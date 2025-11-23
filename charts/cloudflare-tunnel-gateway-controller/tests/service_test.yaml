@@ -1,0 +1,77 @@
+suite: test service
+templates:
+  - service.yaml
+tests:
+  - it: should create a service
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel-id"
+        apiToken: "test-api-token"
+    asserts:
+      - template: service.yaml
+        isKind:
+          of: Service
+      - template: service.yaml
+        equal:
+          path: metadata.name
+          value: RELEASE-NAME-cloudflare-tunnel-gateway-controller
+
+  - it: should use ClusterIP type by default
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel-id"
+        apiToken: "test-api-token"
+    asserts:
+      - template: service.yaml
+        equal:
+          path: spec.type
+          value: ClusterIP
+
+  - it: should expose metrics and health ports
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel-id"
+        apiToken: "test-api-token"
+    asserts:
+      - template: service.yaml
+        contains:
+          path: spec.ports
+          content:
+            name: metrics
+            port: 8080
+            targetPort: metrics
+            protocol: TCP
+      - template: service.yaml
+        contains:
+          path: spec.ports
+          content:
+            name: health
+            port: 8081
+            targetPort: health
+            protocol: TCP
+
+  - it: should use custom ports when specified
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel-id"
+        apiToken: "test-api-token"
+      service:
+        metricsPort: 9090
+        healthPort: 9091
+    asserts:
+      - template: service.yaml
+        contains:
+          path: spec.ports
+          content:
+            name: metrics
+            port: 9090
+            targetPort: metrics
+            protocol: TCP
+      - template: service.yaml
+        contains:
+          path: spec.ports
+          content:
+            name: health
+            port: 9091
+            targetPort: health
+            protocol: TCP

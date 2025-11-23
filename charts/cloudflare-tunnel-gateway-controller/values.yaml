@@ -1,0 +1,133 @@
+# Default values for cloudflare-tunnel-gateway-controller.
+
+# -- Cloudflare configuration
+cloudflare:
+  # -- Cloudflare Tunnel ID (required)
+  tunnelId: ""
+  # -- Cloudflare Account ID (auto-detected if not specified)
+  accountId: ""
+  # -- Cloudflare API token
+  apiToken: ""
+  # -- Existing secret name containing API token (key: api-token)
+  # If set, apiToken value is ignored
+  apiTokenSecretName: ""
+
+# -- Controller configuration
+controller:
+  # -- GatewayClass name to watch
+  gatewayClassName: "cloudflare-tunnel"
+  # -- Controller name for GatewayClass
+  controllerName: "cloudflare.com/tunnel-controller"
+  # -- Kubernetes cluster domain
+  clusterDomain: "cluster.local"
+  # -- Log level (debug, info, warn, error)
+  logLevel: "info"
+  # -- Log format (json, text)
+  logFormat: "json"
+
+# -- Cloudflared deployment management via Helm
+manageCloudflared:
+  # -- Deploy and manage cloudflared via Helm
+  enabled: false
+  # -- Tunnel token for remote-managed mode
+  tunnelToken: ""
+  # -- Existing secret name containing tunnel token (key: tunnel-token)
+  tunnelTokenSecretName: ""
+  # -- Namespace for cloudflared deployment
+  namespace: "cloudflare-tunnel-system"
+  # -- Transport protocol (auto, quic, http2)
+  protocol: ""
+
+# -- AmneziaWG sidecar configuration
+awg:
+  # -- Secret name containing AWG config
+  secretName: ""
+  # -- AWG interface name
+  interfaceName: ""
+
+# -- Container image configuration
+image:
+  repository: ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller
+  pullPolicy: IfNotPresent
+  # -- Overrides appVersion
+  tag: ""
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  # -- Annotations to add to the service account
+  annotations: {}
+  # -- The name of the service account to use
+  # If not set, a name is generated using the fullname template
+  name: ""
+
+podAnnotations: {}
+
+# -- Additional labels to add to pods
+podLabels: {}
+
+# -- Pod security context
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65534
+  seccompProfile:
+    type: RuntimeDefault
+
+# -- Container security context
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: true
+
+resources:
+  {}
+  # limits:
+  #   cpu: 100m
+  #   memory: 128Mi
+  # requests:
+  #   cpu: 50m
+  #   memory: 64Mi
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
+
+# -- Topology spread constraints for pod distribution
+topologySpreadConstraints: []
+
+# -- Priority class name for pod scheduling priority
+priorityClassName: ""
+
+# -- Number of replicas
+replicaCount: 1
+
+# -- Service configuration
+service:
+  type: ClusterIP
+  metricsPort: 8080
+  healthPort: 8081
+
+# -- ServiceMonitor configuration for Prometheus
+serviceMonitor:
+  # -- Enable ServiceMonitor
+  enabled: false
+  # -- Scrape interval
+  interval: ""
+  # -- Additional labels for ServiceMonitor
+  labels: {}
+
+# -- NetworkPolicy configuration
+networkPolicy:
+  # -- Enable NetworkPolicy
+  enabled: false
+
+# -- GatewayClass configuration
+gatewayClass:
+  # -- Create GatewayClass resource
+  create: true

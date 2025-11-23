@@ -1,0 +1,233 @@
+suite: test deployment
+templates:
+  - deployment.yaml
+  - secret.yaml
+tests:
+  - it: should create a deployment with default values
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel-id"
+        apiToken: "test-api-token"
+    asserts:
+      - template: deployment.yaml
+        isKind:
+          of: Deployment
+      - template: deployment.yaml
+        equal:
+          path: metadata.name
+          value: RELEASE-NAME-cloudflare-tunnel-gateway-controller
+      - template: deployment.yaml
+        equal:
+          path: spec.replicas
+          value: 1
+
+  - it: should use custom image tag when specified
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel-id"
+        apiToken: "test-api-token"
+      image:
+        tag: "v1.0.0"
+    asserts:
+      - template: deployment.yaml
+        equal:
+          path: spec.template.spec.containers[0].image
+          value: "ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller:v1.0.0"
+
+  - it: should use appVersion when image tag not specified
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel-id"
+        apiToken: "test-api-token"
+    asserts:
+      - template: deployment.yaml
+        matchRegex:
+          path: spec.template.spec.containers[0].image
+          pattern: ^ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller:.+$
+
+  - it: should set correct security context
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel-id"
+        apiToken: "test-api-token"
+    asserts:
+      - template: deployment.yaml
+        equal:
+          path: spec.template.spec.securityContext.runAsNonRoot
+          value: true
+      - template: deployment.yaml
+        equal:
+          path: spec.template.spec.securityContext.runAsUser
+          value: 65534
+      - template: deployment.yaml
+        equal:
+          path: spec.template.spec.containers[0].securityContext.allowPrivilegeEscalation
+          value: false
+      - template: deployment.yaml
+        equal:
+          path: spec.template.spec.containers[0].securityContext.readOnlyRootFilesystem
+          value: true
+
+  - it: should configure liveness and readiness probes
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel-id"
+        apiToken: "test-api-token"
+    asserts:
+      - template: deployment.yaml
+        equal:
+          path: spec.template.spec.containers[0].livenessProbe.httpGet.path
+          value: /healthz
+      - template: deployment.yaml
+        equal:
+          path: spec.template.spec.containers[0].livenessProbe.httpGet.port
+          value: 8081
+      - template: deployment.yaml
+        equal:
+          path: spec.template.spec.containers[0].readinessProbe.httpGet.path
+          value: /readyz
+      - template: deployment.yaml
+        equal:
+          path: spec.template.spec.containers[0].readinessProbe.httpGet.port
+          value: 8081
+
+  - it: should set controller arguments
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel-id"
+        apiToken: "test-api-token"
+      controller:
+        gatewayClassName: "my-gateway-class"
+        clusterDomain: "my.cluster.local"
+    asserts:
+      - template: deployment.yaml
+        contains:
+          path: spec.template.spec.containers[0].args
+          content: "--tunnel-id=test-tunnel-id"
+      - template: deployment.yaml
+        contains:
+          path: spec.template.spec.containers[0].args
+          content: "--gateway-class-name=my-gateway-class"
+      - template: deployment.yaml
+        contains:
+          path: spec.template.spec.containers[0].args
+          content: "--cluster-domain=my.cluster.local"
+
+  - it: should set custom replica count
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel-id"
+        apiToken: "test-api-token"
+      replicaCount: 3
+    asserts:
+      - template: deployment.yaml
+        equal:
+          path: spec.replicas
+          value: 3
+
+  - it: should add pod annotations when specified
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel-id"
+        apiToken: "test-api-token"
+      podAnnotations:
+        custom-annotation: "value"
+    asserts:
+      - template: deployment.yaml
+        equal:
+          path: spec.template.metadata.annotations["custom-annotation"]
+          value: "value"
+
+  - it: should add pod labels when specified
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel-id"
+        apiToken: "test-api-token"
+      podLabels:
+        custom-label: "value"
+    asserts:
+      - template: deployment.yaml
+        equal:
+          path: spec.template.metadata.labels["custom-label"]
+          value: "value"
+
+  - it: should use existing secret when apiTokenSecretName is set
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel-id"
+        apiTokenSecretName: "my-existing-secret"
+    asserts:
+      - template: deployment.yaml
+        contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: CF_API_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: my-existing-secret
+                key: api-token
+
+  - it: should enable manage-cloudflared when configured
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel-id"
+        apiToken: "test-api-token"
+      manageCloudflared:
+        enabled: true
+        tunnelToken: "test-tunnel-token"
+    asserts:
+      - template: deployment.yaml
+        contains:
+          path: spec.template.spec.containers[0].args
+          content: "--manage-cloudflared=true"
+
+  - it: should set awg configuration when provided
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel-id"
+        apiToken: "test-api-token"
+      awg:
+        secretName: "awg-config"
+        interfaceName: "cftunnel"
+    asserts:
+      - template: deployment.yaml
+        contains:
+          path: spec.template.spec.containers[0].args
+          content: "--awg-secret-name=awg-config"
+      - template: deployment.yaml
+        contains:
+          path: spec.template.spec.containers[0].args
+          content: "--awg-interface-name=cftunnel"
+
+  - it: should set node selector when provided
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel-id"
+        apiToken: "test-api-token"
+      nodeSelector:
+        node-role: worker
+    asserts:
+      - template: deployment.yaml
+        equal:
+          path: spec.template.spec.nodeSelector["node-role"]
+          value: "worker"
+
+  - it: should set tolerations when provided
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel-id"
+        apiToken: "test-api-token"
+      tolerations:
+        - key: "node-role"
+          operator: "Equal"
+          value: "infra"
+          effect: "NoSchedule"
+    asserts:
+      - template: deployment.yaml
+        contains:
+          path: spec.template.spec.tolerations
+          content:
+            key: "node-role"
+            operator: "Equal"
+            value: "infra"
+            effect: "NoSchedule"

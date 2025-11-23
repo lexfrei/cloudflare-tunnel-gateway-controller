@@ -1,0 +1,61 @@
+suite: test gatewayclass
+templates:
+  - gatewayclass.yaml
+tests:
+  - it: should create a gatewayclass by default
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel-id"
+        apiToken: "test-api-token"
+    asserts:
+      - template: gatewayclass.yaml
+        isKind:
+          of: GatewayClass
+      - template: gatewayclass.yaml
+        isAPIVersion:
+          of: gateway.networking.k8s.io/v1
+
+  - it: should use default controller name
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel-id"
+        apiToken: "test-api-token"
+    asserts:
+      - template: gatewayclass.yaml
+        equal:
+          path: metadata.name
+          value: cloudflare-tunnel
+      - template: gatewayclass.yaml
+        equal:
+          path: spec.controllerName
+          value: cloudflare.com/tunnel-controller
+
+  - it: should use custom gateway class name
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel-id"
+        apiToken: "test-api-token"
+      controller:
+        gatewayClassName: "my-gateway-class"
+        controllerName: "my.controller/name"
+    asserts:
+      - template: gatewayclass.yaml
+        equal:
+          path: metadata.name
+          value: my-gateway-class
+      - template: gatewayclass.yaml
+        equal:
+          path: spec.controllerName
+          value: my.controller/name
+
+  - it: should not create gatewayclass when disabled
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel-id"
+        apiToken: "test-api-token"
+      gatewayClass:
+        create: false
+    asserts:
+      - template: gatewayclass.yaml
+        hasDocuments:
+          count: 0

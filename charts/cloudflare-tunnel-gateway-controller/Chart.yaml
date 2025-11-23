@@ -1,0 +1,37 @@
+annotations:
+  artifacthub.io/category: networking
+  artifacthub.io/changes: |-
+    - kind: added
+      description: Initial release
+  artifacthub.io/license: BSD-3-Clause
+  artifacthub.io/links: |
+    - name: Chart Repository
+      url: https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/
+    - name: Gateway API
+      url: https://gateway-api.sigs.k8s.io/
+  artifacthub.io/signKey: |
+    fingerprint: keyless
+    url: https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/.github/workflows/release.yaml@refs/heads/master
+apiVersion: v2
+name: cloudflare-tunnel-gateway-controller
+description: Kubernetes Gateway API controller for Cloudflare Tunnel
+type: application
+version: "0.1.0"
+kubeVersion: ">=1.25.0-0"
+appVersion: "0.0.1"
+icon: https://avatars.githubusercontent.com/u/314135
+home: https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/
+keywords:
+  - cloudflare
+  - gateway-api
+  - tunnel
+  - kubernetes
+  - controller
+  - networking
+  - zero-trust
+maintainers:
+  - name: lexfrei
+    email: f@lex.la
+    url: https://github.com/lexfrei
+sources:
+  - https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/

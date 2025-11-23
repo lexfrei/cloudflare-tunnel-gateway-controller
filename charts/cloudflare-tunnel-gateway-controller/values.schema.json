@@ -1,0 +1,259 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["cloudflare"],
+  "properties": {
+    "cloudflare": {
+      "type": "object",
+      "description": "Cloudflare configuration",
+      "required": ["tunnelId"],
+      "properties": {
+        "tunnelId": {
+          "type": "string",
+          "description": "Cloudflare Tunnel ID",
+          "minLength": 1
+        },
+        "accountId": {
+          "type": "string",
+          "description": "Cloudflare Account ID (auto-detected if not specified)"
+        },
+        "apiToken": {
+          "type": "string",
+          "description": "Cloudflare API token"
+        },
+        "apiTokenSecretName": {
+          "type": "string",
+          "description": "Existing secret name containing API token (key: api-token)"
+        }
+      }
+    },
+    "controller": {
+      "type": "object",
+      "description": "Controller configuration",
+      "properties": {
+        "gatewayClassName": {
+          "type": "string",
+          "description": "GatewayClass name to watch",
+          "default": "cloudflare-tunnel"
+        },
+        "controllerName": {
+          "type": "string",
+          "description": "Controller name for GatewayClass",
+          "default": "cloudflare.com/tunnel-controller"
+        },
+        "clusterDomain": {
+          "type": "string",
+          "description": "Kubernetes cluster domain",
+          "default": "cluster.local"
+        },
+        "logLevel": {
+          "type": "string",
+          "description": "Log level",
+          "enum": ["debug", "info", "warn", "error"],
+          "default": "info"
+        },
+        "logFormat": {
+          "type": "string",
+          "description": "Log format",
+          "enum": ["json", "text"],
+          "default": "json"
+        }
+      }
+    },
+    "manageCloudflared": {
+      "type": "object",
+      "description": "Cloudflared deployment management via Helm",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Deploy and manage cloudflared via Helm",
+          "default": false
+        },
+        "tunnelToken": {
+          "type": "string",
+          "description": "Tunnel token for remote-managed mode"
+        },
+        "tunnelTokenSecretName": {
+          "type": "string",
+          "description": "Existing secret name containing tunnel token (key: tunnel-token)"
+        },
+        "namespace": {
+          "type": "string",
+          "description": "Namespace for cloudflared deployment",
+          "default": "cloudflare-tunnel-system"
+        },
+        "protocol": {
+          "type": "string",
+          "description": "Transport protocol",
+          "enum": ["", "auto", "quic", "http2"]
+        }
+      }
+    },
+    "awg": {
+      "type": "object",
+      "description": "AmneziaWG sidecar configuration",
+      "properties": {
+        "secretName": {
+          "type": "string",
+          "description": "Secret name containing AWG config"
+        },
+        "interfaceName": {
+          "type": "string",
+          "description": "AWG interface name"
+        }
+      }
+    },
+    "image": {
+      "type": "object",
+      "description": "Container image configuration",
+      "properties": {
+        "repository": {
+          "type": "string",
+          "default": "ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller"
+        },
+        "pullPolicy": {
+          "type": "string",
+          "enum": ["Always", "IfNotPresent", "Never"],
+          "default": "IfNotPresent"
+        },
+        "tag": {
+          "type": "string",
+          "description": "Overrides appVersion"
+        }
+      }
+    },
+    "imagePullSecrets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "nameOverride": {
+      "type": "string"
+    },
+    "fullnameOverride": {
+      "type": "string"
+    },
+    "serviceAccount": {
+      "type": "object",
+      "properties": {
+        "annotations": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "name": {
+          "type": "string"
+        }
+      }
+    },
+    "podAnnotations": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "podLabels": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "podSecurityContext": {
+      "type": "object",
+      "description": "Pod security context"
+    },
+    "securityContext": {
+      "type": "object",
+      "description": "Container security context"
+    },
+    "resources": {
+      "type": "object",
+      "description": "Container resource requirements"
+    },
+    "nodeSelector": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "tolerations": {
+      "type": "array"
+    },
+    "affinity": {
+      "type": "object"
+    },
+    "topologySpreadConstraints": {
+      "type": "array"
+    },
+    "priorityClassName": {
+      "type": "string"
+    },
+    "replicaCount": {
+      "type": "integer",
+      "minimum": 1,
+      "default": 1
+    },
+    "service": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["ClusterIP", "NodePort", "LoadBalancer"],
+          "default": "ClusterIP"
+        },
+        "metricsPort": {
+          "type": "integer",
+          "default": 8080
+        },
+        "healthPort": {
+          "type": "integer",
+          "default": 8081
+        }
+      }
+    },
+    "serviceMonitor": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": false
+        },
+        "interval": {
+          "type": "string"
+        },
+        "labels": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "networkPolicy": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": false
+        }
+      }
+    },
+    "gatewayClass": {
+      "type": "object",
+      "properties": {
+        "create": {
+          "type": "boolean",
+          "description": "Create GatewayClass resource",
+          "default": true
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,115 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "cf-tunnel-gw-ctrl.fullname" . }}
+  labels:
+    {{- include "cf-tunnel-gw-ctrl.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "cf-tunnel-gw-ctrl.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "cf-tunnel-gw-ctrl.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if .Values.priorityClassName }}
+      priorityClassName: {{ .Values.priorityClassName }}
+      {{- end }}
+      serviceAccountName: {{ include "cf-tunnel-gw-ctrl.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: {{ .Chart.Name }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - "--tunnel-id={{ .Values.cloudflare.tunnelId }}"
+            - "--gateway-class-name={{ .Values.controller.gatewayClassName }}"
+            - "--controller-name={{ .Values.controller.controllerName }}"
+            - "--cluster-domain={{ .Values.controller.clusterDomain }}"
+            - "--metrics-addr=:{{ .Values.service.metricsPort }}"
+            - "--health-addr=:{{ .Values.service.healthPort }}"
+            - "--log-level={{ .Values.controller.logLevel }}"
+            - "--log-format={{ .Values.controller.logFormat }}"
+            {{- if .Values.cloudflare.accountId }}
+            - "--account-id={{ .Values.cloudflare.accountId }}"
+            {{- end }}
+            {{- if .Values.manageCloudflared.enabled }}
+            - "--manage-cloudflared=true"
+            - "--cloudflared-namespace={{ .Values.manageCloudflared.namespace }}"
+            {{- if .Values.manageCloudflared.protocol }}
+            - "--cloudflared-protocol={{ .Values.manageCloudflared.protocol }}"
+            {{- end }}
+            {{- end }}
+            {{- if .Values.awg.secretName }}
+            - "--awg-secret-name={{ .Values.awg.secretName }}"
+            {{- end }}
+            {{- if .Values.awg.interfaceName }}
+            - "--awg-interface-name={{ .Values.awg.interfaceName }}"
+            {{- end }}
+          env:
+            - name: CF_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "cf-tunnel-gw-ctrl.apiTokenSecretName" . }}
+                  key: api-token
+            {{- if .Values.manageCloudflared.enabled }}
+            - name: CF_TUNNEL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "cf-tunnel-gw-ctrl.tunnelTokenSecretName" . }}
+                  key: tunnel-token
+            {{- end }}
+          ports:
+            - name: metrics
+              containerPort: {{ .Values.service.metricsPort }}
+              protocol: TCP
+            - name: health
+              containerPort: {{ .Values.service.healthPort }}
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: {{ .Values.service.healthPort }}
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: {{ .Values.service.healthPort }}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
