@@ -114,9 +114,6 @@ func runController(_ *cobra.Command, _ []string) error {
 	)
 
 	accountID := viper.GetString("account-id")
-	if accountID == "" {
-		return errors.New("account-id is required")
-	}
 
 	tunnelID := viper.GetString("tunnel-id")
 	if tunnelID == "" {

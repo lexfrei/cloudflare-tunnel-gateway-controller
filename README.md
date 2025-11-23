@@ -42,9 +42,9 @@ kubectl create namespace cloudflare-tunnel-system
 
 Edit `deploy/controller/deployment.yaml` and set your values in ConfigMap and Secret:
 
-- `account-id`: Your Cloudflare account ID
 - `tunnel-id`: Your Cloudflare tunnel ID
 - `api-token`: Your Cloudflare API token
+- `account-id`: (optional) Your Cloudflare account ID - auto-detected if token has access to single account
 - `cluster-domain`: Your cluster domain (default: `cluster.local`)
 
 ### 4. Deploy the controller
@@ -93,7 +93,7 @@ The controller will automatically update Cloudflare Tunnel configuration. Change
 
 | Flag | Environment Variable | Default | Description |
 |------|---------------------|---------|-------------|
-| `--account-id` | `CF_ACCOUNT_ID` | | Cloudflare account ID |
+| `--account-id` | `CF_ACCOUNT_ID` | (auto-detect) | Cloudflare account ID (optional if token has access to single account) |
 | `--tunnel-id` | `CF_TUNNEL_ID` | | Cloudflare tunnel ID |
 | `--api-token` | `CF_API_TOKEN` | | Cloudflare API token |
 | `--cluster-domain` | `CF_CLUSTER_DOMAIN` | `cluster.local` | Kubernetes cluster domain |

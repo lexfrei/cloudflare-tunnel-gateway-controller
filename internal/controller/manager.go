@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/cloudflare/cloudflare-go/v4"
+	"github.com/cloudflare/cloudflare-go/v4/accounts"
 	"github.com/cloudflare/cloudflare-go/v4/option"
 	"github.com/cockroachdb/errors"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -29,6 +30,22 @@ func Run(ctx context.Context, cfg *Config) error {
 	logger := log.FromContext(ctx).WithName("manager")
 	logger.Info("initializing controller manager")
 
+	cfClient := cloudflare.NewClient(
+		option.WithAPIToken(cfg.APIToken),
+	)
+
+	accountID := cfg.AccountID
+	if accountID == "" {
+		var resolveErr error
+
+		accountID, resolveErr = resolveAccountID(ctx, cfClient)
+		if resolveErr != nil {
+			return resolveErr
+		}
+
+		logger.Info("auto-detected account ID", "accountID", accountID)
+	}
+
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Metrics: server.Options{
 			BindAddress: cfg.MetricsAddr,
@@ -42,10 +59,6 @@ func Run(ctx context.Context, cfg *Config) error {
 	if err := gatewayv1.Install(mgr.GetScheme()); err != nil {
 		return errors.Wrap(err, "failed to add gateway-api scheme")
 	}
-
-	cfClient := cloudflare.NewClient(
-		option.WithAPIToken(cfg.APIToken),
-	)
 
 	gatewayReconciler := &GatewayReconciler{
 		Client:           mgr.GetClient(),
@@ -62,7 +75,7 @@ func Run(ctx context.Context, cfg *Config) error {
 		Client:           mgr.GetClient(),
 		Scheme:           mgr.GetScheme(),
 		CFClient:         cfClient,
-		AccountID:        cfg.AccountID,
+		AccountID:        accountID,
 		TunnelID:         cfg.TunnelID,
 		ClusterDomain:    cfg.ClusterDomain,
 		GatewayClassName: cfg.GatewayClassName,
@@ -88,4 +101,23 @@ func Run(ctx context.Context, cfg *Config) error {
 	}
 
 	return nil
+}
+
+func resolveAccountID(ctx context.Context, client *cloudflare.Client) (string, error) {
+	result, err := client.Accounts.List(ctx, accounts.AccountListParams{})
+	if err != nil {
+		return "", errors.Wrap(err, "failed to list accounts")
+	}
+
+	accountList := result.Result
+	if len(accountList) == 0 {
+		return "", errors.New("no accounts found for this API token")
+	}
+
+	if len(accountList) > 1 {
+		//nolint:wrapcheck // this is a new error, not wrapping external
+		return "", errors.Newf("multiple accounts found (%d), please specify --account-id explicitly", len(accountList))
+	}
+
+	return accountList[0].ID, nil
 }
