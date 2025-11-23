@@ -1,0 +1,11 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: cloudflare-tunnel
+  namespace: cloudflare-tunnel-system
+spec:
+  gatewayClassName: cloudflare-tunnel
+  listeners:
+    - name: https
+      port: 443
+      protocol: HTTPS

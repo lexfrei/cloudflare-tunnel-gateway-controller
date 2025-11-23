@@ -1,0 +1,104 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cloudflare-tunnel-gateway-controller
+  namespace: cloudflare-tunnel-system
+  labels:
+    app.kubernetes.io/name: cloudflare-tunnel-gateway-controller
+    app.kubernetes.io/component: controller
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cloudflare-tunnel-gateway-controller
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: cloudflare-tunnel-gateway-controller
+        app.kubernetes.io/component: controller
+    spec:
+      serviceAccountName: cloudflare-tunnel-gateway-controller
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: controller
+          image: ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller:latest
+          args:
+            - --account-id=$(CF_ACCOUNT_ID)
+            - --tunnel-id=$(CF_TUNNEL_ID)
+            - --cluster-domain=$(CLUSTER_DOMAIN)
+          env:
+            - name: CF_ACCOUNT_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: cloudflare-tunnel-gateway-controller
+                  key: account-id
+            - name: CF_TUNNEL_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: cloudflare-tunnel-gateway-controller
+                  key: tunnel-id
+            - name: CF_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: cloudflare-tunnel-gateway-controller
+                  key: api-token
+            - name: CLUSTER_DOMAIN
+              valueFrom:
+                configMapKeyRef:
+                  name: cloudflare-tunnel-gateway-controller
+                  key: cluster-domain
+                  optional: true
+          ports:
+            - name: metrics
+              containerPort: 8080
+              protocol: TCP
+            - name: health
+              containerPort: 8081
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            limits:
+              cpu: 100m
+              memory: 128Mi
+            requests:
+              cpu: 10m
+              memory: 64Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cloudflare-tunnel-gateway-controller
+  namespace: cloudflare-tunnel-system
+data:
+  account-id: "YOUR_ACCOUNT_ID"
+  tunnel-id: "YOUR_TUNNEL_ID"
+  cluster-domain: "cluster.local"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: cloudflare-tunnel-gateway-controller
+  namespace: cloudflare-tunnel-system
+type: Opaque
+stringData:
+  api-token: "YOUR_API_TOKEN"
