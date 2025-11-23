@@ -60,6 +60,7 @@ func init() {
 	rootCmd.Flags().String("cloudflared-namespace", "cloudflare-tunnel-system", "Namespace for cloudflared deployment")
 	rootCmd.Flags().String("cloudflared-protocol", "", "Transport protocol for cloudflared (auto, quic, http2)")
 	rootCmd.Flags().String("awg-secret-name", "", "Secret name containing AWG config for sidecar")
+	rootCmd.Flags().String("awg-interface-name", "", "AWG interface name (must match config file name without .conf)")
 
 	_ = viper.BindPFlags(rootCmd.Flags())
 	_ = viper.BindPFlags(rootCmd.PersistentFlags())
@@ -156,6 +157,7 @@ func runController(_ *cobra.Command, _ []string) error {
 		CloudflaredNS:     viper.GetString("cloudflared-namespace"),
 		CloudflaredProto:  viper.GetString("cloudflared-protocol"),
 		AWGSecretName:     viper.GetString("awg-secret-name"),
+		AWGInterfaceName:  viper.GetString("awg-interface-name"),
 	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

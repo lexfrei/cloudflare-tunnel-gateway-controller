@@ -31,6 +31,7 @@ type Config struct {
 	CloudflaredNS     string
 	CloudflaredProto  string
 	AWGSecretName     string
+	AWGInterfaceName  string
 	ManageCloudflared bool
 }
 
@@ -39,21 +40,31 @@ func Run(ctx context.Context, cfg *Config) error {
 	logger := log.FromContext(ctx).WithName("manager")
 	logger.Info("initializing controller manager")
 
+	logger.Info("creating cloudflare client")
+
 	cfClient := cloudflare.NewClient(
 		option.WithAPIToken(cfg.APIToken),
 	)
 
+	logger.Info("cloudflare client created")
+
 	accountID := cfg.AccountID
 	if accountID == "" {
+		logger.Info("resolving account ID")
+
 		var resolveErr error
 
 		accountID, resolveErr = resolveAccountID(ctx, cfClient)
 		if resolveErr != nil {
+			logger.Error(resolveErr, "failed to resolve account ID")
+
 			return resolveErr
 		}
 
 		logger.Info("auto-detected account ID", "accountID", accountID)
 	}
+
+	logger.Info("creating ctrl.Manager")
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Metrics: server.Options{
@@ -87,11 +98,13 @@ func Run(ctx context.Context, cfg *Config) error {
 		Scheme:           mgr.GetScheme(),
 		GatewayClassName: cfg.GatewayClassName,
 		ControllerName:   cfg.ControllerName,
+		TunnelID:         cfg.TunnelID,
 		HelmManager:      helmManager,
 		TunnelToken:      cfg.TunnelToken,
 		CloudflaredNS:    cfg.CloudflaredNS,
 		Protocol:         cfg.CloudflaredProto,
 		AWGSecretName:    cfg.AWGSecretName,
+		AWGInterfaceName: cfg.AWGInterfaceName,
 	}
 
 	if err := gatewayReconciler.SetupWithManager(mgr); err != nil {

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/cmd/controller/cmd"
@@ -12,11 +13,12 @@ var (
 	Gitsha  = "development"
 )
 
-//nolint:noinlineerr // inline error handling is standard for main
 func main() {
 	cmd.SetVersion(Version, Gitsha)
 
-	if err := cmd.Execute(); err != nil {
+	err := cmd.Execute()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %+v\n", err)
 		os.Exit(1)
 	}
 }
