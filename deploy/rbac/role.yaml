@@ -19,6 +19,8 @@ rules:
       - get
       - list
       - watch
+      - update
+      - patch
   - apiGroups:
       - gateway.networking.k8s.io
     resources:
@@ -51,3 +53,32 @@ rules:
       - get
       - list
       - watch
+  # Helm deployment management (for cloudflared)
+  - apiGroups:
+      - ""
+    resources:
+      - serviceaccounts
+      - secrets
+      - configmaps
+      - pods
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+  - apiGroups:
+      - apps
+    resources:
+      - deployments
+      - replicasets
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
