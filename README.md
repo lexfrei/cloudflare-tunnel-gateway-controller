@@ -103,6 +103,11 @@ The controller will automatically update Cloudflare Tunnel configuration. Change
 | `--health-addr` | `CF_HEALTH_ADDR` | `:8081` | Health probe endpoint address |
 | `--log-level` | `CF_LOG_LEVEL` | `info` | Log level (debug, info, warn, error) |
 | `--log-format` | `CF_LOG_FORMAT` | `json` | Log format (json, text) |
+| `--manage-cloudflared` | `CF_MANAGE_CLOUDFLARED` | `false` | Deploy and manage cloudflared via Helm |
+| `--tunnel-token` | `CF_TUNNEL_TOKEN` | | Tunnel token for remote-managed mode |
+| `--cloudflared-namespace` | `CF_CLOUDFLARED_NAMESPACE` | `cloudflare-tunnel-system` | Namespace for cloudflared |
+| `--cloudflared-protocol` | `CF_CLOUDFLARED_PROTOCOL` | | Transport protocol (auto, quic, http2) |
+| `--awg-secret-name` | `CF_AWG_SECRET_NAME` | | AWG config secret for sidecar |
 
 ## Gateway API Support
 
@@ -151,4 +156,4 @@ The following Gateway API features are not supported due to Cloudflare Tunnel li
 
 ## License
 
-MIT License
+BSD 3-Clause License

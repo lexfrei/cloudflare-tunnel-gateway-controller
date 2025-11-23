@@ -1,0 +1,237 @@
+package helm
+
+import (
+	"context"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"sort"
+	"sync"
+
+	"github.com/Masterminds/semver/v3"
+	"github.com/cockroachdb/errors"
+	"helm.sh/helm/v3/pkg/action"
+	"helm.sh/helm/v3/pkg/chart"
+	"helm.sh/helm/v3/pkg/chart/loader"
+	"helm.sh/helm/v3/pkg/cli"
+	"helm.sh/helm/v3/pkg/registry"
+	"helm.sh/helm/v3/pkg/release"
+)
+
+const (
+	DefaultChartRef = "oci://ghcr.io/lexfrei/charts/cloudflare-tunnel"
+)
+
+type Manager struct {
+	settings       *cli.EnvSettings
+	registryClient *registry.Client
+
+	chartCache   *chart.Chart
+	chartVersion string
+	cacheMu      sync.RWMutex
+}
+
+func NewManager() (*Manager, error) {
+	settings := cli.New()
+
+	registryClient, err := registry.NewClient(
+		registry.ClientOptDebug(false),
+		registry.ClientOptEnableCache(true),
+		registry.ClientOptCredentialsFile(settings.RegistryConfig),
+	)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to create registry client")
+	}
+
+	return &Manager{
+		settings:       settings,
+		registryClient: registryClient,
+	}, nil
+}
+
+func (m *Manager) GetLatestVersion(_ context.Context, chartRef string) (string, error) {
+	repo := extractRepoFromOCI(chartRef)
+
+	tags, err := m.registryClient.Tags(repo)
+	if err != nil {
+		return "", errors.Wrap(err, "failed to get tags from registry")
+	}
+
+	if len(tags) == 0 {
+		return "", errors.New("no tags found in registry")
+	}
+
+	versions := make([]*semver.Version, 0, len(tags))
+
+	for _, tag := range tags {
+		ver, parseErr := semver.NewVersion(tag)
+		if parseErr != nil {
+			continue
+		}
+
+		if ver.Prerelease() == "" {
+			versions = append(versions, ver)
+		}
+	}
+
+	if len(versions) == 0 {
+		return "", errors.New("no valid semver versions found")
+	}
+
+	sort.Sort(semver.Collection(versions))
+
+	return versions[len(versions)-1].Original(), nil
+}
+
+func (m *Manager) LoadChart(_ context.Context, chartRef, version string) (*chart.Chart, error) {
+	m.cacheMu.RLock()
+
+	if m.chartCache != nil && m.chartVersion == version {
+		m.cacheMu.RUnlock()
+
+		return m.chartCache, nil
+	}
+
+	m.cacheMu.RUnlock()
+
+	m.cacheMu.Lock()
+	defer m.cacheMu.Unlock()
+
+	if m.chartCache != nil && m.chartVersion == version {
+		return m.chartCache, nil
+	}
+
+	slog.Info("pulling chart from registry", "ref", chartRef, "version", version)
+
+	pullClient := action.NewPullWithOpts(action.WithConfig(new(action.Configuration)))
+	pullClient.Settings = m.settings
+	pullClient.Version = version
+	pullClient.DestDir = os.TempDir()
+
+	fullRef := chartRef
+	if version != "" {
+		fullRef = chartRef + ":" + version
+	}
+
+	output, err := pullClient.Run(fullRef)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to pull chart")
+	}
+
+	slog.Debug("chart pulled", "output", output)
+
+	chartName := extractChartName(chartRef)
+	chartPath := filepath.Join(os.TempDir(), chartName+"-"+version+".tgz")
+
+	loadedChart, err := loader.Load(chartPath)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to load chart")
+	}
+
+	m.chartCache = loadedChart
+	m.chartVersion = version
+
+	return loadedChart, nil
+}
+
+func (m *Manager) GetActionConfig(namespace string) (*action.Configuration, error) {
+	actionConfig := new(action.Configuration)
+
+	//nolint:noinlineerr // Init requires inline check
+	if err := actionConfig.Init(m.settings.RESTClientGetter(), namespace, "secret", debugLog); err != nil {
+		return nil, errors.Wrap(err, "failed to init action config")
+	}
+
+	actionConfig.RegistryClient = m.registryClient
+
+	return actionConfig, nil
+}
+
+func (m *Manager) Install(
+	ctx context.Context,
+	cfg *action.Configuration,
+	releaseName, namespace string,
+	loadedChart *chart.Chart,
+	values map[string]any,
+) (*release.Release, error) {
+	install := action.NewInstall(cfg)
+	install.ReleaseName = releaseName
+	install.Namespace = namespace
+	install.CreateNamespace = true
+	install.Wait = true
+	install.Timeout = installTimeout
+
+	rel, err := install.RunWithContext(ctx, loadedChart, values)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to install release")
+	}
+
+	return rel, nil
+}
+
+func (m *Manager) Upgrade(
+	ctx context.Context,
+	cfg *action.Configuration,
+	releaseName string,
+	loadedChart *chart.Chart,
+	values map[string]any,
+) (*release.Release, error) {
+	upgrade := action.NewUpgrade(cfg)
+	upgrade.Wait = true
+	upgrade.Timeout = installTimeout
+	upgrade.ReuseValues = false
+
+	rel, err := upgrade.RunWithContext(ctx, releaseName, loadedChart, values)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to upgrade release")
+	}
+
+	return rel, nil
+}
+
+func (m *Manager) Uninstall(cfg *action.Configuration, releaseName string) error {
+	uninstall := action.NewUninstall(cfg)
+	uninstall.Wait = true
+	uninstall.Timeout = installTimeout
+
+	_, err := uninstall.Run(releaseName)
+	if err != nil {
+		return errors.Wrap(err, "failed to uninstall release")
+	}
+
+	return nil
+}
+
+func (m *Manager) GetRelease(cfg *action.Configuration, releaseName string) (*release.Release, error) {
+	get := action.NewGet(cfg)
+
+	rel, err := get.Run(releaseName)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to get release")
+	}
+
+	return rel, nil
+}
+
+func (m *Manager) ReleaseExists(cfg *action.Configuration, releaseName string) bool {
+	_, err := m.GetRelease(cfg, releaseName)
+
+	return err == nil
+}
+
+func debugLog(_ string, _ ...any) {
+	// Suppress helm debug logs
+}
+
+func extractRepoFromOCI(chartRef string) string {
+	const ociPrefix = "oci://"
+	if len(chartRef) > len(ociPrefix) {
+		return chartRef[len(ociPrefix):]
+	}
+
+	return chartRef
+}
+
+func extractChartName(chartRef string) string {
+	return filepath.Base(chartRef)
+}

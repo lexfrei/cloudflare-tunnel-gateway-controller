@@ -54,6 +54,13 @@ func init() {
 	rootCmd.Flags().String("metrics-addr", ":8080", "Address for metrics endpoint")
 	rootCmd.Flags().String("health-addr", ":8081", "Address for health probe endpoint")
 
+	// Cloudflared Helm deployment flags
+	rootCmd.Flags().Bool("manage-cloudflared", false, "Deploy and manage cloudflared via Helm")
+	rootCmd.Flags().String("tunnel-token", "", "Cloudflare tunnel token for remote-managed mode")
+	rootCmd.Flags().String("cloudflared-namespace", "cloudflare-tunnel-system", "Namespace for cloudflared deployment")
+	rootCmd.Flags().String("cloudflared-protocol", "", "Transport protocol for cloudflared (auto, quic, http2)")
+	rootCmd.Flags().String("awg-secret-name", "", "Secret name containing AWG config for sidecar")
+
 	_ = viper.BindPFlags(rootCmd.Flags())
 	_ = viper.BindPFlags(rootCmd.PersistentFlags())
 }
@@ -69,6 +76,8 @@ func initConfig() {
 	viper.SetDefault("health-addr", ":8081")
 	viper.SetDefault("log-level", "info")
 	viper.SetDefault("log-format", "json")
+	viper.SetDefault("manage-cloudflared", false)
+	viper.SetDefault("cloudflared-namespace", "cloudflare-tunnel-system")
 }
 
 func Execute() error {
@@ -125,6 +134,13 @@ func runController(_ *cobra.Command, _ []string) error {
 		return errors.New("api-token is required (use --api-token or CF_API_TOKEN env var)")
 	}
 
+	manageCloudflared := viper.GetBool("manage-cloudflared")
+	tunnelToken := viper.GetString("tunnel-token")
+
+	if manageCloudflared && tunnelToken == "" {
+		return errors.New("tunnel-token is required when manage-cloudflared is enabled")
+	}
+
 	cfg := controller.Config{
 		AccountID:        accountID,
 		TunnelID:         tunnelID,
@@ -134,6 +150,12 @@ func runController(_ *cobra.Command, _ []string) error {
 		ControllerName:   viper.GetString("controller-name"),
 		MetricsAddr:      viper.GetString("metrics-addr"),
 		HealthAddr:       viper.GetString("health-addr"),
+
+		ManageCloudflared: manageCloudflared,
+		TunnelToken:       tunnelToken,
+		CloudflaredNS:     viper.GetString("cloudflared-namespace"),
+		CloudflaredProto:  viper.GetString("cloudflared-protocol"),
+		AWGSecretName:     viper.GetString("awg-secret-name"),
 	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

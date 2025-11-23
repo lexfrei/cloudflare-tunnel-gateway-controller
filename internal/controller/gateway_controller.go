@@ -9,9 +9,18 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
+
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/helm"
+)
+
+const (
+	cloudflaredFinalizer = "cloudflare-tunnel.gateway.networking.k8s.io/cloudflared"
+	cloudflaredRelease   = "cloudflared"
+	defaultCloudflaredNS = "cloudflare-tunnel-system"
 )
 
 type GatewayReconciler struct {
@@ -20,13 +29,21 @@ type GatewayReconciler struct {
 	Scheme           *runtime.Scheme
 	GatewayClassName string
 	ControllerName   string
+
+	// Helm management
+	HelmManager   *helm.Manager
+	TunnelToken   string
+	CloudflaredNS string
+	Protocol      string
+	AWGSecretName string
 }
 
-//nolint:noinlineerr // inline error handling is fine for controller pattern
+//nolint:noinlineerr // controller reconcile logic
 func (r *GatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
 	var gateway gatewayv1.Gateway
+
 	if err := r.Get(ctx, req.NamespacedName, &gateway); err != nil {
 		if apierrors.IsNotFound(err) {
 			return ctrl.Result{}, nil
@@ -41,6 +58,24 @@ func (r *GatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 
 	logger.Info("reconciling gateway", "name", gateway.Name, "namespace", gateway.Namespace)
 
+	if !gateway.DeletionTimestamp.IsZero() {
+		return r.handleDeletion(ctx, &gateway)
+	}
+
+	if r.HelmManager != nil {
+		if !controllerutil.ContainsFinalizer(&gateway, cloudflaredFinalizer) {
+			controllerutil.AddFinalizer(&gateway, cloudflaredFinalizer)
+
+			if err := r.Update(ctx, &gateway); err != nil {
+				return ctrl.Result{}, errors.Wrap(err, "failed to add finalizer")
+			}
+		}
+
+		if err := r.ensureCloudflared(ctx); err != nil {
+			return ctrl.Result{}, errors.Wrap(err, "failed to ensure cloudflared deployment")
+		}
+	}
+
 	if err := r.updateStatus(ctx, &gateway); err != nil {
 		return ctrl.Result{}, errors.Wrap(err, "failed to update gateway status")
 	}
@@ -48,7 +83,132 @@ func (r *GatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	return ctrl.Result{}, nil
 }
 
-//nolint:funcorder,noinlineerr // private helper method
+//nolint:funcorder // deletion handler
+func (r *GatewayReconciler) handleDeletion(
+	ctx context.Context,
+	gateway *gatewayv1.Gateway,
+) (ctrl.Result, error) {
+	logger := log.FromContext(ctx)
+
+	if !controllerutil.ContainsFinalizer(gateway, cloudflaredFinalizer) {
+		return ctrl.Result{}, nil
+	}
+
+	if r.HelmManager != nil {
+		logger.Info("removing cloudflared deployment")
+
+		removeErr := r.removeCloudflared()
+		if removeErr != nil {
+			return ctrl.Result{}, errors.Wrap(removeErr, "failed to remove cloudflared")
+		}
+	}
+
+	controllerutil.RemoveFinalizer(gateway, cloudflaredFinalizer)
+
+	updateErr := r.Update(ctx, gateway)
+	if updateErr != nil {
+		return ctrl.Result{}, errors.Wrap(updateErr, "failed to remove finalizer")
+	}
+
+	return ctrl.Result{}, nil
+}
+
+//nolint:funcorder // helm operations
+func (r *GatewayReconciler) ensureCloudflared(ctx context.Context) error {
+	logger := log.FromContext(ctx)
+
+	namespace := r.CloudflaredNS
+	if namespace == "" {
+		namespace = defaultCloudflaredNS
+	}
+
+	latestVersion, err := r.HelmManager.GetLatestVersion(ctx, helm.DefaultChartRef)
+	if err != nil {
+		return errors.Wrap(err, "failed to get latest chart version")
+	}
+
+	logger.Info("ensuring cloudflared", "version", latestVersion, "namespace", namespace)
+
+	loadedChart, err := r.HelmManager.LoadChart(ctx, helm.DefaultChartRef, latestVersion)
+	if err != nil {
+		return errors.Wrap(err, "failed to load chart")
+	}
+
+	values := r.buildCloudflaredValues()
+
+	cfg, err := r.HelmManager.GetActionConfig(namespace)
+	if err != nil {
+		return errors.Wrap(err, "failed to get action config")
+	}
+
+	if r.HelmManager.ReleaseExists(cfg, cloudflaredRelease) {
+		rel, getErr := r.HelmManager.GetRelease(cfg, cloudflaredRelease)
+		if getErr != nil {
+			return errors.Wrap(getErr, "failed to get existing release")
+		}
+
+		if rel.Chart.Metadata.Version != latestVersion {
+			logger.Info("upgrading cloudflared",
+				"from", rel.Chart.Metadata.Version,
+				"to", latestVersion,
+			)
+
+			_, upgradeErr := r.HelmManager.Upgrade(ctx, cfg, cloudflaredRelease, loadedChart, values)
+			if upgradeErr != nil {
+				return errors.Wrap(upgradeErr, "failed to upgrade release")
+			}
+		}
+
+		return nil
+	}
+
+	logger.Info("installing cloudflared", "version", latestVersion)
+
+	_, err = r.HelmManager.Install(ctx, cfg, cloudflaredRelease, namespace, loadedChart, values)
+	if err != nil {
+		return errors.Wrap(err, "failed to install release")
+	}
+
+	return nil
+}
+
+//nolint:funcorder // helm operations
+func (r *GatewayReconciler) removeCloudflared() error {
+	namespace := r.CloudflaredNS
+	if namespace == "" {
+		namespace = defaultCloudflaredNS
+	}
+
+	cfg, err := r.HelmManager.GetActionConfig(namespace)
+	if err != nil {
+		return errors.Wrap(err, "failed to get action config")
+	}
+
+	if !r.HelmManager.ReleaseExists(cfg, cloudflaredRelease) {
+		return nil
+	}
+
+	return errors.Wrap(r.HelmManager.Uninstall(cfg, cloudflaredRelease), "failed to uninstall cloudflared")
+}
+
+//nolint:funcorder // value builder
+func (r *GatewayReconciler) buildCloudflaredValues() map[string]any {
+	cloudflaredValues := &helm.CloudflaredValues{
+		TunnelToken:  r.TunnelToken,
+		Protocol:     r.Protocol,
+		ReplicaCount: 1,
+	}
+
+	if r.AWGSecretName != "" {
+		cloudflaredValues.Sidecar = &helm.SidecarConfig{
+			ConfigSecretName: r.AWGSecretName,
+		}
+	}
+
+	return cloudflaredValues.BuildValues()
+}
+
+//nolint:funcorder,funlen // status update logic
 func (r *GatewayReconciler) updateStatus(ctx context.Context, gateway *gatewayv1.Gateway) error {
 	now := metav1.Now()
 
@@ -72,6 +232,7 @@ func (r *GatewayReconciler) updateStatus(ctx context.Context, gateway *gatewayv1
 	}
 
 	listenerStatuses := make([]gatewayv1.ListenerStatus, 0, len(gateway.Spec.Listeners))
+
 	for _, listener := range gateway.Spec.Listeners {
 		listenerStatuses = append(listenerStatuses, gatewayv1.ListenerStatus{
 			Name: listener.Name,
@@ -105,8 +266,9 @@ func (r *GatewayReconciler) updateStatus(ctx context.Context, gateway *gatewayv1
 
 	gateway.Status.Listeners = listenerStatuses
 
-	if err := r.Status().Update(ctx, gateway); err != nil {
-		return errors.Wrap(err, "failed to update gateway status")
+	statusErr := r.Status().Update(ctx, gateway)
+	if statusErr != nil {
+		return errors.Wrap(statusErr, "failed to update gateway status")
 	}
 
 	return nil

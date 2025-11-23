@@ -12,6 +12,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
+
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/helm"
 )
 
 type Config struct {
@@ -23,6 +25,13 @@ type Config struct {
 	ControllerName   string
 	MetricsAddr      string
 	HealthAddr       string
+
+	// Cloudflared Helm deployment config
+	TunnelToken       string
+	CloudflaredNS     string
+	CloudflaredProto  string
+	AWGSecretName     string
+	ManageCloudflared bool
 }
 
 //nolint:funlen,noinlineerr // controller setup requires multiple steps
@@ -60,11 +69,29 @@ func Run(ctx context.Context, cfg *Config) error {
 		return errors.Wrap(err, "failed to add gateway-api scheme")
 	}
 
+	var helmManager *helm.Manager
+
+	if cfg.ManageCloudflared {
+		var helmErr error
+
+		helmManager, helmErr = helm.NewManager()
+		if helmErr != nil {
+			return errors.Wrap(helmErr, "failed to create helm manager")
+		}
+
+		logger.Info("helm manager initialized for cloudflared deployment")
+	}
+
 	gatewayReconciler := &GatewayReconciler{
 		Client:           mgr.GetClient(),
 		Scheme:           mgr.GetScheme(),
 		GatewayClassName: cfg.GatewayClassName,
 		ControllerName:   cfg.ControllerName,
+		HelmManager:      helmManager,
+		TunnelToken:      cfg.TunnelToken,
+		CloudflaredNS:    cfg.CloudflaredNS,
+		Protocol:         cfg.CloudflaredProto,
+		AWGSecretName:    cfg.AWGSecretName,
 	}
 
 	if err := gatewayReconciler.SetupWithManager(mgr); err != nil {
