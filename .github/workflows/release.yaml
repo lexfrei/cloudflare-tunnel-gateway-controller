@@ -96,7 +96,19 @@ jobs:
     name: Merge Manifests
     runs-on: ubuntu-latest
     needs: build-and-push
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Extract version
+        id: version
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Version: ${VERSION}"
+
       - name: Download digests
         uses: actions/download-artifact@v6
         with:
@@ -169,13 +181,13 @@ jobs:
             cosign sign --yes "${tag}"
           done
 
-      - name: Generate build summary
+      - name: Generate container summary
         run: |
           IMAGE_TAG="${{ fromJSON(steps.meta.outputs.json).tags[0] }}"
           MANIFEST_DIGEST=$(docker buildx imagetools inspect "${IMAGE_TAG}" --format '{{.Manifest.Digest}}')
 
           {
-            echo "## Release Container Image Built"
+            echo "## Container Image"
             echo ""
             echo "### Image Tags"
             echo "\`\`\`"
@@ -197,9 +209,105 @@ jobs:
             echo "\`\`\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
+  publish-chart:
+    name: Publish Helm Chart
+    runs-on: ubuntu-latest
+    needs: merge-manifests
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: latest
+
+      - name: Install yq
+        run: |
+          # renovate: datasource=github-releases depName=mikefarah/yq
+          YQ_VERSION="4.44.3"
+          wget --quiet https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/yq_linux_amd64 --output-document yq
+          chmod +x yq
+          sudo mv yq /usr/local/bin/yq
+
+      - name: Update Chart version
+        run: |
+          VERSION="${{ needs.merge-manifests.outputs.version }}"
+          CHART_PATH="charts/cloudflare-tunnel-gateway-controller"
+
+          echo "Updating Chart.yaml to version ${VERSION}"
+          yq eval ".version = \"${VERSION}\"" --inplace "${CHART_PATH}/Chart.yaml"
+          yq eval ".appVersion = \"${VERSION}\"" --inplace "${CHART_PATH}/Chart.yaml"
+
+          echo "Updated Chart.yaml:"
+          cat "${CHART_PATH}/Chart.yaml"
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Package and push chart
+        run: |
+          VERSION="${{ needs.merge-manifests.outputs.version }}"
+          CHART_PATH="charts/cloudflare-tunnel-gateway-controller"
+          CHART_NAME="cloudflare-tunnel-gateway-controller"
+
+          # Package chart
+          helm package "${CHART_PATH}"
+
+          # Push to GHCR
+          CHART_FILE="${CHART_NAME}-${VERSION}.tgz"
+          helm push "${CHART_FILE}" oci://ghcr.io/${{ github.repository_owner }}
+
+          echo "Chart pushed: oci://ghcr.io/${{ github.repository_owner }}/${CHART_NAME}:${VERSION}"
+
+      - name: Generate chart summary
+        run: |
+          VERSION="${{ needs.merge-manifests.outputs.version }}"
+          CHART_NAME="cloudflare-tunnel-gateway-controller"
+
+          {
+            echo "## Helm Chart"
+            echo ""
+            echo "**Chart**: \`oci://ghcr.io/${{ github.repository_owner }}/${CHART_NAME}:${VERSION}\`"
+            echo ""
+            echo "### Installation"
+            echo "\`\`\`bash"
+            echo "helm install ${CHART_NAME} \\"
+            echo "  oci://ghcr.io/${{ github.repository_owner }}/${CHART_NAME} \\"
+            echo "  --version ${VERSION}"
+            echo "\`\`\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload chart artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: helm-chart
+          path: "*.tgz"
+          retention-days: 5
+
+  create-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: [merge-manifests, publish-chart]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Download chart artifact
+        uses: actions/download-artifact@v6
+        with:
+          name: helm-chart
+          path: ./artifacts
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
           draft: false
           prerelease: false
+          files: |
+            ./artifacts/*.tgz

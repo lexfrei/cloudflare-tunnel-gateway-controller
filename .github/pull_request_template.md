@@ -23,6 +23,11 @@ Brief description of what this PR does and why.
 - [ ] Code comments added for complex logic
 - [ ] CLAUDE.md updated (if workflow/standards changed)
 
+## Versioning
+
+- [ ] Chart version bumped in `charts/*/Chart.yaml` (if chart changes)
+- [ ] App version matches Chart appVersion (for releases)
+
 ## Checklist
 
 - [ ] Commit messages follow semantic format (`type(scope): description`)
