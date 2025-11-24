@@ -1,0 +1,71 @@
+# Production configuration example
+# Recommended settings for production deployments
+#
+# Features:
+#   - High availability with multiple replicas
+#   - Resource limits and requests
+#   - Prometheus monitoring via ServiceMonitor
+#   - Network policies for security
+#   - Zone-aware pod distribution
+#   - External secrets for credentials
+#
+# Usage:
+#   helm install cloudflare-tunnel-gateway-controller \
+#     oci://ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller \
+#     --namespace cloudflare-tunnel-system \
+#     --create-namespace \
+#     --values production-values.yaml
+
+cloudflare:
+  # Cloudflare Tunnel ID (required)
+  tunnelId: "your-tunnel-id"
+
+  # Use external secret for API token (recommended for production)
+  apiTokenSecretName: "cloudflare-credentials"
+
+controller:
+  # Debug logging disabled in production
+  logLevel: "info"
+  logFormat: "json"
+
+# High availability
+replicaCount: 2
+
+# Resource management
+resources:
+  limits:
+    cpu: 200m
+    memory: 256Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+# Prometheus monitoring
+serviceMonitor:
+  enabled: true
+  labels:
+    prometheus: kube-prometheus
+
+# Network security
+networkPolicy:
+  enabled: true
+
+# Zone-aware distribution for HA
+topologySpreadConstraints:
+  - maxSkew: 1
+    topologyKey: topology.kubernetes.io/zone
+    whenUnsatisfiable: ScheduleAnyway
+    labelSelector:
+      matchLabels:
+        app.kubernetes.io/name: cloudflare-tunnel-gateway-controller
+
+# Pod disruption budget friendly scheduling
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: cloudflare-tunnel-gateway-controller
+          topologyKey: kubernetes.io/hostname

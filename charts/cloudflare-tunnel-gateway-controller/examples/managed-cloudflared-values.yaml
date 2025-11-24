@@ -1,0 +1,33 @@
+# Managed cloudflared example
+# Deploy and manage cloudflared alongside the controller
+#
+# This configuration enables Helm-managed cloudflared deployment
+# which automatically connects to your Cloudflare Tunnel.
+#
+# Usage:
+#   helm install cloudflare-tunnel-gateway-controller \
+#     oci://ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller \
+#     --namespace cloudflare-tunnel-system \
+#     --create-namespace \
+#     --values managed-cloudflared-values.yaml
+
+cloudflare:
+  # Cloudflare Tunnel ID (required)
+  tunnelId: "your-tunnel-id"
+
+  # Cloudflare API token (required)
+  apiToken: "your-api-token"
+
+manageCloudflared:
+  # Enable Helm-managed cloudflared deployment
+  enabled: true
+
+  # Tunnel token for remote-managed mode
+  # Get from: Zero Trust Dashboard > Networks > Tunnels > Configure
+  tunnelToken: "your-tunnel-token"
+
+  # Namespace for cloudflared deployment
+  namespace: "cloudflare-tunnel-system"
+
+  # Transport protocol (optional: auto, quic, http2)
+  # protocol: "quic"

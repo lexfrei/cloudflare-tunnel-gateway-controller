@@ -50,91 +50,22 @@ cosign verify ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller:{{ template "
 
 ## Configuration Examples
 
-### Basic Installation
+Complete example values files are available in the [examples/](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/tree/master/charts/cloudflare-tunnel-gateway-controller/examples) directory:
+
+| Example | Description |
+|---------|-------------|
+| [basic-values.yaml](examples/basic-values.yaml) | Minimal configuration |
+| [external-secrets-values.yaml](examples/external-secrets-values.yaml) | Using existing Kubernetes Secret |
+| [managed-cloudflared-values.yaml](examples/managed-cloudflared-values.yaml) | Helm-managed cloudflared deployment |
+| [awg-sidecar-values.yaml](examples/awg-sidecar-values.yaml) | AmneziaWG VPN sidecar |
+| [production-values.yaml](examples/production-values.yaml) | Production-ready with HA, monitoring, and security |
+
+### Quick Start
 
 ```yaml
 cloudflare:
   tunnelId: "your-tunnel-id"
   apiToken: "your-api-token"
-```
-
-### Using External Secrets
-
-```yaml
-cloudflare:
-  tunnelId: "your-tunnel-id"
-  apiTokenSecretName: "my-cloudflare-secret"  # must have key: api-token
-```
-
-### With Managed Cloudflared
-
-```yaml
-cloudflare:
-  tunnelId: "your-tunnel-id"
-  apiToken: "your-api-token"
-
-manageCloudflared:
-  enabled: true
-  tunnelToken: "your-tunnel-token"
-  namespace: "cloudflare-tunnel-system"
-```
-
-### With AmneziaWG Sidecar
-
-```yaml
-cloudflare:
-  tunnelId: "your-tunnel-id"
-  apiToken: "your-api-token"
-
-awg:
-  secretName: "awg-config"  # must contain wg config file
-
-# Required for AWG - needs NET_ADMIN capability
-podSecurityContext:
-  runAsNonRoot: false
-  runAsUser: 0
-
-securityContext:
-  allowPrivilegeEscalation: true
-  capabilities:
-    add:
-      - NET_ADMIN
-    drop: []
-  readOnlyRootFilesystem: false
-```
-
-### Production Configuration
-
-```yaml
-cloudflare:
-  tunnelId: "your-tunnel-id"
-  apiTokenSecretName: "cloudflare-credentials"
-
-replicaCount: 2
-
-resources:
-  limits:
-    cpu: 200m
-    memory: 256Mi
-  requests:
-    cpu: 100m
-    memory: 128Mi
-
-serviceMonitor:
-  enabled: true
-  labels:
-    prometheus: kube-prometheus
-
-networkPolicy:
-  enabled: true
-
-topologySpreadConstraints:
-  - maxSkew: 1
-    topologyKey: topology.kubernetes.io/zone
-    whenUnsatisfiable: ScheduleAnyway
-    labelSelector:
-      matchLabels:
-        app.kubernetes.io/name: cloudflare-tunnel-gateway-controller
 ```
 
 ## Usage

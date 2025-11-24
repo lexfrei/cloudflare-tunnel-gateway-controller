@@ -1,0 +1,45 @@
+# AmneziaWG sidecar example
+# Route traffic through AmneziaWG VPN tunnel
+#
+# Prerequisites:
+#   Create a secret with AWG configuration:
+#   kubectl create secret generic awg-config \
+#     --namespace cloudflare-tunnel-system \
+#     --from-file=wg0.conf=/path/to/your/awg.conf
+#
+# IMPORTANT: AWG sidecar requires elevated privileges (NET_ADMIN capability)
+# to manage network interfaces. This configuration relaxes security defaults.
+#
+# Usage:
+#   helm install cloudflare-tunnel-gateway-controller \
+#     oci://ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller \
+#     --namespace cloudflare-tunnel-system \
+#     --create-namespace \
+#     --values awg-sidecar-values.yaml
+
+cloudflare:
+  # Cloudflare Tunnel ID (required)
+  tunnelId: "your-tunnel-id"
+
+  # Cloudflare API token (required)
+  apiToken: "your-api-token"
+
+awg:
+  # Secret name containing AWG configuration (enables AWG sidecar)
+  secretName: "awg-config"
+
+  # AWG interface name (must be unique to avoid conflicts)
+  # interfaceName: "awg-cfd-gw-ctrl0"
+
+# Required security context for AWG - needs NET_ADMIN capability
+podSecurityContext:
+  runAsNonRoot: false
+  runAsUser: 0
+
+securityContext:
+  allowPrivilegeEscalation: true
+  capabilities:
+    add:
+      - NET_ADMIN
+    drop: []
+  readOnlyRootFilesystem: false

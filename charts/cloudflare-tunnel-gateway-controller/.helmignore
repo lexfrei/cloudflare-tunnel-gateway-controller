@@ -4,6 +4,7 @@
 
 # Development and testing
 tests/
+examples/
 *.test.yaml
 *.md.gotmpl
 

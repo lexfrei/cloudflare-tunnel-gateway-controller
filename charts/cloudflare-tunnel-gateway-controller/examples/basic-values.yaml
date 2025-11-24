@@ -1,0 +1,18 @@
+# Basic installation example
+# Minimal configuration for cloudflare-tunnel-gateway-controller
+#
+# Usage:
+#   helm install cloudflare-tunnel-gateway-controller \
+#     oci://ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller \
+#     --namespace cloudflare-tunnel-system \
+#     --create-namespace \
+#     --values basic-values.yaml
+
+cloudflare:
+  # Cloudflare Tunnel ID (required)
+  # Get from: Zero Trust Dashboard > Networks > Tunnels
+  tunnelId: "your-tunnel-id"
+
+  # Cloudflare API token with Tunnel permissions (required)
+  # Required scopes: Account.Cloudflare Tunnel:Edit, Zone.DNS:Edit
+  apiToken: "your-api-token"
