@@ -5,15 +5,17 @@ metadata:
   labels:
     {{- include "cf-tunnel-gw-ctrl.labels" . | nindent 4 }}
 rules:
+  # Gateway API resources - read-only access to specs
   - apiGroups: ["gateway.networking.k8s.io"]
     resources: ["gatewayclasses"]
     verbs: ["get", "list", "watch"]
   - apiGroups: ["gateway.networking.k8s.io"]
     resources: ["gateways"]
-    verbs: ["get", "list", "watch", "update", "patch"]
+    verbs: ["get", "list", "watch"]
   - apiGroups: ["gateway.networking.k8s.io"]
     resources: ["httproutes"]
     verbs: ["get", "list", "watch"]
+  # Gateway API status subresources - write access for status updates only
   - apiGroups: ["gateway.networking.k8s.io"]
     resources: ["gateways/status", "httproutes/status"]
     verbs: ["get", "update", "patch"]

@@ -32,7 +32,7 @@ tests:
           path: metadata.name
           value: RELEASE-NAME-cloudflare-tunnel-gateway-controller
 
-  - it: should have gateway api permissions
+  - it: should have read-only permissions for Gateway API specs
     set:
       cloudflare:
         tunnelId: "test-tunnel-id"
@@ -43,8 +43,15 @@ tests:
           path: rules
           content:
             apiGroups: ["gateway.networking.k8s.io"]
+            resources: ["gatewayclasses"]
+            verbs: ["get", "list", "watch"]
+      - template: clusterrole.yaml
+        contains:
+          path: rules
+          content:
+            apiGroups: ["gateway.networking.k8s.io"]
             resources: ["gateways"]
-            verbs: ["get", "list", "watch", "update", "patch"]
+            verbs: ["get", "list", "watch"]
       - template: clusterrole.yaml
         contains:
           path: rules
@@ -52,6 +59,34 @@ tests:
             apiGroups: ["gateway.networking.k8s.io"]
             resources: ["httproutes"]
             verbs: ["get", "list", "watch"]
+
+  - it: should NOT have write permissions for Gateway API specs
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel-id"
+        apiToken: "test-api-token"
+    asserts:
+      - template: clusterrole.yaml
+        notContains:
+          path: rules
+          content:
+            apiGroups: ["gateway.networking.k8s.io"]
+            resources: ["gateways"]
+            verbs: ["get", "list", "watch", "update", "patch"]
+      - template: clusterrole.yaml
+        notContains:
+          path: rules
+          content:
+            apiGroups: ["gateway.networking.k8s.io"]
+            resources: ["httproutes"]
+            verbs: ["get", "list", "watch", "update", "patch"]
+
+  - it: should have write permissions only for status subresources
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel-id"
+        apiToken: "test-api-token"
+    asserts:
       - template: clusterrole.yaml
         contains:
           path: rules
@@ -59,13 +94,6 @@ tests:
             apiGroups: ["gateway.networking.k8s.io"]
             resources: ["gateways/status", "httproutes/status"]
             verbs: ["get", "update", "patch"]
-      - template: clusterrole.yaml
-        contains:
-          path: rules
-          content:
-            apiGroups: ["gateway.networking.k8s.io"]
-            resources: ["gatewayclasses"]
-            verbs: ["get", "list", "watch"]
 
   - it: should create a cluster role binding
     set:
