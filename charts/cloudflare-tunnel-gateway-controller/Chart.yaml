@@ -18,7 +18,7 @@ description: Kubernetes Gateway API controller for Cloudflare Tunnel
 type: application
 version: "0.1.0"
 kubeVersion: ">=1.25.0-0"
-appVersion: "0.0.1"
+appVersion: "0.0.2"
 icon: https://avatars.githubusercontent.com/u/314135
 home: https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/
 keywords:
