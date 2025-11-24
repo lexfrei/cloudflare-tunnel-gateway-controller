@@ -31,7 +31,7 @@ jobs:
           python-version: '3.12'
 
       - name: Set up chart-testing
-        uses: helm/chart-testing-action@v2.7.0
+        uses: helm/chart-testing-action@v2.8.0
 
       - name: Install tools
         run: |
@@ -56,6 +56,9 @@ jobs:
           tar --extract --gzip --file helm-docs_${HELM_DOCS_VERSION}_Linux_x86_64.tar.gz
           chmod +x helm-docs
           sudo mv helm-docs /usr/local/bin/helm-docs
+
+          # markdownlint-cli
+          npm install --global markdownlint-cli
 
       - name: Run Helm Lint
         run: |
@@ -133,6 +136,16 @@ jobs:
             echo "Diff:"
             git diff "$CHART_DIR/README.md"
             exit 1
+          fi
+
+      - name: Run Markdownlint
+        run: |
+          CHART_DIR="charts/cloudflare-tunnel-gateway-controller"
+          if [ -f "$CHART_DIR/README.md" ]; then
+            echo "Running markdownlint on README.md..."
+            markdownlint "$CHART_DIR/README.md" --config "$CHART_DIR/.markdownlint.yaml"
+          else
+            echo "No README.md found, skipping markdownlint"
           fi
 
       - name: Summary

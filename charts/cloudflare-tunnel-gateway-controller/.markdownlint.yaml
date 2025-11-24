@@ -1,0 +1,31 @@
+# Markdownlint configuration for chart documentation
+# See: https://github.com/DavidAnson/markdownlint/blob/main/doc/Rules.md
+
+# MD013/line-length - Line length
+MD013:
+  # Increase line length for generated documentation
+  line_length: 300
+  heading_line_length: 120
+  code_block_line_length: 120
+  code_blocks: false
+  tables: false
+
+# MD033/no-inline-html - Inline HTML
+MD033:
+  # Allow specific HTML elements for badges and formatting
+  allowed_elements:
+    - br
+    - details
+    - summary
+    - img
+    - kbd
+
+# MD004/ul-style - Unordered list style
+# Disabled because helm-docs uses asterisks while custom content uses dashes
+MD004: false
+
+# MD034/no-bare-urls - Bare URL used
+MD034: false
+
+# MD041/first-line-heading - First line in file should be a top level heading
+MD041: false
