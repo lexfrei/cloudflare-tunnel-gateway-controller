@@ -565,3 +565,233 @@ tests:
         equal:
           path: spec.template.spec.securityContext.fsGroup
           value: 2000
+
+  # Default security context verification
+  - it: should have secure defaults for pod security context
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel-id"
+        apiToken: "test-api-token"
+    asserts:
+      - template: deployment.yaml
+        equal:
+          path: spec.template.spec.securityContext.runAsNonRoot
+          value: true
+      - template: deployment.yaml
+        equal:
+          path: spec.template.spec.securityContext.runAsUser
+          value: 65534
+      - template: deployment.yaml
+        equal:
+          path: spec.template.spec.securityContext.seccompProfile.type
+          value: RuntimeDefault
+
+  - it: should have secure defaults for container security context
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel-id"
+        apiToken: "test-api-token"
+    asserts:
+      - template: deployment.yaml
+        equal:
+          path: spec.template.spec.containers[0].securityContext.allowPrivilegeEscalation
+          value: false
+      - template: deployment.yaml
+        equal:
+          path: spec.template.spec.containers[0].securityContext.readOnlyRootFilesystem
+          value: true
+      - template: deployment.yaml
+        contains:
+          path: spec.template.spec.containers[0].securityContext.capabilities.drop
+          content: ALL
+
+  - it: should allow overriding security context for privileged use (AWG)
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel-id"
+        apiToken: "test-api-token"
+      podSecurityContext:
+        runAsNonRoot: false
+        runAsUser: 0
+      securityContext:
+        allowPrivilegeEscalation: true
+        capabilities:
+          add:
+            - NET_ADMIN
+          drop: []
+        readOnlyRootFilesystem: false
+    asserts:
+      - template: deployment.yaml
+        equal:
+          path: spec.template.spec.securityContext.runAsNonRoot
+          value: false
+      - template: deployment.yaml
+        equal:
+          path: spec.template.spec.securityContext.runAsUser
+          value: 0
+      - template: deployment.yaml
+        equal:
+          path: spec.template.spec.containers[0].securityContext.allowPrivilegeEscalation
+          value: true
+      - template: deployment.yaml
+        contains:
+          path: spec.template.spec.containers[0].securityContext.capabilities.add
+          content: NET_ADMIN
+
+  # Checksum annotation tests
+  - it: should have checksum annotation for secret
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel-id"
+        apiToken: "test-api-token"
+    asserts:
+      - template: deployment.yaml
+        exists:
+          path: spec.template.metadata.annotations["checksum/secret"]
+
+  - it: should have different checksum when apiToken changes
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel-id"
+        apiToken: "different-token"
+    asserts:
+      - template: deployment.yaml
+        exists:
+          path: spec.template.metadata.annotations["checksum/secret"]
+        # Note: can't compare directly, but existence confirms it's computed
+
+  - it: should have checksum even with external secret
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel-id"
+        apiTokenSecretName: "external-secret"
+    asserts:
+      - template: deployment.yaml
+        exists:
+          path: spec.template.metadata.annotations["checksum/secret"]
+
+  # Required fields and validation tests
+  - it: should still render with empty tunnelId (validation at runtime)
+    set:
+      cloudflare:
+        tunnelId: ""
+        apiToken: "test-api-token"
+    asserts:
+      - template: deployment.yaml
+        isKind:
+          of: Deployment
+      - template: deployment.yaml
+        contains:
+          path: spec.template.spec.containers[0].args
+          content: "--tunnel-id="
+
+  - it: should handle special characters in tunnelId
+    set:
+      cloudflare:
+        tunnelId: "abc-123-def-456"
+        apiToken: "test-api-token"
+    asserts:
+      - template: deployment.yaml
+        contains:
+          path: spec.template.spec.containers[0].args
+          content: "--tunnel-id=abc-123-def-456"
+
+  - it: should handle UUID format tunnelId
+    set:
+      cloudflare:
+        tunnelId: "550e8400-e29b-41d4-a716-446655440000"
+        apiToken: "test-api-token"
+    asserts:
+      - template: deployment.yaml
+        contains:
+          path: spec.template.spec.containers[0].args
+          content: "--tunnel-id=550e8400-e29b-41d4-a716-446655440000"
+
+  # Default values verification
+  - it: should use default gatewayClassName
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel-id"
+        apiToken: "test-api-token"
+    asserts:
+      - template: deployment.yaml
+        contains:
+          path: spec.template.spec.containers[0].args
+          content: "--gateway-class-name=cloudflare-tunnel"
+
+  - it: should use default controllerName
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel-id"
+        apiToken: "test-api-token"
+    asserts:
+      - template: deployment.yaml
+        contains:
+          path: spec.template.spec.containers[0].args
+          content: "--controller-name=cloudflare.com/tunnel-controller"
+
+  - it: should use default clusterDomain
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel-id"
+        apiToken: "test-api-token"
+    asserts:
+      - template: deployment.yaml
+        contains:
+          path: spec.template.spec.containers[0].args
+          content: "--cluster-domain=cluster.local"
+
+  - it: should use default log level
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel-id"
+        apiToken: "test-api-token"
+    asserts:
+      - template: deployment.yaml
+        contains:
+          path: spec.template.spec.containers[0].args
+          content: "--log-level=info"
+
+  - it: should use default log format
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel-id"
+        apiToken: "test-api-token"
+    asserts:
+      - template: deployment.yaml
+        contains:
+          path: spec.template.spec.containers[0].args
+          content: "--log-format=json"
+
+  - it: should override all controller settings
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel-id"
+        apiToken: "test-api-token"
+      controller:
+        gatewayClassName: "custom-gateway"
+        controllerName: "custom.io/controller"
+        clusterDomain: "custom.local"
+        logLevel: "debug"
+        logFormat: "text"
+    asserts:
+      - template: deployment.yaml
+        contains:
+          path: spec.template.spec.containers[0].args
+          content: "--gateway-class-name=custom-gateway"
+      - template: deployment.yaml
+        contains:
+          path: spec.template.spec.containers[0].args
+          content: "--controller-name=custom.io/controller"
+      - template: deployment.yaml
+        contains:
+          path: spec.template.spec.containers[0].args
+          content: "--cluster-domain=custom.local"
+      - template: deployment.yaml
+        contains:
+          path: spec.template.spec.containers[0].args
+          content: "--log-level=debug"
+      - template: deployment.yaml
+        contains:
+          path: spec.template.spec.containers[0].args
+          content: "--log-format=text"

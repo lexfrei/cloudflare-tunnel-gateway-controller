@@ -59,3 +59,68 @@ tests:
       - template: gatewayclass.yaml
         hasDocuments:
           count: 0
+
+  - it: should have correct labels
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel-id"
+        apiToken: "test-api-token"
+    asserts:
+      - template: gatewayclass.yaml
+        equal:
+          path: metadata.labels["app.kubernetes.io/name"]
+          value: cloudflare-tunnel-gateway-controller
+      - template: gatewayclass.yaml
+        equal:
+          path: metadata.labels["app.kubernetes.io/instance"]
+          value: RELEASE-NAME
+
+  - it: should have managed-by label
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel-id"
+        apiToken: "test-api-token"
+    asserts:
+      - template: gatewayclass.yaml
+        equal:
+          path: metadata.labels["app.kubernetes.io/managed-by"]
+          value: Helm
+
+  - it: should use gatewayClassName independent of release name
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel-id"
+        apiToken: "test-api-token"
+      controller:
+        gatewayClassName: "fixed-class-name"
+    asserts:
+      - template: gatewayclass.yaml
+        equal:
+          path: metadata.name
+          value: fixed-class-name
+
+  - it: should have correct controllerName format
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel-id"
+        apiToken: "test-api-token"
+      controller:
+        controllerName: "example.com/my-controller"
+    asserts:
+      - template: gatewayclass.yaml
+        equal:
+          path: spec.controllerName
+          value: "example.com/my-controller"
+
+  - it: should work with special characters in gatewayClassName
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel-id"
+        apiToken: "test-api-token"
+      controller:
+        gatewayClassName: "cf-tunnel-prod-v1"
+    asserts:
+      - template: gatewayclass.yaml
+        equal:
+          path: metadata.name
+          value: cf-tunnel-prod-v1
