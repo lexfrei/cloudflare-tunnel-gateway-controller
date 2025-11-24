@@ -276,3 +276,292 @@ tests:
             operator: "Equal"
             value: "infra"
             effect: "NoSchedule"
+
+  - it: should set affinity when provided
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel-id"
+        apiToken: "test-api-token"
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: "kubernetes.io/arch"
+                    operator: "In"
+                    values:
+                      - amd64
+    asserts:
+      - template: deployment.yaml
+        exists:
+          path: spec.template.spec.affinity.nodeAffinity
+
+  - it: should set topologySpreadConstraints when provided
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel-id"
+        apiToken: "test-api-token"
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: "topology.kubernetes.io/zone"
+          whenUnsatisfiable: "ScheduleAnyway"
+    asserts:
+      - template: deployment.yaml
+        contains:
+          path: spec.template.spec.topologySpreadConstraints
+          content:
+            maxSkew: 1
+            topologyKey: "topology.kubernetes.io/zone"
+            whenUnsatisfiable: "ScheduleAnyway"
+
+  - it: should set priorityClassName when provided
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel-id"
+        apiToken: "test-api-token"
+      priorityClassName: "high-priority"
+    asserts:
+      - template: deployment.yaml
+        equal:
+          path: spec.template.spec.priorityClassName
+          value: "high-priority"
+
+  - it: should not set priorityClassName by default
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel-id"
+        apiToken: "test-api-token"
+    asserts:
+      - template: deployment.yaml
+        isNull:
+          path: spec.template.spec.priorityClassName
+
+  - it: should set imagePullSecrets when provided
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel-id"
+        apiToken: "test-api-token"
+      imagePullSecrets:
+        - name: "my-registry-secret"
+        - name: "another-secret"
+    asserts:
+      - template: deployment.yaml
+        contains:
+          path: spec.template.spec.imagePullSecrets
+          content:
+            name: "my-registry-secret"
+      - template: deployment.yaml
+        contains:
+          path: spec.template.spec.imagePullSecrets
+          content:
+            name: "another-secret"
+
+  - it: should use apiTokenSecretName when provided
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel-id"
+        apiTokenSecretName: "my-existing-secret"
+    asserts:
+      - template: deployment.yaml
+        equal:
+          path: spec.template.spec.containers[0].env[0].valueFrom.secretKeyRef.name
+          value: "my-existing-secret"
+
+  - it: should add manageCloudflared args when enabled
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel-id"
+        apiToken: "test-api-token"
+      manageCloudflared:
+        enabled: true
+        tunnelToken: "test-token"
+    asserts:
+      - template: deployment.yaml
+        contains:
+          path: spec.template.spec.containers[0].args
+          content: "--manage-cloudflared=true"
+
+  - it: should set cloudflared namespace when manageCloudflared enabled
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel-id"
+        apiToken: "test-api-token"
+      manageCloudflared:
+        enabled: true
+        tunnelToken: "test-token"
+        namespace: "custom-ns"
+    asserts:
+      - template: deployment.yaml
+        contains:
+          path: spec.template.spec.containers[0].args
+          content: "--cloudflared-namespace=custom-ns"
+
+  - it: should set cloudflared protocol when specified
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel-id"
+        apiToken: "test-api-token"
+      manageCloudflared:
+        enabled: true
+        tunnelToken: "test-token"
+        protocol: "quic"
+    asserts:
+      - template: deployment.yaml
+        contains:
+          path: spec.template.spec.containers[0].args
+          content: "--cloudflared-protocol=quic"
+
+  - it: should add CF_TUNNEL_TOKEN env when manageCloudflared enabled
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel-id"
+        apiToken: "test-api-token"
+      manageCloudflared:
+        enabled: true
+        tunnelToken: "test-token"
+    asserts:
+      - template: deployment.yaml
+        contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: CF_TUNNEL_TOKEN
+          any: true
+
+  - it: should use tunnelTokenSecretName when provided
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel-id"
+        apiToken: "test-api-token"
+      manageCloudflared:
+        enabled: true
+        tunnelTokenSecretName: "my-tunnel-secret"
+    asserts:
+      - template: deployment.yaml
+        equal:
+          path: spec.template.spec.containers[0].env[1].valueFrom.secretKeyRef.name
+          value: "my-tunnel-secret"
+
+  - it: should set account ID when provided
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel-id"
+        apiToken: "test-api-token"
+        accountId: "my-account-id"
+    asserts:
+      - template: deployment.yaml
+        contains:
+          path: spec.template.spec.containers[0].args
+          content: "--account-id=my-account-id"
+
+  - it: should not set account ID by default
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel-id"
+        apiToken: "test-api-token"
+    asserts:
+      - template: deployment.yaml
+        notContains:
+          path: spec.template.spec.containers[0].args
+          content: "--account-id="
+          any: true
+
+  - it: should set custom image repository
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel-id"
+        apiToken: "test-api-token"
+      image:
+        repository: "my-registry.io/my-image"
+    asserts:
+      - template: deployment.yaml
+        matchRegex:
+          path: spec.template.spec.containers[0].image
+          pattern: "^my-registry.io/my-image:"
+
+  - it: should set custom image tag
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel-id"
+        apiToken: "test-api-token"
+      image:
+        tag: "v1.2.3"
+    asserts:
+      - template: deployment.yaml
+        matchRegex:
+          path: spec.template.spec.containers[0].image
+          pattern: ":v1.2.3$"
+
+  - it: should set custom pull policy
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel-id"
+        apiToken: "test-api-token"
+      image:
+        pullPolicy: "Always"
+    asserts:
+      - template: deployment.yaml
+        equal:
+          path: spec.template.spec.containers[0].imagePullPolicy
+          value: "Always"
+
+  - it: should set pod annotations when provided
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel-id"
+        apiToken: "test-api-token"
+      podAnnotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+    asserts:
+      - template: deployment.yaml
+        equal:
+          path: spec.template.metadata.annotations["prometheus.io/scrape"]
+          value: "true"
+      - template: deployment.yaml
+        equal:
+          path: spec.template.metadata.annotations["prometheus.io/port"]
+          value: "8080"
+
+  - it: should set pod labels when provided
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel-id"
+        apiToken: "test-api-token"
+      podLabels:
+        custom-label: "custom-value"
+    asserts:
+      - template: deployment.yaml
+        equal:
+          path: spec.template.metadata.labels["custom-label"]
+          value: "custom-value"
+
+  - it: should set custom security context
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel-id"
+        apiToken: "test-api-token"
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+    asserts:
+      - template: deployment.yaml
+        equal:
+          path: spec.template.spec.containers[0].securityContext.runAsUser
+          value: 1000
+      - template: deployment.yaml
+        equal:
+          path: spec.template.spec.containers[0].securityContext.runAsGroup
+          value: 1000
+
+  - it: should set custom pod security context
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel-id"
+        apiToken: "test-api-token"
+      podSecurityContext:
+        fsGroup: 2000
+    asserts:
+      - template: deployment.yaml
+        equal:
+          path: spec.template.spec.securityContext.fsGroup
+          value: 2000
