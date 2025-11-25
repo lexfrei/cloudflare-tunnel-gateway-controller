@@ -69,6 +69,7 @@ helm template test charts/cloudflare-tunnel-gateway-controller --values charts/c
 ### Configuration
 
 Controller reads config via CLI flags or `CF_*` environment variables (viper). Key settings:
+
 - `--tunnel-id` / `CF_TUNNEL_ID` (required)
 - `--api-token` / `CF_API_TOKEN` (required)
 - `--account-id` / `CF_ACCOUNT_ID` (auto-detected if single account)
@@ -77,7 +78,7 @@ Controller reads config via CLI flags or `CF_*` environment variables (viper). K
 
 ## Project Structure
 
-```
+```text
 cmd/controller/          # Entrypoint and CLI (cobra/viper)
 internal/
   controller/            # Kubernetes controllers (Gateway, HTTPRoute)
@@ -90,6 +91,7 @@ deploy/                  # Raw Kubernetes manifests for manual deployment
 ## Linting Configuration
 
 golangci-lint v2 config in `.golangci.yaml`:
+
 - `funlen` limit: 60 lines/statements
 - `gocyclo/cyclop` complexity: 15
 - All linters enabled by default with specific exclusions
