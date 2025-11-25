@@ -36,7 +36,7 @@ jobs:
       - name: Install tools
         run: |
           # helm-unittest
-          helm plugin install --verify=false https://github.com/helm-unittest/helm-unittest.git
+          helm plugin install https://github.com/helm-unittest/helm-unittest.git
 
           # JSON schema validator
           pip install check-jsonschema
@@ -72,7 +72,7 @@ jobs:
           CHART_DIR="charts/cloudflare-tunnel-gateway-controller"
           if [ -d "$CHART_DIR/tests" ]; then
             echo "Running unit tests..."
-            helm unittest "$CHART_DIR" --with-subchart=false
+            helm unittest "$CHART_DIR" --color --with-subchart=false
           else
             echo "No tests directory found, skipping unit tests"
           fi
