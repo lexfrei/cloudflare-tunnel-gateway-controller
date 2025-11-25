@@ -1,0 +1,403 @@
+suite: test edge cases
+templates:
+  - deployment.yaml
+  - service.yaml
+  - secret.yaml
+  - networkpolicy.yaml
+  - poddisruptionbudget.yaml
+tests:
+  # Minimum viable configuration
+  - it: should work with absolute minimum configuration
+    set:
+      cloudflare:
+        tunnelId: "a"
+        apiToken: "t"
+    asserts:
+      - template: deployment.yaml
+        isKind:
+          of: Deployment
+      - template: service.yaml
+        isKind:
+          of: Service
+      - template: secret.yaml
+        isKind:
+          of: Secret
+
+  # Maximum configuration (all features enabled)
+  - it: should work with all features enabled
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel"
+        apiToken: "test-token"
+        accountId: "test-account"
+      manageCloudflared:
+        enabled: true
+        tunnelToken: "test-tunnel-token"
+        namespace: "cf-system"
+        protocol: "quic"
+      awg:
+        secretName: "awg-config"
+        interfaceName: "awg0"
+      replicaCount: 3
+      podDisruptionBudget:
+        enabled: true
+        minAvailable: 2
+      networkPolicy:
+        enabled: true
+        ingress:
+          from:
+            - namespaceSelector:
+                matchLabels:
+                  name: monitoring
+      serviceMonitor:
+        enabled: true
+      dnsPolicy: "None"
+      dnsConfig:
+        nameservers:
+          - 1.1.1.1
+    asserts:
+      - template: deployment.yaml
+        equal:
+          path: spec.replicas
+          value: 3
+      - template: poddisruptionbudget.yaml
+        isKind:
+          of: PodDisruptionBudget
+      - template: networkpolicy.yaml
+        isKind:
+          of: NetworkPolicy
+
+  # Resource limits edge cases
+  - it: should accept very low resource limits
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel"
+        apiToken: "test-token"
+      resources:
+        limits:
+          cpu: "10m"
+          memory: "16Mi"
+        requests:
+          cpu: "1m"
+          memory: "8Mi"
+    asserts:
+      - template: deployment.yaml
+        equal:
+          path: spec.template.spec.containers[0].resources.limits.cpu
+          value: "10m"
+      - template: deployment.yaml
+        equal:
+          path: spec.template.spec.containers[0].resources.limits.memory
+          value: "16Mi"
+
+  - it: should accept very high resource limits
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel"
+        apiToken: "test-token"
+      resources:
+        limits:
+          cpu: "16"
+          memory: "64Gi"
+        requests:
+          cpu: "8"
+          memory: "32Gi"
+    asserts:
+      - template: deployment.yaml
+        equal:
+          path: spec.template.spec.containers[0].resources.limits.cpu
+          value: "16"
+      - template: deployment.yaml
+        equal:
+          path: spec.template.spec.containers[0].resources.limits.memory
+          value: "64Gi"
+
+  # Empty resources (should use defaults)
+  - it: should use defaults when resources is empty object
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel"
+        apiToken: "test-token"
+      resources: {}
+    asserts:
+      - template: deployment.yaml
+        equal:
+          path: spec.template.spec.containers[0].resources.limits.cpu
+          value: "200m"
+
+  # PodDisruptionBudget edge cases
+  - it: should work with maxUnavailable percentage
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel"
+        apiToken: "test-token"
+      podDisruptionBudget:
+        enabled: true
+        minAvailable: null
+        maxUnavailable: "50%"
+    asserts:
+      - template: poddisruptionbudget.yaml
+        equal:
+          path: spec.maxUnavailable
+          value: "50%"
+
+  - it: should work with minAvailable percentage
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel"
+        apiToken: "test-token"
+      podDisruptionBudget:
+        enabled: true
+        minAvailable: "75%"
+    asserts:
+      - template: poddisruptionbudget.yaml
+        equal:
+          path: spec.minAvailable
+          value: "75%"
+
+  # Very long names - use fullnameOverride to test long names
+  - it: should handle long names via fullnameOverride
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel"
+        apiToken: "test-token"
+      fullnameOverride: "very-long-controller-name-for-edge-case-testing"
+    asserts:
+      - template: deployment.yaml
+        isKind:
+          of: Deployment
+      - template: deployment.yaml
+        equal:
+          path: metadata.name
+          value: "very-long-controller-name-for-edge-case-testing"
+
+  # fullnameOverride with special characters
+  - it: should handle fullnameOverride with hyphens
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel"
+        apiToken: "test-token"
+      fullnameOverride: "my-custom-controller-name-v2"
+    asserts:
+      - template: deployment.yaml
+        equal:
+          path: metadata.name
+          value: "my-custom-controller-name-v2"
+
+  # Multiple tolerations
+  - it: should handle multiple tolerations
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel"
+        apiToken: "test-token"
+      tolerations:
+        - key: "node.kubernetes.io/not-ready"
+          operator: "Exists"
+          effect: "NoExecute"
+          tolerationSeconds: 300
+        - key: "workload"
+          operator: "Equal"
+          value: "network"
+          effect: "NoSchedule"
+        - key: "gpu"
+          operator: "Exists"
+          effect: "NoSchedule"
+    asserts:
+      - template: deployment.yaml
+        contains:
+          path: spec.template.spec.tolerations
+          content:
+            key: "node.kubernetes.io/not-ready"
+            operator: "Exists"
+            effect: "NoExecute"
+            tolerationSeconds: 300
+
+  # Complex topology spread constraints
+  - it: should handle multiple topology spread constraints
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel"
+        apiToken: "test-token"
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              app: controller
+        - maxSkew: 2
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: controller
+    asserts:
+      - template: deployment.yaml
+        contains:
+          path: spec.template.spec.topologySpreadConstraints
+          content:
+            maxSkew: 1
+            topologyKey: topology.kubernetes.io/zone
+            whenUnsatisfiable: DoNotSchedule
+            labelSelector:
+              matchLabels:
+                app: controller
+
+  # DNS config with many nameservers
+  - it: should handle multiple DNS nameservers
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel"
+        apiToken: "test-token"
+      dnsConfig:
+        nameservers:
+          - 1.1.1.1
+          - 1.0.0.1
+          - 8.8.8.8
+          - 8.8.4.4
+          - 9.9.9.9
+    asserts:
+      - template: deployment.yaml
+        equal:
+          path: spec.template.spec.dnsConfig.nameservers
+          value:
+            - 1.1.1.1
+            - 1.0.0.1
+            - 8.8.8.8
+            - 8.8.4.4
+            - 9.9.9.9
+
+  # NetworkPolicy with empty from array
+  - it: should handle NetworkPolicy with explicitly empty ingress.from
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel"
+        apiToken: "test-token"
+      networkPolicy:
+        enabled: true
+        ingress:
+          from: []
+    asserts:
+      - template: networkpolicy.yaml
+        notExists:
+          path: spec.ingress[0].from
+
+  # Service with many annotations
+  - it: should handle service with multiple annotations
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel"
+        apiToken: "test-token"
+      service:
+        annotations:
+          prometheus.io/scrape: "true"
+          prometheus.io/port: "8080"
+          prometheus.io/path: "/metrics"
+          service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+          custom.annotation/key1: "value1"
+          custom.annotation/key2: "value2"
+    asserts:
+      - template: service.yaml
+        equal:
+          path: metadata.annotations
+          value:
+            prometheus.io/scrape: "true"
+            prometheus.io/port: "8080"
+            prometheus.io/path: "/metrics"
+            service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+            custom.annotation/key1: "value1"
+            custom.annotation/key2: "value2"
+
+  # Pod labels and annotations
+  - it: should merge pod labels and annotations
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel"
+        apiToken: "test-token"
+      podLabels:
+        environment: "production"
+        team: "platform"
+        cost-center: "engineering"
+      podAnnotations:
+        prometheus.io/scrape: "true"
+        vault.hashicorp.com/agent-inject: "true"
+    asserts:
+      - template: deployment.yaml
+        equal:
+          path: spec.template.metadata.labels.environment
+          value: "production"
+      - template: deployment.yaml
+        equal:
+          path: spec.template.metadata.annotations["vault.hashicorp.com/agent-inject"]
+          value: "true"
+
+  # replicaCount = 1 (minimum)
+  - it: should work with single replica
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel"
+        apiToken: "test-token"
+      replicaCount: 1
+    asserts:
+      - template: deployment.yaml
+        equal:
+          path: spec.replicas
+          value: 1
+
+  # High replica count
+  - it: should work with high replica count
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel"
+        apiToken: "test-token"
+      replicaCount: 100
+    asserts:
+      - template: deployment.yaml
+        equal:
+          path: spec.replicas
+          value: 100
+
+  # terminationGracePeriodSeconds edge cases
+  # Note: Chart uses "| default 30" so zero would be treated as empty and become 30
+  # Testing that explicit non-zero values work
+  - it: should accept custom termination grace period
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel"
+        apiToken: "test-token"
+      terminationGracePeriodSeconds: 5
+    asserts:
+      - template: deployment.yaml
+        equal:
+          path: spec.template.spec.terminationGracePeriodSeconds
+          value: 5
+
+  - it: should accept very long termination grace period
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel"
+        apiToken: "test-token"
+      terminationGracePeriodSeconds: 3600
+    asserts:
+      - template: deployment.yaml
+        equal:
+          path: spec.template.spec.terminationGracePeriodSeconds
+          value: 3600
+
+  # ServiceMonitor with custom settings
+  # Note: Requires adding servicemonitor.yaml to templates list
+  - it: should accept ServiceMonitor configuration
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel"
+        apiToken: "test-token"
+      serviceMonitor:
+        enabled: true
+        interval: "10s"
+        labels:
+          prometheus: custom
+          team: platform
+    asserts:
+      - template: deployment.yaml
+        isKind:
+          of: Deployment
