@@ -72,7 +72,7 @@ jobs:
           CHART_DIR="charts/cloudflare-tunnel-gateway-controller"
           if [ -d "$CHART_DIR/tests" ]; then
             echo "Running unit tests..."
-            helm unittest "$CHART_DIR" --color --with-subchart=false
+            helm unittest "$CHART_DIR" --color=always --with-subchart=false
           else
             echo "No tests directory found, skipping unit tests"
           fi
