@@ -16,25 +16,79 @@ import (
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/helm"
 )
 
+// Config holds all configuration options for the controller manager.
+// Values are typically populated from CLI flags or environment variables.
 type Config struct {
-	AccountID        string
-	TunnelID         string
-	APIToken         string
-	ClusterDomain    string
-	GatewayClassName string
-	ControllerName   string
-	MetricsAddr      string
-	HealthAddr       string
+	// AccountID is the Cloudflare account ID. If empty, it will be auto-detected
+	// from the API token (requires token to have access to exactly one account).
+	AccountID string
 
-	// Cloudflared Helm deployment config
-	TunnelToken       string
-	CloudflaredNS     string
-	CloudflaredProto  string
-	AWGSecretName     string
-	AWGInterfaceName  string
+	// TunnelID is the Cloudflare Tunnel ID (required).
+	TunnelID string
+
+	// APIToken is the Cloudflare API token with Tunnel permissions (required).
+	APIToken string
+
+	// ClusterDomain is the Kubernetes cluster domain for service DNS resolution.
+	// Defaults to "cluster.local".
+	ClusterDomain string
+
+	// GatewayClassName is the name of the GatewayClass to watch.
+	// Only Gateways referencing this class will be reconciled.
+	GatewayClassName string
+
+	// ControllerName is the controller name reported in GatewayClass status.
+	ControllerName string
+
+	// MetricsAddr is the address for the Prometheus metrics endpoint.
+	MetricsAddr string
+
+	// HealthAddr is the address for health and readiness probe endpoints.
+	HealthAddr string
+
+	// LeaderElect enables leader election for high availability.
+	// Required when running multiple replicas.
+	LeaderElect bool
+
+	// LeaderElectNS is the namespace for the leader election lease.
+	LeaderElectNS string
+
+	// LeaderElectName is the name of the leader election lease.
+	LeaderElectName string
+
+	// ManageCloudflared enables automatic cloudflared deployment via Helm.
 	ManageCloudflared bool
+
+	// TunnelToken is the Cloudflare Tunnel token for remote-managed mode.
+	// Required when ManageCloudflared is true.
+	TunnelToken string
+
+	// CloudflaredNS is the namespace for cloudflared deployment.
+	CloudflaredNS string
+
+	// CloudflaredProto is the transport protocol (auto, quic, http2).
+	CloudflaredProto string
+
+	// AWGSecretName is the secret containing AWG VPN configuration.
+	// If set, enables AWG sidecar for cloudflared.
+	AWGSecretName string
+
+	// AWGInterfaceName is the AWG network interface name.
+	AWGInterfaceName string
 }
 
+// Run initializes and starts the controller manager with the provided configuration.
+// It sets up the Cloudflare API client, creates Gateway and HTTPRoute controllers,
+// and blocks until the context is cancelled or an error occurs.
+//
+// The function performs the following steps:
+//  1. Creates Cloudflare API client with the provided token
+//  2. Auto-detects account ID if not provided
+//  3. Initializes controller-runtime manager with metrics and health endpoints
+//  4. Sets up GatewayReconciler and HTTPRouteReconciler
+//  5. Optionally initializes Helm manager for cloudflared deployment
+//  6. Starts the manager and blocks until shutdown
+//
 //nolint:funlen,noinlineerr // controller setup requires multiple steps
 func Run(ctx context.Context, cfg *Config) error {
 	logger := log.FromContext(ctx).WithName("manager")
@@ -66,12 +120,25 @@ func Run(ctx context.Context, cfg *Config) error {
 
 	logger.Info("creating ctrl.Manager")
 
-	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
+	mgrOptions := ctrl.Options{
 		Metrics: server.Options{
 			BindAddress: cfg.MetricsAddr,
 		},
 		HealthProbeBindAddress: cfg.HealthAddr,
-	})
+	}
+
+	if cfg.LeaderElect {
+		mgrOptions.LeaderElection = true
+		mgrOptions.LeaderElectionID = cfg.LeaderElectName
+		mgrOptions.LeaderElectionNamespace = cfg.LeaderElectNS
+
+		logger.Info("leader election enabled",
+			"id", cfg.LeaderElectName,
+			"namespace", cfg.LeaderElectNS,
+		)
+	}
+
+	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), mgrOptions)
 	if err != nil {
 		return errors.Wrap(err, "failed to create manager")
 	}

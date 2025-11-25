@@ -10,21 +10,34 @@ import (
 )
 
 const (
-	CatchAllService  = "http_status:404"
-	DefaultHTTPPort  = 80
+	// CatchAllService is the Cloudflare Tunnel service that returns HTTP 404.
+	// It is always added as the last rule in the ingress configuration.
+	CatchAllService = "http_status:404"
+
+	// DefaultHTTPPort is the default port for HTTP backend services.
+	DefaultHTTPPort = 80
+
+	// DefaultHTTPSPort is the default port for HTTPS backend services.
 	DefaultHTTPSPort = 443
 )
 
+// Builder converts Gateway API HTTPRoute resources to Cloudflare Tunnel
+// ingress configuration rules.
 type Builder struct {
+	// ClusterDomain is the Kubernetes cluster domain suffix for service DNS.
+	// Typically "cluster.local".
 	ClusterDomain string
 }
 
+// NewBuilder creates a new Builder with the specified cluster domain.
 func NewBuilder(clusterDomain string) *Builder {
 	return &Builder{
 		ClusterDomain: clusterDomain,
 	}
 }
 
+// routeEntry is an intermediate representation of an ingress rule.
+// Priority 1 indicates exact path match, 0 indicates prefix match.
 type routeEntry struct {
 	hostname string
 	path     string
@@ -32,6 +45,14 @@ type routeEntry struct {
 	priority int
 }
 
+// Build converts a list of HTTPRoute resources to Cloudflare Tunnel ingress rules.
+//
+// Rules are sorted by:
+//  1. Hostname (alphabetically)
+//  2. Priority (exact matches before prefix matches)
+//  3. Path length (longer paths first for specificity)
+//
+// A catch-all rule returning HTTP 404 is always appended as the last rule.
 func (b *Builder) Build(routes []gatewayv1.HTTPRoute) []zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress {
 	var entries []routeEntry
 

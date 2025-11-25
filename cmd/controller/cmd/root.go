@@ -54,6 +54,11 @@ func init() {
 	rootCmd.Flags().String("metrics-addr", ":8080", "Address for metrics endpoint")
 	rootCmd.Flags().String("health-addr", ":8081", "Address for health probe endpoint")
 
+	// Leader election flags
+	rootCmd.Flags().Bool("leader-elect", false, "Enable leader election for high availability")
+	rootCmd.Flags().String("leader-election-namespace", "", "Namespace for leader election lease (defaults to controller namespace)")
+	rootCmd.Flags().String("leader-election-name", "cloudflare-tunnel-gateway-controller-leader", "Name of the leader election lease")
+
 	// Cloudflared Helm deployment flags
 	rootCmd.Flags().Bool("manage-cloudflared", false, "Deploy and manage cloudflared via Helm")
 	rootCmd.Flags().String("tunnel-token", "", "Cloudflare tunnel token for remote-managed mode")
@@ -77,6 +82,8 @@ func initConfig() {
 	viper.SetDefault("health-addr", ":8081")
 	viper.SetDefault("log-level", "info")
 	viper.SetDefault("log-format", "json")
+	viper.SetDefault("leader-elect", false)
+	viper.SetDefault("leader-election-name", "cloudflare-tunnel-gateway-controller-leader")
 	viper.SetDefault("manage-cloudflared", false)
 	viper.SetDefault("cloudflared-namespace", "cloudflare-tunnel-system")
 }
@@ -151,6 +158,10 @@ func runController(_ *cobra.Command, _ []string) error {
 		ControllerName:   viper.GetString("controller-name"),
 		MetricsAddr:      viper.GetString("metrics-addr"),
 		HealthAddr:       viper.GetString("health-addr"),
+
+		LeaderElect:     viper.GetBool("leader-elect"),
+		LeaderElectNS:   viper.GetString("leader-election-namespace"),
+		LeaderElectName: viper.GetString("leader-election-name"),
 
 		ManageCloudflared: manageCloudflared,
 		TunnelToken:       tunnelToken,

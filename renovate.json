@@ -1,0 +1,57 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    "docker:enableMajor",
+    ":separateMajorReleases",
+    ":prHourlyLimitNone",
+    ":prConcurrentLimitNone"
+  ],
+  "labels": ["dependencies"],
+  "rangeStrategy": "pin",
+  "postUpdateOptions": ["gomodTidy"],
+  "packageRules": [
+    {
+      "description": "Group all Go module updates",
+      "matchManagers": ["gomod"],
+      "groupName": "go modules",
+      "groupSlug": "go-modules"
+    },
+    {
+      "description": "Group all GitHub Actions updates",
+      "matchManagers": ["github-actions"],
+      "groupName": "github actions",
+      "groupSlug": "github-actions"
+    },
+    {
+      "description": "Automerge patch updates for Go modules",
+      "matchManagers": ["gomod"],
+      "matchUpdateTypes": ["patch"],
+      "automerge": true
+    },
+    {
+      "description": "Automerge minor updates for GitHub Actions",
+      "matchManagers": ["github-actions"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "automerge": true
+    },
+    {
+      "description": "Pin Go version in Containerfile",
+      "matchManagers": ["dockerfile"],
+      "matchPackageNames": ["docker.io/library/golang"],
+      "versioning": "docker"
+    }
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Update Go version in GitHub Actions",
+      "fileMatch": ["^\\.github/workflows/.*\\.ya?ml$"],
+      "matchStrings": [
+        "go-version:\\s*['\"]?(?<currentValue>[\\d.]+)['\"]?"
+      ],
+      "depNameTemplate": "golang",
+      "datasourceTemplate": "golang-version"
+    }
+  ]
+}

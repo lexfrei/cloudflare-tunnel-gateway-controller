@@ -21,16 +21,42 @@ import (
 
 const kindGateway = "Gateway"
 
+// HTTPRouteReconciler reconciles HTTPRoute resources and synchronizes them
+// to Cloudflare Tunnel ingress configuration.
+//
+// Key behaviors:
+//   - Watches all HTTPRoute resources in the cluster
+//   - Filters routes by parent Gateway's GatewayClass
+//   - Performs full synchronization on any route change (not incremental)
+//   - Updates Cloudflare Tunnel config via API (cloudflared hot-reloads)
+//   - Updates HTTPRoute status with acceptance conditions
+//
+// On startup, the reconciler performs a full sync to ensure tunnel configuration
+// matches the current state of HTTPRoute resources. This means any ingress rules
+// created outside of this controller will be replaced.
 type HTTPRouteReconciler struct {
 	client.Client
 
-	Scheme           *runtime.Scheme
-	CFClient         *cloudflare.Client
-	AccountID        string
-	TunnelID         string
-	ClusterDomain    string
+	// Scheme is the runtime scheme for API type registration.
+	Scheme *runtime.Scheme
+
+	// CFClient is the Cloudflare API client for tunnel configuration.
+	CFClient *cloudflare.Client
+
+	// AccountID is the Cloudflare account ID.
+	AccountID string
+
+	// TunnelID is the Cloudflare Tunnel ID to configure.
+	TunnelID string
+
+	// ClusterDomain is used for building service URLs (e.g., "cluster.local").
+	ClusterDomain string
+
+	// GatewayClassName filters which routes to process.
 	GatewayClassName string
-	ControllerName   string
+
+	// ControllerName is reported in HTTPRoute status.
+	ControllerName string
 }
 
 //nolint:noinlineerr // inline error handling is fine for controller pattern

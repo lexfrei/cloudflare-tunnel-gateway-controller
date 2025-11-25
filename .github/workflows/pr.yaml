@@ -7,8 +7,32 @@ on:
 permissions:
   contents: read
   pull-requests: write
+  security-events: write
 
 jobs:
+  # Security scanning
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout PR code
+        uses: actions/checkout@v5
+
+      - name: Run Trivy vulnerability scanner (filesystem)
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-fs-results.sarif'
+          severity: 'CRITICAL,HIGH,MEDIUM'
+
+      - name: Upload Trivy filesystem results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: 'trivy-fs-results.sarif'
+          category: 'trivy-filesystem'
+
   # Fast checks: linting and tests
   lint:
     name: Lint
@@ -58,10 +82,10 @@ jobs:
           flags: unittests
           name: codecov-umbrella
 
-  # Build containers only after lint and test succeed
+  # Build containers only after lint, test and security succeed
   build-and-push:
     name: Build and Push (${{ matrix.arch }})
-    needs: [lint, test]
+    needs: [security, lint, test]
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false

@@ -24,20 +24,48 @@ const (
 	cfArgotunnelSuffix   = ".cfargotunnel.com"
 )
 
+// GatewayReconciler reconciles Gateway resources for the cloudflare-tunnel GatewayClass.
+//
+// It performs the following functions:
+//   - Watches Gateway resources matching the configured GatewayClassName
+//   - Updates Gateway status with tunnel CNAME address (for external-dns integration)
+//   - Manages cloudflared deployment lifecycle via Helm (when HelmManager is set)
+//   - Handles Gateway deletion with proper cleanup of cloudflared resources
+//
+// The reconciler uses finalizers to ensure cloudflared is properly removed
+// when a Gateway is deleted.
 type GatewayReconciler struct {
 	client.Client
 
-	Scheme           *runtime.Scheme
-	GatewayClassName string
-	ControllerName   string
-	TunnelID         string
+	// Scheme is the runtime scheme for API type registration.
+	Scheme *runtime.Scheme
 
-	// Helm management
-	HelmManager      *helm.Manager
-	TunnelToken      string
-	CloudflaredNS    string
-	Protocol         string
-	AWGSecretName    string
+	// GatewayClassName is the name of the GatewayClass to watch.
+	GatewayClassName string
+
+	// ControllerName is reported in Gateway status conditions.
+	ControllerName string
+
+	// TunnelID is the Cloudflare Tunnel ID, used for status address.
+	TunnelID string
+
+	// HelmManager handles cloudflared deployment. If nil, cloudflared
+	// management is disabled and must be deployed separately.
+	HelmManager *helm.Manager
+
+	// TunnelToken is passed to cloudflared for tunnel authentication.
+	TunnelToken string
+
+	// CloudflaredNS is the namespace for cloudflared deployment.
+	CloudflaredNS string
+
+	// Protocol is the cloudflared transport protocol (auto, quic, http2).
+	Protocol string
+
+	// AWGSecretName enables AWG sidecar if set.
+	AWGSecretName string
+
+	// AWGInterfaceName is the AWG network interface name.
 	AWGInterfaceName string
 }
 

@@ -73,6 +73,15 @@ spec:
             {{- if .Values.awg.interfaceName }}
             - "--awg-interface-name={{ .Values.awg.interfaceName }}"
             {{- end }}
+            {{- if .Values.leaderElection.enabled }}
+            - "--leader-elect=true"
+            - "--leader-election-name={{ .Values.leaderElection.leaseName }}"
+            {{- if .Values.leaderElection.namespace }}
+            - "--leader-election-namespace={{ .Values.leaderElection.namespace }}"
+            {{- else }}
+            - "--leader-election-namespace={{ .Release.Namespace }}"
+            {{- end }}
+            {{- end }}
           env:
             - name: CF_API_TOKEN
               valueFrom:

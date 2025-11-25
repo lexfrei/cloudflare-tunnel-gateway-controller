@@ -33,6 +33,15 @@ controller:
   # -- Log format (json, text)
   logFormat: "json"
 
+# -- Leader election configuration for high availability
+leaderElection:
+  # -- Enable leader election (required for running multiple replicas)
+  enabled: false
+  # -- Namespace for leader election lease (defaults to release namespace)
+  namespace: ""
+  # -- Name of the leader election lease
+  leaseName: "cloudflare-tunnel-gateway-controller-leader"
+
 # -- Cloudflared deployment management via Helm
 manageCloudflared:
   # -- Deploy and manage cloudflared via Helm

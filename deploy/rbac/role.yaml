@@ -53,6 +53,19 @@ rules:
       - get
       - list
       - watch
+  # Leader election
+  - apiGroups:
+      - coordination.k8s.io
+    resources:
+      - leases
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
   # Helm deployment management (for cloudflared)
   - apiGroups:
       - ""

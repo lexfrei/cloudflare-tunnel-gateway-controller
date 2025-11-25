@@ -1,5 +1,10 @@
 # Cloudflare Tunnel Gateway Controller
 
+[![Go Version](https://img.shields.io/github/go-mod/go-version/lexfrei/cloudflare-tunnel-gateway-controller)](https://go.dev/)
+[![License](https://img.shields.io/github/license/lexfrei/cloudflare-tunnel-gateway-controller)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/lexfrei/cloudflare-tunnel-gateway-controller)](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/releases)
+[![CI](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/actions/workflows/pr.yaml/badge.svg)](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/actions/workflows/pr.yaml)
+
 Kubernetes controller implementing Gateway API for Cloudflare Tunnel.
 
 Enables routing traffic through Cloudflare Tunnel using standard Gateway API resources (Gateway, HTTPRoute).
@@ -8,8 +13,48 @@ Enables routing traffic through Cloudflare Tunnel using standard Gateway API res
 
 - Standard Gateway API implementation (GatewayClass, Gateway, HTTPRoute)
 - Hot reload of tunnel configuration (no cloudflared restart required)
+- Optional cloudflared lifecycle management via Helm SDK
+- Leader election for high availability deployments
 - Multi-arch container images (amd64, arm64)
 - Signed container images with cosign
+
+## Quick Start
+
+```bash
+# 1. Install Gateway API CRDs
+kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.0/standard-install.yaml
+
+# 2. Add Helm repository
+helm registry login ghcr.io
+
+# 3. Install the controller
+helm install cloudflare-tunnel-gateway-controller \
+  oci://ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller/cloudflare-tunnel-gateway-controller \
+  --namespace cloudflare-tunnel-system \
+  --create-namespace \
+  --set config.tunnelID=YOUR_TUNNEL_ID \
+  --set config.apiToken=YOUR_API_TOKEN
+
+# 4. Create HTTPRoute to expose your service
+kubectl apply -f - <<EOF
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: my-app
+spec:
+  parentRefs:
+    - name: cloudflare-tunnel
+      namespace: cloudflare-tunnel-system
+  hostnames:
+    - app.example.com
+  rules:
+    - backendRefs:
+        - name: my-service
+          port: 80
+EOF
+```
+
+See [Installation](#installation) for detailed setup instructions.
 
 ## Prerequisites
 
@@ -46,19 +91,33 @@ The **Account Settings: Read** permission is required for auto-detecting the Acc
 
 ## Installation
 
-### 1. Install Gateway API CRDs
+### Helm (Recommended)
+
+```bash
+helm install cloudflare-tunnel-gateway-controller \
+  oci://ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller/cloudflare-tunnel-gateway-controller \
+  --namespace cloudflare-tunnel-system \
+  --create-namespace \
+  --values values.yaml
+```
+
+See [charts/cloudflare-tunnel-gateway-controller/README.md](charts/cloudflare-tunnel-gateway-controller/README.md) for all configuration options.
+
+### Manual Installation
+
+#### 1. Install Gateway API CRDs
 
 ```bash
 kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.0/standard-install.yaml
 ```
 
-### 2. Create namespace
+#### 2. Create namespace
 
 ```bash
 kubectl create namespace cloudflare-tunnel-system
 ```
 
-### 3. Configure credentials
+#### 3. Configure credentials
 
 Edit `deploy/controller/deployment.yaml` and set your values in ConfigMap and Secret:
 
@@ -67,14 +126,14 @@ Edit `deploy/controller/deployment.yaml` and set your values in ConfigMap and Se
 - `account-id`: (optional) Your Cloudflare account ID - auto-detected if token has access to single account
 - `cluster-domain`: Your cluster domain (default: `cluster.local`)
 
-### 4. Deploy the controller
+#### 4. Deploy the controller
 
 ```bash
 kubectl apply -f deploy/rbac/
 kubectl apply -f deploy/controller/
 ```
 
-### 5. Create GatewayClass and Gateway
+#### 5. Create GatewayClass and Gateway
 
 ```bash
 kubectl apply -f deploy/samples/gatewayclass.yaml
@@ -166,7 +225,7 @@ spec:
 
 | Flag | Environment Variable | Default | Description |
 |------|---------------------|---------|-------------|
-| `--account-id` | `CF_ACCOUNT_ID` | (auto-detect) | Cloudflare account ID (optional if token has access to single account) |
+| `--account-id` | `CF_ACCOUNT_ID` | (auto-detect) | Cloudflare account ID |
 | `--tunnel-id` | `CF_TUNNEL_ID` | | Cloudflare tunnel ID |
 | `--api-token` | `CF_API_TOKEN` | | Cloudflare API token |
 | `--cluster-domain` | `CF_CLUSTER_DOMAIN` | `cluster.local` | Kubernetes cluster domain |
@@ -180,54 +239,67 @@ spec:
 | `--tunnel-token` | `CF_TUNNEL_TOKEN` | | Tunnel token for remote-managed mode |
 | `--cloudflared-namespace` | `CF_CLOUDFLARED_NAMESPACE` | `cloudflare-tunnel-system` | Namespace for cloudflared |
 | `--cloudflared-protocol` | `CF_CLOUDFLARED_PROTOCOL` | | Transport protocol (auto, quic, http2) |
-| `--awg-secret-name` | `CF_AWG_SECRET_NAME` | | AWG config secret for sidecar |
-| `--awg-interface-name` | `CF_AWG_INTERFACE_NAME` | | AWG interface name (must match config file name without .conf) |
-
-## Gateway API Support
-
-### Supported Features
-
-| Resource | Field | Support |
-|----------|-------|---------|
-| HTTPRoute | `hostnames` | Yes |
-| HTTPRoute | `rules.matches.path` (PathPrefix, Exact) | Yes |
-| HTTPRoute | `rules.backendRefs` | Yes |
-| Gateway | `gatewayClassName` | Yes |
-| Gateway | `listeners` | Yes (informational) |
-
-### Unsupported Features
-
-The following Gateway API features are not supported due to Cloudflare Tunnel limitations:
-
-- Header matching (`rules.matches.headers`)
-- Query parameter matching (`rules.matches.queryParams`)
-- Method matching (`rules.matches.method`)
-- Request/Response header modification
-- Request redirects
+| `--leader-elect` | | `false` | Enable leader election for HA |
+| `--leader-election-namespace` | | | Namespace for leader election lease |
+| `--leader-election-name` | | `cloudflare-tunnel-gateway-controller-leader` | Leader election lease name |
 
 ## Architecture
 
-```text
-┌─────────────┐    watch     ┌─────────────────────────┐
-│ HTTPRoute   │─────────────>│ CF-Tunnel-Gateway       │
-│ CRD         │              │ Controller              │
-└─────────────┘              └───────────┬─────────────┘
-                                         │ Cloudflare API
-┌─────────────┐    watch                 │
-│ Gateway     │─────────────>│           │
-│ CRD         │              │           ▼
-└─────────────┘              │  ┌─────────────────┐
-                             │  │ Cloudflare API  │
-                             │  │ (tunnel config) │
-                             │  └────────┬────────┘
-                             │           │ push (automatic)
-                             │           ▼
-                             │  ┌─────────────────┐
-                             │  │ cloudflared     │
-                             │  │ (hot update!)   │
-                             │  └─────────────────┘
+```mermaid
+flowchart TB
+    subgraph Kubernetes["Kubernetes Cluster"]
+        GC[GatewayClass]
+        GW[Gateway]
+        HR[HTTPRoute]
+        SVC[Services]
+        CTRL[Controller]
+        CFD[cloudflared]
+    end
+
+    subgraph Cloudflare["Cloudflare"]
+        API[Cloudflare API]
+        EDGE[Cloudflare Edge]
+        TUN[Tunnel Config]
+    end
+
+    USER[Users] --> EDGE
+    EDGE --> CFD
+    CFD --> SVC
+
+    GC --> CTRL
+    GW --> CTRL
+    HR --> CTRL
+    CTRL -->|Update Config| API
+    API --> TUN
+    TUN -->|Push Config| CFD
 ```
+
+### How It Works
+
+1. **Watch**: Controller watches Gateway API resources (GatewayClass, Gateway, HTTPRoute)
+2. **Convert**: HTTPRoutes are converted to Cloudflare Tunnel ingress rules
+3. **Sync**: Configuration is pushed to Cloudflare API
+4. **Apply**: cloudflared receives updated config automatically (hot reload)
+
+## Documentation
+
+| Document | Description |
+|----------|-------------|
+| [Architecture](docs/ARCHITECTURE.md) | System architecture and design decisions |
+| [Gateway API](docs/GATEWAY_API.md) | Supported Gateway API features and limitations |
+| [Metrics](docs/METRICS.md) | Prometheus metrics, alerting rules, Grafana dashboard |
+| [Development](docs/DEVELOPMENT.md) | Development setup and contributing guide |
+| [Troubleshooting](docs/TROUBLESHOOTING.md) | Common issues and solutions |
+| [Helm Chart](charts/cloudflare-tunnel-gateway-controller/README.md) | Helm chart configuration reference |
+
+## Contributing
+
+Contributions are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+## Security
+
+For security issues, please see [SECURITY.md](SECURITY.md).
 
 ## License
 
-BSD 3-Clause License
+BSD 3-Clause License - see [LICENSE](LICENSE) for details.
