@@ -140,6 +140,10 @@ spec:
 | image.repository | string | `"ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller"` | Image repository |
 | image.tag | string | `""` | Image tag (defaults to appVersion) |
 | imagePullSecrets | list | `[]` | Image pull secrets for private registries |
+| leaderElection | object | `{"enabled":false,"leaseName":"cloudflare-tunnel-gateway-controller-leader","namespace":""}` | Leader election configuration for high availability |
+| leaderElection.enabled | bool | `false` | Enable leader election (required for running multiple replicas) |
+| leaderElection.leaseName | string | `"cloudflare-tunnel-gateway-controller-leader"` | Name of the leader election lease |
+| leaderElection.namespace | string | `""` | Namespace for leader election lease (defaults to release namespace) |
 | manageCloudflared | object | `{"enabled":false,"namespace":"cloudflare-tunnel-system","protocol":"","tunnelToken":"","tunnelTokenSecretName":""}` | Cloudflared deployment management via Helm |
 | manageCloudflared.enabled | bool | `false` | Deploy and manage cloudflared via Helm |
 | manageCloudflared.namespace | string | `"cloudflare-tunnel-system"` | Namespace for cloudflared deployment |
