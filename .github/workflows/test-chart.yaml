@@ -35,8 +35,8 @@ jobs:
 
       - name: Install tools
         run: |
-          # helm-unittest
-          helm plugin install https://github.com/helm-unittest/helm-unittest.git
+          # helm-unittest (--verify=false needed as plugin doesn't support signature verification)
+          helm plugin install --verify=false https://github.com/helm-unittest/helm-unittest.git
 
           # JSON schema validator
           pip install check-jsonschema
