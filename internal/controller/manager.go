@@ -138,6 +138,17 @@ func Run(ctx context.Context, cfg *Config) error {
 		return errors.Wrap(err, "failed to setup httproute controller")
 	}
 
+	// Setup GatewayClassConfig controller for status updates
+	configReconciler := &GatewayClassConfigReconciler{
+		Client:           mgr.GetClient(),
+		Scheme:           mgr.GetScheme(),
+		DefaultNamespace: defaultNamespace,
+	}
+
+	if err := configReconciler.SetupWithManager(mgr); err != nil {
+		return errors.Wrap(err, "failed to setup gatewayclassconfig controller")
+	}
+
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
 		return errors.Wrap(err, "failed to set up health check")
 	}

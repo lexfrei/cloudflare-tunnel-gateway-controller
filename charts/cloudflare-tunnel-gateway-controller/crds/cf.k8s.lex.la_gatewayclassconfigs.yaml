@@ -45,6 +45,9 @@ spec:
               required:
                 - cloudflareCredentialsSecretRef
                 - tunnelID
+              x-kubernetes-validations:
+                - rule: "(has(self.cloudflared) && has(self.cloudflared.enabled) && !self.cloudflared.enabled) || has(self.tunnelTokenSecretRef)"
+                  message: "tunnelTokenSecretRef is required when cloudflared.enabled is true (default)"
               properties:
                 cloudflareCredentialsSecretRef:
                   type: object
@@ -69,6 +72,8 @@ spec:
                 tunnelTokenSecretRef:
                   type: object
                   description: Reference to Secret containing tunnel token.
+                  required:
+                    - name
                   properties:
                     name:
                       type: string

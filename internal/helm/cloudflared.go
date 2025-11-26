@@ -43,7 +43,7 @@ func buildSidecarValues(sidecar *SidecarConfig) map[string]any {
 	}
 
 	// Wrapper script that:
-	// 1. Finds available interface number using kernel auto-numbering pattern
+	// 1. Uses flock to atomically find and reserve interface number
 	// 2. Writes the interface name to shared file for preStop
 	// 3. Copies config with correct name and starts AWG
 	wrapperScript := `#!/bin/sh
@@ -51,13 +51,40 @@ set -e
 PREFIX="` + interfacePrefix + `"
 IFACE_FILE="/run/awg/interface-name"
 CONFIG_DIR="/run/awg"
+LOCK_DIR="/tmp/awg-locks"
 
-# Find available interface number
-N=0
-while ip link show "${PREFIX}${N}" >/dev/null 2>&1; do
-  N=$((N + 1))
-done
-IFACE="${PREFIX}${N}"
+mkdir -p "$LOCK_DIR"
+
+# Find and atomically reserve an interface number using flock
+# This prevents TOCTOU race conditions when multiple pods start simultaneously
+find_and_reserve_interface() {
+  N=0
+  while true; do
+    LOCK_FILE="$LOCK_DIR/${PREFIX}${N}.lock"
+    # Try to acquire exclusive lock (non-blocking)
+    if (set -C; echo $$ > "$LOCK_FILE") 2>/dev/null; then
+      # Successfully acquired lock, check if interface exists
+      if ! ip link show "${PREFIX}${N}" >/dev/null 2>&1; then
+        # Interface doesn't exist, we can use this number
+        echo "${PREFIX}${N}"
+        return 0
+      fi
+      # Interface exists, remove lock and try next
+      rm -f "$LOCK_FILE"
+    fi
+    N=$((N + 1))
+    # Safety limit to prevent infinite loop
+    if [ "$N" -gt 100 ]; then
+      echo "ERROR: Could not find available interface number" >&2
+      return 1
+    fi
+  done
+}
+
+IFACE=$(find_and_reserve_interface)
+if [ -z "$IFACE" ]; then
+  exit 1
+fi
 
 # Write interface name for preStop hook
 echo "$IFACE" > "$IFACE_FILE"

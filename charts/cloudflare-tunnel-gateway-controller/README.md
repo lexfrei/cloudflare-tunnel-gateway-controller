@@ -107,6 +107,50 @@ spec:
           port: 80
 ```
 
+## Multi-Tunnel Setup
+
+To use multiple Cloudflare Tunnels in the same cluster (e.g., for different environments or accounts), deploy multiple controller instances with different GatewayClass names:
+
+```bash
+# First tunnel (production)
+helm install cf-tunnel-prod \
+  oci://ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller \
+  --namespace cloudflare-prod --create-namespace \
+  --values prod-values.yaml
+
+# Second tunnel (staging)
+helm install cf-tunnel-staging \
+  oci://ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller \
+  --namespace cloudflare-staging --create-namespace \
+  --values staging-values.yaml
+```
+
+Each instance requires unique:
+
+- `controller.gatewayClassName` (e.g., `cloudflare-tunnel-prod`, `cloudflare-tunnel-staging`)
+- `controller.controllerName` (e.g., `cf.k8s.lex.la/tunnel-prod`, `cf.k8s.lex.la/tunnel-staging`)
+- `gatewayClassConfig.tunnelID` - different Cloudflare Tunnel ID
+- `gatewayClassConfig.cloudflareCredentialsSecretRef.name` - credentials for respective account
+
+Example values file for multi-tunnel:
+
+```yaml
+controller:
+  gatewayClassName: cloudflare-tunnel-prod
+  controllerName: cf.k8s.lex.la/tunnel-prod
+
+gatewayClass:
+  create: true
+
+gatewayClassConfig:
+  create: true
+  tunnelID: "prod-tunnel-uuid"
+  cloudflareCredentialsSecretRef:
+    name: cf-credentials-prod
+  tunnelTokenSecretRef:
+    name: cf-tunnel-token-prod
+```
+
 ## Values
 
 | Key | Type | Default | Description |

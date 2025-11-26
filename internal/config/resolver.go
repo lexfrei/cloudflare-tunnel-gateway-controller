@@ -3,6 +3,7 @@ package config
 
 import (
 	"context"
+	"sync"
 
 	"github.com/cloudflare/cloudflare-go/v4"
 	"github.com/cloudflare/cloudflare-go/v4/accounts"
@@ -51,6 +52,10 @@ type ResolvedConfig struct {
 type Resolver struct {
 	client           client.Client
 	defaultNamespace string
+
+	// accountIDCache caches resolved account IDs by config name to avoid
+	// repeated API calls. Key is config name, value is account ID.
+	accountIDCache sync.Map
 }
 
 // NewResolver creates a new config Resolver.
@@ -200,10 +205,19 @@ func (r *Resolver) CreateCloudflareClient(resolved *ResolvedConfig) *cloudflare.
 
 //nolint:wrapcheck // errors.Newf creates new errors
 func (r *Resolver) ResolveAccountID(ctx context.Context, cfClient *cloudflare.Client, resolved *ResolvedConfig) (string, error) {
+	// If account ID is already in config, use it directly
 	if resolved.AccountID != "" {
 		return resolved.AccountID, nil
 	}
 
+	// Check cache first
+	if cached, ok := r.accountIDCache.Load(resolved.ConfigName); ok {
+		if accountID, valid := cached.(string); valid {
+			return accountID, nil
+		}
+	}
+
+	// Auto-detect from API
 	result, err := cfClient.Accounts.List(ctx, accounts.AccountListParams{})
 	if err != nil {
 		return "", errors.Wrap(err, "failed to list accounts")
@@ -218,7 +232,12 @@ func (r *Resolver) ResolveAccountID(ctx context.Context, cfClient *cloudflare.Cl
 		return "", errors.Newf("multiple accounts found (%d), please specify account-id in credentials secret", len(accountList))
 	}
 
-	return accountList[0].ID, nil
+	accountID := accountList[0].ID
+
+	// Cache the resolved account ID
+	r.accountIDCache.Store(resolved.ConfigName, accountID)
+
+	return accountID, nil
 }
 
 //nolint:wrapcheck // errors.Newf creates new errors
