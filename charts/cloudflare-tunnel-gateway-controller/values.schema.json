@@ -9,7 +9,7 @@
         "create": {
           "type": "boolean",
           "description": "Create GatewayClassConfig resource",
-          "default": true
+          "default": false
         },
         "name": {
           "type": "string",
@@ -63,7 +63,7 @@
             "enabled": {
               "type": "boolean",
               "description": "Enable cloudflared deployment management",
-              "default": true
+              "default": false
             },
             "replicas": {
               "type": "integer",
@@ -394,7 +394,7 @@
           "properties": {
             "enabled": {
               "type": "boolean",
-              "default": true
+              "default": false
             },
             "initialDelaySeconds": {
               "type": "integer",
@@ -423,7 +423,7 @@
           "properties": {
             "enabled": {
               "type": "boolean",
-              "default": true
+              "default": false
             },
             "initialDelaySeconds": {
               "type": "integer",
@@ -452,7 +452,7 @@
           "properties": {
             "enabled": {
               "type": "boolean",
-              "default": true
+              "default": false
             },
             "initialDelaySeconds": {
               "type": "integer",

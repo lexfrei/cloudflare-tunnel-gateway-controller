@@ -5,7 +5,7 @@
 # All tunnel-specific settings are now in GatewayClassConfig CRD.
 gatewayClassConfig:
   # -- Create GatewayClassConfig resource
-  create: true
+  create: false
   # -- Name of the GatewayClassConfig (defaults to release fullname)
   name: ""
 

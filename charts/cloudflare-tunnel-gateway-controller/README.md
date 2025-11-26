@@ -123,7 +123,7 @@ spec:
 | fullnameOverride | string | `""` | Override the full release name |
 | gatewayClass | object | `{"create":true}` | GatewayClass configuration |
 | gatewayClass.create | bool | `true` | Create GatewayClass resource |
-| gatewayClassConfig | object | `{"cloudflareCredentialsSecretRef":{"key":"","name":"","namespace":""},"cloudflared":{"awg":{"interfacePrefix":"awg-cfd","secretName":""},"enabled":true,"namespace":"cloudflare-tunnel-system","protocol":"","replicas":1},"create":true,"name":"","tunnelID":"","tunnelTokenSecretRef":{"key":"","name":"","namespace":""}}` | GatewayClassConfig configuration This is the main configuration section for Cloudflare Tunnel settings. All tunnel-specific settings are now in GatewayClassConfig CRD. |
+| gatewayClassConfig | object | `{"cloudflareCredentialsSecretRef":{"key":"","name":"","namespace":""},"cloudflared":{"awg":{"interfacePrefix":"awg-cfd","secretName":""},"enabled":true,"namespace":"cloudflare-tunnel-system","protocol":"","replicas":1},"create":false,"name":"","tunnelID":"","tunnelTokenSecretRef":{"key":"","name":"","namespace":""}}` | GatewayClassConfig configuration This is the main configuration section for Cloudflare Tunnel settings. All tunnel-specific settings are now in GatewayClassConfig CRD. |
 | gatewayClassConfig.cloudflareCredentialsSecretRef | object | `{"key":"","name":"","namespace":""}` | Reference to Secret containing Cloudflare API credentials (REQUIRED) The Secret must contain an "api-token" key with a valid Cloudflare API token. Optionally, it can contain an "account-id" key; if not present, account ID is auto-detected. |
 | gatewayClassConfig.cloudflareCredentialsSecretRef.key | string | `""` | Key in the Secret containing the API token (defaults to "api-token") |
 | gatewayClassConfig.cloudflareCredentialsSecretRef.name | string | `""` | Name of the Secret containing API credentials |
@@ -136,7 +136,7 @@ spec:
 | gatewayClassConfig.cloudflared.namespace | string | `"cloudflare-tunnel-system"` | Namespace for cloudflared deployment |
 | gatewayClassConfig.cloudflared.protocol | string | `""` | Transport protocol (auto, quic, http2) |
 | gatewayClassConfig.cloudflared.replicas | int | `1` | Number of cloudflared replicas |
-| gatewayClassConfig.create | bool | `true` | Create GatewayClassConfig resource |
+| gatewayClassConfig.create | bool | `false` | Create GatewayClassConfig resource |
 | gatewayClassConfig.name | string | `""` | Name of the GatewayClassConfig (defaults to release fullname) |
 | gatewayClassConfig.tunnelID | string | `""` | Cloudflare Tunnel ID (REQUIRED) Get from: Zero Trust Dashboard > Networks > Tunnels Example: "550e8400-e29b-41d4-a716-446655440000" |
 | gatewayClassConfig.tunnelTokenSecretRef | object | `{"key":"","name":"","namespace":""}` | Reference to Secret containing tunnel token (REQUIRED when cloudflared.enabled is true) The Secret must contain a "tunnel-token" key. |
