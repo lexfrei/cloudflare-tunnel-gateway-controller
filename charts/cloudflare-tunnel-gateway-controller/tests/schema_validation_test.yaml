@@ -124,7 +124,7 @@ tests:
         cloudflared:
           awg:
             secretName: "awg-config"
-            interfaceName: "custom-awg0"
+            interfacePrefix: "custom-awg"
     asserts:
       - template: gatewayclassconfig.yaml
         equal:
@@ -132,8 +132,8 @@ tests:
           value: "awg-config"
       - template: gatewayclassconfig.yaml
         equal:
-          path: spec.cloudflared.awg.interfaceName
-          value: "custom-awg0"
+          path: spec.cloudflared.awg.interfacePrefix
+          value: "custom-awg"
 
   - it: should not create gatewayclassconfig when disabled
     set:

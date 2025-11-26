@@ -51,8 +51,9 @@ gatewayClassConfig:
     awg:
       # Secret name containing AWG configuration (enables AWG sidecar)
       secretName: "awg-config"
-      # AWG interface name (must be unique to avoid conflicts)
-      interfaceName: "awg-cfd-gw-ctrl0"
+      # AWG interface name prefix (kernel auto-numbers: prefix0, prefix1, etc.)
+      # Use different prefixes for different GatewayClassConfigs to avoid conflicts
+      interfacePrefix: "awg-cfd"
 
 # Required security context for AWG - needs NET_ADMIN capability
 podSecurityContext:

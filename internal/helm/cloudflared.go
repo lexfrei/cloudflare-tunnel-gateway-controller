@@ -11,7 +11,7 @@ type CloudflaredValues struct {
 // SidecarConfig holds AWG sidecar configuration.
 type SidecarConfig struct {
 	ConfigSecretName string
-	InterfaceName    string // AWG interface name (derived from config file name, e.g., "cftunnel" for cftunnel.conf)
+	InterfacePrefix  string // AWG interface name prefix (kernel auto-numbers: prefix0, prefix1, etc.)
 }
 
 // BuildValues converts CloudflaredValues to Helm values map.
@@ -37,10 +37,51 @@ func (v *CloudflaredValues) BuildValues() map[string]any {
 
 //nolint:funlen // sidecar config structure is verbose but readable
 func buildSidecarValues(sidecar *SidecarConfig) map[string]any {
-	interfaceName := sidecar.InterfaceName
-	if interfaceName == "" {
-		interfaceName = "wg0"
+	interfacePrefix := sidecar.InterfacePrefix
+	if interfacePrefix == "" {
+		interfacePrefix = "awg-cfd"
 	}
+
+	// Wrapper script that:
+	// 1. Finds available interface number using kernel auto-numbering pattern
+	// 2. Writes the interface name to shared file for preStop
+	// 3. Copies config with correct name and starts AWG
+	wrapperScript := `#!/bin/sh
+set -e
+PREFIX="` + interfacePrefix + `"
+IFACE_FILE="/run/awg/interface-name"
+CONFIG_DIR="/run/awg"
+
+# Find available interface number
+N=0
+while ip link show "${PREFIX}${N}" >/dev/null 2>&1; do
+  N=$((N + 1))
+done
+IFACE="${PREFIX}${N}"
+
+# Write interface name for preStop hook
+echo "$IFACE" > "$IFACE_FILE"
+echo "Using AWG interface: $IFACE"
+
+# Copy config with correct interface name
+# AWG uses filename as interface name
+for conf in /config/*.conf; do
+  if [ -f "$conf" ]; then
+    cp "$conf" "${CONFIG_DIR}/${IFACE}.conf"
+    break
+  fi
+done
+
+# Start AWG
+exec /usr/bin/awg-quick up "${CONFIG_DIR}/${IFACE}.conf"
+`
+
+	// preStop script reads interface name from shared file
+	preStopScript := `IFACE=$(cat /run/awg/interface-name 2>/dev/null || echo "")
+if [ -n "$IFACE" ]; then
+  /usr/bin/awg-quick down "/run/awg/${IFACE}.conf" 2>/dev/null || true
+  ip link delete "$IFACE" 2>/dev/null || true
+fi`
 
 	return map[string]any{
 		"initContainers": []any{
@@ -63,6 +104,7 @@ func buildSidecarValues(sidecar *SidecarConfig) map[string]any {
 				"imagePullPolicy": "IfNotPresent",
 				"stdin":           true,
 				"tty":             true,
+				"command":         []any{"sh", "-c", wrapperScript},
 				"securityContext": map[string]any{
 					"privileged":   true,
 					"runAsUser":    0,
@@ -71,9 +113,7 @@ func buildSidecarValues(sidecar *SidecarConfig) map[string]any {
 				"lifecycle": map[string]any{
 					"preStop": map[string]any{
 						"exec": map[string]any{
-							"command": []any{
-								"sh", "-c", "ip link delete " + interfaceName + " 2>/dev/null || true",
-							},
+							"command": []any{"sh", "-c", preStopScript},
 						},
 					},
 				},
@@ -82,6 +122,10 @@ func buildSidecarValues(sidecar *SidecarConfig) map[string]any {
 						"name":      "awg-config",
 						"mountPath": "/config",
 						"readOnly":  true,
+					},
+					map[string]any{
+						"name":      "awg-runtime",
+						"mountPath": "/run/awg",
 					},
 					map[string]any{
 						"name":      "tun-device",
@@ -104,6 +148,12 @@ func buildSidecarValues(sidecar *SidecarConfig) map[string]any {
 				"name": "awg-config",
 				"secret": map[string]any{
 					"secretName": sidecar.ConfigSecretName,
+				},
+			},
+			map[string]any{
+				"name": "awg-runtime",
+				"emptyDir": map[string]any{
+					"medium": "Memory",
 				},
 			},
 			map[string]any{

@@ -35,6 +35,6 @@ spec:
     {{- if .Values.gatewayClassConfig.cloudflared.awg.secretName }}
     awg:
       secretName: {{ .Values.gatewayClassConfig.cloudflared.awg.secretName | quote }}
-      interfaceName: {{ .Values.gatewayClassConfig.cloudflared.awg.interfaceName | quote }}
+      interfacePrefix: {{ .Values.gatewayClassConfig.cloudflared.awg.interfacePrefix | quote }}
     {{- end }}
 {{- end }}

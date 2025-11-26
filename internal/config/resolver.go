@@ -40,8 +40,8 @@ type ResolvedConfig struct {
 	CloudflaredProtocol  string
 
 	// AWG sidecar settings
-	AWGSecretName    string
-	AWGInterfaceName string
+	AWGSecretName      string
+	AWGInterfacePrefix string
 
 	// Reference to the source config for watch purposes
 	ConfigName string
@@ -119,9 +119,9 @@ func (r *Resolver) resolveConfig(ctx context.Context, config *v1alpha1.GatewayCl
 	if config.Spec.Cloudflared.AWG != nil {
 		resolved.AWGSecretName = config.Spec.Cloudflared.AWG.SecretName
 
-		resolved.AWGInterfaceName = config.Spec.Cloudflared.AWG.InterfaceName
-		if resolved.AWGInterfaceName == "" {
-			resolved.AWGInterfaceName = "awg-cfd-gw-ctrl0"
+		resolved.AWGInterfacePrefix = config.Spec.Cloudflared.AWG.InterfacePrefix
+		if resolved.AWGInterfacePrefix == "" {
+			resolved.AWGInterfacePrefix = "awg-cfd"
 		}
 	}
 

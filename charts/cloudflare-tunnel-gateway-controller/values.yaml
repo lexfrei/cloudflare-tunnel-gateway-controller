@@ -49,8 +49,8 @@ gatewayClassConfig:
     awg:
       # -- Secret name containing AWG config (enables AWG sidecar)
       secretName: ""
-      # -- AWG interface name
-      interfaceName: "awg-cfd-gw-ctrl0"
+      # -- AWG interface name prefix (kernel auto-numbers: prefix0, prefix1, etc.)
+      interfacePrefix: "awg-cfd"
 
 # -- Controller configuration
 controller:

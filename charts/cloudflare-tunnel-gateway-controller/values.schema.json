@@ -89,10 +89,10 @@
                   "type": "string",
                   "description": "Secret name containing AWG config"
                 },
-                "interfaceName": {
+                "interfacePrefix": {
                   "type": "string",
-                  "description": "AWG interface name",
-                  "default": "awg-cfd-gw-ctrl0"
+                  "description": "AWG interface name prefix (kernel auto-numbers: prefix0, prefix1, etc.)",
+                  "default": "awg-cfd"
                 }
               }
             }

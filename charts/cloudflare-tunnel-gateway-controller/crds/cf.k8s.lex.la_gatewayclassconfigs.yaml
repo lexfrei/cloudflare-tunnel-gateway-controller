@@ -113,10 +113,10 @@ spec:
                           type: string
                           minLength: 1
                           description: Secret containing AWG configuration.
-                        interfaceName:
+                        interfacePrefix:
                           type: string
-                          default: awg-cfd-gw-ctrl0
-                          description: AWG network interface name.
+                          default: awg-cfd
+                          description: AWG interface name prefix (kernel auto-numbers).
             status:
               type: object
               properties:

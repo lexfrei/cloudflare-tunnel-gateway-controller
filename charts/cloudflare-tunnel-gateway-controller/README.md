@@ -123,14 +123,14 @@ spec:
 | fullnameOverride | string | `""` | Override the full release name |
 | gatewayClass | object | `{"create":true}` | GatewayClass configuration |
 | gatewayClass.create | bool | `true` | Create GatewayClass resource |
-| gatewayClassConfig | object | `{"cloudflareCredentialsSecretRef":{"key":"","name":"","namespace":""},"cloudflared":{"awg":{"interfaceName":"awg-cfd-gw-ctrl0","secretName":""},"enabled":true,"namespace":"cloudflare-tunnel-system","protocol":"","replicas":1},"create":true,"name":"","tunnelID":"","tunnelTokenSecretRef":{"key":"","name":"","namespace":""}}` | GatewayClassConfig configuration This is the main configuration section for Cloudflare Tunnel settings. All tunnel-specific settings are now in GatewayClassConfig CRD. |
+| gatewayClassConfig | object | `{"cloudflareCredentialsSecretRef":{"key":"","name":"","namespace":""},"cloudflared":{"awg":{"interfacePrefix":"awg-cfd","secretName":""},"enabled":true,"namespace":"cloudflare-tunnel-system","protocol":"","replicas":1},"create":true,"name":"","tunnelID":"","tunnelTokenSecretRef":{"key":"","name":"","namespace":""}}` | GatewayClassConfig configuration This is the main configuration section for Cloudflare Tunnel settings. All tunnel-specific settings are now in GatewayClassConfig CRD. |
 | gatewayClassConfig.cloudflareCredentialsSecretRef | object | `{"key":"","name":"","namespace":""}` | Reference to Secret containing Cloudflare API credentials (REQUIRED) The Secret must contain an "api-token" key with a valid Cloudflare API token. Optionally, it can contain an "account-id" key; if not present, account ID is auto-detected. |
 | gatewayClassConfig.cloudflareCredentialsSecretRef.key | string | `""` | Key in the Secret containing the API token (defaults to "api-token") |
 | gatewayClassConfig.cloudflareCredentialsSecretRef.name | string | `""` | Name of the Secret containing API credentials |
 | gatewayClassConfig.cloudflareCredentialsSecretRef.namespace | string | `""` | Namespace of the Secret (defaults to release namespace) |
-| gatewayClassConfig.cloudflared | object | `{"awg":{"interfaceName":"awg-cfd-gw-ctrl0","secretName":""},"enabled":true,"namespace":"cloudflare-tunnel-system","protocol":"","replicas":1}` | Cloudflared deployment configuration |
-| gatewayClassConfig.cloudflared.awg | object | `{"interfaceName":"awg-cfd-gw-ctrl0","secretName":""}` | AmneziaWG sidecar configuration |
-| gatewayClassConfig.cloudflared.awg.interfaceName | string | `"awg-cfd-gw-ctrl0"` | AWG interface name |
+| gatewayClassConfig.cloudflared | object | `{"awg":{"interfacePrefix":"awg-cfd","secretName":""},"enabled":true,"namespace":"cloudflare-tunnel-system","protocol":"","replicas":1}` | Cloudflared deployment configuration |
+| gatewayClassConfig.cloudflared.awg | object | `{"interfacePrefix":"awg-cfd","secretName":""}` | AmneziaWG sidecar configuration |
+| gatewayClassConfig.cloudflared.awg.interfacePrefix | string | `"awg-cfd"` | AWG interface name prefix (kernel auto-numbers: prefix0, prefix1, etc.) |
 | gatewayClassConfig.cloudflared.awg.secretName | string | `""` | Secret name containing AWG config (enables AWG sidecar) |
 | gatewayClassConfig.cloudflared.enabled | bool | `true` | Enable cloudflared deployment management (default: true) |
 | gatewayClassConfig.cloudflared.namespace | string | `"cloudflare-tunnel-system"` | Namespace for cloudflared deployment |

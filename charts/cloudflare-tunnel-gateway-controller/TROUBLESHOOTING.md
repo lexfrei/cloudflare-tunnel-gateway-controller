@@ -343,9 +343,12 @@ kubectl logs -n cloudflare-tunnel-system POD_NAME -c amneziawg
 
 2. **Interface name conflicts**:
 
+   Interface names are now auto-generated using kernel numbering.
+   Use different prefixes for different GatewayClassConfigs:
+
    ```yaml
    awg:
-     interfaceName: "awg-unique-name-1"  # Use unique name per instance
+     interfacePrefix: "awg-prod"  # Will create awg-prod0, awg-prod1, etc.
    ```
 
 3. **Missing secret**:

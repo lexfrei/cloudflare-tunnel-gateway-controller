@@ -29,11 +29,12 @@ type AWGConfig struct {
 	// +kubebuilder:validation:MinLength=1
 	SecretName string `json:"secretName"`
 
-	// InterfaceName is the AWG network interface name.
-	// Must be unique per node if running multiple instances.
+	// InterfacePrefix is the AWG network interface name prefix.
+	// The kernel auto-numbers interfaces using this prefix (e.g., awg-cfd0, awg-cfd1).
+	// Different GatewayClassConfigs should use different prefixes to avoid conflicts.
 	// +optional
-	// +kubebuilder:default="awg-cfd-gw-ctrl0"
-	InterfaceName string `json:"interfaceName,omitempty"`
+	// +kubebuilder:default="awg-cfd"
+	InterfacePrefix string `json:"interfacePrefix,omitempty"`
 }
 
 // CloudflaredConfig configures the cloudflared deployment managed by the controller.

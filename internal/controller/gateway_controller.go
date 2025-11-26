@@ -227,7 +227,7 @@ func (r *GatewayReconciler) buildCloudflaredValues(cfg *config.ResolvedConfig) m
 	if cfg.AWGSecretName != "" {
 		cloudflaredValues.Sidecar = &helm.SidecarConfig{
 			ConfigSecretName: cfg.AWGSecretName,
-			InterfaceName:    cfg.AWGInterfaceName,
+			InterfacePrefix:  cfg.AWGInterfacePrefix,
 		}
 	}
 
