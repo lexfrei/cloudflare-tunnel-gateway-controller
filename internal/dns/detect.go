@@ -3,6 +3,7 @@ package dns
 
 import (
 	"bufio"
+	"io"
 	"os"
 	"strings"
 )
@@ -41,8 +42,8 @@ func DetectClusterDomainFromFile(path string) (string, bool) {
 }
 
 // parseResolvConf parses resolv.conf content and extracts the cluster domain.
-func parseResolvConf(file *os.File) (string, bool) {
-	scanner := bufio.NewScanner(file)
+func parseResolvConf(r io.Reader) (string, bool) {
+	scanner := bufio.NewScanner(r)
 
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
@@ -75,12 +76,8 @@ func parseResolvConf(file *os.File) (string, bool) {
 func extractClusterDomain(domains []string) string {
 	for _, domain := range domains {
 		// Look for "svc.<cluster-domain>" pattern
-		if strings.HasPrefix(domain, "svc.") {
-			// Extract cluster domain after "svc."
-			clusterDomain := strings.TrimPrefix(domain, "svc.")
-			if clusterDomain != "" {
-				return clusterDomain
-			}
+		if clusterDomain, found := strings.CutPrefix(domain, "svc."); found && clusterDomain != "" {
+			return clusterDomain
 		}
 	}
 
