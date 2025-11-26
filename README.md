@@ -230,7 +230,7 @@ spec:
 | `--api-token` | `CF_API_TOKEN` | | Cloudflare API token |
 | `--cluster-domain` | `CF_CLUSTER_DOMAIN` | `cluster.local` | Kubernetes cluster domain |
 | `--gateway-class-name` | `CF_GATEWAY_CLASS_NAME` | `cloudflare-tunnel` | GatewayClass name to watch |
-| `--controller-name` | `CF_CONTROLLER_NAME` | `cloudflare.com/tunnel-controller` | Controller name |
+| `--controller-name` | `CF_CONTROLLER_NAME` | `cf.k8s.lex.la/tunnel-controller` | Controller name |
 | `--metrics-addr` | `CF_METRICS_ADDR` | `:8080` | Metrics endpoint address |
 | `--health-addr` | `CF_HEALTH_ADDR` | `:8081` | Health probe endpoint address |
 | `--log-level` | `CF_LOG_LEVEL` | `info` | Log level (debug, info, warn, error) |

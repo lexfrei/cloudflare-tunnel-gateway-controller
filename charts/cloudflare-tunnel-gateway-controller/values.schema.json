@@ -38,7 +38,7 @@
         "controllerName": {
           "type": "string",
           "description": "Controller name for GatewayClass",
-          "default": "cloudflare.com/tunnel-controller"
+          "default": "cf.k8s.lex.la/tunnel-controller"
         },
         "clusterDomain": {
           "type": "string",

@@ -50,7 +50,7 @@ func init() {
 	rootCmd.Flags().String("api-token", "", "Cloudflare API token (or use CF_API_TOKEN env var)")
 	rootCmd.Flags().String("cluster-domain", "cluster.local", "Kubernetes cluster domain")
 	rootCmd.Flags().String("gateway-class-name", "cloudflare-tunnel", "GatewayClass name to watch")
-	rootCmd.Flags().String("controller-name", "cloudflare.com/tunnel-controller", "Controller name for GatewayClass")
+	rootCmd.Flags().String("controller-name", "cf.k8s.lex.la/tunnel-controller", "Controller name for GatewayClass")
 	rootCmd.Flags().String("metrics-addr", ":8080", "Address for metrics endpoint")
 	rootCmd.Flags().String("health-addr", ":8081", "Address for health probe endpoint")
 
@@ -77,7 +77,7 @@ func initConfig() {
 
 	viper.SetDefault("cluster-domain", "cluster.local")
 	viper.SetDefault("gateway-class-name", "cloudflare-tunnel")
-	viper.SetDefault("controller-name", "cloudflare.com/tunnel-controller")
+	viper.SetDefault("controller-name", "cf.k8s.lex.la/tunnel-controller")
 	viper.SetDefault("metrics-addr", ":8080")
 	viper.SetDefault("health-addr", ":8081")
 	viper.SetDefault("log-level", "info")

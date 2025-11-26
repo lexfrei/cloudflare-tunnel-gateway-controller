@@ -120,9 +120,9 @@ spec:
 | cloudflare.apiToken | string | `""` | Cloudflare API token with Tunnel permissions (REQUIRED unless apiTokenSecretName is set) Required scopes: Account.Cloudflare Tunnel:Edit, Zone.DNS:Edit Leave empty if using apiTokenSecretName for external secret |
 | cloudflare.apiTokenSecretName | string | `""` | Existing secret name containing API token (key: api-token) If set, apiToken value is ignored Use this for external secret management (e.g., External Secrets Operator) |
 | cloudflare.tunnelId | string | `""` | Cloudflare Tunnel ID (REQUIRED at install time - must not be empty) Get from: Zero Trust Dashboard > Networks > Tunnels Example: "550e8400-e29b-41d4-a716-446655440000" or "my-tunnel-abc-123" |
-| controller | object | `{"clusterDomain":"cluster.local","controllerName":"cloudflare.com/tunnel-controller","gatewayClassName":"cloudflare-tunnel","logFormat":"json","logLevel":"info"}` | Controller configuration |
+| controller | object | `{"clusterDomain":"cluster.local","controllerName":"cf.k8s.lex.la/tunnel-controller","gatewayClassName":"cloudflare-tunnel","logFormat":"json","logLevel":"info"}` | Controller configuration |
 | controller.clusterDomain | string | `"cluster.local"` | Kubernetes cluster domain for service DNS resolution |
-| controller.controllerName | string | `"cloudflare.com/tunnel-controller"` | Controller name for GatewayClass (must be unique in cluster) |
+| controller.controllerName | string | `"cf.k8s.lex.la/tunnel-controller"` | Controller name for GatewayClass (must be unique in cluster) |
 | controller.gatewayClassName | string | `"cloudflare-tunnel"` | GatewayClass name to watch |
 | controller.logFormat | string | `"json"` | Log format (json, text) |
 | controller.logLevel | string | `"info"` | Log level (debug, info, warn, error) |

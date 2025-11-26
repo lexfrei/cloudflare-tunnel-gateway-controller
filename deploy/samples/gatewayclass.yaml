@@ -3,4 +3,4 @@ kind: GatewayClass
 metadata:
   name: cloudflare-tunnel
 spec:
-  controllerName: cloudflare.com/tunnel-controller
+  controllerName: cf.k8s.lex.la/tunnel-controller

@@ -33,7 +33,7 @@ controller:
   logLevel: "info"
   logFormat: "json"
   gatewayClassName: "cloudflare-tunnel"
-  controllerName: "cloudflare.com/tunnel-controller"
+  controllerName: "cf.k8s.lex.la/tunnel-controller"
   clusterDomain: "cluster.local"
 
 # High availability configuration

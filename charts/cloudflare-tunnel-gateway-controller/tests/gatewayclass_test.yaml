@@ -28,7 +28,7 @@ tests:
       - template: gatewayclass.yaml
         equal:
           path: spec.controllerName
-          value: cloudflare.com/tunnel-controller
+          value: cf.k8s.lex.la/tunnel-controller
 
   - it: should use custom gateway class name
     set:
