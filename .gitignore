@@ -21,9 +21,6 @@ coverage.txt
 .DS_Store
 Thumbs.db
 
-# Dependencies
-vendor/
-
 # Temporary files
 tmp/
 temp/
