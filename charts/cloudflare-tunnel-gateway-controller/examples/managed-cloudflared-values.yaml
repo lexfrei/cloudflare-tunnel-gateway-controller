@@ -4,6 +4,17 @@
 # This configuration enables Helm-managed cloudflared deployment
 # which automatically connects to your Cloudflare Tunnel.
 #
+# Prerequisites:
+#   1. Create a secret with the API token:
+#      kubectl create secret generic cloudflare-credentials \
+#        --namespace cloudflare-tunnel-system \
+#        --from-literal=api-token="your-api-token"
+#
+#   2. Create a secret with the tunnel token:
+#      kubectl create secret generic cloudflare-tunnel-token \
+#        --namespace cloudflare-tunnel-system \
+#        --from-literal=tunnel-token="your-tunnel-token"
+#
 # Usage:
 #   helm install cloudflare-tunnel-gateway-controller \
 #     oci://ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller \
@@ -11,23 +22,31 @@
 #     --create-namespace \
 #     --values managed-cloudflared-values.yaml
 
-cloudflare:
+gatewayClassConfig:
+  create: true
+
   # Cloudflare Tunnel ID (required)
-  tunnelId: "your-tunnel-id"
+  tunnelID: "your-tunnel-id"
 
-  # Cloudflare API token (required)
-  apiToken: "your-api-token"
+  # Reference to Secret containing Cloudflare API credentials
+  cloudflareCredentialsSecretRef:
+    name: "cloudflare-credentials"
 
-manageCloudflared:
-  # Enable Helm-managed cloudflared deployment
-  enabled: true
-
-  # Tunnel token for remote-managed mode
+  # Reference to Secret containing tunnel token
   # Get from: Zero Trust Dashboard > Networks > Tunnels > Configure
-  tunnelToken: "your-tunnel-token"
+  tunnelTokenSecretRef:
+    name: "cloudflare-tunnel-token"
 
-  # Namespace for cloudflared deployment
-  namespace: "cloudflare-tunnel-system"
+  # Cloudflared deployment configuration
+  cloudflared:
+    # Enable Helm-managed cloudflared deployment
+    enabled: true
 
-  # Transport protocol (optional: auto, quic, http2)
-  # protocol: "quic"
+    # Number of replicas for high availability
+    replicas: 2
+
+    # Namespace for cloudflared deployment
+    namespace: "cloudflare-tunnel-system"
+
+    # Transport protocol (optional: auto, quic, http2)
+    # protocol: "quic"

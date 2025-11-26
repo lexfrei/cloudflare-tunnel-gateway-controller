@@ -1,5 +1,3 @@
-{{- include "cf-tunnel-gw-ctrl.validateConfig" . -}}
-{{- include "cf-tunnel-gw-ctrl.validatePDB" . -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -13,11 +11,10 @@ spec:
       {{- include "cf-tunnel-gw-ctrl.selectorLabels" . | nindent 6 }}
   template:
     metadata:
+      {{- with .Values.podAnnotations }}
       annotations:
-        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
-        {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
-        {{- end }}
+      {{- end }}
       labels:
         {{- include "cf-tunnel-gw-ctrl.selectorLabels" . | nindent 8 }}
         {{- with .Values.podLabels }}
@@ -49,7 +46,6 @@ spec:
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           args:
-            - "--tunnel-id={{ .Values.cloudflare.tunnelId }}"
             - "--gateway-class-name={{ .Values.controller.gatewayClassName }}"
             - "--controller-name={{ .Values.controller.controllerName }}"
             - "--cluster-domain={{ .Values.controller.clusterDomain }}"
@@ -57,22 +53,6 @@ spec:
             - "--health-addr=:{{ .Values.service.healthPort }}"
             - "--log-level={{ .Values.controller.logLevel }}"
             - "--log-format={{ .Values.controller.logFormat }}"
-            {{- if .Values.cloudflare.accountId }}
-            - "--account-id={{ .Values.cloudflare.accountId }}"
-            {{- end }}
-            {{- if .Values.manageCloudflared.enabled }}
-            - "--manage-cloudflared=true"
-            - "--cloudflared-namespace={{ .Values.manageCloudflared.namespace }}"
-            {{- if .Values.manageCloudflared.protocol }}
-            - "--cloudflared-protocol={{ .Values.manageCloudflared.protocol }}"
-            {{- end }}
-            {{- end }}
-            {{- if .Values.awg.secretName }}
-            - "--awg-secret-name={{ .Values.awg.secretName }}"
-            {{- end }}
-            {{- if .Values.awg.interfaceName }}
-            - "--awg-interface-name={{ .Values.awg.interfaceName }}"
-            {{- end }}
             {{- if .Values.leaderElection.enabled }}
             - "--leader-elect=true"
             - "--leader-election-name={{ .Values.leaderElection.leaseName }}"
@@ -81,19 +61,6 @@ spec:
             {{- else }}
             - "--leader-election-namespace={{ .Release.Namespace }}"
             {{- end }}
-            {{- end }}
-          env:
-            - name: CF_API_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "cf-tunnel-gw-ctrl.apiTokenSecretName" . }}
-                  key: api-token
-            {{- if .Values.manageCloudflared.enabled }}
-            - name: CF_TUNNEL_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "cf-tunnel-gw-ctrl.tunnelTokenSecretName" . }}
-                  key: tunnel-token
             {{- end }}
           ports:
             - name: metrics
@@ -135,36 +102,6 @@ spec:
             {{- if .Values.healthProbes.readinessProbe.failureThreshold }}
             failureThreshold: {{ .Values.healthProbes.readinessProbe.failureThreshold }}
             {{- end }}
-          {{- end }}
-          {{- if .Values.awg.secretName }}
-          lifecycle:
-            preStop:
-              exec:
-                command:
-                  - /bin/sh
-                  - -c
-                  - |
-                    set +e
-                    interface="{{ .Values.awg.interfaceName | default "awg-cfd-gw-ctrl0" }}"
-                    echo "AWG cleanup: checking interface $interface"
-
-                    if ! command -v ip > /dev/null 2>&1; then
-                      echo "WARNING: ip command not found, skipping AWG interface cleanup"
-                      exit 0
-                    fi
-
-                    if ip link show "$interface" > /dev/null 2>&1; then
-                      echo "Deleting AWG interface: $interface"
-                      if ip link delete "$interface"; then
-                        echo "Successfully deleted AWG interface: $interface"
-                      else
-                        echo "WARNING: Failed to delete AWG interface $interface, continuing shutdown"
-                      fi
-                    else
-                      echo "AWG interface $interface not found, skipping deletion"
-                    fi
-
-                    exit 0
           {{- end }}
           resources:
             {{- if .Values.resources }}
