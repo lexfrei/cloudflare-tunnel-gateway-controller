@@ -22,7 +22,7 @@ Enables routing traffic through Cloudflare Tunnel using standard Gateway API res
 
 ```bash
 # 1. Install Gateway API CRDs
-kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.0/standard-install.yaml
+kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.4.0/standard-install.yaml
 
 # 2. Add Helm repository
 helm registry login ghcr.io
@@ -108,7 +108,7 @@ See [charts/cloudflare-tunnel-gateway-controller/README.md](charts/cloudflare-tu
 #### 1. Install Gateway API CRDs
 
 ```bash
-kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.0/standard-install.yaml
+kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.4.0/standard-install.yaml
 ```
 
 #### 2. Create namespace
