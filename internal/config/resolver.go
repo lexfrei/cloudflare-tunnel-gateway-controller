@@ -61,7 +61,7 @@ func NewResolver(c client.Client, defaultNamespace string) *Resolver {
 	}
 }
 
-// ResolveFromGatewayClass resolves configuration from a GatewayClass's parametersRef.
+//nolint:wrapcheck // errors.Newf creates new errors
 func (r *Resolver) ResolveFromGatewayClass(
 	ctx context.Context,
 	gatewayClass *gatewayv1.GatewayClass,
@@ -80,7 +80,9 @@ func (r *Resolver) ResolveFromGatewayClass(
 	}
 
 	config := &v1alpha1.GatewayClassConfig{}
-	if err := r.client.Get(ctx, types.NamespacedName{Name: ref.Name}, config); err != nil {
+
+	err := r.client.Get(ctx, types.NamespacedName{Name: ref.Name}, config)
+	if err != nil {
 		return nil, errors.Wrapf(err, "failed to get GatewayClassConfig %s", ref.Name)
 	}
 
@@ -93,13 +95,16 @@ func (r *Resolver) ResolveFromGatewayClassName(
 	gatewayClassName string,
 ) (*ResolvedConfig, error) {
 	gatewayClass := &gatewayv1.GatewayClass{}
-	if err := r.client.Get(ctx, types.NamespacedName{Name: gatewayClassName}, gatewayClass); err != nil {
+
+	err := r.client.Get(ctx, types.NamespacedName{Name: gatewayClassName}, gatewayClass)
+	if err != nil {
 		return nil, errors.Wrapf(err, "failed to get GatewayClass %s", gatewayClassName)
 	}
 
 	return r.ResolveFromGatewayClass(ctx, gatewayClass)
 }
 
+//nolint:funcorder,wrapcheck,funlen // private helper, errors.Newf creates new errors
 func (r *Resolver) resolveConfig(ctx context.Context, config *v1alpha1.GatewayClassConfig) (*ResolvedConfig, error) {
 	resolved := &ResolvedConfig{
 		TunnelID:             config.Spec.TunnelID,
@@ -113,29 +118,35 @@ func (r *Resolver) resolveConfig(ctx context.Context, config *v1alpha1.GatewayCl
 	// Resolve AWG config
 	if config.Spec.Cloudflared.AWG != nil {
 		resolved.AWGSecretName = config.Spec.Cloudflared.AWG.SecretName
+
 		resolved.AWGInterfaceName = config.Spec.Cloudflared.AWG.InterfaceName
 		if resolved.AWGInterfaceName == "" {
-			resolved.AWGInterfaceName = "awg0"
+			resolved.AWGInterfaceName = "awg-cfd-gw-ctrl0"
 		}
 	}
 
 	// Resolve Cloudflare credentials from Secret
 	credentialsRef := config.Spec.CloudflareCredentialsSecretRef
+
 	credentialsSecret, err := r.getSecret(ctx, credentialsRef.Name, credentialsRef.Namespace)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to get Cloudflare credentials secret")
 	}
 
 	apiTokenKey := credentialsRef.GetAPITokenKey()
+
 	apiToken, ok := credentialsSecret.Data[apiTokenKey]
 	if !ok {
 		return nil, errors.Newf("secret %s/%s does not contain key %s",
 			credentialsSecret.Namespace, credentialsSecret.Name, apiTokenKey)
 	}
+
 	resolved.APIToken = string(apiToken)
 
-	// Account ID is optional in the secret
-	if accountID, ok := credentialsSecret.Data["account-id"]; ok {
+	// Account ID priority: spec > secret > auto-detect (handled later)
+	if config.Spec.AccountID != "" {
+		resolved.AccountID = config.Spec.AccountID
+	} else if accountID, ok := credentialsSecret.Data["account-id"]; ok {
 		resolved.AccountID = string(accountID)
 	}
 
@@ -146,29 +157,34 @@ func (r *Resolver) resolveConfig(ctx context.Context, config *v1alpha1.GatewayCl
 		}
 
 		tokenRef := config.Spec.TunnelTokenSecretRef
+
 		tokenSecret, secretErr := r.getSecret(ctx, tokenRef.Name, tokenRef.Namespace)
 		if secretErr != nil {
 			return nil, errors.Wrap(secretErr, "failed to get tunnel token secret")
 		}
 
 		tokenKey := tokenRef.GetTunnelTokenKey()
+
 		tunnelToken, ok := tokenSecret.Data[tokenKey]
 		if !ok {
 			return nil, errors.Newf("secret %s/%s does not contain key %s",
 				tokenSecret.Namespace, tokenSecret.Name, tokenKey)
 		}
+
 		resolved.TunnelToken = string(tunnelToken)
 	}
 
 	return resolved, nil
 }
 
+//nolint:funcorder // private helper
 func (r *Resolver) getSecret(ctx context.Context, name, namespace string) (*corev1.Secret, error) {
 	if namespace == "" {
 		namespace = r.defaultNamespace
 	}
 
 	secret := &corev1.Secret{}
+
 	err := r.client.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, secret)
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to get secret %s/%s", namespace, name)
@@ -182,7 +198,7 @@ func (r *Resolver) CreateCloudflareClient(resolved *ResolvedConfig) *cloudflare.
 	return cloudflare.NewClient(option.WithAPIToken(resolved.APIToken))
 }
 
-// ResolveAccountID auto-detects account ID if not provided in config.
+//nolint:wrapcheck // errors.Newf creates new errors
 func (r *Resolver) ResolveAccountID(ctx context.Context, cfClient *cloudflare.Client, resolved *ResolvedConfig) (string, error) {
 	if resolved.AccountID != "" {
 		return resolved.AccountID, nil
@@ -205,7 +221,7 @@ func (r *Resolver) ResolveAccountID(ctx context.Context, cfClient *cloudflare.Cl
 	return accountList[0].ID, nil
 }
 
-// GetConfigForGatewayClass returns the GatewayClassConfig referenced by a GatewayClass.
+//nolint:wrapcheck // errors.Newf creates new errors
 func (r *Resolver) GetConfigForGatewayClass(
 	ctx context.Context,
 	gatewayClass *gatewayv1.GatewayClass,
@@ -220,7 +236,9 @@ func (r *Resolver) GetConfigForGatewayClass(
 	}
 
 	config := &v1alpha1.GatewayClassConfig{}
-	if err := r.client.Get(ctx, types.NamespacedName{Name: ref.Name}, config); err != nil {
+
+	err := r.client.Get(ctx, types.NamespacedName{Name: ref.Name}, config)
+	if err != nil {
 		return nil, errors.Wrapf(err, "failed to get GatewayClassConfig %s", ref.Name)
 	}
 

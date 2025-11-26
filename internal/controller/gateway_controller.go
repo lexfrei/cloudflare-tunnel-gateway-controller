@@ -340,7 +340,7 @@ func (r *GatewayReconciler) setConfigErrorStatus(
 		},
 	}
 
-	return r.Status().Update(ctx, gateway)
+	return errors.Wrap(r.Status().Update(ctx, gateway), "failed to update gateway status")
 }
 
 //nolint:funcorder // helper method for status
@@ -402,6 +402,12 @@ func (r *GatewayReconciler) refMatchesGateway(
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *GatewayReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	mapper := &ConfigMapper{
+		Client:           r.Client,
+		GatewayClassName: r.GatewayClassName,
+		ConfigResolver:   r.ConfigResolver,
+	}
+
 	//nolint:wrapcheck // controller-runtime builder pattern
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&gatewayv1.Gateway{}).
@@ -413,12 +419,12 @@ func (r *GatewayReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		// Watch GatewayClassConfig for config changes
 		Watches(
 			&v1alpha1.GatewayClassConfig{},
-			handler.EnqueueRequestsFromMapFunc(r.configToGateways),
+			handler.EnqueueRequestsFromMapFunc(mapper.MapConfigToRequests(r.getAllGatewaysForClass)),
 		).
 		// Watch Secrets for credential changes
 		Watches(
 			&corev1.Secret{},
-			handler.EnqueueRequestsFromMapFunc(r.secretToGateways),
+			handler.EnqueueRequestsFromMapFunc(mapper.MapSecretToRequests(r.getAllGatewaysForClass)),
 		).
 		WithEventFilter(predicate.GenerationChangedPredicate{}).
 		Complete(r)
@@ -441,88 +447,18 @@ func (r *GatewayReconciler) gatewayClassToGateways(
 	return r.getAllGatewaysForClass(ctx)
 }
 
-// configToGateways maps GatewayClassConfig events to Gateway reconcile requests.
-func (r *GatewayReconciler) configToGateways(
-	ctx context.Context,
-	obj client.Object,
-) []reconcile.Request {
-	cfg, ok := obj.(*v1alpha1.GatewayClassConfig)
-	if !ok {
-		return nil
-	}
+func (r *GatewayReconciler) getAllGatewaysForClass(ctx context.Context) []reconcile.Request {
+	var gatewayList gatewayv1.GatewayList
 
-	// Check if this config is referenced by our GatewayClass
-	gatewayClass := &gatewayv1.GatewayClass{}
-	if err := r.Get(ctx, types.NamespacedName{Name: r.GatewayClassName}, gatewayClass); err != nil {
-		return nil
-	}
-
-	if gatewayClass.Spec.ParametersRef == nil {
-		return nil
-	}
-
-	if gatewayClass.Spec.ParametersRef.Name != cfg.Name {
-		return nil
-	}
-
-	return r.getAllGatewaysForClass(ctx)
-}
-
-// secretToGateways maps Secret events to Gateway reconcile requests.
-func (r *GatewayReconciler) secretToGateways(
-	ctx context.Context,
-	obj client.Object,
-) []reconcile.Request {
-	secret, ok := obj.(*corev1.Secret)
-	if !ok {
-		return nil
-	}
-
-	// Get the GatewayClassConfig for our class
-	gatewayClass := &gatewayv1.GatewayClass{}
-	if err := r.Get(ctx, types.NamespacedName{Name: r.GatewayClassName}, gatewayClass); err != nil {
-		return nil
-	}
-
-	cfg, err := r.ConfigResolver.GetConfigForGatewayClass(ctx, gatewayClass)
+	err := r.List(ctx, &gatewayList)
 	if err != nil {
 		return nil
 	}
 
-	// Check if this secret is referenced by the config
-	if r.secretMatchesConfig(secret, cfg) {
-		return r.getAllGatewaysForClass(ctx)
-	}
-
-	return nil
-}
-
-func (r *GatewayReconciler) secretMatchesConfig(secret *corev1.Secret, cfg *v1alpha1.GatewayClassConfig) bool {
-	// Check credentials secret
-	credRef := cfg.Spec.CloudflareCredentialsSecretRef
-	if secret.Name == credRef.Name && (credRef.Namespace == "" || credRef.Namespace == secret.Namespace) {
-		return true
-	}
-
-	// Check tunnel token secret
-	if cfg.Spec.TunnelTokenSecretRef != nil {
-		tokenRef := cfg.Spec.TunnelTokenSecretRef
-		if secret.Name == tokenRef.Name && (tokenRef.Namespace == "" || tokenRef.Namespace == secret.Namespace) {
-			return true
-		}
-	}
-
-	return false
-}
-
-func (r *GatewayReconciler) getAllGatewaysForClass(ctx context.Context) []reconcile.Request {
-	var gatewayList gatewayv1.GatewayList
-	if err := r.List(ctx, &gatewayList); err != nil {
-		return nil
-	}
-
 	var requests []reconcile.Request
-	for _, gw := range gatewayList.Items {
+
+	for i := range gatewayList.Items {
+		gw := &gatewayList.Items[i]
 		if string(gw.Spec.GatewayClassName) == r.GatewayClassName {
 			requests = append(requests, reconcile.Request{
 				NamespacedName: types.NamespacedName{

@@ -59,6 +59,9 @@ spec:
                       type: string
                     key:
                       type: string
+                accountId:
+                  type: string
+                  description: Cloudflare account ID. Optional - auto-detected if not set.
                 tunnelID:
                   type: string
                   description: Cloudflare Tunnel UUID.
@@ -112,7 +115,7 @@ spec:
                           description: Secret containing AWG configuration.
                         interfaceName:
                           type: string
-                          default: awg0
+                          default: awg-cfd-gw-ctrl0
                           description: AWG network interface name.
             status:
               type: object

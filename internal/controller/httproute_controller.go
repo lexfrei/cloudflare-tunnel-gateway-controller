@@ -11,7 +11,6 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
@@ -107,7 +106,7 @@ func (r *HTTPRouteReconciler) isRouteForOurGateway(ctx context.Context, route *g
 	return false
 }
 
-//nolint:funcorder,noinlineerr // private helper method
+//nolint:funcorder,noinlineerr,funlen // private helper method, complex sync logic
 func (r *HTTPRouteReconciler) syncAllRoutes(ctx context.Context) (ctrl.Result, error) {
 	logger := slog.Default().With("component", "sync")
 
@@ -115,6 +114,7 @@ func (r *HTTPRouteReconciler) syncAllRoutes(ctx context.Context) (ctrl.Result, e
 	resolvedConfig, err := r.ConfigResolver.ResolveFromGatewayClassName(ctx, r.GatewayClassName)
 	if err != nil {
 		logger.Error("failed to resolve config from GatewayClassConfig", "error", err)
+
 		return ctrl.Result{}, errors.Wrap(err, "failed to resolve GatewayClassConfig")
 	}
 
@@ -125,6 +125,7 @@ func (r *HTTPRouteReconciler) syncAllRoutes(ctx context.Context) (ctrl.Result, e
 	accountID, err := r.ConfigResolver.ResolveAccountID(ctx, cfClient, resolvedConfig)
 	if err != nil {
 		logger.Error("failed to resolve account ID", "error", err)
+
 		return ctrl.Result{}, errors.Wrap(err, "failed to resolve account ID")
 	}
 
@@ -261,6 +262,12 @@ func (r *HTTPRouteReconciler) updateRouteStatus(
 }
 
 func (r *HTTPRouteReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	mapper := &ConfigMapper{
+		Client:           r.Client,
+		GatewayClassName: r.GatewayClassName,
+		ConfigResolver:   r.ConfigResolver,
+	}
+
 	err := ctrl.NewControllerManagedBy(mgr).
 		For(&gatewayv1.HTTPRoute{}).
 		Watches(
@@ -270,12 +277,12 @@ func (r *HTTPRouteReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		// Watch GatewayClassConfig for config changes
 		Watches(
 			&v1alpha1.GatewayClassConfig{},
-			handler.EnqueueRequestsFromMapFunc(r.configToRoutes),
+			handler.EnqueueRequestsFromMapFunc(mapper.MapConfigToRequests(r.getAllRelevantRoutes)),
 		).
 		// Watch Secrets for credential changes
 		Watches(
 			&corev1.Secret{},
-			handler.EnqueueRequestsFromMapFunc(r.secretToRoutes),
+			handler.EnqueueRequestsFromMapFunc(mapper.MapSecretToRequests(r.getAllRelevantRoutes)),
 		).
 		Complete(r)
 	if err != nil {
@@ -346,87 +353,16 @@ func (r *HTTPRouteReconciler) findRoutesForGateway(
 	return requests
 }
 
-// configToRoutes maps GatewayClassConfig events to HTTPRoute reconcile requests.
-func (r *HTTPRouteReconciler) configToRoutes(
-	ctx context.Context,
-	obj client.Object,
-) []reconcile.Request {
-	cfg, ok := obj.(*v1alpha1.GatewayClassConfig)
-	if !ok {
-		return nil
-	}
+func (r *HTTPRouteReconciler) getAllRelevantRoutes(ctx context.Context) []reconcile.Request {
+	var routeList gatewayv1.HTTPRouteList
 
-	// Check if this config is referenced by our GatewayClass
-	gatewayClass := &gatewayv1.GatewayClass{}
-	if err := r.Get(ctx, types.NamespacedName{Name: r.GatewayClassName}, gatewayClass); err != nil {
-		return nil
-	}
-
-	if gatewayClass.Spec.ParametersRef == nil {
-		return nil
-	}
-
-	if gatewayClass.Spec.ParametersRef.Name != cfg.Name {
-		return nil
-	}
-
-	return r.getAllRelevantRoutes(ctx)
-}
-
-// secretToRoutes maps Secret events to HTTPRoute reconcile requests.
-func (r *HTTPRouteReconciler) secretToRoutes(
-	ctx context.Context,
-	obj client.Object,
-) []reconcile.Request {
-	secret, ok := obj.(*corev1.Secret)
-	if !ok {
-		return nil
-	}
-
-	// Get the GatewayClassConfig for our class
-	gatewayClass := &gatewayv1.GatewayClass{}
-	if err := r.Get(ctx, types.NamespacedName{Name: r.GatewayClassName}, gatewayClass); err != nil {
-		return nil
-	}
-
-	cfg, err := r.ConfigResolver.GetConfigForGatewayClass(ctx, gatewayClass)
+	err := r.List(ctx, &routeList)
 	if err != nil {
 		return nil
 	}
 
-	// Check if this secret is referenced by the config
-	if r.secretMatchesConfig(secret, cfg) {
-		return r.getAllRelevantRoutes(ctx)
-	}
-
-	return nil
-}
-
-func (r *HTTPRouteReconciler) secretMatchesConfig(secret *corev1.Secret, cfg *v1alpha1.GatewayClassConfig) bool {
-	// Check credentials secret
-	credRef := cfg.Spec.CloudflareCredentialsSecretRef
-	if secret.Name == credRef.Name && (credRef.Namespace == "" || credRef.Namespace == secret.Namespace) {
-		return true
-	}
-
-	// Check tunnel token secret
-	if cfg.Spec.TunnelTokenSecretRef != nil {
-		tokenRef := cfg.Spec.TunnelTokenSecretRef
-		if secret.Name == tokenRef.Name && (tokenRef.Namespace == "" || tokenRef.Namespace == secret.Namespace) {
-			return true
-		}
-	}
-
-	return false
-}
-
-func (r *HTTPRouteReconciler) getAllRelevantRoutes(ctx context.Context) []reconcile.Request {
-	var routeList gatewayv1.HTTPRouteList
-	if err := r.List(ctx, &routeList); err != nil {
-		return nil
-	}
-
 	var requests []reconcile.Request
+
 	for i := range routeList.Items {
 		if r.isRouteForOurGateway(ctx, &routeList.Items[i]) {
 			requests = append(requests, reconcile.Request{

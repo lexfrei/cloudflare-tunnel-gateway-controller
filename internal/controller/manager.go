@@ -109,6 +109,7 @@ func Run(ctx context.Context, cfg *Config) error {
 	if helmErr != nil {
 		return errors.Wrap(helmErr, "failed to create helm manager")
 	}
+
 	logger.Info("helm manager initialized for cloudflared deployment")
 
 	gatewayReconciler := &GatewayReconciler{
@@ -158,7 +159,8 @@ func Run(ctx context.Context, cfg *Config) error {
 // It reads from the standard Kubernetes downward API file, falling back to "default".
 func getControllerNamespace() string {
 	// Try reading from downward API
-	if data, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/namespace"); err == nil {
+	data, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/namespace")
+	if err == nil {
 		return string(data)
 	}
 

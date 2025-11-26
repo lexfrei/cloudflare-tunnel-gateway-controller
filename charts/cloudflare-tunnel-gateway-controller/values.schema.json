@@ -92,7 +92,7 @@
                 "interfaceName": {
                   "type": "string",
                   "description": "AWG interface name",
-                  "default": "awg0"
+                  "default": "awg-cfd-gw-ctrl0"
                 }
               }
             }

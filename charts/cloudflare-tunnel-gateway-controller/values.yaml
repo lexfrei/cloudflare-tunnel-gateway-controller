@@ -50,7 +50,7 @@ gatewayClassConfig:
       # -- Secret name containing AWG config (enables AWG sidecar)
       secretName: ""
       # -- AWG interface name
-      interfaceName: "awg0"
+      interfaceName: "awg-cfd-gw-ctrl0"
 
 # -- Controller configuration
 controller:

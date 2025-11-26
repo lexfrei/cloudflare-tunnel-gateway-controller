@@ -8,6 +8,9 @@ tests:
   # so invalid values will be caught by values.schema.json.
 
   - it: should create deployment with default values
+    set:
+      gatewayClassConfig:
+        create: false
     asserts:
       - template: deployment.yaml
         isKind:

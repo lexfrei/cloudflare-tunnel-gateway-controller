@@ -32,7 +32,7 @@ type AWGConfig struct {
 	// InterfaceName is the AWG network interface name.
 	// Must be unique per node if running multiple instances.
 	// +optional
-	// +kubebuilder:default="awg0"
+	// +kubebuilder:default="awg-cfd-gw-ctrl0"
 	InterfaceName string `json:"interfaceName,omitempty"`
 }
 
@@ -69,14 +69,19 @@ type CloudflaredConfig struct {
 type GatewayClassConfigSpec struct {
 	// CloudflareCredentialsSecretRef references a Secret containing Cloudflare API credentials.
 	// The Secret must contain an "api-token" key with a valid Cloudflare API token.
-	// Optionally, it can contain an "account-id" key; if not present, account ID is auto-detected.
 	// +kubebuilder:validation:Required
 	CloudflareCredentialsSecretRef SecretReference `json:"cloudflareCredentialsSecretRef"`
+
+	// AccountID is the Cloudflare account ID. Optional - if not specified, it will be
+	// read from the credentials secret ("account-id" key) or auto-detected if the API token
+	// has access to only one account.
+	// +optional
+	AccountID string `json:"accountId,omitempty"`
 
 	// TunnelID is the Cloudflare Tunnel UUID.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:Pattern=`^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$`
-	TunnelID string `json:"tunnelID"`
+	TunnelID string `json:"tunnelID"` //nolint:tagliatelle // Cloudflare API uses tunnelID
 
 	// TunnelTokenSecretRef references a Secret containing the tunnel token.
 	// Required when cloudflared.enabled is true.
@@ -86,7 +91,7 @@ type GatewayClassConfigSpec struct {
 
 	// Cloudflared configures the cloudflared deployment.
 	// +optional
-	Cloudflared CloudflaredConfig `json:"cloudflared,omitempty"`
+	Cloudflared CloudflaredConfig `json:"cloudflared,omitempty"` //nolint:modernize // kubebuilder standard
 }
 
 // GatewayClassConfigStatus defines the observed state of GatewayClassConfig.
@@ -109,10 +114,10 @@ type GatewayClassConfigStatus struct {
 // It provides configuration for Cloudflare Tunnel Gateway API implementation.
 type GatewayClassConfig struct {
 	metav1.TypeMeta   `json:",inline"`
-	metav1.ObjectMeta `json:"metadata,omitempty"`
+	metav1.ObjectMeta `json:"metadata,omitempty"` //nolint:modernize // kubebuilder standard
 
-	Spec   GatewayClassConfigSpec   `json:"spec,omitempty"`
-	Status GatewayClassConfigStatus `json:"status,omitempty"`
+	Spec   GatewayClassConfigSpec   `json:"spec,omitempty"`   //nolint:modernize // kubebuilder standard
+	Status GatewayClassConfigStatus `json:"status,omitempty"` //nolint:modernize // kubebuilder standard
 }
 
 // +kubebuilder:object:root=true
@@ -120,8 +125,9 @@ type GatewayClassConfig struct {
 // GatewayClassConfigList contains a list of GatewayClassConfig.
 type GatewayClassConfigList struct {
 	metav1.TypeMeta `json:",inline"`
-	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []GatewayClassConfig `json:"items"`
+	metav1.ListMeta `json:"metadata,omitempty"` //nolint:modernize // kubebuilder standard
+
+	Items []GatewayClassConfig `json:"items"`
 }
 
 func init() {
@@ -134,6 +140,7 @@ func (c *GatewayClassConfigSpec) IsCloudflaredEnabled() bool {
 	if c.Cloudflared.Enabled == nil {
 		return true
 	}
+
 	return *c.Cloudflared.Enabled
 }
 
@@ -142,6 +149,7 @@ func (c *GatewayClassConfigSpec) GetCloudflaredReplicas() int32 {
 	if c.Cloudflared.Replicas == 0 {
 		return 1
 	}
+
 	return c.Cloudflared.Replicas
 }
 
@@ -150,6 +158,7 @@ func (c *GatewayClassConfigSpec) GetCloudflaredNamespace() string {
 	if c.Cloudflared.Namespace == "" {
 		return "cloudflare-tunnel-system"
 	}
+
 	return c.Cloudflared.Namespace
 }
 
@@ -158,6 +167,7 @@ func (r *SecretReference) GetAPITokenKey() string {
 	if r.Key == "" {
 		return "api-token"
 	}
+
 	return r.Key
 }
 
@@ -166,5 +176,6 @@ func (r *SecretReference) GetTunnelTokenKey() string {
 	if r.Key == "" {
 		return "tunnel-token"
 	}
+
 	return r.Key
 }

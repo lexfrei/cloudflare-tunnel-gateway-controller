@@ -11,6 +11,6 @@ spec:
   parametersRef:
     group: cf.k8s.lex.la
     kind: GatewayClassConfig
-    name: {{ .Values.gatewayClassConfig.name | default (include "cloudflare-tunnel-gateway-controller.fullname" .) }}
+    name: {{ .Values.gatewayClassConfig.name | default (include "cf-tunnel-gw-ctrl.fullname" .) }}
   {{- end }}
 {{- end }}

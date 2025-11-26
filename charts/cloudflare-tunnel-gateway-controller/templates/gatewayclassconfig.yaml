@@ -2,9 +2,9 @@
 apiVersion: cf.k8s.lex.la/v1alpha1
 kind: GatewayClassConfig
 metadata:
-  name: {{ .Values.gatewayClassConfig.name | default (include "cloudflare-tunnel-gateway-controller.fullname" .) }}
+  name: {{ .Values.gatewayClassConfig.name | default (include "cf-tunnel-gw-ctrl.fullname" .) }}
   labels:
-    {{- include "cloudflare-tunnel-gateway-controller.labels" . | nindent 4 }}
+    {{- include "cf-tunnel-gw-ctrl.labels" . | nindent 4 }}
 spec:
   cloudflareCredentialsSecretRef:
     name: {{ required "gatewayClassConfig.cloudflareCredentialsSecretRef.name is required" .Values.gatewayClassConfig.cloudflareCredentialsSecretRef.name }}
@@ -15,9 +15,9 @@ spec:
     key: {{ .Values.gatewayClassConfig.cloudflareCredentialsSecretRef.key }}
     {{- end }}
   tunnelID: {{ required "gatewayClassConfig.tunnelID is required" .Values.gatewayClassConfig.tunnelID | quote }}
-  {{- if .Values.gatewayClassConfig.tunnelTokenSecretRef }}
+  {{- if .Values.gatewayClassConfig.tunnelTokenSecretRef.name }}
   tunnelTokenSecretRef:
-    name: {{ required "gatewayClassConfig.tunnelTokenSecretRef.name is required when tunnelTokenSecretRef is set" .Values.gatewayClassConfig.tunnelTokenSecretRef.name }}
+    name: {{ .Values.gatewayClassConfig.tunnelTokenSecretRef.name }}
     {{- if .Values.gatewayClassConfig.tunnelTokenSecretRef.namespace }}
     namespace: {{ .Values.gatewayClassConfig.tunnelTokenSecretRef.namespace }}
     {{- end }}

@@ -5,6 +5,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/scheme"
 )
 
+//nolint:gochecknoglobals // kubebuilder-standard scheme registration
 var (
 	// GroupVersion is group version used to register these objects.
 	GroupVersion = schema.GroupVersion{Group: "cf.k8s.lex.la", Version: "v1alpha1"}
