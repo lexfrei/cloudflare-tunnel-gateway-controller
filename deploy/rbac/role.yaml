@@ -66,6 +66,23 @@ rules:
       - update
       - patch
       - delete
+  # GatewayClassConfig CRD
+  - apiGroups:
+      - cf.k8s.lex.la
+    resources:
+      - gatewayclassconfigs
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - cf.k8s.lex.la
+    resources:
+      - gatewayclassconfigs/status
+    verbs:
+      - get
+      - update
+      - patch
   # Helm deployment management (for cloudflared)
   - apiGroups:
       - ""
