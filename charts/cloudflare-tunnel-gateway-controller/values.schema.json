@@ -116,8 +116,7 @@
         },
         "clusterDomain": {
           "type": "string",
-          "description": "Kubernetes cluster domain",
-          "default": "cluster.local"
+          "description": "Kubernetes cluster domain (auto-detected if empty)"
         },
         "logLevel": {
           "type": "string",

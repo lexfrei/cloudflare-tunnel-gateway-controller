@@ -28,7 +28,8 @@ spec:
           args:
             - --account-id=$(CF_ACCOUNT_ID)
             - --tunnel-id=$(CF_TUNNEL_ID)
-            - --cluster-domain=$(CLUSTER_DOMAIN)
+            # cluster-domain is auto-detected from /etc/resolv.conf
+            # To override, add: --cluster-domain=<your-domain> or set CF_CLUSTER_DOMAIN env var
           env:
             - name: CF_ACCOUNT_ID
               valueFrom:
@@ -45,12 +46,6 @@ spec:
                 secretKeyRef:
                   name: cloudflare-tunnel-gateway-controller
                   key: api-token
-            - name: CLUSTER_DOMAIN
-              valueFrom:
-                configMapKeyRef:
-                  name: cloudflare-tunnel-gateway-controller
-                  key: cluster-domain
-                  optional: true
           ports:
             - name: metrics
               containerPort: 8080
@@ -92,7 +87,8 @@ metadata:
 data:
   account-id: "YOUR_ACCOUNT_ID"
   tunnel-id: "YOUR_TUNNEL_ID"
-  cluster-domain: "cluster.local"
+  # cluster-domain is auto-detected; uncomment to override:
+  # cluster-domain: "cluster.local"
 ---
 apiVersion: v1
 kind: Secret

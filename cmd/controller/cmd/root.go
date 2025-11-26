@@ -14,6 +14,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/controller"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/dns"
 )
 
 //nolint:gochecknoglobals // set by SetVersion from main
@@ -113,16 +114,13 @@ func setupLogger() *slog.Logger {
 func runController(_ *cobra.Command, _ []string) error {
 	logger := setupLogger()
 	slog.SetDefault(logger)
-
 	ctrl.SetLogger(logr.FromSlogHandler(logger.Handler()))
 
 	logger.Info("starting cloudflare-tunnel-gateway-controller",
-		"version", version,
-		"gitsha", gitsha,
-	)
+		"version", version, "gitsha", gitsha)
 
 	cfg := controller.Config{
-		ClusterDomain:    viper.GetString("cluster-domain"),
+		ClusterDomain:    resolveClusterDomain(logger),
 		GatewayClassName: viper.GetString("gateway-class-name"),
 		ControllerName:   viper.GetString("controller-name"),
 		MetricsAddr:      viper.GetString("metrics-addr"),
@@ -141,4 +139,34 @@ func runController(_ *cobra.Command, _ []string) error {
 	}
 
 	return nil
+}
+
+// resolveClusterDomain determines the cluster domain to use.
+// User-configured value takes precedence, then auto-detection,
+// finally falls back to default.
+func resolveClusterDomain(logger *slog.Logger) string {
+	// User explicit value takes precedence
+	if configured := viper.GetString("cluster-domain"); configured != "" {
+		logger.Info("using configured cluster domain",
+			"clusterDomain", configured,
+		)
+
+		return configured
+	}
+
+	// Try auto-detection
+	if detected, ok := dns.DetectClusterDomain(); ok {
+		logger.Info("auto-detected cluster domain from /etc/resolv.conf",
+			"clusterDomain", detected,
+		)
+
+		return detected
+	}
+
+	// Final fallback to default
+	logger.Info("using default cluster domain (auto-detection failed)",
+		"clusterDomain", dns.DefaultClusterDomain,
+	)
+
+	return dns.DefaultClusterDomain
 }
