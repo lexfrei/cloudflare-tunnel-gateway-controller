@@ -109,47 +109,27 @@ spec:
 
 ## Multi-Tunnel Setup
 
-To use multiple Cloudflare Tunnels in the same cluster (e.g., for different environments or accounts), deploy multiple controller instances with different GatewayClass names:
+To use multiple Cloudflare Tunnels in the same cluster, deploy multiple instances of the controller with different GatewayClass names:
 
 ```bash
-# First tunnel (production)
-helm install cf-tunnel-prod \
+# First tunnel for production apps
+helm install controller-prod \
   oci://ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller \
-  --namespace cloudflare-prod --create-namespace \
-  --values prod-values.yaml
+  --namespace cloudflare-system \
+  --set controller.gatewayClassName=cloudflare-tunnel-prod \
+  --set cloudflare.tunnelId="PROD_TUNNEL_ID" \
+  --set cloudflare.apiToken="PROD_API_TOKEN"
 
-# Second tunnel (staging)
-helm install cf-tunnel-staging \
+# Second tunnel for staging apps
+helm install controller-staging \
   oci://ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller \
-  --namespace cloudflare-staging --create-namespace \
-  --values staging-values.yaml
+  --namespace cloudflare-system \
+  --set controller.gatewayClassName=cloudflare-tunnel-staging \
+  --set cloudflare.tunnelId="STAGING_TUNNEL_ID" \
+  --set cloudflare.apiToken="STAGING_API_TOKEN"
 ```
 
-Each instance requires unique:
-
-- `controller.gatewayClassName` (e.g., `cloudflare-tunnel-prod`, `cloudflare-tunnel-staging`)
-- `controller.controllerName` (e.g., `cf.k8s.lex.la/tunnel-prod`, `cf.k8s.lex.la/tunnel-staging`)
-- `gatewayClassConfig.tunnelID` - different Cloudflare Tunnel ID
-- `gatewayClassConfig.cloudflareCredentialsSecretRef.name` - credentials for respective account
-
-Example values file for multi-tunnel:
-
-```yaml
-controller:
-  gatewayClassName: cloudflare-tunnel-prod
-  controllerName: cf.k8s.lex.la/tunnel-prod
-
-gatewayClass:
-  create: true
-
-gatewayClassConfig:
-  create: true
-  tunnelID: "prod-tunnel-uuid"
-  cloudflareCredentialsSecretRef:
-    name: cf-credentials-prod
-  tunnelTokenSecretRef:
-    name: cf-tunnel-token-prod
-```
+Each controller instance manages its own GatewayClass and associated Gateways/HTTPRoutes independently.
 
 ## Values
 
