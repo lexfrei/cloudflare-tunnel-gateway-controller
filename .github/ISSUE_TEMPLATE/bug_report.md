@@ -29,7 +29,7 @@ What actually happened.
 
 - **Controller Version**: [e.g., v0.1.0]
 - **Kubernetes Version**: [e.g., v1.31.0]
-- **Gateway API Version**: [e.g., v1.2.0]
+- **Gateway API Version**: [e.g., v1.4.0]
 - **cloudflared Version**: [e.g., 2024.11.0]
 - **Deployment Method**: [Helm/Manual/Other]
 
