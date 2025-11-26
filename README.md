@@ -29,7 +29,7 @@ helm registry login ghcr.io
 
 # 3. Install the controller
 helm install cloudflare-tunnel-gateway-controller \
-  oci://ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller/chart \
+  oci://ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller-chart \
   --namespace cloudflare-tunnel-system \
   --create-namespace \
   --set config.tunnelID=YOUR_TUNNEL_ID \
@@ -95,7 +95,7 @@ The **Account Settings: Read** permission is required for auto-detecting the Acc
 
 ```bash
 helm install cloudflare-tunnel-gateway-controller \
-  oci://ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller/chart \
+  oci://ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller-chart \
   --namespace cloudflare-tunnel-system \
   --create-namespace \
   --values values.yaml

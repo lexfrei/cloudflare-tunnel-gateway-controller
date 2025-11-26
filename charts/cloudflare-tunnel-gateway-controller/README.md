@@ -38,7 +38,7 @@ Kubernetes: `>=1.25.0-0`
 
 ```bash
 helm install cloudflare-tunnel-gateway-controller \
-  oci://ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller/chart \
+  oci://ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller-chart \
   --version 0.1.0 \
   --namespace cloudflare-tunnel-system \
   --create-namespace \
@@ -114,7 +114,7 @@ To use multiple Cloudflare Tunnels in the same cluster, deploy multiple instance
 ```bash
 # First tunnel for production apps
 helm install controller-prod \
-  oci://ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller/chart \
+  oci://ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller-chart \
   --namespace cloudflare-system \
   --set controller.gatewayClassName=cloudflare-tunnel-prod \
   --set cloudflare.tunnelId="PROD_TUNNEL_ID" \
@@ -122,7 +122,7 @@ helm install controller-prod \
 
 # Second tunnel for staging apps
 helm install controller-staging \
-  oci://ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller/chart \
+  oci://ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller-chart \
   --namespace cloudflare-system \
   --set controller.gatewayClassName=cloudflare-tunnel-staging \
   --set cloudflare.tunnelId="STAGING_TUNNEL_ID" \
