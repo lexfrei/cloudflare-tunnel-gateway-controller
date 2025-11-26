@@ -124,7 +124,7 @@ Edit `deploy/controller/deployment.yaml` and set your values in ConfigMap and Se
 - `tunnel-id`: Your Cloudflare tunnel ID
 - `api-token`: Your Cloudflare API token
 - `account-id`: (optional) Your Cloudflare account ID - auto-detected if token has access to single account
-- `cluster-domain`: Your cluster domain (default: `cluster.local`)
+- `cluster-domain`: (optional) Your cluster domain - auto-detected from `/etc/resolv.conf`, fallback: `cluster.local`
 
 #### 4. Deploy the controller
 
@@ -228,7 +228,7 @@ spec:
 | `--account-id` | `CF_ACCOUNT_ID` | (auto-detect) | Cloudflare account ID |
 | `--tunnel-id` | `CF_TUNNEL_ID` | | Cloudflare tunnel ID |
 | `--api-token` | `CF_API_TOKEN` | | Cloudflare API token |
-| `--cluster-domain` | `CF_CLUSTER_DOMAIN` | `cluster.local` | Kubernetes cluster domain |
+| `--cluster-domain` | `CF_CLUSTER_DOMAIN` | (auto-detect) | Kubernetes cluster domain (fallback: `cluster.local`) |
 | `--gateway-class-name` | `CF_GATEWAY_CLASS_NAME` | `cloudflare-tunnel` | GatewayClass name to watch |
 | `--controller-name` | `CF_CONTROLLER_NAME` | `cf.k8s.lex.la/tunnel-controller` | Controller name |
 | `--metrics-addr` | `CF_METRICS_ADDR` | `:8080` | Metrics endpoint address |
