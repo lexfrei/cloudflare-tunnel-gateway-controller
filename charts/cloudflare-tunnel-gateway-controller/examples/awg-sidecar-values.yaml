@@ -2,10 +2,20 @@
 # Route traffic through AmneziaWG VPN tunnel
 #
 # Prerequisites:
-#   Create a secret with AWG configuration:
-#   kubectl create secret generic awg-config \
-#     --namespace cloudflare-tunnel-system \
-#     --from-file=wg0.conf=/path/to/your/awg.conf
+#   1. Create a secret with AWG configuration:
+#      kubectl create secret generic awg-config \
+#        --namespace cloudflare-tunnel-system \
+#        --from-file=wg0.conf=/path/to/your/awg.conf
+#
+#   2. Create a secret with the API token:
+#      kubectl create secret generic cloudflare-credentials \
+#        --namespace cloudflare-tunnel-system \
+#        --from-literal=api-token="your-api-token"
+#
+#   3. Create a secret with the tunnel token:
+#      kubectl create secret generic cloudflare-tunnel-token \
+#        --namespace cloudflare-tunnel-system \
+#        --from-literal=tunnel-token="your-tunnel-token"
 #
 # IMPORTANT: AWG sidecar requires elevated privileges (NET_ADMIN capability)
 # to manage network interfaces. This configuration relaxes security defaults.
@@ -17,19 +27,33 @@
 #     --create-namespace \
 #     --values awg-sidecar-values.yaml
 
-cloudflare:
+gatewayClassConfig:
+  create: true
+
   # Cloudflare Tunnel ID (required)
-  tunnelId: "your-tunnel-id"
+  tunnelID: "your-tunnel-id"
 
-  # Cloudflare API token (required)
-  apiToken: "your-api-token"
+  # Reference to Secret containing Cloudflare API credentials
+  cloudflareCredentialsSecretRef:
+    name: "cloudflare-credentials"
 
-awg:
-  # Secret name containing AWG configuration (enables AWG sidecar)
-  secretName: "awg-config"
+  # Reference to Secret containing tunnel token
+  tunnelTokenSecretRef:
+    name: "cloudflare-tunnel-token"
 
-  # AWG interface name (must be unique to avoid conflicts)
-  # interfaceName: "awg-cfd-gw-ctrl0"
+  # Cloudflared deployment configuration
+  cloudflared:
+    enabled: true
+    replicas: 1
+    namespace: "cloudflare-tunnel-system"
+
+    # AWG sidecar configuration
+    awg:
+      # Secret name containing AWG configuration (enables AWG sidecar)
+      secretName: "awg-config"
+      # AWG interface name prefix (kernel auto-numbers: prefix0, prefix1, etc.)
+      # Use different prefixes for different GatewayClassConfigs to avoid conflicts
+      interfacePrefix: "awg-cfd"
 
 # Required security context for AWG - needs NET_ADMIN capability
 podSecurityContext:

@@ -1,0 +1,168 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: gatewayclassconfigs.cf.k8s.lex.la
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.14.0
+spec:
+  group: cf.k8s.lex.la
+  names:
+    kind: GatewayClassConfig
+    listKind: GatewayClassConfigList
+    plural: gatewayclassconfigs
+    singular: gatewayclassconfig
+    shortNames:
+      - gcconfig
+  scope: Cluster
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      additionalPrinterColumns:
+        - name: Tunnel ID
+          type: string
+          jsonPath: .spec.tunnelID
+        - name: Managed
+          type: boolean
+          jsonPath: .spec.cloudflared.enabled
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
+      schema:
+        openAPIV3Schema:
+          type: object
+          description: GatewayClassConfig is the Schema for the gatewayclassconfigs API.
+          properties:
+            apiVersion:
+              type: string
+            kind:
+              type: string
+            metadata:
+              type: object
+            spec:
+              type: object
+              required:
+                - cloudflareCredentialsSecretRef
+                - tunnelID
+              x-kubernetes-validations:
+                - rule: "(has(self.cloudflared) && has(self.cloudflared.enabled) && !self.cloudflared.enabled) || has(self.tunnelTokenSecretRef)"
+                  message: "tunnelTokenSecretRef is required when cloudflared.enabled is true (default)"
+              properties:
+                cloudflareCredentialsSecretRef:
+                  type: object
+                  description: Reference to Secret containing Cloudflare API credentials.
+                  required:
+                    - name
+                  properties:
+                    name:
+                      type: string
+                      minLength: 1
+                    namespace:
+                      type: string
+                    key:
+                      type: string
+                accountId:
+                  type: string
+                  description: Cloudflare account ID. Optional - auto-detected if not set.
+                tunnelID:
+                  type: string
+                  description: Cloudflare Tunnel UUID.
+                  pattern: ^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$
+                tunnelTokenSecretRef:
+                  type: object
+                  description: Reference to Secret containing tunnel token.
+                  required:
+                    - name
+                  properties:
+                    name:
+                      type: string
+                      minLength: 1
+                    namespace:
+                      type: string
+                    key:
+                      type: string
+                cloudflared:
+                  type: object
+                  description: Cloudflared deployment configuration.
+                  properties:
+                    enabled:
+                      type: boolean
+                      default: true
+                      description: Enable cloudflared deployment management.
+                    replicas:
+                      type: integer
+                      format: int32
+                      minimum: 1
+                      default: 1
+                      description: Number of cloudflared replicas.
+                    namespace:
+                      type: string
+                      default: cloudflare-tunnel-system
+                      description: Namespace for cloudflared deployment.
+                    protocol:
+                      type: string
+                      enum:
+                        - ""
+                        - auto
+                        - quic
+                        - http2
+                      description: Transport protocol for cloudflared.
+                    awg:
+                      type: object
+                      description: AmneziaWG sidecar configuration.
+                      required:
+                        - secretName
+                      properties:
+                        secretName:
+                          type: string
+                          minLength: 1
+                          description: Secret containing AWG configuration.
+                        interfacePrefix:
+                          type: string
+                          default: awg-cfd
+                          description: AWG interface name prefix (kernel auto-numbers).
+            status:
+              type: object
+              properties:
+                conditions:
+                  type: array
+                  items:
+                    type: object
+                    required:
+                      - lastTransitionTime
+                      - message
+                      - reason
+                      - status
+                      - type
+                    properties:
+                      lastTransitionTime:
+                        type: string
+                        format: date-time
+                      message:
+                        type: string
+                        maxLength: 32768
+                      observedGeneration:
+                        type: integer
+                        format: int64
+                        minimum: 0
+                      reason:
+                        type: string
+                        maxLength: 1024
+                        minLength: 1
+                        pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      status:
+                        type: string
+                        enum:
+                          - "True"
+                          - "False"
+                          - Unknown
+                      type:
+                        type: string
+                        maxLength: 316
+                        pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                  x-kubernetes-list-map-keys:
+                    - type
+                  x-kubernetes-list-type: map
+      subresources:
+        status: {}

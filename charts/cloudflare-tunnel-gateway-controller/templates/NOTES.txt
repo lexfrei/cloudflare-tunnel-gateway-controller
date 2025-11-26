@@ -55,14 +55,11 @@ App Version: {{ .Chart.AppVersion }}
 
 ⚠️  Important Notes:
 
-{{- if not .Values.cloudflare.apiTokenSecretName }}
-{{- if .Values.cloudflare.apiToken }}
+{{- if .Values.gatewayClassConfig.create }}
 
-  🔐 Security Warning: API token is stored in a Kubernetes Secret created by Helm.
-     For production, consider using External Secrets Operator:
-     - See examples/external-secrets-operator.yaml
-     - Set cloudflare.apiTokenSecretName to use an external secret
-{{- end }}
+  📋 GatewayClassConfig: Configuration is managed via GatewayClassConfig CRD.
+     Ensure your Cloudflare credentials Secret exists:
+       kubectl get secret {{ .Values.gatewayClassConfig.cloudflareCredentialsSecretRef.name }} -n {{ .Release.Namespace }}
 {{- end }}
 
 {{- if and (gt (.Values.replicaCount | int) 1) (not .Values.podDisruptionBudget.enabled) }}
@@ -94,10 +91,11 @@ App Version: {{ .Chart.AppVersion }}
                    name: monitoring
 {{- end }}
 
-{{- if .Values.awg.secretName }}
+{{- if .Values.gatewayClassConfig.cloudflared.awg.secretName }}
 
-  🔐 AmneziaWG: AWG sidecar is enabled with interface {{ .Values.awg.interfaceName }}.
-     WARNING: If running multiple instances on the same node, ensure unique interfaceNames.
+  🔐 AmneziaWG: AWG sidecar is enabled with interface prefix {{ .Values.gatewayClassConfig.cloudflared.awg.interfacePrefix }}.
+     Interface names are auto-generated using kernel numbering (e.g., prefix0, prefix1).
+     Consider using pod anti-affinity to prevent multiple cloudflared pods on the same node.
 {{- end }}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

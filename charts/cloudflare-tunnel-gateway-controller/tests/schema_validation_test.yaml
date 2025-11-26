@@ -1,86 +1,145 @@
 suite: test schema validation
 templates:
   - deployment.yaml
-  - secret.yaml
+  - gatewayclassconfig.yaml
 tests:
   # Note: These tests verify that schema validation works correctly.
   # Schema validation happens BEFORE template rendering in Helm,
   # so invalid values will be caught by values.schema.json.
 
-  - it: should accept valid UUID tunnelId
+  - it: should create deployment with default values
     set:
-      cloudflare:
-        tunnelId: "550e8400-e29b-41d4-a716-446655440000"
-        apiToken: "test-token"
+      gatewayClassConfig:
+        create: false
     asserts:
-      - template: secret.yaml
-        isKind:
-          of: Secret
-
-  - it: should accept valid alphanumeric tunnelId with hyphens
-    set:
-      cloudflare:
-        tunnelId: "abc-123-def-456"
-        apiToken: "test-token"
-    asserts:
-      - template: secret.yaml
-        isKind:
-          of: Secret
-
-  - it: should accept tunnelId with mixed case
-    set:
-      cloudflare:
-        tunnelId: "AbC-123-DeF-456"
-        apiToken: "test-token"
-    asserts:
-      - template: secret.yaml
-        isKind:
-          of: Secret
-
-  - it: should succeed with apiTokenSecretName instead of apiToken
-    set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiTokenSecretName: "external-secret"
-    asserts:
-      - template: secret.yaml
-        hasDocuments:
-          count: 0
       - template: deployment.yaml
         isKind:
           of: Deployment
 
-  - it: should prioritize apiTokenSecretName over apiToken when both provided
+  - it: should create gatewayclassconfig with valid tunnelID
     set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "should-be-ignored"
-        apiTokenSecretName: "external-secret"
+      gatewayClassConfig:
+        create: true
+        tunnelID: "550e8400-e29b-41d4-a716-446655440000"
+        cloudflareCredentialsSecretRef:
+          name: "cf-credentials"
     asserts:
-      - template: secret.yaml
+      - template: gatewayclassconfig.yaml
+        isKind:
+          of: GatewayClassConfig
+      - template: gatewayclassconfig.yaml
+        equal:
+          path: spec.tunnelID
+          value: "550e8400-e29b-41d4-a716-446655440000"
+
+  - it: should accept alphanumeric tunnelID with hyphens
+    set:
+      gatewayClassConfig:
+        create: true
+        tunnelID: "abc-123-def-456"
+        cloudflareCredentialsSecretRef:
+          name: "cf-credentials"
+    asserts:
+      - template: gatewayclassconfig.yaml
+        equal:
+          path: spec.tunnelID
+          value: "abc-123-def-456"
+
+  - it: should accept tunnelID with mixed case
+    set:
+      gatewayClassConfig:
+        create: true
+        tunnelID: "AbC-123-DeF-456"
+        cloudflareCredentialsSecretRef:
+          name: "cf-credentials"
+    asserts:
+      - template: gatewayclassconfig.yaml
+        equal:
+          path: spec.tunnelID
+          value: "AbC-123-DeF-456"
+
+  - it: should accept numeric-only tunnel IDs
+    set:
+      gatewayClassConfig:
+        create: true
+        tunnelID: "1234567890"
+        cloudflareCredentialsSecretRef:
+          name: "cf-credentials"
+    asserts:
+      - template: gatewayclassconfig.yaml
+        equal:
+          path: spec.tunnelID
+          value: "1234567890"
+
+  - it: should accept single character tunnel ID
+    set:
+      gatewayClassConfig:
+        create: true
+        tunnelID: "a"
+        cloudflareCredentialsSecretRef:
+          name: "cf-credentials"
+    asserts:
+      - template: gatewayclassconfig.yaml
+        equal:
+          path: spec.tunnelID
+          value: "a"
+
+  - it: should set cloudflared replicas
+    set:
+      gatewayClassConfig:
+        create: true
+        tunnelID: "test-tunnel"
+        cloudflareCredentialsSecretRef:
+          name: "cf-credentials"
+        cloudflared:
+          replicas: 3
+    asserts:
+      - template: gatewayclassconfig.yaml
+        equal:
+          path: spec.cloudflared.replicas
+          value: 3
+
+  - it: should set cloudflared protocol
+    set:
+      gatewayClassConfig:
+        create: true
+        tunnelID: "test-tunnel"
+        cloudflareCredentialsSecretRef:
+          name: "cf-credentials"
+        cloudflared:
+          protocol: "quic"
+    asserts:
+      - template: gatewayclassconfig.yaml
+        equal:
+          path: spec.cloudflared.protocol
+          value: "quic"
+
+  - it: should set AWG configuration
+    set:
+      gatewayClassConfig:
+        create: true
+        tunnelID: "test-tunnel"
+        cloudflareCredentialsSecretRef:
+          name: "cf-credentials"
+        cloudflared:
+          awg:
+            secretName: "awg-config"
+            interfacePrefix: "custom-awg"
+    asserts:
+      - template: gatewayclassconfig.yaml
+        equal:
+          path: spec.cloudflared.awg.secretName
+          value: "awg-config"
+      - template: gatewayclassconfig.yaml
+        equal:
+          path: spec.cloudflared.awg.interfacePrefix
+          value: "custom-awg"
+
+  - it: should not create gatewayclassconfig when disabled
+    set:
+      gatewayClassConfig:
+        create: false
+    asserts:
+      - template: gatewayclassconfig.yaml
         hasDocuments:
           count: 0
-      - template: deployment.yaml
-        equal:
-          path: spec.template.spec.containers[0].env[0].valueFrom.secretKeyRef.name
-          value: "external-secret"
-
-  - it: should work with numeric-only tunnel IDs
-    set:
-      cloudflare:
-        tunnelId: "1234567890"
-        apiToken: "test-token"
-    asserts:
-      - template: secret.yaml
-        isKind:
-          of: Secret
-
-  - it: should work with single character tunnel ID
-    set:
-      cloudflare:
-        tunnelId: "a"
-        apiToken: "test-token"
-    asserts:
-      - template: secret.yaml
-        isKind:
-          of: Secret

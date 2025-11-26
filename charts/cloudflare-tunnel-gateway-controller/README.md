@@ -107,19 +107,35 @@ spec:
           port: 80
 ```
 
+## Multi-Tunnel Setup
+
+To use multiple Cloudflare Tunnels in the same cluster, deploy multiple instances of the controller with different GatewayClass names:
+
+```bash
+# First tunnel for production apps
+helm install controller-prod \
+  oci://ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller \
+  --namespace cloudflare-system \
+  --set controller.gatewayClassName=cloudflare-tunnel-prod \
+  --set cloudflare.tunnelId="PROD_TUNNEL_ID" \
+  --set cloudflare.apiToken="PROD_API_TOKEN"
+
+# Second tunnel for staging apps
+helm install controller-staging \
+  oci://ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller \
+  --namespace cloudflare-system \
+  --set controller.gatewayClassName=cloudflare-tunnel-staging \
+  --set cloudflare.tunnelId="STAGING_TUNNEL_ID" \
+  --set cloudflare.apiToken="STAGING_API_TOKEN"
+```
+
+Each controller instance manages its own GatewayClass and associated Gateways/HTTPRoutes independently.
+
 ## Values
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | affinity | object | `{}` | Affinity rules for pod scheduling |
-| awg | object | `{"interfaceName":"awg-cfd-gw-ctrl0","secretName":""}` | AmneziaWG sidecar configuration for traffic routing through VPN |
-| awg.interfaceName | string | `"awg-cfd-gw-ctrl0"` | AWG interface name (unique to avoid conflicts) WARNING: If running multiple instances with AWG on the same node, each instance MUST use a unique interfaceName to prevent conflicts. Conflicting interface names will cause pod startup failures. Example: awg-instance-1, awg-instance-2, etc. |
-| awg.secretName | string | `""` | Secret name containing AWG config (enables AWG sidecar) |
-| cloudflare | object | `{"accountId":"","apiToken":"","apiTokenSecretName":"","tunnelId":""}` | Cloudflare configuration |
-| cloudflare.accountId | string | `""` | Cloudflare Account ID (auto-detected if not specified) |
-| cloudflare.apiToken | string | `""` | Cloudflare API token with Tunnel permissions (REQUIRED unless apiTokenSecretName is set) Required scopes: Account.Cloudflare Tunnel:Edit, Zone.DNS:Edit Leave empty if using apiTokenSecretName for external secret |
-| cloudflare.apiTokenSecretName | string | `""` | Existing secret name containing API token (key: api-token) If set, apiToken value is ignored Use this for external secret management (e.g., External Secrets Operator) |
-| cloudflare.tunnelId | string | `""` | Cloudflare Tunnel ID (REQUIRED at install time - must not be empty) Get from: Zero Trust Dashboard > Networks > Tunnels Example: "550e8400-e29b-41d4-a716-446655440000" or "my-tunnel-abc-123" |
 | controller | object | `{"clusterDomain":"","controllerName":"cf.k8s.lex.la/tunnel-controller","gatewayClassName":"cloudflare-tunnel","logFormat":"json","logLevel":"info"}` | Controller configuration |
 | controller.clusterDomain | string | auto-detected from /etc/resolv.conf, fallback: cluster.local | Kubernetes cluster domain for service DNS resolution |
 | controller.controllerName | string | `"cf.k8s.lex.la/tunnel-controller"` | Controller name for GatewayClass (must be unique in cluster) |
@@ -131,6 +147,26 @@ spec:
 | fullnameOverride | string | `""` | Override the full release name |
 | gatewayClass | object | `{"create":true}` | GatewayClass configuration |
 | gatewayClass.create | bool | `true` | Create GatewayClass resource |
+| gatewayClassConfig | object | `{"cloudflareCredentialsSecretRef":{"key":"","name":"","namespace":""},"cloudflared":{"awg":{"interfacePrefix":"awg-cfd","secretName":""},"enabled":true,"namespace":"cloudflare-tunnel-system","protocol":"","replicas":1},"create":false,"name":"","tunnelID":"","tunnelTokenSecretRef":{"key":"","name":"","namespace":""}}` | GatewayClassConfig configuration This is the main configuration section for Cloudflare Tunnel settings. All tunnel-specific settings are now in GatewayClassConfig CRD. |
+| gatewayClassConfig.cloudflareCredentialsSecretRef | object | `{"key":"","name":"","namespace":""}` | Reference to Secret containing Cloudflare API credentials (REQUIRED) The Secret must contain an "api-token" key with a valid Cloudflare API token. Optionally, it can contain an "account-id" key; if not present, account ID is auto-detected. |
+| gatewayClassConfig.cloudflareCredentialsSecretRef.key | string | `""` | Key in the Secret containing the API token (defaults to "api-token") |
+| gatewayClassConfig.cloudflareCredentialsSecretRef.name | string | `""` | Name of the Secret containing API credentials |
+| gatewayClassConfig.cloudflareCredentialsSecretRef.namespace | string | `""` | Namespace of the Secret (defaults to release namespace) |
+| gatewayClassConfig.cloudflared | object | `{"awg":{"interfacePrefix":"awg-cfd","secretName":""},"enabled":true,"namespace":"cloudflare-tunnel-system","protocol":"","replicas":1}` | Cloudflared deployment configuration |
+| gatewayClassConfig.cloudflared.awg | object | `{"interfacePrefix":"awg-cfd","secretName":""}` | AmneziaWG sidecar configuration |
+| gatewayClassConfig.cloudflared.awg.interfacePrefix | string | `"awg-cfd"` | AWG interface name prefix (kernel auto-numbers: prefix0, prefix1, etc.) |
+| gatewayClassConfig.cloudflared.awg.secretName | string | `""` | Secret name containing AWG config (enables AWG sidecar) |
+| gatewayClassConfig.cloudflared.enabled | bool | `true` | Enable cloudflared deployment management (default: true) |
+| gatewayClassConfig.cloudflared.namespace | string | `"cloudflare-tunnel-system"` | Namespace for cloudflared deployment |
+| gatewayClassConfig.cloudflared.protocol | string | `""` | Transport protocol (auto, quic, http2) |
+| gatewayClassConfig.cloudflared.replicas | int | `1` | Number of cloudflared replicas |
+| gatewayClassConfig.create | bool | `false` | Create GatewayClassConfig resource |
+| gatewayClassConfig.name | string | `""` | Name of the GatewayClassConfig (defaults to release fullname) |
+| gatewayClassConfig.tunnelID | string | `""` | Cloudflare Tunnel ID (REQUIRED) Get from: Zero Trust Dashboard > Networks > Tunnels Example: "550e8400-e29b-41d4-a716-446655440000" |
+| gatewayClassConfig.tunnelTokenSecretRef | object | `{"key":"","name":"","namespace":""}` | Reference to Secret containing tunnel token (REQUIRED when cloudflared.enabled is true) The Secret must contain a "tunnel-token" key. |
+| gatewayClassConfig.tunnelTokenSecretRef.key | string | `""` | Key in the Secret containing the tunnel token (defaults to "tunnel-token") |
+| gatewayClassConfig.tunnelTokenSecretRef.name | string | `""` | Name of the Secret containing tunnel token |
+| gatewayClassConfig.tunnelTokenSecretRef.namespace | string | `""` | Namespace of the Secret (defaults to release namespace) |
 | healthProbes | object | `{"livenessProbe":{"enabled":true,"failureThreshold":3,"initialDelaySeconds":15,"periodSeconds":20,"timeoutSeconds":5},"readinessProbe":{"enabled":true,"failureThreshold":3,"initialDelaySeconds":5,"periodSeconds":10,"timeoutSeconds":3},"startupProbe":{"enabled":true,"failureThreshold":12,"initialDelaySeconds":0,"periodSeconds":5,"timeoutSeconds":3}}` | Health probes configuration |
 | healthProbes.livenessProbe | object | `{"enabled":true,"failureThreshold":3,"initialDelaySeconds":15,"periodSeconds":20,"timeoutSeconds":5}` | Liveness probe configuration Restarts container if probe fails |
 | healthProbes.readinessProbe | object | `{"enabled":true,"failureThreshold":3,"initialDelaySeconds":5,"periodSeconds":10,"timeoutSeconds":3}` | Readiness probe configuration Removes pod from service endpoints if probe fails |
@@ -144,12 +180,6 @@ spec:
 | leaderElection.enabled | bool | `false` | Enable leader election (required for running multiple replicas) |
 | leaderElection.leaseName | string | `"cloudflare-tunnel-gateway-controller-leader"` | Name of the leader election lease |
 | leaderElection.namespace | string | `""` | Namespace for leader election lease (defaults to release namespace) |
-| manageCloudflared | object | `{"enabled":false,"namespace":"cloudflare-tunnel-system","protocol":"","tunnelToken":"","tunnelTokenSecretName":""}` | Cloudflared deployment management via Helm |
-| manageCloudflared.enabled | bool | `false` | Deploy and manage cloudflared via Helm |
-| manageCloudflared.namespace | string | `"cloudflare-tunnel-system"` | Namespace for cloudflared deployment |
-| manageCloudflared.protocol | string | `""` | Transport protocol (auto, quic, http2) |
-| manageCloudflared.tunnelToken | string | `""` | Tunnel token for remote-managed mode Get from: Zero Trust Dashboard > Networks > Tunnels > Configure |
-| manageCloudflared.tunnelTokenSecretName | string | `""` | Existing secret name containing tunnel token (key: tunnel-token) |
 | nameOverride | string | `""` | Override the chart name |
 | networkPolicy | object | `{"cloudflareIpRanges":{"ipv4":["173.245.48.0/20","103.21.244.0/22","103.22.200.0/22","103.31.4.0/22","141.101.64.0/18","108.162.192.0/18","190.93.240.0/20","188.114.96.0/20","197.234.240.0/22","198.41.128.0/17","162.158.0.0/15","104.16.0.0/13","104.24.0.0/14","172.64.0.0/13","131.0.72.0/22"],"ipv6":["2606:4700::/32","2803:f800::/32","2405:b500::/32","2405:8100::/32","2a06:98c0::/29","2c0f:f248::/32"]},"enabled":false,"ingress":{"from":[]}}` | NetworkPolicy configuration |
 | networkPolicy.cloudflareIpRanges | object | `{"ipv4":["173.245.48.0/20","103.21.244.0/22","103.22.200.0/22","103.31.4.0/22","141.101.64.0/18","108.162.192.0/18","190.93.240.0/20","188.114.96.0/20","197.234.240.0/22","198.41.128.0/17","162.158.0.0/15","104.16.0.0/13","104.24.0.0/14","172.64.0.0/13","131.0.72.0/22"],"ipv6":["2606:4700::/32","2803:f800::/32","2405:b500::/32","2405:8100::/32","2a06:98c0::/29","2c0f:f248::/32"]}` | Cloudflare IP ranges for egress NetworkPolicy Source: https://www.cloudflare.com/ips/ Last updated: 2025-11-25 To update: curl https://www.cloudflare.com/ips-v4 && curl https://www.cloudflare.com/ips-v6 |

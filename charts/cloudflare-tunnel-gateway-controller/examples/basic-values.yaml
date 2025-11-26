@@ -1,6 +1,17 @@
 # Basic installation example
 # Minimal configuration for cloudflare-tunnel-gateway-controller
 #
+# Prerequisites:
+#   1. Create a secret with the API token:
+#      kubectl create secret generic cloudflare-credentials \
+#        --namespace cloudflare-tunnel-system \
+#        --from-literal=api-token="your-api-token"
+#
+#   2. Create a secret with the tunnel token (when cloudflared management is enabled):
+#      kubectl create secret generic cloudflare-tunnel-token \
+#        --namespace cloudflare-tunnel-system \
+#        --from-literal=tunnel-token="your-tunnel-token"
+#
 # Usage:
 #   helm install cloudflare-tunnel-gateway-controller \
 #     oci://ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller \
@@ -8,11 +19,29 @@
 #     --create-namespace \
 #     --values basic-values.yaml
 
-cloudflare:
+gatewayClassConfig:
+  # Create the GatewayClassConfig resource
+  create: true
+
   # Cloudflare Tunnel ID (required)
   # Get from: Zero Trust Dashboard > Networks > Tunnels
-  tunnelId: "your-tunnel-id"
+  tunnelID: "your-tunnel-id"
 
-  # Cloudflare API token with Tunnel permissions (required)
-  # Required scopes: Account.Cloudflare Tunnel:Edit, Zone.DNS:Edit
-  apiToken: "your-api-token"
+  # Reference to Secret containing Cloudflare API credentials
+  # Secret must have key: api-token
+  cloudflareCredentialsSecretRef:
+    name: "cloudflare-credentials"
+
+  # Reference to Secret containing tunnel token (required when cloudflared.enabled is true)
+  # Secret must have key: tunnel-token
+  tunnelTokenSecretRef:
+    name: "cloudflare-tunnel-token"
+
+  # Cloudflared deployment configuration
+  cloudflared:
+    # Enable cloudflared deployment management (default: true)
+    enabled: true
+    # Number of cloudflared replicas
+    replicas: 1
+    # Namespace for cloudflared deployment
+    namespace: "cloudflare-tunnel-system"

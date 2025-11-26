@@ -34,7 +34,11 @@ var rootCmd = &cobra.Command{
 	Short: "Kubernetes Gateway API controller for Cloudflare Tunnel",
 	Long: `A Kubernetes controller that implements the Gateway API for Cloudflare Tunnel.
 It watches Gateway and HTTPRoute resources and configures Cloudflare Tunnel
-ingress rules accordingly.`,
+ingress rules accordingly.
+
+Configuration is read from GatewayClassConfig CRD referenced by GatewayClass.
+Cloudflare credentials and tunnel settings are stored in Kubernetes Secrets
+and referenced from the GatewayClassConfig resource.`,
 	RunE:          runController,
 	SilenceUsage:  true,
 	SilenceErrors: true,
@@ -46,9 +50,6 @@ func init() {
 	rootCmd.PersistentFlags().String("log-level", "info", "Log level (debug, info, warn, error)")
 	rootCmd.PersistentFlags().String("log-format", "json", "Log format (json, text)")
 
-	rootCmd.Flags().String("account-id", "", "Cloudflare account ID")
-	rootCmd.Flags().String("tunnel-id", "", "Cloudflare tunnel ID")
-	rootCmd.Flags().String("api-token", "", "Cloudflare API token (or use CF_API_TOKEN env var)")
 	rootCmd.Flags().String("cluster-domain", "cluster.local", "Kubernetes cluster domain")
 	rootCmd.Flags().String("gateway-class-name", "cloudflare-tunnel", "GatewayClass name to watch")
 	rootCmd.Flags().String("controller-name", "cf.k8s.lex.la/tunnel-controller", "Controller name for GatewayClass")
@@ -59,14 +60,6 @@ func init() {
 	rootCmd.Flags().Bool("leader-elect", false, "Enable leader election for high availability")
 	rootCmd.Flags().String("leader-election-namespace", "", "Namespace for leader election lease (defaults to controller namespace)")
 	rootCmd.Flags().String("leader-election-name", "cloudflare-tunnel-gateway-controller-leader", "Name of the leader election lease")
-
-	// Cloudflared Helm deployment flags
-	rootCmd.Flags().Bool("manage-cloudflared", false, "Deploy and manage cloudflared via Helm")
-	rootCmd.Flags().String("tunnel-token", "", "Cloudflare tunnel token for remote-managed mode")
-	rootCmd.Flags().String("cloudflared-namespace", "cloudflare-tunnel-system", "Namespace for cloudflared deployment")
-	rootCmd.Flags().String("cloudflared-protocol", "", "Transport protocol for cloudflared (auto, quic, http2)")
-	rootCmd.Flags().String("awg-secret-name", "", "Secret name containing AWG config for sidecar")
-	rootCmd.Flags().String("awg-interface-name", "", "AWG interface name (must match config file name without .conf)")
 
 	_ = viper.BindPFlags(rootCmd.Flags())
 	_ = viper.BindPFlags(rootCmd.PersistentFlags())
@@ -85,8 +78,6 @@ func initConfig() {
 	viper.SetDefault("log-format", "json")
 	viper.SetDefault("leader-elect", false)
 	viper.SetDefault("leader-election-name", "cloudflare-tunnel-gateway-controller-leader")
-	viper.SetDefault("manage-cloudflared", false)
-	viper.SetDefault("cloudflared-namespace", "cloudflare-tunnel-system")
 }
 
 func Execute() error {
@@ -128,58 +119,26 @@ func runController(_ *cobra.Command, _ []string) error {
 	logger.Info("starting cloudflare-tunnel-gateway-controller",
 		"version", version, "gitsha", gitsha)
 
-	cfg, err := buildControllerConfig(logger)
-	if err != nil {
-		return err
+	cfg := controller.Config{
+		ClusterDomain:    resolveClusterDomain(logger),
+		GatewayClassName: viper.GetString("gateway-class-name"),
+		ControllerName:   viper.GetString("controller-name"),
+		MetricsAddr:      viper.GetString("metrics-addr"),
+		HealthAddr:       viper.GetString("health-addr"),
+
+		LeaderElect:     viper.GetBool("leader-elect"),
+		LeaderElectNS:   viper.GetString("leader-election-namespace"),
+		LeaderElectName: viper.GetString("leader-election-name"),
 	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	if err := controller.Run(ctx, cfg); err != nil {
+	if err := controller.Run(ctx, &cfg); err != nil {
 		return errors.Wrap(err, "failed to run controller")
 	}
 
 	return nil
-}
-
-func buildControllerConfig(logger *slog.Logger) (*controller.Config, error) {
-	tunnelID := viper.GetString("tunnel-id")
-	if tunnelID == "" {
-		return nil, errors.New("tunnel-id is required")
-	}
-
-	apiToken := viper.GetString("api-token")
-	if apiToken == "" {
-		return nil, errors.New("api-token is required (use --api-token or CF_API_TOKEN env var)")
-	}
-
-	manageCloudflared := viper.GetBool("manage-cloudflared")
-	tunnelToken := viper.GetString("tunnel-token")
-
-	if manageCloudflared && tunnelToken == "" {
-		return nil, errors.New("tunnel-token is required when manage-cloudflared is enabled")
-	}
-
-	return &controller.Config{
-		AccountID:         viper.GetString("account-id"),
-		TunnelID:          tunnelID,
-		APIToken:          apiToken,
-		ClusterDomain:     resolveClusterDomain(logger),
-		GatewayClassName:  viper.GetString("gateway-class-name"),
-		ControllerName:    viper.GetString("controller-name"),
-		MetricsAddr:       viper.GetString("metrics-addr"),
-		HealthAddr:        viper.GetString("health-addr"),
-		LeaderElect:       viper.GetBool("leader-elect"),
-		LeaderElectNS:     viper.GetString("leader-election-namespace"),
-		LeaderElectName:   viper.GetString("leader-election-name"),
-		ManageCloudflared: manageCloudflared,
-		TunnelToken:       tunnelToken,
-		CloudflaredNS:     viper.GetString("cloudflared-namespace"),
-		CloudflaredProto:  viper.GetString("cloudflared-protocol"),
-		AWGSecretName:     viper.GetString("awg-secret-name"),
-		AWGInterfaceName:  viper.GetString("awg-interface-name"),
-	}, nil
 }
 
 // resolveClusterDomain determines the cluster domain to use.

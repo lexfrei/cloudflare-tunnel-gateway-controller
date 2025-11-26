@@ -2,16 +2,11 @@ suite: test edge cases
 templates:
   - deployment.yaml
   - service.yaml
-  - secret.yaml
   - networkpolicy.yaml
   - poddisruptionbudget.yaml
 tests:
   # Minimum viable configuration
   - it: should work with absolute minimum configuration
-    set:
-      cloudflare:
-        tunnelId: "a"
-        apiToken: "t"
     asserts:
       - template: deployment.yaml
         isKind:
@@ -19,25 +14,10 @@ tests:
       - template: service.yaml
         isKind:
           of: Service
-      - template: secret.yaml
-        isKind:
-          of: Secret
 
   # Maximum configuration (all features enabled)
   - it: should work with all features enabled
     set:
-      cloudflare:
-        tunnelId: "test-tunnel"
-        apiToken: "test-token"
-        accountId: "test-account"
-      manageCloudflared:
-        enabled: true
-        tunnelToken: "test-tunnel-token"
-        namespace: "cf-system"
-        protocol: "quic"
-      awg:
-        secretName: "awg-config"
-        interfaceName: "awg0"
       replicaCount: 3
       podDisruptionBudget:
         enabled: true
@@ -70,9 +50,6 @@ tests:
   # Resource limits edge cases
   - it: should accept very low resource limits
     set:
-      cloudflare:
-        tunnelId: "test-tunnel"
-        apiToken: "test-token"
       resources:
         limits:
           cpu: "10m"
@@ -92,9 +69,6 @@ tests:
 
   - it: should accept very high resource limits
     set:
-      cloudflare:
-        tunnelId: "test-tunnel"
-        apiToken: "test-token"
       resources:
         limits:
           cpu: "16"
@@ -115,9 +89,6 @@ tests:
   # Empty resources (should use defaults)
   - it: should use defaults when resources is empty object
     set:
-      cloudflare:
-        tunnelId: "test-tunnel"
-        apiToken: "test-token"
       resources: {}
     asserts:
       - template: deployment.yaml
@@ -128,9 +99,6 @@ tests:
   # PodDisruptionBudget edge cases
   - it: should work with maxUnavailable percentage
     set:
-      cloudflare:
-        tunnelId: "test-tunnel"
-        apiToken: "test-token"
       podDisruptionBudget:
         enabled: true
         minAvailable: null
@@ -143,9 +111,6 @@ tests:
 
   - it: should work with minAvailable percentage
     set:
-      cloudflare:
-        tunnelId: "test-tunnel"
-        apiToken: "test-token"
       podDisruptionBudget:
         enabled: true
         minAvailable: "75%"
@@ -158,9 +123,6 @@ tests:
   # Very long names - use fullnameOverride to test long names
   - it: should handle long names via fullnameOverride
     set:
-      cloudflare:
-        tunnelId: "test-tunnel"
-        apiToken: "test-token"
       fullnameOverride: "very-long-controller-name-for-edge-case-testing"
     asserts:
       - template: deployment.yaml
@@ -174,9 +136,6 @@ tests:
   # fullnameOverride with special characters
   - it: should handle fullnameOverride with hyphens
     set:
-      cloudflare:
-        tunnelId: "test-tunnel"
-        apiToken: "test-token"
       fullnameOverride: "my-custom-controller-name-v2"
     asserts:
       - template: deployment.yaml
@@ -187,9 +146,6 @@ tests:
   # Multiple tolerations
   - it: should handle multiple tolerations
     set:
-      cloudflare:
-        tunnelId: "test-tunnel"
-        apiToken: "test-token"
       tolerations:
         - key: "node.kubernetes.io/not-ready"
           operator: "Exists"
@@ -215,9 +171,6 @@ tests:
   # Complex topology spread constraints
   - it: should handle multiple topology spread constraints
     set:
-      cloudflare:
-        tunnelId: "test-tunnel"
-        apiToken: "test-token"
       topologySpreadConstraints:
         - maxSkew: 1
           topologyKey: topology.kubernetes.io/zone
@@ -246,9 +199,6 @@ tests:
   # DNS config with many nameservers
   - it: should handle multiple DNS nameservers
     set:
-      cloudflare:
-        tunnelId: "test-tunnel"
-        apiToken: "test-token"
       dnsConfig:
         nameservers:
           - 1.1.1.1
@@ -270,9 +220,6 @@ tests:
   # NetworkPolicy with empty from array
   - it: should handle NetworkPolicy with explicitly empty ingress.from
     set:
-      cloudflare:
-        tunnelId: "test-tunnel"
-        apiToken: "test-token"
       networkPolicy:
         enabled: true
         ingress:
@@ -285,9 +232,6 @@ tests:
   # Service with many annotations
   - it: should handle service with multiple annotations
     set:
-      cloudflare:
-        tunnelId: "test-tunnel"
-        apiToken: "test-token"
       service:
         annotations:
           prometheus.io/scrape: "true"
@@ -311,9 +255,6 @@ tests:
   # Pod labels and annotations
   - it: should merge pod labels and annotations
     set:
-      cloudflare:
-        tunnelId: "test-tunnel"
-        apiToken: "test-token"
       podLabels:
         environment: "production"
         team: "platform"
@@ -334,9 +275,6 @@ tests:
   # replicaCount = 1 (minimum)
   - it: should work with single replica
     set:
-      cloudflare:
-        tunnelId: "test-tunnel"
-        apiToken: "test-token"
       replicaCount: 1
     asserts:
       - template: deployment.yaml
@@ -347,9 +285,6 @@ tests:
   # High replica count
   - it: should work with high replica count
     set:
-      cloudflare:
-        tunnelId: "test-tunnel"
-        apiToken: "test-token"
       replicaCount: 100
     asserts:
       - template: deployment.yaml
@@ -358,13 +293,8 @@ tests:
           value: 100
 
   # terminationGracePeriodSeconds edge cases
-  # Note: Chart uses "| default 30" so zero would be treated as empty and become 30
-  # Testing that explicit non-zero values work
   - it: should accept custom termination grace period
     set:
-      cloudflare:
-        tunnelId: "test-tunnel"
-        apiToken: "test-token"
       terminationGracePeriodSeconds: 5
     asserts:
       - template: deployment.yaml
@@ -374,9 +304,6 @@ tests:
 
   - it: should accept very long termination grace period
     set:
-      cloudflare:
-        tunnelId: "test-tunnel"
-        apiToken: "test-token"
       terminationGracePeriodSeconds: 3600
     asserts:
       - template: deployment.yaml
@@ -385,12 +312,8 @@ tests:
           value: 3600
 
   # ServiceMonitor with custom settings
-  # Note: Requires adding servicemonitor.yaml to templates list
   - it: should accept ServiceMonitor configuration
     set:
-      cloudflare:
-        tunnelId: "test-tunnel"
-        apiToken: "test-token"
       serviceMonitor:
         enabled: true
         interval: "10s"

@@ -1,28 +1,102 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
-  "required": ["cloudflare"],
   "properties": {
-    "cloudflare": {
+    "gatewayClassConfig": {
       "type": "object",
-      "description": "Cloudflare configuration",
+      "description": "GatewayClassConfig CRD configuration",
       "properties": {
-        "tunnelId": {
+        "create": {
+          "type": "boolean",
+          "description": "Create GatewayClassConfig resource",
+          "default": false
+        },
+        "name": {
+          "type": "string",
+          "description": "Name of the GatewayClassConfig (defaults to release fullname)"
+        },
+        "cloudflareCredentialsSecretRef": {
+          "type": "object",
+          "description": "Reference to Secret containing Cloudflare API credentials",
+          "properties": {
+            "name": {
+              "type": "string",
+              "description": "Name of the Secret"
+            },
+            "namespace": {
+              "type": "string",
+              "description": "Namespace of the Secret (defaults to release namespace)"
+            },
+            "key": {
+              "type": "string",
+              "description": "Key in the Secret containing the API token"
+            }
+          }
+        },
+        "tunnelID": {
           "type": "string",
           "pattern": "^[a-zA-Z0-9-]*$",
-          "description": "Cloudflare Tunnel ID (required at install time)"
+          "description": "Cloudflare Tunnel ID"
         },
-        "accountId": {
-          "type": "string",
-          "description": "Cloudflare Account ID (auto-detected if not specified)"
+        "tunnelTokenSecretRef": {
+          "type": "object",
+          "description": "Reference to Secret containing tunnel token",
+          "properties": {
+            "name": {
+              "type": "string",
+              "description": "Name of the Secret"
+            },
+            "namespace": {
+              "type": "string",
+              "description": "Namespace of the Secret"
+            },
+            "key": {
+              "type": "string",
+              "description": "Key in the Secret containing the tunnel token"
+            }
+          }
         },
-        "apiToken": {
-          "type": "string",
-          "description": "Cloudflare API token"
-        },
-        "apiTokenSecretName": {
-          "type": "string",
-          "description": "Existing secret name containing API token (key: api-token)"
+        "cloudflared": {
+          "type": "object",
+          "description": "Cloudflared deployment configuration",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Enable cloudflared deployment management",
+              "default": false
+            },
+            "replicas": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Number of cloudflared replicas",
+              "default": 1
+            },
+            "namespace": {
+              "type": "string",
+              "description": "Namespace for cloudflared deployment",
+              "default": "cloudflare-tunnel-system"
+            },
+            "protocol": {
+              "type": "string",
+              "description": "Transport protocol",
+              "enum": ["", "auto", "quic", "http2"]
+            },
+            "awg": {
+              "type": "object",
+              "description": "AmneziaWG sidecar configuration",
+              "properties": {
+                "secretName": {
+                  "type": "string",
+                  "description": "Secret name containing AWG config"
+                },
+                "interfacePrefix": {
+                  "type": "string",
+                  "description": "AWG interface name prefix (kernel auto-numbers: prefix0, prefix1, etc.)",
+                  "default": "awg-cfd"
+                }
+              }
+            }
+          }
         }
       }
     },
@@ -58,47 +132,23 @@
         }
       }
     },
-    "manageCloudflared": {
+    "leaderElection": {
       "type": "object",
-      "description": "Cloudflared deployment management via Helm",
+      "description": "Leader election configuration",
       "properties": {
         "enabled": {
           "type": "boolean",
-          "description": "Deploy and manage cloudflared via Helm",
+          "description": "Enable leader election",
           "default": false
-        },
-        "tunnelToken": {
-          "type": "string",
-          "description": "Tunnel token for remote-managed mode"
-        },
-        "tunnelTokenSecretName": {
-          "type": "string",
-          "description": "Existing secret name containing tunnel token (key: tunnel-token)"
         },
         "namespace": {
           "type": "string",
-          "description": "Namespace for cloudflared deployment",
-          "default": "cloudflare-tunnel-system"
+          "description": "Namespace for leader election lease"
         },
-        "protocol": {
+        "leaseName": {
           "type": "string",
-          "description": "Transport protocol",
-          "enum": ["", "auto", "quic", "http2"]
-        }
-      }
-    },
-    "awg": {
-      "type": "object",
-      "description": "AmneziaWG sidecar configuration",
-      "properties": {
-        "secretName": {
-          "type": "string",
-          "description": "Secret name containing AWG config"
-        },
-        "interfaceName": {
-          "type": "string",
-          "description": "AWG interface name",
-          "default": "awg-cfd-gw-ctrl0"
+          "description": "Name of the leader election lease",
+          "default": "cloudflare-tunnel-gateway-controller-leader"
         }
       }
     },
@@ -344,7 +394,7 @@
           "properties": {
             "enabled": {
               "type": "boolean",
-              "default": true
+              "default": false
             },
             "initialDelaySeconds": {
               "type": "integer",
@@ -373,7 +423,7 @@
           "properties": {
             "enabled": {
               "type": "boolean",
-              "default": true
+              "default": false
             },
             "initialDelaySeconds": {
               "type": "integer",
@@ -402,7 +452,7 @@
           "properties": {
             "enabled": {
               "type": "boolean",
-              "default": true
+              "default": false
             },
             "initialDelaySeconds": {
               "type": "integer",

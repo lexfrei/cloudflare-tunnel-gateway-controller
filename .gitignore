@@ -41,3 +41,6 @@ temp/
 # Kubebuilder
 bin/
 testbin/
+
+# Personal notes
+TODO.md

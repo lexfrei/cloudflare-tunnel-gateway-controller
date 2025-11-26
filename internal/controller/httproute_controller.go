@@ -3,10 +3,13 @@ package controller
 import (
 	"context"
 	"log/slog"
+	"sync/atomic"
+	"time"
 
 	"github.com/cloudflare/cloudflare-go/v4"
 	"github.com/cloudflare/cloudflare-go/v4/zero_trust"
 	"github.com/cockroachdb/errors"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -16,10 +19,24 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/api/v1alpha1"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/config"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/ingress"
 )
 
-const kindGateway = "Gateway"
+const (
+	kindGateway = "Gateway"
+
+	// apiErrorRequeueDelay is the delay before retrying when Cloudflare API calls fail.
+	apiErrorRequeueDelay = 15 * time.Second
+
+	// startupPendingRequeueDelay is the delay before retrying when startup sync is not yet complete.
+	startupPendingRequeueDelay = 1 * time.Second
+
+	// maxIngressRules is the maximum number of ingress rules allowed per Cloudflare Tunnel.
+	// Cloudflare's limit is approximately 1000 rules per tunnel.
+	maxIngressRules = 1000
+)
 
 // HTTPRouteReconciler reconciles HTTPRoute resources and synchronizes them
 // to Cloudflare Tunnel ingress configuration.
@@ -27,6 +44,7 @@ const kindGateway = "Gateway"
 // Key behaviors:
 //   - Watches all HTTPRoute resources in the cluster
 //   - Filters routes by parent Gateway's GatewayClass
+//   - Reads configuration from GatewayClassConfig via parametersRef
 //   - Performs full synchronization on any route change (not incremental)
 //   - Updates Cloudflare Tunnel config via API (cloudflared hot-reloads)
 //   - Updates HTTPRoute status with acceptance conditions
@@ -40,15 +58,6 @@ type HTTPRouteReconciler struct {
 	// Scheme is the runtime scheme for API type registration.
 	Scheme *runtime.Scheme
 
-	// CFClient is the Cloudflare API client for tunnel configuration.
-	CFClient *cloudflare.Client
-
-	// AccountID is the Cloudflare account ID.
-	AccountID string
-
-	// TunnelID is the Cloudflare Tunnel ID to configure.
-	TunnelID string
-
 	// ClusterDomain is used for building service URLs (e.g., "cluster.local").
 	ClusterDomain string
 
@@ -57,10 +66,23 @@ type HTTPRouteReconciler struct {
 
 	// ControllerName is reported in HTTPRoute status.
 	ControllerName string
+
+	// ConfigResolver resolves configuration from GatewayClassConfig.
+	ConfigResolver *config.Resolver
+
+	// startupComplete indicates whether the startup sync has completed.
+	// This prevents race conditions between startup sync and reconcile loop.
+	startupComplete atomic.Bool
 }
 
 //nolint:noinlineerr // inline error handling is fine for controller pattern
 func (r *HTTPRouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	// Wait for startup sync to complete before processing reconcile events
+	// to prevent race conditions with Cloudflare API updates
+	if !r.startupComplete.Load() {
+		return ctrl.Result{RequeueAfter: startupPendingRequeueDelay}, nil
+	}
+
 	logger := slog.Default().With("httproute", req.NamespacedName)
 
 	var route gatewayv1.HTTPRoute
@@ -108,9 +130,28 @@ func (r *HTTPRouteReconciler) isRouteForOurGateway(ctx context.Context, route *g
 	return false
 }
 
-//nolint:funcorder,noinlineerr // private helper method
+//nolint:funcorder,noinlineerr,funlen // private helper method, complex sync logic
 func (r *HTTPRouteReconciler) syncAllRoutes(ctx context.Context) (ctrl.Result, error) {
 	logger := slog.Default().With("component", "sync")
+
+	// Resolve configuration from GatewayClassConfig
+	resolvedConfig, err := r.ConfigResolver.ResolveFromGatewayClassName(ctx, r.GatewayClassName)
+	if err != nil {
+		logger.Error("failed to resolve config from GatewayClassConfig", "error", err)
+
+		return ctrl.Result{RequeueAfter: apiErrorRequeueDelay}, nil
+	}
+
+	// Create Cloudflare client with resolved credentials
+	cfClient := r.ConfigResolver.CreateCloudflareClient(resolvedConfig)
+
+	// Resolve account ID (auto-detect if not in config)
+	accountID, err := r.ConfigResolver.ResolveAccountID(ctx, cfClient, resolvedConfig)
+	if err != nil {
+		logger.Error("failed to resolve account ID", "error", err)
+
+		return ctrl.Result{RequeueAfter: apiErrorRequeueDelay}, nil
+	}
 
 	var routeList gatewayv1.HTTPRouteList
 	if err := r.List(ctx, &routeList); err != nil {
@@ -130,14 +171,29 @@ func (r *HTTPRouteReconciler) syncAllRoutes(ctx context.Context) (ctrl.Result, e
 	builder := ingress.NewBuilder(r.ClusterDomain)
 	rules := builder.Build(relevantRoutes)
 
-	config := zero_trust.TunnelCloudflaredConfigurationUpdateParams{
-		AccountID: cloudflare.String(r.AccountID),
+	// Check ingress rules limit before API call
+	if len(rules) > maxIngressRules {
+		limitErr := errors.Newf("ingress rules limit exceeded: %d rules (max %d)", len(rules), maxIngressRules)
+		logger.Error("ingress rules limit exceeded", "count", len(rules), "max", maxIngressRules)
+
+		for i := range relevantRoutes {
+			if updateErr := r.updateRouteStatus(ctx, &relevantRoutes[i], false, limitErr.Error()); updateErr != nil {
+				logger.Error("failed to update route status", "error", updateErr)
+			}
+		}
+
+		// Don't requeue - user must reduce the number of routes
+		return ctrl.Result{}, nil
+	}
+
+	cfConfig := zero_trust.TunnelCloudflaredConfigurationUpdateParams{
+		AccountID: cloudflare.String(accountID),
 		Config: cloudflare.F(zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfig{
 			Ingress: cloudflare.F(rules),
 		}),
 	}
 
-	_, err := r.CFClient.ZeroTrust.Tunnels.Cloudflared.Configurations.Update(ctx, r.TunnelID, config)
+	_, err = cfClient.ZeroTrust.Tunnels.Cloudflared.Configurations.Update(ctx, resolvedConfig.TunnelID, cfConfig)
 	if err != nil {
 		logger.Error("failed to update tunnel configuration", "error", err)
 
@@ -147,7 +203,7 @@ func (r *HTTPRouteReconciler) syncAllRoutes(ctx context.Context) (ctrl.Result, e
 			}
 		}
 
-		return ctrl.Result{}, errors.Wrap(err, "failed to update cloudflare tunnel configuration")
+		return ctrl.Result{RequeueAfter: apiErrorRequeueDelay}, nil
 	}
 
 	logger.Info("successfully updated tunnel configuration", "rules", len(rules))
@@ -245,11 +301,27 @@ func (r *HTTPRouteReconciler) updateRouteStatus(
 }
 
 func (r *HTTPRouteReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	mapper := &ConfigMapper{
+		Client:           r.Client,
+		GatewayClassName: r.GatewayClassName,
+		ConfigResolver:   r.ConfigResolver,
+	}
+
 	err := ctrl.NewControllerManagedBy(mgr).
 		For(&gatewayv1.HTTPRoute{}).
 		Watches(
 			&gatewayv1.Gateway{},
 			handler.EnqueueRequestsFromMapFunc(r.findRoutesForGateway),
+		).
+		// Watch GatewayClassConfig for config changes
+		Watches(
+			&v1alpha1.GatewayClassConfig{},
+			handler.EnqueueRequestsFromMapFunc(mapper.MapConfigToRequests(r.getAllRelevantRoutes)),
+		).
+		// Watch Secrets for credential changes
+		Watches(
+			&corev1.Secret{},
+			handler.EnqueueRequestsFromMapFunc(mapper.MapSecretToRequests(r.getAllRelevantRoutes)),
 		).
 		Complete(r)
 	if err != nil {
@@ -267,6 +339,10 @@ func (r *HTTPRouteReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 // Start implements manager.Runnable for startup sync.
 func (r *HTTPRouteReconciler) Start(ctx context.Context) error {
+	// Mark startup as complete when this function returns,
+	// regardless of success or failure
+	defer r.startupComplete.Store(true)
+
 	logger := slog.Default().With("component", "startup-sync")
 	logger.Info("performing startup sync of tunnel configuration")
 
@@ -314,6 +390,30 @@ func (r *HTTPRouteReconciler) findRoutesForGateway(
 
 				break
 			}
+		}
+	}
+
+	return requests
+}
+
+func (r *HTTPRouteReconciler) getAllRelevantRoutes(ctx context.Context) []reconcile.Request {
+	var routeList gatewayv1.HTTPRouteList
+
+	err := r.List(ctx, &routeList)
+	if err != nil {
+		return nil
+	}
+
+	var requests []reconcile.Request
+
+	for i := range routeList.Items {
+		if r.isRouteForOurGateway(ctx, &routeList.Items[i]) {
+			requests = append(requests, reconcile.Request{
+				NamespacedName: client.ObjectKey{
+					Name:      routeList.Items[i].Name,
+					Namespace: routeList.Items[i].Namespace,
+				},
+			})
 		}
 	}
 

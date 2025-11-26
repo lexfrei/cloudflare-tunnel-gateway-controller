@@ -99,6 +99,30 @@ spec:
           port: 80
 ```
 
+## Multi-Tunnel Setup
+
+To use multiple Cloudflare Tunnels in the same cluster, deploy multiple instances of the controller with different GatewayClass names:
+
+```bash
+# First tunnel for production apps
+helm install controller-prod \
+  oci://ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller \
+  --namespace cloudflare-system \
+  --set controller.gatewayClassName=cloudflare-tunnel-prod \
+  --set cloudflare.tunnelId="PROD_TUNNEL_ID" \
+  --set cloudflare.apiToken="PROD_API_TOKEN"
+
+# Second tunnel for staging apps
+helm install controller-staging \
+  oci://ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller \
+  --namespace cloudflare-system \
+  --set controller.gatewayClassName=cloudflare-tunnel-staging \
+  --set cloudflare.tunnelId="STAGING_TUNNEL_ID" \
+  --set cloudflare.apiToken="STAGING_API_TOKEN"
+```
+
+Each controller instance manages its own GatewayClass and associated Gateways/HTTPRoutes independently.
+
 {{ template "chart.valuesSection" . }}
 
 {{ template "helm-docs.versionFooter" . }}

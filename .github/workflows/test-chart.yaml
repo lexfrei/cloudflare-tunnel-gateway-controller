@@ -64,9 +64,8 @@ jobs:
       - name: Run Helm Lint
         run: |
           echo "Running Helm lint..."
-          helm lint charts/cloudflare-tunnel-gateway-controller \
-            --set cloudflare.tunnelId=test-tunnel-id \
-            --set cloudflare.apiToken=test-api-token
+          # Default values (gatewayClassConfig.create: false) require no additional sets
+          helm lint charts/cloudflare-tunnel-gateway-controller
 
       - name: Run Helm Unittest
         run: |
@@ -100,26 +99,32 @@ jobs:
 
       - name: Template Chart
         run: |
-          echo "Testing chart templating..."
-          helm template test-release charts/cloudflare-tunnel-gateway-controller \
-            --set cloudflare.tunnelId=test-tunnel-id \
-            --set cloudflare.apiToken=test-api-token
+          echo "Testing chart templating with default values..."
+          # Default values (gatewayClassConfig.create: false) require no additional sets
+          helm template test-release charts/cloudflare-tunnel-gateway-controller
 
-      - name: Template Chart with manageCloudflared
+      - name: Template Chart with GatewayClassConfig
         run: |
-          echo "Testing chart with manageCloudflared enabled..."
+          echo "Testing chart with GatewayClassConfig enabled..."
           helm template test-release charts/cloudflare-tunnel-gateway-controller \
-            --set cloudflare.tunnelId=test-tunnel-id \
-            --set cloudflare.apiToken=test-api-token \
-            --set manageCloudflared.enabled=true \
-            --set manageCloudflared.tunnelToken=test-tunnel-token
+            --set gatewayClassConfig.create=true \
+            --set gatewayClassConfig.tunnelID=550e8400-e29b-41d4-a716-446655440000 \
+            --set gatewayClassConfig.cloudflareCredentialsSecretRef.name=cloudflare-credentials
+
+      - name: Template Chart with cloudflared management
+        run: |
+          echo "Testing chart with cloudflared management enabled..."
+          helm template test-release charts/cloudflare-tunnel-gateway-controller \
+            --set gatewayClassConfig.create=true \
+            --set gatewayClassConfig.tunnelID=550e8400-e29b-41d4-a716-446655440000 \
+            --set gatewayClassConfig.cloudflareCredentialsSecretRef.name=cloudflare-credentials \
+            --set gatewayClassConfig.tunnelTokenSecretRef.name=cloudflare-tunnel-token \
+            --set gatewayClassConfig.cloudflared.enabled=true
 
       - name: Template Chart with ServiceMonitor
         run: |
           echo "Testing chart with ServiceMonitor enabled..."
           helm template test-release charts/cloudflare-tunnel-gateway-controller \
-            --set cloudflare.tunnelId=test-tunnel-id \
-            --set cloudflare.apiToken=test-api-token \
             --set serviceMonitor.enabled=true
 
       - name: Validate helm-docs

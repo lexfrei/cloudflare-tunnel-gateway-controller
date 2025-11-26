@@ -2,33 +2,24 @@ package controller
 
 import (
 	"context"
+	"os"
 
-	"github.com/cloudflare/cloudflare-go/v4"
-	"github.com/cloudflare/cloudflare-go/v4/accounts"
-	"github.com/cloudflare/cloudflare-go/v4/option"
 	"github.com/cockroachdb/errors"
+	corev1 "k8s.io/api/core/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/api/v1alpha1"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/config"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/helm"
 )
 
 // Config holds all configuration options for the controller manager.
 // Values are typically populated from CLI flags or environment variables.
 type Config struct {
-	// AccountID is the Cloudflare account ID. If empty, it will be auto-detected
-	// from the API token (requires token to have access to exactly one account).
-	AccountID string
-
-	// TunnelID is the Cloudflare Tunnel ID (required).
-	TunnelID string
-
-	// APIToken is the Cloudflare API token with Tunnel permissions (required).
-	APIToken string
-
 	// ClusterDomain is the Kubernetes cluster domain for service DNS resolution.
 	// Defaults to "cluster.local".
 	ClusterDomain string
@@ -55,37 +46,17 @@ type Config struct {
 
 	// LeaderElectName is the name of the leader election lease.
 	LeaderElectName string
-
-	// ManageCloudflared enables automatic cloudflared deployment via Helm.
-	ManageCloudflared bool
-
-	// TunnelToken is the Cloudflare Tunnel token for remote-managed mode.
-	// Required when ManageCloudflared is true.
-	TunnelToken string
-
-	// CloudflaredNS is the namespace for cloudflared deployment.
-	CloudflaredNS string
-
-	// CloudflaredProto is the transport protocol (auto, quic, http2).
-	CloudflaredProto string
-
-	// AWGSecretName is the secret containing AWG VPN configuration.
-	// If set, enables AWG sidecar for cloudflared.
-	AWGSecretName string
-
-	// AWGInterfaceName is the AWG network interface name.
-	AWGInterfaceName string
 }
 
 // Run initializes and starts the controller manager with the provided configuration.
-// It sets up the Cloudflare API client, creates Gateway and HTTPRoute controllers,
+// It sets up the config resolver, creates Gateway and HTTPRoute controllers,
 // and blocks until the context is cancelled or an error occurs.
 //
 // The function performs the following steps:
-//  1. Creates Cloudflare API client with the provided token
-//  2. Auto-detects account ID if not provided
-//  3. Initializes controller-runtime manager with metrics and health endpoints
-//  4. Sets up GatewayReconciler and HTTPRouteReconciler
+//  1. Initializes controller-runtime manager with metrics and health endpoints
+//  2. Registers GatewayClassConfig CRD scheme
+//  3. Creates ConfigResolver for reading GatewayClassConfig
+//  4. Sets up GatewayReconciler and HTTPRouteReconciler with watches
 //  5. Optionally initializes Helm manager for cloudflared deployment
 //  6. Starts the manager and blocks until shutdown
 //
@@ -93,32 +64,6 @@ type Config struct {
 func Run(ctx context.Context, cfg *Config) error {
 	logger := log.FromContext(ctx).WithName("manager")
 	logger.Info("initializing controller manager")
-
-	logger.Info("creating cloudflare client")
-
-	cfClient := cloudflare.NewClient(
-		option.WithAPIToken(cfg.APIToken),
-	)
-
-	logger.Info("cloudflare client created")
-
-	accountID := cfg.AccountID
-	if accountID == "" {
-		logger.Info("resolving account ID")
-
-		var resolveErr error
-
-		accountID, resolveErr = resolveAccountID(ctx, cfClient)
-		if resolveErr != nil {
-			logger.Error(resolveErr, "failed to resolve account ID")
-
-			return resolveErr
-		}
-
-		logger.Info("auto-detected account ID", "accountID", accountID)
-	}
-
-	logger.Info("creating ctrl.Manager")
 
 	mgrOptions := ctrl.Options{
 		Metrics: server.Options{
@@ -143,35 +88,37 @@ func Run(ctx context.Context, cfg *Config) error {
 		return errors.Wrap(err, "failed to create manager")
 	}
 
+	// Register Gateway API types
 	if err := gatewayv1.Install(mgr.GetScheme()); err != nil {
 		return errors.Wrap(err, "failed to add gateway-api scheme")
 	}
 
-	var helmManager *helm.Manager
-
-	if cfg.ManageCloudflared {
-		var helmErr error
-
-		helmManager, helmErr = helm.NewManager()
-		if helmErr != nil {
-			return errors.Wrap(helmErr, "failed to create helm manager")
-		}
-
-		logger.Info("helm manager initialized for cloudflared deployment")
+	// Register GatewayClassConfig CRD types
+	if err := v1alpha1.AddToScheme(mgr.GetScheme()); err != nil {
+		return errors.Wrap(err, "failed to add GatewayClassConfig scheme")
 	}
+
+	// Determine default namespace for secret lookups
+	defaultNamespace := getControllerNamespace()
+
+	// Create config resolver
+	configResolver := config.NewResolver(mgr.GetClient(), defaultNamespace)
+
+	// Initialize Helm manager for cloudflared deployment
+	helmManager, helmErr := helm.NewManager()
+	if helmErr != nil {
+		return errors.Wrap(helmErr, "failed to create helm manager")
+	}
+
+	logger.Info("helm manager initialized for cloudflared deployment")
 
 	gatewayReconciler := &GatewayReconciler{
 		Client:           mgr.GetClient(),
 		Scheme:           mgr.GetScheme(),
 		GatewayClassName: cfg.GatewayClassName,
 		ControllerName:   cfg.ControllerName,
-		TunnelID:         cfg.TunnelID,
+		ConfigResolver:   configResolver,
 		HelmManager:      helmManager,
-		TunnelToken:      cfg.TunnelToken,
-		CloudflaredNS:    cfg.CloudflaredNS,
-		Protocol:         cfg.CloudflaredProto,
-		AWGSecretName:    cfg.AWGSecretName,
-		AWGInterfaceName: cfg.AWGInterfaceName,
 	}
 
 	if err := gatewayReconciler.SetupWithManager(mgr); err != nil {
@@ -181,16 +128,25 @@ func Run(ctx context.Context, cfg *Config) error {
 	httpRouteReconciler := &HTTPRouteReconciler{
 		Client:           mgr.GetClient(),
 		Scheme:           mgr.GetScheme(),
-		CFClient:         cfClient,
-		AccountID:        accountID,
-		TunnelID:         cfg.TunnelID,
 		ClusterDomain:    cfg.ClusterDomain,
 		GatewayClassName: cfg.GatewayClassName,
 		ControllerName:   cfg.ControllerName,
+		ConfigResolver:   configResolver,
 	}
 
 	if err := httpRouteReconciler.SetupWithManager(mgr); err != nil {
 		return errors.Wrap(err, "failed to setup httproute controller")
+	}
+
+	// Setup GatewayClassConfig controller for status updates
+	configReconciler := &GatewayClassConfigReconciler{
+		Client:           mgr.GetClient(),
+		Scheme:           mgr.GetScheme(),
+		DefaultNamespace: defaultNamespace,
+	}
+
+	if err := configReconciler.SetupWithManager(mgr); err != nil {
+		return errors.Wrap(err, "failed to setup gatewayclassconfig controller")
 	}
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
@@ -210,21 +166,21 @@ func Run(ctx context.Context, cfg *Config) error {
 	return nil
 }
 
-func resolveAccountID(ctx context.Context, client *cloudflare.Client) (string, error) {
-	result, err := client.Accounts.List(ctx, accounts.AccountListParams{})
-	if err != nil {
-		return "", errors.Wrap(err, "failed to list accounts")
+// getControllerNamespace returns the namespace where the controller is running.
+// It reads from the standard Kubernetes downward API file, falling back to "default".
+func getControllerNamespace() string {
+	// Try reading from downward API
+	data, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/namespace")
+	if err == nil {
+		return string(data)
 	}
 
-	accountList := result.Result
-	if len(accountList) == 0 {
-		return "", errors.New("no accounts found for this API token")
-	}
+	// Fallback to default
+	return "default"
+}
 
-	if len(accountList) > 1 {
-		//nolint:wrapcheck // this is a new error, not wrapping external
-		return "", errors.Newf("multiple accounts found (%d), please specify --account-id explicitly", len(accountList))
-	}
-
-	return accountList[0].ID, nil
+// init registers core types needed for watching Secrets.
+func init() {
+	// corev1 is already registered by controller-runtime, but we ensure it's available
+	_ = corev1.AddToScheme
 }
