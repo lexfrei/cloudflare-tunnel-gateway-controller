@@ -258,11 +258,11 @@ jobs:
           # Package chart
           helm package "${CHART_PATH}"
 
-          # Push to GHCR
+          # Push to GHCR (using /chart subpath to avoid conflict with container image)
           CHART_FILE="${CHART_NAME}-${VERSION}.tgz"
-          helm push "${CHART_FILE}" oci://ghcr.io/${{ github.repository_owner }}
+          helm push "${CHART_FILE}" oci://ghcr.io/${{ github.repository }}/chart
 
-          echo "Chart pushed: oci://ghcr.io/${{ github.repository_owner }}/${CHART_NAME}:${VERSION}"
+          echo "Chart pushed: oci://ghcr.io/${{ github.repository }}/chart:${VERSION}"
 
       - name: Generate chart summary
         run: |
@@ -272,12 +272,12 @@ jobs:
           {
             echo "## Helm Chart"
             echo ""
-            echo "**Chart**: \`oci://ghcr.io/${{ github.repository_owner }}/${CHART_NAME}:${VERSION}\`"
+            echo "**Chart**: \`oci://ghcr.io/${{ github.repository }}/chart:${VERSION}\`"
             echo ""
             echo "### Installation"
             echo "\`\`\`bash"
             echo "helm install ${CHART_NAME} \\"
-            echo "  oci://ghcr.io/${{ github.repository_owner }}/${CHART_NAME} \\"
+            echo "  oci://ghcr.io/${{ github.repository }}/chart \\"
             echo "  --version ${VERSION}"
             echo "\`\`\`"
           } >> "$GITHUB_STEP_SUMMARY"
