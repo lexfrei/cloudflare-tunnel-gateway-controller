@@ -123,73 +123,79 @@ func setupLogger() *slog.Logger {
 func runController(_ *cobra.Command, _ []string) error {
 	logger := setupLogger()
 	slog.SetDefault(logger)
-
 	ctrl.SetLogger(logr.FromSlogHandler(logger.Handler()))
 
 	logger.Info("starting cloudflare-tunnel-gateway-controller",
-		"version", version,
-		"gitsha", gitsha,
-	)
+		"version", version, "gitsha", gitsha)
 
-	accountID := viper.GetString("account-id")
-
-	tunnelID := viper.GetString("tunnel-id")
-	if tunnelID == "" {
-		return errors.New("tunnel-id is required")
-	}
-
-	apiToken := viper.GetString("api-token")
-	if apiToken == "" {
-		return errors.New("api-token is required (use --api-token or CF_API_TOKEN env var)")
-	}
-
-	manageCloudflared := viper.GetBool("manage-cloudflared")
-	tunnelToken := viper.GetString("tunnel-token")
-
-	if manageCloudflared && tunnelToken == "" {
-		return errors.New("tunnel-token is required when manage-cloudflared is enabled")
-	}
-
-	// Determine cluster domain: auto-detect first, fallback to flag value
-	clusterDomain := resolveClusterDomain(logger)
-
-	cfg := controller.Config{
-		AccountID:        accountID,
-		TunnelID:         tunnelID,
-		APIToken:         apiToken,
-		ClusterDomain:    clusterDomain,
-		GatewayClassName: viper.GetString("gateway-class-name"),
-		ControllerName:   viper.GetString("controller-name"),
-		MetricsAddr:      viper.GetString("metrics-addr"),
-		HealthAddr:       viper.GetString("health-addr"),
-
-		LeaderElect:     viper.GetBool("leader-elect"),
-		LeaderElectNS:   viper.GetString("leader-election-namespace"),
-		LeaderElectName: viper.GetString("leader-election-name"),
-
-		ManageCloudflared: manageCloudflared,
-		TunnelToken:       tunnelToken,
-		CloudflaredNS:     viper.GetString("cloudflared-namespace"),
-		CloudflaredProto:  viper.GetString("cloudflared-protocol"),
-		AWGSecretName:     viper.GetString("awg-secret-name"),
-		AWGInterfaceName:  viper.GetString("awg-interface-name"),
+	cfg, err := buildControllerConfig(logger)
+	if err != nil {
+		return err
 	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	if err := controller.Run(ctx, &cfg); err != nil {
+	if err := controller.Run(ctx, cfg); err != nil {
 		return errors.Wrap(err, "failed to run controller")
 	}
 
 	return nil
 }
 
+func buildControllerConfig(logger *slog.Logger) (*controller.Config, error) {
+	tunnelID := viper.GetString("tunnel-id")
+	if tunnelID == "" {
+		return nil, errors.New("tunnel-id is required")
+	}
+
+	apiToken := viper.GetString("api-token")
+	if apiToken == "" {
+		return nil, errors.New("api-token is required (use --api-token or CF_API_TOKEN env var)")
+	}
+
+	manageCloudflared := viper.GetBool("manage-cloudflared")
+	tunnelToken := viper.GetString("tunnel-token")
+
+	if manageCloudflared && tunnelToken == "" {
+		return nil, errors.New("tunnel-token is required when manage-cloudflared is enabled")
+	}
+
+	return &controller.Config{
+		AccountID:         viper.GetString("account-id"),
+		TunnelID:          tunnelID,
+		APIToken:          apiToken,
+		ClusterDomain:     resolveClusterDomain(logger),
+		GatewayClassName:  viper.GetString("gateway-class-name"),
+		ControllerName:    viper.GetString("controller-name"),
+		MetricsAddr:       viper.GetString("metrics-addr"),
+		HealthAddr:        viper.GetString("health-addr"),
+		LeaderElect:       viper.GetBool("leader-elect"),
+		LeaderElectNS:     viper.GetString("leader-election-namespace"),
+		LeaderElectName:   viper.GetString("leader-election-name"),
+		ManageCloudflared: manageCloudflared,
+		TunnelToken:       tunnelToken,
+		CloudflaredNS:     viper.GetString("cloudflared-namespace"),
+		CloudflaredProto:  viper.GetString("cloudflared-protocol"),
+		AWGSecretName:     viper.GetString("awg-secret-name"),
+		AWGInterfaceName:  viper.GetString("awg-interface-name"),
+	}, nil
+}
+
 // resolveClusterDomain determines the cluster domain to use.
-// It first attempts to auto-detect from /etc/resolv.conf,
-// then falls back to the configured flag value.
+// User-configured value takes precedence, then auto-detection,
+// finally falls back to default.
 func resolveClusterDomain(logger *slog.Logger) string {
-	// Try auto-detection first
+	// User explicit value takes precedence
+	if configured := viper.GetString("cluster-domain"); configured != "" {
+		logger.Info("using configured cluster domain",
+			"clusterDomain", configured,
+		)
+
+		return configured
+	}
+
+	// Try auto-detection
 	if detected, ok := dns.DetectClusterDomain(); ok {
 		logger.Info("auto-detected cluster domain from /etc/resolv.conf",
 			"clusterDomain", detected,
@@ -198,11 +204,10 @@ func resolveClusterDomain(logger *slog.Logger) string {
 		return detected
 	}
 
-	// Fall back to configured value
-	fallback := viper.GetString("cluster-domain")
-	logger.Info("using configured cluster domain (auto-detection failed)",
-		"clusterDomain", fallback,
+	// Final fallback to default
+	logger.Info("using default cluster domain (auto-detection failed)",
+		"clusterDomain", dns.DefaultClusterDomain,
 	)
 
-	return fallback
+	return dns.DefaultClusterDomain
 }
