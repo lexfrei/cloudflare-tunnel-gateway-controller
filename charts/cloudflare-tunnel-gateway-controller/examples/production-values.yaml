@@ -34,7 +34,9 @@ controller:
   logFormat: "json"
   gatewayClassName: "cloudflare-tunnel"
   controllerName: "cf.k8s.lex.la/tunnel-controller"
-  clusterDomain: "cluster.local"
+  # clusterDomain is auto-detected from /etc/resolv.conf
+  # Uncomment to override:
+  # clusterDomain: "cluster.local"
 
 # High availability configuration
 replicaCount: 2

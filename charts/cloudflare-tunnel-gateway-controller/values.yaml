@@ -27,7 +27,8 @@ controller:
   # -- Controller name for GatewayClass (must be unique in cluster)
   controllerName: "cf.k8s.lex.la/tunnel-controller"
   # -- Kubernetes cluster domain for service DNS resolution
-  clusterDomain: "cluster.local"
+  # @default -- auto-detected from /etc/resolv.conf, fallback: cluster.local
+  clusterDomain: ""
   # -- Log level (debug, info, warn, error)
   logLevel: "info"
   # -- Log format (json, text)

@@ -732,16 +732,16 @@ tests:
           path: spec.template.spec.containers[0].args
           content: "--controller-name=cf.k8s.lex.la/tunnel-controller"
 
-  - it: should use default clusterDomain
+  - it: should not include cluster-domain flag when empty (auto-detection)
     set:
       cloudflare:
         tunnelId: "test-tunnel-id"
         apiToken: "test-api-token"
     asserts:
       - template: deployment.yaml
-        contains:
+        notContains:
           path: spec.template.spec.containers[0].args
-          content: "--cluster-domain=cluster.local"
+          content: "--cluster-domain="
 
   - it: should use default log level
     set:

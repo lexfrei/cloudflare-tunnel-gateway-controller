@@ -52,7 +52,9 @@ spec:
             - "--tunnel-id={{ .Values.cloudflare.tunnelId }}"
             - "--gateway-class-name={{ .Values.controller.gatewayClassName }}"
             - "--controller-name={{ .Values.controller.controllerName }}"
+            {{- if .Values.controller.clusterDomain }}
             - "--cluster-domain={{ .Values.controller.clusterDomain }}"
+            {{- end }}
             - "--metrics-addr=:{{ .Values.service.metricsPort }}"
             - "--health-addr=:{{ .Values.service.healthPort }}"
             - "--log-level={{ .Values.controller.logLevel }}"
