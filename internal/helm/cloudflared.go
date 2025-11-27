@@ -115,14 +115,12 @@ apply_addresses() {
 }
 
 # Backup/restore resolv.conf to preserve cluster DNS
-# Note: DNS directive is stripped from config, but keep this as safety net
 backup_resolv() {
-  cp /etc/resolv.conf "$RESOLV_BACKUP" 2>/dev/null || true
+  [ -f /etc/resolv.conf ] && cp /etc/resolv.conf "$RESOLV_BACKUP"
 }
 
 restore_resolv() {
-  # Use cat > to handle symlinks (K8s mounts resolv.conf as symlink)
-  [ -f "$RESOLV_BACKUP" ] && cat "$RESOLV_BACKUP" > /etc/resolv.conf 2>/dev/null || true
+  [ -f "$RESOLV_BACKUP" ] && cp "$RESOLV_BACKUP" /etc/resolv.conf
 }
 
 IFACE=$(find_and_reserve_interface)
@@ -157,9 +155,9 @@ else
   echo "Kernel module unavailable, using userspace implementation"
   # Start amneziawg-go in background (creates tun device)
   amneziawg-go "$IFACE" &
-  echo $! > "${CONFIG_DIR}/${IFACE}.pid"
   sleep 1
-  # Apply config and addresses
+  # Bring interface up, apply config and addresses
+  ip link set "$IFACE" up
   awg setconf "$IFACE" "${CONFIG_DIR}/${IFACE}.conf"
   apply_addresses "$IFACE" "$ADDR_FILE"
 fi
@@ -175,9 +173,8 @@ exec sleep infinity
 if [ -n "$IFACE" ]; then
   ip link set "$IFACE" down 2>/dev/null || true
   ip link delete "$IFACE" 2>/dev/null || true
-  # Kill userspace process if running (PID saved during startup)
-  PID_FILE="/run/awg/${IFACE}.pid"
-  [ -f "$PID_FILE" ] && kill "$(cat "$PID_FILE")" 2>/dev/null || true
+  # Kill userspace process if running
+  pkill -f "amneziawg-go $IFACE" 2>/dev/null || true
 fi`
 
 	return map[string]any{
