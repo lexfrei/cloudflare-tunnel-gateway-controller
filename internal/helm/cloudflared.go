@@ -35,7 +35,7 @@ func (v *CloudflaredValues) BuildValues() map[string]any {
 	return values
 }
 
-//nolint:funlen // sidecar config structure is verbose but readable
+//nolint:funlen,dupword // sidecar config structure is verbose but readable; shell script has nested loops
 func buildSidecarValues(sidecar *SidecarConfig) map[string]any {
 	interfacePrefix := sidecar.InterfacePrefix
 	if interfacePrefix == "" {
@@ -84,14 +84,37 @@ find_and_reserve_interface() {
   done
 }
 
-# Copy AWG config to runtime directory
-copy_awg_config() {
+# Process AWG config: strip wg-quick directives that awg setconf doesn't understand
+# Extracts Address for manual application, removes DNS/PostUp/PostDown/etc
+process_awg_config() {
   src_conf="$1"
   dst_conf="$2"
-  cp "$src_conf" "$dst_conf"
+  addr_file="$3"
+
+  # Extract Address lines for later use
+  grep -i "^Address" "$src_conf" | sed 's/^[Aa]ddress[[:space:]]*=[[:space:]]*//' > "$addr_file" || true
+
+  # Copy config, stripping wg-quick specific directives
+  # awg setconf only understands [Interface]/[Peer] sections with WireGuard-native options
+  grep -vEi "^[[:space:]]*(Address|DNS|MTU|Table|PreUp|PostUp|PreDown|PostDown|SaveConfig)[[:space:]]*=" "$src_conf" > "$dst_conf" || true
 }
 
-# Backup/restore resolv.conf as additional protection
+# Apply interface addresses extracted from config
+apply_addresses() {
+  iface="$1"
+  addr_file="$2"
+
+  if [ -s "$addr_file" ]; then
+    while IFS=',' read -r addr_list; do
+      for addr in $addr_list; do
+        addr=$(echo "$addr" | tr -d ' ')
+        [ -n "$addr" ] && ip addr add "$addr" dev "$iface" 2>/dev/null || true
+      done
+    done < "$addr_file"
+  fi
+}
+
+# Backup/restore resolv.conf to preserve cluster DNS
 backup_resolv() {
   [ -f /etc/resolv.conf ] && cp /etc/resolv.conf "$RESOLV_BACKUP"
 }
@@ -109,27 +132,35 @@ fi
 echo "$IFACE" > "$IFACE_FILE"
 echo "Using AWG interface: $IFACE"
 
-# Copy config with correct interface name
+ADDR_FILE="${CONFIG_DIR}/${IFACE}.addr"
+
+# Process config: extract addresses, strip wg-quick directives
 for conf in /config/*.conf; do
   if [ -f "$conf" ]; then
-    copy_awg_config "$conf" "${CONFIG_DIR}/${IFACE}.conf"
+    process_awg_config "$conf" "${CONFIG_DIR}/${IFACE}.conf" "$ADDR_FILE"
     break
   fi
 done
 
 # Start AWG with DNS protection
 backup_resolv
-/usr/bin/awg-quick up "${CONFIG_DIR}/${IFACE}.conf"
+
+# Create interface and apply config manually (bypass buggy awg-quick)
+ip link add dev "$IFACE" type amneziawg
+ip link set "$IFACE" up
+awg setconf "$IFACE" "${CONFIG_DIR}/${IFACE}.conf"
+apply_addresses "$IFACE" "$ADDR_FILE"
+
 restore_resolv
 
 # Keep container running
 exec sleep infinity
 `
 
-	// preStop script reads interface name from shared file
+	// preStop script reads interface name from shared file and tears down interface
 	preStopScript := `IFACE=$(cat /run/awg/interface-name 2>/dev/null || echo "")
 if [ -n "$IFACE" ]; then
-  /usr/bin/awg-quick down "/run/awg/${IFACE}.conf" 2>/dev/null || true
+  ip link set "$IFACE" down 2>/dev/null || true
   ip link delete "$IFACE" 2>/dev/null || true
 fi`
 
