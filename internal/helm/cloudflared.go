@@ -163,6 +163,26 @@ else
   apply_addresses "$IFACE" "$ADDR_FILE"
 fi
 
+# Set up routing for full tunnel (AllowedIPs = 0.0.0.0/0)
+# Keep route to AWG endpoint through original gateway, replace default route
+setup_routing() {
+  iface="$1"
+  # Get AWG endpoint IP
+  WG_ENDPOINT=$(awg show "$iface" endpoints 2>/dev/null | awk '{print $2}' | cut -d: -f1 | head -1)
+  # Get original default gateway
+  ORIG_GW=$(ip route | grep '^default via' | awk '{print $3}' | head -1)
+
+  if [ -n "$WG_ENDPOINT" ] && [ -n "$ORIG_GW" ]; then
+    echo "Setting up routing: endpoint=$WG_ENDPOINT via=$ORIG_GW"
+    # Ensure AWG server is reachable through original gateway
+    ip route add "$WG_ENDPOINT" via "$ORIG_GW" 2>/dev/null || true
+    # Replace default route to go through AWG
+    ip route replace default dev "$iface"
+  fi
+}
+
+setup_routing "$IFACE"
+
 restore_resolv
 
 # Keep container running
