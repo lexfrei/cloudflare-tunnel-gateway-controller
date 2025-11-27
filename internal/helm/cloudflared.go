@@ -99,8 +99,11 @@ for conf in /config/*.conf; do
   fi
 done
 
-# Start AWG
-exec /usr/bin/awg-quick up "${CONFIG_DIR}/${IFACE}.conf"
+# Start AWG (awg-quick up exits after configuring interface)
+/usr/bin/awg-quick up "${CONFIG_DIR}/${IFACE}.conf"
+
+# Keep container running
+exec sleep infinity
 `
 
 	// preStop script reads interface name from shared file
