@@ -14,14 +14,19 @@ type SidecarConfig struct {
 	InterfacePrefix  string // AWG interface name prefix (kernel auto-numbers: prefix0, prefix1, etc.)
 }
 
+// MetricsPort is the default port for cloudflared metrics server.
+const MetricsPort = 2000
+
 // BuildValues converts CloudflaredValues to Helm values map.
 func (v *CloudflaredValues) BuildValues() map[string]any {
 	values := map[string]any{
 		"cloudflare": map[string]any{
-			"mode":        "remote",
-			"tunnelToken": v.TunnelToken,
+			"mode":                    "remote",
+			"tunnelToken":             v.TunnelToken,
+			"tunnelTokenSecretName":   "",
 		},
 		"replicaCount": v.ReplicaCount,
+		"metricsPort":  MetricsPort,
 	}
 
 	if v.Protocol != "" {
@@ -30,6 +35,10 @@ func (v *CloudflaredValues) BuildValues() map[string]any {
 
 	if v.Sidecar != nil {
 		values["sidecar"] = buildSidecarValues(v.Sidecar)
+		// AWG sidecar requires relaxed pod security context
+		values["podSecurityContext"] = map[string]any{
+			"runAsNonRoot": false,
+		}
 	}
 
 	return values
