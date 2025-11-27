@@ -95,7 +95,7 @@ tests:
             resources: ["gateways/status", "httproutes/status"]
             verbs: ["get", "update", "patch"]
 
-  - it: should have read-only permissions for secrets
+  - it: should have full CRUD permissions for secrets (Helm SDK)
     set:
       cloudflare:
         tunnelId: "test-tunnel-id"
@@ -107,7 +107,28 @@ tests:
           content:
             apiGroups: [""]
             resources: ["secrets"]
-            verbs: ["get", "list", "watch"]
+            verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  - it: should have Helm SDK permissions for cloudflared deployment
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel-id"
+        apiToken: "test-api-token"
+    asserts:
+      - template: clusterrole.yaml
+        contains:
+          path: rules
+          content:
+            apiGroups: [""]
+            resources: ["serviceaccounts", "configmaps", "pods"]
+            verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+      - template: clusterrole.yaml
+        contains:
+          path: rules
+          content:
+            apiGroups: ["apps"]
+            resources: ["deployments", "replicasets"]
+            verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 
   - it: should have permissions for GatewayClassConfig CRD
     set:
