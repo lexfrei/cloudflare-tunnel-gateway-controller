@@ -6,5 +6,7 @@ config:
   MD013: false
   # Allow inline HTML for badges, special formatting
   MD033: false
+  # Allow bare URLs - common in technical docs
+  MD034: false
   # Disable table column style rule - compact style is fine
   MD060: false
