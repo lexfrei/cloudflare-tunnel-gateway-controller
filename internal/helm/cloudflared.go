@@ -120,7 +120,8 @@ backup_resolv() {
 }
 
 restore_resolv() {
-  [ -f "$RESOLV_BACKUP" ] && cp "$RESOLV_BACKUP" /etc/resolv.conf
+  # Use cat > to handle symlinks (K8s mounts resolv.conf as symlink)
+  [ -f "$RESOLV_BACKUP" ] && cat "$RESOLV_BACKUP" > /etc/resolv.conf 2>/dev/null || true
 }
 
 IFACE=$(find_and_reserve_interface)
