@@ -167,21 +167,33 @@ fi
 # Keep route to AWG endpoint through original gateway, replace default route
 setup_routing() {
   iface="$1"
-  # Get AWG endpoint IP
-  WG_ENDPOINT=$(awg show "$iface" endpoints 2>/dev/null | awk '{print $2}' | cut -d: -f1 | head -1)
+  conf_file="$2"
+
+  # Get AWG endpoint from config file (awg show may be empty before handshake)
+  WG_ENDPOINT=$(grep -i "^Endpoint" "$conf_file" 2>/dev/null | head -1 | sed 's/^[Ee]ndpoint[[:space:]]*=[[:space:]]*//' | cut -d: -f1)
   # Get original default gateway
   ORIG_GW=$(ip route | grep '^default via' | awk '{print $3}' | head -1)
 
+  echo "Routing setup: endpoint=$WG_ENDPOINT gateway=$ORIG_GW"
+
   if [ -n "$WG_ENDPOINT" ] && [ -n "$ORIG_GW" ]; then
-    echo "Setting up routing: endpoint=$WG_ENDPOINT via=$ORIG_GW"
     # Ensure AWG server is reachable through original gateway
     ip route add "$WG_ENDPOINT" via "$ORIG_GW" 2>/dev/null || true
     # Replace default route to go through AWG
     ip route replace default dev "$iface"
+    echo "Routing configured: default via $iface, $WG_ENDPOINT via $ORIG_GW"
+  else
+    echo "WARNING: Could not configure routing (endpoint=$WG_ENDPOINT, gw=$ORIG_GW)"
   fi
 }
 
-setup_routing "$IFACE"
+# Use original config file to get Endpoint (before it was stripped)
+for conf in /config/*.conf; do
+  if [ -f "$conf" ]; then
+    setup_routing "$IFACE" "$conf"
+    break
+  fi
+done
 
 restore_resolv
 
