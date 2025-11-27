@@ -145,11 +145,21 @@ done
 # Start AWG with DNS protection
 backup_resolv
 
-# Create interface and apply config manually (bypass buggy awg-quick)
-ip link add dev "$IFACE" type amneziawg
-ip link set "$IFACE" up
-awg setconf "$IFACE" "${CONFIG_DIR}/${IFACE}.conf"
-apply_addresses "$IFACE" "$ADDR_FILE"
+# Create interface: try kernel module first, fall back to userspace
+if ip link add dev "$IFACE" type amneziawg 2>/dev/null; then
+  echo "Using kernel module"
+  ip link set "$IFACE" up
+  awg setconf "$IFACE" "${CONFIG_DIR}/${IFACE}.conf"
+  apply_addresses "$IFACE" "$ADDR_FILE"
+else
+  echo "Kernel module unavailable, using userspace implementation"
+  # Start amneziawg-go in background (creates tun device)
+  amneziawg-go "$IFACE" &
+  sleep 1
+  # Apply config and addresses
+  awg setconf "$IFACE" "${CONFIG_DIR}/${IFACE}.conf"
+  apply_addresses "$IFACE" "$ADDR_FILE"
+fi
 
 restore_resolv
 
@@ -162,6 +172,8 @@ exec sleep infinity
 if [ -n "$IFACE" ]; then
   ip link set "$IFACE" down 2>/dev/null || true
   ip link delete "$IFACE" 2>/dev/null || true
+  # Kill userspace process if running
+  pkill -f "amneziawg-go $IFACE" 2>/dev/null || true
 fi`
 
 	return map[string]any{
