@@ -371,11 +371,8 @@ kubectl logs -n cloudflare-tunnel-system POD_NAME -c amneziawg
 
 **Cause**: `awg-quick up` calls `resolvconf` which overwrites `/etc/resolv.conf` with DNS servers from AWG config.
 
-**Solution**: The controller automatically preserves cluster DNS by:
-
-1. Injecting empty `PostUp`/`PostDown` directives (disables automatic resolvconf)
-2. Backing up and restoring `/etc/resolv.conf` after AWG startup
-
+**Solution**: The controller automatically preserves cluster DNS by backing up
+`/etc/resolv.conf` before AWG startup and restoring it immediately after.
 This happens automatically since chart version 0.2.x. No user action required.
 
 **Verification**:

@@ -45,8 +45,9 @@ func buildSidecarValues(sidecar *SidecarConfig) map[string]any {
 	// Wrapper script that:
 	// 1. Uses flock to atomically find and reserve interface number
 	// 2. Writes the interface name to shared file for preStop
-	// 3. Copies config with correct name, preserving cluster DNS
-	// 4. Starts AWG and keeps container running
+	// 3. Copies config with correct interface name
+	// 4. Starts AWG with DNS preservation (backup/restore resolv.conf)
+	// 5. Keeps container running
 	wrapperScript := `#!/bin/sh
 set -e
 PREFIX="` + interfacePrefix + `"
@@ -83,16 +84,11 @@ find_and_reserve_interface() {
   done
 }
 
-# Prepare AWG config with DNS protection
-# If PostUp/PostDown are not present, add empty ones to disable automatic resolvconf
-# This is documented wg-quick behavior: custom PostUp/PostDown disables DNS handling
-prepare_awg_config() {
+# Copy AWG config to runtime directory
+copy_awg_config() {
   src_conf="$1"
   dst_conf="$2"
   cp "$src_conf" "$dst_conf"
-  if ! grep -q "^PostUp" "$dst_conf" && ! grep -q "^PostDown" "$dst_conf"; then
-    printf '\n# Preserve cluster DNS (added by controller)\nPostUp = \nPostDown = \n' >> "$dst_conf"
-  fi
 }
 
 # Backup/restore resolv.conf as additional protection
@@ -113,10 +109,10 @@ fi
 echo "$IFACE" > "$IFACE_FILE"
 echo "Using AWG interface: $IFACE"
 
-# Prepare config with DNS protection
+# Copy config with correct interface name
 for conf in /config/*.conf; do
   if [ -f "$conf" ]; then
-    prepare_awg_config "$conf" "${CONFIG_DIR}/${IFACE}.conf"
+    copy_awg_config "$conf" "${CONFIG_DIR}/${IFACE}.conf"
     break
   fi
 done
