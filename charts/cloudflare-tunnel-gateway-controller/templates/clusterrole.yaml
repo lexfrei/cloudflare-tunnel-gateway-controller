@@ -20,12 +20,6 @@ rules:
     resources: ["gateways/status", "httproutes/status"]
     verbs: ["get", "update", "patch"]
   - apiGroups: [""]
-    resources: ["services"]
-    verbs: ["get", "list", "watch"]
-  - apiGroups: [""]
-    resources: ["secrets"]
-    verbs: ["get", "list", "watch"]
-  - apiGroups: [""]
     resources: ["events"]
     verbs: ["create", "patch"]
   # GatewayClassConfig CRD
@@ -39,9 +33,9 @@ rules:
   - apiGroups: ["coordination.k8s.io"]
     resources: ["leases"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  # Helm SDK for cloudflared deployment
+  # Helm SDK for cloudflared deployment (full CRUD for all resources)
   - apiGroups: [""]
-    resources: ["serviceaccounts", "configmaps"]
+    resources: ["secrets", "services", "serviceaccounts", "configmaps"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: ["apps"]
     resources: ["deployments"]
