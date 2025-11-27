@@ -163,25 +163,70 @@ else
   apply_addresses "$IFACE" "$ADDR_FILE"
 fi
 
-# Set up routing for full tunnel (AllowedIPs = 0.0.0.0/0)
-# Keep route to AWG endpoint through original gateway, replace default route
+# Set up routing based on AllowedIPs configuration
+# awg setconf does NOT add routes (unlike wg-quick), so we must add them manually
+# Full tunnel (0.0.0.0/0): replace default route, keep endpoint route via original GW
+# Split tunnel (specific subnets): add routes for each AllowedIP subnet
 setup_routing() {
   iface="$1"
   conf_file="$2"
 
   # Get AWG endpoint from config file (awg show may be empty before handshake)
   WG_ENDPOINT=$(grep -i "^Endpoint" "$conf_file" 2>/dev/null | head -1 | sed 's/^[Ee]ndpoint[[:space:]]*=[[:space:]]*//' | cut -d: -f1)
+
+  # Resolve hostname to IP if needed (ip route requires IP address)
+  if [ -n "$WG_ENDPOINT" ]; then
+    if ! echo "$WG_ENDPOINT" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
+      echo "Resolving endpoint hostname: $WG_ENDPOINT"
+      WG_ENDPOINT_IP=$(getent hosts "$WG_ENDPOINT" | awk '{print $1}' | head -1)
+      if [ -n "$WG_ENDPOINT_IP" ]; then
+        echo "Resolved $WG_ENDPOINT -> $WG_ENDPOINT_IP"
+        WG_ENDPOINT="$WG_ENDPOINT_IP"
+      else
+        echo "ERROR: Cannot resolve endpoint hostname $WG_ENDPOINT"
+        return 1
+      fi
+    fi
+  fi
+
   # Get original default gateway
   ORIG_GW=$(ip route | grep '^default via' | awk '{print $3}' | head -1)
 
-  echo "Routing setup: endpoint=$WG_ENDPOINT gateway=$ORIG_GW"
+  # Check if full tunnel mode (AllowedIPs contains 0.0.0.0/0)
+  if grep -qi "^AllowedIPs.*0\.0\.0\.0/0" "$conf_file" 2>/dev/null; then
+    FULL_TUNNEL="yes"
+    echo "Full tunnel mode detected (AllowedIPs includes 0.0.0.0/0)"
+  else
+    FULL_TUNNEL="no"
+    echo "Split tunnel mode detected (specific AllowedIPs)"
+  fi
+
+  echo "Routing setup: endpoint=$WG_ENDPOINT gateway=$ORIG_GW full_tunnel=$FULL_TUNNEL"
 
   if [ -n "$WG_ENDPOINT" ] && [ -n "$ORIG_GW" ]; then
-    # Ensure AWG server is reachable through original gateway
+    # Always add route to AWG endpoint via original gateway
     ip route add "$WG_ENDPOINT" via "$ORIG_GW" 2>/dev/null || true
-    # Replace default route to go through AWG
-    ip route replace default dev "$iface"
-    echo "Routing configured: default via $iface, $WG_ENDPOINT via $ORIG_GW"
+
+    if [ "$FULL_TUNNEL" = "yes" ]; then
+      # Full tunnel: replace default route to go through AWG
+      ip route replace default dev "$iface"
+      echo "Routing configured: default via $iface, $WG_ENDPOINT via $ORIG_GW"
+    else
+      # Split tunnel: add routes for each AllowedIP subnet (awg setconf doesn't do this)
+      ALLOWED_IPS=$(grep -i "^AllowedIPs" "$conf_file" 2>/dev/null | sed 's/^[Aa]llowed[Ii][Pp]s[[:space:]]*=[[:space:]]*//')
+      echo "Adding routes for AllowedIPs: $ALLOWED_IPS"
+      echo "$ALLOWED_IPS" | tr ',' '\n' | while read -r subnet; do
+        subnet=$(echo "$subnet" | tr -d ' ')
+        [ -z "$subnet" ] && continue
+        # Skip IPv6 subnets
+        echo "$subnet" | grep -q ':' && continue
+        # Skip 0.0.0.0/0 (handled above)
+        [ "$subnet" = "0.0.0.0/0" ] && continue
+        echo "Adding route: $subnet via $iface"
+        ip route add "$subnet" dev "$iface" 2>/dev/null || true
+      done
+      echo "Routing configured: AllowedIPs via $iface, $WG_ENDPOINT via $ORIG_GW"
+    fi
   else
     echo "WARNING: Could not configure routing (endpoint=$WG_ENDPOINT, gw=$ORIG_GW)"
   fi

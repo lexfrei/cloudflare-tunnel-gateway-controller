@@ -50,7 +50,7 @@ func init() {
 	rootCmd.PersistentFlags().String("log-level", "info", "Log level (debug, info, warn, error)")
 	rootCmd.PersistentFlags().String("log-format", "json", "Log format (json, text)")
 
-	rootCmd.Flags().String("cluster-domain", "cluster.local", "Kubernetes cluster domain")
+	rootCmd.Flags().String("cluster-domain", "", "Kubernetes cluster domain (auto-detected if not set)")
 	rootCmd.Flags().String("gateway-class-name", "cloudflare-tunnel", "GatewayClass name to watch")
 	rootCmd.Flags().String("controller-name", "cf.k8s.lex.la/tunnel-controller", "Controller name for GatewayClass")
 	rootCmd.Flags().String("metrics-addr", ":8080", "Address for metrics endpoint")
@@ -69,7 +69,6 @@ func initConfig() {
 	viper.SetEnvPrefix("CF")
 	viper.AutomaticEnv()
 
-	viper.SetDefault("cluster-domain", "cluster.local")
 	viper.SetDefault("gateway-class-name", "cloudflare-tunnel")
 	viper.SetDefault("controller-name", "cf.k8s.lex.la/tunnel-controller")
 	viper.SetDefault("metrics-addr", ":8080")
@@ -145,7 +144,7 @@ func runController(_ *cobra.Command, _ []string) error {
 // User-configured value takes precedence, then auto-detection,
 // finally falls back to default.
 func resolveClusterDomain(logger *slog.Logger) string {
-	// User explicit value takes precedence
+	// User explicit value takes precedence (CLI flag or CF_CLUSTER_DOMAIN env var)
 	if configured := viper.GetString("cluster-domain"); configured != "" {
 		logger.Info("using configured cluster domain",
 			"clusterDomain", configured,
@@ -154,7 +153,7 @@ func resolveClusterDomain(logger *slog.Logger) string {
 		return configured
 	}
 
-	// Try auto-detection
+	// Try auto-detection from /etc/resolv.conf
 	if detected, ok := dns.DetectClusterDomain(); ok {
 		logger.Info("auto-detected cluster domain from /etc/resolv.conf",
 			"clusterDomain", detected,
