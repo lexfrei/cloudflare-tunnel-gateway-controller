@@ -56,7 +56,6 @@ jobs:
       - name: markdownlint
         uses: DavidAnson/markdownlint-cli2-action@v21
         with:
-          config: '.markdownlint.yaml'
           globs: '**/*.md'
 
   test:

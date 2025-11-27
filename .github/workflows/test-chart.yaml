@@ -58,8 +58,8 @@ jobs:
           chmod +x helm-docs
           sudo mv helm-docs /usr/local/bin/helm-docs
 
-          # markdownlint-cli
-          npm install --global markdownlint-cli
+          # markdownlint-cli2
+          npm install --global markdownlint-cli2
 
       - name: Run Helm Lint
         run: |
@@ -149,7 +149,7 @@ jobs:
           CHART_DIR="charts/cloudflare-tunnel-gateway-controller"
           if [ -f "$CHART_DIR/README.md" ]; then
             echo "Running markdownlint on README.md..."
-            markdownlint "$CHART_DIR/README.md" --config "$CHART_DIR/.markdownlint.yaml"
+            markdownlint-cli2 "$CHART_DIR/README.md"
           else
             echo "No README.md found, skipping markdownlint"
           fi
