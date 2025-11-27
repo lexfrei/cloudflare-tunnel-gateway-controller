@@ -359,6 +359,36 @@ kubectl logs -n cloudflare-tunnel-system POD_NAME -c amneziawg
      --namespace cloudflare-tunnel-system
    ```
 
+### AWG DNS Overwrites Cluster DNS
+
+**Problem**: cloudflared cannot resolve internal Kubernetes services (e.g., `nginx.test-nginx.svc.cluster.local`)
+
+**Symptoms**:
+
+- `/etc/resolv.conf` shows VPN DNS (1.1.1.1) instead of CoreDNS
+- Logs show: `no such host` for internal service names
+- External DNS resolution works, but cluster-internal fails
+
+**Cause**: `awg-quick up` calls `resolvconf` which overwrites `/etc/resolv.conf` with DNS servers from AWG config.
+
+**Solution**: The controller automatically preserves cluster DNS by:
+
+1. Injecting empty `PostUp`/`PostDown` directives (disables automatic resolvconf)
+2. Backing up and restoring `/etc/resolv.conf` after AWG startup
+
+This happens automatically since chart version 0.2.x. No user action required.
+
+**Verification**:
+
+```bash
+# Check DNS config in cloudflared pod
+kubectl exec -n cloudflare-tunnel-system POD_NAME -c cloudflared -- cat /etc/resolv.conf
+
+# Should show CoreDNS IP (e.g., 10.96.0.10), not 1.1.1.1
+```
+
+**Manual workaround** (for older versions): Remove `DNS = ...` line from your AWG config file.
+
 ### Graceful Shutdown Issues
 
 **Problem**: AWG interface not cleaned up on pod termination

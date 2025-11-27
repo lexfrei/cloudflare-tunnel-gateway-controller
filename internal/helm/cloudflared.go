@@ -45,13 +45,15 @@ func buildSidecarValues(sidecar *SidecarConfig) map[string]any {
 	// Wrapper script that:
 	// 1. Uses flock to atomically find and reserve interface number
 	// 2. Writes the interface name to shared file for preStop
-	// 3. Copies config with correct name and starts AWG
+	// 3. Copies config with correct name, preserving cluster DNS
+	// 4. Starts AWG and keeps container running
 	wrapperScript := `#!/bin/sh
 set -e
 PREFIX="` + interfacePrefix + `"
 IFACE_FILE="/run/awg/interface-name"
 CONFIG_DIR="/run/awg"
 LOCK_DIR="/tmp/awg-locks"
+RESOLV_BACKUP="/run/awg/resolv.conf.bak"
 
 mkdir -p "$LOCK_DIR"
 
@@ -81,6 +83,27 @@ find_and_reserve_interface() {
   done
 }
 
+# Prepare AWG config with DNS protection
+# If PostUp/PostDown are not present, add empty ones to disable automatic resolvconf
+# This is documented wg-quick behavior: custom PostUp/PostDown disables DNS handling
+prepare_awg_config() {
+  src_conf="$1"
+  dst_conf="$2"
+  cp "$src_conf" "$dst_conf"
+  if ! grep -q "^PostUp" "$dst_conf" && ! grep -q "^PostDown" "$dst_conf"; then
+    printf '\n# Preserve cluster DNS (added by controller)\nPostUp = \nPostDown = \n' >> "$dst_conf"
+  fi
+}
+
+# Backup/restore resolv.conf as additional protection
+backup_resolv() {
+  [ -f /etc/resolv.conf ] && cp /etc/resolv.conf "$RESOLV_BACKUP"
+}
+
+restore_resolv() {
+  [ -f "$RESOLV_BACKUP" ] && cp "$RESOLV_BACKUP" /etc/resolv.conf
+}
+
 IFACE=$(find_and_reserve_interface)
 if [ -z "$IFACE" ]; then
   exit 1
@@ -90,17 +113,21 @@ fi
 echo "$IFACE" > "$IFACE_FILE"
 echo "Using AWG interface: $IFACE"
 
-# Copy config with correct interface name
-# AWG uses filename as interface name
+# Prepare config with DNS protection
 for conf in /config/*.conf; do
   if [ -f "$conf" ]; then
-    cp "$conf" "${CONFIG_DIR}/${IFACE}.conf"
+    prepare_awg_config "$conf" "${CONFIG_DIR}/${IFACE}.conf"
     break
   fi
 done
 
-# Start AWG
-exec /usr/bin/awg-quick up "${CONFIG_DIR}/${IFACE}.conf"
+# Start AWG with DNS protection
+backup_resolv
+/usr/bin/awg-quick up "${CONFIG_DIR}/${IFACE}.conf"
+restore_resolv
+
+# Keep container running
+exec sleep infinity
 `
 
 	// preStop script reads interface name from shared file
