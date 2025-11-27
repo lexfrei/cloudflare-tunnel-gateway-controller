@@ -155,6 +155,7 @@ else
   echo "Kernel module unavailable, using userspace implementation"
   # Start amneziawg-go in background (creates tun device)
   amneziawg-go "$IFACE" &
+  echo $! > "${CONFIG_DIR}/${IFACE}.pid"
   sleep 1
   # Apply config and addresses
   awg setconf "$IFACE" "${CONFIG_DIR}/${IFACE}.conf"
@@ -172,8 +173,9 @@ exec sleep infinity
 if [ -n "$IFACE" ]; then
   ip link set "$IFACE" down 2>/dev/null || true
   ip link delete "$IFACE" 2>/dev/null || true
-  # Kill userspace process if running
-  pkill -f "amneziawg-go $IFACE" 2>/dev/null || true
+  # Kill userspace process if running (PID saved during startup)
+  PID_FILE="/run/awg/${IFACE}.pid"
+  [ -f "$PID_FILE" ] && kill "$(cat "$PID_FILE")" 2>/dev/null || true
 fi`
 
 	return map[string]any{
