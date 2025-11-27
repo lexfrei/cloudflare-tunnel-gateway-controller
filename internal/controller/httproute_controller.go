@@ -13,9 +13,12 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
@@ -224,80 +227,92 @@ func (r *HTTPRouteReconciler) updateRouteStatus(
 	accepted bool,
 	message string,
 ) error {
-	now := metav1.Now()
+	routeKey := types.NamespacedName{Name: route.Name, Namespace: route.Namespace}
 
-	status := metav1.ConditionTrue
-	reason := string(gatewayv1.RouteReasonAccepted)
-
-	if !accepted {
-		status = metav1.ConditionFalse
-		reason = string(gatewayv1.RouteReasonNoMatchingParent)
-
-		if message == "" {
-			message = "Route not accepted"
-		}
-	} else {
-		message = "Route accepted and programmed in Cloudflare Tunnel"
-	}
-
-	route.Status.Parents = nil
-
-	for _, ref := range route.Spec.ParentRefs {
-		if ref.Kind != nil && *ref.Kind != kindGateway {
-			continue
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		// Get fresh copy of the route to avoid conflict errors
+		var freshRoute gatewayv1.HTTPRoute
+		if err := r.Get(ctx, routeKey, &freshRoute); err != nil {
+			return errors.Wrap(err, "failed to get fresh httproute")
 		}
 
-		namespace := route.Namespace
-		if ref.Namespace != nil {
-			namespace = string(*ref.Namespace)
+		now := metav1.Now()
+
+		status := metav1.ConditionTrue
+		reason := string(gatewayv1.RouteReasonAccepted)
+
+		if !accepted {
+			status = metav1.ConditionFalse
+			reason = string(gatewayv1.RouteReasonNoMatchingParent)
+
+			if message == "" {
+				message = "Route not accepted"
+			}
+		} else {
+			message = "Route accepted and programmed in Cloudflare Tunnel"
 		}
 
-		var gateway gatewayv1.Gateway
-		if err := r.Get(ctx, client.ObjectKey{Name: string(ref.Name), Namespace: namespace}, &gateway); err != nil {
-			continue
-		}
+		freshRoute.Status.Parents = nil
 
-		if gateway.Spec.GatewayClassName != gatewayv1.ObjectName(r.GatewayClassName) {
-			continue
-		}
+		for _, ref := range freshRoute.Spec.ParentRefs {
+			if ref.Kind != nil && *ref.Kind != kindGateway {
+				continue
+			}
 
-		parentStatus := gatewayv1.RouteParentStatus{
-			ParentRef: gatewayv1.ParentReference{
-				Group:       ref.Group,
-				Kind:        ref.Kind,
-				Namespace:   (*gatewayv1.Namespace)(&namespace),
-				Name:        ref.Name,
-				SectionName: ref.SectionName,
-			},
-			ControllerName: gatewayv1.GatewayController(r.ControllerName),
-			Conditions: []metav1.Condition{
-				{
-					Type:               string(gatewayv1.RouteConditionAccepted),
-					Status:             status,
-					ObservedGeneration: route.Generation,
-					LastTransitionTime: now,
-					Reason:             reason,
-					Message:            message,
+			namespace := freshRoute.Namespace
+			if ref.Namespace != nil {
+				namespace = string(*ref.Namespace)
+			}
+
+			var gateway gatewayv1.Gateway
+			if err := r.Get(ctx, client.ObjectKey{Name: string(ref.Name), Namespace: namespace}, &gateway); err != nil {
+				continue
+			}
+
+			if gateway.Spec.GatewayClassName != gatewayv1.ObjectName(r.GatewayClassName) {
+				continue
+			}
+
+			parentStatus := gatewayv1.RouteParentStatus{
+				ParentRef: gatewayv1.ParentReference{
+					Group:       ref.Group,
+					Kind:        ref.Kind,
+					Namespace:   (*gatewayv1.Namespace)(&namespace),
+					Name:        ref.Name,
+					SectionName: ref.SectionName,
 				},
-				{
-					Type:               string(gatewayv1.RouteConditionResolvedRefs),
-					Status:             metav1.ConditionTrue,
-					ObservedGeneration: route.Generation,
-					LastTransitionTime: now,
-					Reason:             string(gatewayv1.RouteReasonResolvedRefs),
-					Message:            "All references resolved",
+				ControllerName: gatewayv1.GatewayController(r.ControllerName),
+				Conditions: []metav1.Condition{
+					{
+						Type:               string(gatewayv1.RouteConditionAccepted),
+						Status:             status,
+						ObservedGeneration: freshRoute.Generation,
+						LastTransitionTime: now,
+						Reason:             reason,
+						Message:            message,
+					},
+					{
+						Type:               string(gatewayv1.RouteConditionResolvedRefs),
+						Status:             metav1.ConditionTrue,
+						ObservedGeneration: freshRoute.Generation,
+						LastTransitionTime: now,
+						Reason:             string(gatewayv1.RouteReasonResolvedRefs),
+						Message:            "All references resolved",
+					},
 				},
-			},
+			}
+
+			freshRoute.Status.Parents = append(freshRoute.Status.Parents, parentStatus)
 		}
 
-		route.Status.Parents = append(route.Status.Parents, parentStatus)
-	}
+		if err := r.Status().Update(ctx, &freshRoute); err != nil {
+			return errors.Wrap(err, "failed to update httproute status")
+		}
 
-	if err := r.Status().Update(ctx, route); err != nil {
-		return errors.Wrap(err, "failed to update httproute status")
-	}
+		return nil
+	})
 
-	return nil
+	return errors.Wrap(err, "failed to update httproute status after retries")
 }
 
 func (r *HTTPRouteReconciler) SetupWithManager(mgr ctrl.Manager) error {
@@ -309,6 +324,9 @@ func (r *HTTPRouteReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 	err := ctrl.NewControllerManagedBy(mgr).
 		For(&gatewayv1.HTTPRoute{}).
+		// Filter out status-only updates to prevent infinite reconciliation loops.
+		// We only care about spec changes (generation changes) or deletions.
+		WithEventFilter(predicate.GenerationChangedPredicate{}).
 		Watches(
 			&gatewayv1.Gateway{},
 			handler.EnqueueRequestsFromMapFunc(r.findRoutesForGateway),
