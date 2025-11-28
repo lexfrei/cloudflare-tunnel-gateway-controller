@@ -9,6 +9,8 @@ for traffic obfuscation.
 - Cloudflare Tunnel created in Zero Trust Dashboard
 - AWG server configured and accessible
 
+> **Warning:** AWG configuration contains unique client identity (private key, address). Running multiple replicas with the same config will cause connection conflicts. Currently only single replica deployments are supported. If you need high availability, please [open an issue](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/issues).
+
 ## Why AWG?
 
 AmneziaWG routes cloudflared traffic through an obfuscated WireGuard tunnel,

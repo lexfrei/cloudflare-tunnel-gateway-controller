@@ -20,6 +20,8 @@ Enables routing traffic through Cloudflare Tunnel using standard Gateway API res
 - Multi-arch container images (amd64, arm64)
 - Signed container images with cosign
 
+> **Warning:** The controller assumes **exclusive ownership** of the tunnel configuration. It will remove any ingress rules not managed by HTTPRoute resources. Do not use a tunnel that has manually configured routes or is shared with other systems.
+
 ## Quick Start
 
 ```bash
@@ -93,7 +95,7 @@ The **Account Settings: Read** permission is required for auto-detecting the Acc
 
 ## Installation
 
-### Helm (Recommended)
+Helm is the only supported installation method. It handles CRD installation, RBAC setup, and provides a simple upgrade path.
 
 ```bash
 helm install cloudflare-tunnel-gateway-controller \
@@ -105,136 +107,21 @@ helm install cloudflare-tunnel-gateway-controller \
 
 See [charts/cloudflare-tunnel-gateway-controller/README.md](charts/cloudflare-tunnel-gateway-controller/README.md) for all configuration options.
 
-### Manual Installation
+For manual installation without Helm, see [Manual Installation](docs/MANUAL_INSTALLATION.md).
 
-#### 1. Install Gateway API CRDs
-
-```bash
-kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.4.0/standard-install.yaml
-```
-
-#### 2. Create namespace
-
-```bash
-kubectl create namespace cloudflare-tunnel-system
-```
-
-#### 3. Create Secrets
-
-```bash
-# Cloudflare API credentials
-kubectl create secret generic cloudflare-credentials \
-  --namespace cloudflare-tunnel-system \
-  --from-literal=api-token="YOUR_API_TOKEN"
-
-# Tunnel token (required for managed cloudflared)
-kubectl create secret generic cloudflare-tunnel-token \
-  --namespace cloudflare-tunnel-system \
-  --from-literal=tunnel-token="YOUR_TUNNEL_TOKEN"
-```
-
-See [deploy/samples/secrets.yaml](deploy/samples/secrets.yaml) for complete examples including AWG configuration.
-
-#### 4. Deploy the controller
-
-```bash
-kubectl apply -f deploy/rbac/
-kubectl apply -f deploy/controller/
-```
-
-#### 5. Create GatewayClassConfig, GatewayClass, and Gateway
-
-Edit [deploy/samples/gatewayclassconfig.yaml](deploy/samples/gatewayclassconfig.yaml) with your tunnel ID:
-
-```bash
-kubectl apply -f deploy/samples/gatewayclassconfig.yaml
-kubectl apply -f deploy/samples/gatewayclass.yaml
-kubectl apply -f deploy/samples/gateway.yaml
-```
+> **Note:** This controller uses [cloudflare-tunnel](https://github.com/lexfrei/charts/tree/main/charts/cloudflare-tunnel) Helm chart under the hood to deploy cloudflared. If you don't need Gateway API integration, you can use that chart directly.
 
 ## Usage
 
-Create an HTTPRoute to expose your service through Cloudflare Tunnel:
+Create standard [Gateway API](https://gateway-api.sigs.k8s.io/) HTTPRoute resources referencing the `cloudflare-tunnel` Gateway. The controller automatically syncs routes to Cloudflare Tunnel configuration with hot reload (no cloudflared restart required).
 
-```yaml
-apiVersion: gateway.networking.k8s.io/v1
-kind: HTTPRoute
-metadata:
-  name: my-app
-  namespace: default
-spec:
-  parentRefs:
-    - name: cloudflare-tunnel
-      namespace: cloudflare-tunnel-system
-  hostnames:
-    - app.example.com
-  rules:
-    - matches:
-        - path:
-            type: PathPrefix
-            value: /
-      backendRefs:
-        - name: my-service
-          port: 80
-```
-
-The controller will automatically update Cloudflare Tunnel configuration. Changes are applied instantly without restarting cloudflared.
-
-**Important:** Each Cloudflare Tunnel should be managed by exactly one controller instance. The controller assumes exclusive ownership of the tunnel configuration.
-
-The controller uses diff-based synchronization:
-
-- Compares current tunnel configuration with desired state from HTTPRoutes
-- Only adds new rules and removes orphaned rules (no full replacement)
-- Ensures catch-all rule exists at the end of the configuration
-- Changes are applied incrementally, minimizing API calls
+See [Gateway API documentation](docs/GATEWAY_API.md) for supported features and examples.
 
 ## External-DNS Integration
 
-The controller integrates with [external-dns](https://github.com/kubernetes-sigs/external-dns) for automatic DNS record creation.
+The controller sets `status.addresses` on the Gateway with the tunnel CNAME (`TUNNEL_ID.cfargotunnel.com`). If you have [external-dns](https://github.com/kubernetes-sigs/external-dns) configured with Gateway API source, it will automatically create DNS records for your HTTPRoute hostnames.
 
-The controller automatically sets `status.addresses` on the Gateway with the tunnel CNAME (`TUNNEL_ID.cfargotunnel.com`). External-dns reads this value as the DNS target.
-
-### Gateway Configuration
-
-```yaml
-apiVersion: gateway.networking.k8s.io/v1
-kind: Gateway
-metadata:
-  name: cloudflare-tunnel
-  namespace: cloudflare-tunnel-system
-spec:
-  gatewayClassName: cloudflare-tunnel
-  listeners:
-    - name: http
-      port: 80
-      protocol: HTTP
-      allowedRoutes:
-        namespaces:
-          from: All
-```
-
-### HTTPRoute Configuration
-
-Add provider-specific annotations on HTTPRoute:
-
-```yaml
-apiVersion: gateway.networking.k8s.io/v1
-kind: HTTPRoute
-metadata:
-  name: my-app
-  annotations:
-    external-dns.alpha.kubernetes.io/cloudflare-proxied: "true"
-spec:
-  parentRefs:
-    - name: cloudflare-tunnel
-      namespace: cloudflare-tunnel-system
-      sectionName: http  # Must match listener name
-  hostnames:
-    - app.example.com
-```
-
-**Important:** The `sectionName` in parentRef must match the listener name in Gateway for external-dns to properly associate routes with the gateway.
+For provider-specific annotations and configuration details, see the [external-dns Gateway API documentation](https://kubernetes-sigs.github.io/external-dns/latest/docs/sources/gateway-api/).
 
 ## Configuration
 
@@ -258,44 +145,6 @@ spec:
 | `--leader-election-namespace` | | | Namespace for leader election lease |
 | `--leader-election-name` | | `cloudflare-tunnel-gateway-controller-leader` | Leader election lease name |
 
-## Architecture
-
-```mermaid
-flowchart TB
-    subgraph Kubernetes["Kubernetes Cluster"]
-        GC[GatewayClass]
-        GW[Gateway]
-        HR[HTTPRoute]
-        SVC[Services]
-        CTRL[Controller]
-        CFD[cloudflared]
-    end
-
-    subgraph Cloudflare["Cloudflare"]
-        API[Cloudflare API]
-        EDGE[Cloudflare Edge]
-        TUN[Tunnel Config]
-    end
-
-    USER[Users] --> EDGE
-    EDGE --> CFD
-    CFD --> SVC
-
-    GC --> CTRL
-    GW --> CTRL
-    HR --> CTRL
-    CTRL -->|Update Config| API
-    API --> TUN
-    TUN -->|Push Config| CFD
-```
-
-### How It Works
-
-1. **Watch**: Controller watches Gateway API resources (GatewayClass, Gateway, HTTPRoute)
-2. **Convert**: HTTPRoutes are converted to Cloudflare Tunnel ingress rules
-3. **Sync**: Configuration is pushed to Cloudflare API
-4. **Apply**: cloudflared receives updated config automatically (hot reload)
-
 ## Documentation
 
 | Document | Description |
@@ -305,6 +154,7 @@ flowchart TB
 | [Gateway API](docs/GATEWAY_API.md) | Supported Gateway API features and limitations |
 | [Metrics](docs/METRICS.md) | Prometheus metrics, alerting rules, Grafana dashboard |
 | [Development](docs/DEVELOPMENT.md) | Development setup and contributing guide |
+| [Manual Installation](docs/MANUAL_INSTALLATION.md) | Installation without Helm (not recommended) |
 | [Troubleshooting](docs/TROUBLESHOOTING.md) | Common issues and solutions |
 | [Helm Chart](charts/cloudflare-tunnel-gateway-controller/README.md) | Helm chart configuration reference |
 
