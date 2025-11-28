@@ -31,6 +31,7 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: '3.12'
+          cache: ''
 
       - name: Set up chart-testing
         uses: helm/chart-testing-action@v2.8.0
