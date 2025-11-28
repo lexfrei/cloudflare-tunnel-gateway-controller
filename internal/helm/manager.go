@@ -104,7 +104,11 @@ func (m *Manager) LoadChart(_ context.Context, chartRef, version string) (chart.
 
 	slog.Info("pulling chart from registry", "ref", chartRef, "version", version)
 
-	pullClient := action.NewPull(action.WithConfig(new(action.Configuration)))
+	pullConfig := &action.Configuration{
+		RegistryClient: m.registryClient,
+	}
+
+	pullClient := action.NewPull(action.WithConfig(pullConfig))
 	pullClient.Settings = m.settings
 	pullClient.Version = version
 	pullClient.DestDir = os.TempDir()
