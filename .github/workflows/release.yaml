@@ -414,13 +414,16 @@ jobs:
           helm package "${CHART_PATH}"
           CHART_FILE="${CHART_NAME}-${VERSION}.tgz"
 
-          # Extract Chart.yaml for config layer
+          # Extract Chart.yaml and convert to JSON for config layer
+          # Helm OCI spec requires JSON config blob (helm does json.Marshal(metadata))
+          # See: https://github.com/helm/helm/blob/main/pkg/registry/client.go
           tar --extract --gzip --file "${CHART_FILE}" "${CHART_NAME}/Chart.yaml"
+          yq eval --output-format=json "${CHART_NAME}/Chart.yaml" > "${CHART_NAME}/config.json"
 
           # Push chart using oras for full path control
           # Media types per Helm OCI spec: https://helm.sh/docs/topics/registries/
           oras push "${CHART_REPO}:${VERSION}" \
-            --config "${CHART_NAME}/Chart.yaml:application/vnd.cncf.helm.config.v1+json" \
+            --config "${CHART_NAME}/config.json:application/vnd.cncf.helm.config.v1+json" \
             "${CHART_FILE}:application/vnd.cncf.helm.chart.content.v1.tar+gzip"
 
           rm --recursive --force "${CHART_NAME}"
