@@ -11,6 +11,18 @@
 //   - Backend service resolution to cluster-internal URLs
 //   - Rule ordering by priority and path specificity
 //
+// # Diff-based Synchronization
+//
+// The package provides diff-based synchronization functions to minimize
+// changes when updating tunnel configuration:
+//
+//   - DiffRules: Computes rules to add and remove
+//   - ApplyDiff: Applies the diff to current rules
+//   - EnsureCatchAll: Ensures catch-all rule exists at the end
+//
+// This approach only adds new rules and removes orphaned rules,
+// rather than replacing the entire configuration.
+//
 // # Path Matching
 //
 // The builder supports two path match types as defined by Gateway API:
