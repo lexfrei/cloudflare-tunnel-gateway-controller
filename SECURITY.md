@@ -54,7 +54,7 @@ The Cloudflare API token is sensitive and should be:
 
 4. **Never committed to git**
    - Use external secret management (Vault, AWS Secrets Manager)
-   - See `charts/.../examples/external-secrets-values.yaml`
+   - See [external-secrets-values.yaml](charts/cloudflare-tunnel-gateway-controller/examples/external-secrets-values.yaml)
 
 ### RBAC Configuration
 

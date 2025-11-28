@@ -84,6 +84,10 @@ chore(deps): update controller-runtime to v0.22.4
 5. **Documentation**: Update relevant docs
 6. **Review**: Address reviewer feedback
 
+### Testing PR Changes
+
+Each PR automatically builds test artifacts. Links to test container images and Helm chart are posted as a comment on the PR, allowing you to test changes before merging.
+
 ### PR Checklist
 
 - [ ] Code follows project style guidelines

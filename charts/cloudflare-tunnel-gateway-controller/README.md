@@ -1,12 +1,11 @@
 # cloudflare-tunnel-gateway-controller
 
-![Version: 0.1.0](https://img.shields.io/badge/Version-0.1.0-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: 0.0.2](https://img.shields.io/badge/AppVersion-0.0.2-informational?style=flat-square)
+> **Note:** The Helm chart is published to a separate OCI path (`cloudflare-tunnel-gateway-controller-chart`) because Helm CLI doesn't support OCI Image Index with `artifactType` selection. Once [helm/helm#31582](https://github.com/helm/helm/issues/31582) is resolved, the chart will be available at `oci://ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller`.
 
+[![Release](https://img.shields.io/github/v/release/lexfrei/cloudflare-tunnel-gateway-controller)](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/releases)
 [![Artifact Hub](https://img.shields.io/endpoint?url=https://artifacthub.io/badge/repository/cloudflare-tunnel-gateway-controller)](https://artifacthub.io/packages/search?repo=cloudflare-tunnel-gateway-controller)
-[![CI](https://img.shields.io/github/actions/workflow/status/lexfrei/cloudflare-tunnel-gateway-controller/pr.yaml?branch=master&label=CI)](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/actions/workflows/pr.yaml)
-[![Release](https://img.shields.io/github/actions/workflow/status/lexfrei/cloudflare-tunnel-gateway-controller/release.yaml?label=Release)](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/actions/workflows/release.yaml)
-[![Chart Version](https://img.shields.io/badge/dynamic/yaml?url=https://raw.githubusercontent.com/lexfrei/cloudflare-tunnel-gateway-controller/master/charts/cloudflare-tunnel-gateway-controller/Chart.yaml&query=$.version&label=Chart&color=blue)](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/releases)
-[![App Version](https://img.shields.io/badge/dynamic/yaml?url=https://raw.githubusercontent.com/lexfrei/cloudflare-tunnel-gateway-controller/master/charts/cloudflare-tunnel-gateway-controller/Chart.yaml&query=$.appVersion&label=App&color=green)](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/releases)
+[![CI](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/actions/workflows/pr.yaml/badge.svg)](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/actions/workflows/pr.yaml)
+[![Release](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/actions/workflows/release.yaml/badge.svg)](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/actions/workflows/release.yaml)
 
 Kubernetes Gateway API controller for Cloudflare Tunnel
 

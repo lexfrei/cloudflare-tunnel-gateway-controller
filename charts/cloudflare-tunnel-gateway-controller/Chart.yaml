@@ -1,38 +1,5 @@
 annotations:
   artifacthub.io/category: networking
-  artifacthub.io/changes: |-
-    - kind: added
-      description: Schema validation for required fields (tunnelId, API credentials)
-    - kind: added
-      description: PodDisruptionBudget support for high availability
-    - kind: added
-      description: Startup probe for reliable pod initialization
-    - kind: added
-      description: External Secrets Operator integration examples
-    - kind: added
-      description: Comprehensive troubleshooting guide
-    - kind: added
-      description: DNS configuration support (dnsPolicy, dnsConfig)
-    - kind: added
-      description: Service annotations support
-    - kind: added
-      description: Edge case test coverage
-    - kind: changed
-      description: RBAC permissions to use status subresources (least privilege)
-    - kind: changed
-      description: NetworkPolicy to restrict egress to specific Cloudflare IP ranges
-    - kind: changed
-      description: NetworkPolicy ingress to support namespace/pod selectors
-    - kind: changed
-      description: Resource defaults to production-ready values
-    - kind: changed
-      description: AWG preStop hook with improved error handling
-    - kind: changed
-      description: Production values example with complete HA configuration
-    - kind: fixed
-      description: Secret template logic for API token handling
-    - kind: fixed
-      description: Graceful shutdown with proper termination grace period
   artifacthub.io/license: BSD-3-Clause
   artifacthub.io/links: |
     - name: Chart Repository
