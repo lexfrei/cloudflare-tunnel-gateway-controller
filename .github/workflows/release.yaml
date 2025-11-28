@@ -365,6 +365,9 @@ jobs:
         with:
           version: latest
 
+      - name: Install oras
+        uses: oras-project/setup-oras@v1
+
       - name: Install yq
         run: |
           # renovate: datasource=github-releases depName=mikefarah/yq
@@ -397,25 +400,52 @@ jobs:
           VERSION="${{ steps.version.outputs.version }}"
           CHART_PATH="charts/cloudflare-tunnel-gateway-controller"
           CHART_NAME="cloudflare-tunnel-gateway-controller"
+          REGISTRY="ghcr.io/${{ github.repository_owner }}"
 
           # Package chart
           helm package "${CHART_PATH}"
-
-          # Push to separate OCI path to avoid conflict with container image
           CHART_FILE="${CHART_NAME}-${VERSION}.tgz"
-          helm push "${CHART_FILE}" oci://ghcr.io/${{ github.repository_owner }}/${CHART_NAME}-chart
 
-          echo "Chart pushed: oci://ghcr.io/${{ github.repository_owner }}/${CHART_NAME}-chart:${VERSION}"
+          # Create Helm config.json with chart metadata
+          CONFIG_FILE="config.json"
+          cat > "${CONFIG_FILE}" << EOF
+          {
+            "name": "${CHART_NAME}",
+            "version": "${VERSION}",
+            "description": "Kubernetes Gateway API controller for Cloudflare Tunnel"
+          }
+          EOF
+
+          # Push using oras with Helm-compatible media types
+          # This allows direct path control: registry/chart-name:version
+          oras push "${REGISTRY}/${CHART_NAME}-chart:${VERSION}" \
+            --config "${CONFIG_FILE}:application/vnd.cncf.helm.config.v1+json" \
+            "${CHART_FILE}:application/vnd.cncf.helm.chart.content.v1.tar+gzip"
+
+          echo "Chart pushed: oci://${REGISTRY}/${CHART_NAME}-chart:${VERSION}"
+
+          # Add additional semver tags (matching container image pattern)
+          MAJOR_MINOR=$(echo "${VERSION}" | cut --delimiter=. --fields=1,2)
+          MAJOR=$(echo "${VERSION}" | cut --delimiter=. --fields=1)
+
+          oras tag "${REGISTRY}/${CHART_NAME}-chart:${VERSION}" \
+            "${MAJOR_MINOR}" \
+            "${MAJOR}" \
+            "latest"
+
+          echo "Additional tags created: ${MAJOR_MINOR}, ${MAJOR}, latest"
 
       - name: Generate chart summary
         run: |
           VERSION="${{ steps.version.outputs.version }}"
           CHART_NAME="cloudflare-tunnel-gateway-controller"
+          MAJOR_MINOR=$(echo "${VERSION}" | cut --delimiter=. --fields=1,2)
+          MAJOR=$(echo "${VERSION}" | cut --delimiter=. --fields=1)
 
           {
             echo "## Helm Chart"
             echo ""
-            echo "**Chart**: \`oci://ghcr.io/${{ github.repository_owner }}/${CHART_NAME}-chart:${VERSION}\`"
+            echo "**Available tags**: \`${VERSION}\`, \`${MAJOR_MINOR}\`, \`${MAJOR}\`, \`latest\`"
             echo ""
             echo "### Installation"
             echo "\`\`\`bash"
