@@ -2,14 +2,24 @@
 {{ template "chart.deprecationWarning" . }}
 {{ template "chart.badgesSection" . }}
 
-## Status
-
-[![Lint and Test Chart](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/actions/workflows/test-chart.yaml/badge.svg)](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/actions/workflows/test-chart.yaml)
-[![Release](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/actions/workflows/release.yaml/badge.svg)](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/actions/workflows/release.yaml)
+[![Artifact Hub](https://img.shields.io/endpoint?url=https://artifacthub.io/badge/repository/cloudflare-tunnel-gateway-controller)](https://artifacthub.io/packages/search?repo=cloudflare-tunnel-gateway-controller)
+[![CI](https://img.shields.io/github/actions/workflow/status/lexfrei/cloudflare-tunnel-gateway-controller/pr.yaml?branch=master&label=CI)](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/actions/workflows/pr.yaml)
+[![Release](https://img.shields.io/github/actions/workflow/status/lexfrei/cloudflare-tunnel-gateway-controller/release.yaml?label=Release)](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/actions/workflows/release.yaml)
+[![Chart Version](https://img.shields.io/badge/dynamic/yaml?url=https://raw.githubusercontent.com/lexfrei/cloudflare-tunnel-gateway-controller/master/charts/cloudflare-tunnel-gateway-controller/Chart.yaml&query=$.version&label=Chart&color=blue)](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/releases)
+[![App Version](https://img.shields.io/badge/dynamic/yaml?url=https://raw.githubusercontent.com/lexfrei/cloudflare-tunnel-gateway-controller/master/charts/cloudflare-tunnel-gateway-controller/Chart.yaml&query=$.appVersion&label=App&color=green)](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/releases)
 
 {{ template "chart.description" . }}
 
 {{ template "chart.homepageLine" . }}
+
+## Features
+
+- Standard Gateway API implementation (GatewayClass, Gateway, HTTPRoute)
+- Hot reload of tunnel configuration (no cloudflared restart required)
+- Optional cloudflared lifecycle management via Helm SDK
+- Leader election for high availability deployments
+- Multi-arch container images (amd64, arm64)
+- Signed container images with cosign
 
 {{ template "chart.maintainersSection" . }}
 
@@ -17,14 +27,42 @@
 
 {{ template "chart.requirementsSection" . }}
 
+## Prerequisites
+
+- Kubernetes 1.25+
+- Helm 3.0+
+- Gateway API CRDs installed
+- Cloudflare Tunnel created
+
+### Install Gateway API CRDs
+
+```bash
+kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.4.0/standard-install.yaml
+```
+
+### Create Cloudflare Tunnel
+
+Before deploying the controller, create a Cloudflare Tunnel:
+
+1. Go to [Cloudflare Zero Trust Dashboard](https://one.dash.cloudflare.com/)
+2. Navigate to **Networks** > **Tunnels**
+3. Click **Create a tunnel**
+4. Choose **Cloudflared** connector type
+5. Name your tunnel and save the **Tunnel ID** and **Tunnel Token**
+
+### Cloudflare API Token Permissions
+
+Create an API token at [Cloudflare API Tokens](https://dash.cloudflare.com/profile/api-tokens) with the following permissions:
+
+| Scope | Permission | Access |
+|-------|------------|--------|
+| Account | Cloudflare Tunnel | Edit |
+| Account | Cloudflare Tunnel | Read |
+| Account | Account Settings | Read |
+
+The **Account Settings: Read** permission is required for auto-detecting the Account ID when not explicitly provided.
+
 ## Installation
-
-### Prerequisites
-
-* Kubernetes 1.25+
-* Helm 3.0+
-* Gateway API CRDs installed
-* Cloudflare Tunnel created
 
 ### Install from OCI Registry
 
@@ -99,6 +137,8 @@ spec:
           port: 80
 ```
 
+**Important:** On startup, the controller performs a full synchronization. All existing ingress rules in the tunnel are replaced with rules derived from current HTTPRoutes. Any rules created outside of this controller will be removed.
+
 ## Multi-Tunnel Setup
 
 To use multiple Cloudflare Tunnels in the same cluster, deploy multiple instances of the controller with different GatewayClass names:
@@ -122,6 +162,77 @@ helm install controller-staging \
 ```
 
 Each controller instance manages its own GatewayClass and associated Gateways/HTTPRoutes independently.
+
+## External-DNS Integration
+
+The controller integrates with [external-dns](https://github.com/kubernetes-sigs/external-dns) for automatic DNS record creation.
+
+The controller automatically sets `status.addresses` on the Gateway with the tunnel CNAME (`TUNNEL_ID.cfargotunnel.com`). External-dns reads this value as the DNS target.
+
+Add provider-specific annotations on HTTPRoute:
+
+```yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: my-app
+  annotations:
+    external-dns.alpha.kubernetes.io/cloudflare-proxied: "true"
+spec:
+  parentRefs:
+    - name: cloudflare-tunnel
+      namespace: cloudflare-tunnel-system
+      sectionName: http  # Must match listener name
+  hostnames:
+    - app.example.com
+```
+
+## Architecture
+
+```mermaid
+flowchart TB
+    subgraph Kubernetes["Kubernetes Cluster"]
+        GC[GatewayClass]
+        GW[Gateway]
+        HR[HTTPRoute]
+        SVC[Services]
+        CTRL[Controller]
+        CFD[cloudflared]
+    end
+
+    subgraph Cloudflare["Cloudflare"]
+        API[Cloudflare API]
+        EDGE[Cloudflare Edge]
+        TUN[Tunnel Config]
+    end
+
+    USER[Users] --> EDGE
+    EDGE --> CFD
+    CFD --> SVC
+
+    GC --> CTRL
+    GW --> CTRL
+    HR --> CTRL
+    CTRL -->|Update Config| API
+    API --> TUN
+    TUN -->|Push Config| CFD
+```
+
+## Documentation
+
+| Document | Description |
+|----------|-------------|
+| [Architecture](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/blob/master/docs/ARCHITECTURE.md) | System architecture and design decisions |
+| [AWG Quick Start](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/blob/master/docs/AWG_QUICKSTART.md) | AmneziaWG sidecar setup guide |
+| [Gateway API](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/blob/master/docs/GATEWAY_API.md) | Supported Gateway API features |
+| [Metrics](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/blob/master/docs/METRICS.md) | Prometheus metrics and Grafana dashboard |
+| [Troubleshooting](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/blob/master/docs/TROUBLESHOOTING.md) | Common issues and solutions |
+
+## External Resources
+
+- [Gateway API](https://gateway-api.sigs.k8s.io/) - Kubernetes Gateway API specification
+- [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) - Cloudflare Tunnel documentation
+- [Cloudflare API Tokens](https://dash.cloudflare.com/profile/api-tokens) - Create API tokens
 
 {{ template "chart.valuesSection" . }}
 
