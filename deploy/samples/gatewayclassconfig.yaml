@@ -1,0 +1,24 @@
+apiVersion: cf.k8s.lex.la/v1alpha1
+kind: GatewayClassConfig
+metadata:
+  name: cloudflare-tunnel-config
+spec:
+  # Cloudflare Tunnel ID (required)
+  # Get from: Zero Trust Dashboard > Networks > Tunnels
+  tunnelID: "your-tunnel-uuid-here"
+
+  # Reference to Secret containing Cloudflare API credentials (required)
+  # Secret must contain "api-token" key
+  cloudflareCredentialsSecretRef:
+    name: cloudflare-credentials
+
+  # Reference to Secret containing tunnel token (required when cloudflared.enabled is true)
+  # Secret must contain "tunnel-token" key
+  tunnelTokenSecretRef:
+    name: cloudflare-tunnel-token
+
+  # Cloudflared deployment configuration
+  cloudflared:
+    enabled: true
+    replicas: 1
+    namespace: cloudflare-tunnel-system
