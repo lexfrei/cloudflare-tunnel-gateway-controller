@@ -5,6 +5,9 @@ import (
 	"time"
 
 	"github.com/cockroachdb/errors"
+	"helm.sh/helm/v4/pkg/action"
+	"helm.sh/helm/v4/pkg/chart"
+	"helm.sh/helm/v4/pkg/release"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -185,25 +188,7 @@ func (r *GatewayReconciler) ensureCloudflared(
 	}
 
 	if r.HelmManager.ReleaseExists(actionCfg, releaseName) {
-		rel, getErr := r.HelmManager.GetRelease(actionCfg, releaseName)
-		if getErr != nil {
-			return errors.Wrap(getErr, "failed to get existing release")
-		}
-
-		if rel.Chart.Metadata.Version != latestVersion {
-			logger.Info("upgrading cloudflared",
-				"release", releaseName,
-				"from", rel.Chart.Metadata.Version,
-				"to", latestVersion,
-			)
-
-			_, upgradeErr := r.HelmManager.Upgrade(ctx, actionCfg, releaseName, loadedChart, values)
-			if upgradeErr != nil {
-				return errors.Wrap(upgradeErr, "failed to upgrade release")
-			}
-		}
-
-		return nil
+		return r.upgradeCloudflaredIfNeeded(ctx, actionCfg, releaseName, latestVersion, loadedChart, values)
 	}
 
 	logger.Info("installing cloudflared", "release", releaseName, "version", latestVersion)
@@ -211,6 +196,46 @@ func (r *GatewayReconciler) ensureCloudflared(
 	_, err = r.HelmManager.Install(ctx, actionCfg, releaseName, namespace, loadedChart, values)
 	if err != nil {
 		return errors.Wrap(err, "failed to install release")
+	}
+
+	return nil
+}
+
+//nolint:funcorder // helm operations helper
+func (r *GatewayReconciler) upgradeCloudflaredIfNeeded(
+	ctx context.Context,
+	actionCfg *action.Configuration,
+	releaseName, latestVersion string,
+	loadedChart chart.Charter,
+	values map[string]any,
+) error {
+	logger := log.FromContext(ctx)
+
+	rel, err := r.HelmManager.GetRelease(actionCfg, releaseName)
+	if err != nil {
+		return errors.Wrap(err, "failed to get existing release")
+	}
+
+	relAccessor, ok := rel.(release.Accessor)
+	if !ok {
+		return errors.New("failed to cast release to Accessor")
+	}
+
+	chartAccessor, ok := relAccessor.Chart().(chart.Accessor)
+	if !ok {
+		return errors.New("failed to cast chart to Accessor")
+	}
+
+	currentVersion := chartAccessor.MetadataAsMap()["version"]
+	if currentVersion == latestVersion {
+		return nil
+	}
+
+	logger.Info("upgrading cloudflared", "release", releaseName, "from", currentVersion, "to", latestVersion)
+
+	_, err = r.HelmManager.Upgrade(ctx, actionCfg, releaseName, loadedChart, values)
+	if err != nil {
+		return errors.Wrap(err, "failed to upgrade release")
 	}
 
 	return nil

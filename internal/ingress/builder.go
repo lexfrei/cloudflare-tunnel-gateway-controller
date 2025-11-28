@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/cloudflare/cloudflare-go/v4"
-	"github.com/cloudflare/cloudflare-go/v4/zero_trust"
+	"github.com/cloudflare/cloudflare-go/v6"
+	"github.com/cloudflare/cloudflare-go/v6/zero_trust"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
