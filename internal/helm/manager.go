@@ -10,12 +10,13 @@ import (
 
 	"github.com/Masterminds/semver/v3"
 	"github.com/cockroachdb/errors"
-	"helm.sh/helm/v3/pkg/action"
-	"helm.sh/helm/v3/pkg/chart"
-	"helm.sh/helm/v3/pkg/chart/loader"
-	"helm.sh/helm/v3/pkg/cli"
-	"helm.sh/helm/v3/pkg/registry"
-	"helm.sh/helm/v3/pkg/release"
+	"helm.sh/helm/v4/pkg/action"
+	"helm.sh/helm/v4/pkg/chart"
+	"helm.sh/helm/v4/pkg/chart/loader"
+	"helm.sh/helm/v4/pkg/cli"
+	"helm.sh/helm/v4/pkg/kube"
+	"helm.sh/helm/v4/pkg/registry"
+	"helm.sh/helm/v4/pkg/release"
 )
 
 const (
@@ -26,7 +27,7 @@ type Manager struct {
 	settings       *cli.EnvSettings
 	registryClient *registry.Client
 
-	chartCache   *chart.Chart
+	chartCache   chart.Charter
 	chartVersion string
 	cacheMu      sync.RWMutex
 }
@@ -83,7 +84,7 @@ func (m *Manager) GetLatestVersion(_ context.Context, chartRef string) (string, 
 	return versions[len(versions)-1].Original(), nil
 }
 
-func (m *Manager) LoadChart(_ context.Context, chartRef, version string) (*chart.Chart, error) {
+func (m *Manager) LoadChart(_ context.Context, chartRef, version string) (chart.Charter, error) {
 	m.cacheMu.RLock()
 
 	if m.chartCache != nil && m.chartVersion == version {
@@ -103,7 +104,7 @@ func (m *Manager) LoadChart(_ context.Context, chartRef, version string) (*chart
 
 	slog.Info("pulling chart from registry", "ref", chartRef, "version", version)
 
-	pullClient := action.NewPullWithOpts(action.WithConfig(new(action.Configuration)))
+	pullClient := action.NewPull(action.WithConfig(new(action.Configuration)))
 	pullClient.Settings = m.settings
 	pullClient.Version = version
 	pullClient.DestDir = os.TempDir()
@@ -137,8 +138,8 @@ func (m *Manager) LoadChart(_ context.Context, chartRef, version string) (*chart
 func (m *Manager) GetActionConfig(namespace string) (*action.Configuration, error) {
 	actionConfig := new(action.Configuration)
 
-	//nolint:noinlineerr // Init requires inline check
-	if err := actionConfig.Init(m.settings.RESTClientGetter(), namespace, "secret", debugLog); err != nil {
+	err := actionConfig.Init(m.settings.RESTClientGetter(), namespace, "secret")
+	if err != nil {
 		return nil, errors.Wrap(err, "failed to init action config")
 	}
 
@@ -151,14 +152,14 @@ func (m *Manager) Install(
 	ctx context.Context,
 	cfg *action.Configuration,
 	releaseName, namespace string,
-	loadedChart *chart.Chart,
+	loadedChart chart.Charter,
 	values map[string]any,
-) (*release.Release, error) {
+) (release.Releaser, error) {
 	install := action.NewInstall(cfg)
 	install.ReleaseName = releaseName
 	install.Namespace = namespace
 	install.CreateNamespace = false
-	install.Wait = true
+	install.WaitStrategy = kube.StatusWatcherStrategy
 	install.Timeout = installTimeout
 
 	rel, err := install.RunWithContext(ctx, loadedChart, values)
@@ -173,11 +174,11 @@ func (m *Manager) Upgrade(
 	ctx context.Context,
 	cfg *action.Configuration,
 	releaseName string,
-	loadedChart *chart.Chart,
+	loadedChart chart.Charter,
 	values map[string]any,
-) (*release.Release, error) {
+) (release.Releaser, error) {
 	upgrade := action.NewUpgrade(cfg)
-	upgrade.Wait = true
+	upgrade.WaitStrategy = kube.StatusWatcherStrategy
 	upgrade.Timeout = installTimeout
 	upgrade.ReuseValues = false
 
@@ -191,7 +192,7 @@ func (m *Manager) Upgrade(
 
 func (m *Manager) Uninstall(cfg *action.Configuration, releaseName string) error {
 	uninstall := action.NewUninstall(cfg)
-	uninstall.Wait = true
+	uninstall.WaitStrategy = kube.StatusWatcherStrategy
 	uninstall.Timeout = installTimeout
 
 	_, err := uninstall.Run(releaseName)
@@ -202,7 +203,7 @@ func (m *Manager) Uninstall(cfg *action.Configuration, releaseName string) error
 	return nil
 }
 
-func (m *Manager) GetRelease(cfg *action.Configuration, releaseName string) (*release.Release, error) {
+func (m *Manager) GetRelease(cfg *action.Configuration, releaseName string) (release.Releaser, error) {
 	get := action.NewGet(cfg)
 
 	rel, err := get.Run(releaseName)
@@ -217,10 +218,6 @@ func (m *Manager) ReleaseExists(cfg *action.Configuration, releaseName string) b
 	_, err := m.GetRelease(cfg, releaseName)
 
 	return err == nil
-}
-
-func debugLog(_ string, _ ...any) {
-	// Suppress helm debug logs
 }
 
 func extractRepoFromOCI(chartRef string) string {
