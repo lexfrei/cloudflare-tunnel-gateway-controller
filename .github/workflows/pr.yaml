@@ -412,7 +412,7 @@ jobs:
   # Comment on PR after all builds complete
   notify:
     name: Notify PR
-    needs: [merge-manifests, build-chart, lint-chart]
+    needs: [merge-manifests, build-chart]
     runs-on: ubuntu-latest
     steps:
       - name: Check if first build
