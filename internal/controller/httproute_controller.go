@@ -156,6 +156,20 @@ func (r *HTTPRouteReconciler) syncAllRoutes(ctx context.Context) (ctrl.Result, e
 		return ctrl.Result{RequeueAfter: apiErrorRequeueDelay}, nil
 	}
 
+	// Get current tunnel configuration
+	currentConfig, err := cfClient.ZeroTrust.Tunnels.Cloudflared.Configurations.Get(
+		ctx,
+		resolvedConfig.TunnelID,
+		zero_trust.TunnelCloudflaredConfigurationGetParams{
+			AccountID: cloudflare.String(accountID),
+		},
+	)
+	if err != nil {
+		logger.Error("failed to get current tunnel configuration", "error", err)
+
+		return ctrl.Result{RequeueAfter: apiErrorRequeueDelay}, nil
+	}
+
 	var routeList gatewayv1.HTTPRouteList
 	if err := r.List(ctx, &routeList); err != nil {
 		return ctrl.Result{}, errors.Wrap(err, "failed to list httproutes")
@@ -171,13 +185,25 @@ func (r *HTTPRouteReconciler) syncAllRoutes(ctx context.Context) (ctrl.Result, e
 
 	logger.Info("syncing routes to cloudflare", "count", len(relevantRoutes))
 
+	// Build desired rules from HTTPRoutes
 	builder := ingress.NewBuilder(r.ClusterDomain)
-	rules := builder.Build(relevantRoutes)
+	desiredRules := builder.Build(relevantRoutes)
+
+	// Compute diff between current and desired
+	toAdd, toRemove := ingress.DiffRules(currentConfig.Config.Ingress, desiredRules)
+
+	logger.Info("computed diff", "toAdd", len(toAdd), "toRemove", len(toRemove))
+
+	// Apply diff to get final rules
+	finalRules := ingress.ApplyDiff(currentConfig.Config.Ingress, toAdd, toRemove)
+
+	// Ensure catch-all rule exists at the end
+	finalRules = ingress.EnsureCatchAll(finalRules)
 
 	// Check ingress rules limit before API call
-	if len(rules) > maxIngressRules {
-		limitErr := errors.Newf("ingress rules limit exceeded: %d rules (max %d)", len(rules), maxIngressRules)
-		logger.Error("ingress rules limit exceeded", "count", len(rules), "max", maxIngressRules)
+	if len(finalRules) > maxIngressRules {
+		limitErr := errors.Newf("ingress rules limit exceeded: %d rules (max %d)", len(finalRules), maxIngressRules)
+		logger.Error("ingress rules limit exceeded", "count", len(finalRules), "max", maxIngressRules)
 
 		for i := range relevantRoutes {
 			if updateErr := r.updateRouteStatus(ctx, &relevantRoutes[i], false, limitErr.Error()); updateErr != nil {
@@ -192,7 +218,7 @@ func (r *HTTPRouteReconciler) syncAllRoutes(ctx context.Context) (ctrl.Result, e
 	cfConfig := zero_trust.TunnelCloudflaredConfigurationUpdateParams{
 		AccountID: cloudflare.String(accountID),
 		Config: cloudflare.F(zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfig{
-			Ingress: cloudflare.F(rules),
+			Ingress: cloudflare.F(finalRules),
 		}),
 	}
 
@@ -209,7 +235,7 @@ func (r *HTTPRouteReconciler) syncAllRoutes(ctx context.Context) (ctrl.Result, e
 		return ctrl.Result{RequeueAfter: apiErrorRequeueDelay}, nil
 	}
 
-	logger.Info("successfully updated tunnel configuration", "rules", len(rules))
+	logger.Info("successfully updated tunnel configuration", "rules", len(finalRules))
 
 	for i := range relevantRoutes {
 		if err := r.updateRouteStatus(ctx, &relevantRoutes[i], true, ""); err != nil {
