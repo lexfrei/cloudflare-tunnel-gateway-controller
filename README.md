@@ -5,7 +5,7 @@
 [![Release](https://img.shields.io/github/v/release/lexfrei/cloudflare-tunnel-gateway-controller)](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/releases)
 [![CI](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/actions/workflows/pr.yaml/badge.svg)](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/actions/workflows/pr.yaml)
 
-> **Note:** The Helm chart is published to a separate OCI path (`cloudflare-tunnel-gateway-controller-chart`) because Helm CLI doesn't support OCI Image Index with `artifactType` selection. Once [helm/helm#31582](https://github.com/helm/helm/issues/31582) is resolved, the chart will be available at `oci://ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller`.
+> **Note:** The Helm chart is published to a separate OCI path (`cloudflare-tunnel-gateway-controller-chart`) to avoid conflicts with container image tags. Available tags: `VERSION`, `MAJOR.MINOR`, `MAJOR`, `latest`.
 
 Kubernetes controller implementing Gateway API for Cloudflare Tunnel.
 

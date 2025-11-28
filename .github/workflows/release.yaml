@@ -406,21 +406,8 @@ jobs:
           helm package "${CHART_PATH}"
           CHART_FILE="${CHART_NAME}-${VERSION}.tgz"
 
-          # Create Helm config.json with chart metadata
-          CONFIG_FILE="config.json"
-          cat > "${CONFIG_FILE}" << EOF
-          {
-            "name": "${CHART_NAME}",
-            "version": "${VERSION}",
-            "description": "Kubernetes Gateway API controller for Cloudflare Tunnel"
-          }
-          EOF
-
-          # Push using oras with Helm-compatible media types
-          # This allows direct path control: registry/chart-name:version
-          oras push "${REGISTRY}/${CHART_NAME}-chart:${VERSION}" \
-            --config "${CONFIG_FILE}:application/vnd.cncf.helm.config.v1+json" \
-            "${CHART_FILE}:application/vnd.cncf.helm.chart.content.v1.tar+gzip"
+          # Push chart with helm (creates VERSION tag)
+          helm push "${CHART_FILE}" "oci://${REGISTRY}/${CHART_NAME}-chart"
 
           echo "Chart pushed: oci://${REGISTRY}/${CHART_NAME}-chart:${VERSION}"
 
