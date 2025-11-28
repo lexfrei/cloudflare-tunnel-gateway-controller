@@ -20,6 +20,8 @@ Enables routing traffic through Cloudflare Tunnel using standard Gateway API res
 - Multi-arch container images (amd64, arm64)
 - Signed container images with cosign
 
+> **Warning:** The controller assumes **exclusive ownership** of the tunnel configuration. It will remove any ingress rules not managed by HTTPRoute resources. Do not use a tunnel that has manually configured routes or is shared with other systems.
+
 ## Quick Start
 
 ```bash
@@ -112,8 +114,6 @@ For manual installation without Helm, see [Manual Installation](docs/MANUAL_INST
 Create standard [Gateway API](https://gateway-api.sigs.k8s.io/) HTTPRoute resources referencing the `cloudflare-tunnel` Gateway. The controller automatically syncs routes to Cloudflare Tunnel configuration with hot reload (no cloudflared restart required).
 
 See [Gateway API documentation](docs/GATEWAY_API.md) for supported features and examples.
-
-**Important:** Each Cloudflare Tunnel should be managed by exactly one controller instance. The controller assumes exclusive ownership of the tunnel configuration and uses diff-based synchronization.
 
 ## External-DNS Integration
 
