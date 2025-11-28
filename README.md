@@ -180,11 +180,14 @@ spec:
 
 The controller will automatically update Cloudflare Tunnel configuration. Changes are applied instantly without restarting cloudflared.
 
-**Important:** On startup, the controller performs a full synchronization of the tunnel configuration. This means:
+**Important:** Each Cloudflare Tunnel should be managed by exactly one controller instance. The controller assumes exclusive ownership of the tunnel configuration.
 
-- All existing ingress rules in the tunnel are replaced with rules derived from current HTTPRoutes
-- Any rules created outside of this controller will be removed
-- This ensures the tunnel configuration is always consistent with Kubernetes resources
+The controller uses diff-based synchronization:
+
+- Compares current tunnel configuration with desired state from HTTPRoutes
+- Only adds new rules and removes orphaned rules (no full replacement)
+- Ensures catch-all rule exists at the end of the configuration
+- Changes are applied incrementally, minimizing API calls
 
 ## External-DNS Integration
 
