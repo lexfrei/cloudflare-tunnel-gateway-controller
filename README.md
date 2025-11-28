@@ -93,7 +93,7 @@ The **Account Settings: Read** permission is required for auto-detecting the Acc
 
 ## Installation
 
-### Helm (Recommended)
+Helm is the only supported installation method. It handles CRD installation, RBAC setup, and provides a simple upgrade path.
 
 ```bash
 helm install cloudflare-tunnel-gateway-controller \
@@ -105,52 +105,7 @@ helm install cloudflare-tunnel-gateway-controller \
 
 See [charts/cloudflare-tunnel-gateway-controller/README.md](charts/cloudflare-tunnel-gateway-controller/README.md) for all configuration options.
 
-### Manual Installation
-
-#### 1. Install Gateway API CRDs
-
-```bash
-kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.4.0/standard-install.yaml
-```
-
-#### 2. Create namespace
-
-```bash
-kubectl create namespace cloudflare-tunnel-system
-```
-
-#### 3. Create Secrets
-
-```bash
-# Cloudflare API credentials
-kubectl create secret generic cloudflare-credentials \
-  --namespace cloudflare-tunnel-system \
-  --from-literal=api-token="YOUR_API_TOKEN"
-
-# Tunnel token (required for managed cloudflared)
-kubectl create secret generic cloudflare-tunnel-token \
-  --namespace cloudflare-tunnel-system \
-  --from-literal=tunnel-token="YOUR_TUNNEL_TOKEN"
-```
-
-See [deploy/samples/secrets.yaml](deploy/samples/secrets.yaml) for complete examples including AWG configuration.
-
-#### 4. Deploy the controller
-
-```bash
-kubectl apply -f deploy/rbac/
-kubectl apply -f deploy/controller/
-```
-
-#### 5. Create GatewayClassConfig, GatewayClass, and Gateway
-
-Edit [deploy/samples/gatewayclassconfig.yaml](deploy/samples/gatewayclassconfig.yaml) with your tunnel ID:
-
-```bash
-kubectl apply -f deploy/samples/gatewayclassconfig.yaml
-kubectl apply -f deploy/samples/gatewayclass.yaml
-kubectl apply -f deploy/samples/gateway.yaml
-```
+For manual installation without Helm, see [Manual Installation](docs/MANUAL_INSTALLATION.md).
 
 ## Usage
 
@@ -305,6 +260,7 @@ flowchart TB
 | [Gateway API](docs/GATEWAY_API.md) | Supported Gateway API features and limitations |
 | [Metrics](docs/METRICS.md) | Prometheus metrics, alerting rules, Grafana dashboard |
 | [Development](docs/DEVELOPMENT.md) | Development setup and contributing guide |
+| [Manual Installation](docs/MANUAL_INSTALLATION.md) | Installation without Helm (not recommended) |
 | [Troubleshooting](docs/TROUBLESHOOTING.md) | Common issues and solutions |
 | [Helm Chart](charts/cloudflare-tunnel-gateway-controller/README.md) | Helm chart configuration reference |
 
