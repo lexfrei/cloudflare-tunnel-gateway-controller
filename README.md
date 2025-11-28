@@ -117,50 +117,9 @@ See [Gateway API documentation](docs/GATEWAY_API.md) for supported features and 
 
 ## External-DNS Integration
 
-The controller integrates with [external-dns](https://github.com/kubernetes-sigs/external-dns) for automatic DNS record creation.
+The controller sets `status.addresses` on the Gateway with the tunnel CNAME (`TUNNEL_ID.cfargotunnel.com`). If you have [external-dns](https://github.com/kubernetes-sigs/external-dns) configured with Gateway API source, it will automatically create DNS records for your HTTPRoute hostnames.
 
-The controller automatically sets `status.addresses` on the Gateway with the tunnel CNAME (`TUNNEL_ID.cfargotunnel.com`). External-dns reads this value as the DNS target.
-
-### Gateway Configuration
-
-```yaml
-apiVersion: gateway.networking.k8s.io/v1
-kind: Gateway
-metadata:
-  name: cloudflare-tunnel
-  namespace: cloudflare-tunnel-system
-spec:
-  gatewayClassName: cloudflare-tunnel
-  listeners:
-    - name: http
-      port: 80
-      protocol: HTTP
-      allowedRoutes:
-        namespaces:
-          from: All
-```
-
-### HTTPRoute Configuration
-
-Add provider-specific annotations on HTTPRoute:
-
-```yaml
-apiVersion: gateway.networking.k8s.io/v1
-kind: HTTPRoute
-metadata:
-  name: my-app
-  annotations:
-    external-dns.alpha.kubernetes.io/cloudflare-proxied: "true"
-spec:
-  parentRefs:
-    - name: cloudflare-tunnel
-      namespace: cloudflare-tunnel-system
-      sectionName: http  # Must match listener name
-  hostnames:
-    - app.example.com
-```
-
-**Important:** The `sectionName` in parentRef must match the listener name in Gateway for external-dns to properly associate routes with the gateway.
+For provider-specific annotations and configuration details, see the [external-dns Gateway API documentation](https://kubernetes-sigs.github.io/external-dns/latest/docs/sources/gateway-api/).
 
 ## Configuration
 
