@@ -325,11 +325,16 @@ jobs:
             exit 1
           fi
 
+      - name: Run Markdownlint
+        uses: DavidAnson/markdownlint-cli2-action@v21
+        with:
+          globs: 'charts/**/*.md'
+
   # Build and push Helm chart to ttl.sh
   build-chart:
     name: Build Chart
     runs-on: ubuntu-latest
-    needs: [security, lint, test]
+    needs: [security, lint, test, lint-chart]
     steps:
       - name: Checkout PR code
         uses: actions/checkout@v5
