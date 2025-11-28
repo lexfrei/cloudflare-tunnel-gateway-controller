@@ -157,6 +157,8 @@ github.com/cloudflare/cloudflare-go/v4/workflows
 github.com/cloudflare/cloudflare-go/v4/zaraz
 github.com/cloudflare/cloudflare-go/v4/zero_trust
 github.com/cloudflare/cloudflare-go/v4/zones
+# github.com/cloudflare/cloudflare-go/v6 v6.3.0
+## explicit; go 1.22
 # github.com/cockroachdb/errors v1.12.0
 ## explicit; go 1.23.0
 github.com/cockroachdb/errors
@@ -738,6 +740,8 @@ helm.sh/helm/v3/pkg/storage/driver
 helm.sh/helm/v3/pkg/time
 helm.sh/helm/v3/pkg/time/ctime
 helm.sh/helm/v3/pkg/uploader
+# helm.sh/helm/v4 v4.0.1
+## explicit; go 1.24.0
 # k8s.io/api v0.34.2
 ## explicit; go 1.24.0
 k8s.io/api/admission/v1
