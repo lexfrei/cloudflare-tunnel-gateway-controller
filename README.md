@@ -28,10 +28,7 @@ Enables routing traffic through Cloudflare Tunnel using standard Gateway API res
 # 1. Install Gateway API CRDs
 kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.4.0/standard-install.yaml
 
-# 2. Add Helm repository
-helm registry login ghcr.io
-
-# 3. Install the controller
+# 2. Install the controller
 helm install cloudflare-tunnel-gateway-controller \
   oci://ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller-chart \
   --namespace cloudflare-tunnel-system \
@@ -39,7 +36,7 @@ helm install cloudflare-tunnel-gateway-controller \
   --set config.tunnelID=YOUR_TUNNEL_ID \
   --set config.apiToken=YOUR_API_TOKEN
 
-# 4. Create HTTPRoute to expose your service
+# 3. Create HTTPRoute to expose your service
 kubectl apply -f - <<EOF
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
@@ -78,8 +75,8 @@ Before deploying the controller, you must create a Cloudflare Tunnel:
 
 The controller manages tunnel ingress configuration via API. You can either:
 
-- Let the controller deploy cloudflared automatically (`--manage-cloudflared=true`)
-- Deploy cloudflared yourself using the tunnel token
+- Let the controller deploy cloudflared automatically (default behavior)
+- Deploy cloudflared yourself using the tunnel token (`cloudflared.enabled: false` in Helm values)
 
 ### Cloudflare API Token Permissions
 
@@ -88,10 +85,8 @@ Create an API token at [Cloudflare API Tokens](https://dash.cloudflare.com/profi
 | Scope | Permission | Access |
 |-------|------------|--------|
 | Account | Cloudflare Tunnel | Edit |
-| Account | Cloudflare Tunnel | Read |
-| Account | Account Settings | Read |
 
-The **Account Settings: Read** permission is required for auto-detecting the Account ID when not explicitly provided.
+Account ID is auto-detected from the API token when not explicitly provided (works if the token has access to a single account).
 
 ## Installation
 
@@ -121,29 +116,7 @@ See [Gateway API documentation](docs/GATEWAY_API.md) for supported features and 
 
 The controller sets `status.addresses` on the Gateway with the tunnel CNAME (`TUNNEL_ID.cfargotunnel.com`). If you have [external-dns](https://github.com/kubernetes-sigs/external-dns) configured with Gateway API source, it will automatically create DNS records for your HTTPRoute hostnames.
 
-For provider-specific annotations and configuration details, see the [external-dns Gateway API documentation](https://kubernetes-sigs.github.io/external-dns/latest/docs/sources/gateway-api/).
-
-## Configuration
-
-| Flag | Environment Variable | Default | Description |
-|------|---------------------|---------|-------------|
-| `--account-id` | `CF_ACCOUNT_ID` | (auto-detect) | Cloudflare account ID |
-| `--tunnel-id` | `CF_TUNNEL_ID` | | Cloudflare tunnel ID |
-| `--api-token` | `CF_API_TOKEN` | | Cloudflare API token |
-| `--cluster-domain` | `CF_CLUSTER_DOMAIN` | (auto-detect) | Kubernetes cluster domain (fallback: `cluster.local`) |
-| `--gateway-class-name` | `CF_GATEWAY_CLASS_NAME` | `cloudflare-tunnel` | GatewayClass name to watch |
-| `--controller-name` | `CF_CONTROLLER_NAME` | `cf.k8s.lex.la/tunnel-controller` | Controller name |
-| `--metrics-addr` | `CF_METRICS_ADDR` | `:8080` | Metrics endpoint address |
-| `--health-addr` | `CF_HEALTH_ADDR` | `:8081` | Health probe endpoint address |
-| `--log-level` | `CF_LOG_LEVEL` | `info` | Log level (debug, info, warn, error) |
-| `--log-format` | `CF_LOG_FORMAT` | `json` | Log format (json, text) |
-| `--manage-cloudflared` | `CF_MANAGE_CLOUDFLARED` | `false` | Deploy and manage cloudflared via Helm |
-| `--tunnel-token` | `CF_TUNNEL_TOKEN` | | Tunnel token for remote-managed mode |
-| `--cloudflared-namespace` | `CF_CLOUDFLARED_NAMESPACE` | `cloudflare-tunnel-system` | Namespace for cloudflared |
-| `--cloudflared-protocol` | `CF_CLOUDFLARED_PROTOCOL` | | Transport protocol (auto, quic, http2) |
-| `--leader-elect` | | `false` | Enable leader election for HA |
-| `--leader-election-namespace` | | | Namespace for leader election lease |
-| `--leader-election-name` | | `cloudflare-tunnel-gateway-controller-leader` | Leader election lease name |
+All external-dns annotations (TTL, provider-specific settings, etc.) should be placed on HTTPRoute resources, not on Gateway. See the [external-dns Gateway API documentation](https://kubernetes-sigs.github.io/external-dns/latest/docs/sources/gateway-api/) for details.
 
 ## Documentation
 
@@ -151,6 +124,7 @@ For provider-specific annotations and configuration details, see the [external-d
 |----------|-------------|
 | [Architecture](docs/ARCHITECTURE.md) | System architecture and design decisions |
 | [AWG Quick Start](docs/AWG_QUICKSTART.md) | AmneziaWG sidecar setup guide |
+| [Configuration](docs/CONFIGURATION.md) | CLI flags and environment variables |
 | [Gateway API](docs/GATEWAY_API.md) | Supported Gateway API features and limitations |
 | [Metrics](docs/METRICS.md) | Prometheus metrics, alerting rules, Grafana dashboard |
 | [Development](docs/DEVELOPMENT.md) | Development setup and contributing guide |

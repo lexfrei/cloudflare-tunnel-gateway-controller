@@ -21,7 +21,7 @@ This document details the Gateway API implementation in the Cloudflare Tunnel Ga
 | Field | Supported | Notes |
 |-------|-----------|-------|
 | `spec.controllerName` | ✅ | Must match `--controller-name` flag |
-| `spec.parametersRef` | ❌ | Not implemented |
+| `spec.parametersRef` | ✅ | Via GatewayClassConfig CRD |
 | `spec.description` | ✅ | Informational only |
 
 ### Gateway

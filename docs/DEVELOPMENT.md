@@ -262,9 +262,13 @@ go get -u ./...
 go mod tidy
 
 # Update specific dependency
-go get -u github.com/cloudflare/cloudflare-go/v4@latest
+go get -u github.com/cloudflare/cloudflare-go/v6@latest
 go mod tidy
 ```
+
+### Helm Chart Versioning
+
+**Do not manually bump `version` or `appVersion` in `Chart.yaml`.** The release workflow automatically sets both values based on the release tag. Manual version changes will cause conflicts.
 
 ### Generate Godoc
 
