@@ -422,6 +422,20 @@ jobs:
 
           echo "Additional tags created: ${MAJOR_MINOR}, ${MAJOR}, latest"
 
+      - name: Push Artifact Hub metadata
+        run: |
+          CHART_NAME="cloudflare-tunnel-gateway-controller"
+          CHART_PATH="charts/${CHART_NAME}"
+          REGISTRY="ghcr.io/${{ github.repository_owner }}"
+
+          # Push artifacthub-repo.yml with special tag for verification
+          # See: https://artifacthub.io/docs/topics/repositories/helm-charts/#oci-support
+          oras push "${REGISTRY}/${CHART_NAME}-chart:artifacthub.io" \
+            --config /dev/null:application/vnd.cncf.artifacthub.config.v1+yaml \
+            "${CHART_PATH}/artifacthub-repo.yml:application/vnd.cncf.artifacthub.repository-metadata.layer.v1.yaml"
+
+          echo "Artifact Hub metadata pushed to: ${REGISTRY}/${CHART_NAME}-chart:artifacthub.io"
+
       - name: Generate chart summary
         run: |
           VERSION="${{ steps.version.outputs.version }}"
