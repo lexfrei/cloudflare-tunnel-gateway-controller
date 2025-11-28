@@ -4,3 +4,7 @@ metadata:
   name: cloudflare-tunnel
 spec:
   controllerName: cf.k8s.lex.la/tunnel-controller
+  parametersRef:
+    group: cf.k8s.lex.la
+    kind: GatewayClassConfig
+    name: cloudflare-tunnel-config

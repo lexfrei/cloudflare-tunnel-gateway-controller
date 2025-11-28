@@ -119,14 +119,21 @@ kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/downloa
 kubectl create namespace cloudflare-tunnel-system
 ```
 
-#### 3. Configure credentials
+#### 3. Create Secrets
 
-Edit `deploy/controller/deployment.yaml` and set your values in ConfigMap and Secret:
+```bash
+# Cloudflare API credentials
+kubectl create secret generic cloudflare-credentials \
+  --namespace cloudflare-tunnel-system \
+  --from-literal=api-token="YOUR_API_TOKEN"
 
-- `tunnel-id`: Your Cloudflare tunnel ID
-- `api-token`: Your Cloudflare API token
-- `account-id`: (optional) Your Cloudflare account ID - auto-detected if token has access to single account
-- `cluster-domain`: (optional) Your cluster domain - auto-detected from `/etc/resolv.conf`, fallback: `cluster.local`
+# Tunnel token (required for managed cloudflared)
+kubectl create secret generic cloudflare-tunnel-token \
+  --namespace cloudflare-tunnel-system \
+  --from-literal=tunnel-token="YOUR_TUNNEL_TOKEN"
+```
+
+See [deploy/samples/secrets.yaml](deploy/samples/secrets.yaml) for complete examples including AWG configuration.
 
 #### 4. Deploy the controller
 
@@ -135,9 +142,12 @@ kubectl apply -f deploy/rbac/
 kubectl apply -f deploy/controller/
 ```
 
-#### 5. Create GatewayClass and Gateway
+#### 5. Create GatewayClassConfig, GatewayClass, and Gateway
+
+Edit [deploy/samples/gatewayclassconfig.yaml](deploy/samples/gatewayclassconfig.yaml) with your tunnel ID:
 
 ```bash
+kubectl apply -f deploy/samples/gatewayclassconfig.yaml
 kubectl apply -f deploy/samples/gatewayclass.yaml
 kubectl apply -f deploy/samples/gateway.yaml
 ```
@@ -288,6 +298,7 @@ flowchart TB
 | Document | Description |
 |----------|-------------|
 | [Architecture](docs/ARCHITECTURE.md) | System architecture and design decisions |
+| [AWG Quick Start](docs/AWG_QUICKSTART.md) | AmneziaWG sidecar setup guide |
 | [Gateway API](docs/GATEWAY_API.md) | Supported Gateway API features and limitations |
 | [Metrics](docs/METRICS.md) | Prometheus metrics, alerting rules, Grafana dashboard |
 | [Development](docs/DEVELOPMENT.md) | Development setup and contributing guide |

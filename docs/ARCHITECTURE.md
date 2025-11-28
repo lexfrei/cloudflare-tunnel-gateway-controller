@@ -34,16 +34,23 @@ flowchart TB
 ## Package Structure
 
 ```text
+api/v1alpha1/            # GatewayClassConfig CRD types
+
 cmd/controller/
 ├── main.go              # Entry point, version injection
 └── cmd/
     └── root.go          # CLI flags, Cobra command
 
 internal/
+├── config/
+│   └── resolver.go      # GatewayClassConfig resolution from Secrets
 ├── controller/
 │   ├── manager.go       # Controller manager setup, Run()
 │   ├── gateway_controller.go    # Gateway reconciler
-│   └── httproute_controller.go  # HTTPRoute reconciler
+│   ├── httproute_controller.go  # HTTPRoute reconciler
+│   └── gatewayclassconfig_controller.go  # GatewayClassConfig reconciler
+├── dns/
+│   └── detect.go        # Cluster domain auto-detection
 ├── ingress/
 │   └── builder.go       # HTTPRoute → Cloudflare rules conversion
 └── helm/
@@ -53,6 +60,40 @@ internal/
 ```
 
 ## Components
+
+### GatewayClassConfig
+
+Cluster-scoped Custom Resource Definition (CRD) that provides tunnel configuration:
+
+- **API Group**: `cf.k8s.lex.la/v1alpha1`
+- **Referenced by**: GatewayClass via `spec.parametersRef`
+- **Configuration**: Cloudflare credentials, tunnel ID, cloudflared settings, AWG sidecar
+
+```yaml
+apiVersion: cf.k8s.lex.la/v1alpha1
+kind: GatewayClassConfig
+metadata:
+  name: cloudflare-tunnel-config
+spec:
+  tunnelID: "550e8400-e29b-41d4-a716-446655440000"
+  cloudflareCredentialsSecretRef:
+    name: cloudflare-credentials
+  tunnelTokenSecretRef:
+    name: cloudflare-tunnel-token
+  cloudflared:
+    enabled: true
+    awg:
+      secretName: awg-config  # Optional: enables AWG sidecar
+```
+
+### ConfigResolver
+
+Resolves GatewayClassConfig from GatewayClass `parametersRef`:
+
+1. Reads GatewayClassConfig by name from parametersRef
+2. Fetches Cloudflare credentials from referenced Secret
+3. Fetches tunnel token from referenced Secret (if cloudflared.enabled)
+4. Auto-detects account ID via Cloudflare API if not specified
 
 ### GatewayReconciler
 
@@ -138,21 +179,21 @@ Manages cloudflared deployment lifecycle:
 
 ```mermaid
 flowchart LR
-    subgraph Input
-        FLAGS[CLI Flags]
-        ENV[Environment Vars]
+    subgraph Kubernetes
+        GCC[GatewayClassConfig]
+        SEC[Secrets]
     end
 
     subgraph Controller
-        VIPER[Viper Config]
-        CONFIG[controller.Config]
-        MGR[Manager]
+        RES[ConfigResolver]
+        CONFIG[ResolvedConfig]
+        CTRL[Controllers]
     end
 
-    FLAGS --> VIPER
-    ENV --> VIPER
-    VIPER --> CONFIG
-    CONFIG --> MGR
+    GCC --> RES
+    SEC --> RES
+    RES --> CONFIG
+    CONFIG --> CTRL
 ```
 
 ### Reconciliation Flow
