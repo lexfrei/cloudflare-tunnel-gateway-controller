@@ -4,7 +4,6 @@ import (
 	"context"
 	"log/slog"
 	"sync/atomic"
-	"time"
 
 	"github.com/cockroachdb/errors"
 	corev1 "k8s.io/api/core/v1"
@@ -23,39 +22,15 @@ import (
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/api/v1alpha1"
 )
 
-const (
-	kindGateway = "Gateway"
-
-	// apiErrorRequeueDelay is the delay before retrying when Cloudflare API calls fail.
-	apiErrorRequeueDelay = 15 * time.Second
-
-	// startupPendingRequeueDelay is the delay before retrying when startup sync is not yet complete.
-	startupPendingRequeueDelay = 1 * time.Second
-
-	// maxIngressRules is the maximum number of ingress rules allowed per Cloudflare Tunnel.
-	// Cloudflare's limit is approximately 1000 rules per tunnel.
-	maxIngressRules = 1000
-
-	// Route status messages.
-	routeNotAcceptedMessage = "Route not accepted"
-	routeAcceptedMessage    = "Route accepted and programmed in Cloudflare Tunnel"
-	resolvedRefsMessage     = "All references resolved"
-)
-
-// HTTPRouteReconciler reconciles HTTPRoute resources and synchronizes them
+// GRPCRouteReconciler reconciles GRPCRoute resources and synchronizes them
 // to Cloudflare Tunnel ingress configuration.
 //
 // Key behaviors:
-//   - Watches all HTTPRoute resources in the cluster
+//   - Watches all GRPCRoute resources in the cluster
 //   - Filters routes by parent Gateway's GatewayClass
-//   - Uses shared RouteSyncer for unified sync with GRPCRoutes
-//   - Updates Cloudflare Tunnel config via API (cloudflared hot-reloads)
-//   - Updates HTTPRoute status with acceptance conditions
-//
-// On startup, the reconciler performs a full sync to ensure tunnel configuration
-// matches the current state of route resources. This means any ingress rules
-// created outside of this controller will be replaced.
-type HTTPRouteReconciler struct {
+//   - Uses shared RouteSyncer for unified sync with HTTPRoutes
+//   - Updates GRPCRoute status with acceptance conditions
+type GRPCRouteReconciler struct {
 	client.Client
 
 	// Scheme is the runtime scheme for API type registration.
@@ -64,54 +39,52 @@ type HTTPRouteReconciler struct {
 	// GatewayClassName filters which routes to process.
 	GatewayClassName string
 
-	// ControllerName is reported in HTTPRoute status.
+	// ControllerName is reported in GRPCRoute status.
 	ControllerName string
 
 	// RouteSyncer provides unified sync for both HTTP and GRPC routes.
 	RouteSyncer *RouteSyncer
 
 	// startupComplete indicates whether the startup sync has completed.
-	// This prevents race conditions between startup sync and reconcile loop.
 	startupComplete atomic.Bool
 }
 
 //nolint:noinlineerr // inline error handling is fine for controller pattern
-func (r *HTTPRouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+func (r *GRPCRouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	// Wait for startup sync to complete before processing reconcile events
-	// to prevent race conditions with Cloudflare API updates
 	if !r.startupComplete.Load() {
 		return ctrl.Result{RequeueAfter: startupPendingRequeueDelay}, nil
 	}
 
-	logger := slog.Default().With("httproute", req.NamespacedName)
+	logger := slog.Default().With("grpcroute", req.NamespacedName)
 
-	var route gatewayv1.HTTPRoute
+	var route gatewayv1.GRPCRoute
 	if err := r.Get(ctx, req.NamespacedName, &route); err != nil {
 		if apierrors.IsNotFound(err) {
-			logger.Info("httproute deleted, triggering full sync")
+			logger.Info("grpcroute deleted, triggering full sync")
 
 			return r.syncAndUpdateStatus(ctx)
 		}
 
-		return ctrl.Result{}, errors.Wrap(err, "failed to get httproute")
+		return ctrl.Result{}, errors.Wrap(err, "failed to get grpcroute")
 	}
 
 	if !r.isRouteForOurGateway(ctx, &route) {
 		return ctrl.Result{}, nil
 	}
 
-	logger.Info("reconciling httproute")
+	logger.Info("reconciling grpcroute")
 
 	return r.syncAndUpdateStatus(ctx)
 }
 
 //nolint:noinlineerr,funcorder // inline error handling for controller pattern; placed near Reconcile for readability
-func (r *HTTPRouteReconciler) syncAndUpdateStatus(ctx context.Context) (ctrl.Result, error) {
-	logger := slog.Default().With("component", "httproute-sync")
+func (r *GRPCRouteReconciler) syncAndUpdateStatus(ctx context.Context) (ctrl.Result, error) {
+	logger := slog.Default().With("component", "grpcroute-sync")
 
 	result, syncResult, syncErr := r.RouteSyncer.SyncAllRoutes(ctx)
 
-	// Update status for all HTTP routes
+	// Update status for all GRPC routes
 	if syncResult != nil {
 		accepted := syncErr == nil
 		message := ""
@@ -120,9 +93,9 @@ func (r *HTTPRouteReconciler) syncAndUpdateStatus(ctx context.Context) (ctrl.Res
 			message = syncErr.Error()
 		}
 
-		for i := range syncResult.HTTPRoutes {
-			if err := r.updateRouteStatus(ctx, &syncResult.HTTPRoutes[i], accepted, message); err != nil {
-				logger.Error("failed to update httproute status", "error", err)
+		for i := range syncResult.GRPCRoutes {
+			if err := r.updateRouteStatus(ctx, &syncResult.GRPCRoutes[i], accepted, message); err != nil {
+				logger.Error("failed to update grpcroute status", "error", err)
 			}
 		}
 	}
@@ -136,7 +109,7 @@ func (r *HTTPRouteReconciler) syncAndUpdateStatus(ctx context.Context) (ctrl.Res
 }
 
 //nolint:funcorder,noinlineerr // private helper method
-func (r *HTTPRouteReconciler) isRouteForOurGateway(ctx context.Context, route *gatewayv1.HTTPRoute) bool {
+func (r *GRPCRouteReconciler) isRouteForOurGateway(ctx context.Context, route *gatewayv1.GRPCRoute) bool {
 	for _, ref := range route.Spec.ParentRefs {
 		if ref.Kind != nil && *ref.Kind != kindGateway {
 			continue
@@ -161,19 +134,18 @@ func (r *HTTPRouteReconciler) isRouteForOurGateway(ctx context.Context, route *g
 }
 
 //nolint:funcorder,funlen,noinlineerr // private helper method, status update logic
-func (r *HTTPRouteReconciler) updateRouteStatus(
+func (r *GRPCRouteReconciler) updateRouteStatus(
 	ctx context.Context,
-	route *gatewayv1.HTTPRoute,
+	route *gatewayv1.GRPCRoute,
 	accepted bool,
 	message string,
 ) error {
 	routeKey := types.NamespacedName{Name: route.Name, Namespace: route.Namespace}
 
 	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		// Get fresh copy of the route to avoid conflict errors
-		var freshRoute gatewayv1.HTTPRoute
+		var freshRoute gatewayv1.GRPCRoute
 		if err := r.Get(ctx, routeKey, &freshRoute); err != nil {
-			return errors.Wrap(err, "failed to get fresh httproute")
+			return errors.Wrap(err, "failed to get fresh grpcroute")
 		}
 
 		now := metav1.Now()
@@ -246,16 +218,16 @@ func (r *HTTPRouteReconciler) updateRouteStatus(
 		}
 
 		if err := r.Status().Update(ctx, &freshRoute); err != nil {
-			return errors.Wrap(err, "failed to update httproute status")
+			return errors.Wrap(err, "failed to update grpcroute status")
 		}
 
 		return nil
 	})
 
-	return errors.Wrap(err, "failed to update httproute status after retries")
+	return errors.Wrap(err, "failed to update grpcroute status after retries")
 }
 
-func (r *HTTPRouteReconciler) SetupWithManager(mgr ctrl.Manager) error {
+func (r *GRPCRouteReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	mapper := &ConfigMapper{
 		Client:           r.Client,
 		GatewayClassName: r.GatewayClassName,
@@ -263,60 +235,52 @@ func (r *HTTPRouteReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	}
 
 	err := ctrl.NewControllerManagedBy(mgr).
-		For(&gatewayv1.HTTPRoute{}).
-		// Filter out status-only updates to prevent infinite reconciliation loops.
-		// We only care about spec changes (generation changes) or deletions.
+		For(&gatewayv1.GRPCRoute{}).
 		WithEventFilter(predicate.GenerationChangedPredicate{}).
 		Watches(
 			&gatewayv1.Gateway{},
 			handler.EnqueueRequestsFromMapFunc(r.findRoutesForGateway),
 		).
-		// Watch GatewayClassConfig for config changes
 		Watches(
 			&v1alpha1.GatewayClassConfig{},
 			handler.EnqueueRequestsFromMapFunc(mapper.MapConfigToRequests(r.getAllRelevantRoutes)),
 		).
-		// Watch Secrets for credential changes
 		Watches(
 			&corev1.Secret{},
 			handler.EnqueueRequestsFromMapFunc(mapper.MapSecretToRequests(r.getAllRelevantRoutes)),
 		).
 		Complete(r)
 	if err != nil {
-		return errors.Wrap(err, "failed to setup httproute controller")
+		return errors.Wrap(err, "failed to setup grpcroute controller")
 	}
 
-	// Add startup runnable for initial sync
 	addErr := mgr.Add(r)
 	if addErr != nil {
-		return errors.Wrap(addErr, "failed to add startup sync runnable")
+		return errors.Wrap(addErr, "failed to add grpcroute startup sync runnable")
 	}
 
 	return nil
 }
 
 // Start implements manager.Runnable for startup sync.
-func (r *HTTPRouteReconciler) Start(ctx context.Context) error {
-	// Mark startup as complete when this function returns,
-	// regardless of success or failure
+func (r *GRPCRouteReconciler) Start(ctx context.Context) error {
 	defer r.startupComplete.Store(true)
 
-	logger := slog.Default().With("component", "httproute-startup-sync")
-	logger.Info("performing startup sync of tunnel configuration")
+	logger := slog.Default().With("component", "grpcroute-startup-sync")
+	logger.Info("performing startup sync of grpcroute configuration")
 
 	_, err := r.syncAndUpdateStatus(ctx)
 	if err != nil {
-		logger.Error("startup sync failed", "error", err)
-		// Don't return error - allow controller to start even if initial sync fails
+		logger.Error("grpcroute startup sync failed", "error", err)
 	} else {
-		logger.Info("startup sync completed successfully")
+		logger.Info("grpcroute startup sync completed successfully")
 	}
 
 	return nil
 }
 
 //nolint:noinlineerr,dupl // inline error handling for controller pattern; similar logic for different route types is intentional
-func (r *HTTPRouteReconciler) findRoutesForGateway(
+func (r *GRPCRouteReconciler) findRoutesForGateway(
 	ctx context.Context,
 	obj client.Object,
 ) []reconcile.Request {
@@ -329,7 +293,7 @@ func (r *HTTPRouteReconciler) findRoutesForGateway(
 		return nil
 	}
 
-	var routeList gatewayv1.HTTPRouteList
+	var routeList gatewayv1.GRPCRouteList
 	if err := r.List(ctx, &routeList); err != nil {
 		return nil
 	}
@@ -354,8 +318,8 @@ func (r *HTTPRouteReconciler) findRoutesForGateway(
 	return requests
 }
 
-func (r *HTTPRouteReconciler) getAllRelevantRoutes(ctx context.Context) []reconcile.Request {
-	var routeList gatewayv1.HTTPRouteList
+func (r *GRPCRouteReconciler) getAllRelevantRoutes(ctx context.Context) []reconcile.Request {
+	var routeList gatewayv1.GRPCRouteList
 
 	err := r.List(ctx, &routeList)
 	if err != nil {

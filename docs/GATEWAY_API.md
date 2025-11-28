@@ -9,7 +9,7 @@ This document details the Gateway API implementation in the Cloudflare Tunnel Ga
 | GatewayClass | `gateway.networking.k8s.io/v1` | ✅ Supported |
 | Gateway | `gateway.networking.k8s.io/v1` | ✅ Supported |
 | HTTPRoute | `gateway.networking.k8s.io/v1` | ✅ Supported |
-| GRPCRoute | `gateway.networking.k8s.io/v1` | ❌ Not supported |
+| GRPCRoute | `gateway.networking.k8s.io/v1` | ✅ Supported |
 | TCPRoute | `gateway.networking.k8s.io/v1alpha2` | ❌ Not supported |
 | TLSRoute | `gateway.networking.k8s.io/v1alpha2` | ❌ Not supported |
 | UDPRoute | `gateway.networking.k8s.io/v1alpha2` | ❌ Not supported |
@@ -61,6 +61,39 @@ This document details the Gateway API implementation in the Cloudflare Tunnel Ga
 | `spec.rules[].backendRefs[].weight` | ❌ | First backend used |
 | `spec.rules[].backendRefs[].filters` | ❌ | Not implemented |
 | `spec.rules[].timeouts` | ❌ | Not implemented |
+
+### GRPCRoute
+
+| Field | Supported | Notes |
+|-------|-----------|-------|
+| `spec.parentRefs` | ✅ | References to Gateway |
+| `spec.parentRefs[].name` | ✅ | Gateway name |
+| `spec.parentRefs[].namespace` | ✅ | Gateway namespace |
+| `spec.parentRefs[].sectionName` | ✅ | Listener name (optional) |
+| `spec.hostnames` | ✅ | Wildcard `*` supported |
+| `spec.rules` | ✅ | Routing rules |
+| `spec.rules[].matches` | ✅ | Service/method matching |
+| `spec.rules[].matches[].method.service` | ✅ | gRPC service name |
+| `spec.rules[].matches[].method.method` | ✅ | gRPC method name |
+| `spec.rules[].matches[].method.type` | ✅ | Exact or RegularExpression |
+| `spec.rules[].matches[].headers` | ❌ | Cloudflare limitation |
+| `spec.rules[].filters` | ❌ | Not implemented |
+| `spec.rules[].backendRefs` | ✅ | Service backends only |
+| `spec.rules[].backendRefs[].name` | ✅ | Service name |
+| `spec.rules[].backendRefs[].namespace` | ✅ | Service namespace |
+| `spec.rules[].backendRefs[].port` | ✅ | Service port |
+| `spec.rules[].backendRefs[].weight` | ❌ | First backend used |
+| `spec.rules[].backendRefs[].filters` | ❌ | Not implemented |
+
+### gRPC Method Matching
+
+gRPC methods are mapped to HTTP/2 paths using the standard format `/package.Service/Method`.
+
+| Match Type | Example | Cloudflare Rule |
+|------------|---------|-----------------|
+| Service only | `service: mypackage.MyService` | `/mypackage.MyService/*` |
+| Service + Method | `service: mypackage.MyService, method: GetUser` | `/mypackage.MyService/GetUser` |
+| No match | (empty) | Matches all gRPC traffic |
 
 ### Path Matching
 
@@ -115,6 +148,14 @@ The following Gateway API features are not supported due to Cloudflare Tunnel ar
 | `ResolvedRefs` | `True` | `ResolvedRefs` | References resolved |
 
 ### HTTPRoute Conditions
+
+| Type | Status | Reason | Description |
+|------|--------|--------|-------------|
+| `Accepted` | `True` | `Accepted` | Route accepted and synced |
+| `Accepted` | `False` | `NoMatchingParent` | Sync to Cloudflare failed |
+| `ResolvedRefs` | `True` | `ResolvedRefs` | Backend references resolved |
+
+### GRPCRoute Conditions
 
 | Type | Status | Reason | Description |
 |------|--------|--------|-------------|
@@ -253,14 +294,96 @@ spec:
           port: 80
 ```
 
+### Basic gRPC Routing
+
+```yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: GRPCRoute
+metadata:
+  name: my-grpc-service
+  namespace: default
+spec:
+  parentRefs:
+    - name: cloudflare-tunnel
+      namespace: cloudflare-tunnel-system
+  hostnames:
+    - grpc.example.com
+  rules:
+    - backendRefs:
+        - name: grpc-server
+          port: 50051
+```
+
+### gRPC Service Routing
+
+```yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: GRPCRoute
+metadata:
+  name: grpc-service-routes
+spec:
+  parentRefs:
+    - name: cloudflare-tunnel
+      namespace: cloudflare-tunnel-system
+  hostnames:
+    - api.example.com
+  rules:
+    # Route specific service to backend
+    - matches:
+        - method:
+            service: mypackage.UserService
+      backendRefs:
+        - name: user-service
+          port: 50051
+    # Route another service
+    - matches:
+        - method:
+            service: mypackage.OrderService
+      backendRefs:
+        - name: order-service
+          port: 50051
+```
+
+### gRPC Method Routing
+
+```yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: GRPCRoute
+metadata:
+  name: grpc-method-routes
+spec:
+  parentRefs:
+    - name: cloudflare-tunnel
+      namespace: cloudflare-tunnel-system
+  hostnames:
+    - api.example.com
+  rules:
+    # Exact method match
+    - matches:
+        - method:
+            service: mypackage.UserService
+            method: GetUser
+      backendRefs:
+        - name: user-read-service
+          port: 50051
+    # All other methods on the service
+    - matches:
+        - method:
+            service: mypackage.UserService
+      backendRefs:
+        - name: user-write-service
+          port: 50051
+```
+
 ## Troubleshooting
 
 ### Route Not Accepted
 
-Check HTTPRoute status:
+Check HTTPRoute or GRPCRoute status:
 
 ```bash
 kubectl get httproute my-route -o jsonpath='{.status.parents[*].conditions}'
+kubectl get grpcroute my-grpc-route -o jsonpath='{.status.parents[*].conditions}'
 ```
 
 Common issues:

@@ -9,57 +9,31 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
-const (
-	// CatchAllService is the Cloudflare Tunnel service that returns HTTP 404.
-	// It is always added as the last rule in the ingress configuration.
-	CatchAllService = "http_status:404"
-
-	// DefaultHTTPPort is the default port for HTTP backend services.
-	DefaultHTTPPort = 80
-
-	// DefaultHTTPSPort is the default port for HTTPS backend services.
-	DefaultHTTPSPort = 443
-
-	// Backend reference constants.
-	backendGroupCore   = "core"
-	backendKindService = "Service"
-	schemeHTTP         = "http"
-	schemeHTTPS        = "https"
-)
-
-// Builder converts Gateway API HTTPRoute resources to Cloudflare Tunnel
+// GRPCBuilder converts Gateway API GRPCRoute resources to Cloudflare Tunnel
 // ingress configuration rules.
-type Builder struct {
+type GRPCBuilder struct {
 	// ClusterDomain is the Kubernetes cluster domain suffix for service DNS.
 	// Typically "cluster.local".
 	ClusterDomain string
 }
 
-// NewBuilder creates a new Builder with the specified cluster domain.
-func NewBuilder(clusterDomain string) *Builder {
-	return &Builder{
+// NewGRPCBuilder creates a new GRPCBuilder with the specified cluster domain.
+func NewGRPCBuilder(clusterDomain string) *GRPCBuilder {
+	return &GRPCBuilder{
 		ClusterDomain: clusterDomain,
 	}
 }
 
-// routeEntry is an intermediate representation of an ingress rule.
-// Priority 1 indicates exact path match, 0 indicates prefix match.
-type routeEntry struct {
-	hostname string
-	path     string
-	service  string
-	priority int
-}
-
-// Build converts a list of HTTPRoute resources to Cloudflare Tunnel ingress rules.
+// Build converts a list of GRPCRoute resources to Cloudflare Tunnel ingress rules.
 //
 // Rules are sorted by:
 //  1. Hostname (alphabetically)
 //  2. Priority (exact matches before prefix matches)
 //  3. Path length (longer paths first for specificity)
 //
-// A catch-all rule returning HTTP 404 is always appended as the last rule.
-func (b *Builder) Build(routes []gatewayv1.HTTPRoute) []zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress {
+// Unlike HTTPRoute builder, this does NOT append a catch-all rule.
+// The catch-all rule should be added once after merging all route types.
+func (b *GRPCBuilder) Build(routes []gatewayv1.GRPCRoute) []zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress {
 	var entries []routeEntry
 
 	for i := range routes {
@@ -79,7 +53,7 @@ func (b *Builder) Build(routes []gatewayv1.HTTPRoute) []zero_trust.TunnelCloudfl
 		return len(entries[idx].path) > len(entries[jdx].path)
 	})
 
-	rules := make([]zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress, 0, len(entries)+1)
+	rules := make([]zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress, 0, len(entries))
 
 	for _, entry := range entries {
 		rule := zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress{
@@ -99,15 +73,11 @@ func (b *Builder) Build(routes []gatewayv1.HTTPRoute) []zero_trust.TunnelCloudfl
 		rules = append(rules, rule)
 	}
 
-	rules = append(rules, zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress{
-		Service: cloudflare.F(CatchAllService),
-	})
-
 	return rules
 }
 
 //nolint:dupl // similar structure for different route types is intentional
-func (b *Builder) buildRouteEntries(route *gatewayv1.HTTPRoute) []routeEntry {
+func (b *GRPCBuilder) buildRouteEntries(route *gatewayv1.GRPCRoute) []routeEntry {
 	var entries []routeEntry
 
 	hostnames := route.Spec.Hostnames
@@ -134,7 +104,7 @@ func (b *Builder) buildRouteEntries(route *gatewayv1.HTTPRoute) []routeEntry {
 			}
 
 			for _, match := range rule.Matches {
-				path, priority := b.extractPath(match.Path)
+				path, priority := b.extractGRPCPath(match.Method)
 				entries = append(entries, routeEntry{
 					hostname: string(hostname),
 					path:     path,
@@ -148,33 +118,48 @@ func (b *Builder) buildRouteEntries(route *gatewayv1.HTTPRoute) []routeEntry {
 	return entries
 }
 
-func (b *Builder) extractPath(pathMatch *gatewayv1.HTTPPathMatch) (path string, priority int) {
-	if pathMatch == nil {
+// extractGRPCPath converts a GRPCMethodMatch to an HTTP path.
+// gRPC requests use HTTP/2 POST to paths like /package.Service/Method.
+//
+// Returns:
+//   - path: the HTTP path (e.g., "/mypackage.MyService/GetUser")
+//   - priority: 1 for exact match (service+method), 0 for prefix match (service only or none)
+func (b *GRPCBuilder) extractGRPCPath(methodMatch *gatewayv1.GRPCMethodMatch) (path string, priority int) {
+	if methodMatch == nil {
 		return "", 0
 	}
 
-	pathType := gatewayv1.PathMatchPathPrefix
-	if pathMatch.Type != nil {
-		pathType = *pathMatch.Type
+	service := ""
+	if methodMatch.Service != nil {
+		service = *methodMatch.Service
 	}
 
-	path = "/"
-	if pathMatch.Value != nil {
-		path = *pathMatch.Value
+	method := ""
+	if methodMatch.Method != nil {
+		method = *methodMatch.Method
 	}
 
-	switch pathType {
-	case gatewayv1.PathMatchExact:
-		return path, 1
-	case gatewayv1.PathMatchPathPrefix, gatewayv1.PathMatchRegularExpression:
-		return path, 0
+	// No service and no method - match all gRPC traffic
+	if service == "" && method == "" {
+		return "", 0
 	}
 
-	return path, 0
+	// Service only - prefix match on /Service/
+	if service != "" && method == "" {
+		return "/" + service + "/", 0
+	}
+
+	// Method only (implementation-specific) - not fully supported, treat as prefix
+	if service == "" && method != "" {
+		return "", 0
+	}
+
+	// Both service and method - exact match
+	return "/" + service + "/" + method, 1
 }
 
 //nolint:dupl // similar structure for different route types is intentional
-func (b *Builder) resolveBackendRef(namespace string, refs []gatewayv1.HTTPBackendRef) string {
+func (b *GRPCBuilder) resolveBackendRef(namespace string, refs []gatewayv1.GRPCBackendRef) string {
 	if len(refs) == 0 {
 		return ""
 	}

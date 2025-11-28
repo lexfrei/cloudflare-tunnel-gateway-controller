@@ -322,6 +322,10 @@ func (r *GatewayReconciler) updateStatus(
 					Group: (*gatewayv1.Group)(&gatewayv1.GroupVersion.Group),
 					Kind:  "HTTPRoute",
 				},
+				{
+					Group: (*gatewayv1.Group)(&gatewayv1.GroupVersion.Group),
+					Kind:  "GRPCRoute",
+				},
 			},
 			AttachedRoutes: attachedRoutes[listener.Name],
 			Conditions: []metav1.Condition{
@@ -385,7 +389,7 @@ func (r *GatewayReconciler) setConfigErrorStatus(
 	return errors.Wrap(r.Status().Update(ctx, gateway), "failed to update gateway status")
 }
 
-//nolint:funcorder // helper method for status
+//nolint:funcorder,gocognit // helper method for status; complexity due to counting two route types
 func (r *GatewayReconciler) countAttachedRoutes(
 	ctx context.Context,
 	gateway *gatewayv1.Gateway,
@@ -396,26 +400,49 @@ func (r *GatewayReconciler) countAttachedRoutes(
 		result[listener.Name] = 0
 	}
 
-	var routeList gatewayv1.HTTPRouteList
+	// Count HTTPRoutes
+	var httpRouteList gatewayv1.HTTPRouteList
 
-	err := r.List(ctx, &routeList)
-	if err != nil {
-		return result
+	err := r.List(ctx, &httpRouteList)
+	if err == nil {
+		for i := range httpRouteList.Items {
+			route := &httpRouteList.Items[i]
+
+			for _, ref := range route.Spec.ParentRefs {
+				if !r.refMatchesGateway(ref, gateway, route.Namespace) {
+					continue
+				}
+
+				if ref.SectionName != nil {
+					result[*ref.SectionName]++
+				} else {
+					for _, listener := range gateway.Spec.Listeners {
+						result[listener.Name]++
+					}
+				}
+			}
+		}
 	}
 
-	for i := range routeList.Items {
-		route := &routeList.Items[i]
+	// Count GRPCRoutes
+	var grpcRouteList gatewayv1.GRPCRouteList
 
-		for _, ref := range route.Spec.ParentRefs {
-			if !r.refMatchesGateway(ref, gateway, route.Namespace) {
-				continue
-			}
+	err = r.List(ctx, &grpcRouteList)
+	if err == nil {
+		for i := range grpcRouteList.Items {
+			route := &grpcRouteList.Items[i]
 
-			if ref.SectionName != nil {
-				result[*ref.SectionName]++
-			} else {
-				for _, listener := range gateway.Spec.Listeners {
-					result[listener.Name]++
+			for _, ref := range route.Spec.ParentRefs {
+				if !r.refMatchesGateway(ref, gateway, route.Namespace) {
+					continue
+				}
+
+				if ref.SectionName != nil {
+					result[*ref.SectionName]++
+				} else {
+					for _, listener := range gateway.Spec.Listeners {
+						result[listener.Name]++
+					}
 				}
 			}
 		}

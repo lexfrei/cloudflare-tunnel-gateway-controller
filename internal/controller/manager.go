@@ -125,17 +125,37 @@ func Run(ctx context.Context, cfg *Config) error {
 		return errors.Wrap(err, "failed to setup gateway controller")
 	}
 
+	// Create shared route syncer for unified HTTP and GRPC route synchronization
+	routeSyncer := NewRouteSyncer(
+		mgr.GetClient(),
+		mgr.GetScheme(),
+		cfg.ClusterDomain,
+		cfg.GatewayClassName,
+		configResolver,
+	)
+
 	httpRouteReconciler := &HTTPRouteReconciler{
 		Client:           mgr.GetClient(),
 		Scheme:           mgr.GetScheme(),
-		ClusterDomain:    cfg.ClusterDomain,
 		GatewayClassName: cfg.GatewayClassName,
 		ControllerName:   cfg.ControllerName,
-		ConfigResolver:   configResolver,
+		RouteSyncer:      routeSyncer,
 	}
 
 	if err := httpRouteReconciler.SetupWithManager(mgr); err != nil {
 		return errors.Wrap(err, "failed to setup httproute controller")
+	}
+
+	grpcRouteReconciler := &GRPCRouteReconciler{
+		Client:           mgr.GetClient(),
+		Scheme:           mgr.GetScheme(),
+		GatewayClassName: cfg.GatewayClassName,
+		ControllerName:   cfg.ControllerName,
+		RouteSyncer:      routeSyncer,
+	}
+
+	if err := grpcRouteReconciler.SetupWithManager(mgr); err != nil {
+		return errors.Wrap(err, "failed to setup grpcroute controller")
 	}
 
 	// Setup GatewayClassConfig controller for status updates

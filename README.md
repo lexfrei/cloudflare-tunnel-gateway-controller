@@ -9,18 +9,18 @@
 
 Kubernetes controller implementing Gateway API for Cloudflare Tunnel.
 
-Enables routing traffic through Cloudflare Tunnel using standard Gateway API resources (Gateway, HTTPRoute).
+Enables routing traffic through Cloudflare Tunnel using standard Gateway API resources (Gateway, HTTPRoute, GRPCRoute).
 
 ## Features
 
-- Standard Gateway API implementation (GatewayClass, Gateway, HTTPRoute)
+- Standard Gateway API implementation (GatewayClass, Gateway, HTTPRoute, GRPCRoute)
 - Hot reload of tunnel configuration (no cloudflared restart required)
 - Optional cloudflared lifecycle management via Helm SDK
 - Leader election for high availability deployments
 - Multi-arch container images (amd64, arm64)
 - Signed container images with cosign
 
-> **Warning:** The controller assumes **exclusive ownership** of the tunnel configuration. It will remove any ingress rules not managed by HTTPRoute resources. Do not use a tunnel that has manually configured routes or is shared with other systems.
+> **Warning:** The controller assumes **exclusive ownership** of the tunnel configuration. It will remove any ingress rules not managed by HTTPRoute/GRPCRoute resources. Do not use a tunnel that has manually configured routes or is shared with other systems.
 
 ## Quick Start
 
@@ -108,9 +108,38 @@ For manual installation without Helm, see [Manual Installation](docs/MANUAL_INST
 
 ## Usage
 
-Create standard [Gateway API](https://gateway-api.sigs.k8s.io/) HTTPRoute resources referencing the `cloudflare-tunnel` Gateway. The controller automatically syncs routes to Cloudflare Tunnel configuration with hot reload (no cloudflared restart required).
+Create standard [Gateway API](https://gateway-api.sigs.k8s.io/) HTTPRoute or GRPCRoute resources referencing the `cloudflare-tunnel` Gateway. The controller automatically syncs routes to Cloudflare Tunnel configuration with hot reload (no cloudflared restart required).
 
-See [Gateway API documentation](docs/GATEWAY_API.md) for supported features and examples.
+### Supported Route Fields
+
+The controller supports a subset of Gateway API fields that map to Cloudflare Tunnel ingress rules:
+
+**HTTPRoute:**
+
+| Field | Supported | Notes |
+|-------|-----------|-------|
+| `spec.hostnames` | ✅ | Wildcard `*` supported |
+| `spec.rules[].matches[].path` | ✅ | PathPrefix and Exact types |
+| `spec.rules[].backendRefs` | ✅ | Service name, namespace, port |
+| `spec.rules[].matches[].headers` | ❌ | Cloudflare limitation |
+| `spec.rules[].matches[].queryParams` | ❌ | Cloudflare limitation |
+| `spec.rules[].matches[].method` | ❌ | Cloudflare limitation |
+| `spec.rules[].filters` | ❌ | Cloudflare limitation |
+| `spec.rules[].backendRefs[].weight` | ❌ | First backend used |
+
+**GRPCRoute:**
+
+| Field | Supported | Notes |
+|-------|-----------|-------|
+| `spec.hostnames` | ✅ | Wildcard `*` supported |
+| `spec.rules[].matches[].method.service` | ✅ | Maps to `/Service/*` path |
+| `spec.rules[].matches[].method.method` | ✅ | Maps to `/Service/Method` path |
+| `spec.rules[].backendRefs` | ✅ | Service name, namespace, port |
+| `spec.rules[].matches[].headers` | ❌ | Cloudflare limitation |
+| `spec.rules[].filters` | ❌ | Cloudflare limitation |
+| `spec.rules[].backendRefs[].weight` | ❌ | First backend used |
+
+See [Gateway API documentation](docs/GATEWAY_API.md) for full details and examples.
 
 ## External-DNS Integration
 
