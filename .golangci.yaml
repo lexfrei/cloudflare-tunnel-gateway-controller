@@ -98,6 +98,21 @@ linters:
           - cyclop
           - errcheck
           - testableexamples
+          - testpackage
+          - forcetypeassert
+          - gocritic
+          - nlreturn
+          - wsl_v5
+          - varnamelen
+          - staticcheck
+          - unparam
+          - unconvert
+          - intrange
+          - modernize
+          - gosec
+          - testifylint
+          - perfsprint
+          - paralleltest
         path: _test\.go
       - linters:
           - forbidigo
