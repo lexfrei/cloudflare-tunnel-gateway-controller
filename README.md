@@ -143,44 +143,6 @@ For provider-specific annotations and configuration details, see the [external-d
 | `--leader-election-namespace` | | | Namespace for leader election lease |
 | `--leader-election-name` | | `cloudflare-tunnel-gateway-controller-leader` | Leader election lease name |
 
-## Architecture
-
-```mermaid
-flowchart TB
-    subgraph Kubernetes["Kubernetes Cluster"]
-        GC[GatewayClass]
-        GW[Gateway]
-        HR[HTTPRoute]
-        SVC[Services]
-        CTRL[Controller]
-        CFD[cloudflared]
-    end
-
-    subgraph Cloudflare["Cloudflare"]
-        API[Cloudflare API]
-        EDGE[Cloudflare Edge]
-        TUN[Tunnel Config]
-    end
-
-    USER[Users] --> EDGE
-    EDGE --> CFD
-    CFD --> SVC
-
-    GC --> CTRL
-    GW --> CTRL
-    HR --> CTRL
-    CTRL -->|Update Config| API
-    API --> TUN
-    TUN -->|Push Config| CFD
-```
-
-### How It Works
-
-1. **Watch**: Controller watches Gateway API resources (GatewayClass, Gateway, HTTPRoute)
-2. **Convert**: HTTPRoutes are converted to Cloudflare Tunnel ingress rules
-3. **Sync**: Configuration is pushed to Cloudflare API
-4. **Apply**: cloudflared receives updated config automatically (hot reload)
-
 ## Documentation
 
 | Document | Description |
