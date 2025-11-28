@@ -109,40 +109,11 @@ For manual installation without Helm, see [Manual Installation](docs/MANUAL_INST
 
 ## Usage
 
-Create an HTTPRoute to expose your service through Cloudflare Tunnel:
+Create standard [Gateway API](https://gateway-api.sigs.k8s.io/) HTTPRoute resources referencing the `cloudflare-tunnel` Gateway. The controller automatically syncs routes to Cloudflare Tunnel configuration with hot reload (no cloudflared restart required).
 
-```yaml
-apiVersion: gateway.networking.k8s.io/v1
-kind: HTTPRoute
-metadata:
-  name: my-app
-  namespace: default
-spec:
-  parentRefs:
-    - name: cloudflare-tunnel
-      namespace: cloudflare-tunnel-system
-  hostnames:
-    - app.example.com
-  rules:
-    - matches:
-        - path:
-            type: PathPrefix
-            value: /
-      backendRefs:
-        - name: my-service
-          port: 80
-```
+See [Gateway API documentation](docs/GATEWAY_API.md) for supported features and examples.
 
-The controller will automatically update Cloudflare Tunnel configuration. Changes are applied instantly without restarting cloudflared.
-
-**Important:** Each Cloudflare Tunnel should be managed by exactly one controller instance. The controller assumes exclusive ownership of the tunnel configuration.
-
-The controller uses diff-based synchronization:
-
-- Compares current tunnel configuration with desired state from HTTPRoutes
-- Only adds new rules and removes orphaned rules (no full replacement)
-- Ensures catch-all rule exists at the end of the configuration
-- Changes are applied incrementally, minimizing API calls
+**Important:** Each Cloudflare Tunnel should be managed by exactly one controller instance. The controller assumes exclusive ownership of the tunnel configuration and uses diff-based synchronization.
 
 ## External-DNS Integration
 
