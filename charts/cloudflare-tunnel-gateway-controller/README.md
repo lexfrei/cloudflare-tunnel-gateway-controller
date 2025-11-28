@@ -20,6 +20,8 @@ Kubernetes Gateway API controller for Cloudflare Tunnel
 - Multi-arch container images (amd64, arm64)
 - Signed container images with cosign
 
+> **Warning:** The controller assumes **exclusive ownership** of the tunnel configuration. It will remove any ingress rules not managed by HTTPRoute resources. Do not use a tunnel that has manually configured routes or is shared with other systems.
+
 ## Maintainers
 
 | Name | Email | Url |
@@ -64,10 +66,8 @@ Create an API token at [Cloudflare API Tokens](https://dash.cloudflare.com/profi
 | Scope | Permission | Access |
 |-------|------------|--------|
 | Account | Cloudflare Tunnel | Edit |
-| Account | Cloudflare Tunnel | Read |
-| Account | Account Settings | Read |
 
-The **Account Settings: Read** permission is required for auto-detecting the Account ID when not explicitly provided.
+Account ID is auto-detected from the API token when not explicitly provided (works if the token has access to a single account).
 
 ## Installation
 
@@ -93,6 +93,8 @@ cosign verify ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller:0.1.0 \
   --certificate-oidc-issuer="https://token.actions.githubusercontent.com"
 ```
 
+> **Note:** This controller uses [cloudflare-tunnel](https://github.com/lexfrei/charts/tree/main/charts/cloudflare-tunnel) Helm chart under the hood to deploy cloudflared. If you don't need Gateway API integration, you can use that chart directly.
+
 ## Configuration Examples
 
 Complete example values files are available in the [examples/](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/tree/master/charts/cloudflare-tunnel-gateway-controller/examples) directory:
@@ -104,6 +106,22 @@ Complete example values files are available in the [examples/](https://github.co
 | [managed-cloudflared-values.yaml](examples/managed-cloudflared-values.yaml) | Helm-managed cloudflared deployment |
 | [awg-sidecar-values.yaml](examples/awg-sidecar-values.yaml) | AmneziaWG VPN sidecar |
 | [production-values.yaml](examples/production-values.yaml) | Production-ready with HA, monitoring, and security |
+
+## Documentation
+
+| Document | Description |
+|----------|-------------|
+| [Architecture](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/blob/master/docs/ARCHITECTURE.md) | System architecture and design decisions |
+| [AWG Quick Start](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/blob/master/docs/AWG_QUICKSTART.md) | AmneziaWG sidecar setup guide |
+| [Gateway API](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/blob/master/docs/GATEWAY_API.md) | Supported Gateway API features |
+| [Metrics](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/blob/master/docs/METRICS.md) | Prometheus metrics and Grafana dashboard |
+| [Troubleshooting](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/blob/master/docs/TROUBLESHOOTING.md) | Common issues and solutions |
+
+## External Resources
+
+- [Gateway API](https://gateway-api.sigs.k8s.io/) - Kubernetes Gateway API specification
+- [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) - Cloudflare Tunnel documentation
+- [Cloudflare API Tokens](https://dash.cloudflare.com/profile/api-tokens) - Create API tokens
 
 ### Quick Start
 
@@ -193,53 +211,6 @@ spec:
   hostnames:
     - app.example.com
 ```
-
-## Architecture
-
-```mermaid
-flowchart TB
-    subgraph Kubernetes["Kubernetes Cluster"]
-        GC[GatewayClass]
-        GW[Gateway]
-        HR[HTTPRoute]
-        SVC[Services]
-        CTRL[Controller]
-        CFD[cloudflared]
-    end
-
-    subgraph Cloudflare["Cloudflare"]
-        API[Cloudflare API]
-        EDGE[Cloudflare Edge]
-        TUN[Tunnel Config]
-    end
-
-    USER[Users] --> EDGE
-    EDGE --> CFD
-    CFD --> SVC
-
-    GC --> CTRL
-    GW --> CTRL
-    HR --> CTRL
-    CTRL -->|Update Config| API
-    API --> TUN
-    TUN -->|Push Config| CFD
-```
-
-## Documentation
-
-| Document | Description |
-|----------|-------------|
-| [Architecture](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/blob/master/docs/ARCHITECTURE.md) | System architecture and design decisions |
-| [AWG Quick Start](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/blob/master/docs/AWG_QUICKSTART.md) | AmneziaWG sidecar setup guide |
-| [Gateway API](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/blob/master/docs/GATEWAY_API.md) | Supported Gateway API features |
-| [Metrics](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/blob/master/docs/METRICS.md) | Prometheus metrics and Grafana dashboard |
-| [Troubleshooting](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/blob/master/docs/TROUBLESHOOTING.md) | Common issues and solutions |
-
-## External Resources
-
-- [Gateway API](https://gateway-api.sigs.k8s.io/) - Kubernetes Gateway API specification
-- [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) - Cloudflare Tunnel documentation
-- [Cloudflare API Tokens](https://dash.cloudflare.com/profile/api-tokens) - Create API tokens
 
 ## Values
 
