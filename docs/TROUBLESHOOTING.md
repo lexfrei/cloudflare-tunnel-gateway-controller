@@ -53,7 +53,7 @@ helm lint charts/cloudflare-tunnel-gateway-controller -f my-values.yaml
 
 # Dry-run installation to catch errors
 helm install --dry-run --debug my-release \
-  oci://ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller-chart \
+  oci://ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller/chart \
   -f my-values.yaml
 ```
 
@@ -66,7 +66,7 @@ helm install --dry-run --debug my-release \
 ```bash
 # Ensure you're using the correct OCI registry URL
 helm install cloudflare-tunnel-gateway-controller \
-  oci://ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller-chart \
+  oci://ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller/chart \
   --version 0.1.0
 
 # For private registries, authenticate first
@@ -626,7 +626,7 @@ After updating:
 
 ```bash
 helm upgrade cloudflare-tunnel-gateway-controller \
-  oci://ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller-chart \
+  oci://ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller/chart \
   -f values.yaml \
   -n cloudflare-tunnel-system
 

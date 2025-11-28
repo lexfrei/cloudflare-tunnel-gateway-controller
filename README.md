@@ -5,7 +5,7 @@
 [![Release](https://img.shields.io/github/v/release/lexfrei/cloudflare-tunnel-gateway-controller)](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/releases)
 [![CI](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/actions/workflows/pr.yaml/badge.svg)](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/actions/workflows/pr.yaml)
 
-> **Note:** The Helm chart is published to a separate OCI path (`cloudflare-tunnel-gateway-controller-chart`) to avoid conflicts with container image tags. Available tags: `VERSION`, `MAJOR.MINOR`, `MAJOR`, `latest`.
+> **Note:** The Helm chart is published at `cloudflare-tunnel-gateway-controller/chart` subpath because Helm CLI doesn't support OCI Image Index with `artifactType` selection. Once [helm/helm#31582](https://github.com/helm/helm/issues/31582) is resolved, the chart will be available at `oci://ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller`. Available tags: `VERSION`, `MAJOR.MINOR`, `MAJOR`, `latest`.
 
 Kubernetes controller implementing Gateway API for Cloudflare Tunnel.
 
@@ -30,7 +30,7 @@ kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/downloa
 
 # 2. Install the controller
 helm install cloudflare-tunnel-gateway-controller \
-  oci://ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller-chart \
+  oci://ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller/chart \
   --namespace cloudflare-tunnel-system \
   --create-namespace \
   --set config.tunnelID=YOUR_TUNNEL_ID \
@@ -94,7 +94,7 @@ Helm is the only supported installation method. It handles CRD installation, RBA
 
 ```bash
 helm install cloudflare-tunnel-gateway-controller \
-  oci://ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller-chart \
+  oci://ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller/chart \
   --namespace cloudflare-tunnel-system \
   --create-namespace \
   --values values.yaml

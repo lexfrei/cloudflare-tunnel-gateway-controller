@@ -115,7 +115,7 @@ Install the controller:
 
 ```bash
 helm install cloudflare-tunnel-gateway-controller \
-  oci://ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller-chart \
+  oci://ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller/chart \
   --namespace cloudflare-tunnel-system \
   --values awg-values.yaml
 ```

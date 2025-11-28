@@ -408,21 +408,30 @@ jobs:
           CHART_PATH="charts/cloudflare-tunnel-gateway-controller"
           CHART_NAME="cloudflare-tunnel-gateway-controller"
           REGISTRY="ghcr.io/${{ github.repository_owner }}"
+          CHART_REPO="${REGISTRY}/${CHART_NAME}/chart"
 
           # Package chart
           helm package "${CHART_PATH}"
           CHART_FILE="${CHART_NAME}-${VERSION}.tgz"
 
-          # Push chart with helm (creates VERSION tag)
-          helm push "${CHART_FILE}" "oci://${REGISTRY}/${CHART_NAME}-chart"
+          # Extract Chart.yaml for config layer
+          tar --extract --gzip --file "${CHART_FILE}" "${CHART_NAME}/Chart.yaml"
 
-          echo "Chart pushed: oci://${REGISTRY}/${CHART_NAME}-chart:${VERSION}"
+          # Push chart using oras for full path control
+          # Media types per Helm OCI spec: https://helm.sh/docs/topics/registries/
+          oras push "${CHART_REPO}:${VERSION}" \
+            --config "${CHART_NAME}/Chart.yaml:application/vnd.cncf.helm.config.v1+json" \
+            "${CHART_FILE}:application/vnd.cncf.helm.chart.content.v1.tar+gzip"
+
+          rm --recursive --force "${CHART_NAME}"
+
+          echo "Chart pushed: oci://${CHART_REPO}:${VERSION}"
 
           # Add additional semver tags (matching container image pattern)
           MAJOR_MINOR=$(echo "${VERSION}" | cut --delimiter=. --fields=1,2)
           MAJOR=$(echo "${VERSION}" | cut --delimiter=. --fields=1)
 
-          oras tag "${REGISTRY}/${CHART_NAME}-chart:${VERSION}" \
+          oras tag "${CHART_REPO}:${VERSION}" \
             "${MAJOR_MINOR}" \
             "${MAJOR}" \
             "latest"
@@ -434,14 +443,15 @@ jobs:
           CHART_NAME="cloudflare-tunnel-gateway-controller"
           CHART_PATH="charts/${CHART_NAME}"
           REGISTRY="ghcr.io/${{ github.repository_owner }}"
+          CHART_REPO="${REGISTRY}/${CHART_NAME}/chart"
 
           # Push artifacthub-repo.yml with special tag for verification
           # See: https://artifacthub.io/docs/topics/repositories/helm-charts/#oci-support
-          oras push "${REGISTRY}/${CHART_NAME}-chart:artifacthub.io" \
+          oras push "${CHART_REPO}:artifacthub.io" \
             --config /dev/null:application/vnd.cncf.artifacthub.config.v1+yaml \
             "${CHART_PATH}/artifacthub-repo.yml:application/vnd.cncf.artifacthub.repository-metadata.layer.v1.yaml"
 
-          echo "Artifact Hub metadata pushed to: ${REGISTRY}/${CHART_NAME}-chart:artifacthub.io"
+          echo "Artifact Hub metadata pushed to: ${CHART_REPO}:artifacthub.io"
 
       - name: Sign Helm chart with cosign
         env:
@@ -450,15 +460,16 @@ jobs:
           VERSION="${{ steps.version.outputs.version }}"
           CHART_NAME="cloudflare-tunnel-gateway-controller"
           REGISTRY="ghcr.io/${{ github.repository_owner }}"
+          CHART_REPO="${REGISTRY}/${CHART_NAME}/chart"
 
           # Get chart digest for signing
-          CHART_DIGEST=$(oras manifest fetch "${REGISTRY}/${CHART_NAME}-chart:${VERSION}" --descriptor | jq -r '.digest')
+          CHART_DIGEST=$(oras manifest fetch "${CHART_REPO}:${VERSION}" --descriptor | jq --raw-output '.digest')
 
           # Sign the chart by digest (immutable reference)
-          echo "Signing ${REGISTRY}/${CHART_NAME}-chart@${CHART_DIGEST}"
-          cosign sign --yes "${REGISTRY}/${CHART_NAME}-chart@${CHART_DIGEST}"
+          echo "Signing ${CHART_REPO}@${CHART_DIGEST}"
+          cosign sign --yes "${CHART_REPO}@${CHART_DIGEST}"
 
-          echo "Chart signed: ${REGISTRY}/${CHART_NAME}-chart@${CHART_DIGEST}"
+          echo "Chart signed: ${CHART_REPO}@${CHART_DIGEST}"
 
       - name: Generate chart summary
         run: |
@@ -475,7 +486,7 @@ jobs:
             echo "### Installation"
             echo "\`\`\`bash"
             echo "helm install ${CHART_NAME} \\"
-            echo "  oci://ghcr.io/${{ github.repository_owner }}/${CHART_NAME}-chart \\"
+            echo "  oci://ghcr.io/${{ github.repository_owner }}/${CHART_NAME}/chart \\"
             echo "  --version ${VERSION}"
             echo "\`\`\`"
           } >> "$GITHUB_STEP_SUMMARY"
