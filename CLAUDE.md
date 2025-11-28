@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Kubernetes controller implementing Gateway API for Cloudflare Tunnel. Watches Gateway and HTTPRoute resources, automatically configures Cloudflare Tunnel ingress rules via API. Supports hot reload without cloudflared restart.
+Kubernetes controller implementing Gateway API for Cloudflare Tunnel. Watches Gateway and HTTPRoute resources, automatically configures Cloudflare Tunnel ingress rules via API. Supports hot reload without cloudflared restart. Optional AmneziaWG (AWG) sidecar support for traffic obfuscation.
 
 ## Build and Development Commands
 
@@ -17,6 +17,9 @@ go build -ldflags "-X main.Version=v0.0.1 -X main.Gitsha=$(git rev-parse HEAD)" 
 
 # Run tests
 go test -v -race -coverprofile=coverage.out ./...
+
+# Run single test
+go test -v -race ./internal/dns/... -run TestDetectClusterDomain
 
 # Run linter (all errors must be fixed before committing)
 golangci-lint run --timeout=5m
@@ -52,11 +55,19 @@ helm template test charts/cloudflare-tunnel-gateway-controller --values charts/c
 
 - **HTTPRouteReconciler** (`internal/controller/httproute_controller.go`): Watches HTTPRoute resources referencing managed Gateways. Performs full sync of all relevant routes to Cloudflare Tunnel configuration on any change. Updates HTTPRoute status.
 
+### Custom Resource Definition
+
+- **GatewayClassConfig** (`api/v1alpha1/`): Cluster-scoped CRD for configuring tunnel credentials and cloudflared deployment. Referenced by GatewayClass via `parametersRef`. Supports AWG sidecar configuration.
+
 ### Supporting Packages
+
+- **internal/config/resolver.go**: Resolves GatewayClassConfig from GatewayClass parametersRef, reads credentials from Secrets, auto-detects account ID via Cloudflare API.
 
 - **internal/ingress/builder.go**: Converts HTTPRoute specs to Cloudflare tunnel ingress rules. Handles hostnames, path matching (prefix/exact), backend service resolution.
 
 - **internal/helm/manager.go**: Helm SDK wrapper for installing/upgrading cloudflared from OCI registry (`oci://ghcr.io/lexfrei/charts/cloudflare-tunnel`). Includes chart version caching.
+
+- **internal/dns/detect.go**: Auto-detects Kubernetes cluster domain from `/etc/resolv.conf` search domains.
 
 ### Key Dependencies
 
@@ -68,20 +79,24 @@ helm template test charts/cloudflare-tunnel-gateway-controller --values charts/c
 
 ### Configuration
 
-Controller reads config via CLI flags or `CF_*` environment variables (viper). Key settings:
+Configuration is provided via GatewayClassConfig CRD (referenced by GatewayClass parametersRef):
 
-- `--tunnel-id` / `CF_TUNNEL_ID` (required)
-- `--api-token` / `CF_API_TOKEN` (required)
-- `--account-id` / `CF_ACCOUNT_ID` (auto-detected if single account)
-- `--manage-cloudflared` - Deploy cloudflared via Helm
-- `--tunnel-token` - Required when manage-cloudflared enabled
+- `cloudflareCredentialsSecretRef` - Secret with `api-token` key (required)
+- `tunnelID` - Cloudflare Tunnel UUID (required)
+- `accountId` - Auto-detected if API token has single account access
+- `tunnelTokenSecretRef` - Secret with `tunnel-token` key (required when cloudflared.enabled)
+- `cloudflared.enabled` - Deploy cloudflared via Helm (default: true)
+- `cloudflared.awg.secretName` - AWG config secret for traffic obfuscation
 
 ## Project Structure
 
 ```text
+api/v1alpha1/            # GatewayClassConfig CRD types
 cmd/controller/          # Entrypoint and CLI (cobra/viper)
 internal/
-  controller/            # Kubernetes controllers (Gateway, HTTPRoute)
+  config/                # GatewayClassConfig resolver and credential handling
+  controller/            # Kubernetes controllers (Gateway, HTTPRoute, GatewayClassConfig)
+  dns/                   # Cluster domain auto-detection
   helm/                  # Helm SDK operations for cloudflared
   ingress/               # HTTPRoute → Cloudflare ingress rule conversion
 charts/                  # Helm chart with helm-unittest tests
