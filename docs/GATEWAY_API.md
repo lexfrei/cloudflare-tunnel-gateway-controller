@@ -355,13 +355,13 @@ spec:
   rules:
     - backendRefs:
         # Backend with highest weight is selected
-        - name: canary-service
+        - name: primary-service
           port: 80
           weight: 80
-        - name: stable-service
+        - name: fallback-service
           port: 80
           weight: 20
-        # canary-service is selected (weight 80 > 20)
+        # primary-service is selected (weight 80 > 20)
 ```
 
 ### External-DNS Integration
