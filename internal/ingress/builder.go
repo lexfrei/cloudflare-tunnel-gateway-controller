@@ -180,6 +180,10 @@ func (b *Builder) resolveBackendRef(namespace string, refs []gatewayv1.HTTPBacke
 	}
 
 	selectedIdx := SelectHighestWeightIndex(wrapHTTPBackendRefs(refs))
+	if selectedIdx == -1 {
+		return "" // All backends disabled (weight=0)
+	}
+
 	ref := refs[selectedIdx].BackendRef
 
 	if ref.Group != nil && *ref.Group != "" && *ref.Group != backendGroupCore {
