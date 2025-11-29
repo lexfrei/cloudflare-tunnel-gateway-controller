@@ -135,6 +135,43 @@ The following Gateway API features are not supported due to Cloudflare Tunnel ar
 | No cross-cluster | Only in-cluster services supported |
 | Service only | Only `Service` kind backends supported |
 
+### Traffic Splitting and Load Balancing
+
+**Design Decision:** This controller intentionally does not implement traffic splitting or weighted load balancing between multiple backends.
+
+Cloudflare Tunnel ingress rules accept only a single service URL per rule. To support Gateway API's `backendRefs` with weights, the controller would need to:
+
+1. Create and manage intermediate Kubernetes Services
+2. Watch and synchronize Endpoints from all referenced services
+3. Handle cross-namespace references and RBAC
+4. Manage lifecycle of controller-created resources
+
+This approach introduces significant complexity, potential for orphaned resources, and creates an opaque traffic path that is difficult for users to debug.
+
+**Our approach:** Provide the tunnel a single, stable entrypoint. If you need load balancing:
+
+- **Between pods of the same Deployment:** Use a standard Kubernetes Service (built-in round-robin)
+- **Weighted traffic splitting or canary:** Deploy a dedicated load balancer (Traefik, Envoy, Nginx, HAProxy) and point the HTTPRoute to it
+
+```yaml
+# Example: Use Traefik for weighted routing
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: my-app
+spec:
+  parentRefs:
+    - name: cloudflare-tunnel
+  hostnames:
+    - app.example.com
+  rules:
+    - backendRefs:
+        - name: traefik  # Traefik handles weighted routing internally
+          port: 80
+```
+
+This keeps the controller simple and predictable, and gives you full control over load balancing behavior.
+
 ## Status Conditions
 
 ### Gateway Conditions
