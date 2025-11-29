@@ -17,6 +17,7 @@ import (
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/api/v1alpha1"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/config"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/routebinding"
 )
 
 func TestGRPCRouteReconciler_Reconcile_NotFound(t *testing.T) {
@@ -639,7 +640,17 @@ func TestGRPCRouteReconciler_UpdateRouteStatus_Integration(t *testing.T) {
 		RouteSyncer:      routeSyncer,
 	}
 
-	err := r.updateRouteStatus(context.Background(), route, true, "")
+	// Test accepted status with binding info showing acceptance
+	bindingInfo := routeBindingInfo{
+		bindingResults: map[int]routebinding.BindingResult{
+			0: {
+				Accepted: true,
+				Reason:   gatewayv1.RouteReasonAccepted,
+				Message:  "Route accepted",
+			},
+		},
+	}
+	err := r.updateRouteStatus(context.Background(), route, bindingInfo, nil)
 	require.NoError(t, err)
 
 	var updatedRoute gatewayv1.GRPCRoute
@@ -718,7 +729,17 @@ func TestGRPCRouteReconciler_UpdateRouteStatus_NotAccepted(t *testing.T) {
 		RouteSyncer:      routeSyncer,
 	}
 
-	err := r.updateRouteStatus(context.Background(), route, false, "Custom error message")
+	// Test not accepted status with binding rejection
+	bindingInfo := routeBindingInfo{
+		bindingResults: map[int]routebinding.BindingResult{
+			0: {
+				Accepted: false,
+				Reason:   gatewayv1.RouteReasonNoMatchingListenerHostname,
+				Message:  "No listener hostname matches route hostnames",
+			},
+		},
+	}
+	err := r.updateRouteStatus(context.Background(), route, bindingInfo, nil)
 	require.NoError(t, err)
 
 	var updatedRoute gatewayv1.GRPCRoute
@@ -736,8 +757,8 @@ func TestGRPCRouteReconciler_UpdateRouteStatus_NotAccepted(t *testing.T) {
 	}
 	require.NotNil(t, acceptedCondition)
 	assert.Equal(t, metav1.ConditionFalse, acceptedCondition.Status)
-	assert.Equal(t, string(gatewayv1.RouteReasonNoMatchingParent), acceptedCondition.Reason)
-	assert.Equal(t, "Custom error message", acceptedCondition.Message)
+	assert.Equal(t, string(gatewayv1.RouteReasonNoMatchingListenerHostname), acceptedCondition.Reason)
+	assert.Equal(t, "No listener hostname matches route hostnames", acceptedCondition.Message)
 }
 
 func TestGRPCRouteReconciler_SyncAndUpdateStatus_NoConfig(t *testing.T) {

@@ -75,7 +75,7 @@ type HTTPRouteReconciler struct {
 	startupComplete atomic.Bool
 }
 
-//nolint:noinlineerr // inline error handling is fine for controller pattern
+//nolint:noinlineerr // inline error handling for controller pattern
 func (r *HTTPRouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	// Wait for startup sync to complete before processing reconcile events
 	// to prevent race conditions with Cloudflare API updates
@@ -111,17 +111,14 @@ func (r *HTTPRouteReconciler) syncAndUpdateStatus(ctx context.Context) (ctrl.Res
 
 	result, syncResult, syncErr := r.RouteSyncer.SyncAllRoutes(ctx)
 
-	// Update status for all HTTP routes
+	// Update status for all HTTP routes with per-parent binding results
 	if syncResult != nil {
-		accepted := syncErr == nil
-		message := ""
-
-		if syncErr != nil {
-			message = syncErr.Error()
-		}
-
 		for i := range syncResult.HTTPRoutes {
-			if err := r.updateRouteStatus(ctx, &syncResult.HTTPRoutes[i], accepted, message); err != nil {
+			route := &syncResult.HTTPRoutes[i]
+			routeKey := route.Namespace + "/" + route.Name
+			bindingInfo := syncResult.HTTPRouteBindings[routeKey]
+
+			if err := r.updateRouteStatus(ctx, route, bindingInfo, syncErr); err != nil {
 				logger.Error("failed to update httproute status", "error", err)
 			}
 		}
@@ -164,8 +161,8 @@ func (r *HTTPRouteReconciler) isRouteForOurGateway(ctx context.Context, route *g
 func (r *HTTPRouteReconciler) updateRouteStatus(
 	ctx context.Context,
 	route *gatewayv1.HTTPRoute,
-	accepted bool,
-	message string,
+	bindingInfo routeBindingInfo,
+	syncErr error,
 ) error {
 	routeKey := types.NamespacedName{Name: route.Name, Namespace: route.Namespace}
 
@@ -177,24 +174,9 @@ func (r *HTTPRouteReconciler) updateRouteStatus(
 		}
 
 		now := metav1.Now()
-
-		status := metav1.ConditionTrue
-		reason := string(gatewayv1.RouteReasonAccepted)
-
-		if !accepted {
-			status = metav1.ConditionFalse
-			reason = string(gatewayv1.RouteReasonNoMatchingParent)
-
-			if message == "" {
-				message = routeNotAcceptedMessage
-			}
-		} else {
-			message = routeAcceptedMessage
-		}
-
 		freshRoute.Status.Parents = nil
 
-		for _, ref := range freshRoute.Spec.ParentRefs {
+		for refIdx, ref := range freshRoute.Spec.ParentRefs {
 			if ref.Kind != nil && *ref.Kind != kindGateway {
 				continue
 			}
@@ -211,6 +193,23 @@ func (r *HTTPRouteReconciler) updateRouteStatus(
 
 			if gateway.Spec.GatewayClassName != gatewayv1.ObjectName(r.GatewayClassName) {
 				continue
+			}
+
+			// Get binding result for this parent ref
+			bindingResult, hasBinding := bindingInfo.bindingResults[refIdx]
+
+			status := metav1.ConditionTrue
+			reason := string(gatewayv1.RouteReasonAccepted)
+			message := routeAcceptedMessage
+
+			if syncErr != nil {
+				status = metav1.ConditionFalse
+				reason = string(gatewayv1.RouteReasonPending)
+				message = syncErr.Error()
+			} else if hasBinding && !bindingResult.Accepted {
+				status = metav1.ConditionFalse
+				reason = string(bindingResult.Reason)
+				message = bindingResult.Message
 			}
 
 			parentStatus := gatewayv1.RouteParentStatus{

@@ -103,6 +103,70 @@ charts/                  # Helm chart with helm-unittest tests
 deploy/                  # Raw Kubernetes manifests for manual deployment
 ```
 
+## Testing Standards
+
+### Approach
+
+- **TDD (Test-Driven Development)**: Write tests first, then implementation
+- Follow RED → GREEN → REFACTOR cycle
+- Commit test and implementation together per feature
+
+### Testing Libraries
+
+- `github.com/stretchr/testify/assert` - Assertions
+- `github.com/stretchr/testify/require` - Fatal assertions (stops test on failure)
+- `sigs.k8s.io/controller-runtime/pkg/client/fake` - Fake Kubernetes client for unit tests
+- `sigs.k8s.io/controller-runtime/pkg/envtest` - Integration tests with real API server
+
+### Test Patterns
+
+- **Table-driven tests**: Use `[]struct{}` with named test cases
+- **Parallel execution**: Always use `t.Parallel()` at test and subtest level
+- **Fake client setup**: Create scheme, register types, build fake client
+- **Helper functions**: Extract common setup (e.g., `setupFakeClient()`)
+
+### Example Structure
+
+```go
+func TestFeature(t *testing.T) {
+    t.Parallel()
+
+    tests := []struct {
+        name     string
+        input    InputType
+        expected OutputType
+    }{
+        {name: "case 1", input: ..., expected: ...},
+        {name: "case 2", input: ..., expected: ...},
+    }
+
+    for _, tt := range tests {
+        t.Run(tt.name, func(t *testing.T) {
+            t.Parallel()
+            // test logic
+            require.NoError(t, err)
+            assert.Equal(t, tt.expected, actual)
+        })
+    }
+}
+```
+
+### Running Tests
+
+```bash
+# All tests with race detection
+go test -race ./...
+
+# Single package
+go test -v -race ./internal/routebinding/...
+
+# Single test by name
+go test -v -race ./internal/controller/... -run TestHTTPRouteReconciler
+
+# With coverage
+go test -race -coverprofile=coverage.out ./...
+```
+
 ## Linting Configuration
 
 golangci-lint v2 config in `.golangci.yaml`:
@@ -111,3 +175,32 @@ golangci-lint v2 config in `.golangci.yaml`:
 - `gocyclo/cyclop` complexity: 15
 - All linters enabled by default with specific exclusions
 - Test files have relaxed rules for funlen, dupl, complexity
+
+## Pull Request Guidelines
+
+Before creating a PR, verify all checklist items from `.github/pull_request_template.md`:
+
+### Pre-PR Checklist
+
+1. **Testing**
+   - All tests pass locally (`go test ./...`)
+   - Linters pass locally (`golangci-lint run`)
+   - Markdown linting passes (`markdownlint-cli2 '**/*.md'`)
+   - Manual testing completed (if applicable)
+
+2. **Documentation**
+   - README updated (if needed)
+   - Code comments added for complex logic
+   - CLAUDE.md updated (if workflow/standards changed)
+
+3. **Code Quality**
+   - Commit messages follow semantic format (`type(scope): description`)
+   - No secrets or credentials in code
+   - Breaking changes documented (if any)
+
+### PR Creation
+
+- Use template from `.github/pull_request_template.md`
+- Fill all sections completely
+- Check all applicable checkboxes honestly
+- Do NOT check boxes for items not actually completed
