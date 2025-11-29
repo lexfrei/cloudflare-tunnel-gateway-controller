@@ -4,6 +4,15 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
+// Route kind constants for Gateway API route types.
+const (
+	KindHTTPRoute = gatewayv1.Kind("HTTPRoute")
+	KindGRPCRoute = gatewayv1.Kind("GRPCRoute")
+	KindTLSRoute  = gatewayv1.Kind("TLSRoute")
+	KindTCPRoute  = gatewayv1.Kind("TCPRoute")
+	KindUDPRoute  = gatewayv1.Kind("UDPRoute")
+)
+
 // IsRouteKindAllowed checks if a route kind is allowed by the listener.
 // Per Gateway API spec:
 //   - If allowedRoutes.kinds is nil/empty, defaults are determined by listener protocol.
@@ -46,29 +55,29 @@ func getDefaultKindsForProtocol(protocol gatewayv1.ProtocolType) []gatewayv1.Rou
 	switch protocol {
 	case gatewayv1.HTTPProtocolType, gatewayv1.HTTPSProtocolType:
 		return []gatewayv1.RouteGroupKind{
-			{Group: &group, Kind: "HTTPRoute"},
-			{Group: &group, Kind: "GRPCRoute"},
+			{Group: &group, Kind: KindHTTPRoute},
+			{Group: &group, Kind: KindGRPCRoute},
 		}
 
 	case gatewayv1.TLSProtocolType:
 		return []gatewayv1.RouteGroupKind{
-			{Group: &group, Kind: "TLSRoute"},
+			{Group: &group, Kind: KindTLSRoute},
 		}
 
 	case gatewayv1.TCPProtocolType:
 		return []gatewayv1.RouteGroupKind{
-			{Group: &group, Kind: "TCPRoute"},
+			{Group: &group, Kind: KindTCPRoute},
 		}
 
 	case gatewayv1.UDPProtocolType:
 		return []gatewayv1.RouteGroupKind{
-			{Group: &group, Kind: "UDPRoute"},
+			{Group: &group, Kind: KindUDPRoute},
 		}
 
 	default:
 		return []gatewayv1.RouteGroupKind{
-			{Group: &group, Kind: "HTTPRoute"},
-			{Group: &group, Kind: "GRPCRoute"},
+			{Group: &group, Kind: KindHTTPRoute},
+			{Group: &group, Kind: KindGRPCRoute},
 		}
 	}
 }

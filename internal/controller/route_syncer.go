@@ -58,18 +58,18 @@ func NewRouteSyncer(
 // RouteUpdateFunc is called to update status of individual routes after sync.
 type RouteUpdateFunc func(ctx context.Context, accepted bool, message string)
 
-// RouteBindingInfo contains a route and its binding validation results per parent.
-type RouteBindingInfo struct {
-	// BindingResults maps ParentRef index to binding result for that parent.
-	BindingResults map[int]routebinding.BindingResult
+// routeBindingInfo contains a route and its binding validation results per parent.
+type routeBindingInfo struct {
+	// bindingResults maps ParentRef index to binding result for that parent.
+	bindingResults map[int]routebinding.BindingResult
 }
 
 // SyncResult contains the results of a sync operation.
 type SyncResult struct {
 	HTTPRoutes        []gatewayv1.HTTPRoute
 	GRPCRoutes        []gatewayv1.GRPCRoute
-	HTTPRouteBindings map[string]RouteBindingInfo // key: namespace/name
-	GRPCRouteBindings map[string]RouteBindingInfo // key: namespace/name
+	HTTPRouteBindings map[string]routeBindingInfo // key: namespace/name
+	GRPCRouteBindings map[string]routeBindingInfo // key: namespace/name
 }
 
 // SyncAllRoutes synchronizes all HTTPRoute and GRPCRoute resources to Cloudflare Tunnel.
@@ -197,7 +197,9 @@ func (s *RouteSyncer) SyncAllRoutes(ctx context.Context) (ctrl.Result, *SyncResu
 //nolint:funlen,dupl // complex binding validation logic; similar to GRPC but for HTTP types
 func (s *RouteSyncer) getRelevantHTTPRoutes(
 	ctx context.Context,
-) ([]gatewayv1.HTTPRoute, map[string]RouteBindingInfo, error) {
+) ([]gatewayv1.HTTPRoute, map[string]routeBindingInfo, error) {
+	logger := slog.Default().With("component", "route-syncer")
+
 	var routeList gatewayv1.HTTPRouteList
 
 	err := s.List(ctx, &routeList)
@@ -207,13 +209,13 @@ func (s *RouteSyncer) getRelevantHTTPRoutes(
 
 	var relevantRoutes []gatewayv1.HTTPRoute
 
-	bindings := make(map[string]RouteBindingInfo)
+	bindings := make(map[string]routeBindingInfo)
 
 	for i := range routeList.Items {
 		route := &routeList.Items[i]
 		routeKey := route.Namespace + "/" + route.Name
-		bindingInfo := RouteBindingInfo{
-			BindingResults: make(map[int]routebinding.BindingResult),
+		bindingInfo := routeBindingInfo{
+			bindingResults: make(map[int]routebinding.BindingResult),
 		}
 
 		hasAcceptedBinding := false
@@ -243,16 +245,21 @@ func (s *RouteSyncer) getRelevantHTTPRoutes(
 				Name:        route.Name,
 				Namespace:   route.Namespace,
 				Hostnames:   route.Spec.Hostnames,
-				Kind:        "HTTPRoute",
+				Kind:        routebinding.KindHTTPRoute,
 				SectionName: ref.SectionName,
 			}
 
 			result, bindErr := s.bindingValidator.ValidateBinding(ctx, &gateway, routeInfo)
 			if bindErr != nil {
+				logger.Error("failed to validate route binding",
+					"route", routeKey,
+					"gateway", gateway.Name,
+					"error", bindErr)
+
 				continue
 			}
 
-			bindingInfo.BindingResults[refIdx] = result
+			bindingInfo.bindingResults[refIdx] = result
 
 			if result.Accepted {
 				hasAcceptedBinding = true
@@ -272,7 +279,9 @@ func (s *RouteSyncer) getRelevantHTTPRoutes(
 //nolint:funlen,dupl // complex binding validation logic; similar to HTTP but for GRPC types
 func (s *RouteSyncer) getRelevantGRPCRoutes(
 	ctx context.Context,
-) ([]gatewayv1.GRPCRoute, map[string]RouteBindingInfo, error) {
+) ([]gatewayv1.GRPCRoute, map[string]routeBindingInfo, error) {
+	logger := slog.Default().With("component", "route-syncer")
+
 	var routeList gatewayv1.GRPCRouteList
 
 	err := s.List(ctx, &routeList)
@@ -282,13 +291,13 @@ func (s *RouteSyncer) getRelevantGRPCRoutes(
 
 	var relevantRoutes []gatewayv1.GRPCRoute
 
-	bindings := make(map[string]RouteBindingInfo)
+	bindings := make(map[string]routeBindingInfo)
 
 	for i := range routeList.Items {
 		route := &routeList.Items[i]
 		routeKey := route.Namespace + "/" + route.Name
-		bindingInfo := RouteBindingInfo{
-			BindingResults: make(map[int]routebinding.BindingResult),
+		bindingInfo := routeBindingInfo{
+			bindingResults: make(map[int]routebinding.BindingResult),
 		}
 
 		hasAcceptedBinding := false
@@ -318,16 +327,21 @@ func (s *RouteSyncer) getRelevantGRPCRoutes(
 				Name:        route.Name,
 				Namespace:   route.Namespace,
 				Hostnames:   route.Spec.Hostnames,
-				Kind:        "GRPCRoute",
+				Kind:        routebinding.KindGRPCRoute,
 				SectionName: ref.SectionName,
 			}
 
 			result, bindErr := s.bindingValidator.ValidateBinding(ctx, &gateway, routeInfo)
 			if bindErr != nil {
+				logger.Error("failed to validate route binding",
+					"route", routeKey,
+					"gateway", gateway.Name,
+					"error", bindErr)
+
 				continue
 			}
 
-			bindingInfo.BindingResults[refIdx] = result
+			bindingInfo.bindingResults[refIdx] = result
 
 			if result.Accepted {
 				hasAcceptedBinding = true

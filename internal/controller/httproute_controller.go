@@ -161,7 +161,7 @@ func (r *HTTPRouteReconciler) isRouteForOurGateway(ctx context.Context, route *g
 func (r *HTTPRouteReconciler) updateRouteStatus(
 	ctx context.Context,
 	route *gatewayv1.HTTPRoute,
-	bindingInfo RouteBindingInfo,
+	bindingInfo routeBindingInfo,
 	syncErr error,
 ) error {
 	routeKey := types.NamespacedName{Name: route.Name, Namespace: route.Namespace}
@@ -196,7 +196,7 @@ func (r *HTTPRouteReconciler) updateRouteStatus(
 			}
 
 			// Get binding result for this parent ref
-			bindingResult, hasBinding := bindingInfo.BindingResults[refIdx]
+			bindingResult, hasBinding := bindingInfo.bindingResults[refIdx]
 
 			status := metav1.ConditionTrue
 			reason := string(gatewayv1.RouteReasonAccepted)

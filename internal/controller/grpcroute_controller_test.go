@@ -641,8 +641,8 @@ func TestGRPCRouteReconciler_UpdateRouteStatus_Integration(t *testing.T) {
 	}
 
 	// Test accepted status with binding info showing acceptance
-	bindingInfo := RouteBindingInfo{
-		BindingResults: map[int]routebinding.BindingResult{
+	bindingInfo := routeBindingInfo{
+		bindingResults: map[int]routebinding.BindingResult{
 			0: {
 				Accepted: true,
 				Reason:   gatewayv1.RouteReasonAccepted,
@@ -730,8 +730,8 @@ func TestGRPCRouteReconciler_UpdateRouteStatus_NotAccepted(t *testing.T) {
 	}
 
 	// Test not accepted status with binding rejection
-	bindingInfo := RouteBindingInfo{
-		BindingResults: map[int]routebinding.BindingResult{
+	bindingInfo := routeBindingInfo{
+		bindingResults: map[int]routebinding.BindingResult{
 			0: {
 				Accepted: false,
 				Reason:   gatewayv1.RouteReasonNoMatchingListenerHostname,

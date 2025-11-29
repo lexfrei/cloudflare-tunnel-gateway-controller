@@ -63,8 +63,12 @@ func hostnameMatches(listenerHost, routeHost string) bool {
 
 // matchesWildcard checks if specificHost matches wildcardHost pattern.
 // wildcardHost must start with "*." (e.g., "*.example.com").
-// *.example.com matches foo.example.com and bar.foo.example.com,
-// but does NOT match example.com itself.
+//
+// Per Gateway API spec interpretation (permissive mode): *.example.com matches both
+// single-level subdomains (foo.example.com) and multi-level subdomains
+// (bar.foo.example.com). This is consistent with Envoy Gateway, Istio, and Kong.
+//
+// *.example.com does NOT match example.com itself (apex domain).
 func matchesWildcard(wildcardHost, specificHost string) bool {
 	suffix := wildcardHost[1:]
 
