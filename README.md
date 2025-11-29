@@ -110,6 +110,25 @@ For manual installation without Helm, see [Manual Installation](docs/MANUAL_INST
 
 Create standard [Gateway API](https://gateway-api.sigs.k8s.io/) HTTPRoute or GRPCRoute resources referencing the `cloudflare-tunnel` Gateway. The controller automatically syncs routes to Cloudflare Tunnel configuration with hot reload (no cloudflared restart required).
 
+### Supported Gateway Fields
+
+The controller processes Gateway resources but with important limitations due to Cloudflare Tunnel architecture:
+
+| Field | Supported | Notes |
+|-------|-----------|-------|
+| `spec.gatewayClassName` | ✅ | Must match controller's GatewayClass |
+| `spec.listeners` | ⚠️ | Accepted but not used for routing |
+| `spec.listeners[].name` | ✅ | Used for status reporting |
+| `spec.listeners[].protocol` | ❌ | Ignored; Cloudflare handles TLS |
+| `spec.listeners[].port` | ❌ | Ignored; Cloudflare uses 443/80 |
+| `spec.listeners[].hostname` | ❌ | Ignored; use HTTPRoute hostnames |
+| `spec.listeners[].tls` | ❌ | Ignored; Cloudflare manages TLS |
+| `spec.listeners[].allowedRoutes` | ❌ | All HTTPRoute/GRPCRoute allowed |
+| `spec.addresses` | ❌ | Ignored; tunnel CNAME set in status |
+| `spec.infrastructure` | ❌ | Not implemented |
+
+> **Note:** Cloudflare Tunnel terminates TLS at Cloudflare edge. The Gateway `listeners` configuration (ports, protocols, TLS settings) is accepted for compatibility but has no effect on routing. All routing is determined by HTTPRoute/GRPCRoute hostnames and paths.
+
 ### Supported Route Fields
 
 The controller supports a subset of Gateway API fields that map to Cloudflare Tunnel ingress rules:

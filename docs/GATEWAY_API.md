@@ -26,17 +26,22 @@ This document details the Gateway API implementation in the Cloudflare Tunnel Ga
 
 ### Gateway
 
+The Gateway resource is accepted but most listener configuration is ignored because Cloudflare Tunnel handles TLS termination and port management at the edge.
+
 | Field | Supported | Notes |
 |-------|-----------|-------|
 | `spec.gatewayClassName` | ✅ | Required, must match configured class |
-| `spec.listeners` | ✅ | Informational, used for status |
-| `spec.listeners[].name` | ✅ | Used in HTTPRoute parentRef.sectionName |
-| `spec.listeners[].port` | ✅ | Informational only (Cloudflare handles ports) |
-| `spec.listeners[].protocol` | ✅ | HTTP and HTTPS supported |
-| `spec.listeners[].hostname` | ❌ | Use HTTPRoute hostnames instead |
-| `spec.listeners[].tls` | ❌ | Cloudflare manages TLS termination |
-| `spec.listeners[].allowedRoutes` | ✅ | Namespace filtering supported |
-| `spec.addresses` | ❌ | Cloudflare assigns addresses |
+| `spec.listeners` | ⚠️ | Accepted for compatibility, not used for routing |
+| `spec.listeners[].name` | ✅ | Used for status reporting and sectionName matching |
+| `spec.listeners[].port` | ❌ | Ignored; Cloudflare uses standard 443/80 |
+| `spec.listeners[].protocol` | ❌ | Ignored; Cloudflare handles protocol negotiation |
+| `spec.listeners[].hostname` | ❌ | Ignored; use HTTPRoute/GRPCRoute hostnames |
+| `spec.listeners[].tls` | ❌ | Ignored; Cloudflare manages TLS certificates |
+| `spec.listeners[].allowedRoutes` | ❌ | Ignored; all HTTPRoute/GRPCRoute accepted |
+| `spec.addresses` | ❌ | Ignored; tunnel CNAME set automatically in status |
+| `spec.infrastructure` | ❌ | Not implemented |
+
+> **Important:** Cloudflare Tunnel terminates TLS at Cloudflare's edge network. The tunnel connector (cloudflared) establishes an outbound connection to Cloudflare. Gateway listener configuration for ports, protocols, and TLS settings has no effect on routing behavior.
 
 ### HTTPRoute
 
