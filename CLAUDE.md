@@ -175,3 +175,32 @@ golangci-lint v2 config in `.golangci.yaml`:
 - `gocyclo/cyclop` complexity: 15
 - All linters enabled by default with specific exclusions
 - Test files have relaxed rules for funlen, dupl, complexity
+
+## Pull Request Guidelines
+
+Before creating a PR, verify all checklist items from `.github/pull_request_template.md`:
+
+### Pre-PR Checklist
+
+1. **Testing**
+   - All tests pass locally (`go test ./...`)
+   - Linters pass locally (`golangci-lint run`)
+   - Markdown linting passes (`markdownlint-cli2 '**/*.md'`)
+   - Manual testing completed (if applicable)
+
+2. **Documentation**
+   - README updated (if needed)
+   - Code comments added for complex logic
+   - CLAUDE.md updated (if workflow/standards changed)
+
+3. **Code Quality**
+   - Commit messages follow semantic format (`type(scope): description`)
+   - No secrets or credentials in code
+   - Breaking changes documented (if any)
+
+### PR Creation
+
+- Use template from `.github/pull_request_template.md`
+- Fill all sections completely
+- Check all applicable checkboxes honestly
+- Do NOT check boxes for items not actually completed
