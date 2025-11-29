@@ -100,6 +100,8 @@ When multiple `backendRefs` are specified in a rule, the controller selects the 
 
 **Default weight:** If `weight` is not specified, it defaults to `1` (per Gateway API specification).
 
+**Zero weight:** Backends with `weight: 0` are disabled and will not receive traffic (per Gateway API specification). If all backends have zero weight, the rule is skipped entirely.
+
 **Equal weights:** When multiple backends have the same highest weight, the first one in the list is selected for deterministic behavior.
 
 ```yaml
