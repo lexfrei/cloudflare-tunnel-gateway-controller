@@ -4,7 +4,11 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
+
+const testModifiedValue = "modified"
 
 func TestIsCloudflaredEnabled_Default(t *testing.T) {
 	t.Parallel()
@@ -239,4 +243,469 @@ func TestGatewayClassConfigStatus_Conditions(t *testing.T) {
 
 	status := GatewayClassConfigStatus{}
 	assert.Empty(t, status.Conditions)
+}
+
+func TestSecretReference_DeepCopy(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		in   *SecretReference
+	}{
+		{
+			name: "nil input",
+			in:   nil,
+		},
+		{
+			name: "empty struct",
+			in:   &SecretReference{},
+		},
+		{
+			name: "full struct",
+			in: &SecretReference{
+				Name:      "test-secret",
+				Namespace: "test-ns",
+				Key:       "test-key",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			out := tt.in.DeepCopy()
+
+			if tt.in == nil {
+				assert.Nil(t, out)
+				return
+			}
+
+			require.NotNil(t, out)
+			assert.Equal(t, tt.in.Name, out.Name)
+			assert.Equal(t, tt.in.Namespace, out.Namespace)
+			assert.Equal(t, tt.in.Key, out.Key)
+
+			out.Name = testModifiedValue
+			assert.NotEqual(t, tt.in.Name, out.Name)
+		})
+	}
+}
+
+func TestAWGConfig_DeepCopy(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		in   *AWGConfig
+	}{
+		{
+			name: "nil input",
+			in:   nil,
+		},
+		{
+			name: "empty struct",
+			in:   &AWGConfig{},
+		},
+		{
+			name: "full struct",
+			in: &AWGConfig{
+				SecretName:      "awg-secret",
+				InterfacePrefix: "awg-test",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			out := tt.in.DeepCopy()
+
+			if tt.in == nil {
+				assert.Nil(t, out)
+				return
+			}
+
+			require.NotNil(t, out)
+			assert.Equal(t, tt.in.SecretName, out.SecretName)
+			assert.Equal(t, tt.in.InterfacePrefix, out.InterfacePrefix)
+
+			out.SecretName = testModifiedValue
+			assert.NotEqual(t, tt.in.SecretName, out.SecretName)
+		})
+	}
+}
+
+func TestCloudflaredConfig_DeepCopy(t *testing.T) {
+	t.Parallel()
+
+	enabled := true
+	tests := []struct {
+		name string
+		in   *CloudflaredConfig
+	}{
+		{
+			name: "nil input",
+			in:   nil,
+		},
+		{
+			name: "empty struct",
+			in:   &CloudflaredConfig{},
+		},
+		{
+			name: "with enabled pointer",
+			in: &CloudflaredConfig{
+				Enabled:   &enabled,
+				Replicas:  2,
+				Namespace: "cf-ns",
+				Protocol:  "quic",
+			},
+		},
+		{
+			name: "with AWG config",
+			in: &CloudflaredConfig{
+				Enabled: &enabled,
+				AWG: &AWGConfig{
+					SecretName:      "awg-secret",
+					InterfacePrefix: "awg-test",
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			out := tt.in.DeepCopy()
+
+			if tt.in == nil {
+				assert.Nil(t, out)
+				return
+			}
+
+			require.NotNil(t, out)
+			assert.Equal(t, tt.in.Replicas, out.Replicas)
+			assert.Equal(t, tt.in.Namespace, out.Namespace)
+			assert.Equal(t, tt.in.Protocol, out.Protocol)
+
+			if tt.in.Enabled != nil {
+				require.NotNil(t, out.Enabled)
+				assert.Equal(t, *tt.in.Enabled, *out.Enabled)
+
+				newVal := false
+				out.Enabled = &newVal
+				assert.NotEqual(t, *tt.in.Enabled, *out.Enabled)
+			}
+
+			if tt.in.AWG != nil {
+				require.NotNil(t, out.AWG)
+				assert.Equal(t, tt.in.AWG.SecretName, out.AWG.SecretName)
+
+				out.AWG.SecretName = testModifiedValue
+				assert.NotEqual(t, tt.in.AWG.SecretName, out.AWG.SecretName)
+			}
+		})
+	}
+}
+
+func TestGatewayClassConfigSpec_DeepCopy(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		in   *GatewayClassConfigSpec
+	}{
+		{
+			name: "nil input",
+			in:   nil,
+		},
+		{
+			name: "empty struct",
+			in:   &GatewayClassConfigSpec{},
+		},
+		{
+			name: "with tunnel token ref",
+			in: &GatewayClassConfigSpec{
+				CloudflareCredentialsSecretRef: SecretReference{
+					Name:      "cf-creds",
+					Namespace: "cf-ns",
+				},
+				AccountID: "test-account",
+				TunnelID:  "test-tunnel",
+				TunnelTokenSecretRef: &SecretReference{
+					Name: "tunnel-token",
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			out := tt.in.DeepCopy()
+
+			if tt.in == nil {
+				assert.Nil(t, out)
+				return
+			}
+
+			require.NotNil(t, out)
+			assert.Equal(t, tt.in.AccountID, out.AccountID)
+			assert.Equal(t, tt.in.TunnelID, out.TunnelID)
+
+			if tt.in.TunnelTokenSecretRef != nil {
+				require.NotNil(t, out.TunnelTokenSecretRef)
+				assert.Equal(t, tt.in.TunnelTokenSecretRef.Name, out.TunnelTokenSecretRef.Name)
+
+				out.TunnelTokenSecretRef.Name = testModifiedValue
+				assert.NotEqual(t, tt.in.TunnelTokenSecretRef.Name, out.TunnelTokenSecretRef.Name)
+			}
+		})
+	}
+}
+
+func TestGatewayClassConfigStatus_DeepCopy(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		in   *GatewayClassConfigStatus
+	}{
+		{
+			name: "nil input",
+			in:   nil,
+		},
+		{
+			name: "empty struct",
+			in:   &GatewayClassConfigStatus{},
+		},
+		{
+			name: "with conditions",
+			in: &GatewayClassConfigStatus{
+				Conditions: []metav1.Condition{
+					{
+						Type:    "Ready",
+						Status:  metav1.ConditionTrue,
+						Reason:  "Configured",
+						Message: "Config is valid",
+					},
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			out := tt.in.DeepCopy()
+
+			if tt.in == nil {
+				assert.Nil(t, out)
+				return
+			}
+
+			require.NotNil(t, out)
+			assert.Len(t, out.Conditions, len(tt.in.Conditions))
+
+			if len(tt.in.Conditions) > 0 {
+				assert.Equal(t, tt.in.Conditions[0].Type, out.Conditions[0].Type)
+
+				out.Conditions[0].Type = testModifiedValue
+				assert.NotEqual(t, tt.in.Conditions[0].Type, out.Conditions[0].Type)
+			}
+		})
+	}
+}
+
+func TestGatewayClassConfig_DeepCopy(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		in   *GatewayClassConfig
+	}{
+		{
+			name: "nil input",
+			in:   nil,
+		},
+		{
+			name: "empty struct",
+			in:   &GatewayClassConfig{},
+		},
+		{
+			name: "full struct",
+			in: &GatewayClassConfig{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-config",
+				},
+				Spec: GatewayClassConfigSpec{
+					TunnelID: "test-tunnel",
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			out := tt.in.DeepCopy()
+
+			if tt.in == nil {
+				assert.Nil(t, out)
+				return
+			}
+
+			require.NotNil(t, out)
+			assert.Equal(t, tt.in.Name, out.Name)
+			assert.Equal(t, tt.in.Spec.TunnelID, out.Spec.TunnelID)
+
+			out.Name = testModifiedValue
+			assert.NotEqual(t, tt.in.Name, out.Name)
+		})
+	}
+}
+
+func TestGatewayClassConfig_DeepCopyObject(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		in   *GatewayClassConfig
+	}{
+		{
+			name: "nil input",
+			in:   nil,
+		},
+		{
+			name: "valid struct",
+			in: &GatewayClassConfig{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-config",
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			if tt.in == nil {
+				var nilConfig *GatewayClassConfig
+				obj := nilConfig.DeepCopyObject()
+				assert.Nil(t, obj)
+				return
+			}
+
+			obj := tt.in.DeepCopyObject()
+			require.NotNil(t, obj)
+
+			gcc, ok := obj.(*GatewayClassConfig)
+			require.True(t, ok)
+			assert.Equal(t, tt.in.Name, gcc.Name)
+		})
+	}
+}
+
+func TestGatewayClassConfigList_DeepCopy(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		in   *GatewayClassConfigList
+	}{
+		{
+			name: "nil input",
+			in:   nil,
+		},
+		{
+			name: "empty list",
+			in:   &GatewayClassConfigList{},
+		},
+		{
+			name: "with items",
+			in: &GatewayClassConfigList{
+				Items: []GatewayClassConfig{
+					{
+						ObjectMeta: metav1.ObjectMeta{Name: "config-1"},
+						Spec:       GatewayClassConfigSpec{TunnelID: "tunnel-1"},
+					},
+					{
+						ObjectMeta: metav1.ObjectMeta{Name: "config-2"},
+						Spec:       GatewayClassConfigSpec{TunnelID: "tunnel-2"},
+					},
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			out := tt.in.DeepCopy()
+
+			if tt.in == nil {
+				assert.Nil(t, out)
+				return
+			}
+
+			require.NotNil(t, out)
+			assert.Len(t, out.Items, len(tt.in.Items))
+
+			if len(tt.in.Items) > 0 {
+				assert.Equal(t, tt.in.Items[0].Name, out.Items[0].Name)
+
+				out.Items[0].Name = testModifiedValue
+				assert.NotEqual(t, tt.in.Items[0].Name, out.Items[0].Name)
+			}
+		})
+	}
+}
+
+func TestGatewayClassConfigList_DeepCopyObject(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		in   *GatewayClassConfigList
+	}{
+		{
+			name: "nil input",
+			in:   nil,
+		},
+		{
+			name: "valid list",
+			in: &GatewayClassConfigList{
+				Items: []GatewayClassConfig{
+					{ObjectMeta: metav1.ObjectMeta{Name: "config-1"}},
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			if tt.in == nil {
+				var nilList *GatewayClassConfigList
+				obj := nilList.DeepCopyObject()
+				assert.Nil(t, obj)
+				return
+			}
+
+			obj := tt.in.DeepCopyObject()
+			require.NotNil(t, obj)
+
+			list, ok := obj.(*GatewayClassConfigList)
+			require.True(t, ok)
+			assert.Len(t, list.Items, len(tt.in.Items))
+		})
+	}
 }
