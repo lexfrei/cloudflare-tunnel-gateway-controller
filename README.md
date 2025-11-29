@@ -168,6 +168,17 @@ The controller sets `status.addresses` on the Gateway with the tunnel CNAME (`TU
 
 All external-dns annotations (TTL, provider-specific settings, etc.) should be placed on HTTPRoute resources, not on Gateway. See the [external-dns Gateway API documentation](https://kubernetes-sigs.github.io/external-dns/latest/docs/sources/gateway-api/) for details.
 
+## FAQ
+
+### Why do I get SSL certificate errors for multi-level subdomains?
+
+Cloudflare's free [Universal SSL](https://developers.cloudflare.com/ssl/edge-certificates/universal-ssl/limitations/) certificates only cover root and first-level subdomains:
+
+- ✅ `example.com`, `*.example.com`
+- ❌ `app.dev.example.com`
+
+For multi-level subdomains, you need [Advanced Certificate Manager](https://developers.cloudflare.com/ssl/edge-certificates/advanced-certificate-manager/) ($10/month) or a Business/Enterprise plan.
+
 ## Documentation
 
 | Document | Description |
