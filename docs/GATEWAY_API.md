@@ -63,7 +63,7 @@ The Gateway resource is accepted but most listener configuration is ignored beca
 | `spec.rules[].backendRefs[].name` | ✅ | Service name |
 | `spec.rules[].backendRefs[].namespace` | ✅ | Service namespace |
 | `spec.rules[].backendRefs[].port` | ✅ | Service port |
-| `spec.rules[].backendRefs[].weight` | ❌ | First backend used |
+| `spec.rules[].backendRefs[].weight` | ⚠️ | Highest weight backend used ([#45](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/issues/45)) |
 | `spec.rules[].backendRefs[].filters` | ❌ | Not implemented |
 | `spec.rules[].timeouts` | ❌ | Not implemented |
 
@@ -87,7 +87,7 @@ The Gateway resource is accepted but most listener configuration is ignored beca
 | `spec.rules[].backendRefs[].name` | ✅ | Service name |
 | `spec.rules[].backendRefs[].namespace` | ✅ | Service namespace |
 | `spec.rules[].backendRefs[].port` | ✅ | Service port |
-| `spec.rules[].backendRefs[].weight` | ❌ | First backend used |
+| `spec.rules[].backendRefs[].weight` | ⚠️ | Highest weight backend used ([#45](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/issues/45)) |
 | `spec.rules[].backendRefs[].filters` | ❌ | Not implemented |
 
 ### gRPC Method Matching
@@ -130,7 +130,7 @@ The following Gateway API features are not supported due to Cloudflare Tunnel ar
 
 | Limitation | Description |
 |------------|-------------|
-| Single backend | Only first `backendRef` is used per rule |
+| Single backend | Only highest-weight `backendRef` is used per rule ([#45](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/issues/45)) |
 | Full sync | Any change triggers full config sync |
 | No cross-cluster | Only in-cluster services supported |
 | Service only | Only `Service` kind backends supported |

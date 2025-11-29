@@ -144,7 +144,7 @@ The controller supports a subset of Gateway API fields that map to Cloudflare Tu
 | `spec.rules[].matches[].queryParams` | ❌ | Cloudflare limitation |
 | `spec.rules[].matches[].method` | ❌ | Cloudflare limitation |
 | `spec.rules[].filters` | ❌ | Cloudflare limitation |
-| `spec.rules[].backendRefs[].weight` | ❌ | First backend used |
+| `spec.rules[].backendRefs[].weight` | ⚠️ | Highest weight backend used ([#45](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/issues/45)) |
 
 **GRPCRoute:**
 
@@ -156,7 +156,7 @@ The controller supports a subset of Gateway API fields that map to Cloudflare Tu
 | `spec.rules[].backendRefs` | ✅ | Service name, namespace, port |
 | `spec.rules[].matches[].headers` | ❌ | Cloudflare limitation |
 | `spec.rules[].filters` | ❌ | Cloudflare limitation |
-| `spec.rules[].backendRefs[].weight` | ❌ | First backend used |
+| `spec.rules[].backendRefs[].weight` | ⚠️ | Highest weight backend used ([#45](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/issues/45)) |
 
 > **Load Balancing:** This controller does not implement traffic splitting between multiple backends. Cloudflare Tunnel accepts only a single service URL per ingress rule. If you need weighted routing or canary deployments, deploy a dedicated load balancer (Traefik, Envoy, Nginx) and point your HTTPRoute to it. See [Traffic Splitting and Load Balancing](docs/GATEWAY_API.md#traffic-splitting-and-load-balancing) for details.
 
@@ -189,6 +189,7 @@ Planned features and improvements:
 | Issue | Description | Status |
 |-------|-------------|--------|
 | [#43](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/issues/43) | Gateway API listener hostname and allowedRoutes validation | Planned |
+| [#45](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/issues/45) | Select backend with highest weight instead of first | Planned |
 | [#44](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/issues/44) | Warning logs for partially ignored route configuration | Planned |
 | [#40](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/issues/40) | TCPRoute and TLSRoute support (GRPCRoute done in v0.8.0) | In Progress |
 | [#33](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/issues/33) | Auto-generate artifacthub.io/changes from git history | Planned |
