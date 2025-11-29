@@ -67,9 +67,6 @@ type GatewayReconciler struct {
 	// HelmManager handles cloudflared deployment. If nil, cloudflared
 	// management is disabled regardless of config.
 	HelmManager *helm.Manager
-
-	// bindingValidator validates route-to-listener bindings for Gateway status.
-	bindingValidator *routebinding.Validator
 }
 
 //nolint:noinlineerr // controller reconcile logic
@@ -404,10 +401,7 @@ func (r *GatewayReconciler) countAttachedRoutes(
 		result[listener.Name] = 0
 	}
 
-	validator := r.bindingValidator
-	if validator == nil {
-		validator = routebinding.NewValidator(r.Client)
-	}
+	validator := routebinding.NewValidator(r.Client)
 
 	// Count HTTPRoutes with binding validation
 	var httpRouteList gatewayv1.HTTPRouteList

@@ -55,9 +55,6 @@ func NewRouteSyncer(
 	}
 }
 
-// RouteUpdateFunc is called to update status of individual routes after sync.
-type RouteUpdateFunc func(ctx context.Context, accepted bool, message string)
-
 // routeBindingInfo contains a route and its binding validation results per parent.
 type routeBindingInfo struct {
 	// bindingResults maps ParentRef index to binding result for that parent.
