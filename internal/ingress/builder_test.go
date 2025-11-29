@@ -886,6 +886,196 @@ func TestBuild_RootPath(t *testing.T) {
 	assert.False(t, result[0].Path.Present)
 }
 
+func TestBuild_HighestWeight(t *testing.T) {
+	t.Parallel()
+
+	builder := ingress.NewBuilder("cluster.local")
+	routes := []gatewayv1.HTTPRoute{
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-route",
+				Namespace: "default",
+			},
+			Spec: gatewayv1.HTTPRouteSpec{
+				Hostnames: []gatewayv1.Hostname{"app.example.com"},
+				Rules: []gatewayv1.HTTPRouteRule{
+					{
+						BackendRefs: []gatewayv1.HTTPBackendRef{
+							{
+								BackendRef: gatewayv1.BackendRef{
+									BackendObjectReference: gatewayv1.BackendObjectReference{
+										Name: "svc-a",
+										Port: portNumPtr(8080),
+									},
+									Weight: int32Ptr(20),
+								},
+							},
+							{
+								BackendRef: gatewayv1.BackendRef{
+									BackendObjectReference: gatewayv1.BackendObjectReference{
+										Name: "svc-b",
+										Port: portNumPtr(8080),
+									},
+									Weight: int32Ptr(80),
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	result := builder.Build(routes)
+
+	require.Len(t, result, 2)
+	assert.Contains(t, result[0].Service.Value, "svc-b")
+}
+
+func TestBuild_EqualWeight_UsesFirst(t *testing.T) {
+	t.Parallel()
+
+	builder := ingress.NewBuilder("cluster.local")
+	routes := []gatewayv1.HTTPRoute{
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-route",
+				Namespace: "default",
+			},
+			Spec: gatewayv1.HTTPRouteSpec{
+				Hostnames: []gatewayv1.Hostname{"app.example.com"},
+				Rules: []gatewayv1.HTTPRouteRule{
+					{
+						BackendRefs: []gatewayv1.HTTPBackendRef{
+							{
+								BackendRef: gatewayv1.BackendRef{
+									BackendObjectReference: gatewayv1.BackendObjectReference{
+										Name: "svc-a",
+										Port: portNumPtr(8080),
+									},
+									Weight: int32Ptr(50),
+								},
+							},
+							{
+								BackendRef: gatewayv1.BackendRef{
+									BackendObjectReference: gatewayv1.BackendObjectReference{
+										Name: "svc-b",
+										Port: portNumPtr(8080),
+									},
+									Weight: int32Ptr(50),
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	result := builder.Build(routes)
+
+	require.Len(t, result, 2)
+	assert.Contains(t, result[0].Service.Value, "svc-a")
+}
+
+func TestBuild_NoWeight_UsesDefaultWeight(t *testing.T) {
+	t.Parallel()
+
+	builder := ingress.NewBuilder("cluster.local")
+	routes := []gatewayv1.HTTPRoute{
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-route",
+				Namespace: "default",
+			},
+			Spec: gatewayv1.HTTPRouteSpec{
+				Hostnames: []gatewayv1.Hostname{"app.example.com"},
+				Rules: []gatewayv1.HTTPRouteRule{
+					{
+						BackendRefs: []gatewayv1.HTTPBackendRef{
+							{
+								BackendRef: gatewayv1.BackendRef{
+									BackendObjectReference: gatewayv1.BackendObjectReference{
+										Name: "svc-a",
+										Port: portNumPtr(8080),
+									},
+								},
+							},
+							{
+								BackendRef: gatewayv1.BackendRef{
+									BackendObjectReference: gatewayv1.BackendObjectReference{
+										Name: "svc-b",
+										Port: portNumPtr(8080),
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	result := builder.Build(routes)
+
+	require.Len(t, result, 2)
+	assert.Contains(t, result[0].Service.Value, "svc-a")
+}
+
+func TestBuild_MixedWeight_SelectsHighest(t *testing.T) {
+	t.Parallel()
+
+	builder := ingress.NewBuilder("cluster.local")
+	routes := []gatewayv1.HTTPRoute{
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-route",
+				Namespace: "default",
+			},
+			Spec: gatewayv1.HTTPRouteSpec{
+				Hostnames: []gatewayv1.Hostname{"app.example.com"},
+				Rules: []gatewayv1.HTTPRouteRule{
+					{
+						BackendRefs: []gatewayv1.HTTPBackendRef{
+							{
+								BackendRef: gatewayv1.BackendRef{
+									BackendObjectReference: gatewayv1.BackendObjectReference{
+										Name: "svc-a",
+										Port: portNumPtr(8080),
+									},
+								},
+							},
+							{
+								BackendRef: gatewayv1.BackendRef{
+									BackendObjectReference: gatewayv1.BackendObjectReference{
+										Name: "svc-b",
+										Port: portNumPtr(8080),
+									},
+									Weight: int32Ptr(100),
+								},
+							},
+							{
+								BackendRef: gatewayv1.BackendRef{
+									BackendObjectReference: gatewayv1.BackendObjectReference{
+										Name: "svc-c",
+										Port: portNumPtr(8080),
+									},
+									Weight: int32Ptr(50),
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	result := builder.Build(routes)
+
+	require.Len(t, result, 2)
+	assert.Contains(t, result[0].Service.Value, "svc-b")
+}
+
 func newHTTPBackendRef(name string, namespace *gatewayv1.Namespace, port *int32) gatewayv1.HTTPBackendRef {
 	ref := gatewayv1.HTTPBackendRef{
 		BackendRef: gatewayv1.BackendRef{

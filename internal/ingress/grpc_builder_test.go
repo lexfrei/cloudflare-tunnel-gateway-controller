@@ -615,6 +615,196 @@ func TestGRPCBuild_MultipleRoutes(t *testing.T) {
 	assert.Equal(t, "grpc2.example.com", result[1].Hostname.Value)
 }
 
+func TestGRPCBuild_HighestWeight(t *testing.T) {
+	t.Parallel()
+
+	builder := ingress.NewGRPCBuilder("cluster.local")
+	routes := []gatewayv1.GRPCRoute{
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-route",
+				Namespace: "default",
+			},
+			Spec: gatewayv1.GRPCRouteSpec{
+				Hostnames: []gatewayv1.Hostname{"grpc.example.com"},
+				Rules: []gatewayv1.GRPCRouteRule{
+					{
+						BackendRefs: []gatewayv1.GRPCBackendRef{
+							{
+								BackendRef: gatewayv1.BackendRef{
+									BackendObjectReference: gatewayv1.BackendObjectReference{
+										Name: "svc-a",
+										Port: portNumPtr(50051),
+									},
+									Weight: int32Ptr(20),
+								},
+							},
+							{
+								BackendRef: gatewayv1.BackendRef{
+									BackendObjectReference: gatewayv1.BackendObjectReference{
+										Name: "svc-b",
+										Port: portNumPtr(50051),
+									},
+									Weight: int32Ptr(80),
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	result := builder.Build(routes)
+
+	require.Len(t, result, 1)
+	assert.Contains(t, result[0].Service.Value, "svc-b")
+}
+
+func TestGRPCBuild_EqualWeight_UsesFirst(t *testing.T) {
+	t.Parallel()
+
+	builder := ingress.NewGRPCBuilder("cluster.local")
+	routes := []gatewayv1.GRPCRoute{
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-route",
+				Namespace: "default",
+			},
+			Spec: gatewayv1.GRPCRouteSpec{
+				Hostnames: []gatewayv1.Hostname{"grpc.example.com"},
+				Rules: []gatewayv1.GRPCRouteRule{
+					{
+						BackendRefs: []gatewayv1.GRPCBackendRef{
+							{
+								BackendRef: gatewayv1.BackendRef{
+									BackendObjectReference: gatewayv1.BackendObjectReference{
+										Name: "svc-a",
+										Port: portNumPtr(50051),
+									},
+									Weight: int32Ptr(50),
+								},
+							},
+							{
+								BackendRef: gatewayv1.BackendRef{
+									BackendObjectReference: gatewayv1.BackendObjectReference{
+										Name: "svc-b",
+										Port: portNumPtr(50051),
+									},
+									Weight: int32Ptr(50),
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	result := builder.Build(routes)
+
+	require.Len(t, result, 1)
+	assert.Contains(t, result[0].Service.Value, "svc-a")
+}
+
+func TestGRPCBuild_NoWeight_UsesDefaultWeight(t *testing.T) {
+	t.Parallel()
+
+	builder := ingress.NewGRPCBuilder("cluster.local")
+	routes := []gatewayv1.GRPCRoute{
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-route",
+				Namespace: "default",
+			},
+			Spec: gatewayv1.GRPCRouteSpec{
+				Hostnames: []gatewayv1.Hostname{"grpc.example.com"},
+				Rules: []gatewayv1.GRPCRouteRule{
+					{
+						BackendRefs: []gatewayv1.GRPCBackendRef{
+							{
+								BackendRef: gatewayv1.BackendRef{
+									BackendObjectReference: gatewayv1.BackendObjectReference{
+										Name: "svc-a",
+										Port: portNumPtr(50051),
+									},
+								},
+							},
+							{
+								BackendRef: gatewayv1.BackendRef{
+									BackendObjectReference: gatewayv1.BackendObjectReference{
+										Name: "svc-b",
+										Port: portNumPtr(50051),
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	result := builder.Build(routes)
+
+	require.Len(t, result, 1)
+	assert.Contains(t, result[0].Service.Value, "svc-a")
+}
+
+func TestGRPCBuild_MixedWeight_SelectsHighest(t *testing.T) {
+	t.Parallel()
+
+	builder := ingress.NewGRPCBuilder("cluster.local")
+	routes := []gatewayv1.GRPCRoute{
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-route",
+				Namespace: "default",
+			},
+			Spec: gatewayv1.GRPCRouteSpec{
+				Hostnames: []gatewayv1.Hostname{"grpc.example.com"},
+				Rules: []gatewayv1.GRPCRouteRule{
+					{
+						BackendRefs: []gatewayv1.GRPCBackendRef{
+							{
+								BackendRef: gatewayv1.BackendRef{
+									BackendObjectReference: gatewayv1.BackendObjectReference{
+										Name: "svc-a",
+										Port: portNumPtr(50051),
+									},
+								},
+							},
+							{
+								BackendRef: gatewayv1.BackendRef{
+									BackendObjectReference: gatewayv1.BackendObjectReference{
+										Name: "svc-b",
+										Port: portNumPtr(50051),
+									},
+									Weight: int32Ptr(100),
+								},
+							},
+							{
+								BackendRef: gatewayv1.BackendRef{
+									BackendObjectReference: gatewayv1.BackendObjectReference{
+										Name: "svc-c",
+										Port: portNumPtr(50051),
+									},
+									Weight: int32Ptr(50),
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	result := builder.Build(routes)
+
+	require.Len(t, result, 1)
+	assert.Contains(t, result[0].Service.Value, "svc-b")
+}
+
 func newGRPCBackendRef(name string, namespace *gatewayv1.Namespace, port *int32) gatewayv1.GRPCBackendRef {
 	ref := gatewayv1.GRPCBackendRef{
 		BackendRef: gatewayv1.BackendRef{
