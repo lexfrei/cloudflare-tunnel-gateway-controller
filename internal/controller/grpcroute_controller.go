@@ -49,7 +49,7 @@ type GRPCRouteReconciler struct {
 	startupComplete atomic.Bool
 }
 
-//nolint:noinlineerr // inline error handling is fine for controller pattern
+//nolint:noinlineerr,dupl // inline error handling for controller pattern; similar logic for different route types
 func (r *GRPCRouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	// Wait for startup sync to complete before processing reconcile events
 	if !r.startupComplete.Load() {
@@ -108,7 +108,7 @@ func (r *GRPCRouteReconciler) syncAndUpdateStatus(ctx context.Context) (ctrl.Res
 	return result, nil
 }
 
-//nolint:funcorder,noinlineerr // private helper method
+//nolint:funcorder,noinlineerr,dupl // private helper method; similar logic for different route types
 func (r *GRPCRouteReconciler) isRouteForOurGateway(ctx context.Context, route *gatewayv1.GRPCRoute) bool {
 	for _, ref := range route.Spec.ParentRefs {
 		if ref.Kind != nil && *ref.Kind != kindGateway {
