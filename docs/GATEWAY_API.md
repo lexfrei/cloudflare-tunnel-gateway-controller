@@ -63,7 +63,7 @@ The Gateway resource is accepted but most listener configuration is ignored beca
 | `spec.rules[].backendRefs[].name` | ✅ | Service name |
 | `spec.rules[].backendRefs[].namespace` | ✅ | Service namespace |
 | `spec.rules[].backendRefs[].port` | ✅ | Service port |
-| `spec.rules[].backendRefs[].weight` | ⚠️ | Highest weight backend used ([#45](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/issues/45)) |
+| `spec.rules[].backendRefs[].weight` | ✅ | Backend with highest weight selected (default: 1) |
 | `spec.rules[].backendRefs[].filters` | ❌ | Not implemented |
 | `spec.rules[].timeouts` | ❌ | Not implemented |
 
@@ -87,7 +87,7 @@ The Gateway resource is accepted but most listener configuration is ignored beca
 | `spec.rules[].backendRefs[].name` | ✅ | Service name |
 | `spec.rules[].backendRefs[].namespace` | ✅ | Service namespace |
 | `spec.rules[].backendRefs[].port` | ✅ | Service port |
-| `spec.rules[].backendRefs[].weight` | ⚠️ | Highest weight backend used ([#45](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/issues/45)) |
+| `spec.rules[].backendRefs[].weight` | ✅ | Backend with highest weight selected (default: 1) |
 | `spec.rules[].backendRefs[].filters` | ❌ | Not implemented |
 
 ### gRPC Method Matching
@@ -130,7 +130,7 @@ The following Gateway API features are not supported due to Cloudflare Tunnel ar
 
 | Limitation | Description |
 |------------|-------------|
-| Single backend | Only highest-weight `backendRef` is used per rule ([#45](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/issues/45)) |
+| Single backend | Only highest-weight `backendRef` is used per rule (no traffic splitting) |
 | Full sync | Any change triggers full config sync |
 | No cross-cluster | Only in-cluster services supported |
 | Service only | Only `Service` kind backends supported |
@@ -312,6 +312,31 @@ spec:
         - name: backend-service
           namespace: backend-namespace  # Cross-namespace reference
           port: 8080
+```
+
+### Backend Selection with Weights
+
+```yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: weighted-backend
+spec:
+  parentRefs:
+    - name: cloudflare-tunnel
+      namespace: cloudflare-tunnel-system
+  hostnames:
+    - app.example.com
+  rules:
+    - backendRefs:
+        # Backend with highest weight is selected
+        - name: canary-service
+          port: 80
+          weight: 80
+        - name: stable-service
+          port: 80
+          weight: 20
+        # canary-service is selected (weight 80 > 20)
 ```
 
 ### External-DNS Integration
