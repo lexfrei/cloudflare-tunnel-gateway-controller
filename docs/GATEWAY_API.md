@@ -63,7 +63,7 @@ The Gateway resource is accepted but most listener configuration is ignored beca
 | `spec.rules[].backendRefs[].name` | ✅ | Service name |
 | `spec.rules[].backendRefs[].namespace` | ✅ | Service namespace |
 | `spec.rules[].backendRefs[].port` | ✅ | Service port |
-| `spec.rules[].backendRefs[].weight` | ✅ | Backend with highest weight selected (default: 1) |
+| `spec.rules[].backendRefs[].weight` | ✅ | Backend with highest weight selected (default: 1); see [Weight Selection](#weight-selection-behavior) |
 | `spec.rules[].backendRefs[].filters` | ❌ | Not implemented |
 | `spec.rules[].timeouts` | ❌ | Not implemented |
 
@@ -87,8 +87,33 @@ The Gateway resource is accepted but most listener configuration is ignored beca
 | `spec.rules[].backendRefs[].name` | ✅ | Service name |
 | `spec.rules[].backendRefs[].namespace` | ✅ | Service namespace |
 | `spec.rules[].backendRefs[].port` | ✅ | Service port |
-| `spec.rules[].backendRefs[].weight` | ✅ | Backend with highest weight selected (default: 1) |
+| `spec.rules[].backendRefs[].weight` | ✅ | Backend with highest weight selected (default: 1); see [Weight Selection](#weight-selection-behavior) |
 | `spec.rules[].backendRefs[].filters` | ❌ | Not implemented |
+
+### Weight Selection Behavior
+
+When multiple `backendRefs` are specified in a rule, the controller selects the backend with the highest `weight` value. This behavior applies consistently across:
+
+- **Within a single HTTPRoute rule** — highest weight backend is selected
+- **Within a single GRPCRoute rule** — highest weight backend is selected
+- **When HTTPRoute and GRPCRoute are merged** — all routes referencing the same Gateway are combined into a single Cloudflare Tunnel ingress configuration; each rule independently selects its highest-weight backend
+
+**Default weight:** If `weight` is not specified, it defaults to `1` (per Gateway API specification).
+
+**Equal weights:** When multiple backends have the same highest weight, the first one in the list is selected for deterministic behavior.
+
+```yaml
+# Example: Backend with highest weight wins
+backendRefs:
+  - name: primary-service
+    port: 80
+    weight: 100  # ← Selected (highest weight)
+  - name: secondary-service
+    port: 80
+    weight: 50
+```
+
+> **Note:** This is NOT traffic splitting. The controller always sends 100% of traffic to the selected backend. Use weights to indicate preference, not traffic distribution. For actual traffic splitting, deploy a dedicated load balancer (see [Traffic Splitting](#traffic-splitting-and-load-balancing)).
 
 ### gRPC Method Matching
 
