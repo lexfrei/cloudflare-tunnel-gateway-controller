@@ -26,17 +26,22 @@ This document details the Gateway API implementation in the Cloudflare Tunnel Ga
 
 ### Gateway
 
+The Gateway resource is accepted but most listener configuration is ignored because Cloudflare Tunnel handles TLS termination and port management at the edge.
+
 | Field | Supported | Notes |
 |-------|-----------|-------|
 | `spec.gatewayClassName` | ✅ | Required, must match configured class |
-| `spec.listeners` | ✅ | Informational, used for status |
-| `spec.listeners[].name` | ✅ | Used in HTTPRoute parentRef.sectionName |
-| `spec.listeners[].port` | ✅ | Informational only (Cloudflare handles ports) |
-| `spec.listeners[].protocol` | ✅ | HTTP and HTTPS supported |
-| `spec.listeners[].hostname` | ❌ | Use HTTPRoute hostnames instead |
-| `spec.listeners[].tls` | ❌ | Cloudflare manages TLS termination |
-| `spec.listeners[].allowedRoutes` | ✅ | Namespace filtering supported |
-| `spec.addresses` | ❌ | Cloudflare assigns addresses |
+| `spec.listeners` | ⚠️ | Accepted for compatibility, not used for routing |
+| `spec.listeners[].name` | ✅ | Used for status reporting and sectionName matching |
+| `spec.listeners[].port` | ❌ | Ignored; Cloudflare uses standard 443/80 |
+| `spec.listeners[].protocol` | ❌ | Ignored; Cloudflare handles protocol negotiation |
+| `spec.listeners[].hostname` | ❌ | Ignored; use HTTPRoute/GRPCRoute hostnames ([#43](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/issues/43)) |
+| `spec.listeners[].tls` | ❌ | Ignored; Cloudflare manages TLS certificates |
+| `spec.listeners[].allowedRoutes` | ❌ | Ignored; all HTTPRoute/GRPCRoute accepted ([#43](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/issues/43)) |
+| `spec.addresses` | ❌ | Ignored; tunnel CNAME set automatically in status |
+| `spec.infrastructure` | ❌ | Not implemented |
+
+> **Important:** Cloudflare Tunnel terminates TLS at Cloudflare's edge network. The tunnel connector (cloudflared) establishes an outbound connection to Cloudflare. Gateway listener configuration for ports, protocols, and TLS settings has no effect on routing behavior.
 
 ### HTTPRoute
 
@@ -58,7 +63,7 @@ This document details the Gateway API implementation in the Cloudflare Tunnel Ga
 | `spec.rules[].backendRefs[].name` | ✅ | Service name |
 | `spec.rules[].backendRefs[].namespace` | ✅ | Service namespace |
 | `spec.rules[].backendRefs[].port` | ✅ | Service port |
-| `spec.rules[].backendRefs[].weight` | ❌ | First backend used |
+| `spec.rules[].backendRefs[].weight` | ⚠️ | Highest weight backend used ([#45](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/issues/45)) |
 | `spec.rules[].backendRefs[].filters` | ❌ | Not implemented |
 | `spec.rules[].timeouts` | ❌ | Not implemented |
 
@@ -82,7 +87,7 @@ This document details the Gateway API implementation in the Cloudflare Tunnel Ga
 | `spec.rules[].backendRefs[].name` | ✅ | Service name |
 | `spec.rules[].backendRefs[].namespace` | ✅ | Service namespace |
 | `spec.rules[].backendRefs[].port` | ✅ | Service port |
-| `spec.rules[].backendRefs[].weight` | ❌ | First backend used |
+| `spec.rules[].backendRefs[].weight` | ⚠️ | Highest weight backend used ([#45](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/issues/45)) |
 | `spec.rules[].backendRefs[].filters` | ❌ | Not implemented |
 
 ### gRPC Method Matching
@@ -125,10 +130,47 @@ The following Gateway API features are not supported due to Cloudflare Tunnel ar
 
 | Limitation | Description |
 |------------|-------------|
-| Single backend | Only first `backendRef` is used per rule |
+| Single backend | Only highest-weight `backendRef` is used per rule ([#45](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/issues/45)) |
 | Full sync | Any change triggers full config sync |
 | No cross-cluster | Only in-cluster services supported |
 | Service only | Only `Service` kind backends supported |
+
+### Traffic Splitting and Load Balancing
+
+**Design Decision:** This controller intentionally does not implement traffic splitting or weighted load balancing between multiple backends.
+
+Cloudflare Tunnel ingress rules accept only a single service URL per rule. To support Gateway API's `backendRefs` with weights, the controller would need to:
+
+1. Create and manage intermediate Kubernetes Services
+2. Watch and synchronize Endpoints from all referenced services
+3. Handle cross-namespace references and RBAC
+4. Manage lifecycle of controller-created resources
+
+This approach introduces significant complexity, potential for orphaned resources, and creates an opaque traffic path that is difficult for users to debug.
+
+**Our approach:** Provide the tunnel a single, stable entrypoint. If you need load balancing:
+
+- **Between pods of the same Deployment:** Use a standard Kubernetes Service (built-in round-robin)
+- **Weighted traffic splitting or canary:** Deploy a dedicated load balancer (Traefik, Envoy, Nginx, HAProxy) and point the HTTPRoute to it
+
+```yaml
+# Example: Use Traefik for weighted routing
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: my-app
+spec:
+  parentRefs:
+    - name: cloudflare-tunnel
+  hostnames:
+    - app.example.com
+  rules:
+    - backendRefs:
+        - name: traefik  # Traefik handles weighted routing internally
+          port: 80
+```
+
+This keeps the controller simple and predictable, and gives you full control over load balancing behavior.
 
 ## Status Conditions
 
