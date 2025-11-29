@@ -180,6 +180,18 @@ All external-dns annotations (TTL, provider-specific settings, etc.) should be p
 | [Troubleshooting](docs/TROUBLESHOOTING.md) | Common issues and solutions |
 | [Helm Chart](charts/cloudflare-tunnel-gateway-controller/README.md) | Helm chart configuration reference |
 
+## Roadmap
+
+Planned features and improvements:
+
+| Issue | Description | Status |
+|-------|-------------|--------|
+| [#43](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/issues/43) | Gateway API listener hostname and allowedRoutes validation | Planned |
+| [#44](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/issues/44) | Warning logs for partially ignored route configuration | Planned |
+| [#40](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/issues/40) | TCPRoute and TLSRoute support (GRPCRoute done in v0.8.0) | In Progress |
+| [#33](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/issues/33) | Auto-generate artifacthub.io/changes from git history | Planned |
+| [#25](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/issues/25) | Increase unit test coverage for core packages | Ongoing |
+
 ## Contributing
 
 Contributions are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
