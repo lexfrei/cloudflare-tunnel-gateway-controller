@@ -24,6 +24,7 @@ import (
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/api/v1alpha1"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/config"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/helm"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/routebinding"
 )
 
 const (
@@ -389,7 +390,7 @@ func (r *GatewayReconciler) setConfigErrorStatus(
 	return errors.Wrap(r.Status().Update(ctx, gateway), "failed to update gateway status")
 }
 
-//nolint:funcorder,gocognit // helper method for status; complexity due to counting two route types
+//nolint:funcorder,gocognit,gocyclo,cyclop,dupl,funlen // helper method for status; complexity due to counting two route types
 func (r *GatewayReconciler) countAttachedRoutes(
 	ctx context.Context,
 	gateway *gatewayv1.Gateway,
@@ -400,7 +401,9 @@ func (r *GatewayReconciler) countAttachedRoutes(
 		result[listener.Name] = 0
 	}
 
-	// Count HTTPRoutes
+	validator := routebinding.NewValidator(r.Client)
+
+	// Count HTTPRoutes with binding validation
 	var httpRouteList gatewayv1.HTTPRouteList
 
 	err := r.List(ctx, &httpRouteList)
@@ -413,18 +416,28 @@ func (r *GatewayReconciler) countAttachedRoutes(
 					continue
 				}
 
-				if ref.SectionName != nil {
-					result[*ref.SectionName]++
-				} else {
-					for _, listener := range gateway.Spec.Listeners {
-						result[listener.Name]++
-					}
+				routeInfo := &routebinding.RouteInfo{
+					Name:        route.Name,
+					Namespace:   route.Namespace,
+					Hostnames:   route.Spec.Hostnames,
+					Kind:        "HTTPRoute",
+					SectionName: ref.SectionName,
+				}
+
+				bindingResult, bindErr := validator.ValidateBinding(ctx, gateway, routeInfo)
+				if bindErr != nil || !bindingResult.Accepted {
+					continue
+				}
+
+				// Count this route for each matched listener
+				for _, listenerName := range bindingResult.MatchedListeners {
+					result[listenerName]++
 				}
 			}
 		}
 	}
 
-	// Count GRPCRoutes
+	// Count GRPCRoutes with binding validation
 	var grpcRouteList gatewayv1.GRPCRouteList
 
 	err = r.List(ctx, &grpcRouteList)
@@ -437,12 +450,22 @@ func (r *GatewayReconciler) countAttachedRoutes(
 					continue
 				}
 
-				if ref.SectionName != nil {
-					result[*ref.SectionName]++
-				} else {
-					for _, listener := range gateway.Spec.Listeners {
-						result[listener.Name]++
-					}
+				routeInfo := &routebinding.RouteInfo{
+					Name:        route.Name,
+					Namespace:   route.Namespace,
+					Hostnames:   route.Spec.Hostnames,
+					Kind:        "GRPCRoute",
+					SectionName: ref.SectionName,
+				}
+
+				bindingResult, bindErr := validator.ValidateBinding(ctx, gateway, routeInfo)
+				if bindErr != nil || !bindingResult.Accepted {
+					continue
+				}
+
+				// Count this route for each matched listener
+				for _, listenerName := range bindingResult.MatchedListeners {
+					result[listenerName]++
 				}
 			}
 		}
