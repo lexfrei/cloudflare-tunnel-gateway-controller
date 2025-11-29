@@ -173,6 +173,7 @@ func (b *Builder) extractPath(pathMatch *gatewayv1.HTTPPathMatch) (path string, 
 	return path, 0
 }
 
+//nolint:dupl // similar structure for different route types is intentional
 func (b *Builder) resolveBackendRef(namespace string, refs []gatewayv1.HTTPBackendRef) string {
 	if len(refs) == 0 {
 		return ""

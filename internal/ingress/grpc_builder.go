@@ -164,24 +164,7 @@ func (b *GRPCBuilder) resolveBackendRef(namespace string, refs []gatewayv1.GRPCB
 		return ""
 	}
 
-	// Select backend with highest weight.
-	// If weights are equal or unspecified, use first backend for deterministic behavior.
-	selectedIdx := 0
-
-	var highestWeight int32
-
-	for i := range refs {
-		weight := int32(1) // Default weight as per Gateway API spec
-		if refs[i].Weight != nil {
-			weight = *refs[i].Weight
-		}
-
-		if i == 0 || weight > highestWeight {
-			highestWeight = weight
-			selectedIdx = i
-		}
-	}
-
+	selectedIdx := SelectHighestWeightIndex(wrapGRPCBackendRefs(refs))
 	ref := refs[selectedIdx].BackendRef
 
 	if ref.Group != nil && *ref.Group != "" && *ref.Group != backendGroupCore {
