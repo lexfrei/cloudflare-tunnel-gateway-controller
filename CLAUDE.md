@@ -103,6 +103,70 @@ charts/                  # Helm chart with helm-unittest tests
 deploy/                  # Raw Kubernetes manifests for manual deployment
 ```
 
+## Testing Standards
+
+### Approach
+
+- **TDD (Test-Driven Development)**: Write tests first, then implementation
+- Follow RED → GREEN → REFACTOR cycle
+- Commit test and implementation together per feature
+
+### Testing Libraries
+
+- `github.com/stretchr/testify/assert` - Assertions
+- `github.com/stretchr/testify/require` - Fatal assertions (stops test on failure)
+- `sigs.k8s.io/controller-runtime/pkg/client/fake` - Fake Kubernetes client for unit tests
+- `sigs.k8s.io/controller-runtime/pkg/envtest` - Integration tests with real API server
+
+### Test Patterns
+
+- **Table-driven tests**: Use `[]struct{}` with named test cases
+- **Parallel execution**: Always use `t.Parallel()` at test and subtest level
+- **Fake client setup**: Create scheme, register types, build fake client
+- **Helper functions**: Extract common setup (e.g., `setupFakeClient()`)
+
+### Example Structure
+
+```go
+func TestFeature(t *testing.T) {
+    t.Parallel()
+
+    tests := []struct {
+        name     string
+        input    InputType
+        expected OutputType
+    }{
+        {name: "case 1", input: ..., expected: ...},
+        {name: "case 2", input: ..., expected: ...},
+    }
+
+    for _, tt := range tests {
+        t.Run(tt.name, func(t *testing.T) {
+            t.Parallel()
+            // test logic
+            require.NoError(t, err)
+            assert.Equal(t, tt.expected, actual)
+        })
+    }
+}
+```
+
+### Running Tests
+
+```bash
+# All tests with race detection
+go test -race ./...
+
+# Single package
+go test -v -race ./internal/routebinding/...
+
+# Single test by name
+go test -v -race ./internal/controller/... -run TestHTTPRouteReconciler
+
+# With coverage
+go test -race -coverprofile=coverage.out ./...
+```
+
 ## Linting Configuration
 
 golangci-lint v2 config in `.golangci.yaml`:
