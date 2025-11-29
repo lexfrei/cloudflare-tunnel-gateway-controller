@@ -49,7 +49,7 @@ type GRPCRouteReconciler struct {
 	startupComplete atomic.Bool
 }
 
-//nolint:noinlineerr,dupl // inline error handling for controller pattern; similar logic for different route types
+//nolint:noinlineerr // inline error handling for controller pattern
 func (r *GRPCRouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	// Wait for startup sync to complete before processing reconcile events
 	if !r.startupComplete.Load() {
@@ -84,17 +84,14 @@ func (r *GRPCRouteReconciler) syncAndUpdateStatus(ctx context.Context) (ctrl.Res
 
 	result, syncResult, syncErr := r.RouteSyncer.SyncAllRoutes(ctx)
 
-	// Update status for all GRPC routes
+	// Update status for all GRPC routes with per-parent binding results
 	if syncResult != nil {
-		accepted := syncErr == nil
-		message := ""
-
-		if syncErr != nil {
-			message = syncErr.Error()
-		}
-
 		for i := range syncResult.GRPCRoutes {
-			if err := r.updateRouteStatus(ctx, &syncResult.GRPCRoutes[i], accepted, message); err != nil {
+			route := &syncResult.GRPCRoutes[i]
+			routeKey := route.Namespace + "/" + route.Name
+			bindingInfo := syncResult.GRPCRouteBindings[routeKey]
+
+			if err := r.updateRouteStatus(ctx, route, bindingInfo, syncErr); err != nil {
 				logger.Error("failed to update grpcroute status", "error", err)
 			}
 		}
@@ -108,7 +105,7 @@ func (r *GRPCRouteReconciler) syncAndUpdateStatus(ctx context.Context) (ctrl.Res
 	return result, nil
 }
 
-//nolint:funcorder,noinlineerr,dupl // private helper method; similar logic for different route types
+//nolint:funcorder,noinlineerr // private helper method
 func (r *GRPCRouteReconciler) isRouteForOurGateway(ctx context.Context, route *gatewayv1.GRPCRoute) bool {
 	for _, ref := range route.Spec.ParentRefs {
 		if ref.Kind != nil && *ref.Kind != kindGateway {
@@ -137,8 +134,8 @@ func (r *GRPCRouteReconciler) isRouteForOurGateway(ctx context.Context, route *g
 func (r *GRPCRouteReconciler) updateRouteStatus(
 	ctx context.Context,
 	route *gatewayv1.GRPCRoute,
-	accepted bool,
-	message string,
+	bindingInfo RouteBindingInfo,
+	syncErr error,
 ) error {
 	routeKey := types.NamespacedName{Name: route.Name, Namespace: route.Namespace}
 
@@ -149,24 +146,9 @@ func (r *GRPCRouteReconciler) updateRouteStatus(
 		}
 
 		now := metav1.Now()
-
-		status := metav1.ConditionTrue
-		reason := string(gatewayv1.RouteReasonAccepted)
-
-		if !accepted {
-			status = metav1.ConditionFalse
-			reason = string(gatewayv1.RouteReasonNoMatchingParent)
-
-			if message == "" {
-				message = routeNotAcceptedMessage
-			}
-		} else {
-			message = routeAcceptedMessage
-		}
-
 		freshRoute.Status.Parents = nil
 
-		for _, ref := range freshRoute.Spec.ParentRefs {
+		for refIdx, ref := range freshRoute.Spec.ParentRefs {
 			if ref.Kind != nil && *ref.Kind != kindGateway {
 				continue
 			}
@@ -183,6 +165,23 @@ func (r *GRPCRouteReconciler) updateRouteStatus(
 
 			if gateway.Spec.GatewayClassName != gatewayv1.ObjectName(r.GatewayClassName) {
 				continue
+			}
+
+			// Get binding result for this parent ref
+			bindingResult, hasBinding := bindingInfo.BindingResults[refIdx]
+
+			status := metav1.ConditionTrue
+			reason := string(gatewayv1.RouteReasonAccepted)
+			message := routeAcceptedMessage
+
+			if syncErr != nil {
+				status = metav1.ConditionFalse
+				reason = string(gatewayv1.RouteReasonPending)
+				message = syncErr.Error()
+			} else if hasBinding && !bindingResult.Accepted {
+				status = metav1.ConditionFalse
+				reason = string(bindingResult.Reason)
+				message = bindingResult.Message
 			}
 
 			parentStatus := gatewayv1.RouteParentStatus{

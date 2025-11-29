@@ -75,7 +75,7 @@ type HTTPRouteReconciler struct {
 	startupComplete atomic.Bool
 }
 
-//nolint:noinlineerr,dupl // inline error handling for controller pattern; similar logic for different route types
+//nolint:noinlineerr // inline error handling for controller pattern
 func (r *HTTPRouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	// Wait for startup sync to complete before processing reconcile events
 	// to prevent race conditions with Cloudflare API updates
@@ -132,7 +132,7 @@ func (r *HTTPRouteReconciler) syncAndUpdateStatus(ctx context.Context) (ctrl.Res
 	return result, nil
 }
 
-//nolint:funcorder,noinlineerr,dupl // private helper method; similar logic for different route types
+//nolint:funcorder,noinlineerr // private helper method
 func (r *HTTPRouteReconciler) isRouteForOurGateway(ctx context.Context, route *gatewayv1.HTTPRoute) bool {
 	for _, ref := range route.Spec.ParentRefs {
 		if ref.Kind != nil && *ref.Kind != kindGateway {
