@@ -81,8 +81,15 @@ jobs:
           go-version: '1.25.4'
           cache: true
 
+      - name: Setup envtest
+        run: |
+          go install sigs.k8s.io/controller-runtime/tools/setup-envtest@latest
+          setup-envtest use
+
       - name: Run tests
-        run: go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
+        run: |
+          export KUBEBUILDER_ASSETS="$(setup-envtest use -p path)"
+          go test -v -race -tags=envtest -coverprofile=coverage.out -covermode=atomic ./...
 
       - name: Upload coverage
         uses: codecov/codecov-action@v5

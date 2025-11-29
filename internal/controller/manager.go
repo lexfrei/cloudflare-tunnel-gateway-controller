@@ -187,8 +187,14 @@ func Run(ctx context.Context, cfg *Config) error {
 }
 
 // getControllerNamespace returns the namespace where the controller is running.
-// It reads from the standard Kubernetes downward API file, falling back to "default".
+// It first checks CONTROLLER_NAMESPACE environment variable, then reads from
+// the standard Kubernetes downward API file, falling back to "default".
 func getControllerNamespace() string {
+	// Allow override via environment variable (useful for testing)
+	if ns := os.Getenv("CONTROLLER_NAMESPACE"); ns != "" {
+		return ns
+	}
+
 	// Try reading from downward API
 	data, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/namespace")
 	if err == nil {
