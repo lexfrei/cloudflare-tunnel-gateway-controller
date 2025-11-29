@@ -158,6 +158,8 @@ The controller supports a subset of Gateway API fields that map to Cloudflare Tu
 | `spec.rules[].filters` | ❌ | Cloudflare limitation |
 | `spec.rules[].backendRefs[].weight` | ❌ | First backend used |
 
+> **Load Balancing:** This controller does not implement traffic splitting between multiple backends. Cloudflare Tunnel accepts only a single service URL per ingress rule. If you need weighted routing or canary deployments, deploy a dedicated load balancer (Traefik, Envoy, Nginx) and point your HTTPRoute to it. See [Traffic Splitting and Load Balancing](docs/GATEWAY_API.md#traffic-splitting-and-load-balancing) for details.
+
 See [Gateway API documentation](docs/GATEWAY_API.md) for full details and examples.
 
 ## External-DNS Integration
