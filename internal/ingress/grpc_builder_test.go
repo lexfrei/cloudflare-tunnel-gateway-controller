@@ -706,6 +706,43 @@ func TestGRPCBuild_WeightSelection(t *testing.T) {
 	}
 }
 
+func TestGRPCBuild_AllBackendsDisabled(t *testing.T) {
+	t.Parallel()
+
+	builder := ingress.NewGRPCBuilder("cluster.local")
+	routes := []gatewayv1.GRPCRoute{
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-route",
+				Namespace: "default",
+			},
+			Spec: gatewayv1.GRPCRouteSpec{
+				Hostnames: []gatewayv1.Hostname{"grpc.example.com"},
+				Rules: []gatewayv1.GRPCRouteRule{
+					{
+						BackendRefs: []gatewayv1.GRPCBackendRef{
+							{
+								BackendRef: gatewayv1.BackendRef{
+									BackendObjectReference: gatewayv1.BackendObjectReference{
+										Name: "disabled-svc",
+										Port: portNumPtr(50051),
+									},
+									Weight: int32Ptr(0),
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	result := builder.Build(routes)
+
+	// No rules should be present (GRPCBuilder doesn't add catch-all)
+	require.Empty(t, result)
+}
+
 func newGRPCBackendRef(name string, namespace *gatewayv1.Namespace, port *int32) gatewayv1.GRPCBackendRef {
 	ref := gatewayv1.GRPCBackendRef{
 		BackendRef: gatewayv1.BackendRef{

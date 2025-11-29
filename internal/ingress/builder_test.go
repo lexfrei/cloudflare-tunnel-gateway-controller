@@ -977,6 +977,44 @@ func TestBuild_WeightSelection(t *testing.T) {
 	}
 }
 
+func TestBuild_AllBackendsDisabled(t *testing.T) {
+	t.Parallel()
+
+	builder := ingress.NewBuilder("cluster.local")
+	routes := []gatewayv1.HTTPRoute{
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-route",
+				Namespace: "default",
+			},
+			Spec: gatewayv1.HTTPRouteSpec{
+				Hostnames: []gatewayv1.Hostname{"app.example.com"},
+				Rules: []gatewayv1.HTTPRouteRule{
+					{
+						BackendRefs: []gatewayv1.HTTPBackendRef{
+							{
+								BackendRef: gatewayv1.BackendRef{
+									BackendObjectReference: gatewayv1.BackendObjectReference{
+										Name: "disabled-svc",
+										Port: portNumPtr(8080),
+									},
+									Weight: int32Ptr(0),
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	result := builder.Build(routes)
+
+	// Only catch-all rule should be present, no actual route rules
+	require.Len(t, result, 1)
+	assert.Equal(t, ingress.CatchAllService, result[0].Service.Value)
+}
+
 func newHTTPBackendRef(name string, namespace *gatewayv1.Namespace, port *int32) gatewayv1.HTTPBackendRef {
 	ref := gatewayv1.HTTPBackendRef{
 		BackendRef: gatewayv1.BackendRef{

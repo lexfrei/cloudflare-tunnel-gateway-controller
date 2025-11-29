@@ -73,9 +73,14 @@ func TestSelectHighestWeightIndex(t *testing.T) {
 			expected: 1,
 		},
 		{
-			name:     "all zero weights uses first",
+			name:     "all zero weights returns -1 (all disabled)",
 			weights:  []*int32{int32Ptr(0), int32Ptr(0)},
-			expected: 0,
+			expected: -1,
+		},
+		{
+			name:     "single backend with weight=0 returns -1 (disabled)",
+			weights:  []*int32{int32Ptr(0)},
+			expected: -1,
 		},
 		{
 			name:     "three backends with varying weights",
@@ -104,8 +109,10 @@ func TestSelectHighestWeightIndex(t *testing.T) {
 	}
 }
 
-func TestDefaultBackendWeight(t *testing.T) {
+func TestBackendWeightConstants(t *testing.T) {
 	t.Parallel()
 
 	assert.Equal(t, int32(1), DefaultBackendWeight)
+	assert.Equal(t, int32(0), MinBackendWeight)
+	assert.Equal(t, int32(1_000_000), MaxBackendWeight)
 }
