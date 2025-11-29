@@ -35,9 +35,9 @@ The Gateway resource is accepted but most listener configuration is ignored beca
 | `spec.listeners[].name` | ✅ | Used for status reporting and sectionName matching |
 | `spec.listeners[].port` | ❌ | Ignored; Cloudflare uses standard 443/80 |
 | `spec.listeners[].protocol` | ❌ | Ignored; Cloudflare handles protocol negotiation |
-| `spec.listeners[].hostname` | ❌ | Ignored; use HTTPRoute/GRPCRoute hostnames |
+| `spec.listeners[].hostname` | ❌ | Ignored; use HTTPRoute/GRPCRoute hostnames ([#43](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/issues/43)) |
 | `spec.listeners[].tls` | ❌ | Ignored; Cloudflare manages TLS certificates |
-| `spec.listeners[].allowedRoutes` | ❌ | Ignored; all HTTPRoute/GRPCRoute accepted |
+| `spec.listeners[].allowedRoutes` | ❌ | Ignored; all HTTPRoute/GRPCRoute accepted ([#43](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/issues/43)) |
 | `spec.addresses` | ❌ | Ignored; tunnel CNAME set automatically in status |
 | `spec.infrastructure` | ❌ | Not implemented |
 

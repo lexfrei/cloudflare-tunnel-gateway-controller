@@ -121,9 +121,9 @@ The controller processes Gateway resources but with important limitations due to
 | `spec.listeners[].name` | ✅ | Used for status reporting |
 | `spec.listeners[].protocol` | ❌ | Ignored; Cloudflare handles TLS |
 | `spec.listeners[].port` | ❌ | Ignored; Cloudflare uses 443/80 |
-| `spec.listeners[].hostname` | ❌ | Ignored; use HTTPRoute hostnames |
+| `spec.listeners[].hostname` | ❌ | Ignored; use HTTPRoute hostnames ([#43](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/issues/43)) |
 | `spec.listeners[].tls` | ❌ | Ignored; Cloudflare manages TLS |
-| `spec.listeners[].allowedRoutes` | ❌ | All HTTPRoute/GRPCRoute allowed |
+| `spec.listeners[].allowedRoutes` | ❌ | All HTTPRoute/GRPCRoute allowed ([#43](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/issues/43)) |
 | `spec.addresses` | ❌ | Ignored; tunnel CNAME set in status |
 | `spec.infrastructure` | ❌ | Not implemented |
 
