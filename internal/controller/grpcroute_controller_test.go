@@ -650,7 +650,7 @@ func TestGRPCRouteReconciler_UpdateRouteStatus_Integration(t *testing.T) {
 			},
 		},
 	}
-	err := r.updateRouteStatus(context.Background(), route, bindingInfo, nil)
+	err := r.updateRouteStatus(context.Background(), route, bindingInfo, nil, nil)
 	require.NoError(t, err)
 
 	var updatedRoute gatewayv1.GRPCRoute
@@ -739,7 +739,7 @@ func TestGRPCRouteReconciler_UpdateRouteStatus_NotAccepted(t *testing.T) {
 			},
 		},
 	}
-	err := r.updateRouteStatus(context.Background(), route, bindingInfo, nil)
+	err := r.updateRouteStatus(context.Background(), route, bindingInfo, nil, nil)
 	require.NoError(t, err)
 
 	var updatedRoute gatewayv1.GRPCRoute
