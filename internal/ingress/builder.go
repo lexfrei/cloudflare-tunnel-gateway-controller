@@ -25,10 +25,11 @@ const (
 	DefaultHTTPSPort = 443
 
 	// Backend reference constants.
-	backendGroupCore   = "core"
-	backendKindService = "Service"
-	schemeHTTP         = "http"
-	schemeHTTPS        = "https"
+	backendGroupCore      = ""     // Core resources (Service, Pod, etc.) use empty group
+	backendGroupCoreAlias = "core" // Accept "core" as backwards-compatible alias
+	backendKindService    = "Service"
+	schemeHTTP            = "http"
+	schemeHTTPS           = "https"
 )
 
 // Builder converts Gateway API HTTPRoute resources to Cloudflare Tunnel
@@ -353,7 +354,8 @@ func (b *Builder) resolveBackendRef(ctx context.Context, namespace, routeName st
 
 	ref := refs[selectedIdx].BackendRef
 
-	if ref.Group != nil && *ref.Group != "" && *ref.Group != backendGroupCore {
+	// Accept nil, "", or "core" as valid core group identifiers
+	if ref.Group != nil && *ref.Group != "" && *ref.Group != backendGroupCoreAlias {
 		return "", nil
 	}
 

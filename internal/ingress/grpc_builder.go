@@ -233,7 +233,8 @@ func (b *GRPCBuilder) resolveBackendRef(ctx context.Context, namespace, routeNam
 
 	ref := refs[selectedIdx].BackendRef
 
-	if ref.Group != nil && *ref.Group != "" && *ref.Group != backendGroupCore {
+	// Accept nil, "", or "core" as valid core group identifiers
+	if ref.Group != nil && *ref.Group != "" && *ref.Group != backendGroupCoreAlias {
 		return "", nil
 	}
 
