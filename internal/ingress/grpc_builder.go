@@ -41,12 +41,18 @@ func NewGRPCBuilder(clusterDomain string, validator *referencegrant.Validator) *
 //
 // Unlike HTTPRoute builder, this does NOT append a catch-all rule.
 // The catch-all rule should be added once after merging all route types.
-func (b *GRPCBuilder) Build(ctx context.Context, routes []gatewayv1.GRPCRoute) []zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress {
+//
+// Returns BuildResult containing the generated rules and any backend references
+// that failed validation (e.g., due to missing ReferenceGrant).
+func (b *GRPCBuilder) Build(ctx context.Context, routes []gatewayv1.GRPCRoute) BuildResult {
 	var entries []routeEntry
 
+	var failedRefs []BackendRefError
+
 	for i := range routes {
-		routeEntries := b.buildRouteEntries(ctx, &routes[i])
+		routeEntries, routeFailedRefs := b.buildRouteEntries(ctx, &routes[i])
 		entries = append(entries, routeEntries...)
+		failedRefs = append(failedRefs, routeFailedRefs...)
 	}
 
 	sort.Slice(entries, func(idx, jdx int) bool {
@@ -81,7 +87,10 @@ func (b *GRPCBuilder) Build(ctx context.Context, routes []gatewayv1.GRPCRoute) [
 		rules = append(rules, rule)
 	}
 
-	return rules
+	return BuildResult{
+		Rules:      rules,
+		FailedRefs: failedRefs,
+	}
 }
 
 // logUnsupportedGRPCHeaders logs info messages for unsupported GRPCRouteMatch header features.
@@ -95,8 +104,10 @@ func logUnsupportedGRPCHeaders(namespace, name string, headers []gatewayv1.GRPCH
 	}
 }
 
-func (b *GRPCBuilder) buildRouteEntries(ctx context.Context, route *gatewayv1.GRPCRoute) []routeEntry {
+func (b *GRPCBuilder) buildRouteEntries(ctx context.Context, route *gatewayv1.GRPCRoute) ([]routeEntry, []BackendRefError) {
 	var entries []routeEntry
+
+	var failedRefs []BackendRefError
 
 	hostnames := route.Spec.Hostnames
 	if len(hostnames) == 0 {
@@ -114,8 +125,12 @@ func (b *GRPCBuilder) buildRouteEntries(ctx context.Context, route *gatewayv1.GR
 				)
 			}
 
-			service := b.resolveBackendRef(ctx, route.Namespace, route.Name, rule.BackendRefs)
+			service, backendErr := b.resolveBackendRef(ctx, route.Namespace, route.Name, rule.BackendRefs)
 			if service == "" {
+				if backendErr != nil {
+					failedRefs = append(failedRefs, *backendErr)
+				}
+
 				continue
 			}
 
@@ -144,7 +159,7 @@ func (b *GRPCBuilder) buildRouteEntries(ctx context.Context, route *gatewayv1.GR
 		}
 	}
 
-	return entries
+	return entries, failedRefs
 }
 
 // extractGRPCPath converts a GRPCMethodMatch to an HTTP path.
@@ -203,9 +218,9 @@ func logGRPCBackendWeights(namespace, routeName string, refs []gatewayv1.GRPCBac
 }
 
 //nolint:dupl // similar structure for different route types is intentional
-func (b *GRPCBuilder) resolveBackendRef(ctx context.Context, namespace, routeName string, refs []gatewayv1.GRPCBackendRef) string {
+func (b *GRPCBuilder) resolveBackendRef(ctx context.Context, namespace, routeName string, refs []gatewayv1.GRPCBackendRef) (string, *BackendRefError) {
 	if len(refs) == 0 {
-		return ""
+		return "", nil
 	}
 
 	logMultipleBackends(namespace, routeName, len(refs))
@@ -213,17 +228,17 @@ func (b *GRPCBuilder) resolveBackendRef(ctx context.Context, namespace, routeNam
 
 	selectedIdx := SelectHighestWeightIndex(wrapGRPCBackendRefs(refs))
 	if selectedIdx == -1 {
-		return "" // All backends disabled (weight=0)
+		return "", nil // All backends disabled (weight=0)
 	}
 
 	ref := refs[selectedIdx].BackendRef
 
 	if ref.Group != nil && *ref.Group != "" && *ref.Group != backendGroupCore {
-		return ""
+		return "", nil
 	}
 
 	if ref.Kind != nil && *ref.Kind != backendKindService {
-		return ""
+		return "", nil
 	}
 
 	svcNamespace := namespace
@@ -234,7 +249,14 @@ func (b *GRPCBuilder) resolveBackendRef(ctx context.Context, namespace, routeNam
 	// Validate cross-namespace references with ReferenceGrant
 	if namespace != svcNamespace {
 		if !validateCrossNamespaceRef(ctx, b.Validator, "GRPCRoute", namespace, routeName, svcNamespace, string(ref.Name)) {
-			return ""
+			return "", &BackendRefError{
+				RouteNamespace: namespace,
+				RouteName:      routeName,
+				BackendName:    string(ref.Name),
+				BackendNS:      svcNamespace,
+				Reason:         string(gatewayv1.RouteReasonRefNotPermitted),
+				Message:        fmt.Sprintf("cross-namespace backend reference to %s/%s not permitted by ReferenceGrant", svcNamespace, ref.Name),
+			}
 		}
 	}
 
@@ -254,5 +276,5 @@ func (b *GRPCBuilder) resolveBackendRef(ctx context.Context, namespace, routeNam
 		svcNamespace,
 		b.ClusterDomain,
 		port,
-	)
+	), nil
 }
