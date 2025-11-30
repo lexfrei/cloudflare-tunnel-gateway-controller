@@ -14,6 +14,7 @@ Enables routing traffic through Cloudflare Tunnel using standard Gateway API res
 ## Features
 
 - Standard Gateway API implementation (GatewayClass, Gateway, HTTPRoute, GRPCRoute)
+- Cross-namespace backend references with ReferenceGrant support
 - Hot reload of tunnel configuration (no cloudflared restart required)
 - Optional cloudflared lifecycle management via Helm SDK
 - Leader election for high availability deployments
@@ -140,6 +141,7 @@ The controller supports a subset of Gateway API fields that map to Cloudflare Tu
 | `spec.hostnames` | ✅ | Wildcard `*` supported |
 | `spec.rules[].matches[].path` | ✅ | PathPrefix and Exact types |
 | `spec.rules[].backendRefs` | ✅ | Service name, namespace, port |
+| `spec.rules[].backendRefs[].namespace` | ✅ | Cross-namespace refs require ReferenceGrant |
 | `spec.rules[].matches[].headers` | ❌ | Cloudflare limitation |
 | `spec.rules[].matches[].queryParams` | ❌ | Cloudflare limitation |
 | `spec.rules[].matches[].method` | ❌ | Cloudflare limitation |
@@ -154,6 +156,7 @@ The controller supports a subset of Gateway API fields that map to Cloudflare Tu
 | `spec.rules[].matches[].method.service` | ✅ | Maps to `/Service/*` path |
 | `spec.rules[].matches[].method.method` | ✅ | Maps to `/Service/Method` path |
 | `spec.rules[].backendRefs` | ✅ | Service name, namespace, port |
+| `spec.rules[].backendRefs[].namespace` | ✅ | Cross-namespace refs require ReferenceGrant |
 | `spec.rules[].matches[].headers` | ❌ | Cloudflare limitation |
 | `spec.rules[].filters` | ❌ | Cloudflare limitation |
 | `spec.rules[].backendRefs[].weight` | ⚠️ | Highest weight backend used ([#45](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/issues/45)) |

@@ -10,6 +10,7 @@ This document details the Gateway API implementation in the Cloudflare Tunnel Ga
 | Gateway | `gateway.networking.k8s.io/v1` | ✅ Supported |
 | HTTPRoute | `gateway.networking.k8s.io/v1` | ✅ Supported |
 | GRPCRoute | `gateway.networking.k8s.io/v1` | ✅ Supported |
+| ReferenceGrant | `gateway.networking.k8s.io/v1beta1` | ✅ Supported |
 | TCPRoute | `gateway.networking.k8s.io/v1alpha2` | ❌ Not supported |
 | TLSRoute | `gateway.networking.k8s.io/v1alpha2` | ❌ Not supported |
 | UDPRoute | `gateway.networking.k8s.io/v1alpha2` | ❌ Not supported |
@@ -89,6 +90,27 @@ The Gateway resource is accepted but most listener configuration is ignored beca
 | `spec.rules[].backendRefs[].port` | ✅ | Service port |
 | `spec.rules[].backendRefs[].weight` | ✅ | Backend with highest weight selected (default: 1); see [Weight Selection](#weight-selection-behavior) |
 | `spec.rules[].backendRefs[].filters` | ❌ | Not implemented |
+
+### ReferenceGrant
+
+ReferenceGrant enables cross-namespace backend references in HTTPRoute and GRPCRoute resources. This is a security feature that requires explicit permission for a Route in one namespace to reference a Service in another namespace.
+
+| Field | Supported | Notes |
+|-------|-----------|-------|
+| `spec.from` | ✅ | Source routes (HTTPRoute, GRPCRoute) |
+| `spec.from[].group` | ✅ | Must be `gateway.networking.k8s.io` |
+| `spec.from[].kind` | ✅ | Must be `HTTPRoute` or `GRPCRoute` |
+| `spec.from[].namespace` | ✅ | Namespace where routes are located |
+| `spec.to` | ✅ | Target resources (Services) |
+| `spec.to[].group` | ✅ | Must be `""` (core) or `"core"` for Services |
+| `spec.to[].kind` | ✅ | Must be `Service` |
+| `spec.to[].name` | ✅ | Optional; if omitted, all Services allowed |
+
+**How it works:**
+
+1. ReferenceGrant must be created in the **target namespace** (where the Service is)
+2. It grants permission to routes in the **source namespace** to reference Services in the target namespace
+3. Without a ReferenceGrant, cross-namespace backend references are denied with `ResolvedRefs=False` status
 
 ### Weight Selection Behavior
 
@@ -223,6 +245,7 @@ This keeps the controller simple and predictable, and gives you full control ove
 | `Accepted` | `True` | `Accepted` | Route accepted and synced |
 | `Accepted` | `False` | `NoMatchingParent` | Sync to Cloudflare failed |
 | `ResolvedRefs` | `True` | `ResolvedRefs` | Backend references resolved |
+| `ResolvedRefs` | `False` | `RefNotPermitted` | Cross-namespace reference not permitted by ReferenceGrant |
 
 ### GRPCRoute Conditions
 
@@ -231,6 +254,7 @@ This keeps the controller simple and predictable, and gives you full control ove
 | `Accepted` | `True` | `Accepted` | Route accepted and synced |
 | `Accepted` | `False` | `NoMatchingParent` | Sync to Cloudflare failed |
 | `ResolvedRefs` | `True` | `ResolvedRefs` | Backend references resolved |
+| `ResolvedRefs` | `False` | `RefNotPermitted` | Cross-namespace reference not permitted by ReferenceGrant |
 
 ## Examples
 
@@ -321,7 +345,24 @@ spec:
 
 ### Cross-Namespace Route
 
+Cross-namespace backend references require a ReferenceGrant in the target namespace:
+
 ```yaml
+# ReferenceGrant must be in the target namespace (where the Service is)
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
+metadata:
+  name: allow-app-to-backend
+  namespace: backend-namespace  # Target namespace
+spec:
+  from:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      namespace: app-namespace  # Source namespace
+  to:
+    - group: ""  # Core API group (empty string for Services)
+      kind: Service
+---
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
@@ -340,6 +381,8 @@ spec:
           namespace: backend-namespace  # Cross-namespace reference
           port: 8080
 ```
+
+Without the ReferenceGrant, the route status will show `ResolvedRefs=False` with reason `RefNotPermitted`.
 
 ### Backend Selection with Weights
 
@@ -466,6 +509,47 @@ spec:
             service: mypackage.UserService
       backendRefs:
         - name: user-write-service
+          port: 50051
+```
+
+### Cross-Namespace GRPCRoute
+
+GRPCRoute also supports cross-namespace backend references with ReferenceGrant:
+
+```yaml
+# ReferenceGrant in target namespace
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
+metadata:
+  name: allow-grpc-routes
+  namespace: grpc-services  # Target namespace
+spec:
+  from:
+    - group: gateway.networking.k8s.io
+      kind: GRPCRoute
+      namespace: app-namespace  # Source namespace
+  to:
+    - group: ""  # Core API group (empty string for Services)
+      kind: Service
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: GRPCRoute
+metadata:
+  name: cross-ns-grpc-route
+  namespace: app-namespace
+spec:
+  parentRefs:
+    - name: cloudflare-tunnel
+      namespace: cloudflare-tunnel-system
+  hostnames:
+    - grpc.example.com
+  rules:
+    - matches:
+        - method:
+            service: mypackage.UserService
+      backendRefs:
+        - name: user-grpc-service
+          namespace: grpc-services  # Cross-namespace reference
           port: 50051
 ```
 
