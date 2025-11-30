@@ -1,6 +1,7 @@
 package ingress
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"sort"
@@ -8,6 +9,8 @@ import (
 	"github.com/cloudflare/cloudflare-go/v6"
 	"github.com/cloudflare/cloudflare-go/v6/zero_trust"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
+
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/referencegrant"
 )
 
 // GRPCBuilder converts Gateway API GRPCRoute resources to Cloudflare Tunnel
@@ -16,12 +19,16 @@ type GRPCBuilder struct {
 	// ClusterDomain is the Kubernetes cluster domain suffix for service DNS.
 	// Typically "cluster.local".
 	ClusterDomain string
+
+	// Validator validates cross-namespace backend references using ReferenceGrant.
+	Validator *referencegrant.Validator
 }
 
-// NewGRPCBuilder creates a new GRPCBuilder with the specified cluster domain.
-func NewGRPCBuilder(clusterDomain string) *GRPCBuilder {
+// NewGRPCBuilder creates a new GRPCBuilder with the specified cluster domain and validator.
+func NewGRPCBuilder(clusterDomain string, validator *referencegrant.Validator) *GRPCBuilder {
 	return &GRPCBuilder{
 		ClusterDomain: clusterDomain,
+		Validator:     validator,
 	}
 }
 
@@ -34,11 +41,11 @@ func NewGRPCBuilder(clusterDomain string) *GRPCBuilder {
 //
 // Unlike HTTPRoute builder, this does NOT append a catch-all rule.
 // The catch-all rule should be added once after merging all route types.
-func (b *GRPCBuilder) Build(routes []gatewayv1.GRPCRoute) []zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress {
+func (b *GRPCBuilder) Build(ctx context.Context, routes []gatewayv1.GRPCRoute) []zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress {
 	var entries []routeEntry
 
 	for i := range routes {
-		routeEntries := b.buildRouteEntries(&routes[i])
+		routeEntries := b.buildRouteEntries(ctx, &routes[i])
 		entries = append(entries, routeEntries...)
 	}
 
@@ -88,7 +95,7 @@ func logUnsupportedGRPCHeaders(namespace, name string, headers []gatewayv1.GRPCH
 	}
 }
 
-func (b *GRPCBuilder) buildRouteEntries(route *gatewayv1.GRPCRoute) []routeEntry {
+func (b *GRPCBuilder) buildRouteEntries(ctx context.Context, route *gatewayv1.GRPCRoute) []routeEntry {
 	var entries []routeEntry
 
 	hostnames := route.Spec.Hostnames
@@ -107,7 +114,7 @@ func (b *GRPCBuilder) buildRouteEntries(route *gatewayv1.GRPCRoute) []routeEntry
 				)
 			}
 
-			service := b.resolveBackendRef(route.Namespace, route.Name, rule.BackendRefs)
+			service := b.resolveBackendRef(ctx, route.Namespace, route.Name, rule.BackendRefs)
 			if service == "" {
 				continue
 			}
@@ -196,7 +203,7 @@ func logGRPCBackendWeights(namespace, routeName string, refs []gatewayv1.GRPCBac
 }
 
 //nolint:dupl // similar structure for different route types is intentional
-func (b *GRPCBuilder) resolveBackendRef(namespace, routeName string, refs []gatewayv1.GRPCBackendRef) string {
+func (b *GRPCBuilder) resolveBackendRef(ctx context.Context, namespace, routeName string, refs []gatewayv1.GRPCBackendRef) string {
 	if len(refs) == 0 {
 		return ""
 	}
@@ -222,6 +229,13 @@ func (b *GRPCBuilder) resolveBackendRef(namespace, routeName string, refs []gate
 	svcNamespace := namespace
 	if ref.Namespace != nil {
 		svcNamespace = string(*ref.Namespace)
+	}
+
+	// Validate cross-namespace references with ReferenceGrant
+	if namespace != svcNamespace {
+		if !validateCrossNamespaceRef(ctx, b.Validator, "GRPCRoute", namespace, routeName, svcNamespace, string(ref.Name)) {
+			return ""
+		}
 	}
 
 	port := DefaultHTTPPort
