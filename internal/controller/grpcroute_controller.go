@@ -18,6 +18,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
+	gatewayv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/api/v1alpha1"
 )
@@ -248,6 +249,11 @@ func (r *GRPCRouteReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			&corev1.Secret{},
 			handler.EnqueueRequestsFromMapFunc(mapper.MapSecretToRequests(r.getAllRelevantRoutes)),
 		).
+		// Watch ReferenceGrant for cross-namespace permission changes
+		Watches(
+			&gatewayv1beta1.ReferenceGrant{},
+			handler.EnqueueRequestsFromMapFunc(r.findRoutesForReferenceGrant),
+		).
 		Complete(r)
 	if err != nil {
 		return errors.Wrap(err, "failed to setup grpcroute controller")
@@ -311,6 +317,70 @@ func (r *GRPCRouteReconciler) findRoutesForGateway(
 
 				break
 			}
+		}
+	}
+
+	return requests
+}
+
+//nolint:noinlineerr // inline error handling for controller pattern
+func (r *GRPCRouteReconciler) findRoutesForReferenceGrant(
+	ctx context.Context,
+	obj client.Object,
+) []reconcile.Request {
+	refGrant, ok := obj.(*gatewayv1beta1.ReferenceGrant)
+	if !ok {
+		return nil
+	}
+
+	// ReferenceGrant is in the target namespace (where Services are)
+	targetNamespace := refGrant.Namespace
+
+	var routeList gatewayv1.GRPCRouteList
+	if err := r.List(ctx, &routeList); err != nil {
+		return nil
+	}
+
+	var requests []reconcile.Request
+
+	for i := range routeList.Items {
+		route := &routeList.Items[i]
+
+		// Only process routes managed by our Gateway
+		if !r.isRouteForOurGateway(ctx, route) {
+			continue
+		}
+
+		// Check if route has cross-namespace references to the ReferenceGrant namespace
+		hasRefToNamespace := false
+
+		for _, rule := range route.Spec.Rules {
+			for _, backendRef := range rule.BackendRefs {
+				backendNs := route.Namespace
+				if backendRef.Namespace != nil {
+					backendNs = string(*backendRef.Namespace)
+				}
+
+				// If this route references a service in the ReferenceGrant's namespace
+				if backendNs == targetNamespace && backendNs != route.Namespace {
+					hasRefToNamespace = true
+
+					break
+				}
+			}
+
+			if hasRefToNamespace {
+				break
+			}
+		}
+
+		if hasRefToNamespace {
+			requests = append(requests, reconcile.Request{
+				NamespacedName: client.ObjectKey{
+					Name:      route.Name,
+					Namespace: route.Namespace,
+				},
+			})
 		}
 	}
 

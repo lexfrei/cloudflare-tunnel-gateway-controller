@@ -14,6 +14,7 @@ import (
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/config"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/ingress"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/referencegrant"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/routebinding"
 )
 
@@ -30,9 +31,10 @@ type RouteSyncer struct {
 	GatewayClassName string
 	ConfigResolver   *config.Resolver
 
-	httpBuilder      *ingress.Builder
-	grpcBuilder      *ingress.GRPCBuilder
-	bindingValidator *routebinding.Validator
+	httpBuilder             *ingress.Builder
+	grpcBuilder             *ingress.GRPCBuilder
+	bindingValidator        *routebinding.Validator
+	referencegrantValidator *referencegrant.Validator
 }
 
 // NewRouteSyncer creates a new RouteSyncer.
@@ -43,15 +45,18 @@ func NewRouteSyncer(
 	gatewayClassName string,
 	configResolver *config.Resolver,
 ) *RouteSyncer {
+	refGrantValidator := referencegrant.NewValidator(c)
+
 	return &RouteSyncer{
-		Client:           c,
-		Scheme:           scheme,
-		ClusterDomain:    clusterDomain,
-		GatewayClassName: gatewayClassName,
-		ConfigResolver:   configResolver,
-		httpBuilder:      ingress.NewBuilder(clusterDomain),
-		grpcBuilder:      ingress.NewGRPCBuilder(clusterDomain),
-		bindingValidator: routebinding.NewValidator(c),
+		Client:                  c,
+		Scheme:                  scheme,
+		ClusterDomain:           clusterDomain,
+		GatewayClassName:        gatewayClassName,
+		ConfigResolver:          configResolver,
+		httpBuilder:             ingress.NewBuilder(clusterDomain, refGrantValidator),
+		grpcBuilder:             ingress.NewGRPCBuilder(clusterDomain, refGrantValidator),
+		bindingValidator:        routebinding.NewValidator(c),
+		referencegrantValidator: refGrantValidator,
 	}
 }
 
@@ -126,8 +131,8 @@ func (s *RouteSyncer) SyncAllRoutes(ctx context.Context) (ctrl.Result, *SyncResu
 	)
 
 	// Build desired rules from both route types
-	httpRules := s.httpBuilder.Build(httpRoutes)
-	grpcRules := s.grpcBuilder.Build(grpcRoutes)
+	httpRules := s.httpBuilder.Build(ctx, httpRoutes)
+	grpcRules := s.grpcBuilder.Build(ctx, grpcRoutes)
 
 	// Merge rules (HTTP rules first, then GRPC, then sort)
 	desiredRules := mergeAndSortRules(httpRules, grpcRules)
