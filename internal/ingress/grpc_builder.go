@@ -2,6 +2,7 @@ package ingress
 
 import (
 	"fmt"
+	"log/slog"
 	"sort"
 
 	"github.com/cloudflare/cloudflare-go/v6"
@@ -87,7 +88,16 @@ func (b *GRPCBuilder) buildRouteEntries(route *gatewayv1.GRPCRoute) []routeEntry
 
 	for _, hostname := range hostnames {
 		for _, rule := range route.Spec.Rules {
-			service := b.resolveBackendRef(route.Namespace, rule.BackendRefs)
+			// Warn if filters are specified (not supported)
+			if len(rule.Filters) > 0 {
+				slog.Warn("route configuration partially applied",
+					"route", fmt.Sprintf("%s/%s", route.Namespace, route.Name),
+					"reason", "filters not supported by Cloudflare Tunnel",
+					"ignored_filters", len(rule.Filters),
+				)
+			}
+
+			service := b.resolveBackendRef(route.Namespace, route.Name, rule.BackendRefs)
 			if service == "" {
 				continue
 			}
@@ -104,6 +114,15 @@ func (b *GRPCBuilder) buildRouteEntries(route *gatewayv1.GRPCRoute) []routeEntry
 			}
 
 			for _, match := range rule.Matches {
+				// Warn if header matching is specified (not supported)
+				if len(match.Headers) > 0 {
+					slog.Warn("route configuration partially applied",
+						"route", fmt.Sprintf("%s/%s", route.Namespace, route.Name),
+						"reason", "header matching not supported by Cloudflare Tunnel",
+						"ignored_headers", len(match.Headers),
+					)
+				}
+
 				path, priority := b.extractGRPCPath(match.Method)
 				entries = append(entries, routeEntry{
 					hostname: string(hostname),
@@ -159,9 +178,32 @@ func (b *GRPCBuilder) extractGRPCPath(methodMatch *gatewayv1.GRPCMethodMatch) (p
 }
 
 //nolint:dupl // similar structure for different route types is intentional
-func (b *GRPCBuilder) resolveBackendRef(namespace string, refs []gatewayv1.GRPCBackendRef) string {
+func (b *GRPCBuilder) resolveBackendRef(namespace, routeName string, refs []gatewayv1.GRPCBackendRef) string {
 	if len(refs) == 0 {
 		return ""
+	}
+
+	// Warn if multiple backends are specified
+	if len(refs) > 1 {
+		slog.Warn("route configuration partially applied",
+			"route", fmt.Sprintf("%s/%s", namespace, routeName),
+			"reason", "multiple backendRefs specified, using only highest weight",
+			"total_backends", len(refs),
+			"ignored_backends", len(refs)-1,
+		)
+	}
+
+	// Warn if any backend has weight specified (traffic splitting not supported)
+	for i, backendRef := range refs {
+		if backendRef.Weight != nil && *backendRef.Weight != 1 {
+			slog.Warn("route configuration partially applied",
+				"route", fmt.Sprintf("%s/%s", namespace, routeName),
+				"reason", "backendRef weight ignored, traffic splitting not supported",
+				"backend", string(backendRef.Name),
+				"backend_index", i,
+				"weight", *backendRef.Weight,
+			)
+		}
 	}
 
 	selectedIdx := SelectHighestWeightIndex(wrapGRPCBackendRefs(refs))
