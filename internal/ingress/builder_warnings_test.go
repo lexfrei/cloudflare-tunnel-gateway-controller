@@ -18,7 +18,7 @@ import (
 func setupTestLogger() (*bytes.Buffer, func()) {
 	var buf bytes.Buffer
 	handler := slog.NewTextHandler(&buf, &slog.HandlerOptions{
-		Level: slog.LevelWarn,
+		Level: slog.LevelInfo,
 	})
 	logger := slog.New(handler)
 	oldDefault := slog.Default()

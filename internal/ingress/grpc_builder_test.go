@@ -1,4 +1,3 @@
-//nolint:goconst // test file uses literal strings for readability
 package ingress_test
 
 import (
@@ -89,8 +88,8 @@ func TestGRPCBuild_ServiceMethodMatch(t *testing.T) {
 	t.Parallel()
 
 	builder := ingress.NewGRPCBuilder("cluster.local")
-	service := "mypackage.MyService"
-	method := "GetUser"
+	service := testGRPCService
+	method := testGRPCMethod
 	routes := []gatewayv1.GRPCRoute{
 		{
 			ObjectMeta: metav1.ObjectMeta{
@@ -128,7 +127,7 @@ func TestGRPCBuild_ServiceOnlyMatch(t *testing.T) {
 	t.Parallel()
 
 	builder := ingress.NewGRPCBuilder("cluster.local")
-	service := "mypackage.MyService"
+	service := testGRPCService
 	routes := []gatewayv1.GRPCRoute{
 		{
 			ObjectMeta: metav1.ObjectMeta{
@@ -497,7 +496,7 @@ func TestGRPCBuild_MethodOnlyMatch(t *testing.T) {
 	t.Parallel()
 
 	builder := ingress.NewGRPCBuilder("cluster.local")
-	method := "GetUser"
+	method := testGRPCMethod
 	routes := []gatewayv1.GRPCRoute{
 		{
 			ObjectMeta: metav1.ObjectMeta{

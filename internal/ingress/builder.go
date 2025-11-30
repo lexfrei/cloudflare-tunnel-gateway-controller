@@ -107,7 +107,35 @@ func (b *Builder) Build(routes []gatewayv1.HTTPRoute) []zero_trust.TunnelCloudfl
 	return rules
 }
 
-//nolint:dupl // similar structure for different route types is intentional
+// warnUnsupportedHTTPMatchFeatures logs warnings for unsupported HTTPRouteMatch features.
+func warnUnsupportedHTTPMatchFeatures(namespace, name string, match gatewayv1.HTTPRouteMatch) {
+	routeKey := fmt.Sprintf("%s/%s", namespace, name)
+
+	if len(match.Headers) > 0 {
+		slog.Info("route configuration partially applied",
+			"route", routeKey,
+			"reason", "header matching not supported by Cloudflare Tunnel",
+			"ignored_headers", len(match.Headers),
+		)
+	}
+
+	if len(match.QueryParams) > 0 {
+		slog.Info("route configuration partially applied",
+			"route", routeKey,
+			"reason", "query parameter matching not supported by Cloudflare Tunnel",
+			"ignored_params", len(match.QueryParams),
+		)
+	}
+
+	if match.Method != nil {
+		slog.Info("route configuration partially applied",
+			"route", routeKey,
+			"reason", "method matching not supported by Cloudflare Tunnel",
+			"ignored_method", string(*match.Method),
+		)
+	}
+}
+
 func (b *Builder) buildRouteEntries(route *gatewayv1.HTTPRoute) []routeEntry {
 	var entries []routeEntry
 
@@ -120,7 +148,7 @@ func (b *Builder) buildRouteEntries(route *gatewayv1.HTTPRoute) []routeEntry {
 		for _, rule := range route.Spec.Rules {
 			// Warn if filters are specified (not supported)
 			if len(rule.Filters) > 0 {
-				slog.Warn("route configuration partially applied",
+				slog.Info("route configuration partially applied",
 					"route", fmt.Sprintf("%s/%s", route.Namespace, route.Name),
 					"reason", "filters not supported by Cloudflare Tunnel",
 					"ignored_filters", len(rule.Filters),
@@ -144,32 +172,7 @@ func (b *Builder) buildRouteEntries(route *gatewayv1.HTTPRoute) []routeEntry {
 			}
 
 			for _, match := range rule.Matches {
-				// Warn if header matching is specified (not supported)
-				if len(match.Headers) > 0 {
-					slog.Warn("route configuration partially applied",
-						"route", fmt.Sprintf("%s/%s", route.Namespace, route.Name),
-						"reason", "header matching not supported by Cloudflare Tunnel",
-						"ignored_headers", len(match.Headers),
-					)
-				}
-
-				// Warn if query parameter matching is specified (not supported)
-				if len(match.QueryParams) > 0 {
-					slog.Warn("route configuration partially applied",
-						"route", fmt.Sprintf("%s/%s", route.Namespace, route.Name),
-						"reason", "query parameter matching not supported by Cloudflare Tunnel",
-						"ignored_params", len(match.QueryParams),
-					)
-				}
-
-				// Warn if method matching is specified (not supported)
-				if match.Method != nil {
-					slog.Warn("route configuration partially applied",
-						"route", fmt.Sprintf("%s/%s", route.Namespace, route.Name),
-						"reason", "method matching not supported by Cloudflare Tunnel",
-						"ignored_method", string(*match.Method),
-					)
-				}
+				warnUnsupportedHTTPMatchFeatures(route.Namespace, route.Name, match)
 
 				path, priority := b.extractPath(route.Namespace, route.Name, match.Path)
 				entries = append(entries, routeEntry{
@@ -205,11 +208,12 @@ func (b *Builder) extractPath(namespace, routeName string, pathMatch *gatewayv1.
 		return path, 1
 	case gatewayv1.PathMatchRegularExpression:
 		// Warn that RegularExpression is treated as PathPrefix
-		slog.Warn("route configuration partially applied",
+		slog.Info("route configuration partially applied",
 			"route", fmt.Sprintf("%s/%s", namespace, routeName),
 			"reason", "RegularExpression path type treated as PathPrefix",
 			"path", path,
 		)
+
 		return path, 0
 	case gatewayv1.PathMatchPathPrefix:
 		return path, 0
@@ -218,26 +222,23 @@ func (b *Builder) extractPath(namespace, routeName string, pathMatch *gatewayv1.
 	return path, 0
 }
 
-//nolint:dupl // similar structure for different route types is intentional
-func (b *Builder) resolveBackendRef(namespace, routeName string, refs []gatewayv1.HTTPBackendRef) string {
-	if len(refs) == 0 {
-		return ""
-	}
-
-	// Warn if multiple backends are specified
-	if len(refs) > 1 {
-		slog.Warn("route configuration partially applied",
+// warnMultipleBackends logs a warning when multiple backendRefs are specified.
+func warnMultipleBackends(namespace, routeName string, totalBackends int) {
+	if totalBackends > 1 {
+		slog.Info("route configuration partially applied",
 			"route", fmt.Sprintf("%s/%s", namespace, routeName),
 			"reason", "multiple backendRefs specified, using only highest weight",
-			"total_backends", len(refs),
-			"ignored_backends", len(refs)-1,
+			"total_backends", totalBackends,
+			"ignored_backends", totalBackends-1,
 		)
 	}
+}
 
-	// Warn if any backend has weight specified (traffic splitting not supported)
+// warnBackendWeights logs warnings for backends with non-default weights.
+func warnBackendWeights(namespace, routeName string, refs []gatewayv1.HTTPBackendRef) {
 	for i, backendRef := range refs {
 		if backendRef.Weight != nil && *backendRef.Weight != 1 {
-			slog.Warn("route configuration partially applied",
+			slog.Info("route configuration partially applied",
 				"route", fmt.Sprintf("%s/%s", namespace, routeName),
 				"reason", "backendRef weight ignored, traffic splitting not supported",
 				"backend", string(backendRef.Name),
@@ -246,6 +247,16 @@ func (b *Builder) resolveBackendRef(namespace, routeName string, refs []gatewayv
 			)
 		}
 	}
+}
+
+//nolint:dupl // similar structure for different route types is intentional
+func (b *Builder) resolveBackendRef(namespace, routeName string, refs []gatewayv1.HTTPBackendRef) string {
+	if len(refs) == 0 {
+		return ""
+	}
+
+	warnMultipleBackends(namespace, routeName, len(refs))
+	warnBackendWeights(namespace, routeName, refs)
 
 	selectedIdx := SelectHighestWeightIndex(wrapHTTPBackendRefs(refs))
 	if selectedIdx == -1 {

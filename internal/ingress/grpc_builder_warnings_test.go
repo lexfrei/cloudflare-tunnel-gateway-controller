@@ -11,6 +11,11 @@ import (
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/ingress"
 )
 
+const (
+	testGRPCService = "mypackage.MyService"
+	testGRPCMethod  = "GetUser"
+)
+
 func TestGRPCBuild_WarnMultipleBackendRefs(t *testing.T) {
 	buf, cleanup := setupTestLogger()
 	defer cleanup()
@@ -92,7 +97,7 @@ func TestGRPCBuild_WarnHeaderMatching(t *testing.T) {
 
 	builder := ingress.NewGRPCBuilder("cluster.local")
 	headerType := gatewayv1.GRPCHeaderMatchExact
-	service := "mypackage.MyService"
+	service := testGRPCService
 
 	routes := []gatewayv1.GRPCRoute{
 		{
@@ -204,7 +209,7 @@ func TestGRPCBuild_MultipleWarnings(t *testing.T) {
 	builder := ingress.NewGRPCBuilder("cluster.local")
 	headerType := gatewayv1.GRPCHeaderMatchExact
 	weight50 := int32(50)
-	service := "mypackage.MyService"
+	service := testGRPCService
 
 	routes := []gatewayv1.GRPCRoute{
 		{
@@ -256,8 +261,8 @@ func TestGRPCBuild_NoWarningsForValidConfig(t *testing.T) {
 	defer cleanup()
 
 	builder := ingress.NewGRPCBuilder("cluster.local")
-	service := "mypackage.MyService"
-	method := "GetUser"
+	service := testGRPCService
+	method := testGRPCMethod
 
 	routes := []gatewayv1.GRPCRoute{
 		{
