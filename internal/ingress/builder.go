@@ -107,8 +107,8 @@ func (b *Builder) Build(routes []gatewayv1.HTTPRoute) []zero_trust.TunnelCloudfl
 	return rules
 }
 
-// warnUnsupportedHTTPMatchFeatures logs warnings for unsupported HTTPRouteMatch features.
-func warnUnsupportedHTTPMatchFeatures(namespace, name string, match gatewayv1.HTTPRouteMatch) {
+// logUnsupportedHTTPMatchFeatures logs info messages for unsupported HTTPRouteMatch features.
+func logUnsupportedHTTPMatchFeatures(namespace, name string, match gatewayv1.HTTPRouteMatch) {
 	routeKey := fmt.Sprintf("%s/%s", namespace, name)
 
 	if len(match.Headers) > 0 {
@@ -172,7 +172,7 @@ func (b *Builder) buildRouteEntries(route *gatewayv1.HTTPRoute) []routeEntry {
 			}
 
 			for _, match := range rule.Matches {
-				warnUnsupportedHTTPMatchFeatures(route.Namespace, route.Name, match)
+				logUnsupportedHTTPMatchFeatures(route.Namespace, route.Name, match)
 
 				path, priority := b.extractPath(route.Namespace, route.Name, match.Path)
 				entries = append(entries, routeEntry{
@@ -222,8 +222,8 @@ func (b *Builder) extractPath(namespace, routeName string, pathMatch *gatewayv1.
 	return path, 0
 }
 
-// warnMultipleBackends logs a warning when multiple backendRefs are specified.
-func warnMultipleBackends(namespace, routeName string, totalBackends int) {
+// logMultipleBackends logs an info message when multiple backendRefs are specified.
+func logMultipleBackends(namespace, routeName string, totalBackends int) {
 	if totalBackends > 1 {
 		slog.Info("route configuration partially applied",
 			"route", fmt.Sprintf("%s/%s", namespace, routeName),
@@ -234,8 +234,8 @@ func warnMultipleBackends(namespace, routeName string, totalBackends int) {
 	}
 }
 
-// warnBackendWeights logs warnings for backends with non-default weights.
-func warnBackendWeights(namespace, routeName string, refs []gatewayv1.HTTPBackendRef) {
+// logBackendWeights logs info messages for backends with non-default weights.
+func logBackendWeights(namespace, routeName string, refs []gatewayv1.HTTPBackendRef) {
 	for i, backendRef := range refs {
 		if backendRef.Weight != nil && *backendRef.Weight != 1 {
 			slog.Info("route configuration partially applied",
@@ -255,8 +255,8 @@ func (b *Builder) resolveBackendRef(namespace, routeName string, refs []gatewayv
 		return ""
 	}
 
-	warnMultipleBackends(namespace, routeName, len(refs))
-	warnBackendWeights(namespace, routeName, refs)
+	logMultipleBackends(namespace, routeName, len(refs))
+	logBackendWeights(namespace, routeName, refs)
 
 	selectedIdx := SelectHighestWeightIndex(wrapHTTPBackendRefs(refs))
 	if selectedIdx == -1 {

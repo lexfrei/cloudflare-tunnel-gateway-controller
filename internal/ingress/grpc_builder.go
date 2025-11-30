@@ -77,8 +77,8 @@ func (b *GRPCBuilder) Build(routes []gatewayv1.GRPCRoute) []zero_trust.TunnelClo
 	return rules
 }
 
-// warnUnsupportedGRPCHeaders logs warnings for unsupported GRPCRouteMatch header features.
-func warnUnsupportedGRPCHeaders(namespace, name string, headers []gatewayv1.GRPCHeaderMatch) {
+// logUnsupportedGRPCHeaders logs info messages for unsupported GRPCRouteMatch header features.
+func logUnsupportedGRPCHeaders(namespace, name string, headers []gatewayv1.GRPCHeaderMatch) {
 	if len(headers) > 0 {
 		slog.Info("route configuration partially applied",
 			"route", fmt.Sprintf("%s/%s", namespace, name),
@@ -124,7 +124,7 @@ func (b *GRPCBuilder) buildRouteEntries(route *gatewayv1.GRPCRoute) []routeEntry
 			}
 
 			for _, match := range rule.Matches {
-				warnUnsupportedGRPCHeaders(route.Namespace, route.Name, match.Headers)
+				logUnsupportedGRPCHeaders(route.Namespace, route.Name, match.Headers)
 
 				path, priority := b.extractGRPCPath(match.Method)
 				entries = append(entries, routeEntry{
@@ -180,8 +180,8 @@ func (b *GRPCBuilder) extractGRPCPath(methodMatch *gatewayv1.GRPCMethodMatch) (p
 	return "/" + service + "/" + method, 1
 }
 
-// warnGRPCBackendWeights logs warnings for GRPC backends with non-default weights.
-func warnGRPCBackendWeights(namespace, routeName string, refs []gatewayv1.GRPCBackendRef) {
+// logGRPCBackendWeights logs info messages for GRPC backends with non-default weights.
+func logGRPCBackendWeights(namespace, routeName string, refs []gatewayv1.GRPCBackendRef) {
 	for i, backendRef := range refs {
 		if backendRef.Weight != nil && *backendRef.Weight != 1 {
 			slog.Info("route configuration partially applied",
@@ -201,8 +201,8 @@ func (b *GRPCBuilder) resolveBackendRef(namespace, routeName string, refs []gate
 		return ""
 	}
 
-	warnMultipleBackends(namespace, routeName, len(refs))
-	warnGRPCBackendWeights(namespace, routeName, refs)
+	logMultipleBackends(namespace, routeName, len(refs))
+	logGRPCBackendWeights(namespace, routeName, refs)
 
 	selectedIdx := SelectHighestWeightIndex(wrapGRPCBackendRefs(refs))
 	if selectedIdx == -1 {
