@@ -110,8 +110,13 @@ func (v *Validator) matchesFrom(grantFrom gatewayv1beta1.ReferenceGrantFrom, fro
 
 // matchesTo checks if the ReferenceGrantTo matches the target reference.
 func (v *Validator) matchesTo(grantTo gatewayv1beta1.ReferenceGrantTo, toRef Reference) bool {
-	// Check group
-	if string(grantTo.Group) != toRef.Group {
+	// Check group - normalize "core" to empty string for core API group
+	grantGroup := string(grantTo.Group)
+	if grantGroup == "core" {
+		grantGroup = ""
+	}
+
+	if grantGroup != toRef.Group {
 		return false
 	}
 

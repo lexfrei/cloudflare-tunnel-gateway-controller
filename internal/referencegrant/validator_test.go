@@ -444,6 +444,66 @@ func TestValidator_IsReferenceAllowed_WrongKind(t *testing.T) {
 	assert.False(t, allowed, "reference to wrong kind should be denied")
 }
 
+// TestValidator_IsReferenceAllowed_CoreGroupAlias tests that "core" is accepted
+// as an alias for empty string in ReferenceGrant To.Group field.
+// Per Gateway API documentation, both "" and "core" should work for core resources.
+func TestValidator_IsReferenceAllowed_CoreGroupAlias(t *testing.T) {
+	t.Parallel()
+
+	scheme := setupScheme(t)
+
+	// ReferenceGrant uses "core" as the group (not empty string)
+	grant := &gatewayv1beta1.ReferenceGrant{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "allow-with-core-alias",
+			Namespace: "backend",
+		},
+		Spec: gatewayv1beta1.ReferenceGrantSpec{
+			From: []gatewayv1beta1.ReferenceGrantFrom{
+				{
+					Group:     gatewayv1.GroupName,
+					Kind:      "HTTPRoute",
+					Namespace: "default",
+				},
+			},
+			To: []gatewayv1beta1.ReferenceGrantTo{
+				{
+					Group: "core", // Using "core" alias instead of ""
+					Kind:  "Service",
+				},
+			},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(grant).
+		Build()
+
+	validator := referencegrant.NewValidator(fakeClient)
+
+	from := referencegrant.Reference{
+		Group:     gatewayv1.GroupName,
+		Kind:      "HTTPRoute",
+		Namespace: "default",
+		Name:      "test-route",
+	}
+
+	// Builder always uses empty string for core group
+	to := referencegrant.Reference{
+		Group:     coreGroup, // empty string
+		Kind:      "Service",
+		Namespace: "backend",
+		Name:      "backend-service",
+	}
+
+	ctx := context.Background()
+	allowed, err := validator.IsReferenceAllowed(ctx, from, to)
+
+	require.NoError(t, err)
+	assert.True(t, allowed, "ReferenceGrant with 'core' group should match references with empty group")
+}
+
 // setupScheme creates a scheme with all required types.
 func setupScheme(t *testing.T) *runtime.Scheme {
 	t.Helper()
