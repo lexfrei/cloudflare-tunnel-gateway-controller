@@ -68,7 +68,7 @@ the edge.
 | `spec.rules[].filters` | No | Not implemented |
 | `spec.rules[].backendRefs` | Yes | Service backends only |
 | `spec.rules[].backendRefs[].name` | Yes | Service name |
-| `spec.rules[].backendRefs[].namespace` | Yes | Service namespace |
+| `spec.rules[].backendRefs[].namespace` | Yes | Cross-namespace refs require ReferenceGrant |
 | `spec.rules[].backendRefs[].port` | Yes | Service port |
 | `spec.rules[].backendRefs[].weight` | Yes | Backend with highest weight selected |
 | `spec.rules[].backendRefs[].filters` | No | Not implemented |
@@ -92,7 +92,7 @@ the edge.
 | `spec.rules[].filters` | No | Not implemented |
 | `spec.rules[].backendRefs` | Yes | Service backends only |
 | `spec.rules[].backendRefs[].name` | Yes | Service name |
-| `spec.rules[].backendRefs[].namespace` | Yes | Service namespace |
+| `spec.rules[].backendRefs[].namespace` | Yes | Cross-namespace refs require ReferenceGrant |
 | `spec.rules[].backendRefs[].port` | Yes | Service port |
 | `spec.rules[].backendRefs[].weight` | Yes | Backend with highest weight selected |
 | `spec.rules[].backendRefs[].filters` | No | Not implemented |
@@ -158,6 +158,14 @@ backendRefs:
     This is NOT traffic splitting. The controller always sends 100% of
     traffic to the selected backend. Use weights to indicate preference,
     not traffic distribution.
+
+!!! danger "No Fallback on Rejection"
+
+    If the highest-weight backend is rejected (e.g., due to missing
+    ReferenceGrant for cross-namespace reference), the controller does
+    **not** fall back to the next backend. The entire rule is skipped,
+    and the route status will show `ResolvedRefs=False`. This is per
+    Gateway API specification — weights indicate preference, not failover order.
 
 ## Status Conditions
 
