@@ -126,6 +126,8 @@ When multiple `backendRefs` are specified in a rule, the controller selects the 
 
 **Equal weights:** When multiple backends have the same highest weight, the first one in the list is selected for deterministic behavior.
 
+**No fallback on rejection:** If the highest-weight backend is rejected (e.g., due to missing ReferenceGrant for cross-namespace reference), the controller does **not** fall back to the next backend. The entire rule is skipped, and the route status will show `ResolvedRefs=False`. This is per Gateway API specification — weights indicate preference, not failover order.
+
 ```yaml
 # Example: Backend with highest weight wins
 backendRefs:
