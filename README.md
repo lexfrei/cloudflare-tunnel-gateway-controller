@@ -102,7 +102,7 @@ helm install cloudflare-tunnel-gateway-controller \
 
 See [charts/cloudflare-tunnel-gateway-controller/README.md](charts/cloudflare-tunnel-gateway-controller/README.md) for all configuration options.
 
-For manual installation without Helm, see [Manual Installation](docs/MANUAL_INSTALLATION.md).
+For manual installation without Helm, see [Manual Installation](https://cf.k8s.lex.la/operations/manual-installation/).
 
 > **Note:** This controller uses [cloudflare-tunnel](https://github.com/lexfrei/charts/tree/main/charts/cloudflare-tunnel) Helm chart under the hood to deploy cloudflared. If you don't need Gateway API integration, you can use that chart directly.
 
@@ -158,9 +158,9 @@ The controller supports a subset of Gateway API fields that map to Cloudflare Tu
 | `spec.rules[].filters` | ❌ | Cloudflare limitation |
 | `spec.rules[].backendRefs[].weight` | ⚠️ | Highest weight backend used ([#45](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/issues/45)) |
 
-> **Load Balancing:** This controller does not implement traffic splitting between multiple backends. Cloudflare Tunnel accepts only a single service URL per ingress rule. If you need weighted routing or canary deployments, deploy a dedicated load balancer (Traefik, Envoy, Nginx) and point your HTTPRoute to it. See [Traffic Splitting and Load Balancing](docs/GATEWAY_API.md#traffic-splitting-and-load-balancing) for details.
+> **Load Balancing:** This controller does not implement traffic splitting between multiple backends. Cloudflare Tunnel accepts only a single service URL per ingress rule. If you need weighted routing or canary deployments, deploy a dedicated load balancer (Traefik, Envoy, Nginx) and point your HTTPRoute to it. See [Limitations](https://cf.k8s.lex.la/gateway-api/limitations/#traffic-splitting-and-load-balancing) for details.
 
-See [Gateway API documentation](docs/GATEWAY_API.md) for full details and examples.
+See [Gateway API documentation](https://cf.k8s.lex.la/gateway-api/) for full details and examples.
 
 ## External-DNS Integration
 
@@ -181,17 +181,17 @@ For multi-level subdomains, you need [Advanced Certificate Manager](https://deve
 
 ## Documentation
 
-| Document | Description |
-|----------|-------------|
-| [Architecture](docs/ARCHITECTURE.md) | System architecture and design decisions |
-| [AWG Quick Start](docs/AWG_QUICKSTART.md) | AmneziaWG sidecar setup guide |
-| [Configuration](docs/CONFIGURATION.md) | CLI flags and environment variables |
-| [Gateway API](docs/GATEWAY_API.md) | Supported Gateway API features and limitations |
-| [Metrics](docs/METRICS.md) | Prometheus metrics, alerting rules, Grafana dashboard |
-| [Development](docs/DEVELOPMENT.md) | Development setup and contributing guide |
-| [Manual Installation](docs/MANUAL_INSTALLATION.md) | Installation without Helm (not recommended) |
-| [Troubleshooting](docs/TROUBLESHOOTING.md) | Common issues and solutions |
-| [Helm Chart](charts/cloudflare-tunnel-gateway-controller/README.md) | Helm chart configuration reference |
+Full documentation is available at **[cf.k8s.lex.la](https://cf.k8s.lex.la)**.
+
+| Section | Description |
+|---------|-------------|
+| [Getting Started](https://cf.k8s.lex.la/getting-started/) | Prerequisites, installation, and quick start |
+| [Configuration](https://cf.k8s.lex.la/configuration/) | Controller configuration and Helm values |
+| [Gateway API](https://cf.k8s.lex.la/gateway-api/) | Supported resources, examples, and limitations |
+| [Guides](https://cf.k8s.lex.la/guides/) | AWG sidecar, external-dns, cross-namespace, monitoring |
+| [Operations](https://cf.k8s.lex.la/operations/) | Troubleshooting, metrics, manual installation |
+| [Development](https://cf.k8s.lex.la/development/) | Development setup, architecture, contributing |
+| [Reference](https://cf.k8s.lex.la/reference/) | CRD reference, Helm chart, security policy |
 
 ## Roadmap
 
