@@ -6,7 +6,12 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/ingress"
@@ -37,7 +42,7 @@ func TestNewBuilder(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			builder := ingress.NewBuilder(tt.clusterDomain, nil)
+			builder := ingress.NewBuilder(tt.clusterDomain, nil, nil)
 			require.NotNil(t, builder)
 			assert.Equal(t, tt.clusterDomain, builder.ClusterDomain)
 		})
@@ -47,7 +52,7 @@ func TestNewBuilder(t *testing.T) {
 func TestBuild_EmptyRoutes(t *testing.T) {
 	t.Parallel()
 
-	builder := ingress.NewBuilder("cluster.local", nil)
+	builder := ingress.NewBuilder("cluster.local", nil, nil)
 	routes := []gatewayv1.HTTPRoute{}
 
 	buildResult := builder.Build(context.Background(), routes)
@@ -60,7 +65,7 @@ func TestBuild_EmptyRoutes(t *testing.T) {
 func TestBuild_SingleRoute(t *testing.T) {
 	t.Parallel()
 
-	builder := ingress.NewBuilder("cluster.local", nil)
+	builder := ingress.NewBuilder("cluster.local", nil, nil)
 	routes := []gatewayv1.HTTPRoute{
 		{
 			ObjectMeta: metav1.ObjectMeta{
@@ -92,7 +97,7 @@ func TestBuild_SingleRoute(t *testing.T) {
 func TestBuild_MultipleHostnames(t *testing.T) {
 	t.Parallel()
 
-	builder := ingress.NewBuilder("cluster.local", nil)
+	builder := ingress.NewBuilder("cluster.local", nil, nil)
 	routes := []gatewayv1.HTTPRoute{
 		{
 			ObjectMeta: metav1.ObjectMeta{
@@ -124,7 +129,7 @@ func TestBuild_MultipleHostnames(t *testing.T) {
 func TestBuild_MultipleRoutes(t *testing.T) {
 	t.Parallel()
 
-	builder := ingress.NewBuilder("cluster.local", nil)
+	builder := ingress.NewBuilder("cluster.local", nil, nil)
 	routes := []gatewayv1.HTTPRoute{
 		{
 			ObjectMeta: metav1.ObjectMeta{
@@ -171,7 +176,7 @@ func TestBuild_MultipleRoutes(t *testing.T) {
 func TestBuild_PathMatching_Exact(t *testing.T) {
 	t.Parallel()
 
-	builder := ingress.NewBuilder("cluster.local", nil)
+	builder := ingress.NewBuilder("cluster.local", nil, nil)
 	exactType := gatewayv1.PathMatchExact
 	routes := []gatewayv1.HTTPRoute{
 		{
@@ -209,7 +214,7 @@ func TestBuild_PathMatching_Exact(t *testing.T) {
 func TestBuild_PathMatching_Prefix(t *testing.T) {
 	t.Parallel()
 
-	builder := ingress.NewBuilder("cluster.local", nil)
+	builder := ingress.NewBuilder("cluster.local", nil, nil)
 	prefixType := gatewayv1.PathMatchPathPrefix
 	routes := []gatewayv1.HTTPRoute{
 		{
@@ -247,7 +252,7 @@ func TestBuild_PathMatching_Prefix(t *testing.T) {
 func TestBuild_Sorting(t *testing.T) {
 	t.Parallel()
 
-	builder := ingress.NewBuilder("cluster.local", nil)
+	builder := ingress.NewBuilder("cluster.local", nil, nil)
 	exactType := gatewayv1.PathMatchExact
 	prefixType := gatewayv1.PathMatchPathPrefix
 	routes := []gatewayv1.HTTPRoute{
@@ -315,7 +320,7 @@ func TestBuild_Sorting(t *testing.T) {
 func TestBuild_NoHostnames(t *testing.T) {
 	t.Parallel()
 
-	builder := ingress.NewBuilder("cluster.local", nil)
+	builder := ingress.NewBuilder("cluster.local", nil, nil)
 	routes := []gatewayv1.HTTPRoute{
 		{
 			ObjectMeta: metav1.ObjectMeta{
@@ -344,7 +349,7 @@ func TestBuild_NoHostnames(t *testing.T) {
 func TestBuild_NoBackendRefs(t *testing.T) {
 	t.Parallel()
 
-	builder := ingress.NewBuilder("cluster.local", nil)
+	builder := ingress.NewBuilder("cluster.local", nil, nil)
 	routes := []gatewayv1.HTTPRoute{
 		{
 			ObjectMeta: metav1.ObjectMeta{
@@ -371,7 +376,7 @@ func TestBuild_NoBackendRefs(t *testing.T) {
 func TestBuild_NonServiceBackend(t *testing.T) {
 	t.Parallel()
 
-	builder := ingress.NewBuilder("cluster.local", nil)
+	builder := ingress.NewBuilder("cluster.local", nil, nil)
 	kind := gatewayv1.Kind("Deployment")
 	routes := []gatewayv1.HTTPRoute{
 		{
@@ -408,7 +413,7 @@ func TestBuild_NonServiceBackend(t *testing.T) {
 func TestBuild_NonCoreGroup(t *testing.T) {
 	t.Parallel()
 
-	builder := ingress.NewBuilder("cluster.local", nil)
+	builder := ingress.NewBuilder("cluster.local", nil, nil)
 	group := gatewayv1.Group("apps")
 	routes := []gatewayv1.HTTPRoute{
 		{
@@ -445,7 +450,7 @@ func TestBuild_NonCoreGroup(t *testing.T) {
 func TestBuild_CustomNamespace(t *testing.T) {
 	t.Parallel()
 
-	builder := ingress.NewBuilder("cluster.local", nil)
+	builder := ingress.NewBuilder("cluster.local", nil, nil)
 	ns := gatewayv1.Namespace("other-namespace")
 	routes := []gatewayv1.HTTPRoute{
 		{
@@ -476,7 +481,7 @@ func TestBuild_CustomNamespace(t *testing.T) {
 func TestBuild_CustomPort(t *testing.T) {
 	t.Parallel()
 
-	builder := ingress.NewBuilder("cluster.local", nil)
+	builder := ingress.NewBuilder("cluster.local", nil, nil)
 	routes := []gatewayv1.HTTPRoute{
 		{
 			ObjectMeta: metav1.ObjectMeta{
@@ -505,7 +510,7 @@ func TestBuild_CustomPort(t *testing.T) {
 func TestBuild_HTTPSPort(t *testing.T) {
 	t.Parallel()
 
-	builder := ingress.NewBuilder("cluster.local", nil)
+	builder := ingress.NewBuilder("cluster.local", nil, nil)
 	routes := []gatewayv1.HTTPRoute{
 		{
 			ObjectMeta: metav1.ObjectMeta{
@@ -534,7 +539,7 @@ func TestBuild_HTTPSPort(t *testing.T) {
 func TestBuild_DefaultPort(t *testing.T) {
 	t.Parallel()
 
-	builder := ingress.NewBuilder("cluster.local", nil)
+	builder := ingress.NewBuilder("cluster.local", nil, nil)
 	routes := []gatewayv1.HTTPRoute{
 		{
 			ObjectMeta: metav1.ObjectMeta{
@@ -563,7 +568,7 @@ func TestBuild_DefaultPort(t *testing.T) {
 func TestBuild_NoPathMatches(t *testing.T) {
 	t.Parallel()
 
-	builder := ingress.NewBuilder("cluster.local", nil)
+	builder := ingress.NewBuilder("cluster.local", nil, nil)
 	routes := []gatewayv1.HTTPRoute{
 		{
 			ObjectMeta: metav1.ObjectMeta{
@@ -593,7 +598,7 @@ func TestBuild_NoPathMatches(t *testing.T) {
 func TestBuild_NilPathMatch(t *testing.T) {
 	t.Parallel()
 
-	builder := ingress.NewBuilder("cluster.local", nil)
+	builder := ingress.NewBuilder("cluster.local", nil, nil)
 	routes := []gatewayv1.HTTPRoute{
 		{
 			ObjectMeta: metav1.ObjectMeta{
@@ -627,7 +632,7 @@ func TestBuild_NilPathMatch(t *testing.T) {
 func TestBuild_RegularExpressionPath(t *testing.T) {
 	t.Parallel()
 
-	builder := ingress.NewBuilder("cluster.local", nil)
+	builder := ingress.NewBuilder("cluster.local", nil, nil)
 	regexType := gatewayv1.PathMatchRegularExpression
 	routes := []gatewayv1.HTTPRoute{
 		{
@@ -665,7 +670,7 @@ func TestBuild_RegularExpressionPath(t *testing.T) {
 func TestBuild_CustomClusterDomain(t *testing.T) {
 	t.Parallel()
 
-	builder := ingress.NewBuilder("my-cluster.example.com", nil)
+	builder := ingress.NewBuilder("my-cluster.example.com", nil, nil)
 	routes := []gatewayv1.HTTPRoute{
 		{
 			ObjectMeta: metav1.ObjectMeta{
@@ -694,7 +699,7 @@ func TestBuild_CustomClusterDomain(t *testing.T) {
 func TestBuild_SortingByHostname(t *testing.T) {
 	t.Parallel()
 
-	builder := ingress.NewBuilder("cluster.local", nil)
+	builder := ingress.NewBuilder("cluster.local", nil, nil)
 	routes := []gatewayv1.HTTPRoute{
 		{
 			ObjectMeta: metav1.ObjectMeta{
@@ -740,7 +745,7 @@ func TestBuild_SortingByHostname(t *testing.T) {
 func TestBuild_CoreGroupExplicit(t *testing.T) {
 	t.Parallel()
 
-	builder := ingress.NewBuilder("cluster.local", nil)
+	builder := ingress.NewBuilder("cluster.local", nil, nil)
 	coreGroup := gatewayv1.Group("core")
 	routes := []gatewayv1.HTTPRoute{
 		{
@@ -778,7 +783,7 @@ func TestBuild_CoreGroupExplicit(t *testing.T) {
 func TestBuild_EmptyGroupExplicit(t *testing.T) {
 	t.Parallel()
 
-	builder := ingress.NewBuilder("cluster.local", nil)
+	builder := ingress.NewBuilder("cluster.local", nil, nil)
 	emptyGroup := gatewayv1.Group("")
 	routes := []gatewayv1.HTTPRoute{
 		{
@@ -816,7 +821,7 @@ func TestBuild_EmptyGroupExplicit(t *testing.T) {
 func TestBuild_ServiceKindExplicit(t *testing.T) {
 	t.Parallel()
 
-	builder := ingress.NewBuilder("cluster.local", nil)
+	builder := ingress.NewBuilder("cluster.local", nil, nil)
 	serviceKind := gatewayv1.Kind("Service")
 	routes := []gatewayv1.HTTPRoute{
 		{
@@ -854,7 +859,7 @@ func TestBuild_ServiceKindExplicit(t *testing.T) {
 func TestBuild_RootPath(t *testing.T) {
 	t.Parallel()
 
-	builder := ingress.NewBuilder("cluster.local", nil)
+	builder := ingress.NewBuilder("cluster.local", nil, nil)
 	prefixType := gatewayv1.PathMatchPathPrefix
 	routes := []gatewayv1.HTTPRoute{
 		{
@@ -940,7 +945,7 @@ func TestBuild_WeightSelection(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			builder := ingress.NewBuilder("cluster.local", nil)
+			builder := ingress.NewBuilder("cluster.local", nil, nil)
 
 			backendRefs := make([]gatewayv1.HTTPBackendRef, len(tt.backendWeights))
 			for i, w := range tt.backendWeights {
@@ -983,7 +988,7 @@ func TestBuild_WeightSelection(t *testing.T) {
 func TestBuild_AllBackendsDisabled(t *testing.T) {
 	t.Parallel()
 
-	builder := ingress.NewBuilder("cluster.local", nil)
+	builder := ingress.NewBuilder("cluster.local", nil, nil)
 	routes := []gatewayv1.HTTPRoute{
 		{
 			ObjectMeta: metav1.ObjectMeta{
@@ -1047,4 +1052,271 @@ func portNumPtr(p int32) *gatewayv1.PortNumber {
 	pn := gatewayv1.PortNumber(p)
 
 	return &pn
+}
+
+// ExternalName Service Tests (TDD Phase 1: RED)
+
+func TestBuild_ExternalNameService(t *testing.T) {
+	t.Parallel()
+
+	externalSvc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "external-api",
+			Namespace: "default",
+		},
+		Spec: corev1.ServiceSpec{
+			Type:         corev1.ServiceTypeExternalName,
+			ExternalName: "api.external.com",
+		},
+	}
+
+	scheme := runtime.NewScheme()
+	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(externalSvc).
+		Build()
+
+	builder := ingress.NewBuilder("cluster.local", nil, fakeClient)
+	routes := []gatewayv1.HTTPRoute{
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-route",
+				Namespace: "default",
+			},
+			Spec: gatewayv1.HTTPRouteSpec{
+				Hostnames: []gatewayv1.Hostname{"app.example.com"},
+				Rules: []gatewayv1.HTTPRouteRule{
+					{
+						BackendRefs: []gatewayv1.HTTPBackendRef{
+							newHTTPBackendRef("external-api", nil, int32Ptr(443)),
+						},
+					},
+				},
+			},
+		},
+	}
+
+	buildResult := builder.Build(context.Background(), routes)
+
+	require.Len(t, buildResult.Rules, 2)
+	assert.Equal(t, "https://api.external.com:443", buildResult.Rules[0].Service.Value)
+	assert.Empty(t, buildResult.FailedRefs)
+}
+
+func TestBuild_ExternalNameService_HTTPPort(t *testing.T) {
+	t.Parallel()
+
+	externalSvc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "external-api",
+			Namespace: "default",
+		},
+		Spec: corev1.ServiceSpec{
+			Type:         corev1.ServiceTypeExternalName,
+			ExternalName: "api.external.com",
+		},
+	}
+
+	scheme := runtime.NewScheme()
+	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(externalSvc).
+		Build()
+
+	builder := ingress.NewBuilder("cluster.local", nil, fakeClient)
+	routes := []gatewayv1.HTTPRoute{
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-route",
+				Namespace: "default",
+			},
+			Spec: gatewayv1.HTTPRouteSpec{
+				Hostnames: []gatewayv1.Hostname{"app.example.com"},
+				Rules: []gatewayv1.HTTPRouteRule{
+					{
+						BackendRefs: []gatewayv1.HTTPBackendRef{
+							newHTTPBackendRef("external-api", nil, int32Ptr(80)),
+						},
+					},
+				},
+			},
+		},
+	}
+
+	buildResult := builder.Build(context.Background(), routes)
+
+	require.Len(t, buildResult.Rules, 2)
+	assert.Equal(t, "http://api.external.com:80", buildResult.Rules[0].Service.Value)
+	assert.Empty(t, buildResult.FailedRefs)
+}
+
+func TestBuild_ClusterIPService_WithClient(t *testing.T) {
+	t.Parallel()
+
+	clusterIPSvc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "my-service",
+			Namespace: "default",
+		},
+		Spec: corev1.ServiceSpec{
+			Type:      corev1.ServiceTypeClusterIP,
+			ClusterIP: "10.0.0.1",
+		},
+	}
+
+	scheme := runtime.NewScheme()
+	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(clusterIPSvc).
+		Build()
+
+	builder := ingress.NewBuilder("cluster.local", nil, fakeClient)
+	routes := []gatewayv1.HTTPRoute{
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-route",
+				Namespace: "default",
+			},
+			Spec: gatewayv1.HTTPRouteSpec{
+				Hostnames: []gatewayv1.Hostname{"app.example.com"},
+				Rules: []gatewayv1.HTTPRouteRule{
+					{
+						BackendRefs: []gatewayv1.HTTPBackendRef{
+							newHTTPBackendRef("my-service", nil, int32Ptr(8080)),
+						},
+					},
+				},
+			},
+		},
+	}
+
+	buildResult := builder.Build(context.Background(), routes)
+
+	require.Len(t, buildResult.Rules, 2)
+	assert.Equal(t, "http://my-service.default.svc.cluster.local:8080", buildResult.Rules[0].Service.Value)
+	assert.Empty(t, buildResult.FailedRefs)
+}
+
+func TestBuild_ServiceNotFound(t *testing.T) {
+	t.Parallel()
+
+	scheme := runtime.NewScheme()
+	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		Build()
+
+	builder := ingress.NewBuilder("cluster.local", nil, fakeClient)
+	routes := []gatewayv1.HTTPRoute{
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-route",
+				Namespace: "default",
+			},
+			Spec: gatewayv1.HTTPRouteSpec{
+				Hostnames: []gatewayv1.Hostname{"app.example.com"},
+				Rules: []gatewayv1.HTTPRouteRule{
+					{
+						BackendRefs: []gatewayv1.HTTPBackendRef{
+							newHTTPBackendRef("nonexistent-service", nil, int32Ptr(8080)),
+						},
+					},
+				},
+			},
+		},
+	}
+
+	buildResult := builder.Build(context.Background(), routes)
+
+	require.Len(t, buildResult.Rules, 1)
+	assert.Equal(t, ingress.CatchAllService, buildResult.Rules[0].Service.Value)
+	require.Len(t, buildResult.FailedRefs, 1)
+	assert.Equal(t, "BackendNotFound", buildResult.FailedRefs[0].Reason)
+	assert.Equal(t, "nonexistent-service", buildResult.FailedRefs[0].BackendName)
+}
+
+func TestBuild_NilClient_FallbackBehavior(t *testing.T) {
+	t.Parallel()
+
+	builder := ingress.NewBuilder("cluster.local", nil, nil)
+	routes := []gatewayv1.HTTPRoute{
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-route",
+				Namespace: "default",
+			},
+			Spec: gatewayv1.HTTPRouteSpec{
+				Hostnames: []gatewayv1.Hostname{"app.example.com"},
+				Rules: []gatewayv1.HTTPRouteRule{
+					{
+						BackendRefs: []gatewayv1.HTTPBackendRef{
+							newHTTPBackendRef("my-service", nil, int32Ptr(8080)),
+						},
+					},
+				},
+			},
+		},
+	}
+
+	buildResult := builder.Build(context.Background(), routes)
+
+	require.Len(t, buildResult.Rules, 2)
+	assert.Equal(t, "http://my-service.default.svc.cluster.local:8080", buildResult.Rules[0].Service.Value)
+	assert.Empty(t, buildResult.FailedRefs)
+}
+
+func TestBuild_ExternalNameService_CrossNamespace(t *testing.T) {
+	t.Parallel()
+
+	externalSvc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "external-api",
+			Namespace: "other-namespace",
+		},
+		Spec: corev1.ServiceSpec{
+			Type:         corev1.ServiceTypeExternalName,
+			ExternalName: "api.external.com",
+		},
+	}
+
+	scheme := runtime.NewScheme()
+	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(externalSvc).
+		Build()
+
+	ns := gatewayv1.Namespace("other-namespace")
+	builder := ingress.NewBuilder("cluster.local", nil, fakeClient)
+	routes := []gatewayv1.HTTPRoute{
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-route",
+				Namespace: "default",
+			},
+			Spec: gatewayv1.HTTPRouteSpec{
+				Hostnames: []gatewayv1.Hostname{"app.example.com"},
+				Rules: []gatewayv1.HTTPRouteRule{
+					{
+						BackendRefs: []gatewayv1.HTTPBackendRef{
+							newHTTPBackendRef("external-api", &ns, int32Ptr(443)),
+						},
+					},
+				},
+			},
+		},
+	}
+
+	buildResult := builder.Build(context.Background(), routes)
+
+	require.Len(t, buildResult.Rules, 2)
+	assert.Equal(t, "https://api.external.com:443", buildResult.Rules[0].Service.Value)
 }

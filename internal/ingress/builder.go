@@ -8,6 +8,10 @@ import (
 
 	"github.com/cloudflare/cloudflare-go/v6"
 	"github.com/cloudflare/cloudflare-go/v6/zero_trust"
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/referencegrant"
@@ -41,13 +45,18 @@ type Builder struct {
 
 	// Validator validates cross-namespace backend references using ReferenceGrant.
 	Validator *referencegrant.Validator
+
+	// Client is used to fetch Service objects for ExternalName resolution.
+	// If nil, falls back to cluster-local DNS for all services.
+	Client client.Reader
 }
 
-// NewBuilder creates a new Builder with the specified cluster domain and validator.
-func NewBuilder(clusterDomain string, validator *referencegrant.Validator) *Builder {
+// NewBuilder creates a new Builder with the specified cluster domain, validator, and client.
+func NewBuilder(clusterDomain string, validator *referencegrant.Validator, c client.Reader) *Builder {
 	return &Builder{
 		ClusterDomain: clusterDomain,
 		Validator:     validator,
+		Client:        c,
 	}
 }
 
@@ -338,7 +347,7 @@ func validateCrossNamespaceRef(
 	return true
 }
 
-//nolint:dupl // similar structure for different route types is intentional
+//nolint:dupl,gocyclo,cyclop,funlen // similar structure for different route types is intentional; complexity from ExternalName handling
 func (b *Builder) resolveBackendRef(ctx context.Context, namespace, routeName string, refs []gatewayv1.HTTPBackendRef) (string, *BackendRefError) {
 	if len(refs) == 0 {
 		return "", nil
@@ -390,6 +399,35 @@ func (b *Builder) resolveBackendRef(ctx context.Context, namespace, routeName st
 	scheme := schemeHTTP
 	if port == DefaultHTTPSPort {
 		scheme = schemeHTTPS
+	}
+
+	// Fetch Service to check for ExternalName type
+	if b.Client != nil {
+		svc := &corev1.Service{}
+
+		err := b.Client.Get(ctx, types.NamespacedName{
+			Name:      string(ref.Name),
+			Namespace: svcNamespace,
+		}, svc)
+		if err != nil {
+			if apierrors.IsNotFound(err) {
+				return "", &BackendRefError{
+					RouteNamespace: namespace,
+					RouteName:      routeName,
+					BackendName:    string(ref.Name),
+					BackendNS:      svcNamespace,
+					Reason:         string(gatewayv1.RouteReasonBackendNotFound),
+					Message:        fmt.Sprintf("Service %s/%s not found", svcNamespace, ref.Name),
+				}
+			}
+			// Log error and fall back to cluster-local DNS
+			slog.Warn("failed to fetch Service, using cluster-local DNS",
+				"service", fmt.Sprintf("%s/%s", svcNamespace, ref.Name),
+				"error", err.Error(),
+			)
+		} else if svc.Spec.Type == corev1.ServiceTypeExternalName {
+			return fmt.Sprintf("%s://%s:%d", scheme, svc.Spec.ExternalName, port), nil
+		}
 	}
 
 	return fmt.Sprintf("%s://%s.%s.svc.%s:%d",

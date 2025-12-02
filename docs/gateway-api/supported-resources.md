@@ -74,6 +74,15 @@ the edge.
 | `spec.rules[].backendRefs[].filters` | No | Not implemented |
 | `spec.rules[].timeouts` | No | Not implemented |
 
+### Supported Service Types
+
+| Service Type | Supported | Notes |
+|--------------|-----------|-------|
+| `ClusterIP` | Yes | Routes via cluster-local DNS |
+| `NodePort` | Yes | Routes via cluster-local DNS |
+| `LoadBalancer` | Yes | Routes via cluster-local DNS |
+| `ExternalName` | Yes | Routes directly to external hostname |
+
 ## GRPCRoute
 
 | Field | Supported | Notes |
@@ -192,3 +201,4 @@ backendRefs:
 | `Accepted` | `False` | `NoMatchingParent` | Sync to Cloudflare failed |
 | `ResolvedRefs` | `True` | `ResolvedRefs` | Backend references resolved |
 | `ResolvedRefs` | `False` | `RefNotPermitted` | Cross-namespace reference denied |
+| `ResolvedRefs` | `False` | `BackendNotFound` | Backend Service not found |
