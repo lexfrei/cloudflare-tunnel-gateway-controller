@@ -31,10 +31,9 @@ type RouteSyncer struct {
 	GatewayClassName string
 	ConfigResolver   *config.Resolver
 
-	httpBuilder             *ingress.Builder
-	grpcBuilder             *ingress.GRPCBuilder
-	bindingValidator        *routebinding.Validator
-	referencegrantValidator *referencegrant.Validator
+	httpBuilder      *ingress.Builder
+	grpcBuilder      *ingress.GRPCBuilder
+	bindingValidator *routebinding.Validator
 }
 
 // NewRouteSyncer creates a new RouteSyncer.
@@ -48,15 +47,14 @@ func NewRouteSyncer(
 	refGrantValidator := referencegrant.NewValidator(c)
 
 	return &RouteSyncer{
-		Client:                  c,
-		Scheme:                  scheme,
-		ClusterDomain:           clusterDomain,
-		GatewayClassName:        gatewayClassName,
-		ConfigResolver:          configResolver,
-		httpBuilder:             ingress.NewBuilder(clusterDomain, refGrantValidator),
-		grpcBuilder:             ingress.NewGRPCBuilder(clusterDomain, refGrantValidator),
-		bindingValidator:        routebinding.NewValidator(c),
-		referencegrantValidator: refGrantValidator,
+		Client:           c,
+		Scheme:           scheme,
+		ClusterDomain:    clusterDomain,
+		GatewayClassName: gatewayClassName,
+		ConfigResolver:   configResolver,
+		httpBuilder:      ingress.NewBuilder(clusterDomain, refGrantValidator),
+		grpcBuilder:      ingress.NewGRPCBuilder(clusterDomain, refGrantValidator),
+		bindingValidator: routebinding.NewValidator(c),
 	}
 }
 

@@ -357,7 +357,7 @@ func (r *HTTPRouteReconciler) Start(ctx context.Context) error {
 	return nil
 }
 
-//nolint:noinlineerr,dupl // inline error handling for controller pattern; similar logic for different route types is intentional
+//nolint:noinlineerr // inline error handling for controller pattern
 func (r *HTTPRouteReconciler) findRoutesForGateway(
 	ctx context.Context,
 	obj client.Object,
@@ -396,70 +396,31 @@ func (r *HTTPRouteReconciler) findRoutesForGateway(
 	return requests
 }
 
-//nolint:noinlineerr // inline error handling for controller pattern
 func (r *HTTPRouteReconciler) findRoutesForReferenceGrant(
 	ctx context.Context,
 	obj client.Object,
 ) []reconcile.Request {
-	refGrant, ok := obj.(*gatewayv1beta1.ReferenceGrant)
-	if !ok {
-		return nil
-	}
-
-	// ReferenceGrant is in the target namespace (where Services are)
-	targetNamespace := refGrant.Namespace
-
 	var routeList gatewayv1.HTTPRouteList
-	if err := r.List(ctx, &routeList); err != nil {
+
+	err := r.List(ctx, &routeList)
+	if err != nil {
 		return nil
 	}
 
-	var requests []reconcile.Request
+	// Collect routes managed by our Gateway as RouteWithCrossNamespaceRefs
+	var routes []RouteWithCrossNamespaceRefs
 
 	for i := range routeList.Items {
 		route := &routeList.Items[i]
-
-		// Only process routes managed by our Gateway
-		if !r.isRouteForOurGateway(ctx, route) {
-			continue
-		}
-
-		// Check if route has cross-namespace references to the ReferenceGrant namespace
-		hasRefToNamespace := false
-
-		for _, rule := range route.Spec.Rules {
-			for _, backendRef := range rule.BackendRefs {
-				backendNs := route.Namespace
-				if backendRef.Namespace != nil {
-					backendNs = string(*backendRef.Namespace)
-				}
-
-				// If this route references a service in the ReferenceGrant's namespace
-				if backendNs == targetNamespace && backendNs != route.Namespace {
-					hasRefToNamespace = true
-
-					break
-				}
-			}
-
-			if hasRefToNamespace {
-				break
-			}
-		}
-
-		if hasRefToNamespace {
-			requests = append(requests, reconcile.Request{
-				NamespacedName: client.ObjectKey{
-					Name:      route.Name,
-					Namespace: route.Namespace,
-				},
-			})
+		if r.isRouteForOurGateway(ctx, route) {
+			routes = append(routes, HTTPRouteWrapper{route})
 		}
 	}
 
-	return requests
+	return FindRoutesForReferenceGrant(obj, routes)
 }
 
+//nolint:dupl // similar logic for different route types is intentional
 func (r *HTTPRouteReconciler) getAllRelevantRoutes(ctx context.Context) []reconcile.Request {
 	var routeList gatewayv1.HTTPRouteList
 
