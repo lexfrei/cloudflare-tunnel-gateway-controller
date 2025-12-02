@@ -1,6 +1,7 @@
 package ingress
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"sort"
@@ -8,6 +9,8 @@ import (
 	"github.com/cloudflare/cloudflare-go/v6"
 	"github.com/cloudflare/cloudflare-go/v6/zero_trust"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
+
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/referencegrant"
 )
 
 const (
@@ -22,10 +25,11 @@ const (
 	DefaultHTTPSPort = 443
 
 	// Backend reference constants.
-	backendGroupCore   = "core"
-	backendKindService = "Service"
-	schemeHTTP         = "http"
-	schemeHTTPS        = "https"
+	backendGroupCore      = ""     // Core resources (Service, Pod, etc.) use empty group
+	backendGroupCoreAlias = "core" // Accept "core" as backwards-compatible alias
+	backendKindService    = "Service"
+	schemeHTTP            = "http"
+	schemeHTTPS           = "https"
 )
 
 // Builder converts Gateway API HTTPRoute resources to Cloudflare Tunnel
@@ -34,12 +38,16 @@ type Builder struct {
 	// ClusterDomain is the Kubernetes cluster domain suffix for service DNS.
 	// Typically "cluster.local".
 	ClusterDomain string
+
+	// Validator validates cross-namespace backend references using ReferenceGrant.
+	Validator *referencegrant.Validator
 }
 
-// NewBuilder creates a new Builder with the specified cluster domain.
-func NewBuilder(clusterDomain string) *Builder {
+// NewBuilder creates a new Builder with the specified cluster domain and validator.
+func NewBuilder(clusterDomain string, validator *referencegrant.Validator) *Builder {
 	return &Builder{
 		ClusterDomain: clusterDomain,
+		Validator:     validator,
 	}
 }
 
@@ -52,6 +60,22 @@ type routeEntry struct {
 	priority int
 }
 
+// BackendRefError represents a backend reference that failed validation.
+type BackendRefError struct {
+	RouteNamespace string
+	RouteName      string
+	BackendName    string
+	BackendNS      string
+	Reason         string // "RefNotPermitted" or other Gateway API reason
+	Message        string
+}
+
+// BuildResult contains the build output including rules and any failed references.
+type BuildResult struct {
+	Rules      []zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress
+	FailedRefs []BackendRefError
+}
+
 // Build converts a list of HTTPRoute resources to Cloudflare Tunnel ingress rules.
 //
 // Rules are sorted by:
@@ -60,12 +84,18 @@ type routeEntry struct {
 //  3. Path length (longer paths first for specificity)
 //
 // A catch-all rule returning HTTP 404 is always appended as the last rule.
-func (b *Builder) Build(routes []gatewayv1.HTTPRoute) []zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress {
+//
+// Returns BuildResult containing the generated rules and any backend references
+// that failed validation (e.g., due to missing ReferenceGrant).
+func (b *Builder) Build(ctx context.Context, routes []gatewayv1.HTTPRoute) BuildResult {
 	var entries []routeEntry
 
+	var failedRefs []BackendRefError
+
 	for i := range routes {
-		routeEntries := b.buildRouteEntries(&routes[i])
+		routeEntries, routeFailedRefs := b.buildRouteEntries(ctx, &routes[i])
 		entries = append(entries, routeEntries...)
+		failedRefs = append(failedRefs, routeFailedRefs...)
 	}
 
 	sort.Slice(entries, func(idx, jdx int) bool {
@@ -104,7 +134,10 @@ func (b *Builder) Build(routes []gatewayv1.HTTPRoute) []zero_trust.TunnelCloudfl
 		Service: cloudflare.F(CatchAllService),
 	})
 
-	return rules
+	return BuildResult{
+		Rules:      rules,
+		FailedRefs: failedRefs,
+	}
 }
 
 // logUnsupportedHTTPMatchFeatures logs info messages for unsupported HTTPRouteMatch features.
@@ -136,8 +169,10 @@ func logUnsupportedHTTPMatchFeatures(namespace, name string, match gatewayv1.HTT
 	}
 }
 
-func (b *Builder) buildRouteEntries(route *gatewayv1.HTTPRoute) []routeEntry {
+func (b *Builder) buildRouteEntries(ctx context.Context, route *gatewayv1.HTTPRoute) ([]routeEntry, []BackendRefError) {
 	var entries []routeEntry
+
+	var failedRefs []BackendRefError
 
 	hostnames := route.Spec.Hostnames
 	if len(hostnames) == 0 {
@@ -155,8 +190,12 @@ func (b *Builder) buildRouteEntries(route *gatewayv1.HTTPRoute) []routeEntry {
 				)
 			}
 
-			service := b.resolveBackendRef(route.Namespace, route.Name, rule.BackendRefs)
+			service, backendErr := b.resolveBackendRef(ctx, route.Namespace, route.Name, rule.BackendRefs)
 			if service == "" {
+				if backendErr != nil {
+					failedRefs = append(failedRefs, *backendErr)
+				}
+
 				continue
 			}
 
@@ -185,7 +224,7 @@ func (b *Builder) buildRouteEntries(route *gatewayv1.HTTPRoute) []routeEntry {
 		}
 	}
 
-	return entries
+	return entries, failedRefs
 }
 
 func (b *Builder) extractPath(namespace, routeName string, pathMatch *gatewayv1.HTTPPathMatch) (path string, priority int) {
@@ -249,10 +288,60 @@ func logBackendWeights(namespace, routeName string, refs []gatewayv1.HTTPBackend
 	}
 }
 
+// validateCrossNamespaceRef validates cross-namespace backend references using ReferenceGrant.
+// Returns true if the reference is allowed, false otherwise.
+func validateCrossNamespaceRef(
+	ctx context.Context,
+	validator *referencegrant.Validator,
+	routeKind, namespace, routeName, svcNamespace, svcName string,
+) bool {
+	if validator == nil {
+		return true // No validator means validation is disabled
+	}
+
+	fromRef := referencegrant.Reference{
+		Group:     gatewayv1.GroupName,
+		Kind:      routeKind,
+		Namespace: namespace,
+		Name:      routeName,
+	}
+
+	toRef := referencegrant.Reference{
+		Group:     backendGroupCore,
+		Kind:      backendKindService,
+		Namespace: svcNamespace,
+		Name:      svcName,
+	}
+
+	allowed, err := validator.IsReferenceAllowed(ctx, fromRef, toRef)
+	if err != nil {
+		slog.Info("route configuration partially applied",
+			"route", fmt.Sprintf("%s/%s", namespace, routeName),
+			"reason", "failed to validate cross-namespace reference",
+			"target", fmt.Sprintf("%s/%s", svcNamespace, svcName),
+			"error", err.Error(),
+		)
+
+		return false
+	}
+
+	if !allowed {
+		slog.Info("route configuration partially applied",
+			"route", fmt.Sprintf("%s/%s", namespace, routeName),
+			"reason", "cross-namespace backend reference not permitted by ReferenceGrant",
+			"target", fmt.Sprintf("%s/%s", svcNamespace, svcName),
+		)
+
+		return false
+	}
+
+	return true
+}
+
 //nolint:dupl // similar structure for different route types is intentional
-func (b *Builder) resolveBackendRef(namespace, routeName string, refs []gatewayv1.HTTPBackendRef) string {
+func (b *Builder) resolveBackendRef(ctx context.Context, namespace, routeName string, refs []gatewayv1.HTTPBackendRef) (string, *BackendRefError) {
 	if len(refs) == 0 {
-		return ""
+		return "", nil
 	}
 
 	logMultipleBackends(namespace, routeName, len(refs))
@@ -260,22 +349,37 @@ func (b *Builder) resolveBackendRef(namespace, routeName string, refs []gatewayv
 
 	selectedIdx := SelectHighestWeightIndex(wrapHTTPBackendRefs(refs))
 	if selectedIdx == -1 {
-		return "" // All backends disabled (weight=0)
+		return "", nil // All backends disabled (weight=0)
 	}
 
 	ref := refs[selectedIdx].BackendRef
 
-	if ref.Group != nil && *ref.Group != "" && *ref.Group != backendGroupCore {
-		return ""
+	// Accept nil, "", or "core" as valid core group identifiers
+	if ref.Group != nil && *ref.Group != "" && *ref.Group != backendGroupCoreAlias {
+		return "", nil
 	}
 
 	if ref.Kind != nil && *ref.Kind != backendKindService {
-		return ""
+		return "", nil
 	}
 
 	svcNamespace := namespace
 	if ref.Namespace != nil {
 		svcNamespace = string(*ref.Namespace)
+	}
+
+	// Validate cross-namespace references with ReferenceGrant
+	if namespace != svcNamespace {
+		if !validateCrossNamespaceRef(ctx, b.Validator, "HTTPRoute", namespace, routeName, svcNamespace, string(ref.Name)) {
+			return "", &BackendRefError{
+				RouteNamespace: namespace,
+				RouteName:      routeName,
+				BackendName:    string(ref.Name),
+				BackendNS:      svcNamespace,
+				Reason:         string(gatewayv1.RouteReasonRefNotPermitted),
+				Message:        fmt.Sprintf("cross-namespace backend reference to %s/%s not permitted by ReferenceGrant", svcNamespace, ref.Name),
+			}
+		}
 	}
 
 	port := DefaultHTTPPort
@@ -294,5 +398,5 @@ func (b *Builder) resolveBackendRef(namespace, routeName string, refs []gatewayv
 		svcNamespace,
 		b.ClusterDomain,
 		port,
-	)
+	), nil
 }

@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"log/slog"
+	"strings"
 	"sync/atomic"
 
 	"github.com/cockroachdb/errors"
@@ -18,8 +19,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
+	gatewayv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/api/v1alpha1"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/ingress"
 )
 
 // GRPCRouteReconciler reconciles GRPCRoute resources and synchronizes them
@@ -91,7 +94,16 @@ func (r *GRPCRouteReconciler) syncAndUpdateStatus(ctx context.Context) (ctrl.Res
 			routeKey := route.Namespace + "/" + route.Name
 			bindingInfo := syncResult.GRPCRouteBindings[routeKey]
 
-			if err := r.updateRouteStatus(ctx, route, bindingInfo, syncErr); err != nil {
+			// Filter failed refs for this route
+			var routeFailedRefs []ingress.BackendRefError
+
+			for _, failedRef := range syncResult.GRPCFailedRefs {
+				if failedRef.RouteNamespace == route.Namespace && failedRef.RouteName == route.Name {
+					routeFailedRefs = append(routeFailedRefs, failedRef)
+				}
+			}
+
+			if err := r.updateRouteStatus(ctx, route, bindingInfo, routeFailedRefs, syncErr); err != nil {
 				logger.Error("failed to update grpcroute status", "error", err)
 			}
 		}
@@ -130,11 +142,12 @@ func (r *GRPCRouteReconciler) isRouteForOurGateway(ctx context.Context, route *g
 	return false
 }
 
-//nolint:funcorder,funlen,noinlineerr // private helper method, status update logic
+//nolint:funcorder,funlen,noinlineerr,gocognit // private helper method, status update logic
 func (r *GRPCRouteReconciler) updateRouteStatus(
 	ctx context.Context,
 	route *gatewayv1.GRPCRoute,
 	bindingInfo routeBindingInfo,
+	failedRefs []ingress.BackendRefError,
 	syncErr error,
 ) error {
 	routeKey := types.NamespacedName{Name: route.Name, Namespace: route.Namespace}
@@ -184,6 +197,31 @@ func (r *GRPCRouteReconciler) updateRouteStatus(
 				message = bindingResult.Message
 			}
 
+			// Check if there are any failed backend refs
+			resolvedRefsStatus := metav1.ConditionTrue
+			resolvedRefsReason := string(gatewayv1.RouteReasonResolvedRefs)
+			resolvedRefsMessage := resolvedRefsMessage
+
+			if len(failedRefs) > 0 {
+				resolvedRefsStatus = metav1.ConditionFalse
+				resolvedRefsReason = string(gatewayv1.RouteReasonRefNotPermitted)
+
+				// Build message with list of denied backends
+				var msgBuilder strings.Builder
+
+				msgBuilder.WriteString("Backend references not permitted: ")
+
+				for i, failedRef := range failedRefs {
+					if i > 0 {
+						msgBuilder.WriteString(", ")
+					}
+
+					msgBuilder.WriteString(failedRef.BackendNS + "/" + failedRef.BackendName)
+				}
+
+				resolvedRefsMessage = msgBuilder.String()
+			}
+
 			parentStatus := gatewayv1.RouteParentStatus{
 				ParentRef: gatewayv1.ParentReference{
 					Group:       ref.Group,
@@ -204,10 +242,10 @@ func (r *GRPCRouteReconciler) updateRouteStatus(
 					},
 					{
 						Type:               string(gatewayv1.RouteConditionResolvedRefs),
-						Status:             metav1.ConditionTrue,
+						Status:             resolvedRefsStatus,
 						ObservedGeneration: freshRoute.Generation,
 						LastTransitionTime: now,
-						Reason:             string(gatewayv1.RouteReasonResolvedRefs),
+						Reason:             resolvedRefsReason,
 						Message:            resolvedRefsMessage,
 					},
 				},
@@ -248,6 +286,11 @@ func (r *GRPCRouteReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			&corev1.Secret{},
 			handler.EnqueueRequestsFromMapFunc(mapper.MapSecretToRequests(r.getAllRelevantRoutes)),
 		).
+		// Watch ReferenceGrant for cross-namespace permission changes
+		Watches(
+			&gatewayv1beta1.ReferenceGrant{},
+			handler.EnqueueRequestsFromMapFunc(r.findRoutesForReferenceGrant),
+		).
 		Complete(r)
 	if err != nil {
 		return errors.Wrap(err, "failed to setup grpcroute controller")
@@ -278,7 +321,7 @@ func (r *GRPCRouteReconciler) Start(ctx context.Context) error {
 	return nil
 }
 
-//nolint:noinlineerr,dupl // inline error handling for controller pattern; similar logic for different route types is intentional
+//nolint:noinlineerr // inline error handling for controller pattern
 func (r *GRPCRouteReconciler) findRoutesForGateway(
 	ctx context.Context,
 	obj client.Object,
@@ -317,6 +360,31 @@ func (r *GRPCRouteReconciler) findRoutesForGateway(
 	return requests
 }
 
+func (r *GRPCRouteReconciler) findRoutesForReferenceGrant(
+	ctx context.Context,
+	obj client.Object,
+) []reconcile.Request {
+	var routeList gatewayv1.GRPCRouteList
+
+	err := r.List(ctx, &routeList)
+	if err != nil {
+		return nil
+	}
+
+	// Collect routes managed by our Gateway as RouteWithCrossNamespaceRefs
+	var routes []RouteWithCrossNamespaceRefs
+
+	for i := range routeList.Items {
+		route := &routeList.Items[i]
+		if r.isRouteForOurGateway(ctx, route) {
+			routes = append(routes, GRPCRouteWrapper{route})
+		}
+	}
+
+	return FindRoutesForReferenceGrant(obj, routes)
+}
+
+//nolint:dupl // similar logic for different route types is intentional
 func (r *GRPCRouteReconciler) getAllRelevantRoutes(ctx context.Context) []reconcile.Request {
 	var routeList gatewayv1.GRPCRouteList
 

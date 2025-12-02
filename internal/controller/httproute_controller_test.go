@@ -669,7 +669,7 @@ func TestHTTPRouteReconciler_UpdateRouteStatus_Integration(t *testing.T) {
 			},
 		},
 	}
-	err := r.updateRouteStatus(context.Background(), route, bindingInfo, nil)
+	err := r.updateRouteStatus(context.Background(), route, bindingInfo, nil, nil)
 	require.NoError(t, err)
 
 	// Verify status was updated
@@ -760,7 +760,7 @@ func TestHTTPRouteReconciler_UpdateRouteStatus_NotAccepted(t *testing.T) {
 			},
 		},
 	}
-	err := r.updateRouteStatus(context.Background(), route, bindingInfo, nil)
+	err := r.updateRouteStatus(context.Background(), route, bindingInfo, nil, nil)
 	require.NoError(t, err)
 
 	// Verify status was updated

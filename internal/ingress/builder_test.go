@@ -1,6 +1,7 @@
 package ingress_test
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -36,7 +37,7 @@ func TestNewBuilder(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			builder := ingress.NewBuilder(tt.clusterDomain)
+			builder := ingress.NewBuilder(tt.clusterDomain, nil)
 			require.NotNil(t, builder)
 			assert.Equal(t, tt.clusterDomain, builder.ClusterDomain)
 		})
@@ -46,19 +47,20 @@ func TestNewBuilder(t *testing.T) {
 func TestBuild_EmptyRoutes(t *testing.T) {
 	t.Parallel()
 
-	builder := ingress.NewBuilder("cluster.local")
+	builder := ingress.NewBuilder("cluster.local", nil)
 	routes := []gatewayv1.HTTPRoute{}
 
-	result := builder.Build(routes)
+	buildResult := builder.Build(context.Background(), routes)
 
-	require.Len(t, result, 1)
-	assert.Equal(t, ingress.CatchAllService, result[0].Service.Value)
+	require.Len(t, buildResult.Rules, 1)
+	assert.Equal(t, ingress.CatchAllService, buildResult.Rules[0].Service.Value)
+	assert.Empty(t, buildResult.FailedRefs)
 }
 
 func TestBuild_SingleRoute(t *testing.T) {
 	t.Parallel()
 
-	builder := ingress.NewBuilder("cluster.local")
+	builder := ingress.NewBuilder("cluster.local", nil)
 	routes := []gatewayv1.HTTPRoute{
 		{
 			ObjectMeta: metav1.ObjectMeta{
@@ -78,18 +80,19 @@ func TestBuild_SingleRoute(t *testing.T) {
 		},
 	}
 
-	result := builder.Build(routes)
+	buildResult := builder.Build(context.Background(), routes)
 
-	require.Len(t, result, 2)
-	assert.Equal(t, "app.example.com", result[0].Hostname.Value)
-	assert.Equal(t, "http://my-service.default.svc.cluster.local:8080", result[0].Service.Value)
-	assert.Equal(t, ingress.CatchAllService, result[1].Service.Value)
+	require.Len(t, buildResult.Rules, 2)
+	assert.Equal(t, "app.example.com", buildResult.Rules[0].Hostname.Value)
+	assert.Equal(t, "http://my-service.default.svc.cluster.local:8080", buildResult.Rules[0].Service.Value)
+	assert.Equal(t, ingress.CatchAllService, buildResult.Rules[1].Service.Value)
+	assert.Empty(t, buildResult.FailedRefs)
 }
 
 func TestBuild_MultipleHostnames(t *testing.T) {
 	t.Parallel()
 
-	builder := ingress.NewBuilder("cluster.local")
+	builder := ingress.NewBuilder("cluster.local", nil)
 	routes := []gatewayv1.HTTPRoute{
 		{
 			ObjectMeta: metav1.ObjectMeta{
@@ -109,19 +112,19 @@ func TestBuild_MultipleHostnames(t *testing.T) {
 		},
 	}
 
-	result := builder.Build(routes)
+	buildResult := builder.Build(context.Background(), routes)
 
-	require.Len(t, result, 4)
-	assert.Equal(t, "app1.example.com", result[0].Hostname.Value)
-	assert.Equal(t, "app2.example.com", result[1].Hostname.Value)
-	assert.Equal(t, "app3.example.com", result[2].Hostname.Value)
-	assert.Equal(t, ingress.CatchAllService, result[3].Service.Value)
+	require.Len(t, buildResult.Rules, 4)
+	assert.Equal(t, "app1.example.com", buildResult.Rules[0].Hostname.Value)
+	assert.Equal(t, "app2.example.com", buildResult.Rules[1].Hostname.Value)
+	assert.Equal(t, "app3.example.com", buildResult.Rules[2].Hostname.Value)
+	assert.Equal(t, ingress.CatchAllService, buildResult.Rules[3].Service.Value)
 }
 
 func TestBuild_MultipleRoutes(t *testing.T) {
 	t.Parallel()
 
-	builder := ingress.NewBuilder("cluster.local")
+	builder := ingress.NewBuilder("cluster.local", nil)
 	routes := []gatewayv1.HTTPRoute{
 		{
 			ObjectMeta: metav1.ObjectMeta{
@@ -157,18 +160,18 @@ func TestBuild_MultipleRoutes(t *testing.T) {
 		},
 	}
 
-	result := builder.Build(routes)
+	buildResult := builder.Build(context.Background(), routes)
 
-	require.Len(t, result, 3)
-	assert.Equal(t, "app1.example.com", result[0].Hostname.Value)
-	assert.Equal(t, "app2.example.com", result[1].Hostname.Value)
-	assert.Equal(t, ingress.CatchAllService, result[2].Service.Value)
+	require.Len(t, buildResult.Rules, 3)
+	assert.Equal(t, "app1.example.com", buildResult.Rules[0].Hostname.Value)
+	assert.Equal(t, "app2.example.com", buildResult.Rules[1].Hostname.Value)
+	assert.Equal(t, ingress.CatchAllService, buildResult.Rules[2].Service.Value)
 }
 
 func TestBuild_PathMatching_Exact(t *testing.T) {
 	t.Parallel()
 
-	builder := ingress.NewBuilder("cluster.local")
+	builder := ingress.NewBuilder("cluster.local", nil)
 	exactType := gatewayv1.PathMatchExact
 	routes := []gatewayv1.HTTPRoute{
 		{
@@ -197,16 +200,16 @@ func TestBuild_PathMatching_Exact(t *testing.T) {
 		},
 	}
 
-	result := builder.Build(routes)
+	buildResult := builder.Build(context.Background(), routes)
 
-	require.Len(t, result, 2)
-	assert.Equal(t, "/api/v1", result[0].Path.Value)
+	require.Len(t, buildResult.Rules, 2)
+	assert.Equal(t, "/api/v1", buildResult.Rules[0].Path.Value)
 }
 
 func TestBuild_PathMatching_Prefix(t *testing.T) {
 	t.Parallel()
 
-	builder := ingress.NewBuilder("cluster.local")
+	builder := ingress.NewBuilder("cluster.local", nil)
 	prefixType := gatewayv1.PathMatchPathPrefix
 	routes := []gatewayv1.HTTPRoute{
 		{
@@ -235,16 +238,16 @@ func TestBuild_PathMatching_Prefix(t *testing.T) {
 		},
 	}
 
-	result := builder.Build(routes)
+	buildResult := builder.Build(context.Background(), routes)
 
-	require.Len(t, result, 2)
-	assert.Equal(t, "/api*", result[0].Path.Value)
+	require.Len(t, buildResult.Rules, 2)
+	assert.Equal(t, "/api*", buildResult.Rules[0].Path.Value)
 }
 
 func TestBuild_Sorting(t *testing.T) {
 	t.Parallel()
 
-	builder := ingress.NewBuilder("cluster.local")
+	builder := ingress.NewBuilder("cluster.local", nil)
 	exactType := gatewayv1.PathMatchExact
 	prefixType := gatewayv1.PathMatchPathPrefix
 	routes := []gatewayv1.HTTPRoute{
@@ -300,19 +303,19 @@ func TestBuild_Sorting(t *testing.T) {
 		},
 	}
 
-	result := builder.Build(routes)
+	buildResult := builder.Build(context.Background(), routes)
 
-	require.Len(t, result, 4)
-	assert.Contains(t, result[0].Service.Value, "exact-service")
-	assert.Contains(t, result[1].Service.Value, "longer-prefix-service")
-	assert.Contains(t, result[2].Service.Value, "prefix-service")
-	assert.Equal(t, ingress.CatchAllService, result[3].Service.Value)
+	require.Len(t, buildResult.Rules, 4)
+	assert.Contains(t, buildResult.Rules[0].Service.Value, "exact-service")
+	assert.Contains(t, buildResult.Rules[1].Service.Value, "longer-prefix-service")
+	assert.Contains(t, buildResult.Rules[2].Service.Value, "prefix-service")
+	assert.Equal(t, ingress.CatchAllService, buildResult.Rules[3].Service.Value)
 }
 
 func TestBuild_NoHostnames(t *testing.T) {
 	t.Parallel()
 
-	builder := ingress.NewBuilder("cluster.local")
+	builder := ingress.NewBuilder("cluster.local", nil)
 	routes := []gatewayv1.HTTPRoute{
 		{
 			ObjectMeta: metav1.ObjectMeta{
@@ -332,16 +335,16 @@ func TestBuild_NoHostnames(t *testing.T) {
 		},
 	}
 
-	result := builder.Build(routes)
+	buildResult := builder.Build(context.Background(), routes)
 
-	require.Len(t, result, 2)
-	assert.Equal(t, "*", result[0].Hostname.Value)
+	require.Len(t, buildResult.Rules, 2)
+	assert.Equal(t, "*", buildResult.Rules[0].Hostname.Value)
 }
 
 func TestBuild_NoBackendRefs(t *testing.T) {
 	t.Parallel()
 
-	builder := ingress.NewBuilder("cluster.local")
+	builder := ingress.NewBuilder("cluster.local", nil)
 	routes := []gatewayv1.HTTPRoute{
 		{
 			ObjectMeta: metav1.ObjectMeta{
@@ -359,16 +362,16 @@ func TestBuild_NoBackendRefs(t *testing.T) {
 		},
 	}
 
-	result := builder.Build(routes)
+	buildResult := builder.Build(context.Background(), routes)
 
-	require.Len(t, result, 1)
-	assert.Equal(t, ingress.CatchAllService, result[0].Service.Value)
+	require.Len(t, buildResult.Rules, 1)
+	assert.Equal(t, ingress.CatchAllService, buildResult.Rules[0].Service.Value)
 }
 
 func TestBuild_NonServiceBackend(t *testing.T) {
 	t.Parallel()
 
-	builder := ingress.NewBuilder("cluster.local")
+	builder := ingress.NewBuilder("cluster.local", nil)
 	kind := gatewayv1.Kind("Deployment")
 	routes := []gatewayv1.HTTPRoute{
 		{
@@ -396,16 +399,16 @@ func TestBuild_NonServiceBackend(t *testing.T) {
 		},
 	}
 
-	result := builder.Build(routes)
+	buildResult := builder.Build(context.Background(), routes)
 
-	require.Len(t, result, 1)
-	assert.Equal(t, ingress.CatchAllService, result[0].Service.Value)
+	require.Len(t, buildResult.Rules, 1)
+	assert.Equal(t, ingress.CatchAllService, buildResult.Rules[0].Service.Value)
 }
 
 func TestBuild_NonCoreGroup(t *testing.T) {
 	t.Parallel()
 
-	builder := ingress.NewBuilder("cluster.local")
+	builder := ingress.NewBuilder("cluster.local", nil)
 	group := gatewayv1.Group("apps")
 	routes := []gatewayv1.HTTPRoute{
 		{
@@ -433,16 +436,16 @@ func TestBuild_NonCoreGroup(t *testing.T) {
 		},
 	}
 
-	result := builder.Build(routes)
+	buildResult := builder.Build(context.Background(), routes)
 
-	require.Len(t, result, 1)
-	assert.Equal(t, ingress.CatchAllService, result[0].Service.Value)
+	require.Len(t, buildResult.Rules, 1)
+	assert.Equal(t, ingress.CatchAllService, buildResult.Rules[0].Service.Value)
 }
 
 func TestBuild_CustomNamespace(t *testing.T) {
 	t.Parallel()
 
-	builder := ingress.NewBuilder("cluster.local")
+	builder := ingress.NewBuilder("cluster.local", nil)
 	ns := gatewayv1.Namespace("other-namespace")
 	routes := []gatewayv1.HTTPRoute{
 		{
@@ -463,17 +466,17 @@ func TestBuild_CustomNamespace(t *testing.T) {
 		},
 	}
 
-	result := builder.Build(routes)
+	buildResult := builder.Build(context.Background(), routes)
 
-	require.Len(t, result, 2)
-	assert.Contains(t, result[0].Service.Value, "other-namespace")
-	assert.Equal(t, "http://my-service.other-namespace.svc.cluster.local:8080", result[0].Service.Value)
+	require.Len(t, buildResult.Rules, 2)
+	assert.Contains(t, buildResult.Rules[0].Service.Value, "other-namespace")
+	assert.Equal(t, "http://my-service.other-namespace.svc.cluster.local:8080", buildResult.Rules[0].Service.Value)
 }
 
 func TestBuild_CustomPort(t *testing.T) {
 	t.Parallel()
 
-	builder := ingress.NewBuilder("cluster.local")
+	builder := ingress.NewBuilder("cluster.local", nil)
 	routes := []gatewayv1.HTTPRoute{
 		{
 			ObjectMeta: metav1.ObjectMeta{
@@ -493,16 +496,16 @@ func TestBuild_CustomPort(t *testing.T) {
 		},
 	}
 
-	result := builder.Build(routes)
+	buildResult := builder.Build(context.Background(), routes)
 
-	require.Len(t, result, 2)
-	assert.Equal(t, "http://my-service.default.svc.cluster.local:9090", result[0].Service.Value)
+	require.Len(t, buildResult.Rules, 2)
+	assert.Equal(t, "http://my-service.default.svc.cluster.local:9090", buildResult.Rules[0].Service.Value)
 }
 
 func TestBuild_HTTPSPort(t *testing.T) {
 	t.Parallel()
 
-	builder := ingress.NewBuilder("cluster.local")
+	builder := ingress.NewBuilder("cluster.local", nil)
 	routes := []gatewayv1.HTTPRoute{
 		{
 			ObjectMeta: metav1.ObjectMeta{
@@ -522,16 +525,16 @@ func TestBuild_HTTPSPort(t *testing.T) {
 		},
 	}
 
-	result := builder.Build(routes)
+	buildResult := builder.Build(context.Background(), routes)
 
-	require.Len(t, result, 2)
-	assert.Equal(t, "https://my-service.default.svc.cluster.local:443", result[0].Service.Value)
+	require.Len(t, buildResult.Rules, 2)
+	assert.Equal(t, "https://my-service.default.svc.cluster.local:443", buildResult.Rules[0].Service.Value)
 }
 
 func TestBuild_DefaultPort(t *testing.T) {
 	t.Parallel()
 
-	builder := ingress.NewBuilder("cluster.local")
+	builder := ingress.NewBuilder("cluster.local", nil)
 	routes := []gatewayv1.HTTPRoute{
 		{
 			ObjectMeta: metav1.ObjectMeta{
@@ -551,16 +554,16 @@ func TestBuild_DefaultPort(t *testing.T) {
 		},
 	}
 
-	result := builder.Build(routes)
+	buildResult := builder.Build(context.Background(), routes)
 
-	require.Len(t, result, 2)
-	assert.Equal(t, "http://my-service.default.svc.cluster.local:80", result[0].Service.Value)
+	require.Len(t, buildResult.Rules, 2)
+	assert.Equal(t, "http://my-service.default.svc.cluster.local:80", buildResult.Rules[0].Service.Value)
 }
 
 func TestBuild_NoPathMatches(t *testing.T) {
 	t.Parallel()
 
-	builder := ingress.NewBuilder("cluster.local")
+	builder := ingress.NewBuilder("cluster.local", nil)
 	routes := []gatewayv1.HTTPRoute{
 		{
 			ObjectMeta: metav1.ObjectMeta{
@@ -581,16 +584,16 @@ func TestBuild_NoPathMatches(t *testing.T) {
 		},
 	}
 
-	result := builder.Build(routes)
+	buildResult := builder.Build(context.Background(), routes)
 
-	require.Len(t, result, 2)
-	assert.False(t, result[0].Path.Present)
+	require.Len(t, buildResult.Rules, 2)
+	assert.False(t, buildResult.Rules[0].Path.Present)
 }
 
 func TestBuild_NilPathMatch(t *testing.T) {
 	t.Parallel()
 
-	builder := ingress.NewBuilder("cluster.local")
+	builder := ingress.NewBuilder("cluster.local", nil)
 	routes := []gatewayv1.HTTPRoute{
 		{
 			ObjectMeta: metav1.ObjectMeta{
@@ -615,16 +618,16 @@ func TestBuild_NilPathMatch(t *testing.T) {
 		},
 	}
 
-	result := builder.Build(routes)
+	buildResult := builder.Build(context.Background(), routes)
 
-	require.Len(t, result, 2)
-	assert.False(t, result[0].Path.Present)
+	require.Len(t, buildResult.Rules, 2)
+	assert.False(t, buildResult.Rules[0].Path.Present)
 }
 
 func TestBuild_RegularExpressionPath(t *testing.T) {
 	t.Parallel()
 
-	builder := ingress.NewBuilder("cluster.local")
+	builder := ingress.NewBuilder("cluster.local", nil)
 	regexType := gatewayv1.PathMatchRegularExpression
 	routes := []gatewayv1.HTTPRoute{
 		{
@@ -653,16 +656,16 @@ func TestBuild_RegularExpressionPath(t *testing.T) {
 		},
 	}
 
-	result := builder.Build(routes)
+	buildResult := builder.Build(context.Background(), routes)
 
-	require.Len(t, result, 2)
-	assert.Equal(t, "/api/[0-9]+*", result[0].Path.Value)
+	require.Len(t, buildResult.Rules, 2)
+	assert.Equal(t, "/api/[0-9]+*", buildResult.Rules[0].Path.Value)
 }
 
 func TestBuild_CustomClusterDomain(t *testing.T) {
 	t.Parallel()
 
-	builder := ingress.NewBuilder("my-cluster.example.com")
+	builder := ingress.NewBuilder("my-cluster.example.com", nil)
 	routes := []gatewayv1.HTTPRoute{
 		{
 			ObjectMeta: metav1.ObjectMeta{
@@ -682,16 +685,16 @@ func TestBuild_CustomClusterDomain(t *testing.T) {
 		},
 	}
 
-	result := builder.Build(routes)
+	buildResult := builder.Build(context.Background(), routes)
 
-	require.Len(t, result, 2)
-	assert.Equal(t, "http://my-service.default.svc.my-cluster.example.com:8080", result[0].Service.Value)
+	require.Len(t, buildResult.Rules, 2)
+	assert.Equal(t, "http://my-service.default.svc.my-cluster.example.com:8080", buildResult.Rules[0].Service.Value)
 }
 
 func TestBuild_SortingByHostname(t *testing.T) {
 	t.Parallel()
 
-	builder := ingress.NewBuilder("cluster.local")
+	builder := ingress.NewBuilder("cluster.local", nil)
 	routes := []gatewayv1.HTTPRoute{
 		{
 			ObjectMeta: metav1.ObjectMeta{
@@ -727,17 +730,17 @@ func TestBuild_SortingByHostname(t *testing.T) {
 		},
 	}
 
-	result := builder.Build(routes)
+	buildResult := builder.Build(context.Background(), routes)
 
-	require.Len(t, result, 3)
-	assert.Equal(t, "a.example.com", result[0].Hostname.Value)
-	assert.Equal(t, "z.example.com", result[1].Hostname.Value)
+	require.Len(t, buildResult.Rules, 3)
+	assert.Equal(t, "a.example.com", buildResult.Rules[0].Hostname.Value)
+	assert.Equal(t, "z.example.com", buildResult.Rules[1].Hostname.Value)
 }
 
 func TestBuild_CoreGroupExplicit(t *testing.T) {
 	t.Parallel()
 
-	builder := ingress.NewBuilder("cluster.local")
+	builder := ingress.NewBuilder("cluster.local", nil)
 	coreGroup := gatewayv1.Group("core")
 	routes := []gatewayv1.HTTPRoute{
 		{
@@ -766,16 +769,16 @@ func TestBuild_CoreGroupExplicit(t *testing.T) {
 		},
 	}
 
-	result := builder.Build(routes)
+	buildResult := builder.Build(context.Background(), routes)
 
-	require.Len(t, result, 2)
-	assert.Contains(t, result[0].Service.Value, "my-service")
+	require.Len(t, buildResult.Rules, 2)
+	assert.Contains(t, buildResult.Rules[0].Service.Value, "my-service")
 }
 
 func TestBuild_EmptyGroupExplicit(t *testing.T) {
 	t.Parallel()
 
-	builder := ingress.NewBuilder("cluster.local")
+	builder := ingress.NewBuilder("cluster.local", nil)
 	emptyGroup := gatewayv1.Group("")
 	routes := []gatewayv1.HTTPRoute{
 		{
@@ -804,16 +807,16 @@ func TestBuild_EmptyGroupExplicit(t *testing.T) {
 		},
 	}
 
-	result := builder.Build(routes)
+	buildResult := builder.Build(context.Background(), routes)
 
-	require.Len(t, result, 2)
-	assert.Contains(t, result[0].Service.Value, "my-service")
+	require.Len(t, buildResult.Rules, 2)
+	assert.Contains(t, buildResult.Rules[0].Service.Value, "my-service")
 }
 
 func TestBuild_ServiceKindExplicit(t *testing.T) {
 	t.Parallel()
 
-	builder := ingress.NewBuilder("cluster.local")
+	builder := ingress.NewBuilder("cluster.local", nil)
 	serviceKind := gatewayv1.Kind("Service")
 	routes := []gatewayv1.HTTPRoute{
 		{
@@ -842,16 +845,16 @@ func TestBuild_ServiceKindExplicit(t *testing.T) {
 		},
 	}
 
-	result := builder.Build(routes)
+	buildResult := builder.Build(context.Background(), routes)
 
-	require.Len(t, result, 2)
-	assert.Contains(t, result[0].Service.Value, "my-service")
+	require.Len(t, buildResult.Rules, 2)
+	assert.Contains(t, buildResult.Rules[0].Service.Value, "my-service")
 }
 
 func TestBuild_RootPath(t *testing.T) {
 	t.Parallel()
 
-	builder := ingress.NewBuilder("cluster.local")
+	builder := ingress.NewBuilder("cluster.local", nil)
 	prefixType := gatewayv1.PathMatchPathPrefix
 	routes := []gatewayv1.HTTPRoute{
 		{
@@ -880,10 +883,10 @@ func TestBuild_RootPath(t *testing.T) {
 		},
 	}
 
-	result := builder.Build(routes)
+	buildResult := builder.Build(context.Background(), routes)
 
-	require.Len(t, result, 2)
-	assert.False(t, result[0].Path.Present)
+	require.Len(t, buildResult.Rules, 2)
+	assert.False(t, buildResult.Rules[0].Path.Present)
 }
 
 func TestBuild_WeightSelection(t *testing.T) {
@@ -937,7 +940,7 @@ func TestBuild_WeightSelection(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			builder := ingress.NewBuilder("cluster.local")
+			builder := ingress.NewBuilder("cluster.local", nil)
 
 			backendRefs := make([]gatewayv1.HTTPBackendRef, len(tt.backendWeights))
 			for i, w := range tt.backendWeights {
@@ -969,10 +972,10 @@ func TestBuild_WeightSelection(t *testing.T) {
 				},
 			}
 
-			result := builder.Build(routes)
+			buildResult := builder.Build(context.Background(), routes)
 
-			require.Len(t, result, 2)
-			assert.Contains(t, result[0].Service.Value, tt.expectedService)
+			require.Len(t, buildResult.Rules, 2)
+			assert.Contains(t, buildResult.Rules[0].Service.Value, tt.expectedService)
 		})
 	}
 }
@@ -980,7 +983,7 @@ func TestBuild_WeightSelection(t *testing.T) {
 func TestBuild_AllBackendsDisabled(t *testing.T) {
 	t.Parallel()
 
-	builder := ingress.NewBuilder("cluster.local")
+	builder := ingress.NewBuilder("cluster.local", nil)
 	routes := []gatewayv1.HTTPRoute{
 		{
 			ObjectMeta: metav1.ObjectMeta{
@@ -1008,11 +1011,11 @@ func TestBuild_AllBackendsDisabled(t *testing.T) {
 		},
 	}
 
-	result := builder.Build(routes)
+	buildResult := builder.Build(context.Background(), routes)
 
 	// Only catch-all rule should be present, no actual route rules
-	require.Len(t, result, 1)
-	assert.Equal(t, ingress.CatchAllService, result[0].Service.Value)
+	require.Len(t, buildResult.Rules, 1)
+	assert.Equal(t, ingress.CatchAllService, buildResult.Rules[0].Service.Value)
 }
 
 func newHTTPBackendRef(name string, namespace *gatewayv1.Namespace, port *int32) gatewayv1.HTTPBackendRef {

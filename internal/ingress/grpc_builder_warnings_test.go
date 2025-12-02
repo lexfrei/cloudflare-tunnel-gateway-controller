@@ -1,6 +1,7 @@
 package ingress_test
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -20,7 +21,7 @@ func TestGRPCBuild_WarnMultipleBackendRefs(t *testing.T) {
 	buf, cleanup := setupTestLogger()
 	defer cleanup()
 
-	builder := ingress.NewGRPCBuilder("cluster.local")
+	builder := ingress.NewGRPCBuilder("cluster.local", nil)
 	routes := []gatewayv1.GRPCRoute{
 		{
 			ObjectMeta: metav1.ObjectMeta{
@@ -42,7 +43,7 @@ func TestGRPCBuild_WarnMultipleBackendRefs(t *testing.T) {
 		},
 	}
 
-	_ = builder.Build(routes)
+	_ = builder.Build(context.Background(), routes)
 
 	logs := buf.String()
 	assert.Contains(t, logs, "route configuration partially applied")
@@ -56,7 +57,7 @@ func TestGRPCBuild_WarnBackendRefWeights(t *testing.T) {
 	buf, cleanup := setupTestLogger()
 	defer cleanup()
 
-	builder := ingress.NewGRPCBuilder("cluster.local")
+	builder := ingress.NewGRPCBuilder("cluster.local", nil)
 	weight70 := int32(70)
 	weight30 := int32(30)
 
@@ -80,7 +81,7 @@ func TestGRPCBuild_WarnBackendRefWeights(t *testing.T) {
 		},
 	}
 
-	_ = builder.Build(routes)
+	_ = builder.Build(context.Background(), routes)
 
 	logs := buf.String()
 	assert.Contains(t, logs, "route configuration partially applied")
@@ -95,7 +96,7 @@ func TestGRPCBuild_WarnHeaderMatching(t *testing.T) {
 	buf, cleanup := setupTestLogger()
 	defer cleanup()
 
-	builder := ingress.NewGRPCBuilder("cluster.local")
+	builder := ingress.NewGRPCBuilder("cluster.local", nil)
 	headerType := gatewayv1.GRPCHeaderMatchExact
 	service := testGRPCService
 
@@ -137,7 +138,7 @@ func TestGRPCBuild_WarnHeaderMatching(t *testing.T) {
 		},
 	}
 
-	_ = builder.Build(routes)
+	_ = builder.Build(context.Background(), routes)
 
 	logs := buf.String()
 	assert.Contains(t, logs, "route configuration partially applied")
@@ -150,7 +151,7 @@ func TestGRPCBuild_WarnFilters(t *testing.T) {
 	buf, cleanup := setupTestLogger()
 	defer cleanup()
 
-	builder := ingress.NewGRPCBuilder("cluster.local")
+	builder := ingress.NewGRPCBuilder("cluster.local", nil)
 	filterType := gatewayv1.GRPCRouteFilterRequestHeaderModifier
 
 	routes := []gatewayv1.GRPCRoute{
@@ -193,7 +194,7 @@ func TestGRPCBuild_WarnFilters(t *testing.T) {
 		},
 	}
 
-	_ = builder.Build(routes)
+	_ = builder.Build(context.Background(), routes)
 
 	logs := buf.String()
 	assert.Contains(t, logs, "route configuration partially applied")
@@ -206,7 +207,7 @@ func TestGRPCBuild_MultipleWarnings(t *testing.T) {
 	buf, cleanup := setupTestLogger()
 	defer cleanup()
 
-	builder := ingress.NewGRPCBuilder("cluster.local")
+	builder := ingress.NewGRPCBuilder("cluster.local", nil)
 	headerType := gatewayv1.GRPCHeaderMatchExact
 	weight50 := int32(50)
 	service := testGRPCService
@@ -245,7 +246,7 @@ func TestGRPCBuild_MultipleWarnings(t *testing.T) {
 		},
 	}
 
-	_ = builder.Build(routes)
+	_ = builder.Build(context.Background(), routes)
 
 	logs := buf.String()
 	// Should have warnings for: multiple backends, weights, headers
@@ -260,7 +261,7 @@ func TestGRPCBuild_NoWarningsForValidConfig(t *testing.T) {
 	buf, cleanup := setupTestLogger()
 	defer cleanup()
 
-	builder := ingress.NewGRPCBuilder("cluster.local")
+	builder := ingress.NewGRPCBuilder("cluster.local", nil)
 	service := testGRPCService
 	method := testGRPCMethod
 
@@ -291,7 +292,7 @@ func TestGRPCBuild_NoWarningsForValidConfig(t *testing.T) {
 		},
 	}
 
-	_ = builder.Build(routes)
+	_ = builder.Build(context.Background(), routes)
 
 	logs := buf.String()
 	// Should have no warnings for a properly configured route

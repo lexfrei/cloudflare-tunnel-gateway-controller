@@ -14,6 +14,7 @@ import (
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/config"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/ingress"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/referencegrant"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/routebinding"
 )
 
@@ -43,14 +44,16 @@ func NewRouteSyncer(
 	gatewayClassName string,
 	configResolver *config.Resolver,
 ) *RouteSyncer {
+	refGrantValidator := referencegrant.NewValidator(c)
+
 	return &RouteSyncer{
 		Client:           c,
 		Scheme:           scheme,
 		ClusterDomain:    clusterDomain,
 		GatewayClassName: gatewayClassName,
 		ConfigResolver:   configResolver,
-		httpBuilder:      ingress.NewBuilder(clusterDomain),
-		grpcBuilder:      ingress.NewGRPCBuilder(clusterDomain),
+		httpBuilder:      ingress.NewBuilder(clusterDomain, refGrantValidator),
+		grpcBuilder:      ingress.NewGRPCBuilder(clusterDomain, refGrantValidator),
 		bindingValidator: routebinding.NewValidator(c),
 	}
 }
@@ -67,6 +70,8 @@ type SyncResult struct {
 	GRPCRoutes        []gatewayv1.GRPCRoute
 	HTTPRouteBindings map[string]routeBindingInfo // key: namespace/name
 	GRPCRouteBindings map[string]routeBindingInfo // key: namespace/name
+	HTTPFailedRefs    []ingress.BackendRefError   // Failed backend refs from HTTP routes
+	GRPCFailedRefs    []ingress.BackendRefError   // Failed backend refs from GRPC routes
 }
 
 // SyncAllRoutes synchronizes all HTTPRoute and GRPCRoute resources to Cloudflare Tunnel.
@@ -126,11 +131,11 @@ func (s *RouteSyncer) SyncAllRoutes(ctx context.Context) (ctrl.Result, *SyncResu
 	)
 
 	// Build desired rules from both route types
-	httpRules := s.httpBuilder.Build(httpRoutes)
-	grpcRules := s.grpcBuilder.Build(grpcRoutes)
+	httpBuildResult := s.httpBuilder.Build(ctx, httpRoutes)
+	grpcBuildResult := s.grpcBuilder.Build(ctx, grpcRoutes)
 
 	// Merge rules (HTTP rules first, then GRPC, then sort)
-	desiredRules := mergeAndSortRules(httpRules, grpcRules)
+	desiredRules := mergeAndSortRules(httpBuildResult.Rules, grpcBuildResult.Rules)
 
 	// Compute diff between current and desired
 	toAdd, toRemove := ingress.DiffRules(currentConfig.Config.Ingress, desiredRules)
@@ -153,6 +158,8 @@ func (s *RouteSyncer) SyncAllRoutes(ctx context.Context) (ctrl.Result, *SyncResu
 			GRPCRoutes:        grpcRoutes,
 			HTTPRouteBindings: httpBindings,
 			GRPCRouteBindings: grpcBindings,
+			HTTPFailedRefs:    httpBuildResult.FailedRefs,
+			GRPCFailedRefs:    grpcBuildResult.FailedRefs,
 		}
 
 		return ctrl.Result{}, result, limitErr
@@ -174,6 +181,8 @@ func (s *RouteSyncer) SyncAllRoutes(ctx context.Context) (ctrl.Result, *SyncResu
 			GRPCRoutes:        grpcRoutes,
 			HTTPRouteBindings: httpBindings,
 			GRPCRouteBindings: grpcBindings,
+			HTTPFailedRefs:    httpBuildResult.FailedRefs,
+			GRPCFailedRefs:    grpcBuildResult.FailedRefs,
 		}
 
 		return ctrl.Result{RequeueAfter: apiErrorRequeueDelay}, result, err
@@ -186,6 +195,8 @@ func (s *RouteSyncer) SyncAllRoutes(ctx context.Context) (ctrl.Result, *SyncResu
 		GRPCRoutes:        grpcRoutes,
 		HTTPRouteBindings: httpBindings,
 		GRPCRouteBindings: grpcBindings,
+		HTTPFailedRefs:    httpBuildResult.FailedRefs,
+		GRPCFailedRefs:    grpcBuildResult.FailedRefs,
 	}
 
 	return ctrl.Result{}, result, nil

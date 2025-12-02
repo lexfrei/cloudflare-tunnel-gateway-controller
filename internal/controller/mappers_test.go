@@ -15,6 +15,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
+	gatewayv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/api/v1alpha1"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/config"
@@ -548,4 +549,266 @@ func setupMapperFakeClient(objs ...client.Object) client.Client {
 		WithScheme(scheme).
 		WithObjects(objs...).
 		Build()
+}
+
+func TestFindRoutesForReferenceGrant(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name           string
+		refGrant       client.Object
+		routes         []RouteWithCrossNamespaceRefs
+		expectedCount  int
+		expectedRoutes []string
+	}{
+		{
+			name: "matches routes with cross-namespace refs to target namespace",
+			refGrant: &gatewayv1beta1.ReferenceGrant{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "allow-cross-ns",
+					Namespace: "backend-ns",
+				},
+			},
+			routes: []RouteWithCrossNamespaceRefs{
+				HTTPRouteWrapper{&gatewayv1.HTTPRoute{
+					ObjectMeta: metav1.ObjectMeta{Name: "route1", Namespace: "app-ns"},
+					Spec: gatewayv1.HTTPRouteSpec{
+						Rules: []gatewayv1.HTTPRouteRule{
+							{BackendRefs: []gatewayv1.HTTPBackendRef{
+								{BackendRef: gatewayv1.BackendRef{
+									BackendObjectReference: gatewayv1.BackendObjectReference{
+										Namespace: ptr(gatewayv1.Namespace("backend-ns")),
+									},
+								}},
+							}},
+						},
+					},
+				}},
+			},
+			expectedCount:  1,
+			expectedRoutes: []string{"app-ns/route1"},
+		},
+		{
+			name: "does not match routes without cross-namespace refs",
+			refGrant: &gatewayv1beta1.ReferenceGrant{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "allow-cross-ns",
+					Namespace: "backend-ns",
+				},
+			},
+			routes: []RouteWithCrossNamespaceRefs{
+				HTTPRouteWrapper{&gatewayv1.HTTPRoute{
+					ObjectMeta: metav1.ObjectMeta{Name: "route1", Namespace: "app-ns"},
+					Spec: gatewayv1.HTTPRouteSpec{
+						Rules: []gatewayv1.HTTPRouteRule{
+							{BackendRefs: []gatewayv1.HTTPBackendRef{
+								{BackendRef: gatewayv1.BackendRef{
+									BackendObjectReference: gatewayv1.BackendObjectReference{
+										Name: "svc",
+									},
+								}},
+							}},
+						},
+					},
+				}},
+			},
+			expectedCount: 0,
+		},
+		{
+			name: "wrong object type returns nil",
+			refGrant: &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: "not-a-refgrant"},
+			},
+			routes:        []RouteWithCrossNamespaceRefs{},
+			expectedCount: 0,
+		},
+		{
+			name: "grpc routes with cross-namespace refs",
+			refGrant: &gatewayv1beta1.ReferenceGrant{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "allow-grpc",
+					Namespace: "grpc-backend",
+				},
+			},
+			routes: []RouteWithCrossNamespaceRefs{
+				GRPCRouteWrapper{&gatewayv1.GRPCRoute{
+					ObjectMeta: metav1.ObjectMeta{Name: "grpc-route", Namespace: "frontend"},
+					Spec: gatewayv1.GRPCRouteSpec{
+						Rules: []gatewayv1.GRPCRouteRule{
+							{BackendRefs: []gatewayv1.GRPCBackendRef{
+								{BackendRef: gatewayv1.BackendRef{
+									BackendObjectReference: gatewayv1.BackendObjectReference{
+										Namespace: ptr(gatewayv1.Namespace("grpc-backend")),
+									},
+								}},
+							}},
+						},
+					},
+				}},
+			},
+			expectedCount:  1,
+			expectedRoutes: []string{"frontend/grpc-route"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			result := FindRoutesForReferenceGrant(tt.refGrant, tt.routes)
+
+			assert.Len(t, result, tt.expectedCount)
+
+			for i, expected := range tt.expectedRoutes {
+				assert.Equal(t, expected, result[i].NamespacedName.String())
+			}
+		})
+	}
+}
+
+func TestHTTPRouteWrapper_GetCrossNamespaceBackendNamespaces(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		route    *gatewayv1.HTTPRoute
+		expected []string
+	}{
+		{
+			name: "returns cross-namespace backend namespaces",
+			route: &gatewayv1.HTTPRoute{
+				ObjectMeta: metav1.ObjectMeta{Namespace: "app-ns"},
+				Spec: gatewayv1.HTTPRouteSpec{
+					Rules: []gatewayv1.HTTPRouteRule{
+						{BackendRefs: []gatewayv1.HTTPBackendRef{
+							{BackendRef: gatewayv1.BackendRef{
+								BackendObjectReference: gatewayv1.BackendObjectReference{
+									Namespace: ptr(gatewayv1.Namespace("backend-ns")),
+								},
+							}},
+						}},
+					},
+				},
+			},
+			expected: []string{"backend-ns"},
+		},
+		{
+			name: "excludes same-namespace backends",
+			route: &gatewayv1.HTTPRoute{
+				ObjectMeta: metav1.ObjectMeta{Namespace: "app-ns"},
+				Spec: gatewayv1.HTTPRouteSpec{
+					Rules: []gatewayv1.HTTPRouteRule{
+						{BackendRefs: []gatewayv1.HTTPBackendRef{
+							{BackendRef: gatewayv1.BackendRef{
+								BackendObjectReference: gatewayv1.BackendObjectReference{
+									Namespace: ptr(gatewayv1.Namespace("app-ns")),
+								},
+							}},
+						}},
+					},
+				},
+			},
+			expected: nil,
+		},
+		{
+			name: "deduplicates namespaces",
+			route: &gatewayv1.HTTPRoute{
+				ObjectMeta: metav1.ObjectMeta{Namespace: "app-ns"},
+				Spec: gatewayv1.HTTPRouteSpec{
+					Rules: []gatewayv1.HTTPRouteRule{
+						{BackendRefs: []gatewayv1.HTTPBackendRef{
+							{BackendRef: gatewayv1.BackendRef{
+								BackendObjectReference: gatewayv1.BackendObjectReference{
+									Namespace: ptr(gatewayv1.Namespace("backend-ns")),
+								},
+							}},
+							{BackendRef: gatewayv1.BackendRef{
+								BackendObjectReference: gatewayv1.BackendObjectReference{
+									Namespace: ptr(gatewayv1.Namespace("backend-ns")),
+								},
+							}},
+						}},
+					},
+				},
+			},
+			expected: []string{"backend-ns"},
+		},
+		{
+			name: "handles nil namespace (same namespace)",
+			route: &gatewayv1.HTTPRoute{
+				ObjectMeta: metav1.ObjectMeta{Namespace: "app-ns"},
+				Spec: gatewayv1.HTTPRouteSpec{
+					Rules: []gatewayv1.HTTPRouteRule{
+						{BackendRefs: []gatewayv1.HTTPBackendRef{
+							{BackendRef: gatewayv1.BackendRef{
+								BackendObjectReference: gatewayv1.BackendObjectReference{
+									Name: "svc",
+								},
+							}},
+						}},
+					},
+				},
+			},
+			expected: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			wrapper := HTTPRouteWrapper{tt.route}
+			result := wrapper.GetCrossNamespaceBackendNamespaces()
+
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestGRPCRouteWrapper_GetCrossNamespaceBackendNamespaces(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		route    *gatewayv1.GRPCRoute
+		expected []string
+	}{
+		{
+			name: "returns cross-namespace backend namespaces",
+			route: &gatewayv1.GRPCRoute{
+				ObjectMeta: metav1.ObjectMeta{Namespace: "app-ns"},
+				Spec: gatewayv1.GRPCRouteSpec{
+					Rules: []gatewayv1.GRPCRouteRule{
+						{BackendRefs: []gatewayv1.GRPCBackendRef{
+							{BackendRef: gatewayv1.BackendRef{
+								BackendObjectReference: gatewayv1.BackendObjectReference{
+									Namespace: ptr(gatewayv1.Namespace("grpc-backend")),
+								},
+							}},
+						}},
+					},
+				},
+			},
+			expected: []string{"grpc-backend"},
+		},
+		{
+			name: "handles empty rules",
+			route: &gatewayv1.GRPCRoute{
+				ObjectMeta: metav1.ObjectMeta{Namespace: "app-ns"},
+				Spec:       gatewayv1.GRPCRouteSpec{},
+			},
+			expected: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			wrapper := GRPCRouteWrapper{tt.route}
+			result := wrapper.GetCrossNamespaceBackendNamespaces()
+
+			assert.Equal(t, tt.expected, result)
+		})
+	}
 }

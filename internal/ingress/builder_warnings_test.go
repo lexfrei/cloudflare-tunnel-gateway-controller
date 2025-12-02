@@ -2,6 +2,7 @@ package ingress_test
 
 import (
 	"bytes"
+	"context"
 	"log/slog"
 	"strings"
 	"testing"
@@ -35,7 +36,7 @@ func TestBuild_WarnMultipleBackendRefs(t *testing.T) {
 	buf, cleanup := setupTestLogger()
 	defer cleanup()
 
-	builder := ingress.NewBuilder("cluster.local")
+	builder := ingress.NewBuilder("cluster.local", nil)
 	routes := []gatewayv1.HTTPRoute{
 		{
 			ObjectMeta: metav1.ObjectMeta{
@@ -57,7 +58,7 @@ func TestBuild_WarnMultipleBackendRefs(t *testing.T) {
 		},
 	}
 
-	_ = builder.Build(routes)
+	_ = builder.Build(context.Background(), routes)
 
 	logs := buf.String()
 	assert.Contains(t, logs, "route configuration partially applied")
@@ -71,7 +72,7 @@ func TestBuild_WarnBackendRefWeights(t *testing.T) {
 	buf, cleanup := setupTestLogger()
 	defer cleanup()
 
-	builder := ingress.NewBuilder("cluster.local")
+	builder := ingress.NewBuilder("cluster.local", nil)
 	weight50 := int32(50)
 	weight30 := int32(30)
 
@@ -95,7 +96,7 @@ func TestBuild_WarnBackendRefWeights(t *testing.T) {
 		},
 	}
 
-	_ = builder.Build(routes)
+	_ = builder.Build(context.Background(), routes)
 
 	logs := buf.String()
 	assert.Contains(t, logs, "route configuration partially applied")
@@ -110,7 +111,7 @@ func TestBuild_WarnHeaderMatching(t *testing.T) {
 	buf, cleanup := setupTestLogger()
 	defer cleanup()
 
-	builder := ingress.NewBuilder("cluster.local")
+	builder := ingress.NewBuilder("cluster.local", nil)
 	headerType := gatewayv1.HeaderMatchExact
 
 	routes := []gatewayv1.HTTPRoute{
@@ -148,7 +149,7 @@ func TestBuild_WarnHeaderMatching(t *testing.T) {
 		},
 	}
 
-	_ = builder.Build(routes)
+	_ = builder.Build(context.Background(), routes)
 
 	logs := buf.String()
 	assert.Contains(t, logs, "route configuration partially applied")
@@ -161,7 +162,7 @@ func TestBuild_WarnQueryParamMatching(t *testing.T) {
 	buf, cleanup := setupTestLogger()
 	defer cleanup()
 
-	builder := ingress.NewBuilder("cluster.local")
+	builder := ingress.NewBuilder("cluster.local", nil)
 	queryType := gatewayv1.QueryParamMatchExact
 
 	routes := []gatewayv1.HTTPRoute{
@@ -194,7 +195,7 @@ func TestBuild_WarnQueryParamMatching(t *testing.T) {
 		},
 	}
 
-	_ = builder.Build(routes)
+	_ = builder.Build(context.Background(), routes)
 
 	logs := buf.String()
 	assert.Contains(t, logs, "route configuration partially applied")
@@ -207,7 +208,7 @@ func TestBuild_WarnMethodMatching(t *testing.T) {
 	buf, cleanup := setupTestLogger()
 	defer cleanup()
 
-	builder := ingress.NewBuilder("cluster.local")
+	builder := ingress.NewBuilder("cluster.local", nil)
 	method := gatewayv1.HTTPMethodPost
 
 	routes := []gatewayv1.HTTPRoute{
@@ -234,7 +235,7 @@ func TestBuild_WarnMethodMatching(t *testing.T) {
 		},
 	}
 
-	_ = builder.Build(routes)
+	_ = builder.Build(context.Background(), routes)
 
 	logs := buf.String()
 	assert.Contains(t, logs, "route configuration partially applied")
@@ -247,7 +248,7 @@ func TestBuild_WarnRegularExpressionPath(t *testing.T) {
 	buf, cleanup := setupTestLogger()
 	defer cleanup()
 
-	builder := ingress.NewBuilder("cluster.local")
+	builder := ingress.NewBuilder("cluster.local", nil)
 	pathType := gatewayv1.PathMatchRegularExpression
 	pathValue := "/api/v[0-9]+/.*"
 
@@ -278,7 +279,7 @@ func TestBuild_WarnRegularExpressionPath(t *testing.T) {
 		},
 	}
 
-	_ = builder.Build(routes)
+	_ = builder.Build(context.Background(), routes)
 
 	logs := buf.String()
 	assert.Contains(t, logs, "route configuration partially applied")
@@ -291,7 +292,7 @@ func TestBuild_WarnFilters(t *testing.T) {
 	buf, cleanup := setupTestLogger()
 	defer cleanup()
 
-	builder := ingress.NewBuilder("cluster.local")
+	builder := ingress.NewBuilder("cluster.local", nil)
 	filterType := gatewayv1.HTTPRouteFilterRequestHeaderModifier
 
 	routes := []gatewayv1.HTTPRoute{
@@ -332,7 +333,7 @@ func TestBuild_WarnFilters(t *testing.T) {
 		},
 	}
 
-	_ = builder.Build(routes)
+	_ = builder.Build(context.Background(), routes)
 
 	logs := buf.String()
 	assert.Contains(t, logs, "route configuration partially applied")
@@ -345,7 +346,7 @@ func TestBuild_MultipleWarnings(t *testing.T) {
 	buf, cleanup := setupTestLogger()
 	defer cleanup()
 
-	builder := ingress.NewBuilder("cluster.local")
+	builder := ingress.NewBuilder("cluster.local", nil)
 	method := gatewayv1.HTTPMethodGet
 	headerType := gatewayv1.HeaderMatchExact
 	weight50 := int32(50)
@@ -382,7 +383,7 @@ func TestBuild_MultipleWarnings(t *testing.T) {
 		},
 	}
 
-	_ = builder.Build(routes)
+	_ = builder.Build(context.Background(), routes)
 
 	logs := buf.String()
 	// Should have warnings for: multiple backends, weights, method, headers
@@ -398,7 +399,7 @@ func TestBuild_NoWarningsForValidConfig(t *testing.T) {
 	buf, cleanup := setupTestLogger()
 	defer cleanup()
 
-	builder := ingress.NewBuilder("cluster.local")
+	builder := ingress.NewBuilder("cluster.local", nil)
 	pathType := gatewayv1.PathMatchPathPrefix
 	pathValue := "/api"
 
@@ -429,7 +430,7 @@ func TestBuild_NoWarningsForValidConfig(t *testing.T) {
 		},
 	}
 
-	_ = builder.Build(routes)
+	_ = builder.Build(context.Background(), routes)
 
 	logs := buf.String()
 	// Should have no warnings for a properly configured route

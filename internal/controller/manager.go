@@ -11,6 +11,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
+	gatewayv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/api/v1alpha1"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/config"
@@ -91,6 +92,11 @@ func Run(ctx context.Context, cfg *Config) error {
 	// Register Gateway API types
 	if err := gatewayv1.Install(mgr.GetScheme()); err != nil {
 		return errors.Wrap(err, "failed to add gateway-api scheme")
+	}
+
+	// Register Gateway API v1beta1 types (required for ReferenceGrant)
+	if err := gatewayv1beta1.Install(mgr.GetScheme()); err != nil {
+		return errors.Wrap(err, "failed to add gateway-api v1beta1 scheme")
 	}
 
 	// Register GatewayClassConfig CRD types
