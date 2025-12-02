@@ -1,0 +1,189 @@
+# yaml-language-server: $schema=https://squidfunk.github.io/mkdocs-material/schema.json
+
+# Site metadata
+site_name: Cloudflare Tunnel Gateway Controller
+site_url: https://cf.k8s.lex.la
+site_author: Aleksei Sviridkin
+site_description: >-
+  Kubernetes Gateway API controller for Cloudflare Tunnel.
+  Route traffic through Cloudflare Tunnel using standard Gateway API resources.
+
+# Repository
+repo_name: lexfrei/cloudflare-tunnel-gateway-controller
+repo_url: https://github.com/lexfrei/cloudflare-tunnel-gateway-controller
+edit_uri: edit/master/docs/
+
+# Copyright
+copyright: Copyright &copy; 2024-2025 Aleksei Sviridkin
+
+# Theme configuration
+theme:
+  name: material
+  language: en
+
+  # Color palette with auto/light/dark modes
+  palette:
+    # Auto mode (follows system preference)
+    - media: "(prefers-color-scheme)"
+      toggle:
+        icon: material/brightness-auto
+        name: Switch to light mode
+    # Light mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: deep orange
+      accent: orange
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    # Dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: deep orange
+      accent: orange
+      toggle:
+        icon: material/brightness-4
+        name: Switch to auto mode
+
+  # Features
+  features:
+    - announce.dismiss
+    - content.action.edit
+    - content.action.view
+    - content.code.annotate
+    - content.code.copy
+    - content.tabs.link
+    - navigation.footer
+    - navigation.indexes
+    - navigation.instant
+    - navigation.instant.progress
+    - navigation.sections
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.top
+    - navigation.tracking
+    - search.highlight
+    - search.share
+    - search.suggest
+    - toc.follow
+
+  # Icons
+  icon:
+    repo: fontawesome/brands/github
+    edit: material/pencil
+    view: material/eye
+
+# Plugins
+plugins:
+  - search:
+      lang: en
+  - same-dir
+  - git-revision-date-localized:
+      enable_creation_date: true
+      type: timeago
+      fallback_to_build_date: true
+  - minify:
+      minify_html: true
+
+# Markdown extensions
+markdown_extensions:
+  # Python Markdown
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+      toc_depth: 3
+
+  # PyMdown Extensions
+  - pymdownx.arithmatex:
+      generic: true
+  - pymdownx.betterem:
+      smart_enable: all
+  - pymdownx.caret
+  - pymdownx.details
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.magiclink:
+      repo_url_shorthand: true
+      user: lexfrei
+      repo: cloudflare-tunnel-gateway-controller
+  - pymdownx.mark
+  - pymdownx.smartsymbols
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+      combine_header_slug: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.tilde
+
+# Extra configuration
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/lexfrei/cloudflare-tunnel-gateway-controller
+      name: GitHub
+  generator: false
+
+# Extra CSS
+extra_css:
+  - stylesheets/extra.css
+
+# Navigation
+nav:
+  - Home: index.md
+  - Getting Started:
+      - getting-started/index.md
+      - Prerequisites: getting-started/prerequisites.md
+      - Installation: getting-started/installation.md
+      - Quick Start: getting-started/quickstart.md
+  - Configuration:
+      - configuration/index.md
+      - Controller Options: configuration/controller.md
+      - Helm Values: configuration/helm-values.md
+      - GatewayClassConfig: configuration/gatewayclassconfig.md
+  - Gateway API:
+      - gateway-api/index.md
+      - Supported Resources: gateway-api/supported-resources.md
+      - HTTPRoute: gateway-api/httproute.md
+      - GRPCRoute: gateway-api/grpcroute.md
+      - ReferenceGrant: gateway-api/referencegrant.md
+      - Limitations: gateway-api/limitations.md
+  - Guides:
+      - guides/index.md
+      - AmneziaWG Sidecar: guides/awg-sidecar.md
+      - External-DNS Integration: guides/external-dns.md
+      - Cross-Namespace Routing: guides/cross-namespace.md
+      - Monitoring: guides/monitoring.md
+  - Operations:
+      - operations/index.md
+      - Troubleshooting: operations/troubleshooting.md
+      - Metrics & Alerting: operations/metrics.md
+      - Manual Installation: operations/manual-installation.md
+  - Development:
+      - development/index.md
+      - Setup: development/setup.md
+      - Architecture: development/architecture.md
+      - Contributing: development/contributing.md
+      - Testing: development/testing.md
+  - Reference:
+      - reference/index.md
+      - Helm Chart: reference/helm-chart.md
+      - CRD Reference: reference/crd-reference.md
+      - Security: reference/security.md
