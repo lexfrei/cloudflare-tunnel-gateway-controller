@@ -32,20 +32,29 @@ type GRPCBuilder struct {
 
 	// Metrics records build duration and validation results.
 	Metrics metrics.Collector
+
+	// Logger is used for structured logging.
+	Logger *slog.Logger
 }
 
-// NewGRPCBuilder creates a new GRPCBuilder with the specified cluster domain, validator, client, and metrics.
+// NewGRPCBuilder creates a new GRPCBuilder with the specified cluster domain, validator, client, metrics, and logger.
 func NewGRPCBuilder(
 	clusterDomain string,
 	validator *referencegrant.Validator,
 	c client.Reader,
 	m metrics.Collector,
+	logger *slog.Logger,
 ) *GRPCBuilder {
+	if logger == nil {
+		logger = slog.Default()
+	}
+
 	return &GRPCBuilder{
 		ClusterDomain: clusterDomain,
 		Validator:     validator,
 		Client:        c,
 		Metrics:       m,
+		Logger:        logger.With("builder", "grpc"),
 	}
 }
 
@@ -117,9 +126,9 @@ func (b *GRPCBuilder) Build(ctx context.Context, routes []gatewayv1.GRPCRoute) B
 }
 
 // logUnsupportedGRPCHeaders logs info messages for unsupported GRPCRouteMatch header features.
-func logUnsupportedGRPCHeaders(namespace, name string, headers []gatewayv1.GRPCHeaderMatch) {
+func (b *GRPCBuilder) logUnsupportedGRPCHeaders(namespace, name string, headers []gatewayv1.GRPCHeaderMatch) {
 	if len(headers) > 0 {
-		slog.Info("route configuration partially applied",
+		b.Logger.Info("route configuration partially applied",
 			"route", fmt.Sprintf("%s/%s", namespace, name),
 			"reason", "header matching not supported by Cloudflare Tunnel",
 			"ignored_headers", len(headers),
@@ -141,7 +150,7 @@ func (b *GRPCBuilder) buildRouteEntries(ctx context.Context, route *gatewayv1.GR
 		for _, rule := range route.Spec.Rules {
 			// Warn if filters are specified (not supported)
 			if len(rule.Filters) > 0 {
-				slog.Info("route configuration partially applied",
+				b.Logger.Info("route configuration partially applied",
 					"route", fmt.Sprintf("%s/%s", route.Namespace, route.Name),
 					"reason", "filters not supported by Cloudflare Tunnel",
 					"ignored_filters", len(rule.Filters),
@@ -169,7 +178,7 @@ func (b *GRPCBuilder) buildRouteEntries(ctx context.Context, route *gatewayv1.GR
 			}
 
 			for _, match := range rule.Matches {
-				logUnsupportedGRPCHeaders(route.Namespace, route.Name, match.Headers)
+				b.logUnsupportedGRPCHeaders(route.Namespace, route.Name, match.Headers)
 
 				path, priority := b.extractGRPCPath(match.Method)
 				entries = append(entries, routeEntry{
@@ -225,11 +234,23 @@ func (b *GRPCBuilder) extractGRPCPath(methodMatch *gatewayv1.GRPCMethodMatch) (p
 	return "/" + service + "/" + method, 1
 }
 
+// logMultipleBackends logs an info message when multiple backendRefs are specified.
+func (b *GRPCBuilder) logMultipleBackends(namespace, routeName string, totalBackends int) {
+	if totalBackends > 1 {
+		b.Logger.Info("route configuration partially applied",
+			"route", fmt.Sprintf("%s/%s", namespace, routeName),
+			"reason", "multiple backendRefs specified, using only highest weight",
+			"total_backends", totalBackends,
+			"ignored_backends", totalBackends-1,
+		)
+	}
+}
+
 // logGRPCBackendWeights logs info messages for GRPC backends with non-default weights.
-func logGRPCBackendWeights(namespace, routeName string, refs []gatewayv1.GRPCBackendRef) {
+func (b *GRPCBuilder) logGRPCBackendWeights(namespace, routeName string, refs []gatewayv1.GRPCBackendRef) {
 	for i, backendRef := range refs {
 		if backendRef.Weight != nil && *backendRef.Weight != 1 {
-			slog.Info("route configuration partially applied",
+			b.Logger.Info("route configuration partially applied",
 				"route", fmt.Sprintf("%s/%s", namespace, routeName),
 				"reason", "backendRef weight ignored, traffic splitting not supported",
 				"backend", string(backendRef.Name),
@@ -246,8 +267,8 @@ func (b *GRPCBuilder) resolveBackendRef(ctx context.Context, namespace, routeNam
 		return "", nil
 	}
 
-	logMultipleBackends(namespace, routeName, len(refs))
-	logGRPCBackendWeights(namespace, routeName, refs)
+	b.logMultipleBackends(namespace, routeName, len(refs))
+	b.logGRPCBackendWeights(namespace, routeName, refs)
 
 	selectedIdx := SelectHighestWeightIndex(wrapGRPCBackendRefs(refs))
 	if selectedIdx == -1 {
@@ -278,6 +299,7 @@ func (b *GRPCBuilder) resolveBackendRef(ctx context.Context, namespace, routeNam
 	url, backendErr := resolveServiceURL(ctx, &serviceResolveParams{
 		client:        b.Client,
 		validator:     b.Validator,
+		logger:        b.Logger,
 		clusterDomain: b.ClusterDomain,
 		routeKind:     "GRPCRoute",
 		routeNS:       namespace,

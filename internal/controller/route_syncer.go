@@ -33,6 +33,7 @@ type RouteSyncer struct {
 	GatewayClassName string
 	ConfigResolver   *config.Resolver
 	Metrics          metrics.Collector
+	Logger           *slog.Logger
 
 	httpBuilder      *ingress.Builder
 	grpcBuilder      *ingress.GRPCBuilder
@@ -47,8 +48,15 @@ func NewRouteSyncer(
 	gatewayClassName string,
 	configResolver *config.Resolver,
 	metricsCollector metrics.Collector,
+	logger *slog.Logger,
 ) *RouteSyncer {
 	refGrantValidator := referencegrant.NewValidator(c)
+
+	if logger == nil {
+		logger = slog.Default()
+	}
+
+	componentLogger := logger.With("component", "route-syncer")
 
 	return &RouteSyncer{
 		Client:           c,
@@ -57,8 +65,9 @@ func NewRouteSyncer(
 		GatewayClassName: gatewayClassName,
 		ConfigResolver:   configResolver,
 		Metrics:          metricsCollector,
-		httpBuilder:      ingress.NewBuilder(clusterDomain, refGrantValidator, c, metricsCollector),
-		grpcBuilder:      ingress.NewGRPCBuilder(clusterDomain, refGrantValidator, c, metricsCollector),
+		Logger:           componentLogger,
+		httpBuilder:      ingress.NewBuilder(clusterDomain, refGrantValidator, c, metricsCollector, componentLogger),
+		grpcBuilder:      ingress.NewGRPCBuilder(clusterDomain, refGrantValidator, c, metricsCollector, componentLogger),
 		bindingValidator: routebinding.NewValidator(c),
 	}
 }
@@ -84,7 +93,7 @@ type SyncResult struct {
 //nolint:funlen,wrapcheck // complex sync logic requires length; Cloudflare API errors are intentionally unwrapped
 func (s *RouteSyncer) SyncAllRoutes(ctx context.Context) (ctrl.Result, *SyncResult, error) {
 	startTime := time.Now()
-	logger := slog.Default().With("component", "route-syncer")
+	logger := s.Logger
 
 	// Resolve configuration from GatewayClassConfig
 	resolvedConfig, err := s.ConfigResolver.ResolveFromGatewayClassName(ctx, s.GatewayClassName)
@@ -239,7 +248,7 @@ func (s *RouteSyncer) SyncAllRoutes(ctx context.Context) (ctrl.Result, *SyncResu
 func (s *RouteSyncer) getRelevantHTTPRoutes(
 	ctx context.Context,
 ) ([]gatewayv1.HTTPRoute, map[string]routeBindingInfo, error) {
-	logger := slog.Default().With("component", "route-syncer")
+	logger := s.Logger
 
 	var routeList gatewayv1.HTTPRouteList
 
@@ -321,7 +330,7 @@ func (s *RouteSyncer) getRelevantHTTPRoutes(
 func (s *RouteSyncer) getRelevantGRPCRoutes(
 	ctx context.Context,
 ) ([]gatewayv1.GRPCRoute, map[string]routeBindingInfo, error) {
-	logger := slog.Default().With("component", "route-syncer")
+	logger := s.Logger
 
 	var routeList gatewayv1.GRPCRouteList
 

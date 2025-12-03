@@ -18,6 +18,7 @@ import (
 type serviceResolveParams struct {
 	client        client.Reader
 	validator     *referencegrant.Validator
+	logger        *slog.Logger
 	clusterDomain string
 	routeKind     string
 	routeNS       string
@@ -32,7 +33,7 @@ type serviceResolveParams struct {
 func resolveServiceURL(ctx context.Context, params *serviceResolveParams) (string, *BackendRefError) {
 	// Validate cross-namespace references with ReferenceGrant
 	if params.routeNS != params.svcNS {
-		if !validateCrossNamespaceRef(ctx, params.validator, params.routeKind, params.routeNS, params.routeName, params.svcNS, params.svcName) {
+		if !validateCrossNamespaceRef(ctx, params.validator, params.logger, params.routeKind, params.routeNS, params.routeName, params.svcNS, params.svcName) {
 			return "", &BackendRefError{
 				RouteNamespace: params.routeNS,
 				RouteName:      params.routeName,
@@ -69,7 +70,7 @@ func resolveServiceURL(ctx context.Context, params *serviceResolveParams) (strin
 				}
 			}
 			// Log error and fall back to cluster-local DNS
-			slog.Warn("failed to fetch Service, using cluster-local DNS",
+			params.logger.Warn("failed to fetch Service, using cluster-local DNS",
 				"service", fmt.Sprintf("%s/%s", params.svcNS, params.svcName),
 				"error", err.Error(),
 			)

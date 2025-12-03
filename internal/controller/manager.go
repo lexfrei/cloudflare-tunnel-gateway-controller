@@ -144,6 +144,7 @@ func Run(ctx context.Context, cfg *Config) error {
 		cfg.GatewayClassName,
 		configResolver,
 		metricsCollector,
+		nil, // Logger will fallback to slog.Default()
 	)
 
 	httpRouteReconciler := &HTTPRouteReconciler{

@@ -51,20 +51,29 @@ type Builder struct {
 
 	// Metrics records build duration and validation results.
 	Metrics metrics.Collector
+
+	// Logger is used for structured logging.
+	Logger *slog.Logger
 }
 
-// NewBuilder creates a new Builder with the specified cluster domain, validator, client, and metrics.
+// NewBuilder creates a new Builder with the specified cluster domain, validator, client, metrics, and logger.
 func NewBuilder(
 	clusterDomain string,
 	validator *referencegrant.Validator,
 	c client.Reader,
 	m metrics.Collector,
+	logger *slog.Logger,
 ) *Builder {
+	if logger == nil {
+		logger = slog.Default()
+	}
+
 	return &Builder{
 		ClusterDomain: clusterDomain,
 		Validator:     validator,
 		Client:        c,
 		Metrics:       m,
+		Logger:        logger.With("builder", "http"),
 	}
 }
 
@@ -164,11 +173,11 @@ func (b *Builder) Build(ctx context.Context, routes []gatewayv1.HTTPRoute) Build
 }
 
 // logUnsupportedHTTPMatchFeatures logs info messages for unsupported HTTPRouteMatch features.
-func logUnsupportedHTTPMatchFeatures(namespace, name string, match gatewayv1.HTTPRouteMatch) {
+func (b *Builder) logUnsupportedHTTPMatchFeatures(namespace, name string, match gatewayv1.HTTPRouteMatch) {
 	routeKey := fmt.Sprintf("%s/%s", namespace, name)
 
 	if len(match.Headers) > 0 {
-		slog.Info("route configuration partially applied",
+		b.Logger.Info("route configuration partially applied",
 			"route", routeKey,
 			"reason", "header matching not supported by Cloudflare Tunnel",
 			"ignored_headers", len(match.Headers),
@@ -176,7 +185,7 @@ func logUnsupportedHTTPMatchFeatures(namespace, name string, match gatewayv1.HTT
 	}
 
 	if len(match.QueryParams) > 0 {
-		slog.Info("route configuration partially applied",
+		b.Logger.Info("route configuration partially applied",
 			"route", routeKey,
 			"reason", "query parameter matching not supported by Cloudflare Tunnel",
 			"ignored_params", len(match.QueryParams),
@@ -184,7 +193,7 @@ func logUnsupportedHTTPMatchFeatures(namespace, name string, match gatewayv1.HTT
 	}
 
 	if match.Method != nil {
-		slog.Info("route configuration partially applied",
+		b.Logger.Info("route configuration partially applied",
 			"route", routeKey,
 			"reason", "method matching not supported by Cloudflare Tunnel",
 			"ignored_method", string(*match.Method),
@@ -206,7 +215,7 @@ func (b *Builder) buildRouteEntries(ctx context.Context, route *gatewayv1.HTTPRo
 		for _, rule := range route.Spec.Rules {
 			// Warn if filters are specified (not supported)
 			if len(rule.Filters) > 0 {
-				slog.Info("route configuration partially applied",
+				b.Logger.Info("route configuration partially applied",
 					"route", fmt.Sprintf("%s/%s", route.Namespace, route.Name),
 					"reason", "filters not supported by Cloudflare Tunnel",
 					"ignored_filters", len(rule.Filters),
@@ -234,7 +243,7 @@ func (b *Builder) buildRouteEntries(ctx context.Context, route *gatewayv1.HTTPRo
 			}
 
 			for _, match := range rule.Matches {
-				logUnsupportedHTTPMatchFeatures(route.Namespace, route.Name, match)
+				b.logUnsupportedHTTPMatchFeatures(route.Namespace, route.Name, match)
 
 				path, priority := b.extractPath(route.Namespace, route.Name, match.Path)
 				entries = append(entries, routeEntry{
@@ -270,7 +279,7 @@ func (b *Builder) extractPath(namespace, routeName string, pathMatch *gatewayv1.
 		return path, 1
 	case gatewayv1.PathMatchRegularExpression:
 		// Warn that RegularExpression is treated as PathPrefix
-		slog.Info("route configuration partially applied",
+		b.Logger.Info("route configuration partially applied",
 			"route", fmt.Sprintf("%s/%s", namespace, routeName),
 			"reason", "RegularExpression path type treated as PathPrefix",
 			"path", path,
@@ -285,9 +294,9 @@ func (b *Builder) extractPath(namespace, routeName string, pathMatch *gatewayv1.
 }
 
 // logMultipleBackends logs an info message when multiple backendRefs are specified.
-func logMultipleBackends(namespace, routeName string, totalBackends int) {
+func (b *Builder) logMultipleBackends(namespace, routeName string, totalBackends int) {
 	if totalBackends > 1 {
-		slog.Info("route configuration partially applied",
+		b.Logger.Info("route configuration partially applied",
 			"route", fmt.Sprintf("%s/%s", namespace, routeName),
 			"reason", "multiple backendRefs specified, using only highest weight",
 			"total_backends", totalBackends,
@@ -297,10 +306,10 @@ func logMultipleBackends(namespace, routeName string, totalBackends int) {
 }
 
 // logBackendWeights logs info messages for backends with non-default weights.
-func logBackendWeights(namespace, routeName string, refs []gatewayv1.HTTPBackendRef) {
+func (b *Builder) logBackendWeights(namespace, routeName string, refs []gatewayv1.HTTPBackendRef) {
 	for i, backendRef := range refs {
 		if backendRef.Weight != nil && *backendRef.Weight != 1 {
-			slog.Info("route configuration partially applied",
+			b.Logger.Info("route configuration partially applied",
 				"route", fmt.Sprintf("%s/%s", namespace, routeName),
 				"reason", "backendRef weight ignored, traffic splitting not supported",
 				"backend", string(backendRef.Name),
@@ -316,6 +325,7 @@ func logBackendWeights(namespace, routeName string, refs []gatewayv1.HTTPBackend
 func validateCrossNamespaceRef(
 	ctx context.Context,
 	validator *referencegrant.Validator,
+	logger *slog.Logger,
 	routeKind, namespace, routeName, svcNamespace, svcName string,
 ) bool {
 	if validator == nil {
@@ -338,7 +348,7 @@ func validateCrossNamespaceRef(
 
 	allowed, err := validator.IsReferenceAllowed(ctx, fromRef, toRef)
 	if err != nil {
-		slog.Info("route configuration partially applied",
+		logger.Info("route configuration partially applied",
 			"route", fmt.Sprintf("%s/%s", namespace, routeName),
 			"reason", "failed to validate cross-namespace reference",
 			"target", fmt.Sprintf("%s/%s", svcNamespace, svcName),
@@ -349,7 +359,7 @@ func validateCrossNamespaceRef(
 	}
 
 	if !allowed {
-		slog.Info("route configuration partially applied",
+		logger.Info("route configuration partially applied",
 			"route", fmt.Sprintf("%s/%s", namespace, routeName),
 			"reason", "cross-namespace backend reference not permitted by ReferenceGrant",
 			"target", fmt.Sprintf("%s/%s", svcNamespace, svcName),
@@ -367,8 +377,8 @@ func (b *Builder) resolveBackendRef(ctx context.Context, namespace, routeName st
 		return "", nil
 	}
 
-	logMultipleBackends(namespace, routeName, len(refs))
-	logBackendWeights(namespace, routeName, refs)
+	b.logMultipleBackends(namespace, routeName, len(refs))
+	b.logBackendWeights(namespace, routeName, refs)
 
 	selectedIdx := SelectHighestWeightIndex(wrapHTTPBackendRefs(refs))
 	if selectedIdx == -1 {
@@ -399,6 +409,7 @@ func (b *Builder) resolveBackendRef(ctx context.Context, namespace, routeName st
 	url, backendErr := resolveServiceURL(ctx, &serviceResolveParams{
 		client:        b.Client,
 		validator:     b.Validator,
+		logger:        b.Logger,
 		clusterDomain: b.ClusterDomain,
 		routeKind:     "HTTPRoute",
 		routeNS:       namespace,
