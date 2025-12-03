@@ -20,7 +20,7 @@ These metrics track the core synchronization of routes to Cloudflare Tunnel.
 |--------|------|--------|-------------|
 | `cftunnel_sync_duration_seconds` | Histogram | `status` | Duration of route sync operations |
 | `cftunnel_synced_routes` | Gauge | `type` | Number of routes synced (http/grpc) |
-| `cftunnel_ingress_rules_total` | Gauge | - | Total ingress rules in tunnel config |
+| `cftunnel_ingress_rules` | Gauge | - | Total ingress rules in tunnel config |
 | `cftunnel_failed_backend_refs` | Gauge | `type` | Failed backend references by route type |
 | `cftunnel_sync_errors_total` | Counter | `error_type` | Sync errors by type |
 
@@ -164,7 +164,7 @@ sum(rate(cftunnel_sync_errors_total[5m])) by (error_type)
 sum(cftunnel_synced_routes) by (type)
 
 # Total ingress rules
-cftunnel_ingress_rules_total
+cftunnel_ingress_rules
 
 # Failed backend references
 sum(cftunnel_failed_backend_refs) by (type)
@@ -426,7 +426,7 @@ Example dashboard panels:
       "gridPos": { "x": 6, "y": 0, "w": 6, "h": 4 },
       "targets": [
         {
-          "expr": "cftunnel_ingress_rules_total"
+          "expr": "cftunnel_ingress_rules"
         }
       ]
     },

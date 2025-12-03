@@ -94,7 +94,7 @@ func init() {
 |--------|------|--------|-------------|
 | `cftunnel_sync_duration_seconds` | Histogram | `status` | Duration of SyncAllRoutes operation |
 | `cftunnel_synced_routes` | Gauge | `type` | Number of routes synced (http/grpc) |
-| `cftunnel_ingress_rules_total` | Gauge | - | Total ingress rules in tunnel config |
+| `cftunnel_ingress_rules` | Gauge | - | Total ingress rules in tunnel config |
 | `cftunnel_failed_backend_refs` | Gauge | `type` | Failed backend references |
 | `cftunnel_sync_errors_total` | Counter | `error_type` | Sync errors by type |
 
