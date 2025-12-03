@@ -485,6 +485,78 @@ func TestHTTPRouteReconciler_IsRouteForOurGateway(t *testing.T) {
 			},
 			expected: true,
 		},
+		{
+			name:             "route_no_hostnames_matches_any_listener",
+			gatewayClassName: "cloudflare-tunnel",
+			gateway: &gatewayv1.Gateway{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-gateway",
+					Namespace: "default",
+				},
+				Spec: gatewayv1.GatewaySpec{
+					GatewayClassName: "cloudflare-tunnel",
+					Listeners: []gatewayv1.Listener{
+						{
+							Name:     "http",
+							Port:     80,
+							Protocol: gatewayv1.HTTPProtocolType,
+							Hostname: ptr(gatewayv1.Hostname("*.example.com")),
+						},
+					},
+				},
+			},
+			route: &gatewayv1.HTTPRoute{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-route",
+					Namespace: "default",
+				},
+				Spec: gatewayv1.HTTPRouteSpec{
+					Hostnames: []gatewayv1.Hostname{}, // empty hostnames
+					CommonRouteSpec: gatewayv1.CommonRouteSpec{
+						ParentRefs: []gatewayv1.ParentReference{
+							{Name: "test-gateway"},
+						},
+					},
+				},
+			},
+			expected: true,
+		},
+		{
+			name:             "multi_level_subdomain_matches_wildcard",
+			gatewayClassName: "cloudflare-tunnel",
+			gateway: &gatewayv1.Gateway{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-gateway",
+					Namespace: "default",
+				},
+				Spec: gatewayv1.GatewaySpec{
+					GatewayClassName: "cloudflare-tunnel",
+					Listeners: []gatewayv1.Listener{
+						{
+							Name:     "http",
+							Port:     80,
+							Protocol: gatewayv1.HTTPProtocolType,
+							Hostname: ptr(gatewayv1.Hostname("*.example.com")),
+						},
+					},
+				},
+			},
+			route: &gatewayv1.HTTPRoute{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-route",
+					Namespace: "default",
+				},
+				Spec: gatewayv1.HTTPRouteSpec{
+					Hostnames: []gatewayv1.Hostname{"a.b.example.com"}, // multi-level subdomain
+					CommonRouteSpec: gatewayv1.CommonRouteSpec{
+						ParentRefs: []gatewayv1.ParentReference{
+							{Name: "test-gateway"},
+						},
+					},
+				},
+			},
+			expected: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -508,6 +580,7 @@ func TestHTTPRouteReconciler_IsRouteForOurGateway(t *testing.T) {
 				Client:           fakeClient,
 				Scheme:           scheme,
 				GatewayClassName: tt.gatewayClassName,
+				bindingValidator: routebinding.NewValidator(fakeClient),
 			}
 
 			result := r.isRouteForOurGateway(context.Background(), tt.route)

@@ -74,6 +74,9 @@ type HTTPRouteReconciler struct {
 	// RouteSyncer provides unified sync for both HTTP and GRPC routes.
 	RouteSyncer *RouteSyncer
 
+	// bindingValidator validates route binding to Gateway listeners.
+	bindingValidator *routebinding.Validator
+
 	// startupComplete indicates whether the startup sync has completed.
 	// This prevents race conditions between startup sync and reconcile loop.
 	startupComplete atomic.Bool
@@ -147,7 +150,7 @@ func (r *HTTPRouteReconciler) syncAndUpdateStatus(ctx context.Context) (ctrl.Res
 
 //nolint:funcorder,noinlineerr // private helper method
 func (r *HTTPRouteReconciler) isRouteForOurGateway(ctx context.Context, route *gatewayv1.HTTPRoute) bool {
-	validator := routebinding.NewValidator(r.Client)
+	routeKey := route.Namespace + "/" + route.Name
 
 	for _, ref := range route.Spec.ParentRefs {
 		if ref.Kind != nil && *ref.Kind != kindGateway {
@@ -177,8 +180,13 @@ func (r *HTTPRouteReconciler) isRouteForOurGateway(ctx context.Context, route *g
 			SectionName: ref.SectionName,
 		}
 
-		result, err := validator.ValidateBinding(ctx, &gateway, routeInfo)
+		result, err := r.bindingValidator.ValidateBinding(ctx, &gateway, routeInfo)
 		if err != nil {
+			slog.Default().Error("failed to validate route binding",
+				"route", routeKey,
+				"gateway", gateway.Name,
+				"error", err)
+
 			continue
 		}
 
@@ -314,6 +322,8 @@ func (r *HTTPRouteReconciler) updateRouteStatus(
 }
 
 func (r *HTTPRouteReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	r.bindingValidator = routebinding.NewValidator(r.Client)
+
 	mapper := &ConfigMapper{
 		Client:           r.Client,
 		GatewayClassName: r.GatewayClassName,
