@@ -25,7 +25,7 @@ on:
         required: false
 
 permissions:
-  contents: write
+  contents: read
   pages: write
   id-token: write
 
@@ -34,8 +34,8 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  deploy:
-    name: Deploy Documentation
+  build:
+    name: Build Documentation
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -43,10 +43,10 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Configure Git
+      - name: Checkout gh-pages branch
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git fetch origin gh-pages:gh-pages || true
+          git worktree add gh-pages-branch gh-pages || git worktree add gh-pages-branch --detach
 
       - name: Setup Python
         uses: actions/setup-python@v6
@@ -57,6 +57,11 @@ jobs:
 
       - name: Install dependencies
         run: pip install --requirement requirements-docs.txt
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
 
       - name: Determine version and alias
         id: version
@@ -73,18 +78,39 @@ jobs:
             echo "alias=" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Deploy with mike
+      - name: Deploy with mike (local)
         run: |
           VERSION="${{ steps.version.outputs.version }}"
           ALIAS="${{ steps.version.outputs.alias }}"
 
           if [[ -n "$ALIAS" ]]; then
-            mike deploy --push --update-aliases "${VERSION}" "${ALIAS}"
+            mike deploy --update-aliases "${VERSION}" "${ALIAS}"
+            mike set-default latest
           else
-            mike deploy --push "${VERSION}"
+            mike deploy "${VERSION}"
           fi
 
-      - name: Set default version
-        if: steps.version.outputs.alias == 'latest'
+      - name: Prepare artifact
         run: |
-          mike set-default --push latest
+          # mike builds into gh-pages branch worktree
+          # Copy the built site to artifact directory
+          mkdir -p artifact
+          git -C gh-pages-branch checkout -- . 2>/dev/null || true
+          cp -r gh-pages-branch/* artifact/ 2>/dev/null || cp -r site/* artifact/
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: artifact/
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
