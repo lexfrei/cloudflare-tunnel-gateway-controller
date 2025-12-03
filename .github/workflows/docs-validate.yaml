@@ -1,0 +1,40 @@
+name: Documentation Validation
+
+on:
+  pull_request:
+    paths:
+      - "docs/**"
+      - "mkdocs.yml"
+      - "requirements-docs.txt"
+      - ".markdownlint*.yaml"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate Documentation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.14.1"
+          cache: pip
+          cache-dependency-path: requirements-docs.txt
+
+      - name: Install dependencies
+        run: pip install --requirement requirements-docs.txt
+
+      - name: Run markdownlint
+        uses: DavidAnson/markdownlint-cli2-action@v21
+        with:
+          globs: "docs/**/*.md"
+
+      - name: Build documentation (strict mode)
+        run: mkdocs build --strict
