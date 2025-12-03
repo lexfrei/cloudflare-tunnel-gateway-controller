@@ -23,6 +23,7 @@ import (
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/api/v1alpha1"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/ingress"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/routebinding"
 )
 
 // GRPCRouteReconciler reconciles GRPCRoute resources and synchronizes them
@@ -119,6 +120,8 @@ func (r *GRPCRouteReconciler) syncAndUpdateStatus(ctx context.Context) (ctrl.Res
 
 //nolint:funcorder,noinlineerr // private helper method
 func (r *GRPCRouteReconciler) isRouteForOurGateway(ctx context.Context, route *gatewayv1.GRPCRoute) bool {
+	validator := routebinding.NewValidator(r.Client)
+
 	for _, ref := range route.Spec.ParentRefs {
 		if ref.Kind != nil && *ref.Kind != kindGateway {
 			continue
@@ -134,7 +137,25 @@ func (r *GRPCRouteReconciler) isRouteForOurGateway(ctx context.Context, route *g
 			continue
 		}
 
-		if gateway.Spec.GatewayClassName == gatewayv1.ObjectName(r.GatewayClassName) {
+		if gateway.Spec.GatewayClassName != gatewayv1.ObjectName(r.GatewayClassName) {
+			continue
+		}
+
+		// Full binding validation including hostname and allowedRoutes checks
+		routeInfo := &routebinding.RouteInfo{
+			Name:        route.Name,
+			Namespace:   route.Namespace,
+			Hostnames:   route.Spec.Hostnames,
+			Kind:        routebinding.KindGRPCRoute,
+			SectionName: ref.SectionName,
+		}
+
+		result, err := validator.ValidateBinding(ctx, &gateway, routeInfo)
+		if err != nil {
+			continue
+		}
+
+		if result.Accepted {
 			return true
 		}
 	}
