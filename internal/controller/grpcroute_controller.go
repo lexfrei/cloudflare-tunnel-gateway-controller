@@ -126,7 +126,7 @@ func (r *GRPCRouteReconciler) isRouteForOurGateway(ctx context.Context, route *g
 	return IsRouteAcceptedByGateway(ctx, r.Client, r.bindingValidator, r.GatewayClassName, GRPCRouteWrapper{route})
 }
 
-//nolint:funcorder,funlen,noinlineerr,gocognit // private helper method, status update logic
+//nolint:funcorder,funlen,noinlineerr,gocognit,dupl // private helper method, status update logic; dupl with HTTPRoute
 func (r *GRPCRouteReconciler) updateRouteStatus(
 	ctx context.Context,
 	route *gatewayv1.GRPCRoute,
@@ -312,38 +312,17 @@ func (r *GRPCRouteReconciler) findRoutesForGateway(
 	ctx context.Context,
 	obj client.Object,
 ) []reconcile.Request {
-	gateway, ok := obj.(*gatewayv1.Gateway)
-	if !ok {
-		return nil
-	}
-
-	if gateway.Spec.GatewayClassName != gatewayv1.ObjectName(r.GatewayClassName) {
-		return nil
-	}
-
 	var routeList gatewayv1.GRPCRouteList
 	if err := r.List(ctx, &routeList); err != nil {
 		return nil
 	}
 
-	var requests []reconcile.Request
-
+	routes := make([]Route, len(routeList.Items))
 	for i := range routeList.Items {
-		for _, ref := range routeList.Items[i].Spec.ParentRefs {
-			if string(ref.Name) == gateway.Name {
-				requests = append(requests, reconcile.Request{
-					NamespacedName: client.ObjectKey{
-						Name:      routeList.Items[i].Name,
-						Namespace: routeList.Items[i].Namespace,
-					},
-				})
-
-				break
-			}
-		}
+		routes[i] = GRPCRouteWrapper{&routeList.Items[i]}
 	}
 
-	return requests
+	return FindRoutesForGateway(obj, r.GatewayClassName, routes)
 }
 
 func (r *GRPCRouteReconciler) findRoutesForReferenceGrant(
@@ -357,8 +336,8 @@ func (r *GRPCRouteReconciler) findRoutesForReferenceGrant(
 		return nil
 	}
 
-	// Collect routes managed by our Gateway as RouteWithCrossNamespaceRefs
-	var routes []RouteWithCrossNamespaceRefs
+	// Collect routes managed by our Gateway as Route
+	var routes []Route
 
 	for i := range routeList.Items {
 		route := &routeList.Items[i]
@@ -370,7 +349,6 @@ func (r *GRPCRouteReconciler) findRoutesForReferenceGrant(
 	return FindRoutesForReferenceGrant(obj, routes)
 }
 
-//nolint:dupl // similar logic for different route types is intentional
 func (r *GRPCRouteReconciler) getAllRelevantRoutes(ctx context.Context) []reconcile.Request {
 	var routeList gatewayv1.GRPCRouteList
 
@@ -379,18 +357,10 @@ func (r *GRPCRouteReconciler) getAllRelevantRoutes(ctx context.Context) []reconc
 		return nil
 	}
 
-	var requests []reconcile.Request
-
+	routes := make([]Route, len(routeList.Items))
 	for i := range routeList.Items {
-		if r.isRouteForOurGateway(ctx, &routeList.Items[i]) {
-			requests = append(requests, reconcile.Request{
-				NamespacedName: client.ObjectKey{
-					Name:      routeList.Items[i].Name,
-					Namespace: routeList.Items[i].Namespace,
-				},
-			})
-		}
+		routes[i] = GRPCRouteWrapper{&routeList.Items[i]}
 	}
 
-	return requests
+	return FilterAcceptedRoutes(ctx, r.Client, r.bindingValidator, r.GatewayClassName, routes)
 }

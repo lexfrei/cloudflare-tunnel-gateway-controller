@@ -558,7 +558,7 @@ func TestFindRoutesForReferenceGrant(t *testing.T) {
 	tests := []struct {
 		name           string
 		refGrant       client.Object
-		routes         []RouteWithCrossNamespaceRefs
+		routes         []Route
 		expectedCount  int
 		expectedRoutes []string
 	}{
@@ -570,7 +570,7 @@ func TestFindRoutesForReferenceGrant(t *testing.T) {
 					Namespace: "backend-ns",
 				},
 			},
-			routes: []RouteWithCrossNamespaceRefs{
+			routes: []Route{
 				HTTPRouteWrapper{&gatewayv1.HTTPRoute{
 					ObjectMeta: metav1.ObjectMeta{Name: "route1", Namespace: "app-ns"},
 					Spec: gatewayv1.HTTPRouteSpec{
@@ -597,7 +597,7 @@ func TestFindRoutesForReferenceGrant(t *testing.T) {
 					Namespace: "backend-ns",
 				},
 			},
-			routes: []RouteWithCrossNamespaceRefs{
+			routes: []Route{
 				HTTPRouteWrapper{&gatewayv1.HTTPRoute{
 					ObjectMeta: metav1.ObjectMeta{Name: "route1", Namespace: "app-ns"},
 					Spec: gatewayv1.HTTPRouteSpec{
@@ -620,7 +620,7 @@ func TestFindRoutesForReferenceGrant(t *testing.T) {
 			refGrant: &corev1.Secret{
 				ObjectMeta: metav1.ObjectMeta{Name: "not-a-refgrant"},
 			},
-			routes:        []RouteWithCrossNamespaceRefs{},
+			routes:        []Route{},
 			expectedCount: 0,
 		},
 		{
@@ -631,7 +631,7 @@ func TestFindRoutesForReferenceGrant(t *testing.T) {
 					Namespace: "grpc-backend",
 				},
 			},
-			routes: []RouteWithCrossNamespaceRefs{
+			routes: []Route{
 				GRPCRouteWrapper{&gatewayv1.GRPCRoute{
 					ObjectMeta: metav1.ObjectMeta{Name: "grpc-route", Namespace: "frontend"},
 					Spec: gatewayv1.GRPCRouteSpec{
@@ -821,7 +821,7 @@ func TestIsRouteAcceptedByGateway(t *testing.T) {
 		name             string
 		gatewayClassName string
 		gateway          *gatewayv1.Gateway
-		route            RouteBindable
+		route            Route
 		expected         bool
 	}{
 		{

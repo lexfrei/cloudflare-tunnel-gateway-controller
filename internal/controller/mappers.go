@@ -110,10 +110,13 @@ func SecretMatchesConfig(secret *corev1.Secret, cfg *v1alpha1.GatewayClassConfig
 	return false
 }
 
-// RouteWithCrossNamespaceRefs describes a route that may have cross-namespace backend references.
-type RouteWithCrossNamespaceRefs interface {
+// Route describes a Gateway API route (HTTPRoute, GRPCRoute, etc.).
+type Route interface {
 	GetName() string
 	GetNamespace() string
+	GetHostnames() []gatewayv1.Hostname
+	GetParentRefs() []gatewayv1.ParentReference
+	GetRouteKind() gatewayv1.Kind
 	// GetCrossNamespaceBackendNamespaces returns namespaces referenced by backends
 	// that differ from the route's own namespace.
 	GetCrossNamespaceBackendNamespaces() []string
@@ -127,7 +130,7 @@ type RouteFilterFunc func(ctx context.Context, name, namespace string) bool
 // This is used by both HTTPRoute and GRPCRoute controllers to watch ReferenceGrant changes.
 func FindRoutesForReferenceGrant(
 	obj client.Object,
-	routes []RouteWithCrossNamespaceRefs,
+	routes []Route,
 ) []reconcile.Request {
 	refGrant, ok := obj.(*gatewayv1beta1.ReferenceGrant)
 	if !ok {
@@ -155,64 +158,60 @@ func FindRoutesForReferenceGrant(
 	return requests
 }
 
-// HTTPRouteWrapper wraps HTTPRoute to implement RouteWithCrossNamespaceRefs.
+// extractCrossNamespaceBackends returns unique namespaces from backend refs
+// that differ from the route's own namespace.
+func extractCrossNamespaceBackends(routeNamespace string, refs []gatewayv1.BackendRef) []string {
+	var namespaces []string
+
+	seen := make(map[string]bool)
+
+	for _, ref := range refs {
+		if ref.Namespace != nil {
+			backendNs := string(*ref.Namespace)
+			if backendNs != routeNamespace && !seen[backendNs] {
+				namespaces = append(namespaces, backendNs)
+				seen[backendNs] = true
+			}
+		}
+	}
+
+	return namespaces
+}
+
+// HTTPRouteWrapper wraps HTTPRoute to implement Route.
 type HTTPRouteWrapper struct {
 	*gatewayv1.HTTPRoute
 }
 
 // GetCrossNamespaceBackendNamespaces returns namespaces of backends in other namespaces.
 func (w HTTPRouteWrapper) GetCrossNamespaceBackendNamespaces() []string {
-	var namespaces []string
-
-	seen := make(map[string]bool)
+	var refs []gatewayv1.BackendRef
 
 	for _, rule := range w.Spec.Rules {
-		for _, backendRef := range rule.BackendRefs {
-			if backendRef.Namespace != nil {
-				backendNs := string(*backendRef.Namespace)
-				if backendNs != w.Namespace && !seen[backendNs] {
-					namespaces = append(namespaces, backendNs)
-					seen[backendNs] = true
-				}
-			}
+		for i := range rule.BackendRefs {
+			refs = append(refs, rule.BackendRefs[i].BackendRef)
 		}
 	}
 
-	return namespaces
+	return extractCrossNamespaceBackends(w.Namespace, refs)
 }
 
-// GRPCRouteWrapper wraps GRPCRoute to implement RouteWithCrossNamespaceRefs.
+// GRPCRouteWrapper wraps GRPCRoute to implement Route.
 type GRPCRouteWrapper struct {
 	*gatewayv1.GRPCRoute
 }
 
 // GetCrossNamespaceBackendNamespaces returns namespaces of backends in other namespaces.
 func (w GRPCRouteWrapper) GetCrossNamespaceBackendNamespaces() []string {
-	var namespaces []string
-
-	seen := make(map[string]bool)
+	var refs []gatewayv1.BackendRef
 
 	for _, rule := range w.Spec.Rules {
-		for _, backendRef := range rule.BackendRefs {
-			if backendRef.Namespace != nil {
-				backendNs := string(*backendRef.Namespace)
-				if backendNs != w.Namespace && !seen[backendNs] {
-					namespaces = append(namespaces, backendNs)
-					seen[backendNs] = true
-				}
-			}
+		for i := range rule.BackendRefs {
+			refs = append(refs, rule.BackendRefs[i].BackendRef)
 		}
 	}
 
-	return namespaces
-}
-
-// RouteBindable extends RouteWithCrossNamespaceRefs for binding validation.
-type RouteBindable interface {
-	RouteWithCrossNamespaceRefs
-	GetHostnames() []gatewayv1.Hostname
-	GetParentRefs() []gatewayv1.ParentReference
-	GetRouteKind() gatewayv1.Kind
+	return extractCrossNamespaceBackends(w.Namespace, refs)
 }
 
 // GetHostnames returns the hostnames from the HTTPRoute spec.
@@ -245,6 +244,61 @@ func (w GRPCRouteWrapper) GetRouteKind() gatewayv1.Kind {
 	return routebinding.KindGRPCRoute
 }
 
+// FindRoutesForGateway returns reconcile requests for routes that reference the given Gateway.
+func FindRoutesForGateway(obj client.Object, gatewayClassName string, routes []Route) []reconcile.Request {
+	gateway, ok := obj.(*gatewayv1.Gateway)
+	if !ok {
+		return nil
+	}
+
+	if gateway.Spec.GatewayClassName != gatewayv1.ObjectName(gatewayClassName) {
+		return nil
+	}
+
+	var requests []reconcile.Request
+
+	for _, route := range routes {
+		for _, ref := range route.GetParentRefs() {
+			if string(ref.Name) == gateway.Name {
+				requests = append(requests, reconcile.Request{
+					NamespacedName: client.ObjectKey{
+						Name:      route.GetName(),
+						Namespace: route.GetNamespace(),
+					},
+				})
+
+				break
+			}
+		}
+	}
+
+	return requests
+}
+
+// FilterAcceptedRoutes returns reconcile requests for routes accepted by a Gateway of the specified class.
+func FilterAcceptedRoutes(
+	ctx context.Context,
+	cli client.Client,
+	validator *routebinding.Validator,
+	gatewayClassName string,
+	routes []Route,
+) []reconcile.Request {
+	var requests []reconcile.Request
+
+	for _, route := range routes {
+		if IsRouteAcceptedByGateway(ctx, cli, validator, gatewayClassName, route) {
+			requests = append(requests, reconcile.Request{
+				NamespacedName: client.ObjectKey{
+					Name:      route.GetName(),
+					Namespace: route.GetNamespace(),
+				},
+			})
+		}
+	}
+
+	return requests
+}
+
 // IsRouteAcceptedByGateway checks if a route has at least one accepted binding
 // to a Gateway of the specified class. This is used by both HTTPRoute and GRPCRoute
 // controllers to determine if a route should be processed.
@@ -253,7 +307,7 @@ func IsRouteAcceptedByGateway(
 	cli client.Client,
 	validator *routebinding.Validator,
 	gatewayClassName string,
-	route RouteBindable,
+	route Route,
 ) bool {
 	for _, ref := range route.GetParentRefs() {
 		if ref.Kind != nil && *ref.Kind != kindGateway {
