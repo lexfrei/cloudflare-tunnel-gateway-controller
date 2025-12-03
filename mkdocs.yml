@@ -180,7 +180,6 @@ nav:
       - development/index.md
       - Setup: development/setup.md
       - Architecture: development/architecture.md
-      - Metrics Design: development/metrics-design.md
       - Contributing: development/contributing.md
       - Testing: development/testing.md
   - Reference:
