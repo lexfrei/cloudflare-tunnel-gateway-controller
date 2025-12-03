@@ -34,7 +34,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
-          python-version: '3.14.0'
+          python-version: '3.14.1'
 
       - name: Set up chart-testing
         uses: helm/chart-testing-action@v2.8.0
