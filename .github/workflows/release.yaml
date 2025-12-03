@@ -388,8 +388,9 @@ jobs:
       - name: Generate changelog from commits
         id: changelog
         run: |
-          # Get previous tag
-          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          # Get previous tag (find tag before current one)
+          CURRENT_TAG="${GITHUB_REF_NAME}"
+          PREV_TAG=$(git tag --sort=-v:refname | grep -v "^${CURRENT_TAG}$" | head -1)
 
           # Get commits since previous tag (or all if first release)
           if [ -n "$PREV_TAG" ]; then
@@ -398,8 +399,10 @@ jobs:
             COMMITS=$(git log --format="%s" --no-merges)
           fi
 
-          # Parse and build YAML changelog
-          CHANGELOG_YAML=""
+          # Build changelog using yq for safe YAML generation
+          CHANGELOG_FILE=$(mktemp)
+          echo "[]" > "$CHANGELOG_FILE"
+
           while IFS= read -r commit; do
             # Skip empty lines
             [ -z "$commit" ] && continue
@@ -429,14 +432,16 @@ jobs:
                 FULL_DESC="${DESC}"
               fi
 
-              # Escape quotes for YAML
-              FULL_DESC="${FULL_DESC//\"/\\\"}"
-
-              CHANGELOG_YAML="${CHANGELOG_YAML}    - kind: ${KIND}
-              description: \"${FULL_DESC}\"
-          "
+              # Use yq with strenv() to safely add entry (handles all special characters)
+              export KIND FULL_DESC
+              yq eval '. += [{"kind": strenv(KIND), "description": strenv(FULL_DESC)}]' \
+                --inplace "$CHANGELOG_FILE"
             fi
           done <<< "$COMMITS"
+
+          # Convert to YAML string for annotation
+          CHANGELOG_YAML=$(cat "$CHANGELOG_FILE")
+          rm "$CHANGELOG_FILE"
 
           # Save to output using heredoc
           {
@@ -586,8 +591,9 @@ jobs:
           VERSION="${GITHUB_REF_NAME#v}"
           CHART_NAME="cloudflare-tunnel-gateway-controller"
 
-          # Get previous tag
-          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          # Get previous tag (find tag before current one)
+          CURRENT_TAG="${GITHUB_REF_NAME}"
+          PREV_TAG=$(git tag --sort=-v:refname | grep -v "^${CURRENT_TAG}$" | head -1)
 
           # Get commits since previous tag
           if [ -n "$PREV_TAG" ]; then
