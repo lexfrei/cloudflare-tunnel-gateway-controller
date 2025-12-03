@@ -122,9 +122,9 @@ The controller processes Gateway resources but with important limitations due to
 | `spec.listeners[].name` | ✅ | Used for status reporting |
 | `spec.listeners[].protocol` | ❌ | Ignored; Cloudflare handles TLS |
 | `spec.listeners[].port` | ❌ | Ignored; Cloudflare uses 443/80 |
-| `spec.listeners[].hostname` | ❌ | Ignored; use HTTPRoute hostnames ([#43](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/issues/43)) |
+| `spec.listeners[].hostname` | ✅ | Routes must have intersecting hostnames |
 | `spec.listeners[].tls` | ❌ | Ignored; Cloudflare manages TLS |
-| `spec.listeners[].allowedRoutes` | ❌ | All HTTPRoute/GRPCRoute allowed ([#43](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/issues/43)) |
+| `spec.listeners[].allowedRoutes` | ✅ | Namespace (Same/All/Selector) and kind filtering |
 | `spec.addresses` | ❌ | Ignored; tunnel CNAME set in status |
 | `spec.infrastructure` | ❌ | Not implemented |
 
@@ -202,7 +202,6 @@ Planned features and improvements:
 
 | Issue | Description | Status |
 |-------|-------------|--------|
-| [#43](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/issues/43) | Gateway API listener hostname and allowedRoutes validation | Planned |
 | [#45](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/issues/45) | Select backend with highest weight instead of first | Planned |
 | [#44](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/issues/44) | Warning logs for partially ignored route configuration | Planned |
 | [#40](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/issues/40) | TCPRoute and TLSRoute support (GRPCRoute done in v0.8.0) | In Progress |

@@ -26,9 +26,9 @@ type in the Cloudflare Tunnel Gateway Controller.
 
 ## Gateway
 
-The Gateway resource is accepted but most listener configuration is ignored
-because Cloudflare Tunnel handles TLS termination and port management at
-the edge.
+The Gateway resource is accepted. Some listener configuration (port, protocol,
+TLS) is ignored because Cloudflare Tunnel handles these at the edge. However,
+`hostname` and `allowedRoutes` are fully validated per Gateway API specification.
 
 | Field | Supported | Notes |
 |-------|-----------|-------|
@@ -37,9 +37,9 @@ the edge.
 | `spec.listeners[].name` | Yes | Used for status reporting and sectionName matching |
 | `spec.listeners[].port` | No | Ignored; Cloudflare uses standard 443/80 |
 | `spec.listeners[].protocol` | No | Ignored; Cloudflare handles protocol negotiation |
-| `spec.listeners[].hostname` | No | Ignored; use HTTPRoute/GRPCRoute hostnames |
+| `spec.listeners[].hostname` | Yes | Routes must have intersecting hostnames |
 | `spec.listeners[].tls` | No | Ignored; Cloudflare manages TLS certificates |
-| `spec.listeners[].allowedRoutes` | No | Ignored; all HTTPRoute/GRPCRoute accepted |
+| `spec.listeners[].allowedRoutes` | Yes | Namespace (Same/All/Selector) and kind filtering |
 | `spec.addresses` | No | Ignored; tunnel CNAME set automatically in status |
 | `spec.infrastructure` | No | Not implemented |
 
@@ -199,6 +199,8 @@ backendRefs:
 |------|--------|--------|-------------|
 | `Accepted` | `True` | `Accepted` | Route accepted and synced |
 | `Accepted` | `False` | `NoMatchingParent` | Sync to Cloudflare failed |
+| `Accepted` | `False` | `NoMatchingListenerHostname` | Route hostnames don't intersect with listener |
+| `Accepted` | `False` | `NotAllowedByListeners` | Route namespace or kind not allowed by listener |
 | `ResolvedRefs` | `True` | `ResolvedRefs` | Backend references resolved |
 | `ResolvedRefs` | `False` | `RefNotPermitted` | Cross-namespace reference denied |
 | `ResolvedRefs` | `False` | `BackendNotFound` | Backend Service not found |
