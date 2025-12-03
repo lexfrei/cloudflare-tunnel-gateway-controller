@@ -36,7 +36,7 @@ Track Cloudflare API interactions for performance and reliability monitoring.
 
 **Label values:**
 
-- `method`: `get`, `update`
+- `method`: `get`, `list`, `update`
 - `resource`: `tunnel_config`, `account`
 - `status`: `success`, `error`
 - `error_type`: `auth`, `rate_limit`, `timeout`, `server_error`, `network`

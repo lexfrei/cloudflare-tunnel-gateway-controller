@@ -106,6 +106,8 @@ func (s *RouteSyncer) SyncAllRoutes(ctx context.Context) (ctrl.Result, *SyncResu
 	}
 
 	// Get current tunnel configuration
+	getStart := time.Now()
+
 	currentConfig, err := cfClient.ZeroTrust.Tunnels.Cloudflared.Configurations.Get(
 		ctx,
 		resolvedConfig.TunnelID,
@@ -114,10 +116,14 @@ func (s *RouteSyncer) SyncAllRoutes(ctx context.Context) (ctrl.Result, *SyncResu
 		},
 	)
 	if err != nil {
+		s.Metrics.RecordAPICall(ctx, "get", "tunnel_config", "error", time.Since(getStart))
+		s.Metrics.RecordAPIError(ctx, "get", metrics.ClassifyCloudflareError(err))
 		logger.Error("failed to get current tunnel configuration", "error", err)
 
 		return ctrl.Result{RequeueAfter: apiErrorRequeueDelay}, nil, nil
 	}
+
+	s.Metrics.RecordAPICall(ctx, "get", "tunnel_config", "success", time.Since(getStart))
 
 	// Collect all relevant HTTPRoutes with binding validation
 	httpRoutes, httpBindings, err := s.getRelevantHTTPRoutes(ctx)
@@ -182,8 +188,12 @@ func (s *RouteSyncer) SyncAllRoutes(ctx context.Context) (ctrl.Result, *SyncResu
 		}),
 	}
 
+	updateStart := time.Now()
+
 	_, err = cfClient.ZeroTrust.Tunnels.Cloudflared.Configurations.Update(ctx, resolvedConfig.TunnelID, cfConfig)
 	if err != nil {
+		s.Metrics.RecordAPICall(ctx, "update", "tunnel_config", "error", time.Since(updateStart))
+		s.Metrics.RecordAPIError(ctx, "update", metrics.ClassifyCloudflareError(err))
 		logger.Error("failed to update tunnel configuration", "error", err)
 
 		// Record error metrics
@@ -202,6 +212,7 @@ func (s *RouteSyncer) SyncAllRoutes(ctx context.Context) (ctrl.Result, *SyncResu
 		return ctrl.Result{RequeueAfter: apiErrorRequeueDelay}, result, err
 	}
 
+	s.Metrics.RecordAPICall(ctx, "update", "tunnel_config", "success", time.Since(updateStart))
 	logger.Info("successfully updated tunnel configuration", "rules", len(finalRules))
 
 	// Record success metrics

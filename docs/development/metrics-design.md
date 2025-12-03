@@ -32,11 +32,10 @@ controller-runtime metrics. This design covers metrics for:
 
 ```text
 internal/metrics/
-├── metrics.go        # Metrics registration and collector interface
-├── sync.go           # Route sync metrics (RouteSyncer)
-├── cloudflare.go     # Cloudflare API metrics
-├── helm.go           # Helm operations metrics
-└── ingress.go        # Ingress builder metrics
+├── metrics.go        # Collector interface, registration, and all metrics
+├── metrics_test.go   # Tests for metrics registration and recording
+├── errors.go         # Cloudflare API error classification
+└── errors_test.go    # Tests for error classification
 ```
 
 ### Integration Pattern
@@ -118,7 +117,7 @@ prometheus.HistogramOpts{
 
 **Label values:**
 
-- `method`: `get`, `update`
+- `method`: `get`, `list`, `update`
 - `resource`: `tunnel_config`, `account`
 - `status`: `success`, `error`
 - `error_type`: `auth`, `rate_limit`, `timeout`, `server_error`, `network`
