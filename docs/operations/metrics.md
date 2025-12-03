@@ -50,6 +50,7 @@ When cloudflared is managed by the controller via Helm.
 | `cftunnel_helm_operation_duration_seconds` | Histogram | `operation` | Helm operation latency |
 | `cftunnel_helm_operations_total` | Counter | `operation`, `status` | Helm operations count |
 | `cftunnel_helm_errors_total` | Counter | `operation`, `error_type` | Helm errors |
+| `cftunnel_helm_chart_info` | Gauge | `chart`, `version`, `app_version` | Deployed chart version info |
 
 **Label values:**
 

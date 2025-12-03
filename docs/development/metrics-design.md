@@ -129,11 +129,15 @@ prometheus.HistogramOpts{
 | `cftunnel_helm_operation_duration_seconds` | Histogram | `operation` | Helm operation latency |
 | `cftunnel_helm_operations_total` | Counter | `operation`, `status` | Helm operations count |
 | `cftunnel_helm_errors_total` | Counter | `operation`, `error_type` | Helm errors |
+| `cftunnel_helm_chart_info` | Gauge | `chart`, `version`, `app_version` | Deployed chart version (always 1) |
 
 **Label values:**
 
 - `operation`: `install`, `upgrade`, `uninstall`, `get_version`, `load_chart`
 - `status`: `success`, `error`
+- `chart`: chart name (e.g., `cloudflare-tunnel`)
+- `version`: chart version (e.g., `0.1.0`)
+- `app_version`: cloudflared version (e.g., `2024.1.0`)
 
 ### Ingress Builder Metrics
 
@@ -153,7 +157,7 @@ prometheus.HistogramOpts{
 
 ### RouteSyncer
 
-In [route_syncer.go](../../internal/controller/route_syncer.go):
+In `internal/controller/route_syncer.go`:
 
 ```go
 type RouteSyncer struct {
@@ -180,7 +184,7 @@ func (s *RouteSyncer) SyncAllRoutes(ctx context.Context) (ctrl.Result, *SyncResu
 
 ### ConfigResolver API Calls
 
-In [resolver.go](../../internal/config/resolver.go), wrap Cloudflare API calls:
+In `internal/config/resolver.go`, wrap Cloudflare API calls:
 
 ```go
 func (r *Resolver) getConfigWithMetrics(
@@ -205,7 +209,7 @@ func (r *Resolver) getConfigWithMetrics(
 
 ### Helm Manager
 
-In [manager.go](../../internal/helm/manager.go):
+In `internal/helm/manager.go`:
 
 ```go
 type Manager struct {
@@ -229,7 +233,8 @@ func (m *Manager) Install(ctx context.Context, ...) (release.Releaser, error) {
 
 ## Error Classification
 
-API errors are classified for the `error_type` label:
+API errors are classified for the `error_type` label using HTTP status codes
+extracted from the Cloudflare API response:
 
 ```go
 func classifyCloudflareError(err error) string {
@@ -237,18 +242,30 @@ func classifyCloudflareError(err error) string {
         return ""
     }
 
+    // Check for typed errors from cloudflare-go SDK
+    var apiErr *cloudflare.APIError
+    if errors.As(err, &apiErr) {
+        switch {
+        case apiErr.StatusCode == 401 || apiErr.StatusCode == 403:
+            return "auth"
+        case apiErr.StatusCode == 429:
+            return "rate_limit"
+        case apiErr.StatusCode >= 500 && apiErr.StatusCode < 600:
+            return "server_error"
+        case apiErr.StatusCode >= 400 && apiErr.StatusCode < 500:
+            return "client_error"
+        }
+    }
+
+    // Fallback for non-API errors
     errStr := err.Error()
     switch {
-    case strings.Contains(errStr, "401") || strings.Contains(errStr, "403"):
-        return "auth"
-    case strings.Contains(errStr, "429"):
-        return "rate_limit"
-    case strings.Contains(errStr, "timeout"):
+    case strings.Contains(errStr, "timeout") || strings.Contains(errStr, "deadline"):
         return "timeout"
-    case strings.Contains(errStr, "5"):
-        return "server_error"
-    default:
+    case strings.Contains(errStr, "connection refused") || strings.Contains(errStr, "no such host"):
         return "network"
+    default:
+        return "unknown"
     }
 }
 ```
