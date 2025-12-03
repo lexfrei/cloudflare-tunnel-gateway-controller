@@ -142,7 +142,7 @@ func (r *GatewayReconciler) handleDeletion(
 		releaseName := cloudflaredReleaseName(gateway)
 		logger.Info("removing cloudflared deployment", "release", releaseName)
 
-		removeErr := r.removeCloudflared(gateway, cfg)
+		removeErr := r.removeCloudflared(ctx, gateway, cfg)
 		if removeErr != nil {
 			return ctrl.Result{}, errors.Wrap(removeErr, "failed to remove cloudflared")
 		}
@@ -243,7 +243,11 @@ func (r *GatewayReconciler) upgradeCloudflaredIfNeeded(
 }
 
 //nolint:funcorder // helm operations
-func (r *GatewayReconciler) removeCloudflared(gateway *gatewayv1.Gateway, cfg *config.ResolvedConfig) error {
+func (r *GatewayReconciler) removeCloudflared(
+	ctx context.Context,
+	gateway *gatewayv1.Gateway,
+	cfg *config.ResolvedConfig,
+) error {
 	namespace := cfg.CloudflaredNamespace
 	releaseName := cloudflaredReleaseName(gateway)
 
@@ -256,7 +260,7 @@ func (r *GatewayReconciler) removeCloudflared(gateway *gatewayv1.Gateway, cfg *c
 		return nil
 	}
 
-	return errors.Wrap(r.HelmManager.Uninstall(actionCfg, releaseName), "failed to uninstall cloudflared")
+	return errors.Wrap(r.HelmManager.Uninstall(ctx, actionCfg, releaseName), "failed to uninstall cloudflared")
 }
 
 //nolint:funcorder // value builder

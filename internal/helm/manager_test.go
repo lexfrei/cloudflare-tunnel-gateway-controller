@@ -7,6 +7,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"helm.sh/helm/v4/pkg/chart"
+
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/metrics"
 )
 
 func TestExtractRepoFromOCI(t *testing.T) {
@@ -124,7 +126,7 @@ func TestDefaultChartRef(t *testing.T) {
 func TestNewManager(t *testing.T) {
 	t.Parallel()
 
-	manager, err := NewManager()
+	manager, err := NewManager(metrics.NewNoopCollector())
 
 	require.NoError(t, err)
 	require.NotNil(t, manager)
@@ -141,7 +143,7 @@ func TestManager_GetLatestVersion_RealRegistry(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	manager, err := NewManager()
+	manager, err := NewManager(metrics.NewNoopCollector())
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -156,7 +158,7 @@ func TestManager_GetLatestVersion_RealRegistry(t *testing.T) {
 func TestManager_GetLatestVersion_InvalidRegistry(t *testing.T) {
 	t.Parallel()
 
-	manager, err := NewManager()
+	manager, err := NewManager(metrics.NewNoopCollector())
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -174,7 +176,7 @@ func TestManager_LoadChart_RealRegistry(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	manager, err := NewManager()
+	manager, err := NewManager(metrics.NewNoopCollector())
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -199,7 +201,7 @@ func TestManager_LoadChart_CacheHit(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	manager, err := NewManager()
+	manager, err := NewManager(metrics.NewNoopCollector())
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -219,7 +221,7 @@ func TestManager_LoadChart_CacheHit(t *testing.T) {
 func TestManager_LoadChart_InvalidChart(t *testing.T) {
 	t.Parallel()
 
-	manager, err := NewManager()
+	manager, err := NewManager(metrics.NewNoopCollector())
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -262,7 +264,7 @@ func TestManager_GetLatestVersion_TableDriven(t *testing.T) {
 		},
 	}
 
-	manager, err := NewManager()
+	manager, err := NewManager(metrics.NewNoopCollector())
 	require.NoError(t, err)
 
 	for _, tt := range tests {
@@ -292,7 +294,7 @@ func TestManager_ConcurrentLoadChart(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	manager, err := NewManager()
+	manager, err := NewManager(metrics.NewNoopCollector())
 	require.NoError(t, err)
 
 	ctx := context.Background()

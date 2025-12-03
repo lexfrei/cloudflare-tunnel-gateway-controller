@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/Masterminds/semver/v3"
 	"github.com/cockroachdb/errors"
@@ -17,6 +18,8 @@ import (
 	"helm.sh/helm/v4/pkg/kube"
 	"helm.sh/helm/v4/pkg/registry"
 	"helm.sh/helm/v4/pkg/release"
+
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/metrics"
 )
 
 const (
@@ -26,13 +29,14 @@ const (
 type Manager struct {
 	settings       *cli.EnvSettings
 	registryClient *registry.Client
+	metrics        metrics.Collector
 
 	chartCache   chart.Charter
 	chartVersion string
 	cacheMu      sync.RWMutex
 }
 
-func NewManager() (*Manager, error) {
+func NewManager(metricsCollector metrics.Collector) (*Manager, error) {
 	settings := cli.New()
 
 	registryClient, err := registry.NewClient(
@@ -47,6 +51,7 @@ func NewManager() (*Manager, error) {
 	return &Manager{
 		settings:       settings,
 		registryClient: registryClient,
+		metrics:        metricsCollector,
 	}, nil
 }
 
@@ -159,6 +164,8 @@ func (m *Manager) Install(
 	loadedChart chart.Charter,
 	values map[string]any,
 ) (release.Releaser, error) {
+	startTime := time.Now()
+
 	install := action.NewInstall(cfg)
 	install.ReleaseName = releaseName
 	install.Namespace = namespace
@@ -168,8 +175,14 @@ func (m *Manager) Install(
 
 	rel, err := install.RunWithContext(ctx, loadedChart, values)
 	if err != nil {
+		m.metrics.RecordHelmOperation(ctx, "install", "error", time.Since(startTime))
+		m.metrics.RecordHelmError(ctx, "install", "install_failed")
+
 		return nil, errors.Wrap(err, "failed to install release")
 	}
+
+	m.metrics.RecordHelmOperation(ctx, "install", "success", time.Since(startTime))
+	m.recordChartInfo(ctx, loadedChart)
 
 	return rel, nil
 }
@@ -181,6 +194,8 @@ func (m *Manager) Upgrade(
 	loadedChart chart.Charter,
 	values map[string]any,
 ) (release.Releaser, error) {
+	startTime := time.Now()
+
 	upgrade := action.NewUpgrade(cfg)
 	upgrade.WaitStrategy = kube.StatusWatcherStrategy
 	upgrade.Timeout = installTimeout
@@ -188,21 +203,34 @@ func (m *Manager) Upgrade(
 
 	rel, err := upgrade.RunWithContext(ctx, releaseName, loadedChart, values)
 	if err != nil {
+		m.metrics.RecordHelmOperation(ctx, "upgrade", "error", time.Since(startTime))
+		m.metrics.RecordHelmError(ctx, "upgrade", "upgrade_failed")
+
 		return nil, errors.Wrap(err, "failed to upgrade release")
 	}
+
+	m.metrics.RecordHelmOperation(ctx, "upgrade", "success", time.Since(startTime))
+	m.recordChartInfo(ctx, loadedChart)
 
 	return rel, nil
 }
 
-func (m *Manager) Uninstall(cfg *action.Configuration, releaseName string) error {
+func (m *Manager) Uninstall(ctx context.Context, cfg *action.Configuration, releaseName string) error {
+	startTime := time.Now()
+
 	uninstall := action.NewUninstall(cfg)
 	uninstall.WaitStrategy = kube.StatusWatcherStrategy
 	uninstall.Timeout = installTimeout
 
 	_, err := uninstall.Run(releaseName)
 	if err != nil {
+		m.metrics.RecordHelmOperation(ctx, "uninstall", "error", time.Since(startTime))
+		m.metrics.RecordHelmError(ctx, "uninstall", "uninstall_failed")
+
 		return errors.Wrap(err, "failed to uninstall release")
 	}
+
+	m.metrics.RecordHelmOperation(ctx, "uninstall", "success", time.Since(startTime))
 
 	return nil
 }
@@ -235,4 +263,17 @@ func extractRepoFromOCI(chartRef string) string {
 
 func extractChartName(chartRef string) string {
 	return filepath.Base(chartRef)
+}
+
+func (m *Manager) recordChartInfo(ctx context.Context, loadedChart chart.Charter) {
+	accessor, err := chart.NewAccessor(loadedChart)
+	if err != nil {
+		return
+	}
+
+	metadata := accessor.MetadataAsMap()
+	name, _ := metadata["name"].(string)
+	version, _ := metadata["version"].(string)
+	appVersion, _ := metadata["appVersion"].(string)
+	m.metrics.RecordHelmChartInfo(ctx, name, version, appVersion)
 }
