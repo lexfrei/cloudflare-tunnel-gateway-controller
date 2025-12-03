@@ -33,7 +33,7 @@ func TestHTTPRouteReconciler_Reconcile_NotFound(t *testing.T) {
 		WithScheme(scheme).
 		Build()
 
-	configResolver := config.NewResolver(fakeClient, "default")
+	configResolver := config.NewResolver(fakeClient, "default", metrics.NewNoopCollector())
 	routeSyncer := NewRouteSyncer(fakeClient, scheme, "cluster.local", "cloudflare-tunnel", configResolver, metrics.NewNoopCollector())
 
 	r := &HTTPRouteReconciler{
@@ -143,7 +143,7 @@ func TestHTTPRouteReconciler_Reconcile_WrongGatewayClass(t *testing.T) {
 		WithObjects(gateway, route).
 		Build()
 
-	configResolver := config.NewResolver(fakeClient, "default")
+	configResolver := config.NewResolver(fakeClient, "default", metrics.NewNoopCollector())
 	routeSyncer := NewRouteSyncer(fakeClient, scheme, "cluster.local", "cloudflare-tunnel", configResolver, metrics.NewNoopCollector())
 
 	r := &HTTPRouteReconciler{
@@ -809,7 +809,7 @@ func TestHTTPRouteReconciler_Start(t *testing.T) {
 		WithScheme(scheme).
 		Build()
 
-	configResolver := config.NewResolver(fakeClient, "default")
+	configResolver := config.NewResolver(fakeClient, "default", metrics.NewNoopCollector())
 	routeSyncer := NewRouteSyncer(fakeClient, scheme, "cluster.local", "cloudflare-tunnel", configResolver, metrics.NewNoopCollector())
 
 	r := &HTTPRouteReconciler{
@@ -884,7 +884,7 @@ func TestHTTPRouteReconciler_UpdateRouteStatus_Integration(t *testing.T) {
 		WithStatusSubresource(route).
 		Build()
 
-	configResolver := config.NewResolver(fakeClient, "default")
+	configResolver := config.NewResolver(fakeClient, "default", metrics.NewNoopCollector())
 	routeSyncer := NewRouteSyncer(fakeClient, scheme, "cluster.local", "cloudflare-tunnel", configResolver, metrics.NewNoopCollector())
 
 	r := &HTTPRouteReconciler{
@@ -975,7 +975,7 @@ func TestHTTPRouteReconciler_UpdateRouteStatus_NotAccepted(t *testing.T) {
 		WithStatusSubresource(route).
 		Build()
 
-	configResolver := config.NewResolver(fakeClient, "default")
+	configResolver := config.NewResolver(fakeClient, "default", metrics.NewNoopCollector())
 	routeSyncer := NewRouteSyncer(fakeClient, scheme, "cluster.local", "cloudflare-tunnel", configResolver, metrics.NewNoopCollector())
 
 	r := &HTTPRouteReconciler{
@@ -1091,7 +1091,7 @@ func TestHTTPRouteReconciler_MapperIntegration(t *testing.T) {
 		WithObjects(gatewayClass, gatewayClassConfig, gateway, route).
 		Build()
 
-	resolver := config.NewResolver(fakeClient, "default")
+	resolver := config.NewResolver(fakeClient, "default", metrics.NewNoopCollector())
 	routeSyncer := NewRouteSyncer(fakeClient, scheme, "cluster.local", "cloudflare-tunnel", resolver, metrics.NewNoopCollector())
 
 	r := &HTTPRouteReconciler{
@@ -1140,7 +1140,7 @@ func TestHTTPRouteReconciler_SyncAndUpdateStatus_NoConfig(t *testing.T) {
 		WithObjects(gatewayClass).
 		Build()
 
-	configResolver := config.NewResolver(fakeClient, "default")
+	configResolver := config.NewResolver(fakeClient, "default", metrics.NewNoopCollector())
 	routeSyncer := NewRouteSyncer(fakeClient, scheme, "cluster.local", "cloudflare-tunnel", configResolver, metrics.NewNoopCollector())
 
 	r := &HTTPRouteReconciler{

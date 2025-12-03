@@ -106,11 +106,14 @@ func Run(ctx context.Context, cfg *Config) error {
 		return errors.Wrap(err, "failed to add GatewayClassConfig scheme")
 	}
 
+	// Create metrics collector and register with controller-runtime
+	metricsCollector := metrics.NewCollector(ctrlMetrics.Registry)
+
 	// Determine default namespace for secret lookups
 	defaultNamespace := getControllerNamespace()
 
 	// Create config resolver
-	configResolver := config.NewResolver(mgr.GetClient(), defaultNamespace)
+	configResolver := config.NewResolver(mgr.GetClient(), defaultNamespace, metricsCollector)
 
 	// Initialize Helm manager for cloudflared deployment
 	helmManager, helmErr := helm.NewManager()
@@ -132,9 +135,6 @@ func Run(ctx context.Context, cfg *Config) error {
 	if err := gatewayReconciler.SetupWithManager(mgr); err != nil {
 		return errors.Wrap(err, "failed to setup gateway controller")
 	}
-
-	// Create metrics collector and register with controller-runtime
-	metricsCollector := metrics.NewCollector(ctrlMetrics.Registry)
 
 	// Create shared route syncer for unified HTTP and GRPC route synchronization
 	routeSyncer := NewRouteSyncer(

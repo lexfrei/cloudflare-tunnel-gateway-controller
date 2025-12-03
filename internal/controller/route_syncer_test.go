@@ -248,7 +248,7 @@ func TestRouteSyncer_GetRelevantHTTPRoutes(t *testing.T) {
 				scheme,
 				"cluster.local",
 				"cloudflare-tunnel",
-				config.NewResolver(fakeClient, "default"),
+				config.NewResolver(fakeClient, "default", metrics.NewNoopCollector()),
 				metrics.NewNoopCollector(),
 			)
 
@@ -361,7 +361,7 @@ func TestRouteSyncer_GetRelevantGRPCRoutes(t *testing.T) {
 				scheme,
 				"cluster.local",
 				"cloudflare-tunnel",
-				config.NewResolver(fakeClient, "default"),
+				config.NewResolver(fakeClient, "default", metrics.NewNoopCollector()),
 				metrics.NewNoopCollector(),
 			)
 
@@ -540,7 +540,7 @@ func TestNewRouteSyncer(t *testing.T) {
 	require.NoError(t, gatewayv1.AddToScheme(scheme))
 
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
-	resolver := config.NewResolver(fakeClient, "default")
+	resolver := config.NewResolver(fakeClient, "default", metrics.NewNoopCollector())
 
 	syncer := NewRouteSyncer(fakeClient, scheme, "cluster.local", "cloudflare-tunnel", resolver, metrics.NewNoopCollector())
 
