@@ -2,7 +2,6 @@ package controller
 
 import (
 	"context"
-	"log/slog"
 	"strings"
 	"sync/atomic"
 
@@ -23,6 +22,7 @@ import (
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/api/v1alpha1"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/ingress"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/logging"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/routebinding"
 )
 
@@ -63,7 +63,9 @@ func (r *GRPCRouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{RequeueAfter: startupPendingRequeueDelay}, nil
 	}
 
-	logger := slog.Default().With("grpcroute", req.NamespacedName)
+	ctx = logging.WithReconcileID(ctx)
+	logger := logging.Component(ctx, "grpcroute-reconciler").With("grpcroute", req.NamespacedName.String())
+	ctx = logging.WithLogger(ctx, logger)
 
 	var route gatewayv1.GRPCRoute
 	if err := r.Get(ctx, req.NamespacedName, &route); err != nil {
@@ -87,7 +89,7 @@ func (r *GRPCRouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 //nolint:noinlineerr,funcorder // inline error handling for controller pattern; placed near Reconcile for readability
 func (r *GRPCRouteReconciler) syncAndUpdateStatus(ctx context.Context) (ctrl.Result, error) {
-	logger := slog.Default().With("component", "grpcroute-sync")
+	logger := logging.FromContext(ctx)
 
 	result, syncResult, syncErr := r.RouteSyncer.SyncAllRoutes(ctx)
 
@@ -294,8 +296,10 @@ func (r *GRPCRouteReconciler) SetupWithManager(mgr ctrl.Manager) error {
 func (r *GRPCRouteReconciler) Start(ctx context.Context) error {
 	defer r.startupComplete.Store(true)
 
-	logger := slog.Default().With("component", "grpcroute-startup-sync")
+	logger := logging.Component(ctx, "grpcroute-startup-sync")
 	logger.Info("performing startup sync of grpcroute configuration")
+
+	ctx = logging.WithLogger(ctx, logger)
 
 	_, err := r.syncAndUpdateStatus(ctx)
 	if err != nil {
