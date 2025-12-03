@@ -36,7 +36,7 @@ func TestBuild_WarnMultipleBackendRefs(t *testing.T) {
 	buf, cleanup := setupTestLogger()
 	defer cleanup()
 
-	builder := ingress.NewBuilder("cluster.local", nil, nil)
+	builder := ingress.NewBuilder("cluster.local", nil, nil, nil)
 	routes := []gatewayv1.HTTPRoute{
 		{
 			ObjectMeta: metav1.ObjectMeta{
@@ -72,7 +72,7 @@ func TestBuild_WarnBackendRefWeights(t *testing.T) {
 	buf, cleanup := setupTestLogger()
 	defer cleanup()
 
-	builder := ingress.NewBuilder("cluster.local", nil, nil)
+	builder := ingress.NewBuilder("cluster.local", nil, nil, nil)
 	weight50 := int32(50)
 	weight30 := int32(30)
 
@@ -111,7 +111,7 @@ func TestBuild_WarnHeaderMatching(t *testing.T) {
 	buf, cleanup := setupTestLogger()
 	defer cleanup()
 
-	builder := ingress.NewBuilder("cluster.local", nil, nil)
+	builder := ingress.NewBuilder("cluster.local", nil, nil, nil)
 	headerType := gatewayv1.HeaderMatchExact
 
 	routes := []gatewayv1.HTTPRoute{
@@ -162,7 +162,7 @@ func TestBuild_WarnQueryParamMatching(t *testing.T) {
 	buf, cleanup := setupTestLogger()
 	defer cleanup()
 
-	builder := ingress.NewBuilder("cluster.local", nil, nil)
+	builder := ingress.NewBuilder("cluster.local", nil, nil, nil)
 	queryType := gatewayv1.QueryParamMatchExact
 
 	routes := []gatewayv1.HTTPRoute{
@@ -208,7 +208,7 @@ func TestBuild_WarnMethodMatching(t *testing.T) {
 	buf, cleanup := setupTestLogger()
 	defer cleanup()
 
-	builder := ingress.NewBuilder("cluster.local", nil, nil)
+	builder := ingress.NewBuilder("cluster.local", nil, nil, nil)
 	method := gatewayv1.HTTPMethodPost
 
 	routes := []gatewayv1.HTTPRoute{
@@ -248,7 +248,7 @@ func TestBuild_WarnRegularExpressionPath(t *testing.T) {
 	buf, cleanup := setupTestLogger()
 	defer cleanup()
 
-	builder := ingress.NewBuilder("cluster.local", nil, nil)
+	builder := ingress.NewBuilder("cluster.local", nil, nil, nil)
 	pathType := gatewayv1.PathMatchRegularExpression
 	pathValue := "/api/v[0-9]+/.*"
 
@@ -292,7 +292,7 @@ func TestBuild_WarnFilters(t *testing.T) {
 	buf, cleanup := setupTestLogger()
 	defer cleanup()
 
-	builder := ingress.NewBuilder("cluster.local", nil, nil)
+	builder := ingress.NewBuilder("cluster.local", nil, nil, nil)
 	filterType := gatewayv1.HTTPRouteFilterRequestHeaderModifier
 
 	routes := []gatewayv1.HTTPRoute{
@@ -346,7 +346,7 @@ func TestBuild_MultipleWarnings(t *testing.T) {
 	buf, cleanup := setupTestLogger()
 	defer cleanup()
 
-	builder := ingress.NewBuilder("cluster.local", nil, nil)
+	builder := ingress.NewBuilder("cluster.local", nil, nil, nil)
 	method := gatewayv1.HTTPMethodGet
 	headerType := gatewayv1.HeaderMatchExact
 	weight50 := int32(50)
@@ -399,7 +399,7 @@ func TestBuild_NoWarningsForValidConfig(t *testing.T) {
 	buf, cleanup := setupTestLogger()
 	defer cleanup()
 
-	builder := ingress.NewBuilder("cluster.local", nil, nil)
+	builder := ingress.NewBuilder("cluster.local", nil, nil, nil)
 	pathType := gatewayv1.PathMatchPathPrefix
 	pathValue := "/api"
 

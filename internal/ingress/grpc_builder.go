@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"time"
 
 	"github.com/cloudflare/cloudflare-go/v6"
 	"github.com/cloudflare/cloudflare-go/v6/zero_trust"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/metrics"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/referencegrant"
 )
 
@@ -27,14 +29,23 @@ type GRPCBuilder struct {
 	// Client is used to fetch Service objects for ExternalName resolution.
 	// If nil, falls back to cluster-local DNS for all services.
 	Client client.Reader
+
+	// Metrics records build duration and validation results.
+	Metrics metrics.Collector
 }
 
-// NewGRPCBuilder creates a new GRPCBuilder with the specified cluster domain, validator, and client.
-func NewGRPCBuilder(clusterDomain string, validator *referencegrant.Validator, c client.Reader) *GRPCBuilder {
+// NewGRPCBuilder creates a new GRPCBuilder with the specified cluster domain, validator, client, and metrics.
+func NewGRPCBuilder(
+	clusterDomain string,
+	validator *referencegrant.Validator,
+	c client.Reader,
+	m metrics.Collector,
+) *GRPCBuilder {
 	return &GRPCBuilder{
 		ClusterDomain: clusterDomain,
 		Validator:     validator,
 		Client:        c,
+		Metrics:       m,
 	}
 }
 
@@ -51,6 +62,8 @@ func NewGRPCBuilder(clusterDomain string, validator *referencegrant.Validator, c
 // Returns BuildResult containing the generated rules and any backend references
 // that failed validation (e.g., due to missing ReferenceGrant).
 func (b *GRPCBuilder) Build(ctx context.Context, routes []gatewayv1.GRPCRoute) BuildResult {
+	startTime := time.Now()
+
 	var entries []routeEntry
 
 	var failedRefs []BackendRefError
@@ -91,6 +104,10 @@ func (b *GRPCBuilder) Build(ctx context.Context, routes []gatewayv1.GRPCRoute) B
 		}
 
 		rules = append(rules, rule)
+	}
+
+	if b.Metrics != nil {
+		b.Metrics.RecordIngressBuildDuration(ctx, "grpc", time.Since(startTime))
 	}
 
 	return BuildResult{
@@ -258,7 +275,7 @@ func (b *GRPCBuilder) resolveBackendRef(ctx context.Context, namespace, routeNam
 		port = int(*ref.Port)
 	}
 
-	return resolveServiceURL(ctx, &serviceResolveParams{
+	url, backendErr := resolveServiceURL(ctx, &serviceResolveParams{
 		client:        b.Client,
 		validator:     b.Validator,
 		clusterDomain: b.ClusterDomain,
@@ -269,4 +286,14 @@ func (b *GRPCBuilder) resolveBackendRef(ctx context.Context, namespace, routeNam
 		svcNS:         svcNamespace,
 		port:          port,
 	})
+
+	if b.Metrics != nil {
+		if backendErr != nil {
+			b.Metrics.RecordBackendRefValidation(ctx, "grpc", "failed", backendErr.Reason)
+		} else {
+			b.Metrics.RecordBackendRefValidation(ctx, "grpc", "success", "")
+		}
+	}
+
+	return url, backendErr
 }

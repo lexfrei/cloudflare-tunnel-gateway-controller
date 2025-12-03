@@ -242,7 +242,7 @@ func TestBuilder_CrossNamespaceRef_WithGrant(t *testing.T) {
 		Build()
 
 	validator := referencegrant.NewValidator(fakeClient)
-	builder := ingress.NewBuilder("cluster.local", validator, nil)
+	builder := ingress.NewBuilder("cluster.local", validator, nil, nil)
 
 	ctx := context.Background()
 

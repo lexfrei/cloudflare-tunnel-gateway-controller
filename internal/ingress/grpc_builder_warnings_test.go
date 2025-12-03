@@ -21,7 +21,7 @@ func TestGRPCBuild_WarnMultipleBackendRefs(t *testing.T) {
 	buf, cleanup := setupTestLogger()
 	defer cleanup()
 
-	builder := ingress.NewGRPCBuilder("cluster.local", nil, nil)
+	builder := ingress.NewGRPCBuilder("cluster.local", nil, nil, nil)
 	routes := []gatewayv1.GRPCRoute{
 		{
 			ObjectMeta: metav1.ObjectMeta{
@@ -57,7 +57,7 @@ func TestGRPCBuild_WarnBackendRefWeights(t *testing.T) {
 	buf, cleanup := setupTestLogger()
 	defer cleanup()
 
-	builder := ingress.NewGRPCBuilder("cluster.local", nil, nil)
+	builder := ingress.NewGRPCBuilder("cluster.local", nil, nil, nil)
 	weight70 := int32(70)
 	weight30 := int32(30)
 
@@ -96,7 +96,7 @@ func TestGRPCBuild_WarnHeaderMatching(t *testing.T) {
 	buf, cleanup := setupTestLogger()
 	defer cleanup()
 
-	builder := ingress.NewGRPCBuilder("cluster.local", nil, nil)
+	builder := ingress.NewGRPCBuilder("cluster.local", nil, nil, nil)
 	headerType := gatewayv1.GRPCHeaderMatchExact
 	service := testGRPCService
 
@@ -151,7 +151,7 @@ func TestGRPCBuild_WarnFilters(t *testing.T) {
 	buf, cleanup := setupTestLogger()
 	defer cleanup()
 
-	builder := ingress.NewGRPCBuilder("cluster.local", nil, nil)
+	builder := ingress.NewGRPCBuilder("cluster.local", nil, nil, nil)
 	filterType := gatewayv1.GRPCRouteFilterRequestHeaderModifier
 
 	routes := []gatewayv1.GRPCRoute{
@@ -207,7 +207,7 @@ func TestGRPCBuild_MultipleWarnings(t *testing.T) {
 	buf, cleanup := setupTestLogger()
 	defer cleanup()
 
-	builder := ingress.NewGRPCBuilder("cluster.local", nil, nil)
+	builder := ingress.NewGRPCBuilder("cluster.local", nil, nil, nil)
 	headerType := gatewayv1.GRPCHeaderMatchExact
 	weight50 := int32(50)
 	service := testGRPCService
@@ -261,7 +261,7 @@ func TestGRPCBuild_NoWarningsForValidConfig(t *testing.T) {
 	buf, cleanup := setupTestLogger()
 	defer cleanup()
 
-	builder := ingress.NewGRPCBuilder("cluster.local", nil, nil)
+	builder := ingress.NewGRPCBuilder("cluster.local", nil, nil, nil)
 	service := testGRPCService
 	method := testGRPCMethod
 

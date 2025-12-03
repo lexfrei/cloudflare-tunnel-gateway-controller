@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"time"
 
 	"github.com/cloudflare/cloudflare-go/v6"
 	"github.com/cloudflare/cloudflare-go/v6/zero_trust"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/metrics"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/referencegrant"
 )
 
@@ -46,14 +48,23 @@ type Builder struct {
 	// Client is used to fetch Service objects for ExternalName resolution.
 	// If nil, falls back to cluster-local DNS for all services.
 	Client client.Reader
+
+	// Metrics records build duration and validation results.
+	Metrics metrics.Collector
 }
 
-// NewBuilder creates a new Builder with the specified cluster domain, validator, and client.
-func NewBuilder(clusterDomain string, validator *referencegrant.Validator, c client.Reader) *Builder {
+// NewBuilder creates a new Builder with the specified cluster domain, validator, client, and metrics.
+func NewBuilder(
+	clusterDomain string,
+	validator *referencegrant.Validator,
+	c client.Reader,
+	m metrics.Collector,
+) *Builder {
 	return &Builder{
 		ClusterDomain: clusterDomain,
 		Validator:     validator,
 		Client:        c,
+		Metrics:       m,
 	}
 }
 
@@ -94,6 +105,8 @@ type BuildResult struct {
 // Returns BuildResult containing the generated rules and any backend references
 // that failed validation (e.g., due to missing ReferenceGrant).
 func (b *Builder) Build(ctx context.Context, routes []gatewayv1.HTTPRoute) BuildResult {
+	startTime := time.Now()
+
 	var entries []routeEntry
 
 	var failedRefs []BackendRefError
@@ -139,6 +152,10 @@ func (b *Builder) Build(ctx context.Context, routes []gatewayv1.HTTPRoute) Build
 	rules = append(rules, zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress{
 		Service: cloudflare.F(CatchAllService),
 	})
+
+	if b.Metrics != nil {
+		b.Metrics.RecordIngressBuildDuration(ctx, "http", time.Since(startTime))
+	}
 
 	return BuildResult{
 		Rules:      rules,
@@ -379,7 +396,7 @@ func (b *Builder) resolveBackendRef(ctx context.Context, namespace, routeName st
 		port = int(*ref.Port)
 	}
 
-	return resolveServiceURL(ctx, &serviceResolveParams{
+	url, backendErr := resolveServiceURL(ctx, &serviceResolveParams{
 		client:        b.Client,
 		validator:     b.Validator,
 		clusterDomain: b.ClusterDomain,
@@ -390,4 +407,14 @@ func (b *Builder) resolveBackendRef(ctx context.Context, namespace, routeName st
 		svcNS:         svcNamespace,
 		port:          port,
 	})
+
+	if b.Metrics != nil {
+		if backendErr != nil {
+			b.Metrics.RecordBackendRefValidation(ctx, "http", "failed", backendErr.Reason)
+		} else {
+			b.Metrics.RecordBackendRefValidation(ctx, "http", "success", "")
+		}
+	}
+
+	return url, backendErr
 }

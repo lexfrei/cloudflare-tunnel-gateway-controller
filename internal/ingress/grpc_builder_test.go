@@ -42,7 +42,7 @@ func TestNewGRPCBuilder(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			builder := ingress.NewGRPCBuilder(tt.clusterDomain, nil, nil)
+			builder := ingress.NewGRPCBuilder(tt.clusterDomain, nil, nil, nil)
 			require.NotNil(t, builder)
 			assert.Equal(t, tt.clusterDomain, builder.ClusterDomain)
 		})
@@ -52,7 +52,7 @@ func TestNewGRPCBuilder(t *testing.T) {
 func TestGRPCBuild_EmptyRoutes(t *testing.T) {
 	t.Parallel()
 
-	builder := ingress.NewGRPCBuilder("cluster.local", nil, nil)
+	builder := ingress.NewGRPCBuilder("cluster.local", nil, nil, nil)
 	routes := []gatewayv1.GRPCRoute{}
 
 	buildResult := builder.Build(context.Background(), routes)
@@ -63,7 +63,7 @@ func TestGRPCBuild_EmptyRoutes(t *testing.T) {
 func TestGRPCBuild_SingleRoute(t *testing.T) {
 	t.Parallel()
 
-	builder := ingress.NewGRPCBuilder("cluster.local", nil, nil)
+	builder := ingress.NewGRPCBuilder("cluster.local", nil, nil, nil)
 	routes := []gatewayv1.GRPCRoute{
 		{
 			ObjectMeta: metav1.ObjectMeta{
@@ -93,7 +93,7 @@ func TestGRPCBuild_SingleRoute(t *testing.T) {
 func TestGRPCBuild_ServiceMethodMatch(t *testing.T) {
 	t.Parallel()
 
-	builder := ingress.NewGRPCBuilder("cluster.local", nil, nil)
+	builder := ingress.NewGRPCBuilder("cluster.local", nil, nil, nil)
 	service := testGRPCService
 	method := testGRPCMethod
 	routes := []gatewayv1.GRPCRoute{
@@ -132,7 +132,7 @@ func TestGRPCBuild_ServiceMethodMatch(t *testing.T) {
 func TestGRPCBuild_ServiceOnlyMatch(t *testing.T) {
 	t.Parallel()
 
-	builder := ingress.NewGRPCBuilder("cluster.local", nil, nil)
+	builder := ingress.NewGRPCBuilder("cluster.local", nil, nil, nil)
 	service := testGRPCService
 	routes := []gatewayv1.GRPCRoute{
 		{
@@ -169,7 +169,7 @@ func TestGRPCBuild_ServiceOnlyMatch(t *testing.T) {
 func TestGRPCBuild_NoMethodMatch(t *testing.T) {
 	t.Parallel()
 
-	builder := ingress.NewGRPCBuilder("cluster.local", nil, nil)
+	builder := ingress.NewGRPCBuilder("cluster.local", nil, nil, nil)
 	routes := []gatewayv1.GRPCRoute{
 		{
 			ObjectMeta: metav1.ObjectMeta{
@@ -203,7 +203,7 @@ func TestGRPCBuild_NoMethodMatch(t *testing.T) {
 func TestGRPCBuild_MultipleHostnames(t *testing.T) {
 	t.Parallel()
 
-	builder := ingress.NewGRPCBuilder("cluster.local", nil, nil)
+	builder := ingress.NewGRPCBuilder("cluster.local", nil, nil, nil)
 	routes := []gatewayv1.GRPCRoute{
 		{
 			ObjectMeta: metav1.ObjectMeta{
@@ -233,7 +233,7 @@ func TestGRPCBuild_MultipleHostnames(t *testing.T) {
 func TestGRPCBuild_NoHostnames(t *testing.T) {
 	t.Parallel()
 
-	builder := ingress.NewGRPCBuilder("cluster.local", nil, nil)
+	builder := ingress.NewGRPCBuilder("cluster.local", nil, nil, nil)
 	routes := []gatewayv1.GRPCRoute{
 		{
 			ObjectMeta: metav1.ObjectMeta{
@@ -262,7 +262,7 @@ func TestGRPCBuild_NoHostnames(t *testing.T) {
 func TestGRPCBuild_NoBackendRefs(t *testing.T) {
 	t.Parallel()
 
-	builder := ingress.NewGRPCBuilder("cluster.local", nil, nil)
+	builder := ingress.NewGRPCBuilder("cluster.local", nil, nil, nil)
 	routes := []gatewayv1.GRPCRoute{
 		{
 			ObjectMeta: metav1.ObjectMeta{
@@ -288,7 +288,7 @@ func TestGRPCBuild_NoBackendRefs(t *testing.T) {
 func TestGRPCBuild_Sorting(t *testing.T) {
 	t.Parallel()
 
-	builder := ingress.NewGRPCBuilder("cluster.local", nil, nil)
+	builder := ingress.NewGRPCBuilder("cluster.local", nil, nil, nil)
 	serviceA := "a.Service"
 	serviceB := "b.Service"
 	methodX := "MethodX"
@@ -341,7 +341,7 @@ func TestGRPCBuild_Sorting(t *testing.T) {
 func TestGRPCBuild_CustomNamespace(t *testing.T) {
 	t.Parallel()
 
-	builder := ingress.NewGRPCBuilder("cluster.local", nil, nil)
+	builder := ingress.NewGRPCBuilder("cluster.local", nil, nil, nil)
 	ns := gatewayv1.Namespace("other-namespace")
 	routes := []gatewayv1.GRPCRoute{
 		{
@@ -371,7 +371,7 @@ func TestGRPCBuild_CustomNamespace(t *testing.T) {
 func TestGRPCBuild_HTTPSPort(t *testing.T) {
 	t.Parallel()
 
-	builder := ingress.NewGRPCBuilder("cluster.local", nil, nil)
+	builder := ingress.NewGRPCBuilder("cluster.local", nil, nil, nil)
 	routes := []gatewayv1.GRPCRoute{
 		{
 			ObjectMeta: metav1.ObjectMeta{
@@ -400,7 +400,7 @@ func TestGRPCBuild_HTTPSPort(t *testing.T) {
 func TestGRPCBuild_DefaultPort(t *testing.T) {
 	t.Parallel()
 
-	builder := ingress.NewGRPCBuilder("cluster.local", nil, nil)
+	builder := ingress.NewGRPCBuilder("cluster.local", nil, nil, nil)
 	routes := []gatewayv1.GRPCRoute{
 		{
 			ObjectMeta: metav1.ObjectMeta{
@@ -429,7 +429,7 @@ func TestGRPCBuild_DefaultPort(t *testing.T) {
 func TestGRPCBuild_NonServiceBackend(t *testing.T) {
 	t.Parallel()
 
-	builder := ingress.NewGRPCBuilder("cluster.local", nil, nil)
+	builder := ingress.NewGRPCBuilder("cluster.local", nil, nil, nil)
 	kind := gatewayv1.Kind("Deployment")
 	routes := []gatewayv1.GRPCRoute{
 		{
@@ -465,7 +465,7 @@ func TestGRPCBuild_NonServiceBackend(t *testing.T) {
 func TestGRPCBuild_NonCoreGroup(t *testing.T) {
 	t.Parallel()
 
-	builder := ingress.NewGRPCBuilder("cluster.local", nil, nil)
+	builder := ingress.NewGRPCBuilder("cluster.local", nil, nil, nil)
 	group := gatewayv1.Group("apps")
 	routes := []gatewayv1.GRPCRoute{
 		{
@@ -501,7 +501,7 @@ func TestGRPCBuild_NonCoreGroup(t *testing.T) {
 func TestGRPCBuild_MethodOnlyMatch(t *testing.T) {
 	t.Parallel()
 
-	builder := ingress.NewGRPCBuilder("cluster.local", nil, nil)
+	builder := ingress.NewGRPCBuilder("cluster.local", nil, nil, nil)
 	method := testGRPCMethod
 	routes := []gatewayv1.GRPCRoute{
 		{
@@ -538,7 +538,7 @@ func TestGRPCBuild_MethodOnlyMatch(t *testing.T) {
 func TestGRPCBuild_EmptyServiceAndMethod(t *testing.T) {
 	t.Parallel()
 
-	builder := ingress.NewGRPCBuilder("cluster.local", nil, nil)
+	builder := ingress.NewGRPCBuilder("cluster.local", nil, nil, nil)
 	emptyService := ""
 	emptyMethod := ""
 	routes := []gatewayv1.GRPCRoute{
@@ -577,7 +577,7 @@ func TestGRPCBuild_EmptyServiceAndMethod(t *testing.T) {
 func TestGRPCBuild_MultipleRoutes(t *testing.T) {
 	t.Parallel()
 
-	builder := ingress.NewGRPCBuilder("cluster.local", nil, nil)
+	builder := ingress.NewGRPCBuilder("cluster.local", nil, nil, nil)
 	routes := []gatewayv1.GRPCRoute{
 		{
 			ObjectMeta: metav1.ObjectMeta{
@@ -671,7 +671,7 @@ func TestGRPCBuild_WeightSelection(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			builder := ingress.NewGRPCBuilder("cluster.local", nil, nil)
+			builder := ingress.NewGRPCBuilder("cluster.local", nil, nil, nil)
 
 			backendRefs := make([]gatewayv1.GRPCBackendRef, len(tt.backendWeights))
 			for i, w := range tt.backendWeights {
@@ -714,7 +714,7 @@ func TestGRPCBuild_WeightSelection(t *testing.T) {
 func TestGRPCBuild_AllBackendsDisabled(t *testing.T) {
 	t.Parallel()
 
-	builder := ingress.NewGRPCBuilder("cluster.local", nil, nil)
+	builder := ingress.NewGRPCBuilder("cluster.local", nil, nil, nil)
 	routes := []gatewayv1.GRPCRoute{
 		{
 			ObjectMeta: metav1.ObjectMeta{
@@ -787,7 +787,7 @@ func TestGRPCBuild_ExternalNameService(t *testing.T) {
 		WithObjects(externalSvc).
 		Build()
 
-	builder := ingress.NewGRPCBuilder("cluster.local", nil, fakeClient)
+	builder := ingress.NewGRPCBuilder("cluster.local", nil, fakeClient, nil)
 	routes := []gatewayv1.GRPCRoute{
 		{
 			ObjectMeta: metav1.ObjectMeta{
@@ -836,7 +836,7 @@ func TestGRPCBuild_ExternalNameService_HTTPPort(t *testing.T) {
 		WithObjects(externalSvc).
 		Build()
 
-	builder := ingress.NewGRPCBuilder("cluster.local", nil, fakeClient)
+	builder := ingress.NewGRPCBuilder("cluster.local", nil, fakeClient, nil)
 	routes := []gatewayv1.GRPCRoute{
 		{
 			ObjectMeta: metav1.ObjectMeta{
@@ -885,7 +885,7 @@ func TestGRPCBuild_ClusterIPService_WithClient(t *testing.T) {
 		WithObjects(clusterIPSvc).
 		Build()
 
-	builder := ingress.NewGRPCBuilder("cluster.local", nil, fakeClient)
+	builder := ingress.NewGRPCBuilder("cluster.local", nil, fakeClient, nil)
 	routes := []gatewayv1.GRPCRoute{
 		{
 			ObjectMeta: metav1.ObjectMeta{
@@ -922,7 +922,7 @@ func TestGRPCBuild_ServiceNotFound(t *testing.T) {
 		WithScheme(scheme).
 		Build()
 
-	builder := ingress.NewGRPCBuilder("cluster.local", nil, fakeClient)
+	builder := ingress.NewGRPCBuilder("cluster.local", nil, fakeClient, nil)
 	routes := []gatewayv1.GRPCRoute{
 		{
 			ObjectMeta: metav1.ObjectMeta{
@@ -953,7 +953,7 @@ func TestGRPCBuild_ServiceNotFound(t *testing.T) {
 func TestGRPCBuild_NilClient_FallbackBehavior(t *testing.T) {
 	t.Parallel()
 
-	builder := ingress.NewGRPCBuilder("cluster.local", nil, nil)
+	builder := ingress.NewGRPCBuilder("cluster.local", nil, nil, nil)
 	routes := []gatewayv1.GRPCRoute{
 		{
 			ObjectMeta: metav1.ObjectMeta{
