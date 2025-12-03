@@ -240,7 +240,7 @@ func TestBuilder_CrossNamespaceRef_WithGrant(t *testing.T) {
 		Build()
 
 	validator := referencegrant.NewValidator(fakeClient)
-	builder := ingress.NewBuilder("cluster.local", validator)
+	builder := ingress.NewBuilder("cluster.local", validator, nil)
 
 	ctx := context.Background()
 
@@ -335,9 +335,20 @@ func TestRouteSyncer_GRPCRoute_CrossNamespaceRef_WithGrant(t *testing.T) {
 		},
 	}
 
+	// Service in "backend" namespace
+	grpcService := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "grpc-service",
+			Namespace: "backend",
+		},
+		Spec: corev1.ServiceSpec{
+			Type: corev1.ServiceTypeClusterIP,
+		},
+	}
+
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(route, gateway, refGrant).
+		WithObjects(route, gateway, refGrant, grpcService).
 		Build()
 
 	syncer := NewRouteSyncer(
@@ -476,9 +487,23 @@ func TestRouteSyncer_ReferenceGrant_SpecificName(t *testing.T) {
 		},
 	}
 
+	// Service in "backend" namespace - only allowed-service exists
+	allowedService := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "allowed-service",
+			Namespace: "backend",
+		},
+		Spec: corev1.ServiceSpec{
+			Type: corev1.ServiceTypeClusterIP,
+		},
+	}
+
+	// Note: denied-service does NOT exist, so it will fail with RefNotPermitted
+	// (ReferenceGrant check happens before Service lookup)
+
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(allowedRoute, deniedRoute, gateway, refGrant).
+		WithObjects(allowedRoute, deniedRoute, gateway, refGrant, allowedService).
 		Build()
 
 	syncer := NewRouteSyncer(

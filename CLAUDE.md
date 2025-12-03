@@ -167,6 +167,84 @@ go test -v -race ./internal/controller/... -run TestHTTPRouteReconciler
 go test -race -coverprofile=coverage.out ./...
 ```
 
+## Documentation
+
+Project documentation uses MkDocs with Material theme. Live site: https://cf.k8s.lex.la
+
+### Commands
+
+```bash
+# Install dependencies
+pip install --requirement requirements-docs.txt
+
+# Local preview server
+mkdocs serve
+
+# Build static site
+mkdocs build
+
+# Lint markdown
+markdownlint-cli2 '**/*.md'
+```
+
+### Structure
+
+```text
+docs/
+├── index.md                 # Homepage
+├── getting-started/         # Installation, prerequisites, quickstart
+├── configuration/           # Controller options, Helm values, GatewayClassConfig
+├── gateway-api/             # HTTPRoute, GRPCRoute, ReferenceGrant, limitations
+├── guides/                  # AWG sidecar, external-DNS, cross-namespace
+├── operations/              # Troubleshooting, metrics, manual installation
+├── development/             # Setup, architecture, contributing, testing
+└── reference/               # Helm chart, CRD reference, security
+```
+
+### Writing Guidelines
+
+- **Section structure**: Each section must have `index.md` as landing page
+- **Navigation**: Register all new pages in `nav:` section of `mkdocs.yml`
+- **Diagrams**: Use Mermaid for architecture and flow diagrams
+- **Code blocks**: Use syntax highlighting with language identifier
+- **Admonitions**: Use `!!! note`, `!!! warning`, `!!! danger` for callouts
+- **Links**: Use relative paths for internal links (`../configuration/helm-values.md`)
+
+### Documentation TDD
+
+**CRITICAL: Apply TDD methodology to documentation with obsessive attention to detail.**
+
+**NEVER work directly on master branch. Create a feature branch for all documentation changes.**
+
+Before writing any documentation:
+
+1. **Verify every command works**
+   - Run each command yourself before documenting
+   - Test on clean environment when possible
+   - Document exact versions and prerequisites
+
+2. **Validate all code examples**
+   - Copy-paste and execute every code snippet
+   - Verify output matches documented expectations
+   - Test edge cases mentioned in documentation
+
+3. **Check all links and references**
+   - Click every internal link
+   - Verify external URLs are accessible
+   - Confirm file paths exist
+
+4. **Test the user journey**
+   - Follow your own documentation step-by-step
+   - Assume zero prior knowledge
+   - Note every missing step or assumption
+
+5. **Build and preview locally**
+   - Run `mkdocs serve` before committing
+   - Check rendering of all changed pages
+   - Verify navigation and search work correctly
+
+**If a command fails, a link is broken, or a step is missing — fix it before committing.**
+
 ## Linting Configuration
 
 golangci-lint v2 config in `.golangci.yaml`:

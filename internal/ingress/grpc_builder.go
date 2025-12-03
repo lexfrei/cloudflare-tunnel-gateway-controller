@@ -8,6 +8,7 @@ import (
 
 	"github.com/cloudflare/cloudflare-go/v6"
 	"github.com/cloudflare/cloudflare-go/v6/zero_trust"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/referencegrant"
@@ -22,13 +23,18 @@ type GRPCBuilder struct {
 
 	// Validator validates cross-namespace backend references using ReferenceGrant.
 	Validator *referencegrant.Validator
+
+	// Client is used to fetch Service objects for ExternalName resolution.
+	// If nil, falls back to cluster-local DNS for all services.
+	Client client.Reader
 }
 
-// NewGRPCBuilder creates a new GRPCBuilder with the specified cluster domain and validator.
-func NewGRPCBuilder(clusterDomain string, validator *referencegrant.Validator) *GRPCBuilder {
+// NewGRPCBuilder creates a new GRPCBuilder with the specified cluster domain, validator, and client.
+func NewGRPCBuilder(clusterDomain string, validator *referencegrant.Validator, c client.Reader) *GRPCBuilder {
 	return &GRPCBuilder{
 		ClusterDomain: clusterDomain,
 		Validator:     validator,
+		Client:        c,
 	}
 }
 
@@ -217,7 +223,7 @@ func logGRPCBackendWeights(namespace, routeName string, refs []gatewayv1.GRPCBac
 	}
 }
 
-//nolint:dupl // similar structure for different route types is intentional
+//nolint:dupl // Similar to Builder.resolveBackendRef but operates on different types
 func (b *GRPCBuilder) resolveBackendRef(ctx context.Context, namespace, routeName string, refs []gatewayv1.GRPCBackendRef) (string, *BackendRefError) {
 	if len(refs) == 0 {
 		return "", nil
@@ -247,35 +253,20 @@ func (b *GRPCBuilder) resolveBackendRef(ctx context.Context, namespace, routeNam
 		svcNamespace = string(*ref.Namespace)
 	}
 
-	// Validate cross-namespace references with ReferenceGrant
-	if namespace != svcNamespace {
-		if !validateCrossNamespaceRef(ctx, b.Validator, "GRPCRoute", namespace, routeName, svcNamespace, string(ref.Name)) {
-			return "", &BackendRefError{
-				RouteNamespace: namespace,
-				RouteName:      routeName,
-				BackendName:    string(ref.Name),
-				BackendNS:      svcNamespace,
-				Reason:         string(gatewayv1.RouteReasonRefNotPermitted),
-				Message:        fmt.Sprintf("cross-namespace backend reference to %s/%s not permitted by ReferenceGrant", svcNamespace, ref.Name),
-			}
-		}
-	}
-
 	port := DefaultHTTPPort
 	if ref.Port != nil {
 		port = int(*ref.Port)
 	}
 
-	scheme := schemeHTTP
-	if port == DefaultHTTPSPort {
-		scheme = schemeHTTPS
-	}
-
-	return fmt.Sprintf("%s://%s.%s.svc.%s:%d",
-		scheme,
-		string(ref.Name),
-		svcNamespace,
-		b.ClusterDomain,
-		port,
-	), nil
+	return resolveServiceURL(ctx, &serviceResolveParams{
+		client:        b.Client,
+		validator:     b.Validator,
+		clusterDomain: b.ClusterDomain,
+		routeKind:     "GRPCRoute",
+		routeNS:       namespace,
+		routeName:     routeName,
+		svcName:       string(ref.Name),
+		svcNS:         svcNamespace,
+		port:          port,
+	})
 }

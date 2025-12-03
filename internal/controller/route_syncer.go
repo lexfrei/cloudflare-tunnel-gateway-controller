@@ -52,8 +52,8 @@ func NewRouteSyncer(
 		ClusterDomain:    clusterDomain,
 		GatewayClassName: gatewayClassName,
 		ConfigResolver:   configResolver,
-		httpBuilder:      ingress.NewBuilder(clusterDomain, refGrantValidator),
-		grpcBuilder:      ingress.NewGRPCBuilder(clusterDomain, refGrantValidator),
+		httpBuilder:      ingress.NewBuilder(clusterDomain, refGrantValidator, c),
+		grpcBuilder:      ingress.NewGRPCBuilder(clusterDomain, refGrantValidator, c),
 		bindingValidator: routebinding.NewValidator(c),
 	}
 }

@@ -181,6 +181,52 @@ spec:
 
 See [ReferenceGrant](referencegrant.md) for more details.
 
+## ExternalName Service Backends
+
+Route traffic to external services using Kubernetes ExternalName Services:
+
+```yaml
+---
+# ExternalName Service pointing to external API
+apiVersion: v1
+kind: Service
+metadata:
+  name: external-api
+  namespace: default
+spec:
+  type: ExternalName
+  externalName: api.external.com
+---
+# HTTPRoute using ExternalName Service
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: external-route
+  namespace: default
+spec:
+  parentRefs:
+    - name: cloudflare-tunnel
+      namespace: cloudflare-tunnel-system
+  hostnames:
+    - myapp.example.com
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /external
+      backendRefs:
+        - name: external-api
+          port: 443
+```
+
+The controller resolves ExternalName Services and routes traffic directly
+to the external hostname (`api.external.com:443` in this example).
+
+!!! note "Port and Scheme"
+
+    The scheme (`http` or `https`) is determined by the port:
+    port 443 uses HTTPS, all other ports use HTTP.
+
 ## External-DNS Integration
 
 Add annotations for automatic DNS record creation:

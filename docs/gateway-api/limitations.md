@@ -27,7 +27,7 @@ architecture:
 | Single backend | Only highest-weight `backendRef` is used per rule |
 | Full sync | Any change triggers full config sync |
 | No cross-cluster | Only in-cluster services supported |
-| Service only | Only `Service` kind backends supported |
+| Service only | Only `Service` kind backends (ClusterIP, NodePort, LoadBalancer, ExternalName) |
 
 ## Traffic Splitting and Load Balancing
 
