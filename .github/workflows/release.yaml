@@ -356,6 +356,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: Extract version
         id: version
@@ -383,7 +385,78 @@ jobs:
           chmod +x yq
           sudo mv yq /usr/local/bin/yq
 
-      - name: Update Chart version
+      - name: Generate changelog from commits
+        id: changelog
+        run: |
+          # Get previous tag (find tag before current one)
+          CURRENT_TAG="${GITHUB_REF_NAME}"
+          PREV_TAG=$(git tag --sort=-v:refname | grep -v "^${CURRENT_TAG}$" | head -1)
+
+          # Get commits since previous tag (or all if first release)
+          if [ -n "$PREV_TAG" ]; then
+            COMMITS=$(git log "${PREV_TAG}..HEAD" --format="%s" --no-merges)
+          else
+            COMMITS=$(git log --format="%s" --no-merges)
+          fi
+
+          # Build changelog using yq for safe YAML generation
+          CHANGELOG_FILE=$(mktemp)
+          echo "[]" > "$CHANGELOG_FILE"
+
+          while IFS= read -r commit; do
+            # Skip empty lines
+            [ -z "$commit" ] && continue
+
+            # Parse: type(scope): description OR type: description
+            if [[ "$commit" =~ ^(feat|fix|security|refactor|docs|perf|build)(\([^\)]+\))?:\ (.+)$ ]]; then
+              TYPE="${BASH_REMATCH[1]}"
+              SCOPE="${BASH_REMATCH[2]}"
+              DESC="${BASH_REMATCH[3]}"
+
+              # Remove parentheses from scope
+              SCOPE="${SCOPE#\(}"
+              SCOPE="${SCOPE%\)}"
+
+              # Map type to Artifact Hub kind
+              case "$TYPE" in
+                feat) KIND="added" ;;
+                fix) KIND="fixed" ;;
+                security) KIND="security" ;;
+                *) KIND="changed" ;;
+              esac
+
+              # Format description with scope
+              if [ -n "$SCOPE" ]; then
+                FULL_DESC="${SCOPE}: ${DESC}"
+              else
+                FULL_DESC="${DESC}"
+              fi
+
+              # Use yq with strenv() to safely add entry (handles all special characters)
+              export KIND FULL_DESC
+              yq eval '. += [{"kind": strenv(KIND), "description": strenv(FULL_DESC)}]' \
+                --inplace "$CHANGELOG_FILE"
+            fi
+          done <<< "$COMMITS"
+
+          # Check if changelog is empty (only chore/ci/test commits)
+          if [ "$(cat "$CHANGELOG_FILE")" = "[]" ]; then
+            echo "No user-facing changes found, skipping changelog annotation"
+            rm "$CHANGELOG_FILE"
+            echo "yaml=" >> "$GITHUB_OUTPUT"
+          else
+            CHANGELOG_YAML=$(cat "$CHANGELOG_FILE")
+            rm "$CHANGELOG_FILE"
+            {
+              echo "yaml<<EOF"
+              echo "$CHANGELOG_YAML"
+              echo "EOF"
+            } >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Update Chart version and changelog
+        env:
+          CHANGELOG_YAML: ${{ steps.changelog.outputs.yaml }}
         run: |
           VERSION="${{ steps.version.outputs.version }}"
           CHART_PATH="charts/cloudflare-tunnel-gateway-controller"
@@ -391,6 +464,12 @@ jobs:
           echo "Updating Chart.yaml to version ${VERSION}"
           yq eval ".version = \"${VERSION}\"" --inplace "${CHART_PATH}/Chart.yaml"
           yq eval ".appVersion = \"${VERSION}\"" --inplace "${CHART_PATH}/Chart.yaml"
+
+          # Add changelog annotation if available
+          if [ -n "$CHANGELOG_YAML" ]; then
+            echo "Adding changelog annotation..."
+            yq eval ".annotations.\"artifacthub.io/changes\" = strenv(CHANGELOG_YAML)" --inplace "${CHART_PATH}/Chart.yaml"
+          fi
 
           echo "Updated Chart.yaml:"
           cat "${CHART_PATH}/Chart.yaml"
@@ -508,6 +587,81 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Generate release notes
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          CHART_NAME="cloudflare-tunnel-gateway-controller"
+
+          # Get previous tag (find tag before current one)
+          CURRENT_TAG="${GITHUB_REF_NAME}"
+          PREV_TAG=$(git tag --sort=-v:refname | grep -v "^${CURRENT_TAG}$" | head -1)
+
+          # Get commits since previous tag
+          if [ -n "$PREV_TAG" ]; then
+            COMMITS=$(git log "${PREV_TAG}..HEAD" --format="%s" --no-merges)
+          else
+            COMMITS=$(git log --format="%s" --no-merges)
+          fi
+
+          # Build changelog with emojis
+          CHANGELOG_SECTION=""
+          while IFS= read -r commit; do
+            [ -z "$commit" ] && continue
+
+            if [[ "$commit" =~ ^(feat|fix|security|refactor|docs|perf|build)(\([^\)]+\))?:\ (.+)$ ]]; then
+              TYPE="${BASH_REMATCH[1]}"
+              SCOPE="${BASH_REMATCH[2]}"
+              DESC="${BASH_REMATCH[3]}"
+              SCOPE="${SCOPE#\(}"; SCOPE="${SCOPE%\)}"
+
+              case "$TYPE" in
+                feat) emoji="✨" ;;
+                fix) emoji="🐛" ;;
+                security) emoji="🔒" ;;
+                *) emoji="🔄" ;;
+              esac
+
+              if [ -n "$SCOPE" ]; then
+                CHANGELOG_SECTION="${CHANGELOG_SECTION}- ${emoji} ${SCOPE}: ${DESC}"$'\n'
+              else
+                CHANGELOG_SECTION="${CHANGELOG_SECTION}- ${emoji} ${DESC}"$'\n'
+              fi
+            fi
+          done <<< "$COMMITS"
+
+          # Fallback for empty changelog
+          if [ -z "$CHANGELOG_SECTION" ]; then
+            CHANGELOG_SECTION="No user-facing changes in this release."
+          fi
+
+          # Build release notes
+          {
+            echo "## Changelog"
+            echo ""
+            echo "${CHANGELOG_SECTION}"
+            echo "## Installation"
+            echo ""
+            echo "\`\`\`bash"
+            echo "helm install ${CHART_NAME} \\"
+            echo "  oci://ghcr.io/${{ github.repository_owner }}/${CHART_NAME}/chart \\"
+            echo "  --version ${VERSION}"
+            echo "\`\`\`"
+            echo ""
+            echo "## Verification"
+            echo ""
+            echo "\`\`\`bash"
+            echo "cosign verify \\"
+            echo "  ghcr.io/${{ github.repository_owner }}/${CHART_NAME}/chart:${VERSION} \\"
+            echo "  --certificate-identity-regexp=https://github.com/${{ github.repository }} \\"
+            echo "  --certificate-oidc-issuer=https://token.actions.githubusercontent.com"
+            echo "\`\`\`"
+          } > release-notes.md
+
+          echo "Generated release notes:"
+          cat release-notes.md
 
       - name: Download chart artifact
         uses: actions/download-artifact@v6
@@ -518,7 +672,7 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          generate_release_notes: true
+          body_path: release-notes.md
           draft: false
           prerelease: false
           files: |
