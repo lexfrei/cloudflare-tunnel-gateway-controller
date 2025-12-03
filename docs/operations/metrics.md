@@ -12,7 +12,63 @@ The controller exposes Prometheus metrics for monitoring and alerting.
 
 ## Available Metrics
 
-### Controller Metrics
+### Route Synchronization Metrics
+
+These metrics track the core synchronization of routes to Cloudflare Tunnel.
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `cftunnel_sync_duration_seconds` | Histogram | `status` | Duration of route sync operations |
+| `cftunnel_synced_routes` | Gauge | `type` | Number of routes synced (http/grpc) |
+| `cftunnel_ingress_rules_total` | Gauge | - | Total ingress rules in tunnel config |
+| `cftunnel_failed_backend_refs` | Gauge | `type` | Failed backend references by route type |
+| `cftunnel_sync_errors_total` | Counter | `error_type` | Sync errors by type |
+
+### Cloudflare API Metrics
+
+Track Cloudflare API interactions for performance and reliability monitoring.
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `cftunnel_cloudflare_api_duration_seconds` | Histogram | `method`, `resource` | API call latency |
+| `cftunnel_cloudflare_api_calls_total` | Counter | `method`, `resource`, `status` | API calls count |
+| `cftunnel_cloudflare_api_errors_total` | Counter | `method`, `error_type` | API errors by type |
+
+**Label values:**
+
+- `method`: `get`, `update`
+- `resource`: `tunnel_config`, `account`
+- `status`: `success`, `error`
+- `error_type`: `auth`, `rate_limit`, `timeout`, `server_error`, `network`
+
+### Helm Operations Metrics
+
+When cloudflared is managed by the controller via Helm.
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `cftunnel_helm_operation_duration_seconds` | Histogram | `operation` | Helm operation latency |
+| `cftunnel_helm_operations_total` | Counter | `operation`, `status` | Helm operations count |
+| `cftunnel_helm_errors_total` | Counter | `operation`, `error_type` | Helm errors |
+
+**Label values:**
+
+- `operation`: `install`, `upgrade`, `uninstall`, `get_version`, `load_chart`
+- `status`: `success`, `error`
+
+### Ingress Builder Metrics
+
+Track the conversion of Gateway API routes to Cloudflare ingress rules.
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `cftunnel_ingress_build_duration_seconds` | Histogram | `type` | Rule building duration |
+| `cftunnel_ingress_rules_generated` | Gauge | `type` | Rules generated per route type |
+| `cftunnel_backend_ref_validation_total` | Counter | `type`, `result`, `reason` | Backend ref validation results |
+
+### Controller Runtime Metrics
+
+Built-in metrics from controller-runtime.
 
 | Metric | Type | Description |
 |--------|------|-------------|
@@ -93,6 +149,58 @@ scrape_configs:
 
 ## PromQL Queries
 
+### Route Sync Performance
+
+```promql
+# Sync duration P95
+histogram_quantile(0.95,
+  sum(rate(cftunnel_sync_duration_seconds_bucket[5m])) by (le)
+)
+
+# Sync error rate
+sum(rate(cftunnel_sync_errors_total[5m])) by (error_type)
+
+# Routes synced by type
+sum(cftunnel_synced_routes) by (type)
+
+# Total ingress rules
+cftunnel_ingress_rules_total
+
+# Failed backend references
+sum(cftunnel_failed_backend_refs) by (type)
+```
+
+### Cloudflare API Health
+
+```promql
+# API success rate
+sum(rate(cftunnel_cloudflare_api_calls_total{status="success"}[5m]))
+/
+sum(rate(cftunnel_cloudflare_api_calls_total[5m]))
+
+# API latency P99
+histogram_quantile(0.99,
+  sum(rate(cftunnel_cloudflare_api_duration_seconds_bucket[5m])) by (le, method)
+)
+
+# API errors by type
+sum(rate(cftunnel_cloudflare_api_errors_total[5m])) by (method, error_type)
+```
+
+### Helm Operations
+
+```promql
+# Helm operation success rate
+sum(rate(cftunnel_helm_operations_total{status="success"}[5m])) by (operation)
+/
+sum(rate(cftunnel_helm_operations_total[5m])) by (operation)
+
+# Helm operation latency P95
+histogram_quantile(0.95,
+  sum(rate(cftunnel_helm_operation_duration_seconds_bucket[5m])) by (le, operation)
+)
+```
+
 ### Reconciliation Rate
 
 ```promql
@@ -168,7 +276,75 @@ metadata:
   namespace: cloudflare-tunnel-system
 spec:
   groups:
-    - name: cloudflare-tunnel-gateway-controller
+    - name: cloudflare-tunnel-sync
+      rules:
+        - alert: CloudflareTunnelSyncErrors
+          expr: |
+            sum(rate(cftunnel_sync_errors_total[5m])) > 0.1
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "High sync error rate"
+            description: "Controller experiencing {{ $value | humanize }} sync errors/sec"
+
+        - alert: CloudflareTunnelSyncSlow
+          expr: |
+            histogram_quantile(0.95,
+              sum(rate(cftunnel_sync_duration_seconds_bucket[5m])) by (le)
+            ) > 10
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Slow route synchronization"
+            description: "P95 sync duration is {{ $value | humanizeDuration }}"
+
+        - alert: CloudflareTunnelFailedBackendRefs
+          expr: |
+            sum(cftunnel_failed_backend_refs) > 0
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Failed backend references"
+            description: "{{ $value }} backend references are failing validation"
+
+    - name: cloudflare-tunnel-api
+      rules:
+        - alert: CloudflareTunnelAPIErrors
+          expr: |
+            sum(rate(cftunnel_cloudflare_api_errors_total[5m])) by (error_type) > 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Cloudflare API errors"
+            description: "{{ $labels.error_type }} errors: {{ $value | humanize }}/sec"
+
+        - alert: CloudflareTunnelAPISlow
+          expr: |
+            histogram_quantile(0.99,
+              sum(rate(cftunnel_cloudflare_api_duration_seconds_bucket[5m])) by (le)
+            ) > 10
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Cloudflare API latency high"
+            description: "P99 API latency is {{ $value | humanizeDuration }}"
+
+        - alert: CloudflareTunnelAPIRateLimited
+          expr: |
+            sum(rate(cftunnel_cloudflare_api_errors_total{error_type="rate_limit"}[5m])) > 0
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Cloudflare API rate limited"
+            description: "Controller is being rate limited by Cloudflare API"
+
+    - name: cloudflare-tunnel-controller
       rules:
         - alert: CloudflareTunnelControllerHighErrorRate
           expr: |
@@ -234,8 +410,105 @@ Example dashboard panels:
   "title": "Cloudflare Tunnel Gateway Controller",
   "panels": [
     {
+      "title": "Routes Synced",
+      "type": "stat",
+      "gridPos": { "x": 0, "y": 0, "w": 6, "h": 4 },
+      "targets": [
+        {
+          "expr": "sum(cftunnel_synced_routes) by (type)",
+          "legendFormat": "{{ type }}"
+        }
+      ]
+    },
+    {
+      "title": "Ingress Rules",
+      "type": "stat",
+      "gridPos": { "x": 6, "y": 0, "w": 6, "h": 4 },
+      "targets": [
+        {
+          "expr": "cftunnel_ingress_rules_total"
+        }
+      ]
+    },
+    {
+      "title": "Failed Backend Refs",
+      "type": "stat",
+      "gridPos": { "x": 12, "y": 0, "w": 6, "h": 4 },
+      "targets": [
+        {
+          "expr": "sum(cftunnel_failed_backend_refs)",
+          "legendFormat": "failed"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "steps": [
+              { "value": 0, "color": "green" },
+              { "value": 1, "color": "red" }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "title": "Sync Duration (P95)",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 4, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(cftunnel_sync_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p95"
+        },
+        {
+          "expr": "histogram_quantile(0.50, sum(rate(cftunnel_sync_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p50"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "s" }
+      }
+    },
+    {
+      "title": "Cloudflare API Latency",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 4, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(cftunnel_cloudflare_api_duration_seconds_bucket[5m])) by (le, method))",
+          "legendFormat": "p99 {{ method }}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "s" }
+      }
+    },
+    {
+      "title": "API Calls/sec",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 12, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "expr": "sum(rate(cftunnel_cloudflare_api_calls_total[5m])) by (method, status)",
+          "legendFormat": "{{ method }} ({{ status }})"
+        }
+      ]
+    },
+    {
+      "title": "Sync Errors/sec",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 12, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "expr": "sum(rate(cftunnel_sync_errors_total[5m])) by (error_type)",
+          "legendFormat": "{{ error_type }}"
+        }
+      ]
+    },
+    {
       "title": "Reconciliations/sec",
       "type": "timeseries",
+      "gridPos": { "x": 0, "y": 20, "w": 12, "h": 8 },
       "targets": [
         {
           "expr": "sum(rate(controller_runtime_reconcile_total[5m])) by (controller)",
@@ -244,32 +517,23 @@ Example dashboard panels:
       ]
     },
     {
-      "title": "Error Rate %",
-      "type": "timeseries",
-      "targets": [
-        {
-          "expr": "sum(rate(controller_runtime_reconcile_errors_total[5m])) / sum(rate(controller_runtime_reconcile_total[5m])) * 100",
-          "legendFormat": "error rate"
-        }
-      ]
-    },
-    {
       "title": "Reconciliation Latency",
       "type": "timeseries",
+      "gridPos": { "x": 12, "y": 20, "w": 12, "h": 8 },
       "targets": [
-        {
-          "expr": "histogram_quantile(0.50, sum(rate(controller_runtime_reconcile_time_seconds_bucket[5m])) by (le, controller))",
-          "legendFormat": "p50 {{ controller }}"
-        },
         {
           "expr": "histogram_quantile(0.95, sum(rate(controller_runtime_reconcile_time_seconds_bucket[5m])) by (le, controller))",
           "legendFormat": "p95 {{ controller }}"
         }
-      ]
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "s" }
+      }
     },
     {
       "title": "Queue Depth",
       "type": "timeseries",
+      "gridPos": { "x": 0, "y": 28, "w": 12, "h": 8 },
       "targets": [
         {
           "expr": "workqueue_depth",
@@ -280,20 +544,20 @@ Example dashboard panels:
     {
       "title": "Memory Usage",
       "type": "stat",
+      "gridPos": { "x": 12, "y": 28, "w": 6, "h": 4 },
       "targets": [
         {
           "expr": "process_resident_memory_bytes{job=\"cloudflare-tunnel-gateway-controller\"}"
         }
       ],
       "fieldConfig": {
-        "defaults": {
-          "unit": "bytes"
-        }
+        "defaults": { "unit": "bytes" }
       }
     },
     {
       "title": "Goroutines",
       "type": "stat",
+      "gridPos": { "x": 18, "y": 28, "w": 6, "h": 4 },
       "targets": [
         {
           "expr": "go_goroutines{job=\"cloudflare-tunnel-gateway-controller\"}"
