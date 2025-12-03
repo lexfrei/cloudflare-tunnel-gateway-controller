@@ -10,6 +10,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/config"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/metrics"
 )
 
 func TestGatewayReconciler_SetupWithManager(t *testing.T) {
@@ -53,6 +54,7 @@ func TestHTTPRouteReconciler_SetupWithManager(t *testing.T) {
 		"cluster.local",
 		"test-gateway-class",
 		configResolver,
+		metrics.NewNoopCollector(),
 	)
 
 	r := &HTTPRouteReconciler{
@@ -84,6 +86,7 @@ func TestGRPCRouteReconciler_SetupWithManager(t *testing.T) {
 		"cluster.local",
 		"test-gateway-class",
 		configResolver,
+		metrics.NewNoopCollector(),
 	)
 
 	r := &GRPCRouteReconciler{

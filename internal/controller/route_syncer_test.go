@@ -15,6 +15,7 @@ import (
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/api/v1alpha1"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/config"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/metrics"
 )
 
 // httpListener creates a standard HTTP listener for testing.
@@ -248,6 +249,7 @@ func TestRouteSyncer_GetRelevantHTTPRoutes(t *testing.T) {
 				"cluster.local",
 				"cloudflare-tunnel",
 				config.NewResolver(fakeClient, "default"),
+				metrics.NewNoopCollector(),
 			)
 
 			routes, _, err := syncer.getRelevantHTTPRoutes(context.Background())
@@ -360,6 +362,7 @@ func TestRouteSyncer_GetRelevantGRPCRoutes(t *testing.T) {
 				"cluster.local",
 				"cloudflare-tunnel",
 				config.NewResolver(fakeClient, "default"),
+				metrics.NewNoopCollector(),
 			)
 
 			routes, _, err := syncer.getRelevantGRPCRoutes(context.Background())
@@ -539,11 +542,12 @@ func TestNewRouteSyncer(t *testing.T) {
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
 	resolver := config.NewResolver(fakeClient, "default")
 
-	syncer := NewRouteSyncer(fakeClient, scheme, "cluster.local", "cloudflare-tunnel", resolver)
+	syncer := NewRouteSyncer(fakeClient, scheme, "cluster.local", "cloudflare-tunnel", resolver, metrics.NewNoopCollector())
 
 	require.NotNil(t, syncer)
 	assert.Equal(t, "cluster.local", syncer.ClusterDomain)
 	assert.Equal(t, "cloudflare-tunnel", syncer.GatewayClassName)
 	assert.NotNil(t, syncer.httpBuilder)
 	assert.NotNil(t, syncer.grpcBuilder)
+	assert.NotNil(t, syncer.Metrics)
 }

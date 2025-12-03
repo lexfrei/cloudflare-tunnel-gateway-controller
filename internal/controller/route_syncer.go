@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"log/slog"
+	"time"
 
 	"github.com/cloudflare/cloudflare-go/v6"
 	"github.com/cloudflare/cloudflare-go/v6/zero_trust"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/config"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/ingress"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/metrics"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/referencegrant"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/routebinding"
 )
@@ -30,6 +32,7 @@ type RouteSyncer struct {
 	ClusterDomain    string
 	GatewayClassName string
 	ConfigResolver   *config.Resolver
+	Metrics          metrics.Collector
 
 	httpBuilder      *ingress.Builder
 	grpcBuilder      *ingress.GRPCBuilder
@@ -43,6 +46,7 @@ func NewRouteSyncer(
 	clusterDomain string,
 	gatewayClassName string,
 	configResolver *config.Resolver,
+	metricsCollector metrics.Collector,
 ) *RouteSyncer {
 	refGrantValidator := referencegrant.NewValidator(c)
 
@@ -52,6 +56,7 @@ func NewRouteSyncer(
 		ClusterDomain:    clusterDomain,
 		GatewayClassName: gatewayClassName,
 		ConfigResolver:   configResolver,
+		Metrics:          metricsCollector,
 		httpBuilder:      ingress.NewBuilder(clusterDomain, refGrantValidator, c),
 		grpcBuilder:      ingress.NewGRPCBuilder(clusterDomain, refGrantValidator, c),
 		bindingValidator: routebinding.NewValidator(c),
@@ -78,6 +83,7 @@ type SyncResult struct {
 //
 //nolint:funlen,wrapcheck // complex sync logic requires length; Cloudflare API errors are intentionally unwrapped
 func (s *RouteSyncer) SyncAllRoutes(ctx context.Context) (ctrl.Result, *SyncResult, error) {
+	startTime := time.Now()
 	logger := slog.Default().With("component", "route-syncer")
 
 	// Resolve configuration from GatewayClassConfig
@@ -153,6 +159,10 @@ func (s *RouteSyncer) SyncAllRoutes(ctx context.Context) (ctrl.Result, *SyncResu
 		limitErr := errors.Newf("ingress rules limit exceeded: %d rules (max %d)", len(finalRules), maxIngressRules)
 		logger.Error("ingress rules limit exceeded", "count", len(finalRules), "max", maxIngressRules)
 
+		// Record error metrics
+		s.Metrics.RecordSyncDuration(ctx, "error", time.Since(startTime))
+		s.Metrics.RecordSyncError(ctx, "limit_exceeded")
+
 		result := &SyncResult{
 			HTTPRoutes:        httpRoutes,
 			GRPCRoutes:        grpcRoutes,
@@ -176,6 +186,10 @@ func (s *RouteSyncer) SyncAllRoutes(ctx context.Context) (ctrl.Result, *SyncResu
 	if err != nil {
 		logger.Error("failed to update tunnel configuration", "error", err)
 
+		// Record error metrics
+		s.Metrics.RecordSyncDuration(ctx, "error", time.Since(startTime))
+		s.Metrics.RecordSyncError(ctx, metrics.ClassifyCloudflareError(err))
+
 		result := &SyncResult{
 			HTTPRoutes:        httpRoutes,
 			GRPCRoutes:        grpcRoutes,
@@ -189,6 +203,14 @@ func (s *RouteSyncer) SyncAllRoutes(ctx context.Context) (ctrl.Result, *SyncResu
 	}
 
 	logger.Info("successfully updated tunnel configuration", "rules", len(finalRules))
+
+	// Record success metrics
+	s.Metrics.RecordSyncDuration(ctx, "success", time.Since(startTime))
+	s.Metrics.RecordSyncedRoutes(ctx, "http", len(httpRoutes))
+	s.Metrics.RecordSyncedRoutes(ctx, "grpc", len(grpcRoutes))
+	s.Metrics.RecordIngressRules(ctx, len(finalRules))
+	s.Metrics.RecordFailedBackendRefs(ctx, "http", len(httpBuildResult.FailedRefs))
+	s.Metrics.RecordFailedBackendRefs(ctx, "grpc", len(grpcBuildResult.FailedRefs))
 
 	result := &SyncResult{
 		HTTPRoutes:        httpRoutes,

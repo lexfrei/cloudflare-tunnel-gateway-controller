@@ -9,6 +9,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	ctrlMetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 	gatewayv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
@@ -16,6 +17,7 @@ import (
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/api/v1alpha1"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/config"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/helm"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/metrics"
 )
 
 // Config holds all configuration options for the controller manager.
@@ -131,6 +133,9 @@ func Run(ctx context.Context, cfg *Config) error {
 		return errors.Wrap(err, "failed to setup gateway controller")
 	}
 
+	// Create metrics collector and register with controller-runtime
+	metricsCollector := metrics.NewCollector(ctrlMetrics.Registry)
+
 	// Create shared route syncer for unified HTTP and GRPC route synchronization
 	routeSyncer := NewRouteSyncer(
 		mgr.GetClient(),
@@ -138,6 +143,7 @@ func Run(ctx context.Context, cfg *Config) error {
 		cfg.ClusterDomain,
 		cfg.GatewayClassName,
 		configResolver,
+		metricsCollector,
 	)
 
 	httpRouteReconciler := &HTTPRouteReconciler{
