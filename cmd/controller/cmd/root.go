@@ -15,6 +15,7 @@ import (
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/controller"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/dns"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/logging"
 )
 
 //nolint:gochecknoglobals // set by SetVersion from main
@@ -105,6 +106,9 @@ func setupLogger() *slog.Logger {
 	} else {
 		handler = slog.NewJSONHandler(os.Stdout, opts)
 	}
+
+	// Wrap with TraceHandler for automatic OpenTelemetry trace ID injection
+	handler = logging.NewTraceHandler(handler)
 
 	return slog.New(handler)
 }

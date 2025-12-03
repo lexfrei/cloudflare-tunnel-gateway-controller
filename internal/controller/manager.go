@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"log/slog"
 	"os"
 
 	"github.com/cockroachdb/errors"
@@ -115,8 +116,12 @@ func Run(ctx context.Context, cfg *Config) error {
 	// Create config resolver
 	configResolver := config.NewResolver(mgr.GetClient(), defaultNamespace, metricsCollector)
 
+	// Create base logger for component injection
+	// Uses slog.Default() which can be configured with TraceHandler at startup
+	baseLogger := slog.Default()
+
 	// Initialize Helm manager for cloudflared deployment
-	helmManager, helmErr := helm.NewManager(metricsCollector, nil)
+	helmManager, helmErr := helm.NewManager(metricsCollector, baseLogger)
 	if helmErr != nil {
 		return errors.Wrap(helmErr, "failed to create helm manager")
 	}
@@ -144,7 +149,7 @@ func Run(ctx context.Context, cfg *Config) error {
 		cfg.GatewayClassName,
 		configResolver,
 		metricsCollector,
-		nil, // Logger will fallback to slog.Default()
+		baseLogger,
 	)
 
 	httpRouteReconciler := &HTTPRouteReconciler{

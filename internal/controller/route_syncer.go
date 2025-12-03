@@ -15,6 +15,7 @@ import (
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/config"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/ingress"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/logging"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/metrics"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/referencegrant"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/routebinding"
@@ -93,7 +94,12 @@ type SyncResult struct {
 //nolint:funlen,wrapcheck // complex sync logic requires length; Cloudflare API errors are intentionally unwrapped
 func (s *RouteSyncer) SyncAllRoutes(ctx context.Context) (ctrl.Result, *SyncResult, error) {
 	startTime := time.Now()
-	logger := s.Logger
+
+	// Prefer context logger (with reconcile ID) over struct logger
+	logger := logging.FromContext(ctx)
+	if logger == slog.Default() {
+		logger = s.Logger
+	}
 
 	// Resolve configuration from GatewayClassConfig
 	resolvedConfig, err := s.ConfigResolver.ResolveFromGatewayClassName(ctx, s.GatewayClassName)
@@ -248,7 +254,11 @@ func (s *RouteSyncer) SyncAllRoutes(ctx context.Context) (ctrl.Result, *SyncResu
 func (s *RouteSyncer) getRelevantHTTPRoutes(
 	ctx context.Context,
 ) ([]gatewayv1.HTTPRoute, map[string]routeBindingInfo, error) {
-	logger := s.Logger
+	// Prefer context logger (with reconcile ID) over struct logger
+	logger := logging.FromContext(ctx)
+	if logger == slog.Default() {
+		logger = s.Logger
+	}
 
 	var routeList gatewayv1.HTTPRouteList
 
@@ -330,7 +340,11 @@ func (s *RouteSyncer) getRelevantHTTPRoutes(
 func (s *RouteSyncer) getRelevantGRPCRoutes(
 	ctx context.Context,
 ) ([]gatewayv1.GRPCRoute, map[string]routeBindingInfo, error) {
-	logger := s.Logger
+	// Prefer context logger (with reconcile ID) over struct logger
+	logger := logging.FromContext(ctx)
+	if logger == slog.Default() {
+		logger = s.Logger
+	}
 
 	var routeList gatewayv1.GRPCRouteList
 
