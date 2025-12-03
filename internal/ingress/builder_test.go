@@ -13,8 +13,10 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
+	gatewayv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/ingress"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/referencegrant"
 )
 
 func TestNewBuilder(t *testing.T) {
@@ -1319,4 +1321,141 @@ func TestBuild_ExternalNameService_CrossNamespace(t *testing.T) {
 
 	require.Len(t, buildResult.Rules, 2)
 	assert.Equal(t, "https://api.external.com:443", buildResult.Rules[0].Service.Value)
+}
+
+func TestBuild_ExternalNameService_CrossNamespace_WithReferenceGrant(t *testing.T) {
+	t.Parallel()
+
+	// ExternalName Service in "backend" namespace
+	externalSvc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "external-api",
+			Namespace: "backend",
+		},
+		Spec: corev1.ServiceSpec{
+			Type:         corev1.ServiceTypeExternalName,
+			ExternalName: "api.external.com",
+		},
+	}
+
+	// ReferenceGrant in "backend" namespace allowing HTTPRoute from "default"
+	refGrant := &gatewayv1beta1.ReferenceGrant{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "allow-default-to-backend",
+			Namespace: "backend",
+		},
+		Spec: gatewayv1beta1.ReferenceGrantSpec{
+			From: []gatewayv1beta1.ReferenceGrantFrom{
+				{
+					Group:     gatewayv1.GroupName,
+					Kind:      "HTTPRoute",
+					Namespace: "default",
+				},
+			},
+			To: []gatewayv1beta1.ReferenceGrantTo{
+				{
+					Group: "",
+					Kind:  "Service",
+				},
+			},
+		},
+	}
+
+	scheme := runtime.NewScheme()
+	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
+	utilruntime.Must(gatewayv1beta1.AddToScheme(scheme))
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(externalSvc, refGrant).
+		Build()
+
+	validator := referencegrant.NewValidator(fakeClient)
+	builder := ingress.NewBuilder("cluster.local", validator, fakeClient)
+
+	ns := gatewayv1.Namespace("backend")
+	routes := []gatewayv1.HTTPRoute{
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-route",
+				Namespace: "default",
+			},
+			Spec: gatewayv1.HTTPRouteSpec{
+				Hostnames: []gatewayv1.Hostname{"app.example.com"},
+				Rules: []gatewayv1.HTTPRouteRule{
+					{
+						BackendRefs: []gatewayv1.HTTPBackendRef{
+							newHTTPBackendRef("external-api", &ns, int32Ptr(443)),
+						},
+					},
+				},
+			},
+		},
+	}
+
+	buildResult := builder.Build(context.Background(), routes)
+
+	// Should succeed with ReferenceGrant
+	require.Len(t, buildResult.Rules, 2)
+	assert.Equal(t, "https://api.external.com:443", buildResult.Rules[0].Service.Value)
+	assert.Empty(t, buildResult.FailedRefs)
+}
+
+func TestBuild_ExternalNameService_CrossNamespace_Denied(t *testing.T) {
+	t.Parallel()
+
+	// ExternalName Service in "backend" namespace
+	externalSvc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "external-api",
+			Namespace: "backend",
+		},
+		Spec: corev1.ServiceSpec{
+			Type:         corev1.ServiceTypeExternalName,
+			ExternalName: "api.external.com",
+		},
+	}
+
+	// No ReferenceGrant - cross-namespace should be denied
+	scheme := runtime.NewScheme()
+	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
+	utilruntime.Must(gatewayv1beta1.AddToScheme(scheme))
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(externalSvc).
+		Build()
+
+	validator := referencegrant.NewValidator(fakeClient)
+	builder := ingress.NewBuilder("cluster.local", validator, fakeClient)
+
+	ns := gatewayv1.Namespace("backend")
+	routes := []gatewayv1.HTTPRoute{
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-route",
+				Namespace: "default",
+			},
+			Spec: gatewayv1.HTTPRouteSpec{
+				Hostnames: []gatewayv1.Hostname{"app.example.com"},
+				Rules: []gatewayv1.HTTPRouteRule{
+					{
+						BackendRefs: []gatewayv1.HTTPBackendRef{
+							newHTTPBackendRef("external-api", &ns, int32Ptr(443)),
+						},
+					},
+				},
+			},
+		},
+	}
+
+	buildResult := builder.Build(context.Background(), routes)
+
+	// Should fail without ReferenceGrant
+	require.Len(t, buildResult.Rules, 1)
+	assert.Equal(t, ingress.CatchAllService, buildResult.Rules[0].Service.Value)
+	require.Len(t, buildResult.FailedRefs, 1)
+	assert.Equal(t, "RefNotPermitted", buildResult.FailedRefs[0].Reason)
+	assert.Equal(t, "external-api", buildResult.FailedRefs[0].BackendName)
+	assert.Equal(t, "backend", buildResult.FailedRefs[0].BackendNS)
 }
