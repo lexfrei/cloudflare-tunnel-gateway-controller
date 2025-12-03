@@ -276,6 +276,11 @@ func TestGRPCRouteReconciler_IsRouteForOurGateway(t *testing.T) {
 							Name:     "grpc",
 							Port:     443,
 							Protocol: gatewayv1.HTTPSProtocolType,
+							AllowedRoutes: &gatewayv1.AllowedRoutes{
+								Namespaces: &gatewayv1.RouteNamespaces{
+									From: ptr(gatewayv1.NamespacesFromAll),
+								},
+							},
 						},
 					},
 				},
@@ -317,6 +322,234 @@ func TestGRPCRouteReconciler_IsRouteForOurGateway(t *testing.T) {
 			},
 			expected: false,
 		},
+		{
+			name:             "route_hostname_no_intersection",
+			gatewayClassName: "cloudflare-tunnel",
+			gateway: &gatewayv1.Gateway{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-gateway",
+					Namespace: "default",
+				},
+				Spec: gatewayv1.GatewaySpec{
+					GatewayClassName: "cloudflare-tunnel",
+					Listeners: []gatewayv1.Listener{
+						{
+							Name:     "grpc",
+							Port:     443,
+							Protocol: gatewayv1.HTTPSProtocolType,
+							Hostname: ptr(gatewayv1.Hostname("*.example.com")),
+						},
+					},
+				},
+			},
+			route: &gatewayv1.GRPCRoute{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-route",
+					Namespace: "default",
+				},
+				Spec: gatewayv1.GRPCRouteSpec{
+					Hostnames: []gatewayv1.Hostname{"other.org"},
+					CommonRouteSpec: gatewayv1.CommonRouteSpec{
+						ParentRefs: []gatewayv1.ParentReference{
+							{Name: "test-gateway"},
+						},
+					},
+				},
+			},
+			expected: false,
+		},
+		{
+			name:             "route_hostname_wildcard_match",
+			gatewayClassName: "cloudflare-tunnel",
+			gateway: &gatewayv1.Gateway{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-gateway",
+					Namespace: "default",
+				},
+				Spec: gatewayv1.GatewaySpec{
+					GatewayClassName: "cloudflare-tunnel",
+					Listeners: []gatewayv1.Listener{
+						{
+							Name:     "grpc",
+							Port:     443,
+							Protocol: gatewayv1.HTTPSProtocolType,
+							Hostname: ptr(gatewayv1.Hostname("*.example.com")),
+						},
+					},
+				},
+			},
+			route: &gatewayv1.GRPCRoute{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-route",
+					Namespace: "default",
+				},
+				Spec: gatewayv1.GRPCRouteSpec{
+					Hostnames: []gatewayv1.Hostname{"api.example.com"},
+					CommonRouteSpec: gatewayv1.CommonRouteSpec{
+						ParentRefs: []gatewayv1.ParentReference{
+							{Name: "test-gateway"},
+						},
+					},
+				},
+			},
+			expected: true,
+		},
+		{
+			name:             "route_namespace_not_allowed_same",
+			gatewayClassName: "cloudflare-tunnel",
+			gateway: &gatewayv1.Gateway{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-gateway",
+					Namespace: "gateway-ns",
+				},
+				Spec: gatewayv1.GatewaySpec{
+					GatewayClassName: "cloudflare-tunnel",
+					Listeners: []gatewayv1.Listener{
+						{
+							Name:     "grpc",
+							Port:     443,
+							Protocol: gatewayv1.HTTPSProtocolType,
+							AllowedRoutes: &gatewayv1.AllowedRoutes{
+								Namespaces: &gatewayv1.RouteNamespaces{
+									From: ptr(gatewayv1.NamespacesFromSame),
+								},
+							},
+						},
+					},
+				},
+			},
+			route: &gatewayv1.GRPCRoute{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-route",
+					Namespace: "other-ns",
+				},
+				Spec: gatewayv1.GRPCRouteSpec{
+					CommonRouteSpec: gatewayv1.CommonRouteSpec{
+						ParentRefs: []gatewayv1.ParentReference{
+							{
+								Name:      "test-gateway",
+								Namespace: ptr(gatewayv1.Namespace("gateway-ns")),
+							},
+						},
+					},
+				},
+			},
+			expected: false,
+		},
+		{
+			name:             "route_namespace_allowed_all",
+			gatewayClassName: "cloudflare-tunnel",
+			gateway: &gatewayv1.Gateway{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-gateway",
+					Namespace: "gateway-ns",
+				},
+				Spec: gatewayv1.GatewaySpec{
+					GatewayClassName: "cloudflare-tunnel",
+					Listeners: []gatewayv1.Listener{
+						{
+							Name:     "grpc",
+							Port:     443,
+							Protocol: gatewayv1.HTTPSProtocolType,
+							AllowedRoutes: &gatewayv1.AllowedRoutes{
+								Namespaces: &gatewayv1.RouteNamespaces{
+									From: ptr(gatewayv1.NamespacesFromAll),
+								},
+							},
+						},
+					},
+				},
+			},
+			route: &gatewayv1.GRPCRoute{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-route",
+					Namespace: "any-namespace",
+				},
+				Spec: gatewayv1.GRPCRouteSpec{
+					CommonRouteSpec: gatewayv1.CommonRouteSpec{
+						ParentRefs: []gatewayv1.ParentReference{
+							{
+								Name:      "test-gateway",
+								Namespace: ptr(gatewayv1.Namespace("gateway-ns")),
+							},
+						},
+					},
+				},
+			},
+			expected: true,
+		},
+		{
+			name:             "route_no_hostnames_matches_any_listener",
+			gatewayClassName: "cloudflare-tunnel",
+			gateway: &gatewayv1.Gateway{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-gateway",
+					Namespace: "default",
+				},
+				Spec: gatewayv1.GatewaySpec{
+					GatewayClassName: "cloudflare-tunnel",
+					Listeners: []gatewayv1.Listener{
+						{
+							Name:     "grpc",
+							Port:     443,
+							Protocol: gatewayv1.HTTPSProtocolType,
+							Hostname: ptr(gatewayv1.Hostname("*.example.com")),
+						},
+					},
+				},
+			},
+			route: &gatewayv1.GRPCRoute{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-route",
+					Namespace: "default",
+				},
+				Spec: gatewayv1.GRPCRouteSpec{
+					Hostnames: []gatewayv1.Hostname{}, // empty hostnames
+					CommonRouteSpec: gatewayv1.CommonRouteSpec{
+						ParentRefs: []gatewayv1.ParentReference{
+							{Name: "test-gateway"},
+						},
+					},
+				},
+			},
+			expected: true,
+		},
+		{
+			name:             "multi_level_subdomain_matches_wildcard",
+			gatewayClassName: "cloudflare-tunnel",
+			gateway: &gatewayv1.Gateway{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-gateway",
+					Namespace: "default",
+				},
+				Spec: gatewayv1.GatewaySpec{
+					GatewayClassName: "cloudflare-tunnel",
+					Listeners: []gatewayv1.Listener{
+						{
+							Name:     "grpc",
+							Port:     443,
+							Protocol: gatewayv1.HTTPSProtocolType,
+							Hostname: ptr(gatewayv1.Hostname("*.example.com")),
+						},
+					},
+				},
+			},
+			route: &gatewayv1.GRPCRoute{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-route",
+					Namespace: "default",
+				},
+				Spec: gatewayv1.GRPCRouteSpec{
+					Hostnames: []gatewayv1.Hostname{"a.b.example.com"}, // multi-level subdomain
+					CommonRouteSpec: gatewayv1.CommonRouteSpec{
+						ParentRefs: []gatewayv1.ParentReference{
+							{Name: "test-gateway"},
+						},
+					},
+				},
+			},
+			expected: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -325,6 +558,7 @@ func TestGRPCRouteReconciler_IsRouteForOurGateway(t *testing.T) {
 
 			scheme := runtime.NewScheme()
 			require.NoError(t, gatewayv1.AddToScheme(scheme))
+			require.NoError(t, corev1.AddToScheme(scheme))
 
 			builder := fake.NewClientBuilder().WithScheme(scheme)
 			if tt.gateway != nil {
@@ -339,6 +573,7 @@ func TestGRPCRouteReconciler_IsRouteForOurGateway(t *testing.T) {
 				Client:           fakeClient,
 				Scheme:           scheme,
 				GatewayClassName: tt.gatewayClassName,
+				bindingValidator: routebinding.NewValidator(fakeClient),
 			}
 
 			result := r.isRouteForOurGateway(context.Background(), tt.route)

@@ -19,6 +19,7 @@ import (
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/api/v1alpha1"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/config"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/routebinding"
 )
 
 func TestConfigMapper_MapConfigToRequests_ValidConfig(t *testing.T) {
@@ -807,6 +808,227 @@ func TestGRPCRouteWrapper_GetCrossNamespaceBackendNamespaces(t *testing.T) {
 
 			wrapper := GRPCRouteWrapper{tt.route}
 			result := wrapper.GetCrossNamespaceBackendNamespaces()
+
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestIsRouteAcceptedByGateway(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name             string
+		gatewayClassName string
+		gateway          *gatewayv1.Gateway
+		route            RouteBindable
+		expected         bool
+	}{
+		{
+			name:             "http_route_accepted_by_gateway",
+			gatewayClassName: "cloudflare-tunnel",
+			gateway: &gatewayv1.Gateway{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-gateway",
+					Namespace: "default",
+				},
+				Spec: gatewayv1.GatewaySpec{
+					GatewayClassName: "cloudflare-tunnel",
+					Listeners: []gatewayv1.Listener{
+						{
+							Name:     "http",
+							Port:     80,
+							Protocol: gatewayv1.HTTPProtocolType,
+						},
+					},
+				},
+			},
+			route: HTTPRouteWrapper{&gatewayv1.HTTPRoute{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-route",
+					Namespace: "default",
+				},
+				Spec: gatewayv1.HTTPRouteSpec{
+					CommonRouteSpec: gatewayv1.CommonRouteSpec{
+						ParentRefs: []gatewayv1.ParentReference{
+							{Name: "test-gateway"},
+						},
+					},
+				},
+			}},
+			expected: true,
+		},
+		{
+			name:             "grpc_route_accepted_by_gateway",
+			gatewayClassName: "cloudflare-tunnel",
+			gateway: &gatewayv1.Gateway{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-gateway",
+					Namespace: "default",
+				},
+				Spec: gatewayv1.GatewaySpec{
+					GatewayClassName: "cloudflare-tunnel",
+					Listeners: []gatewayv1.Listener{
+						{
+							Name:     "grpc",
+							Port:     443,
+							Protocol: gatewayv1.HTTPSProtocolType,
+						},
+					},
+				},
+			},
+			route: GRPCRouteWrapper{&gatewayv1.GRPCRoute{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-route",
+					Namespace: "default",
+				},
+				Spec: gatewayv1.GRPCRouteSpec{
+					CommonRouteSpec: gatewayv1.CommonRouteSpec{
+						ParentRefs: []gatewayv1.ParentReference{
+							{Name: "test-gateway"},
+						},
+					},
+				},
+			}},
+			expected: true,
+		},
+		{
+			name:             "route_rejected_hostname_mismatch",
+			gatewayClassName: "cloudflare-tunnel",
+			gateway: &gatewayv1.Gateway{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-gateway",
+					Namespace: "default",
+				},
+				Spec: gatewayv1.GatewaySpec{
+					GatewayClassName: "cloudflare-tunnel",
+					Listeners: []gatewayv1.Listener{
+						{
+							Name:     "http",
+							Port:     80,
+							Protocol: gatewayv1.HTTPProtocolType,
+							Hostname: ptr(gatewayv1.Hostname("*.example.com")),
+						},
+					},
+				},
+			},
+			route: HTTPRouteWrapper{&gatewayv1.HTTPRoute{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-route",
+					Namespace: "default",
+				},
+				Spec: gatewayv1.HTTPRouteSpec{
+					Hostnames: []gatewayv1.Hostname{"other.org"},
+					CommonRouteSpec: gatewayv1.CommonRouteSpec{
+						ParentRefs: []gatewayv1.ParentReference{
+							{Name: "test-gateway"},
+						},
+					},
+				},
+			}},
+			expected: false,
+		},
+		{
+			name:             "route_rejected_namespace_not_allowed",
+			gatewayClassName: "cloudflare-tunnel",
+			gateway: &gatewayv1.Gateway{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-gateway",
+					Namespace: "gateway-ns",
+				},
+				Spec: gatewayv1.GatewaySpec{
+					GatewayClassName: "cloudflare-tunnel",
+					Listeners: []gatewayv1.Listener{
+						{
+							Name:     "http",
+							Port:     80,
+							Protocol: gatewayv1.HTTPProtocolType,
+							AllowedRoutes: &gatewayv1.AllowedRoutes{
+								Namespaces: &gatewayv1.RouteNamespaces{
+									From: ptr(gatewayv1.NamespacesFromSame),
+								},
+							},
+						},
+					},
+				},
+			},
+			route: HTTPRouteWrapper{&gatewayv1.HTTPRoute{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-route",
+					Namespace: "other-ns",
+				},
+				Spec: gatewayv1.HTTPRouteSpec{
+					CommonRouteSpec: gatewayv1.CommonRouteSpec{
+						ParentRefs: []gatewayv1.ParentReference{
+							{
+								Name:      "test-gateway",
+								Namespace: ptr(gatewayv1.Namespace("gateway-ns")),
+							},
+						},
+					},
+				},
+			}},
+			expected: false,
+		},
+		{
+			name:             "route_rejected_different_gateway_class",
+			gatewayClassName: "cloudflare-tunnel",
+			gateway: &gatewayv1.Gateway{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-gateway",
+					Namespace: "default",
+				},
+				Spec: gatewayv1.GatewaySpec{
+					GatewayClassName: "other-class",
+					Listeners: []gatewayv1.Listener{
+						{
+							Name:     "http",
+							Port:     80,
+							Protocol: gatewayv1.HTTPProtocolType,
+						},
+					},
+				},
+			},
+			route: HTTPRouteWrapper{&gatewayv1.HTTPRoute{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-route",
+					Namespace: "default",
+				},
+				Spec: gatewayv1.HTTPRouteSpec{
+					CommonRouteSpec: gatewayv1.CommonRouteSpec{
+						ParentRefs: []gatewayv1.ParentReference{
+							{Name: "test-gateway"},
+						},
+					},
+				},
+			}},
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			scheme := runtime.NewScheme()
+			require.NoError(t, gatewayv1.AddToScheme(scheme))
+			require.NoError(t, corev1.AddToScheme(scheme))
+
+			builder := fake.NewClientBuilder().WithScheme(scheme)
+			if tt.gateway != nil {
+				builder = builder.WithObjects(tt.gateway)
+			}
+			fakeClient := builder.Build()
+
+			validator := routebinding.NewValidator(fakeClient)
+
+			result := IsRouteAcceptedByGateway(
+				context.Background(),
+				fakeClient,
+				validator,
+				tt.gatewayClassName,
+				tt.route,
+			)
 
 			assert.Equal(t, tt.expected, result)
 		})

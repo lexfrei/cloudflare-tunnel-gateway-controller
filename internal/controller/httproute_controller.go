@@ -24,11 +24,10 @@ import (
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/api/v1alpha1"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/ingress"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/routebinding"
 )
 
 const (
-	kindGateway = "Gateway"
-
 	// apiErrorRequeueDelay is the delay before retrying when Cloudflare API calls fail.
 	apiErrorRequeueDelay = 15 * time.Second
 
@@ -72,6 +71,9 @@ type HTTPRouteReconciler struct {
 
 	// RouteSyncer provides unified sync for both HTTP and GRPC routes.
 	RouteSyncer *RouteSyncer
+
+	// bindingValidator validates route binding to Gateway listeners.
+	bindingValidator *routebinding.Validator
 
 	// startupComplete indicates whether the startup sync has completed.
 	// This prevents race conditions between startup sync and reconcile loop.
@@ -144,29 +146,9 @@ func (r *HTTPRouteReconciler) syncAndUpdateStatus(ctx context.Context) (ctrl.Res
 	return result, nil
 }
 
-//nolint:funcorder,noinlineerr // private helper method
+//nolint:funcorder // private helper method
 func (r *HTTPRouteReconciler) isRouteForOurGateway(ctx context.Context, route *gatewayv1.HTTPRoute) bool {
-	for _, ref := range route.Spec.ParentRefs {
-		if ref.Kind != nil && *ref.Kind != kindGateway {
-			continue
-		}
-
-		namespace := route.Namespace
-		if ref.Namespace != nil {
-			namespace = string(*ref.Namespace)
-		}
-
-		var gateway gatewayv1.Gateway
-		if err := r.Get(ctx, client.ObjectKey{Name: string(ref.Name), Namespace: namespace}, &gateway); err != nil {
-			continue
-		}
-
-		if gateway.Spec.GatewayClassName == gatewayv1.ObjectName(r.GatewayClassName) {
-			return true
-		}
-	}
-
-	return false
+	return IsRouteAcceptedByGateway(ctx, r.Client, r.bindingValidator, r.GatewayClassName, HTTPRouteWrapper{route})
 }
 
 //nolint:funcorder,funlen,noinlineerr,gocognit // private helper method, status update logic
@@ -293,6 +275,8 @@ func (r *HTTPRouteReconciler) updateRouteStatus(
 }
 
 func (r *HTTPRouteReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	r.bindingValidator = routebinding.NewValidator(r.Client)
+
 	mapper := &ConfigMapper{
 		Client:           r.Client,
 		GatewayClassName: r.GatewayClassName,

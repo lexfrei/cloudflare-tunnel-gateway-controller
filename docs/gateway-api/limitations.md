@@ -121,18 +121,20 @@ For multi-level subdomains, you need:
 
 ## Gateway Listener Configuration
 
-Gateway listeners are accepted for compatibility but most fields are ignored:
+Gateway listeners follow Gateway API specification. Some fields are ignored
+because Cloudflare Tunnel manages them at the edge:
 
 | Field | Status | Notes |
 |-------|--------|-------|
 | `port` | Ignored | Cloudflare uses 443/80 |
 | `protocol` | Ignored | Cloudflare handles protocols |
-| `hostname` | Ignored | Use HTTPRoute/GRPCRoute hostnames |
+| `hostname` | Supported | Routes must have intersecting hostnames |
 | `tls` | Ignored | Cloudflare manages TLS |
-| `allowedRoutes` | Ignored | All routes accepted |
+| `allowedRoutes` | Supported | Namespace (Same/All/Selector) and kind filtering |
 
 This is because Cloudflare Tunnel terminates TLS at Cloudflare's edge, not
-in the cluster.
+in the cluster. However, `hostname` and `allowedRoutes` are validated per
+Gateway API specification.
 
 ## Route Types Not Supported
 

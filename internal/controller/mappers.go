@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"log/slog"
 	"slices"
 
 	corev1 "k8s.io/api/core/v1"
@@ -13,7 +14,11 @@ import (
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/api/v1alpha1"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/config"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/routebinding"
 )
+
+// kindGateway is the Gateway API kind for Gateway resources.
+const kindGateway = "Gateway"
 
 // RequestsFunc returns reconcile requests for a given context.
 type RequestsFunc func(ctx context.Context) []reconcile.Request
@@ -200,4 +205,99 @@ func (w GRPCRouteWrapper) GetCrossNamespaceBackendNamespaces() []string {
 	}
 
 	return namespaces
+}
+
+// RouteBindable extends RouteWithCrossNamespaceRefs for binding validation.
+type RouteBindable interface {
+	RouteWithCrossNamespaceRefs
+	GetHostnames() []gatewayv1.Hostname
+	GetParentRefs() []gatewayv1.ParentReference
+	GetRouteKind() gatewayv1.Kind
+}
+
+// GetHostnames returns the hostnames from the HTTPRoute spec.
+func (w HTTPRouteWrapper) GetHostnames() []gatewayv1.Hostname {
+	return w.Spec.Hostnames
+}
+
+// GetParentRefs returns the parent references from the HTTPRoute spec.
+func (w HTTPRouteWrapper) GetParentRefs() []gatewayv1.ParentReference {
+	return w.Spec.ParentRefs
+}
+
+// GetRouteKind returns the route kind for HTTPRoute.
+func (w HTTPRouteWrapper) GetRouteKind() gatewayv1.Kind {
+	return routebinding.KindHTTPRoute
+}
+
+// GetHostnames returns the hostnames from the GRPCRoute spec.
+func (w GRPCRouteWrapper) GetHostnames() []gatewayv1.Hostname {
+	return w.Spec.Hostnames
+}
+
+// GetParentRefs returns the parent references from the GRPCRoute spec.
+func (w GRPCRouteWrapper) GetParentRefs() []gatewayv1.ParentReference {
+	return w.Spec.ParentRefs
+}
+
+// GetRouteKind returns the route kind for GRPCRoute.
+func (w GRPCRouteWrapper) GetRouteKind() gatewayv1.Kind {
+	return routebinding.KindGRPCRoute
+}
+
+// IsRouteAcceptedByGateway checks if a route has at least one accepted binding
+// to a Gateway of the specified class. This is used by both HTTPRoute and GRPCRoute
+// controllers to determine if a route should be processed.
+func IsRouteAcceptedByGateway(
+	ctx context.Context,
+	cli client.Client,
+	validator *routebinding.Validator,
+	gatewayClassName string,
+	route RouteBindable,
+) bool {
+	for _, ref := range route.GetParentRefs() {
+		if ref.Kind != nil && *ref.Kind != kindGateway {
+			continue
+		}
+
+		namespace := route.GetNamespace()
+		if ref.Namespace != nil {
+			namespace = string(*ref.Namespace)
+		}
+
+		var gateway gatewayv1.Gateway
+
+		err := cli.Get(ctx, client.ObjectKey{Name: string(ref.Name), Namespace: namespace}, &gateway)
+		if err != nil {
+			continue
+		}
+
+		if gateway.Spec.GatewayClassName != gatewayv1.ObjectName(gatewayClassName) {
+			continue
+		}
+
+		routeInfo := &routebinding.RouteInfo{
+			Name:        route.GetName(),
+			Namespace:   route.GetNamespace(),
+			Hostnames:   route.GetHostnames(),
+			Kind:        route.GetRouteKind(),
+			SectionName: ref.SectionName,
+		}
+
+		result, err := validator.ValidateBinding(ctx, &gateway, routeInfo)
+		if err != nil {
+			slog.Default().Error("failed to validate route binding",
+				"route", route.GetNamespace()+"/"+route.GetName(),
+				"gateway", gateway.Name,
+				"error", err)
+
+			continue
+		}
+
+		if result.Accepted {
+			return true
+		}
+	}
+
+	return false
 }

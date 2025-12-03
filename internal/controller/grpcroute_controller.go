@@ -23,6 +23,7 @@ import (
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/api/v1alpha1"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/ingress"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/routebinding"
 )
 
 // GRPCRouteReconciler reconciles GRPCRoute resources and synchronizes them
@@ -47,6 +48,9 @@ type GRPCRouteReconciler struct {
 
 	// RouteSyncer provides unified sync for both HTTP and GRPC routes.
 	RouteSyncer *RouteSyncer
+
+	// bindingValidator validates route binding to Gateway listeners.
+	bindingValidator *routebinding.Validator
 
 	// startupComplete indicates whether the startup sync has completed.
 	startupComplete atomic.Bool
@@ -117,29 +121,9 @@ func (r *GRPCRouteReconciler) syncAndUpdateStatus(ctx context.Context) (ctrl.Res
 	return result, nil
 }
 
-//nolint:funcorder,noinlineerr // private helper method
+//nolint:funcorder // private helper method
 func (r *GRPCRouteReconciler) isRouteForOurGateway(ctx context.Context, route *gatewayv1.GRPCRoute) bool {
-	for _, ref := range route.Spec.ParentRefs {
-		if ref.Kind != nil && *ref.Kind != kindGateway {
-			continue
-		}
-
-		namespace := route.Namespace
-		if ref.Namespace != nil {
-			namespace = string(*ref.Namespace)
-		}
-
-		var gateway gatewayv1.Gateway
-		if err := r.Get(ctx, client.ObjectKey{Name: string(ref.Name), Namespace: namespace}, &gateway); err != nil {
-			continue
-		}
-
-		if gateway.Spec.GatewayClassName == gatewayv1.ObjectName(r.GatewayClassName) {
-			return true
-		}
-	}
-
-	return false
+	return IsRouteAcceptedByGateway(ctx, r.Client, r.bindingValidator, r.GatewayClassName, GRPCRouteWrapper{route})
 }
 
 //nolint:funcorder,funlen,noinlineerr,gocognit // private helper method, status update logic
@@ -265,6 +249,8 @@ func (r *GRPCRouteReconciler) updateRouteStatus(
 }
 
 func (r *GRPCRouteReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	r.bindingValidator = routebinding.NewValidator(r.Client)
+
 	mapper := &ConfigMapper{
 		Client:           r.Client,
 		GatewayClassName: r.GatewayClassName,
