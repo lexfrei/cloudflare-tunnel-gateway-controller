@@ -34,7 +34,7 @@ func TestGRPCRouteReconciler_Reconcile_NotFound(t *testing.T) {
 		Build()
 
 	configResolver := config.NewResolver(fakeClient, "default", metrics.NewNoopCollector())
-	routeSyncer := NewRouteSyncer(fakeClient, scheme, "cluster.local", "cloudflare-tunnel", configResolver, metrics.NewNoopCollector())
+	routeSyncer := NewRouteSyncer(fakeClient, scheme, "cluster.local", "cloudflare-tunnel", configResolver, metrics.NewNoopCollector(), nil)
 
 	r := &GRPCRouteReconciler{
 		Client:           fakeClient,
@@ -138,7 +138,7 @@ func TestGRPCRouteReconciler_Reconcile_WrongGatewayClass(t *testing.T) {
 		Build()
 
 	configResolver := config.NewResolver(fakeClient, "default", metrics.NewNoopCollector())
-	routeSyncer := NewRouteSyncer(fakeClient, scheme, "cluster.local", "cloudflare-tunnel", configResolver, metrics.NewNoopCollector())
+	routeSyncer := NewRouteSyncer(fakeClient, scheme, "cluster.local", "cloudflare-tunnel", configResolver, metrics.NewNoopCollector(), nil)
 
 	r := &GRPCRouteReconciler{
 		Client:           fakeClient,
@@ -802,7 +802,7 @@ func TestGRPCRouteReconciler_Start(t *testing.T) {
 		Build()
 
 	configResolver := config.NewResolver(fakeClient, "default", metrics.NewNoopCollector())
-	routeSyncer := NewRouteSyncer(fakeClient, scheme, "cluster.local", "cloudflare-tunnel", configResolver, metrics.NewNoopCollector())
+	routeSyncer := NewRouteSyncer(fakeClient, scheme, "cluster.local", "cloudflare-tunnel", configResolver, metrics.NewNoopCollector(), nil)
 
 	r := &GRPCRouteReconciler{
 		Client:           fakeClient,
@@ -866,7 +866,7 @@ func TestGRPCRouteReconciler_UpdateRouteStatus_Integration(t *testing.T) {
 		Build()
 
 	configResolver := config.NewResolver(fakeClient, "default", metrics.NewNoopCollector())
-	routeSyncer := NewRouteSyncer(fakeClient, scheme, "cluster.local", "cloudflare-tunnel", configResolver, metrics.NewNoopCollector())
+	routeSyncer := NewRouteSyncer(fakeClient, scheme, "cluster.local", "cloudflare-tunnel", configResolver, metrics.NewNoopCollector(), nil)
 
 	r := &GRPCRouteReconciler{
 		Client:           fakeClient,
@@ -955,7 +955,7 @@ func TestGRPCRouteReconciler_UpdateRouteStatus_NotAccepted(t *testing.T) {
 		Build()
 
 	configResolver := config.NewResolver(fakeClient, "default", metrics.NewNoopCollector())
-	routeSyncer := NewRouteSyncer(fakeClient, scheme, "cluster.local", "cloudflare-tunnel", configResolver, metrics.NewNoopCollector())
+	routeSyncer := NewRouteSyncer(fakeClient, scheme, "cluster.local", "cloudflare-tunnel", configResolver, metrics.NewNoopCollector(), nil)
 
 	r := &GRPCRouteReconciler{
 		Client:           fakeClient,
@@ -1020,7 +1020,7 @@ func TestGRPCRouteReconciler_SyncAndUpdateStatus_NoConfig(t *testing.T) {
 		Build()
 
 	configResolver := config.NewResolver(fakeClient, "default", metrics.NewNoopCollector())
-	routeSyncer := NewRouteSyncer(fakeClient, scheme, "cluster.local", "cloudflare-tunnel", configResolver, metrics.NewNoopCollector())
+	routeSyncer := NewRouteSyncer(fakeClient, scheme, "cluster.local", "cloudflare-tunnel", configResolver, metrics.NewNoopCollector(), nil)
 
 	r := &GRPCRouteReconciler{
 		Client:           fakeClient,

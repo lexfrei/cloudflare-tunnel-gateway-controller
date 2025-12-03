@@ -10,6 +10,7 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/ingress"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/logging"
 )
 
 const (
@@ -18,10 +19,10 @@ const (
 )
 
 func TestGRPCBuild_WarnMultipleBackendRefs(t *testing.T) {
-	buf, cleanup := setupTestLogger()
-	defer cleanup()
+	t.Parallel()
 
-	builder := ingress.NewGRPCBuilder("cluster.local", nil, nil, nil)
+	logger, buf := logging.TestLogger(t)
+	builder := ingress.NewGRPCBuilder("cluster.local", nil, nil, nil, logger)
 	routes := []gatewayv1.GRPCRoute{
 		{
 			ObjectMeta: metav1.ObjectMeta{
@@ -47,17 +48,17 @@ func TestGRPCBuild_WarnMultipleBackendRefs(t *testing.T) {
 
 	logs := buf.String()
 	assert.Contains(t, logs, "route configuration partially applied")
-	assert.Contains(t, logs, "route=default/test-grpc-route")
+	assert.Contains(t, logs, `"route":"default/test-grpc-route"`)
 	assert.Contains(t, logs, "multiple backendRefs specified")
-	assert.Contains(t, logs, "total_backends=3")
-	assert.Contains(t, logs, "ignored_backends=2")
+	assert.Contains(t, logs, `"total_backends":3`)
+	assert.Contains(t, logs, `"ignored_backends":2`)
 }
 
 func TestGRPCBuild_WarnBackendRefWeights(t *testing.T) {
-	buf, cleanup := setupTestLogger()
-	defer cleanup()
+	t.Parallel()
 
-	builder := ingress.NewGRPCBuilder("cluster.local", nil, nil, nil)
+	logger, buf := logging.TestLogger(t)
+	builder := ingress.NewGRPCBuilder("cluster.local", nil, nil, nil, logger)
 	weight70 := int32(70)
 	weight30 := int32(30)
 
@@ -85,18 +86,18 @@ func TestGRPCBuild_WarnBackendRefWeights(t *testing.T) {
 
 	logs := buf.String()
 	assert.Contains(t, logs, "route configuration partially applied")
-	assert.Contains(t, logs, "route=production/weighted-grpc-route")
+	assert.Contains(t, logs, `"route":"production/weighted-grpc-route"`)
 	assert.Contains(t, logs, "backendRef weight ignored")
 	assert.Contains(t, logs, "traffic splitting not supported")
 	// Should log for both backends with weights
-	assert.Equal(t, 2, strings.Count(logs, "weight="))
+	assert.Equal(t, 2, strings.Count(logs, `"weight":`))
 }
 
 func TestGRPCBuild_WarnHeaderMatching(t *testing.T) {
-	buf, cleanup := setupTestLogger()
-	defer cleanup()
+	t.Parallel()
 
-	builder := ingress.NewGRPCBuilder("cluster.local", nil, nil, nil)
+	logger, buf := logging.TestLogger(t)
+	builder := ingress.NewGRPCBuilder("cluster.local", nil, nil, nil, logger)
 	headerType := gatewayv1.GRPCHeaderMatchExact
 	service := testGRPCService
 
@@ -142,16 +143,16 @@ func TestGRPCBuild_WarnHeaderMatching(t *testing.T) {
 
 	logs := buf.String()
 	assert.Contains(t, logs, "route configuration partially applied")
-	assert.Contains(t, logs, "route=default/header-grpc-route")
+	assert.Contains(t, logs, `"route":"default/header-grpc-route"`)
 	assert.Contains(t, logs, "header matching not supported")
-	assert.Contains(t, logs, "ignored_headers=2")
+	assert.Contains(t, logs, `"ignored_headers":2`)
 }
 
 func TestGRPCBuild_WarnFilters(t *testing.T) {
-	buf, cleanup := setupTestLogger()
-	defer cleanup()
+	t.Parallel()
 
-	builder := ingress.NewGRPCBuilder("cluster.local", nil, nil, nil)
+	logger, buf := logging.TestLogger(t)
+	builder := ingress.NewGRPCBuilder("cluster.local", nil, nil, nil, logger)
 	filterType := gatewayv1.GRPCRouteFilterRequestHeaderModifier
 
 	routes := []gatewayv1.GRPCRoute{
@@ -198,16 +199,16 @@ func TestGRPCBuild_WarnFilters(t *testing.T) {
 
 	logs := buf.String()
 	assert.Contains(t, logs, "route configuration partially applied")
-	assert.Contains(t, logs, "route=default/filter-grpc-route")
+	assert.Contains(t, logs, `"route":"default/filter-grpc-route"`)
 	assert.Contains(t, logs, "filters not supported")
-	assert.Contains(t, logs, "ignored_filters=2")
+	assert.Contains(t, logs, `"ignored_filters":2`)
 }
 
 func TestGRPCBuild_MultipleWarnings(t *testing.T) {
-	buf, cleanup := setupTestLogger()
-	defer cleanup()
+	t.Parallel()
 
-	builder := ingress.NewGRPCBuilder("cluster.local", nil, nil, nil)
+	logger, buf := logging.TestLogger(t)
+	builder := ingress.NewGRPCBuilder("cluster.local", nil, nil, nil, logger)
 	headerType := gatewayv1.GRPCHeaderMatchExact
 	weight50 := int32(50)
 	service := testGRPCService
@@ -254,14 +255,14 @@ func TestGRPCBuild_MultipleWarnings(t *testing.T) {
 	assert.Contains(t, logs, "backendRef weight ignored")
 	assert.Contains(t, logs, "header matching not supported")
 	// All warnings should reference the same route
-	assert.GreaterOrEqual(t, strings.Count(logs, "route=default/complex-grpc-route"), 3)
+	assert.GreaterOrEqual(t, strings.Count(logs, `"route":"default/complex-grpc-route"`), 3)
 }
 
 func TestGRPCBuild_NoWarningsForValidConfig(t *testing.T) {
-	buf, cleanup := setupTestLogger()
-	defer cleanup()
+	t.Parallel()
 
-	builder := ingress.NewGRPCBuilder("cluster.local", nil, nil, nil)
+	logger, buf := logging.TestLogger(t)
+	builder := ingress.NewGRPCBuilder("cluster.local", nil, nil, nil, logger)
 	service := testGRPCService
 	method := testGRPCMethod
 

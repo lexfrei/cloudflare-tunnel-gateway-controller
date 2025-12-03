@@ -250,6 +250,7 @@ func TestRouteSyncer_GetRelevantHTTPRoutes(t *testing.T) {
 				"cloudflare-tunnel",
 				config.NewResolver(fakeClient, "default", metrics.NewNoopCollector()),
 				metrics.NewNoopCollector(),
+				nil,
 			)
 
 			routes, _, err := syncer.getRelevantHTTPRoutes(context.Background())
@@ -363,6 +364,7 @@ func TestRouteSyncer_GetRelevantGRPCRoutes(t *testing.T) {
 				"cloudflare-tunnel",
 				config.NewResolver(fakeClient, "default", metrics.NewNoopCollector()),
 				metrics.NewNoopCollector(),
+				nil,
 			)
 
 			routes, _, err := syncer.getRelevantGRPCRoutes(context.Background())
@@ -542,7 +544,7 @@ func TestNewRouteSyncer(t *testing.T) {
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
 	resolver := config.NewResolver(fakeClient, "default", metrics.NewNoopCollector())
 
-	syncer := NewRouteSyncer(fakeClient, scheme, "cluster.local", "cloudflare-tunnel", resolver, metrics.NewNoopCollector())
+	syncer := NewRouteSyncer(fakeClient, scheme, "cluster.local", "cloudflare-tunnel", resolver, metrics.NewNoopCollector(), nil)
 
 	require.NotNil(t, syncer)
 	assert.Equal(t, "cluster.local", syncer.ClusterDomain)

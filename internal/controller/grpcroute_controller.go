@@ -64,7 +64,7 @@ func (r *GRPCRouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	ctx = logging.WithReconcileID(ctx)
-	logger := logging.Component(ctx, "grpcroute-reconciler").With("grpcroute", req.NamespacedName.String())
+	logger := logging.Component(ctx, "grpcroute-reconciler").With("grpcroute", req.String())
 	ctx = logging.WithLogger(ctx, logger)
 
 	var route gatewayv1.GRPCRoute

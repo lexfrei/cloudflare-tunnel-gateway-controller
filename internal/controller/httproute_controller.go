@@ -89,7 +89,7 @@ func (r *HTTPRouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	ctx = logging.WithReconcileID(ctx)
-	logger := logging.Component(ctx, "httproute-reconciler").With("httproute", req.NamespacedName.String())
+	logger := logging.Component(ctx, "httproute-reconciler").With("httproute", req.String())
 	ctx = logging.WithLogger(ctx, logger)
 
 	var route gatewayv1.HTTPRoute

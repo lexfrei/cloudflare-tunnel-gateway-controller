@@ -55,6 +55,7 @@ func TestHTTPRouteReconciler_SetupWithManager(t *testing.T) {
 		"test-gateway-class",
 		configResolver,
 		metrics.NewNoopCollector(),
+		nil,
 	)
 
 	r := &HTTPRouteReconciler{
@@ -87,6 +88,7 @@ func TestGRPCRouteReconciler_SetupWithManager(t *testing.T) {
 		"test-gateway-class",
 		configResolver,
 		metrics.NewNoopCollector(),
+		nil,
 	)
 
 	r := &GRPCRouteReconciler{

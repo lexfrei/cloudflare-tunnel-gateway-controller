@@ -84,6 +84,7 @@ func TestRouteSyncer_CrossNamespaceRef_WithoutGrant(t *testing.T) {
 		"cloudflare-tunnel",
 		nil, // No config resolver needed for this test
 		metrics.NewNoopCollector(),
+		nil,
 	)
 
 	ctx := context.Background()
@@ -242,7 +243,7 @@ func TestBuilder_CrossNamespaceRef_WithGrant(t *testing.T) {
 		Build()
 
 	validator := referencegrant.NewValidator(fakeClient)
-	builder := ingress.NewBuilder("cluster.local", validator, nil, nil)
+	builder := ingress.NewBuilder("cluster.local", validator, nil, nil, nil)
 
 	ctx := context.Background()
 
@@ -360,6 +361,7 @@ func TestRouteSyncer_GRPCRoute_CrossNamespaceRef_WithGrant(t *testing.T) {
 		"cloudflare-tunnel",
 		nil,
 		metrics.NewNoopCollector(),
+		nil,
 	)
 
 	ctx := context.Background()
@@ -516,6 +518,7 @@ func TestRouteSyncer_ReferenceGrant_SpecificName(t *testing.T) {
 		"cloudflare-tunnel",
 		nil,
 		metrics.NewNoopCollector(),
+		nil,
 	)
 
 	ctx := context.Background()
