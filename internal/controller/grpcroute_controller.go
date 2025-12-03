@@ -121,54 +121,9 @@ func (r *GRPCRouteReconciler) syncAndUpdateStatus(ctx context.Context) (ctrl.Res
 	return result, nil
 }
 
-//nolint:funcorder,noinlineerr // private helper method
+//nolint:funcorder // private helper method
 func (r *GRPCRouteReconciler) isRouteForOurGateway(ctx context.Context, route *gatewayv1.GRPCRoute) bool {
-	routeKey := route.Namespace + "/" + route.Name
-
-	for _, ref := range route.Spec.ParentRefs {
-		if ref.Kind != nil && *ref.Kind != kindGateway {
-			continue
-		}
-
-		namespace := route.Namespace
-		if ref.Namespace != nil {
-			namespace = string(*ref.Namespace)
-		}
-
-		var gateway gatewayv1.Gateway
-		if err := r.Get(ctx, client.ObjectKey{Name: string(ref.Name), Namespace: namespace}, &gateway); err != nil {
-			continue
-		}
-
-		if gateway.Spec.GatewayClassName != gatewayv1.ObjectName(r.GatewayClassName) {
-			continue
-		}
-
-		// Full binding validation including hostname and allowedRoutes checks
-		routeInfo := &routebinding.RouteInfo{
-			Name:        route.Name,
-			Namespace:   route.Namespace,
-			Hostnames:   route.Spec.Hostnames,
-			Kind:        routebinding.KindGRPCRoute,
-			SectionName: ref.SectionName,
-		}
-
-		result, err := r.bindingValidator.ValidateBinding(ctx, &gateway, routeInfo)
-		if err != nil {
-			slog.Default().Error("failed to validate route binding",
-				"route", routeKey,
-				"gateway", gateway.Name,
-				"error", err)
-
-			continue
-		}
-
-		if result.Accepted {
-			return true
-		}
-	}
-
-	return false
+	return IsRouteAcceptedByGateway(ctx, r.Client, r.bindingValidator, r.GatewayClassName, GRPCRouteWrapper{route})
 }
 
 //nolint:funcorder,funlen,noinlineerr,gocognit // private helper method, status update logic
