@@ -2,7 +2,6 @@ package controller
 
 import (
 	"context"
-	"log/slog"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -24,6 +23,7 @@ import (
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/api/v1alpha1"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/ingress"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/logging"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/routebinding"
 )
 
@@ -88,7 +88,9 @@ func (r *HTTPRouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{RequeueAfter: startupPendingRequeueDelay}, nil
 	}
 
-	logger := slog.Default().With("httproute", req.NamespacedName)
+	ctx = logging.WithReconcileID(ctx)
+	logger := logging.Component(ctx, "httproute-reconciler").With("httproute", req.NamespacedName.String())
+	ctx = logging.WithLogger(ctx, logger)
 
 	var route gatewayv1.HTTPRoute
 	if err := r.Get(ctx, req.NamespacedName, &route); err != nil {
@@ -112,7 +114,7 @@ func (r *HTTPRouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 //nolint:noinlineerr,funcorder // inline error handling for controller pattern; placed near Reconcile for readability
 func (r *HTTPRouteReconciler) syncAndUpdateStatus(ctx context.Context) (ctrl.Result, error) {
-	logger := slog.Default().With("component", "httproute-sync")
+	logger := logging.FromContext(ctx)
 
 	result, syncResult, syncErr := r.RouteSyncer.SyncAllRoutes(ctx)
 
@@ -327,8 +329,10 @@ func (r *HTTPRouteReconciler) Start(ctx context.Context) error {
 	// regardless of success or failure
 	defer r.startupComplete.Store(true)
 
-	logger := slog.Default().With("component", "httproute-startup-sync")
+	logger := logging.Component(ctx, "httproute-startup-sync")
 	logger.Info("performing startup sync of tunnel configuration")
+
+	ctx = logging.WithLogger(ctx, logger)
 
 	_, err := r.syncAndUpdateStatus(ctx)
 	if err != nil {
