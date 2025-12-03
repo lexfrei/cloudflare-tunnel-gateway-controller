@@ -6,7 +6,12 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/ingress"
@@ -758,4 +763,219 @@ func newGRPCBackendRef(name string, namespace *gatewayv1.Namespace, port *int32)
 	}
 
 	return ref
+}
+
+func TestGRPCBuild_ExternalNameService(t *testing.T) {
+	t.Parallel()
+
+	externalSvc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "external-grpc",
+			Namespace: "default",
+		},
+		Spec: corev1.ServiceSpec{
+			Type:         corev1.ServiceTypeExternalName,
+			ExternalName: "grpc.external.com",
+		},
+	}
+
+	scheme := runtime.NewScheme()
+	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(externalSvc).
+		Build()
+
+	builder := ingress.NewGRPCBuilder("cluster.local", nil, fakeClient)
+	routes := []gatewayv1.GRPCRoute{
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-route",
+				Namespace: "default",
+			},
+			Spec: gatewayv1.GRPCRouteSpec{
+				Hostnames: []gatewayv1.Hostname{"grpc.example.com"},
+				Rules: []gatewayv1.GRPCRouteRule{
+					{
+						BackendRefs: []gatewayv1.GRPCBackendRef{
+							newGRPCBackendRef("external-grpc", nil, int32Ptr(443)),
+						},
+					},
+				},
+			},
+		},
+	}
+
+	buildResult := builder.Build(context.Background(), routes)
+
+	require.Len(t, buildResult.Rules, 1)
+	assert.Equal(t, "https://grpc.external.com:443", buildResult.Rules[0].Service.Value)
+	assert.Empty(t, buildResult.FailedRefs)
+}
+
+func TestGRPCBuild_ExternalNameService_HTTPPort(t *testing.T) {
+	t.Parallel()
+
+	externalSvc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "external-grpc",
+			Namespace: "default",
+		},
+		Spec: corev1.ServiceSpec{
+			Type:         corev1.ServiceTypeExternalName,
+			ExternalName: "grpc.external.com",
+		},
+	}
+
+	scheme := runtime.NewScheme()
+	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(externalSvc).
+		Build()
+
+	builder := ingress.NewGRPCBuilder("cluster.local", nil, fakeClient)
+	routes := []gatewayv1.GRPCRoute{
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-route",
+				Namespace: "default",
+			},
+			Spec: gatewayv1.GRPCRouteSpec{
+				Hostnames: []gatewayv1.Hostname{"grpc.example.com"},
+				Rules: []gatewayv1.GRPCRouteRule{
+					{
+						BackendRefs: []gatewayv1.GRPCBackendRef{
+							newGRPCBackendRef("external-grpc", nil, int32Ptr(50051)),
+						},
+					},
+				},
+			},
+		},
+	}
+
+	buildResult := builder.Build(context.Background(), routes)
+
+	require.Len(t, buildResult.Rules, 1)
+	assert.Equal(t, "http://grpc.external.com:50051", buildResult.Rules[0].Service.Value)
+	assert.Empty(t, buildResult.FailedRefs)
+}
+
+func TestGRPCBuild_ClusterIPService_WithClient(t *testing.T) {
+	t.Parallel()
+
+	clusterIPSvc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "grpc-service",
+			Namespace: "default",
+		},
+		Spec: corev1.ServiceSpec{
+			Type:      corev1.ServiceTypeClusterIP,
+			ClusterIP: "10.0.0.1",
+		},
+	}
+
+	scheme := runtime.NewScheme()
+	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(clusterIPSvc).
+		Build()
+
+	builder := ingress.NewGRPCBuilder("cluster.local", nil, fakeClient)
+	routes := []gatewayv1.GRPCRoute{
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-route",
+				Namespace: "default",
+			},
+			Spec: gatewayv1.GRPCRouteSpec{
+				Hostnames: []gatewayv1.Hostname{"grpc.example.com"},
+				Rules: []gatewayv1.GRPCRouteRule{
+					{
+						BackendRefs: []gatewayv1.GRPCBackendRef{
+							newGRPCBackendRef("grpc-service", nil, int32Ptr(50051)),
+						},
+					},
+				},
+			},
+		},
+	}
+
+	buildResult := builder.Build(context.Background(), routes)
+
+	require.Len(t, buildResult.Rules, 1)
+	assert.Equal(t, "http://grpc-service.default.svc.cluster.local:50051", buildResult.Rules[0].Service.Value)
+	assert.Empty(t, buildResult.FailedRefs)
+}
+
+func TestGRPCBuild_ServiceNotFound(t *testing.T) {
+	t.Parallel()
+
+	scheme := runtime.NewScheme()
+	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		Build()
+
+	builder := ingress.NewGRPCBuilder("cluster.local", nil, fakeClient)
+	routes := []gatewayv1.GRPCRoute{
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-route",
+				Namespace: "default",
+			},
+			Spec: gatewayv1.GRPCRouteSpec{
+				Hostnames: []gatewayv1.Hostname{"grpc.example.com"},
+				Rules: []gatewayv1.GRPCRouteRule{
+					{
+						BackendRefs: []gatewayv1.GRPCBackendRef{
+							newGRPCBackendRef("nonexistent-service", nil, int32Ptr(50051)),
+						},
+					},
+				},
+			},
+		},
+	}
+
+	buildResult := builder.Build(context.Background(), routes)
+
+	require.Empty(t, buildResult.Rules)
+	require.Len(t, buildResult.FailedRefs, 1)
+	assert.Equal(t, "BackendNotFound", buildResult.FailedRefs[0].Reason)
+	assert.Equal(t, "nonexistent-service", buildResult.FailedRefs[0].BackendName)
+}
+
+func TestGRPCBuild_NilClient_FallbackBehavior(t *testing.T) {
+	t.Parallel()
+
+	builder := ingress.NewGRPCBuilder("cluster.local", nil, nil)
+	routes := []gatewayv1.GRPCRoute{
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-route",
+				Namespace: "default",
+			},
+			Spec: gatewayv1.GRPCRouteSpec{
+				Hostnames: []gatewayv1.Hostname{"grpc.example.com"},
+				Rules: []gatewayv1.GRPCRouteRule{
+					{
+						BackendRefs: []gatewayv1.GRPCBackendRef{
+							newGRPCBackendRef("grpc-service", nil, int32Ptr(50051)),
+						},
+					},
+				},
+			},
+		},
+	}
+
+	buildResult := builder.Build(context.Background(), routes)
+
+	require.Len(t, buildResult.Rules, 1)
+	assert.Equal(t, "http://grpc-service.default.svc.cluster.local:50051", buildResult.Rules[0].Service.Value)
+	assert.Empty(t, buildResult.FailedRefs)
 }

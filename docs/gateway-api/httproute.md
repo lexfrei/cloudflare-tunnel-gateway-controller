@@ -202,6 +202,7 @@ apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
   name: external-route
+  namespace: default
 spec:
   parentRefs:
     - name: cloudflare-tunnel
