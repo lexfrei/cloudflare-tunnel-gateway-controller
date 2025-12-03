@@ -30,13 +30,14 @@ type Manager struct {
 	settings       *cli.EnvSettings
 	registryClient *registry.Client
 	metrics        metrics.Collector
+	logger         *slog.Logger
 
 	chartCache   chart.Charter
 	chartVersion string
 	cacheMu      sync.RWMutex
 }
 
-func NewManager(metricsCollector metrics.Collector) (*Manager, error) {
+func NewManager(metricsCollector metrics.Collector, logger *slog.Logger) (*Manager, error) {
 	settings := cli.New()
 
 	registryClient, err := registry.NewClient(
@@ -48,10 +49,15 @@ func NewManager(metricsCollector metrics.Collector) (*Manager, error) {
 		return nil, errors.Wrap(err, "failed to create registry client")
 	}
 
+	if logger == nil {
+		logger = slog.Default()
+	}
+
 	return &Manager{
 		settings:       settings,
 		registryClient: registryClient,
 		metrics:        metricsCollector,
+		logger:         logger.With("component", "helm-manager"),
 	}, nil
 }
 
@@ -107,7 +113,7 @@ func (m *Manager) LoadChart(_ context.Context, chartRef, version string) (chart.
 		return m.chartCache, nil
 	}
 
-	slog.Info("pulling chart from registry", "ref", chartRef, "version", version)
+	m.logger.Info("pulling chart from registry", "ref", chartRef, "version", version)
 
 	pullConfig := &action.Configuration{
 		RegistryClient: m.registryClient,
@@ -128,7 +134,7 @@ func (m *Manager) LoadChart(_ context.Context, chartRef, version string) (chart.
 		return nil, errors.Wrap(err, "failed to pull chart")
 	}
 
-	slog.Debug("chart pulled", "output", output)
+	m.logger.Debug("chart pulled", "output", output)
 
 	chartName := extractChartName(chartRef)
 	chartPath := filepath.Join(os.TempDir(), chartName+"-"+version+".tgz")

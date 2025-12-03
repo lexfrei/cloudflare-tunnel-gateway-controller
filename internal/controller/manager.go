@@ -116,7 +116,7 @@ func Run(ctx context.Context, cfg *Config) error {
 	configResolver := config.NewResolver(mgr.GetClient(), defaultNamespace, metricsCollector)
 
 	// Initialize Helm manager for cloudflared deployment
-	helmManager, helmErr := helm.NewManager(metricsCollector)
+	helmManager, helmErr := helm.NewManager(metricsCollector, nil)
 	if helmErr != nil {
 		return errors.Wrap(helmErr, "failed to create helm manager")
 	}
