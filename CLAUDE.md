@@ -282,3 +282,52 @@ Before creating a PR, verify all checklist items from `.github/pull_request_temp
 - Fill all sections completely
 - Check all applicable checkboxes honestly
 - Do NOT check boxes for items not actually completed
+
+## GitHub Issue Labels
+
+When creating issues, apply labels from these categories:
+
+### Type (required)
+
+- `bug` — Something isn't working
+- `enhancement` — New feature or request
+- `documentation` — Documentation improvements
+- `test` — Test coverage
+- `ci` — CI/CD and automation
+- `security` — Security-related
+
+### Area (required)
+
+- `area/controller` — Controller code
+- `area/helm` — Helm chart
+- `area/api` — CRD and API types
+- `area/docs` — Documentation
+
+### Priority (required)
+
+- `priority/critical` — Blocks release, needs immediate attention
+- `priority/high` — Important for milestone
+- `priority/medium` — Should be done for milestone
+- `priority/low` — Nice to have, can defer
+
+### Status (required)
+
+- `status/needs-triage` — Requires analysis
+- `status/needs-design` — Requires design/RFC
+- `status/ready` — Ready to work on
+- `status/in-progress` — Currently being worked on
+- `status/blocked` — Blocked by dependency
+- `status/needs-info` — Waiting for clarification
+- `status/needs-review` — Waiting for review/feedback
+
+### Size (required)
+
+- `size/XS` — < 1 hour
+- `size/S` — 1-4 hours
+- `size/M` — 1-2 days
+- `size/L` — 3-5 days
+- `size/XL` — > 1 week
+
+### Milestone
+
+Always assign a milestone when creating issues (e.g., `v1.0.0`).
