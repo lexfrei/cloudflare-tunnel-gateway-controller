@@ -64,7 +64,6 @@ Track the conversion of Gateway API routes to Cloudflare ingress rules.
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
 | `cftunnel_ingress_build_duration_seconds` | Histogram | `type` | Rule building duration |
-| `cftunnel_ingress_rules_generated` | Gauge | `type` | Rules generated per route type |
 | `cftunnel_backend_ref_validation_total` | Counter | `type`, `result`, `reason` | Backend ref validation results |
 
 ### Controller Runtime Metrics

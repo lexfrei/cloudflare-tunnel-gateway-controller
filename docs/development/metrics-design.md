@@ -61,6 +61,7 @@ type Collector interface {
     // Helm metrics
     RecordHelmOperation(ctx context.Context, operation, status string, duration time.Duration)
     RecordHelmError(ctx context.Context, operation, errorType string)
+    RecordHelmChartInfo(ctx context.Context, chart, version, appVersion string)
 }
 ```
 
@@ -144,7 +145,6 @@ prometheus.HistogramOpts{
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
 | `cftunnel_ingress_build_duration_seconds` | Histogram | `type` | Rule building duration |
-| `cftunnel_ingress_rules_generated` | Gauge | `type` | Rules generated per type |
 | `cftunnel_backend_ref_validation_total` | Counter | `type`, `result`, `reason` | Backend ref validation results |
 
 **Label values:**
@@ -243,7 +243,8 @@ func classifyCloudflareError(err error) string {
     }
 
     // Check for typed errors from cloudflare-go SDK
-    var apiErr *cloudflare.APIError
+    // cloudflare.Error is an alias to apierror.Error in cloudflare-go v6
+    var apiErr *cloudflare.Error
     if errors.As(err, &apiErr) {
         switch {
         case apiErr.StatusCode == 401 || apiErr.StatusCode == 403:
