@@ -113,6 +113,7 @@ linters:
           - testifylint
           - perfsprint
           - paralleltest
+          - maintidx
         path: _test\.go
       - linters:
           - forbidigo

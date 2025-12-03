@@ -12,7 +12,6 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
-//nolint:maintidx // table-driven test with many cases
 func TestValidateBinding(t *testing.T) {
 	t.Parallel()
 
