@@ -439,16 +439,20 @@ jobs:
             fi
           done <<< "$COMMITS"
 
-          # Convert to YAML string for annotation
-          CHANGELOG_YAML=$(cat "$CHANGELOG_FILE")
-          rm "$CHANGELOG_FILE"
-
-          # Save to output using heredoc
-          {
-            echo "yaml<<EOF"
-            echo "$CHANGELOG_YAML"
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
+          # Check if changelog is empty (only chore/ci/test commits)
+          if [ "$(cat "$CHANGELOG_FILE")" = "[]" ]; then
+            echo "No user-facing changes found, skipping changelog annotation"
+            rm "$CHANGELOG_FILE"
+            echo "yaml=" >> "$GITHUB_OUTPUT"
+          else
+            CHANGELOG_YAML=$(cat "$CHANGELOG_FILE")
+            rm "$CHANGELOG_FILE"
+            {
+              echo "yaml<<EOF"
+              echo "$CHANGELOG_YAML"
+              echo "EOF"
+            } >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Update Chart version and changelog
         env:
@@ -627,6 +631,11 @@ jobs:
               fi
             fi
           done <<< "$COMMITS"
+
+          # Fallback for empty changelog
+          if [ -z "$CHANGELOG_SECTION" ]; then
+            CHANGELOG_SECTION="No user-facing changes in this release."
+          fi
 
           # Build release notes
           {
