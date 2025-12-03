@@ -58,8 +58,7 @@ theme:
     - navigation.instant
     - navigation.instant.progress
     - navigation.sections
-    - navigation.tabs
-    - navigation.tabs.sticky
+    - navigation.expand
     - navigation.top
     - navigation.tracking
     - search.highlight
@@ -135,6 +134,10 @@ markdown_extensions:
 
 # Extra configuration
 extra:
+  version:
+    provider: mike
+    default: latest
+    alias: true
   social:
     - icon: fontawesome/brands/github
       link: https://github.com/lexfrei/cloudflare-tunnel-gateway-controller

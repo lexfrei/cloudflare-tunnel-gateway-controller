@@ -12,10 +12,20 @@ on:
       - "CONTRIBUTING.md"
       - "SECURITY.md"
       - "charts/cloudflare-tunnel-gateway-controller/README.md"
+    tags:
+      - "v*"
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to deploy (e.g., 1.0.0 or dev)"
+        required: true
+        default: "dev"
+      alias:
+        description: "Alias for this version (e.g., latest)"
+        required: false
 
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
 
@@ -24,14 +34,19 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  build:
-    name: Build Documentation
+  deploy:
+    name: Deploy Documentation
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
 
       - name: Setup Python
         uses: actions/setup-python@v6
@@ -43,22 +58,33 @@ jobs:
       - name: Install dependencies
         run: pip install --requirement requirements-docs.txt
 
-      - name: Build documentation
-        run: mkdocs build --strict
+      - name: Determine version and alias
+        id: version
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "version=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
+            echo "alias=${{ github.event.inputs.alias }}" >> "$GITHUB_OUTPUT"
+          elif [[ "${{ github.ref_type }}" == "tag" ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+            echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+            echo "alias=latest" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=dev" >> "$GITHUB_OUTPUT"
+            echo "alias=" >> "$GITHUB_OUTPUT"
+          fi
 
-      - name: Upload artifact
-        uses: actions/upload-pages-artifact@v4
-        with:
-          path: site/
+      - name: Deploy with mike
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          ALIAS="${{ steps.version.outputs.alias }}"
 
-  deploy:
-    name: Deploy to GitHub Pages
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
+          if [[ -n "$ALIAS" ]]; then
+            mike deploy --push --update-aliases "${VERSION}" "${ALIAS}"
+          else
+            mike deploy --push "${VERSION}"
+          fi
+
+      - name: Set default version
+        if: steps.version.outputs.alias == 'latest'
+        run: |
+          mike set-default --push latest
