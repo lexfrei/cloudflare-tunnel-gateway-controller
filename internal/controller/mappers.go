@@ -2,7 +2,6 @@ package controller
 
 import (
 	"context"
-	"log/slog"
 	"slices"
 
 	corev1 "k8s.io/api/core/v1"
@@ -14,6 +13,7 @@ import (
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/api/v1alpha1"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/config"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/logging"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/routebinding"
 )
 
@@ -340,7 +340,7 @@ func IsRouteAcceptedByGateway(
 
 		result, err := validator.ValidateBinding(ctx, &gateway, routeInfo)
 		if err != nil {
-			slog.Default().Error("failed to validate route binding",
+			logging.FromContext(ctx).Error("failed to validate route binding",
 				"route", route.GetNamespace()+"/"+route.GetName(),
 				"gateway", gateway.Name,
 				"error", err)
