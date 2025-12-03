@@ -17,6 +17,9 @@ import (
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/routebinding"
 )
 
+// kindGateway is the Gateway API kind for Gateway resources.
+const kindGateway = "Gateway"
+
 // RequestsFunc returns reconcile requests for a given context.
 type RequestsFunc func(ctx context.Context) []reconcile.Request
 
@@ -253,7 +256,7 @@ func IsRouteAcceptedByGateway(
 	route RouteBindable,
 ) bool {
 	for _, ref := range route.GetParentRefs() {
-		if ref.Kind != nil && *ref.Kind != "Gateway" {
+		if ref.Kind != nil && *ref.Kind != kindGateway {
 			continue
 		}
 

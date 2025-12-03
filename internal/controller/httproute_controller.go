@@ -28,8 +28,6 @@ import (
 )
 
 const (
-	kindGateway = "Gateway"
-
 	// apiErrorRequeueDelay is the delay before retrying when Cloudflare API calls fail.
 	apiErrorRequeueDelay = 15 * time.Second
 
