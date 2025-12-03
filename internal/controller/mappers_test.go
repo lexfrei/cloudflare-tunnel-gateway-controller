@@ -1034,3 +1034,298 @@ func TestIsRouteAcceptedByGateway(t *testing.T) {
 		})
 	}
 }
+
+func TestFindRoutesForGateway(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name             string
+		obj              client.Object
+		gatewayClassName string
+		routes           []Route
+		expectedCount    int
+		expectedRoutes   []string
+	}{
+		{
+			name: "returns nil for non-gateway object",
+			obj: &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: "not-a-gateway"},
+			},
+			gatewayClassName: "cloudflare-tunnel",
+			routes: []Route{
+				HTTPRouteWrapper{&gatewayv1.HTTPRoute{
+					ObjectMeta: metav1.ObjectMeta{Name: "route1", Namespace: "default"},
+				}},
+			},
+			expectedCount: 0,
+		},
+		{
+			name: "returns nil for non-matching gateway class",
+			obj: &gatewayv1.Gateway{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-gw", Namespace: "default"},
+				Spec: gatewayv1.GatewaySpec{
+					GatewayClassName: "other-class",
+				},
+			},
+			gatewayClassName: "cloudflare-tunnel",
+			routes: []Route{
+				HTTPRouteWrapper{&gatewayv1.HTTPRoute{
+					ObjectMeta: metav1.ObjectMeta{Name: "route1", Namespace: "default"},
+					Spec: gatewayv1.HTTPRouteSpec{
+						CommonRouteSpec: gatewayv1.CommonRouteSpec{
+							ParentRefs: []gatewayv1.ParentReference{{Name: "test-gw"}},
+						},
+					},
+				}},
+			},
+			expectedCount: 0,
+		},
+		{
+			name: "returns routes matching gateway by parent ref",
+			obj: &gatewayv1.Gateway{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-gw", Namespace: "default"},
+				Spec: gatewayv1.GatewaySpec{
+					GatewayClassName: "cloudflare-tunnel",
+				},
+			},
+			gatewayClassName: "cloudflare-tunnel",
+			routes: []Route{
+				HTTPRouteWrapper{&gatewayv1.HTTPRoute{
+					ObjectMeta: metav1.ObjectMeta{Name: "route1", Namespace: "default"},
+					Spec: gatewayv1.HTTPRouteSpec{
+						CommonRouteSpec: gatewayv1.CommonRouteSpec{
+							ParentRefs: []gatewayv1.ParentReference{{Name: "test-gw"}},
+						},
+					},
+				}},
+			},
+			expectedCount:  1,
+			expectedRoutes: []string{"default/route1"},
+		},
+		{
+			name: "returns empty for routes not referencing gateway",
+			obj: &gatewayv1.Gateway{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-gw", Namespace: "default"},
+				Spec: gatewayv1.GatewaySpec{
+					GatewayClassName: "cloudflare-tunnel",
+				},
+			},
+			gatewayClassName: "cloudflare-tunnel",
+			routes: []Route{
+				HTTPRouteWrapper{&gatewayv1.HTTPRoute{
+					ObjectMeta: metav1.ObjectMeta{Name: "route1", Namespace: "default"},
+					Spec: gatewayv1.HTTPRouteSpec{
+						CommonRouteSpec: gatewayv1.CommonRouteSpec{
+							ParentRefs: []gatewayv1.ParentReference{{Name: "other-gateway"}},
+						},
+					},
+				}},
+			},
+			expectedCount: 0,
+		},
+		{
+			name: "handles multiple routes with different parent refs",
+			obj: &gatewayv1.Gateway{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-gw", Namespace: "default"},
+				Spec: gatewayv1.GatewaySpec{
+					GatewayClassName: "cloudflare-tunnel",
+				},
+			},
+			gatewayClassName: "cloudflare-tunnel",
+			routes: []Route{
+				HTTPRouteWrapper{&gatewayv1.HTTPRoute{
+					ObjectMeta: metav1.ObjectMeta{Name: "route1", Namespace: "default"},
+					Spec: gatewayv1.HTTPRouteSpec{
+						CommonRouteSpec: gatewayv1.CommonRouteSpec{
+							ParentRefs: []gatewayv1.ParentReference{{Name: "test-gw"}},
+						},
+					},
+				}},
+				HTTPRouteWrapper{&gatewayv1.HTTPRoute{
+					ObjectMeta: metav1.ObjectMeta{Name: "route2", Namespace: "default"},
+					Spec: gatewayv1.HTTPRouteSpec{
+						CommonRouteSpec: gatewayv1.CommonRouteSpec{
+							ParentRefs: []gatewayv1.ParentReference{{Name: "other-gw"}},
+						},
+					},
+				}},
+				GRPCRouteWrapper{&gatewayv1.GRPCRoute{
+					ObjectMeta: metav1.ObjectMeta{Name: "grpc-route", Namespace: "app"},
+					Spec: gatewayv1.GRPCRouteSpec{
+						CommonRouteSpec: gatewayv1.CommonRouteSpec{
+							ParentRefs: []gatewayv1.ParentReference{{Name: "test-gw"}},
+						},
+					},
+				}},
+			},
+			expectedCount:  2,
+			expectedRoutes: []string{"default/route1", "app/grpc-route"},
+		},
+		{
+			name: "returns empty for empty routes slice",
+			obj: &gatewayv1.Gateway{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-gw"},
+				Spec:       gatewayv1.GatewaySpec{GatewayClassName: "cloudflare-tunnel"},
+			},
+			gatewayClassName: "cloudflare-tunnel",
+			routes:           []Route{},
+			expectedCount:    0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			result := FindRoutesForGateway(tt.obj, tt.gatewayClassName, tt.routes)
+
+			assert.Len(t, result, tt.expectedCount)
+
+			for i, expected := range tt.expectedRoutes {
+				assert.Equal(t, expected, result[i].NamespacedName.String())
+			}
+		})
+	}
+}
+
+func TestFilterAcceptedRoutes(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name             string
+		gatewayClassName string
+		gateway          *gatewayv1.Gateway
+		routes           []Route
+		expectedCount    int
+		expectedRoutes   []string
+	}{
+		{
+			name:             "returns empty for empty routes slice",
+			gatewayClassName: "cloudflare-tunnel",
+			gateway: &gatewayv1.Gateway{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-gw", Namespace: "default"},
+				Spec: gatewayv1.GatewaySpec{
+					GatewayClassName: "cloudflare-tunnel",
+					Listeners:        []gatewayv1.Listener{{Name: "http", Port: 80, Protocol: gatewayv1.HTTPProtocolType}},
+				},
+			},
+			routes:        []Route{},
+			expectedCount: 0,
+		},
+		{
+			name:             "returns only accepted routes",
+			gatewayClassName: "cloudflare-tunnel",
+			gateway: &gatewayv1.Gateway{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-gw", Namespace: "default"},
+				Spec: gatewayv1.GatewaySpec{
+					GatewayClassName: "cloudflare-tunnel",
+					Listeners:        []gatewayv1.Listener{{Name: "http", Port: 80, Protocol: gatewayv1.HTTPProtocolType}},
+				},
+			},
+			routes: []Route{
+				HTTPRouteWrapper{&gatewayv1.HTTPRoute{
+					ObjectMeta: metav1.ObjectMeta{Name: "accepted-route", Namespace: "default"},
+					Spec: gatewayv1.HTTPRouteSpec{
+						CommonRouteSpec: gatewayv1.CommonRouteSpec{
+							ParentRefs: []gatewayv1.ParentReference{{Name: "test-gw"}},
+						},
+					},
+				}},
+			},
+			expectedCount:  1,
+			expectedRoutes: []string{"default/accepted-route"},
+		},
+		{
+			name:             "filters out routes referencing non-existent gateway",
+			gatewayClassName: "cloudflare-tunnel",
+			gateway: &gatewayv1.Gateway{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-gw", Namespace: "default"},
+				Spec: gatewayv1.GatewaySpec{
+					GatewayClassName: "cloudflare-tunnel",
+					Listeners:        []gatewayv1.Listener{{Name: "http", Port: 80, Protocol: gatewayv1.HTTPProtocolType}},
+				},
+			},
+			routes: []Route{
+				HTTPRouteWrapper{&gatewayv1.HTTPRoute{
+					ObjectMeta: metav1.ObjectMeta{Name: "orphan-route", Namespace: "default"},
+					Spec: gatewayv1.HTTPRouteSpec{
+						CommonRouteSpec: gatewayv1.CommonRouteSpec{
+							ParentRefs: []gatewayv1.ParentReference{{Name: "non-existent-gw"}},
+						},
+					},
+				}},
+			},
+			expectedCount: 0,
+		},
+		{
+			name:             "handles mixed accepted and rejected routes",
+			gatewayClassName: "cloudflare-tunnel",
+			gateway: &gatewayv1.Gateway{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-gw", Namespace: "default"},
+				Spec: gatewayv1.GatewaySpec{
+					GatewayClassName: "cloudflare-tunnel",
+					Listeners: []gatewayv1.Listener{{
+						Name:     "http",
+						Port:     80,
+						Protocol: gatewayv1.HTTPProtocolType,
+						Hostname: ptr(gatewayv1.Hostname("*.example.com")),
+					}},
+				},
+			},
+			routes: []Route{
+				HTTPRouteWrapper{&gatewayv1.HTTPRoute{
+					ObjectMeta: metav1.ObjectMeta{Name: "matching-route", Namespace: "default"},
+					Spec: gatewayv1.HTTPRouteSpec{
+						Hostnames: []gatewayv1.Hostname{"app.example.com"},
+						CommonRouteSpec: gatewayv1.CommonRouteSpec{
+							ParentRefs: []gatewayv1.ParentReference{{Name: "test-gw"}},
+						},
+					},
+				}},
+				HTTPRouteWrapper{&gatewayv1.HTTPRoute{
+					ObjectMeta: metav1.ObjectMeta{Name: "mismatched-route", Namespace: "default"},
+					Spec: gatewayv1.HTTPRouteSpec{
+						Hostnames: []gatewayv1.Hostname{"other.org"},
+						CommonRouteSpec: gatewayv1.CommonRouteSpec{
+							ParentRefs: []gatewayv1.ParentReference{{Name: "test-gw"}},
+						},
+					},
+				}},
+			},
+			expectedCount:  1,
+			expectedRoutes: []string{"default/matching-route"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			scheme := runtime.NewScheme()
+			require.NoError(t, gatewayv1.AddToScheme(scheme))
+			require.NoError(t, corev1.AddToScheme(scheme))
+
+			builder := fake.NewClientBuilder().WithScheme(scheme)
+			if tt.gateway != nil {
+				builder = builder.WithObjects(tt.gateway)
+			}
+
+			fakeClient := builder.Build()
+			validator := routebinding.NewValidator(fakeClient)
+
+			result := FilterAcceptedRoutes(
+				context.Background(),
+				fakeClient,
+				validator,
+				tt.gatewayClassName,
+				tt.routes,
+			)
+
+			assert.Len(t, result, tt.expectedCount)
+
+			for i, expected := range tt.expectedRoutes {
+				assert.Equal(t, expected, result[i].NamespacedName.String())
+			}
+		})
+	}
+}

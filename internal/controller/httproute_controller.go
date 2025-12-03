@@ -371,7 +371,7 @@ func (r *HTTPRouteReconciler) findRoutesForReferenceGrant(
 	}
 
 	// Collect routes managed by our Gateway as Route
-	var routes []Route
+	routes := make([]Route, 0, len(routeList.Items))
 
 	for i := range routeList.Items {
 		route := &routeList.Items[i]
