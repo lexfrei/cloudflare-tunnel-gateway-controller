@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Redirecting...</title>
+  <script>
+    // Redirect non-versioned paths to /latest/
+    var path = window.location.pathname;
+    var defined = ['latest', 'dev', '0.8.0', '0.9.0', '0.9.1', '0.9.2', '1.0.0'];
+    var firstSegment = path.split('/').filter(Boolean)[0];
+
+    // If path doesn't start with a known version, redirect to /latest/
+    if (firstSegment && defined.indexOf(firstSegment) === -1) {
+      window.location.replace('/latest' + path + window.location.search + window.location.hash);
+    }
+  </script>
+</head>
+<body>
+  <p>Redirecting...</p>
+  <p>If not redirected, go to <a href="/latest/">documentation</a>.</p>
+</body>
+</html>
