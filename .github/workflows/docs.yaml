@@ -66,13 +66,14 @@ jobs:
       - name: Determine version and alias
         id: version
         run: |
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            echo "version=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
-            echo "alias=${{ github.event.inputs.alias }}" >> "$GITHUB_OUTPUT"
-          elif [[ "${{ github.ref_type }}" == "tag" ]]; then
+          # Check if running from a tag (works for both push and workflow_dispatch)
+          if [[ "$GITHUB_REF_NAME" == v* ]]; then
             VERSION="${GITHUB_REF_NAME#v}"
             echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
             echo "alias=latest" >> "$GITHUB_OUTPUT"
+          elif [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ github.event.inputs.version }}" != "dev" ]]; then
+            echo "version=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
+            echo "alias=${{ github.event.inputs.alias }}" >> "$GITHUB_OUTPUT"
           else
             echo "version=dev" >> "$GITHUB_OUTPUT"
             echo "alias=" >> "$GITHUB_OUTPUT"
@@ -97,6 +98,8 @@ jobs:
           mkdir -p artifact
           git -C gh-pages-branch checkout -- . 2>/dev/null || true
           cp -r gh-pages-branch/* artifact/ 2>/dev/null || cp -r site/* artifact/
+          # Copy 404.html to root for GitHub Pages fallback redirects
+          cp docs/404.html artifact/404.html
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v4
