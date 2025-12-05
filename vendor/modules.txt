@@ -88,7 +88,7 @@ github.com/cloudflare/circl/math/mlsbset
 github.com/cloudflare/circl/sign
 github.com/cloudflare/circl/sign/ed25519
 github.com/cloudflare/circl/sign/ed448
-# github.com/cloudflare/cloudflare-go/v6 v6.3.0
+# github.com/cloudflare/cloudflare-go/v6 v6.4.0
 ## explicit; go 1.22
 github.com/cloudflare/cloudflare-go/v6
 github.com/cloudflare/cloudflare-go/v6/abuse_reports
@@ -167,6 +167,7 @@ github.com/cloudflare/cloudflare-go/v6/pages
 github.com/cloudflare/cloudflare-go/v6/pipelines
 github.com/cloudflare/cloudflare-go/v6/queues
 github.com/cloudflare/cloudflare-go/v6/r2
+github.com/cloudflare/cloudflare-go/v6/r2_data_catalog
 github.com/cloudflare/cloudflare-go/v6/radar
 github.com/cloudflare/cloudflare-go/v6/rate_limits
 github.com/cloudflare/cloudflare-go/v6/realtime_kit

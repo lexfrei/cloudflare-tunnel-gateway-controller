@@ -4,7 +4,7 @@ go 1.25.4
 
 require (
 	github.com/Masterminds/semver/v3 v3.4.0
-	github.com/cloudflare/cloudflare-go/v6 v6.3.0
+	github.com/cloudflare/cloudflare-go/v6 v6.4.0
 	github.com/cockroachdb/errors v1.12.0
 	github.com/go-logr/logr v1.4.3
 	github.com/google/uuid v1.6.0
