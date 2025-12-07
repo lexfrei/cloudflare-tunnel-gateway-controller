@@ -13,7 +13,7 @@ spec:
     - Ingress
     - Egress
   ingress:
-    # Allow metrics and health checks from monitoring namespace
+    # Allow metrics and health checks
     - {{- if .Values.networkPolicy.ingress.from }}
       from:
         {{- toYaml .Values.networkPolicy.ingress.from | nindent 8 }}

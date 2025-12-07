@@ -62,6 +62,11 @@ func parseResolvConf(r io.Reader) (string, bool) {
 		}
 	}
 
+	// Check for scanner errors (e.g., read errors)
+	if scanner.Err() != nil {
+		return "", false
+	}
+
 	return "", false
 }
 

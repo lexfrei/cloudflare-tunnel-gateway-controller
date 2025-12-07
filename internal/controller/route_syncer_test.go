@@ -231,7 +231,7 @@ func TestRouteSyncer_GetRelevantHTTPRoutes(t *testing.T) {
 			t.Parallel()
 
 			scheme := runtime.NewScheme()
-			require.NoError(t, gatewayv1.AddToScheme(scheme))
+			require.NoError(t, gatewayv1.Install(scheme))
 			require.NoError(t, v1alpha1.AddToScheme(scheme))
 
 			builder := fake.NewClientBuilder().WithScheme(scheme)
@@ -345,7 +345,7 @@ func TestRouteSyncer_GetRelevantGRPCRoutes(t *testing.T) {
 			t.Parallel()
 
 			scheme := runtime.NewScheme()
-			require.NoError(t, gatewayv1.AddToScheme(scheme))
+			require.NoError(t, gatewayv1.Install(scheme))
 			require.NoError(t, v1alpha1.AddToScheme(scheme))
 
 			builder := fake.NewClientBuilder().WithScheme(scheme)
@@ -539,7 +539,7 @@ func TestNewRouteSyncer(t *testing.T) {
 	t.Parallel()
 
 	scheme := runtime.NewScheme()
-	require.NoError(t, gatewayv1.AddToScheme(scheme))
+	require.NoError(t, gatewayv1.Install(scheme))
 
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
 	resolver := config.NewResolver(fakeClient, "default", metrics.NewNoopCollector())

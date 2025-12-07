@@ -259,7 +259,7 @@ func (b *Builder) buildRouteEntries(ctx context.Context, route *gatewayv1.HTTPRo
 	return entries, failedRefs
 }
 
-func (b *Builder) extractPath(namespace, routeName string, pathMatch *gatewayv1.HTTPPathMatch) (path string, priority int) {
+func (b *Builder) extractPath(namespace, routeName string, pathMatch *gatewayv1.HTTPPathMatch) (string, int) {
 	if pathMatch == nil {
 		return "", 0
 	}
@@ -269,7 +269,7 @@ func (b *Builder) extractPath(namespace, routeName string, pathMatch *gatewayv1.
 		pathType = *pathMatch.Type
 	}
 
-	path = "/"
+	path := "/"
 	if pathMatch.Value != nil {
 		path = *pathMatch.Value
 	}

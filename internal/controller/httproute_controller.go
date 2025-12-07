@@ -80,7 +80,6 @@ type HTTPRouteReconciler struct {
 	startupComplete atomic.Bool
 }
 
-//nolint:noinlineerr // inline error handling for controller pattern
 func (r *HTTPRouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	// Wait for startup sync to complete before processing reconcile events
 	// to prevent race conditions with Cloudflare API updates
@@ -112,13 +111,14 @@ func (r *HTTPRouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	return r.syncAndUpdateStatus(ctx)
 }
 
-//nolint:noinlineerr,funcorder // inline error handling for controller pattern; placed near Reconcile for readability
 func (r *HTTPRouteReconciler) syncAndUpdateStatus(ctx context.Context) (ctrl.Result, error) {
 	logger := logging.FromContext(ctx)
 
 	result, syncResult, syncErr := r.RouteSyncer.SyncAllRoutes(ctx)
 
 	// Update status for all HTTP routes with per-parent binding results
+	var statusUpdateErr error
+
 	if syncResult != nil {
 		for i := range syncResult.HTTPRoutes {
 			route := &syncResult.HTTPRoutes[i]
@@ -136,6 +136,10 @@ func (r *HTTPRouteReconciler) syncAndUpdateStatus(ctx context.Context) (ctrl.Res
 
 			if err := r.updateRouteStatus(ctx, route, bindingInfo, routeFailedRefs, syncErr); err != nil {
 				logger.Error("failed to update httproute status", "error", err)
+				// Keep first error to return for requeue with backoff
+				if statusUpdateErr == nil {
+					statusUpdateErr = err
+				}
 			}
 		}
 	}
@@ -145,15 +149,19 @@ func (r *HTTPRouteReconciler) syncAndUpdateStatus(ctx context.Context) (ctrl.Res
 		return result, nil
 	}
 
+	// Return error if status updates failed - controller-runtime will requeue with backoff
+	if statusUpdateErr != nil {
+		return ctrl.Result{}, statusUpdateErr
+	}
+
 	return result, nil
 }
 
-//nolint:funcorder // private helper method
 func (r *HTTPRouteReconciler) isRouteForOurGateway(ctx context.Context, route *gatewayv1.HTTPRoute) bool {
 	return IsRouteAcceptedByGateway(ctx, r.Client, r.bindingValidator, r.GatewayClassName, HTTPRouteWrapper{route})
 }
 
-//nolint:funcorder,funlen,noinlineerr,gocognit,dupl // private helper method, status update logic; dupl with GRPCRoute
+//nolint:funlen,gocognit,dupl // status update logic; dupl with GRPCRoute
 func (r *HTTPRouteReconciler) updateRouteStatus(
 	ctx context.Context,
 	route *gatewayv1.HTTPRoute,
@@ -212,7 +220,7 @@ func (r *HTTPRouteReconciler) updateRouteStatus(
 			// Check if there are any failed backend refs
 			resolvedRefsStatus := metav1.ConditionTrue
 			resolvedRefsReason := string(gatewayv1.RouteReasonResolvedRefs)
-			resolvedRefsMessage := resolvedRefsMessage
+			refsMessage := resolvedRefsMessage // avoid shadowing const
 
 			if len(failedRefs) > 0 {
 				resolvedRefsStatus = metav1.ConditionFalse
@@ -231,14 +239,17 @@ func (r *HTTPRouteReconciler) updateRouteStatus(
 					msgBuilder.WriteString(failedRef.BackendNS + "/" + failedRef.BackendName)
 				}
 
-				resolvedRefsMessage = msgBuilder.String()
+				refsMessage = msgBuilder.String()
 			}
+
+			// Create copy to avoid pointer to loop variable
+			parentNS := gatewayv1.Namespace(namespace)
 
 			parentStatus := gatewayv1.RouteParentStatus{
 				ParentRef: gatewayv1.ParentReference{
 					Group:       ref.Group,
 					Kind:        ref.Kind,
-					Namespace:   (*gatewayv1.Namespace)(&namespace),
+					Namespace:   &parentNS,
 					Name:        ref.Name,
 					SectionName: ref.SectionName,
 				},
@@ -258,7 +269,7 @@ func (r *HTTPRouteReconciler) updateRouteStatus(
 						ObservedGeneration: freshRoute.Generation,
 						LastTransitionTime: now,
 						Reason:             resolvedRefsReason,
-						Message:            resolvedRefsMessage,
+						Message:            refsMessage,
 					},
 				},
 			}
@@ -345,7 +356,6 @@ func (r *HTTPRouteReconciler) Start(ctx context.Context) error {
 	return nil
 }
 
-//nolint:noinlineerr // inline error handling for controller pattern
 func (r *HTTPRouteReconciler) findRoutesForGateway(
 	ctx context.Context,
 	obj client.Object,

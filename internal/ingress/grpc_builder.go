@@ -200,7 +200,7 @@ func (b *GRPCBuilder) buildRouteEntries(ctx context.Context, route *gatewayv1.GR
 // Returns:
 //   - path: the HTTP path (e.g., "/mypackage.MyService/GetUser")
 //   - priority: 1 for exact match (service+method), 0 for prefix match (service only or none)
-func (b *GRPCBuilder) extractGRPCPath(methodMatch *gatewayv1.GRPCMethodMatch) (path string, priority int) {
+func (b *GRPCBuilder) extractGRPCPath(methodMatch *gatewayv1.GRPCMethodMatch) (string, int) {
 	if methodMatch == nil {
 		return "", 0
 	}

@@ -13,7 +13,12 @@ type Rule struct {
 }
 
 // RuleFromUpdate converts an update params ingress rule to a Rule for comparison.
+// Returns empty Rule if r is nil.
 func RuleFromUpdate(r *zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress) Rule {
+	if r == nil {
+		return Rule{}
+	}
+
 	return Rule{
 		Hostname: r.Hostname.Value,
 		Path:     r.Path.Value,
@@ -22,7 +27,12 @@ func RuleFromUpdate(r *zero_trust.TunnelCloudflaredConfigurationUpdateParamsConf
 }
 
 // RuleFromGet converts a get response ingress rule to a Rule for comparison.
+// Returns empty Rule if r is nil.
 func RuleFromGet(r *zero_trust.TunnelCloudflaredConfigurationGetResponseConfigIngress) Rule {
+	if r == nil {
+		return Rule{}
+	}
+
 	return Rule{
 		Hostname: r.Hostname,
 		Path:     r.Path,
@@ -48,7 +58,7 @@ func IsCatchAll(r Rule) bool {
 func DiffRules(
 	current []zero_trust.TunnelCloudflaredConfigurationGetResponseConfigIngress,
 	desired []zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress,
-) (toAdd []zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress, toRemove []Rule) {
+) ([]zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress, []Rule) {
 	currentRules := make([]Rule, 0, len(current))
 
 	for idx := range current {
@@ -70,6 +80,8 @@ func DiffRules(
 	}
 
 	// Find rules to add (in desired but not in current)
+	var toAdd []zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress
+
 	for idx, desiredRule := range desiredRules {
 		found := false
 
@@ -87,6 +99,8 @@ func DiffRules(
 	}
 
 	// Find rules to remove (in current but not in desired)
+	var toRemove []Rule
+
 	for _, currentRule := range currentRules {
 		found := false
 

@@ -139,6 +139,15 @@ func (m *Manager) LoadChart(_ context.Context, chartRef, version string) (chart.
 	chartName := extractChartName(chartRef)
 	chartPath := filepath.Join(os.TempDir(), chartName+"-"+version+".tgz")
 
+	// Clean up temporary chart file after loading (or on error).
+	// The chart is loaded into memory, so the file is no longer needed.
+	defer func() {
+		removeErr := os.Remove(chartPath)
+		if removeErr != nil && !os.IsNotExist(removeErr) {
+			m.logger.Warn("failed to remove temp chart file", "path", chartPath, "error", removeErr)
+		}
+	}()
+
 	loadedChart, err := loader.Load(chartPath)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to load chart")

@@ -511,8 +511,8 @@ func setupScheme(t *testing.T) *runtime.Scheme {
 	scheme := runtime.NewScheme()
 
 	require.NoError(t, corev1.AddToScheme(scheme))
-	require.NoError(t, gatewayv1.AddToScheme(scheme))
-	require.NoError(t, gatewayv1beta1.AddToScheme(scheme))
+	require.NoError(t, gatewayv1.Install(scheme))
+	require.NoError(t, gatewayv1beta1.Install(scheme))
 
 	return scheme
 }

@@ -429,8 +429,7 @@ func newHTTPBackendRefWithWeight(name string, weight *int32, port *int32) gatewa
 		},
 	}
 	if port != nil {
-		portNum := gatewayv1.PortNumber(*port)
-		ref.BackendRef.Port = &portNum
+		ref.Port = port
 	}
 
 	return ref

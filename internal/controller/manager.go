@@ -64,7 +64,7 @@ type Config struct {
 //  5. Optionally initializes Helm manager for cloudflared deployment
 //  6. Starts the manager and blocks until shutdown
 //
-//nolint:funlen,noinlineerr // controller setup requires multiple steps
+//nolint:funlen // controller setup requires multiple steps
 func Run(ctx context.Context, cfg *Config) error {
 	logger := log.FromContext(ctx).WithName("manager")
 	logger.Info("initializing controller manager")

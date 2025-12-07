@@ -305,7 +305,7 @@ func TestManager_ConcurrentLoadChart(t *testing.T) {
 	results := make(chan chart.Charter, concurrency)
 	errors := make(chan error, concurrency)
 
-	for i := 0; i < concurrency; i++ {
+	for range concurrency {
 		go func() {
 			loadedChart, loadErr := manager.LoadChart(ctx, DefaultChartRef, version)
 			if loadErr != nil {
@@ -317,7 +317,7 @@ func TestManager_ConcurrentLoadChart(t *testing.T) {
 	}
 
 	var charts []chart.Charter
-	for i := 0; i < concurrency; i++ {
+	for range concurrency {
 		select {
 		case ch := <-results:
 			charts = append(charts, ch)

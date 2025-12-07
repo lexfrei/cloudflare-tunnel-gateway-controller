@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/cloudflare/cloudflare-go/v6"
@@ -39,6 +40,11 @@ type RouteSyncer struct {
 	httpBuilder      *ingress.Builder
 	grpcBuilder      *ingress.GRPCBuilder
 	bindingValidator *routebinding.Validator
+
+	// syncMu protects concurrent calls to SyncAllRoutes.
+	// Both HTTPRouteReconciler and GRPCRouteReconciler may call SyncAllRoutes
+	// concurrently, and this mutex ensures serialized access to Cloudflare API.
+	syncMu sync.Mutex
 }
 
 // NewRouteSyncer creates a new RouteSyncer.
@@ -93,6 +99,11 @@ type SyncResult struct {
 //
 //nolint:funlen,wrapcheck // complex sync logic requires length; Cloudflare API errors are intentionally unwrapped
 func (s *RouteSyncer) SyncAllRoutes(ctx context.Context) (ctrl.Result, *SyncResult, error) {
+	// Serialize concurrent sync calls to prevent race conditions when
+	// both HTTPRouteReconciler and GRPCRouteReconciler trigger syncs.
+	s.syncMu.Lock()
+	defer s.syncMu.Unlock()
+
 	startTime := time.Now()
 
 	// Prefer context logger (with reconcile ID) over struct logger

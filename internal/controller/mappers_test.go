@@ -662,7 +662,7 @@ func TestFindRoutesForReferenceGrant(t *testing.T) {
 			assert.Len(t, result, tt.expectedCount)
 
 			for i, expected := range tt.expectedRoutes {
-				assert.Equal(t, expected, result[i].NamespacedName.String())
+				assert.Equal(t, expected, result[i].String())
 			}
 		})
 	}
@@ -1012,7 +1012,7 @@ func TestIsRouteAcceptedByGateway(t *testing.T) {
 			t.Parallel()
 
 			scheme := runtime.NewScheme()
-			require.NoError(t, gatewayv1.AddToScheme(scheme))
+			require.NoError(t, gatewayv1.Install(scheme))
 			require.NoError(t, corev1.AddToScheme(scheme))
 
 			builder := fake.NewClientBuilder().WithScheme(scheme)
@@ -1183,7 +1183,7 @@ func TestFindRoutesForGateway(t *testing.T) {
 			assert.Len(t, result, tt.expectedCount)
 
 			for i, expected := range tt.expectedRoutes {
-				assert.Equal(t, expected, result[i].NamespacedName.String())
+				assert.Equal(t, expected, result[i].String())
 			}
 		})
 	}
@@ -1303,7 +1303,7 @@ func TestFilterAcceptedRoutes(t *testing.T) {
 			t.Parallel()
 
 			scheme := runtime.NewScheme()
-			require.NoError(t, gatewayv1.AddToScheme(scheme))
+			require.NoError(t, gatewayv1.Install(scheme))
 			require.NoError(t, corev1.AddToScheme(scheme))
 
 			builder := fake.NewClientBuilder().WithScheme(scheme)
@@ -1325,7 +1325,7 @@ func TestFilterAcceptedRoutes(t *testing.T) {
 			assert.Len(t, result, tt.expectedCount)
 
 			for i, expected := range tt.expectedRoutes {
-				assert.Equal(t, expected, result[i].NamespacedName.String())
+				assert.Equal(t, expected, result[i].String())
 			}
 		})
 	}

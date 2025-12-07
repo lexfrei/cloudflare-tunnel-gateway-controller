@@ -124,7 +124,7 @@ func (r *GatewayClassConfigReconciler) validateConfig(
 func (r *GatewayClassConfigReconciler) validateCredentialsSecret(
 	ctx context.Context,
 	config *v1alpha1.GatewayClassConfig,
-) (resolved bool, errs []string) {
+) (bool, []string) {
 	credRef := config.Spec.CloudflareCredentialsSecretRef
 
 	credNamespace := credRef.Namespace
@@ -136,6 +136,7 @@ func (r *GatewayClassConfigReconciler) validateCredentialsSecret(
 
 	credErr := r.Get(ctx, types.NamespacedName{Name: credRef.Name, Namespace: credNamespace}, credSecret)
 	if credErr != nil {
+		var errs []string
 		if apierrors.IsNotFound(credErr) {
 			errs = append(errs, fmt.Sprintf("credentials secret '%s' not found in namespace '%s'",
 				credRef.Name, credNamespace))
@@ -149,9 +150,7 @@ func (r *GatewayClassConfigReconciler) validateCredentialsSecret(
 	// Check for required key
 	apiTokenKey := credRef.GetAPITokenKey()
 	if _, ok := credSecret.Data[apiTokenKey]; !ok {
-		errs = append(errs, fmt.Sprintf("credentials secret missing key '%s'", apiTokenKey))
-
-		return false, errs
+		return false, []string{fmt.Sprintf("credentials secret missing key '%s'", apiTokenKey)}
 	}
 
 	return true, nil
@@ -160,11 +159,9 @@ func (r *GatewayClassConfigReconciler) validateCredentialsSecret(
 func (r *GatewayClassConfigReconciler) validateTunnelTokenSecret(
 	ctx context.Context,
 	config *v1alpha1.GatewayClassConfig,
-) (resolved bool, errs []string) {
+) (bool, []string) {
 	if config.Spec.TunnelTokenSecretRef == nil {
-		errs = append(errs, "tunnelTokenSecretRef is required when cloudflared.enabled is true")
-
-		return false, errs
+		return false, []string{"tunnelTokenSecretRef is required when cloudflared.enabled is true"}
 	}
 
 	tokenRef := config.Spec.TunnelTokenSecretRef
@@ -178,6 +175,7 @@ func (r *GatewayClassConfigReconciler) validateTunnelTokenSecret(
 
 	tokenErr := r.Get(ctx, types.NamespacedName{Name: tokenRef.Name, Namespace: tokenNamespace}, tokenSecret)
 	if tokenErr != nil {
+		var errs []string
 		if apierrors.IsNotFound(tokenErr) {
 			errs = append(errs, fmt.Sprintf("tunnel token secret '%s' not found in namespace '%s'",
 				tokenRef.Name, tokenNamespace))
@@ -190,9 +188,7 @@ func (r *GatewayClassConfigReconciler) validateTunnelTokenSecret(
 
 	tokenKey := tokenRef.GetTunnelTokenKey()
 	if _, ok := tokenSecret.Data[tokenKey]; !ok {
-		errs = append(errs, fmt.Sprintf("tunnel token secret missing key '%s'", tokenKey))
-
-		return false, errs
+		return false, []string{fmt.Sprintf("tunnel token secret missing key '%s'", tokenKey)}
 	}
 
 	return true, nil
