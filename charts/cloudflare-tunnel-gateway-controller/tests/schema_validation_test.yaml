@@ -32,63 +32,39 @@ tests:
           path: spec.tunnelID
           value: "550e8400-e29b-41d4-a716-446655440000"
 
-  - it: should accept alphanumeric tunnelID with hyphens
+  # tunnelID must be a valid UUID matching the CRD pattern:
+  # ^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$
+  - it: should accept lowercase UUID tunnelID
     set:
       gatewayClassConfig:
         create: true
-        tunnelID: "abc-123-def-456"
+        tunnelID: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
         cloudflareCredentialsSecretRef:
           name: "cf-credentials"
     asserts:
       - template: gatewayclassconfig.yaml
         equal:
           path: spec.tunnelID
-          value: "abc-123-def-456"
+          value: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
 
-  - it: should accept tunnelID with mixed case
+  - it: should accept another valid UUID tunnelID
     set:
       gatewayClassConfig:
         create: true
-        tunnelID: "AbC-123-DeF-456"
+        tunnelID: "12345678-1234-1234-1234-123456789012"
         cloudflareCredentialsSecretRef:
           name: "cf-credentials"
     asserts:
       - template: gatewayclassconfig.yaml
         equal:
           path: spec.tunnelID
-          value: "AbC-123-DeF-456"
-
-  - it: should accept numeric-only tunnel IDs
-    set:
-      gatewayClassConfig:
-        create: true
-        tunnelID: "1234567890"
-        cloudflareCredentialsSecretRef:
-          name: "cf-credentials"
-    asserts:
-      - template: gatewayclassconfig.yaml
-        equal:
-          path: spec.tunnelID
-          value: "1234567890"
-
-  - it: should accept single character tunnel ID
-    set:
-      gatewayClassConfig:
-        create: true
-        tunnelID: "a"
-        cloudflareCredentialsSecretRef:
-          name: "cf-credentials"
-    asserts:
-      - template: gatewayclassconfig.yaml
-        equal:
-          path: spec.tunnelID
-          value: "a"
+          value: "12345678-1234-1234-1234-123456789012"
 
   - it: should set cloudflared replicas
     set:
       gatewayClassConfig:
         create: true
-        tunnelID: "test-tunnel"
+        tunnelID: "00000000-0000-0000-0000-000000000001"
         cloudflareCredentialsSecretRef:
           name: "cf-credentials"
         cloudflared:
@@ -103,7 +79,7 @@ tests:
     set:
       gatewayClassConfig:
         create: true
-        tunnelID: "test-tunnel"
+        tunnelID: "00000000-0000-0000-0000-000000000002"
         cloudflareCredentialsSecretRef:
           name: "cf-credentials"
         cloudflared:
@@ -118,7 +94,7 @@ tests:
     set:
       gatewayClassConfig:
         create: true
-        tunnelID: "test-tunnel"
+        tunnelID: "00000000-0000-0000-0000-000000000003"
         cloudflareCredentialsSecretRef:
           name: "cf-credentials"
         cloudflared:

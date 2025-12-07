@@ -13,16 +13,20 @@ spec:
     - Ingress
     - Egress
   ingress:
-    # Allow metrics and health checks from monitoring namespace
-    - {{- if .Values.networkPolicy.ingress.from }}
-      from:
+    {{- if .Values.networkPolicy.ingress.from }}
+    # Allow metrics and health checks from specified sources
+    - from:
         {{- toYaml .Values.networkPolicy.ingress.from | nindent 8 }}
-      {{- end }}
       ports:
         - protocol: TCP
           port: {{ .Values.service.metricsPort }}
         - protocol: TCP
           port: {{ .Values.service.healthPort }}
+    {{- else }}
+    # No ingress sources specified - deny all ingress traffic by default.
+    # To allow ingress, configure networkPolicy.ingress.from in values.
+    []
+    {{- end }}
   egress:
     # DNS
     - ports:
