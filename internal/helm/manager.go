@@ -206,6 +206,7 @@ func (m *Manager) Upgrade(
 	upgrade.WaitStrategy = kube.StatusWatcherStrategy
 	upgrade.Timeout = installTimeout
 	upgrade.ReuseValues = false
+	upgrade.MaxHistory = 1
 
 	rel, err := upgrade.RunWithContext(ctx, releaseName, loadedChart, values)
 	if err != nil {
