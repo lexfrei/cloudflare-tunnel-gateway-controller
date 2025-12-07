@@ -13,6 +13,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -276,95 +277,106 @@ func (r *GatewayReconciler) buildCloudflaredValues(cfg *config.ResolvedConfig) m
 	return cloudflaredValues.BuildValues()
 }
 
-//nolint:funlen // status update logic
+//nolint:funlen // status update logic with retry
 func (r *GatewayReconciler) updateStatus(
 	ctx context.Context,
 	gateway *gatewayv1.Gateway,
 	cfg *config.ResolvedConfig,
 ) error {
-	now := metav1.Now()
+	gatewayKey := types.NamespacedName{Name: gateway.Name, Namespace: gateway.Namespace}
 
-	attachedRoutes := r.countAttachedRoutes(ctx, gateway)
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		// Get fresh copy of the gateway to avoid conflict errors
+		var freshGateway gatewayv1.Gateway
+		if err := r.Get(ctx, gatewayKey, &freshGateway); err != nil {
+			return errors.Wrap(err, "failed to get fresh gateway")
+		}
 
-	gateway.Status.Addresses = []gatewayv1.GatewayStatusAddress{
-		{
-			Type:  ptr(gatewayv1.HostnameAddressType),
-			Value: cfg.TunnelID + cfArgotunnelSuffix,
-		},
-	}
+		now := metav1.Now()
 
-	gateway.Status.Conditions = []metav1.Condition{
-		{
-			Type:               string(gatewayv1.GatewayConditionAccepted),
-			Status:             metav1.ConditionTrue,
-			ObservedGeneration: gateway.Generation,
-			LastTransitionTime: now,
-			Reason:             string(gatewayv1.GatewayReasonAccepted),
-			Message:            "Gateway accepted by cloudflare-tunnel controller",
-		},
-		{
-			Type:               string(gatewayv1.GatewayConditionProgrammed),
-			Status:             metav1.ConditionTrue,
-			ObservedGeneration: gateway.Generation,
-			LastTransitionTime: now,
-			Reason:             string(gatewayv1.GatewayReasonProgrammed),
-			Message:            "Gateway programmed in Cloudflare Tunnel",
-		},
-	}
+		attachedRoutes := r.countAttachedRoutes(ctx, &freshGateway)
 
-	listenerStatuses := make([]gatewayv1.ListenerStatus, 0, len(gateway.Spec.Listeners))
-
-	for _, listener := range gateway.Spec.Listeners {
-		listenerStatuses = append(listenerStatuses, gatewayv1.ListenerStatus{
-			Name: listener.Name,
-			SupportedKinds: []gatewayv1.RouteGroupKind{
-				{
-					Group: (*gatewayv1.Group)(&gatewayv1.GroupVersion.Group),
-					Kind:  "HTTPRoute",
-				},
-				{
-					Group: (*gatewayv1.Group)(&gatewayv1.GroupVersion.Group),
-					Kind:  "GRPCRoute",
-				},
+		freshGateway.Status.Addresses = []gatewayv1.GatewayStatusAddress{
+			{
+				Type:  ptr(gatewayv1.HostnameAddressType),
+				Value: cfg.TunnelID + cfArgotunnelSuffix,
 			},
-			AttachedRoutes: attachedRoutes[listener.Name],
-			Conditions: []metav1.Condition{
-				{
-					Type:               string(gatewayv1.ListenerConditionAccepted),
-					Status:             metav1.ConditionTrue,
-					ObservedGeneration: gateway.Generation,
-					LastTransitionTime: now,
-					Reason:             string(gatewayv1.ListenerReasonAccepted),
-					Message:            "Listener accepted",
-				},
-				{
-					Type:               string(gatewayv1.ListenerConditionProgrammed),
-					Status:             metav1.ConditionTrue,
-					ObservedGeneration: gateway.Generation,
-					LastTransitionTime: now,
-					Reason:             string(gatewayv1.ListenerReasonProgrammed),
-					Message:            "Listener programmed",
-				},
-				{
-					Type:               string(gatewayv1.ListenerConditionResolvedRefs),
-					Status:             metav1.ConditionTrue,
-					ObservedGeneration: gateway.Generation,
-					LastTransitionTime: now,
-					Reason:             string(gatewayv1.ListenerReasonResolvedRefs),
-					Message:            "References resolved",
-				},
+		}
+
+		freshGateway.Status.Conditions = []metav1.Condition{
+			{
+				Type:               string(gatewayv1.GatewayConditionAccepted),
+				Status:             metav1.ConditionTrue,
+				ObservedGeneration: freshGateway.Generation,
+				LastTransitionTime: now,
+				Reason:             string(gatewayv1.GatewayReasonAccepted),
+				Message:            "Gateway accepted by cloudflare-tunnel controller",
 			},
-		})
-	}
+			{
+				Type:               string(gatewayv1.GatewayConditionProgrammed),
+				Status:             metav1.ConditionTrue,
+				ObservedGeneration: freshGateway.Generation,
+				LastTransitionTime: now,
+				Reason:             string(gatewayv1.GatewayReasonProgrammed),
+				Message:            "Gateway programmed in Cloudflare Tunnel",
+			},
+		}
 
-	gateway.Status.Listeners = listenerStatuses
+		listenerStatuses := make([]gatewayv1.ListenerStatus, 0, len(freshGateway.Spec.Listeners))
 
-	statusErr := r.Status().Update(ctx, gateway)
-	if statusErr != nil {
-		return errors.Wrap(statusErr, "failed to update gateway status")
-	}
+		for _, listener := range freshGateway.Spec.Listeners {
+			listenerStatuses = append(listenerStatuses, gatewayv1.ListenerStatus{
+				Name: listener.Name,
+				SupportedKinds: []gatewayv1.RouteGroupKind{
+					{
+						Group: (*gatewayv1.Group)(&gatewayv1.GroupVersion.Group),
+						Kind:  "HTTPRoute",
+					},
+					{
+						Group: (*gatewayv1.Group)(&gatewayv1.GroupVersion.Group),
+						Kind:  "GRPCRoute",
+					},
+				},
+				AttachedRoutes: attachedRoutes[listener.Name],
+				Conditions: []metav1.Condition{
+					{
+						Type:               string(gatewayv1.ListenerConditionAccepted),
+						Status:             metav1.ConditionTrue,
+						ObservedGeneration: freshGateway.Generation,
+						LastTransitionTime: now,
+						Reason:             string(gatewayv1.ListenerReasonAccepted),
+						Message:            "Listener accepted",
+					},
+					{
+						Type:               string(gatewayv1.ListenerConditionProgrammed),
+						Status:             metav1.ConditionTrue,
+						ObservedGeneration: freshGateway.Generation,
+						LastTransitionTime: now,
+						Reason:             string(gatewayv1.ListenerReasonProgrammed),
+						Message:            "Listener programmed",
+					},
+					{
+						Type:               string(gatewayv1.ListenerConditionResolvedRefs),
+						Status:             metav1.ConditionTrue,
+						ObservedGeneration: freshGateway.Generation,
+						LastTransitionTime: now,
+						Reason:             string(gatewayv1.ListenerReasonResolvedRefs),
+						Message:            "References resolved",
+					},
+				},
+			})
+		}
 
-	return nil
+		freshGateway.Status.Listeners = listenerStatuses
+
+		if err := r.Status().Update(ctx, &freshGateway); err != nil {
+			return errors.Wrap(err, "failed to update gateway status")
+		}
+
+		return nil
+	})
+
+	return errors.Wrap(err, "failed to update gateway status after retries")
 }
 
 func (r *GatewayReconciler) setConfigErrorStatus(
@@ -372,20 +384,36 @@ func (r *GatewayReconciler) setConfigErrorStatus(
 	gateway *gatewayv1.Gateway,
 	configErr error,
 ) error {
-	now := metav1.Now()
+	gatewayKey := types.NamespacedName{Name: gateway.Name, Namespace: gateway.Namespace}
 
-	gateway.Status.Conditions = []metav1.Condition{
-		{
-			Type:               string(gatewayv1.GatewayConditionAccepted),
-			Status:             metav1.ConditionFalse,
-			ObservedGeneration: gateway.Generation,
-			LastTransitionTime: now,
-			Reason:             "InvalidParameters",
-			Message:            "Failed to resolve GatewayClassConfig: " + configErr.Error(),
-		},
-	}
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		// Get fresh copy of the gateway to avoid conflict errors
+		var freshGateway gatewayv1.Gateway
+		if err := r.Get(ctx, gatewayKey, &freshGateway); err != nil {
+			return errors.Wrap(err, "failed to get fresh gateway")
+		}
 
-	return errors.Wrap(r.Status().Update(ctx, gateway), "failed to update gateway status")
+		now := metav1.Now()
+
+		freshGateway.Status.Conditions = []metav1.Condition{
+			{
+				Type:               string(gatewayv1.GatewayConditionAccepted),
+				Status:             metav1.ConditionFalse,
+				ObservedGeneration: freshGateway.Generation,
+				LastTransitionTime: now,
+				Reason:             "InvalidParameters",
+				Message:            "Failed to resolve GatewayClassConfig: " + configErr.Error(),
+			},
+		}
+
+		if err := r.Status().Update(ctx, &freshGateway); err != nil {
+			return errors.Wrap(err, "failed to update gateway status")
+		}
+
+		return nil
+	})
+
+	return errors.Wrap(err, "failed to update gateway status after retries")
 }
 
 //nolint:gocognit,gocyclo,cyclop,dupl,funlen // complexity due to counting two route types
