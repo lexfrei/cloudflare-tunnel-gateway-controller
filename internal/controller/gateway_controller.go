@@ -217,14 +217,14 @@ func (r *GatewayReconciler) upgradeCloudflaredIfNeeded(
 		return errors.Wrap(err, "failed to get existing release")
 	}
 
-	relAccessor, ok := rel.(release.Accessor)
-	if !ok {
-		return errors.New("failed to cast release to Accessor")
+	relAccessor, err := release.NewAccessor(rel)
+	if err != nil {
+		return errors.Wrap(err, "failed to create release accessor")
 	}
 
-	chartAccessor, ok := relAccessor.Chart().(chart.Accessor)
-	if !ok {
-		return errors.New("failed to cast chart to Accessor")
+	chartAccessor, err := chart.NewAccessor(relAccessor.Chart())
+	if err != nil {
+		return errors.Wrap(err, "failed to create chart accessor")
 	}
 
 	currentVersion := chartAccessor.MetadataAsMap()["version"]
