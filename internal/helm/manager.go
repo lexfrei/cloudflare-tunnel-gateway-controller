@@ -279,8 +279,8 @@ func (m *Manager) recordChartInfo(ctx context.Context, loadedChart chart.Charter
 	}
 
 	metadata := accessor.MetadataAsMap()
-	name, _ := metadata["name"].(string)
-	version, _ := metadata["version"].(string)
-	appVersion, _ := metadata["appVersion"].(string)
+	name, _ := metadata["Name"].(string)
+	version, _ := metadata["Version"].(string)
+	appVersion, _ := metadata["AppVersion"].(string)
 	m.metrics.RecordHelmChartInfo(ctx, name, version, appVersion)
 }
