@@ -11,6 +11,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
@@ -59,15 +60,28 @@ func (r *GatewayClassConfigReconciler) Reconcile(ctx context.Context, req ctrl.R
 
 	logger.Info("validating GatewayClassConfig", "name", config.Name)
 
-	// Validate secrets and collect conditions
-	conditions := r.validateConfig(ctx, &config)
+	// Update status with retry to handle concurrent modifications
+	configKey := req.NamespacedName
 
-	// Update status
-	config.Status.Conditions = conditions
+	err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		// Get fresh copy to avoid conflict errors
+		var freshConfig v1alpha1.GatewayClassConfig
+		if err := r.Get(ctx, configKey, &freshConfig); err != nil {
+			return errors.Wrap(err, "failed to get fresh GatewayClassConfig")
+		}
 
-	updateErr := r.Status().Update(ctx, &config)
-	if updateErr != nil {
-		return ctrl.Result{}, errors.Wrap(updateErr, "failed to update GatewayClassConfig status")
+		// Validate secrets and collect conditions
+		conditions := r.validateConfig(ctx, &freshConfig)
+		freshConfig.Status.Conditions = conditions
+
+		if err := r.Status().Update(ctx, &freshConfig); err != nil {
+			return errors.Wrap(err, "failed to update GatewayClassConfig status")
+		}
+
+		return nil
+	})
+	if err != nil {
+		return ctrl.Result{}, errors.Wrap(err, "failed to update GatewayClassConfig status after retries")
 	}
 
 	// Requeue periodically to re-validate (secrets might be created/deleted)
