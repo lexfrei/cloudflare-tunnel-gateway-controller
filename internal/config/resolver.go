@@ -1,4 +1,3 @@
-// Package config provides configuration resolution from GatewayClassConfig resources.
 package config
 
 import (

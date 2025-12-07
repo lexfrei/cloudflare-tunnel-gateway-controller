@@ -26,7 +26,7 @@ func TestRouteSyncer_CrossNamespaceRef_WithoutGrant(t *testing.T) {
 
 	scheme := runtime.NewScheme()
 	require.NoError(t, gatewayv1.Install(scheme))
-	require.NoError(t, gatewayv1beta1.AddToScheme(scheme))
+	require.NoError(t, gatewayv1beta1.Install(scheme))
 	require.NoError(t, v1alpha1.AddToScheme(scheme))
 	require.NoError(t, corev1.AddToScheme(scheme))
 
@@ -120,7 +120,7 @@ func TestReferenceGrant_Validator_Direct(t *testing.T) {
 
 	scheme := runtime.NewScheme()
 	require.NoError(t, gatewayv1.Install(scheme))
-	require.NoError(t, gatewayv1beta1.AddToScheme(scheme))
+	require.NoError(t, gatewayv1beta1.Install(scheme))
 	require.NoError(t, v1alpha1.AddToScheme(scheme))
 	require.NoError(t, corev1.AddToScheme(scheme))
 
@@ -182,7 +182,7 @@ func TestBuilder_CrossNamespaceRef_WithGrant(t *testing.T) {
 
 	scheme := runtime.NewScheme()
 	require.NoError(t, gatewayv1.Install(scheme))
-	require.NoError(t, gatewayv1beta1.AddToScheme(scheme))
+	require.NoError(t, gatewayv1beta1.Install(scheme))
 	require.NoError(t, v1alpha1.AddToScheme(scheme))
 	require.NoError(t, corev1.AddToScheme(scheme))
 
@@ -267,7 +267,7 @@ func TestRouteSyncer_GRPCRoute_CrossNamespaceRef_WithGrant(t *testing.T) {
 
 	scheme := runtime.NewScheme()
 	require.NoError(t, gatewayv1.Install(scheme))
-	require.NoError(t, gatewayv1beta1.AddToScheme(scheme))
+	require.NoError(t, gatewayv1beta1.Install(scheme))
 	require.NoError(t, v1alpha1.AddToScheme(scheme))
 	require.NoError(t, corev1.AddToScheme(scheme))
 
@@ -390,7 +390,7 @@ func TestRouteSyncer_ReferenceGrant_SpecificName(t *testing.T) {
 
 	scheme := runtime.NewScheme()
 	require.NoError(t, gatewayv1.Install(scheme))
-	require.NoError(t, gatewayv1beta1.AddToScheme(scheme))
+	require.NoError(t, gatewayv1beta1.Install(scheme))
 	require.NoError(t, v1alpha1.AddToScheme(scheme))
 	require.NoError(t, corev1.AddToScheme(scheme))
 
@@ -549,7 +549,5 @@ func strPtr(s string) *string {
 
 // portNumPtr returns a pointer to a PortNumber.
 func portNumPtr(p int32) *gatewayv1.PortNumber {
-	pn := gatewayv1.PortNumber(p)
-
-	return &pn
+	return &p
 }

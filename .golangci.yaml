@@ -2,16 +2,12 @@ version: "2"
 
 linters:
   default: all
-  enable:
-    - gosec
   disable:
     - depguard
     - exhaustruct
     - gochecknoinits
-    - nonamedreturns
     - wsl
     - lll
-    - godoclint
     - errchkjson
     - ireturn
   settings:
@@ -23,6 +19,7 @@ linters:
     gocritic:
       disabled-checks:
         - dupImport
+        - unnamedResult
       enabled-tags:
         - diagnostic
         - experimental
@@ -73,10 +70,6 @@ linters:
         - n
         - tt
         - rw
-    wsl_v5:
-      allow-first-in-block: true
-      allow-whole-block: false
-      branch-max-lines: 2
   exclusions:
     generated: lax
     presets:
@@ -104,10 +97,7 @@ linters:
           - nlreturn
           - wsl_v5
           - varnamelen
-          - staticcheck
           - unparam
-          - unconvert
-          - intrange
           - modernize
           - gosec
           - testifylint

@@ -58,7 +58,7 @@ func IsCatchAll(r Rule) bool {
 func DiffRules(
 	current []zero_trust.TunnelCloudflaredConfigurationGetResponseConfigIngress,
 	desired []zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress,
-) (toAdd []zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress, toRemove []Rule) {
+) ([]zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress, []Rule) {
 	currentRules := make([]Rule, 0, len(current))
 
 	for idx := range current {
@@ -80,6 +80,8 @@ func DiffRules(
 	}
 
 	// Find rules to add (in desired but not in current)
+	var toAdd []zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress
+
 	for idx, desiredRule := range desiredRules {
 		found := false
 
@@ -97,6 +99,8 @@ func DiffRules(
 	}
 
 	// Find rules to remove (in current but not in desired)
+	var toRemove []Rule
+
 	for _, currentRule := range currentRules {
 		found := false
 

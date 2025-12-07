@@ -25,7 +25,7 @@ func TestGRPCRouteReconciler_Reconcile_NotFound(t *testing.T) {
 	t.Parallel()
 
 	scheme := runtime.NewScheme()
-	require.NoError(t, gatewayv1.AddToScheme(scheme))
+	require.NoError(t, gatewayv1.Install(scheme))
 	require.NoError(t, corev1.AddToScheme(scheme))
 	require.NoError(t, v1alpha1.AddToScheme(scheme))
 
@@ -62,7 +62,7 @@ func TestGRPCRouteReconciler_Reconcile_WaitForStartup(t *testing.T) {
 	t.Parallel()
 
 	scheme := runtime.NewScheme()
-	require.NoError(t, gatewayv1.AddToScheme(scheme))
+	require.NoError(t, gatewayv1.Install(scheme))
 
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
@@ -92,7 +92,7 @@ func TestGRPCRouteReconciler_Reconcile_WrongGatewayClass(t *testing.T) {
 	t.Parallel()
 
 	scheme := runtime.NewScheme()
-	require.NoError(t, gatewayv1.AddToScheme(scheme))
+	require.NoError(t, gatewayv1.Install(scheme))
 	require.NoError(t, corev1.AddToScheme(scheme))
 	require.NoError(t, v1alpha1.AddToScheme(scheme))
 
@@ -558,7 +558,7 @@ func TestGRPCRouteReconciler_IsRouteForOurGateway(t *testing.T) {
 			t.Parallel()
 
 			scheme := runtime.NewScheme()
-			require.NoError(t, gatewayv1.AddToScheme(scheme))
+			require.NoError(t, gatewayv1.Install(scheme))
 			require.NoError(t, corev1.AddToScheme(scheme))
 
 			builder := fake.NewClientBuilder().WithScheme(scheme)
@@ -588,7 +588,7 @@ func TestGRPCRouteReconciler_FindRoutesForGateway(t *testing.T) {
 	t.Parallel()
 
 	scheme := runtime.NewScheme()
-	require.NoError(t, gatewayv1.AddToScheme(scheme))
+	require.NoError(t, gatewayv1.Install(scheme))
 
 	gateway := &gatewayv1.Gateway{
 		ObjectMeta: metav1.ObjectMeta{
@@ -657,7 +657,7 @@ func TestGRPCRouteReconciler_FindRoutesForGateway_WrongType(t *testing.T) {
 	t.Parallel()
 
 	scheme := runtime.NewScheme()
-	require.NoError(t, gatewayv1.AddToScheme(scheme))
+	require.NoError(t, gatewayv1.Install(scheme))
 	require.NoError(t, corev1.AddToScheme(scheme))
 
 	fakeClient := fake.NewClientBuilder().
@@ -686,7 +686,7 @@ func TestGRPCRouteReconciler_FindRoutesForGateway_WrongClass(t *testing.T) {
 	t.Parallel()
 
 	scheme := runtime.NewScheme()
-	require.NoError(t, gatewayv1.AddToScheme(scheme))
+	require.NoError(t, gatewayv1.Install(scheme))
 
 	gateway := &gatewayv1.Gateway{
 		ObjectMeta: metav1.ObjectMeta{
@@ -725,7 +725,7 @@ func TestGRPCRouteReconciler_GetAllRelevantRoutes(t *testing.T) {
 	t.Parallel()
 
 	scheme := runtime.NewScheme()
-	require.NoError(t, gatewayv1.AddToScheme(scheme))
+	require.NoError(t, gatewayv1.Install(scheme))
 
 	gateway := &gatewayv1.Gateway{
 		ObjectMeta: metav1.ObjectMeta{
@@ -793,7 +793,7 @@ func TestGRPCRouteReconciler_Start(t *testing.T) {
 	t.Parallel()
 
 	scheme := runtime.NewScheme()
-	require.NoError(t, gatewayv1.AddToScheme(scheme))
+	require.NoError(t, gatewayv1.Install(scheme))
 	require.NoError(t, corev1.AddToScheme(scheme))
 	require.NoError(t, v1alpha1.AddToScheme(scheme))
 
@@ -824,7 +824,7 @@ func TestGRPCRouteReconciler_UpdateRouteStatus_Integration(t *testing.T) {
 	t.Parallel()
 
 	scheme := runtime.NewScheme()
-	require.NoError(t, gatewayv1.AddToScheme(scheme))
+	require.NoError(t, gatewayv1.Install(scheme))
 	require.NoError(t, corev1.AddToScheme(scheme))
 	require.NoError(t, v1alpha1.AddToScheme(scheme))
 
@@ -913,7 +913,7 @@ func TestGRPCRouteReconciler_UpdateRouteStatus_NotAccepted(t *testing.T) {
 	t.Parallel()
 
 	scheme := runtime.NewScheme()
-	require.NoError(t, gatewayv1.AddToScheme(scheme))
+	require.NoError(t, gatewayv1.Install(scheme))
 	require.NoError(t, corev1.AddToScheme(scheme))
 	require.NoError(t, v1alpha1.AddToScheme(scheme))
 
@@ -1001,7 +1001,7 @@ func TestGRPCRouteReconciler_SyncAndUpdateStatus_NoConfig(t *testing.T) {
 	t.Parallel()
 
 	scheme := runtime.NewScheme()
-	require.NoError(t, gatewayv1.AddToScheme(scheme))
+	require.NoError(t, gatewayv1.Install(scheme))
 	require.NoError(t, corev1.AddToScheme(scheme))
 	require.NoError(t, v1alpha1.AddToScheme(scheme))
 
@@ -1040,7 +1040,7 @@ func TestGRPCRouteReconciler_GetAllRelevantRoutes_Empty(t *testing.T) {
 	t.Parallel()
 
 	scheme := runtime.NewScheme()
-	require.NoError(t, gatewayv1.AddToScheme(scheme))
+	require.NoError(t, gatewayv1.Install(scheme))
 
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).

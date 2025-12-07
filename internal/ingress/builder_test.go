@@ -1035,8 +1035,7 @@ func newHTTPBackendRef(name string, namespace *gatewayv1.Namespace, port *int32)
 		},
 	}
 	if port != nil {
-		portNum := gatewayv1.PortNumber(*port)
-		ref.BackendRef.Port = &portNum
+		ref.Port = port
 	}
 
 	return ref
@@ -1051,9 +1050,7 @@ func int32Ptr(i int32) *int32 {
 }
 
 func portNumPtr(p int32) *gatewayv1.PortNumber {
-	pn := gatewayv1.PortNumber(p)
-
-	return &pn
+	return &p
 }
 
 // ExternalName Service Tests (TDD Phase 1: RED)
@@ -1363,7 +1360,7 @@ func TestBuild_ExternalNameService_CrossNamespace_WithReferenceGrant(t *testing.
 
 	scheme := runtime.NewScheme()
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
-	utilruntime.Must(gatewayv1beta1.AddToScheme(scheme))
+	utilruntime.Must(gatewayv1beta1.Install(scheme))
 
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
@@ -1419,7 +1416,7 @@ func TestBuild_ExternalNameService_CrossNamespace_Denied(t *testing.T) {
 	// No ReferenceGrant - cross-namespace should be denied
 	scheme := runtime.NewScheme()
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
-	utilruntime.Must(gatewayv1beta1.AddToScheme(scheme))
+	utilruntime.Must(gatewayv1beta1.Install(scheme))
 
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).

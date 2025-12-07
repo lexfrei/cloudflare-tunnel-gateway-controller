@@ -758,8 +758,7 @@ func newGRPCBackendRef(name string, namespace *gatewayv1.Namespace, port *int32)
 		},
 	}
 	if port != nil {
-		portNum := gatewayv1.PortNumber(*port)
-		ref.BackendRef.Port = &portNum
+		ref.Port = port
 	}
 
 	return ref
