@@ -399,6 +399,7 @@ func (r *GatewayReconciler) countAttachedRoutes(
 	ctx context.Context,
 	gateway *gatewayv1.Gateway,
 ) map[gatewayv1.SectionName]int32 {
+	logger := logging.FromContext(ctx)
 	result := make(map[gatewayv1.SectionName]int32)
 
 	for _, listener := range gateway.Spec.Listeners {
@@ -411,7 +412,9 @@ func (r *GatewayReconciler) countAttachedRoutes(
 	var httpRouteList gatewayv1.HTTPRouteList
 
 	err := r.List(ctx, &httpRouteList)
-	if err == nil {
+	if err != nil {
+		logger.Error("failed to list HTTPRoutes for attached routes count", "error", err)
+	} else {
 		for i := range httpRouteList.Items {
 			route := &httpRouteList.Items[i]
 
@@ -445,7 +448,9 @@ func (r *GatewayReconciler) countAttachedRoutes(
 	var grpcRouteList gatewayv1.GRPCRouteList
 
 	err = r.List(ctx, &grpcRouteList)
-	if err == nil {
+	if err != nil {
+		logger.Error("failed to list GRPCRoutes for attached routes count", "error", err)
+	} else {
 		for i := range grpcRouteList.Items {
 			route := &grpcRouteList.Items[i]
 

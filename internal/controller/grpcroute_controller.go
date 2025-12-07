@@ -94,6 +94,8 @@ func (r *GRPCRouteReconciler) syncAndUpdateStatus(ctx context.Context) (ctrl.Res
 	result, syncResult, syncErr := r.RouteSyncer.SyncAllRoutes(ctx)
 
 	// Update status for all GRPC routes with per-parent binding results
+	var statusUpdateErr error
+
 	if syncResult != nil {
 		for i := range syncResult.GRPCRoutes {
 			route := &syncResult.GRPCRoutes[i]
@@ -111,6 +113,10 @@ func (r *GRPCRouteReconciler) syncAndUpdateStatus(ctx context.Context) (ctrl.Res
 
 			if err := r.updateRouteStatus(ctx, route, bindingInfo, routeFailedRefs, syncErr); err != nil {
 				logger.Error("failed to update grpcroute status", "error", err)
+				// Keep first error for requeue decision
+				if statusUpdateErr == nil {
+					statusUpdateErr = err
+				}
 			}
 		}
 	}
@@ -118,6 +124,11 @@ func (r *GRPCRouteReconciler) syncAndUpdateStatus(ctx context.Context) (ctrl.Res
 	if syncErr != nil && result.RequeueAfter == 0 {
 		// Don't propagate error for limit exceeded (no requeue needed)
 		return result, nil
+	}
+
+	// Requeue if status updates failed to ensure eventual consistency
+	if statusUpdateErr != nil {
+		return ctrl.Result{Requeue: true}, nil
 	}
 
 	return result, nil
@@ -186,7 +197,7 @@ func (r *GRPCRouteReconciler) updateRouteStatus(
 			// Check if there are any failed backend refs
 			resolvedRefsStatus := metav1.ConditionTrue
 			resolvedRefsReason := string(gatewayv1.RouteReasonResolvedRefs)
-			resolvedRefsMessage := resolvedRefsMessage
+			refsMessage := resolvedRefsMessage // avoid shadowing const
 
 			if len(failedRefs) > 0 {
 				resolvedRefsStatus = metav1.ConditionFalse
@@ -205,14 +216,17 @@ func (r *GRPCRouteReconciler) updateRouteStatus(
 					msgBuilder.WriteString(failedRef.BackendNS + "/" + failedRef.BackendName)
 				}
 
-				resolvedRefsMessage = msgBuilder.String()
+				refsMessage = msgBuilder.String()
 			}
+
+			// Create copy to avoid pointer to loop variable
+			parentNS := gatewayv1.Namespace(namespace)
 
 			parentStatus := gatewayv1.RouteParentStatus{
 				ParentRef: gatewayv1.ParentReference{
 					Group:       ref.Group,
 					Kind:        ref.Kind,
-					Namespace:   (*gatewayv1.Namespace)(&namespace),
+					Namespace:   &parentNS,
 					Name:        ref.Name,
 					SectionName: ref.SectionName,
 				},
@@ -232,7 +246,7 @@ func (r *GRPCRouteReconciler) updateRouteStatus(
 						ObservedGeneration: freshRoute.Generation,
 						LastTransitionTime: now,
 						Reason:             resolvedRefsReason,
-						Message:            resolvedRefsMessage,
+						Message:            refsMessage,
 					},
 				},
 			}
