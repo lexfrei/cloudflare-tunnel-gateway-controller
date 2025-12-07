@@ -418,7 +418,7 @@ github.com/jmoiron/sqlx/reflectx
 # github.com/json-iterator/go v1.1.12
 ## explicit; go 1.12
 github.com/json-iterator/go
-# github.com/klauspost/compress v1.18.1
+# github.com/klauspost/compress v1.18.2
 ## explicit; go 1.23
 # github.com/kr/pretty v0.3.1
 ## explicit; go 1.12
@@ -744,9 +744,9 @@ golang.org/x/time/rate
 # gomodules.xyz/jsonpatch/v2 v2.5.0
 ## explicit; go 1.20
 gomodules.xyz/jsonpatch/v2
-# google.golang.org/genproto/googleapis/api v0.0.0-20251022142026-3a174f9686a8
+# google.golang.org/genproto/googleapis/api v0.0.0-20251202230838-ff82c1b0f217
 ## explicit; go 1.24.0
-# google.golang.org/genproto/googleapis/rpc v0.0.0-20251124214823-79d6a2a48846
+# google.golang.org/genproto/googleapis/rpc v0.0.0-20251202230838-ff82c1b0f217
 ## explicit; go 1.24.0
 # google.golang.org/grpc v1.77.0
 ## explicit; go 1.24.0
