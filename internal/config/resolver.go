@@ -115,6 +115,11 @@ func (r *Resolver) ResolveFromGatewayClassName(
 
 //nolint:funcorder,wrapcheck,funlen // private helper, errors.Newf creates new errors
 func (r *Resolver) resolveConfig(ctx context.Context, config *v1alpha1.GatewayClassConfig) (*ResolvedConfig, error) {
+	// Validate required TunnelID
+	if config.Spec.TunnelID == "" {
+		return nil, errors.New("tunnelID is required in GatewayClassConfig")
+	}
+
 	resolved := &ResolvedConfig{
 		TunnelID:             config.Spec.TunnelID,
 		CloudflaredEnabled:   config.Spec.IsCloudflaredEnabled(),
@@ -150,6 +155,11 @@ func (r *Resolver) resolveConfig(ctx context.Context, config *v1alpha1.GatewayCl
 			credentialsSecret.Namespace, credentialsSecret.Name, apiTokenKey)
 	}
 
+	if len(apiToken) == 0 {
+		return nil, errors.Newf("secret %s/%s key %s is empty",
+			credentialsSecret.Namespace, credentialsSecret.Name, apiTokenKey)
+	}
+
 	resolved.APIToken = string(apiToken)
 
 	// Account ID priority: spec > secret > auto-detect (handled later)
@@ -177,6 +187,11 @@ func (r *Resolver) resolveConfig(ctx context.Context, config *v1alpha1.GatewayCl
 		tunnelToken, ok := tokenSecret.Data[tokenKey]
 		if !ok {
 			return nil, errors.Newf("secret %s/%s does not contain key %s",
+				tokenSecret.Namespace, tokenSecret.Name, tokenKey)
+		}
+
+		if len(tunnelToken) == 0 {
+			return nil, errors.Newf("secret %s/%s key %s is empty",
 				tokenSecret.Namespace, tokenSecret.Name, tokenKey)
 		}
 
