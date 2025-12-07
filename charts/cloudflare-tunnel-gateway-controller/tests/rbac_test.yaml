@@ -53,6 +53,27 @@ tests:
             resources: ["httproutes"]
             verbs: ["get", "list", "watch"]
 
+  - it: should have read-only permissions for GRPCRoutes and ReferenceGrants
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel-id"
+        apiToken: "test-api-token"
+    asserts:
+      - template: clusterrole.yaml
+        contains:
+          path: rules
+          content:
+            apiGroups: ["gateway.networking.k8s.io"]
+            resources: ["grpcroutes"]
+            verbs: ["get", "list", "watch"]
+      - template: clusterrole.yaml
+        contains:
+          path: rules
+          content:
+            apiGroups: ["gateway.networking.k8s.io"]
+            resources: ["referencegrants"]
+            verbs: ["get", "list", "watch"]
+
   - it: should have write permissions for Gateways (for finalizers)
     set:
       cloudflare:
@@ -92,7 +113,7 @@ tests:
           path: rules
           content:
             apiGroups: ["gateway.networking.k8s.io"]
-            resources: ["gateways/status", "httproutes/status"]
+            resources: ["gateways/status", "httproutes/status", "grpcroutes/status"]
             verbs: ["get", "update", "patch"]
 
   - it: should have full CRUD permissions for secrets (Helm SDK)
