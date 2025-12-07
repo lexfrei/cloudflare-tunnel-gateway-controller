@@ -56,7 +56,6 @@ type GRPCRouteReconciler struct {
 	startupComplete atomic.Bool
 }
 
-//nolint:noinlineerr // inline error handling for controller pattern
 func (r *GRPCRouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	// Wait for startup sync to complete before processing reconcile events
 	if !r.startupComplete.Load() {
@@ -87,7 +86,6 @@ func (r *GRPCRouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	return r.syncAndUpdateStatus(ctx)
 }
 
-//nolint:noinlineerr,funcorder // inline error handling for controller pattern
 func (r *GRPCRouteReconciler) syncAndUpdateStatus(ctx context.Context) (ctrl.Result, error) {
 	logger := logging.FromContext(ctx)
 
@@ -134,12 +132,11 @@ func (r *GRPCRouteReconciler) syncAndUpdateStatus(ctx context.Context) (ctrl.Res
 	return result, nil
 }
 
-//nolint:funcorder // private helper method
 func (r *GRPCRouteReconciler) isRouteForOurGateway(ctx context.Context, route *gatewayv1.GRPCRoute) bool {
 	return IsRouteAcceptedByGateway(ctx, r.Client, r.bindingValidator, r.GatewayClassName, GRPCRouteWrapper{route})
 }
 
-//nolint:funcorder,funlen,noinlineerr,gocognit,dupl // private helper method, status update logic; dupl with HTTPRoute
+//nolint:funlen,gocognit,dupl // status update logic; dupl with HTTPRoute
 func (r *GRPCRouteReconciler) updateRouteStatus(
 	ctx context.Context,
 	route *gatewayv1.GRPCRoute,
@@ -325,7 +322,6 @@ func (r *GRPCRouteReconciler) Start(ctx context.Context) error {
 	return nil
 }
 
-//nolint:noinlineerr // inline error handling for controller pattern
 func (r *GRPCRouteReconciler) findRoutesForGateway(
 	ctx context.Context,
 	obj client.Object,

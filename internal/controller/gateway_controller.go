@@ -70,7 +70,6 @@ type GatewayReconciler struct {
 	HelmManager *helm.Manager
 }
 
-//nolint:noinlineerr // controller reconcile logic
 func (r *GatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
@@ -127,7 +126,6 @@ func (r *GatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	return ctrl.Result{}, nil
 }
 
-//nolint:funcorder // deletion handler
 func (r *GatewayReconciler) handleDeletion(
 	ctx context.Context,
 	gateway *gatewayv1.Gateway,
@@ -159,7 +157,6 @@ func (r *GatewayReconciler) handleDeletion(
 	return ctrl.Result{}, nil
 }
 
-//nolint:funcorder // helm operations
 func (r *GatewayReconciler) ensureCloudflared(
 	ctx context.Context,
 	gateway *gatewayv1.Gateway,
@@ -203,7 +200,6 @@ func (r *GatewayReconciler) ensureCloudflared(
 	return nil
 }
 
-//nolint:funcorder // helm operations helper
 func (r *GatewayReconciler) upgradeCloudflaredIfNeeded(
 	ctx context.Context,
 	actionCfg *action.Configuration,
@@ -243,7 +239,6 @@ func (r *GatewayReconciler) upgradeCloudflaredIfNeeded(
 	return nil
 }
 
-//nolint:funcorder // helm operations
 func (r *GatewayReconciler) removeCloudflared(
 	ctx context.Context,
 	gateway *gatewayv1.Gateway,
@@ -264,7 +259,6 @@ func (r *GatewayReconciler) removeCloudflared(
 	return errors.Wrap(r.HelmManager.Uninstall(ctx, actionCfg, releaseName), "failed to uninstall cloudflared")
 }
 
-//nolint:funcorder // value builder
 func (r *GatewayReconciler) buildCloudflaredValues(cfg *config.ResolvedConfig) map[string]any {
 	cloudflaredValues := &helm.CloudflaredValues{
 		TunnelToken:  cfg.TunnelToken,
@@ -282,7 +276,7 @@ func (r *GatewayReconciler) buildCloudflaredValues(cfg *config.ResolvedConfig) m
 	return cloudflaredValues.BuildValues()
 }
 
-//nolint:funcorder,funlen // status update logic
+//nolint:funlen // status update logic
 func (r *GatewayReconciler) updateStatus(
 	ctx context.Context,
 	gateway *gatewayv1.Gateway,
@@ -373,7 +367,6 @@ func (r *GatewayReconciler) updateStatus(
 	return nil
 }
 
-//nolint:funcorder // error status helper
 func (r *GatewayReconciler) setConfigErrorStatus(
 	ctx context.Context,
 	gateway *gatewayv1.Gateway,
@@ -395,7 +388,7 @@ func (r *GatewayReconciler) setConfigErrorStatus(
 	return errors.Wrap(r.Status().Update(ctx, gateway), "failed to update gateway status")
 }
 
-//nolint:funcorder,gocognit,gocyclo,cyclop,dupl,funlen // helper method for status; complexity due to counting two route types
+//nolint:gocognit,gocyclo,cyclop,dupl,funlen // complexity due to counting two route types
 func (r *GatewayReconciler) countAttachedRoutes(
 	ctx context.Context,
 	gateway *gatewayv1.Gateway,
@@ -484,7 +477,6 @@ func (r *GatewayReconciler) countAttachedRoutes(
 	return result
 }
 
-//nolint:funcorder // helper method
 func (r *GatewayReconciler) refMatchesGateway(
 	ref gatewayv1.ParentReference,
 	gateway *gatewayv1.Gateway,

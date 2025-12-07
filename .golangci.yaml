@@ -116,6 +116,14 @@ linters:
           - gocritic
           - maintidx
         path: examples/
+      # Controller patterns - helper methods near reconcile logic
+      - linters:
+          - funcorder
+        path: internal/controller/
+      # Controller patterns - inline error handling in reconcile
+      - linters:
+          - noinlineerr
+        path: internal/controller/
 formatters:
   enable:
     - gofmt

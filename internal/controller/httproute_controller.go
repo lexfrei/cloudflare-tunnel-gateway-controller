@@ -80,7 +80,6 @@ type HTTPRouteReconciler struct {
 	startupComplete atomic.Bool
 }
 
-//nolint:noinlineerr // inline error handling for controller pattern
 func (r *HTTPRouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	// Wait for startup sync to complete before processing reconcile events
 	// to prevent race conditions with Cloudflare API updates
@@ -112,7 +111,6 @@ func (r *HTTPRouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	return r.syncAndUpdateStatus(ctx)
 }
 
-//nolint:noinlineerr,funcorder // inline error handling for controller pattern
 func (r *HTTPRouteReconciler) syncAndUpdateStatus(ctx context.Context) (ctrl.Result, error) {
 	logger := logging.FromContext(ctx)
 
@@ -159,12 +157,11 @@ func (r *HTTPRouteReconciler) syncAndUpdateStatus(ctx context.Context) (ctrl.Res
 	return result, nil
 }
 
-//nolint:funcorder // private helper method
 func (r *HTTPRouteReconciler) isRouteForOurGateway(ctx context.Context, route *gatewayv1.HTTPRoute) bool {
 	return IsRouteAcceptedByGateway(ctx, r.Client, r.bindingValidator, r.GatewayClassName, HTTPRouteWrapper{route})
 }
 
-//nolint:funcorder,funlen,noinlineerr,gocognit,dupl // private helper method, status update logic; dupl with GRPCRoute
+//nolint:funlen,gocognit,dupl // status update logic; dupl with GRPCRoute
 func (r *HTTPRouteReconciler) updateRouteStatus(
 	ctx context.Context,
 	route *gatewayv1.HTTPRoute,
@@ -359,7 +356,6 @@ func (r *HTTPRouteReconciler) Start(ctx context.Context) error {
 	return nil
 }
 
-//nolint:noinlineerr // inline error handling for controller pattern
 func (r *HTTPRouteReconciler) findRoutesForGateway(
 	ctx context.Context,
 	obj client.Object,
