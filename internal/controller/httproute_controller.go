@@ -112,7 +112,7 @@ func (r *HTTPRouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	return r.syncAndUpdateStatus(ctx)
 }
 
-//nolint:noinlineerr,funcorder // inline error handling for controller pattern; placed near Reconcile for readability
+//nolint:noinlineerr,funcorder // inline error handling for controller pattern
 func (r *HTTPRouteReconciler) syncAndUpdateStatus(ctx context.Context) (ctrl.Result, error) {
 	logger := logging.FromContext(ctx)
 
@@ -138,7 +138,7 @@ func (r *HTTPRouteReconciler) syncAndUpdateStatus(ctx context.Context) (ctrl.Res
 
 			if err := r.updateRouteStatus(ctx, route, bindingInfo, routeFailedRefs, syncErr); err != nil {
 				logger.Error("failed to update httproute status", "error", err)
-				// Keep first error for requeue decision
+				// Keep first error to return for requeue with backoff
 				if statusUpdateErr == nil {
 					statusUpdateErr = err
 				}
@@ -151,9 +151,9 @@ func (r *HTTPRouteReconciler) syncAndUpdateStatus(ctx context.Context) (ctrl.Res
 		return result, nil
 	}
 
-	// Requeue if status updates failed to ensure eventual consistency
+	// Return error if status updates failed - controller-runtime will requeue with backoff
 	if statusUpdateErr != nil {
-		return ctrl.Result{Requeue: true}, nil
+		return ctrl.Result{}, statusUpdateErr
 	}
 
 	return result, nil
