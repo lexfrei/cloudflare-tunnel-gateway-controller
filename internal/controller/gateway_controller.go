@@ -227,7 +227,7 @@ func (r *GatewayReconciler) upgradeCloudflaredIfNeeded(
 		return errors.Wrap(err, "failed to create chart accessor")
 	}
 
-	currentVersion := chartAccessor.MetadataAsMap()["version"]
+	currentVersion := chartAccessor.MetadataAsMap()["Version"]
 	if currentVersion == latestVersion {
 		return nil
 	}
