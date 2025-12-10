@@ -791,7 +791,7 @@ gopkg.in/inf.v0
 # gopkg.in/yaml.v3 v3.0.1
 ## explicit
 gopkg.in/yaml.v3
-# helm.sh/helm/v4 v4.0.1
+# helm.sh/helm/v4 v4.0.2
 ## explicit; go 1.24.0
 helm.sh/helm/v4/internal/chart/v3
 helm.sh/helm/v4/internal/chart/v3/loader
