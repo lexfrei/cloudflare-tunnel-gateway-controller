@@ -32,7 +32,7 @@ jobs:
         run: pip install --requirement requirements-docs.txt
 
       - name: Run markdownlint
-        uses: DavidAnson/markdownlint-cli2-action@v21
+        uses: DavidAnson/markdownlint-cli2-action@v22
         with:
           globs: "docs/**/*.md"
 
