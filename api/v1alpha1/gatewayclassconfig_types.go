@@ -37,6 +37,42 @@ type AWGConfig struct {
 	InterfacePrefix string `json:"interfacePrefix,omitempty"`
 }
 
+// LivenessProbeConfig configures the liveness probe for cloudflared.
+type LivenessProbeConfig struct {
+	// InitialDelaySeconds is the number of seconds after the container has started
+	// before liveness probes are initiated.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:default=30
+	InitialDelaySeconds *int32 `json:"initialDelaySeconds,omitempty"`
+
+	// TimeoutSeconds is the number of seconds after which the probe times out.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:default=5
+	TimeoutSeconds *int32 `json:"timeoutSeconds,omitempty"`
+
+	// PeriodSeconds is how often (in seconds) to perform the probe.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:default=20
+	PeriodSeconds *int32 `json:"periodSeconds,omitempty"`
+
+	// SuccessThreshold is the minimum consecutive successes for the probe to be
+	// considered successful after having failed.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:default=1
+	SuccessThreshold *int32 `json:"successThreshold,omitempty"`
+
+	// FailureThreshold is the number of times the probe is allowed to fail before
+	// giving up. When exceeded, the container will be restarted.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:default=3
+	FailureThreshold *int32 `json:"failureThreshold,omitempty"`
+}
+
 // CloudflaredConfig configures the cloudflared deployment managed by the controller.
 type CloudflaredConfig struct {
 	// Enabled controls whether the controller manages cloudflared deployment.
@@ -64,6 +100,10 @@ type CloudflaredConfig struct {
 	// AWG configures the AmneziaWG sidecar.
 	// +optional
 	AWG *AWGConfig `json:"awg,omitempty"`
+
+	// LivenessProbe configures the liveness probe for cloudflared.
+	// +optional
+	LivenessProbe *LivenessProbeConfig `json:"livenessProbe,omitempty"`
 }
 
 // GatewayClassConfigSpec defines the desired state of GatewayClassConfig.
@@ -179,4 +219,49 @@ func (r *SecretReference) GetTunnelTokenKey() string {
 	}
 
 	return r.Key
+}
+
+// GetInitialDelaySeconds returns the initial delay, defaulting to 30.
+func (c *LivenessProbeConfig) GetInitialDelaySeconds() int32 {
+	if c == nil || c.InitialDelaySeconds == nil {
+		return 30
+	}
+
+	return *c.InitialDelaySeconds
+}
+
+// GetTimeoutSeconds returns the timeout, defaulting to 5.
+func (c *LivenessProbeConfig) GetTimeoutSeconds() int32 {
+	if c == nil || c.TimeoutSeconds == nil {
+		return 5
+	}
+
+	return *c.TimeoutSeconds
+}
+
+// GetPeriodSeconds returns the period, defaulting to 20.
+func (c *LivenessProbeConfig) GetPeriodSeconds() int32 {
+	if c == nil || c.PeriodSeconds == nil {
+		return 20
+	}
+
+	return *c.PeriodSeconds
+}
+
+// GetSuccessThreshold returns the success threshold, defaulting to 1.
+func (c *LivenessProbeConfig) GetSuccessThreshold() int32 {
+	if c == nil || c.SuccessThreshold == nil {
+		return 1
+	}
+
+	return *c.SuccessThreshold
+}
+
+// GetFailureThreshold returns the failure threshold, defaulting to 3.
+func (c *LivenessProbeConfig) GetFailureThreshold() int32 {
+	if c == nil || c.FailureThreshold == nil {
+		return 3
+	}
+
+	return *c.FailureThreshold
 }
