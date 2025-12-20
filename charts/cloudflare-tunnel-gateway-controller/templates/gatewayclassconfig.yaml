@@ -37,4 +37,22 @@ spec:
       secretName: {{ .Values.gatewayClassConfig.cloudflared.awg.secretName | quote }}
       interfacePrefix: {{ .Values.gatewayClassConfig.cloudflared.awg.interfacePrefix | quote }}
     {{- end }}
+    {{- with .Values.gatewayClassConfig.cloudflared.livenessProbe }}
+    livenessProbe:
+      {{- with .initialDelaySeconds }}
+      initialDelaySeconds: {{ . }}
+      {{- end }}
+      {{- with .timeoutSeconds }}
+      timeoutSeconds: {{ . }}
+      {{- end }}
+      {{- with .periodSeconds }}
+      periodSeconds: {{ . }}
+      {{- end }}
+      {{- with .successThreshold }}
+      successThreshold: {{ . }}
+      {{- end }}
+      {{- with .failureThreshold }}
+      failureThreshold: {{ . }}
+      {{- end }}
+    {{- end }}
 {{- end }}
