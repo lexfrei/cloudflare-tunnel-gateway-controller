@@ -259,9 +259,42 @@ golangci-lint v2 config in `.golangci.yaml`:
 
 ## Pull Request Guidelines
 
-Before creating a PR, verify all checklist items from `.github/pull_request_template.md`:
+### Local CI Checks
+
+**CRITICAL: Run CI-equivalent checks locally before each push, not just before PR creation.**
+
+Run checks relevant to the files you changed:
+
+| Changed Files | Required Checks |
+|---------------|-----------------|
+| `*.go` | `go test -race ./...` and `golangci-lint run --timeout=5m` |
+| `charts/**` | `helm unittest`, `helm lint`, `helm-docs` |
+| `**/*.md` | `markdownlint-cli2 '**/*.md'` |
+| `docs/**` | `mkdocs build --strict` |
+
+Quick reference commands:
+
+```bash
+# Go code changes
+go test -race ./... && golangci-lint run --timeout=5m
+
+# Helm chart changes
+helm unittest charts/cloudflare-tunnel-gateway-controller && \
+helm lint charts/cloudflare-tunnel-gateway-controller && \
+helm-docs charts/cloudflare-tunnel-gateway-controller
+
+# Markdown changes
+markdownlint-cli2 '**/*.md'
+
+# Documentation site
+mkdocs build --strict
+```
+
+**Why this matters:** CI failures after push waste time, trigger unnecessary notifications, and delay reviews. Catching issues locally is faster and cheaper.
 
 ### Pre-PR Checklist
+
+Before creating a PR, verify all checklist items from `.github/pull_request_template.md`:
 
 1. **Testing**
    - All tests pass locally (`go test ./...`)
