@@ -4,6 +4,15 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+// Default liveness probe values for cloudflared.
+const (
+	DefaultLivenessProbeInitialDelay = 30
+	DefaultLivenessProbeTimeout      = 5
+	DefaultLivenessProbePeriod       = 20
+	DefaultLivenessProbeSuccess      = 1
+	DefaultLivenessProbeFailure      = 3
+)
+
 // SecretReference is a reference to a Kubernetes Secret.
 type SecretReference struct {
 	// Name of the Secret.
@@ -221,46 +230,46 @@ func (r *SecretReference) GetTunnelTokenKey() string {
 	return r.Key
 }
 
-// GetInitialDelaySeconds returns the initial delay, defaulting to 30.
+// GetInitialDelaySeconds returns the initial delay, defaulting to DefaultLivenessProbeInitialDelay.
 func (c *LivenessProbeConfig) GetInitialDelaySeconds() int32 {
 	if c == nil || c.InitialDelaySeconds == nil {
-		return 30
+		return DefaultLivenessProbeInitialDelay
 	}
 
 	return *c.InitialDelaySeconds
 }
 
-// GetTimeoutSeconds returns the timeout, defaulting to 5.
+// GetTimeoutSeconds returns the timeout, defaulting to DefaultLivenessProbeTimeout.
 func (c *LivenessProbeConfig) GetTimeoutSeconds() int32 {
 	if c == nil || c.TimeoutSeconds == nil {
-		return 5
+		return DefaultLivenessProbeTimeout
 	}
 
 	return *c.TimeoutSeconds
 }
 
-// GetPeriodSeconds returns the period, defaulting to 20.
+// GetPeriodSeconds returns the period, defaulting to DefaultLivenessProbePeriod.
 func (c *LivenessProbeConfig) GetPeriodSeconds() int32 {
 	if c == nil || c.PeriodSeconds == nil {
-		return 20
+		return DefaultLivenessProbePeriod
 	}
 
 	return *c.PeriodSeconds
 }
 
-// GetSuccessThreshold returns the success threshold, defaulting to 1.
+// GetSuccessThreshold returns the success threshold, defaulting to DefaultLivenessProbeSuccess.
 func (c *LivenessProbeConfig) GetSuccessThreshold() int32 {
 	if c == nil || c.SuccessThreshold == nil {
-		return 1
+		return DefaultLivenessProbeSuccess
 	}
 
 	return *c.SuccessThreshold
 }
 
-// GetFailureThreshold returns the failure threshold, defaulting to 3.
+// GetFailureThreshold returns the failure threshold, defaulting to DefaultLivenessProbeFailure.
 func (c *LivenessProbeConfig) GetFailureThreshold() int32 {
 	if c == nil || c.FailureThreshold == nil {
-		return 3
+		return DefaultLivenessProbeFailure
 	}
 
 	return *c.FailureThreshold

@@ -119,6 +119,33 @@ Name of the Secret containing AmneziaWG configuration for traffic obfuscation.
 
 See [AmneziaWG Sidecar Guide](../guides/awg-sidecar.md) for details.
 
+### `spec.cloudflared.livenessProbe` (optional)
+
+Configuration for the cloudflared liveness probe. These settings control how
+Kubernetes determines if cloudflared is healthy.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `initialDelaySeconds` | int32 | 30 | Seconds before probe starts |
+| `timeoutSeconds` | int32 | 5 | Probe timeout |
+| `periodSeconds` | int32 | 20 | How often to probe |
+| `successThreshold` | int32 | 1 | Successes for healthy |
+| `failureThreshold` | int32 | 3 | Failures before restart |
+
+```yaml
+spec:
+  cloudflared:
+    livenessProbe:
+      initialDelaySeconds: 30
+      timeoutSeconds: 5
+      periodSeconds: 20
+      failureThreshold: 3
+```
+
+!!! note "Default values"
+    The default values are conservative to prevent unnecessary pod restarts
+    during QUIC reconnections or high traffic periods.
+
 ## GatewayClass Reference
 
 The GatewayClass references the GatewayClassConfig via `parametersRef`:
