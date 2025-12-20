@@ -265,6 +265,13 @@ func (r *GatewayReconciler) buildCloudflaredValues(cfg *config.ResolvedConfig) m
 		TunnelToken:  cfg.TunnelToken,
 		Protocol:     cfg.CloudflaredProtocol,
 		ReplicaCount: int(cfg.CloudflaredReplicas),
+		LivenessProbe: &helm.LivenessProbeValues{
+			InitialDelaySeconds: cfg.LivenessProbeInitialDelay,
+			TimeoutSeconds:      cfg.LivenessProbeTimeout,
+			PeriodSeconds:       cfg.LivenessProbePeriod,
+			SuccessThreshold:    cfg.LivenessProbeSuccess,
+			FailureThreshold:    cfg.LivenessProbeFailure,
+		},
 	}
 
 	if cfg.AWGSecretName != "" {
