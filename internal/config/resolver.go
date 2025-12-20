@@ -45,6 +45,13 @@ type ResolvedConfig struct {
 	AWGSecretName      string
 	AWGInterfacePrefix string
 
+	// Liveness probe settings
+	LivenessProbeInitialDelay int32
+	LivenessProbeTimeout      int32
+	LivenessProbePeriod       int32
+	LivenessProbeSuccess      int32
+	LivenessProbeFailure      int32
+
 	// Reference to the source config for watch purposes
 	ConfigName string
 }
@@ -137,6 +144,14 @@ func (r *Resolver) resolveConfig(ctx context.Context, config *v1alpha1.GatewayCl
 			resolved.AWGInterfacePrefix = "awg-cfd"
 		}
 	}
+
+	// Resolve liveness probe config with defaults
+	lp := config.Spec.Cloudflared.LivenessProbe
+	resolved.LivenessProbeInitialDelay = lp.GetInitialDelaySeconds()
+	resolved.LivenessProbeTimeout = lp.GetTimeoutSeconds()
+	resolved.LivenessProbePeriod = lp.GetPeriodSeconds()
+	resolved.LivenessProbeSuccess = lp.GetSuccessThreshold()
+	resolved.LivenessProbeFailure = lp.GetFailureThreshold()
 
 	// Resolve Cloudflare credentials from Secret
 	credentialsRef := config.Spec.CloudflareCredentialsSecretRef

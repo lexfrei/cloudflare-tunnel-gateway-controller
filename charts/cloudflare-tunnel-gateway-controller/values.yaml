@@ -51,6 +51,18 @@ gatewayClassConfig:
       secretName: ""
       # -- AWG interface name prefix (kernel auto-numbers: prefix0, prefix1, etc.)
       interfacePrefix: "awg-cfd"
+    # -- Liveness probe configuration for cloudflared
+    livenessProbe:
+      # -- Seconds before liveness probe is initiated
+      initialDelaySeconds: 30
+      # -- Seconds after which probe times out
+      timeoutSeconds: 5
+      # -- How often to perform the probe
+      periodSeconds: 20
+      # -- Minimum consecutive successes for probe to be considered successful
+      successThreshold: 1
+      # -- Number of failures before container restart
+      failureThreshold: 3
 
 # -- Controller configuration
 controller:

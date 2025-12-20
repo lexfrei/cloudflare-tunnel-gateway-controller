@@ -122,6 +122,40 @@ spec:
                           type: string
                           default: awg-cfd
                           description: AWG interface name prefix (kernel auto-numbers).
+                    livenessProbe:
+                      type: object
+                      description: Liveness probe configuration for cloudflared.
+                      properties:
+                        initialDelaySeconds:
+                          type: integer
+                          format: int32
+                          minimum: 1
+                          default: 30
+                          description: Seconds before liveness probe is initiated.
+                        timeoutSeconds:
+                          type: integer
+                          format: int32
+                          minimum: 1
+                          default: 5
+                          description: Seconds after which probe times out.
+                        periodSeconds:
+                          type: integer
+                          format: int32
+                          minimum: 1
+                          default: 20
+                          description: How often to perform the probe.
+                        successThreshold:
+                          type: integer
+                          format: int32
+                          minimum: 1
+                          default: 1
+                          description: Minimum consecutive successes.
+                        failureThreshold:
+                          type: integer
+                          format: int32
+                          minimum: 1
+                          default: 3
+                          description: Number of failures before restart.
             status:
               type: object
               properties:

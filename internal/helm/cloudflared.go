@@ -2,16 +2,26 @@ package helm
 
 // CloudflaredValues holds configuration for cloudflare-tunnel Helm chart.
 type CloudflaredValues struct {
-	TunnelToken  string
-	Protocol     string
-	ReplicaCount int
-	Sidecar      *SidecarConfig
+	TunnelToken   string
+	Protocol      string
+	ReplicaCount  int
+	Sidecar       *SidecarConfig
+	LivenessProbe *LivenessProbeValues
 }
 
 // SidecarConfig holds AWG sidecar configuration.
 type SidecarConfig struct {
 	ConfigSecretName string
 	InterfacePrefix  string // AWG interface name prefix (kernel auto-numbers: prefix0, prefix1, etc.)
+}
+
+// LivenessProbeValues holds liveness probe configuration for Helm chart.
+type LivenessProbeValues struct {
+	InitialDelaySeconds int32
+	TimeoutSeconds      int32
+	PeriodSeconds       int32
+	SuccessThreshold    int32
+	FailureThreshold    int32
 }
 
 // BuildValues converts CloudflaredValues to Helm values map.
@@ -30,6 +40,16 @@ func (v *CloudflaredValues) BuildValues() map[string]any {
 
 	if v.Sidecar != nil {
 		values["sidecar"] = buildSidecarValues(v.Sidecar)
+	}
+
+	if v.LivenessProbe != nil {
+		values["livenessProbe"] = map[string]any{
+			"initialDelaySeconds": v.LivenessProbe.InitialDelaySeconds,
+			"timeoutSeconds":      v.LivenessProbe.TimeoutSeconds,
+			"periodSeconds":       v.LivenessProbe.PeriodSeconds,
+			"successThreshold":    v.LivenessProbe.SuccessThreshold,
+			"failureThreshold":    v.LivenessProbe.FailureThreshold,
+		}
 	}
 
 	return values

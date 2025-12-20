@@ -28,12 +28,23 @@ referenced by a GatewayClass via `spec.parametersRef`.
 |-------|------|---------|-------------|
 | `enabled` | bool | `true` | Deploy cloudflared via Helm |
 | `awg` | AWGSpec | - | AmneziaWG sidecar configuration |
+| `livenessProbe` | LivenessProbeSpec | - | Liveness probe configuration |
 
 ### AWGSpec
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `secretName` | string | Name of Secret containing AWG configuration |
+
+### LivenessProbeSpec
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `initialDelaySeconds` | int32 | 30 | Seconds before probe starts |
+| `timeoutSeconds` | int32 | 5 | Probe timeout in seconds |
+| `periodSeconds` | int32 | 20 | How often to perform probe |
+| `successThreshold` | int32 | 1 | Min successes for healthy |
+| `failureThreshold` | int32 | 3 | Failures before restart |
 
 ### SecretKeySelector
 

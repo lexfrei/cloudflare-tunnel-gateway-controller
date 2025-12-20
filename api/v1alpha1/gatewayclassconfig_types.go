@@ -4,6 +4,15 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+// Default liveness probe values for cloudflared.
+const (
+	DefaultLivenessProbeInitialDelay = 30
+	DefaultLivenessProbeTimeout      = 5
+	DefaultLivenessProbePeriod       = 20
+	DefaultLivenessProbeSuccess      = 1
+	DefaultLivenessProbeFailure      = 3
+)
+
 // SecretReference is a reference to a Kubernetes Secret.
 type SecretReference struct {
 	// Name of the Secret.
@@ -37,6 +46,42 @@ type AWGConfig struct {
 	InterfacePrefix string `json:"interfacePrefix,omitempty"`
 }
 
+// LivenessProbeConfig configures the liveness probe for cloudflared.
+type LivenessProbeConfig struct {
+	// InitialDelaySeconds is the number of seconds after the container has started
+	// before liveness probes are initiated.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:default=30
+	InitialDelaySeconds *int32 `json:"initialDelaySeconds,omitempty"`
+
+	// TimeoutSeconds is the number of seconds after which the probe times out.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:default=5
+	TimeoutSeconds *int32 `json:"timeoutSeconds,omitempty"`
+
+	// PeriodSeconds is how often (in seconds) to perform the probe.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:default=20
+	PeriodSeconds *int32 `json:"periodSeconds,omitempty"`
+
+	// SuccessThreshold is the minimum consecutive successes for the probe to be
+	// considered successful after having failed.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:default=1
+	SuccessThreshold *int32 `json:"successThreshold,omitempty"`
+
+	// FailureThreshold is the number of times the probe is allowed to fail before
+	// giving up. When exceeded, the container will be restarted.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:default=3
+	FailureThreshold *int32 `json:"failureThreshold,omitempty"`
+}
+
 // CloudflaredConfig configures the cloudflared deployment managed by the controller.
 type CloudflaredConfig struct {
 	// Enabled controls whether the controller manages cloudflared deployment.
@@ -64,6 +109,10 @@ type CloudflaredConfig struct {
 	// AWG configures the AmneziaWG sidecar.
 	// +optional
 	AWG *AWGConfig `json:"awg,omitempty"`
+
+	// LivenessProbe configures the liveness probe for cloudflared.
+	// +optional
+	LivenessProbe *LivenessProbeConfig `json:"livenessProbe,omitempty"`
 }
 
 // GatewayClassConfigSpec defines the desired state of GatewayClassConfig.
@@ -179,4 +228,49 @@ func (r *SecretReference) GetTunnelTokenKey() string {
 	}
 
 	return r.Key
+}
+
+// GetInitialDelaySeconds returns the initial delay, defaulting to DefaultLivenessProbeInitialDelay.
+func (c *LivenessProbeConfig) GetInitialDelaySeconds() int32 {
+	if c == nil || c.InitialDelaySeconds == nil {
+		return DefaultLivenessProbeInitialDelay
+	}
+
+	return *c.InitialDelaySeconds
+}
+
+// GetTimeoutSeconds returns the timeout, defaulting to DefaultLivenessProbeTimeout.
+func (c *LivenessProbeConfig) GetTimeoutSeconds() int32 {
+	if c == nil || c.TimeoutSeconds == nil {
+		return DefaultLivenessProbeTimeout
+	}
+
+	return *c.TimeoutSeconds
+}
+
+// GetPeriodSeconds returns the period, defaulting to DefaultLivenessProbePeriod.
+func (c *LivenessProbeConfig) GetPeriodSeconds() int32 {
+	if c == nil || c.PeriodSeconds == nil {
+		return DefaultLivenessProbePeriod
+	}
+
+	return *c.PeriodSeconds
+}
+
+// GetSuccessThreshold returns the success threshold, defaulting to DefaultLivenessProbeSuccess.
+func (c *LivenessProbeConfig) GetSuccessThreshold() int32 {
+	if c == nil || c.SuccessThreshold == nil {
+		return DefaultLivenessProbeSuccess
+	}
+
+	return *c.SuccessThreshold
+}
+
+// GetFailureThreshold returns the failure threshold, defaulting to DefaultLivenessProbeFailure.
+func (c *LivenessProbeConfig) GetFailureThreshold() int32 {
+	if c == nil || c.FailureThreshold == nil {
+		return DefaultLivenessProbeFailure
+	}
+
+	return *c.FailureThreshold
 }
