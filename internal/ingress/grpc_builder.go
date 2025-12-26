@@ -2,13 +2,8 @@ package ingress
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
-	"sort"
-	"time"
 
-	"github.com/cloudflare/cloudflare-go/v6"
-	"github.com/cloudflare/cloudflare-go/v6/zero_trust"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
@@ -17,24 +12,9 @@ import (
 )
 
 // GRPCBuilder converts Gateway API GRPCRoute resources to Cloudflare Tunnel
-// ingress configuration rules.
+// ingress configuration rules. It wraps GenericBuilder with GRPCRouteAdapter.
 type GRPCBuilder struct {
-	// ClusterDomain is the Kubernetes cluster domain suffix for service DNS.
-	// Typically "cluster.local".
-	ClusterDomain string
-
-	// Validator validates cross-namespace backend references using ReferenceGrant.
-	Validator *referencegrant.Validator
-
-	// Client is used to fetch Service objects for ExternalName resolution.
-	// If nil, falls back to cluster-local DNS for all services.
-	Client client.Reader
-
-	// Metrics records build duration and validation results.
-	Metrics metrics.Collector
-
-	// Logger is used for structured logging.
-	Logger *slog.Logger
+	generic *GenericBuilder[gatewayv1.GRPCRoute]
 }
 
 // NewGRPCBuilder creates a new GRPCBuilder with the specified cluster domain, validator, client, metrics, and logger.
@@ -45,23 +25,22 @@ func NewGRPCBuilder(
 	m metrics.Collector,
 	logger *slog.Logger,
 ) *GRPCBuilder {
-	if logger == nil {
-		logger = slog.Default()
-	}
-
 	return &GRPCBuilder{
-		ClusterDomain: clusterDomain,
-		Validator:     validator,
-		Client:        c,
-		Metrics:       m,
-		Logger:        logger.With("builder", "grpc"),
+		generic: NewGenericBuilder[gatewayv1.GRPCRoute](
+			clusterDomain,
+			validator,
+			c,
+			m,
+			logger,
+			GRPCRouteAdapter{},
+		),
 	}
 }
 
 // Build converts a list of GRPCRoute resources to Cloudflare Tunnel ingress rules.
 //
 // Rules are sorted by:
-//  1. Hostname (alphabetically)
+//  1. Hostname (specific hostnames before wildcard "*")
 //  2. Priority (exact matches before prefix matches)
 //  3. Path length (longer paths first for specificity)
 //
@@ -71,251 +50,5 @@ func NewGRPCBuilder(
 // Returns BuildResult containing the generated rules and any backend references
 // that failed validation (e.g., due to missing ReferenceGrant).
 func (b *GRPCBuilder) Build(ctx context.Context, routes []gatewayv1.GRPCRoute) BuildResult {
-	startTime := time.Now()
-
-	var entries []routeEntry //nolint:prealloc // size unknown until buildRouteEntries called
-
-	var failedRefs []BackendRefError //nolint:prealloc // size unknown until buildRouteEntries called
-
-	for i := range routes {
-		routeEntries, routeFailedRefs := b.buildRouteEntries(ctx, &routes[i])
-		entries = append(entries, routeEntries...)
-		failedRefs = append(failedRefs, routeFailedRefs...)
-	}
-
-	sort.Slice(entries, func(idx, jdx int) bool {
-		if entries[idx].hostname != entries[jdx].hostname {
-			return entries[idx].hostname < entries[jdx].hostname
-		}
-
-		if entries[idx].priority != entries[jdx].priority {
-			return entries[idx].priority > entries[jdx].priority
-		}
-
-		return len(entries[idx].path) > len(entries[jdx].path)
-	})
-
-	rules := make([]zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress, 0, len(entries))
-
-	for _, entry := range entries {
-		rule := zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress{
-			Hostname: cloudflare.F(entry.hostname),
-			Service:  cloudflare.F(entry.service),
-		}
-
-		if entry.path != "" && entry.path != "/" {
-			pathWithWildcard := entry.path
-			if entry.priority == 0 {
-				pathWithWildcard = entry.path + "*"
-			}
-
-			rule.Path = cloudflare.F(pathWithWildcard)
-		}
-
-		rules = append(rules, rule)
-	}
-
-	if b.Metrics != nil {
-		b.Metrics.RecordIngressBuildDuration(ctx, "grpc", time.Since(startTime))
-	}
-
-	return BuildResult{
-		Rules:      rules,
-		FailedRefs: failedRefs,
-	}
-}
-
-// logUnsupportedGRPCHeaders logs info messages for unsupported GRPCRouteMatch header features.
-func (b *GRPCBuilder) logUnsupportedGRPCHeaders(namespace, name string, headers []gatewayv1.GRPCHeaderMatch) {
-	if len(headers) > 0 {
-		b.Logger.Info("route configuration partially applied",
-			"route", fmt.Sprintf("%s/%s", namespace, name),
-			"reason", "header matching not supported by Cloudflare Tunnel",
-			"ignored_headers", len(headers),
-		)
-	}
-}
-
-func (b *GRPCBuilder) buildRouteEntries(ctx context.Context, route *gatewayv1.GRPCRoute) ([]routeEntry, []BackendRefError) {
-	var entries []routeEntry
-
-	var failedRefs []BackendRefError
-
-	hostnames := route.Spec.Hostnames
-	if len(hostnames) == 0 {
-		hostnames = []gatewayv1.Hostname{"*"}
-	}
-
-	for _, hostname := range hostnames {
-		for _, rule := range route.Spec.Rules {
-			// Warn if filters are specified (not supported)
-			if len(rule.Filters) > 0 {
-				b.Logger.Info("route configuration partially applied",
-					"route", fmt.Sprintf("%s/%s", route.Namespace, route.Name),
-					"reason", "filters not supported by Cloudflare Tunnel",
-					"ignored_filters", len(rule.Filters),
-				)
-			}
-
-			service, backendErr := b.resolveBackendRef(ctx, route.Namespace, route.Name, rule.BackendRefs)
-			if service == "" {
-				if backendErr != nil {
-					failedRefs = append(failedRefs, *backendErr)
-				}
-
-				continue
-			}
-
-			if len(rule.Matches) == 0 {
-				entries = append(entries, routeEntry{
-					hostname: string(hostname),
-					path:     "",
-					service:  service,
-					priority: 0,
-				})
-
-				continue
-			}
-
-			for _, match := range rule.Matches {
-				b.logUnsupportedGRPCHeaders(route.Namespace, route.Name, match.Headers)
-
-				path, priority := b.extractGRPCPath(match.Method)
-				entries = append(entries, routeEntry{
-					hostname: string(hostname),
-					path:     path,
-					service:  service,
-					priority: priority,
-				})
-			}
-		}
-	}
-
-	return entries, failedRefs
-}
-
-// extractGRPCPath converts a GRPCMethodMatch to an HTTP path.
-// gRPC requests use HTTP/2 POST to paths like /package.Service/Method.
-//
-// Returns:
-//   - path: the HTTP path (e.g., "/mypackage.MyService/GetUser")
-//   - priority: 1 for exact match (service+method), 0 for prefix match (service only or none)
-func (b *GRPCBuilder) extractGRPCPath(methodMatch *gatewayv1.GRPCMethodMatch) (string, int) {
-	if methodMatch == nil {
-		return "", 0
-	}
-
-	service := ""
-	if methodMatch.Service != nil {
-		service = *methodMatch.Service
-	}
-
-	method := ""
-	if methodMatch.Method != nil {
-		method = *methodMatch.Method
-	}
-
-	// No service and no method - match all gRPC traffic
-	if service == "" && method == "" {
-		return "", 0
-	}
-
-	// Service only - prefix match on /Service/
-	if service != "" && method == "" {
-		return "/" + service + "/", 0
-	}
-
-	// Method only (implementation-specific) - not fully supported, treat as prefix
-	if service == "" && method != "" {
-		return "", 0
-	}
-
-	// Both service and method - exact match
-	return "/" + service + "/" + method, 1
-}
-
-// logMultipleBackends logs an info message when multiple backendRefs are specified.
-func (b *GRPCBuilder) logMultipleBackends(namespace, routeName string, totalBackends int) {
-	if totalBackends > 1 {
-		b.Logger.Info("route configuration partially applied",
-			"route", fmt.Sprintf("%s/%s", namespace, routeName),
-			"reason", "multiple backendRefs specified, using only highest weight",
-			"total_backends", totalBackends,
-			"ignored_backends", totalBackends-1,
-		)
-	}
-}
-
-// logGRPCBackendWeights logs info messages for GRPC backends with non-default weights.
-func (b *GRPCBuilder) logGRPCBackendWeights(namespace, routeName string, refs []gatewayv1.GRPCBackendRef) {
-	for i, backendRef := range refs {
-		if backendRef.Weight != nil && *backendRef.Weight != 1 {
-			b.Logger.Info("route configuration partially applied",
-				"route", fmt.Sprintf("%s/%s", namespace, routeName),
-				"reason", "backendRef weight ignored, traffic splitting not supported",
-				"backend", string(backendRef.Name),
-				"backend_index", i,
-				"weight", *backendRef.Weight,
-			)
-		}
-	}
-}
-
-//nolint:dupl // Similar to Builder.resolveBackendRef but operates on different types
-func (b *GRPCBuilder) resolveBackendRef(ctx context.Context, namespace, routeName string, refs []gatewayv1.GRPCBackendRef) (string, *BackendRefError) {
-	if len(refs) == 0 {
-		return "", nil
-	}
-
-	b.logMultipleBackends(namespace, routeName, len(refs))
-	b.logGRPCBackendWeights(namespace, routeName, refs)
-
-	selectedIdx := SelectHighestWeightIndex(wrapGRPCBackendRefs(refs))
-	if selectedIdx == -1 {
-		return "", nil // All backends disabled (weight=0)
-	}
-
-	ref := refs[selectedIdx].BackendRef
-
-	// Accept nil, "", or "core" as valid core group identifiers
-	if ref.Group != nil && *ref.Group != "" && *ref.Group != backendGroupCoreAlias {
-		return "", nil
-	}
-
-	if ref.Kind != nil && *ref.Kind != backendKindService {
-		return "", nil
-	}
-
-	svcNamespace := namespace
-	if ref.Namespace != nil {
-		svcNamespace = string(*ref.Namespace)
-	}
-
-	port := DefaultHTTPPort
-	if ref.Port != nil {
-		port = int(*ref.Port)
-	}
-
-	url, backendErr := resolveServiceURL(ctx, &serviceResolveParams{
-		client:        b.Client,
-		validator:     b.Validator,
-		logger:        b.Logger,
-		clusterDomain: b.ClusterDomain,
-		routeKind:     "GRPCRoute",
-		routeNS:       namespace,
-		routeName:     routeName,
-		svcName:       string(ref.Name),
-		svcNS:         svcNamespace,
-		port:          port,
-	})
-
-	if b.Metrics != nil {
-		if backendErr != nil {
-			b.Metrics.RecordBackendRefValidation(ctx, "grpc", "failed", backendErr.Reason)
-		} else {
-			b.Metrics.RecordBackendRefValidation(ctx, "grpc", "success", "")
-		}
-	}
-
-	return url, backendErr
+	return b.generic.Build(ctx, routes)
 }

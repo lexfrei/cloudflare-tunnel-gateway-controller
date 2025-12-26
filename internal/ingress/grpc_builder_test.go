@@ -44,7 +44,7 @@ func TestNewGRPCBuilder(t *testing.T) {
 
 			builder := ingress.NewGRPCBuilder(tt.clusterDomain, nil, nil, nil, nil)
 			require.NotNil(t, builder)
-			assert.Equal(t, tt.clusterDomain, builder.ClusterDomain)
+			// ClusterDomain is now an internal implementation detail
 		})
 	}
 }
