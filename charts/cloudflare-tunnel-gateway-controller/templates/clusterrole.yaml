@@ -23,7 +23,7 @@ rules:
     verbs: ["get", "list", "watch"]
   # Gateway API status subresources - write access for status updates only
   - apiGroups: ["gateway.networking.k8s.io"]
-    resources: ["gateways/status", "httproutes/status", "grpcroutes/status"]
+    resources: ["gatewayclasses/status", "gateways/status", "httproutes/status", "grpcroutes/status"]
     verbs: ["get", "update", "patch"]
   - apiGroups: [""]
     resources: ["services"]
