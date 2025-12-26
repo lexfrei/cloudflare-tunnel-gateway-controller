@@ -14,6 +14,9 @@ import (
 func TestGatewayAPIConformance(t *testing.T) {
 	opts := conformance.DefaultOptions(t)
 
+	// Use existing GatewayClass from cluster
+	opts.GatewayClassName = "cloudflare-tunnel"
+
 	opts.SupportedFeatures = sets.New[features.FeatureName](
 		features.SupportGateway,
 		features.SupportHTTPRoute,
