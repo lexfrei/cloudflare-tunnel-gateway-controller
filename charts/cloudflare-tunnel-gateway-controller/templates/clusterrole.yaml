@@ -26,7 +26,7 @@ rules:
     resources: ["gatewayclasses/status", "gateways/status", "httproutes/status", "grpcroutes/status"]
     verbs: ["get", "update", "patch"]
   - apiGroups: [""]
-    resources: ["services"]
+    resources: ["services", "namespaces"]
     verbs: ["get", "list", "watch"]
   - apiGroups: [""]
     resources: ["secrets"]
