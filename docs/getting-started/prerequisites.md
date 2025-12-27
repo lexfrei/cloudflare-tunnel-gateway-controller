@@ -54,7 +54,7 @@ Before deploying the controller, create a Cloudflare Tunnel:
 
 ## Cloudflare API Token
 
-Create an API token at [Cloudflare API Tokens](https://dash.cloudflare.com/profile/api-tokens)
+Create an API token at [Cloudflare Account API Tokens](https://dash.cloudflare.com/?to=/:account/api-tokens)
 with the following permissions:
 
 | Scope | Permission | Access |
@@ -68,13 +68,12 @@ with the following permissions:
 
 ### Creating the API Token
 
-1. Go to [Cloudflare API Tokens](https://dash.cloudflare.com/profile/api-tokens)
+1. Go to [Cloudflare Account API Tokens](https://dash.cloudflare.com/?to=/:account/api-tokens)
 2. Click **Create Token**
-3. Click **Create Custom Token**
+3. Click **Get Started** (on the right-hand side of **Create Custom Token**)
 4. Configure the token:
     - **Token name**: `cloudflare-tunnel-gateway-controller`
     - **Permissions**: Account > Cloudflare Tunnel > Edit
-    - **Account Resources**: Include > Your Account
 5. Click **Continue to summary** and **Create Token**
 6. Copy the token value (you won't be able to see it again)
 
