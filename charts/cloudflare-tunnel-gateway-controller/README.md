@@ -76,7 +76,7 @@ Account ID is auto-detected from the API token when not explicitly provided (wor
 ```bash
 helm install cloudflare-tunnel-gateway-controller \
   oci://ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller/chart \
-  --version 0.1.0 \
+  --version 1.0.0 \
   --namespace cloudflare-tunnel-system \
   --create-namespace \
   --set cloudflare.tunnelId="YOUR_TUNNEL_ID" \
@@ -88,7 +88,7 @@ helm install cloudflare-tunnel-gateway-controller \
 Charts are signed with cosign. Verify before installing:
 
 ```bash
-cosign verify ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller:0.1.0 \
+cosign verify ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller:1.0.0 \
   --certificate-identity-regexp="https://github.com/lexfrei/cloudflare-tunnel-gateway-controller" \
   --certificate-oidc-issuer="https://token.actions.githubusercontent.com"
 ```
