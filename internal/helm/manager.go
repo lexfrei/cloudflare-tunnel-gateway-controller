@@ -113,44 +113,9 @@ func (m *Manager) LoadChart(_ context.Context, chartRef, version string) (chart.
 		return m.chartCache, nil
 	}
 
-	m.logger.Info("pulling chart from registry", "ref", chartRef, "version", version)
-
-	pullConfig := &action.Configuration{
-		RegistryClient: m.registryClient,
-	}
-
-	pullClient := action.NewPull(action.WithConfig(pullConfig))
-	pullClient.Settings = m.settings
-	pullClient.Version = version
-	pullClient.DestDir = os.TempDir()
-
-	fullRef := chartRef
-	if version != "" {
-		fullRef = chartRef + ":" + version
-	}
-
-	output, err := pullClient.Run(fullRef)
+	loadedChart, err := m.pullChartFromRegistry(chartRef, version)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to pull chart")
-	}
-
-	m.logger.Debug("chart pulled", "output", output)
-
-	chartName := extractChartName(chartRef)
-	chartPath := filepath.Join(os.TempDir(), chartName+"-"+version+".tgz")
-
-	// Clean up temporary chart file after loading (or on error).
-	// The chart is loaded into memory, so the file is no longer needed.
-	defer func() {
-		removeErr := os.Remove(chartPath)
-		if removeErr != nil && !os.IsNotExist(removeErr) {
-			m.logger.Warn("failed to remove temp chart file", "path", chartPath, "error", removeErr)
-		}
-	}()
-
-	loadedChart, err := loader.Load(chartPath)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to load chart")
+		return nil, err
 	}
 
 	m.chartCache = loadedChart
@@ -266,6 +231,51 @@ func (m *Manager) ReleaseExists(cfg *action.Configuration, releaseName string) b
 	_, err := m.GetRelease(cfg, releaseName)
 
 	return err == nil
+}
+
+func (m *Manager) pullChartFromRegistry(chartRef, version string) (chart.Charter, error) {
+	m.logger.Info("pulling chart from registry", "ref", chartRef, "version", version)
+
+	// Create a unique temp directory to avoid race conditions when multiple
+	// LoadChart calls run concurrently with the same version.
+	tempDir, err := os.MkdirTemp("", "helm-chart-*")
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to create temp directory")
+	}
+
+	defer func() {
+		removeErr := os.RemoveAll(tempDir)
+		if removeErr != nil {
+			m.logger.Warn("failed to remove temp chart directory", "path", tempDir, "error", removeErr)
+		}
+	}()
+
+	pullConfig := &action.Configuration{RegistryClient: m.registryClient}
+	pullClient := action.NewPull(action.WithConfig(pullConfig))
+	pullClient.Settings = m.settings
+	pullClient.Version = version
+	pullClient.DestDir = tempDir
+
+	fullRef := chartRef
+	if version != "" {
+		fullRef = chartRef + ":" + version
+	}
+
+	output, err := pullClient.Run(fullRef)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to pull chart")
+	}
+
+	m.logger.Debug("chart pulled", "output", output)
+
+	chartPath := filepath.Join(tempDir, extractChartName(chartRef)+"-"+version+".tgz")
+
+	loadedChart, err := loader.Load(chartPath)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to load chart")
+	}
+
+	return loadedChart, nil
 }
 
 func extractRepoFromOCI(chartRef string) string {
