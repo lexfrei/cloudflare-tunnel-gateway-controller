@@ -113,7 +113,12 @@ func (m *Manager) LoadChart(_ context.Context, chartRef, version string) (chart.
 		return m.chartCache, nil
 	}
 
-	m.logger.Info("pulling chart from registry", "ref", chartRef, "version", version)
+	m.logger.Info("pulling chart from registry",
+		"ref", chartRef,
+		"version", version,
+		"destDir", os.TempDir(),
+		"contentCache", m.settings.ContentCache,
+	)
 
 	pullConfig := &action.Configuration{
 		RegistryClient: m.registryClient,
@@ -134,10 +139,14 @@ func (m *Manager) LoadChart(_ context.Context, chartRef, version string) (chart.
 		return nil, errors.Wrap(err, "failed to pull chart")
 	}
 
-	m.logger.Debug("chart pulled", "output", output)
-
 	chartName := extractChartName(chartRef)
 	chartPath := filepath.Join(os.TempDir(), chartName+"-"+version+".tgz")
+
+	m.logger.Info("chart pulled",
+		"output", output,
+		"chartPath", chartPath,
+		"chartPathExists", fileExists(chartPath),
+	)
 
 	// Clean up temporary chart file after loading (or on error).
 	// The chart is loaded into memory, so the file is no longer needed.
@@ -279,6 +288,12 @@ func extractRepoFromOCI(chartRef string) string {
 
 func extractChartName(chartRef string) string {
 	return filepath.Base(chartRef)
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+
+	return err == nil
 }
 
 func (m *Manager) recordChartInfo(ctx context.Context, loadedChart chart.Charter) {
