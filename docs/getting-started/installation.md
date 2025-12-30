@@ -12,7 +12,7 @@ RBAC setup, and provides a simple upgrade path.
 
 ```bash
 helm install cloudflare-tunnel-gateway-controller \
-  oci://ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller/chart \
+  oci://ghcr.io/lexfrei/charts/cloudflare-tunnel-gateway-controller \
   --namespace cloudflare-tunnel-system \
   --create-namespace \
   --set config.tunnelID=YOUR_TUNNEL_ID \
@@ -56,7 +56,7 @@ Then install:
 
 ```bash
 helm install cloudflare-tunnel-gateway-controller \
-  oci://ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller/chart \
+  oci://ghcr.io/lexfrei/charts/cloudflare-tunnel-gateway-controller \
   --namespace cloudflare-tunnel-system \
   --create-namespace \
   --values values.yaml
@@ -97,7 +97,7 @@ To upgrade to a newer version:
 
 ```bash
 helm upgrade cloudflare-tunnel-gateway-controller \
-  oci://ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller/chart \
+  oci://ghcr.io/lexfrei/charts/cloudflare-tunnel-gateway-controller \
   --namespace cloudflare-tunnel-system \
   --values values.yaml
 ```

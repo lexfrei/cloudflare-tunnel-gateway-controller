@@ -60,7 +60,7 @@ helm lint charts/cloudflare-tunnel-gateway-controller --values my-values.yaml
 
 # Dry-run installation
 helm install --dry-run --debug my-release \
-  oci://ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller/chart \
+  oci://ghcr.io/lexfrei/charts/cloudflare-tunnel-gateway-controller \
   --values my-values.yaml
 ```
 
@@ -353,7 +353,7 @@ controller:
 
 ```bash
 helm upgrade cloudflare-tunnel-gateway-controller \
-  oci://ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller/chart \
+  oci://ghcr.io/lexfrei/charts/cloudflare-tunnel-gateway-controller \
   --values values.yaml \
   --namespace cloudflare-tunnel-system
 

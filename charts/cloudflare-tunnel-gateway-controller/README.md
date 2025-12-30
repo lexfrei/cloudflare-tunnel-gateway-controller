@@ -1,7 +1,5 @@
 # cloudflare-tunnel-gateway-controller
 
-> **Note:** The Helm chart is published at `cloudflare-tunnel-gateway-controller/chart` subpath because Helm CLI doesn't support OCI Image Index with `artifactType` selection. Once [helm/helm#31582](https://github.com/helm/helm/issues/31582) is resolved, the chart will be available at `oci://ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller`. Available tags: `VERSION`, `MAJOR.MINOR`, `MAJOR`, `latest`.
-
 [![Release](https://img.shields.io/github/v/release/lexfrei/cloudflare-tunnel-gateway-controller)](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/releases)
 [![Artifact Hub](https://img.shields.io/endpoint?url=https://artifacthub.io/badge/repository/cloudflare-tunnel-gateway-controller)](https://artifacthub.io/packages/search?repo=cloudflare-tunnel-gateway-controller)
 [![CI](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/actions/workflows/pr.yaml/badge.svg)](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/actions/workflows/pr.yaml)
@@ -75,7 +73,7 @@ Account ID is auto-detected from the API token when not explicitly provided (wor
 
 ```bash
 helm install cloudflare-tunnel-gateway-controller \
-  oci://ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller/chart \
+  oci://ghcr.io/lexfrei/charts/cloudflare-tunnel-gateway-controller \
   --version 1.0.0 \
   --namespace cloudflare-tunnel-system \
   --create-namespace \
@@ -171,7 +169,7 @@ To use multiple Cloudflare Tunnels in the same cluster, deploy multiple instance
 ```bash
 # First tunnel for production apps
 helm install controller-prod \
-  oci://ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller/chart \
+  oci://ghcr.io/lexfrei/charts/cloudflare-tunnel-gateway-controller \
   --namespace cloudflare-system \
   --set controller.gatewayClassName=cloudflare-tunnel-prod \
   --set cloudflare.tunnelId="PROD_TUNNEL_ID" \
@@ -179,7 +177,7 @@ helm install controller-prod \
 
 # Second tunnel for staging apps
 helm install controller-staging \
-  oci://ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller/chart \
+  oci://ghcr.io/lexfrei/charts/cloudflare-tunnel-gateway-controller \
   --namespace cloudflare-system \
   --set controller.gatewayClassName=cloudflare-tunnel-staging \
   --set cloudflare.tunnelId="STAGING_TUNNEL_ID" \

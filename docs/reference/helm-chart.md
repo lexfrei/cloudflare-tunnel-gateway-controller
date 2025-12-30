@@ -6,7 +6,7 @@ The Cloudflare Tunnel Gateway Controller is distributed as a Helm chart.
 
 ```bash
 helm install cloudflare-tunnel-gateway-controller \
-  oci://ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller/chart \
+  oci://ghcr.io/lexfrei/charts/cloudflare-tunnel-gateway-controller \
   --namespace cloudflare-tunnel-system \
   --create-namespace \
   --values values.yaml
@@ -17,7 +17,7 @@ helm install cloudflare-tunnel-gateway-controller \
 | Field | Value |
 |-------|-------|
 | Chart Name | `cloudflare-tunnel-gateway-controller` |
-| Repository | `oci://ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller/chart` |
+| Repository | `oci://ghcr.io/lexfrei/charts/cloudflare-tunnel-gateway-controller` |
 | Source | [GitHub](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/tree/master/charts/cloudflare-tunnel-gateway-controller) |
 
 ## Values Reference
@@ -104,7 +104,7 @@ The chart includes example values files in the `examples/` directory:
 
 ```bash
 helm upgrade cloudflare-tunnel-gateway-controller \
-  oci://ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller/chart \
+  oci://ghcr.io/lexfrei/charts/cloudflare-tunnel-gateway-controller \
   --namespace cloudflare-tunnel-system \
   --values values.yaml
 ```
@@ -115,7 +115,7 @@ Pin to specific versions in production:
 
 ```bash
 helm upgrade cloudflare-tunnel-gateway-controller \
-  oci://ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller/chart \
+  oci://ghcr.io/lexfrei/charts/cloudflare-tunnel-gateway-controller \
   --version 0.8.0 \
   --namespace cloudflare-tunnel-system \
   --values values.yaml

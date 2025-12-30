@@ -39,7 +39,7 @@ Controller.
 |----------|-------------|
 | [GitHub Releases](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/releases) | Release notes and changelogs |
 | [Container Registry](https://ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller) | Multi-arch container images |
-| [Helm Chart Registry](https://ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller/chart) | OCI Helm chart |
+| [Helm Chart Registry](https://ghcr.io/lexfrei/charts/cloudflare-tunnel-gateway-controller) | OCI Helm chart |
 | [Gateway API Docs](https://gateway-api.sigs.k8s.io/) | Official Gateway API documentation |
 | [Cloudflare Tunnel Docs](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) | Cloudflare Tunnel documentation |
 

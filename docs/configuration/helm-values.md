@@ -192,7 +192,7 @@ When upgrading the Helm release:
 
 ```bash
 helm upgrade cloudflare-tunnel-gateway-controller \
-  oci://ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller/chart \
+  oci://ghcr.io/lexfrei/charts/cloudflare-tunnel-gateway-controller \
   --namespace cloudflare-tunnel-system \
   --values values.yaml
 ```
@@ -203,7 +203,7 @@ helm upgrade cloudflare-tunnel-gateway-controller \
 
     ```bash
     helm upgrade cloudflare-tunnel-gateway-controller \
-      oci://ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller/chart \
+      oci://ghcr.io/lexfrei/charts/cloudflare-tunnel-gateway-controller \
       --version 0.8.0 \
       --namespace cloudflare-tunnel-system \
       --values values.yaml
