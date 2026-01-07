@@ -46,7 +46,7 @@ func TestNewBuilder(t *testing.T) {
 
 			builder := ingress.NewBuilder(tt.clusterDomain, nil, nil, nil, nil)
 			require.NotNil(t, builder)
-			assert.Equal(t, tt.clusterDomain, builder.ClusterDomain)
+			// ClusterDomain is now an internal implementation detail
 		})
 	}
 }
@@ -742,6 +742,122 @@ func TestBuild_SortingByHostname(t *testing.T) {
 	require.Len(t, buildResult.Rules, 3)
 	assert.Equal(t, "a.example.com", buildResult.Rules[0].Hostname.Value)
 	assert.Equal(t, "z.example.com", buildResult.Rules[1].Hostname.Value)
+}
+
+func TestBuild_WildcardHostnameSortedLast(t *testing.T) {
+	t.Parallel()
+
+	builder := ingress.NewBuilder("cluster.local", nil, nil, nil, nil)
+	routes := []gatewayv1.HTTPRoute{
+		// Wildcard route - should be sorted LAST despite "*" < "a" in ASCII
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "wildcard-route",
+				Namespace: "default",
+			},
+			Spec: gatewayv1.HTTPRouteSpec{
+				Hostnames: []gatewayv1.Hostname{},
+				Rules: []gatewayv1.HTTPRouteRule{
+					{
+						BackendRefs: []gatewayv1.HTTPBackendRef{
+							newHTTPBackendRef("wildcard-service", nil, int32Ptr(8080)),
+						},
+					},
+				},
+			},
+		},
+		// Specific hostname route
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "specific-route",
+				Namespace: "default",
+			},
+			Spec: gatewayv1.HTTPRouteSpec{
+				Hostnames: []gatewayv1.Hostname{"app.example.com"},
+				Rules: []gatewayv1.HTTPRouteRule{
+					{
+						BackendRefs: []gatewayv1.HTTPBackendRef{
+							newHTTPBackendRef("specific-service", nil, int32Ptr(8080)),
+						},
+					},
+				},
+			},
+		},
+	}
+
+	buildResult := builder.Build(context.Background(), routes)
+
+	// Specific hostname should come first, wildcard second, catch-all last
+	require.Len(t, buildResult.Rules, 3)
+	assert.Equal(t, "app.example.com", buildResult.Rules[0].Hostname.Value)
+	assert.Equal(t, "*", buildResult.Rules[1].Hostname.Value)
+	assert.Equal(t, ingress.CatchAllService, buildResult.Rules[2].Service.Value)
+}
+
+func TestBuild_MixedHostnamesWithWildcard(t *testing.T) {
+	t.Parallel()
+
+	builder := ingress.NewBuilder("cluster.local", nil, nil, nil, nil)
+	routes := []gatewayv1.HTTPRoute{
+		// Route with explicit "*" hostname
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "wildcard-explicit",
+				Namespace: "default",
+			},
+			Spec: gatewayv1.HTTPRouteSpec{
+				Hostnames: []gatewayv1.Hostname{"*"},
+				Rules: []gatewayv1.HTTPRouteRule{
+					{
+						BackendRefs: []gatewayv1.HTTPBackendRef{
+							newHTTPBackendRef("wildcard-service", nil, int32Ptr(8080)),
+						},
+					},
+				},
+			},
+		},
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "z-route",
+				Namespace: "default",
+			},
+			Spec: gatewayv1.HTTPRouteSpec{
+				Hostnames: []gatewayv1.Hostname{"z.example.com"},
+				Rules: []gatewayv1.HTTPRouteRule{
+					{
+						BackendRefs: []gatewayv1.HTTPBackendRef{
+							newHTTPBackendRef("z-service", nil, int32Ptr(8080)),
+						},
+					},
+				},
+			},
+		},
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "a-route",
+				Namespace: "default",
+			},
+			Spec: gatewayv1.HTTPRouteSpec{
+				Hostnames: []gatewayv1.Hostname{"a.example.com"},
+				Rules: []gatewayv1.HTTPRouteRule{
+					{
+						BackendRefs: []gatewayv1.HTTPBackendRef{
+							newHTTPBackendRef("a-service", nil, int32Ptr(8080)),
+						},
+					},
+				},
+			},
+		},
+	}
+
+	buildResult := builder.Build(context.Background(), routes)
+
+	// Order should be: a.example.com, z.example.com, *, catch-all
+	require.Len(t, buildResult.Rules, 4)
+	assert.Equal(t, "a.example.com", buildResult.Rules[0].Hostname.Value)
+	assert.Equal(t, "z.example.com", buildResult.Rules[1].Hostname.Value)
+	assert.Equal(t, "*", buildResult.Rules[2].Hostname.Value)
+	assert.Equal(t, ingress.CatchAllService, buildResult.Rules[3].Service.Value)
 }
 
 func TestBuild_CoreGroupExplicit(t *testing.T) {

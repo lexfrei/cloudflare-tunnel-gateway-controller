@@ -270,6 +270,122 @@ Tests run automatically in CI:
     files: coverage.out
 ```
 
+## Gateway API Conformance Tests
+
+Conformance tests validate that the controller implements the Gateway API
+specification correctly. These tests require a real Kubernetes cluster with
+a working Cloudflare Tunnel.
+
+### Prerequisites
+
+- Kubernetes cluster (kind, k3s, or real cluster)
+- Controller installed and running
+- Cloudflare Tunnel configured and working
+- GatewayClass `cloudflare-tunnel` created
+
+### Running Conformance Tests
+
+```bash
+# Run all conformance tests
+go test -tags=conformance ./conformance/... -v \
+  --gateway-class=cloudflare-tunnel
+
+# Run with debug output
+go test -tags=conformance ./conformance/... -v \
+  --gateway-class=cloudflare-tunnel \
+  --debug
+
+# Generate conformance report
+go test -tags=conformance ./conformance/... -v \
+  --gateway-class=cloudflare-tunnel \
+  --report-output=./conformance-report.yaml
+
+# Keep resources after tests (for debugging)
+go test -tags=conformance ./conformance/... -v \
+  --gateway-class=cloudflare-tunnel \
+  --cleanup=false
+```
+
+### Supported Features
+
+The controller supports these Gateway API features:
+
+| Feature | Status |
+|---------|--------|
+| Gateway | Supported |
+| HTTPRoute | Supported |
+| GRPCRoute | Supported |
+| ReferenceGrant | Supported |
+
+### Skipped Features (Cloudflare Limitations)
+
+These features are skipped due to Cloudflare Tunnel API limitations:
+
+- Header matching
+- Query parameter matching
+- Method matching
+- Request/response header modification
+- Redirects and rewrites
+- Request mirroring
+
+### Conformance Profiles
+
+The tests target these profiles:
+
+- `GATEWAY-HTTP` - HTTP routing conformance
+- `GATEWAY-GRPC` - gRPC routing conformance
+
+### Test Environment Setup
+
+1. Create a kind cluster:
+
+    ```bash
+    kind create cluster --name conformance-test
+    ```
+
+2. Install the controller:
+
+    ```bash
+    helm install controller charts/cloudflare-tunnel-gateway-controller \
+      --set cloudflared.enabled=true
+    ```
+
+3. Create GatewayClassConfig with Cloudflare credentials:
+
+    ```yaml
+    apiVersion: gateway.cloudflare.com/v1alpha1
+    kind: GatewayClassConfig
+    metadata:
+      name: cloudflare-tunnel-config
+    spec:
+      tunnelID: "your-tunnel-id"
+      cloudflareCredentialsSecretRef:
+        name: cloudflare-credentials
+      tunnelTokenSecretRef:
+        name: cloudflare-tunnel-token
+    ```
+
+4. Create GatewayClass:
+
+    ```yaml
+    apiVersion: gateway.networking.k8s.io/v1
+    kind: GatewayClass
+    metadata:
+      name: cloudflare-tunnel
+    spec:
+      controllerName: gateway.cloudflare.com/cloudflare-tunnel-gateway-controller
+      parametersRef:
+        group: gateway.cloudflare.com
+        kind: GatewayClassConfig
+        name: cloudflare-tunnel-config
+    ```
+
+5. Run the tests:
+
+    ```bash
+    go test -tags=conformance ./conformance/... -v
+    ```
+
 ## Best Practices
 
 1. **Fast tests**: Unit tests should run in milliseconds
