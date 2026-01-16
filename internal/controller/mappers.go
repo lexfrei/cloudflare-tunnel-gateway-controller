@@ -185,7 +185,12 @@ type HTTPRouteWrapper struct {
 
 // GetCrossNamespaceBackendNamespaces returns namespaces of backends in other namespaces.
 func (w HTTPRouteWrapper) GetCrossNamespaceBackendNamespaces() []string {
-	var refs []gatewayv1.BackendRef
+	totalRefs := 0
+	for _, rule := range w.Spec.Rules {
+		totalRefs += len(rule.BackendRefs)
+	}
+
+	refs := make([]gatewayv1.BackendRef, 0, totalRefs)
 
 	for _, rule := range w.Spec.Rules {
 		for i := range rule.BackendRefs {
@@ -203,7 +208,12 @@ type GRPCRouteWrapper struct {
 
 // GetCrossNamespaceBackendNamespaces returns namespaces of backends in other namespaces.
 func (w GRPCRouteWrapper) GetCrossNamespaceBackendNamespaces() []string {
-	var refs []gatewayv1.BackendRef
+	totalRefs := 0
+	for _, rule := range w.Spec.Rules {
+		totalRefs += len(rule.BackendRefs)
+	}
+
+	refs := make([]gatewayv1.BackendRef, 0, totalRefs)
 
 	for _, rule := range w.Spec.Rules {
 		for i := range rule.BackendRefs {

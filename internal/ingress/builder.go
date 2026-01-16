@@ -116,9 +116,9 @@ type BuildResult struct {
 func (b *Builder) Build(ctx context.Context, routes []gatewayv1.HTTPRoute) BuildResult {
 	startTime := time.Now()
 
-	var entries []routeEntry
+	var entries []routeEntry //nolint:prealloc // size unknown until buildRouteEntries called
 
-	var failedRefs []BackendRefError
+	var failedRefs []BackendRefError //nolint:prealloc // size unknown until buildRouteEntries called
 
 	for i := range routes {
 		routeEntries, routeFailedRefs := b.buildRouteEntries(ctx, &routes[i])
