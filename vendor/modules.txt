@@ -88,7 +88,7 @@ github.com/cloudflare/circl/math/mlsbset
 github.com/cloudflare/circl/sign
 github.com/cloudflare/circl/sign/ed25519
 github.com/cloudflare/circl/sign/ed448
-# github.com/cloudflare/cloudflare-go/v6 v6.5.0
+# github.com/cloudflare/cloudflare-go/v6 v6.6.0
 ## explicit; go 1.22
 github.com/cloudflare/cloudflare-go/v6
 github.com/cloudflare/cloudflare-go/v6/abuse_reports
@@ -792,7 +792,7 @@ gopkg.in/inf.v0
 # gopkg.in/yaml.v3 v3.0.1
 ## explicit
 gopkg.in/yaml.v3
-# helm.sh/helm/v4 v4.0.4
+# helm.sh/helm/v4 v4.0.5
 ## explicit; go 1.24.0
 helm.sh/helm/v4/internal/chart/v3
 helm.sh/helm/v4/internal/chart/v3/loader
