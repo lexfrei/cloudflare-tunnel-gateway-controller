@@ -4,7 +4,7 @@ go 1.25.4
 
 require (
 	github.com/Masterminds/semver/v3 v3.4.0
-	github.com/cloudflare/cloudflare-go/v6 v6.5.0
+	github.com/cloudflare/cloudflare-go/v6 v6.6.0
 	github.com/cockroachdb/errors v1.12.0
 	github.com/go-logr/logr v1.4.3
 	github.com/google/uuid v1.6.0
@@ -13,7 +13,7 @@ require (
 	github.com/spf13/viper v1.21.0
 	github.com/stretchr/testify v1.11.1
 	go.opentelemetry.io/otel/trace v1.39.0
-	helm.sh/helm/v4 v4.0.4
+	helm.sh/helm/v4 v4.0.5
 	k8s.io/api v0.35.0
 	k8s.io/apimachinery v0.35.0
 	k8s.io/client-go v0.35.0
