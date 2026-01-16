@@ -141,7 +141,7 @@ type GatewayClassConfigSpec struct {
 
 	// Cloudflared configures the cloudflared deployment.
 	// +optional
-	Cloudflared CloudflaredConfig `json:"cloudflared,omitempty"` //nolint:modernize // kubebuilder standard
+	Cloudflared CloudflaredConfig `json:"cloudflared,omitempty"`
 }
 
 // GatewayClassConfigStatus defines the observed state of GatewayClassConfig.
@@ -164,10 +164,10 @@ type GatewayClassConfigStatus struct {
 // It provides configuration for Cloudflare Tunnel Gateway API implementation.
 type GatewayClassConfig struct {
 	metav1.TypeMeta   `json:",inline"`
-	metav1.ObjectMeta `json:"metadata,omitempty"` //nolint:modernize // kubebuilder standard
+	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec   GatewayClassConfigSpec   `json:"spec,omitempty"`   //nolint:modernize // kubebuilder standard
-	Status GatewayClassConfigStatus `json:"status,omitempty"` //nolint:modernize // kubebuilder standard
+	Spec   GatewayClassConfigSpec   `json:"spec,omitempty"`
+	Status GatewayClassConfigStatus `json:"status,omitempty"`
 }
 
 // +kubebuilder:object:root=true
@@ -175,7 +175,7 @@ type GatewayClassConfig struct {
 // GatewayClassConfigList contains a list of GatewayClassConfig.
 type GatewayClassConfigList struct {
 	metav1.TypeMeta `json:",inline"`
-	metav1.ListMeta `json:"metadata,omitempty"` //nolint:modernize // kubebuilder standard
+	metav1.ListMeta `json:"metadata,omitempty"`
 
 	Items []GatewayClassConfig `json:"items"`
 }
