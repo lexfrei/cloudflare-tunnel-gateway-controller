@@ -41,6 +41,15 @@ const (
 	maxHelmReleaseName = 53
 )
 
+// truncateMessage truncates a message to maxConditionMessageLength.
+func truncateMessage(msg string) string {
+	if len(msg) > maxConditionMessageLength {
+		return msg[:maxConditionMessageLength-3] + "..."
+	}
+
+	return msg
+}
+
 // GatewayReconciler reconciles Gateway resources for the cloudflare-tunnel GatewayClass.
 //
 // It performs the following functions:
@@ -107,6 +116,7 @@ func (r *GatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		return r.handleDeletion(ctx, &gateway, resolvedConfig)
 	}
 
+	//nolint:nestif // cloudflared management requires nested validation
 	if r.HelmManager != nil && resolvedConfig.CloudflaredEnabled {
 		if !controllerutil.ContainsFinalizer(&gateway, cloudflaredFinalizer) {
 			controllerutil.AddFinalizer(&gateway, cloudflaredFinalizer)
@@ -117,7 +127,13 @@ func (r *GatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		}
 
 		if err := r.ensureCloudflared(ctx, &gateway, resolvedConfig); err != nil {
-			return ctrl.Result{}, errors.Wrap(err, "failed to ensure cloudflared deployment")
+			logger.Error(err, "failed to ensure cloudflared deployment")
+
+			if statusErr := r.setCloudflaredErrorStatus(ctx, &gateway, resolvedConfig, err); statusErr != nil {
+				logger.Error(statusErr, "failed to update gateway status")
+			}
+
+			return ctrl.Result{RequeueAfter: configErrorRequeueDelay}, nil
 		}
 	}
 
@@ -402,6 +418,10 @@ func (r *GatewayReconciler) setConfigErrorStatus(
 		}
 
 		now := metav1.Now()
+		errMsg := truncateMessage("Failed to resolve GatewayClassConfig: " + configErr.Error())
+
+		// Clear addresses on config error (no valid tunnel to point to)
+		freshGateway.Status.Addresses = nil
 
 		freshGateway.Status.Conditions = []metav1.Condition{
 			{
@@ -410,9 +430,77 @@ func (r *GatewayReconciler) setConfigErrorStatus(
 				ObservedGeneration: freshGateway.Generation,
 				LastTransitionTime: now,
 				Reason:             "InvalidParameters",
-				Message:            "Failed to resolve GatewayClassConfig: " + configErr.Error(),
+				Message:            errMsg,
+			},
+			{
+				Type:               string(gatewayv1.GatewayConditionProgrammed),
+				Status:             metav1.ConditionFalse,
+				ObservedGeneration: freshGateway.Generation,
+				LastTransitionTime: now,
+				Reason:             "Invalid",
+				Message:            errMsg,
 			},
 		}
+
+		// Clear listener statuses on config error
+		freshGateway.Status.Listeners = nil
+
+		if err := r.Status().Update(ctx, &freshGateway); err != nil {
+			return errors.Wrap(err, "failed to update gateway status")
+		}
+
+		return nil
+	})
+
+	return errors.Wrap(err, "failed to update gateway status after retries")
+}
+
+func (r *GatewayReconciler) setCloudflaredErrorStatus(
+	ctx context.Context,
+	gateway *gatewayv1.Gateway,
+	cfg *config.ResolvedConfig,
+	cloudflaredErr error,
+) error {
+	gatewayKey := types.NamespacedName{Name: gateway.Name, Namespace: gateway.Namespace}
+
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		var freshGateway gatewayv1.Gateway
+		if err := r.Get(ctx, gatewayKey, &freshGateway); err != nil {
+			return errors.Wrap(err, "failed to get fresh gateway")
+		}
+
+		now := metav1.Now()
+		errMsg := truncateMessage("Failed to deploy cloudflared: " + cloudflaredErr.Error())
+
+		// Set address even on error (tunnel exists, just cloudflared failed)
+		freshGateway.Status.Addresses = []gatewayv1.GatewayStatusAddress{
+			{
+				Type:  ptr.To(gatewayv1.HostnameAddressType),
+				Value: cfg.TunnelID + cfArgotunnelSuffix,
+			},
+		}
+
+		freshGateway.Status.Conditions = []metav1.Condition{
+			{
+				Type:               string(gatewayv1.GatewayConditionAccepted),
+				Status:             metav1.ConditionTrue,
+				ObservedGeneration: freshGateway.Generation,
+				LastTransitionTime: now,
+				Reason:             string(gatewayv1.GatewayReasonAccepted),
+				Message:            "Gateway accepted by cloudflare-tunnel controller",
+			},
+			{
+				Type:               string(gatewayv1.GatewayConditionProgrammed),
+				Status:             metav1.ConditionFalse,
+				ObservedGeneration: freshGateway.Generation,
+				LastTransitionTime: now,
+				Reason:             "DeploymentFailed",
+				Message:            errMsg,
+			},
+		}
+
+		// Clear listener statuses on cloudflared error
+		freshGateway.Status.Listeners = nil
 
 		if err := r.Status().Update(ctx, &freshGateway); err != nil {
 			return errors.Wrap(err, "failed to update gateway status")

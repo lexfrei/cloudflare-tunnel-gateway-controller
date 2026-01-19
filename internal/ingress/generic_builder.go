@@ -99,8 +99,10 @@ func (b *GenericBuilder[R]) Build(ctx context.Context, routes []R) BuildResult {
 		metrics:       b.metrics,
 	}
 
+	//nolint:prealloc // size depends on variable entries per route
 	var entries []routeEntry
 
+	//nolint:prealloc // size depends on variable entries per route
 	var failedRefs []BackendRefError
 
 	for i := range routes {

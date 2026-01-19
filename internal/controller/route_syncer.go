@@ -96,6 +96,21 @@ type SyncResult struct {
 	GRPCFailedRefs    []ingress.BackendRefError   // Failed backend refs from GRPC routes
 }
 
+// buildResultForError creates a SyncResult containing all relevant routes.
+// Used when early errors occur (before routes are collected) to ensure
+// route statuses are updated to reflect the error.
+func (s *RouteSyncer) buildResultForError(ctx context.Context) *SyncResult {
+	httpRoutes, httpBindings, _ := s.getRelevantHTTPRoutes(ctx)
+	grpcRoutes, grpcBindings, _ := s.getRelevantGRPCRoutes(ctx)
+
+	return &SyncResult{
+		HTTPRoutes:        httpRoutes,
+		GRPCRoutes:        grpcRoutes,
+		HTTPRouteBindings: httpBindings,
+		GRPCRouteBindings: grpcBindings,
+	}
+}
+
 // SyncAllRoutes synchronizes all HTTPRoute and GRPCRoute resources to Cloudflare Tunnel.
 //
 //nolint:funlen,wrapcheck // complex sync logic requires length; Cloudflare API errors are intentionally unwrapped
@@ -118,7 +133,7 @@ func (s *RouteSyncer) SyncAllRoutes(ctx context.Context) (ctrl.Result, *SyncResu
 	if err != nil {
 		logger.Error("failed to resolve config from GatewayClassConfig", "error", err)
 
-		return ctrl.Result{RequeueAfter: apiErrorRequeueDelay, Priority: ptr.To(priorityRoute)}, nil, nil
+		return ctrl.Result{RequeueAfter: apiErrorRequeueDelay, Priority: ptr.To(priorityRoute)}, s.buildResultForError(ctx), err
 	}
 
 	// Create Cloudflare client with resolved credentials
@@ -129,7 +144,7 @@ func (s *RouteSyncer) SyncAllRoutes(ctx context.Context) (ctrl.Result, *SyncResu
 	if err != nil {
 		logger.Error("failed to resolve account ID", "error", err)
 
-		return ctrl.Result{RequeueAfter: apiErrorRequeueDelay, Priority: ptr.To(priorityRoute)}, nil, nil
+		return ctrl.Result{RequeueAfter: apiErrorRequeueDelay, Priority: ptr.To(priorityRoute)}, s.buildResultForError(ctx), err
 	}
 
 	// Get current tunnel configuration
@@ -147,7 +162,7 @@ func (s *RouteSyncer) SyncAllRoutes(ctx context.Context) (ctrl.Result, *SyncResu
 		s.Metrics.RecordAPIError(ctx, "get", metrics.ClassifyCloudflareError(err))
 		logger.Error("failed to get current tunnel configuration", "error", err)
 
-		return ctrl.Result{RequeueAfter: apiErrorRequeueDelay, Priority: ptr.To(priorityRoute)}, nil, nil
+		return ctrl.Result{RequeueAfter: apiErrorRequeueDelay, Priority: ptr.To(priorityRoute)}, s.buildResultForError(ctx), err
 	}
 
 	s.Metrics.RecordAPICall(ctx, "get", "tunnel_config", "success", time.Since(getStart))

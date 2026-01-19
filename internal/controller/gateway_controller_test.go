@@ -773,10 +773,21 @@ func TestGatewayReconciler_SetConfigErrorStatus(t *testing.T) {
 	}, &updated)
 	require.NoError(t, err)
 
-	require.Len(t, updated.Status.Conditions, 1)
+	require.Len(t, updated.Status.Conditions, 2)
+
+	// Verify Accepted condition
 	assert.Equal(t, string(gatewayv1.GatewayConditionAccepted), updated.Status.Conditions[0].Type)
 	assert.Equal(t, metav1.ConditionFalse, updated.Status.Conditions[0].Status)
 	assert.Equal(t, "InvalidParameters", updated.Status.Conditions[0].Reason)
+
+	// Verify Programmed condition
+	assert.Equal(t, string(gatewayv1.GatewayConditionProgrammed), updated.Status.Conditions[1].Type)
+	assert.Equal(t, metav1.ConditionFalse, updated.Status.Conditions[1].Status)
+	assert.Equal(t, "Invalid", updated.Status.Conditions[1].Reason)
+
+	// Verify addresses and listeners are cleared
+	assert.Nil(t, updated.Status.Addresses)
+	assert.Nil(t, updated.Status.Listeners)
 }
 
 func setupGatewayTestReconcilerWithManagedCloudflared() (*GatewayReconciler, client.WithWatch) {
