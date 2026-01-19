@@ -8,6 +8,7 @@ import (
 	"github.com/cockroachdb/errors"
 	corev1 "k8s.io/api/core/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	ctrlMetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
@@ -74,6 +75,10 @@ func Run(ctx context.Context, cfg *Config) error {
 			BindAddress: cfg.MetricsAddr,
 		},
 		HealthProbeBindAddress: cfg.HealthAddr,
+		// Enable field validation warnings for early detection of unknown fields
+		Client: client.Options{
+			FieldValidation: "Warn",
+		},
 	}
 
 	if cfg.LeaderElect {

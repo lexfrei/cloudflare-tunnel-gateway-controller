@@ -11,6 +11,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
@@ -161,7 +162,7 @@ func TestGatewayClassConfigReconciler_Reconcile_MissingCredentialsSecret(t *test
 				Namespace: "default",
 			},
 			Cloudflared: v1alpha1.CloudflaredConfig{
-				Enabled: ptr(false),
+				Enabled: ptr.To(false),
 			},
 		},
 	}
@@ -311,7 +312,7 @@ func TestGatewayClassConfigReconciler_Reconcile_MissingAPITokenKey(t *testing.T)
 				Namespace: "default",
 			},
 			Cloudflared: v1alpha1.CloudflaredConfig{
-				Enabled: ptr(false),
+				Enabled: ptr.To(false),
 			},
 		},
 	}
@@ -636,7 +637,7 @@ func TestGatewayClassConfigReconciler_ValidateConfig_CloudflaredDisabled(t *test
 				Namespace: "default",
 			},
 			Cloudflared: v1alpha1.CloudflaredConfig{
-				Enabled: ptr(false),
+				Enabled: ptr.To(false),
 			},
 			// No tunnel token needed when cloudflared is disabled
 		},
@@ -713,7 +714,7 @@ func TestGatewayClassConfigReconciler_DefaultNamespace(t *testing.T) {
 				// No namespace specified
 			},
 			Cloudflared: v1alpha1.CloudflaredConfig{
-				Enabled: ptr(false),
+				Enabled: ptr.To(false),
 			},
 		},
 	}

@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
@@ -126,7 +127,7 @@ func TestRouteSyncer_GetRelevantHTTPRoutes(t *testing.T) {
 							ParentRefs: []gatewayv1.ParentReference{
 								{
 									Name:      "test-gateway",
-									Namespace: ptr(gatewayv1.Namespace("gateway-ns")),
+									Namespace: ptr.To(gatewayv1.Namespace("gateway-ns")),
 								},
 							},
 						},
@@ -160,7 +161,7 @@ func TestRouteSyncer_GetRelevantHTTPRoutes(t *testing.T) {
 							ParentRefs: []gatewayv1.ParentReference{
 								{
 									Name: "test-service",
-									Kind: ptr(gatewayv1.Kind("Service")),
+									Kind: ptr.To(gatewayv1.Kind("Service")),
 								},
 							},
 						},

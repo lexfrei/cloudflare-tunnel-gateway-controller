@@ -11,6 +11,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -579,7 +580,7 @@ func TestFindRoutesForReferenceGrant(t *testing.T) {
 							{BackendRefs: []gatewayv1.HTTPBackendRef{
 								{BackendRef: gatewayv1.BackendRef{
 									BackendObjectReference: gatewayv1.BackendObjectReference{
-										Namespace: ptr(gatewayv1.Namespace("backend-ns")),
+										Namespace: ptr.To(gatewayv1.Namespace("backend-ns")),
 									},
 								}},
 							}},
@@ -640,7 +641,7 @@ func TestFindRoutesForReferenceGrant(t *testing.T) {
 							{BackendRefs: []gatewayv1.GRPCBackendRef{
 								{BackendRef: gatewayv1.BackendRef{
 									BackendObjectReference: gatewayv1.BackendObjectReference{
-										Namespace: ptr(gatewayv1.Namespace("grpc-backend")),
+										Namespace: ptr.To(gatewayv1.Namespace("grpc-backend")),
 									},
 								}},
 							}},
@@ -685,7 +686,7 @@ func TestHTTPRouteWrapper_GetCrossNamespaceBackendNamespaces(t *testing.T) {
 						{BackendRefs: []gatewayv1.HTTPBackendRef{
 							{BackendRef: gatewayv1.BackendRef{
 								BackendObjectReference: gatewayv1.BackendObjectReference{
-									Namespace: ptr(gatewayv1.Namespace("backend-ns")),
+									Namespace: ptr.To(gatewayv1.Namespace("backend-ns")),
 								},
 							}},
 						}},
@@ -703,7 +704,7 @@ func TestHTTPRouteWrapper_GetCrossNamespaceBackendNamespaces(t *testing.T) {
 						{BackendRefs: []gatewayv1.HTTPBackendRef{
 							{BackendRef: gatewayv1.BackendRef{
 								BackendObjectReference: gatewayv1.BackendObjectReference{
-									Namespace: ptr(gatewayv1.Namespace("app-ns")),
+									Namespace: ptr.To(gatewayv1.Namespace("app-ns")),
 								},
 							}},
 						}},
@@ -721,12 +722,12 @@ func TestHTTPRouteWrapper_GetCrossNamespaceBackendNamespaces(t *testing.T) {
 						{BackendRefs: []gatewayv1.HTTPBackendRef{
 							{BackendRef: gatewayv1.BackendRef{
 								BackendObjectReference: gatewayv1.BackendObjectReference{
-									Namespace: ptr(gatewayv1.Namespace("backend-ns")),
+									Namespace: ptr.To(gatewayv1.Namespace("backend-ns")),
 								},
 							}},
 							{BackendRef: gatewayv1.BackendRef{
 								BackendObjectReference: gatewayv1.BackendObjectReference{
-									Namespace: ptr(gatewayv1.Namespace("backend-ns")),
+									Namespace: ptr.To(gatewayv1.Namespace("backend-ns")),
 								},
 							}},
 						}},
@@ -784,7 +785,7 @@ func TestGRPCRouteWrapper_GetCrossNamespaceBackendNamespaces(t *testing.T) {
 						{BackendRefs: []gatewayv1.GRPCBackendRef{
 							{BackendRef: gatewayv1.BackendRef{
 								BackendObjectReference: gatewayv1.BackendObjectReference{
-									Namespace: ptr(gatewayv1.Namespace("grpc-backend")),
+									Namespace: ptr.To(gatewayv1.Namespace("grpc-backend")),
 								},
 							}},
 						}},
@@ -908,7 +909,7 @@ func TestIsRouteAcceptedByGateway(t *testing.T) {
 							Name:     "http",
 							Port:     80,
 							Protocol: gatewayv1.HTTPProtocolType,
-							Hostname: ptr(gatewayv1.Hostname("*.example.com")),
+							Hostname: ptr.To(gatewayv1.Hostname("*.example.com")),
 						},
 					},
 				},
@@ -946,7 +947,7 @@ func TestIsRouteAcceptedByGateway(t *testing.T) {
 							Protocol: gatewayv1.HTTPProtocolType,
 							AllowedRoutes: &gatewayv1.AllowedRoutes{
 								Namespaces: &gatewayv1.RouteNamespaces{
-									From: ptr(gatewayv1.NamespacesFromSame),
+									From: ptr.To(gatewayv1.NamespacesFromSame),
 								},
 							},
 						},
@@ -963,7 +964,7 @@ func TestIsRouteAcceptedByGateway(t *testing.T) {
 						ParentRefs: []gatewayv1.ParentReference{
 							{
 								Name:      "test-gateway",
-								Namespace: ptr(gatewayv1.Namespace("gateway-ns")),
+								Namespace: ptr.To(gatewayv1.Namespace("gateway-ns")),
 							},
 						},
 					},
@@ -1269,7 +1270,7 @@ func TestFilterAcceptedRoutes(t *testing.T) {
 						Name:     "http",
 						Port:     80,
 						Protocol: gatewayv1.HTTPProtocolType,
-						Hostname: ptr(gatewayv1.Hostname("*.example.com")),
+						Hostname: ptr.To(gatewayv1.Hostname("*.example.com")),
 					}},
 				},
 			},
