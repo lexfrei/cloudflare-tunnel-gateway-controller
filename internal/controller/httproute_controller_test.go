@@ -10,6 +10,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -261,7 +262,7 @@ func TestHTTPRouteReconciler_IsRouteForOurGateway(t *testing.T) {
 						ParentRefs: []gatewayv1.ParentReference{
 							{
 								Name: "some-service",
-								Kind: ptr(gatewayv1.Kind("Service")),
+								Kind: ptr.To(gatewayv1.Kind("Service")),
 							},
 						},
 					},
@@ -286,7 +287,7 @@ func TestHTTPRouteReconciler_IsRouteForOurGateway(t *testing.T) {
 							Protocol: gatewayv1.HTTPProtocolType,
 							AllowedRoutes: &gatewayv1.AllowedRoutes{
 								Namespaces: &gatewayv1.RouteNamespaces{
-									From: ptr(gatewayv1.NamespacesFromAll),
+									From: ptr.To(gatewayv1.NamespacesFromAll),
 								},
 							},
 						},
@@ -303,7 +304,7 @@ func TestHTTPRouteReconciler_IsRouteForOurGateway(t *testing.T) {
 						ParentRefs: []gatewayv1.ParentReference{
 							{
 								Name:      "test-gateway",
-								Namespace: ptr(gatewayv1.Namespace("other-namespace")),
+								Namespace: ptr.To(gatewayv1.Namespace("other-namespace")),
 							},
 						},
 					},
@@ -345,7 +346,7 @@ func TestHTTPRouteReconciler_IsRouteForOurGateway(t *testing.T) {
 							Name:     "http",
 							Port:     80,
 							Protocol: gatewayv1.HTTPProtocolType,
-							Hostname: ptr(gatewayv1.Hostname("*.example.com")),
+							Hostname: ptr.To(gatewayv1.Hostname("*.example.com")),
 						},
 					},
 				},
@@ -381,7 +382,7 @@ func TestHTTPRouteReconciler_IsRouteForOurGateway(t *testing.T) {
 							Name:     "http",
 							Port:     80,
 							Protocol: gatewayv1.HTTPProtocolType,
-							Hostname: ptr(gatewayv1.Hostname("*.example.com")),
+							Hostname: ptr.To(gatewayv1.Hostname("*.example.com")),
 						},
 					},
 				},
@@ -419,7 +420,7 @@ func TestHTTPRouteReconciler_IsRouteForOurGateway(t *testing.T) {
 							Protocol: gatewayv1.HTTPProtocolType,
 							AllowedRoutes: &gatewayv1.AllowedRoutes{
 								Namespaces: &gatewayv1.RouteNamespaces{
-									From: ptr(gatewayv1.NamespacesFromSame),
+									From: ptr.To(gatewayv1.NamespacesFromSame),
 								},
 							},
 						},
@@ -436,7 +437,7 @@ func TestHTTPRouteReconciler_IsRouteForOurGateway(t *testing.T) {
 						ParentRefs: []gatewayv1.ParentReference{
 							{
 								Name:      "test-gateway",
-								Namespace: ptr(gatewayv1.Namespace("gateway-ns")),
+								Namespace: ptr.To(gatewayv1.Namespace("gateway-ns")),
 							},
 						},
 					},
@@ -461,7 +462,7 @@ func TestHTTPRouteReconciler_IsRouteForOurGateway(t *testing.T) {
 							Protocol: gatewayv1.HTTPProtocolType,
 							AllowedRoutes: &gatewayv1.AllowedRoutes{
 								Namespaces: &gatewayv1.RouteNamespaces{
-									From: ptr(gatewayv1.NamespacesFromAll),
+									From: ptr.To(gatewayv1.NamespacesFromAll),
 								},
 							},
 						},
@@ -478,7 +479,7 @@ func TestHTTPRouteReconciler_IsRouteForOurGateway(t *testing.T) {
 						ParentRefs: []gatewayv1.ParentReference{
 							{
 								Name:      "test-gateway",
-								Namespace: ptr(gatewayv1.Namespace("gateway-ns")),
+								Namespace: ptr.To(gatewayv1.Namespace("gateway-ns")),
 							},
 						},
 					},
@@ -501,7 +502,7 @@ func TestHTTPRouteReconciler_IsRouteForOurGateway(t *testing.T) {
 							Name:     "http",
 							Port:     80,
 							Protocol: gatewayv1.HTTPProtocolType,
-							Hostname: ptr(gatewayv1.Hostname("*.example.com")),
+							Hostname: ptr.To(gatewayv1.Hostname("*.example.com")),
 						},
 					},
 				},
@@ -537,7 +538,7 @@ func TestHTTPRouteReconciler_IsRouteForOurGateway(t *testing.T) {
 							Name:     "http",
 							Port:     80,
 							Protocol: gatewayv1.HTTPProtocolType,
-							Hostname: ptr(gatewayv1.Hostname("*.example.com")),
+							Hostname: ptr.To(gatewayv1.Hostname("*.example.com")),
 						},
 					},
 				},

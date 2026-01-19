@@ -10,6 +10,7 @@ import (
 	"github.com/cloudflare/cloudflare-go/v6/zero_trust"
 	"github.com/cockroachdb/errors"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
@@ -117,7 +118,7 @@ func (s *RouteSyncer) SyncAllRoutes(ctx context.Context) (ctrl.Result, *SyncResu
 	if err != nil {
 		logger.Error("failed to resolve config from GatewayClassConfig", "error", err)
 
-		return ctrl.Result{RequeueAfter: apiErrorRequeueDelay}, nil, nil
+		return ctrl.Result{RequeueAfter: apiErrorRequeueDelay, Priority: ptr.To(priorityRoute)}, nil, nil
 	}
 
 	// Create Cloudflare client with resolved credentials
@@ -128,7 +129,7 @@ func (s *RouteSyncer) SyncAllRoutes(ctx context.Context) (ctrl.Result, *SyncResu
 	if err != nil {
 		logger.Error("failed to resolve account ID", "error", err)
 
-		return ctrl.Result{RequeueAfter: apiErrorRequeueDelay}, nil, nil
+		return ctrl.Result{RequeueAfter: apiErrorRequeueDelay, Priority: ptr.To(priorityRoute)}, nil, nil
 	}
 
 	// Get current tunnel configuration
@@ -146,7 +147,7 @@ func (s *RouteSyncer) SyncAllRoutes(ctx context.Context) (ctrl.Result, *SyncResu
 		s.Metrics.RecordAPIError(ctx, "get", metrics.ClassifyCloudflareError(err))
 		logger.Error("failed to get current tunnel configuration", "error", err)
 
-		return ctrl.Result{RequeueAfter: apiErrorRequeueDelay}, nil, nil
+		return ctrl.Result{RequeueAfter: apiErrorRequeueDelay, Priority: ptr.To(priorityRoute)}, nil, nil
 	}
 
 	s.Metrics.RecordAPICall(ctx, "get", "tunnel_config", "success", time.Since(getStart))
@@ -235,7 +236,7 @@ func (s *RouteSyncer) SyncAllRoutes(ctx context.Context) (ctrl.Result, *SyncResu
 			GRPCFailedRefs:    grpcBuildResult.FailedRefs,
 		}
 
-		return ctrl.Result{RequeueAfter: apiErrorRequeueDelay}, result, err
+		return ctrl.Result{RequeueAfter: apiErrorRequeueDelay, Priority: ptr.To(priorityRoute)}, result, err
 	}
 
 	s.Metrics.RecordAPICall(ctx, "update", "tunnel_config", "success", time.Since(updateStart))

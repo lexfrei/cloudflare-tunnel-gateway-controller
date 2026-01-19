@@ -14,6 +14,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/retry"
+	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -99,7 +100,7 @@ func (r *GatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 			logger.Error(statusErr, "failed to update gateway status")
 		}
 
-		return ctrl.Result{RequeueAfter: configErrorRequeueDelay}, nil
+		return ctrl.Result{RequeueAfter: configErrorRequeueDelay, Priority: ptr.To(priorityGateway)}, nil
 	}
 
 	if !gateway.DeletionTimestamp.IsZero() {
@@ -305,7 +306,7 @@ func (r *GatewayReconciler) updateStatus(
 
 		freshGateway.Status.Addresses = []gatewayv1.GatewayStatusAddress{
 			{
-				Type:  ptr(gatewayv1.HostnameAddressType),
+				Type:  ptr.To(gatewayv1.HostnameAddressType),
 				Value: cfg.TunnelID + cfArgotunnelSuffix,
 			},
 		}
@@ -598,10 +599,6 @@ func (r *GatewayReconciler) getAllGatewaysForClass(ctx context.Context) []reconc
 	}
 
 	return requests
-}
-
-func ptr[T any](v T) *T {
-	return &v
 }
 
 // cloudflaredReleaseName generates a unique Helm release name for cloudflared

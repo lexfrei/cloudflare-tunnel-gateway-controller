@@ -12,6 +12,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/retry"
+	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
@@ -59,7 +60,7 @@ type GRPCRouteReconciler struct {
 func (r *GRPCRouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	// Wait for startup sync to complete before processing reconcile events
 	if !r.startupComplete.Load() {
-		return ctrl.Result{RequeueAfter: startupPendingRequeueDelay}, nil
+		return ctrl.Result{RequeueAfter: startupPendingRequeueDelay, Priority: ptr.To(priorityRoute)}, nil
 	}
 
 	ctx = logging.WithReconcileID(ctx)

@@ -12,6 +12,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/retry"
+	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
@@ -85,7 +86,7 @@ func (r *GatewayClassConfigReconciler) Reconcile(ctx context.Context, req ctrl.R
 	}
 
 	// Requeue periodically to re-validate (secrets might be created/deleted)
-	return ctrl.Result{RequeueAfter: configValidationRequeueDelay}, nil
+	return ctrl.Result{RequeueAfter: configValidationRequeueDelay, Priority: ptr.To(priorityGatewayClassConfig)}, nil
 }
 
 // SetupWithManager sets up the controller with the Manager.
