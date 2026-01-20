@@ -192,6 +192,17 @@ func Run(ctx context.Context, cfg *Config) error {
 		return errors.Wrap(err, "failed to setup gatewayclassconfig controller")
 	}
 
+	// Setup GatewayClass controller for status updates
+	gatewayClassReconciler := &GatewayClassReconciler{
+		Client:         mgr.GetClient(),
+		Scheme:         mgr.GetScheme(),
+		ControllerName: cfg.ControllerName,
+	}
+
+	if err := gatewayClassReconciler.SetupWithManager(mgr); err != nil {
+		return errors.Wrap(err, "failed to setup gatewayclass controller")
+	}
+
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
 		return errors.Wrap(err, "failed to set up health check")
 	}

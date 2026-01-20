@@ -162,6 +162,17 @@ The controller supports a subset of Gateway API fields that map to Cloudflare Tu
 
 > **Load Balancing:** This controller does not implement traffic splitting between multiple backends. Cloudflare Tunnel accepts only a single service URL per ingress rule. If you need weighted routing or canary deployments, deploy a dedicated load balancer (Traefik, Envoy, Nginx) and point your HTTPRoute to it. See [Limitations](https://cf.k8s.lex.la/gateway-api/limitations/#traffic-splitting-and-load-balancing) for details.
 
+### Known Limitations
+
+Cloudflare Tunnel has path matching behavior that differs from Gateway API:
+
+- **No true exact path match**: `/api` (Exact) will still match `/api/v1`
+- **Common prefix routing**: Paths like `/multi-v1`, `/multi-v2` may all route to the first backend
+
+**Workaround:** Use distinct path prefixes (e.g., `/alpha`, `/beta`, `/gamma`).
+
+See [Path Matching Limitations](https://cf.k8s.lex.la/gateway-api/limitations/#cloudflare-tunnel-path-matching-limitations) for details.
+
 See [Gateway API documentation](https://cf.k8s.lex.la/gateway-api/) for full details and examples.
 
 ## External-DNS Integration

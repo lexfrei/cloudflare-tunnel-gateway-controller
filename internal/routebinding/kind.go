@@ -95,3 +95,46 @@ func kindMatches(allowed gatewayv1.RouteGroupKind, routeKind gatewayv1.Kind) boo
 
 	return allowedGroup == gatewayv1.Group(gatewayv1.GroupName)
 }
+
+// FilterSupportedKinds returns only the route kinds that this controller supports
+// (HTTPRoute and GRPCRoute), along with validation status flags.
+// Returns:
+//   - slice of RouteGroupKinds that this controller supports
+//   - hasSupported: true if at least one supported kind exists
+//   - hasInvalid: true if any explicitly specified kinds were rejected (unsupported)
+//
+// Per Gateway API spec, if allowedRoutes.kinds explicitly lists unsupported kinds,
+// the listener should report ResolvedRefs=False with reason InvalidRouteKinds.
+func FilterSupportedKinds(
+	allowedRoutes *gatewayv1.AllowedRoutes,
+	protocol gatewayv1.ProtocolType,
+) ([]gatewayv1.RouteGroupKind, bool, bool) {
+	// Check if kinds are explicitly specified (not defaulted)
+	explicitlySpecified := allowedRoutes != nil && len(allowedRoutes.Kinds) > 0
+
+	kinds := getAllowedKinds(allowedRoutes, protocol)
+
+	var supported []gatewayv1.RouteGroupKind
+
+	hasInvalid := false
+	gatewayGroup := gatewayv1.Group(gatewayv1.GroupName)
+
+	for _, kind := range kinds {
+		// Get the group, defaulting to gateway.networking.k8s.io
+		group := gatewayGroup
+		if kind.Group != nil && *kind.Group != "" {
+			group = *kind.Group
+		}
+
+		// Only HTTPRoute and GRPCRoute are supported by this controller
+		if group == gatewayGroup && (kind.Kind == KindHTTPRoute || kind.Kind == KindGRPCRoute) {
+			supported = append(supported, kind)
+		} else if explicitlySpecified {
+			// Mark as invalid only if kinds were explicitly specified
+			// Default kinds don't count as "invalid" even if protocol defaults include unsupported types
+			hasInvalid = true
+		}
+	}
+
+	return supported, len(supported) > 0, hasInvalid
+}

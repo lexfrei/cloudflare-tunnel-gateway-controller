@@ -170,6 +170,47 @@ go test -v -race ./internal/controller/... -run TestHTTPRouteReconciler
 go test -race -coverprofile=coverage.out ./...
 ```
 
+## Documenting External Service Limitations
+
+**CRITICAL: When discovering limitations of external services (Cloudflare API, Tunnel behavior, etc.), document them IMMEDIATELY.**
+
+### Why This Matters
+
+This controller integrates with Cloudflare Tunnel, which has its own behaviors and limitations that may differ from Gateway API expectations. These limitations:
+
+- Are NOT bugs in our controller
+- Cannot be fixed by us
+- Must be documented for users
+- Require workarounds in tests and usage examples
+
+### When You Discover a Limitation
+
+1. **Stop and document immediately** — don't defer documentation
+2. **Add to `docs/gateway-api/limitations.md`** with:
+   - Clear description of the limitation
+   - Example of unexpected behavior
+   - Workaround if available
+3. **Add brief mention to README.md** in "Known Limitations" section
+4. **Update tests** to work around the limitation (not test impossible behavior)
+5. **Add code comments** where the limitation affects implementation
+
+### Example: Cloudflare Tunnel Path Matching
+
+Discovered during conformance testing:
+
+- Cloudflare Tunnel does NOT support true exact path matching
+- Paths with common prefixes may route unexpectedly
+
+Documented in:
+
+- `docs/gateway-api/limitations.md` — full explanation with workarounds
+- `README.md` — brief "Known Limitations" section
+- `conformance/cftunnel_test.go` — comments explaining test design choices
+
+### Key Principle
+
+If the controller generates correct configuration but external service behaves unexpectedly — that's a limitation to document, not a bug to fix.
+
 ## Documentation
 
 Project documentation uses MkDocs with Material theme. Live site: https://cf.k8s.lex.la
