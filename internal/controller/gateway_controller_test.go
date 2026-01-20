@@ -6,6 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	v1release "helm.sh/helm/v4/pkg/release/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -877,4 +878,151 @@ func TestNewReconcileRequest(t *testing.T) {
 
 	assert.Equal(t, "test", req.Name)
 	assert.Equal(t, "default", req.Namespace)
+}
+
+func TestGetNestedString(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		m        map[string]any
+		keys     []string
+		expected string
+	}{
+		{
+			name:     "nil map",
+			m:        nil,
+			keys:     []string{"key"},
+			expected: "",
+		},
+		{
+			name:     "empty keys",
+			m:        map[string]any{"key": "value"},
+			keys:     []string{},
+			expected: "",
+		},
+		{
+			name:     "simple key",
+			m:        map[string]any{"key": "value"},
+			keys:     []string{"key"},
+			expected: "value",
+		},
+		{
+			name: "nested key",
+			m: map[string]any{
+				"cloudflare": map[string]any{
+					"tunnelToken": "test-token-123",
+				},
+			},
+			keys:     []string{"cloudflare", "tunnelToken"},
+			expected: "test-token-123",
+		},
+		{
+			name:     "missing key",
+			m:        map[string]any{"other": "value"},
+			keys:     []string{"missing"},
+			expected: "",
+		},
+		{
+			name: "non-string value",
+			m: map[string]any{
+				"number": 123,
+			},
+			keys:     []string{"number"},
+			expected: "",
+		},
+		{
+			name: "intermediate not a map",
+			m: map[string]any{
+				"cloudflare": "not-a-map",
+			},
+			keys:     []string{"cloudflare", "tunnelToken"},
+			expected: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			result := getNestedString(tt.m, tt.keys...)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestCloudflaredValuesChanged(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name          string
+		currentConfig map[string]any
+		desiredConfig map[string]any
+		expected      bool
+	}{
+		{
+			name: "same token - no change",
+			currentConfig: map[string]any{
+				"cloudflare": map[string]any{
+					"tunnelToken": "token-123",
+				},
+			},
+			desiredConfig: map[string]any{
+				"cloudflare": map[string]any{
+					"tunnelToken": "token-123",
+				},
+			},
+			expected: false,
+		},
+		{
+			name: "different token - changed",
+			currentConfig: map[string]any{
+				"cloudflare": map[string]any{
+					"tunnelToken": "old-token",
+				},
+			},
+			desiredConfig: map[string]any{
+				"cloudflare": map[string]any{
+					"tunnelToken": "new-token",
+				},
+			},
+			expected: true,
+		},
+		{
+			name:          "current config nil - changed",
+			currentConfig: nil,
+			desiredConfig: map[string]any{
+				"cloudflare": map[string]any{
+					"tunnelToken": "new-token",
+				},
+			},
+			expected: true,
+		},
+		{
+			name: "current token missing - changed",
+			currentConfig: map[string]any{
+				"otherKey": "value",
+			},
+			desiredConfig: map[string]any{
+				"cloudflare": map[string]any{
+					"tunnelToken": "new-token",
+				},
+			},
+			expected: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			// Create a mock release with the current config
+			rel := &v1release.Release{
+				Config: tt.currentConfig,
+			}
+
+			result := cloudflaredValuesChanged(rel, tt.desiredConfig)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
 }

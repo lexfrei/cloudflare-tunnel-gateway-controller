@@ -8,6 +8,7 @@ import (
 	"helm.sh/helm/v4/pkg/action"
 	"helm.sh/helm/v4/pkg/chart"
 	"helm.sh/helm/v4/pkg/release"
+	v1release "helm.sh/helm/v4/pkg/release/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -243,11 +244,28 @@ func (r *GatewayReconciler) upgradeCloudflaredIfNeeded(
 	}
 
 	currentVersion := chartAccessor.MetadataAsMap()["Version"]
-	if currentVersion == latestVersion {
+	versionChanged := currentVersion != latestVersion
+	valuesChanged := cloudflaredValuesChanged(rel, values)
+
+	if !versionChanged && !valuesChanged {
 		return nil
 	}
 
-	logger.Info("upgrading cloudflared", "release", releaseName, "from", currentVersion, "to", latestVersion)
+	reason := "version"
+	if valuesChanged {
+		reason = "values"
+	}
+
+	if versionChanged && valuesChanged {
+		reason = "version and values"
+	}
+
+	logger.Info("upgrading cloudflared",
+		"release", releaseName,
+		"reason", reason,
+		"fromVersion", currentVersion,
+		"toVersion", latestVersion,
+	)
 
 	_, err = r.HelmManager.Upgrade(ctx, actionCfg, releaseName, loadedChart, values)
 	if err != nil {
@@ -255,6 +273,55 @@ func (r *GatewayReconciler) upgradeCloudflaredIfNeeded(
 	}
 
 	return nil
+}
+
+// cloudflaredValuesChanged compares critical values between current and desired configurations.
+// Returns true if an upgrade is needed due to values change.
+func cloudflaredValuesChanged(rel release.Releaser, desired map[string]any) bool {
+	// Type assert to get access to Config field
+	v1rel, ok := rel.(*v1release.Release)
+	if !ok {
+		// If we can't determine current config, assume it changed to be safe
+		return true
+	}
+
+	currentToken := getNestedString(v1rel.Config, "cloudflare", "tunnelToken")
+	desiredToken := getNestedString(desired, "cloudflare", "tunnelToken")
+
+	return currentToken != desiredToken
+}
+
+// getNestedString extracts a string value from a nested map structure.
+// Returns empty string if path doesn't exist or value is not a string.
+func getNestedString(m map[string]any, keys ...string) string {
+	if len(keys) == 0 || m == nil {
+		return ""
+	}
+
+	current := m
+
+	for i, key := range keys {
+		val, ok := current[key]
+		if !ok {
+			return ""
+		}
+
+		if i == len(keys)-1 {
+			if str, ok := val.(string); ok {
+				return str
+			}
+
+			return ""
+		}
+
+		if nested, ok := val.(map[string]any); ok {
+			current = nested
+		} else {
+			return ""
+		}
+	}
+
+	return ""
 }
 
 func (r *GatewayReconciler) removeCloudflared(
