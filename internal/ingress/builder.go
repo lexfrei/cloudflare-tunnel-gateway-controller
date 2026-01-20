@@ -71,7 +71,8 @@ type routeEntry struct {
 // sortRouteEntries sorts entries for Cloudflare Tunnel ingress configuration.
 // Wildcard hostname "*" must always come last (Cloudflare requirement).
 // Specific hostnames are sorted alphabetically, then by priority (exact > prefix),
-// then by path length (longer paths first for specificity).
+// then by path length (longer paths first for specificity), then alphabetically
+// by path for deterministic ordering.
 func sortRouteEntries(entries []routeEntry) {
 	sort.Slice(entries, func(idx, jdx int) bool {
 		// Wildcard hostname "*" must always come last
@@ -91,7 +92,12 @@ func sortRouteEntries(entries []routeEntry) {
 			return entries[idx].priority > entries[jdx].priority
 		}
 
-		return len(entries[idx].path) > len(entries[jdx].path)
+		if len(entries[idx].path) != len(entries[jdx].path) {
+			return len(entries[idx].path) > len(entries[jdx].path)
+		}
+
+		// Alphabetical path order for deterministic sorting
+		return entries[idx].path < entries[jdx].path
 	})
 }
 
