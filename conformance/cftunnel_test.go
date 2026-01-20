@@ -22,15 +22,22 @@ import (
 )
 
 const (
-	testDomain     = "cf-test.lex.la"
-	testNamespace  = "gateway-conformance-infra"
-	testGateway    = "all-namespaces" // Uses Gateway with working AWG sidecar
-	requestTimeout = 30 * time.Second
-	setupTimeout   = 120 * time.Second
-	tunnelSyncWait = 10 * time.Second // Wait for Cloudflare tunnel to sync
-	maxRetries     = 10               // Max retries for HTTP requests
-	retryInterval  = 2 * time.Second  // Interval between retries
+	testDomain            = "cf-test.lex.la"
+	testNamespace         = "gateway-conformance-infra"
+	testGateway           = "all-namespaces" // Uses Gateway with working AWG sidecar
+	requestTimeout        = 30 * time.Second
+	setupTimeout          = 120 * time.Second
+	tunnelSyncWait        = 10 * time.Second // Wait for Cloudflare tunnel to sync
+	maxRetries            = 10               // Max retries for HTTP requests
+	retryInterval         = 2 * time.Second  // Interval between retries
+	conditionAccepted     = "Accepted"       // Gateway API condition type
+	conditionResolvedRefs = "ResolvedRefs"   // Gateway API condition type
 )
+
+// ptrTo returns a pointer to the given value.
+func ptrTo[T any](v T) *T {
+	return &v
+}
 
 func setupClient(t *testing.T) client.Client {
 	t.Helper()
@@ -46,46 +53,6 @@ func setupClient(t *testing.T) client.Client {
 	require.NoError(t, err, "failed to add gateway scheme")
 
 	return c
-}
-
-func createHTTPRoute(t *testing.T, c client.Client, name, hostname, backendName string, port int32) {
-	t.Helper()
-
-	ns := gatewayv1.Namespace(testNamespace)
-	route := &gatewayv1.HTTPRoute{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: testNamespace,
-		},
-		Spec: gatewayv1.HTTPRouteSpec{
-			CommonRouteSpec: gatewayv1.CommonRouteSpec{
-				ParentRefs: []gatewayv1.ParentReference{{
-					Name:      gatewayv1.ObjectName(testGateway),
-					Namespace: &ns,
-				}},
-			},
-			Hostnames: []gatewayv1.Hostname{gatewayv1.Hostname(hostname)},
-			Rules: []gatewayv1.HTTPRouteRule{{
-				BackendRefs: []gatewayv1.HTTPBackendRef{{
-					BackendRef: gatewayv1.BackendRef{
-						BackendObjectReference: gatewayv1.BackendObjectReference{
-							Name: gatewayv1.ObjectName(backendName),
-							Port: (*gatewayv1.PortNumber)(&port),
-						},
-					},
-				}},
-			}},
-		},
-	}
-
-	err := c.Create(context.Background(), route)
-	if err != nil && !strings.Contains(err.Error(), "already exists") {
-		require.NoError(t, err, "failed to create HTTPRoute")
-	}
-
-	t.Cleanup(func() {
-		_ = c.Delete(context.Background(), route)
-	})
 }
 
 func createHTTPRouteWithPath(t *testing.T, c client.Client, name, hostname, path string, pathType gatewayv1.PathMatchType, backendName string, port int32) {
@@ -116,7 +83,7 @@ func createHTTPRouteWithPath(t *testing.T, c client.Client, name, hostname, path
 					BackendRef: gatewayv1.BackendRef{
 						BackendObjectReference: gatewayv1.BackendObjectReference{
 							Name: gatewayv1.ObjectName(backendName),
-							Port: (*gatewayv1.PortNumber)(&port),
+							Port: ptrTo[gatewayv1.PortNumber](port),
 						},
 					},
 				}},
@@ -146,46 +113,22 @@ func waitForRoute(t *testing.T, c client.Client, name string) {
 			t.Fatalf("timeout waiting for route %s to be accepted", name)
 		default:
 			var route gatewayv1.HTTPRoute
+
 			err := c.Get(ctx, types.NamespacedName{Name: name, Namespace: testNamespace}, &route)
 			if err == nil {
 				for _, parent := range route.Status.Parents {
 					for _, cond := range parent.Conditions {
-						if cond.Type == "Accepted" && cond.Status == metav1.ConditionTrue {
+						if cond.Type == conditionAccepted && cond.Status == metav1.ConditionTrue {
 							time.Sleep(tunnelSyncWait) // Wait for tunnel sync
 							return
 						}
 					}
 				}
 			}
+
 			time.Sleep(500 * time.Millisecond)
 		}
 	}
-}
-
-func makeRequest(t *testing.T, method, url string) (int, string, map[string][]string) {
-	t.Helper()
-
-	httpClient := &http.Client{
-		Timeout: requestTimeout,
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{
-				MinVersion:         tls.VersionTLS12,
-				InsecureSkipVerify: true, //nolint:gosec // testing only
-			},
-		},
-	}
-
-	req, err := http.NewRequestWithContext(context.Background(), method, url, nil)
-	require.NoError(t, err)
-
-	resp, err := httpClient.Do(req)
-	require.NoError(t, err, "request to %s failed", url)
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	require.NoError(t, err)
-
-	return resp.StatusCode, string(body), resp.Header
 }
 
 // makeRequestExpecting retries until expected status and body content are received.
@@ -198,12 +141,13 @@ func makeRequestExpecting(t *testing.T, method, url string, expectedStatus int, 
 		Transport: &http.Transport{
 			TLSClientConfig: &tls.Config{
 				MinVersion:         tls.VersionTLS12,
-				InsecureSkipVerify: true, //nolint:gosec // testing only
+				InsecureSkipVerify: true, // Testing conformance against live Cloudflare
 			},
 		},
 	}
 
 	var lastStatus int
+
 	var lastBody string
 
 	for i := range maxRetries {
@@ -349,4 +293,223 @@ func TestCFTunnel_CatchAll404(t *testing.T) {
 		status, _ := makeRequestExpecting(t, "GET", fmt.Sprintf("https://%s/catchall-not-found-xyz", testDomain), 404, "")
 		assert.Equal(t, 404, status)
 	})
+}
+
+func TestCFTunnel_MultipleHostnames(t *testing.T) {
+	c := setupClient(t)
+
+	// Create route with multiple hostnames
+	ns := gatewayv1.Namespace(testNamespace)
+	pathType := gatewayv1.PathMatchPathPrefix
+	path := "/multi-host"
+
+	route := &gatewayv1.HTTPRoute{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "cf-multi-hostname",
+			Namespace: testNamespace,
+		},
+		Spec: gatewayv1.HTTPRouteSpec{
+			CommonRouteSpec: gatewayv1.CommonRouteSpec{
+				ParentRefs: []gatewayv1.ParentReference{{
+					Name:      gatewayv1.ObjectName(testGateway),
+					Namespace: &ns,
+				}},
+			},
+			Hostnames: []gatewayv1.Hostname{
+				gatewayv1.Hostname(testDomain),
+				gatewayv1.Hostname("alt." + testDomain),
+			},
+			Rules: []gatewayv1.HTTPRouteRule{{
+				Matches: []gatewayv1.HTTPRouteMatch{{
+					Path: &gatewayv1.HTTPPathMatch{
+						Type:  &pathType,
+						Value: &path,
+					},
+				}},
+				BackendRefs: []gatewayv1.HTTPBackendRef{{
+					BackendRef: gatewayv1.BackendRef{
+						BackendObjectReference: gatewayv1.BackendObjectReference{
+							Name: gatewayv1.ObjectName("infra-backend-v1"),
+							Port: ptrTo[gatewayv1.PortNumber](8080),
+						},
+					},
+				}},
+			}},
+		},
+	}
+
+	err := c.Create(context.Background(), route)
+	if err != nil && !strings.Contains(err.Error(), "already exists") {
+		require.NoError(t, err, "failed to create HTTPRoute")
+	}
+
+	t.Cleanup(func() {
+		_ = c.Delete(context.Background(), route)
+	})
+
+	waitForRoute(t, c, "cf-multi-hostname")
+
+	// Test primary hostname
+	t.Run("primary hostname works", func(t *testing.T) {
+		status, body := makeRequestExpecting(t, "GET", fmt.Sprintf("https://%s/multi-host", testDomain), 200, "infra-backend-v1")
+		assert.Equal(t, 200, status)
+		assert.Contains(t, body, "infra-backend-v1")
+	})
+
+	// Note: Testing alternate hostname requires DNS setup for alt.cf-test.lex.la
+	// This test verifies the route accepts multiple hostnames
+}
+
+func TestCFTunnel_GRPCRouteAccepted(t *testing.T) {
+	c := setupClient(t)
+
+	// Create a GRPCRoute and verify it gets Accepted status
+	ns := gatewayv1.Namespace(testNamespace)
+	grpcRoute := &gatewayv1.GRPCRoute{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "cf-grpc-test",
+			Namespace: testNamespace,
+		},
+		Spec: gatewayv1.GRPCRouteSpec{
+			CommonRouteSpec: gatewayv1.CommonRouteSpec{
+				ParentRefs: []gatewayv1.ParentReference{{
+					Name:      gatewayv1.ObjectName(testGateway),
+					Namespace: &ns,
+				}},
+			},
+			Hostnames: []gatewayv1.Hostname{gatewayv1.Hostname("grpc." + testDomain)},
+			Rules: []gatewayv1.GRPCRouteRule{{
+				BackendRefs: []gatewayv1.GRPCBackendRef{{
+					BackendRef: gatewayv1.BackendRef{
+						BackendObjectReference: gatewayv1.BackendObjectReference{
+							Name: gatewayv1.ObjectName("grpc-infra-backend-v1"),
+							Port: ptrTo[gatewayv1.PortNumber](8080),
+						},
+					},
+				}},
+			}},
+		},
+	}
+
+	err := c.Create(context.Background(), grpcRoute)
+	if err != nil && !strings.Contains(err.Error(), "already exists") {
+		require.NoError(t, err, "failed to create GRPCRoute")
+	}
+
+	t.Cleanup(func() {
+		_ = c.Delete(context.Background(), grpcRoute)
+	})
+
+	// Wait for GRPCRoute to be accepted
+	ctx, cancel := context.WithTimeout(context.Background(), setupTimeout)
+	defer cancel()
+
+	var route gatewayv1.GRPCRoute
+	var accepted bool
+
+	for !accepted {
+		select {
+		case <-ctx.Done():
+			t.Fatalf("timeout waiting for GRPCRoute to be accepted")
+		default:
+			err := c.Get(ctx, types.NamespacedName{Name: "cf-grpc-test", Namespace: testNamespace}, &route)
+			if err == nil && len(route.Status.Parents) > 0 {
+				for _, parent := range route.Status.Parents {
+					for _, cond := range parent.Conditions {
+						if cond.Type == conditionAccepted && cond.Status == metav1.ConditionTrue {
+							accepted = true
+
+							break
+						}
+					}
+
+					if accepted {
+						break
+					}
+				}
+			}
+
+			if !accepted {
+				time.Sleep(500 * time.Millisecond)
+			}
+		}
+	}
+
+	// Verify the route is accepted
+	assert.NotEmpty(t, route.Status.Parents, "GRPCRoute should have parent status")
+
+	for _, parent := range route.Status.Parents {
+		var hasAccepted bool
+
+		for _, cond := range parent.Conditions {
+			if cond.Type == conditionAccepted {
+				hasAccepted = true
+				assert.Equal(t, metav1.ConditionTrue, cond.Status, "Accepted should be True")
+			}
+		}
+
+		assert.True(t, hasAccepted, "should have Accepted condition")
+	}
+
+	// Note: Full gRPC testing would require a gRPC client and proper endpoint setup
+	// This test verifies the controller accepts GRPCRoute resources
+}
+
+func TestCFTunnel_HTTPRouteStatus(t *testing.T) {
+	c := setupClient(t)
+
+	// Create a simple route and verify status conditions
+	createHTTPRouteWithPath(t, c, "cf-status-test", testDomain, "/status-check", gatewayv1.PathMatchPathPrefix, "infra-backend-v1", 8080)
+
+	// Wait and verify status
+	ctx, cancel := context.WithTimeout(context.Background(), setupTimeout)
+	defer cancel()
+
+	var route gatewayv1.HTTPRoute
+	var accepted bool
+
+	for !accepted {
+		select {
+		case <-ctx.Done():
+			t.Fatalf("timeout waiting for route status")
+		default:
+			err := c.Get(ctx, types.NamespacedName{Name: "cf-status-test", Namespace: testNamespace}, &route)
+			if err == nil && len(route.Status.Parents) > 0 {
+				for _, parent := range route.Status.Parents {
+					for _, cond := range parent.Conditions {
+						if cond.Type == conditionAccepted && cond.Status == metav1.ConditionTrue {
+							accepted = true
+
+							break
+						}
+					}
+
+					if accepted {
+						break
+					}
+				}
+			}
+
+			if !accepted {
+				time.Sleep(500 * time.Millisecond)
+			}
+		}
+	}
+
+	// Verify status structure
+	assert.NotEmpty(t, route.Status.Parents, "route should have parent status")
+
+	for _, parent := range route.Status.Parents {
+		// Should have Accepted condition
+		var hasAccepted bool
+
+		for _, cond := range parent.Conditions {
+			if cond.Type == conditionAccepted {
+				hasAccepted = true
+				assert.Equal(t, metav1.ConditionTrue, cond.Status, "Accepted should be True")
+			}
+		}
+
+		assert.True(t, hasAccepted, "should have Accepted condition")
+	}
 }
