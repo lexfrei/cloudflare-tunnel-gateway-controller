@@ -20,6 +20,62 @@ architecture:
 | Request mirroring | Tunnel doesn't support mirroring |
 | Traffic splitting | Tunnel sends to single backend |
 
+## Cloudflare Tunnel Path Matching Limitations
+
+Cloudflare Tunnel has specific path matching behavior that differs from Gateway
+API expectations:
+
+### No True Exact Path Match
+
+Cloudflare Tunnel does **not** support true exact path matching. A path rule
+without a wildcard (e.g., `/api`) will still match subpaths like `/api/v1`.
+
+**Example:** If you configure:
+
+- `/api` (Exact) → backend-a
+- `/api` (PathPrefix) → backend-b
+
+Both `/api` and `/api/v1` will route to backend-a because Cloudflare treats
+all paths as prefixes internally.
+
+**Workaround:** Use different base paths for different backends:
+
+```yaml
+# Instead of same path with different match types
+- path: /api-exact    # Exact match
+- path: /api-prefix   # Prefix match
+```
+
+### Paths with Common Prefixes
+
+Paths sharing a common prefix may exhibit unexpected routing behavior. For
+example, `/multi-v1`, `/multi-v2`, and `/multi-v3` might all route to the
+first matching backend.
+
+**Workaround:** Use distinct path prefixes:
+
+```yaml
+# Instead of:
+- path: /multi-v1
+- path: /multi-v2
+- path: /multi-v3
+
+# Use:
+- path: /alpha
+- path: /beta
+- path: /gamma
+```
+
+### Path Priority
+
+The controller sorts paths to ensure consistent behavior:
+
+1. Longer paths match before shorter paths (`/api/v2` before `/api`)
+2. Paths of equal length are sorted alphabetically for determinism
+3. Wildcard hostname `*` always comes last
+
+This ensures predictable routing despite Cloudflare's limitations.
+
 ## Controller Limitations
 
 | Limitation | Description |
