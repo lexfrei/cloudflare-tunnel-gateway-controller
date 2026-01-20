@@ -93,10 +93,11 @@ func TestGatewayAPIConformance(t *testing.T) {
 		// Cleartext HTTP/2 (h2c) not supported by Cloudflare edge
 		"HTTPRouteBackendProtocolH2C",
 
-		// === Tests requiring HTTP traffic through Cloudflare edge ===
-		// These tests require traffic to flow through Cloudflare's network.
-		// The Gateway address (*.cfargotunnel.com) doesn't resolve publicly -
-		// it requires DNS records pointing to the tunnel through Cloudflare.
+		// === Tests requiring specific hostname configuration ===
+		// Cloudflare Tunnel ingress requires explicit hostnames - wildcard '*' hostname
+		// rules must be last in the configuration. These tests use wildcard or empty
+		// hostnames which Cloudflare API rejects with "Rule matching hostname '*'
+		// will match every hostname, meaning rules which follow will never trigger."
 		"HTTPRouteExactPathMatching",
 		"HTTPRouteCrossNamespace",
 		"HTTPRouteHostnameIntersection",
