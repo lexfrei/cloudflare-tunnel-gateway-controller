@@ -136,9 +136,12 @@ func TestGatewayAPIConformance(t *testing.T) {
 		"lexfrei",
 		"cloudflare-tunnel-gateway-controller",
 		"https://github.com/lexfrei/cloudflare-tunnel-gateway-controller",
-		"",
+		"v1.1.0",
 		"@lexfrei",
 	)
+
+	// Generate conformance report
+	opts.ReportOutputPath = "conformance-report.yaml"
 
 	conformance.RunConformanceWithOptions(t, opts)
 }
