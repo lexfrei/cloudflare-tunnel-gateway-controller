@@ -292,6 +292,21 @@ func TestCloudflaredReleaseName(t *testing.T) {
 			maxLen:      53,
 			shouldTrunc: true,
 		},
+		{
+			name: "truncation removes trailing hyphens",
+			gateway: &gatewayv1.Gateway{
+				ObjectMeta: metav1.ObjectMeta{
+					// This creates "cfd-gateway-conformance-infra-gateway-secret-invalid-reference-grant"
+					// which truncates to "cfd-gateway-conformance-infra-gateway-secret-invalid-"
+					// and should become "cfd-gateway-conformance-infra-gateway-secret-invalid"
+					Name:      "gateway-secret-invalid-reference-grant",
+					Namespace: "gateway-conformance-infra",
+				},
+			},
+			expected:    "cfd-gateway-conformance-infra-gateway-secret-invalid",
+			maxLen:      53,
+			shouldTrunc: true,
+		},
 	}
 
 	for _, tt := range tests {
