@@ -23,14 +23,16 @@ func TestGatewayAPIConformance(t *testing.T) {
 	opts.Debug = true
 
 	// Configure CloudflareRoundTripper to route requests through Cloudflare CDN
-	// instead of directly to Gateway IP addresses
+	// instead of directly to Gateway IP addresses.
+	// CloudflareHost is required because *.cfargotunnel.com CNAMEs don't resolve publicly.
 	opts.RoundTripper = &CloudflareRoundTripper{
 		Debug: true,
 		TimeoutConfig: config.TimeoutConfig{
 			RequestTimeout: 30 * time.Second,
 		},
-		MaxRetries:    10,
-		RetryInterval: 2 * time.Second,
+		MaxRetries:     10,
+		RetryInterval:  2 * time.Second,
+		CloudflareHost: "cf-test.lex.la",
 	}
 
 	opts.SupportedFeatures = sets.New[features.FeatureName](
@@ -73,6 +75,7 @@ func TestGatewayAPIConformance(t *testing.T) {
 		"HTTPRouteRedirectScheme",
 		"HTTPRouteRewritePath",
 		"HTTPRouteRewriteHost",
+		"HTTPRouteRedirectHostAndStatus",
 
 		// === Cloudflare Tunnel architecture limitations ===
 		// One Gateway = One Tunnel, listener modifications not supported dynamically
@@ -86,9 +89,14 @@ func TestGatewayAPIConformance(t *testing.T) {
 		// === GRPC features not supported by Cloudflare ===
 		"GRPCRouteHeaderMatching",
 
-		// === Tests requiring HTTP traffic (skipped during validation-only runs) ===
-		// These tests require real Cloudflare API credentials to work
-		// Our mock credentials cause HTTPRoutes to stay in Pending state
+		// === Protocol limitations ===
+		// Cleartext HTTP/2 (h2c) not supported by Cloudflare edge
+		"HTTPRouteBackendProtocolH2C",
+
+		// === Tests requiring HTTP traffic through Cloudflare edge ===
+		// These tests require traffic to flow through Cloudflare's network.
+		// The Gateway address (*.cfargotunnel.com) doesn't resolve publicly -
+		// it requires DNS records pointing to the tunnel through Cloudflare.
 		"HTTPRouteExactPathMatching",
 		"HTTPRouteCrossNamespace",
 		"HTTPRouteHostnameIntersection",
@@ -112,12 +120,10 @@ func TestGatewayAPIConformance(t *testing.T) {
 		"HTTPRouteListenerPortMatching",
 		"HTTPRouteObservedGenerationBump",
 		"HTTPRouteNamedRule",
-		"HTTPRouteBackendProtocolH2C",
 		"HTTPRouteBackendProtocolWebSocket",
 		"HTTPRouteCORSAllowCredentialsBehavior",
 		"HTTPRouteHTTPSListener",
 		"HTTPRoutePathMatchOrder",
-		"HTTPRouteRedirectHostAndStatus",
 		"GatewayWithAttachedRoutes",
 		"GatewayHTTPListenerIsolation",
 		"GatewayInfrastructure",
