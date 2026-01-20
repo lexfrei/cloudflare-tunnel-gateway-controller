@@ -1,0 +1,62 @@
+apiVersion: gateway.networking.k8s.io/v1
+date: "2026-01-21T01:30:55+03:00"
+gatewayAPIChannel: experimental
+gatewayAPIVersion: v1.4.1
+implementation:
+  contact:
+  - '@lexfrei'
+  organization: lexfrei
+  project: cloudflare-tunnel-gateway-controller
+  url: https://github.com/lexfrei/cloudflare-tunnel-gateway-controller
+  version: v1.1.0
+kind: ConformanceReport
+mode: default
+profiles:
+- core:
+    result: partial
+    skippedTests:
+    - GatewayModifyListeners
+    - GatewayWithAttachedRoutes
+    - HTTPRouteCrossNamespace
+    - HTTPRouteExactPathMatching
+    - HTTPRouteHTTPSListener
+    - HTTPRouteHeaderMatching
+    - HTTPRouteHostnameIntersection
+    - HTTPRouteInvalidBackendRefUnknownKind
+    - HTTPRouteInvalidCrossNamespaceBackendRef
+    - HTTPRouteInvalidCrossNamespaceParentRef
+    - HTTPRouteInvalidNonExistentBackendRef
+    - HTTPRouteInvalidParentRefNotMatchingSectionName
+    - HTTPRouteInvalidReferenceGrant
+    - HTTPRouteListenerHostnameMatching
+    - HTTPRouteMatching
+    - HTTPRouteMatchingAcrossRoutes
+    - HTTPRouteObservedGenerationBump
+    - HTTPRoutePartiallyInvalidViaInvalidReferenceGrant
+    - HTTPRoutePathMatchOrder
+    - HTTPRouteRedirectHostAndStatus
+    - HTTPRouteReferenceGrant
+    - HTTPRouteRequestHeaderModifier
+    - HTTPRouteServiceTypes
+    - HTTPRouteSimpleSameNamespace
+    - HTTPRouteWeight
+    statistics:
+      Failed: 0
+      Passed: 8
+      Skipped: 25
+  name: GATEWAY-HTTP
+  summary: Core tests partially succeeded with 25 test skips.
+- core:
+    result: partial
+    skippedTests:
+    - GRPCExactMethodMatching
+    - GRPCRouteHeaderMatching
+    - GRPCRouteListenerHostnameMatching
+    - GRPCRouteWeight
+    - GatewayModifyListeners
+    statistics:
+      Failed: 0
+      Passed: 8
+      Skipped: 5
+  name: GATEWAY-GRPC
+  summary: Core tests partially succeeded with 5 test skips.
