@@ -221,3 +221,159 @@ func TestIsRouteKindAllowed(t *testing.T) {
 func groupPtr(g gatewayv1.Group) *gatewayv1.Group {
 	return &g
 }
+
+func TestFilterSupportedKinds(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name              string
+		allowedRoutes     *gatewayv1.AllowedRoutes
+		protocol          gatewayv1.ProtocolType
+		expectedKinds     []gatewayv1.Kind
+		expectedHasAny    bool
+		expectedHasInvald bool
+	}{
+		{
+			name:              "nil allowedRoutes HTTP returns HTTPRoute and GRPCRoute",
+			allowedRoutes:     nil,
+			protocol:          gatewayv1.HTTPProtocolType,
+			expectedKinds:     []gatewayv1.Kind{"HTTPRoute", "GRPCRoute"},
+			expectedHasAny:    true,
+			expectedHasInvald: false,
+		},
+		{
+			name:              "nil allowedRoutes HTTPS returns HTTPRoute and GRPCRoute",
+			allowedRoutes:     nil,
+			protocol:          gatewayv1.HTTPSProtocolType,
+			expectedKinds:     []gatewayv1.Kind{"HTTPRoute", "GRPCRoute"},
+			expectedHasAny:    true,
+			expectedHasInvald: false,
+		},
+		{
+			name:              "nil allowedRoutes TLS returns empty - TLSRoute not supported but not invalid",
+			allowedRoutes:     nil,
+			protocol:          gatewayv1.TLSProtocolType,
+			expectedKinds:     nil,
+			expectedHasAny:    false,
+			expectedHasInvald: false, // Default kinds don't count as invalid
+		},
+		{
+			name:              "nil allowedRoutes TCP returns empty - TCPRoute not supported but not invalid",
+			allowedRoutes:     nil,
+			protocol:          gatewayv1.TCPProtocolType,
+			expectedKinds:     nil,
+			expectedHasAny:    false,
+			expectedHasInvald: false, // Default kinds don't count as invalid
+		},
+		{
+			name:              "nil allowedRoutes UDP returns empty - UDPRoute not supported but not invalid",
+			allowedRoutes:     nil,
+			protocol:          gatewayv1.UDPProtocolType,
+			expectedKinds:     nil,
+			expectedHasAny:    false,
+			expectedHasInvald: false, // Default kinds don't count as invalid
+		},
+		{
+			name: "explicit HTTPRoute only",
+			allowedRoutes: &gatewayv1.AllowedRoutes{
+				Kinds: []gatewayv1.RouteGroupKind{
+					{
+						Group: groupPtr(gatewayv1.GroupName),
+						Kind:  "HTTPRoute",
+					},
+				},
+			},
+			protocol:          gatewayv1.HTTPProtocolType,
+			expectedKinds:     []gatewayv1.Kind{"HTTPRoute"},
+			expectedHasAny:    true,
+			expectedHasInvald: false,
+		},
+		{
+			name: "explicit GRPCRoute only",
+			allowedRoutes: &gatewayv1.AllowedRoutes{
+				Kinds: []gatewayv1.RouteGroupKind{
+					{
+						Group: groupPtr(gatewayv1.GroupName),
+						Kind:  "GRPCRoute",
+					},
+				},
+			},
+			protocol:          gatewayv1.HTTPProtocolType,
+			expectedKinds:     []gatewayv1.Kind{"GRPCRoute"},
+			expectedHasAny:    true,
+			expectedHasInvald: false,
+		},
+		{
+			name: "explicit unsupported TLSRoute only returns empty and marks invalid",
+			allowedRoutes: &gatewayv1.AllowedRoutes{
+				Kinds: []gatewayv1.RouteGroupKind{
+					{
+						Group: groupPtr(gatewayv1.GroupName),
+						Kind:  "TLSRoute",
+					},
+				},
+			},
+			protocol:          gatewayv1.HTTPSProtocolType,
+			expectedKinds:     nil,
+			expectedHasAny:    false,
+			expectedHasInvald: true, // Explicitly specified invalid kind
+		},
+		{
+			name: "mixed supported and unsupported kinds filters correctly and marks invalid",
+			allowedRoutes: &gatewayv1.AllowedRoutes{
+				Kinds: []gatewayv1.RouteGroupKind{
+					{
+						Group: groupPtr(gatewayv1.GroupName),
+						Kind:  "HTTPRoute",
+					},
+					{
+						Group: groupPtr(gatewayv1.GroupName),
+						Kind:  "TLSRoute",
+					},
+					{
+						Group: groupPtr(gatewayv1.GroupName),
+						Kind:  "GRPCRoute",
+					},
+				},
+			},
+			protocol:          gatewayv1.HTTPProtocolType,
+			expectedKinds:     []gatewayv1.Kind{"HTTPRoute", "GRPCRoute"},
+			expectedHasAny:    true,
+			expectedHasInvald: true, // TLSRoute is explicitly specified and invalid
+		},
+		{
+			name: "different group is not supported and marks invalid",
+			allowedRoutes: &gatewayv1.AllowedRoutes{
+				Kinds: []gatewayv1.RouteGroupKind{
+					{
+						Group: groupPtr("custom.example.com"),
+						Kind:  "HTTPRoute",
+					},
+				},
+			},
+			protocol:          gatewayv1.HTTPProtocolType,
+			expectedKinds:     nil,
+			expectedHasAny:    false,
+			expectedHasInvald: true, // Explicitly specified with wrong group
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			kinds, hasAny, hasInvalid := FilterSupportedKinds(tt.allowedRoutes, tt.protocol)
+
+			assert.Equal(t, tt.expectedHasAny, hasAny, "hasAny mismatch")
+			assert.Equal(t, tt.expectedHasInvald, hasInvalid, "hasInvalid mismatch")
+
+			if tt.expectedKinds == nil {
+				assert.Empty(t, kinds)
+			} else {
+				assert.Len(t, kinds, len(tt.expectedKinds))
+				for i, expectedKind := range tt.expectedKinds {
+					assert.Equal(t, expectedKind, kinds[i].Kind)
+				}
+			}
+		})
+	}
+}

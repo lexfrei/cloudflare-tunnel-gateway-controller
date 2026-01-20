@@ -2,6 +2,8 @@ package controller
 
 import (
 	"context"
+	"encoding/pem"
+	"fmt"
 	"time"
 
 	"github.com/cockroachdb/errors"
@@ -23,6 +25,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
+	gatewayv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/api/v1alpha1"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/config"
@@ -40,6 +43,12 @@ const (
 
 	// maxHelmReleaseName is the maximum length for Helm release names.
 	maxHelmReleaseName = 53
+
+	// msgReferencesResolved is the standard message for ResolvedRefs condition.
+	msgReferencesResolved = "References resolved"
+
+	// kindSecret is the resource kind for Kubernetes Secrets.
+	kindSecret = "Secret"
 )
 
 // truncateMessage truncates a message to maxConditionMessageLength.
@@ -415,19 +424,31 @@ func (r *GatewayReconciler) updateStatus(
 
 		listenerStatuses := make([]gatewayv1.ListenerStatus, 0, len(freshGateway.Spec.Listeners))
 
-		for _, listener := range freshGateway.Spec.Listeners {
+		for i := range freshGateway.Spec.Listeners {
+			listener := &freshGateway.Spec.Listeners[i]
+
+			// Validate route kinds - filter to only supported kinds
+			supportedKinds, hasValidKind, hasInvalidKind := routebinding.FilterSupportedKinds(
+				listener.AllowedRoutes,
+				listener.Protocol,
+			)
+
+			// Validate TLS certificate refs (if applicable)
+			tlsStatus, tlsReason, tlsMessage := r.validateTLSCertificateRefs(
+				ctx, &freshGateway, listener,
+			)
+
+			// Determine final ResolvedRefs condition
+			resolvedRefsCondition := r.buildResolvedRefsCondition(
+				freshGateway.Generation, now, hasValidKind, hasInvalidKind, tlsStatus, tlsReason, tlsMessage,
+			)
+			if !hasValidKind {
+				supportedKinds = []gatewayv1.RouteGroupKind{} // Empty slice (not nil) when no valid kinds
+			}
+
 			listenerStatuses = append(listenerStatuses, gatewayv1.ListenerStatus{
-				Name: listener.Name,
-				SupportedKinds: []gatewayv1.RouteGroupKind{
-					{
-						Group: (*gatewayv1.Group)(&gatewayv1.GroupVersion.Group),
-						Kind:  "HTTPRoute",
-					},
-					{
-						Group: (*gatewayv1.Group)(&gatewayv1.GroupVersion.Group),
-						Kind:  "GRPCRoute",
-					},
-				},
+				Name:           listener.Name,
+				SupportedKinds: supportedKinds,
 				AttachedRoutes: attachedRoutes[listener.Name],
 				Conditions: []metav1.Condition{
 					{
@@ -446,14 +467,7 @@ func (r *GatewayReconciler) updateStatus(
 						Reason:             string(gatewayv1.ListenerReasonProgrammed),
 						Message:            "Listener programmed",
 					},
-					{
-						Type:               string(gatewayv1.ListenerConditionResolvedRefs),
-						Status:             metav1.ConditionTrue,
-						ObservedGeneration: freshGateway.Generation,
-						LastTransitionTime: now,
-						Reason:             string(gatewayv1.ListenerReasonResolvedRefs),
-						Message:            "References resolved",
-					},
+					resolvedRefsCondition,
 				},
 			})
 		}
@@ -711,6 +725,11 @@ func (r *GatewayReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			&corev1.Secret{},
 			handler.EnqueueRequestsFromMapFunc(mapper.MapSecretToRequests(r.getAllGatewaysForClass)),
 		).
+		// Watch ReferenceGrants for cross-namespace Secret access changes
+		Watches(
+			&gatewayv1beta1.ReferenceGrant{},
+			handler.EnqueueRequestsFromMapFunc(r.referenceGrantToGateways),
+		).
 		Complete(r)
 }
 
@@ -756,6 +775,92 @@ func (r *GatewayReconciler) getAllGatewaysForClass(ctx context.Context) []reconc
 	return requests
 }
 
+// referenceGrantToGateways maps ReferenceGrant events to Gateway reconcile requests.
+// When a ReferenceGrant changes, we need to re-reconcile all Gateways that might
+// reference Secrets in the ReferenceGrant's namespace.
+func (r *GatewayReconciler) referenceGrantToGateways(
+	ctx context.Context,
+	obj client.Object,
+) []reconcile.Request {
+	grant, ok := obj.(*gatewayv1beta1.ReferenceGrant)
+	if !ok {
+		return nil
+	}
+
+	// Check if this ReferenceGrant allows Gateway access to Secrets
+	allowsGatewayToSecrets := false
+
+	for _, from := range grant.Spec.From {
+		if from.Group == gatewayv1.GroupName && from.Kind == kindGateway {
+			for _, to := range grant.Spec.To {
+				if to.Group == "" && to.Kind == kindSecret {
+					allowsGatewayToSecrets = true
+
+					break
+				}
+			}
+		}
+	}
+
+	if !allowsGatewayToSecrets {
+		return nil
+	}
+
+	// Find all Gateways that reference Secrets in this namespace
+	var gatewayList gatewayv1.GatewayList
+	if err := r.List(ctx, &gatewayList); err != nil {
+		return nil
+	}
+
+	var requests []reconcile.Request
+
+	for i := range gatewayList.Items {
+		gateway := &gatewayList.Items[i]
+		if string(gateway.Spec.GatewayClassName) != r.GatewayClassName {
+			continue
+		}
+
+		// Check if this Gateway references Secrets in the ReferenceGrant's namespace
+		if r.gatewayReferencesSecretsInNamespace(gateway, grant.Namespace) {
+			requests = append(requests, reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      gateway.Name,
+					Namespace: gateway.Namespace,
+				},
+			})
+		}
+	}
+
+	return requests
+}
+
+// gatewayReferencesSecretsInNamespace checks if a Gateway references any Secrets
+// in the given namespace through its TLS configuration.
+func (r *GatewayReconciler) gatewayReferencesSecretsInNamespace(
+	gateway *gatewayv1.Gateway,
+	namespace string,
+) bool {
+	for i := range gateway.Spec.Listeners {
+		listener := &gateway.Spec.Listeners[i]
+		if listener.TLS == nil {
+			continue
+		}
+
+		for _, ref := range listener.TLS.CertificateRefs {
+			refNamespace := gateway.Namespace
+			if ref.Namespace != nil {
+				refNamespace = string(*ref.Namespace)
+			}
+
+			if refNamespace == namespace {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
 // cloudflaredReleaseName generates a unique Helm release name for cloudflared
 // based on the Gateway name and namespace. The name is truncated to fit Helm's
 // 53 character limit for release names.
@@ -766,4 +871,245 @@ func cloudflaredReleaseName(gateway *gatewayv1.Gateway) string {
 	}
 
 	return name
+}
+
+// validateTLSCertificateRefs validates TLS certificate references for a listener.
+// Returns the condition status, reason, and message for the ResolvedRefs condition.
+// Per Gateway API spec, TLS certificateRefs must point to valid Secrets of type
+// kubernetes.io/tls, and cross-namespace references require ReferenceGrant.
+func (r *GatewayReconciler) validateTLSCertificateRefs(
+	ctx context.Context,
+	gateway *gatewayv1.Gateway,
+	listener *gatewayv1.Listener,
+) (metav1.ConditionStatus, string, string) {
+	// No TLS config - nothing to validate
+	if listener.TLS == nil || len(listener.TLS.CertificateRefs) == 0 {
+		return metav1.ConditionTrue,
+			string(gatewayv1.ListenerReasonResolvedRefs),
+			"References resolved"
+	}
+
+	for _, ref := range listener.TLS.CertificateRefs {
+		status, reason, msg := r.validateSingleCertRef(ctx, gateway, ref)
+		if status == metav1.ConditionFalse {
+			return status, reason, msg
+		}
+	}
+
+	return metav1.ConditionTrue,
+		string(gatewayv1.ListenerReasonResolvedRefs),
+		msgReferencesResolved
+}
+
+// validateSingleCertRef validates a single certificate reference.
+func (r *GatewayReconciler) validateSingleCertRef(
+	ctx context.Context,
+	gateway *gatewayv1.Gateway,
+	ref gatewayv1.SecretObjectReference,
+) (metav1.ConditionStatus, string, string) {
+	// Default to Secret in core v1
+	refKind := kindSecret
+	if ref.Kind != nil {
+		refKind = string(*ref.Kind)
+	}
+
+	refGroup := ""
+	if ref.Group != nil {
+		refGroup = string(*ref.Group)
+	}
+
+	// Only support core/v1 Secrets
+	if refGroup != "" || refKind != kindSecret {
+		return metav1.ConditionFalse,
+			string(gatewayv1.ListenerReasonInvalidCertificateRef),
+			fmt.Sprintf("Unsupported certificate ref kind: %s/%s", refGroup, refKind)
+	}
+
+	// Determine namespace
+	refNamespace := gateway.Namespace
+	if ref.Namespace != nil {
+		refNamespace = string(*ref.Namespace)
+	}
+
+	// Check cross-namespace access
+	if refNamespace != gateway.Namespace {
+		allowed, err := r.checkSecretReferenceGrant(ctx, gateway, refNamespace, ref)
+		if err != nil {
+			return metav1.ConditionFalse,
+				string(gatewayv1.ListenerReasonRefNotPermitted),
+				fmt.Sprintf("Failed to check ReferenceGrant: %v", err)
+		}
+
+		if !allowed {
+			return metav1.ConditionFalse,
+				string(gatewayv1.ListenerReasonRefNotPermitted),
+				fmt.Sprintf("Cross-namespace reference to %s/%s not permitted", refNamespace, ref.Name)
+		}
+	}
+
+	// Check Secret exists and has correct type
+	return r.validateSecretExists(ctx, refNamespace, ref)
+}
+
+// validateSecretExists checks if a Secret exists and has type kubernetes.io/tls.
+func (r *GatewayReconciler) validateSecretExists(
+	ctx context.Context,
+	namespace string,
+	ref gatewayv1.SecretObjectReference,
+) (metav1.ConditionStatus, string, string) {
+	secret := &corev1.Secret{}
+
+	err := r.Get(ctx, types.NamespacedName{
+		Namespace: namespace,
+		Name:      string(ref.Name),
+	}, secret)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return metav1.ConditionFalse,
+				string(gatewayv1.ListenerReasonInvalidCertificateRef),
+				fmt.Sprintf("Secret %s/%s not found", namespace, ref.Name)
+		}
+
+		return metav1.ConditionFalse,
+			string(gatewayv1.ListenerReasonInvalidCertificateRef),
+			fmt.Sprintf("Failed to get secret: %v", err)
+	}
+
+	// Validate Secret type
+	if secret.Type != corev1.SecretTypeTLS {
+		return metav1.ConditionFalse,
+			string(gatewayv1.ListenerReasonInvalidCertificateRef),
+			fmt.Sprintf("Secret %s/%s is not of type kubernetes.io/tls", namespace, ref.Name)
+	}
+
+	// Validate certificate data exists and is valid PEM
+	certData, hasCert := secret.Data[corev1.TLSCertKey]
+	if !hasCert || len(certData) == 0 {
+		return metav1.ConditionFalse,
+			string(gatewayv1.ListenerReasonInvalidCertificateRef),
+			fmt.Sprintf("Secret %s/%s missing tls.crt data", namespace, ref.Name)
+	}
+
+	keyData, hasKey := secret.Data[corev1.TLSPrivateKeyKey]
+	if !hasKey || len(keyData) == 0 {
+		return metav1.ConditionFalse,
+			string(gatewayv1.ListenerReasonInvalidCertificateRef),
+			fmt.Sprintf("Secret %s/%s missing tls.key data", namespace, ref.Name)
+	}
+
+	// Validate that certificate contains valid PEM data
+	block, _ := pem.Decode(certData)
+	if block == nil {
+		return metav1.ConditionFalse,
+			string(gatewayv1.ListenerReasonInvalidCertificateRef),
+			fmt.Sprintf("Secret %s/%s contains invalid certificate PEM data", namespace, ref.Name)
+	}
+
+	return metav1.ConditionTrue, "", ""
+}
+
+// buildResolvedRefsCondition creates the ResolvedRefs condition based on validation results.
+// Per Gateway API spec:
+//   - If no supported kinds exist: ResolvedRefs=False, InvalidRouteKinds
+//   - If any explicitly specified kinds are invalid: ResolvedRefs=False, InvalidRouteKinds
+//   - If TLS validation fails: ResolvedRefs=False, with TLS-specific reason
+//   - Otherwise: ResolvedRefs=True
+func (r *GatewayReconciler) buildResolvedRefsCondition(
+	generation int64,
+	now metav1.Time,
+	hasValidKind, hasInvalidKind bool,
+	tlsStatus metav1.ConditionStatus,
+	tlsReason, tlsMessage string,
+) metav1.Condition {
+	switch {
+	case !hasValidKind:
+		// No supported kinds at all
+		return metav1.Condition{
+			Type:               string(gatewayv1.ListenerConditionResolvedRefs),
+			Status:             metav1.ConditionFalse,
+			ObservedGeneration: generation,
+			LastTransitionTime: now,
+			Reason:             string(gatewayv1.ListenerReasonInvalidRouteKinds),
+			Message:            "None of the specified route kinds are supported",
+		}
+	case hasInvalidKind:
+		// Some valid kinds exist, but some explicitly specified kinds are invalid
+		return metav1.Condition{
+			Type:               string(gatewayv1.ListenerConditionResolvedRefs),
+			Status:             metav1.ConditionFalse,
+			ObservedGeneration: generation,
+			LastTransitionTime: now,
+			Reason:             string(gatewayv1.ListenerReasonInvalidRouteKinds),
+			Message:            "One or more specified route kinds are not supported",
+		}
+	case tlsStatus == metav1.ConditionFalse:
+		return metav1.Condition{
+			Type:               string(gatewayv1.ListenerConditionResolvedRefs),
+			Status:             tlsStatus,
+			ObservedGeneration: generation,
+			LastTransitionTime: now,
+			Reason:             tlsReason,
+			Message:            tlsMessage,
+		}
+	default:
+		return metav1.Condition{
+			Type:               string(gatewayv1.ListenerConditionResolvedRefs),
+			Status:             metav1.ConditionTrue,
+			ObservedGeneration: generation,
+			LastTransitionTime: now,
+			Reason:             string(gatewayv1.ListenerReasonResolvedRefs),
+			Message:            msgReferencesResolved,
+		}
+	}
+}
+
+// checkSecretReferenceGrant checks if a cross-namespace Secret reference is allowed
+// by a ReferenceGrant in the target namespace.
+func (r *GatewayReconciler) checkSecretReferenceGrant(
+	ctx context.Context,
+	gateway *gatewayv1.Gateway,
+	targetNamespace string,
+	ref gatewayv1.SecretObjectReference,
+) (bool, error) {
+	var grants gatewayv1beta1.ReferenceGrantList
+	if err := r.List(ctx, &grants, client.InNamespace(targetNamespace)); err != nil {
+		return false, errors.Wrap(err, "failed to list ReferenceGrants")
+	}
+
+	for i := range grants.Items {
+		grant := &grants.Items[i]
+
+		if !r.grantAllowsGateway(grant, gateway.Namespace) {
+			continue
+		}
+
+		// Check To: must allow Secret with matching name
+		// Per Gateway API spec, if to.Name is nil or empty, it allows ALL secrets in namespace
+		for _, to := range grant.Spec.To {
+			if to.Group == "" && to.Kind == kindSecret {
+				// nil or empty name means "all secrets in namespace"
+				if to.Name == nil || *to.Name == "" || string(*to.Name) == string(ref.Name) {
+					return true, nil
+				}
+			}
+		}
+	}
+
+	return false, nil
+}
+
+// grantAllowsGateway checks if a ReferenceGrant allows Gateway from the given namespace.
+func (r *GatewayReconciler) grantAllowsGateway(
+	grant *gatewayv1beta1.ReferenceGrant,
+	gatewayNamespace string,
+) bool {
+	for _, from := range grant.Spec.From {
+		if from.Group == gatewayv1.GroupName &&
+			from.Kind == "Gateway" &&
+			string(from.Namespace) == gatewayNamespace {
+			return true
+		}
+	}
+
+	return false
 }
