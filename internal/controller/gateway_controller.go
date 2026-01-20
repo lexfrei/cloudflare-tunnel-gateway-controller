@@ -429,7 +429,7 @@ func (r *GatewayReconciler) setConfigErrorStatus(
 				Status:             metav1.ConditionFalse,
 				ObservedGeneration: freshGateway.Generation,
 				LastTransitionTime: now,
-				Reason:             "InvalidParameters",
+				Reason:             string(gatewayv1.GatewayReasonInvalidParameters),
 				Message:            errMsg,
 			},
 			{
@@ -437,7 +437,7 @@ func (r *GatewayReconciler) setConfigErrorStatus(
 				Status:             metav1.ConditionFalse,
 				ObservedGeneration: freshGateway.Generation,
 				LastTransitionTime: now,
-				Reason:             "Invalid",
+				Reason:             string(gatewayv1.GatewayReasonInvalid),
 				Message:            errMsg,
 			},
 		}
