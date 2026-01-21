@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/pem"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/cockroachdb/errors"
@@ -863,12 +864,16 @@ func (r *GatewayReconciler) gatewayReferencesSecretsInNamespace(
 
 // cloudflaredReleaseName generates a unique Helm release name for cloudflared
 // based on the Gateway name and namespace. The name is truncated to fit Helm's
-// 53 character limit for release names.
+// 53 character limit for release names, ensuring it ends with an alphanumeric
+// character (Helm requirement: must match ^[a-z0-9]([-a-z0-9]*[a-z0-9])?).
 func cloudflaredReleaseName(gateway *gatewayv1.Gateway) string {
 	name := "cfd-" + gateway.Namespace + "-" + gateway.Name
 	if len(name) > maxHelmReleaseName {
-		return name[:maxHelmReleaseName]
+		name = name[:maxHelmReleaseName]
 	}
+
+	// Trim trailing hyphens to ensure valid Helm release name
+	name = strings.TrimRight(name, "-")
 
 	return name
 }
