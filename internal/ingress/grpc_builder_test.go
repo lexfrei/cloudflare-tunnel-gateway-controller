@@ -256,7 +256,8 @@ func TestGRPCBuild_NoHostnames(t *testing.T) {
 	buildResult := builder.Build(context.Background(), routes)
 
 	require.Len(t, buildResult.Rules, 1)
-	assert.Equal(t, "*", buildResult.Rules[0].Hostname.Value)
+	// Wildcard hostname should NOT set Hostname field - omitting means "match all" in Cloudflare
+	assert.Equal(t, "", buildResult.Rules[0].Hostname.Value)
 }
 
 func TestGRPCBuild_NoBackendRefs(t *testing.T) {
