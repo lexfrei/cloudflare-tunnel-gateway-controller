@@ -45,7 +45,15 @@ type statusWaiter struct {
 	client     dynamic.Interface
 	restMapper meta.RESTMapper
 	ctx        context.Context
+	readers    []engine.StatusReader
 }
+
+// DefaultStatusWatcherTimeout is the timeout used by the status waiter when a
+// zero timeout is provided. This prevents callers from accidentally passing a
+// zero value (which would immediately cancel the context) and getting
+// "context deadline exceeded" errors. SDK callers can rely on this default
+// when they don't set a timeout.
+var DefaultStatusWatcherTimeout = 30 * time.Second
 
 func alwaysReady(_ *unstructured.Unstructured) (*status.Result, error) {
 	return &status.Result{
@@ -55,46 +63,59 @@ func alwaysReady(_ *unstructured.Unstructured) (*status.Result, error) {
 }
 
 func (w *statusWaiter) WatchUntilReady(resourceList ResourceList, timeout time.Duration) error {
+	if timeout == 0 {
+		timeout = DefaultStatusWatcherTimeout
+	}
 	ctx, cancel := w.contextWithTimeout(timeout)
 	defer cancel()
 	slog.Debug("waiting for resources", "count", len(resourceList), "timeout", timeout)
 	sw := watcher.NewDefaultStatusWatcher(w.client, w.restMapper)
 	jobSR := helmStatusReaders.NewCustomJobStatusReader(w.restMapper)
 	podSR := helmStatusReaders.NewCustomPodStatusReader(w.restMapper)
-	// We don't want to wait on any other resources as watchUntilReady is only for Helm hooks
+	// We don't want to wait on any other resources as watchUntilReady is only for Helm hooks.
+	// If custom readers are defined they can be used as Helm hooks support any resource.
+	// We put them in front since the DelegatingStatusReader uses the first reader that matches.
 	genericSR := statusreaders.NewGenericStatusReader(w.restMapper, alwaysReady)
 
 	sr := &statusreaders.DelegatingStatusReader{
-		StatusReaders: []engine.StatusReader{
-			jobSR,
-			podSR,
-			genericSR,
-		},
+		StatusReaders: append(w.readers, jobSR, podSR, genericSR),
 	}
 	sw.StatusReader = sr
 	return w.wait(ctx, resourceList, sw)
 }
 
 func (w *statusWaiter) Wait(resourceList ResourceList, timeout time.Duration) error {
+	if timeout == 0 {
+		timeout = DefaultStatusWatcherTimeout
+	}
 	ctx, cancel := w.contextWithTimeout(timeout)
 	defer cancel()
 	slog.Debug("waiting for resources", "count", len(resourceList), "timeout", timeout)
 	sw := watcher.NewDefaultStatusWatcher(w.client, w.restMapper)
+	sw.StatusReader = statusreaders.NewStatusReader(w.restMapper, w.readers...)
 	return w.wait(ctx, resourceList, sw)
 }
 
 func (w *statusWaiter) WaitWithJobs(resourceList ResourceList, timeout time.Duration) error {
+	if timeout == 0 {
+		timeout = DefaultStatusWatcherTimeout
+	}
 	ctx, cancel := w.contextWithTimeout(timeout)
 	defer cancel()
 	slog.Debug("waiting for resources", "count", len(resourceList), "timeout", timeout)
 	sw := watcher.NewDefaultStatusWatcher(w.client, w.restMapper)
 	newCustomJobStatusReader := helmStatusReaders.NewCustomJobStatusReader(w.restMapper)
-	customSR := statusreaders.NewStatusReader(w.restMapper, newCustomJobStatusReader)
+	readers := append([]engine.StatusReader(nil), w.readers...)
+	readers = append(readers, newCustomJobStatusReader)
+	customSR := statusreaders.NewStatusReader(w.restMapper, readers...)
 	sw.StatusReader = customSR
 	return w.wait(ctx, resourceList, sw)
 }
 
 func (w *statusWaiter) WaitForDelete(resourceList ResourceList, timeout time.Duration) error {
+	if timeout == 0 {
+		timeout = DefaultStatusWatcherTimeout
+	}
 	ctx, cancel := w.contextWithTimeout(timeout)
 	defer cancel()
 	slog.Debug("waiting for resources to be deleted", "count", len(resourceList), "timeout", timeout)
@@ -216,6 +237,7 @@ func statusObserver(cancel context.CancelFunc, desired status.Status) collector.
 		}
 
 		if aggregator.AggregateStatus(rss, desired) == desired {
+			slog.Debug("all resources achieved desired status", "desiredStatus", desired, "resourceCount", len(rss))
 			cancel()
 			return
 		}
@@ -226,7 +248,7 @@ func statusObserver(cancel context.CancelFunc, desired status.Status) collector.
 				return nonDesiredResources[i].Identifier.Name < nonDesiredResources[j].Identifier.Name
 			})
 			first := nonDesiredResources[0]
-			slog.Debug("waiting for resource", "name", first.Identifier.Name, "kind", first.Identifier.GroupKind.Kind, "expectedStatus", desired, "actualStatus", first.Status)
+			slog.Debug("waiting for resource", "namespace", first.Identifier.Namespace, "name", first.Identifier.Name, "kind", first.Identifier.GroupKind.Kind, "expectedStatus", desired, "actualStatus", first.Status)
 		}
 	}
 }
