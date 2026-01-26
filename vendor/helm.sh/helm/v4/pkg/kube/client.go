@@ -87,6 +87,8 @@ type Client struct {
 	// WaitContext is an optional context to use for wait operations.
 	// If not set, a context will be created internally using the
 	// timeout provided to the wait functions.
+	//
+	// Deprecated: Use WithWaitContext wait option when getting a Waiter instead.
 	WaitContext context.Context
 
 	Waiter
@@ -98,12 +100,23 @@ type Client struct {
 
 var _ Interface = (*Client)(nil)
 
+// WaitStrategy represents the algorithm used to wait for Kubernetes
+// resources to reach their desired state.
 type WaitStrategy string
 
 const (
+	// StatusWatcherStrategy: event-driven waits using kstatus (watches + aggregated readers).
+	// Default for --wait. More accurate and responsive; waits CRs and full reconciliation.
+	// Requires: reachable API server, list+watch RBAC on deployed resources, and a non-zero timeout.
 	StatusWatcherStrategy WaitStrategy = "watcher"
-	LegacyStrategy        WaitStrategy = "legacy"
-	HookOnlyStrategy      WaitStrategy = "hookOnly"
+
+	// LegacyStrategy: Helm 3-style periodic polling until ready or timeout.
+	// Use when watches aren’t available/reliable, or for compatibility/simple CI.
+	// Requires only list RBAC for polled resources.
+	LegacyStrategy WaitStrategy = "legacy"
+
+	// HookOnlyStrategy: wait only for hook Pods/Jobs to complete; does not wait for general chart resources.
+	HookOnlyStrategy WaitStrategy = "hookOnly"
 )
 
 type FieldValidationDirective string
@@ -128,7 +141,11 @@ func init() {
 	}
 }
 
-func (c *Client) newStatusWatcher() (*statusWaiter, error) {
+func (c *Client) newStatusWatcher(opts ...WaitOption) (*statusWaiter, error) {
+	var o waitOptions
+	for _, opt := range opts {
+		opt(&o)
+	}
 	cfg, err := c.Factory.ToRESTConfig()
 	if err != nil {
 		return nil, err
@@ -145,14 +162,23 @@ func (c *Client) newStatusWatcher() (*statusWaiter, error) {
 	if err != nil {
 		return nil, err
 	}
+	waitContext := o.ctx
+	if waitContext == nil {
+		waitContext = c.WaitContext
+	}
 	return &statusWaiter{
 		restMapper: restMapper,
 		client:     dynamicClient,
-		ctx:        c.WaitContext,
+		ctx:        waitContext,
+		readers:    o.statusReaders,
 	}, nil
 }
 
-func (c *Client) GetWaiter(strategy WaitStrategy) (Waiter, error) {
+func (c *Client) GetWaiter(ws WaitStrategy) (Waiter, error) {
+	return c.GetWaiterWithOptions(ws)
+}
+
+func (c *Client) GetWaiterWithOptions(strategy WaitStrategy, opts ...WaitOption) (Waiter, error) {
 	switch strategy {
 	case LegacyStrategy:
 		kc, err := c.Factory.KubernetesClientSet()
@@ -161,21 +187,27 @@ func (c *Client) GetWaiter(strategy WaitStrategy) (Waiter, error) {
 		}
 		return &legacyWaiter{kubeClient: kc, ctx: c.WaitContext}, nil
 	case StatusWatcherStrategy:
-		return c.newStatusWatcher()
+		return c.newStatusWatcher(opts...)
 	case HookOnlyStrategy:
-		sw, err := c.newStatusWatcher()
+		sw, err := c.newStatusWatcher(opts...)
 		if err != nil {
 			return nil, err
 		}
 		return &hookOnlyWaiter{sw: sw}, nil
+	case "":
+		return nil, errors.New("wait strategy not set. Choose one of: " + string(StatusWatcherStrategy) + ", " + string(HookOnlyStrategy) + ", " + string(LegacyStrategy))
 	default:
-		return nil, errors.New("unknown wait strategy")
+		return nil, errors.New("unknown wait strategy (s" + string(strategy) + "). Valid values are: " + string(StatusWatcherStrategy) + ", " + string(HookOnlyStrategy) + ", " + string(LegacyStrategy))
 	}
 }
 
 func (c *Client) SetWaiter(ws WaitStrategy) error {
+	return c.SetWaiterWithOptions(ws)
+}
+
+func (c *Client) SetWaiterWithOptions(ws WaitStrategy, opts ...WaitOption) error {
 	var err error
-	c.Waiter, err = c.GetWaiter(ws)
+	c.Waiter, err = c.GetWaiterWithOptions(ws, opts...)
 	if err != nil {
 		return err
 	}
@@ -258,7 +290,7 @@ func ClientCreateOptionDryRun(dryRun bool) ClientCreateOption {
 	}
 }
 
-// ClientCreateOptionFieldValidationDirective specifies show API operations validate object's schema
+// ClientCreateOptionFieldValidationDirective specifies how API operations validate object's schema
 //   - For client-side apply: this is ignored
 //   - For server-side apply: the directive is sent to the server to perform the validation
 //
@@ -550,39 +582,19 @@ func (c *Client) update(originals, targets ResourceList, createApplyFunc CreateA
 			}
 
 			kind := target.Mapping.GroupVersionKind.Kind
-			c.Logger().Debug("created a new resource", "namespace", target.Namespace, "name", target.Name, "kind", kind)
+			c.Logger().Debug(
+				"created a new resource",
+				slog.String("namespace", target.Namespace),
+				slog.String("name", target.Name),
+				slog.String("kind", kind),
+			)
 			return nil
 		}
 
 		original := originals.Get(target)
 		if original == nil {
 			kind := target.Mapping.GroupVersionKind.Kind
-
-			slog.Warn("resource exists on cluster but not in original release, using cluster state as baseline",
-				"namespace", target.Namespace, "name", target.Name, "kind", kind)
-
-			currentObj, err := helper.Get(target.Namespace, target.Name)
-			if err != nil {
-				return fmt.Errorf("original object %s with the name %q not found", kind, target.Name)
-			}
-
-			// Create a temporary Info with the current cluster state to use as "original"
-			currentInfo := &resource.Info{
-				Client:    target.Client,
-				Mapping:   target.Mapping,
-				Namespace: target.Namespace,
-				Name:      target.Name,
-				Object:    currentObj,
-			}
-
-			if err := updateApplyFunc(currentInfo, target); err != nil {
-				updateErrors = append(updateErrors, err)
-			}
-
-			// Because we check for errors later, append the info regardless
-			res.Updated = append(res.Updated, target)
-
-			return nil
+			return fmt.Errorf("original object %s with the name %q not found", kind, target.Name)
 		}
 
 		if err := updateApplyFunc(original, target); err != nil {
@@ -606,23 +618,39 @@ func (c *Client) update(originals, targets ResourceList, createApplyFunc CreateA
 		c.Logger().Debug("deleting resource", "namespace", info.Namespace, "name", info.Name, "kind", info.Mapping.GroupVersionKind.Kind)
 
 		if err := info.Get(); err != nil {
-			c.Logger().Debug("unable to get object", "namespace", info.Namespace, "name", info.Name, "kind", info.Mapping.GroupVersionKind.Kind, slog.Any("error", err))
+			c.Logger().Debug(
+				"unable to get object",
+				slog.String("namespace", info.Namespace),
+				slog.String("name", info.Name),
+				slog.String("kind", info.Mapping.GroupVersionKind.Kind),
+				slog.Any("error", err),
+			)
 			continue
 		}
 		annotations, err := metadataAccessor.Annotations(info.Object)
 		if err != nil {
-			c.Logger().Debug("unable to get annotations", "namespace", info.Namespace, "name", info.Name, "kind", info.Mapping.GroupVersionKind.Kind, slog.Any("error", err))
+			c.Logger().Debug(
+				"unable to get annotations",
+				slog.String("namespace", info.Namespace),
+				slog.String("name", info.Name),
+				slog.String("kind", info.Mapping.GroupVersionKind.Kind),
+				slog.Any("error", err),
+			)
 		}
 		if annotations != nil && annotations[ResourcePolicyAnno] == KeepPolicy {
 			c.Logger().Debug("skipping delete due to annotation", "namespace", info.Namespace, "name", info.Name, "kind", info.Mapping.GroupVersionKind.Kind, "annotation", ResourcePolicyAnno, "value", KeepPolicy)
 			continue
 		}
 		if err := deleteResource(info, metav1.DeletePropagationBackground); err != nil {
-			c.Logger().Debug("failed to delete resource", "namespace", info.Namespace, "name", info.Name, "kind", info.Mapping.GroupVersionKind.Kind, slog.Any("error", err))
+			c.Logger().Debug(
+				"failed to delete resource",
+				slog.String("namespace", info.Namespace),
+				slog.String("name", info.Name),
+				slog.String("kind", info.Mapping.GroupVersionKind.Kind),
+				slog.Any("error", err),
+			)
 			if !apierrors.IsNotFound(err) {
-				updateErrors = append(updateErrors, fmt.Errorf(
-					"failed to delete resource namespace=%s, name=%s, kind=%s: %w",
-					info.Namespace, info.Name, info.Mapping.GroupVersionKind.Kind, err))
+				updateErrors = append(updateErrors, fmt.Errorf("failed to delete resource %s: %w", info.Name, err))
 			}
 			continue
 		}
@@ -695,7 +723,7 @@ func ClientUpdateOptionDryRun(dryRun bool) ClientUpdateOption {
 	}
 }
 
-// ClientUpdateOptionFieldValidationDirective specifies show API operations validate object's schema
+// ClientUpdateOptionFieldValidationDirective specifies how API operations validate object's schema
 //   - For client-side apply: this is ignored
 //   - For server-side apply: the directive is sent to the server to perform the validation
 //
@@ -774,7 +802,13 @@ func (c *Client) Update(originals, targets ResourceList, options ...ClientUpdate
 				slog.String("fieldValidationDirective", string(updateOptions.fieldValidationDirective)))
 			return func(original, target *resource.Info) error {
 				if err := replaceResource(target, updateOptions.fieldValidationDirective); err != nil {
-					c.Logger().Debug("error replacing the resource", "namespace", target.Namespace, "name", target.Name, "kind", target.Mapping.GroupVersionKind.Kind, slog.Any("error", err))
+					c.Logger().With(
+						slog.String("namespace", target.Namespace),
+						slog.String("name", target.Name),
+						slog.String("gvk", target.Mapping.GroupVersionKind.String()),
+					).Debug(
+						"error replacing the resource", slog.Any("error", err),
+					)
 					return err
 				}
 
@@ -843,7 +877,12 @@ func (c *Client) Delete(resources ResourceList, policy metav1.DeletionPropagatio
 		err := deleteResource(target, policy)
 		if err == nil || apierrors.IsNotFound(err) {
 			if err != nil {
-				c.Logger().Debug("ignoring delete failure", "namespace", target.Namespace, "name", target.Name, "kind", target.Mapping.GroupVersionKind.Kind, slog.Any("error", err))
+				c.Logger().Debug(
+					"ignoring delete failure",
+					slog.String("namespace", target.Namespace),
+					slog.String("name", target.Name),
+					slog.String("kind", target.Mapping.GroupVersionKind.Kind),
+					slog.Any("error", err))
 			}
 			mtx.Lock()
 			defer mtx.Unlock()
