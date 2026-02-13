@@ -135,10 +135,11 @@ func TestGenericBuilder_WildcardOrdering(t *testing.T) {
 
 	result := builder.Build(context.Background(), routes)
 
-	// Order: specific hostname, wildcard, catch-all
+	// Order: specific hostname, wildcard (no hostname), catch-all
 	require.Len(t, result.Rules, 3)
 	assert.Equal(t, "app.example.com", result.Rules[0].Hostname.Value)
-	assert.Equal(t, "*", result.Rules[1].Hostname.Value)
+	// Wildcard hostname should NOT set Hostname field - omitting means "match all" in Cloudflare
+	assert.Equal(t, "", result.Rules[1].Hostname.Value)
 	assert.Equal(t, ingress.CatchAllService, result.Rules[2].Service.Value)
 }
 

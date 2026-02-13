@@ -345,7 +345,8 @@ func TestBuild_NoHostnames(t *testing.T) {
 	buildResult := builder.Build(context.Background(), routes)
 
 	require.Len(t, buildResult.Rules, 2)
-	assert.Equal(t, "*", buildResult.Rules[0].Hostname.Value)
+	// Wildcard hostname should NOT set Hostname field - omitting means "match all" in Cloudflare
+	assert.Equal(t, "", buildResult.Rules[0].Hostname.Value)
 }
 
 func TestBuild_NoBackendRefs(t *testing.T) {
@@ -790,7 +791,8 @@ func TestBuild_WildcardHostnameSortedLast(t *testing.T) {
 	// Specific hostname should come first, wildcard second, catch-all last
 	require.Len(t, buildResult.Rules, 3)
 	assert.Equal(t, "app.example.com", buildResult.Rules[0].Hostname.Value)
-	assert.Equal(t, "*", buildResult.Rules[1].Hostname.Value)
+	// Wildcard hostname should NOT set Hostname field - omitting means "match all" in Cloudflare
+	assert.Equal(t, "", buildResult.Rules[1].Hostname.Value)
 	assert.Equal(t, ingress.CatchAllService, buildResult.Rules[2].Service.Value)
 }
 
@@ -852,11 +854,12 @@ func TestBuild_MixedHostnamesWithWildcard(t *testing.T) {
 
 	buildResult := builder.Build(context.Background(), routes)
 
-	// Order should be: a.example.com, z.example.com, *, catch-all
+	// Order should be: a.example.com, z.example.com, wildcard (no hostname), catch-all
 	require.Len(t, buildResult.Rules, 4)
 	assert.Equal(t, "a.example.com", buildResult.Rules[0].Hostname.Value)
 	assert.Equal(t, "z.example.com", buildResult.Rules[1].Hostname.Value)
-	assert.Equal(t, "*", buildResult.Rules[2].Hostname.Value)
+	// Wildcard hostname should NOT set Hostname field - omitting means "match all" in Cloudflare
+	assert.Equal(t, "", buildResult.Rules[2].Hostname.Value)
 	assert.Equal(t, ingress.CatchAllService, buildResult.Rules[3].Service.Value)
 }
 

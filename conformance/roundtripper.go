@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -24,12 +25,15 @@ import (
 //
 // The official Gateway API conformance tests build request URLs using
 // Gateway.Status.Addresses, which for Cloudflare Tunnel contains a CNAME
-// hostname (TUNNEL_ID.cfargotunnel.com), not an IP address.
+// hostname (TUNNEL_ID.cfargotunnel.com), not an IP address. However, these
+// CNAMEs don't resolve publicly - traffic must flow through a configured
+// Cloudflare DNS hostname.
 //
 // This RoundTripper intercepts requests and:
-// 1. Rewrites the URL to use HTTPS with the request's Host header
-// 2. Makes the request through Cloudflare CDN
-// 3. Parses the echo server response format expected by conformance tests.
+// 1. Rewrites the URL to use the CloudflareHost (e.g., cf-test.lex.la)
+// 2. Sets the Host header to the requested hostname for Cloudflare routing
+// 3. Makes the request through Cloudflare CDN
+// 4. Parses the echo server response format expected by conformance tests.
 type CloudflareRoundTripper struct {
 	// Debug enables verbose logging of requests and responses.
 	Debug bool
@@ -45,6 +49,12 @@ type CloudflareRoundTripper struct {
 	// RetryInterval is the duration to wait between retry attempts.
 	// Default: 2s
 	RetryInterval time.Duration
+
+	// CloudflareHost is the DNS hostname that routes to the Cloudflare Tunnel.
+	// The *.cfargotunnel.com addresses don't resolve publicly, so we need
+	// a real hostname with DNS records pointing to the tunnel.
+	// Example: "cf-test.lex.la"
+	CloudflareHost string
 }
 
 // CaptureRoundTrip implements the roundtripper.RoundTripper interface.
@@ -89,7 +99,10 @@ func (c *CloudflareRoundTripper) CaptureRoundTrip(request roundtripper.Request) 
 
 //nolint:gocritic // Interface type defined by gateway-api conformance suite
 func (c *CloudflareRoundTripper) doRoundTrip(request roundtripper.Request) (*roundtripper.CapturedRequest, *roundtripper.CapturedResponse, error) {
-	req, _, method, err := c.buildHTTPRequest(request)
+	ctx, cancel := context.WithTimeout(context.Background(), c.TimeoutConfig.RequestTimeout)
+	defer cancel()
+
+	req, _, method, err := c.buildHTTPRequest(ctx, request)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -104,17 +117,31 @@ func (c *CloudflareRoundTripper) doRoundTrip(request roundtripper.Request) (*rou
 }
 
 //nolint:gocritic // Interface type defined by gateway-api conformance suite
-func (c *CloudflareRoundTripper) buildHTTPRequest(request roundtripper.Request) (*http.Request, string, string, error) {
-	// Build the Cloudflare URL using the Host header
-	host := request.Host
-	if host == "" {
-		host = request.URL.Host
+func (c *CloudflareRoundTripper) buildHTTPRequest(ctx context.Context, request roundtripper.Request) (*http.Request, string, string, error) {
+	// The request.URL.Host contains the Gateway address (tunnel CNAME like xxx.cfargotunnel.com)
+	// The request.Host contains the hostname for routing (the Host header value)
+	//
+	// For Cloudflare Tunnel, we need to:
+	// 1. Connect to CloudflareHost (e.g., cf-test.lex.la) which has DNS pointing to tunnel
+	// 2. Set the Host header to the target hostname (request.Host) for Cloudflare routing
+
+	// URL host should be CloudflareHost (publicly resolvable hostname pointing to tunnel)
+	urlHost := c.CloudflareHost
+	if urlHost == "" {
+		// Fallback to request URL host if CloudflareHost not configured
+		urlHost = request.URL.Host
+	}
+
+	// Host header for routing - use request.Host if set, otherwise use CloudflareHost
+	hostHeader := request.Host
+	if hostHeader == "" {
+		hostHeader = urlHost
 	}
 
 	// Cloudflare Tunnel always uses HTTPS at the edge
 	cloudflareURL := url.URL{
 		Scheme:   "https",
-		Host:     host,
+		Host:     urlHost,
 		Path:     request.URL.Path,
 		RawQuery: request.URL.RawQuery,
 	}
@@ -123,9 +150,6 @@ func (c *CloudflareRoundTripper) buildHTTPRequest(request roundtripper.Request) 
 	if method == "" {
 		method = http.MethodGet
 	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), c.TimeoutConfig.RequestTimeout)
-	defer cancel()
 
 	var reqBody io.Reader
 	if request.Body != "" {
@@ -137,8 +161,8 @@ func (c *CloudflareRoundTripper) buildHTTPRequest(request roundtripper.Request) 
 		return nil, "", "", fmt.Errorf("failed to create request: %w", err)
 	}
 
-	// Set Host header explicitly (important for routing)
-	req.Host = host
+	// Set Host header explicitly (important for Cloudflare routing)
+	req.Host = hostHeader
 
 	// Copy headers from the request
 	if request.Headers != nil {
@@ -149,12 +173,22 @@ func (c *CloudflareRoundTripper) buildHTTPRequest(request roundtripper.Request) 
 		}
 	}
 
-	return req, host, method, nil
+	return req, hostHeader, method, nil
 }
 
 //nolint:gocritic // Interface type defined by gateway-api conformance suite
 func (c *CloudflareRoundTripper) executeRequest(request roundtripper.Request, req *http.Request) (*http.Response, error) {
+	// Force IPv4 to avoid IPv6 routing issues in Kind clusters
+	dialer := &net.Dialer{
+		Timeout:   30 * time.Second,
+		KeepAlive: 30 * time.Second,
+	}
+
 	transport := &http.Transport{
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			// Force IPv4 by using "tcp4" instead of "tcp"
+			return dialer.DialContext(ctx, "tcp4", addr)
+		},
 		TLSClientConfig: &tls.Config{
 			MinVersion:         tls.VersionTLS12,
 			InsecureSkipVerify: true, //nolint:gosec // Conformance tests may use self-signed certs
