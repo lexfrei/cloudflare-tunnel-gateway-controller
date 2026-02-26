@@ -223,7 +223,7 @@ jobs:
           touch "/tmp/digests/${digest#sha256:}"
 
       - name: Upload digest
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: digests-${{ steps.platform.outputs.pair }}
           path: /tmp/digests/*
@@ -248,7 +248,7 @@ jobs:
           echo "Version: ${VERSION}"
 
       - name: Download digests
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           pattern: digests-*
           path: /tmp/digests
@@ -569,7 +569,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload chart artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: helm-chart
           path: "*.tgz"
@@ -661,7 +661,7 @@ jobs:
           cat release-notes.md
 
       - name: Download chart artifact
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: helm-chart
           path: ./artifacts
