@@ -15,7 +15,7 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/api/v1alpha1"
-	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/metrics"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/cfmetrics"
 )
 
 const (
@@ -28,12 +28,12 @@ const (
 // ResolvedConfig contains all configuration resolved from GatewayClassConfig and Secrets.
 type ResolvedConfig struct {
 	// Cloudflare API credentials
-	APIToken  string
+	APIToken  string `json:"-"`
 	AccountID string
 
 	// Tunnel configuration
 	TunnelID    string
-	TunnelToken string
+	TunnelToken string `json:"-"`
 
 	// Cloudflared deployment settings
 	CloudflaredEnabled   bool
@@ -60,7 +60,7 @@ type ResolvedConfig struct {
 type Resolver struct {
 	client           client.Client
 	defaultNamespace string
-	metrics          metrics.Collector
+	metrics          cfmetrics.Collector
 
 	// accountIDCache caches resolved account IDs by config name to avoid
 	// repeated API calls. Key is config name, value is account ID.
@@ -68,7 +68,7 @@ type Resolver struct {
 }
 
 // NewResolver creates a new config Resolver.
-func NewResolver(c client.Client, defaultNamespace string, metricsCollector metrics.Collector) *Resolver {
+func NewResolver(c client.Client, defaultNamespace string, metricsCollector cfmetrics.Collector) *Resolver {
 	return &Resolver{
 		client:           c,
 		defaultNamespace: defaultNamespace,
@@ -256,7 +256,7 @@ func (r *Resolver) ResolveAccountID(ctx context.Context, cfClient *cloudflare.Cl
 	result, err := cfClient.Accounts.List(ctx, accounts.AccountListParams{})
 	if err != nil {
 		r.metrics.RecordAPICall(ctx, "list", "accounts", "error", time.Since(startTime))
-		r.metrics.RecordAPIError(ctx, "list", metrics.ClassifyCloudflareError(err))
+		r.metrics.RecordAPIError(ctx, "list", cfmetrics.ClassifyCloudflareError(err))
 
 		return "", errors.Wrap(err, "failed to list accounts")
 	}
