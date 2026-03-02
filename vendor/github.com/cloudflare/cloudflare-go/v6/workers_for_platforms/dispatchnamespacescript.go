@@ -203,8 +203,7 @@ type DispatchNamespaceScriptUpdateResponse struct {
 	Observability DispatchNamespaceScriptUpdateResponseObservability `json:"observability"`
 	// Configuration for
 	// [Smart Placement](https://developers.cloudflare.com/workers/configuration/smart-placement).
-	// Specify either mode for Smart Placement, or one of region/hostname/host for
-	// targeted placement.
+	// Specify mode='smart' for Smart Placement, or one of region/hostname/host.
 	Placement DispatchNamespaceScriptUpdateResponsePlacement `json:"placement"`
 	// Deprecated: deprecated
 	PlacementMode DispatchNamespaceScriptUpdateResponsePlacementMode `json:"placement_mode"`
@@ -353,8 +352,7 @@ func (r dispatchNamespaceScriptUpdateResponseObservabilityLogsJSON) RawJSON() st
 
 // Configuration for
 // [Smart Placement](https://developers.cloudflare.com/workers/configuration/smart-placement).
-// Specify either mode for Smart Placement, or one of region/hostname/host for
-// targeted placement.
+// Specify mode='smart' for Smart Placement, or one of region/hostname/host.
 type DispatchNamespaceScriptUpdateResponsePlacement struct {
 	// TCP host and port for targeted placement.
 	Host string `json:"host"`
@@ -371,7 +369,10 @@ type DispatchNamespaceScriptUpdateResponsePlacement struct {
 	// Status of
 	// [Smart Placement](https://developers.cloudflare.com/workers/configuration/smart-placement).
 	Status DispatchNamespaceScriptUpdateResponsePlacementStatus `json:"status"`
-	JSON   dispatchNamespaceScriptUpdateResponsePlacementJSON   `json:"-"`
+	// This field can have the runtime type of
+	// [[]DispatchNamespaceScriptUpdateResponsePlacementObjectTarget].
+	Target interface{}                                        `json:"target"`
+	JSON   dispatchNamespaceScriptUpdateResponsePlacementJSON `json:"-"`
 	union  DispatchNamespaceScriptUpdateResponsePlacementUnion
 }
 
@@ -384,6 +385,7 @@ type dispatchNamespaceScriptUpdateResponsePlacementJSON struct {
 	Mode           apijson.Field
 	Region         apijson.Field
 	Status         apijson.Field
+	Target         apijson.Field
 	raw            string
 	ExtraFields    map[string]apijson.Field
 }
@@ -408,6 +410,10 @@ func (r *DispatchNamespaceScriptUpdateResponsePlacement) UnmarshalJSON(data []by
 // [DispatchNamespaceScriptUpdateResponsePlacementObject],
 // [DispatchNamespaceScriptUpdateResponsePlacementObject],
 // [DispatchNamespaceScriptUpdateResponsePlacementObject],
+// [DispatchNamespaceScriptUpdateResponsePlacementObject],
+// [DispatchNamespaceScriptUpdateResponsePlacementObject],
+// [DispatchNamespaceScriptUpdateResponsePlacementObject],
+// [DispatchNamespaceScriptUpdateResponsePlacementObject],
 // [DispatchNamespaceScriptUpdateResponsePlacementObject].
 func (r DispatchNamespaceScriptUpdateResponsePlacement) AsUnion() DispatchNamespaceScriptUpdateResponsePlacementUnion {
 	return r.union
@@ -415,10 +421,13 @@ func (r DispatchNamespaceScriptUpdateResponsePlacement) AsUnion() DispatchNamesp
 
 // Configuration for
 // [Smart Placement](https://developers.cloudflare.com/workers/configuration/smart-placement).
-// Specify either mode for Smart Placement, or one of region/hostname/host for
-// targeted placement.
+// Specify mode='smart' for Smart Placement, or one of region/hostname/host.
 //
 // Union satisfied by [DispatchNamespaceScriptUpdateResponsePlacementObject],
+// [DispatchNamespaceScriptUpdateResponsePlacementObject],
+// [DispatchNamespaceScriptUpdateResponsePlacementObject],
+// [DispatchNamespaceScriptUpdateResponsePlacementObject],
+// [DispatchNamespaceScriptUpdateResponsePlacementObject],
 // [DispatchNamespaceScriptUpdateResponsePlacementObject],
 // [DispatchNamespaceScriptUpdateResponsePlacementObject] or
 // [DispatchNamespaceScriptUpdateResponsePlacementObject].
@@ -430,6 +439,22 @@ func init() {
 	apijson.RegisterUnion(
 		reflect.TypeOf((*DispatchNamespaceScriptUpdateResponsePlacementUnion)(nil)).Elem(),
 		"",
+		apijson.UnionVariant{
+			TypeFilter: gjson.JSON,
+			Type:       reflect.TypeOf(DispatchNamespaceScriptUpdateResponsePlacementObject{}),
+		},
+		apijson.UnionVariant{
+			TypeFilter: gjson.JSON,
+			Type:       reflect.TypeOf(DispatchNamespaceScriptUpdateResponsePlacementObject{}),
+		},
+		apijson.UnionVariant{
+			TypeFilter: gjson.JSON,
+			Type:       reflect.TypeOf(DispatchNamespaceScriptUpdateResponsePlacementObject{}),
+		},
+		apijson.UnionVariant{
+			TypeFilter: gjson.JSON,
+			Type:       reflect.TypeOf(DispatchNamespaceScriptUpdateResponsePlacementObject{}),
+		},
 		apijson.UnionVariant{
 			TypeFilter: gjson.JSON,
 			Type:       reflect.TypeOf(DispatchNamespaceScriptUpdateResponsePlacementObject{}),
@@ -522,12 +547,13 @@ func (r DispatchNamespaceScriptUpdateResponsePlacementObjectStatus) IsKnown() bo
 type DispatchNamespaceScriptUpdateResponsePlacementMode string
 
 const (
-	DispatchNamespaceScriptUpdateResponsePlacementModeSmart DispatchNamespaceScriptUpdateResponsePlacementMode = "smart"
+	DispatchNamespaceScriptUpdateResponsePlacementModeSmart    DispatchNamespaceScriptUpdateResponsePlacementMode = "smart"
+	DispatchNamespaceScriptUpdateResponsePlacementModeTargeted DispatchNamespaceScriptUpdateResponsePlacementMode = "targeted"
 )
 
 func (r DispatchNamespaceScriptUpdateResponsePlacementMode) IsKnown() bool {
 	switch r {
-	case DispatchNamespaceScriptUpdateResponsePlacementModeSmart:
+	case DispatchNamespaceScriptUpdateResponsePlacementModeSmart, DispatchNamespaceScriptUpdateResponsePlacementModeTargeted:
 		return true
 	}
 	return false
@@ -575,6 +601,10 @@ type DispatchNamespaceScriptUpdateParams struct {
 	AccountID param.Field[string] `path:"account_id,required"`
 	// JSON-encoded metadata about the uploaded parts and Worker configuration.
 	Metadata param.Field[DispatchNamespaceScriptUpdateParamsMetadata] `json:"metadata,required"`
+	// When set to "strict", the upload will fail if any `inherit` type bindings cannot
+	// be resolved against the previous version of the script. Without this,
+	// unresolvable inherit bindings are silently dropped.
+	BindingsInherit param.Field[DispatchNamespaceScriptUpdateParamsBindingsInherit] `query:"bindings_inherit"`
 	// An array of modules (often JavaScript files) comprising a Worker script. At
 	// least one module must be present and referenced in the metadata as `main_module`
 	// or `body_part` by filename.<br/>Possible Content-Type(s) are:
@@ -598,6 +628,15 @@ func (r DispatchNamespaceScriptUpdateParams) MarshalMultipart() (data []byte, co
 		return nil, "", err
 	}
 	return buf.Bytes(), writer.FormDataContentType(), nil
+}
+
+// URLQuery serializes [DispatchNamespaceScriptUpdateParams]'s query parameters as
+// `url.Values`.
+func (r DispatchNamespaceScriptUpdateParams) URLQuery() (v url.Values) {
+	return apiquery.MarshalWithSettings(r, apiquery.QuerySettings{
+		ArrayFormat:  apiquery.ArrayQueryFormatRepeat,
+		NestedFormat: apiquery.NestedQueryFormatDots,
+	})
 }
 
 // JSON-encoded metadata about the uploaded parts and Worker configuration.
@@ -636,8 +675,7 @@ type DispatchNamespaceScriptUpdateParamsMetadata struct {
 	Observability param.Field[DispatchNamespaceScriptUpdateParamsMetadataObservability] `json:"observability"`
 	// Configuration for
 	// [Smart Placement](https://developers.cloudflare.com/workers/configuration/smart-placement).
-	// Specify either mode for Smart Placement, or one of region/hostname/host for
-	// targeted placement.
+	// Specify mode='smart' for Smart Placement, or one of region/hostname/host.
 	Placement param.Field[DispatchNamespaceScriptUpdateParamsMetadataPlacementUnion] `json:"placement"`
 	// List of strings to use as tags for this Worker.
 	Tags param.Field[[]string] `json:"tags"`
@@ -773,9 +811,8 @@ type DispatchNamespaceScriptUpdateParamsMetadataBinding struct {
 	// [Learn more](https://developer.mozilla.org/en-US/docs/Web/API/SubtleCrypto/importKey#format).
 	Format param.Field[DispatchNamespaceScriptUpdateParamsMetadataBindingsFormat] `json:"format"`
 	// Name of the Vectorize index to bind to.
-	IndexName param.Field[string] `json:"index_name"`
-	// JSON data to use.
-	Json param.Field[string] `json:"json"`
+	IndexName param.Field[string]      `json:"index_name"`
+	Json      param.Field[interface{}] `json:"json"`
 	// The
 	// [jurisdiction](https://developers.cloudflare.com/r2/reference/data-location/#jurisdictional-restrictions)
 	// of the R2 bucket.
@@ -805,7 +842,8 @@ type DispatchNamespaceScriptUpdateParamsMetadataBinding struct {
 	// Name of the secret in the store.
 	SecretName param.Field[string] `json:"secret_name"`
 	// Name of Worker to bind to.
-	Service param.Field[string] `json:"service"`
+	Service param.Field[string]      `json:"service"`
+	Simple  param.Field[interface{}] `json:"simple"`
 	// ID of the store containing the secret.
 	StoreID param.Field[string] `json:"store_id"`
 	// The text value to use.
@@ -846,6 +884,7 @@ func (r DispatchNamespaceScriptUpdateParamsMetadataBinding) implementsDispatchNa
 // [workers_for_platforms.DispatchNamespaceScriptUpdateParamsMetadataBindingsWorkersBindingKindPlainText],
 // [workers_for_platforms.DispatchNamespaceScriptUpdateParamsMetadataBindingsWorkersBindingKindPipelines],
 // [workers_for_platforms.DispatchNamespaceScriptUpdateParamsMetadataBindingsWorkersBindingKindQueue],
+// [workers_for_platforms.DispatchNamespaceScriptUpdateParamsMetadataBindingsWorkersBindingKindRatelimit],
 // [workers_for_platforms.DispatchNamespaceScriptUpdateParamsMetadataBindingsWorkersBindingKindR2Bucket],
 // [workers_for_platforms.DispatchNamespaceScriptUpdateParamsMetadataBindingsWorkersBindingKindSecretText],
 // [workers_for_platforms.DispatchNamespaceScriptUpdateParamsMetadataBindingsWorkersBindingKindSendEmail],
@@ -1082,7 +1121,7 @@ func (r DispatchNamespaceScriptUpdateParamsMetadataBindingsWorkersBindingKindDis
 type DispatchNamespaceScriptUpdateParamsMetadataBindingsWorkersBindingKindDispatchNamespaceOutbound struct {
 	// Pass information from the Dispatch Worker to the Outbound Worker through the
 	// parameters.
-	Params param.Field[[]string] `json:"params"`
+	Params param.Field[[]DispatchNamespaceScriptUpdateParamsMetadataBindingsWorkersBindingKindDispatchNamespaceOutboundParam] `json:"params"`
 	// Outbound worker.
 	Worker param.Field[DispatchNamespaceScriptUpdateParamsMetadataBindingsWorkersBindingKindDispatchNamespaceOutboundWorker] `json:"worker"`
 }
@@ -1091,8 +1130,19 @@ func (r DispatchNamespaceScriptUpdateParamsMetadataBindingsWorkersBindingKindDis
 	return apijson.MarshalRoot(r)
 }
 
+type DispatchNamespaceScriptUpdateParamsMetadataBindingsWorkersBindingKindDispatchNamespaceOutboundParam struct {
+	// Name of the parameter.
+	Name param.Field[string] `json:"name,required"`
+}
+
+func (r DispatchNamespaceScriptUpdateParamsMetadataBindingsWorkersBindingKindDispatchNamespaceOutboundParam) MarshalJSON() (data []byte, err error) {
+	return apijson.MarshalRoot(r)
+}
+
 // Outbound worker.
 type DispatchNamespaceScriptUpdateParamsMetadataBindingsWorkersBindingKindDispatchNamespaceOutboundWorker struct {
+	// Entrypoint to invoke on the outbound worker.
+	Entrypoint param.Field[string] `json:"entrypoint"`
 	// Environment of the outbound worker.
 	Environment param.Field[string] `json:"environment"`
 	// Name of the outbound worker.
@@ -1240,7 +1290,7 @@ func (r DispatchNamespaceScriptUpdateParamsMetadataBindingsWorkersBindingKindIma
 
 type DispatchNamespaceScriptUpdateParamsMetadataBindingsWorkersBindingKindJson struct {
 	// JSON data to use.
-	Json param.Field[string] `json:"json,required"`
+	Json param.Field[interface{}] `json:"json,required"`
 	// A JavaScript variable name for the binding.
 	Name param.Field[string] `json:"name,required"`
 	// The kind of resource that the binding provides.
@@ -1419,6 +1469,51 @@ const (
 func (r DispatchNamespaceScriptUpdateParamsMetadataBindingsWorkersBindingKindQueueType) IsKnown() bool {
 	switch r {
 	case DispatchNamespaceScriptUpdateParamsMetadataBindingsWorkersBindingKindQueueTypeQueue:
+		return true
+	}
+	return false
+}
+
+type DispatchNamespaceScriptUpdateParamsMetadataBindingsWorkersBindingKindRatelimit struct {
+	// A JavaScript variable name for the binding.
+	Name param.Field[string] `json:"name,required"`
+	// Identifier of the rate limit namespace to bind to.
+	NamespaceID param.Field[string] `json:"namespace_id,required"`
+	// The rate limit configuration.
+	Simple param.Field[DispatchNamespaceScriptUpdateParamsMetadataBindingsWorkersBindingKindRatelimitSimple] `json:"simple,required"`
+	// The kind of resource that the binding provides.
+	Type param.Field[DispatchNamespaceScriptUpdateParamsMetadataBindingsWorkersBindingKindRatelimitType] `json:"type,required"`
+}
+
+func (r DispatchNamespaceScriptUpdateParamsMetadataBindingsWorkersBindingKindRatelimit) MarshalJSON() (data []byte, err error) {
+	return apijson.MarshalRoot(r)
+}
+
+func (r DispatchNamespaceScriptUpdateParamsMetadataBindingsWorkersBindingKindRatelimit) implementsDispatchNamespaceScriptUpdateParamsMetadataBindingUnion() {
+}
+
+// The rate limit configuration.
+type DispatchNamespaceScriptUpdateParamsMetadataBindingsWorkersBindingKindRatelimitSimple struct {
+	// The limit (requests per period).
+	Limit param.Field[float64] `json:"limit,required"`
+	// The period in seconds.
+	Period param.Field[int64] `json:"period,required"`
+}
+
+func (r DispatchNamespaceScriptUpdateParamsMetadataBindingsWorkersBindingKindRatelimitSimple) MarshalJSON() (data []byte, err error) {
+	return apijson.MarshalRoot(r)
+}
+
+// The kind of resource that the binding provides.
+type DispatchNamespaceScriptUpdateParamsMetadataBindingsWorkersBindingKindRatelimitType string
+
+const (
+	DispatchNamespaceScriptUpdateParamsMetadataBindingsWorkersBindingKindRatelimitTypeRatelimit DispatchNamespaceScriptUpdateParamsMetadataBindingsWorkersBindingKindRatelimitType = "ratelimit"
+)
+
+func (r DispatchNamespaceScriptUpdateParamsMetadataBindingsWorkersBindingKindRatelimitType) IsKnown() bool {
+	switch r {
+	case DispatchNamespaceScriptUpdateParamsMetadataBindingsWorkersBindingKindRatelimitTypeRatelimit:
 		return true
 	}
 	return false
@@ -1879,6 +1974,7 @@ const (
 	DispatchNamespaceScriptUpdateParamsMetadataBindingsTypePlainText              DispatchNamespaceScriptUpdateParamsMetadataBindingsType = "plain_text"
 	DispatchNamespaceScriptUpdateParamsMetadataBindingsTypePipelines              DispatchNamespaceScriptUpdateParamsMetadataBindingsType = "pipelines"
 	DispatchNamespaceScriptUpdateParamsMetadataBindingsTypeQueue                  DispatchNamespaceScriptUpdateParamsMetadataBindingsType = "queue"
+	DispatchNamespaceScriptUpdateParamsMetadataBindingsTypeRatelimit              DispatchNamespaceScriptUpdateParamsMetadataBindingsType = "ratelimit"
 	DispatchNamespaceScriptUpdateParamsMetadataBindingsTypeR2Bucket               DispatchNamespaceScriptUpdateParamsMetadataBindingsType = "r2_bucket"
 	DispatchNamespaceScriptUpdateParamsMetadataBindingsTypeSecretText             DispatchNamespaceScriptUpdateParamsMetadataBindingsType = "secret_text"
 	DispatchNamespaceScriptUpdateParamsMetadataBindingsTypeSendEmail              DispatchNamespaceScriptUpdateParamsMetadataBindingsType = "send_email"
@@ -1894,7 +1990,7 @@ const (
 
 func (r DispatchNamespaceScriptUpdateParamsMetadataBindingsType) IsKnown() bool {
 	switch r {
-	case DispatchNamespaceScriptUpdateParamsMetadataBindingsTypeAI, DispatchNamespaceScriptUpdateParamsMetadataBindingsTypeAnalyticsEngine, DispatchNamespaceScriptUpdateParamsMetadataBindingsTypeAssets, DispatchNamespaceScriptUpdateParamsMetadataBindingsTypeBrowser, DispatchNamespaceScriptUpdateParamsMetadataBindingsTypeD1, DispatchNamespaceScriptUpdateParamsMetadataBindingsTypeDataBlob, DispatchNamespaceScriptUpdateParamsMetadataBindingsTypeDispatchNamespace, DispatchNamespaceScriptUpdateParamsMetadataBindingsTypeDurableObjectNamespace, DispatchNamespaceScriptUpdateParamsMetadataBindingsTypeHyperdrive, DispatchNamespaceScriptUpdateParamsMetadataBindingsTypeInherit, DispatchNamespaceScriptUpdateParamsMetadataBindingsTypeImages, DispatchNamespaceScriptUpdateParamsMetadataBindingsTypeJson, DispatchNamespaceScriptUpdateParamsMetadataBindingsTypeKVNamespace, DispatchNamespaceScriptUpdateParamsMetadataBindingsTypeMTLSCertificate, DispatchNamespaceScriptUpdateParamsMetadataBindingsTypePlainText, DispatchNamespaceScriptUpdateParamsMetadataBindingsTypePipelines, DispatchNamespaceScriptUpdateParamsMetadataBindingsTypeQueue, DispatchNamespaceScriptUpdateParamsMetadataBindingsTypeR2Bucket, DispatchNamespaceScriptUpdateParamsMetadataBindingsTypeSecretText, DispatchNamespaceScriptUpdateParamsMetadataBindingsTypeSendEmail, DispatchNamespaceScriptUpdateParamsMetadataBindingsTypeService, DispatchNamespaceScriptUpdateParamsMetadataBindingsTypeTextBlob, DispatchNamespaceScriptUpdateParamsMetadataBindingsTypeVectorize, DispatchNamespaceScriptUpdateParamsMetadataBindingsTypeVersionMetadata, DispatchNamespaceScriptUpdateParamsMetadataBindingsTypeSecretsStoreSecret, DispatchNamespaceScriptUpdateParamsMetadataBindingsTypeSecretKey, DispatchNamespaceScriptUpdateParamsMetadataBindingsTypeWorkflow, DispatchNamespaceScriptUpdateParamsMetadataBindingsTypeWasmModule:
+	case DispatchNamespaceScriptUpdateParamsMetadataBindingsTypeAI, DispatchNamespaceScriptUpdateParamsMetadataBindingsTypeAnalyticsEngine, DispatchNamespaceScriptUpdateParamsMetadataBindingsTypeAssets, DispatchNamespaceScriptUpdateParamsMetadataBindingsTypeBrowser, DispatchNamespaceScriptUpdateParamsMetadataBindingsTypeD1, DispatchNamespaceScriptUpdateParamsMetadataBindingsTypeDataBlob, DispatchNamespaceScriptUpdateParamsMetadataBindingsTypeDispatchNamespace, DispatchNamespaceScriptUpdateParamsMetadataBindingsTypeDurableObjectNamespace, DispatchNamespaceScriptUpdateParamsMetadataBindingsTypeHyperdrive, DispatchNamespaceScriptUpdateParamsMetadataBindingsTypeInherit, DispatchNamespaceScriptUpdateParamsMetadataBindingsTypeImages, DispatchNamespaceScriptUpdateParamsMetadataBindingsTypeJson, DispatchNamespaceScriptUpdateParamsMetadataBindingsTypeKVNamespace, DispatchNamespaceScriptUpdateParamsMetadataBindingsTypeMTLSCertificate, DispatchNamespaceScriptUpdateParamsMetadataBindingsTypePlainText, DispatchNamespaceScriptUpdateParamsMetadataBindingsTypePipelines, DispatchNamespaceScriptUpdateParamsMetadataBindingsTypeQueue, DispatchNamespaceScriptUpdateParamsMetadataBindingsTypeRatelimit, DispatchNamespaceScriptUpdateParamsMetadataBindingsTypeR2Bucket, DispatchNamespaceScriptUpdateParamsMetadataBindingsTypeSecretText, DispatchNamespaceScriptUpdateParamsMetadataBindingsTypeSendEmail, DispatchNamespaceScriptUpdateParamsMetadataBindingsTypeService, DispatchNamespaceScriptUpdateParamsMetadataBindingsTypeTextBlob, DispatchNamespaceScriptUpdateParamsMetadataBindingsTypeVectorize, DispatchNamespaceScriptUpdateParamsMetadataBindingsTypeVersionMetadata, DispatchNamespaceScriptUpdateParamsMetadataBindingsTypeSecretsStoreSecret, DispatchNamespaceScriptUpdateParamsMetadataBindingsTypeSecretKey, DispatchNamespaceScriptUpdateParamsMetadataBindingsTypeWorkflow, DispatchNamespaceScriptUpdateParamsMetadataBindingsTypeWasmModule:
 		return true
 	}
 	return false
@@ -2032,8 +2128,7 @@ func (r DispatchNamespaceScriptUpdateParamsMetadataObservabilityLogs) MarshalJSO
 
 // Configuration for
 // [Smart Placement](https://developers.cloudflare.com/workers/configuration/smart-placement).
-// Specify either mode for Smart Placement, or one of region/hostname/host for
-// targeted placement.
+// Specify mode='smart' for Smart Placement, or one of region/hostname/host.
 type DispatchNamespaceScriptUpdateParamsMetadataPlacement struct {
 	// TCP host and port for targeted placement.
 	Host param.Field[string] `json:"host"`
@@ -2043,7 +2138,8 @@ type DispatchNamespaceScriptUpdateParamsMetadataPlacement struct {
 	// [Smart Placement](https://developers.cloudflare.com/workers/configuration/smart-placement).
 	Mode param.Field[DispatchNamespaceScriptUpdateParamsMetadataPlacementMode] `json:"mode"`
 	// Cloud region for targeted placement in format 'provider:region'.
-	Region param.Field[string] `json:"region"`
+	Region param.Field[string]      `json:"region"`
+	Target param.Field[interface{}] `json:"target"`
 }
 
 func (r DispatchNamespaceScriptUpdateParamsMetadataPlacement) MarshalJSON() (data []byte, err error) {
@@ -2055,10 +2151,13 @@ func (r DispatchNamespaceScriptUpdateParamsMetadataPlacement) implementsDispatch
 
 // Configuration for
 // [Smart Placement](https://developers.cloudflare.com/workers/configuration/smart-placement).
-// Specify either mode for Smart Placement, or one of region/hostname/host for
-// targeted placement.
+// Specify mode='smart' for Smart Placement, or one of region/hostname/host.
 //
 // Satisfied by
+// [workers_for_platforms.DispatchNamespaceScriptUpdateParamsMetadataPlacementObject],
+// [workers_for_platforms.DispatchNamespaceScriptUpdateParamsMetadataPlacementObject],
+// [workers_for_platforms.DispatchNamespaceScriptUpdateParamsMetadataPlacementObject],
+// [workers_for_platforms.DispatchNamespaceScriptUpdateParamsMetadataPlacementObject],
 // [workers_for_platforms.DispatchNamespaceScriptUpdateParamsMetadataPlacementObject],
 // [workers_for_platforms.DispatchNamespaceScriptUpdateParamsMetadataPlacementObject],
 // [workers_for_platforms.DispatchNamespaceScriptUpdateParamsMetadataPlacementObject],
@@ -2120,12 +2219,13 @@ func (r DispatchNamespaceScriptUpdateParamsMetadataPlacementObjectStatus) IsKnow
 type DispatchNamespaceScriptUpdateParamsMetadataPlacementMode string
 
 const (
-	DispatchNamespaceScriptUpdateParamsMetadataPlacementModeSmart DispatchNamespaceScriptUpdateParamsMetadataPlacementMode = "smart"
+	DispatchNamespaceScriptUpdateParamsMetadataPlacementModeSmart    DispatchNamespaceScriptUpdateParamsMetadataPlacementMode = "smart"
+	DispatchNamespaceScriptUpdateParamsMetadataPlacementModeTargeted DispatchNamespaceScriptUpdateParamsMetadataPlacementMode = "targeted"
 )
 
 func (r DispatchNamespaceScriptUpdateParamsMetadataPlacementMode) IsKnown() bool {
 	switch r {
-	case DispatchNamespaceScriptUpdateParamsMetadataPlacementModeSmart:
+	case DispatchNamespaceScriptUpdateParamsMetadataPlacementModeSmart, DispatchNamespaceScriptUpdateParamsMetadataPlacementModeTargeted:
 		return true
 	}
 	return false
@@ -2161,6 +2261,23 @@ const (
 func (r DispatchNamespaceScriptUpdateParamsMetadataUsageModel) IsKnown() bool {
 	switch r {
 	case DispatchNamespaceScriptUpdateParamsMetadataUsageModelStandard, DispatchNamespaceScriptUpdateParamsMetadataUsageModelBundled, DispatchNamespaceScriptUpdateParamsMetadataUsageModelUnbound:
+		return true
+	}
+	return false
+}
+
+// When set to "strict", the upload will fail if any `inherit` type bindings cannot
+// be resolved against the previous version of the script. Without this,
+// unresolvable inherit bindings are silently dropped.
+type DispatchNamespaceScriptUpdateParamsBindingsInherit string
+
+const (
+	DispatchNamespaceScriptUpdateParamsBindingsInheritStrict DispatchNamespaceScriptUpdateParamsBindingsInherit = "strict"
+)
+
+func (r DispatchNamespaceScriptUpdateParamsBindingsInherit) IsKnown() bool {
+	switch r {
+	case DispatchNamespaceScriptUpdateParamsBindingsInheritStrict:
 		return true
 	}
 	return false

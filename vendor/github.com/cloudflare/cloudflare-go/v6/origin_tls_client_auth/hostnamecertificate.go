@@ -54,7 +54,8 @@ func (r *HostnameCertificateService) New(ctx context.Context, params HostnameCer
 	return
 }
 
-// List Certificates
+// Lists all client certificates configured for per-hostname authenticated origin
+// pulls on the zone.
 func (r *HostnameCertificateService) List(ctx context.Context, query HostnameCertificateListParams, opts ...option.RequestOption) (res *pagination.SinglePage[HostnameCertificateListResponse], err error) {
 	var raw *http.Response
 	opts = slices.Concat(r.Options, opts)
@@ -76,12 +77,17 @@ func (r *HostnameCertificateService) List(ctx context.Context, query HostnameCer
 	return res, nil
 }
 
-// List Certificates
+// Lists all client certificates configured for per-hostname authenticated origin
+// pulls on the zone.
 func (r *HostnameCertificateService) ListAutoPaging(ctx context.Context, query HostnameCertificateListParams, opts ...option.RequestOption) *pagination.SinglePageAutoPager[HostnameCertificateListResponse] {
 	return pagination.NewSinglePageAutoPager(r.List(ctx, query, opts...))
 }
 
-// Delete Hostname Client Certificate
+// Removes a client certificate used for authenticated origin pulls on a specific
+// hostname. Note: Before deleting the certificate, you must first invalidate the
+// hostname for client authentication by sending a PUT request with `enabled` set
+// to null. After invalidating the association, the certificate can be safely
+// deleted.
 func (r *HostnameCertificateService) Delete(ctx context.Context, certificateID string, body HostnameCertificateDeleteParams, opts ...option.RequestOption) (res *HostnameCertificateDeleteResponse, err error) {
 	var env HostnameCertificateDeleteResponseEnvelope
 	opts = slices.Concat(r.Options, opts)
@@ -190,33 +196,36 @@ func (r HostnameCertificateNewResponseStatus) IsKnown() bool {
 type HostnameCertificateListResponse struct {
 	// Identifier.
 	ID string `json:"id"`
-	// Identifier.
-	CERTID string `json:"cert_id"`
 	// The hostname certificate.
 	Certificate string `json:"certificate"`
-	// Indicates whether hostname-level authenticated origin pulls is enabled. A null
-	// value voids the association.
-	Enabled bool `json:"enabled,nullable"`
-	// The hostname on the origin for which the client certificate uploaded will be
-	// used.
-	Hostname string `json:"hostname"`
-	// The hostname certificate's private key.
-	PrivateKey string                              `json:"private_key"`
+	// The date when the certificate expires.
+	ExpiresOn time.Time `json:"expires_on" format:"date-time"`
+	// The certificate authority that issued the certificate.
+	Issuer string `json:"issuer"`
+	// The serial number on the uploaded certificate.
+	SerialNumber string `json:"serial_number"`
+	// The type of hash used for the certificate.
+	Signature string `json:"signature"`
+	// Status of the certificate or the association.
+	Status HostnameCertificateListResponseStatus `json:"status"`
+	// The time when the certificate was uploaded.
+	UploadedOn time.Time                           `json:"uploaded_on" format:"date-time"`
 	JSON       hostnameCertificateListResponseJSON `json:"-"`
-	AuthenticatedOriginPull
 }
 
 // hostnameCertificateListResponseJSON contains the JSON metadata for the struct
 // [HostnameCertificateListResponse]
 type hostnameCertificateListResponseJSON struct {
-	ID          apijson.Field
-	CERTID      apijson.Field
-	Certificate apijson.Field
-	Enabled     apijson.Field
-	Hostname    apijson.Field
-	PrivateKey  apijson.Field
-	raw         string
-	ExtraFields map[string]apijson.Field
+	ID           apijson.Field
+	Certificate  apijson.Field
+	ExpiresOn    apijson.Field
+	Issuer       apijson.Field
+	SerialNumber apijson.Field
+	Signature    apijson.Field
+	Status       apijson.Field
+	UploadedOn   apijson.Field
+	raw          string
+	ExtraFields  map[string]apijson.Field
 }
 
 func (r *HostnameCertificateListResponse) UnmarshalJSON(data []byte) (err error) {
@@ -225,6 +234,27 @@ func (r *HostnameCertificateListResponse) UnmarshalJSON(data []byte) (err error)
 
 func (r hostnameCertificateListResponseJSON) RawJSON() string {
 	return r.raw
+}
+
+// Status of the certificate or the association.
+type HostnameCertificateListResponseStatus string
+
+const (
+	HostnameCertificateListResponseStatusInitializing       HostnameCertificateListResponseStatus = "initializing"
+	HostnameCertificateListResponseStatusPendingDeployment  HostnameCertificateListResponseStatus = "pending_deployment"
+	HostnameCertificateListResponseStatusPendingDeletion    HostnameCertificateListResponseStatus = "pending_deletion"
+	HostnameCertificateListResponseStatusActive             HostnameCertificateListResponseStatus = "active"
+	HostnameCertificateListResponseStatusDeleted            HostnameCertificateListResponseStatus = "deleted"
+	HostnameCertificateListResponseStatusDeploymentTimedOut HostnameCertificateListResponseStatus = "deployment_timed_out"
+	HostnameCertificateListResponseStatusDeletionTimedOut   HostnameCertificateListResponseStatus = "deletion_timed_out"
+)
+
+func (r HostnameCertificateListResponseStatus) IsKnown() bool {
+	switch r {
+	case HostnameCertificateListResponseStatusInitializing, HostnameCertificateListResponseStatusPendingDeployment, HostnameCertificateListResponseStatusPendingDeletion, HostnameCertificateListResponseStatusActive, HostnameCertificateListResponseStatusDeleted, HostnameCertificateListResponseStatusDeploymentTimedOut, HostnameCertificateListResponseStatusDeletionTimedOut:
+		return true
+	}
+	return false
 }
 
 type HostnameCertificateDeleteResponse struct {

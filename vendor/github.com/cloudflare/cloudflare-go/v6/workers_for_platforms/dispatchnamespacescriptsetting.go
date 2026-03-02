@@ -110,8 +110,7 @@ type DispatchNamespaceScriptSettingEditResponse struct {
 	Observability DispatchNamespaceScriptSettingEditResponseObservability `json:"observability"`
 	// Configuration for
 	// [Smart Placement](https://developers.cloudflare.com/workers/configuration/smart-placement).
-	// Specify either mode for Smart Placement, or one of region/hostname/host for
-	// targeted placement.
+	// Specify mode='smart' for Smart Placement, or one of region/hostname/host.
 	Placement DispatchNamespaceScriptSettingEditResponsePlacement `json:"placement"`
 	// Tags associated with the Worker.
 	Tags []string `json:"tags,nullable"`
@@ -178,8 +177,8 @@ type DispatchNamespaceScriptSettingEditResponseBinding struct {
 	Format DispatchNamespaceScriptSettingEditResponseBindingsFormat `json:"format"`
 	// Name of the Vectorize index to bind to.
 	IndexName string `json:"index_name"`
-	// JSON data to use.
-	Json string `json:"json"`
+	// This field can have the runtime type of [interface{}].
+	Json interface{} `json:"json"`
 	// The
 	// [jurisdiction](https://developers.cloudflare.com/r2/reference/data-location/#jurisdictional-restrictions)
 	// of the R2 bucket.
@@ -211,6 +210,9 @@ type DispatchNamespaceScriptSettingEditResponseBinding struct {
 	SecretName string `json:"secret_name"`
 	// Name of Worker to bind to.
 	Service string `json:"service"`
+	// This field can have the runtime type of
+	// [DispatchNamespaceScriptSettingEditResponseBindingsWorkersBindingKindRatelimitSimple].
+	Simple interface{} `json:"simple"`
 	// ID of the store containing the secret.
 	StoreID string `json:"store_id"`
 	// The text value to use.
@@ -258,6 +260,7 @@ type dispatchNamespaceScriptSettingEditResponseBindingJSON struct {
 	ScriptName                  apijson.Field
 	SecretName                  apijson.Field
 	Service                     apijson.Field
+	Simple                      apijson.Field
 	StoreID                     apijson.Field
 	Text                        apijson.Field
 	Usages                      apijson.Field
@@ -301,6 +304,7 @@ func (r *DispatchNamespaceScriptSettingEditResponseBinding) UnmarshalJSON(data [
 // [DispatchNamespaceScriptSettingEditResponseBindingsWorkersBindingKindPlainText],
 // [DispatchNamespaceScriptSettingEditResponseBindingsWorkersBindingKindPipelines],
 // [DispatchNamespaceScriptSettingEditResponseBindingsWorkersBindingKindQueue],
+// [DispatchNamespaceScriptSettingEditResponseBindingsWorkersBindingKindRatelimit],
 // [DispatchNamespaceScriptSettingEditResponseBindingsWorkersBindingKindR2Bucket],
 // [DispatchNamespaceScriptSettingEditResponseBindingsWorkersBindingKindSecretText],
 // [DispatchNamespaceScriptSettingEditResponseBindingsWorkersBindingKindSendEmail],
@@ -336,6 +340,7 @@ func (r DispatchNamespaceScriptSettingEditResponseBinding) AsUnion() DispatchNam
 // [DispatchNamespaceScriptSettingEditResponseBindingsWorkersBindingKindPlainText],
 // [DispatchNamespaceScriptSettingEditResponseBindingsWorkersBindingKindPipelines],
 // [DispatchNamespaceScriptSettingEditResponseBindingsWorkersBindingKindQueue],
+// [DispatchNamespaceScriptSettingEditResponseBindingsWorkersBindingKindRatelimit],
 // [DispatchNamespaceScriptSettingEditResponseBindingsWorkersBindingKindR2Bucket],
 // [DispatchNamespaceScriptSettingEditResponseBindingsWorkersBindingKindSecretText],
 // [DispatchNamespaceScriptSettingEditResponseBindingsWorkersBindingKindSendEmail],
@@ -440,6 +445,11 @@ func init() {
 			TypeFilter:         gjson.JSON,
 			Type:               reflect.TypeOf(DispatchNamespaceScriptSettingEditResponseBindingsWorkersBindingKindQueue{}),
 			DiscriminatorValue: "queue",
+		},
+		apijson.UnionVariant{
+			TypeFilter:         gjson.JSON,
+			Type:               reflect.TypeOf(DispatchNamespaceScriptSettingEditResponseBindingsWorkersBindingKindRatelimit{}),
+			DiscriminatorValue: "ratelimit",
 		},
 		apijson.UnionVariant{
 			TypeFilter:         gjson.JSON,
@@ -829,7 +839,7 @@ func (r DispatchNamespaceScriptSettingEditResponseBindingsWorkersBindingKindDisp
 type DispatchNamespaceScriptSettingEditResponseBindingsWorkersBindingKindDispatchNamespaceOutbound struct {
 	// Pass information from the Dispatch Worker to the Outbound Worker through the
 	// parameters.
-	Params []string `json:"params"`
+	Params []DispatchNamespaceScriptSettingEditResponseBindingsWorkersBindingKindDispatchNamespaceOutboundParam `json:"params"`
 	// Outbound worker.
 	Worker DispatchNamespaceScriptSettingEditResponseBindingsWorkersBindingKindDispatchNamespaceOutboundWorker `json:"worker"`
 	JSON   dispatchNamespaceScriptSettingEditResponseBindingsWorkersBindingKindDispatchNamespaceOutboundJSON   `json:"-"`
@@ -853,8 +863,33 @@ func (r dispatchNamespaceScriptSettingEditResponseBindingsWorkersBindingKindDisp
 	return r.raw
 }
 
+type DispatchNamespaceScriptSettingEditResponseBindingsWorkersBindingKindDispatchNamespaceOutboundParam struct {
+	// Name of the parameter.
+	Name string                                                                                                 `json:"name,required"`
+	JSON dispatchNamespaceScriptSettingEditResponseBindingsWorkersBindingKindDispatchNamespaceOutboundParamJSON `json:"-"`
+}
+
+// dispatchNamespaceScriptSettingEditResponseBindingsWorkersBindingKindDispatchNamespaceOutboundParamJSON
+// contains the JSON metadata for the struct
+// [DispatchNamespaceScriptSettingEditResponseBindingsWorkersBindingKindDispatchNamespaceOutboundParam]
+type dispatchNamespaceScriptSettingEditResponseBindingsWorkersBindingKindDispatchNamespaceOutboundParamJSON struct {
+	Name        apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *DispatchNamespaceScriptSettingEditResponseBindingsWorkersBindingKindDispatchNamespaceOutboundParam) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r dispatchNamespaceScriptSettingEditResponseBindingsWorkersBindingKindDispatchNamespaceOutboundParamJSON) RawJSON() string {
+	return r.raw
+}
+
 // Outbound worker.
 type DispatchNamespaceScriptSettingEditResponseBindingsWorkersBindingKindDispatchNamespaceOutboundWorker struct {
+	// Entrypoint to invoke on the outbound worker.
+	Entrypoint string `json:"entrypoint"`
 	// Environment of the outbound worker.
 	Environment string `json:"environment"`
 	// Name of the outbound worker.
@@ -866,6 +901,7 @@ type DispatchNamespaceScriptSettingEditResponseBindingsWorkersBindingKindDispatc
 // contains the JSON metadata for the struct
 // [DispatchNamespaceScriptSettingEditResponseBindingsWorkersBindingKindDispatchNamespaceOutboundWorker]
 type dispatchNamespaceScriptSettingEditResponseBindingsWorkersBindingKindDispatchNamespaceOutboundWorkerJSON struct {
+	Entrypoint  apijson.Field
 	Environment apijson.Field
 	Service     apijson.Field
 	raw         string
@@ -1084,7 +1120,7 @@ func (r DispatchNamespaceScriptSettingEditResponseBindingsWorkersBindingKindImag
 
 type DispatchNamespaceScriptSettingEditResponseBindingsWorkersBindingKindJson struct {
 	// JSON data to use.
-	Json string `json:"json,required"`
+	Json interface{} `json:"json,required"`
 	// A JavaScript variable name for the binding.
 	Name string `json:"name,required"`
 	// The kind of resource that the binding provides.
@@ -1359,6 +1395,83 @@ const (
 func (r DispatchNamespaceScriptSettingEditResponseBindingsWorkersBindingKindQueueType) IsKnown() bool {
 	switch r {
 	case DispatchNamespaceScriptSettingEditResponseBindingsWorkersBindingKindQueueTypeQueue:
+		return true
+	}
+	return false
+}
+
+type DispatchNamespaceScriptSettingEditResponseBindingsWorkersBindingKindRatelimit struct {
+	// A JavaScript variable name for the binding.
+	Name string `json:"name,required"`
+	// Identifier of the rate limit namespace to bind to.
+	NamespaceID string `json:"namespace_id,required"`
+	// The rate limit configuration.
+	Simple DispatchNamespaceScriptSettingEditResponseBindingsWorkersBindingKindRatelimitSimple `json:"simple,required"`
+	// The kind of resource that the binding provides.
+	Type DispatchNamespaceScriptSettingEditResponseBindingsWorkersBindingKindRatelimitType `json:"type,required"`
+	JSON dispatchNamespaceScriptSettingEditResponseBindingsWorkersBindingKindRatelimitJSON `json:"-"`
+}
+
+// dispatchNamespaceScriptSettingEditResponseBindingsWorkersBindingKindRatelimitJSON
+// contains the JSON metadata for the struct
+// [DispatchNamespaceScriptSettingEditResponseBindingsWorkersBindingKindRatelimit]
+type dispatchNamespaceScriptSettingEditResponseBindingsWorkersBindingKindRatelimitJSON struct {
+	Name        apijson.Field
+	NamespaceID apijson.Field
+	Simple      apijson.Field
+	Type        apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *DispatchNamespaceScriptSettingEditResponseBindingsWorkersBindingKindRatelimit) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r dispatchNamespaceScriptSettingEditResponseBindingsWorkersBindingKindRatelimitJSON) RawJSON() string {
+	return r.raw
+}
+
+func (r DispatchNamespaceScriptSettingEditResponseBindingsWorkersBindingKindRatelimit) implementsDispatchNamespaceScriptSettingEditResponseBinding() {
+}
+
+// The rate limit configuration.
+type DispatchNamespaceScriptSettingEditResponseBindingsWorkersBindingKindRatelimitSimple struct {
+	// The limit (requests per period).
+	Limit float64 `json:"limit,required"`
+	// The period in seconds.
+	Period int64                                                                                   `json:"period,required"`
+	JSON   dispatchNamespaceScriptSettingEditResponseBindingsWorkersBindingKindRatelimitSimpleJSON `json:"-"`
+}
+
+// dispatchNamespaceScriptSettingEditResponseBindingsWorkersBindingKindRatelimitSimpleJSON
+// contains the JSON metadata for the struct
+// [DispatchNamespaceScriptSettingEditResponseBindingsWorkersBindingKindRatelimitSimple]
+type dispatchNamespaceScriptSettingEditResponseBindingsWorkersBindingKindRatelimitSimpleJSON struct {
+	Limit       apijson.Field
+	Period      apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *DispatchNamespaceScriptSettingEditResponseBindingsWorkersBindingKindRatelimitSimple) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r dispatchNamespaceScriptSettingEditResponseBindingsWorkersBindingKindRatelimitSimpleJSON) RawJSON() string {
+	return r.raw
+}
+
+// The kind of resource that the binding provides.
+type DispatchNamespaceScriptSettingEditResponseBindingsWorkersBindingKindRatelimitType string
+
+const (
+	DispatchNamespaceScriptSettingEditResponseBindingsWorkersBindingKindRatelimitTypeRatelimit DispatchNamespaceScriptSettingEditResponseBindingsWorkersBindingKindRatelimitType = "ratelimit"
+)
+
+func (r DispatchNamespaceScriptSettingEditResponseBindingsWorkersBindingKindRatelimitType) IsKnown() bool {
+	switch r {
+	case DispatchNamespaceScriptSettingEditResponseBindingsWorkersBindingKindRatelimitTypeRatelimit:
 		return true
 	}
 	return false
@@ -1994,6 +2107,7 @@ const (
 	DispatchNamespaceScriptSettingEditResponseBindingsTypePlainText              DispatchNamespaceScriptSettingEditResponseBindingsType = "plain_text"
 	DispatchNamespaceScriptSettingEditResponseBindingsTypePipelines              DispatchNamespaceScriptSettingEditResponseBindingsType = "pipelines"
 	DispatchNamespaceScriptSettingEditResponseBindingsTypeQueue                  DispatchNamespaceScriptSettingEditResponseBindingsType = "queue"
+	DispatchNamespaceScriptSettingEditResponseBindingsTypeRatelimit              DispatchNamespaceScriptSettingEditResponseBindingsType = "ratelimit"
 	DispatchNamespaceScriptSettingEditResponseBindingsTypeR2Bucket               DispatchNamespaceScriptSettingEditResponseBindingsType = "r2_bucket"
 	DispatchNamespaceScriptSettingEditResponseBindingsTypeSecretText             DispatchNamespaceScriptSettingEditResponseBindingsType = "secret_text"
 	DispatchNamespaceScriptSettingEditResponseBindingsTypeSendEmail              DispatchNamespaceScriptSettingEditResponseBindingsType = "send_email"
@@ -2009,7 +2123,7 @@ const (
 
 func (r DispatchNamespaceScriptSettingEditResponseBindingsType) IsKnown() bool {
 	switch r {
-	case DispatchNamespaceScriptSettingEditResponseBindingsTypeAI, DispatchNamespaceScriptSettingEditResponseBindingsTypeAnalyticsEngine, DispatchNamespaceScriptSettingEditResponseBindingsTypeAssets, DispatchNamespaceScriptSettingEditResponseBindingsTypeBrowser, DispatchNamespaceScriptSettingEditResponseBindingsTypeD1, DispatchNamespaceScriptSettingEditResponseBindingsTypeDataBlob, DispatchNamespaceScriptSettingEditResponseBindingsTypeDispatchNamespace, DispatchNamespaceScriptSettingEditResponseBindingsTypeDurableObjectNamespace, DispatchNamespaceScriptSettingEditResponseBindingsTypeHyperdrive, DispatchNamespaceScriptSettingEditResponseBindingsTypeInherit, DispatchNamespaceScriptSettingEditResponseBindingsTypeImages, DispatchNamespaceScriptSettingEditResponseBindingsTypeJson, DispatchNamespaceScriptSettingEditResponseBindingsTypeKVNamespace, DispatchNamespaceScriptSettingEditResponseBindingsTypeMTLSCertificate, DispatchNamespaceScriptSettingEditResponseBindingsTypePlainText, DispatchNamespaceScriptSettingEditResponseBindingsTypePipelines, DispatchNamespaceScriptSettingEditResponseBindingsTypeQueue, DispatchNamespaceScriptSettingEditResponseBindingsTypeR2Bucket, DispatchNamespaceScriptSettingEditResponseBindingsTypeSecretText, DispatchNamespaceScriptSettingEditResponseBindingsTypeSendEmail, DispatchNamespaceScriptSettingEditResponseBindingsTypeService, DispatchNamespaceScriptSettingEditResponseBindingsTypeTextBlob, DispatchNamespaceScriptSettingEditResponseBindingsTypeVectorize, DispatchNamespaceScriptSettingEditResponseBindingsTypeVersionMetadata, DispatchNamespaceScriptSettingEditResponseBindingsTypeSecretsStoreSecret, DispatchNamespaceScriptSettingEditResponseBindingsTypeSecretKey, DispatchNamespaceScriptSettingEditResponseBindingsTypeWorkflow, DispatchNamespaceScriptSettingEditResponseBindingsTypeWasmModule:
+	case DispatchNamespaceScriptSettingEditResponseBindingsTypeAI, DispatchNamespaceScriptSettingEditResponseBindingsTypeAnalyticsEngine, DispatchNamespaceScriptSettingEditResponseBindingsTypeAssets, DispatchNamespaceScriptSettingEditResponseBindingsTypeBrowser, DispatchNamespaceScriptSettingEditResponseBindingsTypeD1, DispatchNamespaceScriptSettingEditResponseBindingsTypeDataBlob, DispatchNamespaceScriptSettingEditResponseBindingsTypeDispatchNamespace, DispatchNamespaceScriptSettingEditResponseBindingsTypeDurableObjectNamespace, DispatchNamespaceScriptSettingEditResponseBindingsTypeHyperdrive, DispatchNamespaceScriptSettingEditResponseBindingsTypeInherit, DispatchNamespaceScriptSettingEditResponseBindingsTypeImages, DispatchNamespaceScriptSettingEditResponseBindingsTypeJson, DispatchNamespaceScriptSettingEditResponseBindingsTypeKVNamespace, DispatchNamespaceScriptSettingEditResponseBindingsTypeMTLSCertificate, DispatchNamespaceScriptSettingEditResponseBindingsTypePlainText, DispatchNamespaceScriptSettingEditResponseBindingsTypePipelines, DispatchNamespaceScriptSettingEditResponseBindingsTypeQueue, DispatchNamespaceScriptSettingEditResponseBindingsTypeRatelimit, DispatchNamespaceScriptSettingEditResponseBindingsTypeR2Bucket, DispatchNamespaceScriptSettingEditResponseBindingsTypeSecretText, DispatchNamespaceScriptSettingEditResponseBindingsTypeSendEmail, DispatchNamespaceScriptSettingEditResponseBindingsTypeService, DispatchNamespaceScriptSettingEditResponseBindingsTypeTextBlob, DispatchNamespaceScriptSettingEditResponseBindingsTypeVectorize, DispatchNamespaceScriptSettingEditResponseBindingsTypeVersionMetadata, DispatchNamespaceScriptSettingEditResponseBindingsTypeSecretsStoreSecret, DispatchNamespaceScriptSettingEditResponseBindingsTypeSecretKey, DispatchNamespaceScriptSettingEditResponseBindingsTypeWorkflow, DispatchNamespaceScriptSettingEditResponseBindingsTypeWasmModule:
 		return true
 	}
 	return false
@@ -2247,8 +2361,7 @@ func (r dispatchNamespaceScriptSettingEditResponseObservabilityLogsJSON) RawJSON
 
 // Configuration for
 // [Smart Placement](https://developers.cloudflare.com/workers/configuration/smart-placement).
-// Specify either mode for Smart Placement, or one of region/hostname/host for
-// targeted placement.
+// Specify mode='smart' for Smart Placement, or one of region/hostname/host.
 type DispatchNamespaceScriptSettingEditResponsePlacement struct {
 	// TCP host and port for targeted placement.
 	Host string `json:"host"`
@@ -2256,9 +2369,12 @@ type DispatchNamespaceScriptSettingEditResponsePlacement struct {
 	Hostname string `json:"hostname"`
 	// Enables
 	// [Smart Placement](https://developers.cloudflare.com/workers/configuration/smart-placement).
-	Mode DispatchNamespaceScriptSettingEditResponsePlacementMode `json:"mode"`
+	Mode DispatchNamespaceScriptSettingEditResponsePlacementModeMode `json:"mode"`
 	// Cloud region for targeted placement in format 'provider:region'.
-	Region string                                                  `json:"region"`
+	Region string `json:"region"`
+	// This field can have the runtime type of
+	// [[]DispatchNamespaceScriptSettingEditResponsePlacementObjectTarget].
+	Target interface{}                                             `json:"target"`
 	JSON   dispatchNamespaceScriptSettingEditResponsePlacementJSON `json:"-"`
 	union  DispatchNamespaceScriptSettingEditResponsePlacementUnion
 }
@@ -2270,6 +2386,7 @@ type dispatchNamespaceScriptSettingEditResponsePlacementJSON struct {
 	Hostname    apijson.Field
 	Mode        apijson.Field
 	Region      apijson.Field
+	Target      apijson.Field
 	raw         string
 	ExtraFields map[string]apijson.Field
 }
@@ -2294,20 +2411,27 @@ func (r *DispatchNamespaceScriptSettingEditResponsePlacement) UnmarshalJSON(data
 // [DispatchNamespaceScriptSettingEditResponsePlacementMode],
 // [DispatchNamespaceScriptSettingEditResponsePlacementRegion],
 // [DispatchNamespaceScriptSettingEditResponsePlacementHostname],
-// [DispatchNamespaceScriptSettingEditResponsePlacementHost].
+// [DispatchNamespaceScriptSettingEditResponsePlacementHost],
+// [DispatchNamespaceScriptSettingEditResponsePlacementObject],
+// [DispatchNamespaceScriptSettingEditResponsePlacementObject],
+// [DispatchNamespaceScriptSettingEditResponsePlacementObject],
+// [DispatchNamespaceScriptSettingEditResponsePlacementObject].
 func (r DispatchNamespaceScriptSettingEditResponsePlacement) AsUnion() DispatchNamespaceScriptSettingEditResponsePlacementUnion {
 	return r.union
 }
 
 // Configuration for
 // [Smart Placement](https://developers.cloudflare.com/workers/configuration/smart-placement).
-// Specify either mode for Smart Placement, or one of region/hostname/host for
-// targeted placement.
+// Specify mode='smart' for Smart Placement, or one of region/hostname/host.
 //
 // Union satisfied by [DispatchNamespaceScriptSettingEditResponsePlacementMode],
 // [DispatchNamespaceScriptSettingEditResponsePlacementRegion],
-// [DispatchNamespaceScriptSettingEditResponsePlacementHostname] or
-// [DispatchNamespaceScriptSettingEditResponsePlacementHost].
+// [DispatchNamespaceScriptSettingEditResponsePlacementHostname],
+// [DispatchNamespaceScriptSettingEditResponsePlacementHost],
+// [DispatchNamespaceScriptSettingEditResponsePlacementObject],
+// [DispatchNamespaceScriptSettingEditResponsePlacementObject],
+// [DispatchNamespaceScriptSettingEditResponsePlacementObject] or
+// [DispatchNamespaceScriptSettingEditResponsePlacementObject].
 type DispatchNamespaceScriptSettingEditResponsePlacementUnion interface {
 	implementsDispatchNamespaceScriptSettingEditResponsePlacement()
 }
@@ -2331,6 +2455,22 @@ func init() {
 		apijson.UnionVariant{
 			TypeFilter: gjson.JSON,
 			Type:       reflect.TypeOf(DispatchNamespaceScriptSettingEditResponsePlacementHost{}),
+		},
+		apijson.UnionVariant{
+			TypeFilter: gjson.JSON,
+			Type:       reflect.TypeOf(DispatchNamespaceScriptSettingEditResponsePlacementObject{}),
+		},
+		apijson.UnionVariant{
+			TypeFilter: gjson.JSON,
+			Type:       reflect.TypeOf(DispatchNamespaceScriptSettingEditResponsePlacementObject{}),
+		},
+		apijson.UnionVariant{
+			TypeFilter: gjson.JSON,
+			Type:       reflect.TypeOf(DispatchNamespaceScriptSettingEditResponsePlacementObject{}),
+		},
+		apijson.UnionVariant{
+			TypeFilter: gjson.JSON,
+			Type:       reflect.TypeOf(DispatchNamespaceScriptSettingEditResponsePlacementObject{}),
 		},
 	)
 }
@@ -2456,6 +2596,50 @@ func (r dispatchNamespaceScriptSettingEditResponsePlacementHostJSON) RawJSON() s
 func (r DispatchNamespaceScriptSettingEditResponsePlacementHost) implementsDispatchNamespaceScriptSettingEditResponsePlacement() {
 }
 
+type DispatchNamespaceScriptSettingEditResponsePlacementObject struct {
+	// Targeted placement mode.
+	Mode DispatchNamespaceScriptSettingEditResponsePlacementObjectMode `json:"mode,required"`
+	// Cloud region for targeted placement in format 'provider:region'.
+	Region string                                                        `json:"region,required"`
+	JSON   dispatchNamespaceScriptSettingEditResponsePlacementObjectJSON `json:"-"`
+}
+
+// dispatchNamespaceScriptSettingEditResponsePlacementObjectJSON contains the JSON
+// metadata for the struct
+// [DispatchNamespaceScriptSettingEditResponsePlacementObject]
+type dispatchNamespaceScriptSettingEditResponsePlacementObjectJSON struct {
+	Mode        apijson.Field
+	Region      apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *DispatchNamespaceScriptSettingEditResponsePlacementObject) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r dispatchNamespaceScriptSettingEditResponsePlacementObjectJSON) RawJSON() string {
+	return r.raw
+}
+
+func (r DispatchNamespaceScriptSettingEditResponsePlacementObject) implementsDispatchNamespaceScriptSettingEditResponsePlacement() {
+}
+
+// Targeted placement mode.
+type DispatchNamespaceScriptSettingEditResponsePlacementObjectMode string
+
+const (
+	DispatchNamespaceScriptSettingEditResponsePlacementObjectModeTargeted DispatchNamespaceScriptSettingEditResponsePlacementObjectMode = "targeted"
+)
+
+func (r DispatchNamespaceScriptSettingEditResponsePlacementObjectMode) IsKnown() bool {
+	switch r {
+	case DispatchNamespaceScriptSettingEditResponsePlacementObjectModeTargeted:
+		return true
+	}
+	return false
+}
+
 // Usage model for the Worker invocations.
 type DispatchNamespaceScriptSettingEditResponseUsageModel string
 
@@ -2493,8 +2677,7 @@ type DispatchNamespaceScriptSettingGetResponse struct {
 	Observability DispatchNamespaceScriptSettingGetResponseObservability `json:"observability"`
 	// Configuration for
 	// [Smart Placement](https://developers.cloudflare.com/workers/configuration/smart-placement).
-	// Specify either mode for Smart Placement, or one of region/hostname/host for
-	// targeted placement.
+	// Specify mode='smart' for Smart Placement, or one of region/hostname/host.
 	Placement DispatchNamespaceScriptSettingGetResponsePlacement `json:"placement"`
 	// Tags associated with the Worker.
 	Tags []string `json:"tags,nullable"`
@@ -2561,8 +2744,8 @@ type DispatchNamespaceScriptSettingGetResponseBinding struct {
 	Format DispatchNamespaceScriptSettingGetResponseBindingsFormat `json:"format"`
 	// Name of the Vectorize index to bind to.
 	IndexName string `json:"index_name"`
-	// JSON data to use.
-	Json string `json:"json"`
+	// This field can have the runtime type of [interface{}].
+	Json interface{} `json:"json"`
 	// The
 	// [jurisdiction](https://developers.cloudflare.com/r2/reference/data-location/#jurisdictional-restrictions)
 	// of the R2 bucket.
@@ -2594,6 +2777,9 @@ type DispatchNamespaceScriptSettingGetResponseBinding struct {
 	SecretName string `json:"secret_name"`
 	// Name of Worker to bind to.
 	Service string `json:"service"`
+	// This field can have the runtime type of
+	// [DispatchNamespaceScriptSettingGetResponseBindingsWorkersBindingKindRatelimitSimple].
+	Simple interface{} `json:"simple"`
 	// ID of the store containing the secret.
 	StoreID string `json:"store_id"`
 	// The text value to use.
@@ -2641,6 +2827,7 @@ type dispatchNamespaceScriptSettingGetResponseBindingJSON struct {
 	ScriptName                  apijson.Field
 	SecretName                  apijson.Field
 	Service                     apijson.Field
+	Simple                      apijson.Field
 	StoreID                     apijson.Field
 	Text                        apijson.Field
 	Usages                      apijson.Field
@@ -2684,6 +2871,7 @@ func (r *DispatchNamespaceScriptSettingGetResponseBinding) UnmarshalJSON(data []
 // [DispatchNamespaceScriptSettingGetResponseBindingsWorkersBindingKindPlainText],
 // [DispatchNamespaceScriptSettingGetResponseBindingsWorkersBindingKindPipelines],
 // [DispatchNamespaceScriptSettingGetResponseBindingsWorkersBindingKindQueue],
+// [DispatchNamespaceScriptSettingGetResponseBindingsWorkersBindingKindRatelimit],
 // [DispatchNamespaceScriptSettingGetResponseBindingsWorkersBindingKindR2Bucket],
 // [DispatchNamespaceScriptSettingGetResponseBindingsWorkersBindingKindSecretText],
 // [DispatchNamespaceScriptSettingGetResponseBindingsWorkersBindingKindSendEmail],
@@ -2719,6 +2907,7 @@ func (r DispatchNamespaceScriptSettingGetResponseBinding) AsUnion() DispatchName
 // [DispatchNamespaceScriptSettingGetResponseBindingsWorkersBindingKindPlainText],
 // [DispatchNamespaceScriptSettingGetResponseBindingsWorkersBindingKindPipelines],
 // [DispatchNamespaceScriptSettingGetResponseBindingsWorkersBindingKindQueue],
+// [DispatchNamespaceScriptSettingGetResponseBindingsWorkersBindingKindRatelimit],
 // [DispatchNamespaceScriptSettingGetResponseBindingsWorkersBindingKindR2Bucket],
 // [DispatchNamespaceScriptSettingGetResponseBindingsWorkersBindingKindSecretText],
 // [DispatchNamespaceScriptSettingGetResponseBindingsWorkersBindingKindSendEmail],
@@ -2822,6 +3011,11 @@ func init() {
 			TypeFilter:         gjson.JSON,
 			Type:               reflect.TypeOf(DispatchNamespaceScriptSettingGetResponseBindingsWorkersBindingKindQueue{}),
 			DiscriminatorValue: "queue",
+		},
+		apijson.UnionVariant{
+			TypeFilter:         gjson.JSON,
+			Type:               reflect.TypeOf(DispatchNamespaceScriptSettingGetResponseBindingsWorkersBindingKindRatelimit{}),
+			DiscriminatorValue: "ratelimit",
 		},
 		apijson.UnionVariant{
 			TypeFilter:         gjson.JSON,
@@ -3211,7 +3405,7 @@ func (r DispatchNamespaceScriptSettingGetResponseBindingsWorkersBindingKindDispa
 type DispatchNamespaceScriptSettingGetResponseBindingsWorkersBindingKindDispatchNamespaceOutbound struct {
 	// Pass information from the Dispatch Worker to the Outbound Worker through the
 	// parameters.
-	Params []string `json:"params"`
+	Params []DispatchNamespaceScriptSettingGetResponseBindingsWorkersBindingKindDispatchNamespaceOutboundParam `json:"params"`
 	// Outbound worker.
 	Worker DispatchNamespaceScriptSettingGetResponseBindingsWorkersBindingKindDispatchNamespaceOutboundWorker `json:"worker"`
 	JSON   dispatchNamespaceScriptSettingGetResponseBindingsWorkersBindingKindDispatchNamespaceOutboundJSON   `json:"-"`
@@ -3235,8 +3429,33 @@ func (r dispatchNamespaceScriptSettingGetResponseBindingsWorkersBindingKindDispa
 	return r.raw
 }
 
+type DispatchNamespaceScriptSettingGetResponseBindingsWorkersBindingKindDispatchNamespaceOutboundParam struct {
+	// Name of the parameter.
+	Name string                                                                                                `json:"name,required"`
+	JSON dispatchNamespaceScriptSettingGetResponseBindingsWorkersBindingKindDispatchNamespaceOutboundParamJSON `json:"-"`
+}
+
+// dispatchNamespaceScriptSettingGetResponseBindingsWorkersBindingKindDispatchNamespaceOutboundParamJSON
+// contains the JSON metadata for the struct
+// [DispatchNamespaceScriptSettingGetResponseBindingsWorkersBindingKindDispatchNamespaceOutboundParam]
+type dispatchNamespaceScriptSettingGetResponseBindingsWorkersBindingKindDispatchNamespaceOutboundParamJSON struct {
+	Name        apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *DispatchNamespaceScriptSettingGetResponseBindingsWorkersBindingKindDispatchNamespaceOutboundParam) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r dispatchNamespaceScriptSettingGetResponseBindingsWorkersBindingKindDispatchNamespaceOutboundParamJSON) RawJSON() string {
+	return r.raw
+}
+
 // Outbound worker.
 type DispatchNamespaceScriptSettingGetResponseBindingsWorkersBindingKindDispatchNamespaceOutboundWorker struct {
+	// Entrypoint to invoke on the outbound worker.
+	Entrypoint string `json:"entrypoint"`
 	// Environment of the outbound worker.
 	Environment string `json:"environment"`
 	// Name of the outbound worker.
@@ -3248,6 +3467,7 @@ type DispatchNamespaceScriptSettingGetResponseBindingsWorkersBindingKindDispatch
 // contains the JSON metadata for the struct
 // [DispatchNamespaceScriptSettingGetResponseBindingsWorkersBindingKindDispatchNamespaceOutboundWorker]
 type dispatchNamespaceScriptSettingGetResponseBindingsWorkersBindingKindDispatchNamespaceOutboundWorkerJSON struct {
+	Entrypoint  apijson.Field
 	Environment apijson.Field
 	Service     apijson.Field
 	raw         string
@@ -3466,7 +3686,7 @@ func (r DispatchNamespaceScriptSettingGetResponseBindingsWorkersBindingKindImage
 
 type DispatchNamespaceScriptSettingGetResponseBindingsWorkersBindingKindJson struct {
 	// JSON data to use.
-	Json string `json:"json,required"`
+	Json interface{} `json:"json,required"`
 	// A JavaScript variable name for the binding.
 	Name string `json:"name,required"`
 	// The kind of resource that the binding provides.
@@ -3741,6 +3961,83 @@ const (
 func (r DispatchNamespaceScriptSettingGetResponseBindingsWorkersBindingKindQueueType) IsKnown() bool {
 	switch r {
 	case DispatchNamespaceScriptSettingGetResponseBindingsWorkersBindingKindQueueTypeQueue:
+		return true
+	}
+	return false
+}
+
+type DispatchNamespaceScriptSettingGetResponseBindingsWorkersBindingKindRatelimit struct {
+	// A JavaScript variable name for the binding.
+	Name string `json:"name,required"`
+	// Identifier of the rate limit namespace to bind to.
+	NamespaceID string `json:"namespace_id,required"`
+	// The rate limit configuration.
+	Simple DispatchNamespaceScriptSettingGetResponseBindingsWorkersBindingKindRatelimitSimple `json:"simple,required"`
+	// The kind of resource that the binding provides.
+	Type DispatchNamespaceScriptSettingGetResponseBindingsWorkersBindingKindRatelimitType `json:"type,required"`
+	JSON dispatchNamespaceScriptSettingGetResponseBindingsWorkersBindingKindRatelimitJSON `json:"-"`
+}
+
+// dispatchNamespaceScriptSettingGetResponseBindingsWorkersBindingKindRatelimitJSON
+// contains the JSON metadata for the struct
+// [DispatchNamespaceScriptSettingGetResponseBindingsWorkersBindingKindRatelimit]
+type dispatchNamespaceScriptSettingGetResponseBindingsWorkersBindingKindRatelimitJSON struct {
+	Name        apijson.Field
+	NamespaceID apijson.Field
+	Simple      apijson.Field
+	Type        apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *DispatchNamespaceScriptSettingGetResponseBindingsWorkersBindingKindRatelimit) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r dispatchNamespaceScriptSettingGetResponseBindingsWorkersBindingKindRatelimitJSON) RawJSON() string {
+	return r.raw
+}
+
+func (r DispatchNamespaceScriptSettingGetResponseBindingsWorkersBindingKindRatelimit) implementsDispatchNamespaceScriptSettingGetResponseBinding() {
+}
+
+// The rate limit configuration.
+type DispatchNamespaceScriptSettingGetResponseBindingsWorkersBindingKindRatelimitSimple struct {
+	// The limit (requests per period).
+	Limit float64 `json:"limit,required"`
+	// The period in seconds.
+	Period int64                                                                                  `json:"period,required"`
+	JSON   dispatchNamespaceScriptSettingGetResponseBindingsWorkersBindingKindRatelimitSimpleJSON `json:"-"`
+}
+
+// dispatchNamespaceScriptSettingGetResponseBindingsWorkersBindingKindRatelimitSimpleJSON
+// contains the JSON metadata for the struct
+// [DispatchNamespaceScriptSettingGetResponseBindingsWorkersBindingKindRatelimitSimple]
+type dispatchNamespaceScriptSettingGetResponseBindingsWorkersBindingKindRatelimitSimpleJSON struct {
+	Limit       apijson.Field
+	Period      apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *DispatchNamespaceScriptSettingGetResponseBindingsWorkersBindingKindRatelimitSimple) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r dispatchNamespaceScriptSettingGetResponseBindingsWorkersBindingKindRatelimitSimpleJSON) RawJSON() string {
+	return r.raw
+}
+
+// The kind of resource that the binding provides.
+type DispatchNamespaceScriptSettingGetResponseBindingsWorkersBindingKindRatelimitType string
+
+const (
+	DispatchNamespaceScriptSettingGetResponseBindingsWorkersBindingKindRatelimitTypeRatelimit DispatchNamespaceScriptSettingGetResponseBindingsWorkersBindingKindRatelimitType = "ratelimit"
+)
+
+func (r DispatchNamespaceScriptSettingGetResponseBindingsWorkersBindingKindRatelimitType) IsKnown() bool {
+	switch r {
+	case DispatchNamespaceScriptSettingGetResponseBindingsWorkersBindingKindRatelimitTypeRatelimit:
 		return true
 	}
 	return false
@@ -4376,6 +4673,7 @@ const (
 	DispatchNamespaceScriptSettingGetResponseBindingsTypePlainText              DispatchNamespaceScriptSettingGetResponseBindingsType = "plain_text"
 	DispatchNamespaceScriptSettingGetResponseBindingsTypePipelines              DispatchNamespaceScriptSettingGetResponseBindingsType = "pipelines"
 	DispatchNamespaceScriptSettingGetResponseBindingsTypeQueue                  DispatchNamespaceScriptSettingGetResponseBindingsType = "queue"
+	DispatchNamespaceScriptSettingGetResponseBindingsTypeRatelimit              DispatchNamespaceScriptSettingGetResponseBindingsType = "ratelimit"
 	DispatchNamespaceScriptSettingGetResponseBindingsTypeR2Bucket               DispatchNamespaceScriptSettingGetResponseBindingsType = "r2_bucket"
 	DispatchNamespaceScriptSettingGetResponseBindingsTypeSecretText             DispatchNamespaceScriptSettingGetResponseBindingsType = "secret_text"
 	DispatchNamespaceScriptSettingGetResponseBindingsTypeSendEmail              DispatchNamespaceScriptSettingGetResponseBindingsType = "send_email"
@@ -4391,7 +4689,7 @@ const (
 
 func (r DispatchNamespaceScriptSettingGetResponseBindingsType) IsKnown() bool {
 	switch r {
-	case DispatchNamespaceScriptSettingGetResponseBindingsTypeAI, DispatchNamespaceScriptSettingGetResponseBindingsTypeAnalyticsEngine, DispatchNamespaceScriptSettingGetResponseBindingsTypeAssets, DispatchNamespaceScriptSettingGetResponseBindingsTypeBrowser, DispatchNamespaceScriptSettingGetResponseBindingsTypeD1, DispatchNamespaceScriptSettingGetResponseBindingsTypeDataBlob, DispatchNamespaceScriptSettingGetResponseBindingsTypeDispatchNamespace, DispatchNamespaceScriptSettingGetResponseBindingsTypeDurableObjectNamespace, DispatchNamespaceScriptSettingGetResponseBindingsTypeHyperdrive, DispatchNamespaceScriptSettingGetResponseBindingsTypeInherit, DispatchNamespaceScriptSettingGetResponseBindingsTypeImages, DispatchNamespaceScriptSettingGetResponseBindingsTypeJson, DispatchNamespaceScriptSettingGetResponseBindingsTypeKVNamespace, DispatchNamespaceScriptSettingGetResponseBindingsTypeMTLSCertificate, DispatchNamespaceScriptSettingGetResponseBindingsTypePlainText, DispatchNamespaceScriptSettingGetResponseBindingsTypePipelines, DispatchNamespaceScriptSettingGetResponseBindingsTypeQueue, DispatchNamespaceScriptSettingGetResponseBindingsTypeR2Bucket, DispatchNamespaceScriptSettingGetResponseBindingsTypeSecretText, DispatchNamespaceScriptSettingGetResponseBindingsTypeSendEmail, DispatchNamespaceScriptSettingGetResponseBindingsTypeService, DispatchNamespaceScriptSettingGetResponseBindingsTypeTextBlob, DispatchNamespaceScriptSettingGetResponseBindingsTypeVectorize, DispatchNamespaceScriptSettingGetResponseBindingsTypeVersionMetadata, DispatchNamespaceScriptSettingGetResponseBindingsTypeSecretsStoreSecret, DispatchNamespaceScriptSettingGetResponseBindingsTypeSecretKey, DispatchNamespaceScriptSettingGetResponseBindingsTypeWorkflow, DispatchNamespaceScriptSettingGetResponseBindingsTypeWasmModule:
+	case DispatchNamespaceScriptSettingGetResponseBindingsTypeAI, DispatchNamespaceScriptSettingGetResponseBindingsTypeAnalyticsEngine, DispatchNamespaceScriptSettingGetResponseBindingsTypeAssets, DispatchNamespaceScriptSettingGetResponseBindingsTypeBrowser, DispatchNamespaceScriptSettingGetResponseBindingsTypeD1, DispatchNamespaceScriptSettingGetResponseBindingsTypeDataBlob, DispatchNamespaceScriptSettingGetResponseBindingsTypeDispatchNamespace, DispatchNamespaceScriptSettingGetResponseBindingsTypeDurableObjectNamespace, DispatchNamespaceScriptSettingGetResponseBindingsTypeHyperdrive, DispatchNamespaceScriptSettingGetResponseBindingsTypeInherit, DispatchNamespaceScriptSettingGetResponseBindingsTypeImages, DispatchNamespaceScriptSettingGetResponseBindingsTypeJson, DispatchNamespaceScriptSettingGetResponseBindingsTypeKVNamespace, DispatchNamespaceScriptSettingGetResponseBindingsTypeMTLSCertificate, DispatchNamespaceScriptSettingGetResponseBindingsTypePlainText, DispatchNamespaceScriptSettingGetResponseBindingsTypePipelines, DispatchNamespaceScriptSettingGetResponseBindingsTypeQueue, DispatchNamespaceScriptSettingGetResponseBindingsTypeRatelimit, DispatchNamespaceScriptSettingGetResponseBindingsTypeR2Bucket, DispatchNamespaceScriptSettingGetResponseBindingsTypeSecretText, DispatchNamespaceScriptSettingGetResponseBindingsTypeSendEmail, DispatchNamespaceScriptSettingGetResponseBindingsTypeService, DispatchNamespaceScriptSettingGetResponseBindingsTypeTextBlob, DispatchNamespaceScriptSettingGetResponseBindingsTypeVectorize, DispatchNamespaceScriptSettingGetResponseBindingsTypeVersionMetadata, DispatchNamespaceScriptSettingGetResponseBindingsTypeSecretsStoreSecret, DispatchNamespaceScriptSettingGetResponseBindingsTypeSecretKey, DispatchNamespaceScriptSettingGetResponseBindingsTypeWorkflow, DispatchNamespaceScriptSettingGetResponseBindingsTypeWasmModule:
 		return true
 	}
 	return false
@@ -4628,8 +4926,7 @@ func (r dispatchNamespaceScriptSettingGetResponseObservabilityLogsJSON) RawJSON(
 
 // Configuration for
 // [Smart Placement](https://developers.cloudflare.com/workers/configuration/smart-placement).
-// Specify either mode for Smart Placement, or one of region/hostname/host for
-// targeted placement.
+// Specify mode='smart' for Smart Placement, or one of region/hostname/host.
 type DispatchNamespaceScriptSettingGetResponsePlacement struct {
 	// TCP host and port for targeted placement.
 	Host string `json:"host"`
@@ -4637,9 +4934,12 @@ type DispatchNamespaceScriptSettingGetResponsePlacement struct {
 	Hostname string `json:"hostname"`
 	// Enables
 	// [Smart Placement](https://developers.cloudflare.com/workers/configuration/smart-placement).
-	Mode DispatchNamespaceScriptSettingGetResponsePlacementMode `json:"mode"`
+	Mode DispatchNamespaceScriptSettingGetResponsePlacementModeMode `json:"mode"`
 	// Cloud region for targeted placement in format 'provider:region'.
-	Region string                                                 `json:"region"`
+	Region string `json:"region"`
+	// This field can have the runtime type of
+	// [[]DispatchNamespaceScriptSettingGetResponsePlacementObjectTarget].
+	Target interface{}                                            `json:"target"`
 	JSON   dispatchNamespaceScriptSettingGetResponsePlacementJSON `json:"-"`
 	union  DispatchNamespaceScriptSettingGetResponsePlacementUnion
 }
@@ -4651,6 +4951,7 @@ type dispatchNamespaceScriptSettingGetResponsePlacementJSON struct {
 	Hostname    apijson.Field
 	Mode        apijson.Field
 	Region      apijson.Field
+	Target      apijson.Field
 	raw         string
 	ExtraFields map[string]apijson.Field
 }
@@ -4675,20 +4976,27 @@ func (r *DispatchNamespaceScriptSettingGetResponsePlacement) UnmarshalJSON(data 
 // [DispatchNamespaceScriptSettingGetResponsePlacementMode],
 // [DispatchNamespaceScriptSettingGetResponsePlacementRegion],
 // [DispatchNamespaceScriptSettingGetResponsePlacementHostname],
-// [DispatchNamespaceScriptSettingGetResponsePlacementHost].
+// [DispatchNamespaceScriptSettingGetResponsePlacementHost],
+// [DispatchNamespaceScriptSettingGetResponsePlacementObject],
+// [DispatchNamespaceScriptSettingGetResponsePlacementObject],
+// [DispatchNamespaceScriptSettingGetResponsePlacementObject],
+// [DispatchNamespaceScriptSettingGetResponsePlacementObject].
 func (r DispatchNamespaceScriptSettingGetResponsePlacement) AsUnion() DispatchNamespaceScriptSettingGetResponsePlacementUnion {
 	return r.union
 }
 
 // Configuration for
 // [Smart Placement](https://developers.cloudflare.com/workers/configuration/smart-placement).
-// Specify either mode for Smart Placement, or one of region/hostname/host for
-// targeted placement.
+// Specify mode='smart' for Smart Placement, or one of region/hostname/host.
 //
 // Union satisfied by [DispatchNamespaceScriptSettingGetResponsePlacementMode],
 // [DispatchNamespaceScriptSettingGetResponsePlacementRegion],
-// [DispatchNamespaceScriptSettingGetResponsePlacementHostname] or
-// [DispatchNamespaceScriptSettingGetResponsePlacementHost].
+// [DispatchNamespaceScriptSettingGetResponsePlacementHostname],
+// [DispatchNamespaceScriptSettingGetResponsePlacementHost],
+// [DispatchNamespaceScriptSettingGetResponsePlacementObject],
+// [DispatchNamespaceScriptSettingGetResponsePlacementObject],
+// [DispatchNamespaceScriptSettingGetResponsePlacementObject] or
+// [DispatchNamespaceScriptSettingGetResponsePlacementObject].
 type DispatchNamespaceScriptSettingGetResponsePlacementUnion interface {
 	implementsDispatchNamespaceScriptSettingGetResponsePlacement()
 }
@@ -4712,6 +5020,22 @@ func init() {
 		apijson.UnionVariant{
 			TypeFilter: gjson.JSON,
 			Type:       reflect.TypeOf(DispatchNamespaceScriptSettingGetResponsePlacementHost{}),
+		},
+		apijson.UnionVariant{
+			TypeFilter: gjson.JSON,
+			Type:       reflect.TypeOf(DispatchNamespaceScriptSettingGetResponsePlacementObject{}),
+		},
+		apijson.UnionVariant{
+			TypeFilter: gjson.JSON,
+			Type:       reflect.TypeOf(DispatchNamespaceScriptSettingGetResponsePlacementObject{}),
+		},
+		apijson.UnionVariant{
+			TypeFilter: gjson.JSON,
+			Type:       reflect.TypeOf(DispatchNamespaceScriptSettingGetResponsePlacementObject{}),
+		},
+		apijson.UnionVariant{
+			TypeFilter: gjson.JSON,
+			Type:       reflect.TypeOf(DispatchNamespaceScriptSettingGetResponsePlacementObject{}),
 		},
 	)
 }
@@ -4835,6 +5159,50 @@ func (r dispatchNamespaceScriptSettingGetResponsePlacementHostJSON) RawJSON() st
 func (r DispatchNamespaceScriptSettingGetResponsePlacementHost) implementsDispatchNamespaceScriptSettingGetResponsePlacement() {
 }
 
+type DispatchNamespaceScriptSettingGetResponsePlacementObject struct {
+	// Targeted placement mode.
+	Mode DispatchNamespaceScriptSettingGetResponsePlacementObjectMode `json:"mode,required"`
+	// Cloud region for targeted placement in format 'provider:region'.
+	Region string                                                       `json:"region,required"`
+	JSON   dispatchNamespaceScriptSettingGetResponsePlacementObjectJSON `json:"-"`
+}
+
+// dispatchNamespaceScriptSettingGetResponsePlacementObjectJSON contains the JSON
+// metadata for the struct
+// [DispatchNamespaceScriptSettingGetResponsePlacementObject]
+type dispatchNamespaceScriptSettingGetResponsePlacementObjectJSON struct {
+	Mode        apijson.Field
+	Region      apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *DispatchNamespaceScriptSettingGetResponsePlacementObject) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r dispatchNamespaceScriptSettingGetResponsePlacementObjectJSON) RawJSON() string {
+	return r.raw
+}
+
+func (r DispatchNamespaceScriptSettingGetResponsePlacementObject) implementsDispatchNamespaceScriptSettingGetResponsePlacement() {
+}
+
+// Targeted placement mode.
+type DispatchNamespaceScriptSettingGetResponsePlacementObjectMode string
+
+const (
+	DispatchNamespaceScriptSettingGetResponsePlacementObjectModeTargeted DispatchNamespaceScriptSettingGetResponsePlacementObjectMode = "targeted"
+)
+
+func (r DispatchNamespaceScriptSettingGetResponsePlacementObjectMode) IsKnown() bool {
+	switch r {
+	case DispatchNamespaceScriptSettingGetResponsePlacementObjectModeTargeted:
+		return true
+	}
+	return false
+}
+
 // Usage model for the Worker invocations.
 type DispatchNamespaceScriptSettingGetResponseUsageModel string
 
@@ -4895,8 +5263,7 @@ type DispatchNamespaceScriptSettingEditParamsSettings struct {
 	Observability param.Field[DispatchNamespaceScriptSettingEditParamsSettingsObservability] `json:"observability"`
 	// Configuration for
 	// [Smart Placement](https://developers.cloudflare.com/workers/configuration/smart-placement).
-	// Specify either mode for Smart Placement, or one of region/hostname/host for
-	// targeted placement.
+	// Specify mode='smart' for Smart Placement, or one of region/hostname/host.
 	Placement param.Field[DispatchNamespaceScriptSettingEditParamsSettingsPlacementUnion] `json:"placement"`
 	// Tags associated with the Worker.
 	Tags param.Field[[]string] `json:"tags"`
@@ -4937,9 +5304,8 @@ type DispatchNamespaceScriptSettingEditParamsSettingsBinding struct {
 	// [Learn more](https://developer.mozilla.org/en-US/docs/Web/API/SubtleCrypto/importKey#format).
 	Format param.Field[DispatchNamespaceScriptSettingEditParamsSettingsBindingsFormat] `json:"format"`
 	// Name of the Vectorize index to bind to.
-	IndexName param.Field[string] `json:"index_name"`
-	// JSON data to use.
-	Json param.Field[string] `json:"json"`
+	IndexName param.Field[string]      `json:"index_name"`
+	Json      param.Field[interface{}] `json:"json"`
 	// The
 	// [jurisdiction](https://developers.cloudflare.com/r2/reference/data-location/#jurisdictional-restrictions)
 	// of the R2 bucket.
@@ -4969,7 +5335,8 @@ type DispatchNamespaceScriptSettingEditParamsSettingsBinding struct {
 	// Name of the secret in the store.
 	SecretName param.Field[string] `json:"secret_name"`
 	// Name of Worker to bind to.
-	Service param.Field[string] `json:"service"`
+	Service param.Field[string]      `json:"service"`
+	Simple  param.Field[interface{}] `json:"simple"`
 	// ID of the store containing the secret.
 	StoreID param.Field[string] `json:"store_id"`
 	// The text value to use.
@@ -5010,6 +5377,7 @@ func (r DispatchNamespaceScriptSettingEditParamsSettingsBinding) implementsDispa
 // [workers_for_platforms.DispatchNamespaceScriptSettingEditParamsSettingsBindingsWorkersBindingKindPlainText],
 // [workers_for_platforms.DispatchNamespaceScriptSettingEditParamsSettingsBindingsWorkersBindingKindPipelines],
 // [workers_for_platforms.DispatchNamespaceScriptSettingEditParamsSettingsBindingsWorkersBindingKindQueue],
+// [workers_for_platforms.DispatchNamespaceScriptSettingEditParamsSettingsBindingsWorkersBindingKindRatelimit],
 // [workers_for_platforms.DispatchNamespaceScriptSettingEditParamsSettingsBindingsWorkersBindingKindR2Bucket],
 // [workers_for_platforms.DispatchNamespaceScriptSettingEditParamsSettingsBindingsWorkersBindingKindSecretText],
 // [workers_for_platforms.DispatchNamespaceScriptSettingEditParamsSettingsBindingsWorkersBindingKindSendEmail],
@@ -5246,7 +5614,7 @@ func (r DispatchNamespaceScriptSettingEditParamsSettingsBindingsWorkersBindingKi
 type DispatchNamespaceScriptSettingEditParamsSettingsBindingsWorkersBindingKindDispatchNamespaceOutbound struct {
 	// Pass information from the Dispatch Worker to the Outbound Worker through the
 	// parameters.
-	Params param.Field[[]string] `json:"params"`
+	Params param.Field[[]DispatchNamespaceScriptSettingEditParamsSettingsBindingsWorkersBindingKindDispatchNamespaceOutboundParam] `json:"params"`
 	// Outbound worker.
 	Worker param.Field[DispatchNamespaceScriptSettingEditParamsSettingsBindingsWorkersBindingKindDispatchNamespaceOutboundWorker] `json:"worker"`
 }
@@ -5255,8 +5623,19 @@ func (r DispatchNamespaceScriptSettingEditParamsSettingsBindingsWorkersBindingKi
 	return apijson.MarshalRoot(r)
 }
 
+type DispatchNamespaceScriptSettingEditParamsSettingsBindingsWorkersBindingKindDispatchNamespaceOutboundParam struct {
+	// Name of the parameter.
+	Name param.Field[string] `json:"name,required"`
+}
+
+func (r DispatchNamespaceScriptSettingEditParamsSettingsBindingsWorkersBindingKindDispatchNamespaceOutboundParam) MarshalJSON() (data []byte, err error) {
+	return apijson.MarshalRoot(r)
+}
+
 // Outbound worker.
 type DispatchNamespaceScriptSettingEditParamsSettingsBindingsWorkersBindingKindDispatchNamespaceOutboundWorker struct {
+	// Entrypoint to invoke on the outbound worker.
+	Entrypoint param.Field[string] `json:"entrypoint"`
 	// Environment of the outbound worker.
 	Environment param.Field[string] `json:"environment"`
 	// Name of the outbound worker.
@@ -5404,7 +5783,7 @@ func (r DispatchNamespaceScriptSettingEditParamsSettingsBindingsWorkersBindingKi
 
 type DispatchNamespaceScriptSettingEditParamsSettingsBindingsWorkersBindingKindJson struct {
 	// JSON data to use.
-	Json param.Field[string] `json:"json,required"`
+	Json param.Field[interface{}] `json:"json,required"`
 	// A JavaScript variable name for the binding.
 	Name param.Field[string] `json:"name,required"`
 	// The kind of resource that the binding provides.
@@ -5583,6 +5962,51 @@ const (
 func (r DispatchNamespaceScriptSettingEditParamsSettingsBindingsWorkersBindingKindQueueType) IsKnown() bool {
 	switch r {
 	case DispatchNamespaceScriptSettingEditParamsSettingsBindingsWorkersBindingKindQueueTypeQueue:
+		return true
+	}
+	return false
+}
+
+type DispatchNamespaceScriptSettingEditParamsSettingsBindingsWorkersBindingKindRatelimit struct {
+	// A JavaScript variable name for the binding.
+	Name param.Field[string] `json:"name,required"`
+	// Identifier of the rate limit namespace to bind to.
+	NamespaceID param.Field[string] `json:"namespace_id,required"`
+	// The rate limit configuration.
+	Simple param.Field[DispatchNamespaceScriptSettingEditParamsSettingsBindingsWorkersBindingKindRatelimitSimple] `json:"simple,required"`
+	// The kind of resource that the binding provides.
+	Type param.Field[DispatchNamespaceScriptSettingEditParamsSettingsBindingsWorkersBindingKindRatelimitType] `json:"type,required"`
+}
+
+func (r DispatchNamespaceScriptSettingEditParamsSettingsBindingsWorkersBindingKindRatelimit) MarshalJSON() (data []byte, err error) {
+	return apijson.MarshalRoot(r)
+}
+
+func (r DispatchNamespaceScriptSettingEditParamsSettingsBindingsWorkersBindingKindRatelimit) implementsDispatchNamespaceScriptSettingEditParamsSettingsBindingUnion() {
+}
+
+// The rate limit configuration.
+type DispatchNamespaceScriptSettingEditParamsSettingsBindingsWorkersBindingKindRatelimitSimple struct {
+	// The limit (requests per period).
+	Limit param.Field[float64] `json:"limit,required"`
+	// The period in seconds.
+	Period param.Field[int64] `json:"period,required"`
+}
+
+func (r DispatchNamespaceScriptSettingEditParamsSettingsBindingsWorkersBindingKindRatelimitSimple) MarshalJSON() (data []byte, err error) {
+	return apijson.MarshalRoot(r)
+}
+
+// The kind of resource that the binding provides.
+type DispatchNamespaceScriptSettingEditParamsSettingsBindingsWorkersBindingKindRatelimitType string
+
+const (
+	DispatchNamespaceScriptSettingEditParamsSettingsBindingsWorkersBindingKindRatelimitTypeRatelimit DispatchNamespaceScriptSettingEditParamsSettingsBindingsWorkersBindingKindRatelimitType = "ratelimit"
+)
+
+func (r DispatchNamespaceScriptSettingEditParamsSettingsBindingsWorkersBindingKindRatelimitType) IsKnown() bool {
+	switch r {
+	case DispatchNamespaceScriptSettingEditParamsSettingsBindingsWorkersBindingKindRatelimitTypeRatelimit:
 		return true
 	}
 	return false
@@ -6043,6 +6467,7 @@ const (
 	DispatchNamespaceScriptSettingEditParamsSettingsBindingsTypePlainText              DispatchNamespaceScriptSettingEditParamsSettingsBindingsType = "plain_text"
 	DispatchNamespaceScriptSettingEditParamsSettingsBindingsTypePipelines              DispatchNamespaceScriptSettingEditParamsSettingsBindingsType = "pipelines"
 	DispatchNamespaceScriptSettingEditParamsSettingsBindingsTypeQueue                  DispatchNamespaceScriptSettingEditParamsSettingsBindingsType = "queue"
+	DispatchNamespaceScriptSettingEditParamsSettingsBindingsTypeRatelimit              DispatchNamespaceScriptSettingEditParamsSettingsBindingsType = "ratelimit"
 	DispatchNamespaceScriptSettingEditParamsSettingsBindingsTypeR2Bucket               DispatchNamespaceScriptSettingEditParamsSettingsBindingsType = "r2_bucket"
 	DispatchNamespaceScriptSettingEditParamsSettingsBindingsTypeSecretText             DispatchNamespaceScriptSettingEditParamsSettingsBindingsType = "secret_text"
 	DispatchNamespaceScriptSettingEditParamsSettingsBindingsTypeSendEmail              DispatchNamespaceScriptSettingEditParamsSettingsBindingsType = "send_email"
@@ -6058,7 +6483,7 @@ const (
 
 func (r DispatchNamespaceScriptSettingEditParamsSettingsBindingsType) IsKnown() bool {
 	switch r {
-	case DispatchNamespaceScriptSettingEditParamsSettingsBindingsTypeAI, DispatchNamespaceScriptSettingEditParamsSettingsBindingsTypeAnalyticsEngine, DispatchNamespaceScriptSettingEditParamsSettingsBindingsTypeAssets, DispatchNamespaceScriptSettingEditParamsSettingsBindingsTypeBrowser, DispatchNamespaceScriptSettingEditParamsSettingsBindingsTypeD1, DispatchNamespaceScriptSettingEditParamsSettingsBindingsTypeDataBlob, DispatchNamespaceScriptSettingEditParamsSettingsBindingsTypeDispatchNamespace, DispatchNamespaceScriptSettingEditParamsSettingsBindingsTypeDurableObjectNamespace, DispatchNamespaceScriptSettingEditParamsSettingsBindingsTypeHyperdrive, DispatchNamespaceScriptSettingEditParamsSettingsBindingsTypeInherit, DispatchNamespaceScriptSettingEditParamsSettingsBindingsTypeImages, DispatchNamespaceScriptSettingEditParamsSettingsBindingsTypeJson, DispatchNamespaceScriptSettingEditParamsSettingsBindingsTypeKVNamespace, DispatchNamespaceScriptSettingEditParamsSettingsBindingsTypeMTLSCertificate, DispatchNamespaceScriptSettingEditParamsSettingsBindingsTypePlainText, DispatchNamespaceScriptSettingEditParamsSettingsBindingsTypePipelines, DispatchNamespaceScriptSettingEditParamsSettingsBindingsTypeQueue, DispatchNamespaceScriptSettingEditParamsSettingsBindingsTypeR2Bucket, DispatchNamespaceScriptSettingEditParamsSettingsBindingsTypeSecretText, DispatchNamespaceScriptSettingEditParamsSettingsBindingsTypeSendEmail, DispatchNamespaceScriptSettingEditParamsSettingsBindingsTypeService, DispatchNamespaceScriptSettingEditParamsSettingsBindingsTypeTextBlob, DispatchNamespaceScriptSettingEditParamsSettingsBindingsTypeVectorize, DispatchNamespaceScriptSettingEditParamsSettingsBindingsTypeVersionMetadata, DispatchNamespaceScriptSettingEditParamsSettingsBindingsTypeSecretsStoreSecret, DispatchNamespaceScriptSettingEditParamsSettingsBindingsTypeSecretKey, DispatchNamespaceScriptSettingEditParamsSettingsBindingsTypeWorkflow, DispatchNamespaceScriptSettingEditParamsSettingsBindingsTypeWasmModule:
+	case DispatchNamespaceScriptSettingEditParamsSettingsBindingsTypeAI, DispatchNamespaceScriptSettingEditParamsSettingsBindingsTypeAnalyticsEngine, DispatchNamespaceScriptSettingEditParamsSettingsBindingsTypeAssets, DispatchNamespaceScriptSettingEditParamsSettingsBindingsTypeBrowser, DispatchNamespaceScriptSettingEditParamsSettingsBindingsTypeD1, DispatchNamespaceScriptSettingEditParamsSettingsBindingsTypeDataBlob, DispatchNamespaceScriptSettingEditParamsSettingsBindingsTypeDispatchNamespace, DispatchNamespaceScriptSettingEditParamsSettingsBindingsTypeDurableObjectNamespace, DispatchNamespaceScriptSettingEditParamsSettingsBindingsTypeHyperdrive, DispatchNamespaceScriptSettingEditParamsSettingsBindingsTypeInherit, DispatchNamespaceScriptSettingEditParamsSettingsBindingsTypeImages, DispatchNamespaceScriptSettingEditParamsSettingsBindingsTypeJson, DispatchNamespaceScriptSettingEditParamsSettingsBindingsTypeKVNamespace, DispatchNamespaceScriptSettingEditParamsSettingsBindingsTypeMTLSCertificate, DispatchNamespaceScriptSettingEditParamsSettingsBindingsTypePlainText, DispatchNamespaceScriptSettingEditParamsSettingsBindingsTypePipelines, DispatchNamespaceScriptSettingEditParamsSettingsBindingsTypeQueue, DispatchNamespaceScriptSettingEditParamsSettingsBindingsTypeRatelimit, DispatchNamespaceScriptSettingEditParamsSettingsBindingsTypeR2Bucket, DispatchNamespaceScriptSettingEditParamsSettingsBindingsTypeSecretText, DispatchNamespaceScriptSettingEditParamsSettingsBindingsTypeSendEmail, DispatchNamespaceScriptSettingEditParamsSettingsBindingsTypeService, DispatchNamespaceScriptSettingEditParamsSettingsBindingsTypeTextBlob, DispatchNamespaceScriptSettingEditParamsSettingsBindingsTypeVectorize, DispatchNamespaceScriptSettingEditParamsSettingsBindingsTypeVersionMetadata, DispatchNamespaceScriptSettingEditParamsSettingsBindingsTypeSecretsStoreSecret, DispatchNamespaceScriptSettingEditParamsSettingsBindingsTypeSecretKey, DispatchNamespaceScriptSettingEditParamsSettingsBindingsTypeWorkflow, DispatchNamespaceScriptSettingEditParamsSettingsBindingsTypeWasmModule:
 		return true
 	}
 	return false
@@ -6196,8 +6621,7 @@ func (r DispatchNamespaceScriptSettingEditParamsSettingsObservabilityLogs) Marsh
 
 // Configuration for
 // [Smart Placement](https://developers.cloudflare.com/workers/configuration/smart-placement).
-// Specify either mode for Smart Placement, or one of region/hostname/host for
-// targeted placement.
+// Specify mode='smart' for Smart Placement, or one of region/hostname/host.
 type DispatchNamespaceScriptSettingEditParamsSettingsPlacement struct {
 	// TCP host and port for targeted placement.
 	Host param.Field[string] `json:"host"`
@@ -6207,7 +6631,8 @@ type DispatchNamespaceScriptSettingEditParamsSettingsPlacement struct {
 	// [Smart Placement](https://developers.cloudflare.com/workers/configuration/smart-placement).
 	Mode param.Field[DispatchNamespaceScriptSettingEditParamsSettingsPlacementMode] `json:"mode"`
 	// Cloud region for targeted placement in format 'provider:region'.
-	Region param.Field[string] `json:"region"`
+	Region param.Field[string]      `json:"region"`
+	Target param.Field[interface{}] `json:"target"`
 }
 
 func (r DispatchNamespaceScriptSettingEditParamsSettingsPlacement) MarshalJSON() (data []byte, err error) {
@@ -6219,14 +6644,17 @@ func (r DispatchNamespaceScriptSettingEditParamsSettingsPlacement) implementsDis
 
 // Configuration for
 // [Smart Placement](https://developers.cloudflare.com/workers/configuration/smart-placement).
-// Specify either mode for Smart Placement, or one of region/hostname/host for
-// targeted placement.
+// Specify mode='smart' for Smart Placement, or one of region/hostname/host.
 //
 // Satisfied by
 // [workers_for_platforms.DispatchNamespaceScriptSettingEditParamsSettingsPlacementMode],
 // [workers_for_platforms.DispatchNamespaceScriptSettingEditParamsSettingsPlacementRegion],
 // [workers_for_platforms.DispatchNamespaceScriptSettingEditParamsSettingsPlacementHostname],
 // [workers_for_platforms.DispatchNamespaceScriptSettingEditParamsSettingsPlacementHost],
+// [workers_for_platforms.DispatchNamespaceScriptSettingEditParamsSettingsPlacementObject],
+// [workers_for_platforms.DispatchNamespaceScriptSettingEditParamsSettingsPlacementObject],
+// [workers_for_platforms.DispatchNamespaceScriptSettingEditParamsSettingsPlacementObject],
+// [workers_for_platforms.DispatchNamespaceScriptSettingEditParamsSettingsPlacementObject],
 // [DispatchNamespaceScriptSettingEditParamsSettingsPlacement].
 type DispatchNamespaceScriptSettingEditParamsSettingsPlacementUnion interface {
 	implementsDispatchNamespaceScriptSettingEditParamsSettingsPlacementUnion()
@@ -6295,6 +6723,35 @@ func (r DispatchNamespaceScriptSettingEditParamsSettingsPlacementHost) MarshalJS
 }
 
 func (r DispatchNamespaceScriptSettingEditParamsSettingsPlacementHost) implementsDispatchNamespaceScriptSettingEditParamsSettingsPlacementUnion() {
+}
+
+type DispatchNamespaceScriptSettingEditParamsSettingsPlacementObject struct {
+	// Targeted placement mode.
+	Mode param.Field[DispatchNamespaceScriptSettingEditParamsSettingsPlacementObjectMode] `json:"mode,required"`
+	// Cloud region for targeted placement in format 'provider:region'.
+	Region param.Field[string] `json:"region,required"`
+}
+
+func (r DispatchNamespaceScriptSettingEditParamsSettingsPlacementObject) MarshalJSON() (data []byte, err error) {
+	return apijson.MarshalRoot(r)
+}
+
+func (r DispatchNamespaceScriptSettingEditParamsSettingsPlacementObject) implementsDispatchNamespaceScriptSettingEditParamsSettingsPlacementUnion() {
+}
+
+// Targeted placement mode.
+type DispatchNamespaceScriptSettingEditParamsSettingsPlacementObjectMode string
+
+const (
+	DispatchNamespaceScriptSettingEditParamsSettingsPlacementObjectModeTargeted DispatchNamespaceScriptSettingEditParamsSettingsPlacementObjectMode = "targeted"
+)
+
+func (r DispatchNamespaceScriptSettingEditParamsSettingsPlacementObjectMode) IsKnown() bool {
+	switch r {
+	case DispatchNamespaceScriptSettingEditParamsSettingsPlacementObjectModeTargeted:
+		return true
+	}
+	return false
 }
 
 // Usage model for the Worker invocations.

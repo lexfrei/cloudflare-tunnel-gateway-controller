@@ -1,40 +1,111 @@
 # Changelog
 
-## 6.6.0 (2026-01-16)
+## 6.8.0 (2026-02-27)
 
-Full Changelog: [v6.5.0...v6.6.0](https://github.com/cloudflare/cloudflare-go/compare/v6.5.0...v6.6.0)
+Full Changelog: [v6.7.0...v6.8.0](https://github.com/cloudflare/cloudflare-go/compare/v6.7.0...v6.8.0)
 
 ### Features
 
-* chore: use 'next' branch for go_sdk_version ([6e36dc4](https://github.com/cloudflare/cloudflare-go/commit/6e36dc44a16f8672d9fc9ec717e3884be5cacc33))
-* feat(d1): Add time travel `get_bookmark` and `restore` endpoints ([f4e82ff](https://github.com/cloudflare/cloudflare-go/commit/f4e82ffa8e03abb9d49671c262bd7aeb27b5e695))
-* fix: unsupported auth scheme ([3d01e2d](https://github.com/cloudflare/cloudflare-go/commit/3d01e2d03b742099a7d1eb3262fbae095811b05c))
-* **requestconfig:** more resilient rate limit handling ([2bbfb73](https://github.com/cloudflare/cloudflare-go/commit/2bbfb7321c9fe81b79554288e882f6ab46dcdd07))
+* feat: GIN-1439: Add gateway PAC files ([b9575e3](https://github.com/cloudflare/cloudflare-go/commit/b9575e38f21d4b4a837d1fc772cbc42a8a122c5a))
+* feat(custom_origin_trust_store): enable custom_origin_trust_store ([8e6ad51](https://github.com/cloudflare/cloudflare-go/commit/8e6ad51bcbc505169e7d2a8ad003c65b22ad8c6c))
+* feat(dex): add DEX rules ([e7341f8](https://github.com/cloudflare/cloudflare-go/commit/e7341f841b755d4cdc96808bb1d740b7272828d3))
+* feat(email_security): Add phishguard reports endpoint ([7e67a1a](https://github.com/cloudflare/cloudflare-go/commit/7e67a1a4a0de8d29304e1ff49c756c6490409691))
+* feat(radar): Add Botnet and PQ Endpoints to developer docs ([94623fa](https://github.com/cloudflare/cloudflare-go/commit/94623fa47ae92dbc6a4fab3d0925a49af4d86c9b))
+* feat(stainless): AUTH-7071 Complete Access Users endpoint ([27ee6a4](https://github.com/cloudflare/cloudflare-go/commit/27ee6a42d6c08034e646717f2be6a889aa054af7))
+* feat(stainless): TUN-10249 Add WARP Subnet endpoints ([7a4bb2a](https://github.com/cloudflare/cloudflare-go/commit/7a4bb2a93a62f61611db941431819cb2db1f6fb9))
+* fix: add 'rdp' as an initialism ([40f95a1](https://github.com/cloudflare/cloudflare-go/commit/40f95a17796db00c76df335ebfa0b844c5917b94))
+* fix: broken reference for the queues 'consumer' model ([f508eeb](https://github.com/cloudflare/cloudflare-go/commit/f508eeb5682f53998109d0fd7e5efb11acbe469f))
+* **radar:** Add Botnet Threat Feed endpoint ([94623fa](https://github.com/cloudflare/cloudflare-go/commit/94623fa47ae92dbc6a4fab3d0925a49af4d86c9b))
+* test: skip prism tests for endpoints with non-JSON content types ([116572a](https://github.com/cloudflare/cloudflare-go/commit/116572a20cd9e6a181b5e8ea9e215f324c776d48))
 
 
 ### Chores
 
-* **api:** update composite API spec ([087abae](https://github.com/cloudflare/cloudflare-go/commit/087abaec3e0ee420d742fbaf1a94beeb6a2d5e8d))
-* **api:** update composite API spec ([642e88b](https://github.com/cloudflare/cloudflare-go/commit/642e88ba84480f8f671097f2e9f8012273097db7))
-* **api:** update composite API spec ([3cca923](https://github.com/cloudflare/cloudflare-go/commit/3cca9238ccd2ba6c74846a262166f7445353c6c6))
-* **api:** update composite API spec ([d86ec65](https://github.com/cloudflare/cloudflare-go/commit/d86ec65cf166e7c0dda5ec3d0a7a2164203880d7))
-* **api:** update composite API spec ([4cab5b1](https://github.com/cloudflare/cloudflare-go/commit/4cab5b1a24718e0d6462bb9210a803133c1def41))
-* **api:** update composite API spec ([0198b9d](https://github.com/cloudflare/cloudflare-go/commit/0198b9d430bb4069c3c346b1070c1d72f96d4e27))
-* **api:** update composite API spec ([6a863d9](https://github.com/cloudflare/cloudflare-go/commit/6a863d9d4e3b9b6fdb4828e9599cc5f77bfc22a6))
-* **api:** update composite API spec ([e5b3dad](https://github.com/cloudflare/cloudflare-go/commit/e5b3dad3d396a425a5d2b6b251127e77f685cb42))
-* **api:** update composite API spec ([9ebcb23](https://github.com/cloudflare/cloudflare-go/commit/9ebcb236689be5c2327103e19f4d08106a038705))
-* **api:** update composite API spec ([20aa2ba](https://github.com/cloudflare/cloudflare-go/commit/20aa2baa64f78d608c7c1cd6df7226feb33d7f00))
-* **api:** update composite API spec ([51946fe](https://github.com/cloudflare/cloudflare-go/commit/51946fedde72943b8b9d933a7fc8b4955e2d562d))
-* **api:** update composite API spec ([352168e](https://github.com/cloudflare/cloudflare-go/commit/352168ede302b94aef9ce758925b14dce58a8a22))
-* **api:** update composite API spec ([a52e446](https://github.com/cloudflare/cloudflare-go/commit/a52e446a6c523db828cc58ef0c400d2d0add371c))
-* **api:** update composite API spec ([7c2d0c9](https://github.com/cloudflare/cloudflare-go/commit/7c2d0c940f953fdd7436150c27475ba10a834d56))
-* **ci:** fix client retry tests to accomodate the new retry logic ([72cc307](https://github.com/cloudflare/cloudflare-go/commit/72cc3074aa2fc0f36d5511b0409b1322f80f083c))
-* remove stalebot ([1c1e4b9](https://github.com/cloudflare/cloudflare-go/commit/1c1e4b9de15e284150f2b6f8ec73255744ad7239))
+* add v6.8.0 migration guide for breaking changes ([4cda9b7](https://github.com/cloudflare/cloudflare-go/commit/4cda9b7fb6e4e4cd87efa4f867c03e538a9c2c58))
+* **api:** update composite API spec ([740d73b](https://github.com/cloudflare/cloudflare-go/commit/740d73bbdb8db4081056fb21e464b255a0466733))
+* **api:** update composite API spec ([116a9d7](https://github.com/cloudflare/cloudflare-go/commit/116a9d78ae6c67fa2476fd2a429d62cb5f5762f9))
+* **api:** update composite API spec ([fc9c525](https://github.com/cloudflare/cloudflare-go/commit/fc9c5252fe22ee1926e9fd4201266b8ad125d932))
+* **api:** update composite API spec ([92e8387](https://github.com/cloudflare/cloudflare-go/commit/92e83874604b474a404cdfeea08ffb988e455dc2))
+* **api:** update composite API spec ([0e8f055](https://github.com/cloudflare/cloudflare-go/commit/0e8f0553fd1ba6dc160f3e4be1f2f1b044fd4e2f))
+* **api:** update composite API spec ([fc47923](https://github.com/cloudflare/cloudflare-go/commit/fc47923eeda348515d32165c7ec36d8e88a0b77d))
+* **api:** update composite API spec ([ef9e677](https://github.com/cloudflare/cloudflare-go/commit/ef9e6775ebbcee6e8df39bae688406a7923eddec))
+* **api:** update composite API spec ([d76edda](https://github.com/cloudflare/cloudflare-go/commit/d76eddada3407b1e2b6ffc14cce0a9d1af443b49))
+* **api:** update composite API spec ([2efa24a](https://github.com/cloudflare/cloudflare-go/commit/2efa24a842ef064408dfb1860205fb33f6c403bb))
+* **api:** update composite API spec ([12102fd](https://github.com/cloudflare/cloudflare-go/commit/12102fd1d9d76960b4d270198c860dc332d5eadf))
+* **api:** update composite API spec ([ac06ca9](https://github.com/cloudflare/cloudflare-go/commit/ac06ca95e2cf9f55cfbc434e039c5c7a5a0d7f61))
+* **api:** update composite API spec ([fcee717](https://github.com/cloudflare/cloudflare-go/commit/fcee71780af96a3dfee6ded1eab8564d3f394267))
+* **api:** update composite API spec ([9abd8b2](https://github.com/cloudflare/cloudflare-go/commit/9abd8b27036b9dcdc3f9802d7cc642848f982ea8))
+* **api:** update composite API spec ([47c3b59](https://github.com/cloudflare/cloudflare-go/commit/47c3b5977eafcbd9be73c6ba92602e17bb1208be))
+* **api:** update composite API spec ([fc712b2](https://github.com/cloudflare/cloudflare-go/commit/fc712b24b6ef89886b39ec61d74888170baa3451))
+* **api:** update composite API spec ([928e0c3](https://github.com/cloudflare/cloudflare-go/commit/928e0c3cdb0fab72acdca788a640735f53b618ef))
+* **api:** update composite API spec ([902cbe3](https://github.com/cloudflare/cloudflare-go/commit/902cbe39a67d189c24615acd1a87b139a006489e))
+* **api:** update composite API spec ([18dd787](https://github.com/cloudflare/cloudflare-go/commit/18dd78773750555daa6458c82a1ddcf12eb44e0f))
+* **api:** update composite API spec ([3f484b4](https://github.com/cloudflare/cloudflare-go/commit/3f484b460cf6f907da6d81208e0c28575ebdb91d))
+* **api:** update composite API spec ([32d0d5f](https://github.com/cloudflare/cloudflare-go/commit/32d0d5fb551b1b1b445afba677f9709a6425caae))
+* **api:** update composite API spec ([723c6e7](https://github.com/cloudflare/cloudflare-go/commit/723c6e72330e3779a1be167272e0dfa9e3b302f2))
+* **api:** update composite API spec ([13ed254](https://github.com/cloudflare/cloudflare-go/commit/13ed25458334a9d957df3656ba90c5f9f90151ff))
+* **api:** update composite API spec ([827fe0c](https://github.com/cloudflare/cloudflare-go/commit/827fe0c0afb7817888b6445d384ef096b1f618a1))
+* **api:** update composite API spec ([d82420b](https://github.com/cloudflare/cloudflare-go/commit/d82420b221f583752ec27dbc336a09bfc05d9d3a))
+* **api:** update composite API spec ([fb4cbdf](https://github.com/cloudflare/cloudflare-go/commit/fb4cbdf99914151fee5fe40003f88ed7283af1a9))
+* **api:** update composite API spec ([fe9578d](https://github.com/cloudflare/cloudflare-go/commit/fe9578ddead795f005653558586a8509ab023c8d))
+* **api:** update composite API spec ([b76b9d7](https://github.com/cloudflare/cloudflare-go/commit/b76b9d789b9134dcb868b83e1bd692c228da92e7))
 
 
 ### Documentation
 
-* **changelog:** update changelog for v6.6.0 ([7629a70](https://github.com/cloudflare/cloudflare-go/commit/7629a707f273272787f0e404f6002eb2557716a7))
+* **changelog:** fix changlog ([5bf6935](https://github.com/cloudflare/cloudflare-go/commit/5bf693501b4b5ae5c5788c982ad77b1756e34071))
+
+
+### Build System
+
+* **url_scanner:** fix recursive type reference ([982074c](https://github.com/cloudflare/cloudflare-go/commit/982074c4c82d92c4adf1bebbfd47c178e6cddfbe))
+
+## 6.7.0 (2026-02-10)
+
+Full Changelog: [v6.6.0...v6.7.0](https://github.com/cloudflare/cloudflare-go/compare/v6.6.0...v6.7.0)
+
+### Features
+
+* **fraud:** add new fraud detection API package
+* **ai_gateway:** add dynamic routing endpoints for AI Gateway
+* **ai_gateway:** add provider configuration management
+* **ai_search:** add chat completions endpoint
+* **ai_search:** add search endpoint
+* **ai_search:** add custom metadata field support
+* **ai_search:** add specific sitemaps configuration for web crawler
+* **acm:** add Update method for Total TLS settings (upsert pattern)
+* **images:** add metadata filtering support for image listings with operators (eq, in) and nested fields
+* **magic_transit:** add bond_id field to site LAN configuration
+* **cloudforce_one:** add cursor-based pagination for threat events (for deep pagination beyond 100k records)
+* **cloudforce_one:** add includeCreatedEvents option to bulk threat event creation
+* **cloudforce_one:** add datasetId field to threat event responses
+* **zero_trust:** add secure_web_gateway field to MCP portal configuration
+* **email_security:** add ids field for bulk move operations (replaces postfix_ids)
+
+### Bug Fixes
+
+* **acm:** rename New method to Edit for Total TLS settings to match API semantics
+* **ai:** add missing string union variants for AI run response types
+* **ai:** correct ToMarkdown transform method signature to use params instead of separate file parameter
+* **custom_certificates:** make bundle_method and other fields optional in response
+* **custom_certificates:** restructure edit params with proper union types
+* **kv:** change value field to support binary data in namespace value updates
+* **d1:** mark batch field as required for multiple queries
+* **email_security:** update bulk move documentation to specify 100 message limit
+* **origin_tls_client_auth:** restructure to use proper subresource pattern
+* **workflows:** properly type timeout and delay fields as unions (string or number)
+* **workers:** correct Mode types
+* **browser_rendering:** correct test URLs
+* **cloudforce_one:** remove preserveUuid parameter (replaced by includeCreatedEvents)
+* **cloudforce_one:** remove uuid field from threat event creation parameters
+* **radar:** correct CT data source constant name casing
+
+### Chores
+
+* **intel:** remove deprecated IP list endpoint and associated types
+* update version to 6.7.0
+* **tests:** skip problematic AI ToMarkdown transform tests
+* **api:** extensive API specification updates across all packages
 
 ## 6.6.0 (2025-01-15)
 

@@ -213,6 +213,9 @@ type AccessApplicationPolicyTestNewParamsPoliciesObject struct {
 	// Requires the user to request access from an administrator at the start of each
 	// session.
 	ApprovalRequired param.Field[bool] `json:"approval_required"`
+	// The rules that define how users may connect to targets secured by your
+	// application.
+	ConnectionRules param.Field[AccessApplicationPolicyTestNewParamsPoliciesObjectConnectionRules] `json:"connection_rules"`
 	// Rules evaluated with a NOT logical operator. To match the policy, a user cannot
 	// meet any of the Exclude rules.
 	Exclude param.Field[[]AccessRuleUnionParam] `json:"exclude"`
@@ -220,6 +223,8 @@ type AccessApplicationPolicyTestNewParamsPoliciesObject struct {
 	// this policy. 'Client Web Isolation' must be on for the account in order to use
 	// this feature.
 	IsolationRequired param.Field[bool] `json:"isolation_required"`
+	// Configures multi-factor authentication (MFA) settings.
+	MfaConfig param.Field[AccessApplicationPolicyTestNewParamsPoliciesObjectMfaConfig] `json:"mfa_config"`
 	// A custom message that will appear on the purpose justification screen.
 	PurposeJustificationPrompt param.Field[string] `json:"purpose_justification_prompt"`
 	// Require users to enter a justification when they log in to the application.
@@ -238,6 +243,91 @@ func (r AccessApplicationPolicyTestNewParamsPoliciesObject) MarshalJSON() (data 
 }
 
 func (r AccessApplicationPolicyTestNewParamsPoliciesObject) ImplementsAccessApplicationPolicyTestNewParamsPolicyUnion() {
+}
+
+// The rules that define how users may connect to targets secured by your
+// application.
+type AccessApplicationPolicyTestNewParamsPoliciesObjectConnectionRules struct {
+	// The RDP-specific rules that define clipboard behavior for RDP connections.
+	RDP param.Field[AccessApplicationPolicyTestNewParamsPoliciesObjectConnectionRulesRDP] `json:"rdp"`
+}
+
+func (r AccessApplicationPolicyTestNewParamsPoliciesObjectConnectionRules) MarshalJSON() (data []byte, err error) {
+	return apijson.MarshalRoot(r)
+}
+
+// The RDP-specific rules that define clipboard behavior for RDP connections.
+type AccessApplicationPolicyTestNewParamsPoliciesObjectConnectionRulesRDP struct {
+	// Clipboard formats allowed when copying from local machine to remote RDP session.
+	AllowedClipboardLocalToRemoteFormats param.Field[[]AccessApplicationPolicyTestNewParamsPoliciesObjectConnectionRulesRDPAllowedClipboardLocalToRemoteFormat] `json:"allowed_clipboard_local_to_remote_formats"`
+	// Clipboard formats allowed when copying from remote RDP session to local machine.
+	AllowedClipboardRemoteToLocalFormats param.Field[[]AccessApplicationPolicyTestNewParamsPoliciesObjectConnectionRulesRDPAllowedClipboardRemoteToLocalFormat] `json:"allowed_clipboard_remote_to_local_formats"`
+}
+
+func (r AccessApplicationPolicyTestNewParamsPoliciesObjectConnectionRulesRDP) MarshalJSON() (data []byte, err error) {
+	return apijson.MarshalRoot(r)
+}
+
+// Clipboard format for RDP connections.
+type AccessApplicationPolicyTestNewParamsPoliciesObjectConnectionRulesRDPAllowedClipboardLocalToRemoteFormat string
+
+const (
+	AccessApplicationPolicyTestNewParamsPoliciesObjectConnectionRulesRDPAllowedClipboardLocalToRemoteFormatText AccessApplicationPolicyTestNewParamsPoliciesObjectConnectionRulesRDPAllowedClipboardLocalToRemoteFormat = "text"
+)
+
+func (r AccessApplicationPolicyTestNewParamsPoliciesObjectConnectionRulesRDPAllowedClipboardLocalToRemoteFormat) IsKnown() bool {
+	switch r {
+	case AccessApplicationPolicyTestNewParamsPoliciesObjectConnectionRulesRDPAllowedClipboardLocalToRemoteFormatText:
+		return true
+	}
+	return false
+}
+
+// Clipboard format for RDP connections.
+type AccessApplicationPolicyTestNewParamsPoliciesObjectConnectionRulesRDPAllowedClipboardRemoteToLocalFormat string
+
+const (
+	AccessApplicationPolicyTestNewParamsPoliciesObjectConnectionRulesRDPAllowedClipboardRemoteToLocalFormatText AccessApplicationPolicyTestNewParamsPoliciesObjectConnectionRulesRDPAllowedClipboardRemoteToLocalFormat = "text"
+)
+
+func (r AccessApplicationPolicyTestNewParamsPoliciesObjectConnectionRulesRDPAllowedClipboardRemoteToLocalFormat) IsKnown() bool {
+	switch r {
+	case AccessApplicationPolicyTestNewParamsPoliciesObjectConnectionRulesRDPAllowedClipboardRemoteToLocalFormatText:
+		return true
+	}
+	return false
+}
+
+// Configures multi-factor authentication (MFA) settings.
+type AccessApplicationPolicyTestNewParamsPoliciesObjectMfaConfig struct {
+	// Lists the MFA methods that users can authenticate with.
+	AllowedAuthenticators param.Field[[]AccessApplicationPolicyTestNewParamsPoliciesObjectMfaConfigAllowedAuthenticator] `json:"allowed_authenticators"`
+	// Indicates whether to bypass MFA for this resource. This option is available at
+	// the application and policy level.
+	MfaBypass param.Field[bool] `json:"mfa_bypass"`
+	// Defines the duration of an MFA session. Must be in minutes (m) or hours (h).
+	// Minimum: 0m. Maximum: 720h (30 days). Examples:`5m` or `24h`.
+	SessionDuration param.Field[string] `json:"session_duration"`
+}
+
+func (r AccessApplicationPolicyTestNewParamsPoliciesObjectMfaConfig) MarshalJSON() (data []byte, err error) {
+	return apijson.MarshalRoot(r)
+}
+
+type AccessApplicationPolicyTestNewParamsPoliciesObjectMfaConfigAllowedAuthenticator string
+
+const (
+	AccessApplicationPolicyTestNewParamsPoliciesObjectMfaConfigAllowedAuthenticatorTotp        AccessApplicationPolicyTestNewParamsPoliciesObjectMfaConfigAllowedAuthenticator = "totp"
+	AccessApplicationPolicyTestNewParamsPoliciesObjectMfaConfigAllowedAuthenticatorBiometrics  AccessApplicationPolicyTestNewParamsPoliciesObjectMfaConfigAllowedAuthenticator = "biometrics"
+	AccessApplicationPolicyTestNewParamsPoliciesObjectMfaConfigAllowedAuthenticatorSecurityKey AccessApplicationPolicyTestNewParamsPoliciesObjectMfaConfigAllowedAuthenticator = "security_key"
+)
+
+func (r AccessApplicationPolicyTestNewParamsPoliciesObjectMfaConfigAllowedAuthenticator) IsKnown() bool {
+	switch r {
+	case AccessApplicationPolicyTestNewParamsPoliciesObjectMfaConfigAllowedAuthenticatorTotp, AccessApplicationPolicyTestNewParamsPoliciesObjectMfaConfigAllowedAuthenticatorBiometrics, AccessApplicationPolicyTestNewParamsPoliciesObjectMfaConfigAllowedAuthenticatorSecurityKey:
+		return true
+	}
+	return false
 }
 
 type AccessApplicationPolicyTestNewResponseEnvelope struct {

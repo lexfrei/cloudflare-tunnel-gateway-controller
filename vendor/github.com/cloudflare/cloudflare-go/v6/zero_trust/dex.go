@@ -23,6 +23,7 @@ type DEXService struct {
 	Tests                 *DEXTestService
 	TracerouteTestResults *DEXTracerouteTestResultService
 	TracerouteTests       *DEXTracerouteTestService
+	Rules                 *DEXRuleService
 }
 
 // NewDEXService generates a new service that applies the given options to each
@@ -39,10 +40,12 @@ func NewDEXService(opts ...option.RequestOption) (r *DEXService) {
 	r.Tests = NewDEXTestService(opts...)
 	r.TracerouteTestResults = NewDEXTracerouteTestResultService(opts...)
 	r.TracerouteTests = NewDEXTracerouteTestService(opts...)
+	r.Rules = NewDEXRuleService(opts...)
 	return
 }
 
 type DigitalExperienceMonitor struct {
+	// API Resource UUID tag.
 	ID string `json:"id,required"`
 	// Whether the policy is the default for the account
 	Default bool                         `json:"default,required"`
