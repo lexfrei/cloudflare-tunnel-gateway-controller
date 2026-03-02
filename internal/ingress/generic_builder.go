@@ -10,7 +10,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
-	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/metrics"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/cfmetrics"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/referencegrant"
 )
 
@@ -45,7 +45,7 @@ type backendResolver struct {
 	validator     *referencegrant.Validator
 	logger        *slog.Logger
 	clusterDomain string
-	metrics       metrics.Collector
+	metrics       cfmetrics.Collector
 }
 
 // GenericBuilder is a generic builder for converting Gateway API routes to
@@ -54,7 +54,7 @@ type GenericBuilder[R any] struct {
 	clusterDomain string
 	validator     *referencegrant.Validator
 	client        client.Reader
-	metrics       metrics.Collector
+	metrics       cfmetrics.Collector
 	logger        *slog.Logger
 	adapter       RouteAdapter[R]
 }
@@ -64,7 +64,7 @@ func NewGenericBuilder[R any](
 	clusterDomain string,
 	validator *referencegrant.Validator,
 	c client.Reader,
-	m metrics.Collector,
+	m cfmetrics.Collector,
 	logger *slog.Logger,
 	adapter RouteAdapter[R],
 ) *GenericBuilder[R] {

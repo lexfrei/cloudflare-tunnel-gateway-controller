@@ -29,7 +29,7 @@ func TestMain(m *testing.M) {
 	crdPath := filepath.Join("..", "..", "charts", "cloudflare-tunnel-gateway-controller", "crds")
 
 	testEnv = &envtest.Environment{
-		CRDDirectoryPaths: []string{crdPath},
+		CRDDirectoryPaths:     []string{crdPath},
 		ErrorIfCRDPathMissing: false,
 	}
 

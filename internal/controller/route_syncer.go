@@ -15,10 +15,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/cfmetrics"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/config"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/ingress"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/logging"
-	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/metrics"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/referencegrant"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/routebinding"
 )
@@ -35,7 +35,7 @@ type RouteSyncer struct {
 	ClusterDomain    string
 	GatewayClassName string
 	ConfigResolver   *config.Resolver
-	Metrics          metrics.Collector
+	Metrics          cfmetrics.Collector
 	Logger           *slog.Logger
 
 	httpBuilder      *ingress.Builder
@@ -55,7 +55,7 @@ func NewRouteSyncer(
 	clusterDomain string,
 	gatewayClassName string,
 	configResolver *config.Resolver,
-	metricsCollector metrics.Collector,
+	metricsCollector cfmetrics.Collector,
 	logger *slog.Logger,
 ) *RouteSyncer {
 	refGrantValidator := referencegrant.NewValidator(c)
@@ -159,7 +159,7 @@ func (s *RouteSyncer) SyncAllRoutes(ctx context.Context) (ctrl.Result, *SyncResu
 	)
 	if err != nil {
 		s.Metrics.RecordAPICall(ctx, "get", "tunnel_config", "error", time.Since(getStart))
-		s.Metrics.RecordAPIError(ctx, "get", metrics.ClassifyCloudflareError(err))
+		s.Metrics.RecordAPIError(ctx, "get", cfmetrics.ClassifyCloudflareError(err))
 		logger.Error("failed to get current tunnel configuration", "error", err)
 
 		return ctrl.Result{RequeueAfter: apiErrorRequeueDelay, Priority: ptr.To(priorityRoute)}, s.buildResultForError(ctx), err
@@ -235,12 +235,12 @@ func (s *RouteSyncer) SyncAllRoutes(ctx context.Context) (ctrl.Result, *SyncResu
 	_, err = cfClient.ZeroTrust.Tunnels.Cloudflared.Configurations.Update(ctx, resolvedConfig.TunnelID, cfConfig)
 	if err != nil {
 		s.Metrics.RecordAPICall(ctx, "update", "tunnel_config", "error", time.Since(updateStart))
-		s.Metrics.RecordAPIError(ctx, "update", metrics.ClassifyCloudflareError(err))
+		s.Metrics.RecordAPIError(ctx, "update", cfmetrics.ClassifyCloudflareError(err))
 		logger.Error("failed to update tunnel configuration", "error", err)
 
 		// Record error metrics
 		s.Metrics.RecordSyncDuration(ctx, "error", time.Since(startTime))
-		s.Metrics.RecordSyncError(ctx, metrics.ClassifyCloudflareError(err))
+		s.Metrics.RecordSyncError(ctx, cfmetrics.ClassifyCloudflareError(err))
 
 		result := &SyncResult{
 			HTTPRoutes:        httpRoutes,

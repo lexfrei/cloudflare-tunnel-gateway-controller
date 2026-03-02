@@ -19,8 +19,8 @@ import (
 	gatewayv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/api/v1alpha1"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/cfmetrics"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/config"
-	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/metrics"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/routebinding"
 )
 
@@ -56,7 +56,7 @@ func TestConfigMapper_MapConfigToRequests_ValidConfig(t *testing.T) {
 	mapper := &ConfigMapper{
 		Client:           fakeClient,
 		GatewayClassName: "cloudflare-tunnel",
-		ConfigResolver:   config.NewResolver(fakeClient, "default", metrics.NewNoopCollector()),
+		ConfigResolver:   config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
 	}
 
 	expectedRequests := []reconcile.Request{
@@ -105,7 +105,7 @@ func TestConfigMapper_MapConfigToRequests_WrongConfig(t *testing.T) {
 	mapper := &ConfigMapper{
 		Client:           fakeClient,
 		GatewayClassName: "cloudflare-tunnel",
-		ConfigResolver:   config.NewResolver(fakeClient, "default", metrics.NewNoopCollector()),
+		ConfigResolver:   config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
 	}
 
 	mapFunc := mapper.MapConfigToRequests(func(_ context.Context) []reconcile.Request {
@@ -159,7 +159,7 @@ func TestConfigMapper_MapConfigToRequests_GatewayClassNotFound(t *testing.T) {
 	mapper := &ConfigMapper{
 		Client:           fakeClient,
 		GatewayClassName: "non-existent-class",
-		ConfigResolver:   config.NewResolver(fakeClient, "default", metrics.NewNoopCollector()),
+		ConfigResolver:   config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
 	}
 
 	mapFunc := mapper.MapConfigToRequests(func(_ context.Context) []reconcile.Request {
@@ -217,7 +217,7 @@ func TestConfigMapper_MapSecretToRequests_ValidSecret(t *testing.T) {
 	mapper := &ConfigMapper{
 		Client:           fakeClient,
 		GatewayClassName: "cloudflare-tunnel",
-		ConfigResolver:   config.NewResolver(fakeClient, "default", metrics.NewNoopCollector()),
+		ConfigResolver:   config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
 	}
 
 	expectedRequests := []reconcile.Request{
@@ -277,7 +277,7 @@ func TestConfigMapper_MapSecretToRequests_WrongSecret(t *testing.T) {
 	mapper := &ConfigMapper{
 		Client:           fakeClient,
 		GatewayClassName: "cloudflare-tunnel",
-		ConfigResolver:   config.NewResolver(fakeClient, "default", metrics.NewNoopCollector()),
+		ConfigResolver:   config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
 	}
 
 	mapFunc := mapper.MapSecretToRequests(func(_ context.Context) []reconcile.Request {
@@ -331,7 +331,7 @@ func TestConfigMapper_MapSecretToRequests_GatewayClassNotFound(t *testing.T) {
 	mapper := &ConfigMapper{
 		Client:           fakeClient,
 		GatewayClassName: "non-existent-class",
-		ConfigResolver:   config.NewResolver(fakeClient, "default", metrics.NewNoopCollector()),
+		ConfigResolver:   config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
 	}
 
 	mapFunc := mapper.MapSecretToRequests(func(_ context.Context) []reconcile.Request {
@@ -534,7 +534,7 @@ func TestConfigMapper_IsConfigForOurClass_NoParametersRef(t *testing.T) {
 	mapper := &ConfigMapper{
 		Client:           fakeClient,
 		GatewayClassName: "cloudflare-tunnel",
-		ConfigResolver:   config.NewResolver(fakeClient, "default", metrics.NewNoopCollector()),
+		ConfigResolver:   config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
 	}
 
 	result := mapper.isConfigForOurClass(ctx, gatewayClassConfig)

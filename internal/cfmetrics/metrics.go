@@ -1,5 +1,5 @@
-// Package metrics provides Prometheus metrics instrumentation for the controller.
-package metrics
+// Package cfmetrics provides Prometheus metrics instrumentation for the controller.
+package cfmetrics
 
 import (
 	"context"
