@@ -65,7 +65,7 @@ func (r *ObservabilityTelemetryService) KeysAutoPaging(ctx context.Context, para
 	return pagination.NewSinglePageAutoPager(r.Keys(ctx, params, opts...))
 }
 
-// Runs a temporary or saved query
+// Run a temporary or saved query.
 func (r *ObservabilityTelemetryService) Query(ctx context.Context, params ObservabilityTelemetryQueryParams, opts ...option.RequestOption) (res *ObservabilityTelemetryQueryResponse, err error) {
 	var env ObservabilityTelemetryQueryResponseEnvelope
 	opts = slices.Concat(r.Options, opts)
@@ -82,7 +82,7 @@ func (r *ObservabilityTelemetryService) Query(ctx context.Context, params Observ
 	return
 }
 
-// List unique values found in your events
+// List unique values found in your events.
 func (r *ObservabilityTelemetryService) Values(ctx context.Context, params ObservabilityTelemetryValuesParams, opts ...option.RequestOption) (res *pagination.SinglePage[ObservabilityTelemetryValuesResponse], err error) {
 	var raw *http.Response
 	opts = slices.Concat(r.Options, opts)
@@ -104,7 +104,7 @@ func (r *ObservabilityTelemetryService) Values(ctx context.Context, params Obser
 	return res, nil
 }
 
-// List unique values found in your events
+// List unique values found in your events.
 func (r *ObservabilityTelemetryService) ValuesAutoPaging(ctx context.Context, params ObservabilityTelemetryValuesParams, opts ...option.RequestOption) *pagination.SinglePageAutoPager[ObservabilityTelemetryValuesResponse] {
 	return pagination.NewSinglePageAutoPager(r.Values(ctx, params, opts...))
 }

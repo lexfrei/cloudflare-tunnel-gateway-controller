@@ -67,7 +67,7 @@ func (r *InvestigateMoveService) NewAutoPaging(ctx context.Context, postfixID st
 	return pagination.NewSinglePageAutoPager(r.New(ctx, postfixID, params, opts...))
 }
 
-// Move multiple messages
+// Maximum batch size: 1000 messages per request
 func (r *InvestigateMoveService) Bulk(ctx context.Context, params InvestigateMoveBulkParams, opts ...option.RequestOption) (res *pagination.SinglePage[InvestigateMoveBulkResponse], err error) {
 	var raw *http.Response
 	opts = slices.Concat(r.Options, opts)
@@ -89,7 +89,7 @@ func (r *InvestigateMoveService) Bulk(ctx context.Context, params InvestigateMov
 	return res, nil
 }
 
-// Move multiple messages
+// Maximum batch size: 1000 messages per request
 func (r *InvestigateMoveService) BulkAutoPaging(ctx context.Context, params InvestigateMoveBulkParams, opts ...option.RequestOption) *pagination.SinglePageAutoPager[InvestigateMoveBulkResponse] {
 	return pagination.NewSinglePageAutoPager(r.Bulk(ctx, params, opts...))
 }
@@ -198,7 +198,10 @@ type InvestigateMoveBulkParams struct {
 	// Account Identifier
 	AccountID   param.Field[string]                               `path:"account_id,required"`
 	Destination param.Field[InvestigateMoveBulkParamsDestination] `json:"destination,required"`
-	PostfixIDs  param.Field[[]string]                             `json:"postfix_ids,required"`
+	// List of message IDs to move.
+	IDs param.Field[[]string] `json:"ids"`
+	// Deprecated: Use `ids` instead. List of message IDs to move.
+	PostfixIDs param.Field[[]string] `json:"postfix_ids"`
 }
 
 func (r InvestigateMoveBulkParams) MarshalJSON() (data []byte, err error) {

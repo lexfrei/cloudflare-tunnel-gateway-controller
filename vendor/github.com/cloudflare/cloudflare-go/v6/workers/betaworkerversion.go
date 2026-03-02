@@ -185,7 +185,9 @@ type Version struct {
 	// `_headers` and `_redirects` files should be included as modules named `_headers`
 	// and `_redirects` with content type `text/plain`.
 	Modules []VersionModule `json:"modules"`
-	// Placement settings for the version.
+	// Configuration for
+	// [Smart Placement](https://developers.cloudflare.com/workers/configuration/smart-placement).
+	// Specify mode='smart' for Smart Placement, or one of region/hostname/host.
 	Placement VersionPlacement `json:"placement"`
 	// The client used to create the version.
 	Source string `json:"source"`
@@ -423,8 +425,8 @@ type VersionBinding struct {
 	Format VersionBindingsFormat `json:"format"`
 	// Name of the Vectorize index to bind to.
 	IndexName string `json:"index_name"`
-	// JSON data to use.
-	Json string `json:"json"`
+	// This field can have the runtime type of [interface{}].
+	Json interface{} `json:"json"`
 	// The
 	// [jurisdiction](https://developers.cloudflare.com/r2/reference/data-location/#jurisdictional-restrictions)
 	// of the R2 bucket.
@@ -456,6 +458,9 @@ type VersionBinding struct {
 	SecretName string `json:"secret_name"`
 	// Name of Worker to bind to.
 	Service string `json:"service"`
+	// This field can have the runtime type of
+	// [VersionBindingsWorkersBindingKindRatelimitSimple].
+	Simple interface{} `json:"simple"`
 	// ID of the store containing the secret.
 	StoreID string `json:"store_id"`
 	// The text value to use.
@@ -502,6 +507,7 @@ type versionBindingJSON struct {
 	ScriptName                  apijson.Field
 	SecretName                  apijson.Field
 	Service                     apijson.Field
+	Simple                      apijson.Field
 	StoreID                     apijson.Field
 	Text                        apijson.Field
 	Usages                      apijson.Field
@@ -544,6 +550,7 @@ func (r *VersionBinding) UnmarshalJSON(data []byte) (err error) {
 // [VersionBindingsWorkersBindingKindPlainText],
 // [VersionBindingsWorkersBindingKindPipelines],
 // [VersionBindingsWorkersBindingKindQueue],
+// [VersionBindingsWorkersBindingKindRatelimit],
 // [VersionBindingsWorkersBindingKindR2Bucket],
 // [VersionBindingsWorkersBindingKindSecretText],
 // [VersionBindingsWorkersBindingKindSendEmail],
@@ -578,6 +585,7 @@ func (r VersionBinding) AsUnion() VersionBindingsUnion {
 // [VersionBindingsWorkersBindingKindPlainText],
 // [VersionBindingsWorkersBindingKindPipelines],
 // [VersionBindingsWorkersBindingKindQueue],
+// [VersionBindingsWorkersBindingKindRatelimit],
 // [VersionBindingsWorkersBindingKindR2Bucket],
 // [VersionBindingsWorkersBindingKindSecretText],
 // [VersionBindingsWorkersBindingKindSendEmail],
@@ -681,6 +689,11 @@ func init() {
 			TypeFilter:         gjson.JSON,
 			Type:               reflect.TypeOf(VersionBindingsWorkersBindingKindQueue{}),
 			DiscriminatorValue: "queue",
+		},
+		apijson.UnionVariant{
+			TypeFilter:         gjson.JSON,
+			Type:               reflect.TypeOf(VersionBindingsWorkersBindingKindRatelimit{}),
+			DiscriminatorValue: "ratelimit",
 		},
 		apijson.UnionVariant{
 			TypeFilter:         gjson.JSON,
@@ -1056,7 +1069,7 @@ func (r VersionBindingsWorkersBindingKindDispatchNamespaceType) IsKnown() bool {
 type VersionBindingsWorkersBindingKindDispatchNamespaceOutbound struct {
 	// Pass information from the Dispatch Worker to the Outbound Worker through the
 	// parameters.
-	Params []string `json:"params"`
+	Params []VersionBindingsWorkersBindingKindDispatchNamespaceOutboundParam `json:"params"`
 	// Outbound worker.
 	Worker VersionBindingsWorkersBindingKindDispatchNamespaceOutboundWorker `json:"worker"`
 	JSON   versionBindingsWorkersBindingKindDispatchNamespaceOutboundJSON   `json:"-"`
@@ -1080,8 +1093,33 @@ func (r versionBindingsWorkersBindingKindDispatchNamespaceOutboundJSON) RawJSON(
 	return r.raw
 }
 
+type VersionBindingsWorkersBindingKindDispatchNamespaceOutboundParam struct {
+	// Name of the parameter.
+	Name string                                                              `json:"name,required"`
+	JSON versionBindingsWorkersBindingKindDispatchNamespaceOutboundParamJSON `json:"-"`
+}
+
+// versionBindingsWorkersBindingKindDispatchNamespaceOutboundParamJSON contains the
+// JSON metadata for the struct
+// [VersionBindingsWorkersBindingKindDispatchNamespaceOutboundParam]
+type versionBindingsWorkersBindingKindDispatchNamespaceOutboundParamJSON struct {
+	Name        apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *VersionBindingsWorkersBindingKindDispatchNamespaceOutboundParam) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r versionBindingsWorkersBindingKindDispatchNamespaceOutboundParamJSON) RawJSON() string {
+	return r.raw
+}
+
 // Outbound worker.
 type VersionBindingsWorkersBindingKindDispatchNamespaceOutboundWorker struct {
+	// Entrypoint to invoke on the outbound worker.
+	Entrypoint string `json:"entrypoint"`
 	// Environment of the outbound worker.
 	Environment string `json:"environment"`
 	// Name of the outbound worker.
@@ -1093,6 +1131,7 @@ type VersionBindingsWorkersBindingKindDispatchNamespaceOutboundWorker struct {
 // the JSON metadata for the struct
 // [VersionBindingsWorkersBindingKindDispatchNamespaceOutboundWorker]
 type versionBindingsWorkersBindingKindDispatchNamespaceOutboundWorkerJSON struct {
+	Entrypoint  apijson.Field
 	Environment apijson.Field
 	Service     apijson.Field
 	raw         string
@@ -1304,7 +1343,7 @@ func (r VersionBindingsWorkersBindingKindImagesType) IsKnown() bool {
 
 type VersionBindingsWorkersBindingKindJson struct {
 	// JSON data to use.
-	Json string `json:"json,required"`
+	Json interface{} `json:"json,required"`
 	// A JavaScript variable name for the binding.
 	Name string `json:"name,required"`
 	// The kind of resource that the binding provides.
@@ -1567,6 +1606,80 @@ const (
 func (r VersionBindingsWorkersBindingKindQueueType) IsKnown() bool {
 	switch r {
 	case VersionBindingsWorkersBindingKindQueueTypeQueue:
+		return true
+	}
+	return false
+}
+
+type VersionBindingsWorkersBindingKindRatelimit struct {
+	// A JavaScript variable name for the binding.
+	Name string `json:"name,required"`
+	// Identifier of the rate limit namespace to bind to.
+	NamespaceID string `json:"namespace_id,required"`
+	// The rate limit configuration.
+	Simple VersionBindingsWorkersBindingKindRatelimitSimple `json:"simple,required"`
+	// The kind of resource that the binding provides.
+	Type VersionBindingsWorkersBindingKindRatelimitType `json:"type,required"`
+	JSON versionBindingsWorkersBindingKindRatelimitJSON `json:"-"`
+}
+
+// versionBindingsWorkersBindingKindRatelimitJSON contains the JSON metadata for
+// the struct [VersionBindingsWorkersBindingKindRatelimit]
+type versionBindingsWorkersBindingKindRatelimitJSON struct {
+	Name        apijson.Field
+	NamespaceID apijson.Field
+	Simple      apijson.Field
+	Type        apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *VersionBindingsWorkersBindingKindRatelimit) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r versionBindingsWorkersBindingKindRatelimitJSON) RawJSON() string {
+	return r.raw
+}
+
+func (r VersionBindingsWorkersBindingKindRatelimit) implementsVersionBinding() {}
+
+// The rate limit configuration.
+type VersionBindingsWorkersBindingKindRatelimitSimple struct {
+	// The limit (requests per period).
+	Limit float64 `json:"limit,required"`
+	// The period in seconds.
+	Period int64                                                `json:"period,required"`
+	JSON   versionBindingsWorkersBindingKindRatelimitSimpleJSON `json:"-"`
+}
+
+// versionBindingsWorkersBindingKindRatelimitSimpleJSON contains the JSON metadata
+// for the struct [VersionBindingsWorkersBindingKindRatelimitSimple]
+type versionBindingsWorkersBindingKindRatelimitSimpleJSON struct {
+	Limit       apijson.Field
+	Period      apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *VersionBindingsWorkersBindingKindRatelimitSimple) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r versionBindingsWorkersBindingKindRatelimitSimpleJSON) RawJSON() string {
+	return r.raw
+}
+
+// The kind of resource that the binding provides.
+type VersionBindingsWorkersBindingKindRatelimitType string
+
+const (
+	VersionBindingsWorkersBindingKindRatelimitTypeRatelimit VersionBindingsWorkersBindingKindRatelimitType = "ratelimit"
+)
+
+func (r VersionBindingsWorkersBindingKindRatelimitType) IsKnown() bool {
+	switch r {
+	case VersionBindingsWorkersBindingKindRatelimitTypeRatelimit:
 		return true
 	}
 	return false
@@ -2180,6 +2293,7 @@ const (
 	VersionBindingsTypePlainText              VersionBindingsType = "plain_text"
 	VersionBindingsTypePipelines              VersionBindingsType = "pipelines"
 	VersionBindingsTypeQueue                  VersionBindingsType = "queue"
+	VersionBindingsTypeRatelimit              VersionBindingsType = "ratelimit"
 	VersionBindingsTypeR2Bucket               VersionBindingsType = "r2_bucket"
 	VersionBindingsTypeSecretText             VersionBindingsType = "secret_text"
 	VersionBindingsTypeSendEmail              VersionBindingsType = "send_email"
@@ -2195,7 +2309,7 @@ const (
 
 func (r VersionBindingsType) IsKnown() bool {
 	switch r {
-	case VersionBindingsTypeAI, VersionBindingsTypeAnalyticsEngine, VersionBindingsTypeAssets, VersionBindingsTypeBrowser, VersionBindingsTypeD1, VersionBindingsTypeDataBlob, VersionBindingsTypeDispatchNamespace, VersionBindingsTypeDurableObjectNamespace, VersionBindingsTypeHyperdrive, VersionBindingsTypeInherit, VersionBindingsTypeImages, VersionBindingsTypeJson, VersionBindingsTypeKVNamespace, VersionBindingsTypeMTLSCertificate, VersionBindingsTypePlainText, VersionBindingsTypePipelines, VersionBindingsTypeQueue, VersionBindingsTypeR2Bucket, VersionBindingsTypeSecretText, VersionBindingsTypeSendEmail, VersionBindingsTypeService, VersionBindingsTypeTextBlob, VersionBindingsTypeVectorize, VersionBindingsTypeVersionMetadata, VersionBindingsTypeSecretsStoreSecret, VersionBindingsTypeSecretKey, VersionBindingsTypeWorkflow, VersionBindingsTypeWasmModule:
+	case VersionBindingsTypeAI, VersionBindingsTypeAnalyticsEngine, VersionBindingsTypeAssets, VersionBindingsTypeBrowser, VersionBindingsTypeD1, VersionBindingsTypeDataBlob, VersionBindingsTypeDispatchNamespace, VersionBindingsTypeDurableObjectNamespace, VersionBindingsTypeHyperdrive, VersionBindingsTypeInherit, VersionBindingsTypeImages, VersionBindingsTypeJson, VersionBindingsTypeKVNamespace, VersionBindingsTypeMTLSCertificate, VersionBindingsTypePlainText, VersionBindingsTypePipelines, VersionBindingsTypeQueue, VersionBindingsTypeRatelimit, VersionBindingsTypeR2Bucket, VersionBindingsTypeSecretText, VersionBindingsTypeSendEmail, VersionBindingsTypeService, VersionBindingsTypeTextBlob, VersionBindingsTypeVectorize, VersionBindingsTypeVersionMetadata, VersionBindingsTypeSecretsStoreSecret, VersionBindingsTypeSecretKey, VersionBindingsTypeWorkflow, VersionBindingsTypeWasmModule:
 		return true
 	}
 	return false
@@ -2386,39 +2500,261 @@ func (r versionModuleJSON) RawJSON() string {
 	return r.raw
 }
 
-// Placement settings for the version.
+// Configuration for
+// [Smart Placement](https://developers.cloudflare.com/workers/configuration/smart-placement).
+// Specify mode='smart' for Smart Placement, or one of region/hostname/host.
 type VersionPlacement struct {
-	// Placement mode for the version.
-	Mode VersionPlacementMode `json:"mode"`
-	JSON versionPlacementJSON `json:"-"`
+	// TCP host and port for targeted placement.
+	Host string `json:"host"`
+	// HTTP hostname for targeted placement.
+	Hostname string `json:"hostname"`
+	// Enables
+	// [Smart Placement](https://developers.cloudflare.com/workers/configuration/smart-placement).
+	Mode VersionPlacementModeMode `json:"mode"`
+	// Cloud region for targeted placement in format 'provider:region'.
+	Region string `json:"region"`
+	// This field can have the runtime type of [[]VersionPlacementObjectTarget].
+	Target interface{}          `json:"target"`
+	JSON   versionPlacementJSON `json:"-"`
+	union  VersionPlacementUnion
 }
 
 // versionPlacementJSON contains the JSON metadata for the struct
 // [VersionPlacement]
 type versionPlacementJSON struct {
+	Host        apijson.Field
+	Hostname    apijson.Field
 	Mode        apijson.Field
+	Region      apijson.Field
+	Target      apijson.Field
 	raw         string
 	ExtraFields map[string]apijson.Field
-}
-
-func (r *VersionPlacement) UnmarshalJSON(data []byte) (err error) {
-	return apijson.UnmarshalRoot(data, r)
 }
 
 func (r versionPlacementJSON) RawJSON() string {
 	return r.raw
 }
 
-// Placement mode for the version.
-type VersionPlacementMode string
+func (r *VersionPlacement) UnmarshalJSON(data []byte) (err error) {
+	*r = VersionPlacement{}
+	err = apijson.UnmarshalRoot(data, &r.union)
+	if err != nil {
+		return err
+	}
+	return apijson.Port(r.union, &r)
+}
+
+// AsUnion returns a [VersionPlacementUnion] interface which you can cast to the
+// specific types for more type safety.
+//
+// Possible runtime types of the union are [VersionPlacementMode],
+// [VersionPlacementRegion], [VersionPlacementHostname], [VersionPlacementHost],
+// [VersionPlacementObject], [VersionPlacementObject], [VersionPlacementObject],
+// [VersionPlacementObject].
+func (r VersionPlacement) AsUnion() VersionPlacementUnion {
+	return r.union
+}
+
+// Configuration for
+// [Smart Placement](https://developers.cloudflare.com/workers/configuration/smart-placement).
+// Specify mode='smart' for Smart Placement, or one of region/hostname/host.
+//
+// Union satisfied by [VersionPlacementMode], [VersionPlacementRegion],
+// [VersionPlacementHostname], [VersionPlacementHost], [VersionPlacementObject],
+// [VersionPlacementObject], [VersionPlacementObject] or [VersionPlacementObject].
+type VersionPlacementUnion interface {
+	implementsVersionPlacement()
+}
+
+func init() {
+	apijson.RegisterUnion(
+		reflect.TypeOf((*VersionPlacementUnion)(nil)).Elem(),
+		"",
+		apijson.UnionVariant{
+			TypeFilter: gjson.JSON,
+			Type:       reflect.TypeOf(VersionPlacementMode{}),
+		},
+		apijson.UnionVariant{
+			TypeFilter: gjson.JSON,
+			Type:       reflect.TypeOf(VersionPlacementRegion{}),
+		},
+		apijson.UnionVariant{
+			TypeFilter: gjson.JSON,
+			Type:       reflect.TypeOf(VersionPlacementHostname{}),
+		},
+		apijson.UnionVariant{
+			TypeFilter: gjson.JSON,
+			Type:       reflect.TypeOf(VersionPlacementHost{}),
+		},
+		apijson.UnionVariant{
+			TypeFilter: gjson.JSON,
+			Type:       reflect.TypeOf(VersionPlacementObject{}),
+		},
+		apijson.UnionVariant{
+			TypeFilter: gjson.JSON,
+			Type:       reflect.TypeOf(VersionPlacementObject{}),
+		},
+		apijson.UnionVariant{
+			TypeFilter: gjson.JSON,
+			Type:       reflect.TypeOf(VersionPlacementObject{}),
+		},
+		apijson.UnionVariant{
+			TypeFilter: gjson.JSON,
+			Type:       reflect.TypeOf(VersionPlacementObject{}),
+		},
+	)
+}
+
+type VersionPlacementMode struct {
+	// Enables
+	// [Smart Placement](https://developers.cloudflare.com/workers/configuration/smart-placement).
+	Mode VersionPlacementModeMode `json:"mode,required"`
+	JSON versionPlacementModeJSON `json:"-"`
+}
+
+// versionPlacementModeJSON contains the JSON metadata for the struct
+// [VersionPlacementMode]
+type versionPlacementModeJSON struct {
+	Mode        apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *VersionPlacementMode) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r versionPlacementModeJSON) RawJSON() string {
+	return r.raw
+}
+
+func (r VersionPlacementMode) implementsVersionPlacement() {}
+
+// Enables
+// [Smart Placement](https://developers.cloudflare.com/workers/configuration/smart-placement).
+type VersionPlacementModeMode string
 
 const (
-	VersionPlacementModeSmart VersionPlacementMode = "smart"
+	VersionPlacementModeModeSmart VersionPlacementModeMode = "smart"
 )
 
-func (r VersionPlacementMode) IsKnown() bool {
+func (r VersionPlacementModeMode) IsKnown() bool {
 	switch r {
-	case VersionPlacementModeSmart:
+	case VersionPlacementModeModeSmart:
+		return true
+	}
+	return false
+}
+
+type VersionPlacementRegion struct {
+	// Cloud region for targeted placement in format 'provider:region'.
+	Region string                     `json:"region,required"`
+	JSON   versionPlacementRegionJSON `json:"-"`
+}
+
+// versionPlacementRegionJSON contains the JSON metadata for the struct
+// [VersionPlacementRegion]
+type versionPlacementRegionJSON struct {
+	Region      apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *VersionPlacementRegion) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r versionPlacementRegionJSON) RawJSON() string {
+	return r.raw
+}
+
+func (r VersionPlacementRegion) implementsVersionPlacement() {}
+
+type VersionPlacementHostname struct {
+	// HTTP hostname for targeted placement.
+	Hostname string                       `json:"hostname,required"`
+	JSON     versionPlacementHostnameJSON `json:"-"`
+}
+
+// versionPlacementHostnameJSON contains the JSON metadata for the struct
+// [VersionPlacementHostname]
+type versionPlacementHostnameJSON struct {
+	Hostname    apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *VersionPlacementHostname) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r versionPlacementHostnameJSON) RawJSON() string {
+	return r.raw
+}
+
+func (r VersionPlacementHostname) implementsVersionPlacement() {}
+
+type VersionPlacementHost struct {
+	// TCP host and port for targeted placement.
+	Host string                   `json:"host,required"`
+	JSON versionPlacementHostJSON `json:"-"`
+}
+
+// versionPlacementHostJSON contains the JSON metadata for the struct
+// [VersionPlacementHost]
+type versionPlacementHostJSON struct {
+	Host        apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *VersionPlacementHost) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r versionPlacementHostJSON) RawJSON() string {
+	return r.raw
+}
+
+func (r VersionPlacementHost) implementsVersionPlacement() {}
+
+type VersionPlacementObject struct {
+	// Targeted placement mode.
+	Mode VersionPlacementObjectMode `json:"mode,required"`
+	// Cloud region for targeted placement in format 'provider:region'.
+	Region string                     `json:"region,required"`
+	JSON   versionPlacementObjectJSON `json:"-"`
+}
+
+// versionPlacementObjectJSON contains the JSON metadata for the struct
+// [VersionPlacementObject]
+type versionPlacementObjectJSON struct {
+	Mode        apijson.Field
+	Region      apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *VersionPlacementObject) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r versionPlacementObjectJSON) RawJSON() string {
+	return r.raw
+}
+
+func (r VersionPlacementObject) implementsVersionPlacement() {}
+
+// Targeted placement mode.
+type VersionPlacementObjectMode string
+
+const (
+	VersionPlacementObjectModeTargeted VersionPlacementObjectMode = "targeted"
+)
+
+func (r VersionPlacementObjectMode) IsKnown() bool {
+	switch r {
+	case VersionPlacementObjectModeTargeted:
 		return true
 	}
 	return false
@@ -2482,8 +2818,10 @@ type VersionParam struct {
 	// `_headers` and `_redirects` files should be included as modules named `_headers`
 	// and `_redirects` with content type `text/plain`.
 	Modules param.Field[[]VersionModuleParam] `json:"modules"`
-	// Placement settings for the version.
-	Placement param.Field[VersionPlacementParam] `json:"placement"`
+	// Configuration for
+	// [Smart Placement](https://developers.cloudflare.com/workers/configuration/smart-placement).
+	// Specify mode='smart' for Smart Placement, or one of region/hostname/host.
+	Placement param.Field[VersionPlacementUnionParam] `json:"placement"`
 	// Usage model for the version.
 	//
 	// Deprecated: deprecated
@@ -2585,9 +2923,8 @@ type VersionBindingParam struct {
 	// [Learn more](https://developer.mozilla.org/en-US/docs/Web/API/SubtleCrypto/importKey#format).
 	Format param.Field[VersionBindingsFormat] `json:"format"`
 	// Name of the Vectorize index to bind to.
-	IndexName param.Field[string] `json:"index_name"`
-	// JSON data to use.
-	Json param.Field[string] `json:"json"`
+	IndexName param.Field[string]      `json:"index_name"`
+	Json      param.Field[interface{}] `json:"json"`
 	// The
 	// [jurisdiction](https://developers.cloudflare.com/r2/reference/data-location/#jurisdictional-restrictions)
 	// of the R2 bucket.
@@ -2617,7 +2954,8 @@ type VersionBindingParam struct {
 	// Name of the secret in the store.
 	SecretName param.Field[string] `json:"secret_name"`
 	// Name of Worker to bind to.
-	Service param.Field[string] `json:"service"`
+	Service param.Field[string]      `json:"service"`
+	Simple  param.Field[interface{}] `json:"simple"`
 	// ID of the store containing the secret.
 	StoreID param.Field[string] `json:"store_id"`
 	// The text value to use.
@@ -2656,6 +2994,7 @@ func (r VersionBindingParam) implementsVersionBindingsUnionParam() {}
 // [workers.VersionBindingsWorkersBindingKindPlainTextParam],
 // [workers.VersionBindingsWorkersBindingKindPipelinesParam],
 // [workers.VersionBindingsWorkersBindingKindQueueParam],
+// [workers.VersionBindingsWorkersBindingKindRatelimitParam],
 // [workers.VersionBindingsWorkersBindingKindR2BucketParam],
 // [workers.VersionBindingsWorkersBindingKindSecretTextParam],
 // [workers.VersionBindingsWorkersBindingKindSendEmailParam],
@@ -2778,31 +3117,6 @@ func (r VersionBindingsWorkersBindingKindDispatchNamespaceParam) MarshalJSON() (
 func (r VersionBindingsWorkersBindingKindDispatchNamespaceParam) implementsVersionBindingsUnionParam() {
 }
 
-// Outbound worker.
-type VersionBindingsWorkersBindingKindDispatchNamespaceOutboundParam struct {
-	// Pass information from the Dispatch Worker to the Outbound Worker through the
-	// parameters.
-	Params param.Field[[]string] `json:"params"`
-	// Outbound worker.
-	Worker param.Field[VersionBindingsWorkersBindingKindDispatchNamespaceOutboundWorkerParam] `json:"worker"`
-}
-
-func (r VersionBindingsWorkersBindingKindDispatchNamespaceOutboundParam) MarshalJSON() (data []byte, err error) {
-	return apijson.MarshalRoot(r)
-}
-
-// Outbound worker.
-type VersionBindingsWorkersBindingKindDispatchNamespaceOutboundWorkerParam struct {
-	// Environment of the outbound worker.
-	Environment param.Field[string] `json:"environment"`
-	// Name of the outbound worker.
-	Service param.Field[string] `json:"service"`
-}
-
-func (r VersionBindingsWorkersBindingKindDispatchNamespaceOutboundWorkerParam) MarshalJSON() (data []byte, err error) {
-	return apijson.MarshalRoot(r)
-}
-
 type VersionBindingsWorkersBindingKindDurableObjectNamespaceParam struct {
 	// A JavaScript variable name for the binding.
 	Name param.Field[string] `json:"name,required"`
@@ -2877,7 +3191,7 @@ func (r VersionBindingsWorkersBindingKindImagesParam) implementsVersionBindingsU
 
 type VersionBindingsWorkersBindingKindJsonParam struct {
 	// JSON data to use.
-	Json param.Field[string] `json:"json,required"`
+	Json param.Field[interface{}] `json:"json,required"`
 	// A JavaScript variable name for the binding.
 	Name param.Field[string] `json:"name,required"`
 	// The kind of resource that the binding provides.
@@ -2965,6 +3279,35 @@ func (r VersionBindingsWorkersBindingKindQueueParam) MarshalJSON() (data []byte,
 }
 
 func (r VersionBindingsWorkersBindingKindQueueParam) implementsVersionBindingsUnionParam() {}
+
+type VersionBindingsWorkersBindingKindRatelimitParam struct {
+	// A JavaScript variable name for the binding.
+	Name param.Field[string] `json:"name,required"`
+	// Identifier of the rate limit namespace to bind to.
+	NamespaceID param.Field[string] `json:"namespace_id,required"`
+	// The rate limit configuration.
+	Simple param.Field[VersionBindingsWorkersBindingKindRatelimitSimpleParam] `json:"simple,required"`
+	// The kind of resource that the binding provides.
+	Type param.Field[VersionBindingsWorkersBindingKindRatelimitType] `json:"type,required"`
+}
+
+func (r VersionBindingsWorkersBindingKindRatelimitParam) MarshalJSON() (data []byte, err error) {
+	return apijson.MarshalRoot(r)
+}
+
+func (r VersionBindingsWorkersBindingKindRatelimitParam) implementsVersionBindingsUnionParam() {}
+
+// The rate limit configuration.
+type VersionBindingsWorkersBindingKindRatelimitSimpleParam struct {
+	// The limit (requests per period).
+	Limit param.Field[float64] `json:"limit,required"`
+	// The period in seconds.
+	Period param.Field[int64] `json:"period,required"`
+}
+
+func (r VersionBindingsWorkersBindingKindRatelimitSimpleParam) MarshalJSON() (data []byte, err error) {
+	return apijson.MarshalRoot(r)
+}
 
 type VersionBindingsWorkersBindingKindR2BucketParam struct {
 	// R2 bucket to bind to.
@@ -3240,15 +3583,98 @@ func (r VersionModuleParam) MarshalJSON() (data []byte, err error) {
 	return apijson.MarshalRoot(r)
 }
 
-// Placement settings for the version.
+// Configuration for
+// [Smart Placement](https://developers.cloudflare.com/workers/configuration/smart-placement).
+// Specify mode='smart' for Smart Placement, or one of region/hostname/host.
 type VersionPlacementParam struct {
-	// Placement mode for the version.
+	// TCP host and port for targeted placement.
+	Host param.Field[string] `json:"host"`
+	// HTTP hostname for targeted placement.
+	Hostname param.Field[string] `json:"hostname"`
+	// Enables
+	// [Smart Placement](https://developers.cloudflare.com/workers/configuration/smart-placement).
 	Mode param.Field[VersionPlacementMode] `json:"mode"`
+	// Cloud region for targeted placement in format 'provider:region'.
+	Region param.Field[string]      `json:"region"`
+	Target param.Field[interface{}] `json:"target"`
 }
 
 func (r VersionPlacementParam) MarshalJSON() (data []byte, err error) {
 	return apijson.MarshalRoot(r)
 }
+
+func (r VersionPlacementParam) implementsVersionPlacementUnionParam() {}
+
+// Configuration for
+// [Smart Placement](https://developers.cloudflare.com/workers/configuration/smart-placement).
+// Specify mode='smart' for Smart Placement, or one of region/hostname/host.
+//
+// Satisfied by [workers.VersionPlacementModeParam],
+// [workers.VersionPlacementRegionParam], [workers.VersionPlacementHostnameParam],
+// [workers.VersionPlacementHostParam], [workers.VersionPlacementObjectParam],
+// [workers.VersionPlacementObjectParam], [workers.VersionPlacementObjectParam],
+// [workers.VersionPlacementObjectParam], [VersionPlacementParam].
+type VersionPlacementUnionParam interface {
+	implementsVersionPlacementUnionParam()
+}
+
+type VersionPlacementModeParam struct {
+	// Enables
+	// [Smart Placement](https://developers.cloudflare.com/workers/configuration/smart-placement).
+	Mode param.Field[VersionPlacementModeMode] `json:"mode,required"`
+}
+
+func (r VersionPlacementModeParam) MarshalJSON() (data []byte, err error) {
+	return apijson.MarshalRoot(r)
+}
+
+func (r VersionPlacementModeParam) implementsVersionPlacementUnionParam() {}
+
+type VersionPlacementRegionParam struct {
+	// Cloud region for targeted placement in format 'provider:region'.
+	Region param.Field[string] `json:"region,required"`
+}
+
+func (r VersionPlacementRegionParam) MarshalJSON() (data []byte, err error) {
+	return apijson.MarshalRoot(r)
+}
+
+func (r VersionPlacementRegionParam) implementsVersionPlacementUnionParam() {}
+
+type VersionPlacementHostnameParam struct {
+	// HTTP hostname for targeted placement.
+	Hostname param.Field[string] `json:"hostname,required"`
+}
+
+func (r VersionPlacementHostnameParam) MarshalJSON() (data []byte, err error) {
+	return apijson.MarshalRoot(r)
+}
+
+func (r VersionPlacementHostnameParam) implementsVersionPlacementUnionParam() {}
+
+type VersionPlacementHostParam struct {
+	// TCP host and port for targeted placement.
+	Host param.Field[string] `json:"host,required"`
+}
+
+func (r VersionPlacementHostParam) MarshalJSON() (data []byte, err error) {
+	return apijson.MarshalRoot(r)
+}
+
+func (r VersionPlacementHostParam) implementsVersionPlacementUnionParam() {}
+
+type VersionPlacementObjectParam struct {
+	// Targeted placement mode.
+	Mode param.Field[VersionPlacementObjectMode] `json:"mode,required"`
+	// Cloud region for targeted placement in format 'provider:region'.
+	Region param.Field[string] `json:"region,required"`
+}
+
+func (r VersionPlacementObjectParam) MarshalJSON() (data []byte, err error) {
+	return apijson.MarshalRoot(r)
+}
+
+func (r VersionPlacementObjectParam) implementsVersionPlacementUnionParam() {}
 
 type BetaWorkerVersionDeleteResponse struct {
 	Errors   []BetaWorkerVersionDeleteResponseError   `json:"errors,required"`
