@@ -101,8 +101,7 @@ type ScriptScriptAndVersionSettingEditResponse struct {
 	Observability ScriptScriptAndVersionSettingEditResponseObservability `json:"observability"`
 	// Configuration for
 	// [Smart Placement](https://developers.cloudflare.com/workers/configuration/smart-placement).
-	// Specify either mode for Smart Placement, or one of region/hostname/host for
-	// targeted placement.
+	// Specify mode='smart' for Smart Placement, or one of region/hostname/host.
 	Placement ScriptScriptAndVersionSettingEditResponsePlacement `json:"placement"`
 	// Tags associated with the Worker.
 	Tags []string `json:"tags,nullable"`
@@ -169,8 +168,8 @@ type ScriptScriptAndVersionSettingEditResponseBinding struct {
 	Format ScriptScriptAndVersionSettingEditResponseBindingsFormat `json:"format"`
 	// Name of the Vectorize index to bind to.
 	IndexName string `json:"index_name"`
-	// JSON data to use.
-	Json string `json:"json"`
+	// This field can have the runtime type of [interface{}].
+	Json interface{} `json:"json"`
 	// The
 	// [jurisdiction](https://developers.cloudflare.com/r2/reference/data-location/#jurisdictional-restrictions)
 	// of the R2 bucket.
@@ -202,6 +201,9 @@ type ScriptScriptAndVersionSettingEditResponseBinding struct {
 	SecretName string `json:"secret_name"`
 	// Name of Worker to bind to.
 	Service string `json:"service"`
+	// This field can have the runtime type of
+	// [ScriptScriptAndVersionSettingEditResponseBindingsWorkersBindingKindRatelimitSimple].
+	Simple interface{} `json:"simple"`
 	// ID of the store containing the secret.
 	StoreID string `json:"store_id"`
 	// The text value to use.
@@ -249,6 +251,7 @@ type scriptScriptAndVersionSettingEditResponseBindingJSON struct {
 	ScriptName                  apijson.Field
 	SecretName                  apijson.Field
 	Service                     apijson.Field
+	Simple                      apijson.Field
 	StoreID                     apijson.Field
 	Text                        apijson.Field
 	Usages                      apijson.Field
@@ -292,6 +295,7 @@ func (r *ScriptScriptAndVersionSettingEditResponseBinding) UnmarshalJSON(data []
 // [ScriptScriptAndVersionSettingEditResponseBindingsWorkersBindingKindPlainText],
 // [ScriptScriptAndVersionSettingEditResponseBindingsWorkersBindingKindPipelines],
 // [ScriptScriptAndVersionSettingEditResponseBindingsWorkersBindingKindQueue],
+// [ScriptScriptAndVersionSettingEditResponseBindingsWorkersBindingKindRatelimit],
 // [ScriptScriptAndVersionSettingEditResponseBindingsWorkersBindingKindR2Bucket],
 // [ScriptScriptAndVersionSettingEditResponseBindingsWorkersBindingKindSecretText],
 // [ScriptScriptAndVersionSettingEditResponseBindingsWorkersBindingKindSendEmail],
@@ -327,6 +331,7 @@ func (r ScriptScriptAndVersionSettingEditResponseBinding) AsUnion() ScriptScript
 // [ScriptScriptAndVersionSettingEditResponseBindingsWorkersBindingKindPlainText],
 // [ScriptScriptAndVersionSettingEditResponseBindingsWorkersBindingKindPipelines],
 // [ScriptScriptAndVersionSettingEditResponseBindingsWorkersBindingKindQueue],
+// [ScriptScriptAndVersionSettingEditResponseBindingsWorkersBindingKindRatelimit],
 // [ScriptScriptAndVersionSettingEditResponseBindingsWorkersBindingKindR2Bucket],
 // [ScriptScriptAndVersionSettingEditResponseBindingsWorkersBindingKindSecretText],
 // [ScriptScriptAndVersionSettingEditResponseBindingsWorkersBindingKindSendEmail],
@@ -430,6 +435,11 @@ func init() {
 			TypeFilter:         gjson.JSON,
 			Type:               reflect.TypeOf(ScriptScriptAndVersionSettingEditResponseBindingsWorkersBindingKindQueue{}),
 			DiscriminatorValue: "queue",
+		},
+		apijson.UnionVariant{
+			TypeFilter:         gjson.JSON,
+			Type:               reflect.TypeOf(ScriptScriptAndVersionSettingEditResponseBindingsWorkersBindingKindRatelimit{}),
+			DiscriminatorValue: "ratelimit",
 		},
 		apijson.UnionVariant{
 			TypeFilter:         gjson.JSON,
@@ -819,7 +829,7 @@ func (r ScriptScriptAndVersionSettingEditResponseBindingsWorkersBindingKindDispa
 type ScriptScriptAndVersionSettingEditResponseBindingsWorkersBindingKindDispatchNamespaceOutbound struct {
 	// Pass information from the Dispatch Worker to the Outbound Worker through the
 	// parameters.
-	Params []string `json:"params"`
+	Params []ScriptScriptAndVersionSettingEditResponseBindingsWorkersBindingKindDispatchNamespaceOutboundParam `json:"params"`
 	// Outbound worker.
 	Worker ScriptScriptAndVersionSettingEditResponseBindingsWorkersBindingKindDispatchNamespaceOutboundWorker `json:"worker"`
 	JSON   scriptScriptAndVersionSettingEditResponseBindingsWorkersBindingKindDispatchNamespaceOutboundJSON   `json:"-"`
@@ -843,8 +853,33 @@ func (r scriptScriptAndVersionSettingEditResponseBindingsWorkersBindingKindDispa
 	return r.raw
 }
 
+type ScriptScriptAndVersionSettingEditResponseBindingsWorkersBindingKindDispatchNamespaceOutboundParam struct {
+	// Name of the parameter.
+	Name string                                                                                                `json:"name,required"`
+	JSON scriptScriptAndVersionSettingEditResponseBindingsWorkersBindingKindDispatchNamespaceOutboundParamJSON `json:"-"`
+}
+
+// scriptScriptAndVersionSettingEditResponseBindingsWorkersBindingKindDispatchNamespaceOutboundParamJSON
+// contains the JSON metadata for the struct
+// [ScriptScriptAndVersionSettingEditResponseBindingsWorkersBindingKindDispatchNamespaceOutboundParam]
+type scriptScriptAndVersionSettingEditResponseBindingsWorkersBindingKindDispatchNamespaceOutboundParamJSON struct {
+	Name        apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *ScriptScriptAndVersionSettingEditResponseBindingsWorkersBindingKindDispatchNamespaceOutboundParam) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r scriptScriptAndVersionSettingEditResponseBindingsWorkersBindingKindDispatchNamespaceOutboundParamJSON) RawJSON() string {
+	return r.raw
+}
+
 // Outbound worker.
 type ScriptScriptAndVersionSettingEditResponseBindingsWorkersBindingKindDispatchNamespaceOutboundWorker struct {
+	// Entrypoint to invoke on the outbound worker.
+	Entrypoint string `json:"entrypoint"`
 	// Environment of the outbound worker.
 	Environment string `json:"environment"`
 	// Name of the outbound worker.
@@ -856,6 +891,7 @@ type ScriptScriptAndVersionSettingEditResponseBindingsWorkersBindingKindDispatch
 // contains the JSON metadata for the struct
 // [ScriptScriptAndVersionSettingEditResponseBindingsWorkersBindingKindDispatchNamespaceOutboundWorker]
 type scriptScriptAndVersionSettingEditResponseBindingsWorkersBindingKindDispatchNamespaceOutboundWorkerJSON struct {
+	Entrypoint  apijson.Field
 	Environment apijson.Field
 	Service     apijson.Field
 	raw         string
@@ -1074,7 +1110,7 @@ func (r ScriptScriptAndVersionSettingEditResponseBindingsWorkersBindingKindImage
 
 type ScriptScriptAndVersionSettingEditResponseBindingsWorkersBindingKindJson struct {
 	// JSON data to use.
-	Json string `json:"json,required"`
+	Json interface{} `json:"json,required"`
 	// A JavaScript variable name for the binding.
 	Name string `json:"name,required"`
 	// The kind of resource that the binding provides.
@@ -1349,6 +1385,83 @@ const (
 func (r ScriptScriptAndVersionSettingEditResponseBindingsWorkersBindingKindQueueType) IsKnown() bool {
 	switch r {
 	case ScriptScriptAndVersionSettingEditResponseBindingsWorkersBindingKindQueueTypeQueue:
+		return true
+	}
+	return false
+}
+
+type ScriptScriptAndVersionSettingEditResponseBindingsWorkersBindingKindRatelimit struct {
+	// A JavaScript variable name for the binding.
+	Name string `json:"name,required"`
+	// Identifier of the rate limit namespace to bind to.
+	NamespaceID string `json:"namespace_id,required"`
+	// The rate limit configuration.
+	Simple ScriptScriptAndVersionSettingEditResponseBindingsWorkersBindingKindRatelimitSimple `json:"simple,required"`
+	// The kind of resource that the binding provides.
+	Type ScriptScriptAndVersionSettingEditResponseBindingsWorkersBindingKindRatelimitType `json:"type,required"`
+	JSON scriptScriptAndVersionSettingEditResponseBindingsWorkersBindingKindRatelimitJSON `json:"-"`
+}
+
+// scriptScriptAndVersionSettingEditResponseBindingsWorkersBindingKindRatelimitJSON
+// contains the JSON metadata for the struct
+// [ScriptScriptAndVersionSettingEditResponseBindingsWorkersBindingKindRatelimit]
+type scriptScriptAndVersionSettingEditResponseBindingsWorkersBindingKindRatelimitJSON struct {
+	Name        apijson.Field
+	NamespaceID apijson.Field
+	Simple      apijson.Field
+	Type        apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *ScriptScriptAndVersionSettingEditResponseBindingsWorkersBindingKindRatelimit) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r scriptScriptAndVersionSettingEditResponseBindingsWorkersBindingKindRatelimitJSON) RawJSON() string {
+	return r.raw
+}
+
+func (r ScriptScriptAndVersionSettingEditResponseBindingsWorkersBindingKindRatelimit) implementsScriptScriptAndVersionSettingEditResponseBinding() {
+}
+
+// The rate limit configuration.
+type ScriptScriptAndVersionSettingEditResponseBindingsWorkersBindingKindRatelimitSimple struct {
+	// The limit (requests per period).
+	Limit float64 `json:"limit,required"`
+	// The period in seconds.
+	Period int64                                                                                  `json:"period,required"`
+	JSON   scriptScriptAndVersionSettingEditResponseBindingsWorkersBindingKindRatelimitSimpleJSON `json:"-"`
+}
+
+// scriptScriptAndVersionSettingEditResponseBindingsWorkersBindingKindRatelimitSimpleJSON
+// contains the JSON metadata for the struct
+// [ScriptScriptAndVersionSettingEditResponseBindingsWorkersBindingKindRatelimitSimple]
+type scriptScriptAndVersionSettingEditResponseBindingsWorkersBindingKindRatelimitSimpleJSON struct {
+	Limit       apijson.Field
+	Period      apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *ScriptScriptAndVersionSettingEditResponseBindingsWorkersBindingKindRatelimitSimple) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r scriptScriptAndVersionSettingEditResponseBindingsWorkersBindingKindRatelimitSimpleJSON) RawJSON() string {
+	return r.raw
+}
+
+// The kind of resource that the binding provides.
+type ScriptScriptAndVersionSettingEditResponseBindingsWorkersBindingKindRatelimitType string
+
+const (
+	ScriptScriptAndVersionSettingEditResponseBindingsWorkersBindingKindRatelimitTypeRatelimit ScriptScriptAndVersionSettingEditResponseBindingsWorkersBindingKindRatelimitType = "ratelimit"
+)
+
+func (r ScriptScriptAndVersionSettingEditResponseBindingsWorkersBindingKindRatelimitType) IsKnown() bool {
+	switch r {
+	case ScriptScriptAndVersionSettingEditResponseBindingsWorkersBindingKindRatelimitTypeRatelimit:
 		return true
 	}
 	return false
@@ -1984,6 +2097,7 @@ const (
 	ScriptScriptAndVersionSettingEditResponseBindingsTypePlainText              ScriptScriptAndVersionSettingEditResponseBindingsType = "plain_text"
 	ScriptScriptAndVersionSettingEditResponseBindingsTypePipelines              ScriptScriptAndVersionSettingEditResponseBindingsType = "pipelines"
 	ScriptScriptAndVersionSettingEditResponseBindingsTypeQueue                  ScriptScriptAndVersionSettingEditResponseBindingsType = "queue"
+	ScriptScriptAndVersionSettingEditResponseBindingsTypeRatelimit              ScriptScriptAndVersionSettingEditResponseBindingsType = "ratelimit"
 	ScriptScriptAndVersionSettingEditResponseBindingsTypeR2Bucket               ScriptScriptAndVersionSettingEditResponseBindingsType = "r2_bucket"
 	ScriptScriptAndVersionSettingEditResponseBindingsTypeSecretText             ScriptScriptAndVersionSettingEditResponseBindingsType = "secret_text"
 	ScriptScriptAndVersionSettingEditResponseBindingsTypeSendEmail              ScriptScriptAndVersionSettingEditResponseBindingsType = "send_email"
@@ -1999,7 +2113,7 @@ const (
 
 func (r ScriptScriptAndVersionSettingEditResponseBindingsType) IsKnown() bool {
 	switch r {
-	case ScriptScriptAndVersionSettingEditResponseBindingsTypeAI, ScriptScriptAndVersionSettingEditResponseBindingsTypeAnalyticsEngine, ScriptScriptAndVersionSettingEditResponseBindingsTypeAssets, ScriptScriptAndVersionSettingEditResponseBindingsTypeBrowser, ScriptScriptAndVersionSettingEditResponseBindingsTypeD1, ScriptScriptAndVersionSettingEditResponseBindingsTypeDataBlob, ScriptScriptAndVersionSettingEditResponseBindingsTypeDispatchNamespace, ScriptScriptAndVersionSettingEditResponseBindingsTypeDurableObjectNamespace, ScriptScriptAndVersionSettingEditResponseBindingsTypeHyperdrive, ScriptScriptAndVersionSettingEditResponseBindingsTypeInherit, ScriptScriptAndVersionSettingEditResponseBindingsTypeImages, ScriptScriptAndVersionSettingEditResponseBindingsTypeJson, ScriptScriptAndVersionSettingEditResponseBindingsTypeKVNamespace, ScriptScriptAndVersionSettingEditResponseBindingsTypeMTLSCertificate, ScriptScriptAndVersionSettingEditResponseBindingsTypePlainText, ScriptScriptAndVersionSettingEditResponseBindingsTypePipelines, ScriptScriptAndVersionSettingEditResponseBindingsTypeQueue, ScriptScriptAndVersionSettingEditResponseBindingsTypeR2Bucket, ScriptScriptAndVersionSettingEditResponseBindingsTypeSecretText, ScriptScriptAndVersionSettingEditResponseBindingsTypeSendEmail, ScriptScriptAndVersionSettingEditResponseBindingsTypeService, ScriptScriptAndVersionSettingEditResponseBindingsTypeTextBlob, ScriptScriptAndVersionSettingEditResponseBindingsTypeVectorize, ScriptScriptAndVersionSettingEditResponseBindingsTypeVersionMetadata, ScriptScriptAndVersionSettingEditResponseBindingsTypeSecretsStoreSecret, ScriptScriptAndVersionSettingEditResponseBindingsTypeSecretKey, ScriptScriptAndVersionSettingEditResponseBindingsTypeWorkflow, ScriptScriptAndVersionSettingEditResponseBindingsTypeWasmModule:
+	case ScriptScriptAndVersionSettingEditResponseBindingsTypeAI, ScriptScriptAndVersionSettingEditResponseBindingsTypeAnalyticsEngine, ScriptScriptAndVersionSettingEditResponseBindingsTypeAssets, ScriptScriptAndVersionSettingEditResponseBindingsTypeBrowser, ScriptScriptAndVersionSettingEditResponseBindingsTypeD1, ScriptScriptAndVersionSettingEditResponseBindingsTypeDataBlob, ScriptScriptAndVersionSettingEditResponseBindingsTypeDispatchNamespace, ScriptScriptAndVersionSettingEditResponseBindingsTypeDurableObjectNamespace, ScriptScriptAndVersionSettingEditResponseBindingsTypeHyperdrive, ScriptScriptAndVersionSettingEditResponseBindingsTypeInherit, ScriptScriptAndVersionSettingEditResponseBindingsTypeImages, ScriptScriptAndVersionSettingEditResponseBindingsTypeJson, ScriptScriptAndVersionSettingEditResponseBindingsTypeKVNamespace, ScriptScriptAndVersionSettingEditResponseBindingsTypeMTLSCertificate, ScriptScriptAndVersionSettingEditResponseBindingsTypePlainText, ScriptScriptAndVersionSettingEditResponseBindingsTypePipelines, ScriptScriptAndVersionSettingEditResponseBindingsTypeQueue, ScriptScriptAndVersionSettingEditResponseBindingsTypeRatelimit, ScriptScriptAndVersionSettingEditResponseBindingsTypeR2Bucket, ScriptScriptAndVersionSettingEditResponseBindingsTypeSecretText, ScriptScriptAndVersionSettingEditResponseBindingsTypeSendEmail, ScriptScriptAndVersionSettingEditResponseBindingsTypeService, ScriptScriptAndVersionSettingEditResponseBindingsTypeTextBlob, ScriptScriptAndVersionSettingEditResponseBindingsTypeVectorize, ScriptScriptAndVersionSettingEditResponseBindingsTypeVersionMetadata, ScriptScriptAndVersionSettingEditResponseBindingsTypeSecretsStoreSecret, ScriptScriptAndVersionSettingEditResponseBindingsTypeSecretKey, ScriptScriptAndVersionSettingEditResponseBindingsTypeWorkflow, ScriptScriptAndVersionSettingEditResponseBindingsTypeWasmModule:
 		return true
 	}
 	return false
@@ -2234,8 +2348,7 @@ func (r scriptScriptAndVersionSettingEditResponseObservabilityLogsJSON) RawJSON(
 
 // Configuration for
 // [Smart Placement](https://developers.cloudflare.com/workers/configuration/smart-placement).
-// Specify either mode for Smart Placement, or one of region/hostname/host for
-// targeted placement.
+// Specify mode='smart' for Smart Placement, or one of region/hostname/host.
 type ScriptScriptAndVersionSettingEditResponsePlacement struct {
 	// TCP host and port for targeted placement.
 	Host string `json:"host"`
@@ -2243,9 +2356,12 @@ type ScriptScriptAndVersionSettingEditResponsePlacement struct {
 	Hostname string `json:"hostname"`
 	// Enables
 	// [Smart Placement](https://developers.cloudflare.com/workers/configuration/smart-placement).
-	Mode ScriptScriptAndVersionSettingEditResponsePlacementMode `json:"mode"`
+	Mode ScriptScriptAndVersionSettingEditResponsePlacementModeMode `json:"mode"`
 	// Cloud region for targeted placement in format 'provider:region'.
-	Region string                                                 `json:"region"`
+	Region string `json:"region"`
+	// This field can have the runtime type of
+	// [[]ScriptScriptAndVersionSettingEditResponsePlacementObjectTarget].
+	Target interface{}                                            `json:"target"`
 	JSON   scriptScriptAndVersionSettingEditResponsePlacementJSON `json:"-"`
 	union  ScriptScriptAndVersionSettingEditResponsePlacementUnion
 }
@@ -2257,6 +2373,7 @@ type scriptScriptAndVersionSettingEditResponsePlacementJSON struct {
 	Hostname    apijson.Field
 	Mode        apijson.Field
 	Region      apijson.Field
+	Target      apijson.Field
 	raw         string
 	ExtraFields map[string]apijson.Field
 }
@@ -2281,20 +2398,27 @@ func (r *ScriptScriptAndVersionSettingEditResponsePlacement) UnmarshalJSON(data 
 // [ScriptScriptAndVersionSettingEditResponsePlacementMode],
 // [ScriptScriptAndVersionSettingEditResponsePlacementRegion],
 // [ScriptScriptAndVersionSettingEditResponsePlacementHostname],
-// [ScriptScriptAndVersionSettingEditResponsePlacementHost].
+// [ScriptScriptAndVersionSettingEditResponsePlacementHost],
+// [ScriptScriptAndVersionSettingEditResponsePlacementObject],
+// [ScriptScriptAndVersionSettingEditResponsePlacementObject],
+// [ScriptScriptAndVersionSettingEditResponsePlacementObject],
+// [ScriptScriptAndVersionSettingEditResponsePlacementObject].
 func (r ScriptScriptAndVersionSettingEditResponsePlacement) AsUnion() ScriptScriptAndVersionSettingEditResponsePlacementUnion {
 	return r.union
 }
 
 // Configuration for
 // [Smart Placement](https://developers.cloudflare.com/workers/configuration/smart-placement).
-// Specify either mode for Smart Placement, or one of region/hostname/host for
-// targeted placement.
+// Specify mode='smart' for Smart Placement, or one of region/hostname/host.
 //
 // Union satisfied by [ScriptScriptAndVersionSettingEditResponsePlacementMode],
 // [ScriptScriptAndVersionSettingEditResponsePlacementRegion],
-// [ScriptScriptAndVersionSettingEditResponsePlacementHostname] or
-// [ScriptScriptAndVersionSettingEditResponsePlacementHost].
+// [ScriptScriptAndVersionSettingEditResponsePlacementHostname],
+// [ScriptScriptAndVersionSettingEditResponsePlacementHost],
+// [ScriptScriptAndVersionSettingEditResponsePlacementObject],
+// [ScriptScriptAndVersionSettingEditResponsePlacementObject],
+// [ScriptScriptAndVersionSettingEditResponsePlacementObject] or
+// [ScriptScriptAndVersionSettingEditResponsePlacementObject].
 type ScriptScriptAndVersionSettingEditResponsePlacementUnion interface {
 	implementsScriptScriptAndVersionSettingEditResponsePlacement()
 }
@@ -2318,6 +2442,22 @@ func init() {
 		apijson.UnionVariant{
 			TypeFilter: gjson.JSON,
 			Type:       reflect.TypeOf(ScriptScriptAndVersionSettingEditResponsePlacementHost{}),
+		},
+		apijson.UnionVariant{
+			TypeFilter: gjson.JSON,
+			Type:       reflect.TypeOf(ScriptScriptAndVersionSettingEditResponsePlacementObject{}),
+		},
+		apijson.UnionVariant{
+			TypeFilter: gjson.JSON,
+			Type:       reflect.TypeOf(ScriptScriptAndVersionSettingEditResponsePlacementObject{}),
+		},
+		apijson.UnionVariant{
+			TypeFilter: gjson.JSON,
+			Type:       reflect.TypeOf(ScriptScriptAndVersionSettingEditResponsePlacementObject{}),
+		},
+		apijson.UnionVariant{
+			TypeFilter: gjson.JSON,
+			Type:       reflect.TypeOf(ScriptScriptAndVersionSettingEditResponsePlacementObject{}),
 		},
 	)
 }
@@ -2441,6 +2581,50 @@ func (r scriptScriptAndVersionSettingEditResponsePlacementHostJSON) RawJSON() st
 func (r ScriptScriptAndVersionSettingEditResponsePlacementHost) implementsScriptScriptAndVersionSettingEditResponsePlacement() {
 }
 
+type ScriptScriptAndVersionSettingEditResponsePlacementObject struct {
+	// Targeted placement mode.
+	Mode ScriptScriptAndVersionSettingEditResponsePlacementObjectMode `json:"mode,required"`
+	// Cloud region for targeted placement in format 'provider:region'.
+	Region string                                                       `json:"region,required"`
+	JSON   scriptScriptAndVersionSettingEditResponsePlacementObjectJSON `json:"-"`
+}
+
+// scriptScriptAndVersionSettingEditResponsePlacementObjectJSON contains the JSON
+// metadata for the struct
+// [ScriptScriptAndVersionSettingEditResponsePlacementObject]
+type scriptScriptAndVersionSettingEditResponsePlacementObjectJSON struct {
+	Mode        apijson.Field
+	Region      apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *ScriptScriptAndVersionSettingEditResponsePlacementObject) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r scriptScriptAndVersionSettingEditResponsePlacementObjectJSON) RawJSON() string {
+	return r.raw
+}
+
+func (r ScriptScriptAndVersionSettingEditResponsePlacementObject) implementsScriptScriptAndVersionSettingEditResponsePlacement() {
+}
+
+// Targeted placement mode.
+type ScriptScriptAndVersionSettingEditResponsePlacementObjectMode string
+
+const (
+	ScriptScriptAndVersionSettingEditResponsePlacementObjectModeTargeted ScriptScriptAndVersionSettingEditResponsePlacementObjectMode = "targeted"
+)
+
+func (r ScriptScriptAndVersionSettingEditResponsePlacementObjectMode) IsKnown() bool {
+	switch r {
+	case ScriptScriptAndVersionSettingEditResponsePlacementObjectModeTargeted:
+		return true
+	}
+	return false
+}
+
 // Usage model for the Worker invocations.
 type ScriptScriptAndVersionSettingEditResponseUsageModel string
 
@@ -2478,8 +2662,7 @@ type ScriptScriptAndVersionSettingGetResponse struct {
 	Observability ScriptScriptAndVersionSettingGetResponseObservability `json:"observability"`
 	// Configuration for
 	// [Smart Placement](https://developers.cloudflare.com/workers/configuration/smart-placement).
-	// Specify either mode for Smart Placement, or one of region/hostname/host for
-	// targeted placement.
+	// Specify mode='smart' for Smart Placement, or one of region/hostname/host.
 	Placement ScriptScriptAndVersionSettingGetResponsePlacement `json:"placement"`
 	// Tags associated with the Worker.
 	Tags []string `json:"tags,nullable"`
@@ -2546,8 +2729,8 @@ type ScriptScriptAndVersionSettingGetResponseBinding struct {
 	Format ScriptScriptAndVersionSettingGetResponseBindingsFormat `json:"format"`
 	// Name of the Vectorize index to bind to.
 	IndexName string `json:"index_name"`
-	// JSON data to use.
-	Json string `json:"json"`
+	// This field can have the runtime type of [interface{}].
+	Json interface{} `json:"json"`
 	// The
 	// [jurisdiction](https://developers.cloudflare.com/r2/reference/data-location/#jurisdictional-restrictions)
 	// of the R2 bucket.
@@ -2579,6 +2762,9 @@ type ScriptScriptAndVersionSettingGetResponseBinding struct {
 	SecretName string `json:"secret_name"`
 	// Name of Worker to bind to.
 	Service string `json:"service"`
+	// This field can have the runtime type of
+	// [ScriptScriptAndVersionSettingGetResponseBindingsWorkersBindingKindRatelimitSimple].
+	Simple interface{} `json:"simple"`
 	// ID of the store containing the secret.
 	StoreID string `json:"store_id"`
 	// The text value to use.
@@ -2626,6 +2812,7 @@ type scriptScriptAndVersionSettingGetResponseBindingJSON struct {
 	ScriptName                  apijson.Field
 	SecretName                  apijson.Field
 	Service                     apijson.Field
+	Simple                      apijson.Field
 	StoreID                     apijson.Field
 	Text                        apijson.Field
 	Usages                      apijson.Field
@@ -2669,6 +2856,7 @@ func (r *ScriptScriptAndVersionSettingGetResponseBinding) UnmarshalJSON(data []b
 // [ScriptScriptAndVersionSettingGetResponseBindingsWorkersBindingKindPlainText],
 // [ScriptScriptAndVersionSettingGetResponseBindingsWorkersBindingKindPipelines],
 // [ScriptScriptAndVersionSettingGetResponseBindingsWorkersBindingKindQueue],
+// [ScriptScriptAndVersionSettingGetResponseBindingsWorkersBindingKindRatelimit],
 // [ScriptScriptAndVersionSettingGetResponseBindingsWorkersBindingKindR2Bucket],
 // [ScriptScriptAndVersionSettingGetResponseBindingsWorkersBindingKindSecretText],
 // [ScriptScriptAndVersionSettingGetResponseBindingsWorkersBindingKindSendEmail],
@@ -2704,6 +2892,7 @@ func (r ScriptScriptAndVersionSettingGetResponseBinding) AsUnion() ScriptScriptA
 // [ScriptScriptAndVersionSettingGetResponseBindingsWorkersBindingKindPlainText],
 // [ScriptScriptAndVersionSettingGetResponseBindingsWorkersBindingKindPipelines],
 // [ScriptScriptAndVersionSettingGetResponseBindingsWorkersBindingKindQueue],
+// [ScriptScriptAndVersionSettingGetResponseBindingsWorkersBindingKindRatelimit],
 // [ScriptScriptAndVersionSettingGetResponseBindingsWorkersBindingKindR2Bucket],
 // [ScriptScriptAndVersionSettingGetResponseBindingsWorkersBindingKindSecretText],
 // [ScriptScriptAndVersionSettingGetResponseBindingsWorkersBindingKindSendEmail],
@@ -2807,6 +2996,11 @@ func init() {
 			TypeFilter:         gjson.JSON,
 			Type:               reflect.TypeOf(ScriptScriptAndVersionSettingGetResponseBindingsWorkersBindingKindQueue{}),
 			DiscriminatorValue: "queue",
+		},
+		apijson.UnionVariant{
+			TypeFilter:         gjson.JSON,
+			Type:               reflect.TypeOf(ScriptScriptAndVersionSettingGetResponseBindingsWorkersBindingKindRatelimit{}),
+			DiscriminatorValue: "ratelimit",
 		},
 		apijson.UnionVariant{
 			TypeFilter:         gjson.JSON,
@@ -3196,7 +3390,7 @@ func (r ScriptScriptAndVersionSettingGetResponseBindingsWorkersBindingKindDispat
 type ScriptScriptAndVersionSettingGetResponseBindingsWorkersBindingKindDispatchNamespaceOutbound struct {
 	// Pass information from the Dispatch Worker to the Outbound Worker through the
 	// parameters.
-	Params []string `json:"params"`
+	Params []ScriptScriptAndVersionSettingGetResponseBindingsWorkersBindingKindDispatchNamespaceOutboundParam `json:"params"`
 	// Outbound worker.
 	Worker ScriptScriptAndVersionSettingGetResponseBindingsWorkersBindingKindDispatchNamespaceOutboundWorker `json:"worker"`
 	JSON   scriptScriptAndVersionSettingGetResponseBindingsWorkersBindingKindDispatchNamespaceOutboundJSON   `json:"-"`
@@ -3220,8 +3414,33 @@ func (r scriptScriptAndVersionSettingGetResponseBindingsWorkersBindingKindDispat
 	return r.raw
 }
 
+type ScriptScriptAndVersionSettingGetResponseBindingsWorkersBindingKindDispatchNamespaceOutboundParam struct {
+	// Name of the parameter.
+	Name string                                                                                               `json:"name,required"`
+	JSON scriptScriptAndVersionSettingGetResponseBindingsWorkersBindingKindDispatchNamespaceOutboundParamJSON `json:"-"`
+}
+
+// scriptScriptAndVersionSettingGetResponseBindingsWorkersBindingKindDispatchNamespaceOutboundParamJSON
+// contains the JSON metadata for the struct
+// [ScriptScriptAndVersionSettingGetResponseBindingsWorkersBindingKindDispatchNamespaceOutboundParam]
+type scriptScriptAndVersionSettingGetResponseBindingsWorkersBindingKindDispatchNamespaceOutboundParamJSON struct {
+	Name        apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *ScriptScriptAndVersionSettingGetResponseBindingsWorkersBindingKindDispatchNamespaceOutboundParam) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r scriptScriptAndVersionSettingGetResponseBindingsWorkersBindingKindDispatchNamespaceOutboundParamJSON) RawJSON() string {
+	return r.raw
+}
+
 // Outbound worker.
 type ScriptScriptAndVersionSettingGetResponseBindingsWorkersBindingKindDispatchNamespaceOutboundWorker struct {
+	// Entrypoint to invoke on the outbound worker.
+	Entrypoint string `json:"entrypoint"`
 	// Environment of the outbound worker.
 	Environment string `json:"environment"`
 	// Name of the outbound worker.
@@ -3233,6 +3452,7 @@ type ScriptScriptAndVersionSettingGetResponseBindingsWorkersBindingKindDispatchN
 // contains the JSON metadata for the struct
 // [ScriptScriptAndVersionSettingGetResponseBindingsWorkersBindingKindDispatchNamespaceOutboundWorker]
 type scriptScriptAndVersionSettingGetResponseBindingsWorkersBindingKindDispatchNamespaceOutboundWorkerJSON struct {
+	Entrypoint  apijson.Field
 	Environment apijson.Field
 	Service     apijson.Field
 	raw         string
@@ -3451,7 +3671,7 @@ func (r ScriptScriptAndVersionSettingGetResponseBindingsWorkersBindingKindImages
 
 type ScriptScriptAndVersionSettingGetResponseBindingsWorkersBindingKindJson struct {
 	// JSON data to use.
-	Json string `json:"json,required"`
+	Json interface{} `json:"json,required"`
 	// A JavaScript variable name for the binding.
 	Name string `json:"name,required"`
 	// The kind of resource that the binding provides.
@@ -3726,6 +3946,83 @@ const (
 func (r ScriptScriptAndVersionSettingGetResponseBindingsWorkersBindingKindQueueType) IsKnown() bool {
 	switch r {
 	case ScriptScriptAndVersionSettingGetResponseBindingsWorkersBindingKindQueueTypeQueue:
+		return true
+	}
+	return false
+}
+
+type ScriptScriptAndVersionSettingGetResponseBindingsWorkersBindingKindRatelimit struct {
+	// A JavaScript variable name for the binding.
+	Name string `json:"name,required"`
+	// Identifier of the rate limit namespace to bind to.
+	NamespaceID string `json:"namespace_id,required"`
+	// The rate limit configuration.
+	Simple ScriptScriptAndVersionSettingGetResponseBindingsWorkersBindingKindRatelimitSimple `json:"simple,required"`
+	// The kind of resource that the binding provides.
+	Type ScriptScriptAndVersionSettingGetResponseBindingsWorkersBindingKindRatelimitType `json:"type,required"`
+	JSON scriptScriptAndVersionSettingGetResponseBindingsWorkersBindingKindRatelimitJSON `json:"-"`
+}
+
+// scriptScriptAndVersionSettingGetResponseBindingsWorkersBindingKindRatelimitJSON
+// contains the JSON metadata for the struct
+// [ScriptScriptAndVersionSettingGetResponseBindingsWorkersBindingKindRatelimit]
+type scriptScriptAndVersionSettingGetResponseBindingsWorkersBindingKindRatelimitJSON struct {
+	Name        apijson.Field
+	NamespaceID apijson.Field
+	Simple      apijson.Field
+	Type        apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *ScriptScriptAndVersionSettingGetResponseBindingsWorkersBindingKindRatelimit) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r scriptScriptAndVersionSettingGetResponseBindingsWorkersBindingKindRatelimitJSON) RawJSON() string {
+	return r.raw
+}
+
+func (r ScriptScriptAndVersionSettingGetResponseBindingsWorkersBindingKindRatelimit) implementsScriptScriptAndVersionSettingGetResponseBinding() {
+}
+
+// The rate limit configuration.
+type ScriptScriptAndVersionSettingGetResponseBindingsWorkersBindingKindRatelimitSimple struct {
+	// The limit (requests per period).
+	Limit float64 `json:"limit,required"`
+	// The period in seconds.
+	Period int64                                                                                 `json:"period,required"`
+	JSON   scriptScriptAndVersionSettingGetResponseBindingsWorkersBindingKindRatelimitSimpleJSON `json:"-"`
+}
+
+// scriptScriptAndVersionSettingGetResponseBindingsWorkersBindingKindRatelimitSimpleJSON
+// contains the JSON metadata for the struct
+// [ScriptScriptAndVersionSettingGetResponseBindingsWorkersBindingKindRatelimitSimple]
+type scriptScriptAndVersionSettingGetResponseBindingsWorkersBindingKindRatelimitSimpleJSON struct {
+	Limit       apijson.Field
+	Period      apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *ScriptScriptAndVersionSettingGetResponseBindingsWorkersBindingKindRatelimitSimple) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r scriptScriptAndVersionSettingGetResponseBindingsWorkersBindingKindRatelimitSimpleJSON) RawJSON() string {
+	return r.raw
+}
+
+// The kind of resource that the binding provides.
+type ScriptScriptAndVersionSettingGetResponseBindingsWorkersBindingKindRatelimitType string
+
+const (
+	ScriptScriptAndVersionSettingGetResponseBindingsWorkersBindingKindRatelimitTypeRatelimit ScriptScriptAndVersionSettingGetResponseBindingsWorkersBindingKindRatelimitType = "ratelimit"
+)
+
+func (r ScriptScriptAndVersionSettingGetResponseBindingsWorkersBindingKindRatelimitType) IsKnown() bool {
+	switch r {
+	case ScriptScriptAndVersionSettingGetResponseBindingsWorkersBindingKindRatelimitTypeRatelimit:
 		return true
 	}
 	return false
@@ -4361,6 +4658,7 @@ const (
 	ScriptScriptAndVersionSettingGetResponseBindingsTypePlainText              ScriptScriptAndVersionSettingGetResponseBindingsType = "plain_text"
 	ScriptScriptAndVersionSettingGetResponseBindingsTypePipelines              ScriptScriptAndVersionSettingGetResponseBindingsType = "pipelines"
 	ScriptScriptAndVersionSettingGetResponseBindingsTypeQueue                  ScriptScriptAndVersionSettingGetResponseBindingsType = "queue"
+	ScriptScriptAndVersionSettingGetResponseBindingsTypeRatelimit              ScriptScriptAndVersionSettingGetResponseBindingsType = "ratelimit"
 	ScriptScriptAndVersionSettingGetResponseBindingsTypeR2Bucket               ScriptScriptAndVersionSettingGetResponseBindingsType = "r2_bucket"
 	ScriptScriptAndVersionSettingGetResponseBindingsTypeSecretText             ScriptScriptAndVersionSettingGetResponseBindingsType = "secret_text"
 	ScriptScriptAndVersionSettingGetResponseBindingsTypeSendEmail              ScriptScriptAndVersionSettingGetResponseBindingsType = "send_email"
@@ -4376,7 +4674,7 @@ const (
 
 func (r ScriptScriptAndVersionSettingGetResponseBindingsType) IsKnown() bool {
 	switch r {
-	case ScriptScriptAndVersionSettingGetResponseBindingsTypeAI, ScriptScriptAndVersionSettingGetResponseBindingsTypeAnalyticsEngine, ScriptScriptAndVersionSettingGetResponseBindingsTypeAssets, ScriptScriptAndVersionSettingGetResponseBindingsTypeBrowser, ScriptScriptAndVersionSettingGetResponseBindingsTypeD1, ScriptScriptAndVersionSettingGetResponseBindingsTypeDataBlob, ScriptScriptAndVersionSettingGetResponseBindingsTypeDispatchNamespace, ScriptScriptAndVersionSettingGetResponseBindingsTypeDurableObjectNamespace, ScriptScriptAndVersionSettingGetResponseBindingsTypeHyperdrive, ScriptScriptAndVersionSettingGetResponseBindingsTypeInherit, ScriptScriptAndVersionSettingGetResponseBindingsTypeImages, ScriptScriptAndVersionSettingGetResponseBindingsTypeJson, ScriptScriptAndVersionSettingGetResponseBindingsTypeKVNamespace, ScriptScriptAndVersionSettingGetResponseBindingsTypeMTLSCertificate, ScriptScriptAndVersionSettingGetResponseBindingsTypePlainText, ScriptScriptAndVersionSettingGetResponseBindingsTypePipelines, ScriptScriptAndVersionSettingGetResponseBindingsTypeQueue, ScriptScriptAndVersionSettingGetResponseBindingsTypeR2Bucket, ScriptScriptAndVersionSettingGetResponseBindingsTypeSecretText, ScriptScriptAndVersionSettingGetResponseBindingsTypeSendEmail, ScriptScriptAndVersionSettingGetResponseBindingsTypeService, ScriptScriptAndVersionSettingGetResponseBindingsTypeTextBlob, ScriptScriptAndVersionSettingGetResponseBindingsTypeVectorize, ScriptScriptAndVersionSettingGetResponseBindingsTypeVersionMetadata, ScriptScriptAndVersionSettingGetResponseBindingsTypeSecretsStoreSecret, ScriptScriptAndVersionSettingGetResponseBindingsTypeSecretKey, ScriptScriptAndVersionSettingGetResponseBindingsTypeWorkflow, ScriptScriptAndVersionSettingGetResponseBindingsTypeWasmModule:
+	case ScriptScriptAndVersionSettingGetResponseBindingsTypeAI, ScriptScriptAndVersionSettingGetResponseBindingsTypeAnalyticsEngine, ScriptScriptAndVersionSettingGetResponseBindingsTypeAssets, ScriptScriptAndVersionSettingGetResponseBindingsTypeBrowser, ScriptScriptAndVersionSettingGetResponseBindingsTypeD1, ScriptScriptAndVersionSettingGetResponseBindingsTypeDataBlob, ScriptScriptAndVersionSettingGetResponseBindingsTypeDispatchNamespace, ScriptScriptAndVersionSettingGetResponseBindingsTypeDurableObjectNamespace, ScriptScriptAndVersionSettingGetResponseBindingsTypeHyperdrive, ScriptScriptAndVersionSettingGetResponseBindingsTypeInherit, ScriptScriptAndVersionSettingGetResponseBindingsTypeImages, ScriptScriptAndVersionSettingGetResponseBindingsTypeJson, ScriptScriptAndVersionSettingGetResponseBindingsTypeKVNamespace, ScriptScriptAndVersionSettingGetResponseBindingsTypeMTLSCertificate, ScriptScriptAndVersionSettingGetResponseBindingsTypePlainText, ScriptScriptAndVersionSettingGetResponseBindingsTypePipelines, ScriptScriptAndVersionSettingGetResponseBindingsTypeQueue, ScriptScriptAndVersionSettingGetResponseBindingsTypeRatelimit, ScriptScriptAndVersionSettingGetResponseBindingsTypeR2Bucket, ScriptScriptAndVersionSettingGetResponseBindingsTypeSecretText, ScriptScriptAndVersionSettingGetResponseBindingsTypeSendEmail, ScriptScriptAndVersionSettingGetResponseBindingsTypeService, ScriptScriptAndVersionSettingGetResponseBindingsTypeTextBlob, ScriptScriptAndVersionSettingGetResponseBindingsTypeVectorize, ScriptScriptAndVersionSettingGetResponseBindingsTypeVersionMetadata, ScriptScriptAndVersionSettingGetResponseBindingsTypeSecretsStoreSecret, ScriptScriptAndVersionSettingGetResponseBindingsTypeSecretKey, ScriptScriptAndVersionSettingGetResponseBindingsTypeWorkflow, ScriptScriptAndVersionSettingGetResponseBindingsTypeWasmModule:
 		return true
 	}
 	return false
@@ -4611,8 +4909,7 @@ func (r scriptScriptAndVersionSettingGetResponseObservabilityLogsJSON) RawJSON()
 
 // Configuration for
 // [Smart Placement](https://developers.cloudflare.com/workers/configuration/smart-placement).
-// Specify either mode for Smart Placement, or one of region/hostname/host for
-// targeted placement.
+// Specify mode='smart' for Smart Placement, or one of region/hostname/host.
 type ScriptScriptAndVersionSettingGetResponsePlacement struct {
 	// TCP host and port for targeted placement.
 	Host string `json:"host"`
@@ -4620,9 +4917,12 @@ type ScriptScriptAndVersionSettingGetResponsePlacement struct {
 	Hostname string `json:"hostname"`
 	// Enables
 	// [Smart Placement](https://developers.cloudflare.com/workers/configuration/smart-placement).
-	Mode ScriptScriptAndVersionSettingGetResponsePlacementMode `json:"mode"`
+	Mode ScriptScriptAndVersionSettingGetResponsePlacementModeMode `json:"mode"`
 	// Cloud region for targeted placement in format 'provider:region'.
-	Region string                                                `json:"region"`
+	Region string `json:"region"`
+	// This field can have the runtime type of
+	// [[]ScriptScriptAndVersionSettingGetResponsePlacementObjectTarget].
+	Target interface{}                                           `json:"target"`
 	JSON   scriptScriptAndVersionSettingGetResponsePlacementJSON `json:"-"`
 	union  ScriptScriptAndVersionSettingGetResponsePlacementUnion
 }
@@ -4634,6 +4934,7 @@ type scriptScriptAndVersionSettingGetResponsePlacementJSON struct {
 	Hostname    apijson.Field
 	Mode        apijson.Field
 	Region      apijson.Field
+	Target      apijson.Field
 	raw         string
 	ExtraFields map[string]apijson.Field
 }
@@ -4658,20 +4959,27 @@ func (r *ScriptScriptAndVersionSettingGetResponsePlacement) UnmarshalJSON(data [
 // [ScriptScriptAndVersionSettingGetResponsePlacementMode],
 // [ScriptScriptAndVersionSettingGetResponsePlacementRegion],
 // [ScriptScriptAndVersionSettingGetResponsePlacementHostname],
-// [ScriptScriptAndVersionSettingGetResponsePlacementHost].
+// [ScriptScriptAndVersionSettingGetResponsePlacementHost],
+// [ScriptScriptAndVersionSettingGetResponsePlacementObject],
+// [ScriptScriptAndVersionSettingGetResponsePlacementObject],
+// [ScriptScriptAndVersionSettingGetResponsePlacementObject],
+// [ScriptScriptAndVersionSettingGetResponsePlacementObject].
 func (r ScriptScriptAndVersionSettingGetResponsePlacement) AsUnion() ScriptScriptAndVersionSettingGetResponsePlacementUnion {
 	return r.union
 }
 
 // Configuration for
 // [Smart Placement](https://developers.cloudflare.com/workers/configuration/smart-placement).
-// Specify either mode for Smart Placement, or one of region/hostname/host for
-// targeted placement.
+// Specify mode='smart' for Smart Placement, or one of region/hostname/host.
 //
 // Union satisfied by [ScriptScriptAndVersionSettingGetResponsePlacementMode],
 // [ScriptScriptAndVersionSettingGetResponsePlacementRegion],
-// [ScriptScriptAndVersionSettingGetResponsePlacementHostname] or
-// [ScriptScriptAndVersionSettingGetResponsePlacementHost].
+// [ScriptScriptAndVersionSettingGetResponsePlacementHostname],
+// [ScriptScriptAndVersionSettingGetResponsePlacementHost],
+// [ScriptScriptAndVersionSettingGetResponsePlacementObject],
+// [ScriptScriptAndVersionSettingGetResponsePlacementObject],
+// [ScriptScriptAndVersionSettingGetResponsePlacementObject] or
+// [ScriptScriptAndVersionSettingGetResponsePlacementObject].
 type ScriptScriptAndVersionSettingGetResponsePlacementUnion interface {
 	implementsScriptScriptAndVersionSettingGetResponsePlacement()
 }
@@ -4695,6 +5003,22 @@ func init() {
 		apijson.UnionVariant{
 			TypeFilter: gjson.JSON,
 			Type:       reflect.TypeOf(ScriptScriptAndVersionSettingGetResponsePlacementHost{}),
+		},
+		apijson.UnionVariant{
+			TypeFilter: gjson.JSON,
+			Type:       reflect.TypeOf(ScriptScriptAndVersionSettingGetResponsePlacementObject{}),
+		},
+		apijson.UnionVariant{
+			TypeFilter: gjson.JSON,
+			Type:       reflect.TypeOf(ScriptScriptAndVersionSettingGetResponsePlacementObject{}),
+		},
+		apijson.UnionVariant{
+			TypeFilter: gjson.JSON,
+			Type:       reflect.TypeOf(ScriptScriptAndVersionSettingGetResponsePlacementObject{}),
+		},
+		apijson.UnionVariant{
+			TypeFilter: gjson.JSON,
+			Type:       reflect.TypeOf(ScriptScriptAndVersionSettingGetResponsePlacementObject{}),
 		},
 	)
 }
@@ -4818,6 +5142,50 @@ func (r scriptScriptAndVersionSettingGetResponsePlacementHostJSON) RawJSON() str
 func (r ScriptScriptAndVersionSettingGetResponsePlacementHost) implementsScriptScriptAndVersionSettingGetResponsePlacement() {
 }
 
+type ScriptScriptAndVersionSettingGetResponsePlacementObject struct {
+	// Targeted placement mode.
+	Mode ScriptScriptAndVersionSettingGetResponsePlacementObjectMode `json:"mode,required"`
+	// Cloud region for targeted placement in format 'provider:region'.
+	Region string                                                      `json:"region,required"`
+	JSON   scriptScriptAndVersionSettingGetResponsePlacementObjectJSON `json:"-"`
+}
+
+// scriptScriptAndVersionSettingGetResponsePlacementObjectJSON contains the JSON
+// metadata for the struct
+// [ScriptScriptAndVersionSettingGetResponsePlacementObject]
+type scriptScriptAndVersionSettingGetResponsePlacementObjectJSON struct {
+	Mode        apijson.Field
+	Region      apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *ScriptScriptAndVersionSettingGetResponsePlacementObject) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r scriptScriptAndVersionSettingGetResponsePlacementObjectJSON) RawJSON() string {
+	return r.raw
+}
+
+func (r ScriptScriptAndVersionSettingGetResponsePlacementObject) implementsScriptScriptAndVersionSettingGetResponsePlacement() {
+}
+
+// Targeted placement mode.
+type ScriptScriptAndVersionSettingGetResponsePlacementObjectMode string
+
+const (
+	ScriptScriptAndVersionSettingGetResponsePlacementObjectModeTargeted ScriptScriptAndVersionSettingGetResponsePlacementObjectMode = "targeted"
+)
+
+func (r ScriptScriptAndVersionSettingGetResponsePlacementObjectMode) IsKnown() bool {
+	switch r {
+	case ScriptScriptAndVersionSettingGetResponsePlacementObjectModeTargeted:
+		return true
+	}
+	return false
+}
+
 // Usage model for the Worker invocations.
 type ScriptScriptAndVersionSettingGetResponseUsageModel string
 
@@ -4878,8 +5246,7 @@ type ScriptScriptAndVersionSettingEditParamsSettings struct {
 	Observability param.Field[ScriptScriptAndVersionSettingEditParamsSettingsObservability] `json:"observability"`
 	// Configuration for
 	// [Smart Placement](https://developers.cloudflare.com/workers/configuration/smart-placement).
-	// Specify either mode for Smart Placement, or one of region/hostname/host for
-	// targeted placement.
+	// Specify mode='smart' for Smart Placement, or one of region/hostname/host.
 	Placement param.Field[ScriptScriptAndVersionSettingEditParamsSettingsPlacementUnion] `json:"placement"`
 	// Tags associated with the Worker.
 	Tags param.Field[[]string] `json:"tags"`
@@ -4920,9 +5287,8 @@ type ScriptScriptAndVersionSettingEditParamsSettingsBinding struct {
 	// [Learn more](https://developer.mozilla.org/en-US/docs/Web/API/SubtleCrypto/importKey#format).
 	Format param.Field[ScriptScriptAndVersionSettingEditParamsSettingsBindingsFormat] `json:"format"`
 	// Name of the Vectorize index to bind to.
-	IndexName param.Field[string] `json:"index_name"`
-	// JSON data to use.
-	Json param.Field[string] `json:"json"`
+	IndexName param.Field[string]      `json:"index_name"`
+	Json      param.Field[interface{}] `json:"json"`
 	// The
 	// [jurisdiction](https://developers.cloudflare.com/r2/reference/data-location/#jurisdictional-restrictions)
 	// of the R2 bucket.
@@ -4952,7 +5318,8 @@ type ScriptScriptAndVersionSettingEditParamsSettingsBinding struct {
 	// Name of the secret in the store.
 	SecretName param.Field[string] `json:"secret_name"`
 	// Name of Worker to bind to.
-	Service param.Field[string] `json:"service"`
+	Service param.Field[string]      `json:"service"`
+	Simple  param.Field[interface{}] `json:"simple"`
 	// ID of the store containing the secret.
 	StoreID param.Field[string] `json:"store_id"`
 	// The text value to use.
@@ -4993,6 +5360,7 @@ func (r ScriptScriptAndVersionSettingEditParamsSettingsBinding) implementsScript
 // [workers.ScriptScriptAndVersionSettingEditParamsSettingsBindingsWorkersBindingKindPlainText],
 // [workers.ScriptScriptAndVersionSettingEditParamsSettingsBindingsWorkersBindingKindPipelines],
 // [workers.ScriptScriptAndVersionSettingEditParamsSettingsBindingsWorkersBindingKindQueue],
+// [workers.ScriptScriptAndVersionSettingEditParamsSettingsBindingsWorkersBindingKindRatelimit],
 // [workers.ScriptScriptAndVersionSettingEditParamsSettingsBindingsWorkersBindingKindR2Bucket],
 // [workers.ScriptScriptAndVersionSettingEditParamsSettingsBindingsWorkersBindingKindSecretText],
 // [workers.ScriptScriptAndVersionSettingEditParamsSettingsBindingsWorkersBindingKindSendEmail],
@@ -5229,7 +5597,7 @@ func (r ScriptScriptAndVersionSettingEditParamsSettingsBindingsWorkersBindingKin
 type ScriptScriptAndVersionSettingEditParamsSettingsBindingsWorkersBindingKindDispatchNamespaceOutbound struct {
 	// Pass information from the Dispatch Worker to the Outbound Worker through the
 	// parameters.
-	Params param.Field[[]string] `json:"params"`
+	Params param.Field[[]ScriptScriptAndVersionSettingEditParamsSettingsBindingsWorkersBindingKindDispatchNamespaceOutboundParam] `json:"params"`
 	// Outbound worker.
 	Worker param.Field[ScriptScriptAndVersionSettingEditParamsSettingsBindingsWorkersBindingKindDispatchNamespaceOutboundWorker] `json:"worker"`
 }
@@ -5238,8 +5606,19 @@ func (r ScriptScriptAndVersionSettingEditParamsSettingsBindingsWorkersBindingKin
 	return apijson.MarshalRoot(r)
 }
 
+type ScriptScriptAndVersionSettingEditParamsSettingsBindingsWorkersBindingKindDispatchNamespaceOutboundParam struct {
+	// Name of the parameter.
+	Name param.Field[string] `json:"name,required"`
+}
+
+func (r ScriptScriptAndVersionSettingEditParamsSettingsBindingsWorkersBindingKindDispatchNamespaceOutboundParam) MarshalJSON() (data []byte, err error) {
+	return apijson.MarshalRoot(r)
+}
+
 // Outbound worker.
 type ScriptScriptAndVersionSettingEditParamsSettingsBindingsWorkersBindingKindDispatchNamespaceOutboundWorker struct {
+	// Entrypoint to invoke on the outbound worker.
+	Entrypoint param.Field[string] `json:"entrypoint"`
 	// Environment of the outbound worker.
 	Environment param.Field[string] `json:"environment"`
 	// Name of the outbound worker.
@@ -5387,7 +5766,7 @@ func (r ScriptScriptAndVersionSettingEditParamsSettingsBindingsWorkersBindingKin
 
 type ScriptScriptAndVersionSettingEditParamsSettingsBindingsWorkersBindingKindJson struct {
 	// JSON data to use.
-	Json param.Field[string] `json:"json,required"`
+	Json param.Field[interface{}] `json:"json,required"`
 	// A JavaScript variable name for the binding.
 	Name param.Field[string] `json:"name,required"`
 	// The kind of resource that the binding provides.
@@ -5566,6 +5945,51 @@ const (
 func (r ScriptScriptAndVersionSettingEditParamsSettingsBindingsWorkersBindingKindQueueType) IsKnown() bool {
 	switch r {
 	case ScriptScriptAndVersionSettingEditParamsSettingsBindingsWorkersBindingKindQueueTypeQueue:
+		return true
+	}
+	return false
+}
+
+type ScriptScriptAndVersionSettingEditParamsSettingsBindingsWorkersBindingKindRatelimit struct {
+	// A JavaScript variable name for the binding.
+	Name param.Field[string] `json:"name,required"`
+	// Identifier of the rate limit namespace to bind to.
+	NamespaceID param.Field[string] `json:"namespace_id,required"`
+	// The rate limit configuration.
+	Simple param.Field[ScriptScriptAndVersionSettingEditParamsSettingsBindingsWorkersBindingKindRatelimitSimple] `json:"simple,required"`
+	// The kind of resource that the binding provides.
+	Type param.Field[ScriptScriptAndVersionSettingEditParamsSettingsBindingsWorkersBindingKindRatelimitType] `json:"type,required"`
+}
+
+func (r ScriptScriptAndVersionSettingEditParamsSettingsBindingsWorkersBindingKindRatelimit) MarshalJSON() (data []byte, err error) {
+	return apijson.MarshalRoot(r)
+}
+
+func (r ScriptScriptAndVersionSettingEditParamsSettingsBindingsWorkersBindingKindRatelimit) implementsScriptScriptAndVersionSettingEditParamsSettingsBindingUnion() {
+}
+
+// The rate limit configuration.
+type ScriptScriptAndVersionSettingEditParamsSettingsBindingsWorkersBindingKindRatelimitSimple struct {
+	// The limit (requests per period).
+	Limit param.Field[float64] `json:"limit,required"`
+	// The period in seconds.
+	Period param.Field[int64] `json:"period,required"`
+}
+
+func (r ScriptScriptAndVersionSettingEditParamsSettingsBindingsWorkersBindingKindRatelimitSimple) MarshalJSON() (data []byte, err error) {
+	return apijson.MarshalRoot(r)
+}
+
+// The kind of resource that the binding provides.
+type ScriptScriptAndVersionSettingEditParamsSettingsBindingsWorkersBindingKindRatelimitType string
+
+const (
+	ScriptScriptAndVersionSettingEditParamsSettingsBindingsWorkersBindingKindRatelimitTypeRatelimit ScriptScriptAndVersionSettingEditParamsSettingsBindingsWorkersBindingKindRatelimitType = "ratelimit"
+)
+
+func (r ScriptScriptAndVersionSettingEditParamsSettingsBindingsWorkersBindingKindRatelimitType) IsKnown() bool {
+	switch r {
+	case ScriptScriptAndVersionSettingEditParamsSettingsBindingsWorkersBindingKindRatelimitTypeRatelimit:
 		return true
 	}
 	return false
@@ -6026,6 +6450,7 @@ const (
 	ScriptScriptAndVersionSettingEditParamsSettingsBindingsTypePlainText              ScriptScriptAndVersionSettingEditParamsSettingsBindingsType = "plain_text"
 	ScriptScriptAndVersionSettingEditParamsSettingsBindingsTypePipelines              ScriptScriptAndVersionSettingEditParamsSettingsBindingsType = "pipelines"
 	ScriptScriptAndVersionSettingEditParamsSettingsBindingsTypeQueue                  ScriptScriptAndVersionSettingEditParamsSettingsBindingsType = "queue"
+	ScriptScriptAndVersionSettingEditParamsSettingsBindingsTypeRatelimit              ScriptScriptAndVersionSettingEditParamsSettingsBindingsType = "ratelimit"
 	ScriptScriptAndVersionSettingEditParamsSettingsBindingsTypeR2Bucket               ScriptScriptAndVersionSettingEditParamsSettingsBindingsType = "r2_bucket"
 	ScriptScriptAndVersionSettingEditParamsSettingsBindingsTypeSecretText             ScriptScriptAndVersionSettingEditParamsSettingsBindingsType = "secret_text"
 	ScriptScriptAndVersionSettingEditParamsSettingsBindingsTypeSendEmail              ScriptScriptAndVersionSettingEditParamsSettingsBindingsType = "send_email"
@@ -6041,7 +6466,7 @@ const (
 
 func (r ScriptScriptAndVersionSettingEditParamsSettingsBindingsType) IsKnown() bool {
 	switch r {
-	case ScriptScriptAndVersionSettingEditParamsSettingsBindingsTypeAI, ScriptScriptAndVersionSettingEditParamsSettingsBindingsTypeAnalyticsEngine, ScriptScriptAndVersionSettingEditParamsSettingsBindingsTypeAssets, ScriptScriptAndVersionSettingEditParamsSettingsBindingsTypeBrowser, ScriptScriptAndVersionSettingEditParamsSettingsBindingsTypeD1, ScriptScriptAndVersionSettingEditParamsSettingsBindingsTypeDataBlob, ScriptScriptAndVersionSettingEditParamsSettingsBindingsTypeDispatchNamespace, ScriptScriptAndVersionSettingEditParamsSettingsBindingsTypeDurableObjectNamespace, ScriptScriptAndVersionSettingEditParamsSettingsBindingsTypeHyperdrive, ScriptScriptAndVersionSettingEditParamsSettingsBindingsTypeInherit, ScriptScriptAndVersionSettingEditParamsSettingsBindingsTypeImages, ScriptScriptAndVersionSettingEditParamsSettingsBindingsTypeJson, ScriptScriptAndVersionSettingEditParamsSettingsBindingsTypeKVNamespace, ScriptScriptAndVersionSettingEditParamsSettingsBindingsTypeMTLSCertificate, ScriptScriptAndVersionSettingEditParamsSettingsBindingsTypePlainText, ScriptScriptAndVersionSettingEditParamsSettingsBindingsTypePipelines, ScriptScriptAndVersionSettingEditParamsSettingsBindingsTypeQueue, ScriptScriptAndVersionSettingEditParamsSettingsBindingsTypeR2Bucket, ScriptScriptAndVersionSettingEditParamsSettingsBindingsTypeSecretText, ScriptScriptAndVersionSettingEditParamsSettingsBindingsTypeSendEmail, ScriptScriptAndVersionSettingEditParamsSettingsBindingsTypeService, ScriptScriptAndVersionSettingEditParamsSettingsBindingsTypeTextBlob, ScriptScriptAndVersionSettingEditParamsSettingsBindingsTypeVectorize, ScriptScriptAndVersionSettingEditParamsSettingsBindingsTypeVersionMetadata, ScriptScriptAndVersionSettingEditParamsSettingsBindingsTypeSecretsStoreSecret, ScriptScriptAndVersionSettingEditParamsSettingsBindingsTypeSecretKey, ScriptScriptAndVersionSettingEditParamsSettingsBindingsTypeWorkflow, ScriptScriptAndVersionSettingEditParamsSettingsBindingsTypeWasmModule:
+	case ScriptScriptAndVersionSettingEditParamsSettingsBindingsTypeAI, ScriptScriptAndVersionSettingEditParamsSettingsBindingsTypeAnalyticsEngine, ScriptScriptAndVersionSettingEditParamsSettingsBindingsTypeAssets, ScriptScriptAndVersionSettingEditParamsSettingsBindingsTypeBrowser, ScriptScriptAndVersionSettingEditParamsSettingsBindingsTypeD1, ScriptScriptAndVersionSettingEditParamsSettingsBindingsTypeDataBlob, ScriptScriptAndVersionSettingEditParamsSettingsBindingsTypeDispatchNamespace, ScriptScriptAndVersionSettingEditParamsSettingsBindingsTypeDurableObjectNamespace, ScriptScriptAndVersionSettingEditParamsSettingsBindingsTypeHyperdrive, ScriptScriptAndVersionSettingEditParamsSettingsBindingsTypeInherit, ScriptScriptAndVersionSettingEditParamsSettingsBindingsTypeImages, ScriptScriptAndVersionSettingEditParamsSettingsBindingsTypeJson, ScriptScriptAndVersionSettingEditParamsSettingsBindingsTypeKVNamespace, ScriptScriptAndVersionSettingEditParamsSettingsBindingsTypeMTLSCertificate, ScriptScriptAndVersionSettingEditParamsSettingsBindingsTypePlainText, ScriptScriptAndVersionSettingEditParamsSettingsBindingsTypePipelines, ScriptScriptAndVersionSettingEditParamsSettingsBindingsTypeQueue, ScriptScriptAndVersionSettingEditParamsSettingsBindingsTypeRatelimit, ScriptScriptAndVersionSettingEditParamsSettingsBindingsTypeR2Bucket, ScriptScriptAndVersionSettingEditParamsSettingsBindingsTypeSecretText, ScriptScriptAndVersionSettingEditParamsSettingsBindingsTypeSendEmail, ScriptScriptAndVersionSettingEditParamsSettingsBindingsTypeService, ScriptScriptAndVersionSettingEditParamsSettingsBindingsTypeTextBlob, ScriptScriptAndVersionSettingEditParamsSettingsBindingsTypeVectorize, ScriptScriptAndVersionSettingEditParamsSettingsBindingsTypeVersionMetadata, ScriptScriptAndVersionSettingEditParamsSettingsBindingsTypeSecretsStoreSecret, ScriptScriptAndVersionSettingEditParamsSettingsBindingsTypeSecretKey, ScriptScriptAndVersionSettingEditParamsSettingsBindingsTypeWorkflow, ScriptScriptAndVersionSettingEditParamsSettingsBindingsTypeWasmModule:
 		return true
 	}
 	return false
@@ -6179,8 +6604,7 @@ func (r ScriptScriptAndVersionSettingEditParamsSettingsObservabilityLogs) Marsha
 
 // Configuration for
 // [Smart Placement](https://developers.cloudflare.com/workers/configuration/smart-placement).
-// Specify either mode for Smart Placement, or one of region/hostname/host for
-// targeted placement.
+// Specify mode='smart' for Smart Placement, or one of region/hostname/host.
 type ScriptScriptAndVersionSettingEditParamsSettingsPlacement struct {
 	// TCP host and port for targeted placement.
 	Host param.Field[string] `json:"host"`
@@ -6190,7 +6614,8 @@ type ScriptScriptAndVersionSettingEditParamsSettingsPlacement struct {
 	// [Smart Placement](https://developers.cloudflare.com/workers/configuration/smart-placement).
 	Mode param.Field[ScriptScriptAndVersionSettingEditParamsSettingsPlacementMode] `json:"mode"`
 	// Cloud region for targeted placement in format 'provider:region'.
-	Region param.Field[string] `json:"region"`
+	Region param.Field[string]      `json:"region"`
+	Target param.Field[interface{}] `json:"target"`
 }
 
 func (r ScriptScriptAndVersionSettingEditParamsSettingsPlacement) MarshalJSON() (data []byte, err error) {
@@ -6202,14 +6627,17 @@ func (r ScriptScriptAndVersionSettingEditParamsSettingsPlacement) implementsScri
 
 // Configuration for
 // [Smart Placement](https://developers.cloudflare.com/workers/configuration/smart-placement).
-// Specify either mode for Smart Placement, or one of region/hostname/host for
-// targeted placement.
+// Specify mode='smart' for Smart Placement, or one of region/hostname/host.
 //
 // Satisfied by
 // [workers.ScriptScriptAndVersionSettingEditParamsSettingsPlacementMode],
 // [workers.ScriptScriptAndVersionSettingEditParamsSettingsPlacementRegion],
 // [workers.ScriptScriptAndVersionSettingEditParamsSettingsPlacementHostname],
 // [workers.ScriptScriptAndVersionSettingEditParamsSettingsPlacementHost],
+// [workers.ScriptScriptAndVersionSettingEditParamsSettingsPlacementObject],
+// [workers.ScriptScriptAndVersionSettingEditParamsSettingsPlacementObject],
+// [workers.ScriptScriptAndVersionSettingEditParamsSettingsPlacementObject],
+// [workers.ScriptScriptAndVersionSettingEditParamsSettingsPlacementObject],
 // [ScriptScriptAndVersionSettingEditParamsSettingsPlacement].
 type ScriptScriptAndVersionSettingEditParamsSettingsPlacementUnion interface {
 	implementsScriptScriptAndVersionSettingEditParamsSettingsPlacementUnion()
@@ -6278,6 +6706,35 @@ func (r ScriptScriptAndVersionSettingEditParamsSettingsPlacementHost) MarshalJSO
 }
 
 func (r ScriptScriptAndVersionSettingEditParamsSettingsPlacementHost) implementsScriptScriptAndVersionSettingEditParamsSettingsPlacementUnion() {
+}
+
+type ScriptScriptAndVersionSettingEditParamsSettingsPlacementObject struct {
+	// Targeted placement mode.
+	Mode param.Field[ScriptScriptAndVersionSettingEditParamsSettingsPlacementObjectMode] `json:"mode,required"`
+	// Cloud region for targeted placement in format 'provider:region'.
+	Region param.Field[string] `json:"region,required"`
+}
+
+func (r ScriptScriptAndVersionSettingEditParamsSettingsPlacementObject) MarshalJSON() (data []byte, err error) {
+	return apijson.MarshalRoot(r)
+}
+
+func (r ScriptScriptAndVersionSettingEditParamsSettingsPlacementObject) implementsScriptScriptAndVersionSettingEditParamsSettingsPlacementUnion() {
+}
+
+// Targeted placement mode.
+type ScriptScriptAndVersionSettingEditParamsSettingsPlacementObjectMode string
+
+const (
+	ScriptScriptAndVersionSettingEditParamsSettingsPlacementObjectModeTargeted ScriptScriptAndVersionSettingEditParamsSettingsPlacementObjectMode = "targeted"
+)
+
+func (r ScriptScriptAndVersionSettingEditParamsSettingsPlacementObjectMode) IsKnown() bool {
+	switch r {
+	case ScriptScriptAndVersionSettingEditParamsSettingsPlacementObjectModeTargeted:
+		return true
+	}
+	return false
 }
 
 // Usage model for the Worker invocations.

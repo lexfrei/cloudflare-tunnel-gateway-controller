@@ -27,6 +27,7 @@ import (
 // the [NewNetworkSubnetService] method instead.
 type NetworkSubnetService struct {
 	Options          []option.RequestOption
+	WARP             *NetworkSubnetWARPService
 	CloudflareSource *NetworkSubnetCloudflareSourceService
 }
 
@@ -36,6 +37,7 @@ type NetworkSubnetService struct {
 func NewNetworkSubnetService(opts ...option.RequestOption) (r *NetworkSubnetService) {
 	r = &NetworkSubnetService{}
 	r.Options = opts
+	r.WARP = NewNetworkSubnetWARPService(opts...)
 	r.CloudflareSource = NewNetworkSubnetCloudflareSourceService(opts...)
 	return
 }
@@ -117,11 +119,12 @@ type NetworkSubnetListResponseSubnetType string
 
 const (
 	NetworkSubnetListResponseSubnetTypeCloudflareSource NetworkSubnetListResponseSubnetType = "cloudflare_source"
+	NetworkSubnetListResponseSubnetTypeWARP             NetworkSubnetListResponseSubnetType = "warp"
 )
 
 func (r NetworkSubnetListResponseSubnetType) IsKnown() bool {
 	switch r {
-	case NetworkSubnetListResponseSubnetTypeCloudflareSource:
+	case NetworkSubnetListResponseSubnetTypeCloudflareSource, NetworkSubnetListResponseSubnetTypeWARP:
 		return true
 	}
 	return false

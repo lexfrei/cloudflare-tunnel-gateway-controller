@@ -24,8 +24,7 @@ import (
 // automatically. You should not instantiate this service directly, and instead use
 // the [NewHostnameService] method instead.
 type HostnameService struct {
-	Options      []option.RequestOption
-	Certificates *HostnameCertificateService
+	Options []option.RequestOption
 }
 
 // NewHostnameService generates a new service that applies the given options to
@@ -34,7 +33,6 @@ type HostnameService struct {
 func NewHostnameService(opts ...option.RequestOption) (r *HostnameService) {
 	r = &HostnameService{}
 	r.Options = opts
-	r.Certificates = NewHostnameCertificateService(opts...)
 	return
 }
 
@@ -73,7 +71,8 @@ func (r *HostnameService) UpdateAutoPaging(ctx context.Context, params HostnameU
 	return pagination.NewSinglePageAutoPager(r.Update(ctx, params, opts...))
 }
 
-// Get the Hostname Status for Client Authentication
+// Retrieves the client certificate authentication status for a specific hostname,
+// showing whether authenticated origin pulls are enabled.
 func (r *HostnameService) Get(ctx context.Context, hostname string, query HostnameGetParams, opts ...option.RequestOption) (res *AuthenticatedOriginPull, err error) {
 	var env HostnameGetResponseEnvelope
 	opts = slices.Concat(r.Options, opts)

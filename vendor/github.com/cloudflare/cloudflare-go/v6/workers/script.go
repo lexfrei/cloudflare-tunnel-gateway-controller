@@ -206,11 +206,11 @@ type Script struct {
 	Observability ScriptObservability `json:"observability"`
 	// Configuration for
 	// [Smart Placement](https://developers.cloudflare.com/workers/configuration/smart-placement).
-	// Specify either mode for Smart Placement, or one of region/hostname/host for
-	// targeted placement.
+	// Specify mode='smart' for Smart Placement, or one of region/hostname/host.
 	Placement ScriptPlacement `json:"placement"`
-	// Enables
+	// Configuration for
 	// [Smart Placement](https://developers.cloudflare.com/workers/configuration/smart-placement).
+	// Specify mode='smart' for Smart Placement, or one of region/hostname/host.
 	//
 	// Deprecated: deprecated
 	PlacementMode ScriptPlacementMode `json:"placement_mode"`
@@ -359,8 +359,7 @@ func (r scriptObservabilityLogsJSON) RawJSON() string {
 
 // Configuration for
 // [Smart Placement](https://developers.cloudflare.com/workers/configuration/smart-placement).
-// Specify either mode for Smart Placement, or one of region/hostname/host for
-// targeted placement.
+// Specify mode='smart' for Smart Placement, or one of region/hostname/host.
 type ScriptPlacement struct {
 	// TCP host and port for targeted placement.
 	Host string `json:"host"`
@@ -377,7 +376,9 @@ type ScriptPlacement struct {
 	// Status of
 	// [Smart Placement](https://developers.cloudflare.com/workers/configuration/smart-placement).
 	Status ScriptPlacementStatus `json:"status"`
-	JSON   scriptPlacementJSON   `json:"-"`
+	// This field can have the runtime type of [[]ScriptPlacementObjectTarget].
+	Target interface{}         `json:"target"`
+	JSON   scriptPlacementJSON `json:"-"`
 	union  ScriptPlacementUnion
 }
 
@@ -389,6 +390,7 @@ type scriptPlacementJSON struct {
 	Mode           apijson.Field
 	Region         apijson.Field
 	Status         apijson.Field
+	Target         apijson.Field
 	raw            string
 	ExtraFields    map[string]apijson.Field
 }
@@ -410,18 +412,20 @@ func (r *ScriptPlacement) UnmarshalJSON(data []byte) (err error) {
 // specific types for more type safety.
 //
 // Possible runtime types of the union are [ScriptPlacementObject],
-// [ScriptPlacementObject], [ScriptPlacementObject], [ScriptPlacementObject].
+// [ScriptPlacementObject], [ScriptPlacementObject], [ScriptPlacementObject],
+// [ScriptPlacementObject], [ScriptPlacementObject], [ScriptPlacementObject],
+// [ScriptPlacementObject].
 func (r ScriptPlacement) AsUnion() ScriptPlacementUnion {
 	return r.union
 }
 
 // Configuration for
 // [Smart Placement](https://developers.cloudflare.com/workers/configuration/smart-placement).
-// Specify either mode for Smart Placement, or one of region/hostname/host for
-// targeted placement.
+// Specify mode='smart' for Smart Placement, or one of region/hostname/host.
 //
 // Union satisfied by [ScriptPlacementObject], [ScriptPlacementObject],
-// [ScriptPlacementObject] or [ScriptPlacementObject].
+// [ScriptPlacementObject], [ScriptPlacementObject], [ScriptPlacementObject],
+// [ScriptPlacementObject], [ScriptPlacementObject] or [ScriptPlacementObject].
 type ScriptPlacementUnion interface {
 	implementsScriptPlacement()
 }
@@ -430,6 +434,22 @@ func init() {
 	apijson.RegisterUnion(
 		reflect.TypeOf((*ScriptPlacementUnion)(nil)).Elem(),
 		"",
+		apijson.UnionVariant{
+			TypeFilter: gjson.JSON,
+			Type:       reflect.TypeOf(ScriptPlacementObject{}),
+		},
+		apijson.UnionVariant{
+			TypeFilter: gjson.JSON,
+			Type:       reflect.TypeOf(ScriptPlacementObject{}),
+		},
+		apijson.UnionVariant{
+			TypeFilter: gjson.JSON,
+			Type:       reflect.TypeOf(ScriptPlacementObject{}),
+		},
+		apijson.UnionVariant{
+			TypeFilter: gjson.JSON,
+			Type:       reflect.TypeOf(ScriptPlacementObject{}),
+		},
 		apijson.UnionVariant{
 			TypeFilter: gjson.JSON,
 			Type:       reflect.TypeOf(ScriptPlacementObject{}),
@@ -521,12 +541,13 @@ func (r ScriptPlacementObjectStatus) IsKnown() bool {
 type ScriptPlacementMode string
 
 const (
-	ScriptPlacementModeSmart ScriptPlacementMode = "smart"
+	ScriptPlacementModeSmart    ScriptPlacementMode = "smart"
+	ScriptPlacementModeTargeted ScriptPlacementMode = "targeted"
 )
 
 func (r ScriptPlacementMode) IsKnown() bool {
 	switch r {
-	case ScriptPlacementModeSmart:
+	case ScriptPlacementModeSmart, ScriptPlacementModeTargeted:
 		return true
 	}
 	return false
@@ -753,8 +774,7 @@ type ScriptUpdateResponse struct {
 	Observability ScriptUpdateResponseObservability `json:"observability"`
 	// Configuration for
 	// [Smart Placement](https://developers.cloudflare.com/workers/configuration/smart-placement).
-	// Specify either mode for Smart Placement, or one of region/hostname/host for
-	// targeted placement.
+	// Specify mode='smart' for Smart Placement, or one of region/hostname/host.
 	Placement ScriptUpdateResponsePlacement `json:"placement"`
 	// Deprecated: deprecated
 	PlacementMode ScriptUpdateResponsePlacementMode `json:"placement_mode"`
@@ -903,8 +923,7 @@ func (r scriptUpdateResponseObservabilityLogsJSON) RawJSON() string {
 
 // Configuration for
 // [Smart Placement](https://developers.cloudflare.com/workers/configuration/smart-placement).
-// Specify either mode for Smart Placement, or one of region/hostname/host for
-// targeted placement.
+// Specify mode='smart' for Smart Placement, or one of region/hostname/host.
 type ScriptUpdateResponsePlacement struct {
 	// TCP host and port for targeted placement.
 	Host string `json:"host"`
@@ -921,7 +940,10 @@ type ScriptUpdateResponsePlacement struct {
 	// Status of
 	// [Smart Placement](https://developers.cloudflare.com/workers/configuration/smart-placement).
 	Status ScriptUpdateResponsePlacementStatus `json:"status"`
-	JSON   scriptUpdateResponsePlacementJSON   `json:"-"`
+	// This field can have the runtime type of
+	// [[]ScriptUpdateResponsePlacementObjectTarget].
+	Target interface{}                       `json:"target"`
+	JSON   scriptUpdateResponsePlacementJSON `json:"-"`
 	union  ScriptUpdateResponsePlacementUnion
 }
 
@@ -934,6 +956,7 @@ type scriptUpdateResponsePlacementJSON struct {
 	Mode           apijson.Field
 	Region         apijson.Field
 	Status         apijson.Field
+	Target         apijson.Field
 	raw            string
 	ExtraFields    map[string]apijson.Field
 }
@@ -956,6 +979,8 @@ func (r *ScriptUpdateResponsePlacement) UnmarshalJSON(data []byte) (err error) {
 //
 // Possible runtime types of the union are [ScriptUpdateResponsePlacementObject],
 // [ScriptUpdateResponsePlacementObject], [ScriptUpdateResponsePlacementObject],
+// [ScriptUpdateResponsePlacementObject], [ScriptUpdateResponsePlacementObject],
+// [ScriptUpdateResponsePlacementObject], [ScriptUpdateResponsePlacementObject],
 // [ScriptUpdateResponsePlacementObject].
 func (r ScriptUpdateResponsePlacement) AsUnion() ScriptUpdateResponsePlacementUnion {
 	return r.union
@@ -963,10 +988,11 @@ func (r ScriptUpdateResponsePlacement) AsUnion() ScriptUpdateResponsePlacementUn
 
 // Configuration for
 // [Smart Placement](https://developers.cloudflare.com/workers/configuration/smart-placement).
-// Specify either mode for Smart Placement, or one of region/hostname/host for
-// targeted placement.
+// Specify mode='smart' for Smart Placement, or one of region/hostname/host.
 //
 // Union satisfied by [ScriptUpdateResponsePlacementObject],
+// [ScriptUpdateResponsePlacementObject], [ScriptUpdateResponsePlacementObject],
+// [ScriptUpdateResponsePlacementObject], [ScriptUpdateResponsePlacementObject],
 // [ScriptUpdateResponsePlacementObject], [ScriptUpdateResponsePlacementObject] or
 // [ScriptUpdateResponsePlacementObject].
 type ScriptUpdateResponsePlacementUnion interface {
@@ -977,6 +1003,22 @@ func init() {
 	apijson.RegisterUnion(
 		reflect.TypeOf((*ScriptUpdateResponsePlacementUnion)(nil)).Elem(),
 		"",
+		apijson.UnionVariant{
+			TypeFilter: gjson.JSON,
+			Type:       reflect.TypeOf(ScriptUpdateResponsePlacementObject{}),
+		},
+		apijson.UnionVariant{
+			TypeFilter: gjson.JSON,
+			Type:       reflect.TypeOf(ScriptUpdateResponsePlacementObject{}),
+		},
+		apijson.UnionVariant{
+			TypeFilter: gjson.JSON,
+			Type:       reflect.TypeOf(ScriptUpdateResponsePlacementObject{}),
+		},
+		apijson.UnionVariant{
+			TypeFilter: gjson.JSON,
+			Type:       reflect.TypeOf(ScriptUpdateResponsePlacementObject{}),
+		},
 		apijson.UnionVariant{
 			TypeFilter: gjson.JSON,
 			Type:       reflect.TypeOf(ScriptUpdateResponsePlacementObject{}),
@@ -1068,12 +1110,13 @@ func (r ScriptUpdateResponsePlacementObjectStatus) IsKnown() bool {
 type ScriptUpdateResponsePlacementMode string
 
 const (
-	ScriptUpdateResponsePlacementModeSmart ScriptUpdateResponsePlacementMode = "smart"
+	ScriptUpdateResponsePlacementModeSmart    ScriptUpdateResponsePlacementMode = "smart"
+	ScriptUpdateResponsePlacementModeTargeted ScriptUpdateResponsePlacementMode = "targeted"
 )
 
 func (r ScriptUpdateResponsePlacementMode) IsKnown() bool {
 	switch r {
-	case ScriptUpdateResponsePlacementModeSmart:
+	case ScriptUpdateResponsePlacementModeSmart, ScriptUpdateResponsePlacementModeTargeted:
 		return true
 	}
 	return false
@@ -1150,8 +1193,7 @@ type ScriptListResponse struct {
 	Observability ScriptListResponseObservability `json:"observability"`
 	// Configuration for
 	// [Smart Placement](https://developers.cloudflare.com/workers/configuration/smart-placement).
-	// Specify either mode for Smart Placement, or one of region/hostname/host for
-	// targeted placement.
+	// Specify mode='smart' for Smart Placement, or one of region/hostname/host.
 	Placement ScriptListResponsePlacement `json:"placement"`
 	// Deprecated: deprecated
 	PlacementMode ScriptListResponsePlacementMode `json:"placement_mode"`
@@ -1301,8 +1343,7 @@ func (r scriptListResponseObservabilityLogsJSON) RawJSON() string {
 
 // Configuration for
 // [Smart Placement](https://developers.cloudflare.com/workers/configuration/smart-placement).
-// Specify either mode for Smart Placement, or one of region/hostname/host for
-// targeted placement.
+// Specify mode='smart' for Smart Placement, or one of region/hostname/host.
 type ScriptListResponsePlacement struct {
 	// TCP host and port for targeted placement.
 	Host string `json:"host"`
@@ -1319,7 +1360,10 @@ type ScriptListResponsePlacement struct {
 	// Status of
 	// [Smart Placement](https://developers.cloudflare.com/workers/configuration/smart-placement).
 	Status ScriptListResponsePlacementStatus `json:"status"`
-	JSON   scriptListResponsePlacementJSON   `json:"-"`
+	// This field can have the runtime type of
+	// [[]ScriptListResponsePlacementObjectTarget].
+	Target interface{}                     `json:"target"`
+	JSON   scriptListResponsePlacementJSON `json:"-"`
 	union  ScriptListResponsePlacementUnion
 }
 
@@ -1332,6 +1376,7 @@ type scriptListResponsePlacementJSON struct {
 	Mode           apijson.Field
 	Region         apijson.Field
 	Status         apijson.Field
+	Target         apijson.Field
 	raw            string
 	ExtraFields    map[string]apijson.Field
 }
@@ -1354,6 +1399,8 @@ func (r *ScriptListResponsePlacement) UnmarshalJSON(data []byte) (err error) {
 //
 // Possible runtime types of the union are [ScriptListResponsePlacementObject],
 // [ScriptListResponsePlacementObject], [ScriptListResponsePlacementObject],
+// [ScriptListResponsePlacementObject], [ScriptListResponsePlacementObject],
+// [ScriptListResponsePlacementObject], [ScriptListResponsePlacementObject],
 // [ScriptListResponsePlacementObject].
 func (r ScriptListResponsePlacement) AsUnion() ScriptListResponsePlacementUnion {
 	return r.union
@@ -1361,10 +1408,11 @@ func (r ScriptListResponsePlacement) AsUnion() ScriptListResponsePlacementUnion 
 
 // Configuration for
 // [Smart Placement](https://developers.cloudflare.com/workers/configuration/smart-placement).
-// Specify either mode for Smart Placement, or one of region/hostname/host for
-// targeted placement.
+// Specify mode='smart' for Smart Placement, or one of region/hostname/host.
 //
 // Union satisfied by [ScriptListResponsePlacementObject],
+// [ScriptListResponsePlacementObject], [ScriptListResponsePlacementObject],
+// [ScriptListResponsePlacementObject], [ScriptListResponsePlacementObject],
 // [ScriptListResponsePlacementObject], [ScriptListResponsePlacementObject] or
 // [ScriptListResponsePlacementObject].
 type ScriptListResponsePlacementUnion interface {
@@ -1375,6 +1423,22 @@ func init() {
 	apijson.RegisterUnion(
 		reflect.TypeOf((*ScriptListResponsePlacementUnion)(nil)).Elem(),
 		"",
+		apijson.UnionVariant{
+			TypeFilter: gjson.JSON,
+			Type:       reflect.TypeOf(ScriptListResponsePlacementObject{}),
+		},
+		apijson.UnionVariant{
+			TypeFilter: gjson.JSON,
+			Type:       reflect.TypeOf(ScriptListResponsePlacementObject{}),
+		},
+		apijson.UnionVariant{
+			TypeFilter: gjson.JSON,
+			Type:       reflect.TypeOf(ScriptListResponsePlacementObject{}),
+		},
+		apijson.UnionVariant{
+			TypeFilter: gjson.JSON,
+			Type:       reflect.TypeOf(ScriptListResponsePlacementObject{}),
+		},
 		apijson.UnionVariant{
 			TypeFilter: gjson.JSON,
 			Type:       reflect.TypeOf(ScriptListResponsePlacementObject{}),
@@ -1466,12 +1530,13 @@ func (r ScriptListResponsePlacementObjectStatus) IsKnown() bool {
 type ScriptListResponsePlacementMode string
 
 const (
-	ScriptListResponsePlacementModeSmart ScriptListResponsePlacementMode = "smart"
+	ScriptListResponsePlacementModeSmart    ScriptListResponsePlacementMode = "smart"
+	ScriptListResponsePlacementModeTargeted ScriptListResponsePlacementMode = "targeted"
 )
 
 func (r ScriptListResponsePlacementMode) IsKnown() bool {
 	switch r {
-	case ScriptListResponsePlacementModeSmart:
+	case ScriptListResponsePlacementModeSmart, ScriptListResponsePlacementModeTargeted:
 		return true
 	}
 	return false
@@ -1544,14 +1609,14 @@ func (r ScriptListResponseUsageModel) IsKnown() bool {
 type ScriptDeleteResponse = interface{}
 
 type ScriptSearchResponse struct {
+	// Identifier.
+	ID string `json:"id,required"`
 	// When the script was created.
 	CreatedOn time.Time `json:"created_on,required" format:"date-time"`
 	// When the script was last modified.
 	ModifiedOn time.Time `json:"modified_on,required" format:"date-time"`
 	// Name of the script, used in URLs and route configuration.
 	ScriptName string `json:"script_name,required"`
-	// Identifier.
-	ScriptTag string `json:"script_tag,required"`
 	// Whether the environment is the default environment.
 	EnvironmentIsDefault bool `json:"environment_is_default"`
 	// Name of the environment.
@@ -1564,10 +1629,10 @@ type ScriptSearchResponse struct {
 // scriptSearchResponseJSON contains the JSON metadata for the struct
 // [ScriptSearchResponse]
 type scriptSearchResponseJSON struct {
+	ID                   apijson.Field
 	CreatedOn            apijson.Field
 	ModifiedOn           apijson.Field
 	ScriptName           apijson.Field
-	ScriptTag            apijson.Field
 	EnvironmentIsDefault apijson.Field
 	EnvironmentName      apijson.Field
 	ServiceName          apijson.Field
@@ -1588,6 +1653,10 @@ type ScriptUpdateParams struct {
 	AccountID param.Field[string] `path:"account_id,required"`
 	// JSON-encoded metadata about the uploaded parts and Worker configuration.
 	Metadata param.Field[ScriptUpdateParamsMetadata] `json:"metadata,required"`
+	// When set to "strict", the upload will fail if any `inherit` type bindings cannot
+	// be resolved against the previous version of the Worker. Without this,
+	// unresolvable inherit bindings are silently dropped.
+	BindingsInherit param.Field[ScriptUpdateParamsBindingsInherit] `query:"bindings_inherit"`
 	// An array of modules (often JavaScript files) comprising a Worker script. At
 	// least one module must be present and referenced in the metadata as `main_module`
 	// or `body_part` by filename.<br/>Possible Content-Type(s) are:
@@ -1613,8 +1682,18 @@ func (r ScriptUpdateParams) MarshalMultipart() (data []byte, contentType string,
 	return buf.Bytes(), writer.FormDataContentType(), nil
 }
 
+// URLQuery serializes [ScriptUpdateParams]'s query parameters as `url.Values`.
+func (r ScriptUpdateParams) URLQuery() (v url.Values) {
+	return apiquery.MarshalWithSettings(r, apiquery.QuerySettings{
+		ArrayFormat:  apiquery.ArrayQueryFormatRepeat,
+		NestedFormat: apiquery.NestedQueryFormatDots,
+	})
+}
+
 // JSON-encoded metadata about the uploaded parts and Worker configuration.
 type ScriptUpdateParamsMetadata struct {
+	// Annotations for the version created by this upload.
+	Annotations param.Field[ScriptUpdateParamsMetadataAnnotations] `json:"annotations"`
 	// Configuration for assets within a Worker.
 	Assets param.Field[ScriptUpdateParamsMetadataAssets] `json:"assets"`
 	// List of bindings attached to a Worker. You can find more about bindings on our
@@ -1649,8 +1728,7 @@ type ScriptUpdateParamsMetadata struct {
 	Observability param.Field[ScriptUpdateParamsMetadataObservability] `json:"observability"`
 	// Configuration for
 	// [Smart Placement](https://developers.cloudflare.com/workers/configuration/smart-placement).
-	// Specify either mode for Smart Placement, or one of region/hostname/host for
-	// targeted placement.
+	// Specify mode='smart' for Smart Placement, or one of region/hostname/host.
 	Placement param.Field[ScriptUpdateParamsMetadataPlacementUnion] `json:"placement"`
 	// List of strings to use as tags for this Worker.
 	Tags param.Field[[]string] `json:"tags"`
@@ -1661,6 +1739,18 @@ type ScriptUpdateParamsMetadata struct {
 }
 
 func (r ScriptUpdateParamsMetadata) MarshalJSON() (data []byte, err error) {
+	return apijson.MarshalRoot(r)
+}
+
+// Annotations for the version created by this upload.
+type ScriptUpdateParamsMetadataAnnotations struct {
+	// Human-readable message about the version.
+	WorkersMessage param.Field[string] `json:"workers/message"`
+	// User-provided identifier for the version.
+	WorkersTag param.Field[string] `json:"workers/tag"`
+}
+
+func (r ScriptUpdateParamsMetadataAnnotations) MarshalJSON() (data []byte, err error) {
 	return apijson.MarshalRoot(r)
 }
 
@@ -1786,9 +1876,8 @@ type ScriptUpdateParamsMetadataBinding struct {
 	// [Learn more](https://developer.mozilla.org/en-US/docs/Web/API/SubtleCrypto/importKey#format).
 	Format param.Field[ScriptUpdateParamsMetadataBindingsFormat] `json:"format"`
 	// Name of the Vectorize index to bind to.
-	IndexName param.Field[string] `json:"index_name"`
-	// JSON data to use.
-	Json param.Field[string] `json:"json"`
+	IndexName param.Field[string]      `json:"index_name"`
+	Json      param.Field[interface{}] `json:"json"`
 	// The
 	// [jurisdiction](https://developers.cloudflare.com/r2/reference/data-location/#jurisdictional-restrictions)
 	// of the R2 bucket.
@@ -1818,7 +1907,8 @@ type ScriptUpdateParamsMetadataBinding struct {
 	// Name of the secret in the store.
 	SecretName param.Field[string] `json:"secret_name"`
 	// Name of Worker to bind to.
-	Service param.Field[string] `json:"service"`
+	Service param.Field[string]      `json:"service"`
+	Simple  param.Field[interface{}] `json:"simple"`
 	// ID of the store containing the secret.
 	StoreID param.Field[string] `json:"store_id"`
 	// The text value to use.
@@ -1857,6 +1947,7 @@ func (r ScriptUpdateParamsMetadataBinding) implementsScriptUpdateParamsMetadataB
 // [workers.ScriptUpdateParamsMetadataBindingsWorkersBindingKindPlainText],
 // [workers.ScriptUpdateParamsMetadataBindingsWorkersBindingKindPipelines],
 // [workers.ScriptUpdateParamsMetadataBindingsWorkersBindingKindQueue],
+// [workers.ScriptUpdateParamsMetadataBindingsWorkersBindingKindRatelimit],
 // [workers.ScriptUpdateParamsMetadataBindingsWorkersBindingKindR2Bucket],
 // [workers.ScriptUpdateParamsMetadataBindingsWorkersBindingKindSecretText],
 // [workers.ScriptUpdateParamsMetadataBindingsWorkersBindingKindSendEmail],
@@ -2093,7 +2184,7 @@ func (r ScriptUpdateParamsMetadataBindingsWorkersBindingKindDispatchNamespaceTyp
 type ScriptUpdateParamsMetadataBindingsWorkersBindingKindDispatchNamespaceOutbound struct {
 	// Pass information from the Dispatch Worker to the Outbound Worker through the
 	// parameters.
-	Params param.Field[[]string] `json:"params"`
+	Params param.Field[[]ScriptUpdateParamsMetadataBindingsWorkersBindingKindDispatchNamespaceOutboundParam] `json:"params"`
 	// Outbound worker.
 	Worker param.Field[ScriptUpdateParamsMetadataBindingsWorkersBindingKindDispatchNamespaceOutboundWorker] `json:"worker"`
 }
@@ -2102,8 +2193,19 @@ func (r ScriptUpdateParamsMetadataBindingsWorkersBindingKindDispatchNamespaceOut
 	return apijson.MarshalRoot(r)
 }
 
+type ScriptUpdateParamsMetadataBindingsWorkersBindingKindDispatchNamespaceOutboundParam struct {
+	// Name of the parameter.
+	Name param.Field[string] `json:"name,required"`
+}
+
+func (r ScriptUpdateParamsMetadataBindingsWorkersBindingKindDispatchNamespaceOutboundParam) MarshalJSON() (data []byte, err error) {
+	return apijson.MarshalRoot(r)
+}
+
 // Outbound worker.
 type ScriptUpdateParamsMetadataBindingsWorkersBindingKindDispatchNamespaceOutboundWorker struct {
+	// Entrypoint to invoke on the outbound worker.
+	Entrypoint param.Field[string] `json:"entrypoint"`
 	// Environment of the outbound worker.
 	Environment param.Field[string] `json:"environment"`
 	// Name of the outbound worker.
@@ -2251,7 +2353,7 @@ func (r ScriptUpdateParamsMetadataBindingsWorkersBindingKindImagesType) IsKnown(
 
 type ScriptUpdateParamsMetadataBindingsWorkersBindingKindJson struct {
 	// JSON data to use.
-	Json param.Field[string] `json:"json,required"`
+	Json param.Field[interface{}] `json:"json,required"`
 	// A JavaScript variable name for the binding.
 	Name param.Field[string] `json:"name,required"`
 	// The kind of resource that the binding provides.
@@ -2430,6 +2532,51 @@ const (
 func (r ScriptUpdateParamsMetadataBindingsWorkersBindingKindQueueType) IsKnown() bool {
 	switch r {
 	case ScriptUpdateParamsMetadataBindingsWorkersBindingKindQueueTypeQueue:
+		return true
+	}
+	return false
+}
+
+type ScriptUpdateParamsMetadataBindingsWorkersBindingKindRatelimit struct {
+	// A JavaScript variable name for the binding.
+	Name param.Field[string] `json:"name,required"`
+	// Identifier of the rate limit namespace to bind to.
+	NamespaceID param.Field[string] `json:"namespace_id,required"`
+	// The rate limit configuration.
+	Simple param.Field[ScriptUpdateParamsMetadataBindingsWorkersBindingKindRatelimitSimple] `json:"simple,required"`
+	// The kind of resource that the binding provides.
+	Type param.Field[ScriptUpdateParamsMetadataBindingsWorkersBindingKindRatelimitType] `json:"type,required"`
+}
+
+func (r ScriptUpdateParamsMetadataBindingsWorkersBindingKindRatelimit) MarshalJSON() (data []byte, err error) {
+	return apijson.MarshalRoot(r)
+}
+
+func (r ScriptUpdateParamsMetadataBindingsWorkersBindingKindRatelimit) implementsScriptUpdateParamsMetadataBindingUnion() {
+}
+
+// The rate limit configuration.
+type ScriptUpdateParamsMetadataBindingsWorkersBindingKindRatelimitSimple struct {
+	// The limit (requests per period).
+	Limit param.Field[float64] `json:"limit,required"`
+	// The period in seconds.
+	Period param.Field[int64] `json:"period,required"`
+}
+
+func (r ScriptUpdateParamsMetadataBindingsWorkersBindingKindRatelimitSimple) MarshalJSON() (data []byte, err error) {
+	return apijson.MarshalRoot(r)
+}
+
+// The kind of resource that the binding provides.
+type ScriptUpdateParamsMetadataBindingsWorkersBindingKindRatelimitType string
+
+const (
+	ScriptUpdateParamsMetadataBindingsWorkersBindingKindRatelimitTypeRatelimit ScriptUpdateParamsMetadataBindingsWorkersBindingKindRatelimitType = "ratelimit"
+)
+
+func (r ScriptUpdateParamsMetadataBindingsWorkersBindingKindRatelimitType) IsKnown() bool {
+	switch r {
+	case ScriptUpdateParamsMetadataBindingsWorkersBindingKindRatelimitTypeRatelimit:
 		return true
 	}
 	return false
@@ -2890,6 +3037,7 @@ const (
 	ScriptUpdateParamsMetadataBindingsTypePlainText              ScriptUpdateParamsMetadataBindingsType = "plain_text"
 	ScriptUpdateParamsMetadataBindingsTypePipelines              ScriptUpdateParamsMetadataBindingsType = "pipelines"
 	ScriptUpdateParamsMetadataBindingsTypeQueue                  ScriptUpdateParamsMetadataBindingsType = "queue"
+	ScriptUpdateParamsMetadataBindingsTypeRatelimit              ScriptUpdateParamsMetadataBindingsType = "ratelimit"
 	ScriptUpdateParamsMetadataBindingsTypeR2Bucket               ScriptUpdateParamsMetadataBindingsType = "r2_bucket"
 	ScriptUpdateParamsMetadataBindingsTypeSecretText             ScriptUpdateParamsMetadataBindingsType = "secret_text"
 	ScriptUpdateParamsMetadataBindingsTypeSendEmail              ScriptUpdateParamsMetadataBindingsType = "send_email"
@@ -2905,7 +3053,7 @@ const (
 
 func (r ScriptUpdateParamsMetadataBindingsType) IsKnown() bool {
 	switch r {
-	case ScriptUpdateParamsMetadataBindingsTypeAI, ScriptUpdateParamsMetadataBindingsTypeAnalyticsEngine, ScriptUpdateParamsMetadataBindingsTypeAssets, ScriptUpdateParamsMetadataBindingsTypeBrowser, ScriptUpdateParamsMetadataBindingsTypeD1, ScriptUpdateParamsMetadataBindingsTypeDataBlob, ScriptUpdateParamsMetadataBindingsTypeDispatchNamespace, ScriptUpdateParamsMetadataBindingsTypeDurableObjectNamespace, ScriptUpdateParamsMetadataBindingsTypeHyperdrive, ScriptUpdateParamsMetadataBindingsTypeInherit, ScriptUpdateParamsMetadataBindingsTypeImages, ScriptUpdateParamsMetadataBindingsTypeJson, ScriptUpdateParamsMetadataBindingsTypeKVNamespace, ScriptUpdateParamsMetadataBindingsTypeMTLSCertificate, ScriptUpdateParamsMetadataBindingsTypePlainText, ScriptUpdateParamsMetadataBindingsTypePipelines, ScriptUpdateParamsMetadataBindingsTypeQueue, ScriptUpdateParamsMetadataBindingsTypeR2Bucket, ScriptUpdateParamsMetadataBindingsTypeSecretText, ScriptUpdateParamsMetadataBindingsTypeSendEmail, ScriptUpdateParamsMetadataBindingsTypeService, ScriptUpdateParamsMetadataBindingsTypeTextBlob, ScriptUpdateParamsMetadataBindingsTypeVectorize, ScriptUpdateParamsMetadataBindingsTypeVersionMetadata, ScriptUpdateParamsMetadataBindingsTypeSecretsStoreSecret, ScriptUpdateParamsMetadataBindingsTypeSecretKey, ScriptUpdateParamsMetadataBindingsTypeWorkflow, ScriptUpdateParamsMetadataBindingsTypeWasmModule:
+	case ScriptUpdateParamsMetadataBindingsTypeAI, ScriptUpdateParamsMetadataBindingsTypeAnalyticsEngine, ScriptUpdateParamsMetadataBindingsTypeAssets, ScriptUpdateParamsMetadataBindingsTypeBrowser, ScriptUpdateParamsMetadataBindingsTypeD1, ScriptUpdateParamsMetadataBindingsTypeDataBlob, ScriptUpdateParamsMetadataBindingsTypeDispatchNamespace, ScriptUpdateParamsMetadataBindingsTypeDurableObjectNamespace, ScriptUpdateParamsMetadataBindingsTypeHyperdrive, ScriptUpdateParamsMetadataBindingsTypeInherit, ScriptUpdateParamsMetadataBindingsTypeImages, ScriptUpdateParamsMetadataBindingsTypeJson, ScriptUpdateParamsMetadataBindingsTypeKVNamespace, ScriptUpdateParamsMetadataBindingsTypeMTLSCertificate, ScriptUpdateParamsMetadataBindingsTypePlainText, ScriptUpdateParamsMetadataBindingsTypePipelines, ScriptUpdateParamsMetadataBindingsTypeQueue, ScriptUpdateParamsMetadataBindingsTypeRatelimit, ScriptUpdateParamsMetadataBindingsTypeR2Bucket, ScriptUpdateParamsMetadataBindingsTypeSecretText, ScriptUpdateParamsMetadataBindingsTypeSendEmail, ScriptUpdateParamsMetadataBindingsTypeService, ScriptUpdateParamsMetadataBindingsTypeTextBlob, ScriptUpdateParamsMetadataBindingsTypeVectorize, ScriptUpdateParamsMetadataBindingsTypeVersionMetadata, ScriptUpdateParamsMetadataBindingsTypeSecretsStoreSecret, ScriptUpdateParamsMetadataBindingsTypeSecretKey, ScriptUpdateParamsMetadataBindingsTypeWorkflow, ScriptUpdateParamsMetadataBindingsTypeWasmModule:
 		return true
 	}
 	return false
@@ -3042,8 +3190,7 @@ func (r ScriptUpdateParamsMetadataObservabilityLogs) MarshalJSON() (data []byte,
 
 // Configuration for
 // [Smart Placement](https://developers.cloudflare.com/workers/configuration/smart-placement).
-// Specify either mode for Smart Placement, or one of region/hostname/host for
-// targeted placement.
+// Specify mode='smart' for Smart Placement, or one of region/hostname/host.
 type ScriptUpdateParamsMetadataPlacement struct {
 	// TCP host and port for targeted placement.
 	Host param.Field[string] `json:"host"`
@@ -3053,7 +3200,8 @@ type ScriptUpdateParamsMetadataPlacement struct {
 	// [Smart Placement](https://developers.cloudflare.com/workers/configuration/smart-placement).
 	Mode param.Field[ScriptUpdateParamsMetadataPlacementMode] `json:"mode"`
 	// Cloud region for targeted placement in format 'provider:region'.
-	Region param.Field[string] `json:"region"`
+	Region param.Field[string]      `json:"region"`
+	Target param.Field[interface{}] `json:"target"`
 }
 
 func (r ScriptUpdateParamsMetadataPlacement) MarshalJSON() (data []byte, err error) {
@@ -3064,10 +3212,13 @@ func (r ScriptUpdateParamsMetadataPlacement) implementsScriptUpdateParamsMetadat
 
 // Configuration for
 // [Smart Placement](https://developers.cloudflare.com/workers/configuration/smart-placement).
-// Specify either mode for Smart Placement, or one of region/hostname/host for
-// targeted placement.
+// Specify mode='smart' for Smart Placement, or one of region/hostname/host.
 //
 // Satisfied by [workers.ScriptUpdateParamsMetadataPlacementObject],
+// [workers.ScriptUpdateParamsMetadataPlacementObject],
+// [workers.ScriptUpdateParamsMetadataPlacementObject],
+// [workers.ScriptUpdateParamsMetadataPlacementObject],
+// [workers.ScriptUpdateParamsMetadataPlacementObject],
 // [workers.ScriptUpdateParamsMetadataPlacementObject],
 // [workers.ScriptUpdateParamsMetadataPlacementObject],
 // [workers.ScriptUpdateParamsMetadataPlacementObject],
@@ -3128,12 +3279,13 @@ func (r ScriptUpdateParamsMetadataPlacementObjectStatus) IsKnown() bool {
 type ScriptUpdateParamsMetadataPlacementMode string
 
 const (
-	ScriptUpdateParamsMetadataPlacementModeSmart ScriptUpdateParamsMetadataPlacementMode = "smart"
+	ScriptUpdateParamsMetadataPlacementModeSmart    ScriptUpdateParamsMetadataPlacementMode = "smart"
+	ScriptUpdateParamsMetadataPlacementModeTargeted ScriptUpdateParamsMetadataPlacementMode = "targeted"
 )
 
 func (r ScriptUpdateParamsMetadataPlacementMode) IsKnown() bool {
 	switch r {
-	case ScriptUpdateParamsMetadataPlacementModeSmart:
+	case ScriptUpdateParamsMetadataPlacementModeSmart, ScriptUpdateParamsMetadataPlacementModeTargeted:
 		return true
 	}
 	return false
@@ -3169,6 +3321,23 @@ const (
 func (r ScriptUpdateParamsMetadataUsageModel) IsKnown() bool {
 	switch r {
 	case ScriptUpdateParamsMetadataUsageModelStandard, ScriptUpdateParamsMetadataUsageModelBundled, ScriptUpdateParamsMetadataUsageModelUnbound:
+		return true
+	}
+	return false
+}
+
+// When set to "strict", the upload will fail if any `inherit` type bindings cannot
+// be resolved against the previous version of the Worker. Without this,
+// unresolvable inherit bindings are silently dropped.
+type ScriptUpdateParamsBindingsInherit string
+
+const (
+	ScriptUpdateParamsBindingsInheritStrict ScriptUpdateParamsBindingsInherit = "strict"
+)
+
+func (r ScriptUpdateParamsBindingsInherit) IsKnown() bool {
+	switch r {
+	case ScriptUpdateParamsBindingsInheritStrict:
 		return true
 	}
 	return false
