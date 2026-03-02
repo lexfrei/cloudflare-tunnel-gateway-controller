@@ -21,8 +21,8 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/api/v1alpha1"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/cfmetrics"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/config"
-	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/metrics"
 )
 
 func TestGatewayReconciler_WrongGatewayClass(t *testing.T) {
@@ -54,7 +54,7 @@ func TestGatewayReconciler_WrongGatewayClass(t *testing.T) {
 		Scheme:           fakeClient.Scheme(),
 		GatewayClassName: "cloudflare-tunnel",
 		ControllerName:   "test-controller",
-		ConfigResolver:   config.NewResolver(fakeClient, "default", metrics.NewNoopCollector()),
+		ConfigResolver:   config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
 	}
 
 	result, err := reconciler.Reconcile(ctx, ctrl.Request{
@@ -80,7 +80,7 @@ func TestGatewayReconciler_NotFound(t *testing.T) {
 		Scheme:           fakeClient.Scheme(),
 		GatewayClassName: "cloudflare-tunnel",
 		ControllerName:   "test-controller",
-		ConfigResolver:   config.NewResolver(fakeClient, "default", metrics.NewNoopCollector()),
+		ConfigResolver:   config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
 	}
 
 	result, err := reconciler.Reconcile(ctx, ctrl.Request{
@@ -137,7 +137,7 @@ func TestGatewayReconciler_ConfigResolutionError(t *testing.T) {
 		Scheme:           fakeClient.Scheme(),
 		GatewayClassName: "cloudflare-tunnel",
 		ControllerName:   "test-controller",
-		ConfigResolver:   config.NewResolver(fakeClient, "default", metrics.NewNoopCollector()),
+		ConfigResolver:   config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
 	}
 
 	result, err := reconciler.Reconcile(ctx, ctrl.Request{
@@ -221,7 +221,7 @@ func TestGatewayReconciler_UpdateStatus(t *testing.T) {
 		Scheme:           fakeClient.Scheme(),
 		GatewayClassName: "cloudflare-tunnel",
 		ControllerName:   "test-controller",
-		ConfigResolver:   config.NewResolver(fakeClient, "default", metrics.NewNoopCollector()),
+		ConfigResolver:   config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
 		HelmManager:      nil,
 	}
 
@@ -807,7 +807,7 @@ func setupGatewayTestReconcilerWithManagedCloudflared() (*GatewayReconciler, cli
 		Scheme:           scheme,
 		GatewayClassName: "cloudflare-tunnel",
 		ControllerName:   "test-controller",
-		ConfigResolver:   config.NewResolver(fakeClient, "default", metrics.NewNoopCollector()),
+		ConfigResolver:   config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
 		HelmManager:      nil,
 	}, fakeClient
 }
@@ -832,7 +832,7 @@ func TestGatewayReconciler_MapperIntegration(t *testing.T) {
 		Scheme:           fakeClient.Scheme(),
 		GatewayClassName: "cloudflare-tunnel",
 		ControllerName:   "test-controller",
-		ConfigResolver:   config.NewResolver(fakeClient, "default", metrics.NewNoopCollector()),
+		ConfigResolver:   config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
 	}
 
 	mapper := &ConfigMapper{

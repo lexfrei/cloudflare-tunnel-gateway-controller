@@ -17,9 +17,9 @@ import (
 	gatewayv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/api/v1alpha1"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/cfmetrics"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/config"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/helm"
-	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/metrics"
 )
 
 // Config holds all configuration options for the controller manager.
@@ -113,7 +113,7 @@ func Run(ctx context.Context, cfg *Config) error {
 	}
 
 	// Create metrics collector and register with controller-runtime
-	metricsCollector := metrics.NewCollector(ctrlMetrics.Registry)
+	metricsCollector := cfmetrics.NewCollector(ctrlMetrics.Registry)
 
 	// Determine default namespace for secret lookups
 	defaultNamespace := getControllerNamespace()

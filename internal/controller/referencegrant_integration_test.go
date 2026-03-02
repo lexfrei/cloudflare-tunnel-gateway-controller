@@ -14,8 +14,8 @@ import (
 	gatewayv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/api/v1alpha1"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/cfmetrics"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/ingress"
-	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/metrics"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/referencegrant"
 )
 
@@ -83,7 +83,7 @@ func TestRouteSyncer_CrossNamespaceRef_WithoutGrant(t *testing.T) {
 		"cluster.local",
 		"cloudflare-tunnel",
 		nil, // No config resolver needed for this test
-		metrics.NewNoopCollector(),
+		cfmetrics.NewNoopCollector(),
 		nil,
 	)
 
@@ -360,7 +360,7 @@ func TestRouteSyncer_GRPCRoute_CrossNamespaceRef_WithGrant(t *testing.T) {
 		"cluster.local",
 		"cloudflare-tunnel",
 		nil,
-		metrics.NewNoopCollector(),
+		cfmetrics.NewNoopCollector(),
 		nil,
 	)
 
@@ -517,7 +517,7 @@ func TestRouteSyncer_ReferenceGrant_SpecificName(t *testing.T) {
 		"cluster.local",
 		"cloudflare-tunnel",
 		nil,
-		metrics.NewNoopCollector(),
+		cfmetrics.NewNoopCollector(),
 		nil,
 	)
 

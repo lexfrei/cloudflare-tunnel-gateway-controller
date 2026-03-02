@@ -7,7 +7,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
-	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/metrics"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/cfmetrics"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/referencegrant"
 )
 
@@ -22,7 +22,7 @@ func NewGRPCBuilder(
 	clusterDomain string,
 	validator *referencegrant.Validator,
 	c client.Reader,
-	m metrics.Collector,
+	m cfmetrics.Collector,
 	logger *slog.Logger,
 ) *GRPCBuilder {
 	return &GRPCBuilder{

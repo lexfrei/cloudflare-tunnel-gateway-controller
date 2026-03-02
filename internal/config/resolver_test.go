@@ -16,15 +16,15 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/api/v1alpha1"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/cfmetrics"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/config"
-	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/metrics"
 )
 
 func TestNewResolver(t *testing.T) {
 	t.Parallel()
 
 	fakeClient := setupFakeClient()
-	resolver := config.NewResolver(fakeClient, "default", metrics.NewNoopCollector())
+	resolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector())
 
 	require.NotNil(t, resolver)
 }
@@ -82,7 +82,7 @@ func TestResolveFromGatewayClass_Valid(t *testing.T) {
 	gatewayClass := newGatewayClass("test-class", "test-config")
 
 	fakeClient := setupFakeClient(secret, tunnelSecret, gatewayClassConfig, gatewayClass)
-	resolver := config.NewResolver(fakeClient, "default", metrics.NewNoopCollector())
+	resolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector())
 
 	resolved, err := resolver.ResolveFromGatewayClass(ctx, gatewayClass)
 
@@ -115,7 +115,7 @@ func TestResolveFromGatewayClass_MissingParametersRef(t *testing.T) {
 	}
 
 	fakeClient := setupFakeClient(gatewayClass)
-	resolver := config.NewResolver(fakeClient, "default", metrics.NewNoopCollector())
+	resolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector())
 
 	_, err := resolver.ResolveFromGatewayClass(ctx, gatewayClass)
 
@@ -143,7 +143,7 @@ func TestResolveFromGatewayClass_WrongGroup(t *testing.T) {
 	}
 
 	fakeClient := setupFakeClient(gatewayClass)
-	resolver := config.NewResolver(fakeClient, "default", metrics.NewNoopCollector())
+	resolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector())
 
 	_, err := resolver.ResolveFromGatewayClass(ctx, gatewayClass)
 
@@ -171,7 +171,7 @@ func TestResolveFromGatewayClass_WrongKind(t *testing.T) {
 	}
 
 	fakeClient := setupFakeClient(gatewayClass)
-	resolver := config.NewResolver(fakeClient, "default", metrics.NewNoopCollector())
+	resolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector())
 
 	_, err := resolver.ResolveFromGatewayClass(ctx, gatewayClass)
 
@@ -187,7 +187,7 @@ func TestResolveFromGatewayClass_ConfigNotFound(t *testing.T) {
 	gatewayClass := newGatewayClass("test-class", "non-existent-config")
 
 	fakeClient := setupFakeClient(gatewayClass)
-	resolver := config.NewResolver(fakeClient, "default", metrics.NewNoopCollector())
+	resolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector())
 
 	_, err := resolver.ResolveFromGatewayClass(ctx, gatewayClass)
 
@@ -216,7 +216,7 @@ func TestResolveFromGatewayClass_SecretNotFound(t *testing.T) {
 	gatewayClass := newGatewayClass("test-class", "test-config")
 
 	fakeClient := setupFakeClient(gatewayClassConfig, gatewayClass)
-	resolver := config.NewResolver(fakeClient, "default", metrics.NewNoopCollector())
+	resolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector())
 
 	_, err := resolver.ResolveFromGatewayClass(ctx, gatewayClass)
 
@@ -255,7 +255,7 @@ func TestResolveFromGatewayClass_MissingAPIToken(t *testing.T) {
 	gatewayClass := newGatewayClass("test-class", "test-config")
 
 	fakeClient := setupFakeClient(secret, gatewayClassConfig, gatewayClass)
-	resolver := config.NewResolver(fakeClient, "default", metrics.NewNoopCollector())
+	resolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector())
 
 	_, err := resolver.ResolveFromGatewayClass(ctx, gatewayClass)
 
@@ -298,7 +298,7 @@ func TestResolveFromGatewayClassName_Valid(t *testing.T) {
 	gatewayClass := newGatewayClass("test-class", "test-config")
 
 	fakeClient := setupFakeClient(secret, gatewayClassConfig, gatewayClass)
-	resolver := config.NewResolver(fakeClient, "default", metrics.NewNoopCollector())
+	resolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector())
 
 	resolved, err := resolver.ResolveFromGatewayClassName(ctx, "test-class")
 
@@ -313,7 +313,7 @@ func TestResolveFromGatewayClassName_NotFound(t *testing.T) {
 	ctx := context.Background()
 
 	fakeClient := setupFakeClient()
-	resolver := config.NewResolver(fakeClient, "default", metrics.NewNoopCollector())
+	resolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector())
 
 	_, err := resolver.ResolveFromGatewayClassName(ctx, "non-existent")
 
@@ -357,7 +357,7 @@ func TestResolveConfig_CloudflaredEnabled_MissingTunnelTokenRef(t *testing.T) {
 	gatewayClass := newGatewayClass("test-class", "test-config")
 
 	fakeClient := setupFakeClient(secret, gatewayClassConfig, gatewayClass)
-	resolver := config.NewResolver(fakeClient, "default", metrics.NewNoopCollector())
+	resolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector())
 
 	_, err := resolver.ResolveFromGatewayClass(ctx, gatewayClass)
 
@@ -404,7 +404,7 @@ func TestResolveConfig_CloudflaredEnabled_TunnelSecretNotFound(t *testing.T) {
 	gatewayClass := newGatewayClass("test-class", "test-config")
 
 	fakeClient := setupFakeClient(secret, gatewayClassConfig, gatewayClass)
-	resolver := config.NewResolver(fakeClient, "default", metrics.NewNoopCollector())
+	resolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector())
 
 	_, err := resolver.ResolveFromGatewayClass(ctx, gatewayClass)
 
@@ -461,7 +461,7 @@ func TestResolveConfig_CloudflaredEnabled_MissingTunnelToken(t *testing.T) {
 	gatewayClass := newGatewayClass("test-class", "test-config")
 
 	fakeClient := setupFakeClient(secret, tunnelSecret, gatewayClassConfig, gatewayClass)
-	resolver := config.NewResolver(fakeClient, "default", metrics.NewNoopCollector())
+	resolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector())
 
 	_, err := resolver.ResolveFromGatewayClass(ctx, gatewayClass)
 
@@ -504,7 +504,7 @@ func TestResolveConfig_CloudflaredDisabled(t *testing.T) {
 	gatewayClass := newGatewayClass("test-class", "test-config")
 
 	fakeClient := setupFakeClient(secret, gatewayClassConfig, gatewayClass)
-	resolver := config.NewResolver(fakeClient, "default", metrics.NewNoopCollector())
+	resolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector())
 
 	resolved, err := resolver.ResolveFromGatewayClass(ctx, gatewayClass)
 
@@ -566,7 +566,7 @@ func TestResolveConfig_AWGConfig(t *testing.T) {
 	gatewayClass := newGatewayClass("test-class", "test-config")
 
 	fakeClient := setupFakeClient(secret, tunnelSecret, gatewayClassConfig, gatewayClass)
-	resolver := config.NewResolver(fakeClient, "default", metrics.NewNoopCollector())
+	resolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector())
 
 	resolved, err := resolver.ResolveFromGatewayClass(ctx, gatewayClass)
 
@@ -628,7 +628,7 @@ func TestResolveConfig_AWGConfig_DefaultPrefix(t *testing.T) {
 	gatewayClass := newGatewayClass("test-class", "test-config")
 
 	fakeClient := setupFakeClient(secret, tunnelSecret, gatewayClassConfig, gatewayClass)
-	resolver := config.NewResolver(fakeClient, "default", metrics.NewNoopCollector())
+	resolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector())
 
 	resolved, err := resolver.ResolveFromGatewayClass(ctx, gatewayClass)
 
@@ -671,7 +671,7 @@ func TestResolveConfig_DefaultNamespace(t *testing.T) {
 	gatewayClass := newGatewayClass("test-class", "test-config")
 
 	fakeClient := setupFakeClient(secret, gatewayClassConfig, gatewayClass)
-	resolver := config.NewResolver(fakeClient, "my-default-ns", metrics.NewNoopCollector())
+	resolver := config.NewResolver(fakeClient, "my-default-ns", cfmetrics.NewNoopCollector())
 
 	resolved, err := resolver.ResolveFromGatewayClass(ctx, gatewayClass)
 
@@ -716,7 +716,7 @@ func TestResolveConfig_AccountIDFromSecret(t *testing.T) {
 	gatewayClass := newGatewayClass("test-class", "test-config")
 
 	fakeClient := setupFakeClient(secret, gatewayClassConfig, gatewayClass)
-	resolver := config.NewResolver(fakeClient, "default", metrics.NewNoopCollector())
+	resolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector())
 
 	resolved, err := resolver.ResolveFromGatewayClass(ctx, gatewayClass)
 
@@ -761,7 +761,7 @@ func TestResolveConfig_AccountIDFromSpec(t *testing.T) {
 	gatewayClass := newGatewayClass("test-class", "test-config")
 
 	fakeClient := setupFakeClient(secret, gatewayClassConfig, gatewayClass)
-	resolver := config.NewResolver(fakeClient, "default", metrics.NewNoopCollector())
+	resolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector())
 
 	resolved, err := resolver.ResolveFromGatewayClass(ctx, gatewayClass)
 
@@ -805,7 +805,7 @@ func TestResolveConfig_CustomAPITokenKey(t *testing.T) {
 	gatewayClass := newGatewayClass("test-class", "test-config")
 
 	fakeClient := setupFakeClient(secret, gatewayClassConfig, gatewayClass)
-	resolver := config.NewResolver(fakeClient, "default", metrics.NewNoopCollector())
+	resolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector())
 
 	resolved, err := resolver.ResolveFromGatewayClass(ctx, gatewayClass)
 
@@ -863,7 +863,7 @@ func TestResolveConfig_CustomTunnelTokenKey(t *testing.T) {
 	gatewayClass := newGatewayClass("test-class", "test-config")
 
 	fakeClient := setupFakeClient(secret, tunnelSecret, gatewayClassConfig, gatewayClass)
-	resolver := config.NewResolver(fakeClient, "default", metrics.NewNoopCollector())
+	resolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector())
 
 	resolved, err := resolver.ResolveFromGatewayClass(ctx, gatewayClass)
 
@@ -875,7 +875,7 @@ func TestCreateCloudflareClient(t *testing.T) {
 	t.Parallel()
 
 	fakeClient := setupFakeClient()
-	resolver := config.NewResolver(fakeClient, "default", metrics.NewNoopCollector())
+	resolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector())
 
 	resolved := &config.ResolvedConfig{
 		APIToken: "test-api-token",
@@ -892,7 +892,7 @@ func TestResolveAccountID_FromResolvedConfig(t *testing.T) {
 	ctx := context.Background()
 
 	fakeClient := setupFakeClient()
-	resolver := config.NewResolver(fakeClient, "default", metrics.NewNoopCollector())
+	resolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector())
 
 	resolved := &config.ResolvedConfig{
 		AccountID:  "already-resolved-account-id",
@@ -922,7 +922,7 @@ func TestGetConfigForGatewayClass_Valid(t *testing.T) {
 	gatewayClass := newGatewayClass("test-class", "test-config")
 
 	fakeClient := setupFakeClient(gatewayClassConfig, gatewayClass)
-	resolver := config.NewResolver(fakeClient, "default", metrics.NewNoopCollector())
+	resolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector())
 
 	cfg, err := resolver.GetConfigForGatewayClass(ctx, gatewayClass)
 
@@ -947,7 +947,7 @@ func TestGetConfigForGatewayClass_MissingParametersRef(t *testing.T) {
 	}
 
 	fakeClient := setupFakeClient(gatewayClass)
-	resolver := config.NewResolver(fakeClient, "default", metrics.NewNoopCollector())
+	resolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector())
 
 	_, err := resolver.GetConfigForGatewayClass(ctx, gatewayClass)
 
@@ -975,7 +975,7 @@ func TestGetConfigForGatewayClass_WrongGroupKind(t *testing.T) {
 	}
 
 	fakeClient := setupFakeClient(gatewayClass)
-	resolver := config.NewResolver(fakeClient, "default", metrics.NewNoopCollector())
+	resolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector())
 
 	_, err := resolver.GetConfigForGatewayClass(ctx, gatewayClass)
 
@@ -991,7 +991,7 @@ func TestGetConfigForGatewayClass_ConfigNotFound(t *testing.T) {
 	gatewayClass := newGatewayClass("test-class", "non-existent-config")
 
 	fakeClient := setupFakeClient(gatewayClass)
-	resolver := config.NewResolver(fakeClient, "default", metrics.NewNoopCollector())
+	resolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector())
 
 	_, err := resolver.GetConfigForGatewayClass(ctx, gatewayClass)
 
@@ -1045,7 +1045,7 @@ func TestResolveConfig_DefaultCloudflaredSettings(t *testing.T) {
 	gatewayClass := newGatewayClass("test-class", "test-config")
 
 	fakeClient := setupFakeClient(secret, tunnelSecret, gatewayClassConfig, gatewayClass)
-	resolver := config.NewResolver(fakeClient, "default", metrics.NewNoopCollector())
+	resolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector())
 
 	resolved, err := resolver.ResolveFromGatewayClass(ctx, gatewayClass)
 

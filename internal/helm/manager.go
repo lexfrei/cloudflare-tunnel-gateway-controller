@@ -19,7 +19,7 @@ import (
 	"helm.sh/helm/v4/pkg/registry"
 	"helm.sh/helm/v4/pkg/release"
 
-	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/metrics"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/cfmetrics"
 )
 
 const (
@@ -29,7 +29,7 @@ const (
 type Manager struct {
 	settings       *cli.EnvSettings
 	registryClient *registry.Client
-	metrics        metrics.Collector
+	metrics        cfmetrics.Collector
 	logger         *slog.Logger
 
 	chartCache   chart.Charter
@@ -37,7 +37,7 @@ type Manager struct {
 	cacheMu      sync.RWMutex
 }
 
-func NewManager(metricsCollector metrics.Collector, logger *slog.Logger) (*Manager, error) {
+func NewManager(metricsCollector cfmetrics.Collector, logger *slog.Logger) (*Manager, error) {
 	settings := cli.New()
 
 	registryClient, err := registry.NewClient(

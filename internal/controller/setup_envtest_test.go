@@ -9,8 +9,8 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/cfmetrics"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/config"
-	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/metrics"
 )
 
 func TestGatewayReconciler_SetupWithManager(t *testing.T) {
@@ -22,7 +22,7 @@ func TestGatewayReconciler_SetupWithManager(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	configResolver := config.NewResolver(envK8sClient, "default", metrics.NewNoopCollector())
+	configResolver := config.NewResolver(envK8sClient, "default", cfmetrics.NewNoopCollector())
 
 	r := &GatewayReconciler{
 		Client:           envK8sClient,
@@ -46,7 +46,7 @@ func TestHTTPRouteReconciler_SetupWithManager(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	configResolver := config.NewResolver(envK8sClient, "default", metrics.NewNoopCollector())
+	configResolver := config.NewResolver(envK8sClient, "default", cfmetrics.NewNoopCollector())
 
 	routeSyncer := NewRouteSyncer(
 		envK8sClient,
@@ -54,7 +54,7 @@ func TestHTTPRouteReconciler_SetupWithManager(t *testing.T) {
 		"cluster.local",
 		"test-gateway-class",
 		configResolver,
-		metrics.NewNoopCollector(),
+		cfmetrics.NewNoopCollector(),
 		nil,
 	)
 
@@ -79,7 +79,7 @@ func TestGRPCRouteReconciler_SetupWithManager(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	configResolver := config.NewResolver(envK8sClient, "default", metrics.NewNoopCollector())
+	configResolver := config.NewResolver(envK8sClient, "default", cfmetrics.NewNoopCollector())
 
 	routeSyncer := NewRouteSyncer(
 		envK8sClient,
@@ -87,7 +87,7 @@ func TestGRPCRouteReconciler_SetupWithManager(t *testing.T) {
 		"cluster.local",
 		"test-gateway-class",
 		configResolver,
-		metrics.NewNoopCollector(),
+		cfmetrics.NewNoopCollector(),
 		nil,
 	)
 

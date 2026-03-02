@@ -15,8 +15,8 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/api/v1alpha1"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/cfmetrics"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/config"
-	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/metrics"
 )
 
 // httpListener creates a standard HTTP listener for testing.
@@ -249,8 +249,8 @@ func TestRouteSyncer_GetRelevantHTTPRoutes(t *testing.T) {
 				scheme,
 				"cluster.local",
 				"cloudflare-tunnel",
-				config.NewResolver(fakeClient, "default", metrics.NewNoopCollector()),
-				metrics.NewNoopCollector(),
+				config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+				cfmetrics.NewNoopCollector(),
 				nil,
 			)
 
@@ -363,8 +363,8 @@ func TestRouteSyncer_GetRelevantGRPCRoutes(t *testing.T) {
 				scheme,
 				"cluster.local",
 				"cloudflare-tunnel",
-				config.NewResolver(fakeClient, "default", metrics.NewNoopCollector()),
-				metrics.NewNoopCollector(),
+				config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+				cfmetrics.NewNoopCollector(),
 				nil,
 			)
 
@@ -543,9 +543,9 @@ func TestNewRouteSyncer(t *testing.T) {
 	require.NoError(t, gatewayv1.Install(scheme))
 
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
-	resolver := config.NewResolver(fakeClient, "default", metrics.NewNoopCollector())
+	resolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector())
 
-	syncer := NewRouteSyncer(fakeClient, scheme, "cluster.local", "cloudflare-tunnel", resolver, metrics.NewNoopCollector(), nil)
+	syncer := NewRouteSyncer(fakeClient, scheme, "cluster.local", "cloudflare-tunnel", resolver, cfmetrics.NewNoopCollector(), nil)
 
 	require.NotNil(t, syncer)
 	assert.Equal(t, "cluster.local", syncer.ClusterDomain)
