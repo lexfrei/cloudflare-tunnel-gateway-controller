@@ -7,7 +7,6 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
-//go:fix inline
 func ptr[T any](v T) *T {
 	return new(v)
 }

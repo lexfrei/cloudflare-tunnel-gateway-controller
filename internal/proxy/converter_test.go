@@ -264,11 +264,6 @@ func TestConvertHTTPRoutes_Empty(t *testing.T) {
 
 // Helper functions.
 
-//go:fix inline
-func strPtr(s string) *string {
-	return new(s)
-}
-
 func backendRef(name string, port, weight int) gatewayv1.HTTPBackendRef {
 	portNum := gatewayv1.PortNumber(port)
 	weightInt := int32(weight)

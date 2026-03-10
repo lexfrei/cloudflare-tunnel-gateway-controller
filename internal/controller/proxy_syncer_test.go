@@ -170,11 +170,6 @@ func TestProxySyncer_NoRoutes(t *testing.T) {
 
 // Helper functions.
 
-//go:fix inline
-func strPtr(s string) *string {
-	return new(s)
-}
-
 func makeBackendRef(name string, port, weight int) gatewayv1.HTTPBackendRef {
 	portNum := gatewayv1.PortNumber(port)
 	weightInt := int32(weight)

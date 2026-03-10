@@ -383,9 +383,7 @@ func TestRouter_ConcurrentAccess(t *testing.T) {
 
 	// Concurrent reads
 	for range 100 {
-
 		waitGroup.Go(func() {
-
 			req := &http.Request{
 				Method: http.MethodGet,
 				Host:   "example.com",
@@ -401,7 +399,6 @@ func TestRouter_ConcurrentAccess(t *testing.T) {
 	// Concurrent write
 
 	waitGroup.Go(func() {
-
 		newCfg := &proxy.Config{
 			Version: 2,
 			Rules: []proxy.RouteRule{

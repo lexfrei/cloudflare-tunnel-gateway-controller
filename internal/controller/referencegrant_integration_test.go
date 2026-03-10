@@ -542,16 +542,7 @@ func TestRouteSyncer_ReferenceGrant_SpecificName(t *testing.T) {
 	assert.Contains(t, buildResult.Rules[0].Service.Value, "allowed-service")
 }
 
-// strPtr returns a pointer to a string.
-//
-//go:fix inline
-func strPtr(s string) *string {
-	return new(s)
-}
-
 // portNumPtr returns a pointer to a PortNumber.
-//
-//go:fix inline
 func portNumPtr(p int32) *gatewayv1.PortNumber {
 	return new(p)
 }

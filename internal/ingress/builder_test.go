@@ -1157,17 +1157,10 @@ func newHTTPBackendRef(name string, namespace *gatewayv1.Namespace, port *int32)
 	return ref
 }
 
-//go:fix inline
-func strPtr(s string) *string {
-	return new(s)
-}
-
-//go:fix inline
 func int32Ptr(i int32) *int32 {
 	return new(i)
 }
 
-//go:fix inline
 func portNumPtr(p int32) *gatewayv1.PortNumber {
 	return new(p)
 }
