@@ -62,6 +62,9 @@ func init() {
 	rootCmd.Flags().String("leader-election-namespace", "", "Namespace for leader election lease (defaults to controller namespace)")
 	rootCmd.Flags().String("leader-election-name", "cloudflare-tunnel-gateway-controller-leader", "Name of the leader election lease")
 
+	// v2 proxy flags
+	rootCmd.Flags().StringSlice("proxy-endpoints", nil, "Proxy config API endpoints for v2 proxy sync (e.g., http://proxy-0:8081,http://proxy-1:8081)")
+
 	_ = viper.BindPFlags(rootCmd.Flags())
 	_ = viper.BindPFlags(rootCmd.PersistentFlags())
 }
@@ -132,6 +135,8 @@ func runController(_ *cobra.Command, _ []string) error {
 		LeaderElect:     viper.GetBool("leader-elect"),
 		LeaderElectNS:   viper.GetString("leader-election-namespace"),
 		LeaderElectName: viper.GetString("leader-election-name"),
+
+		ProxyEndpoints: viper.GetStringSlice("proxy-endpoints"),
 	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

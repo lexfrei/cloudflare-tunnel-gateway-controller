@@ -51,6 +51,11 @@ type Config struct {
 
 	// LeaderElectName is the name of the leader election lease.
 	LeaderElectName string
+
+	// ProxyEndpoints is a list of proxy config API URLs for v2 proxy sync.
+	// When non-empty, the controller pushes routing config to these endpoints.
+	// Example: ["http://proxy-0:8081", "http://proxy-1:8081"]
+	ProxyEndpoints []string
 }
 
 // Run initializes and starts the controller manager with the provided configuration.
@@ -65,7 +70,7 @@ type Config struct {
 //  5. Optionally initializes Helm manager for cloudflared deployment
 //  6. Starts the manager and blocks until shutdown
 //
-//nolint:funlen // controller setup requires multiple steps
+//nolint:funlen,gocyclo,cyclop // controller setup requires multiple sequential steps
 func Run(ctx context.Context, cfg *Config) error {
 	logger := log.FromContext(ctx).WithName("manager")
 	logger.Info("initializing controller manager")
@@ -157,12 +162,28 @@ func Run(ctx context.Context, cfg *Config) error {
 		baseLogger,
 	)
 
+	// Create proxy syncer for v2 proxy config push (optional)
+	var proxySyncer *ProxySyncer
+	if len(cfg.ProxyEndpoints) > 0 {
+		proxySyncer = NewProxySyncer(
+			mgr.GetClient(),
+			mgr.GetScheme(),
+			cfg.ClusterDomain,
+			cfg.GatewayClassName,
+			baseLogger,
+		)
+
+		logger.Info("proxy syncer enabled", "endpoints", cfg.ProxyEndpoints)
+	}
+
 	httpRouteReconciler := &HTTPRouteReconciler{
 		Client:           mgr.GetClient(),
 		Scheme:           mgr.GetScheme(),
 		GatewayClassName: cfg.GatewayClassName,
 		ControllerName:   cfg.ControllerName,
 		RouteSyncer:      routeSyncer,
+		ProxySyncer:      proxySyncer,
+		ProxyEndpoints:   cfg.ProxyEndpoints,
 	}
 
 	if err := httpRouteReconciler.SetupWithManager(mgr); err != nil {
@@ -175,6 +196,8 @@ func Run(ctx context.Context, cfg *Config) error {
 		GatewayClassName: cfg.GatewayClassName,
 		ControllerName:   cfg.ControllerName,
 		RouteSyncer:      routeSyncer,
+		ProxySyncer:      proxySyncer,
+		ProxyEndpoints:   cfg.ProxyEndpoints,
 	}
 
 	if err := grpcRouteReconciler.SetupWithManager(mgr); err != nil {

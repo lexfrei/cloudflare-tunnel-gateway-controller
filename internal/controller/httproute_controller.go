@@ -80,6 +80,12 @@ type HTTPRouteReconciler struct {
 	// RouteSyncer provides unified sync for both HTTP and GRPC routes.
 	RouteSyncer *RouteSyncer
 
+	// ProxySyncer pushes routing config to v2 proxy replicas (optional).
+	ProxySyncer *ProxySyncer
+
+	// ProxyEndpoints is the list of proxy config API URLs for v2 proxy sync.
+	ProxyEndpoints []string
+
 	// bindingValidator validates route binding to Gateway listeners.
 	bindingValidator *routebinding.Validator
 
@@ -123,6 +129,13 @@ func (r *HTTPRouteReconciler) syncAndUpdateStatus(ctx context.Context) (ctrl.Res
 	logger := logging.FromContext(ctx)
 
 	result, syncResult, syncErr := r.RouteSyncer.SyncAllRoutes(ctx)
+
+	// Push config to v2 proxy replicas (best-effort, non-blocking)
+	if r.ProxySyncer != nil && len(r.ProxyEndpoints) > 0 {
+		if proxyErr := r.ProxySyncer.SyncRoutes(ctx, r.ProxyEndpoints); proxyErr != nil {
+			logger.Error("proxy sync failed (non-blocking)", "error", proxyErr)
+		}
+	}
 
 	// Update status for all HTTP routes with per-parent binding results
 	var statusUpdateErr error
