@@ -1,0 +1,157 @@
+# HTTPRoute test cases for comprehensive E2E validation
+# Tests: path matching, weights, header matching, redirects, rewrites
+
+---
+# Test 1: Basic PathPrefix routing
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: basic-prefix
+  namespace: e2e-test
+spec:
+  parentRefs:
+    - name: e2e-gateway
+      namespace: cloudflare-tunnel-system
+  hostnames:
+    - v2-test.lex.la
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /echo-a
+      backendRefs:
+        - name: echo-a
+          port: 80
+
+---
+# Test 2: Exact path matching
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: exact-path
+  namespace: e2e-test
+spec:
+  parentRefs:
+    - name: e2e-gateway
+      namespace: cloudflare-tunnel-system
+  hostnames:
+    - v2-test.lex.la
+  rules:
+    - matches:
+        - path:
+            type: Exact
+            value: /exact
+      backendRefs:
+        - name: echo-b
+          port: 80
+
+---
+# Test 3: Weighted traffic splitting (80/20)
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: weighted-split
+  namespace: e2e-test
+spec:
+  parentRefs:
+    - name: e2e-gateway
+      namespace: cloudflare-tunnel-system
+  hostnames:
+    - v2-test.lex.la
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /weighted
+      backendRefs:
+        - name: echo-a
+          port: 80
+          weight: 80
+        - name: echo-b
+          port: 80
+          weight: 20
+
+---
+# Test 4: Header-based matching
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: header-match
+  namespace: e2e-test
+spec:
+  parentRefs:
+    - name: e2e-gateway
+      namespace: cloudflare-tunnel-system
+  hostnames:
+    - v2-test.lex.la
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /header-test
+          headers:
+            - name: X-Route-To
+              value: backend-b
+      backendRefs:
+        - name: echo-b
+          port: 80
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /header-test
+      backendRefs:
+        - name: echo-a
+          port: 80
+
+---
+# Test 5: Method-based matching
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: method-match
+  namespace: e2e-test
+spec:
+  parentRefs:
+    - name: e2e-gateway
+      namespace: cloudflare-tunnel-system
+  hostnames:
+    - v2-test.lex.la
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /method-test
+          method: POST
+      backendRefs:
+        - name: echo-b
+          port: 80
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /method-test
+          method: GET
+      backendRefs:
+        - name: echo-a
+          port: 80
+
+---
+# Test 6: Catch-all fallback (lowest priority)
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: catch-all
+  namespace: e2e-test
+spec:
+  parentRefs:
+    - name: e2e-gateway
+      namespace: cloudflare-tunnel-system
+  hostnames:
+    - v2-test.lex.la
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: echo-a
+          port: 80
