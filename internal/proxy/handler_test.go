@@ -164,7 +164,7 @@ func TestHandler_RedirectFilter(t *testing.T) {
 
 	router := proxy.NewRouter()
 
-	scheme := "https"
+	scheme := testSchemeHTTPS
 	statusCode := http.StatusMovedPermanently
 
 	cfg := &proxy.Config{
