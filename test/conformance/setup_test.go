@@ -59,6 +59,7 @@ func setupEchoBackends(t *testing.T, k8sClient client.Client, cfg testConfig) {
 	}{
 		{name: "echo-v1"},
 		{name: "echo-v2"},
+		{name: "echo-v3"},
 	}
 
 	for _, backend := range backends {

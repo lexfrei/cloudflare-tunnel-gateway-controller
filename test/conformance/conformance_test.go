@@ -246,8 +246,72 @@ func TestHTTPRouteConformance(t *testing.T) {
 
 		t.Run("HTTPRouteRequestRedirect", func(t *testing.T) {
 			defer deleteAllRoutes(t, k8sClient, cfg)
-
 			testHTTPRouteRequestRedirect(t, httpClient, k8sClient, cfg)
+		})
+
+		t.Run("HTTPRouteRegexPathMatching", func(t *testing.T) {
+			defer deleteAllRoutes(t, k8sClient, cfg)
+			testHTTPRouteRegexPathMatching(t, httpClient, k8sClient, cfg)
+		})
+
+		t.Run("HTTPRouteRegexHeaderMatching", func(t *testing.T) {
+			defer deleteAllRoutes(t, k8sClient, cfg)
+			testHTTPRouteRegexHeaderMatching(t, httpClient, k8sClient, cfg)
+		})
+
+		t.Run("HTTPRouteRegexQueryParamMatching", func(t *testing.T) {
+			defer deleteAllRoutes(t, k8sClient, cfg)
+			testHTTPRouteRegexQueryParamMatching(t, httpClient, k8sClient, cfg)
+		})
+
+		t.Run("HTTPRoutePathMatchOrder", func(t *testing.T) {
+			defer deleteAllRoutes(t, k8sClient, cfg)
+			testHTTPRoutePathMatchOrder(t, httpClient, k8sClient, cfg)
+		})
+
+		t.Run("HTTPRouteURLRewritePath", func(t *testing.T) {
+			defer deleteAllRoutes(t, k8sClient, cfg)
+			testHTTPRouteURLRewritePath(t, httpClient, k8sClient, cfg)
+		})
+
+		t.Run("HTTPRouteURLRewriteHost", func(t *testing.T) {
+			defer deleteAllRoutes(t, k8sClient, cfg)
+			testHTTPRouteURLRewriteHost(t, httpClient, k8sClient, cfg)
+		})
+
+		t.Run("HTTPRouteRequestMirror", func(t *testing.T) {
+			defer deleteAllRoutes(t, k8sClient, cfg)
+			testHTTPRouteRequestMirror(t, httpClient, k8sClient, cfg)
+		})
+
+		t.Run("HTTPRouteRedirectPort", func(t *testing.T) {
+			defer deleteAllRoutes(t, k8sClient, cfg)
+			testHTTPRouteRedirectPort(t, httpClient, k8sClient, cfg)
+		})
+
+		t.Run("HTTPRouteRedirectPath", func(t *testing.T) {
+			defer deleteAllRoutes(t, k8sClient, cfg)
+			testHTTPRouteRedirectPath(t, httpClient, k8sClient, cfg)
+		})
+
+		t.Run("HTTPRouteCombinedMatching", func(t *testing.T) {
+			defer deleteAllRoutes(t, k8sClient, cfg)
+			testHTTPRouteCombinedMatching(t, httpClient, k8sClient, cfg)
+		})
+
+		t.Run("HTTPRouteMultipleMatchesOR", func(t *testing.T) {
+			defer deleteAllRoutes(t, k8sClient, cfg)
+			testHTTPRouteMultipleMatchesOR(t, httpClient, k8sClient, cfg)
+		})
+	})
+
+	t.Run("Gateway", func(t *testing.T) {
+		t.Run("GatewayAcceptedCondition", func(t *testing.T) {
+			testGatewayAcceptedCondition(t, k8sClient, cfg)
+		})
+
+		t.Run("GatewayObservedGenerationBump", func(t *testing.T) {
+			testGatewayObservedGenerationBump(t, k8sClient, cfg)
 		})
 	})
 }
@@ -666,14 +730,14 @@ func testHTTPRouteRequestRedirect(
 				return false, nil
 			}
 
-			return resp.StatusCode == 301, nil
+			return resp.StatusCode == http.StatusMovedPermanently, nil
 		},
 	)
 	require.NoError(t, err, "redirect route did not return 301")
 
 	_, resp, reqErr := makeRequest(t, httpClient, cfg.TunnelHostname, http.MethodGet, "/redir-test", nil)
 	require.NoError(t, reqErr)
-	assert.Equal(t, 301, resp.StatusCode)
+	assert.Equal(t, http.StatusMovedPermanently, resp.StatusCode)
 
 	location := resp.Header.Get("Location")
 	assert.Contains(t, location, "redirected.example.com")
@@ -681,7 +745,6 @@ func testHTTPRouteRequestRedirect(
 }
 
 // --- Helpers ---
-
 
 func pathPrefix(path string) *gatewayv1.HTTPPathMatch {
 	t := gatewayv1.PathMatchPathPrefix
@@ -691,6 +754,11 @@ func pathPrefix(path string) *gatewayv1.HTTPPathMatch {
 func pathExact(path string) *gatewayv1.HTTPPathMatch {
 	t := gatewayv1.PathMatchExact
 	return &gatewayv1.HTTPPathMatch{Type: &t, Value: &path}
+}
+
+func pathRegex(pattern string) *gatewayv1.HTTPPathMatch {
+	t := gatewayv1.PathMatchRegularExpression
+	return &gatewayv1.HTTPPathMatch{Type: &t, Value: &pattern}
 }
 
 func backendRef(name string, port int32, weight *int32) gatewayv1.HTTPBackendRef {
@@ -761,4 +829,498 @@ func setupTestNamespace(t *testing.T, k8sClient client.Client, cfg testConfig) {
 		require.NoError(t, k8sClient.Create(ctx, ns))
 		t.Logf("created namespace %s", cfg.TestNamespace)
 	}
+}
+
+// --- Extended conformance tests (regex, rewrite, mirror, redirect, combined) ---
+
+func testHTTPRouteRegexPathMatching(
+	t *testing.T, httpClient *http.Client, k8sClient client.Client, cfg testConfig,
+) {
+	t.Helper()
+
+	route := buildHTTPRoute("regex-path", cfg, []gatewayv1.HTTPRouteRule{
+		{
+			Matches:     []gatewayv1.HTTPRouteMatch{{Path: pathRegex(`/rgx/item-[0-9]+`)}},
+			BackendRefs: []gatewayv1.HTTPBackendRef{backendRef("echo-v1", 80, nil)},
+		},
+		{
+			Matches:     []gatewayv1.HTTPRouteMatch{{Path: pathPrefix("/rgx")}},
+			BackendRefs: []gatewayv1.HTTPBackendRef{backendRef("echo-v2", 80, nil)},
+		},
+	})
+
+	createHTTPRoute(t, k8sClient, route)
+	waitForBackend(t, httpClient, cfg.TunnelHostname, "/rgx/other", "echo-v2-", 60*time.Second)
+
+	// Regex match → echo-v1.
+	echo, _, err := makeRequest(t, httpClient, cfg.TunnelHostname, http.MethodGet, "/rgx/item-42", nil)
+	require.NoError(t, err)
+	assert.True(t, strings.HasPrefix(echo.Pod, "echo-v1-"), "regex match → echo-v1, got: %s", echo.Pod)
+
+	// Non-numeric suffix → falls to prefix → echo-v2.
+	echo, _, err = makeRequest(t, httpClient, cfg.TunnelHostname, http.MethodGet, "/rgx/item-abc", nil)
+	require.NoError(t, err)
+	assert.True(t, strings.HasPrefix(echo.Pod, "echo-v2-"), "no regex match → echo-v2, got: %s", echo.Pod)
+
+	// Other path under /rgx → prefix fallback → echo-v2.
+	echo, _, err = makeRequest(t, httpClient, cfg.TunnelHostname, http.MethodGet, "/rgx/other", nil)
+	require.NoError(t, err)
+	assert.True(t, strings.HasPrefix(echo.Pod, "echo-v2-"), "prefix fallback → echo-v2, got: %s", echo.Pod)
+}
+
+func testHTTPRouteRegexHeaderMatching(
+	t *testing.T, httpClient *http.Client, k8sClient client.Client, cfg testConfig,
+) {
+	t.Helper()
+
+	headerMatchRegex := gatewayv1.HeaderMatchRegularExpression
+
+	route := buildHTTPRoute("regex-header", cfg, []gatewayv1.HTTPRouteRule{
+		{
+			Matches: []gatewayv1.HTTPRouteMatch{
+				{
+					Path: pathPrefix("/rgx-hdr"),
+					Headers: []gatewayv1.HTTPHeaderMatch{
+						{Type: &headerMatchRegex, Name: "X-Api-Version", Value: `v[0-9]+`},
+					},
+				},
+			},
+			BackendRefs: []gatewayv1.HTTPBackendRef{backendRef("echo-v2", 80, nil)},
+		},
+		{
+			Matches:     []gatewayv1.HTTPRouteMatch{{Path: pathPrefix("/rgx-hdr")}},
+			BackendRefs: []gatewayv1.HTTPBackendRef{backendRef("echo-v1", 80, nil)},
+		},
+	})
+
+	createHTTPRoute(t, k8sClient, route)
+	waitForBackend(t, httpClient, cfg.TunnelHostname, "/rgx-hdr", "echo-v1-", 60*time.Second)
+
+	// Header matching regex → echo-v2.
+	echo, _, err := makeRequest(t, httpClient, cfg.TunnelHostname, http.MethodGet, "/rgx-hdr",
+		map[string]string{"X-Api-Version": "v2"})
+	require.NoError(t, err)
+	assert.True(t, strings.HasPrefix(echo.Pod, "echo-v2-"), "regex header match → echo-v2, got: %s", echo.Pod)
+
+	// Header not matching regex → echo-v1.
+	echo, _, err = makeRequest(t, httpClient, cfg.TunnelHostname, http.MethodGet, "/rgx-hdr",
+		map[string]string{"X-Api-Version": "latest"})
+	require.NoError(t, err)
+	assert.True(t, strings.HasPrefix(echo.Pod, "echo-v1-"), "non-matching header → echo-v1, got: %s", echo.Pod)
+
+	// No header → echo-v1.
+	echo, _, err = makeRequest(t, httpClient, cfg.TunnelHostname, http.MethodGet, "/rgx-hdr", nil)
+	require.NoError(t, err)
+	assert.True(t, strings.HasPrefix(echo.Pod, "echo-v1-"), "no header → echo-v1, got: %s", echo.Pod)
+}
+
+func testHTTPRouteRegexQueryParamMatching(
+	t *testing.T, httpClient *http.Client, k8sClient client.Client, cfg testConfig,
+) {
+	t.Helper()
+
+	queryMatchRegex := gatewayv1.QueryParamMatchRegularExpression
+
+	route := buildHTTPRoute("regex-query", cfg, []gatewayv1.HTTPRouteRule{
+		{
+			Matches: []gatewayv1.HTTPRouteMatch{
+				{
+					Path: pathPrefix("/rgx-qp"),
+					QueryParams: []gatewayv1.HTTPQueryParamMatch{
+						{Type: &queryMatchRegex, Name: "id", Value: `[0-9]+`},
+					},
+				},
+			},
+			BackendRefs: []gatewayv1.HTTPBackendRef{backendRef("echo-v2", 80, nil)},
+		},
+		{
+			Matches:     []gatewayv1.HTTPRouteMatch{{Path: pathPrefix("/rgx-qp")}},
+			BackendRefs: []gatewayv1.HTTPBackendRef{backendRef("echo-v1", 80, nil)},
+		},
+	})
+
+	createHTTPRoute(t, k8sClient, route)
+	waitForBackend(t, httpClient, cfg.TunnelHostname, "/rgx-qp", "echo-v1-", 60*time.Second)
+
+	// Numeric query param → echo-v2.
+	echo, _, err := makeRequest(t, httpClient, cfg.TunnelHostname, http.MethodGet, "/rgx-qp?id=123", nil)
+	require.NoError(t, err)
+	assert.True(t, strings.HasPrefix(echo.Pod, "echo-v2-"), "regex qp match → echo-v2, got: %s", echo.Pod)
+
+	// Non-numeric query param → echo-v1.
+	echo, _, err = makeRequest(t, httpClient, cfg.TunnelHostname, http.MethodGet, "/rgx-qp?id=abc", nil)
+	require.NoError(t, err)
+	assert.True(t, strings.HasPrefix(echo.Pod, "echo-v1-"), "non-matching qp → echo-v1, got: %s", echo.Pod)
+
+	// No query param → echo-v1.
+	echo, _, err = makeRequest(t, httpClient, cfg.TunnelHostname, http.MethodGet, "/rgx-qp", nil)
+	require.NoError(t, err)
+	assert.True(t, strings.HasPrefix(echo.Pod, "echo-v1-"), "no qp → echo-v1, got: %s", echo.Pod)
+}
+
+func testHTTPRoutePathMatchOrder(
+	t *testing.T, httpClient *http.Client, k8sClient client.Client, cfg testConfig,
+) {
+	t.Helper()
+
+	route := buildHTTPRoute("path-order", cfg, []gatewayv1.HTTPRouteRule{
+		{
+			Matches:     []gatewayv1.HTTPRouteMatch{{Path: pathExact("/pmo/specific")}},
+			BackendRefs: []gatewayv1.HTTPBackendRef{backendRef("echo-v1", 80, nil)},
+		},
+		{
+			Matches:     []gatewayv1.HTTPRouteMatch{{Path: pathPrefix("/pmo")}},
+			BackendRefs: []gatewayv1.HTTPBackendRef{backendRef("echo-v2", 80, nil)},
+		},
+	})
+
+	createHTTPRoute(t, k8sClient, route)
+	waitForBackend(t, httpClient, cfg.TunnelHostname, "/pmo/other", "echo-v2-", 60*time.Second)
+
+	// Exact match wins → echo-v1.
+	echo, _, err := makeRequest(t, httpClient, cfg.TunnelHostname, http.MethodGet, "/pmo/specific", nil)
+	require.NoError(t, err)
+	assert.True(t, strings.HasPrefix(echo.Pod, "echo-v1-"), "exact wins → echo-v1, got: %s", echo.Pod)
+
+	// Prefix fallback → echo-v2.
+	echo, _, err = makeRequest(t, httpClient, cfg.TunnelHostname, http.MethodGet, "/pmo/other", nil)
+	require.NoError(t, err)
+	assert.True(t, strings.HasPrefix(echo.Pod, "echo-v2-"), "prefix fallback → echo-v2, got: %s", echo.Pod)
+}
+
+func testHTTPRouteURLRewritePath(
+	t *testing.T, httpClient *http.Client, k8sClient client.Client, cfg testConfig,
+) {
+	t.Helper()
+
+	route := buildHTTPRoute("url-rewrite-path", cfg, []gatewayv1.HTTPRouteRule{
+		{
+			Matches: []gatewayv1.HTTPRouteMatch{{Path: pathPrefix("/rewrite-test")}},
+			Filters: []gatewayv1.HTTPRouteFilter{
+				{
+					Type: gatewayv1.HTTPRouteFilterURLRewrite,
+					URLRewrite: &gatewayv1.HTTPURLRewriteFilter{
+						Path: &gatewayv1.HTTPPathModifier{
+							Type:            gatewayv1.FullPathHTTPPathModifier,
+							ReplaceFullPath: new("/replaced"),
+						},
+					},
+				},
+			},
+			BackendRefs: []gatewayv1.HTTPBackendRef{backendRef("echo-v1", 80, nil)},
+		},
+	})
+
+	createHTTPRoute(t, k8sClient, route)
+	waitForBackend(t, httpClient, cfg.TunnelHostname, "/rewrite-test", "echo-v1-", 60*time.Second)
+
+	echo, _, err := makeRequest(t, httpClient, cfg.TunnelHostname, http.MethodGet, "/rewrite-test/anything", nil)
+	require.NoError(t, err)
+	assert.Equal(t, "/replaced", echo.Path, "path should be rewritten to /replaced")
+}
+
+func testHTTPRouteURLRewriteHost(
+	t *testing.T, httpClient *http.Client, k8sClient client.Client, cfg testConfig,
+) {
+	t.Helper()
+
+	rewrittenHost := gatewayv1.PreciseHostname("rewritten.internal")
+
+	route := buildHTTPRoute("url-rewrite-host", cfg, []gatewayv1.HTTPRouteRule{
+		{
+			Matches: []gatewayv1.HTTPRouteMatch{{Path: pathPrefix("/rewrite-host")}},
+			Filters: []gatewayv1.HTTPRouteFilter{
+				{
+					Type: gatewayv1.HTTPRouteFilterURLRewrite,
+					URLRewrite: &gatewayv1.HTTPURLRewriteFilter{
+						Hostname: &rewrittenHost,
+					},
+				},
+			},
+			BackendRefs: []gatewayv1.HTTPBackendRef{backendRef("echo-v1", 80, nil)},
+		},
+	})
+
+	createHTTPRoute(t, k8sClient, route)
+	waitForBackend(t, httpClient, cfg.TunnelHostname, "/rewrite-host", "echo-v1-", 60*time.Second)
+
+	echo, _, err := makeRequest(t, httpClient, cfg.TunnelHostname, http.MethodGet, "/rewrite-host", nil)
+	require.NoError(t, err)
+	assert.Equal(t, "rewritten.internal", echo.Host, "host should be rewritten to rewritten.internal")
+}
+
+func testHTTPRouteRequestMirror(
+	t *testing.T, httpClient *http.Client, k8sClient client.Client, cfg testConfig,
+) {
+	t.Helper()
+
+	mirrorPort := gatewayv1.PortNumber(80)
+
+	route := buildHTTPRoute("mirror-test", cfg, []gatewayv1.HTTPRouteRule{
+		{
+			Matches: []gatewayv1.HTTPRouteMatch{{Path: pathPrefix("/mirror-test")}},
+			Filters: []gatewayv1.HTTPRouteFilter{
+				{
+					Type: gatewayv1.HTTPRouteFilterRequestMirror,
+					RequestMirror: &gatewayv1.HTTPRequestMirrorFilter{
+						BackendRef: gatewayv1.BackendObjectReference{
+							Name: gatewayv1.ObjectName("echo-v3"),
+							Port: &mirrorPort,
+						},
+					},
+				},
+			},
+			BackendRefs: []gatewayv1.HTTPBackendRef{backendRef("echo-v1", 80, nil)},
+		},
+	})
+
+	createHTTPRoute(t, k8sClient, route)
+	waitForBackend(t, httpClient, cfg.TunnelHostname, "/mirror-test", "echo-v1-", 60*time.Second)
+
+	// Response should come from echo-v1 (mirror is fire-and-forget).
+	echo, resp, err := makeRequest(t, httpClient, cfg.TunnelHostname, http.MethodGet, "/mirror-test", nil)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.True(t, strings.HasPrefix(echo.Pod, "echo-v1-"), "response from primary → echo-v1, got: %s", echo.Pod)
+}
+
+func testHTTPRouteRedirectPort(
+	t *testing.T, httpClient *http.Client, k8sClient client.Client, cfg testConfig,
+) {
+	t.Helper()
+
+	statusCode := 302
+	redirectPort := gatewayv1.PortNumber(8443)
+
+	route := buildHTTPRoute("redir-port", cfg, []gatewayv1.HTTPRouteRule{
+		{
+			Matches: []gatewayv1.HTTPRouteMatch{{Path: pathPrefix("/redir-port")}},
+			Filters: []gatewayv1.HTTPRouteFilter{
+				{
+					Type: gatewayv1.HTTPRouteFilterRequestRedirect,
+					RequestRedirect: &gatewayv1.HTTPRequestRedirectFilter{
+						Port:       &redirectPort,
+						StatusCode: &statusCode,
+					},
+				},
+			},
+		},
+	})
+
+	createHTTPRoute(t, k8sClient, route)
+
+	// Wait for redirect response.
+	err := wait.PollUntilContextTimeout(context.Background(), 2*time.Second, 60*time.Second, true,
+		func(_ context.Context) (bool, error) {
+			_, resp, reqErr := makeRequest(t, httpClient, cfg.TunnelHostname, http.MethodGet, "/redir-port", nil)
+			if reqErr != nil {
+				return false, nil //nolint:nilerr // transient errors are expected during polling
+			}
+
+			return resp.StatusCode == http.StatusFound, nil
+		},
+	)
+	require.NoError(t, err, "redirect route did not return 302")
+
+	_, resp, reqErr := makeRequest(t, httpClient, cfg.TunnelHostname, http.MethodGet, "/redir-port", nil)
+	require.NoError(t, reqErr)
+	assert.Equal(t, http.StatusFound, resp.StatusCode)
+
+	location := resp.Header.Get("Location")
+	assert.Contains(t, location, ":8443", "Location should contain port 8443")
+}
+
+func testHTTPRouteRedirectPath(
+	t *testing.T, httpClient *http.Client, k8sClient client.Client, cfg testConfig,
+) {
+	t.Helper()
+
+	statusCode := 301
+
+	route := buildHTTPRoute("redir-path", cfg, []gatewayv1.HTTPRouteRule{
+		{
+			Matches: []gatewayv1.HTTPRouteMatch{{Path: pathPrefix("/redir-path")}},
+			Filters: []gatewayv1.HTTPRouteFilter{
+				{
+					Type: gatewayv1.HTTPRouteFilterRequestRedirect,
+					RequestRedirect: &gatewayv1.HTTPRequestRedirectFilter{
+						Path: &gatewayv1.HTTPPathModifier{
+							Type:            gatewayv1.FullPathHTTPPathModifier,
+							ReplaceFullPath: new("/new-dest"),
+						},
+						StatusCode: &statusCode,
+					},
+				},
+			},
+		},
+	})
+
+	createHTTPRoute(t, k8sClient, route)
+
+	// Wait for redirect response.
+	err := wait.PollUntilContextTimeout(context.Background(), 2*time.Second, 60*time.Second, true,
+		func(_ context.Context) (bool, error) {
+			_, resp, reqErr := makeRequest(t, httpClient, cfg.TunnelHostname, http.MethodGet, "/redir-path", nil)
+			if reqErr != nil {
+				return false, nil //nolint:nilerr // transient errors are expected during polling
+			}
+
+			return resp.StatusCode == http.StatusMovedPermanently, nil
+		},
+	)
+	require.NoError(t, err, "redirect route did not return 301")
+
+	_, resp, reqErr := makeRequest(t, httpClient, cfg.TunnelHostname, http.MethodGet, "/redir-path", nil)
+	require.NoError(t, reqErr)
+	assert.Equal(t, http.StatusMovedPermanently, resp.StatusCode)
+
+	location := resp.Header.Get("Location")
+	assert.Contains(t, location, "/new-dest", "Location should contain /new-dest")
+}
+
+func testHTTPRouteCombinedMatching(
+	t *testing.T, httpClient *http.Client, k8sClient client.Client, cfg testConfig,
+) {
+	t.Helper()
+
+	methodGet := gatewayv1.HTTPMethodGet
+	headerMatchExact := gatewayv1.HeaderMatchExact
+	queryMatchExact := gatewayv1.QueryParamMatchExact
+
+	route := buildHTTPRoute("combined-match", cfg, []gatewayv1.HTTPRouteRule{
+		{
+			Matches: []gatewayv1.HTTPRouteMatch{
+				{
+					Path:   pathPrefix("/combo"),
+					Method: &methodGet,
+					Headers: []gatewayv1.HTTPHeaderMatch{
+						{Type: &headerMatchExact, Name: "X-Env", Value: "prod"},
+					},
+					QueryParams: []gatewayv1.HTTPQueryParamMatch{
+						{Type: &queryMatchExact, Name: "format", Value: "json"},
+					},
+				},
+			},
+			BackendRefs: []gatewayv1.HTTPBackendRef{backendRef("echo-v2", 80, nil)},
+		},
+		{
+			Matches:     []gatewayv1.HTTPRouteMatch{{Path: pathPrefix("/combo")}},
+			BackendRefs: []gatewayv1.HTTPBackendRef{backendRef("echo-v1", 80, nil)},
+		},
+	})
+
+	createHTTPRoute(t, k8sClient, route)
+	waitForBackend(t, httpClient, cfg.TunnelHostname, "/combo", "echo-v1-", 60*time.Second)
+
+	// All 4 conditions met → echo-v2.
+	echo, _, err := makeRequest(t, httpClient, cfg.TunnelHostname, http.MethodGet, "/combo?format=json",
+		map[string]string{"X-Env": "prod"})
+	require.NoError(t, err)
+	assert.True(t, strings.HasPrefix(echo.Pod, "echo-v2-"), "all conditions → echo-v2, got: %s", echo.Pod)
+
+	// Missing header → echo-v1.
+	echo, _, err = makeRequest(t, httpClient, cfg.TunnelHostname, http.MethodGet, "/combo?format=json", nil)
+	require.NoError(t, err)
+	assert.True(t, strings.HasPrefix(echo.Pod, "echo-v1-"), "missing header → echo-v1, got: %s", echo.Pod)
+
+	// Missing query param → echo-v1.
+	echo, _, err = makeRequest(t, httpClient, cfg.TunnelHostname, http.MethodGet, "/combo",
+		map[string]string{"X-Env": "prod"})
+	require.NoError(t, err)
+	assert.True(t, strings.HasPrefix(echo.Pod, "echo-v1-"), "missing qp → echo-v1, got: %s", echo.Pod)
+
+	// Wrong method (POST) → echo-v1.
+	echo, _, err = makeRequest(t, httpClient, cfg.TunnelHostname, http.MethodPost, "/combo?format=json",
+		map[string]string{"X-Env": "prod"})
+	require.NoError(t, err)
+	assert.True(t, strings.HasPrefix(echo.Pod, "echo-v1-"), "wrong method → echo-v1, got: %s", echo.Pod)
+}
+
+func testHTTPRouteMultipleMatchesOR(
+	t *testing.T, httpClient *http.Client, k8sClient client.Client, cfg testConfig,
+) {
+	t.Helper()
+
+	route := buildHTTPRoute("or-match", cfg, []gatewayv1.HTTPRouteRule{
+		{
+			Matches: []gatewayv1.HTTPRouteMatch{
+				{Path: pathExact("/or-a")},
+				{Path: pathExact("/or-b")},
+			},
+			BackendRefs: []gatewayv1.HTTPBackendRef{backendRef("echo-v1", 80, nil)},
+		},
+	})
+
+	createHTTPRoute(t, k8sClient, route)
+	waitForBackend(t, httpClient, cfg.TunnelHostname, "/or-a", "echo-v1-", 60*time.Second)
+
+	// /or-a → echo-v1.
+	echo, _, err := makeRequest(t, httpClient, cfg.TunnelHostname, http.MethodGet, "/or-a", nil)
+	require.NoError(t, err)
+	assert.True(t, strings.HasPrefix(echo.Pod, "echo-v1-"), "/or-a → echo-v1, got: %s", echo.Pod)
+
+	// /or-b → echo-v1.
+	echo, _, err = makeRequest(t, httpClient, cfg.TunnelHostname, http.MethodGet, "/or-b", nil)
+	require.NoError(t, err)
+	assert.True(t, strings.HasPrefix(echo.Pod, "echo-v1-"), "/or-b → echo-v1, got: %s", echo.Pod)
+
+	// /or-c → 404 (no match).
+	_, resp, err := makeRequest(t, httpClient, cfg.TunnelHostname, http.MethodGet, "/or-c", nil)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode, "/or-c should be 404")
+}
+
+// --- Gateway conformance tests ---
+
+func testGatewayAcceptedCondition(
+	t *testing.T, k8sClient client.Client, cfg testConfig,
+) {
+	t.Helper()
+
+	ctx := context.Background()
+	gw := &gatewayv1.Gateway{}
+
+	err := k8sClient.Get(ctx, types.NamespacedName{Name: cfg.GatewayName, Namespace: cfg.Namespace}, gw)
+	require.NoError(t, err, "failed to get gateway")
+
+	found := false
+
+	for _, condition := range gw.Status.Conditions {
+		if condition.Type == string(gatewayv1.GatewayConditionAccepted) {
+			found = true
+			assert.Equal(t, metav1.ConditionTrue, condition.Status,
+				"Gateway Accepted condition should be True, got: %s (reason: %s)", condition.Status, condition.Reason)
+		}
+	}
+
+	assert.True(t, found, "Gateway should have Accepted condition in status")
+}
+
+func testGatewayObservedGenerationBump(
+	t *testing.T, k8sClient client.Client, cfg testConfig,
+) {
+	t.Helper()
+
+	ctx := context.Background()
+	gw := &gatewayv1.Gateway{}
+
+	err := k8sClient.Get(ctx, types.NamespacedName{Name: cfg.GatewayName, Namespace: cfg.Namespace}, gw)
+	require.NoError(t, err, "failed to get gateway")
+
+	generation := gw.Generation
+
+	// Verify that at least one status condition has ObservedGeneration matching Generation.
+	matched := false
+
+	for _, condition := range gw.Status.Conditions {
+		if condition.ObservedGeneration == generation {
+			matched = true
+
+			break
+		}
+	}
+
+	assert.True(t, matched,
+		"at least one status condition should have ObservedGeneration=%d matching Generation=%d",
+		generation, generation)
 }
