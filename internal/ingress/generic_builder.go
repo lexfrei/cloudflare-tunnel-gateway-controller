@@ -103,7 +103,7 @@ func (b *GenericBuilder[R]) Build(ctx context.Context, routes []R) BuildResult {
 
 	var failedRefs []BackendRefError
 
-	for i := range len(routes) {
+	for i := range routes {
 		routeEntries, routeFailedRefs := b.adapter.ExtractEntries(ctx, &routes[i], resolver)
 		entries = append(entries, routeEntries...)
 		failedRefs = append(failedRefs, routeFailedRefs...)
