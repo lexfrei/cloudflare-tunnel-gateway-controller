@@ -563,3 +563,48 @@ func TestRouter_NoMatchesMatchesAll(t *testing.T) {
 	rule, _ := router.Route(req)
 	require.NotNil(t, rule)
 }
+
+func TestRouter_EmptyBackends_ReturnsMinusOne(t *testing.T) {
+	t.Parallel()
+
+	router := proxy.NewRouter()
+
+	cfg := &proxy.Config{
+		Version: 1,
+		Rules: []proxy.RouteRule{
+			{
+				Hostnames: []string{"example.com"},
+				Matches: []proxy.RouteMatch{
+					{Path: &proxy.PathMatch{Type: proxy.PathMatchPathPrefix, Value: "/redirect"}},
+				},
+				Filters: []proxy.RouteFilter{
+					{
+						Type: proxy.FilterRequestRedirect,
+						RequestRedirect: &proxy.RedirectConfig{
+							Hostname:   ptrTo("other.example.com"),
+							StatusCode: ptrToInt(301),
+						},
+					},
+				},
+				// No backends — redirect-only rule.
+			},
+		},
+	}
+	require.NoError(t, router.UpdateConfig(cfg))
+
+	req := &http.Request{
+		Method: http.MethodGet,
+		Host:   "example.com",
+		URL:    &url.URL{Path: "/redirect"},
+		Header: http.Header{},
+	}
+
+	rule, backendIdx := router.Route(req)
+	require.NotNil(t, rule, "redirect-only rule should match")
+	assert.Equal(t, -1, backendIdx, "should return -1 for empty backends")
+	assert.NotEmpty(t, rule.Filters, "rule should have redirect filter")
+}
+
+func ptrTo(s string) *string { return &s }
+
+func ptrToInt(i int) *int { return &i }

@@ -49,6 +49,13 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	// No backend available (e.g., redirect-only rule that didn't redirect).
+	if backendIdx < 0 || backendIdx >= len(rule.Backends) {
+		http.Error(writer, "no backend available", http.StatusInternalServerError)
+
+		return
+	}
+
 	// Proxy to backend.
 	backend := rule.Backends[backendIdx]
 

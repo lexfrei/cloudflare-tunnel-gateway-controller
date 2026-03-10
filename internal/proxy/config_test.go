@@ -111,6 +111,25 @@ func TestProxyConfig_Validate(t *testing.T) {
 			wantErr: "rule[0]: at least one backend is required",
 		},
 		{
+			name: "redirect-only rule without backends is valid",
+			config: proxy.Config{
+				Version: 1,
+				Rules: []proxy.RouteRule{
+					{
+						Filters: []proxy.RouteFilter{
+							{
+								Type: proxy.FilterRequestRedirect,
+								RequestRedirect: &proxy.RedirectConfig{
+									Hostname:   ptrTo("other.example.com"),
+									StatusCode: ptrToInt(301),
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		{
 			name: "backend without URL",
 			config: proxy.Config{
 				Version: 1,

@@ -192,7 +192,7 @@ func (c *Config) Validate() error {
 }
 
 func (r *RouteRule) validate() error {
-	if len(r.Backends) == 0 {
+	if len(r.Backends) == 0 && !r.hasRedirectFilter() {
 		return errors.New("at least one backend is required")
 	}
 
@@ -221,6 +221,16 @@ func (r *RouteRule) validate() error {
 	}
 
 	return nil
+}
+
+func (r *RouteRule) hasRedirectFilter() bool {
+	for _, f := range r.Filters {
+		if f.Type == FilterRequestRedirect {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (m *RouteMatch) validate() error {

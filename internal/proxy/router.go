@@ -265,7 +265,12 @@ func matchesRule(compiled *compiledRule, req *http.Request) bool {
 }
 
 // selectBackend picks a backend using weighted random selection.
+// Returns -1 when the backends slice is empty (e.g., redirect-only rules).
 func selectBackend(backends []BackendRef) int {
+	if len(backends) == 0 {
+		return -1
+	}
+
 	if len(backends) == 1 {
 		return 0
 	}
