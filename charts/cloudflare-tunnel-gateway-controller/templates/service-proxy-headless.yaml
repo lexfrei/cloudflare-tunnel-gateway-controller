@@ -8,6 +8,10 @@ metadata:
 spec:
   type: ClusterIP
   clusterIP: None
+  # Publish endpoints even when pods are not ready.
+  # The controller pushes config to proxy pods via this service;
+  # proxy readiness depends on receiving config, creating a circular dependency.
+  publishNotReadyAddresses: true
   ports:
     - name: config-api
       port: {{ .Values.proxy.configAPIPort }}
