@@ -281,6 +281,37 @@ spec:
 | podLabels | object | `{}` | Additional labels to add to pods |
 | podSecurityContext | object | See values.yaml | Pod security context (secure defaults) |
 | priorityClassName | string | `""` | Priority class name for pod scheduling priority |
+| proxy | object | `{"affinity":{},"configAPIPort":8081,"enabled":false,"healthProbes":{"livenessProbe":{"enabled":true,"failureThreshold":3,"initialDelaySeconds":15,"periodSeconds":20,"timeoutSeconds":5},"readinessProbe":{"enabled":true,"failureThreshold":3,"initialDelaySeconds":5,"periodSeconds":10,"timeoutSeconds":3},"startupProbe":{"enabled":true,"failureThreshold":30,"initialDelaySeconds":0,"periodSeconds":5,"timeoutSeconds":3}},"image":{"pullPolicy":"IfNotPresent","repository":"ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller-proxy","tag":""},"networkPolicy":{"enabled":false,"ingress":{"from":[]}},"nodeSelector":{},"podAnnotations":{},"podLabels":{},"podSecurityContext":{"runAsNonRoot":true,"runAsUser":65534,"seccompProfile":{"type":"RuntimeDefault"}},"proxyPort":8080,"replicas":2,"resources":{"limits":{"cpu":"500m","memory":"512Mi"},"requests":{"cpu":"100m","memory":"128Mi"}},"securityContext":{"allowPrivilegeEscalation":false,"capabilities":{"drop":["ALL"]},"readOnlyRootFilesystem":true},"service":{"annotations":{}},"tolerations":[],"topologySpreadConstraints":[],"tunnelTokenSecretRef":{"key":"tunnel-token","name":""}}` | L7 Proxy configuration (enhanced-cloudflared data plane) When enabled, deploys proxy pods that run cloudflared tunnel transport with an L7 reverse proxy for full Gateway API HTTPRoute support. |
+| proxy.affinity | object | `{}` | Affinity rules for pod scheduling |
+| proxy.configAPIPort | int | `8081` | Config API port (controller pushes config here) |
+| proxy.enabled | bool | `false` | Enable L7 proxy deployment |
+| proxy.healthProbes | object | `{"livenessProbe":{"enabled":true,"failureThreshold":3,"initialDelaySeconds":15,"periodSeconds":20,"timeoutSeconds":5},"readinessProbe":{"enabled":true,"failureThreshold":3,"initialDelaySeconds":5,"periodSeconds":10,"timeoutSeconds":3},"startupProbe":{"enabled":true,"failureThreshold":30,"initialDelaySeconds":0,"periodSeconds":5,"timeoutSeconds":3}}` | Health probes configuration |
+| proxy.healthProbes.livenessProbe | object | `{"enabled":true,"failureThreshold":3,"initialDelaySeconds":15,"periodSeconds":20,"timeoutSeconds":5}` | Liveness probe |
+| proxy.healthProbes.readinessProbe | object | `{"enabled":true,"failureThreshold":3,"initialDelaySeconds":5,"periodSeconds":10,"timeoutSeconds":3}` | Readiness probe (ready when config loaded) |
+| proxy.healthProbes.startupProbe | object | `{"enabled":true,"failureThreshold":30,"initialDelaySeconds":0,"periodSeconds":5,"timeoutSeconds":3}` | Startup probe (gives tunnel time to connect) |
+| proxy.image | object | `{"pullPolicy":"IfNotPresent","repository":"ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller-proxy","tag":""}` | Proxy container image |
+| proxy.image.pullPolicy | string | `"IfNotPresent"` | Image pull policy |
+| proxy.image.repository | string | `"ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller-proxy"` | Proxy image repository |
+| proxy.image.tag | string | `""` | Image tag (defaults to appVersion) |
+| proxy.networkPolicy | object | `{"enabled":false,"ingress":{"from":[]}}` | NetworkPolicy configuration for proxy pods |
+| proxy.networkPolicy.enabled | bool | `false` | Enable NetworkPolicy for proxy pods |
+| proxy.networkPolicy.ingress | object | `{"from":[]}` | Ingress source configuration |
+| proxy.networkPolicy.ingress.from | list | `[]` | Allow ingress from specific namespaces/pods |
+| proxy.nodeSelector | object | `{}` | Node selector for pod scheduling |
+| proxy.podAnnotations | object | `{}` | Annotations to add to proxy pods |
+| proxy.podLabels | object | `{}` | Additional labels to add to proxy pods |
+| proxy.podSecurityContext | object | See values.yaml | Pod security context |
+| proxy.proxyPort | int | `8080` | Proxy port (internal, traffic arrives through tunnel) |
+| proxy.replicas | int | `2` | Number of proxy replicas |
+| proxy.resources | object | `{"limits":{"cpu":"500m","memory":"512Mi"},"requests":{"cpu":"100m","memory":"128Mi"}}` | Container resource requests and limits |
+| proxy.securityContext | object | See values.yaml | Container security context |
+| proxy.service | object | `{"annotations":{}}` | Service configuration for proxy metrics/health |
+| proxy.service.annotations | object | `{}` | Service annotations |
+| proxy.tolerations | list | `[]` | Tolerations for pod scheduling |
+| proxy.topologySpreadConstraints | list | `[]` | Topology spread constraints for pod distribution |
+| proxy.tunnelTokenSecretRef | object | `{"key":"tunnel-token","name":""}` | Reference to Secret containing tunnel token (REQUIRED when proxy.enabled) |
+| proxy.tunnelTokenSecretRef.key | string | `"tunnel-token"` | Key in the Secret containing the tunnel token |
+| proxy.tunnelTokenSecretRef.name | string | `""` | Name of the Secret containing tunnel token |
 | replicaCount | int | `1` | Number of controller replicas |
 | resources | object | See values.yaml for recommended production defaults | Container resource requests and limits When resources is empty ({}), the chart will use recommended defaults. Specify explicit values to override defaults. |
 | securityContext | object | See values.yaml | Container security context (secure defaults) |

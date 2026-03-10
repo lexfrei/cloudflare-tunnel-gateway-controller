@@ -1,0 +1,178 @@
+suite: test proxy deployment
+templates:
+  - deployment-proxy.yaml
+tests:
+  - it: should not create proxy deployment when disabled
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: should create proxy deployment when enabled
+    set:
+      proxy:
+        enabled: true
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: Deployment
+      - equal:
+          path: spec.replicas
+          value: 2
+
+  - it: should set custom replicas
+    set:
+      proxy:
+        enabled: true
+        replicas: 3
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
+    asserts:
+      - equal:
+          path: spec.replicas
+          value: 3
+
+  - it: should use correct proxy image
+    set:
+      proxy:
+        enabled: true
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
+    asserts:
+      - matchRegex:
+          path: spec.template.spec.containers[0].image
+          pattern: "^ghcr\\.io/lexfrei/cloudflare-tunnel-gateway-controller-proxy:"
+
+  - it: should mount tunnel token from secret
+    set:
+      proxy:
+        enabled: true
+        tunnelTokenSecretRef:
+          name: my-tunnel-secret
+          key: my-key
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: TUNNEL_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: my-tunnel-secret
+                key: my-key
+
+  - it: should use default tunnel token key
+    set:
+      proxy:
+        enabled: true
+        tunnelTokenSecretRef:
+          name: my-tunnel-secret
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: TUNNEL_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: my-tunnel-secret
+                key: tunnel-token
+
+  - it: should set config API and proxy ports
+    set:
+      proxy:
+        enabled: true
+        configAPIPort: 9091
+        proxyPort: 9090
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].ports
+          content:
+            name: config-api
+            containerPort: 9091
+            protocol: TCP
+      - contains:
+          path: spec.template.spec.containers[0].ports
+          content:
+            name: proxy
+            containerPort: 9090
+            protocol: TCP
+
+  - it: should apply security context defaults
+    set:
+      proxy:
+        enabled: true
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
+    asserts:
+      - equal:
+          path: spec.template.spec.securityContext.runAsNonRoot
+          value: true
+      - equal:
+          path: spec.template.spec.securityContext.runAsUser
+          value: 65534
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.allowPrivilegeEscalation
+          value: false
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.readOnlyRootFilesystem
+          value: true
+
+  - it: should set resource limits
+    set:
+      proxy:
+        enabled: true
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
+        resources:
+          limits:
+            cpu: 1
+            memory: 1Gi
+          requests:
+            cpu: 200m
+            memory: 256Mi
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].resources.limits.cpu
+          value: 1
+      - equal:
+          path: spec.template.spec.containers[0].resources.limits.memory
+          value: 1Gi
+
+  - it: should include proxy component label
+    set:
+      proxy:
+        enabled: true
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
+    asserts:
+      - equal:
+          path: spec.template.metadata.labels["app.kubernetes.io/component"]
+          value: proxy
+
+  - it: should configure startup probe
+    set:
+      proxy:
+        enabled: true
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].startupProbe.httpGet.path
+          value: /healthz
+      - equal:
+          path: spec.template.spec.containers[0].startupProbe.failureThreshold
+          value: 30
+
+  - it: should configure readiness probe
+    set:
+      proxy:
+        enabled: true
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.httpGet.path
+          value: /readyz

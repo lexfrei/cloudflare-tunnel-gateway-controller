@@ -574,6 +574,153 @@
           "default": true
         }
       }
+    },
+    "proxy": {
+      "type": "object",
+      "description": "L7 Proxy configuration (enhanced-cloudflared data plane)",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Enable L7 proxy deployment",
+          "default": false
+        },
+        "replicas": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Number of proxy replicas",
+          "default": 2
+        },
+        "image": {
+          "type": "object",
+          "description": "Proxy container image",
+          "properties": {
+            "repository": {
+              "type": "string",
+              "default": "ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller-proxy"
+            },
+            "pullPolicy": {
+              "type": "string",
+              "enum": ["Always", "IfNotPresent", "Never"],
+              "default": "IfNotPresent"
+            },
+            "tag": {
+              "type": "string",
+              "description": "Overrides appVersion"
+            }
+          }
+        },
+        "configAPIPort": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535,
+          "default": 8081
+        },
+        "proxyPort": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535,
+          "default": 8080
+        },
+        "tunnelTokenSecretRef": {
+          "type": "object",
+          "description": "Reference to Secret containing tunnel token",
+          "properties": {
+            "name": {
+              "type": "string",
+              "description": "Name of the Secret"
+            },
+            "key": {
+              "type": "string",
+              "description": "Key in the Secret containing the tunnel token",
+              "default": "tunnel-token"
+            }
+          }
+        },
+        "resources": {
+          "type": "object",
+          "description": "Container resource requirements"
+        },
+        "podSecurityContext": {
+          "type": "object",
+          "description": "Pod security context"
+        },
+        "securityContext": {
+          "type": "object",
+          "description": "Container security context"
+        },
+        "healthProbes": {
+          "type": "object",
+          "description": "Health probes configuration",
+          "properties": {
+            "startupProbe": {
+              "type": "object",
+              "properties": {
+                "enabled": { "type": "boolean", "default": true },
+                "initialDelaySeconds": { "type": "integer", "minimum": 0 },
+                "periodSeconds": { "type": "integer", "minimum": 1 },
+                "timeoutSeconds": { "type": "integer", "minimum": 1 },
+                "failureThreshold": { "type": "integer", "minimum": 1 }
+              }
+            },
+            "livenessProbe": {
+              "type": "object",
+              "properties": {
+                "enabled": { "type": "boolean", "default": true },
+                "initialDelaySeconds": { "type": "integer", "minimum": 0 },
+                "periodSeconds": { "type": "integer", "minimum": 1 },
+                "timeoutSeconds": { "type": "integer", "minimum": 1 },
+                "failureThreshold": { "type": "integer", "minimum": 1 }
+              }
+            },
+            "readinessProbe": {
+              "type": "object",
+              "properties": {
+                "enabled": { "type": "boolean", "default": true },
+                "initialDelaySeconds": { "type": "integer", "minimum": 0 },
+                "periodSeconds": { "type": "integer", "minimum": 1 },
+                "timeoutSeconds": { "type": "integer", "minimum": 1 },
+                "failureThreshold": { "type": "integer", "minimum": 1 }
+              }
+            }
+          }
+        },
+        "service": {
+          "type": "object",
+          "properties": {
+            "annotations": {
+              "type": "object",
+              "additionalProperties": { "type": "string" }
+            }
+          }
+        },
+        "networkPolicy": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean", "default": false },
+            "ingress": {
+              "type": "object",
+              "properties": {
+                "from": { "type": "array" }
+              }
+            }
+          }
+        },
+        "nodeSelector": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "tolerations": { "type": "array" },
+        "affinity": { "type": "object" },
+        "topologySpreadConstraints": { "type": "array" },
+        "podAnnotations": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "podLabels": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        }
+      }
     }
   }
 }

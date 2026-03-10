@@ -1,0 +1,86 @@
+suite: test proxy services
+templates:
+  - service-proxy.yaml
+  - service-proxy-headless.yaml
+tests:
+  - it: should not create services when proxy disabled
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: should create ClusterIP service when proxy enabled
+    template: service-proxy.yaml
+    set:
+      proxy:
+        enabled: true
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: Service
+      - equal:
+          path: spec.type
+          value: ClusterIP
+
+  - it: should create headless service when proxy enabled
+    template: service-proxy-headless.yaml
+    set:
+      proxy:
+        enabled: true
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: Service
+      - equal:
+          path: spec.clusterIP
+          value: None
+
+  - it: should expose config-api and proxy ports on ClusterIP service
+    template: service-proxy.yaml
+    set:
+      proxy:
+        enabled: true
+        configAPIPort: 8081
+        proxyPort: 8080
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
+    asserts:
+      - contains:
+          path: spec.ports
+          content:
+            name: config-api
+            port: 8081
+            targetPort: config-api
+            protocol: TCP
+      - contains:
+          path: spec.ports
+          content:
+            name: proxy
+            port: 8080
+            targetPort: proxy
+            protocol: TCP
+
+  - it: should expose only config-api port on headless service
+    template: service-proxy-headless.yaml
+    set:
+      proxy:
+        enabled: true
+        configAPIPort: 8081
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
+    asserts:
+      - contains:
+          path: spec.ports
+          content:
+            name: config-api
+            port: 8081
+            targetPort: config-api
+            protocol: TCP
+      - lengthEqual:
+          path: spec.ports
+          count: 1
