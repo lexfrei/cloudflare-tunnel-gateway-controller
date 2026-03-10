@@ -1,0 +1,131 @@
+package proxy
+
+import (
+	"net/http"
+	"net/http/httputil"
+	"net/url"
+	"sync"
+
+	"github.com/cockroachdb/errors"
+)
+
+// Handler is the main HTTP handler for the L7 proxy.
+// It routes requests, applies filters, and proxies to backends.
+type Handler struct {
+	router     *Router
+	transports sync.Map // map[string]*http.Transport — per-backend transport pool
+}
+
+// NewHandler creates a new proxy Handler backed by the given Router.
+func NewHandler(router *Router) *Handler {
+	return &Handler{
+		router: router,
+	}
+}
+
+// ServeHTTP implements http.Handler.
+func (h *Handler) ServeHTTP(writer http.ResponseWriter, req *http.Request) {
+	rule, backendIdx := h.router.Route(req)
+	if rule == nil {
+		http.Error(writer, "no matching route", http.StatusNotFound)
+
+		return
+	}
+
+	// Compile and apply request filters.
+	filters, err := CompileFilters(rule.Filters)
+	if err != nil {
+		http.Error(writer, "filter compilation error", http.StatusInternalServerError)
+
+		return
+	}
+
+	redirectResp := ApplyRequestFilters(filters, req)
+	if redirectResp != nil {
+		defer redirectResp.Body.Close()
+
+		writeRedirectResponse(writer, redirectResp)
+
+		return
+	}
+
+	// Proxy to backend.
+	backend := rule.Backends[backendIdx]
+
+	backendURL, err := url.Parse(backend.URL)
+	if err != nil {
+		http.Error(writer, "invalid backend URL", http.StatusInternalServerError)
+
+		return
+	}
+
+	proxy := h.createReverseProxy(backendURL, filters)
+	proxy.ServeHTTP(writer, req)
+}
+
+// createReverseProxy builds an httputil.ReverseProxy for the given backend.
+func (h *Handler) createReverseProxy(backendURL *url.URL, filters []Filter) *httputil.ReverseProxy {
+	return &httputil.ReverseProxy{
+		Director: func(req *http.Request) {
+			req.URL.Scheme = backendURL.Scheme
+			req.URL.Host = backendURL.Host
+			req.Host = backendURL.Host
+
+			if _, ok := req.Header["User-Agent"]; !ok {
+				req.Header.Set("User-Agent", "")
+			}
+		},
+		Transport:    h.getTransport(backendURL.Host),
+		ErrorHandler: errorHandler,
+		ModifyResponse: func(resp *http.Response) error {
+			ApplyResponseFilters(filters, resp)
+
+			return nil
+		},
+	}
+}
+
+// getTransport returns a shared transport for the given backend host.
+func (h *Handler) getTransport(host string) http.RoundTripper {
+	if transport, ok := h.transports.Load(host); ok {
+		loadedTransport, castOK := transport.(*http.Transport)
+		if castOK {
+			return loadedTransport
+		}
+	}
+
+	defaultTransport, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		return http.DefaultTransport
+	}
+
+	transport := defaultTransport.Clone()
+	actual, _ := h.transports.LoadOrStore(host, transport)
+
+	loadedTransport, ok := actual.(*http.Transport)
+	if !ok {
+		return http.DefaultTransport
+	}
+
+	return loadedTransport
+}
+
+// errorHandler handles proxy errors by returning 502 Bad Gateway.
+func errorHandler(writer http.ResponseWriter, _ *http.Request, err error) {
+	if errors.Is(err, nil) {
+		return
+	}
+
+	http.Error(writer, "bad gateway", http.StatusBadGateway)
+}
+
+// writeRedirectResponse writes a short-circuit redirect response.
+func writeRedirectResponse(writer http.ResponseWriter, resp *http.Response) {
+	for key, values := range resp.Header {
+		for _, value := range values {
+			writer.Header().Add(key, value)
+		}
+	}
+
+	writer.WriteHeader(resp.StatusCode)
+}
