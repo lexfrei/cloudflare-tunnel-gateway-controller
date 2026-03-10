@@ -57,7 +57,12 @@ type Config struct {
 	// Logger for tunnel operations.
 	Logger *slog.Logger
 	// ProxyURL is the catch-all backend URL (e.g., "http://localhost:8080").
+	// Ignored when OriginProxy is set (in-process mode).
 	ProxyURL string
+	// OriginProxy enables in-process delegation mode.
+	// When set, traffic is routed directly to this proxy without HTTP serialization.
+	// The ProxyURL field is ignored and a placeholder is used for orchestrator initialization.
+	OriginProxy connection.OriginProxy
 }
 
 // Token mirrors the cloudflared token JSON structure.
@@ -114,22 +119,9 @@ func StartTunnel(ctx context.Context, cfg Config) error {
 		logger = slog.Default()
 	}
 
-	zlog := newZerologLogger()
-
-	tunnelCfg, orchestratorCfg, err := buildTunnelConfig(ctx, token, cfg.ProxyURL, &zlog)
+	orchestrator, tunnelCfg, err := buildOrchestrator(ctx, &cfg, token, logger)
 	if err != nil {
-		return errors.Wrap(err, "build tunnel config")
-	}
-
-	orchestrator, err := orchestration.NewOrchestrator(
-		ctx,
-		orchestratorCfg,
-		nil, // tags
-		nil, // internal rules
-		&zlog,
-	)
-	if err != nil {
-		return errors.Wrap(err, "create orchestrator")
+		return err
 	}
 
 	connectedSignal := cfdsignal.New(make(chan struct{}))
@@ -164,6 +156,48 @@ func StartTunnel(ctx context.Context, cfg Config) error {
 	)
 
 	return errors.Wrap(err, "tunnel daemon")
+}
+
+// buildOrchestrator creates the orchestration.Orchestrator and tunnel config.
+// When cfg.OriginProxy is set, it enables in-process delegation mode.
+func buildOrchestrator(
+	ctx context.Context,
+	cfg *Config,
+	token *Token,
+	logger *slog.Logger,
+) (*orchestration.Orchestrator, *supervisor.TunnelConfig, error) {
+	zlog := newZerologLogger()
+
+	// In in-process mode, use a placeholder URL for orchestrator initialization.
+	// The actual proxying is handled by OverrideProxy, bypassing ingress rules entirely.
+	proxyURL := cfg.ProxyURL
+	if cfg.OriginProxy != nil {
+		proxyURL = "http://localhost:0"
+	}
+
+	tunnelCfg, orchestratorCfg, err := buildTunnelConfig(ctx, token, proxyURL, &zlog)
+	if err != nil {
+		return nil, nil, errors.Wrap(err, "build tunnel config")
+	}
+
+	orchestrator, err := orchestration.NewOrchestrator(
+		ctx,
+		orchestratorCfg,
+		nil, // tags
+		nil, // internal rules
+		&zlog,
+	)
+	if err != nil {
+		return nil, nil, errors.Wrap(err, "create orchestrator")
+	}
+
+	if cfg.OriginProxy != nil {
+		orchestrator.OverrideProxy = cfg.OriginProxy
+
+		logger.Info("in-process origin proxy enabled")
+	}
+
+	return orchestrator, tunnelCfg, nil
 }
 
 func buildTunnelConfig(

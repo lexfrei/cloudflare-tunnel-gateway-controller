@@ -38,15 +38,19 @@ func main() {
 }
 
 // runTunnelMode starts the proxy with cloudflared tunnel integration.
-// Traffic arrives through the tunnel; the proxy server is not exposed directly.
+// Traffic flows in-process: cloudflared → GatewayOriginProxy → proxy.Handler.
+// No localhost HTTP server is needed for proxying.
 func runTunnelMode(logger *slog.Logger, token string) {
 	configAddr := envOrDefault("PROXY_CONFIG_ADDR", defaultConfigAddr)
-	proxyAddr := envOrDefault("PROXY_ADDR", defaultProxyAddr)
 
 	router := proxy.NewRouter()
 	proxyHandler := proxy.NewHandler(router)
 
 	configServer := newServer(configAddr, proxy.NewConfigAPI(router))
+
+	// Create in-process origin proxy — traffic flows directly from cloudflared
+	// to our handler without HTTP serialization or localhost TCP hop.
+	originProxy := tunnel.NewGatewayOriginProxy(proxyHandler, logger)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -63,33 +67,18 @@ func runTunnelMode(logger *slog.Logger, token string) {
 		}
 	}()
 
-	// Start the proxy on localhost for cloudflared to forward traffic to.
-	proxyServer := newServer(proxyAddr, proxyHandler)
-
-	go func() {
-		logger.Info("starting proxy server for tunnel", "addr", proxyAddr)
-
-		err := proxyServer.ListenAndServe()
-		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			logger.Error("proxy server error", "error", err)
-			cancel()
-		}
-	}()
-
-	proxyURL := "http://localhost" + proxyAddr
-
-	logger.Info("starting cloudflared tunnel", "proxyURL", proxyURL)
+	logger.Info("starting cloudflared tunnel with in-process proxy")
 
 	err := tunnel.StartTunnel(ctx, tunnel.Config{
-		Token:    token,
-		Logger:   logger,
-		ProxyURL: proxyURL,
+		Token:       token,
+		Logger:      logger,
+		OriginProxy: originProxy,
 	})
 	if err != nil {
 		logger.Error("tunnel error", "error", err)
 	}
 
-	gracefulShutdown(logger, configServer, proxyServer)
+	gracefulShutdown(logger, configServer)
 }
 
 // runStandaloneMode starts the proxy as a standalone HTTP server.

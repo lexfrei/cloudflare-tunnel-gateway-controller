@@ -65,3 +65,14 @@ func TestNewZerologLogger(t *testing.T) {
 
 	assert.NotNil(t, logger, "zerolog logger should not be nil")
 }
+
+func TestBuildCatchAllIngress_PlaceholderURL(t *testing.T) {
+	t.Parallel()
+
+	// In in-process mode, buildOrchestrator uses a placeholder URL.
+	// Verify it produces valid ingress rules.
+	result, err := buildCatchAllIngress("http://localhost:0")
+
+	require.NoError(t, err)
+	assert.NotEmpty(t, result.Rules, "placeholder URL should produce valid ingress rules")
+}
