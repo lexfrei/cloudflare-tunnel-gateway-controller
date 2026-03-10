@@ -194,7 +194,7 @@ func TestBuild_PathMatching_Exact(t *testing.T) {
 							{
 								Path: &gatewayv1.HTTPPathMatch{
 									Type:  &exactType,
-									Value: strPtr("/api/v1"),
+									Value: new("/api/v1"),
 								},
 							},
 						},
@@ -232,7 +232,7 @@ func TestBuild_PathMatching_Prefix(t *testing.T) {
 							{
 								Path: &gatewayv1.HTTPPathMatch{
 									Type:  &prefixType,
-									Value: strPtr("/api"),
+									Value: new("/api"),
 								},
 							},
 						},
@@ -271,7 +271,7 @@ func TestBuild_Sorting(t *testing.T) {
 							{
 								Path: &gatewayv1.HTTPPathMatch{
 									Type:  &prefixType,
-									Value: strPtr("/api"),
+									Value: new("/api"),
 								},
 							},
 						},
@@ -284,7 +284,7 @@ func TestBuild_Sorting(t *testing.T) {
 							{
 								Path: &gatewayv1.HTTPPathMatch{
 									Type:  &exactType,
-									Value: strPtr("/api/v1/specific"),
+									Value: new("/api/v1/specific"),
 								},
 							},
 						},
@@ -297,7 +297,7 @@ func TestBuild_Sorting(t *testing.T) {
 							{
 								Path: &gatewayv1.HTTPPathMatch{
 									Type:  &prefixType,
-									Value: strPtr("/api/v1"),
+									Value: new("/api/v1"),
 								},
 							},
 						},
@@ -650,7 +650,7 @@ func TestBuild_RegularExpressionPath(t *testing.T) {
 							{
 								Path: &gatewayv1.HTTPPathMatch{
 									Type:  &regexType,
-									Value: strPtr("/api/[0-9]+"),
+									Value: new("/api/[0-9]+"),
 								},
 							},
 						},
@@ -993,7 +993,7 @@ func TestBuild_RootPath(t *testing.T) {
 							{
 								Path: &gatewayv1.HTTPPathMatch{
 									Type:  &prefixType,
-									Value: strPtr("/"),
+									Value: new("/"),
 								},
 							},
 						},
@@ -1157,16 +1157,19 @@ func newHTTPBackendRef(name string, namespace *gatewayv1.Namespace, port *int32)
 	return ref
 }
 
+//go:fix inline
 func strPtr(s string) *string {
-	return &s
+	return new(s)
 }
 
+//go:fix inline
 func int32Ptr(i int32) *int32 {
-	return &i
+	return new(i)
 }
 
+//go:fix inline
 func portNumPtr(p int32) *gatewayv1.PortNumber {
-	return &p
+	return new(p)
 }
 
 // ExternalName Service Tests (TDD Phase 1: RED)

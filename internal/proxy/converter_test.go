@@ -28,7 +28,7 @@ func TestConvertHTTPRoutes_Basic(t *testing.T) {
 							{
 								Path: &gatewayv1.HTTPPathMatch{
 									Type:  &pathPrefix,
-									Value: strPtr("/"),
+									Value: new("/"),
 								},
 							},
 						},
@@ -49,7 +49,7 @@ func TestConvertHTTPRoutes_Basic(t *testing.T) {
 							{
 								Path: &gatewayv1.HTTPPathMatch{
 									Type:  &pathExact,
-									Value: strPtr("/api/health"),
+									Value: new("/api/health"),
 								},
 							},
 						},
@@ -82,7 +82,7 @@ func TestConvertHTTPRoutes_MultipleHostnames(t *testing.T) {
 				Rules: []gatewayv1.HTTPRouteRule{
 					{
 						Matches: []gatewayv1.HTTPRouteMatch{
-							{Path: &gatewayv1.HTTPPathMatch{Type: &pathPrefix, Value: strPtr("/")}},
+							{Path: &gatewayv1.HTTPPathMatch{Type: &pathPrefix, Value: new("/")}},
 						},
 						BackendRefs: []gatewayv1.HTTPBackendRef{
 							backendRef("app-svc", 80, 1),
@@ -114,7 +114,7 @@ func TestConvertHTTPRoutes_Filters(t *testing.T) {
 				Rules: []gatewayv1.HTTPRouteRule{
 					{
 						Matches: []gatewayv1.HTTPRouteMatch{
-							{Path: &gatewayv1.HTTPPathMatch{Type: &pathPrefix, Value: strPtr("/")}},
+							{Path: &gatewayv1.HTTPPathMatch{Type: &pathPrefix, Value: new("/")}},
 						},
 						Filters: []gatewayv1.HTTPRouteFilter{
 							{
@@ -159,7 +159,7 @@ func TestConvertHTTPRoutes_HeaderMatch(t *testing.T) {
 					{
 						Matches: []gatewayv1.HTTPRouteMatch{
 							{
-								Path:   &gatewayv1.HTTPPathMatch{Type: &pathPrefix, Value: strPtr("/api")},
+								Path:   &gatewayv1.HTTPPathMatch{Type: &pathPrefix, Value: new("/api")},
 								Method: &methodGet,
 								Headers: []gatewayv1.HTTPHeaderMatch{
 									{
@@ -204,7 +204,7 @@ func TestConvertHTTPRoutes_WeightedBackends(t *testing.T) {
 				Rules: []gatewayv1.HTTPRouteRule{
 					{
 						Matches: []gatewayv1.HTTPRouteMatch{
-							{Path: &gatewayv1.HTTPPathMatch{Type: &pathPrefix, Value: strPtr("/")}},
+							{Path: &gatewayv1.HTTPPathMatch{Type: &pathPrefix, Value: new("/")}},
 						},
 						BackendRefs: []gatewayv1.HTTPBackendRef{
 							backendRef("stable", 80, 80),
@@ -236,7 +236,7 @@ func TestConvertHTTPRoutes_NoHostnames(t *testing.T) {
 				Rules: []gatewayv1.HTTPRouteRule{
 					{
 						Matches: []gatewayv1.HTTPRouteMatch{
-							{Path: &gatewayv1.HTTPPathMatch{Type: &pathPrefix, Value: strPtr("/")}},
+							{Path: &gatewayv1.HTTPPathMatch{Type: &pathPrefix, Value: new("/")}},
 						},
 						BackendRefs: []gatewayv1.HTTPBackendRef{
 							backendRef("default-svc", 80, 1),
@@ -264,8 +264,9 @@ func TestConvertHTTPRoutes_Empty(t *testing.T) {
 
 // Helper functions.
 
+//go:fix inline
 func strPtr(s string) *string {
-	return &s
+	return new(s)
 }
 
 func backendRef(name string, port, weight int) gatewayv1.HTTPBackendRef {

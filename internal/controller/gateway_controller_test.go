@@ -13,8 +13,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
-	"k8s.io/utils/ptr"
-	ctrl "sigs.k8s.io/controller-runtime"
+ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -430,7 +429,7 @@ func TestGatewayReconciler_RefMatchesGateway(t *testing.T) {
 			name: "matching gateway explicit namespace",
 			ref: gatewayv1.ParentReference{
 				Name:      "test-gateway",
-				Namespace: ptr.To(gatewayv1.Namespace("default")),
+				Namespace: new(gatewayv1.Namespace("default")),
 			},
 			routeNamespace: "other",
 			expected:       true,
@@ -447,7 +446,7 @@ func TestGatewayReconciler_RefMatchesGateway(t *testing.T) {
 			name: "wrong namespace",
 			ref: gatewayv1.ParentReference{
 				Name:      "test-gateway",
-				Namespace: ptr.To(gatewayv1.Namespace("other")),
+				Namespace: new(gatewayv1.Namespace("other")),
 			},
 			routeNamespace: "default",
 			expected:       false,
@@ -604,11 +603,11 @@ func TestPtr(t *testing.T) {
 	t.Parallel()
 
 	strVal := "test"
-	strPtr := ptr.To(strVal)
+	strPtr := new(strVal)
 	assert.Equal(t, strVal, *strPtr)
 
 	intVal := 42
-	intPtr := ptr.To(intVal)
+	intPtr := new(intVal)
 	assert.Equal(t, intVal, *intPtr)
 }
 

@@ -50,7 +50,7 @@ func TestRouteSyncer_CrossNamespaceRef_WithoutGrant(t *testing.T) {
 							BackendRef: gatewayv1.BackendRef{
 								BackendObjectReference: gatewayv1.BackendObjectReference{
 									Name:      "backend-service",
-									Namespace: (*gatewayv1.Namespace)(strPtr("backend")),
+									Namespace: (*gatewayv1.Namespace)(new("backend")),
 									Port:      portNumPtr(8080),
 								},
 							},
@@ -486,7 +486,7 @@ func TestRouteSyncer_ReferenceGrant_SpecificName(t *testing.T) {
 				{
 					Group: "",
 					Kind:  "Service",
-					Name:  (*gatewayv1.ObjectName)(strPtr("allowed-service")),
+					Name:  (*gatewayv1.ObjectName)(new("allowed-service")),
 				},
 			},
 		},
@@ -543,11 +543,15 @@ func TestRouteSyncer_ReferenceGrant_SpecificName(t *testing.T) {
 }
 
 // strPtr returns a pointer to a string.
+//
+//go:fix inline
 func strPtr(s string) *string {
-	return &s
+	return new(s)
 }
 
 // portNumPtr returns a pointer to a PortNumber.
+//
+//go:fix inline
 func portNumPtr(p int32) *gatewayv1.PortNumber {
-	return &p
+	return new(p)
 }

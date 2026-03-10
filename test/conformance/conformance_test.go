@@ -647,8 +647,8 @@ func testHTTPRouteRequestRedirect(
 				{
 					Type: gatewayv1.HTTPRouteFilterRequestRedirect,
 					RequestRedirect: &gatewayv1.HTTPRequestRedirectFilter{
-						Scheme:     ptrTo("https"),
-						Hostname:   ptrToHostname("redirected.example.com"),
+						Scheme:     new("https"),
+						Hostname:   new(gatewayv1.PreciseHostname("redirected.example.com")),
 						StatusCode: &statusCode,
 					},
 				},
@@ -682,11 +682,6 @@ func testHTTPRouteRequestRedirect(
 
 // --- Helpers ---
 
-func ptrTo(s string) *string      { return &s }
-func ptrToHostname(s string) *gatewayv1.PreciseHostname {
-	h := gatewayv1.PreciseHostname(s)
-	return &h
-}
 
 func pathPrefix(path string) *gatewayv1.HTTPPathMatch {
 	t := gatewayv1.PathMatchPathPrefix

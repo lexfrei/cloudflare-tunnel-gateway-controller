@@ -34,11 +34,6 @@ const (
 	conditionResolvedRefs = "ResolvedRefs"   // Gateway API condition type
 )
 
-// ptrTo returns a pointer to the given value.
-func ptrTo[T any](v T) *T {
-	return &v
-}
-
 func setupClient(t *testing.T) client.Client {
 	t.Helper()
 
@@ -83,7 +78,7 @@ func createHTTPRouteWithPath(t *testing.T, c client.Client, name, hostname, path
 					BackendRef: gatewayv1.BackendRef{
 						BackendObjectReference: gatewayv1.BackendObjectReference{
 							Name: gatewayv1.ObjectName(backendName),
-							Port: ptrTo[gatewayv1.PortNumber](port),
+							Port: new(gatewayv1.PortNumber(port)),
 						},
 					},
 				}},
@@ -330,7 +325,7 @@ func TestCFTunnel_MultipleHostnames(t *testing.T) {
 					BackendRef: gatewayv1.BackendRef{
 						BackendObjectReference: gatewayv1.BackendObjectReference{
 							Name: gatewayv1.ObjectName("infra-backend-v1"),
-							Port: ptrTo[gatewayv1.PortNumber](8080),
+							Port: new(gatewayv1.PortNumber(8080)),
 						},
 					},
 				}},
@@ -383,7 +378,7 @@ func TestCFTunnel_GRPCRouteAccepted(t *testing.T) {
 					BackendRef: gatewayv1.BackendRef{
 						BackendObjectReference: gatewayv1.BackendObjectReference{
 							Name: gatewayv1.ObjectName("grpc-infra-backend-v1"),
-							Port: ptrTo[gatewayv1.PortNumber](8080),
+							Port: new(gatewayv1.PortNumber(8080)),
 						},
 					},
 				}},

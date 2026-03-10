@@ -383,10 +383,8 @@ func TestRouter_ConcurrentAccess(t *testing.T) {
 
 	// Concurrent reads
 	for range 100 {
-		waitGroup.Add(1)
 
-		go func() {
-			defer waitGroup.Done()
+		waitGroup.Go(func() {
 
 			req := &http.Request{
 				Method: http.MethodGet,
@@ -397,14 +395,12 @@ func TestRouter_ConcurrentAccess(t *testing.T) {
 
 			rule, _ := router.Route(req)
 			assert.NotNil(t, rule)
-		}()
+		})
 	}
 
 	// Concurrent write
-	waitGroup.Add(1)
 
-	go func() {
-		defer waitGroup.Done()
+	waitGroup.Go(func() {
 
 		newCfg := &proxy.Config{
 			Version: 2,
@@ -416,7 +412,7 @@ func TestRouter_ConcurrentAccess(t *testing.T) {
 			},
 		}
 		_ = router.UpdateConfig(newCfg)
-	}()
+	})
 
 	waitGroup.Wait()
 }
@@ -581,8 +577,8 @@ func TestRouter_EmptyBackends_ReturnsMinusOne(t *testing.T) {
 					{
 						Type: proxy.FilterRequestRedirect,
 						RequestRedirect: &proxy.RedirectConfig{
-							Hostname:   ptrTo("other.example.com"),
-							StatusCode: ptrToInt(301),
+							Hostname:   new("other.example.com"),
+							StatusCode: new(301),
 						},
 					},
 				},
@@ -604,7 +600,3 @@ func TestRouter_EmptyBackends_ReturnsMinusOne(t *testing.T) {
 	assert.Equal(t, -1, backendIdx, "should return -1 for empty backends")
 	assert.NotEmpty(t, rule.Filters, "rule should have redirect filter")
 }
-
-func ptrTo(s string) *string { return &s }
-
-func ptrToInt(i int) *int { return &i }

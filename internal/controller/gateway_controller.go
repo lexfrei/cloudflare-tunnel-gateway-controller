@@ -17,8 +17,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/retry"
-	"k8s.io/utils/ptr"
-	ctrl "sigs.k8s.io/controller-runtime"
+ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
@@ -119,7 +118,7 @@ func (r *GatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 			logger.Error(statusErr, "failed to update gateway status")
 		}
 
-		return ctrl.Result{RequeueAfter: configErrorRequeueDelay, Priority: ptr.To(priorityGateway)}, nil
+		return ctrl.Result{RequeueAfter: configErrorRequeueDelay, Priority: new(priorityGateway)}, nil
 	}
 
 	if !gateway.DeletionTimestamp.IsZero() {
@@ -398,7 +397,7 @@ func (r *GatewayReconciler) updateStatus(
 
 		freshGateway.Status.Addresses = []gatewayv1.GatewayStatusAddress{
 			{
-				Type:  ptr.To(gatewayv1.HostnameAddressType),
+				Type:  new(gatewayv1.HostnameAddressType),
 				Value: cfg.TunnelID + cfArgotunnelSuffix,
 			},
 		}
@@ -556,7 +555,7 @@ func (r *GatewayReconciler) setCloudflaredErrorStatus(
 		// Set address even on error (tunnel exists, just cloudflared failed)
 		freshGateway.Status.Addresses = []gatewayv1.GatewayStatusAddress{
 			{
-				Type:  ptr.To(gatewayv1.HostnameAddressType),
+				Type:  new(gatewayv1.HostnameAddressType),
 				Value: cfg.TunnelID + cfArgotunnelSuffix,
 			},
 		}

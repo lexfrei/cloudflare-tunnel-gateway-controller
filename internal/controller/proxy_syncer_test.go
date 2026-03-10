@@ -78,7 +78,7 @@ func TestProxySyncer_SyncRoutes(t *testing.T) {
 						{
 							Path: &gatewayv1.HTTPPathMatch{
 								Type:  &pathPrefix,
-								Value: strPtr("/"),
+								Value: new("/"),
 							},
 						},
 					},
@@ -170,8 +170,9 @@ func TestProxySyncer_NoRoutes(t *testing.T) {
 
 // Helper functions.
 
+//go:fix inline
 func strPtr(s string) *string {
-	return &s
+	return new(s)
 }
 
 func makeBackendRef(name string, port, weight int) gatewayv1.HTTPBackendRef {

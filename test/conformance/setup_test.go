@@ -202,7 +202,7 @@ func setupGateway(t *testing.T, k8sClient client.Client, cfg testConfig) {
 					Protocol: gatewayv1.HTTPSProtocolType,
 					AllowedRoutes: &gatewayv1.AllowedRoutes{
 						Namespaces: &gatewayv1.RouteNamespaces{
-							From: ptrToNamespacesFromAll(),
+							From: new(gatewayv1.NamespacesFromAll),
 						},
 					},
 				},
@@ -233,11 +233,6 @@ func setupGateway(t *testing.T, k8sClient client.Client, cfg testConfig) {
 	)
 	require.NoError(t, err, "gateway did not become accepted")
 	t.Logf("gateway %s/%s is accepted", cfg.Namespace, cfg.GatewayName)
-}
-
-func ptrToNamespacesFromAll() *gatewayv1.FromNamespaces {
-	from := gatewayv1.NamespacesFromAll
-	return &from
 }
 
 func mustParseQuantity(s string) *resource.Quantity {

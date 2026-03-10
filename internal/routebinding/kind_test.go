@@ -218,8 +218,9 @@ func TestIsRouteKindAllowed(t *testing.T) {
 	}
 }
 
+//go:fix inline
 func groupPtr(g gatewayv1.Group) *gatewayv1.Group {
-	return &g
+	return new(g)
 }
 
 func TestFilterSupportedKinds(t *testing.T) {

@@ -120,8 +120,8 @@ func TestProxyConfig_Validate(t *testing.T) {
 							{
 								Type: proxy.FilterRequestRedirect,
 								RequestRedirect: &proxy.RedirectConfig{
-									Hostname:   ptrTo("other.example.com"),
-									StatusCode: ptrToInt(301),
+									Hostname:   new("other.example.com"),
+									StatusCode: new(301),
 								},
 							},
 						},

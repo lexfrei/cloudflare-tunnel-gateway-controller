@@ -15,8 +15,9 @@ func (m mockWeightedRef) GetWeight() *int32 {
 	return m.weight
 }
 
+//go:fix inline
 func int32Ptr(i int32) *int32 {
-	return &i
+	return new(i)
 }
 
 func TestSelectHighestWeightIndex(t *testing.T) {
