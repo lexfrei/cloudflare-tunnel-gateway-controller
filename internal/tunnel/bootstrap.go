@@ -13,6 +13,7 @@ import (
 
 	"github.com/cockroachdb/errors"
 	"github.com/google/uuid"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/rs/zerolog"
 
 	"github.com/cloudflare/cloudflared/client"
@@ -21,6 +22,7 @@ import (
 	"github.com/cloudflare/cloudflared/edgediscovery"
 	"github.com/cloudflare/cloudflared/features"
 	"github.com/cloudflare/cloudflared/ingress"
+	"github.com/cloudflare/cloudflared/ingress/origins"
 	"github.com/cloudflare/cloudflared/orchestration"
 	cfdsignal "github.com/cloudflare/cloudflared/signal"
 	"github.com/cloudflare/cloudflared/supervisor"
@@ -228,11 +230,13 @@ func buildTunnelConfig(
 	}, zlog)
 
 	observer := connection.NewObserver(zlog, zlog)
+	dnsService := origins.NewDNSResolverService(originDialerService, zlog, origins.NewMetrics(prometheus.DefaultRegisterer))
 
 	tunnelCfg.EdgeTLSConfigs = edgeTLSConfigs
 	tunnelCfg.ProtocolSelector = protocolSelector
 	tunnelCfg.OriginDialerService = originDialerService
 	tunnelCfg.Observer = observer
+	tunnelCfg.OriginDNSService = dnsService
 	tunnelCfg.NamedTunnel = &connection.TunnelProperties{
 		Credentials: connection.Credentials{
 			AccountTag:   token.AccountTag,
