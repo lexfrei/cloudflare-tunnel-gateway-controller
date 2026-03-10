@@ -127,6 +127,13 @@ jobs:
           helm template test-release charts/cloudflare-tunnel-gateway-controller \
             --set serviceMonitor.enabled=true
 
+      - name: Template Chart with proxy enabled
+        run: |
+          echo "Testing chart with proxy enabled..."
+          helm template test-release charts/cloudflare-tunnel-gateway-controller \
+            --set proxy.enabled=true \
+            --set proxy.tunnelTokenSecretRef.name=tunnel-token-secret
+
       - name: Validate helm-docs
         run: |
           CHART_DIR="charts/cloudflare-tunnel-gateway-controller"
