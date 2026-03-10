@@ -80,6 +80,20 @@ helm template test charts/cloudflare-tunnel-gateway-controller --values charts/c
 - `helm.sh/helm/v3` - Helm SDK for cloudflared deployment
 - `github.com/cockroachdb/errors` - Error wrapping
 
+### Cloudflared Fork
+
+The project uses a fork of cloudflared: `github.com/lexfrei/cloudflared` (via `replace` directive in `go.mod`).
+
+**Why:** The v2 in-process proxy needs to inject a custom `OriginProxy` into cloudflared's `Orchestrator`. Upstream cloudflared doesn't expose this capability, so the fork adds an `OverrideProxy` field to `Orchestrator` and modifies `GetOriginProxy()` to return it when set.
+
+**Fork maintenance:**
+
+- Fork repo: `github.com/lexfrei/cloudflared`, branch `master`
+- Base: upstream cloudflare/cloudflared at a pinned commit
+- Patch: single commit adding `OverrideProxy` field to `orchestration/orchestrator.go`
+- **NEVER patch vendor directly** — always update the fork and re-vendor
+- When upgrading cloudflared version: rebase fork's master onto new upstream tag/commit, re-apply patch, update `replace` directive and pseudo-version in `go.mod`, then `go mod tidy && go mod vendor`
+
 ### Configuration
 
 Configuration is provided via GatewayClassConfig CRD (referenced by GatewayClass parametersRef):

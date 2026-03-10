@@ -1,6 +1,6 @@
 module github.com/lexfrei/cloudflare-tunnel-gateway-controller
 
-go 1.25.4
+go 1.26.1
 
 require (
 	github.com/Masterminds/semver/v3 v3.4.0
@@ -206,3 +206,5 @@ require (
 	sigs.k8s.io/yaml v1.6.0 // indirect
 	zombiezen.com/go/capnproto2 v2.18.0+incompatible // indirect
 )
+
+replace github.com/cloudflare/cloudflared => github.com/lexfrei/cloudflared v0.0.0-20260310225828-a24714888bf2
