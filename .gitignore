@@ -1,5 +1,6 @@
 # Binaries
 /controller
+/proxy
 *.exe
 *.dll
 *.so
