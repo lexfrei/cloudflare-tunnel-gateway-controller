@@ -3,22 +3,29 @@
 This document describes the known limitations of the Cloudflare Tunnel Gateway
 Controller and provides workarounds where applicable.
 
-## Cloudflare Tunnel Constraints
+## Cloudflare Tunnel Constraints (v1 mode)
 
-The following Gateway API features are not supported due to Cloudflare Tunnel
-architecture:
+!!! note "v2 L7 Proxy removes most limitations"
+    When using the [L7 proxy](../guides/l7-proxy.md), all features marked
+    "Yes (v2)" below are fully supported. The proxy runs routing locally,
+    bypassing Cloudflare Tunnel ingress API limitations.
 
-| Feature | Reason |
-|---------|--------|
-| Header matching | Tunnel ingress rules don't support header conditions |
-| Query parameter matching | Tunnel ingress rules don't support query conditions |
-| Method matching | Tunnel ingress rules don't support HTTP method conditions |
-| Request header modification | Tunnel doesn't modify requests |
-| Response header modification | Tunnel doesn't modify responses |
-| Request redirect | Tunnel doesn't support redirects |
-| URL rewrite | Tunnel doesn't support rewrites |
-| Request mirroring | Tunnel doesn't support mirroring |
-| Traffic splitting | Tunnel sends to single backend |
+The following table shows feature support across v1 (Cloudflare API) and v2
+(L7 Proxy) modes:
+
+| Feature | v1 (CF API) | v2 (L7 Proxy) |
+| --- | --- | --- |
+| Exact path matching | No | Yes |
+| Header matching | No | Yes |
+| Query parameter matching | No | Yes |
+| Method matching | No | Yes |
+| Request header modification | No | Yes |
+| Response header modification | No | Yes |
+| Request redirect | No | Yes |
+| URL rewrite | No | Yes |
+| Request mirroring | No | Yes |
+| Traffic splitting (weighted) | No | Yes |
+| Regex path matching | No | Yes |
 
 ## Cloudflare Tunnel Path Matching Limitations
 
