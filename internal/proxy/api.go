@@ -2,7 +2,10 @@ package proxy
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
+
+	"github.com/cockroachdb/errors"
 )
 
 // ConfigStatus is the response for GET /config.
@@ -62,6 +65,12 @@ func (a *ConfigAPI) handlePutConfig(writer http.ResponseWriter, req *http.Reques
 
 	err = a.router.UpdateConfig(&cfg)
 	if err != nil {
+		if errors.Is(err, errStaleVersion) {
+			http.Error(writer, err.Error(), http.StatusConflict)
+
+			return
+		}
+
 		http.Error(writer, "failed to apply config: "+err.Error(), http.StatusInternalServerError)
 
 		return
@@ -77,13 +86,19 @@ func (a *ConfigAPI) handleGetConfig(writer http.ResponseWriter, _ *http.Request)
 		Ready:   version > 0,
 	}
 
-	writer.Header().Set("Content-Type", "application/json")
-
-	err := json.NewEncoder(writer).Encode(status)
+	data, err := json.Marshal(status)
 	if err != nil {
 		http.Error(writer, "failed to encode response", http.StatusInternalServerError)
 
 		return
+	}
+
+	writer.Header().Set("Content-Type", "application/json")
+	writer.WriteHeader(http.StatusOK)
+
+	_, writeErr := writer.Write(data)
+	if writeErr != nil {
+		slog.Error("failed to write config response", "error", writeErr)
 	}
 }
 

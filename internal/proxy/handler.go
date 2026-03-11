@@ -59,11 +59,20 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, req *http.Request) {
 	}
 
 	// Apply route timeouts to the request context.
-	if result.Rule.Timeouts != nil && result.Rule.Timeouts.Backend > 0 {
-		ctx, cancel := context.WithTimeout(req.Context(), result.Rule.Timeouts.Backend)
-		defer cancel()
+	// Request timeout covers the entire transaction; Backend timeout covers the backend call.
+	// Use the shorter of the two if both are set.
+	if result.Rule.Timeouts != nil {
+		timeout := result.Rule.Timeouts.Request
+		if result.Rule.Timeouts.Backend > 0 && (timeout == 0 || result.Rule.Timeouts.Backend < timeout) {
+			timeout = result.Rule.Timeouts.Backend
+		}
 
-		req = req.WithContext(ctx)
+		if timeout > 0 {
+			ctx, cancel := context.WithTimeout(req.Context(), timeout)
+			defer cancel()
+
+			req = req.WithContext(ctx)
+		}
 	}
 
 	proxy := h.createReverseProxy(backendURL, result.Filters)
