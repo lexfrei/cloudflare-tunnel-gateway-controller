@@ -50,6 +50,8 @@ func runTunnelMode(logger *slog.Logger, token string) {
 	router.SetHandler(proxyHandler)
 
 	authToken := os.Getenv("PROXY_AUTH_TOKEN")
+	warnIfNoAuth(logger, authToken)
+
 	configServer := newServer(configAddr, proxy.NewConfigAPI(router, authToken))
 
 	// Create in-process origin proxy — traffic flows directly from cloudflared
@@ -81,7 +83,7 @@ func runTunnelMode(logger *slog.Logger, token string) {
 
 	gracefulShutdown(logger, configServer)
 
-	if err != nil {
+	if err != nil && !errors.Is(err, context.Canceled) {
 		logger.Error("tunnel error", "error", err)
 		cancel()
 		os.Exit(1) //nolint:gocritic // cancel() called explicitly above
@@ -99,6 +101,8 @@ func runStandaloneMode(logger *slog.Logger) {
 	router.SetHandler(proxyHandler)
 
 	authToken := os.Getenv("PROXY_AUTH_TOKEN")
+	warnIfNoAuth(logger, authToken)
+
 	configServer := newServer(configAddr, proxy.NewConfigAPI(router, authToken))
 	proxyServer := newProxyServer(proxyAddr, proxyHandler)
 
@@ -217,6 +221,12 @@ func drainErrors(logger *slog.Logger, errChan <-chan error) {
 		default:
 			return
 		}
+	}
+}
+
+func warnIfNoAuth(logger *slog.Logger, authToken string) {
+	if authToken == "" {
+		logger.Warn("config API running WITHOUT authentication -- set PROXY_AUTH_TOKEN for production use")
 	}
 }
 

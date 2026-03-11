@@ -39,12 +39,6 @@ type GRPCRouteReconciler struct {
 	// RouteSyncer provides unified sync for both HTTP and GRPC routes.
 	RouteSyncer *RouteSyncer
 
-	// ProxySyncer pushes routing config to v2 proxy replicas (optional).
-	ProxySyncer *ProxySyncer
-
-	// ProxyEndpoints is the list of proxy config API URLs for v2 proxy sync.
-	ProxyEndpoints []string
-
 	// bindingValidator validates route binding to Gateway listeners.
 	bindingValidator *routebinding.Validator
 
@@ -66,9 +60,9 @@ func (r *GRPCRouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 func (r *GRPCRouteReconciler) syncAndUpdateStatus(ctx context.Context) (ctrl.Result, error) {
 	return syncAndUpdateStatusCommon(ctx, syncUpdateParams{
-		routeSyncer:    r.RouteSyncer,
-		proxySyncer:    r.ProxySyncer,
-		proxyEndpoints: r.ProxyEndpoints,
+		routeSyncer: r.RouteSyncer,
+		// GRPC routes are not pushed to the v2 proxy — they use Cloudflare
+		// Tunnel natively. proxySyncer and proxyEndpoints are intentionally nil.
 		statusEntries: func(sr *SyncResult) []routeStatusEntry {
 			return sr.grpcStatusEntries(r.updateRouteStatus)
 		},
