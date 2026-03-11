@@ -29,9 +29,8 @@ const (
 	maxIngressRules = 1000
 
 	// Route status messages.
-	routeNotAcceptedMessage = "Route not accepted"
-	routeAcceptedMessage    = "Route accepted and programmed in Cloudflare Tunnel"
-	resolvedRefsMessage     = "All references resolved"
+	routeAcceptedMessage = "Route accepted and programmed in Cloudflare Tunnel"
+	resolvedRefsMessage  = "All references resolved"
 
 	// Priority levels for reconciliation queue.
 	// Higher values = higher priority = processed first.
@@ -60,10 +59,8 @@ type HTTPRouteReconciler struct {
 	// Scheme is the runtime scheme for API type registration.
 	Scheme *runtime.Scheme
 
-	// GatewayClassName filters which routes to process.
-	GatewayClassName string
-
-	// ControllerName is reported in HTTPRoute status.
+	// ControllerName identifies this controller and is used to filter
+	// routes by their parent Gateway's GatewayClass controllerName.
 	ControllerName string
 
 	// RouteSyncer provides unified sync for both HTTP and GRPC routes.
@@ -88,7 +85,7 @@ func (r *HTTPRouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		startupComplete:  &r.startupComplete,
 		k8sClient:        r.Client,
 		bindingValidator: r.bindingValidator,
-		gatewayClassName: r.GatewayClassName,
+		controllerName:   r.ControllerName,
 		componentName:    "httproute",
 		wrapRoute:        func(route *gatewayv1.HTTPRoute) Route { return HTTPRouteWrapper{route} },
 		syncAndUpdate:    r.syncAndUpdateStatus,
@@ -118,7 +115,7 @@ func httpRoutePtrs(routes []gatewayv1.HTTPRoute) []*gatewayv1.HTTPRoute {
 }
 
 func (r *HTTPRouteReconciler) isRouteForOurGateway(ctx context.Context, route *gatewayv1.HTTPRoute) bool {
-	return IsRouteAcceptedByGateway(ctx, r.Client, r.bindingValidator, r.GatewayClassName, HTTPRouteWrapper{route})
+	return IsRouteAcceptedByGateway(ctx, r.Client, r.bindingValidator, r.ControllerName, HTTPRouteWrapper{route})
 }
 
 func (r *HTTPRouteReconciler) updateRouteStatus(
@@ -131,9 +128,8 @@ func (r *HTTPRouteReconciler) updateRouteStatus(
 	return updateRouteStatusGeneric(
 		ctx,
 		routeStatusUpdateParams{
-			k8sClient:        r.Client,
-			gatewayClassName: r.GatewayClassName,
-			controllerName:   r.ControllerName,
+			k8sClient:      r.Client,
+			controllerName: r.ControllerName,
 		},
 		types.NamespacedName{Name: route.Name, Namespace: route.Namespace},
 		newHTTPRouteAccessor,
@@ -151,7 +147,7 @@ func (r *HTTPRouteReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		reconciler:            r,
 		runnable:              r,
 		k8sClient:             r.Client,
-		gatewayClassName:      r.GatewayClassName,
+		controllerName:        r.ControllerName,
 		configResolver:        r.RouteSyncer.ConfigResolver,
 		bindingValidator:      r.bindingValidator,
 		findRoutesForGateway:  r.findRoutesForGateway,
@@ -196,7 +192,7 @@ func (r *HTTPRouteReconciler) findRoutesForGateway(
 		routes[i] = HTTPRouteWrapper{&routeList.Items[i]}
 	}
 
-	return FindRoutesForGateway(obj, r.GatewayClassName, routes)
+	return FindRoutesForGateway(ctx, r.Client, obj, r.ControllerName, routes)
 }
 
 func (r *HTTPRouteReconciler) findRoutesForReferenceGrant(
@@ -236,5 +232,5 @@ func (r *HTTPRouteReconciler) getAllRelevantRoutes(ctx context.Context) []reconc
 		routes[i] = HTTPRouteWrapper{&routeList.Items[i]}
 	}
 
-	return FilterAcceptedRoutes(ctx, r.Client, r.bindingValidator, r.GatewayClassName, routes)
+	return FilterAcceptedRoutes(ctx, r.Client, r.bindingValidator, r.ControllerName, routes)
 }

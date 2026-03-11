@@ -27,7 +27,7 @@ type reconcileRouteParams[T client.Object] struct {
 	startupComplete  *atomic.Bool
 	k8sClient        client.Client
 	bindingValidator *routebinding.Validator
-	gatewayClassName string
+	controllerName   string
 	componentName    string
 	wrapRoute        func(T) Route
 	syncAndUpdate    func(ctx context.Context) (ctrl.Result, error)
@@ -63,7 +63,7 @@ func reconcileRoute[T client.Object](
 	}
 
 	wrapped := params.wrapRoute(route)
-	if !IsRouteAcceptedByGateway(ctx, params.k8sClient, params.bindingValidator, params.gatewayClassName, wrapped) {
+	if !IsRouteAcceptedByGateway(ctx, params.k8sClient, params.bindingValidator, params.controllerName, wrapped) {
 		return ctrl.Result{}, nil
 	}
 
@@ -79,7 +79,7 @@ type routeControllerSetupParams struct {
 	reconciler            reconcile.Reconciler
 	runnable              manager.Runnable
 	k8sClient             client.Client
-	gatewayClassName      string
+	controllerName        string
 	configResolver        *config.Resolver
 	bindingValidator      *routebinding.Validator
 	findRoutesForGateway  handler.MapFunc
@@ -91,9 +91,9 @@ type routeControllerSetupParams struct {
 // watches shared between HTTPRoute and GRPCRoute controllers.
 func setupRouteController(mgr ctrl.Manager, params *routeControllerSetupParams) error {
 	mapper := &ConfigMapper{
-		Client:           params.k8sClient,
-		GatewayClassName: params.gatewayClassName,
-		ConfigResolver:   params.configResolver,
+		Client:         params.k8sClient,
+		ControllerName: params.controllerName,
+		ConfigResolver: params.configResolver,
 	}
 
 	err := ctrl.NewControllerManagedBy(mgr).

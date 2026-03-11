@@ -118,14 +118,19 @@ func TestGatewayReconciler_WrongGatewayClass(t *testing.T) {
 		},
 	}
 
-	fakeClient := setupGatewayFakeClient(gateway)
+	// GatewayClass exists but belongs to a different controller.
+	otherClass := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "other-class"},
+		Spec:       gatewayv1.GatewayClassSpec{ControllerName: "other-controller"},
+	}
+
+	fakeClient := setupGatewayFakeClient(gateway, otherClass)
 
 	reconciler := &GatewayReconciler{
-		Client:           fakeClient,
-		Scheme:           fakeClient.Scheme(),
-		GatewayClassName: "cloudflare-tunnel",
-		ControllerName:   "test-controller",
-		ConfigResolver:   config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		Client:         fakeClient,
+		Scheme:         fakeClient.Scheme(),
+		ControllerName: "test-controller",
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
 	}
 
 	result, err := reconciler.Reconcile(ctx, ctrl.Request{
@@ -147,11 +152,10 @@ func TestGatewayReconciler_NotFound(t *testing.T) {
 	fakeClient := setupGatewayFakeClient()
 
 	reconciler := &GatewayReconciler{
-		Client:           fakeClient,
-		Scheme:           fakeClient.Scheme(),
-		GatewayClassName: "cloudflare-tunnel",
-		ControllerName:   "test-controller",
-		ConfigResolver:   config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		Client:         fakeClient,
+		Scheme:         fakeClient.Scheme(),
+		ControllerName: "test-controller",
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
 	}
 
 	result, err := reconciler.Reconcile(ctx, ctrl.Request{
@@ -204,11 +208,10 @@ func TestGatewayReconciler_ConfigResolutionError(t *testing.T) {
 	fakeClient := setupGatewayFakeClient(gateway, gatewayClass)
 
 	reconciler := &GatewayReconciler{
-		Client:           fakeClient,
-		Scheme:           fakeClient.Scheme(),
-		GatewayClassName: "cloudflare-tunnel",
-		ControllerName:   "test-controller",
-		ConfigResolver:   config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		Client:         fakeClient,
+		Scheme:         fakeClient.Scheme(),
+		ControllerName: "test-controller",
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
 	}
 
 	result, err := reconciler.Reconcile(ctx, ctrl.Request{
@@ -288,12 +291,11 @@ func TestGatewayReconciler_UpdateStatus(t *testing.T) {
 	fakeClient := setupGatewayFakeClient(gateway, secret, gatewayClassConfig, gatewayClass)
 
 	reconciler := &GatewayReconciler{
-		Client:           fakeClient,
-		Scheme:           fakeClient.Scheme(),
-		GatewayClassName: "cloudflare-tunnel",
-		ControllerName:   "test-controller",
-		ConfigResolver:   config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
-		HelmManager:      nil,
+		Client:         fakeClient,
+		Scheme:         fakeClient.Scheme(),
+		ControllerName: "test-controller",
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		HelmManager:    nil,
 	}
 
 	result, err := reconciler.Reconcile(ctx, ctrl.Request{
@@ -459,10 +461,9 @@ func TestGatewayReconciler_CountAttachedRoutes(t *testing.T) {
 	fakeClient := setupGatewayFakeClient(gateway, route1, route2, route3)
 
 	reconciler := &GatewayReconciler{
-		Client:           fakeClient,
-		Scheme:           fakeClient.Scheme(),
-		GatewayClassName: "cloudflare-tunnel",
-		ControllerName:   "test-controller",
+		Client:         fakeClient,
+		Scheme:         fakeClient.Scheme(),
+		ControllerName: "test-controller",
 	}
 
 	counts := reconciler.countAttachedRoutes(ctx, gateway)
@@ -582,10 +583,9 @@ func TestGatewayReconciler_GatewayClassToGateways(t *testing.T) {
 	fakeClient := setupGatewayFakeClient(gateway1, gateway2, gateway3, gatewayClass)
 
 	reconciler := &GatewayReconciler{
-		Client:           fakeClient,
-		Scheme:           fakeClient.Scheme(),
-		GatewayClassName: "cloudflare-tunnel",
-		ControllerName:   "test-controller",
+		Client:         fakeClient,
+		Scheme:         fakeClient.Scheme(),
+		ControllerName: "test-controller",
 	}
 
 	requests := reconciler.gatewayClassToGateways(ctx, gatewayClass)
@@ -619,10 +619,9 @@ func TestGatewayReconciler_GatewayClassToGateways_WrongClass(t *testing.T) {
 	fakeClient := setupGatewayFakeClient(otherGatewayClass)
 
 	reconciler := &GatewayReconciler{
-		Client:           fakeClient,
-		Scheme:           fakeClient.Scheme(),
-		GatewayClassName: "cloudflare-tunnel",
-		ControllerName:   "test-controller",
+		Client:         fakeClient,
+		Scheme:         fakeClient.Scheme(),
+		ControllerName: "test-controller",
 	}
 
 	requests := reconciler.gatewayClassToGateways(ctx, otherGatewayClass)
@@ -630,7 +629,7 @@ func TestGatewayReconciler_GatewayClassToGateways_WrongClass(t *testing.T) {
 	assert.Nil(t, requests)
 }
 
-func TestGatewayReconciler_GetAllGatewaysForClass(t *testing.T) {
+func TestGatewayReconciler_GetAllManagedGateways(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -655,16 +654,20 @@ func TestGatewayReconciler_GetAllGatewaysForClass(t *testing.T) {
 		},
 	}
 
-	fakeClient := setupGatewayFakeClient(gateway1, gateway2)
-
-	reconciler := &GatewayReconciler{
-		Client:           fakeClient,
-		Scheme:           fakeClient.Scheme(),
-		GatewayClassName: "cloudflare-tunnel",
-		ControllerName:   "test-controller",
+	gatewayClass := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "cloudflare-tunnel"},
+		Spec:       gatewayv1.GatewayClassSpec{ControllerName: "test-controller"},
 	}
 
-	requests := reconciler.getAllGatewaysForClass(ctx)
+	fakeClient := setupGatewayFakeClient(gatewayClass, gateway1, gateway2)
+
+	reconciler := &GatewayReconciler{
+		Client:         fakeClient,
+		Scheme:         fakeClient.Scheme(),
+		ControllerName: "test-controller",
+	}
+
+	requests := reconciler.getAllManagedGateways(ctx)
 
 	require.Len(t, requests, 1)
 	assert.Equal(t, "gateway-1", requests[0].Name)
@@ -758,9 +761,8 @@ func TestGatewayReconciler_GatewayClassToGateways_WrongType(t *testing.T) {
 	fakeClient := setupGatewayFakeClient()
 
 	reconciler := &GatewayReconciler{
-		Client:           fakeClient,
-		Scheme:           fakeClient.Scheme(),
-		GatewayClassName: "cloudflare-tunnel",
+		Client: fakeClient,
+		Scheme: fakeClient.Scheme(),
 	}
 
 	notGatewayClass := &corev1.Secret{
@@ -799,9 +801,8 @@ func TestGatewayReconciler_HandleDeletion_NoFinalizer(t *testing.T) {
 	fakeClient := setupGatewayFakeClient(gateway)
 
 	reconciler := &GatewayReconciler{
-		Client:           fakeClient,
-		Scheme:           fakeClient.Scheme(),
-		GatewayClassName: "cloudflare-tunnel",
+		Client: fakeClient,
+		Scheme: fakeClient.Scheme(),
 	}
 
 	result, err := reconciler.handleDeletion(ctx, gateway, cfg)
@@ -874,12 +875,11 @@ func setupGatewayTestReconcilerWithManagedCloudflared() (*GatewayReconciler, cli
 		Build()
 
 	return &GatewayReconciler{
-		Client:           fakeClient,
-		Scheme:           scheme,
-		GatewayClassName: "cloudflare-tunnel",
-		ControllerName:   "test-controller",
-		ConfigResolver:   config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
-		HelmManager:      nil,
+		Client:         fakeClient,
+		Scheme:         scheme,
+		ControllerName: "test-controller",
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		HelmManager:    nil,
 	}, fakeClient
 }
 
@@ -888,7 +888,7 @@ func TestGatewayReconciler_ReturnsReconcileRequest(t *testing.T) {
 
 	reconciler, _ := setupGatewayTestReconcilerWithManagedCloudflared()
 
-	requests := reconciler.getAllGatewaysForClass(context.Background())
+	requests := reconciler.getAllManagedGateways(context.Background())
 
 	assert.Empty(t, requests)
 }
@@ -899,21 +899,20 @@ func TestGatewayReconciler_MapperIntegration(t *testing.T) {
 	fakeClient := setupGatewayFakeClient()
 
 	reconciler := &GatewayReconciler{
-		Client:           fakeClient,
-		Scheme:           fakeClient.Scheme(),
-		GatewayClassName: "cloudflare-tunnel",
-		ControllerName:   "test-controller",
-		ConfigResolver:   config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		Client:         fakeClient,
+		Scheme:         fakeClient.Scheme(),
+		ControllerName: "test-controller",
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
 	}
 
 	mapper := &ConfigMapper{
-		Client:           reconciler.Client,
-		GatewayClassName: reconciler.GatewayClassName,
-		ConfigResolver:   reconciler.ConfigResolver,
+		Client:         reconciler.Client,
+		ControllerName: reconciler.ControllerName,
+		ConfigResolver: reconciler.ConfigResolver,
 	}
 
 	assert.NotNil(t, mapper)
-	assert.Equal(t, reconciler.GatewayClassName, mapper.GatewayClassName)
+	assert.Equal(t, reconciler.ControllerName, mapper.ControllerName)
 }
 
 func TestConstants(t *testing.T) {
@@ -1218,10 +1217,9 @@ func TestGatewayReconciler_HandleDeletion_WithFinalizer_NoHelmManager(t *testing
 	fakeClient := setupGatewayFakeClient(gateway)
 
 	reconciler := &GatewayReconciler{
-		Client:           fakeClient,
-		Scheme:           fakeClient.Scheme(),
-		GatewayClassName: "cloudflare-tunnel",
-		HelmManager:      nil, // No Helm manager
+		Client:      fakeClient,
+		Scheme:      fakeClient.Scheme(),
+		HelmManager: nil, // No Helm manager
 	}
 
 	result, err := reconciler.handleDeletion(ctx, gateway, cfg)
@@ -1261,10 +1259,9 @@ func TestGatewayReconciler_HandleDeletion_WithFinalizer_CloudflaredDisabled(t *t
 	fakeClient := setupGatewayFakeClient(gateway)
 
 	reconciler := &GatewayReconciler{
-		Client:           fakeClient,
-		Scheme:           fakeClient.Scheme(),
-		GatewayClassName: "cloudflare-tunnel",
-		HelmManager:      nil,
+		Client:      fakeClient,
+		Scheme:      fakeClient.Scheme(),
+		HelmManager: nil,
 	}
 
 	result, err := reconciler.handleDeletion(ctx, gateway, cfg)
@@ -1994,12 +1991,17 @@ func TestGatewayReconciler_ReferenceGrantToGateways(t *testing.T) {
 		},
 	}
 
-	fakeClient := setupGatewayFakeClientWithBeta1(gateway, grant)
+	gatewayClass := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "cloudflare-tunnel"},
+		Spec:       gatewayv1.GatewayClassSpec{ControllerName: "test-controller"},
+	}
+
+	fakeClient := setupGatewayFakeClientWithBeta1(gateway, grant, gatewayClass)
 
 	reconciler := &GatewayReconciler{
-		Client:           fakeClient,
-		Scheme:           fakeClient.Scheme(),
-		GatewayClassName: "cloudflare-tunnel",
+		Client:         fakeClient,
+		Scheme:         fakeClient.Scheme(),
+		ControllerName: "test-controller",
 	}
 
 	requests := reconciler.referenceGrantToGateways(ctx, grant)
@@ -2015,9 +2017,8 @@ func TestGatewayReconciler_ReferenceGrantToGateways_WrongType(t *testing.T) {
 
 	fakeClient := setupGatewayFakeClientWithBeta1()
 	reconciler := &GatewayReconciler{
-		Client:           fakeClient,
-		Scheme:           fakeClient.Scheme(),
-		GatewayClassName: "cloudflare-tunnel",
+		Client: fakeClient,
+		Scheme: fakeClient.Scheme(),
 	}
 
 	// Pass a Secret instead of ReferenceGrant
@@ -2059,9 +2060,8 @@ func TestGatewayReconciler_ReferenceGrantToGateways_IrrelevantGrant(t *testing.T
 
 	fakeClient := setupGatewayFakeClientWithBeta1(grant)
 	reconciler := &GatewayReconciler{
-		Client:           fakeClient,
-		Scheme:           fakeClient.Scheme(),
-		GatewayClassName: "cloudflare-tunnel",
+		Client: fakeClient,
+		Scheme: fakeClient.Scheme(),
 	}
 
 	requests := reconciler.referenceGrantToGateways(ctx, grant)
@@ -2090,9 +2090,8 @@ func TestGatewayReconciler_CountAttachedRoutes_NoRoutes(t *testing.T) {
 	fakeClient := setupGatewayFakeClient(gateway)
 
 	reconciler := &GatewayReconciler{
-		Client:           fakeClient,
-		Scheme:           fakeClient.Scheme(),
-		GatewayClassName: "cloudflare-tunnel",
+		Client: fakeClient,
+		Scheme: fakeClient.Scheme(),
 	}
 
 	counts := reconciler.countAttachedRoutes(ctx, gateway)
@@ -2137,11 +2136,10 @@ func TestGatewayReconciler_Reconcile_ConfigError_SetsStatus(t *testing.T) {
 	fakeClient := setupGatewayFakeClient(gateway, gatewayClass)
 
 	reconciler := &GatewayReconciler{
-		Client:           fakeClient,
-		Scheme:           fakeClient.Scheme(),
-		GatewayClassName: "cloudflare-tunnel",
-		ControllerName:   "test-controller",
-		ConfigResolver:   config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		Client:         fakeClient,
+		Scheme:         fakeClient.Scheme(),
+		ControllerName: "test-controller",
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
 	}
 
 	result, err := reconciler.Reconcile(ctx, ctrl.Request{
@@ -2427,9 +2425,8 @@ func TestGatewayReconciler_CountAttachedRoutes_WithGRPCRoutes(t *testing.T) {
 	fakeClient := setupGatewayFakeClient(gateway, httpRoute, grpcRoute, otherRoute)
 
 	reconciler := &GatewayReconciler{
-		Client:           fakeClient,
-		Scheme:           fakeClient.Scheme(),
-		GatewayClassName: "cloudflare-tunnel",
+		Client: fakeClient,
+		Scheme: fakeClient.Scheme(),
 	}
 
 	counts := reconciler.countAttachedRoutes(ctx, gateway)
@@ -2502,9 +2499,8 @@ func TestGatewayReconciler_CountAttachedRoutes_MixedNamespaces(t *testing.T) {
 	fakeClient := setupGatewayFakeClient(gateway, route1, route2)
 
 	reconciler := &GatewayReconciler{
-		Client:           fakeClient,
-		Scheme:           fakeClient.Scheme(),
-		GatewayClassName: "cloudflare-tunnel",
+		Client: fakeClient,
+		Scheme: fakeClient.Scheme(),
 	}
 
 	counts := reconciler.countAttachedRoutes(ctx, gateway)
@@ -2537,10 +2533,9 @@ func TestGatewayReconciler_HandleDeletion_WithFinalizer_CloudflaredEnabled_NoHel
 	fakeClient := setupGatewayFakeClient(gateway)
 
 	reconciler := &GatewayReconciler{
-		Client:           fakeClient,
-		Scheme:           fakeClient.Scheme(),
-		GatewayClassName: "cloudflare-tunnel",
-		HelmManager:      nil, // No Helm manager => skip cloudflared removal
+		Client:      fakeClient,
+		Scheme:      fakeClient.Scheme(),
+		HelmManager: nil, // No Helm manager => skip cloudflared removal
 	}
 
 	result, err := reconciler.handleDeletion(ctx, gateway, cfg)
@@ -2695,12 +2690,11 @@ func TestGatewayReconciler_Reconcile_SuccessPath_WithFinalizer(t *testing.T) {
 	fakeClient := setupGatewayFakeClient(gateway, secret, gatewayClassConfig, gatewayClass, httpRoute, grpcRoute)
 
 	reconciler := &GatewayReconciler{
-		Client:           fakeClient,
-		Scheme:           fakeClient.Scheme(),
-		GatewayClassName: "cloudflare-tunnel",
-		ControllerName:   "test-controller",
-		ConfigResolver:   config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
-		HelmManager:      nil,
+		Client:         fakeClient,
+		Scheme:         fakeClient.Scheme(),
+		ControllerName: "test-controller",
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		HelmManager:    nil,
 	}
 
 	result, err := reconciler.Reconcile(ctx, ctrl.Request{
@@ -2845,9 +2839,8 @@ func TestGatewayReconciler_CountAttachedRoutes_MultipleHTTPAndGRPC(t *testing.T)
 	fakeClient := setupGatewayFakeClient(gateway, httpRoute1, httpRoute2, httpRoute3, grpcRoute1, grpcRoute2, otherRoute)
 
 	reconciler := &GatewayReconciler{
-		Client:           fakeClient,
-		Scheme:           fakeClient.Scheme(),
-		GatewayClassName: "cloudflare-tunnel",
+		Client: fakeClient,
+		Scheme: fakeClient.Scheme(),
 	}
 
 	counts := reconciler.countAttachedRoutes(ctx, gateway)
@@ -3026,10 +3019,9 @@ func TestGatewayReconciler_HandleDeletion_WithFinalizer_CloudflaredDisabledConfi
 	fakeClient := setupGatewayFakeClient(gateway)
 
 	reconciler := &GatewayReconciler{
-		Client:           fakeClient,
-		Scheme:           fakeClient.Scheme(),
-		GatewayClassName: "cloudflare-tunnel",
-		HelmManager:      nil,
+		Client:      fakeClient,
+		Scheme:      fakeClient.Scheme(),
+		HelmManager: nil,
 	}
 
 	result, err := reconciler.handleDeletion(ctx, gateway, cfg)
@@ -3121,12 +3113,11 @@ func TestGatewayReconciler_UpdateStatus_WithUnsupportedRouteKind(t *testing.T) {
 	fakeClient := setupGatewayFakeClient(gateway, gatewayClassConfig, secret, gatewayClass)
 
 	reconciler := &GatewayReconciler{
-		Client:           fakeClient,
-		Scheme:           fakeClient.Scheme(),
-		GatewayClassName: "cloudflare-tunnel",
-		ControllerName:   "test-controller",
-		ConfigResolver:   config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
-		HelmManager:      nil,
+		Client:         fakeClient,
+		Scheme:         fakeClient.Scheme(),
+		ControllerName: "test-controller",
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		HelmManager:    nil,
 	}
 
 	result, err := reconciler.Reconcile(ctx, ctrl.Request{
@@ -3159,10 +3150,9 @@ func TestGatewayReconciler_Reconcile_GetError(t *testing.T) {
 		Build()
 
 	reconciler := &GatewayReconciler{
-		Client:           fakeClient,
-		Scheme:           scheme,
-		GatewayClassName: "cloudflare-tunnel",
-		ControllerName:   "test-controller",
+		Client:         fakeClient,
+		Scheme:         scheme,
+		ControllerName: "test-controller",
 	}
 
 	result, err := reconciler.Reconcile(context.Background(), ctrl.Request{
@@ -3215,9 +3205,8 @@ func TestGatewayReconciler_CheckSecretReferenceGrant_GrantDoesNotAllowGateway(t 
 	fakeClient := setupGatewayFakeClientWithBeta1(gateway, grant)
 
 	reconciler := &GatewayReconciler{
-		Client:           fakeClient,
-		Scheme:           fakeClient.Scheme(),
-		GatewayClassName: "cloudflare-tunnel",
+		Client: fakeClient,
+		Scheme: fakeClient.Scheme(),
 	}
 
 	ref := gatewayv1.SecretObjectReference{
@@ -3252,10 +3241,9 @@ func TestGatewayReconciler_SetConfigErrorStatus_UpdateFailure(t *testing.T) {
 	fakeClient := setupGatewayFakeClient(gateway)
 
 	reconciler := &GatewayReconciler{
-		Client:           fakeClient,
-		Scheme:           fakeClient.Scheme(),
-		GatewayClassName: "cloudflare-tunnel",
-		ControllerName:   "test-controller",
+		Client:         fakeClient,
+		Scheme:         fakeClient.Scheme(),
+		ControllerName: "test-controller",
 	}
 
 	configErr := errors.New("test config error")
@@ -3299,10 +3287,9 @@ func TestGatewayReconciler_SetCloudflaredErrorStatus_WithAddress(t *testing.T) {
 	fakeClient := setupGatewayFakeClient(gateway)
 
 	reconciler := &GatewayReconciler{
-		Client:           fakeClient,
-		Scheme:           fakeClient.Scheme(),
-		GatewayClassName: "cloudflare-tunnel",
-		ControllerName:   "test-controller",
+		Client:         fakeClient,
+		Scheme:         fakeClient.Scheme(),
+		ControllerName: "test-controller",
 	}
 
 	cloudflaredErr := errors.New("helm install failed")
@@ -3487,9 +3474,8 @@ func TestGatewayReconciler_ReferenceGrantToGateways_NoSecretsInNamespace(t *test
 	fakeClient := setupGatewayFakeClientWithBeta1(gateway, grant)
 
 	reconciler := &GatewayReconciler{
-		Client:           fakeClient,
-		Scheme:           fakeClient.Scheme(),
-		GatewayClassName: "cloudflare-tunnel",
+		Client: fakeClient,
+		Scheme: fakeClient.Scheme(),
 	}
 
 	// Gateway has no TLS so it doesn't reference secrets in "secret-ns"
@@ -3552,12 +3538,17 @@ func TestGatewayReconciler_ReferenceGrantToGateways_MatchingGatewayWithTLS(t *te
 		},
 	}
 
-	fakeClient := setupGatewayFakeClientWithBeta1(gateway, grant)
+	gatewayClass := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "cloudflare-tunnel"},
+		Spec:       gatewayv1.GatewayClassSpec{ControllerName: "test-controller"},
+	}
+
+	fakeClient := setupGatewayFakeClientWithBeta1(gateway, grant, gatewayClass)
 
 	reconciler := &GatewayReconciler{
-		Client:           fakeClient,
-		Scheme:           fakeClient.Scheme(),
-		GatewayClassName: "cloudflare-tunnel",
+		Client:         fakeClient,
+		Scheme:         fakeClient.Scheme(),
+		ControllerName: "test-controller",
 	}
 
 	requests := reconciler.referenceGrantToGateways(ctx, grant)
@@ -3602,9 +3593,8 @@ func TestGatewayReconciler_ReferenceGrantToGateways_WrongGatewayClass(t *testing
 	fakeClient := setupGatewayFakeClientWithBeta1(gateway, grant)
 
 	reconciler := &GatewayReconciler{
-		Client:           fakeClient,
-		Scheme:           fakeClient.Scheme(),
-		GatewayClassName: "cloudflare-tunnel",
+		Client: fakeClient,
+		Scheme: fakeClient.Scheme(),
 	}
 
 	requests := reconciler.referenceGrantToGateways(ctx, grant)
@@ -3642,11 +3632,10 @@ func TestGatewayReconciler_Reconcile_ConfigError(t *testing.T) {
 	fakeClient := setupGatewayFakeClient(gateway, gatewayClass)
 
 	reconciler := &GatewayReconciler{
-		Client:           fakeClient,
-		Scheme:           fakeClient.Scheme(),
-		GatewayClassName: "cloudflare-tunnel",
-		ControllerName:   "test-controller",
-		ConfigResolver:   config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		Client:         fakeClient,
+		Scheme:         fakeClient.Scheme(),
+		ControllerName: "test-controller",
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
 	}
 
 	result, err := reconciler.Reconcile(ctx, ctrl.Request{
@@ -3657,7 +3646,7 @@ func TestGatewayReconciler_Reconcile_ConfigError(t *testing.T) {
 	assert.Equal(t, configErrorRequeueDelay, result.RequeueAfter)
 }
 
-func TestGatewayReconciler_GetAllGatewaysForClass_MultipleNamespaces(t *testing.T) {
+func TestGatewayReconciler_GetAllManagedGateways_MultipleNamespaces(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -3675,15 +3664,20 @@ func TestGatewayReconciler_GetAllGatewaysForClass_MultipleNamespaces(t *testing.
 		Spec:       gatewayv1.GatewaySpec{GatewayClassName: "cloudflare-tunnel"},
 	}
 
-	fakeClient := setupGatewayFakeClient(gw1, gw2, gw3)
-
-	reconciler := &GatewayReconciler{
-		Client:           fakeClient,
-		Scheme:           fakeClient.Scheme(),
-		GatewayClassName: "cloudflare-tunnel",
+	gatewayClass := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "cloudflare-tunnel"},
+		Spec:       gatewayv1.GatewayClassSpec{ControllerName: "test-controller"},
 	}
 
-	requests := reconciler.getAllGatewaysForClass(ctx)
+	fakeClient := setupGatewayFakeClient(gw1, gw2, gw3, gatewayClass)
+
+	reconciler := &GatewayReconciler{
+		Client:         fakeClient,
+		Scheme:         fakeClient.Scheme(),
+		ControllerName: "test-controller",
+	}
+
+	requests := reconciler.getAllManagedGateways(ctx)
 	require.Len(t, requests, 2)
 
 	names := make([]string, len(requests))
@@ -3716,10 +3710,9 @@ func TestGatewayReconciler_EnsureCloudflared_Install(t *testing.T) {
 	fakeClient := setupGatewayFakeClient(gateway)
 
 	reconciler := &GatewayReconciler{
-		Client:           fakeClient,
-		Scheme:           fakeClient.Scheme(),
-		GatewayClassName: "cloudflare-tunnel",
-		HelmManager:      mock,
+		Client:      fakeClient,
+		Scheme:      fakeClient.Scheme(),
+		HelmManager: mock,
 	}
 
 	cfg := &config.ResolvedConfig{
@@ -3769,10 +3762,9 @@ func TestGatewayReconciler_EnsureCloudflared_UpgradeNeeded(t *testing.T) {
 	fakeClient := setupGatewayFakeClient(gateway)
 
 	reconciler := &GatewayReconciler{
-		Client:           fakeClient,
-		Scheme:           fakeClient.Scheme(),
-		GatewayClassName: "cloudflare-tunnel",
-		HelmManager:      mock,
+		Client:      fakeClient,
+		Scheme:      fakeClient.Scheme(),
+		HelmManager: mock,
 	}
 
 	cfg := &config.ResolvedConfig{
@@ -4211,10 +4203,9 @@ func TestGatewayReconciler_HandleDeletion_WithHelmManager(t *testing.T) {
 	fakeClient := setupGatewayFakeClient(gateway)
 
 	reconciler := &GatewayReconciler{
-		Client:           fakeClient,
-		Scheme:           fakeClient.Scheme(),
-		GatewayClassName: "cloudflare-tunnel",
-		HelmManager:      mock,
+		Client:      fakeClient,
+		Scheme:      fakeClient.Scheme(),
+		HelmManager: mock,
 	}
 
 	cfg := &config.ResolvedConfig{
@@ -4260,10 +4251,9 @@ func TestGatewayReconciler_HandleDeletion_RemoveError(t *testing.T) {
 	fakeClient := setupGatewayFakeClient(gateway)
 
 	reconciler := &GatewayReconciler{
-		Client:           fakeClient,
-		Scheme:           fakeClient.Scheme(),
-		GatewayClassName: "cloudflare-tunnel",
-		HelmManager:      mock,
+		Client:      fakeClient,
+		Scheme:      fakeClient.Scheme(),
+		HelmManager: mock,
 	}
 
 	cfg := &config.ResolvedConfig{
@@ -4361,9 +4351,8 @@ func TestGatewayReconciler_CountAttachedRoutes_RejectedByBinding(t *testing.T) {
 	fakeClient := setupGatewayFakeClient(gateway, httpRoute, grpcRoute, matchingRoute)
 
 	reconciler := &GatewayReconciler{
-		Client:           fakeClient,
-		Scheme:           fakeClient.Scheme(),
-		GatewayClassName: "cloudflare-tunnel",
+		Client: fakeClient,
+		Scheme: fakeClient.Scheme(),
 	}
 
 	result := reconciler.countAttachedRoutes(ctx, gateway)

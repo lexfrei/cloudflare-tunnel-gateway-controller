@@ -39,11 +39,10 @@ func TestGRPCRouteReconciler_Reconcile_NotFound(t *testing.T) {
 	routeSyncer := NewRouteSyncer(fakeClient, scheme, "cluster.local", "cloudflare-tunnel", configResolver, cfmetrics.NewNoopCollector(), nil)
 
 	r := &GRPCRouteReconciler{
-		Client:           fakeClient,
-		Scheme:           scheme,
-		GatewayClassName: "cloudflare-tunnel",
-		ControllerName:   "test-controller",
-		RouteSyncer:      routeSyncer,
+		Client:         fakeClient,
+		Scheme:         scheme,
+		ControllerName: "test-controller",
+		RouteSyncer:    routeSyncer,
 	}
 	r.startupComplete.Store(true)
 
@@ -71,9 +70,8 @@ func TestGRPCRouteReconciler_Reconcile_WaitForStartup(t *testing.T) {
 		Build()
 
 	r := &GRPCRouteReconciler{
-		Client:           fakeClient,
-		Scheme:           scheme,
-		GatewayClassName: "cloudflare-tunnel",
+		Client: fakeClient,
+		Scheme: scheme,
 	}
 	// Leave startupComplete as false (default)
 
@@ -143,11 +141,10 @@ func TestGRPCRouteReconciler_Reconcile_WrongGatewayClass(t *testing.T) {
 	routeSyncer := NewRouteSyncer(fakeClient, scheme, "cluster.local", "cloudflare-tunnel", configResolver, cfmetrics.NewNoopCollector(), nil)
 
 	r := &GRPCRouteReconciler{
-		Client:           fakeClient,
-		Scheme:           scheme,
-		GatewayClassName: "cloudflare-tunnel",
-		ControllerName:   "test-controller",
-		RouteSyncer:      routeSyncer,
+		Client:         fakeClient,
+		Scheme:         scheme,
+		ControllerName: "test-controller",
+		RouteSyncer:    routeSyncer,
 	}
 	r.startupComplete.Store(true)
 
@@ -168,15 +165,13 @@ func TestGRPCRouteReconciler_IsRouteForOurGateway(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name             string
-		gatewayClassName string
-		gateway          *gatewayv1.Gateway
-		route            *gatewayv1.GRPCRoute
-		expected         bool
+		name     string
+		gateway  *gatewayv1.Gateway
+		route    *gatewayv1.GRPCRoute
+		expected bool
 	}{
 		{
-			name:             "route_for_our_gateway",
-			gatewayClassName: "cloudflare-tunnel",
+			name: "route_for_our_gateway",
 			gateway: &gatewayv1.Gateway{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-gateway",
@@ -209,8 +204,7 @@ func TestGRPCRouteReconciler_IsRouteForOurGateway(t *testing.T) {
 			expected: true,
 		},
 		{
-			name:             "route_for_different_gateway_class",
-			gatewayClassName: "cloudflare-tunnel",
+			name: "route_for_different_gateway_class",
 			gateway: &gatewayv1.Gateway{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-gateway",
@@ -243,9 +237,8 @@ func TestGRPCRouteReconciler_IsRouteForOurGateway(t *testing.T) {
 			expected: false,
 		},
 		{
-			name:             "route_with_non_gateway_parent",
-			gatewayClassName: "cloudflare-tunnel",
-			gateway:          nil,
+			name:    "route_with_non_gateway_parent",
+			gateway: nil,
 			route: &gatewayv1.GRPCRoute{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-route",
@@ -265,8 +258,7 @@ func TestGRPCRouteReconciler_IsRouteForOurGateway(t *testing.T) {
 			expected: false,
 		},
 		{
-			name:             "route_with_explicit_namespace",
-			gatewayClassName: "cloudflare-tunnel",
+			name: "route_with_explicit_namespace",
 			gateway: &gatewayv1.Gateway{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-gateway",
@@ -307,9 +299,8 @@ func TestGRPCRouteReconciler_IsRouteForOurGateway(t *testing.T) {
 			expected: true,
 		},
 		{
-			name:             "route_referencing_nonexistent_gateway",
-			gatewayClassName: "cloudflare-tunnel",
-			gateway:          nil,
+			name:    "route_referencing_nonexistent_gateway",
+			gateway: nil,
 			route: &gatewayv1.GRPCRoute{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-route",
@@ -326,8 +317,7 @@ func TestGRPCRouteReconciler_IsRouteForOurGateway(t *testing.T) {
 			expected: false,
 		},
 		{
-			name:             "route_hostname_no_intersection",
-			gatewayClassName: "cloudflare-tunnel",
+			name: "route_hostname_no_intersection",
 			gateway: &gatewayv1.Gateway{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-gateway",
@@ -362,8 +352,7 @@ func TestGRPCRouteReconciler_IsRouteForOurGateway(t *testing.T) {
 			expected: false,
 		},
 		{
-			name:             "route_hostname_wildcard_match",
-			gatewayClassName: "cloudflare-tunnel",
+			name: "route_hostname_wildcard_match",
 			gateway: &gatewayv1.Gateway{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-gateway",
@@ -398,8 +387,7 @@ func TestGRPCRouteReconciler_IsRouteForOurGateway(t *testing.T) {
 			expected: true,
 		},
 		{
-			name:             "route_namespace_not_allowed_same",
-			gatewayClassName: "cloudflare-tunnel",
+			name: "route_namespace_not_allowed_same",
 			gateway: &gatewayv1.Gateway{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-gateway",
@@ -440,8 +428,7 @@ func TestGRPCRouteReconciler_IsRouteForOurGateway(t *testing.T) {
 			expected: false,
 		},
 		{
-			name:             "route_namespace_allowed_all",
-			gatewayClassName: "cloudflare-tunnel",
+			name: "route_namespace_allowed_all",
 			gateway: &gatewayv1.Gateway{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-gateway",
@@ -482,8 +469,7 @@ func TestGRPCRouteReconciler_IsRouteForOurGateway(t *testing.T) {
 			expected: true,
 		},
 		{
-			name:             "route_no_hostnames_matches_any_listener",
-			gatewayClassName: "cloudflare-tunnel",
+			name: "route_no_hostnames_matches_any_listener",
 			gateway: &gatewayv1.Gateway{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-gateway",
@@ -518,8 +504,7 @@ func TestGRPCRouteReconciler_IsRouteForOurGateway(t *testing.T) {
 			expected: true,
 		},
 		{
-			name:             "multi_level_subdomain_matches_wildcard",
-			gatewayClassName: "cloudflare-tunnel",
+			name: "multi_level_subdomain_matches_wildcard",
 			gateway: &gatewayv1.Gateway{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-gateway",
@@ -566,6 +551,12 @@ func TestGRPCRouteReconciler_IsRouteForOurGateway(t *testing.T) {
 			builder := fake.NewClientBuilder().WithScheme(scheme)
 			if tt.gateway != nil {
 				builder = builder.WithObjects(tt.gateway)
+				gcName := string(tt.gateway.Spec.GatewayClassName)
+				controllerName := gatewayv1.GatewayController(gcName)
+				builder = builder.WithObjects(&gatewayv1.GatewayClass{
+					ObjectMeta: metav1.ObjectMeta{Name: gcName},
+					Spec:       gatewayv1.GatewayClassSpec{ControllerName: controllerName},
+				})
 			}
 			if tt.route != nil {
 				builder = builder.WithObjects(tt.route)
@@ -575,7 +566,7 @@ func TestGRPCRouteReconciler_IsRouteForOurGateway(t *testing.T) {
 			r := &GRPCRouteReconciler{
 				Client:           fakeClient,
 				Scheme:           scheme,
-				GatewayClassName: tt.gatewayClassName,
+				ControllerName:   "cloudflare-tunnel",
 				bindingValidator: routebinding.NewValidator(fakeClient),
 			}
 
@@ -591,6 +582,11 @@ func TestGRPCRouteReconciler_FindRoutesForGateway(t *testing.T) {
 
 	scheme := runtime.NewScheme()
 	require.NoError(t, gatewayv1.Install(scheme))
+
+	gatewayClass := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "cloudflare-tunnel"},
+		Spec:       gatewayv1.GatewayClassSpec{ControllerName: "cloudflare-tunnel"},
+	}
 
 	gateway := &gatewayv1.Gateway{
 		ObjectMeta: metav1.ObjectMeta{
@@ -639,13 +635,13 @@ func TestGRPCRouteReconciler_FindRoutesForGateway(t *testing.T) {
 
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(gateway, route1, route2).
+		WithObjects(gatewayClass, gateway, route1, route2).
 		Build()
 
 	r := &GRPCRouteReconciler{
-		Client:           fakeClient,
-		Scheme:           scheme,
-		GatewayClassName: "cloudflare-tunnel",
+		Client:         fakeClient,
+		Scheme:         scheme,
+		ControllerName: "cloudflare-tunnel",
 	}
 
 	requests := r.findRoutesForGateway(context.Background(), gateway)
@@ -667,9 +663,8 @@ func TestGRPCRouteReconciler_FindRoutesForGateway_WrongType(t *testing.T) {
 		Build()
 
 	r := &GRPCRouteReconciler{
-		Client:           fakeClient,
-		Scheme:           scheme,
-		GatewayClassName: "cloudflare-tunnel",
+		Client: fakeClient,
+		Scheme: scheme,
 	}
 
 	wrongType := &corev1.ConfigMap{
@@ -713,9 +708,9 @@ func TestGRPCRouteReconciler_FindRoutesForGateway_WrongClass(t *testing.T) {
 		Build()
 
 	r := &GRPCRouteReconciler{
-		Client:           fakeClient,
-		Scheme:           scheme,
-		GatewayClassName: "cloudflare-tunnel",
+		Client:         fakeClient,
+		Scheme:         scheme,
+		ControllerName: "cloudflare-tunnel",
 	}
 
 	requests := r.findRoutesForGateway(context.Background(), gateway)
@@ -728,6 +723,11 @@ func TestGRPCRouteReconciler_GetAllRelevantRoutes(t *testing.T) {
 
 	scheme := runtime.NewScheme()
 	require.NoError(t, gatewayv1.Install(scheme))
+
+	gatewayClass := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "cloudflare-tunnel"},
+		Spec:       gatewayv1.GatewayClassSpec{ControllerName: "cloudflare-tunnel"},
+	}
 
 	gateway := &gatewayv1.Gateway{
 		ObjectMeta: metav1.ObjectMeta{
@@ -776,13 +776,13 @@ func TestGRPCRouteReconciler_GetAllRelevantRoutes(t *testing.T) {
 
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(gateway, route1, route2).
+		WithObjects(gatewayClass, gateway, route1, route2).
 		Build()
 
 	r := &GRPCRouteReconciler{
-		Client:           fakeClient,
-		Scheme:           scheme,
-		GatewayClassName: "cloudflare-tunnel",
+		Client:         fakeClient,
+		Scheme:         scheme,
+		ControllerName: "cloudflare-tunnel",
 	}
 
 	requests := r.getAllRelevantRoutes(context.Background())
@@ -807,11 +807,10 @@ func TestGRPCRouteReconciler_Start(t *testing.T) {
 	routeSyncer := NewRouteSyncer(fakeClient, scheme, "cluster.local", "cloudflare-tunnel", configResolver, cfmetrics.NewNoopCollector(), nil)
 
 	r := &GRPCRouteReconciler{
-		Client:           fakeClient,
-		Scheme:           scheme,
-		GatewayClassName: "cloudflare-tunnel",
-		ControllerName:   "test-controller",
-		RouteSyncer:      routeSyncer,
+		Client:         fakeClient,
+		Scheme:         scheme,
+		ControllerName: "test-controller",
+		RouteSyncer:    routeSyncer,
 	}
 
 	assert.False(t, r.startupComplete.Load())
@@ -829,6 +828,11 @@ func TestGRPCRouteReconciler_UpdateRouteStatus_Integration(t *testing.T) {
 	require.NoError(t, gatewayv1.Install(scheme))
 	require.NoError(t, corev1.AddToScheme(scheme))
 	require.NoError(t, v1alpha1.AddToScheme(scheme))
+
+	gatewayClass := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "cloudflare-tunnel"},
+		Spec:       gatewayv1.GatewayClassSpec{ControllerName: "test-controller"},
+	}
 
 	gateway := &gatewayv1.Gateway{
 		ObjectMeta: metav1.ObjectMeta{
@@ -863,7 +867,7 @@ func TestGRPCRouteReconciler_UpdateRouteStatus_Integration(t *testing.T) {
 
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(gateway, route).
+		WithObjects(gatewayClass, gateway, route).
 		WithStatusSubresource(route).
 		Build()
 
@@ -871,11 +875,10 @@ func TestGRPCRouteReconciler_UpdateRouteStatus_Integration(t *testing.T) {
 	routeSyncer := NewRouteSyncer(fakeClient, scheme, "cluster.local", "cloudflare-tunnel", configResolver, cfmetrics.NewNoopCollector(), nil)
 
 	r := &GRPCRouteReconciler{
-		Client:           fakeClient,
-		Scheme:           scheme,
-		GatewayClassName: "cloudflare-tunnel",
-		ControllerName:   "test-controller",
-		RouteSyncer:      routeSyncer,
+		Client:         fakeClient,
+		Scheme:         scheme,
+		ControllerName: "test-controller",
+		RouteSyncer:    routeSyncer,
 	}
 
 	// Test accepted status with binding info showing acceptance
@@ -919,6 +922,11 @@ func TestGRPCRouteReconciler_UpdateRouteStatus_NotAccepted(t *testing.T) {
 	require.NoError(t, corev1.AddToScheme(scheme))
 	require.NoError(t, v1alpha1.AddToScheme(scheme))
 
+	gatewayClass := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "cloudflare-tunnel"},
+		Spec:       gatewayv1.GatewayClassSpec{ControllerName: "test-controller"},
+	}
+
 	gateway := &gatewayv1.Gateway{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-gateway",
@@ -952,7 +960,7 @@ func TestGRPCRouteReconciler_UpdateRouteStatus_NotAccepted(t *testing.T) {
 
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(gateway, route).
+		WithObjects(gatewayClass, gateway, route).
 		WithStatusSubresource(route).
 		Build()
 
@@ -960,11 +968,10 @@ func TestGRPCRouteReconciler_UpdateRouteStatus_NotAccepted(t *testing.T) {
 	routeSyncer := NewRouteSyncer(fakeClient, scheme, "cluster.local", "cloudflare-tunnel", configResolver, cfmetrics.NewNoopCollector(), nil)
 
 	r := &GRPCRouteReconciler{
-		Client:           fakeClient,
-		Scheme:           scheme,
-		GatewayClassName: "cloudflare-tunnel",
-		ControllerName:   "test-controller",
-		RouteSyncer:      routeSyncer,
+		Client:         fakeClient,
+		Scheme:         scheme,
+		ControllerName: "test-controller",
+		RouteSyncer:    routeSyncer,
 	}
 
 	// Test not accepted status with binding rejection
@@ -1025,11 +1032,10 @@ func TestGRPCRouteReconciler_SyncAndUpdateStatus_NoConfig(t *testing.T) {
 	routeSyncer := NewRouteSyncer(fakeClient, scheme, "cluster.local", "cloudflare-tunnel", configResolver, cfmetrics.NewNoopCollector(), nil)
 
 	r := &GRPCRouteReconciler{
-		Client:           fakeClient,
-		Scheme:           scheme,
-		GatewayClassName: "cloudflare-tunnel",
-		ControllerName:   "test-controller",
-		RouteSyncer:      routeSyncer,
+		Client:         fakeClient,
+		Scheme:         scheme,
+		ControllerName: "test-controller",
+		RouteSyncer:    routeSyncer,
 	}
 
 	result, err := r.syncAndUpdateStatus(context.Background())
@@ -1049,9 +1055,8 @@ func TestGRPCRouteReconciler_GetAllRelevantRoutes_Empty(t *testing.T) {
 		Build()
 
 	r := &GRPCRouteReconciler{
-		Client:           fakeClient,
-		Scheme:           scheme,
-		GatewayClassName: "cloudflare-tunnel",
+		Client: fakeClient,
+		Scheme: scheme,
 	}
 
 	requests := r.getAllRelevantRoutes(context.Background())
@@ -1065,6 +1070,11 @@ func TestGRPCRouteReconciler_FindRoutesForReferenceGrant(t *testing.T) {
 	scheme := runtime.NewScheme()
 	require.NoError(t, gatewayv1.Install(scheme))
 	require.NoError(t, corev1.AddToScheme(scheme))
+
+	gatewayClass := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "cloudflare-tunnel"},
+		Spec:       gatewayv1.GatewayClassSpec{ControllerName: "cloudflare-tunnel"},
+	}
 
 	gateway := &gatewayv1.Gateway{
 		ObjectMeta: metav1.ObjectMeta{
@@ -1129,13 +1139,13 @@ func TestGRPCRouteReconciler_FindRoutesForReferenceGrant(t *testing.T) {
 
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(gateway, route, otherRoute).
+		WithObjects(gatewayClass, gateway, route, otherRoute).
 		Build()
 
 	r := &GRPCRouteReconciler{
 		Client:           fakeClient,
 		Scheme:           scheme,
-		GatewayClassName: "cloudflare-tunnel",
+		ControllerName:   "cloudflare-tunnel",
 		bindingValidator: routebinding.NewValidator(fakeClient),
 	}
 
@@ -1154,6 +1164,11 @@ func TestGRPCRouteReconciler_UpdateRouteStatus_WithSyncError(t *testing.T) {
 	require.NoError(t, gatewayv1.Install(scheme))
 	require.NoError(t, corev1.AddToScheme(scheme))
 	require.NoError(t, v1alpha1.AddToScheme(scheme))
+
+	gatewayClass := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "cloudflare-tunnel"},
+		Spec:       gatewayv1.GatewayClassSpec{ControllerName: "test-controller"},
+	}
 
 	gateway := &gatewayv1.Gateway{
 		ObjectMeta: metav1.ObjectMeta{
@@ -1184,7 +1199,7 @@ func TestGRPCRouteReconciler_UpdateRouteStatus_WithSyncError(t *testing.T) {
 
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(gateway, route).
+		WithObjects(gatewayClass, gateway, route).
 		WithStatusSubresource(route).
 		Build()
 
@@ -1192,11 +1207,10 @@ func TestGRPCRouteReconciler_UpdateRouteStatus_WithSyncError(t *testing.T) {
 	routeSyncer := NewRouteSyncer(fakeClient, scheme, "cluster.local", "cloudflare-tunnel", configResolver, cfmetrics.NewNoopCollector(), nil)
 
 	r := &GRPCRouteReconciler{
-		Client:           fakeClient,
-		Scheme:           scheme,
-		GatewayClassName: "cloudflare-tunnel",
-		ControllerName:   "test-controller",
-		RouteSyncer:      routeSyncer,
+		Client:         fakeClient,
+		Scheme:         scheme,
+		ControllerName: "test-controller",
+		RouteSyncer:    routeSyncer,
 	}
 
 	// Test with sync error
@@ -1237,6 +1251,11 @@ func TestGRPCRouteReconciler_UpdateRouteStatus_WithFailedBackendRefs(t *testing.
 	require.NoError(t, corev1.AddToScheme(scheme))
 	require.NoError(t, v1alpha1.AddToScheme(scheme))
 
+	gatewayClass := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "cloudflare-tunnel"},
+		Spec:       gatewayv1.GatewayClassSpec{ControllerName: "test-controller"},
+	}
+
 	gateway := &gatewayv1.Gateway{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-gateway",
@@ -1266,7 +1285,7 @@ func TestGRPCRouteReconciler_UpdateRouteStatus_WithFailedBackendRefs(t *testing.
 
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(gateway, route).
+		WithObjects(gatewayClass, gateway, route).
 		WithStatusSubresource(route).
 		Build()
 
@@ -1274,11 +1293,10 @@ func TestGRPCRouteReconciler_UpdateRouteStatus_WithFailedBackendRefs(t *testing.
 	routeSyncer := NewRouteSyncer(fakeClient, scheme, "cluster.local", "cloudflare-tunnel", configResolver, cfmetrics.NewNoopCollector(), nil)
 
 	r := &GRPCRouteReconciler{
-		Client:           fakeClient,
-		Scheme:           scheme,
-		GatewayClassName: "cloudflare-tunnel",
-		ControllerName:   "test-controller",
-		RouteSyncer:      routeSyncer,
+		Client:         fakeClient,
+		Scheme:         scheme,
+		ControllerName: "test-controller",
+		RouteSyncer:    routeSyncer,
 	}
 
 	// Test with failed backend refs
@@ -1358,11 +1376,10 @@ func TestGRPCRouteReconciler_UpdateRouteStatus_NonGatewayParentRef(t *testing.T)
 	routeSyncer := NewRouteSyncer(fakeClient, scheme, "cluster.local", "cloudflare-tunnel", configResolver, cfmetrics.NewNoopCollector(), nil)
 
 	r := &GRPCRouteReconciler{
-		Client:           fakeClient,
-		Scheme:           scheme,
-		GatewayClassName: "cloudflare-tunnel",
-		ControllerName:   "test-controller",
-		RouteSyncer:      routeSyncer,
+		Client:         fakeClient,
+		Scheme:         scheme,
+		ControllerName: "test-controller",
+		RouteSyncer:    routeSyncer,
 	}
 
 	bindingInfo := routeBindingInfo{bindingResults: map[int]routebinding.BindingResult{}}
@@ -1384,6 +1401,11 @@ func TestGRPCRouteReconciler_FindRoutesForReferenceGrant_CrossNs(t *testing.T) {
 	require.NoError(t, gatewayv1.Install(scheme))
 	require.NoError(t, corev1.AddToScheme(scheme))
 	require.NoError(t, gatewayv1beta1.Install(scheme))
+
+	gatewayClass := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "cloudflare-tunnel"},
+		Spec:       gatewayv1.GatewayClassSpec{ControllerName: "cloudflare-tunnel"},
+	}
 
 	gateway := &gatewayv1.Gateway{
 		ObjectMeta: metav1.ObjectMeta{
@@ -1475,13 +1497,13 @@ func TestGRPCRouteReconciler_FindRoutesForReferenceGrant_CrossNs(t *testing.T) {
 
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(gateway, crossNsRoute, localRoute, refGrant).
+		WithObjects(gatewayClass, gateway, crossNsRoute, localRoute, refGrant).
 		Build()
 
 	r := &GRPCRouteReconciler{
 		Client:           fakeClient,
 		Scheme:           scheme,
-		GatewayClassName: "cloudflare-tunnel",
+		ControllerName:   "cloudflare-tunnel",
 		bindingValidator: routebinding.NewValidator(fakeClient),
 	}
 
@@ -1499,6 +1521,11 @@ func TestGRPCRouteReconciler_UpdateRouteStatus_MultipleParents(t *testing.T) {
 	require.NoError(t, gatewayv1.Install(scheme))
 	require.NoError(t, corev1.AddToScheme(scheme))
 	require.NoError(t, v1alpha1.AddToScheme(scheme))
+
+	gatewayClass := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "cloudflare-tunnel"},
+		Spec:       gatewayv1.GatewayClassSpec{ControllerName: "test-controller"},
+	}
 
 	gw1 := &gatewayv1.Gateway{
 		ObjectMeta: metav1.ObjectMeta{
@@ -1543,7 +1570,7 @@ func TestGRPCRouteReconciler_UpdateRouteStatus_MultipleParents(t *testing.T) {
 
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(gw1, gw2, route).
+		WithObjects(gatewayClass, gw1, gw2, route).
 		WithStatusSubresource(route).
 		Build()
 
@@ -1551,11 +1578,10 @@ func TestGRPCRouteReconciler_UpdateRouteStatus_MultipleParents(t *testing.T) {
 	routeSyncer := NewRouteSyncer(fakeClient, scheme, "cluster.local", "cloudflare-tunnel", configResolver, cfmetrics.NewNoopCollector(), nil)
 
 	r := &GRPCRouteReconciler{
-		Client:           fakeClient,
-		Scheme:           scheme,
-		GatewayClassName: "cloudflare-tunnel",
-		ControllerName:   "test-controller",
-		RouteSyncer:      routeSyncer,
+		Client:         fakeClient,
+		Scheme:         scheme,
+		ControllerName: "test-controller",
+		RouteSyncer:    routeSyncer,
 	}
 
 	bindingInfo := routeBindingInfo{
@@ -1608,6 +1634,11 @@ func TestGRPCRouteReconciler_UpdateRouteStatus_ExplicitNamespace(t *testing.T) {
 	require.NoError(t, corev1.AddToScheme(scheme))
 	require.NoError(t, v1alpha1.AddToScheme(scheme))
 
+	gatewayClass := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "cloudflare-tunnel"},
+		Spec:       gatewayv1.GatewayClassSpec{ControllerName: "test-controller"},
+	}
+
 	gateway := &gatewayv1.Gateway{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "gw",
@@ -1641,7 +1672,7 @@ func TestGRPCRouteReconciler_UpdateRouteStatus_ExplicitNamespace(t *testing.T) {
 
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(gateway, route).
+		WithObjects(gatewayClass, gateway, route).
 		WithStatusSubresource(route).
 		Build()
 
@@ -1649,11 +1680,10 @@ func TestGRPCRouteReconciler_UpdateRouteStatus_ExplicitNamespace(t *testing.T) {
 	routeSyncer := NewRouteSyncer(fakeClient, scheme, "cluster.local", "cloudflare-tunnel", configResolver, cfmetrics.NewNoopCollector(), nil)
 
 	r := &GRPCRouteReconciler{
-		Client:           fakeClient,
-		Scheme:           scheme,
-		GatewayClassName: "cloudflare-tunnel",
-		ControllerName:   "test-controller",
-		RouteSyncer:      routeSyncer,
+		Client:         fakeClient,
+		Scheme:         scheme,
+		ControllerName: "test-controller",
+		RouteSyncer:    routeSyncer,
 	}
 
 	bindingInfo := routeBindingInfo{
@@ -1680,6 +1710,11 @@ func TestGRPCRouteReconciler_UpdateRouteStatus_MultipleFailedBackendRefs(t *test
 	require.NoError(t, gatewayv1.Install(scheme))
 	require.NoError(t, corev1.AddToScheme(scheme))
 	require.NoError(t, v1alpha1.AddToScheme(scheme))
+
+	gatewayClass := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "cloudflare-tunnel"},
+		Spec:       gatewayv1.GatewayClassSpec{ControllerName: "test-controller"},
+	}
 
 	gateway := &gatewayv1.Gateway{
 		ObjectMeta: metav1.ObjectMeta{
@@ -1710,7 +1745,7 @@ func TestGRPCRouteReconciler_UpdateRouteStatus_MultipleFailedBackendRefs(t *test
 
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(gateway, route).
+		WithObjects(gatewayClass, gateway, route).
 		WithStatusSubresource(route).
 		Build()
 
@@ -1718,11 +1753,10 @@ func TestGRPCRouteReconciler_UpdateRouteStatus_MultipleFailedBackendRefs(t *test
 	routeSyncer := NewRouteSyncer(fakeClient, scheme, "cluster.local", "cloudflare-tunnel", configResolver, cfmetrics.NewNoopCollector(), nil)
 
 	r := &GRPCRouteReconciler{
-		Client:           fakeClient,
-		Scheme:           scheme,
-		GatewayClassName: "cloudflare-tunnel",
-		ControllerName:   "test-controller",
-		RouteSyncer:      routeSyncer,
+		Client:         fakeClient,
+		Scheme:         scheme,
+		ControllerName: "test-controller",
+		RouteSyncer:    routeSyncer,
 	}
 
 	bindingInfo := routeBindingInfo{
@@ -1772,7 +1806,7 @@ func TestGRPCRouteReconciler_SyncAndUpdateStatus_WithRoutesAndConfigFailure(t *t
 			Name: "cloudflare-tunnel",
 		},
 		Spec: gatewayv1.GatewayClassSpec{
-			ControllerName: "test-controller",
+			ControllerName: "cloudflare-tunnel",
 			ParametersRef: &gatewayv1.ParametersReference{
 				Group: config.ParametersRefGroup,
 				Kind:  config.ParametersRefKind,
@@ -1836,8 +1870,7 @@ func TestGRPCRouteReconciler_SyncAndUpdateStatus_WithRoutesAndConfigFailure(t *t
 	r := &GRPCRouteReconciler{
 		Client:           fakeClient,
 		Scheme:           scheme,
-		GatewayClassName: "cloudflare-tunnel",
-		ControllerName:   "test-controller",
+		ControllerName:   "cloudflare-tunnel",
 		RouteSyncer:      routeSyncer,
 		bindingValidator: routebinding.NewValidator(fakeClient),
 	}
@@ -1872,7 +1905,7 @@ func TestGRPCRouteReconciler_SyncAndUpdateStatus_MultipleRoutes(t *testing.T) {
 			Name: "cloudflare-tunnel",
 		},
 		Spec: gatewayv1.GatewayClassSpec{
-			ControllerName: "test-controller",
+			ControllerName: "cloudflare-tunnel",
 			ParametersRef: &gatewayv1.ParametersReference{
 				Group: config.ParametersRefGroup,
 				Kind:  config.ParametersRefKind,
@@ -1951,8 +1984,7 @@ func TestGRPCRouteReconciler_SyncAndUpdateStatus_MultipleRoutes(t *testing.T) {
 	r := &GRPCRouteReconciler{
 		Client:           fakeClient,
 		Scheme:           scheme,
-		GatewayClassName: "cloudflare-tunnel",
-		ControllerName:   "test-controller",
+		ControllerName:   "cloudflare-tunnel",
 		RouteSyncer:      routeSyncer,
 		bindingValidator: routebinding.NewValidator(fakeClient),
 	}
@@ -2039,7 +2071,6 @@ func TestGRPCRouteReconciler_Reconcile_RouteNotForOurGateway(t *testing.T) {
 	r := &GRPCRouteReconciler{
 		Client:           fakeClient,
 		Scheme:           scheme,
-		GatewayClassName: "cloudflare-tunnel",
 		ControllerName:   "test-controller",
 		RouteSyncer:      routeSyncer,
 		bindingValidator: routebinding.NewValidator(fakeClient),

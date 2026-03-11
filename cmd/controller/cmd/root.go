@@ -52,7 +52,6 @@ func init() {
 	rootCmd.PersistentFlags().String("log-format", "json", "Log format (json, text)")
 
 	rootCmd.Flags().String("cluster-domain", "", "Kubernetes cluster domain (auto-detected if not set)")
-	rootCmd.Flags().String("gateway-class-name", "cloudflare-tunnel", "GatewayClass name to watch")
 	rootCmd.Flags().String("controller-name", "cf.k8s.lex.la/tunnel-controller", "Controller name for GatewayClass")
 	rootCmd.Flags().String("metrics-addr", ":8080", "Address for metrics endpoint")
 	rootCmd.Flags().String("health-addr", ":8081", "Address for health probe endpoint")
@@ -66,6 +65,13 @@ func init() {
 	rootCmd.Flags().StringSlice("proxy-endpoints", nil, "Proxy config API endpoints for v2 proxy sync (e.g., http://proxy-0:8081,http://proxy-1:8081)")
 	rootCmd.Flags().String("proxy-auth-token", "", "Bearer token for authenticating proxy config push requests")
 
+	// Deprecated: --gateway-class-name is no longer used. The controller discovers
+	// GatewayClasses by spec.controllerName, not by name.
+	rootCmd.Flags().String("gateway-class-name", "", "DEPRECATED: no longer used, will be removed in a future release")
+	_ = rootCmd.Flags().MarkHidden("gateway-class-name")
+	_ = rootCmd.Flags().MarkDeprecated("gateway-class-name",
+		"the controller now discovers GatewayClasses by spec.controllerName; this flag is ignored")
+
 	_ = viper.BindPFlags(rootCmd.Flags())
 	_ = viper.BindPFlags(rootCmd.PersistentFlags())
 }
@@ -74,7 +80,6 @@ func initConfig() {
 	viper.SetEnvPrefix("CF")
 	viper.AutomaticEnv()
 
-	viper.SetDefault("gateway-class-name", "cloudflare-tunnel")
 	viper.SetDefault("controller-name", "cf.k8s.lex.la/tunnel-controller")
 	viper.SetDefault("metrics-addr", ":8080")
 	viper.SetDefault("health-addr", ":8081")
@@ -127,11 +132,10 @@ func runController(_ *cobra.Command, _ []string) error {
 		"version", version, "gitsha", gitsha)
 
 	cfg := controller.Config{
-		ClusterDomain:    resolveClusterDomain(logger),
-		GatewayClassName: viper.GetString("gateway-class-name"),
-		ControllerName:   viper.GetString("controller-name"),
-		MetricsAddr:      viper.GetString("metrics-addr"),
-		HealthAddr:       viper.GetString("health-addr"),
+		ClusterDomain:  resolveClusterDomain(logger),
+		ControllerName: viper.GetString("controller-name"),
+		MetricsAddr:    viper.GetString("metrics-addr"),
+		HealthAddr:     viper.GetString("health-addr"),
 
 		LeaderElect:     viper.GetBool("leader-elect"),
 		LeaderElectNS:   viper.GetString("leader-election-namespace"),

@@ -106,12 +106,12 @@
       "properties": {
         "gatewayClassName": {
           "type": "string",
-          "description": "GatewayClass name to watch",
+          "description": "Name of the GatewayClass resource to create",
           "default": "cloudflare-tunnel"
         },
         "controllerName": {
           "type": "string",
-          "description": "Controller name for GatewayClass",
+          "description": "Controller name matching GatewayClass spec.controllerName",
           "default": "cf.k8s.lex.la/tunnel-controller"
         },
         "clusterDomain": {

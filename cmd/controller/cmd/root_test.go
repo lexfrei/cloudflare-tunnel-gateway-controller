@@ -39,7 +39,6 @@ func TestInitConfig_Defaults(t *testing.T) {
 	initConfig()
 
 	// Verify defaults are set
-	assert.Equal(t, "cloudflare-tunnel", viper.GetString("gateway-class-name"))
 	assert.Equal(t, "cf.k8s.lex.la/tunnel-controller", viper.GetString("controller-name"))
 	assert.Equal(t, ":8080", viper.GetString("metrics-addr"))
 	assert.Equal(t, ":8081", viper.GetString("health-addr"))
@@ -52,18 +51,10 @@ func TestInitConfig_Defaults(t *testing.T) {
 func TestInitConfig_EnvPrefix(t *testing.T) {
 	viper.Reset()
 
-	// Set an env variable before initializing
-	t.Setenv("CF_GATEWAY_CLASS_NAME", "test-class")
-
 	// Initialize to pick up env
 	initConfig()
 
-	// Viper with AutomaticEnv reads from env automatically
-	// But the env var name needs to match exactly with dash replacement
-	// CF_GATEWAY_CLASS_NAME -> gateway-class-name
-	// Viper replaces dashes with underscores in env lookup
-	// So the env var should be CF_GATEWAY_CLASS_NAME
-	// This test verifies the env prefix is set correctly
+	// Verify the env prefix is set correctly
 	assert.Equal(t, "CF", viper.GetEnvPrefix())
 }
 
@@ -148,10 +139,6 @@ func TestRootCmd_Flags(t *testing.T) {
 	flag := flags.Lookup("cluster-domain")
 	assert.NotNil(t, flag)
 	assert.Empty(t, flag.DefValue)
-
-	flag = flags.Lookup("gateway-class-name")
-	assert.NotNil(t, flag)
-	assert.Equal(t, "cloudflare-tunnel", flag.DefValue)
 
 	flag = flags.Lookup("controller-name")
 	assert.NotNil(t, flag)

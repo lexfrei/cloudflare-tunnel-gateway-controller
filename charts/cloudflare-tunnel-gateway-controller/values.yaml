@@ -66,9 +66,9 @@ gatewayClassConfig:
 
 # -- Controller configuration
 controller:
-  # -- GatewayClass name to watch
+  # -- Name of the GatewayClass resource to create
   gatewayClassName: "cloudflare-tunnel"
-  # -- Controller name for GatewayClass (must be unique in cluster)
+  # -- Value for GatewayClass spec.controllerName — this is how the controller discovers its GatewayClasses (must be unique per controller instance)
   controllerName: "cf.k8s.lex.la/tunnel-controller"
   # -- Kubernetes cluster domain for service DNS resolution
   # @default -- auto-detected from /etc/resolv.conf, fallback: cluster.local

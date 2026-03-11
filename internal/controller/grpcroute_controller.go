@@ -30,10 +30,8 @@ type GRPCRouteReconciler struct {
 	// Scheme is the runtime scheme for API type registration.
 	Scheme *runtime.Scheme
 
-	// GatewayClassName filters which routes to process.
-	GatewayClassName string
-
-	// ControllerName is reported in GRPCRoute status.
+	// ControllerName identifies this controller and is used to filter
+	// routes by their parent Gateway's GatewayClass controllerName.
 	ControllerName string
 
 	// RouteSyncer provides unified sync for both HTTP and GRPC routes.
@@ -51,7 +49,7 @@ func (r *GRPCRouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		startupComplete:  &r.startupComplete,
 		k8sClient:        r.Client,
 		bindingValidator: r.bindingValidator,
-		gatewayClassName: r.GatewayClassName,
+		controllerName:   r.ControllerName,
 		componentName:    "grpcroute",
 		wrapRoute:        func(route *gatewayv1.GRPCRoute) Route { return GRPCRouteWrapper{route} },
 		syncAndUpdate:    r.syncAndUpdateStatus,
@@ -70,7 +68,7 @@ func (r *GRPCRouteReconciler) syncAndUpdateStatus(ctx context.Context) (ctrl.Res
 }
 
 func (r *GRPCRouteReconciler) isRouteForOurGateway(ctx context.Context, route *gatewayv1.GRPCRoute) bool {
-	return IsRouteAcceptedByGateway(ctx, r.Client, r.bindingValidator, r.GatewayClassName, GRPCRouteWrapper{route})
+	return IsRouteAcceptedByGateway(ctx, r.Client, r.bindingValidator, r.ControllerName, GRPCRouteWrapper{route})
 }
 
 func (r *GRPCRouteReconciler) updateRouteStatus(
@@ -83,9 +81,8 @@ func (r *GRPCRouteReconciler) updateRouteStatus(
 	return updateRouteStatusGeneric(
 		ctx,
 		routeStatusUpdateParams{
-			k8sClient:        r.Client,
-			gatewayClassName: r.GatewayClassName,
-			controllerName:   r.ControllerName,
+			k8sClient:      r.Client,
+			controllerName: r.ControllerName,
 		},
 		types.NamespacedName{Name: route.Name, Namespace: route.Namespace},
 		newGRPCRouteAccessor,
@@ -103,7 +100,7 @@ func (r *GRPCRouteReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		reconciler:            r,
 		runnable:              r,
 		k8sClient:             r.Client,
-		gatewayClassName:      r.GatewayClassName,
+		controllerName:        r.ControllerName,
 		configResolver:        r.RouteSyncer.ConfigResolver,
 		bindingValidator:      r.bindingValidator,
 		findRoutesForGateway:  r.findRoutesForGateway,
@@ -145,7 +142,7 @@ func (r *GRPCRouteReconciler) findRoutesForGateway(
 		routes[i] = GRPCRouteWrapper{&routeList.Items[i]}
 	}
 
-	return FindRoutesForGateway(obj, r.GatewayClassName, routes)
+	return FindRoutesForGateway(ctx, r.Client, obj, r.ControllerName, routes)
 }
 
 func (r *GRPCRouteReconciler) findRoutesForReferenceGrant(
@@ -185,5 +182,5 @@ func (r *GRPCRouteReconciler) getAllRelevantRoutes(ctx context.Context) []reconc
 		routes[i] = GRPCRouteWrapper{&routeList.Items[i]}
 	}
 
-	return FilterAcceptedRoutes(ctx, r.Client, r.bindingValidator, r.GatewayClassName, routes)
+	return FilterAcceptedRoutes(ctx, r.Client, r.bindingValidator, r.ControllerName, routes)
 }

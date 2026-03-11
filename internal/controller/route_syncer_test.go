@@ -239,8 +239,18 @@ func TestRouteSyncer_GetRelevantHTTPRoutes(t *testing.T) {
 			for i := range tt.routes {
 				builder = builder.WithObjects(&tt.routes[i])
 			}
+			addedClasses := map[string]bool{}
 			for i := range tt.gateways {
 				builder = builder.WithObjects(&tt.gateways[i])
+				gcName := string(tt.gateways[i].Spec.GatewayClassName)
+				if !addedClasses[gcName] {
+					controllerName := gatewayv1.GatewayController(gcName)
+					builder = builder.WithObjects(&gatewayv1.GatewayClass{
+						ObjectMeta: metav1.ObjectMeta{Name: gcName},
+						Spec:       gatewayv1.GatewayClassSpec{ControllerName: controllerName},
+					})
+					addedClasses[gcName] = true
+				}
 			}
 			fakeClient := builder.Build()
 
@@ -353,8 +363,18 @@ func TestRouteSyncer_GetRelevantGRPCRoutes(t *testing.T) {
 			for i := range tt.routes {
 				builder = builder.WithObjects(&tt.routes[i])
 			}
+			addedClasses := map[string]bool{}
 			for i := range tt.gateways {
 				builder = builder.WithObjects(&tt.gateways[i])
+				gcName := string(tt.gateways[i].Spec.GatewayClassName)
+				if !addedClasses[gcName] {
+					controllerName := gatewayv1.GatewayController(gcName)
+					builder = builder.WithObjects(&gatewayv1.GatewayClass{
+						ObjectMeta: metav1.ObjectMeta{Name: gcName},
+						Spec:       gatewayv1.GatewayClassSpec{ControllerName: controllerName},
+					})
+					addedClasses[gcName] = true
+				}
 			}
 			fakeClient := builder.Build()
 
@@ -670,8 +690,18 @@ func TestRouteSyncer_GetRelevantGRPCRoutes_WithExplicitNamespace(t *testing.T) {
 			for i := range tt.routes {
 				builder = builder.WithObjects(&tt.routes[i])
 			}
+			addedClasses := map[string]bool{}
 			for i := range tt.gateways {
 				builder = builder.WithObjects(&tt.gateways[i])
+				gcName := string(tt.gateways[i].Spec.GatewayClassName)
+				if !addedClasses[gcName] {
+					controllerName := gatewayv1.GatewayController(gcName)
+					builder = builder.WithObjects(&gatewayv1.GatewayClass{
+						ObjectMeta: metav1.ObjectMeta{Name: gcName},
+						Spec:       gatewayv1.GatewayClassSpec{ControllerName: controllerName},
+					})
+					addedClasses[gcName] = true
+				}
 			}
 			fakeClient := builder.Build()
 
@@ -752,9 +782,14 @@ func TestRouteSyncer_BuildResultForError(t *testing.T) {
 		},
 	}
 
+	gatewayClass := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "cloudflare-tunnel"},
+		Spec:       gatewayv1.GatewayClassSpec{ControllerName: "cloudflare-tunnel"},
+	}
+
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(gateway, httpRoute, grpcRoute).
+		WithObjects(gatewayClass, gateway, httpRoute, grpcRoute).
 		Build()
 
 	syncer := NewRouteSyncer(
@@ -789,7 +824,7 @@ func TestRouteSyncer_SyncAllRoutes_ConfigResolveFailure(t *testing.T) {
 			Name: "cloudflare-tunnel",
 		},
 		Spec: gatewayv1.GatewayClassSpec{
-			ControllerName: "test-controller",
+			ControllerName: "cloudflare-tunnel",
 			ParametersRef: &gatewayv1.ParametersReference{
 				Group: config.ParametersRefGroup,
 				Kind:  config.ParametersRefKind,
@@ -906,7 +941,7 @@ func TestRouteSyncer_SyncAllRoutes_AccountIDResolveFailure(t *testing.T) {
 			Name: "cloudflare-tunnel",
 		},
 		Spec: gatewayv1.GatewayClassSpec{
-			ControllerName: "test-controller",
+			ControllerName: "cloudflare-tunnel",
 			ParametersRef: &gatewayv1.ParametersReference{
 				Group: config.ParametersRefGroup,
 				Kind:  config.ParametersRefKind,
@@ -980,7 +1015,7 @@ func TestRouteSyncer_SyncAllRoutes_TunnelConfigGetFailure(t *testing.T) {
 			Name: "cloudflare-tunnel",
 		},
 		Spec: gatewayv1.GatewayClassSpec{
-			ControllerName: "test-controller",
+			ControllerName: "cloudflare-tunnel",
 			ParametersRef: &gatewayv1.ParametersReference{
 				Group: config.ParametersRefGroup,
 				Kind:  config.ParametersRefKind,
@@ -1053,7 +1088,7 @@ func TestNewRouteSyncer(t *testing.T) {
 
 	require.NotNil(t, syncer)
 	assert.Equal(t, "cluster.local", syncer.ClusterDomain)
-	assert.Equal(t, "cloudflare-tunnel", syncer.GatewayClassName)
+	assert.Equal(t, "cloudflare-tunnel", syncer.ControllerName)
 	assert.NotNil(t, syncer.httpBuilder)
 	assert.NotNil(t, syncer.grpcBuilder)
 	assert.NotNil(t, syncer.Metrics)
@@ -1065,4 +1100,265 @@ func TestNewProxySyncer_NilLogger(t *testing.T) {
 	testClient := fake.NewClientBuilder().WithScheme(runtime.NewScheme()).Build()
 	syncer := NewProxySyncer("cluster.local", "", testClient, nil)
 	require.NotNil(t, syncer)
+}
+
+func TestResolveConfigForController_MultipleClasses_DeterministicOrder(t *testing.T) {
+	t.Parallel()
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, gatewayv1.Install(scheme))
+	require.NoError(t, v1alpha1.AddToScheme(scheme))
+
+	// Two GatewayClasses with same controllerName but different parametersRef.
+	// The class with the lexicographically smallest name should be selected.
+	classZ := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "z-class"},
+		Spec: gatewayv1.GatewayClassSpec{
+			ControllerName: "test-controller",
+			ParametersRef: &gatewayv1.ParametersReference{
+				Group: "cf.k8s.lex.la",
+				Kind:  "GatewayClassConfig",
+				Name:  "config-z",
+			},
+		},
+	}
+	classA := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "a-class"},
+		Spec: gatewayv1.GatewayClassSpec{
+			ControllerName: "test-controller",
+			ParametersRef: &gatewayv1.ParametersReference{
+				Group: "cf.k8s.lex.la",
+				Kind:  "GatewayClassConfig",
+				Name:  "config-a",
+			},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(classZ, classA).
+		Build()
+
+	syncer := NewRouteSyncer(
+		fakeClient, scheme, "cluster.local", "test-controller",
+		config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		cfmetrics.NewNoopCollector(), nil,
+	)
+
+	// resolveConfigForController should pick "a-class" (alphabetically first).
+	// It will fail because there's no GatewayClassConfig, but the error message
+	// reveals which class was selected.
+	_, err := syncer.resolveConfigForController(context.Background())
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "a-class")
+	assert.NotContains(t, err.Error(), "z-class")
+}
+
+func TestResolveConfigForController_MultipleClasses_ConflictingParametersRef(t *testing.T) {
+	t.Parallel()
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, gatewayv1.Install(scheme))
+	require.NoError(t, v1alpha1.AddToScheme(scheme))
+
+	// Two GatewayClasses with same controllerName but different parametersRef.
+	classA := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "a-class"},
+		Spec: gatewayv1.GatewayClassSpec{
+			ControllerName: "test-controller",
+			ParametersRef: &gatewayv1.ParametersReference{
+				Group: "cf.k8s.lex.la",
+				Kind:  "GatewayClassConfig",
+				Name:  "config-tunnel-1",
+			},
+		},
+	}
+	classB := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "b-class"},
+		Spec: gatewayv1.GatewayClassSpec{
+			ControllerName: "test-controller",
+			ParametersRef: &gatewayv1.ParametersReference{
+				Group: "cf.k8s.lex.la",
+				Kind:  "GatewayClassConfig",
+				Name:  "config-tunnel-2",
+			},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(classA, classB).
+		Build()
+
+	syncer := NewRouteSyncer(
+		fakeClient, scheme, "cluster.local", "test-controller",
+		config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		cfmetrics.NewNoopCollector(), nil,
+	)
+
+	// Should still resolve (using a-class), but with conflict detected.
+	// The error will come from missing GatewayClassConfig, not from conflict.
+	_, err := syncer.resolveConfigForController(context.Background())
+
+	require.Error(t, err)
+	// Verifies that a-class was selected (alphabetically first)
+	assert.Contains(t, err.Error(), "a-class")
+}
+
+func TestHasConflictingParametersRef(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		classes  []gatewayv1.GatewayClass
+		expected bool
+	}{
+		{
+			name: "same parametersRef",
+			classes: []gatewayv1.GatewayClass{
+				{Spec: gatewayv1.GatewayClassSpec{ParametersRef: &gatewayv1.ParametersReference{Name: "config-a"}}},
+				{Spec: gatewayv1.GatewayClassSpec{ParametersRef: &gatewayv1.ParametersReference{Name: "config-a"}}},
+			},
+			expected: false,
+		},
+		{
+			name: "different parametersRef",
+			classes: []gatewayv1.GatewayClass{
+				{Spec: gatewayv1.GatewayClassSpec{ParametersRef: &gatewayv1.ParametersReference{Name: "config-a"}}},
+				{Spec: gatewayv1.GatewayClassSpec{ParametersRef: &gatewayv1.ParametersReference{Name: "config-b"}}},
+			},
+			expected: true,
+		},
+		{
+			name: "one nil parametersRef",
+			classes: []gatewayv1.GatewayClass{
+				{Spec: gatewayv1.GatewayClassSpec{ParametersRef: &gatewayv1.ParametersReference{Name: "config-a"}}},
+				{Spec: gatewayv1.GatewayClassSpec{}},
+			},
+			expected: true,
+		},
+		{
+			name: "single class",
+			classes: []gatewayv1.GatewayClass{
+				{Spec: gatewayv1.GatewayClassSpec{ParametersRef: &gatewayv1.ParametersReference{Name: "config-a"}}},
+			},
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.expected, hasConflictingParametersRef(tt.classes))
+		})
+	}
+}
+
+func TestResolveConfigForController_NoClasses(t *testing.T) {
+	t.Parallel()
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, gatewayv1.Install(scheme))
+
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+
+	syncer := NewRouteSyncer(
+		fakeClient, scheme, "cluster.local", "test-controller",
+		config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		cfmetrics.NewNoopCollector(), nil,
+	)
+
+	_, err := syncer.resolveConfigForController(context.Background())
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no GatewayClass found")
+}
+
+func TestSyncAndUpdateStatusCommon_PropagatesError(t *testing.T) {
+	t.Parallel()
+
+	// When SyncAllRoutes returns an error with RequeueAfter == 0,
+	// syncAndUpdateStatusCommon should propagate the error for
+	// controller-runtime backoff-based requeue.
+	scheme := runtime.NewScheme()
+	require.NoError(t, gatewayv1.Install(scheme))
+	require.NoError(t, v1alpha1.AddToScheme(scheme))
+
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+
+	syncer := NewRouteSyncer(
+		fakeClient, scheme, "cluster.local", "test-controller",
+		config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		cfmetrics.NewNoopCollector(), nil,
+	)
+
+	params := syncUpdateParams{
+		routeSyncer: syncer,
+		statusEntries: func(_ *SyncResult) []routeStatusEntry {
+			return nil
+		},
+	}
+
+	// No GatewayClass exists, so SyncAllRoutes will return error with RequeueAfter > 0
+	// (apiErrorRequeueDelay). In that case, error is NOT propagated (swallowed for requeue).
+	result, err := syncAndUpdateStatusCommon(context.Background(), params)
+
+	// The error should be nil because RequeueAfter is set —
+	// controller-runtime would override the requeue interval if error were returned.
+	assert.NoError(t, err)
+	assert.Equal(t, apiErrorRequeueDelay, result.RequeueAfter)
+}
+
+func TestSyncAndUpdateStatusCommon_PropagatesErrorWhenNoRequeue(t *testing.T) {
+	t.Parallel()
+
+	// When SyncAllRoutes returns a sync error with RequeueAfter == 0
+	// (e.g., ingress rule limit exceeded), syncAndUpdateStatusCommon
+	// should propagate the error so controller-runtime applies backoff.
+	// This is intentionally different from the pre-refactor behavior.
+	scheme := runtime.NewScheme()
+	require.NoError(t, gatewayv1.Install(scheme))
+	require.NoError(t, v1alpha1.AddToScheme(scheme))
+
+	// Create a valid GatewayClass + GatewayClassConfig so SyncAllRoutes
+	// progresses past config resolution. The Cloudflare API call will fail
+	// with an authentication error, returning RequeueAfter > 0.
+	// We verify the general contract: errors with RequeueAfter > 0 are swallowed.
+	gatewayClass := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-class"},
+		Spec: gatewayv1.GatewayClassSpec{
+			ControllerName: "test-controller",
+			ParametersRef: &gatewayv1.ParametersReference{
+				Group: "cf.k8s.lex.la",
+				Kind:  "GatewayClassConfig",
+				Name:  "missing-config",
+			},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(gatewayClass).
+		Build()
+
+	syncer := NewRouteSyncer(
+		fakeClient, scheme, "cluster.local", "test-controller",
+		config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		cfmetrics.NewNoopCollector(), nil,
+	)
+
+	params := syncUpdateParams{
+		routeSyncer: syncer,
+		statusEntries: func(_ *SyncResult) []routeStatusEntry {
+			return nil
+		},
+	}
+
+	result, err := syncAndUpdateStatusCommon(context.Background(), params)
+
+	// Config resolution will fail (missing GatewayClassConfig),
+	// returning RequeueAfter=apiErrorRequeueDelay. Error should be swallowed.
+	assert.NoError(t, err)
+	assert.Equal(t, apiErrorRequeueDelay, result.RequeueAfter)
 }

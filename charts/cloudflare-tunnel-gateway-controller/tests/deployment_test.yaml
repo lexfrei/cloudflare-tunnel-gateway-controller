@@ -74,13 +74,8 @@ tests:
   - it: should set controller arguments
     set:
       controller:
-        gatewayClassName: "my-gateway-class"
         clusterDomain: "my.cluster.local"
     asserts:
-      - template: deployment.yaml
-        contains:
-          path: spec.template.spec.containers[0].args
-          content: "--gateway-class-name=my-gateway-class"
       - template: deployment.yaml
         contains:
           path: spec.template.spec.containers[0].args
@@ -292,13 +287,6 @@ tests:
           content: ALL
 
   # Default values verification
-  - it: should use default gatewayClassName
-    asserts:
-      - template: deployment.yaml
-        contains:
-          path: spec.template.spec.containers[0].args
-          content: "--gateway-class-name=cloudflare-tunnel"
-
   - it: should use default controllerName
     asserts:
       - template: deployment.yaml
@@ -330,16 +318,11 @@ tests:
   - it: should override all controller settings
     set:
       controller:
-        gatewayClassName: "custom-gateway"
         controllerName: "custom.io/controller"
         clusterDomain: "custom.local"
         logLevel: "debug"
         logFormat: "text"
     asserts:
-      - template: deployment.yaml
-        contains:
-          path: spec.template.spec.containers[0].args
-          content: "--gateway-class-name=custom-gateway"
       - template: deployment.yaml
         contains:
           path: spec.template.spec.containers[0].args

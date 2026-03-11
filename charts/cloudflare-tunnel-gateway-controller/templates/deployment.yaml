@@ -46,7 +46,6 @@ spec:
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           args:
-            - "--gateway-class-name={{ .Values.controller.gatewayClassName }}"
             - "--controller-name={{ .Values.controller.controllerName }}"
             {{- if .Values.controller.clusterDomain }}
             - "--cluster-domain={{ .Values.controller.clusterDomain }}"

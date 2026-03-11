@@ -30,9 +30,6 @@ const (
 
 	// configValidationRequeueDelay is the delay before re-validating config.
 	configValidationRequeueDelay = 5 * time.Minute
-
-	// maxConditionMessageLength is the maximum length for condition messages.
-	maxConditionMessageLength = 256
 )
 
 // GatewayClassConfigReconciler reconciles GatewayClassConfig resources.
@@ -256,9 +253,7 @@ func (r *GatewayClassConfigReconciler) buildValidCondition(
 		errMsg = fmt.Sprintf("%s (and %d more errors)", errMsg, len(validationErrors)-1)
 	}
 
-	if len(errMsg) > maxConditionMessageLength {
-		errMsg = errMsg[:maxConditionMessageLength-3] + "..."
-	}
+	errMsg = truncateMessage(errMsg)
 
 	return metav1.Condition{
 		Type:               ConditionTypeValid,

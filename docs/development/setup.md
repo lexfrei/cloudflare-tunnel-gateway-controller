@@ -73,8 +73,7 @@ export CF_API_TOKEN="your-api-token"
 # Run controller
 ./bin/controller \
   --log-level=debug \
-  --log-format=text \
-  --gateway-class-name=cloudflare-tunnel
+  --log-format=text
 ```
 
 ### In Cluster (Development)

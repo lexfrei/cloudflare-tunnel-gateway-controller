@@ -53,9 +53,9 @@ func TestConfigMapper_MapConfigToRequests_ValidConfig(t *testing.T) {
 
 	fakeClient := setupMapperFakeClient(gatewayClassConfig, gatewayClass)
 	mapper := &ConfigMapper{
-		Client:           fakeClient,
-		GatewayClassName: "cloudflare-tunnel",
-		ConfigResolver:   config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		Client:         fakeClient,
+		ControllerName: "test-controller",
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
 	}
 
 	expectedRequests := []reconcile.Request{
@@ -102,9 +102,9 @@ func TestConfigMapper_MapConfigToRequests_WrongConfig(t *testing.T) {
 
 	fakeClient := setupMapperFakeClient(gatewayClassConfig, gatewayClass)
 	mapper := &ConfigMapper{
-		Client:           fakeClient,
-		GatewayClassName: "cloudflare-tunnel",
-		ConfigResolver:   config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		Client:         fakeClient,
+		ControllerName: "test-controller",
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
 	}
 
 	mapFunc := mapper.MapConfigToRequests(func(_ context.Context) []reconcile.Request {
@@ -123,8 +123,8 @@ func TestConfigMapper_MapConfigToRequests_WrongType(t *testing.T) {
 
 	fakeClient := setupMapperFakeClient()
 	mapper := &ConfigMapper{
-		Client:           fakeClient,
-		GatewayClassName: "cloudflare-tunnel",
+		Client:         fakeClient,
+		ControllerName: "test-controller",
 	}
 
 	mapFunc := mapper.MapConfigToRequests(func(_ context.Context) []reconcile.Request {
@@ -156,9 +156,9 @@ func TestConfigMapper_MapConfigToRequests_GatewayClassNotFound(t *testing.T) {
 
 	fakeClient := setupMapperFakeClient(gatewayClassConfig)
 	mapper := &ConfigMapper{
-		Client:           fakeClient,
-		GatewayClassName: "non-existent-class",
-		ConfigResolver:   config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		Client:         fakeClient,
+		ControllerName: "non-existent-controller",
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
 	}
 
 	mapFunc := mapper.MapConfigToRequests(func(_ context.Context) []reconcile.Request {
@@ -214,9 +214,9 @@ func TestConfigMapper_MapSecretToRequests_ValidSecret(t *testing.T) {
 
 	fakeClient := setupMapperFakeClient(secret, gatewayClassConfig, gatewayClass)
 	mapper := &ConfigMapper{
-		Client:           fakeClient,
-		GatewayClassName: "cloudflare-tunnel",
-		ConfigResolver:   config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		Client:         fakeClient,
+		ControllerName: "test-controller",
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
 	}
 
 	expectedRequests := []reconcile.Request{
@@ -274,9 +274,9 @@ func TestConfigMapper_MapSecretToRequests_WrongSecret(t *testing.T) {
 
 	fakeClient := setupMapperFakeClient(secret, gatewayClassConfig, gatewayClass)
 	mapper := &ConfigMapper{
-		Client:           fakeClient,
-		GatewayClassName: "cloudflare-tunnel",
-		ConfigResolver:   config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		Client:         fakeClient,
+		ControllerName: "test-controller",
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
 	}
 
 	mapFunc := mapper.MapSecretToRequests(func(_ context.Context) []reconcile.Request {
@@ -295,8 +295,8 @@ func TestConfigMapper_MapSecretToRequests_WrongType(t *testing.T) {
 
 	fakeClient := setupMapperFakeClient()
 	mapper := &ConfigMapper{
-		Client:           fakeClient,
-		GatewayClassName: "cloudflare-tunnel",
+		Client:         fakeClient,
+		ControllerName: "test-controller",
 	}
 
 	mapFunc := mapper.MapSecretToRequests(func(_ context.Context) []reconcile.Request {
@@ -328,9 +328,9 @@ func TestConfigMapper_MapSecretToRequests_GatewayClassNotFound(t *testing.T) {
 
 	fakeClient := setupMapperFakeClient(secret)
 	mapper := &ConfigMapper{
-		Client:           fakeClient,
-		GatewayClassName: "non-existent-class",
-		ConfigResolver:   config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		Client:         fakeClient,
+		ControllerName: "non-existent-controller",
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
 	}
 
 	mapFunc := mapper.MapSecretToRequests(func(_ context.Context) []reconcile.Request {
@@ -531,9 +531,9 @@ func TestConfigMapper_IsConfigForOurClass_NoParametersRef(t *testing.T) {
 
 	fakeClient := setupMapperFakeClient(gatewayClassConfig, gatewayClass)
 	mapper := &ConfigMapper{
-		Client:           fakeClient,
-		GatewayClassName: "cloudflare-tunnel",
-		ConfigResolver:   config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		Client:         fakeClient,
+		ControllerName: "test-controller",
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
 	}
 
 	result := mapper.isConfigForOurClass(ctx, gatewayClassConfig)
@@ -819,15 +819,19 @@ func TestIsRouteAcceptedByGateway(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name             string
-		gatewayClassName string
-		gateway          *gatewayv1.Gateway
-		route            Route
-		expected         bool
+		name              string
+		controllerName    string
+		gateway           *gatewayv1.Gateway
+		gwClassName       string
+		gwClassController string
+		route             Route
+		expected          bool
 	}{
 		{
-			name:             "http_route_accepted_by_gateway",
-			gatewayClassName: "cloudflare-tunnel",
+			name:              "http_route_accepted_by_gateway",
+			controllerName:    "test-controller",
+			gwClassName:       "cloudflare-tunnel",
+			gwClassController: "test-controller",
 			gateway: &gatewayv1.Gateway{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-gateway",
@@ -860,8 +864,10 @@ func TestIsRouteAcceptedByGateway(t *testing.T) {
 			expected: true,
 		},
 		{
-			name:             "grpc_route_accepted_by_gateway",
-			gatewayClassName: "cloudflare-tunnel",
+			name:              "grpc_route_accepted_by_gateway",
+			controllerName:    "test-controller",
+			gwClassName:       "cloudflare-tunnel",
+			gwClassController: "test-controller",
 			gateway: &gatewayv1.Gateway{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-gateway",
@@ -894,8 +900,10 @@ func TestIsRouteAcceptedByGateway(t *testing.T) {
 			expected: true,
 		},
 		{
-			name:             "route_rejected_hostname_mismatch",
-			gatewayClassName: "cloudflare-tunnel",
+			name:              "route_rejected_hostname_mismatch",
+			controllerName:    "test-controller",
+			gwClassName:       "cloudflare-tunnel",
+			gwClassController: "test-controller",
 			gateway: &gatewayv1.Gateway{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-gateway",
@@ -930,8 +938,10 @@ func TestIsRouteAcceptedByGateway(t *testing.T) {
 			expected: false,
 		},
 		{
-			name:             "route_rejected_namespace_not_allowed",
-			gatewayClassName: "cloudflare-tunnel",
+			name:              "route_rejected_namespace_not_allowed",
+			controllerName:    "test-controller",
+			gwClassName:       "cloudflare-tunnel",
+			gwClassController: "test-controller",
 			gateway: &gatewayv1.Gateway{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-gateway",
@@ -972,8 +982,10 @@ func TestIsRouteAcceptedByGateway(t *testing.T) {
 			expected: false,
 		},
 		{
-			name:             "route_rejected_different_gateway_class",
-			gatewayClassName: "cloudflare-tunnel",
+			name:              "route_rejected_different_gateway_class",
+			controllerName:    "test-controller",
+			gwClassName:       "other-class",
+			gwClassController: "other-controller",
 			gateway: &gatewayv1.Gateway{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-gateway",
@@ -1015,10 +1027,16 @@ func TestIsRouteAcceptedByGateway(t *testing.T) {
 			require.NoError(t, gatewayv1.Install(scheme))
 			require.NoError(t, corev1.AddToScheme(scheme))
 
-			builder := fake.NewClientBuilder().WithScheme(scheme)
+			gwClass := &gatewayv1.GatewayClass{
+				ObjectMeta: metav1.ObjectMeta{Name: tt.gwClassName},
+				Spec:       gatewayv1.GatewayClassSpec{ControllerName: gatewayv1.GatewayController(tt.gwClassController)},
+			}
+
+			builder := fake.NewClientBuilder().WithScheme(scheme).WithObjects(gwClass)
 			if tt.gateway != nil {
 				builder = builder.WithObjects(tt.gateway)
 			}
+
 			fakeClient := builder.Build()
 
 			validator := routebinding.NewValidator(fakeClient)
@@ -1027,7 +1045,7 @@ func TestIsRouteAcceptedByGateway(t *testing.T) {
 				context.Background(),
 				fakeClient,
 				validator,
-				tt.gatewayClassName,
+				tt.controllerName,
 				tt.route,
 			)
 
@@ -1039,20 +1057,32 @@ func TestIsRouteAcceptedByGateway(t *testing.T) {
 func TestFindRoutesForGateway(t *testing.T) {
 	t.Parallel()
 
+	gatewayClass := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "cloudflare-tunnel"},
+		Spec:       gatewayv1.GatewayClassSpec{ControllerName: "test-controller"},
+	}
+
+	otherGatewayClass := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "other-class"},
+		Spec:       gatewayv1.GatewayClassSpec{ControllerName: "other-controller"},
+	}
+
+	fakeClient := setupMapperFakeClient(gatewayClass, otherGatewayClass)
+
 	tests := []struct {
-		name             string
-		obj              client.Object
-		gatewayClassName string
-		routes           []Route
-		expectedCount    int
-		expectedRoutes   []string
+		name           string
+		obj            client.Object
+		controllerName string
+		routes         []Route
+		expectedCount  int
+		expectedRoutes []string
 	}{
 		{
 			name: "returns nil for non-gateway object",
 			obj: &corev1.Secret{
 				ObjectMeta: metav1.ObjectMeta{Name: "not-a-gateway"},
 			},
-			gatewayClassName: "cloudflare-tunnel",
+			controllerName: "test-controller",
 			routes: []Route{
 				HTTPRouteWrapper{&gatewayv1.HTTPRoute{
 					ObjectMeta: metav1.ObjectMeta{Name: "route1", Namespace: "default"},
@@ -1068,7 +1098,7 @@ func TestFindRoutesForGateway(t *testing.T) {
 					GatewayClassName: "other-class",
 				},
 			},
-			gatewayClassName: "cloudflare-tunnel",
+			controllerName: "test-controller",
 			routes: []Route{
 				HTTPRouteWrapper{&gatewayv1.HTTPRoute{
 					ObjectMeta: metav1.ObjectMeta{Name: "route1", Namespace: "default"},
@@ -1089,7 +1119,7 @@ func TestFindRoutesForGateway(t *testing.T) {
 					GatewayClassName: "cloudflare-tunnel",
 				},
 			},
-			gatewayClassName: "cloudflare-tunnel",
+			controllerName: "test-controller",
 			routes: []Route{
 				HTTPRouteWrapper{&gatewayv1.HTTPRoute{
 					ObjectMeta: metav1.ObjectMeta{Name: "route1", Namespace: "default"},
@@ -1111,7 +1141,7 @@ func TestFindRoutesForGateway(t *testing.T) {
 					GatewayClassName: "cloudflare-tunnel",
 				},
 			},
-			gatewayClassName: "cloudflare-tunnel",
+			controllerName: "test-controller",
 			routes: []Route{
 				HTTPRouteWrapper{&gatewayv1.HTTPRoute{
 					ObjectMeta: metav1.ObjectMeta{Name: "route1", Namespace: "default"},
@@ -1132,7 +1162,7 @@ func TestFindRoutesForGateway(t *testing.T) {
 					GatewayClassName: "cloudflare-tunnel",
 				},
 			},
-			gatewayClassName: "cloudflare-tunnel",
+			controllerName: "test-controller",
 			routes: []Route{
 				HTTPRouteWrapper{&gatewayv1.HTTPRoute{
 					ObjectMeta: metav1.ObjectMeta{Name: "route1", Namespace: "default"},
@@ -1154,13 +1184,42 @@ func TestFindRoutesForGateway(t *testing.T) {
 					ObjectMeta: metav1.ObjectMeta{Name: "grpc-route", Namespace: "app"},
 					Spec: gatewayv1.GRPCRouteSpec{
 						CommonRouteSpec: gatewayv1.CommonRouteSpec{
+							ParentRefs: []gatewayv1.ParentReference{{
+								Name:      "test-gw",
+								Namespace: (*gatewayv1.Namespace)(new(string)),
+							}},
+						},
+					},
+				}},
+			},
+			// grpc-route in "app" references test-gw with empty namespace string,
+			// which doesn't match the gateway in "default".
+			expectedCount:  1,
+			expectedRoutes: []string{"default/route1"},
+		},
+		{
+			name: "cross-namespace route without explicit namespace does not match",
+			obj: &gatewayv1.Gateway{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-gw", Namespace: "default"},
+				Spec: gatewayv1.GatewaySpec{
+					GatewayClassName: "cloudflare-tunnel",
+				},
+			},
+			controllerName: "test-controller",
+			routes: []Route{
+				// Route in "app" references "test-gw" without namespace.
+				// Per Gateway API spec, nil namespace means route's own namespace.
+				// So it looks for test-gw in "app", not "default".
+				HTTPRouteWrapper{&gatewayv1.HTTPRoute{
+					ObjectMeta: metav1.ObjectMeta{Name: "cross-ns-route", Namespace: "app"},
+					Spec: gatewayv1.HTTPRouteSpec{
+						CommonRouteSpec: gatewayv1.CommonRouteSpec{
 							ParentRefs: []gatewayv1.ParentReference{{Name: "test-gw"}},
 						},
 					},
 				}},
 			},
-			expectedCount:  2,
-			expectedRoutes: []string{"default/route1", "app/grpc-route"},
+			expectedCount: 0,
 		},
 		{
 			name: "returns empty for empty routes slice",
@@ -1168,9 +1227,9 @@ func TestFindRoutesForGateway(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{Name: "test-gw"},
 				Spec:       gatewayv1.GatewaySpec{GatewayClassName: "cloudflare-tunnel"},
 			},
-			gatewayClassName: "cloudflare-tunnel",
-			routes:           []Route{},
-			expectedCount:    0,
+			controllerName: "test-controller",
+			routes:         []Route{},
+			expectedCount:  0,
 		},
 	}
 
@@ -1178,7 +1237,7 @@ func TestFindRoutesForGateway(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			result := FindRoutesForGateway(tt.obj, tt.gatewayClassName, tt.routes)
+			result := FindRoutesForGateway(context.Background(), fakeClient, tt.obj, tt.controllerName, tt.routes)
 
 			assert.Len(t, result, tt.expectedCount)
 
@@ -1193,16 +1252,16 @@ func TestFilterAcceptedRoutes(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name             string
-		gatewayClassName string
-		gateway          *gatewayv1.Gateway
-		routes           []Route
-		expectedCount    int
-		expectedRoutes   []string
+		name           string
+		controllerName string
+		gateway        *gatewayv1.Gateway
+		routes         []Route
+		expectedCount  int
+		expectedRoutes []string
 	}{
 		{
-			name:             "returns empty for empty routes slice",
-			gatewayClassName: "cloudflare-tunnel",
+			name:           "returns empty for empty routes slice",
+			controllerName: "test-controller",
 			gateway: &gatewayv1.Gateway{
 				ObjectMeta: metav1.ObjectMeta{Name: "test-gw", Namespace: "default"},
 				Spec: gatewayv1.GatewaySpec{
@@ -1214,8 +1273,8 @@ func TestFilterAcceptedRoutes(t *testing.T) {
 			expectedCount: 0,
 		},
 		{
-			name:             "returns only accepted routes",
-			gatewayClassName: "cloudflare-tunnel",
+			name:           "returns only accepted routes",
+			controllerName: "test-controller",
 			gateway: &gatewayv1.Gateway{
 				ObjectMeta: metav1.ObjectMeta{Name: "test-gw", Namespace: "default"},
 				Spec: gatewayv1.GatewaySpec{
@@ -1237,8 +1296,8 @@ func TestFilterAcceptedRoutes(t *testing.T) {
 			expectedRoutes: []string{"default/accepted-route"},
 		},
 		{
-			name:             "filters out routes referencing non-existent gateway",
-			gatewayClassName: "cloudflare-tunnel",
+			name:           "filters out routes referencing non-existent gateway",
+			controllerName: "test-controller",
 			gateway: &gatewayv1.Gateway{
 				ObjectMeta: metav1.ObjectMeta{Name: "test-gw", Namespace: "default"},
 				Spec: gatewayv1.GatewaySpec{
@@ -1259,8 +1318,8 @@ func TestFilterAcceptedRoutes(t *testing.T) {
 			expectedCount: 0,
 		},
 		{
-			name:             "handles mixed accepted and rejected routes",
-			gatewayClassName: "cloudflare-tunnel",
+			name:           "handles mixed accepted and rejected routes",
+			controllerName: "test-controller",
 			gateway: &gatewayv1.Gateway{
 				ObjectMeta: metav1.ObjectMeta{Name: "test-gw", Namespace: "default"},
 				Spec: gatewayv1.GatewaySpec{
@@ -1306,7 +1365,12 @@ func TestFilterAcceptedRoutes(t *testing.T) {
 			require.NoError(t, gatewayv1.Install(scheme))
 			require.NoError(t, corev1.AddToScheme(scheme))
 
-			builder := fake.NewClientBuilder().WithScheme(scheme)
+			gwClass := &gatewayv1.GatewayClass{
+				ObjectMeta: metav1.ObjectMeta{Name: "cloudflare-tunnel"},
+				Spec:       gatewayv1.GatewayClassSpec{ControllerName: "test-controller"},
+			}
+
+			builder := fake.NewClientBuilder().WithScheme(scheme).WithObjects(gwClass)
 			if tt.gateway != nil {
 				builder = builder.WithObjects(tt.gateway)
 			}
@@ -1318,7 +1382,7 @@ func TestFilterAcceptedRoutes(t *testing.T) {
 				context.Background(),
 				fakeClient,
 				validator,
-				tt.gatewayClassName,
+				tt.controllerName,
 				tt.routes,
 			)
 
@@ -1351,7 +1415,12 @@ func TestIsRouteAcceptedByGateway_NonGatewayKind(t *testing.T) {
 		},
 	}
 
-	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(gateway).Build()
+	gatewayClass := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "cloudflare-tunnel"},
+		Spec:       gatewayv1.GatewayClassSpec{ControllerName: "test-controller"},
+	}
+
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(gateway, gatewayClass).Build()
 	validator := routebinding.NewValidator(fakeClient)
 
 	serviceKind := gatewayv1.Kind("Service")
@@ -1366,7 +1435,7 @@ func TestIsRouteAcceptedByGateway_NonGatewayKind(t *testing.T) {
 		},
 	}}
 
-	result := IsRouteAcceptedByGateway(context.Background(), fakeClient, validator, "cloudflare-tunnel", route)
+	result := IsRouteAcceptedByGateway(context.Background(), fakeClient, validator, "test-controller", route)
 	assert.False(t, result)
 }
 
@@ -1391,7 +1460,7 @@ func TestIsRouteAcceptedByGateway_GatewayNotFound(t *testing.T) {
 		},
 	}}
 
-	result := IsRouteAcceptedByGateway(context.Background(), fakeClient, validator, "cloudflare-tunnel", route)
+	result := IsRouteAcceptedByGateway(context.Background(), fakeClient, validator, "test-controller", route)
 	assert.False(t, result)
 }
 
@@ -1417,7 +1486,12 @@ func TestIsRouteAcceptedByGateway_CrossNamespaceExplicit(t *testing.T) {
 		},
 	}
 
-	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(gateway).Build()
+	gatewayClass := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "cloudflare-tunnel"},
+		Spec:       gatewayv1.GatewayClassSpec{ControllerName: "test-controller"},
+	}
+
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(gateway, gatewayClass).Build()
 	validator := routebinding.NewValidator(fakeClient)
 
 	gwNs := gatewayv1.Namespace("gw-ns")
@@ -1432,7 +1506,7 @@ func TestIsRouteAcceptedByGateway_CrossNamespaceExplicit(t *testing.T) {
 		},
 	}}
 
-	result := IsRouteAcceptedByGateway(context.Background(), fakeClient, validator, "cloudflare-tunnel", route)
+	result := IsRouteAcceptedByGateway(context.Background(), fakeClient, validator, "test-controller", route)
 	assert.True(t, result)
 }
 
@@ -1454,11 +1528,169 @@ func TestConfigMapper_IsSecretReferencedByConfig_GetConfigError(t *testing.T) {
 
 	fakeClient := setupMapperFakeClient(secret, gatewayClass)
 	mapper := &ConfigMapper{
-		Client:           fakeClient,
-		GatewayClassName: "cloudflare-tunnel",
-		ConfigResolver:   config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		Client:         fakeClient,
+		ControllerName: "test-controller",
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
 	}
 
 	result := mapper.isSecretReferencedByConfig(ctx, secret)
 	assert.False(t, result)
+}
+
+func TestManagedClassNames(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+
+	class1 := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "class-a"},
+		Spec:       gatewayv1.GatewayClassSpec{ControllerName: "test-controller"},
+	}
+	class2 := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "class-b"},
+		Spec:       gatewayv1.GatewayClassSpec{ControllerName: "test-controller"},
+	}
+	otherClass := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "other-class"},
+		Spec:       gatewayv1.GatewayClassSpec{ControllerName: "other-controller"},
+	}
+
+	fakeClient := setupMapperFakeClient(class1, class2, otherClass)
+
+	names := managedClassNames(ctx, fakeClient, "test-controller")
+
+	assert.True(t, names["class-a"])
+	assert.True(t, names["class-b"])
+	assert.False(t, names["other-class"])
+}
+
+func TestManagedClassNames_Empty(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+
+	fakeClient := setupMapperFakeClient()
+
+	names := managedClassNames(ctx, fakeClient, "test-controller")
+
+	assert.Empty(t, names)
+}
+
+func TestListGatewayClassesForController(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+
+	class1 := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "class-a"},
+		Spec:       gatewayv1.GatewayClassSpec{ControllerName: "example.com/my-controller"},
+	}
+	class2 := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "class-b"},
+		Spec:       gatewayv1.GatewayClassSpec{ControllerName: "example.com/my-controller"},
+	}
+	otherClass := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "other"},
+		Spec:       gatewayv1.GatewayClassSpec{ControllerName: "example.com/other"},
+	}
+
+	fakeClient := setupMapperFakeClient(class1, class2, otherClass)
+
+	// Matching controllerName returns both classes.
+	matched := listGatewayClassesForController(ctx, fakeClient, "example.com/my-controller")
+	assert.Len(t, matched, 2)
+
+	// Non-matching controllerName returns empty.
+	none := listGatewayClassesForController(ctx, fakeClient, "example.com/nonexistent")
+	assert.Empty(t, none)
+
+	// No classes at all returns empty.
+	emptyClient := setupMapperFakeClient()
+	empty := listGatewayClassesForController(ctx, emptyClient, "example.com/my-controller")
+	assert.Empty(t, empty)
+}
+
+// TestIsGatewayManagedByController_GatewayClassNotFound verifies that a missing
+// GatewayClass causes the function to return false (not panic).
+func TestIsGatewayManagedByController_GatewayClassNotFound(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+
+	gateway := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "default"},
+		Spec:       gatewayv1.GatewaySpec{GatewayClassName: "non-existent-class"},
+	}
+
+	fakeClient := setupMapperFakeClient(gateway)
+
+	assert.False(t, isGatewayManagedByController(ctx, fakeClient, gateway, "any-controller"))
+}
+
+// TestIsGatewayManagedByController_ClassNameDiffersFromControllerName verifies
+// that gateway management is determined by controllerName, not by class name.
+// This is the key indirection per Gateway API spec.
+func TestIsGatewayManagedByController_ClassNameDiffersFromControllerName(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+
+	gatewayClass := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "my-custom-tunnel-class"},
+		Spec:       gatewayv1.GatewayClassSpec{ControllerName: "example.com/tunnel-controller"},
+	}
+
+	gateway := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "default"},
+		Spec: gatewayv1.GatewaySpec{
+			GatewayClassName: "my-custom-tunnel-class",
+		},
+	}
+
+	fakeClient := setupMapperFakeClient(gatewayClass, gateway)
+
+	// Matches by controllerName — should return true
+	assert.True(t, isGatewayManagedByController(ctx, fakeClient, gateway, "example.com/tunnel-controller"))
+
+	// Does NOT match by class name — should return false
+	assert.False(t, isGatewayManagedByController(ctx, fakeClient, gateway, "my-custom-tunnel-class"))
+}
+
+// TestFindRoutesForGateway_MultipleClassesSameController verifies that routes
+// are found when multiple GatewayClasses reference the same controllerName.
+func TestFindRoutesForGateway_MultipleClassesSameController(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+
+	classA := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "tunnel-prod"},
+		Spec:       gatewayv1.GatewayClassSpec{ControllerName: "example.com/tunnel"},
+	}
+	classB := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "tunnel-staging"},
+		Spec:       gatewayv1.GatewayClassSpec{ControllerName: "example.com/tunnel"},
+	}
+
+	gwProd := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "gw-prod", Namespace: "default"},
+		Spec:       gatewayv1.GatewaySpec{GatewayClassName: "tunnel-prod"},
+	}
+
+	fakeClient := setupMapperFakeClient(classA, classB, gwProd)
+
+	routes := []Route{
+		HTTPRouteWrapper{&gatewayv1.HTTPRoute{
+			ObjectMeta: metav1.ObjectMeta{Name: "route-prod", Namespace: "default"},
+			Spec: gatewayv1.HTTPRouteSpec{
+				CommonRouteSpec: gatewayv1.CommonRouteSpec{
+					ParentRefs: []gatewayv1.ParentReference{{Name: "gw-prod"}},
+				},
+			},
+		}},
+	}
+
+	result := FindRoutesForGateway(ctx, fakeClient, gwProd, "example.com/tunnel", routes)
+	require.Len(t, result, 1)
+	assert.Equal(t, "default/route-prod", result[0].String())
 }

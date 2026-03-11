@@ -32,7 +32,7 @@ TLS) is ignored because Cloudflare Tunnel handles these at the edge. However,
 
 | Field | Supported | Notes |
 |-------|-----------|-------|
-| `spec.gatewayClassName` | Yes | Required, must match configured class |
+| `spec.gatewayClassName` | Yes | Required; the referenced GatewayClass must have a `spec.controllerName` matching the controller |
 | `spec.listeners` | Partial | Accepted for compatibility, not used for routing |
 | `spec.listeners[].name` | Yes | Used for status reporting and sectionName matching |
 | `spec.listeners[].port` | No | Ignored; Cloudflare uses standard 443/80 |

@@ -72,9 +72,14 @@ func TestRouteSyncer_CrossNamespaceRef_WithoutGrant(t *testing.T) {
 		},
 	}
 
+	gatewayClass := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "cloudflare-tunnel"},
+		Spec:       gatewayv1.GatewayClassSpec{ControllerName: "cloudflare-tunnel"},
+	}
+
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(route, gateway).
+		WithObjects(gatewayClass, route, gateway).
 		Build()
 
 	syncer := NewRouteSyncer(
@@ -349,9 +354,14 @@ func TestRouteSyncer_GRPCRoute_CrossNamespaceRef_WithGrant(t *testing.T) {
 		},
 	}
 
+	gatewayClass := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "cloudflare-tunnel"},
+		Spec:       gatewayv1.GatewayClassSpec{ControllerName: "cloudflare-tunnel"},
+	}
+
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(route, gateway, refGrant, grpcService).
+		WithObjects(gatewayClass, route, gateway, refGrant, grpcService).
 		Build()
 
 	syncer := NewRouteSyncer(
@@ -506,9 +516,14 @@ func TestRouteSyncer_ReferenceGrant_SpecificName(t *testing.T) {
 	// Note: denied-service does NOT exist, so it will fail with RefNotPermitted
 	// (ReferenceGrant check happens before Service lookup)
 
+	gatewayClass := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "cloudflare-tunnel"},
+		Spec:       gatewayv1.GatewayClassSpec{ControllerName: "cloudflare-tunnel"},
+	}
+
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(allowedRoute, deniedRoute, gateway, refGrant, allowedService).
+		WithObjects(gatewayClass, allowedRoute, deniedRoute, gateway, refGrant, allowedService).
 		Build()
 
 	syncer := NewRouteSyncer(

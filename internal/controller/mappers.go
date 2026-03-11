@@ -17,6 +17,78 @@ import (
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/routebinding"
 )
 
+// isGatewayManagedByController checks if a Gateway belongs to a GatewayClass
+// managed by the given controller. Per Gateway API spec, controllerName is the
+// binding mechanism between GatewayClass and controller, not the class name.
+func isGatewayManagedByController(
+	ctx context.Context,
+	cli client.Client,
+	gateway *gatewayv1.Gateway,
+	controllerName string,
+) bool {
+	var gatewayClass gatewayv1.GatewayClass
+
+	err := cli.Get(ctx, types.NamespacedName{Name: string(gateway.Spec.GatewayClassName)}, &gatewayClass)
+	if err != nil {
+		logging.FromContext(ctx).Debug("GatewayClass not found for gateway",
+			"gateway", gateway.Namespace+"/"+gateway.Name,
+			"gatewayClassName", string(gateway.Spec.GatewayClassName),
+			"error", err)
+
+		return false
+	}
+
+	return string(gatewayClass.Spec.ControllerName) == controllerName
+}
+
+// listGatewayClassesForController returns all GatewayClasses that reference
+// the given controllerName.
+func listGatewayClassesForController(
+	ctx context.Context,
+	cli client.Client,
+	controllerName string,
+) []gatewayv1.GatewayClass {
+	var classList gatewayv1.GatewayClassList
+
+	if err := cli.List(ctx, &classList); err != nil {
+		logging.FromContext(ctx).Warn("failed to list GatewayClasses",
+			"controllerName", controllerName, "error", err)
+
+		return nil
+	}
+
+	var matched []gatewayv1.GatewayClass
+
+	for i := range classList.Items {
+		if string(classList.Items[i].Spec.ControllerName) == controllerName {
+			matched = append(matched, classList.Items[i])
+		}
+	}
+
+	return matched
+}
+
+// managedClassNames returns the set of GatewayClass names managed by the
+// given controllerName. Used for batch operations to avoid per-Gateway lookups.
+//
+// Note: with controller-runtime, both Get and List hit the local informer cache,
+// not the API server. This helper still improves efficiency by replacing N Get
+// calls with a single List + local map lookup.
+func managedClassNames(
+	ctx context.Context,
+	cli client.Client,
+	controllerName string,
+) map[string]bool {
+	classes := listGatewayClassesForController(ctx, cli, controllerName)
+	names := make(map[string]bool, len(classes))
+
+	for i := range classes {
+		names[classes[i].Name] = true
+	}
+
+	return names
+}
+
 // kindGateway is the Gateway API kind for Gateway resources.
 const kindGateway = "Gateway"
 
@@ -25,9 +97,9 @@ type RequestsFunc func(ctx context.Context) []reconcile.Request
 
 // ConfigMapper provides shared mapping logic for GatewayClassConfig and Secret events.
 type ConfigMapper struct {
-	Client           client.Client
-	GatewayClassName string
-	ConfigResolver   *config.Resolver
+	Client         client.Client
+	ControllerName string
+	ConfigResolver *config.Resolver
 }
 
 // MapConfigToRequests returns a mapper function for GatewayClassConfig events.
@@ -63,34 +135,35 @@ func (m *ConfigMapper) MapSecretToRequests(getRequests RequestsFunc) func(contex
 }
 
 func (m *ConfigMapper) isConfigForOurClass(ctx context.Context, cfg *v1alpha1.GatewayClassConfig) bool {
-	gatewayClass := &gatewayv1.GatewayClass{}
+	classes := listGatewayClassesForController(ctx, m.Client, m.ControllerName)
 
-	err := m.Client.Get(ctx, types.NamespacedName{Name: m.GatewayClassName}, gatewayClass)
-	if err != nil {
-		return false
+	for i := range classes {
+		gc := &classes[i]
+		if gc.Spec.ParametersRef != nil && gc.Spec.ParametersRef.Name == cfg.Name {
+			return true
+		}
 	}
 
-	if gatewayClass.Spec.ParametersRef == nil {
-		return false
-	}
-
-	return gatewayClass.Spec.ParametersRef.Name == cfg.Name
+	return false
 }
 
 func (m *ConfigMapper) isSecretReferencedByConfig(ctx context.Context, secret *corev1.Secret) bool {
-	gatewayClass := &gatewayv1.GatewayClass{}
+	classes := listGatewayClassesForController(ctx, m.Client, m.ControllerName)
 
-	err := m.Client.Get(ctx, types.NamespacedName{Name: m.GatewayClassName}, gatewayClass)
-	if err != nil {
-		return false
+	for i := range classes {
+		gc := &classes[i]
+
+		cfg, cfgErr := m.ConfigResolver.GetConfigForGatewayClass(ctx, gc)
+		if cfgErr != nil {
+			continue
+		}
+
+		if SecretMatchesConfig(secret, cfg) {
+			return true
+		}
 	}
 
-	cfg, cfgErr := m.ConfigResolver.GetConfigForGatewayClass(ctx, gatewayClass)
-	if cfgErr != nil {
-		return false
-	}
-
-	return SecretMatchesConfig(secret, cfg)
+	return false
 }
 
 // SecretMatchesConfig checks if a Secret is referenced by the GatewayClassConfig.
@@ -255,13 +328,20 @@ func (w GRPCRouteWrapper) GetRouteKind() gatewayv1.Kind {
 }
 
 // FindRoutesForGateway returns reconcile requests for routes that reference the given Gateway.
-func FindRoutesForGateway(obj client.Object, gatewayClassName string, routes []Route) []reconcile.Request {
+// It checks whether the Gateway's GatewayClass is managed by the given controllerName.
+func FindRoutesForGateway(
+	ctx context.Context,
+	cli client.Client,
+	obj client.Object,
+	controllerName string,
+	routes []Route,
+) []reconcile.Request {
 	gateway, ok := obj.(*gatewayv1.Gateway)
 	if !ok {
 		return nil
 	}
 
-	if gateway.Spec.GatewayClassName != gatewayv1.ObjectName(gatewayClassName) {
+	if !isGatewayManagedByController(ctx, cli, gateway, controllerName) {
 		return nil
 	}
 
@@ -269,7 +349,12 @@ func FindRoutesForGateway(obj client.Object, gatewayClassName string, routes []R
 
 	for _, route := range routes {
 		for _, ref := range route.GetParentRefs() {
-			if string(ref.Name) == gateway.Name {
+			refNamespace := route.GetNamespace()
+			if ref.Namespace != nil {
+				refNamespace = string(*ref.Namespace)
+			}
+
+			if string(ref.Name) == gateway.Name && refNamespace == gateway.Namespace {
 				requests = append(requests, reconcile.Request{
 					NamespacedName: client.ObjectKey{
 						Name:      route.GetName(),
@@ -285,18 +370,19 @@ func FindRoutesForGateway(obj client.Object, gatewayClassName string, routes []R
 	return requests
 }
 
-// FilterAcceptedRoutes returns reconcile requests for routes accepted by a Gateway of the specified class.
+// FilterAcceptedRoutes returns reconcile requests for routes accepted by a Gateway
+// managed by the given controllerName.
 func FilterAcceptedRoutes(
 	ctx context.Context,
 	cli client.Client,
 	validator *routebinding.Validator,
-	gatewayClassName string,
+	controllerName string,
 	routes []Route,
 ) []reconcile.Request {
 	var requests []reconcile.Request
 
 	for _, route := range routes {
-		if IsRouteAcceptedByGateway(ctx, cli, validator, gatewayClassName, route) {
+		if IsRouteAcceptedByGateway(ctx, cli, validator, controllerName, route) {
 			requests = append(requests, reconcile.Request{
 				NamespacedName: client.ObjectKey{
 					Name:      route.GetName(),
@@ -310,13 +396,13 @@ func FilterAcceptedRoutes(
 }
 
 // IsRouteAcceptedByGateway checks if a route has at least one accepted binding
-// to a Gateway of the specified class. This is used by both HTTPRoute and GRPCRoute
-// controllers to determine if a route should be processed.
+// to a Gateway managed by the given controllerName. This is used by both HTTPRoute
+// and GRPCRoute controllers to determine if a route should be processed.
 func IsRouteAcceptedByGateway(
 	ctx context.Context,
 	cli client.Client,
 	validator *routebinding.Validator,
-	gatewayClassName string,
+	controllerName string,
 	route Route,
 ) bool {
 	for _, ref := range route.GetParentRefs() {
@@ -336,7 +422,7 @@ func IsRouteAcceptedByGateway(
 			continue
 		}
 
-		if gateway.Spec.GatewayClassName != gatewayv1.ObjectName(gatewayClassName) {
+		if !isGatewayManagedByController(ctx, cli, &gateway, controllerName) {
 			continue
 		}
 

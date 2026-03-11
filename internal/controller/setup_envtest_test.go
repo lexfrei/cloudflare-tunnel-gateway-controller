@@ -25,12 +25,11 @@ func TestGatewayReconciler_SetupWithManager(t *testing.T) {
 	configResolver := config.NewResolver(envK8sClient, "default", cfmetrics.NewNoopCollector())
 
 	r := &GatewayReconciler{
-		Client:           envK8sClient,
-		Scheme:           envScheme,
-		GatewayClassName: "test-gateway-class",
-		ControllerName:   "test-controller",
-		ConfigResolver:   configResolver,
-		HelmManager:      nil, // not needed for setup test
+		Client:         envK8sClient,
+		Scheme:         envScheme,
+		ControllerName: "test-controller",
+		ConfigResolver: configResolver,
+		HelmManager:    nil, // not needed for setup test
 	}
 
 	err = r.SetupWithManager(mgr)
@@ -52,18 +51,17 @@ func TestHTTPRouteReconciler_SetupWithManager(t *testing.T) {
 		envK8sClient,
 		envScheme,
 		"cluster.local",
-		"test-gateway-class",
+		"test-controller",
 		configResolver,
 		cfmetrics.NewNoopCollector(),
 		nil,
 	)
 
 	r := &HTTPRouteReconciler{
-		Client:           envK8sClient,
-		Scheme:           envScheme,
-		GatewayClassName: "test-gateway-class",
-		ControllerName:   "test-controller",
-		RouteSyncer:      routeSyncer,
+		Client:         envK8sClient,
+		Scheme:         envScheme,
+		ControllerName: "test-controller",
+		RouteSyncer:    routeSyncer,
 	}
 
 	err = r.SetupWithManager(mgr)
@@ -85,18 +83,17 @@ func TestGRPCRouteReconciler_SetupWithManager(t *testing.T) {
 		envK8sClient,
 		envScheme,
 		"cluster.local",
-		"test-gateway-class",
+		"test-controller",
 		configResolver,
 		cfmetrics.NewNoopCollector(),
 		nil,
 	)
 
 	r := &GRPCRouteReconciler{
-		Client:           envK8sClient,
-		Scheme:           envScheme,
-		GatewayClassName: "test-gateway-class",
-		ControllerName:   "test-controller",
-		RouteSyncer:      routeSyncer,
+		Client:         envK8sClient,
+		Scheme:         envScheme,
+		ControllerName: "test-controller",
+		RouteSyncer:    routeSyncer,
 	}
 
 	err = r.SetupWithManager(mgr)

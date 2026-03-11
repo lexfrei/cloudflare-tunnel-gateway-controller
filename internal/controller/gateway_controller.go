@@ -48,6 +48,10 @@ const (
 
 	// kindSecret is the resource kind for Kubernetes Secrets.
 	kindSecret = "Secret"
+
+	// maxConditionMessageLength is the maximum length for condition messages.
+	// Used by truncateMessage to cap status condition messages.
+	maxConditionMessageLength = 256
 )
 
 // truncateMessage truncates a message to maxConditionMessageLength.
@@ -77,7 +81,7 @@ type HelmManagement interface {
 // GatewayReconciler reconciles Gateway resources for the cloudflare-tunnel GatewayClass.
 //
 // It performs the following functions:
-//   - Watches Gateway resources matching the configured GatewayClassName
+//   - Watches Gateway resources whose GatewayClass matches the configured ControllerName
 //   - Reads configuration from GatewayClassConfig via parametersRef
 //   - Updates Gateway status with tunnel CNAME address (for external-dns integration)
 //   - Manages cloudflared deployment lifecycle via Helm (when enabled in config)
@@ -91,10 +95,9 @@ type GatewayReconciler struct {
 	// Scheme is the runtime scheme for API type registration.
 	Scheme *runtime.Scheme
 
-	// GatewayClassName is the name of the GatewayClass to watch.
-	GatewayClassName string
-
-	// ControllerName is reported in Gateway status conditions.
+	// ControllerName identifies this controller. Per Gateway API spec,
+	// controllerName is the binding mechanism between GatewayClass and controller.
+	// The controller watches all GatewayClasses with matching controllerName.
 	ControllerName string
 
 	// ConfigResolver resolves configuration from GatewayClassConfig.
@@ -118,14 +121,14 @@ func (r *GatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		return ctrl.Result{}, errors.Wrap(err, "failed to get gateway")
 	}
 
-	if gateway.Spec.GatewayClassName != gatewayv1.ObjectName(r.GatewayClassName) {
+	if !isGatewayManagedByController(ctx, r.Client, &gateway, r.ControllerName) {
 		return ctrl.Result{}, nil
 	}
 
 	logger.Info("reconciling gateway", "name", gateway.Name, "namespace", gateway.Namespace)
 
-	// Resolve configuration from GatewayClassConfig
-	resolvedConfig, err := r.ConfigResolver.ResolveFromGatewayClassName(ctx, r.GatewayClassName)
+	// Resolve configuration from the Gateway's GatewayClass
+	resolvedConfig, err := r.ConfigResolver.ResolveFromGatewayClassName(ctx, string(gateway.Spec.GatewayClassName))
 	if err != nil {
 		logger.Error(err, "failed to resolve config from GatewayClassConfig")
 		// Update Gateway status to reflect config error and requeue for retry
@@ -716,9 +719,9 @@ func (r *GatewayReconciler) refMatchesGateway(
 // SetupWithManager sets up the controller with the Manager.
 func (r *GatewayReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	mapper := &ConfigMapper{
-		Client:           r.Client,
-		GatewayClassName: r.GatewayClassName,
-		ConfigResolver:   r.ConfigResolver,
+		Client:         r.Client,
+		ControllerName: r.ControllerName,
+		ConfigResolver: r.ConfigResolver,
 	}
 
 	//nolint:wrapcheck // controller-runtime builder pattern
@@ -732,12 +735,12 @@ func (r *GatewayReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		// Watch GatewayClassConfig for config changes
 		Watches(
 			&v1alpha1.GatewayClassConfig{},
-			handler.EnqueueRequestsFromMapFunc(mapper.MapConfigToRequests(r.getAllGatewaysForClass)),
+			handler.EnqueueRequestsFromMapFunc(mapper.MapConfigToRequests(r.getAllManagedGateways)),
 		).
 		// Watch Secrets for credential changes
 		Watches(
 			&corev1.Secret{},
-			handler.EnqueueRequestsFromMapFunc(mapper.MapSecretToRequests(r.getAllGatewaysForClass)),
+			handler.EnqueueRequestsFromMapFunc(mapper.MapSecretToRequests(r.getAllManagedGateways)),
 		).
 		// Watch ReferenceGrants for cross-namespace Secret access changes
 		Watches(
@@ -757,14 +760,14 @@ func (r *GatewayReconciler) gatewayClassToGateways(
 		return nil
 	}
 
-	if gatewayClass.Name != r.GatewayClassName {
+	if string(gatewayClass.Spec.ControllerName) != r.ControllerName {
 		return nil
 	}
 
-	return r.getAllGatewaysForClass(ctx)
+	return r.getAllManagedGateways(ctx)
 }
 
-func (r *GatewayReconciler) getAllGatewaysForClass(ctx context.Context) []reconcile.Request {
+func (r *GatewayReconciler) getAllManagedGateways(ctx context.Context) []reconcile.Request {
 	var gatewayList gatewayv1.GatewayList
 
 	err := r.List(ctx, &gatewayList)
@@ -772,11 +775,13 @@ func (r *GatewayReconciler) getAllGatewaysForClass(ctx context.Context) []reconc
 		return nil
 	}
 
+	classNames := managedClassNames(ctx, r.Client, r.ControllerName)
+
 	var requests []reconcile.Request
 
 	for i := range gatewayList.Items {
 		gw := &gatewayList.Items[i]
-		if string(gw.Spec.GatewayClassName) == r.GatewayClassName {
+		if classNames[string(gw.Spec.GatewayClassName)] {
 			requests = append(requests, reconcile.Request{
 				NamespacedName: types.NamespacedName{
 					Name:      gw.Name,
@@ -826,11 +831,13 @@ func (r *GatewayReconciler) referenceGrantToGateways(
 		return nil
 	}
 
+	classNames := managedClassNames(ctx, r.Client, r.ControllerName)
+
 	var requests []reconcile.Request
 
 	for i := range gatewayList.Items {
 		gateway := &gatewayList.Items[i]
-		if string(gateway.Spec.GatewayClassName) != r.GatewayClassName {
+		if !classNames[string(gateway.Spec.GatewayClassName)] {
 			continue
 		}
 

@@ -26,9 +26,8 @@ type routeAccessor struct {
 
 // routeStatusUpdateParams holds the common parameters for updating route status.
 type routeStatusUpdateParams struct {
-	k8sClient        client.Client
-	gatewayClassName string
-	controllerName   string
+	k8sClient      client.Client
+	controllerName string
 }
 
 // updateRouteStatusGeneric updates the status of a route with per-parent binding conditions.
@@ -42,6 +41,10 @@ func updateRouteStatusGeneric(
 	failedRefs []ingress.BackendRefError,
 	syncErr error,
 ) error {
+	// Compute managed class names once outside the retry loop.
+	// The set does not change between retries (conflict retries happen in milliseconds).
+	classNames := managedClassNames(ctx, params.k8sClient, params.controllerName)
+
 	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		accessor := newAccessor()
 		if err := params.k8sClient.Get(ctx, routeKey, accessor.obj); err != nil {
@@ -70,7 +73,7 @@ func updateRouteStatusGeneric(
 				continue
 			}
 
-			if gateway.Spec.GatewayClassName != gatewayv1.ObjectName(params.gatewayClassName) {
+			if !classNames[string(gateway.Spec.GatewayClassName)] {
 				continue
 			}
 

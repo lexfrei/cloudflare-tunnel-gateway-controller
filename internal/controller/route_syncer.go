@@ -1,8 +1,10 @@
 package controller
 
 import (
+	"cmp"
 	"context"
 	"log/slog"
+	"slices"
 	"sync"
 	"time"
 
@@ -30,12 +32,12 @@ import (
 type RouteSyncer struct {
 	client.Client
 
-	Scheme           *runtime.Scheme
-	ClusterDomain    string
-	GatewayClassName string
-	ConfigResolver   *config.Resolver
-	Metrics          cfmetrics.Collector
-	Logger           *slog.Logger
+	Scheme         *runtime.Scheme
+	ClusterDomain  string
+	ControllerName string
+	ConfigResolver *config.Resolver
+	Metrics        cfmetrics.Collector
+	Logger         *slog.Logger
 
 	httpBuilder      *ingress.Builder
 	grpcBuilder      *ingress.GRPCBuilder
@@ -52,7 +54,7 @@ func NewRouteSyncer(
 	c client.Client,
 	scheme *runtime.Scheme,
 	clusterDomain string,
-	gatewayClassName string,
+	controllerName string,
 	configResolver *config.Resolver,
 	metricsCollector cfmetrics.Collector,
 	logger *slog.Logger,
@@ -69,7 +71,7 @@ func NewRouteSyncer(
 		Client:           c,
 		Scheme:           scheme,
 		ClusterDomain:    clusterDomain,
-		GatewayClassName: gatewayClassName,
+		ControllerName:   controllerName,
 		ConfigResolver:   configResolver,
 		Metrics:          metricsCollector,
 		Logger:           componentLogger,
@@ -207,6 +209,84 @@ func syncAndUpdateStatusCommon(ctx context.Context, params syncUpdateParams) (ct
 	return result, nil
 }
 
+// resolveConfigForController resolves configuration from the GatewayClass
+// managed by this controller. Returns an error if no matching GatewayClass is found.
+//
+// When multiple GatewayClasses reference the same controllerName, the class
+// with the lexicographically smallest name is used (deterministic ordering).
+// A warning is logged because all GatewayClasses under one controller share
+// the same tunnel credentials — multiple classes with different parametersRef
+// may lead to unexpected behavior.
+func (s *RouteSyncer) resolveConfigForController(ctx context.Context) (*config.ResolvedConfig, error) {
+	classes := listGatewayClassesForController(ctx, s.Client, s.ControllerName)
+	if len(classes) == 0 {
+		return nil, errors.New("no GatewayClass found for controller " + s.ControllerName)
+	}
+
+	// Sort by name for deterministic selection.
+	slices.SortFunc(classes, func(a, b gatewayv1.GatewayClass) int {
+		return cmp.Compare(a.Name, b.Name)
+	})
+
+	if len(classes) > 1 {
+		names := make([]string, len(classes))
+		for i := range classes {
+			names[i] = classes[i].Name
+		}
+
+		s.Logger.Warn("multiple GatewayClasses found for controller, using first alphabetically",
+			"controllerName", s.ControllerName,
+			"classes", names,
+			"selected", classes[0].Name,
+		)
+
+		// Check if classes have different parametersRef — this indicates a
+		// misconfiguration, since one controller syncs all routes to one tunnel.
+		if hasConflictingParametersRef(classes) {
+			s.Logger.Error("GatewayClasses have different parametersRef — "+
+				"one controller instance supports only one tunnel configuration; "+
+				"routes from all classes will use config from the selected class",
+				"selected", classes[0].Name,
+				"controllerName", s.ControllerName,
+			)
+		}
+	}
+
+	resolved, err := s.ConfigResolver.ResolveFromGatewayClass(ctx, &classes[0])
+	if err != nil {
+		return nil, errors.Wrap(err, "resolving config for GatewayClass "+classes[0].Name)
+	}
+
+	return resolved, nil
+}
+
+// hasConflictingParametersRef returns true if the given GatewayClasses
+// reference different parametersRef names, indicating a misconfiguration.
+func hasConflictingParametersRef(classes []gatewayv1.GatewayClass) bool {
+	var firstName string
+
+	for i := range classes {
+		ref := classes[i].Spec.ParametersRef
+		name := ""
+
+		if ref != nil {
+			name = ref.Name
+		}
+
+		if i == 0 {
+			firstName = name
+
+			continue
+		}
+
+		if name != firstName {
+			return true
+		}
+	}
+
+	return false
+}
+
 // buildResultForError creates a SyncResult containing all relevant routes.
 // Used when early errors occur (before routes are collected) to ensure
 // route statuses are updated to reflect the error.
@@ -239,8 +319,9 @@ func (s *RouteSyncer) SyncAllRoutes(ctx context.Context) (ctrl.Result, *SyncResu
 		logger = s.Logger
 	}
 
-	// Resolve configuration from GatewayClassConfig
-	resolvedConfig, err := s.ConfigResolver.ResolveFromGatewayClassName(ctx, s.GatewayClassName)
+	// Resolve configuration from the first matching GatewayClass.
+	// All GatewayClasses managed by this controller share tunnel credentials.
+	resolvedConfig, err := s.resolveConfigForController(ctx)
 	if err != nil {
 		logger.Error("failed to resolve config from GatewayClassConfig", "error", err)
 
@@ -405,6 +486,8 @@ func (s *RouteSyncer) getRelevantHTTPRoutes(
 		return nil, nil, errors.Wrap(err, "failed to list httproutes")
 	}
 
+	classNames := managedClassNames(ctx, s.Client, s.ControllerName)
+
 	var relevantRoutes []gatewayv1.HTTPRoute
 
 	bindings := make(map[string]routeBindingInfo)
@@ -435,7 +518,7 @@ func (s *RouteSyncer) getRelevantHTTPRoutes(
 				continue
 			}
 
-			if gateway.Spec.GatewayClassName != gatewayv1.ObjectName(s.GatewayClassName) {
+			if !classNames[string(gateway.Spec.GatewayClassName)] {
 				continue
 			}
 
@@ -491,6 +574,8 @@ func (s *RouteSyncer) getRelevantGRPCRoutes(
 		return nil, nil, errors.Wrap(err, "failed to list grpcroutes")
 	}
 
+	classNames := managedClassNames(ctx, s.Client, s.ControllerName)
+
 	var relevantRoutes []gatewayv1.GRPCRoute
 
 	bindings := make(map[string]routeBindingInfo)
@@ -521,7 +606,7 @@ func (s *RouteSyncer) getRelevantGRPCRoutes(
 				continue
 			}
 
-			if gateway.Spec.GatewayClassName != gatewayv1.ObjectName(s.GatewayClassName) {
+			if !classNames[string(gateway.Spec.GatewayClassName)] {
 				continue
 			}
 

@@ -103,7 +103,7 @@ Resolves GatewayClassConfig from GatewayClass `parametersRef`:
 
 Watches Gateway resources and performs the following:
 
-1. **Filtering**: Only processes Gateways with matching `gatewayClassName`
+1. **Filtering**: Only processes Gateways whose GatewayClass has a matching `spec.controllerName`
 2. **Finalizers**: Adds finalizer for cleanup when Helm management is enabled
 3. **Helm Management**: Deploys/upgrades cloudflared via Helm chart
 4. **Status Update**: Sets Gateway address to `<tunnel-id>.cfargotunnel.com`
