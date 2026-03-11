@@ -62,14 +62,16 @@ func (a *ConfigAPI) handlePutConfig(writer http.ResponseWriter, req *http.Reques
 
 	err := decoder.Decode(&cfg)
 	if err != nil {
-		http.Error(writer, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		slog.Warn("config API: invalid JSON", "error", err)
+		http.Error(writer, "invalid JSON", http.StatusBadRequest)
 
 		return
 	}
 
 	err = cfg.Validate()
 	if err != nil {
-		http.Error(writer, "invalid config: "+err.Error(), http.StatusBadRequest)
+		slog.Warn("config API: invalid config", "error", err)
+		http.Error(writer, "invalid config", http.StatusBadRequest)
 
 		return
 	}
@@ -77,12 +79,13 @@ func (a *ConfigAPI) handlePutConfig(writer http.ResponseWriter, req *http.Reques
 	err = a.router.UpdateConfig(&cfg)
 	if err != nil {
 		if errors.Is(err, errStaleVersion) {
-			http.Error(writer, err.Error(), http.StatusConflict)
+			http.Error(writer, "stale config version", http.StatusConflict)
 
 			return
 		}
 
-		http.Error(writer, "failed to apply config: "+err.Error(), http.StatusInternalServerError)
+		slog.Error("config API: failed to apply config", "error", err)
+		http.Error(writer, "internal server error", http.StatusInternalServerError)
 
 		return
 	}

@@ -1100,6 +1100,71 @@ func TestConvertMirrorFilter_InvalidPort(t *testing.T) {
 	}
 }
 
+func TestConvertBackendRef_NonServiceKind(t *testing.T) {
+	t.Parallel()
+
+	pathPrefix := gatewayv1.PathMatchPathPrefix
+	bucketKind := gatewayv1.Kind("Bucket")
+	bucketGroup := gatewayv1.Group("objectbucket.io")
+	portNum := gatewayv1.PortNumber(80)
+	weight := int32(1)
+
+	route := &gatewayv1.HTTPRoute{
+		ObjectMeta: metav1.ObjectMeta{Name: "bucket-backend", Namespace: "default"},
+		Spec: gatewayv1.HTTPRouteSpec{
+			Hostnames: []gatewayv1.Hostname{"example.com"},
+			Rules: []gatewayv1.HTTPRouteRule{
+				{
+					Matches: []gatewayv1.HTTPRouteMatch{
+						{Path: &gatewayv1.HTTPPathMatch{Type: &pathPrefix, Value: new("/")}},
+					},
+					BackendRefs: []gatewayv1.HTTPBackendRef{
+						{
+							BackendRef: gatewayv1.BackendRef{
+								BackendObjectReference: gatewayv1.BackendObjectReference{
+									Group: &bucketGroup,
+									Kind:  &bucketKind,
+									Name:  "my-bucket",
+									Port:  &portNum,
+								},
+								Weight: &weight,
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	cfg := proxy.ConvertHTTPRoutes([]*gatewayv1.HTTPRoute{route}, "cluster.local")
+
+	require.Len(t, cfg.Rules, 1)
+	assert.Empty(t, cfg.Rules[0].Backends, "non-Service backend kind should be skipped")
+}
+
+func TestConvertMirrorFilter_NonServiceKind(t *testing.T) {
+	t.Parallel()
+
+	bucketKind := gatewayv1.Kind("Bucket")
+	bucketGroup := gatewayv1.Group("objectbucket.io")
+
+	route := routeWithFilter(gatewayv1.HTTPRouteFilter{
+		Type: gatewayv1.HTTPRouteFilterRequestMirror,
+		RequestMirror: &gatewayv1.HTTPRequestMirrorFilter{
+			BackendRef: gatewayv1.BackendObjectReference{
+				Group: &bucketGroup,
+				Kind:  &bucketKind,
+				Name:  "my-bucket",
+			},
+		},
+	})
+
+	cfg := proxy.ConvertHTTPRoutes([]*gatewayv1.HTTPRoute{route}, "cluster.local")
+
+	require.Len(t, cfg.Rules, 1)
+	assert.Empty(t, cfg.Rules[0].Filters, "mirror filter with non-Service kind should be skipped")
+}
+
 // Helper functions.
 
 func routeWithQueryMatch(query gatewayv1.HTTPQueryParamMatch) *gatewayv1.HTTPRoute {

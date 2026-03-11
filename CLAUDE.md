@@ -117,7 +117,11 @@ internal/
   dns/                   # Cluster domain auto-detection
   helm/                  # Helm SDK operations for cloudflared
   ingress/               # HTTPRoute → Cloudflare ingress rule conversion
+  logging/               # Structured logging helpers (OpenTelemetry trace handler)
+  cfmetrics/             # Cloudflare metrics collection
   proxy/                 # L7 reverse proxy (router, matcher, filter, config API, converter)
+  referencegrant/        # ReferenceGrant validation for cross-namespace backends
+  routebinding/          # Route-to-Gateway binding validation
   tunnel/                # cloudflared tunnel bootstrap and GatewayOriginProxy adapter
 charts/                  # Helm chart with helm-unittest tests
 deploy/                  # Raw Kubernetes manifests for manual deployment

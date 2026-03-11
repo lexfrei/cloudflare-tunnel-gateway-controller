@@ -3,6 +3,7 @@ package proxy
 import (
 	"math/rand/v2"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"sync/atomic"
@@ -43,9 +44,15 @@ type wildcardEntry struct {
 	rules  []*compiledRule
 }
 
+// transportPruner is implemented by Handler to prune stale transport entries.
+type transportPruner interface {
+	PruneTransports(activeHosts map[string]bool)
+}
+
 // Router provides thread-safe HTTP request routing with atomic config updates.
 type Router struct {
-	table atomic.Pointer[routingTable]
+	table  atomic.Pointer[routingTable]
+	pruner transportPruner
 }
 
 // NewRouter creates a Router with an empty routing table.
@@ -56,6 +63,11 @@ func NewRouter() *Router {
 	})
 
 	return router
+}
+
+// SetHandler registers a handler whose transport pool will be pruned on config updates.
+func (r *Router) SetHandler(h *Handler) {
+	r.pruner = h
 }
 
 // ConfigVersion returns the version of the currently loaded configuration.
@@ -117,7 +129,29 @@ func (r *Router) UpdateConfig(cfg *Config) error {
 
 	r.table.Store(table)
 
+	if r.pruner != nil {
+		r.pruner.PruneTransports(extractActiveHosts(cfg))
+	}
+
 	return nil
+}
+
+// extractActiveHosts collects all backend hosts from the config's rules.
+func extractActiveHosts(cfg *Config) map[string]bool {
+	hosts := make(map[string]bool)
+
+	for _, rule := range cfg.Rules {
+		for _, backend := range rule.Backends {
+			parsed, err := url.Parse(backend.URL)
+			if err != nil {
+				continue
+			}
+
+			hosts[parsed.Host] = true
+		}
+	}
+
+	return hosts
 }
 
 // compileRoutingTable builds a routingTable from a Config.

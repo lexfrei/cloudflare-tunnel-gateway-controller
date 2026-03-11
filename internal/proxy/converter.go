@@ -210,8 +210,28 @@ func convertFilter(filter *gatewayv1.HTTPRouteFilter, namespace, clusterDomain s
 	return nil
 }
 
+func isServiceBackendRef(ref gatewayv1.BackendObjectReference) bool {
+	if ref.Group != nil && *ref.Group != "" && *ref.Group != "core" {
+		return false
+	}
+
+	if ref.Kind != nil && *ref.Kind != "Service" {
+		return false
+	}
+
+	return true
+}
+
 func convertMirrorFilter(mirror *gatewayv1.HTTPRequestMirrorFilter, namespace, clusterDomain string) *RouteFilter {
 	if mirror == nil {
+		return nil
+	}
+
+	if !isServiceBackendRef(mirror.BackendRef) {
+		slog.Warn("skipping mirror with non-Service backend kind",
+			"kind", mirror.BackendRef.Kind,
+			"name", mirror.BackendRef.Name)
+
 		return nil
 	}
 
@@ -337,6 +357,14 @@ func convertBackendRef(
 	namespace string,
 	clusterDomain string,
 ) (BackendRef, bool) {
+	if !isServiceBackendRef(backend.BackendObjectReference) {
+		slog.Warn("skipping non-Service backend kind",
+			"kind", backend.Kind,
+			"name", backend.Name)
+
+		return BackendRef{}, false
+	}
+
 	result := BackendRef{
 		Weight: 1,
 	}
