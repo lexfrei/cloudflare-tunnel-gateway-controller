@@ -129,6 +129,56 @@ func TestConfigAPI_MethodNotAllowed(t *testing.T) {
 	assert.Equal(t, http.StatusMethodNotAllowed, recorder.Code)
 }
 
+func TestConfigAPI_AuthRequired(t *testing.T) {
+	t.Parallel()
+
+	router := proxy.NewRouter()
+	api := proxy.NewConfigAPI(router, "secret-token")
+
+	cfg := proxy.Config{
+		Version: 1,
+		Rules:   []proxy.RouteRule{{Backends: []proxy.BackendRef{{URL: "http://svc:80", Weight: 1}}}},
+	}
+
+	body, err := json.Marshal(cfg)
+	require.NoError(t, err)
+
+	t.Run("rejected without token", func(t *testing.T) {
+		t.Parallel()
+
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPut, "/config", bytes.NewReader(body))
+		recorder := httptest.NewRecorder()
+
+		api.ServeHTTP(recorder, req)
+
+		assert.Equal(t, http.StatusUnauthorized, recorder.Code)
+	})
+
+	t.Run("rejected with wrong token", func(t *testing.T) {
+		t.Parallel()
+
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPut, "/config", bytes.NewReader(body))
+		req.Header.Set("Authorization", "Bearer wrong-token")
+		recorder := httptest.NewRecorder()
+
+		api.ServeHTTP(recorder, req)
+
+		assert.Equal(t, http.StatusUnauthorized, recorder.Code)
+	})
+
+	t.Run("accepted with correct token", func(t *testing.T) {
+		t.Parallel()
+
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPut, "/config", bytes.NewReader(body))
+		req.Header.Set("Authorization", "Bearer secret-token")
+		recorder := httptest.NewRecorder()
+
+		api.ServeHTTP(recorder, req)
+
+		assert.Equal(t, http.StatusOK, recorder.Code)
+	})
+}
+
 func TestConfigAPI_HealthEndpoint(t *testing.T) {
 	t.Parallel()
 

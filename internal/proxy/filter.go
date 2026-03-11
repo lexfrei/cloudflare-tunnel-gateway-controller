@@ -3,6 +3,7 @@ package proxy
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -210,19 +211,26 @@ func NewRequestMirror(backendURL string) Filter {
 }
 
 func (f *requestMirror) ProcessRequest(req *http.Request) *http.Response {
+	mirrorURL, err := req.URL.Parse(f.backendURL + req.URL.Path)
+	if err != nil {
+		slog.Warn("mirror: failed to parse backend URL", "error", err)
+
+		return nil
+	}
+
 	// Use a detached context so the mirror is fire-and-forget,
 	// not cancelled when the original request completes.
 	mirrorCtx, cancel := context.WithTimeout(context.Background(), mirrorTimeout)
 	mirrorReq := req.Clone(mirrorCtx)
-	mirrorReq.URL, _ = req.URL.Parse(f.backendURL + req.URL.Path)
-	mirrorReq.Host = mirrorReq.URL.Host
+	mirrorReq.URL = mirrorURL
+	mirrorReq.Host = mirrorURL.Host
 	mirrorReq.RequestURI = ""
 
 	go func() {
 		defer cancel()
 
-		resp, err := f.client.Do(mirrorReq) //nolint:gosec // mirror URL comes from trusted config
-		if err == nil {
+		resp, doErr := f.client.Do(mirrorReq) //nolint:gosec // mirror URL comes from trusted config
+		if doErr == nil {
 			resp.Body.Close()
 		}
 	}()

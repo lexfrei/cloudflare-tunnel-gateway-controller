@@ -299,6 +299,18 @@ func TestRequestMirror(t *testing.T) {
 	<-received
 }
 
+func TestRequestMirror_InvalidBackendURL(t *testing.T) {
+	t.Parallel()
+
+	filter := proxy.NewRequestMirror("://invalid\x00url")
+
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "http://example.com/test", nil)
+
+	// Should not panic — must handle invalid URL gracefully.
+	resp := filter.ProcessRequest(req) //nolint:bodyclose // mirror returns nil response
+	assert.Nil(t, resp)
+}
+
 func TestCompileFilters(t *testing.T) {
 	t.Parallel()
 

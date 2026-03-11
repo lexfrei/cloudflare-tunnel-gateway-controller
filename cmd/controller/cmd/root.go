@@ -64,6 +64,7 @@ func init() {
 
 	// v2 proxy flags
 	rootCmd.Flags().StringSlice("proxy-endpoints", nil, "Proxy config API endpoints for v2 proxy sync (e.g., http://proxy-0:8081,http://proxy-1:8081)")
+	rootCmd.Flags().String("proxy-auth-token", "", "Bearer token for authenticating proxy config push requests")
 
 	_ = viper.BindPFlags(rootCmd.Flags())
 	_ = viper.BindPFlags(rootCmd.PersistentFlags())
@@ -137,6 +138,7 @@ func runController(_ *cobra.Command, _ []string) error {
 		LeaderElectName: viper.GetString("leader-election-name"),
 
 		ProxyEndpoints: viper.GetStringSlice("proxy-endpoints"),
+		ProxyAuthToken: viper.GetString("proxy-auth-token"),
 	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

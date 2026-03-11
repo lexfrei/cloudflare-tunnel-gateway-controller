@@ -160,17 +160,14 @@ func waitForShutdown(logger *slog.Logger, errChan <-chan error) bool {
 
 	signal.Stop(sigChan)
 
-	// Drain remaining errors so no goroutine blocks forever.
-	for {
-		select {
-		case err := <-errChan:
-			if err != nil && !errors.Is(err, http.ErrServerClosed) {
-				logger.Error("server error", "error", err)
-			}
-		default:
-			return startupFailure
-		}
+	// Drain the remaining server error. We started exactly 2 server goroutines,
+	// so one error has been consumed above; drain the second.
+	err := <-errChan
+	if err != nil && !errors.Is(err, http.ErrServerClosed) {
+		logger.Error("server error", "error", err)
 	}
+
+	return startupFailure
 }
 
 func gracefulShutdown(logger *slog.Logger, servers ...*http.Server) {

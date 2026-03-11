@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -120,7 +121,13 @@ func (a *ConfigAPI) checkAuth(req *http.Request) bool {
 		return false
 	}
 
-	return header[:len(bearerPrefix)] == bearerPrefix && header[len(bearerPrefix):] == a.authToken
+	if header[:len(bearerPrefix)] != bearerPrefix {
+		return false
+	}
+
+	token := header[len(bearerPrefix):]
+
+	return subtle.ConstantTimeCompare([]byte(token), []byte(a.authToken)) == 1
 }
 
 func (a *ConfigAPI) handleHealthz(writer http.ResponseWriter, _ *http.Request) {
