@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/cockroachdb/errors"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -47,7 +48,9 @@ func NewProxySyncer(
 		clusterDomain:    clusterDomain,
 		gatewayClassName: gatewayClassName,
 		logger:           logger.With("component", "proxy-syncer"),
-		pusher:           proxy.NewConfigPusher(&http.Client{}),
+		pusher: proxy.NewConfigPusher(&http.Client{
+			Timeout: 10 * time.Second,
+		}),
 	}
 }
 

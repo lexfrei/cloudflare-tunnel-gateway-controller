@@ -120,6 +120,10 @@ func (f *requestRedirect) ProcessResponse(_ *http.Response) {}
 
 func (f *requestRedirect) buildRedirectURL(req *http.Request) string {
 	scheme := req.URL.Scheme
+	if scheme == "" {
+		scheme = "https"
+	}
+
 	if f.config.Scheme != nil {
 		scheme = *f.config.Scheme
 	}

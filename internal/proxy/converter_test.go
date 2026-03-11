@@ -595,7 +595,7 @@ func TestConvertFilter_RequestMirror(t *testing.T) {
 	f := cfg.Rules[0].Filters[0]
 	assert.Equal(t, proxy.FilterRequestMirror, f.Type)
 	require.NotNil(t, f.RequestMirror)
-	assert.Equal(t, "mirror-svc", f.RequestMirror.BackendURL)
+	assert.Equal(t, "http://mirror-svc.default.svc.cluster.local:80", f.RequestMirror.BackendURL)
 }
 
 func TestConvertFilter_RequestMirror_NilBody(t *testing.T) {

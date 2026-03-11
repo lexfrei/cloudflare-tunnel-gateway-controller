@@ -5,8 +5,6 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"sync"
-
-	"github.com/cockroachdb/errors"
 )
 
 // Handler is the main HTTP handler for the L7 proxy.
@@ -119,7 +117,7 @@ func (h *Handler) getTransport(host string) http.RoundTripper {
 
 // errorHandler handles proxy errors by returning 502 Bad Gateway.
 func errorHandler(writer http.ResponseWriter, _ *http.Request, err error) {
-	if errors.Is(err, nil) {
+	if err == nil {
 		return
 	}
 

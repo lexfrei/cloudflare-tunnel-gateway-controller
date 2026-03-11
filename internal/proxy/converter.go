@@ -53,7 +53,7 @@ func convertHTTPRouteRule(
 	}
 
 	for filterIdx := range rule.Filters {
-		converted := convertFilter(&rule.Filters[filterIdx])
+		converted := convertFilter(&rule.Filters[filterIdx], namespace, clusterDomain)
 		if converted != nil {
 			proxyRule.Filters = append(proxyRule.Filters, *converted)
 		}
@@ -143,7 +143,7 @@ func convertQueryMatch(query gatewayv1.HTTPQueryParamMatch) QueryParamMatch {
 	return result
 }
 
-func convertFilter(filter *gatewayv1.HTTPRouteFilter) *RouteFilter {
+func convertFilter(filter *gatewayv1.HTTPRouteFilter, namespace, clusterDomain string) *RouteFilter {
 	switch filter.Type {
 	case gatewayv1.HTTPRouteFilterRequestHeaderModifier:
 		if filter.RequestHeaderModifier == nil {
@@ -186,14 +186,7 @@ func convertFilter(filter *gatewayv1.HTTPRouteFilter) *RouteFilter {
 		}
 
 	case gatewayv1.HTTPRouteFilterRequestMirror:
-		if filter.RequestMirror == nil {
-			return nil
-		}
-
-		return &RouteFilter{
-			Type:          FilterRequestMirror,
-			RequestMirror: &MirrorConfig{BackendURL: string(filter.RequestMirror.BackendRef.Name)},
-		}
+		return convertMirrorFilter(filter.RequestMirror, namespace, clusterDomain)
 
 	case gatewayv1.HTTPRouteFilterExtensionRef,
 		gatewayv1.HTTPRouteFilterCORS,
@@ -202,6 +195,29 @@ func convertFilter(filter *gatewayv1.HTTPRouteFilter) *RouteFilter {
 	}
 
 	return nil
+}
+
+func convertMirrorFilter(mirror *gatewayv1.HTTPRequestMirrorFilter, namespace, clusterDomain string) *RouteFilter {
+	if mirror == nil {
+		return nil
+	}
+
+	mirrorPort := int32(defaultServicePort)
+	if mirror.BackendRef.Port != nil {
+		mirrorPort = *mirror.BackendRef.Port
+	}
+
+	mirrorNS := namespace
+	if mirror.BackendRef.Namespace != nil {
+		mirrorNS = string(*mirror.BackendRef.Namespace)
+	}
+
+	mirrorURL := buildServiceURL(string(mirror.BackendRef.Name), mirrorNS, mirrorPort, clusterDomain)
+
+	return &RouteFilter{
+		Type:          FilterRequestMirror,
+		RequestMirror: &MirrorConfig{BackendURL: mirrorURL},
+	}
 }
 
 func convertHeaderModifier(modifier *gatewayv1.HTTPHeaderFilter) *HeaderModifier {

@@ -37,9 +37,13 @@ func (a *ConfigAPI) ServeHTTP(writer http.ResponseWriter, req *http.Request) {
 	a.mux.ServeHTTP(writer, req)
 }
 
+// maxConfigBodySize limits the request body for config updates (1 MiB).
+const maxConfigBodySize = 1 << 20
+
 func (a *ConfigAPI) handlePutConfig(writer http.ResponseWriter, req *http.Request) {
 	var cfg Config
 
+	req.Body = http.MaxBytesReader(writer, req.Body, maxConfigBodySize)
 	decoder := json.NewDecoder(req.Body)
 
 	err := decoder.Decode(&cfg)
@@ -67,9 +71,10 @@ func (a *ConfigAPI) handlePutConfig(writer http.ResponseWriter, req *http.Reques
 }
 
 func (a *ConfigAPI) handleGetConfig(writer http.ResponseWriter, _ *http.Request) {
+	version := a.router.ConfigVersion()
 	status := ConfigStatus{
-		Version: a.router.ConfigVersion(),
-		Ready:   a.router.ConfigVersion() > 0,
+		Version: version,
+		Ready:   version > 0,
 	}
 
 	writer.Header().Set("Content-Type", "application/json")
