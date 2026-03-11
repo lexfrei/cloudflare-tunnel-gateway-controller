@@ -7,7 +7,6 @@ import (
 
 	"github.com/cockroachdb/errors"
 	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -56,35 +55,16 @@ type GRPCRouteReconciler struct {
 	startupComplete atomic.Bool
 }
 
-//nolint:dupl // intentionally similar to HTTPRouteReconciler.Reconcile
 func (r *GRPCRouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	// Wait for startup sync to complete before processing reconcile events
-	if !r.startupComplete.Load() {
-		return ctrl.Result{RequeueAfter: startupPendingRequeueDelay, Priority: new(priorityRoute)}, nil
-	}
-
-	ctx = logging.WithReconcileID(ctx)
-	logger := logging.Component(ctx, "grpcroute-reconciler").With("grpcroute", req.String())
-	ctx = logging.WithLogger(ctx, logger)
-
-	var route gatewayv1.GRPCRoute
-	if err := r.Get(ctx, req.NamespacedName, &route); err != nil {
-		if apierrors.IsNotFound(err) {
-			logger.Info("grpcroute deleted, triggering full sync")
-
-			return r.syncAndUpdateStatus(ctx)
-		}
-
-		return ctrl.Result{}, errors.Wrap(err, "failed to get grpcroute")
-	}
-
-	if !r.isRouteForOurGateway(ctx, &route) {
-		return ctrl.Result{}, nil
-	}
-
-	logger.Info("reconciling grpcroute")
-
-	return r.syncAndUpdateStatus(ctx)
+	return reconcileRoute(ctx, req, &gatewayv1.GRPCRoute{}, reconcileRouteParams[*gatewayv1.GRPCRoute]{
+		startupComplete:  &r.startupComplete,
+		k8sClient:        r.Client,
+		bindingValidator: r.bindingValidator,
+		gatewayClassName: r.GatewayClassName,
+		componentName:    "grpcroute",
+		wrapRoute:        func(route *gatewayv1.GRPCRoute) Route { return GRPCRouteWrapper{route} },
+		syncAndUpdate:    r.syncAndUpdateStatus,
+	})
 }
 
 func (r *GRPCRouteReconciler) syncAndUpdateStatus(ctx context.Context) (ctrl.Result, error) {
