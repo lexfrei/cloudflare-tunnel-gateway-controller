@@ -82,8 +82,28 @@ func TestProxySyncer_SyncRoutes(t *testing.T) {
 	assert.NotEmpty(t, receivedConfig.Rules)
 }
 
-func TestProxySyncer_NoRoutes(t *testing.T) {
+func TestProxySyncer_NoRoutes_PushesEmptyConfig(t *testing.T) {
 	t.Parallel()
+
+	var receivedConfig proxy.Config
+
+	var pushCount atomic.Int32
+
+	configServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, req *http.Request) {
+		if req.Method == http.MethodPut {
+			pushCount.Add(1)
+
+			decodeErr := json.NewDecoder(req.Body).Decode(&receivedConfig)
+			if decodeErr != nil {
+				writer.WriteHeader(http.StatusBadRequest)
+
+				return
+			}
+		}
+
+		writer.WriteHeader(http.StatusOK)
+	}))
+	defer configServer.Close()
 
 	testClient := fake.NewClientBuilder().WithScheme(runtime.NewScheme()).Build()
 
@@ -94,9 +114,14 @@ func TestProxySyncer_NoRoutes(t *testing.T) {
 		slog.Default(),
 	)
 
-	// No routes, unreachable endpoint — push will fail.
-	err := syncer.SyncRoutes(context.Background(), []string{"http://127.0.0.1:1/config"}, nil)
-	assert.Error(t, err)
+	// Zero routes should still push a valid config with empty rules.
+	// The proxy will return 404 for all requests until routes are added.
+	err := syncer.SyncRoutes(context.Background(), []string{configServer.URL + "/config"}, nil)
+	require.NoError(t, err)
+
+	assert.Equal(t, int32(1), pushCount.Load())
+	assert.Empty(t, receivedConfig.Rules, "empty routes should produce empty rules")
+	assert.True(t, receivedConfig.Version > 0, "version should be positive even with no routes")
 }
 
 // Helper functions.

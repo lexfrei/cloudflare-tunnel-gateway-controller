@@ -193,48 +193,15 @@ func convertQueryMatch(query gatewayv1.HTTPQueryParamMatch) QueryParamMatch {
 func convertFilter(filter *gatewayv1.HTTPRouteFilter, namespace, clusterDomain string) *RouteFilter {
 	switch filter.Type {
 	case gatewayv1.HTTPRouteFilterRequestHeaderModifier:
-		if filter.RequestHeaderModifier == nil {
-			return nil
-		}
-
-		return &RouteFilter{
-			Type:                  FilterRequestHeaderModifier,
-			RequestHeaderModifier: convertHeaderModifier(filter.RequestHeaderModifier),
-		}
-
+		return convertRequestHeaderFilter(filter.RequestHeaderModifier)
 	case gatewayv1.HTTPRouteFilterResponseHeaderModifier:
-		if filter.ResponseHeaderModifier == nil {
-			return nil
-		}
-
-		return &RouteFilter{
-			Type:                   FilterResponseHeaderModifier,
-			ResponseHeaderModifier: convertHeaderModifier(filter.ResponseHeaderModifier),
-		}
-
+		return convertResponseHeaderFilter(filter.ResponseHeaderModifier)
 	case gatewayv1.HTTPRouteFilterRequestRedirect:
-		if filter.RequestRedirect == nil {
-			return nil
-		}
-
-		return &RouteFilter{
-			Type:            FilterRequestRedirect,
-			RequestRedirect: convertRedirectConfig(filter.RequestRedirect),
-		}
-
+		return convertRedirectFilter(filter.RequestRedirect)
 	case gatewayv1.HTTPRouteFilterURLRewrite:
-		if filter.URLRewrite == nil {
-			return nil
-		}
-
-		return &RouteFilter{
-			Type:       FilterURLRewrite,
-			URLRewrite: convertURLRewrite(filter.URLRewrite),
-		}
-
+		return convertURLRewriteFilter(filter.URLRewrite)
 	case gatewayv1.HTTPRouteFilterRequestMirror:
 		return convertMirrorFilter(filter.RequestMirror, namespace, clusterDomain)
-
 	case gatewayv1.HTTPRouteFilterExtensionRef,
 		gatewayv1.HTTPRouteFilterCORS,
 		gatewayv1.HTTPRouteFilterExternalAuth:
@@ -246,6 +213,58 @@ func convertFilter(filter *gatewayv1.HTTPRouteFilter, namespace, clusterDomain s
 	slog.Warn("skipping unknown filter type", "type", filter.Type)
 
 	return nil
+}
+
+func convertRequestHeaderFilter(modifier *gatewayv1.HTTPHeaderFilter) *RouteFilter {
+	if modifier == nil {
+		slog.Warn("skipping RequestHeaderModifier filter with nil config")
+
+		return nil
+	}
+
+	return &RouteFilter{
+		Type:                  FilterRequestHeaderModifier,
+		RequestHeaderModifier: convertHeaderModifier(modifier),
+	}
+}
+
+func convertResponseHeaderFilter(modifier *gatewayv1.HTTPHeaderFilter) *RouteFilter {
+	if modifier == nil {
+		slog.Warn("skipping ResponseHeaderModifier filter with nil config")
+
+		return nil
+	}
+
+	return &RouteFilter{
+		Type:                   FilterResponseHeaderModifier,
+		ResponseHeaderModifier: convertHeaderModifier(modifier),
+	}
+}
+
+func convertRedirectFilter(redirect *gatewayv1.HTTPRequestRedirectFilter) *RouteFilter {
+	if redirect == nil {
+		slog.Warn("skipping RequestRedirect filter with nil config")
+
+		return nil
+	}
+
+	return &RouteFilter{
+		Type:            FilterRequestRedirect,
+		RequestRedirect: convertRedirectConfig(redirect),
+	}
+}
+
+func convertURLRewriteFilter(rewrite *gatewayv1.HTTPURLRewriteFilter) *RouteFilter {
+	if rewrite == nil {
+		slog.Warn("skipping URLRewrite filter with nil config")
+
+		return nil
+	}
+
+	return &RouteFilter{
+		Type:       FilterURLRewrite,
+		URLRewrite: convertURLRewrite(rewrite),
+	}
 }
 
 func isServiceBackendRef(ref gatewayv1.BackendObjectReference) bool {

@@ -58,7 +58,7 @@ func runTunnelMode(logger *slog.Logger, token string) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go handleSignals(logger, cancel)
+	go handleSignals(ctx, logger, cancel)
 
 	go func() {
 		logger.Info("starting config API server", "addr", configAddr)
@@ -144,17 +144,21 @@ func newProxyServer(addr string, handler http.Handler) *http.Server {
 	}
 }
 
-func handleSignals(logger *slog.Logger, cancel context.CancelFunc) {
+func handleSignals(ctx context.Context, logger *slog.Logger, cancel context.CancelFunc) {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGTERM, syscall.SIGINT)
 
-	sig := <-sigChan
+	defer signal.Stop(sigChan)
 
-	signal.Stop(sigChan)
+	select {
+	case sig := <-sigChan:
+		logger.Info("received signal, shutting down", "signal", sig)
 
-	logger.Info("received signal, shutting down", "signal", sig)
-
-	cancel()
+		cancel()
+	case <-ctx.Done():
+		// Context was cancelled by another path (e.g., tunnel exit).
+		// Nothing to do — just let the goroutine exit cleanly.
+	}
 }
 
 // waitForShutdown blocks until a termination signal is received or a server

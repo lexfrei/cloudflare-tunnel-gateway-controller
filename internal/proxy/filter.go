@@ -265,43 +265,9 @@ func (f *requestMirror) ProcessRequest(req *http.Request) *http.Response {
 		return nil
 	}
 
-	// Buffer the request body so that both the mirror goroutine and the
-	// main handler each get their own independent copy. Without this,
-	// req.Clone performs a shallow copy and both readers race on the
-	// same underlying io.Reader, corrupting the body.
-	var bodyBuf []byte
-
-	if req.Body != nil && req.Body != http.NoBody {
-		bodyBuf, err = io.ReadAll(io.LimitReader(req.Body, maxMirrorBodySize+1))
-		if err != nil {
-			slog.Warn("mirror: failed to read request body, skipping mirror", "error", err)
-
-			// Restore the body from whatever was buffered so the main handler
-			// still receives the data that was read before the error.
-			// Do not re-attach the original req.Body — it is in a failed state.
-			if len(bodyBuf) > 0 {
-				req.Body = io.NopCloser(bytes.NewReader(bodyBuf))
-				req.ContentLength = int64(len(bodyBuf))
-			}
-
-			return nil
-		}
-
-		if int64(len(bodyBuf)) > maxMirrorBodySize {
-			slog.Warn("mirror: request body exceeds maximum mirror size, skipping mirror",
-				"max_bytes", maxMirrorBodySize)
-
-			// Restore the original body so the main handler still works.
-			req.Body = io.NopCloser(io.MultiReader(
-				bytes.NewReader(bodyBuf),
-				req.Body,
-			))
-
-			return nil
-		}
-
-		req.Body = io.NopCloser(bytes.NewReader(bodyBuf))
-		req.ContentLength = int64(len(bodyBuf))
+	bodyBuf, ok := bufferMirrorBody(req)
+	if !ok {
+		return nil
 	}
 
 	// Use a detached context so the mirror is fire-and-forget,
@@ -331,6 +297,52 @@ func (f *requestMirror) ProcessRequest(req *http.Request) *http.Response {
 	}()
 
 	return nil
+}
+
+// bufferMirrorBody reads and buffers the request body for mirroring.
+// Returns the buffered data and true if mirroring should proceed.
+// Returns nil, false if mirroring should be skipped (body too large or read error).
+// The original request body is always restored for the main handler.
+func bufferMirrorBody(req *http.Request) ([]byte, bool) {
+	if req.Body == nil || req.Body == http.NoBody {
+		return nil, true
+	}
+
+	bodyBuf, err := io.ReadAll(io.LimitReader(req.Body, maxMirrorBodySize+1))
+	if err != nil {
+		slog.Warn("mirror: failed to read request body, skipping mirror", "error", err)
+
+		// Restore the body from whatever was buffered so the main handler
+		// still receives the data that was read before the error.
+		if len(bodyBuf) > 0 {
+			req.Body = io.NopCloser(bytes.NewReader(bodyBuf))
+			req.ContentLength = int64(len(bodyBuf))
+		}
+
+		return nil, false
+	}
+
+	if int64(len(bodyBuf)) > maxMirrorBodySize {
+		slog.Warn("mirror: request body exceeds maximum mirror size, skipping mirror",
+			"max_bytes", maxMirrorBodySize)
+
+		// Restore the original body so the main handler still works.
+		// Set ContentLength to -1 (unknown) so the reverse proxy falls back
+		// to chunked transfer encoding instead of trusting the original
+		// ContentLength which no longer matches the reassembled body.
+		req.Body = io.NopCloser(io.MultiReader(
+			bytes.NewReader(bodyBuf),
+			req.Body,
+		))
+		req.ContentLength = -1
+
+		return nil, false
+	}
+
+	req.Body = io.NopCloser(bytes.NewReader(bodyBuf))
+	req.ContentLength = int64(len(bodyBuf))
+
+	return bodyBuf, true
 }
 
 func (f *requestMirror) ProcessResponse(_ *http.Response) {}
