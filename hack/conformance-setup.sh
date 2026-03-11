@@ -200,7 +200,7 @@ echo ""
 if [[ "${RUN_TESTS}" == "true" ]]; then
   info "Running conformance tests..."
   CONFORMANCE_KUBE_CONTEXT="${KUBE_CONTEXT}" \
-    go test -v -race -tags conformance -count=1 -timeout=30m ./test/conformance/...
+    go test -v -race -tags conformance -count=1 -timeout=60m -parallel 10 ./test/conformance/...
 else
   echo ""
   info "Setup complete! To run conformance tests:"
