@@ -264,6 +264,42 @@ func TestConvertHTTPRoutes_Empty(t *testing.T) {
 	assert.True(t, cfg.Version > 0, "version should be positive")
 }
 
+func TestConvertHTTPRoutes_NonServiceBackendSkipped(t *testing.T) {
+	t.Parallel()
+
+	// Route with a non-Service backend (e.g., kind=NonExistent) should produce
+	// no proxy rules, because the converter skips non-Service backends and
+	// rules with zero backends must be omitted to avoid proxy 400 errors.
+	nonExistentKind := gatewayv1.Kind("NonExistent")
+	routes := []*gatewayv1.HTTPRoute{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "bad-backend", Namespace: "default"},
+			Spec: gatewayv1.HTTPRouteSpec{
+				Hostnames: []gatewayv1.Hostname{"app.example.com"},
+				Rules: []gatewayv1.HTTPRouteRule{
+					{
+						BackendRefs: []gatewayv1.HTTPBackendRef{
+							{
+								BackendRef: gatewayv1.BackendRef{
+									BackendObjectReference: gatewayv1.BackendObjectReference{
+										Kind: &nonExistentKind,
+										Name: "some-backend",
+										Port: new(gatewayv1.PortNumber(8080)),
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	cfg := proxy.ConvertHTTPRoutes(context.Background(), routes, "cluster.local", nil)
+
+	assert.Empty(t, cfg.Rules, "rules with no valid backends should be omitted")
+}
+
 func TestConvertQueryMatch(t *testing.T) {
 	t.Parallel()
 
@@ -1078,11 +1114,10 @@ func TestConvertBackendRef_InvalidPort(t *testing.T) {
 
 			cfg := proxy.ConvertHTTPRoutes(context.Background(), []*gatewayv1.HTTPRoute{route}, "cluster.local", nil)
 
-			require.Len(t, cfg.Rules, 1)
-
 			if tt.expectSkipped {
-				assert.Empty(t, cfg.Rules[0].Backends, "backend with invalid port should be skipped")
+				assert.Empty(t, cfg.Rules, "rule with no valid backends should be omitted entirely")
 			} else {
+				require.Len(t, cfg.Rules, 1, "rule with valid backend should be kept")
 				require.Len(t, cfg.Rules[0].Backends, 1, "backend with valid port should be kept")
 			}
 		})
@@ -1171,8 +1206,7 @@ func TestConvertBackendRef_NonServiceKind(t *testing.T) {
 
 	cfg := proxy.ConvertHTTPRoutes(context.Background(), []*gatewayv1.HTTPRoute{route}, "cluster.local", nil)
 
-	require.Len(t, cfg.Rules, 1)
-	assert.Empty(t, cfg.Rules[0].Backends, "non-Service backend kind should be skipped")
+	assert.Empty(t, cfg.Rules, "rule with no valid backends should be omitted entirely")
 }
 
 func TestConvertMirrorFilter_NonServiceKind(t *testing.T) {
@@ -1239,8 +1273,7 @@ func TestConvertBackendRef_CrossNamespaceRejected(t *testing.T) {
 
 	cfg := proxy.ConvertHTTPRoutes(context.Background(), []*gatewayv1.HTTPRoute{route}, "cluster.local", rejectAll)
 
-	require.Len(t, cfg.Rules, 1)
-	assert.Empty(t, cfg.Rules[0].Backends, "cross-namespace backend should be rejected by validator")
+	assert.Empty(t, cfg.Rules, "rule with rejected cross-namespace backend should be omitted entirely")
 }
 
 func TestConvertBackendRef_CrossNamespaceAllowed(t *testing.T) {
@@ -1400,8 +1433,7 @@ func TestConvertBackendRef_NegativeWeight(t *testing.T) {
 
 	cfg := proxy.ConvertHTTPRoutes(context.Background(), []*gatewayv1.HTTPRoute{route}, "cluster.local", nil)
 
-	require.Len(t, cfg.Rules, 1)
-	assert.Empty(t, cfg.Rules[0].Backends, "backend with negative weight should be skipped")
+	assert.Empty(t, cfg.Rules, "rule with no valid backends should be omitted entirely")
 }
 
 // Helper functions.

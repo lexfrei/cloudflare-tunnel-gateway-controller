@@ -62,6 +62,13 @@ func ConvertHTTPRoutes(
 				ctx, &route.Spec.Rules[ruleIdx], hostnames,
 				route.Namespace, clusterDomain, validator,
 			)
+
+			// Skip rules with no backends and no redirect filter —
+			// proxy rejects these with 400 (validation error).
+			if len(proxyRule.Backends) == 0 && !proxyRule.hasRedirectFilter() {
+				continue
+			}
+
 			cfg.Rules = append(cfg.Rules, proxyRule)
 		}
 	}
