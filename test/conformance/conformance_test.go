@@ -94,6 +94,8 @@ func TestGatewayAPIConformance(t *testing.T) {
 
 	// --- Skip tests ---
 	// Tests that fail due to Cloudflare Tunnel semantics, not missing features.
+	// Also skip tests for unsupported protocols/features that ExemptFeatures
+	// does not reliably filter (conformance suite runs all profile tests).
 	opts.SkipTests = []string{
 		// Cloudflare Tunnel uses prefix semantics for path matching internally.
 		"HTTPRouteExactPathMatching",
@@ -112,6 +114,56 @@ func TestGatewayAPIConformance(t *testing.T) {
 
 		// We only support ClusterIP backends.
 		"HTTPRouteServiceTypes",
+
+		// Mesh: not supported — tunnel architecture, no service mesh.
+		"MeshBasic",
+		"MeshConsumerRoute",
+		"MeshFrontend",
+		"MeshFrontendHostname",
+		"MeshPorts",
+		"MeshTrafficSplit",
+		"MeshGRPCRouteWeight",
+		"MeshHTTPRoute303Redirect",
+		"MeshHTTPRoute307Redirect",
+		"MeshHTTPRoute308Redirect",
+		"MeshHTTPRouteBackendRequestHeaderModifier",
+		"MeshHTTPRouteMatching",
+		"MeshHTTPRouteNamedRule",
+		"MeshHTTPRouteQueryParamMatching",
+		"MeshHTTPRouteRedirectHostAndStatus",
+		"MeshHTTPRouteRedirectPath",
+		"MeshHTTPRouteRedirectPort",
+		"MeshHTTPRouteRequestHeaderModifier",
+		"MeshHTTPRouteRewritePath",
+		"MeshHTTPRouteSchemeRedirect",
+		"MeshHTTPRouteSimpleSameNamespace",
+		"MeshHTTPRouteWeight",
+
+		// BackendTLSPolicy: not supported — tunnel terminates TLS at edge.
+		"BackendTLSPolicy",
+		"BackendTLSPolicyConflictResolution",
+		"BackendTLSPolicyInvalidCACertificateRef",
+		"BackendTLSPolicyInvalidKind",
+		"BackendTLSPolicyObservedGenerationBump",
+		"BackendTLSPolicySANValidation",
+
+		// Gateway features not applicable to tunnel architecture.
+		"GatewayStaticAddresses",
+		"GatewayHTTPListenerIsolation",
+		"GatewayInfrastructure",
+		"GatewayBackendClientCertificateFeature",
+		"GatewayFrontendClientCertificateValidation",
+		"GatewayFrontendClientCertificateValidationInsecureFallback",
+		"GatewayFrontendInvalidDefaultClientCertificateValidation",
+		"GatewayInvalidFrontendClientCertificateValidation",
+		"GatewayWithAttachedRoutesWithPort8080",
+		"GatewayOptionalAddressValue",
+
+		// HTTPRoute features not implemented.
+		"HTTPRouteBackendProtocolH2C",
+		"HTTPRouteBackendProtocolWebSocket",
+		"HTTPRouteCORS",
+		"HTTPRouteCORSAllowCredentialsBehavior",
 	}
 
 	// --- Timeouts ---
