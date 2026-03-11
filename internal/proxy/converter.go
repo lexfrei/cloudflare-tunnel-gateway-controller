@@ -309,12 +309,26 @@ func convertRedirectConfig(redirect *gatewayv1.HTTPRequestRedirectFilter) *Redir
 	return result
 }
 
-func convertRedirectPath(pathModifier *gatewayv1.HTTPPathModifier) *string {
+func convertRedirectPath(pathModifier *gatewayv1.HTTPPathModifier) *RedirectPath {
 	switch pathModifier.Type {
 	case gatewayv1.FullPathHTTPPathModifier:
-		return pathModifier.ReplaceFullPath
+		if pathModifier.ReplaceFullPath == nil {
+			return nil
+		}
+
+		return &RedirectPath{
+			Type:  RedirectPathFullReplace,
+			Value: *pathModifier.ReplaceFullPath,
+		}
 	case gatewayv1.PrefixMatchHTTPPathModifier:
-		return pathModifier.ReplacePrefixMatch
+		if pathModifier.ReplacePrefixMatch == nil {
+			return nil
+		}
+
+		return &RedirectPath{
+			Type:  RedirectPathPrefixReplace,
+			Value: *pathModifier.ReplacePrefixMatch,
+		}
 	default:
 		return nil
 	}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/cockroachdb/errors"
 )
@@ -124,7 +125,7 @@ func (a *ConfigAPI) checkAuth(req *http.Request) bool {
 		return false
 	}
 
-	if header[:len(bearerPrefix)] != bearerPrefix {
+	if !strings.EqualFold(header[:len(bearerPrefix)], bearerPrefix) {
 		return false
 	}
 

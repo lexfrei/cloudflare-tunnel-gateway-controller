@@ -167,12 +167,14 @@ func TestRequestRedirect_PortAndPath(t *testing.T) {
 	t.Parallel()
 
 	port := int32(8443)
-	path := "/new-path"
 	statusCode := http.StatusFound
 
 	filter := proxy.NewRequestRedirect(&proxy.RedirectConfig{
-		Port:       &port,
-		Path:       &path,
+		Port: &port,
+		Path: &proxy.RedirectPath{
+			Type:  proxy.RedirectPathFullReplace,
+			Value: "/new-path",
+		},
 		StatusCode: &statusCode,
 	})
 
@@ -208,6 +210,36 @@ func TestRequestRedirect_DefaultStatusCode(t *testing.T) {
 	require.NotNil(t, resp)
 	defer resp.Body.Close()
 	assert.Equal(t, http.StatusFound, resp.StatusCode)
+}
+
+func TestRequestRedirect_ReplacePrefixMatch(t *testing.T) {
+	t.Parallel()
+
+	statusCode := http.StatusMovedPermanently
+
+	filter := proxy.NewRequestRedirect(&proxy.RedirectConfig{
+		Path: &proxy.RedirectPath{
+			Type:  proxy.RedirectPathPrefixReplace,
+			Value: "/v2",
+		},
+		StatusCode: &statusCode,
+	})
+
+	req := &http.Request{
+		Host:   "example.com",
+		URL:    &url.URL{Scheme: testSchemeHTTPS, Host: "example.com", Path: "/api/users"},
+		Header: http.Header{},
+	}
+
+	// Set matched prefix as would happen during route matching.
+	req = proxy.SetMatchedPrefix(req, "/api")
+
+	resp := filter.ProcessRequest(req)
+	require.NotNil(t, resp, "redirect should short-circuit")
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusMovedPermanently, resp.StatusCode)
+	assert.Equal(t, "https://example.com/v2/users", resp.Header.Get("Location"),
+		"prefix replacement should only replace the matched prefix, preserving the suffix")
 }
 
 func TestURLRewriter_ReplaceFullPath(t *testing.T) {

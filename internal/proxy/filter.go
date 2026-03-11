@@ -143,7 +143,18 @@ func (f *requestRedirect) buildRedirectURL(req *http.Request) string {
 
 	path := req.URL.Path
 	if f.config.Path != nil {
-		path = *f.config.Path
+		switch f.config.Path.Type {
+		case RedirectPathFullReplace:
+			path = f.config.Path.Value
+		case RedirectPathPrefixReplace:
+			matchedPrefix := getMatchedPrefix(req)
+			if matchedPrefix != "" {
+				suffix := strings.TrimPrefix(req.URL.Path, matchedPrefix)
+				path = f.config.Path.Value + suffix
+			} else {
+				path = f.config.Path.Value
+			}
+		}
 	}
 
 	if f.config.Port != nil {

@@ -436,7 +436,9 @@ func TestConvertFilter_RequestRedirect_Full(t *testing.T) {
 	assert.Equal(t, "https", *f.RequestRedirect.Scheme)
 	assert.Equal(t, "new.example.com", *f.RequestRedirect.Hostname)
 	assert.Equal(t, int32(443), *f.RequestRedirect.Port)
-	assert.Equal(t, "/new-path", *f.RequestRedirect.Path)
+	require.NotNil(t, f.RequestRedirect.Path)
+	assert.Equal(t, proxy.RedirectPathFullReplace, f.RequestRedirect.Path.Type)
+	assert.Equal(t, "/new-path", f.RequestRedirect.Path.Value)
 	assert.Equal(t, 301, *f.RequestRedirect.StatusCode)
 }
 
@@ -693,7 +695,8 @@ func TestConvertRedirectPath(t *testing.T) {
 	tests := []struct {
 		name         string
 		pathModifier *gatewayv1.HTTPPathModifier
-		expectedPath string
+		expectedType proxy.RedirectPathType
+		expectedVal  string
 	}{
 		{
 			name: "full path replacement",
@@ -701,7 +704,8 @@ func TestConvertRedirectPath(t *testing.T) {
 				Type:            gatewayv1.FullPathHTTPPathModifier,
 				ReplaceFullPath: new("/new-full-path"),
 			},
-			expectedPath: "/new-full-path",
+			expectedType: proxy.RedirectPathFullReplace,
+			expectedVal:  "/new-full-path",
 		},
 		{
 			name: "prefix match replacement",
@@ -709,7 +713,8 @@ func TestConvertRedirectPath(t *testing.T) {
 				Type:               gatewayv1.PrefixMatchHTTPPathModifier,
 				ReplacePrefixMatch: new("/new-prefix"),
 			},
-			expectedPath: "/new-prefix",
+			expectedType: proxy.RedirectPathPrefixReplace,
+			expectedVal:  "/new-prefix",
 		},
 	}
 
@@ -730,9 +735,36 @@ func TestConvertRedirectPath(t *testing.T) {
 			require.Len(t, cfg.Rules[0].Filters, 1)
 			require.NotNil(t, cfg.Rules[0].Filters[0].RequestRedirect)
 			require.NotNil(t, cfg.Rules[0].Filters[0].RequestRedirect.Path)
-			assert.Equal(t, tt.expectedPath, *cfg.Rules[0].Filters[0].RequestRedirect.Path)
+			assert.Equal(t, tt.expectedType, cfg.Rules[0].Filters[0].RequestRedirect.Path.Type)
+			assert.Equal(t, tt.expectedVal, cfg.Rules[0].Filters[0].RequestRedirect.Path.Value)
 		})
 	}
+}
+
+func TestConvertRedirectPath_PrefixMatch(t *testing.T) {
+	t.Parallel()
+
+	route := routeWithFilter(gatewayv1.HTTPRouteFilter{
+		Type: gatewayv1.HTTPRouteFilterRequestRedirect,
+		RequestRedirect: &gatewayv1.HTTPRequestRedirectFilter{
+			Path: &gatewayv1.HTTPPathModifier{
+				Type:               gatewayv1.PrefixMatchHTTPPathModifier,
+				ReplacePrefixMatch: new("/v2"),
+			},
+		},
+	})
+
+	cfg := proxy.ConvertHTTPRoutes([]*gatewayv1.HTTPRoute{route}, "cluster.local")
+
+	require.Len(t, cfg.Rules, 1)
+	require.Len(t, cfg.Rules[0].Filters, 1)
+
+	redirect := cfg.Rules[0].Filters[0].RequestRedirect
+	require.NotNil(t, redirect)
+	require.NotNil(t, redirect.Path)
+	assert.Equal(t, proxy.RedirectPathPrefixReplace, redirect.Path.Type,
+		"path modifier type must be preserved through conversion")
+	assert.Equal(t, "/v2", redirect.Path.Value)
 }
 
 func TestConvertRedirectPath_NilFields(t *testing.T) {

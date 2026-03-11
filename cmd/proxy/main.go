@@ -110,6 +110,7 @@ func runStandaloneMode(logger *slog.Logger) {
 
 	startupFailure := waitForShutdown(logger, errChan)
 	gracefulShutdown(logger, configServer, proxyServer)
+	drainErrors(logger, errChan)
 
 	if startupFailure {
 		os.Exit(1)
@@ -160,13 +161,6 @@ func waitForShutdown(logger *slog.Logger, errChan <-chan error) bool {
 
 	signal.Stop(sigChan)
 
-	// Drain the remaining server error. We started exactly 2 server goroutines,
-	// so one error has been consumed above; drain the second.
-	err := <-errChan
-	if err != nil && !errors.Is(err, http.ErrServerClosed) {
-		logger.Error("server error", "error", err)
-	}
-
 	return startupFailure
 }
 
@@ -182,6 +176,21 @@ func gracefulShutdown(logger *slog.Logger, servers ...*http.Server) {
 	}
 
 	logger.Info("shutdown complete")
+}
+
+// drainErrors reads remaining errors from errChan after servers have been shut down.
+// Must be called AFTER gracefulShutdown to avoid blocking on still-running servers.
+func drainErrors(logger *slog.Logger, errChan <-chan error) {
+	for {
+		select {
+		case err := <-errChan:
+			if err != nil && !errors.Is(err, http.ErrServerClosed) {
+				logger.Error("server error", "error", err)
+			}
+		default:
+			return
+		}
+	}
 }
 
 func envOrDefault(key, defaultValue string) string {

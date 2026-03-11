@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	"github.com/cockroachdb/errors"
@@ -51,8 +52,9 @@ type transportPruner interface {
 
 // Router provides thread-safe HTTP request routing with atomic config updates.
 type Router struct {
-	table  atomic.Pointer[routingTable]
-	pruner transportPruner
+	table    atomic.Pointer[routingTable]
+	updateMu sync.Mutex
+	pruner   transportPruner
 }
 
 // NewRouter creates a Router with an empty routing table.
@@ -115,8 +117,11 @@ func (r *Router) Route(req *http.Request) *RouteResult {
 
 // UpdateConfig compiles a new routing table from the config and atomically swaps it in.
 // Rejects configs with a version older than the current one to prevent out-of-order updates.
-// Callers must serialize concurrent calls externally (e.g., via ProxySyncer.syncMu).
+// Thread-safe: concurrent calls are serialized internally.
 func (r *Router) UpdateConfig(cfg *Config) error {
+	r.updateMu.Lock()
+	defer r.updateMu.Unlock()
+
 	current := r.table.Load()
 	if current != nil && cfg.Version > 0 && cfg.Version < current.version {
 		return errors.Wrapf(errStaleVersion, "version %d < current %d", cfg.Version, current.version)

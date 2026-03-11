@@ -131,11 +131,27 @@ type HeaderValue struct {
 
 // RedirectConfig describes an HTTP redirect response.
 type RedirectConfig struct {
-	Scheme     *string `json:"scheme,omitempty"`
-	Hostname   *string `json:"hostname,omitempty"`
-	Port       *int32  `json:"port,omitempty"`
-	Path       *string `json:"path,omitempty"`
-	StatusCode *int    `json:"statusCode,omitempty"`
+	Scheme     *string       `json:"scheme,omitempty"`
+	Hostname   *string       `json:"hostname,omitempty"`
+	Port       *int32        `json:"port,omitempty"`
+	Path       *RedirectPath `json:"path,omitempty"`
+	StatusCode *int          `json:"statusCode,omitempty"`
+}
+
+// RedirectPathType defines the redirect path strategy.
+type RedirectPathType string
+
+const (
+	// RedirectPathFullReplace replaces the entire path.
+	RedirectPathFullReplace RedirectPathType = "ReplaceFullPath"
+	// RedirectPathPrefixReplace replaces only the matched prefix portion.
+	RedirectPathPrefixReplace RedirectPathType = "ReplacePrefixMatch"
+)
+
+// RedirectPath specifies how to modify the path in a redirect.
+type RedirectPath struct {
+	Type  RedirectPathType `json:"type"`
+	Value string           `json:"value"`
 }
 
 // URLRewriteConfig describes how to rewrite the request URL.
