@@ -46,6 +46,7 @@ func runTunnelMode(logger *slog.Logger, token string) {
 
 	router := proxy.NewRouter()
 	proxyHandler := proxy.NewHandler(router)
+	router.SetHandler(proxyHandler)
 
 	authToken := os.Getenv("PROXY_AUTH_TOKEN")
 	configServer := newServer(configAddr, proxy.NewConfigAPI(router, authToken))
@@ -90,10 +91,12 @@ func runStandaloneMode(logger *slog.Logger) {
 	proxyAddr := envOrDefault("PROXY_ADDR", defaultProxyAddr)
 
 	router := proxy.NewRouter()
+	proxyHandler := proxy.NewHandler(router)
+	router.SetHandler(proxyHandler)
 
 	authToken := os.Getenv("PROXY_AUTH_TOKEN")
 	configServer := newServer(configAddr, proxy.NewConfigAPI(router, authToken))
-	proxyServer := newProxyServer(proxyAddr, proxy.NewHandler(router))
+	proxyServer := newProxyServer(proxyAddr, proxyHandler)
 
 	errChan := make(chan error, 2)
 

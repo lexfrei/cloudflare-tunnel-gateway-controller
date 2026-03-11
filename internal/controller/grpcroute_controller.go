@@ -39,6 +39,12 @@ type GRPCRouteReconciler struct {
 	// RouteSyncer provides unified sync for both HTTP and GRPC routes.
 	RouteSyncer *RouteSyncer
 
+	// ProxySyncer pushes routing config to v2 proxy replicas (optional).
+	ProxySyncer *ProxySyncer
+
+	// ProxyEndpoints is the list of proxy config API URLs for v2 proxy sync.
+	ProxyEndpoints []string
+
 	// bindingValidator validates route binding to Gateway listeners.
 	bindingValidator *routebinding.Validator
 
@@ -59,31 +65,14 @@ func (r *GRPCRouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 }
 
 func (r *GRPCRouteReconciler) syncAndUpdateStatus(ctx context.Context) (ctrl.Result, error) {
-	logger := logging.FromContext(ctx)
-
-	result, syncResult, syncErr := r.RouteSyncer.SyncAllRoutes(ctx)
-
-	// Note: ProxySyncer is not used here because it only collects HTTPRoutes.
-	// GRPCRoute proxy support will be added when the proxy converter supports gRPC.
-
-	// Update status for all GRPC routes with per-parent binding results
-	var statusUpdateErr error
-
-	if syncResult != nil {
-		statusUpdateErr = updateRoutesStatus(ctx, logger, syncResult.grpcStatusEntries(r.updateRouteStatus), syncErr)
-	}
-
-	if syncErr != nil && result.RequeueAfter == 0 {
-		// Don't propagate error for limit exceeded (no requeue needed)
-		return result, nil
-	}
-
-	// Return error if status updates failed - controller-runtime will requeue with backoff
-	if statusUpdateErr != nil {
-		return ctrl.Result{}, statusUpdateErr
-	}
-
-	return result, nil
+	return syncAndUpdateStatusCommon(ctx, syncUpdateParams{
+		routeSyncer:    r.RouteSyncer,
+		proxySyncer:    r.ProxySyncer,
+		proxyEndpoints: r.ProxyEndpoints,
+		statusEntries: func(sr *SyncResult) []routeStatusEntry {
+			return sr.grpcStatusEntries(r.updateRouteStatus)
+		},
+	})
 }
 
 func (r *GRPCRouteReconciler) isRouteForOurGateway(ctx context.Context, route *gatewayv1.GRPCRoute) bool {

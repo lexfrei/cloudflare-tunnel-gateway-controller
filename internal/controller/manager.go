@@ -198,6 +198,8 @@ func Run(ctx context.Context, cfg *Config) error {
 		GatewayClassName: cfg.GatewayClassName,
 		ControllerName:   cfg.ControllerName,
 		RouteSyncer:      routeSyncer,
+		ProxySyncer:      proxySyncer,
+		ProxyEndpoints:   cfg.ProxyEndpoints,
 	}
 
 	if err := grpcRouteReconciler.SetupWithManager(mgr); err != nil {

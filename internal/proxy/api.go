@@ -56,6 +56,13 @@ func (a *ConfigAPI) handlePutConfig(writer http.ResponseWriter, req *http.Reques
 		return
 	}
 
+	contentType := req.Header.Get("Content-Type")
+	if contentType != "" && !strings.HasPrefix(contentType, "application/json") {
+		http.Error(writer, "unsupported content type", http.StatusUnsupportedMediaType)
+
+		return
+	}
+
 	var cfg Config
 
 	req.Body = http.MaxBytesReader(writer, req.Body, maxConfigBodySize)

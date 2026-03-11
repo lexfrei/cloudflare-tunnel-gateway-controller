@@ -179,6 +179,46 @@ func TestConfigAPI_AuthRequired(t *testing.T) {
 	})
 }
 
+func TestConfigAPI_ContentTypeValidation(t *testing.T) {
+	t.Parallel()
+
+	router := proxy.NewRouter()
+	api := proxy.NewConfigAPI(router, "")
+
+	cfg := proxy.Config{
+		Version: 1,
+		Rules:   []proxy.RouteRule{{Backends: []proxy.BackendRef{{URL: "http://svc:80", Weight: 1}}}},
+	}
+
+	body, err := json.Marshal(cfg)
+	require.NoError(t, err)
+
+	t.Run("rejected with text/plain content type", func(t *testing.T) {
+		t.Parallel()
+
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPut, "/config", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "text/plain")
+		recorder := httptest.NewRecorder()
+
+		api.ServeHTTP(recorder, req)
+
+		assert.Equal(t, http.StatusUnsupportedMediaType, recorder.Code)
+	})
+
+	t.Run("accepted with application/json content type", func(t *testing.T) {
+		t.Parallel()
+
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPut, "/config", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		recorder := httptest.NewRecorder()
+
+		api.ServeHTTP(recorder, req)
+
+		assert.Equal(t, http.StatusOK, recorder.Code,
+			"application/json content type should be accepted and processed normally")
+	})
+}
+
 func TestConfigAPI_HealthEndpoint(t *testing.T) {
 	t.Parallel()
 

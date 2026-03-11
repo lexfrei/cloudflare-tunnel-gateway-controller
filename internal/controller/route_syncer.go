@@ -152,6 +152,46 @@ func buildStatusEntries[T routeObject](
 	return entries
 }
 
+// syncUpdateParams holds the common parameters for route sync + status update.
+type syncUpdateParams struct {
+	routeSyncer    *RouteSyncer
+	proxySyncer    *ProxySyncer
+	proxyEndpoints []string
+	statusEntries  func(*SyncResult) []routeStatusEntry
+}
+
+// syncAndUpdateStatusCommon performs a full route sync, pushes proxy config,
+// and updates route status. Used by both HTTPRoute and GRPCRoute reconcilers.
+func syncAndUpdateStatusCommon(ctx context.Context, params syncUpdateParams) (ctrl.Result, error) {
+	logger := logging.FromContext(ctx)
+
+	result, syncResult, syncErr := params.routeSyncer.SyncAllRoutes(ctx)
+
+	// Push config to v2 proxy replicas (best-effort, non-blocking).
+	if params.proxySyncer != nil && len(params.proxyEndpoints) > 0 && syncResult != nil {
+		routes := httpRoutePtrs(syncResult.HTTPRoutes)
+		if proxyErr := params.proxySyncer.SyncRoutes(ctx, params.proxyEndpoints, routes); proxyErr != nil {
+			logger.Error("proxy sync failed (non-blocking)", "error", proxyErr)
+		}
+	}
+
+	var statusUpdateErr error
+
+	if syncResult != nil {
+		statusUpdateErr = updateRoutesStatus(ctx, logger, params.statusEntries(syncResult), syncErr)
+	}
+
+	if syncErr != nil && result.RequeueAfter == 0 {
+		return result, nil
+	}
+
+	if statusUpdateErr != nil {
+		return ctrl.Result{}, statusUpdateErr
+	}
+
+	return result, nil
+}
+
 // buildResultForError creates a SyncResult containing all relevant routes.
 // Used when early errors occur (before routes are collected) to ensure
 // route statuses are updated to reflect the error.

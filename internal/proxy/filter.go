@@ -24,6 +24,10 @@ const maxMirrorBodySize = 1 << 20 // 1 MiB
 // matchedPrefixKey is the context key for storing the matched path prefix.
 type matchedPrefixKey struct{}
 
+// hostRewrittenKey is the context key indicating that a filter has rewritten
+// the Host header. The Director must not overwrite it in this case.
+type hostRewrittenKey struct{}
+
 // SetMatchedPrefix returns a shallow copy of req with the matched path prefix
 // stored in its context. The original request is NOT modified.
 // Used by URL rewrite filters for ReplacePrefixMatch.
@@ -36,6 +40,13 @@ func getMatchedPrefix(req *http.Request) string {
 	prefix, _ := req.Context().Value(matchedPrefixKey{}).(string)
 
 	return prefix
+}
+
+// isHostRewritten returns true if a filter has rewritten the Host header.
+func isHostRewritten(req *http.Request) bool {
+	rewritten, _ := req.Context().Value(hostRewrittenKey{}).(bool)
+
+	return rewritten
 }
 
 // Filter defines a transformation applied to matching requests or responses.
@@ -184,6 +195,9 @@ func NewURLRewriter(config *URLRewriteConfig) Filter {
 func (f *urlRewriter) ProcessRequest(req *http.Request) *http.Response {
 	if f.config.Hostname != nil {
 		req.Host = *f.config.Hostname
+		// Mark host as rewritten so the Director does not overwrite it.
+		ctx := context.WithValue(req.Context(), hostRewrittenKey{}, true)
+		*req = *req.WithContext(ctx)
 	}
 
 	if f.config.Path != nil {

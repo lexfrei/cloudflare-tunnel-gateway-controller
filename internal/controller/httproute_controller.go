@@ -96,37 +96,14 @@ func (r *HTTPRouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 }
 
 func (r *HTTPRouteReconciler) syncAndUpdateStatus(ctx context.Context) (ctrl.Result, error) {
-	logger := logging.FromContext(ctx)
-
-	result, syncResult, syncErr := r.RouteSyncer.SyncAllRoutes(ctx)
-
-	// Push config to v2 proxy replicas (best-effort, non-blocking).
-	// Uses routes already collected by SyncAllRoutes to avoid redundant API calls.
-	if r.ProxySyncer != nil && len(r.ProxyEndpoints) > 0 && syncResult != nil {
-		routes := httpRoutePtrs(syncResult.HTTPRoutes)
-		if proxyErr := r.ProxySyncer.SyncRoutes(ctx, r.ProxyEndpoints, routes); proxyErr != nil {
-			logger.Error("proxy sync failed (non-blocking)", "error", proxyErr)
-		}
-	}
-
-	// Update status for all HTTP routes with per-parent binding results
-	var statusUpdateErr error
-
-	if syncResult != nil {
-		statusUpdateErr = updateRoutesStatus(ctx, logger, syncResult.httpStatusEntries(r.updateRouteStatus), syncErr)
-	}
-
-	if syncErr != nil && result.RequeueAfter == 0 {
-		// Don't propagate error for limit exceeded (no requeue needed)
-		return result, nil
-	}
-
-	// Return error if status updates failed - controller-runtime will requeue with backoff
-	if statusUpdateErr != nil {
-		return ctrl.Result{}, statusUpdateErr
-	}
-
-	return result, nil
+	return syncAndUpdateStatusCommon(ctx, syncUpdateParams{
+		routeSyncer:    r.RouteSyncer,
+		proxySyncer:    r.ProxySyncer,
+		proxyEndpoints: r.ProxyEndpoints,
+		statusEntries: func(sr *SyncResult) []routeStatusEntry {
+			return sr.httpStatusEntries(r.updateRouteStatus)
+		},
+	})
 }
 
 // httpRoutePtrs converts a slice of HTTPRoute values to a slice of pointers.

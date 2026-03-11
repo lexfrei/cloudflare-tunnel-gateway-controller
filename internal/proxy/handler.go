@@ -119,7 +119,11 @@ func (h *Handler) createReverseProxy(backendURL *url.URL, filters []Filter) *htt
 		Director: func(req *http.Request) {
 			req.URL.Scheme = backendURL.Scheme
 			req.URL.Host = backendURL.Host
-			req.Host = backendURL.Host
+
+			// Preserve Host if a URLRewrite filter already set it.
+			if !isHostRewritten(req) {
+				req.Host = backendURL.Host
+			}
 
 			if _, ok := req.Header["User-Agent"]; !ok {
 				req.Header.Set("User-Agent", "")

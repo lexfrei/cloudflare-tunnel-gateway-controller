@@ -351,6 +351,117 @@ func TestHandler_PruneTransportsRemovesStaleHosts(t *testing.T) {
 	handler.PruneTransports(map[string]bool{})
 }
 
+func TestHandler_PruneTransportsRemovesStaleHostFromSyncMap(t *testing.T) {
+	t.Parallel()
+
+	backendA := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusOK)
+	}))
+	defer backendA.Close()
+
+	backendB := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusOK)
+	}))
+	defer backendB.Close()
+
+	router := proxy.NewRouter()
+	handler := proxy.NewHandler(router)
+	router.SetHandler(handler)
+
+	// Configure with backend A and send a request to populate the transport cache.
+	cfgA := &proxy.Config{
+		Version: 1,
+		Rules: []proxy.RouteRule{
+			{
+				Hostnames: []string{"app.example.com"},
+				Backends:  []proxy.BackendRef{{URL: backendA.URL, Weight: 1}},
+			},
+		},
+	}
+
+	err := router.UpdateConfig(cfgA)
+	require.NoError(t, err)
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://app.example.com/", nil)
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, req)
+	require.Equal(t, http.StatusOK, recorder.Code)
+
+	// Verify transport for backend A was created.
+	hostA := backendA.Listener.Addr().String()
+	_, loaded := handler.Transports().Load(hostA)
+	require.True(t, loaded, "transport for backend A should exist after request")
+
+	// Push new config with only backend B, removing A.
+	cfgB := &proxy.Config{
+		Version: 2,
+		Rules: []proxy.RouteRule{
+			{
+				Hostnames: []string{"app.example.com"},
+				Backends:  []proxy.BackendRef{{URL: backendB.URL, Weight: 1}},
+			},
+		},
+	}
+
+	err = router.UpdateConfig(cfgB)
+	require.NoError(t, err)
+
+	// Verify transport for backend A was pruned.
+	_, loaded = handler.Transports().Load(hostA)
+	assert.False(t, loaded, "transport for backend A should be pruned after config update removed it")
+}
+
+func TestHandler_URLRewriteHostnamePreservedByDirector(t *testing.T) {
+	t.Parallel()
+
+	receivedHost := make(chan string, 1)
+
+	backend := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, req *http.Request) {
+		receivedHost <- req.Host
+		writer.WriteHeader(http.StatusOK)
+	}))
+	defer backend.Close()
+
+	router := proxy.NewRouter()
+
+	rewrittenHostname := "rewritten.example.com"
+
+	cfg := &proxy.Config{
+		Version: 1,
+		Rules: []proxy.RouteRule{
+			{
+				Hostnames: []string{"app.example.com"},
+				Filters: []proxy.RouteFilter{
+					{
+						Type: proxy.FilterURLRewrite,
+						URLRewrite: &proxy.URLRewriteConfig{
+							Hostname: &rewrittenHostname,
+						},
+					},
+				},
+				Backends: []proxy.BackendRef{{URL: backend.URL, Weight: 1}},
+			},
+		},
+	}
+
+	err := router.UpdateConfig(cfg)
+	require.NoError(t, err)
+
+	handler := proxy.NewHandler(router)
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://app.example.com/test", nil)
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, req)
+
+	assert.Equal(t, http.StatusOK, recorder.Code)
+
+	host := <-receivedHost
+	assert.Equal(t, "rewritten.example.com", host,
+		"Director should preserve the rewritten hostname, not overwrite it with the backend host")
+}
+
 func TestHandler_PruneTransportsPreservesActiveHosts(t *testing.T) {
 	t.Parallel()
 

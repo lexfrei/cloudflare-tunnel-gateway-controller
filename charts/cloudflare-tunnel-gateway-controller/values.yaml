@@ -325,8 +325,13 @@ proxy:
   configAPIPort: 8081
   # -- Proxy port (internal, traffic arrives through tunnel)
   proxyPort: 8080
-  # -- Auth token for proxy config API (shared secret between controller and proxy)
-  authToken: ""
+  # -- Reference to Secret containing auth token for proxy config API.
+  # When set, both controller and proxy use this token for authenticated config push.
+  authTokenSecretRef:
+    # -- Name of the Secret containing the auth token
+    name: ""
+    # -- Key in the Secret containing the auth token
+    key: "auth-token"
   # -- Reference to Secret containing tunnel token (REQUIRED when proxy.enabled)
   tunnelTokenSecretRef:
     # -- Name of the Secret containing tunnel token

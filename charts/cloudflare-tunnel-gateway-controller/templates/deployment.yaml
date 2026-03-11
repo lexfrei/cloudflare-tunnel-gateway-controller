@@ -57,8 +57,8 @@ spec:
             - "--log-format={{ .Values.controller.logFormat }}"
             {{- if .Values.proxy.enabled }}
             - "--proxy-endpoints=http://{{ include "cf-tunnel-gw-ctrl.proxyFullname" . }}-headless.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.proxy.configAPIPort }}/config"
-            {{- if .Values.proxy.authToken }}
-            - "--proxy-auth-token={{ .Values.proxy.authToken }}"
+            {{- if .Values.proxy.authTokenSecretRef.name }}
+            - "--proxy-auth-token=$(PROXY_AUTH_TOKEN)"
             {{- end }}
             {{- end }}
             {{- if .Values.leaderElection.enabled }}
@@ -70,6 +70,14 @@ spec:
             - "--leader-election-namespace={{ .Release.Namespace }}"
             {{- end }}
             {{- end }}
+          {{- if and .Values.proxy.enabled .Values.proxy.authTokenSecretRef.name }}
+          env:
+            - name: PROXY_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.proxy.authTokenSecretRef.name }}
+                  key: {{ .Values.proxy.authTokenSecretRef.key | default "auth-token" }}
+          {{- end }}
           ports:
             - name: metrics
               containerPort: {{ .Values.service.metricsPort }}

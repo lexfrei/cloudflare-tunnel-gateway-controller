@@ -72,6 +72,21 @@ helm template test charts/cloudflare-tunnel-gateway-controller --values charts/c
 
 - **internal/dns/detect.go**: Auto-detects Kubernetes cluster domain from `/etc/resolv.conf` search domains.
 
+### V2 Proxy Data Plane
+
+- **cmd/proxy/**: Standalone binary running cloudflared tunnel transport with an L7 reverse proxy. Supports tunnel mode (in-process via `OriginProxy`) and standalone mode (HTTP server for development).
+
+- **internal/proxy/**: L7 reverse proxy implementation:
+  - `router.go` — Thread-safe HTTP router with atomic config swap, compiled matchers, and weighted backend selection.
+  - `handler.go` — Request handler with filter pipeline, per-route timeouts, and transport pool management.
+  - `converter.go` — Converts Gateway API HTTPRoute resources to proxy config.
+  - `filter.go` — Filter implementations: header modifier, redirect, URL rewrite, request mirror.
+  - `config.go` — Proxy config types (rules, matches, filters, backends, timeouts).
+  - `api.go` — Config API endpoints (PUT/GET /config, healthz, readyz) with Bearer token auth.
+  - `pusher.go` — HTTP client for pushing config to proxy replicas concurrently.
+
+- **internal/tunnel/**: Cloudflared tunnel bootstrap and in-process origin proxy (`GatewayOriginProxy`).
+
 ### Key Dependencies
 
 - `sigs.k8s.io/controller-runtime` - Kubernetes controller framework
