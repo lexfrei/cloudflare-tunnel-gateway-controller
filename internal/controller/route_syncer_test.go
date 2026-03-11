@@ -1062,6 +1062,7 @@ func TestNewRouteSyncer(t *testing.T) {
 func TestNewProxySyncer_NilLogger(t *testing.T) {
 	t.Parallel()
 
-	syncer := NewProxySyncer("cluster.local", "", nil)
+	testClient := fake.NewClientBuilder().WithScheme(runtime.NewScheme()).Build()
+	syncer := NewProxySyncer("cluster.local", "", testClient, nil)
 	require.NotNil(t, syncer)
 }

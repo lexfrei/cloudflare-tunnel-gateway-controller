@@ -172,6 +172,7 @@ func Run(ctx context.Context, cfg *Config) error {
 		proxySyncer = NewProxySyncer(
 			cfg.ClusterDomain,
 			cfg.ProxyAuthToken,
+			mgr.GetClient(),
 			baseLogger,
 		)
 

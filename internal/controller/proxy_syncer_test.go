@@ -12,6 +12,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/controller"
@@ -43,9 +45,12 @@ func TestProxySyncer_SyncRoutes(t *testing.T) {
 	}))
 	defer configServer.Close()
 
+	testClient := fake.NewClientBuilder().WithScheme(runtime.NewScheme()).Build()
+
 	syncer := controller.NewProxySyncer(
 		"cluster.local",
 		"",
+		testClient,
 		slog.Default(),
 	)
 
@@ -80,9 +85,12 @@ func TestProxySyncer_SyncRoutes(t *testing.T) {
 func TestProxySyncer_NoRoutes(t *testing.T) {
 	t.Parallel()
 
+	testClient := fake.NewClientBuilder().WithScheme(runtime.NewScheme()).Build()
+
 	syncer := controller.NewProxySyncer(
 		"cluster.local",
 		"",
+		testClient,
 		slog.Default(),
 	)
 

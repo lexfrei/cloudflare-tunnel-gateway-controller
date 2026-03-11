@@ -11,30 +11,37 @@ import (
 	"time"
 
 	"github.com/cockroachdb/errors"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/logging"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/proxy"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/referencegrant"
 )
 
 // ProxySyncer converts HTTPRoute resources to proxy config
 // and pushes it to enhanced-cloudflared replicas via HTTP API.
 type ProxySyncer struct {
-	clusterDomain string
-	logger        *slog.Logger
-	pusher        *proxy.ConfigPusher
-	syncMu        sync.Mutex
+	clusterDomain    string
+	logger           *slog.Logger
+	pusher           *proxy.ConfigPusher
+	backendValidator proxy.BackendRefValidator
+	syncMu           sync.Mutex
 }
 
 // NewProxySyncer creates a ProxySyncer for pushing config to proxy replicas.
+// The client is used to validate cross-namespace backend references via ReferenceGrant.
 func NewProxySyncer(
 	clusterDomain string,
 	authToken string,
+	k8sClient client.Client,
 	logger *slog.Logger,
 ) *ProxySyncer {
 	if logger == nil {
 		logger = slog.Default()
 	}
+
+	refGrantValidator := referencegrant.NewValidator(k8sClient)
 
 	return &ProxySyncer{
 		clusterDomain: clusterDomain,
@@ -42,6 +49,54 @@ func NewProxySyncer(
 		pusher: proxy.NewConfigPusher(&http.Client{
 			Timeout: 10 * time.Second,
 		}, authToken),
+		backendValidator: newBackendRefValidator(refGrantValidator),
+	}
+}
+
+// newBackendRefValidator creates a BackendRefValidator from a referencegrant.Validator.
+func newBackendRefValidator(validator *referencegrant.Validator) proxy.BackendRefValidator {
+	return func(ctx context.Context, fromNamespace string, ref gatewayv1.BackendObjectReference) bool {
+		fromRef := referencegrant.Reference{
+			Group:     "gateway.networking.k8s.io",
+			Kind:      "HTTPRoute",
+			Namespace: fromNamespace,
+		}
+
+		toGroup := ""
+		if ref.Group != nil {
+			toGroup = string(*ref.Group)
+		}
+
+		toKind := "Service"
+		if ref.Kind != nil {
+			toKind = string(*ref.Kind)
+		}
+
+		toNamespace := fromNamespace
+		if ref.Namespace != nil {
+			toNamespace = string(*ref.Namespace)
+		}
+
+		toRef := referencegrant.Reference{
+			Group:     toGroup,
+			Kind:      toKind,
+			Namespace: toNamespace,
+			Name:      string(ref.Name),
+		}
+
+		allowed, err := validator.IsReferenceAllowed(ctx, fromRef, toRef)
+		if err != nil {
+			slog.Warn("failed to validate cross-namespace reference",
+				"error", err,
+				"from_namespace", fromNamespace,
+				"to_namespace", toNamespace,
+				"service", string(ref.Name),
+			)
+
+			return false
+		}
+
+		return allowed
 	}
 }
 
@@ -58,8 +113,8 @@ func (s *ProxySyncer) SyncRoutes(ctx context.Context, endpoints []string, routes
 
 	logger.Info("syncing proxy config", "routes", len(routes))
 
-	// Convert to proxy config.
-	cfg := proxy.ConvertHTTPRoutes(routes, s.clusterDomain)
+	// Convert to proxy config with cross-namespace validation.
+	cfg := proxy.ConvertHTTPRoutes(ctx, routes, s.clusterDomain, s.backendValidator)
 
 	// Resolve headless service DNS names to individual pod IPs.
 	resolved := resolveEndpoints(ctx, endpoints)

@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -31,8 +32,20 @@ const (
 	maxPort            = 65535
 )
 
+// BackendRefValidator checks whether a cross-namespace backend reference is allowed.
+// Called only for cross-namespace refs; same-namespace refs are always permitted.
+// Returns true if the reference is authorized (e.g., via ReferenceGrant).
+type BackendRefValidator func(ctx context.Context, fromNamespace string, ref gatewayv1.BackendObjectReference) bool
+
 // ConvertHTTPRoutes converts Gateway API HTTPRoute resources into a proxy Config.
-func ConvertHTTPRoutes(routes []*gatewayv1.HTTPRoute, clusterDomain string) *Config {
+// If validator is non-nil, cross-namespace backend refs are checked against it;
+// unauthorized refs are skipped with a warning log.
+func ConvertHTTPRoutes(
+	ctx context.Context,
+	routes []*gatewayv1.HTTPRoute,
+	clusterDomain string,
+	validator BackendRefValidator,
+) *Config {
 	cfg := &Config{
 		Version: configVersionCounter.Add(1),
 	}
@@ -41,7 +54,10 @@ func ConvertHTTPRoutes(routes []*gatewayv1.HTTPRoute, clusterDomain string) *Con
 		hostnames := convertHostnames(route.Spec.Hostnames)
 
 		for ruleIdx := range route.Spec.Rules {
-			proxyRule := convertHTTPRouteRule(&route.Spec.Rules[ruleIdx], hostnames, route.Namespace, clusterDomain)
+			proxyRule := convertHTTPRouteRule(
+				ctx, &route.Spec.Rules[ruleIdx], hostnames,
+				route.Namespace, clusterDomain, validator,
+			)
 			cfg.Rules = append(cfg.Rules, proxyRule)
 		}
 	}
@@ -60,10 +76,12 @@ func convertHostnames(hostnames []gatewayv1.Hostname) []string {
 }
 
 func convertHTTPRouteRule(
+	ctx context.Context,
 	rule *gatewayv1.HTTPRouteRule,
 	hostnames []string,
 	namespace string,
 	clusterDomain string,
+	validator BackendRefValidator,
 ) RouteRule {
 	proxyRule := RouteRule{
 		Hostnames: hostnames,
@@ -81,7 +99,7 @@ func convertHTTPRouteRule(
 	}
 
 	for backendIdx := range rule.BackendRefs {
-		backend, ok := convertBackendRef(&rule.BackendRefs[backendIdx], namespace, clusterDomain)
+		backend, ok := convertBackendRef(ctx, &rule.BackendRefs[backendIdx], namespace, clusterDomain, validator)
 		if ok {
 			proxyRule.Backends = append(proxyRule.Backends, backend)
 		}
@@ -387,9 +405,11 @@ func convertURLRewritePath(pathModifier *gatewayv1.HTTPPathModifier) *URLRewrite
 }
 
 func convertBackendRef(
+	ctx context.Context,
 	backend *gatewayv1.HTTPBackendRef,
 	namespace string,
 	clusterDomain string,
+	validator BackendRefValidator,
 ) (BackendRef, bool) {
 	if !isServiceBackendRef(backend.BackendObjectReference) {
 		slog.Warn("skipping non-Service backend kind",
@@ -423,6 +443,19 @@ func convertBackendRef(
 	svcNamespace := namespace
 	if backend.Namespace != nil {
 		svcNamespace = string(*backend.Namespace)
+	}
+
+	// Validate cross-namespace references via ReferenceGrant.
+	if svcNamespace != namespace && validator != nil {
+		if !validator(ctx, namespace, backend.BackendObjectReference) {
+			slog.Warn("skipping cross-namespace backend ref not permitted by ReferenceGrant",
+				"service", serviceName,
+				"from_namespace", namespace,
+				"to_namespace", svcNamespace,
+			)
+
+			return BackendRef{}, false
+		}
 	}
 
 	result.URL = buildServiceURL(serviceName, svcNamespace, port, clusterDomain)
