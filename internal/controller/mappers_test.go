@@ -1330,3 +1330,135 @@ func TestFilterAcceptedRoutes(t *testing.T) {
 		})
 	}
 }
+
+func TestIsRouteAcceptedByGateway_NonGatewayKind(t *testing.T) {
+	t.Parallel()
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, gatewayv1.Install(scheme))
+	require.NoError(t, corev1.AddToScheme(scheme))
+
+	gateway := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-gateway",
+			Namespace: "default",
+		},
+		Spec: gatewayv1.GatewaySpec{
+			GatewayClassName: "cloudflare-tunnel",
+			Listeners: []gatewayv1.Listener{
+				{Name: "http", Port: 80, Protocol: gatewayv1.HTTPProtocolType},
+			},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(gateway).Build()
+	validator := routebinding.NewValidator(fakeClient)
+
+	serviceKind := gatewayv1.Kind("Service")
+	route := HTTPRouteWrapper{&gatewayv1.HTTPRoute{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-route", Namespace: "default"},
+		Spec: gatewayv1.HTTPRouteSpec{
+			CommonRouteSpec: gatewayv1.CommonRouteSpec{
+				ParentRefs: []gatewayv1.ParentReference{
+					{Kind: &serviceKind, Name: "test-service"},
+				},
+			},
+		},
+	}}
+
+	result := IsRouteAcceptedByGateway(context.Background(), fakeClient, validator, "cloudflare-tunnel", route)
+	assert.False(t, result)
+}
+
+func TestIsRouteAcceptedByGateway_GatewayNotFound(t *testing.T) {
+	t.Parallel()
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, gatewayv1.Install(scheme))
+	require.NoError(t, corev1.AddToScheme(scheme))
+
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+	validator := routebinding.NewValidator(fakeClient)
+
+	route := HTTPRouteWrapper{&gatewayv1.HTTPRoute{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-route", Namespace: "default"},
+		Spec: gatewayv1.HTTPRouteSpec{
+			CommonRouteSpec: gatewayv1.CommonRouteSpec{
+				ParentRefs: []gatewayv1.ParentReference{
+					{Name: "missing-gateway"},
+				},
+			},
+		},
+	}}
+
+	result := IsRouteAcceptedByGateway(context.Background(), fakeClient, validator, "cloudflare-tunnel", route)
+	assert.False(t, result)
+}
+
+func TestIsRouteAcceptedByGateway_CrossNamespaceExplicit(t *testing.T) {
+	t.Parallel()
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, gatewayv1.Install(scheme))
+	require.NoError(t, corev1.AddToScheme(scheme))
+
+	gateway := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-gw", Namespace: "gw-ns"},
+		Spec: gatewayv1.GatewaySpec{
+			GatewayClassName: "cloudflare-tunnel",
+			Listeners: []gatewayv1.Listener{
+				{
+					Name: "http", Port: 80, Protocol: gatewayv1.HTTPProtocolType,
+					AllowedRoutes: &gatewayv1.AllowedRoutes{
+						Namespaces: &gatewayv1.RouteNamespaces{From: new(gatewayv1.NamespacesFromAll)},
+					},
+				},
+			},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(gateway).Build()
+	validator := routebinding.NewValidator(fakeClient)
+
+	gwNs := gatewayv1.Namespace("gw-ns")
+	route := HTTPRouteWrapper{&gatewayv1.HTTPRoute{
+		ObjectMeta: metav1.ObjectMeta{Name: "route", Namespace: "route-ns"},
+		Spec: gatewayv1.HTTPRouteSpec{
+			CommonRouteSpec: gatewayv1.CommonRouteSpec{
+				ParentRefs: []gatewayv1.ParentReference{
+					{Name: "test-gw", Namespace: &gwNs},
+				},
+			},
+		},
+	}}
+
+	result := IsRouteAcceptedByGateway(context.Background(), fakeClient, validator, "cloudflare-tunnel", route)
+	assert.True(t, result)
+}
+
+func TestConfigMapper_IsSecretReferencedByConfig_GetConfigError(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "cf-credentials", Namespace: "default"},
+	}
+
+	gatewayClass := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "cloudflare-tunnel"},
+		Spec: gatewayv1.GatewayClassSpec{
+			ControllerName: "test-controller",
+		},
+	}
+
+	fakeClient := setupMapperFakeClient(secret, gatewayClass)
+	mapper := &ConfigMapper{
+		Client:           fakeClient,
+		GatewayClassName: "cloudflare-tunnel",
+		ConfigResolver:   config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+	}
+
+	result := mapper.isSecretReferencedByConfig(ctx, secret)
+	assert.False(t, result)
+}

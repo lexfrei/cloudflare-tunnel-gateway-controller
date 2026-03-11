@@ -59,6 +59,21 @@ func truncateMessage(msg string) string {
 	return msg
 }
 
+// HelmManagement defines the interface for Helm operations used by the gateway controller.
+// This interface exists to enable testing with mock implementations.
+type HelmManagement interface {
+	GetLatestVersion(ctx context.Context, chartRef string) (string, error)
+	LoadChart(ctx context.Context, chartRef, version string) (chart.Charter, error)
+	GetActionConfig(namespace string) (*action.Configuration, error)
+	ReleaseExists(cfg *action.Configuration, releaseName string) bool
+	Install(ctx context.Context, cfg *action.Configuration,
+		releaseName, namespace string, loadedChart chart.Charter, values map[string]any) (release.Releaser, error)
+	GetRelease(cfg *action.Configuration, releaseName string) (release.Releaser, error)
+	Upgrade(ctx context.Context, cfg *action.Configuration,
+		releaseName string, loadedChart chart.Charter, values map[string]any) (release.Releaser, error)
+	Uninstall(ctx context.Context, cfg *action.Configuration, releaseName string) error
+}
+
 // GatewayReconciler reconciles Gateway resources for the cloudflare-tunnel GatewayClass.
 //
 // It performs the following functions:
@@ -87,7 +102,7 @@ type GatewayReconciler struct {
 
 	// HelmManager handles cloudflared deployment. If nil, cloudflared
 	// management is disabled regardless of config.
-	HelmManager *helm.Manager
+	HelmManager HelmManagement
 }
 
 func (r *GatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {

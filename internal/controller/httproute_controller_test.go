@@ -1733,3 +1733,306 @@ func TestHTTPRouteReconciler_UpdateRouteStatus_ParentRefWithExplicitNamespace(t 
 	require.NotNil(t, updatedRoute.Status.Parents[0].ParentRef.Namespace)
 	assert.Equal(t, gatewayv1.Namespace("gateway-ns"), *updatedRoute.Status.Parents[0].ParentRef.Namespace)
 }
+
+func TestHTTPRouteReconciler_SyncAndUpdateStatus_WithRoutesAndConfigFailure(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+
+	allNamespaces := gatewayv1.NamespacesFromAll
+
+	// GatewayClass with parametersRef pointing to nonexistent config
+	gatewayClass := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "cloudflare-tunnel",
+		},
+		Spec: gatewayv1.GatewayClassSpec{
+			ControllerName: "test-controller",
+			ParametersRef: &gatewayv1.ParametersReference{
+				Group: config.ParametersRefGroup,
+				Kind:  config.ParametersRefKind,
+				Name:  "nonexistent-config",
+			},
+		},
+	}
+
+	gateway := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-gateway",
+			Namespace: "default",
+		},
+		Spec: gatewayv1.GatewaySpec{
+			GatewayClassName: "cloudflare-tunnel",
+			Listeners: []gatewayv1.Listener{
+				{
+					Name:     "http",
+					Port:     80,
+					Protocol: gatewayv1.HTTPProtocolType,
+					AllowedRoutes: &gatewayv1.AllowedRoutes{
+						Namespaces: &gatewayv1.RouteNamespaces{
+							From: &allNamespaces,
+						},
+					},
+				},
+			},
+		},
+	}
+
+	httpRoute := &gatewayv1.HTTPRoute{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-route",
+			Namespace: "default",
+		},
+		Spec: gatewayv1.HTTPRouteSpec{
+			CommonRouteSpec: gatewayv1.CommonRouteSpec{
+				ParentRefs: []gatewayv1.ParentReference{
+					{Name: "test-gateway"},
+				},
+			},
+			Hostnames: []gatewayv1.Hostname{"example.com"},
+		},
+	}
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, gatewayv1.Install(scheme))
+	require.NoError(t, corev1.AddToScheme(scheme))
+	require.NoError(t, v1alpha1.AddToScheme(scheme))
+	require.NoError(t, gatewayv1beta1.Install(scheme))
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(gatewayClass, gateway, httpRoute).
+		WithStatusSubresource(httpRoute).
+		Build()
+
+	configResolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector())
+	routeSyncer := NewRouteSyncer(fakeClient, scheme, "cluster.local", "cloudflare-tunnel", configResolver, cfmetrics.NewNoopCollector(), nil)
+
+	r := &HTTPRouteReconciler{
+		Client:           fakeClient,
+		Scheme:           scheme,
+		GatewayClassName: "cloudflare-tunnel",
+		ControllerName:   "test-controller",
+		RouteSyncer:      routeSyncer,
+		bindingValidator: routebinding.NewValidator(fakeClient),
+	}
+	r.startupComplete.Store(true)
+
+	// Reconcile the existing route - triggers syncAndUpdateStatus
+	result, err := r.Reconcile(ctx, ctrl.Request{
+		NamespacedName: types.NamespacedName{
+			Name:      "test-route",
+			Namespace: "default",
+		},
+	})
+
+	// Config resolution fails, so we get requeue with delay but no error
+	assert.NoError(t, err)
+	assert.Equal(t, apiErrorRequeueDelay, result.RequeueAfter)
+
+	// Verify route status was updated with Pending condition (sync error)
+	var updatedRoute gatewayv1.HTTPRoute
+	err = fakeClient.Get(ctx, client.ObjectKey{Name: "test-route", Namespace: "default"}, &updatedRoute)
+	require.NoError(t, err)
+
+	// Route should have status parents set (at least one parent)
+	require.NotEmpty(t, updatedRoute.Status.Parents)
+}
+
+func TestHTTPRouteReconciler_SyncAndUpdateStatus_MultipleRoutes(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+
+	allNamespaces := gatewayv1.NamespacesFromAll
+
+	gatewayClass := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "cloudflare-tunnel",
+		},
+		Spec: gatewayv1.GatewayClassSpec{
+			ControllerName: "test-controller",
+			ParametersRef: &gatewayv1.ParametersReference{
+				Group: config.ParametersRefGroup,
+				Kind:  config.ParametersRefKind,
+				Name:  "missing-config",
+			},
+		},
+	}
+
+	gateway := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "my-gateway",
+			Namespace: "default",
+		},
+		Spec: gatewayv1.GatewaySpec{
+			GatewayClassName: "cloudflare-tunnel",
+			Listeners: []gatewayv1.Listener{
+				{
+					Name:     "http",
+					Port:     80,
+					Protocol: gatewayv1.HTTPProtocolType,
+					AllowedRoutes: &gatewayv1.AllowedRoutes{
+						Namespaces: &gatewayv1.RouteNamespaces{
+							From: &allNamespaces,
+						},
+					},
+				},
+			},
+		},
+	}
+
+	route1 := &gatewayv1.HTTPRoute{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "route-one",
+			Namespace: "default",
+		},
+		Spec: gatewayv1.HTTPRouteSpec{
+			CommonRouteSpec: gatewayv1.CommonRouteSpec{
+				ParentRefs: []gatewayv1.ParentReference{
+					{Name: "my-gateway"},
+				},
+			},
+			Hostnames: []gatewayv1.Hostname{"one.example.com"},
+		},
+	}
+
+	route2 := &gatewayv1.HTTPRoute{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "route-two",
+			Namespace: "default",
+		},
+		Spec: gatewayv1.HTTPRouteSpec{
+			CommonRouteSpec: gatewayv1.CommonRouteSpec{
+				ParentRefs: []gatewayv1.ParentReference{
+					{Name: "my-gateway"},
+				},
+			},
+			Hostnames: []gatewayv1.Hostname{"two.example.com"},
+		},
+	}
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, gatewayv1.Install(scheme))
+	require.NoError(t, corev1.AddToScheme(scheme))
+	require.NoError(t, v1alpha1.AddToScheme(scheme))
+	require.NoError(t, gatewayv1beta1.Install(scheme))
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(gatewayClass, gateway, route1, route2).
+		WithStatusSubresource(route1, route2).
+		Build()
+
+	configResolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector())
+	routeSyncer := NewRouteSyncer(fakeClient, scheme, "cluster.local", "cloudflare-tunnel", configResolver, cfmetrics.NewNoopCollector(), nil)
+
+	r := &HTTPRouteReconciler{
+		Client:           fakeClient,
+		Scheme:           scheme,
+		GatewayClassName: "cloudflare-tunnel",
+		ControllerName:   "test-controller",
+		RouteSyncer:      routeSyncer,
+		bindingValidator: routebinding.NewValidator(fakeClient),
+	}
+	r.startupComplete.Store(true)
+
+	result, err := r.Reconcile(ctx, ctrl.Request{
+		NamespacedName: types.NamespacedName{
+			Name:      "route-one",
+			Namespace: "default",
+		},
+	})
+
+	assert.NoError(t, err)
+	assert.Equal(t, apiErrorRequeueDelay, result.RequeueAfter)
+
+	// Both routes should have had their status updated
+	var updated1 gatewayv1.HTTPRoute
+	err = fakeClient.Get(ctx, client.ObjectKey{Name: "route-one", Namespace: "default"}, &updated1)
+	require.NoError(t, err)
+	require.NotEmpty(t, updated1.Status.Parents)
+
+	var updated2 gatewayv1.HTTPRoute
+	err = fakeClient.Get(ctx, client.ObjectKey{Name: "route-two", Namespace: "default"}, &updated2)
+	require.NoError(t, err)
+	require.NotEmpty(t, updated2.Status.Parents)
+}
+
+func TestHTTPRouteReconciler_Reconcile_RouteNotForOurGateway(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+
+	allNamespaces := gatewayv1.NamespacesFromAll
+
+	otherGateway := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "other-gateway",
+			Namespace: "default",
+		},
+		Spec: gatewayv1.GatewaySpec{
+			GatewayClassName: "other-class",
+			Listeners: []gatewayv1.Listener{
+				{
+					Name:     "http",
+					Port:     80,
+					Protocol: gatewayv1.HTTPProtocolType,
+					AllowedRoutes: &gatewayv1.AllowedRoutes{
+						Namespaces: &gatewayv1.RouteNamespaces{
+							From: &allNamespaces,
+						},
+					},
+				},
+			},
+		},
+	}
+
+	route := &gatewayv1.HTTPRoute{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "other-route",
+			Namespace: "default",
+		},
+		Spec: gatewayv1.HTTPRouteSpec{
+			CommonRouteSpec: gatewayv1.CommonRouteSpec{
+				ParentRefs: []gatewayv1.ParentReference{
+					{Name: "other-gateway"},
+				},
+			},
+		},
+	}
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, gatewayv1.Install(scheme))
+	require.NoError(t, corev1.AddToScheme(scheme))
+	require.NoError(t, v1alpha1.AddToScheme(scheme))
+	require.NoError(t, gatewayv1beta1.Install(scheme))
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(otherGateway, route).
+		Build()
+
+	configResolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector())
+	routeSyncer := NewRouteSyncer(fakeClient, scheme, "cluster.local", "cloudflare-tunnel", configResolver, cfmetrics.NewNoopCollector(), nil)
+
+	r := &HTTPRouteReconciler{
+		Client:           fakeClient,
+		Scheme:           scheme,
+		GatewayClassName: "cloudflare-tunnel",
+		ControllerName:   "test-controller",
+		RouteSyncer:      routeSyncer,
+		bindingValidator: routebinding.NewValidator(fakeClient),
+	}
+	r.startupComplete.Store(true)
+
+	result, err := r.Reconcile(ctx, ctrl.Request{
+		NamespacedName: types.NamespacedName{
+			Name:      "other-route",
+			Namespace: "default",
+		},
+	})
+
+	assert.NoError(t, err)
+	assert.Equal(t, ctrl.Result{}, result)
+}
