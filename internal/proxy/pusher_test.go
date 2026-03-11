@@ -214,3 +214,63 @@ func TestConfigPusher_StaleVersionRecovery(t *testing.T) {
 	assert.NoError(t, results[0].Err, "stale version should be recovered automatically")
 	assert.Equal(t, int32(2), pushCount.Load(), "should have pushed twice (initial + retry)")
 }
+
+func TestConfigPusher_ConcurrentStaleVersionRetry(t *testing.T) {
+	t.Parallel()
+
+	// Two endpoints both return 409 on first push, then accept retry.
+	// This verifies no data race on Config when multiple goroutines
+	// retry concurrently (run with -race to detect).
+	newStaleServer := func() *httptest.Server {
+		var count atomic.Int32
+
+		return httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, req *http.Request) {
+			switch req.Method {
+			case http.MethodPut:
+				attempt := count.Add(1)
+				if attempt == 1 {
+					http.Error(writer, "stale", http.StatusConflict)
+
+					return
+				}
+
+				writer.WriteHeader(http.StatusOK)
+
+			case http.MethodGet:
+				status := proxy.ConfigStatus{Version: 5000, Ready: true}
+				data, _ := json.Marshal(status)
+				writer.Header().Set("Content-Type", "application/json")
+				_, _ = writer.Write(data)
+			}
+		}))
+	}
+
+	server1 := newStaleServer()
+	defer server1.Close()
+
+	server2 := newStaleServer()
+	defer server2.Close()
+
+	pusher := proxy.NewConfigPusher(http.DefaultClient, "")
+
+	cfg := &proxy.Config{
+		Version: 1,
+		Rules: []proxy.RouteRule{
+			{
+				Hostnames: []string{"example.com"},
+				Backends:  []proxy.BackendRef{{URL: "http://svc:80", Weight: 1}},
+			},
+		},
+	}
+
+	results := pusher.Push(t.Context(), cfg, []string{
+		server1.URL + "/config",
+		server2.URL + "/config",
+	})
+
+	require.Len(t, results, 2)
+
+	for _, result := range results {
+		assert.NoError(t, result.Err, "both endpoints should recover from stale version")
+	}
+}

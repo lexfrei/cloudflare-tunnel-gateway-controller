@@ -154,6 +154,9 @@ func (s *ProxySyncer) SyncRoutes(ctx context.Context, endpoints []string, routes
 	return nil
 }
 
+// dnsLookupTimeout is the maximum time to wait for a single DNS resolution.
+const dnsLookupTimeout = 5 * time.Second
+
 // resolveEndpoints expands headless service DNS names to individual pod IPs.
 // For each endpoint URL, it resolves the hostname via DNS. If the hostname
 // resolves to multiple IPs (headless service), it creates a separate endpoint
@@ -173,8 +176,13 @@ func resolveEndpoints(ctx context.Context, endpoints []string) []string {
 		hostname := parsed.Hostname()
 		port := parsed.Port()
 
-		addrs, err := net.DefaultResolver.LookupHost(ctx, hostname)
-		if err != nil || len(addrs) == 0 {
+		lookupCtx, cancel := context.WithTimeout(ctx, dnsLookupTimeout)
+
+		addrs, lookupErr := net.DefaultResolver.LookupHost(lookupCtx, hostname)
+
+		cancel()
+
+		if lookupErr != nil || len(addrs) == 0 {
 			resolved = append(resolved, endpoint)
 
 			continue
