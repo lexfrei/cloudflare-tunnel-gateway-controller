@@ -168,6 +168,9 @@ func syncAndUpdateStatusCommon(ctx context.Context, params syncUpdateParams) (ct
 	result, syncResult, syncErr := params.routeSyncer.SyncAllRoutes(ctx)
 
 	// Push config to v2 proxy replicas (best-effort, non-blocking).
+	// Only HTTPRoutes are pushed — the proxy converter does not yet support
+	// gRPC-specific routing semantics. GRPCRoutes are handled by the
+	// Cloudflare Tunnel ingress configuration (v1 path).
 	if params.proxySyncer != nil && len(params.proxyEndpoints) > 0 && syncResult != nil {
 		routes := httpRoutePtrs(syncResult.HTTPRoutes)
 		if proxyErr := params.proxySyncer.SyncRoutes(ctx, params.proxyEndpoints, routes); proxyErr != nil {
@@ -181,8 +184,15 @@ func syncAndUpdateStatusCommon(ctx context.Context, params syncUpdateParams) (ct
 		statusUpdateErr = updateRoutesStatus(ctx, logger, params.statusEntries(syncResult), syncErr)
 	}
 
-	if syncErr != nil && result.RequeueAfter == 0 {
-		return result, nil
+	if syncErr != nil {
+		if result.RequeueAfter > 0 {
+			// Specific requeue interval requested (e.g., ingress rule limit exceeded).
+			// Don't propagate error — controller-runtime would override the interval.
+			return result, nil
+		}
+
+		// Propagate error for controller-runtime backoff-based requeue.
+		return result, syncErr
 	}
 
 	if statusUpdateErr != nil {

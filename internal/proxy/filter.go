@@ -24,9 +24,10 @@ const maxMirrorBodySize = 1 << 20 // 1 MiB
 // matchedPrefixKey is the context key for storing the matched path prefix.
 type matchedPrefixKey struct{}
 
-// hostRewrittenKey is the context key indicating that a filter has rewritten
-// the Host header. The Director must not overwrite it in this case.
-type hostRewrittenKey struct{}
+// hostRewrittenHeader is an internal header set by URL rewrite filters
+// to signal the Director not to overwrite the Host header.
+// It is removed before the request is sent to the backend.
+const hostRewrittenHeader = "X-Proxy-Host-Rewritten"
 
 // SetMatchedPrefix returns a shallow copy of req with the matched path prefix
 // stored in its context. The original request is NOT modified.
@@ -44,9 +45,7 @@ func getMatchedPrefix(req *http.Request) string {
 
 // isHostRewritten returns true if a filter has rewritten the Host header.
 func isHostRewritten(req *http.Request) bool {
-	rewritten, _ := req.Context().Value(hostRewrittenKey{}).(bool)
-
-	return rewritten
+	return req.Header.Get(hostRewrittenHeader) != ""
 }
 
 // Filter defines a transformation applied to matching requests or responses.
@@ -175,11 +174,23 @@ func (f *requestRedirect) buildRedirectURL(req *http.Request) string {
 		}
 	}
 
+	query := req.URL.RawQuery
+
 	if f.config.Port != nil {
-		return fmt.Sprintf("%s://%s:%d%s", scheme, hostname, *f.config.Port, path)
+		result := fmt.Sprintf("%s://%s:%d%s", scheme, hostname, *f.config.Port, path)
+		if query != "" {
+			return result + "?" + query
+		}
+
+		return result
 	}
 
-	return fmt.Sprintf("%s://%s%s", scheme, hostname, path)
+	result := fmt.Sprintf("%s://%s%s", scheme, hostname, path)
+	if query != "" {
+		return result + "?" + query
+	}
+
+	return result
 }
 
 // urlRewriter modifies the request URL path and/or host.
@@ -196,8 +207,7 @@ func (f *urlRewriter) ProcessRequest(req *http.Request) *http.Response {
 	if f.config.Hostname != nil {
 		req.Host = *f.config.Hostname
 		// Mark host as rewritten so the Director does not overwrite it.
-		ctx := context.WithValue(req.Context(), hostRewrittenKey{}, true)
-		*req = *req.WithContext(ctx)
+		req.Header.Set(hostRewrittenHeader, "true")
 	}
 
 	if f.config.Path != nil {

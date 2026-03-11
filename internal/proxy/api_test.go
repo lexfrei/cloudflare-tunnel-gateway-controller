@@ -171,6 +171,7 @@ func TestConfigAPI_AuthRequired(t *testing.T) {
 
 		req := httptest.NewRequestWithContext(t.Context(), http.MethodPut, "/config", bytes.NewReader(body))
 		req.Header.Set("Authorization", "Bearer secret-token")
+		req.Header.Set("Content-Type", "application/json")
 		recorder := httptest.NewRecorder()
 
 		api.ServeHTTP(recorder, req)
@@ -192,6 +193,17 @@ func TestConfigAPI_ContentTypeValidation(t *testing.T) {
 
 	body, err := json.Marshal(cfg)
 	require.NoError(t, err)
+
+	t.Run("rejected without content type", func(t *testing.T) {
+		t.Parallel()
+
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPut, "/config", bytes.NewReader(body))
+		recorder := httptest.NewRecorder()
+
+		api.ServeHTTP(recorder, req)
+
+		assert.Equal(t, http.StatusUnsupportedMediaType, recorder.Code)
+	})
 
 	t.Run("rejected with text/plain content type", func(t *testing.T) {
 		t.Parallel()

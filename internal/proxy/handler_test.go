@@ -1,6 +1,7 @@
 package proxy_test
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -284,6 +285,54 @@ func TestHandler_BackendError(t *testing.T) {
 	handler.ServeHTTP(recorder, req)
 
 	assert.Equal(t, http.StatusBadGateway, recorder.Code)
+}
+
+func TestHandler_ClientDisconnectDoesNotReturn504(t *testing.T) {
+	t.Parallel()
+
+	// Backend that blocks until context is cancelled.
+	backend := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, req *http.Request) {
+		<-req.Context().Done()
+	}))
+	defer backend.Close()
+
+	router := proxy.NewRouter()
+
+	cfg := &proxy.Config{
+		Version: 1,
+		Rules: []proxy.RouteRule{
+			{
+				Hostnames: []string{"app.example.com"},
+				Backends:  []proxy.BackendRef{{URL: backend.URL, Weight: 1}},
+			},
+		},
+	}
+
+	err := router.UpdateConfig(cfg)
+	require.NoError(t, err)
+
+	handler := proxy.NewHandler(router)
+
+	// Create a request with a cancelable context to simulate client disconnect.
+	ctx, cancel := context.WithCancel(t.Context())
+	req := httptest.NewRequestWithContext(ctx, http.MethodGet, "http://app.example.com/", nil)
+	recorder := httptest.NewRecorder()
+
+	done := make(chan struct{})
+
+	go func() {
+		handler.ServeHTTP(recorder, req)
+		close(done)
+	}()
+
+	// Cancel context to simulate client disconnect.
+	cancel()
+	<-done
+
+	// Should NOT be 504 — client is gone, response doesn't matter much,
+	// but it should not be a misleading 504 Gateway Timeout.
+	assert.NotEqual(t, http.StatusGatewayTimeout, recorder.Code,
+		"client disconnect should not produce 504 Gateway Timeout")
 }
 
 func TestHandler_PruneTransportsRemovesStaleHosts(t *testing.T) {

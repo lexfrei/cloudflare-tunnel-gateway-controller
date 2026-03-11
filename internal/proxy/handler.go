@@ -121,7 +121,9 @@ func (h *Handler) createReverseProxy(backendURL *url.URL, filters []Filter) *htt
 			req.URL.Host = backendURL.Host
 
 			// Preserve Host if a URLRewrite filter already set it.
-			if !isHostRewritten(req) {
+			if isHostRewritten(req) {
+				req.Header.Del(hostRewrittenHeader)
+			} else {
 				req.Host = backendURL.Host
 			}
 
@@ -171,7 +173,12 @@ func errorHandler(writer http.ResponseWriter, _ *http.Request, err error) {
 		return
 	}
 
-	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+	if errors.Is(err, context.Canceled) {
+		// Client disconnected — no point writing a response.
+		return
+	}
+
+	if errors.Is(err, context.DeadlineExceeded) {
 		http.Error(writer, "gateway timeout", http.StatusGatewayTimeout)
 
 		return

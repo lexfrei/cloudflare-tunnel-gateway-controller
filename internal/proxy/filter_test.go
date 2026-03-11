@@ -475,3 +475,72 @@ func TestApplyRequestFilters_ShortCircuit(t *testing.T) {
 	assert.Equal(t, "yes", req.Header.Get("X-Before"), "filters before redirect should run")
 	assert.Empty(t, req.Header.Get("X-After"), "filters after redirect should not run")
 }
+
+func TestRedirectFilter_PreservesQueryParams(t *testing.T) {
+	t.Parallel()
+
+	hostname := "redirect.example.com"
+	filters := []proxy.RouteFilter{
+		{
+			Type: proxy.FilterRequestRedirect,
+			RequestRedirect: &proxy.RedirectConfig{
+				Hostname: &hostname,
+			},
+		},
+	}
+
+	compiled, err := proxy.CompileFilters(filters)
+	require.NoError(t, err)
+
+	req := &http.Request{
+		Host: "example.com",
+		URL: &url.URL{
+			Scheme:   testSchemeHTTPS,
+			Host:     "example.com",
+			Path:     "/search",
+			RawQuery: "q=hello&page=2",
+		},
+		Header: http.Header{},
+	}
+
+	resp := proxy.ApplyRequestFilters(compiled, req)
+	require.NotNil(t, resp)
+	defer resp.Body.Close()
+
+	location := resp.Header.Get("Location")
+	assert.Contains(t, location, "q=hello&page=2",
+		"redirect should preserve original query parameters")
+	assert.Contains(t, location, "redirect.example.com")
+}
+
+func TestURLRewriter_HostnameDoesNotCorruptRequest(t *testing.T) {
+	t.Parallel()
+
+	const rewrittenHost = "rewritten.example.com"
+	hostname := rewrittenHost
+	filters := []proxy.RouteFilter{
+		{
+			Type: proxy.FilterURLRewrite,
+			URLRewrite: &proxy.URLRewriteConfig{
+				Hostname: &hostname,
+			},
+		},
+	}
+
+	compiled, err := proxy.CompileFilters(filters)
+	require.NoError(t, err)
+
+	req := &http.Request{
+		Host:   "original.example.com",
+		URL:    &url.URL{Scheme: "http", Host: "original.example.com", Path: "/test"},
+		Header: http.Header{},
+	}
+
+	resp := proxy.ApplyRequestFilters(compiled, req)
+	if resp != nil {
+		defer resp.Body.Close()
+	}
+
+	assert.Nil(t, resp, "URL rewrite should not short-circuit")
+	assert.Equal(t, rewrittenHost, req.Host)
+}

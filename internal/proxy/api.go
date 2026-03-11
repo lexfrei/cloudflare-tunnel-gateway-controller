@@ -57,7 +57,7 @@ func (a *ConfigAPI) handlePutConfig(writer http.ResponseWriter, req *http.Reques
 	}
 
 	contentType := req.Header.Get("Content-Type")
-	if contentType != "" && !strings.HasPrefix(contentType, "application/json") {
+	if !strings.HasPrefix(contentType, "application/json") {
 		http.Error(writer, "unsupported content type", http.StatusUnsupportedMediaType)
 
 		return
