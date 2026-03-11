@@ -14,14 +14,13 @@ import (
 )
 
 // Priority scoring constants for Gateway API rule precedence.
-// The base values for path types are set far enough apart that
-// path length bonuses cannot cause a lower-priority type to
-// outrank a higher-priority one (e.g., a long prefix path must
-// never beat a short exact path per Gateway API spec).
+// Per Gateway API spec: Exact > RegularExpression > PathPrefix.
+// The base values are set far enough apart that path length bonuses
+// cannot cause a lower-priority type to outrank a higher-priority one.
 const (
 	priorityExactPath     = 1_000_000
-	priorityPrefixPath    = 500_000
-	priorityRegexPath     = 100_000
+	priorityRegexPath     = 500_000
+	priorityPrefixPath    = 100_000
 	priorityPathLength    = 10
 	priorityMethod        = 100
 	priorityPerHeader     = 50

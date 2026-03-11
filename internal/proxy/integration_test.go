@@ -104,11 +104,11 @@ func TestHandler_PathMatchPrecedence(t *testing.T) {
 			expectedStatus:  http.StatusOK,
 		},
 		{
-			// Per Gateway API spec, prefix paths have higher precedence than
-			// regex paths regardless of specificity, so /api prefix wins.
-			name:            "prefix wins over regex per gateway api precedence",
+			// Per Gateway API spec, regex paths have higher precedence than
+			// prefix paths, so the regex rule wins.
+			name:            "regex wins over prefix per gateway api precedence",
 			path:            "/api/v1/orders",
-			expectedBackend: "prefix",
+			expectedBackend: "regex",
 			expectedStatus:  http.StatusOK,
 		},
 		{
