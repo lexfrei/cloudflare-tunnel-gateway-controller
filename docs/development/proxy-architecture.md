@@ -129,7 +129,7 @@ Weighted random selection using cumulative weight sums:
 
 1. Precompute cumulative weights: `[30, 30+70] = [30, 100]`
 2. Generate random number in `[0, totalWeight)`
-3. Binary search in cumulative array
+3. Linear scan in cumulative weight array
 4. Each backend has its own `*http.Transport` with connection pooling
 
 ## Tunnel Integration
@@ -144,5 +144,8 @@ Weighted random selection using cumulative weight sums:
 - Parse tunnel token (base64 JSON)
 - Build edge TLS configs (Cloudflare root CAs + system pool)
 - Create protocol selector (auto: QUIC preferred)
-- Build catch-all ingress to `http://localhost:PROXY_PORT`
+- **In-process mode** (default): Set `OverrideProxy` on supervisor config to
+  route all requests directly to `proxy.Handler`, bypassing ingress rules entirely
+- **Standalone mode**: Build catch-all ingress to `http://localhost:PROXY_PORT`
+  so cloudflared forwards traffic to the local proxy HTTP server
 - Start `supervisor.StartTunnelDaemon`

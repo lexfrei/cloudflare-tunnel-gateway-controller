@@ -492,6 +492,11 @@ func buildServiceURL(name, namespace string, port int32, clusterDomain string) s
 	return fmt.Sprintf("http://%s.%s.svc.%s:%d", name, namespace, clusterDomain, port)
 }
 
+// convertTimeouts parses Gateway API timeout values into Go durations.
+// NOTE: Gateway API Duration (GEP-2257) is a subset of Go's time.Duration
+// format (only s, ms, h, m are specified). Using time.ParseDuration is
+// intentionally permissive — Kubernetes admission webhooks validate the
+// format before it reaches the controller.
 func convertTimeouts(timeouts *gatewayv1.HTTPRouteTimeouts) (*RouteTimeouts, error) {
 	result := &RouteTimeouts{}
 

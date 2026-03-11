@@ -14,10 +14,14 @@ import (
 )
 
 // Priority scoring constants for Gateway API rule precedence.
+// The base values for path types are set far enough apart that
+// path length bonuses cannot cause a lower-priority type to
+// outrank a higher-priority one (e.g., a long prefix path must
+// never beat a short exact path per Gateway API spec).
 const (
-	priorityExactPath     = 10000
-	priorityPrefixPath    = 5000
-	priorityRegexPath     = 1000
+	priorityExactPath     = 1_000_000
+	priorityPrefixPath    = 500_000
+	priorityRegexPath     = 100_000
 	priorityPathLength    = 10
 	priorityMethod        = 100
 	priorityPerHeader     = 50
@@ -365,10 +369,11 @@ func selectBackend(backends []BackendRef) int {
 		return 0
 	}
 
-	totalWeight := int32(0)
+	// Use int64 to avoid overflow when multiple backends have large weights.
+	totalWeight := int64(0)
 
 	for _, backend := range backends {
-		totalWeight += backend.Weight
+		totalWeight += int64(backend.Weight)
 	}
 
 	if totalWeight <= 0 {
@@ -377,11 +382,11 @@ func selectBackend(backends []BackendRef) int {
 	}
 
 	//nolint:gosec // not security-sensitive, routing randomization only
-	pick := rand.Int32N(totalWeight)
-	cumulative := int32(0)
+	pick := rand.Int64N(totalWeight)
+	cumulative := int64(0)
 
 	for idx, backend := range backends {
-		cumulative += backend.Weight
+		cumulative += int64(backend.Weight)
 
 		if pick < cumulative {
 			return idx

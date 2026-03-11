@@ -3,6 +3,7 @@ package proxy_test
 import (
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 	"testing"
 
@@ -752,6 +753,102 @@ func TestRouter_ZeroWeightBackendsReturnNoBackend(t *testing.T) {
 		require.NotNil(t, result)
 		assert.Equal(t, -1, result.BackendIdx, "zero-weight backends should not receive traffic")
 	}
+}
+
+func TestRouter_LargeWeightsNoOverflow(t *testing.T) {
+	t.Parallel()
+
+	router := proxy.NewRouter()
+
+	cfg := &proxy.Config{
+		Version: 1,
+		Rules: []proxy.RouteRule{
+			{
+				Hostnames: []string{"example.com"},
+				Backends: []proxy.BackendRef{
+					{URL: "http://a:80", Weight: 1_500_000_000},
+					{URL: "http://b:80", Weight: 1_500_000_000},
+				},
+			},
+		},
+	}
+
+	require.NoError(t, router.UpdateConfig(cfg))
+
+	req := &http.Request{
+		Method: http.MethodGet,
+		Host:   "example.com",
+		URL:    &url.URL{Path: "/"},
+		Header: http.Header{},
+	}
+
+	// With int32, 1.5B + 1.5B = 3B overflows (max int32 ~2.1B).
+	// With int64, both backends should receive traffic.
+	selectedA, selectedB := false, false
+
+	for range 1000 {
+		result := router.Route(req)
+		require.NotNil(t, result)
+		require.GreaterOrEqual(t, result.BackendIdx, 0, "valid backend should be selected")
+
+		if result.BackendIdx == 0 {
+			selectedA = true
+		} else {
+			selectedB = true
+		}
+
+		if selectedA && selectedB {
+			break
+		}
+	}
+
+	assert.True(t, selectedA && selectedB, "both backends should receive traffic with large weights")
+}
+
+func TestRouter_ExactPathAlwaysBeatsPrefix(t *testing.T) {
+	t.Parallel()
+
+	router := proxy.NewRouter()
+
+	// Create a prefix match with a very long path (600+ chars)
+	// and an exact match with a short path. Per Gateway API spec,
+	// exact match ALWAYS wins regardless of path length.
+	longPrefix := "/" + strings.Repeat("a", 600)
+
+	cfg := &proxy.Config{
+		Version: 1,
+		Rules: []proxy.RouteRule{
+			{
+				Hostnames: []string{"example.com"},
+				Matches: []proxy.RouteMatch{
+					{Path: &proxy.PathMatch{Type: proxy.PathMatchPathPrefix, Value: longPrefix}},
+				},
+				Backends: []proxy.BackendRef{{URL: "http://prefix-backend:80", Weight: 1}},
+			},
+			{
+				Hostnames: []string{"example.com"},
+				Matches: []proxy.RouteMatch{
+					{Path: &proxy.PathMatch{Type: proxy.PathMatchExact, Value: longPrefix + "/sub"}},
+				},
+				Backends: []proxy.BackendRef{{URL: "http://exact-backend:80", Weight: 1}},
+			},
+		},
+	}
+
+	require.NoError(t, router.UpdateConfig(cfg))
+
+	req := &http.Request{
+		Method: http.MethodGet,
+		Host:   "example.com",
+		URL:    &url.URL{Path: longPrefix + "/sub"},
+		Header: http.Header{},
+	}
+
+	result := router.Route(req)
+	require.NotNil(t, result)
+	assert.Equal(t, 0, result.BackendIdx)
+	assert.Contains(t, result.Rule.Backends[0].URL, "exact-backend",
+		"exact path should always beat prefix path regardless of length")
 }
 
 func TestRouter_HostnameCaseInsensitive(t *testing.T) {

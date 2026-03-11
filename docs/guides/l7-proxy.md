@@ -110,9 +110,10 @@ The proxy binary accepts the following environment variables:
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `TUNNEL_TOKEN` | (required) | Cloudflare tunnel token (base64) |
+| `TUNNEL_TOKEN` | Required for tunnel mode; omit for standalone/dev mode | Cloudflare tunnel token (base64) |
 | `PROXY_CONFIG_ADDR` | `:8081` | Config API listen address |
 | `PROXY_ADDR` | `:8080` | Proxy listen address |
+| `PROXY_AUTH_TOKEN` | `""` (empty, no auth) | Bearer token for config push API authentication. If unset, the API is unauthenticated. |
 
 ### Health Endpoints
 
