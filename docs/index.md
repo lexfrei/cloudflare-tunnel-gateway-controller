@@ -14,6 +14,20 @@ resources (Gateway, HTTPRoute, GRPCRoute).
 - Multi-arch container images (amd64, arm64)
 - Signed container images with cosign
 
+### v2: L7 Proxy Mode
+
+Version 2 introduces an L7 reverse proxy that runs alongside cloudflared,
+unlocking full Gateway API HTTPRoute feature support:
+
+- **Header-based routing** -- match requests by HTTP header values
+- **Query parameter matching** -- route based on URL query parameters
+- **HTTP method matching** -- differentiate GET, POST, PUT, and other methods
+- **Request/response header modification** -- add, set, or remove headers via filters
+- **Request redirects** -- configure HTTP redirects declaratively
+- **Weighted traffic splitting** -- distribute traffic across backends by percentage
+
+See the [L7 Proxy Guide](guides/l7-proxy.md) for setup and examples.
+
 !!! warning
 
     The controller assumes **exclusive ownership** of the tunnel configuration.

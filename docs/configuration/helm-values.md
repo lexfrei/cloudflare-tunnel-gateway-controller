@@ -209,6 +209,103 @@ helm upgrade cloudflare-tunnel-gateway-controller \
       --values values.yaml
     ```
 
+## L7 Proxy Configuration
+
+The `proxy` section configures the v2 L7 reverse proxy deployment. When
+enabled, the proxy runs alongside cloudflared and provides full Gateway API
+HTTPRoute support (header matching, traffic splitting, filters).
+
+### Core Settings
+
+| Value | Type | Default | Description |
+| --- | --- | --- | --- |
+| `proxy.enabled` | bool | `false` | Enable the L7 proxy deployment |
+| `proxy.replicas` | int | `2` | Number of proxy pod replicas |
+| `proxy.image.repository` | string | `ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller-proxy` | Proxy container image repository |
+| `proxy.image.pullPolicy` | string | `IfNotPresent` | Image pull policy |
+| `proxy.image.tag` | string | `""` (appVersion) | Image tag override |
+| `proxy.configAPIPort` | int | `8081` | Port where the controller pushes configuration |
+| `proxy.proxyPort` | int | `8080` | Internal proxy port (traffic arrives through tunnel) |
+
+### Tunnel Token
+
+| Value | Type | Default | Description |
+| --- | --- | --- | --- |
+| `proxy.tunnelTokenSecretRef.name` | string | `""` | Name of the Secret containing the tunnel token (required when proxy is enabled) |
+| `proxy.tunnelTokenSecretRef.key` | string | `"tunnel-token"` | Key in the Secret containing the tunnel token |
+
+### Resources
+
+| Value | Type | Default | Description |
+| --- | --- | --- | --- |
+| `proxy.resources.limits.cpu` | string | `500m` | CPU limit |
+| `proxy.resources.limits.memory` | string | `512Mi` | Memory limit |
+| `proxy.resources.requests.cpu` | string | `100m` | CPU request |
+| `proxy.resources.requests.memory` | string | `128Mi` | Memory request |
+
+### Security Contexts
+
+| Value | Type | Default | Description |
+| --- | --- | --- | --- |
+| `proxy.podSecurityContext.runAsNonRoot` | bool | `true` | Require non-root user |
+| `proxy.podSecurityContext.runAsUser` | int | `65534` | UID to run as (nobody) |
+| `proxy.podSecurityContext.seccompProfile.type` | string | `RuntimeDefault` | Seccomp profile type |
+| `proxy.securityContext.allowPrivilegeEscalation` | bool | `false` | Disallow privilege escalation |
+| `proxy.securityContext.readOnlyRootFilesystem` | bool | `true` | Read-only root filesystem |
+
+### Health Probes
+
+| Value | Type | Default | Description |
+| --- | --- | --- | --- |
+| `proxy.healthProbes.startupProbe.enabled` | bool | `true` | Enable startup probe (gives tunnel time to connect) |
+| `proxy.healthProbes.startupProbe.failureThreshold` | int | `30` | Startup probe failure threshold |
+| `proxy.healthProbes.livenessProbe.enabled` | bool | `true` | Enable liveness probe |
+| `proxy.healthProbes.livenessProbe.periodSeconds` | int | `20` | Liveness probe interval |
+| `proxy.healthProbes.readinessProbe.enabled` | bool | `true` | Enable readiness probe (ready when config loaded) |
+| `proxy.healthProbes.readinessProbe.periodSeconds` | int | `10` | Readiness probe interval |
+
+### Networking and Service
+
+| Value | Type | Default | Description |
+| --- | --- | --- | --- |
+| `proxy.service.annotations` | object | `{}` | Service annotations |
+| `proxy.networkPolicy.enabled` | bool | `false` | Enable NetworkPolicy for proxy pods |
+| `proxy.networkPolicy.ingress.from` | list | `[]` | Ingress source configuration |
+
+### Scheduling
+
+| Value | Type | Default | Description |
+| --- | --- | --- | --- |
+| `proxy.nodeSelector` | object | `{}` | Node selector for pod scheduling |
+| `proxy.tolerations` | list | `[]` | Tolerations for pod scheduling |
+| `proxy.affinity` | object | `{}` | Affinity rules for pod scheduling |
+| `proxy.topologySpreadConstraints` | list | `[]` | Topology spread constraints for pod distribution |
+| `proxy.podAnnotations` | object | `{}` | Annotations to add to proxy pods |
+| `proxy.podLabels` | object | `{}` | Additional labels to add to proxy pods |
+
+### Example
+
+```yaml
+proxy:
+  enabled: true
+  replicas: 3
+  tunnelTokenSecretRef:
+    name: cloudflare-tunnel-token
+    key: tunnel-token
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+  networkPolicy:
+    enabled: true
+```
+
+For architecture details and usage examples, see the
+[L7 Proxy Guide](../guides/l7-proxy.md).
+
 ## Full Reference
 
 For the complete list of all available values with descriptions, see the

@@ -31,6 +31,15 @@ and advanced configurations.
 
     [:octicons-arrow-right-24: Cross-Namespace](cross-namespace.md)
 
+-   :material-server-network:{ .lg .middle } **L7 Proxy**
+
+    ---
+
+    Enable the v2 L7 reverse proxy for full HTTPRoute support including
+    header matching, traffic splitting, and request filters.
+
+    [:octicons-arrow-right-24: L7 Proxy](l7-proxy.md)
+
 -   :material-chart-line:{ .lg .middle } **Monitoring**
 
     ---
@@ -53,6 +62,7 @@ Before following these guides, ensure you have:
 
 | Use Case | Recommended Guide |
 |----------|-------------------|
+| Full HTTPRoute matching and filters | [L7 Proxy](l7-proxy.md) |
 | Traffic obfuscation in restricted networks | [AmneziaWG Sidecar](awg-sidecar.md) |
 | Automatic DNS record creation | [External-DNS](external-dns.md) |
 | Multi-namespace service mesh | [Cross-Namespace Routing](cross-namespace.md) |

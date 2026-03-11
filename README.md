@@ -19,14 +19,29 @@ Enables routing traffic through Cloudflare Tunnel using standard Gateway API res
 - Leader election for high availability deployments
 - Multi-arch container images (amd64, arm64)
 - Signed container images with cosign
+- L7 reverse proxy for full Gateway API HTTPRoute support (v2)
+- Header, query parameter, and HTTP method matching (v2)
+- Request/response header modification (v2)
+- URL rewriting and request redirects (v2)
+- Request mirroring (v2)
+- Weighted traffic splitting between backends (v2)
+- Regex path matching (v2)
 
 > **Warning:** The controller assumes **exclusive ownership** of the tunnel configuration. It will remove any ingress rules not managed by HTTPRoute/GRPCRoute resources. Do not use a tunnel that has manually configured routes or is shared with other systems.
+
+## L7 Proxy (v2)
+
+The v2 mode deploys an in-cluster L7 reverse proxy alongside cloudflared, enabling full Gateway API HTTPRoute support beyond Cloudflare Tunnel's native capabilities. The proxy handles header matching, query parameter matching, HTTP method matching, request/response header modification, URL rewriting, request redirects, request mirroring, weighted traffic splitting, and regex path matching.
+
+In v2 mode, cloudflared forwards traffic to the local proxy, which applies all Gateway API routing rules before sending requests to backends. This removes the path matching and filtering limitations present in v1 (Cloudflare API-only) mode.
+
+See [L7 Proxy Architecture](https://cf.k8s.lex.la/development/architecture/) for full details.
 
 ## Quick Start
 
 ```bash
 # 1. Install Gateway API CRDs
-kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.4.0/standard-install.yaml
+kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.5.0/standard-install.yaml
 
 # 2. Install the controller
 helm install cloudflare-tunnel-gateway-controller \
@@ -141,11 +156,11 @@ The controller supports a subset of Gateway API fields that map to Cloudflare Tu
 | `spec.rules[].matches[].path` | ✅ | PathPrefix and Exact types |
 | `spec.rules[].backendRefs` | ✅ | Service name, namespace, port |
 | `spec.rules[].backendRefs[].namespace` | ✅ | Cross-namespace refs require ReferenceGrant |
-| `spec.rules[].matches[].headers` | ❌ | Cloudflare limitation |
-| `spec.rules[].matches[].queryParams` | ❌ | Cloudflare limitation |
-| `spec.rules[].matches[].method` | ❌ | Cloudflare limitation |
-| `spec.rules[].filters` | ❌ | Cloudflare limitation |
-| `spec.rules[].backendRefs[].weight` | ⚠️ | Highest weight backend used ([#45](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/issues/45)) |
+| `spec.rules[].matches[].headers` | ✅ (v2 proxy) | Requires v2 proxy mode |
+| `spec.rules[].matches[].queryParams` | ✅ (v2 proxy) | Requires v2 proxy mode |
+| `spec.rules[].matches[].method` | ✅ (v2 proxy) | Requires v2 proxy mode |
+| `spec.rules[].filters` | ✅ (v2 proxy) | Requires v2 proxy mode |
+| `spec.rules[].backendRefs[].weight` | ✅ (v2 proxy) | Requires v2 proxy mode; v1 uses highest weight only |
 
 **GRPCRoute:**
 
@@ -156,20 +171,22 @@ The controller supports a subset of Gateway API fields that map to Cloudflare Tu
 | `spec.rules[].matches[].method.method` | ✅ | Maps to `/Service/Method` path |
 | `spec.rules[].backendRefs` | ✅ | Service name, namespace, port |
 | `spec.rules[].backendRefs[].namespace` | ✅ | Cross-namespace refs require ReferenceGrant |
-| `spec.rules[].matches[].headers` | ❌ | Cloudflare limitation |
-| `spec.rules[].filters` | ❌ | Cloudflare limitation |
-| `spec.rules[].backendRefs[].weight` | ⚠️ | Highest weight backend used ([#45](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/issues/45)) |
+| `spec.rules[].matches[].headers` | ✅ (v2 proxy) | Requires v2 proxy mode |
+| `spec.rules[].filters` | ✅ (v2 proxy) | Requires v2 proxy mode |
+| `spec.rules[].backendRefs[].weight` | ✅ (v2 proxy) | Requires v2 proxy mode; v1 uses highest weight only |
 
-> **Load Balancing:** This controller does not implement traffic splitting between multiple backends. Cloudflare Tunnel accepts only a single service URL per ingress rule. If you need weighted routing or canary deployments, deploy a dedicated load balancer (Traefik, Envoy, Nginx) and point your HTTPRoute to it. See [Limitations](https://cf.k8s.lex.la/gateway-api/limitations/#traffic-splitting-and-load-balancing) for details.
+> **Load Balancing:** In v1 mode, Cloudflare Tunnel accepts only a single service URL per ingress rule; the controller uses the highest-weight backend. In v2 proxy mode, full weighted traffic splitting between multiple backends is supported. See [Limitations](https://cf.k8s.lex.la/gateway-api/limitations/#traffic-splitting-and-load-balancing) for details.
 
 ### Known Limitations
+
+These limitations apply to v1 mode (Cloudflare API). The v2 L7 proxy removes all path matching limitations.
 
 Cloudflare Tunnel has path matching behavior that differs from Gateway API:
 
 - **No true exact path match**: `/api` (Exact) will still match `/api/v1`
 - **Common prefix routing**: Paths like `/multi-v1`, `/multi-v2` may all route to the first backend
 
-**Workaround:** Use distinct path prefixes (e.g., `/alpha`, `/beta`, `/gamma`).
+**Workaround (v1 only):** Use distinct path prefixes (e.g., `/alpha`, `/beta`, `/gamma`), or switch to v2 proxy mode.
 
 See [Path Matching Limitations](https://cf.k8s.lex.la/gateway-api/limitations/#cloudflare-tunnel-path-matching-limitations) for details.
 
@@ -212,7 +229,8 @@ Planned features and improvements:
 
 | Issue | Description | Status |
 |-------|-------------|--------|
-| [#45](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/issues/45) | Select backend with highest weight instead of first | Planned |
+| -- | L7 reverse proxy for full Gateway API HTTPRoute support (v2) | In Progress |
+| [#45](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/issues/45) | Weighted backend traffic splitting | Done (v2 proxy) |
 | [#44](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/issues/44) | Warning logs for partially ignored route configuration | Planned |
 | [#40](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/issues/40) | TCPRoute and TLSRoute support (GRPCRoute done in v0.8.0) | In Progress |
 | [#33](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/issues/33) | Auto-generate artifacthub.io/changes from git history | Planned |

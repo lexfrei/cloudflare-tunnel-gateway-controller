@@ -3,6 +3,30 @@
 HTTPRoute is the primary resource for configuring HTTP routing through
 Cloudflare Tunnel.
 
+## Feature Support
+
+| Feature | v1 (tunnel-only) | v2 (with L7 proxy) |
+| --- | --- | --- |
+| Hostname matching | Yes | Yes |
+| Path matching (Prefix, Exact) | Yes | Yes |
+| Header matching | No | Yes (v2 proxy) |
+| Query parameter matching | No | Yes (v2 proxy) |
+| HTTP method matching | No | Yes (v2 proxy) |
+| Backend weight selection (highest wins) | Yes | Yes |
+| Weighted traffic splitting | No | Yes (v2 proxy) |
+| RequestHeaderModifier filter | No | Yes (v2 proxy) |
+| ResponseHeaderModifier filter | No | Yes (v2 proxy) |
+| RequestRedirect filter | No | Yes (v2 proxy) |
+| Cross-namespace routing | Yes | Yes |
+| ExternalName service backends | Yes | Yes |
+| GRPCRoute | Yes | Yes |
+
+!!! note "Enabling v2 features"
+
+    Header matching, query parameter matching, method matching, traffic
+    splitting, and filters require the L7 proxy to be enabled. See the
+    [L7 Proxy Guide](../guides/l7-proxy.md) for setup instructions.
+
 ## Basic Example
 
 ```yaml
@@ -133,11 +157,11 @@ spec:
         # primary-service is selected (weight 80 > 20)
 ```
 
-!!! note "Not Traffic Splitting"
+!!! note "v1 vs v2 behavior"
 
-    This is NOT traffic splitting. The controller always sends 100% of
-    traffic to the selected backend. For traffic splitting, deploy a
-    dedicated load balancer.
+    Without the L7 proxy (v1), the backend with the highest weight receives
+    100% of traffic. With the L7 proxy enabled (v2), weights are used for
+    true percentage-based traffic splitting across backends.
 
 ## Cross-Namespace Routing
 
