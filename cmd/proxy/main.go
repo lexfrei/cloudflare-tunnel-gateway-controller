@@ -93,7 +93,7 @@ func runStandaloneMode(logger *slog.Logger) {
 
 	authToken := os.Getenv("PROXY_AUTH_TOKEN")
 	configServer := newServer(configAddr, proxy.NewConfigAPI(router, authToken))
-	proxyServer := newServer(proxyAddr, proxy.NewHandler(router))
+	proxyServer := newProxyServer(proxyAddr, proxy.NewHandler(router))
 
 	errChan := make(chan error, 2)
 
@@ -124,6 +124,17 @@ func newServer(addr string, handler http.Handler) *http.Server {
 		Handler:           handler,
 		ReadHeaderTimeout: readHeaderTimeout,
 		WriteTimeout:      writeTimeout,
+	}
+}
+
+// newProxyServer creates an HTTP server without WriteTimeout.
+// Per-route timeouts are enforced via context deadlines, so a global
+// WriteTimeout would prematurely kill long-running proxied responses.
+func newProxyServer(addr string, handler http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              addr,
+		Handler:           handler,
+		ReadHeaderTimeout: readHeaderTimeout,
 	}
 }
 

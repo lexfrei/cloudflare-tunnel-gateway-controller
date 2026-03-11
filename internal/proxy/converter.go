@@ -15,6 +15,16 @@ import (
 //nolint:gochecknoglobals // package-level atomic counter is the simplest correct approach
 var configVersionCounter atomic.Int64
 
+// init seeds the config version counter from the current time so that versions
+// are always higher than any previously issued value. Without this, a controller
+// restart would reset the counter to 0 and the proxy's UpdateConfig would reject
+// the new (lower) versions as stale.
+//
+//nolint:gochecknoinits // init is the correct place to seed a package-level atomic counter
+func init() {
+	configVersionCounter.Store(time.Now().UnixMilli())
+}
+
 const (
 	defaultServicePort = 80
 	minPort            = 1

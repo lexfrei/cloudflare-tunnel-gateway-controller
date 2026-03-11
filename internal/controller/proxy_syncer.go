@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
+	"net/url"
 	"sync"
 	"time"
 
@@ -59,8 +61,16 @@ func (s *ProxySyncer) SyncRoutes(ctx context.Context, endpoints []string, routes
 	// Convert to proxy config.
 	cfg := proxy.ConvertHTTPRoutes(routes, s.clusterDomain)
 
+	// Resolve headless service DNS names to individual pod IPs.
+	resolved := resolveEndpoints(ctx, endpoints)
+
+	logger.Info("resolved endpoints",
+		"original", len(endpoints),
+		"resolved", len(resolved),
+	)
+
 	// Push to all endpoints.
-	results := s.pusher.Push(ctx, cfg, endpoints)
+	results := s.pusher.Push(ctx, cfg, resolved)
 
 	var pushErrors []error
 
@@ -77,14 +87,59 @@ func (s *ProxySyncer) SyncRoutes(ctx context.Context, endpoints []string, routes
 
 	if len(pushErrors) > 0 {
 		return fmt.Errorf("failed to push config to %d/%d endpoints: %w",
-			len(pushErrors), len(endpoints), errors.Join(pushErrors...))
+			len(pushErrors), len(resolved), errors.Join(pushErrors...))
 	}
 
 	logger.Info("successfully pushed proxy config",
-		"endpoints", len(endpoints),
+		"endpoints", len(resolved),
 		"rules", len(cfg.Rules),
 		"version", cfg.Version,
 	)
 
 	return nil
+}
+
+// resolveEndpoints expands headless service DNS names to individual pod IPs.
+// For each endpoint URL, it resolves the hostname via DNS. If the hostname
+// resolves to multiple IPs (headless service), it creates a separate endpoint
+// URL for each IP, preserving the original scheme, port, and path.
+// If resolution fails or returns no results, the original endpoint is kept.
+func resolveEndpoints(ctx context.Context, endpoints []string) []string {
+	var resolved []string
+
+	for _, endpoint := range endpoints {
+		parsed, err := url.Parse(endpoint)
+		if err != nil {
+			resolved = append(resolved, endpoint)
+
+			continue
+		}
+
+		hostname := parsed.Hostname()
+		port := parsed.Port()
+
+		addrs, err := net.DefaultResolver.LookupHost(ctx, hostname)
+		if err != nil || len(addrs) == 0 {
+			resolved = append(resolved, endpoint)
+
+			continue
+		}
+
+		for _, addr := range addrs {
+			epURL := &url.URL{
+				Scheme: parsed.Scheme,
+				Path:   parsed.Path,
+			}
+
+			if port != "" {
+				epURL.Host = net.JoinHostPort(addr, port)
+			} else {
+				epURL.Host = addr
+			}
+
+			resolved = append(resolved, epURL.String())
+		}
+	}
+
+	return resolved
 }
