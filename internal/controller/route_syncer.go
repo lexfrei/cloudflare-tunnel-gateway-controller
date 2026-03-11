@@ -95,6 +95,63 @@ type SyncResult struct {
 	GRPCFailedRefs    []ingress.BackendRefError   // Failed backend refs from GRPC routes
 }
 
+// httpStatusEntries builds routeStatusEntry slice for HTTP routes.
+func (sr *SyncResult) httpStatusEntries(
+	updateFn func(ctx context.Context, route *gatewayv1.HTTPRoute, bi routeBindingInfo, fr []ingress.BackendRefError, se error) error,
+) []routeStatusEntry {
+	return buildStatusEntries(sr.HTTPRoutes, sr.HTTPRouteBindings, sr.HTTPFailedRefs, updateFn)
+}
+
+// grpcStatusEntries builds routeStatusEntry slice for GRPC routes.
+func (sr *SyncResult) grpcStatusEntries(
+	updateFn func(ctx context.Context, route *gatewayv1.GRPCRoute, bi routeBindingInfo, fr []ingress.BackendRefError, se error) error,
+) []routeStatusEntry {
+	return buildStatusEntries(sr.GRPCRoutes, sr.GRPCRouteBindings, sr.GRPCFailedRefs, updateFn)
+}
+
+// routeObject is the constraint for Gateway API route types with Name and Namespace.
+type routeObject interface {
+	gatewayv1.HTTPRoute | gatewayv1.GRPCRoute
+}
+
+// buildStatusEntries creates routeStatusEntry slice from any route type.
+func buildStatusEntries[T routeObject](
+	routes []T,
+	bindings map[string]routeBindingInfo,
+	failedRefs []ingress.BackendRefError,
+	updateFn func(ctx context.Context, route *T, bi routeBindingInfo, fr []ingress.BackendRefError, se error) error,
+) []routeStatusEntry {
+	entries := make([]routeStatusEntry, 0, len(routes))
+
+	for i := range routes {
+		route := &routes[i]
+		// Both HTTPRoute and GRPCRoute embed ObjectMeta which provides these methods.
+		obj, ok := any(route).(interface {
+			GetName() string
+			GetNamespace() string
+		})
+		if !ok {
+			continue
+		}
+
+		name := obj.GetName()
+		namespace := obj.GetNamespace()
+		routeKey := namespace + "/" + name
+
+		entries = append(entries, routeStatusEntry{
+			name:        name,
+			namespace:   namespace,
+			bindingInfo: bindings[routeKey],
+			failedRefs:  filterFailedRefs(failedRefs, namespace, name),
+			update: func(ctx context.Context, bi routeBindingInfo, fr []ingress.BackendRefError, se error) error {
+				return updateFn(ctx, route, bi, fr, se)
+			},
+		})
+	}
+
+	return entries
+}
+
 // buildResultForError creates a SyncResult containing all relevant routes.
 // Used when early errors occur (before routes are collected) to ensure
 // route statuses are updated to reflect the error.
