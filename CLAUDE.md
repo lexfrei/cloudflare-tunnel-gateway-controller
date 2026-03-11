@@ -109,15 +109,19 @@ Configuration is provided via GatewayClassConfig CRD (referenced by GatewayClass
 
 ```text
 api/v1alpha1/            # GatewayClassConfig CRD types
-cmd/controller/          # Entrypoint and CLI (cobra/viper)
+cmd/controller/          # Controller entrypoint and CLI (cobra/viper)
+cmd/proxy/               # L7 proxy binary entrypoint (standalone + tunnel modes)
 internal/
   config/                # GatewayClassConfig resolver and credential handling
-  controller/            # Kubernetes controllers (Gateway, HTTPRoute, GatewayClassConfig)
+  controller/            # Kubernetes controllers (Gateway, HTTPRoute, GRPCRoute, ProxySyncer)
   dns/                   # Cluster domain auto-detection
   helm/                  # Helm SDK operations for cloudflared
   ingress/               # HTTPRoute → Cloudflare ingress rule conversion
+  proxy/                 # L7 reverse proxy (router, matcher, filter, config API, converter)
+  tunnel/                # cloudflared tunnel bootstrap and GatewayOriginProxy adapter
 charts/                  # Helm chart with helm-unittest tests
 deploy/                  # Raw Kubernetes manifests for manual deployment
+test/conformance/        # Gateway API conformance E2E tests
 ```
 
 ## Testing Standards

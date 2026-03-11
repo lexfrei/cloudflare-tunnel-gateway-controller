@@ -825,6 +825,7 @@ func TestConvertTimeouts(t *testing.T) {
 	tests := []struct {
 		name            string
 		timeouts        *gatewayv1.HTTPRouteTimeouts
+		expectNil       bool
 		expectedRequest time.Duration
 		expectedBackend time.Duration
 	}{
@@ -854,22 +855,20 @@ func TestConvertTimeouts(t *testing.T) {
 			expectedBackend: 15 * time.Second,
 		},
 		{
-			name: "invalid request timeout is ignored",
+			name: "invalid request timeout drops all timeouts",
 			timeouts: &gatewayv1.HTTPRouteTimeouts{
 				Request:        durationPtr("not-a-duration"),
 				BackendRequest: durationPtr("5s"),
 			},
-			expectedRequest: 0,
-			expectedBackend: 5 * time.Second,
+			expectNil: true,
 		},
 		{
-			name: "invalid backend timeout is ignored",
+			name: "invalid backend timeout drops all timeouts",
 			timeouts: &gatewayv1.HTTPRouteTimeouts{
 				Request:        durationPtr("10s"),
 				BackendRequest: durationPtr("garbage"),
 			},
-			expectedRequest: 10 * time.Second,
-			expectedBackend: 0,
+			expectNil: true,
 		},
 		{
 			name: "millisecond precision",
@@ -890,9 +889,14 @@ func TestConvertTimeouts(t *testing.T) {
 			cfg := proxy.ConvertHTTPRoutes([]*gatewayv1.HTTPRoute{route}, "cluster.local")
 
 			require.Len(t, cfg.Rules, 1)
-			require.NotNil(t, cfg.Rules[0].Timeouts)
-			assert.Equal(t, tt.expectedRequest, cfg.Rules[0].Timeouts.Request)
-			assert.Equal(t, tt.expectedBackend, cfg.Rules[0].Timeouts.Backend)
+
+			if tt.expectNil {
+				assert.Nil(t, cfg.Rules[0].Timeouts)
+			} else {
+				require.NotNil(t, cfg.Rules[0].Timeouts)
+				assert.Equal(t, tt.expectedRequest, cfg.Rules[0].Timeouts.Request)
+				assert.Equal(t, tt.expectedBackend, cfg.Rules[0].Timeouts.Backend)
+			}
 		})
 	}
 }

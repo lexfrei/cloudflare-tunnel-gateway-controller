@@ -102,6 +102,7 @@ func (r *Router) Route(req *http.Request) *RouteResult {
 
 // UpdateConfig compiles a new routing table from the config and atomically swaps it in.
 // Rejects configs with a version older than the current one to prevent out-of-order updates.
+// Callers must serialize concurrent calls externally (e.g., via ProxySyncer.syncMu).
 func (r *Router) UpdateConfig(cfg *Config) error {
 	current := r.table.Load()
 	if current != nil && cfg.Version > 0 && cfg.Version < current.version {

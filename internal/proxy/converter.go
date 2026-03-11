@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -64,7 +65,12 @@ func convertHTTPRouteRule(
 	}
 
 	if rule.Timeouts != nil {
-		proxyRule.Timeouts = convertTimeouts(rule.Timeouts)
+		timeouts, err := convertTimeouts(rule.Timeouts)
+		if err != nil {
+			slog.Warn("skipping invalid route timeouts", "error", err)
+		} else {
+			proxyRule.Timeouts = timeouts
+		}
 	}
 
 	return proxyRule
@@ -349,22 +355,26 @@ func buildServiceURL(name, namespace string, port int32, clusterDomain string) s
 	return fmt.Sprintf("http://%s.%s.svc.%s:%d", name, namespace, clusterDomain, port)
 }
 
-func convertTimeouts(timeouts *gatewayv1.HTTPRouteTimeouts) *RouteTimeouts {
+func convertTimeouts(timeouts *gatewayv1.HTTPRouteTimeouts) (*RouteTimeouts, error) {
 	result := &RouteTimeouts{}
 
 	if timeouts.Request != nil {
 		duration, err := time.ParseDuration(string(*timeouts.Request))
-		if err == nil {
-			result.Request = duration
+		if err != nil {
+			return nil, fmt.Errorf("invalid request timeout %q: %w", *timeouts.Request, err)
 		}
+
+		result.Request = duration
 	}
 
 	if timeouts.BackendRequest != nil {
 		duration, err := time.ParseDuration(string(*timeouts.BackendRequest))
-		if err == nil {
-			result.Backend = duration
+		if err != nil {
+			return nil, fmt.Errorf("invalid backend timeout %q: %w", *timeouts.BackendRequest, err)
 		}
+
+		result.Backend = duration
 	}
 
-	return result
+	return result, nil
 }

@@ -93,6 +93,7 @@ type HTTPRouteReconciler struct {
 	startupComplete atomic.Bool
 }
 
+//nolint:dupl // intentionally similar to GRPCRouteReconciler.Reconcile
 func (r *HTTPRouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	// Wait for startup sync to complete before processing reconcile events
 	// to prevent race conditions with Cloudflare API updates
