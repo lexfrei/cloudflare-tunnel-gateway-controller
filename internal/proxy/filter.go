@@ -210,12 +210,17 @@ func NewRequestMirror(backendURL string) Filter {
 }
 
 func (f *requestMirror) ProcessRequest(req *http.Request) *http.Response {
-	mirrorReq := req.Clone(req.Context())
+	// Use a detached context so the mirror is fire-and-forget,
+	// not cancelled when the original request completes.
+	mirrorCtx, cancel := context.WithTimeout(context.Background(), mirrorTimeout)
+	mirrorReq := req.Clone(mirrorCtx)
 	mirrorReq.URL, _ = req.URL.Parse(f.backendURL + req.URL.Path)
 	mirrorReq.Host = mirrorReq.URL.Host
 	mirrorReq.RequestURI = ""
 
 	go func() {
+		defer cancel()
+
 		resp, err := f.client.Do(mirrorReq) //nolint:gosec // mirror URL comes from trusted config
 		if err == nil {
 			resp.Body.Close()

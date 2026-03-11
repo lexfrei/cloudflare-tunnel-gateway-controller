@@ -39,7 +39,25 @@ func NewPrefixPathMatcher(prefix string) RequestMatcher {
 }
 
 func (m *prefixPathMatcher) Match(r *http.Request) bool {
-	return strings.HasPrefix(r.URL.Path, m.prefix)
+	path := r.URL.Path
+
+	if !strings.HasPrefix(path, m.prefix) {
+		return false
+	}
+
+	// Gateway API requires segment-aware prefix matching:
+	// /foo matches /foo and /foo/bar but NOT /foobar.
+	if len(path) == len(m.prefix) {
+		return true
+	}
+
+	// Prefix ends with / — any continuation is valid.
+	if strings.HasSuffix(m.prefix, "/") {
+		return true
+	}
+
+	// Next character after prefix must be a segment boundary.
+	return path[len(m.prefix)] == '/'
 }
 
 // regexPathMatcher matches requests whose URL path matches a precompiled regex.

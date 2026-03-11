@@ -21,6 +21,7 @@ var (
 	errNameRequired      = errors.New("name is required")
 	errPathValueRequired = errors.New("path: value is required")
 	errUnknownFilterType = errors.New("unknown filter type")
+	errStaleVersion      = errors.New("stale config version")
 )
 
 // Config is the top-level configuration pushed by the controller.

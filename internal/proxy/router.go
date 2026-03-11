@@ -25,6 +25,7 @@ const (
 type compiledRule struct {
 	matches  []*CompiledMatch
 	rule     *RouteRule
+	filters  []Filter
 	priority int
 }
 
@@ -62,38 +63,51 @@ func (r *Router) ConfigVersion() int64 {
 	return r.table.Load().version
 }
 
+// RouteResult contains the result of a routing decision.
+type RouteResult struct {
+	Rule       *RouteRule
+	Filters    []Filter
+	BackendIdx int
+}
+
 // Route finds the best matching rule for the request and selects a backend.
-// Returns the matched RouteRule and backend index, or (nil, -1) if no match.
-func (r *Router) Route(req *http.Request) (*RouteRule, int) {
+// Returns nil if no match.
+func (r *Router) Route(req *http.Request) *RouteResult {
 	table := r.table.Load()
 	host := extractHost(req)
 
 	// Try exact host match first.
 	if rules, ok := table.exactHosts[host]; ok {
-		if rule, idx := matchRules(rules, req); rule != nil {
-			return rule, idx
+		if result := matchRules(rules, req); result != nil {
+			return result
 		}
 	}
 
 	// Try wildcard host matches (longest suffix first).
 	for _, wildcard := range table.wildcardHosts {
 		if matchesWildcard(host, wildcard.suffix) {
-			if rule, idx := matchRules(wildcard.rules, req); rule != nil {
-				return rule, idx
+			if result := matchRules(wildcard.rules, req); result != nil {
+				return result
 			}
 		}
 	}
 
 	// Try default (no hostname) rules.
-	if rule, idx := matchRules(table.defaultRules, req); rule != nil {
-		return rule, idx
+	if result := matchRules(table.defaultRules, req); result != nil {
+		return result
 	}
 
-	return nil, -1
+	return nil
 }
 
 // UpdateConfig compiles a new routing table from the config and atomically swaps it in.
+// Rejects configs with a version older than the current one to prevent out-of-order updates.
 func (r *Router) UpdateConfig(cfg *Config) error {
+	current := r.table.Load()
+	if current != nil && cfg.Version > 0 && cfg.Version < current.version {
+		return errors.Wrapf(errStaleVersion, "version %d < current %d", cfg.Version, current.version)
+	}
+
 	table, err := compileRoutingTable(cfg)
 	if err != nil {
 		return errors.Wrap(err, "failed to compile routing table")
@@ -174,9 +188,15 @@ func compileRule(rule *RouteRule, ruleIndex int) (*compiledRule, error) {
 		matches = append(matches, compiled)
 	}
 
+	filters, err := CompileFilters(rule.Filters)
+	if err != nil {
+		return nil, errors.Wrap(err, "compile filters")
+	}
+
 	return &compiledRule{
 		matches:  matches,
 		rule:     rule,
+		filters:  filters,
 		priority: computePriority(rule, ruleIndex),
 	}, nil
 }
@@ -238,14 +258,36 @@ func sortRulesByPrecedence(rules []*compiledRule) {
 
 // matchRules iterates through sorted rules and returns the first match.
 // Multiple matches within a rule are ORed.
-func matchRules(rules []*compiledRule, req *http.Request) (*RouteRule, int) {
+func matchRules(rules []*compiledRule, req *http.Request) *RouteResult {
 	for _, compiled := range rules {
-		if matchesRule(compiled, req) {
-			return compiled.rule, selectBackend(compiled.rule.Backends)
+		if !matchesRule(compiled, req) {
+			continue
+		}
+
+		// Store matched prefix for URL rewrite filters.
+		if prefix := getMatchedPathPrefix(compiled.rule); prefix != "" {
+			SetMatchedPrefix(req, prefix)
+		}
+
+		return &RouteResult{
+			Rule:       compiled.rule,
+			Filters:    compiled.filters,
+			BackendIdx: selectBackend(compiled.rule.Backends),
 		}
 	}
 
-	return nil, -1
+	return nil
+}
+
+// getMatchedPathPrefix returns the path prefix value from the first prefix match.
+func getMatchedPathPrefix(rule *RouteRule) string {
+	for _, match := range rule.Matches {
+		if match.Path != nil && match.Path.Type == PathMatchPathPrefix {
+			return match.Path.Value
+		}
+	}
+
+	return ""
 }
 
 // matchesRule checks if a request matches any of the rule's compiled match conditions (OR logic).

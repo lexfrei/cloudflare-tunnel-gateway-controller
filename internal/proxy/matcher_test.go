@@ -54,7 +54,7 @@ func TestPrefixPathMatcher(t *testing.T) {
 		{name: "no match", prefix: "/api", path: "/other", want: false},
 		{name: "root matches all", prefix: "/", path: "/anything", want: true},
 		{name: "root matches root", prefix: "/", path: "/", want: true},
-		{name: "partial word no match", prefix: "/app", path: "/application", want: true},
+		{name: "partial word no match", prefix: "/app", path: "/application", want: false},
 		{name: "case sensitive", prefix: "/API", path: "/api/v1", want: false},
 	}
 

@@ -92,5 +92,11 @@ func (a *ConfigAPI) handleHealthz(writer http.ResponseWriter, _ *http.Request) {
 }
 
 func (a *ConfigAPI) handleReadyz(writer http.ResponseWriter, _ *http.Request) {
+	if a.router.ConfigVersion() == 0 {
+		http.Error(writer, "not ready: no config loaded", http.StatusServiceUnavailable)
+
+		return
+	}
+
 	writer.WriteHeader(http.StatusOK)
 }

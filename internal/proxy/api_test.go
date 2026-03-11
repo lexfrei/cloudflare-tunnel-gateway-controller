@@ -149,14 +149,14 @@ func TestConfigAPI_ReadyEndpoint(t *testing.T) {
 	router := proxy.NewRouter()
 	api := proxy.NewConfigAPI(router)
 
-	// Ready immediately — proxy accepts traffic even without config (returns 404 for unmatched routes).
+	// Not ready before config is loaded.
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/readyz", nil)
 	recorder := httptest.NewRecorder()
 
 	api.ServeHTTP(recorder, req)
-	assert.Equal(t, http.StatusOK, recorder.Code)
+	assert.Equal(t, http.StatusServiceUnavailable, recorder.Code)
 
-	// Still ready after config loaded.
+	// Ready after config loaded.
 	cfg := &proxy.Config{
 		Version: 1,
 		Rules:   []proxy.RouteRule{{Backends: []proxy.BackendRef{{URL: "http://svc:80", Weight: 1}}}},

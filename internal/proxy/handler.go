@@ -23,22 +23,15 @@ func NewHandler(router *Router) *Handler {
 
 // ServeHTTP implements http.Handler.
 func (h *Handler) ServeHTTP(writer http.ResponseWriter, req *http.Request) {
-	rule, backendIdx := h.router.Route(req)
-	if rule == nil {
+	result := h.router.Route(req)
+	if result == nil {
 		http.Error(writer, "no matching route", http.StatusNotFound)
 
 		return
 	}
 
-	// Compile and apply request filters.
-	filters, err := CompileFilters(rule.Filters)
-	if err != nil {
-		http.Error(writer, "filter compilation error", http.StatusInternalServerError)
-
-		return
-	}
-
-	redirectResp := ApplyRequestFilters(filters, req)
+	// Apply pre-compiled request filters.
+	redirectResp := ApplyRequestFilters(result.Filters, req)
 	if redirectResp != nil {
 		defer redirectResp.Body.Close()
 
@@ -48,14 +41,14 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, req *http.Request) {
 	}
 
 	// No backend available (e.g., redirect-only rule that didn't redirect).
-	if backendIdx < 0 || backendIdx >= len(rule.Backends) {
+	if result.BackendIdx < 0 || result.BackendIdx >= len(result.Rule.Backends) {
 		http.Error(writer, "no backend available", http.StatusInternalServerError)
 
 		return
 	}
 
 	// Proxy to backend.
-	backend := rule.Backends[backendIdx]
+	backend := result.Rule.Backends[result.BackendIdx]
 
 	backendURL, err := url.Parse(backend.URL)
 	if err != nil {
@@ -64,7 +57,7 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	proxy := h.createReverseProxy(backendURL, filters)
+	proxy := h.createReverseProxy(backendURL, result.Filters)
 	proxy.ServeHTTP(writer, req)
 }
 

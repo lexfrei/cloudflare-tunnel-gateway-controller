@@ -24,9 +24,8 @@ func TestRouter_EmptyConfig(t *testing.T) {
 		Header: http.Header{},
 	}
 
-	rule, backendIdx := router.Route(req)
-	assert.Nil(t, rule)
-	assert.Equal(t, -1, backendIdx)
+	result := router.Route(req)
+	assert.Nil(t, result)
 }
 
 func TestRouter_UpdateConfig(t *testing.T) {
@@ -54,9 +53,9 @@ func TestRouter_UpdateConfig(t *testing.T) {
 		Header: http.Header{},
 	}
 
-	rule, backendIdx := router.Route(req)
-	require.NotNil(t, rule)
-	assert.GreaterOrEqual(t, backendIdx, 0)
+	result := router.Route(req)
+	require.NotNil(t, result)
+	assert.GreaterOrEqual(t, result.BackendIdx, 0)
 }
 
 func TestRouter_ExactHostMatch(t *testing.T) {
@@ -89,22 +88,22 @@ func TestRouter_ExactHostMatch(t *testing.T) {
 		Header: http.Header{},
 	}
 
-	rule, _ := router.Route(req)
-	require.NotNil(t, rule)
-	assert.Equal(t, "http://app:80", rule.Backends[0].URL)
+	result := router.Route(req)
+	require.NotNil(t, result)
+	assert.Equal(t, "http://app:80", result.Rule.Backends[0].URL)
 
 	// Match api.example.com
 	req.Host = "api.example.com"
 
-	rule, _ = router.Route(req)
-	require.NotNil(t, rule)
-	assert.Equal(t, "http://api:80", rule.Backends[0].URL)
+	result = router.Route(req)
+	require.NotNil(t, result)
+	assert.Equal(t, "http://api:80", result.Rule.Backends[0].URL)
 
 	// No match for unknown host
 	req.Host = "unknown.example.com"
 
-	rule, _ = router.Route(req)
-	assert.Nil(t, rule)
+	result = router.Route(req)
+	assert.Nil(t, result)
 }
 
 func TestRouter_WildcardHostMatch(t *testing.T) {
@@ -137,22 +136,22 @@ func TestRouter_WildcardHostMatch(t *testing.T) {
 		Header: http.Header{},
 	}
 
-	rule, _ := router.Route(req)
-	require.NotNil(t, rule)
-	assert.Equal(t, "http://specific:80", rule.Backends[0].URL)
+	result := router.Route(req)
+	require.NotNil(t, result)
+	assert.Equal(t, "http://specific:80", result.Rule.Backends[0].URL)
 
 	// Wildcard matches other subdomains
 	req.Host = "other.example.com"
 
-	rule, _ = router.Route(req)
-	require.NotNil(t, rule)
-	assert.Equal(t, "http://wildcard:80", rule.Backends[0].URL)
+	result = router.Route(req)
+	require.NotNil(t, result)
+	assert.Equal(t, "http://wildcard:80", result.Rule.Backends[0].URL)
 
 	// Wildcard does not match bare domain
 	req.Host = "example.com"
 
-	rule, _ = router.Route(req)
-	assert.Nil(t, rule)
+	result = router.Route(req)
+	assert.Nil(t, result)
 }
 
 func TestRouter_DefaultRules(t *testing.T) {
@@ -185,16 +184,16 @@ func TestRouter_DefaultRules(t *testing.T) {
 		Header: http.Header{},
 	}
 
-	rule, _ := router.Route(req)
-	require.NotNil(t, rule)
-	assert.Equal(t, "http://specific:80", rule.Backends[0].URL)
+	result := router.Route(req)
+	require.NotNil(t, result)
+	assert.Equal(t, "http://specific:80", result.Rule.Backends[0].URL)
 
 	// Unknown host falls through to default
 	req.Host = "anything.example.com"
 
-	rule, _ = router.Route(req)
-	require.NotNil(t, rule)
-	assert.Equal(t, "http://default:80", rule.Backends[0].URL)
+	result = router.Route(req)
+	require.NotNil(t, result)
+	assert.Equal(t, "http://default:80", result.Rule.Backends[0].URL)
 }
 
 func TestRouter_PathPrecedence(t *testing.T) {
@@ -240,23 +239,23 @@ func TestRouter_PathPrecedence(t *testing.T) {
 		Header: http.Header{},
 	}
 
-	rule, _ := router.Route(req)
-	require.NotNil(t, rule)
-	assert.Equal(t, "http://users:80", rule.Backends[0].URL)
+	result := router.Route(req)
+	require.NotNil(t, result)
+	assert.Equal(t, "http://users:80", result.Rule.Backends[0].URL)
 
 	// Longer prefix match has higher precedence
 	req.URL.Path = "/api/v2/items"
 
-	rule, _ = router.Route(req)
-	require.NotNil(t, rule)
-	assert.Equal(t, "http://api:80", rule.Backends[0].URL)
+	result = router.Route(req)
+	require.NotNil(t, result)
+	assert.Equal(t, "http://api:80", result.Rule.Backends[0].URL)
 
 	// Short prefix as fallback
 	req.URL.Path = "/unmatched"
 
-	rule, _ = router.Route(req)
-	require.NotNil(t, rule)
-	assert.Equal(t, "http://catch-all:80", rule.Backends[0].URL)
+	result = router.Route(req)
+	require.NotNil(t, result)
+	assert.Equal(t, "http://catch-all:80", result.Rule.Backends[0].URL)
 }
 
 func TestRouter_MethodAndHeaderPrecedence(t *testing.T) {
@@ -303,16 +302,16 @@ func TestRouter_MethodAndHeaderPrecedence(t *testing.T) {
 		Header: http.Header{"X-Env": {"prod"}},
 	}
 
-	rule, _ := router.Route(req)
-	require.NotNil(t, rule)
-	assert.Equal(t, "http://specific:80", rule.Backends[0].URL)
+	result := router.Route(req)
+	require.NotNil(t, result)
+	assert.Equal(t, "http://specific:80", result.Rule.Backends[0].URL)
 
 	// Request without header matches general rule
 	req.Header = http.Header{}
 
-	rule, _ = router.Route(req)
-	require.NotNil(t, rule)
-	assert.Equal(t, "http://general:80", rule.Backends[0].URL)
+	result = router.Route(req)
+	require.NotNil(t, result)
+	assert.Equal(t, "http://general:80", result.Rule.Backends[0].URL)
 }
 
 func TestRouter_MultipleMatchesOR(t *testing.T) {
@@ -345,20 +344,20 @@ func TestRouter_MultipleMatchesOR(t *testing.T) {
 		Header: http.Header{},
 	}
 
-	rule, _ := router.Route(req)
-	require.NotNil(t, rule)
+	result := router.Route(req)
+	require.NotNil(t, result)
 
 	// Second match (OR)
 	req.URL.Path = "/ready"
 
-	rule, _ = router.Route(req)
-	require.NotNil(t, rule)
+	result = router.Route(req)
+	require.NotNil(t, result)
 
 	// Neither match
 	req.URL.Path = "/neither-health-nor-ready"
 
-	rule, _ = router.Route(req)
-	assert.Nil(t, rule)
+	result = router.Route(req)
+	assert.Nil(t, result)
 }
 
 func TestRouter_ConcurrentAccess(t *testing.T) {
@@ -391,8 +390,8 @@ func TestRouter_ConcurrentAccess(t *testing.T) {
 				Header: http.Header{},
 			}
 
-			rule, _ := router.Route(req)
-			assert.NotNil(t, rule)
+			result := router.Route(req)
+			assert.NotNil(t, result)
 		})
 	}
 
@@ -447,8 +446,8 @@ func TestRouter_WeightedBackendSelection(t *testing.T) {
 	iterations := 10000
 
 	for range iterations {
-		_, idx := router.Route(req)
-		counts[idx]++
+		result := router.Route(req)
+		counts[result.BackendIdx]++
 	}
 
 	// With 80/20 weights, primary should get roughly 80% of traffic
@@ -482,9 +481,9 @@ func TestRouter_HostWithPort(t *testing.T) {
 		Header: http.Header{},
 	}
 
-	rule, _ := router.Route(req)
-	require.NotNil(t, rule)
-	assert.Equal(t, "http://backend:80", rule.Backends[0].URL)
+	result := router.Route(req)
+	require.NotNil(t, result)
+	assert.Equal(t, "http://backend:80", result.Rule.Backends[0].URL)
 }
 
 func TestRouter_ConfigVersion(t *testing.T) {
@@ -553,8 +552,8 @@ func TestRouter_NoMatchesMatchesAll(t *testing.T) {
 		Header: http.Header{},
 	}
 
-	rule, _ := router.Route(req)
-	require.NotNil(t, rule)
+	result := router.Route(req)
+	require.NotNil(t, result)
 }
 
 func TestRouter_EmptyBackends_ReturnsMinusOne(t *testing.T) {
@@ -592,8 +591,95 @@ func TestRouter_EmptyBackends_ReturnsMinusOne(t *testing.T) {
 		Header: http.Header{},
 	}
 
-	rule, backendIdx := router.Route(req)
-	require.NotNil(t, rule, "redirect-only rule should match")
-	assert.Equal(t, -1, backendIdx, "should return -1 for empty backends")
-	assert.NotEmpty(t, rule.Filters, "rule should have redirect filter")
+	result := router.Route(req)
+	require.NotNil(t, result, "redirect-only rule should match")
+	assert.Equal(t, -1, result.BackendIdx, "should return -1 for empty backends")
+	assert.NotEmpty(t, result.Rule.Filters, "rule should have redirect filter")
+}
+
+func TestRouter_PrefixMatchSegmentAware(t *testing.T) {
+	t.Parallel()
+
+	router := proxy.NewRouter()
+
+	cfg := &proxy.Config{
+		Version: 1,
+		Rules: []proxy.RouteRule{
+			{
+				Hostnames: []string{"example.com"},
+				Matches: []proxy.RouteMatch{
+					{Path: &proxy.PathMatch{Type: proxy.PathMatchPathPrefix, Value: "/foo"}},
+				},
+				Backends: []proxy.BackendRef{{URL: "http://backend:80", Weight: 1}},
+			},
+		},
+	}
+
+	require.NoError(t, router.UpdateConfig(cfg))
+
+	tests := []struct {
+		path    string
+		matches bool
+	}{
+		{"/foo", true},
+		{"/foo/bar", true},
+		{"/foo/", true},
+		{"/foobar", false},
+		{"/foob", false},
+		{"/fo", false},
+		{"/bar", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.path, func(t *testing.T) {
+			t.Parallel()
+
+			req := &http.Request{
+				Method: http.MethodGet,
+				Host:   "example.com",
+				URL:    &url.URL{Path: tt.path},
+				Header: http.Header{},
+			}
+
+			result := router.Route(req)
+			if tt.matches {
+				require.NotNil(t, result, "expected match for %s", tt.path)
+			} else {
+				assert.Nil(t, result, "expected no match for %s", tt.path)
+			}
+		})
+	}
+}
+
+func TestRouter_StaleVersionRejected(t *testing.T) {
+	t.Parallel()
+
+	router := proxy.NewRouter()
+
+	cfg1 := &proxy.Config{
+		Version: 100,
+		Rules: []proxy.RouteRule{
+			{Backends: []proxy.BackendRef{{URL: "http://svc:80", Weight: 1}}},
+		},
+	}
+	require.NoError(t, router.UpdateConfig(cfg1))
+
+	cfg2 := &proxy.Config{
+		Version: 50,
+		Rules: []proxy.RouteRule{
+			{Backends: []proxy.BackendRef{{URL: "http://svc:80", Weight: 1}}},
+		},
+	}
+
+	err := router.UpdateConfig(cfg2)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "stale config version")
+	assert.Equal(t, int64(100), router.ConfigVersion(), "version should remain at 100")
+}
+
+func TestRouter_ReadyzBeforeConfig(t *testing.T) {
+	t.Parallel()
+
+	router := proxy.NewRouter()
+	assert.Equal(t, int64(0), router.ConfigVersion(), "new router should have version 0")
 }
