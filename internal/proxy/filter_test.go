@@ -244,6 +244,31 @@ func TestRequestRedirect_ReplacePrefixMatch(t *testing.T) {
 		"prefix replacement should only replace the matched prefix, preserving the suffix")
 }
 
+func TestRequestRedirect_PathWithSpecialCharacters(t *testing.T) {
+	t.Parallel()
+
+	filter := proxy.NewRequestRedirect(&proxy.RedirectConfig{
+		Path: &proxy.RedirectPath{
+			Type:  proxy.RedirectPathFullReplace,
+			Value: "/new path/with spaces",
+		},
+	})
+
+	req := &http.Request{
+		Host:   "example.com",
+		URL:    &url.URL{Scheme: testSchemeHTTPS, Host: "example.com", Path: "/old"},
+		Header: http.Header{},
+	}
+
+	resp := filter.ProcessRequest(req)
+	require.NotNil(t, resp, "redirect should short-circuit")
+	defer resp.Body.Close()
+
+	location := resp.Header.Get("Location")
+	assert.Contains(t, location, "example.com")
+	assert.NotContains(t, location, " ", "spaces in path should be percent-encoded")
+}
+
 func TestURLRewriter_ReplaceFullPath(t *testing.T) {
 	t.Parallel()
 
@@ -571,6 +596,34 @@ func TestRequestMirror_BodyReadError_RestoresPartialBody(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(restoredBody), partialData,
 		"partial body data should be restored after read error")
+}
+
+func TestRequestMirror_OversizeBody_SetsUnknownContentLength(t *testing.T) {
+	t.Parallel()
+
+	// Create a body larger than maxMirrorBodySize (1 MiB).
+	oversizeBody := strings.Repeat("x", 1<<20+100)
+	req := httptest.NewRequestWithContext(
+		t.Context(), http.MethodPost, "http://example.com/test",
+		strings.NewReader(oversizeBody),
+	)
+	req.ContentLength = int64(len(oversizeBody))
+
+	filter := proxy.NewRequestMirror("http://mirror-backend:8080")
+	resp := filter.ProcessRequest(req)
+
+	if resp != nil {
+		defer resp.Body.Close()
+	}
+
+	assert.Nil(t, resp, "mirror should not short-circuit on oversize body")
+	assert.Equal(t, int64(-1), req.ContentLength,
+		"ContentLength should be -1 (unknown) for reassembled oversize body")
+
+	// Verify the body is still readable.
+	restoredBody, err := io.ReadAll(req.Body)
+	require.NoError(t, err)
+	assert.NotEmpty(t, restoredBody, "body should still be readable after oversize skip")
 }
 
 // errorReader is a reader that always returns the specified error.

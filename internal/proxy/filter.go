@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -145,60 +146,75 @@ func (f *requestRedirect) ProcessRequest(req *http.Request) *http.Response {
 func (f *requestRedirect) ProcessResponse(_ *http.Response) {}
 
 func (f *requestRedirect) buildRedirectURL(req *http.Request) string {
+	result := buildRedirectBase(req, f.config)
+	result.Path = buildRedirectPath(req, f.config)
+	result.RawQuery = req.URL.RawQuery
+
+	return result.String()
+}
+
+// buildRedirectBase constructs the base URL (scheme + host) for a redirect.
+func buildRedirectBase(req *http.Request, config *RedirectConfig) *url.URL {
 	scheme := req.URL.Scheme
 	if scheme == "" {
 		scheme = "https"
 	}
 
-	if f.config.Scheme != nil {
-		scheme = *f.config.Scheme
+	if config.Scheme != nil {
+		scheme = *config.Scheme
 	}
 
 	hostname := req.Host
-	if f.config.Hostname != nil {
-		hostname = *f.config.Hostname
+	if config.Hostname != nil {
+		hostname = *config.Hostname
 	}
 
 	// Strip any existing port from hostname for clean URL construction.
-	if idx := strings.LastIndex(hostname, ":"); idx != -1 {
-		if !strings.Contains(hostname[idx:], "]") {
-			hostname = hostname[:idx]
+	hostname = stripPort(hostname)
+
+	host := hostname
+	if config.Port != nil {
+		host = fmt.Sprintf("%s:%d", hostname, *config.Port)
+	}
+
+	return &url.URL{
+		Scheme: scheme,
+		Host:   host,
+	}
+}
+
+// buildRedirectPath resolves the redirect path from the config and request.
+func buildRedirectPath(req *http.Request, config *RedirectConfig) string {
+	if config.Path == nil {
+		return req.URL.Path
+	}
+
+	switch config.Path.Type {
+	case RedirectPathFullReplace:
+		return config.Path.Value
+	case RedirectPathPrefixReplace:
+		matchedPrefix := getMatchedPrefix(req)
+		if matchedPrefix != "" {
+			suffix := strings.TrimPrefix(req.URL.Path, matchedPrefix)
+
+			return config.Path.Value + suffix
+		}
+
+		return config.Path.Value
+	}
+
+	return req.URL.Path
+}
+
+// stripPort removes the port suffix from a host string, preserving IPv6 brackets.
+func stripPort(host string) string {
+	if idx := strings.LastIndex(host, ":"); idx != -1 {
+		if !strings.Contains(host[idx:], "]") {
+			return host[:idx]
 		}
 	}
 
-	path := req.URL.Path
-	if f.config.Path != nil {
-		switch f.config.Path.Type {
-		case RedirectPathFullReplace:
-			path = f.config.Path.Value
-		case RedirectPathPrefixReplace:
-			matchedPrefix := getMatchedPrefix(req)
-			if matchedPrefix != "" {
-				suffix := strings.TrimPrefix(req.URL.Path, matchedPrefix)
-				path = f.config.Path.Value + suffix
-			} else {
-				path = f.config.Path.Value
-			}
-		}
-	}
-
-	query := req.URL.RawQuery
-
-	if f.config.Port != nil {
-		result := fmt.Sprintf("%s://%s:%d%s", scheme, hostname, *f.config.Port, path)
-		if query != "" {
-			return result + "?" + query
-		}
-
-		return result
-	}
-
-	result := fmt.Sprintf("%s://%s%s", scheme, hostname, path)
-	if query != "" {
-		return result + "?" + query
-	}
-
-	return result
+	return host
 }
 
 // urlRewriter modifies the request URL path and/or host.
@@ -289,6 +305,11 @@ func (f *requestMirror) ProcessRequest(req *http.Request) *http.Response {
 
 	go func() {
 		defer cancel()
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				slog.Error("mirror: panic in mirror request goroutine", "panic", recovered)
+			}
+		}()
 
 		resp, doErr := mirrorClient.Do(mirrorReq) //nolint:gosec // mirror URL comes from trusted config
 		if doErr == nil {

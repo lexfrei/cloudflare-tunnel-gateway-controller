@@ -392,6 +392,8 @@ func selectBackend(backends []BackendRef) int {
 }
 
 // extractHost strips the port from the Host header if present.
+// NOTE: Go's http.Request.Host always wraps IPv6 addresses in brackets
+// (e.g., "[::1]:8080"), so bare IPv6 like "::1" should not appear in practice.
 func extractHost(req *http.Request) string {
 	host := req.Host
 

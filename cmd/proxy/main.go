@@ -18,6 +18,7 @@ const (
 	defaultConfigAddr = ":8081"
 	defaultProxyAddr  = ":8080"
 	readHeaderTimeout = 10 * time.Second
+	readTimeout       = 5 * time.Minute
 	writeTimeout      = 60 * time.Second
 	shutdownTimeout   = 30 * time.Second
 )
@@ -136,11 +137,14 @@ func newServer(addr string, handler http.Handler) *http.Server {
 // newProxyServer creates an HTTP server without WriteTimeout.
 // Per-route timeouts are enforced via context deadlines, so a global
 // WriteTimeout would prematurely kill long-running proxied responses.
+// ReadTimeout is set to a generous 5 minutes to protect against slow-loris
+// attacks while still allowing large request bodies.
 func newProxyServer(addr string, handler http.Handler) *http.Server {
 	return &http.Server{
 		Addr:              addr,
 		Handler:           handler,
 		ReadHeaderTimeout: readHeaderTimeout,
+		ReadTimeout:       readTimeout,
 	}
 }
 

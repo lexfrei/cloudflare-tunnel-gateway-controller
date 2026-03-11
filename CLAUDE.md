@@ -56,7 +56,11 @@ helm template test charts/cloudflare-tunnel-gateway-controller --values charts/c
 
 - **GatewayReconciler** (`internal/controller/gateway_controller.go`): Watches Gateway resources matching `cloudflare-tunnel` GatewayClass. Manages cloudflared deployment via Helm when `--manage-cloudflared` enabled. Updates Gateway status with tunnel CNAME address.
 
-- **HTTPRouteReconciler** (`internal/controller/httproute_controller.go`): Watches HTTPRoute resources referencing managed Gateways. Performs full sync of all relevant routes to Cloudflare Tunnel configuration on any change. Updates HTTPRoute status.
+- **HTTPRouteReconciler** (`internal/controller/httproute_controller.go`): Watches HTTPRoute resources referencing managed Gateways. Performs full sync of all relevant routes to Cloudflare Tunnel configuration on any change. Updates HTTPRoute status. Optionally pushes config to v2 proxy replicas via ProxySyncer.
+
+- **GRPCRouteReconciler** (`internal/controller/grpcroute_controller.go`): Watches GRPCRoute resources. Shares RouteSyncer with HTTPRouteReconciler for unified Cloudflare Tunnel sync. Does NOT push to v2 proxy (GRPC is tunnel-only).
+
+- **ProxySyncer** (`internal/controller/proxy_syncer.go`): Converts HTTPRoutes to proxy config and pushes to v2 proxy replicas via ConfigPusher. Validates cross-namespace backends via ReferenceGrant.
 
 ### Custom Resource Definition
 

@@ -33,26 +33,13 @@ func NewConfigPusher(client *http.Client, authToken string) *ConfigPusher {
 
 // Push sends the config to all endpoints concurrently and returns results.
 func (p *ConfigPusher) Push(ctx context.Context, cfg *Config, endpoints []string) []PushResult {
-	body, err := json.Marshal(cfg)
-	if err != nil {
-		results := make([]PushResult, len(endpoints))
-		for idx, endpoint := range endpoints {
-			results[idx] = PushResult{
-				Endpoint: endpoint,
-				Err:      fmt.Errorf("marshal config: %w", err),
-			}
-		}
-
-		return results
-	}
-
 	results := make([]PushResult, len(endpoints))
 
 	var waitGroup sync.WaitGroup
 
 	for idx, endpoint := range endpoints {
 		waitGroup.Go(func() {
-			results[idx] = p.pushToEndpoint(ctx, endpoint, body)
+			results[idx] = p.pushToEndpoint(ctx, endpoint, cfg)
 		})
 	}
 
@@ -61,7 +48,12 @@ func (p *ConfigPusher) Push(ctx context.Context, cfg *Config, endpoints []string
 	return results
 }
 
-func (p *ConfigPusher) pushToEndpoint(ctx context.Context, endpoint string, body []byte) PushResult {
+func (p *ConfigPusher) pushToEndpoint(ctx context.Context, endpoint string, cfg *Config) PushResult {
+	body, err := json.Marshal(cfg)
+	if err != nil {
+		return PushResult{Endpoint: endpoint, Err: fmt.Errorf("marshal config: %w", err)}
+	}
+
 	result := p.doPush(ctx, endpoint, body)
 	if result.Err == nil {
 		return result
@@ -74,25 +66,20 @@ func (p *ConfigPusher) pushToEndpoint(ctx context.Context, endpoint string, body
 		return result
 	}
 
-	proxyVersion, err := p.fetchProxyVersion(ctx, endpoint)
-	if err != nil {
-		return PushResult{Endpoint: endpoint, Err: fmt.Errorf("stale version recovery: %w", err)}
+	proxyVersion, fetchErr := p.fetchProxyVersion(ctx, endpoint)
+	if fetchErr != nil {
+		return PushResult{Endpoint: endpoint, Err: fmt.Errorf("stale version recovery: %w", fetchErr)}
 	}
 
 	bumpVersionCounter(proxyVersion)
 
-	var cfg Config
-
-	unmarshalErr := json.Unmarshal(body, &cfg)
-	if unmarshalErr != nil {
-		return PushResult{Endpoint: endpoint, Err: fmt.Errorf("stale version recovery unmarshal: %w", unmarshalErr)}
-	}
-
+	// Mutate version directly — avoids JSON round-trip which could
+	// lose data if marshaling is not perfectly round-trip-stable.
 	cfg.Version = configVersionCounter.Add(1)
 
-	retryBody, err := json.Marshal(cfg)
-	if err != nil {
-		return PushResult{Endpoint: endpoint, Err: fmt.Errorf("stale version recovery marshal: %w", err)}
+	retryBody, marshalErr := json.Marshal(cfg)
+	if marshalErr != nil {
+		return PushResult{Endpoint: endpoint, Err: fmt.Errorf("stale version recovery marshal: %w", marshalErr)}
 	}
 
 	return p.doPush(ctx, endpoint, retryBody)
