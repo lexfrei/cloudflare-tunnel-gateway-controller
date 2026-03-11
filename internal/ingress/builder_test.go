@@ -344,8 +344,10 @@ func TestBuild_NoHostnames(t *testing.T) {
 
 	buildResult := builder.Build(context.Background(), routes)
 
-	require.Len(t, buildResult.Rules, 2)
-	assert.False(t, buildResult.Rules[0].Hostname.Present, "wildcard route must omit Hostname field")
+	// Wildcard routes are skipped from Cloudflare config (handled by proxy).
+	// Only catch-all remains.
+	require.Len(t, buildResult.Rules, 1)
+	assert.Equal(t, ingress.CatchAllService, buildResult.Rules[0].Service.Value)
 }
 
 func TestBuild_NoBackendRefs(t *testing.T) {
@@ -787,11 +789,11 @@ func TestBuild_WildcardHostnameSortedLast(t *testing.T) {
 
 	buildResult := builder.Build(context.Background(), routes)
 
-	// Specific hostname should come first, wildcard second, catch-all last
-	require.Len(t, buildResult.Rules, 3)
+	// Wildcard route is skipped from Cloudflare config (handled by proxy).
+	// Only specific hostname + catch-all remain.
+	require.Len(t, buildResult.Rules, 2)
 	assert.Equal(t, "app.example.com", buildResult.Rules[0].Hostname.Value)
-	assert.False(t, buildResult.Rules[1].Hostname.Present, "wildcard route must omit Hostname field")
-	assert.Equal(t, ingress.CatchAllService, buildResult.Rules[2].Service.Value)
+	assert.Equal(t, ingress.CatchAllService, buildResult.Rules[1].Service.Value)
 }
 
 func TestBuild_MixedHostnamesWithWildcard(t *testing.T) {
@@ -852,12 +854,12 @@ func TestBuild_MixedHostnamesWithWildcard(t *testing.T) {
 
 	buildResult := builder.Build(context.Background(), routes)
 
-	// Order should be: a.example.com, z.example.com, *, catch-all
-	require.Len(t, buildResult.Rules, 4)
+	// Wildcard route is skipped from Cloudflare config (handled by proxy).
+	// Order: a.example.com, z.example.com, catch-all
+	require.Len(t, buildResult.Rules, 3)
 	assert.Equal(t, "a.example.com", buildResult.Rules[0].Hostname.Value)
 	assert.Equal(t, "z.example.com", buildResult.Rules[1].Hostname.Value)
-	assert.False(t, buildResult.Rules[2].Hostname.Present, "wildcard route must omit Hostname field")
-	assert.Equal(t, ingress.CatchAllService, buildResult.Rules[3].Service.Value)
+	assert.Equal(t, ingress.CatchAllService, buildResult.Rules[2].Service.Value)
 }
 
 func TestBuild_CoreGroupExplicit(t *testing.T) {

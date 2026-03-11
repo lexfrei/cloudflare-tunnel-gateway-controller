@@ -135,14 +135,11 @@ func TestGenericBuilder_WildcardOrdering(t *testing.T) {
 
 	result := builder.Build(context.Background(), routes)
 
-	// Order: specific hostname, wildcard (no Hostname field), catch-all.
-	// Wildcard routes must NOT set Hostname to "*" — Cloudflare API rejects
-	// hostname "*" when other rules exist (code 1056).
-	require.Len(t, result.Rules, 3)
+	// Wildcard routes are skipped from Cloudflare config (handled by proxy).
+	// Only specific hostname + catch-all remain.
+	require.Len(t, result.Rules, 2)
 	assert.Equal(t, "app.example.com", result.Rules[0].Hostname.Value)
-	assert.False(t, result.Rules[1].Hostname.Present, "wildcard route must not set Hostname field")
-	assert.Equal(t, "http://wildcard-service.default.svc.cluster.local:8080", result.Rules[1].Service.Value)
-	assert.Equal(t, ingress.CatchAllService, result.Rules[2].Service.Value)
+	assert.Equal(t, ingress.CatchAllService, result.Rules[1].Service.Value)
 }
 
 // TestGenericBuilder_MixedRoutes tests building with multiple routes.

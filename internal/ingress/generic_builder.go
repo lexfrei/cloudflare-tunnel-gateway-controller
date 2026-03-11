@@ -111,30 +111,7 @@ func (b *GenericBuilder[R]) Build(ctx context.Context, routes []R) BuildResult {
 
 	sortRouteEntries(entries)
 
-	rules := make([]zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress, 0, len(entries)+1)
-
-	for _, entry := range entries {
-		rule := zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress{
-			Service: cloudflare.F(entry.service),
-		}
-
-		// Wildcard hostname ("*") must omit the Hostname field entirely.
-		// Cloudflare API rejects explicit "*" when other rules exist (error 1056).
-		if entry.hostname != "*" {
-			rule.Hostname = cloudflare.F(entry.hostname)
-		}
-
-		if entry.path != "" && entry.path != "/" {
-			pathWithWildcard := entry.path
-			if entry.priority == 0 {
-				pathWithWildcard = entry.path + "*"
-			}
-
-			rule.Path = cloudflare.F(pathWithWildcard)
-		}
-
-		rules = append(rules, rule)
-	}
+	rules := entriesToIngressRules(entries, b.logger)
 
 	if b.adapter.AddCatchAll() {
 		rules = append(rules, zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress{
@@ -150,4 +127,42 @@ func (b *GenericBuilder[R]) Build(ctx context.Context, routes []R) BuildResult {
 		Rules:      rules,
 		FailedRefs: failedRefs,
 	}
+}
+
+// entriesToIngressRules converts sorted route entries into Cloudflare ingress rules.
+// Wildcard entries (hostname == "*") are skipped — Cloudflare API rejects rules
+// with empty hostname (error 1056). These routes are handled by the v2 proxy.
+func entriesToIngressRules(
+	entries []routeEntry,
+	logger *slog.Logger,
+) []zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress {
+	rules := make([]zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress, 0, len(entries))
+
+	for _, entry := range entries {
+		if entry.hostname == "*" {
+			logger.Info("skipping wildcard route from tunnel config (handled by proxy)",
+				"service", entry.service,
+			)
+
+			continue
+		}
+
+		rule := zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress{
+			Service:  cloudflare.F(entry.service),
+			Hostname: cloudflare.F(entry.hostname),
+		}
+
+		if entry.path != "" && entry.path != "/" {
+			pathWithWildcard := entry.path
+			if entry.priority == 0 {
+				pathWithWildcard = entry.path + "*"
+			}
+
+			rule.Path = cloudflare.F(pathWithWildcard)
+		}
+
+		rules = append(rules, rule)
+	}
+
+	return rules
 }
