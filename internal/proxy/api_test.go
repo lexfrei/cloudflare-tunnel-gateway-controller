@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -272,4 +273,47 @@ func TestConfigAPI_ReadyEndpoint(t *testing.T) {
 
 	api.ServeHTTP(recorder, req)
 	assert.Equal(t, http.StatusOK, recorder.Code)
+}
+
+func TestConfigAPI_OversizeBody(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name           string
+		bodySize       int
+		expectedStatus int
+		expectedBody   string
+	}{
+		{
+			name:           "body exceeding 1 MiB returns 413",
+			bodySize:       2 << 20,
+			expectedStatus: http.StatusRequestEntityTooLarge,
+			expectedBody:   "config body exceeds maximum size",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			router := proxy.NewRouter()
+			api := proxy.NewConfigAPI(router, "")
+
+			// Build a valid-looking JSON body that exceeds the limit.
+			// Use a large string value inside a JSON object so the decoder
+			// keeps reading until MaxBytesReader triggers.
+			largeValue := strings.Repeat("a", tt.bodySize)
+			oversizeBody := `{"version":1,"rules":[{"hostnames":["` + largeValue + `"]}]}`
+
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodPut, "/config",
+				strings.NewReader(oversizeBody))
+			req.Header.Set("Content-Type", "application/json")
+			recorder := httptest.NewRecorder()
+
+			api.ServeHTTP(recorder, req)
+
+			assert.Equal(t, tt.expectedStatus, recorder.Code)
+			assert.Contains(t, recorder.Body.String(), tt.expectedBody)
+		})
+	}
 }

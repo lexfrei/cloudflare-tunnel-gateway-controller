@@ -8,14 +8,21 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"path"
 	"strings"
 	"time"
 
 	"github.com/cockroachdb/errors"
 )
 
-// mirrorTimeout is the maximum time to wait for a mirror request.
-const mirrorTimeout = 5 * time.Second
+// Mirror HTTP client pool configuration.
+const (
+	mirrorTimeout         = 5 * time.Second
+	mirrorMaxIdleConns    = 100
+	mirrorMaxIdlePerHost  = 10
+	mirrorMaxConnsPerHost = 50
+	mirrorIdleTimeout     = 30 * time.Second
+)
 
 // mirrorClient is a shared HTTP client for all mirror filter instances.
 // Using a single client ensures connection pooling across mirror filters.
@@ -23,6 +30,12 @@ const mirrorTimeout = 5 * time.Second
 //nolint:gochecknoglobals // shared client avoids unbounded transport pool creation
 var mirrorClient = &http.Client{
 	Timeout: mirrorTimeout,
+	Transport: &http.Transport{
+		MaxIdleConns:        mirrorMaxIdleConns,
+		MaxIdleConnsPerHost: mirrorMaxIdlePerHost,
+		MaxConnsPerHost:     mirrorMaxConnsPerHost,
+		IdleConnTimeout:     mirrorIdleTimeout,
+	},
 }
 
 // maxMirrorBodySize is the maximum request body size that will be buffered
@@ -157,7 +170,7 @@ func (f *requestRedirect) buildRedirectURL(req *http.Request) string {
 func buildRedirectBase(req *http.Request, config *RedirectConfig) *url.URL {
 	scheme := req.URL.Scheme
 	if scheme == "" {
-		scheme = "https"
+		scheme = schemeHTTPS
 	}
 
 	if config.Scheme != nil {
@@ -197,7 +210,7 @@ func buildRedirectPath(req *http.Request, config *RedirectConfig) string {
 		if matchedPrefix != "" {
 			suffix := strings.TrimPrefix(req.URL.Path, matchedPrefix)
 
-			return config.Path.Value + suffix
+			return joinPathSegments(config.Path.Value, suffix)
 		}
 
 		return config.Path.Value
@@ -215,6 +228,17 @@ func stripPort(host string) string {
 	}
 
 	return host
+}
+
+// joinPathSegments concatenates a prefix and suffix into a clean path
+// without producing double slashes. When suffix is empty the prefix
+// is returned unchanged (no trailing slash added).
+func joinPathSegments(prefix, suffix string) string {
+	if suffix == "" {
+		return prefix
+	}
+
+	return path.Clean(prefix + "/" + suffix)
 }
 
 // urlRewriter modifies the request URL path and/or host.
@@ -254,7 +278,7 @@ func (f *urlRewriter) rewritePath(req *http.Request) {
 			matchedPrefix := getMatchedPrefix(req)
 			if matchedPrefix != "" {
 				suffix := strings.TrimPrefix(req.URL.Path, matchedPrefix)
-				req.URL.Path = *f.config.Path.ReplacePrefixMatch + suffix
+				req.URL.Path = joinPathSegments(*f.config.Path.ReplacePrefixMatch, suffix)
 			}
 		}
 	}

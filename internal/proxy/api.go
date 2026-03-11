@@ -70,6 +70,13 @@ func (a *ConfigAPI) handlePutConfig(writer http.ResponseWriter, req *http.Reques
 
 	err := decoder.Decode(&cfg)
 	if err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			http.Error(writer, "config body exceeds maximum size", http.StatusRequestEntityTooLarge)
+
+			return
+		}
+
 		slog.Warn("config API: invalid JSON", "error", err)
 		http.Error(writer, "invalid JSON", http.StatusBadRequest)
 

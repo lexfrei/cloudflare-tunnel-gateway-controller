@@ -28,8 +28,12 @@ func init() {
 
 const (
 	defaultServicePort = 80
+	httpsPort          = 443
 	minPort            = 1
 	maxPort            = 65535
+
+	schemeHTTP  = "http"
+	schemeHTTPS = "https"
 )
 
 // BackendRefValidator checks whether a cross-namespace backend reference is allowed.
@@ -446,6 +450,15 @@ func convertBackendRef(
 		result.Weight = *backend.Weight
 	}
 
+	if result.Weight < 0 {
+		slog.Warn("skipping backend with negative weight",
+			"name", string(backend.Name),
+			"weight", result.Weight,
+		)
+
+		return BackendRef{}, false
+	}
+
 	serviceName := string(backend.Name)
 
 	port := int32(defaultServicePort)
@@ -459,27 +472,46 @@ func convertBackendRef(
 		return BackendRef{}, false
 	}
 
-	svcNamespace := namespace
-	if backend.Namespace != nil {
-		svcNamespace = string(*backend.Namespace)
-	}
+	svcNamespace := resolveBackendNamespace(backend, namespace)
 
-	// Validate cross-namespace references via ReferenceGrant.
-	if svcNamespace != namespace && validator != nil {
-		if !validator(ctx, namespace, backend.BackendObjectReference) {
-			slog.Warn("skipping cross-namespace backend ref not permitted by ReferenceGrant",
-				"service", serviceName,
-				"from_namespace", namespace,
-				"to_namespace", svcNamespace,
-			)
-
-			return BackendRef{}, false
-		}
+	if !validateCrossNamespace(ctx, svcNamespace, namespace, serviceName, backend.BackendObjectReference, validator) {
+		return BackendRef{}, false
 	}
 
 	result.URL = buildServiceURL(serviceName, svcNamespace, port, clusterDomain)
 
 	return result, true
+}
+
+func resolveBackendNamespace(backend *gatewayv1.HTTPBackendRef, fallback string) string {
+	if backend.Namespace != nil {
+		return string(*backend.Namespace)
+	}
+
+	return fallback
+}
+
+func validateCrossNamespace(
+	ctx context.Context,
+	targetNS, sourceNS, serviceName string,
+	ref gatewayv1.BackendObjectReference,
+	validator BackendRefValidator,
+) bool {
+	if targetNS == sourceNS || validator == nil {
+		return true
+	}
+
+	if !validator(ctx, sourceNS, ref) {
+		slog.Warn("skipping cross-namespace backend ref not permitted by ReferenceGrant",
+			"service", serviceName,
+			"from_namespace", sourceNS,
+			"to_namespace", targetNS,
+		)
+
+		return false
+	}
+
+	return true
 }
 
 func validatePort(port int32) bool {
@@ -489,7 +521,12 @@ func validatePort(port int32) bool {
 func buildServiceURL(name, namespace string, port int32, clusterDomain string) string {
 	clusterDomain = strings.TrimSuffix(clusterDomain, ".")
 
-	return fmt.Sprintf("http://%s.%s.svc.%s:%d", name, namespace, clusterDomain, port)
+	scheme := schemeHTTP
+	if port == httpsPort {
+		scheme = schemeHTTPS
+	}
+
+	return fmt.Sprintf("%s://%s.%s.svc.%s:%d", scheme, name, namespace, clusterDomain, port)
 }
 
 // convertTimeouts parses Gateway API timeout values into Go durations.

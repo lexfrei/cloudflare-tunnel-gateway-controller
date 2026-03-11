@@ -1324,6 +1324,86 @@ func TestConvertBackendRef_SameNamespaceAlwaysAllowed(t *testing.T) {
 	require.Len(t, cfg.Rules[0].Backends, 1, "same-namespace backend should always be allowed")
 }
 
+func TestBuildServiceURL_SchemeByPort(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		port        int
+		expectedURL string
+	}{
+		{
+			name:        "port 443 uses https scheme",
+			port:        443,
+			expectedURL: "https://svc.default.svc.cluster.local:443",
+		},
+		{
+			name:        "port 80 uses http scheme",
+			port:        80,
+			expectedURL: "http://svc.default.svc.cluster.local:80",
+		},
+		{
+			name:        "port 8080 uses http scheme",
+			port:        8080,
+			expectedURL: "http://svc.default.svc.cluster.local:8080",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			route := &gatewayv1.HTTPRoute{
+				ObjectMeta: metav1.ObjectMeta{Name: "scheme-test", Namespace: "default"},
+				Spec: gatewayv1.HTTPRouteSpec{
+					Hostnames: []gatewayv1.Hostname{"example.com"},
+					Rules: []gatewayv1.HTTPRouteRule{
+						{
+							BackendRefs: []gatewayv1.HTTPBackendRef{
+								backendRef("svc", tt.port, 1),
+							},
+						},
+					},
+				},
+			}
+
+			cfg := proxy.ConvertHTTPRoutes(context.Background(), []*gatewayv1.HTTPRoute{route}, "cluster.local", nil)
+
+			require.Len(t, cfg.Rules, 1)
+			require.Len(t, cfg.Rules[0].Backends, 1)
+			assert.Equal(t, tt.expectedURL, cfg.Rules[0].Backends[0].URL)
+		})
+	}
+}
+
+func TestConvertBackendRef_NegativeWeight(t *testing.T) {
+	t.Parallel()
+
+	pathPrefix := gatewayv1.PathMatchPathPrefix
+
+	route := &gatewayv1.HTTPRoute{
+		ObjectMeta: metav1.ObjectMeta{Name: "neg-weight", Namespace: "default"},
+		Spec: gatewayv1.HTTPRouteSpec{
+			Hostnames: []gatewayv1.Hostname{"example.com"},
+			Rules: []gatewayv1.HTTPRouteRule{
+				{
+					Matches: []gatewayv1.HTTPRouteMatch{
+						{Path: &gatewayv1.HTTPPathMatch{Type: &pathPrefix, Value: new("/")}},
+					},
+					BackendRefs: []gatewayv1.HTTPBackendRef{
+						backendRef("svc", 80, -1),
+					},
+				},
+			},
+		},
+	}
+
+	cfg := proxy.ConvertHTTPRoutes(context.Background(), []*gatewayv1.HTTPRoute{route}, "cluster.local", nil)
+
+	require.Len(t, cfg.Rules, 1)
+	assert.Empty(t, cfg.Rules[0].Backends, "backend with negative weight should be skipped")
+}
+
 // Helper functions.
 
 func routeWithQueryMatch(query gatewayv1.HTTPQueryParamMatch) *gatewayv1.HTTPRoute {

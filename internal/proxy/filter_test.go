@@ -316,6 +316,133 @@ func TestURLRewriter_ReplacePrefixMatch(t *testing.T) {
 	assert.Equal(t, "/v2/users", req.URL.Path)
 }
 
+func TestRequestRedirect_PrefixReplaceNoDoubleSlash(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name          string
+		replacement   string
+		matchedPrefix string
+		requestPath   string
+		expectedPath  string
+	}{
+		{
+			name:          "trailing slash on replacement with leading slash on suffix",
+			replacement:   "/v2/",
+			matchedPrefix: "/api",
+			requestPath:   "/api/users",
+			expectedPath:  "/v2/users",
+		},
+		{
+			name:          "trailing slash on replacement with no suffix",
+			replacement:   "/v2/",
+			matchedPrefix: "/api",
+			requestPath:   "/api",
+			expectedPath:  "/v2/",
+		},
+		{
+			name:          "no trailing slash normal case",
+			replacement:   "/v2",
+			matchedPrefix: "/api",
+			requestPath:   "/api/users",
+			expectedPath:  "/v2/users",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			statusCode := http.StatusMovedPermanently
+
+			filter := proxy.NewRequestRedirect(&proxy.RedirectConfig{
+				Path: &proxy.RedirectPath{
+					Type:  proxy.RedirectPathPrefixReplace,
+					Value: tt.replacement,
+				},
+				StatusCode: &statusCode,
+			})
+
+			req := &http.Request{
+				Host:   "example.com",
+				URL:    &url.URL{Scheme: testSchemeHTTPS, Host: "example.com", Path: tt.requestPath},
+				Header: http.Header{},
+			}
+			req = proxy.SetMatchedPrefix(req, tt.matchedPrefix)
+
+			resp := filter.ProcessRequest(req)
+			require.NotNil(t, resp)
+			defer resp.Body.Close()
+
+			location := resp.Header.Get("Location")
+			parsed, err := url.Parse(location)
+			require.NoError(t, err)
+			assert.Equal(t, tt.expectedPath, parsed.Path,
+				"path should not contain double slashes")
+		})
+	}
+}
+
+func TestURLRewriter_PrefixReplaceNoDoubleSlash(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name          string
+		replacement   string
+		matchedPrefix string
+		requestPath   string
+		expectedPath  string
+	}{
+		{
+			name:          "trailing slash on replacement with leading slash on suffix",
+			replacement:   "/v2/",
+			matchedPrefix: "/api",
+			requestPath:   "/api/users",
+			expectedPath:  "/v2/users",
+		},
+		{
+			name:          "trailing slash on replacement with no suffix",
+			replacement:   "/v2/",
+			matchedPrefix: "/api",
+			requestPath:   "/api",
+			expectedPath:  "/v2/",
+		},
+		{
+			name:          "no trailing slash normal case",
+			replacement:   "/v2",
+			matchedPrefix: "/api",
+			requestPath:   "/api/users",
+			expectedPath:  "/v2/users",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			replacement := tt.replacement
+
+			filter := proxy.NewURLRewriter(&proxy.URLRewriteConfig{
+				Path: &proxy.URLRewritePath{
+					Type:               proxy.URLRewritePrefixMatch,
+					ReplacePrefixMatch: &replacement,
+				},
+			})
+
+			req := &http.Request{
+				URL:    &url.URL{Path: tt.requestPath},
+				Header: http.Header{},
+			}
+			req = proxy.SetMatchedPrefix(req, tt.matchedPrefix)
+
+			resp := filter.ProcessRequest(req) //nolint:bodyclose // rewriter returns nil response
+			assert.Nil(t, resp)
+			assert.Equal(t, tt.expectedPath, req.URL.Path,
+				"path should not contain double slashes")
+		})
+	}
+}
+
 func TestURLRewriter_Hostname(t *testing.T) {
 	t.Parallel()
 
