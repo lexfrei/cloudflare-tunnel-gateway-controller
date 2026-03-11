@@ -190,11 +190,12 @@ func compileRoutingTable(cfg *Config) (*routingTable, error) {
 		}
 
 		for _, hostname := range rule.Hostnames {
-			if strings.HasPrefix(hostname, "*.") {
-				suffix := hostname[1:] // e.g., "*.example.com" → ".example.com"
+			normalized := strings.ToLower(hostname)
+			if strings.HasPrefix(normalized, "*.") {
+				suffix := normalized[1:] // e.g., "*.example.com" → ".example.com"
 				wildcardMap[suffix] = append(wildcardMap[suffix], compiled)
 			} else {
-				table.exactHosts[hostname] = append(table.exactHosts[hostname], compiled)
+				table.exactHosts[normalized] = append(table.exactHosts[normalized], compiled)
 			}
 		}
 	}
@@ -308,7 +309,8 @@ func sortRulesByPrecedence(rules []*compiledRule) {
 // Multiple matches within a rule are ORed.
 func matchRules(rules []*compiledRule, req *http.Request) *RouteResult {
 	for _, compiled := range rules {
-		if !matchesRule(compiled, req) {
+		matchIdx := findMatchingIndex(compiled, req)
+		if matchIdx < 0 {
 			continue
 		}
 
@@ -316,16 +318,18 @@ func matchRules(rules []*compiledRule, req *http.Request) *RouteResult {
 			Rule:          compiled.rule,
 			Filters:       compiled.filters,
 			BackendIdx:    selectBackend(compiled.rule.Backends),
-			MatchedPrefix: getMatchedPathPrefix(compiled.rule),
+			MatchedPrefix: getMatchedPathPrefix(compiled.rule, matchIdx),
 		}
 	}
 
 	return nil
 }
 
-// getMatchedPathPrefix returns the path prefix value from the first prefix match.
-func getMatchedPathPrefix(rule *RouteRule) string {
-	for _, match := range rule.Matches {
+// getMatchedPathPrefix returns the path prefix from the match that actually fired.
+// Falls back to the first prefix match if matchIdx is out of range.
+func getMatchedPathPrefix(rule *RouteRule, matchIdx int) string {
+	if matchIdx >= 0 && matchIdx < len(rule.Matches) {
+		match := rule.Matches[matchIdx]
 		if match.Path != nil && match.Path.Type == PathMatchPathPrefix {
 			return match.Path.Value
 		}
@@ -334,20 +338,20 @@ func getMatchedPathPrefix(rule *RouteRule) string {
 	return ""
 }
 
-// matchesRule checks if a request matches any of the rule's compiled match conditions (OR logic).
-// A rule with no match conditions accepts everything.
-func matchesRule(compiled *compiledRule, req *http.Request) bool {
+// findMatchingIndex returns the index of the first compiled match that matches the request,
+// or -1 if no match is found. A rule with no match conditions returns 0 (matches everything).
+func findMatchingIndex(compiled *compiledRule, req *http.Request) int {
 	if len(compiled.matches) == 0 {
-		return true
+		return 0
 	}
 
-	for _, match := range compiled.matches {
+	for idx, match := range compiled.matches {
 		if match.Match(req) {
-			return true
+			return idx
 		}
 	}
 
-	return false
+	return -1
 }
 
 // selectBackend picks a backend using weighted random selection.
@@ -368,8 +372,8 @@ func selectBackend(backends []BackendRef) int {
 	}
 
 	if totalWeight <= 0 {
-		//nolint:gosec // not security-sensitive, routing randomization only
-		return rand.IntN(len(backends))
+		// All backends have zero weight — per Gateway API spec, no traffic should be sent.
+		return -1
 	}
 
 	//nolint:gosec // not security-sensitive, routing randomization only

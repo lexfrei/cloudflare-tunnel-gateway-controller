@@ -683,3 +683,114 @@ func TestRouter_ReadyzBeforeConfig(t *testing.T) {
 	router := proxy.NewRouter()
 	assert.Equal(t, int64(0), router.ConfigVersion(), "new router should have version 0")
 }
+
+func TestRouter_MatchedPrefixFromCorrectMatch(t *testing.T) {
+	t.Parallel()
+
+	router := proxy.NewRouter()
+
+	cfg := &proxy.Config{
+		Version: 1,
+		Rules: []proxy.RouteRule{
+			{
+				Hostnames: []string{"example.com"},
+				Matches: []proxy.RouteMatch{
+					{Path: &proxy.PathMatch{Type: proxy.PathMatchPathPrefix, Value: "/api"}},
+					{Path: &proxy.PathMatch{Type: proxy.PathMatchPathPrefix, Value: "/v2"}},
+				},
+				Backends: []proxy.BackendRef{{URL: "http://backend:80", Weight: 1}},
+			},
+		},
+	}
+
+	require.NoError(t, router.UpdateConfig(cfg))
+
+	// Request matches second match (/v2), not first (/api).
+	// MatchedPrefix must be /v2, not /api.
+	req := &http.Request{
+		Method: http.MethodGet,
+		Host:   "example.com",
+		URL:    &url.URL{Path: "/v2/users"},
+		Header: http.Header{},
+	}
+
+	result := router.Route(req)
+	require.NotNil(t, result)
+	assert.Equal(t, "/v2", result.MatchedPrefix, "should return prefix from the match that fired")
+}
+
+func TestRouter_ZeroWeightBackendsReturnNoBackend(t *testing.T) {
+	t.Parallel()
+
+	router := proxy.NewRouter()
+
+	cfg := &proxy.Config{
+		Version: 1,
+		Rules: []proxy.RouteRule{
+			{
+				Hostnames: []string{"example.com"},
+				Backends: []proxy.BackendRef{
+					{URL: "http://a:80", Weight: 0},
+					{URL: "http://b:80", Weight: 0},
+				},
+			},
+		},
+	}
+
+	require.NoError(t, router.UpdateConfig(cfg))
+
+	req := &http.Request{
+		Method: http.MethodGet,
+		Host:   "example.com",
+		URL:    &url.URL{Path: "/"},
+		Header: http.Header{},
+	}
+
+	// All backends have zero weight — should return -1 per Gateway API spec.
+	for range 100 {
+		result := router.Route(req)
+		require.NotNil(t, result)
+		assert.Equal(t, -1, result.BackendIdx, "zero-weight backends should not receive traffic")
+	}
+}
+
+func TestRouter_HostnameCaseInsensitive(t *testing.T) {
+	t.Parallel()
+
+	router := proxy.NewRouter()
+
+	cfg := &proxy.Config{
+		Version: 1,
+		Rules: []proxy.RouteRule{
+			{
+				Hostnames: []string{"Example.COM"},
+				Backends:  []proxy.BackendRef{{URL: "http://backend:80", Weight: 1}},
+			},
+			{
+				Hostnames: []string{"*.UPPER.Example.Com"},
+				Backends:  []proxy.BackendRef{{URL: "http://wildcard:80", Weight: 1}},
+			},
+		},
+	}
+
+	require.NoError(t, router.UpdateConfig(cfg))
+
+	// Lowercase request host should match uppercase config hostname.
+	req := &http.Request{
+		Method: http.MethodGet,
+		Host:   "example.com",
+		URL:    &url.URL{Path: "/"},
+		Header: http.Header{},
+	}
+
+	result := router.Route(req)
+	require.NotNil(t, result, "lowercase host should match uppercase config")
+	assert.Equal(t, "http://backend:80", result.Rule.Backends[0].URL)
+
+	// Wildcard with mixed-case config should match lowercase host.
+	req.Host = "app.upper.example.com"
+
+	result = router.Route(req)
+	require.NotNil(t, result, "lowercase host should match uppercase wildcard config")
+	assert.Equal(t, "http://wildcard:80", result.Rule.Backends[0].URL)
+}
