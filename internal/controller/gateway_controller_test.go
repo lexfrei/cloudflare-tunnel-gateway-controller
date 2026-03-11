@@ -4378,3 +4378,145 @@ func TestGatewayReconciler_CloudflaredValuesChanged_NotV1Release(t *testing.T) {
 	result := cloudflaredValuesChanged(&mockReleaser{}, desired)
 	assert.True(t, result, "non-v1 release should indicate changed values (safe default)")
 }
+
+func TestGatewayReconciler_RouteToGateways_HTTPRoute(t *testing.T) {
+	t.Parallel()
+
+	scheme := runtime.NewScheme()
+	utilruntime.Must(gatewayv1.Install(scheme))
+	utilruntime.Must(v1alpha1.AddToScheme(scheme))
+
+	gatewayClass := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "cloudflare-tunnel"},
+		Spec:       gatewayv1.GatewayClassSpec{ControllerName: "cloudflare-tunnel"},
+	}
+
+	gateway := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-gw", Namespace: "default"},
+		Spec: gatewayv1.GatewaySpec{
+			GatewayClassName: "cloudflare-tunnel",
+			Listeners:        httpListener(),
+		},
+	}
+
+	httpRoute := &gatewayv1.HTTPRoute{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-route", Namespace: "default"},
+		Spec: gatewayv1.HTTPRouteSpec{
+			CommonRouteSpec: gatewayv1.CommonRouteSpec{
+				ParentRefs: []gatewayv1.ParentReference{
+					{Name: "test-gw"},
+				},
+			},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(gatewayClass, gateway, httpRoute).
+		Build()
+
+	reconciler := &GatewayReconciler{
+		Client:         fakeClient,
+		ControllerName: "cloudflare-tunnel",
+	}
+
+	requests := reconciler.routeToGateways(context.Background(), httpRoute)
+
+	require.Len(t, requests, 1)
+	assert.Equal(t, "test-gw", requests[0].Name)
+	assert.Equal(t, "default", requests[0].Namespace)
+}
+
+func TestGatewayReconciler_RouteToGateways_GRPCRoute(t *testing.T) {
+	t.Parallel()
+
+	scheme := runtime.NewScheme()
+	utilruntime.Must(gatewayv1.Install(scheme))
+	utilruntime.Must(v1alpha1.AddToScheme(scheme))
+
+	gatewayClass := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "cloudflare-tunnel"},
+		Spec:       gatewayv1.GatewayClassSpec{ControllerName: "cloudflare-tunnel"},
+	}
+
+	gateway := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "grpc-gw", Namespace: "infra"},
+		Spec: gatewayv1.GatewaySpec{
+			GatewayClassName: "cloudflare-tunnel",
+			Listeners:        httpListener(),
+		},
+	}
+
+	grpcRoute := &gatewayv1.GRPCRoute{
+		ObjectMeta: metav1.ObjectMeta{Name: "grpc-route", Namespace: "infra"},
+		Spec: gatewayv1.GRPCRouteSpec{
+			CommonRouteSpec: gatewayv1.CommonRouteSpec{
+				ParentRefs: []gatewayv1.ParentReference{
+					{Name: "grpc-gw"},
+				},
+			},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(gatewayClass, gateway, grpcRoute).
+		Build()
+
+	reconciler := &GatewayReconciler{
+		Client:         fakeClient,
+		ControllerName: "cloudflare-tunnel",
+	}
+
+	requests := reconciler.routeToGateways(context.Background(), grpcRoute)
+
+	require.Len(t, requests, 1)
+	assert.Equal(t, "grpc-gw", requests[0].Name)
+	assert.Equal(t, "infra", requests[0].Namespace)
+}
+
+func TestGatewayReconciler_RouteToGateways_DifferentClass(t *testing.T) {
+	t.Parallel()
+
+	scheme := runtime.NewScheme()
+	utilruntime.Must(gatewayv1.Install(scheme))
+	utilruntime.Must(v1alpha1.AddToScheme(scheme))
+
+	gatewayClass := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "other-class"},
+		Spec:       gatewayv1.GatewayClassSpec{ControllerName: "other-controller"},
+	}
+
+	gateway := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "other-gw", Namespace: "default"},
+		Spec: gatewayv1.GatewaySpec{
+			GatewayClassName: "other-class",
+			Listeners:        httpListener(),
+		},
+	}
+
+	httpRoute := &gatewayv1.HTTPRoute{
+		ObjectMeta: metav1.ObjectMeta{Name: "route", Namespace: "default"},
+		Spec: gatewayv1.HTTPRouteSpec{
+			CommonRouteSpec: gatewayv1.CommonRouteSpec{
+				ParentRefs: []gatewayv1.ParentReference{
+					{Name: "other-gw"},
+				},
+			},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(gatewayClass, gateway, httpRoute).
+		Build()
+
+	reconciler := &GatewayReconciler{
+		Client:         fakeClient,
+		ControllerName: "cloudflare-tunnel",
+	}
+
+	requests := reconciler.routeToGateways(context.Background(), httpRoute)
+
+	assert.Empty(t, requests, "route referencing different GatewayClass should not trigger reconcile")
+}

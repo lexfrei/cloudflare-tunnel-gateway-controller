@@ -747,6 +747,16 @@ func (r *GatewayReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			&gatewayv1beta1.ReferenceGrant{},
 			handler.EnqueueRequestsFromMapFunc(r.referenceGrantToGateways),
 		).
+		// Watch HTTPRoutes to update AttachedRoutes count when routes change
+		Watches(
+			&gatewayv1.HTTPRoute{},
+			handler.EnqueueRequestsFromMapFunc(r.routeToGateways),
+		).
+		// Watch GRPCRoutes to update AttachedRoutes count when routes change
+		Watches(
+			&gatewayv1.GRPCRoute{},
+			handler.EnqueueRequestsFromMapFunc(r.routeToGateways),
+		).
 		Complete(r)
 }
 
@@ -850,6 +860,61 @@ func (r *GatewayReconciler) referenceGrantToGateways(
 				},
 			})
 		}
+	}
+
+	return requests
+}
+
+// routeToGateways maps HTTPRoute/GRPCRoute events to Gateway reconcile requests.
+// This ensures AttachedRoutes is updated when routes are created, updated, or deleted.
+func (r *GatewayReconciler) routeToGateways(
+	ctx context.Context,
+	obj client.Object,
+) []reconcile.Request {
+	var parentRefs []gatewayv1.ParentReference
+
+	switch route := obj.(type) {
+	case *gatewayv1.HTTPRoute:
+		parentRefs = route.Spec.ParentRefs
+	case *gatewayv1.GRPCRoute:
+		parentRefs = route.Spec.ParentRefs
+	default:
+		return nil
+	}
+
+	classNames := managedClassNames(ctx, r.Client, r.ControllerName)
+
+	seen := make(map[types.NamespacedName]bool)
+
+	var requests []reconcile.Request
+
+	for _, ref := range parentRefs {
+		if ref.Kind != nil && *ref.Kind != kindGateway {
+			continue
+		}
+
+		gwNamespace := obj.GetNamespace()
+		if ref.Namespace != nil {
+			gwNamespace = string(*ref.Namespace)
+		}
+
+		gwKey := types.NamespacedName{Name: string(ref.Name), Namespace: gwNamespace}
+		if seen[gwKey] {
+			continue
+		}
+
+		seen[gwKey] = true
+
+		var gateway gatewayv1.Gateway
+		if err := r.Get(ctx, gwKey, &gateway); err != nil {
+			continue
+		}
+
+		if !classNames[string(gateway.Spec.GatewayClassName)] {
+			continue
+		}
+
+		requests = append(requests, reconcile.Request{NamespacedName: gwKey})
 	}
 
 	return requests
