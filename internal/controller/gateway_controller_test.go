@@ -4520,3 +4520,118 @@ func TestGatewayReconciler_RouteToGateways_DifferentClass(t *testing.T) {
 
 	assert.Empty(t, requests, "route referencing different GatewayClass should not trigger reconcile")
 }
+
+func TestGatewayReconciler_UpdateStatus_UnresolvedRefs_ProgrammedFalse(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+
+	gateway := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       "tls-gw",
+			Namespace:  "default",
+			Generation: 1,
+		},
+		Spec: gatewayv1.GatewaySpec{
+			GatewayClassName: "cloudflare-tunnel",
+			Listeners: []gatewayv1.Listener{
+				{
+					Name:     "https",
+					Port:     443,
+					Protocol: gatewayv1.HTTPSProtocolType,
+					TLS: &gatewayv1.ListenerTLSConfig{
+						CertificateRefs: []gatewayv1.SecretObjectReference{
+							{Name: "does-not-exist"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	disabled := false
+	gatewayClassConfig := &v1alpha1.GatewayClassConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-config",
+		},
+		Spec: v1alpha1.GatewayClassConfigSpec{
+			CloudflareCredentialsSecretRef: v1alpha1.SecretReference{
+				Name:      "cf-creds",
+				Namespace: "default",
+			},
+			TunnelID: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+			Cloudflared: v1alpha1.CloudflaredConfig{
+				Enabled: &disabled,
+			},
+		},
+	}
+
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "cf-creds",
+			Namespace: "default",
+		},
+		Data: map[string][]byte{
+			"api-token": []byte("test-token"),
+		},
+	}
+
+	gatewayClass := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "cloudflare-tunnel",
+		},
+		Spec: gatewayv1.GatewayClassSpec{
+			ControllerName: "test-controller",
+			ParametersRef: &gatewayv1.ParametersReference{
+				Group: config.ParametersRefGroup,
+				Kind:  config.ParametersRefKind,
+				Name:  "test-config",
+			},
+		},
+	}
+
+	fakeClient := setupGatewayFakeClient(gateway, gatewayClassConfig, secret, gatewayClass)
+
+	reconciler := &GatewayReconciler{
+		Client:         fakeClient,
+		Scheme:         fakeClient.Scheme(),
+		ControllerName: "test-controller",
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		HelmManager:    nil,
+	}
+
+	result, err := reconciler.Reconcile(ctx, ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "tls-gw", Namespace: "default"},
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, ctrl.Result{}, result)
+
+	var updatedGateway gatewayv1.Gateway
+	err = fakeClient.Get(ctx, types.NamespacedName{Name: "tls-gw", Namespace: "default"}, &updatedGateway)
+	require.NoError(t, err)
+
+	require.Len(t, updatedGateway.Status.Listeners, 1)
+	listener := updatedGateway.Status.Listeners[0]
+
+	// ResolvedRefs must be False (missing secret)
+	resolvedRefs := findCondition(listener.Conditions, string(gatewayv1.ListenerConditionResolvedRefs))
+	require.NotNil(t, resolvedRefs, "ResolvedRefs condition must exist")
+	assert.Equal(t, metav1.ConditionFalse, resolvedRefs.Status)
+	assert.Equal(t, string(gatewayv1.ListenerReasonInvalidCertificateRef), resolvedRefs.Reason)
+
+	// Programmed must be False when ResolvedRefs is False
+	programmed := findCondition(listener.Conditions, string(gatewayv1.ListenerConditionProgrammed))
+	require.NotNil(t, programmed, "Programmed condition must exist")
+	assert.Equal(t, metav1.ConditionFalse, programmed.Status, "Programmed must be False when ResolvedRefs is False")
+}
+
+func findCondition(conditions []metav1.Condition, condType string) *metav1.Condition {
+	for i := range conditions {
+		if conditions[i].Type == condType {
+			return &conditions[i]
+		}
+	}
+
+	return nil
+}

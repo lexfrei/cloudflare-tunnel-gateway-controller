@@ -463,6 +463,21 @@ func (r *GatewayReconciler) updateStatus(
 				supportedKinds = []gatewayv1.RouteGroupKind{} // Empty slice (not nil) when no valid kinds
 			}
 
+			programmedCondition := metav1.Condition{
+				Type:               string(gatewayv1.ListenerConditionProgrammed),
+				Status:             metav1.ConditionTrue,
+				ObservedGeneration: freshGateway.Generation,
+				LastTransitionTime: now,
+				Reason:             string(gatewayv1.ListenerReasonProgrammed),
+				Message:            "Listener programmed",
+			}
+
+			if resolvedRefsCondition.Status == metav1.ConditionFalse {
+				programmedCondition.Status = metav1.ConditionFalse
+				programmedCondition.Reason = string(gatewayv1.ListenerReasonInvalid)
+				programmedCondition.Message = "Listener has unresolved references"
+			}
+
 			listenerStatuses = append(listenerStatuses, gatewayv1.ListenerStatus{
 				Name:           listener.Name,
 				SupportedKinds: supportedKinds,
@@ -476,14 +491,7 @@ func (r *GatewayReconciler) updateStatus(
 						Reason:             string(gatewayv1.ListenerReasonAccepted),
 						Message:            "Listener accepted",
 					},
-					{
-						Type:               string(gatewayv1.ListenerConditionProgrammed),
-						Status:             metav1.ConditionTrue,
-						ObservedGeneration: freshGateway.Generation,
-						LastTransitionTime: now,
-						Reason:             string(gatewayv1.ListenerReasonProgrammed),
-						Message:            "Listener programmed",
-					},
+					programmedCondition,
 					resolvedRefsCondition,
 				},
 			})
