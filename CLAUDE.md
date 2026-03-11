@@ -147,7 +147,7 @@ internal/
   tunnel/                # cloudflared tunnel bootstrap and GatewayOriginProxy adapter
 charts/                  # Helm chart with helm-unittest tests
 deploy/                  # Raw Kubernetes manifests for manual deployment
-test/conformance/        # Gateway API conformance E2E tests
+test/e2e/                # E2E tests (custom, against live tunnel + proxy)
 ```
 
 ## Testing Standards
