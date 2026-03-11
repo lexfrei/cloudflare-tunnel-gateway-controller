@@ -103,6 +103,10 @@ func newBackendRefValidator(validator *referencegrant.Validator) proxy.BackendRe
 // SyncRoutes converts pre-collected HTTPRoutes to proxy config and pushes to all endpoints.
 // Routes should come from the RouteSyncer's SyncResult to avoid redundant API calls.
 func (s *ProxySyncer) SyncRoutes(ctx context.Context, endpoints []string, routes []*gatewayv1.HTTPRoute) error {
+	// Resolve headless service DNS names before acquiring the lock
+	// to avoid blocking concurrent reconciles during slow DNS lookups.
+	resolved := resolveEndpoints(ctx, endpoints)
+
 	s.syncMu.Lock()
 	defer s.syncMu.Unlock()
 
@@ -115,9 +119,6 @@ func (s *ProxySyncer) SyncRoutes(ctx context.Context, endpoints []string, routes
 
 	// Convert to proxy config with cross-namespace validation.
 	cfg := proxy.ConvertHTTPRoutes(ctx, routes, s.clusterDomain, s.backendValidator)
-
-	// Resolve headless service DNS names to individual pod IPs.
-	resolved := resolveEndpoints(ctx, endpoints)
 
 	logger.Info("resolved endpoints",
 		"original", len(endpoints),

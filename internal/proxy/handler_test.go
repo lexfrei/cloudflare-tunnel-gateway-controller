@@ -511,6 +511,41 @@ func TestHandler_URLRewriteHostnamePreservedByDirector(t *testing.T) {
 		"Director should preserve the rewritten hostname, not overwrite it with the backend host")
 }
 
+func TestHandler_AllZeroWeightBackendsReturns502(t *testing.T) {
+	t.Parallel()
+
+	router := proxy.NewRouter()
+
+	cfg := &proxy.Config{
+		Version: 1,
+		Rules: []proxy.RouteRule{
+			{
+				Hostnames: []string{"app.example.com"},
+				Matches: []proxy.RouteMatch{
+					{Path: &proxy.PathMatch{Type: proxy.PathMatchPathPrefix, Value: "/"}},
+				},
+				Backends: []proxy.BackendRef{
+					{URL: "http://backend-a:80", Weight: 0},
+					{URL: "http://backend-b:80", Weight: 0},
+				},
+			},
+		},
+	}
+
+	err := router.UpdateConfig(cfg)
+	require.NoError(t, err)
+
+	handler := proxy.NewHandler(router)
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://app.example.com/test", nil)
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, req)
+
+	assert.Equal(t, http.StatusBadGateway, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), "no backend configured")
+}
+
 func TestHandler_PruneTransportsPreservesActiveHosts(t *testing.T) {
 	t.Parallel()
 

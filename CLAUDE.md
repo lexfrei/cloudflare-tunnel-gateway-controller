@@ -27,6 +27,9 @@ golangci-lint run --timeout=5m
 # Lint markdown files
 markdownlint-cli2 '**/*.md'
 
+# Build proxy binary
+go build -o bin/proxy ./cmd/proxy
+
 # Build container
 podman build --tag cloudflare-tunnel-gateway-controller:dev --file Containerfile .
 ```
@@ -60,7 +63,7 @@ helm template test charts/cloudflare-tunnel-gateway-controller --values charts/c
 
 - **GRPCRouteReconciler** (`internal/controller/grpcroute_controller.go`): Watches GRPCRoute resources. Shares RouteSyncer with HTTPRouteReconciler for unified Cloudflare Tunnel sync. Does NOT push to v2 proxy (GRPC is tunnel-only).
 
-- **ProxySyncer** (`internal/controller/proxy_syncer.go`): Converts HTTPRoutes to proxy config and pushes to v2 proxy replicas via ConfigPusher. Validates cross-namespace backends via ReferenceGrant.
+- **ProxySyncer** (`internal/controller/proxy_syncer.go`): Converts HTTPRoutes into proxy config and pushes to proxy endpoints via HTTP API. Resolves headless service DNS for endpoint discovery. Validates cross-namespace backends via ReferenceGrant.
 
 ### Custom Resource Definition
 
@@ -89,7 +92,7 @@ helm template test charts/cloudflare-tunnel-gateway-controller --values charts/c
   - `api.go` — Config API endpoints (PUT/GET /config, healthz, readyz) with Bearer token auth.
   - `pusher.go` — HTTP client for pushing config to proxy replicas concurrently.
 
-- **internal/tunnel/**: Cloudflared tunnel bootstrap and in-process origin proxy (`GatewayOriginProxy`).
+- **internal/tunnel/**: Bootstraps cloudflared tunnel with in-process proxy override. Parses tunnel tokens, builds tunnel configuration, and integrates with the vendored cloudflared `OverrideProxy` hook. Exposes `GatewayOriginProxy` adapter for routing requests to the L7 proxy.
 
 ### Key Dependencies
 

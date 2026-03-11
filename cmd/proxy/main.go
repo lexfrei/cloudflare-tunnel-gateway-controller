@@ -134,6 +134,7 @@ func newServer(addr string, handler http.Handler) *http.Server {
 		Addr:              addr,
 		Handler:           handler,
 		ReadHeaderTimeout: readHeaderTimeout,
+		ReadTimeout:       writeTimeout,
 		WriteTimeout:      writeTimeout,
 	}
 }
