@@ -1151,7 +1151,7 @@ func TestProxySyncer_RouteReferencesGateway(t *testing.T) {
 			require.NoError(t, gatewayv1.Install(scheme))
 
 			fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
-			syncer := NewProxySyncer(fakeClient, scheme, "cluster.local", "cloudflare-tunnel", nil)
+			syncer := NewProxySyncer(fakeClient, scheme, "cluster.local", "cloudflare-tunnel", "", nil)
 
 			got := syncer.routeReferencesGateway(tt.route, tt.gatewayNames)
 			assert.Equal(t, tt.expected, got)
@@ -1226,7 +1226,7 @@ func TestProxySyncer_CollectHTTPRoutes(t *testing.T) {
 		WithObjects(gateway, route1, route2, route3).
 		Build()
 
-	syncer := NewProxySyncer(fakeClient, scheme, "cluster.local", "cloudflare-tunnel", nil)
+	syncer := NewProxySyncer(fakeClient, scheme, "cluster.local", "cloudflare-tunnel", "", nil)
 
 	routes, err := syncer.collectHTTPRoutes(context.Background())
 	require.NoError(t, err)
@@ -1241,7 +1241,7 @@ func TestNewProxySyncer_NilLogger(t *testing.T) {
 
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
 
-	syncer := NewProxySyncer(fakeClient, scheme, "cluster.local", "cloudflare-tunnel", nil)
+	syncer := NewProxySyncer(fakeClient, scheme, "cluster.local", "cloudflare-tunnel", "", nil)
 	require.NotNil(t, syncer)
 	assert.NotNil(t, syncer.logger)
 }

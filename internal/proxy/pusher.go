@@ -22,12 +22,13 @@ type PushResult struct {
 
 // ConfigPusher pushes proxy config to enhanced-cloudflared replicas via HTTP API.
 type ConfigPusher struct {
-	client *http.Client
+	client    *http.Client
+	authToken string
 }
 
-// NewConfigPusher creates a ConfigPusher with the given HTTP client.
-func NewConfigPusher(client *http.Client) *ConfigPusher {
-	return &ConfigPusher{client: client}
+// NewConfigPusher creates a ConfigPusher with the given HTTP client and optional auth token.
+func NewConfigPusher(client *http.Client, authToken string) *ConfigPusher {
+	return &ConfigPusher{client: client, authToken: authToken}
 }
 
 // Push sends the config to all endpoints concurrently and returns results.
@@ -67,6 +68,10 @@ func (p *ConfigPusher) pushToEndpoint(ctx context.Context, endpoint string, body
 	}
 
 	req.Header.Set("Content-Type", "application/json")
+
+	if p.authToken != "" {
+		req.Header.Set("Authorization", "Bearer "+p.authToken)
+	}
 
 	resp, err := p.client.Do(req)
 	if err != nil {

@@ -15,16 +15,20 @@ type ConfigStatus struct {
 }
 
 // ConfigAPI provides HTTP endpoints for runtime config management.
+// When authToken is set, PUT /config requires Bearer token authentication.
 type ConfigAPI struct {
-	router *Router
-	mux    *http.ServeMux
+	router    *Router
+	mux       *http.ServeMux
+	authToken string
 }
 
 // NewConfigAPI creates a ConfigAPI handler for the given Router.
-func NewConfigAPI(router *Router) *ConfigAPI {
+// If authToken is non-empty, PUT /config requires "Authorization: Bearer <token>".
+func NewConfigAPI(router *Router, authToken string) *ConfigAPI {
 	api := &ConfigAPI{
-		router: router,
-		mux:    http.NewServeMux(),
+		router:    router,
+		mux:       http.NewServeMux(),
+		authToken: authToken,
 	}
 
 	api.mux.HandleFunc("PUT /config", api.handlePutConfig)
@@ -44,6 +48,12 @@ func (a *ConfigAPI) ServeHTTP(writer http.ResponseWriter, req *http.Request) {
 const maxConfigBodySize = 1 << 20
 
 func (a *ConfigAPI) handlePutConfig(writer http.ResponseWriter, req *http.Request) {
+	if a.authToken != "" && !a.checkAuth(req) {
+		http.Error(writer, "unauthorized", http.StatusUnauthorized)
+
+		return
+	}
+
 	var cfg Config
 
 	req.Body = http.MaxBytesReader(writer, req.Body, maxConfigBodySize)
@@ -100,6 +110,17 @@ func (a *ConfigAPI) handleGetConfig(writer http.ResponseWriter, _ *http.Request)
 	if writeErr != nil {
 		slog.Error("failed to write config response", "error", writeErr)
 	}
+}
+
+const bearerPrefix = "Bearer "
+
+func (a *ConfigAPI) checkAuth(req *http.Request) bool {
+	header := req.Header.Get("Authorization")
+	if len(header) <= len(bearerPrefix) {
+		return false
+	}
+
+	return header[:len(bearerPrefix)] == bearerPrefix && header[len(bearerPrefix):] == a.authToken
 }
 
 func (a *ConfigAPI) handleHealthz(writer http.ResponseWriter, _ *http.Request) {

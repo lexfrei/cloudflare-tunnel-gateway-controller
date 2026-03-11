@@ -171,9 +171,67 @@ type BackendRef struct {
 }
 
 // RouteTimeouts configures timeout durations for proxied requests.
+// Custom JSON marshal/unmarshal serializes durations as human-readable strings
+// (e.g. "10s") instead of nanosecond integers.
 type RouteTimeouts struct {
 	Request time.Duration `json:"request,omitempty"`
 	Backend time.Duration `json:"backend,omitempty"`
+}
+
+// routeTimeoutsJSON is the JSON wire format for RouteTimeouts.
+type routeTimeoutsJSON struct {
+	Request string `json:"request,omitempty"`
+	Backend string `json:"backend,omitempty"`
+}
+
+// MarshalJSON serializes durations as human-readable strings.
+func (rt RouteTimeouts) MarshalJSON() ([]byte, error) {
+	aux := routeTimeoutsJSON{}
+
+	if rt.Request != 0 {
+		aux.Request = rt.Request.String()
+	}
+
+	if rt.Backend != 0 {
+		aux.Backend = rt.Backend.String()
+	}
+
+	result, err := json.Marshal(aux)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to marshal route timeouts")
+	}
+
+	return result, nil
+}
+
+// UnmarshalJSON deserializes durations from human-readable strings.
+func (rt *RouteTimeouts) UnmarshalJSON(data []byte) error {
+	var aux routeTimeoutsJSON
+
+	err := json.Unmarshal(data, &aux)
+	if err != nil {
+		return errors.Wrap(err, "failed to unmarshal route timeouts")
+	}
+
+	if aux.Request != "" {
+		d, err := time.ParseDuration(aux.Request)
+		if err != nil {
+			return errors.Wrapf(err, "invalid request timeout %q", aux.Request)
+		}
+
+		rt.Request = d
+	}
+
+	if aux.Backend != "" {
+		d, err := time.ParseDuration(aux.Backend)
+		if err != nil {
+			return errors.Wrapf(err, "invalid backend timeout %q", aux.Backend)
+		}
+
+		rt.Backend = d
+	}
+
+	return nil
 }
 
 // Validate checks that the Config is well-formed.

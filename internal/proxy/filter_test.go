@@ -250,7 +250,7 @@ func TestURLRewriter_ReplacePrefixMatch(t *testing.T) {
 	}
 
 	// Need to set the matched prefix for prefix replacement to work.
-	proxy.SetMatchedPrefix(req, "/api/v1")
+	req = proxy.SetMatchedPrefix(req, "/api/v1")
 
 	resp := filter.ProcessRequest(req) //nolint:bodyclose // rewriter returns nil response
 	assert.Nil(t, resp)

@@ -46,7 +46,8 @@ func runTunnelMode(logger *slog.Logger, token string) {
 	router := proxy.NewRouter()
 	proxyHandler := proxy.NewHandler(router)
 
-	configServer := newServer(configAddr, proxy.NewConfigAPI(router))
+	authToken := os.Getenv("PROXY_AUTH_TOKEN")
+	configServer := newServer(configAddr, proxy.NewConfigAPI(router, authToken))
 
 	// Create in-process origin proxy — traffic flows directly from cloudflared
 	// to our handler without HTTP serialization or localhost TCP hop.
@@ -89,7 +90,8 @@ func runStandaloneMode(logger *slog.Logger) {
 
 	router := proxy.NewRouter()
 
-	configServer := newServer(configAddr, proxy.NewConfigAPI(router))
+	authToken := os.Getenv("PROXY_AUTH_TOKEN")
+	configServer := newServer(configAddr, proxy.NewConfigAPI(router, authToken))
 	proxyServer := newServer(proxyAddr, proxy.NewHandler(router))
 
 	errChan := make(chan error, 2)
@@ -106,8 +108,12 @@ func runStandaloneMode(logger *slog.Logger) {
 		errChan <- proxyServer.ListenAndServe()
 	}()
 
-	waitForShutdown(logger, errChan)
+	startupFailure := waitForShutdown(logger, errChan)
 	gracefulShutdown(logger, configServer, proxyServer)
+
+	if startupFailure {
+		os.Exit(1)
+	}
 }
 
 func newServer(addr string, handler http.Handler) *http.Server {
@@ -123,20 +129,47 @@ func handleSignals(logger *slog.Logger, cancel context.CancelFunc) {
 	signal.Notify(sigChan, syscall.SIGTERM, syscall.SIGINT)
 
 	sig := <-sigChan
+
+	signal.Stop(sigChan)
+
 	logger.Info("received signal, shutting down", "signal", sig)
 
 	cancel()
 }
 
-func waitForShutdown(logger *slog.Logger, errChan <-chan error) {
+// waitForShutdown blocks until a termination signal is received or a server
+// error is read from errChan. It returns true when the trigger was a server
+// error (i.e. a startup failure), so the caller can exit with a non-zero code.
+// All remaining errors in errChan are drained and logged before returning.
+func waitForShutdown(logger *slog.Logger, errChan <-chan error) bool {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGTERM, syscall.SIGINT)
+
+	var startupFailure bool
 
 	select {
 	case sig := <-sigChan:
 		logger.Info("received signal, shutting down", "signal", sig)
 	case err := <-errChan:
-		logger.Error("server error", "error", err)
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			logger.Error("server error", "error", err)
+
+			startupFailure = true
+		}
+	}
+
+	signal.Stop(sigChan)
+
+	// Drain remaining errors so no goroutine blocks forever.
+	for {
+		select {
+		case err := <-errChan:
+			if err != nil && !errors.Is(err, http.ErrServerClosed) {
+				logger.Error("server error", "error", err)
+			}
+		default:
+			return startupFailure
+		}
 	}
 }
 

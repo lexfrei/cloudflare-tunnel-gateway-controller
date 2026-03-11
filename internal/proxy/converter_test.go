@@ -1004,6 +1004,102 @@ func TestConvertHeaderMatch_EdgeCases(t *testing.T) {
 	}
 }
 
+func TestConvertBackendRef_InvalidPort(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name          string
+		port          int
+		expectSkipped bool
+	}{
+		{name: "port zero", port: 0, expectSkipped: true},
+		{name: "negative port", port: -1, expectSkipped: true},
+		{name: "port exceeds max", port: 65536, expectSkipped: true},
+		{name: "valid port min", port: 1, expectSkipped: false},
+		{name: "valid port max", port: 65535, expectSkipped: false},
+		{name: "valid port common", port: 8080, expectSkipped: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			pathPrefix := gatewayv1.PathMatchPathPrefix
+
+			route := &gatewayv1.HTTPRoute{
+				ObjectMeta: metav1.ObjectMeta{Name: "port-test", Namespace: "default"},
+				Spec: gatewayv1.HTTPRouteSpec{
+					Hostnames: []gatewayv1.Hostname{"example.com"},
+					Rules: []gatewayv1.HTTPRouteRule{
+						{
+							Matches: []gatewayv1.HTTPRouteMatch{
+								{Path: &gatewayv1.HTTPPathMatch{Type: &pathPrefix, Value: new("/")}},
+							},
+							BackendRefs: []gatewayv1.HTTPBackendRef{
+								backendRef("svc", tt.port, 1),
+							},
+						},
+					},
+				},
+			}
+
+			cfg := proxy.ConvertHTTPRoutes([]*gatewayv1.HTTPRoute{route}, "cluster.local")
+
+			require.Len(t, cfg.Rules, 1)
+
+			if tt.expectSkipped {
+				assert.Empty(t, cfg.Rules[0].Backends, "backend with invalid port should be skipped")
+			} else {
+				require.Len(t, cfg.Rules[0].Backends, 1, "backend with valid port should be kept")
+			}
+		})
+	}
+}
+
+func TestConvertMirrorFilter_InvalidPort(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name          string
+		port          int
+		expectSkipped bool
+	}{
+		{name: "port zero", port: 0, expectSkipped: true},
+		{name: "negative port", port: -1, expectSkipped: true},
+		{name: "port exceeds max", port: 65536, expectSkipped: true},
+		{name: "valid port", port: 8080, expectSkipped: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			portNum := gatewayv1.PortNumber(tt.port)
+
+			route := routeWithFilter(gatewayv1.HTTPRouteFilter{
+				Type: gatewayv1.HTTPRouteFilterRequestMirror,
+				RequestMirror: &gatewayv1.HTTPRequestMirrorFilter{
+					BackendRef: gatewayv1.BackendObjectReference{
+						Name: "mirror-svc",
+						Port: &portNum,
+					},
+				},
+			})
+
+			cfg := proxy.ConvertHTTPRoutes([]*gatewayv1.HTTPRoute{route}, "cluster.local")
+
+			require.Len(t, cfg.Rules, 1)
+
+			if tt.expectSkipped {
+				assert.Empty(t, cfg.Rules[0].Filters, "mirror filter with invalid port should be skipped")
+			} else {
+				require.Len(t, cfg.Rules[0].Filters, 1, "mirror filter with valid port should be kept")
+				assert.Equal(t, proxy.FilterRequestMirror, cfg.Rules[0].Filters[0].Type)
+			}
+		})
+	}
+}
+
 // Helper functions.
 
 func routeWithQueryMatch(query gatewayv1.HTTPQueryParamMatch) *gatewayv1.HTTPRoute {

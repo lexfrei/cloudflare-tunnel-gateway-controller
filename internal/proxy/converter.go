@@ -9,7 +9,11 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
-const defaultServicePort = 80
+const (
+	defaultServicePort = 80
+	minPort            = 1
+	maxPort            = 65535
+)
 
 // ConvertHTTPRoutes converts Gateway API HTTPRoute resources into a proxy Config.
 func ConvertHTTPRoutes(routes []*gatewayv1.HTTPRoute, clusterDomain string) *Config {
@@ -61,7 +65,10 @@ func convertHTTPRouteRule(
 	}
 
 	for backendIdx := range rule.BackendRefs {
-		proxyRule.Backends = append(proxyRule.Backends, convertBackendRef(&rule.BackendRefs[backendIdx], namespace, clusterDomain))
+		backend, ok := convertBackendRef(&rule.BackendRefs[backendIdx], namespace, clusterDomain)
+		if ok {
+			proxyRule.Backends = append(proxyRule.Backends, backend)
+		}
 	}
 
 	if rule.Timeouts != nil {
@@ -213,6 +220,12 @@ func convertMirrorFilter(mirror *gatewayv1.HTTPRequestMirrorFilter, namespace, c
 		mirrorPort = *mirror.BackendRef.Port
 	}
 
+	if !validatePort(mirrorPort) {
+		slog.Warn("skipping mirror with invalid port", "service", string(mirror.BackendRef.Name), "port", mirrorPort)
+
+		return nil
+	}
+
 	mirrorNS := namespace
 	if mirror.BackendRef.Namespace != nil {
 		mirrorNS = string(*mirror.BackendRef.Namespace)
@@ -323,7 +336,7 @@ func convertBackendRef(
 	backend *gatewayv1.HTTPBackendRef,
 	namespace string,
 	clusterDomain string,
-) BackendRef {
+) (BackendRef, bool) {
 	result := BackendRef{
 		Weight: 1,
 	}
@@ -339,6 +352,12 @@ func convertBackendRef(
 		port = *backend.Port
 	}
 
+	if !validatePort(port) {
+		slog.Warn("skipping backend with invalid port", "service", serviceName, "port", port)
+
+		return BackendRef{}, false
+	}
+
 	svcNamespace := namespace
 	if backend.Namespace != nil {
 		svcNamespace = string(*backend.Namespace)
@@ -346,7 +365,11 @@ func convertBackendRef(
 
 	result.URL = buildServiceURL(serviceName, svcNamespace, port, clusterDomain)
 
-	return result
+	return result, true
+}
+
+func validatePort(port int32) bool {
+	return port >= minPort && port <= maxPort
 }
 
 func buildServiceURL(name, namespace string, port int32, clusterDomain string) string {

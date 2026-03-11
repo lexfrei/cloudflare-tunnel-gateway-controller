@@ -133,6 +133,7 @@ func TestProxySyncer_SyncRoutes(t *testing.T) {
 		scheme,
 		"cluster.local",
 		string(gatewayClassName),
+		"",
 		slog.Default(),
 	)
 
@@ -159,6 +160,7 @@ func TestProxySyncer_NoRoutes(t *testing.T) {
 		scheme,
 		"cluster.local",
 		"cloudflare-tunnel",
+		"",
 		slog.Default(),
 	)
 

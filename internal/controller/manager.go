@@ -56,6 +56,10 @@ type Config struct {
 	// When non-empty, the controller pushes routing config to these endpoints.
 	// Example: ["http://proxy-0:8081", "http://proxy-1:8081"]
 	ProxyEndpoints []string
+
+	// ProxyAuthToken is the Bearer token for authenticating config push requests.
+	// When set, the controller includes "Authorization: Bearer <token>" in push requests.
+	ProxyAuthToken string
 }
 
 // Run initializes and starts the controller manager with the provided configuration.
@@ -170,6 +174,7 @@ func Run(ctx context.Context, cfg *Config) error {
 			mgr.GetScheme(),
 			cfg.ClusterDomain,
 			cfg.GatewayClassName,
+			cfg.ProxyAuthToken,
 			baseLogger,
 		)
 

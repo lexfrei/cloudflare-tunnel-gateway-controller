@@ -16,11 +16,11 @@ const mirrorTimeout = 5 * time.Second
 // matchedPrefixKey is the context key for storing the matched path prefix.
 type matchedPrefixKey struct{}
 
-// SetMatchedPrefix stores the matched path prefix in the request context.
+// SetMatchedPrefix returns a shallow copy of req with the matched path prefix
+// stored in its context. The original request is NOT modified.
 // Used by URL rewrite filters for ReplacePrefixMatch.
-func SetMatchedPrefix(req *http.Request, prefix string) {
-	ctx := context.WithValue(req.Context(), matchedPrefixKey{}, prefix)
-	*req = *req.WithContext(ctx)
+func SetMatchedPrefix(req *http.Request, prefix string) *http.Request {
+	return req.WithContext(context.WithValue(req.Context(), matchedPrefixKey{}, prefix))
 }
 
 // getMatchedPrefix retrieves the matched path prefix from the request context.

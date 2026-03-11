@@ -65,9 +65,10 @@ func (r *Router) ConfigVersion() int64 {
 
 // RouteResult contains the result of a routing decision.
 type RouteResult struct {
-	Rule       *RouteRule
-	Filters    []Filter
-	BackendIdx int
+	Rule          *RouteRule
+	Filters       []Filter
+	BackendIdx    int
+	MatchedPrefix string
 }
 
 // Route finds the best matching rule for the request and selects a backend.
@@ -265,15 +266,11 @@ func matchRules(rules []*compiledRule, req *http.Request) *RouteResult {
 			continue
 		}
 
-		// Store matched prefix for URL rewrite filters.
-		if prefix := getMatchedPathPrefix(compiled.rule); prefix != "" {
-			SetMatchedPrefix(req, prefix)
-		}
-
 		return &RouteResult{
-			Rule:       compiled.rule,
-			Filters:    compiled.filters,
-			BackendIdx: selectBackend(compiled.rule.Backends),
+			Rule:          compiled.rule,
+			Filters:       compiled.filters,
+			BackendIdx:    selectBackend(compiled.rule.Backends),
+			MatchedPrefix: getMatchedPathPrefix(compiled.rule),
 		}
 	}
 

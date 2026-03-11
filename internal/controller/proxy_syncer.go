@@ -36,6 +36,7 @@ func NewProxySyncer(
 	scheme *runtime.Scheme,
 	clusterDomain string,
 	gatewayClassName string,
+	authToken string,
 	logger *slog.Logger,
 ) *ProxySyncer {
 	if logger == nil {
@@ -50,7 +51,7 @@ func NewProxySyncer(
 		logger:           logger.With("component", "proxy-syncer"),
 		pusher: proxy.NewConfigPusher(&http.Client{
 			Timeout: 10 * time.Second,
-		}),
+		}, authToken),
 	}
 }
 

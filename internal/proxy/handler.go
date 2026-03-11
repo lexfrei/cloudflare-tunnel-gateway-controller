@@ -31,6 +31,11 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	// Store matched prefix in request context for URL rewrite filters.
+	if result.MatchedPrefix != "" {
+		req = req.WithContext(context.WithValue(req.Context(), matchedPrefixKey{}, result.MatchedPrefix))
+	}
+
 	// Apply pre-compiled request filters.
 	redirectResp := ApplyRequestFilters(result.Filters, req)
 	if redirectResp != nil {

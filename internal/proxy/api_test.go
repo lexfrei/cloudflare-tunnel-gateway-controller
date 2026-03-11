@@ -17,7 +17,7 @@ func TestConfigAPI_PutConfig(t *testing.T) {
 	t.Parallel()
 
 	router := proxy.NewRouter()
-	api := proxy.NewConfigAPI(router)
+	api := proxy.NewConfigAPI(router, "")
 
 	cfg := proxy.Config{
 		Version: 1,
@@ -46,7 +46,7 @@ func TestConfigAPI_GetConfig(t *testing.T) {
 	t.Parallel()
 
 	router := proxy.NewRouter()
-	api := proxy.NewConfigAPI(router)
+	api := proxy.NewConfigAPI(router, "")
 
 	// First load a config.
 	cfg := proxy.Config{
@@ -80,7 +80,7 @@ func TestConfigAPI_InvalidJSON(t *testing.T) {
 	t.Parallel()
 
 	router := proxy.NewRouter()
-	api := proxy.NewConfigAPI(router)
+	api := proxy.NewConfigAPI(router, "")
 
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodPut, "/config",
 		bytes.NewReader([]byte("not json")))
@@ -96,7 +96,7 @@ func TestConfigAPI_InvalidConfig(t *testing.T) {
 	t.Parallel()
 
 	router := proxy.NewRouter()
-	api := proxy.NewConfigAPI(router)
+	api := proxy.NewConfigAPI(router, "")
 
 	cfg := proxy.Config{
 		Version: -1,
@@ -119,7 +119,7 @@ func TestConfigAPI_MethodNotAllowed(t *testing.T) {
 	t.Parallel()
 
 	router := proxy.NewRouter()
-	api := proxy.NewConfigAPI(router)
+	api := proxy.NewConfigAPI(router, "")
 
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/config", nil)
 	recorder := httptest.NewRecorder()
@@ -133,7 +133,7 @@ func TestConfigAPI_HealthEndpoint(t *testing.T) {
 	t.Parallel()
 
 	router := proxy.NewRouter()
-	api := proxy.NewConfigAPI(router)
+	api := proxy.NewConfigAPI(router, "")
 
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/healthz", nil)
 	recorder := httptest.NewRecorder()
@@ -147,7 +147,7 @@ func TestConfigAPI_ReadyEndpoint(t *testing.T) {
 	t.Parallel()
 
 	router := proxy.NewRouter()
-	api := proxy.NewConfigAPI(router)
+	api := proxy.NewConfigAPI(router, "")
 
 	// Not ready before config is loaded.
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/readyz", nil)

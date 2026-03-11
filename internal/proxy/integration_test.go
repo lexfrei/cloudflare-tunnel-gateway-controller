@@ -620,15 +620,9 @@ func TestHandler_URLRewriteFullPath(t *testing.T) {
 func TestHandler_URLRewritePrefixMatch(t *testing.T) {
 	t.Parallel()
 
-	// NOTE: The router does not automatically set the matched prefix in the
-	// request context. The ReplacePrefixMatch rewrite relies on
-	// proxy.SetMatchedPrefix being called before the filter runs.
-	// In production, the controller or an intermediary component would need to
-	// set this. Without it, the prefix replacement is a no-op because
-	// getMatchedPrefix returns an empty string.
-	//
-	// This test verifies the behavior when SetMatchedPrefix IS called, by
-	// using a backend that records the received path and a wrapper handler.
+	// The handler now automatically sets the matched prefix from the RouteResult,
+	// so no wrapper is needed. The prefix is stored in the request context
+	// before filters are applied.
 
 	backend := newBackend(t, "prefix-rewrite")
 
@@ -663,17 +657,10 @@ func TestHandler_URLRewritePrefixMatch(t *testing.T) {
 
 	handler := proxy.NewHandler(router)
 
-	// Wrap the handler to inject SetMatchedPrefix, simulating what a
-	// production integration layer would do.
-	wrappedHandler := http.HandlerFunc(func(writer http.ResponseWriter, req *http.Request) {
-		proxy.SetMatchedPrefix(req, "/v1")
-		handler.ServeHTTP(writer, req)
-	})
-
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://app.example.com/v1/users/123", nil)
 	recorder := httptest.NewRecorder()
 
-	wrappedHandler.ServeHTTP(recorder, req)
+	handler.ServeHTTP(recorder, req)
 
 	assert.Equal(t, http.StatusOK, recorder.Code)
 	assert.Equal(t, "/v2/users/123", recorder.Header().Get("X-Received-Path"))

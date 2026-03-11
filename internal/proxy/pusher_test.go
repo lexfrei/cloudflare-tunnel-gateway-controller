@@ -36,7 +36,7 @@ func TestConfigPusher_PushToSingleEndpoint(t *testing.T) {
 	}))
 	defer server.Close()
 
-	pusher := proxy.NewConfigPusher(http.DefaultClient)
+	pusher := proxy.NewConfigPusher(http.DefaultClient, "")
 
 	cfg := &proxy.Config{
 		Version: 1,
@@ -73,7 +73,7 @@ func TestConfigPusher_PushToMultipleEndpoints(t *testing.T) {
 	server2 := httptest.NewServer(handler)
 	defer server2.Close()
 
-	pusher := proxy.NewConfigPusher(http.DefaultClient)
+	pusher := proxy.NewConfigPusher(http.DefaultClient, "")
 
 	cfg := &proxy.Config{Version: 1}
 
@@ -105,7 +105,7 @@ func TestConfigPusher_PartialFailure(t *testing.T) {
 	}))
 	defer badServer.Close()
 
-	pusher := proxy.NewConfigPusher(http.DefaultClient)
+	pusher := proxy.NewConfigPusher(http.DefaultClient, "")
 
 	cfg := &proxy.Config{Version: 1}
 
@@ -135,7 +135,7 @@ func TestConfigPusher_PartialFailure(t *testing.T) {
 func TestConfigPusher_UnreachableEndpoint(t *testing.T) {
 	t.Parallel()
 
-	pusher := proxy.NewConfigPusher(http.DefaultClient)
+	pusher := proxy.NewConfigPusher(http.DefaultClient, "")
 
 	cfg := &proxy.Config{Version: 1}
 

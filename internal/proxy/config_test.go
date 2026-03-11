@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -364,6 +365,57 @@ func TestProxyConfig_Validate(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestRouteTimeouts_JSON_RoundTrip(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		timeouts proxy.RouteTimeouts
+		wantJSON string
+	}{
+		{
+			name:     "both timeouts",
+			timeouts: proxy.RouteTimeouts{Request: 10 * time.Second, Backend: 5 * time.Second},
+			wantJSON: `{"request":"10s","backend":"5s"}`,
+		},
+		{
+			name:     "request only",
+			timeouts: proxy.RouteTimeouts{Request: 500 * time.Millisecond},
+			wantJSON: `{"request":"500ms"}`,
+		},
+		{
+			name:     "zero values omitted",
+			timeouts: proxy.RouteTimeouts{},
+			wantJSON: `{}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			data, err := json.Marshal(tt.timeouts)
+			require.NoError(t, err)
+			assert.JSONEq(t, tt.wantJSON, string(data))
+
+			var decoded proxy.RouteTimeouts
+			err = json.Unmarshal(data, &decoded)
+			require.NoError(t, err)
+			assert.Equal(t, tt.timeouts, decoded)
+		})
+	}
+}
+
+func TestRouteTimeouts_UnmarshalJSON_Invalid(t *testing.T) {
+	t.Parallel()
+
+	var rt proxy.RouteTimeouts
+
+	err := json.Unmarshal([]byte(`{"request":"not-a-duration"}`), &rt)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid request timeout")
 }
 
 func TestParseConfig_InvalidJSON(t *testing.T) {
