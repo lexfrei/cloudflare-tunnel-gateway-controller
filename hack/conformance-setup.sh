@@ -2,21 +2,21 @@
 # conformance-setup.sh — Reproducible setup for Gateway API conformance tests.
 #
 # This script:
-#   1. Ensures colima and kind are running
-#   2. Creates a kind cluster (if not exists)
-#   3. Installs Gateway API CRDs (experimental channel)
-#   4. Builds controller + proxy images
-#   5. Loads images into kind
-#   6. Creates secrets from .env
-#   7. Deploys controller via helm
-#   8. Waits for readiness
-#   9. Optionally runs conformance tests
+#   1. Ensures colima is running
+#   2. Deletes old v2-test-* kind clusters
+#   3. Creates a fresh kind cluster with random suffix
+#   4. Installs Gateway API CRDs (experimental channel)
+#   5. Builds controller + proxy images
+#   6. Loads images into kind
+#   7. Creates secrets from .env
+#   8. Deploys controller via helm
+#   9. Waits for readiness
+#  10. Optionally runs conformance tests
 #
 # Usage:
 #   ./hack/conformance-setup.sh              # full setup (fresh cluster)
 #   ./hack/conformance-setup.sh --test       # setup + run tests
 #   ./hack/conformance-setup.sh --skip-build # skip image build (reuse existing)
-#   ./hack/conformance-setup.sh --redeploy   # rebuild + redeploy into existing cluster
 #
 # Prerequisites:
 #   - .env file in repo root with: CF_API_TOKEN, CF_ACCOUNT_ID, V2_TUNNEL_ID, V2_TUNNEL_TOKEN
@@ -28,7 +28,8 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${REPO_ROOT}"
 
 # --- Configuration ---
-CLUSTER_NAME="v2-test"
+CLUSTER_SUFFIX="$(head -c 4 /dev/urandom | xxd -plain)"
+CLUSTER_NAME="v2-test-${CLUSTER_SUFFIX}"
 KUBE_CONTEXT="kind-${CLUSTER_NAME}"
 NAMESPACE="cloudflare-tunnel-system"
 TEST_NAMESPACE="conformance-test"
@@ -40,13 +41,11 @@ GATEWAY_API_VERSION="v1.5.0"
 # --- Flags ---
 RUN_TESTS=false
 SKIP_BUILD=false
-REDEPLOY=false
 
 for arg in "$@"; do
   case "${arg}" in
     --test) RUN_TESTS=true ;;
     --skip-build) SKIP_BUILD=true ;;
-    --redeploy) REDEPLOY=true ;;
     *) echo "Unknown flag: ${arg}"; exit 1 ;;
   esac
 done
@@ -88,30 +87,27 @@ if ! colima status >/dev/null 2>&1; then
   colima start
 fi
 
-if [[ "${REDEPLOY}" == "false" ]]; then
-  # --- Step 2: Create fresh kind cluster ---
-  if kind get clusters 2>/dev/null | grep --quiet "^${CLUSTER_NAME}$"; then
-    info "Deleting existing kind cluster '${CLUSTER_NAME}' for a clean environment..."
-    kind delete cluster --name "${CLUSTER_NAME}"
-  fi
+# --- Step 2: Delete old v2-test-* clusters ---
+for old_cluster in $(kind get clusters 2>/dev/null | grep "^v2-test" || true); do
+  info "Deleting old kind cluster '${old_cluster}'..."
+  kind delete cluster --name "${old_cluster}"
+done
 
-  info "Creating kind cluster '${CLUSTER_NAME}'..."
-  kind create cluster --name "${CLUSTER_NAME}" --wait 60s
-
-  # --- Step 3: Install Gateway API CRDs (experimental channel) ---
-  info "Installing Gateway API CRDs (${GATEWAY_API_VERSION}, experimental)..."
-  kubectl --context "${KUBE_CONTEXT}" apply \
-    --server-side --force-conflicts \
-    --filename "https://github.com/kubernetes-sigs/gateway-api/releases/download/${GATEWAY_API_VERSION}/experimental-install.yaml"
-else
-  info "Redeploying into existing cluster (--redeploy)..."
-fi
+# --- Step 3: Create fresh kind cluster ---
+info "Creating kind cluster '${CLUSTER_NAME}'..."
+kind create cluster --name "${CLUSTER_NAME}" --wait 60s
 
 # Verify connectivity
 kubectl --context "${KUBE_CONTEXT}" cluster-info --request-timeout=5s >/dev/null 2>&1 \
   || die "Cannot connect to cluster '${KUBE_CONTEXT}'"
 
-# --- Step 4: Build images ---
+# --- Step 4: Install Gateway API CRDs (experimental channel) ---
+info "Installing Gateway API CRDs (${GATEWAY_API_VERSION}, experimental)..."
+kubectl --context "${KUBE_CONTEXT}" apply \
+  --server-side --force-conflicts \
+  --filename "https://github.com/kubernetes-sigs/gateway-api/releases/download/${GATEWAY_API_VERSION}/experimental-install.yaml"
+
+# --- Step 5: Build images ---
 if [[ "${SKIP_BUILD}" == "false" ]]; then
   info "Building controller image..."
   docker build --tag "${CONTROLLER_IMAGE}" --file Containerfile .
@@ -122,13 +118,12 @@ else
   info "Skipping image build (--skip-build)"
 fi
 
-# --- Step 5: Load images into kind ---
+# --- Step 6: Load images into kind ---
 info "Loading images into kind cluster..."
 kind load docker-image "${CONTROLLER_IMAGE}" --name "${CLUSTER_NAME}"
 kind load docker-image "${PROXY_IMAGE}" --name "${CLUSTER_NAME}"
 
-# --- Step 6: Create namespace and secrets ---
-# Uses dry-run+apply so it's idempotent (safe for --redeploy).
+# --- Step 7: Create namespace and secrets ---
 info "Creating namespace '${NAMESPACE}'..."
 kubectl --context "${KUBE_CONTEXT}" create namespace "${NAMESPACE}" --dry-run=client --output yaml \
   | kubectl --context "${KUBE_CONTEXT}" apply --filename -
@@ -152,7 +147,7 @@ kubectl --context "${KUBE_CONTEXT}" create secret generic cloudflare-tunnel-toke
   --dry-run=client --output yaml \
   | kubectl --context "${KUBE_CONTEXT}" apply --filename -
 
-# --- Step 7: Deploy via helm ---
+# --- Step 8: Deploy via helm ---
 info "Deploying controller via helm..."
 helm upgrade --install "${RELEASE_NAME}" \
   "${REPO_ROOT}/charts/cloudflare-tunnel-gateway-controller" \
@@ -174,7 +169,7 @@ helm upgrade --install "${RELEASE_NAME}" \
   --set controller.logLevel=debug \
   --wait --timeout 120s
 
-# --- Step 8: Wait for readiness ---
+# --- Step 9: Wait for readiness ---
 info "Waiting for controller deployment..."
 kubectl --context "${KUBE_CONTEXT}" rollout status deployment \
   --namespace "${NAMESPACE}" \
@@ -193,23 +188,27 @@ fi
 
 info "All deployments ready!"
 
-# --- Step 9: Show status ---
+# --- Step 10: Show status ---
 echo ""
-info "Cluster status:"
+info "Cluster: ${CLUSTER_NAME} (context: ${KUBE_CONTEXT})"
 kubectl --context "${KUBE_CONTEXT}" get pods --namespace "${NAMESPACE}"
 echo ""
 kubectl --context "${KUBE_CONTEXT}" get gatewayclass 2>/dev/null || true
 echo ""
 
-# --- Step 10: Run tests (optional) ---
+# --- Step 11: Run tests (optional) ---
 if [[ "${RUN_TESTS}" == "true" ]]; then
   info "Running conformance tests..."
-  go test -v -race -tags conformance -count=1 -timeout=30m ./test/conformance/...
+  CONFORMANCE_KUBE_CONTEXT="${KUBE_CONTEXT}" \
+    go test -v -race -tags conformance -count=1 -timeout=30m ./test/conformance/...
 else
   echo ""
   info "Setup complete! To run conformance tests:"
-  echo "  go test -v -race -tags conformance -count=1 -timeout=30m ./test/conformance/..."
+  echo "  CONFORMANCE_KUBE_CONTEXT=${KUBE_CONTEXT} go test -v -race -tags conformance -count=1 -timeout=30m ./test/conformance/..."
   echo ""
   info "To run E2E tests:"
-  echo "  go test -v -race -tags e2e -count=1 -timeout=15m ./test/e2e/..."
+  echo "  CONFORMANCE_KUBE_CONTEXT=${KUBE_CONTEXT} go test -v -race -tags e2e -count=1 -timeout=15m ./test/e2e/..."
+  echo ""
+  info "To tear down:"
+  echo "  kind delete cluster --name ${CLUSTER_NAME}"
 fi
