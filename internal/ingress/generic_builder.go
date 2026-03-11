@@ -115,8 +115,13 @@ func (b *GenericBuilder[R]) Build(ctx context.Context, routes []R) BuildResult {
 
 	for _, entry := range entries {
 		rule := zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress{
-			Hostname: cloudflare.F(entry.hostname),
-			Service:  cloudflare.F(entry.service),
+			Service: cloudflare.F(entry.service),
+		}
+
+		// Wildcard hostname ("*") must omit the Hostname field entirely.
+		// Cloudflare API rejects explicit "*" when other rules exist (error 1056).
+		if entry.hostname != "*" {
+			rule.Hostname = cloudflare.F(entry.hostname)
 		}
 
 		if entry.path != "" && entry.path != "/" {

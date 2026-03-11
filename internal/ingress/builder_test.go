@@ -345,7 +345,7 @@ func TestBuild_NoHostnames(t *testing.T) {
 	buildResult := builder.Build(context.Background(), routes)
 
 	require.Len(t, buildResult.Rules, 2)
-	assert.Equal(t, "*", buildResult.Rules[0].Hostname.Value)
+	assert.False(t, buildResult.Rules[0].Hostname.Present, "wildcard route must omit Hostname field")
 }
 
 func TestBuild_NoBackendRefs(t *testing.T) {
@@ -790,7 +790,7 @@ func TestBuild_WildcardHostnameSortedLast(t *testing.T) {
 	// Specific hostname should come first, wildcard second, catch-all last
 	require.Len(t, buildResult.Rules, 3)
 	assert.Equal(t, "app.example.com", buildResult.Rules[0].Hostname.Value)
-	assert.Equal(t, "*", buildResult.Rules[1].Hostname.Value)
+	assert.False(t, buildResult.Rules[1].Hostname.Present, "wildcard route must omit Hostname field")
 	assert.Equal(t, ingress.CatchAllService, buildResult.Rules[2].Service.Value)
 }
 
@@ -856,7 +856,7 @@ func TestBuild_MixedHostnamesWithWildcard(t *testing.T) {
 	require.Len(t, buildResult.Rules, 4)
 	assert.Equal(t, "a.example.com", buildResult.Rules[0].Hostname.Value)
 	assert.Equal(t, "z.example.com", buildResult.Rules[1].Hostname.Value)
-	assert.Equal(t, "*", buildResult.Rules[2].Hostname.Value)
+	assert.False(t, buildResult.Rules[2].Hostname.Present, "wildcard route must omit Hostname field")
 	assert.Equal(t, ingress.CatchAllService, buildResult.Rules[3].Service.Value)
 }
 
