@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"context"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -55,6 +56,14 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, req *http.Request) {
 		http.Error(writer, "invalid backend URL", http.StatusInternalServerError)
 
 		return
+	}
+
+	// Apply route timeouts to the request context.
+	if result.Rule.Timeouts != nil && result.Rule.Timeouts.Backend > 0 {
+		ctx, cancel := context.WithTimeout(req.Context(), result.Rule.Timeouts.Backend)
+		defer cancel()
+
+		req = req.WithContext(ctx)
 	}
 
 	proxy := h.createReverseProxy(backendURL, result.Filters)

@@ -151,6 +151,15 @@ func (s *ProxySyncer) routeReferencesGateway(
 	gatewayNames map[string]bool,
 ) bool {
 	for _, parentRef := range route.Spec.ParentRefs {
+		// Skip non-Gateway parentRefs.
+		if parentRef.Group != nil && *parentRef.Group != gatewayv1.GroupName {
+			continue
+		}
+
+		if parentRef.Kind != nil && *parentRef.Kind != kindGateway {
+			continue
+		}
+
 		namespace := route.Namespace
 		if parentRef.Namespace != nil {
 			namespace = string(*parentRef.Namespace)

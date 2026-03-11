@@ -1119,7 +1119,7 @@ func (r *GatewayReconciler) grantAllowsGateway(
 ) bool {
 	for _, from := range grant.Spec.From {
 		if from.Group == gatewayv1.GroupName &&
-			from.Kind == "Gateway" &&
+			from.Kind == kindGateway &&
 			string(from.Namespace) == gatewayNamespace {
 			return true
 		}
