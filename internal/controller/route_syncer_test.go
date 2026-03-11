@@ -490,6 +490,56 @@ func TestMergeAndSortRules(t *testing.T) {
 	}
 }
 
+func TestMergeAndSortRules_Ordering(t *testing.T) {
+	t.Parallel()
+
+	// GRPC wildcard route (no hostname) should come AFTER HTTP specific hostname.
+	// mergeAndSortRules must sort the combined result, not just concatenate.
+	httpRules := []zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress{
+		{
+			Hostname: cloudflare.String("z.example.com"),
+			Service:  cloudflare.String("http://z-svc:80"),
+		},
+	}
+	grpcRules := []zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress{
+		{
+			Hostname: cloudflare.String("a.example.com"),
+			Service:  cloudflare.String("http://a-grpc:50051"),
+		},
+	}
+
+	result := mergeAndSortRules(httpRules, grpcRules)
+
+	require.Len(t, result, 2)
+	// Alphabetical: a.example.com before z.example.com
+	assert.Equal(t, "a.example.com", result[0].Hostname.Value)
+	assert.Equal(t, "z.example.com", result[1].Hostname.Value)
+}
+
+func TestMergeAndSortRules_WildcardLast(t *testing.T) {
+	t.Parallel()
+
+	// Wildcard (no hostname) must come after specific hostnames.
+	httpRules := []zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress{
+		{
+			Hostname: cloudflare.String("app.example.com"),
+			Service:  cloudflare.String("http://app:80"),
+		},
+	}
+	grpcRules := []zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress{
+		{
+			// No hostname = wildcard
+			Service: cloudflare.String("http://grpc-wildcard:50051"),
+		},
+	}
+
+	result := mergeAndSortRules(httpRules, grpcRules)
+
+	require.Len(t, result, 2)
+	assert.Equal(t, "app.example.com", result[0].Hostname.Value)
+	assert.False(t, result[1].Hostname.Present, "wildcard rule must be last")
+}
+
 func TestFilterOutCatchAll(t *testing.T) {
 	t.Parallel()
 

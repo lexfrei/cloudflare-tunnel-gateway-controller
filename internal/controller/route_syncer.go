@@ -663,10 +663,27 @@ func mergeAndSortRules(
 	combined = append(combined, httpFiltered...)
 	combined = append(combined, grpcFiltered...)
 
-	// Rules are already sorted by each builder, but we want consistent ordering
-	// Sort by: hostname -> path length (longer first)
-	// Note: Since both builders use the same sorting logic, and hostnames
-	// typically don't overlap between HTTP and GRPC routes, the merge is straightforward.
+	// Sort merged rules: specific hostnames alphabetically, wildcard (no hostname) last.
+	slices.SortStableFunc(combined, func(left, right zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress) int {
+		leftPresent := left.Hostname.Present
+		rightPresent := right.Hostname.Present
+
+		// Rules without hostname (wildcard) sort after rules with hostname.
+		if leftPresent != rightPresent {
+			if leftPresent {
+				return -1
+			}
+
+			return 1
+		}
+
+		// Both have hostname or both don't — sort alphabetically, then by path length (longer first).
+		if c := cmp.Compare(left.Hostname.Value, right.Hostname.Value); c != 0 {
+			return c
+		}
+
+		return cmp.Compare(len(right.Path.Value), len(left.Path.Value))
+	})
 
 	return combined
 }
