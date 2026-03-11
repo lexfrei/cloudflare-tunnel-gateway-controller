@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/cloudflare/cloudflared/connection"
+	"github.com/cloudflare/cloudflared/orchestration"
 )
 
 func TestBuildCatchAllIngress(t *testing.T) {
@@ -838,4 +839,17 @@ func TestStartTunnel_NilLogger_SuccessPath_CancelledContext(t *testing.T) {
 			assert.NotContains(t, err.Error(), "parse tunnel token")
 		}
 	})
+}
+
+// TestOrchestratorHasOverrideProxy is a compile-time guard that ensures
+// the vendor patch adding OverrideProxy to orchestration.Orchestrator
+// survives re-vendoring. If `go mod vendor` regenerates the vendor tree
+// without the patch, this test will fail to compile.
+func TestOrchestratorHasOverrideProxy(t *testing.T) {
+	t.Parallel()
+
+	// Import is already present via bootstrap.go's usage.
+	// This test merely exercises the field to catch re-vendoring.
+	var orch orchestration.Orchestrator
+	_ = orch.OverrideProxy
 }

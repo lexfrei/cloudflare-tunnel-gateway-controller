@@ -16,6 +16,14 @@ import (
 // mirrorTimeout is the maximum time to wait for a mirror request.
 const mirrorTimeout = 5 * time.Second
 
+// mirrorClient is a shared HTTP client for all mirror filter instances.
+// Using a single client ensures connection pooling across mirror filters.
+//
+//nolint:gochecknoglobals // shared client avoids unbounded transport pool creation
+var mirrorClient = &http.Client{
+	Timeout: mirrorTimeout,
+}
+
 // maxMirrorBodySize is the maximum request body size that will be buffered
 // for mirroring. Bodies exceeding this limit cause mirroring to be skipped
 // to avoid excessive memory usage.
@@ -239,16 +247,13 @@ func (f *urlRewriter) rewritePath(req *http.Request) {
 // requestMirror sends a copy of the request to a mirror backend asynchronously.
 type requestMirror struct {
 	backendURL string
-	client     *http.Client
 }
 
 // NewRequestMirror creates a filter that mirrors requests to a backend URL.
+// All mirror instances share a single HTTP client for connection pooling.
 func NewRequestMirror(backendURL string) Filter {
 	return &requestMirror{
 		backendURL: backendURL,
-		client: &http.Client{
-			Timeout: mirrorTimeout,
-		},
 	}
 }
 
@@ -311,7 +316,7 @@ func (f *requestMirror) ProcessRequest(req *http.Request) *http.Response {
 	go func() {
 		defer cancel()
 
-		resp, doErr := f.client.Do(mirrorReq) //nolint:gosec // mirror URL comes from trusted config
+		resp, doErr := mirrorClient.Do(mirrorReq) //nolint:gosec // mirror URL comes from trusted config
 		if doErr == nil {
 			resp.Body.Close()
 		}

@@ -77,11 +77,14 @@ func runTunnelMode(logger *slog.Logger, token string) {
 		Logger:      logger,
 		OriginProxy: originProxy,
 	})
-	if err != nil {
-		logger.Error("tunnel error", "error", err)
-	}
 
 	gracefulShutdown(logger, configServer)
+
+	if err != nil {
+		logger.Error("tunnel error", "error", err)
+		cancel()
+		os.Exit(1) //nolint:gocritic // cancel() called explicitly above
+	}
 }
 
 // runStandaloneMode starts the proxy as a standalone HTTP server.

@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"log/slog"
 	"math/rand/v2"
 	"net/http"
 	"net/url"
@@ -123,6 +124,12 @@ func (r *Router) UpdateConfig(cfg *Config) error {
 	defer r.updateMu.Unlock()
 
 	current := r.table.Load()
+
+	if cfg.Version == 0 && current != nil && current.version > 0 {
+		slog.Warn("applying unversioned config (version 0) over versioned config",
+			"current_version", current.version)
+	}
+
 	if current != nil && cfg.Version > 0 && cfg.Version < current.version {
 		return errors.Wrapf(errStaleVersion, "version %d < current %d", cfg.Version, current.version)
 	}

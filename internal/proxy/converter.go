@@ -220,8 +220,12 @@ func convertFilter(filter *gatewayv1.HTTPRouteFilter, namespace, clusterDomain s
 	case gatewayv1.HTTPRouteFilterExtensionRef,
 		gatewayv1.HTTPRouteFilterCORS,
 		gatewayv1.HTTPRouteFilterExternalAuth:
+		slog.Warn("skipping unsupported filter type", "type", filter.Type)
+
 		return nil
 	}
+
+	slog.Warn("skipping unknown filter type", "type", filter.Type)
 
 	return nil
 }
