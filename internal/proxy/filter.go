@@ -274,7 +274,15 @@ func (f *requestMirror) ProcessRequest(req *http.Request) *http.Response {
 	if req.Body != nil && req.Body != http.NoBody {
 		bodyBuf, err = io.ReadAll(io.LimitReader(req.Body, maxMirrorBodySize+1))
 		if err != nil {
-			slog.Warn("mirror: failed to read request body", "error", err)
+			slog.Warn("mirror: failed to read request body, skipping mirror", "error", err)
+
+			// Restore the body from whatever was buffered so the main handler
+			// still receives the data that was read before the error.
+			// Do not re-attach the original req.Body — it is in a failed state.
+			if len(bodyBuf) > 0 {
+				req.Body = io.NopCloser(bytes.NewReader(bodyBuf))
+				req.ContentLength = int64(len(bodyBuf))
+			}
 
 			return nil
 		}

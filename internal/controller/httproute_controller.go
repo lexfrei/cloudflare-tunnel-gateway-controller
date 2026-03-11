@@ -100,6 +100,7 @@ func (r *HTTPRouteReconciler) syncAndUpdateStatus(ctx context.Context) (ctrl.Res
 		routeSyncer:    r.RouteSyncer,
 		proxySyncer:    r.ProxySyncer,
 		proxyEndpoints: r.ProxyEndpoints,
+		pushProxy:      true,
 		statusEntries: func(sr *SyncResult) []routeStatusEntry {
 			return sr.httpStatusEntries(r.updateRouteStatus)
 		},

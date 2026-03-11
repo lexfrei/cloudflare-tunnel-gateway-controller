@@ -157,6 +157,7 @@ type syncUpdateParams struct {
 	routeSyncer    *RouteSyncer
 	proxySyncer    *ProxySyncer
 	proxyEndpoints []string
+	pushProxy      bool
 	statusEntries  func(*SyncResult) []routeStatusEntry
 }
 
@@ -171,7 +172,8 @@ func syncAndUpdateStatusCommon(ctx context.Context, params syncUpdateParams) (ct
 	// Only HTTPRoutes are pushed — the proxy converter does not yet support
 	// gRPC-specific routing semantics. GRPCRoutes are handled by the
 	// Cloudflare Tunnel ingress configuration (v1 path).
-	if params.proxySyncer != nil && len(params.proxyEndpoints) > 0 && syncResult != nil {
+	// pushProxy is false for GRPCRoute reconciler to avoid redundant pushes.
+	if params.pushProxy && params.proxySyncer != nil && len(params.proxyEndpoints) > 0 && syncResult != nil {
 		routes := httpRoutePtrs(syncResult.HTTPRoutes)
 		if proxyErr := params.proxySyncer.SyncRoutes(ctx, params.proxyEndpoints, routes); proxyErr != nil {
 			logger.Error("proxy sync failed (non-blocking)", "error", proxyErr)
@@ -192,6 +194,8 @@ func syncAndUpdateStatusCommon(ctx context.Context, params syncUpdateParams) (ct
 		}
 
 		// Propagate error for controller-runtime backoff-based requeue.
+		// This is intentionally different from the pre-refactor behavior which
+		// swallowed errors when RequeueAfter was 0, preventing retries.
 		return result, syncErr
 	}
 

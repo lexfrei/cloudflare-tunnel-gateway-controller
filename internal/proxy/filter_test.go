@@ -544,3 +544,40 @@ func TestURLRewriter_HostnameDoesNotCorruptRequest(t *testing.T) {
 	assert.Nil(t, resp, "URL rewrite should not short-circuit")
 	assert.Equal(t, rewrittenHost, req.Host)
 }
+
+func TestRequestMirror_BodyReadError_RestoresPartialBody(t *testing.T) {
+	t.Parallel()
+
+	// Create a reader that returns data then errors.
+	partialData := "partial-data"
+	failingBody := io.NopCloser(io.MultiReader(
+		strings.NewReader(partialData),
+		&errorReader{err: io.ErrUnexpectedEOF},
+	))
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "http://example.com/test", failingBody)
+
+	filter := proxy.NewRequestMirror("http://mirror-backend:8080")
+	resp := filter.ProcessRequest(req)
+
+	if resp != nil {
+		defer resp.Body.Close()
+	}
+
+	assert.Nil(t, resp, "mirror should not short-circuit on body read error")
+
+	// The partial body data should be restored for the main handler.
+	restoredBody, err := io.ReadAll(req.Body)
+	require.NoError(t, err)
+	assert.Contains(t, string(restoredBody), partialData,
+		"partial body data should be restored after read error")
+}
+
+// errorReader is a reader that always returns the specified error.
+type errorReader struct {
+	err error
+}
+
+func (r *errorReader) Read(_ []byte) (int, error) {
+	return 0, r.err
+}
