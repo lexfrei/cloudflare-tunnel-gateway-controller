@@ -540,6 +540,97 @@ func TestMergeAndSortRules_WildcardLast(t *testing.T) {
 	assert.False(t, result[1].Hostname.Present, "wildcard rule must be last")
 }
 
+func TestSortIngressRules(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		rules    []zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress
+		expected []string // expected hostname order (empty string = no hostname)
+	}{
+		{
+			name:     "empty rules",
+			rules:    nil,
+			expected: nil,
+		},
+		{
+			name: "already sorted",
+			rules: []zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress{
+				{Hostname: cloudflare.String("a.example.com"), Service: cloudflare.String("http://a:80")},
+				{Hostname: cloudflare.String("z.example.com"), Service: cloudflare.String("http://z:80")},
+				{Service: cloudflare.String("http://wildcard:80")},
+			},
+			expected: []string{"a.example.com", "z.example.com", ""},
+		},
+		{
+			name: "wildcard before specific hostname",
+			rules: []zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress{
+				{Service: cloudflare.String("http://wildcard:80")},
+				{Hostname: cloudflare.String("a.example.com"), Service: cloudflare.String("http://a:80")},
+			},
+			expected: []string{"a.example.com", ""},
+		},
+		{
+			name: "reverse alphabetical hostnames",
+			rules: []zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress{
+				{Hostname: cloudflare.String("z.example.com"), Service: cloudflare.String("http://z:80")},
+				{Hostname: cloudflare.String("a.example.com"), Service: cloudflare.String("http://a:80")},
+			},
+			expected: []string{"a.example.com", "z.example.com"},
+		},
+		{
+			name: "same hostname different path lengths",
+			rules: []zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress{
+				{Hostname: cloudflare.String("app.example.com"), Path: cloudflare.String("/"), Service: cloudflare.String("http://short:80")},
+				{Hostname: cloudflare.String("app.example.com"), Path: cloudflare.String("/api/v1"), Service: cloudflare.String("http://long:80")},
+			},
+			expected: []string{"app.example.com", "app.example.com"},
+		},
+		{
+			name: "mixed: wildcard between specific hostnames",
+			rules: []zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress{
+				{Hostname: cloudflare.String("b.example.com"), Service: cloudflare.String("http://b:80")},
+				{Service: cloudflare.String("http://wildcard:80")},
+				{Hostname: cloudflare.String("a.example.com"), Service: cloudflare.String("http://a:80")},
+			},
+			expected: []string{"a.example.com", "b.example.com", ""},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			result := sortIngressRules(tt.rules)
+
+			require.Len(t, result, len(tt.expected))
+
+			for i, expectedHostname := range tt.expected {
+				if expectedHostname == "" {
+					assert.False(t, result[i].Hostname.Present, "rule %d should have no hostname", i)
+				} else {
+					assert.Equal(t, expectedHostname, result[i].Hostname.Value, "rule %d hostname mismatch", i)
+				}
+			}
+		})
+	}
+}
+
+func TestSortIngressRules_LongerPathFirst(t *testing.T) {
+	t.Parallel()
+
+	rules := []zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress{
+		{Hostname: cloudflare.String("app.example.com"), Path: cloudflare.String("/"), Service: cloudflare.String("http://short:80")},
+		{Hostname: cloudflare.String("app.example.com"), Path: cloudflare.String("/api/v1"), Service: cloudflare.String("http://long:80")},
+	}
+
+	result := sortIngressRules(rules)
+
+	require.Len(t, result, 2)
+	assert.Equal(t, "/api/v1", result[0].Path.Value, "longer path should come first")
+	assert.Equal(t, "/", result[1].Path.Value, "shorter path should come second")
+}
+
 func TestFilterOutCatchAll(t *testing.T) {
 	t.Parallel()
 

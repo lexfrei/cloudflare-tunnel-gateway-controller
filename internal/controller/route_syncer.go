@@ -391,6 +391,11 @@ func (s *RouteSyncer) SyncAllRoutes(ctx context.Context) (ctrl.Result, *SyncResu
 	// Apply diff to get final rules
 	finalRules := ingress.ApplyDiff(currentConfig.Config.Ingress, toAdd, toRemove)
 
+	// Sort final rules — ApplyDiff returns rules in arbitrary order
+	// (kept-from-current first, then toAdd). Wildcard rules (no hostname)
+	// must come after specific hostname rules to avoid Cloudflare error 1056.
+	finalRules = sortIngressRules(finalRules)
+
 	// Ensure catch-all rule exists at the end
 	finalRules = ingress.EnsureCatchAll(finalRules)
 
@@ -645,26 +650,14 @@ func (s *RouteSyncer) getRelevantGRPCRoutes(
 	return relevantRoutes, bindings, nil
 }
 
-// mergeAndSortRules combines HTTP and GRPC rules and adds catch-all.
-// Rules are already sorted within each builder, but we need to merge them.
-func mergeAndSortRules(
-	httpRules, grpcRules []zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress,
+// sortIngressRules sorts ingress rules: specific hostnames alphabetically first,
+// wildcard (no hostname) last, same hostname by path length (longer first).
+// This ordering is required by Cloudflare API — rules without hostname before
+// rules with hostname trigger error 1056.
+func sortIngressRules(
+	rules []zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress,
 ) []zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress {
-	// Remove catch-all from httpRules if present (it's added at the end anyway)
-	httpFiltered := filterOutCatchAll(httpRules)
-	grpcFiltered := filterOutCatchAll(grpcRules)
-
-	// Combine all rules
-	combined := make(
-		[]zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress,
-		0,
-		len(httpFiltered)+len(grpcFiltered)+1,
-	)
-	combined = append(combined, httpFiltered...)
-	combined = append(combined, grpcFiltered...)
-
-	// Sort merged rules: specific hostnames alphabetically, wildcard (no hostname) last.
-	slices.SortStableFunc(combined, func(left, right zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress) int {
+	slices.SortStableFunc(rules, func(left, right zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress) int {
 		leftPresent := left.Hostname.Present
 		rightPresent := right.Hostname.Present
 
@@ -685,7 +678,28 @@ func mergeAndSortRules(
 		return cmp.Compare(len(right.Path.Value), len(left.Path.Value))
 	})
 
-	return combined
+	return rules
+}
+
+// mergeAndSortRules combines HTTP and GRPC rules and adds catch-all.
+// Rules are already sorted within each builder, but we need to merge them.
+func mergeAndSortRules(
+	httpRules, grpcRules []zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress,
+) []zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress {
+	// Remove catch-all from httpRules if present (it's added at the end anyway)
+	httpFiltered := filterOutCatchAll(httpRules)
+	grpcFiltered := filterOutCatchAll(grpcRules)
+
+	// Combine all rules
+	combined := make(
+		[]zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress,
+		0,
+		len(httpFiltered)+len(grpcFiltered)+1,
+	)
+	combined = append(combined, httpFiltered...)
+	combined = append(combined, grpcFiltered...)
+
+	return sortIngressRules(combined)
 }
 
 func filterOutCatchAll(
