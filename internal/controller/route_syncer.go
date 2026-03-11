@@ -177,6 +177,7 @@ func syncAndUpdateStatusCommon(ctx context.Context, params syncUpdateParams) (ct
 		routes := httpRoutePtrs(syncResult.HTTPRoutes)
 		if proxyErr := params.proxySyncer.SyncRoutes(ctx, params.proxyEndpoints, routes); proxyErr != nil {
 			logger.Error("proxy sync failed (non-blocking)", "error", proxyErr)
+			params.routeSyncer.Metrics.RecordSyncError(ctx, "proxy_push")
 		}
 	}
 

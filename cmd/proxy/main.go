@@ -15,12 +15,13 @@ import (
 )
 
 const (
-	defaultConfigAddr = ":8081"
-	defaultProxyAddr  = ":8080"
-	readHeaderTimeout = 10 * time.Second
-	readTimeout       = 5 * time.Minute
-	writeTimeout      = 60 * time.Second
-	shutdownTimeout   = 30 * time.Second
+	defaultConfigAddr  = ":8081"
+	defaultProxyAddr   = ":8080"
+	readHeaderTimeout  = 10 * time.Second
+	readTimeout        = 5 * time.Minute
+	configReadTimeout  = 60 * time.Second
+	configWriteTimeout = 60 * time.Second
+	shutdownTimeout    = 30 * time.Second
 )
 
 func main() {
@@ -58,10 +59,15 @@ func runTunnelMode(logger *slog.Logger, token string) {
 	// to our handler without HTTP serialization or localhost TCP hop.
 	originProxy := tunnel.NewGatewayOriginProxy(proxyHandler, logger)
 
+	// Register signal handler before starting tunnel to prevent signal loss
+	// during startup. The goroutine waits for either a signal or context cancellation.
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGTERM, syscall.SIGINT)
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go handleSignals(ctx, logger, cancel)
+	go handleSignals(ctx, logger, cancel, sigChan)
 
 	go func() {
 		logger.Info("starting config API server", "addr", configAddr)
@@ -134,8 +140,8 @@ func newServer(addr string, handler http.Handler) *http.Server {
 		Addr:              addr,
 		Handler:           handler,
 		ReadHeaderTimeout: readHeaderTimeout,
-		ReadTimeout:       writeTimeout,
-		WriteTimeout:      writeTimeout,
+		ReadTimeout:       configReadTimeout,
+		WriteTimeout:      configWriteTimeout,
 	}
 }
 
@@ -153,12 +159,7 @@ func newProxyServer(addr string, handler http.Handler) *http.Server {
 	}
 }
 
-func handleSignals(ctx context.Context, logger *slog.Logger, cancel context.CancelFunc) {
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGTERM, syscall.SIGINT)
-
-	defer signal.Stop(sigChan)
-
+func handleSignals(ctx context.Context, logger *slog.Logger, cancel context.CancelFunc, sigChan <-chan os.Signal) {
 	select {
 	case sig := <-sigChan:
 		logger.Info("received signal, shutting down", "signal", sig)
