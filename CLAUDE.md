@@ -148,6 +148,7 @@ internal/
 charts/                  # Helm chart with helm-unittest tests
 deploy/                  # Raw Kubernetes manifests for manual deployment
 test/e2e/                # E2E tests (custom, against live tunnel + proxy)
+test/conformance/        # Official Gateway API conformance suite integration
 ```
 
 ## Testing Standards

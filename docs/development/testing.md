@@ -317,6 +317,28 @@ Tests cover both Cloudflare Tunnel and v2 proxy features:
   URLRewriteHost, RequestMirror, RedirectPort, RedirectPath, CombinedMatching, MultipleMatchesOR
 - **Gateway (2):** AcceptedCondition, ObservedGenerationBump
 
+### Official Gateway API Conformance Suite
+
+The project integrates the official `sigs.k8s.io/gateway-api/conformance` suite
+with a custom `TunnelRoundTripper` that routes requests through Cloudflare edge.
+
+```bash
+# Run conformance tests (requires deployed controller + tunnel)
+go test -v -tags conformance -count=1 -timeout=30m ./test/conformance/...
+
+# Generate conformance report
+CONFORMANCE_REPORT_OUTPUT=./conformance-report.yaml \
+  go test -v -tags conformance -count=1 -timeout=30m ./test/conformance/...
+```
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `CONFORMANCE_GATEWAY_CLASS` | `cloudflare-tunnel` | GatewayClass name |
+| `CONFORMANCE_REPORT_OUTPUT` | (none) | Path for YAML conformance report |
+| `CONTROLLER_VERSION` | `dev` | Version for report metadata |
+
+Profiles: `GATEWAY-HTTP`, `GATEWAY-GRPC`.
+
 ## Best Practices
 
 1. **Fast tests**: Unit tests should run in milliseconds
