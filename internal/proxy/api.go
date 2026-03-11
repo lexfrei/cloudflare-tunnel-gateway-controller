@@ -94,7 +94,13 @@ func (a *ConfigAPI) handlePutConfig(writer http.ResponseWriter, req *http.Reques
 	writer.WriteHeader(http.StatusOK)
 }
 
-func (a *ConfigAPI) handleGetConfig(writer http.ResponseWriter, _ *http.Request) {
+func (a *ConfigAPI) handleGetConfig(writer http.ResponseWriter, req *http.Request) {
+	if a.authToken != "" && !a.checkAuth(req) {
+		http.Error(writer, "unauthorized", http.StatusUnauthorized)
+
+		return
+	}
+
 	version := a.router.ConfigVersion()
 	status := ConfigStatus{
 		Version: version,

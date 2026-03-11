@@ -1,8 +1,10 @@
 package proxy
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -13,6 +15,11 @@ import (
 
 // mirrorTimeout is the maximum time to wait for a mirror request.
 const mirrorTimeout = 5 * time.Second
+
+// maxMirrorBodySize is the maximum request body size that will be buffered
+// for mirroring. Bodies exceeding this limit cause mirroring to be skipped
+// to avoid excessive memory usage.
+const maxMirrorBodySize = 1 << 20 // 1 MiB
 
 // matchedPrefixKey is the context key for storing the matched path prefix.
 type matchedPrefixKey struct{}
@@ -229,6 +236,37 @@ func (f *requestMirror) ProcessRequest(req *http.Request) *http.Response {
 		return nil
 	}
 
+	// Buffer the request body so that both the mirror goroutine and the
+	// main handler each get their own independent copy. Without this,
+	// req.Clone performs a shallow copy and both readers race on the
+	// same underlying io.Reader, corrupting the body.
+	var bodyBuf []byte
+
+	if req.Body != nil && req.Body != http.NoBody {
+		bodyBuf, err = io.ReadAll(io.LimitReader(req.Body, maxMirrorBodySize+1))
+		if err != nil {
+			slog.Warn("mirror: failed to read request body", "error", err)
+
+			return nil
+		}
+
+		if int64(len(bodyBuf)) > maxMirrorBodySize {
+			slog.Warn("mirror: request body exceeds maximum mirror size, skipping mirror",
+				"max_bytes", maxMirrorBodySize)
+
+			// Restore the original body so the main handler still works.
+			req.Body = io.NopCloser(io.MultiReader(
+				bytes.NewReader(bodyBuf),
+				req.Body,
+			))
+
+			return nil
+		}
+
+		req.Body = io.NopCloser(bytes.NewReader(bodyBuf))
+		req.ContentLength = int64(len(bodyBuf))
+	}
+
 	// Use a detached context so the mirror is fire-and-forget,
 	// not cancelled when the original request completes.
 	mirrorCtx, cancel := context.WithTimeout(context.Background(), mirrorTimeout)
@@ -236,6 +274,15 @@ func (f *requestMirror) ProcessRequest(req *http.Request) *http.Response {
 	mirrorReq.URL = mirrorURL
 	mirrorReq.Host = mirrorURL.Host
 	mirrorReq.RequestURI = ""
+
+	// After Clone, both req and mirrorReq share the same body reader.
+	// Give each its own independent reader from the buffered data.
+	if bodyBuf != nil {
+		req.Body = io.NopCloser(bytes.NewReader(bodyBuf))
+		req.ContentLength = int64(len(bodyBuf))
+		mirrorReq.Body = io.NopCloser(bytes.NewReader(bodyBuf))
+		mirrorReq.ContentLength = int64(len(bodyBuf))
+	}
 
 	go func() {
 		defer cancel()

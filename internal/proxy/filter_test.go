@@ -2,9 +2,11 @@ package proxy_test
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -341,6 +343,52 @@ func TestRequestMirror_InvalidBackendURL(t *testing.T) {
 	// Should not panic — must handle invalid URL gracefully.
 	resp := filter.ProcessRequest(req) //nolint:bodyclose // mirror returns nil response
 	assert.Nil(t, resp)
+}
+
+func TestRequestMirror_PostBody(t *testing.T) {
+	t.Parallel()
+
+	const body = "hello world"
+
+	// Mirror backend that records the received body.
+	mirrorBody := make(chan string, 1)
+
+	mirror := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		data, err := io.ReadAll(r.Body)
+		if err != nil {
+			mirrorBody <- "read error: " + err.Error()
+
+			return
+		}
+
+		mirrorBody <- string(data)
+	}))
+	defer mirror.Close()
+
+	filter := proxy.NewRequestMirror(mirror.URL)
+
+	req := httptest.NewRequestWithContext(
+		context.Background(),
+		http.MethodPost,
+		"http://example.com/test",
+		strings.NewReader(body),
+	)
+	req.ContentLength = int64(len(body))
+
+	resp := filter.ProcessRequest(req) //nolint:bodyclose // mirror returns nil response
+	assert.Nil(t, resp, "mirror should not short-circuit")
+
+	// Verify the mirror received the complete body.
+	got := <-mirrorBody
+	assert.Equal(t, body, got, "mirror backend should receive the complete request body")
+
+	// Verify the original request body is still fully readable for the main handler.
+	remaining, err := io.ReadAll(req.Body)
+	require.NoError(t, err)
+	assert.Equal(t, body, string(remaining),
+		"original request body must remain intact for the main handler")
+	assert.Equal(t, int64(len(body)), req.ContentLength,
+		"content length must reflect the buffered body size")
 }
 
 func TestCompileFilters(t *testing.T) {

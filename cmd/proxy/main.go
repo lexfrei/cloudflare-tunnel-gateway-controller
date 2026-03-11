@@ -18,6 +18,7 @@ const (
 	defaultConfigAddr = ":8081"
 	defaultProxyAddr  = ":8080"
 	readHeaderTimeout = 10 * time.Second
+	writeTimeout      = 60 * time.Second
 	shutdownTimeout   = 30 * time.Second
 )
 
@@ -122,6 +123,7 @@ func newServer(addr string, handler http.Handler) *http.Server {
 		Addr:              addr,
 		Handler:           handler,
 		ReadHeaderTimeout: readHeaderTimeout,
+		WriteTimeout:      writeTimeout,
 	}
 }
 

@@ -4,10 +4,16 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
+
+// configVersionCounter provides monotonically increasing config versions.
+//
+//nolint:gochecknoglobals // package-level atomic counter is the simplest correct approach
+var configVersionCounter atomic.Int64
 
 const (
 	defaultServicePort = 80
@@ -18,7 +24,7 @@ const (
 // ConvertHTTPRoutes converts Gateway API HTTPRoute resources into a proxy Config.
 func ConvertHTTPRoutes(routes []*gatewayv1.HTTPRoute, clusterDomain string) *Config {
 	cfg := &Config{
-		Version: time.Now().UnixNano(),
+		Version: configVersionCounter.Add(1),
 	}
 
 	for _, route := range routes {

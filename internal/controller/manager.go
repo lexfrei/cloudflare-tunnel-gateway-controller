@@ -170,10 +170,7 @@ func Run(ctx context.Context, cfg *Config) error {
 	var proxySyncer *ProxySyncer
 	if len(cfg.ProxyEndpoints) > 0 {
 		proxySyncer = NewProxySyncer(
-			mgr.GetClient(),
-			mgr.GetScheme(),
 			cfg.ClusterDomain,
-			cfg.GatewayClassName,
 			cfg.ProxyAuthToken,
 			baseLogger,
 		)

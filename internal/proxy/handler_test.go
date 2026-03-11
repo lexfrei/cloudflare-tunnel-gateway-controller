@@ -442,7 +442,7 @@ func TestHandler_RequestTimeoutCoversEntireHandler(t *testing.T) {
 
 	// The request should be cancelled well before the backend's 5s sleep.
 	assert.Less(t, elapsed, 2*time.Second, "request timeout should cancel the handler promptly")
-	assert.Equal(t, http.StatusBadGateway, recorder.Code)
+	assert.Equal(t, http.StatusGatewayTimeout, recorder.Code)
 }
 
 func TestHandler_BackendTimeoutOnlyAffectsProxyCall(t *testing.T) {
@@ -489,7 +489,7 @@ func TestHandler_BackendTimeoutOnlyAffectsProxyCall(t *testing.T) {
 
 	// Backend timeout should cancel the proxy call promptly.
 	assert.Less(t, elapsed, 2*time.Second, "backend timeout should cancel the proxy call promptly")
-	assert.Equal(t, http.StatusBadGateway, recorder.Code)
+	assert.Equal(t, http.StatusGatewayTimeout, recorder.Code)
 }
 
 func TestHandler_BothTimeoutsAppliedIndependently(t *testing.T) {
@@ -538,5 +538,5 @@ func TestHandler_BothTimeoutsAppliedIndependently(t *testing.T) {
 
 	// Backend timeout (100ms) should fire before request timeout (2s).
 	assert.Less(t, elapsed, time.Second, "backend timeout should fire before request timeout")
-	assert.Equal(t, http.StatusBadGateway, recorder.Code)
+	assert.Equal(t, http.StatusGatewayTimeout, recorder.Code)
 }

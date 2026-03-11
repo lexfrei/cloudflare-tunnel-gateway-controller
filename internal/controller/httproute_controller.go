@@ -100,9 +100,11 @@ func (r *HTTPRouteReconciler) syncAndUpdateStatus(ctx context.Context) (ctrl.Res
 
 	result, syncResult, syncErr := r.RouteSyncer.SyncAllRoutes(ctx)
 
-	// Push config to v2 proxy replicas (best-effort, non-blocking)
-	if r.ProxySyncer != nil && len(r.ProxyEndpoints) > 0 {
-		if proxyErr := r.ProxySyncer.SyncRoutes(ctx, r.ProxyEndpoints); proxyErr != nil {
+	// Push config to v2 proxy replicas (best-effort, non-blocking).
+	// Uses routes already collected by SyncAllRoutes to avoid redundant API calls.
+	if r.ProxySyncer != nil && len(r.ProxyEndpoints) > 0 && syncResult != nil {
+		routes := httpRoutePtrs(syncResult.HTTPRoutes)
+		if proxyErr := r.ProxySyncer.SyncRoutes(ctx, r.ProxyEndpoints, routes); proxyErr != nil {
 			logger.Error("proxy sync failed (non-blocking)", "error", proxyErr)
 		}
 	}
@@ -125,6 +127,16 @@ func (r *HTTPRouteReconciler) syncAndUpdateStatus(ctx context.Context) (ctrl.Res
 	}
 
 	return result, nil
+}
+
+// httpRoutePtrs converts a slice of HTTPRoute values to a slice of pointers.
+func httpRoutePtrs(routes []gatewayv1.HTTPRoute) []*gatewayv1.HTTPRoute {
+	ptrs := make([]*gatewayv1.HTTPRoute, len(routes))
+	for idx := range routes {
+		ptrs[idx] = &routes[idx]
+	}
+
+	return ptrs
 }
 
 func (r *HTTPRouteReconciler) isRouteForOurGateway(ctx context.Context, route *gatewayv1.HTTPRoute) bool {

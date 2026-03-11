@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -159,9 +160,16 @@ func (h *Handler) getTransport(host string) http.RoundTripper {
 	return loadedTransport
 }
 
-// errorHandler handles proxy errors by returning 502 Bad Gateway.
+// errorHandler handles proxy errors with appropriate HTTP status codes.
+// Returns 504 Gateway Timeout for deadline/cancellation errors, 502 Bad Gateway otherwise.
 func errorHandler(writer http.ResponseWriter, _ *http.Request, err error) {
 	if err == nil {
+		return
+	}
+
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		http.Error(writer, "gateway timeout", http.StatusGatewayTimeout)
+
 		return
 	}
 
