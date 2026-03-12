@@ -1288,3 +1288,94 @@ func TestRouter_PathLengthDominatesMethod(t *testing.T) {
 		})
 	}
 }
+
+func TestRouter_QueryParamCountDominatesRuleIndex(t *testing.T) {
+	t.Parallel()
+
+	router := proxy.NewRouter()
+
+	// Reproduces the conformance test HTTPRouteQueryParamMatching:
+	// Rule 1 (index 1): 1 query param (animal=dolphin) → v2
+	// Rule 2 (index 2): 2 query params (animal=dolphin AND color=blue) → v3
+	// Per GEP-1722: more query params = higher precedence, regardless of rule index.
+	cfg := &proxy.Config{
+		Version: 1,
+		Rules: []proxy.RouteRule{
+			{
+				Matches: []proxy.RouteMatch{
+					{QueryParams: []proxy.QueryParamMatch{
+						{Type: proxy.QueryParamMatchExact, Name: "animal", Value: "cat"},
+					}},
+				},
+				Backends: []proxy.BackendRef{{URL: "http://v1:80", Weight: 1}},
+			},
+			{
+				Matches: []proxy.RouteMatch{
+					{QueryParams: []proxy.QueryParamMatch{
+						{Type: proxy.QueryParamMatchExact, Name: "animal", Value: "dolphin"},
+					}},
+				},
+				Backends: []proxy.BackendRef{{URL: "http://v2:80", Weight: 1}},
+			},
+			{
+				Matches: []proxy.RouteMatch{
+					{QueryParams: []proxy.QueryParamMatch{
+						{Type: proxy.QueryParamMatchExact, Name: "animal", Value: "dolphin"},
+						{Type: proxy.QueryParamMatchExact, Name: "color", Value: "blue"},
+					}},
+					{QueryParams: []proxy.QueryParamMatch{
+						{Type: proxy.QueryParamMatchExact, Name: "ANIMAL", Value: "Whale"},
+					}},
+				},
+				Backends: []proxy.BackendRef{{URL: "http://v3:80", Weight: 1}},
+			},
+		},
+	}
+
+	err := router.UpdateConfig(cfg)
+	require.NoError(t, err)
+
+	tests := []struct {
+		name     string
+		query    string
+		expected string
+	}{
+		{
+			name:     "single param matches rule 1",
+			query:    "animal=cat",
+			expected: "http://v1:80",
+		},
+		{
+			name:     "single param matches rule 2",
+			query:    "animal=dolphin",
+			expected: "http://v2:80",
+		},
+		{
+			name:     "two params match more-specific rule 3",
+			query:    "animal=dolphin&color=blue",
+			expected: "http://v3:80",
+		},
+		{
+			name:     "case-sensitive param matches rule 3 second match",
+			query:    "ANIMAL=Whale",
+			expected: "http://v3:80",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			req := &http.Request{
+				Method: "GET",
+				Host:   "any.example.com",
+				URL:    &url.URL{Path: "/", RawQuery: tt.query},
+				Header: http.Header{},
+			}
+
+			result := router.Route(req)
+			require.NotNil(t, result, "expected a route match for ?%s", tt.query)
+			assert.Equal(t, tt.expected, result.Rule.Backends[0].URL)
+		})
+	}
+}

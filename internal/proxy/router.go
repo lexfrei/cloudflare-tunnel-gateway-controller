@@ -31,10 +31,11 @@ const (
 
 // compiledRule is a pre-compiled routing rule ready for request matching.
 type compiledRule struct {
-	matches  []*CompiledMatch
-	rule     *RouteRule
-	filters  []Filter
-	priority int
+	matches   []*CompiledMatch
+	rule      *RouteRule
+	filters   []Filter
+	priority  int
+	ruleIndex int // original rule index for tiebreaking (earlier rules win)
 }
 
 // routingTable holds the compiled routing state for lock-free reads.
@@ -248,10 +249,11 @@ func compileRule(rule *RouteRule, ruleIndex int) (*compiledRule, error) {
 	}
 
 	return &compiledRule{
-		matches:  matches,
-		rule:     rule,
-		filters:  filters,
-		priority: computePriority(rule, ruleIndex),
+		matches:   matches,
+		rule:      rule,
+		filters:   filters,
+		priority:  computePriority(rule),
+		ruleIndex: ruleIndex,
 	}, nil
 }
 
@@ -271,7 +273,7 @@ func compileRule(rule *RouteRule, ruleIndex int) (*compiledRule, error) {
 // This is correct because a rule with matches [PathPrefix /v2, header:x]
 // should rank higher on path than a rule with [PathPrefix /, header:y],
 // regardless of which match carries the header.
-func computePriority(rule *RouteRule, ruleIndex int) int {
+func computePriority(rule *RouteRule) int {
 	maxPathTypeScore := 0
 	maxPathLen := 0
 	hasMethod := false
@@ -321,16 +323,18 @@ func computePriority(rule *RouteRule, ruleIndex int) int {
 	priority += maxHeaders * priorityPerHeader
 	priority += maxQueryParams * priorityPerQueryParam
 
-	// Use negative rule index as tiebreaker (earlier rules win).
-	priority -= ruleIndex
-
 	return priority
 }
 
 // sortRulesByPrecedence sorts rules in descending priority order.
+// When priorities are equal, earlier rules (lower ruleIndex) win.
 func sortRulesByPrecedence(rules []*compiledRule) {
-	sort.Slice(rules, func(i, j int) bool {
-		return rules[i].priority > rules[j].priority
+	sort.SliceStable(rules, func(i, j int) bool {
+		if rules[i].priority != rules[j].priority {
+			return rules[i].priority > rules[j].priority
+		}
+
+		return rules[i].ruleIndex < rules[j].ruleIndex
 	})
 }
 
