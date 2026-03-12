@@ -31,11 +31,12 @@ const (
 
 // compiledRule is a pre-compiled routing rule ready for request matching.
 type compiledRule struct {
-	matches   []*CompiledMatch
-	rule      *RouteRule
-	filters   []Filter
-	priority  int
-	ruleIndex int // original rule index for tiebreaking (earlier rules win)
+	matches        []*CompiledMatch
+	rule           *RouteRule
+	filters        []Filter
+	backendFilters [][]Filter // per-backend compiled filters (indexed by backend position)
+	priority       int
+	ruleIndex      int // original rule index for tiebreaking (earlier rules win)
 }
 
 // routingTable holds the compiled routing state for lock-free reads.
@@ -86,10 +87,11 @@ func (r *Router) ConfigVersion() int64 {
 
 // RouteResult contains the result of a routing decision.
 type RouteResult struct {
-	Rule          *RouteRule
-	Filters       []Filter
-	BackendIdx    int
-	MatchedPrefix string
+	Rule           *RouteRule
+	Filters        []Filter
+	BackendFilters []Filter
+	BackendIdx     int
+	MatchedPrefix  string
 }
 
 // Route finds the best matching rule for the request and selects a backend.
@@ -248,12 +250,30 @@ func compileRule(rule *RouteRule, ruleIndex int) (*compiledRule, error) {
 		return nil, errors.Wrap(err, "compile filters")
 	}
 
+	var backendFilters [][]Filter
+
+	for backendIdx, backend := range rule.Backends {
+		if len(backend.Filters) == 0 {
+			backendFilters = append(backendFilters, nil)
+
+			continue
+		}
+
+		bf, bfErr := CompileFilters(backend.Filters)
+		if bfErr != nil {
+			return nil, errors.Wrapf(bfErr, "backend[%d] filters", backendIdx)
+		}
+
+		backendFilters = append(backendFilters, bf)
+	}
+
 	return &compiledRule{
-		matches:   matches,
-		rule:      rule,
-		filters:   filters,
-		priority:  computePriority(rule),
-		ruleIndex: ruleIndex,
+		matches:        matches,
+		rule:           rule,
+		filters:        filters,
+		backendFilters: backendFilters,
+		priority:       computePriority(rule),
+		ruleIndex:      ruleIndex,
 	}, nil
 }
 
@@ -347,11 +367,19 @@ func matchRules(rules []*compiledRule, req *http.Request) *RouteResult {
 			continue
 		}
 
+		backendIdx := selectBackend(compiled.rule.Backends)
+
+		var backendFilters []Filter
+		if backendIdx >= 0 && backendIdx < len(compiled.backendFilters) {
+			backendFilters = compiled.backendFilters[backendIdx]
+		}
+
 		return &RouteResult{
-			Rule:          compiled.rule,
-			Filters:       compiled.filters,
-			BackendIdx:    selectBackend(compiled.rule.Backends),
-			MatchedPrefix: getMatchedPathPrefix(compiled.rule, matchIdx),
+			Rule:           compiled.rule,
+			Filters:        compiled.filters,
+			BackendFilters: backendFilters,
+			BackendIdx:     backendIdx,
+			MatchedPrefix:  getMatchedPathPrefix(compiled.rule, matchIdx),
 		}
 	}
 

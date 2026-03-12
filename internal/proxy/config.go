@@ -182,8 +182,9 @@ type MirrorConfig struct {
 
 // BackendRef identifies a backend service with a weight for traffic splitting.
 type BackendRef struct {
-	URL    string `json:"url"`
-	Weight int32  `json:"weight"`
+	URL     string        `json:"url"`
+	Weight  int32         `json:"weight"`
+	Filters []RouteFilter `json:"filters,omitempty"`
 }
 
 // RouteTimeouts configures timeout durations for proxied requests.
@@ -278,6 +279,13 @@ func (r *RouteRule) validate() error {
 
 		if backend.Weight < 0 {
 			return errors.Wrapf(errWeightNonNegative, "backend[%d]", idx)
+		}
+
+		for filterIdx, filter := range backend.Filters {
+			err := filter.validate()
+			if err != nil {
+				return errors.Wrapf(err, "backend[%d].filter[%d]", idx, filterIdx)
+			}
 		}
 	}
 

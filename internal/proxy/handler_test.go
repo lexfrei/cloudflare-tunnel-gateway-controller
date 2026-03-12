@@ -790,3 +790,58 @@ func TestHandler_URLRewriteHostBeatsXOriginalHost(t *testing.T) {
 	assert.Equal(t, "rewritten.example.com", host,
 		"URL rewrite filter host must take precedence over X-Original-Host")
 }
+
+func TestHandler_BackendSpecificHeaderModifier(t *testing.T) {
+	t.Parallel()
+
+	receivedHeaders := make(chan http.Header, 1)
+
+	backend := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, req *http.Request) {
+		receivedHeaders <- req.Header.Clone()
+		writer.WriteHeader(http.StatusOK)
+	}))
+	defer backend.Close()
+
+	router := proxy.NewRouter()
+
+	cfg := &proxy.Config{
+		Version: 1,
+		Rules: []proxy.RouteRule{
+			{
+				Hostnames: []string{"app.example.com"},
+				Backends: []proxy.BackendRef{
+					{
+						URL:    backend.URL,
+						Weight: 1,
+						Filters: []proxy.RouteFilter{
+							{
+								Type: proxy.FilterRequestHeaderModifier,
+								RequestHeaderModifier: &proxy.HeaderModifier{
+									Set: []proxy.HeaderValue{
+										{Name: "Backend", Value: "backend-v1"},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	err := router.UpdateConfig(cfg)
+	require.NoError(t, err)
+
+	handler := proxy.NewHandler(router)
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://app.example.com/", nil)
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, req)
+
+	assert.Equal(t, http.StatusOK, recorder.Code)
+
+	headers := <-receivedHeaders
+	assert.Equal(t, "backend-v1", headers.Get("Backend"),
+		"backend-specific RequestHeaderModifier should set Backend header")
+}

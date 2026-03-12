@@ -485,6 +485,13 @@ func convertBackendRef(
 
 	result.URL = buildServiceURL(serviceName, svcNamespace, port, clusterDomain)
 
+	for filterIdx := range backend.Filters {
+		converted := convertFilter(&backend.Filters[filterIdx], namespace, clusterDomain)
+		if converted != nil {
+			result.Filters = append(result.Filters, *converted)
+		}
+	}
+
 	return result, true
 }
 

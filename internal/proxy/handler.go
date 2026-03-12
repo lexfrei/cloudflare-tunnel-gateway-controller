@@ -47,7 +47,7 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, req *http.Request) {
 		req = req.WithContext(context.WithValue(req.Context(), matchedPrefixKey{}, result.MatchedPrefix))
 	}
 
-	// Apply pre-compiled request filters.
+	// Apply pre-compiled rule-level request filters.
 	redirectResp := ApplyRequestFilters(result.Filters, req)
 	if redirectResp != nil {
 		defer redirectResp.Body.Close()
@@ -55,6 +55,18 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, req *http.Request) {
 		writeRedirectResponse(writer, redirectResp)
 
 		return
+	}
+
+	// Apply backend-specific filters (e.g., per-backend header modifiers).
+	if len(result.BackendFilters) > 0 {
+		redirectResp = ApplyRequestFilters(result.BackendFilters, req)
+		if redirectResp != nil {
+			defer redirectResp.Body.Close()
+
+			writeRedirectResponse(writer, redirectResp)
+
+			return
+		}
 	}
 
 	h.proxyToBackend(writer, req, result)
@@ -119,7 +131,13 @@ func (h *Handler) proxyToBackend(writer http.ResponseWriter, req *http.Request, 
 		req = req.WithContext(ctx)
 	}
 
-	proxy := h.createReverseProxy(backendURL, result.Filters)
+	// Merge rule-level and backend-specific filters for response processing.
+	allFilters := result.Filters
+	if len(result.BackendFilters) > 0 {
+		allFilters = append(allFilters, result.BackendFilters...)
+	}
+
+	proxy := h.createReverseProxy(backendURL, allFilters)
 	proxy.ServeHTTP(writer, req)
 }
 
