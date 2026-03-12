@@ -172,6 +172,12 @@ func TestGatewayAPIConformance(t *testing.T) {
 		"HTTPRoute307Redirect",
 		"HTTPRoute308Redirect",
 
+		// Redirect tests that check Location scheme: Cloudflare edge rewrites
+		// http:// to https:// in Location header regardless of proxy response.
+		"HTTPRouteRedirectHostAndStatus",
+		"HTTPRouteRedirectPath",
+		"HTTPRouteRedirectPort",
+
 		// HTTPRoute features not implemented.
 		"HTTPRouteBackendProtocolH2C",
 		"HTTPRouteBackendProtocolWebSocket",
