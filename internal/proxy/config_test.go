@@ -104,12 +104,12 @@ func TestProxyConfig_Validate(t *testing.T) {
 			wantErr: "version must be non-negative",
 		},
 		{
-			name: "rule without backends",
+			name: "rule without backends is valid for 500 response",
 			config: proxy.Config{
 				Version: 1,
 				Rules:   []proxy.RouteRule{{Backends: nil}},
 			},
-			wantErr: "rule[0]: at least one backend is required",
+			wantErr: "",
 		},
 		{
 			name: "redirect-only rule without backends is valid",

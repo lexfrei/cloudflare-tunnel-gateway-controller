@@ -267,9 +267,9 @@ func (c *Config) Validate() error {
 }
 
 func (r *RouteRule) validate() error {
-	if len(r.Backends) == 0 && !r.hasRedirectFilter() {
-		return errors.New("at least one backend is required")
-	}
+	// Rules with empty backends and no redirect filter are valid —
+	// per Gateway API spec, the proxy handler returns HTTP 500 for
+	// routes with unresolvable backend refs.
 
 	for idx, backend := range r.Backends {
 		if backend.URL == "" {
@@ -296,16 +296,6 @@ func (r *RouteRule) validate() error {
 	}
 
 	return nil
-}
-
-func (r *RouteRule) hasRedirectFilter() bool {
-	for _, f := range r.Filters {
-		if f.Type == FilterRequestRedirect {
-			return true
-		}
-	}
-
-	return false
 }
 
 func (m *RouteMatch) validate() error {
