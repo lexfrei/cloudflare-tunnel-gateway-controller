@@ -1224,3 +1224,67 @@ func TestRouter_DefaultRulesWithDefaultedPaths(t *testing.T) {
 		})
 	}
 }
+
+// TestRouter_PathLengthDominatesMethod verifies that a longer path prefix
+// always takes precedence over a method match per GEP-1722 ordering.
+func TestRouter_PathLengthDominatesMethod(t *testing.T) {
+	t.Parallel()
+
+	router := proxy.NewRouter()
+
+	// Rule 0 (index 6 in conformance): PathPrefix /path5 → v1
+	// Rule 1 (index 7 in conformance): method PATCH (defaulted path /) → v2
+	// Per spec: path length > method, so /path5 wins for PATCH /path5.
+	cfg := &proxy.Config{
+		Version: 1,
+		Rules: []proxy.RouteRule{
+			{
+				Matches: []proxy.RouteMatch{
+					{Path: &proxy.PathMatch{Type: proxy.PathMatchPathPrefix, Value: "/path5"}},
+				},
+				Backends: []proxy.BackendRef{{URL: "http://v1:80", Weight: 1}},
+			},
+			{
+				Matches: []proxy.RouteMatch{
+					{
+						Path:   &proxy.PathMatch{Type: proxy.PathMatchPathPrefix, Value: "/"},
+						Method: "PATCH",
+					},
+				},
+				Backends: []proxy.BackendRef{{URL: "http://v2:80", Weight: 1}},
+			},
+		},
+	}
+
+	err := router.UpdateConfig(cfg)
+	require.NoError(t, err)
+
+	tests := []struct {
+		name     string
+		method   string
+		path     string
+		expected string
+	}{
+		{name: "PATCH /path5 goes to v1 (path wins over method)", method: "PATCH", path: "/path5", expected: "http://v1:80"},
+		{name: "GET /path5 goes to v1", method: "GET", path: "/path5", expected: "http://v1:80"},
+		{name: "PATCH / goes to v2 (method match)", method: "PATCH", path: "/", expected: "http://v2:80"},
+		{name: "PATCH /other goes to v2 (method match, no path5)", method: "PATCH", path: "/other", expected: "http://v2:80"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			req := &http.Request{
+				Method: tt.method,
+				Host:   "any.example.com",
+				URL:    &url.URL{Path: tt.path},
+				Header: http.Header{},
+			}
+
+			result := router.Route(req)
+			require.NotNil(t, result, "expected a route match for %s %s", tt.method, tt.path)
+			assert.Equal(t, tt.expected, result.Rule.Backends[0].URL)
+		})
+	}
+}

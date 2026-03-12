@@ -13,18 +13,20 @@ import (
 	"github.com/cockroachdb/errors"
 )
 
-// Priority scoring constants for Gateway API rule precedence.
-// Per Gateway API spec: Exact > RegularExpression > PathPrefix.
-// The base values are set far enough apart that path length bonuses
-// cannot cause a lower-priority type to outrank a higher-priority one.
+// Priority scoring constants for Gateway API rule precedence (GEP-1722).
+// Strict tier ordering: path type > path length > method > headers > queries.
+//
+// Each tier's per-unit value strictly dominates the total possible contribution
+// of all lower tiers combined. This ensures that 1 extra character of path
+// length always outranks any combination of method, header, and query matches.
 const (
-	priorityExactPath     = 1_000_000
-	priorityRegexPath     = 500_000
-	priorityPrefixPath    = 100_000
-	priorityPathLength    = 10
+	priorityExactPath     = 1_000_000_000
+	priorityRegexPath     = 500_000_000
+	priorityPrefixPath    = 100_000_000
+	priorityPathLength    = 10_000
 	priorityMethod        = 100
-	priorityPerHeader     = 50
-	priorityPerQueryParam = 25
+	priorityPerHeader     = 10
+	priorityPerQueryParam = 1
 )
 
 // compiledRule is a pre-compiled routing rule ready for request matching.
