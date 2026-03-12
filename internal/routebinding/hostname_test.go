@@ -8,7 +8,7 @@ import (
 )
 
 func ptr[T any](v T) *T {
-	return &v
+	return new(v)
 }
 
 func TestHostnamesIntersect(t *testing.T) {

@@ -220,7 +220,7 @@ kubectl logs --namespace cloudflare-tunnel-system \
 | Issue | Solution |
 |-------|----------|
 | GatewayClass not found | Set `gatewayClass.create: true` in Helm values |
-| Wrong controller name | Check `gatewayClassName` matches chart configuration |
+| Wrong controller name | Check GatewayClass `spec.controllerName` matches `controller.controllerName` in chart values |
 | Service not found | Verify backend Services exist |
 
 ### HTTPRoute Not Attached

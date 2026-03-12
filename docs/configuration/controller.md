@@ -7,8 +7,7 @@ For Helm chart values, see [Helm Values](helm-values.md).
 
 | Flag | Environment Variable | Default | Description |
 |------|---------------------|---------|-------------|
-| `--gateway-class-name` | `CF_GATEWAY_CLASS_NAME` | `cloudflare-tunnel` | GatewayClass name to watch |
-| `--controller-name` | `CF_CONTROLLER_NAME` | `cf.k8s.lex.la/tunnel-controller` | Controller name for GatewayClass |
+| `--controller-name` | `CF_CONTROLLER_NAME` | `cf.k8s.lex.la/tunnel-controller` | Controller name matching GatewayClass spec.controllerName |
 | `--cluster-domain` | `CF_CLUSTER_DOMAIN` | (auto-detect) | Kubernetes cluster domain |
 | `--metrics-addr` | `CF_METRICS_ADDR` | `:8080` | Metrics endpoint address |
 | `--health-addr` | `CF_HEALTH_ADDR` | `:8081` | Health probe endpoint address |
@@ -17,6 +16,8 @@ For Helm chart values, see [Helm Values](helm-values.md).
 | `--leader-elect` | `CF_LEADER_ELECT` | `false` | Enable leader election for HA |
 | `--leader-election-namespace` | `CF_LEADER_ELECTION_NAMESPACE` | | Namespace for leader election lease |
 | `--leader-election-name` | `CF_LEADER_ELECTION_NAME` | `cloudflare-tunnel-gateway-controller-leader` | Leader election lease name |
+| `--proxy-endpoints` | `CF_PROXY_ENDPOINTS` | | Proxy config API endpoints for v2 proxy sync |
+| `--proxy-auth-token` | `CF_PROXY_AUTH_TOKEN` | | Bearer token for proxy config push authentication |
 
 ## Environment Variables
 
@@ -25,7 +26,7 @@ Dashes in flag names are replaced with underscores.
 
 Examples:
 
-- `--gateway-class-name` → `CF_GATEWAY_CLASS_NAME`
+- `--controller-name` → `CF_CONTROLLER_NAME`
 - `--log-level` → `CF_LOG_LEVEL`
 - `--leader-elect` → `CF_LEADER_ELECT`
 

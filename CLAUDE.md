@@ -27,6 +27,9 @@ golangci-lint run --timeout=5m
 # Lint markdown files
 markdownlint-cli2 '**/*.md'
 
+# Build proxy binary
+go build -o bin/proxy ./cmd/proxy
+
 # Build container
 podman build --tag cloudflare-tunnel-gateway-controller:dev --file Containerfile .
 ```
@@ -54,9 +57,13 @@ helm template test charts/cloudflare-tunnel-gateway-controller --values charts/c
 
 ### Controllers (controller-runtime based)
 
-- **GatewayReconciler** (`internal/controller/gateway_controller.go`): Watches Gateway resources matching `cloudflare-tunnel` GatewayClass. Manages cloudflared deployment via Helm when `--manage-cloudflared` enabled. Updates Gateway status with tunnel CNAME address.
+- **GatewayReconciler** (`internal/controller/gateway_controller.go`): Watches Gateway resources whose GatewayClass has a matching `spec.controllerName`. Resolves GatewayClassConfig for tunnel credentials. Optionally manages cloudflared deployment via Helm SDK. Updates Gateway status with tunnel CNAME address.
 
-- **HTTPRouteReconciler** (`internal/controller/httproute_controller.go`): Watches HTTPRoute resources referencing managed Gateways. Performs full sync of all relevant routes to Cloudflare Tunnel configuration on any change. Updates HTTPRoute status.
+- **HTTPRouteReconciler** (`internal/controller/httproute_controller.go`): Watches HTTPRoute resources referencing managed Gateways. Performs full sync of all relevant routes to Cloudflare Tunnel configuration on any change. Updates HTTPRoute status. Optionally pushes config to v2 proxy replicas via ProxySyncer.
+
+- **GRPCRouteReconciler** (`internal/controller/grpcroute_controller.go`): Watches GRPCRoute resources. Shares RouteSyncer with HTTPRouteReconciler for unified Cloudflare Tunnel sync. Does NOT push to v2 proxy (GRPC is tunnel-only).
+
+- **ProxySyncer** (`internal/controller/proxy_syncer.go`): Converts HTTPRoutes into proxy config and pushes to proxy endpoints via HTTP API. Resolves headless service DNS for endpoint discovery. Validates cross-namespace backends via ReferenceGrant.
 
 ### Custom Resource Definition
 
@@ -72,6 +79,21 @@ helm template test charts/cloudflare-tunnel-gateway-controller --values charts/c
 
 - **internal/dns/detect.go**: Auto-detects Kubernetes cluster domain from `/etc/resolv.conf` search domains.
 
+### V2 Proxy Data Plane
+
+- **cmd/proxy/**: Standalone binary running cloudflared tunnel transport with an L7 reverse proxy. Supports tunnel mode (in-process via `OriginProxy`) and standalone mode (HTTP server for development).
+
+- **internal/proxy/**: L7 reverse proxy implementation:
+  - `router.go` — Thread-safe HTTP router with atomic config swap, compiled matchers, and weighted backend selection.
+  - `handler.go` — Request handler with filter pipeline, per-route timeouts, and transport pool management.
+  - `converter.go` — Converts Gateway API HTTPRoute resources to proxy config.
+  - `filter.go` — Filter implementations: header modifier, redirect, URL rewrite, request mirror.
+  - `config.go` — Proxy config types (rules, matches, filters, backends, timeouts).
+  - `api.go` — Config API endpoints (PUT/GET /config, healthz, readyz) with Bearer token auth.
+  - `pusher.go` — HTTP client for pushing config to proxy replicas concurrently.
+
+- **internal/tunnel/**: Bootstraps cloudflared tunnel with in-process proxy override. Parses tunnel tokens, builds tunnel configuration, and integrates with the vendored cloudflared `OverrideProxy` hook. Exposes `GatewayOriginProxy` adapter for routing requests to the L7 proxy.
+
 ### Key Dependencies
 
 - `sigs.k8s.io/controller-runtime` - Kubernetes controller framework
@@ -79,6 +101,20 @@ helm template test charts/cloudflare-tunnel-gateway-controller --values charts/c
 - `github.com/cloudflare/cloudflare-go/v4` - Cloudflare API client
 - `helm.sh/helm/v3` - Helm SDK for cloudflared deployment
 - `github.com/cockroachdb/errors` - Error wrapping
+
+### Cloudflared Fork
+
+The project uses a fork of cloudflared: `github.com/lexfrei/cloudflared` (via `replace` directive in `go.mod`).
+
+**Why:** The v2 in-process proxy needs to inject a custom `OriginProxy` into cloudflared's `Orchestrator`. Upstream cloudflared doesn't expose this capability, so the fork adds an `OverrideProxy` field to `Orchestrator` and modifies `GetOriginProxy()` to return it when set.
+
+**Fork maintenance:**
+
+- Fork repo: `github.com/lexfrei/cloudflared`, branch `master`
+- Base: upstream cloudflare/cloudflared at a pinned commit
+- Patch: single commit adding `OverrideProxy` field to `orchestration/orchestrator.go`
+- **NEVER patch vendor directly** — always update the fork and re-vendor
+- When upgrading cloudflared version: rebase fork's master onto new upstream tag/commit, re-apply patch, update `replace` directive and pseudo-version in `go.mod`, then `go mod tidy && go mod vendor`
 
 ### Configuration
 
@@ -95,15 +131,24 @@ Configuration is provided via GatewayClassConfig CRD (referenced by GatewayClass
 
 ```text
 api/v1alpha1/            # GatewayClassConfig CRD types
-cmd/controller/          # Entrypoint and CLI (cobra/viper)
+cmd/controller/          # Controller entrypoint and CLI (cobra/viper)
+cmd/proxy/               # L7 proxy binary entrypoint (standalone + tunnel modes)
 internal/
   config/                # GatewayClassConfig resolver and credential handling
-  controller/            # Kubernetes controllers (Gateway, HTTPRoute, GatewayClassConfig)
+  controller/            # Kubernetes controllers (Gateway, HTTPRoute, GRPCRoute, ProxySyncer)
   dns/                   # Cluster domain auto-detection
   helm/                  # Helm SDK operations for cloudflared
   ingress/               # HTTPRoute → Cloudflare ingress rule conversion
+  logging/               # Structured logging helpers (OpenTelemetry trace handler)
+  cfmetrics/             # Cloudflare metrics collection
+  proxy/                 # L7 reverse proxy (router, matcher, filter, config API, converter)
+  referencegrant/        # ReferenceGrant validation for cross-namespace backends
+  routebinding/          # Route-to-Gateway binding validation
+  tunnel/                # cloudflared tunnel bootstrap and GatewayOriginProxy adapter
 charts/                  # Helm chart with helm-unittest tests
 deploy/                  # Raw Kubernetes manifests for manual deployment
+test/e2e/                # E2E tests (custom, against live tunnel + proxy)
+test/conformance/        # Official Gateway API conformance suite integration
 ```
 
 ## Testing Standards
@@ -411,3 +456,66 @@ When creating issues, apply labels from these categories:
 ### Milestone
 
 Always assign a milestone when creating issues (e.g., `v1.0.0`).
+
+## Conformance Testing
+
+### Overview
+
+Official Gateway API conformance suite (`sigs.k8s.io/gateway-api/conformance` v1.5.0) runs against a kind cluster with a real Cloudflare Tunnel.
+
+### Cloudflare Edge Constraints
+
+**Host header validation**: Cloudflare edge returns 403 for any Host header with a domain not registered on the account. Conformance tests use `example.com`, `example.net`, `rewrite.example` etc. — all rejected by edge.
+
+**Solution**: `X-Original-Host` header pattern:
+
+- `TunnelRoundTripper` (test-only) always sets `Host: <edge-hostname>` so Cloudflare passes the request through
+- Original test Host is sent via `X-Original-Host` header
+- Proxy's `extractHost()` checks `X-Original-Host` first, falls back to `Host`
+- This is NOT a production pattern — only needed because conformance tests use unregistered domains
+
+**Other approaches investigated and rejected**:
+
+- WARP/Zero Trust: edge still validates Host for public hostname routing
+- `cloudflared access` proxy: still goes through edge, same Host validation
+- Private Network (IP/CIDR routing): bypasses Host validation but requires WARP client on CI — impractical
+- Direct tunnel connection: not possible, cloudflared is outbound-only
+
+**gRPC tests**: Conformance suite's gRPC client (`grpc.NewClient`) dials directly to Gateway address (`*.cfargotunnel.com` AAAA → Cloudflare ULA fd10::/8, not routable). Custom gRPC dialer cannot be injected. These tests are skipped.
+
+### Setup and Execution
+
+```bash
+# Full setup: fresh kind cluster + deploy + run tests
+./hack/conformance-setup.sh --test
+
+# Setup only (reuse for iterative testing)
+./hack/conformance-setup.sh
+
+# Run all conformance tests on existing cluster
+go test -v -tags conformance -count=1 -timeout=60m -parallel 10 ./test/conformance/...
+
+# Run specific failing test
+go test -v -tags conformance -count=1 -timeout=10m ./test/conformance/... -run "HTTPRouteMatchingAcrossRoutes"
+
+# Rebuild and redeploy images without recreating cluster
+docker build --tag controller:dev --file Containerfile .
+docker build --tag proxy:dev --file Containerfile.proxy .
+kind load docker-image controller:dev --name <cluster-name>
+kind load docker-image proxy:dev --name <cluster-name>
+kubectl --context kind-<cluster-name> rollout restart deployment --namespace cloudflare-tunnel-system \
+  cftunnel-cloudflare-tunnel-gateway-controller \
+  cftunnel-cloudflare-tunnel-gateway-controller-proxy
+```
+
+### Key Files
+
+- `test/conformance/conformance_test.go` — Test configuration, skip lists, feature sets
+- `test/conformance/roundtripper.go` — Custom HTTP round-tripper for Cloudflare edge
+- `hack/conformance-setup.sh` — Cluster setup script (kind + helm deploy)
+
+### Environment Variables
+
+- `CONFORMANCE_TUNNEL_HOSTNAME` — Edge hostname (default: `v2-test.lex.la`)
+- `CONFORMANCE_GATEWAY_CLASS` — GatewayClass name (default: `cloudflare-tunnel`)
+- `CONFORMANCE_REPORT_OUTPUT` — Path for YAML conformance report

@@ -25,7 +25,7 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
 
       - name: Run Trivy vulnerability scanner (filesystem)
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@0.35.0
         with:
           scan-type: 'fs'
           scan-ref: '.'
@@ -100,7 +100,7 @@ jobs:
 
   # Build containers only after lint, test and security succeed
   build-and-push:
-    name: Build and Push (${{ matrix.arch }})
+    name: Build and Push (${{ matrix.component }}/${{ matrix.arch }})
     needs: [security, lint, test]
     runs-on: ${{ matrix.runner }}
     strategy:
@@ -110,9 +110,27 @@ jobs:
           - platform: linux/amd64
             arch: amd64
             runner: ubuntu-24.04
+            component: controller
+            file: Containerfile
+            image: ttl.sh/cf-tunnel-gateway-ctrl
           - platform: linux/arm64
             arch: arm64
             runner: ubuntu-24.04-arm
+            component: controller
+            file: Containerfile
+            image: ttl.sh/cf-tunnel-gateway-ctrl
+          - platform: linux/amd64
+            arch: amd64
+            runner: ubuntu-24.04
+            component: proxy
+            file: Containerfile.proxy
+            image: ttl.sh/cf-tunnel-gateway-proxy
+          - platform: linux/arm64
+            arch: arm64
+            runner: ubuntu-24.04-arm
+            component: proxy
+            file: Containerfile.proxy
+            image: ttl.sh/cf-tunnel-gateway-proxy
     steps:
       - name: Checkout PR code
         uses: actions/checkout@v6
@@ -127,11 +145,11 @@ jobs:
         uses: docker/build-push-action@v7
         with:
           context: .
-          file: ./Containerfile
+          file: ./${{ matrix.file }}
           platforms: ${{ matrix.platform }}
-          outputs: type=image,name=ttl.sh/cf-tunnel-gateway-ctrl,push-by-digest=true,name-canonical=true,push=true
-          cache-from: type=gha,scope=build-${{ matrix.arch }}
-          cache-to: type=gha,scope=build-${{ matrix.arch }},mode=max
+          outputs: type=image,name=${{ matrix.image }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=build-${{ matrix.component }}-${{ matrix.arch }}
+          cache-to: type=gha,scope=build-${{ matrix.component }}-${{ matrix.arch }},mode=max
           build-args: |
             VERSION=pr-${{ github.event.pull_request.number }}
             REVISION=${{ github.event.pull_request.head.sha }}
@@ -145,21 +163,28 @@ jobs:
       - name: Upload digest
         uses: actions/upload-artifact@v7
         with:
-          name: digests-${{ matrix.arch }}
+          name: digests-${{ matrix.component }}-${{ matrix.arch }}
           path: /tmp/digests/*
           if-no-files-found: error
           retention-days: 1
 
-  # Merge multi-arch manifests
+  # Merge multi-arch manifests for each component
   merge-manifests:
-    name: Merge Manifests
+    name: Merge Manifests (${{ matrix.component }})
     runs-on: ubuntu-latest
     needs: build-and-push
+    strategy:
+      matrix:
+        include:
+          - component: controller
+            image: ttl.sh/cf-tunnel-gateway-ctrl
+          - component: proxy
+            image: ttl.sh/cf-tunnel-gateway-proxy
     steps:
       - name: Download digests
         uses: actions/download-artifact@v8
         with:
-          pattern: digests-*
+          pattern: digests-${{ matrix.component }}-*
           path: /tmp/digests
           merge-multiple: true
 
@@ -172,7 +197,7 @@ jobs:
           set -euo pipefail
 
           PR_NUMBER="${{ github.event.pull_request.number }}"
-          IMAGE_NAME="ttl.sh/cf-tunnel-gateway-ctrl"
+          IMAGE_NAME="${{ matrix.image }}"
           TAG="pr-${PR_NUMBER}-1d"
 
           # Build image references array
@@ -190,15 +215,15 @@ jobs:
       - name: Inspect image
         run: |
           PR_NUMBER="${{ github.event.pull_request.number }}"
-          docker buildx imagetools inspect "ttl.sh/cf-tunnel-gateway-ctrl:pr-${PR_NUMBER}-1d"
+          docker buildx imagetools inspect "${{ matrix.image }}:pr-${PR_NUMBER}-1d"
 
       - name: Generate build summary
         run: |
           PR_NUMBER="${{ github.event.pull_request.number }}"
-          IMAGE_TAG="ttl.sh/cf-tunnel-gateway-ctrl:pr-${PR_NUMBER}-1d"
+          IMAGE_TAG="${{ matrix.image }}:pr-${PR_NUMBER}-1d"
 
           {
-            echo "## Multi-arch Container Image"
+            echo "## Multi-arch Container Image (${{ matrix.component }})"
             echo ""
             echo "### Image Tag"
             echo "- \`${IMAGE_TAG}\`"
@@ -327,6 +352,13 @@ jobs:
           echo "Testing chart with ServiceMonitor enabled..."
           helm template test-release charts/cloudflare-tunnel-gateway-controller \
             --set serviceMonitor.enabled=true
+
+      - name: Template Chart with proxy enabled
+        run: |
+          echo "Testing chart with proxy enabled..."
+          helm template test-release charts/cloudflare-tunnel-gateway-controller \
+            --set proxy.enabled=true \
+            --set proxy.tunnelTokenSecretRef.name=tunnel-token-secret
 
       - name: Validate helm-docs
         run: |
@@ -470,12 +502,13 @@ jobs:
         with:
           script: |
             const prNumber = context.payload.pull_request.number;
-            const imageTag = `ttl.sh/cf-tunnel-gateway-ctrl:pr-${prNumber}-1d`;
+            const ctrlTag = `ttl.sh/cf-tunnel-gateway-ctrl:pr-${prNumber}-1d`;
+            const proxyTag = `ttl.sh/cf-tunnel-gateway-proxy:pr-${prNumber}-1d`;
             const chartVersion = `0.0.0-pr.${prNumber}-1d`;
 
             github.rest.issues.createComment({
               issue_number: prNumber,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: `## Container image available\n\n**Multi-arch image (amd64 + arm64):**\n\`\`\`bash\npodman pull ${imageTag}\n\`\`\`\n\n## Helm chart available\n\n**Install chart:**\n\`\`\`bash\nhelm install test oci://ttl.sh/cloudflare-tunnel-gateway-controller --version ${chartVersion}\n\`\`\`\n\n> **Note:** Image and chart are rebuilt on every commit and expire after 24 hours (hosted on ttl.sh).`
+              body: `## Container images available\n\n**Controller (amd64 + arm64):**\n\`\`\`bash\npodman pull ${ctrlTag}\n\`\`\`\n\n**Proxy (amd64 + arm64):**\n\`\`\`bash\npodman pull ${proxyTag}\n\`\`\`\n\n## Helm chart available\n\n**Install chart:**\n\`\`\`bash\nhelm install test oci://ttl.sh/cloudflare-tunnel-gateway-controller --version ${chartVersion}\n\`\`\`\n\n> **Note:** Images and chart are rebuilt on every commit and expire after 24 hours (hosted on ttl.sh).`
             })

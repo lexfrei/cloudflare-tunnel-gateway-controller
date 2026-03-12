@@ -2,27 +2,16 @@ package controller
 
 import (
 	"context"
-	"strings"
 	"sync/atomic"
 	"time"
 
-	"github.com/cockroachdb/errors"
-	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/util/retry"
-	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/handler"
-	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
-	gatewayv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
 
-	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/api/v1alpha1"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/ingress"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/logging"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/routebinding"
@@ -40,9 +29,8 @@ const (
 	maxIngressRules = 1000
 
 	// Route status messages.
-	routeNotAcceptedMessage = "Route not accepted"
-	routeAcceptedMessage    = "Route accepted and programmed in Cloudflare Tunnel"
-	resolvedRefsMessage     = "All references resolved"
+	routeAcceptedMessage = "Route accepted and programmed in Cloudflare Tunnel"
+	resolvedRefsMessage  = "All references resolved"
 
 	// Priority levels for reconciliation queue.
 	// Higher values = higher priority = processed first.
@@ -71,14 +59,18 @@ type HTTPRouteReconciler struct {
 	// Scheme is the runtime scheme for API type registration.
 	Scheme *runtime.Scheme
 
-	// GatewayClassName filters which routes to process.
-	GatewayClassName string
-
-	// ControllerName is reported in HTTPRoute status.
+	// ControllerName identifies this controller and is used to filter
+	// routes by their parent Gateway's GatewayClass controllerName.
 	ControllerName string
 
 	// RouteSyncer provides unified sync for both HTTP and GRPC routes.
 	RouteSyncer *RouteSyncer
+
+	// ProxySyncer pushes routing config to v2 proxy replicas (optional).
+	ProxySyncer *ProxySyncer
+
+	// ProxyEndpoints is the list of proxy config API URLs for v2 proxy sync.
+	ProxyEndpoints []string
 
 	// bindingValidator validates route binding to Gateway listeners.
 	bindingValidator *routebinding.Validator
@@ -89,87 +81,42 @@ type HTTPRouteReconciler struct {
 }
 
 func (r *HTTPRouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	// Wait for startup sync to complete before processing reconcile events
-	// to prevent race conditions with Cloudflare API updates
-	if !r.startupComplete.Load() {
-		return ctrl.Result{RequeueAfter: startupPendingRequeueDelay, Priority: ptr.To(priorityRoute)}, nil
-	}
-
-	ctx = logging.WithReconcileID(ctx)
-	logger := logging.Component(ctx, "httproute-reconciler").With("httproute", req.String())
-	ctx = logging.WithLogger(ctx, logger)
-
-	var route gatewayv1.HTTPRoute
-	if err := r.Get(ctx, req.NamespacedName, &route); err != nil {
-		if apierrors.IsNotFound(err) {
-			logger.Info("httproute deleted, triggering full sync")
-
-			return r.syncAndUpdateStatus(ctx)
-		}
-
-		return ctrl.Result{}, errors.Wrap(err, "failed to get httproute")
-	}
-
-	if !r.isRouteForOurGateway(ctx, &route) {
-		return ctrl.Result{}, nil
-	}
-
-	logger.Info("reconciling httproute")
-
-	return r.syncAndUpdateStatus(ctx)
+	return reconcileRoute(ctx, req, &gatewayv1.HTTPRoute{}, reconcileRouteParams[*gatewayv1.HTTPRoute]{
+		startupComplete: &r.startupComplete,
+		k8sClient:       r.Client,
+		controllerName:  r.ControllerName,
+		componentName:   "httproute",
+		wrapRoute:       func(route *gatewayv1.HTTPRoute) Route { return HTTPRouteWrapper{route} },
+		syncAndUpdate:   r.syncAndUpdateStatus,
+	})
 }
 
 func (r *HTTPRouteReconciler) syncAndUpdateStatus(ctx context.Context) (ctrl.Result, error) {
-	logger := logging.FromContext(ctx)
+	return syncAndUpdateStatusCommon(ctx, syncUpdateParams{
+		routeSyncer:    r.RouteSyncer,
+		proxySyncer:    r.ProxySyncer,
+		proxyEndpoints: r.ProxyEndpoints,
+		pushProxy:      true,
+		statusEntries: func(sr *SyncResult) []routeStatusEntry {
+			return sr.httpStatusEntries(r.updateRouteStatus)
+		},
+	})
+}
 
-	result, syncResult, syncErr := r.RouteSyncer.SyncAllRoutes(ctx)
-
-	// Update status for all HTTP routes with per-parent binding results
-	var statusUpdateErr error
-
-	if syncResult != nil {
-		for i := range syncResult.HTTPRoutes {
-			route := &syncResult.HTTPRoutes[i]
-			routeKey := route.Namespace + "/" + route.Name
-			bindingInfo := syncResult.HTTPRouteBindings[routeKey]
-
-			// Filter failed refs for this route
-			var routeFailedRefs []ingress.BackendRefError
-
-			for _, failedRef := range syncResult.HTTPFailedRefs {
-				if failedRef.RouteNamespace == route.Namespace && failedRef.RouteName == route.Name {
-					routeFailedRefs = append(routeFailedRefs, failedRef)
-				}
-			}
-
-			if err := r.updateRouteStatus(ctx, route, bindingInfo, routeFailedRefs, syncErr); err != nil {
-				logger.Error("failed to update httproute status", "error", err)
-				// Keep first error to return for requeue with backoff
-				if statusUpdateErr == nil {
-					statusUpdateErr = err
-				}
-			}
-		}
+// httpRoutePtrs converts a slice of HTTPRoute values to a slice of pointers.
+func httpRoutePtrs(routes []gatewayv1.HTTPRoute) []*gatewayv1.HTTPRoute {
+	ptrs := make([]*gatewayv1.HTTPRoute, len(routes))
+	for idx := range routes {
+		ptrs[idx] = &routes[idx]
 	}
 
-	if syncErr != nil && result.RequeueAfter == 0 {
-		// Don't propagate error for limit exceeded (no requeue needed)
-		return result, nil
-	}
-
-	// Return error if status updates failed - controller-runtime will requeue with backoff
-	if statusUpdateErr != nil {
-		return ctrl.Result{}, statusUpdateErr
-	}
-
-	return result, nil
+	return ptrs
 }
 
 func (r *HTTPRouteReconciler) isRouteForOurGateway(ctx context.Context, route *gatewayv1.HTTPRoute) bool {
-	return IsRouteAcceptedByGateway(ctx, r.Client, r.bindingValidator, r.GatewayClassName, HTTPRouteWrapper{route})
+	return IsRouteAcceptedByGateway(ctx, r.Client, r.bindingValidator, r.ControllerName, HTTPRouteWrapper{route})
 }
 
-//nolint:funlen,gocognit,dupl // status update logic; dupl with GRPCRoute
 func (r *HTTPRouteReconciler) updateRouteStatus(
 	ctx context.Context,
 	route *gatewayv1.HTTPRoute,
@@ -177,169 +124,34 @@ func (r *HTTPRouteReconciler) updateRouteStatus(
 	failedRefs []ingress.BackendRefError,
 	syncErr error,
 ) error {
-	routeKey := types.NamespacedName{Name: route.Name, Namespace: route.Namespace}
-
-	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		// Get fresh copy of the route to avoid conflict errors
-		var freshRoute gatewayv1.HTTPRoute
-		if err := r.Get(ctx, routeKey, &freshRoute); err != nil {
-			return errors.Wrap(err, "failed to get fresh httproute")
-		}
-
-		now := metav1.Now()
-		freshRoute.Status.Parents = nil
-
-		for refIdx, ref := range freshRoute.Spec.ParentRefs {
-			if ref.Kind != nil && *ref.Kind != kindGateway {
-				continue
-			}
-
-			namespace := freshRoute.Namespace
-			if ref.Namespace != nil {
-				namespace = string(*ref.Namespace)
-			}
-
-			var gateway gatewayv1.Gateway
-			if err := r.Get(ctx, client.ObjectKey{Name: string(ref.Name), Namespace: namespace}, &gateway); err != nil {
-				continue
-			}
-
-			if gateway.Spec.GatewayClassName != gatewayv1.ObjectName(r.GatewayClassName) {
-				continue
-			}
-
-			// Get binding result for this parent ref
-			bindingResult, hasBinding := bindingInfo.bindingResults[refIdx]
-
-			status := metav1.ConditionTrue
-			reason := string(gatewayv1.RouteReasonAccepted)
-			message := routeAcceptedMessage
-
-			if syncErr != nil {
-				status = metav1.ConditionFalse
-				reason = string(gatewayv1.RouteReasonPending)
-				message = syncErr.Error()
-			} else if hasBinding && !bindingResult.Accepted {
-				status = metav1.ConditionFalse
-				reason = string(bindingResult.Reason)
-				message = bindingResult.Message
-			}
-
-			// Check if there are any failed backend refs
-			resolvedRefsStatus := metav1.ConditionTrue
-			resolvedRefsReason := string(gatewayv1.RouteReasonResolvedRefs)
-			refsMessage := resolvedRefsMessage // avoid shadowing const
-
-			if len(failedRefs) > 0 {
-				resolvedRefsStatus = metav1.ConditionFalse
-				resolvedRefsReason = string(gatewayv1.RouteReasonRefNotPermitted)
-
-				// Build message with list of denied backends
-				var msgBuilder strings.Builder
-
-				msgBuilder.WriteString("Backend references not permitted: ")
-
-				for i, failedRef := range failedRefs {
-					if i > 0 {
-						msgBuilder.WriteString(", ")
-					}
-
-					msgBuilder.WriteString(failedRef.BackendNS + "/" + failedRef.BackendName)
-				}
-
-				refsMessage = msgBuilder.String()
-			}
-
-			// Create copy to avoid pointer to loop variable
-			parentNS := gatewayv1.Namespace(namespace)
-
-			parentStatus := gatewayv1.RouteParentStatus{
-				ParentRef: gatewayv1.ParentReference{
-					Group:       ref.Group,
-					Kind:        ref.Kind,
-					Namespace:   &parentNS,
-					Name:        ref.Name,
-					SectionName: ref.SectionName,
-				},
-				ControllerName: gatewayv1.GatewayController(r.ControllerName),
-				Conditions: []metav1.Condition{
-					{
-						Type:               string(gatewayv1.RouteConditionAccepted),
-						Status:             status,
-						ObservedGeneration: freshRoute.Generation,
-						LastTransitionTime: now,
-						Reason:             reason,
-						Message:            message,
-					},
-					{
-						Type:               string(gatewayv1.RouteConditionResolvedRefs),
-						Status:             resolvedRefsStatus,
-						ObservedGeneration: freshRoute.Generation,
-						LastTransitionTime: now,
-						Reason:             resolvedRefsReason,
-						Message:            refsMessage,
-					},
-				},
-			}
-
-			freshRoute.Status.Parents = append(freshRoute.Status.Parents, parentStatus)
-		}
-
-		if err := r.Status().Update(ctx, &freshRoute); err != nil {
-			return errors.Wrap(err, "failed to update httproute status")
-		}
-
-		return nil
-	})
-
-	return errors.Wrap(err, "failed to update httproute status after retries")
+	return updateRouteStatusGeneric(
+		ctx,
+		routeStatusUpdateParams{
+			k8sClient:      r.Client,
+			controllerName: r.ControllerName,
+		},
+		types.NamespacedName{Name: route.Name, Namespace: route.Namespace},
+		newHTTPRouteAccessor,
+		bindingInfo,
+		failedRefs,
+		syncErr,
+	)
 }
 
 func (r *HTTPRouteReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	r.bindingValidator = routebinding.NewValidator(r.Client)
 
-	mapper := &ConfigMapper{
-		Client:           r.Client,
-		GatewayClassName: r.GatewayClassName,
-		ConfigResolver:   r.RouteSyncer.ConfigResolver,
-	}
-
-	err := ctrl.NewControllerManagedBy(mgr).
-		For(&gatewayv1.HTTPRoute{}).
-		// Filter out status-only updates to prevent infinite reconciliation loops.
-		// We only care about spec changes (generation changes) or deletions.
-		WithEventFilter(predicate.GenerationChangedPredicate{}).
-		Watches(
-			&gatewayv1.Gateway{},
-			handler.EnqueueRequestsFromMapFunc(r.findRoutesForGateway),
-		).
-		// Watch GatewayClassConfig for config changes
-		Watches(
-			&v1alpha1.GatewayClassConfig{},
-			handler.EnqueueRequestsFromMapFunc(mapper.MapConfigToRequests(r.getAllRelevantRoutes)),
-		).
-		// Watch Secrets for credential changes
-		Watches(
-			&corev1.Secret{},
-			handler.EnqueueRequestsFromMapFunc(mapper.MapSecretToRequests(r.getAllRelevantRoutes)),
-		).
-		// Watch ReferenceGrant for cross-namespace permission changes
-		Watches(
-			&gatewayv1beta1.ReferenceGrant{},
-			handler.EnqueueRequestsFromMapFunc(r.findRoutesForReferenceGrant),
-		).
-		Complete(r)
-	if err != nil {
-		return errors.Wrap(err, "failed to setup httproute controller")
-	}
-
-	// Add startup runnable for initial sync
-	addErr := mgr.Add(r)
-	if addErr != nil {
-		return errors.Wrap(addErr, "failed to add startup sync runnable")
-	}
-
-	return nil
+	return setupRouteController(mgr, &routeControllerSetupParams{
+		routeObject:           &gatewayv1.HTTPRoute{},
+		reconciler:            r,
+		runnable:              r,
+		k8sClient:             r.Client,
+		controllerName:        r.ControllerName,
+		configResolver:        r.RouteSyncer.ConfigResolver,
+		findRoutesForGateway:  r.findRoutesForGateway,
+		findRoutesForRefGrant: r.findRoutesForReferenceGrant,
+		getAllRelevantRoutes:  r.getAllRelevantRoutes,
+	})
 }
 
 // Start implements manager.Runnable for startup sync.
@@ -378,7 +190,7 @@ func (r *HTTPRouteReconciler) findRoutesForGateway(
 		routes[i] = HTTPRouteWrapper{&routeList.Items[i]}
 	}
 
-	return FindRoutesForGateway(obj, r.GatewayClassName, routes)
+	return FindRoutesForGateway(ctx, r.Client, obj, r.ControllerName, routes)
 }
 
 func (r *HTTPRouteReconciler) findRoutesForReferenceGrant(
@@ -418,5 +230,5 @@ func (r *HTTPRouteReconciler) getAllRelevantRoutes(ctx context.Context) []reconc
 		routes[i] = HTTPRouteWrapper{&routeList.Items[i]}
 	}
 
-	return FilterAcceptedRoutes(ctx, r.Client, r.bindingValidator, r.GatewayClassName, routes)
+	return FilterAcceptedRoutes(ctx, r.Client, r.bindingValidator, r.ControllerName, routes)
 }

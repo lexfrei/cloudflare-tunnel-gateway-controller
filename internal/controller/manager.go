@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/cockroachdb/errors"
+	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -29,11 +30,8 @@ type Config struct {
 	// Defaults to "cluster.local".
 	ClusterDomain string
 
-	// GatewayClassName is the name of the GatewayClass to watch.
-	// Only Gateways referencing this class will be reconciled.
-	GatewayClassName string
-
-	// ControllerName is the controller name reported in GatewayClass status.
+	// ControllerName identifies this controller per Gateway API spec.
+	// The controller watches all GatewayClasses with matching controllerName.
 	ControllerName string
 
 	// MetricsAddr is the address for the Prometheus metrics endpoint.
@@ -51,6 +49,15 @@ type Config struct {
 
 	// LeaderElectName is the name of the leader election lease.
 	LeaderElectName string
+
+	// ProxyEndpoints is a list of proxy config API URLs for v2 proxy sync.
+	// When non-empty, the controller pushes routing config to these endpoints.
+	// Example: ["http://proxy-0:8081", "http://proxy-1:8081"]
+	ProxyEndpoints []string
+
+	// ProxyAuthToken is the Bearer token for authenticating config push requests.
+	// When set, the controller includes "Authorization: Bearer <token>" in push requests.
+	ProxyAuthToken string
 }
 
 // Run initializes and starts the controller manager with the provided configuration.
@@ -65,7 +72,7 @@ type Config struct {
 //  5. Optionally initializes Helm manager for cloudflared deployment
 //  6. Starts the manager and blocks until shutdown
 //
-//nolint:funlen // controller setup requires multiple steps
+//nolint:funlen // controller setup requires multiple sequential steps
 func Run(ctx context.Context, cfg *Config) error {
 	logger := log.FromContext(ctx).WithName("manager")
 	logger.Info("initializing controller manager")
@@ -134,12 +141,11 @@ func Run(ctx context.Context, cfg *Config) error {
 	logger.Info("helm manager initialized for cloudflared deployment")
 
 	gatewayReconciler := &GatewayReconciler{
-		Client:           mgr.GetClient(),
-		Scheme:           mgr.GetScheme(),
-		GatewayClassName: cfg.GatewayClassName,
-		ControllerName:   cfg.ControllerName,
-		ConfigResolver:   configResolver,
-		HelmManager:      helmManager,
+		Client:         mgr.GetClient(),
+		Scheme:         mgr.GetScheme(),
+		ControllerName: cfg.ControllerName,
+		ConfigResolver: configResolver,
+		HelmManager:    helmManager,
 	}
 
 	if err := gatewayReconciler.SetupWithManager(mgr); err != nil {
@@ -151,18 +157,22 @@ func Run(ctx context.Context, cfg *Config) error {
 		mgr.GetClient(),
 		mgr.GetScheme(),
 		cfg.ClusterDomain,
-		cfg.GatewayClassName,
+		cfg.ControllerName,
 		configResolver,
 		metricsCollector,
 		baseLogger,
 	)
 
+	// Create proxy syncer for v2 proxy config push (optional)
+	proxySyncer := initProxySyncer(cfg, mgr.GetClient(), baseLogger, logger)
+
 	httpRouteReconciler := &HTTPRouteReconciler{
-		Client:           mgr.GetClient(),
-		Scheme:           mgr.GetScheme(),
-		GatewayClassName: cfg.GatewayClassName,
-		ControllerName:   cfg.ControllerName,
-		RouteSyncer:      routeSyncer,
+		Client:         mgr.GetClient(),
+		Scheme:         mgr.GetScheme(),
+		ControllerName: cfg.ControllerName,
+		RouteSyncer:    routeSyncer,
+		ProxySyncer:    proxySyncer,
+		ProxyEndpoints: cfg.ProxyEndpoints,
 	}
 
 	if err := httpRouteReconciler.SetupWithManager(mgr); err != nil {
@@ -170,11 +180,10 @@ func Run(ctx context.Context, cfg *Config) error {
 	}
 
 	grpcRouteReconciler := &GRPCRouteReconciler{
-		Client:           mgr.GetClient(),
-		Scheme:           mgr.GetScheme(),
-		GatewayClassName: cfg.GatewayClassName,
-		ControllerName:   cfg.ControllerName,
-		RouteSyncer:      routeSyncer,
+		Client:         mgr.GetClient(),
+		Scheme:         mgr.GetScheme(),
+		ControllerName: cfg.ControllerName,
+		RouteSyncer:    routeSyncer,
 	}
 
 	if err := grpcRouteReconciler.SetupWithManager(mgr); err != nil {
@@ -218,6 +227,27 @@ func Run(ctx context.Context, cfg *Config) error {
 	}
 
 	return nil
+}
+
+// initProxySyncer creates a ProxySyncer if proxy endpoints are configured.
+func initProxySyncer(
+	cfg *Config,
+	k8sClient client.Client,
+	baseLogger *slog.Logger,
+	logger logr.Logger,
+) *ProxySyncer {
+	if len(cfg.ProxyEndpoints) == 0 {
+		return nil
+	}
+
+	logger.Info("proxy syncer enabled", "endpoints", cfg.ProxyEndpoints)
+
+	return NewProxySyncer(
+		cfg.ClusterDomain,
+		cfg.ProxyAuthToken,
+		k8sClient,
+		baseLogger,
+	)
 }
 
 // getControllerNamespace returns the namespace where the controller is running.

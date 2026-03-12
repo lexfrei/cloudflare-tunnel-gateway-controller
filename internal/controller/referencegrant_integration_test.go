@@ -50,7 +50,7 @@ func TestRouteSyncer_CrossNamespaceRef_WithoutGrant(t *testing.T) {
 							BackendRef: gatewayv1.BackendRef{
 								BackendObjectReference: gatewayv1.BackendObjectReference{
 									Name:      "backend-service",
-									Namespace: (*gatewayv1.Namespace)(strPtr("backend")),
+									Namespace: (*gatewayv1.Namespace)(new("backend")),
 									Port:      portNumPtr(8080),
 								},
 							},
@@ -72,9 +72,14 @@ func TestRouteSyncer_CrossNamespaceRef_WithoutGrant(t *testing.T) {
 		},
 	}
 
+	gatewayClass := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "cloudflare-tunnel"},
+		Spec:       gatewayv1.GatewayClassSpec{ControllerName: "cloudflare-tunnel"},
+	}
+
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(route, gateway).
+		WithObjects(gatewayClass, route, gateway).
 		Build()
 
 	syncer := NewRouteSyncer(
@@ -90,13 +95,15 @@ func TestRouteSyncer_CrossNamespaceRef_WithoutGrant(t *testing.T) {
 	ctx := context.Background()
 
 	// Get relevant routes (should include our route)
-	routes, bindings, err := syncer.getRelevantHTTPRoutes(ctx)
+	httpResult, err := syncer.getRelevantHTTPRoutes(ctx)
 	require.NoError(t, err)
-	require.Len(t, routes, 1)
-	assert.Equal(t, "cross-ns-route", routes[0].Name)
+	require.Len(t, httpResult.accepted, 1)
+	assert.Equal(t, "cross-ns-route", httpResult.accepted[0].Name)
+
+	bindings := httpResult.bindings
 
 	// Build ingress rules
-	buildResult := syncer.httpBuilder.Build(ctx, routes)
+	buildResult := syncer.httpBuilder.Build(ctx, httpResult.accepted)
 
 	// Should have failed refs for cross-namespace reference without ReferenceGrant
 	require.Len(t, buildResult.FailedRefs, 1, "Expected one failed backend reference")
@@ -349,9 +356,14 @@ func TestRouteSyncer_GRPCRoute_CrossNamespaceRef_WithGrant(t *testing.T) {
 		},
 	}
 
+	gatewayClass := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "cloudflare-tunnel"},
+		Spec:       gatewayv1.GatewayClassSpec{ControllerName: "cloudflare-tunnel"},
+	}
+
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(route, gateway, refGrant, grpcService).
+		WithObjects(gatewayClass, route, gateway, refGrant, grpcService).
 		Build()
 
 	syncer := NewRouteSyncer(
@@ -367,12 +379,12 @@ func TestRouteSyncer_GRPCRoute_CrossNamespaceRef_WithGrant(t *testing.T) {
 	ctx := context.Background()
 
 	// Get relevant routes
-	routes, _, err := syncer.getRelevantGRPCRoutes(ctx)
+	grpcResult, err := syncer.getRelevantGRPCRoutes(ctx)
 	require.NoError(t, err)
-	require.Len(t, routes, 1)
+	require.Len(t, grpcResult.accepted, 1)
 
 	// Build ingress rules
-	buildResult := syncer.grpcBuilder.Build(ctx, routes)
+	buildResult := syncer.grpcBuilder.Build(ctx, grpcResult.accepted)
 
 	// Should have NO failed refs because ReferenceGrant permits the reference
 	assert.Empty(t, buildResult.FailedRefs, "Expected no failed backend references with ReferenceGrant")
@@ -486,7 +498,7 @@ func TestRouteSyncer_ReferenceGrant_SpecificName(t *testing.T) {
 				{
 					Group: "",
 					Kind:  "Service",
-					Name:  (*gatewayv1.ObjectName)(strPtr("allowed-service")),
+					Name:  (*gatewayv1.ObjectName)(new("allowed-service")),
 				},
 			},
 		},
@@ -506,9 +518,14 @@ func TestRouteSyncer_ReferenceGrant_SpecificName(t *testing.T) {
 	// Note: denied-service does NOT exist, so it will fail with RefNotPermitted
 	// (ReferenceGrant check happens before Service lookup)
 
+	gatewayClass := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "cloudflare-tunnel"},
+		Spec:       gatewayv1.GatewayClassSpec{ControllerName: "cloudflare-tunnel"},
+	}
+
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(allowedRoute, deniedRoute, gateway, refGrant, allowedService).
+		WithObjects(gatewayClass, allowedRoute, deniedRoute, gateway, refGrant, allowedService).
 		Build()
 
 	syncer := NewRouteSyncer(
@@ -524,12 +541,12 @@ func TestRouteSyncer_ReferenceGrant_SpecificName(t *testing.T) {
 	ctx := context.Background()
 
 	// Get relevant routes
-	routes, _, err := syncer.getRelevantHTTPRoutes(ctx)
+	httpResult2, err := syncer.getRelevantHTTPRoutes(ctx)
 	require.NoError(t, err)
-	require.Len(t, routes, 2)
+	require.Len(t, httpResult2.accepted, 2)
 
 	// Build ingress rules
-	buildResult := syncer.httpBuilder.Build(ctx, routes)
+	buildResult := syncer.httpBuilder.Build(ctx, httpResult2.accepted)
 
 	// Should have one failed ref for denied-service
 	require.Len(t, buildResult.FailedRefs, 1)
@@ -542,12 +559,7 @@ func TestRouteSyncer_ReferenceGrant_SpecificName(t *testing.T) {
 	assert.Contains(t, buildResult.Rules[0].Service.Value, "allowed-service")
 }
 
-// strPtr returns a pointer to a string.
-func strPtr(s string) *string {
-	return &s
-}
-
 // portNumPtr returns a pointer to a PortNumber.
 func portNumPtr(p int32) *gatewayv1.PortNumber {
-	return &p
+	return new(p)
 }

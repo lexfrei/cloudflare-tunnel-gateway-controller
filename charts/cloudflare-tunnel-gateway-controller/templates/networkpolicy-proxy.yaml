@@ -1,0 +1,53 @@
+{{- if and .Values.proxy.enabled .Values.proxy.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "cf-tunnel-gw-ctrl.proxyFullname" . }}
+  labels:
+    {{- include "cf-tunnel-gw-ctrl.proxyLabels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "cf-tunnel-gw-ctrl.proxySelectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow config push from controller and metrics scraping
+    - {{- if .Values.proxy.networkPolicy.ingress.from }}
+      from:
+        {{- toYaml .Values.proxy.networkPolicy.ingress.from | nindent 8 }}
+      {{- end }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.proxy.configAPIPort }}
+        - protocol: TCP
+          port: {{ .Values.proxy.proxyPort }}
+  egress:
+    # DNS
+    - ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Cloudflare edge (tunnel transport)
+    - to:
+        {{- range .Values.networkPolicy.cloudflareIpRanges.ipv4 }}
+        - ipBlock:
+            cidr: {{ . }}
+        {{- end }}
+        {{- range .Values.networkPolicy.cloudflareIpRanges.ipv6 }}
+        - ipBlock:
+            cidr: {{ . }}
+        {{- end }}
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: UDP
+          port: 7844
+    # Cluster services (backend routing)
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: TCP
+{{- end }}

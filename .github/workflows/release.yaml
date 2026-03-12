@@ -127,6 +127,13 @@ jobs:
           helm template test-release charts/cloudflare-tunnel-gateway-controller \
             --set serviceMonitor.enabled=true
 
+      - name: Template Chart with proxy enabled
+        run: |
+          echo "Testing chart with proxy enabled..."
+          helm template test-release charts/cloudflare-tunnel-gateway-controller \
+            --set proxy.enabled=true \
+            --set proxy.tunnelTokenSecretRef.name=tunnel-token-secret
+
       - name: Validate helm-docs
         run: |
           CHART_DIR="charts/cloudflare-tunnel-gateway-controller"
@@ -150,7 +157,7 @@ jobs:
           globs: 'charts/**/*.md'
 
   build-and-push:
-    name: Build and Push
+    name: Build and Push (${{ matrix.component }})
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -158,8 +165,24 @@ jobs:
         include:
           - platform: linux/amd64
             runner: ubuntu-24.04
+            component: controller
+            file: Containerfile
+            image_suffix: ""
           - platform: linux/arm64
             runner: ubuntu-24.04-arm
+            component: controller
+            file: Containerfile
+            image_suffix: ""
+          - platform: linux/amd64
+            runner: ubuntu-24.04
+            component: proxy
+            file: Containerfile.proxy
+            image_suffix: -proxy
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+            component: proxy
+            file: Containerfile.proxy
+            image_suffix: -proxy
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -192,7 +215,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v6
         with:
-          images: ghcr.io/${{ github.repository }}
+          images: ghcr.io/${{ github.repository }}${{ matrix.image_suffix }}
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
@@ -206,11 +229,11 @@ jobs:
         uses: docker/build-push-action@v7
         with:
           context: .
-          file: ./Containerfile
+          file: ./${{ matrix.file }}
           platforms: ${{ matrix.platform }}
-          outputs: type=image,name=ghcr.io/${{ github.repository }},push-by-digest=true,name-canonical=true,push=true
-          cache-from: type=gha,scope=build-${{ steps.platform.outputs.pair }}
-          cache-to: type=gha,scope=build-${{ steps.platform.outputs.pair }},mode=max
+          outputs: type=image,name=ghcr.io/${{ github.repository }}${{ matrix.image_suffix }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=build-${{ matrix.component }}-${{ steps.platform.outputs.pair }}
+          cache-to: type=gha,scope=build-${{ matrix.component }}-${{ steps.platform.outputs.pair }},mode=max
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             VERSION=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.version'] }}
@@ -225,17 +248,24 @@ jobs:
       - name: Upload digest
         uses: actions/upload-artifact@v7
         with:
-          name: digests-${{ steps.platform.outputs.pair }}
+          name: digests-${{ matrix.component }}-${{ steps.platform.outputs.pair }}
           path: /tmp/digests/*
           if-no-files-found: error
           retention-days: 1
 
   merge-manifests:
-    name: Merge Manifests
+    name: Merge Manifests (${{ matrix.component }})
     runs-on: ubuntu-latest
     needs: build-and-push
     outputs:
       version: ${{ steps.version.outputs.version }}
+    strategy:
+      matrix:
+        include:
+          - component: controller
+            image_suffix: ""
+          - component: proxy
+            image_suffix: -proxy
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -250,7 +280,7 @@ jobs:
       - name: Download digests
         uses: actions/download-artifact@v8
         with:
-          pattern: digests-*
+          pattern: digests-${{ matrix.component }}-*
           path: /tmp/digests
           merge-multiple: true
 
@@ -274,7 +304,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v6
         with:
-          images: ghcr.io/${{ github.repository }}
+          images: ghcr.io/${{ github.repository }}${{ matrix.image_suffix }}
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
@@ -295,7 +325,7 @@ jobs:
           images=()
           for digest_file in *; do
             [[ -f "$digest_file" ]] || continue
-            images+=("ghcr.io/${{ github.repository }}@sha256:${digest_file}")
+            images+=("ghcr.io/${{ github.repository }}${{ matrix.image_suffix }}@sha256:${digest_file}")
           done
 
           # Create multi-arch manifest
@@ -325,7 +355,7 @@ jobs:
           MANIFEST_DIGEST=$(docker buildx imagetools inspect "${IMAGE_TAG}" --format '{{.Manifest.Digest}}')
 
           {
-            echo "## Container Image"
+            echo "## Container Image (${{ matrix.component }})"
             echo ""
             echo "### Image Tags"
             echo "\`\`\`"

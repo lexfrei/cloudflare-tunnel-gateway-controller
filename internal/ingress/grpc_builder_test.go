@@ -255,8 +255,9 @@ func TestGRPCBuild_NoHostnames(t *testing.T) {
 
 	buildResult := builder.Build(context.Background(), routes)
 
-	require.Len(t, buildResult.Rules, 1)
-	assert.Equal(t, "*", buildResult.Rules[0].Hostname.Value)
+	// Wildcard routes are skipped from Cloudflare config (handled by proxy).
+	// GRPC builder doesn't add catch-all, so no rules remain.
+	require.Empty(t, buildResult.Rules)
 }
 
 func TestGRPCBuild_NoBackendRefs(t *testing.T) {

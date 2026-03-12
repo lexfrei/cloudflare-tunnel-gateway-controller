@@ -79,6 +79,16 @@ func TestIsCatchAll(t *testing.T) {
 			rule:     ingress.Rule{Hostname: "app.example.com", Service: "http://svc:8080"},
 			expected: false,
 		},
+		{
+			name:     "wildcard rule (empty hostname, real service) is NOT catch-all",
+			rule:     ingress.Rule{Hostname: "", Service: "http://wildcard-svc:8080"},
+			expected: false,
+		},
+		{
+			name:     "empty hostname with non-catch-all service is NOT catch-all",
+			rule:     ingress.Rule{Hostname: "", Service: "http_status:503"},
+			expected: false,
+		},
 	}
 
 	for _, testCase := range tests {

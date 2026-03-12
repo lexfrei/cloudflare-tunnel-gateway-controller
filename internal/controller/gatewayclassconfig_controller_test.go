@@ -11,7 +11,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
@@ -162,7 +161,7 @@ func TestGatewayClassConfigReconciler_Reconcile_MissingCredentialsSecret(t *test
 				Namespace: "default",
 			},
 			Cloudflared: v1alpha1.CloudflaredConfig{
-				Enabled: ptr.To(false),
+				Enabled: new(false),
 			},
 		},
 	}
@@ -312,7 +311,7 @@ func TestGatewayClassConfigReconciler_Reconcile_MissingAPITokenKey(t *testing.T)
 				Namespace: "default",
 			},
 			Cloudflared: v1alpha1.CloudflaredConfig{
-				Enabled: ptr.To(false),
+				Enabled: new(false),
 			},
 		},
 	}
@@ -637,7 +636,7 @@ func TestGatewayClassConfigReconciler_ValidateConfig_CloudflaredDisabled(t *test
 				Namespace: "default",
 			},
 			Cloudflared: v1alpha1.CloudflaredConfig{
-				Enabled: ptr.To(false),
+				Enabled: new(false),
 			},
 			// No tunnel token needed when cloudflared is disabled
 		},
@@ -683,6 +682,171 @@ func TestGatewayClassConfigReconciler_ValidateConfig_CloudflaredDisabled(t *test
 	assert.Equal(t, metav1.ConditionTrue, validCondition.Status)
 }
 
+func TestGatewayClassConfigReconciler_Reconcile_TunnelTokenSecretMissingKey(t *testing.T) {
+	t.Parallel()
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, v1alpha1.AddToScheme(scheme))
+	require.NoError(t, corev1.AddToScheme(scheme))
+
+	credentialsSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "cf-credentials",
+			Namespace: "default",
+		},
+		Data: map[string][]byte{
+			"api-token": []byte("test-token"),
+		},
+	}
+
+	// Tunnel token secret exists but with wrong key
+	tunnelTokenSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "tunnel-token",
+			Namespace: "default",
+		},
+		Data: map[string][]byte{
+			"wrong-key": []byte("some-value"),
+		},
+	}
+
+	config := &v1alpha1.GatewayClassConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       "test-config",
+			Generation: 1,
+		},
+		Spec: v1alpha1.GatewayClassConfigSpec{
+			TunnelID: "test-tunnel-id",
+			CloudflareCredentialsSecretRef: v1alpha1.SecretReference{
+				Name:      "cf-credentials",
+				Namespace: "default",
+			},
+			TunnelTokenSecretRef: &v1alpha1.SecretReference{
+				Name:      "tunnel-token",
+				Namespace: "default",
+			},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(config, credentialsSecret, tunnelTokenSecret).
+		WithStatusSubresource(config).
+		Build()
+
+	r := &GatewayClassConfigReconciler{
+		Client:           fakeClient,
+		Scheme:           scheme,
+		DefaultNamespace: "default",
+	}
+
+	req := ctrl.Request{
+		NamespacedName: types.NamespacedName{
+			Name: "test-config",
+		},
+	}
+
+	result, err := r.Reconcile(context.Background(), req)
+
+	assert.NoError(t, err)
+	assert.Equal(t, configValidationRequeueDelay, result.RequeueAfter)
+
+	// Verify status reflects missing key
+	var updatedConfig v1alpha1.GatewayClassConfig
+	err = fakeClient.Get(context.Background(), types.NamespacedName{Name: "test-config"}, &updatedConfig)
+	require.NoError(t, err)
+
+	var validCondition *metav1.Condition
+	for i := range updatedConfig.Status.Conditions {
+		if updatedConfig.Status.Conditions[i].Type == ConditionTypeValid {
+			validCondition = &updatedConfig.Status.Conditions[i]
+
+			break
+		}
+	}
+
+	require.NotNil(t, validCondition)
+	assert.Equal(t, metav1.ConditionFalse, validCondition.Status)
+	assert.Contains(t, validCondition.Message, "missing key")
+}
+
+func TestGatewayClassConfigReconciler_Reconcile_TunnelTokenSecretNotFound(t *testing.T) {
+	t.Parallel()
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, v1alpha1.AddToScheme(scheme))
+	require.NoError(t, corev1.AddToScheme(scheme))
+
+	credentialsSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "cf-credentials",
+			Namespace: "default",
+		},
+		Data: map[string][]byte{
+			"api-token": []byte("test-token"),
+		},
+	}
+
+	config := &v1alpha1.GatewayClassConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       "test-config",
+			Generation: 1,
+		},
+		Spec: v1alpha1.GatewayClassConfigSpec{
+			TunnelID: "test-tunnel-id",
+			CloudflareCredentialsSecretRef: v1alpha1.SecretReference{
+				Name:      "cf-credentials",
+				Namespace: "default",
+			},
+			TunnelTokenSecretRef: &v1alpha1.SecretReference{
+				Name:      "nonexistent-token",
+				Namespace: "default",
+			},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(config, credentialsSecret).
+		WithStatusSubresource(config).
+		Build()
+
+	r := &GatewayClassConfigReconciler{
+		Client:           fakeClient,
+		Scheme:           scheme,
+		DefaultNamespace: "default",
+	}
+
+	req := ctrl.Request{
+		NamespacedName: types.NamespacedName{
+			Name: "test-config",
+		},
+	}
+
+	result, err := r.Reconcile(context.Background(), req)
+
+	assert.NoError(t, err)
+	assert.Equal(t, configValidationRequeueDelay, result.RequeueAfter)
+
+	// Verify status reflects missing secret
+	var updatedConfig v1alpha1.GatewayClassConfig
+	err = fakeClient.Get(context.Background(), types.NamespacedName{Name: "test-config"}, &updatedConfig)
+	require.NoError(t, err)
+
+	var validCondition *metav1.Condition
+	for i := range updatedConfig.Status.Conditions {
+		if updatedConfig.Status.Conditions[i].Type == ConditionTypeValid {
+			validCondition = &updatedConfig.Status.Conditions[i]
+
+			break
+		}
+	}
+
+	require.NotNil(t, validCondition)
+	assert.Equal(t, metav1.ConditionFalse, validCondition.Status)
+	assert.Contains(t, validCondition.Message, "not found")
+}
+
 func TestGatewayClassConfigReconciler_DefaultNamespace(t *testing.T) {
 	t.Parallel()
 
@@ -714,7 +878,7 @@ func TestGatewayClassConfigReconciler_DefaultNamespace(t *testing.T) {
 				// No namespace specified
 			},
 			Cloudflared: v1alpha1.CloudflaredConfig{
-				Enabled: ptr.To(false),
+				Enabled: new(false),
 			},
 		},
 	}
@@ -757,4 +921,336 @@ func TestGatewayClassConfigReconciler_DefaultNamespace(t *testing.T) {
 
 	require.NotNil(t, secretsCondition)
 	assert.Equal(t, metav1.ConditionTrue, secretsCondition.Status)
+}
+
+func TestGatewayClassConfigReconciler_ValidateTunnelTokenSecret_ExistingSecretMissingKey(t *testing.T) {
+	t.Parallel()
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, v1alpha1.AddToScheme(scheme))
+	require.NoError(t, corev1.AddToScheme(scheme))
+
+	credentialsSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "cf-credentials",
+			Namespace: "default",
+		},
+		Data: map[string][]byte{
+			"api-token": []byte("test-token"),
+		},
+	}
+
+	// Tunnel token secret exists but has wrong key
+	tokenSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "tunnel-token-secret",
+			Namespace: "default",
+		},
+		Data: map[string][]byte{
+			"wrong-key": []byte("some-value"),
+		},
+	}
+
+	config := &v1alpha1.GatewayClassConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       "test-config",
+			Generation: 1,
+		},
+		Spec: v1alpha1.GatewayClassConfigSpec{
+			TunnelID: "test-tunnel-id",
+			CloudflareCredentialsSecretRef: v1alpha1.SecretReference{
+				Name:      "cf-credentials",
+				Namespace: "default",
+			},
+			TunnelTokenSecretRef: &v1alpha1.SecretReference{
+				Name:      "tunnel-token-secret",
+				Namespace: "default",
+			},
+			// Cloudflared enabled by default
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(config, credentialsSecret, tokenSecret).
+		WithStatusSubresource(config).
+		Build()
+
+	r := &GatewayClassConfigReconciler{
+		Client:           fakeClient,
+		Scheme:           scheme,
+		DefaultNamespace: "default",
+	}
+
+	req := ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "test-config"},
+	}
+
+	result, err := r.Reconcile(context.Background(), req)
+
+	assert.NoError(t, err)
+	assert.Equal(t, configValidationRequeueDelay, result.RequeueAfter)
+
+	var updatedConfig v1alpha1.GatewayClassConfig
+	err = fakeClient.Get(context.Background(), types.NamespacedName{Name: "test-config"}, &updatedConfig)
+	require.NoError(t, err)
+
+	var validCondition *metav1.Condition
+	for i := range updatedConfig.Status.Conditions {
+		if updatedConfig.Status.Conditions[i].Type == ConditionTypeValid {
+			validCondition = &updatedConfig.Status.Conditions[i]
+
+			break
+		}
+	}
+
+	require.NotNil(t, validCondition)
+	assert.Equal(t, metav1.ConditionFalse, validCondition.Status)
+	assert.Contains(t, validCondition.Message, "missing key")
+}
+
+func TestGatewayClassConfigReconciler_ValidateTunnelTokenSecret_SecretExists_Valid(t *testing.T) {
+	t.Parallel()
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, v1alpha1.AddToScheme(scheme))
+	require.NoError(t, corev1.AddToScheme(scheme))
+
+	credentialsSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "cf-credentials",
+			Namespace: "default",
+		},
+		Data: map[string][]byte{
+			"api-token": []byte("test-token"),
+		},
+	}
+
+	tokenSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "tunnel-token-secret",
+			Namespace: "default",
+		},
+		Data: map[string][]byte{
+			"tunnel-token": []byte("my-tunnel-token"),
+		},
+	}
+
+	config := &v1alpha1.GatewayClassConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       "test-config",
+			Generation: 1,
+		},
+		Spec: v1alpha1.GatewayClassConfigSpec{
+			TunnelID: "test-tunnel-id",
+			CloudflareCredentialsSecretRef: v1alpha1.SecretReference{
+				Name:      "cf-credentials",
+				Namespace: "default",
+			},
+			TunnelTokenSecretRef: &v1alpha1.SecretReference{
+				Name:      "tunnel-token-secret",
+				Namespace: "default",
+			},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(config, credentialsSecret, tokenSecret).
+		WithStatusSubresource(config).
+		Build()
+
+	r := &GatewayClassConfigReconciler{
+		Client:           fakeClient,
+		Scheme:           scheme,
+		DefaultNamespace: "default",
+	}
+
+	req := ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "test-config"},
+	}
+
+	result, err := r.Reconcile(context.Background(), req)
+
+	assert.NoError(t, err)
+	assert.Equal(t, configValidationRequeueDelay, result.RequeueAfter)
+
+	var updatedConfig v1alpha1.GatewayClassConfig
+	err = fakeClient.Get(context.Background(), types.NamespacedName{Name: "test-config"}, &updatedConfig)
+	require.NoError(t, err)
+
+	var validCondition *metav1.Condition
+	for i := range updatedConfig.Status.Conditions {
+		if updatedConfig.Status.Conditions[i].Type == ConditionTypeValid {
+			validCondition = &updatedConfig.Status.Conditions[i]
+
+			break
+		}
+	}
+
+	require.NotNil(t, validCondition)
+	assert.Equal(t, metav1.ConditionTrue, validCondition.Status)
+}
+
+func TestGatewayClassConfigReconciler_ValidateTunnelTokenSecret_DefaultNamespace(t *testing.T) {
+	t.Parallel()
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, v1alpha1.AddToScheme(scheme))
+	require.NoError(t, corev1.AddToScheme(scheme))
+
+	credentialsSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "cf-credentials",
+			Namespace: "cf-system",
+		},
+		Data: map[string][]byte{
+			"api-token": []byte("test-token"),
+		},
+	}
+
+	// Token secret in default namespace (no namespace specified in ref)
+	tokenSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "tunnel-token-secret",
+			Namespace: "cf-system",
+		},
+		Data: map[string][]byte{
+			"tunnel-token": []byte("my-token"),
+		},
+	}
+
+	config := &v1alpha1.GatewayClassConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       "test-config",
+			Generation: 1,
+		},
+		Spec: v1alpha1.GatewayClassConfigSpec{
+			TunnelID: "test-tunnel-id",
+			CloudflareCredentialsSecretRef: v1alpha1.SecretReference{
+				Name:      "cf-credentials",
+				Namespace: "cf-system",
+			},
+			TunnelTokenSecretRef: &v1alpha1.SecretReference{
+				Name: "tunnel-token-secret",
+				// No namespace - should use DefaultNamespace
+			},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(config, credentialsSecret, tokenSecret).
+		WithStatusSubresource(config).
+		Build()
+
+	r := &GatewayClassConfigReconciler{
+		Client:           fakeClient,
+		Scheme:           scheme,
+		DefaultNamespace: "cf-system",
+	}
+
+	req := ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "test-config"},
+	}
+
+	result, err := r.Reconcile(context.Background(), req)
+
+	assert.NoError(t, err)
+	assert.Equal(t, configValidationRequeueDelay, result.RequeueAfter)
+
+	var updatedConfig v1alpha1.GatewayClassConfig
+	err = fakeClient.Get(context.Background(), types.NamespacedName{Name: "test-config"}, &updatedConfig)
+	require.NoError(t, err)
+
+	var secretsCondition *metav1.Condition
+	for i := range updatedConfig.Status.Conditions {
+		if updatedConfig.Status.Conditions[i].Type == ConditionTypeSecretsResolved {
+			secretsCondition = &updatedConfig.Status.Conditions[i]
+
+			break
+		}
+	}
+
+	require.NotNil(t, secretsCondition)
+	assert.Equal(t, metav1.ConditionTrue, secretsCondition.Status)
+}
+
+func TestGatewayClassConfigReconciler_ValidateConfig_MultipleErrors(t *testing.T) {
+	t.Parallel()
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, v1alpha1.AddToScheme(scheme))
+	require.NoError(t, corev1.AddToScheme(scheme))
+
+	// Config with both missing credentials and missing tunnel token
+	config := &v1alpha1.GatewayClassConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       "test-config",
+			Generation: 1,
+		},
+		Spec: v1alpha1.GatewayClassConfigSpec{
+			TunnelID: "test-tunnel-id",
+			CloudflareCredentialsSecretRef: v1alpha1.SecretReference{
+				Name:      "nonexistent-credentials",
+				Namespace: "default",
+			},
+			TunnelTokenSecretRef: &v1alpha1.SecretReference{
+				Name:      "nonexistent-token",
+				Namespace: "default",
+			},
+			// Cloudflared enabled by default
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(config).
+		WithStatusSubresource(config).
+		Build()
+
+	r := &GatewayClassConfigReconciler{
+		Client:           fakeClient,
+		Scheme:           scheme,
+		DefaultNamespace: "default",
+	}
+
+	req := ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "test-config"},
+	}
+
+	result, err := r.Reconcile(context.Background(), req)
+
+	assert.NoError(t, err)
+	assert.Equal(t, configValidationRequeueDelay, result.RequeueAfter)
+
+	var updatedConfig v1alpha1.GatewayClassConfig
+	err = fakeClient.Get(context.Background(), types.NamespacedName{Name: "test-config"}, &updatedConfig)
+	require.NoError(t, err)
+
+	var validCondition *metav1.Condition
+	for i := range updatedConfig.Status.Conditions {
+		if updatedConfig.Status.Conditions[i].Type == ConditionTypeValid {
+			validCondition = &updatedConfig.Status.Conditions[i]
+
+			break
+		}
+	}
+
+	require.NotNil(t, validCondition)
+	assert.Equal(t, metav1.ConditionFalse, validCondition.Status)
+	// Should mention multiple errors
+	assert.Contains(t, validCondition.Message, "more errors")
+
+	var secretsCondition *metav1.Condition
+	for i := range updatedConfig.Status.Conditions {
+		if updatedConfig.Status.Conditions[i].Type == ConditionTypeSecretsResolved {
+			secretsCondition = &updatedConfig.Status.Conditions[i]
+
+			break
+		}
+	}
+
+	require.NotNil(t, secretsCondition)
+	assert.Equal(t, metav1.ConditionFalse, secretsCondition.Status)
 }

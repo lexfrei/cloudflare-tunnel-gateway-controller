@@ -332,6 +332,150 @@ func TestValidateBinding(t *testing.T) {
 			expectedMatched:  nil,
 		},
 		{
+			name: "route with SectionName and matching Port accepted",
+			gateway: &gatewayv1.Gateway{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-gateway",
+					Namespace: "default",
+				},
+				Spec: gatewayv1.GatewaySpec{
+					Listeners: []gatewayv1.Listener{
+						{
+							Name:     "http",
+							Port:     80,
+							Protocol: gatewayv1.HTTPProtocolType,
+							AllowedRoutes: &gatewayv1.AllowedRoutes{
+								Namespaces: &gatewayv1.RouteNamespaces{
+									From: &fromAll,
+								},
+							},
+						},
+					},
+				},
+			},
+			route: &RouteInfo{
+				Name:        "test-route",
+				Namespace:   "default",
+				Hostnames:   []gatewayv1.Hostname{"example.com"},
+				Kind:        "HTTPRoute",
+				SectionName: ptr(gatewayv1.SectionName("http")),
+				Port:        ptr(gatewayv1.PortNumber(80)),
+			},
+			expectedAccepted: true,
+			expectedReason:   gatewayv1.RouteReasonAccepted,
+			expectedMatched:  []gatewayv1.SectionName{"http"},
+		},
+		{
+			name: "route with SectionName matching but Port mismatching rejected",
+			gateway: &gatewayv1.Gateway{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-gateway",
+					Namespace: "default",
+				},
+				Spec: gatewayv1.GatewaySpec{
+					Listeners: []gatewayv1.Listener{
+						{
+							Name:     "http",
+							Port:     80,
+							Protocol: gatewayv1.HTTPProtocolType,
+							AllowedRoutes: &gatewayv1.AllowedRoutes{
+								Namespaces: &gatewayv1.RouteNamespaces{
+									From: &fromAll,
+								},
+							},
+						},
+					},
+				},
+			},
+			route: &RouteInfo{
+				Name:        "test-route",
+				Namespace:   "default",
+				Hostnames:   []gatewayv1.Hostname{"example.com"},
+				Kind:        "HTTPRoute",
+				SectionName: ptr(gatewayv1.SectionName("http")),
+				Port:        ptr(gatewayv1.PortNumber(81)),
+			},
+			expectedAccepted: false,
+			expectedReason:   gatewayv1.RouteReasonNoMatchingParent,
+			expectedMatched:  nil,
+		},
+		{
+			name: "route with Port only (no SectionName) rejected when no listener matches port",
+			gateway: &gatewayv1.Gateway{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-gateway",
+					Namespace: "default",
+				},
+				Spec: gatewayv1.GatewaySpec{
+					Listeners: []gatewayv1.Listener{
+						{
+							Name:     "http",
+							Port:     80,
+							Protocol: gatewayv1.HTTPProtocolType,
+							AllowedRoutes: &gatewayv1.AllowedRoutes{
+								Namespaces: &gatewayv1.RouteNamespaces{
+									From: &fromAll,
+								},
+							},
+						},
+					},
+				},
+			},
+			route: &RouteInfo{
+				Name:      "test-route",
+				Namespace: "default",
+				Hostnames: []gatewayv1.Hostname{"example.com"},
+				Kind:      "HTTPRoute",
+				Port:      ptr(gatewayv1.PortNumber(81)),
+			},
+			expectedAccepted: false,
+			expectedReason:   gatewayv1.RouteReasonNoMatchingParent,
+			expectedMatched:  nil,
+		},
+		{
+			name: "route with Port only (no SectionName) accepted when listener matches port",
+			gateway: &gatewayv1.Gateway{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-gateway",
+					Namespace: "default",
+				},
+				Spec: gatewayv1.GatewaySpec{
+					Listeners: []gatewayv1.Listener{
+						{
+							Name:     "http",
+							Port:     80,
+							Protocol: gatewayv1.HTTPProtocolType,
+							AllowedRoutes: &gatewayv1.AllowedRoutes{
+								Namespaces: &gatewayv1.RouteNamespaces{
+									From: &fromAll,
+								},
+							},
+						},
+						{
+							Name:     "alt",
+							Port:     8080,
+							Protocol: gatewayv1.HTTPProtocolType,
+							AllowedRoutes: &gatewayv1.AllowedRoutes{
+								Namespaces: &gatewayv1.RouteNamespaces{
+									From: &fromAll,
+								},
+							},
+						},
+					},
+				},
+			},
+			route: &RouteInfo{
+				Name:      "test-route",
+				Namespace: "default",
+				Hostnames: []gatewayv1.Hostname{"example.com"},
+				Kind:      "HTTPRoute",
+				Port:      ptr(gatewayv1.PortNumber(8080)),
+			},
+			expectedAccepted: true,
+			expectedReason:   gatewayv1.RouteReasonAccepted,
+			expectedMatched:  []gatewayv1.SectionName{"alt"},
+		},
+		{
 			name: "partial match - one listener matches one does not",
 			gateway: &gatewayv1.Gateway{
 				ObjectMeta: metav1.ObjectMeta{

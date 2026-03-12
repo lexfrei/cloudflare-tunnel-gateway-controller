@@ -103,7 +103,7 @@ Resolves GatewayClassConfig from GatewayClass `parametersRef`:
 
 Watches Gateway resources and performs the following:
 
-1. **Filtering**: Only processes Gateways with matching `gatewayClassName`
+1. **Filtering**: Only processes Gateways whose GatewayClass has a matching `spec.controllerName`
 2. **Finalizers**: Adds finalizer for cleanup when Helm management is enabled
 3. **Helm Management**: Deploys/upgrades cloudflared via Helm chart
 4. **Status Update**: Sets Gateway address to `<tunnel-id>.cfargotunnel.com`
@@ -264,10 +264,68 @@ flowchart LR
 | **Network** | Controller only needs egress to Cloudflare API |
 | **Container** | Runs as non-root user (UID 65534) with read-only filesystem |
 
+## v2 Architecture: L7 Proxy Data Plane
+
+v2 adds an L7 proxy that sits between cloudflared tunnel transport and backend
+services. This removes most Cloudflare Tunnel ingress API limitations.
+
+```mermaid
+flowchart TB
+    subgraph Kubernetes["Kubernetes Cluster"]
+        subgraph ControlPlane["Control Plane"]
+            CTRL[Controller]
+            GW[Gateway]
+            HR[HTTPRoute]
+        end
+
+        subgraph DataPlane["Data Plane (N replicas)"]
+            CFD[cloudflared]
+            L7[L7 Proxy]
+            CAPI[Config API]
+        end
+
+        SVC[Backend Services]
+    end
+
+    subgraph Cloudflare["Cloudflare Edge"]
+        EDGE[Edge Network]
+    end
+
+    GW -->|watch| CTRL
+    HR -->|watch| CTRL
+    CTRL -->|PUT /config| CAPI
+    CAPI -->|atomic swap| L7
+    EDGE -->|QUIC tunnel| CFD
+    CFD --> L7
+    L7 -->|route| SVC
+```
+
+### v2 Package Structure
+
+```text
+cmd/proxy/              # Proxy binary entry point
+internal/
+├── proxy/              # L7 reverse proxy core
+│   ├── config.go       # Config types and validation
+│   ├── matcher.go      # Path/header/query/method matchers
+│   ├── router.go       # Routing table with atomic config swap
+│   ├── filter.go       # Request/response filters
+│   ├── handler.go      # HTTP handler pipeline
+│   └── api.go          # Config API server
+├── tunnel/             # cloudflared integration
+│   ├── origin.go       # OriginProxy implementation
+│   └── bootstrap.go    # Tunnel startup from token
+└── controller/
+    └── proxy_syncer.go # Config push to proxy replicas
+```
+
+For detailed proxy internals, see [Proxy Architecture](proxy-architecture.md).
+
 ## Key Dependencies
 
 - `sigs.k8s.io/controller-runtime` - Kubernetes controller framework
 - `sigs.k8s.io/gateway-api` - Gateway API types
 - `github.com/cloudflare/cloudflare-go/v4` - Cloudflare API client
+- `github.com/cloudflare/cloudflared` - Cloudflare tunnel daemon (v2 proxy)
 - `helm.sh/helm/v3` - Helm SDK for cloudflared deployment
 - `github.com/cockroachdb/errors` - Error wrapping

@@ -39,6 +39,15 @@ The controller can be configured at multiple levels:
 
     [:octicons-arrow-right-24: GatewayClassConfig](gatewayclassconfig.md)
 
+-   :material-server-network:{ .lg .middle } **L7 Proxy Configuration**
+
+    ---
+
+    Helm values for the v2 L7 reverse proxy: replicas, resources, health
+    probes, networking, and security contexts.
+
+    [:octicons-arrow-right-24: L7 Proxy Values](helm-values.md#l7-proxy-configuration)
+
 </div>
 
 ## Configuration Flow

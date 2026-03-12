@@ -158,14 +158,17 @@ spec:
 
 ## Multi-Tunnel Setup
 
-To use multiple Cloudflare Tunnels in the same cluster, deploy multiple instances of the controller with different GatewayClass names:
+To use multiple Cloudflare Tunnels in the same cluster, deploy multiple instances of the controller with different `controllerName` values. Each controller binds to GatewayClasses by `spec.controllerName`, not by class name:
 
 ```bash
 # First tunnel for production apps
+# gatewayClassName = name of the GatewayClass K8s resource created by this chart (cosmetic, no filtering effect)
+# controllerName = spec.controllerName on the GatewayClass; this is what binds it to this controller instance
 helm install controller-prod \
   oci://ghcr.io/lexfrei/charts/cloudflare-tunnel-gateway-controller \
   --namespace cloudflare-system \
   --set controller.gatewayClassName=cloudflare-tunnel-prod \
+  --set controller.controllerName=cf.k8s.lex.la/tunnel-prod \
   --set cloudflare.tunnelId="PROD_TUNNEL_ID" \
   --set cloudflare.apiToken="PROD_API_TOKEN"
 
@@ -174,11 +177,12 @@ helm install controller-staging \
   oci://ghcr.io/lexfrei/charts/cloudflare-tunnel-gateway-controller \
   --namespace cloudflare-system \
   --set controller.gatewayClassName=cloudflare-tunnel-staging \
+  --set controller.controllerName=cf.k8s.lex.la/tunnel-staging \
   --set cloudflare.tunnelId="STAGING_TUNNEL_ID" \
   --set cloudflare.apiToken="STAGING_API_TOKEN"
 ```
 
-Each controller instance manages its own GatewayClass and associated Gateways/HTTPRoutes independently.
+Each controller instance discovers GatewayClasses by `spec.controllerName` (not by resource name) and manages their associated Gateways and routes independently.
 
 ## External-DNS Integration
 

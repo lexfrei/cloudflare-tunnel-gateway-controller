@@ -1,0 +1,110 @@
+{{- if .Values.proxy.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "cf-tunnel-gw-ctrl.proxyFullname" . }}
+  labels:
+    {{- include "cf-tunnel-gw-ctrl.proxyLabels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.proxy.replicas }}
+  selector:
+    matchLabels:
+      {{- include "cf-tunnel-gw-ctrl.proxySelectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      {{- with .Values.proxy.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "cf-tunnel-gw-ctrl.proxySelectorLabels" . | nindent 8 }}
+        {{- with .Values.proxy.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        {{- toYaml .Values.proxy.podSecurityContext | nindent 8 }}
+      containers:
+        - name: proxy
+          securityContext:
+            {{- toYaml .Values.proxy.securityContext | nindent 12 }}
+          image: "{{ .Values.proxy.image.repository }}:{{ .Values.proxy.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.proxy.image.pullPolicy }}
+          env:
+            - name: TUNNEL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "proxy.tunnelTokenSecretRef.name is required when proxy.enabled is true" .Values.proxy.tunnelTokenSecretRef.name }}
+                  key: {{ .Values.proxy.tunnelTokenSecretRef.key | default "tunnel-token" }}
+            - name: PROXY_CONFIG_ADDR
+              value: ":{{ .Values.proxy.configAPIPort }}"
+            - name: PROXY_ADDR
+              value: ":{{ .Values.proxy.proxyPort }}"
+            {{- if .Values.proxy.authTokenSecretRef.name }}
+            - name: PROXY_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.proxy.authTokenSecretRef.name }}
+                  key: {{ .Values.proxy.authTokenSecretRef.key | default "auth-token" }}
+            {{- end }}
+          ports:
+            - name: config-api
+              containerPort: {{ .Values.proxy.configAPIPort }}
+              protocol: TCP
+            - name: proxy
+              containerPort: {{ .Values.proxy.proxyPort }}
+              protocol: TCP
+          {{- if .Values.proxy.healthProbes.startupProbe.enabled }}
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: config-api
+            initialDelaySeconds: {{ .Values.proxy.healthProbes.startupProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.proxy.healthProbes.startupProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.proxy.healthProbes.startupProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.proxy.healthProbes.startupProbe.failureThreshold }}
+          {{- end }}
+          {{- if .Values.proxy.healthProbes.livenessProbe.enabled }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: config-api
+            initialDelaySeconds: {{ .Values.proxy.healthProbes.livenessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.proxy.healthProbes.livenessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.proxy.healthProbes.livenessProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.proxy.healthProbes.livenessProbe.failureThreshold }}
+          {{- end }}
+          {{- if .Values.proxy.healthProbes.readinessProbe.enabled }}
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: config-api
+            initialDelaySeconds: {{ .Values.proxy.healthProbes.readinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.proxy.healthProbes.readinessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.proxy.healthProbes.readinessProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.proxy.healthProbes.readinessProbe.failureThreshold }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.proxy.resources | nindent 12 }}
+      {{- with .Values.proxy.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.proxy.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.proxy.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.proxy.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

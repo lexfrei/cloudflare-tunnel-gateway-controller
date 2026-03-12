@@ -47,9 +47,10 @@ func RulesEqual(a, b Rule) bool {
 		a.Service == b.Service
 }
 
-// IsCatchAll returns true if the rule is a catch-all rule (no hostname).
+// IsCatchAll returns true if the rule is a catch-all rule (no hostname and catch-all service).
+// Wildcard routes (no hostname but with a real backend) are NOT catch-all.
 func IsCatchAll(r Rule) bool {
-	return r.Hostname == ""
+	return r.Hostname == "" && r.Service == CatchAllService
 }
 
 // DiffRules computes the difference between current and desired rules.

@@ -170,6 +170,7 @@ nav:
       - Limitations: gateway-api/limitations.md
   - Guides:
       - guides/index.md
+      - L7 Proxy Setup: guides/l7-proxy.md
       - AmneziaWG Sidecar: guides/awg-sidecar.md
       - External-DNS Integration: guides/external-dns.md
       - Cross-Namespace Routing: guides/cross-namespace.md
@@ -183,6 +184,7 @@ nav:
       - development/index.md
       - Setup: development/setup.md
       - Architecture: development/architecture.md
+      - Proxy Architecture: development/proxy-architecture.md
       - Contributing: development/contributing.md
       - Testing: development/testing.md
   - Reference:

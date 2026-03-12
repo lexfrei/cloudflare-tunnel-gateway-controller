@@ -46,7 +46,6 @@ spec:
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           args:
-            - "--gateway-class-name={{ .Values.controller.gatewayClassName }}"
             - "--controller-name={{ .Values.controller.controllerName }}"
             {{- if .Values.controller.clusterDomain }}
             - "--cluster-domain={{ .Values.controller.clusterDomain }}"
@@ -55,6 +54,12 @@ spec:
             - "--health-addr=:{{ .Values.service.healthPort }}"
             - "--log-level={{ .Values.controller.logLevel }}"
             - "--log-format={{ .Values.controller.logFormat }}"
+            {{- if .Values.proxy.enabled }}
+            - "--proxy-endpoints=http://{{ include "cf-tunnel-gw-ctrl.proxyFullname" . }}-headless.{{ .Release.Namespace }}.svc.{{ .Values.controller.clusterDomain | default "cluster.local" }}:{{ .Values.proxy.configAPIPort }}/config"
+            {{- if .Values.proxy.authTokenSecretRef.name }}
+            - "--proxy-auth-token=$(PROXY_AUTH_TOKEN)"
+            {{- end }}
+            {{- end }}
             {{- if .Values.leaderElection.enabled }}
             - "--leader-elect=true"
             - "--leader-election-name={{ .Values.leaderElection.leaseName }}"
@@ -64,6 +69,14 @@ spec:
             - "--leader-election-namespace={{ .Release.Namespace }}"
             {{- end }}
             {{- end }}
+          {{- if and .Values.proxy.enabled .Values.proxy.authTokenSecretRef.name }}
+          env:
+            - name: PROXY_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.proxy.authTokenSecretRef.name }}
+                  key: {{ .Values.proxy.authTokenSecretRef.key | default "auth-token" }}
+          {{- end }}
           ports:
             - name: metrics
               containerPort: {{ .Values.service.metricsPort }}

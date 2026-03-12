@@ -146,7 +146,6 @@ func (GRPCRouteAdapter) extractGRPCPath(methodMatch *gatewayv1.GRPCMethodMatch) 
 	return "/" + service + "/" + method, 1
 }
 
-//nolint:dupl // Similar to HTTPRouteAdapter.resolveBackendRef but operates on different types
 func (a GRPCRouteAdapter) resolveBackendRef(
 	ctx context.Context,
 	resolver *backendResolver,
@@ -165,48 +164,7 @@ func (a GRPCRouteAdapter) resolveBackendRef(
 		return "", nil
 	}
 
-	ref := refs[selectedIdx].BackendRef
-
-	if ref.Group != nil && *ref.Group != "" && *ref.Group != backendGroupCoreAlias {
-		return "", nil
-	}
-
-	if ref.Kind != nil && *ref.Kind != backendKindService {
-		return "", nil
-	}
-
-	svcNamespace := namespace
-	if ref.Namespace != nil {
-		svcNamespace = string(*ref.Namespace)
-	}
-
-	port := DefaultHTTPPort
-	if ref.Port != nil {
-		port = int(*ref.Port)
-	}
-
-	url, backendErr := resolveServiceURL(ctx, &serviceResolveParams{
-		client:        resolver.client,
-		validator:     resolver.validator,
-		logger:        resolver.logger,
-		clusterDomain: resolver.clusterDomain,
-		routeKind:     "GRPCRoute",
-		routeNS:       namespace,
-		routeName:     routeName,
-		svcName:       string(ref.Name),
-		svcNS:         svcNamespace,
-		port:          port,
-	})
-
-	if resolver.metrics != nil {
-		if backendErr != nil {
-			resolver.metrics.RecordBackendRefValidation(ctx, "grpc", "failed", backendErr.Reason)
-		} else {
-			resolver.metrics.RecordBackendRefValidation(ctx, "grpc", "success", "")
-		}
-	}
-
-	return url, backendErr
+	return resolveValidatedBackend(ctx, resolver, refs[selectedIdx].BackendRef, namespace, routeName, "GRPCRoute")
 }
 
 func (GRPCRouteAdapter) logMultipleBackends(resolver *backendResolver, namespace, routeName string, totalBackends int) {

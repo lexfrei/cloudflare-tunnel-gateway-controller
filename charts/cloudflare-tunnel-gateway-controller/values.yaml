@@ -66,9 +66,9 @@ gatewayClassConfig:
 
 # -- Controller configuration
 controller:
-  # -- GatewayClass name to watch
+  # -- Name of the GatewayClass resource to create
   gatewayClassName: "cloudflare-tunnel"
-  # -- Controller name for GatewayClass (must be unique in cluster)
+  # -- Value for GatewayClass spec.controllerName — this is how the controller discovers its GatewayClasses (must be unique per controller instance)
   controllerName: "cf.k8s.lex.la/tunnel-controller"
   # -- Kubernetes cluster domain for service DNS resolution
   # @default -- auto-detected from /etc/resolv.conf, fallback: cluster.local
@@ -304,3 +304,107 @@ networkPolicy:
 gatewayClass:
   # -- Create GatewayClass resource
   create: true
+
+# -- L7 Proxy configuration (enhanced-cloudflared data plane)
+# When enabled, deploys proxy pods that run cloudflared tunnel transport
+# with an L7 reverse proxy for full Gateway API HTTPRoute support.
+proxy:
+  # -- Enable L7 proxy deployment
+  enabled: false
+  # -- Number of proxy replicas
+  replicas: 2
+  # -- Proxy container image
+  image:
+    # -- Proxy image repository
+    repository: ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller-proxy
+    # -- Image pull policy
+    pullPolicy: IfNotPresent
+    # -- Image tag (defaults to appVersion)
+    tag: ""
+  # -- Config API port (controller pushes config here)
+  configAPIPort: 8081
+  # -- Proxy port (internal, traffic arrives through tunnel)
+  proxyPort: 8080
+  # -- Reference to Secret containing auth token for proxy config API.
+  # When set, both controller and proxy use this token for authenticated config push.
+  authTokenSecretRef:
+    # -- Name of the Secret containing the auth token
+    name: ""
+    # -- Key in the Secret containing the auth token
+    key: "auth-token"
+  # -- Reference to Secret containing tunnel token (REQUIRED when proxy.enabled)
+  tunnelTokenSecretRef:
+    # -- Name of the Secret containing tunnel token
+    name: ""
+    # -- Key in the Secret containing the tunnel token
+    key: "tunnel-token"
+  # -- Container resource requests and limits
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+  # -- Pod security context
+  # @default -- See values.yaml
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 65534
+    seccompProfile:
+      type: RuntimeDefault
+  # -- Container security context
+  # @default -- See values.yaml
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    readOnlyRootFilesystem: true
+  # -- Health probes configuration
+  healthProbes:
+    # -- Startup probe (gives tunnel time to connect)
+    startupProbe:
+      enabled: true
+      initialDelaySeconds: 0
+      periodSeconds: 5
+      timeoutSeconds: 3
+      failureThreshold: 30
+    # -- Liveness probe
+    livenessProbe:
+      enabled: true
+      initialDelaySeconds: 15
+      periodSeconds: 20
+      timeoutSeconds: 5
+      failureThreshold: 3
+    # -- Readiness probe (ready when config loaded)
+    readinessProbe:
+      enabled: true
+      initialDelaySeconds: 5
+      periodSeconds: 10
+      timeoutSeconds: 3
+      failureThreshold: 3
+  # -- Service configuration for proxy metrics/health
+  service:
+    # -- Service annotations
+    annotations: {}
+  # -- NetworkPolicy configuration for proxy pods
+  networkPolicy:
+    # -- Enable NetworkPolicy for proxy pods
+    enabled: false
+    # -- Ingress source configuration
+    ingress:
+      # -- Allow ingress from specific namespaces/pods
+      from: []
+  # -- Node selector for pod scheduling
+  nodeSelector: {}
+  # -- Tolerations for pod scheduling
+  tolerations: []
+  # -- Affinity rules for pod scheduling
+  affinity: {}
+  # -- Topology spread constraints for pod distribution
+  topologySpreadConstraints: []
+  # -- Annotations to add to proxy pods
+  podAnnotations: {}
+  # -- Additional labels to add to proxy pods
+  podLabels: {}

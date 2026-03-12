@@ -17,7 +17,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/retry"
-	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -49,6 +48,10 @@ const (
 
 	// kindSecret is the resource kind for Kubernetes Secrets.
 	kindSecret = "Secret"
+
+	// maxConditionMessageLength is the maximum length for condition messages.
+	// Used by truncateMessage to cap status condition messages.
+	maxConditionMessageLength = 256
 )
 
 // truncateMessage truncates a message to maxConditionMessageLength.
@@ -60,10 +63,25 @@ func truncateMessage(msg string) string {
 	return msg
 }
 
+// HelmManagement defines the interface for Helm operations used by the gateway controller.
+// This interface exists to enable testing with mock implementations.
+type HelmManagement interface {
+	GetLatestVersion(ctx context.Context, chartRef string) (string, error)
+	LoadChart(ctx context.Context, chartRef, version string) (chart.Charter, error)
+	GetActionConfig(namespace string) (*action.Configuration, error)
+	ReleaseExists(cfg *action.Configuration, releaseName string) bool
+	Install(ctx context.Context, cfg *action.Configuration,
+		releaseName, namespace string, loadedChart chart.Charter, values map[string]any) (release.Releaser, error)
+	GetRelease(cfg *action.Configuration, releaseName string) (release.Releaser, error)
+	Upgrade(ctx context.Context, cfg *action.Configuration,
+		releaseName string, loadedChart chart.Charter, values map[string]any) (release.Releaser, error)
+	Uninstall(ctx context.Context, cfg *action.Configuration, releaseName string) error
+}
+
 // GatewayReconciler reconciles Gateway resources for the cloudflare-tunnel GatewayClass.
 //
 // It performs the following functions:
-//   - Watches Gateway resources matching the configured GatewayClassName
+//   - Watches Gateway resources whose GatewayClass matches the configured ControllerName
 //   - Reads configuration from GatewayClassConfig via parametersRef
 //   - Updates Gateway status with tunnel CNAME address (for external-dns integration)
 //   - Manages cloudflared deployment lifecycle via Helm (when enabled in config)
@@ -77,10 +95,9 @@ type GatewayReconciler struct {
 	// Scheme is the runtime scheme for API type registration.
 	Scheme *runtime.Scheme
 
-	// GatewayClassName is the name of the GatewayClass to watch.
-	GatewayClassName string
-
-	// ControllerName is reported in Gateway status conditions.
+	// ControllerName identifies this controller. Per Gateway API spec,
+	// controllerName is the binding mechanism between GatewayClass and controller.
+	// The controller watches all GatewayClasses with matching controllerName.
 	ControllerName string
 
 	// ConfigResolver resolves configuration from GatewayClassConfig.
@@ -88,7 +105,7 @@ type GatewayReconciler struct {
 
 	// HelmManager handles cloudflared deployment. If nil, cloudflared
 	// management is disabled regardless of config.
-	HelmManager *helm.Manager
+	HelmManager HelmManagement
 }
 
 func (r *GatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -104,14 +121,14 @@ func (r *GatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		return ctrl.Result{}, errors.Wrap(err, "failed to get gateway")
 	}
 
-	if gateway.Spec.GatewayClassName != gatewayv1.ObjectName(r.GatewayClassName) {
+	if !isGatewayManagedByController(ctx, r.Client, &gateway, r.ControllerName) {
 		return ctrl.Result{}, nil
 	}
 
 	logger.Info("reconciling gateway", "name", gateway.Name, "namespace", gateway.Namespace)
 
-	// Resolve configuration from GatewayClassConfig
-	resolvedConfig, err := r.ConfigResolver.ResolveFromGatewayClassName(ctx, r.GatewayClassName)
+	// Resolve configuration from the Gateway's GatewayClass
+	resolvedConfig, err := r.ConfigResolver.ResolveFromGatewayClassName(ctx, string(gateway.Spec.GatewayClassName))
 	if err != nil {
 		logger.Error(err, "failed to resolve config from GatewayClassConfig")
 		// Update Gateway status to reflect config error and requeue for retry
@@ -119,7 +136,7 @@ func (r *GatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 			logger.Error(statusErr, "failed to update gateway status")
 		}
 
-		return ctrl.Result{RequeueAfter: configErrorRequeueDelay, Priority: ptr.To(priorityGateway)}, nil
+		return ctrl.Result{RequeueAfter: configErrorRequeueDelay, Priority: new(priorityGateway)}, nil
 	}
 
 	if !gateway.DeletionTimestamp.IsZero() {
@@ -398,7 +415,7 @@ func (r *GatewayReconciler) updateStatus(
 
 		freshGateway.Status.Addresses = []gatewayv1.GatewayStatusAddress{
 			{
-				Type:  ptr.To(gatewayv1.HostnameAddressType),
+				Type:  new(gatewayv1.HostnameAddressType),
 				Value: cfg.TunnelID + cfArgotunnelSuffix,
 			},
 		}
@@ -446,6 +463,21 @@ func (r *GatewayReconciler) updateStatus(
 				supportedKinds = []gatewayv1.RouteGroupKind{} // Empty slice (not nil) when no valid kinds
 			}
 
+			programmedCondition := metav1.Condition{
+				Type:               string(gatewayv1.ListenerConditionProgrammed),
+				Status:             metav1.ConditionTrue,
+				ObservedGeneration: freshGateway.Generation,
+				LastTransitionTime: now,
+				Reason:             string(gatewayv1.ListenerReasonProgrammed),
+				Message:            "Listener programmed",
+			}
+
+			if resolvedRefsCondition.Status == metav1.ConditionFalse {
+				programmedCondition.Status = metav1.ConditionFalse
+				programmedCondition.Reason = string(gatewayv1.ListenerReasonInvalid)
+				programmedCondition.Message = "Listener has unresolved references"
+			}
+
 			listenerStatuses = append(listenerStatuses, gatewayv1.ListenerStatus{
 				Name:           listener.Name,
 				SupportedKinds: supportedKinds,
@@ -459,14 +491,7 @@ func (r *GatewayReconciler) updateStatus(
 						Reason:             string(gatewayv1.ListenerReasonAccepted),
 						Message:            "Listener accepted",
 					},
-					{
-						Type:               string(gatewayv1.ListenerConditionProgrammed),
-						Status:             metav1.ConditionTrue,
-						ObservedGeneration: freshGateway.Generation,
-						LastTransitionTime: now,
-						Reason:             string(gatewayv1.ListenerReasonProgrammed),
-						Message:            "Listener programmed",
-					},
+					programmedCondition,
 					resolvedRefsCondition,
 				},
 			})
@@ -556,7 +581,7 @@ func (r *GatewayReconciler) setCloudflaredErrorStatus(
 		// Set address even on error (tunnel exists, just cloudflared failed)
 		freshGateway.Status.Addresses = []gatewayv1.GatewayStatusAddress{
 			{
-				Type:  ptr.To(gatewayv1.HostnameAddressType),
+				Type:  new(gatewayv1.HostnameAddressType),
 				Value: cfg.TunnelID + cfArgotunnelSuffix,
 			},
 		}
@@ -628,6 +653,7 @@ func (r *GatewayReconciler) countAttachedRoutes(
 					Hostnames:   route.Spec.Hostnames,
 					Kind:        routebinding.KindHTTPRoute,
 					SectionName: ref.SectionName,
+					Port:        ref.Port,
 				}
 
 				bindingResult, bindErr := validator.ValidateBinding(ctx, gateway, routeInfo)
@@ -664,6 +690,7 @@ func (r *GatewayReconciler) countAttachedRoutes(
 					Hostnames:   route.Spec.Hostnames,
 					Kind:        routebinding.KindGRPCRoute,
 					SectionName: ref.SectionName,
+					Port:        ref.Port,
 				}
 
 				bindingResult, bindErr := validator.ValidateBinding(ctx, gateway, routeInfo)
@@ -702,9 +729,9 @@ func (r *GatewayReconciler) refMatchesGateway(
 // SetupWithManager sets up the controller with the Manager.
 func (r *GatewayReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	mapper := &ConfigMapper{
-		Client:           r.Client,
-		GatewayClassName: r.GatewayClassName,
-		ConfigResolver:   r.ConfigResolver,
+		Client:         r.Client,
+		ControllerName: r.ControllerName,
+		ConfigResolver: r.ConfigResolver,
 	}
 
 	//nolint:wrapcheck // controller-runtime builder pattern
@@ -718,17 +745,27 @@ func (r *GatewayReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		// Watch GatewayClassConfig for config changes
 		Watches(
 			&v1alpha1.GatewayClassConfig{},
-			handler.EnqueueRequestsFromMapFunc(mapper.MapConfigToRequests(r.getAllGatewaysForClass)),
+			handler.EnqueueRequestsFromMapFunc(mapper.MapConfigToRequests(r.getAllManagedGateways)),
 		).
 		// Watch Secrets for credential changes
 		Watches(
 			&corev1.Secret{},
-			handler.EnqueueRequestsFromMapFunc(mapper.MapSecretToRequests(r.getAllGatewaysForClass)),
+			handler.EnqueueRequestsFromMapFunc(mapper.MapSecretToRequests(r.getAllManagedGateways)),
 		).
 		// Watch ReferenceGrants for cross-namespace Secret access changes
 		Watches(
 			&gatewayv1beta1.ReferenceGrant{},
 			handler.EnqueueRequestsFromMapFunc(r.referenceGrantToGateways),
+		).
+		// Watch HTTPRoutes to update AttachedRoutes count when routes change
+		Watches(
+			&gatewayv1.HTTPRoute{},
+			handler.EnqueueRequestsFromMapFunc(r.routeToGateways),
+		).
+		// Watch GRPCRoutes to update AttachedRoutes count when routes change
+		Watches(
+			&gatewayv1.GRPCRoute{},
+			handler.EnqueueRequestsFromMapFunc(r.routeToGateways),
 		).
 		Complete(r)
 }
@@ -743,14 +780,14 @@ func (r *GatewayReconciler) gatewayClassToGateways(
 		return nil
 	}
 
-	if gatewayClass.Name != r.GatewayClassName {
+	if string(gatewayClass.Spec.ControllerName) != r.ControllerName {
 		return nil
 	}
 
-	return r.getAllGatewaysForClass(ctx)
+	return r.getAllManagedGateways(ctx)
 }
 
-func (r *GatewayReconciler) getAllGatewaysForClass(ctx context.Context) []reconcile.Request {
+func (r *GatewayReconciler) getAllManagedGateways(ctx context.Context) []reconcile.Request {
 	var gatewayList gatewayv1.GatewayList
 
 	err := r.List(ctx, &gatewayList)
@@ -758,11 +795,19 @@ func (r *GatewayReconciler) getAllGatewaysForClass(ctx context.Context) []reconc
 		return nil
 	}
 
+	classNames, err := managedClassNames(ctx, r.Client, r.ControllerName)
+	if err != nil {
+		logging.FromContext(ctx).Warn("failed to get managed class names in getAllManagedGateways",
+			"error", err)
+
+		return nil
+	}
+
 	var requests []reconcile.Request
 
 	for i := range gatewayList.Items {
 		gw := &gatewayList.Items[i]
-		if string(gw.Spec.GatewayClassName) == r.GatewayClassName {
+		if classNames[string(gw.Spec.GatewayClassName)] {
 			requests = append(requests, reconcile.Request{
 				NamespacedName: types.NamespacedName{
 					Name:      gw.Name,
@@ -812,11 +857,19 @@ func (r *GatewayReconciler) referenceGrantToGateways(
 		return nil
 	}
 
+	classNames, err := managedClassNames(ctx, r.Client, r.ControllerName)
+	if err != nil {
+		logging.FromContext(ctx).Warn("failed to get managed class names in referenceGrantToGateways",
+			"error", err)
+
+		return nil
+	}
+
 	var requests []reconcile.Request
 
 	for i := range gatewayList.Items {
 		gateway := &gatewayList.Items[i]
-		if string(gateway.Spec.GatewayClassName) != r.GatewayClassName {
+		if !classNames[string(gateway.Spec.GatewayClassName)] {
 			continue
 		}
 
@@ -829,6 +882,67 @@ func (r *GatewayReconciler) referenceGrantToGateways(
 				},
 			})
 		}
+	}
+
+	return requests
+}
+
+// routeToGateways maps HTTPRoute/GRPCRoute events to Gateway reconcile requests.
+// This ensures AttachedRoutes is updated when routes are created, updated, or deleted.
+func (r *GatewayReconciler) routeToGateways(
+	ctx context.Context,
+	obj client.Object,
+) []reconcile.Request {
+	var parentRefs []gatewayv1.ParentReference
+
+	switch route := obj.(type) {
+	case *gatewayv1.HTTPRoute:
+		parentRefs = route.Spec.ParentRefs
+	case *gatewayv1.GRPCRoute:
+		parentRefs = route.Spec.ParentRefs
+	default:
+		return nil
+	}
+
+	classNames, err := managedClassNames(ctx, r.Client, r.ControllerName)
+	if err != nil {
+		logging.FromContext(ctx).Warn("failed to get managed class names in routeToGateways",
+			"error", err)
+
+		return nil
+	}
+
+	seen := make(map[types.NamespacedName]bool)
+
+	var requests []reconcile.Request
+
+	for _, ref := range parentRefs {
+		if ref.Kind != nil && *ref.Kind != kindGateway {
+			continue
+		}
+
+		gwNamespace := obj.GetNamespace()
+		if ref.Namespace != nil {
+			gwNamespace = string(*ref.Namespace)
+		}
+
+		gwKey := types.NamespacedName{Name: string(ref.Name), Namespace: gwNamespace}
+		if seen[gwKey] {
+			continue
+		}
+
+		seen[gwKey] = true
+
+		var gateway gatewayv1.Gateway
+		if err := r.Get(ctx, gwKey, &gateway); err != nil {
+			continue
+		}
+
+		if !classNames[string(gateway.Spec.GatewayClassName)] {
+			continue
+		}
+
+		requests = append(requests, reconcile.Request{NamespacedName: gwKey})
 	}
 
 	return requests
@@ -1105,7 +1219,7 @@ func (r *GatewayReconciler) grantAllowsGateway(
 ) bool {
 	for _, from := range grant.Spec.From {
 		if from.Group == gatewayv1.GroupName &&
-			from.Kind == "Gateway" &&
+			from.Kind == kindGateway &&
 			string(from.Namespace) == gatewayNamespace {
 			return true
 		}

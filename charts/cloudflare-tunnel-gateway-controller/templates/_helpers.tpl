@@ -99,6 +99,34 @@ Validate required configuration
 {{- end }}
 
 {{/*
+Proxy fullname
+*/}}
+{{- define "cf-tunnel-gw-ctrl.proxyFullname" -}}
+{{ include "cf-tunnel-gw-ctrl.fullname" . }}-proxy
+{{- end }}
+
+{{/*
+Proxy labels
+*/}}
+{{- define "cf-tunnel-gw-ctrl.proxyLabels" -}}
+helm.sh/chart: {{ include "cf-tunnel-gw-ctrl.chart" . }}
+{{ include "cf-tunnel-gw-ctrl.proxySelectorLabels" . }}
+{{- if .Chart.AppVersion }}
+app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+{{- end }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end }}
+
+{{/*
+Proxy selector labels
+*/}}
+{{- define "cf-tunnel-gw-ctrl.proxySelectorLabels" -}}
+app.kubernetes.io/name: {{ include "cf-tunnel-gw-ctrl.name" . }}-proxy
+app.kubernetes.io/instance: {{ .Release.Name }}
+app.kubernetes.io/component: proxy
+{{- end }}
+
+{{/*
 Validate PodDisruptionBudget configuration
 */}}
 {{- define "cf-tunnel-gw-ctrl.validatePDB" -}}

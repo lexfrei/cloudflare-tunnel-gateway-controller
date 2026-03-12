@@ -194,7 +194,7 @@ func TestBuild_PathMatching_Exact(t *testing.T) {
 							{
 								Path: &gatewayv1.HTTPPathMatch{
 									Type:  &exactType,
-									Value: strPtr("/api/v1"),
+									Value: new("/api/v1"),
 								},
 							},
 						},
@@ -232,7 +232,7 @@ func TestBuild_PathMatching_Prefix(t *testing.T) {
 							{
 								Path: &gatewayv1.HTTPPathMatch{
 									Type:  &prefixType,
-									Value: strPtr("/api"),
+									Value: new("/api"),
 								},
 							},
 						},
@@ -271,7 +271,7 @@ func TestBuild_Sorting(t *testing.T) {
 							{
 								Path: &gatewayv1.HTTPPathMatch{
 									Type:  &prefixType,
-									Value: strPtr("/api"),
+									Value: new("/api"),
 								},
 							},
 						},
@@ -284,7 +284,7 @@ func TestBuild_Sorting(t *testing.T) {
 							{
 								Path: &gatewayv1.HTTPPathMatch{
 									Type:  &exactType,
-									Value: strPtr("/api/v1/specific"),
+									Value: new("/api/v1/specific"),
 								},
 							},
 						},
@@ -297,7 +297,7 @@ func TestBuild_Sorting(t *testing.T) {
 							{
 								Path: &gatewayv1.HTTPPathMatch{
 									Type:  &prefixType,
-									Value: strPtr("/api/v1"),
+									Value: new("/api/v1"),
 								},
 							},
 						},
@@ -344,8 +344,10 @@ func TestBuild_NoHostnames(t *testing.T) {
 
 	buildResult := builder.Build(context.Background(), routes)
 
-	require.Len(t, buildResult.Rules, 2)
-	assert.Equal(t, "*", buildResult.Rules[0].Hostname.Value)
+	// Wildcard routes are skipped from Cloudflare config (handled by proxy).
+	// Only catch-all remains.
+	require.Len(t, buildResult.Rules, 1)
+	assert.Equal(t, ingress.CatchAllService, buildResult.Rules[0].Service.Value)
 }
 
 func TestBuild_NoBackendRefs(t *testing.T) {
@@ -650,7 +652,7 @@ func TestBuild_RegularExpressionPath(t *testing.T) {
 							{
 								Path: &gatewayv1.HTTPPathMatch{
 									Type:  &regexType,
-									Value: strPtr("/api/[0-9]+"),
+									Value: new("/api/[0-9]+"),
 								},
 							},
 						},
@@ -787,11 +789,11 @@ func TestBuild_WildcardHostnameSortedLast(t *testing.T) {
 
 	buildResult := builder.Build(context.Background(), routes)
 
-	// Specific hostname should come first, wildcard second, catch-all last
-	require.Len(t, buildResult.Rules, 3)
+	// Wildcard route is skipped from Cloudflare config (handled by proxy).
+	// Only specific hostname + catch-all remain.
+	require.Len(t, buildResult.Rules, 2)
 	assert.Equal(t, "app.example.com", buildResult.Rules[0].Hostname.Value)
-	assert.Equal(t, "*", buildResult.Rules[1].Hostname.Value)
-	assert.Equal(t, ingress.CatchAllService, buildResult.Rules[2].Service.Value)
+	assert.Equal(t, ingress.CatchAllService, buildResult.Rules[1].Service.Value)
 }
 
 func TestBuild_MixedHostnamesWithWildcard(t *testing.T) {
@@ -852,12 +854,12 @@ func TestBuild_MixedHostnamesWithWildcard(t *testing.T) {
 
 	buildResult := builder.Build(context.Background(), routes)
 
-	// Order should be: a.example.com, z.example.com, *, catch-all
-	require.Len(t, buildResult.Rules, 4)
+	// Wildcard route is skipped from Cloudflare config (handled by proxy).
+	// Order: a.example.com, z.example.com, catch-all
+	require.Len(t, buildResult.Rules, 3)
 	assert.Equal(t, "a.example.com", buildResult.Rules[0].Hostname.Value)
 	assert.Equal(t, "z.example.com", buildResult.Rules[1].Hostname.Value)
-	assert.Equal(t, "*", buildResult.Rules[2].Hostname.Value)
-	assert.Equal(t, ingress.CatchAllService, buildResult.Rules[3].Service.Value)
+	assert.Equal(t, ingress.CatchAllService, buildResult.Rules[2].Service.Value)
 }
 
 func TestBuild_CoreGroupExplicit(t *testing.T) {
@@ -993,7 +995,7 @@ func TestBuild_RootPath(t *testing.T) {
 							{
 								Path: &gatewayv1.HTTPPathMatch{
 									Type:  &prefixType,
-									Value: strPtr("/"),
+									Value: new("/"),
 								},
 							},
 						},
@@ -1157,16 +1159,12 @@ func newHTTPBackendRef(name string, namespace *gatewayv1.Namespace, port *int32)
 	return ref
 }
 
-func strPtr(s string) *string {
-	return &s
-}
-
 func int32Ptr(i int32) *int32 {
-	return &i
+	return new(i)
 }
 
 func portNumPtr(p int32) *gatewayv1.PortNumber {
-	return &p
+	return new(p)
 }
 
 // ExternalName Service Tests (TDD Phase 1: RED)

@@ -135,11 +135,11 @@ func TestGenericBuilder_WildcardOrdering(t *testing.T) {
 
 	result := builder.Build(context.Background(), routes)
 
-	// Order: specific hostname, wildcard, catch-all
-	require.Len(t, result.Rules, 3)
+	// Wildcard routes are skipped from Cloudflare config (handled by proxy).
+	// Only specific hostname + catch-all remain.
+	require.Len(t, result.Rules, 2)
 	assert.Equal(t, "app.example.com", result.Rules[0].Hostname.Value)
-	assert.Equal(t, "*", result.Rules[1].Hostname.Value)
-	assert.Equal(t, ingress.CatchAllService, result.Rules[2].Service.Value)
+	assert.Equal(t, ingress.CatchAllService, result.Rules[1].Service.Value)
 }
 
 // TestGenericBuilder_MixedRoutes tests building with multiple routes.

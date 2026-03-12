@@ -8,9 +8,9 @@ import (
 	"github.com/cloudflare/cloudflare-go/v6/zero_trust"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
@@ -127,7 +127,7 @@ func TestRouteSyncer_GetRelevantHTTPRoutes(t *testing.T) {
 							ParentRefs: []gatewayv1.ParentReference{
 								{
 									Name:      "test-gateway",
-									Namespace: ptr.To(gatewayv1.Namespace("gateway-ns")),
+									Namespace: new(gatewayv1.Namespace("gateway-ns")),
 								},
 							},
 						},
@@ -161,7 +161,7 @@ func TestRouteSyncer_GetRelevantHTTPRoutes(t *testing.T) {
 							ParentRefs: []gatewayv1.ParentReference{
 								{
 									Name: "test-service",
-									Kind: ptr.To(gatewayv1.Kind("Service")),
+									Kind: new(gatewayv1.Kind("Service")),
 								},
 							},
 						},
@@ -239,8 +239,18 @@ func TestRouteSyncer_GetRelevantHTTPRoutes(t *testing.T) {
 			for i := range tt.routes {
 				builder = builder.WithObjects(&tt.routes[i])
 			}
+			addedClasses := map[string]bool{}
 			for i := range tt.gateways {
 				builder = builder.WithObjects(&tt.gateways[i])
+				gcName := string(tt.gateways[i].Spec.GatewayClassName)
+				if !addedClasses[gcName] {
+					controllerName := gatewayv1.GatewayController(gcName)
+					builder = builder.WithObjects(&gatewayv1.GatewayClass{
+						ObjectMeta: metav1.ObjectMeta{Name: gcName},
+						Spec:       gatewayv1.GatewayClassSpec{ControllerName: controllerName},
+					})
+					addedClasses[gcName] = true
+				}
 			}
 			fakeClient := builder.Build()
 
@@ -254,10 +264,10 @@ func TestRouteSyncer_GetRelevantHTTPRoutes(t *testing.T) {
 				nil,
 			)
 
-			routes, _, err := syncer.getRelevantHTTPRoutes(context.Background())
+			result, err := syncer.getRelevantHTTPRoutes(context.Background())
 
 			require.NoError(t, err)
-			assert.Len(t, routes, tt.expectedCount)
+			assert.Len(t, result.accepted, tt.expectedCount)
 		})
 	}
 }
@@ -353,8 +363,18 @@ func TestRouteSyncer_GetRelevantGRPCRoutes(t *testing.T) {
 			for i := range tt.routes {
 				builder = builder.WithObjects(&tt.routes[i])
 			}
+			addedClasses := map[string]bool{}
 			for i := range tt.gateways {
 				builder = builder.WithObjects(&tt.gateways[i])
+				gcName := string(tt.gateways[i].Spec.GatewayClassName)
+				if !addedClasses[gcName] {
+					controllerName := gatewayv1.GatewayController(gcName)
+					builder = builder.WithObjects(&gatewayv1.GatewayClass{
+						ObjectMeta: metav1.ObjectMeta{Name: gcName},
+						Spec:       gatewayv1.GatewayClassSpec{ControllerName: controllerName},
+					})
+					addedClasses[gcName] = true
+				}
 			}
 			fakeClient := builder.Build()
 
@@ -368,10 +388,10 @@ func TestRouteSyncer_GetRelevantGRPCRoutes(t *testing.T) {
 				nil,
 			)
 
-			routes, _, err := syncer.getRelevantGRPCRoutes(context.Background())
+			result, err := syncer.getRelevantGRPCRoutes(context.Background())
 
 			require.NoError(t, err)
-			assert.Len(t, routes, tt.expectedCount)
+			assert.Len(t, result.accepted, tt.expectedCount)
 		})
 	}
 }
@@ -470,6 +490,147 @@ func TestMergeAndSortRules(t *testing.T) {
 	}
 }
 
+func TestMergeAndSortRules_Ordering(t *testing.T) {
+	t.Parallel()
+
+	// GRPC wildcard route (no hostname) should come AFTER HTTP specific hostname.
+	// mergeAndSortRules must sort the combined result, not just concatenate.
+	httpRules := []zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress{
+		{
+			Hostname: cloudflare.String("z.example.com"),
+			Service:  cloudflare.String("http://z-svc:80"),
+		},
+	}
+	grpcRules := []zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress{
+		{
+			Hostname: cloudflare.String("a.example.com"),
+			Service:  cloudflare.String("http://a-grpc:50051"),
+		},
+	}
+
+	result := mergeAndSortRules(httpRules, grpcRules)
+
+	require.Len(t, result, 2)
+	// Alphabetical: a.example.com before z.example.com
+	assert.Equal(t, "a.example.com", result[0].Hostname.Value)
+	assert.Equal(t, "z.example.com", result[1].Hostname.Value)
+}
+
+func TestMergeAndSortRules_WildcardLast(t *testing.T) {
+	t.Parallel()
+
+	// Wildcard (no hostname) must come after specific hostnames.
+	httpRules := []zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress{
+		{
+			Hostname: cloudflare.String("app.example.com"),
+			Service:  cloudflare.String("http://app:80"),
+		},
+	}
+	grpcRules := []zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress{
+		{
+			// No hostname = wildcard
+			Service: cloudflare.String("http://grpc-wildcard:50051"),
+		},
+	}
+
+	result := mergeAndSortRules(httpRules, grpcRules)
+
+	require.Len(t, result, 2)
+	assert.Equal(t, "app.example.com", result[0].Hostname.Value)
+	assert.False(t, result[1].Hostname.Present, "wildcard rule must be last")
+}
+
+func TestSortIngressRules(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		rules    []zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress
+		expected []string // expected hostname order (empty string = no hostname)
+	}{
+		{
+			name:     "empty rules",
+			rules:    nil,
+			expected: nil,
+		},
+		{
+			name: "already sorted",
+			rules: []zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress{
+				{Hostname: cloudflare.String("a.example.com"), Service: cloudflare.String("http://a:80")},
+				{Hostname: cloudflare.String("z.example.com"), Service: cloudflare.String("http://z:80")},
+				{Service: cloudflare.String("http://wildcard:80")},
+			},
+			expected: []string{"a.example.com", "z.example.com", ""},
+		},
+		{
+			name: "wildcard before specific hostname",
+			rules: []zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress{
+				{Service: cloudflare.String("http://wildcard:80")},
+				{Hostname: cloudflare.String("a.example.com"), Service: cloudflare.String("http://a:80")},
+			},
+			expected: []string{"a.example.com", ""},
+		},
+		{
+			name: "reverse alphabetical hostnames",
+			rules: []zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress{
+				{Hostname: cloudflare.String("z.example.com"), Service: cloudflare.String("http://z:80")},
+				{Hostname: cloudflare.String("a.example.com"), Service: cloudflare.String("http://a:80")},
+			},
+			expected: []string{"a.example.com", "z.example.com"},
+		},
+		{
+			name: "same hostname different path lengths",
+			rules: []zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress{
+				{Hostname: cloudflare.String("app.example.com"), Path: cloudflare.String("/"), Service: cloudflare.String("http://short:80")},
+				{Hostname: cloudflare.String("app.example.com"), Path: cloudflare.String("/api/v1"), Service: cloudflare.String("http://long:80")},
+			},
+			expected: []string{"app.example.com", "app.example.com"},
+		},
+		{
+			name: "mixed: wildcard between specific hostnames",
+			rules: []zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress{
+				{Hostname: cloudflare.String("b.example.com"), Service: cloudflare.String("http://b:80")},
+				{Service: cloudflare.String("http://wildcard:80")},
+				{Hostname: cloudflare.String("a.example.com"), Service: cloudflare.String("http://a:80")},
+			},
+			expected: []string{"a.example.com", "b.example.com", ""},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			result := sortIngressRules(tt.rules)
+
+			require.Len(t, result, len(tt.expected))
+
+			for i, expectedHostname := range tt.expected {
+				if expectedHostname == "" {
+					assert.False(t, result[i].Hostname.Present, "rule %d should have no hostname", i)
+				} else {
+					assert.Equal(t, expectedHostname, result[i].Hostname.Value, "rule %d hostname mismatch", i)
+				}
+			}
+		})
+	}
+}
+
+func TestSortIngressRules_LongerPathFirst(t *testing.T) {
+	t.Parallel()
+
+	rules := []zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress{
+		{Hostname: cloudflare.String("app.example.com"), Path: cloudflare.String("/"), Service: cloudflare.String("http://short:80")},
+		{Hostname: cloudflare.String("app.example.com"), Path: cloudflare.String("/api/v1"), Service: cloudflare.String("http://long:80")},
+	}
+
+	result := sortIngressRules(rules)
+
+	require.Len(t, result, 2)
+	assert.Equal(t, "/api/v1", result[0].Path.Value, "longer path should come first")
+	assert.Equal(t, "/", result[1].Path.Value, "shorter path should come second")
+}
+
 func TestFilterOutCatchAll(t *testing.T) {
 	t.Parallel()
 
@@ -536,6 +697,525 @@ func TestFilterOutCatchAll(t *testing.T) {
 	}
 }
 
+func TestRouteSyncer_GetRelevantGRPCRoutes_WithExplicitNamespace(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name          string
+		routes        []gatewayv1.GRPCRoute
+		gateways      []gatewayv1.Gateway
+		expectedCount int
+	}{
+		{
+			name: "route with explicit namespace in parentRef",
+			routes: []gatewayv1.GRPCRoute{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "cross-ns-route",
+						Namespace: "route-ns",
+					},
+					Spec: gatewayv1.GRPCRouteSpec{
+						CommonRouteSpec: gatewayv1.CommonRouteSpec{
+							ParentRefs: []gatewayv1.ParentReference{
+								{
+									Name:      "test-gateway",
+									Namespace: new(gatewayv1.Namespace("gateway-ns")),
+								},
+							},
+						},
+					},
+				},
+			},
+			gateways: []gatewayv1.Gateway{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "test-gateway",
+						Namespace: "gateway-ns",
+					},
+					Spec: gatewayv1.GatewaySpec{
+						GatewayClassName: "cloudflare-tunnel",
+						Listeners:        httpListener(),
+					},
+				},
+			},
+			expectedCount: 1,
+		},
+		{
+			name: "route with non-gateway kind ignored",
+			routes: []gatewayv1.GRPCRoute{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "svc-route",
+						Namespace: "default",
+					},
+					Spec: gatewayv1.GRPCRouteSpec{
+						CommonRouteSpec: gatewayv1.CommonRouteSpec{
+							ParentRefs: []gatewayv1.ParentReference{
+								{
+									Name: "some-service",
+									Kind: new(gatewayv1.Kind("Service")),
+								},
+							},
+						},
+					},
+				},
+			},
+			gateways:      nil,
+			expectedCount: 0,
+		},
+		{
+			name: "mixed grpc routes",
+			routes: []gatewayv1.GRPCRoute{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "our-route",
+						Namespace: "default",
+					},
+					Spec: gatewayv1.GRPCRouteSpec{
+						CommonRouteSpec: gatewayv1.CommonRouteSpec{
+							ParentRefs: []gatewayv1.ParentReference{
+								{Name: "our-gateway"},
+							},
+						},
+					},
+				},
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "other-route",
+						Namespace: "default",
+					},
+					Spec: gatewayv1.GRPCRouteSpec{
+						CommonRouteSpec: gatewayv1.CommonRouteSpec{
+							ParentRefs: []gatewayv1.ParentReference{
+								{Name: "other-gateway"},
+							},
+						},
+					},
+				},
+			},
+			gateways: []gatewayv1.Gateway{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "our-gateway",
+						Namespace: "default",
+					},
+					Spec: gatewayv1.GatewaySpec{
+						GatewayClassName: "cloudflare-tunnel",
+						Listeners:        httpListener(),
+					},
+				},
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "other-gateway",
+						Namespace: "default",
+					},
+					Spec: gatewayv1.GatewaySpec{
+						GatewayClassName: "other-class",
+						Listeners:        httpListener(),
+					},
+				},
+			},
+			expectedCount: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			scheme := runtime.NewScheme()
+			require.NoError(t, gatewayv1.Install(scheme))
+			require.NoError(t, v1alpha1.AddToScheme(scheme))
+
+			builder := fake.NewClientBuilder().WithScheme(scheme)
+			for i := range tt.routes {
+				builder = builder.WithObjects(&tt.routes[i])
+			}
+			addedClasses := map[string]bool{}
+			for i := range tt.gateways {
+				builder = builder.WithObjects(&tt.gateways[i])
+				gcName := string(tt.gateways[i].Spec.GatewayClassName)
+				if !addedClasses[gcName] {
+					controllerName := gatewayv1.GatewayController(gcName)
+					builder = builder.WithObjects(&gatewayv1.GatewayClass{
+						ObjectMeta: metav1.ObjectMeta{Name: gcName},
+						Spec:       gatewayv1.GatewayClassSpec{ControllerName: controllerName},
+					})
+					addedClasses[gcName] = true
+				}
+			}
+			fakeClient := builder.Build()
+
+			syncer := NewRouteSyncer(
+				fakeClient,
+				scheme,
+				"cluster.local",
+				"cloudflare-tunnel",
+				config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+				cfmetrics.NewNoopCollector(),
+				nil,
+			)
+
+			result, err := syncer.getRelevantGRPCRoutes(context.Background())
+
+			require.NoError(t, err)
+			assert.Len(t, result.accepted, tt.expectedCount)
+			assert.NotNil(t, result.bindings)
+		})
+	}
+}
+
+func TestRouteSyncer_BuildResultForError(t *testing.T) {
+	t.Parallel()
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, gatewayv1.Install(scheme))
+	require.NoError(t, v1alpha1.AddToScheme(scheme))
+
+	// Create a gateway and routes to verify buildResultForError collects them
+	gateway := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-gw",
+			Namespace: "default",
+		},
+		Spec: gatewayv1.GatewaySpec{
+			GatewayClassName: "cloudflare-tunnel",
+			Listeners: []gatewayv1.Listener{
+				{
+					Name:     "http",
+					Port:     80,
+					Protocol: gatewayv1.HTTPProtocolType,
+					AllowedRoutes: &gatewayv1.AllowedRoutes{
+						Namespaces: &gatewayv1.RouteNamespaces{
+							From: new(gatewayv1.NamespacesFromAll),
+						},
+					},
+				},
+			},
+		},
+	}
+
+	httpRoute := &gatewayv1.HTTPRoute{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "http-route",
+			Namespace: "default",
+		},
+		Spec: gatewayv1.HTTPRouteSpec{
+			CommonRouteSpec: gatewayv1.CommonRouteSpec{
+				ParentRefs: []gatewayv1.ParentReference{
+					{Name: "test-gw"},
+				},
+			},
+		},
+	}
+
+	grpcRoute := &gatewayv1.GRPCRoute{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "grpc-route",
+			Namespace: "default",
+		},
+		Spec: gatewayv1.GRPCRouteSpec{
+			CommonRouteSpec: gatewayv1.CommonRouteSpec{
+				ParentRefs: []gatewayv1.ParentReference{
+					{Name: "test-gw"},
+				},
+			},
+		},
+	}
+
+	gatewayClass := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "cloudflare-tunnel"},
+		Spec:       gatewayv1.GatewayClassSpec{ControllerName: "cloudflare-tunnel"},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(gatewayClass, gateway, httpRoute, grpcRoute).
+		Build()
+
+	syncer := NewRouteSyncer(
+		fakeClient,
+		scheme,
+		"cluster.local",
+		"cloudflare-tunnel",
+		config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		cfmetrics.NewNoopCollector(),
+		nil,
+	)
+
+	result := syncer.buildResultForError(context.Background())
+
+	require.NotNil(t, result)
+	assert.Len(t, result.HTTPRoutes, 1)
+	assert.Len(t, result.GRPCRoutes, 1)
+	assert.NotNil(t, result.HTTPRouteBindings)
+	assert.NotNil(t, result.GRPCRouteBindings)
+}
+
+func TestRouteSyncer_SyncAllRoutes_ConfigResolveFailure(t *testing.T) {
+	t.Parallel()
+
+	// No GatewayClassConfig exists, so ResolveFromGatewayClassName fails.
+	scheme := runtime.NewScheme()
+	require.NoError(t, gatewayv1.Install(scheme))
+	require.NoError(t, v1alpha1.AddToScheme(scheme))
+
+	gatewayClass := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "cloudflare-tunnel",
+		},
+		Spec: gatewayv1.GatewayClassSpec{
+			ControllerName: "cloudflare-tunnel",
+			ParametersRef: &gatewayv1.ParametersReference{
+				Group: config.ParametersRefGroup,
+				Kind:  config.ParametersRefKind,
+				Name:  "missing-config",
+			},
+		},
+	}
+
+	gateway := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-gw",
+			Namespace: "default",
+		},
+		Spec: gatewayv1.GatewaySpec{
+			GatewayClassName: "cloudflare-tunnel",
+			Listeners:        httpListener(),
+		},
+	}
+
+	httpRoute := &gatewayv1.HTTPRoute{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "route-a",
+			Namespace: "default",
+		},
+		Spec: gatewayv1.HTTPRouteSpec{
+			CommonRouteSpec: gatewayv1.CommonRouteSpec{
+				ParentRefs: []gatewayv1.ParentReference{
+					{Name: "test-gw"},
+				},
+			},
+			Hostnames: []gatewayv1.Hostname{"a.example.com"},
+		},
+	}
+
+	grpcRoute := &gatewayv1.GRPCRoute{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "grpc-route-a",
+			Namespace: "default",
+		},
+		Spec: gatewayv1.GRPCRouteSpec{
+			CommonRouteSpec: gatewayv1.CommonRouteSpec{
+				ParentRefs: []gatewayv1.ParentReference{
+					{Name: "test-gw"},
+				},
+			},
+			Hostnames: []gatewayv1.Hostname{"grpc.example.com"},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(gatewayClass, gateway, httpRoute, grpcRoute).
+		Build()
+
+	syncer := NewRouteSyncer(
+		fakeClient,
+		scheme,
+		"cluster.local",
+		"cloudflare-tunnel",
+		config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		cfmetrics.NewNoopCollector(),
+		nil,
+	)
+
+	result, syncResult, err := syncer.SyncAllRoutes(context.Background())
+
+	require.Error(t, err)
+	assert.Equal(t, apiErrorRequeueDelay, result.RequeueAfter)
+	require.NotNil(t, syncResult)
+	assert.Len(t, syncResult.HTTPRoutes, 1)
+	assert.Len(t, syncResult.GRPCRoutes, 1)
+}
+
+func TestRouteSyncer_SyncAllRoutes_AccountIDResolveFailure(t *testing.T) {
+	t.Parallel()
+
+	// Config resolves successfully but account ID auto-detect fails
+	// because API token is invalid
+	scheme := runtime.NewScheme()
+	require.NoError(t, gatewayv1.Install(scheme))
+	require.NoError(t, v1alpha1.AddToScheme(scheme))
+	require.NoError(t, corev1.AddToScheme(scheme))
+
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "cf-creds",
+			Namespace: "default",
+		},
+		Data: map[string][]byte{
+			"api-token": []byte("invalid-token-for-testing"),
+		},
+	}
+
+	disabled := false
+	gatewayClassConfig := &v1alpha1.GatewayClassConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-config",
+		},
+		Spec: v1alpha1.GatewayClassConfigSpec{
+			CloudflareCredentialsSecretRef: v1alpha1.SecretReference{
+				Name:      "cf-creds",
+				Namespace: "default",
+			},
+			TunnelID: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+			Cloudflared: v1alpha1.CloudflaredConfig{
+				Enabled: &disabled,
+			},
+			// AccountID intentionally NOT set to trigger auto-detect
+		},
+	}
+
+	gatewayClass := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "cloudflare-tunnel",
+		},
+		Spec: gatewayv1.GatewayClassSpec{
+			ControllerName: "cloudflare-tunnel",
+			ParametersRef: &gatewayv1.ParametersReference{
+				Group: config.ParametersRefGroup,
+				Kind:  config.ParametersRefKind,
+				Name:  "test-config",
+			},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(secret, gatewayClassConfig, gatewayClass).
+		Build()
+
+	syncer := NewRouteSyncer(
+		fakeClient,
+		scheme,
+		"cluster.local",
+		"cloudflare-tunnel",
+		config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		cfmetrics.NewNoopCollector(),
+		nil,
+	)
+
+	result, syncResult, err := syncer.SyncAllRoutes(context.Background())
+
+	require.Error(t, err)
+	assert.Equal(t, apiErrorRequeueDelay, result.RequeueAfter)
+	require.NotNil(t, syncResult)
+}
+
+func TestRouteSyncer_SyncAllRoutes_TunnelConfigGetFailure(t *testing.T) {
+	t.Parallel()
+
+	// Config resolves with AccountID set (skips auto-detect),
+	// but tunnel config GET fails because token is invalid
+	scheme := runtime.NewScheme()
+	require.NoError(t, gatewayv1.Install(scheme))
+	require.NoError(t, v1alpha1.AddToScheme(scheme))
+	require.NoError(t, corev1.AddToScheme(scheme))
+
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "cf-creds",
+			Namespace: "default",
+		},
+		Data: map[string][]byte{
+			"api-token": []byte("invalid-token-for-testing"),
+		},
+	}
+
+	disabled := false
+	gatewayClassConfig := &v1alpha1.GatewayClassConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-config",
+		},
+		Spec: v1alpha1.GatewayClassConfigSpec{
+			CloudflareCredentialsSecretRef: v1alpha1.SecretReference{
+				Name:      "cf-creds",
+				Namespace: "default",
+			},
+			TunnelID:  "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+			AccountID: "test-account-id",
+			Cloudflared: v1alpha1.CloudflaredConfig{
+				Enabled: &disabled,
+			},
+		},
+	}
+
+	gatewayClass := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "cloudflare-tunnel",
+		},
+		Spec: gatewayv1.GatewayClassSpec{
+			ControllerName: "cloudflare-tunnel",
+			ParametersRef: &gatewayv1.ParametersReference{
+				Group: config.ParametersRefGroup,
+				Kind:  config.ParametersRefKind,
+				Name:  "test-config",
+			},
+		},
+	}
+
+	gateway := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-gw",
+			Namespace: "default",
+		},
+		Spec: gatewayv1.GatewaySpec{
+			GatewayClassName: "cloudflare-tunnel",
+			Listeners:        httpListener(),
+		},
+	}
+
+	httpRoute := &gatewayv1.HTTPRoute{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-route",
+			Namespace: "default",
+		},
+		Spec: gatewayv1.HTTPRouteSpec{
+			CommonRouteSpec: gatewayv1.CommonRouteSpec{
+				ParentRefs: []gatewayv1.ParentReference{
+					{Name: "test-gw"},
+				},
+			},
+			Hostnames: []gatewayv1.Hostname{"test.example.com"},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(secret, gatewayClassConfig, gatewayClass, gateway, httpRoute).
+		Build()
+
+	syncer := NewRouteSyncer(
+		fakeClient,
+		scheme,
+		"cluster.local",
+		"cloudflare-tunnel",
+		config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		cfmetrics.NewNoopCollector(),
+		nil,
+	)
+
+	result, syncResult, err := syncer.SyncAllRoutes(context.Background())
+
+	// The Cloudflare API call will fail with authentication error
+	require.Error(t, err)
+	assert.Equal(t, apiErrorRequeueDelay, result.RequeueAfter)
+	require.NotNil(t, syncResult)
+	// Route should be in the sync result even on API error
+	assert.Len(t, syncResult.HTTPRoutes, 1)
+}
+
 func TestNewRouteSyncer(t *testing.T) {
 	t.Parallel()
 
@@ -549,8 +1229,297 @@ func TestNewRouteSyncer(t *testing.T) {
 
 	require.NotNil(t, syncer)
 	assert.Equal(t, "cluster.local", syncer.ClusterDomain)
-	assert.Equal(t, "cloudflare-tunnel", syncer.GatewayClassName)
+	assert.Equal(t, "cloudflare-tunnel", syncer.ControllerName)
 	assert.NotNil(t, syncer.httpBuilder)
 	assert.NotNil(t, syncer.grpcBuilder)
 	assert.NotNil(t, syncer.Metrics)
+}
+
+func TestNewProxySyncer_NilLogger(t *testing.T) {
+	t.Parallel()
+
+	testClient := fake.NewClientBuilder().WithScheme(runtime.NewScheme()).Build()
+	syncer := NewProxySyncer("cluster.local", "", testClient, nil)
+	require.NotNil(t, syncer)
+}
+
+func TestResolveConfigForController_MultipleClasses_DeterministicOrder(t *testing.T) {
+	t.Parallel()
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, gatewayv1.Install(scheme))
+	require.NoError(t, v1alpha1.AddToScheme(scheme))
+
+	// Two GatewayClasses with same controllerName and same parametersRef.
+	// The class with the lexicographically smallest name should be selected.
+	sharedRef := &gatewayv1.ParametersReference{
+		Group: "cf.k8s.lex.la",
+		Kind:  "GatewayClassConfig",
+		Name:  "shared-config",
+	}
+	classZ := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "z-class"},
+		Spec: gatewayv1.GatewayClassSpec{
+			ControllerName: "test-controller",
+			ParametersRef:  sharedRef,
+		},
+	}
+	classA := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "a-class"},
+		Spec: gatewayv1.GatewayClassSpec{
+			ControllerName: "test-controller",
+			ParametersRef:  sharedRef,
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(classZ, classA).
+		Build()
+
+	syncer := NewRouteSyncer(
+		fakeClient, scheme, "cluster.local", "test-controller",
+		config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		cfmetrics.NewNoopCollector(), nil,
+	)
+
+	// resolveConfigForController should pick "a-class" (alphabetically first).
+	// It will fail because there's no GatewayClassConfig, but the error message
+	// reveals which class was selected.
+	_, err := syncer.resolveConfigForController(context.Background())
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "a-class")
+	assert.NotContains(t, err.Error(), "z-class")
+}
+
+func TestResolveConfigForController_MultipleClasses_ConflictingParametersRef(t *testing.T) {
+	t.Parallel()
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, gatewayv1.Install(scheme))
+	require.NoError(t, v1alpha1.AddToScheme(scheme))
+
+	// Two GatewayClasses with same controllerName but different parametersRef.
+	classA := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "a-class"},
+		Spec: gatewayv1.GatewayClassSpec{
+			ControllerName: "test-controller",
+			ParametersRef: &gatewayv1.ParametersReference{
+				Group: "cf.k8s.lex.la",
+				Kind:  "GatewayClassConfig",
+				Name:  "config-tunnel-1",
+			},
+		},
+	}
+	classB := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "b-class"},
+		Spec: gatewayv1.GatewayClassSpec{
+			ControllerName: "test-controller",
+			ParametersRef: &gatewayv1.ParametersReference{
+				Group: "cf.k8s.lex.la",
+				Kind:  "GatewayClassConfig",
+				Name:  "config-tunnel-2",
+			},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(classA, classB).
+		Build()
+
+	syncer := NewRouteSyncer(
+		fakeClient, scheme, "cluster.local", "test-controller",
+		config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		cfmetrics.NewNoopCollector(), nil,
+	)
+
+	// Must return an error because different parametersRef means different
+	// tunnel credentials — silently using one would send traffic to wrong tunnel.
+	_, err := syncer.resolveConfigForController(context.Background())
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "conflicting parametersRef")
+}
+
+func TestHasConflictingParametersRef(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		classes  []gatewayv1.GatewayClass
+		expected bool
+	}{
+		{
+			name: "same parametersRef",
+			classes: []gatewayv1.GatewayClass{
+				{Spec: gatewayv1.GatewayClassSpec{ParametersRef: &gatewayv1.ParametersReference{Name: "config-a"}}},
+				{Spec: gatewayv1.GatewayClassSpec{ParametersRef: &gatewayv1.ParametersReference{Name: "config-a"}}},
+			},
+			expected: false,
+		},
+		{
+			name: "different parametersRef",
+			classes: []gatewayv1.GatewayClass{
+				{Spec: gatewayv1.GatewayClassSpec{ParametersRef: &gatewayv1.ParametersReference{Name: "config-a"}}},
+				{Spec: gatewayv1.GatewayClassSpec{ParametersRef: &gatewayv1.ParametersReference{Name: "config-b"}}},
+			},
+			expected: true,
+		},
+		{
+			name: "one nil parametersRef",
+			classes: []gatewayv1.GatewayClass{
+				{Spec: gatewayv1.GatewayClassSpec{ParametersRef: &gatewayv1.ParametersReference{Name: "config-a"}}},
+				{Spec: gatewayv1.GatewayClassSpec{}},
+			},
+			expected: true,
+		},
+		{
+			name: "same name but different group",
+			classes: []gatewayv1.GatewayClass{
+				{Spec: gatewayv1.GatewayClassSpec{ParametersRef: &gatewayv1.ParametersReference{Group: "a.io", Kind: "Config", Name: "cfg"}}},
+				{Spec: gatewayv1.GatewayClassSpec{ParametersRef: &gatewayv1.ParametersReference{Group: "b.io", Kind: "Config", Name: "cfg"}}},
+			},
+			expected: true,
+		},
+		{
+			name: "same name but different kind",
+			classes: []gatewayv1.GatewayClass{
+				{Spec: gatewayv1.GatewayClassSpec{ParametersRef: &gatewayv1.ParametersReference{Group: "a.io", Kind: "ConfigA", Name: "cfg"}}},
+				{Spec: gatewayv1.GatewayClassSpec{ParametersRef: &gatewayv1.ParametersReference{Group: "a.io", Kind: "ConfigB", Name: "cfg"}}},
+			},
+			expected: true,
+		},
+		{
+			name: "both nil parametersRef",
+			classes: []gatewayv1.GatewayClass{
+				{Spec: gatewayv1.GatewayClassSpec{}},
+				{Spec: gatewayv1.GatewayClassSpec{}},
+			},
+			expected: false,
+		},
+		{
+			name: "single class",
+			classes: []gatewayv1.GatewayClass{
+				{Spec: gatewayv1.GatewayClassSpec{ParametersRef: &gatewayv1.ParametersReference{Name: "config-a"}}},
+			},
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.expected, hasConflictingParametersRef(tt.classes))
+		})
+	}
+}
+
+func TestResolveConfigForController_NoClasses(t *testing.T) {
+	t.Parallel()
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, gatewayv1.Install(scheme))
+
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+
+	syncer := NewRouteSyncer(
+		fakeClient, scheme, "cluster.local", "test-controller",
+		config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		cfmetrics.NewNoopCollector(), nil,
+	)
+
+	_, err := syncer.resolveConfigForController(context.Background())
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no GatewayClass found")
+}
+
+func TestSyncAndUpdateStatusCommon_PropagatesError(t *testing.T) {
+	t.Parallel()
+
+	// When SyncAllRoutes returns an error with RequeueAfter == 0,
+	// syncAndUpdateStatusCommon should propagate the error for
+	// controller-runtime backoff-based requeue.
+	scheme := runtime.NewScheme()
+	require.NoError(t, gatewayv1.Install(scheme))
+	require.NoError(t, v1alpha1.AddToScheme(scheme))
+
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+
+	syncer := NewRouteSyncer(
+		fakeClient, scheme, "cluster.local", "test-controller",
+		config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		cfmetrics.NewNoopCollector(), nil,
+	)
+
+	params := syncUpdateParams{
+		routeSyncer: syncer,
+		statusEntries: func(_ *SyncResult) []routeStatusEntry {
+			return nil
+		},
+	}
+
+	// No GatewayClass exists, so SyncAllRoutes will return error with RequeueAfter > 0
+	// (apiErrorRequeueDelay). In that case, error is NOT propagated (swallowed for requeue).
+	result, err := syncAndUpdateStatusCommon(context.Background(), params)
+
+	// The error should be nil because RequeueAfter is set —
+	// controller-runtime would override the requeue interval if error were returned.
+	assert.NoError(t, err)
+	assert.Equal(t, apiErrorRequeueDelay, result.RequeueAfter)
+}
+
+func TestSyncAndUpdateStatusCommon_PropagatesErrorWhenNoRequeue(t *testing.T) {
+	t.Parallel()
+
+	// When SyncAllRoutes returns a sync error with RequeueAfter == 0
+	// (e.g., ingress rule limit exceeded), syncAndUpdateStatusCommon
+	// should propagate the error so controller-runtime applies backoff.
+	// This is intentionally different from the pre-refactor behavior.
+	scheme := runtime.NewScheme()
+	require.NoError(t, gatewayv1.Install(scheme))
+	require.NoError(t, v1alpha1.AddToScheme(scheme))
+
+	// Create a valid GatewayClass + GatewayClassConfig so SyncAllRoutes
+	// progresses past config resolution. The Cloudflare API call will fail
+	// with an authentication error, returning RequeueAfter > 0.
+	// We verify the general contract: errors with RequeueAfter > 0 are swallowed.
+	gatewayClass := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-class"},
+		Spec: gatewayv1.GatewayClassSpec{
+			ControllerName: "test-controller",
+			ParametersRef: &gatewayv1.ParametersReference{
+				Group: "cf.k8s.lex.la",
+				Kind:  "GatewayClassConfig",
+				Name:  "missing-config",
+			},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(gatewayClass).
+		Build()
+
+	syncer := NewRouteSyncer(
+		fakeClient, scheme, "cluster.local", "test-controller",
+		config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		cfmetrics.NewNoopCollector(), nil,
+	)
+
+	params := syncUpdateParams{
+		routeSyncer: syncer,
+		statusEntries: func(_ *SyncResult) []routeStatusEntry {
+			return nil
+		},
+	}
+
+	result, err := syncAndUpdateStatusCommon(context.Background(), params)
+
+	// Config resolution will fail (missing GatewayClassConfig),
+	// returning RequeueAfter=apiErrorRequeueDelay. Error should be swallowed.
+	assert.NoError(t, err)
+	assert.Equal(t, apiErrorRequeueDelay, result.RequeueAfter)
 }

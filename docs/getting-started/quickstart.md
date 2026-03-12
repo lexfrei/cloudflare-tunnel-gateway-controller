@@ -138,6 +138,89 @@ spec:
           port: 80
 ```
 
+## Advanced Routing (v2 Proxy)
+
+When the L7 proxy is enabled, HTTPRoute gains full Gateway API matching and
+filter support. Below are short examples of the most common patterns.
+
+### Header-Based Routing
+
+Route requests to different backends based on an HTTP header value:
+
+```yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: header-route
+spec:
+  parentRefs:
+    - name: cloudflare-tunnel
+      namespace: cloudflare-tunnel-system
+  hostnames:
+    - app.example.com
+  rules:
+    - matches:
+        - headers:
+            - name: X-Version
+              value: beta
+      backendRefs:
+        - name: beta-service
+          port: 80
+```
+
+### Weighted Traffic Splitting
+
+Split traffic between two backends by weight:
+
+```yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: canary-route
+spec:
+  parentRefs:
+    - name: cloudflare-tunnel
+      namespace: cloudflare-tunnel-system
+  hostnames:
+    - app.example.com
+  rules:
+    - backendRefs:
+        - name: stable-service
+          port: 80
+          weight: 90
+        - name: canary-service
+          port: 80
+          weight: 10
+```
+
+### Request Redirect
+
+Redirect HTTP requests to a different host or path:
+
+```yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: redirect-route
+spec:
+  parentRefs:
+    - name: cloudflare-tunnel
+      namespace: cloudflare-tunnel-system
+  hostnames:
+    - old.example.com
+  rules:
+    - filters:
+        - type: RequestRedirect
+          requestRedirect:
+            hostname: new.example.com
+            statusCode: 301
+```
+
+!!! tip "Enable the proxy first"
+
+    These features require the L7 proxy. See the
+    [L7 Proxy Guide](../guides/l7-proxy.md) for installation instructions.
+
 ## Troubleshooting
 
 ### Route Not Accepted

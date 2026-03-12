@@ -283,108 +283,61 @@ a working Cloudflare Tunnel.
 - Cloudflare Tunnel configured and working
 - GatewayClass `cloudflare-tunnel` created
 
-### Running Conformance Tests
+### Running E2E Tests
+
+E2E tests run against a live kind cluster with Cloudflare Tunnel and v2 proxy deployed.
 
 ```bash
-# Run all conformance tests
-go test -tags=conformance ./conformance/... -v \
-  --gateway-class=cloudflare-tunnel
+# Run all E2E tests
+go test -v -race -tags e2e -count=1 -timeout=15m ./test/e2e/...
 
-# Run with debug output
-go test -tags=conformance ./conformance/... -v \
-  --gateway-class=cloudflare-tunnel \
-  --debug
-
-# Generate conformance report
-go test -tags=conformance ./conformance/... -v \
-  --gateway-class=cloudflare-tunnel \
-  --report-output=./conformance-report.yaml
-
-# Keep resources after tests (for debugging)
-go test -tags=conformance ./conformance/... -v \
-  --gateway-class=cloudflare-tunnel \
-  --cleanup=false
+# Run a single test
+go test -v -race -tags e2e -count=1 -timeout=15m ./test/e2e/... \
+  -run TestHTTPRouteSimpleSameNamespace
 ```
 
-### Supported Features
+### E2E Environment Variables
 
-The controller supports these Gateway API features:
+| Variable | Default | Description |
+| --- | --- | --- |
+| `CONFORMANCE_TUNNEL_HOSTNAME` | `v2-test.lex.la` | Tunnel hostname for requests |
+| `CONFORMANCE_KUBE_CONTEXT` | `kind-v2-test` | kubectl context |
+| `CONFORMANCE_NAMESPACE` | `cloudflare-tunnel-system` | Controller namespace |
+| `CONFORMANCE_TEST_NAMESPACE` | `conformance-test` | Test resources namespace |
+| `CONFORMANCE_GATEWAY_NAME` | `conformance-gateway` | Gateway resource name |
 
-| Feature | Status |
-|---------|--------|
-| Gateway | Supported |
-| HTTPRoute | Supported |
-| GRPCRoute | Supported |
-| ReferenceGrant | Supported |
+### E2E Test Coverage (24 tests)
 
-### Skipped Features (Cloudflare Limitations)
+Tests cover both Cloudflare Tunnel and v2 proxy features:
 
-These features are skipped due to Cloudflare Tunnel API limitations:
+- **Core (4):** SimpleSameNamespace, PathPrefixMatching, ExactPathMatching, MatchingAcrossRoutes
+- **Extended (18):** HeaderMatching, MethodMatching, QueryParamMatching, Weight,
+  RequestHeaderModifier, ResponseHeaderModifier, RequestRedirect, RegexPathMatching,
+  RegexHeaderMatching, RegexQueryParamMatching, PathMatchOrder, URLRewritePath,
+  URLRewriteHost, RequestMirror, RedirectPort, RedirectPath, CombinedMatching, MultipleMatchesOR
+- **Gateway (2):** AcceptedCondition, ObservedGenerationBump
 
-- Header matching
-- Query parameter matching
-- Method matching
-- Request/response header modification
-- Redirects and rewrites
-- Request mirroring
+### Official Gateway API Conformance Suite
 
-### Conformance Profiles
+The project integrates the official `sigs.k8s.io/gateway-api/conformance` suite
+with a custom `TunnelRoundTripper` that routes requests through Cloudflare edge.
 
-The tests target these profiles:
+```bash
+# Run conformance tests (requires deployed controller + tunnel)
+go test -v -tags conformance -count=1 -timeout=30m ./test/conformance/...
 
-- `GATEWAY-HTTP` - HTTP routing conformance
-- `GATEWAY-GRPC` - gRPC routing conformance
+# Generate conformance report
+CONFORMANCE_REPORT_OUTPUT=./conformance-report.yaml \
+  go test -v -tags conformance -count=1 -timeout=30m ./test/conformance/...
+```
 
-### Test Environment Setup
+| Variable | Default | Description |
+| --- | --- | --- |
+| `CONFORMANCE_GATEWAY_CLASS` | `cloudflare-tunnel` | GatewayClass name |
+| `CONFORMANCE_REPORT_OUTPUT` | (none) | Path for YAML conformance report |
+| `CONTROLLER_VERSION` | `dev` | Version for report metadata |
 
-1. Create a kind cluster:
-
-    ```bash
-    kind create cluster --name conformance-test
-    ```
-
-2. Install the controller:
-
-    ```bash
-    helm install controller charts/cloudflare-tunnel-gateway-controller \
-      --set cloudflared.enabled=true
-    ```
-
-3. Create GatewayClassConfig with Cloudflare credentials:
-
-    ```yaml
-    apiVersion: gateway.cloudflare.com/v1alpha1
-    kind: GatewayClassConfig
-    metadata:
-      name: cloudflare-tunnel-config
-    spec:
-      tunnelID: "your-tunnel-id"
-      cloudflareCredentialsSecretRef:
-        name: cloudflare-credentials
-      tunnelTokenSecretRef:
-        name: cloudflare-tunnel-token
-    ```
-
-4. Create GatewayClass:
-
-    ```yaml
-    apiVersion: gateway.networking.k8s.io/v1
-    kind: GatewayClass
-    metadata:
-      name: cloudflare-tunnel
-    spec:
-      controllerName: gateway.cloudflare.com/cloudflare-tunnel-gateway-controller
-      parametersRef:
-        group: gateway.cloudflare.com
-        kind: GatewayClassConfig
-        name: cloudflare-tunnel-config
-    ```
-
-5. Run the tests:
-
-    ```bash
-    go test -tags=conformance ./conformance/... -v
-    ```
+Profiles: `GATEWAY-HTTP`, `GATEWAY-GRPC`.
 
 ## Best Practices
 
