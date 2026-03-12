@@ -80,15 +80,17 @@ func (t *TunnelRoundTripper) CaptureRoundTrip(request roundtripper.Request) (*ro
 	}
 
 	// Cloudflare edge validates Host header against configured DNS records.
-	// *.cfargotunnel.com is an internal hostname not reachable from internet.
-	// Replace it with the edge hostname. For test-specific hostnames
-	// (e.g., *.example.com from conformance suite), keep them — Cloudflare
-	// should pass them through since SNI matches our tunnel's DNS record.
-	if strings.HasSuffix(host, ".cfargotunnel.com") {
-		host = edgeHost
+	// Any hostname not registered with our Cloudflare account (example.com,
+	// rewrite.example, etc.) gets a 403 Forbidden from edge. We must always
+	// use the edge hostname as the HTTP Host to pass through Cloudflare.
+	//
+	// The original Host is forwarded via X-Original-Host so the proxy can
+	// still route based on the intended hostname from the test.
+	if host != edgeHost {
+		req.Header.Set("X-Original-Host", host)
 	}
 
-	req.Host = host
+	req.Host = edgeHost
 
 	for name, values := range request.Headers {
 		for _, value := range values {

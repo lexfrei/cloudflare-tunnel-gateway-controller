@@ -395,11 +395,17 @@ func selectBackend(backends []BackendRef) int {
 	return len(backends) - 1
 }
 
-// extractHost strips the port from the Host header if present.
+// extractHost returns the hostname to use for route matching.
+// Prefers X-Original-Host header (set by TunnelRoundTripper when the real Host
+// must be replaced with the edge hostname to pass through Cloudflare edge).
+// Falls back to the standard Host header. Port suffix is stripped.
 // NOTE: Go's http.Request.Host always wraps IPv6 addresses in brackets
 // (e.g., "[::1]:8080"), so bare IPv6 like "::1" should not appear in practice.
 func extractHost(req *http.Request) string {
-	host := req.Host
+	host := req.Header.Get("X-Original-Host")
+	if host == "" {
+		host = req.Host
+	}
 
 	if idx := strings.LastIndex(host, ":"); idx != -1 {
 		// Ensure we don't strip part of an IPv6 address.

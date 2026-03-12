@@ -891,3 +891,50 @@ func TestRouter_HostnameCaseInsensitive(t *testing.T) {
 	require.NotNil(t, result, "lowercase host should match uppercase wildcard config")
 	assert.Equal(t, "http://wildcard:80", result.Rule.Backends[0].URL)
 }
+
+func TestRouter_XOriginalHostOverridesHost(t *testing.T) {
+	t.Parallel()
+
+	router := proxy.NewRouter()
+
+	cfg := &proxy.Config{
+		Version: 1,
+		Rules: []proxy.RouteRule{
+			{
+				Hostnames: []string{"example.com"},
+				Backends:  []proxy.BackendRef{{URL: "http://example-backend:80", Weight: 1}},
+			},
+			{
+				Hostnames: []string{"edge.tunnel.example"},
+				Backends:  []proxy.BackendRef{{URL: "http://edge-backend:80", Weight: 1}},
+			},
+		},
+	}
+
+	err := router.UpdateConfig(cfg)
+	require.NoError(t, err)
+
+	// When X-Original-Host is set, it should be used for routing
+	// instead of the Host header (which may be the edge hostname).
+	req := &http.Request{
+		Method: http.MethodGet,
+		Host:   "edge.tunnel.example",
+		URL:    &url.URL{Path: "/"},
+		Header: http.Header{
+			"X-Original-Host": []string{"example.com"},
+		},
+	}
+
+	result := router.Route(req)
+	require.NotNil(t, result)
+	assert.Equal(t, "http://example-backend:80", result.Rule.Backends[0].URL,
+		"should route based on X-Original-Host, not Host header")
+
+	// Without X-Original-Host, should fall back to Host header.
+	req.Header.Del("X-Original-Host")
+
+	result = router.Route(req)
+	require.NotNil(t, result)
+	assert.Equal(t, "http://edge-backend:80", result.Rule.Backends[0].URL,
+		"should route based on Host header when X-Original-Host is absent")
+}
