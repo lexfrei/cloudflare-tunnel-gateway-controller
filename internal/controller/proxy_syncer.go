@@ -14,6 +14,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/ingress"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/logging"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/proxy"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/referencegrant"
@@ -102,7 +103,14 @@ func newBackendRefValidator(validator *referencegrant.Validator) proxy.BackendRe
 
 // SyncRoutes converts pre-collected HTTPRoutes to proxy config and pushes to all endpoints.
 // Routes should come from the RouteSyncer's SyncResult to avoid redundant API calls.
-func (s *ProxySyncer) SyncRoutes(ctx context.Context, endpoints []string, routes []*gatewayv1.HTTPRoute) error {
+// failedRefs contains backend refs that failed validation in the ingress builder — routes
+// with failed refs will have their backends cleared so the proxy returns HTTP 500.
+func (s *ProxySyncer) SyncRoutes(
+	ctx context.Context,
+	endpoints []string,
+	routes []*gatewayv1.HTTPRoute,
+	failedRefs []ingress.BackendRefError,
+) error {
 	// Resolve headless service DNS names before acquiring the lock
 	// to avoid blocking concurrent reconciles during slow DNS lookups.
 	resolved := resolveEndpoints(ctx, endpoints)
@@ -119,6 +127,11 @@ func (s *ProxySyncer) SyncRoutes(ctx context.Context, endpoints []string, routes
 
 	// Convert to proxy config with cross-namespace validation.
 	cfg := proxy.ConvertHTTPRoutes(ctx, routes, s.clusterDomain, s.backendValidator)
+
+	// Clear backends for routes that have failed backend refs.
+	// This ensures the proxy returns 500 (no backend available) instead of
+	// trying to connect to a nonexistent service (which would return 502).
+	clearFailedBackends(cfg, routes, failedRefs)
 
 	logger.Info("resolved endpoints",
 		"original", len(endpoints),
@@ -153,6 +166,45 @@ func (s *ProxySyncer) SyncRoutes(ctx context.Context, endpoints []string, routes
 	)
 
 	return nil
+}
+
+// clearFailedBackends removes backends from proxy config rules that correspond
+// to routes with failed backend refs. This ensures the proxy returns 500
+// (no backend available) instead of trying to connect to nonexistent services.
+func clearFailedBackends(cfg *proxy.Config, routes []*gatewayv1.HTTPRoute, failedRefs []ingress.BackendRefError) {
+	if len(failedRefs) == 0 {
+		return
+	}
+
+	// Build a set of route keys that have failed refs.
+	failedRoutes := make(map[string]bool, len(failedRefs))
+	for _, ref := range failedRefs {
+		failedRoutes[ref.RouteNamespace+"/"+ref.RouteName] = true
+	}
+
+	// Map each config rule back to its source route based on hostnames.
+	// ConvertHTTPRoutes processes routes in order, generating rules per route.
+	ruleIdx := 0
+
+	for _, route := range routes {
+		routeKey := route.Namespace + "/" + route.Name
+
+		if !failedRoutes[routeKey] {
+			// Skip rules for routes without failed refs.
+			ruleIdx += len(route.Spec.Rules)
+
+			continue
+		}
+
+		// Clear backends for all rules from this failed route.
+		for range route.Spec.Rules {
+			if ruleIdx < len(cfg.Rules) {
+				cfg.Rules[ruleIdx].Backends = nil
+			}
+
+			ruleIdx++
+		}
+	}
 }
 
 // dnsLookupTimeout is the maximum time to wait for a single DNS resolution.

@@ -75,7 +75,7 @@ func TestProxySyncer_SyncRoutes(t *testing.T) {
 
 	endpoints := []string{configServer.URL + "/config"}
 
-	err := syncer.SyncRoutes(context.Background(), endpoints, routes)
+	err := syncer.SyncRoutes(context.Background(), endpoints, routes, nil)
 	require.NoError(t, err)
 
 	assert.Equal(t, int32(1), pushCount.Load())
@@ -116,7 +116,7 @@ func TestProxySyncer_NoRoutes_PushesEmptyConfig(t *testing.T) {
 
 	// Zero routes should still push a valid config with empty rules.
 	// The proxy will return 404 for all requests until routes are added.
-	err := syncer.SyncRoutes(context.Background(), []string{configServer.URL + "/config"}, nil)
+	err := syncer.SyncRoutes(context.Background(), []string{configServer.URL + "/config"}, nil, nil)
 	require.NoError(t, err)
 
 	assert.Equal(t, int32(1), pushCount.Load())
