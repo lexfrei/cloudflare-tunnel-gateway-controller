@@ -160,7 +160,6 @@ func (HTTPRouteAdapter) extractPath(resolver *backendResolver, namespace, routeN
 	return path, 0
 }
 
-//nolint:dupl // Similar to GRPCRouteAdapter.resolveBackendRef but operates on different types
 func (a HTTPRouteAdapter) resolveBackendRef(
 	ctx context.Context,
 	resolver *backendResolver,
@@ -179,60 +178,7 @@ func (a HTTPRouteAdapter) resolveBackendRef(
 		return "", nil
 	}
 
-	ref := refs[selectedIdx].BackendRef
-
-	if ref.Group != nil && *ref.Group != "" && *ref.Group != backendGroupCoreAlias {
-		return "", &BackendRefError{
-			RouteNamespace: namespace,
-			RouteName:      routeName,
-			BackendName:    string(ref.Name),
-			Reason:         string(gatewayv1.RouteReasonInvalidKind),
-			Message:        fmt.Sprintf("unsupported backend group %q", *ref.Group),
-		}
-	}
-
-	if ref.Kind != nil && *ref.Kind != backendKindService {
-		return "", &BackendRefError{
-			RouteNamespace: namespace,
-			RouteName:      routeName,
-			BackendName:    string(ref.Name),
-			Reason:         string(gatewayv1.RouteReasonInvalidKind),
-			Message:        fmt.Sprintf("unsupported backend kind %q, only Service is supported", *ref.Kind),
-		}
-	}
-
-	svcNamespace := namespace
-	if ref.Namespace != nil {
-		svcNamespace = string(*ref.Namespace)
-	}
-
-	port := DefaultHTTPPort
-	if ref.Port != nil {
-		port = int(*ref.Port)
-	}
-
-	url, backendErr := resolveServiceURL(ctx, &serviceResolveParams{
-		client:        resolver.client,
-		validator:     resolver.validator,
-		logger:        resolver.logger,
-		clusterDomain: resolver.clusterDomain,
-		routeKind:     "HTTPRoute",
-		routeNS:       namespace,
-		routeName:     routeName,
-		svcName:       string(ref.Name),
-		svcNS:         svcNamespace,
-		port:          port,
-	})
-
-	if resolver.metrics != nil {
-		if backendErr != nil {
-			resolver.metrics.RecordBackendRefValidation(ctx, "http", "failed", backendErr.Reason)
-		} else {
-			resolver.metrics.RecordBackendRefValidation(ctx, "http", "success", "")
-		}
-	}
-
-	return url, backendErr
+	return resolveValidatedBackend(ctx, resolver, refs[selectedIdx].BackendRef, namespace, routeName, "HTTPRoute")
 }
 
 func (HTTPRouteAdapter) logMultipleBackends(resolver *backendResolver, namespace, routeName string, totalBackends int) {

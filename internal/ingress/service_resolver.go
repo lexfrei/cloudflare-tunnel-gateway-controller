@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -26,6 +27,84 @@ type serviceResolveParams struct {
 	svcName       string
 	svcNS         string
 	port          int
+}
+
+// validateBackendGroupKind checks that the backend ref targets a core Service.
+// Returns a BackendRefError if the group or kind is not supported.
+func validateBackendGroupKind(
+	ref gatewayv1.BackendRef,
+	namespace, routeName string,
+) *BackendRefError {
+	if ref.Group != nil && *ref.Group != "" && *ref.Group != backendGroupCoreAlias {
+		return &BackendRefError{
+			RouteNamespace: namespace,
+			RouteName:      routeName,
+			BackendName:    string(ref.Name),
+			Reason:         string(gatewayv1.RouteReasonInvalidKind),
+			Message:        fmt.Sprintf("unsupported backend group %q", *ref.Group),
+		}
+	}
+
+	if ref.Kind != nil && *ref.Kind != backendKindService {
+		return &BackendRefError{
+			RouteNamespace: namespace,
+			RouteName:      routeName,
+			BackendName:    string(ref.Name),
+			Reason:         string(gatewayv1.RouteReasonInvalidKind),
+			Message:        fmt.Sprintf("unsupported backend kind %q, only Service is supported", *ref.Kind),
+		}
+	}
+
+	return nil
+}
+
+// resolveBackendNamespacePort extracts the target namespace and port from a BackendRef.
+func resolveBackendNamespacePort(ref gatewayv1.BackendRef, routeNamespace string) (string, int) {
+	svcNamespace := routeNamespace
+	if ref.Namespace != nil {
+		svcNamespace = string(*ref.Namespace)
+	}
+
+	port := DefaultHTTPPort
+	if ref.Port != nil {
+		port = int(*ref.Port)
+	}
+
+	return svcNamespace, port
+}
+
+// resolveValidatedBackend validates a BackendRef and resolves it to a service URL.
+// It handles group/kind validation, namespace/port extraction, service resolution, and metrics recording.
+func resolveValidatedBackend(
+	ctx context.Context,
+	resolver *backendResolver,
+	ref gatewayv1.BackendRef,
+	namespace, routeName, routeKind string,
+) (string, *BackendRefError) {
+	if validErr := validateBackendGroupKind(ref, namespace, routeName); validErr != nil {
+		return "", validErr
+	}
+
+	svcNamespace, port := resolveBackendNamespacePort(ref, namespace)
+
+	url, backendErr := resolveServiceURL(ctx, &serviceResolveParams{
+		client: resolver.client, validator: resolver.validator,
+		logger: resolver.logger, clusterDomain: resolver.clusterDomain,
+		routeKind: routeKind, routeNS: namespace, routeName: routeName,
+		svcName: string(ref.Name), svcNS: svcNamespace, port: port,
+	})
+
+	if resolver.metrics != nil {
+		kind := strings.ToLower(strings.TrimSuffix(routeKind, "Route"))
+
+		if backendErr != nil {
+			resolver.metrics.RecordBackendRefValidation(ctx, kind, "failed", backendErr.Reason)
+		} else {
+			resolver.metrics.RecordBackendRefValidation(ctx, kind, "success", "")
+		}
+	}
+
+	return url, backendErr
 }
 
 // resolveServiceURL resolves a backend service reference to a URL.
