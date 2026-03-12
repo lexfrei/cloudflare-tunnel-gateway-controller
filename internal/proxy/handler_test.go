@@ -511,7 +511,7 @@ func TestHandler_URLRewriteHostnamePreservedByDirector(t *testing.T) {
 		"Director should preserve the rewritten hostname, not overwrite it with the backend host")
 }
 
-func TestHandler_AllZeroWeightBackendsReturns502(t *testing.T) {
+func TestHandler_AllZeroWeightBackendsReturns500(t *testing.T) {
 	t.Parallel()
 
 	router := proxy.NewRouter()
@@ -542,8 +542,8 @@ func TestHandler_AllZeroWeightBackendsReturns502(t *testing.T) {
 
 	handler.ServeHTTP(recorder, req)
 
-	assert.Equal(t, http.StatusBadGateway, recorder.Code)
-	assert.Contains(t, recorder.Body.String(), "no backend configured")
+	assert.Equal(t, http.StatusInternalServerError, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), "no backend available")
 }
 
 func TestHandler_PruneTransportsPreservesActiveHosts(t *testing.T) {

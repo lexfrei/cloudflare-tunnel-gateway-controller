@@ -85,9 +85,11 @@ func (h *Handler) PruneTransports(activeHosts map[string]bool) {
 
 // proxyToBackend selects the backend from the route result and proxies the request.
 func (h *Handler) proxyToBackend(writer http.ResponseWriter, req *http.Request, result *RouteResult) {
-	// No backend available — this happens for redirect-only rules where the
-	// redirect filter did not fire (e.g., filter order issue or missing config),
-	// or when all backends have zero weight.
+	// No backend available — this happens when all backend refs are invalid
+	// (unsupported Kind, missing ReferenceGrant, non-existent Service),
+	// when all backends have zero weight, or for redirect-only rules where
+	// the redirect filter did not fire.
+	// Per Gateway API spec: return 500 when backend refs cannot be resolved.
 	if result.BackendIdx < 0 || result.BackendIdx >= len(result.Rule.Backends) {
 		if len(result.Rule.Backends) > 0 {
 			//nolint:gosec // G706 false positive: backend_count is len() — not user input
@@ -95,7 +97,7 @@ func (h *Handler) proxyToBackend(writer http.ResponseWriter, req *http.Request, 
 				slog.Int("backend_count", len(result.Rule.Backends)))
 		}
 
-		http.Error(writer, "no backend configured for this route", http.StatusBadGateway)
+		http.Error(writer, "no backend available for this route", http.StatusInternalServerError)
 
 		return
 	}

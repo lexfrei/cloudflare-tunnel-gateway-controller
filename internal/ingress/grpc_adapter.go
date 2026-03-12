@@ -168,11 +168,23 @@ func (a GRPCRouteAdapter) resolveBackendRef(
 	ref := refs[selectedIdx].BackendRef
 
 	if ref.Group != nil && *ref.Group != "" && *ref.Group != backendGroupCoreAlias {
-		return "", nil
+		return "", &BackendRefError{
+			RouteNamespace: namespace,
+			RouteName:      routeName,
+			BackendName:    string(ref.Name),
+			Reason:         string(gatewayv1.RouteReasonInvalidKind),
+			Message:        fmt.Sprintf("unsupported backend group %q", *ref.Group),
+		}
 	}
 
 	if ref.Kind != nil && *ref.Kind != backendKindService {
-		return "", nil
+		return "", &BackendRefError{
+			RouteNamespace: namespace,
+			RouteName:      routeName,
+			BackendName:    string(ref.Name),
+			Reason:         string(gatewayv1.RouteReasonInvalidKind),
+			Message:        fmt.Sprintf("unsupported backend kind %q, only Service is supported", *ref.Kind),
+		}
 	}
 
 	svcNamespace := namespace
