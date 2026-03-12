@@ -116,6 +116,7 @@ func buildParentStatus(
 			Kind:        ref.Kind,
 			Namespace:   &parentNS,
 			Name:        ref.Name,
+			Port:        ref.Port,
 			SectionName: ref.SectionName,
 		},
 		ControllerName: gatewayv1.GatewayController(controllerName),
