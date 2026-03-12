@@ -1473,7 +1473,7 @@ func TestHTTPRouteReconciler_UpdateRouteStatus_MultipleParents(t *testing.T) {
 	err = fakeClient.Get(context.Background(), client.ObjectKey{Name: "multi-parent-route", Namespace: "default"}, &updatedRoute)
 	require.NoError(t, err)
 
-	// Only one parent status should be set (the one matching our GatewayClassName)
+	// Only one parent status should be set (the one matching our controllerName)
 	require.Len(t, updatedRoute.Status.Parents, 1)
 	assert.Equal(t, gatewayv1.ObjectName("test-gateway"), updatedRoute.Status.Parents[0].ParentRef.Name)
 }
