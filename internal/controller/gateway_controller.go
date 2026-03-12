@@ -653,6 +653,7 @@ func (r *GatewayReconciler) countAttachedRoutes(
 					Hostnames:   route.Spec.Hostnames,
 					Kind:        routebinding.KindHTTPRoute,
 					SectionName: ref.SectionName,
+					Port:        ref.Port,
 				}
 
 				bindingResult, bindErr := validator.ValidateBinding(ctx, gateway, routeInfo)
@@ -689,6 +690,7 @@ func (r *GatewayReconciler) countAttachedRoutes(
 					Hostnames:   route.Spec.Hostnames,
 					Kind:        routebinding.KindGRPCRoute,
 					SectionName: ref.SectionName,
+					Port:        ref.Port,
 				}
 
 				bindingResult, bindErr := validator.ValidateBinding(ctx, gateway, routeInfo)

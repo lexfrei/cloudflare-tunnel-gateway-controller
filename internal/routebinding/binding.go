@@ -15,6 +15,7 @@ type RouteInfo struct {
 	Hostnames   []gatewayv1.Hostname
 	Kind        gatewayv1.Kind
 	SectionName *gatewayv1.SectionName
+	Port        *gatewayv1.PortNumber
 }
 
 // BindingResult represents the result of route-to-listener binding validation.
@@ -76,6 +77,10 @@ func (v *Validator) findMatchingListeners(
 			continue
 		}
 
+		if route.Port != nil && *route.Port != listener.Port {
+			continue
+		}
+
 		reason, err := v.listenerAcceptsRoute(ctx, listener, gateway.Namespace, route)
 		if err != nil {
 			return nil, "", err
@@ -89,7 +94,7 @@ func (v *Validator) findMatchingListeners(
 	}
 
 	if len(matchedListeners) == 0 {
-		if route.SectionName != nil {
+		if route.SectionName != nil || route.Port != nil {
 			return nil, gatewayv1.RouteReasonNoMatchingParent, nil
 		}
 

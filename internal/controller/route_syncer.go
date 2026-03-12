@@ -533,6 +533,7 @@ func (s *RouteSyncer) getRelevantHTTPRoutes(
 				Hostnames:   route.Spec.Hostnames,
 				Kind:        routebinding.KindHTTPRoute,
 				SectionName: ref.SectionName,
+				Port:        ref.Port,
 			}
 
 			result, bindErr := s.bindingValidator.ValidateBinding(ctx, &gateway, routeInfo)
@@ -621,6 +622,7 @@ func (s *RouteSyncer) getRelevantGRPCRoutes(
 				Hostnames:   route.Spec.Hostnames,
 				Kind:        routebinding.KindGRPCRoute,
 				SectionName: ref.SectionName,
+				Port:        ref.Port,
 			}
 
 			result, bindErr := s.bindingValidator.ValidateBinding(ctx, &gateway, routeInfo)

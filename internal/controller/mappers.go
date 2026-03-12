@@ -432,6 +432,7 @@ func IsRouteAcceptedByGateway(
 			Hostnames:   route.GetHostnames(),
 			Kind:        route.GetRouteKind(),
 			SectionName: ref.SectionName,
+			Port:        ref.Port,
 		}
 
 		result, err := validator.ValidateBinding(ctx, &gateway, routeInfo)
