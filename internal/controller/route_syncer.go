@@ -277,30 +277,32 @@ func (s *RouteSyncer) resolveConfigForController(ctx context.Context) (*config.R
 }
 
 // hasConflictingParametersRef returns true if the given GatewayClasses
-// reference different parametersRef names, indicating a misconfiguration.
+// reference different parametersRef (Group, Kind, or Name), indicating
+// a misconfiguration.
 func hasConflictingParametersRef(classes []gatewayv1.GatewayClass) bool {
-	var firstName string
+	first := classes[0].Spec.ParametersRef
 
-	for i := range classes {
+	for i := 1; i < len(classes); i++ {
 		ref := classes[i].Spec.ParametersRef
-		name := ""
-
-		if ref != nil {
-			name = ref.Name
-		}
-
-		if i == 0 {
-			firstName = name
-
-			continue
-		}
-
-		if name != firstName {
+		if !parametersRefEqual(first, ref) {
 			return true
 		}
 	}
 
 	return false
+}
+
+// parametersRefEqual compares two ParametersReference pointers for equality.
+func parametersRefEqual(a, b *gatewayv1.ParametersReference) bool {
+	if a == nil && b == nil {
+		return true
+	}
+
+	if a == nil || b == nil {
+		return false
+	}
+
+	return a.Group == b.Group && a.Kind == b.Kind && a.Name == b.Name
 }
 
 // buildResultForError creates a SyncResult containing all relevant routes.

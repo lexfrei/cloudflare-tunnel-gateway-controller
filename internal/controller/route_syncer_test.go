@@ -1376,6 +1376,30 @@ func TestHasConflictingParametersRef(t *testing.T) {
 			expected: true,
 		},
 		{
+			name: "same name but different group",
+			classes: []gatewayv1.GatewayClass{
+				{Spec: gatewayv1.GatewayClassSpec{ParametersRef: &gatewayv1.ParametersReference{Group: "a.io", Kind: "Config", Name: "cfg"}}},
+				{Spec: gatewayv1.GatewayClassSpec{ParametersRef: &gatewayv1.ParametersReference{Group: "b.io", Kind: "Config", Name: "cfg"}}},
+			},
+			expected: true,
+		},
+		{
+			name: "same name but different kind",
+			classes: []gatewayv1.GatewayClass{
+				{Spec: gatewayv1.GatewayClassSpec{ParametersRef: &gatewayv1.ParametersReference{Group: "a.io", Kind: "ConfigA", Name: "cfg"}}},
+				{Spec: gatewayv1.GatewayClassSpec{ParametersRef: &gatewayv1.ParametersReference{Group: "a.io", Kind: "ConfigB", Name: "cfg"}}},
+			},
+			expected: true,
+		},
+		{
+			name: "both nil parametersRef",
+			classes: []gatewayv1.GatewayClass{
+				{Spec: gatewayv1.GatewayClassSpec{}},
+				{Spec: gatewayv1.GatewayClassSpec{}},
+			},
+			expected: false,
+		},
+		{
 			name: "single class",
 			classes: []gatewayv1.GatewayClass{
 				{Spec: gatewayv1.GatewayClassSpec{ParametersRef: &gatewayv1.ParametersReference{Name: "config-a"}}},
