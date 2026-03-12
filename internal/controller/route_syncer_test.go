@@ -264,10 +264,10 @@ func TestRouteSyncer_GetRelevantHTTPRoutes(t *testing.T) {
 				nil,
 			)
 
-			routes, _, err := syncer.getRelevantHTTPRoutes(context.Background())
+			result, err := syncer.getRelevantHTTPRoutes(context.Background())
 
 			require.NoError(t, err)
-			assert.Len(t, routes, tt.expectedCount)
+			assert.Len(t, result.accepted, tt.expectedCount)
 		})
 	}
 }
@@ -388,10 +388,10 @@ func TestRouteSyncer_GetRelevantGRPCRoutes(t *testing.T) {
 				nil,
 			)
 
-			routes, _, err := syncer.getRelevantGRPCRoutes(context.Background())
+			result, err := syncer.getRelevantGRPCRoutes(context.Background())
 
 			require.NoError(t, err)
-			assert.Len(t, routes, tt.expectedCount)
+			assert.Len(t, result.accepted, tt.expectedCount)
 		})
 	}
 }
@@ -856,11 +856,11 @@ func TestRouteSyncer_GetRelevantGRPCRoutes_WithExplicitNamespace(t *testing.T) {
 				nil,
 			)
 
-			routes, bindings, err := syncer.getRelevantGRPCRoutes(context.Background())
+			result, err := syncer.getRelevantGRPCRoutes(context.Background())
 
 			require.NoError(t, err)
-			assert.Len(t, routes, tt.expectedCount)
-			assert.NotNil(t, bindings)
+			assert.Len(t, result.accepted, tt.expectedCount)
+			assert.NotNil(t, result.bindings)
 		})
 	}
 }

@@ -46,13 +46,12 @@ type GRPCRouteReconciler struct {
 
 func (r *GRPCRouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	return reconcileRoute(ctx, req, &gatewayv1.GRPCRoute{}, reconcileRouteParams[*gatewayv1.GRPCRoute]{
-		startupComplete:  &r.startupComplete,
-		k8sClient:        r.Client,
-		bindingValidator: r.bindingValidator,
-		controllerName:   r.ControllerName,
-		componentName:    "grpcroute",
-		wrapRoute:        func(route *gatewayv1.GRPCRoute) Route { return GRPCRouteWrapper{route} },
-		syncAndUpdate:    r.syncAndUpdateStatus,
+		startupComplete: &r.startupComplete,
+		k8sClient:       r.Client,
+		controllerName:  r.ControllerName,
+		componentName:   "grpcroute",
+		wrapRoute:       func(route *gatewayv1.GRPCRoute) Route { return GRPCRouteWrapper{route} },
+		syncAndUpdate:   r.syncAndUpdateStatus,
 	})
 }
 
@@ -102,10 +101,9 @@ func (r *GRPCRouteReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		k8sClient:             r.Client,
 		controllerName:        r.ControllerName,
 		configResolver:        r.RouteSyncer.ConfigResolver,
-		bindingValidator:      r.bindingValidator,
 		findRoutesForGateway:  r.findRoutesForGateway,
 		findRoutesForRefGrant: r.findRoutesForReferenceGrant,
-		getAllRelevantRoutes:  r.getAllRelevantRoutes,
+		getAllRelevantRoutes:   r.getAllRelevantRoutes,
 	})
 }
 

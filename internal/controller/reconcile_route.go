@@ -19,18 +19,16 @@ import (
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/api/v1alpha1"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/config"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/logging"
-	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/routebinding"
 )
 
 // reconcileRouteParams holds common parameters for the generic route reconcile loop.
 type reconcileRouteParams[T client.Object] struct {
-	startupComplete  *atomic.Bool
-	k8sClient        client.Client
-	bindingValidator *routebinding.Validator
-	controllerName   string
-	componentName    string
-	wrapRoute        func(T) Route
-	syncAndUpdate    func(ctx context.Context) (ctrl.Result, error)
+	startupComplete *atomic.Bool
+	k8sClient       client.Client
+	controllerName  string
+	componentName   string
+	wrapRoute       func(T) Route
+	syncAndUpdate   func(ctx context.Context) (ctrl.Result, error)
 }
 
 // reconcileRoute is the generic Reconcile implementation shared by
@@ -63,7 +61,7 @@ func reconcileRoute[T client.Object](
 	}
 
 	wrapped := params.wrapRoute(route)
-	if !IsRouteAcceptedByGateway(ctx, params.k8sClient, params.bindingValidator, params.controllerName, wrapped) {
+	if !routeReferencesOurGateways(ctx, params.k8sClient, params.controllerName, wrapped) {
 		return ctrl.Result{}, nil
 	}
 
@@ -81,10 +79,9 @@ type routeControllerSetupParams struct {
 	k8sClient             client.Client
 	controllerName        string
 	configResolver        *config.Resolver
-	bindingValidator      *routebinding.Validator
 	findRoutesForGateway  handler.MapFunc
 	findRoutesForRefGrant handler.MapFunc
-	getAllRelevantRoutes  RequestsFunc
+	getAllRelevantRoutes   RequestsFunc
 }
 
 // setupRouteController sets up the controller-runtime builder with standard

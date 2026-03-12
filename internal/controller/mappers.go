@@ -395,6 +395,42 @@ func FilterAcceptedRoutes(
 	return requests
 }
 
+// routeReferencesOurGateways checks if a route references at least one Gateway
+// managed by the given controllerName. Unlike IsRouteAcceptedByGateway, this does
+// not perform binding validation — it only checks if the parentRef points to our Gateway.
+// This is used to decide whether to trigger a full sync (which includes status updates
+// for both accepted and rejected routes).
+func routeReferencesOurGateways(
+	ctx context.Context,
+	cli client.Client,
+	controllerName string,
+	route Route,
+) bool {
+	for _, ref := range route.GetParentRefs() {
+		if ref.Kind != nil && *ref.Kind != kindGateway {
+			continue
+		}
+
+		namespace := route.GetNamespace()
+		if ref.Namespace != nil {
+			namespace = string(*ref.Namespace)
+		}
+
+		var gateway gatewayv1.Gateway
+
+		err := cli.Get(ctx, client.ObjectKey{Name: string(ref.Name), Namespace: namespace}, &gateway)
+		if err != nil {
+			continue
+		}
+
+		if isGatewayManagedByController(ctx, cli, &gateway, controllerName) {
+			return true
+		}
+	}
+
+	return false
+}
+
 // IsRouteAcceptedByGateway checks if a route has at least one accepted binding
 // to a Gateway managed by the given controllerName. This is used by both HTTPRoute
 // and GRPCRoute controllers to determine if a route should be processed.

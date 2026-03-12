@@ -95,13 +95,15 @@ func TestRouteSyncer_CrossNamespaceRef_WithoutGrant(t *testing.T) {
 	ctx := context.Background()
 
 	// Get relevant routes (should include our route)
-	routes, bindings, err := syncer.getRelevantHTTPRoutes(ctx)
+	httpResult, err := syncer.getRelevantHTTPRoutes(ctx)
 	require.NoError(t, err)
-	require.Len(t, routes, 1)
-	assert.Equal(t, "cross-ns-route", routes[0].Name)
+	require.Len(t, httpResult.accepted, 1)
+	assert.Equal(t, "cross-ns-route", httpResult.accepted[0].Name)
+
+	bindings := httpResult.bindings
 
 	// Build ingress rules
-	buildResult := syncer.httpBuilder.Build(ctx, routes)
+	buildResult := syncer.httpBuilder.Build(ctx, httpResult.accepted)
 
 	// Should have failed refs for cross-namespace reference without ReferenceGrant
 	require.Len(t, buildResult.FailedRefs, 1, "Expected one failed backend reference")
@@ -377,12 +379,12 @@ func TestRouteSyncer_GRPCRoute_CrossNamespaceRef_WithGrant(t *testing.T) {
 	ctx := context.Background()
 
 	// Get relevant routes
-	routes, _, err := syncer.getRelevantGRPCRoutes(ctx)
+	grpcResult, err := syncer.getRelevantGRPCRoutes(ctx)
 	require.NoError(t, err)
-	require.Len(t, routes, 1)
+	require.Len(t, grpcResult.accepted, 1)
 
 	// Build ingress rules
-	buildResult := syncer.grpcBuilder.Build(ctx, routes)
+	buildResult := syncer.grpcBuilder.Build(ctx, grpcResult.accepted)
 
 	// Should have NO failed refs because ReferenceGrant permits the reference
 	assert.Empty(t, buildResult.FailedRefs, "Expected no failed backend references with ReferenceGrant")
@@ -539,12 +541,12 @@ func TestRouteSyncer_ReferenceGrant_SpecificName(t *testing.T) {
 	ctx := context.Background()
 
 	// Get relevant routes
-	routes, _, err := syncer.getRelevantHTTPRoutes(ctx)
+	httpResult2, err := syncer.getRelevantHTTPRoutes(ctx)
 	require.NoError(t, err)
-	require.Len(t, routes, 2)
+	require.Len(t, httpResult2.accepted, 2)
 
 	// Build ingress rules
-	buildResult := syncer.httpBuilder.Build(ctx, routes)
+	buildResult := syncer.httpBuilder.Build(ctx, httpResult2.accepted)
 
 	// Should have one failed ref for denied-service
 	require.Len(t, buildResult.FailedRefs, 1)

@@ -95,20 +95,36 @@ type SyncResult struct {
 	GRPCRouteBindings map[string]routeBindingInfo // key: namespace/name
 	HTTPFailedRefs    []ingress.BackendRefError   // Failed backend refs from HTTP routes
 	GRPCFailedRefs    []ingress.BackendRefError   // Failed backend refs from GRPC routes
+
+	// RejectedHTTPRoutes and RejectedGRPCRoutes are routes that reference
+	// our Gateways but were not accepted by binding validation (e.g.,
+	// sectionName or port mismatch). Their status must be updated with
+	// Accepted=False so conformance tests can observe the rejection.
+	RejectedHTTPRoutes []gatewayv1.HTTPRoute
+	RejectedGRPCRoutes []gatewayv1.GRPCRoute
 }
 
-// httpStatusEntries builds routeStatusEntry slice for HTTP routes.
+// httpStatusEntries builds routeStatusEntry slice for HTTP routes,
+// including rejected routes that need Accepted=False status.
 func (sr *SyncResult) httpStatusEntries(
 	updateFn func(ctx context.Context, route *gatewayv1.HTTPRoute, bi routeBindingInfo, fr []ingress.BackendRefError, se error) error,
 ) []routeStatusEntry {
-	return buildStatusEntries(sr.HTTPRoutes, sr.HTTPRouteBindings, sr.HTTPFailedRefs, updateFn)
+	entries := buildStatusEntries(sr.HTTPRoutes, sr.HTTPRouteBindings, sr.HTTPFailedRefs, updateFn)
+	// Rejected routes have no failed refs — they were rejected at binding level.
+	entries = append(entries, buildStatusEntries(sr.RejectedHTTPRoutes, sr.HTTPRouteBindings, nil, updateFn)...)
+
+	return entries
 }
 
-// grpcStatusEntries builds routeStatusEntry slice for GRPC routes.
+// grpcStatusEntries builds routeStatusEntry slice for GRPC routes,
+// including rejected routes that need Accepted=False status.
 func (sr *SyncResult) grpcStatusEntries(
 	updateFn func(ctx context.Context, route *gatewayv1.GRPCRoute, bi routeBindingInfo, fr []ingress.BackendRefError, se error) error,
 ) []routeStatusEntry {
-	return buildStatusEntries(sr.GRPCRoutes, sr.GRPCRouteBindings, sr.GRPCFailedRefs, updateFn)
+	entries := buildStatusEntries(sr.GRPCRoutes, sr.GRPCRouteBindings, sr.GRPCFailedRefs, updateFn)
+	entries = append(entries, buildStatusEntries(sr.RejectedGRPCRoutes, sr.GRPCRouteBindings, nil, updateFn)...)
+
+	return entries
 }
 
 // routeObject is the constraint for Gateway API route types with Name and Namespace.
@@ -291,15 +307,24 @@ func hasConflictingParametersRef(classes []gatewayv1.GatewayClass) bool {
 // Used when early errors occur (before routes are collected) to ensure
 // route statuses are updated to reflect the error.
 func (s *RouteSyncer) buildResultForError(ctx context.Context) *SyncResult {
-	httpRoutes, httpBindings, _ := s.getRelevantHTTPRoutes(ctx)
-	grpcRoutes, grpcBindings, _ := s.getRelevantGRPCRoutes(ctx)
+	httpResult, _ := s.getRelevantHTTPRoutes(ctx)
+	grpcResult, _ := s.getRelevantGRPCRoutes(ctx)
 
-	return &SyncResult{
-		HTTPRoutes:        httpRoutes,
-		GRPCRoutes:        grpcRoutes,
-		HTTPRouteBindings: httpBindings,
-		GRPCRouteBindings: grpcBindings,
+	result := &SyncResult{}
+
+	if httpResult != nil {
+		result.HTTPRoutes = httpResult.accepted
+		result.HTTPRouteBindings = httpResult.bindings
+		result.RejectedHTTPRoutes = httpResult.rejected
 	}
+
+	if grpcResult != nil {
+		result.GRPCRoutes = grpcResult.accepted
+		result.GRPCRouteBindings = grpcResult.bindings
+		result.RejectedGRPCRoutes = grpcResult.rejected
+	}
+
+	return result
 }
 
 // SyncAllRoutes synchronizes all HTTPRoute and GRPCRoute resources to Cloudflare Tunnel.
@@ -360,25 +385,25 @@ func (s *RouteSyncer) SyncAllRoutes(ctx context.Context) (ctrl.Result, *SyncResu
 	s.Metrics.RecordAPICall(ctx, "get", "tunnel_config", "success", time.Since(getStart))
 
 	// Collect all relevant HTTPRoutes with binding validation
-	httpRoutes, httpBindings, err := s.getRelevantHTTPRoutes(ctx)
+	httpResult, err := s.getRelevantHTTPRoutes(ctx)
 	if err != nil {
 		return ctrl.Result{}, nil, errors.Wrap(err, "failed to list httproutes")
 	}
 
 	// Collect all relevant GRPCRoutes with binding validation
-	grpcRoutes, grpcBindings, err := s.getRelevantGRPCRoutes(ctx)
+	grpcResult, err := s.getRelevantGRPCRoutes(ctx)
 	if err != nil {
 		return ctrl.Result{}, nil, errors.Wrap(err, "failed to list grpcroutes")
 	}
 
 	logger.Info("syncing routes to cloudflare",
-		"httpRoutes", len(httpRoutes),
-		"grpcRoutes", len(grpcRoutes),
+		"httpRoutes", len(httpResult.accepted),
+		"grpcRoutes", len(grpcResult.accepted),
 	)
 
-	// Build desired rules from both route types
-	httpBuildResult := s.httpBuilder.Build(ctx, httpRoutes)
-	grpcBuildResult := s.grpcBuilder.Build(ctx, grpcRoutes)
+	// Build desired rules from both route types (accepted routes only)
+	httpBuildResult := s.httpBuilder.Build(ctx, httpResult.accepted)
+	grpcBuildResult := s.grpcBuilder.Build(ctx, grpcResult.accepted)
 
 	// Merge rules (HTTP rules first, then GRPC, then sort)
 	desiredRules := mergeAndSortRules(httpBuildResult.Rules, grpcBuildResult.Rules)
@@ -409,12 +434,14 @@ func (s *RouteSyncer) SyncAllRoutes(ctx context.Context) (ctrl.Result, *SyncResu
 		s.Metrics.RecordSyncError(ctx, "limit_exceeded")
 
 		result := &SyncResult{
-			HTTPRoutes:        httpRoutes,
-			GRPCRoutes:        grpcRoutes,
-			HTTPRouteBindings: httpBindings,
-			GRPCRouteBindings: grpcBindings,
-			HTTPFailedRefs:    httpBuildResult.FailedRefs,
-			GRPCFailedRefs:    grpcBuildResult.FailedRefs,
+			HTTPRoutes:         httpResult.accepted,
+			GRPCRoutes:         grpcResult.accepted,
+			HTTPRouteBindings:  httpResult.bindings,
+			GRPCRouteBindings:  grpcResult.bindings,
+			HTTPFailedRefs:     httpBuildResult.FailedRefs,
+			GRPCFailedRefs:     grpcBuildResult.FailedRefs,
+			RejectedHTTPRoutes: httpResult.rejected,
+			RejectedGRPCRoutes: grpcResult.rejected,
 		}
 
 		return ctrl.Result{}, result, limitErr
@@ -440,12 +467,14 @@ func (s *RouteSyncer) SyncAllRoutes(ctx context.Context) (ctrl.Result, *SyncResu
 		s.Metrics.RecordSyncError(ctx, cfmetrics.ClassifyCloudflareError(err))
 
 		result := &SyncResult{
-			HTTPRoutes:        httpRoutes,
-			GRPCRoutes:        grpcRoutes,
-			HTTPRouteBindings: httpBindings,
-			GRPCRouteBindings: grpcBindings,
-			HTTPFailedRefs:    httpBuildResult.FailedRefs,
-			GRPCFailedRefs:    grpcBuildResult.FailedRefs,
+			HTTPRoutes:         httpResult.accepted,
+			GRPCRoutes:         grpcResult.accepted,
+			HTTPRouteBindings:  httpResult.bindings,
+			GRPCRouteBindings:  grpcResult.bindings,
+			HTTPFailedRefs:     httpBuildResult.FailedRefs,
+			GRPCFailedRefs:     grpcBuildResult.FailedRefs,
+			RejectedHTTPRoutes: httpResult.rejected,
+			RejectedGRPCRoutes: grpcResult.rejected,
 		}
 
 		return ctrl.Result{RequeueAfter: apiErrorRequeueDelay, Priority: new(priorityRoute)}, result, err
@@ -456,28 +485,44 @@ func (s *RouteSyncer) SyncAllRoutes(ctx context.Context) (ctrl.Result, *SyncResu
 
 	// Record success metrics
 	s.Metrics.RecordSyncDuration(ctx, "success", time.Since(startTime))
-	s.Metrics.RecordSyncedRoutes(ctx, "http", len(httpRoutes))
-	s.Metrics.RecordSyncedRoutes(ctx, "grpc", len(grpcRoutes))
+	s.Metrics.RecordSyncedRoutes(ctx, "http", len(httpResult.accepted))
+	s.Metrics.RecordSyncedRoutes(ctx, "grpc", len(grpcResult.accepted))
 	s.Metrics.RecordIngressRules(ctx, len(finalRules))
 	s.Metrics.RecordFailedBackendRefs(ctx, "http", len(httpBuildResult.FailedRefs))
 	s.Metrics.RecordFailedBackendRefs(ctx, "grpc", len(grpcBuildResult.FailedRefs))
 
 	result := &SyncResult{
-		HTTPRoutes:        httpRoutes,
-		GRPCRoutes:        grpcRoutes,
-		HTTPRouteBindings: httpBindings,
-		GRPCRouteBindings: grpcBindings,
-		HTTPFailedRefs:    httpBuildResult.FailedRefs,
-		GRPCFailedRefs:    grpcBuildResult.FailedRefs,
+		HTTPRoutes:         httpResult.accepted,
+		GRPCRoutes:         grpcResult.accepted,
+		HTTPRouteBindings:  httpResult.bindings,
+		GRPCRouteBindings:  grpcResult.bindings,
+		HTTPFailedRefs:     httpBuildResult.FailedRefs,
+		GRPCFailedRefs:     grpcBuildResult.FailedRefs,
+		RejectedHTTPRoutes: httpResult.rejected,
+		RejectedGRPCRoutes: grpcResult.rejected,
 	}
 
 	return ctrl.Result{}, result, nil
 }
 
+// httpRouteResult holds accepted and rejected HTTPRoutes from binding validation.
+type httpRouteResult struct {
+	accepted []gatewayv1.HTTPRoute
+	rejected []gatewayv1.HTTPRoute
+	bindings map[string]routeBindingInfo
+}
+
+// grpcRouteResult holds accepted and rejected GRPCRoutes from binding validation.
+type grpcRouteResult struct {
+	accepted []gatewayv1.GRPCRoute
+	rejected []gatewayv1.GRPCRoute
+	bindings map[string]routeBindingInfo
+}
+
 //nolint:funlen,dupl // complex binding validation logic; similar to GRPC but for HTTP types
 func (s *RouteSyncer) getRelevantHTTPRoutes(
 	ctx context.Context,
-) ([]gatewayv1.HTTPRoute, map[string]routeBindingInfo, error) {
+) (*httpRouteResult, error) {
 	// Prefer context logger (with reconcile ID) over struct logger
 	logger := logging.FromContext(ctx)
 	if logger == slog.Default() {
@@ -488,14 +533,14 @@ func (s *RouteSyncer) getRelevantHTTPRoutes(
 
 	err := s.List(ctx, &routeList)
 	if err != nil {
-		return nil, nil, errors.Wrap(err, "failed to list httproutes")
+		return nil, errors.Wrap(err, "failed to list httproutes")
 	}
 
 	classNames := managedClassNames(ctx, s.Client, s.ControllerName)
 
-	var relevantRoutes []gatewayv1.HTTPRoute
-
-	bindings := make(map[string]routeBindingInfo)
+	result := &httpRouteResult{
+		bindings: make(map[string]routeBindingInfo),
+	}
 
 	for i := range routeList.Items {
 		route := &routeList.Items[i]
@@ -505,6 +550,7 @@ func (s *RouteSyncer) getRelevantHTTPRoutes(
 		}
 
 		hasAcceptedBinding := false
+		referencesOurGateway := false
 
 		for refIdx, ref := range route.Spec.ParentRefs {
 			if ref.Kind != nil && *ref.Kind != kindGateway {
@@ -526,6 +572,8 @@ func (s *RouteSyncer) getRelevantHTTPRoutes(
 			if !classNames[string(gateway.Spec.GatewayClassName)] {
 				continue
 			}
+
+			referencesOurGateway = true
 
 			routeInfo := &routebinding.RouteInfo{
 				Name:        route.Name,
@@ -536,7 +584,7 @@ func (s *RouteSyncer) getRelevantHTTPRoutes(
 				Port:        ref.Port,
 			}
 
-			result, bindErr := s.bindingValidator.ValidateBinding(ctx, &gateway, routeInfo)
+			bindResult, bindErr := s.bindingValidator.ValidateBinding(ctx, &gateway, routeInfo)
 			if bindErr != nil {
 				logger.Error("failed to validate route binding",
 					"route", routeKey,
@@ -546,27 +594,32 @@ func (s *RouteSyncer) getRelevantHTTPRoutes(
 				continue
 			}
 
-			bindingInfo.bindingResults[refIdx] = result
+			bindingInfo.bindingResults[refIdx] = bindResult
 
-			if result.Accepted {
+			if bindResult.Accepted {
 				hasAcceptedBinding = true
 			}
 		}
 
-		bindings[routeKey] = bindingInfo
+		result.bindings[routeKey] = bindingInfo
 
 		if hasAcceptedBinding {
-			relevantRoutes = append(relevantRoutes, routeList.Items[i])
+			result.accepted = append(result.accepted, routeList.Items[i])
+		} else if referencesOurGateway {
+			// Route references our Gateway but binding was rejected
+			// (e.g., sectionName or port mismatch). Track it so we
+			// can update its status with Accepted=False.
+			result.rejected = append(result.rejected, routeList.Items[i])
 		}
 	}
 
-	return relevantRoutes, bindings, nil
+	return result, nil
 }
 
 //nolint:funlen,dupl // complex binding validation logic; similar to HTTP but for GRPC types
 func (s *RouteSyncer) getRelevantGRPCRoutes(
 	ctx context.Context,
-) ([]gatewayv1.GRPCRoute, map[string]routeBindingInfo, error) {
+) (*grpcRouteResult, error) {
 	// Prefer context logger (with reconcile ID) over struct logger
 	logger := logging.FromContext(ctx)
 	if logger == slog.Default() {
@@ -577,14 +630,14 @@ func (s *RouteSyncer) getRelevantGRPCRoutes(
 
 	err := s.List(ctx, &routeList)
 	if err != nil {
-		return nil, nil, errors.Wrap(err, "failed to list grpcroutes")
+		return nil, errors.Wrap(err, "failed to list grpcroutes")
 	}
 
 	classNames := managedClassNames(ctx, s.Client, s.ControllerName)
 
-	var relevantRoutes []gatewayv1.GRPCRoute
-
-	bindings := make(map[string]routeBindingInfo)
+	result := &grpcRouteResult{
+		bindings: make(map[string]routeBindingInfo),
+	}
 
 	for i := range routeList.Items {
 		route := &routeList.Items[i]
@@ -594,6 +647,7 @@ func (s *RouteSyncer) getRelevantGRPCRoutes(
 		}
 
 		hasAcceptedBinding := false
+		referencesOurGateway := false
 
 		for refIdx, ref := range route.Spec.ParentRefs {
 			if ref.Kind != nil && *ref.Kind != kindGateway {
@@ -616,6 +670,8 @@ func (s *RouteSyncer) getRelevantGRPCRoutes(
 				continue
 			}
 
+			referencesOurGateway = true
+
 			routeInfo := &routebinding.RouteInfo{
 				Name:        route.Name,
 				Namespace:   route.Namespace,
@@ -625,7 +681,7 @@ func (s *RouteSyncer) getRelevantGRPCRoutes(
 				Port:        ref.Port,
 			}
 
-			result, bindErr := s.bindingValidator.ValidateBinding(ctx, &gateway, routeInfo)
+			bindResult, bindErr := s.bindingValidator.ValidateBinding(ctx, &gateway, routeInfo)
 			if bindErr != nil {
 				logger.Error("failed to validate route binding",
 					"route", routeKey,
@@ -635,21 +691,23 @@ func (s *RouteSyncer) getRelevantGRPCRoutes(
 				continue
 			}
 
-			bindingInfo.bindingResults[refIdx] = result
+			bindingInfo.bindingResults[refIdx] = bindResult
 
-			if result.Accepted {
+			if bindResult.Accepted {
 				hasAcceptedBinding = true
 			}
 		}
 
-		bindings[routeKey] = bindingInfo
+		result.bindings[routeKey] = bindingInfo
 
 		if hasAcceptedBinding {
-			relevantRoutes = append(relevantRoutes, routeList.Items[i])
+			result.accepted = append(result.accepted, routeList.Items[i])
+		} else if referencesOurGateway {
+			result.rejected = append(result.rejected, routeList.Items[i])
 		}
 	}
 
-	return relevantRoutes, bindings, nil
+	return result, nil
 }
 
 // sortIngressRules sorts ingress rules: specific hostnames alphabetically first,
