@@ -3,6 +3,7 @@ package controller
 import (
 	"cmp"
 	"context"
+	"fmt"
 	"log/slog"
 	"slices"
 	"sync"
@@ -264,10 +265,11 @@ func (s *RouteSyncer) resolveConfigForController(ctx context.Context) (*config.R
 		// class's credentials for another class's routes would silently send
 		// traffic to the wrong tunnel. Return an error to prevent data integrity issues.
 		if hasConflictingParametersRef(classes) {
-			return nil, errors.Newf(
-				"GatewayClasses %v have conflicting parametersRef for controller %s; "+
+			return nil, errors.Wrap(
+				errors.New("conflicting parametersRef across GatewayClasses"),
+				fmt.Sprintf("classes %v for controller %s — "+
 					"one controller instance supports only one tunnel configuration",
-				names, s.ControllerName,
+					names, s.ControllerName),
 			)
 		}
 	}
@@ -297,16 +299,16 @@ func hasConflictingParametersRef(classes []gatewayv1.GatewayClass) bool {
 }
 
 // parametersRefEqual compares two ParametersReference pointers for equality.
-func parametersRefEqual(a, b *gatewayv1.ParametersReference) bool {
-	if a == nil && b == nil {
+func parametersRefEqual(left, right *gatewayv1.ParametersReference) bool {
+	if left == nil && right == nil {
 		return true
 	}
 
-	if a == nil || b == nil {
+	if left == nil || right == nil {
 		return false
 	}
 
-	return a.Group == b.Group && a.Kind == b.Kind && a.Name == b.Name
+	return left.Group == right.Group && left.Kind == right.Kind && left.Name == right.Name
 }
 
 // buildResultForError creates a SyncResult containing all relevant routes.

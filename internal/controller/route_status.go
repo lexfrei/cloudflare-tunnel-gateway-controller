@@ -53,54 +53,92 @@ func updateRouteStatusGeneric(
 	}
 
 	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		accessor := newAccessor()
-		if err := params.k8sClient.Get(ctx, routeKey, accessor.obj); err != nil {
-			return errors.Wrap(err, "failed to get fresh route")
-		}
-
-		now := metav1.Now()
-		routeStatus := accessor.routeStatus()
-		routeStatus.Parents = nil
-
-		for refIdx, ref := range accessor.parentRefs() {
-			if ref.Kind != nil && *ref.Kind != kindGateway {
-				continue
-			}
-
-			namespace := accessor.obj.GetNamespace()
-			if ref.Namespace != nil {
-				namespace = string(*ref.Namespace)
-			}
-
-			var gateway gatewayv1.Gateway
-			if err := params.k8sClient.Get(ctx, client.ObjectKey{
-				Name:      string(ref.Name),
-				Namespace: namespace,
-			}, &gateway); err != nil {
-				continue
-			}
-
-			if !classNames[string(gateway.Spec.GatewayClassName)] {
-				continue
-			}
-
-			parentStatus := buildParentStatus(
-				ref, namespace, params.controllerName,
-				accessor.generation(), now,
-				bindingInfo, refIdx,
-				failedRefs, syncErr,
-			)
-			routeStatus.Parents = append(routeStatus.Parents, parentStatus)
-		}
-
-		if err := params.k8sClient.Status().Update(ctx, accessor.obj); err != nil {
-			return errors.Wrap(err, "failed to update route status")
-		}
-
-		return nil
+		return updateRouteParentStatuses(
+			ctx, params, routeKey, newAccessor(), classNames, bindingInfo, failedRefs, syncErr,
+		)
 	})
 
 	return errors.Wrap(err, "failed to update route status after retries")
+}
+
+// updateRouteParentStatuses fetches a fresh route, builds parent statuses, and writes the update.
+func updateRouteParentStatuses(
+	ctx context.Context,
+	params routeStatusUpdateParams,
+	routeKey types.NamespacedName,
+	accessor routeAccessor,
+	classNames map[string]bool,
+	bindingInfo routeBindingInfo,
+	failedRefs []ingress.BackendRefError,
+	syncErr error,
+) error {
+	if err := params.k8sClient.Get(ctx, routeKey, accessor.obj); err != nil {
+		return errors.Wrap(err, "failed to get fresh route")
+	}
+
+	now := metav1.Now()
+	routeStatus := accessor.routeStatus()
+	routeStatus.Parents = nil
+
+	for refIdx, ref := range accessor.parentRefs() {
+		parentStatus := resolveParentRefStatus(
+			ctx, params, accessor, ref, refIdx, classNames, now, bindingInfo, failedRefs, syncErr,
+		)
+		if parentStatus != nil {
+			routeStatus.Parents = append(routeStatus.Parents, *parentStatus)
+		}
+	}
+
+	if err := params.k8sClient.Status().Update(ctx, accessor.obj); err != nil {
+		return errors.Wrap(err, "failed to update route status")
+	}
+
+	return nil
+}
+
+// resolveParentRefStatus builds a RouteParentStatus for a single parentRef,
+// or returns nil if the ref doesn't belong to a managed Gateway.
+func resolveParentRefStatus(
+	ctx context.Context,
+	params routeStatusUpdateParams,
+	accessor routeAccessor,
+	ref gatewayv1.ParentReference,
+	refIdx int,
+	classNames map[string]bool,
+	now metav1.Time,
+	bindingInfo routeBindingInfo,
+	failedRefs []ingress.BackendRefError,
+	syncErr error,
+) *gatewayv1.RouteParentStatus {
+	if ref.Kind != nil && *ref.Kind != kindGateway {
+		return nil
+	}
+
+	namespace := accessor.obj.GetNamespace()
+	if ref.Namespace != nil {
+		namespace = string(*ref.Namespace)
+	}
+
+	var gateway gatewayv1.Gateway
+	if err := params.k8sClient.Get(ctx, client.ObjectKey{
+		Name:      string(ref.Name),
+		Namespace: namespace,
+	}, &gateway); err != nil {
+		return nil
+	}
+
+	if !classNames[string(gateway.Spec.GatewayClassName)] {
+		return nil
+	}
+
+	parentStatus := buildParentStatus(
+		ref, namespace, params.controllerName,
+		accessor.generation(), now,
+		bindingInfo, refIdx,
+		failedRefs, syncErr,
+	)
+
+	return &parentStatus
 }
 
 // buildParentStatus constructs a RouteParentStatus entry for a single parent ref.
