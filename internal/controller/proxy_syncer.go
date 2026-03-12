@@ -168,37 +168,44 @@ func (s *ProxySyncer) SyncRoutes(
 	return nil
 }
 
-// clearFailedBackends removes backends from proxy config rules that correspond
-// to routes with failed backend refs. This ensures the proxy returns 500
-// (no backend available) instead of trying to connect to nonexistent services.
+// clearFailedBackends removes backends from proxy config rules where the
+// corresponding route rule has failed backend refs. This ensures the proxy
+// returns 500 (no backend available) for rules with unresolvable backends,
+// while leaving sibling rules with valid backends intact.
 func clearFailedBackends(cfg *proxy.Config, routes []*gatewayv1.HTTPRoute, failedRefs []ingress.BackendRefError) {
 	if len(failedRefs) == 0 {
 		return
 	}
 
-	// Build a set of route keys that have failed refs.
-	failedRoutes := make(map[string]bool, len(failedRefs))
+	// Build a set of failed backend keys: "routeNS/routeName/backendName".
+	failedBackends := make(map[string]bool, len(failedRefs))
 	for _, ref := range failedRefs {
-		failedRoutes[ref.RouteNamespace+"/"+ref.RouteName] = true
+		failedBackends[ref.RouteNamespace+"/"+ref.RouteName+"/"+ref.BackendName] = true
 	}
 
-	// Map each config rule back to its source route based on hostnames.
-	// ConvertHTTPRoutes processes routes in order, generating rules per route.
+	// Walk routes and their rules in order, matching proxy config rules 1:1.
+	// ConvertHTTPRoutes generates one proxy rule per route rule.
 	ruleIdx := 0
 
 	for _, route := range routes {
-		routeKey := route.Namespace + "/" + route.Name
+		for _, rule := range route.Spec.Rules {
+			if ruleIdx >= len(cfg.Rules) {
+				break
+			}
 
-		if !failedRoutes[routeKey] {
-			// Skip rules for routes without failed refs.
-			ruleIdx += len(route.Spec.Rules)
+			// Check if any backend ref in this rule failed.
+			ruleHasFailedRef := false
 
-			continue
-		}
+			for _, backendRef := range rule.BackendRefs {
+				key := route.Namespace + "/" + route.Name + "/" + string(backendRef.Name)
+				if failedBackends[key] {
+					ruleHasFailedRef = true
 
-		// Clear backends for all rules from this failed route.
-		for range route.Spec.Rules {
-			if ruleIdx < len(cfg.Rules) {
+					break
+				}
+			}
+
+			if ruleHasFailedRef {
 				cfg.Rules[ruleIdx].Backends = nil
 			}
 
