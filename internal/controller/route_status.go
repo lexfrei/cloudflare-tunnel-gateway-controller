@@ -168,7 +168,13 @@ func buildResolvedRefsCondition(
 
 	if len(failedRefs) > 0 {
 		status = metav1.ConditionFalse
-		reason = string(gatewayv1.RouteReasonRefNotPermitted)
+		// Use the reason from the first failed ref — Gateway API spec requires
+		// specific reasons like InvalidKind, RefNotPermitted, BackendNotFound, etc.
+		reason = failedRefs[0].Reason
+		if reason == "" {
+			reason = string(gatewayv1.RouteReasonRefNotPermitted)
+		}
+
 		message = buildFailedRefsMessage(failedRefs)
 	}
 
