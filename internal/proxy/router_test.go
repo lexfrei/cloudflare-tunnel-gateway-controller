@@ -938,3 +938,289 @@ func TestRouter_XOriginalHostOverridesHost(t *testing.T) {
 	assert.Equal(t, "http://edge-backend:80", result.Rule.Backends[0].URL,
 		"should route based on Host header when X-Original-Host is absent")
 }
+
+func TestRouter_LongerPrefixWins(t *testing.T) {
+	t.Parallel()
+
+	router := proxy.NewRouter()
+
+	// Reproduces HTTPRouteMatchingAcrossRoutes conformance test:
+	// matching-part1: hostnames [example.com, example.net], path "/" → v1
+	// matching-part2: hostnames [example.com], path "/v2" → v2
+	cfg := &proxy.Config{
+		Version: 1,
+		Rules: []proxy.RouteRule{
+			{
+				Hostnames: []string{"example.com", "example.net"},
+				Matches: []proxy.RouteMatch{
+					{Path: &proxy.PathMatch{Type: proxy.PathMatchPathPrefix, Value: "/"}},
+					{Headers: []proxy.HeaderMatch{{Name: "version", Value: "one", Type: proxy.HeaderMatchExact}}},
+				},
+				Backends: []proxy.BackendRef{{URL: "http://v1:80", Weight: 1}},
+			},
+			{
+				Hostnames: []string{"example.com"},
+				Matches: []proxy.RouteMatch{
+					{Path: &proxy.PathMatch{Type: proxy.PathMatchPathPrefix, Value: "/v2"}},
+					{Headers: []proxy.HeaderMatch{{Name: "version", Value: "two", Type: proxy.HeaderMatchExact}}},
+				},
+				Backends: []proxy.BackendRef{{URL: "http://v2:80", Weight: 1}},
+			},
+		},
+	}
+
+	err := router.UpdateConfig(cfg)
+	require.NoError(t, err)
+
+	tests := []struct {
+		name     string
+		host     string
+		path     string
+		headers  map[string]string
+		expected string
+	}{
+		{
+			name:     "catch-all / goes to v1",
+			host:     "example.com",
+			path:     "/",
+			expected: "http://v1:80",
+		},
+		{
+			name:     "/v2 prefix goes to v2",
+			host:     "example.com",
+			path:     "/v2",
+			expected: "http://v2:80",
+		},
+		{
+			name:     "/v2/example goes to v2",
+			host:     "example.com",
+			path:     "/v2/example",
+			expected: "http://v2:80",
+		},
+		{
+			name:     "header version:two goes to v2",
+			host:     "example.com",
+			path:     "/",
+			headers:  map[string]string{"version": "two"},
+			expected: "http://v2:80",
+		},
+		{
+			name:     "example.net /v2 goes to v1 (v2 only on example.com)",
+			host:     "example.net",
+			path:     "/v2",
+			expected: "http://v1:80",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			header := http.Header{}
+			for k, v := range tt.headers {
+				header.Set(k, v)
+			}
+
+			req := &http.Request{
+				Method: http.MethodGet,
+				Host:   tt.host,
+				URL:    &url.URL{Path: tt.path},
+				Header: header,
+			}
+
+			result := router.Route(req)
+			require.NotNil(t, result, "expected a route match")
+			assert.Equal(t, tt.expected, result.Rule.Backends[0].URL)
+		})
+	}
+}
+
+// TestRouter_DefaultRulesNoHostname reproduces the HTTPRouteMatching conformance test.
+// Routes with no hostnames go to defaultRules and should match any host.
+func TestRouter_DefaultRulesNoHostname(t *testing.T) {
+	t.Parallel()
+
+	router := proxy.NewRouter()
+
+	// Single HTTPRoute, no hostnames, two rules:
+	// Rule 0: path / OR header version:one → v1
+	// Rule 1: path /v2 OR header version:two → v2
+	cfg := &proxy.Config{
+		Version: 1,
+		Rules: []proxy.RouteRule{
+			{
+				// No hostnames — goes to defaultRules
+				Matches: []proxy.RouteMatch{
+					{Path: &proxy.PathMatch{Type: proxy.PathMatchPathPrefix, Value: "/"}},
+					{Headers: []proxy.HeaderMatch{{Name: "version", Value: "one", Type: proxy.HeaderMatchExact}}},
+				},
+				Backends: []proxy.BackendRef{{URL: "http://v1:80", Weight: 1}},
+			},
+			{
+				// No hostnames — goes to defaultRules
+				Matches: []proxy.RouteMatch{
+					{Path: &proxy.PathMatch{Type: proxy.PathMatchPathPrefix, Value: "/v2"}},
+					{Headers: []proxy.HeaderMatch{{Name: "version", Value: "two", Type: proxy.HeaderMatchExact}}},
+				},
+				Backends: []proxy.BackendRef{{URL: "http://v2:80", Weight: 1}},
+			},
+		},
+	}
+
+	err := router.UpdateConfig(cfg)
+	require.NoError(t, err)
+
+	tests := []struct {
+		name     string
+		host     string
+		path     string
+		headers  map[string]string
+		expected string
+	}{
+		{
+			name:     "/ goes to v1",
+			host:     "random-tunnel-id.cfargotunnel.com",
+			path:     "/",
+			expected: "http://v1:80",
+		},
+		{
+			name:     "/example goes to v1",
+			host:     "random-tunnel-id.cfargotunnel.com",
+			path:     "/example",
+			expected: "http://v1:80",
+		},
+		{
+			name:     "/v2 goes to v2",
+			host:     "random-tunnel-id.cfargotunnel.com",
+			path:     "/v2",
+			expected: "http://v2:80",
+		},
+		{
+			name:     "/v2/example goes to v2",
+			host:     "random-tunnel-id.cfargotunnel.com",
+			path:     "/v2/example",
+			expected: "http://v2:80",
+		},
+		{
+			name:     "header version:two goes to v2",
+			host:     "random-tunnel-id.cfargotunnel.com",
+			path:     "/",
+			headers:  map[string]string{"version": "two"},
+			expected: "http://v2:80",
+		},
+		{
+			name:     "/v2example goes to v1 (not segment prefix)",
+			host:     "random-tunnel-id.cfargotunnel.com",
+			path:     "/v2example",
+			expected: "http://v1:80",
+		},
+		{
+			name:     "/foo/v2/example goes to v1 (prefix must be at start)",
+			host:     "random-tunnel-id.cfargotunnel.com",
+			path:     "/foo/v2/example",
+			expected: "http://v1:80",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			header := http.Header{}
+			for k, v := range tt.headers {
+				header.Set(k, v)
+			}
+
+			req := &http.Request{
+				Method: http.MethodGet,
+				Host:   tt.host,
+				URL:    &url.URL{Path: tt.path},
+				Header: header,
+			}
+
+			result := router.Route(req)
+			require.NotNil(t, result, "expected a route match for %s %s", tt.host, tt.path)
+			assert.Equal(t, tt.expected, result.Rule.Backends[0].URL)
+		})
+	}
+}
+
+// TestRouter_DefaultRulesWithDefaultedPaths reproduces the exact config that
+// Gateway API webhook defaulting produces: header-only matches get an implicit
+// PathPrefix "/" added. This previously caused incorrect priority calculation
+// where both rules had the same max per-match score, making Rule 0 always win.
+func TestRouter_DefaultRulesWithDefaultedPaths(t *testing.T) {
+	t.Parallel()
+
+	router := proxy.NewRouter()
+
+	// Mirrors httproute-matching.yaml AFTER Gateway API defaulting:
+	// Rule 0: [PathPrefix /, PathPrefix / + header:one] → v1
+	// Rule 1: [PathPrefix /v2, PathPrefix / + header:two] → v2
+	cfg := &proxy.Config{
+		Version: 1,
+		Rules: []proxy.RouteRule{
+			{
+				Matches: []proxy.RouteMatch{
+					{Path: &proxy.PathMatch{Type: proxy.PathMatchPathPrefix, Value: "/"}},
+					{
+						Path:    &proxy.PathMatch{Type: proxy.PathMatchPathPrefix, Value: "/"},
+						Headers: []proxy.HeaderMatch{{Name: "version", Value: "one", Type: proxy.HeaderMatchExact}},
+					},
+				},
+				Backends: []proxy.BackendRef{{URL: "http://v1:80", Weight: 1}},
+			},
+			{
+				Matches: []proxy.RouteMatch{
+					{Path: &proxy.PathMatch{Type: proxy.PathMatchPathPrefix, Value: "/v2"}},
+					{
+						Path:    &proxy.PathMatch{Type: proxy.PathMatchPathPrefix, Value: "/"},
+						Headers: []proxy.HeaderMatch{{Name: "version", Value: "two", Type: proxy.HeaderMatchExact}},
+					},
+				},
+				Backends: []proxy.BackendRef{{URL: "http://v2:80", Weight: 1}},
+			},
+		},
+	}
+
+	err := router.UpdateConfig(cfg)
+	require.NoError(t, err)
+
+	tests := []struct {
+		name     string
+		path     string
+		headers  map[string]string
+		expected string
+	}{
+		{name: "/ goes to v1", path: "/", expected: "http://v1:80"},
+		{name: "/example goes to v1", path: "/example", expected: "http://v1:80"},
+		{name: "/v2 goes to v2", path: "/v2", expected: "http://v2:80"},
+		{name: "/v2/ goes to v2", path: "/v2/", expected: "http://v2:80"},
+		{name: "/v2/example goes to v2", path: "/v2/example", expected: "http://v2:80"},
+		{name: "header version:one goes to v1", path: "/", headers: map[string]string{"version": "one"}, expected: "http://v1:80"},
+		{name: "header version:two goes to v2", path: "/", headers: map[string]string{"version": "two"}, expected: "http://v2:80"},
+		{name: "/v2example goes to v1", path: "/v2example", expected: "http://v1:80"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			header := http.Header{}
+			for k, v := range tt.headers {
+				header.Set(k, v)
+			}
+
+			req := &http.Request{
+				Method: http.MethodGet,
+				Host:   "any-host.example.com",
+				URL:    &url.URL{Path: tt.path},
+				Header: header,
+			}
+
+			result := router.Route(req)
+			require.NotNil(t, result, "expected a route match for %s", tt.path)
+			assert.Equal(t, tt.expected, result.Rule.Backends[0].URL)
+		})
+	}
+}

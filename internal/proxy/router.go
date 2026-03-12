@@ -256,7 +256,7 @@ func compileRule(rule *RouteRule, ruleIndex int) (*compiledRule, error) {
 // computePriority calculates a precedence score for Gateway API ordering.
 // Higher score = higher precedence. Rules are sorted descending by priority.
 //
-// Gateway API precedence (from spec):
+// Gateway API precedence (from spec, GEP-1722):
 //
 //  1. Longest hostname (handled by exact > wildcard > default lookup order)
 //  2. Exact path > Prefix path > Regex path
@@ -264,36 +264,60 @@ func compileRule(rule *RouteRule, ruleIndex int) (*compiledRule, error) {
 //  4. Method match present
 //  5. Most header matches
 //  6. Most query param matches
+//
+// Each component is maximized independently across all ORed matches in the rule.
+// This is correct because a rule with matches [PathPrefix /v2, header:x]
+// should rank higher on path than a rule with [PathPrefix /, header:y],
+// regardless of which match carries the header.
 func computePriority(rule *RouteRule, ruleIndex int) int {
-	priority := 0
+	maxPathTypeScore := 0
+	maxPathLen := 0
+	hasMethod := false
+	maxHeaders := 0
+	maxQueryParams := 0
 
 	for _, match := range rule.Matches {
-		matchScore := 0
-
 		if match.Path != nil {
+			pathTypeScore := 0
+
 			switch match.Path.Type {
 			case PathMatchExact:
-				matchScore += priorityExactPath
+				pathTypeScore = priorityExactPath
 			case PathMatchPathPrefix:
-				matchScore += priorityPrefixPath
+				pathTypeScore = priorityPrefixPath
 			case PathMatchRegularExpression:
-				matchScore += priorityRegexPath
+				pathTypeScore = priorityRegexPath
 			}
 
-			matchScore += len(match.Path.Value) * priorityPathLength
+			if pathTypeScore > maxPathTypeScore {
+				maxPathTypeScore = pathTypeScore
+				maxPathLen = len(match.Path.Value)
+			} else if pathTypeScore == maxPathTypeScore && len(match.Path.Value) > maxPathLen {
+				maxPathLen = len(match.Path.Value)
+			}
 		}
 
 		if match.Method != "" {
-			matchScore += priorityMethod
+			hasMethod = true
 		}
 
-		matchScore += len(match.Headers) * priorityPerHeader
-		matchScore += len(match.QueryParams) * priorityPerQueryParam
+		if len(match.Headers) > maxHeaders {
+			maxHeaders = len(match.Headers)
+		}
 
-		if matchScore > priority {
-			priority = matchScore
+		if len(match.QueryParams) > maxQueryParams {
+			maxQueryParams = len(match.QueryParams)
 		}
 	}
+
+	priority := maxPathTypeScore + maxPathLen*priorityPathLength
+
+	if hasMethod {
+		priority += priorityMethod
+	}
+
+	priority += maxHeaders * priorityPerHeader
+	priority += maxQueryParams * priorityPerQueryParam
 
 	// Use negative rule index as tiebreaker (earlier rules win).
 	priority -= ruleIndex
