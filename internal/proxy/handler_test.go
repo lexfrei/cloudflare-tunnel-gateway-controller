@@ -735,3 +735,58 @@ func TestHandler_BothTimeoutsAppliedIndependently(t *testing.T) {
 	assert.Less(t, elapsed, time.Second, "backend timeout should fire before request timeout")
 	assert.Equal(t, http.StatusGatewayTimeout, recorder.Code)
 }
+
+func TestHandler_URLRewriteHostBeatsXOriginalHost(t *testing.T) {
+	t.Parallel()
+
+	receivedHost := make(chan string, 1)
+
+	backend := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, req *http.Request) {
+		receivedHost <- req.Host
+		writer.WriteHeader(http.StatusOK)
+	}))
+	defer backend.Close()
+
+	router := proxy.NewRouter()
+
+	rewrittenHostname := "rewritten.example.com"
+
+	cfg := &proxy.Config{
+		Version: 1,
+		Rules: []proxy.RouteRule{
+			{
+				Hostnames: []string{"app.example.com"},
+				Filters: []proxy.RouteFilter{
+					{
+						Type: proxy.FilterURLRewrite,
+						URLRewrite: &proxy.URLRewriteConfig{
+							Hostname: &rewrittenHostname,
+						},
+					},
+				},
+				Backends: []proxy.BackendRef{{URL: backend.URL, Weight: 1}},
+			},
+		},
+	}
+
+	err := router.UpdateConfig(cfg)
+	require.NoError(t, err)
+
+	handler := proxy.NewHandler(router)
+
+	// Simulate tunnel transport: X-Original-Host carries the real hostname
+	// that was replaced with the edge hostname for Cloudflare routing.
+	// When a URL rewrite filter explicitly sets a new host, the filter's
+	// host must take precedence over X-Original-Host.
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://edge.cloudflare.com/test", nil)
+	req.Header.Set("X-Original-Host", "app.example.com")
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, req)
+
+	assert.Equal(t, http.StatusOK, recorder.Code)
+
+	host := <-receivedHost
+	assert.Equal(t, "rewritten.example.com", host,
+		"URL rewrite filter host must take precedence over X-Original-Host")
+}
