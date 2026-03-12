@@ -47,16 +47,21 @@ type testConfig struct {
 
 func loadTestConfig() testConfig {
 	return testConfig{
-		TunnelHostname: envOrDefault("CONFORMANCE_TUNNEL_HOSTNAME", "v2-test.lex.la"),
-		KubeContext:    envOrDefault("CONFORMANCE_KUBE_CONTEXT", "kind-v2-test"),
-		Namespace:      envOrDefault("CONFORMANCE_NAMESPACE", "cloudflare-tunnel-system"),
-		TestNamespace:  envOrDefault("CONFORMANCE_TEST_NAMESPACE", "conformance-test"),
-		GatewayName:    envOrDefault("CONFORMANCE_GATEWAY_NAME", "conformance-gateway"),
+		TunnelHostname: envWithFallback("E2E_TUNNEL_HOSTNAME", "CONFORMANCE_TUNNEL_HOSTNAME", "v2-test.lex.la"),
+		KubeContext:    envWithFallback("E2E_KUBE_CONTEXT", "CONFORMANCE_KUBE_CONTEXT", "kind-v2-test"),
+		Namespace:      envWithFallback("E2E_NAMESPACE", "CONFORMANCE_NAMESPACE", "cloudflare-tunnel-system"),
+		TestNamespace:  envWithFallback("E2E_TEST_NAMESPACE", "CONFORMANCE_TEST_NAMESPACE", "e2e-test"),
+		GatewayName:    envWithFallback("E2E_GATEWAY_NAME", "CONFORMANCE_GATEWAY_NAME", "e2e-gateway"),
 	}
 }
 
-func envOrDefault(key, defaultVal string) string {
-	if val := os.Getenv(key); val != "" {
+// envWithFallback checks the primary key, then the fallback key, then returns the default.
+func envWithFallback(primary, fallback, defaultVal string) string {
+	if val := os.Getenv(primary); val != "" {
+		return val
+	}
+
+	if val := os.Getenv(fallback); val != "" {
 		return val
 	}
 
