@@ -234,7 +234,11 @@ func syncAndUpdateStatusCommon(ctx context.Context, params syncUpdateParams) (ct
 // the same tunnel credentials — multiple classes with different parametersRef
 // may lead to unexpected behavior.
 func (s *RouteSyncer) resolveConfigForController(ctx context.Context) (*config.ResolvedConfig, error) {
-	classes := listGatewayClassesForController(ctx, s.Client, s.ControllerName)
+	classes, err := listGatewayClassesForController(ctx, s.Client, s.ControllerName)
+	if err != nil {
+		return nil, errors.Wrap(err, "listing GatewayClasses for config resolution")
+	}
+
 	if len(classes) == 0 {
 		return nil, errors.New("no GatewayClass found for controller " + s.ControllerName)
 	}
@@ -538,7 +542,10 @@ func (s *RouteSyncer) getRelevantHTTPRoutes(
 		return nil, errors.Wrap(err, "failed to list httproutes")
 	}
 
-	classNames := managedClassNames(ctx, s.Client, s.ControllerName)
+	classNames, classErr := managedClassNames(ctx, s.Client, s.ControllerName)
+	if classErr != nil {
+		return nil, errors.Wrap(classErr, "failed to get managed class names for HTTPRoutes")
+	}
 
 	result := &httpRouteResult{
 		bindings: make(map[string]routeBindingInfo),
@@ -635,7 +642,10 @@ func (s *RouteSyncer) getRelevantGRPCRoutes(
 		return nil, errors.Wrap(err, "failed to list grpcroutes")
 	}
 
-	classNames := managedClassNames(ctx, s.Client, s.ControllerName)
+	classNames, classErr := managedClassNames(ctx, s.Client, s.ControllerName)
+	if classErr != nil {
+		return nil, errors.Wrap(classErr, "failed to get managed class names for GRPCRoutes")
+	}
 
 	result := &grpcRouteResult{
 		bindings: make(map[string]routeBindingInfo),

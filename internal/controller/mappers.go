@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"fmt"
 	"slices"
 
 	corev1 "k8s.io/api/core/v1"
@@ -47,14 +48,11 @@ func listGatewayClassesForController(
 	ctx context.Context,
 	cli client.Client,
 	controllerName string,
-) []gatewayv1.GatewayClass {
+) ([]gatewayv1.GatewayClass, error) {
 	var classList gatewayv1.GatewayClassList
 
 	if err := cli.List(ctx, &classList); err != nil {
-		logging.FromContext(ctx).Warn("failed to list GatewayClasses",
-			"controllerName", controllerName, "error", err)
-
-		return nil
+		return nil, fmt.Errorf("listing GatewayClasses for controller %s: %w", controllerName, err)
 	}
 
 	var matched []gatewayv1.GatewayClass
@@ -65,7 +63,7 @@ func listGatewayClassesForController(
 		}
 	}
 
-	return matched
+	return matched, nil
 }
 
 // managedClassNames returns the set of GatewayClass names managed by the
@@ -78,15 +76,19 @@ func managedClassNames(
 	ctx context.Context,
 	cli client.Client,
 	controllerName string,
-) map[string]bool {
-	classes := listGatewayClassesForController(ctx, cli, controllerName)
+) (map[string]bool, error) {
+	classes, err := listGatewayClassesForController(ctx, cli, controllerName)
+	if err != nil {
+		return nil, err
+	}
+
 	names := make(map[string]bool, len(classes))
 
 	for i := range classes {
 		names[classes[i].Name] = true
 	}
 
-	return names
+	return names, nil
 }
 
 // kindGateway is the Gateway API kind for Gateway resources.
@@ -135,7 +137,13 @@ func (m *ConfigMapper) MapSecretToRequests(getRequests RequestsFunc) func(contex
 }
 
 func (m *ConfigMapper) isConfigForOurClass(ctx context.Context, cfg *v1alpha1.GatewayClassConfig) bool {
-	classes := listGatewayClassesForController(ctx, m.Client, m.ControllerName)
+	classes, err := listGatewayClassesForController(ctx, m.Client, m.ControllerName)
+	if err != nil {
+		logging.FromContext(ctx).Warn("failed to list GatewayClasses in isConfigForOurClass",
+			"error", err)
+
+		return false
+	}
 
 	for i := range classes {
 		gc := &classes[i]
@@ -148,7 +156,13 @@ func (m *ConfigMapper) isConfigForOurClass(ctx context.Context, cfg *v1alpha1.Ga
 }
 
 func (m *ConfigMapper) isSecretReferencedByConfig(ctx context.Context, secret *corev1.Secret) bool {
-	classes := listGatewayClassesForController(ctx, m.Client, m.ControllerName)
+	classes, err := listGatewayClassesForController(ctx, m.Client, m.ControllerName)
+	if err != nil {
+		logging.FromContext(ctx).Warn("failed to list GatewayClasses in isSecretReferencedByConfig",
+			"error", err)
+
+		return false
+	}
 
 	for i := range classes {
 		gc := &classes[i]

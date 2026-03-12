@@ -12,6 +12,7 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/ingress"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/logging"
 )
 
 // routeAccessor provides type-agnostic access to Gateway API route fields
@@ -43,7 +44,13 @@ func updateRouteStatusGeneric(
 ) error {
 	// Compute managed class names once outside the retry loop.
 	// The set does not change between retries (conflict retries happen in milliseconds).
-	classNames := managedClassNames(ctx, params.k8sClient, params.controllerName)
+	classNames, classErr := managedClassNames(ctx, params.k8sClient, params.controllerName)
+	if classErr != nil {
+		logging.FromContext(ctx).Warn("failed to get managed class names for route status update",
+			"error", classErr)
+
+		classNames = nil
+	}
 
 	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		accessor := newAccessor()

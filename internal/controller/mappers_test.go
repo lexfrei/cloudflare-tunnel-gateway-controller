@@ -1557,7 +1557,8 @@ func TestManagedClassNames(t *testing.T) {
 
 	fakeClient := setupMapperFakeClient(class1, class2, otherClass)
 
-	names := managedClassNames(ctx, fakeClient, "test-controller")
+	names, err := managedClassNames(ctx, fakeClient, "test-controller")
+	require.NoError(t, err)
 
 	assert.True(t, names["class-a"])
 	assert.True(t, names["class-b"])
@@ -1571,7 +1572,8 @@ func TestManagedClassNames_Empty(t *testing.T) {
 
 	fakeClient := setupMapperFakeClient()
 
-	names := managedClassNames(ctx, fakeClient, "test-controller")
+	names, err := managedClassNames(ctx, fakeClient, "test-controller")
+	require.NoError(t, err)
 
 	assert.Empty(t, names)
 }
@@ -1597,16 +1599,19 @@ func TestListGatewayClassesForController(t *testing.T) {
 	fakeClient := setupMapperFakeClient(class1, class2, otherClass)
 
 	// Matching controllerName returns both classes.
-	matched := listGatewayClassesForController(ctx, fakeClient, "example.com/my-controller")
+	matched, err := listGatewayClassesForController(ctx, fakeClient, "example.com/my-controller")
+	require.NoError(t, err)
 	assert.Len(t, matched, 2)
 
 	// Non-matching controllerName returns empty.
-	none := listGatewayClassesForController(ctx, fakeClient, "example.com/nonexistent")
+	none, err := listGatewayClassesForController(ctx, fakeClient, "example.com/nonexistent")
+	require.NoError(t, err)
 	assert.Empty(t, none)
 
 	// No classes at all returns empty.
 	emptyClient := setupMapperFakeClient()
-	empty := listGatewayClassesForController(ctx, emptyClient, "example.com/my-controller")
+	empty, err := listGatewayClassesForController(ctx, emptyClient, "example.com/my-controller")
+	require.NoError(t, err)
 	assert.Empty(t, empty)
 }
 

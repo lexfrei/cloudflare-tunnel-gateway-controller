@@ -795,7 +795,13 @@ func (r *GatewayReconciler) getAllManagedGateways(ctx context.Context) []reconci
 		return nil
 	}
 
-	classNames := managedClassNames(ctx, r.Client, r.ControllerName)
+	classNames, err := managedClassNames(ctx, r.Client, r.ControllerName)
+	if err != nil {
+		logging.FromContext(ctx).Warn("failed to get managed class names in getAllManagedGateways",
+			"error", err)
+
+		return nil
+	}
 
 	var requests []reconcile.Request
 
@@ -851,7 +857,13 @@ func (r *GatewayReconciler) referenceGrantToGateways(
 		return nil
 	}
 
-	classNames := managedClassNames(ctx, r.Client, r.ControllerName)
+	classNames, err := managedClassNames(ctx, r.Client, r.ControllerName)
+	if err != nil {
+		logging.FromContext(ctx).Warn("failed to get managed class names in referenceGrantToGateways",
+			"error", err)
+
+		return nil
+	}
 
 	var requests []reconcile.Request
 
@@ -892,7 +904,13 @@ func (r *GatewayReconciler) routeToGateways(
 		return nil
 	}
 
-	classNames := managedClassNames(ctx, r.Client, r.ControllerName)
+	classNames, err := managedClassNames(ctx, r.Client, r.ControllerName)
+	if err != nil {
+		logging.FromContext(ctx).Warn("failed to get managed class names in routeToGateways",
+			"error", err)
+
+		return nil
+	}
 
 	seen := make(map[types.NamespacedName]bool)
 
