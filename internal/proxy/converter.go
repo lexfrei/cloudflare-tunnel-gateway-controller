@@ -63,11 +63,9 @@ func ConvertHTTPRoutes(
 				route.Namespace, clusterDomain, validator,
 			)
 
-			// Skip rules with no backends and no redirect filter —
-			// proxy rejects these with 400 (validation error).
-			if len(proxyRule.Backends) == 0 && !proxyRule.hasRedirectFilter() {
-				continue
-			}
+			// Rules with no backends and no redirect filter are kept —
+			// per Gateway API spec, unresolvable backend refs must return HTTP 500.
+			// The proxy handler returns 500 when no backend is available.
 
 			cfg.Rules = append(cfg.Rules, proxyRule)
 		}
