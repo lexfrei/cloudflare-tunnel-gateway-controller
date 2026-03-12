@@ -1250,28 +1250,25 @@ func TestResolveConfigForController_MultipleClasses_DeterministicOrder(t *testin
 	require.NoError(t, gatewayv1.Install(scheme))
 	require.NoError(t, v1alpha1.AddToScheme(scheme))
 
-	// Two GatewayClasses with same controllerName but different parametersRef.
+	// Two GatewayClasses with same controllerName and same parametersRef.
 	// The class with the lexicographically smallest name should be selected.
+	sharedRef := &gatewayv1.ParametersReference{
+		Group: "cf.k8s.lex.la",
+		Kind:  "GatewayClassConfig",
+		Name:  "shared-config",
+	}
 	classZ := &gatewayv1.GatewayClass{
 		ObjectMeta: metav1.ObjectMeta{Name: "z-class"},
 		Spec: gatewayv1.GatewayClassSpec{
 			ControllerName: "test-controller",
-			ParametersRef: &gatewayv1.ParametersReference{
-				Group: "cf.k8s.lex.la",
-				Kind:  "GatewayClassConfig",
-				Name:  "config-z",
-			},
+			ParametersRef:  sharedRef,
 		},
 	}
 	classA := &gatewayv1.GatewayClass{
 		ObjectMeta: metav1.ObjectMeta{Name: "a-class"},
 		Spec: gatewayv1.GatewayClassSpec{
 			ControllerName: "test-controller",
-			ParametersRef: &gatewayv1.ParametersReference{
-				Group: "cf.k8s.lex.la",
-				Kind:  "GatewayClassConfig",
-				Name:  "config-a",
-			},
+			ParametersRef:  sharedRef,
 		},
 	}
 
@@ -1338,13 +1335,12 @@ func TestResolveConfigForController_MultipleClasses_ConflictingParametersRef(t *
 		cfmetrics.NewNoopCollector(), nil,
 	)
 
-	// Should still resolve (using a-class), but with conflict detected.
-	// The error will come from missing GatewayClassConfig, not from conflict.
+	// Must return an error because different parametersRef means different
+	// tunnel credentials — silently using one would send traffic to wrong tunnel.
 	_, err := syncer.resolveConfigForController(context.Background())
 
 	require.Error(t, err)
-	// Verifies that a-class was selected (alphabetically first)
-	assert.Contains(t, err.Error(), "a-class")
+	assert.Contains(t, err.Error(), "conflicting parametersRef")
 }
 
 func TestHasConflictingParametersRef(t *testing.T) {

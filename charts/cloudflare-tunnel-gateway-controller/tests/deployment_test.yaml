@@ -540,6 +540,14 @@ tests:
             name: ndots
             value: "2"
 
+  # Deprecated flag should not be present
+  - it: should not pass deprecated --gateway-class-name flag
+    asserts:
+      - template: deployment.yaml
+        notContains:
+          path: spec.template.spec.containers[0].args
+          content: "--gateway-class-name"
+
   # Proxy endpoint tests
   - it: should use default cluster.local in proxy endpoint when clusterDomain not set
     set:
