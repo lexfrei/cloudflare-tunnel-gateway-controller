@@ -55,7 +55,7 @@ spec:
             - "--log-level={{ .Values.controller.logLevel }}"
             - "--log-format={{ .Values.controller.logFormat }}"
             {{- if .Values.proxy.enabled }}
-            - "--proxy-endpoints=http://{{ include "cf-tunnel-gw-ctrl.proxyFullname" . }}-headless.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.proxy.configAPIPort }}/config"
+            - "--proxy-endpoints=http://{{ include "cf-tunnel-gw-ctrl.proxyFullname" . }}-headless.{{ .Release.Namespace }}.svc.{{ .Values.controller.clusterDomain | default "cluster.local" }}:{{ .Values.proxy.configAPIPort }}/config"
             {{- if .Values.proxy.authTokenSecretRef.name }}
             - "--proxy-auth-token=$(PROXY_AUTH_TOKEN)"
             {{- end }}

@@ -540,6 +540,41 @@ tests:
             name: ndots
             value: "2"
 
+  # Proxy endpoint tests
+  - it: should use default cluster.local in proxy endpoint when clusterDomain not set
+    set:
+      proxy:
+        enabled: true
+        configAPIPort: 8900
+    asserts:
+      - template: deployment.yaml
+        contains:
+          path: spec.template.spec.containers[0].args
+          content: "--proxy-endpoints=http://RELEASE-NAME-cloudflare-tunnel-gateway-controller-proxy-headless.NAMESPACE.svc.cluster.local:8900/config"
+
+  - it: should use custom clusterDomain in proxy endpoint
+    set:
+      proxy:
+        enabled: true
+        configAPIPort: 8900
+      controller:
+        clusterDomain: "custom.local"
+    asserts:
+      - template: deployment.yaml
+        contains:
+          path: spec.template.spec.containers[0].args
+          content: "--proxy-endpoints=http://RELEASE-NAME-cloudflare-tunnel-gateway-controller-proxy-headless.NAMESPACE.svc.custom.local:8900/config"
+
+  - it: should not include proxy-endpoints when proxy disabled
+    set:
+      proxy:
+        enabled: false
+    asserts:
+      - template: deployment.yaml
+        notContains:
+          path: spec.template.spec.containers[0].args
+          content: "--proxy-endpoints="
+
   # Leader election tests
   - it: should not enable leader election by default
     asserts:
