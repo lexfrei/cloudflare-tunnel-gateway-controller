@@ -259,7 +259,7 @@ func (s *RouteSyncer) resolveConfigForController(ctx context.Context) (*config.R
 		// Check if classes have different parametersRef — this indicates a
 		// misconfiguration, since one controller syncs all routes to one tunnel.
 		if hasConflictingParametersRef(classes) {
-			s.Logger.Error("GatewayClasses have different parametersRef — "+
+			s.Logger.Warn("GatewayClasses have different parametersRef — "+
 				"one controller instance supports only one tunnel configuration; "+
 				"routes from all classes will use config from the selected class",
 				"selected", classes[0].Name,

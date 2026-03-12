@@ -221,7 +221,7 @@ spec:
 | affinity | object | `{}` | Affinity rules for pod scheduling |
 | controller | object | `{"clusterDomain":"","controllerName":"cf.k8s.lex.la/tunnel-controller","gatewayClassName":"cloudflare-tunnel","logFormat":"json","logLevel":"info"}` | Controller configuration |
 | controller.clusterDomain | string | auto-detected from /etc/resolv.conf, fallback: cluster.local | Kubernetes cluster domain for service DNS resolution |
-| controller.controllerName | string | `"cf.k8s.lex.la/tunnel-controller"` | Controller name for GatewayClass (must be unique in cluster) |
+| controller.controllerName | string | `"cf.k8s.lex.la/tunnel-controller"` | Value for GatewayClass spec.controllerName — this is how the controller discovers its GatewayClasses (must be unique per controller instance) |
 | controller.gatewayClassName | string | `"cloudflare-tunnel"` | Name of the GatewayClass resource to create |
 | controller.logFormat | string | `"json"` | Log format (json, text) |
 | controller.logLevel | string | `"info"` | Log level (debug, info, warn, error) |
