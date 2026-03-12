@@ -2,7 +2,7 @@
 mkdocs==1.6.1
 
 # Material theme
-mkdocs-material==9.7.4
+mkdocs-material==9.7.5
 
 # Plugins
 mkdocs-same-dir==0.1.3
