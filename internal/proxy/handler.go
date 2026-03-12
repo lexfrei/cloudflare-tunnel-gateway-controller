@@ -128,11 +128,18 @@ func (h *Handler) createReverseProxy(backendURL *url.URL, filters []Filter) *htt
 			req.URL.Scheme = backendURL.Scheme
 			req.URL.Host = backendURL.Host
 
-			// Preserve Host if a URLRewrite filter already set it.
+			// Preserve the original Host header per Gateway API spec.
+			// Only override it if a URLRewrite filter explicitly set a new host.
 			if isHostRewritten(req) {
 				req.Header.Del(hostRewrittenHeader)
-			} else {
-				req.Host = backendURL.Host
+			}
+
+			// When X-Original-Host is present (set by TunnelRoundTripper to
+			// bypass Cloudflare edge Host validation), restore it as the
+			// request Host so the backend sees the intended hostname.
+			if origHost := req.Header.Get("X-Original-Host"); origHost != "" {
+				req.Host = origHost
+				req.Header.Del("X-Original-Host")
 			}
 
 			if _, ok := req.Header["User-Agent"]; !ok {

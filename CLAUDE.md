@@ -456,3 +456,66 @@ When creating issues, apply labels from these categories:
 ### Milestone
 
 Always assign a milestone when creating issues (e.g., `v1.0.0`).
+
+## Conformance Testing
+
+### Overview
+
+Official Gateway API conformance suite (`sigs.k8s.io/gateway-api/conformance` v1.5.0) runs against a kind cluster with a real Cloudflare Tunnel.
+
+### Cloudflare Edge Constraints
+
+**Host header validation**: Cloudflare edge returns 403 for any Host header with a domain not registered on the account. Conformance tests use `example.com`, `example.net`, `rewrite.example` etc. — all rejected by edge.
+
+**Solution**: `X-Original-Host` header pattern:
+
+- `TunnelRoundTripper` (test-only) always sets `Host: <edge-hostname>` so Cloudflare passes the request through
+- Original test Host is sent via `X-Original-Host` header
+- Proxy's `extractHost()` checks `X-Original-Host` first, falls back to `Host`
+- This is NOT a production pattern — only needed because conformance tests use unregistered domains
+
+**Other approaches investigated and rejected**:
+
+- WARP/Zero Trust: edge still validates Host for public hostname routing
+- `cloudflared access` proxy: still goes through edge, same Host validation
+- Private Network (IP/CIDR routing): bypasses Host validation but requires WARP client on CI — impractical
+- Direct tunnel connection: not possible, cloudflared is outbound-only
+
+**gRPC tests**: Conformance suite's gRPC client (`grpc.NewClient`) dials directly to Gateway address (`*.cfargotunnel.com` AAAA → Cloudflare ULA fd10::/8, not routable). Custom gRPC dialer cannot be injected. These tests are skipped.
+
+### Setup and Execution
+
+```bash
+# Full setup: fresh kind cluster + deploy + run tests
+./hack/conformance-setup.sh --test
+
+# Setup only (reuse for iterative testing)
+./hack/conformance-setup.sh
+
+# Run all conformance tests on existing cluster
+go test -v -tags conformance -count=1 -timeout=60m -parallel 10 ./test/conformance/...
+
+# Run specific failing test
+go test -v -tags conformance -count=1 -timeout=10m ./test/conformance/... -run "HTTPRouteMatchingAcrossRoutes"
+
+# Rebuild and redeploy images without recreating cluster
+docker build --tag controller:dev --file Containerfile .
+docker build --tag proxy:dev --file Containerfile.proxy .
+kind load docker-image controller:dev --name <cluster-name>
+kind load docker-image proxy:dev --name <cluster-name>
+kubectl --context kind-<cluster-name> rollout restart deployment --namespace cloudflare-tunnel-system \
+  cftunnel-cloudflare-tunnel-gateway-controller \
+  cftunnel-cloudflare-tunnel-gateway-controller-proxy
+```
+
+### Key Files
+
+- `test/conformance/conformance_test.go` — Test configuration, skip lists, feature sets
+- `test/conformance/roundtripper.go` — Custom HTTP round-tripper for Cloudflare edge
+- `hack/conformance-setup.sh` — Cluster setup script (kind + helm deploy)
+
+### Environment Variables
+
+- `CONFORMANCE_TUNNEL_HOSTNAME` — Edge hostname (default: `v2-test.lex.la`)
+- `CONFORMANCE_GATEWAY_CLASS` — GatewayClass name (default: `cloudflare-tunnel`)
+- `CONFORMANCE_REPORT_OUTPUT` — Path for YAML conformance report
