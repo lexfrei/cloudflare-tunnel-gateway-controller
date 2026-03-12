@@ -103,7 +103,7 @@ func (r *GRPCRouteReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		configResolver:        r.RouteSyncer.ConfigResolver,
 		findRoutesForGateway:  r.findRoutesForGateway,
 		findRoutesForRefGrant: r.findRoutesForReferenceGrant,
-		getAllRelevantRoutes:   r.getAllRelevantRoutes,
+		getAllRelevantRoutes:  r.getAllRelevantRoutes,
 	})
 }
 

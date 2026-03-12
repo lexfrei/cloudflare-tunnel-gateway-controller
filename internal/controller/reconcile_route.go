@@ -81,7 +81,7 @@ type routeControllerSetupParams struct {
 	configResolver        *config.Resolver
 	findRoutesForGateway  handler.MapFunc
 	findRoutesForRefGrant handler.MapFunc
-	getAllRelevantRoutes   RequestsFunc
+	getAllRelevantRoutes  RequestsFunc
 }
 
 // setupRouteController sets up the controller-runtime builder with standard

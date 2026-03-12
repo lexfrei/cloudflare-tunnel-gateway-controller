@@ -271,7 +271,6 @@ func (r *RouteRule) validate() error {
 	// Rules with empty backends and no redirect filter are valid —
 	// per Gateway API spec, the proxy handler returns HTTP 500 for
 	// routes with unresolvable backend refs.
-
 	for idx, backend := range r.Backends {
 		if backend.URL == "" {
 			return errors.Wrapf(errURLRequired, "backend[%d]", idx)

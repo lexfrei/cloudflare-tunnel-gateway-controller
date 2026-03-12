@@ -14,6 +14,8 @@ import (
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/proxy"
 )
 
+const rewrittenHost = "rewritten.example.com"
+
 func TestHandler_NoMatchReturns404(t *testing.T) {
 	t.Parallel()
 
@@ -474,7 +476,7 @@ func TestHandler_URLRewriteHostnamePreservedByDirector(t *testing.T) {
 
 	router := proxy.NewRouter()
 
-	rewrittenHostname := "rewritten.example.com"
+	rewrittenHostname := rewrittenHost
 
 	cfg := &proxy.Config{
 		Version: 1,
@@ -749,7 +751,7 @@ func TestHandler_URLRewriteHostBeatsXOriginalHost(t *testing.T) {
 
 	router := proxy.NewRouter()
 
-	rewrittenHostname := "rewritten.example.com"
+	rewrittenHostname := rewrittenHost
 
 	cfg := &proxy.Config{
 		Version: 1,

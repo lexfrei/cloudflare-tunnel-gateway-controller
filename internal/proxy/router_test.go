@@ -1367,7 +1367,7 @@ func TestRouter_QueryParamCountDominatesRuleIndex(t *testing.T) {
 			t.Parallel()
 
 			req := &http.Request{
-				Method: "GET",
+				Method: http.MethodGet,
 				Host:   "any.example.com",
 				URL:    &url.URL{Path: "/", RawQuery: tt.query},
 				Header: http.Header{},
