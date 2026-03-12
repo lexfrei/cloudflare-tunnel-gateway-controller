@@ -164,6 +164,14 @@ func TestGatewayAPIConformance(t *testing.T) {
 		"HTTPRouteBackendProtocolWebSocket",
 		"HTTPRouteCORS",
 		"HTTPRouteCORSAllowCredentialsBehavior",
+
+		// GRPCRoute: conformance suite uses its own gRPC client (grpc.Dial)
+		// that connects directly to Gateway address. *.cfargotunnel.com
+		// only has AAAA records with Cloudflare ULA (fd10::/8) which is not
+		// routable from outside CF network. We cannot override gRPC dialer.
+		"GRPCExactMethodMatching",
+		"GRPCRouteHeaderMatching",
+		"GRPCRouteWeight",
 	}
 
 	// --- Timeouts ---

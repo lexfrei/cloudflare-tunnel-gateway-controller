@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"os"
 	"strings"
 
 	"sigs.k8s.io/gateway-api/conformance/utils/config"
@@ -22,18 +23,24 @@ import (
 // to Gateway IP addresses. This is necessary because Cloudflare Tunnel does not
 // expose an in-cluster IP — all traffic flows through Cloudflare's edge network.
 //
-// The official conformance tests build request URLs using Gateway.Status.Addresses,
-// which for our controller contains a tunnel CNAME (TUNNEL_ID.cfargotunnel.com).
-// The DefaultRoundTripper sends plain HTTP to that address, but Cloudflare edge
-// requires HTTPS with proper Host header for routing.
-//
-// This RoundTripper:
-//  1. Rewrites the URL to use HTTPS with the Host header as the authority
-//  2. Connects to Cloudflare edge via TLS (trusting public CAs)
-//  3. Parses the echo server JSON response expected by conformance tests
+// The *.cfargotunnel.com CNAME used as Gateway address only has AAAA records
+// pointing to Cloudflare ULA (fd10::/8) which are not publicly routable.
+// Instead, we connect to the real tunnel hostname (e.g. v2-test.lex.la) which
+// has proper DNS pointing to Cloudflare edge. TLS SNI uses the tunnel hostname
+// so Cloudflare routes traffic to our tunnel. The HTTP Host header carries the
+// test-specific hostname for our proxy to route on.
 type TunnelRoundTripper struct {
 	Debug         bool
 	TimeoutConfig config.TimeoutConfig
+}
+
+// tunnelHostname returns the hostname used to reach the tunnel via Cloudflare edge.
+func tunnelHostname() string {
+	if h := os.Getenv("CONFORMANCE_TUNNEL_HOSTNAME"); h != "" {
+		return h
+	}
+
+	return "v2-test.lex.la"
 }
 
 // CaptureRoundTrip implements roundtripper.RoundTripper.
@@ -43,11 +50,13 @@ func (t *TunnelRoundTripper) CaptureRoundTrip(request roundtripper.Request) (*ro
 		host = request.URL.Host
 	}
 
-	// Cloudflare edge always uses HTTPS. Rewrite URL to target the hostname
-	// from the Host header — Cloudflare routes based on SNI/Host.
+	edgeHost := tunnelHostname()
+
+	// Build URL targeting the tunnel hostname (for DNS resolution) but
+	// preserving the original path and query from the test request.
 	cfURL := url.URL{
 		Scheme:   "https",
-		Host:     host,
+		Host:     edgeHost,
 		Path:     request.URL.Path,
 		RawQuery: request.URL.RawQuery,
 	}
@@ -70,6 +79,15 @@ func (t *TunnelRoundTripper) CaptureRoundTrip(request roundtripper.Request) (*ro
 		return nil, nil, fmt.Errorf("building request: %w", err)
 	}
 
+	// Cloudflare edge validates Host header against configured DNS records.
+	// *.cfargotunnel.com is an internal hostname not reachable from internet.
+	// Replace it with the edge hostname. For test-specific hostnames
+	// (e.g., *.example.com from conformance suite), keep them — Cloudflare
+	// should pass them through since SNI matches our tunnel's DNS record.
+	if strings.HasSuffix(host, ".cfargotunnel.com") {
+		host = edgeHost
+	}
+
 	req.Host = host
 
 	for name, values := range request.Headers {
@@ -80,13 +98,18 @@ func (t *TunnelRoundTripper) CaptureRoundTrip(request roundtripper.Request) (*ro
 
 	transport := &http.Transport{
 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-			// addr is "host:port" — keep it as-is, DNS will resolve the
-			// test hostname to Cloudflare edge IPs via CNAME.
-			return (&net.Dialer{}).DialContext(ctx, network, addr)
+			// Replace the target with the tunnel hostname for DNS resolution.
+			// The URL already points to edgeHost, so this is a safety net.
+			_, port, _ := net.SplitHostPort(addr)
+			edgeAddr := net.JoinHostPort(edgeHost, port)
+
+			return (&net.Dialer{}).DialContext(ctx, network, edgeAddr)
 		},
 		TLSClientConfig: &tls.Config{
 			MinVersion: tls.VersionTLS12,
-			ServerName: host,
+			// SNI must match a hostname with DNS CNAME to the tunnel,
+			// otherwise Cloudflare edge won't route to our tunnel.
+			ServerName: edgeHost,
 		},
 		DisableKeepAlives: true,
 	}

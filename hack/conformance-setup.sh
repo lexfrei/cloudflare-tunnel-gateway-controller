@@ -93,9 +93,14 @@ for old_cluster in $(kind get clusters 2>/dev/null | grep "^v2-test" || true); d
   kind delete cluster --name "${old_cluster}"
 done
 
-# --- Step 3: Create fresh kind cluster ---
+# --- Step 3: Create fresh kind cluster (IPv4 only) ---
 info "Creating kind cluster '${CLUSTER_NAME}'..."
-kind create cluster --name "${CLUSTER_NAME}" --wait 60s
+cat <<KINDEOF | kind create cluster --name "${CLUSTER_NAME}" --wait 60s --config -
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+networking:
+  ipFamily: ipv4
+KINDEOF
 
 # Verify connectivity
 kubectl --context "${KUBE_CONTEXT}" cluster-info --request-timeout=5s >/dev/null 2>&1 \
