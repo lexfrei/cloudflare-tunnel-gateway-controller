@@ -212,8 +212,8 @@ helm upgrade cloudflare-tunnel-gateway-controller \
 ## L7 Proxy Configuration
 
 The `proxy` section configures the v2 L7 reverse proxy deployment. When
-enabled, the proxy runs alongside cloudflared and provides full Gateway API
-HTTPRoute support (header matching, traffic splitting, filters).
+enabled, the proxy runs in-process inside cloudflared and provides full Gateway
+API HTTPRoute support (header matching, traffic splitting, filters).
 
 ### Core Settings
 

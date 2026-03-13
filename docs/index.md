@@ -16,8 +16,8 @@ resources (Gateway, HTTPRoute, GRPCRoute).
 
 ### v2: L7 Proxy Mode
 
-Version 2 introduces an L7 reverse proxy that runs alongside cloudflared,
-unlocking full Gateway API HTTPRoute feature support:
+Version 2 introduces an in-process L7 reverse proxy embedded inside cloudflared
+(via the `OverrideProxy` hook), unlocking full Gateway API HTTPRoute feature support:
 
 - **Header-based routing** -- match requests by HTTP header values
 - **Query parameter matching** -- route based on URL query parameters

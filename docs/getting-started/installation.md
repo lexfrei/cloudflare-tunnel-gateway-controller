@@ -76,8 +76,8 @@ proxy:
     key: tunnel-token
 ```
 
-The proxy runs as a separate deployment alongside the controller. For full
-configuration options and architecture details, see the
+The proxy runs in-process inside cloudflared via the `OverrideProxy` hook. For
+full configuration options and architecture details, see the
 [L7 Proxy Guide](../guides/l7-proxy.md).
 
 ## Verify Installation

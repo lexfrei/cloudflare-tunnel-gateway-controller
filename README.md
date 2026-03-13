@@ -31,9 +31,9 @@ Enables routing traffic through Cloudflare Tunnel using standard Gateway API res
 
 ## L7 Proxy (v2)
 
-The v2 mode deploys an in-cluster L7 reverse proxy alongside cloudflared, enabling full Gateway API HTTPRoute support beyond Cloudflare Tunnel's native capabilities. The proxy handles header matching, query parameter matching, HTTP method matching, request/response header modification, URL rewriting, request redirects, request mirroring, weighted traffic splitting, and regex path matching.
+The v2 mode runs an in-process L7 reverse proxy inside the cloudflared process via the `OverrideProxy` hook (using a [fork of cloudflared](https://github.com/lexfrei/cloudflared)). This enables full Gateway API HTTPRoute support beyond Cloudflare Tunnel's native capabilities: header matching, query parameter matching, HTTP method matching, request/response header modification, URL rewriting, request redirects, request mirroring, weighted traffic splitting, and regex path matching.
 
-In v2 mode, cloudflared forwards traffic to the local proxy, which applies all Gateway API routing rules before sending requests to backends. This removes the path matching and filtering limitations present in v1 (Cloudflare API-only) mode.
+All tunnel traffic is intercepted by the in-process proxy, which applies Gateway API routing rules before forwarding requests to backends. Cloudflare Tunnel API configuration is used only for DNS/edge routing — actual request routing is handled entirely by the proxy. This removes the path matching and filtering limitations present in v1 (Cloudflare API-only) mode.
 
 See [L7 Proxy Architecture](https://cf.k8s.lex.la/development/architecture/) for full details.
 
@@ -229,7 +229,7 @@ Planned features and improvements:
 
 | Issue | Description | Status |
 |-------|-------------|--------|
-| -- | L7 reverse proxy for full Gateway API HTTPRoute support (v2) | In Progress |
+| -- | L7 reverse proxy for full Gateway API HTTPRoute support (v2) | Done (v2.0.0) |
 | [#45](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/issues/45) | Weighted backend traffic splitting | Done (v2 proxy) |
 | [#44](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/issues/44) | Warning logs for partially ignored route configuration | Planned |
 | [#40](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/issues/40) | TCPRoute and TLSRoute support (GRPCRoute done in v0.8.0) | In Progress |

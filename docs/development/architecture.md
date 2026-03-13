@@ -266,8 +266,11 @@ flowchart LR
 
 ## v2 Architecture: L7 Proxy Data Plane
 
-v2 adds an L7 proxy that sits between cloudflared tunnel transport and backend
-services. This removes most Cloudflare Tunnel ingress API limitations.
+v2 adds an in-process L7 proxy embedded inside cloudflared via the
+`OverrideProxy` hook (using a [fork of cloudflared](https://github.com/lexfrei/cloudflared)).
+All tunnel traffic is intercepted by the proxy, which applies Gateway API
+routing rules before forwarding to backends. This removes most Cloudflare
+Tunnel ingress API limitations.
 
 ```mermaid
 flowchart TB
@@ -279,9 +282,11 @@ flowchart TB
         end
 
         subgraph DataPlane["Data Plane (N replicas)"]
-            CFD[cloudflared]
-            L7[L7 Proxy]
-            CAPI[Config API]
+            subgraph ProxyProcess["proxy binary (single process)"]
+                CFD[cloudflared tunnel transport]
+                L7[L7 Proxy via OverrideProxy]
+                CAPI[Config API]
+            end
         end
 
         SVC[Backend Services]
@@ -296,7 +301,7 @@ flowchart TB
     CTRL -->|PUT /config| CAPI
     CAPI -->|atomic swap| L7
     EDGE -->|QUIC tunnel| CFD
-    CFD --> L7
+    CFD -->|OverrideProxy| L7
     L7 -->|route| SVC
 ```
 
