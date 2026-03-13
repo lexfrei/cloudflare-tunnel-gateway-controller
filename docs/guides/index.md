@@ -35,7 +35,7 @@ and advanced configurations.
 
     ---
 
-    Enable the v2 L7 reverse proxy for full HTTPRoute support including
+    Enable the L7 reverse proxy for full HTTPRoute support including
     header matching, traffic splitting, and request filters.
 
     [:octicons-arrow-right-24: L7 Proxy](l7-proxy.md)

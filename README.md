@@ -19,21 +19,21 @@ Enables routing traffic through Cloudflare Tunnel using standard Gateway API res
 - Leader election for high availability deployments
 - Multi-arch container images (amd64, arm64)
 - Signed container images with cosign
-- L7 reverse proxy for full Gateway API HTTPRoute support (v2)
-- Header, query parameter, and HTTP method matching (v2)
-- Request/response header modification (v2)
-- URL rewriting and request redirects (v2)
-- Request mirroring (v2)
-- Weighted traffic splitting between backends (v2)
-- Regex path matching (v2)
+- In-process L7 reverse proxy for full Gateway API HTTPRoute support
+- Header, query parameter, and HTTP method matching
+- Request/response header modification
+- URL rewriting and request redirects
+- Request mirroring
+- Weighted traffic splitting between backends
+- Regex path matching
 
 > **Warning:** The controller assumes **exclusive ownership** of the tunnel configuration. It will remove any ingress rules not managed by HTTPRoute/GRPCRoute resources. Do not use a tunnel that has manually configured routes or is shared with other systems.
 
-## L7 Proxy (v2)
+## L7 Proxy
 
-The v2 mode runs an in-process L7 reverse proxy inside the cloudflared process via the `OverrideProxy` hook (using a [fork of cloudflared](https://github.com/lexfrei/cloudflared)). This enables full Gateway API HTTPRoute support beyond Cloudflare Tunnel's native capabilities: header matching, query parameter matching, HTTP method matching, request/response header modification, URL rewriting, request redirects, request mirroring, weighted traffic splitting, and regex path matching.
+The controller runs an in-process L7 reverse proxy inside the cloudflared process via the `OverrideProxy` hook (using a [fork of cloudflared](https://github.com/lexfrei/cloudflared)). This enables full Gateway API HTTPRoute support beyond Cloudflare Tunnel's native capabilities: header matching, query parameter matching, HTTP method matching, request/response header modification, URL rewriting, request redirects, request mirroring, weighted traffic splitting, and regex path matching.
 
-All tunnel traffic is intercepted by the in-process proxy, which applies Gateway API routing rules before forwarding requests to backends. Cloudflare Tunnel API configuration is used only for DNS/edge routing — actual request routing is handled entirely by the proxy. This removes the path matching and filtering limitations present in v1 (Cloudflare API-only) mode.
+All tunnel traffic is intercepted by the in-process proxy, which applies Gateway API routing rules before forwarding requests to backends. Cloudflare Tunnel API configuration is used only for DNS/edge routing — actual request routing is handled entirely by the proxy.
 
 See [L7 Proxy Architecture](https://cf.k8s.lex.la/development/architecture/) for full details.
 
@@ -156,11 +156,11 @@ The controller supports a subset of Gateway API fields that map to Cloudflare Tu
 | `spec.rules[].matches[].path` | ✅ | PathPrefix and Exact types |
 | `spec.rules[].backendRefs` | ✅ | Service name, namespace, port |
 | `spec.rules[].backendRefs[].namespace` | ✅ | Cross-namespace refs require ReferenceGrant |
-| `spec.rules[].matches[].headers` | ✅ (v2 proxy) | Requires v2 proxy mode |
-| `spec.rules[].matches[].queryParams` | ✅ (v2 proxy) | Requires v2 proxy mode |
-| `spec.rules[].matches[].method` | ✅ (v2 proxy) | Requires v2 proxy mode |
-| `spec.rules[].filters` | ✅ (v2 proxy) | Requires v2 proxy mode |
-| `spec.rules[].backendRefs[].weight` | ✅ (v2 proxy) | Requires v2 proxy mode; v1 uses highest weight only |
+| `spec.rules[].matches[].headers` | ✅ | Requires L7 proxy |
+| `spec.rules[].matches[].queryParams` | ✅ | Requires L7 proxy |
+| `spec.rules[].matches[].method` | ✅ | Requires L7 proxy |
+| `spec.rules[].filters` | ✅ | Requires L7 proxy |
+| `spec.rules[].backendRefs[].weight` | ✅ | Requires L7 proxy for traffic splitting; without proxy, highest weight wins |
 
 **GRPCRoute:**
 
@@ -171,22 +171,22 @@ The controller supports a subset of Gateway API fields that map to Cloudflare Tu
 | `spec.rules[].matches[].method.method` | ✅ | Maps to `/Service/Method` path |
 | `spec.rules[].backendRefs` | ✅ | Service name, namespace, port |
 | `spec.rules[].backendRefs[].namespace` | ✅ | Cross-namespace refs require ReferenceGrant |
-| `spec.rules[].matches[].headers` | ✅ (v2 proxy) | Requires v2 proxy mode |
-| `spec.rules[].filters` | ✅ (v2 proxy) | Requires v2 proxy mode |
-| `spec.rules[].backendRefs[].weight` | ✅ (v2 proxy) | Requires v2 proxy mode; v1 uses highest weight only |
+| `spec.rules[].matches[].headers` | ✅ | Requires L7 proxy |
+| `spec.rules[].filters` | ✅ | Requires L7 proxy |
+| `spec.rules[].backendRefs[].weight` | ✅ | Requires L7 proxy for traffic splitting; without proxy, highest weight wins |
 
-> **Load Balancing:** In v1 mode, Cloudflare Tunnel accepts only a single service URL per ingress rule; the controller uses the highest-weight backend. In v2 proxy mode, full weighted traffic splitting between multiple backends is supported. See [Limitations](https://cf.k8s.lex.la/gateway-api/limitations/#traffic-splitting-and-load-balancing) for details.
+> **Load Balancing:** Without the L7 proxy, the controller uses the highest-weight backend (Cloudflare Tunnel accepts only a single service URL per ingress rule). With the L7 proxy enabled, full weighted traffic splitting between multiple backends is supported. See [Limitations](https://cf.k8s.lex.la/gateway-api/limitations/#traffic-splitting-and-load-balancing) for details.
 
 ### Known Limitations
 
-These limitations apply to v1 mode (Cloudflare API). The v2 L7 proxy removes all path matching limitations.
+These limitations apply when running without the L7 proxy (Cloudflare API-only mode). The L7 proxy removes all path matching limitations.
 
 Cloudflare Tunnel has path matching behavior that differs from Gateway API:
 
 - **No true exact path match**: `/api` (Exact) will still match `/api/v1`
 - **Common prefix routing**: Paths like `/multi-v1`, `/multi-v2` may all route to the first backend
 
-**Workaround (v1 only):** Use distinct path prefixes (e.g., `/alpha`, `/beta`, `/gamma`), or switch to v2 proxy mode.
+**Workaround:** Use distinct path prefixes (e.g., `/alpha`, `/beta`, `/gamma`), or enable the L7 proxy.
 
 See [Path Matching Limitations](https://cf.k8s.lex.la/gateway-api/limitations/#cloudflare-tunnel-path-matching-limitations) for details.
 
@@ -229,8 +229,8 @@ Planned features and improvements:
 
 | Issue | Description | Status |
 |-------|-------------|--------|
-| -- | L7 reverse proxy for full Gateway API HTTPRoute support (v2) | Done (v2.0.0) |
-| [#45](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/issues/45) | Weighted backend traffic splitting | Done (v2 proxy) |
+| -- | L7 reverse proxy for full Gateway API HTTPRoute support | Done |
+| [#45](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/issues/45) | Weighted backend traffic splitting | Done |
 | [#44](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/issues/44) | Warning logs for partially ignored route configuration | Planned |
 | [#40](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/issues/40) | TCPRoute and TLSRoute support (GRPCRoute done in v0.8.0) | In Progress |
 | [#33](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/issues/33) | Auto-generate artifacthub.io/changes from git history | Planned |

@@ -264,9 +264,9 @@ flowchart LR
 | **Network** | Controller only needs egress to Cloudflare API |
 | **Container** | Runs as non-root user (UID 65534) with read-only filesystem |
 
-## v2 Architecture: L7 Proxy Data Plane
+## L7 Proxy Data Plane
 
-v2 adds an in-process L7 proxy embedded inside cloudflared via the
+An in-process L7 proxy is embedded inside cloudflared via the
 `OverrideProxy` hook (using a [fork of cloudflared](https://github.com/lexfrei/cloudflared)).
 All tunnel traffic is intercepted by the proxy, which applies Gateway API
 routing rules before forwarding to backends. This removes most Cloudflare
@@ -305,7 +305,7 @@ flowchart TB
     L7 -->|route| SVC
 ```
 
-### v2 Package Structure
+### L7 Proxy Package Structure
 
 ```text
 cmd/proxy/              # Proxy binary entry point
@@ -331,6 +331,6 @@ For detailed proxy internals, see [Proxy Architecture](proxy-architecture.md).
 - `sigs.k8s.io/controller-runtime` - Kubernetes controller framework
 - `sigs.k8s.io/gateway-api` - Gateway API types
 - `github.com/cloudflare/cloudflare-go/v4` - Cloudflare API client
-- `github.com/cloudflare/cloudflared` - Cloudflare tunnel daemon (v2 proxy)
+- `github.com/cloudflare/cloudflared` - Cloudflare tunnel daemon (L7 proxy)
 - `helm.sh/helm/v3` - Helm SDK for cloudflared deployment
 - `github.com/cockroachdb/errors` - Error wrapping

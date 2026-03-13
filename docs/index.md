@@ -14,10 +14,10 @@ resources (Gateway, HTTPRoute, GRPCRoute).
 - Multi-arch container images (amd64, arm64)
 - Signed container images with cosign
 
-### v2: L7 Proxy Mode
+### L7 Proxy
 
-Version 2 introduces an in-process L7 reverse proxy embedded inside cloudflared
-(via the `OverrideProxy` hook), unlocking full Gateway API HTTPRoute feature support:
+An in-process L7 reverse proxy embedded inside cloudflared (via the
+`OverrideProxy` hook) provides full Gateway API HTTPRoute feature support:
 
 - **Header-based routing** -- match requests by HTTP header values
 - **Query parameter matching** -- route based on URL query parameters

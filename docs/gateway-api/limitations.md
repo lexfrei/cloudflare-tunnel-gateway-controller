@@ -3,17 +3,17 @@
 This document describes the known limitations of the Cloudflare Tunnel Gateway
 Controller and provides workarounds where applicable.
 
-## Cloudflare Tunnel Constraints (v1 mode)
+## Cloudflare Tunnel API Constraints
 
-!!! note "v2 L7 Proxy removes most limitations"
-    When using the [L7 proxy](../guides/l7-proxy.md), all features marked
-    "Yes (v2)" below are fully supported. The proxy runs routing locally,
-    bypassing Cloudflare Tunnel ingress API limitations.
+!!! note "L7 Proxy removes most limitations"
+    When using the [L7 proxy](../guides/l7-proxy.md), all features below
+    are fully supported. The proxy handles routing in-process, bypassing
+    Cloudflare Tunnel ingress API limitations.
 
-The following table shows feature support across v1 (Cloudflare API) and v2
-(L7 Proxy) modes:
+The following features require the L7 proxy and are **not** available when
+running with only the Cloudflare Tunnel API:
 
-| Feature | v1 (CF API) | v2 (L7 Proxy) |
+| Feature | Without L7 proxy | With L7 proxy |
 | --- | --- | --- |
 | Exact path matching | No | Yes |
 | Header matching | No | Yes |

@@ -16,7 +16,7 @@ For Helm chart values, see [Helm Values](helm-values.md).
 | `--leader-elect` | `CF_LEADER_ELECT` | `false` | Enable leader election for HA |
 | `--leader-election-namespace` | `CF_LEADER_ELECTION_NAMESPACE` | | Namespace for leader election lease |
 | `--leader-election-name` | `CF_LEADER_ELECTION_NAME` | `cloudflare-tunnel-gateway-controller-leader` | Leader election lease name |
-| `--proxy-endpoints` | `CF_PROXY_ENDPOINTS` | | Proxy config API endpoints for v2 proxy sync |
+| `--proxy-endpoints` | `CF_PROXY_ENDPOINTS` | | Proxy config API endpoints for L7 proxy sync |
 | `--proxy-auth-token` | `CF_PROXY_AUTH_TOKEN` | | Bearer token for proxy config push authentication |
 
 ## Environment Variables

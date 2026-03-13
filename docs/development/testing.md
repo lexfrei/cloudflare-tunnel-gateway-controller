@@ -285,7 +285,7 @@ a working Cloudflare Tunnel.
 
 ### Running E2E Tests
 
-E2E tests run against a live kind cluster with Cloudflare Tunnel and v2 proxy deployed.
+E2E tests run against a live kind cluster with Cloudflare Tunnel and L7 proxy deployed.
 
 ```bash
 # Run all E2E tests
@@ -298,17 +298,17 @@ go test -v -race -tags e2e -count=1 -timeout=15m ./test/e2e/... \
 
 ### E2E Environment Variables
 
-| Variable | Default | Description |
-| --- | --- | --- |
-| `CONFORMANCE_TUNNEL_HOSTNAME` | `v2-test.lex.la` | Tunnel hostname for requests |
-| `CONFORMANCE_KUBE_CONTEXT` | `kind-v2-test` | kubectl context |
-| `CONFORMANCE_NAMESPACE` | `cloudflare-tunnel-system` | Controller namespace |
-| `CONFORMANCE_TEST_NAMESPACE` | `conformance-test` | Test resources namespace |
-| `CONFORMANCE_GATEWAY_NAME` | `conformance-gateway` | Gateway resource name |
+| Variable | Fallback | Default | Description |
+| --- | --- | --- | --- |
+| `E2E_TUNNEL_HOSTNAME` | `CONFORMANCE_TUNNEL_HOSTNAME` | `v2-test.lex.la` | Tunnel hostname for requests |
+| `E2E_KUBE_CONTEXT` | `CONFORMANCE_KUBE_CONTEXT` | `kind-v2-test` | kubectl context |
+| `E2E_NAMESPACE` | `CONFORMANCE_NAMESPACE` | `cloudflare-tunnel-system` | Controller namespace |
+| `E2E_TEST_NAMESPACE` | `CONFORMANCE_TEST_NAMESPACE` | `e2e-test` | Test resources namespace |
+| `E2E_GATEWAY_NAME` | `CONFORMANCE_GATEWAY_NAME` | `e2e-gateway` | Gateway resource name |
 
 ### E2E Test Coverage (24 tests)
 
-Tests cover both Cloudflare Tunnel and v2 proxy features:
+Tests cover both Cloudflare Tunnel and L7 proxy features:
 
 - **Core (4):** SimpleSameNamespace, PathPrefixMatching, ExactPathMatching, MatchingAcrossRoutes
 - **Extended (18):** HeaderMatching, MethodMatching, QueryParamMatching, Weight,
