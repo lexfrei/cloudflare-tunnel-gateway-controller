@@ -98,8 +98,8 @@ helm template test charts/cloudflare-tunnel-gateway-controller --values charts/c
 
 - `sigs.k8s.io/controller-runtime` - Kubernetes controller framework
 - `sigs.k8s.io/gateway-api` - Gateway API types
-- `github.com/cloudflare/cloudflare-go/v4` - Cloudflare API client
-- `helm.sh/helm/v3` - Helm SDK for cloudflared deployment
+- `github.com/cloudflare/cloudflare-go/v6` - Cloudflare API client
+- `helm.sh/helm/v4` - Helm SDK for cloudflared deployment
 - `github.com/cockroachdb/errors` - Error wrapping
 
 ### Cloudflared Fork
