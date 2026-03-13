@@ -12,4 +12,4 @@ mike==2.1.4
 
 # Required by material theme for social cards
 pillow==12.1.1
-cairosvg==2.8.2
+cairosvg==2.9.0
