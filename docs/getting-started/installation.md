@@ -64,7 +64,7 @@ helm install cloudflare-tunnel-gateway-controller \
 
 ### L7 Proxy Mode
 
-To enable the v2 L7 proxy (required for header matching, traffic splitting,
+To enable the L7 proxy (required for header matching, traffic splitting,
 and other advanced HTTPRoute features), add the `proxy` section to your
 values file:
 
@@ -76,8 +76,8 @@ proxy:
     key: tunnel-token
 ```
 
-The proxy runs as a separate deployment alongside the controller. For full
-configuration options and architecture details, see the
+The proxy runs in-process inside cloudflared via the `OverrideProxy` hook. For
+full configuration options and architecture details, see the
 [L7 Proxy Guide](../guides/l7-proxy.md).
 
 ## Verify Installation

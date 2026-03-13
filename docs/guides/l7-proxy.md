@@ -1,9 +1,8 @@
 # L7 Proxy Setup
 
-The L7 proxy is the v2 data plane for the Cloudflare Tunnel Gateway Controller.
-It runs cloudflared tunnel transport with a built-in reverse proxy that
-implements full Gateway API HTTPRoute routing locally, removing most limitations
-of the v1 Cloudflare Tunnel ingress API.
+The L7 proxy runs cloudflared tunnel transport with a built-in reverse proxy
+that implements full Gateway API HTTPRoute routing in-process, removing the
+limitations of the Cloudflare Tunnel ingress API.
 
 ## Architecture
 
@@ -83,21 +82,20 @@ helm upgrade --install cloudflare-tunnel \
 
 ## Features Enabled by L7 Proxy
 
-With the L7 proxy, the following Gateway API features are fully supported:
+The L7 proxy enables the following Gateway API features that are not available
+with only the Cloudflare Tunnel API:
 
-| Feature | v1 (CF API) | v2 (L7 Proxy) |
-| --- | --- | --- |
-| Exact path matching | No | Yes |
-| Header matching | No | Yes |
-| Query parameter matching | No | Yes |
-| HTTP method matching | No | Yes |
-| Request header modification | No | Yes |
-| Response header modification | No | Yes |
-| URL rewriting | No | Yes |
-| Request redirect | No | Yes |
-| Request mirroring | No | Yes |
-| Weighted traffic splitting | No | Yes |
-| Regex path matching | No | Yes |
+- Exact path matching
+- Header matching
+- Query parameter matching
+- HTTP method matching
+- Request header modification
+- Response header modification
+- URL rewriting
+- Request redirect
+- Request mirroring
+- Weighted traffic splitting
+- Regex path matching
 
 ## Configuration
 

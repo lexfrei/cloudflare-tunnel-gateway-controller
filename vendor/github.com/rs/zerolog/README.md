@@ -1,6 +1,6 @@
 # Zero Allocation JSON Logger
 
-[![godoc](http://img.shields.io/badge/godoc-reference-blue.svg?style=flat)](https://godoc.org/github.com/rs/zerolog) [![license](http://img.shields.io/badge/license-MIT-red.svg?style=flat)](https://raw.githubusercontent.com/rs/zerolog/master/LICENSE) [![Build Status](https://travis-ci.org/rs/zerolog.svg?branch=master)](https://travis-ci.org/rs/zerolog) [![Coverage](http://gocover.io/_badge/github.com/rs/zerolog)](http://gocover.io/github.com/rs/zerolog)
+[![godoc](http://img.shields.io/badge/godoc-reference-blue.svg?style=flat)](https://godoc.org/github.com/rs/zerolog) [![license](http://img.shields.io/badge/license-MIT-red.svg?style=flat)](https://raw.githubusercontent.com/rs/zerolog/master/LICENSE) [![Build Status](https://github.com/rs/zerolog/actions/workflows/test.yml/badge.svg)](https://github.com/rs/zerolog/actions/workflows/test.yml) [![Go Coverage](https://github.com/rs/zerolog/wiki/coverage.svg)](https://raw.githack.com/wiki/rs/zerolog/coverage.html)
 
 The zerolog package provides a fast and simple logger dedicated to JSON output.
 
@@ -18,16 +18,17 @@ Find out [who uses zerolog](https://github.com/rs/zerolog/wiki/Who-uses-zerolog)
 
 ## Features
 
-* Blazing fast
-* Low to zero allocation
-* Level logging
-* Sampling
-* Hooks
-* Contextual fields
-* `context.Context` integration
-* `net/http` helpers
-* JSON and CBOR encoding formats
-* Pretty logging for development
+* [Blazing fast](#benchmarks)
+* [Low to zero allocation](#benchmarks)
+* [Leveled logging](#leveled-logging)
+* [Sampling](#log-sampling)
+* [Hooks](#hooks)
+* [Contextual fields](#contextual-logging)
+* [`context.Context` integration](#contextcontext-integration)
+* [Integration with `net/http`](#integration-with-nethttp)
+* [JSON and CBOR encoding formats](#binary-encoding)
+* [Pretty logging for development](#pretty-logging)
+* [Error Logging (with optional Stacktrace)](#error-logging)
 
 ## Installation
 
@@ -51,8 +52,6 @@ import (
 
 func main() {
     // UNIX Time is faster and smaller than most timestamps
-    // If you set zerolog.TimeFieldFormat to an empty string,
-    // logs will write with UNIX time
     zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
 
     log.Print("hello world")
@@ -61,7 +60,7 @@ func main() {
 // Output: {"time":1516134303,"level":"debug","message":"hello world"}
 ```
 > Note: By default log writes to `os.Stderr`
-> Note: The default log level for `log.Print` is *debug*
+> Note: The default log level for `log.Print` is *trace*
 
 ### Contextual Logging
 
@@ -205,6 +204,80 @@ func main() {
 // Output: {"time":1494567715,"foo":"bar"}
 ```
 
+### Error Logging
+
+You can log errors using the `Err` method
+
+```go
+package main
+
+import (
+	"errors"
+
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
+)
+
+func main() {
+	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
+
+	err := errors.New("seems we have an error here")
+	log.Error().Err(err).Msg("")
+}
+
+// Output: {"level":"error","error":"seems we have an error here","time":1609085256}
+```
+
+> The default field name for errors is `error`, you can change this by setting `zerolog.ErrorFieldName` to meet your needs.
+
+#### Error Logging with Stacktrace
+
+Using `github.com/pkg/errors`, you can add a formatted stacktrace to your errors. 
+
+```go
+package main
+
+import (
+	"github.com/pkg/errors"
+	"github.com/rs/zerolog/pkgerrors"
+
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
+)
+
+func main() {
+	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
+	zerolog.ErrorStackMarshaler = pkgerrors.MarshalStack
+
+	err := outer()
+	log.Error().Stack().Err(err).Msg("")
+}
+
+func inner() error {
+	return errors.New("seems we have an error here")
+}
+
+func middle() error {
+	err := inner()
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func outer() error {
+	err := middle()
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+// Output: {"level":"error","stack":[{"func":"inner","line":"20","source":"errors.go"},{"func":"middle","line":"24","source":"errors.go"},{"func":"outer","line":"32","source":"errors.go"},{"func":"main","line":"15","source":"errors.go"},{"func":"main","line":"204","source":"proc.go"},{"func":"goexit","line":"1374","source":"asm_amd64.s"}],"error":"seems we have an error here","time":1609086683}
+```
+
+> zerolog.ErrorStackMarshaler must be set in order for the stack to output anything.
+
 #### Logging Fatal Messages
 
 ```go
@@ -234,6 +307,7 @@ func main() {
 ```
 
 > NOTE: Using `Msgf` generates one allocation even when the logger is disabled.
+
 
 ### Create logger instance to manage different outputs
 
@@ -292,6 +366,37 @@ log.Info().Str("foo", "bar").Msg("Hello World")
 // Output: 2006-01-02T15:04:05Z07:00 | INFO  | ***Hello World**** foo:BAR
 ```
 
+To use custom advanced formatting:
+
+```go
+output := zerolog.ConsoleWriter{Out: os.Stdout, NoColor: true,
+    PartsOrder:    []string{"level", "one", "two", "three", "message"},
+    FieldsExclude: []string{"one", "two", "three"}}
+output.FormatLevel = func(i interface{}) string { return strings.ToUpper(fmt.Sprintf("%-6s", i)) }
+output.FormatFieldName = func(i interface{}) string { return fmt.Sprintf("%s:", i) }
+output.FormatPartValueByName = func(i interface{}, s string) string {
+    var ret string
+    switch s {
+    case "one":
+        ret = strings.ToUpper(fmt.Sprintf("%s", i))
+    case "two":
+        ret = strings.ToLower(fmt.Sprintf("%s", i))
+    case "three":
+        ret = strings.ToLower(fmt.Sprintf("(%s)", i))
+    }
+    return ret
+}
+log := zerolog.New(output)
+
+log.Info().Str("foo", "bar").
+    Str("two", "TEST_TWO").
+    Str("one", "test_one").
+    Str("three", "test_three").
+    Msg("Hello World")
+    
+// Output: INFO   TEST_ONE test_two (test_three) Hello World foo:bar
+```
+
 ### Sub dictionary
 
 ```go
@@ -325,6 +430,8 @@ log.Logger = log.With().Str("foo", "bar").Logger()
 
 ### Add file and line number to log
 
+Equivalent of `Llongfile`:
+
 ```go
 log.Logger = log.With().Caller().Logger()
 log.Info().Msg("hello world")
@@ -332,10 +439,21 @@ log.Info().Msg("hello world")
 // Output: {"level": "info", "message": "hello world", "caller": "/go/src/your_project/some_file:21"}
 ```
 
+Equivalent of `Lshortfile`:
+
+```go
+zerolog.CallerMarshalFunc = func(pc uintptr, file string, line int) string {
+    return filepath.Base(file) + ":" + strconv.Itoa(line)
+}
+log.Logger = log.With().Caller().Logger()
+log.Info().Msg("hello world")
+
+// Output: {"level": "info", "message": "hello world", "caller": "some_file:21"}
+```
 
 ### Thread-safe, lock-free, non-blocking writer
 
-If your writer might be slow or not thread-safe and you need your log producers to never get slowed down by a slow writer, you can use a `diode.Writer` as follow:
+If your writer might be slow or not thread-safe and you need your log producers to never get slowed down by a slow writer, you can use a `diode.Writer` as follows:
 
 ```go
 wr := diode.NewWriter(os.Stdout, 1000, 10*time.Millisecond, func(missed int) {
@@ -416,6 +534,58 @@ stdlog.Print("hello world")
 // Output: {"foo":"bar","message":"hello world"}
 ```
 
+### context.Context integration
+
+Go contexts are commonly passed throughout Go code, and this can help you pass
+your Logger into places it might otherwise be hard to inject.  The `Logger`
+instance may be attached to Go context (`context.Context`) using
+`Logger.WithContext(ctx)` and extracted from it using `zerolog.Ctx(ctx)`.
+For example:
+
+```go
+func f() {
+    logger := zerolog.New(os.Stdout)
+    ctx := context.Background()
+
+    // Attach the Logger to the context.Context
+    ctx = logger.WithContext(ctx)
+    someFunc(ctx)
+}
+
+func someFunc(ctx context.Context) {
+    // Get Logger from the go Context. if it's nil, then
+    // `zerolog.DefaultContextLogger` is returned, if
+    // `DefaultContextLogger` is nil, then a disabled logger is returned.
+    logger := zerolog.Ctx(ctx)
+    logger.Info().Msg("Hello")
+}
+```
+
+A second form of `context.Context` integration allows you to pass the current
+context.Context into the logged event, and retrieve it from hooks.  This can be
+useful to log trace and span IDs or other information stored in the go context,
+and facilitates the unification of logging and tracing in some systems:
+
+```go
+type TracingHook struct{}
+
+func (h TracingHook) Run(e *zerolog.Event, level zerolog.Level, msg string) {
+    ctx := e.GetCtx()
+    spanId := getSpanIdFromContext(ctx) // as per your tracing framework
+    e.Str("span-id", spanId)
+}
+
+func f() {
+    // Setup the logger
+    logger := zerolog.New(os.Stdout)
+    logger = logger.Hook(TracingHook{})
+
+    ctx := context.Background()
+    // Use the Ctx function to make the context available to the hook
+    logger.Info().Ctx(ctx).Msg("Hello")
+}
+```
+
 ### Integration with `net/http`
 
 The `github.com/rs/zerolog/hlog` package provides some helpers to integrate zerolog with `http.Handler`.
@@ -486,11 +656,11 @@ func main() {
 // Output (Line 1: Console; Line 2: Stdout)
 // 12:36PM INF Hello World!
 // {"level":"info","time":"2019-11-07T12:36:38+03:00","message":"Hello World!"}
-``` 
+```
 
 ## Global Settings
 
-Some settings can be changed and will by applied to all loggers:
+Some settings can be changed and will be applied to all loggers:
 
 * `log.Logger`: You can set this value to customize the global logger (the one used by package level methods).
 * `zerolog.SetGlobalLevel`: Can raise the minimum level of all loggers. Call this with `zerolog.Disabled` to disable logging altogether (quiet mode).
@@ -499,10 +669,14 @@ Some settings can be changed and will by applied to all loggers:
 * `zerolog.LevelFieldName`: Can be set to customize level field name.
 * `zerolog.MessageFieldName`: Can be set to customize message field name.
 * `zerolog.ErrorFieldName`: Can be set to customize `Err` field name.
-* `zerolog.TimeFieldFormat`: Can be set to customize `Time` field value formatting. If set with `zerolog.TimeFormatUnix`, `zerolog.TimeFormatUnixMs` or `zerolog.TimeFormatUnixMicro`, times are formated as UNIX timestamp.
+* `zerolog.TimeFieldFormat`: Can be set to customize `Time` field value formatting. If set with `zerolog.TimeFormatUnix`, `zerolog.TimeFormatUnixMs` or `zerolog.TimeFormatUnixMicro`, times are formatted as UNIX timestamp.
 * `zerolog.DurationFieldUnit`: Can be set to customize the unit for time.Duration type fields added by `Dur` (default: `time.Millisecond`).
 * `zerolog.DurationFieldInteger`: If set to `true`, `Dur` fields are formatted as integers instead of floats (default: `false`). 
 * `zerolog.ErrorHandler`: Called whenever zerolog fails to write an event on its output. If not set, an error is printed on the stderr. This handler must be thread safe and non-blocking.
+* `zerolog.FloatingPointPrecision`: If set to a value other than -1, controls the number
+of digits when formatting float numbers in JSON. See
+[strconv.FormatFloat](https://pkg.go.dev/strconv#FormatFloat)
+for more details.
 
 ## Field Types
 
@@ -517,6 +691,7 @@ Some settings can be changed and will by applied to all loggers:
 ### Advanced Fields
 
 * `Err`: Takes an `error` and renders it as a string using the `zerolog.ErrorFieldName` field name.
+* `Func`: Run a `func` only if the level is enabled.
 * `Timestamp`: Inserts a timestamp field with `zerolog.TimestampFieldName` field name, formatted using `zerolog.TimeFieldFormat`.
 * `Time`: Adds a field with time formatted with `zerolog.TimeFieldFormat`.
 * `Dur`: Adds a field with `time.Duration`.
@@ -529,7 +704,7 @@ Most fields are also available in the slice format (`Strs` for `[]string`, `Errs
 
 ## Binary Encoding
 
-In addition to the default JSON encoding, `zerolog` can produce binary logs using [CBOR](http://cbor.io) encoding. The choice of encoding can be decided at compile time using the build tag `binary_log` as follows:
+In addition to the default JSON encoding, `zerolog` can produce binary logs using [CBOR](https://cbor.io) encoding. The choice of encoding can be decided at compile time using the build tag `binary_log` as follows:
 
 ```bash
 go build -tags binary_log .
@@ -541,10 +716,12 @@ with zerolog library is [CSD](https://github.com/toravir/csd/).
 ## Related Projects
 
 * [grpc-zerolog](https://github.com/cheapRoc/grpc-zerolog): Implementation of `grpclog.LoggerV2` interface using `zerolog`
+* [overlog](https://github.com/Trendyol/overlog): Implementation of `Mapped Diagnostic Context` interface using `zerolog`
+* [zerologr](https://github.com/go-logr/zerologr): Implementation of `logr.LogSink` interface using `zerolog`
 
 ## Benchmarks
 
-See [logbench](http://hackemist.com/logbench/) for more comprehensive and up-to-date benchmarks.
+See [logbench](http://bench.zerolog.io/) for more comprehensive and up-to-date benchmarks.
 
 All operations are allocation free (those numbers *include* JSON encoding):
 
@@ -605,6 +782,8 @@ Log a static string, without any context or `printf`-style templating:
 
 ## Caveats
 
+### Field duplication
+
 Note that zerolog does no de-duplication of fields. Using the same key multiple times creates multiple keys in final JSON:
 
 ```go
@@ -616,3 +795,19 @@ logger.Info().
 ```
 
 In this case, many consumers will take the last value, but this is not guaranteed; check yours if in doubt.
+
+### Concurrency safety
+
+Be careful when calling UpdateContext. It is not concurrency safe. Use the With method to create a child logger:
+
+```go
+func handler(w http.ResponseWriter, r *http.Request) {
+    // Create a child logger for concurrency safety
+    logger := log.Logger.With().Logger()
+
+    // Add context fields, for example User-Agent from HTTP headers
+    logger.UpdateContext(func(c zerolog.Context) zerolog.Context {
+        ...
+    })
+}
+```

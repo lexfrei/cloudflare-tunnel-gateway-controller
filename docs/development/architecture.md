@@ -264,10 +264,13 @@ flowchart LR
 | **Network** | Controller only needs egress to Cloudflare API |
 | **Container** | Runs as non-root user (UID 65534) with read-only filesystem |
 
-## v2 Architecture: L7 Proxy Data Plane
+## L7 Proxy Data Plane
 
-v2 adds an L7 proxy that sits between cloudflared tunnel transport and backend
-services. This removes most Cloudflare Tunnel ingress API limitations.
+An in-process L7 proxy is embedded inside cloudflared via the
+`OverrideProxy` hook (using a [fork of cloudflared](https://github.com/lexfrei/cloudflared)).
+All tunnel traffic is intercepted by the proxy, which applies Gateway API
+routing rules before forwarding to backends. This removes most Cloudflare
+Tunnel ingress API limitations.
 
 ```mermaid
 flowchart TB
@@ -279,9 +282,11 @@ flowchart TB
         end
 
         subgraph DataPlane["Data Plane (N replicas)"]
-            CFD[cloudflared]
-            L7[L7 Proxy]
-            CAPI[Config API]
+            subgraph ProxyProcess["proxy binary (single process)"]
+                CFD[cloudflared tunnel transport]
+                L7[L7 Proxy via OverrideProxy]
+                CAPI[Config API]
+            end
         end
 
         SVC[Backend Services]
@@ -296,11 +301,11 @@ flowchart TB
     CTRL -->|PUT /config| CAPI
     CAPI -->|atomic swap| L7
     EDGE -->|QUIC tunnel| CFD
-    CFD --> L7
+    CFD -->|OverrideProxy| L7
     L7 -->|route| SVC
 ```
 
-### v2 Package Structure
+### L7 Proxy Package Structure
 
 ```text
 cmd/proxy/              # Proxy binary entry point
@@ -326,6 +331,6 @@ For detailed proxy internals, see [Proxy Architecture](proxy-architecture.md).
 - `sigs.k8s.io/controller-runtime` - Kubernetes controller framework
 - `sigs.k8s.io/gateway-api` - Gateway API types
 - `github.com/cloudflare/cloudflare-go/v4` - Cloudflare API client
-- `github.com/cloudflare/cloudflared` - Cloudflare tunnel daemon (v2 proxy)
+- `github.com/cloudflare/cloudflared` - Cloudflare tunnel daemon (L7 proxy)
 - `helm.sh/helm/v3` - Helm SDK for cloudflared deployment
 - `github.com/cockroachdb/errors` - Error wrapping

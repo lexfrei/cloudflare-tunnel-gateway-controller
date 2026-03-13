@@ -138,7 +138,7 @@ spec:
           port: 80
 ```
 
-## Advanced Routing (v2 Proxy)
+## Advanced Routing
 
 When the L7 proxy is enabled, HTTPRoute gains full Gateway API matching and
 filter support. Below are short examples of the most common patterns.
