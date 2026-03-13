@@ -5,7 +5,7 @@ Gateway Controller.
 
 ## Prerequisites
 
-- Go 1.25.4 or later
+- Go 1.26.1 or later
 - kubectl configured with cluster access
 - A Kubernetes cluster (kind, minikube, or remote)
 - Cloudflare account with a tunnel configured
