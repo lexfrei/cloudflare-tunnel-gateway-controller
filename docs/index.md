@@ -22,9 +22,13 @@ An in-process L7 reverse proxy embedded inside cloudflared (via the
 - **Header-based routing** -- match requests by HTTP header values
 - **Query parameter matching** -- route based on URL query parameters
 - **HTTP method matching** -- differentiate GET, POST, PUT, and other methods
+- **Regex path matching** -- match paths using regular expressions
 - **Request/response header modification** -- add, set, or remove headers via filters
 - **Request redirects** -- configure HTTP redirects declaratively
+- **URL rewriting** -- rewrite hostname and/or path before forwarding
+- **Request mirroring** -- mirror traffic to a secondary backend
 - **Weighted traffic splitting** -- distribute traffic across backends by percentage
+- **Per-route timeouts** -- configure request timeouts per routing rule
 
 See the [L7 Proxy Guide](guides/l7-proxy.md) for setup and examples.
 
@@ -39,7 +43,7 @@ See the [L7 Proxy Guide](guides/l7-proxy.md) for setup and examples.
 
 ```bash
 # 1. Install Gateway API CRDs
-kubectl apply --filename https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.4.0/standard-install.yaml
+kubectl apply --filename https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.5.0/standard-install.yaml
 
 # 2. Install the controller
 helm install cloudflare-tunnel-gateway-controller \

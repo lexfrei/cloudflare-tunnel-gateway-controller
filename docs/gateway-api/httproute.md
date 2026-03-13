@@ -9,6 +9,7 @@ Cloudflare Tunnel.
 | --- | --- | --- |
 | Hostname matching | ✅ | Wildcard `*` supported |
 | Path matching (Prefix, Exact) | ✅ | |
+| Path matching (RegularExpression) | ✅ | Requires L7 proxy |
 | Header matching | ✅ | Requires L7 proxy |
 | Query parameter matching | ✅ | Requires L7 proxy |
 | HTTP method matching | ✅ | Requires L7 proxy |
@@ -17,6 +18,9 @@ Cloudflare Tunnel.
 | RequestHeaderModifier filter | ✅ | Requires L7 proxy |
 | ResponseHeaderModifier filter | ✅ | Requires L7 proxy |
 | RequestRedirect filter | ✅ | Requires L7 proxy |
+| URLRewrite filter | ✅ | Requires L7 proxy |
+| RequestMirror filter | ✅ | Requires L7 proxy |
+| Per-route timeouts | ✅ | Requires L7 proxy |
 | Cross-namespace routing | ✅ | Via ReferenceGrant |
 | ExternalName service backends | ✅ | |
 | GRPCRoute | ✅ | |
@@ -95,10 +99,11 @@ spec:
 
 ### Path Match Types
 
-| Type | Example | Cloudflare Rule | Description |
-|------|---------|-----------------|-------------|
-| `PathPrefix` | `/api` | `/api*` | Matches paths starting with value |
-| `Exact` | `/health` | `/health` | Matches exact path only |
+| Type | Description | Notes |
+| --- | --- | --- |
+| `PathPrefix` | Matches paths starting with value | |
+| `Exact` | Matches exact path only | |
+| `RegularExpression` | Matches path against regex pattern | Requires L7 proxy |
 
 ## Multiple Hostnames
 

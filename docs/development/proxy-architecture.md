@@ -36,7 +36,9 @@ internal/
 │   ├── router.go      # Routing table with atomic config swap
 │   ├── filter.go      # Request/response filters (headers, redirect, rewrite, mirror)
 │   ├── handler.go     # http.Handler: match → filter → proxy → response filter
-│   └── api.go         # Config API (PUT/GET /config, /healthz, /readyz)
+│   ├── api.go         # Config API (PUT/GET /config, /healthz, /readyz)
+│   ├── converter.go   # Gateway API HTTPRoute → proxy config conversion
+│   └── pusher.go      # HTTP client for pushing config to proxy replicas
 │
 ├── tunnel/
 │   ├── origin.go      # GatewayOriginProxy (connection.OriginProxy)

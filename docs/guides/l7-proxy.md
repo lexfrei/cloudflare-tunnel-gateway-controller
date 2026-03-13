@@ -96,6 +96,7 @@ with only the Cloudflare Tunnel API:
 - Request mirroring
 - Weighted traffic splitting
 - Regex path matching
+- Per-route timeouts
 
 ## Configuration
 
