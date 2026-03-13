@@ -25,28 +25,21 @@ on:
         required: false
 
 permissions:
-  contents: read
-  pages: write
-  id-token: write
+  contents: write
 
 concurrency:
   group: pages
   cancel-in-progress: false
 
 jobs:
-  build:
-    name: Build Documentation
+  deploy:
+    name: Deploy Documentation
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
-
-      - name: Checkout gh-pages branch
-        run: |
-          git fetch origin gh-pages:gh-pages || true
-          git worktree add gh-pages-branch gh-pages || git worktree add gh-pages-branch --detach
 
       - name: Setup Python
         uses: actions/setup-python@v6
@@ -79,41 +72,14 @@ jobs:
             echo "alias=" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Deploy with mike (local)
+      - name: Deploy with mike
         run: |
           VERSION="${{ steps.version.outputs.version }}"
           ALIAS="${{ steps.version.outputs.alias }}"
 
           if [[ -n "$ALIAS" ]]; then
-            mike deploy --update-aliases "${VERSION}" "${ALIAS}"
-            mike set-default latest
+            mike deploy --push --update-aliases "${VERSION}" "${ALIAS}"
+            mike set-default --push latest
           else
-            mike deploy "${VERSION}"
+            mike deploy --push "${VERSION}"
           fi
-
-      - name: Prepare artifact
-        run: |
-          # mike builds into gh-pages branch worktree
-          # Copy the built site to artifact directory
-          mkdir -p artifact
-          git -C gh-pages-branch checkout -- . 2>/dev/null || true
-          cp -r gh-pages-branch/* artifact/ 2>/dev/null || cp -r site/* artifact/
-          # Copy 404.html to root for GitHub Pages fallback redirects
-          cp docs/404.html artifact/404.html
-
-      - name: Upload artifact
-        uses: actions/upload-pages-artifact@v4
-        with:
-          path: artifact/
-
-  deploy:
-    name: Deploy to GitHub Pages
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
