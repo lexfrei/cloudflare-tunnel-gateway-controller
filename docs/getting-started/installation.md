@@ -105,8 +105,8 @@ kubectl get gatewayclass cloudflare-tunnel
 Expected output:
 
 ```text
-NAME               CONTROLLER                                   ACCEPTED   AGE
-cloudflare-tunnel  github.com/lexfrei/cloudflare-tunnel-gateway  True       30s
+NAME               CONTROLLER                          ACCEPTED   AGE
+cloudflare-tunnel  cf.k8s.lex.la/tunnel-controller     True       30s
 ```
 
 ## Upgrading

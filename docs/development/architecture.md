@@ -49,17 +49,26 @@ internal/
 │   └── resolver.go      # GatewayClassConfig resolution from Secrets
 ├── controller/
 │   ├── manager.go       # Controller manager setup, Run()
-│   ├── gateway_controller.go    # Gateway reconciler
-│   ├── httproute_controller.go  # HTTPRoute reconciler
-│   └── gatewayclassconfig_controller.go  # GatewayClassConfig reconciler
+│   ├── gateway_controller.go        # Gateway reconciler
+│   ├── gatewayclass_controller.go   # GatewayClass reconciler
+│   ├── gatewayclassconfig_controller.go  # GatewayClassConfig reconciler
+│   ├── httproute_controller.go      # HTTPRoute reconciler
+│   ├── grpcroute_controller.go      # GRPCRoute reconciler
+│   └── proxy_syncer.go             # Config push to proxy replicas
 ├── dns/
 │   └── detect.go        # Cluster domain auto-detection
 ├── ingress/
 │   └── builder.go       # HTTPRoute → Cloudflare rules conversion
-└── helm/
-    ├── manager.go       # Helm SDK operations
-    ├── cloudflared.go   # cloudflared chart values builder
-    └── constants.go     # Chart reference, timeouts
+├── helm/
+│   ├── manager.go       # Helm SDK operations
+│   ├── cloudflared.go   # cloudflared chart values builder
+│   └── constants.go     # Chart reference, timeouts
+├── referencegrant/      # ReferenceGrant validation for cross-namespace backends
+├── routebinding/        # Route-to-Gateway binding validation
+├── proxy/               # L7 reverse proxy (see Proxy Architecture doc)
+├── tunnel/              # cloudflared tunnel bootstrap and OriginProxy adapter
+├── logging/             # Structured logging helpers
+└── cfmetrics/           # Cloudflare metrics collection
 ```
 
 ## Components
@@ -316,7 +325,9 @@ internal/
 │   ├── router.go       # Routing table with atomic config swap
 │   ├── filter.go       # Request/response filters
 │   ├── handler.go      # HTTP handler pipeline
-│   └── api.go          # Config API server
+│   ├── api.go          # Config API server
+│   ├── converter.go    # Gateway API HTTPRoute → proxy config conversion
+│   └── pusher.go       # HTTP client for pushing config to proxy replicas
 ├── tunnel/             # cloudflared integration
 │   ├── origin.go       # OriginProxy implementation
 │   └── bootstrap.go    # Tunnel startup from token
@@ -330,7 +341,7 @@ For detailed proxy internals, see [Proxy Architecture](proxy-architecture.md).
 
 - `sigs.k8s.io/controller-runtime` - Kubernetes controller framework
 - `sigs.k8s.io/gateway-api` - Gateway API types
-- `github.com/cloudflare/cloudflare-go/v4` - Cloudflare API client
-- `github.com/cloudflare/cloudflared` - Cloudflare tunnel daemon (L7 proxy)
-- `helm.sh/helm/v3` - Helm SDK for cloudflared deployment
+- `github.com/cloudflare/cloudflare-go/v6` - Cloudflare API client
+- `github.com/lexfrei/cloudflared` - Cloudflare tunnel daemon (fork with OverrideProxy)
+- `helm.sh/helm/v4` - Helm SDK for cloudflared deployment
 - `github.com/cockroachdb/errors` - Error wrapping

@@ -5,7 +5,7 @@ Gateway Controller.
 
 ## Prerequisites
 
-- Go 1.25.4 or later
+- Go 1.26.1 or later
 - kubectl configured with cluster access
 - A Kubernetes cluster (kind, minikube, or remote)
 - Cloudflare account with a tunnel configured
@@ -80,7 +80,7 @@ export CF_API_TOKEN="your-api-token"
 
 ```bash
 # Install Gateway API CRDs
-kubectl apply --filename https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.4.0/standard-install.yaml
+kubectl apply --filename https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.5.0/standard-install.yaml
 
 # Create namespace
 kubectl create namespace cloudflare-tunnel-system

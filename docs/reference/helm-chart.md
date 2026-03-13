@@ -140,7 +140,7 @@ The chart installs the GatewayClassConfig CRD. Gateway API CRDs must be
 installed separately:
 
 ```bash
-kubectl apply --filename https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.4.0/standard-install.yaml
+kubectl apply --filename https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.5.0/standard-install.yaml
 ```
 
 ## Dependencies

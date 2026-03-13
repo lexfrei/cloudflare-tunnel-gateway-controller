@@ -17,12 +17,12 @@ The controller requires Gateway API Custom Resource Definitions (CRDs) to be
 installed in your cluster:
 
 ```bash
-kubectl apply --filename https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.4.0/standard-install.yaml
+kubectl apply --filename https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.5.0/standard-install.yaml
 ```
 
 !!! tip "Version Compatibility"
 
-    The controller is tested with Gateway API v1.4.0. Using older versions
+    The controller is tested with Gateway API v1.5.0. Using older versions
     may result in missing features or compatibility issues.
 
 ## Cloudflare Account

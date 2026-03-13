@@ -28,18 +28,18 @@ kubectl get httproute --all-namespaces
 
 **Common causes**:
 
-1. Empty or invalid `tunnelId`:
+1. Empty or invalid `tunnelID`:
 
     ```text
-    Error: at '/cloudflare/tunnelId': minLength: got 0, want 1
+    Error: at '/gatewayClassConfig/tunnelID': minLength: got 0, want 1
     ```
 
     **Solution**: Provide a valid Tunnel ID from Cloudflare Zero Trust Dashboard
 
-2. Invalid characters in `tunnelId`:
+2. Invalid characters in `tunnelID`:
 
     ```text
-    Error: at '/cloudflare/tunnelId': pattern mismatch
+    Error: at '/gatewayClassConfig/tunnelID': pattern mismatch
     ```
 
     **Solution**: Use only alphanumeric characters and hyphens
@@ -47,10 +47,11 @@ kubectl get httproute --all-namespaces
 3. Missing API credentials:
 
     ```text
-    Error: neither apiToken nor apiTokenSecretName provided
+    Error: cloudflareCredentialsSecretRef.name is required
     ```
 
-    **Solution**: Set either `cloudflare.apiToken` or `cloudflare.apiTokenSecretName`
+    **Solution**: Set `gatewayClassConfig.cloudflareCredentialsSecretRef.name` to
+    the name of a Secret containing an `api-token` key
 
 **Verification**:
 

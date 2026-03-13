@@ -127,22 +127,20 @@ Create standard [Gateway API](https://gateway-api.sigs.k8s.io/) HTTPRoute or GRP
 
 ### Supported Gateway Fields
 
-The controller processes Gateway resources but with important limitations due to Cloudflare Tunnel architecture:
-
 | Field | Supported | Notes |
-|-------|-----------|-------|
+| --- | --- | --- |
 | `spec.gatewayClassName` | ✅ | Must match controller's GatewayClass |
-| `spec.listeners` | ⚠️ | Accepted but not used for routing |
-| `spec.listeners[].name` | ✅ | Used for status reporting |
-| `spec.listeners[].protocol` | ❌ | Ignored; Cloudflare handles TLS |
-| `spec.listeners[].port` | ❌ | Ignored; Cloudflare uses 443/80 |
+| `spec.listeners` | ✅ | Fully processed for route binding and status |
+| `spec.listeners[].name` | ✅ | Used for route binding, status reporting, attached route counting |
+| `spec.listeners[].protocol` | ✅ | Used for route kind filtering (HTTP/HTTPS → HTTPRoute/GRPCRoute) |
+| `spec.listeners[].port` | ✅ | Used for route binding when route specifies a port |
 | `spec.listeners[].hostname` | ✅ | Routes must have intersecting hostnames |
-| `spec.listeners[].tls` | ❌ | Ignored; Cloudflare manages TLS |
+| `spec.listeners[].tls` | ✅ | CertificateRefs validated with ReferenceGrant support |
 | `spec.listeners[].allowedRoutes` | ✅ | Namespace (Same/All/Selector) and kind filtering |
 | `spec.addresses` | ❌ | Ignored; tunnel CNAME set in status |
 | `spec.infrastructure` | ❌ | Not implemented |
 
-> **Note:** Cloudflare Tunnel terminates TLS at Cloudflare edge. The Gateway `listeners` configuration (ports, protocols, TLS settings) is accepted for compatibility but has no effect on routing. All routing is determined by HTTPRoute/GRPCRoute hostnames and paths.
+> **Note:** Cloudflare Tunnel terminates TLS at its edge. TLS certificate references on listeners are validated (including cross-namespace ReferenceGrant checks), but the actual TLS termination is handled by Cloudflare, not by the controller.
 
 ### Supported Route Fields
 
@@ -153,7 +151,7 @@ The controller supports a subset of Gateway API fields that map to Cloudflare Tu
 | Field | Supported | Notes |
 |-------|-----------|-------|
 | `spec.hostnames` | ✅ | Wildcard `*` supported |
-| `spec.rules[].matches[].path` | ✅ | PathPrefix and Exact types |
+| `spec.rules[].matches[].path` | ✅ | PathPrefix, Exact; RegularExpression requires L7 proxy |
 | `spec.rules[].backendRefs` | ✅ | Service name, namespace, port |
 | `spec.rules[].backendRefs[].namespace` | ✅ | Cross-namespace refs require ReferenceGrant |
 | `spec.rules[].matches[].headers` | ✅ | Requires L7 proxy |
