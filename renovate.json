@@ -2,37 +2,24 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
     "config:recommended",
-    "docker:enableMajor",
-    ":separateMajorReleases",
+    ":semanticCommits",
+    ":semanticCommitTypeAll(chore)",
     ":prHourlyLimitNone",
     ":prConcurrentLimitNone"
   ],
   "labels": ["dependencies"],
-  "rangeStrategy": "pin",
+  "platformAutomerge": true,
+  "automergeStrategy": "squash",
   "postUpdateOptions": ["gomodTidy"],
   "packageRules": [
     {
-      "description": "Group all Go module updates",
-      "matchManagers": ["gomod"],
-      "groupName": "go modules",
-      "groupSlug": "go-modules"
-    },
-    {
-      "description": "Group all GitHub Actions updates",
-      "matchManagers": ["github-actions"],
-      "groupName": "github actions",
-      "groupSlug": "github-actions"
-    },
-    {
-      "description": "Automerge patch updates for Go modules",
-      "matchManagers": ["gomod"],
-      "matchUpdateTypes": ["patch"],
+      "description": "Automerge minor and patch updates",
+      "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
       "automerge": true
     },
     {
-      "description": "Automerge minor updates for GitHub Actions",
+      "description": "Automerge all GitHub Actions updates including major",
       "matchManagers": ["github-actions"],
-      "matchUpdateTypes": ["minor", "patch"],
       "automerge": true
     },
     {
