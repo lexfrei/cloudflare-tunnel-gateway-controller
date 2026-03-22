@@ -27,6 +27,13 @@
       "matchManagers": ["dockerfile"],
       "matchPackageNames": ["docker.io/library/golang"],
       "versioning": "docker"
+    },
+    {
+      "description": "Allow Renovate to bump go directive in go.mod",
+      "matchManagers": ["gomod"],
+      "matchDepNames": ["go"],
+      "matchDepTypes": ["golang"],
+      "rangeStrategy": "bump"
     }
   ],
   "customManagers": [
