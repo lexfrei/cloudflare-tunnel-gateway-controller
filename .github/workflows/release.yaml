@@ -26,7 +26,7 @@ jobs:
           fetch-depth: 0
 
       - name: Set up Helm
-        uses: azure/setup-helm@v4
+        uses: azure/setup-helm@v5
         with:
           # renovate: datasource=github-releases depName=helm/helm
           version: 'v3.19.2'
@@ -402,7 +402,7 @@ jobs:
           echo "Version: ${VERSION}"
 
       - name: Install Helm
-        uses: azure/setup-helm@v4
+        uses: azure/setup-helm@v5
         with:
           version: latest
 
