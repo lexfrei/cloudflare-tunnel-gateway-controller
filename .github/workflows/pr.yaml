@@ -92,7 +92,7 @@ jobs:
           go test -v -race -tags=envtest -coverprofile=coverage.out -covermode=atomic ./...
 
       - name: Upload coverage
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v6
         with:
           files: ./coverage.out
           flags: unittests
