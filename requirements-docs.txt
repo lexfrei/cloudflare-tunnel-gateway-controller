@@ -11,5 +11,5 @@ mkdocs-minify-plugin==0.8.0
 mike==2.1.4
 
 # Required by material theme for social cards
-pillow==12.1.1
+pillow==12.2.0
 cairosvg==2.9.0
