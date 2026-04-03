@@ -35,52 +35,55 @@ func NewSecurityTXTService(opts ...option.RequestOption) (r *SecurityTXTService)
 	return
 }
 
-// Updates security.txt
+// Updates the security.txt file configuration for a zone, which provides security
+// researchers with vulnerability reporting information.
 func (r *SecurityTXTService) Update(ctx context.Context, params SecurityTXTUpdateParams, opts ...option.RequestOption) (res *SecurityTXTUpdateResponse, err error) {
 	opts = slices.Concat(r.Options, opts)
 	if params.ZoneID.Value == "" {
 		err = errors.New("missing required zone_id parameter")
-		return
+		return nil, err
 	}
 	path := fmt.Sprintf("zones/%s/security-center/securitytxt", params.ZoneID)
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodPut, path, params, &res, opts...)
-	return
+	return res, err
 }
 
-// Deletes security.txt
+// Removes the security.txt file configuration for a zone. The
+// /.well-known/security.txt endpoint will no longer be served.
 func (r *SecurityTXTService) Delete(ctx context.Context, body SecurityTXTDeleteParams, opts ...option.RequestOption) (res *SecurityTXTDeleteResponse, err error) {
 	opts = slices.Concat(r.Options, opts)
 	if body.ZoneID.Value == "" {
 		err = errors.New("missing required zone_id parameter")
-		return
+		return nil, err
 	}
 	path := fmt.Sprintf("zones/%s/security-center/securitytxt", body.ZoneID)
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodDelete, path, nil, &res, opts...)
-	return
+	return res, err
 }
 
-// Retrieves security.txt
+// Retrieves the current security.txt file configuration for a zone, used for
+// security vulnerability reporting.
 func (r *SecurityTXTService) Get(ctx context.Context, query SecurityTXTGetParams, opts ...option.RequestOption) (res *SecurityTXTGetResponse, err error) {
 	var env SecurityTXTGetResponseEnvelope
 	opts = slices.Concat(r.Options, opts)
 	if query.ZoneID.Value == "" {
 		err = errors.New("missing required zone_id parameter")
-		return
+		return nil, err
 	}
 	path := fmt.Sprintf("zones/%s/security-center/securitytxt", query.ZoneID)
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodGet, path, nil, &env, opts...)
 	if err != nil {
-		return
+		return nil, err
 	}
 	res = &env.Result
-	return
+	return res, nil
 }
 
 type SecurityTXTUpdateResponse struct {
-	Errors   []SecurityTXTUpdateResponseError   `json:"errors,required"`
-	Messages []SecurityTXTUpdateResponseMessage `json:"messages,required"`
+	Errors   []SecurityTXTUpdateResponseError   `json:"errors" api:"required"`
+	Messages []SecurityTXTUpdateResponseMessage `json:"messages" api:"required"`
 	// Whether the API call was successful.
-	Success SecurityTXTUpdateResponseSuccess `json:"success,required"`
+	Success SecurityTXTUpdateResponseSuccess `json:"success" api:"required"`
 	JSON    securityTXTUpdateResponseJSON    `json:"-"`
 }
 
@@ -103,8 +106,8 @@ func (r securityTXTUpdateResponseJSON) RawJSON() string {
 }
 
 type SecurityTXTUpdateResponseError struct {
-	Code             int64                                 `json:"code,required"`
-	Message          string                                `json:"message,required"`
+	Code             int64                                 `json:"code" api:"required"`
+	Message          string                                `json:"message" api:"required"`
 	DocumentationURL string                                `json:"documentation_url"`
 	Source           SecurityTXTUpdateResponseErrorsSource `json:"source"`
 	JSON             securityTXTUpdateResponseErrorJSON    `json:"-"`
@@ -151,8 +154,8 @@ func (r securityTXTUpdateResponseErrorsSourceJSON) RawJSON() string {
 }
 
 type SecurityTXTUpdateResponseMessage struct {
-	Code             int64                                   `json:"code,required"`
-	Message          string                                  `json:"message,required"`
+	Code             int64                                   `json:"code" api:"required"`
+	Message          string                                  `json:"message" api:"required"`
 	DocumentationURL string                                  `json:"documentation_url"`
 	Source           SecurityTXTUpdateResponseMessagesSource `json:"source"`
 	JSON             securityTXTUpdateResponseMessageJSON    `json:"-"`
@@ -214,10 +217,10 @@ func (r SecurityTXTUpdateResponseSuccess) IsKnown() bool {
 }
 
 type SecurityTXTDeleteResponse struct {
-	Errors   []SecurityTXTDeleteResponseError   `json:"errors,required"`
-	Messages []SecurityTXTDeleteResponseMessage `json:"messages,required"`
+	Errors   []SecurityTXTDeleteResponseError   `json:"errors" api:"required"`
+	Messages []SecurityTXTDeleteResponseMessage `json:"messages" api:"required"`
 	// Whether the API call was successful.
-	Success SecurityTXTDeleteResponseSuccess `json:"success,required"`
+	Success SecurityTXTDeleteResponseSuccess `json:"success" api:"required"`
 	JSON    securityTXTDeleteResponseJSON    `json:"-"`
 }
 
@@ -240,8 +243,8 @@ func (r securityTXTDeleteResponseJSON) RawJSON() string {
 }
 
 type SecurityTXTDeleteResponseError struct {
-	Code             int64                                 `json:"code,required"`
-	Message          string                                `json:"message,required"`
+	Code             int64                                 `json:"code" api:"required"`
+	Message          string                                `json:"message" api:"required"`
 	DocumentationURL string                                `json:"documentation_url"`
 	Source           SecurityTXTDeleteResponseErrorsSource `json:"source"`
 	JSON             securityTXTDeleteResponseErrorJSON    `json:"-"`
@@ -288,8 +291,8 @@ func (r securityTXTDeleteResponseErrorsSourceJSON) RawJSON() string {
 }
 
 type SecurityTXTDeleteResponseMessage struct {
-	Code             int64                                   `json:"code,required"`
-	Message          string                                  `json:"message,required"`
+	Code             int64                                   `json:"code" api:"required"`
+	Message          string                                  `json:"message" api:"required"`
 	DocumentationURL string                                  `json:"documentation_url"`
 	Source           SecurityTXTDeleteResponseMessagesSource `json:"source"`
 	JSON             securityTXTDeleteResponseMessageJSON    `json:"-"`
@@ -359,7 +362,7 @@ type SecurityTXTGetResponse struct {
 	Expires            time.Time                  `json:"expires" format:"date-time"`
 	Hiring             []string                   `json:"hiring" format:"uri"`
 	Policy             []string                   `json:"policy" format:"uri"`
-	PreferredLanguages string                     `json:"preferredLanguages"`
+	PreferredLanguages string                     `json:"preferred_languages"`
 	JSON               securityTXTGetResponseJSON `json:"-"`
 }
 
@@ -389,7 +392,7 @@ func (r securityTXTGetResponseJSON) RawJSON() string {
 
 type SecurityTXTUpdateParams struct {
 	// Identifier.
-	ZoneID             param.Field[string]    `path:"zone_id,required"`
+	ZoneID             param.Field[string]    `path:"zone_id" api:"required"`
 	Acknowledgments    param.Field[[]string]  `json:"acknowledgments" format:"uri"`
 	Canonical          param.Field[[]string]  `json:"canonical" format:"uri"`
 	Contact            param.Field[[]string]  `json:"contact" format:"uri"`
@@ -398,7 +401,7 @@ type SecurityTXTUpdateParams struct {
 	Expires            param.Field[time.Time] `json:"expires" format:"date-time"`
 	Hiring             param.Field[[]string]  `json:"hiring" format:"uri"`
 	Policy             param.Field[[]string]  `json:"policy" format:"uri"`
-	PreferredLanguages param.Field[string]    `json:"preferredLanguages"`
+	PreferredLanguages param.Field[string]    `json:"preferred_languages"`
 }
 
 func (r SecurityTXTUpdateParams) MarshalJSON() (data []byte, err error) {
@@ -407,19 +410,19 @@ func (r SecurityTXTUpdateParams) MarshalJSON() (data []byte, err error) {
 
 type SecurityTXTDeleteParams struct {
 	// Identifier.
-	ZoneID param.Field[string] `path:"zone_id,required"`
+	ZoneID param.Field[string] `path:"zone_id" api:"required"`
 }
 
 type SecurityTXTGetParams struct {
 	// Identifier.
-	ZoneID param.Field[string] `path:"zone_id,required"`
+	ZoneID param.Field[string] `path:"zone_id" api:"required"`
 }
 
 type SecurityTXTGetResponseEnvelope struct {
-	Errors   []SecurityTXTGetResponseEnvelopeErrors   `json:"errors,required"`
-	Messages []SecurityTXTGetResponseEnvelopeMessages `json:"messages,required"`
+	Errors   []SecurityTXTGetResponseEnvelopeErrors   `json:"errors" api:"required"`
+	Messages []SecurityTXTGetResponseEnvelopeMessages `json:"messages" api:"required"`
 	// Whether the API call was successful.
-	Success SecurityTXTGetResponseEnvelopeSuccess `json:"success,required"`
+	Success SecurityTXTGetResponseEnvelopeSuccess `json:"success" api:"required"`
 	Result  SecurityTXTGetResponse                `json:"result"`
 	JSON    securityTXTGetResponseEnvelopeJSON    `json:"-"`
 }
@@ -444,8 +447,8 @@ func (r securityTXTGetResponseEnvelopeJSON) RawJSON() string {
 }
 
 type SecurityTXTGetResponseEnvelopeErrors struct {
-	Code             int64                                      `json:"code,required"`
-	Message          string                                     `json:"message,required"`
+	Code             int64                                      `json:"code" api:"required"`
+	Message          string                                     `json:"message" api:"required"`
 	DocumentationURL string                                     `json:"documentation_url"`
 	Source           SecurityTXTGetResponseEnvelopeErrorsSource `json:"source"`
 	JSON             securityTXTGetResponseEnvelopeErrorsJSON   `json:"-"`
@@ -492,8 +495,8 @@ func (r securityTXTGetResponseEnvelopeErrorsSourceJSON) RawJSON() string {
 }
 
 type SecurityTXTGetResponseEnvelopeMessages struct {
-	Code             int64                                        `json:"code,required"`
-	Message          string                                       `json:"message,required"`
+	Code             int64                                        `json:"code" api:"required"`
+	Message          string                                       `json:"message" api:"required"`
 	DocumentationURL string                                       `json:"documentation_url"`
 	Source           SecurityTXTGetResponseEnvelopeMessagesSource `json:"source"`
 	JSON             securityTXTGetResponseEnvelopeMessagesJSON   `json:"-"`

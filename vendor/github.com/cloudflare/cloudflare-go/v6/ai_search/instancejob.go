@@ -38,24 +38,24 @@ func NewInstanceJobService(opts ...option.RequestOption) (r *InstanceJobService)
 }
 
 // Creates a new indexing job for an AI Search instance.
-func (r *InstanceJobService) New(ctx context.Context, id string, body InstanceJobNewParams, opts ...option.RequestOption) (res *InstanceJobNewResponse, err error) {
+func (r *InstanceJobService) New(ctx context.Context, id string, params InstanceJobNewParams, opts ...option.RequestOption) (res *InstanceJobNewResponse, err error) {
 	var env InstanceJobNewResponseEnvelope
 	opts = slices.Concat(r.Options, opts)
-	if body.AccountID.Value == "" {
+	if params.AccountID.Value == "" {
 		err = errors.New("missing required account_id parameter")
-		return
+		return nil, err
 	}
 	if id == "" {
 		err = errors.New("missing required id parameter")
-		return
+		return nil, err
 	}
-	path := fmt.Sprintf("accounts/%s/ai-search/instances/%s/jobs", body.AccountID, id)
-	err = requestconfig.ExecuteNewRequest(ctx, http.MethodPost, path, nil, &env, opts...)
+	path := fmt.Sprintf("accounts/%s/ai-search/instances/%s/jobs", params.AccountID, id)
+	err = requestconfig.ExecuteNewRequest(ctx, http.MethodPost, path, params, &env, opts...)
 	if err != nil {
-		return
+		return nil, err
 	}
 	res = &env.Result
-	return
+	return res, nil
 }
 
 // Lists indexing jobs for an AI Search instance.
@@ -65,11 +65,11 @@ func (r *InstanceJobService) List(ctx context.Context, id string, params Instanc
 	opts = append([]option.RequestOption{option.WithResponseInto(&raw)}, opts...)
 	if params.AccountID.Value == "" {
 		err = errors.New("missing required account_id parameter")
-		return
+		return nil, err
 	}
 	if id == "" {
 		err = errors.New("missing required id parameter")
-		return
+		return nil, err
 	}
 	path := fmt.Sprintf("accounts/%s/ai-search/instances/%s/jobs", params.AccountID, id)
 	cfg, err := requestconfig.NewRequestConfig(ctx, http.MethodGet, path, params, &res, opts...)
@@ -95,23 +95,23 @@ func (r *InstanceJobService) Get(ctx context.Context, id string, jobID string, q
 	opts = slices.Concat(r.Options, opts)
 	if query.AccountID.Value == "" {
 		err = errors.New("missing required account_id parameter")
-		return
+		return nil, err
 	}
 	if id == "" {
 		err = errors.New("missing required id parameter")
-		return
+		return nil, err
 	}
 	if jobID == "" {
 		err = errors.New("missing required job_id parameter")
-		return
+		return nil, err
 	}
 	path := fmt.Sprintf("accounts/%s/ai-search/instances/%s/jobs/%s", query.AccountID, id, jobID)
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodGet, path, nil, &env, opts...)
 	if err != nil {
-		return
+		return nil, err
 	}
 	res = &env.Result
-	return
+	return res, nil
 }
 
 // Lists log entries for an AI Search indexing job.
@@ -120,33 +120,34 @@ func (r *InstanceJobService) Logs(ctx context.Context, id string, jobID string, 
 	opts = slices.Concat(r.Options, opts)
 	if params.AccountID.Value == "" {
 		err = errors.New("missing required account_id parameter")
-		return
+		return nil, err
 	}
 	if id == "" {
 		err = errors.New("missing required id parameter")
-		return
+		return nil, err
 	}
 	if jobID == "" {
 		err = errors.New("missing required job_id parameter")
-		return
+		return nil, err
 	}
 	path := fmt.Sprintf("accounts/%s/ai-search/instances/%s/jobs/%s/logs", params.AccountID, id, jobID)
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodGet, path, params, &env, opts...)
 	if err != nil {
-		return
+		return nil, err
 	}
 	res = &env.Result
-	return
+	return res, nil
 }
 
 type InstanceJobNewResponse struct {
-	ID         string                       `json:"id,required"`
-	Source     InstanceJobNewResponseSource `json:"source,required"`
-	EndReason  string                       `json:"end_reason"`
-	EndedAt    string                       `json:"ended_at"`
-	LastSeenAt string                       `json:"last_seen_at"`
-	StartedAt  string                       `json:"started_at"`
-	JSON       instanceJobNewResponseJSON   `json:"-"`
+	ID          string                       `json:"id" api:"required"`
+	Source      InstanceJobNewResponseSource `json:"source" api:"required"`
+	Description string                       `json:"description"`
+	EndReason   string                       `json:"end_reason"`
+	EndedAt     string                       `json:"ended_at"`
+	LastSeenAt  string                       `json:"last_seen_at"`
+	StartedAt   string                       `json:"started_at"`
+	JSON        instanceJobNewResponseJSON   `json:"-"`
 }
 
 // instanceJobNewResponseJSON contains the JSON metadata for the struct
@@ -154,6 +155,7 @@ type InstanceJobNewResponse struct {
 type instanceJobNewResponseJSON struct {
 	ID          apijson.Field
 	Source      apijson.Field
+	Description apijson.Field
 	EndReason   apijson.Field
 	EndedAt     apijson.Field
 	LastSeenAt  apijson.Field
@@ -186,13 +188,14 @@ func (r InstanceJobNewResponseSource) IsKnown() bool {
 }
 
 type InstanceJobListResponse struct {
-	ID         string                        `json:"id,required"`
-	Source     InstanceJobListResponseSource `json:"source,required"`
-	EndReason  string                        `json:"end_reason"`
-	EndedAt    string                        `json:"ended_at"`
-	LastSeenAt string                        `json:"last_seen_at"`
-	StartedAt  string                        `json:"started_at"`
-	JSON       instanceJobListResponseJSON   `json:"-"`
+	ID          string                        `json:"id" api:"required"`
+	Source      InstanceJobListResponseSource `json:"source" api:"required"`
+	Description string                        `json:"description"`
+	EndReason   string                        `json:"end_reason"`
+	EndedAt     string                        `json:"ended_at"`
+	LastSeenAt  string                        `json:"last_seen_at"`
+	StartedAt   string                        `json:"started_at"`
+	JSON        instanceJobListResponseJSON   `json:"-"`
 }
 
 // instanceJobListResponseJSON contains the JSON metadata for the struct
@@ -200,6 +203,7 @@ type InstanceJobListResponse struct {
 type instanceJobListResponseJSON struct {
 	ID          apijson.Field
 	Source      apijson.Field
+	Description apijson.Field
 	EndReason   apijson.Field
 	EndedAt     apijson.Field
 	LastSeenAt  apijson.Field
@@ -232,13 +236,14 @@ func (r InstanceJobListResponseSource) IsKnown() bool {
 }
 
 type InstanceJobGetResponse struct {
-	ID         string                       `json:"id,required"`
-	Source     InstanceJobGetResponseSource `json:"source,required"`
-	EndReason  string                       `json:"end_reason"`
-	EndedAt    string                       `json:"ended_at"`
-	LastSeenAt string                       `json:"last_seen_at"`
-	StartedAt  string                       `json:"started_at"`
-	JSON       instanceJobGetResponseJSON   `json:"-"`
+	ID          string                       `json:"id" api:"required"`
+	Source      InstanceJobGetResponseSource `json:"source" api:"required"`
+	Description string                       `json:"description"`
+	EndReason   string                       `json:"end_reason"`
+	EndedAt     string                       `json:"ended_at"`
+	LastSeenAt  string                       `json:"last_seen_at"`
+	StartedAt   string                       `json:"started_at"`
+	JSON        instanceJobGetResponseJSON   `json:"-"`
 }
 
 // instanceJobGetResponseJSON contains the JSON metadata for the struct
@@ -246,6 +251,7 @@ type InstanceJobGetResponse struct {
 type instanceJobGetResponseJSON struct {
 	ID          apijson.Field
 	Source      apijson.Field
+	Description apijson.Field
 	EndReason   apijson.Field
 	EndedAt     apijson.Field
 	LastSeenAt  apijson.Field
@@ -278,10 +284,10 @@ func (r InstanceJobGetResponseSource) IsKnown() bool {
 }
 
 type InstanceJobLogsResponse struct {
-	ID          int64                       `json:"id,required"`
-	CreatedAt   float64                     `json:"created_at,required"`
-	Message     string                      `json:"message,required"`
-	MessageType int64                       `json:"message_type,required"`
+	ID          int64                       `json:"id" api:"required"`
+	CreatedAt   float64                     `json:"created_at" api:"required"`
+	Message     string                      `json:"message" api:"required"`
+	MessageType int64                       `json:"message_type" api:"required"`
 	JSON        instanceJobLogsResponseJSON `json:"-"`
 }
 
@@ -305,12 +311,17 @@ func (r instanceJobLogsResponseJSON) RawJSON() string {
 }
 
 type InstanceJobNewParams struct {
-	AccountID param.Field[string] `path:"account_id,required"`
+	AccountID   param.Field[string] `path:"account_id" api:"required"`
+	Description param.Field[string] `json:"description"`
+}
+
+func (r InstanceJobNewParams) MarshalJSON() (data []byte, err error) {
+	return apijson.MarshalRoot(r)
 }
 
 type InstanceJobNewResponseEnvelope struct {
-	Result  InstanceJobNewResponse             `json:"result,required"`
-	Success bool                               `json:"success,required"`
+	Result  InstanceJobNewResponse             `json:"result" api:"required"`
+	Success bool                               `json:"success" api:"required"`
 	JSON    instanceJobNewResponseEnvelopeJSON `json:"-"`
 }
 
@@ -332,7 +343,7 @@ func (r instanceJobNewResponseEnvelopeJSON) RawJSON() string {
 }
 
 type InstanceJobListParams struct {
-	AccountID param.Field[string] `path:"account_id,required"`
+	AccountID param.Field[string] `path:"account_id" api:"required"`
 	Page      param.Field[int64]  `query:"page"`
 	PerPage   param.Field[int64]  `query:"per_page"`
 }
@@ -346,12 +357,12 @@ func (r InstanceJobListParams) URLQuery() (v url.Values) {
 }
 
 type InstanceJobGetParams struct {
-	AccountID param.Field[string] `path:"account_id,required"`
+	AccountID param.Field[string] `path:"account_id" api:"required"`
 }
 
 type InstanceJobGetResponseEnvelope struct {
-	Result  InstanceJobGetResponse             `json:"result,required"`
-	Success bool                               `json:"success,required"`
+	Result  InstanceJobGetResponse             `json:"result" api:"required"`
+	Success bool                               `json:"success" api:"required"`
 	JSON    instanceJobGetResponseEnvelopeJSON `json:"-"`
 }
 
@@ -373,7 +384,7 @@ func (r instanceJobGetResponseEnvelopeJSON) RawJSON() string {
 }
 
 type InstanceJobLogsParams struct {
-	AccountID param.Field[string] `path:"account_id,required"`
+	AccountID param.Field[string] `path:"account_id" api:"required"`
 	Page      param.Field[int64]  `query:"page"`
 	PerPage   param.Field[int64]  `query:"per_page"`
 }
@@ -387,9 +398,9 @@ func (r InstanceJobLogsParams) URLQuery() (v url.Values) {
 }
 
 type InstanceJobLogsResponseEnvelope struct {
-	Result     []InstanceJobLogsResponse                 `json:"result,required"`
-	ResultInfo InstanceJobLogsResponseEnvelopeResultInfo `json:"result_info,required"`
-	Success    bool                                      `json:"success,required"`
+	Result     []InstanceJobLogsResponse                 `json:"result" api:"required"`
+	ResultInfo InstanceJobLogsResponseEnvelopeResultInfo `json:"result_info" api:"required"`
+	Success    bool                                      `json:"success" api:"required"`
 	JSON       instanceJobLogsResponseEnvelopeJSON       `json:"-"`
 }
 
@@ -412,10 +423,10 @@ func (r instanceJobLogsResponseEnvelopeJSON) RawJSON() string {
 }
 
 type InstanceJobLogsResponseEnvelopeResultInfo struct {
-	Count      int64                                         `json:"count,required"`
-	Page       int64                                         `json:"page,required"`
-	PerPage    int64                                         `json:"per_page,required"`
-	TotalCount int64                                         `json:"total_count,required"`
+	Count      int64                                         `json:"count" api:"required"`
+	Page       int64                                         `json:"page" api:"required"`
+	PerPage    int64                                         `json:"per_page" api:"required"`
+	TotalCount int64                                         `json:"total_count" api:"required"`
 	JSON       instanceJobLogsResponseEnvelopeResultInfoJSON `json:"-"`
 }
 

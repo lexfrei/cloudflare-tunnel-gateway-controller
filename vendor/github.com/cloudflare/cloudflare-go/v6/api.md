@@ -26,6 +26,7 @@
 - <a href="https://pkg.go.dev/github.com/cloudflare/cloudflare-go/v6/shared">shared</a>.<a href="https://pkg.go.dev/github.com/cloudflare/cloudflare-go/v6/shared#RatePlan">RatePlan</a>
 - <a href="https://pkg.go.dev/github.com/cloudflare/cloudflare-go/v6/shared">shared</a>.<a href="https://pkg.go.dev/github.com/cloudflare/cloudflare-go/v6/shared#ResponseInfo">ResponseInfo</a>
 - <a href="https://pkg.go.dev/github.com/cloudflare/cloudflare-go/v6/shared">shared</a>.<a href="https://pkg.go.dev/github.com/cloudflare/cloudflare-go/v6/shared#Role">Role</a>
+- <a href="https://pkg.go.dev/github.com/cloudflare/cloudflare-go/v6/shared">shared</a>.<a href="https://pkg.go.dev/github.com/cloudflare/cloudflare-go/v6/shared#SortDirection">SortDirection</a>
 - <a href="https://pkg.go.dev/github.com/cloudflare/cloudflare-go/v6/shared">shared</a>.<a href="https://pkg.go.dev/github.com/cloudflare/cloudflare-go/v6/shared#Subscription">Subscription</a>
 - <a href="https://pkg.go.dev/github.com/cloudflare/cloudflare-go/v6/shared">shared</a>.<a href="https://pkg.go.dev/github.com/cloudflare/cloudflare-go/v6/shared#Token">Token</a>
 - <a href="https://pkg.go.dev/github.com/cloudflare/cloudflare-go/v6/shared">shared</a>.<a href="https://pkg.go.dev/github.com/cloudflare/cloudflare-go/v6/shared#TokenConditionCIDRList">TokenConditionCIDRList</a>
@@ -73,6 +74,8 @@
 # [EmailSecurity](email_security/api.md)
 
 # [EmailRouting](email_routing/api.md)
+
+# [EmailSending](email_sending/api.md)
 
 # [Filters](filters/api.md)
 
@@ -182,6 +185,8 @@
 
 # [OriginPostQuantumEncryption](origin_post_quantum_encryption/api.md)
 
+# [GoogleTagGateway](google_tag_gateway/api.md)
+
 # [Zaraz](zaraz/api.md)
 
 # [Speed](speed/api.md)
@@ -211,6 +216,8 @@
 # [Workflows](workflows/api.md)
 
 # [ResourceSharing](resource_sharing/api.md)
+
+# [ResourceTagging](resource_tagging/api.md)
 
 # [LeakedCredentialChecks](leaked_credential_checks/api.md)
 

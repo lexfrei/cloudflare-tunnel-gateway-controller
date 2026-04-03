@@ -42,44 +42,44 @@ func NewCfInterconnectService(opts ...option.RequestOption) (r *CfInterconnectSe
 func (r *CfInterconnectService) Update(ctx context.Context, cfInterconnectID string, params CfInterconnectUpdateParams, opts ...option.RequestOption) (res *CfInterconnectUpdateResponse, err error) {
 	var env CfInterconnectUpdateResponseEnvelope
 	if params.XMagicNewHcTarget.Present {
-		opts = append(opts, option.WithHeader("x-magic-new-hc-target", fmt.Sprintf("%s", params.XMagicNewHcTarget)))
+		opts = append(opts, option.WithHeader("x-magic-new-hc-target", fmt.Sprintf("%v", params.XMagicNewHcTarget)))
 	}
 	opts = slices.Concat(r.Options, opts)
 	if params.AccountID.Value == "" {
 		err = errors.New("missing required account_id parameter")
-		return
+		return nil, err
 	}
 	if cfInterconnectID == "" {
 		err = errors.New("missing required cf_interconnect_id parameter")
-		return
+		return nil, err
 	}
 	path := fmt.Sprintf("accounts/%s/magic/cf_interconnects/%s", params.AccountID, cfInterconnectID)
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodPut, path, params, &env, opts...)
 	if err != nil {
-		return
+		return nil, err
 	}
 	res = &env.Result
-	return
+	return res, nil
 }
 
 // Lists interconnects associated with an account.
 func (r *CfInterconnectService) List(ctx context.Context, params CfInterconnectListParams, opts ...option.RequestOption) (res *CfInterconnectListResponse, err error) {
 	var env CfInterconnectListResponseEnvelope
 	if params.XMagicNewHcTarget.Present {
-		opts = append(opts, option.WithHeader("x-magic-new-hc-target", fmt.Sprintf("%s", params.XMagicNewHcTarget)))
+		opts = append(opts, option.WithHeader("x-magic-new-hc-target", fmt.Sprintf("%v", params.XMagicNewHcTarget)))
 	}
 	opts = slices.Concat(r.Options, opts)
 	if params.AccountID.Value == "" {
 		err = errors.New("missing required account_id parameter")
-		return
+		return nil, err
 	}
 	path := fmt.Sprintf("accounts/%s/magic/cf_interconnects", params.AccountID)
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodGet, path, nil, &env, opts...)
 	if err != nil {
-		return
+		return nil, err
 	}
 	res = &env.Result
-	return
+	return res, nil
 }
 
 // Updates multiple interconnects associated with an account. Use
@@ -88,44 +88,44 @@ func (r *CfInterconnectService) List(ctx context.Context, params CfInterconnectL
 func (r *CfInterconnectService) BulkUpdate(ctx context.Context, params CfInterconnectBulkUpdateParams, opts ...option.RequestOption) (res *CfInterconnectBulkUpdateResponse, err error) {
 	var env CfInterconnectBulkUpdateResponseEnvelope
 	if params.XMagicNewHcTarget.Present {
-		opts = append(opts, option.WithHeader("x-magic-new-hc-target", fmt.Sprintf("%s", params.XMagicNewHcTarget)))
+		opts = append(opts, option.WithHeader("x-magic-new-hc-target", fmt.Sprintf("%v", params.XMagicNewHcTarget)))
 	}
 	opts = slices.Concat(r.Options, opts)
 	if params.AccountID.Value == "" {
 		err = errors.New("missing required account_id parameter")
-		return
+		return nil, err
 	}
 	path := fmt.Sprintf("accounts/%s/magic/cf_interconnects", params.AccountID)
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodPut, path, params, &env, opts...)
 	if err != nil {
-		return
+		return nil, err
 	}
 	res = &env.Result
-	return
+	return res, nil
 }
 
 // Lists details for a specific interconnect.
 func (r *CfInterconnectService) Get(ctx context.Context, cfInterconnectID string, params CfInterconnectGetParams, opts ...option.RequestOption) (res *CfInterconnectGetResponse, err error) {
 	var env CfInterconnectGetResponseEnvelope
 	if params.XMagicNewHcTarget.Present {
-		opts = append(opts, option.WithHeader("x-magic-new-hc-target", fmt.Sprintf("%s", params.XMagicNewHcTarget)))
+		opts = append(opts, option.WithHeader("x-magic-new-hc-target", fmt.Sprintf("%v", params.XMagicNewHcTarget)))
 	}
 	opts = slices.Concat(r.Options, opts)
 	if params.AccountID.Value == "" {
 		err = errors.New("missing required account_id parameter")
-		return
+		return nil, err
 	}
 	if cfInterconnectID == "" {
 		err = errors.New("missing required cf_interconnect_id parameter")
-		return
+		return nil, err
 	}
 	path := fmt.Sprintf("accounts/%s/magic/cf_interconnects/%s", params.AccountID, cfInterconnectID)
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodGet, path, nil, &env, opts...)
 	if err != nil {
-		return
+		return nil, err
 	}
 	res = &env.Result
-	return
+	return res, nil
 }
 
 type CfInterconnectUpdateResponse struct {
@@ -181,27 +181,31 @@ type CfInterconnectUpdateResponseModifiedInterconnect struct {
 	// value is 576.
 	Mtu int64 `json:"mtu"`
 	// The name of the interconnect. The name cannot share a name with other tunnels.
-	Name string                                               `json:"name"`
-	JSON cfInterconnectUpdateResponseModifiedInterconnectJSON `json:"-"`
+	Name string `json:"name"`
+	// An identifier that correlates this interconnect with the corresponding V2 CNI
+	// interconnect resource.
+	VirtualPortReservationID string                                               `json:"virtual_port_reservation_id"`
+	JSON                     cfInterconnectUpdateResponseModifiedInterconnectJSON `json:"-"`
 }
 
 // cfInterconnectUpdateResponseModifiedInterconnectJSON contains the JSON metadata
 // for the struct [CfInterconnectUpdateResponseModifiedInterconnect]
 type cfInterconnectUpdateResponseModifiedInterconnectJSON struct {
-	ID                     apijson.Field
-	AutomaticReturnRouting apijson.Field
-	ColoName               apijson.Field
-	CreatedOn              apijson.Field
-	Description            apijson.Field
-	GRE                    apijson.Field
-	HealthCheck            apijson.Field
-	InterfaceAddress       apijson.Field
-	InterfaceAddress6      apijson.Field
-	ModifiedOn             apijson.Field
-	Mtu                    apijson.Field
-	Name                   apijson.Field
-	raw                    string
-	ExtraFields            map[string]apijson.Field
+	ID                       apijson.Field
+	AutomaticReturnRouting   apijson.Field
+	ColoName                 apijson.Field
+	CreatedOn                apijson.Field
+	Description              apijson.Field
+	GRE                      apijson.Field
+	HealthCheck              apijson.Field
+	InterfaceAddress         apijson.Field
+	InterfaceAddress6        apijson.Field
+	ModifiedOn               apijson.Field
+	Mtu                      apijson.Field
+	Name                     apijson.Field
+	VirtualPortReservationID apijson.Field
+	raw                      string
+	ExtraFields              map[string]apijson.Field
 }
 
 func (r *CfInterconnectUpdateResponseModifiedInterconnect) UnmarshalJSON(data []byte) (err error) {
@@ -287,27 +291,31 @@ type CfInterconnectListResponseInterconnect struct {
 	// value is 576.
 	Mtu int64 `json:"mtu"`
 	// The name of the interconnect. The name cannot share a name with other tunnels.
-	Name string                                     `json:"name"`
-	JSON cfInterconnectListResponseInterconnectJSON `json:"-"`
+	Name string `json:"name"`
+	// An identifier that correlates this interconnect with the corresponding V2 CNI
+	// interconnect resource.
+	VirtualPortReservationID string                                     `json:"virtual_port_reservation_id"`
+	JSON                     cfInterconnectListResponseInterconnectJSON `json:"-"`
 }
 
 // cfInterconnectListResponseInterconnectJSON contains the JSON metadata for the
 // struct [CfInterconnectListResponseInterconnect]
 type cfInterconnectListResponseInterconnectJSON struct {
-	ID                     apijson.Field
-	AutomaticReturnRouting apijson.Field
-	ColoName               apijson.Field
-	CreatedOn              apijson.Field
-	Description            apijson.Field
-	GRE                    apijson.Field
-	HealthCheck            apijson.Field
-	InterfaceAddress       apijson.Field
-	InterfaceAddress6      apijson.Field
-	ModifiedOn             apijson.Field
-	Mtu                    apijson.Field
-	Name                   apijson.Field
-	raw                    string
-	ExtraFields            map[string]apijson.Field
+	ID                       apijson.Field
+	AutomaticReturnRouting   apijson.Field
+	ColoName                 apijson.Field
+	CreatedOn                apijson.Field
+	Description              apijson.Field
+	GRE                      apijson.Field
+	HealthCheck              apijson.Field
+	InterfaceAddress         apijson.Field
+	InterfaceAddress6        apijson.Field
+	ModifiedOn               apijson.Field
+	Mtu                      apijson.Field
+	Name                     apijson.Field
+	VirtualPortReservationID apijson.Field
+	raw                      string
+	ExtraFields              map[string]apijson.Field
 }
 
 func (r *CfInterconnectListResponseInterconnect) UnmarshalJSON(data []byte) (err error) {
@@ -395,27 +403,31 @@ type CfInterconnectBulkUpdateResponseModifiedInterconnect struct {
 	// value is 576.
 	Mtu int64 `json:"mtu"`
 	// The name of the interconnect. The name cannot share a name with other tunnels.
-	Name string                                                   `json:"name"`
-	JSON cfInterconnectBulkUpdateResponseModifiedInterconnectJSON `json:"-"`
+	Name string `json:"name"`
+	// An identifier that correlates this interconnect with the corresponding V2 CNI
+	// interconnect resource.
+	VirtualPortReservationID string                                                   `json:"virtual_port_reservation_id"`
+	JSON                     cfInterconnectBulkUpdateResponseModifiedInterconnectJSON `json:"-"`
 }
 
 // cfInterconnectBulkUpdateResponseModifiedInterconnectJSON contains the JSON
 // metadata for the struct [CfInterconnectBulkUpdateResponseModifiedInterconnect]
 type cfInterconnectBulkUpdateResponseModifiedInterconnectJSON struct {
-	ID                     apijson.Field
-	AutomaticReturnRouting apijson.Field
-	ColoName               apijson.Field
-	CreatedOn              apijson.Field
-	Description            apijson.Field
-	GRE                    apijson.Field
-	HealthCheck            apijson.Field
-	InterfaceAddress       apijson.Field
-	InterfaceAddress6      apijson.Field
-	ModifiedOn             apijson.Field
-	Mtu                    apijson.Field
-	Name                   apijson.Field
-	raw                    string
-	ExtraFields            map[string]apijson.Field
+	ID                       apijson.Field
+	AutomaticReturnRouting   apijson.Field
+	ColoName                 apijson.Field
+	CreatedOn                apijson.Field
+	Description              apijson.Field
+	GRE                      apijson.Field
+	HealthCheck              apijson.Field
+	InterfaceAddress         apijson.Field
+	InterfaceAddress6        apijson.Field
+	ModifiedOn               apijson.Field
+	Mtu                      apijson.Field
+	Name                     apijson.Field
+	VirtualPortReservationID apijson.Field
+	raw                      string
+	ExtraFields              map[string]apijson.Field
 }
 
 func (r *CfInterconnectBulkUpdateResponseModifiedInterconnect) UnmarshalJSON(data []byte) (err error) {
@@ -502,27 +514,31 @@ type CfInterconnectGetResponseInterconnect struct {
 	// value is 576.
 	Mtu int64 `json:"mtu"`
 	// The name of the interconnect. The name cannot share a name with other tunnels.
-	Name string                                    `json:"name"`
-	JSON cfInterconnectGetResponseInterconnectJSON `json:"-"`
+	Name string `json:"name"`
+	// An identifier that correlates this interconnect with the corresponding V2 CNI
+	// interconnect resource.
+	VirtualPortReservationID string                                    `json:"virtual_port_reservation_id"`
+	JSON                     cfInterconnectGetResponseInterconnectJSON `json:"-"`
 }
 
 // cfInterconnectGetResponseInterconnectJSON contains the JSON metadata for the
 // struct [CfInterconnectGetResponseInterconnect]
 type cfInterconnectGetResponseInterconnectJSON struct {
-	ID                     apijson.Field
-	AutomaticReturnRouting apijson.Field
-	ColoName               apijson.Field
-	CreatedOn              apijson.Field
-	Description            apijson.Field
-	GRE                    apijson.Field
-	HealthCheck            apijson.Field
-	InterfaceAddress       apijson.Field
-	InterfaceAddress6      apijson.Field
-	ModifiedOn             apijson.Field
-	Mtu                    apijson.Field
-	Name                   apijson.Field
-	raw                    string
-	ExtraFields            map[string]apijson.Field
+	ID                       apijson.Field
+	AutomaticReturnRouting   apijson.Field
+	ColoName                 apijson.Field
+	CreatedOn                apijson.Field
+	Description              apijson.Field
+	GRE                      apijson.Field
+	HealthCheck              apijson.Field
+	InterfaceAddress         apijson.Field
+	InterfaceAddress6        apijson.Field
+	ModifiedOn               apijson.Field
+	Mtu                      apijson.Field
+	Name                     apijson.Field
+	VirtualPortReservationID apijson.Field
+	raw                      string
+	ExtraFields              map[string]apijson.Field
 }
 
 func (r *CfInterconnectGetResponseInterconnect) UnmarshalJSON(data []byte) (err error) {
@@ -559,7 +575,7 @@ func (r cfInterconnectGetResponseInterconnectGREJSON) RawJSON() string {
 
 type CfInterconnectUpdateParams struct {
 	// Identifier
-	AccountID param.Field[string] `path:"account_id,required"`
+	AccountID param.Field[string] `path:"account_id" api:"required"`
 	// True if automatic stateful return routing should be enabled for a tunnel, false
 	// otherwise.
 	AutomaticReturnRouting param.Field[bool] `json:"automatic_return_routing"`
@@ -579,8 +595,10 @@ type CfInterconnectUpdateParams struct {
 	InterfaceAddress6 param.Field[string] `json:"interface_address6"`
 	// The Maximum Transmission Unit (MTU) in bytes for the interconnect. The minimum
 	// value is 576.
-	Mtu               param.Field[int64] `json:"mtu"`
-	XMagicNewHcTarget param.Field[bool]  `header:"x-magic-new-hc-target"`
+	Mtu param.Field[int64] `json:"mtu"`
+	// The name of the interconnect. The name cannot share a name with other tunnels.
+	Name              param.Field[string] `json:"name"`
+	XMagicNewHcTarget param.Field[bool]   `header:"x-magic-new-hc-target"`
 }
 
 func (r CfInterconnectUpdateParams) MarshalJSON() (data []byte, err error) {
@@ -599,11 +617,11 @@ func (r CfInterconnectUpdateParamsGRE) MarshalJSON() (data []byte, err error) {
 }
 
 type CfInterconnectUpdateResponseEnvelope struct {
-	Errors   []shared.ResponseInfo        `json:"errors,required"`
-	Messages []shared.ResponseInfo        `json:"messages,required"`
-	Result   CfInterconnectUpdateResponse `json:"result,required"`
+	Errors   []shared.ResponseInfo        `json:"errors" api:"required"`
+	Messages []shared.ResponseInfo        `json:"messages" api:"required"`
+	Result   CfInterconnectUpdateResponse `json:"result" api:"required"`
 	// Whether the API call was successful
-	Success CfInterconnectUpdateResponseEnvelopeSuccess `json:"success,required"`
+	Success CfInterconnectUpdateResponseEnvelopeSuccess `json:"success" api:"required"`
 	JSON    cfInterconnectUpdateResponseEnvelopeJSON    `json:"-"`
 }
 
@@ -643,16 +661,16 @@ func (r CfInterconnectUpdateResponseEnvelopeSuccess) IsKnown() bool {
 
 type CfInterconnectListParams struct {
 	// Identifier
-	AccountID         param.Field[string] `path:"account_id,required"`
+	AccountID         param.Field[string] `path:"account_id" api:"required"`
 	XMagicNewHcTarget param.Field[bool]   `header:"x-magic-new-hc-target"`
 }
 
 type CfInterconnectListResponseEnvelope struct {
-	Errors   []shared.ResponseInfo      `json:"errors,required"`
-	Messages []shared.ResponseInfo      `json:"messages,required"`
-	Result   CfInterconnectListResponse `json:"result,required"`
+	Errors   []shared.ResponseInfo      `json:"errors" api:"required"`
+	Messages []shared.ResponseInfo      `json:"messages" api:"required"`
+	Result   CfInterconnectListResponse `json:"result" api:"required"`
 	// Whether the API call was successful
-	Success CfInterconnectListResponseEnvelopeSuccess `json:"success,required"`
+	Success CfInterconnectListResponseEnvelopeSuccess `json:"success" api:"required"`
 	JSON    cfInterconnectListResponseEnvelopeJSON    `json:"-"`
 }
 
@@ -692,8 +710,8 @@ func (r CfInterconnectListResponseEnvelopeSuccess) IsKnown() bool {
 
 type CfInterconnectBulkUpdateParams struct {
 	// Identifier
-	AccountID         param.Field[string] `path:"account_id,required"`
-	Body              interface{}         `json:"body,required"`
+	AccountID         param.Field[string] `path:"account_id" api:"required"`
+	Body              interface{}         `json:"body" api:"required"`
 	XMagicNewHcTarget param.Field[bool]   `header:"x-magic-new-hc-target"`
 }
 
@@ -702,11 +720,11 @@ func (r CfInterconnectBulkUpdateParams) MarshalJSON() (data []byte, err error) {
 }
 
 type CfInterconnectBulkUpdateResponseEnvelope struct {
-	Errors   []shared.ResponseInfo            `json:"errors,required"`
-	Messages []shared.ResponseInfo            `json:"messages,required"`
-	Result   CfInterconnectBulkUpdateResponse `json:"result,required"`
+	Errors   []shared.ResponseInfo            `json:"errors" api:"required"`
+	Messages []shared.ResponseInfo            `json:"messages" api:"required"`
+	Result   CfInterconnectBulkUpdateResponse `json:"result" api:"required"`
 	// Whether the API call was successful
-	Success CfInterconnectBulkUpdateResponseEnvelopeSuccess `json:"success,required"`
+	Success CfInterconnectBulkUpdateResponseEnvelopeSuccess `json:"success" api:"required"`
 	JSON    cfInterconnectBulkUpdateResponseEnvelopeJSON    `json:"-"`
 }
 
@@ -746,16 +764,16 @@ func (r CfInterconnectBulkUpdateResponseEnvelopeSuccess) IsKnown() bool {
 
 type CfInterconnectGetParams struct {
 	// Identifier
-	AccountID         param.Field[string] `path:"account_id,required"`
+	AccountID         param.Field[string] `path:"account_id" api:"required"`
 	XMagicNewHcTarget param.Field[bool]   `header:"x-magic-new-hc-target"`
 }
 
 type CfInterconnectGetResponseEnvelope struct {
-	Errors   []shared.ResponseInfo     `json:"errors,required"`
-	Messages []shared.ResponseInfo     `json:"messages,required"`
-	Result   CfInterconnectGetResponse `json:"result,required"`
+	Errors   []shared.ResponseInfo     `json:"errors" api:"required"`
+	Messages []shared.ResponseInfo     `json:"messages" api:"required"`
+	Result   CfInterconnectGetResponse `json:"result" api:"required"`
 	// Whether the API call was successful
-	Success CfInterconnectGetResponseEnvelopeSuccess `json:"success,required"`
+	Success CfInterconnectGetResponseEnvelopeSuccess `json:"success" api:"required"`
 	JSON    cfInterconnectGetResponseEnvelopeJSON    `json:"-"`
 }
 

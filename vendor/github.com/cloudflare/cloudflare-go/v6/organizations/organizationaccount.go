@@ -46,23 +46,23 @@ func (r *OrganizationAccountService) Get(ctx context.Context, organizationID str
 	opts = slices.Concat(r.Options, opts)
 	if organizationID == "" {
 		err = errors.New("missing required organization_id parameter")
-		return
+		return nil, err
 	}
 	path := fmt.Sprintf("organizations/%s/accounts", organizationID)
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodGet, path, query, &env, opts...)
 	if err != nil {
-		return
+		return nil, err
 	}
 	res = &env.Result
-	return
+	return res, nil
 }
 
 type OrganizationAccountGetResponse struct {
-	ID        string                                 `json:"id,required"`
-	CreatedOn time.Time                              `json:"created_on,required" format:"date-time"`
-	Name      string                                 `json:"name,required,nullable"`
-	Settings  OrganizationAccountGetResponseSettings `json:"settings,required"`
-	Type      OrganizationAccountGetResponseType     `json:"type,required"`
+	ID        string                                 `json:"id" api:"required"`
+	CreatedOn time.Time                              `json:"created_on" api:"required" format:"date-time"`
+	Name      string                                 `json:"name" api:"required,nullable"`
+	Settings  OrganizationAccountGetResponseSettings `json:"settings" api:"required"`
+	Type      OrganizationAccountGetResponseType     `json:"type" api:"required"`
 	JSON      organizationAccountGetResponseJSON     `json:"-"`
 }
 
@@ -87,22 +87,22 @@ func (r organizationAccountGetResponseJSON) RawJSON() string {
 }
 
 type OrganizationAccountGetResponseSettings struct {
-	AbuseContactEmail    string    `json:"abuse_contact_email,required,nullable"`
-	AccessApprovalExpiry time.Time `json:"access_approval_expiry,required,nullable" format:"date-time"`
-	APIAccessEnabled     bool      `json:"api_access_enabled,required,nullable"`
+	AbuseContactEmail    string    `json:"abuse_contact_email" api:"required,nullable"`
+	AccessApprovalExpiry time.Time `json:"access_approval_expiry" api:"required,nullable" format:"date-time"`
+	APIAccessEnabled     bool      `json:"api_access_enabled" api:"required,nullable"`
 	// Use
 	// [DNS Settings](https://developers.cloudflare.com/api/operations/dns-settings-for-an-account-list-dns-settings)
 	// instead. Deprecated.
 	//
 	// Deprecated: deprecated
-	DefaultNameservers string `json:"default_nameservers,required,nullable"`
-	EnforceTwofactor   bool   `json:"enforce_twofactor,required,nullable"`
+	DefaultNameservers string `json:"default_nameservers" api:"required,nullable"`
+	EnforceTwofactor   bool   `json:"enforce_twofactor" api:"required,nullable"`
 	// Use
 	// [DNS Settings](https://developers.cloudflare.com/api/operations/dns-settings-for-an-account-list-dns-settings)
 	// instead. Deprecated.
 	//
 	// Deprecated: deprecated
-	UseAccountCustomNSByDefault bool                                       `json:"use_account_custom_ns_by_default,required,nullable"`
+	UseAccountCustomNSByDefault bool                                       `json:"use_account_custom_ns_by_default" api:"required,nullable"`
 	JSON                        organizationAccountGetResponseSettingsJSON `json:"-"`
 }
 
@@ -144,7 +144,13 @@ func (r OrganizationAccountGetResponseType) IsKnown() bool {
 
 type OrganizationAccountGetParams struct {
 	AccountPubname param.Field[OrganizationAccountGetParamsAccountPubname] `query:"account_pubname"`
-	Name           param.Field[OrganizationAccountGetParamsName]           `query:"name"`
+	// Sort direction for the order_by field. Valid values: `asc`, `desc`. Defaults to
+	// `asc` when order_by is specified.
+	Direction param.Field[OrganizationAccountGetParamsDirection] `query:"direction"`
+	Name      param.Field[OrganizationAccountGetParamsName]      `query:"name"`
+	// Field to order results by. Currently supported values: `account_name`. When not
+	// specified, results are ordered by internal account ID.
+	OrderBy param.Field[OrganizationAccountGetParamsOrderBy] `query:"order_by"`
 	// The amount of items to return. Defaults to 10.
 	PageSize param.Field[int64] `query:"page_size"`
 	// An opaque token returned from the last list response that when provided will
@@ -185,6 +191,23 @@ func (r OrganizationAccountGetParamsAccountPubname) URLQuery() (v url.Values) {
 	})
 }
 
+// Sort direction for the order_by field. Valid values: `asc`, `desc`. Defaults to
+// `asc` when order_by is specified.
+type OrganizationAccountGetParamsDirection string
+
+const (
+	OrganizationAccountGetParamsDirectionAsc  OrganizationAccountGetParamsDirection = "asc"
+	OrganizationAccountGetParamsDirectionDesc OrganizationAccountGetParamsDirection = "desc"
+)
+
+func (r OrganizationAccountGetParamsDirection) IsKnown() bool {
+	switch r {
+	case OrganizationAccountGetParamsDirectionAsc, OrganizationAccountGetParamsDirectionDesc:
+		return true
+	}
+	return false
+}
+
 type OrganizationAccountGetParamsName struct {
 	// (case-insensitive) Filter the list of accounts to where the name contains a
 	// particular string.
@@ -206,12 +229,28 @@ func (r OrganizationAccountGetParamsName) URLQuery() (v url.Values) {
 	})
 }
 
+// Field to order results by. Currently supported values: `account_name`. When not
+// specified, results are ordered by internal account ID.
+type OrganizationAccountGetParamsOrderBy string
+
+const (
+	OrganizationAccountGetParamsOrderByAccountName OrganizationAccountGetParamsOrderBy = "account_name"
+)
+
+func (r OrganizationAccountGetParamsOrderBy) IsKnown() bool {
+	switch r {
+	case OrganizationAccountGetParamsOrderByAccountName:
+		return true
+	}
+	return false
+}
+
 type OrganizationAccountGetResponseEnvelope struct {
-	Errors     []interface{}                                    `json:"errors,required"`
-	Messages   []shared.ResponseInfo                            `json:"messages,required"`
-	Result     []OrganizationAccountGetResponse                 `json:"result,required"`
-	ResultInfo OrganizationAccountGetResponseEnvelopeResultInfo `json:"result_info,required"`
-	Success    OrganizationAccountGetResponseEnvelopeSuccess    `json:"success,required"`
+	Errors     []interface{}                                    `json:"errors" api:"required"`
+	Messages   []shared.ResponseInfo                            `json:"messages" api:"required"`
+	Result     []OrganizationAccountGetResponse                 `json:"result" api:"required"`
+	ResultInfo OrganizationAccountGetResponseEnvelopeResultInfo `json:"result_info" api:"required"`
+	Success    OrganizationAccountGetResponseEnvelopeSuccess    `json:"success" api:"required"`
 	JSON       organizationAccountGetResponseEnvelopeJSON       `json:"-"`
 }
 

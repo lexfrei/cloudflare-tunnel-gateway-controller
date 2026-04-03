@@ -45,7 +45,7 @@ func (r *DEXCommandDeviceService) List(ctx context.Context, params DEXCommandDev
 	opts = append([]option.RequestOption{option.WithResponseInto(&raw)}, opts...)
 	if params.AccountID.Value == "" {
 		err = errors.New("missing required account_id parameter")
-		return
+		return nil, err
 	}
 	path := fmt.Sprintf("accounts/%s/dex/commands/devices", params.AccountID)
 	cfg, err := requestconfig.NewRequestConfig(ctx, http.MethodGet, path, params, &res, opts...)
@@ -101,6 +101,9 @@ type DEXCommandDeviceListResponseDevice struct {
 	PersonEmail string `json:"personEmail"`
 	// Operating system
 	Platform string `json:"platform"`
+	// Device registration identifier (UUID v4). On multi-user devices, this uniquely
+	// identifies a user's registration on the device.
+	RegistrationID string `json:"registrationId"`
 	// Network status
 	Status string `json:"status"`
 	// Timestamp in ISO format
@@ -119,6 +122,7 @@ type dexCommandDeviceListResponseDeviceJSON struct {
 	IneligibleReason apijson.Field
 	PersonEmail      apijson.Field
 	Platform         apijson.Field
+	RegistrationID   apijson.Field
 	Status           apijson.Field
 	Timestamp        apijson.Field
 	Version          apijson.Field
@@ -135,11 +139,11 @@ func (r dexCommandDeviceListResponseDeviceJSON) RawJSON() string {
 }
 
 type DEXCommandDeviceListParams struct {
-	AccountID param.Field[string] `path:"account_id,required"`
+	AccountID param.Field[string] `path:"account_id" api:"required"`
 	// Page number of paginated results
-	Page param.Field[float64] `query:"page,required"`
+	Page param.Field[float64] `query:"page" api:"required"`
 	// Number of items per page
-	PerPage param.Field[float64] `query:"per_page,required"`
+	PerPage param.Field[float64] `query:"per_page" api:"required"`
 	// Filter devices by name or email
 	Search param.Field[string] `query:"search"`
 }

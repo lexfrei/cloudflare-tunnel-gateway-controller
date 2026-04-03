@@ -38,7 +38,8 @@ func NewAttackSurfaceReportIssueService(opts ...option.RequestOption) (r *Attack
 	return
 }
 
-// Retrieves Security Center Issues
+// Lists all Security Center issues for the account, showing active security
+// problems requiring attention.
 //
 // Deprecated: deprecated
 func (r *AttackSurfaceReportIssueService) List(ctx context.Context, params AttackSurfaceReportIssueListParams, opts ...option.RequestOption) (res *pagination.V4PagePagination[AttackSurfaceReportIssueListResponse], err error) {
@@ -47,7 +48,7 @@ func (r *AttackSurfaceReportIssueService) List(ctx context.Context, params Attac
 	opts = append([]option.RequestOption{option.WithResponseInto(&raw)}, opts...)
 	if params.AccountID.Value == "" {
 		err = errors.New("missing required account_id parameter")
-		return
+		return nil, err
 	}
 	path := fmt.Sprintf("accounts/%s/intel/attack-surface-report/issues", params.AccountID)
 	cfg, err := requestconfig.NewRequestConfig(ctx, http.MethodGet, path, params, &res, opts...)
@@ -62,14 +63,15 @@ func (r *AttackSurfaceReportIssueService) List(ctx context.Context, params Attac
 	return res, nil
 }
 
-// Retrieves Security Center Issues
+// Lists all Security Center issues for the account, showing active security
+// problems requiring attention.
 //
 // Deprecated: deprecated
 func (r *AttackSurfaceReportIssueService) ListAutoPaging(ctx context.Context, params AttackSurfaceReportIssueListParams, opts ...option.RequestOption) *pagination.V4PagePaginationAutoPager[AttackSurfaceReportIssueListResponse] {
 	return pagination.NewV4PagePaginationAutoPager(r.List(ctx, params, opts...))
 }
 
-// Retrieves Security Center Issue Counts by Class
+// Retrieves Security Center issue counts aggregated by classification class.
 //
 // Deprecated: deprecated
 func (r *AttackSurfaceReportIssueService) Class(ctx context.Context, params AttackSurfaceReportIssueClassParams, opts ...option.RequestOption) (res *[]AttackSurfaceReportIssueClassResponse, err error) {
@@ -77,36 +79,37 @@ func (r *AttackSurfaceReportIssueService) Class(ctx context.Context, params Atta
 	opts = slices.Concat(r.Options, opts)
 	if params.AccountID.Value == "" {
 		err = errors.New("missing required account_id parameter")
-		return
+		return nil, err
 	}
 	path := fmt.Sprintf("accounts/%s/intel/attack-surface-report/issues/class", params.AccountID)
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodGet, path, params, &env, opts...)
 	if err != nil {
-		return
+		return nil, err
 	}
 	res = &env.Result
-	return
+	return res, nil
 }
 
-// Archives Security Center Insight
+// Deprecated endpoint for archiving Security Center insights. Use the newer
+// archive-security-center-insight endpoint instead.
 //
 // Deprecated: deprecated
 func (r *AttackSurfaceReportIssueService) Dismiss(ctx context.Context, issueID string, params AttackSurfaceReportIssueDismissParams, opts ...option.RequestOption) (res *AttackSurfaceReportIssueDismissResponse, err error) {
 	opts = slices.Concat(r.Options, opts)
 	if params.AccountID.Value == "" {
 		err = errors.New("missing required account_id parameter")
-		return
+		return nil, err
 	}
 	if issueID == "" {
 		err = errors.New("missing required issue_id parameter")
-		return
+		return nil, err
 	}
 	path := fmt.Sprintf("accounts/%s/intel/attack-surface-report/%s/dismiss", params.AccountID, issueID)
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodPut, path, params, &res, opts...)
-	return
+	return res, err
 }
 
-// Retrieves Security Center Issue Counts by Severity
+// Retrieves Security Center issue counts aggregated by severity level.
 //
 // Deprecated: deprecated
 func (r *AttackSurfaceReportIssueService) Severity(ctx context.Context, params AttackSurfaceReportIssueSeverityParams, opts ...option.RequestOption) (res *[]AttackSurfaceReportIssueSeverityResponse, err error) {
@@ -114,18 +117,18 @@ func (r *AttackSurfaceReportIssueService) Severity(ctx context.Context, params A
 	opts = slices.Concat(r.Options, opts)
 	if params.AccountID.Value == "" {
 		err = errors.New("missing required account_id parameter")
-		return
+		return nil, err
 	}
 	path := fmt.Sprintf("accounts/%s/intel/attack-surface-report/issues/severity", params.AccountID)
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodGet, path, params, &env, opts...)
 	if err != nil {
-		return
+		return nil, err
 	}
 	res = &env.Result
-	return
+	return res, nil
 }
 
-// Retrieves Security Center Issue Counts by Type
+// Retrieves Security Center issue counts aggregated by issue type.
 //
 // Deprecated: deprecated
 func (r *AttackSurfaceReportIssueService) Type(ctx context.Context, params AttackSurfaceReportIssueTypeParams, opts ...option.RequestOption) (res *[]AttackSurfaceReportIssueTypeResponse, err error) {
@@ -133,15 +136,15 @@ func (r *AttackSurfaceReportIssueService) Type(ctx context.Context, params Attac
 	opts = slices.Concat(r.Options, opts)
 	if params.AccountID.Value == "" {
 		err = errors.New("missing required account_id parameter")
-		return
+		return nil, err
 	}
 	path := fmt.Sprintf("accounts/%s/intel/attack-surface-report/issues/type", params.AccountID)
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodGet, path, params, &env, opts...)
 	if err != nil {
-		return
+		return nil, err
 	}
 	res = &env.Result
-	return
+	return res, nil
 }
 
 type IssueType string
@@ -314,10 +317,10 @@ func (r attackSurfaceReportIssueClassResponseJSON) RawJSON() string {
 }
 
 type AttackSurfaceReportIssueDismissResponse struct {
-	Errors   []AttackSurfaceReportIssueDismissResponseError   `json:"errors,required"`
-	Messages []AttackSurfaceReportIssueDismissResponseMessage `json:"messages,required"`
+	Errors   []AttackSurfaceReportIssueDismissResponseError   `json:"errors" api:"required"`
+	Messages []AttackSurfaceReportIssueDismissResponseMessage `json:"messages" api:"required"`
 	// Whether the API call was successful.
-	Success AttackSurfaceReportIssueDismissResponseSuccess `json:"success,required"`
+	Success AttackSurfaceReportIssueDismissResponseSuccess `json:"success" api:"required"`
 	JSON    attackSurfaceReportIssueDismissResponseJSON    `json:"-"`
 }
 
@@ -340,8 +343,8 @@ func (r attackSurfaceReportIssueDismissResponseJSON) RawJSON() string {
 }
 
 type AttackSurfaceReportIssueDismissResponseError struct {
-	Code             int64                                               `json:"code,required"`
-	Message          string                                              `json:"message,required"`
+	Code             int64                                               `json:"code" api:"required"`
+	Message          string                                              `json:"message" api:"required"`
 	DocumentationURL string                                              `json:"documentation_url"`
 	Source           AttackSurfaceReportIssueDismissResponseErrorsSource `json:"source"`
 	JSON             attackSurfaceReportIssueDismissResponseErrorJSON    `json:"-"`
@@ -388,8 +391,8 @@ func (r attackSurfaceReportIssueDismissResponseErrorsSourceJSON) RawJSON() strin
 }
 
 type AttackSurfaceReportIssueDismissResponseMessage struct {
-	Code             int64                                                 `json:"code,required"`
-	Message          string                                                `json:"message,required"`
+	Code             int64                                                 `json:"code" api:"required"`
+	Message          string                                                `json:"message" api:"required"`
 	DocumentationURL string                                                `json:"documentation_url"`
 	Source           AttackSurfaceReportIssueDismissResponseMessagesSource `json:"source"`
 	JSON             attackSurfaceReportIssueDismissResponseMessageJSON    `json:"-"`
@@ -498,7 +501,7 @@ func (r attackSurfaceReportIssueTypeResponseJSON) RawJSON() string {
 
 type AttackSurfaceReportIssueListParams struct {
 	// Identifier.
-	AccountID     param.Field[string]      `path:"account_id,required"`
+	AccountID     param.Field[string]      `path:"account_id" api:"required"`
 	Dismissed     param.Field[bool]        `query:"dismissed"`
 	IssueClass    param.Field[[]string]    `query:"issue_class"`
 	IssueClassNeq param.Field[[]string]    `query:"issue_class~neq"`
@@ -527,7 +530,7 @@ func (r AttackSurfaceReportIssueListParams) URLQuery() (v url.Values) {
 
 type AttackSurfaceReportIssueClassParams struct {
 	// Identifier.
-	AccountID     param.Field[string]               `path:"account_id,required"`
+	AccountID     param.Field[string]               `path:"account_id" api:"required"`
 	Dismissed     param.Field[bool]                 `query:"dismissed"`
 	IssueClass    param.Field[[]string]             `query:"issue_class"`
 	IssueClassNeq param.Field[[]string]             `query:"issue_class~neq"`
@@ -551,10 +554,10 @@ func (r AttackSurfaceReportIssueClassParams) URLQuery() (v url.Values) {
 }
 
 type AttackSurfaceReportIssueClassResponseEnvelope struct {
-	Errors   []AttackSurfaceReportIssueClassResponseEnvelopeErrors   `json:"errors,required"`
-	Messages []AttackSurfaceReportIssueClassResponseEnvelopeMessages `json:"messages,required"`
+	Errors   []AttackSurfaceReportIssueClassResponseEnvelopeErrors   `json:"errors" api:"required"`
+	Messages []AttackSurfaceReportIssueClassResponseEnvelopeMessages `json:"messages" api:"required"`
 	// Whether the API call was successful.
-	Success AttackSurfaceReportIssueClassResponseEnvelopeSuccess `json:"success,required"`
+	Success AttackSurfaceReportIssueClassResponseEnvelopeSuccess `json:"success" api:"required"`
 	Result  []AttackSurfaceReportIssueClassResponse              `json:"result"`
 	JSON    attackSurfaceReportIssueClassResponseEnvelopeJSON    `json:"-"`
 }
@@ -579,8 +582,8 @@ func (r attackSurfaceReportIssueClassResponseEnvelopeJSON) RawJSON() string {
 }
 
 type AttackSurfaceReportIssueClassResponseEnvelopeErrors struct {
-	Code             int64                                                     `json:"code,required"`
-	Message          string                                                    `json:"message,required"`
+	Code             int64                                                     `json:"code" api:"required"`
+	Message          string                                                    `json:"message" api:"required"`
 	DocumentationURL string                                                    `json:"documentation_url"`
 	Source           AttackSurfaceReportIssueClassResponseEnvelopeErrorsSource `json:"source"`
 	JSON             attackSurfaceReportIssueClassResponseEnvelopeErrorsJSON   `json:"-"`
@@ -628,8 +631,8 @@ func (r attackSurfaceReportIssueClassResponseEnvelopeErrorsSourceJSON) RawJSON()
 }
 
 type AttackSurfaceReportIssueClassResponseEnvelopeMessages struct {
-	Code             int64                                                       `json:"code,required"`
-	Message          string                                                      `json:"message,required"`
+	Code             int64                                                       `json:"code" api:"required"`
+	Message          string                                                      `json:"message" api:"required"`
 	DocumentationURL string                                                      `json:"documentation_url"`
 	Source           AttackSurfaceReportIssueClassResponseEnvelopeMessagesSource `json:"source"`
 	JSON             attackSurfaceReportIssueClassResponseEnvelopeMessagesJSON   `json:"-"`
@@ -693,7 +696,7 @@ func (r AttackSurfaceReportIssueClassResponseEnvelopeSuccess) IsKnown() bool {
 
 type AttackSurfaceReportIssueDismissParams struct {
 	// Identifier.
-	AccountID param.Field[string] `path:"account_id,required"`
+	AccountID param.Field[string] `path:"account_id" api:"required"`
 	Dismiss   param.Field[bool]   `json:"dismiss"`
 }
 
@@ -703,7 +706,7 @@ func (r AttackSurfaceReportIssueDismissParams) MarshalJSON() (data []byte, err e
 
 type AttackSurfaceReportIssueSeverityParams struct {
 	// Identifier.
-	AccountID     param.Field[string]               `path:"account_id,required"`
+	AccountID     param.Field[string]               `path:"account_id" api:"required"`
 	Dismissed     param.Field[bool]                 `query:"dismissed"`
 	IssueClass    param.Field[[]string]             `query:"issue_class"`
 	IssueClassNeq param.Field[[]string]             `query:"issue_class~neq"`
@@ -727,10 +730,10 @@ func (r AttackSurfaceReportIssueSeverityParams) URLQuery() (v url.Values) {
 }
 
 type AttackSurfaceReportIssueSeverityResponseEnvelope struct {
-	Errors   []AttackSurfaceReportIssueSeverityResponseEnvelopeErrors   `json:"errors,required"`
-	Messages []AttackSurfaceReportIssueSeverityResponseEnvelopeMessages `json:"messages,required"`
+	Errors   []AttackSurfaceReportIssueSeverityResponseEnvelopeErrors   `json:"errors" api:"required"`
+	Messages []AttackSurfaceReportIssueSeverityResponseEnvelopeMessages `json:"messages" api:"required"`
 	// Whether the API call was successful.
-	Success AttackSurfaceReportIssueSeverityResponseEnvelopeSuccess `json:"success,required"`
+	Success AttackSurfaceReportIssueSeverityResponseEnvelopeSuccess `json:"success" api:"required"`
 	Result  []AttackSurfaceReportIssueSeverityResponse              `json:"result"`
 	JSON    attackSurfaceReportIssueSeverityResponseEnvelopeJSON    `json:"-"`
 }
@@ -755,8 +758,8 @@ func (r attackSurfaceReportIssueSeverityResponseEnvelopeJSON) RawJSON() string {
 }
 
 type AttackSurfaceReportIssueSeverityResponseEnvelopeErrors struct {
-	Code             int64                                                        `json:"code,required"`
-	Message          string                                                       `json:"message,required"`
+	Code             int64                                                        `json:"code" api:"required"`
+	Message          string                                                       `json:"message" api:"required"`
 	DocumentationURL string                                                       `json:"documentation_url"`
 	Source           AttackSurfaceReportIssueSeverityResponseEnvelopeErrorsSource `json:"source"`
 	JSON             attackSurfaceReportIssueSeverityResponseEnvelopeErrorsJSON   `json:"-"`
@@ -804,8 +807,8 @@ func (r attackSurfaceReportIssueSeverityResponseEnvelopeErrorsSourceJSON) RawJSO
 }
 
 type AttackSurfaceReportIssueSeverityResponseEnvelopeMessages struct {
-	Code             int64                                                          `json:"code,required"`
-	Message          string                                                         `json:"message,required"`
+	Code             int64                                                          `json:"code" api:"required"`
+	Message          string                                                         `json:"message" api:"required"`
 	DocumentationURL string                                                         `json:"documentation_url"`
 	Source           AttackSurfaceReportIssueSeverityResponseEnvelopeMessagesSource `json:"source"`
 	JSON             attackSurfaceReportIssueSeverityResponseEnvelopeMessagesJSON   `json:"-"`
@@ -870,7 +873,7 @@ func (r AttackSurfaceReportIssueSeverityResponseEnvelopeSuccess) IsKnown() bool 
 
 type AttackSurfaceReportIssueTypeParams struct {
 	// Identifier.
-	AccountID     param.Field[string]               `path:"account_id,required"`
+	AccountID     param.Field[string]               `path:"account_id" api:"required"`
 	Dismissed     param.Field[bool]                 `query:"dismissed"`
 	IssueClass    param.Field[[]string]             `query:"issue_class"`
 	IssueClassNeq param.Field[[]string]             `query:"issue_class~neq"`
@@ -894,10 +897,10 @@ func (r AttackSurfaceReportIssueTypeParams) URLQuery() (v url.Values) {
 }
 
 type AttackSurfaceReportIssueTypeResponseEnvelope struct {
-	Errors   []AttackSurfaceReportIssueTypeResponseEnvelopeErrors   `json:"errors,required"`
-	Messages []AttackSurfaceReportIssueTypeResponseEnvelopeMessages `json:"messages,required"`
+	Errors   []AttackSurfaceReportIssueTypeResponseEnvelopeErrors   `json:"errors" api:"required"`
+	Messages []AttackSurfaceReportIssueTypeResponseEnvelopeMessages `json:"messages" api:"required"`
 	// Whether the API call was successful.
-	Success AttackSurfaceReportIssueTypeResponseEnvelopeSuccess `json:"success,required"`
+	Success AttackSurfaceReportIssueTypeResponseEnvelopeSuccess `json:"success" api:"required"`
 	Result  []AttackSurfaceReportIssueTypeResponse              `json:"result"`
 	JSON    attackSurfaceReportIssueTypeResponseEnvelopeJSON    `json:"-"`
 }
@@ -922,8 +925,8 @@ func (r attackSurfaceReportIssueTypeResponseEnvelopeJSON) RawJSON() string {
 }
 
 type AttackSurfaceReportIssueTypeResponseEnvelopeErrors struct {
-	Code             int64                                                    `json:"code,required"`
-	Message          string                                                   `json:"message,required"`
+	Code             int64                                                    `json:"code" api:"required"`
+	Message          string                                                   `json:"message" api:"required"`
 	DocumentationURL string                                                   `json:"documentation_url"`
 	Source           AttackSurfaceReportIssueTypeResponseEnvelopeErrorsSource `json:"source"`
 	JSON             attackSurfaceReportIssueTypeResponseEnvelopeErrorsJSON   `json:"-"`
@@ -971,8 +974,8 @@ func (r attackSurfaceReportIssueTypeResponseEnvelopeErrorsSourceJSON) RawJSON() 
 }
 
 type AttackSurfaceReportIssueTypeResponseEnvelopeMessages struct {
-	Code             int64                                                      `json:"code,required"`
-	Message          string                                                     `json:"message,required"`
+	Code             int64                                                      `json:"code" api:"required"`
+	Message          string                                                     `json:"message" api:"required"`
 	DocumentationURL string                                                     `json:"documentation_url"`
 	Source           AttackSurfaceReportIssueTypeResponseEnvelopeMessagesSource `json:"source"`
 	JSON             attackSurfaceReportIssueTypeResponseEnvelopeMessagesJSON   `json:"-"`

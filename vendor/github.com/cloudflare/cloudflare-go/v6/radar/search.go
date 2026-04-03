@@ -35,21 +35,24 @@ func NewSearchService(opts ...option.RequestOption) (r *SearchService) {
 }
 
 // Searches for locations, autonomous systems, reports, bots, certificate logs,
-// certificate authorities, industries and verticals
+// certificate authorities, industries and verticals. Location names can be
+// localized by sending an `Accept-Language` HTTP header with a BCP 47 language tag
+// (e.g., `Accept-Language: pt-PT`). The full quality-value chain is supported
+// (e.g., `pt-PT,pt;q=0.9,en;q=0.8`).
 func (r *SearchService) Global(ctx context.Context, query SearchGlobalParams, opts ...option.RequestOption) (res *SearchGlobalResponse, err error) {
 	var env SearchGlobalResponseEnvelope
 	opts = slices.Concat(r.Options, opts)
 	path := "radar/search/global"
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodGet, path, query, &env, opts...)
 	if err != nil {
-		return
+		return nil, err
 	}
 	res = &env.Result
-	return
+	return res, nil
 }
 
 type SearchGlobalResponse struct {
-	Search []SearchGlobalResponseSearch `json:"search,required"`
+	Search []SearchGlobalResponseSearch `json:"search" api:"required"`
 	JSON   searchGlobalResponseJSON     `json:"-"`
 }
 
@@ -70,9 +73,9 @@ func (r searchGlobalResponseJSON) RawJSON() string {
 }
 
 type SearchGlobalResponseSearch struct {
-	Code string                         `json:"code,required"`
-	Name string                         `json:"name,required"`
-	Type string                         `json:"type,required"`
+	Code string                         `json:"code" api:"required"`
+	Name string                         `json:"name" api:"required"`
+	Type string                         `json:"type" api:"required"`
 	JSON searchGlobalResponseSearchJSON `json:"-"`
 }
 
@@ -96,7 +99,7 @@ func (r searchGlobalResponseSearchJSON) RawJSON() string {
 
 type SearchGlobalParams struct {
 	// String used to perform the search operation.
-	Query param.Field[string] `query:"query,required"`
+	Query param.Field[string] `query:"query" api:"required"`
 	// Search types excluded from results.
 	Exclude param.Field[[]SearchGlobalParamsExclude] `query:"exclude"`
 	// Format in which results will be returned.
@@ -184,8 +187,8 @@ func (r SearchGlobalParamsInclude) IsKnown() bool {
 }
 
 type SearchGlobalResponseEnvelope struct {
-	Result  SearchGlobalResponse             `json:"result,required"`
-	Success bool                             `json:"success,required"`
+	Result  SearchGlobalResponse             `json:"result" api:"required"`
+	Success bool                             `json:"success" api:"required"`
 	JSON    searchGlobalResponseEnvelopeJSON `json:"-"`
 }
 

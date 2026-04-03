@@ -34,14 +34,15 @@ func NewAttackSurfaceReportIssueTypeService(opts ...option.RequestOption) (r *At
 	return
 }
 
-// Retrieves Security Center Issues Types
+// Lists all available issue types in Security Center, describing categories of
+// security issues.
 func (r *AttackSurfaceReportIssueTypeService) Get(ctx context.Context, query AttackSurfaceReportIssueTypeGetParams, opts ...option.RequestOption) (res *pagination.SinglePage[string], err error) {
 	var raw *http.Response
 	opts = slices.Concat(r.Options, opts)
 	opts = append([]option.RequestOption{option.WithResponseInto(&raw)}, opts...)
 	if query.AccountID.Value == "" {
 		err = errors.New("missing required account_id parameter")
-		return
+		return nil, err
 	}
 	path := fmt.Sprintf("accounts/%s/intel/attack-surface-report/issue-types", query.AccountID)
 	cfg, err := requestconfig.NewRequestConfig(ctx, http.MethodGet, path, nil, &res, opts...)
@@ -56,12 +57,13 @@ func (r *AttackSurfaceReportIssueTypeService) Get(ctx context.Context, query Att
 	return res, nil
 }
 
-// Retrieves Security Center Issues Types
+// Lists all available issue types in Security Center, describing categories of
+// security issues.
 func (r *AttackSurfaceReportIssueTypeService) GetAutoPaging(ctx context.Context, query AttackSurfaceReportIssueTypeGetParams, opts ...option.RequestOption) *pagination.SinglePageAutoPager[string] {
 	return pagination.NewSinglePageAutoPager(r.Get(ctx, query, opts...))
 }
 
 type AttackSurfaceReportIssueTypeGetParams struct {
 	// Identifier.
-	AccountID param.Field[string] `path:"account_id,required"`
+	AccountID param.Field[string] `path:"account_id" api:"required"`
 }

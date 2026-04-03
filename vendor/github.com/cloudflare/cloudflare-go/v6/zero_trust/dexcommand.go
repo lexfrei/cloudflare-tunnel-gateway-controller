@@ -50,15 +50,15 @@ func (r *DEXCommandService) New(ctx context.Context, params DEXCommandNewParams,
 	opts = slices.Concat(r.Options, opts)
 	if params.AccountID.Value == "" {
 		err = errors.New("missing required account_id parameter")
-		return
+		return nil, err
 	}
 	path := fmt.Sprintf("accounts/%s/dex/commands", params.AccountID)
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodPost, path, params, &env, opts...)
 	if err != nil {
-		return
+		return nil, err
 	}
 	res = &env.Result
-	return
+	return res, nil
 }
 
 // Retrieves a paginated list of commands issued to devices under the specified
@@ -69,7 +69,7 @@ func (r *DEXCommandService) List(ctx context.Context, params DEXCommandListParam
 	opts = append([]option.RequestOption{option.WithResponseInto(&raw)}, opts...)
 	if params.AccountID.Value == "" {
 		err = errors.New("missing required account_id parameter")
-		return
+		return nil, err
 	}
 	path := fmt.Sprintf("accounts/%s/dex/commands", params.AccountID)
 	cfg, err := requestconfig.NewRequestConfig(ctx, http.MethodGet, path, params, &res, opts...)
@@ -119,6 +119,8 @@ type DEXCommandNewResponseCommand struct {
 	Args map[string]string `json:"args"`
 	// Identifier for the device associated with the command
 	DeviceID string `json:"device_id"`
+	// Unique identifier for the device registration
+	RegistrationID string `json:"registration_id"`
 	// Current status of the command
 	Status DEXCommandNewResponseCommandsStatus `json:"status"`
 	// Type of the command (e.g., "pcap" or "warp-diag")
@@ -129,13 +131,14 @@ type DEXCommandNewResponseCommand struct {
 // dexCommandNewResponseCommandJSON contains the JSON metadata for the struct
 // [DEXCommandNewResponseCommand]
 type dexCommandNewResponseCommandJSON struct {
-	ID          apijson.Field
-	Args        apijson.Field
-	DeviceID    apijson.Field
-	Status      apijson.Field
-	Type        apijson.Field
-	raw         string
-	ExtraFields map[string]apijson.Field
+	ID             apijson.Field
+	Args           apijson.Field
+	DeviceID       apijson.Field
+	RegistrationID apijson.Field
+	Status         apijson.Field
+	Type           apijson.Field
+	raw            string
+	ExtraFields    map[string]apijson.Field
 }
 
 func (r *DEXCommandNewResponseCommand) UnmarshalJSON(data []byte) (err error) {
@@ -186,30 +189,33 @@ func (r dexCommandListResponseJSON) RawJSON() string {
 }
 
 type DEXCommandListResponseCommand struct {
-	ID            string                            `json:"id"`
-	CompletedDate time.Time                         `json:"completed_date,nullable" format:"date-time"`
-	CreatedDate   time.Time                         `json:"created_date" format:"date-time"`
-	DeviceID      string                            `json:"device_id"`
-	Filename      string                            `json:"filename,nullable"`
-	Status        string                            `json:"status"`
-	Type          string                            `json:"type"`
-	UserEmail     string                            `json:"user_email"`
-	JSON          dexCommandListResponseCommandJSON `json:"-"`
+	ID            string    `json:"id"`
+	CompletedDate time.Time `json:"completed_date" api:"nullable" format:"date-time"`
+	CreatedDate   time.Time `json:"created_date" format:"date-time"`
+	DeviceID      string    `json:"device_id"`
+	Filename      string    `json:"filename" api:"nullable"`
+	// Unique identifier for the device registration
+	RegistrationID string                            `json:"registration_id"`
+	Status         string                            `json:"status"`
+	Type           string                            `json:"type"`
+	UserEmail      string                            `json:"user_email"`
+	JSON           dexCommandListResponseCommandJSON `json:"-"`
 }
 
 // dexCommandListResponseCommandJSON contains the JSON metadata for the struct
 // [DEXCommandListResponseCommand]
 type dexCommandListResponseCommandJSON struct {
-	ID            apijson.Field
-	CompletedDate apijson.Field
-	CreatedDate   apijson.Field
-	DeviceID      apijson.Field
-	Filename      apijson.Field
-	Status        apijson.Field
-	Type          apijson.Field
-	UserEmail     apijson.Field
-	raw           string
-	ExtraFields   map[string]apijson.Field
+	ID             apijson.Field
+	CompletedDate  apijson.Field
+	CreatedDate    apijson.Field
+	DeviceID       apijson.Field
+	Filename       apijson.Field
+	RegistrationID apijson.Field
+	Status         apijson.Field
+	Type           apijson.Field
+	UserEmail      apijson.Field
+	raw            string
+	ExtraFields    map[string]apijson.Field
 }
 
 func (r *DEXCommandListResponseCommand) UnmarshalJSON(data []byte) (err error) {
@@ -221,9 +227,9 @@ func (r dexCommandListResponseCommandJSON) RawJSON() string {
 }
 
 type DEXCommandNewParams struct {
-	AccountID param.Field[string] `path:"account_id,required"`
+	AccountID param.Field[string] `path:"account_id" api:"required"`
 	// List of device-level commands to execute
-	Commands param.Field[[]DEXCommandNewParamsCommand] `json:"commands,required"`
+	Commands param.Field[[]DEXCommandNewParamsCommand] `json:"commands" api:"required"`
 }
 
 func (r DEXCommandNewParams) MarshalJSON() (data []byte, err error) {
@@ -232,12 +238,15 @@ func (r DEXCommandNewParams) MarshalJSON() (data []byte, err error) {
 
 type DEXCommandNewParamsCommand struct {
 	// Type of command to execute on the device
-	CommandType param.Field[DEXCommandNewParamsCommandsCommandType] `json:"command_type,required"`
-	// Unique identifier for the device
-	DeviceID param.Field[string] `json:"device_id,required"`
+	CommandType param.Field[DEXCommandNewParamsCommandsCommandType] `json:"command_type" api:"required"`
+	// Unique identifier for the physical device
+	DeviceID param.Field[string] `json:"device_id" api:"required"`
 	// Email tied to the device
-	UserEmail   param.Field[string]                                 `json:"user_email,required"`
+	UserEmail   param.Field[string]                                 `json:"user_email" api:"required"`
 	CommandArgs param.Field[DEXCommandNewParamsCommandsCommandArgs] `json:"command_args"`
+	// Unique identifier for the device registration. Required for multi-user devices
+	// to target the correct user session.
+	RegistrationID param.Field[string] `json:"registration_id"`
 }
 
 func (r DEXCommandNewParamsCommand) MarshalJSON() (data []byte, err error) {
@@ -298,10 +307,10 @@ func (r DEXCommandNewParamsCommandsCommandArgsInterface) IsKnown() bool {
 }
 
 type DEXCommandNewResponseEnvelope struct {
-	Errors   []DEXCommandNewResponseEnvelopeErrors   `json:"errors,required"`
-	Messages []DEXCommandNewResponseEnvelopeMessages `json:"messages,required"`
+	Errors   []DEXCommandNewResponseEnvelopeErrors   `json:"errors" api:"required"`
+	Messages []DEXCommandNewResponseEnvelopeMessages `json:"messages" api:"required"`
 	// Whether the API call was successful.
-	Success    DEXCommandNewResponseEnvelopeSuccess    `json:"success,required"`
+	Success    DEXCommandNewResponseEnvelopeSuccess    `json:"success" api:"required"`
 	Result     DEXCommandNewResponse                   `json:"result"`
 	ResultInfo DEXCommandNewResponseEnvelopeResultInfo `json:"result_info"`
 	JSON       dexCommandNewResponseEnvelopeJSON       `json:"-"`
@@ -328,8 +337,8 @@ func (r dexCommandNewResponseEnvelopeJSON) RawJSON() string {
 }
 
 type DEXCommandNewResponseEnvelopeErrors struct {
-	Code             int64                                     `json:"code,required"`
-	Message          string                                    `json:"message,required"`
+	Code             int64                                     `json:"code" api:"required"`
+	Message          string                                    `json:"message" api:"required"`
 	DocumentationURL string                                    `json:"documentation_url"`
 	Source           DEXCommandNewResponseEnvelopeErrorsSource `json:"source"`
 	JSON             dexCommandNewResponseEnvelopeErrorsJSON   `json:"-"`
@@ -376,8 +385,8 @@ func (r dexCommandNewResponseEnvelopeErrorsSourceJSON) RawJSON() string {
 }
 
 type DEXCommandNewResponseEnvelopeMessages struct {
-	Code             int64                                       `json:"code,required"`
-	Message          string                                      `json:"message,required"`
+	Code             int64                                       `json:"code" api:"required"`
+	Message          string                                      `json:"message" api:"required"`
 	DocumentationURL string                                      `json:"documentation_url"`
 	Source           DEXCommandNewResponseEnvelopeMessagesSource `json:"source"`
 	JSON             dexCommandNewResponseEnvelopeMessagesJSON   `json:"-"`
@@ -446,7 +455,9 @@ type DEXCommandNewResponseEnvelopeResultInfo struct {
 	// Number of results per page of results.
 	PerPage float64 `json:"per_page"`
 	// Total results available without any search parameters.
-	TotalCount float64                                     `json:"total_count"`
+	TotalCount float64 `json:"total_count"`
+	// The number of total pages in the entire result set.
+	TotalPages float64                                     `json:"total_pages"`
 	JSON       dexCommandNewResponseEnvelopeResultInfoJSON `json:"-"`
 }
 
@@ -457,6 +468,7 @@ type dexCommandNewResponseEnvelopeResultInfoJSON struct {
 	Page        apijson.Field
 	PerPage     apijson.Field
 	TotalCount  apijson.Field
+	TotalPages  apijson.Field
 	raw         string
 	ExtraFields map[string]apijson.Field
 }
@@ -470,11 +482,11 @@ func (r dexCommandNewResponseEnvelopeResultInfoJSON) RawJSON() string {
 }
 
 type DEXCommandListParams struct {
-	AccountID param.Field[string] `path:"account_id,required"`
+	AccountID param.Field[string] `path:"account_id" api:"required"`
 	// Page number for pagination
-	Page param.Field[float64] `query:"page,required"`
+	Page param.Field[float64] `query:"page" api:"required"`
 	// Number of results per page
-	PerPage param.Field[float64] `query:"per_page,required"`
+	PerPage param.Field[float64] `query:"per_page" api:"required"`
 	// Optionally filter executed commands by command type
 	CommandType param.Field[string] `query:"command_type"`
 	// Unique identifier for a device

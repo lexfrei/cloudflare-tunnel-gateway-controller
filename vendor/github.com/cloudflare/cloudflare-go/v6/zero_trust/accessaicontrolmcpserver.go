@@ -38,52 +38,52 @@ func NewAccessAIControlMcpServerService(opts ...option.RequestOption) (r *Access
 	return
 }
 
-// Create a new MCP Server
+// Creates a new MCP portal for managing AI tool access through Cloudflare Access.
 func (r *AccessAIControlMcpServerService) New(ctx context.Context, params AccessAIControlMcpServerNewParams, opts ...option.RequestOption) (res *AccessAIControlMcpServerNewResponse, err error) {
 	var env AccessAIControlMcpServerNewResponseEnvelope
 	opts = slices.Concat(r.Options, opts)
 	if params.AccountID.Value == "" {
 		err = errors.New("missing required account_id parameter")
-		return
+		return nil, err
 	}
 	path := fmt.Sprintf("accounts/%s/access/ai-controls/mcp/servers", params.AccountID)
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodPost, path, params, &env, opts...)
 	if err != nil {
-		return
+		return nil, err
 	}
 	res = &env.Result
-	return
+	return res, nil
 }
 
-// Update a MCP Server
+// Updates an MCP portal configuration.
 func (r *AccessAIControlMcpServerService) Update(ctx context.Context, id string, params AccessAIControlMcpServerUpdateParams, opts ...option.RequestOption) (res *AccessAIControlMcpServerUpdateResponse, err error) {
 	var env AccessAIControlMcpServerUpdateResponseEnvelope
 	opts = slices.Concat(r.Options, opts)
 	if params.AccountID.Value == "" {
 		err = errors.New("missing required account_id parameter")
-		return
+		return nil, err
 	}
 	if id == "" {
 		err = errors.New("missing required id parameter")
-		return
+		return nil, err
 	}
 	path := fmt.Sprintf("accounts/%s/access/ai-controls/mcp/servers/%s", params.AccountID, id)
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodPut, path, params, &env, opts...)
 	if err != nil {
-		return
+		return nil, err
 	}
 	res = &env.Result
-	return
+	return res, nil
 }
 
-// List MCP Servers
+// Lists all MCP portals configured for the account.
 func (r *AccessAIControlMcpServerService) List(ctx context.Context, params AccessAIControlMcpServerListParams, opts ...option.RequestOption) (res *pagination.V4PagePaginationArray[AccessAIControlMcpServerListResponse], err error) {
 	var raw *http.Response
 	opts = slices.Concat(r.Options, opts)
 	opts = append([]option.RequestOption{option.WithResponseInto(&raw)}, opts...)
 	if params.AccountID.Value == "" {
 		err = errors.New("missing required account_id parameter")
-		return
+		return nil, err
 	}
 	path := fmt.Sprintf("accounts/%s/access/ai-controls/mcp/servers", params.AccountID)
 	cfg, err := requestconfig.NewRequestConfig(ctx, http.MethodGet, path, params, &res, opts...)
@@ -98,85 +98,85 @@ func (r *AccessAIControlMcpServerService) List(ctx context.Context, params Acces
 	return res, nil
 }
 
-// List MCP Servers
+// Lists all MCP portals configured for the account.
 func (r *AccessAIControlMcpServerService) ListAutoPaging(ctx context.Context, params AccessAIControlMcpServerListParams, opts ...option.RequestOption) *pagination.V4PagePaginationArrayAutoPager[AccessAIControlMcpServerListResponse] {
 	return pagination.NewV4PagePaginationArrayAutoPager(r.List(ctx, params, opts...))
 }
 
-// Delete a MCP Server
+// Deletes an MCP portal from the account.
 func (r *AccessAIControlMcpServerService) Delete(ctx context.Context, id string, body AccessAIControlMcpServerDeleteParams, opts ...option.RequestOption) (res *AccessAIControlMcpServerDeleteResponse, err error) {
 	var env AccessAIControlMcpServerDeleteResponseEnvelope
 	opts = slices.Concat(r.Options, opts)
 	if body.AccountID.Value == "" {
 		err = errors.New("missing required account_id parameter")
-		return
+		return nil, err
 	}
 	if id == "" {
 		err = errors.New("missing required id parameter")
-		return
+		return nil, err
 	}
 	path := fmt.Sprintf("accounts/%s/access/ai-controls/mcp/servers/%s", body.AccountID, id)
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodDelete, path, nil, &env, opts...)
 	if err != nil {
-		return
+		return nil, err
 	}
 	res = &env.Result
-	return
+	return res, nil
 }
 
-// Read the details of a MCP Server
+// Retrieves gateway configuration for MCP portals.
 func (r *AccessAIControlMcpServerService) Read(ctx context.Context, id string, query AccessAIControlMcpServerReadParams, opts ...option.RequestOption) (res *AccessAIControlMcpServerReadResponse, err error) {
 	var env AccessAIControlMcpServerReadResponseEnvelope
 	opts = slices.Concat(r.Options, opts)
 	if query.AccountID.Value == "" {
 		err = errors.New("missing required account_id parameter")
-		return
+		return nil, err
 	}
 	if id == "" {
 		err = errors.New("missing required id parameter")
-		return
+		return nil, err
 	}
 	path := fmt.Sprintf("accounts/%s/access/ai-controls/mcp/servers/%s", query.AccountID, id)
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodGet, path, nil, &env, opts...)
 	if err != nil {
-		return
+		return nil, err
 	}
 	res = &env.Result
-	return
+	return res, nil
 }
 
-// Sync MCP Server Capabilities
+// Syncs an MCP server's tool catalog with the portal.
 func (r *AccessAIControlMcpServerService) Sync(ctx context.Context, id string, body AccessAIControlMcpServerSyncParams, opts ...option.RequestOption) (res *AccessAIControlMcpServerSyncResponse, err error) {
 	var env AccessAIControlMcpServerSyncResponseEnvelope
 	opts = slices.Concat(r.Options, opts)
 	if body.AccountID.Value == "" {
 		err = errors.New("missing required account_id parameter")
-		return
+		return nil, err
 	}
 	if id == "" {
 		err = errors.New("missing required id parameter")
-		return
+		return nil, err
 	}
 	path := fmt.Sprintf("accounts/%s/access/ai-controls/mcp/servers/%s/sync", body.AccountID, id)
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodPost, path, nil, &env, opts...)
 	if err != nil {
-		return
+		return nil, err
 	}
 	res = &env.Result
-	return
+	return res, nil
 }
 
 type AccessAIControlMcpServerNewResponse struct {
 	// server id
-	ID                 string                                      `json:"id,required"`
-	AuthType           AccessAIControlMcpServerNewResponseAuthType `json:"auth_type,required"`
-	Hostname           string                                      `json:"hostname,required" format:"uri"`
-	Name               string                                      `json:"name,required"`
-	Prompts            []map[string]interface{}                    `json:"prompts,required"`
-	Tools              []map[string]interface{}                    `json:"tools,required"`
+	ID                 string                                      `json:"id" api:"required"`
+	AuthType           AccessAIControlMcpServerNewResponseAuthType `json:"auth_type" api:"required"`
+	Hostname           string                                      `json:"hostname" api:"required" format:"uri"`
+	Name               string                                      `json:"name" api:"required"`
+	Prompts            []map[string]interface{}                    `json:"prompts" api:"required"`
+	Tools              []map[string]interface{}                    `json:"tools" api:"required"`
 	CreatedAt          time.Time                                   `json:"created_at" format:"date-time"`
 	CreatedBy          string                                      `json:"created_by"`
-	Description        string                                      `json:"description,nullable"`
+	Description        string                                      `json:"description" api:"nullable"`
 	Error              string                                      `json:"error"`
 	LastSuccessfulSync time.Time                                   `json:"last_successful_sync" format:"date-time"`
 	LastSynced         time.Time                                   `json:"last_synced" format:"date-time"`
@@ -234,15 +234,15 @@ func (r AccessAIControlMcpServerNewResponseAuthType) IsKnown() bool {
 
 type AccessAIControlMcpServerUpdateResponse struct {
 	// server id
-	ID                 string                                         `json:"id,required"`
-	AuthType           AccessAIControlMcpServerUpdateResponseAuthType `json:"auth_type,required"`
-	Hostname           string                                         `json:"hostname,required" format:"uri"`
-	Name               string                                         `json:"name,required"`
-	Prompts            []map[string]interface{}                       `json:"prompts,required"`
-	Tools              []map[string]interface{}                       `json:"tools,required"`
+	ID                 string                                         `json:"id" api:"required"`
+	AuthType           AccessAIControlMcpServerUpdateResponseAuthType `json:"auth_type" api:"required"`
+	Hostname           string                                         `json:"hostname" api:"required" format:"uri"`
+	Name               string                                         `json:"name" api:"required"`
+	Prompts            []map[string]interface{}                       `json:"prompts" api:"required"`
+	Tools              []map[string]interface{}                       `json:"tools" api:"required"`
 	CreatedAt          time.Time                                      `json:"created_at" format:"date-time"`
 	CreatedBy          string                                         `json:"created_by"`
-	Description        string                                         `json:"description,nullable"`
+	Description        string                                         `json:"description" api:"nullable"`
 	Error              string                                         `json:"error"`
 	LastSuccessfulSync time.Time                                      `json:"last_successful_sync" format:"date-time"`
 	LastSynced         time.Time                                      `json:"last_synced" format:"date-time"`
@@ -300,15 +300,15 @@ func (r AccessAIControlMcpServerUpdateResponseAuthType) IsKnown() bool {
 
 type AccessAIControlMcpServerListResponse struct {
 	// server id
-	ID                 string                                       `json:"id,required"`
-	AuthType           AccessAIControlMcpServerListResponseAuthType `json:"auth_type,required"`
-	Hostname           string                                       `json:"hostname,required" format:"uri"`
-	Name               string                                       `json:"name,required"`
-	Prompts            []map[string]interface{}                     `json:"prompts,required"`
-	Tools              []map[string]interface{}                     `json:"tools,required"`
+	ID                 string                                       `json:"id" api:"required"`
+	AuthType           AccessAIControlMcpServerListResponseAuthType `json:"auth_type" api:"required"`
+	Hostname           string                                       `json:"hostname" api:"required" format:"uri"`
+	Name               string                                       `json:"name" api:"required"`
+	Prompts            []map[string]interface{}                     `json:"prompts" api:"required"`
+	Tools              []map[string]interface{}                     `json:"tools" api:"required"`
 	CreatedAt          time.Time                                    `json:"created_at" format:"date-time"`
 	CreatedBy          string                                       `json:"created_by"`
-	Description        string                                       `json:"description,nullable"`
+	Description        string                                       `json:"description" api:"nullable"`
 	Error              string                                       `json:"error"`
 	LastSuccessfulSync time.Time                                    `json:"last_successful_sync" format:"date-time"`
 	LastSynced         time.Time                                    `json:"last_synced" format:"date-time"`
@@ -366,15 +366,15 @@ func (r AccessAIControlMcpServerListResponseAuthType) IsKnown() bool {
 
 type AccessAIControlMcpServerDeleteResponse struct {
 	// server id
-	ID                 string                                         `json:"id,required"`
-	AuthType           AccessAIControlMcpServerDeleteResponseAuthType `json:"auth_type,required"`
-	Hostname           string                                         `json:"hostname,required" format:"uri"`
-	Name               string                                         `json:"name,required"`
-	Prompts            []map[string]interface{}                       `json:"prompts,required"`
-	Tools              []map[string]interface{}                       `json:"tools,required"`
+	ID                 string                                         `json:"id" api:"required"`
+	AuthType           AccessAIControlMcpServerDeleteResponseAuthType `json:"auth_type" api:"required"`
+	Hostname           string                                         `json:"hostname" api:"required" format:"uri"`
+	Name               string                                         `json:"name" api:"required"`
+	Prompts            []map[string]interface{}                       `json:"prompts" api:"required"`
+	Tools              []map[string]interface{}                       `json:"tools" api:"required"`
 	CreatedAt          time.Time                                      `json:"created_at" format:"date-time"`
 	CreatedBy          string                                         `json:"created_by"`
-	Description        string                                         `json:"description,nullable"`
+	Description        string                                         `json:"description" api:"nullable"`
 	Error              string                                         `json:"error"`
 	LastSuccessfulSync time.Time                                      `json:"last_successful_sync" format:"date-time"`
 	LastSynced         time.Time                                      `json:"last_synced" format:"date-time"`
@@ -432,15 +432,15 @@ func (r AccessAIControlMcpServerDeleteResponseAuthType) IsKnown() bool {
 
 type AccessAIControlMcpServerReadResponse struct {
 	// server id
-	ID                 string                                       `json:"id,required"`
-	AuthType           AccessAIControlMcpServerReadResponseAuthType `json:"auth_type,required"`
-	Hostname           string                                       `json:"hostname,required" format:"uri"`
-	Name               string                                       `json:"name,required"`
-	Prompts            []map[string]interface{}                     `json:"prompts,required"`
-	Tools              []map[string]interface{}                     `json:"tools,required"`
+	ID                 string                                       `json:"id" api:"required"`
+	AuthType           AccessAIControlMcpServerReadResponseAuthType `json:"auth_type" api:"required"`
+	Hostname           string                                       `json:"hostname" api:"required" format:"uri"`
+	Name               string                                       `json:"name" api:"required"`
+	Prompts            []map[string]interface{}                     `json:"prompts" api:"required"`
+	Tools              []map[string]interface{}                     `json:"tools" api:"required"`
 	CreatedAt          time.Time                                    `json:"created_at" format:"date-time"`
 	CreatedBy          string                                       `json:"created_by"`
-	Description        string                                       `json:"description,nullable"`
+	Description        string                                       `json:"description" api:"nullable"`
 	Error              string                                       `json:"error"`
 	LastSuccessfulSync time.Time                                    `json:"last_successful_sync" format:"date-time"`
 	LastSynced         time.Time                                    `json:"last_synced" format:"date-time"`
@@ -499,12 +499,12 @@ func (r AccessAIControlMcpServerReadResponseAuthType) IsKnown() bool {
 type AccessAIControlMcpServerSyncResponse = interface{}
 
 type AccessAIControlMcpServerNewParams struct {
-	AccountID param.Field[string] `path:"account_id,required"`
+	AccountID param.Field[string] `path:"account_id" api:"required"`
 	// server id
-	ID              param.Field[string]                                    `json:"id,required"`
-	AuthType        param.Field[AccessAIControlMcpServerNewParamsAuthType] `json:"auth_type,required"`
-	Hostname        param.Field[string]                                    `json:"hostname,required" format:"uri"`
-	Name            param.Field[string]                                    `json:"name,required"`
+	ID              param.Field[string]                                    `json:"id" api:"required"`
+	AuthType        param.Field[AccessAIControlMcpServerNewParamsAuthType] `json:"auth_type" api:"required"`
+	Hostname        param.Field[string]                                    `json:"hostname" api:"required" format:"uri"`
+	Name            param.Field[string]                                    `json:"name" api:"required"`
 	AuthCredentials param.Field[string]                                    `json:"auth_credentials"`
 	Description     param.Field[string]                                    `json:"description"`
 }
@@ -530,8 +530,8 @@ func (r AccessAIControlMcpServerNewParamsAuthType) IsKnown() bool {
 }
 
 type AccessAIControlMcpServerNewResponseEnvelope struct {
-	Result  AccessAIControlMcpServerNewResponse             `json:"result,required"`
-	Success bool                                            `json:"success,required"`
+	Result  AccessAIControlMcpServerNewResponse             `json:"result" api:"required"`
+	Success bool                                            `json:"success" api:"required"`
 	JSON    accessAIControlMcpServerNewResponseEnvelopeJSON `json:"-"`
 }
 
@@ -553,7 +553,7 @@ func (r accessAIControlMcpServerNewResponseEnvelopeJSON) RawJSON() string {
 }
 
 type AccessAIControlMcpServerUpdateParams struct {
-	AccountID       param.Field[string] `path:"account_id,required"`
+	AccountID       param.Field[string] `path:"account_id" api:"required"`
 	AuthCredentials param.Field[string] `json:"auth_credentials"`
 	Description     param.Field[string] `json:"description"`
 	Name            param.Field[string] `json:"name"`
@@ -564,8 +564,8 @@ func (r AccessAIControlMcpServerUpdateParams) MarshalJSON() (data []byte, err er
 }
 
 type AccessAIControlMcpServerUpdateResponseEnvelope struct {
-	Result  AccessAIControlMcpServerUpdateResponse             `json:"result,required"`
-	Success bool                                               `json:"success,required"`
+	Result  AccessAIControlMcpServerUpdateResponse             `json:"result" api:"required"`
+	Success bool                                               `json:"success" api:"required"`
 	JSON    accessAIControlMcpServerUpdateResponseEnvelopeJSON `json:"-"`
 }
 
@@ -587,7 +587,7 @@ func (r accessAIControlMcpServerUpdateResponseEnvelopeJSON) RawJSON() string {
 }
 
 type AccessAIControlMcpServerListParams struct {
-	AccountID param.Field[string] `path:"account_id,required"`
+	AccountID param.Field[string] `path:"account_id" api:"required"`
 	Page      param.Field[int64]  `query:"page"`
 	PerPage   param.Field[int64]  `query:"per_page"`
 	// Search by id, name
@@ -604,12 +604,12 @@ func (r AccessAIControlMcpServerListParams) URLQuery() (v url.Values) {
 }
 
 type AccessAIControlMcpServerDeleteParams struct {
-	AccountID param.Field[string] `path:"account_id,required"`
+	AccountID param.Field[string] `path:"account_id" api:"required"`
 }
 
 type AccessAIControlMcpServerDeleteResponseEnvelope struct {
-	Result  AccessAIControlMcpServerDeleteResponse             `json:"result,required"`
-	Success bool                                               `json:"success,required"`
+	Result  AccessAIControlMcpServerDeleteResponse             `json:"result" api:"required"`
+	Success bool                                               `json:"success" api:"required"`
 	JSON    accessAIControlMcpServerDeleteResponseEnvelopeJSON `json:"-"`
 }
 
@@ -631,12 +631,12 @@ func (r accessAIControlMcpServerDeleteResponseEnvelopeJSON) RawJSON() string {
 }
 
 type AccessAIControlMcpServerReadParams struct {
-	AccountID param.Field[string] `path:"account_id,required"`
+	AccountID param.Field[string] `path:"account_id" api:"required"`
 }
 
 type AccessAIControlMcpServerReadResponseEnvelope struct {
-	Result  AccessAIControlMcpServerReadResponse             `json:"result,required"`
-	Success bool                                             `json:"success,required"`
+	Result  AccessAIControlMcpServerReadResponse             `json:"result" api:"required"`
+	Success bool                                             `json:"success" api:"required"`
 	JSON    accessAIControlMcpServerReadResponseEnvelopeJSON `json:"-"`
 }
 
@@ -658,12 +658,12 @@ func (r accessAIControlMcpServerReadResponseEnvelopeJSON) RawJSON() string {
 }
 
 type AccessAIControlMcpServerSyncParams struct {
-	AccountID param.Field[string] `path:"account_id,required"`
+	AccountID param.Field[string] `path:"account_id" api:"required"`
 }
 
 type AccessAIControlMcpServerSyncResponseEnvelope struct {
-	Result  AccessAIControlMcpServerSyncResponse             `json:"result,required"`
-	Success bool                                             `json:"success,required"`
+	Result  AccessAIControlMcpServerSyncResponse             `json:"result" api:"required"`
+	Success bool                                             `json:"success" api:"required"`
 	JSON    accessAIControlMcpServerSyncResponseEnvelopeJSON `json:"-"`
 }
 

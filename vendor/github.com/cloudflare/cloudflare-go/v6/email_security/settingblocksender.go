@@ -39,31 +39,32 @@ func NewSettingBlockSenderService(opts ...option.RequestOption) (r *SettingBlock
 	return
 }
 
-// Create a blocked email sender
+// Adds a sender pattern to the email block list, preventing messages from matching
+// senders from being delivered.
 func (r *SettingBlockSenderService) New(ctx context.Context, params SettingBlockSenderNewParams, opts ...option.RequestOption) (res *SettingBlockSenderNewResponse, err error) {
 	var env SettingBlockSenderNewResponseEnvelope
 	opts = slices.Concat(r.Options, opts)
 	if params.AccountID.Value == "" {
 		err = errors.New("missing required account_id parameter")
-		return
+		return nil, err
 	}
 	path := fmt.Sprintf("accounts/%s/email-security/settings/block_senders", params.AccountID)
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodPost, path, params, &env, opts...)
 	if err != nil {
-		return
+		return nil, err
 	}
 	res = &env.Result
-	return
+	return res, nil
 }
 
-// List blocked email senders
+// Lists all blocked sender entries with their patterns and block reasons.
 func (r *SettingBlockSenderService) List(ctx context.Context, params SettingBlockSenderListParams, opts ...option.RequestOption) (res *pagination.V4PagePaginationArray[SettingBlockSenderListResponse], err error) {
 	var raw *http.Response
 	opts = slices.Concat(r.Options, opts)
 	opts = append([]option.RequestOption{option.WithResponseInto(&raw)}, opts...)
 	if params.AccountID.Value == "" {
 		err = errors.New("missing required account_id parameter")
-		return
+		return nil, err
 	}
 	path := fmt.Sprintf("accounts/%s/email-security/settings/block_senders", params.AccountID)
 	cfg, err := requestconfig.NewRequestConfig(ctx, http.MethodGet, path, params, &res, opts...)
@@ -78,71 +79,73 @@ func (r *SettingBlockSenderService) List(ctx context.Context, params SettingBloc
 	return res, nil
 }
 
-// List blocked email senders
+// Lists all blocked sender entries with their patterns and block reasons.
 func (r *SettingBlockSenderService) ListAutoPaging(ctx context.Context, params SettingBlockSenderListParams, opts ...option.RequestOption) *pagination.V4PagePaginationArrayAutoPager[SettingBlockSenderListResponse] {
 	return pagination.NewV4PagePaginationArrayAutoPager(r.List(ctx, params, opts...))
 }
 
-// Delete a blocked email sender
+// Removes a sender from the email block list, allowing their messages to be
+// delivered normally.
 func (r *SettingBlockSenderService) Delete(ctx context.Context, patternID int64, body SettingBlockSenderDeleteParams, opts ...option.RequestOption) (res *SettingBlockSenderDeleteResponse, err error) {
 	var env SettingBlockSenderDeleteResponseEnvelope
 	opts = slices.Concat(r.Options, opts)
 	if body.AccountID.Value == "" {
 		err = errors.New("missing required account_id parameter")
-		return
+		return nil, err
 	}
 	path := fmt.Sprintf("accounts/%s/email-security/settings/block_senders/%v", body.AccountID, patternID)
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodDelete, path, nil, &env, opts...)
 	if err != nil {
-		return
+		return nil, err
 	}
 	res = &env.Result
-	return
+	return res, nil
 }
 
-// Update a blocked email sender
+// Modifies a blocked sender entry, updating its pattern or block reason.
 func (r *SettingBlockSenderService) Edit(ctx context.Context, patternID int64, params SettingBlockSenderEditParams, opts ...option.RequestOption) (res *SettingBlockSenderEditResponse, err error) {
 	var env SettingBlockSenderEditResponseEnvelope
 	opts = slices.Concat(r.Options, opts)
 	if params.AccountID.Value == "" {
 		err = errors.New("missing required account_id parameter")
-		return
+		return nil, err
 	}
 	path := fmt.Sprintf("accounts/%s/email-security/settings/block_senders/%v", params.AccountID, patternID)
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodPatch, path, params, &env, opts...)
 	if err != nil {
-		return
+		return nil, err
 	}
 	res = &env.Result
-	return
+	return res, nil
 }
 
-// Get a blocked email sender
+// Gets information about a specific blocked sender entry, including the pattern
+// and block reason.
 func (r *SettingBlockSenderService) Get(ctx context.Context, patternID int64, query SettingBlockSenderGetParams, opts ...option.RequestOption) (res *SettingBlockSenderGetResponse, err error) {
 	var env SettingBlockSenderGetResponseEnvelope
 	opts = slices.Concat(r.Options, opts)
 	if query.AccountID.Value == "" {
 		err = errors.New("missing required account_id parameter")
-		return
+		return nil, err
 	}
 	path := fmt.Sprintf("accounts/%s/email-security/settings/block_senders/%v", query.AccountID, patternID)
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodGet, path, nil, &env, opts...)
 	if err != nil {
-		return
+		return nil, err
 	}
 	res = &env.Result
-	return
+	return res, nil
 }
 
 type SettingBlockSenderNewResponse struct {
 	// The unique identifier for the allow policy.
-	ID           int64                                    `json:"id,required"`
-	CreatedAt    time.Time                                `json:"created_at,required" format:"date-time"`
-	IsRegex      bool                                     `json:"is_regex,required"`
-	LastModified time.Time                                `json:"last_modified,required" format:"date-time"`
-	Pattern      string                                   `json:"pattern,required"`
-	PatternType  SettingBlockSenderNewResponsePatternType `json:"pattern_type,required"`
-	Comments     string                                   `json:"comments,nullable"`
+	ID           int64                                    `json:"id" api:"required"`
+	CreatedAt    time.Time                                `json:"created_at" api:"required" format:"date-time"`
+	IsRegex      bool                                     `json:"is_regex" api:"required"`
+	LastModified time.Time                                `json:"last_modified" api:"required" format:"date-time"`
+	Pattern      string                                   `json:"pattern" api:"required"`
+	PatternType  SettingBlockSenderNewResponsePatternType `json:"pattern_type" api:"required"`
+	Comments     string                                   `json:"comments" api:"nullable"`
 	JSON         settingBlockSenderNewResponseJSON        `json:"-"`
 }
 
@@ -187,13 +190,13 @@ func (r SettingBlockSenderNewResponsePatternType) IsKnown() bool {
 
 type SettingBlockSenderListResponse struct {
 	// The unique identifier for the allow policy.
-	ID           int64                                     `json:"id,required"`
-	CreatedAt    time.Time                                 `json:"created_at,required" format:"date-time"`
-	IsRegex      bool                                      `json:"is_regex,required"`
-	LastModified time.Time                                 `json:"last_modified,required" format:"date-time"`
-	Pattern      string                                    `json:"pattern,required"`
-	PatternType  SettingBlockSenderListResponsePatternType `json:"pattern_type,required"`
-	Comments     string                                    `json:"comments,nullable"`
+	ID           int64                                     `json:"id" api:"required"`
+	CreatedAt    time.Time                                 `json:"created_at" api:"required" format:"date-time"`
+	IsRegex      bool                                      `json:"is_regex" api:"required"`
+	LastModified time.Time                                 `json:"last_modified" api:"required" format:"date-time"`
+	Pattern      string                                    `json:"pattern" api:"required"`
+	PatternType  SettingBlockSenderListResponsePatternType `json:"pattern_type" api:"required"`
+	Comments     string                                    `json:"comments" api:"nullable"`
 	JSON         settingBlockSenderListResponseJSON        `json:"-"`
 }
 
@@ -238,7 +241,7 @@ func (r SettingBlockSenderListResponsePatternType) IsKnown() bool {
 
 type SettingBlockSenderDeleteResponse struct {
 	// The unique identifier for the allow policy.
-	ID   int64                                `json:"id,required"`
+	ID   int64                                `json:"id" api:"required"`
 	JSON settingBlockSenderDeleteResponseJSON `json:"-"`
 }
 
@@ -260,13 +263,13 @@ func (r settingBlockSenderDeleteResponseJSON) RawJSON() string {
 
 type SettingBlockSenderEditResponse struct {
 	// The unique identifier for the allow policy.
-	ID           int64                                     `json:"id,required"`
-	CreatedAt    time.Time                                 `json:"created_at,required" format:"date-time"`
-	IsRegex      bool                                      `json:"is_regex,required"`
-	LastModified time.Time                                 `json:"last_modified,required" format:"date-time"`
-	Pattern      string                                    `json:"pattern,required"`
-	PatternType  SettingBlockSenderEditResponsePatternType `json:"pattern_type,required"`
-	Comments     string                                    `json:"comments,nullable"`
+	ID           int64                                     `json:"id" api:"required"`
+	CreatedAt    time.Time                                 `json:"created_at" api:"required" format:"date-time"`
+	IsRegex      bool                                      `json:"is_regex" api:"required"`
+	LastModified time.Time                                 `json:"last_modified" api:"required" format:"date-time"`
+	Pattern      string                                    `json:"pattern" api:"required"`
+	PatternType  SettingBlockSenderEditResponsePatternType `json:"pattern_type" api:"required"`
+	Comments     string                                    `json:"comments" api:"nullable"`
 	JSON         settingBlockSenderEditResponseJSON        `json:"-"`
 }
 
@@ -311,13 +314,13 @@ func (r SettingBlockSenderEditResponsePatternType) IsKnown() bool {
 
 type SettingBlockSenderGetResponse struct {
 	// The unique identifier for the allow policy.
-	ID           int64                                    `json:"id,required"`
-	CreatedAt    time.Time                                `json:"created_at,required" format:"date-time"`
-	IsRegex      bool                                     `json:"is_regex,required"`
-	LastModified time.Time                                `json:"last_modified,required" format:"date-time"`
-	Pattern      string                                   `json:"pattern,required"`
-	PatternType  SettingBlockSenderGetResponsePatternType `json:"pattern_type,required"`
-	Comments     string                                   `json:"comments,nullable"`
+	ID           int64                                    `json:"id" api:"required"`
+	CreatedAt    time.Time                                `json:"created_at" api:"required" format:"date-time"`
+	IsRegex      bool                                     `json:"is_regex" api:"required"`
+	LastModified time.Time                                `json:"last_modified" api:"required" format:"date-time"`
+	Pattern      string                                   `json:"pattern" api:"required"`
+	PatternType  SettingBlockSenderGetResponsePatternType `json:"pattern_type" api:"required"`
+	Comments     string                                   `json:"comments" api:"nullable"`
 	JSON         settingBlockSenderGetResponseJSON        `json:"-"`
 }
 
@@ -362,10 +365,10 @@ func (r SettingBlockSenderGetResponsePatternType) IsKnown() bool {
 
 type SettingBlockSenderNewParams struct {
 	// Account Identifier
-	AccountID   param.Field[string]                                 `path:"account_id,required"`
-	IsRegex     param.Field[bool]                                   `json:"is_regex,required"`
-	Pattern     param.Field[string]                                 `json:"pattern,required"`
-	PatternType param.Field[SettingBlockSenderNewParamsPatternType] `json:"pattern_type,required"`
+	AccountID   param.Field[string]                                 `path:"account_id" api:"required"`
+	IsRegex     param.Field[bool]                                   `json:"is_regex" api:"required"`
+	Pattern     param.Field[string]                                 `json:"pattern" api:"required"`
+	PatternType param.Field[SettingBlockSenderNewParamsPatternType] `json:"pattern_type" api:"required"`
 	Comments    param.Field[string]                                 `json:"comments"`
 }
 
@@ -391,10 +394,10 @@ func (r SettingBlockSenderNewParamsPatternType) IsKnown() bool {
 }
 
 type SettingBlockSenderNewResponseEnvelope struct {
-	Errors   []shared.ResponseInfo                     `json:"errors,required"`
-	Messages []shared.ResponseInfo                     `json:"messages,required"`
-	Result   SettingBlockSenderNewResponse             `json:"result,required"`
-	Success  bool                                      `json:"success,required"`
+	Errors   []shared.ResponseInfo                     `json:"errors" api:"required"`
+	Messages []shared.ResponseInfo                     `json:"messages" api:"required"`
+	Result   SettingBlockSenderNewResponse             `json:"result" api:"required"`
+	Success  bool                                      `json:"success" api:"required"`
 	JSON     settingBlockSenderNewResponseEnvelopeJSON `json:"-"`
 }
 
@@ -419,7 +422,7 @@ func (r settingBlockSenderNewResponseEnvelopeJSON) RawJSON() string {
 
 type SettingBlockSenderListParams struct {
 	// Account Identifier
-	AccountID param.Field[string] `path:"account_id,required"`
+	AccountID param.Field[string] `path:"account_id" api:"required"`
 	// The sorting direction.
 	Direction param.Field[SettingBlockSenderListParamsDirection] `query:"direction"`
 	// The field to sort by.
@@ -496,14 +499,14 @@ func (r SettingBlockSenderListParamsPatternType) IsKnown() bool {
 
 type SettingBlockSenderDeleteParams struct {
 	// Account Identifier
-	AccountID param.Field[string] `path:"account_id,required"`
+	AccountID param.Field[string] `path:"account_id" api:"required"`
 }
 
 type SettingBlockSenderDeleteResponseEnvelope struct {
-	Errors   []shared.ResponseInfo                        `json:"errors,required"`
-	Messages []shared.ResponseInfo                        `json:"messages,required"`
-	Result   SettingBlockSenderDeleteResponse             `json:"result,required"`
-	Success  bool                                         `json:"success,required"`
+	Errors   []shared.ResponseInfo                        `json:"errors" api:"required"`
+	Messages []shared.ResponseInfo                        `json:"messages" api:"required"`
+	Result   SettingBlockSenderDeleteResponse             `json:"result" api:"required"`
+	Success  bool                                         `json:"success" api:"required"`
 	JSON     settingBlockSenderDeleteResponseEnvelopeJSON `json:"-"`
 }
 
@@ -528,7 +531,7 @@ func (r settingBlockSenderDeleteResponseEnvelopeJSON) RawJSON() string {
 
 type SettingBlockSenderEditParams struct {
 	// Account Identifier
-	AccountID   param.Field[string]                                  `path:"account_id,required"`
+	AccountID   param.Field[string]                                  `path:"account_id" api:"required"`
 	Comments    param.Field[string]                                  `json:"comments"`
 	IsRegex     param.Field[bool]                                    `json:"is_regex"`
 	Pattern     param.Field[string]                                  `json:"pattern"`
@@ -557,10 +560,10 @@ func (r SettingBlockSenderEditParamsPatternType) IsKnown() bool {
 }
 
 type SettingBlockSenderEditResponseEnvelope struct {
-	Errors   []shared.ResponseInfo                      `json:"errors,required"`
-	Messages []shared.ResponseInfo                      `json:"messages,required"`
-	Result   SettingBlockSenderEditResponse             `json:"result,required"`
-	Success  bool                                       `json:"success,required"`
+	Errors   []shared.ResponseInfo                      `json:"errors" api:"required"`
+	Messages []shared.ResponseInfo                      `json:"messages" api:"required"`
+	Result   SettingBlockSenderEditResponse             `json:"result" api:"required"`
+	Success  bool                                       `json:"success" api:"required"`
 	JSON     settingBlockSenderEditResponseEnvelopeJSON `json:"-"`
 }
 
@@ -585,14 +588,14 @@ func (r settingBlockSenderEditResponseEnvelopeJSON) RawJSON() string {
 
 type SettingBlockSenderGetParams struct {
 	// Account Identifier
-	AccountID param.Field[string] `path:"account_id,required"`
+	AccountID param.Field[string] `path:"account_id" api:"required"`
 }
 
 type SettingBlockSenderGetResponseEnvelope struct {
-	Errors   []shared.ResponseInfo                     `json:"errors,required"`
-	Messages []shared.ResponseInfo                     `json:"messages,required"`
-	Result   SettingBlockSenderGetResponse             `json:"result,required"`
-	Success  bool                                      `json:"success,required"`
+	Errors   []shared.ResponseInfo                     `json:"errors" api:"required"`
+	Messages []shared.ResponseInfo                     `json:"messages" api:"required"`
+	Result   SettingBlockSenderGetResponse             `json:"result" api:"required"`
+	Success  bool                                      `json:"success" api:"required"`
 	JSON     settingBlockSenderGetResponseEnvelopeJSON `json:"-"`
 }
 

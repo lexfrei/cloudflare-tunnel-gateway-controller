@@ -44,9 +44,11 @@ import (
 	"github.com/cloudflare/cloudflare-go/v6/durable_objects"
 	"github.com/cloudflare/cloudflare-go/v6/email_routing"
 	"github.com/cloudflare/cloudflare-go/v6/email_security"
+	"github.com/cloudflare/cloudflare-go/v6/email_sending"
 	"github.com/cloudflare/cloudflare-go/v6/filters"
 	"github.com/cloudflare/cloudflare-go/v6/firewall"
 	"github.com/cloudflare/cloudflare-go/v6/fraud"
+	"github.com/cloudflare/cloudflare-go/v6/google_tag_gateway"
 	"github.com/cloudflare/cloudflare-go/v6/healthchecks"
 	"github.com/cloudflare/cloudflare-go/v6/hostnames"
 	"github.com/cloudflare/cloudflare-go/v6/hyperdrive"
@@ -86,6 +88,7 @@ import (
 	"github.com/cloudflare/cloudflare-go/v6/registrar"
 	"github.com/cloudflare/cloudflare-go/v6/request_tracers"
 	"github.com/cloudflare/cloudflare-go/v6/resource_sharing"
+	"github.com/cloudflare/cloudflare-go/v6/resource_tagging"
 	"github.com/cloudflare/cloudflare-go/v6/rules"
 	"github.com/cloudflare/cloudflare-go/v6/rulesets"
 	"github.com/cloudflare/cloudflare-go/v6/rum"
@@ -140,6 +143,7 @@ type Client struct {
 	DNS                    *dns.DNSService
 	EmailSecurity          *email_security.EmailSecurityService
 	EmailRouting           *email_routing.EmailRoutingService
+	EmailSending           *email_sending.EmailSendingService
 	// Deprecated: The Filters API is deprecated in favour of using the Ruleset Engine.
 	// See
 	// https://developers.cloudflare.com/fundamentals/api/reference/deprecations/#firewall-rules-api-and-filters-api
@@ -202,6 +206,7 @@ type Client struct {
 	BotManagement               *bot_management.BotManagementService
 	Fraud                       *fraud.FraudService
 	OriginPostQuantumEncryption *origin_post_quantum_encryption.OriginPostQuantumEncryptionService
+	GoogleTagGateway            *google_tag_gateway.GoogleTagGatewayService
 	Zaraz                       *zaraz.ZarazService
 	Speed                       *speed.SpeedService
 	DCVDelegation               *dcv_delegation.DCVDelegationService
@@ -217,6 +222,7 @@ type Client struct {
 	SecurityTXT                 *security_txt.SecurityTXTService
 	Workflows                   *workflows.WorkflowService
 	ResourceSharing             *resource_sharing.ResourceSharingService
+	ResourceTagging             *resource_tagging.ResourceTaggingService
 	LeakedCredentialChecks      *leaked_credential_checks.LeakedCredentialCheckService
 	ContentScanning             *content_scanning.ContentScanningService
 	AbuseReports                *abuse_reports.AbuseReportService
@@ -285,6 +291,7 @@ func NewClient(opts ...option.RequestOption) (r *Client) {
 	r.DNS = dns.NewDNSService(opts...)
 	r.EmailSecurity = email_security.NewEmailSecurityService(opts...)
 	r.EmailRouting = email_routing.NewEmailRoutingService(opts...)
+	r.EmailSending = email_sending.NewEmailSendingService(opts...)
 	r.Filters = filters.NewFilterService(opts...)
 	r.Firewall = firewall.NewFirewallService(opts...)
 	r.Healthchecks = healthchecks.NewHealthcheckService(opts...)
@@ -339,6 +346,7 @@ func NewClient(opts ...option.RequestOption) (r *Client) {
 	r.BotManagement = bot_management.NewBotManagementService(opts...)
 	r.Fraud = fraud.NewFraudService(opts...)
 	r.OriginPostQuantumEncryption = origin_post_quantum_encryption.NewOriginPostQuantumEncryptionService(opts...)
+	r.GoogleTagGateway = google_tag_gateway.NewGoogleTagGatewayService(opts...)
 	r.Zaraz = zaraz.NewZarazService(opts...)
 	r.Speed = speed.NewSpeedService(opts...)
 	r.DCVDelegation = dcv_delegation.NewDCVDelegationService(opts...)
@@ -354,6 +362,7 @@ func NewClient(opts ...option.RequestOption) (r *Client) {
 	r.SecurityTXT = security_txt.NewSecurityTXTService(opts...)
 	r.Workflows = workflows.NewWorkflowService(opts...)
 	r.ResourceSharing = resource_sharing.NewResourceSharingService(opts...)
+	r.ResourceTagging = resource_tagging.NewResourceTaggingService(opts...)
 	r.LeakedCredentialChecks = leaked_credential_checks.NewLeakedCredentialCheckService(opts...)
 	r.ContentScanning = content_scanning.NewContentScanningService(opts...)
 	r.AbuseReports = abuse_reports.NewAbuseReportService(opts...)

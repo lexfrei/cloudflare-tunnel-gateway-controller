@@ -35,33 +35,34 @@ func NewInvestigateReclassifyService(opts ...option.RequestOption) (r *Investiga
 	return
 }
 
-// Change email classfication
+// Submits an email message for reclassification, updating its threat assessment
+// based on new analysis.
 func (r *InvestigateReclassifyService) New(ctx context.Context, postfixID string, params InvestigateReclassifyNewParams, opts ...option.RequestOption) (res *InvestigateReclassifyNewResponse, err error) {
 	var env InvestigateReclassifyNewResponseEnvelope
 	opts = slices.Concat(r.Options, opts)
 	if params.AccountID.Value == "" {
 		err = errors.New("missing required account_id parameter")
-		return
+		return nil, err
 	}
 	if postfixID == "" {
 		err = errors.New("missing required postfix_id parameter")
-		return
+		return nil, err
 	}
 	path := fmt.Sprintf("accounts/%s/email-security/investigate/%s/reclassify", params.AccountID, postfixID)
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodPost, path, params, &env, opts...)
 	if err != nil {
-		return
+		return nil, err
 	}
 	res = &env.Result
-	return
+	return res, nil
 }
 
 type InvestigateReclassifyNewResponse = interface{}
 
 type InvestigateReclassifyNewParams struct {
 	// Account Identifier
-	AccountID           param.Field[string]                                            `path:"account_id,required"`
-	ExpectedDisposition param.Field[InvestigateReclassifyNewParamsExpectedDisposition] `json:"expected_disposition,required"`
+	AccountID           param.Field[string]                                            `path:"account_id" api:"required"`
+	ExpectedDisposition param.Field[InvestigateReclassifyNewParamsExpectedDisposition] `json:"expected_disposition" api:"required"`
 	// Base64 encoded content of the EML file
 	EmlContent            param.Field[string] `json:"eml_content"`
 	EscalatedSubmissionID param.Field[string] `json:"escalated_submission_id"`
@@ -91,10 +92,10 @@ func (r InvestigateReclassifyNewParamsExpectedDisposition) IsKnown() bool {
 }
 
 type InvestigateReclassifyNewResponseEnvelope struct {
-	Errors   []shared.ResponseInfo                        `json:"errors,required"`
-	Messages []shared.ResponseInfo                        `json:"messages,required"`
-	Result   InvestigateReclassifyNewResponse             `json:"result,required"`
-	Success  bool                                         `json:"success,required"`
+	Errors   []shared.ResponseInfo                        `json:"errors" api:"required"`
+	Messages []shared.ResponseInfo                        `json:"messages" api:"required"`
+	Result   InvestigateReclassifyNewResponse             `json:"result" api:"required"`
+	Success  bool                                         `json:"success" api:"required"`
 	JSON     investigateReclassifyNewResponseEnvelopeJSON `json:"-"`
 }
 

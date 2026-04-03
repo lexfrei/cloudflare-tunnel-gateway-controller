@@ -63,10 +63,10 @@ func (r *OrganizationService) New(ctx context.Context, params OrganizationNewPar
 	path := fmt.Sprintf("%s/%s/access/organizations", accountOrZone, accountOrZoneID)
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodPost, path, params, &env, opts...)
 	if err != nil {
-		return
+		return nil, err
 	}
 	res = &env.Result
-	return
+	return res, nil
 }
 
 // Updates the configuration for your Zero Trust organization.
@@ -94,10 +94,10 @@ func (r *OrganizationService) Update(ctx context.Context, params OrganizationUpd
 	path := fmt.Sprintf("%s/%s/access/organizations", accountOrZone, accountOrZoneID)
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodPut, path, params, &env, opts...)
 	if err != nil {
-		return
+		return nil, err
 	}
 	res = &env.Result
-	return
+	return res, nil
 }
 
 // Returns the configuration for your Zero Trust organization.
@@ -125,10 +125,10 @@ func (r *OrganizationService) List(ctx context.Context, query OrganizationListPa
 	path := fmt.Sprintf("%s/%s/access/organizations", accountOrZone, accountOrZoneID)
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodGet, path, nil, &env, opts...)
 	if err != nil {
-		return
+		return nil, err
 	}
 	res = &env.Result
-	return
+	return res, nil
 }
 
 // Revokes a user's access across all applications.
@@ -156,10 +156,10 @@ func (r *OrganizationService) RevokeUsers(ctx context.Context, params Organizati
 	path := fmt.Sprintf("%s/%s/access/organizations/revoke_user", accountOrZone, accountOrZoneID)
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodPost, path, params, &env, opts...)
 	if err != nil {
-		return
+		return nil, err
 	}
 	res = &env.Result
-	return
+	return res, nil
 }
 
 type LoginDesign struct {
@@ -239,9 +239,6 @@ type Organization struct {
 	LoginDesign  LoginDesign `json:"login_design"`
 	// Configures multi-factor authentication (MFA) settings for an organization.
 	MfaConfig OrganizationMfaConfig `json:"mfa_config"`
-	// Indicates if this organization can enforce multi-factor authentication (MFA)
-	// requirements at the application and policy level.
-	MfaConfigurationAllowed bool `json:"mfa_configuration_allowed"`
 	// Determines whether global MFA settings apply to applications by default. The
 	// organization must have MFA enabled with at least one authentication method and a
 	// session duration configured.
@@ -277,7 +274,6 @@ type organizationJSON struct {
 	IsUIReadOnly                           apijson.Field
 	LoginDesign                            apijson.Field
 	MfaConfig                              apijson.Field
-	MfaConfigurationAllowed                apijson.Field
 	MfaRequiredForAllApps                  apijson.Field
 	Name                                   apijson.Field
 	SessionDuration                        apijson.Field
@@ -382,9 +378,9 @@ func (r OrganizationRevokeUsersResponse) IsKnown() bool {
 
 type OrganizationNewParams struct {
 	// The unique subdomain assigned to your Zero Trust organization.
-	AuthDomain param.Field[string] `json:"auth_domain,required"`
+	AuthDomain param.Field[string] `json:"auth_domain" api:"required"`
 	// The name of your Zero Trust organization.
-	Name param.Field[string] `json:"name,required"`
+	Name param.Field[string] `json:"name" api:"required"`
 	// The Account ID to use for this endpoint. Mutually exclusive with the Zone ID.
 	AccountID param.Field[string] `path:"account_id"`
 	// The Zone ID to use for this endpoint. Mutually exclusive with the Account ID.
@@ -412,9 +408,6 @@ type OrganizationNewParams struct {
 	LoginDesign  param.Field[LoginDesignParam] `json:"login_design"`
 	// Configures multi-factor authentication (MFA) settings for an organization.
 	MfaConfig param.Field[OrganizationNewParamsMfaConfig] `json:"mfa_config"`
-	// Indicates if this organization can enforce multi-factor authentication (MFA)
-	// requirements at the application and policy level.
-	MfaConfigurationAllowed param.Field[bool] `json:"mfa_configuration_allowed"`
 	// Determines whether global MFA settings apply to applications by default. The
 	// organization must have MFA enabled with at least one authentication method and a
 	// session duration configured.
@@ -470,10 +463,10 @@ func (r OrganizationNewParamsMfaConfigAllowedAuthenticator) IsKnown() bool {
 }
 
 type OrganizationNewResponseEnvelope struct {
-	Errors   []OrganizationNewResponseEnvelopeErrors   `json:"errors,required"`
-	Messages []OrganizationNewResponseEnvelopeMessages `json:"messages,required"`
+	Errors   []OrganizationNewResponseEnvelopeErrors   `json:"errors" api:"required"`
+	Messages []OrganizationNewResponseEnvelopeMessages `json:"messages" api:"required"`
 	// Whether the API call was successful.
-	Success OrganizationNewResponseEnvelopeSuccess `json:"success,required"`
+	Success OrganizationNewResponseEnvelopeSuccess `json:"success" api:"required"`
 	Result  Organization                           `json:"result"`
 	JSON    organizationNewResponseEnvelopeJSON    `json:"-"`
 }
@@ -498,8 +491,8 @@ func (r organizationNewResponseEnvelopeJSON) RawJSON() string {
 }
 
 type OrganizationNewResponseEnvelopeErrors struct {
-	Code             int64                                       `json:"code,required"`
-	Message          string                                      `json:"message,required"`
+	Code             int64                                       `json:"code" api:"required"`
+	Message          string                                      `json:"message" api:"required"`
 	DocumentationURL string                                      `json:"documentation_url"`
 	Source           OrganizationNewResponseEnvelopeErrorsSource `json:"source"`
 	JSON             organizationNewResponseEnvelopeErrorsJSON   `json:"-"`
@@ -546,8 +539,8 @@ func (r organizationNewResponseEnvelopeErrorsSourceJSON) RawJSON() string {
 }
 
 type OrganizationNewResponseEnvelopeMessages struct {
-	Code             int64                                         `json:"code,required"`
-	Message          string                                        `json:"message,required"`
+	Code             int64                                         `json:"code" api:"required"`
+	Message          string                                        `json:"message" api:"required"`
 	DocumentationURL string                                        `json:"documentation_url"`
 	Source           OrganizationNewResponseEnvelopeMessagesSource `json:"source"`
 	JSON             organizationNewResponseEnvelopeMessagesJSON   `json:"-"`
@@ -639,9 +632,6 @@ type OrganizationUpdateParams struct {
 	LoginDesign  param.Field[LoginDesignParam] `json:"login_design"`
 	// Configures multi-factor authentication (MFA) settings for an organization.
 	MfaConfig param.Field[OrganizationUpdateParamsMfaConfig] `json:"mfa_config"`
-	// Indicates if this organization can enforce multi-factor authentication (MFA)
-	// requirements at the application and policy level.
-	MfaConfigurationAllowed param.Field[bool] `json:"mfa_configuration_allowed"`
 	// Determines whether global MFA settings apply to applications by default. The
 	// organization must have MFA enabled with at least one authentication method and a
 	// session duration configured.
@@ -711,10 +701,10 @@ func (r OrganizationUpdateParamsMfaConfigAllowedAuthenticator) IsKnown() bool {
 }
 
 type OrganizationUpdateResponseEnvelope struct {
-	Errors   []OrganizationUpdateResponseEnvelopeErrors   `json:"errors,required"`
-	Messages []OrganizationUpdateResponseEnvelopeMessages `json:"messages,required"`
+	Errors   []OrganizationUpdateResponseEnvelopeErrors   `json:"errors" api:"required"`
+	Messages []OrganizationUpdateResponseEnvelopeMessages `json:"messages" api:"required"`
 	// Whether the API call was successful.
-	Success OrganizationUpdateResponseEnvelopeSuccess `json:"success,required"`
+	Success OrganizationUpdateResponseEnvelopeSuccess `json:"success" api:"required"`
 	Result  Organization                              `json:"result"`
 	JSON    organizationUpdateResponseEnvelopeJSON    `json:"-"`
 }
@@ -739,8 +729,8 @@ func (r organizationUpdateResponseEnvelopeJSON) RawJSON() string {
 }
 
 type OrganizationUpdateResponseEnvelopeErrors struct {
-	Code             int64                                          `json:"code,required"`
-	Message          string                                         `json:"message,required"`
+	Code             int64                                          `json:"code" api:"required"`
+	Message          string                                         `json:"message" api:"required"`
 	DocumentationURL string                                         `json:"documentation_url"`
 	Source           OrganizationUpdateResponseEnvelopeErrorsSource `json:"source"`
 	JSON             organizationUpdateResponseEnvelopeErrorsJSON   `json:"-"`
@@ -787,8 +777,8 @@ func (r organizationUpdateResponseEnvelopeErrorsSourceJSON) RawJSON() string {
 }
 
 type OrganizationUpdateResponseEnvelopeMessages struct {
-	Code             int64                                            `json:"code,required"`
-	Message          string                                           `json:"message,required"`
+	Code             int64                                            `json:"code" api:"required"`
+	Message          string                                           `json:"message" api:"required"`
 	DocumentationURL string                                           `json:"documentation_url"`
 	Source           OrganizationUpdateResponseEnvelopeMessagesSource `json:"source"`
 	JSON             organizationUpdateResponseEnvelopeMessagesJSON   `json:"-"`
@@ -857,10 +847,10 @@ type OrganizationListParams struct {
 }
 
 type OrganizationListResponseEnvelope struct {
-	Errors   []OrganizationListResponseEnvelopeErrors   `json:"errors,required"`
-	Messages []OrganizationListResponseEnvelopeMessages `json:"messages,required"`
+	Errors   []OrganizationListResponseEnvelopeErrors   `json:"errors" api:"required"`
+	Messages []OrganizationListResponseEnvelopeMessages `json:"messages" api:"required"`
 	// Whether the API call was successful.
-	Success OrganizationListResponseEnvelopeSuccess `json:"success,required"`
+	Success OrganizationListResponseEnvelopeSuccess `json:"success" api:"required"`
 	Result  Organization                            `json:"result"`
 	JSON    organizationListResponseEnvelopeJSON    `json:"-"`
 }
@@ -885,8 +875,8 @@ func (r organizationListResponseEnvelopeJSON) RawJSON() string {
 }
 
 type OrganizationListResponseEnvelopeErrors struct {
-	Code             int64                                        `json:"code,required"`
-	Message          string                                       `json:"message,required"`
+	Code             int64                                        `json:"code" api:"required"`
+	Message          string                                       `json:"message" api:"required"`
 	DocumentationURL string                                       `json:"documentation_url"`
 	Source           OrganizationListResponseEnvelopeErrorsSource `json:"source"`
 	JSON             organizationListResponseEnvelopeErrorsJSON   `json:"-"`
@@ -933,8 +923,8 @@ func (r organizationListResponseEnvelopeErrorsSourceJSON) RawJSON() string {
 }
 
 type OrganizationListResponseEnvelopeMessages struct {
-	Code             int64                                          `json:"code,required"`
-	Message          string                                         `json:"message,required"`
+	Code             int64                                          `json:"code" api:"required"`
+	Message          string                                         `json:"message" api:"required"`
 	DocumentationURL string                                         `json:"documentation_url"`
 	Source           OrganizationListResponseEnvelopeMessagesSource `json:"source"`
 	JSON             organizationListResponseEnvelopeMessagesJSON   `json:"-"`
@@ -997,7 +987,7 @@ func (r OrganizationListResponseEnvelopeSuccess) IsKnown() bool {
 
 type OrganizationRevokeUsersParams struct {
 	// The email of the user to revoke.
-	Email param.Field[string] `json:"email,required"`
+	Email param.Field[string] `json:"email" api:"required"`
 	// The Account ID to use for this endpoint. Mutually exclusive with the Zone ID.
 	AccountID param.Field[string] `path:"account_id"`
 	// The Zone ID to use for this endpoint. Mutually exclusive with the Account ID.
