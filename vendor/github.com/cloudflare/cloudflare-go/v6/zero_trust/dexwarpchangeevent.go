@@ -44,15 +44,15 @@ func (r *DEXWARPChangeEventService) Get(ctx context.Context, params DEXWARPChang
 	opts = slices.Concat(r.Options, opts)
 	if params.AccountID.Value == "" {
 		err = errors.New("missing required account_id parameter")
-		return
+		return nil, err
 	}
 	path := fmt.Sprintf("accounts/%s/dex/warp-change-events", params.AccountID)
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodGet, path, params, &env, opts...)
 	if err != nil {
-		return
+		return nil, err
 	}
 	res = &env.Result
-	return
+	return res, nil
 }
 
 type DexwarpChangeEventGetResponse struct {
@@ -334,15 +334,15 @@ func (r DexwarpChangeEventGetResponseToggle) IsKnown() bool {
 }
 
 type DEXWARPChangeEventGetParams struct {
-	AccountID param.Field[string] `path:"account_id,required"`
+	AccountID param.Field[string] `path:"account_id" api:"required"`
 	// Start time for the query in ISO (RFC3339 - ISO 8601) format
-	From param.Field[string] `query:"from,required"`
+	From param.Field[string] `query:"from" api:"required"`
 	// Page number of paginated results
-	Page param.Field[float64] `query:"page,required"`
+	Page param.Field[float64] `query:"page" api:"required"`
 	// Number of items per page
-	PerPage param.Field[float64] `query:"per_page,required"`
+	PerPage param.Field[float64] `query:"per_page" api:"required"`
 	// End time for the query in ISO (RFC3339 - ISO 8601) format
-	To param.Field[string] `query:"to,required"`
+	To param.Field[string] `query:"to" api:"required"`
 	// Filter events by account name.
 	AccountName param.Field[string] `query:"account_name"`
 	// Filter events by WARP configuration name changed from or to. Applicable to
@@ -414,10 +414,10 @@ func (r DexwarpChangeEventGetParamsType) IsKnown() bool {
 }
 
 type DexwarpChangeEventGetResponseEnvelope struct {
-	Errors   []DexwarpChangeEventGetResponseEnvelopeErrors   `json:"errors,required"`
-	Messages []DexwarpChangeEventGetResponseEnvelopeMessages `json:"messages,required"`
+	Errors   []DexwarpChangeEventGetResponseEnvelopeErrors   `json:"errors" api:"required"`
+	Messages []DexwarpChangeEventGetResponseEnvelopeMessages `json:"messages" api:"required"`
 	// Whether the API call was successful.
-	Success    DexwarpChangeEventGetResponseEnvelopeSuccess    `json:"success,required"`
+	Success    DexwarpChangeEventGetResponseEnvelopeSuccess    `json:"success" api:"required"`
 	Result     []DexwarpChangeEventGetResponse                 `json:"result"`
 	ResultInfo DexwarpChangeEventGetResponseEnvelopeResultInfo `json:"result_info"`
 	JSON       dexwarpChangeEventGetResponseEnvelopeJSON       `json:"-"`
@@ -444,8 +444,8 @@ func (r dexwarpChangeEventGetResponseEnvelopeJSON) RawJSON() string {
 }
 
 type DexwarpChangeEventGetResponseEnvelopeErrors struct {
-	Code             int64                                             `json:"code,required"`
-	Message          string                                            `json:"message,required"`
+	Code             int64                                             `json:"code" api:"required"`
+	Message          string                                            `json:"message" api:"required"`
 	DocumentationURL string                                            `json:"documentation_url"`
 	Source           DexwarpChangeEventGetResponseEnvelopeErrorsSource `json:"source"`
 	JSON             dexwarpChangeEventGetResponseEnvelopeErrorsJSON   `json:"-"`
@@ -492,8 +492,8 @@ func (r dexwarpChangeEventGetResponseEnvelopeErrorsSourceJSON) RawJSON() string 
 }
 
 type DexwarpChangeEventGetResponseEnvelopeMessages struct {
-	Code             int64                                               `json:"code,required"`
-	Message          string                                              `json:"message,required"`
+	Code             int64                                               `json:"code" api:"required"`
+	Message          string                                              `json:"message" api:"required"`
 	DocumentationURL string                                              `json:"documentation_url"`
 	Source           DexwarpChangeEventGetResponseEnvelopeMessagesSource `json:"source"`
 	JSON             dexwarpChangeEventGetResponseEnvelopeMessagesJSON   `json:"-"`
@@ -562,7 +562,9 @@ type DexwarpChangeEventGetResponseEnvelopeResultInfo struct {
 	// Number of results per page of results.
 	PerPage float64 `json:"per_page"`
 	// Total results available without any search parameters.
-	TotalCount float64                                             `json:"total_count"`
+	TotalCount float64 `json:"total_count"`
+	// The number of total pages in the entire result set.
+	TotalPages float64                                             `json:"total_pages"`
 	JSON       dexwarpChangeEventGetResponseEnvelopeResultInfoJSON `json:"-"`
 }
 
@@ -573,6 +575,7 @@ type dexwarpChangeEventGetResponseEnvelopeResultInfoJSON struct {
 	Page        apijson.Field
 	PerPage     apijson.Field
 	TotalCount  apijson.Field
+	TotalPages  apijson.Field
 	raw         string
 	ExtraFields map[string]apijson.Field
 }

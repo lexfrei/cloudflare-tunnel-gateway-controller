@@ -44,11 +44,11 @@ func (r *MitigationService) List(ctx context.Context, reportID string, params Mi
 	opts = append([]option.RequestOption{option.WithResponseInto(&raw)}, opts...)
 	if params.AccountID.Value == "" {
 		err = errors.New("missing required account_id parameter")
-		return
+		return nil, err
 	}
 	if reportID == "" {
 		err = errors.New("missing required report_id parameter")
-		return
+		return nil, err
 	}
 	path := fmt.Sprintf("accounts/%s/abuse-reports/%s/mitigations", params.AccountID, reportID)
 	cfg, err := requestconfig.NewRequestConfig(ctx, http.MethodGet, path, params, &res, opts...)
@@ -75,11 +75,11 @@ func (r *MitigationService) Review(ctx context.Context, reportID string, params 
 	opts = append([]option.RequestOption{option.WithResponseInto(&raw)}, opts...)
 	if params.AccountID.Value == "" {
 		err = errors.New("missing required account_id parameter")
-		return
+		return nil, err
 	}
 	if reportID == "" {
 		err = errors.New("missing required report_id parameter")
-		return
+		return nil, err
 	}
 	path := fmt.Sprintf("accounts/%s/abuse-reports/%s/mitigations/appeal", params.AccountID, reportID)
 	cfg, err := requestconfig.NewRequestConfig(ctx, http.MethodPost, path, params, &res, opts...)
@@ -100,7 +100,7 @@ func (r *MitigationService) ReviewAutoPaging(ctx context.Context, reportID strin
 }
 
 type MitigationListResponse struct {
-	Mitigations []MitigationListResponseMitigation `json:"mitigations,required"`
+	Mitigations []MitigationListResponseMitigation `json:"mitigations" api:"required"`
 	JSON        mitigationListResponseJSON         `json:"-"`
 }
 
@@ -122,16 +122,16 @@ func (r mitigationListResponseJSON) RawJSON() string {
 
 type MitigationListResponseMitigation struct {
 	// ID of remediation.
-	ID string `json:"id,required"`
+	ID string `json:"id" api:"required"`
 	// Date when the mitigation will become active. Time in RFC 3339 format
 	// (https://www.rfc-editor.org/rfc/rfc3339.html)
-	EffectiveDate string                                      `json:"effective_date,required"`
-	EntityID      string                                      `json:"entity_id,required"`
-	EntityType    MitigationListResponseMitigationsEntityType `json:"entity_type,required"`
+	EffectiveDate string                                      `json:"effective_date" api:"required"`
+	EntityID      string                                      `json:"entity_id" api:"required"`
+	EntityType    MitigationListResponseMitigationsEntityType `json:"entity_type" api:"required"`
 	// The status of a mitigation
-	Status MitigationListResponseMitigationsStatus `json:"status,required"`
+	Status MitigationListResponseMitigationsStatus `json:"status" api:"required"`
 	// The type of mitigation
-	Type MitigationListResponseMitigationsType `json:"type,required"`
+	Type MitigationListResponseMitigationsType `json:"type" api:"required"`
 	JSON mitigationListResponseMitigationJSON  `json:"-"`
 }
 
@@ -195,17 +195,18 @@ func (r MitigationListResponseMitigationsStatus) IsKnown() bool {
 type MitigationListResponseMitigationsType string
 
 const (
-	MitigationListResponseMitigationsTypeLegalBlock           MitigationListResponseMitigationsType = "legal_block"
-	MitigationListResponseMitigationsTypePhishingInterstitial MitigationListResponseMitigationsType = "phishing_interstitial"
-	MitigationListResponseMitigationsTypeNetworkBlock         MitigationListResponseMitigationsType = "network_block"
-	MitigationListResponseMitigationsTypeRateLimitCache       MitigationListResponseMitigationsType = "rate_limit_cache"
-	MitigationListResponseMitigationsTypeAccountSuspend       MitigationListResponseMitigationsType = "account_suspend"
-	MitigationListResponseMitigationsTypeRedirectVideoStream  MitigationListResponseMitigationsType = "redirect_video_stream"
+	MitigationListResponseMitigationsTypeLegalBlock             MitigationListResponseMitigationsType = "legal_block"
+	MitigationListResponseMitigationsTypeMisleadingInterstitial MitigationListResponseMitigationsType = "misleading_interstitial"
+	MitigationListResponseMitigationsTypePhishingInterstitial   MitigationListResponseMitigationsType = "phishing_interstitial"
+	MitigationListResponseMitigationsTypeNetworkBlock           MitigationListResponseMitigationsType = "network_block"
+	MitigationListResponseMitigationsTypeRateLimitCache         MitigationListResponseMitigationsType = "rate_limit_cache"
+	MitigationListResponseMitigationsTypeAccountSuspend         MitigationListResponseMitigationsType = "account_suspend"
+	MitigationListResponseMitigationsTypeRedirectVideoStream    MitigationListResponseMitigationsType = "redirect_video_stream"
 )
 
 func (r MitigationListResponseMitigationsType) IsKnown() bool {
 	switch r {
-	case MitigationListResponseMitigationsTypeLegalBlock, MitigationListResponseMitigationsTypePhishingInterstitial, MitigationListResponseMitigationsTypeNetworkBlock, MitigationListResponseMitigationsTypeRateLimitCache, MitigationListResponseMitigationsTypeAccountSuspend, MitigationListResponseMitigationsTypeRedirectVideoStream:
+	case MitigationListResponseMitigationsTypeLegalBlock, MitigationListResponseMitigationsTypeMisleadingInterstitial, MitigationListResponseMitigationsTypePhishingInterstitial, MitigationListResponseMitigationsTypeNetworkBlock, MitigationListResponseMitigationsTypeRateLimitCache, MitigationListResponseMitigationsTypeAccountSuspend, MitigationListResponseMitigationsTypeRedirectVideoStream:
 		return true
 	}
 	return false
@@ -213,16 +214,16 @@ func (r MitigationListResponseMitigationsType) IsKnown() bool {
 
 type MitigationReviewResponse struct {
 	// ID of remediation.
-	ID string `json:"id,required"`
+	ID string `json:"id" api:"required"`
 	// Date when the mitigation will become active. Time in RFC 3339 format
 	// (https://www.rfc-editor.org/rfc/rfc3339.html)
-	EffectiveDate string                             `json:"effective_date,required"`
-	EntityID      string                             `json:"entity_id,required"`
-	EntityType    MitigationReviewResponseEntityType `json:"entity_type,required"`
+	EffectiveDate string                             `json:"effective_date" api:"required"`
+	EntityID      string                             `json:"entity_id" api:"required"`
+	EntityType    MitigationReviewResponseEntityType `json:"entity_type" api:"required"`
 	// The status of a mitigation
-	Status MitigationReviewResponseStatus `json:"status,required"`
+	Status MitigationReviewResponseStatus `json:"status" api:"required"`
 	// The type of mitigation
-	Type MitigationReviewResponseType `json:"type,required"`
+	Type MitigationReviewResponseType `json:"type" api:"required"`
 	JSON mitigationReviewResponseJSON `json:"-"`
 }
 
@@ -286,24 +287,25 @@ func (r MitigationReviewResponseStatus) IsKnown() bool {
 type MitigationReviewResponseType string
 
 const (
-	MitigationReviewResponseTypeLegalBlock           MitigationReviewResponseType = "legal_block"
-	MitigationReviewResponseTypePhishingInterstitial MitigationReviewResponseType = "phishing_interstitial"
-	MitigationReviewResponseTypeNetworkBlock         MitigationReviewResponseType = "network_block"
-	MitigationReviewResponseTypeRateLimitCache       MitigationReviewResponseType = "rate_limit_cache"
-	MitigationReviewResponseTypeAccountSuspend       MitigationReviewResponseType = "account_suspend"
-	MitigationReviewResponseTypeRedirectVideoStream  MitigationReviewResponseType = "redirect_video_stream"
+	MitigationReviewResponseTypeLegalBlock             MitigationReviewResponseType = "legal_block"
+	MitigationReviewResponseTypeMisleadingInterstitial MitigationReviewResponseType = "misleading_interstitial"
+	MitigationReviewResponseTypePhishingInterstitial   MitigationReviewResponseType = "phishing_interstitial"
+	MitigationReviewResponseTypeNetworkBlock           MitigationReviewResponseType = "network_block"
+	MitigationReviewResponseTypeRateLimitCache         MitigationReviewResponseType = "rate_limit_cache"
+	MitigationReviewResponseTypeAccountSuspend         MitigationReviewResponseType = "account_suspend"
+	MitigationReviewResponseTypeRedirectVideoStream    MitigationReviewResponseType = "redirect_video_stream"
 )
 
 func (r MitigationReviewResponseType) IsKnown() bool {
 	switch r {
-	case MitigationReviewResponseTypeLegalBlock, MitigationReviewResponseTypePhishingInterstitial, MitigationReviewResponseTypeNetworkBlock, MitigationReviewResponseTypeRateLimitCache, MitigationReviewResponseTypeAccountSuspend, MitigationReviewResponseTypeRedirectVideoStream:
+	case MitigationReviewResponseTypeLegalBlock, MitigationReviewResponseTypeMisleadingInterstitial, MitigationReviewResponseTypePhishingInterstitial, MitigationReviewResponseTypeNetworkBlock, MitigationReviewResponseTypeRateLimitCache, MitigationReviewResponseTypeAccountSuspend, MitigationReviewResponseTypeRedirectVideoStream:
 		return true
 	}
 	return false
 }
 
 type MitigationListParams struct {
-	AccountID param.Field[string] `path:"account_id,required"`
+	AccountID param.Field[string] `path:"account_id" api:"required"`
 	// Returns mitigation that were dispatched after the given date
 	EffectiveAfter param.Field[string] `query:"effective_after"`
 	// Returns mitigations that were dispatched before the given date
@@ -396,26 +398,27 @@ func (r MitigationListParamsStatus) IsKnown() bool {
 type MitigationListParamsType string
 
 const (
-	MitigationListParamsTypeLegalBlock           MitigationListParamsType = "legal_block"
-	MitigationListParamsTypePhishingInterstitial MitigationListParamsType = "phishing_interstitial"
-	MitigationListParamsTypeNetworkBlock         MitigationListParamsType = "network_block"
-	MitigationListParamsTypeRateLimitCache       MitigationListParamsType = "rate_limit_cache"
-	MitigationListParamsTypeAccountSuspend       MitigationListParamsType = "account_suspend"
-	MitigationListParamsTypeRedirectVideoStream  MitigationListParamsType = "redirect_video_stream"
+	MitigationListParamsTypeLegalBlock             MitigationListParamsType = "legal_block"
+	MitigationListParamsTypeMisleadingInterstitial MitigationListParamsType = "misleading_interstitial"
+	MitigationListParamsTypePhishingInterstitial   MitigationListParamsType = "phishing_interstitial"
+	MitigationListParamsTypeNetworkBlock           MitigationListParamsType = "network_block"
+	MitigationListParamsTypeRateLimitCache         MitigationListParamsType = "rate_limit_cache"
+	MitigationListParamsTypeAccountSuspend         MitigationListParamsType = "account_suspend"
+	MitigationListParamsTypeRedirectVideoStream    MitigationListParamsType = "redirect_video_stream"
 )
 
 func (r MitigationListParamsType) IsKnown() bool {
 	switch r {
-	case MitigationListParamsTypeLegalBlock, MitigationListParamsTypePhishingInterstitial, MitigationListParamsTypeNetworkBlock, MitigationListParamsTypeRateLimitCache, MitigationListParamsTypeAccountSuspend, MitigationListParamsTypeRedirectVideoStream:
+	case MitigationListParamsTypeLegalBlock, MitigationListParamsTypeMisleadingInterstitial, MitigationListParamsTypePhishingInterstitial, MitigationListParamsTypeNetworkBlock, MitigationListParamsTypeRateLimitCache, MitigationListParamsTypeAccountSuspend, MitigationListParamsTypeRedirectVideoStream:
 		return true
 	}
 	return false
 }
 
 type MitigationReviewParams struct {
-	AccountID param.Field[string] `path:"account_id,required"`
+	AccountID param.Field[string] `path:"account_id" api:"required"`
 	// List of mitigations to appeal.
-	Appeals param.Field[[]MitigationReviewParamsAppeal] `json:"appeals,required"`
+	Appeals param.Field[[]MitigationReviewParamsAppeal] `json:"appeals" api:"required"`
 }
 
 func (r MitigationReviewParams) MarshalJSON() (data []byte, err error) {
@@ -424,9 +427,9 @@ func (r MitigationReviewParams) MarshalJSON() (data []byte, err error) {
 
 type MitigationReviewParamsAppeal struct {
 	// ID of the mitigation to appeal.
-	ID param.Field[string] `json:"id,required"`
+	ID param.Field[string] `json:"id" api:"required"`
 	// Reason why the customer is appealing.
-	Reason param.Field[MitigationReviewParamsAppealsReason] `json:"reason,required"`
+	Reason param.Field[MitigationReviewParamsAppealsReason] `json:"reason" api:"required"`
 }
 
 func (r MitigationReviewParamsAppeal) MarshalJSON() (data []byte, err error) {

@@ -54,52 +54,52 @@ func NewAIGatewayService(opts ...option.RequestOption) (r *AIGatewayService) {
 	return
 }
 
-// Create a new Gateway
+// Creates a new AI Gateway.
 func (r *AIGatewayService) New(ctx context.Context, params AIGatewayNewParams, opts ...option.RequestOption) (res *AIGatewayNewResponse, err error) {
 	var env AIGatewayNewResponseEnvelope
 	opts = slices.Concat(r.Options, opts)
 	if params.AccountID.Value == "" {
 		err = errors.New("missing required account_id parameter")
-		return
+		return nil, err
 	}
 	path := fmt.Sprintf("accounts/%s/ai-gateway/gateways", params.AccountID)
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodPost, path, params, &env, opts...)
 	if err != nil {
-		return
+		return nil, err
 	}
 	res = &env.Result
-	return
+	return res, nil
 }
 
-// Update a Gateway
+// Updates an existing AI Gateway dataset.
 func (r *AIGatewayService) Update(ctx context.Context, id string, params AIGatewayUpdateParams, opts ...option.RequestOption) (res *AIGatewayUpdateResponse, err error) {
 	var env AIGatewayUpdateResponseEnvelope
 	opts = slices.Concat(r.Options, opts)
 	if params.AccountID.Value == "" {
 		err = errors.New("missing required account_id parameter")
-		return
+		return nil, err
 	}
 	if id == "" {
 		err = errors.New("missing required id parameter")
-		return
+		return nil, err
 	}
 	path := fmt.Sprintf("accounts/%s/ai-gateway/gateways/%s", params.AccountID, id)
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodPut, path, params, &env, opts...)
 	if err != nil {
-		return
+		return nil, err
 	}
 	res = &env.Result
-	return
+	return res, nil
 }
 
-// List Gateways
+// Lists all AI Gateway evaluator types configured for the account.
 func (r *AIGatewayService) List(ctx context.Context, params AIGatewayListParams, opts ...option.RequestOption) (res *pagination.V4PagePaginationArray[AIGatewayListResponse], err error) {
 	var raw *http.Response
 	opts = slices.Concat(r.Options, opts)
 	opts = append([]option.RequestOption{option.WithResponseInto(&raw)}, opts...)
 	if params.AccountID.Value == "" {
 		err = errors.New("missing required account_id parameter")
-		return
+		return nil, err
 	}
 	path := fmt.Sprintf("accounts/%s/ai-gateway/gateways", params.AccountID)
 	cfg, err := requestconfig.NewRequestConfig(ctx, http.MethodGet, path, params, &res, opts...)
@@ -114,96 +114,98 @@ func (r *AIGatewayService) List(ctx context.Context, params AIGatewayListParams,
 	return res, nil
 }
 
-// List Gateways
+// Lists all AI Gateway evaluator types configured for the account.
 func (r *AIGatewayService) ListAutoPaging(ctx context.Context, params AIGatewayListParams, opts ...option.RequestOption) *pagination.V4PagePaginationArrayAutoPager[AIGatewayListResponse] {
 	return pagination.NewV4PagePaginationArrayAutoPager(r.List(ctx, params, opts...))
 }
 
-// Delete a Gateway
+// Deletes an AI Gateway dataset.
 func (r *AIGatewayService) Delete(ctx context.Context, id string, body AIGatewayDeleteParams, opts ...option.RequestOption) (res *AIGatewayDeleteResponse, err error) {
 	var env AIGatewayDeleteResponseEnvelope
 	opts = slices.Concat(r.Options, opts)
 	if body.AccountID.Value == "" {
 		err = errors.New("missing required account_id parameter")
-		return
+		return nil, err
 	}
 	if id == "" {
 		err = errors.New("missing required id parameter")
-		return
+		return nil, err
 	}
 	path := fmt.Sprintf("accounts/%s/ai-gateway/gateways/%s", body.AccountID, id)
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodDelete, path, nil, &env, opts...)
 	if err != nil {
-		return
+		return nil, err
 	}
 	res = &env.Result
-	return
+	return res, nil
 }
 
-// Fetch a Gateway
+// Retrieves details for a specific AI Gateway dataset.
 func (r *AIGatewayService) Get(ctx context.Context, id string, query AIGatewayGetParams, opts ...option.RequestOption) (res *AIGatewayGetResponse, err error) {
 	var env AIGatewayGetResponseEnvelope
 	opts = slices.Concat(r.Options, opts)
 	if query.AccountID.Value == "" {
 		err = errors.New("missing required account_id parameter")
-		return
+		return nil, err
 	}
 	if id == "" {
 		err = errors.New("missing required id parameter")
-		return
+		return nil, err
 	}
 	path := fmt.Sprintf("accounts/%s/ai-gateway/gateways/%s", query.AccountID, id)
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodGet, path, nil, &env, opts...)
 	if err != nil {
-		return
+		return nil, err
 	}
 	res = &env.Result
-	return
+	return res, nil
 }
 
 type AIGatewayNewResponse struct {
 	// gateway id
-	ID                      string                                    `json:"id,required"`
-	AccountID               string                                    `json:"account_id,required"`
-	AccountTag              string                                    `json:"account_tag,required"`
-	CacheInvalidateOnUpdate bool                                      `json:"cache_invalidate_on_update,required"`
-	CacheTTL                int64                                     `json:"cache_ttl,required,nullable"`
-	CollectLogs             bool                                      `json:"collect_logs,required"`
-	CreatedAt               time.Time                                 `json:"created_at,required" format:"date-time"`
-	InternalID              string                                    `json:"internal_id,required" format:"uuid"`
-	ModifiedAt              time.Time                                 `json:"modified_at,required" format:"date-time"`
-	RateLimitingInterval    int64                                     `json:"rate_limiting_interval,required,nullable"`
-	RateLimitingLimit       int64                                     `json:"rate_limiting_limit,required,nullable"`
-	RateLimitingTechnique   AIGatewayNewResponseRateLimitingTechnique `json:"rate_limiting_technique,required"`
+	ID                      string                                    `json:"id" api:"required"`
+	CacheInvalidateOnUpdate bool                                      `json:"cache_invalidate_on_update" api:"required"`
+	CacheTTL                int64                                     `json:"cache_ttl" api:"required,nullable"`
+	CollectLogs             bool                                      `json:"collect_logs" api:"required"`
+	CreatedAt               time.Time                                 `json:"created_at" api:"required" format:"date-time"`
+	ModifiedAt              time.Time                                 `json:"modified_at" api:"required" format:"date-time"`
+	RateLimitingInterval    int64                                     `json:"rate_limiting_interval" api:"required,nullable"`
+	RateLimitingLimit       int64                                     `json:"rate_limiting_limit" api:"required,nullable"`
 	Authentication          bool                                      `json:"authentication"`
 	DLP                     AIGatewayNewResponseDLP                   `json:"dlp"`
 	IsDefault               bool                                      `json:"is_default"`
-	LogManagement           int64                                     `json:"log_management,nullable"`
-	LogManagementStrategy   AIGatewayNewResponseLogManagementStrategy `json:"log_management_strategy,nullable"`
+	LogManagement           int64                                     `json:"log_management" api:"nullable"`
+	LogManagementStrategy   AIGatewayNewResponseLogManagementStrategy `json:"log_management_strategy" api:"nullable"`
 	Logpush                 bool                                      `json:"logpush"`
-	LogpushPublicKey        string                                    `json:"logpush_public_key,nullable"`
-	Otel                    []AIGatewayNewResponseOtel                `json:"otel,nullable"`
-	StoreID                 string                                    `json:"store_id,nullable"`
-	Stripe                  AIGatewayNewResponseStripe                `json:"stripe,nullable"`
-	Zdr                     bool                                      `json:"zdr"`
-	JSON                    aiGatewayNewResponseJSON                  `json:"-"`
+	LogpushPublicKey        string                                    `json:"logpush_public_key" api:"nullable"`
+	Otel                    []AIGatewayNewResponseOtel                `json:"otel" api:"nullable"`
+	RateLimitingTechnique   AIGatewayNewResponseRateLimitingTechnique `json:"rate_limiting_technique" api:"nullable"`
+	// Backoff strategy for retry delays
+	RetryBackoff AIGatewayNewResponseRetryBackoff `json:"retry_backoff" api:"nullable"`
+	// Delay between retry attempts in milliseconds (0-5000)
+	RetryDelay int64 `json:"retry_delay" api:"nullable"`
+	// Maximum number of retry attempts for failed requests (1-5)
+	RetryMaxAttempts int64                      `json:"retry_max_attempts" api:"nullable"`
+	StoreID          string                     `json:"store_id" api:"nullable"`
+	Stripe           AIGatewayNewResponseStripe `json:"stripe" api:"nullable"`
+	// Controls how Workers AI inference calls routed through this gateway are billed.
+	// Only 'postpaid' is currently supported.
+	WorkersAIBillingMode AIGatewayNewResponseWorkersAIBillingMode `json:"workers_ai_billing_mode"`
+	Zdr                  bool                                     `json:"zdr"`
+	JSON                 aiGatewayNewResponseJSON                 `json:"-"`
 }
 
 // aiGatewayNewResponseJSON contains the JSON metadata for the struct
 // [AIGatewayNewResponse]
 type aiGatewayNewResponseJSON struct {
 	ID                      apijson.Field
-	AccountID               apijson.Field
-	AccountTag              apijson.Field
 	CacheInvalidateOnUpdate apijson.Field
 	CacheTTL                apijson.Field
 	CollectLogs             apijson.Field
 	CreatedAt               apijson.Field
-	InternalID              apijson.Field
 	ModifiedAt              apijson.Field
 	RateLimitingInterval    apijson.Field
 	RateLimitingLimit       apijson.Field
-	RateLimitingTechnique   apijson.Field
 	Authentication          apijson.Field
 	DLP                     apijson.Field
 	IsDefault               apijson.Field
@@ -212,8 +214,13 @@ type aiGatewayNewResponseJSON struct {
 	Logpush                 apijson.Field
 	LogpushPublicKey        apijson.Field
 	Otel                    apijson.Field
+	RateLimitingTechnique   apijson.Field
+	RetryBackoff            apijson.Field
+	RetryDelay              apijson.Field
+	RetryMaxAttempts        apijson.Field
 	StoreID                 apijson.Field
 	Stripe                  apijson.Field
+	WorkersAIBillingMode    apijson.Field
 	Zdr                     apijson.Field
 	raw                     string
 	ExtraFields             map[string]apijson.Field
@@ -227,23 +234,8 @@ func (r aiGatewayNewResponseJSON) RawJSON() string {
 	return r.raw
 }
 
-type AIGatewayNewResponseRateLimitingTechnique string
-
-const (
-	AIGatewayNewResponseRateLimitingTechniqueFixed   AIGatewayNewResponseRateLimitingTechnique = "fixed"
-	AIGatewayNewResponseRateLimitingTechniqueSliding AIGatewayNewResponseRateLimitingTechnique = "sliding"
-)
-
-func (r AIGatewayNewResponseRateLimitingTechnique) IsKnown() bool {
-	switch r {
-	case AIGatewayNewResponseRateLimitingTechniqueFixed, AIGatewayNewResponseRateLimitingTechniqueSliding:
-		return true
-	}
-	return false
-}
-
 type AIGatewayNewResponseDLP struct {
-	Enabled bool                          `json:"enabled,required"`
+	Enabled bool                          `json:"enabled" api:"required"`
 	Action  AIGatewayNewResponseDLPAction `json:"action"`
 	// This field can have the runtime type of [[]AIGatewayNewResponseDLPObjectPolicy].
 	Policies interface{} `json:"policies"`
@@ -308,9 +300,9 @@ func init() {
 }
 
 type AIGatewayNewResponseDLPObject struct {
-	Action   AIGatewayNewResponseDLPObjectAction `json:"action,required"`
-	Enabled  bool                                `json:"enabled,required"`
-	Profiles []string                            `json:"profiles,required"`
+	Action   AIGatewayNewResponseDLPObjectAction `json:"action" api:"required"`
+	Enabled  bool                                `json:"enabled" api:"required"`
+	Profiles []string                            `json:"profiles" api:"required"`
 	JSON     aiGatewayNewResponseDLPObjectJSON   `json:"-"`
 }
 
@@ -380,10 +372,11 @@ func (r AIGatewayNewResponseLogManagementStrategy) IsKnown() bool {
 }
 
 type AIGatewayNewResponseOtel struct {
-	Authorization string                       `json:"authorization,required"`
-	Headers       map[string]string            `json:"headers,required"`
-	URL           string                       `json:"url,required"`
-	JSON          aiGatewayNewResponseOtelJSON `json:"-"`
+	Authorization string                              `json:"authorization" api:"required"`
+	Headers       map[string]string                   `json:"headers" api:"required"`
+	URL           string                              `json:"url" api:"required"`
+	ContentType   AIGatewayNewResponseOtelContentType `json:"content_type"`
+	JSON          aiGatewayNewResponseOtelJSON        `json:"-"`
 }
 
 // aiGatewayNewResponseOtelJSON contains the JSON metadata for the struct
@@ -392,6 +385,7 @@ type aiGatewayNewResponseOtelJSON struct {
 	Authorization apijson.Field
 	Headers       apijson.Field
 	URL           apijson.Field
+	ContentType   apijson.Field
 	raw           string
 	ExtraFields   map[string]apijson.Field
 }
@@ -404,9 +398,56 @@ func (r aiGatewayNewResponseOtelJSON) RawJSON() string {
 	return r.raw
 }
 
+type AIGatewayNewResponseOtelContentType string
+
+const (
+	AIGatewayNewResponseOtelContentTypeJson     AIGatewayNewResponseOtelContentType = "json"
+	AIGatewayNewResponseOtelContentTypeProtobuf AIGatewayNewResponseOtelContentType = "protobuf"
+)
+
+func (r AIGatewayNewResponseOtelContentType) IsKnown() bool {
+	switch r {
+	case AIGatewayNewResponseOtelContentTypeJson, AIGatewayNewResponseOtelContentTypeProtobuf:
+		return true
+	}
+	return false
+}
+
+type AIGatewayNewResponseRateLimitingTechnique string
+
+const (
+	AIGatewayNewResponseRateLimitingTechniqueFixed   AIGatewayNewResponseRateLimitingTechnique = "fixed"
+	AIGatewayNewResponseRateLimitingTechniqueSliding AIGatewayNewResponseRateLimitingTechnique = "sliding"
+)
+
+func (r AIGatewayNewResponseRateLimitingTechnique) IsKnown() bool {
+	switch r {
+	case AIGatewayNewResponseRateLimitingTechniqueFixed, AIGatewayNewResponseRateLimitingTechniqueSliding:
+		return true
+	}
+	return false
+}
+
+// Backoff strategy for retry delays
+type AIGatewayNewResponseRetryBackoff string
+
+const (
+	AIGatewayNewResponseRetryBackoffConstant    AIGatewayNewResponseRetryBackoff = "constant"
+	AIGatewayNewResponseRetryBackoffLinear      AIGatewayNewResponseRetryBackoff = "linear"
+	AIGatewayNewResponseRetryBackoffExponential AIGatewayNewResponseRetryBackoff = "exponential"
+)
+
+func (r AIGatewayNewResponseRetryBackoff) IsKnown() bool {
+	switch r {
+	case AIGatewayNewResponseRetryBackoffConstant, AIGatewayNewResponseRetryBackoffLinear, AIGatewayNewResponseRetryBackoffExponential:
+		return true
+	}
+	return false
+}
+
 type AIGatewayNewResponseStripe struct {
-	Authorization string                                 `json:"authorization,required"`
-	UsageEvents   []AIGatewayNewResponseStripeUsageEvent `json:"usage_events,required"`
+	Authorization string                                 `json:"authorization" api:"required"`
+	UsageEvents   []AIGatewayNewResponseStripeUsageEvent `json:"usage_events" api:"required"`
 	JSON          aiGatewayNewResponseStripeJSON         `json:"-"`
 }
 
@@ -428,7 +469,7 @@ func (r aiGatewayNewResponseStripeJSON) RawJSON() string {
 }
 
 type AIGatewayNewResponseStripeUsageEvent struct {
-	Payload string                                   `json:"payload,required"`
+	Payload string                                   `json:"payload" api:"required"`
 	JSON    aiGatewayNewResponseStripeUsageEventJSON `json:"-"`
 }
 
@@ -448,49 +489,67 @@ func (r aiGatewayNewResponseStripeUsageEventJSON) RawJSON() string {
 	return r.raw
 }
 
+// Controls how Workers AI inference calls routed through this gateway are billed.
+// Only 'postpaid' is currently supported.
+type AIGatewayNewResponseWorkersAIBillingMode string
+
+const (
+	AIGatewayNewResponseWorkersAIBillingModePostpaid AIGatewayNewResponseWorkersAIBillingMode = "postpaid"
+)
+
+func (r AIGatewayNewResponseWorkersAIBillingMode) IsKnown() bool {
+	switch r {
+	case AIGatewayNewResponseWorkersAIBillingModePostpaid:
+		return true
+	}
+	return false
+}
+
 type AIGatewayUpdateResponse struct {
 	// gateway id
-	ID                      string                                       `json:"id,required"`
-	AccountID               string                                       `json:"account_id,required"`
-	AccountTag              string                                       `json:"account_tag,required"`
-	CacheInvalidateOnUpdate bool                                         `json:"cache_invalidate_on_update,required"`
-	CacheTTL                int64                                        `json:"cache_ttl,required,nullable"`
-	CollectLogs             bool                                         `json:"collect_logs,required"`
-	CreatedAt               time.Time                                    `json:"created_at,required" format:"date-time"`
-	InternalID              string                                       `json:"internal_id,required" format:"uuid"`
-	ModifiedAt              time.Time                                    `json:"modified_at,required" format:"date-time"`
-	RateLimitingInterval    int64                                        `json:"rate_limiting_interval,required,nullable"`
-	RateLimitingLimit       int64                                        `json:"rate_limiting_limit,required,nullable"`
-	RateLimitingTechnique   AIGatewayUpdateResponseRateLimitingTechnique `json:"rate_limiting_technique,required"`
+	ID                      string                                       `json:"id" api:"required"`
+	CacheInvalidateOnUpdate bool                                         `json:"cache_invalidate_on_update" api:"required"`
+	CacheTTL                int64                                        `json:"cache_ttl" api:"required,nullable"`
+	CollectLogs             bool                                         `json:"collect_logs" api:"required"`
+	CreatedAt               time.Time                                    `json:"created_at" api:"required" format:"date-time"`
+	ModifiedAt              time.Time                                    `json:"modified_at" api:"required" format:"date-time"`
+	RateLimitingInterval    int64                                        `json:"rate_limiting_interval" api:"required,nullable"`
+	RateLimitingLimit       int64                                        `json:"rate_limiting_limit" api:"required,nullable"`
 	Authentication          bool                                         `json:"authentication"`
 	DLP                     AIGatewayUpdateResponseDLP                   `json:"dlp"`
 	IsDefault               bool                                         `json:"is_default"`
-	LogManagement           int64                                        `json:"log_management,nullable"`
-	LogManagementStrategy   AIGatewayUpdateResponseLogManagementStrategy `json:"log_management_strategy,nullable"`
+	LogManagement           int64                                        `json:"log_management" api:"nullable"`
+	LogManagementStrategy   AIGatewayUpdateResponseLogManagementStrategy `json:"log_management_strategy" api:"nullable"`
 	Logpush                 bool                                         `json:"logpush"`
-	LogpushPublicKey        string                                       `json:"logpush_public_key,nullable"`
-	Otel                    []AIGatewayUpdateResponseOtel                `json:"otel,nullable"`
-	StoreID                 string                                       `json:"store_id,nullable"`
-	Stripe                  AIGatewayUpdateResponseStripe                `json:"stripe,nullable"`
-	Zdr                     bool                                         `json:"zdr"`
-	JSON                    aiGatewayUpdateResponseJSON                  `json:"-"`
+	LogpushPublicKey        string                                       `json:"logpush_public_key" api:"nullable"`
+	Otel                    []AIGatewayUpdateResponseOtel                `json:"otel" api:"nullable"`
+	RateLimitingTechnique   AIGatewayUpdateResponseRateLimitingTechnique `json:"rate_limiting_technique" api:"nullable"`
+	// Backoff strategy for retry delays
+	RetryBackoff AIGatewayUpdateResponseRetryBackoff `json:"retry_backoff" api:"nullable"`
+	// Delay between retry attempts in milliseconds (0-5000)
+	RetryDelay int64 `json:"retry_delay" api:"nullable"`
+	// Maximum number of retry attempts for failed requests (1-5)
+	RetryMaxAttempts int64                         `json:"retry_max_attempts" api:"nullable"`
+	StoreID          string                        `json:"store_id" api:"nullable"`
+	Stripe           AIGatewayUpdateResponseStripe `json:"stripe" api:"nullable"`
+	// Controls how Workers AI inference calls routed through this gateway are billed.
+	// Only 'postpaid' is currently supported.
+	WorkersAIBillingMode AIGatewayUpdateResponseWorkersAIBillingMode `json:"workers_ai_billing_mode"`
+	Zdr                  bool                                        `json:"zdr"`
+	JSON                 aiGatewayUpdateResponseJSON                 `json:"-"`
 }
 
 // aiGatewayUpdateResponseJSON contains the JSON metadata for the struct
 // [AIGatewayUpdateResponse]
 type aiGatewayUpdateResponseJSON struct {
 	ID                      apijson.Field
-	AccountID               apijson.Field
-	AccountTag              apijson.Field
 	CacheInvalidateOnUpdate apijson.Field
 	CacheTTL                apijson.Field
 	CollectLogs             apijson.Field
 	CreatedAt               apijson.Field
-	InternalID              apijson.Field
 	ModifiedAt              apijson.Field
 	RateLimitingInterval    apijson.Field
 	RateLimitingLimit       apijson.Field
-	RateLimitingTechnique   apijson.Field
 	Authentication          apijson.Field
 	DLP                     apijson.Field
 	IsDefault               apijson.Field
@@ -499,8 +558,13 @@ type aiGatewayUpdateResponseJSON struct {
 	Logpush                 apijson.Field
 	LogpushPublicKey        apijson.Field
 	Otel                    apijson.Field
+	RateLimitingTechnique   apijson.Field
+	RetryBackoff            apijson.Field
+	RetryDelay              apijson.Field
+	RetryMaxAttempts        apijson.Field
 	StoreID                 apijson.Field
 	Stripe                  apijson.Field
+	WorkersAIBillingMode    apijson.Field
 	Zdr                     apijson.Field
 	raw                     string
 	ExtraFields             map[string]apijson.Field
@@ -514,23 +578,8 @@ func (r aiGatewayUpdateResponseJSON) RawJSON() string {
 	return r.raw
 }
 
-type AIGatewayUpdateResponseRateLimitingTechnique string
-
-const (
-	AIGatewayUpdateResponseRateLimitingTechniqueFixed   AIGatewayUpdateResponseRateLimitingTechnique = "fixed"
-	AIGatewayUpdateResponseRateLimitingTechniqueSliding AIGatewayUpdateResponseRateLimitingTechnique = "sliding"
-)
-
-func (r AIGatewayUpdateResponseRateLimitingTechnique) IsKnown() bool {
-	switch r {
-	case AIGatewayUpdateResponseRateLimitingTechniqueFixed, AIGatewayUpdateResponseRateLimitingTechniqueSliding:
-		return true
-	}
-	return false
-}
-
 type AIGatewayUpdateResponseDLP struct {
-	Enabled bool                             `json:"enabled,required"`
+	Enabled bool                             `json:"enabled" api:"required"`
 	Action  AIGatewayUpdateResponseDLPAction `json:"action"`
 	// This field can have the runtime type of
 	// [[]AIGatewayUpdateResponseDLPObjectPolicy].
@@ -596,9 +645,9 @@ func init() {
 }
 
 type AIGatewayUpdateResponseDLPObject struct {
-	Action   AIGatewayUpdateResponseDLPObjectAction `json:"action,required"`
-	Enabled  bool                                   `json:"enabled,required"`
-	Profiles []string                               `json:"profiles,required"`
+	Action   AIGatewayUpdateResponseDLPObjectAction `json:"action" api:"required"`
+	Enabled  bool                                   `json:"enabled" api:"required"`
+	Profiles []string                               `json:"profiles" api:"required"`
 	JSON     aiGatewayUpdateResponseDLPObjectJSON   `json:"-"`
 }
 
@@ -668,10 +717,11 @@ func (r AIGatewayUpdateResponseLogManagementStrategy) IsKnown() bool {
 }
 
 type AIGatewayUpdateResponseOtel struct {
-	Authorization string                          `json:"authorization,required"`
-	Headers       map[string]string               `json:"headers,required"`
-	URL           string                          `json:"url,required"`
-	JSON          aiGatewayUpdateResponseOtelJSON `json:"-"`
+	Authorization string                                 `json:"authorization" api:"required"`
+	Headers       map[string]string                      `json:"headers" api:"required"`
+	URL           string                                 `json:"url" api:"required"`
+	ContentType   AIGatewayUpdateResponseOtelContentType `json:"content_type"`
+	JSON          aiGatewayUpdateResponseOtelJSON        `json:"-"`
 }
 
 // aiGatewayUpdateResponseOtelJSON contains the JSON metadata for the struct
@@ -680,6 +730,7 @@ type aiGatewayUpdateResponseOtelJSON struct {
 	Authorization apijson.Field
 	Headers       apijson.Field
 	URL           apijson.Field
+	ContentType   apijson.Field
 	raw           string
 	ExtraFields   map[string]apijson.Field
 }
@@ -692,9 +743,56 @@ func (r aiGatewayUpdateResponseOtelJSON) RawJSON() string {
 	return r.raw
 }
 
+type AIGatewayUpdateResponseOtelContentType string
+
+const (
+	AIGatewayUpdateResponseOtelContentTypeJson     AIGatewayUpdateResponseOtelContentType = "json"
+	AIGatewayUpdateResponseOtelContentTypeProtobuf AIGatewayUpdateResponseOtelContentType = "protobuf"
+)
+
+func (r AIGatewayUpdateResponseOtelContentType) IsKnown() bool {
+	switch r {
+	case AIGatewayUpdateResponseOtelContentTypeJson, AIGatewayUpdateResponseOtelContentTypeProtobuf:
+		return true
+	}
+	return false
+}
+
+type AIGatewayUpdateResponseRateLimitingTechnique string
+
+const (
+	AIGatewayUpdateResponseRateLimitingTechniqueFixed   AIGatewayUpdateResponseRateLimitingTechnique = "fixed"
+	AIGatewayUpdateResponseRateLimitingTechniqueSliding AIGatewayUpdateResponseRateLimitingTechnique = "sliding"
+)
+
+func (r AIGatewayUpdateResponseRateLimitingTechnique) IsKnown() bool {
+	switch r {
+	case AIGatewayUpdateResponseRateLimitingTechniqueFixed, AIGatewayUpdateResponseRateLimitingTechniqueSliding:
+		return true
+	}
+	return false
+}
+
+// Backoff strategy for retry delays
+type AIGatewayUpdateResponseRetryBackoff string
+
+const (
+	AIGatewayUpdateResponseRetryBackoffConstant    AIGatewayUpdateResponseRetryBackoff = "constant"
+	AIGatewayUpdateResponseRetryBackoffLinear      AIGatewayUpdateResponseRetryBackoff = "linear"
+	AIGatewayUpdateResponseRetryBackoffExponential AIGatewayUpdateResponseRetryBackoff = "exponential"
+)
+
+func (r AIGatewayUpdateResponseRetryBackoff) IsKnown() bool {
+	switch r {
+	case AIGatewayUpdateResponseRetryBackoffConstant, AIGatewayUpdateResponseRetryBackoffLinear, AIGatewayUpdateResponseRetryBackoffExponential:
+		return true
+	}
+	return false
+}
+
 type AIGatewayUpdateResponseStripe struct {
-	Authorization string                                    `json:"authorization,required"`
-	UsageEvents   []AIGatewayUpdateResponseStripeUsageEvent `json:"usage_events,required"`
+	Authorization string                                    `json:"authorization" api:"required"`
+	UsageEvents   []AIGatewayUpdateResponseStripeUsageEvent `json:"usage_events" api:"required"`
 	JSON          aiGatewayUpdateResponseStripeJSON         `json:"-"`
 }
 
@@ -716,7 +814,7 @@ func (r aiGatewayUpdateResponseStripeJSON) RawJSON() string {
 }
 
 type AIGatewayUpdateResponseStripeUsageEvent struct {
-	Payload string                                      `json:"payload,required"`
+	Payload string                                      `json:"payload" api:"required"`
 	JSON    aiGatewayUpdateResponseStripeUsageEventJSON `json:"-"`
 }
 
@@ -736,49 +834,67 @@ func (r aiGatewayUpdateResponseStripeUsageEventJSON) RawJSON() string {
 	return r.raw
 }
 
+// Controls how Workers AI inference calls routed through this gateway are billed.
+// Only 'postpaid' is currently supported.
+type AIGatewayUpdateResponseWorkersAIBillingMode string
+
+const (
+	AIGatewayUpdateResponseWorkersAIBillingModePostpaid AIGatewayUpdateResponseWorkersAIBillingMode = "postpaid"
+)
+
+func (r AIGatewayUpdateResponseWorkersAIBillingMode) IsKnown() bool {
+	switch r {
+	case AIGatewayUpdateResponseWorkersAIBillingModePostpaid:
+		return true
+	}
+	return false
+}
+
 type AIGatewayListResponse struct {
 	// gateway id
-	ID                      string                                     `json:"id,required"`
-	AccountID               string                                     `json:"account_id,required"`
-	AccountTag              string                                     `json:"account_tag,required"`
-	CacheInvalidateOnUpdate bool                                       `json:"cache_invalidate_on_update,required"`
-	CacheTTL                int64                                      `json:"cache_ttl,required,nullable"`
-	CollectLogs             bool                                       `json:"collect_logs,required"`
-	CreatedAt               time.Time                                  `json:"created_at,required" format:"date-time"`
-	InternalID              string                                     `json:"internal_id,required" format:"uuid"`
-	ModifiedAt              time.Time                                  `json:"modified_at,required" format:"date-time"`
-	RateLimitingInterval    int64                                      `json:"rate_limiting_interval,required,nullable"`
-	RateLimitingLimit       int64                                      `json:"rate_limiting_limit,required,nullable"`
-	RateLimitingTechnique   AIGatewayListResponseRateLimitingTechnique `json:"rate_limiting_technique,required"`
+	ID                      string                                     `json:"id" api:"required"`
+	CacheInvalidateOnUpdate bool                                       `json:"cache_invalidate_on_update" api:"required"`
+	CacheTTL                int64                                      `json:"cache_ttl" api:"required,nullable"`
+	CollectLogs             bool                                       `json:"collect_logs" api:"required"`
+	CreatedAt               time.Time                                  `json:"created_at" api:"required" format:"date-time"`
+	ModifiedAt              time.Time                                  `json:"modified_at" api:"required" format:"date-time"`
+	RateLimitingInterval    int64                                      `json:"rate_limiting_interval" api:"required,nullable"`
+	RateLimitingLimit       int64                                      `json:"rate_limiting_limit" api:"required,nullable"`
 	Authentication          bool                                       `json:"authentication"`
 	DLP                     AIGatewayListResponseDLP                   `json:"dlp"`
 	IsDefault               bool                                       `json:"is_default"`
-	LogManagement           int64                                      `json:"log_management,nullable"`
-	LogManagementStrategy   AIGatewayListResponseLogManagementStrategy `json:"log_management_strategy,nullable"`
+	LogManagement           int64                                      `json:"log_management" api:"nullable"`
+	LogManagementStrategy   AIGatewayListResponseLogManagementStrategy `json:"log_management_strategy" api:"nullable"`
 	Logpush                 bool                                       `json:"logpush"`
-	LogpushPublicKey        string                                     `json:"logpush_public_key,nullable"`
-	Otel                    []AIGatewayListResponseOtel                `json:"otel,nullable"`
-	StoreID                 string                                     `json:"store_id,nullable"`
-	Stripe                  AIGatewayListResponseStripe                `json:"stripe,nullable"`
-	Zdr                     bool                                       `json:"zdr"`
-	JSON                    aiGatewayListResponseJSON                  `json:"-"`
+	LogpushPublicKey        string                                     `json:"logpush_public_key" api:"nullable"`
+	Otel                    []AIGatewayListResponseOtel                `json:"otel" api:"nullable"`
+	RateLimitingTechnique   AIGatewayListResponseRateLimitingTechnique `json:"rate_limiting_technique" api:"nullable"`
+	// Backoff strategy for retry delays
+	RetryBackoff AIGatewayListResponseRetryBackoff `json:"retry_backoff" api:"nullable"`
+	// Delay between retry attempts in milliseconds (0-5000)
+	RetryDelay int64 `json:"retry_delay" api:"nullable"`
+	// Maximum number of retry attempts for failed requests (1-5)
+	RetryMaxAttempts int64                       `json:"retry_max_attempts" api:"nullable"`
+	StoreID          string                      `json:"store_id" api:"nullable"`
+	Stripe           AIGatewayListResponseStripe `json:"stripe" api:"nullable"`
+	// Controls how Workers AI inference calls routed through this gateway are billed.
+	// Only 'postpaid' is currently supported.
+	WorkersAIBillingMode AIGatewayListResponseWorkersAIBillingMode `json:"workers_ai_billing_mode"`
+	Zdr                  bool                                      `json:"zdr"`
+	JSON                 aiGatewayListResponseJSON                 `json:"-"`
 }
 
 // aiGatewayListResponseJSON contains the JSON metadata for the struct
 // [AIGatewayListResponse]
 type aiGatewayListResponseJSON struct {
 	ID                      apijson.Field
-	AccountID               apijson.Field
-	AccountTag              apijson.Field
 	CacheInvalidateOnUpdate apijson.Field
 	CacheTTL                apijson.Field
 	CollectLogs             apijson.Field
 	CreatedAt               apijson.Field
-	InternalID              apijson.Field
 	ModifiedAt              apijson.Field
 	RateLimitingInterval    apijson.Field
 	RateLimitingLimit       apijson.Field
-	RateLimitingTechnique   apijson.Field
 	Authentication          apijson.Field
 	DLP                     apijson.Field
 	IsDefault               apijson.Field
@@ -787,8 +903,13 @@ type aiGatewayListResponseJSON struct {
 	Logpush                 apijson.Field
 	LogpushPublicKey        apijson.Field
 	Otel                    apijson.Field
+	RateLimitingTechnique   apijson.Field
+	RetryBackoff            apijson.Field
+	RetryDelay              apijson.Field
+	RetryMaxAttempts        apijson.Field
 	StoreID                 apijson.Field
 	Stripe                  apijson.Field
+	WorkersAIBillingMode    apijson.Field
 	Zdr                     apijson.Field
 	raw                     string
 	ExtraFields             map[string]apijson.Field
@@ -802,23 +923,8 @@ func (r aiGatewayListResponseJSON) RawJSON() string {
 	return r.raw
 }
 
-type AIGatewayListResponseRateLimitingTechnique string
-
-const (
-	AIGatewayListResponseRateLimitingTechniqueFixed   AIGatewayListResponseRateLimitingTechnique = "fixed"
-	AIGatewayListResponseRateLimitingTechniqueSliding AIGatewayListResponseRateLimitingTechnique = "sliding"
-)
-
-func (r AIGatewayListResponseRateLimitingTechnique) IsKnown() bool {
-	switch r {
-	case AIGatewayListResponseRateLimitingTechniqueFixed, AIGatewayListResponseRateLimitingTechniqueSliding:
-		return true
-	}
-	return false
-}
-
 type AIGatewayListResponseDLP struct {
-	Enabled bool                           `json:"enabled,required"`
+	Enabled bool                           `json:"enabled" api:"required"`
 	Action  AIGatewayListResponseDLPAction `json:"action"`
 	// This field can have the runtime type of
 	// [[]AIGatewayListResponseDLPObjectPolicy].
@@ -884,9 +990,9 @@ func init() {
 }
 
 type AIGatewayListResponseDLPObject struct {
-	Action   AIGatewayListResponseDLPObjectAction `json:"action,required"`
-	Enabled  bool                                 `json:"enabled,required"`
-	Profiles []string                             `json:"profiles,required"`
+	Action   AIGatewayListResponseDLPObjectAction `json:"action" api:"required"`
+	Enabled  bool                                 `json:"enabled" api:"required"`
+	Profiles []string                             `json:"profiles" api:"required"`
 	JSON     aiGatewayListResponseDLPObjectJSON   `json:"-"`
 }
 
@@ -956,10 +1062,11 @@ func (r AIGatewayListResponseLogManagementStrategy) IsKnown() bool {
 }
 
 type AIGatewayListResponseOtel struct {
-	Authorization string                        `json:"authorization,required"`
-	Headers       map[string]string             `json:"headers,required"`
-	URL           string                        `json:"url,required"`
-	JSON          aiGatewayListResponseOtelJSON `json:"-"`
+	Authorization string                               `json:"authorization" api:"required"`
+	Headers       map[string]string                    `json:"headers" api:"required"`
+	URL           string                               `json:"url" api:"required"`
+	ContentType   AIGatewayListResponseOtelContentType `json:"content_type"`
+	JSON          aiGatewayListResponseOtelJSON        `json:"-"`
 }
 
 // aiGatewayListResponseOtelJSON contains the JSON metadata for the struct
@@ -968,6 +1075,7 @@ type aiGatewayListResponseOtelJSON struct {
 	Authorization apijson.Field
 	Headers       apijson.Field
 	URL           apijson.Field
+	ContentType   apijson.Field
 	raw           string
 	ExtraFields   map[string]apijson.Field
 }
@@ -980,9 +1088,56 @@ func (r aiGatewayListResponseOtelJSON) RawJSON() string {
 	return r.raw
 }
 
+type AIGatewayListResponseOtelContentType string
+
+const (
+	AIGatewayListResponseOtelContentTypeJson     AIGatewayListResponseOtelContentType = "json"
+	AIGatewayListResponseOtelContentTypeProtobuf AIGatewayListResponseOtelContentType = "protobuf"
+)
+
+func (r AIGatewayListResponseOtelContentType) IsKnown() bool {
+	switch r {
+	case AIGatewayListResponseOtelContentTypeJson, AIGatewayListResponseOtelContentTypeProtobuf:
+		return true
+	}
+	return false
+}
+
+type AIGatewayListResponseRateLimitingTechnique string
+
+const (
+	AIGatewayListResponseRateLimitingTechniqueFixed   AIGatewayListResponseRateLimitingTechnique = "fixed"
+	AIGatewayListResponseRateLimitingTechniqueSliding AIGatewayListResponseRateLimitingTechnique = "sliding"
+)
+
+func (r AIGatewayListResponseRateLimitingTechnique) IsKnown() bool {
+	switch r {
+	case AIGatewayListResponseRateLimitingTechniqueFixed, AIGatewayListResponseRateLimitingTechniqueSliding:
+		return true
+	}
+	return false
+}
+
+// Backoff strategy for retry delays
+type AIGatewayListResponseRetryBackoff string
+
+const (
+	AIGatewayListResponseRetryBackoffConstant    AIGatewayListResponseRetryBackoff = "constant"
+	AIGatewayListResponseRetryBackoffLinear      AIGatewayListResponseRetryBackoff = "linear"
+	AIGatewayListResponseRetryBackoffExponential AIGatewayListResponseRetryBackoff = "exponential"
+)
+
+func (r AIGatewayListResponseRetryBackoff) IsKnown() bool {
+	switch r {
+	case AIGatewayListResponseRetryBackoffConstant, AIGatewayListResponseRetryBackoffLinear, AIGatewayListResponseRetryBackoffExponential:
+		return true
+	}
+	return false
+}
+
 type AIGatewayListResponseStripe struct {
-	Authorization string                                  `json:"authorization,required"`
-	UsageEvents   []AIGatewayListResponseStripeUsageEvent `json:"usage_events,required"`
+	Authorization string                                  `json:"authorization" api:"required"`
+	UsageEvents   []AIGatewayListResponseStripeUsageEvent `json:"usage_events" api:"required"`
 	JSON          aiGatewayListResponseStripeJSON         `json:"-"`
 }
 
@@ -1004,7 +1159,7 @@ func (r aiGatewayListResponseStripeJSON) RawJSON() string {
 }
 
 type AIGatewayListResponseStripeUsageEvent struct {
-	Payload string                                    `json:"payload,required"`
+	Payload string                                    `json:"payload" api:"required"`
 	JSON    aiGatewayListResponseStripeUsageEventJSON `json:"-"`
 }
 
@@ -1024,49 +1179,67 @@ func (r aiGatewayListResponseStripeUsageEventJSON) RawJSON() string {
 	return r.raw
 }
 
+// Controls how Workers AI inference calls routed through this gateway are billed.
+// Only 'postpaid' is currently supported.
+type AIGatewayListResponseWorkersAIBillingMode string
+
+const (
+	AIGatewayListResponseWorkersAIBillingModePostpaid AIGatewayListResponseWorkersAIBillingMode = "postpaid"
+)
+
+func (r AIGatewayListResponseWorkersAIBillingMode) IsKnown() bool {
+	switch r {
+	case AIGatewayListResponseWorkersAIBillingModePostpaid:
+		return true
+	}
+	return false
+}
+
 type AIGatewayDeleteResponse struct {
 	// gateway id
-	ID                      string                                       `json:"id,required"`
-	AccountID               string                                       `json:"account_id,required"`
-	AccountTag              string                                       `json:"account_tag,required"`
-	CacheInvalidateOnUpdate bool                                         `json:"cache_invalidate_on_update,required"`
-	CacheTTL                int64                                        `json:"cache_ttl,required,nullable"`
-	CollectLogs             bool                                         `json:"collect_logs,required"`
-	CreatedAt               time.Time                                    `json:"created_at,required" format:"date-time"`
-	InternalID              string                                       `json:"internal_id,required" format:"uuid"`
-	ModifiedAt              time.Time                                    `json:"modified_at,required" format:"date-time"`
-	RateLimitingInterval    int64                                        `json:"rate_limiting_interval,required,nullable"`
-	RateLimitingLimit       int64                                        `json:"rate_limiting_limit,required,nullable"`
-	RateLimitingTechnique   AIGatewayDeleteResponseRateLimitingTechnique `json:"rate_limiting_technique,required"`
+	ID                      string                                       `json:"id" api:"required"`
+	CacheInvalidateOnUpdate bool                                         `json:"cache_invalidate_on_update" api:"required"`
+	CacheTTL                int64                                        `json:"cache_ttl" api:"required,nullable"`
+	CollectLogs             bool                                         `json:"collect_logs" api:"required"`
+	CreatedAt               time.Time                                    `json:"created_at" api:"required" format:"date-time"`
+	ModifiedAt              time.Time                                    `json:"modified_at" api:"required" format:"date-time"`
+	RateLimitingInterval    int64                                        `json:"rate_limiting_interval" api:"required,nullable"`
+	RateLimitingLimit       int64                                        `json:"rate_limiting_limit" api:"required,nullable"`
 	Authentication          bool                                         `json:"authentication"`
 	DLP                     AIGatewayDeleteResponseDLP                   `json:"dlp"`
 	IsDefault               bool                                         `json:"is_default"`
-	LogManagement           int64                                        `json:"log_management,nullable"`
-	LogManagementStrategy   AIGatewayDeleteResponseLogManagementStrategy `json:"log_management_strategy,nullable"`
+	LogManagement           int64                                        `json:"log_management" api:"nullable"`
+	LogManagementStrategy   AIGatewayDeleteResponseLogManagementStrategy `json:"log_management_strategy" api:"nullable"`
 	Logpush                 bool                                         `json:"logpush"`
-	LogpushPublicKey        string                                       `json:"logpush_public_key,nullable"`
-	Otel                    []AIGatewayDeleteResponseOtel                `json:"otel,nullable"`
-	StoreID                 string                                       `json:"store_id,nullable"`
-	Stripe                  AIGatewayDeleteResponseStripe                `json:"stripe,nullable"`
-	Zdr                     bool                                         `json:"zdr"`
-	JSON                    aiGatewayDeleteResponseJSON                  `json:"-"`
+	LogpushPublicKey        string                                       `json:"logpush_public_key" api:"nullable"`
+	Otel                    []AIGatewayDeleteResponseOtel                `json:"otel" api:"nullable"`
+	RateLimitingTechnique   AIGatewayDeleteResponseRateLimitingTechnique `json:"rate_limiting_technique" api:"nullable"`
+	// Backoff strategy for retry delays
+	RetryBackoff AIGatewayDeleteResponseRetryBackoff `json:"retry_backoff" api:"nullable"`
+	// Delay between retry attempts in milliseconds (0-5000)
+	RetryDelay int64 `json:"retry_delay" api:"nullable"`
+	// Maximum number of retry attempts for failed requests (1-5)
+	RetryMaxAttempts int64                         `json:"retry_max_attempts" api:"nullable"`
+	StoreID          string                        `json:"store_id" api:"nullable"`
+	Stripe           AIGatewayDeleteResponseStripe `json:"stripe" api:"nullable"`
+	// Controls how Workers AI inference calls routed through this gateway are billed.
+	// Only 'postpaid' is currently supported.
+	WorkersAIBillingMode AIGatewayDeleteResponseWorkersAIBillingMode `json:"workers_ai_billing_mode"`
+	Zdr                  bool                                        `json:"zdr"`
+	JSON                 aiGatewayDeleteResponseJSON                 `json:"-"`
 }
 
 // aiGatewayDeleteResponseJSON contains the JSON metadata for the struct
 // [AIGatewayDeleteResponse]
 type aiGatewayDeleteResponseJSON struct {
 	ID                      apijson.Field
-	AccountID               apijson.Field
-	AccountTag              apijson.Field
 	CacheInvalidateOnUpdate apijson.Field
 	CacheTTL                apijson.Field
 	CollectLogs             apijson.Field
 	CreatedAt               apijson.Field
-	InternalID              apijson.Field
 	ModifiedAt              apijson.Field
 	RateLimitingInterval    apijson.Field
 	RateLimitingLimit       apijson.Field
-	RateLimitingTechnique   apijson.Field
 	Authentication          apijson.Field
 	DLP                     apijson.Field
 	IsDefault               apijson.Field
@@ -1075,8 +1248,13 @@ type aiGatewayDeleteResponseJSON struct {
 	Logpush                 apijson.Field
 	LogpushPublicKey        apijson.Field
 	Otel                    apijson.Field
+	RateLimitingTechnique   apijson.Field
+	RetryBackoff            apijson.Field
+	RetryDelay              apijson.Field
+	RetryMaxAttempts        apijson.Field
 	StoreID                 apijson.Field
 	Stripe                  apijson.Field
+	WorkersAIBillingMode    apijson.Field
 	Zdr                     apijson.Field
 	raw                     string
 	ExtraFields             map[string]apijson.Field
@@ -1090,23 +1268,8 @@ func (r aiGatewayDeleteResponseJSON) RawJSON() string {
 	return r.raw
 }
 
-type AIGatewayDeleteResponseRateLimitingTechnique string
-
-const (
-	AIGatewayDeleteResponseRateLimitingTechniqueFixed   AIGatewayDeleteResponseRateLimitingTechnique = "fixed"
-	AIGatewayDeleteResponseRateLimitingTechniqueSliding AIGatewayDeleteResponseRateLimitingTechnique = "sliding"
-)
-
-func (r AIGatewayDeleteResponseRateLimitingTechnique) IsKnown() bool {
-	switch r {
-	case AIGatewayDeleteResponseRateLimitingTechniqueFixed, AIGatewayDeleteResponseRateLimitingTechniqueSliding:
-		return true
-	}
-	return false
-}
-
 type AIGatewayDeleteResponseDLP struct {
-	Enabled bool                             `json:"enabled,required"`
+	Enabled bool                             `json:"enabled" api:"required"`
 	Action  AIGatewayDeleteResponseDLPAction `json:"action"`
 	// This field can have the runtime type of
 	// [[]AIGatewayDeleteResponseDLPObjectPolicy].
@@ -1172,9 +1335,9 @@ func init() {
 }
 
 type AIGatewayDeleteResponseDLPObject struct {
-	Action   AIGatewayDeleteResponseDLPObjectAction `json:"action,required"`
-	Enabled  bool                                   `json:"enabled,required"`
-	Profiles []string                               `json:"profiles,required"`
+	Action   AIGatewayDeleteResponseDLPObjectAction `json:"action" api:"required"`
+	Enabled  bool                                   `json:"enabled" api:"required"`
+	Profiles []string                               `json:"profiles" api:"required"`
 	JSON     aiGatewayDeleteResponseDLPObjectJSON   `json:"-"`
 }
 
@@ -1244,10 +1407,11 @@ func (r AIGatewayDeleteResponseLogManagementStrategy) IsKnown() bool {
 }
 
 type AIGatewayDeleteResponseOtel struct {
-	Authorization string                          `json:"authorization,required"`
-	Headers       map[string]string               `json:"headers,required"`
-	URL           string                          `json:"url,required"`
-	JSON          aiGatewayDeleteResponseOtelJSON `json:"-"`
+	Authorization string                                 `json:"authorization" api:"required"`
+	Headers       map[string]string                      `json:"headers" api:"required"`
+	URL           string                                 `json:"url" api:"required"`
+	ContentType   AIGatewayDeleteResponseOtelContentType `json:"content_type"`
+	JSON          aiGatewayDeleteResponseOtelJSON        `json:"-"`
 }
 
 // aiGatewayDeleteResponseOtelJSON contains the JSON metadata for the struct
@@ -1256,6 +1420,7 @@ type aiGatewayDeleteResponseOtelJSON struct {
 	Authorization apijson.Field
 	Headers       apijson.Field
 	URL           apijson.Field
+	ContentType   apijson.Field
 	raw           string
 	ExtraFields   map[string]apijson.Field
 }
@@ -1268,9 +1433,56 @@ func (r aiGatewayDeleteResponseOtelJSON) RawJSON() string {
 	return r.raw
 }
 
+type AIGatewayDeleteResponseOtelContentType string
+
+const (
+	AIGatewayDeleteResponseOtelContentTypeJson     AIGatewayDeleteResponseOtelContentType = "json"
+	AIGatewayDeleteResponseOtelContentTypeProtobuf AIGatewayDeleteResponseOtelContentType = "protobuf"
+)
+
+func (r AIGatewayDeleteResponseOtelContentType) IsKnown() bool {
+	switch r {
+	case AIGatewayDeleteResponseOtelContentTypeJson, AIGatewayDeleteResponseOtelContentTypeProtobuf:
+		return true
+	}
+	return false
+}
+
+type AIGatewayDeleteResponseRateLimitingTechnique string
+
+const (
+	AIGatewayDeleteResponseRateLimitingTechniqueFixed   AIGatewayDeleteResponseRateLimitingTechnique = "fixed"
+	AIGatewayDeleteResponseRateLimitingTechniqueSliding AIGatewayDeleteResponseRateLimitingTechnique = "sliding"
+)
+
+func (r AIGatewayDeleteResponseRateLimitingTechnique) IsKnown() bool {
+	switch r {
+	case AIGatewayDeleteResponseRateLimitingTechniqueFixed, AIGatewayDeleteResponseRateLimitingTechniqueSliding:
+		return true
+	}
+	return false
+}
+
+// Backoff strategy for retry delays
+type AIGatewayDeleteResponseRetryBackoff string
+
+const (
+	AIGatewayDeleteResponseRetryBackoffConstant    AIGatewayDeleteResponseRetryBackoff = "constant"
+	AIGatewayDeleteResponseRetryBackoffLinear      AIGatewayDeleteResponseRetryBackoff = "linear"
+	AIGatewayDeleteResponseRetryBackoffExponential AIGatewayDeleteResponseRetryBackoff = "exponential"
+)
+
+func (r AIGatewayDeleteResponseRetryBackoff) IsKnown() bool {
+	switch r {
+	case AIGatewayDeleteResponseRetryBackoffConstant, AIGatewayDeleteResponseRetryBackoffLinear, AIGatewayDeleteResponseRetryBackoffExponential:
+		return true
+	}
+	return false
+}
+
 type AIGatewayDeleteResponseStripe struct {
-	Authorization string                                    `json:"authorization,required"`
-	UsageEvents   []AIGatewayDeleteResponseStripeUsageEvent `json:"usage_events,required"`
+	Authorization string                                    `json:"authorization" api:"required"`
+	UsageEvents   []AIGatewayDeleteResponseStripeUsageEvent `json:"usage_events" api:"required"`
 	JSON          aiGatewayDeleteResponseStripeJSON         `json:"-"`
 }
 
@@ -1292,7 +1504,7 @@ func (r aiGatewayDeleteResponseStripeJSON) RawJSON() string {
 }
 
 type AIGatewayDeleteResponseStripeUsageEvent struct {
-	Payload string                                      `json:"payload,required"`
+	Payload string                                      `json:"payload" api:"required"`
 	JSON    aiGatewayDeleteResponseStripeUsageEventJSON `json:"-"`
 }
 
@@ -1312,49 +1524,67 @@ func (r aiGatewayDeleteResponseStripeUsageEventJSON) RawJSON() string {
 	return r.raw
 }
 
+// Controls how Workers AI inference calls routed through this gateway are billed.
+// Only 'postpaid' is currently supported.
+type AIGatewayDeleteResponseWorkersAIBillingMode string
+
+const (
+	AIGatewayDeleteResponseWorkersAIBillingModePostpaid AIGatewayDeleteResponseWorkersAIBillingMode = "postpaid"
+)
+
+func (r AIGatewayDeleteResponseWorkersAIBillingMode) IsKnown() bool {
+	switch r {
+	case AIGatewayDeleteResponseWorkersAIBillingModePostpaid:
+		return true
+	}
+	return false
+}
+
 type AIGatewayGetResponse struct {
 	// gateway id
-	ID                      string                                    `json:"id,required"`
-	AccountID               string                                    `json:"account_id,required"`
-	AccountTag              string                                    `json:"account_tag,required"`
-	CacheInvalidateOnUpdate bool                                      `json:"cache_invalidate_on_update,required"`
-	CacheTTL                int64                                     `json:"cache_ttl,required,nullable"`
-	CollectLogs             bool                                      `json:"collect_logs,required"`
-	CreatedAt               time.Time                                 `json:"created_at,required" format:"date-time"`
-	InternalID              string                                    `json:"internal_id,required" format:"uuid"`
-	ModifiedAt              time.Time                                 `json:"modified_at,required" format:"date-time"`
-	RateLimitingInterval    int64                                     `json:"rate_limiting_interval,required,nullable"`
-	RateLimitingLimit       int64                                     `json:"rate_limiting_limit,required,nullable"`
-	RateLimitingTechnique   AIGatewayGetResponseRateLimitingTechnique `json:"rate_limiting_technique,required"`
+	ID                      string                                    `json:"id" api:"required"`
+	CacheInvalidateOnUpdate bool                                      `json:"cache_invalidate_on_update" api:"required"`
+	CacheTTL                int64                                     `json:"cache_ttl" api:"required,nullable"`
+	CollectLogs             bool                                      `json:"collect_logs" api:"required"`
+	CreatedAt               time.Time                                 `json:"created_at" api:"required" format:"date-time"`
+	ModifiedAt              time.Time                                 `json:"modified_at" api:"required" format:"date-time"`
+	RateLimitingInterval    int64                                     `json:"rate_limiting_interval" api:"required,nullable"`
+	RateLimitingLimit       int64                                     `json:"rate_limiting_limit" api:"required,nullable"`
 	Authentication          bool                                      `json:"authentication"`
 	DLP                     AIGatewayGetResponseDLP                   `json:"dlp"`
 	IsDefault               bool                                      `json:"is_default"`
-	LogManagement           int64                                     `json:"log_management,nullable"`
-	LogManagementStrategy   AIGatewayGetResponseLogManagementStrategy `json:"log_management_strategy,nullable"`
+	LogManagement           int64                                     `json:"log_management" api:"nullable"`
+	LogManagementStrategy   AIGatewayGetResponseLogManagementStrategy `json:"log_management_strategy" api:"nullable"`
 	Logpush                 bool                                      `json:"logpush"`
-	LogpushPublicKey        string                                    `json:"logpush_public_key,nullable"`
-	Otel                    []AIGatewayGetResponseOtel                `json:"otel,nullable"`
-	StoreID                 string                                    `json:"store_id,nullable"`
-	Stripe                  AIGatewayGetResponseStripe                `json:"stripe,nullable"`
-	Zdr                     bool                                      `json:"zdr"`
-	JSON                    aiGatewayGetResponseJSON                  `json:"-"`
+	LogpushPublicKey        string                                    `json:"logpush_public_key" api:"nullable"`
+	Otel                    []AIGatewayGetResponseOtel                `json:"otel" api:"nullable"`
+	RateLimitingTechnique   AIGatewayGetResponseRateLimitingTechnique `json:"rate_limiting_technique" api:"nullable"`
+	// Backoff strategy for retry delays
+	RetryBackoff AIGatewayGetResponseRetryBackoff `json:"retry_backoff" api:"nullable"`
+	// Delay between retry attempts in milliseconds (0-5000)
+	RetryDelay int64 `json:"retry_delay" api:"nullable"`
+	// Maximum number of retry attempts for failed requests (1-5)
+	RetryMaxAttempts int64                      `json:"retry_max_attempts" api:"nullable"`
+	StoreID          string                     `json:"store_id" api:"nullable"`
+	Stripe           AIGatewayGetResponseStripe `json:"stripe" api:"nullable"`
+	// Controls how Workers AI inference calls routed through this gateway are billed.
+	// Only 'postpaid' is currently supported.
+	WorkersAIBillingMode AIGatewayGetResponseWorkersAIBillingMode `json:"workers_ai_billing_mode"`
+	Zdr                  bool                                     `json:"zdr"`
+	JSON                 aiGatewayGetResponseJSON                 `json:"-"`
 }
 
 // aiGatewayGetResponseJSON contains the JSON metadata for the struct
 // [AIGatewayGetResponse]
 type aiGatewayGetResponseJSON struct {
 	ID                      apijson.Field
-	AccountID               apijson.Field
-	AccountTag              apijson.Field
 	CacheInvalidateOnUpdate apijson.Field
 	CacheTTL                apijson.Field
 	CollectLogs             apijson.Field
 	CreatedAt               apijson.Field
-	InternalID              apijson.Field
 	ModifiedAt              apijson.Field
 	RateLimitingInterval    apijson.Field
 	RateLimitingLimit       apijson.Field
-	RateLimitingTechnique   apijson.Field
 	Authentication          apijson.Field
 	DLP                     apijson.Field
 	IsDefault               apijson.Field
@@ -1363,8 +1593,13 @@ type aiGatewayGetResponseJSON struct {
 	Logpush                 apijson.Field
 	LogpushPublicKey        apijson.Field
 	Otel                    apijson.Field
+	RateLimitingTechnique   apijson.Field
+	RetryBackoff            apijson.Field
+	RetryDelay              apijson.Field
+	RetryMaxAttempts        apijson.Field
 	StoreID                 apijson.Field
 	Stripe                  apijson.Field
+	WorkersAIBillingMode    apijson.Field
 	Zdr                     apijson.Field
 	raw                     string
 	ExtraFields             map[string]apijson.Field
@@ -1378,23 +1613,8 @@ func (r aiGatewayGetResponseJSON) RawJSON() string {
 	return r.raw
 }
 
-type AIGatewayGetResponseRateLimitingTechnique string
-
-const (
-	AIGatewayGetResponseRateLimitingTechniqueFixed   AIGatewayGetResponseRateLimitingTechnique = "fixed"
-	AIGatewayGetResponseRateLimitingTechniqueSliding AIGatewayGetResponseRateLimitingTechnique = "sliding"
-)
-
-func (r AIGatewayGetResponseRateLimitingTechnique) IsKnown() bool {
-	switch r {
-	case AIGatewayGetResponseRateLimitingTechniqueFixed, AIGatewayGetResponseRateLimitingTechniqueSliding:
-		return true
-	}
-	return false
-}
-
 type AIGatewayGetResponseDLP struct {
-	Enabled bool                          `json:"enabled,required"`
+	Enabled bool                          `json:"enabled" api:"required"`
 	Action  AIGatewayGetResponseDLPAction `json:"action"`
 	// This field can have the runtime type of [[]AIGatewayGetResponseDLPObjectPolicy].
 	Policies interface{} `json:"policies"`
@@ -1459,9 +1679,9 @@ func init() {
 }
 
 type AIGatewayGetResponseDLPObject struct {
-	Action   AIGatewayGetResponseDLPObjectAction `json:"action,required"`
-	Enabled  bool                                `json:"enabled,required"`
-	Profiles []string                            `json:"profiles,required"`
+	Action   AIGatewayGetResponseDLPObjectAction `json:"action" api:"required"`
+	Enabled  bool                                `json:"enabled" api:"required"`
+	Profiles []string                            `json:"profiles" api:"required"`
 	JSON     aiGatewayGetResponseDLPObjectJSON   `json:"-"`
 }
 
@@ -1531,10 +1751,11 @@ func (r AIGatewayGetResponseLogManagementStrategy) IsKnown() bool {
 }
 
 type AIGatewayGetResponseOtel struct {
-	Authorization string                       `json:"authorization,required"`
-	Headers       map[string]string            `json:"headers,required"`
-	URL           string                       `json:"url,required"`
-	JSON          aiGatewayGetResponseOtelJSON `json:"-"`
+	Authorization string                              `json:"authorization" api:"required"`
+	Headers       map[string]string                   `json:"headers" api:"required"`
+	URL           string                              `json:"url" api:"required"`
+	ContentType   AIGatewayGetResponseOtelContentType `json:"content_type"`
+	JSON          aiGatewayGetResponseOtelJSON        `json:"-"`
 }
 
 // aiGatewayGetResponseOtelJSON contains the JSON metadata for the struct
@@ -1543,6 +1764,7 @@ type aiGatewayGetResponseOtelJSON struct {
 	Authorization apijson.Field
 	Headers       apijson.Field
 	URL           apijson.Field
+	ContentType   apijson.Field
 	raw           string
 	ExtraFields   map[string]apijson.Field
 }
@@ -1555,9 +1777,56 @@ func (r aiGatewayGetResponseOtelJSON) RawJSON() string {
 	return r.raw
 }
 
+type AIGatewayGetResponseOtelContentType string
+
+const (
+	AIGatewayGetResponseOtelContentTypeJson     AIGatewayGetResponseOtelContentType = "json"
+	AIGatewayGetResponseOtelContentTypeProtobuf AIGatewayGetResponseOtelContentType = "protobuf"
+)
+
+func (r AIGatewayGetResponseOtelContentType) IsKnown() bool {
+	switch r {
+	case AIGatewayGetResponseOtelContentTypeJson, AIGatewayGetResponseOtelContentTypeProtobuf:
+		return true
+	}
+	return false
+}
+
+type AIGatewayGetResponseRateLimitingTechnique string
+
+const (
+	AIGatewayGetResponseRateLimitingTechniqueFixed   AIGatewayGetResponseRateLimitingTechnique = "fixed"
+	AIGatewayGetResponseRateLimitingTechniqueSliding AIGatewayGetResponseRateLimitingTechnique = "sliding"
+)
+
+func (r AIGatewayGetResponseRateLimitingTechnique) IsKnown() bool {
+	switch r {
+	case AIGatewayGetResponseRateLimitingTechniqueFixed, AIGatewayGetResponseRateLimitingTechniqueSliding:
+		return true
+	}
+	return false
+}
+
+// Backoff strategy for retry delays
+type AIGatewayGetResponseRetryBackoff string
+
+const (
+	AIGatewayGetResponseRetryBackoffConstant    AIGatewayGetResponseRetryBackoff = "constant"
+	AIGatewayGetResponseRetryBackoffLinear      AIGatewayGetResponseRetryBackoff = "linear"
+	AIGatewayGetResponseRetryBackoffExponential AIGatewayGetResponseRetryBackoff = "exponential"
+)
+
+func (r AIGatewayGetResponseRetryBackoff) IsKnown() bool {
+	switch r {
+	case AIGatewayGetResponseRetryBackoffConstant, AIGatewayGetResponseRetryBackoffLinear, AIGatewayGetResponseRetryBackoffExponential:
+		return true
+	}
+	return false
+}
+
 type AIGatewayGetResponseStripe struct {
-	Authorization string                                 `json:"authorization,required"`
-	UsageEvents   []AIGatewayGetResponseStripeUsageEvent `json:"usage_events,required"`
+	Authorization string                                 `json:"authorization" api:"required"`
+	UsageEvents   []AIGatewayGetResponseStripeUsageEvent `json:"usage_events" api:"required"`
 	JSON          aiGatewayGetResponseStripeJSON         `json:"-"`
 }
 
@@ -1579,7 +1848,7 @@ func (r aiGatewayGetResponseStripeJSON) RawJSON() string {
 }
 
 type AIGatewayGetResponseStripeUsageEvent struct {
-	Payload string                                   `json:"payload,required"`
+	Payload string                                   `json:"payload" api:"required"`
 	JSON    aiGatewayGetResponseStripeUsageEventJSON `json:"-"`
 }
 
@@ -1599,42 +1868,51 @@ func (r aiGatewayGetResponseStripeUsageEventJSON) RawJSON() string {
 	return r.raw
 }
 
+// Controls how Workers AI inference calls routed through this gateway are billed.
+// Only 'postpaid' is currently supported.
+type AIGatewayGetResponseWorkersAIBillingMode string
+
+const (
+	AIGatewayGetResponseWorkersAIBillingModePostpaid AIGatewayGetResponseWorkersAIBillingMode = "postpaid"
+)
+
+func (r AIGatewayGetResponseWorkersAIBillingMode) IsKnown() bool {
+	switch r {
+	case AIGatewayGetResponseWorkersAIBillingModePostpaid:
+		return true
+	}
+	return false
+}
+
 type AIGatewayNewParams struct {
-	AccountID param.Field[string] `path:"account_id,required"`
+	AccountID param.Field[string] `path:"account_id" api:"required"`
 	// gateway id
-	ID                      param.Field[string]                                  `json:"id,required"`
-	CacheInvalidateOnUpdate param.Field[bool]                                    `json:"cache_invalidate_on_update,required"`
-	CacheTTL                param.Field[int64]                                   `json:"cache_ttl,required"`
-	CollectLogs             param.Field[bool]                                    `json:"collect_logs,required"`
-	RateLimitingInterval    param.Field[int64]                                   `json:"rate_limiting_interval,required"`
-	RateLimitingLimit       param.Field[int64]                                   `json:"rate_limiting_limit,required"`
-	RateLimitingTechnique   param.Field[AIGatewayNewParamsRateLimitingTechnique] `json:"rate_limiting_technique,required"`
+	ID                      param.Field[string]                                  `json:"id" api:"required"`
+	CacheInvalidateOnUpdate param.Field[bool]                                    `json:"cache_invalidate_on_update" api:"required"`
+	CacheTTL                param.Field[int64]                                   `json:"cache_ttl" api:"required"`
+	CollectLogs             param.Field[bool]                                    `json:"collect_logs" api:"required"`
+	RateLimitingInterval    param.Field[int64]                                   `json:"rate_limiting_interval" api:"required"`
+	RateLimitingLimit       param.Field[int64]                                   `json:"rate_limiting_limit" api:"required"`
 	Authentication          param.Field[bool]                                    `json:"authentication"`
-	IsDefault               param.Field[bool]                                    `json:"is_default"`
 	LogManagement           param.Field[int64]                                   `json:"log_management"`
 	LogManagementStrategy   param.Field[AIGatewayNewParamsLogManagementStrategy] `json:"log_management_strategy"`
 	Logpush                 param.Field[bool]                                    `json:"logpush"`
 	LogpushPublicKey        param.Field[string]                                  `json:"logpush_public_key"`
-	Zdr                     param.Field[bool]                                    `json:"zdr"`
+	RateLimitingTechnique   param.Field[AIGatewayNewParamsRateLimitingTechnique] `json:"rate_limiting_technique"`
+	// Backoff strategy for retry delays
+	RetryBackoff param.Field[AIGatewayNewParamsRetryBackoff] `json:"retry_backoff"`
+	// Delay between retry attempts in milliseconds (0-5000)
+	RetryDelay param.Field[int64] `json:"retry_delay"`
+	// Maximum number of retry attempts for failed requests (1-5)
+	RetryMaxAttempts param.Field[int64] `json:"retry_max_attempts"`
+	// Controls how Workers AI inference calls routed through this gateway are billed.
+	// Only 'postpaid' is currently supported.
+	WorkersAIBillingMode param.Field[AIGatewayNewParamsWorkersAIBillingMode] `json:"workers_ai_billing_mode"`
+	Zdr                  param.Field[bool]                                   `json:"zdr"`
 }
 
 func (r AIGatewayNewParams) MarshalJSON() (data []byte, err error) {
 	return apijson.MarshalRoot(r)
-}
-
-type AIGatewayNewParamsRateLimitingTechnique string
-
-const (
-	AIGatewayNewParamsRateLimitingTechniqueFixed   AIGatewayNewParamsRateLimitingTechnique = "fixed"
-	AIGatewayNewParamsRateLimitingTechniqueSliding AIGatewayNewParamsRateLimitingTechnique = "sliding"
-)
-
-func (r AIGatewayNewParamsRateLimitingTechnique) IsKnown() bool {
-	switch r {
-	case AIGatewayNewParamsRateLimitingTechniqueFixed, AIGatewayNewParamsRateLimitingTechniqueSliding:
-		return true
-	}
-	return false
 }
 
 type AIGatewayNewParamsLogManagementStrategy string
@@ -1652,9 +1930,57 @@ func (r AIGatewayNewParamsLogManagementStrategy) IsKnown() bool {
 	return false
 }
 
+type AIGatewayNewParamsRateLimitingTechnique string
+
+const (
+	AIGatewayNewParamsRateLimitingTechniqueFixed   AIGatewayNewParamsRateLimitingTechnique = "fixed"
+	AIGatewayNewParamsRateLimitingTechniqueSliding AIGatewayNewParamsRateLimitingTechnique = "sliding"
+)
+
+func (r AIGatewayNewParamsRateLimitingTechnique) IsKnown() bool {
+	switch r {
+	case AIGatewayNewParamsRateLimitingTechniqueFixed, AIGatewayNewParamsRateLimitingTechniqueSliding:
+		return true
+	}
+	return false
+}
+
+// Backoff strategy for retry delays
+type AIGatewayNewParamsRetryBackoff string
+
+const (
+	AIGatewayNewParamsRetryBackoffConstant    AIGatewayNewParamsRetryBackoff = "constant"
+	AIGatewayNewParamsRetryBackoffLinear      AIGatewayNewParamsRetryBackoff = "linear"
+	AIGatewayNewParamsRetryBackoffExponential AIGatewayNewParamsRetryBackoff = "exponential"
+)
+
+func (r AIGatewayNewParamsRetryBackoff) IsKnown() bool {
+	switch r {
+	case AIGatewayNewParamsRetryBackoffConstant, AIGatewayNewParamsRetryBackoffLinear, AIGatewayNewParamsRetryBackoffExponential:
+		return true
+	}
+	return false
+}
+
+// Controls how Workers AI inference calls routed through this gateway are billed.
+// Only 'postpaid' is currently supported.
+type AIGatewayNewParamsWorkersAIBillingMode string
+
+const (
+	AIGatewayNewParamsWorkersAIBillingModePostpaid AIGatewayNewParamsWorkersAIBillingMode = "postpaid"
+)
+
+func (r AIGatewayNewParamsWorkersAIBillingMode) IsKnown() bool {
+	switch r {
+	case AIGatewayNewParamsWorkersAIBillingModePostpaid:
+		return true
+	}
+	return false
+}
+
 type AIGatewayNewResponseEnvelope struct {
-	Result  AIGatewayNewResponse             `json:"result,required"`
-	Success bool                             `json:"success,required"`
+	Result  AIGatewayNewResponse             `json:"result" api:"required"`
+	Success bool                             `json:"success" api:"required"`
 	JSON    aiGatewayNewResponseEnvelopeJSON `json:"-"`
 }
 
@@ -1676,47 +2002,40 @@ func (r aiGatewayNewResponseEnvelopeJSON) RawJSON() string {
 }
 
 type AIGatewayUpdateParams struct {
-	AccountID               param.Field[string]                                     `path:"account_id,required"`
-	CacheInvalidateOnUpdate param.Field[bool]                                       `json:"cache_invalidate_on_update,required"`
-	CacheTTL                param.Field[int64]                                      `json:"cache_ttl,required"`
-	CollectLogs             param.Field[bool]                                       `json:"collect_logs,required"`
-	RateLimitingInterval    param.Field[int64]                                      `json:"rate_limiting_interval,required"`
-	RateLimitingLimit       param.Field[int64]                                      `json:"rate_limiting_limit,required"`
-	RateLimitingTechnique   param.Field[AIGatewayUpdateParamsRateLimitingTechnique] `json:"rate_limiting_technique,required"`
+	AccountID               param.Field[string]                                     `path:"account_id" api:"required"`
+	CacheInvalidateOnUpdate param.Field[bool]                                       `json:"cache_invalidate_on_update" api:"required"`
+	CacheTTL                param.Field[int64]                                      `json:"cache_ttl" api:"required"`
+	CollectLogs             param.Field[bool]                                       `json:"collect_logs" api:"required"`
+	RateLimitingInterval    param.Field[int64]                                      `json:"rate_limiting_interval" api:"required"`
+	RateLimitingLimit       param.Field[int64]                                      `json:"rate_limiting_limit" api:"required"`
 	Authentication          param.Field[bool]                                       `json:"authentication"`
 	DLP                     param.Field[AIGatewayUpdateParamsDLPUnion]              `json:"dlp"`
-	IsDefault               param.Field[bool]                                       `json:"is_default"`
 	LogManagement           param.Field[int64]                                      `json:"log_management"`
 	LogManagementStrategy   param.Field[AIGatewayUpdateParamsLogManagementStrategy] `json:"log_management_strategy"`
 	Logpush                 param.Field[bool]                                       `json:"logpush"`
 	LogpushPublicKey        param.Field[string]                                     `json:"logpush_public_key"`
 	Otel                    param.Field[[]AIGatewayUpdateParamsOtel]                `json:"otel"`
-	StoreID                 param.Field[string]                                     `json:"store_id"`
-	Stripe                  param.Field[AIGatewayUpdateParamsStripe]                `json:"stripe"`
-	Zdr                     param.Field[bool]                                       `json:"zdr"`
+	RateLimitingTechnique   param.Field[AIGatewayUpdateParamsRateLimitingTechnique] `json:"rate_limiting_technique"`
+	// Backoff strategy for retry delays
+	RetryBackoff param.Field[AIGatewayUpdateParamsRetryBackoff] `json:"retry_backoff"`
+	// Delay between retry attempts in milliseconds (0-5000)
+	RetryDelay param.Field[int64] `json:"retry_delay"`
+	// Maximum number of retry attempts for failed requests (1-5)
+	RetryMaxAttempts param.Field[int64]                       `json:"retry_max_attempts"`
+	StoreID          param.Field[string]                      `json:"store_id"`
+	Stripe           param.Field[AIGatewayUpdateParamsStripe] `json:"stripe"`
+	// Controls how Workers AI inference calls routed through this gateway are billed.
+	// Only 'postpaid' is currently supported.
+	WorkersAIBillingMode param.Field[AIGatewayUpdateParamsWorkersAIBillingMode] `json:"workers_ai_billing_mode"`
+	Zdr                  param.Field[bool]                                      `json:"zdr"`
 }
 
 func (r AIGatewayUpdateParams) MarshalJSON() (data []byte, err error) {
 	return apijson.MarshalRoot(r)
 }
 
-type AIGatewayUpdateParamsRateLimitingTechnique string
-
-const (
-	AIGatewayUpdateParamsRateLimitingTechniqueFixed   AIGatewayUpdateParamsRateLimitingTechnique = "fixed"
-	AIGatewayUpdateParamsRateLimitingTechniqueSliding AIGatewayUpdateParamsRateLimitingTechnique = "sliding"
-)
-
-func (r AIGatewayUpdateParamsRateLimitingTechnique) IsKnown() bool {
-	switch r {
-	case AIGatewayUpdateParamsRateLimitingTechniqueFixed, AIGatewayUpdateParamsRateLimitingTechniqueSliding:
-		return true
-	}
-	return false
-}
-
 type AIGatewayUpdateParamsDLP struct {
-	Enabled  param.Field[bool]                           `json:"enabled,required"`
+	Enabled  param.Field[bool]                           `json:"enabled" api:"required"`
 	Action   param.Field[AIGatewayUpdateParamsDLPAction] `json:"action"`
 	Policies param.Field[interface{}]                    `json:"policies"`
 	Profiles param.Field[interface{}]                    `json:"profiles"`
@@ -1735,9 +2054,9 @@ type AIGatewayUpdateParamsDLPUnion interface {
 }
 
 type AIGatewayUpdateParamsDLPObject struct {
-	Action   param.Field[AIGatewayUpdateParamsDLPObjectAction] `json:"action,required"`
-	Enabled  param.Field[bool]                                 `json:"enabled,required"`
-	Profiles param.Field[[]string]                             `json:"profiles,required"`
+	Action   param.Field[AIGatewayUpdateParamsDLPObjectAction] `json:"action" api:"required"`
+	Enabled  param.Field[bool]                                 `json:"enabled" api:"required"`
+	Profiles param.Field[[]string]                             `json:"profiles" api:"required"`
 }
 
 func (r AIGatewayUpdateParamsDLPObject) MarshalJSON() (data []byte, err error) {
@@ -1792,18 +2111,66 @@ func (r AIGatewayUpdateParamsLogManagementStrategy) IsKnown() bool {
 }
 
 type AIGatewayUpdateParamsOtel struct {
-	Authorization param.Field[string]            `json:"authorization,required"`
-	Headers       param.Field[map[string]string] `json:"headers,required"`
-	URL           param.Field[string]            `json:"url,required"`
+	Authorization param.Field[string]                               `json:"authorization" api:"required"`
+	Headers       param.Field[map[string]string]                    `json:"headers" api:"required"`
+	URL           param.Field[string]                               `json:"url" api:"required"`
+	ContentType   param.Field[AIGatewayUpdateParamsOtelContentType] `json:"content_type"`
 }
 
 func (r AIGatewayUpdateParamsOtel) MarshalJSON() (data []byte, err error) {
 	return apijson.MarshalRoot(r)
 }
 
+type AIGatewayUpdateParamsOtelContentType string
+
+const (
+	AIGatewayUpdateParamsOtelContentTypeJson     AIGatewayUpdateParamsOtelContentType = "json"
+	AIGatewayUpdateParamsOtelContentTypeProtobuf AIGatewayUpdateParamsOtelContentType = "protobuf"
+)
+
+func (r AIGatewayUpdateParamsOtelContentType) IsKnown() bool {
+	switch r {
+	case AIGatewayUpdateParamsOtelContentTypeJson, AIGatewayUpdateParamsOtelContentTypeProtobuf:
+		return true
+	}
+	return false
+}
+
+type AIGatewayUpdateParamsRateLimitingTechnique string
+
+const (
+	AIGatewayUpdateParamsRateLimitingTechniqueFixed   AIGatewayUpdateParamsRateLimitingTechnique = "fixed"
+	AIGatewayUpdateParamsRateLimitingTechniqueSliding AIGatewayUpdateParamsRateLimitingTechnique = "sliding"
+)
+
+func (r AIGatewayUpdateParamsRateLimitingTechnique) IsKnown() bool {
+	switch r {
+	case AIGatewayUpdateParamsRateLimitingTechniqueFixed, AIGatewayUpdateParamsRateLimitingTechniqueSliding:
+		return true
+	}
+	return false
+}
+
+// Backoff strategy for retry delays
+type AIGatewayUpdateParamsRetryBackoff string
+
+const (
+	AIGatewayUpdateParamsRetryBackoffConstant    AIGatewayUpdateParamsRetryBackoff = "constant"
+	AIGatewayUpdateParamsRetryBackoffLinear      AIGatewayUpdateParamsRetryBackoff = "linear"
+	AIGatewayUpdateParamsRetryBackoffExponential AIGatewayUpdateParamsRetryBackoff = "exponential"
+)
+
+func (r AIGatewayUpdateParamsRetryBackoff) IsKnown() bool {
+	switch r {
+	case AIGatewayUpdateParamsRetryBackoffConstant, AIGatewayUpdateParamsRetryBackoffLinear, AIGatewayUpdateParamsRetryBackoffExponential:
+		return true
+	}
+	return false
+}
+
 type AIGatewayUpdateParamsStripe struct {
-	Authorization param.Field[string]                                  `json:"authorization,required"`
-	UsageEvents   param.Field[[]AIGatewayUpdateParamsStripeUsageEvent] `json:"usage_events,required"`
+	Authorization param.Field[string]                                  `json:"authorization" api:"required"`
+	UsageEvents   param.Field[[]AIGatewayUpdateParamsStripeUsageEvent] `json:"usage_events" api:"required"`
 }
 
 func (r AIGatewayUpdateParamsStripe) MarshalJSON() (data []byte, err error) {
@@ -1811,16 +2178,32 @@ func (r AIGatewayUpdateParamsStripe) MarshalJSON() (data []byte, err error) {
 }
 
 type AIGatewayUpdateParamsStripeUsageEvent struct {
-	Payload param.Field[string] `json:"payload,required"`
+	Payload param.Field[string] `json:"payload" api:"required"`
 }
 
 func (r AIGatewayUpdateParamsStripeUsageEvent) MarshalJSON() (data []byte, err error) {
 	return apijson.MarshalRoot(r)
 }
 
+// Controls how Workers AI inference calls routed through this gateway are billed.
+// Only 'postpaid' is currently supported.
+type AIGatewayUpdateParamsWorkersAIBillingMode string
+
+const (
+	AIGatewayUpdateParamsWorkersAIBillingModePostpaid AIGatewayUpdateParamsWorkersAIBillingMode = "postpaid"
+)
+
+func (r AIGatewayUpdateParamsWorkersAIBillingMode) IsKnown() bool {
+	switch r {
+	case AIGatewayUpdateParamsWorkersAIBillingModePostpaid:
+		return true
+	}
+	return false
+}
+
 type AIGatewayUpdateResponseEnvelope struct {
-	Result  AIGatewayUpdateResponse             `json:"result,required"`
-	Success bool                                `json:"success,required"`
+	Result  AIGatewayUpdateResponse             `json:"result" api:"required"`
+	Success bool                                `json:"success" api:"required"`
 	JSON    aiGatewayUpdateResponseEnvelopeJSON `json:"-"`
 }
 
@@ -1842,7 +2225,7 @@ func (r aiGatewayUpdateResponseEnvelopeJSON) RawJSON() string {
 }
 
 type AIGatewayListParams struct {
-	AccountID param.Field[string] `path:"account_id,required"`
+	AccountID param.Field[string] `path:"account_id" api:"required"`
 	Page      param.Field[int64]  `query:"page"`
 	PerPage   param.Field[int64]  `query:"per_page"`
 	// Search by id
@@ -1858,12 +2241,12 @@ func (r AIGatewayListParams) URLQuery() (v url.Values) {
 }
 
 type AIGatewayDeleteParams struct {
-	AccountID param.Field[string] `path:"account_id,required"`
+	AccountID param.Field[string] `path:"account_id" api:"required"`
 }
 
 type AIGatewayDeleteResponseEnvelope struct {
-	Result  AIGatewayDeleteResponse             `json:"result,required"`
-	Success bool                                `json:"success,required"`
+	Result  AIGatewayDeleteResponse             `json:"result" api:"required"`
+	Success bool                                `json:"success" api:"required"`
 	JSON    aiGatewayDeleteResponseEnvelopeJSON `json:"-"`
 }
 
@@ -1885,12 +2268,12 @@ func (r aiGatewayDeleteResponseEnvelopeJSON) RawJSON() string {
 }
 
 type AIGatewayGetParams struct {
-	AccountID param.Field[string] `path:"account_id,required"`
+	AccountID param.Field[string] `path:"account_id" api:"required"`
 }
 
 type AIGatewayGetResponseEnvelope struct {
-	Result  AIGatewayGetResponse             `json:"result,required"`
-	Success bool                             `json:"success,required"`
+	Result  AIGatewayGetResponse             `json:"result" api:"required"`
+	Success bool                             `json:"success" api:"required"`
 	JSON    aiGatewayGetResponseEnvelopeJSON `json:"-"`
 }
 

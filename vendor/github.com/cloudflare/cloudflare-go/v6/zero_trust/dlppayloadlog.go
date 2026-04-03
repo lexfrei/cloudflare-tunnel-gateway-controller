@@ -35,60 +35,62 @@ func NewDLPPayloadLogService(opts ...option.RequestOption) (r *DLPPayloadLogServ
 	return
 }
 
-// Set payload log settings
+// Enables or disables payload logging for DLP matches. When enabled, matched
+// content is stored for review.
 func (r *DLPPayloadLogService) Update(ctx context.Context, params DLPPayloadLogUpdateParams, opts ...option.RequestOption) (res *DLPPayloadLogUpdateResponse, err error) {
 	var env DLPPayloadLogUpdateResponseEnvelope
 	opts = slices.Concat(r.Options, opts)
 	if params.AccountID.Value == "" {
 		err = errors.New("missing required account_id parameter")
-		return
+		return nil, err
 	}
 	path := fmt.Sprintf("accounts/%s/dlp/payload_log", params.AccountID)
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodPut, path, params, &env, opts...)
 	if err != nil {
-		return
+		return nil, err
 	}
 	res = &env.Result
-	return
+	return res, nil
 }
 
-// Get payload log settings
+// Gets the current payload logging configuration for DLP, showing whether matched
+// content is being logged.
 func (r *DLPPayloadLogService) Get(ctx context.Context, query DLPPayloadLogGetParams, opts ...option.RequestOption) (res *DLPPayloadLogGetResponse, err error) {
 	var env DLPPayloadLogGetResponseEnvelope
 	opts = slices.Concat(r.Options, opts)
 	if query.AccountID.Value == "" {
 		err = errors.New("missing required account_id parameter")
-		return
+		return nil, err
 	}
 	path := fmt.Sprintf("accounts/%s/dlp/payload_log", query.AccountID)
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodGet, path, nil, &env, opts...)
 	if err != nil {
-		return
+		return nil, err
 	}
 	res = &env.Result
-	return
+	return res, nil
 }
 
 type DLPPayloadLogUpdateResponse struct {
+	UpdatedAt time.Time `json:"updated_at" api:"required" format:"date-time"`
 	// Masking level for payload logs.
 	//
 	// - `full`: The entire payload is masked.
 	// - `partial`: Only partial payload content is masked.
 	// - `clear`: No masking is applied to the payload content.
 	// - `default`: DLP uses its default masking behavior.
-	MaskingLevel DLPPayloadLogUpdateResponseMaskingLevel `json:"masking_level,required"`
-	UpdatedAt    time.Time                               `json:"updated_at,required" format:"date-time"`
+	MaskingLevel DLPPayloadLogUpdateResponseMaskingLevel `json:"masking_level"`
 	// Base64-encoded public key for encrypting payload logs. Null when payload logging
 	// is disabled.
-	PublicKey string                          `json:"public_key,nullable"`
+	PublicKey string                          `json:"public_key" api:"nullable"`
 	JSON      dlpPayloadLogUpdateResponseJSON `json:"-"`
 }
 
 // dlpPayloadLogUpdateResponseJSON contains the JSON metadata for the struct
 // [DLPPayloadLogUpdateResponse]
 type dlpPayloadLogUpdateResponseJSON struct {
-	MaskingLevel apijson.Field
 	UpdatedAt    apijson.Field
+	MaskingLevel apijson.Field
 	PublicKey    apijson.Field
 	raw          string
 	ExtraFields  map[string]apijson.Field
@@ -126,25 +128,25 @@ func (r DLPPayloadLogUpdateResponseMaskingLevel) IsKnown() bool {
 }
 
 type DLPPayloadLogGetResponse struct {
+	UpdatedAt time.Time `json:"updated_at" api:"required" format:"date-time"`
 	// Masking level for payload logs.
 	//
 	// - `full`: The entire payload is masked.
 	// - `partial`: Only partial payload content is masked.
 	// - `clear`: No masking is applied to the payload content.
 	// - `default`: DLP uses its default masking behavior.
-	MaskingLevel DLPPayloadLogGetResponseMaskingLevel `json:"masking_level,required"`
-	UpdatedAt    time.Time                            `json:"updated_at,required" format:"date-time"`
+	MaskingLevel DLPPayloadLogGetResponseMaskingLevel `json:"masking_level"`
 	// Base64-encoded public key for encrypting payload logs. Null when payload logging
 	// is disabled.
-	PublicKey string                       `json:"public_key,nullable"`
+	PublicKey string                       `json:"public_key" api:"nullable"`
 	JSON      dlpPayloadLogGetResponseJSON `json:"-"`
 }
 
 // dlpPayloadLogGetResponseJSON contains the JSON metadata for the struct
 // [DLPPayloadLogGetResponse]
 type dlpPayloadLogGetResponseJSON struct {
-	MaskingLevel apijson.Field
 	UpdatedAt    apijson.Field
+	MaskingLevel apijson.Field
 	PublicKey    apijson.Field
 	raw          string
 	ExtraFields  map[string]apijson.Field
@@ -182,7 +184,7 @@ func (r DLPPayloadLogGetResponseMaskingLevel) IsKnown() bool {
 }
 
 type DLPPayloadLogUpdateParams struct {
-	AccountID param.Field[string] `path:"account_id,required"`
+	AccountID param.Field[string] `path:"account_id" api:"required"`
 	// Masking level for payload logs.
 	//
 	// - `full`: The entire payload is masked.
@@ -234,10 +236,10 @@ func (r DLPPayloadLogUpdateParamsMaskingLevel) IsKnown() bool {
 }
 
 type DLPPayloadLogUpdateResponseEnvelope struct {
-	Errors   []DLPPayloadLogUpdateResponseEnvelopeErrors   `json:"errors,required"`
-	Messages []DLPPayloadLogUpdateResponseEnvelopeMessages `json:"messages,required"`
+	Errors   []DLPPayloadLogUpdateResponseEnvelopeErrors   `json:"errors" api:"required"`
+	Messages []DLPPayloadLogUpdateResponseEnvelopeMessages `json:"messages" api:"required"`
 	// Whether the API call was successful.
-	Success DLPPayloadLogUpdateResponseEnvelopeSuccess `json:"success,required"`
+	Success DLPPayloadLogUpdateResponseEnvelopeSuccess `json:"success" api:"required"`
 	Result  DLPPayloadLogUpdateResponse                `json:"result"`
 	JSON    dlpPayloadLogUpdateResponseEnvelopeJSON    `json:"-"`
 }
@@ -262,8 +264,8 @@ func (r dlpPayloadLogUpdateResponseEnvelopeJSON) RawJSON() string {
 }
 
 type DLPPayloadLogUpdateResponseEnvelopeErrors struct {
-	Code             int64                                           `json:"code,required"`
-	Message          string                                          `json:"message,required"`
+	Code             int64                                           `json:"code" api:"required"`
+	Message          string                                          `json:"message" api:"required"`
 	DocumentationURL string                                          `json:"documentation_url"`
 	Source           DLPPayloadLogUpdateResponseEnvelopeErrorsSource `json:"source"`
 	JSON             dlpPayloadLogUpdateResponseEnvelopeErrorsJSON   `json:"-"`
@@ -310,8 +312,8 @@ func (r dlpPayloadLogUpdateResponseEnvelopeErrorsSourceJSON) RawJSON() string {
 }
 
 type DLPPayloadLogUpdateResponseEnvelopeMessages struct {
-	Code             int64                                             `json:"code,required"`
-	Message          string                                            `json:"message,required"`
+	Code             int64                                             `json:"code" api:"required"`
+	Message          string                                            `json:"message" api:"required"`
 	DocumentationURL string                                            `json:"documentation_url"`
 	Source           DLPPayloadLogUpdateResponseEnvelopeMessagesSource `json:"source"`
 	JSON             dlpPayloadLogUpdateResponseEnvelopeMessagesJSON   `json:"-"`
@@ -373,14 +375,14 @@ func (r DLPPayloadLogUpdateResponseEnvelopeSuccess) IsKnown() bool {
 }
 
 type DLPPayloadLogGetParams struct {
-	AccountID param.Field[string] `path:"account_id,required"`
+	AccountID param.Field[string] `path:"account_id" api:"required"`
 }
 
 type DLPPayloadLogGetResponseEnvelope struct {
-	Errors   []DLPPayloadLogGetResponseEnvelopeErrors   `json:"errors,required"`
-	Messages []DLPPayloadLogGetResponseEnvelopeMessages `json:"messages,required"`
+	Errors   []DLPPayloadLogGetResponseEnvelopeErrors   `json:"errors" api:"required"`
+	Messages []DLPPayloadLogGetResponseEnvelopeMessages `json:"messages" api:"required"`
 	// Whether the API call was successful.
-	Success DLPPayloadLogGetResponseEnvelopeSuccess `json:"success,required"`
+	Success DLPPayloadLogGetResponseEnvelopeSuccess `json:"success" api:"required"`
 	Result  DLPPayloadLogGetResponse                `json:"result"`
 	JSON    dlpPayloadLogGetResponseEnvelopeJSON    `json:"-"`
 }
@@ -405,8 +407,8 @@ func (r dlpPayloadLogGetResponseEnvelopeJSON) RawJSON() string {
 }
 
 type DLPPayloadLogGetResponseEnvelopeErrors struct {
-	Code             int64                                        `json:"code,required"`
-	Message          string                                       `json:"message,required"`
+	Code             int64                                        `json:"code" api:"required"`
+	Message          string                                       `json:"message" api:"required"`
 	DocumentationURL string                                       `json:"documentation_url"`
 	Source           DLPPayloadLogGetResponseEnvelopeErrorsSource `json:"source"`
 	JSON             dlpPayloadLogGetResponseEnvelopeErrorsJSON   `json:"-"`
@@ -453,8 +455,8 @@ func (r dlpPayloadLogGetResponseEnvelopeErrorsSourceJSON) RawJSON() string {
 }
 
 type DLPPayloadLogGetResponseEnvelopeMessages struct {
-	Code             int64                                          `json:"code,required"`
-	Message          string                                         `json:"message,required"`
+	Code             int64                                          `json:"code" api:"required"`
+	Message          string                                         `json:"message" api:"required"`
 	DocumentationURL string                                         `json:"documentation_url"`
 	Source           DLPPayloadLogGetResponseEnvelopeMessagesSource `json:"source"`
 	JSON             dlpPayloadLogGetResponseEnvelopeMessagesJSON   `json:"-"`

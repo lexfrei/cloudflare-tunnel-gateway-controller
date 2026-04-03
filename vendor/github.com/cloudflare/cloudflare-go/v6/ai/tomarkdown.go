@@ -39,14 +39,14 @@ func NewToMarkdownService(opts ...option.RequestOption) (r *ToMarkdownService) {
 	return
 }
 
-// Get all converted formats supported
+// Lists all file formats supported for conversion to Markdown.
 func (r *ToMarkdownService) Supported(ctx context.Context, query ToMarkdownSupportedParams, opts ...option.RequestOption) (res *pagination.SinglePage[ToMarkdownSupportedResponse], err error) {
 	var raw *http.Response
 	opts = slices.Concat(r.Options, opts)
 	opts = append([]option.RequestOption{option.WithResponseInto(&raw)}, opts...)
 	if query.AccountID.Value == "" {
 		err = errors.New("missing required account_id parameter")
-		return
+		return nil, err
 	}
 	path := fmt.Sprintf("accounts/%s/ai/tomarkdown/supported", query.AccountID)
 	cfg, err := requestconfig.NewRequestConfig(ctx, http.MethodGet, path, nil, &res, opts...)
@@ -61,19 +61,19 @@ func (r *ToMarkdownService) Supported(ctx context.Context, query ToMarkdownSuppo
 	return res, nil
 }
 
-// Get all converted formats supported
+// Lists all file formats supported for conversion to Markdown.
 func (r *ToMarkdownService) SupportedAutoPaging(ctx context.Context, query ToMarkdownSupportedParams, opts ...option.RequestOption) *pagination.SinglePageAutoPager[ToMarkdownSupportedResponse] {
 	return pagination.NewSinglePageAutoPager(r.Supported(ctx, query, opts...))
 }
 
-// Convert Files into Markdown
+// Converts uploaded files into Markdown format using Workers AI.
 func (r *ToMarkdownService) Transform(ctx context.Context, params ToMarkdownTransformParams, opts ...option.RequestOption) (res *pagination.SinglePage[ToMarkdownTransformResponse], err error) {
 	var raw *http.Response
 	opts = slices.Concat(r.Options, opts)
 	opts = append([]option.RequestOption{option.WithResponseInto(&raw)}, opts...)
 	if params.AccountID.Value == "" {
 		err = errors.New("missing required account_id parameter")
-		return
+		return nil, err
 	}
 	path := fmt.Sprintf("accounts/%s/ai/tomarkdown", params.AccountID)
 	cfg, err := requestconfig.NewRequestConfig(ctx, http.MethodPost, path, params, &res, opts...)
@@ -88,14 +88,14 @@ func (r *ToMarkdownService) Transform(ctx context.Context, params ToMarkdownTran
 	return res, nil
 }
 
-// Convert Files into Markdown
+// Converts uploaded files into Markdown format using Workers AI.
 func (r *ToMarkdownService) TransformAutoPaging(ctx context.Context, params ToMarkdownTransformParams, opts ...option.RequestOption) *pagination.SinglePageAutoPager[ToMarkdownTransformResponse] {
 	return pagination.NewSinglePageAutoPager(r.Transform(ctx, params, opts...))
 }
 
 type ToMarkdownSupportedResponse struct {
-	Extension string                          `json:"extension,required"`
-	MimeType  string                          `json:"mimeType,required"`
+	Extension string                          `json:"extension" api:"required"`
+	MimeType  string                          `json:"mimeType" api:"required"`
 	JSON      toMarkdownSupportedResponseJSON `json:"-"`
 }
 
@@ -117,11 +117,11 @@ func (r toMarkdownSupportedResponseJSON) RawJSON() string {
 }
 
 type ToMarkdownTransformResponse struct {
-	Data     string                          `json:"data,required"`
-	Format   string                          `json:"format,required"`
-	MimeType string                          `json:"mimeType,required"`
-	Name     string                          `json:"name,required"`
-	Tokens   string                          `json:"tokens,required"`
+	Data     string                          `json:"data" api:"required"`
+	Format   string                          `json:"format" api:"required"`
+	MimeType string                          `json:"mimeType" api:"required"`
+	Name     string                          `json:"name" api:"required"`
+	Tokens   string                          `json:"tokens" api:"required"`
 	JSON     toMarkdownTransformResponseJSON `json:"-"`
 }
 
@@ -146,12 +146,12 @@ func (r toMarkdownTransformResponseJSON) RawJSON() string {
 }
 
 type ToMarkdownSupportedParams struct {
-	AccountID param.Field[string] `path:"account_id,required"`
+	AccountID param.Field[string] `path:"account_id" api:"required"`
 }
 
 type ToMarkdownTransformParams struct {
-	AccountID param.Field[string]           `path:"account_id,required"`
-	File      ToMarkdownTransformParamsFile `json:"file,required"`
+	AccountID param.Field[string]           `path:"account_id" api:"required"`
+	File      ToMarkdownTransformParamsFile `json:"file" api:"required"`
 }
 
 func (r ToMarkdownTransformParams) MarshalMultipart() (data []byte, contentType string, err error) {
@@ -170,7 +170,7 @@ func (r ToMarkdownTransformParams) MarshalMultipart() (data []byte, contentType 
 }
 
 type ToMarkdownTransformParamsFile struct {
-	Files param.Field[[]io.Reader] `json:"files,required" format:"binary"`
+	Files param.Field[[]io.Reader] `json:"files" api:"required" format:"binary"`
 }
 
 func (r ToMarkdownTransformParamsFile) MarshalJSON() (data []byte, err error) {

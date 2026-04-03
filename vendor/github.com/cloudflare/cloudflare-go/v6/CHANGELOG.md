@@ -1,64 +1,315 @@
 # Changelog
 
+## 6.9.0 (2026-04-01)
+
+Full Changelog: [v6.8.0...v6.9.0](https://github.com/cloudflare/cloudflare-go/compare/v6.8.0...v6.9.0)
+
+In this release, you'll see a number of breaking changes. This is primarily due to changes in OpenAPI definitions, which our libraries are based off of, and codegen updates that we rely on to read those OpenAPI definitions and produce our SDK libraries.
+
+## Please ensure you read through the list of changes below before moving to this version - this will help you understand any down or upstream issues it may cause to your environments.
+
+---
+
+## Breaking Changes
+
+See the [v6.9.0 Migration Guide](./docs/migration-guides/v6.9.0-migration-guide.md) for before/after code examples and actions needed for each change.
+
+### AI Gateway - AccountID, AccountTag, and InternalID Field Removal
+
+The `AccountID`, `AccountTag`, and `InternalID` fields have been removed from all AI Gateway response types:
+
+- `AIGatewayNewResponse`
+- `AIGatewayUpdateResponse`
+- `AIGatewayListResponse`
+- `AIGatewayDeleteResponse`
+- `AIGatewayGetResponse`
+- `DynamicRoutingNewResponse`
+- `DynamicRoutingDeleteResponse`
+- `DynamicRoutingNewDeploymentResponse`
+- `DynamicRoutingNewVersionResponse`
+- `DynamicRoutingGetResponse`
+- `DynamicRoutingGetVersionResponse`
+
+### AI Search - VectorizeName Field Removal
+
+The `VectorizeName` field has been removed from all AI Search instance response types:
+
+- `InstanceNewResponse.VectorizeName`
+- `InstanceUpdateResponse.VectorizeName`
+- `InstanceListResponse.VectorizeName`
+- `InstanceDeleteResponse.VectorizeName`
+- `InstanceReadResponse.VectorizeName`
+
+### AI Search - KeywordMatchMode Enum Values Changed
+
+The `KeywordMatchMode` enum values have been renamed:
+
+- `KeywordMatchModeExactMatch` → `KeywordMatchModeAnd`
+- `KeywordMatchModeFuzzyMatch` → `KeywordMatchModeOr`
+
+Affects `InstanceNewParams` and `InstanceUpdateParams`.
+
+### Billing - New PayGo Usage Endpoint
+
+**NEW**: Added `billing.Usage` service with PayGo endpoint:
+- `client.Billing.Usage.Paygo()` - Returns billable usage data for PayGo (self-serve) accounts
+
+**Note**: The PayGo endpoint parameters (`From`, `To`) are now the primary query mechanism. The previously available `LastMonthPeriodStart` and `LastYearPeriodStart` parameters were removed in the underlying API specification.
+
+### Connectivity - TCP Service Support
+
+The directory services now support TCP service configurations via discriminated union types:
+
+- `ServiceConfig` is now a discriminated union of `HttpServiceConfig` and `TcpServiceConfig`
+- New `TcpServiceConfig` type with `tcp_port` and `app_protocol` fields
+- `HttpServiceConfig` and `TcpServiceConfig` both extend `ServiceCommon` base type
+
+### Custom Hostnames - Hostname Parameter Type Change
+
+The `Hostname` parameter in `CustomHostnameListParams` has changed from a simple string to a structured object:
+
+- **Before**: `Hostname param.Field[string]`
+- **After**: `Hostname param.Field[CustomHostnameListParamsHostname]` (object with `Contain` field)
+
+### AI Search - InstanceItem Service Methods Removed
+
+The `InstanceItem` service methods have been removed. The service structure still exists at `client.AISearch.Instances.Items` but no longer provides any methods:
+
+- `List()` - List indexed items in an AI Search instance
+- `ListAutoPaging()` - Auto-paging list method
+- `Get()` - Get a specific indexed item
+- All associated response types (`InstanceItemListResponse`, `InstanceItemGetResponse`, etc.)
+
+### Workers - Filter Type Changes
+
+The observability telemetry filters have been restructured:
+
+- Filter types changed from `QueryFilter[]` to `FilterNode[]` (discriminated union)
+- Filters now support nested groups via `kind: 'group'`
+- Affects telemetry endpoints: keys, query, and values
+
+### Workers - Domain Service Return Type Changes
+
+The `workers.Domain` service methods now return specific response types instead of the generic `Domain` type:
+
+- `Update()` returns `*DomainUpdateResponse` instead of `*Domain`
+- `List()` returns `pagination.SinglePage[DomainListResponse]` instead of `pagination.SinglePage[Domain]`
+- `Delete()` now returns `(*DomainDeleteResponse, error)` instead of just `error`
+- `Get()` returns `*DomainGetResponse` instead of `*Domain`
+
+### Zero Trust - NetworkSubnet Response Type Consolidation
+
+The `NetworkSubnet` service methods now use the shared `Subnet` type instead of endpoint-specific response types:
+
+- `NetworkSubnetService.List()` returns `Subnet` instead of `NetworkSubnetListResponse`
+- `NetworkSubnetWARPService.New()` returns `Subnet` instead of `NetworkSubnetWARPNewResponse`
+- `NetworkSubnetWARPService.Edit()` returns `Subnet` instead of `NetworkSubnetWARPEditResponse`
+- `NetworkSubnetWARPService.Get()` returns `Subnet` instead of `NetworkSubnetWARPGetResponse`
+- `NetworkSubnetCloudflareSourceService.Update()` returns `Subnet` instead of `NetworkSubnetCloudflareSourceUpdateResponse`
+
+The removed types (`NetworkSubnetListResponse`, `NetworkSubnetWARPNewResponse`, etc.) have been consolidated into the shared `Subnet` type.
+
+### Zero Trust - MfaBypass Field Removal
+
+The `MfaBypass` field has been removed from MFA configuration types across multiple services:
+
+**Affected Param Types:**
+- `AccessApplicationNewParamsBodySelfHostedApplicationMfaConfig.MfaBypass`
+- `AccessApplicationUpdateParamsBodySelfHostedApplicationMfaConfig.MfaBypass`
+- `AccessApplicationPolicyNewParamsMfaConfig.MfaBypass`
+- `AccessApplicationPolicyUpdateParamsMfaConfig.MfaBypass`
+- `AccessApplicationPolicyTestNewParamsPoliciesObjectMfaConfig.MfaBypass`
+- `AccessPolicyNewParamsMfaConfig.MfaBypass`
+- `AccessPolicyUpdateParamsMfaConfig.MfaBypass`
+
+**Affected Response Types:**
+- All corresponding MfaConfig response types
+
+### Zero Trust - MfaConfigurationAllowed Field Removal
+
+The `MfaConfigurationAllowed` field has been removed from Organization types:
+
+- `OrganizationNewParams.MfaConfigurationAllowed`
+- `OrganizationUpdateParams.MfaConfigurationAllowed`
+- `OrganizationNewResponse.MfaConfigurationAllowed`
+
+---
+
+## Features
+
+### AI Search - BoostBy Field Addition
+
+The `BoostBy` field has been added to retrieval options across multiple response types:
+
+- `InstanceNewResponseRetrievalOptions.BoostBy`
+- `InstanceUpdateResponseRetrievalOptions.BoostBy`
+- `InstanceListResponseRetrievalOptions.BoostBy`
+- `InstanceDeleteResponseRetrievalOptions.BoostBy`
+- `InstanceReadResponseRetrievalOptions.BoostBy`
+
+### Browser Rendering (`client.browserRendering`)
+
+- **Crawl**: New endpoints for headless browser crawling
+    - `Create()` - Start a crawl job
+    - `List()` - List crawl jobs
+    - `Get()` - Get crawl job details
+    - `Update()` - Update crawl job
+    - `Delete()` - Delete crawl job
+    - `Screenshot()` - Take screenshots during crawl
+    - `Scrape()` - Scrape content during crawl
+
+### Brand Protection v2 (`client.brandProtection.v2`)
+
+- New v2 API endpoints:
+    - `Logo` - Logo management
+    - `LogoMatch` - Logo matching
+    - `Match` - Brand protection matching
+    - `Query` - Query brand protection data
+
+### Google Tag Gateway (`client.googleTagGateway`)
+
+- **NEW SERVICE**: Manage Google Tag configurations
+    - `Config.Create()`, `Update()`, `List()`, `Delete()`, `Get()`
+
+### Resource Tagging (`client.resourceTagging`)
+
+- **NEW SERVICE**: Resource tagging management
+    - `AccountTag` management
+    - `Key` management for resource tagging
+
+### Zero Trust Device IP Profiles (`client.zeroTrust.devices.ipProfiles`)
+
+- IP profile management for device posture
+    - `Create()`, `Update()`, `List()`, `Delete()`, `Get()`
+
+### Abuse Reports
+
+- `Mitigation` responses now include additional metadata fields
+
+### Accounts
+
+- `managed_by` field with `parent_org_id`, `parent_org_name` support
+
+### AI Gateway
+
+- `zdr` field added to all responses and params
+- Dataset, evaluation, log, and provider config endpoints updated
+
+### AI Search
+
+- Instance management expanded with new fields
+- Job management enhancements
+- Token management updates
+
+### API Gateway
+
+- Configuration and user schema updates
+- Expression template fallthrough improvements
+
+### D1
+
+- Database query and raw query parameter refinements
+- Time travel support: `GetBookmark()`, `Restore()`
+
+### DNS
+
+- `dns_records/usage` endpoints added
+- Record type improvements
+
+### Email Security
+
+- Enhanced investigation endpoints
+- New fields: `envelope_from`, `envelope_to`, `postfix_id_outbound`, `replyto`
+- New detection classification: `outbound_ndr`
+
+### Logpush
+
+- New datasets: `dex_application_tests`, `dex_device_state_events`, `ipsec_logs`, `warp_config_changes`, `warp_toggle_changes`
+
+### Magic Transit
+
+- App and connector enhancements
+- CF interconnect improvements
+- License key and provisioning support
+
+### Organizations
+
+- Organization account management improvements
+- Hierarchical organization support
+
+### R2
+
+- Super Slurper job enhancements
+- Job log improvements
+
+### Rulesets
+
+- Buffering fields: `request_body_buffering`, `response_body_buffering`
+
+### Workers
+
+- Subdomain deletion support
+- Script observability settings
+- Tags and tail consumers support
+
+### Workflows
+
+- Instance retention configuration
+- New status option: `restart`
+
+### Zero Trust
+
+- MCP portal and server configuration updates
+- Access application type enhancements
+- Gateway proxy endpoint improvements
+- Tunnel connection updates
+
+---
+
+## Deprecations
+
+None in this release.
+
+---
+
+## Bug Fixes
+
+- **AI Search**: Fixed test compatibility issues
+- **Billing**: Transport error handling improvements
+- **Client**: Retry logic error passing fixes
+
 ## 6.8.0 (2026-02-27)
 
 Full Changelog: [v6.7.0...v6.8.0](https://github.com/cloudflare/cloudflare-go/compare/v6.7.0...v6.8.0)
 
-### Features
+## Breaking Changes
 
-* feat: GIN-1439: Add gateway PAC files ([b9575e3](https://github.com/cloudflare/cloudflare-go/commit/b9575e38f21d4b4a837d1fc772cbc42a8a122c5a))
-* feat(custom_origin_trust_store): enable custom_origin_trust_store ([8e6ad51](https://github.com/cloudflare/cloudflare-go/commit/8e6ad51bcbc505169e7d2a8ad003c65b22ad8c6c))
-* feat(dex): add DEX rules ([e7341f8](https://github.com/cloudflare/cloudflare-go/commit/e7341f841b755d4cdc96808bb1d740b7272828d3))
-* feat(email_security): Add phishguard reports endpoint ([7e67a1a](https://github.com/cloudflare/cloudflare-go/commit/7e67a1a4a0de8d29304e1ff49c756c6490409691))
-* feat(radar): Add Botnet and PQ Endpoints to developer docs ([94623fa](https://github.com/cloudflare/cloudflare-go/commit/94623fa47ae92dbc6a4fab3d0925a49af4d86c9b))
-* feat(stainless): AUTH-7071 Complete Access Users endpoint ([27ee6a4](https://github.com/cloudflare/cloudflare-go/commit/27ee6a42d6c08034e646717f2be6a889aa054af7))
-* feat(stainless): TUN-10249 Add WARP Subnet endpoints ([7a4bb2a](https://github.com/cloudflare/cloudflare-go/commit/7a4bb2a93a62f61611db941431819cb2db1f6fb9))
-* fix: add 'rdp' as an initialism ([40f95a1](https://github.com/cloudflare/cloudflare-go/commit/40f95a17796db00c76df335ebfa0b844c5917b94))
-* fix: broken reference for the queues 'consumer' model ([f508eeb](https://github.com/cloudflare/cloudflare-go/commit/f508eeb5682f53998109d0fd7e5efb11acbe469f))
-* **radar:** Add Botnet Threat Feed endpoint ([94623fa](https://github.com/cloudflare/cloudflare-go/commit/94623fa47ae92dbc6a4fab3d0925a49af4d86c9b))
-* test: skip prism tests for endpoints with non-JSON content types ([116572a](https://github.com/cloudflare/cloudflare-go/commit/116572a20cd9e6a181b5e8ea9e215f324c776d48))
+See the [v6.8.0 Migration Guide](./docs/migration-guides/v6.8.0-migration-guide.md) for before/after code examples and actions needed for each change.
 
+- `CloudforceOne.ThreatEvents` — `Delete()` method removed
+- `SSL.CertificatePacks` — `List()` pagination type changed from `SinglePage` to `V4PagePaginationArray`
+- `ZeroTrust.DLP.Datasets` — `New()`, `Update()`, `Get()` return types replaced with shared DLP types
+- `ZeroTrust.DLP.Datasets.Upload` — `New()`, `Edit()` return types replaced with shared DLP types
+- `ZeroTrust.DLP.Profiles` — `Get()` return type replaced with shared `Profile` type
+- `ZeroTrust.DLP.Profiles.Custom` — `New()`, `Update()`, `Get()` return types replaced with shared `Profile` type
+- `ZeroTrust.DLP.Profiles.Predefined` — `Update()`, `Get()` return types replaced with shared `PredefinedProfile` type
 
-### Chores
+## Features
 
-* add v6.8.0 migration guide for breaking changes ([4cda9b7](https://github.com/cloudflare/cloudflare-go/commit/4cda9b7fb6e4e4cd87efa4f867c03e538a9c2c58))
-* **api:** update composite API spec ([740d73b](https://github.com/cloudflare/cloudflare-go/commit/740d73bbdb8db4081056fb21e464b255a0466733))
-* **api:** update composite API spec ([116a9d7](https://github.com/cloudflare/cloudflare-go/commit/116a9d78ae6c67fa2476fd2a429d62cb5f5762f9))
-* **api:** update composite API spec ([fc9c525](https://github.com/cloudflare/cloudflare-go/commit/fc9c5252fe22ee1926e9fd4201266b8ad125d932))
-* **api:** update composite API spec ([92e8387](https://github.com/cloudflare/cloudflare-go/commit/92e83874604b474a404cdfeea08ffb988e455dc2))
-* **api:** update composite API spec ([0e8f055](https://github.com/cloudflare/cloudflare-go/commit/0e8f0553fd1ba6dc160f3e4be1f2f1b044fd4e2f))
-* **api:** update composite API spec ([fc47923](https://github.com/cloudflare/cloudflare-go/commit/fc47923eeda348515d32165c7ec36d8e88a0b77d))
-* **api:** update composite API spec ([ef9e677](https://github.com/cloudflare/cloudflare-go/commit/ef9e6775ebbcee6e8df39bae688406a7923eddec))
-* **api:** update composite API spec ([d76edda](https://github.com/cloudflare/cloudflare-go/commit/d76eddada3407b1e2b6ffc14cce0a9d1af443b49))
-* **api:** update composite API spec ([2efa24a](https://github.com/cloudflare/cloudflare-go/commit/2efa24a842ef064408dfb1860205fb33f6c403bb))
-* **api:** update composite API spec ([12102fd](https://github.com/cloudflare/cloudflare-go/commit/12102fd1d9d76960b4d270198c860dc332d5eadf))
-* **api:** update composite API spec ([ac06ca9](https://github.com/cloudflare/cloudflare-go/commit/ac06ca95e2cf9f55cfbc434e039c5c7a5a0d7f61))
-* **api:** update composite API spec ([fcee717](https://github.com/cloudflare/cloudflare-go/commit/fcee71780af96a3dfee6ded1eab8564d3f394267))
-* **api:** update composite API spec ([9abd8b2](https://github.com/cloudflare/cloudflare-go/commit/9abd8b27036b9dcdc3f9802d7cc642848f982ea8))
-* **api:** update composite API spec ([47c3b59](https://github.com/cloudflare/cloudflare-go/commit/47c3b5977eafcbd9be73c6ba92602e17bb1208be))
-* **api:** update composite API spec ([fc712b2](https://github.com/cloudflare/cloudflare-go/commit/fc712b24b6ef89886b39ec61d74888170baa3451))
-* **api:** update composite API spec ([928e0c3](https://github.com/cloudflare/cloudflare-go/commit/928e0c3cdb0fab72acdca788a640735f53b618ef))
-* **api:** update composite API spec ([902cbe3](https://github.com/cloudflare/cloudflare-go/commit/902cbe39a67d189c24615acd1a87b139a006489e))
-* **api:** update composite API spec ([18dd787](https://github.com/cloudflare/cloudflare-go/commit/18dd78773750555daa6458c82a1ddcf12eb44e0f))
-* **api:** update composite API spec ([3f484b4](https://github.com/cloudflare/cloudflare-go/commit/3f484b460cf6f907da6d81208e0c28575ebdb91d))
-* **api:** update composite API spec ([32d0d5f](https://github.com/cloudflare/cloudflare-go/commit/32d0d5fb551b1b1b445afba677f9709a6425caae))
-* **api:** update composite API spec ([723c6e7](https://github.com/cloudflare/cloudflare-go/commit/723c6e72330e3779a1be167272e0dfa9e3b302f2))
-* **api:** update composite API spec ([13ed254](https://github.com/cloudflare/cloudflare-go/commit/13ed25458334a9d957df3656ba90c5f9f90151ff))
-* **api:** update composite API spec ([827fe0c](https://github.com/cloudflare/cloudflare-go/commit/827fe0c0afb7817888b6445d384ef096b1f618a1))
-* **api:** update composite API spec ([d82420b](https://github.com/cloudflare/cloudflare-go/commit/d82420b221f583752ec27dbc336a09bfc05d9d3a))
-* **api:** update composite API spec ([fb4cbdf](https://github.com/cloudflare/cloudflare-go/commit/fb4cbdf99914151fee5fe40003f88ed7283af1a9))
-* **api:** update composite API spec ([fe9578d](https://github.com/cloudflare/cloudflare-go/commit/fe9578ddead795f005653558586a8509ab023c8d))
-* **api:** update composite API spec ([b76b9d7](https://github.com/cloudflare/cloudflare-go/commit/b76b9d789b9134dcb868b83e1bd692c228da92e7))
+### New API Resources
 
+- `ACM.CustomTrustStore` - Manage custom origin trust store certificates per zone
+- `EmailSecurity.Phishguard.Reports` - List phishing reports via Email Security Phishguard
+- `Radar.PostQuantum` - Post-quantum encryption analytics including origin adoption (`Origin.Summary`, `Origin.TimeseriesGroups`) and TLS support (`TLS.Support`)
+- `ZeroTrust.Access.Users` - Manage Zero Trust Access user identities
+- `ZeroTrust.DEX.Rules` - Manage DEX rules for device testing
+- `ZeroTrust.Gateway.Pacfiles` - Manage Gateway PAC file configurations
+- `ZeroTrust.Networks.Subnets.WARP` - Manage WARP subnet exclusions
 
-### Documentation
+### New Endpoints (Existing Resources)
 
-* **changelog:** fix changlog ([5bf6935](https://github.com/cloudflare/cloudflare-go/commit/5bf693501b4b5ae5c5788c982ad77b1756e34071))
-
-
-### Build System
-
-* **url_scanner:** fix recursive type reference ([982074c](https://github.com/cloudflare/cloudflare-go/commit/982074c4c82d92c4adf1bebbfd47c178e6cddfbe))
+#### `Radar.Entities.ASNs`
+- `BotnetThreatFeed()` - Retrieve botnet threat feed data for ASNs from Cloudflare Radar
 
 ## 6.7.0 (2026-02-10)
 

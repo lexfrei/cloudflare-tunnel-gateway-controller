@@ -45,7 +45,8 @@ func NewInsightService(opts ...option.RequestOption) (r *InsightService) {
 	return
 }
 
-// Retrieves Security Center Insights
+// Lists all Security Center insights for the account or zone, showing security
+// findings and recommendations.
 func (r *InsightService) List(ctx context.Context, params InsightListParams, opts ...option.RequestOption) (res *pagination.V4PagePagination[InsightListResponse], err error) {
 	var raw *http.Response
 	opts = slices.Concat(r.Options, opts)
@@ -81,12 +82,14 @@ func (r *InsightService) List(ctx context.Context, params InsightListParams, opt
 	return res, nil
 }
 
-// Retrieves Security Center Insights
+// Lists all Security Center insights for the account or zone, showing security
+// findings and recommendations.
 func (r *InsightService) ListAutoPaging(ctx context.Context, params InsightListParams, opts ...option.RequestOption) *pagination.V4PagePaginationAutoPager[InsightListResponse] {
 	return pagination.NewV4PagePaginationAutoPager(r.List(ctx, params, opts...))
 }
 
-// Archives Security Center Insight
+// Archives a Security Center insight for an account or zone, removing it from the
+// active insights list while preserving historical data.
 func (r *InsightService) Dismiss(ctx context.Context, issueID string, params InsightDismissParams, opts ...option.RequestOption) (res *InsightDismissResponse, err error) {
 	opts = slices.Concat(r.Options, opts)
 	var accountOrZone string
@@ -109,11 +112,11 @@ func (r *InsightService) Dismiss(ctx context.Context, issueID string, params Ins
 	}
 	if issueID == "" {
 		err = errors.New("missing required issue_id parameter")
-		return
+		return nil, err
 	}
 	path := fmt.Sprintf("%s/%s/security-center/insights/%s/dismiss", accountOrZone, accountOrZoneID, issueID)
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodPut, path, params, &res, opts...)
-	return
+	return res, err
 }
 
 type InsightListResponse struct {
@@ -228,10 +231,10 @@ func (r InsightListResponseIssuesSeverity) IsKnown() bool {
 }
 
 type InsightDismissResponse struct {
-	Errors   []InsightDismissResponseError   `json:"errors,required"`
-	Messages []InsightDismissResponseMessage `json:"messages,required"`
+	Errors   []InsightDismissResponseError   `json:"errors" api:"required"`
+	Messages []InsightDismissResponseMessage `json:"messages" api:"required"`
 	// Whether the API call was successful.
-	Success InsightDismissResponseSuccess `json:"success,required"`
+	Success InsightDismissResponseSuccess `json:"success" api:"required"`
 	JSON    insightDismissResponseJSON    `json:"-"`
 }
 
@@ -254,8 +257,8 @@ func (r insightDismissResponseJSON) RawJSON() string {
 }
 
 type InsightDismissResponseError struct {
-	Code             int64                              `json:"code,required"`
-	Message          string                             `json:"message,required"`
+	Code             int64                              `json:"code" api:"required"`
+	Message          string                             `json:"message" api:"required"`
 	DocumentationURL string                             `json:"documentation_url"`
 	Source           InsightDismissResponseErrorsSource `json:"source"`
 	JSON             insightDismissResponseErrorJSON    `json:"-"`
@@ -302,8 +305,8 @@ func (r insightDismissResponseErrorsSourceJSON) RawJSON() string {
 }
 
 type InsightDismissResponseMessage struct {
-	Code             int64                                `json:"code,required"`
-	Message          string                               `json:"message,required"`
+	Code             int64                                `json:"code" api:"required"`
+	Message          string                               `json:"message" api:"required"`
 	DocumentationURL string                               `json:"documentation_url"`
 	Source           InsightDismissResponseMessagesSource `json:"source"`
 	JSON             insightDismissResponseMessageJSON    `json:"-"`

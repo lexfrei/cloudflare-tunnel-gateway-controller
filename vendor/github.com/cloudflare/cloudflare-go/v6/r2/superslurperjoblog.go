@@ -37,18 +37,19 @@ func NewSuperSlurperJobLogService(opts ...option.RequestOption) (r *SuperSlurper
 	return
 }
 
-// Get job logs
+// Gets log entries for an R2 Super Slurper migration job, showing migration status
+// changes, errors, etc.
 func (r *SuperSlurperJobLogService) List(ctx context.Context, jobID string, params SuperSlurperJobLogListParams, opts ...option.RequestOption) (res *pagination.SinglePage[SuperSlurperJobLogListResponse], err error) {
 	var raw *http.Response
 	opts = slices.Concat(r.Options, opts)
 	opts = append([]option.RequestOption{option.WithResponseInto(&raw)}, opts...)
 	if params.AccountID.Value == "" {
 		err = errors.New("missing required account_id parameter")
-		return
+		return nil, err
 	}
 	if jobID == "" {
 		err = errors.New("missing required job_id parameter")
-		return
+		return nil, err
 	}
 	path := fmt.Sprintf("accounts/%s/slurper/jobs/%s/logs", params.AccountID, jobID)
 	cfg, err := requestconfig.NewRequestConfig(ctx, http.MethodGet, path, params, &res, opts...)
@@ -63,7 +64,8 @@ func (r *SuperSlurperJobLogService) List(ctx context.Context, jobID string, para
 	return res, nil
 }
 
-// Get job logs
+// Gets log entries for an R2 Super Slurper migration job, showing migration status
+// changes, errors, etc.
 func (r *SuperSlurperJobLogService) ListAutoPaging(ctx context.Context, jobID string, params SuperSlurperJobLogListParams, opts ...option.RequestOption) *pagination.SinglePageAutoPager[SuperSlurperJobLogListResponse] {
 	return pagination.NewSinglePageAutoPager(r.List(ctx, jobID, params, opts...))
 }
@@ -72,8 +74,8 @@ type SuperSlurperJobLogListResponse struct {
 	CreatedAt string                                `json:"createdAt"`
 	Job       string                                `json:"job"`
 	LogType   SuperSlurperJobLogListResponseLogType `json:"logType"`
-	Message   string                                `json:"message,nullable"`
-	ObjectKey string                                `json:"objectKey,nullable"`
+	Message   string                                `json:"message" api:"nullable"`
+	ObjectKey string                                `json:"objectKey" api:"nullable"`
 	JSON      superSlurperJobLogListResponseJSON    `json:"-"`
 }
 
@@ -126,7 +128,7 @@ func (r SuperSlurperJobLogListResponseLogType) IsKnown() bool {
 }
 
 type SuperSlurperJobLogListParams struct {
-	AccountID param.Field[string] `path:"account_id,required"`
+	AccountID param.Field[string] `path:"account_id" api:"required"`
 	Limit     param.Field[int64]  `query:"limit"`
 	Offset    param.Field[int64]  `query:"offset"`
 }

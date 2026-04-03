@@ -38,39 +38,39 @@ func NewProviderConfigService(opts ...option.RequestOption) (r *ProviderConfigSe
 	return
 }
 
-// Create a new Provider Configs
+// Creates a new AI Gateway.
 func (r *ProviderConfigService) New(ctx context.Context, gatewayID string, params ProviderConfigNewParams, opts ...option.RequestOption) (res *ProviderConfigNewResponse, err error) {
 	var env ProviderConfigNewResponseEnvelope
 	opts = slices.Concat(r.Options, opts)
 	if params.AccountID.Value == "" {
 		err = errors.New("missing required account_id parameter")
-		return
+		return nil, err
 	}
 	if gatewayID == "" {
 		err = errors.New("missing required gateway_id parameter")
-		return
+		return nil, err
 	}
 	path := fmt.Sprintf("accounts/%s/ai-gateway/gateways/%s/provider_configs", params.AccountID, gatewayID)
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodPost, path, params, &env, opts...)
 	if err != nil {
-		return
+		return nil, err
 	}
 	res = &env.Result
-	return
+	return res, nil
 }
 
-// List Provider Configs
+// Lists all AI Gateway evaluator types configured for the account.
 func (r *ProviderConfigService) List(ctx context.Context, gatewayID string, params ProviderConfigListParams, opts ...option.RequestOption) (res *pagination.V4PagePaginationArray[ProviderConfigListResponse], err error) {
 	var raw *http.Response
 	opts = slices.Concat(r.Options, opts)
 	opts = append([]option.RequestOption{option.WithResponseInto(&raw)}, opts...)
 	if params.AccountID.Value == "" {
 		err = errors.New("missing required account_id parameter")
-		return
+		return nil, err
 	}
 	if gatewayID == "" {
 		err = errors.New("missing required gateway_id parameter")
-		return
+		return nil, err
 	}
 	path := fmt.Sprintf("accounts/%s/ai-gateway/gateways/%s/provider_configs", params.AccountID, gatewayID)
 	cfg, err := requestconfig.NewRequestConfig(ctx, http.MethodGet, path, params, &res, opts...)
@@ -85,23 +85,21 @@ func (r *ProviderConfigService) List(ctx context.Context, gatewayID string, para
 	return res, nil
 }
 
-// List Provider Configs
+// Lists all AI Gateway evaluator types configured for the account.
 func (r *ProviderConfigService) ListAutoPaging(ctx context.Context, gatewayID string, params ProviderConfigListParams, opts ...option.RequestOption) *pagination.V4PagePaginationArrayAutoPager[ProviderConfigListResponse] {
 	return pagination.NewV4PagePaginationArrayAutoPager(r.List(ctx, gatewayID, params, opts...))
 }
 
 type ProviderConfigNewResponse struct {
-	ID            string `json:"id,required"`
-	AccountID     string `json:"account_id,required"`
-	AccountTag    string `json:"account_tag,required"`
-	Alias         string `json:"alias,required"`
-	DefaultConfig bool   `json:"default_config,required"`
+	ID            string `json:"id" api:"required"`
+	Alias         string `json:"alias" api:"required"`
+	DefaultConfig bool   `json:"default_config" api:"required"`
 	// gateway id
-	GatewayID       string                        `json:"gateway_id,required"`
-	ModifiedAt      time.Time                     `json:"modified_at,required" format:"date-time"`
-	ProviderSlug    string                        `json:"provider_slug,required"`
-	SecretID        string                        `json:"secret_id,required"`
-	SecretPreview   string                        `json:"secret_preview,required"`
+	GatewayID       string                        `json:"gateway_id" api:"required"`
+	ModifiedAt      time.Time                     `json:"modified_at" api:"required" format:"date-time"`
+	ProviderSlug    string                        `json:"provider_slug" api:"required"`
+	SecretID        string                        `json:"secret_id" api:"required"`
+	SecretPreview   string                        `json:"secret_preview" api:"required"`
 	RateLimit       float64                       `json:"rate_limit"`
 	RateLimitPeriod float64                       `json:"rate_limit_period"`
 	JSON            providerConfigNewResponseJSON `json:"-"`
@@ -111,8 +109,6 @@ type ProviderConfigNewResponse struct {
 // [ProviderConfigNewResponse]
 type providerConfigNewResponseJSON struct {
 	ID              apijson.Field
-	AccountID       apijson.Field
-	AccountTag      apijson.Field
 	Alias           apijson.Field
 	DefaultConfig   apijson.Field
 	GatewayID       apijson.Field
@@ -135,17 +131,15 @@ func (r providerConfigNewResponseJSON) RawJSON() string {
 }
 
 type ProviderConfigListResponse struct {
-	ID            string `json:"id,required"`
-	AccountID     string `json:"account_id,required"`
-	AccountTag    string `json:"account_tag,required"`
-	Alias         string `json:"alias,required"`
-	DefaultConfig bool   `json:"default_config,required"`
+	ID            string `json:"id" api:"required"`
+	Alias         string `json:"alias" api:"required"`
+	DefaultConfig bool   `json:"default_config" api:"required"`
 	// gateway id
-	GatewayID       string                         `json:"gateway_id,required"`
-	ModifiedAt      time.Time                      `json:"modified_at,required" format:"date-time"`
-	ProviderSlug    string                         `json:"provider_slug,required"`
-	SecretID        string                         `json:"secret_id,required"`
-	SecretPreview   string                         `json:"secret_preview,required"`
+	GatewayID       string                         `json:"gateway_id" api:"required"`
+	ModifiedAt      time.Time                      `json:"modified_at" api:"required" format:"date-time"`
+	ProviderSlug    string                         `json:"provider_slug" api:"required"`
+	SecretID        string                         `json:"secret_id" api:"required"`
+	SecretPreview   string                         `json:"secret_preview" api:"required"`
 	RateLimit       float64                        `json:"rate_limit"`
 	RateLimitPeriod float64                        `json:"rate_limit_period"`
 	JSON            providerConfigListResponseJSON `json:"-"`
@@ -155,8 +149,6 @@ type ProviderConfigListResponse struct {
 // [ProviderConfigListResponse]
 type providerConfigListResponseJSON struct {
 	ID              apijson.Field
-	AccountID       apijson.Field
-	AccountTag      apijson.Field
 	Alias           apijson.Field
 	DefaultConfig   apijson.Field
 	GatewayID       apijson.Field
@@ -179,12 +171,12 @@ func (r providerConfigListResponseJSON) RawJSON() string {
 }
 
 type ProviderConfigNewParams struct {
-	AccountID       param.Field[string]  `path:"account_id,required"`
-	Alias           param.Field[string]  `json:"alias,required"`
-	DefaultConfig   param.Field[bool]    `json:"default_config,required"`
-	ProviderSlug    param.Field[string]  `json:"provider_slug,required"`
-	Secret          param.Field[string]  `json:"secret,required"`
-	SecretID        param.Field[string]  `json:"secret_id,required"`
+	AccountID       param.Field[string]  `path:"account_id" api:"required"`
+	Alias           param.Field[string]  `json:"alias" api:"required"`
+	DefaultConfig   param.Field[bool]    `json:"default_config" api:"required"`
+	ProviderSlug    param.Field[string]  `json:"provider_slug" api:"required"`
+	Secret          param.Field[string]  `json:"secret" api:"required"`
+	SecretID        param.Field[string]  `json:"secret_id" api:"required"`
 	RateLimit       param.Field[float64] `json:"rate_limit"`
 	RateLimitPeriod param.Field[float64] `json:"rate_limit_period"`
 }
@@ -194,8 +186,8 @@ func (r ProviderConfigNewParams) MarshalJSON() (data []byte, err error) {
 }
 
 type ProviderConfigNewResponseEnvelope struct {
-	Result  ProviderConfigNewResponse             `json:"result,required"`
-	Success bool                                  `json:"success,required"`
+	Result  ProviderConfigNewResponse             `json:"result" api:"required"`
+	Success bool                                  `json:"success" api:"required"`
 	JSON    providerConfigNewResponseEnvelopeJSON `json:"-"`
 }
 
@@ -217,7 +209,7 @@ func (r providerConfigNewResponseEnvelopeJSON) RawJSON() string {
 }
 
 type ProviderConfigListParams struct {
-	AccountID param.Field[string] `path:"account_id,required"`
+	AccountID param.Field[string] `path:"account_id" api:"required"`
 	Page      param.Field[int64]  `query:"page"`
 	PerPage   param.Field[int64]  `query:"per_page"`
 }

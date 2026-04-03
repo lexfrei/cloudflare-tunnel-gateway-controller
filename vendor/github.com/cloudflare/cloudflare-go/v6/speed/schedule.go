@@ -43,19 +43,19 @@ func (r *ScheduleService) New(ctx context.Context, url string, params ScheduleNe
 	opts = slices.Concat(r.Options, opts)
 	if params.ZoneID.Value == "" {
 		err = errors.New("missing required zone_id parameter")
-		return
+		return nil, err
 	}
 	if url == "" {
 		err = errors.New("missing required url parameter")
-		return
+		return nil, err
 	}
 	path := fmt.Sprintf("zones/%s/speed_api/schedule/%s", params.ZoneID, url)
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodPost, path, params, &env, opts...)
 	if err != nil {
-		return
+		return nil, err
 	}
 	res = &env.Result
-	return
+	return res, nil
 }
 
 // Deletes a scheduled test for a page.
@@ -64,19 +64,19 @@ func (r *ScheduleService) Delete(ctx context.Context, url string, params Schedul
 	opts = slices.Concat(r.Options, opts)
 	if params.ZoneID.Value == "" {
 		err = errors.New("missing required zone_id parameter")
-		return
+		return nil, err
 	}
 	if url == "" {
 		err = errors.New("missing required url parameter")
-		return
+		return nil, err
 	}
 	path := fmt.Sprintf("zones/%s/speed_api/schedule/%s", params.ZoneID, url)
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodDelete, path, params, &env, opts...)
 	if err != nil {
-		return
+		return nil, err
 	}
 	res = &env.Result
-	return
+	return res, nil
 }
 
 // Retrieves the test schedule for a page in a specific region.
@@ -85,19 +85,19 @@ func (r *ScheduleService) Get(ctx context.Context, url string, params ScheduleGe
 	opts = slices.Concat(r.Options, opts)
 	if params.ZoneID.Value == "" {
 		err = errors.New("missing required zone_id parameter")
-		return
+		return nil, err
 	}
 	if url == "" {
 		err = errors.New("missing required url parameter")
-		return
+		return nil, err
 	}
 	path := fmt.Sprintf("zones/%s/speed_api/schedule/%s", params.ZoneID, url)
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodGet, path, params, &env, opts...)
 	if err != nil {
-		return
+		return nil, err
 	}
 	res = &env.Result
-	return
+	return res, nil
 }
 
 // The test schedule.
@@ -227,7 +227,10 @@ func (r scheduleDeleteResponseJSON) RawJSON() string {
 
 type ScheduleNewParams struct {
 	// Identifier.
-	ZoneID param.Field[string] `path:"zone_id,required"`
+	ZoneID param.Field[string] `path:"zone_id" api:"required"`
+	// The frequency of the scheduled test. Defaults to WEEKLY for free plans, DAILY
+	// for paid plans.
+	Frequency param.Field[ScheduleNewParamsFrequency] `query:"frequency"`
 	// A test region.
 	Region param.Field[ScheduleNewParamsRegion] `query:"region"`
 }
@@ -238,6 +241,23 @@ func (r ScheduleNewParams) URLQuery() (v url.Values) {
 		ArrayFormat:  apiquery.ArrayQueryFormatRepeat,
 		NestedFormat: apiquery.NestedQueryFormatDots,
 	})
+}
+
+// The frequency of the scheduled test. Defaults to WEEKLY for free plans, DAILY
+// for paid plans.
+type ScheduleNewParamsFrequency string
+
+const (
+	ScheduleNewParamsFrequencyDaily  ScheduleNewParamsFrequency = "DAILY"
+	ScheduleNewParamsFrequencyWeekly ScheduleNewParamsFrequency = "WEEKLY"
+)
+
+func (r ScheduleNewParamsFrequency) IsKnown() bool {
+	switch r {
+	case ScheduleNewParamsFrequencyDaily, ScheduleNewParamsFrequencyWeekly:
+		return true
+	}
+	return false
 }
 
 // A test region.
@@ -276,10 +296,10 @@ func (r ScheduleNewParamsRegion) IsKnown() bool {
 }
 
 type ScheduleNewResponseEnvelope struct {
-	Errors   []shared.ResponseInfo `json:"errors,required"`
-	Messages []shared.ResponseInfo `json:"messages,required"`
+	Errors   []shared.ResponseInfo `json:"errors" api:"required"`
+	Messages []shared.ResponseInfo `json:"messages" api:"required"`
 	// Whether the API call was successful.
-	Success bool                            `json:"success,required"`
+	Success bool                            `json:"success" api:"required"`
 	Result  ScheduleNewResponse             `json:"result"`
 	JSON    scheduleNewResponseEnvelopeJSON `json:"-"`
 }
@@ -305,7 +325,7 @@ func (r scheduleNewResponseEnvelopeJSON) RawJSON() string {
 
 type ScheduleDeleteParams struct {
 	// Identifier.
-	ZoneID param.Field[string] `path:"zone_id,required"`
+	ZoneID param.Field[string] `path:"zone_id" api:"required"`
 	// A test region.
 	Region param.Field[ScheduleDeleteParamsRegion] `query:"region"`
 }
@@ -354,10 +374,10 @@ func (r ScheduleDeleteParamsRegion) IsKnown() bool {
 }
 
 type ScheduleDeleteResponseEnvelope struct {
-	Errors   []shared.ResponseInfo `json:"errors,required"`
-	Messages []shared.ResponseInfo `json:"messages,required"`
+	Errors   []shared.ResponseInfo `json:"errors" api:"required"`
+	Messages []shared.ResponseInfo `json:"messages" api:"required"`
 	// Whether the API call was successful.
-	Success bool                               `json:"success,required"`
+	Success bool                               `json:"success" api:"required"`
 	Result  ScheduleDeleteResponse             `json:"result"`
 	JSON    scheduleDeleteResponseEnvelopeJSON `json:"-"`
 }
@@ -383,7 +403,7 @@ func (r scheduleDeleteResponseEnvelopeJSON) RawJSON() string {
 
 type ScheduleGetParams struct {
 	// Identifier.
-	ZoneID param.Field[string] `path:"zone_id,required"`
+	ZoneID param.Field[string] `path:"zone_id" api:"required"`
 	// A test region.
 	Region param.Field[ScheduleGetParamsRegion] `query:"region"`
 }
@@ -432,10 +452,10 @@ func (r ScheduleGetParamsRegion) IsKnown() bool {
 }
 
 type ScheduleGetResponseEnvelope struct {
-	Errors   []shared.ResponseInfo `json:"errors,required"`
-	Messages []shared.ResponseInfo `json:"messages,required"`
+	Errors   []shared.ResponseInfo `json:"errors" api:"required"`
+	Messages []shared.ResponseInfo `json:"messages" api:"required"`
 	// Whether the API call was successful.
-	Success bool `json:"success,required"`
+	Success bool `json:"success" api:"required"`
 	// The test schedule.
 	Result Schedule                        `json:"result"`
 	JSON   scheduleGetResponseEnvelopeJSON `json:"-"`

@@ -86,7 +86,7 @@ github.com/cloudflare/circl/math/mlsbset
 github.com/cloudflare/circl/sign
 github.com/cloudflare/circl/sign/ed25519
 github.com/cloudflare/circl/sign/ed448
-# github.com/cloudflare/cloudflare-go/v6 v6.8.0
+# github.com/cloudflare/cloudflare-go/v6 v6.9.0
 ## explicit; go 1.22
 github.com/cloudflare/cloudflare-go/v6
 github.com/cloudflare/cloudflare-go/v6/abuse_reports
@@ -125,9 +125,11 @@ github.com/cloudflare/cloudflare-go/v6/dns_firewall
 github.com/cloudflare/cloudflare-go/v6/durable_objects
 github.com/cloudflare/cloudflare-go/v6/email_routing
 github.com/cloudflare/cloudflare-go/v6/email_security
+github.com/cloudflare/cloudflare-go/v6/email_sending
 github.com/cloudflare/cloudflare-go/v6/filters
 github.com/cloudflare/cloudflare-go/v6/firewall
 github.com/cloudflare/cloudflare-go/v6/fraud
+github.com/cloudflare/cloudflare-go/v6/google_tag_gateway
 github.com/cloudflare/cloudflare-go/v6/healthchecks
 github.com/cloudflare/cloudflare-go/v6/hostnames
 github.com/cloudflare/cloudflare-go/v6/hyperdrive
@@ -174,6 +176,7 @@ github.com/cloudflare/cloudflare-go/v6/realtime_kit
 github.com/cloudflare/cloudflare-go/v6/registrar
 github.com/cloudflare/cloudflare-go/v6/request_tracers
 github.com/cloudflare/cloudflare-go/v6/resource_sharing
+github.com/cloudflare/cloudflare-go/v6/resource_tagging
 github.com/cloudflare/cloudflare-go/v6/rules
 github.com/cloudflare/cloudflare-go/v6/rulesets
 github.com/cloudflare/cloudflare-go/v6/rum

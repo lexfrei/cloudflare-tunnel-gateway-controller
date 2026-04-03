@@ -45,15 +45,15 @@ func (r *ConnectorService) New(ctx context.Context, params ConnectorNewParams, o
 	opts = slices.Concat(r.Options, opts)
 	if params.AccountID.Value == "" {
 		err = errors.New("missing required account_id parameter")
-		return
+		return nil, err
 	}
 	path := fmt.Sprintf("accounts/%s/magic/connectors", params.AccountID)
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodPost, path, params, &env, opts...)
 	if err != nil {
-		return
+		return nil, err
 	}
 	res = &env.Result
-	return
+	return res, nil
 }
 
 // Replace Connector or Re-provision License Key
@@ -62,19 +62,19 @@ func (r *ConnectorService) Update(ctx context.Context, connectorID string, param
 	opts = slices.Concat(r.Options, opts)
 	if params.AccountID.Value == "" {
 		err = errors.New("missing required account_id parameter")
-		return
+		return nil, err
 	}
 	if connectorID == "" {
 		err = errors.New("missing required connector_id parameter")
-		return
+		return nil, err
 	}
 	path := fmt.Sprintf("accounts/%s/magic/connectors/%s", params.AccountID, connectorID)
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodPut, path, params, &env, opts...)
 	if err != nil {
-		return
+		return nil, err
 	}
 	res = &env.Result
-	return
+	return res, nil
 }
 
 // List Connectors
@@ -84,7 +84,7 @@ func (r *ConnectorService) List(ctx context.Context, query ConnectorListParams, 
 	opts = append([]option.RequestOption{option.WithResponseInto(&raw)}, opts...)
 	if query.AccountID.Value == "" {
 		err = errors.New("missing required account_id parameter")
-		return
+		return nil, err
 	}
 	path := fmt.Sprintf("accounts/%s/magic/connectors", query.AccountID)
 	cfg, err := requestconfig.NewRequestConfig(ctx, http.MethodGet, path, nil, &res, opts...)
@@ -110,19 +110,19 @@ func (r *ConnectorService) Delete(ctx context.Context, connectorID string, body 
 	opts = slices.Concat(r.Options, opts)
 	if body.AccountID.Value == "" {
 		err = errors.New("missing required account_id parameter")
-		return
+		return nil, err
 	}
 	if connectorID == "" {
 		err = errors.New("missing required connector_id parameter")
-		return
+		return nil, err
 	}
 	path := fmt.Sprintf("accounts/%s/magic/connectors/%s", body.AccountID, connectorID)
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodDelete, path, nil, &env, opts...)
 	if err != nil {
-		return
+		return nil, err
 	}
 	res = &env.Result
-	return
+	return res, nil
 }
 
 // Edit Connector to update specific properties or Re-provision License Key
@@ -131,19 +131,19 @@ func (r *ConnectorService) Edit(ctx context.Context, connectorID string, params 
 	opts = slices.Concat(r.Options, opts)
 	if params.AccountID.Value == "" {
 		err = errors.New("missing required account_id parameter")
-		return
+		return nil, err
 	}
 	if connectorID == "" {
 		err = errors.New("missing required connector_id parameter")
-		return
+		return nil, err
 	}
 	path := fmt.Sprintf("accounts/%s/magic/connectors/%s", params.AccountID, connectorID)
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodPatch, path, params, &env, opts...)
 	if err != nil {
-		return
+		return nil, err
 	}
 	res = &env.Result
-	return
+	return res, nil
 }
 
 // Fetch Connector
@@ -152,34 +152,38 @@ func (r *ConnectorService) Get(ctx context.Context, connectorID string, query Co
 	opts = slices.Concat(r.Options, opts)
 	if query.AccountID.Value == "" {
 		err = errors.New("missing required account_id parameter")
-		return
+		return nil, err
 	}
 	if connectorID == "" {
 		err = errors.New("missing required connector_id parameter")
-		return
+		return nil, err
 	}
 	path := fmt.Sprintf("accounts/%s/magic/connectors/%s", query.AccountID, connectorID)
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodGet, path, nil, &env, opts...)
 	if err != nil {
-		return
+		return nil, err
 	}
 	res = &env.Result
-	return
+	return res, nil
 }
 
 type ConnectorNewResponse struct {
-	ID                           string                     `json:"id,required"`
-	Activated                    bool                       `json:"activated,required"`
-	InterruptWindowDurationHours float64                    `json:"interrupt_window_duration_hours,required"`
-	InterruptWindowHourOfDay     float64                    `json:"interrupt_window_hour_of_day,required"`
-	LastUpdated                  string                     `json:"last_updated,required"`
-	Notes                        string                     `json:"notes,required"`
-	Timezone                     string                     `json:"timezone,required"`
-	Device                       ConnectorNewResponseDevice `json:"device"`
-	LastHeartbeat                string                     `json:"last_heartbeat"`
-	LastSeenVersion              string                     `json:"last_seen_version"`
-	LicenseKey                   string                     `json:"license_key"`
-	JSON                         connectorNewResponseJSON   `json:"-"`
+	ID        string `json:"id" api:"required"`
+	Activated bool   `json:"activated" api:"required"`
+	// Allowed days of the week for upgrades. Default is all days.
+	InterruptWindowDaysOfWeek    []ConnectorNewResponseInterruptWindowDaysOfWeek `json:"interrupt_window_days_of_week" api:"required"`
+	InterruptWindowDurationHours float64                                         `json:"interrupt_window_duration_hours" api:"required"`
+	// List of dates (YYYY-MM-DD) when upgrades are blocked.
+	InterruptWindowEmbargoDates []string                   `json:"interrupt_window_embargo_dates" api:"required"`
+	InterruptWindowHourOfDay    float64                    `json:"interrupt_window_hour_of_day" api:"required"`
+	LastUpdated                 string                     `json:"last_updated" api:"required"`
+	Notes                       string                     `json:"notes" api:"required"`
+	Timezone                    string                     `json:"timezone" api:"required"`
+	Device                      ConnectorNewResponseDevice `json:"device"`
+	LastHeartbeat               string                     `json:"last_heartbeat"`
+	LastSeenVersion             string                     `json:"last_seen_version"`
+	LicenseKey                  string                     `json:"license_key"`
+	JSON                        connectorNewResponseJSON   `json:"-"`
 }
 
 // connectorNewResponseJSON contains the JSON metadata for the struct
@@ -187,7 +191,9 @@ type ConnectorNewResponse struct {
 type connectorNewResponseJSON struct {
 	ID                           apijson.Field
 	Activated                    apijson.Field
+	InterruptWindowDaysOfWeek    apijson.Field
 	InterruptWindowDurationHours apijson.Field
+	InterruptWindowEmbargoDates  apijson.Field
 	InterruptWindowHourOfDay     apijson.Field
 	LastUpdated                  apijson.Field
 	Notes                        apijson.Field
@@ -208,8 +214,28 @@ func (r connectorNewResponseJSON) RawJSON() string {
 	return r.raw
 }
 
+type ConnectorNewResponseInterruptWindowDaysOfWeek string
+
+const (
+	ConnectorNewResponseInterruptWindowDaysOfWeekSunday    ConnectorNewResponseInterruptWindowDaysOfWeek = "Sunday"
+	ConnectorNewResponseInterruptWindowDaysOfWeekMonday    ConnectorNewResponseInterruptWindowDaysOfWeek = "Monday"
+	ConnectorNewResponseInterruptWindowDaysOfWeekTuesday   ConnectorNewResponseInterruptWindowDaysOfWeek = "Tuesday"
+	ConnectorNewResponseInterruptWindowDaysOfWeekWednesday ConnectorNewResponseInterruptWindowDaysOfWeek = "Wednesday"
+	ConnectorNewResponseInterruptWindowDaysOfWeekThursday  ConnectorNewResponseInterruptWindowDaysOfWeek = "Thursday"
+	ConnectorNewResponseInterruptWindowDaysOfWeekFriday    ConnectorNewResponseInterruptWindowDaysOfWeek = "Friday"
+	ConnectorNewResponseInterruptWindowDaysOfWeekSaturday  ConnectorNewResponseInterruptWindowDaysOfWeek = "Saturday"
+)
+
+func (r ConnectorNewResponseInterruptWindowDaysOfWeek) IsKnown() bool {
+	switch r {
+	case ConnectorNewResponseInterruptWindowDaysOfWeekSunday, ConnectorNewResponseInterruptWindowDaysOfWeekMonday, ConnectorNewResponseInterruptWindowDaysOfWeekTuesday, ConnectorNewResponseInterruptWindowDaysOfWeekWednesday, ConnectorNewResponseInterruptWindowDaysOfWeekThursday, ConnectorNewResponseInterruptWindowDaysOfWeekFriday, ConnectorNewResponseInterruptWindowDaysOfWeekSaturday:
+		return true
+	}
+	return false
+}
+
 type ConnectorNewResponseDevice struct {
-	ID           string                         `json:"id,required"`
+	ID           string                         `json:"id" api:"required"`
 	SerialNumber string                         `json:"serial_number"`
 	JSON         connectorNewResponseDeviceJSON `json:"-"`
 }
@@ -232,18 +258,22 @@ func (r connectorNewResponseDeviceJSON) RawJSON() string {
 }
 
 type ConnectorUpdateResponse struct {
-	ID                           string                        `json:"id,required"`
-	Activated                    bool                          `json:"activated,required"`
-	InterruptWindowDurationHours float64                       `json:"interrupt_window_duration_hours,required"`
-	InterruptWindowHourOfDay     float64                       `json:"interrupt_window_hour_of_day,required"`
-	LastUpdated                  string                        `json:"last_updated,required"`
-	Notes                        string                        `json:"notes,required"`
-	Timezone                     string                        `json:"timezone,required"`
-	Device                       ConnectorUpdateResponseDevice `json:"device"`
-	LastHeartbeat                string                        `json:"last_heartbeat"`
-	LastSeenVersion              string                        `json:"last_seen_version"`
-	LicenseKey                   string                        `json:"license_key"`
-	JSON                         connectorUpdateResponseJSON   `json:"-"`
+	ID        string `json:"id" api:"required"`
+	Activated bool   `json:"activated" api:"required"`
+	// Allowed days of the week for upgrades. Default is all days.
+	InterruptWindowDaysOfWeek    []ConnectorUpdateResponseInterruptWindowDaysOfWeek `json:"interrupt_window_days_of_week" api:"required"`
+	InterruptWindowDurationHours float64                                            `json:"interrupt_window_duration_hours" api:"required"`
+	// List of dates (YYYY-MM-DD) when upgrades are blocked.
+	InterruptWindowEmbargoDates []string                      `json:"interrupt_window_embargo_dates" api:"required"`
+	InterruptWindowHourOfDay    float64                       `json:"interrupt_window_hour_of_day" api:"required"`
+	LastUpdated                 string                        `json:"last_updated" api:"required"`
+	Notes                       string                        `json:"notes" api:"required"`
+	Timezone                    string                        `json:"timezone" api:"required"`
+	Device                      ConnectorUpdateResponseDevice `json:"device"`
+	LastHeartbeat               string                        `json:"last_heartbeat"`
+	LastSeenVersion             string                        `json:"last_seen_version"`
+	LicenseKey                  string                        `json:"license_key"`
+	JSON                        connectorUpdateResponseJSON   `json:"-"`
 }
 
 // connectorUpdateResponseJSON contains the JSON metadata for the struct
@@ -251,7 +281,9 @@ type ConnectorUpdateResponse struct {
 type connectorUpdateResponseJSON struct {
 	ID                           apijson.Field
 	Activated                    apijson.Field
+	InterruptWindowDaysOfWeek    apijson.Field
 	InterruptWindowDurationHours apijson.Field
+	InterruptWindowEmbargoDates  apijson.Field
 	InterruptWindowHourOfDay     apijson.Field
 	LastUpdated                  apijson.Field
 	Notes                        apijson.Field
@@ -272,8 +304,28 @@ func (r connectorUpdateResponseJSON) RawJSON() string {
 	return r.raw
 }
 
+type ConnectorUpdateResponseInterruptWindowDaysOfWeek string
+
+const (
+	ConnectorUpdateResponseInterruptWindowDaysOfWeekSunday    ConnectorUpdateResponseInterruptWindowDaysOfWeek = "Sunday"
+	ConnectorUpdateResponseInterruptWindowDaysOfWeekMonday    ConnectorUpdateResponseInterruptWindowDaysOfWeek = "Monday"
+	ConnectorUpdateResponseInterruptWindowDaysOfWeekTuesday   ConnectorUpdateResponseInterruptWindowDaysOfWeek = "Tuesday"
+	ConnectorUpdateResponseInterruptWindowDaysOfWeekWednesday ConnectorUpdateResponseInterruptWindowDaysOfWeek = "Wednesday"
+	ConnectorUpdateResponseInterruptWindowDaysOfWeekThursday  ConnectorUpdateResponseInterruptWindowDaysOfWeek = "Thursday"
+	ConnectorUpdateResponseInterruptWindowDaysOfWeekFriday    ConnectorUpdateResponseInterruptWindowDaysOfWeek = "Friday"
+	ConnectorUpdateResponseInterruptWindowDaysOfWeekSaturday  ConnectorUpdateResponseInterruptWindowDaysOfWeek = "Saturday"
+)
+
+func (r ConnectorUpdateResponseInterruptWindowDaysOfWeek) IsKnown() bool {
+	switch r {
+	case ConnectorUpdateResponseInterruptWindowDaysOfWeekSunday, ConnectorUpdateResponseInterruptWindowDaysOfWeekMonday, ConnectorUpdateResponseInterruptWindowDaysOfWeekTuesday, ConnectorUpdateResponseInterruptWindowDaysOfWeekWednesday, ConnectorUpdateResponseInterruptWindowDaysOfWeekThursday, ConnectorUpdateResponseInterruptWindowDaysOfWeekFriday, ConnectorUpdateResponseInterruptWindowDaysOfWeekSaturday:
+		return true
+	}
+	return false
+}
+
 type ConnectorUpdateResponseDevice struct {
-	ID           string                            `json:"id,required"`
+	ID           string                            `json:"id" api:"required"`
 	SerialNumber string                            `json:"serial_number"`
 	JSON         connectorUpdateResponseDeviceJSON `json:"-"`
 }
@@ -296,18 +348,22 @@ func (r connectorUpdateResponseDeviceJSON) RawJSON() string {
 }
 
 type ConnectorListResponse struct {
-	ID                           string                      `json:"id,required"`
-	Activated                    bool                        `json:"activated,required"`
-	InterruptWindowDurationHours float64                     `json:"interrupt_window_duration_hours,required"`
-	InterruptWindowHourOfDay     float64                     `json:"interrupt_window_hour_of_day,required"`
-	LastUpdated                  string                      `json:"last_updated,required"`
-	Notes                        string                      `json:"notes,required"`
-	Timezone                     string                      `json:"timezone,required"`
-	Device                       ConnectorListResponseDevice `json:"device"`
-	LastHeartbeat                string                      `json:"last_heartbeat"`
-	LastSeenVersion              string                      `json:"last_seen_version"`
-	LicenseKey                   string                      `json:"license_key"`
-	JSON                         connectorListResponseJSON   `json:"-"`
+	ID        string `json:"id" api:"required"`
+	Activated bool   `json:"activated" api:"required"`
+	// Allowed days of the week for upgrades. Default is all days.
+	InterruptWindowDaysOfWeek    []ConnectorListResponseInterruptWindowDaysOfWeek `json:"interrupt_window_days_of_week" api:"required"`
+	InterruptWindowDurationHours float64                                          `json:"interrupt_window_duration_hours" api:"required"`
+	// List of dates (YYYY-MM-DD) when upgrades are blocked.
+	InterruptWindowEmbargoDates []string                    `json:"interrupt_window_embargo_dates" api:"required"`
+	InterruptWindowHourOfDay    float64                     `json:"interrupt_window_hour_of_day" api:"required"`
+	LastUpdated                 string                      `json:"last_updated" api:"required"`
+	Notes                       string                      `json:"notes" api:"required"`
+	Timezone                    string                      `json:"timezone" api:"required"`
+	Device                      ConnectorListResponseDevice `json:"device"`
+	LastHeartbeat               string                      `json:"last_heartbeat"`
+	LastSeenVersion             string                      `json:"last_seen_version"`
+	LicenseKey                  string                      `json:"license_key"`
+	JSON                        connectorListResponseJSON   `json:"-"`
 }
 
 // connectorListResponseJSON contains the JSON metadata for the struct
@@ -315,7 +371,9 @@ type ConnectorListResponse struct {
 type connectorListResponseJSON struct {
 	ID                           apijson.Field
 	Activated                    apijson.Field
+	InterruptWindowDaysOfWeek    apijson.Field
 	InterruptWindowDurationHours apijson.Field
+	InterruptWindowEmbargoDates  apijson.Field
 	InterruptWindowHourOfDay     apijson.Field
 	LastUpdated                  apijson.Field
 	Notes                        apijson.Field
@@ -336,8 +394,28 @@ func (r connectorListResponseJSON) RawJSON() string {
 	return r.raw
 }
 
+type ConnectorListResponseInterruptWindowDaysOfWeek string
+
+const (
+	ConnectorListResponseInterruptWindowDaysOfWeekSunday    ConnectorListResponseInterruptWindowDaysOfWeek = "Sunday"
+	ConnectorListResponseInterruptWindowDaysOfWeekMonday    ConnectorListResponseInterruptWindowDaysOfWeek = "Monday"
+	ConnectorListResponseInterruptWindowDaysOfWeekTuesday   ConnectorListResponseInterruptWindowDaysOfWeek = "Tuesday"
+	ConnectorListResponseInterruptWindowDaysOfWeekWednesday ConnectorListResponseInterruptWindowDaysOfWeek = "Wednesday"
+	ConnectorListResponseInterruptWindowDaysOfWeekThursday  ConnectorListResponseInterruptWindowDaysOfWeek = "Thursday"
+	ConnectorListResponseInterruptWindowDaysOfWeekFriday    ConnectorListResponseInterruptWindowDaysOfWeek = "Friday"
+	ConnectorListResponseInterruptWindowDaysOfWeekSaturday  ConnectorListResponseInterruptWindowDaysOfWeek = "Saturday"
+)
+
+func (r ConnectorListResponseInterruptWindowDaysOfWeek) IsKnown() bool {
+	switch r {
+	case ConnectorListResponseInterruptWindowDaysOfWeekSunday, ConnectorListResponseInterruptWindowDaysOfWeekMonday, ConnectorListResponseInterruptWindowDaysOfWeekTuesday, ConnectorListResponseInterruptWindowDaysOfWeekWednesday, ConnectorListResponseInterruptWindowDaysOfWeekThursday, ConnectorListResponseInterruptWindowDaysOfWeekFriday, ConnectorListResponseInterruptWindowDaysOfWeekSaturday:
+		return true
+	}
+	return false
+}
+
 type ConnectorListResponseDevice struct {
-	ID           string                          `json:"id,required"`
+	ID           string                          `json:"id" api:"required"`
 	SerialNumber string                          `json:"serial_number"`
 	JSON         connectorListResponseDeviceJSON `json:"-"`
 }
@@ -360,18 +438,22 @@ func (r connectorListResponseDeviceJSON) RawJSON() string {
 }
 
 type ConnectorDeleteResponse struct {
-	ID                           string                        `json:"id,required"`
-	Activated                    bool                          `json:"activated,required"`
-	InterruptWindowDurationHours float64                       `json:"interrupt_window_duration_hours,required"`
-	InterruptWindowHourOfDay     float64                       `json:"interrupt_window_hour_of_day,required"`
-	LastUpdated                  string                        `json:"last_updated,required"`
-	Notes                        string                        `json:"notes,required"`
-	Timezone                     string                        `json:"timezone,required"`
-	Device                       ConnectorDeleteResponseDevice `json:"device"`
-	LastHeartbeat                string                        `json:"last_heartbeat"`
-	LastSeenVersion              string                        `json:"last_seen_version"`
-	LicenseKey                   string                        `json:"license_key"`
-	JSON                         connectorDeleteResponseJSON   `json:"-"`
+	ID        string `json:"id" api:"required"`
+	Activated bool   `json:"activated" api:"required"`
+	// Allowed days of the week for upgrades. Default is all days.
+	InterruptWindowDaysOfWeek    []ConnectorDeleteResponseInterruptWindowDaysOfWeek `json:"interrupt_window_days_of_week" api:"required"`
+	InterruptWindowDurationHours float64                                            `json:"interrupt_window_duration_hours" api:"required"`
+	// List of dates (YYYY-MM-DD) when upgrades are blocked.
+	InterruptWindowEmbargoDates []string                      `json:"interrupt_window_embargo_dates" api:"required"`
+	InterruptWindowHourOfDay    float64                       `json:"interrupt_window_hour_of_day" api:"required"`
+	LastUpdated                 string                        `json:"last_updated" api:"required"`
+	Notes                       string                        `json:"notes" api:"required"`
+	Timezone                    string                        `json:"timezone" api:"required"`
+	Device                      ConnectorDeleteResponseDevice `json:"device"`
+	LastHeartbeat               string                        `json:"last_heartbeat"`
+	LastSeenVersion             string                        `json:"last_seen_version"`
+	LicenseKey                  string                        `json:"license_key"`
+	JSON                        connectorDeleteResponseJSON   `json:"-"`
 }
 
 // connectorDeleteResponseJSON contains the JSON metadata for the struct
@@ -379,7 +461,9 @@ type ConnectorDeleteResponse struct {
 type connectorDeleteResponseJSON struct {
 	ID                           apijson.Field
 	Activated                    apijson.Field
+	InterruptWindowDaysOfWeek    apijson.Field
 	InterruptWindowDurationHours apijson.Field
+	InterruptWindowEmbargoDates  apijson.Field
 	InterruptWindowHourOfDay     apijson.Field
 	LastUpdated                  apijson.Field
 	Notes                        apijson.Field
@@ -400,8 +484,28 @@ func (r connectorDeleteResponseJSON) RawJSON() string {
 	return r.raw
 }
 
+type ConnectorDeleteResponseInterruptWindowDaysOfWeek string
+
+const (
+	ConnectorDeleteResponseInterruptWindowDaysOfWeekSunday    ConnectorDeleteResponseInterruptWindowDaysOfWeek = "Sunday"
+	ConnectorDeleteResponseInterruptWindowDaysOfWeekMonday    ConnectorDeleteResponseInterruptWindowDaysOfWeek = "Monday"
+	ConnectorDeleteResponseInterruptWindowDaysOfWeekTuesday   ConnectorDeleteResponseInterruptWindowDaysOfWeek = "Tuesday"
+	ConnectorDeleteResponseInterruptWindowDaysOfWeekWednesday ConnectorDeleteResponseInterruptWindowDaysOfWeek = "Wednesday"
+	ConnectorDeleteResponseInterruptWindowDaysOfWeekThursday  ConnectorDeleteResponseInterruptWindowDaysOfWeek = "Thursday"
+	ConnectorDeleteResponseInterruptWindowDaysOfWeekFriday    ConnectorDeleteResponseInterruptWindowDaysOfWeek = "Friday"
+	ConnectorDeleteResponseInterruptWindowDaysOfWeekSaturday  ConnectorDeleteResponseInterruptWindowDaysOfWeek = "Saturday"
+)
+
+func (r ConnectorDeleteResponseInterruptWindowDaysOfWeek) IsKnown() bool {
+	switch r {
+	case ConnectorDeleteResponseInterruptWindowDaysOfWeekSunday, ConnectorDeleteResponseInterruptWindowDaysOfWeekMonday, ConnectorDeleteResponseInterruptWindowDaysOfWeekTuesday, ConnectorDeleteResponseInterruptWindowDaysOfWeekWednesday, ConnectorDeleteResponseInterruptWindowDaysOfWeekThursday, ConnectorDeleteResponseInterruptWindowDaysOfWeekFriday, ConnectorDeleteResponseInterruptWindowDaysOfWeekSaturday:
+		return true
+	}
+	return false
+}
+
 type ConnectorDeleteResponseDevice struct {
-	ID           string                            `json:"id,required"`
+	ID           string                            `json:"id" api:"required"`
 	SerialNumber string                            `json:"serial_number"`
 	JSON         connectorDeleteResponseDeviceJSON `json:"-"`
 }
@@ -424,18 +528,22 @@ func (r connectorDeleteResponseDeviceJSON) RawJSON() string {
 }
 
 type ConnectorEditResponse struct {
-	ID                           string                      `json:"id,required"`
-	Activated                    bool                        `json:"activated,required"`
-	InterruptWindowDurationHours float64                     `json:"interrupt_window_duration_hours,required"`
-	InterruptWindowHourOfDay     float64                     `json:"interrupt_window_hour_of_day,required"`
-	LastUpdated                  string                      `json:"last_updated,required"`
-	Notes                        string                      `json:"notes,required"`
-	Timezone                     string                      `json:"timezone,required"`
-	Device                       ConnectorEditResponseDevice `json:"device"`
-	LastHeartbeat                string                      `json:"last_heartbeat"`
-	LastSeenVersion              string                      `json:"last_seen_version"`
-	LicenseKey                   string                      `json:"license_key"`
-	JSON                         connectorEditResponseJSON   `json:"-"`
+	ID        string `json:"id" api:"required"`
+	Activated bool   `json:"activated" api:"required"`
+	// Allowed days of the week for upgrades. Default is all days.
+	InterruptWindowDaysOfWeek    []ConnectorEditResponseInterruptWindowDaysOfWeek `json:"interrupt_window_days_of_week" api:"required"`
+	InterruptWindowDurationHours float64                                          `json:"interrupt_window_duration_hours" api:"required"`
+	// List of dates (YYYY-MM-DD) when upgrades are blocked.
+	InterruptWindowEmbargoDates []string                    `json:"interrupt_window_embargo_dates" api:"required"`
+	InterruptWindowHourOfDay    float64                     `json:"interrupt_window_hour_of_day" api:"required"`
+	LastUpdated                 string                      `json:"last_updated" api:"required"`
+	Notes                       string                      `json:"notes" api:"required"`
+	Timezone                    string                      `json:"timezone" api:"required"`
+	Device                      ConnectorEditResponseDevice `json:"device"`
+	LastHeartbeat               string                      `json:"last_heartbeat"`
+	LastSeenVersion             string                      `json:"last_seen_version"`
+	LicenseKey                  string                      `json:"license_key"`
+	JSON                        connectorEditResponseJSON   `json:"-"`
 }
 
 // connectorEditResponseJSON contains the JSON metadata for the struct
@@ -443,7 +551,9 @@ type ConnectorEditResponse struct {
 type connectorEditResponseJSON struct {
 	ID                           apijson.Field
 	Activated                    apijson.Field
+	InterruptWindowDaysOfWeek    apijson.Field
 	InterruptWindowDurationHours apijson.Field
+	InterruptWindowEmbargoDates  apijson.Field
 	InterruptWindowHourOfDay     apijson.Field
 	LastUpdated                  apijson.Field
 	Notes                        apijson.Field
@@ -464,8 +574,28 @@ func (r connectorEditResponseJSON) RawJSON() string {
 	return r.raw
 }
 
+type ConnectorEditResponseInterruptWindowDaysOfWeek string
+
+const (
+	ConnectorEditResponseInterruptWindowDaysOfWeekSunday    ConnectorEditResponseInterruptWindowDaysOfWeek = "Sunday"
+	ConnectorEditResponseInterruptWindowDaysOfWeekMonday    ConnectorEditResponseInterruptWindowDaysOfWeek = "Monday"
+	ConnectorEditResponseInterruptWindowDaysOfWeekTuesday   ConnectorEditResponseInterruptWindowDaysOfWeek = "Tuesday"
+	ConnectorEditResponseInterruptWindowDaysOfWeekWednesday ConnectorEditResponseInterruptWindowDaysOfWeek = "Wednesday"
+	ConnectorEditResponseInterruptWindowDaysOfWeekThursday  ConnectorEditResponseInterruptWindowDaysOfWeek = "Thursday"
+	ConnectorEditResponseInterruptWindowDaysOfWeekFriday    ConnectorEditResponseInterruptWindowDaysOfWeek = "Friday"
+	ConnectorEditResponseInterruptWindowDaysOfWeekSaturday  ConnectorEditResponseInterruptWindowDaysOfWeek = "Saturday"
+)
+
+func (r ConnectorEditResponseInterruptWindowDaysOfWeek) IsKnown() bool {
+	switch r {
+	case ConnectorEditResponseInterruptWindowDaysOfWeekSunday, ConnectorEditResponseInterruptWindowDaysOfWeekMonday, ConnectorEditResponseInterruptWindowDaysOfWeekTuesday, ConnectorEditResponseInterruptWindowDaysOfWeekWednesday, ConnectorEditResponseInterruptWindowDaysOfWeekThursday, ConnectorEditResponseInterruptWindowDaysOfWeekFriday, ConnectorEditResponseInterruptWindowDaysOfWeekSaturday:
+		return true
+	}
+	return false
+}
+
 type ConnectorEditResponseDevice struct {
-	ID           string                          `json:"id,required"`
+	ID           string                          `json:"id" api:"required"`
 	SerialNumber string                          `json:"serial_number"`
 	JSON         connectorEditResponseDeviceJSON `json:"-"`
 }
@@ -488,18 +618,22 @@ func (r connectorEditResponseDeviceJSON) RawJSON() string {
 }
 
 type ConnectorGetResponse struct {
-	ID                           string                     `json:"id,required"`
-	Activated                    bool                       `json:"activated,required"`
-	InterruptWindowDurationHours float64                    `json:"interrupt_window_duration_hours,required"`
-	InterruptWindowHourOfDay     float64                    `json:"interrupt_window_hour_of_day,required"`
-	LastUpdated                  string                     `json:"last_updated,required"`
-	Notes                        string                     `json:"notes,required"`
-	Timezone                     string                     `json:"timezone,required"`
-	Device                       ConnectorGetResponseDevice `json:"device"`
-	LastHeartbeat                string                     `json:"last_heartbeat"`
-	LastSeenVersion              string                     `json:"last_seen_version"`
-	LicenseKey                   string                     `json:"license_key"`
-	JSON                         connectorGetResponseJSON   `json:"-"`
+	ID        string `json:"id" api:"required"`
+	Activated bool   `json:"activated" api:"required"`
+	// Allowed days of the week for upgrades. Default is all days.
+	InterruptWindowDaysOfWeek    []ConnectorGetResponseInterruptWindowDaysOfWeek `json:"interrupt_window_days_of_week" api:"required"`
+	InterruptWindowDurationHours float64                                         `json:"interrupt_window_duration_hours" api:"required"`
+	// List of dates (YYYY-MM-DD) when upgrades are blocked.
+	InterruptWindowEmbargoDates []string                   `json:"interrupt_window_embargo_dates" api:"required"`
+	InterruptWindowHourOfDay    float64                    `json:"interrupt_window_hour_of_day" api:"required"`
+	LastUpdated                 string                     `json:"last_updated" api:"required"`
+	Notes                       string                     `json:"notes" api:"required"`
+	Timezone                    string                     `json:"timezone" api:"required"`
+	Device                      ConnectorGetResponseDevice `json:"device"`
+	LastHeartbeat               string                     `json:"last_heartbeat"`
+	LastSeenVersion             string                     `json:"last_seen_version"`
+	LicenseKey                  string                     `json:"license_key"`
+	JSON                        connectorGetResponseJSON   `json:"-"`
 }
 
 // connectorGetResponseJSON contains the JSON metadata for the struct
@@ -507,7 +641,9 @@ type ConnectorGetResponse struct {
 type connectorGetResponseJSON struct {
 	ID                           apijson.Field
 	Activated                    apijson.Field
+	InterruptWindowDaysOfWeek    apijson.Field
 	InterruptWindowDurationHours apijson.Field
+	InterruptWindowEmbargoDates  apijson.Field
 	InterruptWindowHourOfDay     apijson.Field
 	LastUpdated                  apijson.Field
 	Notes                        apijson.Field
@@ -528,8 +664,28 @@ func (r connectorGetResponseJSON) RawJSON() string {
 	return r.raw
 }
 
+type ConnectorGetResponseInterruptWindowDaysOfWeek string
+
+const (
+	ConnectorGetResponseInterruptWindowDaysOfWeekSunday    ConnectorGetResponseInterruptWindowDaysOfWeek = "Sunday"
+	ConnectorGetResponseInterruptWindowDaysOfWeekMonday    ConnectorGetResponseInterruptWindowDaysOfWeek = "Monday"
+	ConnectorGetResponseInterruptWindowDaysOfWeekTuesday   ConnectorGetResponseInterruptWindowDaysOfWeek = "Tuesday"
+	ConnectorGetResponseInterruptWindowDaysOfWeekWednesday ConnectorGetResponseInterruptWindowDaysOfWeek = "Wednesday"
+	ConnectorGetResponseInterruptWindowDaysOfWeekThursday  ConnectorGetResponseInterruptWindowDaysOfWeek = "Thursday"
+	ConnectorGetResponseInterruptWindowDaysOfWeekFriday    ConnectorGetResponseInterruptWindowDaysOfWeek = "Friday"
+	ConnectorGetResponseInterruptWindowDaysOfWeekSaturday  ConnectorGetResponseInterruptWindowDaysOfWeek = "Saturday"
+)
+
+func (r ConnectorGetResponseInterruptWindowDaysOfWeek) IsKnown() bool {
+	switch r {
+	case ConnectorGetResponseInterruptWindowDaysOfWeekSunday, ConnectorGetResponseInterruptWindowDaysOfWeekMonday, ConnectorGetResponseInterruptWindowDaysOfWeekTuesday, ConnectorGetResponseInterruptWindowDaysOfWeekWednesday, ConnectorGetResponseInterruptWindowDaysOfWeekThursday, ConnectorGetResponseInterruptWindowDaysOfWeekFriday, ConnectorGetResponseInterruptWindowDaysOfWeekSaturday:
+		return true
+	}
+	return false
+}
+
 type ConnectorGetResponseDevice struct {
-	ID           string                         `json:"id,required"`
+	ID           string                         `json:"id" api:"required"`
 	SerialNumber string                         `json:"serial_number"`
 	JSON         connectorGetResponseDeviceJSON `json:"-"`
 }
@@ -553,14 +709,18 @@ func (r connectorGetResponseDeviceJSON) RawJSON() string {
 
 type ConnectorNewParams struct {
 	// Account identifier
-	AccountID param.Field[string] `path:"account_id,required"`
+	AccountID param.Field[string] `path:"account_id" api:"required"`
 	// Exactly one of id, serial_number, or provision_license must be provided.
-	Device                       param.Field[ConnectorNewParamsDevice] `json:"device,required"`
-	Activated                    param.Field[bool]                     `json:"activated"`
-	InterruptWindowDurationHours param.Field[float64]                  `json:"interrupt_window_duration_hours"`
-	InterruptWindowHourOfDay     param.Field[float64]                  `json:"interrupt_window_hour_of_day"`
-	Notes                        param.Field[string]                   `json:"notes"`
-	Timezone                     param.Field[string]                   `json:"timezone"`
+	Device    param.Field[ConnectorNewParamsDevice] `json:"device" api:"required"`
+	Activated param.Field[bool]                     `json:"activated"`
+	// Allowed days of the week for upgrades. Default is all days.
+	InterruptWindowDaysOfWeek    param.Field[[]ConnectorNewParamsInterruptWindowDaysOfWeek] `json:"interrupt_window_days_of_week"`
+	InterruptWindowDurationHours param.Field[float64]                                       `json:"interrupt_window_duration_hours"`
+	// List of dates (YYYY-MM-DD) when upgrades are blocked.
+	InterruptWindowEmbargoDates param.Field[[]string] `json:"interrupt_window_embargo_dates"`
+	InterruptWindowHourOfDay    param.Field[float64]  `json:"interrupt_window_hour_of_day"`
+	Notes                       param.Field[string]   `json:"notes"`
+	Timezone                    param.Field[string]   `json:"timezone"`
 }
 
 func (r ConnectorNewParams) MarshalJSON() (data []byte, err error) {
@@ -579,11 +739,31 @@ func (r ConnectorNewParamsDevice) MarshalJSON() (data []byte, err error) {
 	return apijson.MarshalRoot(r)
 }
 
+type ConnectorNewParamsInterruptWindowDaysOfWeek string
+
+const (
+	ConnectorNewParamsInterruptWindowDaysOfWeekSunday    ConnectorNewParamsInterruptWindowDaysOfWeek = "Sunday"
+	ConnectorNewParamsInterruptWindowDaysOfWeekMonday    ConnectorNewParamsInterruptWindowDaysOfWeek = "Monday"
+	ConnectorNewParamsInterruptWindowDaysOfWeekTuesday   ConnectorNewParamsInterruptWindowDaysOfWeek = "Tuesday"
+	ConnectorNewParamsInterruptWindowDaysOfWeekWednesday ConnectorNewParamsInterruptWindowDaysOfWeek = "Wednesday"
+	ConnectorNewParamsInterruptWindowDaysOfWeekThursday  ConnectorNewParamsInterruptWindowDaysOfWeek = "Thursday"
+	ConnectorNewParamsInterruptWindowDaysOfWeekFriday    ConnectorNewParamsInterruptWindowDaysOfWeek = "Friday"
+	ConnectorNewParamsInterruptWindowDaysOfWeekSaturday  ConnectorNewParamsInterruptWindowDaysOfWeek = "Saturday"
+)
+
+func (r ConnectorNewParamsInterruptWindowDaysOfWeek) IsKnown() bool {
+	switch r {
+	case ConnectorNewParamsInterruptWindowDaysOfWeekSunday, ConnectorNewParamsInterruptWindowDaysOfWeekMonday, ConnectorNewParamsInterruptWindowDaysOfWeekTuesday, ConnectorNewParamsInterruptWindowDaysOfWeekWednesday, ConnectorNewParamsInterruptWindowDaysOfWeekThursday, ConnectorNewParamsInterruptWindowDaysOfWeekFriday, ConnectorNewParamsInterruptWindowDaysOfWeekSaturday:
+		return true
+	}
+	return false
+}
+
 type ConnectorNewResponseEnvelope struct {
-	Errors   []ConnectorNewResponseEnvelopeErrors   `json:"errors,required"`
-	Messages []ConnectorNewResponseEnvelopeMessages `json:"messages,required"`
-	Result   ConnectorNewResponse                   `json:"result,required"`
-	Success  bool                                   `json:"success,required"`
+	Errors   []ConnectorNewResponseEnvelopeErrors   `json:"errors" api:"required"`
+	Messages []ConnectorNewResponseEnvelopeMessages `json:"messages" api:"required"`
+	Result   ConnectorNewResponse                   `json:"result" api:"required"`
+	Success  bool                                   `json:"success" api:"required"`
 	JSON     connectorNewResponseEnvelopeJSON       `json:"-"`
 }
 
@@ -607,8 +787,8 @@ func (r connectorNewResponseEnvelopeJSON) RawJSON() string {
 }
 
 type ConnectorNewResponseEnvelopeErrors struct {
-	Code    float64                                `json:"code,required"`
-	Message string                                 `json:"message,required"`
+	Code    float64                                `json:"code" api:"required"`
+	Message string                                 `json:"message" api:"required"`
 	JSON    connectorNewResponseEnvelopeErrorsJSON `json:"-"`
 }
 
@@ -630,8 +810,8 @@ func (r connectorNewResponseEnvelopeErrorsJSON) RawJSON() string {
 }
 
 type ConnectorNewResponseEnvelopeMessages struct {
-	Code    float64                                  `json:"code,required"`
-	Message string                                   `json:"message,required"`
+	Code    float64                                  `json:"code" api:"required"`
+	Message string                                   `json:"message" api:"required"`
 	JSON    connectorNewResponseEnvelopeMessagesJSON `json:"-"`
 }
 
@@ -654,11 +834,15 @@ func (r connectorNewResponseEnvelopeMessagesJSON) RawJSON() string {
 
 type ConnectorUpdateParams struct {
 	// Account identifier
-	AccountID                    param.Field[string]  `path:"account_id,required"`
-	Activated                    param.Field[bool]    `json:"activated"`
-	InterruptWindowDurationHours param.Field[float64] `json:"interrupt_window_duration_hours"`
-	InterruptWindowHourOfDay     param.Field[float64] `json:"interrupt_window_hour_of_day"`
-	Notes                        param.Field[string]  `json:"notes"`
+	AccountID param.Field[string] `path:"account_id" api:"required"`
+	Activated param.Field[bool]   `json:"activated"`
+	// Allowed days of the week for upgrades. Default is all days.
+	InterruptWindowDaysOfWeek    param.Field[[]ConnectorUpdateParamsInterruptWindowDaysOfWeek] `json:"interrupt_window_days_of_week"`
+	InterruptWindowDurationHours param.Field[float64]                                          `json:"interrupt_window_duration_hours"`
+	// List of dates (YYYY-MM-DD) when upgrades are blocked.
+	InterruptWindowEmbargoDates param.Field[[]string] `json:"interrupt_window_embargo_dates"`
+	InterruptWindowHourOfDay    param.Field[float64]  `json:"interrupt_window_hour_of_day"`
+	Notes                       param.Field[string]   `json:"notes"`
 	// When true, regenerate license key for the connector.
 	ProvisionLicense param.Field[bool]   `json:"provision_license"`
 	Timezone         param.Field[string] `json:"timezone"`
@@ -668,11 +852,31 @@ func (r ConnectorUpdateParams) MarshalJSON() (data []byte, err error) {
 	return apijson.MarshalRoot(r)
 }
 
+type ConnectorUpdateParamsInterruptWindowDaysOfWeek string
+
+const (
+	ConnectorUpdateParamsInterruptWindowDaysOfWeekSunday    ConnectorUpdateParamsInterruptWindowDaysOfWeek = "Sunday"
+	ConnectorUpdateParamsInterruptWindowDaysOfWeekMonday    ConnectorUpdateParamsInterruptWindowDaysOfWeek = "Monday"
+	ConnectorUpdateParamsInterruptWindowDaysOfWeekTuesday   ConnectorUpdateParamsInterruptWindowDaysOfWeek = "Tuesday"
+	ConnectorUpdateParamsInterruptWindowDaysOfWeekWednesday ConnectorUpdateParamsInterruptWindowDaysOfWeek = "Wednesday"
+	ConnectorUpdateParamsInterruptWindowDaysOfWeekThursday  ConnectorUpdateParamsInterruptWindowDaysOfWeek = "Thursday"
+	ConnectorUpdateParamsInterruptWindowDaysOfWeekFriday    ConnectorUpdateParamsInterruptWindowDaysOfWeek = "Friday"
+	ConnectorUpdateParamsInterruptWindowDaysOfWeekSaturday  ConnectorUpdateParamsInterruptWindowDaysOfWeek = "Saturday"
+)
+
+func (r ConnectorUpdateParamsInterruptWindowDaysOfWeek) IsKnown() bool {
+	switch r {
+	case ConnectorUpdateParamsInterruptWindowDaysOfWeekSunday, ConnectorUpdateParamsInterruptWindowDaysOfWeekMonday, ConnectorUpdateParamsInterruptWindowDaysOfWeekTuesday, ConnectorUpdateParamsInterruptWindowDaysOfWeekWednesday, ConnectorUpdateParamsInterruptWindowDaysOfWeekThursday, ConnectorUpdateParamsInterruptWindowDaysOfWeekFriday, ConnectorUpdateParamsInterruptWindowDaysOfWeekSaturday:
+		return true
+	}
+	return false
+}
+
 type ConnectorUpdateResponseEnvelope struct {
-	Errors   []ConnectorUpdateResponseEnvelopeErrors   `json:"errors,required"`
-	Messages []ConnectorUpdateResponseEnvelopeMessages `json:"messages,required"`
-	Result   ConnectorUpdateResponse                   `json:"result,required"`
-	Success  bool                                      `json:"success,required"`
+	Errors   []ConnectorUpdateResponseEnvelopeErrors   `json:"errors" api:"required"`
+	Messages []ConnectorUpdateResponseEnvelopeMessages `json:"messages" api:"required"`
+	Result   ConnectorUpdateResponse                   `json:"result" api:"required"`
+	Success  bool                                      `json:"success" api:"required"`
 	JSON     connectorUpdateResponseEnvelopeJSON       `json:"-"`
 }
 
@@ -696,8 +900,8 @@ func (r connectorUpdateResponseEnvelopeJSON) RawJSON() string {
 }
 
 type ConnectorUpdateResponseEnvelopeErrors struct {
-	Code    float64                                   `json:"code,required"`
-	Message string                                    `json:"message,required"`
+	Code    float64                                   `json:"code" api:"required"`
+	Message string                                    `json:"message" api:"required"`
 	JSON    connectorUpdateResponseEnvelopeErrorsJSON `json:"-"`
 }
 
@@ -719,8 +923,8 @@ func (r connectorUpdateResponseEnvelopeErrorsJSON) RawJSON() string {
 }
 
 type ConnectorUpdateResponseEnvelopeMessages struct {
-	Code    float64                                     `json:"code,required"`
-	Message string                                      `json:"message,required"`
+	Code    float64                                     `json:"code" api:"required"`
+	Message string                                      `json:"message" api:"required"`
 	JSON    connectorUpdateResponseEnvelopeMessagesJSON `json:"-"`
 }
 
@@ -743,19 +947,19 @@ func (r connectorUpdateResponseEnvelopeMessagesJSON) RawJSON() string {
 
 type ConnectorListParams struct {
 	// Account identifier
-	AccountID param.Field[string] `path:"account_id,required"`
+	AccountID param.Field[string] `path:"account_id" api:"required"`
 }
 
 type ConnectorDeleteParams struct {
 	// Account identifier
-	AccountID param.Field[string] `path:"account_id,required"`
+	AccountID param.Field[string] `path:"account_id" api:"required"`
 }
 
 type ConnectorDeleteResponseEnvelope struct {
-	Errors   []ConnectorDeleteResponseEnvelopeErrors   `json:"errors,required"`
-	Messages []ConnectorDeleteResponseEnvelopeMessages `json:"messages,required"`
-	Result   ConnectorDeleteResponse                   `json:"result,required"`
-	Success  bool                                      `json:"success,required"`
+	Errors   []ConnectorDeleteResponseEnvelopeErrors   `json:"errors" api:"required"`
+	Messages []ConnectorDeleteResponseEnvelopeMessages `json:"messages" api:"required"`
+	Result   ConnectorDeleteResponse                   `json:"result" api:"required"`
+	Success  bool                                      `json:"success" api:"required"`
 	JSON     connectorDeleteResponseEnvelopeJSON       `json:"-"`
 }
 
@@ -779,8 +983,8 @@ func (r connectorDeleteResponseEnvelopeJSON) RawJSON() string {
 }
 
 type ConnectorDeleteResponseEnvelopeErrors struct {
-	Code    float64                                   `json:"code,required"`
-	Message string                                    `json:"message,required"`
+	Code    float64                                   `json:"code" api:"required"`
+	Message string                                    `json:"message" api:"required"`
 	JSON    connectorDeleteResponseEnvelopeErrorsJSON `json:"-"`
 }
 
@@ -802,8 +1006,8 @@ func (r connectorDeleteResponseEnvelopeErrorsJSON) RawJSON() string {
 }
 
 type ConnectorDeleteResponseEnvelopeMessages struct {
-	Code    float64                                     `json:"code,required"`
-	Message string                                      `json:"message,required"`
+	Code    float64                                     `json:"code" api:"required"`
+	Message string                                      `json:"message" api:"required"`
 	JSON    connectorDeleteResponseEnvelopeMessagesJSON `json:"-"`
 }
 
@@ -826,11 +1030,15 @@ func (r connectorDeleteResponseEnvelopeMessagesJSON) RawJSON() string {
 
 type ConnectorEditParams struct {
 	// Account identifier
-	AccountID                    param.Field[string]  `path:"account_id,required"`
-	Activated                    param.Field[bool]    `json:"activated"`
-	InterruptWindowDurationHours param.Field[float64] `json:"interrupt_window_duration_hours"`
-	InterruptWindowHourOfDay     param.Field[float64] `json:"interrupt_window_hour_of_day"`
-	Notes                        param.Field[string]  `json:"notes"`
+	AccountID param.Field[string] `path:"account_id" api:"required"`
+	Activated param.Field[bool]   `json:"activated"`
+	// Allowed days of the week for upgrades. Default is all days.
+	InterruptWindowDaysOfWeek    param.Field[[]ConnectorEditParamsInterruptWindowDaysOfWeek] `json:"interrupt_window_days_of_week"`
+	InterruptWindowDurationHours param.Field[float64]                                        `json:"interrupt_window_duration_hours"`
+	// List of dates (YYYY-MM-DD) when upgrades are blocked.
+	InterruptWindowEmbargoDates param.Field[[]string] `json:"interrupt_window_embargo_dates"`
+	InterruptWindowHourOfDay    param.Field[float64]  `json:"interrupt_window_hour_of_day"`
+	Notes                       param.Field[string]   `json:"notes"`
 	// When true, regenerate license key for the connector.
 	ProvisionLicense param.Field[bool]   `json:"provision_license"`
 	Timezone         param.Field[string] `json:"timezone"`
@@ -840,11 +1048,31 @@ func (r ConnectorEditParams) MarshalJSON() (data []byte, err error) {
 	return apijson.MarshalRoot(r)
 }
 
+type ConnectorEditParamsInterruptWindowDaysOfWeek string
+
+const (
+	ConnectorEditParamsInterruptWindowDaysOfWeekSunday    ConnectorEditParamsInterruptWindowDaysOfWeek = "Sunday"
+	ConnectorEditParamsInterruptWindowDaysOfWeekMonday    ConnectorEditParamsInterruptWindowDaysOfWeek = "Monday"
+	ConnectorEditParamsInterruptWindowDaysOfWeekTuesday   ConnectorEditParamsInterruptWindowDaysOfWeek = "Tuesday"
+	ConnectorEditParamsInterruptWindowDaysOfWeekWednesday ConnectorEditParamsInterruptWindowDaysOfWeek = "Wednesday"
+	ConnectorEditParamsInterruptWindowDaysOfWeekThursday  ConnectorEditParamsInterruptWindowDaysOfWeek = "Thursday"
+	ConnectorEditParamsInterruptWindowDaysOfWeekFriday    ConnectorEditParamsInterruptWindowDaysOfWeek = "Friday"
+	ConnectorEditParamsInterruptWindowDaysOfWeekSaturday  ConnectorEditParamsInterruptWindowDaysOfWeek = "Saturday"
+)
+
+func (r ConnectorEditParamsInterruptWindowDaysOfWeek) IsKnown() bool {
+	switch r {
+	case ConnectorEditParamsInterruptWindowDaysOfWeekSunday, ConnectorEditParamsInterruptWindowDaysOfWeekMonday, ConnectorEditParamsInterruptWindowDaysOfWeekTuesday, ConnectorEditParamsInterruptWindowDaysOfWeekWednesday, ConnectorEditParamsInterruptWindowDaysOfWeekThursday, ConnectorEditParamsInterruptWindowDaysOfWeekFriday, ConnectorEditParamsInterruptWindowDaysOfWeekSaturday:
+		return true
+	}
+	return false
+}
+
 type ConnectorEditResponseEnvelope struct {
-	Errors   []ConnectorEditResponseEnvelopeErrors   `json:"errors,required"`
-	Messages []ConnectorEditResponseEnvelopeMessages `json:"messages,required"`
-	Result   ConnectorEditResponse                   `json:"result,required"`
-	Success  bool                                    `json:"success,required"`
+	Errors   []ConnectorEditResponseEnvelopeErrors   `json:"errors" api:"required"`
+	Messages []ConnectorEditResponseEnvelopeMessages `json:"messages" api:"required"`
+	Result   ConnectorEditResponse                   `json:"result" api:"required"`
+	Success  bool                                    `json:"success" api:"required"`
 	JSON     connectorEditResponseEnvelopeJSON       `json:"-"`
 }
 
@@ -868,8 +1096,8 @@ func (r connectorEditResponseEnvelopeJSON) RawJSON() string {
 }
 
 type ConnectorEditResponseEnvelopeErrors struct {
-	Code    float64                                 `json:"code,required"`
-	Message string                                  `json:"message,required"`
+	Code    float64                                 `json:"code" api:"required"`
+	Message string                                  `json:"message" api:"required"`
 	JSON    connectorEditResponseEnvelopeErrorsJSON `json:"-"`
 }
 
@@ -891,8 +1119,8 @@ func (r connectorEditResponseEnvelopeErrorsJSON) RawJSON() string {
 }
 
 type ConnectorEditResponseEnvelopeMessages struct {
-	Code    float64                                   `json:"code,required"`
-	Message string                                    `json:"message,required"`
+	Code    float64                                   `json:"code" api:"required"`
+	Message string                                    `json:"message" api:"required"`
 	JSON    connectorEditResponseEnvelopeMessagesJSON `json:"-"`
 }
 
@@ -915,14 +1143,14 @@ func (r connectorEditResponseEnvelopeMessagesJSON) RawJSON() string {
 
 type ConnectorGetParams struct {
 	// Account identifier
-	AccountID param.Field[string] `path:"account_id,required"`
+	AccountID param.Field[string] `path:"account_id" api:"required"`
 }
 
 type ConnectorGetResponseEnvelope struct {
-	Errors   []ConnectorGetResponseEnvelopeErrors   `json:"errors,required"`
-	Messages []ConnectorGetResponseEnvelopeMessages `json:"messages,required"`
-	Result   ConnectorGetResponse                   `json:"result,required"`
-	Success  bool                                   `json:"success,required"`
+	Errors   []ConnectorGetResponseEnvelopeErrors   `json:"errors" api:"required"`
+	Messages []ConnectorGetResponseEnvelopeMessages `json:"messages" api:"required"`
+	Result   ConnectorGetResponse                   `json:"result" api:"required"`
+	Success  bool                                   `json:"success" api:"required"`
 	JSON     connectorGetResponseEnvelopeJSON       `json:"-"`
 }
 
@@ -946,8 +1174,8 @@ func (r connectorGetResponseEnvelopeJSON) RawJSON() string {
 }
 
 type ConnectorGetResponseEnvelopeErrors struct {
-	Code    float64                                `json:"code,required"`
-	Message string                                 `json:"message,required"`
+	Code    float64                                `json:"code" api:"required"`
+	Message string                                 `json:"message" api:"required"`
 	JSON    connectorGetResponseEnvelopeErrorsJSON `json:"-"`
 }
 
@@ -969,8 +1197,8 @@ func (r connectorGetResponseEnvelopeErrorsJSON) RawJSON() string {
 }
 
 type ConnectorGetResponseEnvelopeMessages struct {
-	Code    float64                                  `json:"code,required"`
-	Message string                                   `json:"message,required"`
+	Code    float64                                  `json:"code" api:"required"`
+	Message string                                   `json:"message" api:"required"`
 	JSON    connectorGetResponseEnvelopeMessagesJSON `json:"-"`
 }
 
