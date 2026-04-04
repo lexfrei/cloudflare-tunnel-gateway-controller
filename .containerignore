@@ -1,0 +1,37 @@
+# Version control
+.git
+.gitignore
+.gitattributes
+.github
+
+# Documentation
+docs/
+site/
+*.md
+mkdocs.yml
+requirements-docs.txt
+
+# Development
+.env
+*.secret
+*.key
+*.pem
+*credentials*.yaml
+.golangci.yaml
+renovate.json
+.markdownlint-cli2.yaml
+
+# Charts and deploy
+charts/
+deploy/
+hack/
+
+# Tests
+test/
+*_test.go
+coverage.out
+
+# IDE
+.idea/
+.vscode/
+*.swp
