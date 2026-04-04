@@ -19,7 +19,7 @@ jobs:
     steps:
       - name: Download SARIF artifact
         id: download-sarif
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: trivy-sarif
           run-id: ${{ github.event.workflow_run.id }}
@@ -28,7 +28,7 @@ jobs:
 
       - name: Upload SARIF to GitHub Security
         if: steps.download-sarif.outcome == 'success'
-        uses: github/codeql-action/upload-sarif@v4
+        uses: github/codeql-action/upload-sarif@c10b8064de6f491fea524254123dbe5e09572f13 # v4
         with:
           sarif_file: trivy-fs-results.sarif
           category: trivy-filesystem
@@ -42,7 +42,7 @@ jobs:
       github.event.workflow_run.conclusion == 'success'
     steps:
       - name: Download PR metadata
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: pr-metadata
           run-id: ${{ github.event.workflow_run.id }}
@@ -60,7 +60,7 @@ jobs:
 
       - name: Check if first build
         id: first_build
-        uses: actions/github-script@v8
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         with:
           result-encoding: string
           script: |
@@ -75,7 +75,7 @@ jobs:
 
       - name: Add Container Available label
         if: steps.first_build.outputs.result == 'true'
-        uses: actions/github-script@v8
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         with:
           script: |
             github.rest.issues.addLabels({
@@ -87,7 +87,7 @@ jobs:
 
       - name: Comment on PR (first time only)
         if: steps.first_build.outputs.result == 'true'
-        uses: actions/github-script@v8
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         with:
           script: |
             const prNumber = ${{ steps.pr.outputs.number }};

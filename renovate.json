@@ -5,7 +5,8 @@
     ":semanticCommits",
     ":semanticCommitTypeAll(chore)",
     ":prHourlyLimitNone",
-    ":prConcurrentLimitNone"
+    ":prConcurrentLimitNone",
+    "helpers:pinGitHubActionDigests"
   ],
   "labels": ["dependencies"],
   "platformAutomerge": true,
