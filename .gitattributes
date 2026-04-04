@@ -1,0 +1,6 @@
+# Vendored dependencies — collapse in PR diffs, exclude from language stats
+vendor/** linguist-vendored
+vendor/** -diff
+
+# Generated CRD code
+api/v1alpha1/zz_generated.*.go linguist-generated
