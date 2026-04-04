@@ -419,7 +419,7 @@ jobs:
       - name: Install yq
         run: |
           # renovate: datasource=github-releases depName=mikefarah/yq
-          YQ_VERSION="4.44.3"
+          YQ_VERSION="4.52.5"
           YQ_SHA256="a2c097180dd884a8d50c956ee16a9cec070f30a7947cf4ebf87d5f36213e9ed7"
           wget --quiet "https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/yq_linux_amd64" --output-document yq
           echo "${YQ_SHA256}  yq" | sha256sum --check --strict
