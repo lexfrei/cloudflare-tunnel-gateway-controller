@@ -91,7 +91,7 @@ jobs:
 
       - name: Setup envtest
         run: |
-          go install sigs.k8s.io/controller-runtime/tools/setup-envtest@v0.23.3
+          go install sigs.k8s.io/controller-runtime/tools/setup-envtest@latest
           setup-envtest use
 
       - name: Run tests

@@ -55,16 +55,6 @@
       "matchStrings": [
         "# renovate: datasource=(?<datasource>.*?) depName=(?<depName>.*?)\\n\\s+[A-Z_]+VERSION=\"(?<currentValue>.*?)\""
       ]
-    },
-    {
-      "customType": "regex",
-      "description": "Update setup-envtest version",
-      "fileMatch": ["^\\.github/workflows/.*\\.ya?ml$"],
-      "matchStrings": [
-        "go install sigs\\.k8s\\.io/controller-runtime/tools/setup-envtest@(?<currentValue>v[\\d.]+)"
-      ],
-      "depNameTemplate": "sigs.k8s.io/controller-runtime",
-      "datasourceTemplate": "go"
     }
   ]
 }
