@@ -1,7 +1,7 @@
 name: PR Checks and Build
 
 on:
-  pull_request_target:
+  pull_request:
     types: [opened, synchronize]
 
 concurrency:
@@ -10,10 +10,23 @@ concurrency:
 
 permissions:
   contents: read
-  pull-requests: write
-  security-events: write
 
 jobs:
+  # Save PR metadata for the privileged workflow
+  save-pr-metadata:
+    name: Save PR Metadata
+    runs-on: ubuntu-latest
+    steps:
+      - name: Save PR number
+        run: echo "${{ github.event.pull_request.number }}" > pr-number.txt
+
+      - name: Upload PR metadata
+        uses: actions/upload-artifact@v7
+        with:
+          name: pr-metadata
+          path: pr-number.txt
+          retention-days: 1
+
   # Security scanning
   security:
     name: Security Scan
@@ -21,8 +34,6 @@ jobs:
     steps:
       - name: Checkout PR code
         uses: actions/checkout@v6
-        with:
-          ref: ${{ github.event.pull_request.head.sha }}
 
       - name: Run Trivy vulnerability scanner (filesystem)
         uses: aquasecurity/trivy-action@0.35.0
@@ -33,11 +44,12 @@ jobs:
           output: 'trivy-fs-results.sarif'
           severity: 'CRITICAL,HIGH,MEDIUM'
 
-      - name: Upload Trivy filesystem results to GitHub Security
-        uses: github/codeql-action/upload-sarif@v4
+      - name: Upload Trivy SARIF as artifact
+        uses: actions/upload-artifact@v7
         with:
-          sarif_file: 'trivy-fs-results.sarif'
-          category: 'trivy-filesystem'
+          name: trivy-sarif
+          path: trivy-fs-results.sarif
+          retention-days: 1
 
   # Fast checks: linting and tests
   lint:
@@ -46,8 +58,6 @@ jobs:
     steps:
       - name: Checkout PR code
         uses: actions/checkout@v6
-        with:
-          ref: ${{ github.event.pull_request.head.sha }}
 
       - name: Setup Go
         uses: actions/setup-go@v6
@@ -72,8 +82,6 @@ jobs:
     steps:
       - name: Checkout PR code
         uses: actions/checkout@v6
-        with:
-          ref: ${{ github.event.pull_request.head.sha }}
 
       - name: Setup Go
         uses: actions/setup-go@v6
@@ -134,8 +142,6 @@ jobs:
     steps:
       - name: Checkout PR code
         uses: actions/checkout@v6
-        with:
-          ref: ${{ github.event.pull_request.head.sha }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -248,7 +254,6 @@ jobs:
       - name: Checkout PR code
         uses: actions/checkout@v6
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
 
       - name: Set up Helm
@@ -390,8 +395,6 @@ jobs:
     steps:
       - name: Checkout PR code
         uses: actions/checkout@v6
-        with:
-          ref: ${{ github.event.pull_request.head.sha }}
 
       - name: Set up Helm
         uses: azure/setup-helm@v5
@@ -462,53 +465,3 @@ jobs:
             echo ""
             echo "> **Note:** Chart expires in 24 hours (ttl.sh)"
           } >> "$GITHUB_STEP_SUMMARY"
-
-  # Comment on PR after all builds complete
-  notify:
-    name: Notify PR
-    needs: [merge-manifests, build-chart]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check if first build
-        id: first_build
-        uses: actions/github-script@v8
-        with:
-          result-encoding: string
-          script: |
-            const labels = await github.rest.issues.listLabelsOnIssue({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.payload.pull_request.number
-            });
-
-            const hasLabel = labels.data.some(label => label.name === 'Container Available');
-            return hasLabel ? 'false' : 'true';
-
-      - name: Add Container Available label
-        if: steps.first_build.outputs.result == 'true'
-        uses: actions/github-script@v8
-        with:
-          script: |
-            github.rest.issues.addLabels({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.payload.pull_request.number,
-              labels: ['Container Available']
-            })
-
-      - name: Comment on PR (first time only)
-        if: steps.first_build.outputs.result == 'true'
-        uses: actions/github-script@v8
-        with:
-          script: |
-            const prNumber = context.payload.pull_request.number;
-            const ctrlTag = `ttl.sh/cf-tunnel-gateway-ctrl:pr-${prNumber}-1d`;
-            const proxyTag = `ttl.sh/cf-tunnel-gateway-proxy:pr-${prNumber}-1d`;
-            const chartVersion = `0.0.0-pr.${prNumber}-1d`;
-
-            github.rest.issues.createComment({
-              issue_number: prNumber,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: `## Container images available\n\n**Controller (amd64 + arm64):**\n\`\`\`bash\npodman pull ${ctrlTag}\n\`\`\`\n\n**Proxy (amd64 + arm64):**\n\`\`\`bash\npodman pull ${proxyTag}\n\`\`\`\n\n## Helm chart available\n\n**Install chart:**\n\`\`\`bash\nhelm install test oci://ttl.sh/cloudflare-tunnel-gateway-controller --version ${chartVersion}\n\`\`\`\n\n> **Note:** Images and chart are rebuilt on every commit and expire after 24 hours (hosted on ttl.sh).`
-            })
