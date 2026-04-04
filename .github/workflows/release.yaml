@@ -50,16 +50,20 @@ jobs:
           # Artifact Hub CLI
           # renovate: datasource=github-releases depName=artifacthub/hub
           AH_VERSION="1.21.0"
-          wget --quiet https://github.com/artifacthub/hub/releases/download/v${AH_VERSION}/ah_${AH_VERSION}_linux_amd64.tar.gz
-          tar --extract --gzip --file ah_${AH_VERSION}_linux_amd64.tar.gz
+          AH_SHA256="48d6b87b60baf4ee8fd5efbfec3bf5fb3ca783ab3f1dab625e64332b95df2a84"
+          wget --quiet "https://github.com/artifacthub/hub/releases/download/v${AH_VERSION}/ah_${AH_VERSION}_linux_amd64.tar.gz"
+          echo "${AH_SHA256}  ah_${AH_VERSION}_linux_amd64.tar.gz" | sha256sum --check --strict
+          tar --extract --gzip --file "ah_${AH_VERSION}_linux_amd64.tar.gz"
           chmod +x ah
           sudo mv ah /usr/local/bin/ah
 
           # helm-docs
           # renovate: datasource=github-releases depName=norwoodj/helm-docs
           HELM_DOCS_VERSION="1.14.2"
-          wget --quiet https://github.com/norwoodj/helm-docs/releases/download/v${HELM_DOCS_VERSION}/helm-docs_${HELM_DOCS_VERSION}_Linux_x86_64.tar.gz
-          tar --extract --gzip --file helm-docs_${HELM_DOCS_VERSION}_Linux_x86_64.tar.gz
+          HELM_DOCS_SHA256="a8cf72ada34fad93285ba2a452b38bdc5bd52cc9a571236244ec31022928d6cc"
+          wget --quiet "https://github.com/norwoodj/helm-docs/releases/download/v${HELM_DOCS_VERSION}/helm-docs_${HELM_DOCS_VERSION}_Linux_x86_64.tar.gz"
+          echo "${HELM_DOCS_SHA256}  helm-docs_${HELM_DOCS_VERSION}_Linux_x86_64.tar.gz" | sha256sum --check --strict
+          tar --extract --gzip --file "helm-docs_${HELM_DOCS_VERSION}_Linux_x86_64.tar.gz"
           chmod +x helm-docs
           sudo mv helm-docs /usr/local/bin/helm-docs
 
@@ -416,7 +420,9 @@ jobs:
         run: |
           # renovate: datasource=github-releases depName=mikefarah/yq
           YQ_VERSION="4.44.3"
-          wget --quiet https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/yq_linux_amd64 --output-document yq
+          YQ_SHA256="a2c097180dd884a8d50c956ee16a9cec070f30a7947cf4ebf87d5f36213e9ed7"
+          wget --quiet "https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/yq_linux_amd64" --output-document yq
+          echo "${YQ_SHA256}  yq" | sha256sum --check --strict
           chmod +x yq
           sudo mv yq /usr/local/bin/yq
 
