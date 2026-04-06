@@ -204,7 +204,7 @@ github.com/cloudflare/cloudflare-go/v6/workflows
 github.com/cloudflare/cloudflare-go/v6/zaraz
 github.com/cloudflare/cloudflare-go/v6/zero_trust
 github.com/cloudflare/cloudflare-go/v6/zones
-# github.com/cloudflare/cloudflared v0.0.0-20260306125340-d2a87e9b9345 => github.com/lexfrei/cloudflared v0.0.0-20260310225828-a24714888bf2
+# github.com/cloudflare/cloudflared v0.0.0-20260406120418-1e9deb10021d => github.com/lexfrei/cloudflared v0.0.0-20260310225828-a24714888bf2
 ## explicit; go 1.24.0
 github.com/cloudflare/cloudflared/carrier
 github.com/cloudflare/cloudflared/cfapi
