@@ -60,7 +60,7 @@ jobs:
 
       - name: Check if first build
         id: first_build
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         with:
           result-encoding: string
           script: |
@@ -75,7 +75,7 @@ jobs:
 
       - name: Add Container Available label
         if: steps.first_build.outputs.result == 'true'
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         with:
           script: |
             github.rest.issues.addLabels({
@@ -87,7 +87,7 @@ jobs:
 
       - name: Comment on PR (first time only)
         if: steps.first_build.outputs.result == 'true'
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         with:
           script: |
             const prNumber = ${{ steps.pr.outputs.number }};
