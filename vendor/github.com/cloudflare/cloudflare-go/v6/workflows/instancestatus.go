@@ -110,6 +110,8 @@ type InstanceStatusEditParams struct {
 	AccountID param.Field[string] `path:"account_id" api:"required"`
 	// Apply action to instance.
 	Status param.Field[InstanceStatusEditParamsStatus] `json:"status" api:"required"`
+	// Step to restart from. Only applicable when status is "restart".
+	From param.Field[InstanceStatusEditParamsFrom] `json:"from"`
 }
 
 func (r InstanceStatusEditParams) MarshalJSON() (data []byte, err error) {
@@ -129,6 +131,33 @@ const (
 func (r InstanceStatusEditParamsStatus) IsKnown() bool {
 	switch r {
 	case InstanceStatusEditParamsStatusResume, InstanceStatusEditParamsStatusPause, InstanceStatusEditParamsStatusTerminate, InstanceStatusEditParamsStatusRestart:
+		return true
+	}
+	return false
+}
+
+// Step to restart from. Only applicable when status is "restart".
+type InstanceStatusEditParamsFrom struct {
+	Name  param.Field[string]                           `json:"name" api:"required"`
+	Count param.Field[int64]                            `json:"count"`
+	Type  param.Field[InstanceStatusEditParamsFromType] `json:"type"`
+}
+
+func (r InstanceStatusEditParamsFrom) MarshalJSON() (data []byte, err error) {
+	return apijson.MarshalRoot(r)
+}
+
+type InstanceStatusEditParamsFromType string
+
+const (
+	InstanceStatusEditParamsFromTypeDo           InstanceStatusEditParamsFromType = "do"
+	InstanceStatusEditParamsFromTypeSleep        InstanceStatusEditParamsFromType = "sleep"
+	InstanceStatusEditParamsFromTypeWaitForEvent InstanceStatusEditParamsFromType = "waitForEvent"
+)
+
+func (r InstanceStatusEditParamsFromType) IsKnown() bool {
+	switch r {
+	case InstanceStatusEditParamsFromTypeDo, InstanceStatusEditParamsFromTypeSleep, InstanceStatusEditParamsFromTypeWaitForEvent:
 		return true
 	}
 	return false
@@ -229,6 +258,7 @@ type InstanceStatusEditResponseEnvelopeResultInfo struct {
 	TotalCount float64                                          `json:"total_count" api:"required"`
 	Cursor     string                                           `json:"cursor"`
 	Page       float64                                          `json:"page"`
+	TotalPages float64                                          `json:"total_pages"`
 	JSON       instanceStatusEditResponseEnvelopeResultInfoJSON `json:"-"`
 }
 
@@ -240,6 +270,7 @@ type instanceStatusEditResponseEnvelopeResultInfoJSON struct {
 	TotalCount  apijson.Field
 	Cursor      apijson.Field
 	Page        apijson.Field
+	TotalPages  apijson.Field
 	raw         string
 	ExtraFields map[string]apijson.Field
 }

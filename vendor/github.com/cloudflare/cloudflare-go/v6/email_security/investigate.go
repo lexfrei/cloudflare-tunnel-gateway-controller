@@ -86,10 +86,10 @@ func (r *InvestigateService) ListAutoPaging(ctx context.Context, params Investig
 
 // Retrieves detailed information about a specific email message, including
 // headers, metadata, and security scan results.
-func (r *InvestigateService) Get(ctx context.Context, postfixID string, query InvestigateGetParams, opts ...option.RequestOption) (res *InvestigateGetResponse, err error) {
+func (r *InvestigateService) Get(ctx context.Context, postfixID string, params InvestigateGetParams, opts ...option.RequestOption) (res *InvestigateGetResponse, err error) {
 	var env InvestigateGetResponseEnvelope
 	opts = slices.Concat(r.Options, opts)
-	if query.AccountID.Value == "" {
+	if params.AccountID.Value == "" {
 		err = errors.New("missing required account_id parameter")
 		return nil, err
 	}
@@ -97,8 +97,8 @@ func (r *InvestigateService) Get(ctx context.Context, postfixID string, query In
 		err = errors.New("missing required postfix_id parameter")
 		return nil, err
 	}
-	path := fmt.Sprintf("accounts/%s/email-security/investigate/%s", query.AccountID, postfixID)
-	err = requestconfig.ExecuteNewRequest(ctx, http.MethodGet, path, nil, &env, opts...)
+	path := fmt.Sprintf("accounts/%s/email-security/investigate/%s", params.AccountID, postfixID)
+	err = requestconfig.ExecuteNewRequest(ctx, http.MethodGet, path, params, &env, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -107,7 +107,10 @@ func (r *InvestigateService) Get(ctx context.Context, postfixID string, query In
 }
 
 type InvestigateListResponse struct {
-	ID                string      `json:"id" api:"required"`
+	ID string `json:"id" api:"required"`
+	// Deprecated: use `/investigate/{id}/action_log` instead.
+	//
+	// Deprecated: deprecated
 	ActionLog         interface{} `json:"action_log" api:"required"`
 	ClientRecipients  []string    `json:"client_recipients" api:"required"`
 	DetectionReasons  []string    `json:"detection_reasons" api:"required"`
@@ -119,13 +122,17 @@ type InvestigateListResponse struct {
 	// Deprecated, use `scanned_at` instead
 	//
 	// Deprecated: deprecated
-	Ts                     string                                         `json:"ts" api:"required"`
-	AlertID                string                                         `json:"alert_id" api:"nullable"`
-	DeliveryMode           InvestigateListResponseDeliveryMode            `json:"delivery_mode" api:"nullable"`
-	EdfHash                string                                         `json:"edf_hash" api:"nullable"`
-	EnvelopeFrom           string                                         `json:"envelope_from" api:"nullable"`
-	EnvelopeTo             []string                                       `json:"envelope_to" api:"nullable"`
-	FinalDisposition       InvestigateListResponseFinalDisposition        `json:"final_disposition" api:"nullable"`
+	Ts               string                                  `json:"ts" api:"required"`
+	AlertID          string                                  `json:"alert_id" api:"nullable"`
+	DeliveryMode     InvestigateListResponseDeliveryMode     `json:"delivery_mode" api:"nullable"`
+	DeliveryStatus   []InvestigateListResponseDeliveryStatus `json:"delivery_status"`
+	EdfHash          string                                  `json:"edf_hash" api:"nullable"`
+	EnvelopeFrom     string                                  `json:"envelope_from" api:"nullable"`
+	EnvelopeTo       []string                                `json:"envelope_to" api:"nullable"`
+	FinalDisposition InvestigateListResponseFinalDisposition `json:"final_disposition" api:"nullable"`
+	// Deprecated: use `/investigate/{id}/detections` instead.
+	//
+	// Deprecated: deprecated
 	Findings               []InvestigateListResponseFinding               `json:"findings" api:"nullable"`
 	From                   string                                         `json:"from" api:"nullable"`
 	FromName               string                                         `json:"from_name" api:"nullable"`
@@ -162,6 +169,7 @@ type investigateListResponseJSON struct {
 	Ts                     apijson.Field
 	AlertID                apijson.Field
 	DeliveryMode           apijson.Field
+	DeliveryStatus         apijson.Field
 	EdfHash                apijson.Field
 	EnvelopeFrom           apijson.Field
 	EnvelopeTo             apijson.Field
@@ -284,6 +292,27 @@ const (
 func (r InvestigateListResponseDeliveryMode) IsKnown() bool {
 	switch r {
 	case InvestigateListResponseDeliveryModeDirect, InvestigateListResponseDeliveryModeBcc, InvestigateListResponseDeliveryModeJournal, InvestigateListResponseDeliveryModeReviewSubmission, InvestigateListResponseDeliveryModeDMARCUnverified, InvestigateListResponseDeliveryModeDMARCFailureReport, InvestigateListResponseDeliveryModeDMARCAggregateReport, InvestigateListResponseDeliveryModeThreatIntelSubmission, InvestigateListResponseDeliveryModeSimulationSubmission, InvestigateListResponseDeliveryModeAPI, InvestigateListResponseDeliveryModeRetroScan:
+		return true
+	}
+	return false
+}
+
+// Delivery status of the message.
+type InvestigateListResponseDeliveryStatus string
+
+const (
+	InvestigateListResponseDeliveryStatusDelivered   InvestigateListResponseDeliveryStatus = "delivered"
+	InvestigateListResponseDeliveryStatusMoved       InvestigateListResponseDeliveryStatus = "moved"
+	InvestigateListResponseDeliveryStatusQuarantined InvestigateListResponseDeliveryStatus = "quarantined"
+	InvestigateListResponseDeliveryStatusRejected    InvestigateListResponseDeliveryStatus = "rejected"
+	InvestigateListResponseDeliveryStatusDeferred    InvestigateListResponseDeliveryStatus = "deferred"
+	InvestigateListResponseDeliveryStatusBounced     InvestigateListResponseDeliveryStatus = "bounced"
+	InvestigateListResponseDeliveryStatusQueued      InvestigateListResponseDeliveryStatus = "queued"
+)
+
+func (r InvestigateListResponseDeliveryStatus) IsKnown() bool {
+	switch r {
+	case InvestigateListResponseDeliveryStatusDelivered, InvestigateListResponseDeliveryStatusMoved, InvestigateListResponseDeliveryStatusQuarantined, InvestigateListResponseDeliveryStatusRejected, InvestigateListResponseDeliveryStatusDeferred, InvestigateListResponseDeliveryStatusBounced, InvestigateListResponseDeliveryStatusQueued:
 		return true
 	}
 	return false
@@ -471,7 +500,10 @@ func (r InvestigateListResponseValidationSPF) IsKnown() bool {
 }
 
 type InvestigateGetResponse struct {
-	ID                string      `json:"id" api:"required"`
+	ID string `json:"id" api:"required"`
+	// Deprecated: use `/investigate/{id}/action_log` instead.
+	//
+	// Deprecated: deprecated
 	ActionLog         interface{} `json:"action_log" api:"required"`
 	ClientRecipients  []string    `json:"client_recipients" api:"required"`
 	DetectionReasons  []string    `json:"detection_reasons" api:"required"`
@@ -483,13 +515,17 @@ type InvestigateGetResponse struct {
 	// Deprecated, use `scanned_at` instead
 	//
 	// Deprecated: deprecated
-	Ts                     string                                        `json:"ts" api:"required"`
-	AlertID                string                                        `json:"alert_id" api:"nullable"`
-	DeliveryMode           InvestigateGetResponseDeliveryMode            `json:"delivery_mode" api:"nullable"`
-	EdfHash                string                                        `json:"edf_hash" api:"nullable"`
-	EnvelopeFrom           string                                        `json:"envelope_from" api:"nullable"`
-	EnvelopeTo             []string                                      `json:"envelope_to" api:"nullable"`
-	FinalDisposition       InvestigateGetResponseFinalDisposition        `json:"final_disposition" api:"nullable"`
+	Ts               string                                 `json:"ts" api:"required"`
+	AlertID          string                                 `json:"alert_id" api:"nullable"`
+	DeliveryMode     InvestigateGetResponseDeliveryMode     `json:"delivery_mode" api:"nullable"`
+	DeliveryStatus   []InvestigateGetResponseDeliveryStatus `json:"delivery_status"`
+	EdfHash          string                                 `json:"edf_hash" api:"nullable"`
+	EnvelopeFrom     string                                 `json:"envelope_from" api:"nullable"`
+	EnvelopeTo       []string                               `json:"envelope_to" api:"nullable"`
+	FinalDisposition InvestigateGetResponseFinalDisposition `json:"final_disposition" api:"nullable"`
+	// Deprecated: use `/investigate/{id}/detections` instead.
+	//
+	// Deprecated: deprecated
 	Findings               []InvestigateGetResponseFinding               `json:"findings" api:"nullable"`
 	From                   string                                        `json:"from" api:"nullable"`
 	FromName               string                                        `json:"from_name" api:"nullable"`
@@ -526,6 +562,7 @@ type investigateGetResponseJSON struct {
 	Ts                     apijson.Field
 	AlertID                apijson.Field
 	DeliveryMode           apijson.Field
+	DeliveryStatus         apijson.Field
 	EdfHash                apijson.Field
 	EnvelopeFrom           apijson.Field
 	EnvelopeTo             apijson.Field
@@ -648,6 +685,27 @@ const (
 func (r InvestigateGetResponseDeliveryMode) IsKnown() bool {
 	switch r {
 	case InvestigateGetResponseDeliveryModeDirect, InvestigateGetResponseDeliveryModeBcc, InvestigateGetResponseDeliveryModeJournal, InvestigateGetResponseDeliveryModeReviewSubmission, InvestigateGetResponseDeliveryModeDMARCUnverified, InvestigateGetResponseDeliveryModeDMARCFailureReport, InvestigateGetResponseDeliveryModeDMARCAggregateReport, InvestigateGetResponseDeliveryModeThreatIntelSubmission, InvestigateGetResponseDeliveryModeSimulationSubmission, InvestigateGetResponseDeliveryModeAPI, InvestigateGetResponseDeliveryModeRetroScan:
+		return true
+	}
+	return false
+}
+
+// Delivery status of the message.
+type InvestigateGetResponseDeliveryStatus string
+
+const (
+	InvestigateGetResponseDeliveryStatusDelivered   InvestigateGetResponseDeliveryStatus = "delivered"
+	InvestigateGetResponseDeliveryStatusMoved       InvestigateGetResponseDeliveryStatus = "moved"
+	InvestigateGetResponseDeliveryStatusQuarantined InvestigateGetResponseDeliveryStatus = "quarantined"
+	InvestigateGetResponseDeliveryStatusRejected    InvestigateGetResponseDeliveryStatus = "rejected"
+	InvestigateGetResponseDeliveryStatusDeferred    InvestigateGetResponseDeliveryStatus = "deferred"
+	InvestigateGetResponseDeliveryStatusBounced     InvestigateGetResponseDeliveryStatus = "bounced"
+	InvestigateGetResponseDeliveryStatusQueued      InvestigateGetResponseDeliveryStatus = "queued"
+)
+
+func (r InvestigateGetResponseDeliveryStatus) IsKnown() bool {
+	switch r {
+	case InvestigateGetResponseDeliveryStatusDelivered, InvestigateGetResponseDeliveryStatusMoved, InvestigateGetResponseDeliveryStatusQuarantined, InvestigateGetResponseDeliveryStatusRejected, InvestigateGetResponseDeliveryStatusDeferred, InvestigateGetResponseDeliveryStatusBounced, InvestigateGetResponseDeliveryStatusQueued:
 		return true
 	}
 	return false
@@ -858,7 +916,7 @@ type InvestigateListParams struct {
 	Metric        param.Field[string]                             `query:"metric"`
 	// Deprecated: Use cursor pagination instead.
 	Page param.Field[int64] `query:"page"`
-	// The number of results per page.
+	// The number of results per page. Maximum value is 1000.
 	PerPage param.Field[int64] `query:"per_page"`
 	// The space-delimited term used in the query. The search is case-insensitive.
 	//
@@ -948,6 +1006,17 @@ func (r InvestigateListParamsMessageAction) IsKnown() bool {
 type InvestigateGetParams struct {
 	// Account Identifier
 	AccountID param.Field[string] `path:"account_id" api:"required"`
+	// When true, search the submissions datastore only. When false or omitted, search
+	// the regular datastore only.
+	Submission param.Field[bool] `query:"submission"`
+}
+
+// URLQuery serializes [InvestigateGetParams]'s query parameters as `url.Values`.
+func (r InvestigateGetParams) URLQuery() (v url.Values) {
+	return apiquery.MarshalWithSettings(r, apiquery.QuerySettings{
+		ArrayFormat:  apiquery.ArrayQueryFormatRepeat,
+		NestedFormat: apiquery.NestedQueryFormatDots,
+	})
 }
 
 type InvestigateGetResponseEnvelope struct {
