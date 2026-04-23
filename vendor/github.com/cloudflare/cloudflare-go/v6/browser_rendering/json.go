@@ -311,11 +311,12 @@ func (r JsonNewParamsBodyObjectCookiesSourceScheme) IsKnown() bool {
 }
 
 type JsonNewParamsBodyObjectCustomAI struct {
-	// Authorization token for the AI model: `Bearer <token>`.
-	Authorization param.Field[string] `json:"authorization" api:"required"`
 	// AI model to use for the request. Must be formed as `<provider>/<model_name>`,
 	// e.g. `workers-ai/@cf/meta/llama-3.3-70b-instruct-fp8-fast`.
 	Model param.Field[string] `json:"model" api:"required"`
+	// Authorization token for the AI model: `Bearer <token>`. Not needed for
+	// workers-ai models.
+	Authorization param.Field[string] `json:"authorization"`
 }
 
 func (r JsonNewParamsBodyObjectCustomAI) MarshalJSON() (data []byte, err error) {
@@ -417,7 +418,7 @@ func (r JsonNewParamsBodyObjectRejectResourceType) IsKnown() bool {
 type JsonNewParamsBodyObjectResponseFormat struct {
 	Type param.Field[string] `json:"type" api:"required"`
 	// Schema for the response format. More information here:
-	// https://developers.cloudflare.com/workers-ai/json-mode/.
+	// https://developers.cloudflare.com/workers-ai/json-mode/
 	JsonSchema param.Field[map[string]JsonNewParamsBodyObjectResponseFormatJsonSchemaUnion] `json:"json_schema"`
 }
 

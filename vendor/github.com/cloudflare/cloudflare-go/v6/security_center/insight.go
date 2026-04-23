@@ -150,36 +150,47 @@ func (r insightListResponseJSON) RawJSON() string {
 }
 
 type InsightListResponseIssue struct {
-	ID          string                            `json:"id"`
-	Dismissed   bool                              `json:"dismissed"`
-	IssueClass  string                            `json:"issue_class"`
-	IssueType   intel.IssueType                   `json:"issue_type"`
-	Payload     InsightListResponseIssuesPayload  `json:"payload"`
-	ResolveLink string                            `json:"resolve_link"`
-	ResolveText string                            `json:"resolve_text"`
-	Severity    InsightListResponseIssuesSeverity `json:"severity"`
-	Since       time.Time                         `json:"since" format:"date-time"`
-	Subject     string                            `json:"subject"`
-	Timestamp   time.Time                         `json:"timestamp" format:"date-time"`
-	JSON        insightListResponseIssueJSON      `json:"-"`
+	ID        string `json:"id"`
+	Dismissed bool   `json:"dismissed"`
+	// Indicates whether the insight has a large payload that requires fetching via the
+	// context endpoint.
+	HasExtendedContext bool                              `json:"has_extended_context"`
+	IssueClass         string                            `json:"issue_class"`
+	IssueType          intel.IssueType                   `json:"issue_type"`
+	Payload            InsightListResponseIssuesPayload  `json:"payload"`
+	ResolveLink        string                            `json:"resolve_link"`
+	ResolveText        string                            `json:"resolve_text"`
+	Severity           InsightListResponseIssuesSeverity `json:"severity"`
+	Since              time.Time                         `json:"since" format:"date-time"`
+	// The current status of the insight.
+	Status    InsightListResponseIssuesStatus `json:"status"`
+	Subject   string                          `json:"subject"`
+	Timestamp time.Time                       `json:"timestamp" format:"date-time"`
+	// User-defined classification for the insight. Can be 'false_positive',
+	// 'accept_risk', 'other', or null.
+	UserClassification InsightListResponseIssuesUserClassification `json:"user_classification" api:"nullable"`
+	JSON               insightListResponseIssueJSON                `json:"-"`
 }
 
 // insightListResponseIssueJSON contains the JSON metadata for the struct
 // [InsightListResponseIssue]
 type insightListResponseIssueJSON struct {
-	ID          apijson.Field
-	Dismissed   apijson.Field
-	IssueClass  apijson.Field
-	IssueType   apijson.Field
-	Payload     apijson.Field
-	ResolveLink apijson.Field
-	ResolveText apijson.Field
-	Severity    apijson.Field
-	Since       apijson.Field
-	Subject     apijson.Field
-	Timestamp   apijson.Field
-	raw         string
-	ExtraFields map[string]apijson.Field
+	ID                 apijson.Field
+	Dismissed          apijson.Field
+	HasExtendedContext apijson.Field
+	IssueClass         apijson.Field
+	IssueType          apijson.Field
+	Payload            apijson.Field
+	ResolveLink        apijson.Field
+	ResolveText        apijson.Field
+	Severity           apijson.Field
+	Since              apijson.Field
+	Status             apijson.Field
+	Subject            apijson.Field
+	Timestamp          apijson.Field
+	UserClassification apijson.Field
+	raw                string
+	ExtraFields        map[string]apijson.Field
 }
 
 func (r *InsightListResponseIssue) UnmarshalJSON(data []byte) (err error) {
@@ -225,6 +236,40 @@ const (
 func (r InsightListResponseIssuesSeverity) IsKnown() bool {
 	switch r {
 	case InsightListResponseIssuesSeverityLow, InsightListResponseIssuesSeverityModerate, InsightListResponseIssuesSeverityCritical:
+		return true
+	}
+	return false
+}
+
+// The current status of the insight.
+type InsightListResponseIssuesStatus string
+
+const (
+	InsightListResponseIssuesStatusActive   InsightListResponseIssuesStatus = "active"
+	InsightListResponseIssuesStatusResolved InsightListResponseIssuesStatus = "resolved"
+)
+
+func (r InsightListResponseIssuesStatus) IsKnown() bool {
+	switch r {
+	case InsightListResponseIssuesStatusActive, InsightListResponseIssuesStatusResolved:
+		return true
+	}
+	return false
+}
+
+// User-defined classification for the insight. Can be 'false_positive',
+// 'accept_risk', 'other', or null.
+type InsightListResponseIssuesUserClassification string
+
+const (
+	InsightListResponseIssuesUserClassificationFalsePositive InsightListResponseIssuesUserClassification = "false_positive"
+	InsightListResponseIssuesUserClassificationAcceptRisk    InsightListResponseIssuesUserClassification = "accept_risk"
+	InsightListResponseIssuesUserClassificationOther         InsightListResponseIssuesUserClassification = "other"
+)
+
+func (r InsightListResponseIssuesUserClassification) IsKnown() bool {
+	switch r {
+	case InsightListResponseIssuesUserClassificationFalsePositive, InsightListResponseIssuesUserClassificationAcceptRisk, InsightListResponseIssuesUserClassificationOther:
 		return true
 	}
 	return false

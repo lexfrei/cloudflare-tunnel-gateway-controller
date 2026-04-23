@@ -38,7 +38,8 @@ func NewV2MatchService(opts ...option.RequestOption) (r *V2MatchService) {
 
 // Get paginated list of domain matches for one or more brand protection queries.
 // When multiple query_ids are provided (comma-separated), matches are deduplicated
-// across queries and each match includes a matched_queries array.
+// across queries and each match includes a match_details array with per-match
+// query metadata and individual dismissed state.
 func (r *V2MatchService) Get(ctx context.Context, params V2MatchGetParams, opts ...option.RequestOption) (res *V2MatchGetResponse, err error) {
 	opts = slices.Concat(r.Options, opts)
 	if params.AccountID.Value == "" {
@@ -74,34 +75,34 @@ func (r v2MatchGetResponseJSON) RawJSON() string {
 }
 
 type V2MatchGetResponseMatch struct {
-	Dismissed        bool                                 `json:"dismissed" api:"required"`
 	Domain           string                               `json:"domain" api:"required"`
 	FirstSeen        string                               `json:"first_seen" api:"required"`
 	PublicScans      V2MatchGetResponseMatchesPublicScans `json:"public_scans" api:"required,nullable"`
+	Registrar        string                               `json:"registrar" api:"required,nullable"`
 	ScanStatus       string                               `json:"scan_status" api:"required"`
 	ScanSubmissionID int64                                `json:"scan_submission_id" api:"required,nullable"`
 	Source           string                               `json:"source" api:"required,nullable"`
-	// All underlying match row IDs for this domain. Only present when multiple
-	// query_ids are requested.
-	MatchIDs []int64 `json:"match_ids"`
-	// List of query IDs that produced this match. Only present when multiple query_ids
-	// are requested.
-	MatchedQueries []int64                     `json:"matched_queries"`
-	JSON           v2MatchGetResponseMatchJSON `json:"-"`
+	// Whether the match is dismissed. Only present for single-query requests. For
+	// multi-query requests, use the dismissed field in each match_details entry.
+	Dismissed bool `json:"dismissed"`
+	// Per-match detail objects with query metadata and individual dismissed state.
+	// Only present when multiple query_ids are requested.
+	MatchDetails []V2MatchGetResponseMatchesMatchDetail `json:"match_details"`
+	JSON         v2MatchGetResponseMatchJSON            `json:"-"`
 }
 
 // v2MatchGetResponseMatchJSON contains the JSON metadata for the struct
 // [V2MatchGetResponseMatch]
 type v2MatchGetResponseMatchJSON struct {
-	Dismissed        apijson.Field
 	Domain           apijson.Field
 	FirstSeen        apijson.Field
 	PublicScans      apijson.Field
+	Registrar        apijson.Field
 	ScanStatus       apijson.Field
 	ScanSubmissionID apijson.Field
 	Source           apijson.Field
-	MatchIDs         apijson.Field
-	MatchedQueries   apijson.Field
+	Dismissed        apijson.Field
+	MatchDetails     apijson.Field
 	raw              string
 	ExtraFields      map[string]apijson.Field
 }
@@ -135,11 +136,40 @@ func (r v2MatchGetResponseMatchesPublicScansJSON) RawJSON() string {
 	return r.raw
 }
 
+type V2MatchGetResponseMatchesMatchDetail struct {
+	// Individual dismissed state for this specific match.
+	Dismissed bool  `json:"dismissed" api:"required"`
+	MatchID   int64 `json:"match_id" api:"required"`
+	QueryID   int64 `json:"query_id" api:"required"`
+	// Tag associated with the query, if one exists.
+	QueryTag string                                   `json:"query_tag" api:"required,nullable"`
+	JSON     v2MatchGetResponseMatchesMatchDetailJSON `json:"-"`
+}
+
+// v2MatchGetResponseMatchesMatchDetailJSON contains the JSON metadata for the
+// struct [V2MatchGetResponseMatchesMatchDetail]
+type v2MatchGetResponseMatchesMatchDetailJSON struct {
+	Dismissed   apijson.Field
+	MatchID     apijson.Field
+	QueryID     apijson.Field
+	QueryTag    apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *V2MatchGetResponseMatchesMatchDetail) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r v2MatchGetResponseMatchesMatchDetailJSON) RawJSON() string {
+	return r.raw
+}
+
 type V2MatchGetParams struct {
 	AccountID param.Field[string] `path:"account_id" api:"required"`
 	// Query ID or comma-separated list of Query IDs. When multiple IDs are provided,
-	// matches are deduplicated across queries and each match includes matched_queries
-	// and match_ids arrays.
+	// matches are deduplicated across queries and each match includes a match_details
+	// array with per-match query metadata and dismissed state.
 	QueryID param.Field[[]string] `query:"query_id" api:"required"`
 	// Filter matches by domain name (substring match)
 	DomainSearch     param.Field[string] `query:"domain_search"`
@@ -149,7 +179,7 @@ type V2MatchGetParams struct {
 	Offset           param.Field[string] `query:"offset"`
 	// Sort order. Options: 'asc' (ascending) or 'desc' (descending)
 	Order param.Field[V2MatchGetParamsOrder] `query:"order"`
-	// Column to sort by. Options: 'domain' or 'first_seen'
+	// Column to sort by. Options: 'domain', 'first_seen', or 'registrar'
 	OrderBy param.Field[V2MatchGetParamsOrderBy] `query:"orderBy"`
 }
 
@@ -177,17 +207,18 @@ func (r V2MatchGetParamsOrder) IsKnown() bool {
 	return false
 }
 
-// Column to sort by. Options: 'domain' or 'first_seen'
+// Column to sort by. Options: 'domain', 'first_seen', or 'registrar'
 type V2MatchGetParamsOrderBy string
 
 const (
 	V2MatchGetParamsOrderByDomain    V2MatchGetParamsOrderBy = "domain"
 	V2MatchGetParamsOrderByFirstSeen V2MatchGetParamsOrderBy = "first_seen"
+	V2MatchGetParamsOrderByRegistrar V2MatchGetParamsOrderBy = "registrar"
 )
 
 func (r V2MatchGetParamsOrderBy) IsKnown() bool {
 	switch r {
-	case V2MatchGetParamsOrderByDomain, V2MatchGetParamsOrderByFirstSeen:
+	case V2MatchGetParamsOrderByDomain, V2MatchGetParamsOrderByFirstSeen, V2MatchGetParamsOrderByRegistrar:
 		return true
 	}
 	return false
