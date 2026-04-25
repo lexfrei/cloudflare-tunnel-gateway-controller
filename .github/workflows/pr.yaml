@@ -281,7 +281,7 @@ jobs:
           # Artifact Hub CLI
           # renovate: datasource=github-releases depName=artifacthub/hub
           AH_VERSION="1.22.0"
-          AH_SHA256="48d6b87b60baf4ee8fd5efbfec3bf5fb3ca783ab3f1dab625e64332b95df2a84"
+          AH_SHA256="c845307d19f822905b7c47b3f216712116dd74709802c7d1d4a9b6f999d6f92a"
           wget --quiet "https://github.com/artifacthub/hub/releases/download/v${AH_VERSION}/ah_${AH_VERSION}_linux_amd64.tar.gz"
           echo "${AH_SHA256}  ah_${AH_VERSION}_linux_amd64.tar.gz" | sha256sum --check --strict
           tar --extract --gzip --file "ah_${AH_VERSION}_linux_amd64.tar.gz"
