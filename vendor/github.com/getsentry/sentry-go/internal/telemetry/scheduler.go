@@ -8,6 +8,7 @@ import (
 	"github.com/getsentry/sentry-go/internal/debuglog"
 	"github.com/getsentry/sentry-go/internal/protocol"
 	"github.com/getsentry/sentry-go/internal/ratelimit"
+	"github.com/getsentry/sentry-go/report"
 )
 
 // Scheduler implements a weighted round-robin scheduler for processing buffered events.
@@ -15,7 +16,8 @@ type Scheduler struct {
 	buffers   map[ratelimit.Category]Buffer[protocol.TelemetryItem]
 	transport protocol.TelemetryTransport
 	dsn       *protocol.Dsn
-	sdkInfo   *protocol.SdkInfo
+	sdkInfo   func() *protocol.SdkInfo
+	recorder  report.ClientReportRecorder
 
 	currentCycle []ratelimit.Priority
 	cyclePos     int
@@ -34,9 +36,14 @@ func NewScheduler(
 	buffers map[ratelimit.Category]Buffer[protocol.TelemetryItem],
 	transport protocol.TelemetryTransport,
 	dsn *protocol.Dsn,
-	sdkInfo *protocol.SdkInfo,
+	sdkInfo func() *protocol.SdkInfo,
+	recorder report.ClientReportRecorder,
 ) *Scheduler {
-	ctx, cancel := context.WithCancel(context.Background())
+	if recorder == nil {
+		recorder = report.NoopRecorder()
+	}
+
+	ctx, cancel := context.WithCancel(context.Background()) //nolint:gosec // G118: cancel is stored in s.cancel and called in Shutdown()
 
 	priorityWeights := map[ratelimit.Priority]int{
 		ratelimit.PriorityCritical: 5,
@@ -68,6 +75,7 @@ func NewScheduler(
 		transport:    transport,
 		dsn:          dsn,
 		sdkInfo:      sdkInfo,
+		recorder:     recorder,
 		currentCycle: currentCycle,
 		ctx:          ctx,
 		cancel:       cancel,
@@ -75,6 +83,13 @@ func NewScheduler(
 	s.cond = sync.NewCond(&s.mu)
 
 	return s
+}
+
+func (s *Scheduler) resolveSdkInfo() *protocol.SdkInfo {
+	if s.sdkInfo == nil {
+		return &protocol.SdkInfo{}
+	}
+	return s.sdkInfo()
 }
 
 func (s *Scheduler) Start() {
@@ -209,18 +224,27 @@ func (s *Scheduler) processItems(buffer Buffer[protocol.TelemetryItem], category
 		items = buffer.PollIfReady()
 	}
 
-	// drop the current batch if rate-limited or if transport is full
-	if len(items) == 0 || s.isRateLimited(category) || !s.transport.HasCapacity() {
+	if len(items) == 0 {
+		return
+	}
+
+	if s.isRateLimited(category) {
+		for _, item := range items {
+			s.recorder.RecordItem(report.ReasonRateLimitBackoff, item)
+		}
+		return
+	}
+	if !s.transport.HasCapacity() {
+		for _, item := range items {
+			s.recorder.RecordItem(report.ReasonQueueOverflow, item)
+		}
 		return
 	}
 
 	switch category {
 	case ratelimit.CategoryLog:
 		logs := protocol.Logs(items)
-		header := &protocol.EnvelopeHeader{EventID: protocol.GenerateEventID(), SentAt: time.Now(), Sdk: s.sdkInfo}
-		if s.dsn != nil {
-			header.Dsn = s.dsn.String()
-		}
+		header := &protocol.EnvelopeHeader{EventID: protocol.GenerateEventID(), SentAt: time.Now(), Dsn: s.dsn, Sdk: s.resolveSdkInfo()}
 		envelope := protocol.NewEnvelope(header)
 		item, err := logs.ToEnvelopeItem()
 		if err != nil {
@@ -234,10 +258,7 @@ func (s *Scheduler) processItems(buffer Buffer[protocol.TelemetryItem], category
 		return
 	case ratelimit.CategoryTraceMetric:
 		metrics := protocol.Metrics(items)
-		header := &protocol.EnvelopeHeader{EventID: protocol.GenerateEventID(), SentAt: time.Now(), Sdk: s.sdkInfo}
-		if s.dsn != nil {
-			header.Dsn = s.dsn.String()
-		}
+		header := &protocol.EnvelopeHeader{EventID: protocol.GenerateEventID(), SentAt: time.Now(), Dsn: s.dsn, Sdk: s.resolveSdkInfo()}
 		envelope := protocol.NewEnvelope(header)
 		item, err := metrics.ToEnvelopeItem()
 		if err != nil {
@@ -267,19 +288,18 @@ func (s *Scheduler) sendItem(item protocol.EnvelopeItemConvertible) {
 	header := &protocol.EnvelopeHeader{
 		EventID: item.GetEventID(),
 		SentAt:  time.Now(),
+		Dsn:     s.dsn,
 		Trace:   item.GetDynamicSamplingContext(),
-		Sdk:     s.sdkInfo,
+		Sdk:     s.resolveSdkInfo(),
 	}
 	if header.EventID == "" {
 		header.EventID = protocol.GenerateEventID()
-	}
-	if s.dsn != nil {
-		header.Dsn = s.dsn.String()
 	}
 	envelope := protocol.NewEnvelope(header)
 	envItem, err := item.ToEnvelopeItem()
 	if err != nil {
 		debuglog.Printf("error while converting to envelope item: %v", err)
+		s.recorder.RecordItem(report.ReasonInternalError, item)
 		return
 	}
 	envelope.AddItem(envItem)

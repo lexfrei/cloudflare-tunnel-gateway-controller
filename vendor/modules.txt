@@ -251,8 +251,8 @@ github.com/cloudflare/cloudflared/watcher
 github.com/cloudflare/cloudflared/websocket
 # github.com/cloudwego/base64x v0.1.6
 ## explicit; go 1.17
-# github.com/cockroachdb/errors v1.12.0
-## explicit; go 1.23.0
+# github.com/cockroachdb/errors v1.13.0
+## explicit; go 1.25.0
 github.com/cockroachdb/errors
 github.com/cockroachdb/errors/assert
 github.com/cockroachdb/errors/barriers
@@ -341,8 +341,8 @@ github.com/fsnotify/fsnotify/internal
 github.com/fxamacker/cbor/v2
 # github.com/gabriel-vasile/mimetype v1.4.13
 ## explicit; go 1.21
-# github.com/getsentry/sentry-go v0.43.0
-## explicit; go 1.24.0
+# github.com/getsentry/sentry-go v0.46.0
+## explicit; go 1.25.0
 github.com/getsentry/sentry-go
 github.com/getsentry/sentry-go/attribute
 github.com/getsentry/sentry-go/internal/debug
@@ -354,6 +354,7 @@ github.com/getsentry/sentry-go/internal/protocol
 github.com/getsentry/sentry-go/internal/ratelimit
 github.com/getsentry/sentry-go/internal/telemetry
 github.com/getsentry/sentry-go/internal/util
+github.com/getsentry/sentry-go/report
 # github.com/go-chi/chi/v5 v5.2.2
 ## explicit; go 1.20
 github.com/go-chi/chi/v5
