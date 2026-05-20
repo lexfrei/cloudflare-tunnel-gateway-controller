@@ -335,7 +335,7 @@ func (f *requestMirror) ProcessRequest(req *http.Request) *http.Response {
 			}
 		}()
 
-		resp, doErr := mirrorClient.Do(mirrorReq) //nolint:gosec // mirror URL comes from trusted config
+		resp, doErr := mirrorClient.Do(mirrorReq)
 		if doErr == nil {
 			resp.Body.Close()
 		}
