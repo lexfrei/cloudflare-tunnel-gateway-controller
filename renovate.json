@@ -11,7 +11,7 @@
   "labels": ["dependencies"],
   "platformAutomerge": true,
   "automergeStrategy": "squash",
-  "postUpdateOptions": ["gomodTidy"],
+  "postUpdateOptions": ["gomodTidy", "gomodVendor", "gomodUpdateImportPaths"],
   "packageRules": [
     {
       "description": "Automerge minor and patch updates",
