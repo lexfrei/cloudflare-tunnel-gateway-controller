@@ -48,6 +48,7 @@ linters:
     gomoddirectives:
       replace-allow-list:
         - github.com/cloudflare/cloudflared
+        - github.com/quic-go/quic-go
     nolintlint:
       require-explanation: true
       require-specific: true

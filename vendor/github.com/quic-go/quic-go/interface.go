@@ -30,7 +30,6 @@ const (
 // It can be used to skip address validation on future connection attempts.
 type ClientToken struct {
 	data []byte
-	rtt  time.Duration
 }
 
 type TokenStore interface {
