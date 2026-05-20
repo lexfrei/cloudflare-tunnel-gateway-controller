@@ -47,25 +47,23 @@ jobs:
           # JSON schema validator
           pip install check-jsonschema
 
-          # Artifact Hub CLI
-          # renovate: datasource=github-releases depName=artifacthub/hub
-          AH_VERSION="1.22.0"
-          AH_SHA256="c845307d19f822905b7c47b3f216712116dd74709802c7d1d4a9b6f999d6f92a"
-          wget --quiet "https://github.com/artifacthub/hub/releases/download/v${AH_VERSION}/ah_${AH_VERSION}_linux_amd64.tar.gz"
-          echo "${AH_SHA256}  ah_${AH_VERSION}_linux_amd64.tar.gz" | sha256sum --check --strict
-          tar --extract --gzip --file "ah_${AH_VERSION}_linux_amd64.tar.gz"
-          chmod +x ah
-          sudo mv ah /usr/local/bin/ah
+          # Artifact Hub CLI — extracted from upstream image so the tag binds
+          # both version and content digest (Renovate's docker datasource
+          # auto-bumps the tag without a separate sha256 line to drift).
+          # renovate: datasource=docker depName=artifacthub/ah
+          AH_VERSION="v1.22.0"
+          docker create --name ah-tmp "artifacthub/ah:${AH_VERSION}"
+          sudo docker cp ah-tmp:/usr/local/bin/ah /usr/local/bin/ah
+          docker rm ah-tmp
+          sudo chmod +x /usr/local/bin/ah
 
-          # helm-docs
-          # renovate: datasource=github-releases depName=norwoodj/helm-docs
-          HELM_DOCS_VERSION="1.14.2"
-          HELM_DOCS_SHA256="a8cf72ada34fad93285ba2a452b38bdc5bd52cc9a571236244ec31022928d6cc"
-          wget --quiet "https://github.com/norwoodj/helm-docs/releases/download/v${HELM_DOCS_VERSION}/helm-docs_${HELM_DOCS_VERSION}_Linux_x86_64.tar.gz"
-          echo "${HELM_DOCS_SHA256}  helm-docs_${HELM_DOCS_VERSION}_Linux_x86_64.tar.gz" | sha256sum --check --strict
-          tar --extract --gzip --file "helm-docs_${HELM_DOCS_VERSION}_Linux_x86_64.tar.gz"
-          chmod +x helm-docs
-          sudo mv helm-docs /usr/local/bin/helm-docs
+          # helm-docs — same rationale as ah above.
+          # renovate: datasource=docker depName=jnorwood/helm-docs
+          HELM_DOCS_VERSION="v1.14.2"
+          docker create --name helm-docs-tmp "jnorwood/helm-docs:${HELM_DOCS_VERSION}"
+          sudo docker cp helm-docs-tmp:/usr/bin/helm-docs /usr/local/bin/helm-docs
+          docker rm helm-docs-tmp
+          sudo chmod +x /usr/local/bin/helm-docs
 
       - name: Run Helm Lint
         run: |
@@ -418,13 +416,15 @@ jobs:
 
       - name: Install yq
         run: |
-          # renovate: datasource=github-releases depName=mikefarah/yq
+          # yq — extracted from upstream image so the tag binds both version
+          # and content digest (Renovate's docker datasource auto-bumps the
+          # tag without a separate sha256 line to drift).
+          # renovate: datasource=docker depName=mikefarah/yq
           YQ_VERSION="4.53.2"
-          YQ_SHA256="d56bf5c6819e8e696340c312bd70f849dc1678a7cda9c2ad63eebd906371d56b"
-          wget --quiet "https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/yq_linux_amd64" --output-document yq
-          echo "${YQ_SHA256}  yq" | sha256sum --check --strict
-          chmod +x yq
-          sudo mv yq /usr/local/bin/yq
+          docker create --name yq-tmp "mikefarah/yq:${YQ_VERSION}"
+          sudo docker cp yq-tmp:/usr/bin/yq /usr/local/bin/yq
+          docker rm yq-tmp
+          sudo chmod +x /usr/local/bin/yq
 
       - name: Generate changelog from commits
         id: changelog
