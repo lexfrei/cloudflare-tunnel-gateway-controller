@@ -49,7 +49,7 @@ jobs:
         with:
           sarif_file: trivy-fs-results.sarif
           category: trivy-filesystem
-          ref: refs/pull/${{ steps.pr.outputs.number }}/merge
+          ref: refs/pull/${{ steps.pr.outputs.number }}/head
           sha: ${{ github.event.workflow_run.head_sha }}
 
   notify:
