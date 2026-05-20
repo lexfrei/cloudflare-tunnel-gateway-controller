@@ -104,7 +104,6 @@ func (h *Handler) proxyToBackend(writer http.ResponseWriter, req *http.Request, 
 	// Per Gateway API spec: return 500 when backend refs cannot be resolved.
 	if result.BackendIdx < 0 || result.BackendIdx >= len(result.Rule.Backends) {
 		if len(result.Rule.Backends) > 0 {
-			//nolint:gosec // G706 false positive: backend_count is len() — not user input
 			slog.Warn("all backends have zero weight; no traffic routed per Gateway API spec",
 				slog.Int("backend_count", len(result.Rule.Backends)))
 		}

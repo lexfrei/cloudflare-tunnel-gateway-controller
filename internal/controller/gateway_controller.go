@@ -46,6 +46,10 @@ const (
 	// msgReferencesResolved is the standard message for ResolvedRefs condition.
 	msgReferencesResolved = "References resolved"
 
+	// msgGatewayAccepted is the standard message for Accepted/Programmed conditions
+	// on Gateways managed by this controller.
+	msgGatewayAccepted = "Gateway accepted by cloudflare-tunnel controller"
+
 	// kindSecret is the resource kind for Kubernetes Secrets.
 	kindSecret = "Secret"
 
@@ -427,7 +431,7 @@ func (r *GatewayReconciler) updateStatus(
 				ObservedGeneration: freshGateway.Generation,
 				LastTransitionTime: now,
 				Reason:             string(gatewayv1.GatewayReasonAccepted),
-				Message:            "Gateway accepted by cloudflare-tunnel controller",
+				Message:            msgGatewayAccepted,
 			},
 			{
 				Type:               string(gatewayv1.GatewayConditionProgrammed),
@@ -593,7 +597,7 @@ func (r *GatewayReconciler) setCloudflaredErrorStatus(
 				ObservedGeneration: freshGateway.Generation,
 				LastTransitionTime: now,
 				Reason:             string(gatewayv1.GatewayReasonAccepted),
-				Message:            "Gateway accepted by cloudflare-tunnel controller",
+				Message:            msgGatewayAccepted,
 			},
 			{
 				Type:               string(gatewayv1.GatewayConditionProgrammed),
