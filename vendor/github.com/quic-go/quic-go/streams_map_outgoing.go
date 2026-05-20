@@ -2,7 +2,6 @@ package quic
 
 import (
 	"context"
-	"slices"
 	"sync"
 
 	"github.com/quic-go/quic-go/internal/protocol"
@@ -20,7 +19,9 @@ type outgoingStreamsMap[T outgoingStream] struct {
 	streamType protocol.StreamType
 	streams    map[protocol.StreamNum]T
 
-	openQueue []chan struct{}
+	openQueue      map[uint64]chan struct{}
+	lowestInQueue  uint64
+	highestInQueue uint64
 
 	nextStream  protocol.StreamNum // stream ID of the stream returned by OpenStream(Sync)
 	maxStream   protocol.StreamNum // the maximum stream ID we're allowed to open
@@ -40,6 +41,7 @@ func newOutgoingStreamsMap[T outgoingStream](
 	return &outgoingStreamsMap[T]{
 		streamType:           streamType,
 		streams:              make(map[protocol.StreamNum]T),
+		openQueue:            make(map[uint64]chan struct{}),
 		maxStream:            protocol.InvalidStreamNum,
 		nextStream:           1,
 		newStream:            newStream,
@@ -58,7 +60,7 @@ func (m *outgoingStreamsMap[T]) OpenStream() (T, error) {
 	// if there are OpenStreamSync calls waiting, return an error here
 	if len(m.openQueue) > 0 || m.nextStream > m.maxStream {
 		m.maybeSendBlockedFrame()
-		return *new(T), &StreamLimitReachedError{}
+		return *new(T), streamOpenErr{errTooManyOpenStreams}
 	}
 	return m.openStream(), nil
 }
@@ -70,15 +72,22 @@ func (m *outgoingStreamsMap[T]) OpenStreamSync(ctx context.Context) (T, error) {
 	if m.closeErr != nil {
 		return *new(T), m.closeErr
 	}
+
 	if err := ctx.Err(); err != nil {
 		return *new(T), err
 	}
+
 	if len(m.openQueue) == 0 && m.nextStream <= m.maxStream {
 		return m.openStream(), nil
 	}
 
 	waitChan := make(chan struct{}, 1)
-	m.openQueue = append(m.openQueue, waitChan)
+	queuePos := m.highestInQueue
+	m.highestInQueue++
+	if len(m.openQueue) == 0 {
+		m.lowestInQueue = queuePos
+	}
+	m.openQueue[queuePos] = waitChan
 	m.maybeSendBlockedFrame()
 
 	for {
@@ -86,17 +95,12 @@ func (m *outgoingStreamsMap[T]) OpenStreamSync(ctx context.Context) (T, error) {
 		select {
 		case <-ctx.Done():
 			m.mutex.Lock()
-			m.openQueue = slices.DeleteFunc(m.openQueue, func(c chan struct{}) bool {
-				return c == waitChan
-			})
-			// If we just received a MAX_STREAMS frame, this might have been the next stream
-			// that could be opened. Make sure we unblock the next OpenStreamSync call.
-			m.maybeUnblockOpenSync()
+			delete(m.openQueue, queuePos)
 			return *new(T), ctx.Err()
 		case <-waitChan:
 		}
-
 		m.mutex.Lock()
+
 		if m.closeErr != nil {
 			return *new(T), m.closeErr
 		}
@@ -105,8 +109,9 @@ func (m *outgoingStreamsMap[T]) OpenStreamSync(ctx context.Context) (T, error) {
 			continue
 		}
 		str := m.openStream()
-		m.openQueue = m.openQueue[1:]
-		m.maybeUnblockOpenSync()
+		delete(m.openQueue, queuePos)
+		m.lowestInQueue = queuePos + 1
+		m.unblockOpenSync()
 		return str, nil
 	}
 }
@@ -176,7 +181,7 @@ func (m *outgoingStreamsMap[T]) SetMaxStream(num protocol.StreamNum) {
 	if m.maxStream < m.nextStream-1+protocol.StreamNum(len(m.openQueue)) {
 		m.maybeSendBlockedFrame()
 	}
-	m.maybeUnblockOpenSync()
+	m.unblockOpenSync()
 }
 
 // UpdateSendWindow is called when the peer's transport parameters are received.
@@ -191,25 +196,27 @@ func (m *outgoingStreamsMap[T]) UpdateSendWindow(limit protocol.ByteCount) {
 }
 
 // unblockOpenSync unblocks the next OpenStreamSync go-routine to open a new stream
-func (m *outgoingStreamsMap[T]) maybeUnblockOpenSync() {
+func (m *outgoingStreamsMap[T]) unblockOpenSync() {
 	if len(m.openQueue) == 0 {
 		return
 	}
-	if m.nextStream > m.maxStream {
+	for qp := m.lowestInQueue; qp <= m.highestInQueue; qp++ {
+		c, ok := m.openQueue[qp]
+		if !ok { // entry was deleted because the context was canceled
+			continue
+		}
+		// unblockOpenSync is called both from OpenStreamSync and from SetMaxStream.
+		// It's sufficient to only unblock OpenStreamSync once.
+		select {
+		case c <- struct{}{}:
+		default:
+		}
 		return
-	}
-	// unblockOpenSync is called both from OpenStreamSync and from SetMaxStream.
-	// It's sufficient to only unblock OpenStreamSync once.
-	select {
-	case m.openQueue[0] <- struct{}{}:
-	default:
 	}
 }
 
 func (m *outgoingStreamsMap[T]) CloseWithError(err error) {
 	m.mutex.Lock()
-	defer m.mutex.Unlock()
-
 	m.closeErr = err
 	for _, str := range m.streams {
 		str.closeForShutdown(err)
@@ -219,5 +226,5 @@ func (m *outgoingStreamsMap[T]) CloseWithError(err error) {
 			close(c)
 		}
 	}
-	m.openQueue = nil
+	m.mutex.Unlock()
 }

@@ -1,6 +1,7 @@
 package wire
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -31,23 +32,66 @@ type ExtendedHeader struct {
 	parsedLen protocol.ByteCount
 }
 
-func (h *ExtendedHeader) parse(data []byte) (bool /* reserved bits valid */, error) {
+func (h *ExtendedHeader) parse(b *bytes.Reader, v protocol.Version) (bool /* reserved bits valid */, error) {
+	startLen := b.Len()
 	// read the (now unencrypted) first byte
-	h.typeByte = data[0]
-	h.PacketNumberLen = protocol.PacketNumberLen(h.typeByte&0x3) + 1
-	if protocol.ByteCount(len(data)) < h.Header.ParsedLen()+protocol.ByteCount(h.PacketNumberLen) {
-		return false, io.EOF
-	}
-
-	pn, err := readPacketNumber(data[h.Header.ParsedLen():], h.PacketNumberLen)
+	var err error
+	h.typeByte, err = b.ReadByte()
 	if err != nil {
-		return true, nil
+		return false, err
 	}
-	h.PacketNumber = pn
-	reservedBitsValid := h.typeByte&0xc == 0
-
-	h.parsedLen = h.Header.ParsedLen() + protocol.ByteCount(h.PacketNumberLen)
+	if _, err := b.Seek(int64(h.Header.ParsedLen())-1, io.SeekCurrent); err != nil {
+		return false, err
+	}
+	reservedBitsValid, err := h.parseLongHeader(b, v)
+	if err != nil {
+		return false, err
+	}
+	h.parsedLen = protocol.ByteCount(startLen - b.Len())
 	return reservedBitsValid, err
+}
+
+func (h *ExtendedHeader) parseLongHeader(b *bytes.Reader, _ protocol.Version) (bool /* reserved bits valid */, error) {
+	if err := h.readPacketNumber(b); err != nil {
+		return false, err
+	}
+	if h.typeByte&0xc != 0 {
+		return false, nil
+	}
+	return true, nil
+}
+
+func (h *ExtendedHeader) readPacketNumber(b *bytes.Reader) error {
+	h.PacketNumberLen = protocol.PacketNumberLen(h.typeByte&0x3) + 1
+	switch h.PacketNumberLen {
+	case protocol.PacketNumberLen1:
+		n, err := b.ReadByte()
+		if err != nil {
+			return err
+		}
+		h.PacketNumber = protocol.PacketNumber(n)
+	case protocol.PacketNumberLen2:
+		n, err := utils.BigEndian.ReadUint16(b)
+		if err != nil {
+			return err
+		}
+		h.PacketNumber = protocol.PacketNumber(n)
+	case protocol.PacketNumberLen3:
+		n, err := utils.BigEndian.ReadUint24(b)
+		if err != nil {
+			return err
+		}
+		h.PacketNumber = protocol.PacketNumber(n)
+	case protocol.PacketNumberLen4:
+		n, err := utils.BigEndian.ReadUint32(b)
+		if err != nil {
+			return err
+		}
+		h.PacketNumber = protocol.PacketNumber(n)
+	default:
+		return fmt.Errorf("invalid packet number length: %d", h.PacketNumberLen)
+	}
+	return nil
 }
 
 // Append appends the Header.

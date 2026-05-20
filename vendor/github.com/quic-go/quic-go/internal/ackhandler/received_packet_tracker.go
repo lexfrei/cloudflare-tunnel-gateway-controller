@@ -196,7 +196,8 @@ func (h *appDataReceivedPacketTracker) shouldQueueACK(pn protocol.PacketNumber, 
 	return false
 }
 
-func (h *appDataReceivedPacketTracker) GetAckFrame(now time.Time, onlyIfQueued bool) *wire.AckFrame {
+func (h *appDataReceivedPacketTracker) GetAckFrame(onlyIfQueued bool) *wire.AckFrame {
+	now := time.Now()
 	if onlyIfQueued && !h.ackQueued {
 		if h.ackAlarm.IsZero() || h.ackAlarm.After(now) {
 			return nil
