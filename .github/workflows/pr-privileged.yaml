@@ -32,7 +32,7 @@ jobs:
         with:
           sarif_file: trivy-fs-results.sarif
           category: trivy-filesystem
-          ref: ${{ github.event.workflow_run.head_branch }}
+          ref: refs/pull/${{ github.event.workflow_run.pull_requests[0].number }}/merge
           sha: ${{ github.event.workflow_run.head_sha }}
 
   notify:
