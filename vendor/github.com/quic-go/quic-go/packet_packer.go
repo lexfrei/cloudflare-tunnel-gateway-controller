@@ -122,7 +122,7 @@ type packetPacker struct {
 	perspective protocol.Perspective
 	cryptoSetup sealingManager
 
-	initialStream   *initialCryptoStream
+	initialStream   *cryptoStream
 	handshakeStream *cryptoStream
 
 	token []byte
@@ -142,8 +142,7 @@ var _ packer = &packetPacker{}
 func newPacketPacker(
 	srcConnID protocol.ConnectionID,
 	getDestConnID func() protocol.ConnectionID,
-	initialStream *initialCryptoStream,
-	handshakeStream *cryptoStream,
+	initialStream, handshakeStream *cryptoStream,
 	packetNumberManager packetNumberManager,
 	retransmissionQueue *retransmissionQueue,
 	cryptoSetup sealingManager,
@@ -513,26 +512,24 @@ func (p *packetPacker) maybeGetCryptoPacket(
 		return nil, payload{}
 	}
 
-	var hasCryptoData func() bool
-	var popCryptoFrame func(maxLen protocol.ByteCount) *wire.CryptoFrame
+	var s *cryptoStream
 	//nolint:exhaustive // Initial and Handshake are the only two encryption levels here.
 	switch encLevel {
 	case protocol.EncryptionInitial:
-		hasCryptoData = p.initialStream.HasData
-		popCryptoFrame = p.initialStream.PopCryptoFrame
+		s = p.initialStream
 	case protocol.EncryptionHandshake:
-		hasCryptoData = p.handshakeStream.HasData
-		popCryptoFrame = p.handshakeStream.PopCryptoFrame
+		s = p.handshakeStream
 	}
+	hasData := s.HasData()
 	handler := p.retransmissionQueue.AckHandler(encLevel)
 	hasRetransmission := p.retransmissionQueue.HasData(encLevel)
 
 	var ack *wire.AckFrame
 	if ackAllowed {
-		ack = p.acks.GetAckFrame(encLevel, now, !hasRetransmission && !hasCryptoData())
+		ack = p.acks.GetAckFrame(encLevel, now, !hasRetransmission && !hasData)
 	}
 	var pl payload
-	if !hasCryptoData() && !hasRetransmission && ack == nil {
+	if !hasData && !hasRetransmission && ack == nil {
 		if !addPingIfEmpty {
 			// nothing to send
 			return nil, payload{}
@@ -563,17 +560,10 @@ func (p *packetPacker) maybeGetCryptoPacket(
 			pl.length += frameLen
 			maxPacketSize -= frameLen
 		}
-		return hdr, pl
-	} else {
-		for hasCryptoData() {
-			cf := popCryptoFrame(maxPacketSize)
-			if cf == nil {
-				break
-			}
-			pl.frames = append(pl.frames, ackhandler.Frame{Frame: cf, Handler: handler})
-			pl.length += cf.Length(v)
-			maxPacketSize -= cf.Length(v)
-		}
+	} else if s.HasData() {
+		cf := s.PopCryptoFrame(maxPacketSize)
+		pl.frames = append(pl.frames, ackhandler.Frame{Frame: cf, Handler: handler})
+		pl.length += cf.Length(v)
 	}
 	return hdr, pl
 }

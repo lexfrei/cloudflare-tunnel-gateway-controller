@@ -263,8 +263,7 @@ func buildProtocolAndClient(
 	protocolSelector, err := connection.NewProtocolSelector(
 		connection.AutoSelectFlag,
 		token.AccountTag,
-		true,  // tunnelTokenProvided
-		false, // needPQ
+		true, // tunnelTokenProvided
 		edgediscovery.ProtocolPercentage,
 		connection.ResolveTTL,
 		zlog,
