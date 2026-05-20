@@ -8,32 +8,55 @@
     ":prConcurrentLimitNone",
     "helpers:pinGitHubActionDigests"
   ],
-  "labels": ["dependencies"],
+  "labels": [
+    "dependencies"
+  ],
   "platformAutomerge": true,
   "automergeStrategy": "squash",
-  "postUpdateOptions": ["gomodTidy", "gomodVendor", "gomodUpdateImportPaths"],
+  "postUpdateOptions": [
+    "gomodTidy",
+    "gomodVendor",
+    "gomodUpdateImportPaths"
+  ],
   "packageRules": [
     {
       "description": "Automerge minor and patch updates",
-      "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
+      "matchUpdateTypes": [
+        "minor",
+        "patch",
+        "pin",
+        "digest"
+      ],
       "automerge": true
     },
     {
       "description": "Automerge all GitHub Actions updates including major",
-      "matchManagers": ["github-actions"],
+      "matchManagers": [
+        "github-actions"
+      ],
       "automerge": true
     },
     {
       "description": "Pin Go version in Containerfile",
-      "matchManagers": ["dockerfile"],
-      "matchPackageNames": ["docker.io/library/golang"],
+      "matchManagers": [
+        "dockerfile"
+      ],
+      "matchPackageNames": [
+        "docker.io/library/golang"
+      ],
       "versioning": "docker"
     },
     {
       "description": "Allow Renovate to bump go directive in go.mod",
-      "matchManagers": ["gomod"],
-      "matchDepNames": ["go"],
-      "matchDepTypes": ["golang"],
+      "matchManagers": [
+        "gomod"
+      ],
+      "matchDepNames": [
+        "go"
+      ],
+      "matchDepTypes": [
+        "golang"
+      ],
       "rangeStrategy": "bump"
     }
   ],
@@ -41,7 +64,9 @@
     {
       "customType": "regex",
       "description": "Update Go version in GitHub Actions",
-      "fileMatch": ["^\\.github/workflows/.*\\.ya?ml$"],
+      "fileMatch": [
+        "^\\.github/workflows/.*\\.ya?ml$"
+      ],
       "matchStrings": [
         "go-version:\\s*['\"]?(?<currentValue>[\\d.]+)['\"]?"
       ],
@@ -51,7 +76,9 @@
     {
       "customType": "regex",
       "description": "Update versioned binaries in GitHub Actions workflows",
-      "fileMatch": ["^\\.github/workflows/.*\\.ya?ml$"],
+      "fileMatch": [
+        "^\\.github/workflows/.*\\.ya?ml$"
+      ],
       "matchStrings": [
         "# renovate: datasource=(?<datasource>.*?) depName=(?<depName>.*?)\\n\\s+[A-Z_]+VERSION=\"(?<currentValue>.*?)\""
       ]
