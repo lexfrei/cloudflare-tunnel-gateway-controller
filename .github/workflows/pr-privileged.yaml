@@ -17,6 +17,23 @@ jobs:
     if: >-
       github.event.workflow_run.event == 'pull_request'
     steps:
+      - name: Download PR metadata
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: pr-metadata
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Read and validate PR number
+        id: pr
+        run: |
+          PR_NUMBER=$(cat pr-number.txt)
+          if ! [[ "$PR_NUMBER" =~ ^[0-9]+$ ]]; then
+            echo "ERROR: Invalid PR number: $PR_NUMBER"
+            exit 1
+          fi
+          echo "number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
+
       - name: Download SARIF artifact
         id: download-sarif
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
@@ -32,7 +49,7 @@ jobs:
         with:
           sarif_file: trivy-fs-results.sarif
           category: trivy-filesystem
-          ref: refs/pull/${{ github.event.workflow_run.pull_requests[0].number }}/merge
+          ref: refs/pull/${{ steps.pr.outputs.number }}/merge
           sha: ${{ github.event.workflow_run.head_sha }}
 
   notify:
