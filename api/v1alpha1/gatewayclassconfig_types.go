@@ -180,10 +180,6 @@ type GatewayClassConfigList struct {
 	Items []GatewayClassConfig `json:"items"`
 }
 
-func init() {
-	SchemeBuilder.Register(&GatewayClassConfig{}, &GatewayClassConfigList{})
-}
-
 // IsCloudflaredEnabled returns whether cloudflared management is enabled.
 // Defaults to true if not explicitly set.
 func (c *GatewayClassConfigSpec) IsCloudflaredEnabled() bool {
