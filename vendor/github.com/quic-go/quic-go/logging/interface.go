@@ -36,8 +36,8 @@ type (
 	StreamNum = protocol.StreamNum
 	// The StreamType is the type of the stream (unidirectional or bidirectional).
 	StreamType = protocol.StreamType
-	// The Version is the QUIC version.
-	Version = protocol.Version
+	// The VersionNumber is the QUIC version.
+	VersionNumber = protocol.Version
 
 	// The Header is the QUIC packet header, before removing header protection.
 	Header = wire.Header
@@ -72,27 +72,27 @@ const (
 
 const (
 	// KeyPhaseZero is key phase bit 0
-	KeyPhaseZero = protocol.KeyPhaseZero
+	KeyPhaseZero KeyPhaseBit = protocol.KeyPhaseZero
 	// KeyPhaseOne is key phase bit 1
-	KeyPhaseOne = protocol.KeyPhaseOne
+	KeyPhaseOne KeyPhaseBit = protocol.KeyPhaseOne
 )
 
 const (
 	// PerspectiveServer is used for a QUIC server
-	PerspectiveServer = protocol.PerspectiveServer
+	PerspectiveServer Perspective = protocol.PerspectiveServer
 	// PerspectiveClient is used for a QUIC client
-	PerspectiveClient = protocol.PerspectiveClient
+	PerspectiveClient Perspective = protocol.PerspectiveClient
 )
 
 const (
 	// EncryptionInitial is the Initial encryption level
-	EncryptionInitial = protocol.EncryptionInitial
+	EncryptionInitial EncryptionLevel = protocol.EncryptionInitial
 	// EncryptionHandshake is the Handshake encryption level
-	EncryptionHandshake = protocol.EncryptionHandshake
+	EncryptionHandshake EncryptionLevel = protocol.EncryptionHandshake
 	// Encryption1RTT is the 1-RTT encryption level
-	Encryption1RTT = protocol.Encryption1RTT
+	Encryption1RTT EncryptionLevel = protocol.Encryption1RTT
 	// Encryption0RTT is the 0-RTT encryption level
-	Encryption0RTT = protocol.Encryption0RTT
+	Encryption0RTT EncryptionLevel = protocol.Encryption0RTT
 )
 
 const (

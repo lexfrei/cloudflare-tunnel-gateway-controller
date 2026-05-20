@@ -1,9 +1,10 @@
 package ackhandler
 
 import (
-	"slices"
+	"sync"
 
 	"github.com/quic-go/quic-go/internal/protocol"
+	list "github.com/quic-go/quic-go/internal/utils/linkedlist"
 	"github.com/quic-go/quic-go/internal/wire"
 )
 
@@ -13,17 +14,25 @@ type interval struct {
 	End   protocol.PacketNumber
 }
 
+var intervalElementPool sync.Pool
+
+func init() {
+	intervalElementPool = *list.NewPool[interval]()
+}
+
 // The receivedPacketHistory stores if a packet number has already been received.
 // It generates ACK ranges which can be used to assemble an ACK frame.
 // It does not store packet contents.
 type receivedPacketHistory struct {
-	ranges []interval // maximum length: protocol.MaxNumAckRanges
+	ranges *list.List[interval]
 
 	deletedBelow protocol.PacketNumber
 }
 
 func newReceivedPacketHistory() *receivedPacketHistory {
-	return &receivedPacketHistory{}
+	return &receivedPacketHistory{
+		ranges: list.NewWithPool[interval](&intervalElementPool),
+	}
 }
 
 // ReceivedPacket registers a packet with PacketNumber p and updates the ranges
@@ -32,52 +41,56 @@ func (h *receivedPacketHistory) ReceivedPacket(p protocol.PacketNumber) bool /* 
 	if p < h.deletedBelow {
 		return false
 	}
-
 	isNew := h.addToRanges(p)
-	// Delete old ranges, if we're tracking too many of them.
-	// This is a DoS defense against a peer that sends us too many gaps.
-	if len(h.ranges) > protocol.MaxNumAckRanges {
-		h.ranges = slices.Delete(h.ranges, 0, len(h.ranges)-protocol.MaxNumAckRanges)
-	}
+	h.maybeDeleteOldRanges()
 	return isNew
 }
 
 func (h *receivedPacketHistory) addToRanges(p protocol.PacketNumber) bool /* is a new packet (and not a duplicate / delayed packet) */ {
-	if len(h.ranges) == 0 {
-		h.ranges = append(h.ranges, interval{Start: p, End: p})
+	if h.ranges.Len() == 0 {
+		h.ranges.PushBack(interval{Start: p, End: p})
 		return true
 	}
 
-	for i := len(h.ranges) - 1; i >= 0; i-- {
+	for el := h.ranges.Back(); el != nil; el = el.Prev() {
 		// p already included in an existing range. Nothing to do here
-		if p >= h.ranges[i].Start && p <= h.ranges[i].End {
+		if p >= el.Value.Start && p <= el.Value.End {
 			return false
 		}
 
-		if h.ranges[i].End == p-1 { // extend a range at the end
-			h.ranges[i].End = p
+		if el.Value.End == p-1 { // extend a range at the end
+			el.Value.End = p
 			return true
 		}
-		if h.ranges[i].Start == p+1 { // extend a range at the beginning
-			h.ranges[i].Start = p
+		if el.Value.Start == p+1 { // extend a range at the beginning
+			el.Value.Start = p
 
-			if i > 0 && h.ranges[i-1].End+1 == h.ranges[i].Start { // merge two ranges
-				h.ranges[i-1].End = h.ranges[i].End
-				h.ranges = slices.Delete(h.ranges, i, i+1)
+			prev := el.Prev()
+			if prev != nil && prev.Value.End+1 == el.Value.Start { // merge two ranges
+				prev.Value.End = el.Value.End
+				h.ranges.Remove(el)
 			}
 			return true
 		}
 
-		// create a new range after the current one
-		if p > h.ranges[i].End {
-			h.ranges = slices.Insert(h.ranges, i+1, interval{Start: p, End: p})
+		// create a new range at the end
+		if p > el.Value.End {
+			h.ranges.InsertAfter(interval{Start: p, End: p}, el)
 			return true
 		}
 	}
 
 	// create a new range at the beginning
-	h.ranges = slices.Insert(h.ranges, 0, interval{Start: p, End: p})
+	h.ranges.InsertBefore(interval{Start: p, End: p}, h.ranges.Front())
 	return true
+}
+
+// Delete old ranges, if we're tracking more than 500 of them.
+// This is a DoS defense against a peer that sends us too many gaps.
+func (h *receivedPacketHistory) maybeDeleteOldRanges() {
+	for h.ranges.Len() > protocol.MaxNumAckRanges {
+		h.ranges.Remove(h.ranges.Front())
+	}
 }
 
 // DeleteBelow deletes all entries below (but not including) p
@@ -87,39 +100,37 @@ func (h *receivedPacketHistory) DeleteBelow(p protocol.PacketNumber) {
 	}
 	h.deletedBelow = p
 
-	if len(h.ranges) == 0 {
-		return
-	}
+	nextEl := h.ranges.Front()
+	for el := h.ranges.Front(); nextEl != nil; el = nextEl {
+		nextEl = el.Next()
 
-	idx := -1
-	for i := 0; i < len(h.ranges); i++ {
-		if h.ranges[i].End < p { // delete a whole range
-			idx = i
-		} else if p > h.ranges[i].Start && p <= h.ranges[i].End {
-			h.ranges[i].Start = p
-			break
+		if el.Value.End < p { // delete a whole range
+			h.ranges.Remove(el)
+		} else if p > el.Value.Start && p <= el.Value.End {
+			el.Value.Start = p
+			return
 		} else { // no ranges affected. Nothing to do
-			break
+			return
 		}
-	}
-	if idx >= 0 {
-		h.ranges = slices.Delete(h.ranges, 0, idx+1)
 	}
 }
 
 // AppendAckRanges appends to a slice of all AckRanges that can be used in an AckFrame
 func (h *receivedPacketHistory) AppendAckRanges(ackRanges []wire.AckRange) []wire.AckRange {
-	for i := len(h.ranges) - 1; i >= 0; i-- {
-		ackRanges = append(ackRanges, wire.AckRange{Smallest: h.ranges[i].Start, Largest: h.ranges[i].End})
+	if h.ranges.Len() > 0 {
+		for el := h.ranges.Back(); el != nil; el = el.Prev() {
+			ackRanges = append(ackRanges, wire.AckRange{Smallest: el.Value.Start, Largest: el.Value.End})
+		}
 	}
 	return ackRanges
 }
 
 func (h *receivedPacketHistory) GetHighestAckRange() wire.AckRange {
 	ackRange := wire.AckRange{}
-	if len(h.ranges) > 0 {
-		ackRange.Smallest = h.ranges[len(h.ranges)-1].Start
-		ackRange.Largest = h.ranges[len(h.ranges)-1].End
+	if h.ranges.Len() > 0 {
+		r := h.ranges.Back().Value
+		ackRange.Smallest = r.Start
+		ackRange.Largest = r.End
 	}
 	return ackRange
 }
@@ -128,12 +139,11 @@ func (h *receivedPacketHistory) IsPotentiallyDuplicate(p protocol.PacketNumber) 
 	if p < h.deletedBelow {
 		return true
 	}
-	// Iterating over the slices is faster than using a binary search (using slices.BinarySearchFunc).
-	for i := len(h.ranges) - 1; i >= 0; i-- {
-		if p > h.ranges[i].End {
+	for el := h.ranges.Back(); el != nil; el = el.Prev() {
+		if p > el.Value.End {
 			return false
 		}
-		if p <= h.ranges[i].End && p >= h.ranges[i].Start {
+		if p <= el.Value.End && p >= el.Value.Start {
 			return true
 		}
 	}

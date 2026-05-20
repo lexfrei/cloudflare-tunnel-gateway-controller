@@ -2,14 +2,27 @@ package quic
 
 import (
 	"fmt"
+	"io"
 
 	"github.com/quic-go/quic-go/internal/protocol"
 	"github.com/quic-go/quic-go/internal/qerr"
 	"github.com/quic-go/quic-go/internal/wire"
 )
 
-type cryptoStream struct {
-	queue frameSorter
+type cryptoStream interface {
+	// for receiving data
+	HandleCryptoFrame(*wire.CryptoFrame) error
+	GetCryptoData() []byte
+	Finish() error
+	// for sending data
+	io.Writer
+	HasData() bool
+	PopCryptoFrame(protocol.ByteCount) *wire.CryptoFrame
+}
+
+type cryptoStreamImpl struct {
+	queue  *frameSorter
+	msgBuf []byte
 
 	highestOffset protocol.ByteCount
 	finished      bool
@@ -18,11 +31,11 @@ type cryptoStream struct {
 	writeBuf    []byte
 }
 
-func newCryptoStream() *cryptoStream {
-	return &cryptoStream{queue: *newFrameSorter()}
+func newCryptoStream() cryptoStream {
+	return &cryptoStreamImpl{queue: newFrameSorter()}
 }
 
-func (s *cryptoStream) HandleCryptoFrame(f *wire.CryptoFrame) error {
+func (s *cryptoStreamImpl) HandleCryptoFrame(f *wire.CryptoFrame) error {
 	highestOffset := f.Offset + protocol.ByteCount(len(f.Data))
 	if maxOffset := highestOffset; maxOffset > protocol.MaxCryptoStreamOffset {
 		return &qerr.TransportError{
@@ -43,16 +56,26 @@ func (s *cryptoStream) HandleCryptoFrame(f *wire.CryptoFrame) error {
 		return nil
 	}
 	s.highestOffset = max(s.highestOffset, highestOffset)
-	return s.queue.Push(f.Data, f.Offset, nil)
+	if err := s.queue.Push(f.Data, f.Offset, nil); err != nil {
+		return err
+	}
+	for {
+		_, data, _ := s.queue.Pop()
+		if data == nil {
+			return nil
+		}
+		s.msgBuf = append(s.msgBuf, data...)
+	}
 }
 
 // GetCryptoData retrieves data that was received in CRYPTO frames
-func (s *cryptoStream) GetCryptoData() []byte {
-	_, data, _ := s.queue.Pop()
-	return data
+func (s *cryptoStreamImpl) GetCryptoData() []byte {
+	b := s.msgBuf
+	s.msgBuf = nil
+	return b
 }
 
-func (s *cryptoStream) Finish() error {
+func (s *cryptoStreamImpl) Finish() error {
 	if s.queue.HasMoreData() {
 		return &qerr.TransportError{
 			ErrorCode:    qerr.ProtocolViolation,
@@ -64,16 +87,16 @@ func (s *cryptoStream) Finish() error {
 }
 
 // Writes writes data that should be sent out in CRYPTO frames
-func (s *cryptoStream) Write(p []byte) (int, error) {
+func (s *cryptoStreamImpl) Write(p []byte) (int, error) {
 	s.writeBuf = append(s.writeBuf, p...)
 	return len(p), nil
 }
 
-func (s *cryptoStream) HasData() bool {
+func (s *cryptoStreamImpl) HasData() bool {
 	return len(s.writeBuf) > 0
 }
 
-func (s *cryptoStream) PopCryptoFrame(maxLen protocol.ByteCount) *wire.CryptoFrame {
+func (s *cryptoStreamImpl) PopCryptoFrame(maxLen protocol.ByteCount) *wire.CryptoFrame {
 	f := &wire.CryptoFrame{Offset: s.writeOffset}
 	n := min(f.MaxDataLen(maxLen), protocol.ByteCount(len(s.writeBuf)))
 	f.Data = s.writeBuf[:n]

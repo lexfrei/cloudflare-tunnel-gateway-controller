@@ -63,11 +63,9 @@ type TimerType uint8
 
 const (
 	// TimerTypeACK is the timer type for the early retransmit timer
-	TimerTypeACK TimerType = iota + 1
+	TimerTypeACK TimerType = iota
 	// TimerTypePTO is the timer type for the PTO retransmit timer
 	TimerTypePTO
-	// TimerTypePathProbe is the timer type for the path probe retransmit timer
-	TimerTypePathProbe
 )
 
 // TimeoutReason is the reason why a connection is closed

@@ -6,7 +6,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/quic-go/quic-go/internal/ackhandler"
 	"github.com/quic-go/quic-go/internal/flowcontrol"
 	"github.com/quic-go/quic-go/internal/protocol"
 	"github.com/quic-go/quic-go/internal/qerr"
@@ -17,9 +16,10 @@ import (
 type receiveStreamI interface {
 	ReceiveStream
 
-	handleStreamFrame(*wire.StreamFrame, time.Time) error
-	handleResetStreamFrame(*wire.ResetStreamFrame, time.Time) error
+	handleStreamFrame(*wire.StreamFrame) error
+	handleResetStreamFrame(*wire.ResetStreamFrame) error
 	closeForShutdown(error)
+	getWindowUpdate() protocol.ByteCount
 }
 
 type receiveStream struct {
@@ -36,9 +36,6 @@ type receiveStream struct {
 	currentFrameDone   func()
 	readPosInFrame     int
 	currentFrameIsLast bool // is the currentFrame the last frame on this stream
-
-	queuedStopSending   bool
-	queuedMaxStreamData bool
 
 	// Set once we read the io.EOF or the cancellation error.
 	// Note that for local cancellations, this doesn't necessarily mean that we know the final offset yet.
@@ -57,9 +54,8 @@ type receiveStream struct {
 }
 
 var (
-	_ ReceiveStream            = &receiveStream{}
-	_ receiveStreamI           = &receiveStream{}
-	_ streamControlFrameGetter = &receiveStream{}
+	_ ReceiveStream  = &receiveStream{}
+	_ receiveStreamI = &receiveStream{}
 )
 
 func newReceiveStream(
@@ -91,18 +87,12 @@ func (s *receiveStream) Read(p []byte) (int, error) {
 	defer func() { <-s.readOnce }()
 
 	s.mutex.Lock()
-	queuedStreamWindowUpdate, queuedConnWindowUpdate, n, err := s.readImpl(p)
+	n, err := s.readImpl(p)
 	completed := s.isNewlyCompleted()
 	s.mutex.Unlock()
 
 	if completed {
 		s.sender.onStreamCompleted(s.streamID)
-	}
-	if queuedStreamWindowUpdate {
-		s.sender.onHasStreamControlFrame(s.streamID, s)
-	}
-	if queuedConnWindowUpdate {
-		s.sender.onHasConnectionData()
 	}
 	return n, err
 }
@@ -128,17 +118,17 @@ func (s *receiveStream) isNewlyCompleted() bool {
 	return false
 }
 
-func (s *receiveStream) readImpl(p []byte) (hasStreamWindowUpdate bool, hasConnWindowUpdate bool, _ int, _ error) {
+func (s *receiveStream) readImpl(p []byte) (int, error) {
 	if s.currentFrameIsLast && s.currentFrame == nil {
 		s.errorRead = true
-		return false, false, 0, io.EOF
+		return 0, io.EOF
 	}
 	if s.cancelledRemotely || s.cancelledLocally {
 		s.errorRead = true
-		return false, false, 0, s.cancelErr
+		return 0, s.cancelErr
 	}
 	if s.closeForShutdownErr != nil {
-		return false, false, 0, s.closeForShutdownErr
+		return 0, s.closeForShutdownErr
 	}
 
 	var bytesRead int
@@ -148,23 +138,23 @@ func (s *receiveStream) readImpl(p []byte) (hasStreamWindowUpdate bool, hasConnW
 			s.dequeueNextFrame()
 		}
 		if s.currentFrame == nil && bytesRead > 0 {
-			return hasStreamWindowUpdate, hasConnWindowUpdate, bytesRead, s.closeForShutdownErr
+			return bytesRead, s.closeForShutdownErr
 		}
 
 		for {
 			// Stop waiting on errors
 			if s.closeForShutdownErr != nil {
-				return hasStreamWindowUpdate, hasConnWindowUpdate, bytesRead, s.closeForShutdownErr
+				return bytesRead, s.closeForShutdownErr
 			}
 			if s.cancelledRemotely || s.cancelledLocally {
 				s.errorRead = true
-				return hasStreamWindowUpdate, hasConnWindowUpdate, 0, s.cancelErr
+				return 0, s.cancelErr
 			}
 
 			deadline := s.deadline
 			if !deadline.IsZero() {
 				if !time.Now().Before(deadline) {
-					return hasStreamWindowUpdate, hasConnWindowUpdate, bytesRead, errDeadline
+					return bytesRead, errDeadline
 				}
 				if deadlineTimer == nil {
 					deadlineTimer = utils.NewTimer()
@@ -194,10 +184,10 @@ func (s *receiveStream) readImpl(p []byte) (hasStreamWindowUpdate bool, hasConnW
 		}
 
 		if bytesRead > len(p) {
-			return hasStreamWindowUpdate, hasConnWindowUpdate, bytesRead, fmt.Errorf("BUG: bytesRead (%d) > len(p) (%d) in stream.Read", bytesRead, len(p))
+			return bytesRead, fmt.Errorf("BUG: bytesRead (%d) > len(p) (%d) in stream.Read", bytesRead, len(p))
 		}
 		if s.readPosInFrame > len(s.currentFrame) {
-			return hasStreamWindowUpdate, hasConnWindowUpdate, bytesRead, fmt.Errorf("BUG: readPosInFrame (%d) > frame.DataLen (%d) in stream.Read", s.readPosInFrame, len(s.currentFrame))
+			return bytesRead, fmt.Errorf("BUG: readPosInFrame (%d) > frame.DataLen (%d) in stream.Read", s.readPosInFrame, len(s.currentFrame))
 		}
 
 		m := copy(p[bytesRead:], s.currentFrame[s.readPosInFrame:])
@@ -207,14 +197,7 @@ func (s *receiveStream) readImpl(p []byte) (hasStreamWindowUpdate bool, hasConnW
 		// when a RESET_STREAM was received, the flow controller was already
 		// informed about the final byteOffset for this stream
 		if !s.cancelledRemotely {
-			hasStream, hasConn := s.flowController.AddBytesRead(protocol.ByteCount(m))
-			if hasStream {
-				s.queuedMaxStreamData = true
-				hasStreamWindowUpdate = true
-			}
-			if hasConn {
-				hasConnWindowUpdate = true
-			}
+			s.flowController.AddBytesRead(protocol.ByteCount(m))
 		}
 
 		if s.readPosInFrame >= len(s.currentFrame) && s.currentFrameIsLast {
@@ -223,10 +206,10 @@ func (s *receiveStream) readImpl(p []byte) (hasStreamWindowUpdate bool, hasConnW
 				s.currentFrameDone()
 			}
 			s.errorRead = true
-			return hasStreamWindowUpdate, hasConnWindowUpdate, bytesRead, io.EOF
+			return bytesRead, io.EOF
 		}
 	}
-	return hasStreamWindowUpdate, hasConnWindowUpdate, bytesRead, nil
+	return bytesRead, nil
 }
 
 func (s *receiveStream) dequeueNextFrame() {
@@ -242,39 +225,35 @@ func (s *receiveStream) dequeueNextFrame() {
 
 func (s *receiveStream) CancelRead(errorCode StreamErrorCode) {
 	s.mutex.Lock()
-	queuedNewControlFrame := s.cancelReadImpl(errorCode)
+	s.cancelReadImpl(errorCode)
 	completed := s.isNewlyCompleted()
 	s.mutex.Unlock()
 
-	if queuedNewControlFrame {
-		s.sender.onHasStreamControlFrame(s.streamID, s)
-	}
 	if completed {
 		s.flowController.Abandon()
 		s.sender.onStreamCompleted(s.streamID)
 	}
 }
 
-func (s *receiveStream) cancelReadImpl(errorCode qerr.StreamErrorCode) (queuedNewControlFrame bool) {
+func (s *receiveStream) cancelReadImpl(errorCode qerr.StreamErrorCode) {
 	if s.cancelledLocally { // duplicate call to CancelRead
-		return false
-	}
-	if s.closeForShutdownErr != nil {
-		return false
+		return
 	}
 	s.cancelledLocally = true
 	if s.errorRead || s.cancelledRemotely {
-		return false
+		return
 	}
-	s.queuedStopSending = true
 	s.cancelErr = &StreamError{StreamID: s.streamID, ErrorCode: errorCode, Remote: false}
 	s.signalRead()
-	return true
+	s.sender.queueControlFrame(&wire.StopSendingFrame{
+		StreamID:  s.streamID,
+		ErrorCode: errorCode,
+	})
 }
 
-func (s *receiveStream) handleStreamFrame(frame *wire.StreamFrame, now time.Time) error {
+func (s *receiveStream) handleStreamFrame(frame *wire.StreamFrame) error {
 	s.mutex.Lock()
-	err := s.handleStreamFrameImpl(frame, now)
+	err := s.handleStreamFrameImpl(frame)
 	completed := s.isNewlyCompleted()
 	s.mutex.Unlock()
 
@@ -285,9 +264,9 @@ func (s *receiveStream) handleStreamFrame(frame *wire.StreamFrame, now time.Time
 	return err
 }
 
-func (s *receiveStream) handleStreamFrameImpl(frame *wire.StreamFrame, now time.Time) error {
+func (s *receiveStream) handleStreamFrameImpl(frame *wire.StreamFrame) error {
 	maxOffset := frame.Offset + frame.DataLen()
-	if err := s.flowController.UpdateHighestReceived(maxOffset, frame.Fin, now); err != nil {
+	if err := s.flowController.UpdateHighestReceived(maxOffset, frame.Fin); err != nil {
 		return err
 	}
 	if frame.Fin {
@@ -303,9 +282,9 @@ func (s *receiveStream) handleStreamFrameImpl(frame *wire.StreamFrame, now time.
 	return nil
 }
 
-func (s *receiveStream) handleResetStreamFrame(frame *wire.ResetStreamFrame, now time.Time) error {
+func (s *receiveStream) handleResetStreamFrame(frame *wire.ResetStreamFrame) error {
 	s.mutex.Lock()
-	err := s.handleResetStreamFrameImpl(frame, now)
+	err := s.handleResetStreamFrameImpl(frame)
 	completed := s.isNewlyCompleted()
 	s.mutex.Unlock()
 
@@ -315,11 +294,11 @@ func (s *receiveStream) handleResetStreamFrame(frame *wire.ResetStreamFrame, now
 	return err
 }
 
-func (s *receiveStream) handleResetStreamFrameImpl(frame *wire.ResetStreamFrame, now time.Time) error {
+func (s *receiveStream) handleResetStreamFrameImpl(frame *wire.ResetStreamFrame) error {
 	if s.closeForShutdownErr != nil {
 		return nil
 	}
-	if err := s.flowController.UpdateHighestReceived(frame.FinalSize, true, now); err != nil {
+	if err := s.flowController.UpdateHighestReceived(frame.FinalSize, true); err != nil {
 		return err
 	}
 	s.finalOffset = frame.FinalSize
@@ -339,29 +318,6 @@ func (s *receiveStream) handleResetStreamFrameImpl(frame *wire.ResetStreamFrame,
 	return nil
 }
 
-func (s *receiveStream) getControlFrame(now time.Time) (_ ackhandler.Frame, ok, hasMore bool) {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
-
-	if !s.queuedStopSending && !s.queuedMaxStreamData {
-		return ackhandler.Frame{}, false, false
-	}
-	if s.queuedStopSending {
-		s.queuedStopSending = false
-		return ackhandler.Frame{
-			Frame: &wire.StopSendingFrame{StreamID: s.streamID, ErrorCode: s.cancelErr.ErrorCode},
-		}, true, s.queuedMaxStreamData
-	}
-
-	s.queuedMaxStreamData = false
-	return ackhandler.Frame{
-		Frame: &wire.MaxStreamDataFrame{
-			StreamID:          s.streamID,
-			MaximumStreamData: s.flowController.GetWindowUpdate(now),
-		},
-	}, true, false
-}
-
 func (s *receiveStream) SetReadDeadline(t time.Time) error {
 	s.mutex.Lock()
 	s.deadline = t
@@ -378,6 +334,10 @@ func (s *receiveStream) closeForShutdown(err error) {
 	s.closeForShutdownErr = err
 	s.mutex.Unlock()
 	s.signalRead()
+}
+
+func (s *receiveStream) getWindowUpdate() protocol.ByteCount {
+	return s.flowController.GetWindowUpdate()
 }
 
 // signalRead performs a non-blocking send on the readChan
