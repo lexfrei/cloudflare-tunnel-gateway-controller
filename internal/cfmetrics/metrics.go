@@ -8,6 +8,16 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
+// Prometheus label names used across metric definitions.
+const (
+	labelStatus    = "status"
+	labelType      = "type"
+	labelMethod    = "method"
+	labelOperation = "operation"
+	labelErrorType = "error_type"
+	labelResource  = "resource"
+)
+
 // Collector provides metrics recording interface.
 // This allows components to record metrics without direct prometheus dependency.
 //
@@ -152,14 +162,14 @@ func (c *prometheusCollector) initSyncMetrics() {
 			Help:    "Duration of route synchronization to Cloudflare",
 			Buckets: []float64{0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30},
 		},
-		[]string{"status"},
+		[]string{labelStatus},
 	)
 	c.syncedRoutes = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "cftunnel_synced_routes",
 			Help: "Number of routes synced by type",
 		},
-		[]string{"type"},
+		[]string{labelType},
 	)
 	c.ingressRulesTotal = prometheus.NewGauge(
 		prometheus.GaugeOpts{
@@ -172,14 +182,14 @@ func (c *prometheusCollector) initSyncMetrics() {
 			Name: "cftunnel_failed_backend_refs",
 			Help: "Number of failed backend references",
 		},
-		[]string{"type"},
+		[]string{labelType},
 	)
 	c.syncErrorsTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "cftunnel_sync_errors_total",
 			Help: "Total sync errors by type",
 		},
-		[]string{"error_type"},
+		[]string{labelErrorType},
 	)
 }
 
@@ -190,21 +200,21 @@ func (c *prometheusCollector) initAPIMetrics() {
 			Help:    "Duration of Cloudflare API calls",
 			Buckets: []float64{0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30},
 		},
-		[]string{"method", "resource"},
+		[]string{labelMethod, labelResource},
 	)
 	c.apiCallsTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "cftunnel_cloudflare_api_calls_total",
 			Help: "Total Cloudflare API calls",
 		},
-		[]string{"method", "resource", "status"},
+		[]string{labelMethod, labelResource, labelStatus},
 	)
 	c.apiErrorsTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "cftunnel_cloudflare_api_errors_total",
 			Help: "Total Cloudflare API errors by type",
 		},
-		[]string{"method", "error_type"},
+		[]string{labelMethod, labelErrorType},
 	)
 }
 
@@ -215,21 +225,21 @@ func (c *prometheusCollector) initHelmMetrics() {
 			Help:    "Duration of Helm operations",
 			Buckets: []float64{0.5, 1, 2.5, 5, 10, 30, 60},
 		},
-		[]string{"operation"},
+		[]string{labelOperation},
 	)
 	c.helmOpsTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "cftunnel_helm_operations_total",
 			Help: "Total Helm operations",
 		},
-		[]string{"operation", "status"},
+		[]string{labelOperation, labelStatus},
 	)
 	c.helmErrorsTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "cftunnel_helm_errors_total",
 			Help: "Total Helm errors by type",
 		},
-		[]string{"operation", "error_type"},
+		[]string{labelOperation, labelErrorType},
 	)
 	c.helmChartInfo = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
@@ -247,14 +257,14 @@ func (c *prometheusCollector) initIngressMetrics() {
 			Help:    "Duration of ingress rule building",
 			Buckets: []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5},
 		},
-		[]string{"type"},
+		[]string{labelType},
 	)
 	c.backendRefValidation = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "cftunnel_backend_ref_validation_total",
 			Help: "Backend reference validation results",
 		},
-		[]string{"type", "result", "reason"},
+		[]string{labelType, "result", "reason"},
 	)
 }
 
