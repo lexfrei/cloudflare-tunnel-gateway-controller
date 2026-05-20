@@ -1,5 +1,25 @@
 package helm
 
+// Helm values map keys used when assembling cloudflared chart values.
+const (
+	keyName            = "name"
+	keyImage           = "image"
+	keyCommand         = "command"
+	keyShellFlag       = "-c"
+	keySecurityContext = "securityContext"
+	keyRunAsUser       = "runAsUser"
+	keyRunAsNonRoot    = "runAsNonRoot"
+	keyMountPath       = "mountPath"
+	keyMemory          = "memory"
+	keyShell           = "sh"
+
+	volNameAWGConfig  = "awg-config"
+	volNameAWGRuntime = "awg-runtime"
+	volNameTunDevice  = "tun-device"
+
+	pathDevNetTun = "/dev/net/tun"
+)
+
 // CloudflaredValues holds configuration for cloudflare-tunnel Helm chart.
 type CloudflaredValues struct {
 	TunnelToken   string
@@ -278,78 +298,78 @@ fi`
 	return map[string]any{
 		"initContainers": []any{
 			map[string]any{
-				"name":  "wait-for-awg",
-				"image": "busybox:1.36",
-				"command": []any{
-					"sh", "-c", "echo 'Waiting for AWG...' && sleep 5 && echo 'Done'",
+				keyName:  "wait-for-awg",
+				keyImage: "busybox:1.36",
+				keyCommand: []any{
+					keyShell, keyShellFlag, "echo 'Waiting for AWG...' && sleep 5 && echo 'Done'",
 				},
-				"securityContext": map[string]any{
-					"runAsUser":    0,
-					"runAsNonRoot": false,
+				keySecurityContext: map[string]any{
+					keyRunAsUser:    0,
+					keyRunAsNonRoot: false,
 				},
 			},
 		},
 		"containers": []any{
 			map[string]any{
-				"name":            "amneziawg",
-				"image":           "ghcr.io/zeozeozeo/amneziawg-client:latest",
+				keyName:           "amneziawg",
+				keyImage:          "ghcr.io/zeozeozeo/amneziawg-client:latest",
 				"imagePullPolicy": "IfNotPresent",
 				"stdin":           true,
 				"tty":             true,
-				"command":         []any{"sh", "-c", wrapperScript},
-				"securityContext": map[string]any{
-					"privileged":   true,
-					"runAsUser":    0,
-					"runAsNonRoot": false,
+				keyCommand:        []any{keyShell, keyShellFlag, wrapperScript},
+				keySecurityContext: map[string]any{
+					"privileged":    true,
+					keyRunAsUser:    0,
+					keyRunAsNonRoot: false,
 				},
 				"lifecycle": map[string]any{
 					"preStop": map[string]any{
 						"exec": map[string]any{
-							"command": []any{"sh", "-c", preStopScript},
+							keyCommand: []any{keyShell, keyShellFlag, preStopScript},
 						},
 					},
 				},
 				"volumeMounts": []any{
 					map[string]any{
-						"name":      "awg-config",
-						"mountPath": "/config",
-						"readOnly":  true,
+						keyName:      volNameAWGConfig,
+						keyMountPath: "/config",
+						"readOnly":   true,
 					},
 					map[string]any{
-						"name":      "awg-runtime",
-						"mountPath": "/run/awg",
+						keyName:      volNameAWGRuntime,
+						keyMountPath: "/run/awg",
 					},
 					map[string]any{
-						"name":      "tun-device",
-						"mountPath": "/dev/net/tun",
+						keyName:      volNameTunDevice,
+						keyMountPath: pathDevNetTun,
 					},
 				},
 				"resources": map[string]any{
 					"requests": map[string]any{
-						"cpu":    "10m",
-						"memory": "32Mi",
+						"cpu":     "10m",
+						keyMemory: "32Mi",
 					},
 					"limits": map[string]any{
-						"memory": "64Mi",
+						keyMemory: "64Mi",
 					},
 				},
 			},
 		},
 		"extraVolumes": []any{
 			map[string]any{
-				"name": "awg-config",
+				keyName: volNameAWGConfig,
 				"secret": map[string]any{
 					"secretName": sidecar.ConfigSecretName,
 				},
 			},
 			map[string]any{
-				"name": "awg-runtime",
+				keyName: volNameAWGRuntime,
 				"emptyDir": map[string]any{
 					"medium": "Memory",
 				},
 			},
 			map[string]any{
-				"name": "tun-device",
+				keyName: volNameTunDevice,
 				"hostPath": map[string]any{
 					"path": "/dev/net/tun",
 					"type": "CharDevice",
