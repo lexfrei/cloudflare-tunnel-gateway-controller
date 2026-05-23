@@ -186,7 +186,15 @@ Cloudflare Tunnel has path matching behavior that differs from Gateway API:
 
 **Workaround:** Use distinct path prefixes (e.g., `/alpha`, `/beta`, `/gamma`), or enable the L7 proxy.
 
-See [Path Matching Limitations](https://cf.k8s.lex.la/gateway-api/limitations/#cloudflare-tunnel-path-matching-limitations) for details.
+`BackendTLSPolicy` (proxy → backend TLS) is supported at minimum-viable scope:
+
+- Hostname-type `SubjectAltNames` only — URI/SPIFFE SANs are rejected with `Accepted=False, Reason=Invalid`
+- `WellKnownCACertificates: System` is not honoured — only explicit `CACertificateRefs`
+- Multi-policy conflicts resolve by oldest-creationTimestamp (then alphabetical), but losing policies are not yet stamped `Accepted=False, Reason=Conflicted`
+- HTTPS-listener Re-encrypt is not supported (Cloudflare terminates frontend TLS at the edge)
+- `RequestMirror` filter does NOT route mirrored traffic through the TLS-aware transport pool — when a `BackendTLSPolicy` targets a mirror destination the mirrored copy is sent in plaintext (the converter logs a WARN to surface this; tracked as a follow-up)
+
+See [Path Matching Limitations](https://cf.k8s.lex.la/gateway-api/limitations/#cloudflare-tunnel-path-matching-limitations) and [Backend mTLS](https://cf.k8s.lex.la/gateway-api/limitations/#backend-mtls-backendtlspolicy) for details.
 
 See [Gateway API documentation](https://cf.k8s.lex.la/gateway-api/) for full details and examples.
 

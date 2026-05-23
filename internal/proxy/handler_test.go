@@ -441,7 +441,7 @@ func TestHandler_PruneTransportsRemovesStaleHostFromSyncMap(t *testing.T) {
 
 	// Verify transport for backend A was created.
 	hostA := backendA.Listener.Addr().String()
-	keyA := proxy.TransportKey(hostA, proxy.BackendProtocolHTTP)
+	keyA := proxy.TransportKey(hostA, proxy.BackendProtocolHTTP, nil)
 	_, loaded := handler.Transports().Load(keyA)
 	require.True(t, loaded, "transport for backend A should exist after request")
 

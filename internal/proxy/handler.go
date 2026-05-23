@@ -2,8 +2,12 @@ package proxy
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
+	"crypto/x509"
+	"encoding/hex"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -28,11 +32,35 @@ type Handler struct {
 	transports sync.Map // map[string]http.RoundTripper
 }
 
-// transportKey forms the cache key for a backend transport. The protocol is
-// part of the key so a protocol flip on the same host:port forces a fresh
-// transport.
-func transportKey(host string, protocol BackendProtocol) string {
-	return host + "|" + string(protocol)
+// transportKey forms the cache key for a backend transport. Host, protocol
+// AND TLS identity all participate so that a config push which adds, removes,
+// or re-anchors a BackendTLSPolicy forces a fresh transport instead of reusing
+// a stale one. tlsFingerprint hashes the CA + ServerName + SANs into a short
+// stable string.
+func transportKey(host string, protocol BackendProtocol, backendTLS *BackendTLSConfig) string {
+	return host + "|" + string(protocol) + "|" + tlsFingerprint(backendTLS)
+}
+
+// tlsFingerprint returns a stable short hash of the TLS config, or "" when nil.
+func tlsFingerprint(backendTLS *BackendTLSConfig) string {
+	if backendTLS == nil {
+		return ""
+	}
+
+	hasher := sha256.New()
+	hasher.Write([]byte(backendTLS.CABundlePEM))
+	hasher.Write([]byte{0})
+	hasher.Write([]byte(backendTLS.ServerName))
+	hasher.Write([]byte{0})
+
+	for _, san := range backendTLS.SubjectAltNames {
+		hasher.Write([]byte(san))
+		hasher.Write([]byte{0})
+	}
+
+	sum := hasher.Sum(nil)
+
+	return hex.EncodeToString(sum[:8])
 }
 
 // NewHandler creates a new proxy Handler backed by the given Router.
@@ -156,12 +184,12 @@ func (h *Handler) proxyToBackend(writer http.ResponseWriter, req *http.Request, 
 	// requests reading the same compiled rule.
 	allFilters := slices.Concat(result.Filters, result.BackendFilters)
 
-	proxy := h.createReverseProxy(backendURL, backend.Protocol, allFilters)
+	proxy := h.createReverseProxy(backendURL, backend.Protocol, backend.TLS, allFilters)
 	proxy.ServeHTTP(writer, req)
 }
 
 // createReverseProxy builds an httputil.ReverseProxy for the given backend.
-func (h *Handler) createReverseProxy(backendURL *url.URL, protocol BackendProtocol, filters []Filter) *httputil.ReverseProxy {
+func (h *Handler) createReverseProxy(backendURL *url.URL, protocol BackendProtocol, backendTLS *BackendTLSConfig, filters []Filter) *httputil.ReverseProxy {
 	return &httputil.ReverseProxy{
 		Director: func(req *http.Request) {
 			req.URL.Scheme = backendURL.Scheme
@@ -191,7 +219,7 @@ func (h *Handler) createReverseProxy(backendURL *url.URL, protocol BackendProtoc
 				req.Header.Set("User-Agent", "")
 			}
 		},
-		Transport:    h.getTransport(backendURL.Host, protocol),
+		Transport:    h.getTransport(backendURL.Host, protocol, backendTLS),
 		ErrorHandler: errorHandler,
 		ModifyResponse: func(resp *http.Response) error {
 			ApplyResponseFilters(filters, resp)
@@ -201,11 +229,11 @@ func (h *Handler) createReverseProxy(backendURL *url.URL, protocol BackendProtoc
 	}
 }
 
-// getTransport returns a shared transport for the given backend host/protocol.
-// The cache key includes the protocol so that flipping a Service's appProtocol
-// (e.g. http -> h2c) does not silently reuse a stale HTTP/1.1 transport.
-func (h *Handler) getTransport(host string, protocol BackendProtocol) http.RoundTripper {
-	key := transportKey(host, protocol)
+// getTransport returns a shared transport for the given backend host/protocol/TLS.
+// The cache key includes protocol AND TLS identity so config flips that swap
+// out either don't silently reuse a stale transport.
+func (h *Handler) getTransport(host string, protocol BackendProtocol, backendTLS *BackendTLSConfig) http.RoundTripper {
+	key := transportKey(host, protocol, backendTLS)
 
 	if transport, ok := h.transports.Load(key); ok {
 		if rt, castOK := transport.(http.RoundTripper); castOK {
@@ -213,7 +241,7 @@ func (h *Handler) getTransport(host string, protocol BackendProtocol) http.Round
 		}
 	}
 
-	transport := newTransport(protocol)
+	transport := newTransport(protocol, backendTLS)
 	actual, _ := h.transports.LoadOrStore(key, transport)
 
 	if rt, ok := actual.(http.RoundTripper); ok {
@@ -251,10 +279,17 @@ func newH2CDialer() *net.Dialer {
 	}
 }
 
-// newTransport builds a backend transport for the given protocol. For h2c it
-// returns an HTTP/2 transport that negotiates cleartext via prior knowledge
-// (AllowHTTP with a plaintext dialer); otherwise a clone of the default transport.
-func newTransport(protocol BackendProtocol) http.RoundTripper {
+// newTransport builds a backend transport for the given protocol and optional
+// TLS policy. Precedence: when backendTLS is set, the proxy dials TLS (HTTPS,
+// with HTTP/2 auto-negotiated via ALPN) — h2c (cleartext) cannot coexist with
+// TLS, so the protocol marker is intentionally ignored in that path. Otherwise
+// h2c uses an HTTP/2 plaintext transport; default is a clone of the stdlib
+// transport.
+func newTransport(protocol BackendProtocol, backendTLS *BackendTLSConfig) http.RoundTripper {
+	if backendTLS != nil {
+		return newTLSTransport(backendTLS)
+	}
+
 	if protocol == BackendProtocolH2C {
 		dialer := newH2CDialer()
 
@@ -273,6 +308,127 @@ func newTransport(protocol BackendProtocol) http.RoundTripper {
 	}
 
 	return http.DefaultTransport
+}
+
+// Sentinel errors for backend TLS verification so wrappers can be matched with errors.Is.
+var (
+	errBackendTLSNoPeerCert  = errors.New("backend tls: no peer certificates presented")
+	errBackendTLSSANMissing  = errors.New("backend tls: required SAN not present in cert SANs")
+	errBackendTLSChainVerify = errors.New("backend tls: chain verification failed")
+)
+
+// newTLSTransport wires a BackendTLSConfig into an http.Transport that
+// validates the backend cert chain against the policy's CA bundle.
+//
+// Two verification modes, per Gateway API BackendTLSPolicy spec:
+//
+//   - SubjectAltNames empty: stdlib hostname verification against ServerName
+//     (i.e. policy Hostname is the authentication identity). ServerName is
+//     also used as SNI.
+//   - SubjectAltNames non-empty: Hostname is used ONLY for SNI/selection, NOT
+//     authentication. We disable the default ServerName-vs-cert match and
+//     manually verify the chain + OR-match the leaf against the policy's SAN
+//     list using x509.VerifyHostname so RFC 6125 wildcards work.
+//
+// In both modes a CA pool that fails to parse any PEM block is treated as a
+// hard failure so misconfigured operators see a TLS handshake error instead of
+// silently trusting nothing (gosec G402-safe path).
+func newTLSTransport(backendTLS *BackendTLSConfig) http.RoundTripper {
+	rootCAs := x509.NewCertPool()
+	if ok := rootCAs.AppendCertsFromPEM([]byte(backendTLS.CABundlePEM)); !ok {
+		slog.Error("BackendTLSPolicy CA bundle did not parse — all backend TLS handshakes will fail",
+			"serverName", backendTLS.ServerName,
+		)
+	}
+
+	tlsConfig := buildBackendTLSConfig(backendTLS, rootCAs)
+
+	base, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		// stdlib's DefaultTransport is always *http.Transport; fall back is
+		// defensive only.
+		return http.DefaultTransport
+	}
+
+	transport := base.Clone()
+	transport.TLSClientConfig = tlsConfig
+
+	return transport
+}
+
+// buildBackendTLSConfig assembles the *tls.Config for the two backend-TLS
+// verification modes. Split from newTLSTransport for testability and to keep
+// per-function complexity within the funlen budget.
+func buildBackendTLSConfig(backendTLS *BackendTLSConfig, rootCAs *x509.CertPool) *tls.Config {
+	if len(backendTLS.SubjectAltNames) == 0 {
+		// Mode 1: Hostname-based authentication via ServerName.
+		return &tls.Config{
+			MinVersion: tls.VersionTLS12,
+			RootCAs:    rootCAs,
+			ServerName: backendTLS.ServerName,
+		}
+	}
+
+	// Mode 2: SAN-list authentication. ServerName drives SNI only.
+	expected := slices.Clone(backendTLS.SubjectAltNames)
+
+	tlsConfig := &tls.Config{
+		MinVersion: tls.VersionTLS12,
+		RootCAs:    rootCAs,
+		ServerName: backendTLS.ServerName,
+		// Hostname matching is intentionally bypassed — VerifyConnection
+		// performs full chain validation AND the SAN OR-match below.
+		// gosec G402: this is the documented Gateway API SAN-only verification
+		// path; chain validation is preserved via leaf.Verify().
+		InsecureSkipVerify: true, //nolint:gosec // see comment above
+		VerifyConnection:   verifyBackendChainAndSANs(rootCAs, expected),
+	}
+
+	return tlsConfig
+}
+
+// verifyBackendChainAndSANs returns a VerifyConnection callback that runs both
+// on fresh and resumed handshakes (per gosec G123). It manually verifies the
+// chain against rootCAs (since InsecureSkipVerify=true disables the default
+// path) and asserts the leaf cert matches at least one of the expected SANs.
+// Wildcard SANs are honoured via x509.Certificate.VerifyHostname.
+func verifyBackendChainAndSANs(rootCAs *x509.CertPool, expected []string) func(tls.ConnectionState) error {
+	return func(state tls.ConnectionState) error {
+		if len(state.PeerCertificates) == 0 {
+			return errBackendTLSNoPeerCert
+		}
+
+		leaf := state.PeerCertificates[0]
+
+		intermediates := x509.NewCertPool()
+		for _, intermediate := range state.PeerCertificates[1:] {
+			intermediates.AddCert(intermediate)
+		}
+
+		// DNSName intentionally empty: hostname auth happens via the SAN
+		// OR-match below per BackendTLSPolicy semantics.
+		_, verifyErr := leaf.Verify(x509.VerifyOptions{
+			Roots:         rootCAs,
+			Intermediates: intermediates,
+		})
+		if verifyErr != nil {
+			return fmt.Errorf("%w: %w", errBackendTLSChainVerify, verifyErr)
+		}
+
+		// Gateway API spec: the cert must match AT LEAST ONE of the policy's
+		// SubjectAltNames (OR semantics). VerifyHostname handles RFC 6125
+		// wildcard SANs correctly (e.g. cert SAN "*.example.com" matches a
+		// policy SAN "foo.example.com").
+		for _, want := range expected {
+			sanErr := leaf.VerifyHostname(want)
+			if sanErr == nil {
+				return nil
+			}
+		}
+
+		return fmt.Errorf("%w: required one of %v, cert SANs %v",
+			errBackendTLSSANMissing, expected, leaf.DNSNames)
+	}
 }
 
 // errorHandler handles proxy errors with appropriate HTTP status codes.

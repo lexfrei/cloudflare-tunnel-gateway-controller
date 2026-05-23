@@ -70,6 +70,22 @@ rules:
       - list
       - watch
   - apiGroups:
+      - gateway.networking.k8s.io
+    resources:
+      - backendtlspolicies
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - gateway.networking.k8s.io
+    resources:
+      - backendtlspolicies/status
+    verbs:
+      - get
+      - patch
+      - update
+  - apiGroups:
       - ""
     resources:
       - services

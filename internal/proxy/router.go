@@ -158,9 +158,9 @@ func (r *Router) UpdateConfig(cfg *Config) error {
 }
 
 // extractActiveTransportKeys collects all backend transport-pool keys from the
-// config's rules. Keys are formed by transportKey(host, protocol) so
-// PruneTransports can evict stale entries when either changes (e.g. on a
-// Service appProtocol flip).
+// config's rules. Keys are formed by transportKey(host, protocol, tls) so
+// PruneTransports can evict stale entries when any of those change (e.g. on a
+// Service appProtocol flip or a BackendTLSPolicy swap).
 func extractActiveTransportKeys(cfg *Config) map[string]bool {
 	keys := make(map[string]bool)
 
@@ -171,7 +171,7 @@ func extractActiveTransportKeys(cfg *Config) map[string]bool {
 				continue
 			}
 
-			keys[transportKey(parsed.Host, backend.Protocol)] = true
+			keys[transportKey(parsed.Host, backend.Protocol, backend.TLS)] = true
 		}
 	}
 

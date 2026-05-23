@@ -50,18 +50,25 @@ type BackendRefValidator func(ctx context.Context, fromNamespace string, ref gat
 // It lets the converter pick the backend transport without itself reading the API.
 type BackendProtocolResolver func(ctx context.Context, namespace, serviceName string, port int32) string
 
+// BackendTLSResolver returns the TLS config the proxy must apply when dialing
+// the given backend Service port, or nil when no BackendTLSPolicy targets it.
+// It lets the converter inject TLS settings without itself reading the API.
+type BackendTLSResolver func(ctx context.Context, namespace, serviceName string, port int32) *BackendTLSConfig
+
 // ConvertHTTPRoutes converts Gateway API HTTPRoute resources into a proxy Config.
 //
-// validator and protocolResolver may both be nil:
+// validator, protocolResolver, and tlsResolver may all be nil:
 //   - nil validator: cross-namespace backend refs are accepted unconditionally
 //     (used by tests that don't model ReferenceGrant).
 //   - nil protocolResolver: backend protocol stays the default HTTP/1.1.
+//   - nil tlsResolver: no BackendTLSPolicy is applied; plaintext to backends.
 func ConvertHTTPRoutes(
 	ctx context.Context,
 	routes []*gatewayv1.HTTPRoute,
 	clusterDomain string,
 	validator BackendRefValidator,
 	protocolResolver BackendProtocolResolver,
+	tlsResolver BackendTLSResolver,
 ) *Config {
 	cfg := &Config{
 		Version: configVersionCounter.Add(1),
@@ -73,7 +80,7 @@ func ConvertHTTPRoutes(
 		for ruleIdx := range route.Spec.Rules {
 			proxyRule := convertHTTPRouteRule(
 				ctx, &route.Spec.Rules[ruleIdx], hostnames,
-				route.Namespace, clusterDomain, validator, protocolResolver,
+				route.Namespace, clusterDomain, validator, protocolResolver, tlsResolver,
 			)
 
 			// Rules with no backends and no redirect filter are kept —
@@ -105,6 +112,7 @@ func convertHTTPRouteRule(
 	clusterDomain string,
 	validator BackendRefValidator,
 	resolver BackendProtocolResolver,
+	tlsResolver BackendTLSResolver,
 ) RouteRule {
 	proxyRule := RouteRule{
 		Hostnames: hostnames,
@@ -115,14 +123,14 @@ func convertHTTPRouteRule(
 	}
 
 	for filterIdx := range rule.Filters {
-		converted := convertFilter(ctx, &rule.Filters[filterIdx], namespace, clusterDomain, validator)
+		converted := convertFilter(ctx, &rule.Filters[filterIdx], namespace, clusterDomain, validator, tlsResolver)
 		if converted != nil {
 			proxyRule.Filters = append(proxyRule.Filters, *converted)
 		}
 	}
 
 	for backendIdx := range rule.BackendRefs {
-		backend, ok := convertBackendRef(ctx, &rule.BackendRefs[backendIdx], namespace, clusterDomain, validator, resolver)
+		backend, ok := convertBackendRef(ctx, &rule.BackendRefs[backendIdx], namespace, clusterDomain, validator, resolver, tlsResolver)
 		if ok {
 			proxyRule.Backends = append(proxyRule.Backends, backend)
 		}
@@ -218,6 +226,7 @@ func convertFilter(
 	filter *gatewayv1.HTTPRouteFilter,
 	namespace, clusterDomain string,
 	validator BackendRefValidator,
+	tlsResolver BackendTLSResolver,
 ) *RouteFilter {
 	switch filter.Type {
 	case gatewayv1.HTTPRouteFilterRequestHeaderModifier:
@@ -229,7 +238,7 @@ func convertFilter(
 	case gatewayv1.HTTPRouteFilterURLRewrite:
 		return convertURLRewriteFilter(filter.URLRewrite)
 	case gatewayv1.HTTPRouteFilterRequestMirror:
-		return convertMirrorFilter(ctx, filter.RequestMirror, namespace, clusterDomain, validator)
+		return convertMirrorFilter(ctx, filter.RequestMirror, namespace, clusterDomain, validator, tlsResolver)
 	case gatewayv1.HTTPRouteFilterExtensionRef,
 		gatewayv1.HTTPRouteFilterCORS,
 		gatewayv1.HTTPRouteFilterExternalAuth:
@@ -315,6 +324,7 @@ func convertMirrorFilter(
 	mirror *gatewayv1.HTTPRequestMirrorFilter,
 	namespace, clusterDomain string,
 	validator BackendRefValidator,
+	tlsResolver BackendTLSResolver,
 ) *RouteFilter {
 	if mirror == nil {
 		return nil
@@ -349,6 +359,22 @@ func convertMirrorFilter(
 	}
 
 	mirrorURL := buildServiceURL(string(mirror.BackendRef.Name), mirrorNS, mirrorPort, clusterDomain)
+
+	// RequestMirror runs through a side-channel HTTP client that does NOT
+	// share the main proxy's TLS-aware transport pool. If a BackendTLSPolicy
+	// targets the mirror destination, the mirrored copy would be sent in
+	// plaintext, silently bypassing the operator's TLS intent. Document the
+	// gap loudly so operators see the silent downgrade; an actual TLS-aware
+	// mirror dial is tracked as a follow-up (see limitations.md).
+	if tlsResolver != nil {
+		if tls := tlsResolver(ctx, mirrorNS, string(mirror.BackendRef.Name), mirrorPort); tls != nil {
+			slog.Warn("RequestMirror target has a matching BackendTLSPolicy but the mirror filter dials plaintext — mirrored copy bypasses backend TLS enforcement",
+				"namespace", mirrorNS,
+				"service", string(mirror.BackendRef.Name),
+				"port", mirrorPort,
+			)
+		}
+	}
 
 	return &RouteFilter{
 		Type: FilterRequestMirror,
@@ -531,6 +557,7 @@ func convertBackendRef(
 	clusterDomain string,
 	validator BackendRefValidator,
 	resolver BackendProtocolResolver,
+	tlsResolver BackendTLSResolver,
 ) (BackendRef, bool) {
 	if !IsServiceBackendRef(backend.BackendObjectReference) {
 		slog.Warn("skipping non-Service backend kind",
@@ -578,11 +605,38 @@ func convertBackendRef(
 
 	result.URL = buildServiceURL(serviceName, svcNamespace, port, clusterDomain)
 
-	result.Protocol, result.URL = resolveBackendProtocol(ctx, resolver, svcNamespace, serviceName, port, result.URL)
+	// Resolve TLS first so the protocol resolver can know whether to silently
+	// pass through `appProtocol: https` (policy attached → suppressed) or warn
+	// (no policy → operator misconfigured a TLS hint with no actual TLS).
+	result.TLS, result.URL = resolveBackendTLS(ctx, tlsResolver, svcNamespace, serviceName, port, result.URL)
+	result.Protocol, result.URL = resolveBackendProtocol(ctx, resolver, svcNamespace, serviceName, port, result.URL, result.TLS != nil)
 
-	result.Filters = convertBackendFilters(ctx, backend.Filters, namespace, clusterDomain, validator)
+	result.Filters = convertBackendFilters(ctx, backend.Filters, namespace, clusterDomain, validator, tlsResolver)
 
 	return result, true
+}
+
+// resolveBackendTLS applies the BackendTLSPolicy resolver. When a policy
+// targets the backend, the returned TLS config is attached and the URL scheme
+// is forced to https (buildServiceURL's port-443 heuristic alone misses TLS on
+// non-standard ports).
+func resolveBackendTLS(
+	ctx context.Context,
+	resolver BackendTLSResolver,
+	namespace, serviceName string,
+	port int32,
+	rawURL string,
+) (*BackendTLSConfig, string) {
+	if resolver == nil {
+		return nil, rawURL
+	}
+
+	tls := resolver(ctx, namespace, serviceName, port)
+	if tls == nil {
+		return nil, rawURL
+	}
+
+	return tls, strings.Replace(rawURL, schemeHTTP+"://", schemeHTTPS+"://", 1)
 }
 
 // resolveBackendProtocol applies the protocol resolver to a backend reference
@@ -593,12 +647,19 @@ func convertBackendRef(
 // Unrecognised appProtocol values (e.g. kubernetes.io/ws, kubernetes.io/wss)
 // log a warning and fall back to the default HTTP/1.1 transport rather than
 // silently dropping the signal.
+//
+// `tlsAttached` reports whether a BackendTLSPolicy already applied a TLS config
+// to this backend. When the operator declared `appProtocol: https` (or
+// `HTTPS`) but no policy attached, the proxy would otherwise silently dial
+// plaintext — defeating the operator's stated TLS intent. In that case the
+// function logs a WARN so the misconfiguration is visible.
 func resolveBackendProtocol(
 	ctx context.Context,
 	resolver BackendProtocolResolver,
 	namespace, serviceName string,
 	port int32,
 	rawURL string,
+	tlsAttached bool,
 ) (BackendProtocol, string) {
 	if resolver == nil {
 		return BackendProtocolHTTP, rawURL
@@ -610,7 +671,41 @@ func resolveBackendProtocol(
 	case "":
 		return BackendProtocolHTTP, rawURL
 	case appProtocolH2C:
+		// h2c is plaintext HTTP/2 — but if a BackendTLSPolicy already
+		// attached, TLS wins (cleartext h2c cannot coexist with TLS).
+		// Leave the URL https:// so stdlib applies TLSClientConfig and
+		// HTTP/2 is negotiated via ALPN. A WARN surfaces the suppressed
+		// h2c hint so operators don't ship a confusing combo silently.
+		if tlsAttached {
+			slog.Warn("appProtocol kubernetes.io/h2c suppressed by BackendTLSPolicy on the same Service — HTTP/2 will be negotiated over TLS via ALPN",
+				"namespace", namespace,
+				"service", serviceName,
+				"port", port,
+			)
+
+			return BackendProtocolHTTP, rawURL
+		}
+
 		return BackendProtocolH2C, strings.Replace(rawURL, schemeHTTPS+"://", schemeHTTP+"://", 1)
+	case "http", "HTTP":
+		// Plaintext hint matches the default transport — silent.
+		return BackendProtocolHTTP, rawURL
+	case "https", "HTTPS":
+		// TLS hint. If a BackendTLSPolicy attached, resolveBackendTLS already
+		// rewrote the URL to https:// and built a real TLS config — the hint
+		// is redundant, no warning needed. If no policy attached, the proxy
+		// would dial in plaintext anyway (we have no CA to verify against);
+		// surface this so operators don't ship a broken TLS expectation.
+		if !tlsAttached {
+			slog.Warn("backend declares appProtocol https but no BackendTLSPolicy targets it — request will be sent in plaintext",
+				"namespace", namespace,
+				"service", serviceName,
+				"port", port,
+				"appProtocol", appProto,
+			)
+		}
+
+		return BackendProtocolHTTP, rawURL
 	default:
 		slog.Warn("unsupported backend appProtocol; falling back to HTTP/1.1",
 			"namespace", namespace,
@@ -630,6 +725,7 @@ func convertBackendFilters(
 	filters []gatewayv1.HTTPRouteFilter,
 	namespace, clusterDomain string,
 	validator BackendRefValidator,
+	tlsResolver BackendTLSResolver,
 ) []RouteFilter {
 	if len(filters) == 0 {
 		return nil
@@ -638,7 +734,7 @@ func convertBackendFilters(
 	result := make([]RouteFilter, 0, len(filters))
 
 	for filterIdx := range filters {
-		converted := convertFilter(ctx, &filters[filterIdx], namespace, clusterDomain, validator)
+		converted := convertFilter(ctx, &filters[filterIdx], namespace, clusterDomain, validator, tlsResolver)
 		if converted != nil {
 			result = append(result, *converted)
 		}
