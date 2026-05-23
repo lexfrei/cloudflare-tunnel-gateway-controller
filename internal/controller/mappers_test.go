@@ -1699,3 +1699,119 @@ func TestFindRoutesForGateway_MultipleClassesSameController(t *testing.T) {
 	require.Len(t, result, 1)
 	assert.Equal(t, "default/route-prod", result[0].String())
 }
+
+func TestFindRoutesForService_Direct(t *testing.T) {
+	t.Parallel()
+
+	port := gatewayv1.PortNumber(8081)
+
+	mkRoute := func(name string, refs ...gatewayv1.HTTPBackendRef) *gatewayv1.HTTPRoute {
+		return &gatewayv1.HTTPRoute{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"},
+			Spec: gatewayv1.HTTPRouteSpec{
+				Rules: []gatewayv1.HTTPRouteRule{{BackendRefs: refs}},
+			},
+		}
+	}
+
+	ref := func(name string) gatewayv1.HTTPBackendRef {
+		return gatewayv1.HTTPBackendRef{
+			BackendRef: gatewayv1.BackendRef{
+				BackendObjectReference: gatewayv1.BackendObjectReference{
+					Name: gatewayv1.ObjectName(name),
+					Port: &port,
+				},
+			},
+		}
+	}
+
+	svc := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "svc-x", Namespace: "default"}}
+
+	routes := []Route{
+		HTTPRouteWrapper{mkRoute("hit", ref("svc-x"))},
+		HTTPRouteWrapper{mkRoute("miss", ref("svc-other"))},
+	}
+
+	t.Run("matches routes referencing the Service", func(t *testing.T) {
+		t.Parallel()
+
+		got := FindRoutesForService(svc, routes)
+		require.Len(t, got, 1)
+		assert.Equal(t, "default/hit", got[0].String())
+	})
+
+	t.Run("non-Service object returns nil", func(t *testing.T) {
+		t.Parallel()
+
+		got := FindRoutesForService(&corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{Name: "cm", Namespace: "default"},
+		}, routes)
+		assert.Nil(t, got)
+	})
+
+	t.Run("empty route list returns nil", func(t *testing.T) {
+		t.Parallel()
+
+		got := FindRoutesForService(svc, nil)
+		assert.Nil(t, got)
+	})
+}
+
+func TestGRPCRouteWrapper_ReferencesService(t *testing.T) {
+	t.Parallel()
+
+	port := gatewayv1.PortNumber(50051)
+	otherNS := gatewayv1.Namespace("other-ns")
+	notServiceKind := gatewayv1.Kind("Foo")
+
+	mk := func(refs ...gatewayv1.GRPCBackendRef) GRPCRouteWrapper {
+		return GRPCRouteWrapper{&gatewayv1.GRPCRoute{
+			ObjectMeta: metav1.ObjectMeta{Name: "r", Namespace: "default"},
+			Spec: gatewayv1.GRPCRouteSpec{
+				Rules: []gatewayv1.GRPCRouteRule{{BackendRefs: refs}},
+			},
+		}}
+	}
+
+	t.Run("same-namespace hit", func(t *testing.T) {
+		t.Parallel()
+
+		w := mk(gatewayv1.GRPCBackendRef{
+			BackendRef: gatewayv1.BackendRef{
+				BackendObjectReference: gatewayv1.BackendObjectReference{
+					Name: "svc-x", Port: &port,
+				},
+			},
+		})
+		assert.True(t, w.ReferencesService("default", "svc-x"))
+		assert.False(t, w.ReferencesService("default", "svc-other"))
+	})
+
+	t.Run("cross-namespace hit", func(t *testing.T) {
+		t.Parallel()
+
+		w := mk(gatewayv1.GRPCBackendRef{
+			BackendRef: gatewayv1.BackendRef{
+				BackendObjectReference: gatewayv1.BackendObjectReference{
+					Name: "svc-x", Namespace: &otherNS, Port: &port,
+				},
+			},
+		})
+		assert.True(t, w.ReferencesService("other-ns", "svc-x"))
+		assert.False(t, w.ReferencesService("default", "svc-x"),
+			"explicit ref.Namespace must override the route's namespace for matching")
+	})
+
+	t.Run("non-Service kind is ignored", func(t *testing.T) {
+		t.Parallel()
+
+		w := mk(gatewayv1.GRPCBackendRef{
+			BackendRef: gatewayv1.BackendRef{
+				BackendObjectReference: gatewayv1.BackendObjectReference{
+					Name: "svc-x", Kind: &notServiceKind, Port: &port,
+				},
+			},
+		})
+		assert.False(t, w.ReferencesService("default", "svc-x"))
+	})
+}

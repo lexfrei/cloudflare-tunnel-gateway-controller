@@ -151,6 +151,26 @@ func TestProxyConfig_Validate(t *testing.T) {
 			wantErr: "rule[0]: backend[0]: weight must be non-negative",
 		},
 		{
+			name: "unknown backend protocol is rejected",
+			config: proxy.Config{
+				Version: 1,
+				Rules: []proxy.RouteRule{
+					{Backends: []proxy.BackendRef{{URL: "http://svc:80", Weight: 1, Protocol: "bogus"}}},
+				},
+			},
+			wantErr: "rule[0]: backend[0]: unknown protocol \"bogus\"",
+		},
+		{
+			name: "known backend protocol h2c is accepted",
+			config: proxy.Config{
+				Version: 1,
+				Rules: []proxy.RouteRule{
+					{Backends: []proxy.BackendRef{{URL: "http://svc:80", Weight: 1, Protocol: proxy.BackendProtocolH2C}}},
+				},
+			},
+			wantErr: "",
+		},
+		{
 			name: "unknown path match type",
 			config: proxy.Config{
 				Version: 1,

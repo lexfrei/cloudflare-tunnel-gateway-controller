@@ -1,7 +1,10 @@
 package proxy_test
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -64,11 +67,338 @@ func TestConvertHTTPRoutes_Basic(t *testing.T) {
 		},
 	}
 
-	cfg := proxy.ConvertHTTPRoutes(context.Background(), routes, "cluster.local", nil)
+	cfg := proxy.ConvertHTTPRoutes(context.Background(), routes, "cluster.local", nil, nil)
 
 	require.Len(t, cfg.Rules, 2)
 	assert.Contains(t, cfg.Rules[0].Hostnames, "example.com")
 	assert.Contains(t, cfg.Rules[1].Hostnames, "example.com")
+}
+
+func TestConvertHTTPRoutes_BackendProtocolH2C(t *testing.T) {
+	t.Parallel()
+
+	pathPrefix := gatewayv1.PathMatchPathPrefix
+
+	routes := []*gatewayv1.HTTPRoute{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "h2c", Namespace: "default"},
+			Spec: gatewayv1.HTTPRouteSpec{
+				Hostnames: []gatewayv1.Hostname{"example.com"},
+				Rules: []gatewayv1.HTTPRouteRule{
+					{
+						Matches: []gatewayv1.HTTPRouteMatch{
+							{Path: &gatewayv1.HTTPPathMatch{Type: &pathPrefix, Value: new("/")}},
+						},
+						BackendRefs: []gatewayv1.HTTPBackendRef{
+							backendRef("grpc-svc", 8081, 1),
+							backendRef("plain-svc", 80, 1),
+						},
+					},
+				},
+			},
+		},
+	}
+
+	// Resolver mimics reading Service port appProtocol: grpc-svc:8081 is h2c,
+	// everything else has no appProtocol.
+	resolver := func(_ context.Context, namespace, name string, port int32) string {
+		if namespace == "default" && name == "grpc-svc" && port == 8081 {
+			return "kubernetes.io/h2c"
+		}
+
+		return ""
+	}
+
+	cfg := proxy.ConvertHTTPRoutes(context.Background(), routes, "cluster.local", nil, resolver)
+
+	require.Len(t, cfg.Rules, 1)
+	require.Len(t, cfg.Rules[0].Backends, 2)
+	assert.Equal(t, proxy.BackendProtocolH2C, cfg.Rules[0].Backends[0].Protocol, "grpc-svc:8081 should be h2c")
+	assert.Equal(t, proxy.BackendProtocolHTTP, cfg.Rules[0].Backends[1].Protocol, "plain-svc:80 should default to http")
+}
+
+func TestConvertHTTPRoutes_UnknownAppProtocol_LogsAndDefaults(t *testing.T) {
+	// Sequential test: swaps the default slog logger so we can capture the
+	// warning. t.Parallel() would race with other tests using slog.Default().
+	pathPrefix := gatewayv1.PathMatchPathPrefix
+
+	routes := []*gatewayv1.HTTPRoute{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "wss", Namespace: "default"},
+			Spec: gatewayv1.HTTPRouteSpec{
+				Hostnames: []gatewayv1.Hostname{"example.com"},
+				Rules: []gatewayv1.HTTPRouteRule{
+					{
+						Matches: []gatewayv1.HTTPRouteMatch{
+							{Path: &gatewayv1.HTTPPathMatch{Type: &pathPrefix, Value: new("/")}},
+						},
+						BackendRefs: []gatewayv1.HTTPBackendRef{backendRef("ws-svc", 80, 1)},
+					},
+				},
+			},
+		},
+	}
+
+	resolver := func(_ context.Context, _, _ string, _ int32) string {
+		return "kubernetes.io/wss"
+	}
+
+	var logs bytes.Buffer
+
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn})))
+
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	cfg := proxy.ConvertHTTPRoutes(context.Background(), routes, "cluster.local", nil, resolver)
+
+	require.Len(t, cfg.Rules, 1)
+	require.Len(t, cfg.Rules[0].Backends, 1)
+	assert.Equal(t, proxy.BackendProtocolHTTP, cfg.Rules[0].Backends[0].Protocol,
+		"unknown appProtocol must fall back to default HTTP/1.1")
+	assert.Contains(t, logs.String(), "unsupported backend appProtocol",
+		"unknown appProtocol must surface a warning, not silently disappear")
+	assert.Contains(t, logs.String(), "kubernetes.io/wss",
+		"warning must name the offending appProtocol")
+}
+
+func TestConvertHTTPRoutes_RuleMirror_CrossNamespaceRejectedWithoutGrant(t *testing.T) {
+	t.Parallel()
+
+	pathPrefix := gatewayv1.PathMatchPathPrefix
+	mirrorNS := gatewayv1.Namespace("other-ns")
+
+	routes := []*gatewayv1.HTTPRoute{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "mirror", Namespace: "default"},
+			Spec: gatewayv1.HTTPRouteSpec{
+				Hostnames: []gatewayv1.Hostname{"example.com"},
+				Rules: []gatewayv1.HTTPRouteRule{
+					{
+						Matches: []gatewayv1.HTTPRouteMatch{
+							{Path: &gatewayv1.HTTPPathMatch{Type: &pathPrefix, Value: new("/")}},
+						},
+						Filters: []gatewayv1.HTTPRouteFilter{
+							{
+								Type: gatewayv1.HTTPRouteFilterRequestMirror,
+								RequestMirror: &gatewayv1.HTTPRequestMirrorFilter{
+									BackendRef: gatewayv1.BackendObjectReference{
+										Name:      "shadow",
+										Namespace: &mirrorNS,
+										Port:      new(gatewayv1.PortNumber(8080)),
+									},
+								},
+							},
+						},
+						BackendRefs: []gatewayv1.HTTPBackendRef{backendRef("primary", 80, 1)},
+					},
+				},
+			},
+		},
+	}
+
+	// Validator that denies every cross-namespace reference — mimics absence
+	// of a ReferenceGrant.
+	rejectAll := func(_ context.Context, _ string, _ gatewayv1.BackendObjectReference) bool {
+		return false
+	}
+
+	cfg := proxy.ConvertHTTPRoutes(context.Background(), routes, "cluster.local", rejectAll, nil)
+
+	require.Len(t, cfg.Rules, 1)
+	assert.Empty(t, cfg.Rules[0].Filters,
+		"rule-level mirror to a cross-namespace Service without ReferenceGrant must be dropped, not silently forwarded")
+}
+
+func TestConvertHTTPRoutes_PerBackendMirror_CrossNamespaceRejectedWithoutGrant(t *testing.T) {
+	t.Parallel()
+
+	pathPrefix := gatewayv1.PathMatchPathPrefix
+	mirrorNS := gatewayv1.Namespace("other-ns")
+
+	routes := []*gatewayv1.HTTPRoute{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "perbackendmirror", Namespace: "default"},
+			Spec: gatewayv1.HTTPRouteSpec{
+				Hostnames: []gatewayv1.Hostname{"example.com"},
+				Rules: []gatewayv1.HTTPRouteRule{
+					{
+						Matches: []gatewayv1.HTTPRouteMatch{
+							{Path: &gatewayv1.HTTPPathMatch{Type: &pathPrefix, Value: new("/")}},
+						},
+						BackendRefs: []gatewayv1.HTTPBackendRef{
+							{
+								BackendRef: gatewayv1.BackendRef{
+									BackendObjectReference: gatewayv1.BackendObjectReference{
+										Name: "primary",
+										Port: new(gatewayv1.PortNumber(80)),
+									},
+									Weight: new(int32(1)),
+								},
+								Filters: []gatewayv1.HTTPRouteFilter{
+									{
+										Type: gatewayv1.HTTPRouteFilterRequestMirror,
+										RequestMirror: &gatewayv1.HTTPRequestMirrorFilter{
+											BackendRef: gatewayv1.BackendObjectReference{
+												Name:      "shadow",
+												Namespace: &mirrorNS,
+												Port:      new(gatewayv1.PortNumber(8080)),
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	rejectAll := func(_ context.Context, _ string, _ gatewayv1.BackendObjectReference) bool {
+		return false
+	}
+
+	cfg := proxy.ConvertHTTPRoutes(context.Background(), routes, "cluster.local", rejectAll, nil)
+
+	require.Len(t, cfg.Rules, 1)
+	require.Len(t, cfg.Rules[0].Backends, 1)
+	assert.Empty(t, cfg.Rules[0].Backends[0].Filters,
+		"per-backend mirror to a cross-namespace Service without ReferenceGrant must be dropped")
+}
+
+func TestConvertHTTPRoutes_PerBackendFilters(t *testing.T) {
+	t.Parallel()
+
+	pathPrefix := gatewayv1.PathMatchPathPrefix
+	port := gatewayv1.PortNumber(80)
+	weight := int32(1)
+
+	// Backend-scoped filters are part of the Gateway API HTTPRoute spec
+	// (distinct from rule-level filters). The converter must carry them onto
+	// BackendRef.Filters; otherwise per-backend tweaks silently no-op.
+	routes := []*gatewayv1.HTTPRoute{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "per-backend", Namespace: "default"},
+			Spec: gatewayv1.HTTPRouteSpec{
+				Hostnames: []gatewayv1.Hostname{"example.com"},
+				Rules: []gatewayv1.HTTPRouteRule{
+					{
+						Matches: []gatewayv1.HTTPRouteMatch{
+							{Path: &gatewayv1.HTTPPathMatch{Type: &pathPrefix, Value: new("/")}},
+						},
+						BackendRefs: []gatewayv1.HTTPBackendRef{
+							{
+								BackendRef: gatewayv1.BackendRef{
+									BackendObjectReference: gatewayv1.BackendObjectReference{
+										Name: "v1",
+										Port: &port,
+									},
+									Weight: &weight,
+								},
+								Filters: []gatewayv1.HTTPRouteFilter{
+									{
+										Type: gatewayv1.HTTPRouteFilterRequestHeaderModifier,
+										RequestHeaderModifier: &gatewayv1.HTTPHeaderFilter{
+											Set: []gatewayv1.HTTPHeader{
+												{Name: "X-Backend-Version", Value: "v1"},
+											},
+										},
+									},
+								},
+							},
+							{
+								BackendRef: gatewayv1.BackendRef{
+									BackendObjectReference: gatewayv1.BackendObjectReference{
+										Name: "v2",
+										Port: &port,
+									},
+									Weight: &weight,
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	cfg := proxy.ConvertHTTPRoutes(context.Background(), routes, "cluster.local", nil, nil)
+
+	require.Len(t, cfg.Rules, 1)
+	require.Len(t, cfg.Rules[0].Backends, 2)
+	require.Len(t, cfg.Rules[0].Backends[0].Filters, 1, "v1 backend must have its per-backend filter converted")
+	assert.Equal(t, proxy.FilterRequestHeaderModifier, cfg.Rules[0].Backends[0].Filters[0].Type)
+	require.NotNil(t, cfg.Rules[0].Backends[0].Filters[0].RequestHeaderModifier)
+	require.Len(t, cfg.Rules[0].Backends[0].Filters[0].RequestHeaderModifier.Set, 1)
+	assert.Equal(t, "X-Backend-Version", cfg.Rules[0].Backends[0].Filters[0].RequestHeaderModifier.Set[0].Name)
+	assert.Equal(t, "v1", cfg.Rules[0].Backends[0].Filters[0].RequestHeaderModifier.Set[0].Value)
+	assert.Empty(t, cfg.Rules[0].Backends[1].Filters, "v2 backend declares no per-backend filters")
+}
+
+func TestConvertHTTPRoutes_BackendProtocolH2C_OnPort443_UsesHTTPScheme(t *testing.T) {
+	t.Parallel()
+
+	pathPrefix := gatewayv1.PathMatchPathPrefix
+
+	// Port 443 normally produces an https:// backend URL. h2c is cleartext —
+	// dialing plaintext against an https-scheme URL silently misbehaves.
+	// The converter must force http:// when the backend is marked h2c.
+	routes := []*gatewayv1.HTTPRoute{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "h2c-443", Namespace: "default"},
+			Spec: gatewayv1.HTTPRouteSpec{
+				Hostnames: []gatewayv1.Hostname{"example.com"},
+				Rules: []gatewayv1.HTTPRouteRule{
+					{
+						Matches: []gatewayv1.HTTPRouteMatch{
+							{Path: &gatewayv1.HTTPPathMatch{Type: &pathPrefix, Value: new("/")}},
+						},
+						BackendRefs: []gatewayv1.HTTPBackendRef{backendRef("grpc-svc", 443, 1)},
+					},
+				},
+			},
+		},
+	}
+
+	resolver := func(_ context.Context, _, _ string, _ int32) string { return "kubernetes.io/h2c" }
+
+	cfg := proxy.ConvertHTTPRoutes(context.Background(), routes, "cluster.local", nil, resolver)
+
+	require.Len(t, cfg.Rules, 1)
+	require.Len(t, cfg.Rules[0].Backends, 1)
+	assert.Equal(t, proxy.BackendProtocolH2C, cfg.Rules[0].Backends[0].Protocol)
+	assert.True(t, strings.HasPrefix(cfg.Rules[0].Backends[0].URL, "http://"),
+		"h2c backend on port 443 must use http:// scheme, got %q", cfg.Rules[0].Backends[0].URL)
+}
+
+func TestConvertHTTPRoutes_NoProtocolResolver_DefaultsHTTP(t *testing.T) {
+	t.Parallel()
+
+	pathPrefix := gatewayv1.PathMatchPathPrefix
+
+	routes := []*gatewayv1.HTTPRoute{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "plain", Namespace: "default"},
+			Spec: gatewayv1.HTTPRouteSpec{
+				Hostnames: []gatewayv1.Hostname{"example.com"},
+				Rules: []gatewayv1.HTTPRouteRule{
+					{
+						Matches: []gatewayv1.HTTPRouteMatch{
+							{Path: &gatewayv1.HTTPPathMatch{Type: &pathPrefix, Value: new("/")}},
+						},
+						BackendRefs: []gatewayv1.HTTPBackendRef{backendRef("web-svc", 80, 1)},
+					},
+				},
+			},
+		},
+	}
+
+	cfg := proxy.ConvertHTTPRoutes(context.Background(), routes, "cluster.local", nil, nil)
+
+	require.Len(t, cfg.Rules, 1)
+	require.Len(t, cfg.Rules[0].Backends, 1)
+	assert.Equal(t, proxy.BackendProtocolHTTP, cfg.Rules[0].Backends[0].Protocol)
 }
 
 func TestConvertHTTPRoutes_MultipleHostnames(t *testing.T) {
@@ -95,7 +425,7 @@ func TestConvertHTTPRoutes_MultipleHostnames(t *testing.T) {
 		},
 	}
 
-	cfg := proxy.ConvertHTTPRoutes(context.Background(), routes, "cluster.local", nil)
+	cfg := proxy.ConvertHTTPRoutes(context.Background(), routes, "cluster.local", nil, nil)
 
 	require.Len(t, cfg.Rules, 1)
 	assert.Equal(t, []string{"app.example.com", "app.example.org"}, cfg.Rules[0].Hostnames)
@@ -136,7 +466,7 @@ func TestConvertHTTPRoutes_Filters(t *testing.T) {
 		},
 	}
 
-	cfg := proxy.ConvertHTTPRoutes(context.Background(), routes, "cluster.local", nil)
+	cfg := proxy.ConvertHTTPRoutes(context.Background(), routes, "cluster.local", nil, nil)
 
 	require.Len(t, cfg.Rules, 1)
 	require.Len(t, cfg.Rules[0].Filters, 1)
@@ -181,7 +511,7 @@ func TestConvertHTTPRoutes_HeaderMatch(t *testing.T) {
 		},
 	}
 
-	cfg := proxy.ConvertHTTPRoutes(context.Background(), routes, "cluster.local", nil)
+	cfg := proxy.ConvertHTTPRoutes(context.Background(), routes, "cluster.local", nil, nil)
 
 	require.Len(t, cfg.Rules, 1)
 	require.Len(t, cfg.Rules[0].Matches, 1)
@@ -218,7 +548,7 @@ func TestConvertHTTPRoutes_WeightedBackends(t *testing.T) {
 		},
 	}
 
-	cfg := proxy.ConvertHTTPRoutes(context.Background(), routes, "cluster.local", nil)
+	cfg := proxy.ConvertHTTPRoutes(context.Background(), routes, "cluster.local", nil, nil)
 
 	require.Len(t, cfg.Rules, 1)
 	require.Len(t, cfg.Rules[0].Backends, 2)
@@ -249,7 +579,7 @@ func TestConvertHTTPRoutes_NoHostnames(t *testing.T) {
 		},
 	}
 
-	cfg := proxy.ConvertHTTPRoutes(context.Background(), routes, "cluster.local", nil)
+	cfg := proxy.ConvertHTTPRoutes(context.Background(), routes, "cluster.local", nil, nil)
 
 	require.Len(t, cfg.Rules, 1)
 	assert.Empty(t, cfg.Rules[0].Hostnames, "no hostnames means catch-all")
@@ -258,7 +588,7 @@ func TestConvertHTTPRoutes_NoHostnames(t *testing.T) {
 func TestConvertHTTPRoutes_Empty(t *testing.T) {
 	t.Parallel()
 
-	cfg := proxy.ConvertHTTPRoutes(context.Background(), nil, "cluster.local", nil)
+	cfg := proxy.ConvertHTTPRoutes(context.Background(), nil, "cluster.local", nil, nil)
 
 	assert.Empty(t, cfg.Rules)
 	assert.True(t, cfg.Version > 0, "version should be positive")
@@ -295,7 +625,7 @@ func TestConvertHTTPRoutes_NonServiceBackendSkipped(t *testing.T) {
 		},
 	}
 
-	cfg := proxy.ConvertHTTPRoutes(context.Background(), routes, "cluster.local", nil)
+	cfg := proxy.ConvertHTTPRoutes(context.Background(), routes, "cluster.local", nil, nil)
 
 	require.Len(t, cfg.Rules, 1, "rule with unresolvable backend should still be present for 500 response")
 	assert.Empty(t, cfg.Rules[0].Backends, "non-Service backend should not be in backends list")
@@ -353,7 +683,7 @@ func TestConvertQueryMatch(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			cfg := proxy.ConvertHTTPRoutes(context.Background(), []*gatewayv1.HTTPRoute{tt.route}, "cluster.local", nil)
+			cfg := proxy.ConvertHTTPRoutes(context.Background(), []*gatewayv1.HTTPRoute{tt.route}, "cluster.local", nil, nil)
 
 			require.Len(t, cfg.Rules, 1)
 			require.Len(t, cfg.Rules[0].Matches, 1)
@@ -379,7 +709,7 @@ func TestConvertFilter_RequestHeaderModifier(t *testing.T) {
 		},
 	})
 
-	cfg := proxy.ConvertHTTPRoutes(context.Background(), []*gatewayv1.HTTPRoute{route}, "cluster.local", nil)
+	cfg := proxy.ConvertHTTPRoutes(context.Background(), []*gatewayv1.HTTPRoute{route}, "cluster.local", nil, nil)
 
 	require.Len(t, cfg.Rules, 1)
 	require.Len(t, cfg.Rules[0].Filters, 1)
@@ -400,7 +730,7 @@ func TestConvertFilter_RequestHeaderModifier_NilBody(t *testing.T) {
 		RequestHeaderModifier: nil,
 	})
 
-	cfg := proxy.ConvertHTTPRoutes(context.Background(), []*gatewayv1.HTTPRoute{route}, "cluster.local", nil)
+	cfg := proxy.ConvertHTTPRoutes(context.Background(), []*gatewayv1.HTTPRoute{route}, "cluster.local", nil, nil)
 
 	require.Len(t, cfg.Rules, 1)
 	assert.Empty(t, cfg.Rules[0].Filters)
@@ -418,7 +748,7 @@ func TestConvertFilter_ResponseHeaderModifier(t *testing.T) {
 		},
 	})
 
-	cfg := proxy.ConvertHTTPRoutes(context.Background(), []*gatewayv1.HTTPRoute{route}, "cluster.local", nil)
+	cfg := proxy.ConvertHTTPRoutes(context.Background(), []*gatewayv1.HTTPRoute{route}, "cluster.local", nil, nil)
 
 	require.Len(t, cfg.Rules, 1)
 	require.Len(t, cfg.Rules[0].Filters, 1)
@@ -437,7 +767,7 @@ func TestConvertFilter_ResponseHeaderModifier_NilBody(t *testing.T) {
 		ResponseHeaderModifier: nil,
 	})
 
-	cfg := proxy.ConvertHTTPRoutes(context.Background(), []*gatewayv1.HTTPRoute{route}, "cluster.local", nil)
+	cfg := proxy.ConvertHTTPRoutes(context.Background(), []*gatewayv1.HTTPRoute{route}, "cluster.local", nil, nil)
 
 	require.Len(t, cfg.Rules, 1)
 	assert.Empty(t, cfg.Rules[0].Filters)
@@ -463,7 +793,7 @@ func TestConvertFilter_RequestRedirect_Full(t *testing.T) {
 		},
 	})
 
-	cfg := proxy.ConvertHTTPRoutes(context.Background(), []*gatewayv1.HTTPRoute{route}, "cluster.local", nil)
+	cfg := proxy.ConvertHTTPRoutes(context.Background(), []*gatewayv1.HTTPRoute{route}, "cluster.local", nil, nil)
 
 	require.Len(t, cfg.Rules, 1)
 	require.Len(t, cfg.Rules[0].Filters, 1)
@@ -488,7 +818,7 @@ func TestConvertFilter_RequestRedirect_NilBody(t *testing.T) {
 		RequestRedirect: nil,
 	})
 
-	cfg := proxy.ConvertHTTPRoutes(context.Background(), []*gatewayv1.HTTPRoute{route}, "cluster.local", nil)
+	cfg := proxy.ConvertHTTPRoutes(context.Background(), []*gatewayv1.HTTPRoute{route}, "cluster.local", nil, nil)
 
 	require.Len(t, cfg.Rules, 1)
 	assert.Empty(t, cfg.Rules[0].Filters)
@@ -565,7 +895,7 @@ func TestConvertFilter_URLRewrite(t *testing.T) {
 				URLRewrite: tt.rewrite,
 			})
 
-			cfg := proxy.ConvertHTTPRoutes(context.Background(), []*gatewayv1.HTTPRoute{route}, "cluster.local", nil)
+			cfg := proxy.ConvertHTTPRoutes(context.Background(), []*gatewayv1.HTTPRoute{route}, "cluster.local", nil, nil)
 
 			require.Len(t, cfg.Rules, 1)
 			require.Len(t, cfg.Rules[0].Filters, 1)
@@ -609,7 +939,7 @@ func TestConvertFilter_URLRewrite_NilBody(t *testing.T) {
 		URLRewrite: nil,
 	})
 
-	cfg := proxy.ConvertHTTPRoutes(context.Background(), []*gatewayv1.HTTPRoute{route}, "cluster.local", nil)
+	cfg := proxy.ConvertHTTPRoutes(context.Background(), []*gatewayv1.HTTPRoute{route}, "cluster.local", nil, nil)
 
 	require.Len(t, cfg.Rules, 1)
 	assert.Empty(t, cfg.Rules[0].Filters)
@@ -627,7 +957,7 @@ func TestConvertFilter_RequestMirror(t *testing.T) {
 		},
 	})
 
-	cfg := proxy.ConvertHTTPRoutes(context.Background(), []*gatewayv1.HTTPRoute{route}, "cluster.local", nil)
+	cfg := proxy.ConvertHTTPRoutes(context.Background(), []*gatewayv1.HTTPRoute{route}, "cluster.local", nil, nil)
 
 	require.Len(t, cfg.Rules, 1)
 	require.Len(t, cfg.Rules[0].Filters, 1)
@@ -646,7 +976,7 @@ func TestConvertFilter_RequestMirror_NilBody(t *testing.T) {
 		RequestMirror: nil,
 	})
 
-	cfg := proxy.ConvertHTTPRoutes(context.Background(), []*gatewayv1.HTTPRoute{route}, "cluster.local", nil)
+	cfg := proxy.ConvertHTTPRoutes(context.Background(), []*gatewayv1.HTTPRoute{route}, "cluster.local", nil, nil)
 
 	require.Len(t, cfg.Rules, 1)
 	assert.Empty(t, cfg.Rules[0].Filters)
@@ -667,7 +997,7 @@ func TestConvertFilter_UnsupportedTypes(t *testing.T) {
 				Type: filterType,
 			})
 
-			cfg := proxy.ConvertHTTPRoutes(context.Background(), []*gatewayv1.HTTPRoute{route}, "cluster.local", nil)
+			cfg := proxy.ConvertHTTPRoutes(context.Background(), []*gatewayv1.HTTPRoute{route}, "cluster.local", nil, nil)
 
 			require.Len(t, cfg.Rules, 1)
 			assert.Empty(t, cfg.Rules[0].Filters)
@@ -692,7 +1022,7 @@ func TestConvertHeaderModifier_AllOperations(t *testing.T) {
 		},
 	})
 
-	cfg := proxy.ConvertHTTPRoutes(context.Background(), []*gatewayv1.HTTPRoute{route}, "cluster.local", nil)
+	cfg := proxy.ConvertHTTPRoutes(context.Background(), []*gatewayv1.HTTPRoute{route}, "cluster.local", nil, nil)
 
 	require.Len(t, cfg.Rules, 1)
 	require.Len(t, cfg.Rules[0].Filters, 1)
@@ -715,7 +1045,7 @@ func TestConvertHeaderModifier_Empty(t *testing.T) {
 		RequestHeaderModifier: &gatewayv1.HTTPHeaderFilter{},
 	})
 
-	cfg := proxy.ConvertHTTPRoutes(context.Background(), []*gatewayv1.HTTPRoute{route}, "cluster.local", nil)
+	cfg := proxy.ConvertHTTPRoutes(context.Background(), []*gatewayv1.HTTPRoute{route}, "cluster.local", nil, nil)
 
 	require.Len(t, cfg.Rules, 1)
 	require.Len(t, cfg.Rules[0].Filters, 1)
@@ -767,7 +1097,7 @@ func TestConvertRedirectPath(t *testing.T) {
 				},
 			})
 
-			cfg := proxy.ConvertHTTPRoutes(context.Background(), []*gatewayv1.HTTPRoute{route}, "cluster.local", nil)
+			cfg := proxy.ConvertHTTPRoutes(context.Background(), []*gatewayv1.HTTPRoute{route}, "cluster.local", nil, nil)
 
 			require.Len(t, cfg.Rules, 1)
 			require.Len(t, cfg.Rules[0].Filters, 1)
@@ -792,7 +1122,7 @@ func TestConvertRedirectPath_PrefixMatch(t *testing.T) {
 		},
 	})
 
-	cfg := proxy.ConvertHTTPRoutes(context.Background(), []*gatewayv1.HTTPRoute{route}, "cluster.local", nil)
+	cfg := proxy.ConvertHTTPRoutes(context.Background(), []*gatewayv1.HTTPRoute{route}, "cluster.local", nil, nil)
 
 	require.Len(t, cfg.Rules, 1)
 	require.Len(t, cfg.Rules[0].Filters, 1)
@@ -815,7 +1145,7 @@ func TestConvertRedirectPath_NilFields(t *testing.T) {
 		},
 	})
 
-	cfg := proxy.ConvertHTTPRoutes(context.Background(), []*gatewayv1.HTTPRoute{route}, "cluster.local", nil)
+	cfg := proxy.ConvertHTTPRoutes(context.Background(), []*gatewayv1.HTTPRoute{route}, "cluster.local", nil, nil)
 
 	require.Len(t, cfg.Rules, 1)
 	require.Len(t, cfg.Rules[0].Filters, 1)
@@ -869,7 +1199,7 @@ func TestConvertURLRewritePath(t *testing.T) {
 				},
 			})
 
-			cfg := proxy.ConvertHTTPRoutes(context.Background(), []*gatewayv1.HTTPRoute{route}, "cluster.local", nil)
+			cfg := proxy.ConvertHTTPRoutes(context.Background(), []*gatewayv1.HTTPRoute{route}, "cluster.local", nil, nil)
 
 			require.Len(t, cfg.Rules, 1)
 			require.Len(t, cfg.Rules[0].Filters, 1)
@@ -956,7 +1286,7 @@ func TestConvertTimeouts(t *testing.T) {
 
 			route := routeWithTimeouts(tt.timeouts)
 
-			cfg := proxy.ConvertHTTPRoutes(context.Background(), []*gatewayv1.HTTPRoute{route}, "cluster.local", nil)
+			cfg := proxy.ConvertHTTPRoutes(context.Background(), []*gatewayv1.HTTPRoute{route}, "cluster.local", nil, nil)
 
 			require.Len(t, cfg.Rules, 1)
 
@@ -992,7 +1322,7 @@ func TestConvertTimeouts_Nil(t *testing.T) {
 		},
 	}
 
-	cfg := proxy.ConvertHTTPRoutes(context.Background(), []*gatewayv1.HTTPRoute{route}, "cluster.local", nil)
+	cfg := proxy.ConvertHTTPRoutes(context.Background(), []*gatewayv1.HTTPRoute{route}, "cluster.local", nil, nil)
 
 	require.Len(t, cfg.Rules, 1)
 	assert.Nil(t, cfg.Rules[0].Timeouts)
@@ -1064,7 +1394,7 @@ func TestConvertHeaderMatch_EdgeCases(t *testing.T) {
 
 			route := routeWithHeaderMatch(tt.header)
 
-			cfg := proxy.ConvertHTTPRoutes(context.Background(), []*gatewayv1.HTTPRoute{route}, "cluster.local", nil)
+			cfg := proxy.ConvertHTTPRoutes(context.Background(), []*gatewayv1.HTTPRoute{route}, "cluster.local", nil, nil)
 
 			require.Len(t, cfg.Rules, 1)
 			require.Len(t, cfg.Rules[0].Matches, 1)
@@ -1113,7 +1443,7 @@ func TestConvertBackendRef_InvalidPort(t *testing.T) {
 				},
 			}
 
-			cfg := proxy.ConvertHTTPRoutes(context.Background(), []*gatewayv1.HTTPRoute{route}, "cluster.local", nil)
+			cfg := proxy.ConvertHTTPRoutes(context.Background(), []*gatewayv1.HTTPRoute{route}, "cluster.local", nil, nil)
 
 			if tt.expectSkipped {
 				require.Len(t, cfg.Rules, 1, "rule with invalid backend should still be present for 500 response")
@@ -1156,7 +1486,7 @@ func TestConvertMirrorFilter_InvalidPort(t *testing.T) {
 				},
 			})
 
-			cfg := proxy.ConvertHTTPRoutes(context.Background(), []*gatewayv1.HTTPRoute{route}, "cluster.local", nil)
+			cfg := proxy.ConvertHTTPRoutes(context.Background(), []*gatewayv1.HTTPRoute{route}, "cluster.local", nil, nil)
 
 			require.Len(t, cfg.Rules, 1)
 
@@ -1206,7 +1536,7 @@ func TestConvertBackendRef_NonServiceKind(t *testing.T) {
 		},
 	}
 
-	cfg := proxy.ConvertHTTPRoutes(context.Background(), []*gatewayv1.HTTPRoute{route}, "cluster.local", nil)
+	cfg := proxy.ConvertHTTPRoutes(context.Background(), []*gatewayv1.HTTPRoute{route}, "cluster.local", nil, nil)
 
 	require.Len(t, cfg.Rules, 1, "rule with unresolvable backend should still be present for 500 response")
 	assert.Empty(t, cfg.Rules[0].Backends, "non-Service backend should not be in backends list")
@@ -1229,7 +1559,7 @@ func TestConvertMirrorFilter_NonServiceKind(t *testing.T) {
 		},
 	})
 
-	cfg := proxy.ConvertHTTPRoutes(context.Background(), []*gatewayv1.HTTPRoute{route}, "cluster.local", nil)
+	cfg := proxy.ConvertHTTPRoutes(context.Background(), []*gatewayv1.HTTPRoute{route}, "cluster.local", nil, nil)
 
 	require.Len(t, cfg.Rules, 1)
 	assert.Empty(t, cfg.Rules[0].Filters, "mirror filter with non-Service kind should be skipped")
@@ -1274,7 +1604,7 @@ func TestConvertBackendRef_CrossNamespaceRejected(t *testing.T) {
 		return false
 	}
 
-	cfg := proxy.ConvertHTTPRoutes(context.Background(), []*gatewayv1.HTTPRoute{route}, "cluster.local", rejectAll)
+	cfg := proxy.ConvertHTTPRoutes(context.Background(), []*gatewayv1.HTTPRoute{route}, "cluster.local", rejectAll, nil)
 
 	require.Len(t, cfg.Rules, 1, "rule with rejected cross-namespace backend should still be present for 500 response")
 	assert.Empty(t, cfg.Rules[0].Backends, "rejected cross-namespace backend should not be in backends list")
@@ -1319,7 +1649,7 @@ func TestConvertBackendRef_CrossNamespaceAllowed(t *testing.T) {
 		return true
 	}
 
-	cfg := proxy.ConvertHTTPRoutes(context.Background(), []*gatewayv1.HTTPRoute{route}, "cluster.local", allowAll)
+	cfg := proxy.ConvertHTTPRoutes(context.Background(), []*gatewayv1.HTTPRoute{route}, "cluster.local", allowAll, nil)
 
 	require.Len(t, cfg.Rules, 1)
 	require.Len(t, cfg.Rules[0].Backends, 1, "cross-namespace backend should be allowed by validator")
@@ -1355,7 +1685,7 @@ func TestConvertBackendRef_SameNamespaceAlwaysAllowed(t *testing.T) {
 		return false
 	}
 
-	cfg := proxy.ConvertHTTPRoutes(context.Background(), []*gatewayv1.HTTPRoute{route}, "cluster.local", rejectAll)
+	cfg := proxy.ConvertHTTPRoutes(context.Background(), []*gatewayv1.HTTPRoute{route}, "cluster.local", rejectAll, nil)
 
 	require.Len(t, cfg.Rules, 1)
 	require.Len(t, cfg.Rules[0].Backends, 1, "same-namespace backend should always be allowed")
@@ -1404,7 +1734,7 @@ func TestBuildServiceURL_SchemeByPort(t *testing.T) {
 				},
 			}
 
-			cfg := proxy.ConvertHTTPRoutes(context.Background(), []*gatewayv1.HTTPRoute{route}, "cluster.local", nil)
+			cfg := proxy.ConvertHTTPRoutes(context.Background(), []*gatewayv1.HTTPRoute{route}, "cluster.local", nil, nil)
 
 			require.Len(t, cfg.Rules, 1)
 			require.Len(t, cfg.Rules[0].Backends, 1)
@@ -1435,7 +1765,7 @@ func TestConvertBackendRef_NegativeWeight(t *testing.T) {
 		},
 	}
 
-	cfg := proxy.ConvertHTTPRoutes(context.Background(), []*gatewayv1.HTTPRoute{route}, "cluster.local", nil)
+	cfg := proxy.ConvertHTTPRoutes(context.Background(), []*gatewayv1.HTTPRoute{route}, "cluster.local", nil, nil)
 
 	require.Len(t, cfg.Rules, 1, "rule with unresolvable backend should still be present for 500 response")
 	assert.Empty(t, cfg.Rules[0].Backends, "negative-weight backend should not be in backends list")

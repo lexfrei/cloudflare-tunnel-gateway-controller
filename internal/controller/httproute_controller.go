@@ -150,6 +150,7 @@ func (r *HTTPRouteReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		configResolver:        r.RouteSyncer.ConfigResolver,
 		findRoutesForGateway:  r.findRoutesForGateway,
 		findRoutesForRefGrant: r.findRoutesForReferenceGrant,
+		findRoutesForService:  r.findRoutesForService,
 		getAllRelevantRoutes:  r.getAllRelevantRoutes,
 	})
 }
@@ -191,6 +192,32 @@ func (r *HTTPRouteReconciler) findRoutesForGateway(
 	}
 
 	return FindRoutesForGateway(ctx, r.Client, obj, r.ControllerName, routes)
+}
+
+// findRoutesForService enqueues every HTTPRoute managed by our controller that
+// references the given Service in any of its backendRefs. A Service-side change
+// (e.g. appProtocol added to a port) must trigger a reconcile so the proxy
+// config stays current. Routes belonging to other GatewayClasses are filtered
+// out — mirroring findRoutesForReferenceGrant.
+func (r *HTTPRouteReconciler) findRoutesForService(
+	ctx context.Context,
+	obj client.Object,
+) []reconcile.Request {
+	var routeList gatewayv1.HTTPRouteList
+	if err := r.List(ctx, &routeList); err != nil {
+		return nil
+	}
+
+	routes := make([]Route, 0, len(routeList.Items))
+
+	for i := range routeList.Items {
+		route := &routeList.Items[i]
+		if r.isRouteForOurGateway(ctx, route) {
+			routes = append(routes, HTTPRouteWrapper{route})
+		}
+	}
+
+	return FindRoutesForService(obj, routes)
 }
 
 func (r *HTTPRouteReconciler) findRoutesForReferenceGrant(

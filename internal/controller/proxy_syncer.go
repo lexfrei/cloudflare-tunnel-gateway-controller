@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/cockroachdb/errors"
+	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
@@ -20,6 +21,10 @@ import (
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/referencegrant"
 )
 
+// serviceKind is the default Kind a Gateway API BackendObjectReference falls
+// back to when Group/Kind are unset.
+const serviceKind = "Service"
+
 // ProxySyncer converts HTTPRoute resources to proxy config
 // and pushes it to enhanced-cloudflared replicas via HTTP API.
 type ProxySyncer struct {
@@ -27,6 +32,7 @@ type ProxySyncer struct {
 	logger           *slog.Logger
 	pusher           *proxy.ConfigPusher
 	backendValidator proxy.BackendRefValidator
+	protocolResolver proxy.BackendProtocolResolver
 	syncMu           sync.Mutex
 }
 
@@ -51,7 +57,35 @@ func NewProxySyncer(
 			Timeout: 10 * time.Second,
 		}, authToken),
 		backendValidator: newBackendRefValidator(refGrantValidator),
+		protocolResolver: newBackendProtocolResolver(k8sClient),
 	}
+}
+
+// newBackendProtocolResolver returns a resolver that reads a backend Service's
+// port appProtocol (e.g. kubernetes.io/h2c) so the proxy can pick the right
+// backend transport. Unknown services or ports resolve to "".
+func newBackendProtocolResolver(c client.Client) proxy.BackendProtocolResolver {
+	return func(ctx context.Context, namespace, serviceName string, port int32) string {
+		var svc corev1.Service
+
+		key := client.ObjectKey{Namespace: namespace, Name: serviceName}
+		if err := c.Get(ctx, key, &svc); err != nil {
+			return ""
+		}
+
+		return portAppProtocol(&svc, port)
+	}
+}
+
+// portAppProtocol returns the appProtocol of the Service port matching port, or "".
+func portAppProtocol(svc *corev1.Service, port int32) string {
+	for i := range svc.Spec.Ports {
+		if svc.Spec.Ports[i].Port == port && svc.Spec.Ports[i].AppProtocol != nil {
+			return *svc.Spec.Ports[i].AppProtocol
+		}
+	}
+
+	return ""
 }
 
 // newBackendRefValidator creates a BackendRefValidator from a referencegrant.Validator.
@@ -68,7 +102,7 @@ func newBackendRefValidator(validator *referencegrant.Validator) proxy.BackendRe
 			toGroup = string(*ref.Group)
 		}
 
-		toKind := "Service"
+		toKind := serviceKind
 		if ref.Kind != nil {
 			toKind = string(*ref.Kind)
 		}
@@ -125,8 +159,9 @@ func (s *ProxySyncer) SyncRoutes(
 
 	logger.Info("syncing proxy config", "routes", len(routes))
 
-	// Convert to proxy config with cross-namespace validation.
-	cfg := proxy.ConvertHTTPRoutes(ctx, routes, s.clusterDomain, s.backendValidator)
+	// Convert to proxy config with cross-namespace validation and backend
+	// protocol resolution (e.g. h2c) from Service appProtocol.
+	cfg := proxy.ConvertHTTPRoutes(ctx, routes, s.clusterDomain, s.backendValidator, s.protocolResolver)
 
 	// Clear backends for routes that have failed backend refs.
 	// This ensures the proxy returns 500 (no backend available) instead of

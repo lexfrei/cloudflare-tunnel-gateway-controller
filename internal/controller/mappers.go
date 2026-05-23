@@ -15,6 +15,7 @@ import (
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/api/v1alpha1"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/config"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/logging"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/proxy"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/routebinding"
 )
 
@@ -207,6 +208,40 @@ type Route interface {
 	// GetCrossNamespaceBackendNamespaces returns namespaces referenced by backends
 	// that differ from the route's own namespace.
 	GetCrossNamespaceBackendNamespaces() []string
+	// ReferencesService reports whether any backendRef on this route resolves
+	// to the Service identified by (namespace, name).
+	ReferencesService(namespace, name string) bool
+}
+
+// FindRoutesForService returns reconcile requests for routes that reference the
+// Service object in any of their backendRefs (across all rules). Used by both
+// HTTPRoute and GRPCRoute controllers to watch Service changes — a Service
+// appProtocol flip (e.g. enabling h2c) must enqueue all referencing routes.
+func FindRoutesForService(
+	obj client.Object,
+	routes []Route,
+) []reconcile.Request {
+	svc, ok := obj.(*corev1.Service)
+	if !ok {
+		return nil
+	}
+
+	var requests []reconcile.Request
+
+	for _, route := range routes {
+		if !route.ReferencesService(svc.Namespace, svc.Name) {
+			continue
+		}
+
+		requests = append(requests, reconcile.Request{
+			NamespacedName: client.ObjectKey{
+				Name:      route.GetName(),
+				Namespace: route.GetNamespace(),
+			},
+		})
+	}
+
+	return requests
 }
 
 // RouteFilterFunc determines if a route is relevant (e.g., managed by our Gateway).
@@ -243,6 +278,22 @@ func FindRoutesForReferenceGrant(
 	}
 
 	return requests
+}
+
+// backendRefMatchesService reports whether a Gateway API backendRef points at
+// the Service identified by (svcNamespace, svcName). routeNamespace is the
+// fallback used when the backendRef omits an explicit namespace.
+func backendRefMatchesService(ref *gatewayv1.BackendRef, routeNamespace, svcNamespace, svcName string) bool {
+	if !proxy.IsServiceBackendRef(ref.BackendObjectReference) {
+		return false
+	}
+
+	refNS := routeNamespace
+	if ref.Namespace != nil {
+		refNS = string(*ref.Namespace)
+	}
+
+	return refNS == svcNamespace && string(ref.Name) == svcName
 }
 
 // extractCrossNamespaceBackends returns unique namespaces from backend refs
@@ -288,6 +339,20 @@ func (w HTTPRouteWrapper) GetCrossNamespaceBackendNamespaces() []string {
 	return extractCrossNamespaceBackends(w.Namespace, refs)
 }
 
+// ReferencesService reports whether this HTTPRoute has any Service backendRef
+// matching (namespace, name).
+func (w HTTPRouteWrapper) ReferencesService(namespace, name string) bool {
+	for ruleIdx := range w.Spec.Rules {
+		for refIdx := range w.Spec.Rules[ruleIdx].BackendRefs {
+			if backendRefMatchesService(&w.Spec.Rules[ruleIdx].BackendRefs[refIdx].BackendRef, w.Namespace, namespace, name) {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
 // GRPCRouteWrapper wraps GRPCRoute to implement Route.
 type GRPCRouteWrapper struct {
 	*gatewayv1.GRPCRoute
@@ -309,6 +374,20 @@ func (w GRPCRouteWrapper) GetCrossNamespaceBackendNamespaces() []string {
 	}
 
 	return extractCrossNamespaceBackends(w.Namespace, refs)
+}
+
+// ReferencesService reports whether this GRPCRoute has any Service backendRef
+// matching (namespace, name).
+func (w GRPCRouteWrapper) ReferencesService(namespace, name string) bool {
+	for ruleIdx := range w.Spec.Rules {
+		for refIdx := range w.Spec.Rules[ruleIdx].BackendRefs {
+			if backendRefMatchesService(&w.Spec.Rules[ruleIdx].BackendRefs[refIdx].BackendRef, w.Namespace, namespace, name) {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 // GetHostnames returns the hostnames from the HTTPRoute spec.

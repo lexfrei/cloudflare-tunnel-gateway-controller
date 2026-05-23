@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/net/http2"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/proxy"
 )
@@ -48,6 +49,156 @@ func newEchoHeadersBackend(t *testing.T, headerNames ...string) *httptest.Server
 	t.Cleanup(server.Close)
 
 	return server
+}
+
+// newH2CBackend creates an httptest.Server that serves HTTP/2 cleartext (h2c)
+// via the stdlib's native UnencryptedHTTP2 protocol (Go 1.24+). It reports the
+// protocol it saw the request on via X-Backend-Proto so tests can assert the
+// proxy actually negotiated h2c. The server is closed on cleanup.
+func newH2CBackend(t *testing.T, name string) *httptest.Server {
+	t.Helper()
+
+	backend := http.HandlerFunc(func(writer http.ResponseWriter, req *http.Request) {
+		writer.Header().Set("X-Backend", name)
+		writer.Header().Set("X-Backend-Proto", req.Proto)
+		writer.WriteHeader(http.StatusOK)
+	})
+
+	var protocols http.Protocols
+
+	protocols.SetHTTP1(true)
+	protocols.SetUnencryptedHTTP2(true)
+
+	server := httptest.NewUnstartedServer(backend)
+	server.Config.Protocols = &protocols
+	server.Start()
+	t.Cleanup(server.Close)
+
+	return server
+}
+
+func TestHandler_BackendProtocolH2C(t *testing.T) {
+	t.Parallel()
+
+	backend := newH2CBackend(t, "h2c")
+
+	router := proxy.NewRouter()
+
+	cfg := &proxy.Config{
+		Version: 1,
+		Rules: []proxy.RouteRule{
+			{
+				Hostnames: []string{"app.example.com"},
+				Matches: []proxy.RouteMatch{
+					{Path: &proxy.PathMatch{Type: proxy.PathMatchPathPrefix, Value: "/"}},
+				},
+				Backends: []proxy.BackendRef{
+					{URL: backend.URL, Weight: 1, Protocol: proxy.BackendProtocolH2C},
+				},
+			},
+		},
+	}
+
+	require.NoError(t, router.UpdateConfig(cfg))
+
+	handler := proxy.NewHandler(router)
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://app.example.com/", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	resp := rec.Result()
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, "h2c", resp.Header.Get("X-Backend"))
+	assert.Equal(t, "HTTP/2.0", resp.Header.Get("X-Backend-Proto"),
+		"proxy must speak HTTP/2 cleartext (h2c) to a backend with appProtocol kubernetes.io/h2c")
+}
+
+func TestNewTransport_H2C_HasLivenessDefaults(t *testing.T) {
+	t.Parallel()
+
+	rt := proxy.NewTransportForTest(proxy.BackendProtocolH2C)
+
+	tr, ok := rt.(*http2.Transport)
+	require.True(t, ok, "h2c transport must be *http2.Transport, got %T", rt)
+	assert.NotZero(t, tr.ReadIdleTimeout,
+		"h2c transport must set ReadIdleTimeout so dead TCP connections get evicted from the multiplexed pool")
+	assert.NotZero(t, tr.PingTimeout,
+		"h2c transport must set PingTimeout to bound how long a stuck PING blocks request progress")
+}
+
+func TestNewH2CDialer_HasTimeouts(t *testing.T) {
+	t.Parallel()
+
+	dialer := proxy.NewH2CDialerForTest()
+
+	// Without a Timeout the dialer would wait for kernel TCP defaults (often
+	// >1 minute) on a hung SYN, stalling the proxy request well past any
+	// sensible request budget. KeepAlive evicts half-closed connections from
+	// the pool. Both must mirror http.DefaultTransport's dialer config.
+	assert.NotZero(t, dialer.Timeout, "h2c dialer must set Timeout to bound TCP SYN waits")
+	assert.NotZero(t, dialer.KeepAlive, "h2c dialer must set KeepAlive to evict half-closed pool connections")
+}
+
+func TestHandler_BackendProtocolToggleSameHostPort(t *testing.T) {
+	t.Parallel()
+
+	// One backend server serving BOTH HTTP/1.1 and h2c on the same host:port —
+	// http.Protocols accepts both. This pins the scenario where the only thing
+	// that changes between configs is the Service appProtocol, not the address.
+	backend := newH2CBackend(t, "dualproto")
+
+	router := proxy.NewRouter()
+	require.NoError(t, router.UpdateConfig(&proxy.Config{
+		Version: 1,
+		Rules: []proxy.RouteRule{
+			{
+				Hostnames: []string{"app.example.com"},
+				Matches:   []proxy.RouteMatch{{Path: &proxy.PathMatch{Type: proxy.PathMatchPathPrefix, Value: "/"}}},
+				Backends:  []proxy.BackendRef{{URL: backend.URL, Weight: 1, Protocol: proxy.BackendProtocolHTTP}},
+			},
+		},
+	}))
+
+	handler := proxy.NewHandler(router)
+
+	// Phase 1: HTTP/1.1 path primes the per-host transport cache.
+	req1 := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://app.example.com/", nil)
+	rec1 := httptest.NewRecorder()
+	handler.ServeHTTP(rec1, req1)
+
+	resp1 := rec1.Result()
+	defer resp1.Body.Close()
+
+	require.Equal(t, http.StatusOK, resp1.StatusCode)
+	require.Equal(t, "HTTP/1.1", resp1.Header.Get("X-Backend-Proto"),
+		"phase 1 must speak HTTP/1.1 to prime the wrong transport")
+
+	// Phase 2: same backend.URL, same host:port — only Protocol flipped to h2c.
+	// A cache keyed on host alone would reuse the HTTP/1.1 transport here.
+	require.NoError(t, router.UpdateConfig(&proxy.Config{
+		Version: 2,
+		Rules: []proxy.RouteRule{
+			{
+				Hostnames: []string{"app.example.com"},
+				Matches:   []proxy.RouteMatch{{Path: &proxy.PathMatch{Type: proxy.PathMatchPathPrefix, Value: "/"}}},
+				Backends:  []proxy.BackendRef{{URL: backend.URL, Weight: 1, Protocol: proxy.BackendProtocolH2C}},
+			},
+		},
+	}))
+
+	req2 := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://app.example.com/", nil)
+	rec2 := httptest.NewRecorder()
+	handler.ServeHTTP(rec2, req2)
+
+	resp2 := rec2.Result()
+	defer resp2.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp2.StatusCode)
+	assert.Equal(t, "HTTP/2.0", resp2.Header.Get("X-Backend-Proto"),
+		"after the Protocol flip to h2c on the same host:port, the proxy must NOT reuse the cached HTTP/1.1 transport")
 }
 
 func TestHandler_PathMatchPrecedence(t *testing.T) {
