@@ -229,8 +229,9 @@ with the following minimum-viable scope:
 | CA via same-namespace `ConfigMap` ref with `ca.crt` | Yes | Core support level. The CA bundle is parsed as PEM and rejected with `Accepted=False, Reason=NoValidCACertificate` if it contains no `CERTIFICATE` blocks |
 | Multiple `CACertificateRefs` per policy | Yes | All bundles are concatenated into the trust pool |
 | `Hostname` as TLS SNI + authentication (when no SANs) | Yes | Required field; matches stdlib RFC 6125 hostname verification |
-| `SubjectAltNames` of type `Hostname` (OR-matching) | Yes | Cert must match at least one entry. Wildcards in the cert SAN list are honoured via `x509.Certificate.VerifyHostname`. When `SubjectAltNames` is set, `Hostname` is used for SNI only and NOT for authentication, per Gateway API spec |
-| `SubjectAltNames` of type `URI` (e.g. SPIFFE) | No | The policy is stamped `Accepted=False, Reason=Invalid` rather than silently dropping the URI entries — operators see a clear failure instead of a weaker-than-requested enforcement |
+| `SubjectAltNames` of type `Hostname` (OR-matching) | Yes | Cert must match at least one entry. Wildcards in the cert SAN list are honoured via `x509.Certificate.VerifyHostname` |
+| `SubjectAltNames` of type `URI` (e.g. SPIFFE) | Yes | Matched by exact string equality against the leaf cert's `URIs` field. OR-matched alongside Hostname SANs in the same policy — either path passing accepts the handshake (matches `BackendTLSPolicySANValidation` conformance) |
+| SNI / authentication split when SANs are set | Yes | When ANY `SubjectAltNames` entry is present (Hostname OR URI), `Hostname` is used only for SNI and NOT for authentication, per Gateway API spec. Authentication runs against the SAN list |
 | `WellKnownCACertificates: System` | No | Only explicit `CACertificateRefs` are honoured |
 | Multiple `targetRefs` per policy | Yes | All targeted Services share the same TLS config |
 | `SectionName` per-port targeting | Yes | When a `TargetRef` carries `sectionName`, only the matching named Service port receives TLS; siblings on the same Service stay plaintext |
@@ -249,14 +250,13 @@ only flips when `Status`, `Reason`, or `Message` actually changes.
 
 ### Fail-closed enforcement
 
-When a `BackendTLSPolicy` targets a Service but cannot be enforced (CA
-`ConfigMap` missing or unreadable, `ca.crt` empty or malformed PEM,
-unsupported `SubjectAltName` type), the proxy receives a poisoned TLS config
-(empty CA pool) and the next request to that Service fails with HTTP 502 — it
-is NOT silently downgraded to plaintext. The operator's stated intent ("this
-hop MUST be authenticated TLS") is preserved. Monitor the policy's
-`Accepted` condition to detect the failure mode (`Reason=NoValidCACertificate`
-or `Reason=Invalid`).
+When a `BackendTLSPolicy` targets a Service but cannot be enforced — the CA
+`ConfigMap` is missing or unreadable, `ca.crt` is empty, or the bundle is
+malformed PEM — the proxy receives a poisoned TLS config (empty CA pool) and
+the next request to that Service fails with HTTP 502. It is NOT silently
+downgraded to plaintext. The operator's stated intent ("this hop MUST be
+authenticated TLS") is preserved. Monitor the policy's `Accepted` condition
+to detect the failure mode (`Reason=NoValidCACertificate`).
 
 ### Interaction with `appProtocol: kubernetes.io/h2c`
 

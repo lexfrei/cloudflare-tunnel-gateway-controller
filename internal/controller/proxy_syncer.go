@@ -93,13 +93,15 @@ func NewProxySyncer(
 //     dials the backend in plaintext (no policy applies, so there's no
 //     operator intent to enforce).
 //   - A policy targets the service BUT the CA cannot be resolved (missing
-//     ConfigMap, unsupported Group/Kind, empty ca.crt, malformed PEM) OR the
-//     policy carries a non-Hostname SubjectAltName type that this controller
-//     does not support: returns a *poisoned* config — an empty CA pool with
-//     the policy's Hostname. This causes the proxy's TLS handshake to fail
-//     and the request returns 502, NOT a silent plaintext downgrade. The
-//     operator's stated intent ("traffic to this Service MUST be
-//     authenticated TLS") is preserved.
+//     ConfigMap, unsupported Group/Kind, empty ca.crt, malformed PEM):
+//     returns a *poisoned* config — an empty CA pool with the policy's
+//     Hostname. This causes the proxy's TLS handshake to fail and the
+//     request returns 502, NOT a silent plaintext downgrade.
+//   - Hostname and URI SubjectAltNames are both honoured. URI SANs are
+//     forwarded to the proxy as plain strings and matched via exact equality
+//     against the leaf cert's URIs (SPIFFE convention used by the Gateway
+//     API conformance suite). DNS Hostname SANs are matched via
+//     x509.VerifyHostname (RFC 6125 wildcards).
 //
 // Precedence per Gateway API: oldest creationTimestamp wins; on tie,
 // alphabetical {namespace}/{name}.
@@ -123,43 +125,62 @@ func newBackendTLSResolver(c client.Client) proxy.BackendTLSResolver {
 			return nil
 		}
 
-		// Fail closed for any unsupported SAN type — the operator asked for
-		// stricter identity than this controller can enforce.
-		if !hasOnlyHostnameSANs(policy) {
-			return poisonedBackendTLS(policy)
-		}
-
 		caBundle, ok := resolveCABundlePEM(ctx, c, policy)
 		if !ok {
 			return poisonedBackendTLS(policy)
 		}
 
-		sans := make([]string, 0, len(policy.Spec.Validation.SubjectAltNames))
-		for _, san := range policy.Spec.Validation.SubjectAltNames {
-			if san.Hostname != "" {
-				sans = append(sans, string(san.Hostname))
-			}
+		dnsSANs, uriSANs, hasUnknown := splitSANsByType(policy)
+		if hasUnknown {
+			// CRD-newer-than-controller scenario: a SAN entry carries a Type
+			// this controller doesn't recognise (Hostname/URI are the only
+			// enum values today, but the spec may add more). Fail closed
+			// rather than silently enforcing the subset we understand —
+			// downgrading is worse than refusing the request.
+			slog.Warn("BackendTLSPolicy carries a SubjectAltName of unsupported type — falling back to poisoned config to preserve operator intent",
+				"namespace", policy.Namespace,
+				"name", policy.Name,
+			)
+
+			return poisonedBackendTLS(policy)
 		}
 
 		return &proxy.BackendTLSConfig{
-			CABundlePEM:     caBundle,
-			ServerName:      string(policy.Spec.Validation.Hostname),
-			SubjectAltNames: sans,
+			CABundlePEM:        caBundle,
+			ServerName:         string(policy.Spec.Validation.Hostname),
+			SubjectAltNames:    dnsSANs,
+			SubjectAltNameURIs: uriSANs,
 		}
 	}
 }
 
-// hasOnlyHostnameSANs reports whether every SubjectAltName entry on the
-// policy is of the supported Hostname type. URI-type SANs (SPIFFE etc.) are
-// not yet implemented end-to-end and must not silently degrade enforcement.
-func hasOnlyHostnameSANs(policy *gatewayv1.BackendTLSPolicy) bool {
+// splitSANsByType separates the policy's SubjectAltNames into the DNS-hostname
+// list and the URI list the proxy expects. The third return reports whether
+// any entry carries a Type this controller doesn't recognise — the caller
+// must then fail closed rather than ship the partial result.
+func splitSANsByType(policy *gatewayv1.BackendTLSPolicy) ([]string, []string, bool) {
+	sansLen := len(policy.Spec.Validation.SubjectAltNames)
+	dnsSANs := make([]string, 0, sansLen)
+	uriSANs := make([]string, 0, sansLen)
+
+	hasUnknown := false
+
 	for _, san := range policy.Spec.Validation.SubjectAltNames {
-		if san.Type != gatewayv1.HostnameSubjectAltNameType {
-			return false
+		switch san.Type {
+		case gatewayv1.HostnameSubjectAltNameType:
+			if san.Hostname != "" {
+				dnsSANs = append(dnsSANs, string(san.Hostname))
+			}
+		case gatewayv1.URISubjectAltNameType:
+			if san.URI != "" {
+				uriSANs = append(uriSANs, string(san.URI))
+			}
+		default:
+			hasUnknown = true
 		}
 	}
 
-	return true
+	return dnsSANs, uriSANs, hasUnknown
 }
 
 // poisonedBackendTLS returns a TLS config that is guaranteed to fail handshake

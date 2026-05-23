@@ -317,47 +317,6 @@ func TestValidateCARefs_HappyPath(t *testing.T) {
 	require.NoError(t, err)
 }
 
-// ---- validateSANs ----
-
-func TestValidateSANs_AcceptsHostnameOnly(t *testing.T) {
-	t.Parallel()
-
-	r := &BackendTLSPolicyReconciler{ControllerName: "test"}
-
-	policy := &gatewayv1.BackendTLSPolicy{
-		Spec: gatewayv1.BackendTLSPolicySpec{
-			Validation: gatewayv1.BackendTLSPolicyValidation{
-				SubjectAltNames: []gatewayv1.SubjectAltName{
-					{Type: gatewayv1.HostnameSubjectAltNameType, Hostname: "alt.example.com"},
-				},
-			},
-		},
-	}
-
-	require.NoError(t, r.validateSANs(policy))
-}
-
-func TestValidateSANs_RejectsURIType(t *testing.T) {
-	t.Parallel()
-
-	r := &BackendTLSPolicyReconciler{ControllerName: "test"}
-
-	uriType := gatewayv1.URISubjectAltNameType
-	policy := &gatewayv1.BackendTLSPolicy{
-		Spec: gatewayv1.BackendTLSPolicySpec{
-			Validation: gatewayv1.BackendTLSPolicyValidation{
-				SubjectAltNames: []gatewayv1.SubjectAltName{
-					{Type: uriType},
-				},
-			},
-		},
-	}
-
-	err := r.validateSANs(policy)
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, errBackendTLSUnsupportedSANType))
-}
-
 // ---- computeConditions ----
 
 func TestComputeConditions_HappyPath(t *testing.T) {
@@ -427,29 +386,119 @@ func TestComputeConditions_InvalidCACertificateRef(t *testing.T) {
 	assert.Equal(t, string(gatewayv1.BackendTLSPolicyReasonInvalidCACertificateRef), conditions[1].Reason)
 }
 
-func TestComputeConditions_URISANRejected(t *testing.T) {
+// TestComputeConditions_NeverEmitsPolicyReasonInvalid pins the invariant
+// that — since this controller fully supports both Hostname and URI
+// SubjectAltNames — `computeConditions` MUST NOT stamp the Accepted Reason
+// with `PolicyReasonInvalid`. The previous controller emitted that Reason
+// when it rejected URI SANs; that path is gone and the docs (fail-closed
+// section in docs/gateway-api/limitations.md) no longer mention it. A
+// regression that silently reintroduces the rejection branch must surface
+// here, not at conformance time on homelab.
+func TestComputeConditions_NeverEmitsPolicyReasonInvalid(t *testing.T) {
 	t.Parallel()
 
 	scheme := newBackendTLSPolicyScheme(t)
-	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+	configMap := caConfigMap("ns", "cm", generateSelfSignedCAPEM(t))
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(configMap).Build()
 	r := &BackendTLSPolicyReconciler{Client: fakeClient, Scheme: scheme, ControllerName: "test"}
 
-	uriType := gatewayv1.URISubjectAltNameType
-	policy := &gatewayv1.BackendTLSPolicy{
-		ObjectMeta: metav1.ObjectMeta{Namespace: "ns", Name: "p", Generation: 7},
-		Spec: gatewayv1.BackendTLSPolicySpec{
-			Validation: gatewayv1.BackendTLSPolicyValidation{
-				SubjectAltNames: []gatewayv1.SubjectAltName{{Type: uriType}},
-			},
-		},
+	noSAN := backendTLSPolicyFor("ns", "no-san", "svc", "cm", time.Time{})
+
+	hostOnly := backendTLSPolicyFor("ns", "host-only", "svc", "cm", time.Time{})
+	hostOnly.Spec.Validation.SubjectAltNames = []gatewayv1.SubjectAltName{
+		{Type: gatewayv1.HostnameSubjectAltNameType, Hostname: "alt.example.com"},
+	}
+
+	uriOnly := backendTLSPolicyFor("ns", "uri-only", "svc", "cm", time.Time{})
+	uriOnly.Spec.Validation.SubjectAltNames = []gatewayv1.SubjectAltName{
+		{Type: gatewayv1.URISubjectAltNameType, URI: "spiffe://example/identity"},
+	}
+
+	mixed := backendTLSPolicyFor("ns", "mixed", "svc", "cm", time.Time{})
+	mixed.Spec.Validation.SubjectAltNames = []gatewayv1.SubjectAltName{
+		{Type: gatewayv1.HostnameSubjectAltNameType, Hostname: "alt.example.com"},
+		{Type: gatewayv1.URISubjectAltNameType, URI: "spiffe://example/identity"},
+	}
+
+	for _, policy := range []*gatewayv1.BackendTLSPolicy{noSAN, hostOnly, uriOnly, mixed} {
+		t.Run(policy.Name, func(t *testing.T) {
+			t.Parallel()
+
+			conds := r.computeConditions(context.Background(), policy)
+			require.NotEmpty(t, conds)
+
+			for _, condition := range conds {
+				if condition.Type == string(gatewayv1.PolicyConditionAccepted) {
+					assert.NotEqual(t, string(gatewayv1.PolicyReasonInvalid), condition.Reason,
+						"controller MUST NOT emit Reason=Invalid on Accepted — that path was removed when URI SANs became supported")
+				}
+			}
+		})
+	}
+}
+
+// TestBackendTLSResolver_UnknownSANType_ReturnsPoisonedConfig pins the
+// CRD-newer-than-controller defence: if a future Gateway API release adds a
+// SubjectAltName type (Email, IP, etc.) and a cluster's CRD ships that enum
+// value, the resolver MUST fail closed rather than silently enforce the
+// subset it understands. Otherwise an operator who writes a policy requiring
+// the new SAN type would get plaintext-equivalent enforcement, downgrading
+// their stated intent.
+func TestBackendTLSResolver_UnknownSANType_ReturnsPoisonedConfig(t *testing.T) {
+	t.Parallel()
+
+	scheme := newBackendTLSPolicyScheme(t)
+
+	policy := backendTLSPolicyFor("ns", "p", "svc", "cm", time.Time{})
+	// Fabricated SAN type — not Hostname or URI. Mimics the case where the
+	// cluster CRD enum is ahead of this controller's compiled spec.
+	policy.Spec.Validation.SubjectAltNames = []gatewayv1.SubjectAltName{
+		{Type: gatewayv1.SubjectAltNameType("Email")},
+	}
+
+	configMap := caConfigMap("ns", "cm", generateSelfSignedCAPEM(t))
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(policy, configMap).
+		Build()
+
+	resolver := newBackendTLSResolver(fakeClient)
+
+	got := resolver(context.Background(), "ns", "svc", 443)
+	require.NotNil(t, got, "policy targets the Service — resolver MUST NOT return nil (would downgrade to plaintext)")
+	assert.Empty(t, got.CABundlePEM,
+		"unknown SAN type → poisoned config (empty CA pool) so handshake fails closed")
+	assert.Empty(t, got.SubjectAltNames,
+		"poisoned config drops the partial SAN list")
+	assert.Empty(t, got.SubjectAltNameURIs,
+		"poisoned config drops URI SAN list too")
+}
+
+// TestComputeConditions_URISANAccepted verifies that a BackendTLSPolicy
+// carrying URI-type SubjectAltNames is accepted end-to-end (Accepted=True,
+// ResolvedRefs=True). URI SANs (e.g. SPIFFE IDs) are matched against the
+// leaf cert's URIs[] by the proxy.
+func TestComputeConditions_URISANAccepted(t *testing.T) {
+	t.Parallel()
+
+	scheme := newBackendTLSPolicyScheme(t)
+	configMap := caConfigMap("ns", "cm", generateSelfSignedCAPEM(t))
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(configMap).Build()
+	r := &BackendTLSPolicyReconciler{Client: fakeClient, Scheme: scheme, ControllerName: "test"}
+
+	policy := backendTLSPolicyFor("ns", "p", "svc", "cm", time.Time{})
+	policy.Generation = 7
+	policy.Spec.Validation.SubjectAltNames = []gatewayv1.SubjectAltName{
+		{Type: gatewayv1.URISubjectAltNameType, URI: "spiffe://abc.example.com/test-identity"},
 	}
 
 	conditions := r.computeConditions(context.Background(), policy)
 
 	require.Len(t, conditions, 2)
-	assert.Equal(t, metav1.ConditionFalse, conditions[0].Status)
-	assert.Equal(t, string(gatewayv1.PolicyReasonInvalid), conditions[0].Reason)
-	// SAN failure does not invalidate the CA refs themselves.
+	assert.Equal(t, metav1.ConditionTrue, conditions[0].Status,
+		"URI SubjectAltName is now fully supported — Accepted MUST be True")
+	assert.Equal(t, string(gatewayv1.PolicyReasonAccepted), conditions[0].Reason)
 	assert.Equal(t, metav1.ConditionTrue, conditions[1].Status)
 	assert.Equal(t, string(gatewayv1.BackendTLSPolicyReasonResolvedRefs), conditions[1].Reason)
 	assert.Equal(t, int64(7), conditions[0].ObservedGeneration)
@@ -1002,15 +1051,19 @@ func TestBackendTLSResolver_PolicyTargetsButCAMalformed_ReturnsPoisonedConfig(t 
 	assert.Empty(t, got.CABundlePEM)
 }
 
-func TestBackendTLSResolver_URISubjectAltName_ReturnsPoisonedConfig(t *testing.T) {
+// TestBackendTLSResolver_URISubjectAltName_ForwardsURIToProxy verifies that
+// URI-type SubjectAltNames are forwarded to the proxy BackendTLSConfig as
+// plain strings on the SubjectAltNameURIs field. Hostname-type SANs go to
+// SubjectAltNames. Both lists are OR-matched by the proxy at handshake time.
+func TestBackendTLSResolver_URISubjectAltName_ForwardsURIToProxy(t *testing.T) {
 	t.Parallel()
 
 	scheme := newBackendTLSPolicyScheme(t)
 
 	policy := backendTLSPolicyFor("ns", "p", "svc", "cm", time.Time{})
-	uriType := gatewayv1.URISubjectAltNameType
 	policy.Spec.Validation.SubjectAltNames = []gatewayv1.SubjectAltName{
-		{Type: uriType},
+		{Type: gatewayv1.URISubjectAltNameType, URI: "spiffe://abc.example.com/identity"},
+		{Type: gatewayv1.HostnameSubjectAltNameType, Hostname: "alt.example.com"},
 	}
 
 	configMap := caConfigMap("ns", "cm", generateSelfSignedCAPEM(t))
@@ -1023,10 +1076,12 @@ func TestBackendTLSResolver_URISubjectAltName_ReturnsPoisonedConfig(t *testing.T
 	resolver := newBackendTLSResolver(fakeClient)
 
 	got := resolver(context.Background(), "ns", "svc", 443)
-	require.NotNil(t, got,
-		"URI-type SubjectAltName is not supported — resolver must NOT return nil (plaintext); "+
-			"must return a poisoned config so traffic fails closed")
-	assert.Empty(t, got.CABundlePEM)
+	require.NotNil(t, got, "happy-path policy must produce a real TLS config")
+	assert.NotEmpty(t, got.CABundlePEM, "valid CA bundle must be forwarded — not a poisoned config")
+	assert.Equal(t, []string{"alt.example.com"}, got.SubjectAltNames,
+		"Hostname SANs go to SubjectAltNames")
+	assert.Equal(t, []string{"spiffe://abc.example.com/identity"}, got.SubjectAltNameURIs,
+		"URI SANs go to SubjectAltNameURIs")
 }
 
 // TestBackendTLSResolver_ListErrorFailsOpen pins the documented asymmetry

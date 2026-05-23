@@ -220,10 +220,26 @@ type BackendTLSConfig struct {
 	// ServerName is used both as the TLS SNI value and as the expected
 	// hostname during certificate verification (DNS SAN match).
 	ServerName string `json:"serverName,omitempty"`
-	// SubjectAltNames lists additional hostnames that the backend cert may
-	// present in its SAN to satisfy this policy. ServerName is implied; this
-	// list is additive.
+	// SubjectAltNames lists hostnames (DNS SAN) that the backend cert may
+	// present to satisfy this policy. Empty when only URI SANs are required.
+	// When SubjectAltNames or SubjectAltNameURIs is non-empty, ServerName is
+	// used for SNI only and NOT for authentication (per Gateway API spec).
 	SubjectAltNames []string `json:"subjectAltNames,omitempty"`
+	// SubjectAltNameURIs lists URI SANs (e.g. SPIFFE IDs) that the backend
+	// cert may present to satisfy this policy. Matched by exact string
+	// equality against each URI in the leaf cert's URIs field.
+	SubjectAltNameURIs []string `json:"subjectAltNameUris,omitempty"`
+}
+
+// HasSANConstraints reports whether the policy requires SAN-list verification
+// (any of DNS or URI). When true, the proxy disables stdlib hostname
+// verification and runs the manual chain + OR-match path.
+func (c *BackendTLSConfig) HasSANConstraints() bool {
+	if c == nil {
+		return false
+	}
+
+	return len(c.SubjectAltNames) > 0 || len(c.SubjectAltNameURIs) > 0
 }
 
 // BackendRef identifies a backend service with a weight for traffic splitting.

@@ -2,12 +2,20 @@ package controller_test
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
+	"encoding/pem"
 	"log/slog"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -20,6 +28,31 @@ import (
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/controller"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/proxy"
 )
+
+// testSelfSignedCAPEM emits a fresh PEM-encoded self-signed CA so tests that
+// need a non-poisoned trust pool can stand one up without touching the
+// filesystem. Used by URI-SAN tests where the resolver must produce a real
+// (non-poisoned) BackendTLSConfig.
+func testSelfSignedCAPEM(t *testing.T) string {
+	t.Helper()
+
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	template := x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "test-ca"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+		KeyUsage:     x509.KeyUsageCertSign,
+		IsCA:         true,
+	}
+
+	derBytes, err := x509.CreateCertificate(rand.Reader, &template, &template, &priv.PublicKey, priv)
+	require.NoError(t, err)
+
+	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: derBytes}))
+}
 
 func TestProxySyncer_SyncRoutes(t *testing.T) {
 	t.Parallel()
@@ -278,15 +311,14 @@ func TestProxySyncer_SyncRoutes_BackendTLSPolicyMissingCA_FailsClosed(t *testing
 		"poisoned config has empty CA bundle → handshake fails closed at the proxy")
 }
 
-// TestProxySyncer_SyncRoutes_BackendTLSPolicy_URISubjectAltName_PushesPoisonedConfig
-// verifies the URI-SAN fail-closed path end-to-end: when a BackendTLSPolicy
-// requires a URI-type SubjectAltName (SPIFFE etc.), the resolver MUST emit a
-// poisoned TLS config rather than silently dropping the SAN requirement.
-// This pairs with the integration handshake test
-// (TestHandler_BackendTLSPolicy_PoisonedConfig_HandshakeFails in
-// internal/proxy/integration_test.go) which confirms the proxy turns that
-// poisoned config into a 502 at handshake time.
-func TestProxySyncer_SyncRoutes_BackendTLSPolicy_URISubjectAltName_PushesPoisonedConfig(t *testing.T) {
+// TestProxySyncer_SyncRoutes_BackendTLSPolicy_URISubjectAltName_PushesURIList
+// verifies the URI-SAN happy path end-to-end: when a BackendTLSPolicy carries
+// a URI-type SubjectAltName (e.g. SPIFFE ID), the resolver forwards it on
+// BackendTLSConfig.SubjectAltNameURIs to the proxy where it's matched against
+// the leaf cert's URIs at handshake time. Pairs with
+// internal/proxy/integration_test.go's TestHandler_BackendTLSPolicy_URISAN_*
+// which exercise the proxy-side matching.
+func TestProxySyncer_SyncRoutes_BackendTLSPolicy_URISubjectAltName_PushesURIList(t *testing.T) {
 	t.Parallel()
 
 	pathPrefix := gatewayv1.PathMatchPathPrefix
@@ -310,6 +342,11 @@ func TestProxySyncer_SyncRoutes_BackendTLSPolicy_URISubjectAltName_PushesPoisone
 	require.NoError(t, corev1.AddToScheme(scheme))
 	require.NoError(t, gatewayv1.Install(scheme))
 
+	caCM := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Name: "spiffe-ca", Namespace: "default"},
+		Data:       map[string]string{"ca.crt": testSelfSignedCAPEM(t)},
+	}
+
 	policy := &gatewayv1.BackendTLSPolicy{
 		ObjectMeta: metav1.ObjectMeta{Name: "spiffe-policy", Namespace: "default"},
 		Spec: gatewayv1.BackendTLSPolicySpec{
@@ -322,17 +359,18 @@ func TestProxySyncer_SyncRoutes_BackendTLSPolicy_URISubjectAltName_PushesPoisone
 				},
 			},
 			Validation: gatewayv1.BackendTLSPolicyValidation{
-				// URI-type SAN — unsupported by this controller. The resolver
-				// MUST poison rather than fall back to plaintext.
+				CACertificateRefs: []gatewayv1.LocalObjectReference{
+					{Kind: "ConfigMap", Name: "spiffe-ca"},
+				},
+				Hostname: "spiffe.example.com",
 				SubjectAltNames: []gatewayv1.SubjectAltName{
 					{Type: gatewayv1.URISubjectAltNameType, URI: "spiffe://example.org/server"},
 				},
-				Hostname: "spiffe.example.com",
 			},
 		},
 	}
 
-	testClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(policy).Build()
+	testClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(policy, caCM).Build()
 
 	syncer := controller.NewProxySyncer("cluster.local", "", testClient, slog.Default())
 
@@ -359,14 +397,11 @@ func TestProxySyncer_SyncRoutes_BackendTLSPolicy_URISubjectAltName_PushesPoisone
 	require.Len(t, receivedConfig.Rules[0].Backends, 1)
 	backend := receivedConfig.Rules[0].Backends[0]
 
-	require.NotNil(t, backend.TLS,
-		"URI-type SAN is unsupported but the policy targets the Service — the resolver MUST emit "+
-			"a TLS block (poisoned) so traffic fails closed at handshake time. nil here would "+
-			"silently downgrade to plaintext.")
-	assert.Empty(t, backend.TLS.CABundlePEM,
-		"poisoned config carries an empty CA bundle so handshake fails closed")
-	assert.Empty(t, backend.TLS.SubjectAltNames,
-		"poisoned config drops SAN list — chain verification fails before SAN matching matters")
+	require.NotNil(t, backend.TLS, "valid policy must produce a real TLS config")
+	assert.NotEmpty(t, backend.TLS.CABundlePEM, "valid CA bundle must be forwarded — not poisoned")
+	assert.Empty(t, backend.TLS.SubjectAltNames, "no Hostname SAN on the policy → empty DNS list")
+	assert.Equal(t, []string{"spiffe://example.org/server"}, backend.TLS.SubjectAltNameURIs,
+		"URI SAN must flow through to BackendTLSConfig.SubjectAltNameURIs for proxy-side matching")
 }
 
 // Helper functions.
