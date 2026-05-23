@@ -103,7 +103,7 @@ The following HTTPRoute filters are supported with the L7 proxy enabled:
 | `ResponseHeaderModifier` | Yes | Add, set, or remove response headers |
 | `RequestRedirect` | Yes | Redirect with scheme, hostname, port, path, status code |
 | `URLRewrite` | Yes | Rewrite hostname and/or path |
-| `RequestMirror` | Yes | Mirror traffic to a secondary backend |
+| `RequestMirror` | Yes | Mirror traffic to one or more secondary backends. Per Gateway API only one of `percent` or `fraction` may be set on a filter; `percent` takes precedence if both appear. |
 | `ExtensionRef` | No | Not implemented |
 
 ### Supported Service Types

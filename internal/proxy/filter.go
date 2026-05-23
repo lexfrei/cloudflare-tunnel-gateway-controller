@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math/rand/v2"
 	"net/http"
 	"net/url"
 	"path"
@@ -285,19 +286,28 @@ func (f *urlRewriter) rewritePath(req *http.Request) {
 }
 
 // requestMirror sends a copy of the request to a mirror backend asynchronously.
+// percent is nil for unconditional mirroring (100%), otherwise an integer in
+// 0..100 that gates whether a given request is mirrored.
 type requestMirror struct {
 	backendURL string
+	percent    *int32
 }
 
 // NewRequestMirror creates a filter that mirrors requests to a backend URL.
 // All mirror instances share a single HTTP client for connection pooling.
-func NewRequestMirror(backendURL string) Filter {
+// percent (0-100) controls the fraction of requests mirrored; nil means 100%.
+func NewRequestMirror(backendURL string, percent *int32) Filter {
 	return &requestMirror{
 		backendURL: backendURL,
+		percent:    percent,
 	}
 }
 
 func (f *requestMirror) ProcessRequest(req *http.Request) *http.Response {
+	if !f.shouldMirror() {
+		return nil
+	}
+
 	mirrorURL, err := req.URL.Parse(f.backendURL + req.URL.Path)
 	if err != nil {
 		slog.Warn("mirror: failed to parse backend URL", "error", err)
@@ -392,6 +402,26 @@ func bufferMirrorBody(req *http.Request) ([]byte, bool) {
 
 func (f *requestMirror) ProcessResponse(_ *http.Response) {}
 
+// shouldMirror returns true when the configured percent admits the current
+// request. nil percent means mirror every request. 0 means never. Otherwise
+// flip a fair coin biased by percent.
+func (f *requestMirror) shouldMirror() bool {
+	if f.percent == nil {
+		return true
+	}
+
+	pct := *f.percent
+	if pct <= 0 {
+		return false
+	}
+
+	if pct >= 100 {
+		return true
+	}
+	//nolint:gosec // math/rand is fine for traffic mirroring sampling
+	return rand.Int32N(100) < pct
+}
+
 // CompileFilters converts RouteFilter specs into executable Filter instances.
 func CompileFilters(filters []RouteFilter) ([]Filter, error) {
 	compiled := make([]Filter, 0, len(filters))
@@ -419,7 +449,7 @@ func compileFilter(filter RouteFilter) (Filter, error) {
 	case FilterURLRewrite:
 		return NewURLRewriter(filter.URLRewrite), nil
 	case FilterRequestMirror:
-		return NewRequestMirror(filter.RequestMirror.BackendURL), nil
+		return NewRequestMirror(filter.RequestMirror.BackendURL, filter.RequestMirror.Percent), nil
 	default:
 		return nil, errors.Wrapf(errUnknownFilterType, "%q", filter.Type)
 	}

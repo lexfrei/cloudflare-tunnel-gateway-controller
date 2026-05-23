@@ -151,6 +151,40 @@ func TestProxyConfig_Validate(t *testing.T) {
 			wantErr: "rule[0]: backend[0]: weight must be non-negative",
 		},
 		{
+			name: "mirror percent out of range above is rejected",
+			config: proxy.Config{
+				Version: 1,
+				Rules: []proxy.RouteRule{
+					{
+						Filters: []proxy.RouteFilter{
+							{
+								Type:          proxy.FilterRequestMirror,
+								RequestMirror: &proxy.MirrorConfig{BackendURL: "http://mirror:80", Percent: new(int32(101))},
+							},
+						},
+					},
+				},
+			},
+			wantErr: "rule[0]: filter[0]: requestMirror percent must be in [0,100], got 101",
+		},
+		{
+			name: "mirror percent out of range below is rejected",
+			config: proxy.Config{
+				Version: 1,
+				Rules: []proxy.RouteRule{
+					{
+						Filters: []proxy.RouteFilter{
+							{
+								Type:          proxy.FilterRequestMirror,
+								RequestMirror: &proxy.MirrorConfig{BackendURL: "http://mirror:80", Percent: new(int32(-1))},
+							},
+						},
+					},
+				},
+			},
+			wantErr: "rule[0]: filter[0]: requestMirror percent must be in [0,100], got -1",
+		},
+		{
 			name: "unknown backend protocol is rejected",
 			config: proxy.Config{
 				Version: 1,

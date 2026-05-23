@@ -351,9 +351,70 @@ func convertMirrorFilter(
 	mirrorURL := buildServiceURL(string(mirror.BackendRef.Name), mirrorNS, mirrorPort, clusterDomain)
 
 	return &RouteFilter{
-		Type:          FilterRequestMirror,
-		RequestMirror: &MirrorConfig{BackendURL: mirrorURL},
+		Type: FilterRequestMirror,
+		RequestMirror: &MirrorConfig{
+			BackendURL: mirrorURL,
+			Percent:    mirrorPercent(mirror),
+		},
 	}
+}
+
+// mirrorPercent normalises HTTPRequestMirrorFilter.Percent and Fraction into a
+// single 0-100 value. Returns nil when neither is set (i.e. mirror everything).
+// Per Gateway API only one of Percent or Fraction may be specified.
+//
+// Always returns a freshly allocated pointer so the proxy config is fully
+// detached from the HTTPRoute object's storage. Arithmetic uses int64 to avoid
+// overflow when a Fraction uses large numerator/denominator values that are
+// individually valid int32 but whose product overflows. The result is clamped
+// to [0, 100] defensively, even though the CRD already enforces this — the
+// proxy data plane treats out-of-range as a programming error and snapping to
+// the nearest legal value is safer than producing UB in shouldMirror.
+func mirrorPercent(mirror *gatewayv1.HTTPRequestMirrorFilter) *int32 {
+	if mirror.Percent != nil {
+		clamped := clampPercent(int64(*mirror.Percent))
+
+		return &clamped
+	}
+
+	if mirror.Fraction == nil {
+		return nil
+	}
+
+	denominator := int32(100)
+	if mirror.Fraction.Denominator != nil {
+		denominator = *mirror.Fraction.Denominator
+	}
+
+	if denominator <= 0 {
+		slog.Warn("skipping mirror Fraction with non-positive denominator",
+			"numerator", mirror.Fraction.Numerator,
+			"denominator", denominator,
+		)
+
+		return nil
+	}
+
+	// int64 arithmetic prevents Numerator*100 from wrapping on large
+	// Numerators (CRD validation only requires Numerator <= Denominator,
+	// not a Maximum cap, so values in the billions are legal input).
+	resolved := clampPercent(int64(mirror.Fraction.Numerator) * 100 / int64(denominator))
+
+	return &resolved
+}
+
+// clampPercent snaps an arbitrary integer to the [0, 100] range and narrows
+// the type to int32 (the wire format used by MirrorConfig.Percent).
+func clampPercent(value int64) int32 {
+	if value < 0 {
+		return 0
+	}
+
+	if value > 100 {
+		return 100
+	}
+
+	return int32(value)
 }
 
 func convertHeaderModifier(modifier *gatewayv1.HTTPHeaderFilter) *HeaderModifier {

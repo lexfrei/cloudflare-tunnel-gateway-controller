@@ -336,6 +336,326 @@ func TestConvertHTTPRoutes_PerBackendFilters(t *testing.T) {
 	assert.Empty(t, cfg.Rules[0].Backends[1].Filters, "v2 backend declares no per-backend filters")
 }
 
+func TestConvertHTTPRoutes_MultipleMirrors(t *testing.T) {
+	t.Parallel()
+
+	pathPrefix := gatewayv1.PathMatchPathPrefix
+	port := gatewayv1.PortNumber(80)
+
+	// Two RequestMirror filters in the same rule must yield two distinct
+	// mirror RouteFilters (one per target). Gateway API 1.5 standard channel
+	// removed the previous "at most one mirror filter per rule" restriction.
+	routes := []*gatewayv1.HTTPRoute{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "multi-mirror", Namespace: "default"},
+			Spec: gatewayv1.HTTPRouteSpec{
+				Hostnames: []gatewayv1.Hostname{"example.com"},
+				Rules: []gatewayv1.HTTPRouteRule{
+					{
+						Matches: []gatewayv1.HTTPRouteMatch{
+							{Path: &gatewayv1.HTTPPathMatch{Type: &pathPrefix, Value: new("/")}},
+						},
+						Filters: []gatewayv1.HTTPRouteFilter{
+							{
+								Type: gatewayv1.HTTPRouteFilterRequestMirror,
+								RequestMirror: &gatewayv1.HTTPRequestMirrorFilter{
+									BackendRef: gatewayv1.BackendObjectReference{Name: "mirror-a", Port: &port},
+								},
+							},
+							{
+								Type: gatewayv1.HTTPRouteFilterRequestMirror,
+								RequestMirror: &gatewayv1.HTTPRequestMirrorFilter{
+									BackendRef: gatewayv1.BackendObjectReference{Name: "mirror-b", Port: &port},
+								},
+							},
+						},
+						BackendRefs: []gatewayv1.HTTPBackendRef{backendRef("primary", 80, 1)},
+					},
+				},
+			},
+		},
+	}
+
+	cfg := proxy.ConvertHTTPRoutes(context.Background(), routes, "cluster.local", nil, nil)
+
+	require.Len(t, cfg.Rules, 1)
+	require.Len(t, cfg.Rules[0].Filters, 2, "both mirror filters must be carried into the rule")
+	assert.Equal(t, proxy.FilterRequestMirror, cfg.Rules[0].Filters[0].Type)
+	assert.Equal(t, proxy.FilterRequestMirror, cfg.Rules[0].Filters[1].Type)
+	require.NotNil(t, cfg.Rules[0].Filters[0].RequestMirror)
+	require.NotNil(t, cfg.Rules[0].Filters[1].RequestMirror)
+	assert.Contains(t, cfg.Rules[0].Filters[0].RequestMirror.BackendURL, "mirror-a")
+	assert.Contains(t, cfg.Rules[0].Filters[1].RequestMirror.BackendURL, "mirror-b")
+}
+
+func TestConvertHTTPRoutes_MirrorWithPercent(t *testing.T) {
+	t.Parallel()
+
+	pathPrefix := gatewayv1.PathMatchPathPrefix
+	port := gatewayv1.PortNumber(80)
+	percent := int32(20)
+
+	routes := []*gatewayv1.HTTPRoute{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "percent-mirror", Namespace: "default"},
+			Spec: gatewayv1.HTTPRouteSpec{
+				Hostnames: []gatewayv1.Hostname{"example.com"},
+				Rules: []gatewayv1.HTTPRouteRule{
+					{
+						Matches: []gatewayv1.HTTPRouteMatch{
+							{Path: &gatewayv1.HTTPPathMatch{Type: &pathPrefix, Value: new("/")}},
+						},
+						Filters: []gatewayv1.HTTPRouteFilter{
+							{
+								Type: gatewayv1.HTTPRouteFilterRequestMirror,
+								RequestMirror: &gatewayv1.HTTPRequestMirrorFilter{
+									BackendRef: gatewayv1.BackendObjectReference{Name: "mirror", Port: &port},
+									Percent:    &percent,
+								},
+							},
+						},
+						BackendRefs: []gatewayv1.HTTPBackendRef{backendRef("primary", 80, 1)},
+					},
+				},
+			},
+		},
+	}
+
+	cfg := proxy.ConvertHTTPRoutes(context.Background(), routes, "cluster.local", nil, nil)
+
+	require.Len(t, cfg.Rules, 1)
+	require.Len(t, cfg.Rules[0].Filters, 1)
+	require.NotNil(t, cfg.Rules[0].Filters[0].RequestMirror)
+	require.NotNil(t, cfg.Rules[0].Filters[0].RequestMirror.Percent, "Percent field must propagate from HTTPRequestMirrorFilter")
+	assert.Equal(t, int32(20), *cfg.Rules[0].Filters[0].RequestMirror.Percent)
+}
+
+func TestConvertHTTPRoutes_MirrorFractionLargeDenominatorNoOverflow(t *testing.T) {
+	t.Parallel()
+
+	pathPrefix := gatewayv1.PathMatchPathPrefix
+	port := gatewayv1.PortNumber(80)
+
+	// Numerator=30_000_000 and Denominator=100_000_000 encode 30% sampling at
+	// high resolution. The CRD validation does not cap either value.
+	// Numerator*100 = 3_000_000_000 overflows int32; int64 arithmetic must be
+	// used to land on 30, not on a wrapped negative.
+	routes := []*gatewayv1.HTTPRoute{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "fraction-big", Namespace: "default"},
+			Spec: gatewayv1.HTTPRouteSpec{
+				Hostnames: []gatewayv1.Hostname{"example.com"},
+				Rules: []gatewayv1.HTTPRouteRule{
+					{
+						Matches: []gatewayv1.HTTPRouteMatch{
+							{Path: &gatewayv1.HTTPPathMatch{Type: &pathPrefix, Value: new("/")}},
+						},
+						Filters: []gatewayv1.HTTPRouteFilter{
+							{
+								Type: gatewayv1.HTTPRouteFilterRequestMirror,
+								RequestMirror: &gatewayv1.HTTPRequestMirrorFilter{
+									BackendRef: gatewayv1.BackendObjectReference{Name: "mirror", Port: &port},
+									Fraction:   &gatewayv1.Fraction{Numerator: 30_000_000, Denominator: new(int32(100_000_000))},
+								},
+							},
+						},
+						BackendRefs: []gatewayv1.HTTPBackendRef{backendRef("primary", 80, 1)},
+					},
+				},
+			},
+		},
+	}
+
+	cfg := proxy.ConvertHTTPRoutes(context.Background(), routes, "cluster.local", nil, nil)
+
+	require.Len(t, cfg.Rules, 1)
+	require.NotNil(t, cfg.Rules[0].Filters[0].RequestMirror.Percent)
+	assert.Equal(t, int32(30), *cfg.Rules[0].Filters[0].RequestMirror.Percent,
+		"large-denominator Fraction must use int64 arithmetic; got %d (likely int32 overflow)",
+		*cfg.Rules[0].Filters[0].RequestMirror.Percent)
+}
+
+func TestConvertHTTPRoutes_MirrorPercentDetachedFromSourcePointer(t *testing.T) {
+	t.Parallel()
+
+	pathPrefix := gatewayv1.PathMatchPathPrefix
+	port := gatewayv1.PortNumber(80)
+	percent := int32(20)
+
+	route := &gatewayv1.HTTPRoute{
+		ObjectMeta: metav1.ObjectMeta{Name: "alias", Namespace: "default"},
+		Spec: gatewayv1.HTTPRouteSpec{
+			Hostnames: []gatewayv1.Hostname{"example.com"},
+			Rules: []gatewayv1.HTTPRouteRule{
+				{
+					Matches: []gatewayv1.HTTPRouteMatch{
+						{Path: &gatewayv1.HTTPPathMatch{Type: &pathPrefix, Value: new("/")}},
+					},
+					Filters: []gatewayv1.HTTPRouteFilter{
+						{
+							Type: gatewayv1.HTTPRouteFilterRequestMirror,
+							RequestMirror: &gatewayv1.HTTPRequestMirrorFilter{
+								BackendRef: gatewayv1.BackendObjectReference{Name: "mirror", Port: &port},
+								Percent:    &percent,
+							},
+						},
+					},
+					BackendRefs: []gatewayv1.HTTPBackendRef{backendRef("primary", 80, 1)},
+				},
+			},
+		},
+	}
+
+	cfg := proxy.ConvertHTTPRoutes(context.Background(), []*gatewayv1.HTTPRoute{route}, "cluster.local", nil, nil)
+
+	// Mutate the source pointer after conversion. The proxy config must hold a
+	// snapshot, not a live alias — otherwise the filter goroutine could read
+	// changing values while serving requests.
+	*route.Spec.Rules[0].Filters[0].RequestMirror.Percent = 99
+	assert.Equal(t, int32(20), *cfg.Rules[0].Filters[0].RequestMirror.Percent,
+		"proxy config must own its own copy of Percent; source mutation leaked in")
+}
+
+func TestConvertHTTPRoutes_MirrorFractionNonPositiveDenominator_Skipped(t *testing.T) {
+	t.Parallel()
+
+	pathPrefix := gatewayv1.PathMatchPathPrefix
+	port := gatewayv1.PortNumber(80)
+
+	// CRD validation requires Denominator>=1 but the proxy is permissive against
+	// malformed input that bypasses admission (e.g. a pushed config). A zero or
+	// negative denominator must not panic-divide; mirrorPercent returns nil and
+	// the filter falls back to default 100% sampling.
+	routes := []*gatewayv1.HTTPRoute{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "zero-denom", Namespace: "default"},
+			Spec: gatewayv1.HTTPRouteSpec{
+				Hostnames: []gatewayv1.Hostname{"example.com"},
+				Rules: []gatewayv1.HTTPRouteRule{
+					{
+						Matches: []gatewayv1.HTTPRouteMatch{
+							{Path: &gatewayv1.HTTPPathMatch{Type: &pathPrefix, Value: new("/")}},
+						},
+						Filters: []gatewayv1.HTTPRouteFilter{
+							{
+								Type: gatewayv1.HTTPRouteFilterRequestMirror,
+								RequestMirror: &gatewayv1.HTTPRequestMirrorFilter{
+									BackendRef: gatewayv1.BackendObjectReference{Name: "mirror", Port: &port},
+									Fraction:   &gatewayv1.Fraction{Numerator: 1, Denominator: new(int32(0))},
+								},
+							},
+						},
+						BackendRefs: []gatewayv1.HTTPBackendRef{backendRef("primary", 80, 1)},
+					},
+				},
+			},
+		},
+	}
+
+	require.NotPanics(t, func() {
+		cfg := proxy.ConvertHTTPRoutes(context.Background(), routes, "cluster.local", nil, nil)
+		require.Len(t, cfg.Rules, 1)
+		require.Len(t, cfg.Rules[0].Filters, 1)
+		require.NotNil(t, cfg.Rules[0].Filters[0].RequestMirror)
+		assert.Nil(t, cfg.Rules[0].Filters[0].RequestMirror.Percent,
+			"non-positive denominator must drop the sampling rate (fall back to default 100%%)")
+	})
+}
+
+func TestShouldMirror_Contract(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		percent *int32
+		want    bool // either deterministic, or "expected steady-state" for stochastic cases
+		isProb  bool // when true, want is the steady-state and we sample
+	}{
+		{name: "nil percent mirrors every request", percent: nil, want: true},
+		{name: "negative percent never mirrors (clamped)", percent: new(int32(-1)), want: false},
+		{name: "zero percent never mirrors", percent: new(int32(0)), want: false},
+		{name: "one hundred always mirrors", percent: new(int32(100)), want: true},
+		{name: "above one hundred always mirrors (clamped)", percent: new(int32(101)), want: true},
+		{name: "fifty mirrors stochastically", percent: new(int32(50)), want: true, isProb: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			if !tt.isProb {
+				// Deterministic case: a single call must produce the expected verdict.
+				assert.Equal(t, tt.want, proxy.ShouldMirrorForTest(tt.percent))
+
+				return
+			}
+
+			// Stochastic case: across many calls the function must return both
+			// true and false at least once (it isn't stuck on one branch).
+			sawTrue := false
+			sawFalse := false
+
+			for range 1000 {
+				if proxy.ShouldMirrorForTest(tt.percent) {
+					sawTrue = true
+				} else {
+					sawFalse = true
+				}
+				if sawTrue && sawFalse {
+					break
+				}
+			}
+
+			assert.True(t, sawTrue, "percent=50 must produce true at least once over 1000 calls")
+			assert.True(t, sawFalse, "percent=50 must produce false at least once over 1000 calls")
+		})
+	}
+}
+
+func TestConvertHTTPRoutes_MirrorWithFractionResolvesToPercent(t *testing.T) {
+	t.Parallel()
+
+	pathPrefix := gatewayv1.PathMatchPathPrefix
+	port := gatewayv1.PortNumber(80)
+
+	routes := []*gatewayv1.HTTPRoute{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "fraction-mirror", Namespace: "default"},
+			Spec: gatewayv1.HTTPRouteSpec{
+				Hostnames: []gatewayv1.Hostname{"example.com"},
+				Rules: []gatewayv1.HTTPRouteRule{
+					{
+						Matches: []gatewayv1.HTTPRouteMatch{
+							{Path: &gatewayv1.HTTPPathMatch{Type: &pathPrefix, Value: new("/")}},
+						},
+						Filters: []gatewayv1.HTTPRouteFilter{
+							{
+								Type: gatewayv1.HTTPRouteFilterRequestMirror,
+								RequestMirror: &gatewayv1.HTTPRequestMirrorFilter{
+									BackendRef: gatewayv1.BackendObjectReference{Name: "mirror", Port: &port},
+									// 25/50 = 50%
+									Fraction: &gatewayv1.Fraction{Numerator: 25, Denominator: new(int32(50))},
+								},
+							},
+						},
+						BackendRefs: []gatewayv1.HTTPBackendRef{backendRef("primary", 80, 1)},
+					},
+				},
+			},
+		},
+	}
+
+	cfg := proxy.ConvertHTTPRoutes(context.Background(), routes, "cluster.local", nil, nil)
+
+	require.Len(t, cfg.Rules, 1)
+	require.Len(t, cfg.Rules[0].Filters, 1)
+	require.NotNil(t, cfg.Rules[0].Filters[0].RequestMirror)
+	require.NotNil(t, cfg.Rules[0].Filters[0].RequestMirror.Percent,
+		"Fraction must be normalized to Percent at conversion time")
+	assert.Equal(t, int32(50), *cfg.Rules[0].Filters[0].RequestMirror.Percent,
+		"25/50 must resolve to 50%%")
+}
+
 func TestConvertHTTPRoutes_BackendProtocolH2C_OnPort443_UsesHTTPScheme(t *testing.T) {
 	t.Parallel()
 
