@@ -1,0 +1,212 @@
+// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
+
+package email_security
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/url"
+	"slices"
+	"time"
+
+	"github.com/cloudflare/cloudflare-go/v7/internal/apijson"
+	"github.com/cloudflare/cloudflare-go/v7/internal/apiquery"
+	"github.com/cloudflare/cloudflare-go/v7/internal/param"
+	"github.com/cloudflare/cloudflare-go/v7/internal/requestconfig"
+	"github.com/cloudflare/cloudflare-go/v7/option"
+	"github.com/cloudflare/cloudflare-go/v7/packages/pagination"
+)
+
+// PhishguardReportService contains methods and other services that help with
+// interacting with the cloudflare API.
+//
+// Note, unlike clients, this service does not read variables from the environment
+// automatically. You should not instantiate this service directly, and instead use
+// the [NewPhishguardReportService] method instead.
+type PhishguardReportService struct {
+	Options []option.RequestOption
+}
+
+// NewPhishguardReportService generates a new service that applies the given
+// options to each request. These options are applied after the parent client's
+// options (if there is one), and before any request-specific options.
+func NewPhishguardReportService(opts ...option.RequestOption) (r *PhishguardReportService) {
+	r = &PhishguardReportService{}
+	r.Options = opts
+	return
+}
+
+// Retrieves PhishGuard security alert reports for a specified date range. Reports
+// include detected threats, dispositions, and contextual information. Use for
+// security monitoring and threat analysis.
+func (r *PhishguardReportService) List(ctx context.Context, params PhishguardReportListParams, opts ...option.RequestOption) (res *pagination.SinglePage[PhishguardReportListResponse], err error) {
+	var raw *http.Response
+	opts = slices.Concat(r.Options, opts)
+	opts = append([]option.RequestOption{option.WithResponseInto(&raw)}, opts...)
+	if params.AccountID.Value == "" {
+		err = errors.New("missing required account_id parameter")
+		return nil, err
+	}
+	path := fmt.Sprintf("accounts/%s/email-security/phishguard/reports", params.AccountID)
+	cfg, err := requestconfig.NewRequestConfig(ctx, http.MethodGet, path, params, &res, opts...)
+	if err != nil {
+		return nil, err
+	}
+	err = cfg.Execute()
+	if err != nil {
+		return nil, err
+	}
+	res.SetPageConfig(cfg, raw)
+	return res, nil
+}
+
+// Retrieves PhishGuard security alert reports for a specified date range. Reports
+// include detected threats, dispositions, and contextual information. Use for
+// security monitoring and threat analysis.
+func (r *PhishguardReportService) ListAutoPaging(ctx context.Context, params PhishguardReportListParams, opts ...option.RequestOption) *pagination.SinglePageAutoPager[PhishguardReportListResponse] {
+	return pagination.NewSinglePageAutoPager(r.List(ctx, params, opts...))
+}
+
+type PhishguardReportListResponse struct {
+	ID          int64                                   `json:"id" api:"required"`
+	Content     string                                  `json:"content" api:"required"`
+	Disposition PhishguardReportListResponseDisposition `json:"disposition" api:"required"`
+	Fields      PhishguardReportListResponseFields      `json:"fields" api:"required"`
+	Priority    string                                  `json:"priority" api:"required"`
+	Title       string                                  `json:"title" api:"required"`
+	CreatedAt   time.Time                               `json:"created_at" api:"nullable" format:"date-time"`
+	Tags        []PhishguardReportListResponseTag       `json:"tags" api:"nullable"`
+	// Deprecated, use `created_at` instead
+	//
+	// Deprecated: deprecated
+	Ts        time.Time                        `json:"ts" format:"date-time"`
+	UpdatedAt time.Time                        `json:"updated_at" api:"nullable" format:"date-time"`
+	JSON      phishguardReportListResponseJSON `json:"-"`
+}
+
+// phishguardReportListResponseJSON contains the JSON metadata for the struct
+// [PhishguardReportListResponse]
+type phishguardReportListResponseJSON struct {
+	ID          apijson.Field
+	Content     apijson.Field
+	Disposition apijson.Field
+	Fields      apijson.Field
+	Priority    apijson.Field
+	Title       apijson.Field
+	CreatedAt   apijson.Field
+	Tags        apijson.Field
+	Ts          apijson.Field
+	UpdatedAt   apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *PhishguardReportListResponse) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r phishguardReportListResponseJSON) RawJSON() string {
+	return r.raw
+}
+
+type PhishguardReportListResponseDisposition string
+
+const (
+	PhishguardReportListResponseDispositionMalicious    PhishguardReportListResponseDisposition = "MALICIOUS"
+	PhishguardReportListResponseDispositionMaliciousBec PhishguardReportListResponseDisposition = "MALICIOUS-BEC"
+	PhishguardReportListResponseDispositionSuspicious   PhishguardReportListResponseDisposition = "SUSPICIOUS"
+	PhishguardReportListResponseDispositionSpoof        PhishguardReportListResponseDisposition = "SPOOF"
+	PhishguardReportListResponseDispositionSpam         PhishguardReportListResponseDisposition = "SPAM"
+	PhishguardReportListResponseDispositionBulk         PhishguardReportListResponseDisposition = "BULK"
+	PhishguardReportListResponseDispositionEncrypted    PhishguardReportListResponseDisposition = "ENCRYPTED"
+	PhishguardReportListResponseDispositionExternal     PhishguardReportListResponseDisposition = "EXTERNAL"
+	PhishguardReportListResponseDispositionUnknown      PhishguardReportListResponseDisposition = "UNKNOWN"
+	PhishguardReportListResponseDispositionNone         PhishguardReportListResponseDisposition = "NONE"
+)
+
+func (r PhishguardReportListResponseDisposition) IsKnown() bool {
+	switch r {
+	case PhishguardReportListResponseDispositionMalicious, PhishguardReportListResponseDispositionMaliciousBec, PhishguardReportListResponseDispositionSuspicious, PhishguardReportListResponseDispositionSpoof, PhishguardReportListResponseDispositionSpam, PhishguardReportListResponseDispositionBulk, PhishguardReportListResponseDispositionEncrypted, PhishguardReportListResponseDispositionExternal, PhishguardReportListResponseDispositionUnknown, PhishguardReportListResponseDispositionNone:
+		return true
+	}
+	return false
+}
+
+type PhishguardReportListResponseFields struct {
+	To         []string  `json:"to" api:"required"`
+	From       string    `json:"from" api:"nullable"`
+	OccurredAt time.Time `json:"occurred_at" format:"date-time"`
+	PostfixID  string    `json:"postfix_id" api:"nullable"`
+	// Deprecated, use `occurred_at` instead
+	//
+	// Deprecated: deprecated
+	Ts   time.Time                              `json:"ts" format:"date-time"`
+	JSON phishguardReportListResponseFieldsJSON `json:"-"`
+}
+
+// phishguardReportListResponseFieldsJSON contains the JSON metadata for the struct
+// [PhishguardReportListResponseFields]
+type phishguardReportListResponseFieldsJSON struct {
+	To          apijson.Field
+	From        apijson.Field
+	OccurredAt  apijson.Field
+	PostfixID   apijson.Field
+	Ts          apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *PhishguardReportListResponseFields) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r phishguardReportListResponseFieldsJSON) RawJSON() string {
+	return r.raw
+}
+
+type PhishguardReportListResponseTag struct {
+	Category string                              `json:"category" api:"required"`
+	Value    string                              `json:"value" api:"required"`
+	JSON     phishguardReportListResponseTagJSON `json:"-"`
+}
+
+// phishguardReportListResponseTagJSON contains the JSON metadata for the struct
+// [PhishguardReportListResponseTag]
+type phishguardReportListResponseTagJSON struct {
+	Category    apijson.Field
+	Value       apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *PhishguardReportListResponseTag) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r phishguardReportListResponseTagJSON) RawJSON() string {
+	return r.raw
+}
+
+type PhishguardReportListParams struct {
+	// Identifier.
+	AccountID param.Field[string] `path:"account_id" api:"required"`
+	// End of the time range (RFC3339). Takes precedence over to_date.
+	End param.Field[time.Time] `query:"end" format:"date-time"`
+	// Deprecated, use `start` instead. Start date in YYYY-MM-DD format.
+	FromDate param.Field[time.Time] `query:"from_date" format:"date"`
+	// Start of the time range (RFC3339). Takes precedence over from_date.
+	Start param.Field[time.Time] `query:"start" format:"date-time"`
+	// Deprecated, use `end` instead. End date in YYYY-MM-DD format.
+	ToDate param.Field[time.Time] `query:"to_date" format:"date"`
+}
+
+// URLQuery serializes [PhishguardReportListParams]'s query parameters as
+// `url.Values`.
+func (r PhishguardReportListParams) URLQuery() (v url.Values) {
+	return apiquery.MarshalWithSettings(r, apiquery.QuerySettings{
+		ArrayFormat:  apiquery.ArrayQueryFormatRepeat,
+		NestedFormat: apiquery.NestedQueryFormatDots,
+	})
+}

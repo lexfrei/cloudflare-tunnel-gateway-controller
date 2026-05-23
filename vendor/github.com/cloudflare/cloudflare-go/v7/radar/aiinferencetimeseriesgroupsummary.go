@@ -1,0 +1,852 @@
+// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
+
+package radar
+
+import (
+	"context"
+	"net/http"
+	"net/url"
+	"slices"
+	"time"
+
+	"github.com/cloudflare/cloudflare-go/v7/internal/apijson"
+	"github.com/cloudflare/cloudflare-go/v7/internal/apiquery"
+	"github.com/cloudflare/cloudflare-go/v7/internal/param"
+	"github.com/cloudflare/cloudflare-go/v7/internal/requestconfig"
+	"github.com/cloudflare/cloudflare-go/v7/option"
+)
+
+// AIInferenceTimeseriesGroupSummaryService contains methods and other services
+// that help with interacting with the cloudflare API.
+//
+// Note, unlike clients, this service does not read variables from the environment
+// automatically. You should not instantiate this service directly, and instead use
+// the [NewAIInferenceTimeseriesGroupSummaryService] method instead.
+type AIInferenceTimeseriesGroupSummaryService struct {
+	Options []option.RequestOption
+}
+
+// NewAIInferenceTimeseriesGroupSummaryService generates a new service that applies
+// the given options to each request. These options are applied after the parent
+// client's options (if there is one), and before any request-specific options.
+func NewAIInferenceTimeseriesGroupSummaryService(opts ...option.RequestOption) (r *AIInferenceTimeseriesGroupSummaryService) {
+	r = &AIInferenceTimeseriesGroupSummaryService{}
+	r.Options = opts
+	return
+}
+
+// Retrieves the distribution of unique accounts by model over time.
+//
+// Deprecated: Use
+// [Radar AI Inference Timeseries Groups By Dimension](https://developers.cloudflare.com/api/resources/radar/subresources/ai/subresources/inference/methods/timeseries_groups_v2/)
+// instead.
+func (r *AIInferenceTimeseriesGroupSummaryService) Model(ctx context.Context, query AIInferenceTimeseriesGroupSummaryModelParams, opts ...option.RequestOption) (res *AIInferenceTimeseriesGroupSummaryModelResponse, err error) {
+	var env AIInferenceTimeseriesGroupSummaryModelResponseEnvelope
+	opts = slices.Concat(r.Options, opts)
+	path := "radar/ai/inference/timeseries_groups/model"
+	err = requestconfig.ExecuteNewRequest(ctx, http.MethodGet, path, query, &env, opts...)
+	if err != nil {
+		return nil, err
+	}
+	res = &env.Result
+	return res, nil
+}
+
+// Retrieves the distribution of unique accounts by task over time.
+//
+// Deprecated: Use
+// [Radar AI Inference Timeseries Groups By Dimension](https://developers.cloudflare.com/api/resources/radar/subresources/ai/subresources/inference/methods/timeseries_groups_v2/)
+// instead.
+func (r *AIInferenceTimeseriesGroupSummaryService) Task(ctx context.Context, query AIInferenceTimeseriesGroupSummaryTaskParams, opts ...option.RequestOption) (res *AIInferenceTimeseriesGroupSummaryTaskResponse, err error) {
+	var env AIInferenceTimeseriesGroupSummaryTaskResponseEnvelope
+	opts = slices.Concat(r.Options, opts)
+	path := "radar/ai/inference/timeseries_groups/task"
+	err = requestconfig.ExecuteNewRequest(ctx, http.MethodGet, path, query, &env, opts...)
+	if err != nil {
+		return nil, err
+	}
+	res = &env.Result
+	return res, nil
+}
+
+type AIInferenceTimeseriesGroupSummaryModelResponse struct {
+	// Metadata for the results.
+	Meta   AIInferenceTimeseriesGroupSummaryModelResponseMeta   `json:"meta" api:"required"`
+	Serie0 AIInferenceTimeseriesGroupSummaryModelResponseSerie0 `json:"serie_0" api:"required"`
+	JSON   aiInferenceTimeseriesGroupSummaryModelResponseJSON   `json:"-"`
+}
+
+// aiInferenceTimeseriesGroupSummaryModelResponseJSON contains the JSON metadata
+// for the struct [AIInferenceTimeseriesGroupSummaryModelResponse]
+type aiInferenceTimeseriesGroupSummaryModelResponseJSON struct {
+	Meta        apijson.Field
+	Serie0      apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *AIInferenceTimeseriesGroupSummaryModelResponse) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r aiInferenceTimeseriesGroupSummaryModelResponseJSON) RawJSON() string {
+	return r.raw
+}
+
+// Metadata for the results.
+type AIInferenceTimeseriesGroupSummaryModelResponseMeta struct {
+	// Aggregation interval of the results (e.g., in 15 minutes or 1 hour intervals).
+	// Refer to
+	// [Aggregation intervals](https://developers.cloudflare.com/radar/concepts/aggregation-intervals/).
+	AggInterval    AIInferenceTimeseriesGroupSummaryModelResponseMetaAggInterval    `json:"aggInterval" api:"required"`
+	ConfidenceInfo AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfo `json:"confidenceInfo" api:"required"`
+	DateRange      []AIInferenceTimeseriesGroupSummaryModelResponseMetaDateRange    `json:"dateRange" api:"required"`
+	// Timestamp of the last dataset update.
+	LastUpdated time.Time `json:"lastUpdated" api:"required" format:"date-time"`
+	// Normalization method applied to the results. Refer to
+	// [Normalization methods](https://developers.cloudflare.com/radar/concepts/normalization/).
+	Normalization AIInferenceTimeseriesGroupSummaryModelResponseMetaNormalization `json:"normalization" api:"required"`
+	// Measurement units for the results.
+	Units []AIInferenceTimeseriesGroupSummaryModelResponseMetaUnit `json:"units" api:"required"`
+	JSON  aiInferenceTimeseriesGroupSummaryModelResponseMetaJSON   `json:"-"`
+}
+
+// aiInferenceTimeseriesGroupSummaryModelResponseMetaJSON contains the JSON
+// metadata for the struct [AIInferenceTimeseriesGroupSummaryModelResponseMeta]
+type aiInferenceTimeseriesGroupSummaryModelResponseMetaJSON struct {
+	AggInterval    apijson.Field
+	ConfidenceInfo apijson.Field
+	DateRange      apijson.Field
+	LastUpdated    apijson.Field
+	Normalization  apijson.Field
+	Units          apijson.Field
+	raw            string
+	ExtraFields    map[string]apijson.Field
+}
+
+func (r *AIInferenceTimeseriesGroupSummaryModelResponseMeta) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r aiInferenceTimeseriesGroupSummaryModelResponseMetaJSON) RawJSON() string {
+	return r.raw
+}
+
+// Aggregation interval of the results (e.g., in 15 minutes or 1 hour intervals).
+// Refer to
+// [Aggregation intervals](https://developers.cloudflare.com/radar/concepts/aggregation-intervals/).
+type AIInferenceTimeseriesGroupSummaryModelResponseMetaAggInterval string
+
+const (
+	AIInferenceTimeseriesGroupSummaryModelResponseMetaAggIntervalFifteenMinutes AIInferenceTimeseriesGroupSummaryModelResponseMetaAggInterval = "FIFTEEN_MINUTES"
+	AIInferenceTimeseriesGroupSummaryModelResponseMetaAggIntervalOneHour        AIInferenceTimeseriesGroupSummaryModelResponseMetaAggInterval = "ONE_HOUR"
+	AIInferenceTimeseriesGroupSummaryModelResponseMetaAggIntervalOneDay         AIInferenceTimeseriesGroupSummaryModelResponseMetaAggInterval = "ONE_DAY"
+	AIInferenceTimeseriesGroupSummaryModelResponseMetaAggIntervalOneWeek        AIInferenceTimeseriesGroupSummaryModelResponseMetaAggInterval = "ONE_WEEK"
+	AIInferenceTimeseriesGroupSummaryModelResponseMetaAggIntervalOneMonth       AIInferenceTimeseriesGroupSummaryModelResponseMetaAggInterval = "ONE_MONTH"
+)
+
+func (r AIInferenceTimeseriesGroupSummaryModelResponseMetaAggInterval) IsKnown() bool {
+	switch r {
+	case AIInferenceTimeseriesGroupSummaryModelResponseMetaAggIntervalFifteenMinutes, AIInferenceTimeseriesGroupSummaryModelResponseMetaAggIntervalOneHour, AIInferenceTimeseriesGroupSummaryModelResponseMetaAggIntervalOneDay, AIInferenceTimeseriesGroupSummaryModelResponseMetaAggIntervalOneWeek, AIInferenceTimeseriesGroupSummaryModelResponseMetaAggIntervalOneMonth:
+		return true
+	}
+	return false
+}
+
+type AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfo struct {
+	Annotations []AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotation `json:"annotations" api:"required"`
+	// Provides an indication of how much confidence Cloudflare has in the data.
+	Level int64                                                                `json:"level" api:"required"`
+	JSON  aiInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoJSON `json:"-"`
+}
+
+// aiInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoJSON contains
+// the JSON metadata for the struct
+// [AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfo]
+type aiInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoJSON struct {
+	Annotations apijson.Field
+	Level       apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfo) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r aiInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoJSON) RawJSON() string {
+	return r.raw
+}
+
+// Annotation associated with the result (e.g. outage or other type of event).
+type AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotation struct {
+	// Data source for annotations.
+	DataSource  AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsDataSource `json:"dataSource" api:"required"`
+	Description string                                                                                `json:"description" api:"required"`
+	EndDate     time.Time                                                                             `json:"endDate" api:"required" format:"date-time"`
+	// Event type for annotations.
+	EventType AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsEventType `json:"eventType" api:"required"`
+	// Whether event is a single point in time or a time range.
+	IsInstantaneous bool                                                                           `json:"isInstantaneous" api:"required"`
+	LinkedURL       string                                                                         `json:"linkedUrl" api:"required" format:"uri"`
+	StartDate       time.Time                                                                      `json:"startDate" api:"required" format:"date-time"`
+	JSON            aiInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationJSON `json:"-"`
+}
+
+// aiInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationJSON
+// contains the JSON metadata for the struct
+// [AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotation]
+type aiInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationJSON struct {
+	DataSource      apijson.Field
+	Description     apijson.Field
+	EndDate         apijson.Field
+	EventType       apijson.Field
+	IsInstantaneous apijson.Field
+	LinkedURL       apijson.Field
+	StartDate       apijson.Field
+	raw             string
+	ExtraFields     map[string]apijson.Field
+}
+
+func (r *AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotation) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r aiInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationJSON) RawJSON() string {
+	return r.raw
+}
+
+// Data source for annotations.
+type AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsDataSource string
+
+const (
+	AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsDataSourceAll                AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsDataSource = "ALL"
+	AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsDataSourceAIBots             AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsDataSource = "AI_BOTS"
+	AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsDataSourceAIGateway          AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsDataSource = "AI_GATEWAY"
+	AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsDataSourceBGP                AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsDataSource = "BGP"
+	AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsDataSourceBots               AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsDataSource = "BOTS"
+	AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsDataSourceConnectionAnomaly  AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsDataSource = "CONNECTION_ANOMALY"
+	AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsDataSourceCT                 AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsDataSource = "CT"
+	AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsDataSourceDNS                AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsDataSource = "DNS"
+	AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsDataSourceDNSMagnitude       AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsDataSource = "DNS_MAGNITUDE"
+	AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsDataSourceDNSAS112           AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsDataSource = "DNS_AS112"
+	AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsDataSourceDos                AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsDataSource = "DOS"
+	AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsDataSourceEmailRouting       AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsDataSource = "EMAIL_ROUTING"
+	AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsDataSourceEmailSecurity      AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsDataSource = "EMAIL_SECURITY"
+	AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsDataSourceFw                 AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsDataSource = "FW"
+	AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsDataSourceFwPg               AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsDataSource = "FW_PG"
+	AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsDataSourceHTTP               AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsDataSource = "HTTP"
+	AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsDataSourceHTTPControl        AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsDataSource = "HTTP_CONTROL"
+	AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsDataSourceHTTPCrawlerReferer AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsDataSource = "HTTP_CRAWLER_REFERER"
+	AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsDataSourceHTTPOrigins        AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsDataSource = "HTTP_ORIGINS"
+	AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsDataSourceIQI                AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsDataSource = "IQI"
+	AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsDataSourceLeakedCredentials  AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsDataSource = "LEAKED_CREDENTIALS"
+	AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsDataSourceNet                AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsDataSource = "NET"
+	AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsDataSourceRobotsTXT          AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsDataSource = "ROBOTS_TXT"
+	AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsDataSourceSpeed              AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsDataSource = "SPEED"
+	AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsDataSourceWorkersAI          AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsDataSource = "WORKERS_AI"
+)
+
+func (r AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsDataSource) IsKnown() bool {
+	switch r {
+	case AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsDataSourceAll, AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsDataSourceAIBots, AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsDataSourceAIGateway, AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsDataSourceBGP, AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsDataSourceBots, AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsDataSourceConnectionAnomaly, AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsDataSourceCT, AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsDataSourceDNS, AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsDataSourceDNSMagnitude, AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsDataSourceDNSAS112, AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsDataSourceDos, AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsDataSourceEmailRouting, AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsDataSourceEmailSecurity, AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsDataSourceFw, AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsDataSourceFwPg, AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsDataSourceHTTP, AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsDataSourceHTTPControl, AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsDataSourceHTTPCrawlerReferer, AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsDataSourceHTTPOrigins, AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsDataSourceIQI, AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsDataSourceLeakedCredentials, AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsDataSourceNet, AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsDataSourceRobotsTXT, AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsDataSourceSpeed, AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsDataSourceWorkersAI:
+		return true
+	}
+	return false
+}
+
+// Event type for annotations.
+type AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsEventType string
+
+const (
+	AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsEventTypeEvent             AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsEventType = "EVENT"
+	AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsEventTypeGeneral           AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsEventType = "GENERAL"
+	AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsEventTypeOutage            AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsEventType = "OUTAGE"
+	AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsEventTypePartialProjection AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsEventType = "PARTIAL_PROJECTION"
+	AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsEventTypePipeline          AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsEventType = "PIPELINE"
+	AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsEventTypeTrafficAnomaly    AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsEventType = "TRAFFIC_ANOMALY"
+)
+
+func (r AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsEventType) IsKnown() bool {
+	switch r {
+	case AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsEventTypeEvent, AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsEventTypeGeneral, AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsEventTypeOutage, AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsEventTypePartialProjection, AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsEventTypePipeline, AIInferenceTimeseriesGroupSummaryModelResponseMetaConfidenceInfoAnnotationsEventTypeTrafficAnomaly:
+		return true
+	}
+	return false
+}
+
+type AIInferenceTimeseriesGroupSummaryModelResponseMetaDateRange struct {
+	// Adjusted end of date range.
+	EndTime time.Time `json:"endTime" api:"required" format:"date-time"`
+	// Adjusted start of date range.
+	StartTime time.Time                                                       `json:"startTime" api:"required" format:"date-time"`
+	JSON      aiInferenceTimeseriesGroupSummaryModelResponseMetaDateRangeJSON `json:"-"`
+}
+
+// aiInferenceTimeseriesGroupSummaryModelResponseMetaDateRangeJSON contains the
+// JSON metadata for the struct
+// [AIInferenceTimeseriesGroupSummaryModelResponseMetaDateRange]
+type aiInferenceTimeseriesGroupSummaryModelResponseMetaDateRangeJSON struct {
+	EndTime     apijson.Field
+	StartTime   apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *AIInferenceTimeseriesGroupSummaryModelResponseMetaDateRange) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r aiInferenceTimeseriesGroupSummaryModelResponseMetaDateRangeJSON) RawJSON() string {
+	return r.raw
+}
+
+// Normalization method applied to the results. Refer to
+// [Normalization methods](https://developers.cloudflare.com/radar/concepts/normalization/).
+type AIInferenceTimeseriesGroupSummaryModelResponseMetaNormalization string
+
+const (
+	AIInferenceTimeseriesGroupSummaryModelResponseMetaNormalizationPercentage           AIInferenceTimeseriesGroupSummaryModelResponseMetaNormalization = "PERCENTAGE"
+	AIInferenceTimeseriesGroupSummaryModelResponseMetaNormalizationMin0Max              AIInferenceTimeseriesGroupSummaryModelResponseMetaNormalization = "MIN0_MAX"
+	AIInferenceTimeseriesGroupSummaryModelResponseMetaNormalizationMinMax               AIInferenceTimeseriesGroupSummaryModelResponseMetaNormalization = "MIN_MAX"
+	AIInferenceTimeseriesGroupSummaryModelResponseMetaNormalizationRawValues            AIInferenceTimeseriesGroupSummaryModelResponseMetaNormalization = "RAW_VALUES"
+	AIInferenceTimeseriesGroupSummaryModelResponseMetaNormalizationPercentageChange     AIInferenceTimeseriesGroupSummaryModelResponseMetaNormalization = "PERCENTAGE_CHANGE"
+	AIInferenceTimeseriesGroupSummaryModelResponseMetaNormalizationRollingAverage       AIInferenceTimeseriesGroupSummaryModelResponseMetaNormalization = "ROLLING_AVERAGE"
+	AIInferenceTimeseriesGroupSummaryModelResponseMetaNormalizationOverlappedPercentage AIInferenceTimeseriesGroupSummaryModelResponseMetaNormalization = "OVERLAPPED_PERCENTAGE"
+	AIInferenceTimeseriesGroupSummaryModelResponseMetaNormalizationRatio                AIInferenceTimeseriesGroupSummaryModelResponseMetaNormalization = "RATIO"
+)
+
+func (r AIInferenceTimeseriesGroupSummaryModelResponseMetaNormalization) IsKnown() bool {
+	switch r {
+	case AIInferenceTimeseriesGroupSummaryModelResponseMetaNormalizationPercentage, AIInferenceTimeseriesGroupSummaryModelResponseMetaNormalizationMin0Max, AIInferenceTimeseriesGroupSummaryModelResponseMetaNormalizationMinMax, AIInferenceTimeseriesGroupSummaryModelResponseMetaNormalizationRawValues, AIInferenceTimeseriesGroupSummaryModelResponseMetaNormalizationPercentageChange, AIInferenceTimeseriesGroupSummaryModelResponseMetaNormalizationRollingAverage, AIInferenceTimeseriesGroupSummaryModelResponseMetaNormalizationOverlappedPercentage, AIInferenceTimeseriesGroupSummaryModelResponseMetaNormalizationRatio:
+		return true
+	}
+	return false
+}
+
+type AIInferenceTimeseriesGroupSummaryModelResponseMetaUnit struct {
+	Name  string                                                     `json:"name" api:"required"`
+	Value string                                                     `json:"value" api:"required"`
+	JSON  aiInferenceTimeseriesGroupSummaryModelResponseMetaUnitJSON `json:"-"`
+}
+
+// aiInferenceTimeseriesGroupSummaryModelResponseMetaUnitJSON contains the JSON
+// metadata for the struct [AIInferenceTimeseriesGroupSummaryModelResponseMetaUnit]
+type aiInferenceTimeseriesGroupSummaryModelResponseMetaUnitJSON struct {
+	Name        apijson.Field
+	Value       apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *AIInferenceTimeseriesGroupSummaryModelResponseMetaUnit) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r aiInferenceTimeseriesGroupSummaryModelResponseMetaUnitJSON) RawJSON() string {
+	return r.raw
+}
+
+type AIInferenceTimeseriesGroupSummaryModelResponseSerie0 struct {
+	Timestamps  []time.Time                                              `json:"timestamps" api:"required" format:"date-time"`
+	ExtraFields map[string][]string                                      `json:"-" api:"extrafields"`
+	JSON        aiInferenceTimeseriesGroupSummaryModelResponseSerie0JSON `json:"-"`
+}
+
+// aiInferenceTimeseriesGroupSummaryModelResponseSerie0JSON contains the JSON
+// metadata for the struct [AIInferenceTimeseriesGroupSummaryModelResponseSerie0]
+type aiInferenceTimeseriesGroupSummaryModelResponseSerie0JSON struct {
+	Timestamps  apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *AIInferenceTimeseriesGroupSummaryModelResponseSerie0) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r aiInferenceTimeseriesGroupSummaryModelResponseSerie0JSON) RawJSON() string {
+	return r.raw
+}
+
+type AIInferenceTimeseriesGroupSummaryTaskResponse struct {
+	// Metadata for the results.
+	Meta   AIInferenceTimeseriesGroupSummaryTaskResponseMeta   `json:"meta" api:"required"`
+	Serie0 AIInferenceTimeseriesGroupSummaryTaskResponseSerie0 `json:"serie_0" api:"required"`
+	JSON   aiInferenceTimeseriesGroupSummaryTaskResponseJSON   `json:"-"`
+}
+
+// aiInferenceTimeseriesGroupSummaryTaskResponseJSON contains the JSON metadata for
+// the struct [AIInferenceTimeseriesGroupSummaryTaskResponse]
+type aiInferenceTimeseriesGroupSummaryTaskResponseJSON struct {
+	Meta        apijson.Field
+	Serie0      apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *AIInferenceTimeseriesGroupSummaryTaskResponse) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r aiInferenceTimeseriesGroupSummaryTaskResponseJSON) RawJSON() string {
+	return r.raw
+}
+
+// Metadata for the results.
+type AIInferenceTimeseriesGroupSummaryTaskResponseMeta struct {
+	// Aggregation interval of the results (e.g., in 15 minutes or 1 hour intervals).
+	// Refer to
+	// [Aggregation intervals](https://developers.cloudflare.com/radar/concepts/aggregation-intervals/).
+	AggInterval    AIInferenceTimeseriesGroupSummaryTaskResponseMetaAggInterval    `json:"aggInterval" api:"required"`
+	ConfidenceInfo AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfo `json:"confidenceInfo" api:"required"`
+	DateRange      []AIInferenceTimeseriesGroupSummaryTaskResponseMetaDateRange    `json:"dateRange" api:"required"`
+	// Timestamp of the last dataset update.
+	LastUpdated time.Time `json:"lastUpdated" api:"required" format:"date-time"`
+	// Normalization method applied to the results. Refer to
+	// [Normalization methods](https://developers.cloudflare.com/radar/concepts/normalization/).
+	Normalization AIInferenceTimeseriesGroupSummaryTaskResponseMetaNormalization `json:"normalization" api:"required"`
+	// Measurement units for the results.
+	Units []AIInferenceTimeseriesGroupSummaryTaskResponseMetaUnit `json:"units" api:"required"`
+	JSON  aiInferenceTimeseriesGroupSummaryTaskResponseMetaJSON   `json:"-"`
+}
+
+// aiInferenceTimeseriesGroupSummaryTaskResponseMetaJSON contains the JSON metadata
+// for the struct [AIInferenceTimeseriesGroupSummaryTaskResponseMeta]
+type aiInferenceTimeseriesGroupSummaryTaskResponseMetaJSON struct {
+	AggInterval    apijson.Field
+	ConfidenceInfo apijson.Field
+	DateRange      apijson.Field
+	LastUpdated    apijson.Field
+	Normalization  apijson.Field
+	Units          apijson.Field
+	raw            string
+	ExtraFields    map[string]apijson.Field
+}
+
+func (r *AIInferenceTimeseriesGroupSummaryTaskResponseMeta) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r aiInferenceTimeseriesGroupSummaryTaskResponseMetaJSON) RawJSON() string {
+	return r.raw
+}
+
+// Aggregation interval of the results (e.g., in 15 minutes or 1 hour intervals).
+// Refer to
+// [Aggregation intervals](https://developers.cloudflare.com/radar/concepts/aggregation-intervals/).
+type AIInferenceTimeseriesGroupSummaryTaskResponseMetaAggInterval string
+
+const (
+	AIInferenceTimeseriesGroupSummaryTaskResponseMetaAggIntervalFifteenMinutes AIInferenceTimeseriesGroupSummaryTaskResponseMetaAggInterval = "FIFTEEN_MINUTES"
+	AIInferenceTimeseriesGroupSummaryTaskResponseMetaAggIntervalOneHour        AIInferenceTimeseriesGroupSummaryTaskResponseMetaAggInterval = "ONE_HOUR"
+	AIInferenceTimeseriesGroupSummaryTaskResponseMetaAggIntervalOneDay         AIInferenceTimeseriesGroupSummaryTaskResponseMetaAggInterval = "ONE_DAY"
+	AIInferenceTimeseriesGroupSummaryTaskResponseMetaAggIntervalOneWeek        AIInferenceTimeseriesGroupSummaryTaskResponseMetaAggInterval = "ONE_WEEK"
+	AIInferenceTimeseriesGroupSummaryTaskResponseMetaAggIntervalOneMonth       AIInferenceTimeseriesGroupSummaryTaskResponseMetaAggInterval = "ONE_MONTH"
+)
+
+func (r AIInferenceTimeseriesGroupSummaryTaskResponseMetaAggInterval) IsKnown() bool {
+	switch r {
+	case AIInferenceTimeseriesGroupSummaryTaskResponseMetaAggIntervalFifteenMinutes, AIInferenceTimeseriesGroupSummaryTaskResponseMetaAggIntervalOneHour, AIInferenceTimeseriesGroupSummaryTaskResponseMetaAggIntervalOneDay, AIInferenceTimeseriesGroupSummaryTaskResponseMetaAggIntervalOneWeek, AIInferenceTimeseriesGroupSummaryTaskResponseMetaAggIntervalOneMonth:
+		return true
+	}
+	return false
+}
+
+type AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfo struct {
+	Annotations []AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotation `json:"annotations" api:"required"`
+	// Provides an indication of how much confidence Cloudflare has in the data.
+	Level int64                                                               `json:"level" api:"required"`
+	JSON  aiInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoJSON `json:"-"`
+}
+
+// aiInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoJSON contains the
+// JSON metadata for the struct
+// [AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfo]
+type aiInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoJSON struct {
+	Annotations apijson.Field
+	Level       apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfo) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r aiInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoJSON) RawJSON() string {
+	return r.raw
+}
+
+// Annotation associated with the result (e.g. outage or other type of event).
+type AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotation struct {
+	// Data source for annotations.
+	DataSource  AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsDataSource `json:"dataSource" api:"required"`
+	Description string                                                                               `json:"description" api:"required"`
+	EndDate     time.Time                                                                            `json:"endDate" api:"required" format:"date-time"`
+	// Event type for annotations.
+	EventType AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsEventType `json:"eventType" api:"required"`
+	// Whether event is a single point in time or a time range.
+	IsInstantaneous bool                                                                          `json:"isInstantaneous" api:"required"`
+	LinkedURL       string                                                                        `json:"linkedUrl" api:"required" format:"uri"`
+	StartDate       time.Time                                                                     `json:"startDate" api:"required" format:"date-time"`
+	JSON            aiInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationJSON `json:"-"`
+}
+
+// aiInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationJSON
+// contains the JSON metadata for the struct
+// [AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotation]
+type aiInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationJSON struct {
+	DataSource      apijson.Field
+	Description     apijson.Field
+	EndDate         apijson.Field
+	EventType       apijson.Field
+	IsInstantaneous apijson.Field
+	LinkedURL       apijson.Field
+	StartDate       apijson.Field
+	raw             string
+	ExtraFields     map[string]apijson.Field
+}
+
+func (r *AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotation) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r aiInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationJSON) RawJSON() string {
+	return r.raw
+}
+
+// Data source for annotations.
+type AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsDataSource string
+
+const (
+	AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsDataSourceAll                AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsDataSource = "ALL"
+	AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsDataSourceAIBots             AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsDataSource = "AI_BOTS"
+	AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsDataSourceAIGateway          AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsDataSource = "AI_GATEWAY"
+	AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsDataSourceBGP                AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsDataSource = "BGP"
+	AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsDataSourceBots               AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsDataSource = "BOTS"
+	AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsDataSourceConnectionAnomaly  AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsDataSource = "CONNECTION_ANOMALY"
+	AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsDataSourceCT                 AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsDataSource = "CT"
+	AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsDataSourceDNS                AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsDataSource = "DNS"
+	AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsDataSourceDNSMagnitude       AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsDataSource = "DNS_MAGNITUDE"
+	AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsDataSourceDNSAS112           AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsDataSource = "DNS_AS112"
+	AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsDataSourceDos                AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsDataSource = "DOS"
+	AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsDataSourceEmailRouting       AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsDataSource = "EMAIL_ROUTING"
+	AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsDataSourceEmailSecurity      AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsDataSource = "EMAIL_SECURITY"
+	AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsDataSourceFw                 AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsDataSource = "FW"
+	AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsDataSourceFwPg               AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsDataSource = "FW_PG"
+	AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsDataSourceHTTP               AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsDataSource = "HTTP"
+	AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsDataSourceHTTPControl        AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsDataSource = "HTTP_CONTROL"
+	AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsDataSourceHTTPCrawlerReferer AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsDataSource = "HTTP_CRAWLER_REFERER"
+	AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsDataSourceHTTPOrigins        AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsDataSource = "HTTP_ORIGINS"
+	AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsDataSourceIQI                AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsDataSource = "IQI"
+	AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsDataSourceLeakedCredentials  AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsDataSource = "LEAKED_CREDENTIALS"
+	AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsDataSourceNet                AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsDataSource = "NET"
+	AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsDataSourceRobotsTXT          AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsDataSource = "ROBOTS_TXT"
+	AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsDataSourceSpeed              AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsDataSource = "SPEED"
+	AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsDataSourceWorkersAI          AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsDataSource = "WORKERS_AI"
+)
+
+func (r AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsDataSource) IsKnown() bool {
+	switch r {
+	case AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsDataSourceAll, AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsDataSourceAIBots, AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsDataSourceAIGateway, AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsDataSourceBGP, AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsDataSourceBots, AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsDataSourceConnectionAnomaly, AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsDataSourceCT, AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsDataSourceDNS, AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsDataSourceDNSMagnitude, AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsDataSourceDNSAS112, AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsDataSourceDos, AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsDataSourceEmailRouting, AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsDataSourceEmailSecurity, AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsDataSourceFw, AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsDataSourceFwPg, AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsDataSourceHTTP, AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsDataSourceHTTPControl, AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsDataSourceHTTPCrawlerReferer, AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsDataSourceHTTPOrigins, AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsDataSourceIQI, AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsDataSourceLeakedCredentials, AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsDataSourceNet, AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsDataSourceRobotsTXT, AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsDataSourceSpeed, AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsDataSourceWorkersAI:
+		return true
+	}
+	return false
+}
+
+// Event type for annotations.
+type AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsEventType string
+
+const (
+	AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsEventTypeEvent             AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsEventType = "EVENT"
+	AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsEventTypeGeneral           AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsEventType = "GENERAL"
+	AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsEventTypeOutage            AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsEventType = "OUTAGE"
+	AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsEventTypePartialProjection AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsEventType = "PARTIAL_PROJECTION"
+	AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsEventTypePipeline          AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsEventType = "PIPELINE"
+	AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsEventTypeTrafficAnomaly    AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsEventType = "TRAFFIC_ANOMALY"
+)
+
+func (r AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsEventType) IsKnown() bool {
+	switch r {
+	case AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsEventTypeEvent, AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsEventTypeGeneral, AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsEventTypeOutage, AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsEventTypePartialProjection, AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsEventTypePipeline, AIInferenceTimeseriesGroupSummaryTaskResponseMetaConfidenceInfoAnnotationsEventTypeTrafficAnomaly:
+		return true
+	}
+	return false
+}
+
+type AIInferenceTimeseriesGroupSummaryTaskResponseMetaDateRange struct {
+	// Adjusted end of date range.
+	EndTime time.Time `json:"endTime" api:"required" format:"date-time"`
+	// Adjusted start of date range.
+	StartTime time.Time                                                      `json:"startTime" api:"required" format:"date-time"`
+	JSON      aiInferenceTimeseriesGroupSummaryTaskResponseMetaDateRangeJSON `json:"-"`
+}
+
+// aiInferenceTimeseriesGroupSummaryTaskResponseMetaDateRangeJSON contains the JSON
+// metadata for the struct
+// [AIInferenceTimeseriesGroupSummaryTaskResponseMetaDateRange]
+type aiInferenceTimeseriesGroupSummaryTaskResponseMetaDateRangeJSON struct {
+	EndTime     apijson.Field
+	StartTime   apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *AIInferenceTimeseriesGroupSummaryTaskResponseMetaDateRange) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r aiInferenceTimeseriesGroupSummaryTaskResponseMetaDateRangeJSON) RawJSON() string {
+	return r.raw
+}
+
+// Normalization method applied to the results. Refer to
+// [Normalization methods](https://developers.cloudflare.com/radar/concepts/normalization/).
+type AIInferenceTimeseriesGroupSummaryTaskResponseMetaNormalization string
+
+const (
+	AIInferenceTimeseriesGroupSummaryTaskResponseMetaNormalizationPercentage           AIInferenceTimeseriesGroupSummaryTaskResponseMetaNormalization = "PERCENTAGE"
+	AIInferenceTimeseriesGroupSummaryTaskResponseMetaNormalizationMin0Max              AIInferenceTimeseriesGroupSummaryTaskResponseMetaNormalization = "MIN0_MAX"
+	AIInferenceTimeseriesGroupSummaryTaskResponseMetaNormalizationMinMax               AIInferenceTimeseriesGroupSummaryTaskResponseMetaNormalization = "MIN_MAX"
+	AIInferenceTimeseriesGroupSummaryTaskResponseMetaNormalizationRawValues            AIInferenceTimeseriesGroupSummaryTaskResponseMetaNormalization = "RAW_VALUES"
+	AIInferenceTimeseriesGroupSummaryTaskResponseMetaNormalizationPercentageChange     AIInferenceTimeseriesGroupSummaryTaskResponseMetaNormalization = "PERCENTAGE_CHANGE"
+	AIInferenceTimeseriesGroupSummaryTaskResponseMetaNormalizationRollingAverage       AIInferenceTimeseriesGroupSummaryTaskResponseMetaNormalization = "ROLLING_AVERAGE"
+	AIInferenceTimeseriesGroupSummaryTaskResponseMetaNormalizationOverlappedPercentage AIInferenceTimeseriesGroupSummaryTaskResponseMetaNormalization = "OVERLAPPED_PERCENTAGE"
+	AIInferenceTimeseriesGroupSummaryTaskResponseMetaNormalizationRatio                AIInferenceTimeseriesGroupSummaryTaskResponseMetaNormalization = "RATIO"
+)
+
+func (r AIInferenceTimeseriesGroupSummaryTaskResponseMetaNormalization) IsKnown() bool {
+	switch r {
+	case AIInferenceTimeseriesGroupSummaryTaskResponseMetaNormalizationPercentage, AIInferenceTimeseriesGroupSummaryTaskResponseMetaNormalizationMin0Max, AIInferenceTimeseriesGroupSummaryTaskResponseMetaNormalizationMinMax, AIInferenceTimeseriesGroupSummaryTaskResponseMetaNormalizationRawValues, AIInferenceTimeseriesGroupSummaryTaskResponseMetaNormalizationPercentageChange, AIInferenceTimeseriesGroupSummaryTaskResponseMetaNormalizationRollingAverage, AIInferenceTimeseriesGroupSummaryTaskResponseMetaNormalizationOverlappedPercentage, AIInferenceTimeseriesGroupSummaryTaskResponseMetaNormalizationRatio:
+		return true
+	}
+	return false
+}
+
+type AIInferenceTimeseriesGroupSummaryTaskResponseMetaUnit struct {
+	Name  string                                                    `json:"name" api:"required"`
+	Value string                                                    `json:"value" api:"required"`
+	JSON  aiInferenceTimeseriesGroupSummaryTaskResponseMetaUnitJSON `json:"-"`
+}
+
+// aiInferenceTimeseriesGroupSummaryTaskResponseMetaUnitJSON contains the JSON
+// metadata for the struct [AIInferenceTimeseriesGroupSummaryTaskResponseMetaUnit]
+type aiInferenceTimeseriesGroupSummaryTaskResponseMetaUnitJSON struct {
+	Name        apijson.Field
+	Value       apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *AIInferenceTimeseriesGroupSummaryTaskResponseMetaUnit) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r aiInferenceTimeseriesGroupSummaryTaskResponseMetaUnitJSON) RawJSON() string {
+	return r.raw
+}
+
+type AIInferenceTimeseriesGroupSummaryTaskResponseSerie0 struct {
+	Timestamps  []time.Time                                             `json:"timestamps" api:"required" format:"date-time"`
+	ExtraFields map[string][]string                                     `json:"-" api:"extrafields"`
+	JSON        aiInferenceTimeseriesGroupSummaryTaskResponseSerie0JSON `json:"-"`
+}
+
+// aiInferenceTimeseriesGroupSummaryTaskResponseSerie0JSON contains the JSON
+// metadata for the struct [AIInferenceTimeseriesGroupSummaryTaskResponseSerie0]
+type aiInferenceTimeseriesGroupSummaryTaskResponseSerie0JSON struct {
+	Timestamps  apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *AIInferenceTimeseriesGroupSummaryTaskResponseSerie0) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r aiInferenceTimeseriesGroupSummaryTaskResponseSerie0JSON) RawJSON() string {
+	return r.raw
+}
+
+type AIInferenceTimeseriesGroupSummaryModelParams struct {
+	// Aggregation interval of the results (e.g., in 15 minutes or 1 hour intervals).
+	// Refer to
+	// [Aggregation intervals](https://developers.cloudflare.com/radar/concepts/aggregation-intervals/).
+	AggInterval param.Field[AIInferenceTimeseriesGroupSummaryModelParamsAggInterval] `query:"aggInterval"`
+	// End of the date range (inclusive).
+	DateEnd param.Field[[]time.Time] `query:"dateEnd" format:"date-time"`
+	// Filters results by date range. For example, use `7d` and `7dcontrol` to compare
+	// this week with the previous week. Use this parameter or set specific start and
+	// end dates (`dateStart` and `dateEnd` parameters).
+	DateRange param.Field[[]string] `query:"dateRange"`
+	// Start of the date range.
+	DateStart param.Field[[]time.Time] `query:"dateStart" format:"date-time"`
+	// Format in which results will be returned.
+	Format param.Field[AIInferenceTimeseriesGroupSummaryModelParamsFormat] `query:"format"`
+	// Limits the number of objects per group to the top items within the specified
+	// time range. When item count exceeds the limit, extra items appear grouped under
+	// an "other" category.
+	LimitPerGroup param.Field[int64] `query:"limitPerGroup"`
+	// Array of names used to label the series in the response.
+	Name param.Field[[]string] `query:"name"`
+}
+
+// URLQuery serializes [AIInferenceTimeseriesGroupSummaryModelParams]'s query
+// parameters as `url.Values`.
+func (r AIInferenceTimeseriesGroupSummaryModelParams) URLQuery() (v url.Values) {
+	return apiquery.MarshalWithSettings(r, apiquery.QuerySettings{
+		ArrayFormat:  apiquery.ArrayQueryFormatRepeat,
+		NestedFormat: apiquery.NestedQueryFormatDots,
+	})
+}
+
+// Aggregation interval of the results (e.g., in 15 minutes or 1 hour intervals).
+// Refer to
+// [Aggregation intervals](https://developers.cloudflare.com/radar/concepts/aggregation-intervals/).
+type AIInferenceTimeseriesGroupSummaryModelParamsAggInterval string
+
+const (
+	AIInferenceTimeseriesGroupSummaryModelParamsAggInterval15m AIInferenceTimeseriesGroupSummaryModelParamsAggInterval = "15m"
+	AIInferenceTimeseriesGroupSummaryModelParamsAggInterval1h  AIInferenceTimeseriesGroupSummaryModelParamsAggInterval = "1h"
+	AIInferenceTimeseriesGroupSummaryModelParamsAggInterval1d  AIInferenceTimeseriesGroupSummaryModelParamsAggInterval = "1d"
+	AIInferenceTimeseriesGroupSummaryModelParamsAggInterval1w  AIInferenceTimeseriesGroupSummaryModelParamsAggInterval = "1w"
+)
+
+func (r AIInferenceTimeseriesGroupSummaryModelParamsAggInterval) IsKnown() bool {
+	switch r {
+	case AIInferenceTimeseriesGroupSummaryModelParamsAggInterval15m, AIInferenceTimeseriesGroupSummaryModelParamsAggInterval1h, AIInferenceTimeseriesGroupSummaryModelParamsAggInterval1d, AIInferenceTimeseriesGroupSummaryModelParamsAggInterval1w:
+		return true
+	}
+	return false
+}
+
+// Format in which results will be returned.
+type AIInferenceTimeseriesGroupSummaryModelParamsFormat string
+
+const (
+	AIInferenceTimeseriesGroupSummaryModelParamsFormatJson AIInferenceTimeseriesGroupSummaryModelParamsFormat = "JSON"
+	AIInferenceTimeseriesGroupSummaryModelParamsFormatCsv  AIInferenceTimeseriesGroupSummaryModelParamsFormat = "CSV"
+)
+
+func (r AIInferenceTimeseriesGroupSummaryModelParamsFormat) IsKnown() bool {
+	switch r {
+	case AIInferenceTimeseriesGroupSummaryModelParamsFormatJson, AIInferenceTimeseriesGroupSummaryModelParamsFormatCsv:
+		return true
+	}
+	return false
+}
+
+type AIInferenceTimeseriesGroupSummaryModelResponseEnvelope struct {
+	Result  AIInferenceTimeseriesGroupSummaryModelResponse             `json:"result" api:"required"`
+	Success bool                                                       `json:"success" api:"required"`
+	JSON    aiInferenceTimeseriesGroupSummaryModelResponseEnvelopeJSON `json:"-"`
+}
+
+// aiInferenceTimeseriesGroupSummaryModelResponseEnvelopeJSON contains the JSON
+// metadata for the struct [AIInferenceTimeseriesGroupSummaryModelResponseEnvelope]
+type aiInferenceTimeseriesGroupSummaryModelResponseEnvelopeJSON struct {
+	Result      apijson.Field
+	Success     apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *AIInferenceTimeseriesGroupSummaryModelResponseEnvelope) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r aiInferenceTimeseriesGroupSummaryModelResponseEnvelopeJSON) RawJSON() string {
+	return r.raw
+}
+
+type AIInferenceTimeseriesGroupSummaryTaskParams struct {
+	// Aggregation interval of the results (e.g., in 15 minutes or 1 hour intervals).
+	// Refer to
+	// [Aggregation intervals](https://developers.cloudflare.com/radar/concepts/aggregation-intervals/).
+	AggInterval param.Field[AIInferenceTimeseriesGroupSummaryTaskParamsAggInterval] `query:"aggInterval"`
+	// End of the date range (inclusive).
+	DateEnd param.Field[[]time.Time] `query:"dateEnd" format:"date-time"`
+	// Filters results by date range. For example, use `7d` and `7dcontrol` to compare
+	// this week with the previous week. Use this parameter or set specific start and
+	// end dates (`dateStart` and `dateEnd` parameters).
+	DateRange param.Field[[]string] `query:"dateRange"`
+	// Start of the date range.
+	DateStart param.Field[[]time.Time] `query:"dateStart" format:"date-time"`
+	// Format in which results will be returned.
+	Format param.Field[AIInferenceTimeseriesGroupSummaryTaskParamsFormat] `query:"format"`
+	// Limits the number of objects per group to the top items within the specified
+	// time range. When item count exceeds the limit, extra items appear grouped under
+	// an "other" category.
+	LimitPerGroup param.Field[int64] `query:"limitPerGroup"`
+	// Array of names used to label the series in the response.
+	Name param.Field[[]string] `query:"name"`
+}
+
+// URLQuery serializes [AIInferenceTimeseriesGroupSummaryTaskParams]'s query
+// parameters as `url.Values`.
+func (r AIInferenceTimeseriesGroupSummaryTaskParams) URLQuery() (v url.Values) {
+	return apiquery.MarshalWithSettings(r, apiquery.QuerySettings{
+		ArrayFormat:  apiquery.ArrayQueryFormatRepeat,
+		NestedFormat: apiquery.NestedQueryFormatDots,
+	})
+}
+
+// Aggregation interval of the results (e.g., in 15 minutes or 1 hour intervals).
+// Refer to
+// [Aggregation intervals](https://developers.cloudflare.com/radar/concepts/aggregation-intervals/).
+type AIInferenceTimeseriesGroupSummaryTaskParamsAggInterval string
+
+const (
+	AIInferenceTimeseriesGroupSummaryTaskParamsAggInterval15m AIInferenceTimeseriesGroupSummaryTaskParamsAggInterval = "15m"
+	AIInferenceTimeseriesGroupSummaryTaskParamsAggInterval1h  AIInferenceTimeseriesGroupSummaryTaskParamsAggInterval = "1h"
+	AIInferenceTimeseriesGroupSummaryTaskParamsAggInterval1d  AIInferenceTimeseriesGroupSummaryTaskParamsAggInterval = "1d"
+	AIInferenceTimeseriesGroupSummaryTaskParamsAggInterval1w  AIInferenceTimeseriesGroupSummaryTaskParamsAggInterval = "1w"
+)
+
+func (r AIInferenceTimeseriesGroupSummaryTaskParamsAggInterval) IsKnown() bool {
+	switch r {
+	case AIInferenceTimeseriesGroupSummaryTaskParamsAggInterval15m, AIInferenceTimeseriesGroupSummaryTaskParamsAggInterval1h, AIInferenceTimeseriesGroupSummaryTaskParamsAggInterval1d, AIInferenceTimeseriesGroupSummaryTaskParamsAggInterval1w:
+		return true
+	}
+	return false
+}
+
+// Format in which results will be returned.
+type AIInferenceTimeseriesGroupSummaryTaskParamsFormat string
+
+const (
+	AIInferenceTimeseriesGroupSummaryTaskParamsFormatJson AIInferenceTimeseriesGroupSummaryTaskParamsFormat = "JSON"
+	AIInferenceTimeseriesGroupSummaryTaskParamsFormatCsv  AIInferenceTimeseriesGroupSummaryTaskParamsFormat = "CSV"
+)
+
+func (r AIInferenceTimeseriesGroupSummaryTaskParamsFormat) IsKnown() bool {
+	switch r {
+	case AIInferenceTimeseriesGroupSummaryTaskParamsFormatJson, AIInferenceTimeseriesGroupSummaryTaskParamsFormatCsv:
+		return true
+	}
+	return false
+}
+
+type AIInferenceTimeseriesGroupSummaryTaskResponseEnvelope struct {
+	Result  AIInferenceTimeseriesGroupSummaryTaskResponse             `json:"result" api:"required"`
+	Success bool                                                      `json:"success" api:"required"`
+	JSON    aiInferenceTimeseriesGroupSummaryTaskResponseEnvelopeJSON `json:"-"`
+}
+
+// aiInferenceTimeseriesGroupSummaryTaskResponseEnvelopeJSON contains the JSON
+// metadata for the struct [AIInferenceTimeseriesGroupSummaryTaskResponseEnvelope]
+type aiInferenceTimeseriesGroupSummaryTaskResponseEnvelopeJSON struct {
+	Result      apijson.Field
+	Success     apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *AIInferenceTimeseriesGroupSummaryTaskResponseEnvelope) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r aiInferenceTimeseriesGroupSummaryTaskResponseEnvelopeJSON) RawJSON() string {
+	return r.raw
+}

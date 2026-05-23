@@ -3,8 +3,8 @@ package ingress_test
 import (
 	"testing"
 
-	"github.com/cloudflare/cloudflare-go/v6"
-	"github.com/cloudflare/cloudflare-go/v6/zero_trust"
+	"github.com/cloudflare/cloudflare-go/v7"
+	"github.com/cloudflare/cloudflare-go/v7/zero_trust"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/ingress"
 )
 
