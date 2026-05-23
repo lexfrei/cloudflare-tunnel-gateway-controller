@@ -219,6 +219,83 @@ test's `websocket.Dial` connects directly to the Gateway address
 tests documented above. WebSocket backends may be supported separately via
 e2e validation in a future change.
 
+## Backend mTLS (BackendTLSPolicy)
+
+The L7 proxy supports Gateway API `BackendTLSPolicy` for proxy → backend TLS,
+with the following minimum-viable scope:
+
+| Behaviour | Status | Notes |
+| --- | --- | --- |
+| CA via same-namespace `ConfigMap` ref with `ca.crt` | Yes | Core support level. The CA bundle is parsed as PEM and rejected with `Accepted=False, Reason=NoValidCACertificate` if it contains no `CERTIFICATE` blocks |
+| Multiple `CACertificateRefs` per policy | Yes | All bundles are concatenated into the trust pool |
+| `Hostname` as TLS SNI + authentication (when no SANs) | Yes | Required field; matches stdlib RFC 6125 hostname verification |
+| `SubjectAltNames` of type `Hostname` (OR-matching) | Yes | Cert must match at least one entry. Wildcards in the cert SAN list are honoured via `x509.Certificate.VerifyHostname`. When `SubjectAltNames` is set, `Hostname` is used for SNI only and NOT for authentication, per Gateway API spec |
+| `SubjectAltNames` of type `URI` (e.g. SPIFFE) | No | The policy is stamped `Accepted=False, Reason=Invalid` rather than silently dropping the URI entries — operators see a clear failure instead of a weaker-than-requested enforcement |
+| `WellKnownCACertificates: System` | No | Only explicit `CACertificateRefs` are honoured |
+| Multiple `targetRefs` per policy | Yes | All targeted Services share the same TLS config |
+| `SectionName` per-port targeting | Yes | When a `TargetRef` carries `sectionName`, only the matching named Service port receives TLS; siblings on the same Service stay plaintext |
+| Conflict resolution across multiple policies on the same target | Partial | Oldest-creationTimestamp wins, alphabetical name on tie. Losers are NOT yet stamped `Accepted=False, Reason=Conflicted` — they share the winner's `Accepted=True`. The upstream `BackendTLSPolicyConflictResolution` conformance subtest is skipped pending that work |
+| Cross-namespace CA refs | No | Same-namespace only |
+| `GatewayBackendClientCertificate` (mutual TLS) | No | Requires the experimental Gateway API CRD channel; homelab ships the standard channel |
+| HTTPS-listener Re-encrypt (frontend TLS termination + backend TLS) | No | Cloudflare terminates TLS at the edge, so HTTPS listeners aren't supported (see the HTTPRoute HTTPS Listener limitation). The upstream `BackendTLSPolicy` parent test is skipped for the same reason |
+
+Policy status (`Accepted` / `ResolvedRefs`) is maintained per-Gateway-ancestor.
+Edits to the CA `ConfigMap` (creation, content patch, or deletion) re-trigger
+status reconciliation. The `Status.Ancestors` slice is capped at the spec's
+limit of 16 entries; entries are sorted deterministically by
+`{namespace, name}` so the truncated set stays stable across reconciles.
+`LastTransitionTime` is maintained via `meta.SetStatusCondition`, so it
+only flips when `Status`, `Reason`, or `Message` actually changes.
+
+### Fail-closed enforcement
+
+When a `BackendTLSPolicy` targets a Service but cannot be enforced (CA
+`ConfigMap` missing or unreadable, `ca.crt` empty or malformed PEM,
+unsupported `SubjectAltName` type), the proxy receives a poisoned TLS config
+(empty CA pool) and the next request to that Service fails with HTTP 502 — it
+is NOT silently downgraded to plaintext. The operator's stated intent ("this
+hop MUST be authenticated TLS") is preserved. Monitor the policy's
+`Accepted` condition to detect the failure mode (`Reason=NoValidCACertificate`
+or `Reason=Invalid`).
+
+### Interaction with `appProtocol: kubernetes.io/h2c`
+
+When a backend Service carries both `appProtocol: kubernetes.io/h2c` AND a
+`BackendTLSPolicy` targets it, the policy wins: the proxy dials TLS (HTTPS,
+with HTTP/2 negotiated via ALPN). h2c is by definition cleartext HTTP/2 and
+cannot coexist with backend TLS; the h2c marker is silently ignored on that
+hop. If you genuinely want HTTP/2 over TLS, omit the `appProtocol` hint and
+let ALPN negotiate it during the handshake.
+
+### RequestMirror filter does not honour BackendTLSPolicy
+
+The Gateway API `RequestMirror` filter sends a fire-and-forget copy of the
+request to a secondary backend through a side-channel HTTP client that does
+NOT share the proxy's TLS-aware transport pool. If a `BackendTLSPolicy`
+targets the mirror destination Service, the mirrored copy is sent in
+plaintext — the primary leg still respects the policy, but the mirror leg
+silently bypasses it.
+
+The converter surfaces a WARN log when a mirror destination has a matching
+policy so operators don't ship a silent bypass. A TLS-aware mirror dial path
+is a tracked follow-up; until then, if the mirror destination MUST receive
+TLS, route mirror traffic through a separate Service without a policy or use
+weighted `backendRefs` instead of the mirror filter.
+
+### Interaction with `appProtocol: https` / `HTTPS`
+
+`appProtocol: https` (or `HTTPS`) is treated as a hint that the backend
+expects TLS — but the proxy cannot dial TLS on its own without a CA to
+verify against. The behaviour:
+
+- With a matching `BackendTLSPolicy`: the policy provides the CA, the proxy
+  dials TLS, and the request goes through normally. The `appProtocol` hint
+  is redundant but accepted silently.
+- Without a matching `BackendTLSPolicy`: the proxy logs a WARN and falls
+  back to plaintext HTTP/1.1. The misconfiguration is visible in logs so
+  operators don't ship a broken TLS expectation. Attach a `BackendTLSPolicy`
+  to upgrade the hop to authenticated TLS.
+
 ## Route Types Not Supported
 
 | Route Type | Status | Reason |

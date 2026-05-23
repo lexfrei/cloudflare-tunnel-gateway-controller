@@ -53,6 +53,7 @@ func TestGatewayAPIConformance(t *testing.T) {
 		features.SupportHTTPRouteBackendProtocolH2C,
 		features.SupportHTTPRouteRequestMultipleMirrors,
 		features.SupportHTTPRouteRequestPercentageMirror,
+		features.SupportBackendTLSPolicy,
 		// NOTE: 303/307/308 redirect status codes work correctly in the proxy,
 		// but Cloudflare edge rewrites Location scheme to HTTPS, so conformance
 		// tests that verify http:// scheme in redirects will always fail.
@@ -78,7 +79,8 @@ func TestGatewayAPIConformance(t *testing.T) {
 		features.SupportTLSRoute,
 		features.SupportTLSRouteModeTerminate,
 		features.SupportTLSRouteModeMixed,
-		features.SupportBackendTLSPolicy,
+		// SANValidation requires URI-SAN support end-to-end; this minimum
+		// BackendTLSPolicy implementation handles Hostname SANs only.
 		features.SupportBackendTLSPolicySANValidation,
 		features.SupportUDPRoute,
 		features.SupportMesh,
@@ -150,12 +152,22 @@ func TestGatewayAPIConformance(t *testing.T) {
 		"MeshHTTPRouteSimpleSameNamespace",
 		"MeshHTTPRouteWeight",
 
-		// BackendTLSPolicy: not supported — tunnel terminates TLS at edge.
+		// BackendTLSPolicy: the main test exercises Re-encrypt against the
+		// "same-namespace-with-https-listener" Gateway; Cloudflare terminates
+		// TLS at the edge so HTTPS listeners are not supported (see the
+		// HTTPRouteHTTPSListener skip above) and the parent test would fail on
+		// its first sub-test. The subsequent HTTP sub-tests are covered by the
+		// HTTPRoute_ extended suite. ConflictResolution requires cross-policy
+		// conflict tracking (loser stamped with Reason=Conflicted) that this
+		// implementation does not yet do — older policy wins, others share the
+		// same Accepted=True status. SANValidation requires URI-type
+		// SubjectAltNames which are rejected by validateSANs (see the
+		// BackendTLSPolicy section in docs/gateway-api/limitations.md).
+		// InvalidCACertificateRef and ObservedGenerationBump are enabled —
+		// the controller emits the conformance-required Reasons and updates
+		// ObservedGeneration on every reconcile.
 		"BackendTLSPolicy",
 		"BackendTLSPolicyConflictResolution",
-		"BackendTLSPolicyInvalidCACertificateRef",
-		"BackendTLSPolicyInvalidKind",
-		"BackendTLSPolicyObservedGenerationBump",
 		"BackendTLSPolicySANValidation",
 
 		// Gateway features not applicable to tunnel architecture.

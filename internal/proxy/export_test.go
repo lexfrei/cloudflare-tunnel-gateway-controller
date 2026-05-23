@@ -11,14 +11,14 @@ func (h *Handler) Transports() *sync.Map {
 	return &h.transports
 }
 
-// TransportKey exposes the per-host+protocol pool key for testing purposes.
-func TransportKey(host string, protocol BackendProtocol) string {
-	return transportKey(host, protocol)
+// TransportKey exposes the per-host+protocol+tls pool key for testing purposes.
+func TransportKey(host string, protocol BackendProtocol, backendTLS *BackendTLSConfig) string {
+	return transportKey(host, protocol, backendTLS)
 }
 
 // NewTransportForTest exposes newTransport for testing purposes.
-func NewTransportForTest(protocol BackendProtocol) http.RoundTripper {
-	return newTransport(protocol)
+func NewTransportForTest(protocol BackendProtocol, backendTLS *BackendTLSConfig) http.RoundTripper {
+	return newTransport(protocol, backendTLS)
 }
 
 // ShouldMirrorForTest exposes the unexported requestMirror.shouldMirror

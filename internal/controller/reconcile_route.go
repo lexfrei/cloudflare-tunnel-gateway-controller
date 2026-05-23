@@ -114,17 +114,7 @@ func setupRouteController(mgr ctrl.Manager, params *routeControllerSetupParams) 
 			handler.EnqueueRequestsFromMapFunc(params.findRoutesForRefGrant),
 		)
 
-	// A Service change can flip a backendRef's appProtocol (e.g. enable h2c)
-	// without touching any HTTPRoute. Only controllers that actually consume
-	// appProtocol (the L7 proxy, i.e. HTTPRoute) opt into this watch. GRPCRoute
-	// is tunnel-only and never reads appProtocol — leaving its findRoutesForService
-	// unset suppresses the watch and avoids needless reconcile churn.
-	if params.findRoutesForService != nil {
-		builder = builder.Watches(
-			&corev1.Service{},
-			handler.EnqueueRequestsFromMapFunc(params.findRoutesForService),
-		)
-	}
+	builder = addProxyOnlyWatches(builder, params)
 
 	err := builder.Complete(params.reconciler)
 	if err != nil {
@@ -136,4 +126,44 @@ func setupRouteController(mgr ctrl.Manager, params *routeControllerSetupParams) 
 	}
 
 	return nil
+}
+
+// addProxyOnlyWatches adds the watches that only the proxy-driving (HTTPRoute)
+// controller needs: Service for appProtocol changes, BackendTLSPolicy for TLS
+// config churn, and ConfigMap for CA bundle edits (filtered to ones actually
+// referenced by a policy). GRPCRoute opts out by leaving findRoutesForService
+// nil. Extracted from setupRouteController to keep its function length within
+// the linter budget.
+func addProxyOnlyWatches(
+	builder *ctrl.Builder,
+	params *routeControllerSetupParams,
+) *ctrl.Builder {
+	if params.findRoutesForService == nil {
+		return builder
+	}
+
+	enqueueAllRoutes := handler.EnqueueRequestsFromMapFunc(
+		func(ctx context.Context, _ client.Object) []reconcile.Request {
+			return params.getAllRelevantRoutes(ctx)
+		},
+	)
+	enqueueRoutesForCAConfigMap := handler.EnqueueRequestsFromMapFunc(
+		func(ctx context.Context, obj client.Object) []reconcile.Request {
+			configMap, ok := obj.(*corev1.ConfigMap)
+			if !ok {
+				return nil
+			}
+
+			if !isConfigMapReferencedByBackendTLSPolicy(ctx, params.k8sClient, configMap) {
+				return nil
+			}
+
+			return params.getAllRelevantRoutes(ctx)
+		},
+	)
+
+	return builder.
+		Watches(&corev1.Service{}, handler.EnqueueRequestsFromMapFunc(params.findRoutesForService)).
+		Watches(&gatewayv1.BackendTLSPolicy{}, enqueueAllRoutes).
+		Watches(&corev1.ConfigMap{}, enqueueRoutesForCAConfigMap)
 }

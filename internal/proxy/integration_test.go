@@ -1,6 +1,7 @@
 package proxy_test
 
 import (
+	"encoding/pem"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -120,7 +121,7 @@ func TestHandler_BackendProtocolH2C(t *testing.T) {
 func TestNewTransport_H2C_HasLivenessDefaults(t *testing.T) {
 	t.Parallel()
 
-	rt := proxy.NewTransportForTest(proxy.BackendProtocolH2C)
+	rt := proxy.NewTransportForTest(proxy.BackendProtocolH2C, nil)
 
 	tr, ok := rt.(*http2.Transport)
 	require.True(t, ok, "h2c transport must be *http2.Transport, got %T", rt)
@@ -388,6 +389,305 @@ func TestHandler_MirrorPercentDistribution(t *testing.T) {
 		"mirrored request count %d below 20%% expected ±15%% tolerance", got)
 	assert.LessOrEqual(t, got, expected+tolerance,
 		"mirrored request count %d above 20%% expected ±15%% tolerance", got)
+}
+
+// caPEMFromTLSServer returns the PEM-encoded test certificate authority that
+// httptest.NewTLSServer self-signed for itself. Suitable as a CABundle for
+// BackendTLSConfig so the proxy trusts the test server.
+func caPEMFromTLSServer(t *testing.T, server *httptest.Server) string {
+	t.Helper()
+
+	require.NotNil(t, server.TLS, "expected *httptest.Server in TLS mode")
+	require.NotEmpty(t, server.TLS.Certificates)
+
+	cert := server.TLS.Certificates[0].Certificate[0]
+	pemBlock := &pem.Block{Type: "CERTIFICATE", Bytes: cert}
+
+	return string(pem.EncodeToMemory(pemBlock))
+}
+
+func TestHandler_BackendTLSPolicy_ValidCA_Succeeds(t *testing.T) {
+	t.Parallel()
+
+	tlsBackend := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("X-Backend", "tls")
+		writer.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(tlsBackend.Close)
+
+	caPEM := caPEMFromTLSServer(t, tlsBackend)
+
+	router := proxy.NewRouter()
+	require.NoError(t, router.UpdateConfig(&proxy.Config{
+		Version: 1,
+		Rules: []proxy.RouteRule{
+			{
+				Hostnames: []string{"app.example.com"},
+				Matches:   []proxy.RouteMatch{{Path: &proxy.PathMatch{Type: proxy.PathMatchPathPrefix, Value: "/"}}},
+				Backends: []proxy.BackendRef{
+					{
+						URL:    tlsBackend.URL,
+						Weight: 1,
+						TLS: &proxy.BackendTLSConfig{
+							CABundlePEM: caPEM,
+							ServerName:  "example.com", // httptest.NewTLSServer cert SAN
+						},
+					},
+				},
+			},
+		},
+	}))
+
+	handler := proxy.NewHandler(router)
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://app.example.com/", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	resp := rec.Result()
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, "tls", resp.Header.Get("X-Backend"))
+}
+
+func TestHandler_BackendTLSPolicy_BogusCA_Fails(t *testing.T) {
+	t.Parallel()
+
+	tlsBackend := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(tlsBackend.Close)
+
+	bogusCA := `-----BEGIN CERTIFICATE-----
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA1234567890BOGUSCAFORTEST
+-----END CERTIFICATE-----
+`
+
+	router := proxy.NewRouter()
+	require.NoError(t, router.UpdateConfig(&proxy.Config{
+		Version: 1,
+		Rules: []proxy.RouteRule{
+			{
+				Hostnames: []string{"app.example.com"},
+				Matches:   []proxy.RouteMatch{{Path: &proxy.PathMatch{Type: proxy.PathMatchPathPrefix, Value: "/"}}},
+				Backends: []proxy.BackendRef{
+					{
+						URL:    tlsBackend.URL,
+						Weight: 1,
+						TLS: &proxy.BackendTLSConfig{
+							CABundlePEM: bogusCA,
+							ServerName:  "example.com",
+						},
+					},
+				},
+			},
+		},
+	}))
+
+	handler := proxy.NewHandler(router)
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://app.example.com/", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusBadGateway, rec.Result().StatusCode,
+		"BackendTLSPolicy with mismatched CA must fail TLS verification → proxy returns 502")
+}
+
+func TestHandler_BackendTLSPolicy_MismatchedHostname_Fails(t *testing.T) {
+	t.Parallel()
+
+	tlsBackend := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(tlsBackend.Close)
+
+	caPEM := caPEMFromTLSServer(t, tlsBackend)
+
+	router := proxy.NewRouter()
+	require.NoError(t, router.UpdateConfig(&proxy.Config{
+		Version: 1,
+		Rules: []proxy.RouteRule{
+			{
+				Hostnames: []string{"app.example.com"},
+				Matches:   []proxy.RouteMatch{{Path: &proxy.PathMatch{Type: proxy.PathMatchPathPrefix, Value: "/"}}},
+				Backends: []proxy.BackendRef{
+					{
+						URL:    tlsBackend.URL,
+						Weight: 1,
+						TLS: &proxy.BackendTLSConfig{
+							CABundlePEM: caPEM,
+							ServerName:  "wrong-hostname.invalid",
+						},
+					},
+				},
+			},
+		},
+	}))
+
+	handler := proxy.NewHandler(router)
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://app.example.com/", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusBadGateway, rec.Result().StatusCode,
+		"BackendTLSPolicy with hostname not in cert SAN must fail TLS verification → proxy returns 502")
+}
+
+// TestHandler_BackendTLSPolicy_PoisonedConfig_HandshakeFails verifies the
+// end-to-end fail-closed contract: when the controller pushes a config with an
+// empty CABundlePEM (e.g. because the BackendTLSPolicy CA reference cannot be
+// resolved), the proxy MUST refuse the request via a 502 rather than silently
+// downgrading to plaintext. Pairs with
+// TestProxySyncer_SyncRoutes_BackendTLSPolicyMissingCA_FailsClosed which
+// covers the config-push side; this test pins the runtime side.
+func TestHandler_BackendTLSPolicy_PoisonedConfig_HandshakeFails(t *testing.T) {
+	t.Parallel()
+
+	tlsBackend := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(tlsBackend.Close)
+
+	router := proxy.NewRouter()
+	require.NoError(t, router.UpdateConfig(&proxy.Config{
+		Version: 1,
+		Rules: []proxy.RouteRule{
+			{
+				Hostnames: []string{"app.example.com"},
+				Matches:   []proxy.RouteMatch{{Path: &proxy.PathMatch{Type: proxy.PathMatchPathPrefix, Value: "/"}}},
+				Backends: []proxy.BackendRef{
+					{
+						URL:    tlsBackend.URL,
+						Weight: 1,
+						// Poisoned config: empty CA bundle. The controller
+						// pushes exactly this when a policy targets the
+						// Service but its CA ref cannot be resolved.
+						TLS: &proxy.BackendTLSConfig{
+							CABundlePEM: "",
+							ServerName:  "example.com",
+						},
+					},
+				},
+			},
+		},
+	}))
+
+	handler := proxy.NewHandler(router)
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://app.example.com/", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusBadGateway, rec.Result().StatusCode,
+		"poisoned TLS config (empty CA pool) MUST fail TLS verification at handshake → 502, "+
+			"the operator's intent is preserved over silent plaintext downgrade")
+}
+
+// TestHandler_BackendTLSPolicy_SANOnly_AcceptsMatchingSAN verifies the
+// SAN-list authentication path: when SubjectAltNames is non-empty the proxy
+// uses x509.VerifyHostname against each entry rather than treating ServerName
+// as an authentication identity. The first SAN in the list does NOT match the
+// cert, the second one DOES — OR-semantics must accept.
+func TestHandler_BackendTLSPolicy_SANOnly_AcceptsMatchingSAN(t *testing.T) {
+	t.Parallel()
+
+	tlsBackend := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(tlsBackend.Close)
+
+	caPEM := caPEMFromTLSServer(t, tlsBackend)
+
+	router := proxy.NewRouter()
+	require.NoError(t, router.UpdateConfig(&proxy.Config{
+		Version: 1,
+		Rules: []proxy.RouteRule{
+			{
+				Hostnames: []string{"app.example.com"},
+				Matches:   []proxy.RouteMatch{{Path: &proxy.PathMatch{Type: proxy.PathMatchPathPrefix, Value: "/"}}},
+				Backends: []proxy.BackendRef{
+					{
+						URL:    tlsBackend.URL,
+						Weight: 1,
+						TLS: &proxy.BackendTLSConfig{
+							CABundlePEM: caPEM,
+							// ServerName intentionally set to a value the cert
+							// does NOT carry — when SANs are present, this
+							// must be used for SNI only and the leaf
+							// authentication runs over the SAN list below.
+							ServerName: "sni-only.invalid",
+							SubjectAltNames: []string{
+								"does-not-match.invalid",
+								"example.com", // matches httptest.NewTLSServer cert SAN
+							},
+						},
+					},
+				},
+			},
+		},
+	}))
+
+	handler := proxy.NewHandler(router)
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://app.example.com/", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Result().StatusCode,
+		"SAN OR-matching must succeed when any policy SAN matches the cert")
+}
+
+// TestHandler_BackendTLSPolicy_SANOnly_RejectsAllMismatching verifies that the
+// SAN-list authentication path returns 502 when NO policy SAN matches the
+// cert. ServerName must NOT rescue the request — it's SNI only in this mode.
+func TestHandler_BackendTLSPolicy_SANOnly_RejectsAllMismatching(t *testing.T) {
+	t.Parallel()
+
+	tlsBackend := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(tlsBackend.Close)
+
+	caPEM := caPEMFromTLSServer(t, tlsBackend)
+
+	router := proxy.NewRouter()
+	require.NoError(t, router.UpdateConfig(&proxy.Config{
+		Version: 1,
+		Rules: []proxy.RouteRule{
+			{
+				Hostnames: []string{"app.example.com"},
+				Matches:   []proxy.RouteMatch{{Path: &proxy.PathMatch{Type: proxy.PathMatchPathPrefix, Value: "/"}}},
+				Backends: []proxy.BackendRef{
+					{
+						URL:    tlsBackend.URL,
+						Weight: 1,
+						TLS: &proxy.BackendTLSConfig{
+							CABundlePEM: caPEM,
+							// ServerName matches the cert — but since SANs are
+							// set, ServerName must NOT be used for auth.
+							ServerName: "example.com",
+							SubjectAltNames: []string{
+								"only-wrong.invalid",
+								"also-wrong.invalid",
+							},
+						},
+					},
+				},
+			},
+		},
+	}))
+
+	handler := proxy.NewHandler(router)
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://app.example.com/", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusBadGateway, rec.Result().StatusCode,
+		"SAN OR-matching must reject when NO policy SAN matches, regardless of ServerName")
 }
 
 func TestHandler_BackendProtocolToggleSameHostPort(t *testing.T) {

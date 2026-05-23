@@ -209,12 +209,30 @@ func isKnownBackendProtocol(p BackendProtocol) bool {
 	}
 }
 
+// BackendTLSConfig captures the per-backend TLS verification settings derived
+// from a Gateway API BackendTLSPolicy that targets the Service this BackendRef
+// points at. The proxy uses it to build a TLS transport that validates the
+// backend's server certificate against the supplied CA bundle and hostname.
+type BackendTLSConfig struct {
+	// CABundlePEM is the concatenated PEM-encoded CA certificate bundle the
+	// proxy uses as the trust anchor when verifying the backend's certificate.
+	CABundlePEM string `json:"caBundle,omitempty"`
+	// ServerName is used both as the TLS SNI value and as the expected
+	// hostname during certificate verification (DNS SAN match).
+	ServerName string `json:"serverName,omitempty"`
+	// SubjectAltNames lists additional hostnames that the backend cert may
+	// present in its SAN to satisfy this policy. ServerName is implied; this
+	// list is additive.
+	SubjectAltNames []string `json:"subjectAltNames,omitempty"`
+}
+
 // BackendRef identifies a backend service with a weight for traffic splitting.
 type BackendRef struct {
-	URL      string          `json:"url"`
-	Weight   int32           `json:"weight"`
-	Protocol BackendProtocol `json:"protocol,omitempty"`
-	Filters  []RouteFilter   `json:"filters,omitempty"`
+	URL      string            `json:"url"`
+	Weight   int32             `json:"weight"`
+	Protocol BackendProtocol   `json:"protocol,omitempty"`
+	TLS      *BackendTLSConfig `json:"tls,omitempty"`
+	Filters  []RouteFilter     `json:"filters,omitempty"`
 }
 
 // RouteTimeouts configures timeout durations for proxied requests.
