@@ -4,6 +4,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -140,6 +141,253 @@ func TestNewH2CDialer_HasTimeouts(t *testing.T) {
 	// the pool. Both must mirror http.DefaultTransport's dialer config.
 	assert.NotZero(t, dialer.Timeout, "h2c dialer must set Timeout to bound TCP SYN waits")
 	assert.NotZero(t, dialer.KeepAlive, "h2c dialer must set KeepAlive to evict half-closed pool connections")
+}
+
+// countingMirrorBackend records the number of received requests on an atomic
+// counter and 200s every one. Used to assert mirror filter behavior.
+func countingMirrorBackend(t *testing.T) (*httptest.Server, *atomic.Int32) {
+	t.Helper()
+
+	var hits atomic.Int32
+
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		writer.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(server.Close)
+
+	return server, &hits
+}
+
+func TestHandler_MultipleMirrors_AllBackendsHit(t *testing.T) {
+	t.Parallel()
+
+	primary := newBackend(t, "primary")
+	mirrorA, hitsA := countingMirrorBackend(t)
+	mirrorB, hitsB := countingMirrorBackend(t)
+
+	router := proxy.NewRouter()
+	require.NoError(t, router.UpdateConfig(&proxy.Config{
+		Version: 1,
+		Rules: []proxy.RouteRule{
+			{
+				Hostnames: []string{"app.example.com"},
+				Matches:   []proxy.RouteMatch{{Path: &proxy.PathMatch{Type: proxy.PathMatchPathPrefix, Value: "/"}}},
+				Filters: []proxy.RouteFilter{
+					{Type: proxy.FilterRequestMirror, RequestMirror: &proxy.MirrorConfig{BackendURL: mirrorA.URL}},
+					{Type: proxy.FilterRequestMirror, RequestMirror: &proxy.MirrorConfig{BackendURL: mirrorB.URL}},
+				},
+				Backends: []proxy.BackendRef{{URL: primary.URL, Weight: 1}},
+			},
+		},
+	}))
+
+	handler := proxy.NewHandler(router)
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://app.example.com/", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Result().StatusCode)
+
+	// Mirror requests are fire-and-forget goroutines; give them a moment.
+	require.Eventually(t, func() bool {
+		return hitsA.Load() == 1 && hitsB.Load() == 1
+	}, 3*time.Second, 20*time.Millisecond,
+		"both mirror backends must receive exactly one mirrored request (got A=%d B=%d)", hitsA.Load(), hitsB.Load())
+}
+
+// bodyEchoBackend captures the full request body of each request so tests can
+// assert mirror filters didn't truncate or share the body reader.
+func bodyEchoBackend(t *testing.T) (*httptest.Server, *atomic.Value) {
+	t.Helper()
+
+	var last atomic.Value
+
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, req *http.Request) {
+		body, _ := io.ReadAll(req.Body)
+		last.Store(string(body))
+		writer.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(server.Close)
+
+	return server, &last
+}
+
+func TestHandler_MultipleMirrors_PostBody_BothReceiveFullBody(t *testing.T) {
+	t.Parallel()
+
+	primary := newBackend(t, "primary")
+	mirrorA, lastA := bodyEchoBackend(t)
+	mirrorB, lastB := bodyEchoBackend(t)
+
+	router := proxy.NewRouter()
+	require.NoError(t, router.UpdateConfig(&proxy.Config{
+		Version: 1,
+		Rules: []proxy.RouteRule{
+			{
+				Hostnames: []string{"app.example.com"},
+				Matches:   []proxy.RouteMatch{{Path: &proxy.PathMatch{Type: proxy.PathMatchPathPrefix, Value: "/"}}},
+				Filters: []proxy.RouteFilter{
+					{Type: proxy.FilterRequestMirror, RequestMirror: &proxy.MirrorConfig{BackendURL: mirrorA.URL}},
+					{Type: proxy.FilterRequestMirror, RequestMirror: &proxy.MirrorConfig{BackendURL: mirrorB.URL}},
+				},
+				Backends: []proxy.BackendRef{{URL: primary.URL, Weight: 1}},
+			},
+		},
+	}))
+
+	handler := proxy.NewHandler(router)
+
+	const payload = "this body must reach every mirror identically"
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "http://app.example.com/", strings.NewReader(payload))
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Result().StatusCode)
+
+	require.Eventually(t, func() bool {
+		a, _ := lastA.Load().(string)
+		b, _ := lastB.Load().(string)
+
+		return a == payload && b == payload
+	}, 3*time.Second, 20*time.Millisecond,
+		"both mirror backends must receive the full unmodified body via independent readers")
+}
+
+func TestHandler_MultipleMirrors_OversizeBody_PrimaryStillSucceeds(t *testing.T) {
+	t.Parallel()
+
+	// 1 MiB + 1 byte: deliberately just past maxMirrorBodySize (1 << 20) so
+	// every mirror's bufferMirrorBody hits the oversize branch.
+	const oversize = (1 << 20) + 1
+
+	primary, primaryLast := bodyEchoBackend(t)
+	mirrorA, hitsA := countingMirrorBackend(t)
+	mirrorB, hitsB := countingMirrorBackend(t)
+
+	router := proxy.NewRouter()
+	require.NoError(t, router.UpdateConfig(&proxy.Config{
+		Version: 1,
+		Rules: []proxy.RouteRule{
+			{
+				Hostnames: []string{"app.example.com"},
+				Matches:   []proxy.RouteMatch{{Path: &proxy.PathMatch{Type: proxy.PathMatchPathPrefix, Value: "/"}}},
+				Filters: []proxy.RouteFilter{
+					{Type: proxy.FilterRequestMirror, RequestMirror: &proxy.MirrorConfig{BackendURL: mirrorA.URL}},
+					{Type: proxy.FilterRequestMirror, RequestMirror: &proxy.MirrorConfig{BackendURL: mirrorB.URL}},
+				},
+				Backends: []proxy.BackendRef{{URL: primary.URL, Weight: 1}},
+			},
+		},
+	}))
+
+	handler := proxy.NewHandler(router)
+
+	body := strings.Repeat("a", oversize)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "http://app.example.com/", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Result().StatusCode,
+		"primary must still succeed even when both mirrors skip on oversize body")
+
+	// Give any spurious mirror goroutines a chance to run before asserting zero.
+	time.Sleep(200 * time.Millisecond)
+
+	assert.Zero(t, hitsA.Load(), "first mirror must skip on oversize body, got %d hits", hitsA.Load())
+	assert.Zero(t, hitsB.Load(), "second mirror must skip on oversize body, got %d hits", hitsB.Load())
+
+	got, _ := primaryLast.Load().(string)
+	assert.Len(t, got, oversize, "primary must receive the full body despite mirror skips")
+}
+
+func TestHandler_MirrorPercentZero_NeverMirrors(t *testing.T) {
+	t.Parallel()
+
+	primary := newBackend(t, "primary")
+	mirror, hits := countingMirrorBackend(t)
+	zero := int32(0)
+
+	router := proxy.NewRouter()
+	require.NoError(t, router.UpdateConfig(&proxy.Config{
+		Version: 1,
+		Rules: []proxy.RouteRule{
+			{
+				Hostnames: []string{"app.example.com"},
+				Matches:   []proxy.RouteMatch{{Path: &proxy.PathMatch{Type: proxy.PathMatchPathPrefix, Value: "/"}}},
+				Filters: []proxy.RouteFilter{
+					{Type: proxy.FilterRequestMirror, RequestMirror: &proxy.MirrorConfig{BackendURL: mirror.URL, Percent: &zero}},
+				},
+				Backends: []proxy.BackendRef{{URL: primary.URL, Weight: 1}},
+			},
+		},
+	}))
+
+	handler := proxy.NewHandler(router)
+
+	for range 100 {
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://app.example.com/", nil)
+		handler.ServeHTTP(httptest.NewRecorder(), req)
+	}
+
+	// Allow goroutines a moment in case any leaked through.
+	time.Sleep(200 * time.Millisecond)
+	assert.Zero(t, hits.Load(), "Percent=0 must never mirror; got %d requests", hits.Load())
+}
+
+func TestHandler_MirrorPercentDistribution(t *testing.T) {
+	t.Parallel()
+
+	primary := newBackend(t, "primary")
+	mirror, hits := countingMirrorBackend(t)
+	twenty := int32(20)
+
+	router := proxy.NewRouter()
+	require.NoError(t, router.UpdateConfig(&proxy.Config{
+		Version: 1,
+		Rules: []proxy.RouteRule{
+			{
+				Hostnames: []string{"app.example.com"},
+				Matches:   []proxy.RouteMatch{{Path: &proxy.PathMatch{Type: proxy.PathMatchPathPrefix, Value: "/"}}},
+				Filters: []proxy.RouteFilter{
+					{Type: proxy.FilterRequestMirror, RequestMirror: &proxy.MirrorConfig{BackendURL: mirror.URL, Percent: &twenty}},
+				},
+				Backends: []proxy.BackendRef{{URL: primary.URL, Weight: 1}},
+			},
+		},
+	}))
+
+	handler := proxy.NewHandler(router)
+
+	const totalRequests = 500
+	for range totalRequests {
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://app.example.com/", nil)
+		handler.ServeHTTP(httptest.NewRecorder(), req)
+	}
+
+	// Wait for fire-and-forget goroutines to drain. Require at least one
+	// hit before declaring "stable", otherwise the initial poll fires before
+	// any mirror goroutine has had a chance to run (hits==0, sleep, hits==0,
+	// "stable") and the assertion below evaluates a falsely-empty counter.
+	require.Eventually(t, func() bool {
+		first := hits.Load()
+		if first == 0 {
+			return false
+		}
+
+		time.Sleep(100 * time.Millisecond)
+
+		return hits.Load() == first
+	}, 10*time.Second, 200*time.Millisecond)
+
+	got := int(hits.Load())
+	// Upstream conformance uses ±15% tolerance over 500 requests; mirror that.
+	// 20% expected → ~100 mirrored; allow [50, 150].
+	const expected = totalRequests * 20 / 100
+	const tolerance = totalRequests * 15 / 100
+	assert.GreaterOrEqual(t, got, expected-tolerance,
+		"mirrored request count %d below 20%% expected ±15%% tolerance", got)
+	assert.LessOrEqual(t, got, expected+tolerance,
+		"mirrored request count %d above 20%% expected ±15%% tolerance", got)
 }
 
 func TestHandler_BackendProtocolToggleSameHostPort(t *testing.T) {

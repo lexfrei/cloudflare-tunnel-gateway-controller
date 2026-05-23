@@ -175,9 +175,14 @@ type URLRewritePath struct {
 	ReplacePrefixMatch *string            `json:"replacePrefixMatch,omitempty"`
 }
 
-// MirrorConfig describes where to mirror requests.
+// MirrorConfig describes where to mirror requests and at what rate.
 type MirrorConfig struct {
 	BackendURL string `json:"backendUrl"`
+	// Percent is the percentage of requests to mirror to the backend
+	// (0-100 inclusive). nil means 100% (mirror every request). A Fraction
+	// on the Gateway API filter is normalized into Percent at conversion
+	// time so the proxy speaks one shape.
+	Percent *int32 `json:"percent,omitempty"`
 }
 
 // BackendProtocol identifies the application protocol the proxy must speak to a
@@ -398,6 +403,10 @@ func (f *RouteFilter) validate() error {
 	case FilterRequestMirror:
 		if f.RequestMirror == nil {
 			return errors.New("requestMirror config is required")
+		}
+
+		if pct := f.RequestMirror.Percent; pct != nil && (*pct < 0 || *pct > 100) {
+			return errors.Errorf("requestMirror percent must be in [0,100], got %d", *pct)
 		}
 	default:
 		return errors.Wrapf(errUnknownFilterType, "%q", f.Type)

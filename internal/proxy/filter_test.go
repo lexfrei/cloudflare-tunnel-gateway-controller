@@ -474,7 +474,7 @@ func TestRequestMirror(t *testing.T) {
 	}))
 	defer mirror.Close()
 
-	filter := proxy.NewRequestMirror(mirror.URL)
+	filter := proxy.NewRequestMirror(mirror.URL, nil)
 
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "http://example.com/test", nil)
 
@@ -488,7 +488,7 @@ func TestRequestMirror(t *testing.T) {
 func TestRequestMirror_InvalidBackendURL(t *testing.T) {
 	t.Parallel()
 
-	filter := proxy.NewRequestMirror("://invalid\x00url")
+	filter := proxy.NewRequestMirror("://invalid\x00url", nil)
 
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "http://example.com/test", nil)
 
@@ -517,7 +517,7 @@ func TestRequestMirror_PostBody(t *testing.T) {
 	}))
 	defer mirror.Close()
 
-	filter := proxy.NewRequestMirror(mirror.URL)
+	filter := proxy.NewRequestMirror(mirror.URL, nil)
 
 	req := httptest.NewRequestWithContext(
 		context.Background(),
@@ -709,7 +709,7 @@ func TestRequestMirror_BodyReadError_RestoresPartialBody(t *testing.T) {
 
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "http://example.com/test", failingBody)
 
-	filter := proxy.NewRequestMirror("http://mirror-backend:8080")
+	filter := proxy.NewRequestMirror("http://mirror-backend:8080", nil)
 	resp := filter.ProcessRequest(req)
 
 	if resp != nil {
@@ -736,7 +736,7 @@ func TestRequestMirror_OversizeBody_SetsUnknownContentLength(t *testing.T) {
 	)
 	req.ContentLength = int64(len(oversizeBody))
 
-	filter := proxy.NewRequestMirror("http://mirror-backend:8080")
+	filter := proxy.NewRequestMirror("http://mirror-backend:8080", nil)
 	resp := filter.ProcessRequest(req)
 
 	if resp != nil {
