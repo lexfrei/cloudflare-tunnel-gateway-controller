@@ -81,6 +81,7 @@ type routeControllerSetupParams struct {
 	configResolver        *config.Resolver
 	findRoutesForGateway  handler.MapFunc
 	findRoutesForRefGrant handler.MapFunc
+	findRoutesForService  handler.MapFunc
 	getAllRelevantRoutes  RequestsFunc
 }
 
@@ -93,7 +94,7 @@ func setupRouteController(mgr ctrl.Manager, params *routeControllerSetupParams) 
 		ConfigResolver: params.configResolver,
 	}
 
-	err := ctrl.NewControllerManagedBy(mgr).
+	builder := ctrl.NewControllerManagedBy(mgr).
 		For(params.routeObject).
 		WithEventFilter(predicate.GenerationChangedPredicate{}).
 		Watches(
@@ -111,8 +112,21 @@ func setupRouteController(mgr ctrl.Manager, params *routeControllerSetupParams) 
 		Watches(
 			&gatewayv1beta1.ReferenceGrant{},
 			handler.EnqueueRequestsFromMapFunc(params.findRoutesForRefGrant),
-		).
-		Complete(params.reconciler)
+		)
+
+	// A Service change can flip a backendRef's appProtocol (e.g. enable h2c)
+	// without touching any HTTPRoute. Only controllers that actually consume
+	// appProtocol (the L7 proxy, i.e. HTTPRoute) opt into this watch. GRPCRoute
+	// is tunnel-only and never reads appProtocol — leaving its findRoutesForService
+	// unset suppresses the watch and avoids needless reconcile churn.
+	if params.findRoutesForService != nil {
+		builder = builder.Watches(
+			&corev1.Service{},
+			handler.EnqueueRequestsFromMapFunc(params.findRoutesForService),
+		)
+	}
+
+	err := builder.Complete(params.reconciler)
 	if err != nil {
 		return errors.Wrap(err, "failed to setup route controller")
 	}

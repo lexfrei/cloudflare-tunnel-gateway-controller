@@ -2,19 +2,37 @@ package proxy
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"slices"
 	"sync"
+	"time"
+
+	"golang.org/x/net/http2"
 )
 
 // Handler is the main HTTP handler for the L7 proxy.
 // It routes requests, applies filters, and proxies to backends.
 type Handler struct {
-	router     *Router
-	transports sync.Map // map[string]*http.Transport — per-backend transport pool
+	router *Router
+	// transports caches one http.RoundTripper per backend, keyed by
+	// host|protocol (see transportKey). Including the protocol in the key is
+	// what makes flipping a Service's appProtocol (e.g. http -> h2c) take effect
+	// without restarting the proxy: a stale HTTP/1.1 transport for the same
+	// host can no longer mask an h2c reconfiguration.
+	transports sync.Map // map[string]http.RoundTripper
+}
+
+// transportKey forms the cache key for a backend transport. The protocol is
+// part of the key so a protocol flip on the same host:port forces a fresh
+// transport.
+func transportKey(host string, protocol BackendProtocol) string {
+	return host + "|" + string(protocol)
 }
 
 // NewHandler creates a new proxy Handler backed by the given Router.
@@ -72,23 +90,25 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, req *http.Request) {
 	h.proxyToBackend(writer, req, result)
 }
 
-// PruneTransports removes cached transports for hosts that are no longer active,
-// closing their idle connections to prevent resource leaks.
-func (h *Handler) PruneTransports(activeHosts map[string]bool) {
-	h.transports.Range(func(key, value any) bool {
-		host, ok := key.(string)
+// PruneTransports removes cached transports whose (host, protocol) key is no
+// longer present in activeKeys, closing their idle connections to prevent
+// resource leaks. Keys are formed by transportKey(host, protocol).
+func (h *Handler) PruneTransports(activeKeys map[string]bool) {
+	h.transports.Range(func(rawKey, value any) bool {
+		key, ok := rawKey.(string)
 		if !ok {
 			return true
 		}
 
-		if activeHosts[host] {
+		if activeKeys[key] {
 			return true
 		}
 
-		h.transports.Delete(host)
+		h.transports.Delete(key)
 
-		if transport, castOK := value.(*http.Transport); castOK {
-			transport.CloseIdleConnections()
+		// Both *http.Transport and *http2.Transport expose CloseIdleConnections.
+		if closer, castOK := value.(interface{ CloseIdleConnections() }); castOK {
+			closer.CloseIdleConnections()
 		}
 
 		return true
@@ -131,17 +151,17 @@ func (h *Handler) proxyToBackend(writer http.ResponseWriter, req *http.Request, 
 	}
 
 	// Merge rule-level and backend-specific filters for response processing.
-	allFilters := result.Filters
-	if len(result.BackendFilters) > 0 {
-		allFilters = append(allFilters, result.BackendFilters...)
-	}
+	// slices.Concat allocates a fresh slice; using append on result.Filters
+	// would alias its backing array if cap > len and races against concurrent
+	// requests reading the same compiled rule.
+	allFilters := slices.Concat(result.Filters, result.BackendFilters)
 
-	proxy := h.createReverseProxy(backendURL, allFilters)
+	proxy := h.createReverseProxy(backendURL, backend.Protocol, allFilters)
 	proxy.ServeHTTP(writer, req)
 }
 
 // createReverseProxy builds an httputil.ReverseProxy for the given backend.
-func (h *Handler) createReverseProxy(backendURL *url.URL, filters []Filter) *httputil.ReverseProxy {
+func (h *Handler) createReverseProxy(backendURL *url.URL, protocol BackendProtocol, filters []Filter) *httputil.ReverseProxy {
 	return &httputil.ReverseProxy{
 		Director: func(req *http.Request) {
 			req.URL.Scheme = backendURL.Scheme
@@ -171,7 +191,7 @@ func (h *Handler) createReverseProxy(backendURL *url.URL, filters []Filter) *htt
 				req.Header.Set("User-Agent", "")
 			}
 		},
-		Transport:    h.getTransport(backendURL.Host),
+		Transport:    h.getTransport(backendURL.Host, protocol),
 		ErrorHandler: errorHandler,
 		ModifyResponse: func(resp *http.Response) error {
 			ApplyResponseFilters(filters, resp)
@@ -181,29 +201,78 @@ func (h *Handler) createReverseProxy(backendURL *url.URL, filters []Filter) *htt
 	}
 }
 
-// getTransport returns a shared transport for the given backend host.
-func (h *Handler) getTransport(host string) http.RoundTripper {
-	if transport, ok := h.transports.Load(host); ok {
-		loadedTransport, castOK := transport.(*http.Transport)
-		if castOK {
-			return loadedTransport
+// getTransport returns a shared transport for the given backend host/protocol.
+// The cache key includes the protocol so that flipping a Service's appProtocol
+// (e.g. http -> h2c) does not silently reuse a stale HTTP/1.1 transport.
+func (h *Handler) getTransport(host string, protocol BackendProtocol) http.RoundTripper {
+	key := transportKey(host, protocol)
+
+	if transport, ok := h.transports.Load(key); ok {
+		if rt, castOK := transport.(http.RoundTripper); castOK {
+			return rt
 		}
 	}
 
-	defaultTransport, ok := http.DefaultTransport.(*http.Transport)
-	if !ok {
-		return http.DefaultTransport
+	transport := newTransport(protocol)
+	actual, _ := h.transports.LoadOrStore(key, transport)
+
+	if rt, ok := actual.(http.RoundTripper); ok {
+		return rt
 	}
 
-	transport := defaultTransport.Clone()
-	actual, _ := h.transports.LoadOrStore(host, transport)
+	return transport
+}
 
-	loadedTransport, ok := actual.(*http.Transport)
-	if !ok {
-		return http.DefaultTransport
+// h2cReadIdleTimeout sends an HTTP/2 PING on the multiplexed connection after
+// this much idle time so a dead TCP connection (NodePort flap, kube-proxy
+// churn, NAT timeout) gets evicted instead of blocking new requests.
+const h2cReadIdleTimeout = 30 * time.Second
+
+// h2cPingTimeout bounds how long the transport waits for a PING ACK before
+// declaring the connection dead and closing it.
+const h2cPingTimeout = 15 * time.Second
+
+// h2cDialTimeout caps the time spent on a single TCP SYN to an h2c backend.
+// Without this, a SYN against a gone pod hangs on kernel TCP defaults
+// (often >1 min), stalling the request goroutine well past any sensible
+// request budget. The value mirrors http.DefaultTransport's dialer.
+const h2cDialTimeout = 30 * time.Second
+
+// h2cDialKeepAlive matches http.DefaultTransport's dialer KeepAlive so TCP
+// keepalives evict half-closed connections from the pool.
+const h2cDialKeepAlive = 30 * time.Second
+
+// newH2CDialer constructs the net.Dialer used for h2c backend connections.
+// Exported indirectly via export_test.go so tests can assert the timeout fields.
+func newH2CDialer() *net.Dialer {
+	return &net.Dialer{
+		Timeout:   h2cDialTimeout,
+		KeepAlive: h2cDialKeepAlive,
+	}
+}
+
+// newTransport builds a backend transport for the given protocol. For h2c it
+// returns an HTTP/2 transport that negotiates cleartext via prior knowledge
+// (AllowHTTP with a plaintext dialer); otherwise a clone of the default transport.
+func newTransport(protocol BackendProtocol) http.RoundTripper {
+	if protocol == BackendProtocolH2C {
+		dialer := newH2CDialer()
+
+		return &http2.Transport{
+			AllowHTTP: true,
+			DialTLSContext: func(ctx context.Context, network, addr string, _ *tls.Config) (net.Conn, error) {
+				return dialer.DialContext(ctx, network, addr)
+			},
+			ReadIdleTimeout: h2cReadIdleTimeout,
+			PingTimeout:     h2cPingTimeout,
+		}
 	}
 
-	return loadedTransport
+	if defaultTransport, ok := http.DefaultTransport.(*http.Transport); ok {
+		return defaultTransport.Clone()
+	}
+
+	return http.DefaultTransport
 }
 
 // errorHandler handles proxy errors with appropriate HTTP status codes.

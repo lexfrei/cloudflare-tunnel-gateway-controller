@@ -676,6 +676,230 @@ func TestHTTPRouteReconciler_FindRoutesForGateway(t *testing.T) {
 	assert.Equal(t, "default", requests[0].Namespace)
 }
 
+func TestHTTPRouteReconciler_FindRoutesForService(t *testing.T) {
+	t.Parallel()
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, gatewayv1.Install(scheme))
+	require.NoError(t, corev1.AddToScheme(scheme))
+
+	port := gatewayv1.PortNumber(8081)
+
+	gatewayClass := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "cloudflare-tunnel"},
+		Spec:       gatewayv1.GatewayClassSpec{ControllerName: "test-controller"},
+	}
+
+	gateway := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-gateway", Namespace: "default"},
+		Spec: gatewayv1.GatewaySpec{
+			GatewayClassName: "cloudflare-tunnel",
+			Listeners: []gatewayv1.Listener{
+				{Name: "http", Port: 80, Protocol: gatewayv1.HTTPProtocolType},
+			},
+		},
+	}
+
+	// route-h2c references svc-grpc and is attached to our Gateway.
+	routeH2C := &gatewayv1.HTTPRoute{
+		ObjectMeta: metav1.ObjectMeta{Name: "route-h2c", Namespace: "default"},
+		Spec: gatewayv1.HTTPRouteSpec{
+			CommonRouteSpec: gatewayv1.CommonRouteSpec{
+				ParentRefs: []gatewayv1.ParentReference{{Name: "test-gateway"}},
+			},
+			Rules: []gatewayv1.HTTPRouteRule{
+				{
+					BackendRefs: []gatewayv1.HTTPBackendRef{
+						{
+							BackendRef: gatewayv1.BackendRef{
+								BackendObjectReference: gatewayv1.BackendObjectReference{
+									Name: "svc-grpc",
+									Port: &port,
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	// route-other references svc-other; must NOT be enqueued for svc-grpc.
+	routeOther := &gatewayv1.HTTPRoute{
+		ObjectMeta: metav1.ObjectMeta{Name: "route-other", Namespace: "default"},
+		Spec: gatewayv1.HTTPRouteSpec{
+			CommonRouteSpec: gatewayv1.CommonRouteSpec{
+				ParentRefs: []gatewayv1.ParentReference{{Name: "test-gateway"}},
+			},
+			Rules: []gatewayv1.HTTPRouteRule{
+				{
+					BackendRefs: []gatewayv1.HTTPBackendRef{
+						{
+							BackendRef: gatewayv1.BackendRef{
+								BackendObjectReference: gatewayv1.BackendObjectReference{
+									Name: "svc-other",
+									Port: &port,
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	// route-foreign is attached to a Gateway from another controller; must NOT
+	// be enqueued even though it references svc-grpc.
+	foreignClass := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "other-tunnel"},
+		Spec:       gatewayv1.GatewayClassSpec{ControllerName: "other-controller"},
+	}
+
+	foreignGateway := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "foreign-gateway", Namespace: "default"},
+		Spec: gatewayv1.GatewaySpec{
+			GatewayClassName: "other-tunnel",
+			Listeners: []gatewayv1.Listener{
+				{Name: "http", Port: 80, Protocol: gatewayv1.HTTPProtocolType},
+			},
+		},
+	}
+
+	routeForeign := &gatewayv1.HTTPRoute{
+		ObjectMeta: metav1.ObjectMeta{Name: "route-foreign", Namespace: "default"},
+		Spec: gatewayv1.HTTPRouteSpec{
+			CommonRouteSpec: gatewayv1.CommonRouteSpec{
+				ParentRefs: []gatewayv1.ParentReference{{Name: "foreign-gateway"}},
+			},
+			Rules: []gatewayv1.HTTPRouteRule{
+				{
+					BackendRefs: []gatewayv1.HTTPBackendRef{
+						{
+							BackendRef: gatewayv1.BackendRef{
+								BackendObjectReference: gatewayv1.BackendObjectReference{
+									Name: "svc-grpc",
+									Port: &port,
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	svc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: "svc-grpc", Namespace: "default"},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(gatewayClass, gateway, foreignClass, foreignGateway, routeH2C, routeOther, routeForeign, svc).
+		Build()
+
+	r := &HTTPRouteReconciler{
+		Client:         fakeClient,
+		Scheme:         scheme,
+		ControllerName: "test-controller",
+		// Initialize the binding validator the way SetupWithManager does, so
+		// the test exercises the real validator path (not a nil-receiver hole).
+		bindingValidator: routebinding.NewValidator(fakeClient),
+	}
+
+	requests := r.findRoutesForService(context.Background(), svc)
+
+	require.Len(t, requests, 1,
+		"only the route referencing svc-grpc that's bound to our Gateway should be enqueued (foreign-controller routes filtered out)")
+	assert.Equal(t, "route-h2c", requests[0].Name)
+	assert.Equal(t, "default", requests[0].Namespace)
+}
+
+func TestHTTPRouteReconciler_FindRoutesForService_CrossNamespace(t *testing.T) {
+	t.Parallel()
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, gatewayv1.Install(scheme))
+	require.NoError(t, gatewayv1beta1.Install(scheme))
+	require.NoError(t, corev1.AddToScheme(scheme))
+
+	port := gatewayv1.PortNumber(8081)
+	servicesNS := gatewayv1.Namespace("services-ns")
+
+	gatewayClass := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "cloudflare-tunnel"},
+		Spec:       gatewayv1.GatewayClassSpec{ControllerName: "test-controller"},
+	}
+
+	gateway := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-gateway", Namespace: "routes-ns"},
+		Spec: gatewayv1.GatewaySpec{
+			GatewayClassName: "cloudflare-tunnel",
+			Listeners: []gatewayv1.Listener{
+				{Name: "http", Port: 80, Protocol: gatewayv1.HTTPProtocolType},
+			},
+		},
+	}
+
+	// Route in routes-ns explicitly references a Service in services-ns.
+	routeXNS := &gatewayv1.HTTPRoute{
+		ObjectMeta: metav1.ObjectMeta{Name: "cross-ns-route", Namespace: "routes-ns"},
+		Spec: gatewayv1.HTTPRouteSpec{
+			CommonRouteSpec: gatewayv1.CommonRouteSpec{
+				ParentRefs: []gatewayv1.ParentReference{{Name: "test-gateway"}},
+			},
+			Rules: []gatewayv1.HTTPRouteRule{
+				{
+					BackendRefs: []gatewayv1.HTTPBackendRef{
+						{
+							BackendRef: gatewayv1.BackendRef{
+								BackendObjectReference: gatewayv1.BackendObjectReference{
+									Name:      "shared",
+									Namespace: &servicesNS,
+									Port:      &port,
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	svcMatch := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "shared", Namespace: "services-ns"}}
+	// A same-name Service in the route's namespace must NOT match — the
+	// backendRef has an explicit namespace selector.
+	svcSameName := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "shared", Namespace: "routes-ns"}}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(gatewayClass, gateway, routeXNS, svcMatch, svcSameName).
+		Build()
+
+	r := &HTTPRouteReconciler{
+		Client:           fakeClient,
+		Scheme:           scheme,
+		ControllerName:   "test-controller",
+		bindingValidator: routebinding.NewValidator(fakeClient),
+	}
+
+	t.Run("service in target namespace enqueues the cross-ns route", func(t *testing.T) {
+		t.Parallel()
+
+		got := r.findRoutesForService(context.Background(), svcMatch)
+		require.Len(t, got, 1)
+		assert.Equal(t, "cross-ns-route", got[0].Name)
+		assert.Equal(t, "routes-ns", got[0].Namespace)
+	})
+
+	t.Run("service with same name in a different namespace is ignored", func(t *testing.T) {
+		t.Parallel()
+
+		got := r.findRoutesForService(context.Background(), svcSameName)
+		assert.Empty(t, got,
+			"backendRef has an explicit namespace; a same-name Service in the route's own namespace must not trigger reconcile")
+	})
+}
+
 func TestHTTPRouteReconciler_FindRoutesForGateway_WrongType(t *testing.T) {
 	t.Parallel()
 

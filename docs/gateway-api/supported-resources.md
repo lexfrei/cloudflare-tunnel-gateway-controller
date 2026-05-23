@@ -77,8 +77,21 @@ only path-based routing through the Cloudflare Tunnel API is available.
 | `spec.rules[].backendRefs[].namespace` | Yes | Cross-namespace refs require ReferenceGrant |
 | `spec.rules[].backendRefs[].port` | Yes | Service port |
 | `spec.rules[].backendRefs[].weight` | Yes | Requires L7 proxy for traffic splitting; without proxy, highest weight wins |
-| `spec.rules[].backendRefs[].filters` | No | Not implemented |
+| `spec.rules[].backendRefs[].filters` | Yes | Per-backend filters applied after rule-level filters; requires L7 proxy |
 | `spec.rules[].timeouts` | Yes | Requires L7 proxy |
+
+### Backend Protocol (`appProtocol`)
+
+When an HTTPRoute references a Service whose target port sets `appProtocol`, the
+L7 proxy selects the upstream transport accordingly:
+
+| `Service.spec.ports[].appProtocol` | Supported | Notes |
+| --- | --- | --- |
+| `kubernetes.io/h2c` | Yes | Proxy speaks HTTP/2 cleartext (prior knowledge) to the backend |
+| _(unset)_ | Yes | Proxy speaks HTTP/1.1 to the backend (default) |
+| `kubernetes.io/ws` | No | Backend WebSocket not implemented; see [Backend Protocol limitations](limitations.md#backend-protocol-servicespecportsappprotocol) |
+| `kubernetes.io/wss` | No | Backend WebSocket-over-TLS not implemented; see [Backend Protocol limitations](limitations.md#backend-protocol-servicespecportsappprotocol) |
+| any other value | No | Logged with a warning; proxy falls back to default HTTP/1.1 |
 
 ### Filters
 

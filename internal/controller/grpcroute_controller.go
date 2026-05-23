@@ -103,7 +103,11 @@ func (r *GRPCRouteReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		configResolver:        r.RouteSyncer.ConfigResolver,
 		findRoutesForGateway:  r.findRoutesForGateway,
 		findRoutesForRefGrant: r.findRoutesForReferenceGrant,
-		getAllRelevantRoutes:  r.getAllRelevantRoutes,
+		// GRPCRoute is tunnel-only; the tunnel ingress config is not
+		// protocol-aware, so Service-side changes (appProtocol or otherwise)
+		// don't require a re-sync. Watching Services here would only add
+		// reconcile churn.
+		getAllRelevantRoutes: r.getAllRelevantRoutes,
 	})
 }
 

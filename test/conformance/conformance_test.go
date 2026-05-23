@@ -50,6 +50,7 @@ func TestGatewayAPIConformance(t *testing.T) {
 		features.SupportHTTPRouteRequestTimeout,
 		features.SupportHTTPRouteBackendTimeout,
 		features.SupportHTTPRouteParentRefPort,
+		features.SupportHTTPRouteBackendProtocolH2C,
 		// NOTE: 303/307/308 redirect status codes work correctly in the proxy,
 		// but Cloudflare edge rewrites Location scheme to HTTPS, so conformance
 		// tests that verify http:// scheme in redirects will always fail.
@@ -83,7 +84,10 @@ func TestGatewayAPIConformance(t *testing.T) {
 		// HTTPRoute features not implemented
 		features.SupportHTTPRouteRequestMultipleMirrors,
 		features.SupportHTTPRouteRequestPercentageMirror,
-		features.SupportHTTPRouteBackendProtocolH2C,
+		// HTTPRouteBackendProtocolWebSocket: the proxy could implement it, but the
+		// conformance suite dials the Gateway address directly with a ws:// client
+		// (no custom dialer hook), and *.cfargotunnel.com is not routable — same
+		// structural limitation as the gRPC tests below. Left exempt.
 		features.SupportHTTPRouteBackendProtocolWebSocket,
 		features.SupportHTTPRouteCORS,
 		features.SupportHTTPRouteNamedRouteRule,
@@ -179,7 +183,6 @@ func TestGatewayAPIConformance(t *testing.T) {
 		"HTTPRouteRedirectPort",
 
 		// HTTPRoute features not implemented.
-		"HTTPRouteBackendProtocolH2C",
 		"HTTPRouteBackendProtocolWebSocket",
 		"HTTPRouteCORS",
 		"HTTPRouteCORSAllowCredentialsBehavior",

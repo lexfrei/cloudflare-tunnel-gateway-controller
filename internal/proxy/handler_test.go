@@ -441,7 +441,8 @@ func TestHandler_PruneTransportsRemovesStaleHostFromSyncMap(t *testing.T) {
 
 	// Verify transport for backend A was created.
 	hostA := backendA.Listener.Addr().String()
-	_, loaded := handler.Transports().Load(hostA)
+	keyA := proxy.TransportKey(hostA, proxy.BackendProtocolHTTP)
+	_, loaded := handler.Transports().Load(keyA)
 	require.True(t, loaded, "transport for backend A should exist after request")
 
 	// Push new config with only backend B, removing A.
@@ -459,7 +460,7 @@ func TestHandler_PruneTransportsRemovesStaleHostFromSyncMap(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify transport for backend A was pruned.
-	_, loaded = handler.Transports().Load(hostA)
+	_, loaded = handler.Transports().Load(keyA)
 	assert.False(t, loaded, "transport for backend A should be pruned after config update removed it")
 }
 

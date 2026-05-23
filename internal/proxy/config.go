@@ -180,11 +180,36 @@ type MirrorConfig struct {
 	BackendURL string `json:"backendUrl"`
 }
 
+// BackendProtocol identifies the application protocol the proxy must speak to a
+// backend. It is derived from the Service port's appProtocol field.
+type BackendProtocol string
+
+const (
+	// BackendProtocolHTTP is the default: HTTP/1.1 (and TLS when the URL scheme is https).
+	BackendProtocolHTTP BackendProtocol = ""
+	// BackendProtocolH2C is HTTP/2 over cleartext (prior knowledge), selected by
+	// the Service port appProtocol kubernetes.io/h2c.
+	BackendProtocolH2C BackendProtocol = "h2c"
+)
+
+// isKnownBackendProtocol reports whether p is one of the protocols the proxy
+// recognises. Used by Config.Validate to reject pushed configs with unknown
+// values rather than silently falling through to the default-transport path.
+func isKnownBackendProtocol(p BackendProtocol) bool {
+	switch p {
+	case BackendProtocolHTTP, BackendProtocolH2C:
+		return true
+	default:
+		return false
+	}
+}
+
 // BackendRef identifies a backend service with a weight for traffic splitting.
 type BackendRef struct {
-	URL     string        `json:"url"`
-	Weight  int32         `json:"weight"`
-	Filters []RouteFilter `json:"filters,omitempty"`
+	URL      string          `json:"url"`
+	Weight   int32           `json:"weight"`
+	Protocol BackendProtocol `json:"protocol,omitempty"`
+	Filters  []RouteFilter   `json:"filters,omitempty"`
 }
 
 // RouteTimeouts configures timeout durations for proxied requests.
@@ -278,6 +303,10 @@ func (r *RouteRule) validate() error {
 
 		if backend.Weight < 0 {
 			return errors.Wrapf(errWeightNonNegative, "backend[%d]", idx)
+		}
+
+		if !isKnownBackendProtocol(backend.Protocol) {
+			return errors.Errorf("backend[%d]: unknown protocol %q", idx, string(backend.Protocol))
 		}
 
 		for filterIdx, filter := range backend.Filters {

@@ -34,6 +34,10 @@ const (
 
 	schemeHTTP  = "http"
 	schemeHTTPS = "https"
+
+	// appProtocolH2C is the Kubernetes Service appProtocol value selecting
+	// HTTP/2 cleartext to the backend.
+	appProtocolH2C = "kubernetes.io/h2c"
 )
 
 // BackendRefValidator checks whether a cross-namespace backend reference is allowed.
@@ -41,14 +45,23 @@ const (
 // Returns true if the reference is authorized (e.g., via ReferenceGrant).
 type BackendRefValidator func(ctx context.Context, fromNamespace string, ref gatewayv1.BackendObjectReference) bool
 
+// BackendProtocolResolver returns the Service port's appProtocol for a backend
+// (e.g. "kubernetes.io/h2c"), or "" when none is set or the Service is unknown.
+// It lets the converter pick the backend transport without itself reading the API.
+type BackendProtocolResolver func(ctx context.Context, namespace, serviceName string, port int32) string
+
 // ConvertHTTPRoutes converts Gateway API HTTPRoute resources into a proxy Config.
-// If validator is non-nil, cross-namespace backend refs are checked against it;
-// unauthorized refs are skipped with a warning log.
+//
+// validator and protocolResolver may both be nil:
+//   - nil validator: cross-namespace backend refs are accepted unconditionally
+//     (used by tests that don't model ReferenceGrant).
+//   - nil protocolResolver: backend protocol stays the default HTTP/1.1.
 func ConvertHTTPRoutes(
 	ctx context.Context,
 	routes []*gatewayv1.HTTPRoute,
 	clusterDomain string,
 	validator BackendRefValidator,
+	protocolResolver BackendProtocolResolver,
 ) *Config {
 	cfg := &Config{
 		Version: configVersionCounter.Add(1),
@@ -60,7 +73,7 @@ func ConvertHTTPRoutes(
 		for ruleIdx := range route.Spec.Rules {
 			proxyRule := convertHTTPRouteRule(
 				ctx, &route.Spec.Rules[ruleIdx], hostnames,
-				route.Namespace, clusterDomain, validator,
+				route.Namespace, clusterDomain, validator, protocolResolver,
 			)
 
 			// Rules with no backends and no redirect filter are kept —
@@ -91,6 +104,7 @@ func convertHTTPRouteRule(
 	namespace string,
 	clusterDomain string,
 	validator BackendRefValidator,
+	resolver BackendProtocolResolver,
 ) RouteRule {
 	proxyRule := RouteRule{
 		Hostnames: hostnames,
@@ -101,14 +115,14 @@ func convertHTTPRouteRule(
 	}
 
 	for filterIdx := range rule.Filters {
-		converted := convertFilter(&rule.Filters[filterIdx], namespace, clusterDomain)
+		converted := convertFilter(ctx, &rule.Filters[filterIdx], namespace, clusterDomain, validator)
 		if converted != nil {
 			proxyRule.Filters = append(proxyRule.Filters, *converted)
 		}
 	}
 
 	for backendIdx := range rule.BackendRefs {
-		backend, ok := convertBackendRef(ctx, &rule.BackendRefs[backendIdx], namespace, clusterDomain, validator)
+		backend, ok := convertBackendRef(ctx, &rule.BackendRefs[backendIdx], namespace, clusterDomain, validator, resolver)
 		if ok {
 			proxyRule.Backends = append(proxyRule.Backends, backend)
 		}
@@ -199,7 +213,12 @@ func convertQueryMatch(query gatewayv1.HTTPQueryParamMatch) QueryParamMatch {
 	return result
 }
 
-func convertFilter(filter *gatewayv1.HTTPRouteFilter, namespace, clusterDomain string) *RouteFilter {
+func convertFilter(
+	ctx context.Context,
+	filter *gatewayv1.HTTPRouteFilter,
+	namespace, clusterDomain string,
+	validator BackendRefValidator,
+) *RouteFilter {
 	switch filter.Type {
 	case gatewayv1.HTTPRouteFilterRequestHeaderModifier:
 		return convertRequestHeaderFilter(filter.RequestHeaderModifier)
@@ -210,7 +229,7 @@ func convertFilter(filter *gatewayv1.HTTPRouteFilter, namespace, clusterDomain s
 	case gatewayv1.HTTPRouteFilterURLRewrite:
 		return convertURLRewriteFilter(filter.URLRewrite)
 	case gatewayv1.HTTPRouteFilterRequestMirror:
-		return convertMirrorFilter(filter.RequestMirror, namespace, clusterDomain)
+		return convertMirrorFilter(ctx, filter.RequestMirror, namespace, clusterDomain, validator)
 	case gatewayv1.HTTPRouteFilterExtensionRef,
 		gatewayv1.HTTPRouteFilterCORS,
 		gatewayv1.HTTPRouteFilterExternalAuth:
@@ -276,7 +295,10 @@ func convertURLRewriteFilter(rewrite *gatewayv1.HTTPURLRewriteFilter) *RouteFilt
 	}
 }
 
-func isServiceBackendRef(ref gatewayv1.BackendObjectReference) bool {
+// IsServiceBackendRef reports whether the BackendObjectReference points at a
+// core Service (the default Kind when Group/Kind are nil). Exported so the
+// controller package can reuse the same predicate without duplicating it.
+func IsServiceBackendRef(ref gatewayv1.BackendObjectReference) bool {
 	if ref.Group != nil && *ref.Group != "" && *ref.Group != "core" {
 		return false
 	}
@@ -288,12 +310,17 @@ func isServiceBackendRef(ref gatewayv1.BackendObjectReference) bool {
 	return true
 }
 
-func convertMirrorFilter(mirror *gatewayv1.HTTPRequestMirrorFilter, namespace, clusterDomain string) *RouteFilter {
+func convertMirrorFilter(
+	ctx context.Context,
+	mirror *gatewayv1.HTTPRequestMirrorFilter,
+	namespace, clusterDomain string,
+	validator BackendRefValidator,
+) *RouteFilter {
 	if mirror == nil {
 		return nil
 	}
 
-	if !isServiceBackendRef(mirror.BackendRef) {
+	if !IsServiceBackendRef(mirror.BackendRef) {
 		slog.Warn("skipping mirror with non-Service backend kind",
 			"kind", mirror.BackendRef.Kind,
 			"name", mirror.BackendRef.Name)
@@ -315,6 +342,10 @@ func convertMirrorFilter(mirror *gatewayv1.HTTPRequestMirrorFilter, namespace, c
 	mirrorNS := namespace
 	if mirror.BackendRef.Namespace != nil {
 		mirrorNS = string(*mirror.BackendRef.Namespace)
+	}
+
+	if !validateCrossNamespace(ctx, mirrorNS, namespace, string(mirror.BackendRef.Name), mirror.BackendRef, validator) {
+		return nil
 	}
 
 	mirrorURL := buildServiceURL(string(mirror.BackendRef.Name), mirrorNS, mirrorPort, clusterDomain)
@@ -438,8 +469,9 @@ func convertBackendRef(
 	namespace string,
 	clusterDomain string,
 	validator BackendRefValidator,
+	resolver BackendProtocolResolver,
 ) (BackendRef, bool) {
-	if !isServiceBackendRef(backend.BackendObjectReference) {
+	if !IsServiceBackendRef(backend.BackendObjectReference) {
 		slog.Warn("skipping non-Service backend kind",
 			"kind", backend.Kind,
 			"name", backend.Name)
@@ -485,14 +517,73 @@ func convertBackendRef(
 
 	result.URL = buildServiceURL(serviceName, svcNamespace, port, clusterDomain)
 
-	for filterIdx := range backend.Filters {
-		converted := convertFilter(&backend.Filters[filterIdx], namespace, clusterDomain)
+	result.Protocol, result.URL = resolveBackendProtocol(ctx, resolver, svcNamespace, serviceName, port, result.URL)
+
+	result.Filters = convertBackendFilters(ctx, backend.Filters, namespace, clusterDomain, validator)
+
+	return result, true
+}
+
+// resolveBackendProtocol applies the protocol resolver to a backend reference
+// and adjusts the URL scheme accordingly. h2c is cleartext, so an https://
+// scheme (which buildServiceURL emits for port 443) is rewritten to http://
+// to avoid a silent TLS-vs-plaintext mismatch.
+//
+// Unrecognised appProtocol values (e.g. kubernetes.io/ws, kubernetes.io/wss)
+// log a warning and fall back to the default HTTP/1.1 transport rather than
+// silently dropping the signal.
+func resolveBackendProtocol(
+	ctx context.Context,
+	resolver BackendProtocolResolver,
+	namespace, serviceName string,
+	port int32,
+	rawURL string,
+) (BackendProtocol, string) {
+	if resolver == nil {
+		return BackendProtocolHTTP, rawURL
+	}
+
+	appProto := resolver(ctx, namespace, serviceName, port)
+
+	switch appProto {
+	case "":
+		return BackendProtocolHTTP, rawURL
+	case appProtocolH2C:
+		return BackendProtocolH2C, strings.Replace(rawURL, schemeHTTPS+"://", schemeHTTP+"://", 1)
+	default:
+		slog.Warn("unsupported backend appProtocol; falling back to HTTP/1.1",
+			"namespace", namespace,
+			"service", serviceName,
+			"port", port,
+			"appProtocol", appProto,
+		)
+
+		return BackendProtocolHTTP, rawURL
+	}
+}
+
+// convertBackendFilters converts the per-backend HTTPRouteFilters into proxy
+// RouteFilters, skipping any that aren't supported or have nil config.
+func convertBackendFilters(
+	ctx context.Context,
+	filters []gatewayv1.HTTPRouteFilter,
+	namespace, clusterDomain string,
+	validator BackendRefValidator,
+) []RouteFilter {
+	if len(filters) == 0 {
+		return nil
+	}
+
+	result := make([]RouteFilter, 0, len(filters))
+
+	for filterIdx := range filters {
+		converted := convertFilter(ctx, &filters[filterIdx], namespace, clusterDomain, validator)
 		if converted != nil {
-			result.Filters = append(result.Filters, *converted)
+			result = append(result, *converted)
 		}
 	}
 
-	return result, true
+	return result
 }
 
 func resolveBackendNamespace(backend *gatewayv1.HTTPBackendRef, fallback string) string {

@@ -199,6 +199,26 @@ This is because Cloudflare Tunnel terminates TLS at Cloudflare's edge, not
 in the cluster. However, `hostname` and `allowedRoutes` are validated per
 Gateway API specification.
 
+## Backend Protocol (`Service.spec.ports[].appProtocol`)
+
+The L7 proxy reads the backend Service port's `appProtocol` to pick the upstream
+transport. Only one Kubernetes-defined value is implemented today:
+
+| `appProtocol` | Supported | Notes |
+| --- | --- | --- |
+| _(unset)_ | Yes | Default — proxy speaks HTTP/1.1 to the backend |
+| `kubernetes.io/h2c` | Yes | Proxy speaks HTTP/2 cleartext (prior knowledge) |
+| `kubernetes.io/ws` | No | Backend WebSocket not implemented; treated as default HTTP — no conformance coverage |
+| `kubernetes.io/wss` | No | Backend WebSocket-over-TLS not implemented; treated as default HTTP |
+| any other value | No | Logged with a warning at conversion time; proxy falls back to default HTTP/1.1 |
+
+The conformance test `HTTPRouteBackendProtocolWebSocket` is not testable on
+this controller via the upstream Gateway API conformance suite because the
+test's `websocket.Dial` connects directly to the Gateway address
+(`*.cfargotunnel.com`) — same structural limitation as the gRPC conformance
+tests documented above. WebSocket backends may be supported separately via
+e2e validation in a future change.
+
 ## Route Types Not Supported
 
 | Route Type | Status | Reason |

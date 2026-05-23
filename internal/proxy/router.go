@@ -54,8 +54,9 @@ type wildcardEntry struct {
 }
 
 // transportPruner is implemented by Handler to prune stale transport entries.
+// activeKeys are host|protocol keys produced by transportKey().
 type transportPruner interface {
-	PruneTransports(activeHosts map[string]bool)
+	PruneTransports(activeKeys map[string]bool)
 }
 
 // Router provides thread-safe HTTP request routing with atomic config updates.
@@ -150,15 +151,18 @@ func (r *Router) UpdateConfig(cfg *Config) error {
 	r.table.Store(table)
 
 	if r.pruner != nil {
-		r.pruner.PruneTransports(extractActiveHosts(cfg))
+		r.pruner.PruneTransports(extractActiveTransportKeys(cfg))
 	}
 
 	return nil
 }
 
-// extractActiveHosts collects all backend hosts from the config's rules.
-func extractActiveHosts(cfg *Config) map[string]bool {
-	hosts := make(map[string]bool)
+// extractActiveTransportKeys collects all backend transport-pool keys from the
+// config's rules. Keys are formed by transportKey(host, protocol) so
+// PruneTransports can evict stale entries when either changes (e.g. on a
+// Service appProtocol flip).
+func extractActiveTransportKeys(cfg *Config) map[string]bool {
+	keys := make(map[string]bool)
 
 	for _, rule := range cfg.Rules {
 		for _, backend := range rule.Backends {
@@ -167,11 +171,11 @@ func extractActiveHosts(cfg *Config) map[string]bool {
 				continue
 			}
 
-			hosts[parsed.Host] = true
+			keys[transportKey(parsed.Host, backend.Protocol)] = true
 		}
 	}
 
-	return hosts
+	return keys
 }
 
 // compileRoutingTable builds a routingTable from a Config.

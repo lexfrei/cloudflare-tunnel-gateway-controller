@@ -44,6 +44,11 @@ func tunnelHostname() string {
 }
 
 // CaptureRoundTrip implements roundtripper.RoundTripper.
+//
+// Note: request.Protocol is intentionally ignored. Even if a test asks for
+// H2CPriorKnowledge, we always send HTTPS to the Cloudflare edge (the edge is
+// HTTPS-only). The backend-protocol features (h2c, etc.) are validated by what
+// the proxy-to-backend leg negotiates, not by the test client's wire format.
 func (t *TunnelRoundTripper) CaptureRoundTrip(request roundtripper.Request) (*roundtripper.CapturedRequest, *roundtripper.CapturedResponse, error) {
 	host := request.Host
 	if host == "" {
