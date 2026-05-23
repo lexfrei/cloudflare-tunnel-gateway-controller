@@ -188,7 +188,7 @@ Cloudflare Tunnel has path matching behavior that differs from Gateway API:
 
 `BackendTLSPolicy` (proxy → backend TLS) is supported at minimum-viable scope:
 
-- Hostname-type `SubjectAltNames` only — URI/SPIFFE SANs are rejected with `Accepted=False, Reason=Invalid`
+- `SubjectAltNames` of both `Hostname` (RFC 6125 wildcards via `VerifyHostname`) and `URI` types (e.g. SPIFFE IDs, exact string match against the leaf cert's URIs) are supported, with OR-matching across the list
 - `WellKnownCACertificates: System` is not honoured — only explicit `CACertificateRefs`
 - Multi-policy conflicts resolve by oldest-creationTimestamp (then alphabetical), but losing policies are not yet stamped `Accepted=False, Reason=Conflicted`
 - HTTPS-listener Re-encrypt is not supported (Cloudflare terminates frontend TLS at the edge)

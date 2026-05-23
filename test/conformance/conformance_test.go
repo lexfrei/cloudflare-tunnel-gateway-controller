@@ -54,6 +54,7 @@ func TestGatewayAPIConformance(t *testing.T) {
 		features.SupportHTTPRouteRequestMultipleMirrors,
 		features.SupportHTTPRouteRequestPercentageMirror,
 		features.SupportBackendTLSPolicy,
+		features.SupportBackendTLSPolicySANValidation,
 		// NOTE: 303/307/308 redirect status codes work correctly in the proxy,
 		// but Cloudflare edge rewrites Location scheme to HTTPS, so conformance
 		// tests that verify http:// scheme in redirects will always fail.
@@ -79,9 +80,6 @@ func TestGatewayAPIConformance(t *testing.T) {
 		features.SupportTLSRoute,
 		features.SupportTLSRouteModeTerminate,
 		features.SupportTLSRouteModeMixed,
-		// SANValidation requires URI-SAN support end-to-end; this minimum
-		// BackendTLSPolicy implementation handles Hostname SANs only.
-		features.SupportBackendTLSPolicySANValidation,
 		features.SupportUDPRoute,
 		features.SupportMesh,
 
@@ -160,15 +158,15 @@ func TestGatewayAPIConformance(t *testing.T) {
 		// HTTPRoute_ extended suite. ConflictResolution requires cross-policy
 		// conflict tracking (loser stamped with Reason=Conflicted) that this
 		// implementation does not yet do — older policy wins, others share the
-		// same Accepted=True status. SANValidation requires URI-type
-		// SubjectAltNames which are rejected by validateSANs (see the
-		// BackendTLSPolicy section in docs/gateway-api/limitations.md).
-		// InvalidCACertificateRef and ObservedGenerationBump are enabled —
-		// the controller emits the conformance-required Reasons and updates
-		// ObservedGeneration on every reconcile.
+		// same Accepted=True status.
+		// InvalidCACertificateRef, InvalidKind, ObservedGenerationBump, and
+		// SANValidation (both Hostname and URI types, including OR-matching)
+		// are enabled — the controller emits the conformance-required Reasons,
+		// updates ObservedGeneration on every reconcile, and the proxy
+		// matches DNS Hostname SANs via VerifyHostname (RFC 6125 wildcards)
+		// and URI SANs by exact string equality against the leaf's URIs.
 		"BackendTLSPolicy",
 		"BackendTLSPolicyConflictResolution",
-		"BackendTLSPolicySANValidation",
 
 		// Gateway features not applicable to tunnel architecture.
 		"GatewayStaticAddresses",

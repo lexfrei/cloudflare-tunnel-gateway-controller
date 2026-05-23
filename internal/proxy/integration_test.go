@@ -1,10 +1,19 @@
 package proxy_test
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/pem"
 	"io"
+	"math/big"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -406,6 +415,71 @@ func caPEMFromTLSServer(t *testing.T, server *httptest.Server) string {
 	return string(pem.EncodeToMemory(pemBlock))
 }
 
+// uriSANTestServer is the shared output of newURITLSServer: a TLS-enabled
+// httptest.Server plus the PEM-encoded CA bundle (== the self-signed leaf,
+// since it's its own root) that BackendTLSConfig should use as the trust
+// anchor.
+type uriSANTestServer struct {
+	Server *httptest.Server
+	CAPEM  string
+}
+
+// newURITLSServer spins up a TLS httptest.Server whose certificate carries
+// the supplied DNS SANs AND URI SANs. Used to exercise the URI-SAN matching
+// path that the Gateway API BackendTLSPolicySANValidation conformance test
+// drives. The cert is self-signed; CAPEM is the same cert encoded as PEM so
+// the proxy trusts it.
+func newURITLSServer(t *testing.T, dnsSANs []string, uriSANs []string) *uriSANTestServer {
+	t.Helper()
+
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	uris := make([]*url.URL, 0, len(uriSANs))
+	for _, raw := range uriSANs {
+		u, parseErr := url.Parse(raw)
+		require.NoError(t, parseErr, "failed to parse test URI SAN %q", raw)
+		uris = append(uris, u)
+	}
+
+	template := x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "uri-san-test"},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(time.Hour),
+		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		DNSNames:              append([]string{}, dnsSANs...),
+		IPAddresses:           []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("::1")},
+		URIs:                  uris,
+		IsCA:                  true,
+		BasicConstraintsValid: true,
+	}
+
+	derBytes, err := x509.CreateCertificate(rand.Reader, &template, &template, &priv.PublicKey, priv)
+	require.NoError(t, err)
+
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: derBytes})
+
+	tlsCert := tls.Certificate{
+		Certificate: [][]byte{derBytes},
+		PrivateKey:  priv,
+	}
+
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("X-Backend", "uri-san-tls")
+		writer.WriteHeader(http.StatusOK)
+	}))
+	server.TLS = &tls.Config{
+		MinVersion:   tls.VersionTLS12,
+		Certificates: []tls.Certificate{tlsCert},
+	}
+	server.StartTLS()
+	t.Cleanup(server.Close)
+
+	return &uriSANTestServer{Server: server, CAPEM: string(certPEM)}
+}
+
 func TestHandler_BackendTLSPolicy_ValidCA_Succeeds(t *testing.T) {
 	t.Parallel()
 
@@ -688,6 +762,205 @@ func TestHandler_BackendTLSPolicy_SANOnly_RejectsAllMismatching(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadGateway, rec.Result().StatusCode,
 		"SAN OR-matching must reject when NO policy SAN matches, regardless of ServerName")
+}
+
+// TestHandler_BackendTLSPolicy_URISAN_AcceptsMatchingURI verifies that a
+// policy with URI-type SubjectAltName (e.g. SPIFFE ID) succeeds when the
+// backend cert presents an exact-matching URI SAN. The Gateway API
+// BackendTLSPolicySANValidation conformance test drives this end-to-end.
+func TestHandler_BackendTLSPolicy_URISAN_AcceptsMatchingURI(t *testing.T) {
+	t.Parallel()
+
+	srv := newURITLSServer(t,
+		[]string{"abc.example.com"},
+		[]string{"spiffe://abc.example.com/test-identity"},
+	)
+
+	router := proxy.NewRouter()
+	require.NoError(t, router.UpdateConfig(&proxy.Config{
+		Version: 1,
+		Rules: []proxy.RouteRule{
+			{
+				Hostnames: []string{"app.example.com"},
+				Matches:   []proxy.RouteMatch{{Path: &proxy.PathMatch{Type: proxy.PathMatchPathPrefix, Value: "/"}}},
+				Backends: []proxy.BackendRef{
+					{
+						URL:    srv.Server.URL,
+						Weight: 1,
+						TLS: &proxy.BackendTLSConfig{
+							CABundlePEM: srv.CAPEM,
+							// ServerName must NOT be used for auth (per spec) when SANs are set.
+							// Use a value not in the cert to prove that.
+							ServerName:         "sni-only.invalid",
+							SubjectAltNameURIs: []string{"spiffe://abc.example.com/test-identity"},
+						},
+					},
+				},
+			},
+		},
+	}))
+
+	handler := proxy.NewHandler(router)
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://app.example.com/", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Result().StatusCode,
+		"URI SAN matching the cert's URI must accept the handshake")
+}
+
+// TestHandler_BackendTLSPolicy_URISAN_RejectsMismatching verifies that a
+// policy with URI SAN that doesn't appear in the leaf cert fails the
+// handshake — the proxy returns 502.
+func TestHandler_BackendTLSPolicy_URISAN_RejectsMismatching(t *testing.T) {
+	t.Parallel()
+
+	srv := newURITLSServer(t,
+		[]string{"abc.example.com"},
+		[]string{"spiffe://abc.example.com/test-identity"},
+	)
+
+	router := proxy.NewRouter()
+	require.NoError(t, router.UpdateConfig(&proxy.Config{
+		Version: 1,
+		Rules: []proxy.RouteRule{
+			{
+				Hostnames: []string{"app.example.com"},
+				Matches:   []proxy.RouteMatch{{Path: &proxy.PathMatch{Type: proxy.PathMatchPathPrefix, Value: "/"}}},
+				Backends: []proxy.BackendRef{
+					{
+						URL:    srv.Server.URL,
+						Weight: 1,
+						TLS: &proxy.BackendTLSConfig{
+							CABundlePEM:        srv.CAPEM,
+							ServerName:         "abc.example.com",
+							SubjectAltNameURIs: []string{"spiffe://def.example.com/test-identity"},
+						},
+					},
+				},
+			},
+		},
+	}))
+
+	handler := proxy.NewHandler(router)
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://app.example.com/", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusBadGateway, rec.Result().StatusCode,
+		"URI SAN not present in the cert must fail TLS verification → proxy returns 502")
+}
+
+// TestHandler_BackendTLSPolicy_MixedSAN_OrMatch verifies that when a policy
+// lists BOTH DNS hostnames AND URI SANs, the matching is OR — either path
+// passing accepts the handshake. Matches the Gateway API multiple-sans test.
+func TestHandler_BackendTLSPolicy_MixedSAN_OrMatch(t *testing.T) {
+	t.Parallel()
+
+	srv := newURITLSServer(t,
+		[]string{"abc.example.com"},
+		[]string{"spiffe://abc.example.com/test-identity"},
+	)
+
+	cases := []struct {
+		name string
+		dns  []string
+		uris []string
+	}{
+		{
+			name: "dns matches, uri does not",
+			dns:  []string{"abc.example.com"},
+			uris: []string{"spiffe://def.example.com/test-identity"},
+		},
+		{
+			name: "uri matches, dns does not",
+			dns:  []string{"def.example.com"},
+			uris: []string{"spiffe://abc.example.com/test-identity"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			router := proxy.NewRouter()
+			require.NoError(t, router.UpdateConfig(&proxy.Config{
+				Version: 1,
+				Rules: []proxy.RouteRule{
+					{
+						Hostnames: []string{"app.example.com"},
+						Matches:   []proxy.RouteMatch{{Path: &proxy.PathMatch{Type: proxy.PathMatchPathPrefix, Value: "/"}}},
+						Backends: []proxy.BackendRef{
+							{
+								URL:    srv.Server.URL,
+								Weight: 1,
+								TLS: &proxy.BackendTLSConfig{
+									CABundlePEM:        srv.CAPEM,
+									ServerName:         "sni-only.invalid",
+									SubjectAltNames:    tc.dns,
+									SubjectAltNameURIs: tc.uris,
+								},
+							},
+						},
+					},
+				},
+			}))
+
+			handler := proxy.NewHandler(router)
+
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://app.example.com/", nil)
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+
+			assert.Equal(t, http.StatusOK, rec.Result().StatusCode,
+				"OR semantics: either DNS SAN or URI SAN matching must accept the handshake")
+		})
+	}
+}
+
+// TestHandler_BackendTLSPolicy_MixedSAN_AllMismatch confirms that when neither
+// DNS nor URI lists match the cert, the handshake fails closed.
+func TestHandler_BackendTLSPolicy_MixedSAN_AllMismatch(t *testing.T) {
+	t.Parallel()
+
+	srv := newURITLSServer(t,
+		[]string{"abc.example.com"},
+		[]string{"spiffe://abc.example.com/test-identity"},
+	)
+
+	router := proxy.NewRouter()
+	require.NoError(t, router.UpdateConfig(&proxy.Config{
+		Version: 1,
+		Rules: []proxy.RouteRule{
+			{
+				Hostnames: []string{"app.example.com"},
+				Matches:   []proxy.RouteMatch{{Path: &proxy.PathMatch{Type: proxy.PathMatchPathPrefix, Value: "/"}}},
+				Backends: []proxy.BackendRef{
+					{
+						URL:    srv.Server.URL,
+						Weight: 1,
+						TLS: &proxy.BackendTLSConfig{
+							CABundlePEM:        srv.CAPEM,
+							ServerName:         "abc.example.com",
+							SubjectAltNames:    []string{"def.example.com"},
+							SubjectAltNameURIs: []string{"spiffe://def.example.com/test-identity"},
+						},
+					},
+				},
+			},
+		},
+	}))
+
+	handler := proxy.NewHandler(router)
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://app.example.com/", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusBadGateway, rec.Result().StatusCode,
+		"with neither DNS nor URI SAN matching, both lists must fail → proxy returns 502")
 }
 
 func TestHandler_BackendProtocolToggleSameHostPort(t *testing.T) {

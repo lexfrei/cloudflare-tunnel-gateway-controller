@@ -40,13 +40,12 @@ const policyAncestorStatusMaxCount = 16
 
 // Sentinel errors for BackendTLSPolicy CA validation so wrappers can be matched.
 var (
-	errBackendTLSNoCARef            = errors.New("BackendTLSPolicy has no CACertificateRefs (WellKnownCACertificates not supported)")
-	errBackendTLSUnsupportedGroup   = errors.New("BackendTLSPolicy CACertificateRef group not supported (only core)")
-	errBackendTLSUnsupportedKind    = errors.New("BackendTLSPolicy CACertificateRef kind not supported (only ConfigMap)")
-	errBackendTLSCAKeyMissing       = errors.New("BackendTLSPolicy CA ConfigMap is missing the ca.crt key")
-	errBackendTLSCABundleMalformed  = errors.New("BackendTLSPolicy CA bundle is not valid PEM")
-	errBackendTLSCABundleNoCerts    = errors.New("BackendTLSPolicy CA bundle contains no CERTIFICATE blocks")
-	errBackendTLSUnsupportedSANType = errors.New("BackendTLSPolicy SubjectAltName type not supported (only Hostname)")
+	errBackendTLSNoCARef           = errors.New("BackendTLSPolicy has no CACertificateRefs (WellKnownCACertificates not supported)")
+	errBackendTLSUnsupportedGroup  = errors.New("BackendTLSPolicy CACertificateRef group not supported (only core)")
+	errBackendTLSUnsupportedKind   = errors.New("BackendTLSPolicy CACertificateRef kind not supported (only ConfigMap)")
+	errBackendTLSCAKeyMissing      = errors.New("BackendTLSPolicy CA ConfigMap is missing the ca.crt key")
+	errBackendTLSCABundleMalformed = errors.New("BackendTLSPolicy CA bundle is not valid PEM")
+	errBackendTLSCABundleNoCerts   = errors.New("BackendTLSPolicy CA bundle contains no CERTIFICATE blocks")
 )
 
 // parseCABundle decodes every PEM block in the supplied bundle and verifies
@@ -182,11 +181,11 @@ func (r *BackendTLSPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Req
 // computeConditions evaluates the policy spec and returns the two conditions
 // to expose (Accepted and ResolvedRefs) per Gateway API semantics.
 //
-//   - Unsupported SubjectAltName type (URI etc.): Accepted=False, Reason=Invalid;
-//     ResolvedRefs is reported True because CA refs themselves resolved cleanly.
 //   - CA reference invalid or unresolvable: Accepted=False, Reason=NoValidCACertificate;
-//     ResolvedRefs=False, Reason=InvalidCACertificateRef.
-//   - All happy: both True.
+//     ResolvedRefs=False, Reason=InvalidCACertificateRef (or InvalidKind for
+//     Group/Kind mismatches).
+//   - All happy: both True. Both DNS-Hostname and URI-type SubjectAltNames
+//     are honoured end-to-end by the proxy.
 //
 // LastTransitionTime is left zero; callers route through meta.SetStatusCondition
 // in updateStatus so the timestamp reflects an actual transition rather than
@@ -195,37 +194,11 @@ func (r *BackendTLSPolicyReconciler) computeConditions(
 	ctx context.Context,
 	policy *gatewayv1.BackendTLSPolicy,
 ) []metav1.Condition {
-	if err := r.validateSANs(policy); err != nil {
-		return sanInvalidConditions(policy.Generation, err)
-	}
-
 	if err := r.validateCARefs(ctx, policy); err != nil {
 		return caInvalidConditions(policy.Generation, err)
 	}
 
 	return acceptedConditions(policy.Generation)
-}
-
-// sanInvalidConditions returns Accepted=False/Invalid + ResolvedRefs=True for
-// the URI-SAN-not-supported case: CA refs themselves resolved fine but the
-// policy is rejected by the controller for an unsupported SubjectAltName type.
-func sanInvalidConditions(generation int64, err error) []metav1.Condition {
-	return []metav1.Condition{
-		{
-			Type:               string(gatewayv1.PolicyConditionAccepted),
-			Status:             metav1.ConditionFalse,
-			ObservedGeneration: generation,
-			Reason:             string(gatewayv1.PolicyReasonInvalid),
-			Message:            err.Error(),
-		},
-		{
-			Type:               string(gatewayv1.BackendTLSPolicyConditionResolvedRefs),
-			Status:             metav1.ConditionTrue,
-			ObservedGeneration: generation,
-			Reason:             string(gatewayv1.BackendTLSPolicyReasonResolvedRefs),
-			Message:            "CA references resolved; SAN validation rejected the policy",
-		},
-	}
 }
 
 // caInvalidConditions returns the Accepted=False/NoValidCACertificate +
@@ -275,19 +248,6 @@ func acceptedConditions(generation int64) []metav1.Condition {
 			Message:            "All CA certificate references resolved",
 		},
 	}
-}
-
-// validateSANs rejects any SubjectAltName whose type is not Hostname. URI-type
-// SANs (SPIFFE etc.) are not yet implemented end-to-end and silently dropping
-// them would weaken the policy below what the operator requested.
-func (r *BackendTLSPolicyReconciler) validateSANs(policy *gatewayv1.BackendTLSPolicy) error {
-	for _, san := range policy.Spec.Validation.SubjectAltNames {
-		if san.Type != gatewayv1.HostnameSubjectAltNameType {
-			return fmt.Errorf("%w: %q", errBackendTLSUnsupportedSANType, san.Type)
-		}
-	}
-
-	return nil
 }
 
 // validateCARefs returns an error describing the first invalid CA reference,

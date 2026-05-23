@@ -42,6 +42,8 @@ func transportKey(host string, protocol BackendProtocol, backendTLS *BackendTLSC
 }
 
 // tlsFingerprint returns a stable short hash of the TLS config, or "" when nil.
+// The hash covers CA + ServerName + DNS SANs + URI SANs so any change to the
+// effective trust policy evicts the cached transport.
 func tlsFingerprint(backendTLS *BackendTLSConfig) string {
 	if backendTLS == nil {
 		return ""
@@ -55,6 +57,14 @@ func tlsFingerprint(backendTLS *BackendTLSConfig) string {
 
 	for _, san := range backendTLS.SubjectAltNames {
 		hasher.Write([]byte(san))
+		hasher.Write([]byte{0})
+	}
+	// Use a distinct separator between DNS and URI SAN sections so a config
+	// with DNS "foo" + URI "" can't collide with one carrying URI "foo" + DNS "".
+	hasher.Write([]byte("|uri|"))
+
+	for _, sanURI := range backendTLS.SubjectAltNameURIs {
+		hasher.Write([]byte(sanURI))
 		hasher.Write([]byte{0})
 	}
 
@@ -360,7 +370,7 @@ func newTLSTransport(backendTLS *BackendTLSConfig) http.RoundTripper {
 // verification modes. Split from newTLSTransport for testability and to keep
 // per-function complexity within the funlen budget.
 func buildBackendTLSConfig(backendTLS *BackendTLSConfig, rootCAs *x509.CertPool) *tls.Config {
-	if len(backendTLS.SubjectAltNames) == 0 {
+	if !backendTLS.HasSANConstraints() {
 		// Mode 1: Hostname-based authentication via ServerName.
 		return &tls.Config{
 			MinVersion: tls.VersionTLS12,
@@ -370,7 +380,8 @@ func buildBackendTLSConfig(backendTLS *BackendTLSConfig, rootCAs *x509.CertPool)
 	}
 
 	// Mode 2: SAN-list authentication. ServerName drives SNI only.
-	expected := slices.Clone(backendTLS.SubjectAltNames)
+	expectedHostnames := slices.Clone(backendTLS.SubjectAltNames)
+	expectedURIs := slices.Clone(backendTLS.SubjectAltNameURIs)
 
 	tlsConfig := &tls.Config{
 		MinVersion: tls.VersionTLS12,
@@ -381,7 +392,7 @@ func buildBackendTLSConfig(backendTLS *BackendTLSConfig, rootCAs *x509.CertPool)
 		// gosec G402: this is the documented Gateway API SAN-only verification
 		// path; chain validation is preserved via leaf.Verify().
 		InsecureSkipVerify: true, //nolint:gosec // see comment above
-		VerifyConnection:   verifyBackendChainAndSANs(rootCAs, expected),
+		VerifyConnection:   verifyBackendChainAndSANs(rootCAs, expectedHostnames, expectedURIs),
 	}
 
 	return tlsConfig
@@ -391,8 +402,14 @@ func buildBackendTLSConfig(backendTLS *BackendTLSConfig, rootCAs *x509.CertPool)
 // on fresh and resumed handshakes (per gosec G123). It manually verifies the
 // chain against rootCAs (since InsecureSkipVerify=true disables the default
 // path) and asserts the leaf cert matches at least one of the expected SANs.
-// Wildcard SANs are honoured via x509.Certificate.VerifyHostname.
-func verifyBackendChainAndSANs(rootCAs *x509.CertPool, expected []string) func(tls.ConnectionState) error {
+// DNS SANs honour RFC 6125 wildcards via x509.Certificate.VerifyHostname;
+// URI SANs are matched by exact string equality against leaf.URIs per the
+// SPIFFE convention used by the Gateway API conformance suite.
+func verifyBackendChainAndSANs(
+	rootCAs *x509.CertPool,
+	expectedHostnames []string,
+	expectedURIs []string,
+) func(tls.ConnectionState) error {
 	return func(state tls.ConnectionState) error {
 		if len(state.PeerCertificates) == 0 {
 			return errBackendTLSNoPeerCert
@@ -415,20 +432,55 @@ func verifyBackendChainAndSANs(rootCAs *x509.CertPool, expected []string) func(t
 			return fmt.Errorf("%w: %w", errBackendTLSChainVerify, verifyErr)
 		}
 
-		// Gateway API spec: the cert must match AT LEAST ONE of the policy's
-		// SubjectAltNames (OR semantics). VerifyHostname handles RFC 6125
-		// wildcard SANs correctly (e.g. cert SAN "*.example.com" matches a
-		// policy SAN "foo.example.com").
-		for _, want := range expected {
-			sanErr := leaf.VerifyHostname(want)
-			if sanErr == nil {
-				return nil
-			}
+		if matchAnyDNSSan(leaf, expectedHostnames) {
+			return nil
 		}
 
-		return fmt.Errorf("%w: required one of %v, cert SANs %v",
-			errBackendTLSSANMissing, expected, leaf.DNSNames)
+		if matchAnyURISan(leaf, expectedURIs) {
+			return nil
+		}
+
+		certURIs := make([]string, 0, len(leaf.URIs))
+		for _, certURI := range leaf.URIs {
+			certURIs = append(certURIs, certURI.String())
+		}
+
+		return fmt.Errorf("%w: required one of DNS%v / URI%v, cert DNS%v / cert URIs%v",
+			errBackendTLSSANMissing, expectedHostnames, expectedURIs, leaf.DNSNames, certURIs)
 	}
+}
+
+// matchAnyDNSSan reports whether the leaf cert satisfies at least one of the
+// expected DNS SAN values via x509.Certificate.VerifyHostname (RFC 6125,
+// wildcard-aware). Empty expected list reports false.
+func matchAnyDNSSan(leaf *x509.Certificate, expected []string) bool {
+	for _, want := range expected {
+		hostErr := leaf.VerifyHostname(want)
+		if hostErr == nil {
+			return true
+		}
+	}
+
+	return false
+}
+
+// matchAnyURISan reports whether the leaf cert presents at least one URI SAN
+// (as carried in leaf.URIs) that exactly matches one of the expected URI
+// strings. Empty expected list reports false. Matching is plain string
+// equality on the URI's canonical String() form — this is the convention
+// used by SPIFFE and the Gateway API conformance suite.
+func matchAnyURISan(leaf *x509.Certificate, expected []string) bool {
+	if len(expected) == 0 {
+		return false
+	}
+
+	for _, certURI := range leaf.URIs {
+		if slices.Contains(expected, certURI.String()) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // errorHandler handles proxy errors with appropriate HTTP status codes.
