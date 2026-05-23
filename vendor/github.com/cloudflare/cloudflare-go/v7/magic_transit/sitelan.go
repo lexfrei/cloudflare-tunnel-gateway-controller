@@ -1,0 +1,800 @@
+// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
+
+package magic_transit
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net/http"
+	"slices"
+
+	"github.com/cloudflare/cloudflare-go/v7/internal/apijson"
+	"github.com/cloudflare/cloudflare-go/v7/internal/param"
+	"github.com/cloudflare/cloudflare-go/v7/internal/requestconfig"
+	"github.com/cloudflare/cloudflare-go/v7/option"
+	"github.com/cloudflare/cloudflare-go/v7/packages/pagination"
+	"github.com/cloudflare/cloudflare-go/v7/shared"
+)
+
+// SiteLANService contains methods and other services that help with interacting
+// with the cloudflare API.
+//
+// Note, unlike clients, this service does not read variables from the environment
+// automatically. You should not instantiate this service directly, and instead use
+// the [NewSiteLANService] method instead.
+type SiteLANService struct {
+	Options []option.RequestOption
+}
+
+// NewSiteLANService generates a new service that applies the given options to each
+// request. These options are applied after the parent client's options (if there
+// is one), and before any request-specific options.
+func NewSiteLANService(opts ...option.RequestOption) (r *SiteLANService) {
+	r = &SiteLANService{}
+	r.Options = opts
+	return
+}
+
+// Creates a new Site LAN. If the site is in high availability mode,
+// static_addressing is required along with secondary and virtual address.
+func (r *SiteLANService) New(ctx context.Context, siteID string, params SiteLANNewParams, opts ...option.RequestOption) (res *pagination.SinglePage[LAN], err error) {
+	var raw *http.Response
+	opts = slices.Concat(r.Options, opts)
+	opts = append([]option.RequestOption{option.WithResponseInto(&raw)}, opts...)
+	if params.AccountID.Value == "" {
+		err = errors.New("missing required account_id parameter")
+		return nil, err
+	}
+	if siteID == "" {
+		err = errors.New("missing required site_id parameter")
+		return nil, err
+	}
+	path := fmt.Sprintf("accounts/%s/magic/sites/%s/lans", params.AccountID, siteID)
+	cfg, err := requestconfig.NewRequestConfig(ctx, http.MethodPost, path, params, &res, opts...)
+	if err != nil {
+		return nil, err
+	}
+	err = cfg.Execute()
+	if err != nil {
+		return nil, err
+	}
+	res.SetPageConfig(cfg, raw)
+	return res, nil
+}
+
+// Creates a new Site LAN. If the site is in high availability mode,
+// static_addressing is required along with secondary and virtual address.
+func (r *SiteLANService) NewAutoPaging(ctx context.Context, siteID string, params SiteLANNewParams, opts ...option.RequestOption) *pagination.SinglePageAutoPager[LAN] {
+	return pagination.NewSinglePageAutoPager(r.New(ctx, siteID, params, opts...))
+}
+
+// Update a specific Site LAN.
+func (r *SiteLANService) Update(ctx context.Context, siteID string, lanID string, params SiteLANUpdateParams, opts ...option.RequestOption) (res *LAN, err error) {
+	var env SiteLANUpdateResponseEnvelope
+	opts = slices.Concat(r.Options, opts)
+	if params.AccountID.Value == "" {
+		err = errors.New("missing required account_id parameter")
+		return nil, err
+	}
+	if siteID == "" {
+		err = errors.New("missing required site_id parameter")
+		return nil, err
+	}
+	if lanID == "" {
+		err = errors.New("missing required lan_id parameter")
+		return nil, err
+	}
+	path := fmt.Sprintf("accounts/%s/magic/sites/%s/lans/%s", params.AccountID, siteID, lanID)
+	err = requestconfig.ExecuteNewRequest(ctx, http.MethodPut, path, params, &env, opts...)
+	if err != nil {
+		return nil, err
+	}
+	res = &env.Result
+	return res, nil
+}
+
+// Lists Site LANs associated with an account.
+func (r *SiteLANService) List(ctx context.Context, siteID string, query SiteLANListParams, opts ...option.RequestOption) (res *pagination.SinglePage[LAN], err error) {
+	var raw *http.Response
+	opts = slices.Concat(r.Options, opts)
+	opts = append([]option.RequestOption{option.WithResponseInto(&raw)}, opts...)
+	if query.AccountID.Value == "" {
+		err = errors.New("missing required account_id parameter")
+		return nil, err
+	}
+	if siteID == "" {
+		err = errors.New("missing required site_id parameter")
+		return nil, err
+	}
+	path := fmt.Sprintf("accounts/%s/magic/sites/%s/lans", query.AccountID, siteID)
+	cfg, err := requestconfig.NewRequestConfig(ctx, http.MethodGet, path, nil, &res, opts...)
+	if err != nil {
+		return nil, err
+	}
+	err = cfg.Execute()
+	if err != nil {
+		return nil, err
+	}
+	res.SetPageConfig(cfg, raw)
+	return res, nil
+}
+
+// Lists Site LANs associated with an account.
+func (r *SiteLANService) ListAutoPaging(ctx context.Context, siteID string, query SiteLANListParams, opts ...option.RequestOption) *pagination.SinglePageAutoPager[LAN] {
+	return pagination.NewSinglePageAutoPager(r.List(ctx, siteID, query, opts...))
+}
+
+// Remove a specific Site LAN.
+func (r *SiteLANService) Delete(ctx context.Context, siteID string, lanID string, body SiteLANDeleteParams, opts ...option.RequestOption) (res *LAN, err error) {
+	var env SiteLANDeleteResponseEnvelope
+	opts = slices.Concat(r.Options, opts)
+	if body.AccountID.Value == "" {
+		err = errors.New("missing required account_id parameter")
+		return nil, err
+	}
+	if siteID == "" {
+		err = errors.New("missing required site_id parameter")
+		return nil, err
+	}
+	if lanID == "" {
+		err = errors.New("missing required lan_id parameter")
+		return nil, err
+	}
+	path := fmt.Sprintf("accounts/%s/magic/sites/%s/lans/%s", body.AccountID, siteID, lanID)
+	err = requestconfig.ExecuteNewRequest(ctx, http.MethodDelete, path, nil, &env, opts...)
+	if err != nil {
+		return nil, err
+	}
+	res = &env.Result
+	return res, nil
+}
+
+// Patch a specific Site LAN.
+func (r *SiteLANService) Edit(ctx context.Context, siteID string, lanID string, params SiteLANEditParams, opts ...option.RequestOption) (res *LAN, err error) {
+	var env SiteLANEditResponseEnvelope
+	opts = slices.Concat(r.Options, opts)
+	if params.AccountID.Value == "" {
+		err = errors.New("missing required account_id parameter")
+		return nil, err
+	}
+	if siteID == "" {
+		err = errors.New("missing required site_id parameter")
+		return nil, err
+	}
+	if lanID == "" {
+		err = errors.New("missing required lan_id parameter")
+		return nil, err
+	}
+	path := fmt.Sprintf("accounts/%s/magic/sites/%s/lans/%s", params.AccountID, siteID, lanID)
+	err = requestconfig.ExecuteNewRequest(ctx, http.MethodPatch, path, params, &env, opts...)
+	if err != nil {
+		return nil, err
+	}
+	res = &env.Result
+	return res, nil
+}
+
+// Get a specific Site LAN.
+func (r *SiteLANService) Get(ctx context.Context, siteID string, lanID string, query SiteLANGetParams, opts ...option.RequestOption) (res *LAN, err error) {
+	var env SiteLANGetResponseEnvelope
+	opts = slices.Concat(r.Options, opts)
+	if query.AccountID.Value == "" {
+		err = errors.New("missing required account_id parameter")
+		return nil, err
+	}
+	if siteID == "" {
+		err = errors.New("missing required site_id parameter")
+		return nil, err
+	}
+	if lanID == "" {
+		err = errors.New("missing required lan_id parameter")
+		return nil, err
+	}
+	path := fmt.Sprintf("accounts/%s/magic/sites/%s/lans/%s", query.AccountID, siteID, lanID)
+	err = requestconfig.ExecuteNewRequest(ctx, http.MethodGet, path, nil, &env, opts...)
+	if err != nil {
+		return nil, err
+	}
+	res = &env.Result
+	return res, nil
+}
+
+type DHCPRelay struct {
+	// List of DHCP server IPs.
+	ServerAddresses []string      `json:"server_addresses"`
+	JSON            dhcpRelayJSON `json:"-"`
+}
+
+// dhcpRelayJSON contains the JSON metadata for the struct [DHCPRelay]
+type dhcpRelayJSON struct {
+	ServerAddresses apijson.Field
+	raw             string
+	ExtraFields     map[string]apijson.Field
+}
+
+func (r *DHCPRelay) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r dhcpRelayJSON) RawJSON() string {
+	return r.raw
+}
+
+type DHCPRelayParam struct {
+	// List of DHCP server IPs.
+	ServerAddresses param.Field[[]string] `json:"server_addresses"`
+}
+
+func (r DHCPRelayParam) MarshalJSON() (data []byte, err error) {
+	return apijson.MarshalRoot(r)
+}
+
+type DHCPServer struct {
+	// Optional list of custom DHCP options to include in DHCP responses. Only valid
+	// when DHCP server is enabled.
+	DHCPOptions []DHCPServerDHCPOption `json:"dhcp_options"`
+	// A valid IPv4 address.
+	DHCPPoolEnd string `json:"dhcp_pool_end"`
+	// A valid IPv4 address.
+	DHCPPoolStart string `json:"dhcp_pool_start"`
+	// A valid IPv4 address.
+	DNSServer  string   `json:"dns_server"`
+	DNSServers []string `json:"dns_servers"`
+	// Mapping of MAC addresses to IP addresses
+	Reservations map[string]string `json:"reservations"`
+	JSON         dhcpServerJSON    `json:"-"`
+}
+
+// dhcpServerJSON contains the JSON metadata for the struct [DHCPServer]
+type dhcpServerJSON struct {
+	DHCPOptions   apijson.Field
+	DHCPPoolEnd   apijson.Field
+	DHCPPoolStart apijson.Field
+	DNSServer     apijson.Field
+	DNSServers    apijson.Field
+	Reservations  apijson.Field
+	raw           string
+	ExtraFields   map[string]apijson.Field
+}
+
+func (r *DHCPServer) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r dhcpServerJSON) RawJSON() string {
+	return r.raw
+}
+
+// A custom DHCP option to include in DHCP responses.
+type DHCPServerDHCPOption struct {
+	// DHCP option number (1-254). Options 0 and 255 are reserved by RFC 2132. Options
+	// 3, 6, and 51 are not allowed because they conflict with connector-managed
+	// configuration.
+	Code int64 `json:"code" api:"required"`
+	// The type of the option value. text: a string (max 255 bytes). hex:
+	// colon-separated hex bytes (e.g. "01:04:aa:bb:cc", max 255 bytes). ip: an IPv4
+	// address (e.g. "10.20.30.40"). byte: an unsigned integer 0-255 (1 byte). short:
+	// an unsigned integer 0-65535 (2 bytes). integer: an unsigned integer 0-4294967295
+	// (4 bytes).
+	Type DHCPServerDHCPOptionsType `json:"type" api:"required"`
+	// The option value, interpreted according to the type field.
+	Value string                   `json:"value" api:"required"`
+	JSON  dhcpServerDHCPOptionJSON `json:"-"`
+}
+
+// dhcpServerDHCPOptionJSON contains the JSON metadata for the struct
+// [DHCPServerDHCPOption]
+type dhcpServerDHCPOptionJSON struct {
+	Code        apijson.Field
+	Type        apijson.Field
+	Value       apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *DHCPServerDHCPOption) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r dhcpServerDHCPOptionJSON) RawJSON() string {
+	return r.raw
+}
+
+// The type of the option value. text: a string (max 255 bytes). hex:
+// colon-separated hex bytes (e.g. "01:04:aa:bb:cc", max 255 bytes). ip: an IPv4
+// address (e.g. "10.20.30.40"). byte: an unsigned integer 0-255 (1 byte). short:
+// an unsigned integer 0-65535 (2 bytes). integer: an unsigned integer 0-4294967295
+// (4 bytes).
+type DHCPServerDHCPOptionsType string
+
+const (
+	DHCPServerDHCPOptionsTypeText    DHCPServerDHCPOptionsType = "text"
+	DHCPServerDHCPOptionsTypeHex     DHCPServerDHCPOptionsType = "hex"
+	DHCPServerDHCPOptionsTypeIP      DHCPServerDHCPOptionsType = "ip"
+	DHCPServerDHCPOptionsTypeByte    DHCPServerDHCPOptionsType = "byte"
+	DHCPServerDHCPOptionsTypeShort   DHCPServerDHCPOptionsType = "short"
+	DHCPServerDHCPOptionsTypeInteger DHCPServerDHCPOptionsType = "integer"
+)
+
+func (r DHCPServerDHCPOptionsType) IsKnown() bool {
+	switch r {
+	case DHCPServerDHCPOptionsTypeText, DHCPServerDHCPOptionsTypeHex, DHCPServerDHCPOptionsTypeIP, DHCPServerDHCPOptionsTypeByte, DHCPServerDHCPOptionsTypeShort, DHCPServerDHCPOptionsTypeInteger:
+		return true
+	}
+	return false
+}
+
+type DHCPServerParam struct {
+	// Optional list of custom DHCP options to include in DHCP responses. Only valid
+	// when DHCP server is enabled.
+	DHCPOptions param.Field[[]DHCPServerDHCPOptionParam] `json:"dhcp_options"`
+	// A valid IPv4 address.
+	DHCPPoolEnd param.Field[string] `json:"dhcp_pool_end"`
+	// A valid IPv4 address.
+	DHCPPoolStart param.Field[string] `json:"dhcp_pool_start"`
+	// A valid IPv4 address.
+	DNSServer  param.Field[string]   `json:"dns_server"`
+	DNSServers param.Field[[]string] `json:"dns_servers"`
+	// Mapping of MAC addresses to IP addresses
+	Reservations param.Field[map[string]string] `json:"reservations"`
+}
+
+func (r DHCPServerParam) MarshalJSON() (data []byte, err error) {
+	return apijson.MarshalRoot(r)
+}
+
+// A custom DHCP option to include in DHCP responses.
+type DHCPServerDHCPOptionParam struct {
+	// DHCP option number (1-254). Options 0 and 255 are reserved by RFC 2132. Options
+	// 3, 6, and 51 are not allowed because they conflict with connector-managed
+	// configuration.
+	Code param.Field[int64] `json:"code" api:"required"`
+	// The type of the option value. text: a string (max 255 bytes). hex:
+	// colon-separated hex bytes (e.g. "01:04:aa:bb:cc", max 255 bytes). ip: an IPv4
+	// address (e.g. "10.20.30.40"). byte: an unsigned integer 0-255 (1 byte). short:
+	// an unsigned integer 0-65535 (2 bytes). integer: an unsigned integer 0-4294967295
+	// (4 bytes).
+	Type param.Field[DHCPServerDHCPOptionsType] `json:"type" api:"required"`
+	// The option value, interpreted according to the type field.
+	Value param.Field[string] `json:"value" api:"required"`
+}
+
+func (r DHCPServerDHCPOptionParam) MarshalJSON() (data []byte, err error) {
+	return apijson.MarshalRoot(r)
+}
+
+type LAN struct {
+	// Identifier
+	ID     string `json:"id"`
+	BondID int64  `json:"bond_id"`
+	// mark true to use this LAN for HA probing. only works for site with HA turned on.
+	// only one LAN can be set as the ha_link.
+	HaLink bool `json:"ha_link"`
+	// mark true to use this LAN for source-based breakout traffic
+	IsBreakout bool `json:"is_breakout"`
+	// mark true to use this LAN for source-based prioritized traffic
+	IsPrioritized bool           `json:"is_prioritized"`
+	Name          string         `json:"name"`
+	Nat           Nat            `json:"nat"`
+	Physport      int64          `json:"physport"`
+	RoutedSubnets []RoutedSubnet `json:"routed_subnets"`
+	// Identifier
+	SiteID string `json:"site_id"`
+	// If the site is not configured in high availability mode, this configuration is
+	// optional (if omitted, use DHCP). However, if in high availability mode,
+	// static_address is required along with secondary and virtual address.
+	StaticAddressing LANStaticAddressing `json:"static_addressing"`
+	// VLAN ID. Use zero for untagged.
+	VlanTag int64   `json:"vlan_tag"`
+	JSON    lanJSON `json:"-"`
+}
+
+// lanJSON contains the JSON metadata for the struct [LAN]
+type lanJSON struct {
+	ID               apijson.Field
+	BondID           apijson.Field
+	HaLink           apijson.Field
+	IsBreakout       apijson.Field
+	IsPrioritized    apijson.Field
+	Name             apijson.Field
+	Nat              apijson.Field
+	Physport         apijson.Field
+	RoutedSubnets    apijson.Field
+	SiteID           apijson.Field
+	StaticAddressing apijson.Field
+	VlanTag          apijson.Field
+	raw              string
+	ExtraFields      map[string]apijson.Field
+}
+
+func (r *LAN) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r lanJSON) RawJSON() string {
+	return r.raw
+}
+
+// If the site is not configured in high availability mode, this configuration is
+// optional (if omitted, use DHCP). However, if in high availability mode,
+// static_address is required along with secondary and virtual address.
+type LANStaticAddressing struct {
+	// A valid CIDR notation representing an IP range.
+	Address    string     `json:"address" api:"required"`
+	DHCPRelay  DHCPRelay  `json:"dhcp_relay"`
+	DHCPServer DHCPServer `json:"dhcp_server"`
+	// A valid CIDR notation representing an IP range.
+	SecondaryAddress string `json:"secondary_address"`
+	// A valid CIDR notation representing an IP range.
+	VirtualAddress string                  `json:"virtual_address"`
+	JSON           lanStaticAddressingJSON `json:"-"`
+}
+
+// lanStaticAddressingJSON contains the JSON metadata for the struct
+// [LANStaticAddressing]
+type lanStaticAddressingJSON struct {
+	Address          apijson.Field
+	DHCPRelay        apijson.Field
+	DHCPServer       apijson.Field
+	SecondaryAddress apijson.Field
+	VirtualAddress   apijson.Field
+	raw              string
+	ExtraFields      map[string]apijson.Field
+}
+
+func (r *LANStaticAddressing) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r lanStaticAddressingJSON) RawJSON() string {
+	return r.raw
+}
+
+// If the site is not configured in high availability mode, this configuration is
+// optional (if omitted, use DHCP). However, if in high availability mode,
+// static_address is required along with secondary and virtual address.
+type LANStaticAddressingParam struct {
+	// A valid CIDR notation representing an IP range.
+	Address    param.Field[string]          `json:"address" api:"required"`
+	DHCPRelay  param.Field[DHCPRelayParam]  `json:"dhcp_relay"`
+	DHCPServer param.Field[DHCPServerParam] `json:"dhcp_server"`
+	// A valid CIDR notation representing an IP range.
+	SecondaryAddress param.Field[string] `json:"secondary_address"`
+	// A valid CIDR notation representing an IP range.
+	VirtualAddress param.Field[string] `json:"virtual_address"`
+}
+
+func (r LANStaticAddressingParam) MarshalJSON() (data []byte, err error) {
+	return apijson.MarshalRoot(r)
+}
+
+type Nat struct {
+	// A valid CIDR notation representing an IP range.
+	StaticPrefix string  `json:"static_prefix"`
+	JSON         natJSON `json:"-"`
+}
+
+// natJSON contains the JSON metadata for the struct [Nat]
+type natJSON struct {
+	StaticPrefix apijson.Field
+	raw          string
+	ExtraFields  map[string]apijson.Field
+}
+
+func (r *Nat) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r natJSON) RawJSON() string {
+	return r.raw
+}
+
+type NatParam struct {
+	// A valid CIDR notation representing an IP range.
+	StaticPrefix param.Field[string] `json:"static_prefix"`
+}
+
+func (r NatParam) MarshalJSON() (data []byte, err error) {
+	return apijson.MarshalRoot(r)
+}
+
+type RoutedSubnet struct {
+	// A valid IPv4 address.
+	NextHop string `json:"next_hop" api:"required"`
+	// A valid CIDR notation representing an IP range.
+	Prefix string           `json:"prefix" api:"required"`
+	Nat    Nat              `json:"nat"`
+	JSON   routedSubnetJSON `json:"-"`
+}
+
+// routedSubnetJSON contains the JSON metadata for the struct [RoutedSubnet]
+type routedSubnetJSON struct {
+	NextHop     apijson.Field
+	Prefix      apijson.Field
+	Nat         apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *RoutedSubnet) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r routedSubnetJSON) RawJSON() string {
+	return r.raw
+}
+
+type RoutedSubnetParam struct {
+	// A valid IPv4 address.
+	NextHop param.Field[string] `json:"next_hop" api:"required"`
+	// A valid CIDR notation representing an IP range.
+	Prefix param.Field[string]   `json:"prefix" api:"required"`
+	Nat    param.Field[NatParam] `json:"nat"`
+}
+
+func (r RoutedSubnetParam) MarshalJSON() (data []byte, err error) {
+	return apijson.MarshalRoot(r)
+}
+
+type SiteLANNewParams struct {
+	// Identifier
+	AccountID param.Field[string] `path:"account_id" api:"required"`
+	BondID    param.Field[int64]  `json:"bond_id"`
+	// mark true to use this LAN for HA probing. only works for site with HA turned on.
+	// only one LAN can be set as the ha_link.
+	HaLink param.Field[bool] `json:"ha_link"`
+	// mark true to use this LAN for source-based breakout traffic
+	IsBreakout param.Field[bool] `json:"is_breakout"`
+	// mark true to use this LAN for source-based prioritized traffic
+	IsPrioritized param.Field[bool]                `json:"is_prioritized"`
+	Name          param.Field[string]              `json:"name"`
+	Nat           param.Field[NatParam]            `json:"nat"`
+	Physport      param.Field[int64]               `json:"physport"`
+	RoutedSubnets param.Field[[]RoutedSubnetParam] `json:"routed_subnets"`
+	// If the site is not configured in high availability mode, this configuration is
+	// optional (if omitted, use DHCP). However, if in high availability mode,
+	// static_address is required along with secondary and virtual address.
+	StaticAddressing param.Field[LANStaticAddressingParam] `json:"static_addressing"`
+	// VLAN ID. Use zero for untagged.
+	VlanTag param.Field[int64] `json:"vlan_tag"`
+}
+
+func (r SiteLANNewParams) MarshalJSON() (data []byte, err error) {
+	return apijson.MarshalRoot(r)
+}
+
+type SiteLANUpdateParams struct {
+	// Identifier
+	AccountID param.Field[string] `path:"account_id" api:"required"`
+	BondID    param.Field[int64]  `json:"bond_id"`
+	// mark true to use this LAN for source-based breakout traffic
+	IsBreakout param.Field[bool] `json:"is_breakout"`
+	// mark true to use this LAN for source-based prioritized traffic
+	IsPrioritized param.Field[bool]                `json:"is_prioritized"`
+	Name          param.Field[string]              `json:"name"`
+	Nat           param.Field[NatParam]            `json:"nat"`
+	Physport      param.Field[int64]               `json:"physport"`
+	RoutedSubnets param.Field[[]RoutedSubnetParam] `json:"routed_subnets"`
+	// If the site is not configured in high availability mode, this configuration is
+	// optional (if omitted, use DHCP). However, if in high availability mode,
+	// static_address is required along with secondary and virtual address.
+	StaticAddressing param.Field[LANStaticAddressingParam] `json:"static_addressing"`
+	// VLAN ID. Use zero for untagged.
+	VlanTag param.Field[int64] `json:"vlan_tag"`
+}
+
+func (r SiteLANUpdateParams) MarshalJSON() (data []byte, err error) {
+	return apijson.MarshalRoot(r)
+}
+
+type SiteLANUpdateResponseEnvelope struct {
+	Errors   []shared.ResponseInfo `json:"errors" api:"required"`
+	Messages []shared.ResponseInfo `json:"messages" api:"required"`
+	Result   LAN                   `json:"result" api:"required"`
+	// Whether the API call was successful
+	Success SiteLANUpdateResponseEnvelopeSuccess `json:"success" api:"required"`
+	JSON    siteLANUpdateResponseEnvelopeJSON    `json:"-"`
+}
+
+// siteLANUpdateResponseEnvelopeJSON contains the JSON metadata for the struct
+// [SiteLANUpdateResponseEnvelope]
+type siteLANUpdateResponseEnvelopeJSON struct {
+	Errors      apijson.Field
+	Messages    apijson.Field
+	Result      apijson.Field
+	Success     apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *SiteLANUpdateResponseEnvelope) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r siteLANUpdateResponseEnvelopeJSON) RawJSON() string {
+	return r.raw
+}
+
+// Whether the API call was successful
+type SiteLANUpdateResponseEnvelopeSuccess bool
+
+const (
+	SiteLANUpdateResponseEnvelopeSuccessTrue SiteLANUpdateResponseEnvelopeSuccess = true
+)
+
+func (r SiteLANUpdateResponseEnvelopeSuccess) IsKnown() bool {
+	switch r {
+	case SiteLANUpdateResponseEnvelopeSuccessTrue:
+		return true
+	}
+	return false
+}
+
+type SiteLANListParams struct {
+	// Identifier
+	AccountID param.Field[string] `path:"account_id" api:"required"`
+}
+
+type SiteLANDeleteParams struct {
+	// Identifier
+	AccountID param.Field[string] `path:"account_id" api:"required"`
+}
+
+type SiteLANDeleteResponseEnvelope struct {
+	Errors   []shared.ResponseInfo `json:"errors" api:"required"`
+	Messages []shared.ResponseInfo `json:"messages" api:"required"`
+	Result   LAN                   `json:"result" api:"required"`
+	// Whether the API call was successful
+	Success SiteLANDeleteResponseEnvelopeSuccess `json:"success" api:"required"`
+	JSON    siteLANDeleteResponseEnvelopeJSON    `json:"-"`
+}
+
+// siteLANDeleteResponseEnvelopeJSON contains the JSON metadata for the struct
+// [SiteLANDeleteResponseEnvelope]
+type siteLANDeleteResponseEnvelopeJSON struct {
+	Errors      apijson.Field
+	Messages    apijson.Field
+	Result      apijson.Field
+	Success     apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *SiteLANDeleteResponseEnvelope) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r siteLANDeleteResponseEnvelopeJSON) RawJSON() string {
+	return r.raw
+}
+
+// Whether the API call was successful
+type SiteLANDeleteResponseEnvelopeSuccess bool
+
+const (
+	SiteLANDeleteResponseEnvelopeSuccessTrue SiteLANDeleteResponseEnvelopeSuccess = true
+)
+
+func (r SiteLANDeleteResponseEnvelopeSuccess) IsKnown() bool {
+	switch r {
+	case SiteLANDeleteResponseEnvelopeSuccessTrue:
+		return true
+	}
+	return false
+}
+
+type SiteLANEditParams struct {
+	// Identifier
+	AccountID param.Field[string] `path:"account_id" api:"required"`
+	BondID    param.Field[int64]  `json:"bond_id"`
+	// mark true to use this LAN for source-based breakout traffic
+	IsBreakout param.Field[bool] `json:"is_breakout"`
+	// mark true to use this LAN for source-based prioritized traffic
+	IsPrioritized param.Field[bool]                `json:"is_prioritized"`
+	Name          param.Field[string]              `json:"name"`
+	Nat           param.Field[NatParam]            `json:"nat"`
+	Physport      param.Field[int64]               `json:"physport"`
+	RoutedSubnets param.Field[[]RoutedSubnetParam] `json:"routed_subnets"`
+	// If the site is not configured in high availability mode, this configuration is
+	// optional (if omitted, use DHCP). However, if in high availability mode,
+	// static_address is required along with secondary and virtual address.
+	StaticAddressing param.Field[LANStaticAddressingParam] `json:"static_addressing"`
+	// VLAN ID. Use zero for untagged.
+	VlanTag param.Field[int64] `json:"vlan_tag"`
+}
+
+func (r SiteLANEditParams) MarshalJSON() (data []byte, err error) {
+	return apijson.MarshalRoot(r)
+}
+
+type SiteLANEditResponseEnvelope struct {
+	Errors   []shared.ResponseInfo `json:"errors" api:"required"`
+	Messages []shared.ResponseInfo `json:"messages" api:"required"`
+	Result   LAN                   `json:"result" api:"required"`
+	// Whether the API call was successful
+	Success SiteLANEditResponseEnvelopeSuccess `json:"success" api:"required"`
+	JSON    siteLANEditResponseEnvelopeJSON    `json:"-"`
+}
+
+// siteLANEditResponseEnvelopeJSON contains the JSON metadata for the struct
+// [SiteLANEditResponseEnvelope]
+type siteLANEditResponseEnvelopeJSON struct {
+	Errors      apijson.Field
+	Messages    apijson.Field
+	Result      apijson.Field
+	Success     apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *SiteLANEditResponseEnvelope) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r siteLANEditResponseEnvelopeJSON) RawJSON() string {
+	return r.raw
+}
+
+// Whether the API call was successful
+type SiteLANEditResponseEnvelopeSuccess bool
+
+const (
+	SiteLANEditResponseEnvelopeSuccessTrue SiteLANEditResponseEnvelopeSuccess = true
+)
+
+func (r SiteLANEditResponseEnvelopeSuccess) IsKnown() bool {
+	switch r {
+	case SiteLANEditResponseEnvelopeSuccessTrue:
+		return true
+	}
+	return false
+}
+
+type SiteLANGetParams struct {
+	// Identifier
+	AccountID param.Field[string] `path:"account_id" api:"required"`
+}
+
+type SiteLANGetResponseEnvelope struct {
+	Errors   []shared.ResponseInfo `json:"errors" api:"required"`
+	Messages []shared.ResponseInfo `json:"messages" api:"required"`
+	Result   LAN                   `json:"result" api:"required"`
+	// Whether the API call was successful
+	Success SiteLANGetResponseEnvelopeSuccess `json:"success" api:"required"`
+	JSON    siteLANGetResponseEnvelopeJSON    `json:"-"`
+}
+
+// siteLANGetResponseEnvelopeJSON contains the JSON metadata for the struct
+// [SiteLANGetResponseEnvelope]
+type siteLANGetResponseEnvelopeJSON struct {
+	Errors      apijson.Field
+	Messages    apijson.Field
+	Result      apijson.Field
+	Success     apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *SiteLANGetResponseEnvelope) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r siteLANGetResponseEnvelopeJSON) RawJSON() string {
+	return r.raw
+}
+
+// Whether the API call was successful
+type SiteLANGetResponseEnvelopeSuccess bool
+
+const (
+	SiteLANGetResponseEnvelopeSuccessTrue SiteLANGetResponseEnvelopeSuccess = true
+)
+
+func (r SiteLANGetResponseEnvelopeSuccess) IsKnown() bool {
+	switch r {
+	case SiteLANGetResponseEnvelopeSuccessTrue:
+		return true
+	}
+	return false
+}

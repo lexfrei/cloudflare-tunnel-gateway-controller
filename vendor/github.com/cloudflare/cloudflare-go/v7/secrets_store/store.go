@@ -1,0 +1,813 @@
+// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
+
+package secrets_store
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/url"
+	"slices"
+	"time"
+
+	"github.com/cloudflare/cloudflare-go/v7/internal/apijson"
+	"github.com/cloudflare/cloudflare-go/v7/internal/apiquery"
+	"github.com/cloudflare/cloudflare-go/v7/internal/param"
+	"github.com/cloudflare/cloudflare-go/v7/internal/requestconfig"
+	"github.com/cloudflare/cloudflare-go/v7/option"
+	"github.com/cloudflare/cloudflare-go/v7/packages/pagination"
+)
+
+// StoreService contains methods and other services that help with interacting with
+// the cloudflare API.
+//
+// Note, unlike clients, this service does not read variables from the environment
+// automatically. You should not instantiate this service directly, and instead use
+// the [NewStoreService] method instead.
+type StoreService struct {
+	Options []option.RequestOption
+	Secrets *StoreSecretService
+}
+
+// NewStoreService generates a new service that applies the given options to each
+// request. These options are applied after the parent client's options (if there
+// is one), and before any request-specific options.
+func NewStoreService(opts ...option.RequestOption) (r *StoreService) {
+	r = &StoreService{}
+	r.Options = opts
+	r.Secrets = NewStoreSecretService(opts...)
+	return
+}
+
+// Creates a store in the account
+func (r *StoreService) New(ctx context.Context, params StoreNewParams, opts ...option.RequestOption) (res *StoreNewResponse, err error) {
+	var env StoreNewResponseEnvelope
+	opts = slices.Concat(r.Options, opts)
+	if params.AccountID.Value == "" {
+		err = errors.New("missing required account_id parameter")
+		return nil, err
+	}
+	path := fmt.Sprintf("accounts/%s/secrets_store/stores", params.AccountID)
+	err = requestconfig.ExecuteNewRequest(ctx, http.MethodPost, path, params, &env, opts...)
+	if err != nil {
+		return nil, err
+	}
+	res = &env.Result
+	return res, nil
+}
+
+// Lists all the stores in an account
+func (r *StoreService) List(ctx context.Context, params StoreListParams, opts ...option.RequestOption) (res *pagination.V4PagePaginationArray[StoreListResponse], err error) {
+	var raw *http.Response
+	opts = slices.Concat(r.Options, opts)
+	opts = append([]option.RequestOption{option.WithResponseInto(&raw)}, opts...)
+	if params.AccountID.Value == "" {
+		err = errors.New("missing required account_id parameter")
+		return nil, err
+	}
+	path := fmt.Sprintf("accounts/%s/secrets_store/stores", params.AccountID)
+	cfg, err := requestconfig.NewRequestConfig(ctx, http.MethodGet, path, params, &res, opts...)
+	if err != nil {
+		return nil, err
+	}
+	err = cfg.Execute()
+	if err != nil {
+		return nil, err
+	}
+	res.SetPageConfig(cfg, raw)
+	return res, nil
+}
+
+// Lists all the stores in an account
+func (r *StoreService) ListAutoPaging(ctx context.Context, params StoreListParams, opts ...option.RequestOption) *pagination.V4PagePaginationArrayAutoPager[StoreListResponse] {
+	return pagination.NewV4PagePaginationArrayAutoPager(r.List(ctx, params, opts...))
+}
+
+// Deletes a single store. By default, a store that still contains secrets cannot
+// be deleted and returns HTTP 409 (Conflict) with the "store_not_empty" error.
+// Pass `force=true` to cascade-delete all secrets in the store. Empty stores are
+// always deleted regardless of the force parameter.
+func (r *StoreService) Delete(ctx context.Context, storeID string, params StoreDeleteParams, opts ...option.RequestOption) (res *StoreDeleteResponse, err error) {
+	var env StoreDeleteResponseEnvelope
+	opts = slices.Concat(r.Options, opts)
+	if params.AccountID.Value == "" {
+		err = errors.New("missing required account_id parameter")
+		return nil, err
+	}
+	if storeID == "" {
+		err = errors.New("missing required store_id parameter")
+		return nil, err
+	}
+	path := fmt.Sprintf("accounts/%s/secrets_store/stores/%s", params.AccountID, storeID)
+	err = requestconfig.ExecuteNewRequest(ctx, http.MethodDelete, path, params, &env, opts...)
+	if err != nil {
+		return nil, err
+	}
+	res = &env.Result
+	return res, nil
+}
+
+// Returns details of a single store
+func (r *StoreService) Get(ctx context.Context, storeID string, query StoreGetParams, opts ...option.RequestOption) (res *StoreGetResponse, err error) {
+	var env StoreGetResponseEnvelope
+	opts = slices.Concat(r.Options, opts)
+	if query.AccountID.Value == "" {
+		err = errors.New("missing required account_id parameter")
+		return nil, err
+	}
+	if storeID == "" {
+		err = errors.New("missing required store_id parameter")
+		return nil, err
+	}
+	path := fmt.Sprintf("accounts/%s/secrets_store/stores/%s", query.AccountID, storeID)
+	err = requestconfig.ExecuteNewRequest(ctx, http.MethodGet, path, nil, &env, opts...)
+	if err != nil {
+		return nil, err
+	}
+	res = &env.Result
+	return res, nil
+}
+
+type StoreNewResponse struct {
+	// Store Identifier
+	ID string `json:"id" api:"required"`
+	// Whenthe secret was created.
+	Created time.Time `json:"created" api:"required" format:"date-time"`
+	// When the secret was modified.
+	Modified time.Time `json:"modified" api:"required" format:"date-time"`
+	// The name of the store
+	Name string `json:"name" api:"required"`
+	// Account Identifier
+	AccountID string               `json:"account_id"`
+	JSON      storeNewResponseJSON `json:"-"`
+}
+
+// storeNewResponseJSON contains the JSON metadata for the struct
+// [StoreNewResponse]
+type storeNewResponseJSON struct {
+	ID          apijson.Field
+	Created     apijson.Field
+	Modified    apijson.Field
+	Name        apijson.Field
+	AccountID   apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *StoreNewResponse) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r storeNewResponseJSON) RawJSON() string {
+	return r.raw
+}
+
+type StoreListResponse struct {
+	// Store Identifier
+	ID string `json:"id" api:"required"`
+	// Whenthe secret was created.
+	Created time.Time `json:"created" api:"required" format:"date-time"`
+	// When the secret was modified.
+	Modified time.Time `json:"modified" api:"required" format:"date-time"`
+	// The name of the store
+	Name string `json:"name" api:"required"`
+	// Account Identifier
+	AccountID string                `json:"account_id"`
+	JSON      storeListResponseJSON `json:"-"`
+}
+
+// storeListResponseJSON contains the JSON metadata for the struct
+// [StoreListResponse]
+type storeListResponseJSON struct {
+	ID          apijson.Field
+	Created     apijson.Field
+	Modified    apijson.Field
+	Name        apijson.Field
+	AccountID   apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *StoreListResponse) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r storeListResponseJSON) RawJSON() string {
+	return r.raw
+}
+
+type StoreDeleteResponse = interface{}
+
+type StoreGetResponse struct {
+	// Store Identifier
+	ID string `json:"id" api:"required"`
+	// Whenthe secret was created.
+	Created time.Time `json:"created" api:"required" format:"date-time"`
+	// When the secret was modified.
+	Modified time.Time `json:"modified" api:"required" format:"date-time"`
+	// The name of the store
+	Name string `json:"name" api:"required"`
+	// Account Identifier
+	AccountID string               `json:"account_id"`
+	JSON      storeGetResponseJSON `json:"-"`
+}
+
+// storeGetResponseJSON contains the JSON metadata for the struct
+// [StoreGetResponse]
+type storeGetResponseJSON struct {
+	ID          apijson.Field
+	Created     apijson.Field
+	Modified    apijson.Field
+	Name        apijson.Field
+	AccountID   apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *StoreGetResponse) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r storeGetResponseJSON) RawJSON() string {
+	return r.raw
+}
+
+type StoreNewParams struct {
+	// Account Identifier
+	AccountID param.Field[string] `path:"account_id" api:"required"`
+	// The name of the store
+	Name param.Field[string] `json:"name" api:"required"`
+}
+
+func (r StoreNewParams) MarshalJSON() (data []byte, err error) {
+	return apijson.MarshalRoot(r)
+}
+
+type StoreNewResponseEnvelope struct {
+	Errors   []StoreNewResponseEnvelopeErrors   `json:"errors" api:"required"`
+	Messages []StoreNewResponseEnvelopeMessages `json:"messages" api:"required"`
+	// Whether the API call was successful.
+	Success    StoreNewResponseEnvelopeSuccess    `json:"success" api:"required"`
+	Result     StoreNewResponse                   `json:"result"`
+	ResultInfo StoreNewResponseEnvelopeResultInfo `json:"result_info"`
+	JSON       storeNewResponseEnvelopeJSON       `json:"-"`
+}
+
+// storeNewResponseEnvelopeJSON contains the JSON metadata for the struct
+// [StoreNewResponseEnvelope]
+type storeNewResponseEnvelopeJSON struct {
+	Errors      apijson.Field
+	Messages    apijson.Field
+	Success     apijson.Field
+	Result      apijson.Field
+	ResultInfo  apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *StoreNewResponseEnvelope) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r storeNewResponseEnvelopeJSON) RawJSON() string {
+	return r.raw
+}
+
+type StoreNewResponseEnvelopeErrors struct {
+	Code             int64                                `json:"code" api:"required"`
+	Message          string                               `json:"message" api:"required"`
+	DocumentationURL string                               `json:"documentation_url"`
+	Source           StoreNewResponseEnvelopeErrorsSource `json:"source"`
+	JSON             storeNewResponseEnvelopeErrorsJSON   `json:"-"`
+}
+
+// storeNewResponseEnvelopeErrorsJSON contains the JSON metadata for the struct
+// [StoreNewResponseEnvelopeErrors]
+type storeNewResponseEnvelopeErrorsJSON struct {
+	Code             apijson.Field
+	Message          apijson.Field
+	DocumentationURL apijson.Field
+	Source           apijson.Field
+	raw              string
+	ExtraFields      map[string]apijson.Field
+}
+
+func (r *StoreNewResponseEnvelopeErrors) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r storeNewResponseEnvelopeErrorsJSON) RawJSON() string {
+	return r.raw
+}
+
+type StoreNewResponseEnvelopeErrorsSource struct {
+	Pointer string                                   `json:"pointer"`
+	JSON    storeNewResponseEnvelopeErrorsSourceJSON `json:"-"`
+}
+
+// storeNewResponseEnvelopeErrorsSourceJSON contains the JSON metadata for the
+// struct [StoreNewResponseEnvelopeErrorsSource]
+type storeNewResponseEnvelopeErrorsSourceJSON struct {
+	Pointer     apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *StoreNewResponseEnvelopeErrorsSource) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r storeNewResponseEnvelopeErrorsSourceJSON) RawJSON() string {
+	return r.raw
+}
+
+type StoreNewResponseEnvelopeMessages struct {
+	Code             int64                                  `json:"code" api:"required"`
+	Message          string                                 `json:"message" api:"required"`
+	DocumentationURL string                                 `json:"documentation_url"`
+	Source           StoreNewResponseEnvelopeMessagesSource `json:"source"`
+	JSON             storeNewResponseEnvelopeMessagesJSON   `json:"-"`
+}
+
+// storeNewResponseEnvelopeMessagesJSON contains the JSON metadata for the struct
+// [StoreNewResponseEnvelopeMessages]
+type storeNewResponseEnvelopeMessagesJSON struct {
+	Code             apijson.Field
+	Message          apijson.Field
+	DocumentationURL apijson.Field
+	Source           apijson.Field
+	raw              string
+	ExtraFields      map[string]apijson.Field
+}
+
+func (r *StoreNewResponseEnvelopeMessages) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r storeNewResponseEnvelopeMessagesJSON) RawJSON() string {
+	return r.raw
+}
+
+type StoreNewResponseEnvelopeMessagesSource struct {
+	Pointer string                                     `json:"pointer"`
+	JSON    storeNewResponseEnvelopeMessagesSourceJSON `json:"-"`
+}
+
+// storeNewResponseEnvelopeMessagesSourceJSON contains the JSON metadata for the
+// struct [StoreNewResponseEnvelopeMessagesSource]
+type storeNewResponseEnvelopeMessagesSourceJSON struct {
+	Pointer     apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *StoreNewResponseEnvelopeMessagesSource) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r storeNewResponseEnvelopeMessagesSourceJSON) RawJSON() string {
+	return r.raw
+}
+
+// Whether the API call was successful.
+type StoreNewResponseEnvelopeSuccess bool
+
+const (
+	StoreNewResponseEnvelopeSuccessTrue StoreNewResponseEnvelopeSuccess = true
+)
+
+func (r StoreNewResponseEnvelopeSuccess) IsKnown() bool {
+	switch r {
+	case StoreNewResponseEnvelopeSuccessTrue:
+		return true
+	}
+	return false
+}
+
+type StoreNewResponseEnvelopeResultInfo struct {
+	// Total number of results for the requested service.
+	Count float64 `json:"count"`
+	// Current page within paginated list of results.
+	Page float64 `json:"page"`
+	// Number of results per page of results.
+	PerPage float64 `json:"per_page"`
+	// Total results available without any search parameters.
+	TotalCount float64 `json:"total_count"`
+	// The number of total pages in the entire result set.
+	TotalPages float64                                `json:"total_pages"`
+	JSON       storeNewResponseEnvelopeResultInfoJSON `json:"-"`
+}
+
+// storeNewResponseEnvelopeResultInfoJSON contains the JSON metadata for the struct
+// [StoreNewResponseEnvelopeResultInfo]
+type storeNewResponseEnvelopeResultInfoJSON struct {
+	Count       apijson.Field
+	Page        apijson.Field
+	PerPage     apijson.Field
+	TotalCount  apijson.Field
+	TotalPages  apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *StoreNewResponseEnvelopeResultInfo) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r storeNewResponseEnvelopeResultInfoJSON) RawJSON() string {
+	return r.raw
+}
+
+type StoreListParams struct {
+	// Account Identifier
+	AccountID param.Field[string] `path:"account_id" api:"required"`
+	// Direction to sort objects
+	Direction param.Field[StoreListParamsDirection] `query:"direction"`
+	// Order secrets by values in the given field
+	Order param.Field[StoreListParamsOrder] `query:"order"`
+	// Page number
+	Page param.Field[int64] `query:"page"`
+	// Number of objects to return per page
+	PerPage param.Field[int64] `query:"per_page"`
+}
+
+// URLQuery serializes [StoreListParams]'s query parameters as `url.Values`.
+func (r StoreListParams) URLQuery() (v url.Values) {
+	return apiquery.MarshalWithSettings(r, apiquery.QuerySettings{
+		ArrayFormat:  apiquery.ArrayQueryFormatRepeat,
+		NestedFormat: apiquery.NestedQueryFormatDots,
+	})
+}
+
+// Direction to sort objects
+type StoreListParamsDirection string
+
+const (
+	StoreListParamsDirectionAsc  StoreListParamsDirection = "asc"
+	StoreListParamsDirectionDesc StoreListParamsDirection = "desc"
+)
+
+func (r StoreListParamsDirection) IsKnown() bool {
+	switch r {
+	case StoreListParamsDirectionAsc, StoreListParamsDirectionDesc:
+		return true
+	}
+	return false
+}
+
+// Order secrets by values in the given field
+type StoreListParamsOrder string
+
+const (
+	StoreListParamsOrderName     StoreListParamsOrder = "name"
+	StoreListParamsOrderComment  StoreListParamsOrder = "comment"
+	StoreListParamsOrderCreated  StoreListParamsOrder = "created"
+	StoreListParamsOrderModified StoreListParamsOrder = "modified"
+	StoreListParamsOrderStatus   StoreListParamsOrder = "status"
+)
+
+func (r StoreListParamsOrder) IsKnown() bool {
+	switch r {
+	case StoreListParamsOrderName, StoreListParamsOrderComment, StoreListParamsOrderCreated, StoreListParamsOrderModified, StoreListParamsOrderStatus:
+		return true
+	}
+	return false
+}
+
+type StoreDeleteParams struct {
+	// Account Identifier
+	AccountID param.Field[string] `path:"account_id" api:"required"`
+	// When true, cascade-deletes all secrets in the store before deleting the store
+	// itself. Required when deleting a non-empty store. Without this parameter,
+	// attempting to delete a non-empty store returns 409.
+	Force param.Field[bool] `query:"force"`
+}
+
+// URLQuery serializes [StoreDeleteParams]'s query parameters as `url.Values`.
+func (r StoreDeleteParams) URLQuery() (v url.Values) {
+	return apiquery.MarshalWithSettings(r, apiquery.QuerySettings{
+		ArrayFormat:  apiquery.ArrayQueryFormatRepeat,
+		NestedFormat: apiquery.NestedQueryFormatDots,
+	})
+}
+
+type StoreDeleteResponseEnvelope struct {
+	Errors   []StoreDeleteResponseEnvelopeErrors   `json:"errors" api:"required"`
+	Messages []StoreDeleteResponseEnvelopeMessages `json:"messages" api:"required"`
+	// Whether the API call was successful.
+	Success StoreDeleteResponseEnvelopeSuccess `json:"success" api:"required"`
+	// Result is null for delete operations.
+	Result StoreDeleteResponse             `json:"result" api:"nullable"`
+	JSON   storeDeleteResponseEnvelopeJSON `json:"-"`
+}
+
+// storeDeleteResponseEnvelopeJSON contains the JSON metadata for the struct
+// [StoreDeleteResponseEnvelope]
+type storeDeleteResponseEnvelopeJSON struct {
+	Errors      apijson.Field
+	Messages    apijson.Field
+	Success     apijson.Field
+	Result      apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *StoreDeleteResponseEnvelope) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r storeDeleteResponseEnvelopeJSON) RawJSON() string {
+	return r.raw
+}
+
+type StoreDeleteResponseEnvelopeErrors struct {
+	Code             int64                                   `json:"code" api:"required"`
+	Message          string                                  `json:"message" api:"required"`
+	DocumentationURL string                                  `json:"documentation_url"`
+	Source           StoreDeleteResponseEnvelopeErrorsSource `json:"source"`
+	JSON             storeDeleteResponseEnvelopeErrorsJSON   `json:"-"`
+}
+
+// storeDeleteResponseEnvelopeErrorsJSON contains the JSON metadata for the struct
+// [StoreDeleteResponseEnvelopeErrors]
+type storeDeleteResponseEnvelopeErrorsJSON struct {
+	Code             apijson.Field
+	Message          apijson.Field
+	DocumentationURL apijson.Field
+	Source           apijson.Field
+	raw              string
+	ExtraFields      map[string]apijson.Field
+}
+
+func (r *StoreDeleteResponseEnvelopeErrors) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r storeDeleteResponseEnvelopeErrorsJSON) RawJSON() string {
+	return r.raw
+}
+
+type StoreDeleteResponseEnvelopeErrorsSource struct {
+	Pointer string                                      `json:"pointer"`
+	JSON    storeDeleteResponseEnvelopeErrorsSourceJSON `json:"-"`
+}
+
+// storeDeleteResponseEnvelopeErrorsSourceJSON contains the JSON metadata for the
+// struct [StoreDeleteResponseEnvelopeErrorsSource]
+type storeDeleteResponseEnvelopeErrorsSourceJSON struct {
+	Pointer     apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *StoreDeleteResponseEnvelopeErrorsSource) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r storeDeleteResponseEnvelopeErrorsSourceJSON) RawJSON() string {
+	return r.raw
+}
+
+type StoreDeleteResponseEnvelopeMessages struct {
+	Code             int64                                     `json:"code" api:"required"`
+	Message          string                                    `json:"message" api:"required"`
+	DocumentationURL string                                    `json:"documentation_url"`
+	Source           StoreDeleteResponseEnvelopeMessagesSource `json:"source"`
+	JSON             storeDeleteResponseEnvelopeMessagesJSON   `json:"-"`
+}
+
+// storeDeleteResponseEnvelopeMessagesJSON contains the JSON metadata for the
+// struct [StoreDeleteResponseEnvelopeMessages]
+type storeDeleteResponseEnvelopeMessagesJSON struct {
+	Code             apijson.Field
+	Message          apijson.Field
+	DocumentationURL apijson.Field
+	Source           apijson.Field
+	raw              string
+	ExtraFields      map[string]apijson.Field
+}
+
+func (r *StoreDeleteResponseEnvelopeMessages) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r storeDeleteResponseEnvelopeMessagesJSON) RawJSON() string {
+	return r.raw
+}
+
+type StoreDeleteResponseEnvelopeMessagesSource struct {
+	Pointer string                                        `json:"pointer"`
+	JSON    storeDeleteResponseEnvelopeMessagesSourceJSON `json:"-"`
+}
+
+// storeDeleteResponseEnvelopeMessagesSourceJSON contains the JSON metadata for the
+// struct [StoreDeleteResponseEnvelopeMessagesSource]
+type storeDeleteResponseEnvelopeMessagesSourceJSON struct {
+	Pointer     apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *StoreDeleteResponseEnvelopeMessagesSource) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r storeDeleteResponseEnvelopeMessagesSourceJSON) RawJSON() string {
+	return r.raw
+}
+
+// Whether the API call was successful.
+type StoreDeleteResponseEnvelopeSuccess bool
+
+const (
+	StoreDeleteResponseEnvelopeSuccessTrue StoreDeleteResponseEnvelopeSuccess = true
+)
+
+func (r StoreDeleteResponseEnvelopeSuccess) IsKnown() bool {
+	switch r {
+	case StoreDeleteResponseEnvelopeSuccessTrue:
+		return true
+	}
+	return false
+}
+
+type StoreGetParams struct {
+	// Account Identifier
+	AccountID param.Field[string] `path:"account_id" api:"required"`
+}
+
+type StoreGetResponseEnvelope struct {
+	Errors   []StoreGetResponseEnvelopeErrors   `json:"errors" api:"required"`
+	Messages []StoreGetResponseEnvelopeMessages `json:"messages" api:"required"`
+	// Whether the API call was successful.
+	Success    StoreGetResponseEnvelopeSuccess    `json:"success" api:"required"`
+	Result     StoreGetResponse                   `json:"result"`
+	ResultInfo StoreGetResponseEnvelopeResultInfo `json:"result_info"`
+	JSON       storeGetResponseEnvelopeJSON       `json:"-"`
+}
+
+// storeGetResponseEnvelopeJSON contains the JSON metadata for the struct
+// [StoreGetResponseEnvelope]
+type storeGetResponseEnvelopeJSON struct {
+	Errors      apijson.Field
+	Messages    apijson.Field
+	Success     apijson.Field
+	Result      apijson.Field
+	ResultInfo  apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *StoreGetResponseEnvelope) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r storeGetResponseEnvelopeJSON) RawJSON() string {
+	return r.raw
+}
+
+type StoreGetResponseEnvelopeErrors struct {
+	Code             int64                                `json:"code" api:"required"`
+	Message          string                               `json:"message" api:"required"`
+	DocumentationURL string                               `json:"documentation_url"`
+	Source           StoreGetResponseEnvelopeErrorsSource `json:"source"`
+	JSON             storeGetResponseEnvelopeErrorsJSON   `json:"-"`
+}
+
+// storeGetResponseEnvelopeErrorsJSON contains the JSON metadata for the struct
+// [StoreGetResponseEnvelopeErrors]
+type storeGetResponseEnvelopeErrorsJSON struct {
+	Code             apijson.Field
+	Message          apijson.Field
+	DocumentationURL apijson.Field
+	Source           apijson.Field
+	raw              string
+	ExtraFields      map[string]apijson.Field
+}
+
+func (r *StoreGetResponseEnvelopeErrors) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r storeGetResponseEnvelopeErrorsJSON) RawJSON() string {
+	return r.raw
+}
+
+type StoreGetResponseEnvelopeErrorsSource struct {
+	Pointer string                                   `json:"pointer"`
+	JSON    storeGetResponseEnvelopeErrorsSourceJSON `json:"-"`
+}
+
+// storeGetResponseEnvelopeErrorsSourceJSON contains the JSON metadata for the
+// struct [StoreGetResponseEnvelopeErrorsSource]
+type storeGetResponseEnvelopeErrorsSourceJSON struct {
+	Pointer     apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *StoreGetResponseEnvelopeErrorsSource) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r storeGetResponseEnvelopeErrorsSourceJSON) RawJSON() string {
+	return r.raw
+}
+
+type StoreGetResponseEnvelopeMessages struct {
+	Code             int64                                  `json:"code" api:"required"`
+	Message          string                                 `json:"message" api:"required"`
+	DocumentationURL string                                 `json:"documentation_url"`
+	Source           StoreGetResponseEnvelopeMessagesSource `json:"source"`
+	JSON             storeGetResponseEnvelopeMessagesJSON   `json:"-"`
+}
+
+// storeGetResponseEnvelopeMessagesJSON contains the JSON metadata for the struct
+// [StoreGetResponseEnvelopeMessages]
+type storeGetResponseEnvelopeMessagesJSON struct {
+	Code             apijson.Field
+	Message          apijson.Field
+	DocumentationURL apijson.Field
+	Source           apijson.Field
+	raw              string
+	ExtraFields      map[string]apijson.Field
+}
+
+func (r *StoreGetResponseEnvelopeMessages) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r storeGetResponseEnvelopeMessagesJSON) RawJSON() string {
+	return r.raw
+}
+
+type StoreGetResponseEnvelopeMessagesSource struct {
+	Pointer string                                     `json:"pointer"`
+	JSON    storeGetResponseEnvelopeMessagesSourceJSON `json:"-"`
+}
+
+// storeGetResponseEnvelopeMessagesSourceJSON contains the JSON metadata for the
+// struct [StoreGetResponseEnvelopeMessagesSource]
+type storeGetResponseEnvelopeMessagesSourceJSON struct {
+	Pointer     apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *StoreGetResponseEnvelopeMessagesSource) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r storeGetResponseEnvelopeMessagesSourceJSON) RawJSON() string {
+	return r.raw
+}
+
+// Whether the API call was successful.
+type StoreGetResponseEnvelopeSuccess bool
+
+const (
+	StoreGetResponseEnvelopeSuccessTrue StoreGetResponseEnvelopeSuccess = true
+)
+
+func (r StoreGetResponseEnvelopeSuccess) IsKnown() bool {
+	switch r {
+	case StoreGetResponseEnvelopeSuccessTrue:
+		return true
+	}
+	return false
+}
+
+type StoreGetResponseEnvelopeResultInfo struct {
+	// Total number of results for the requested service.
+	Count float64 `json:"count"`
+	// Current page within paginated list of results.
+	Page float64 `json:"page"`
+	// Number of results per page of results.
+	PerPage float64 `json:"per_page"`
+	// Total results available without any search parameters.
+	TotalCount float64 `json:"total_count"`
+	// The number of total pages in the entire result set.
+	TotalPages float64                                `json:"total_pages"`
+	JSON       storeGetResponseEnvelopeResultInfoJSON `json:"-"`
+}
+
+// storeGetResponseEnvelopeResultInfoJSON contains the JSON metadata for the struct
+// [StoreGetResponseEnvelopeResultInfo]
+type storeGetResponseEnvelopeResultInfoJSON struct {
+	Count       apijson.Field
+	Page        apijson.Field
+	PerPage     apijson.Field
+	TotalCount  apijson.Field
+	TotalPages  apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *StoreGetResponseEnvelopeResultInfo) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r storeGetResponseEnvelopeResultInfoJSON) RawJSON() string {
+	return r.raw
+}

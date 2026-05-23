@@ -1,0 +1,244 @@
+// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
+
+package stream
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net/http"
+	"slices"
+	"time"
+
+	"github.com/cloudflare/cloudflare-go/v7/internal/apijson"
+	"github.com/cloudflare/cloudflare-go/v7/internal/param"
+	"github.com/cloudflare/cloudflare-go/v7/internal/requestconfig"
+	"github.com/cloudflare/cloudflare-go/v7/option"
+)
+
+// ClipService contains methods and other services that help with interacting with
+// the cloudflare API.
+//
+// Note, unlike clients, this service does not read variables from the environment
+// automatically. You should not instantiate this service directly, and instead use
+// the [NewClipService] method instead.
+type ClipService struct {
+	Options []option.RequestOption
+}
+
+// NewClipService generates a new service that applies the given options to each
+// request. These options are applied after the parent client's options (if there
+// is one), and before any request-specific options.
+func NewClipService(opts ...option.RequestOption) (r *ClipService) {
+	r = &ClipService{}
+	r.Options = opts
+	return
+}
+
+// Clips a video based on the specified start and end times provided in seconds.
+func (r *ClipService) New(ctx context.Context, params ClipNewParams, opts ...option.RequestOption) (res *Video, err error) {
+	var env ClipNewResponseEnvelope
+	opts = slices.Concat(r.Options, opts)
+	if params.AccountID.Value == "" {
+		err = errors.New("missing required account_id parameter")
+		return nil, err
+	}
+	path := fmt.Sprintf("accounts/%s/stream/clip", params.AccountID)
+	err = requestconfig.ExecuteNewRequest(ctx, http.MethodPost, path, params, &env, opts...)
+	if err != nil {
+		return nil, err
+	}
+	res = &env.Result
+	return res, nil
+}
+
+type ClipNewParams struct {
+	// The account identifier tag.
+	AccountID param.Field[string] `path:"account_id" api:"required"`
+	// The unique video identifier (UID).
+	ClippedFromVideoUID param.Field[string] `json:"clippedFromVideoUID" api:"required"`
+	// Specifies the end time for the video clip in seconds.
+	EndTimeSeconds param.Field[int64] `json:"endTimeSeconds" api:"required"`
+	// Specifies the start time for the video clip in seconds.
+	StartTimeSeconds param.Field[int64] `json:"startTimeSeconds" api:"required"`
+	// Lists the origins allowed to display the video. Enter allowed origin domains in
+	// an array and use `*` for wildcard subdomains. Empty arrays allow the video to be
+	// viewed on any origin.
+	AllowedOrigins param.Field[[]AllowedOriginsParam] `json:"allowedOrigins"`
+	// A user-defined identifier for the media creator.
+	Creator param.Field[string] `json:"creator"`
+	// A video's URL. Preferred over 'url'.
+	Input param.Field[string] `json:"input" format:"uri"`
+	// A user modifiable key-value store used to reference other systems of record for
+	// managing videos.
+	Meta param.Field[interface{}] `json:"meta"`
+	// A name for the video.
+	Name param.Field[string] `json:"name"`
+	// Indicates whether the video can be a accessed using the UID. When set to `true`,
+	// a signed token must be generated with a signing key to view the video.
+	RequireSignedURLs param.Field[bool] `json:"requireSignedURLs"`
+	// Indicates the date and time at which the video will be deleted. Omit the field
+	// to indicate no change, or include with a `null` value to remove an existing
+	// scheduled deletion. If specified, must be at least 30 days from upload time.
+	ScheduledDeletion param.Field[time.Time] `json:"scheduledDeletion" format:"date-time"`
+	// The timestamp for a thumbnail image calculated as a percentage value of the
+	// video's duration. To convert from a second-wise timestamp to a percentage,
+	// divide the desired timestamp by the total duration of the video. If this value
+	// is not set, the default thumbnail image is taken from 0s of the video.
+	ThumbnailTimestampPct param.Field[float64] `json:"thumbnailTimestampPct"`
+	// A video's URL (legacy field, use 'input' instead).
+	URL       param.Field[string]                 `json:"url" format:"uri"`
+	Watermark param.Field[ClipNewParamsWatermark] `json:"watermark"`
+}
+
+func (r ClipNewParams) MarshalJSON() (data []byte, err error) {
+	return apijson.MarshalRoot(r)
+}
+
+type ClipNewParamsWatermark struct {
+	// The unique identifier for the watermark profile.
+	UID param.Field[string] `json:"uid"`
+}
+
+func (r ClipNewParamsWatermark) MarshalJSON() (data []byte, err error) {
+	return apijson.MarshalRoot(r)
+}
+
+type ClipNewResponseEnvelope struct {
+	Errors   []ClipNewResponseEnvelopeErrors   `json:"errors" api:"required"`
+	Messages []ClipNewResponseEnvelopeMessages `json:"messages" api:"required"`
+	// Whether the API call was successful.
+	Success ClipNewResponseEnvelopeSuccess `json:"success" api:"required"`
+	Result  Video                          `json:"result"`
+	JSON    clipNewResponseEnvelopeJSON    `json:"-"`
+}
+
+// clipNewResponseEnvelopeJSON contains the JSON metadata for the struct
+// [ClipNewResponseEnvelope]
+type clipNewResponseEnvelopeJSON struct {
+	Errors      apijson.Field
+	Messages    apijson.Field
+	Success     apijson.Field
+	Result      apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *ClipNewResponseEnvelope) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r clipNewResponseEnvelopeJSON) RawJSON() string {
+	return r.raw
+}
+
+type ClipNewResponseEnvelopeErrors struct {
+	Code             int64                               `json:"code" api:"required"`
+	Message          string                              `json:"message" api:"required"`
+	DocumentationURL string                              `json:"documentation_url"`
+	Source           ClipNewResponseEnvelopeErrorsSource `json:"source"`
+	JSON             clipNewResponseEnvelopeErrorsJSON   `json:"-"`
+}
+
+// clipNewResponseEnvelopeErrorsJSON contains the JSON metadata for the struct
+// [ClipNewResponseEnvelopeErrors]
+type clipNewResponseEnvelopeErrorsJSON struct {
+	Code             apijson.Field
+	Message          apijson.Field
+	DocumentationURL apijson.Field
+	Source           apijson.Field
+	raw              string
+	ExtraFields      map[string]apijson.Field
+}
+
+func (r *ClipNewResponseEnvelopeErrors) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r clipNewResponseEnvelopeErrorsJSON) RawJSON() string {
+	return r.raw
+}
+
+type ClipNewResponseEnvelopeErrorsSource struct {
+	Pointer string                                  `json:"pointer"`
+	JSON    clipNewResponseEnvelopeErrorsSourceJSON `json:"-"`
+}
+
+// clipNewResponseEnvelopeErrorsSourceJSON contains the JSON metadata for the
+// struct [ClipNewResponseEnvelopeErrorsSource]
+type clipNewResponseEnvelopeErrorsSourceJSON struct {
+	Pointer     apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *ClipNewResponseEnvelopeErrorsSource) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r clipNewResponseEnvelopeErrorsSourceJSON) RawJSON() string {
+	return r.raw
+}
+
+type ClipNewResponseEnvelopeMessages struct {
+	Code             int64                                 `json:"code" api:"required"`
+	Message          string                                `json:"message" api:"required"`
+	DocumentationURL string                                `json:"documentation_url"`
+	Source           ClipNewResponseEnvelopeMessagesSource `json:"source"`
+	JSON             clipNewResponseEnvelopeMessagesJSON   `json:"-"`
+}
+
+// clipNewResponseEnvelopeMessagesJSON contains the JSON metadata for the struct
+// [ClipNewResponseEnvelopeMessages]
+type clipNewResponseEnvelopeMessagesJSON struct {
+	Code             apijson.Field
+	Message          apijson.Field
+	DocumentationURL apijson.Field
+	Source           apijson.Field
+	raw              string
+	ExtraFields      map[string]apijson.Field
+}
+
+func (r *ClipNewResponseEnvelopeMessages) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r clipNewResponseEnvelopeMessagesJSON) RawJSON() string {
+	return r.raw
+}
+
+type ClipNewResponseEnvelopeMessagesSource struct {
+	Pointer string                                    `json:"pointer"`
+	JSON    clipNewResponseEnvelopeMessagesSourceJSON `json:"-"`
+}
+
+// clipNewResponseEnvelopeMessagesSourceJSON contains the JSON metadata for the
+// struct [ClipNewResponseEnvelopeMessagesSource]
+type clipNewResponseEnvelopeMessagesSourceJSON struct {
+	Pointer     apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *ClipNewResponseEnvelopeMessagesSource) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r clipNewResponseEnvelopeMessagesSourceJSON) RawJSON() string {
+	return r.raw
+}
+
+// Whether the API call was successful.
+type ClipNewResponseEnvelopeSuccess bool
+
+const (
+	ClipNewResponseEnvelopeSuccessTrue ClipNewResponseEnvelopeSuccess = true
+)
+
+func (r ClipNewResponseEnvelopeSuccess) IsKnown() bool {
+	switch r {
+	case ClipNewResponseEnvelopeSuccessTrue:
+		return true
+	}
+	return false
+}
