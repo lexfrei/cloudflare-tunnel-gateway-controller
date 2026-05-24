@@ -22,6 +22,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/net/http2"
+	"golang.org/x/net/websocket"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/proxy"
 )
@@ -2176,4 +2177,287 @@ func TestHandler_BackendClientCert_MissingWhenServerRequires(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadGateway, rec.Result().StatusCode,
 		"backend that requires a client cert must reject a handshake without one — proxy returns 502")
+}
+
+// newWSEchoBackend stands up an httptest backend running an x/net/websocket
+// echo handler. tlsEnabled chooses between httptest.NewServer and
+// NewTLSServer; the returned *httptest.Server carries the TLS material that
+// caPEMFromTLSServer reads.
+//
+// The WS handler echoes raw bytes back; tests write a frame and expect to
+// read the same bytes. golang.org/x/net/websocket frames text payloads with
+// FrameType 1 automatically.
+func newWSEchoBackend(t *testing.T, tlsEnabled bool) *httptest.Server {
+	t.Helper()
+
+	handler := websocket.Server{
+		Handler: func(c *websocket.Conn) {
+			// io.Copy reads frames from the client and writes them back
+			// verbatim. It returns when the client closes.
+			_, _ = io.Copy(c, c)
+		},
+	}
+
+	if tlsEnabled {
+		server := httptest.NewTLSServer(handler)
+		t.Cleanup(server.Close)
+
+		return server
+	}
+
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
+
+	return server
+}
+
+// TestHandler_BackendProtocolWebSocket_Echo pins the contract that
+// httputil.ReverseProxy's native 101 Switching Protocols handling survives
+// our Director. The Director currently only deletes X-Original-Host and
+// sets a default User-Agent — Connection/Upgrade/Sec-WebSocket-* flow
+// through. If anyone adds header sanitisation here in the future, this
+// test fails loudly: WebSocket support is silently broken without a real
+// upgrade handshake to prove otherwise.
+//
+// The proxy itself runs as a real httptest.Server because httptest
+// .NewRecorder does not implement http.Hijacker, which ReverseProxy needs
+// in handleUpgradeResponse to hijack the conn after the 101.
+func TestHandler_BackendProtocolWebSocket_Echo(t *testing.T) {
+	t.Parallel()
+
+	backend := newWSEchoBackend(t, false)
+
+	router := proxy.NewRouter()
+	require.NoError(t, router.UpdateConfig(&proxy.Config{
+		Version: 1,
+		Rules: []proxy.RouteRule{
+			{
+				// Empty Hostnames → match-all. Avoids forcing the test
+				// client to forge a Host header on top of the dialed
+				// loopback address.
+				Matches: []proxy.RouteMatch{{Path: &proxy.PathMatch{Type: proxy.PathMatchPathPrefix, Value: "/"}}},
+				Backends: []proxy.BackendRef{
+					{URL: backend.URL, Weight: 1, Protocol: proxy.BackendProtocolHTTP, WebSocket: true},
+				},
+			},
+		},
+	}))
+
+	proxySrv := httptest.NewServer(proxy.NewHandler(router))
+	t.Cleanup(proxySrv.Close)
+
+	roundTripWSEcho(t, proxySrv, "ws-cleartext-round-trip")
+}
+
+// TestHandler_BackendProtocolWebSocket_TLS_Echo is the wss/BackendTLSPolicy
+// variant: the backend speaks WS-over-TLS and the proxy must complete the
+// TLS handshake before the WebSocket upgrade. Pins that the cert flows
+// through cleanly and the 101 still hijacks.
+func TestHandler_BackendProtocolWebSocket_TLS_Echo(t *testing.T) {
+	t.Parallel()
+
+	backend := newWSEchoBackend(t, true)
+	caPEM := caPEMFromTLSServer(t, backend)
+
+	router := proxy.NewRouter()
+	require.NoError(t, router.UpdateConfig(&proxy.Config{
+		Version: 1,
+		Rules: []proxy.RouteRule{
+			{
+				Matches: []proxy.RouteMatch{{Path: &proxy.PathMatch{Type: proxy.PathMatchPathPrefix, Value: "/"}}},
+				Backends: []proxy.BackendRef{
+					{
+						URL:       backend.URL, // already https://
+						Weight:    1,
+						Protocol:  proxy.BackendProtocolHTTP,
+						WebSocket: true,
+						TLS: &proxy.BackendTLSConfig{
+							CABundlePEM: caPEM,
+							ServerName:  "example.com", // httptest.NewTLSServer cert SAN
+						},
+					},
+				},
+			},
+		},
+	}))
+
+	proxySrv := httptest.NewServer(proxy.NewHandler(router))
+	t.Cleanup(proxySrv.Close)
+
+	roundTripWSEcho(t, proxySrv, "wss-tls-round-trip")
+}
+
+// TestHandler_WebSocket_NotTerminatedByRequestTimeout pins that a route's
+// per-rule `timeouts.request` does NOT kill an active WebSocket once the
+// 101 Switching Protocols response has hijacked the conn. The Gateway API
+// spec defines `timeouts.request` as a bound on how long the gateway takes
+// to respond to an HTTP request; once the protocol switches via upgrade,
+// the HTTP request is complete and the post-upgrade bytestream is not an
+// HTTP request anymore. Applying an HTTP request timeout to a long-lived
+// WS conn would be a footgun — operators would set a 30s timeout for
+// regular traffic and discover their WS clients silently dropped.
+//
+// Without the upgrade-skip fix in Handler.ServeHTTP, stdlib's
+// httputil.ReverseProxy.handleUpgradeResponse watches req.Context() and
+// closes both ends of the hijacked conn when ctx is canceled — so a
+// request timeout of 1s would terminate the WS at the 1s mark regardless
+// of whether bytes were still flowing.
+func TestHandler_WebSocket_NotTerminatedByRequestTimeout(t *testing.T) {
+	t.Parallel()
+	runWebSocketTimeoutSkipTest(t, &proxy.RouteTimeouts{Request: 500 * time.Millisecond})
+}
+
+// TestHandler_WebSocket_NotTerminatedByBackendTimeout is the sibling pin
+// for `timeouts.backend`. Both timeouts get the same upgrade-skip
+// treatment in Handler.proxyToBackend, but without an explicit test a
+// future change that drops the `!isHTTPUpgradeRequest(req)` guard on the
+// backend-timeout arm would sail through CI because the request-timeout
+// test on its own would still pass.
+func TestHandler_WebSocket_NotTerminatedByBackendTimeout(t *testing.T) {
+	t.Parallel()
+	runWebSocketTimeoutSkipTest(t, &proxy.RouteTimeouts{Backend: 500 * time.Millisecond})
+}
+
+// runWebSocketTimeoutSkipTest sets up a WS echo backend, applies the given
+// per-rule timeouts to the route, opens a WebSocket, sleeps past the
+// configured deadline, and confirms the round trip still works. The
+// behaviour is identical for `Request` and `Backend` timeouts because
+// both arms of the handler now skip context.WithTimeout for HTTP/1.1
+// upgrade requests.
+func runWebSocketTimeoutSkipTest(t *testing.T, timeouts *proxy.RouteTimeouts) {
+	t.Helper()
+
+	backend := newWSEchoBackend(t, false)
+
+	router := proxy.NewRouter()
+
+	// Apply a very tight 500ms timeout so the test takes < 2s but is
+	// large enough to comfortably absorb the upgrade handshake.
+	require.NoError(t, router.UpdateConfig(&proxy.Config{
+		Version: 1,
+		Rules: []proxy.RouteRule{
+			{
+				Matches:  []proxy.RouteMatch{{Path: &proxy.PathMatch{Type: proxy.PathMatchPathPrefix, Value: "/"}}},
+				Timeouts: timeouts,
+				Backends: []proxy.BackendRef{{URL: backend.URL, Weight: 1, Protocol: proxy.BackendProtocolHTTP, WebSocket: true}},
+			},
+		},
+	}))
+
+	proxySrv := httptest.NewServer(proxy.NewHandler(router))
+	t.Cleanup(proxySrv.Close)
+
+	wsURL := "ws" + strings.TrimPrefix(proxySrv.URL, "http") + "/echo"
+	origin := "http://" + proxySrv.Listener.Addr().String()
+
+	conn, err := websocket.Dial(wsURL, "", origin)
+	require.NoError(t, err)
+
+	t.Cleanup(func() { _ = conn.Close() })
+
+	// Sleep past the timeout — without the upgrade-skip fix this would
+	// have canceled the request context and closed the hijacked conn.
+	time.Sleep(1 * time.Second)
+
+	const payload = "after-timeout-payload"
+
+	_, err = conn.Write([]byte(payload))
+	require.NoError(t, err,
+		"writing a frame >1s after the 500ms timeout must succeed — "+
+			"the upgrade response detached the conn from the request lifecycle")
+
+	require.NoError(t, conn.SetReadDeadline(time.Now().Add(5*time.Second)))
+
+	buf := make([]byte, len(payload))
+	n, err := io.ReadFull(conn, buf)
+	require.NoError(t, err, "reading the echoed frame back must succeed after the timeout")
+	assert.Equal(t, payload, string(buf[:n]))
+}
+
+// TestHandler_NonWSBackend_TimeoutAppliesEvenWithUpgradeHeaders is the
+// regression guard for the upgrade-skip's operator-driven gate. A request
+// arrives at a route whose backends have NO `appProtocol: kubernetes.io/ws`
+// declaration but carries the WebSocket upgrade headers anyway (a
+// misconfigured or malicious client). The route's Request timeout MUST
+// still apply — otherwise any client could bypass operator-declared
+// deadlines by tacking on `Connection: Upgrade, Upgrade: websocket`, a
+// slow-loris vector and a Gateway API spec violation on non-WS routes.
+//
+// The backend here is a slow-write HTTP/1.1 server that takes 2s to write
+// its response body; with a 500ms request timeout the proxy must return
+// 504 Gateway Timeout, NOT proxy through.
+func TestHandler_NonWSBackend_TimeoutAppliesEvenWithUpgradeHeaders(t *testing.T) {
+	t.Parallel()
+
+	// Slow backend: hold the response for longer than the request timeout
+	// so the timeout decides the outcome rather than the backend latency.
+	backend := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		time.Sleep(2 * time.Second)
+		writer.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(backend.Close)
+
+	router := proxy.NewRouter()
+	require.NoError(t, router.UpdateConfig(&proxy.Config{
+		Version: 1,
+		Rules: []proxy.RouteRule{
+			{
+				Matches:  []proxy.RouteMatch{{Path: &proxy.PathMatch{Type: proxy.PathMatchPathPrefix, Value: "/"}}},
+				Timeouts: &proxy.RouteTimeouts{Request: 500 * time.Millisecond},
+				Backends: []proxy.BackendRef{
+					// NB: WebSocket is intentionally false — operator did NOT
+					// declare this backend as WS-capable. The timeout-skip
+					// must NOT trigger even with client-supplied upgrade
+					// headers.
+					{URL: backend.URL, Weight: 1, Protocol: proxy.BackendProtocolHTTP},
+				},
+			},
+		},
+	}))
+
+	handler := proxy.NewHandler(router)
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://app.example.com/", nil)
+	req.Header.Set("Connection", "Upgrade")
+	req.Header.Set("Upgrade", "websocket")
+	req.Header.Set("Sec-WebSocket-Version", "13")
+	req.Header.Set("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
+
+	start := time.Now()
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	elapsed := time.Since(start)
+
+	assert.Equal(t, http.StatusGatewayTimeout, rec.Result().StatusCode,
+		"client claiming upgrade against a non-WebSocket backend MUST still hit the 500ms request timeout — "+
+			"gating on the client header alone would let any request bypass operator-declared deadlines")
+	assert.Less(t, elapsed, 1500*time.Millisecond,
+		"the handler must return inside the timeout window, not block for the full 2s backend latency")
+}
+
+// roundTripWSEcho dials the proxy via ws://, writes a payload, and reads
+// it back. Extracted so the cleartext and TLS variants share the assertion
+// shape — the only difference between them is the backend configuration.
+func roundTripWSEcho(t *testing.T, proxySrv *httptest.Server, payload string) {
+	t.Helper()
+
+	wsURL := "ws" + strings.TrimPrefix(proxySrv.URL, "http") + "/echo"
+	origin := "http://" + proxySrv.Listener.Addr().String()
+
+	conn, err := websocket.Dial(wsURL, "", origin)
+	require.NoError(t, err, "WebSocket handshake through proxy must succeed (101 Switching Protocols)")
+
+	t.Cleanup(func() { _ = conn.Close() })
+
+	_, err = conn.Write([]byte(payload))
+	require.NoError(t, err, "writing frame after 101 must succeed (conn is hijacked, bytes go to backend)")
+
+	require.NoError(t, conn.SetReadDeadline(time.Now().Add(5*time.Second)))
+
+	buf := make([]byte, len(payload))
+	n, err := io.ReadFull(conn, buf)
+	require.NoError(t, err, "reading the echoed frame back must succeed")
+	assert.Equal(t, payload, string(buf[:n]),
+		"echo round-trip through proxy must preserve payload verbatim — "+
+			"any difference proves the Director / transport corrupted the upgrade")
 }

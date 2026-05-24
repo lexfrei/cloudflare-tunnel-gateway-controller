@@ -230,6 +230,16 @@ operators can either drop the BackendTLSPolicy (if they actually wanted
 cleartext WebSocket) or flip the hint to `kubernetes.io/wss` (if they
 wanted the TLS-protected variant all along).
 
+### Interaction with `spec.rules[].timeouts`
+
+`timeouts.request` and `timeouts.backend` are HTTP-request-scoped deadlines.
+They are **not applied** to requests carrying `Connection: Upgrade` headers
+(WebSocket and any other HTTP/1.1 upgrade). Once the upgrade response
+hijacks the conn the HTTP request lifecycle ends, and applying an HTTP
+deadline would silently terminate the long-lived stream at the timeout
+boundary. Set timeouts on routes whose backends are pure HTTP; the
+upgrade-skip is automatic for WebSocket traffic.
+
 ## Backend mTLS (BackendTLSPolicy)
 
 The L7 proxy supports Gateway API `BackendTLSPolicy` for proxy → backend TLS,

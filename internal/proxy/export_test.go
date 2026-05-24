@@ -41,3 +41,10 @@ func ShouldMirrorForTest(percent *int32) bool {
 func NewH2CDialerForTest() *net.Dialer {
 	return newH2CDialer()
 }
+
+// IsHTTPUpgradeRequestForTest exposes isHTTPUpgradeRequest so its RFC 7230
+// token-parsing edge cases can be pinned by direct unit tests instead of
+// relying on the WS integration test as the only proof of correctness.
+func IsHTTPUpgradeRequestForTest(req *http.Request) bool {
+	return isHTTPUpgradeRequest(req)
+}
