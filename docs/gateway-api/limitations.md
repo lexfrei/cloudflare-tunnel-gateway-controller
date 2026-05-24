@@ -202,22 +202,24 @@ Gateway API specification.
 ## Backend Protocol (`Service.spec.ports[].appProtocol`)
 
 The L7 proxy reads the backend Service port's `appProtocol` to pick the upstream
-transport. Only one Kubernetes-defined value is implemented today:
+transport. The supported Kubernetes-defined values:
 
 | `appProtocol` | Supported | Notes |
 | --- | --- | --- |
 | _(unset)_ | Yes | Default — proxy speaks HTTP/1.1 to the backend |
 | `kubernetes.io/h2c` | Yes | Proxy speaks HTTP/2 cleartext (prior knowledge) |
-| `kubernetes.io/ws` | No | Backend WebSocket not implemented; treated as default HTTP — no conformance coverage |
-| `kubernetes.io/wss` | No | Backend WebSocket-over-TLS not implemented; treated as default HTTP |
+| `kubernetes.io/ws` | Yes | Default HTTP/1.1 transport; the WebSocket upgrade is decided per-request by the `Connection: Upgrade` + `Upgrade: websocket` headers and `httputil.ReverseProxy` hijacks the conn on the 101 response |
+| `kubernetes.io/wss` | Yes | Requires a `BackendTLSPolicy` targeting the Service (same precondition as `appProtocol: https`); without one the proxy logs a WARN and falls back to plaintext, which the backend will refuse |
 | any other value | No | Logged with a warning at conversion time; proxy falls back to default HTTP/1.1 |
 
-The conformance test `HTTPRouteBackendProtocolWebSocket` is not testable on
-this controller via the upstream Gateway API conformance suite because the
-test's `websocket.Dial` connects directly to the Gateway address
-(`*.cfargotunnel.com`) — same structural limitation as the gRPC conformance
-tests documented above. WebSocket backends may be supported separately via
-e2e validation in a future change.
+The upstream conformance test `HTTPRouteBackendProtocolWebSocket` is not
+testable through Cloudflare Tunnel: it dials the Gateway address directly via
+`golang.org/x/net/websocket.Dial` with no RoundTripper hook, and our Gateway
+address is `<tunnel-id>.cfargotunnel.com` whose AAAA records point at
+Cloudflare's ULA (`fd10::/8`), which is unreachable from any test runner.
+Same structural limitation as the gRPC conformance tests documented above.
+`test/e2e/e2e_backend_protocol_websocket_test.go` is the substitute proof —
+it runs an end-to-end WebSocket round trip against the real tunnel hostname.
 
 ### Interaction with `appProtocol: kubernetes.io/ws`
 
@@ -233,12 +235,27 @@ wanted the TLS-protected variant all along).
 ### Interaction with `spec.rules[].timeouts`
 
 `timeouts.request` and `timeouts.backend` are HTTP-request-scoped deadlines.
-They are **not applied** to requests carrying `Connection: Upgrade` headers
-(WebSocket and any other HTTP/1.1 upgrade). Once the upgrade response
-hijacks the conn the HTTP request lifecycle ends, and applying an HTTP
-deadline would silently terminate the long-lived stream at the timeout
-boundary. Set timeouts on routes whose backends are pure HTTP; the
-upgrade-skip is automatic for WebSocket traffic.
+The proxy skips them only when BOTH of these hold:
+
+1. The operator declared at least one backend on the route as WebSocket-
+   capable via `appProtocol: kubernetes.io/ws` or `kubernetes.io/wss`
+   (for `timeouts.request`) or — for `timeouts.backend` — the specific
+   selected backend.
+2. The client request itself carries the HTTP/1.1 upgrade headers
+   (`Connection: Upgrade` + a non-empty `Upgrade:` value, per RFC 7230).
+
+Both conditions matter. Gating only on the operator signal would skip
+timeouts for plain HTTP requests that happen to hit a WS-marked route;
+gating only on the client header would let any request bypass the route's
+declared deadlines by tacking on `Connection: Upgrade` — a slow-loris
+vector and a Gateway API spec violation on non-WebSocket routes.
+
+Once a real WS upgrade completes, the request context is what
+`httputil.ReverseProxy.handleUpgradeResponse` watches; cancelling it
+closes the hijacked conn from underneath the parties (see
+[golang.org/issue/35559](https://golang.org/issue/35559)). The gated
+skip ensures live WebSocket conns are not terminated at the timeout
+boundary on routes that legitimately serve them.
 
 ## Backend mTLS (BackendTLSPolicy)
 
