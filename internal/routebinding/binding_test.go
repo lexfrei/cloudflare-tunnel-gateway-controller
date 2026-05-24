@@ -400,6 +400,10 @@ func TestValidateBinding(t *testing.T) {
 			expectedMatched:  nil,
 		},
 		{
+			// This case also pins the upstream conformance fixture
+			// httproute-invalid-parentref-not-matching-listener-port.yaml:
+			// single listener on port 80, parentRef.port=81, no sectionName.
+			// Spec requires Accepted=False with Reason=NoMatchingParent.
 			name: "route with Port only (no SectionName) rejected when no listener matches port",
 			gateway: &gatewayv1.Gateway{
 				ObjectMeta: metav1.ObjectMeta{

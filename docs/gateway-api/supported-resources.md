@@ -66,6 +66,7 @@ only path-based routing through the Cloudflare Tunnel API is available.
 | `spec.parentRefs[].port` | Yes | Listener port (optional) |
 | `spec.hostnames` | Yes | Wildcard `*` supported |
 | `spec.rules` | Yes | Routing rules |
+| `spec.rules[].name` | Yes | Metadata only; preserved on the spec but not consulted during matching |
 | `spec.rules[].matches` | Yes | Full matching with L7 proxy |
 | `spec.rules[].matches[].path` | Yes | PathPrefix, Exact; RegularExpression requires L7 proxy |
 | `spec.rules[].matches[].headers` | Yes | Requires L7 proxy |
@@ -123,8 +124,10 @@ The following HTTPRoute filters are supported with the L7 proxy enabled:
 | `spec.parentRefs[].name` | Yes | Gateway name |
 | `spec.parentRefs[].namespace` | Yes | Gateway namespace |
 | `spec.parentRefs[].sectionName` | Yes | Listener name (optional) |
+| `spec.parentRefs[].port` | Yes | Listener port (optional) |
 | `spec.hostnames` | Yes | Wildcard `*` supported |
 | `spec.rules` | Yes | Routing rules |
+| `spec.rules[].name` | Yes | Metadata only; preserved on the spec but not consulted during matching |
 | `spec.rules[].matches` | Yes | Service/method matching |
 | `spec.rules[].matches[].method.service` | Yes | gRPC service name |
 | `spec.rules[].matches[].method.method` | Yes | gRPC method name |
