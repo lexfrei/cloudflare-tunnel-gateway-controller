@@ -463,7 +463,7 @@ func (s *ProxySyncer) SyncRoutes(
 	// Convert to proxy config with cross-namespace validation, backend
 	// protocol resolution (e.g. h2c from Service appProtocol), and
 	// BackendTLSPolicy lookup for the proxy → backend TLS hop.
-	cfg := proxy.ConvertHTTPRoutes(ctx, routes, s.clusterDomain, s.backendValidator, s.protocolResolver, s.tlsResolver)
+	cfg := proxy.ConvertHTTPRoutes(ctx, routes, s.clusterDomain, s.backendValidator, s.protocolResolver, s.tlsResolver, nil)
 
 	// Clear backends for routes that have failed backend refs.
 	// This ensures the proxy returns 500 (no backend available) instead of

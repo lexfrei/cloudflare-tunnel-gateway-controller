@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"k8s.io/apimachinery/pkg/types"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
@@ -55,13 +56,30 @@ type BackendProtocolResolver func(ctx context.Context, namespace, serviceName st
 // It lets the converter inject TLS settings without itself reading the API.
 type BackendTLSResolver func(ctx context.Context, namespace, serviceName string, port int32) *BackendTLSConfig
 
+// ClientCertConfig carries the PEM-encoded TLS client certificate (optionally
+// a chain) and matching private key that the proxy must present during backend
+// mTLS handshakes. Sourced from a Gateway's
+// spec.tls.backend.clientCertificateRef.
+type ClientCertConfig struct {
+	CertPEM []byte
+	KeyPEM  []byte
+}
+
+// GatewayClientCertResolver returns the resolved client certificate for the
+// Gateway identified by gatewayNN, or nil when that Gateway does not
+// configure backend mTLS. The converter calls it once per route (first parent
+// wins) and stamps the result onto every backend's BackendTLSConfig.
+type GatewayClientCertResolver func(ctx context.Context, gatewayNN types.NamespacedName) *ClientCertConfig
+
 // ConvertHTTPRoutes converts Gateway API HTTPRoute resources into a proxy Config.
 //
-// validator, protocolResolver, and tlsResolver may all be nil:
+// validator, protocolResolver, tlsResolver and gatewayCertResolver may all be nil:
 //   - nil validator: cross-namespace backend refs are accepted unconditionally
 //     (used by tests that don't model ReferenceGrant).
 //   - nil protocolResolver: backend protocol stays the default HTTP/1.1.
 //   - nil tlsResolver: no BackendTLSPolicy is applied; plaintext to backends.
+//   - nil gatewayCertResolver: no Gateway-level client certificate is attached
+//     to any backend TLS handshake (one-way TLS only).
 func ConvertHTTPRoutes(
 	ctx context.Context,
 	routes []*gatewayv1.HTTPRoute,
@@ -69,6 +87,7 @@ func ConvertHTTPRoutes(
 	validator BackendRefValidator,
 	protocolResolver BackendProtocolResolver,
 	tlsResolver BackendTLSResolver,
+	gatewayCertResolver GatewayClientCertResolver,
 ) *Config {
 	cfg := &Config{
 		Version: configVersionCounter.Add(1),
@@ -76,11 +95,12 @@ func ConvertHTTPRoutes(
 
 	for _, route := range routes {
 		hostnames := convertHostnames(route.Spec.Hostnames)
+		clientCert := resolveFirstParentClientCert(ctx, route, gatewayCertResolver)
 
 		for ruleIdx := range route.Spec.Rules {
 			proxyRule := convertHTTPRouteRule(
 				ctx, &route.Spec.Rules[ruleIdx], hostnames,
-				route.Namespace, clusterDomain, validator, protocolResolver, tlsResolver,
+				route.Namespace, clusterDomain, validator, protocolResolver, tlsResolver, clientCert,
 			)
 
 			// Rules with no backends and no redirect filter are kept —
@@ -92,6 +112,42 @@ func ConvertHTTPRoutes(
 	}
 
 	return cfg
+}
+
+// resolveFirstParentClientCert walks the route's parentRefs in declaration
+// order, asking gatewayCertResolver for each parent's client certificate, and
+// returns the first non-nil result. Multiple parents with conflicting certs
+// are a spec edge case the conformance suite does not exercise; this
+// "first-wins" rule is documented in docs/gateway-api/limitations.md.
+func resolveFirstParentClientCert(
+	ctx context.Context,
+	route *gatewayv1.HTTPRoute,
+	resolver GatewayClientCertResolver,
+) *ClientCertConfig {
+	if resolver == nil {
+		return nil
+	}
+
+	for _, ref := range route.Spec.ParentRefs {
+		if ref.Group != nil && *ref.Group != "" && *ref.Group != "gateway.networking.k8s.io" {
+			continue
+		}
+
+		if ref.Kind != nil && *ref.Kind != "" && *ref.Kind != "Gateway" {
+			continue
+		}
+
+		ns := route.Namespace
+		if ref.Namespace != nil {
+			ns = string(*ref.Namespace)
+		}
+
+		if cert := resolver(ctx, types.NamespacedName{Namespace: ns, Name: string(ref.Name)}); cert != nil {
+			return cert
+		}
+	}
+
+	return nil
 }
 
 func convertHostnames(hostnames []gatewayv1.Hostname) []string {
@@ -113,6 +169,7 @@ func convertHTTPRouteRule(
 	validator BackendRefValidator,
 	resolver BackendProtocolResolver,
 	tlsResolver BackendTLSResolver,
+	clientCert *ClientCertConfig,
 ) RouteRule {
 	proxyRule := RouteRule{
 		Hostnames: hostnames,
@@ -130,7 +187,7 @@ func convertHTTPRouteRule(
 	}
 
 	for backendIdx := range rule.BackendRefs {
-		backend, ok := convertBackendRef(ctx, &rule.BackendRefs[backendIdx], namespace, clusterDomain, validator, resolver, tlsResolver)
+		backend, ok := convertBackendRef(ctx, &rule.BackendRefs[backendIdx], namespace, clusterDomain, validator, resolver, tlsResolver, clientCert)
 		if ok {
 			proxyRule.Backends = append(proxyRule.Backends, backend)
 		}
@@ -618,6 +675,7 @@ func convertBackendRef(
 	validator BackendRefValidator,
 	resolver BackendProtocolResolver,
 	tlsResolver BackendTLSResolver,
+	clientCert *ClientCertConfig,
 ) (BackendRef, bool) {
 	if !IsServiceBackendRef(backend.BackendObjectReference) {
 		slog.Warn("skipping non-Service backend kind",
@@ -627,20 +685,8 @@ func convertBackendRef(
 		return BackendRef{}, false
 	}
 
-	result := BackendRef{
-		Weight: 1,
-	}
-
-	if backend.Weight != nil {
-		result.Weight = *backend.Weight
-	}
-
-	if result.Weight < 0 {
-		slog.Warn("skipping backend with negative weight",
-			"name", string(backend.Name),
-			"weight", result.Weight,
-		)
-
+	result, ok := initBackendRefBaseline(backend)
+	if !ok {
 		return BackendRef{}, false
 	}
 
@@ -669,11 +715,48 @@ func convertBackendRef(
 	// pass through `appProtocol: https` (policy attached → suppressed) or warn
 	// (no policy → operator misconfigured a TLS hint with no actual TLS).
 	result.TLS, result.URL = resolveBackendTLS(ctx, tlsResolver, svcNamespace, serviceName, port, result.URL)
+	attachGatewayClientCert(result.TLS, clientCert)
 	result.Protocol, result.URL = resolveBackendProtocol(ctx, resolver, svcNamespace, serviceName, port, result.URL, result.TLS != nil)
 
 	result.Filters = convertBackendFilters(ctx, backend.Filters, namespace, clusterDomain, validator, tlsResolver)
 
 	return result, true
+}
+
+// initBackendRefBaseline validates a backend ref's kind and weight, returning
+// a partially-initialised BackendRef when both checks pass. Extracted from
+// convertBackendRef to keep that function under the funlen budget.
+func initBackendRefBaseline(backend *gatewayv1.HTTPBackendRef) (BackendRef, bool) {
+	result := BackendRef{Weight: 1}
+	if backend.Weight != nil {
+		result.Weight = *backend.Weight
+	}
+
+	if result.Weight < 0 {
+		slog.Warn("skipping backend with negative weight",
+			"name", string(backend.Name),
+			"weight", result.Weight,
+		)
+
+		return BackendRef{}, false
+	}
+
+	return result, true
+}
+
+// attachGatewayClientCert stamps the Gateway-level client keypair onto an
+// already-resolved backend TLS config. It is a no-op when either the backend
+// has no BackendTLSPolicy (tlsCfg == nil) or the parent Gateway does not
+// configure clientCertificateRef (clientCert == nil). The Gateway API spec
+// is explicit that the client cert is presented only when backend TLS is
+// active — sending a cert over plaintext makes no sense.
+func attachGatewayClientCert(tlsCfg *BackendTLSConfig, clientCert *ClientCertConfig) {
+	if tlsCfg == nil || clientCert == nil {
+		return
+	}
+
+	tlsCfg.ClientCertPEM = clientCert.CertPEM
+	tlsCfg.ClientKeyPEM = clientCert.KeyPEM
 }
 
 // resolveBackendTLS applies the BackendTLSPolicy resolver. When a policy
