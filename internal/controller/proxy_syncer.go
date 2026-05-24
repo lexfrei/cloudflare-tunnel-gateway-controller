@@ -13,6 +13,7 @@ import (
 
 	"github.com/cockroachdb/errors"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
@@ -100,6 +101,18 @@ func newGatewayClientCertResolver(c client.Client, controllerName string) proxy.
 	return func(ctx context.Context, gatewayNN types.NamespacedName) *proxy.ClientCertConfig {
 		var gateway gatewayv1.Gateway
 		if err := c.Get(ctx, gatewayNN, &gateway); err != nil {
+			// NotFound is the expected outcome for routes pointing at a
+			// foreign-namespace or deleted parent — silently skip. Any other
+			// error is logged so a transient API-server hiccup that turns
+			// mTLS into plaintext has a visible cause.
+			if !apierrors.IsNotFound(err) {
+				slog.Warn("gateway client cert resolver: Get(Gateway) failed — falling back to plaintext for this hop",
+					"error", err,
+					"namespace", gatewayNN.Namespace,
+					"gateway", gatewayNN.Name,
+				)
+			}
+
 			return nil
 		}
 
@@ -146,12 +159,24 @@ func gatewayManagedByController(ctx context.Context, c client.Client, gateway *g
 		return true
 	}
 
-	var gc gatewayv1.GatewayClass
-	if err := c.Get(ctx, types.NamespacedName{Name: string(gateway.Spec.GatewayClassName)}, &gc); err != nil {
+	var gatewayClass gatewayv1.GatewayClass
+	if err := c.Get(ctx, types.NamespacedName{Name: string(gateway.Spec.GatewayClassName)}, &gatewayClass); err != nil {
+		// NotFound is silent — a Gateway pointing at a missing GatewayClass
+		// is correctly rejected from the "ours" set. Other errors (transient
+		// API-server failure) get logged because they cause the same fail-
+		// closed outcome but for an operational, not configuration, reason.
+		if !apierrors.IsNotFound(err) {
+			slog.Warn("gateway client cert resolver: Get(GatewayClass) failed — Gateway treated as foreign-controlled, no cert presented",
+				"error", err,
+				"gateway", gateway.Name,
+				"gatewayClass", string(gateway.Spec.GatewayClassName),
+			)
+		}
+
 		return false
 	}
 
-	return string(gc.Spec.ControllerName) == controllerName
+	return string(gatewayClass.Spec.ControllerName) == controllerName
 }
 
 // gatewayClientCertGrantChecker adapts the package-level grant lookup into a

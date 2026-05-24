@@ -959,7 +959,12 @@ func (r *GatewayReconciler) routeToGateways(
 }
 
 // gatewayReferencesSecretsInNamespace checks if a Gateway references any Secrets
-// in the given namespace through its TLS configuration.
+// in the given namespace through its TLS configuration. Two surfaces are
+// inspected: each Listener's TLS.CertificateRefs (frontend cert refs) and the
+// Gateway-level Spec.TLS.Backend.ClientCertificateRef (backend mTLS keypair).
+// Both surfaces participate in ReferenceGrant-driven cross-namespace lookups,
+// so a grant change in `namespace` must enqueue the Gateway whenever EITHER
+// surface points at a Secret there.
 func (r *GatewayReconciler) gatewayReferencesSecretsInNamespace(
 	gateway *gatewayv1.Gateway,
 	namespace string,
@@ -979,6 +984,17 @@ func (r *GatewayReconciler) gatewayReferencesSecretsInNamespace(
 			if refNamespace == namespace {
 				return true
 			}
+		}
+	}
+
+	if backendRef := gatewayClientCertRef(gateway); backendRef != nil {
+		refNamespace := gateway.Namespace
+		if backendRef.Namespace != nil {
+			refNamespace = string(*backendRef.Namespace)
+		}
+
+		if refNamespace == namespace {
+			return true
 		}
 	}
 

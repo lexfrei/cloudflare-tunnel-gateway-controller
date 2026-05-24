@@ -1668,6 +1668,46 @@ func TestGatewayReconciler_GatewayReferencesSecretsInNamespace(t *testing.T) {
 			namespace: "other-ns",
 			expected:  false,
 		},
+		{
+			// Pin: a Gateway whose backend client-cert ref lives in the target
+			// namespace must enqueue when a ReferenceGrant lands there, even
+			// if no listener cert points at the namespace. Without this the
+			// proxy's mTLS posture stays stuck behind the next unrelated
+			// reconcile event.
+			name: "backend clientCertificateRef in same namespace",
+			gateway: &gatewayv1.Gateway{
+				ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "default"},
+				Spec: gatewayv1.GatewaySpec{
+					TLS: &gatewayv1.GatewayTLSConfig{
+						Backend: &gatewayv1.GatewayBackendTLS{
+							ClientCertificateRef: &gatewayv1.SecretObjectReference{
+								Name: "client-cert",
+							},
+						},
+					},
+				},
+			},
+			namespace: "default",
+			expected:  true,
+		},
+		{
+			name: "backend clientCertificateRef cross-namespace",
+			gateway: &gatewayv1.Gateway{
+				ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "default"},
+				Spec: gatewayv1.GatewaySpec{
+					TLS: &gatewayv1.GatewayTLSConfig{
+						Backend: &gatewayv1.GatewayBackendTLS{
+							ClientCertificateRef: &gatewayv1.SecretObjectReference{
+								Name:      "client-cert",
+								Namespace: &certNs,
+							},
+						},
+					},
+				},
+			},
+			namespace: "cert-ns",
+			expected:  true,
+		},
 	}
 
 	for _, tt := range tests {
