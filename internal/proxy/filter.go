@@ -450,6 +450,8 @@ func compileFilter(filter RouteFilter) (Filter, error) {
 		return NewURLRewriter(filter.URLRewrite), nil
 	case FilterRequestMirror:
 		return NewRequestMirror(filter.RequestMirror.BackendURL, filter.RequestMirror.Percent), nil
+	case FilterCORS:
+		return NewCORSFilter(filter.CORS), nil
 	default:
 		return nil, errors.Wrapf(errUnknownFilterType, "%q", filter.Type)
 	}

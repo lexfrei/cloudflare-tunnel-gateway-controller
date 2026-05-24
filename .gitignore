@@ -43,3 +43,9 @@ testbin/
 
 # Personal notes
 TODO.md
+
+# Claude Code: keep team-shared .claude/settings.json (committed), drop
+# per-machine state (worktrees, lock files, plugin caches).
+.claude/worktrees/
+.claude/scheduled_tasks.lock
+.claude/plugins/

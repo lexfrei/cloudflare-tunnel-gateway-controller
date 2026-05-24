@@ -239,8 +239,9 @@ func convertFilter(
 		return convertURLRewriteFilter(filter.URLRewrite)
 	case gatewayv1.HTTPRouteFilterRequestMirror:
 		return convertMirrorFilter(ctx, filter.RequestMirror, namespace, clusterDomain, validator, tlsResolver)
+	case gatewayv1.HTTPRouteFilterCORS:
+		return convertCORSFilter(filter.CORS)
 	case gatewayv1.HTTPRouteFilterExtensionRef,
-		gatewayv1.HTTPRouteFilterCORS,
 		gatewayv1.HTTPRouteFilterExternalAuth:
 		slog.Warn("skipping unsupported filter type", "type", filter.Type)
 
@@ -382,6 +383,65 @@ func convertMirrorFilter(
 			BackendURL: mirrorURL,
 			Percent:    mirrorPercent(mirror),
 		},
+	}
+}
+
+// convertCORSFilter maps the upstream HTTPCORSFilter into the proxy's
+// CORSConfig wire shape. Returns nil (silently skipped, with a warning) when
+// the .CORS payload is missing — that's a malformed HTTPRoute that the CRD
+// admission webhook would normally block, but the converter must not panic
+// or ship a half-config. Optional fields:
+//
+//   - AllowCredentials is a *bool upstream; nil → false in the proxy config.
+//   - MaxAge stays zero when omitted; the proxy applies the spec default
+//     (5 seconds) at emit time so the controller doesn't need to mirror
+//     CRD-default logic that may shift in future Gateway API releases.
+func convertCORSFilter(cors *gatewayv1.HTTPCORSFilter) *RouteFilter {
+	if cors == nil {
+		slog.Warn("skipping CORS filter with nil config")
+
+		return nil
+	}
+
+	cfg := &CORSConfig{
+		MaxAge: cors.MaxAge,
+	}
+
+	if cors.AllowCredentials != nil {
+		cfg.AllowCredentials = *cors.AllowCredentials
+	}
+
+	if len(cors.AllowOrigins) > 0 {
+		cfg.AllowOrigins = make([]string, 0, len(cors.AllowOrigins))
+		for _, origin := range cors.AllowOrigins {
+			cfg.AllowOrigins = append(cfg.AllowOrigins, string(origin))
+		}
+	}
+
+	if len(cors.AllowMethods) > 0 {
+		cfg.AllowMethods = make([]string, 0, len(cors.AllowMethods))
+		for _, method := range cors.AllowMethods {
+			cfg.AllowMethods = append(cfg.AllowMethods, string(method))
+		}
+	}
+
+	if len(cors.AllowHeaders) > 0 {
+		cfg.AllowHeaders = make([]string, 0, len(cors.AllowHeaders))
+		for _, header := range cors.AllowHeaders {
+			cfg.AllowHeaders = append(cfg.AllowHeaders, string(header))
+		}
+	}
+
+	if len(cors.ExposeHeaders) > 0 {
+		cfg.ExposeHeaders = make([]string, 0, len(cors.ExposeHeaders))
+		for _, header := range cors.ExposeHeaders {
+			cfg.ExposeHeaders = append(cfg.ExposeHeaders, string(header))
+		}
+	}
+
+	return &RouteFilter{
+		Type: FilterCORS,
+		CORS: cfg,
 	}
 }
 

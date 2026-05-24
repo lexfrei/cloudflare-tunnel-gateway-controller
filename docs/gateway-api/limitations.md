@@ -296,6 +296,32 @@ verify against. The behaviour:
   operators don't ship a broken TLS expectation. Attach a `BackendTLSPolicy`
   to upgrade the hop to authenticated TLS.
 
+## HTTP CORS filter (`HTTPRouteCORS`)
+
+The L7 proxy honours the Gateway API `HTTPCORSFilter` for both CORS preflight
+(OPTIONS + `Access-Control-Request-Method`) and simple cross-origin requests.
+
+| Behaviour | Status | Notes |
+| --- | --- | --- |
+| Exact-match origins (`https://www.foo.com`) | Yes | Compared by full scheme + host + port string |
+| Wildcard host (`https://*.bar.com`) | Yes | Greedy left-match against any number of DNS labels; the base domain (`bar.com`) does NOT match — only proper subdomains do |
+| Universal wildcard (`"*"` alone) | Yes | Matches every origin |
+| Port matching | Yes | When the pattern carries a port, the origin must include the same port (and vice versa). Defaults (80/443) are NOT auto-applied — operators who care about port matching spell it out |
+| `allowMethods: ["*"]` | Yes | When the request is uncredentialed and carries `Access-Control-Request-Method`, the requested method is echoed back. When credentialed AND no requested method is in the header, the proxy omits the `Access-Control-Allow-Methods` response header entirely rather than emitting `*` (per spec, `*` with credentials is forbidden) |
+| `allowHeaders: ["*"]` | Yes | Same wildcard-vs-credentials logic as `allowMethods` |
+| `allowCredentials: true` | Yes | The proxy never emits `*` for `Access-Control-Allow-Origin`, `-Methods`, or `-Headers` while credentials are enabled — it echoes the request's Origin / requested method / requested headers, or omits the header entirely when there is nothing to echo |
+| `exposeHeaders` | Yes | Joined with a comma+space separator and stamped on both preflight and simple responses. With `allowCredentials: true` and `exposeHeaders: ["*"]` the header is omitted entirely (spec forbids `*` with credentials) |
+| `maxAge` | Yes | Emitted as `Access-Control-Max-Age`. Defaults to 5 seconds when the policy carries 0 (matches the CRD default; applied at emit time so the controller doesn't need to mirror CRD-default logic) |
+
+Preflight handling: a matched OPTIONS preflight short-circuits with HTTP 204
+and the negotiated CORS headers — the backend is never hit. A preflight from
+a non-matched Origin still returns 204 but with no CORS headers, so the
+browser fails the cross-origin request on the client side. Simple
+cross-origin requests pass through to the backend and receive
+`Access-Control-Allow-Origin` (and credentials/expose headers when
+applicable) stamped on the way back; same-origin requests (no `Origin`
+header) are untouched.
+
 ## Route Types Not Supported
 
 | Route Type | Status | Reason |

@@ -2,6 +2,19 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Feature delivery workflow
+
+Every feature/fix follows the gates below. No shortcuts: each gate must close before the next opens.
+
+1. **Branch.** Create `feat/...`, `fix/...`, etc. from a freshly pulled `master`. Never work on `master` directly.
+2. **TDD implementation.** Red → Green → Refactor, strictly. Write a failing test FIRST, run it, watch it fail, then write the minimum code to pass. Repeat per behaviour. No implementation lands without a test that fails without it and passes with it. This applies even when the implementation feels obvious — "I'll write the tests after" silently drops edge cases.
+3. **Local CI gates.** Run every check from `Pull Request Guidelines → Local CI Checks` for the files you touched; everything must pass before the next step.
+4. **Double `/branch-review` LGTM.** Iterate the `/branch-review` skill against the branch until it returns LGTM twice in a row. Any NOT LGTM resets the counter to zero — even cosmetic feedback that gets addressed must be followed by two consecutive LGTMs on top of the fixes. The skill ships as part of the `review-toolkit` plugin, which `.claude/settings.json` enables for everyone working in this repo — no per-machine install needed.
+5. **Open PR as draft.** `gh pr create --draft` with the body filled per `.github/pull_request_template.md`. Wait for CI green; address bot feedback if any.
+6. **Mark ready + request review.** Once CI is green and any maintainer-side verification (e.g. running upstream Gateway API conformance against a real Cloudflare Tunnel) is complete, the PR moves out of draft and is merged with `--squash --delete-branch`.
+
+Step 6's real-cluster verification is maintainer-only — it requires a Cloudflare account, a registered tunnel, and a Kubernetes cluster the maintainer can reach. Contributors finishing a branch should leave the PR in draft and ping the maintainer; the verification + merge is owned by them.
+
 ## Project Overview
 
 Kubernetes controller implementing Gateway API for Cloudflare Tunnel. Watches Gateway and HTTPRoute resources, automatically configures Cloudflare Tunnel ingress rules via API. Supports hot reload without cloudflared restart. Optional AmneziaWG (AWG) sidecar support for traffic obfuscation.
@@ -107,6 +120,8 @@ helm template test charts/cloudflare-tunnel-gateway-controller --values charts/c
 The project uses a fork of cloudflared: `github.com/lexfrei/cloudflared` (via `replace` directive in `go.mod`).
 
 **Why:** The v2 in-process proxy needs to inject a custom `OriginProxy` into cloudflared's `Orchestrator`. Upstream cloudflared doesn't expose this capability, so the fork adds an `OverrideProxy` field to `Orchestrator` and modifies `GetOriginProxy()` to return it when set.
+
+**Key architectural consequence:** Because the proxy hooks into cloudflared at the `OriginProxy` layer, ALL tunnel traffic flows through our in-process L7 proxy and bypasses cloudflared's native ingress rules. The Cloudflare-side tunnel API config (Cloudflare ingress rules) only serves DNS / edge routing purposes — actual L7 routing, hostname matching, path matching, filters etc. are all done by the in-cluster proxy. This means features like wildcard routes, regex path matching, and CORS work end-to-end regardless of what the Cloudflare Tunnel API itself supports.
 
 **Fork maintenance:**
 
@@ -334,6 +349,15 @@ Before writing any documentation:
 
 **If a command fails, a link is broken, or a step is missing — fix it before committing.**
 
+## Build environment
+
+- **Go version**: tracked in `go.mod` (currently Go 1.26.x). Newer builtins like `new(expr)` are used freely — there is no fallback to `ptr.To` helpers.
+- **gopls quirk**: `gopls` versions older than the project's Go release sometimes flag `new(expr)` as `requires go1.26`. The real compiler accepts it; ignore that specific gopls noise.
+
+## Design principles
+
+- **Spec compliance is the default.** If the implementation deviates from the Gateway API spec, the deviation MUST be justified (with a code comment and, where user-visible, a `docs/gateway-api/limitations.md` entry). Otherwise refactor to match the spec. Initial design decisions that turn out to disagree with the spec get fixed, not defended — for example, the controller's route → Gateway binding was originally keyed on GatewayClass name; it was refactored to use `controllerName` because that's what the spec defines as the binding mechanism.
+
 ## Linting Configuration
 
 golangci-lint v2 config in `.golangci.yaml`:
@@ -342,6 +366,8 @@ golangci-lint v2 config in `.golangci.yaml`:
 - `gocyclo/cyclop` complexity: 15
 - All linters enabled by default with specific exclusions
 - Test files have relaxed rules for funlen, dupl, complexity
+
+**`nolint` policy:** `nolint` directives are last resort. If the linter is flagging something fixable (long function, duplication, unused argument, error wrapping), fix the root cause — extract a helper, hoist a constant, refactor. Only legitimately-unfixable cases earn a `nolint`, and each one needs a comment explaining why the linter is wrong for this call site. Drive-by `nolint` adds get removed in review.
 
 ## Pull Request Guidelines
 
