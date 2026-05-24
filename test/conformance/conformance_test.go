@@ -51,6 +51,7 @@ func TestGatewayAPIConformance(t *testing.T) {
 		features.SupportHTTPRouteBackendTimeout,
 		features.SupportHTTPRouteParentRefPort,
 		features.SupportHTTPRouteBackendProtocolH2C,
+		features.SupportHTTPRouteBackendProtocolWebSocket,
 		features.SupportHTTPRouteRequestMultipleMirrors,
 		features.SupportHTTPRouteRequestPercentageMirror,
 		features.SupportBackendTLSPolicy,
@@ -101,13 +102,6 @@ func TestGatewayAPIConformance(t *testing.T) {
 		features.SupportTLSRouteModeMixed,
 		features.SupportUDPRoute,
 		features.SupportMesh,
-
-		// HTTPRoute features not implemented
-		// HTTPRouteBackendProtocolWebSocket: the proxy could implement it, but the
-		// conformance suite dials the Gateway address directly with a ws:// client
-		// (no custom dialer hook), and *.cfargotunnel.com is not routable — same
-		// structural limitation as the gRPC tests below. Left exempt.
-		features.SupportHTTPRouteBackendProtocolWebSocket,
 
 		// Redirect status codes: proxy implements them, but Cloudflare edge
 		// rewrites Location scheme to HTTPS — conformance tests fail.
@@ -204,18 +198,27 @@ func TestGatewayAPIConformance(t *testing.T) {
 		"HTTPRouteRedirectPath",
 		"HTTPRouteRedirectPort",
 
-		// HTTPRoute features not implemented.
-		"HTTPRouteBackendProtocolWebSocket",
 		// HTTPRouteCORSAllowCredentialsBehavior exercises an edge case
 		// in the "credentials + wildcard" branch that this implementation
 		// does not yet cover end-to-end; the main HTTPRouteCORS test is
 		// enabled above.
 		"HTTPRouteCORSAllowCredentialsBehavior",
 
-		// GRPCRoute: conformance suite uses its own gRPC client (grpc.Dial)
-		// that connects directly to Gateway address. *.cfargotunnel.com
-		// only has AAAA records with Cloudflare ULA (fd10::/8) which is not
-		// routable from outside CF network. We cannot override gRPC dialer.
+		// WebSocket: the upstream test calls
+		// golang.org/x/net/websocket.Dial against the Gateway address and
+		// has no RoundTripper hook for a custom dialer. The Gateway address
+		// is *.cfargotunnel.com whose AAAA records point at Cloudflare's
+		// ULA (fd10::/8) — unreachable from any external test runner. The
+		// proxy's WebSocket path is exercised by the
+		// HTTPRouteBackendProtocolWebSocket e2e against the real tunnel
+		// hostname; the feature flag stays declared in SupportedFeatures
+		// above so the conformance report reflects actual support.
+		"HTTPRouteBackendProtocolWebSocket",
+
+		// GRPCRoute: the upstream suite uses grpc.NewClient against the
+		// Gateway address with no dialer-injection hook. Same Cloudflare
+		// ULA routing limitation as the WebSocket case above. Our gRPC
+		// routing is exercised by test/e2e/grpc_* through the real edge.
 		"GRPCExactMethodMatching",
 		"GRPCRouteHeaderMatching",
 		"GRPCRouteWeight",
