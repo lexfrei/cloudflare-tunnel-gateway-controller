@@ -36,7 +36,7 @@ func TestGatewayAPIConformance(t *testing.T) {
 		features.SupportReferenceGrant,
 		features.SupportGRPCRoute,
 
-		// Extended HTTPRoute (all via v2 proxy)
+		// Extended HTTPRoute (Standard channel feature gates; v1 CRD fields)
 		features.SupportHTTPRouteQueryParamMatching,
 		features.SupportHTTPRouteMethodMatching,
 		features.SupportHTTPRouteResponseHeaderModification,
@@ -56,6 +56,24 @@ func TestGatewayAPIConformance(t *testing.T) {
 		features.SupportBackendTLSPolicy,
 		features.SupportBackendTLSPolicySANValidation,
 		features.SupportHTTPRouteCORS,
+		features.SupportHTTPRouteNamedRouteRule,
+
+		// Extended GRPCRoute (Standard channel feature gates; v1 CRD fields).
+		// The matching conformance tests are listed in SkipTests below because
+		// the upstream gRPC suite dials *.cfargotunnel.com directly and the
+		// Cloudflare ULA address space is not externally routable. The feature
+		// flag stays here so the conformance report reflects what the proxy
+		// itself supports.
+		features.SupportGRPCRouteNamedRouteRule,
+
+		// Extended HTTPRoute (Experimental channel feature gates; v1 CRD fields).
+		// DestinationPortMatching is gated as Experimental in upstream but the
+		// underlying ParentRef.Port field is in Standard v1 — the gate covers
+		// rejecting Accepted=False/NoMatchingParent when a parentRef.port does
+		// not match any Listener.Port on the referenced Gateway, which works on
+		// any v1 cluster regardless of CRD channel.
+		features.SupportHTTPRouteDestinationPortMatching,
+
 		// NOTE: 303/307/308 redirect status codes work correctly in the proxy,
 		// but Cloudflare edge rewrites Location scheme to HTTPS, so conformance
 		// tests that verify http:// scheme in redirects will always fail.
@@ -90,17 +108,12 @@ func TestGatewayAPIConformance(t *testing.T) {
 		// (no custom dialer hook), and *.cfargotunnel.com is not routable — same
 		// structural limitation as the gRPC tests below. Left exempt.
 		features.SupportHTTPRouteBackendProtocolWebSocket,
-		features.SupportHTTPRouteNamedRouteRule,
-		features.SupportHTTPRouteDestinationPortMatching,
 
 		// Redirect status codes: proxy implements them, but Cloudflare edge
 		// rewrites Location scheme to HTTPS — conformance tests fail.
 		features.SupportHTTPRoute303RedirectStatusCode,
 		features.SupportHTTPRoute307RedirectStatusCode,
 		features.SupportHTTPRoute308RedirectStatusCode,
-
-		// GRPCRoute extended
-		features.SupportGRPCRouteNamedRouteRule,
 	)
 
 	// --- Skip tests ---
@@ -207,6 +220,7 @@ func TestGatewayAPIConformance(t *testing.T) {
 		"GRPCExactMethodMatching",
 		"GRPCRouteHeaderMatching",
 		"GRPCRouteWeight",
+		"GRPCRouteNamedRule",
 	}
 
 	// --- Timeouts ---
