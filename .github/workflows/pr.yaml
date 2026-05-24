@@ -411,20 +411,70 @@ jobs:
           CHART_DIR="charts/cloudflare-tunnel-gateway-controller"
           CHART_VERSION="0.0.0-pr.${PR_NUMBER}-1d"
           APP_VERSION="pr-${PR_NUMBER}-1d"
-          IMAGE_REPO="ttl.sh/cf-tunnel-gateway-ctrl"
+          CONTROLLER_IMAGE_REPO="ttl.sh/cf-tunnel-gateway-ctrl"
+          PROXY_IMAGE_REPO="ttl.sh/cf-tunnel-gateway-proxy"
           IMAGE_TAG="pr-${PR_NUMBER}-1d"
 
           # Update Chart.yaml
           sed -i "s/^version: .*/version: ${CHART_VERSION}/" "${CHART_DIR}/Chart.yaml"
           sed -i "s/^appVersion: .*/appVersion: \"${APP_VERSION}\"/" "${CHART_DIR}/Chart.yaml"
 
-          # Update values.yaml
-          sed -i "s|repository: .*|repository: ${IMAGE_REPO}|" "${CHART_DIR}/values.yaml"
-          sed -i "s/tag: .*/tag: \"${IMAGE_TAG}\"/" "${CHART_DIR}/values.yaml"
+          # Update values.yaml — controller and proxy images are independent.
+          # A greedy `sed s|repository: .*|...|` would rewrite both blocks to the
+          # controller image and the proxy pod would crash-loop on the wrong binary.
+          # Use yq to target each YAML path explicitly.
+          yq --inplace ".image.repository = \"${CONTROLLER_IMAGE_REPO}\"" "${CHART_DIR}/values.yaml"
+          yq --inplace ".image.tag = \"${IMAGE_TAG}\"" "${CHART_DIR}/values.yaml"
+          yq --inplace ".proxy.image.repository = \"${PROXY_IMAGE_REPO}\"" "${CHART_DIR}/values.yaml"
+          yq --inplace ".proxy.image.tag = \"${IMAGE_TAG}\"" "${CHART_DIR}/values.yaml"
 
           echo "Modified chart version: ${CHART_VERSION}"
           echo "Modified appVersion: ${APP_VERSION}"
-          echo "Modified image: ${IMAGE_REPO}:${IMAGE_TAG}"
+          echo "Modified controller image: ${CONTROLLER_IMAGE_REPO}:${IMAGE_TAG}"
+          echo "Modified proxy image:      ${PROXY_IMAGE_REPO}:${IMAGE_TAG}"
+
+      - name: Validate values.yaml image overrides
+        run: |
+          set -euo pipefail
+
+          CHART_DIR="charts/cloudflare-tunnel-gateway-controller"
+          PR_NUMBER="${{ github.event.pull_request.number }}"
+          EXPECTED_TAG="pr-${PR_NUMBER}-1d"
+
+          controller_repo=$(yq --exit-status '.image.repository' "${CHART_DIR}/values.yaml")
+          controller_tag=$(yq --exit-status '.image.tag' "${CHART_DIR}/values.yaml")
+          proxy_repo=$(yq --exit-status '.proxy.image.repository' "${CHART_DIR}/values.yaml")
+          proxy_tag=$(yq --exit-status '.proxy.image.tag' "${CHART_DIR}/values.yaml")
+
+          fail=0
+          if [[ "${controller_repo}" != *-ctrl ]]; then
+            echo "ERROR: image.repository must end in -ctrl, got: ${controller_repo}"
+            fail=1
+          fi
+          if [[ "${proxy_repo}" != *-proxy ]]; then
+            echo "ERROR: proxy.image.repository must end in -proxy, got: ${proxy_repo}"
+            fail=1
+          fi
+          if [[ "${controller_repo}" == "${proxy_repo}" ]]; then
+            echo "ERROR: image.repository and proxy.image.repository collapsed to the same value (greedy sed regression)"
+            fail=1
+          fi
+          if [[ "${controller_tag}" != "${EXPECTED_TAG}" ]]; then
+            echo "ERROR: image.tag must equal ${EXPECTED_TAG}, got: ${controller_tag}"
+            fail=1
+          fi
+          if [[ "${proxy_tag}" != "${EXPECTED_TAG}" ]]; then
+            echo "ERROR: proxy.image.tag must equal ${EXPECTED_TAG}, got: ${proxy_tag}"
+            fail=1
+          fi
+
+          if [[ ${fail} -ne 0 ]]; then
+            exit 1
+          fi
+
+          echo "values.yaml image overrides verified:"
+          echo "  controller: ${controller_repo}:${controller_tag}"
+          echo "  proxy:      ${proxy_repo}:${proxy_tag}"
 
       - name: Package chart
         run: |
