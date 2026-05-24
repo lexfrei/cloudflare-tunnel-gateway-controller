@@ -1239,7 +1239,7 @@ func TestNewProxySyncer_NilLogger(t *testing.T) {
 	t.Parallel()
 
 	testClient := fake.NewClientBuilder().WithScheme(runtime.NewScheme()).Build()
-	syncer := NewProxySyncer("cluster.local", "", testClient, nil)
+	syncer := NewProxySyncer("cluster.local", "", "", testClient, nil)
 	require.NotNil(t, syncer)
 }
 

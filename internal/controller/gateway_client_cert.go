@@ -243,7 +243,11 @@ func checkSecretReferenceGrantForGateway(
 ) (bool, error) {
 	var grants gatewayv1beta1.ReferenceGrantList
 	if err := c.List(ctx, &grants, client.InNamespace(targetNamespace)); err != nil {
-		return false, errors.Wrap(err, "failed to list ReferenceGrants")
+		// Wrap as transient so the Gateway-status emit path leaves the
+		// previous ResolvedRefs verdict alone instead of falsely declaring
+		// InvalidClientCertificateRef on an API-server hiccup. The ref
+		// itself is not necessarily invalid; the next reconcile retries.
+		return false, errors.Wrapf(errGatewayClientCertTransientError, "list ReferenceGrants in %s: %s", targetNamespace, err.Error())
 	}
 
 	for i := range grants.Items {

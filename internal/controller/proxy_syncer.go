@@ -49,10 +49,17 @@ type ProxySyncer struct {
 }
 
 // NewProxySyncer creates a ProxySyncer for pushing config to proxy replicas.
-// The client is used to validate cross-namespace backend references via ReferenceGrant.
+// The client is used to validate cross-namespace backend references via
+// ReferenceGrant. controllerName scopes the Gateway client-cert resolver to
+// Gateways whose GatewayClass.spec.controllerName matches ours — parentRefs
+// pointing at a Gateway managed by another controller MUST NOT contribute
+// their client cert to OUR proxy's mTLS handshake. controllerName may be
+// empty (tests); the resolver then accepts any Gateway regardless of its
+// GatewayClass.
 func NewProxySyncer(
 	clusterDomain string,
 	authToken string,
+	controllerName string,
 	k8sClient client.Client,
 	logger *slog.Logger,
 ) *ProxySyncer {
@@ -71,21 +78,32 @@ func NewProxySyncer(
 		backendValidator:    newBackendRefValidator(refGrantValidator),
 		protocolResolver:    newBackendProtocolResolver(k8sClient),
 		tlsResolver:         newBackendTLSResolver(k8sClient),
-		gatewayCertResolver: newGatewayClientCertResolver(k8sClient),
+		gatewayCertResolver: newGatewayClientCertResolver(k8sClient, controllerName),
 	}
 }
 
 // newGatewayClientCertResolver returns a resolver that loads the Gateway's
 // spec.tls.backend.clientCertificateRef Secret into the PEM-encoded keypair
-// the proxy presents during backend mTLS handshakes. Returns nil when the
-// Gateway has no such ref, the Secret cannot be resolved, the ReferenceGrant
-// is missing, or the keypair fails to parse — all of which also surface on
-// the Gateway's ResolvedRefs condition via the parallel emit path in the
-// GatewayReconciler.
-func newGatewayClientCertResolver(c client.Client) proxy.GatewayClientCertResolver {
+// the proxy presents during backend mTLS handshakes. The resolver is scoped
+// to Gateways managed by this controller — a parentRef pointing at another
+// vendor's Gateway must NOT cause OUR proxy to present THEIR client cert
+// (cross-controller credential leak guard). When controllerName is empty
+// the GatewayClass check is skipped, matching test fixtures that don't model
+// the full chain.
+//
+// Returns nil when the Gateway has no such ref, isn't managed by this
+// controller, the Secret cannot be resolved, the ReferenceGrant is missing,
+// or the keypair fails to parse. The first three reasons leave the Gateway's
+// ResolvedRefs condition alone; the remaining ones drive it through the
+// parallel emit path in the GatewayReconciler.
+func newGatewayClientCertResolver(c client.Client, controllerName string) proxy.GatewayClientCertResolver {
 	return func(ctx context.Context, gatewayNN types.NamespacedName) *proxy.ClientCertConfig {
 		var gateway gatewayv1.Gateway
 		if err := c.Get(ctx, gatewayNN, &gateway); err != nil {
+			return nil
+		}
+
+		if !gatewayManagedByController(ctx, c, &gateway, controllerName) {
 			return nil
 		}
 
@@ -96,6 +114,26 @@ func newGatewayClientCertResolver(c client.Client) proxy.GatewayClientCertResolv
 
 		return &proxy.ClientCertConfig{CertPEM: certPEM, KeyPEM: keyPEM}
 	}
+}
+
+// gatewayManagedByController reports whether the Gateway's GatewayClass.spec.
+// controllerName matches ours. An empty controllerName disables the check —
+// used by tests that don't construct a full GatewayClass chain. When the
+// GatewayClass lookup itself fails (NotFound, transient error) we return
+// false: better to NOT present a cert that may belong to another controller
+// than to leak credentials on a doubtful match. The Gateway's status surface
+// will already reflect "no managed parent" via existing reconcile paths.
+func gatewayManagedByController(ctx context.Context, c client.Client, gateway *gatewayv1.Gateway, controllerName string) bool {
+	if controllerName == "" {
+		return true
+	}
+
+	var gc gatewayv1.GatewayClass
+	if err := c.Get(ctx, types.NamespacedName{Name: string(gateway.Spec.GatewayClassName)}, &gc); err != nil {
+		return false
+	}
+
+	return string(gc.Spec.ControllerName) == controllerName
 }
 
 // gatewayClientCertGrantChecker adapts the package-level grant lookup into a

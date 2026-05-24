@@ -430,3 +430,46 @@ func TestMergeClientCertCondition_TransientNoPrevious_DropsNothing(t *testing.T)
 	// No previous ResolvedRefs to preserve → the helper just returns base.
 	assert.Equal(t, base, merged)
 }
+
+// failingListClient wraps a fake client so List calls always fail. Used to
+// drive the transient-error path through checkSecretReferenceGrantForGateway.
+type failingListClient struct {
+	client.Client
+}
+
+var errFakeAPIBoom = errors.New("api-server boom")
+
+func (failingListClient) List(_ context.Context, _ client.ObjectList, _ ...client.ListOption) error {
+	return errFakeAPIBoom
+}
+
+func TestLoadGatewayClientCertPEM_TransientGrantListError(t *testing.T) {
+	t.Parallel()
+
+	// A cross-namespace ref with a List failure on the ReferenceGrant lookup
+	// must surface as the transient sentinel so the Gateway's ResolvedRefs
+	// condition stays put. Per spec InvalidClientCertificateRef is reserved
+	// for actual data problems, not API-server hiccups.
+	certPEM, keyPEM := generateClientKeypair(t)
+	secret := clientCertSecret("secret-ns", "client-cert", certPEM, keyPEM)
+	secretNS := gatewayv1.Namespace("secret-ns")
+	gateway := gatewayWithClientCertRef("gw-ns", "gw", "client-cert", &secretNS)
+
+	scheme := newClientCertScheme(t)
+	base := fake.NewClientBuilder().WithScheme(scheme).WithObjects(secret).Build()
+	cli := failingListClient{Client: base}
+
+	// Mirror the production wiring: grantChecker delegates to the free helper
+	// whose List call now fails.
+	grantChecker := func(ctx context.Context, gw *gatewayv1.Gateway, targetNS string, ref gatewayv1.SecretObjectReference) (bool, error) {
+		return checkSecretReferenceGrantForGateway(ctx, cli, gw, targetNS, ref)
+	}
+
+	_, _, err := loadGatewayClientCertPEM(context.Background(), cli, gateway, grantChecker)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, errGatewayClientCertTransientError,
+		"a List failure on the ReferenceGrant lookup must be classified as transient")
+
+	cond := buildClientCertResolvedRefsCondition(1, metav1.Now(), err)
+	assert.Nil(t, cond, "transient error must NOT flip Gateway to InvalidClientCertificateRef")
+}
