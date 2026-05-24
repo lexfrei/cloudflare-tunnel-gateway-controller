@@ -219,6 +219,17 @@ test's `websocket.Dial` connects directly to the Gateway address
 tests documented above. WebSocket backends may be supported separately via
 e2e validation in a future change.
 
+### Interaction with `appProtocol: kubernetes.io/ws`
+
+When a backend Service carries both `appProtocol: kubernetes.io/ws` AND a
+`BackendTLSPolicy` targeting the same Service, the TLS policy wins:
+`resolveBackendTLS` rewrites the URL to `https://`, the proxy completes a
+TLS handshake, and the WebSocket upgrade runs over TLS regardless of the
+cleartext appProtocol hint. A WARN surfaces the suppressed `ws` hint so
+operators can either drop the BackendTLSPolicy (if they actually wanted
+cleartext WebSocket) or flip the hint to `kubernetes.io/wss` (if they
+wanted the TLS-protected variant all along).
+
 ## Backend mTLS (BackendTLSPolicy)
 
 The L7 proxy supports Gateway API `BackendTLSPolicy` for proxy → backend TLS,

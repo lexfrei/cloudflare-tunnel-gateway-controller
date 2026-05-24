@@ -185,7 +185,7 @@ func TestConvertHTTPRoutes_UnknownAppProtocol_LogsAndDefaults(t *testing.T) {
 
 	routes := []*gatewayv1.HTTPRoute{
 		{
-			ObjectMeta: metav1.ObjectMeta{Name: "wss", Namespace: "default"},
+			ObjectMeta: metav1.ObjectMeta{Name: "exotic", Namespace: "default"},
 			Spec: gatewayv1.HTTPRouteSpec{
 				Hostnames: []gatewayv1.Hostname{"example.com"},
 				Rules: []gatewayv1.HTTPRouteRule{
@@ -193,15 +193,19 @@ func TestConvertHTTPRoutes_UnknownAppProtocol_LogsAndDefaults(t *testing.T) {
 						Matches: []gatewayv1.HTTPRouteMatch{
 							{Path: &gatewayv1.HTTPPathMatch{Type: &pathPrefix, Value: new("/")}},
 						},
-						BackendRefs: []gatewayv1.HTTPBackendRef{backendRef("ws-svc", 80, 1)},
+						BackendRefs: []gatewayv1.HTTPBackendRef{backendRef("exotic-svc", 80, 1)},
 					},
 				},
 			},
 		},
 	}
 
+	// Use a truly unrecognised appProtocol — kubernetes.io/ws and kubernetes.io/wss
+	// are explicitly handled by resolveBackendProtocol now (silent for ws, warns
+	// only when wss lacks a BackendTLSPolicy). A vendor-namespaced unknown value
+	// keeps the "unsupported" branch under test.
 	resolver := func(_ context.Context, _, _ string, _ int32) string {
-		return "kubernetes.io/wss"
+		return "mycompany.com/exotic-proto"
 	}
 
 	var logs bytes.Buffer
@@ -219,8 +223,134 @@ func TestConvertHTTPRoutes_UnknownAppProtocol_LogsAndDefaults(t *testing.T) {
 		"unknown appProtocol must fall back to default HTTP/1.1")
 	assert.Contains(t, logs.String(), "unsupported backend appProtocol",
 		"unknown appProtocol must surface a warning, not silently disappear")
-	assert.Contains(t, logs.String(), "kubernetes.io/wss",
+	assert.Contains(t, logs.String(), "mycompany.com/exotic-proto",
 		"warning must name the offending appProtocol")
+}
+
+// TestConvertHTTPRoutes_AppProtocolWS_NoWarn confirms that `appProtocol:
+// kubernetes.io/ws` is accepted silently. The WebSocket upgrade is decided
+// per-request by Connection: Upgrade + Upgrade: websocket headers, not by
+// transport selection — httputil.ReverseProxy handles the 101 Switching
+// Protocols response natively, so the default plaintext HTTP/1.1 transport
+// is the right answer for a `ws` hint.
+func TestConvertHTTPRoutes_AppProtocolWS_NoWarn(t *testing.T) {
+	pathPrefix := gatewayv1.PathMatchPathPrefix
+	routes := []*gatewayv1.HTTPRoute{httpAppProtocolTestRoute(pathPrefix)}
+
+	resolver := func(_ context.Context, _, _ string, _ int32) string { return "kubernetes.io/ws" }
+	logs, cleanup := captureWarnLogs()
+	t.Cleanup(cleanup)
+
+	cfg := proxy.ConvertHTTPRoutes(context.Background(), routes, "cluster.local", nil, resolver, nil, nil)
+
+	require.Len(t, cfg.Rules, 1)
+	require.Len(t, cfg.Rules[0].Backends, 1)
+
+	backend := cfg.Rules[0].Backends[0]
+	assert.Equal(t, proxy.BackendProtocolHTTP, backend.Protocol,
+		"appProtocol kubernetes.io/ws must use the default plaintext HTTP/1.1 transport — "+
+			"ReverseProxy hijacks the conn on the 101 upgrade response")
+	assert.Contains(t, backend.URL, "http://",
+		"ws scheme stays http:// — TLS is irrelevant for the cleartext WebSocket variant")
+	assert.NotContains(t, logs.String(), "unsupported backend appProtocol",
+		"kubernetes.io/ws is a known appProtocol — must NOT log 'unsupported'")
+	assert.Nil(t, backend.TLS, "no BackendTLSPolicy resolver was given — TLS must stay nil")
+}
+
+// TestConvertHTTPRoutes_AppProtocolWSS_WithoutPolicy_Warns pins that declaring
+// `appProtocol: kubernetes.io/wss` without a matching BackendTLSPolicy logs a
+// WARN — operators hinted TLS but provided no trust anchor, so the proxy will
+// dial plaintext and the backend (expecting TLS) will refuse the upgrade.
+// Identical fail-closed semantics to the existing `appProtocol: https` path.
+func TestConvertHTTPRoutes_AppProtocolWSS_WithoutPolicy_Warns(t *testing.T) {
+	pathPrefix := gatewayv1.PathMatchPathPrefix
+	routes := []*gatewayv1.HTTPRoute{httpAppProtocolTestRoute(pathPrefix)}
+
+	resolver := func(_ context.Context, _, _ string, _ int32) string { return "kubernetes.io/wss" }
+	logs, cleanup := captureWarnLogs()
+	t.Cleanup(cleanup)
+
+	// tlsResolver = nil → no BackendTLSPolicy applies → must warn.
+	cfg := proxy.ConvertHTTPRoutes(context.Background(), routes, "cluster.local", nil, resolver, nil, nil)
+
+	require.Len(t, cfg.Rules, 1)
+	require.Len(t, cfg.Rules[0].Backends, 1)
+	assert.Equal(t, proxy.BackendProtocolHTTP, cfg.Rules[0].Backends[0].Protocol)
+	assert.Nil(t, cfg.Rules[0].Backends[0].TLS, "no policy attached → no TLS config")
+	assert.Contains(t, logs.String(), "appProtocol wss but no BackendTLSPolicy",
+		"appProtocol wss without a policy MUST log a warning so the misconfiguration is visible")
+	assert.NotContains(t, logs.String(), "unsupported backend appProtocol",
+		"wss is a known appProtocol — must not be classified as 'unsupported'")
+}
+
+// TestConvertHTTPRoutes_AppProtocolWS_WithPolicy_Warns surfaces the same
+// "operator hint vs reality" mismatch the existing h2c+BackendTLSPolicy
+// case already flags. `kubernetes.io/ws` is the cleartext variant of
+// WebSocket; if the operator also attaches a BackendTLSPolicy to the same
+// Service the actual conversation will run wss-style over TLS. The proxy
+// already does the right thing (TLS wins), but a WARN surfaces the
+// misconfiguration so the operator knows the appProtocol hint was
+// ignored — symmetric to the h2c+TLS suppression warning.
+func TestConvertHTTPRoutes_AppProtocolWS_WithPolicy_Warns(t *testing.T) {
+	pathPrefix := gatewayv1.PathMatchPathPrefix
+	routes := []*gatewayv1.HTTPRoute{httpAppProtocolTestRoute(pathPrefix)}
+
+	protocolResolver := func(_ context.Context, _, _ string, _ int32) string { return "kubernetes.io/ws" }
+	tlsResolver := func(_ context.Context, _, _ string, _ int32) *proxy.BackendTLSConfig {
+		return &proxy.BackendTLSConfig{
+			CABundlePEM: "-----BEGIN CERTIFICATE-----\nQUFBQQ==\n-----END CERTIFICATE-----\n",
+			ServerName:  "svc.default.svc.cluster.local",
+		}
+	}
+
+	logs, cleanup := captureWarnLogs()
+	t.Cleanup(cleanup)
+
+	cfg := proxy.ConvertHTTPRoutes(context.Background(), routes, "cluster.local", nil, protocolResolver, tlsResolver, nil)
+
+	require.Len(t, cfg.Rules, 1)
+	require.Len(t, cfg.Rules[0].Backends, 1)
+
+	backend := cfg.Rules[0].Backends[0]
+	assert.NotNil(t, backend.TLS, "BackendTLSPolicy MUST stay attached — TLS wins over the cleartext ws hint")
+	assert.Contains(t, backend.URL, "https://",
+		"TLS policy MUST rewrite the URL to https:// — silently downgrading to plaintext would defeat the policy")
+	assert.Contains(t, logs.String(), "ws suppressed by BackendTLSPolicy",
+		"the suppressed-cleartext-hint warning must surface so operators see the conflict — "+
+			"symmetric to the existing h2c suppressed warning")
+}
+
+// TestConvertHTTPRoutes_AppProtocolWSS_WithPolicy_NoWarn confirms the happy
+// path: `appProtocol: kubernetes.io/wss` together with a BackendTLSPolicy
+// produces TLS-armed config and emits no warnings.
+func TestConvertHTTPRoutes_AppProtocolWSS_WithPolicy_NoWarn(t *testing.T) {
+	pathPrefix := gatewayv1.PathMatchPathPrefix
+	routes := []*gatewayv1.HTTPRoute{httpAppProtocolTestRoute(pathPrefix)}
+
+	protocolResolver := func(_ context.Context, _, _ string, _ int32) string { return "kubernetes.io/wss" }
+	tlsResolver := func(_ context.Context, _, _ string, _ int32) *proxy.BackendTLSConfig {
+		return &proxy.BackendTLSConfig{
+			CABundlePEM: "-----BEGIN CERTIFICATE-----\nQUFBQQ==\n-----END CERTIFICATE-----\n",
+			ServerName:  "svc.default.svc.cluster.local",
+		}
+	}
+
+	logs, cleanup := captureWarnLogs()
+	t.Cleanup(cleanup)
+
+	cfg := proxy.ConvertHTTPRoutes(context.Background(), routes, "cluster.local", nil, protocolResolver, tlsResolver, nil)
+
+	require.Len(t, cfg.Rules, 1)
+	require.Len(t, cfg.Rules[0].Backends, 1)
+
+	backend := cfg.Rules[0].Backends[0]
+	assert.NotNil(t, backend.TLS, "policy attached → TLS config present")
+	assert.Contains(t, backend.URL, "https://",
+		"BackendTLSPolicy MUST rewrite the URL to https:// so stdlib applies TLSClientConfig before the upgrade")
+	assert.NotContains(t, logs.String(), "appProtocol wss but no BackendTLSPolicy",
+		"wss WITH a policy must NOT warn — operator did the right thing")
+	assert.NotContains(t, logs.String(), "unsupported backend appProtocol",
+		"wss is a known appProtocol")
 }
 
 // TestConvertHTTPRoutes_AppProtocolPlaintextPassThrough verifies that
