@@ -127,13 +127,79 @@ func TestGatewayOriginProxy_ProxyHTTP_WritesResponse(t *testing.T) {
 	assert.Equal(t, "created", rw.Body.String())
 }
 
-func TestGatewayOriginProxy_ProxyHTTP_IsLBProbeIgnored(t *testing.T) {
+// TestGatewayOriginProxy_ProxyHTTP_WebSocketReinjectsHeaders pins the bridge
+// contract between cloudflared and our L7 handler for WebSocket traffic.
+//
+// cloudflared (HTTP/2 connection) strips the standard HTTP/1.1 upgrade
+// headers from the request before invoking OriginProxy.ProxyHTTP — the
+// upgrade is signalled instead via the third (`isWebsocket bool`) parameter.
+// Native cloudflared re-injects `Connection: Upgrade`, `Upgrade: websocket`,
+// and `Sec-Websocket-Version: 13` before forwarding to origin (see
+// vendor/github.com/cloudflare/cloudflared/proxy/proxy.go:proxyHTTPRequest).
+//
+// Our `httputil.ReverseProxy`-based handler keys its 101-hijack path on
+// those same RFC 7230 §6.1 headers. Without re-injection here the handler
+// sees a regular HTTP request, forwards it without upgrade headers, and
+// the backend returns 400 "not websocket protocol". This pin captures the
+// fix so a future revert breaks loudly with a deterministic mock instead
+// of an opaque e2e failure.
+func TestGatewayOriginProxy_ProxyHTTP_WebSocketReinjectsHeaders(t *testing.T) {
 	t.Parallel()
 
-	var called atomic.Bool
+	var (
+		gotConnection string
+		gotUpgrade    string
+		gotWSVersion  string
+	)
 
-	handler := http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
-		called.Store(true)
+	handler := http.HandlerFunc(func(_ http.ResponseWriter, req *http.Request) {
+		gotConnection = req.Header.Get("Connection")
+		gotUpgrade = req.Header.Get("Upgrade")
+		gotWSVersion = req.Header.Get("Sec-Websocket-Version")
+	})
+
+	proxy := tunnel.NewGatewayOriginProxy(handler, nil)
+
+	req := httptest.NewRequestWithContext(
+		t.Context(), http.MethodGet, "http://example.com/ws", nil,
+	)
+	// cloudflared already stripped these by the time ProxyHTTP runs.
+	req.Header.Del("Connection")
+	req.Header.Del("Upgrade")
+
+	zlog := zerolog.Nop()
+	tracedReq := tracing.NewTracedHTTPRequest(req, 0, &zlog)
+	rw := newTestResponseWriter()
+
+	err := proxy.ProxyHTTP(rw, tracedReq, true)
+
+	require.NoError(t, err)
+	assert.Equal(t, "Upgrade", gotConnection,
+		"isWebsocket=true MUST re-inject Connection: Upgrade so the handler's "+
+			"isHTTPUpgradeRequest predicate fires and ReverseProxy hijacks on 101")
+	assert.Equal(t, "websocket", gotUpgrade,
+		"isWebsocket=true MUST re-inject Upgrade: websocket so the backend "+
+			"completes the RFC 6455 handshake instead of returning 400")
+	assert.Equal(t, "13", gotWSVersion,
+		"Sec-Websocket-Version: 13 is the only WebSocket version this proxy "+
+			"path supports; native cloudflared pins it the same way")
+}
+
+// TestGatewayOriginProxy_ProxyHTTP_NonWebSocketLeavesHeadersAlone is the
+// negative pin: a regular HTTP request must NOT acquire WebSocket upgrade
+// headers from the bridge, otherwise plain HTTP backends would interpret
+// every routed request as an upgrade attempt.
+func TestGatewayOriginProxy_ProxyHTTP_NonWebSocketLeavesHeadersAlone(t *testing.T) {
+	t.Parallel()
+
+	var (
+		gotConnection string
+		gotUpgrade    string
+	)
+
+	handler := http.HandlerFunc(func(_ http.ResponseWriter, req *http.Request) {
+		gotConnection = req.Header.Get("Connection")
+		gotUpgrade = req.Header.Get("Upgrade")
 	})
 
 	proxy := tunnel.NewGatewayOriginProxy(handler, nil)
@@ -145,11 +211,11 @@ func TestGatewayOriginProxy_ProxyHTTP_IsLBProbeIgnored(t *testing.T) {
 	tracedReq := tracing.NewTracedHTTPRequest(req, 0, &zlog)
 	rw := newTestResponseWriter()
 
-	// The isWebsocket (third) parameter should be ignored; handler is still called.
-	err := proxy.ProxyHTTP(rw, tracedReq, true)
+	err := proxy.ProxyHTTP(rw, tracedReq, false)
 
 	require.NoError(t, err)
-	assert.True(t, called.Load())
+	assert.Empty(t, gotConnection, "non-websocket request must not gain a Connection: Upgrade header")
+	assert.Empty(t, gotUpgrade, "non-websocket request must not gain an Upgrade header")
 }
 
 func TestGatewayOriginProxy_ProxyTCP_ReturnsError(t *testing.T) {
