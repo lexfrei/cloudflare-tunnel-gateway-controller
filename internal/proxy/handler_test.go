@@ -848,3 +848,98 @@ func TestHandler_BackendSpecificHeaderModifier(t *testing.T) {
 	assert.Equal(t, "backend-v1", headers.Get("Backend"),
 		"backend-specific RequestHeaderModifier should set Backend header")
 }
+
+// TestIsHTTPUpgradeRequest pins the RFC 7230 §6.1 contract that drives the
+// upgrade-skip in ServeHTTP / proxyToBackend. The integration tests cover
+// only the canonical WebSocket shape that golang.org/x/net/websocket emits
+// (single-token Connection: Upgrade + Upgrade: websocket); the cases below
+// guard the token-parser against regressions on shapes that browsers and
+// upstream HTTP/2-to-HTTP/1.1 reverse proxies produce in the wild.
+func TestIsHTTPUpgradeRequest(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name    string
+		headers http.Header
+		want    bool
+	}{
+		{
+			name:    "websocket canonical single-token Connection",
+			headers: http.Header{"Connection": {"Upgrade"}, "Upgrade": {"websocket"}},
+			want:    true,
+		},
+		{
+			name:    "comma-separated Connection with upgrade as second token (typical browser shape)",
+			headers: http.Header{"Connection": {"keep-alive, Upgrade"}, "Upgrade": {"websocket"}},
+			want:    true,
+		},
+		{
+			name:    "case-insensitive Connection token",
+			headers: http.Header{"Connection": {"upgrade"}, "Upgrade": {"websocket"}},
+			want:    true,
+		},
+		{
+			name:    "extra whitespace around comma-separated tokens",
+			headers: http.Header{"Connection": {"keep-alive ,  Upgrade  ,  TE"}, "Upgrade": {"websocket"}},
+			want:    true,
+		},
+		{
+			name: "multiple Connection header lines, upgrade in second line",
+			headers: http.Header{
+				"Connection": {"keep-alive", "Upgrade"},
+				"Upgrade":    {"h2c"},
+			},
+			want: true,
+		},
+		{
+			name:    "Connection: Upgrade but no Upgrade header — not a valid upgrade",
+			headers: http.Header{"Connection": {"Upgrade"}},
+			want:    false,
+		},
+		{
+			name:    "Upgrade header set but Connection lacks upgrade token",
+			headers: http.Header{"Connection": {"keep-alive"}, "Upgrade": {"websocket"}},
+			want:    false,
+		},
+		{
+			name:    "neither header present",
+			headers: http.Header{},
+			want:    false,
+		},
+		{
+			name:    "Upgrade header empty string",
+			headers: http.Header{"Connection": {"Upgrade"}, "Upgrade": {""}},
+			want:    false,
+		},
+		{
+			name:    "Connection token contains 'upgrade' substring but not as a standalone token",
+			headers: http.Header{"Connection": {"upgrade-insecure-requests"}, "Upgrade": {"websocket"}},
+			want:    false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://example.com/", nil)
+			req.Header = tc.headers
+
+			assert.Equal(t, tc.want, proxy.IsHTTPUpgradeRequestForTest(req))
+		})
+	}
+}
+
+// TestIsHTTPUpgradeRequest_NilGuards pins the defensive nil-checks in
+// isHTTPUpgradeRequest. They exist so a future refactor that calls into the
+// helper before req is fully constructed doesn't panic.
+func TestIsHTTPUpgradeRequest_NilGuards(t *testing.T) {
+	t.Parallel()
+
+	assert.False(t, proxy.IsHTTPUpgradeRequestForTest(nil),
+		"nil request must return false, not panic")
+
+	req := &http.Request{Header: nil}
+	assert.False(t, proxy.IsHTTPUpgradeRequestForTest(req),
+		"request with nil Header must return false, not panic")
+}

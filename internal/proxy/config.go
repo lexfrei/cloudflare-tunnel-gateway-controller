@@ -271,6 +271,16 @@ type BackendRef struct {
 	Protocol BackendProtocol   `json:"protocol,omitempty"`
 	TLS      *BackendTLSConfig `json:"tls,omitempty"`
 	Filters  []RouteFilter     `json:"filters,omitempty"`
+	// WebSocket flags this backend as WebSocket-capable per the operator's
+	// `Service.spec.ports[].appProtocol: kubernetes.io/ws` (or `wss`) hint.
+	// It is the sole input to the upgrade-aware timeout-skip in Handler:
+	// requests carrying `Connection: Upgrade` headers bypass
+	// `timeouts.request`/`timeouts.backend` only when this flag is true.
+	// Gating on a client-controlled header alone would let any request
+	// claim upgrade and bypass operator-declared deadlines, opening a
+	// slow-loris vector and violating the Gateway API timeout contract
+	// for non-WebSocket routes.
+	WebSocket bool `json:"websocket,omitempty"`
 }
 
 // RouteTimeouts configures timeout durations for proxied requests.

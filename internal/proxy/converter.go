@@ -39,6 +39,20 @@ const (
 	// appProtocolH2C is the Kubernetes Service appProtocol value selecting
 	// HTTP/2 cleartext to the backend.
 	appProtocolH2C = "kubernetes.io/h2c"
+	// appProtocolWS is the Kubernetes Service appProtocol value selecting
+	// WebSocket over cleartext to the backend. The WebSocket upgrade itself is
+	// decided per-request by the Connection: Upgrade + Upgrade: websocket
+	// headers — appProtocol is only a hint for sidecars / metrics. The proxy
+	// keeps the default plaintext HTTP/1.1 transport; httputil.ReverseProxy
+	// natively handles the 101 Switching Protocols response and hijacks the
+	// underlying net.Conn.
+	appProtocolWS = "kubernetes.io/ws"
+	// appProtocolWSS is the Kubernetes Service appProtocol value selecting
+	// WebSocket over TLS to the backend. Same precondition as appProtocol:
+	// https — operators MUST attach a BackendTLSPolicy so the proxy has a CA
+	// to verify against. Without a policy the dial goes plaintext and the
+	// backend will refuse the upgrade.
+	appProtocolWSS = "kubernetes.io/wss"
 )
 
 // BackendRefValidator checks whether a cross-namespace backend reference is allowed.
@@ -716,7 +730,7 @@ func convertBackendRef(
 	// (no policy → operator misconfigured a TLS hint with no actual TLS).
 	result.TLS, result.URL = resolveBackendTLS(ctx, tlsResolver, svcNamespace, serviceName, port, result.URL)
 	result.TLS = attachGatewayClientCert(result.TLS, clientCert)
-	result.Protocol, result.URL = resolveBackendProtocol(ctx, resolver, svcNamespace, serviceName, port, result.URL, result.TLS != nil)
+	result.Protocol, result.URL, result.WebSocket = resolveBackendProtocol(ctx, resolver, svcNamespace, serviceName, port, result.URL, result.TLS != nil)
 
 	result.Filters = convertBackendFilters(ctx, backend.Filters, namespace, clusterDomain, validator, tlsResolver)
 
@@ -796,15 +810,26 @@ func resolveBackendTLS(
 // scheme (which buildServiceURL emits for port 443) is rewritten to http://
 // to avoid a silent TLS-vs-plaintext mismatch.
 //
-// Unrecognised appProtocol values (e.g. kubernetes.io/ws, kubernetes.io/wss)
-// log a warning and fall back to the default HTTP/1.1 transport rather than
-// silently dropping the signal.
+// kubernetes.io/ws is accepted silently — the WebSocket upgrade is decided
+// per-request by Connection: Upgrade headers, not by transport selection, so
+// the default plaintext HTTP/1.1 transport is exactly right. kubernetes.io/wss
+// mirrors the `appProtocol: https` precondition: with a BackendTLSPolicy
+// attached the URL is already https://, without one the proxy logs a WARN and
+// the backend will refuse the upgrade. Unrecognised appProtocol values fall
+// through to a generic "unsupported" WARN.
 //
 // `tlsAttached` reports whether a BackendTLSPolicy already applied a TLS config
-// to this backend. When the operator declared `appProtocol: https` (or
+// to this backend. When the operator declared `appProtocol: https`/`wss` (or
 // `HTTPS`) but no policy attached, the proxy would otherwise silently dial
 // plaintext — defeating the operator's stated TLS intent. In that case the
 // function logs a WARN so the misconfiguration is visible.
+//
+// The third return value reports whether the appProtocol marks this backend
+// as WebSocket-capable (true for `kubernetes.io/ws` and `kubernetes.io/wss`,
+// false otherwise). The Handler uses this to gate the upgrade-aware timeout
+// skip on operator declaration, not on client-controlled headers — gating
+// solely on `Connection: Upgrade` would let any request bypass the route's
+// declared timeouts.
 func resolveBackendProtocol(
 	ctx context.Context,
 	resolver BackendProtocolResolver,
@@ -812,52 +837,39 @@ func resolveBackendProtocol(
 	port int32,
 	rawURL string,
 	tlsAttached bool,
-) (BackendProtocol, string) {
+) (BackendProtocol, string, bool) {
 	if resolver == nil {
-		return BackendProtocolHTTP, rawURL
+		return BackendProtocolHTTP, rawURL, false
 	}
 
 	appProto := resolver(ctx, namespace, serviceName, port)
 
 	switch appProto {
-	case "":
-		return BackendProtocolHTTP, rawURL
 	case appProtocolH2C:
-		// h2c is plaintext HTTP/2 — but if a BackendTLSPolicy already
-		// attached, TLS wins (cleartext h2c cannot coexist with TLS).
-		// Leave the URL https:// so stdlib applies TLSClientConfig and
-		// HTTP/2 is negotiated via ALPN. A WARN surfaces the suppressed
-		// h2c hint so operators don't ship a confusing combo silently.
+		return resolveH2C(rawURL, tlsAttached, namespace, serviceName, port)
+	case appProtocolWS:
 		if tlsAttached {
-			slog.Warn("appProtocol kubernetes.io/h2c suppressed by BackendTLSPolicy on the same Service — HTTP/2 will be negotiated over TLS via ALPN",
-				"namespace", namespace,
-				"service", serviceName,
-				"port", port,
-			)
-
-			return BackendProtocolHTTP, rawURL
+			warnCleartextHintSuppressed(
+				"appProtocol kubernetes.io/ws suppressed by BackendTLSPolicy on the same Service — WebSocket will run over TLS (consider appProtocol kubernetes.io/wss instead)",
+				namespace, serviceName, port)
 		}
 
-		return BackendProtocolH2C, strings.Replace(rawURL, schemeHTTPS+"://", schemeHTTP+"://", 1)
-	case "http", "HTTP":
-		// Plaintext hint matches the default transport — silent.
-		return BackendProtocolHTTP, rawURL
+		return BackendProtocolHTTP, rawURL, true
+	case appProtocolWSS:
+		warnUnpolicedTLSHint(tlsAttached,
+			"backend declares appProtocol wss but no BackendTLSPolicy targets it — WebSocket upgrade will be attempted in plaintext",
+			namespace, serviceName, port, appProto)
+
+		return BackendProtocolHTTP, rawURL, true
 	case "https", "HTTPS":
-		// TLS hint. If a BackendTLSPolicy attached, resolveBackendTLS already
-		// rewrote the URL to https:// and built a real TLS config — the hint
-		// is redundant, no warning needed. If no policy attached, the proxy
-		// would dial in plaintext anyway (we have no CA to verify against);
-		// surface this so operators don't ship a broken TLS expectation.
-		if !tlsAttached {
-			slog.Warn("backend declares appProtocol https but no BackendTLSPolicy targets it — request will be sent in plaintext",
-				"namespace", namespace,
-				"service", serviceName,
-				"port", port,
-				"appProtocol", appProto,
-			)
-		}
+		warnUnpolicedTLSHint(tlsAttached,
+			"backend declares appProtocol https but no BackendTLSPolicy targets it — request will be sent in plaintext",
+			namespace, serviceName, port, appProto)
 
-		return BackendProtocolHTTP, rawURL
+		return BackendProtocolHTTP, rawURL, false
+	case "", "http", "HTTP":
+		// Default / cleartext hints match the default transport — silent.
+		return BackendProtocolHTTP, rawURL, false
 	default:
 		slog.Warn("unsupported backend appProtocol; falling back to HTTP/1.1",
 			"namespace", namespace,
@@ -866,8 +878,63 @@ func resolveBackendProtocol(
 			"appProtocol", appProto,
 		)
 
-		return BackendProtocolHTTP, rawURL
+		return BackendProtocolHTTP, rawURL, false
 	}
+}
+
+// resolveH2C handles the `kubernetes.io/h2c` branch. Extracted so
+// resolveBackendProtocol stays within the funlen budget while keeping the
+// behaviour and comments next to the rest of the protocol-dispatch logic.
+//
+// When a BackendTLSPolicy attached, TLS wins (cleartext h2c cannot coexist
+// with TLS). Leave the URL https:// so stdlib applies TLSClientConfig and
+// HTTP/2 is negotiated over the ALPN handshake; emit a WARN about the
+// suppressed h2c hint so the operator sees the conflict. Otherwise rewrite
+// any https:// URL (which buildServiceURL emits for port 443) back to
+// http:// so the h2c transport dials cleartext.
+func resolveH2C(rawURL string, tlsAttached bool, namespace, serviceName string, port int32) (BackendProtocol, string, bool) {
+	if tlsAttached {
+		warnCleartextHintSuppressed(
+			"appProtocol kubernetes.io/h2c suppressed by BackendTLSPolicy on the same Service — HTTP/2 will be negotiated over TLS via ALPN",
+			namespace, serviceName, port)
+
+		return BackendProtocolHTTP, rawURL, false
+	}
+
+	return BackendProtocolH2C, strings.Replace(rawURL, schemeHTTPS+"://", schemeHTTP+"://", 1), false
+}
+
+// warnUnpolicedTLSHint logs a WARN when an operator declared a TLS-bearing
+// appProtocol (https, wss) without attaching a BackendTLSPolicy. Without a
+// CA the proxy cannot verify and will dial plaintext — the backend will
+// reject the request and the operator deserves a clear signal about the
+// misconfiguration. Extracted from resolveBackendProtocol because the
+// pattern is shared by both `https` and `wss`.
+func warnUnpolicedTLSHint(tlsAttached bool, message, namespace, serviceName string, port int32, appProto string) {
+	if tlsAttached {
+		return
+	}
+
+	slog.Warn(message,
+		"namespace", namespace,
+		"service", serviceName,
+		"port", port,
+		"appProtocol", appProto,
+	)
+}
+
+// warnCleartextHintSuppressed logs a WARN when an operator declared a
+// cleartext appProtocol (h2c, ws) but a BackendTLSPolicy attached to the
+// same Service forced TLS anyway. The proxy still does the right thing —
+// TLS wins because it's the higher-priority signal — but surfacing the
+// conflict lets the operator notice the contradictory hint instead of
+// shipping a misleading appProtocol value forever.
+func warnCleartextHintSuppressed(message, namespace, serviceName string, port int32) {
+	slog.Warn(message,
+		"namespace", namespace,
+		"service", serviceName,
+		"port", port,
+	)
 }
 
 // convertBackendFilters converts the per-backend HTTPRouteFilters into proxy

@@ -14,6 +14,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -99,9 +100,25 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	// Apply Request timeout early: it covers the entire handler (filters + backend call)
-	// per Gateway API spec.
-	if result.Rule.Timeouts != nil && result.Rule.Timeouts.Request > 0 {
+	// Apply Request timeout early: it covers the entire handler (filters +
+	// backend call) per Gateway API spec.
+	//
+	// Skip ONLY when (a) the client claims an HTTP/1.1 Upgrade AND (b) at
+	// least one backend on this rule was declared WebSocket-capable by the
+	// operator (`appProtocol: kubernetes.io/ws[s]`). The operator's
+	// declaration is the source of truth; gating solely on the
+	// client-controlled `Connection: Upgrade` header would let any request
+	// bypass the route's declared timeouts on routes that have nothing to
+	// do with WebSocket — a slow-loris vector and a violation of the
+	// Gateway API timeout contract for non-WebSocket routes.
+	//
+	// Once a real WS upgrade completes, stdlib `httputil.ReverseProxy
+	// .handleUpgradeResponse` watches req.Context().Done() and closes both
+	// halves of the hijacked conn when ctx is canceled (see
+	// golang.org/issue/35559), so applying any request-scoped timeout to a
+	// live WebSocket would terminate it at the timeout boundary.
+	if !shouldSkipUpgradeTimeout(req, ruleHasWebSocketBackend(result.Rule)) &&
+		result.Rule.Timeouts != nil && result.Rule.Timeouts.Request > 0 {
 		ctx, cancel := context.WithTimeout(req.Context(), result.Rule.Timeouts.Request)
 		defer cancel()
 
@@ -190,8 +207,29 @@ func (h *Handler) proxyToBackend(writer http.ResponseWriter, req *http.Request, 
 		return
 	}
 
-	// Apply Backend timeout: covers only the reverse proxy call to the upstream.
-	if result.Rule.Timeouts != nil && result.Rule.Timeouts.Backend > 0 {
+	// WebSocket upgrade: bypass httputil.ReverseProxy. ReverseProxy's
+	// handleUpgradeResponse calls Hijack() on the writer BEFORE writing
+	// the 101 status, then writes the raw HTTP/1.1 status line onto the
+	// hijacked conn. That fails over cloudflared's HTTP/2 transport
+	// because http2RespWriter.Hijack requires statusWritten=true and the
+	// raw HTTP/1.1 bytes don't translate into HTTP/2 DATA frames the edge
+	// can re-frame back to a client 101 — the client sees 403 / 502
+	// instead of a successful upgrade. proxyWebSocketUpgrade does the
+	// dial/handshake/hijack/pipe sequence directly; see the comment on
+	// that method for the protocol-level details.
+	if shouldSkipUpgradeTimeout(req, backend.WebSocket) {
+		h.proxyWebSocketUpgrade(writer, req, backendURL, backend.TLS)
+
+		return
+	}
+
+	// Apply Backend timeout: covers only the reverse proxy call to the
+	// upstream. Skipped only when the operator declared THIS backend as
+	// WebSocket-capable AND the client is actually attempting an upgrade.
+	// Symmetric to the request-timeout gating in ServeHTTP — see the
+	// comment there for the security rationale.
+	if !shouldSkipUpgradeTimeout(req, backend.WebSocket) &&
+		result.Rule.Timeouts != nil && result.Rule.Timeouts.Backend > 0 {
 		ctx, cancel := context.WithTimeout(req.Context(), result.Rule.Timeouts.Backend)
 		defer cancel()
 
@@ -540,6 +578,64 @@ func errorHandler(writer http.ResponseWriter, _ *http.Request, err error) {
 	}
 
 	http.Error(writer, "bad gateway", http.StatusBadGateway)
+}
+
+// shouldSkipUpgradeTimeout combines the two predicates the timeout-skip path
+// needs: the client must actually be attempting an HTTP/1.1 upgrade AND the
+// operator must have declared the relevant scope (rule or backend) as
+// WebSocket-capable via `appProtocol: kubernetes.io/ws[s]`. Gating on the
+// client header alone would let any request bypass the route's declared
+// timeouts; gating on operator scope alone would skip timeouts for plain
+// HTTP requests that happen to hit a WS-marked route.
+func shouldSkipUpgradeTimeout(req *http.Request, operatorAllowsUpgrade bool) bool {
+	return operatorAllowsUpgrade && isHTTPUpgradeRequest(req)
+}
+
+// ruleHasWebSocketBackend reports whether any backend on the rule was
+// declared WebSocket-capable. Used at rule-scope (before backend selection)
+// to decide whether the rule's Request timeout should be skipped for
+// upgrade requests.
+func ruleHasWebSocketBackend(rule *RouteRule) bool {
+	if rule == nil {
+		return false
+	}
+
+	for i := range rule.Backends {
+		if rule.Backends[i].WebSocket {
+			return true
+		}
+	}
+
+	return false
+}
+
+// isHTTPUpgradeRequest reports whether the request is an HTTP/1.1 upgrade
+// per RFC 7230 §6.1 — a non-empty Upgrade header AND a Connection header
+// containing the "upgrade" token. WebSocket is the most common case but the
+// same predicate covers any upgrade (HTTP/2 prior knowledge over h2c
+// originally negotiated by Upgrade, etc.).
+//
+// Used together with `BackendRef.WebSocket` to gate the upgrade-aware
+// timeout skip: a client-controlled header alone is not enough — the
+// operator must also have marked the relevant backend as WS-capable.
+func isHTTPUpgradeRequest(req *http.Request) bool {
+	if req == nil || req.Header == nil {
+		return false
+	}
+
+	if req.Header.Get("Upgrade") == "" {
+		return false
+	}
+
+	for _, value := range req.Header.Values("Connection") {
+		for token := range strings.SplitSeq(value, ",") {
+			if strings.EqualFold(strings.TrimSpace(token), "upgrade") {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 // writeRedirectResponse writes a short-circuit redirect response.

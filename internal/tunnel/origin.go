@@ -34,13 +34,42 @@ func NewGatewayOriginProxy(handler http.Handler, logger *slog.Logger) *GatewayOr
 }
 
 // ProxyHTTP delegates the HTTP request to our L7 proxy handler.
-// connection.ResponseWriter implements http.ResponseWriter, so direct delegation works.
+// connection.ResponseWriter implements http.ResponseWriter, so direct
+// delegation works for plain HTTP.
+//
+// When cloudflared signals a WebSocket upgrade via the third parameter, it
+// has already stripped the standard HTTP/1.1 upgrade headers from `tr
+// .Request`; the upgrade is communicated out-of-band so the request can
+// traverse cloudflared's HTTP/2 transport (which forbids hop-by-hop
+// headers per RFC 7540 §8.1.2.2). Native cloudflared re-injects them
+// before forwarding to origin (see cloudflared/proxy/proxy.go
+// `proxyHTTPRequest`). Our `httputil.ReverseProxy`-based handler keys its
+// 101-hijack path on those same RFC 7230 §6.1 headers, so re-injecting
+// them here is what turns the bridge into a functional WebSocket origin.
+//
+// Without re-injection the handler sees a regular HTTP request, forwards
+// it without upgrade headers, and the backend rejects with 400 "not
+// websocket protocol".
 func (p *GatewayOriginProxy) ProxyHTTP(
 	writer connection.ResponseWriter,
-	tr *tracing.TracedHTTPRequest,
-	_ bool,
+	tracedReq *tracing.TracedHTTPRequest,
+	isWebsocket bool,
 ) error {
-	p.handler.ServeHTTP(writer, tr.Request)
+	req := tracedReq.Request
+
+	if isWebsocket {
+		// Clone before mutating: tracedReq.Request may be retained by
+		// cloudflared for tracing/logging, and a body-less header copy is
+		// what the handshake needs anyway.
+		req = tracedReq.Clone(tracedReq.Context())
+		req.Header.Set("Connection", "Upgrade")
+		req.Header.Set("Upgrade", "websocket")
+		req.Header.Set("Sec-Websocket-Version", "13")
+		req.ContentLength = 0
+		req.Body = nil
+	}
+
+	p.handler.ServeHTTP(writer, req)
 
 	return nil
 }
