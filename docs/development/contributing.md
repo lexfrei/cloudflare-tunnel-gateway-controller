@@ -100,6 +100,7 @@ changes before merging.
 - [ ] Commit messages follow conventional format
 - [ ] All CI checks pass
 - [ ] PR description is complete
+- [ ] Proxy features touching request/response flow are validated against `fakeCloudflaredRespWriter` (`internal/proxy/handler_tunnelfake_test.go`), not just `httptest.NewServer` — see [Tunnel-mode response writer semantics](proxy-architecture.md#tunnel-mode-response-writer-semantics)
 
 ## Code Style
 
