@@ -42,8 +42,11 @@ func transportKey(host string, protocol BackendProtocol, backendTLS *BackendTLSC
 }
 
 // tlsFingerprint returns a stable short hash of the TLS config, or "" when nil.
-// The hash covers CA + ServerName + DNS SANs + URI SANs so any change to the
-// effective trust policy evicts the cached transport.
+// The hash covers CA + ServerName + DNS SANs + URI SANs + client keypair so
+// any change to the effective trust policy or the presented client identity
+// evicts the cached transport. The client cert section is hashed last so
+// existing keys with no client cert keep their byte layout intact (the
+// trailing separator + empty payload is collision-free with prior URI SANs).
 func tlsFingerprint(backendTLS *BackendTLSConfig) string {
 	if backendTLS == nil {
 		return ""
@@ -67,6 +70,13 @@ func tlsFingerprint(backendTLS *BackendTLSConfig) string {
 		hasher.Write([]byte(sanURI))
 		hasher.Write([]byte{0})
 	}
+	// Distinct separator before the client keypair so two Gateways serving
+	// the same backend host with different client certs never share a
+	// transport (each would otherwise present the cached transport's cert).
+	hasher.Write([]byte("|client|"))
+	hasher.Write(backendTLS.ClientCertPEM)
+	hasher.Write([]byte{0})
+	hasher.Write(backendTLS.ClientKeyPEM)
 
 	sum := hasher.Sum(nil)
 

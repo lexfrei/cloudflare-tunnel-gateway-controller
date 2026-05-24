@@ -103,6 +103,42 @@ func TestBuildBackendTLSConfig_NoClientCert_NoCertificates(t *testing.T) {
 	assert.Empty(t, cfg.Certificates)
 }
 
+func TestTransportKey_DistinguishesByClientCert(t *testing.T) {
+	t.Parallel()
+
+	certA, keyA := generateClientKeypairPEM(t, "tenant-a")
+	certB, keyB := generateClientKeypairPEM(t, "tenant-b")
+
+	host := "backend.example.com:8443"
+	protocol := proxy.BackendProtocolHTTP
+
+	noCert := &proxy.BackendTLSConfig{ServerName: "backend.example.com"}
+	certAOnly := &proxy.BackendTLSConfig{
+		ServerName:    "backend.example.com",
+		ClientCertPEM: certA,
+		ClientKeyPEM:  keyA,
+	}
+	certBOnly := &proxy.BackendTLSConfig{
+		ServerName:    "backend.example.com",
+		ClientCertPEM: certB,
+		ClientKeyPEM:  keyB,
+	}
+
+	keyNoCert := proxy.TransportKey(host, protocol, noCert)
+	keyCertA := proxy.TransportKey(host, protocol, certAOnly)
+	keyCertB := proxy.TransportKey(host, protocol, certBOnly)
+
+	// Two Gateways serving the same backend host with distinct client certs
+	// must not share a cached transport — otherwise a connection from one
+	// Gateway would present the other's cert.
+	assert.NotEqual(t, keyNoCert, keyCertA, "presence of client cert must change pool key")
+	assert.NotEqual(t, keyCertA, keyCertB, "different client cert must change pool key")
+	assert.NotEqual(t, keyNoCert, keyCertB)
+
+	// Determinism: same config produces same key.
+	assert.Equal(t, keyCertA, proxy.TransportKey(host, protocol, certAOnly))
+}
+
 func TestBuildBackendTLSConfig_ClientCert_WithSANConstraints(t *testing.T) {
 	t.Parallel()
 
