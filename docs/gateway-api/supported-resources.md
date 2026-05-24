@@ -40,6 +40,7 @@ but TLS certificate references are validated (including ReferenceGrant checks).
 | `spec.listeners[].hostname` | Yes | Routes must have intersecting hostnames |
 | `spec.listeners[].tls` | Yes | CertificateRefs validated with ReferenceGrant support |
 | `spec.listeners[].allowedRoutes` | Yes | Namespace (Same/All/Selector) and kind filtering |
+| `spec.tls.backend.clientCertificateRef` | Yes | `kubernetes.io/tls` Secret only; same-namespace or via ReferenceGrant; presented during backend TLS handshake **only** when the target Service has a BackendTLSPolicy (no client cert is sent over plaintext) |
 | `spec.addresses` | No | Ignored; tunnel CNAME set automatically in status |
 | `spec.infrastructure` | No | Not implemented |
 
