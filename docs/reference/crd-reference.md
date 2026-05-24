@@ -199,9 +199,14 @@ spec:
 | Condition | Status | Reason | Description |
 |-----------|--------|--------|-------------|
 | `Accepted` | `True` | `Accepted` | Route accepted and synced |
-| `Accepted` | `False` | `NoMatchingParent` | Sync to Cloudflare failed |
+| `Accepted` | `False` | `NoMatchingParent` | No listener matched the parentRef's `sectionName` or `port`; also fires when hostname is the failure reason and the parentRef pinned a `sectionName` or `port` |
+| `Accepted` | `False` | `NoMatchingListenerHostname` | Route hostnames do not intersect with any listener hostname (no `sectionName`/`port` pin on the parentRef) |
+| `Accepted` | `False` | `NotAllowedByListeners` | Route namespace or kind not allowed by listener |
+| `Accepted` | `False` | `Pending` | Sync to the Cloudflare Tunnel API failed; reconcile will retry. Proxy-push failures are best-effort: they are logged and counted via the `proxy_push` sync-error metric but do **not** flip `Accepted` to False / Reason=`Pending` |
 | `ResolvedRefs` | `True` | `ResolvedRefs` | Backend references resolved |
 | `ResolvedRefs` | `False` | `RefNotPermitted` | Cross-namespace reference denied |
+| `ResolvedRefs` | `False` | `BackendNotFound` | Backend Service not found |
+| `ResolvedRefs` | `False` | `InvalidKind` | Backend ref group/kind is not a core Service |
 
 ## API Versions
 
