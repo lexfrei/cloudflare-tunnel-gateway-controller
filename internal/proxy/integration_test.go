@@ -2059,3 +2059,121 @@ func TestHandler_MultipleFiltersApplied(t *testing.T) {
 	// X-Internal was removed by the filter, so the backend should not echo it.
 	assert.Empty(t, recorder.Header().Get("X-Echo-X-Internal"))
 }
+
+// TestHandler_BackendClientCert_PresentedAtHandshake exercises the end-to-end
+// path the GatewayBackendClientCertificateFeature conformance test verifies:
+// the proxy presents the configured client certificate during the backend
+// TLS handshake, and the backend can observe it via TLS.PeerCertificates.
+func TestHandler_BackendClientCert_PresentedAtHandshake(t *testing.T) {
+	t.Parallel()
+
+	clientCertPEM, clientKeyPEM := generateClientKeypairPEM(t, "gateway-mtls-tenant")
+
+	// Backend server: TLS with RequireAnyClientCert so the handshake succeeds
+	// for any presented cert; the handler records what came through.
+	var receivedCN atomic.Value
+
+	tlsBackend := httptest.NewUnstartedServer(http.HandlerFunc(func(writer http.ResponseWriter, req *http.Request) {
+		if req.TLS != nil && len(req.TLS.PeerCertificates) > 0 {
+			receivedCN.Store(req.TLS.PeerCertificates[0].Subject.CommonName)
+		}
+
+		writer.WriteHeader(http.StatusOK)
+	}))
+	tlsBackend.TLS = &tls.Config{
+		MinVersion: tls.VersionTLS12,
+		ClientAuth: tls.RequireAnyClientCert,
+	}
+	tlsBackend.StartTLS()
+
+	t.Cleanup(tlsBackend.Close)
+
+	caPEM := caPEMFromTLSServer(t, tlsBackend)
+
+	router := proxy.NewRouter()
+	require.NoError(t, router.UpdateConfig(&proxy.Config{
+		Version: 1,
+		Rules: []proxy.RouteRule{
+			{
+				Hostnames: []string{"app.example.com"},
+				Matches:   []proxy.RouteMatch{{Path: &proxy.PathMatch{Type: proxy.PathMatchPathPrefix, Value: "/"}}},
+				Backends: []proxy.BackendRef{
+					{
+						URL:    tlsBackend.URL,
+						Weight: 1,
+						TLS: &proxy.BackendTLSConfig{
+							CABundlePEM:   caPEM,
+							ServerName:    "example.com",
+							ClientCertPEM: clientCertPEM,
+							ClientKeyPEM:  clientKeyPEM,
+						},
+					},
+				},
+			},
+		},
+	}))
+
+	handler := proxy.NewHandler(router)
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://app.example.com/", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	resp := rec.Result()
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, "gateway-mtls-tenant", receivedCN.Load(),
+		"backend must observe the client cert the proxy presented in the TLS handshake")
+}
+
+// TestHandler_BackendClientCert_MissingWhenServerRequires verifies the
+// fail-closed path: a server that requires a client cert and the proxy that
+// does NOT configure one must produce a 502 (handshake failure), not a 200.
+func TestHandler_BackendClientCert_MissingWhenServerRequires(t *testing.T) {
+	t.Parallel()
+
+	tlsBackend := httptest.NewUnstartedServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusOK)
+	}))
+	tlsBackend.TLS = &tls.Config{
+		MinVersion: tls.VersionTLS12,
+		ClientAuth: tls.RequireAnyClientCert,
+	}
+	tlsBackend.StartTLS()
+
+	t.Cleanup(tlsBackend.Close)
+
+	caPEM := caPEMFromTLSServer(t, tlsBackend)
+
+	router := proxy.NewRouter()
+	require.NoError(t, router.UpdateConfig(&proxy.Config{
+		Version: 1,
+		Rules: []proxy.RouteRule{
+			{
+				Hostnames: []string{"app.example.com"},
+				Matches:   []proxy.RouteMatch{{Path: &proxy.PathMatch{Type: proxy.PathMatchPathPrefix, Value: "/"}}},
+				Backends: []proxy.BackendRef{
+					{
+						URL:    tlsBackend.URL,
+						Weight: 1,
+						TLS: &proxy.BackendTLSConfig{
+							CABundlePEM: caPEM,
+							ServerName:  "example.com",
+							// No ClientCertPEM/ClientKeyPEM: the backend will reject the handshake.
+						},
+					},
+				},
+			},
+		},
+	}))
+
+	handler := proxy.NewHandler(router)
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://app.example.com/", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusBadGateway, rec.Result().StatusCode,
+		"backend that requires a client cert must reject a handshake without one — proxy returns 502")
+}
