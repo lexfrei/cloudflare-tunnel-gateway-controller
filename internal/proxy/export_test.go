@@ -1,10 +1,18 @@
 package proxy
 
 import (
+	"crypto/tls"
+	"crypto/x509"
 	"net"
 	"net/http"
 	"sync"
 )
+
+// BuildBackendTLSConfigForTest exposes buildBackendTLSConfig so attach-client-cert
+// tests can drive it directly with a precomputed root pool.
+func BuildBackendTLSConfigForTest(backendTLS *BackendTLSConfig, rootCAs *x509.CertPool) *tls.Config {
+	return buildBackendTLSConfig(backendTLS, rootCAs)
+}
 
 // Transports returns the handler's internal transport pool for testing purposes.
 func (h *Handler) Transports() *sync.Map {

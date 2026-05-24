@@ -370,32 +370,60 @@ func newTLSTransport(backendTLS *BackendTLSConfig) http.RoundTripper {
 // verification modes. Split from newTLSTransport for testability and to keep
 // per-function complexity within the funlen budget.
 func buildBackendTLSConfig(backendTLS *BackendTLSConfig, rootCAs *x509.CertPool) *tls.Config {
+	var tlsConfig *tls.Config
+
 	if !backendTLS.HasSANConstraints() {
 		// Mode 1: Hostname-based authentication via ServerName.
-		return &tls.Config{
+		tlsConfig = &tls.Config{
 			MinVersion: tls.VersionTLS12,
 			RootCAs:    rootCAs,
 			ServerName: backendTLS.ServerName,
 		}
+	} else {
+		// Mode 2: SAN-list authentication. ServerName drives SNI only.
+		expectedHostnames := slices.Clone(backendTLS.SubjectAltNames)
+		expectedURIs := slices.Clone(backendTLS.SubjectAltNameURIs)
+		tlsConfig = &tls.Config{
+			MinVersion: tls.VersionTLS12,
+			RootCAs:    rootCAs,
+			ServerName: backendTLS.ServerName,
+			// Hostname matching is intentionally bypassed — VerifyConnection
+			// performs full chain validation AND the SAN OR-match below.
+			// gosec G402: this is the documented Gateway API SAN-only verification
+			// path; chain validation is preserved via leaf.Verify().
+			InsecureSkipVerify: true, //nolint:gosec // see comment above
+			VerifyConnection:   verifyBackendChainAndSANs(rootCAs, expectedHostnames, expectedURIs),
+		}
 	}
 
-	// Mode 2: SAN-list authentication. ServerName drives SNI only.
-	expectedHostnames := slices.Clone(backendTLS.SubjectAltNames)
-	expectedURIs := slices.Clone(backendTLS.SubjectAltNameURIs)
-
-	tlsConfig := &tls.Config{
-		MinVersion: tls.VersionTLS12,
-		RootCAs:    rootCAs,
-		ServerName: backendTLS.ServerName,
-		// Hostname matching is intentionally bypassed — VerifyConnection
-		// performs full chain validation AND the SAN OR-match below.
-		// gosec G402: this is the documented Gateway API SAN-only verification
-		// path; chain validation is preserved via leaf.Verify().
-		InsecureSkipVerify: true, //nolint:gosec // see comment above
-		VerifyConnection:   verifyBackendChainAndSANs(rootCAs, expectedHostnames, expectedURIs),
-	}
+	attachClientCert(tlsConfig, backendTLS)
 
 	return tlsConfig
+}
+
+// attachClientCert loads the Gateway-level client keypair into tlsConfig so
+// the proxy can present it during the backend TLS handshake (mTLS). A parse
+// failure is logged and the cert is left unattached so the handshake fails
+// closed — a server that requires a client cert will reject the connection
+// rather than silently fall back to one-way authentication. tls.X509KeyPair
+// accepts a PEM chain (leaf + intermediates) in ClientCertPEM and pairs it
+// with the single private key in ClientKeyPEM.
+func attachClientCert(tlsConfig *tls.Config, backendTLS *BackendTLSConfig) {
+	if !backendTLS.HasClientCert() {
+		return
+	}
+
+	cert, err := tls.X509KeyPair(backendTLS.ClientCertPEM, backendTLS.ClientKeyPEM)
+	if err != nil {
+		slog.Error("backend client certificate keypair failed to parse — handshake will fail closed",
+			"error", err,
+			"serverName", backendTLS.ServerName,
+		)
+
+		return
+	}
+
+	tlsConfig.Certificates = []tls.Certificate{cert}
 }
 
 // verifyBackendChainAndSANs returns a VerifyConnection callback that runs both
