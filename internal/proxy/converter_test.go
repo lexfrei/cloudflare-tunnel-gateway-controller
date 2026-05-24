@@ -74,6 +74,66 @@ func TestConvertHTTPRoutes_Basic(t *testing.T) {
 	assert.Contains(t, cfg.Rules[1].Hostnames, "example.com")
 }
 
+// TestConvertHTTPRoutes_NamedAndUnnamedRules_BothRoutable pins the routing
+// behaviour exercised by the upstream conformance test HTTPRouteNamedRule.
+// Resource names, paths, and backend service names mirror the upstream
+// fixture httproute-named-rule.yaml verbatim. The route's hostnames are
+// left unset (matching the fixture) so the converter must produce two
+// independently matchable proxy rules purely from path matchers. The rule
+// Name field is metadata only and must not interfere with path-based
+// dispatch.
+func TestConvertHTTPRoutes_NamedAndUnnamedRules_BothRoutable(t *testing.T) {
+	t.Parallel()
+
+	pathPrefix := gatewayv1.PathMatchPathPrefix
+	ruleName := gatewayv1.SectionName("named-rule")
+
+	routes := []*gatewayv1.HTTPRoute{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "http-named-rules", Namespace: "gateway-conformance-infra"},
+			Spec: gatewayv1.HTTPRouteSpec{
+				Rules: []gatewayv1.HTTPRouteRule{
+					{
+						Name: &ruleName,
+						Matches: []gatewayv1.HTTPRouteMatch{
+							{Path: &gatewayv1.HTTPPathMatch{Type: &pathPrefix, Value: new("/named")}},
+						},
+						BackendRefs: []gatewayv1.HTTPBackendRef{
+							backendRef("infra-backend-v1", 8080, 1),
+						},
+					},
+					{
+						Matches: []gatewayv1.HTTPRouteMatch{
+							{Path: &gatewayv1.HTTPPathMatch{Type: &pathPrefix, Value: new("/unnamed")}},
+						},
+						BackendRefs: []gatewayv1.HTTPBackendRef{
+							backendRef("infra-backend-v2", 8080, 1),
+						},
+					},
+				},
+			},
+		},
+	}
+
+	cfg := proxy.ConvertHTTPRoutes(context.Background(), routes, "cluster.local", nil, nil, nil)
+
+	require.Len(t, cfg.Rules, 2)
+
+	// Both rules must keep their distinct path matchers and resolved backends —
+	// the Name field on one rule must not alter the output of the other.
+	require.Len(t, cfg.Rules[0].Matches, 1)
+	require.NotNil(t, cfg.Rules[0].Matches[0].Path)
+	assert.Equal(t, "/named", cfg.Rules[0].Matches[0].Path.Value)
+	require.Len(t, cfg.Rules[0].Backends, 1)
+	assert.Contains(t, cfg.Rules[0].Backends[0].URL, "infra-backend-v1")
+
+	require.Len(t, cfg.Rules[1].Matches, 1)
+	require.NotNil(t, cfg.Rules[1].Matches[0].Path)
+	assert.Equal(t, "/unnamed", cfg.Rules[1].Matches[0].Path.Value)
+	require.Len(t, cfg.Rules[1].Backends, 1)
+	assert.Contains(t, cfg.Rules[1].Backends[0].URL, "infra-backend-v2")
+}
+
 func TestConvertHTTPRoutes_BackendProtocolH2C(t *testing.T) {
 	t.Parallel()
 
