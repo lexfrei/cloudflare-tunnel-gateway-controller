@@ -11,6 +11,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
+	gatewayv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
 )
 
 // Sentinel errors describing why a Gateway-level client certificate ref could
@@ -178,6 +179,59 @@ func buildClientCertResolvedRefsCondition(generation int64, now metav1.Time, err
 		Reason:             string(reason),
 		Message:            err.Error(),
 	}
+}
+
+// checkSecretReferenceGrantForGateway is the standalone equivalent of
+// GatewayReconciler.checkSecretReferenceGrant — both walk ReferenceGrants in
+// the target namespace and report whether any grants the Gateway's namespace
+// access to the referenced Secret. Extracted as a free function so the
+// ProxySyncer can authorise the same cross-namespace path without holding a
+// GatewayReconciler reference. The behaviour is byte-identical to the
+// receiver-method version.
+func checkSecretReferenceGrantForGateway(
+	ctx context.Context,
+	c client.Client,
+	gateway *gatewayv1.Gateway,
+	targetNamespace string,
+	ref gatewayv1.SecretObjectReference,
+) (bool, error) {
+	var grants gatewayv1beta1.ReferenceGrantList
+	if err := c.List(ctx, &grants, client.InNamespace(targetNamespace)); err != nil {
+		return false, errors.Wrap(err, "failed to list ReferenceGrants")
+	}
+
+	for i := range grants.Items {
+		if !grantAllowsGatewayFromNamespace(&grants.Items[i], gateway.Namespace) {
+			continue
+		}
+
+		for _, to := range grants.Items[i].Spec.To {
+			if to.Group != "" || to.Kind != kindSecret {
+				continue
+			}
+
+			if to.Name == nil || *to.Name == "" || string(*to.Name) == string(ref.Name) {
+				return true, nil
+			}
+		}
+	}
+
+	return false, nil
+}
+
+// grantAllowsGatewayFromNamespace mirrors GatewayReconciler.grantAllowsGateway
+// as a free function so the standalone reference-grant check above can reuse
+// the same predicate.
+func grantAllowsGatewayFromNamespace(grant *gatewayv1beta1.ReferenceGrant, gatewayNamespace string) bool {
+	for _, from := range grant.Spec.From {
+		if from.Group == gatewayv1.GroupName &&
+			from.Kind == kindGateway &&
+			string(from.Namespace) == gatewayNamespace {
+			return true
+		}
+	}
+
+	return false
 }
 
 // isCoreSecretRef reports whether the ref targets a core/v1 Secret (Group ""

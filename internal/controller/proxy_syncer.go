@@ -13,6 +13,7 @@ import (
 
 	"github.com/cockroachdb/errors"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
@@ -37,13 +38,14 @@ const configMapKind = "ConfigMap"
 // ProxySyncer converts HTTPRoute resources to proxy config
 // and pushes it to enhanced-cloudflared replicas via HTTP API.
 type ProxySyncer struct {
-	clusterDomain    string
-	logger           *slog.Logger
-	pusher           *proxy.ConfigPusher
-	backendValidator proxy.BackendRefValidator
-	protocolResolver proxy.BackendProtocolResolver
-	tlsResolver      proxy.BackendTLSResolver
-	syncMu           sync.Mutex
+	clusterDomain       string
+	logger              *slog.Logger
+	pusher              *proxy.ConfigPusher
+	backendValidator    proxy.BackendRefValidator
+	protocolResolver    proxy.BackendProtocolResolver
+	tlsResolver         proxy.BackendTLSResolver
+	gatewayCertResolver proxy.GatewayClientCertResolver
+	syncMu              sync.Mutex
 }
 
 // NewProxySyncer creates a ProxySyncer for pushing config to proxy replicas.
@@ -66,9 +68,48 @@ func NewProxySyncer(
 		pusher: proxy.NewConfigPusher(&http.Client{
 			Timeout: 10 * time.Second,
 		}, authToken),
-		backendValidator: newBackendRefValidator(refGrantValidator),
-		protocolResolver: newBackendProtocolResolver(k8sClient),
-		tlsResolver:      newBackendTLSResolver(k8sClient),
+		backendValidator:    newBackendRefValidator(refGrantValidator),
+		protocolResolver:    newBackendProtocolResolver(k8sClient),
+		tlsResolver:         newBackendTLSResolver(k8sClient),
+		gatewayCertResolver: newGatewayClientCertResolver(k8sClient),
+	}
+}
+
+// newGatewayClientCertResolver returns a resolver that loads the Gateway's
+// spec.tls.backend.clientCertificateRef Secret into the PEM-encoded keypair
+// the proxy presents during backend mTLS handshakes. Returns nil when the
+// Gateway has no such ref, the Secret cannot be resolved, the ReferenceGrant
+// is missing, or the keypair fails to parse — all of which also surface on
+// the Gateway's ResolvedRefs condition via the parallel emit path in the
+// GatewayReconciler.
+func newGatewayClientCertResolver(c client.Client) proxy.GatewayClientCertResolver {
+	return func(ctx context.Context, gatewayNN types.NamespacedName) *proxy.ClientCertConfig {
+		var gateway gatewayv1.Gateway
+		if err := c.Get(ctx, gatewayNN, &gateway); err != nil {
+			return nil
+		}
+
+		certPEM, keyPEM, err := loadGatewayClientCertPEM(ctx, c, &gateway, gatewayClientCertGrantChecker(c))
+		if err != nil || certPEM == nil || keyPEM == nil {
+			return nil
+		}
+
+		return &proxy.ClientCertConfig{CertPEM: certPEM, KeyPEM: keyPEM}
+	}
+}
+
+// gatewayClientCertGrantChecker adapts the package-level grant lookup into a
+// secretRefGrantChecker so the syncer can resolve cross-namespace refs without
+// depending on a GatewayReconciler instance. The lookup mirrors the
+// implementation on GatewayReconciler.checkSecretReferenceGrant verbatim.
+func gatewayClientCertGrantChecker(c client.Client) secretRefGrantChecker {
+	return func(
+		ctx context.Context,
+		gateway *gatewayv1.Gateway,
+		targetNamespace string,
+		ref gatewayv1.SecretObjectReference,
+	) (bool, error) {
+		return checkSecretReferenceGrantForGateway(ctx, c, gateway, targetNamespace, ref)
 	}
 }
 
@@ -463,7 +504,7 @@ func (s *ProxySyncer) SyncRoutes(
 	// Convert to proxy config with cross-namespace validation, backend
 	// protocol resolution (e.g. h2c from Service appProtocol), and
 	// BackendTLSPolicy lookup for the proxy → backend TLS hop.
-	cfg := proxy.ConvertHTTPRoutes(ctx, routes, s.clusterDomain, s.backendValidator, s.protocolResolver, s.tlsResolver, nil)
+	cfg := proxy.ConvertHTTPRoutes(ctx, routes, s.clusterDomain, s.backendValidator, s.protocolResolver, s.tlsResolver, s.gatewayCertResolver)
 
 	// Clear backends for routes that have failed backend refs.
 	// This ensures the proxy returns 500 (no backend available) instead of
