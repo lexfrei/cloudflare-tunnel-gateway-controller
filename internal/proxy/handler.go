@@ -207,6 +207,22 @@ func (h *Handler) proxyToBackend(writer http.ResponseWriter, req *http.Request, 
 		return
 	}
 
+	// WebSocket upgrade: bypass httputil.ReverseProxy. ReverseProxy's
+	// handleUpgradeResponse calls Hijack() on the writer BEFORE writing
+	// the 101 status, then writes the raw HTTP/1.1 status line onto the
+	// hijacked conn. That fails over cloudflared's HTTP/2 transport
+	// because http2RespWriter.Hijack requires statusWritten=true and the
+	// raw HTTP/1.1 bytes don't translate into HTTP/2 DATA frames the edge
+	// can re-frame back to a client 101 — the client sees 403 / 502
+	// instead of a successful upgrade. proxyWebSocketUpgrade does the
+	// dial/handshake/hijack/pipe sequence directly; see the comment on
+	// that method for the protocol-level details.
+	if shouldSkipUpgradeTimeout(req, backend.WebSocket) {
+		h.proxyWebSocketUpgrade(writer, req, backendURL, backend.TLS)
+
+		return
+	}
+
 	// Apply Backend timeout: covers only the reverse proxy call to the
 	// upstream. Skipped only when the operator declared THIS backend as
 	// WebSocket-capable AND the client is actually attempting an upgrade.
