@@ -237,7 +237,7 @@ with the following minimum-viable scope:
 | `SectionName` per-port targeting | Yes | When a `TargetRef` carries `sectionName`, only the matching named Service port receives TLS; siblings on the same Service stay plaintext |
 | Conflict resolution across multiple policies on the same target | Partial | Oldest-creationTimestamp wins, alphabetical name on tie. Losers are NOT yet stamped `Accepted=False, Reason=Conflicted` — they share the winner's `Accepted=True`. The upstream `BackendTLSPolicyConflictResolution` conformance subtest is skipped pending that work |
 | Cross-namespace CA refs | No | Same-namespace only |
-| `GatewayBackendClientCertificate` (mutual TLS) | No | Requires the experimental Gateway API CRD channel; homelab ships the standard channel |
+| `GatewayBackendClientCertificate` (mutual TLS) | Yes | The Gateway's `spec.tls.backend.clientCertificateRef` (Standard channel) loads a `kubernetes.io/tls` Secret and the proxy presents the keypair during backend TLS handshakes. Cross-namespace refs require ReferenceGrant. The client cert is attached **only** when the target Service has a `BackendTLSPolicy` — sending a cert over plaintext is meaningless. When an HTTPRoute attaches to multiple Gateways, the first parentRef managed by this controller that has a resolvable client cert wins; foreign-controller parents and parents without a cert are skipped, not blocking. The conformance test does not exercise this multi-parent edge case |
 | HTTPS-listener Re-encrypt (frontend TLS termination + backend TLS) | No | Cloudflare terminates TLS at the edge, so HTTPS listeners aren't supported (see the HTTPRoute HTTPS Listener limitation). The upstream `BackendTLSPolicy` parent test is skipped for the same reason |
 
 Policy status (`Accepted` / `ResolvedRefs`) is maintained per-Gateway-ancestor.
@@ -266,6 +266,26 @@ with HTTP/2 negotiated via ALPN). h2c is by definition cleartext HTTP/2 and
 cannot coexist with backend TLS; the h2c marker is silently ignored on that
 hop. If you genuinely want HTTP/2 over TLS, omit the `appProtocol` hint and
 let ALPN negotiate it during the handshake.
+
+### Gateway client cert rotation has a propagation lag
+
+The controller's existing Secret watch only matches the GatewayClassConfig's
+`cloudflareCredentialsSecretRef` and `tunnelTokenSecretRef`. A rotation of the
+`Secret` referenced by `spec.tls.backend.clientCertificateRef` (or by a
+listener's `certificateRefs`) does NOT enqueue the Gateway on its own — the
+proxy continues to dial backends with the previous keypair until some
+unrelated event (HTTPRoute create/update, BackendTLSPolicy change, periodic
+resync, controller restart) drives the next reconcile. On that reconcile the
+new keypair is loaded, the converter stamps it onto every affected
+`BackendTLSConfig`, and the per-cert transport-pool hash evicts the stale
+transport on the next config push.
+
+In active clusters the propagation window is short, but operators that
+rotate certs more frequently than other Gateway-namespace events occur will
+observe stale-cert traffic until the next reconcile fires. Active hot-reload
+on a Secret-only change is a tracked follow-up — extending
+`ConfigMapper.MapSecretToRequests` to also match Gateway-level
+`clientCertificateRef` Secrets is the planned fix.
 
 ### RequestMirror filter does not honour BackendTLSPolicy
 

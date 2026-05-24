@@ -55,6 +55,7 @@ func TestGatewayAPIConformance(t *testing.T) {
 		features.SupportHTTPRouteRequestPercentageMirror,
 		features.SupportBackendTLSPolicy,
 		features.SupportBackendTLSPolicySANValidation,
+		features.SupportGatewayBackendClientCertificate,
 		features.SupportHTTPRouteCORS,
 		features.SupportHTTPRouteNamedRouteRule,
 
@@ -89,7 +90,6 @@ func TestGatewayAPIConformance(t *testing.T) {
 		features.SupportGatewayInfrastructurePropagation,
 		features.SupportGatewayPort8080,
 		features.SupportGatewayAddressEmpty,
-		features.SupportGatewayBackendClientCertificate,
 		features.SupportGatewayFrontendClientCertificateValidation,
 		features.SupportGatewayFrontendClientCertificateValidationInsecureFallback,
 		features.SupportGatewayHTTPSListenerDetectMisdirectedRequests,
@@ -185,7 +185,6 @@ func TestGatewayAPIConformance(t *testing.T) {
 		"GatewayStaticAddresses",
 		"GatewayHTTPListenerIsolation",
 		"GatewayInfrastructure",
-		"GatewayBackendClientCertificateFeature",
 		"GatewayFrontendClientCertificateValidation",
 		"GatewayFrontendClientCertificateValidationInsecureFallback",
 		"GatewayFrontendInvalidDefaultClientCertificateValidation",

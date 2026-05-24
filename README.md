@@ -193,6 +193,7 @@ Cloudflare Tunnel has path matching behavior that differs from Gateway API:
 - Multi-policy conflicts resolve by oldest-creationTimestamp (then alphabetical), but losing policies are not yet stamped `Accepted=False, Reason=Conflicted`
 - HTTPS-listener Re-encrypt is not supported (Cloudflare terminates frontend TLS at the edge)
 - `RequestMirror` filter does NOT route mirrored traffic through the TLS-aware transport pool — when a `BackendTLSPolicy` targets a mirror destination the mirrored copy is sent in plaintext (the converter logs a WARN to surface this; tracked as a follow-up)
+- Backend mTLS is supported via `Gateway.spec.tls.backend.clientCertificateRef` (Gateway API `GatewayBackendClientCertificate` feature, Standard channel). The referenced `kubernetes.io/tls` Secret's keypair is presented during the backend TLS handshake **only** when a `BackendTLSPolicy` also targets the Service — a client cert over plaintext is meaningless. Cross-namespace refs require ReferenceGrant.
 
 The L7 proxy implements the Gateway API `HTTPRouteCORS` filter (preflight + simple requests, wildcard origin / methods / headers, credentials-aware echoing). The `HTTPRouteCORSAllowCredentialsBehavior` conformance subtest exercises an edge case (`credentials + wildcard`) that this implementation does not yet cover end-to-end and stays skipped.
 

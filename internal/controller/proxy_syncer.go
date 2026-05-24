@@ -13,6 +13,8 @@ import (
 
 	"github.com/cockroachdb/errors"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
@@ -37,20 +39,28 @@ const configMapKind = "ConfigMap"
 // ProxySyncer converts HTTPRoute resources to proxy config
 // and pushes it to enhanced-cloudflared replicas via HTTP API.
 type ProxySyncer struct {
-	clusterDomain    string
-	logger           *slog.Logger
-	pusher           *proxy.ConfigPusher
-	backendValidator proxy.BackendRefValidator
-	protocolResolver proxy.BackendProtocolResolver
-	tlsResolver      proxy.BackendTLSResolver
-	syncMu           sync.Mutex
+	clusterDomain       string
+	logger              *slog.Logger
+	pusher              *proxy.ConfigPusher
+	backendValidator    proxy.BackendRefValidator
+	protocolResolver    proxy.BackendProtocolResolver
+	tlsResolver         proxy.BackendTLSResolver
+	gatewayCertResolver proxy.GatewayClientCertResolver
+	syncMu              sync.Mutex
 }
 
 // NewProxySyncer creates a ProxySyncer for pushing config to proxy replicas.
-// The client is used to validate cross-namespace backend references via ReferenceGrant.
+// The client is used to validate cross-namespace backend references via
+// ReferenceGrant. controllerName scopes the Gateway client-cert resolver to
+// Gateways whose GatewayClass.spec.controllerName matches ours — parentRefs
+// pointing at a Gateway managed by another controller MUST NOT contribute
+// their client cert to OUR proxy's mTLS handshake. controllerName may be
+// empty (tests); the resolver then accepts any Gateway regardless of its
+// GatewayClass.
 func NewProxySyncer(
 	clusterDomain string,
 	authToken string,
+	controllerName string,
 	k8sClient client.Client,
 	logger *slog.Logger,
 ) *ProxySyncer {
@@ -66,9 +76,121 @@ func NewProxySyncer(
 		pusher: proxy.NewConfigPusher(&http.Client{
 			Timeout: 10 * time.Second,
 		}, authToken),
-		backendValidator: newBackendRefValidator(refGrantValidator),
-		protocolResolver: newBackendProtocolResolver(k8sClient),
-		tlsResolver:      newBackendTLSResolver(k8sClient),
+		backendValidator:    newBackendRefValidator(refGrantValidator),
+		protocolResolver:    newBackendProtocolResolver(k8sClient),
+		tlsResolver:         newBackendTLSResolver(k8sClient),
+		gatewayCertResolver: newGatewayClientCertResolver(k8sClient, controllerName),
+	}
+}
+
+// newGatewayClientCertResolver returns a resolver that loads the Gateway's
+// spec.tls.backend.clientCertificateRef Secret into the PEM-encoded keypair
+// the proxy presents during backend mTLS handshakes. The resolver is scoped
+// to Gateways managed by this controller — a parentRef pointing at another
+// vendor's Gateway must NOT cause OUR proxy to present THEIR client cert
+// (cross-controller credential leak guard). When controllerName is empty
+// the GatewayClass check is skipped, matching test fixtures that don't model
+// the full chain.
+//
+// Returns nil when the Gateway has no such ref, isn't managed by this
+// controller, the Secret cannot be resolved, the ReferenceGrant is missing,
+// or the keypair fails to parse. The first three reasons leave the Gateway's
+// ResolvedRefs condition alone; the remaining ones drive it through the
+// parallel emit path in the GatewayReconciler.
+func newGatewayClientCertResolver(c client.Client, controllerName string) proxy.GatewayClientCertResolver {
+	return func(ctx context.Context, gatewayNN types.NamespacedName) *proxy.ClientCertConfig {
+		var gateway gatewayv1.Gateway
+		if err := c.Get(ctx, gatewayNN, &gateway); err != nil {
+			// NotFound is the expected outcome for routes pointing at a
+			// foreign-namespace or deleted parent — silently skip. Any other
+			// error is logged so a transient API-server hiccup that turns
+			// mTLS into plaintext has a visible cause.
+			if !apierrors.IsNotFound(err) {
+				slog.Warn("gateway client cert resolver: Get(Gateway) failed — falling back to plaintext for this hop",
+					"error", err,
+					"namespace", gatewayNN.Namespace,
+					"gateway", gatewayNN.Name,
+				)
+			}
+
+			return nil
+		}
+
+		if !gatewayManagedByController(ctx, c, &gateway, controllerName) {
+			return nil
+		}
+
+		certPEM, keyPEM, err := loadGatewayClientCertPEM(ctx, c, &gateway, gatewayClientCertGrantChecker(c))
+		if err != nil {
+			// The Gateway-status emit path already reports the same error
+			// through ResolvedRefs; we also log on the syncer side so a
+			// 502-from-handshake-fail incident has a visible cause without
+			// scraping Gateway status. Transient API-server errors are
+			// excluded — those are expected to recover on the next reconcile
+			// without operator action.
+			if !errors.Is(err, errGatewayClientCertTransientError) {
+				slog.Warn("gateway client certificate resolution failed — backend mTLS handshake will be plaintext",
+					"error", err,
+					"namespace", gatewayNN.Namespace,
+					"gateway", gatewayNN.Name,
+				)
+			}
+
+			return nil
+		}
+
+		if certPEM == nil || keyPEM == nil {
+			return nil
+		}
+
+		return &proxy.ClientCertConfig{CertPEM: certPEM, KeyPEM: keyPEM}
+	}
+}
+
+// gatewayManagedByController reports whether the Gateway's GatewayClass.spec.
+// controllerName matches ours. An empty controllerName disables the check —
+// used by tests that don't construct a full GatewayClass chain. When the
+// GatewayClass lookup itself fails (NotFound, transient error) we return
+// false: better to NOT present a cert that may belong to another controller
+// than to leak credentials on a doubtful match. The Gateway's status surface
+// will already reflect "no managed parent" via existing reconcile paths.
+func gatewayManagedByController(ctx context.Context, c client.Client, gateway *gatewayv1.Gateway, controllerName string) bool {
+	if controllerName == "" {
+		return true
+	}
+
+	var gatewayClass gatewayv1.GatewayClass
+	if err := c.Get(ctx, types.NamespacedName{Name: string(gateway.Spec.GatewayClassName)}, &gatewayClass); err != nil {
+		// NotFound is silent — a Gateway pointing at a missing GatewayClass
+		// is correctly rejected from the "ours" set. Other errors (transient
+		// API-server failure) get logged because they cause the same fail-
+		// closed outcome but for an operational, not configuration, reason.
+		if !apierrors.IsNotFound(err) {
+			slog.Warn("gateway client cert resolver: Get(GatewayClass) failed — Gateway treated as foreign-controlled, no cert presented",
+				"error", err,
+				"gateway", gateway.Name,
+				"gatewayClass", string(gateway.Spec.GatewayClassName),
+			)
+		}
+
+		return false
+	}
+
+	return string(gatewayClass.Spec.ControllerName) == controllerName
+}
+
+// gatewayClientCertGrantChecker adapts the package-level grant lookup into a
+// secretRefGrantChecker so the syncer can resolve cross-namespace refs without
+// depending on a GatewayReconciler instance. The lookup mirrors the
+// implementation on GatewayReconciler.checkSecretReferenceGrant verbatim.
+func gatewayClientCertGrantChecker(c client.Client) secretRefGrantChecker {
+	return func(
+		ctx context.Context,
+		gateway *gatewayv1.Gateway,
+		targetNamespace string,
+		ref gatewayv1.SecretObjectReference,
+	) (bool, error) {
+		return checkSecretReferenceGrantForGateway(ctx, c, gateway, targetNamespace, ref)
 	}
 }
 
@@ -463,7 +585,7 @@ func (s *ProxySyncer) SyncRoutes(
 	// Convert to proxy config with cross-namespace validation, backend
 	// protocol resolution (e.g. h2c from Service appProtocol), and
 	// BackendTLSPolicy lookup for the proxy → backend TLS hop.
-	cfg := proxy.ConvertHTTPRoutes(ctx, routes, s.clusterDomain, s.backendValidator, s.protocolResolver, s.tlsResolver)
+	cfg := proxy.ConvertHTTPRoutes(ctx, routes, s.clusterDomain, s.backendValidator, s.protocolResolver, s.tlsResolver, s.gatewayCertResolver)
 
 	// Clear backends for routes that have failed backend refs.
 	// This ensures the proxy returns 500 (no backend available) instead of

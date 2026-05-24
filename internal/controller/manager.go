@@ -238,6 +238,7 @@ func initProxySyncer(
 	return NewProxySyncer(
 		cfg.ClusterDomain,
 		cfg.ProxyAuthToken,
+		cfg.ControllerName,
 		k8sClient,
 		baseLogger,
 	)

@@ -231,6 +231,14 @@ type BackendTLSConfig struct {
 	// cert may present to satisfy this policy. Matched by exact string
 	// equality against each URI in the leaf cert's URIs field.
 	SubjectAltNameURIs []string `json:"subjectAltNameUris,omitempty"`
+	// ClientCertPEM is the PEM-encoded client certificate (optionally a chain
+	// of leaf + intermediates) the proxy presents during the backend TLS
+	// handshake. Sourced from gateway.spec.tls.backend.clientCertificateRef.
+	// Empty when the Gateway does not configure a backend client certificate.
+	ClientCertPEM []byte `json:"clientCertPem,omitempty"`
+	// ClientKeyPEM is the PEM-encoded private key matching ClientCertPEM.
+	// Must be set together with ClientCertPEM; either both or neither.
+	ClientKeyPEM []byte `json:"clientKeyPem,omitempty"`
 }
 
 // HasSANConstraints reports whether the policy requires SAN-list verification
@@ -242,6 +250,18 @@ func (c *BackendTLSConfig) HasSANConstraints() bool {
 	}
 
 	return len(c.SubjectAltNames) > 0 || len(c.SubjectAltNameURIs) > 0
+}
+
+// HasClientCert reports whether the config carries a non-empty client cert
+// keypair that should be attached to the outgoing TLS handshake. Both PEM
+// blocks must be set; either alone is treated as "no client cert" so that a
+// half-configured policy never silently flips an mTLS connection to one-way.
+func (c *BackendTLSConfig) HasClientCert() bool {
+	if c == nil {
+		return false
+	}
+
+	return len(c.ClientCertPEM) > 0 && len(c.ClientKeyPEM) > 0
 }
 
 // BackendRef identifies a backend service with a weight for traffic splitting.

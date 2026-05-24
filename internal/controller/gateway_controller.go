@@ -424,7 +424,9 @@ func (r *GatewayReconciler) updateStatus(
 			},
 		}
 
-		freshGateway.Status.Conditions = []metav1.Condition{
+		_, _, clientCertErr := loadGatewayClientCertPEM(ctx, r.Client, &freshGateway, r.checkSecretReferenceGrant)
+
+		freshGateway.Status.Conditions = mergeClientCertCondition(freshGateway.Status.Conditions, []metav1.Condition{
 			{
 				Type:               string(gatewayv1.GatewayConditionAccepted),
 				Status:             metav1.ConditionTrue,
@@ -441,7 +443,7 @@ func (r *GatewayReconciler) updateStatus(
 				Reason:             string(gatewayv1.GatewayReasonProgrammed),
 				Message:            "Gateway programmed in Cloudflare Tunnel",
 			},
-		}
+		}, buildClientCertResolvedRefsCondition(freshGateway.Generation, now, clientCertErr))
 
 		listenerStatuses := make([]gatewayv1.ListenerStatus, 0, len(freshGateway.Spec.Listeners))
 
@@ -533,7 +535,9 @@ func (r *GatewayReconciler) setConfigErrorStatus(
 		// Clear addresses on config error (no valid tunnel to point to)
 		freshGateway.Status.Addresses = nil
 
-		freshGateway.Status.Conditions = []metav1.Condition{
+		_, _, clientCertErr := loadGatewayClientCertPEM(ctx, r.Client, &freshGateway, r.checkSecretReferenceGrant)
+
+		freshGateway.Status.Conditions = mergeClientCertCondition(freshGateway.Status.Conditions, []metav1.Condition{
 			{
 				Type:               string(gatewayv1.GatewayConditionAccepted),
 				Status:             metav1.ConditionFalse,
@@ -550,7 +554,7 @@ func (r *GatewayReconciler) setConfigErrorStatus(
 				Reason:             string(gatewayv1.GatewayReasonInvalid),
 				Message:            errMsg,
 			},
-		}
+		}, buildClientCertResolvedRefsCondition(freshGateway.Generation, now, clientCertErr))
 
 		// Clear listener statuses on config error
 		freshGateway.Status.Listeners = nil
@@ -590,7 +594,9 @@ func (r *GatewayReconciler) setCloudflaredErrorStatus(
 			},
 		}
 
-		freshGateway.Status.Conditions = []metav1.Condition{
+		_, _, clientCertErr := loadGatewayClientCertPEM(ctx, r.Client, &freshGateway, r.checkSecretReferenceGrant)
+
+		freshGateway.Status.Conditions = mergeClientCertCondition(freshGateway.Status.Conditions, []metav1.Condition{
 			{
 				Type:               string(gatewayv1.GatewayConditionAccepted),
 				Status:             metav1.ConditionTrue,
@@ -607,7 +613,7 @@ func (r *GatewayReconciler) setCloudflaredErrorStatus(
 				Reason:             "DeploymentFailed",
 				Message:            errMsg,
 			},
-		}
+		}, buildClientCertResolvedRefsCondition(freshGateway.Generation, now, clientCertErr))
 
 		// Clear listener statuses on cloudflared error
 		freshGateway.Status.Listeners = nil
@@ -953,7 +959,12 @@ func (r *GatewayReconciler) routeToGateways(
 }
 
 // gatewayReferencesSecretsInNamespace checks if a Gateway references any Secrets
-// in the given namespace through its TLS configuration.
+// in the given namespace through its TLS configuration. Two surfaces are
+// inspected: each Listener's TLS.CertificateRefs (frontend cert refs) and the
+// Gateway-level Spec.TLS.Backend.ClientCertificateRef (backend mTLS keypair).
+// Both surfaces participate in ReferenceGrant-driven cross-namespace lookups,
+// so a grant change in `namespace` must enqueue the Gateway whenever EITHER
+// surface points at a Secret there.
 func (r *GatewayReconciler) gatewayReferencesSecretsInNamespace(
 	gateway *gatewayv1.Gateway,
 	namespace string,
@@ -973,6 +984,17 @@ func (r *GatewayReconciler) gatewayReferencesSecretsInNamespace(
 			if refNamespace == namespace {
 				return true
 			}
+		}
+	}
+
+	if backendRef := gatewayClientCertRef(gateway); backendRef != nil {
+		refNamespace := gateway.Namespace
+		if backendRef.Namespace != nil {
+			refNamespace = string(*backendRef.Namespace)
+		}
+
+		if refNamespace == namespace {
+			return true
 		}
 	}
 

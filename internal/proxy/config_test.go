@@ -487,3 +487,70 @@ func TestParseConfig_ValidationFailure(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid config")
 }
+
+func TestBackendTLSConfig_HasClientCert(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		cfg  *proxy.BackendTLSConfig
+		want bool
+	}{
+		{name: "nil receiver", cfg: nil, want: false},
+		{name: "empty config", cfg: &proxy.BackendTLSConfig{}, want: false},
+		{
+			name: "only CA bundle",
+			cfg:  &proxy.BackendTLSConfig{CABundlePEM: "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n"},
+			want: false,
+		},
+		{
+			name: "cert without key",
+			cfg:  &proxy.BackendTLSConfig{ClientCertPEM: []byte("cert")},
+			want: false,
+		},
+		{
+			name: "key without cert",
+			cfg:  &proxy.BackendTLSConfig{ClientKeyPEM: []byte("key")},
+			want: false,
+		},
+		{
+			name: "both cert and key set",
+			cfg: &proxy.BackendTLSConfig{
+				ClientCertPEM: []byte("cert"),
+				ClientKeyPEM:  []byte("key"),
+			},
+			want: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.want, tt.cfg.HasClientCert())
+		})
+	}
+}
+
+func TestBackendTLSConfig_ClientCertJSONRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	original := &proxy.BackendTLSConfig{
+		CABundlePEM:   "ca-bundle",
+		ServerName:    "backend.example.com",
+		ClientCertPEM: []byte("-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n"),
+		ClientKeyPEM:  []byte("-----BEGIN PRIVATE KEY-----\nBBBB\n-----END PRIVATE KEY-----\n"),
+	}
+
+	data, err := json.Marshal(original)
+	require.NoError(t, err)
+
+	var parsed proxy.BackendTLSConfig
+
+	require.NoError(t, json.Unmarshal(data, &parsed))
+
+	assert.Equal(t, original.CABundlePEM, parsed.CABundlePEM)
+	assert.Equal(t, original.ServerName, parsed.ServerName)
+	assert.Equal(t, original.ClientCertPEM, parsed.ClientCertPEM)
+	assert.Equal(t, original.ClientKeyPEM, parsed.ClientKeyPEM)
+	assert.True(t, parsed.HasClientCert())
+}

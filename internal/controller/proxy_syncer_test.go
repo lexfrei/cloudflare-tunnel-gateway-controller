@@ -84,6 +84,7 @@ func TestProxySyncer_SyncRoutes(t *testing.T) {
 	syncer := controller.NewProxySyncer(
 		"cluster.local",
 		"",
+		"",
 		testClient,
 		slog.Default(),
 	)
@@ -144,6 +145,7 @@ func TestProxySyncer_NoRoutes_PushesEmptyConfig(t *testing.T) {
 	syncer := controller.NewProxySyncer(
 		"cluster.local",
 		"",
+		"",
 		testClient,
 		slog.Default(),
 	)
@@ -198,7 +200,7 @@ func TestProxySyncer_SyncRoutes_H2CBackend(t *testing.T) {
 
 	testClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(svc).Build()
 
-	syncer := controller.NewProxySyncer("cluster.local", "", testClient, slog.Default())
+	syncer := controller.NewProxySyncer("cluster.local", "", "", testClient, slog.Default())
 
 	routes := []*gatewayv1.HTTPRoute{
 		{
@@ -279,7 +281,7 @@ func TestProxySyncer_SyncRoutes_BackendTLSPolicyMissingCA_FailsClosed(t *testing
 
 	testClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(policy).Build()
 
-	syncer := controller.NewProxySyncer("cluster.local", "", testClient, slog.Default())
+	syncer := controller.NewProxySyncer("cluster.local", "", "", testClient, slog.Default())
 
 	routes := []*gatewayv1.HTTPRoute{
 		{
@@ -372,7 +374,7 @@ func TestProxySyncer_SyncRoutes_BackendTLSPolicy_URISubjectAltName_PushesURIList
 
 	testClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(policy, caCM).Build()
 
-	syncer := controller.NewProxySyncer("cluster.local", "", testClient, slog.Default())
+	syncer := controller.NewProxySyncer("cluster.local", "", "", testClient, slog.Default())
 
 	routes := []*gatewayv1.HTTPRoute{
 		{
