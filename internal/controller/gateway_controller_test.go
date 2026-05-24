@@ -846,7 +846,7 @@ func TestGatewayReconciler_SetConfigErrorStatus(t *testing.T) {
 	}, &updated)
 	require.NoError(t, err)
 
-	require.Len(t, updated.Status.Conditions, 2)
+	require.Len(t, updated.Status.Conditions, 3)
 
 	// Verify Accepted condition
 	assert.Equal(t, string(gatewayv1.GatewayConditionAccepted), updated.Status.Conditions[0].Type)
@@ -1181,7 +1181,7 @@ func TestGatewayReconciler_SetCloudflaredErrorStatus(t *testing.T) {
 	assert.Equal(t, "test-tunnel-id"+cfArgotunnelSuffix, updated.Status.Addresses[0].Value)
 
 	// Verify conditions
-	require.Len(t, updated.Status.Conditions, 2)
+	require.Len(t, updated.Status.Conditions, 3)
 
 	assert.Equal(t, string(gatewayv1.GatewayConditionAccepted), updated.Status.Conditions[0].Type)
 	assert.Equal(t, metav1.ConditionTrue, updated.Status.Conditions[0].Status)
@@ -2154,7 +2154,7 @@ func TestGatewayReconciler_Reconcile_ConfigError_SetsStatus(t *testing.T) {
 	err = fakeClient.Get(ctx, types.NamespacedName{Name: "test-gateway", Namespace: "default"}, &updated)
 	require.NoError(t, err)
 
-	require.Len(t, updated.Status.Conditions, 2)
+	require.Len(t, updated.Status.Conditions, 3)
 	assert.Equal(t, metav1.ConditionFalse, updated.Status.Conditions[0].Status)
 	assert.Equal(t, string(gatewayv1.GatewayReasonInvalidParameters), updated.Status.Conditions[0].Reason)
 	assert.Nil(t, updated.Status.Addresses)
@@ -2717,7 +2717,7 @@ func TestGatewayReconciler_Reconcile_SuccessPath_WithFinalizer(t *testing.T) {
 	assert.Equal(t, "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.cfargotunnel.com", updatedGateway.Status.Addresses[0].Value)
 
 	// Gateway conditions
-	require.Len(t, updatedGateway.Status.Conditions, 2)
+	require.Len(t, updatedGateway.Status.Conditions, 3)
 
 	// Listener statuses
 	require.Len(t, updatedGateway.Status.Listeners, 2)
@@ -3256,7 +3256,7 @@ func TestGatewayReconciler_SetConfigErrorStatus_UpdateFailure(t *testing.T) {
 	err = fakeClient.Get(ctx, types.NamespacedName{Name: "test-gw", Namespace: "default"}, &updatedGateway)
 	require.NoError(t, err)
 
-	require.Len(t, updatedGateway.Status.Conditions, 2)
+	require.Len(t, updatedGateway.Status.Conditions, 3)
 	assert.Equal(t, metav1.ConditionFalse, updatedGateway.Status.Conditions[0].Status)
 }
 
@@ -3300,7 +3300,7 @@ func TestGatewayReconciler_SetCloudflaredErrorStatus_WithAddress(t *testing.T) {
 	err = fakeClient.Get(ctx, types.NamespacedName{Name: "test-gw", Namespace: "default"}, &updatedGateway)
 	require.NoError(t, err)
 
-	require.Len(t, updatedGateway.Status.Conditions, 2)
+	require.Len(t, updatedGateway.Status.Conditions, 3)
 	// Should have address set even on cloudflared error
 	require.Len(t, updatedGateway.Status.Addresses, 1)
 	assert.Contains(t, updatedGateway.Status.Addresses[0].Value, "cfargotunnel.com")

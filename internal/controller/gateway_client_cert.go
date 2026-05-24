@@ -7,6 +7,7 @@ import (
 	"github.com/cockroachdb/errors"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
@@ -135,6 +136,48 @@ func gatewayClientCertRef(gateway *gatewayv1.Gateway) *gatewayv1.SecretObjectRef
 	}
 
 	return gateway.Spec.TLS.Backend.ClientCertificateRef
+}
+
+// buildClientCertResolvedRefsCondition maps the outcome of
+// loadGatewayClientCertPEM onto a Gateway-level ResolvedRefs condition.
+// Per Gateway API spec on the GatewayBackendTLS type:
+//
+//   - nil error → ConditionTrue / Reason=ResolvedRefs.
+//   - cross-namespace denial → ConditionFalse / Reason=RefNotPermitted.
+//   - any other resolution error (unsupported kind, missing Secret, wrong
+//     type, missing tls.crt|tls.key, malformed PEM) →
+//     ConditionFalse / Reason=InvalidClientCertificateRef.
+//
+// The FIRST-PR scope is intentionally narrow: this condition reflects only
+// the client-cert outcome. The spec also allows Gateway ResolvedRefs to be a
+// positive-polarity summary across listener-level ResolvedRefs; that broader
+// semantic is left for a follow-up since the upstream conformance test only
+// asserts the client-cert path.
+func buildClientCertResolvedRefsCondition(generation int64, now metav1.Time, err error) metav1.Condition {
+	if err == nil {
+		return metav1.Condition{
+			Type:               string(gatewayv1.GatewayConditionResolvedRefs),
+			Status:             metav1.ConditionTrue,
+			ObservedGeneration: generation,
+			LastTransitionTime: now,
+			Reason:             string(gatewayv1.GatewayReasonResolvedRefs),
+			Message:            "All references resolved",
+		}
+	}
+
+	reason := gatewayv1.GatewayReasonInvalidClientCertificateRef
+	if errors.Is(err, errGatewayClientCertRefNotPermitted) {
+		reason = gatewayv1.GatewayReasonRefNotPermitted
+	}
+
+	return metav1.Condition{
+		Type:               string(gatewayv1.GatewayConditionResolvedRefs),
+		Status:             metav1.ConditionFalse,
+		ObservedGeneration: generation,
+		LastTransitionTime: now,
+		Reason:             string(reason),
+		Message:            err.Error(),
+	}
 }
 
 // isCoreSecretRef reports whether the ref targets a core/v1 Secret (Group ""

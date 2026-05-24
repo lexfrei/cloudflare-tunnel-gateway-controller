@@ -342,3 +342,44 @@ func TestGatewayClientCertSentinels_AreStable(t *testing.T) {
 // Compile-time use of the fake client.Client interface so the import isn't
 // pruned when sentinel tests grow.
 var _ client.Client = (client.Client)(nil)
+
+func TestBuildClientCertResolvedRefsCondition_NilErr_TrueResolvedRefs(t *testing.T) {
+	t.Parallel()
+
+	cond := buildClientCertResolvedRefsCondition(7, metav1.Now(), nil)
+
+	assert.Equal(t, string(gatewayv1.GatewayConditionResolvedRefs), cond.Type)
+	assert.Equal(t, metav1.ConditionTrue, cond.Status)
+	assert.Equal(t, string(gatewayv1.GatewayReasonResolvedRefs), cond.Reason)
+	assert.Equal(t, int64(7), cond.ObservedGeneration)
+}
+
+func TestBuildClientCertResolvedRefsCondition_InvalidRef_FalseInvalidRef(t *testing.T) {
+	t.Parallel()
+
+	invalidRefSentinels := []error{
+		errGatewayClientCertUnsupportedRef,
+		errGatewayClientCertSecretNotFound,
+		errGatewayClientCertWrongType,
+		errGatewayClientCertMissingKey,
+		errGatewayClientCertInvalidPEM,
+	}
+
+	for _, sentinel := range invalidRefSentinels {
+		cond := buildClientCertResolvedRefsCondition(11, metav1.Now(), sentinel)
+		assert.Equal(t, metav1.ConditionFalse, cond.Status, "%v", sentinel)
+		assert.Equal(t, string(gatewayv1.GatewayReasonInvalidClientCertificateRef), cond.Reason,
+			"sentinel %v must map to InvalidClientCertificateRef", sentinel)
+		assert.Contains(t, cond.Message, sentinel.Error(), "sentinel %v message must surface in condition", sentinel)
+		assert.Equal(t, int64(11), cond.ObservedGeneration)
+	}
+}
+
+func TestBuildClientCertResolvedRefsCondition_RefNotPermitted_FalseRefNotPermitted(t *testing.T) {
+	t.Parallel()
+
+	cond := buildClientCertResolvedRefsCondition(3, metav1.Now(), errGatewayClientCertRefNotPermitted)
+
+	assert.Equal(t, metav1.ConditionFalse, cond.Status)
+	assert.Equal(t, string(gatewayv1.GatewayReasonRefNotPermitted), cond.Reason)
+}

@@ -424,6 +424,8 @@ func (r *GatewayReconciler) updateStatus(
 			},
 		}
 
+		_, _, clientCertErr := loadGatewayClientCertPEM(ctx, r.Client, &freshGateway, r.checkSecretReferenceGrant)
+
 		freshGateway.Status.Conditions = []metav1.Condition{
 			{
 				Type:               string(gatewayv1.GatewayConditionAccepted),
@@ -441,6 +443,7 @@ func (r *GatewayReconciler) updateStatus(
 				Reason:             string(gatewayv1.GatewayReasonProgrammed),
 				Message:            "Gateway programmed in Cloudflare Tunnel",
 			},
+			buildClientCertResolvedRefsCondition(freshGateway.Generation, now, clientCertErr),
 		}
 
 		listenerStatuses := make([]gatewayv1.ListenerStatus, 0, len(freshGateway.Spec.Listeners))
@@ -533,6 +536,8 @@ func (r *GatewayReconciler) setConfigErrorStatus(
 		// Clear addresses on config error (no valid tunnel to point to)
 		freshGateway.Status.Addresses = nil
 
+		_, _, clientCertErr := loadGatewayClientCertPEM(ctx, r.Client, &freshGateway, r.checkSecretReferenceGrant)
+
 		freshGateway.Status.Conditions = []metav1.Condition{
 			{
 				Type:               string(gatewayv1.GatewayConditionAccepted),
@@ -550,6 +555,7 @@ func (r *GatewayReconciler) setConfigErrorStatus(
 				Reason:             string(gatewayv1.GatewayReasonInvalid),
 				Message:            errMsg,
 			},
+			buildClientCertResolvedRefsCondition(freshGateway.Generation, now, clientCertErr),
 		}
 
 		// Clear listener statuses on config error
@@ -590,6 +596,8 @@ func (r *GatewayReconciler) setCloudflaredErrorStatus(
 			},
 		}
 
+		_, _, clientCertErr := loadGatewayClientCertPEM(ctx, r.Client, &freshGateway, r.checkSecretReferenceGrant)
+
 		freshGateway.Status.Conditions = []metav1.Condition{
 			{
 				Type:               string(gatewayv1.GatewayConditionAccepted),
@@ -607,6 +615,7 @@ func (r *GatewayReconciler) setCloudflaredErrorStatus(
 				Reason:             "DeploymentFailed",
 				Message:            errMsg,
 			},
+			buildClientCertResolvedRefsCondition(freshGateway.Generation, now, clientCertErr),
 		}
 
 		// Clear listener statuses on cloudflared error
