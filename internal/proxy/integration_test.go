@@ -963,6 +963,152 @@ func TestHandler_BackendTLSPolicy_MixedSAN_AllMismatch(t *testing.T) {
 		"with neither DNS nor URI SAN matching, both lists must fail → proxy returns 502")
 }
 
+// TestHandler_CORSFilter_PreflightShortCircuits drives a CORS preflight
+// through the full handler stack: filter pipeline → 204 + headers, backend
+// never touched (verified via a request counter).
+func TestHandler_CORSFilter_PreflightShortCircuits(t *testing.T) {
+	t.Parallel()
+
+	backend, hits := countingMirrorBackend(t)
+
+	router := proxy.NewRouter()
+	require.NoError(t, router.UpdateConfig(&proxy.Config{
+		Version: 1,
+		Rules: []proxy.RouteRule{
+			{
+				Hostnames: []string{"app.example.com"},
+				Matches:   []proxy.RouteMatch{{Path: &proxy.PathMatch{Type: proxy.PathMatchPathPrefix, Value: "/"}}},
+				Filters: []proxy.RouteFilter{
+					{
+						Type: proxy.FilterCORS,
+						CORS: &proxy.CORSConfig{
+							AllowOrigins:     []string{"https://www.foo.com"},
+							AllowMethods:     []string{"GET", "OPTIONS"},
+							AllowHeaders:     []string{"x-header-1"},
+							AllowCredentials: true,
+							MaxAge:           3600,
+						},
+					},
+				},
+				Backends: []proxy.BackendRef{{URL: backend.URL, Weight: 1}},
+			},
+		},
+	}))
+
+	handler := proxy.NewHandler(router)
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodOptions, "http://app.example.com/x", nil)
+	req.Header.Set("Origin", "https://www.foo.com")
+	req.Header.Set("Access-Control-Request-Method", "GET")
+	req.Header.Set("Access-Control-Request-Headers", "x-header-1")
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	resp := rec.Result()
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusNoContent, resp.StatusCode,
+		"preflight MUST short-circuit at the filter with a 204")
+	assert.Equal(t, "https://www.foo.com", resp.Header.Get("Access-Control-Allow-Origin"))
+	assert.Equal(t, "GET, OPTIONS", resp.Header.Get("Access-Control-Allow-Methods"))
+	assert.Equal(t, "true", resp.Header.Get("Access-Control-Allow-Credentials"))
+	assert.Equal(t, "3600", resp.Header.Get("Access-Control-Max-Age"))
+	assert.Equal(t, int32(0), hits.Load(),
+		"backend MUST NOT be hit by a CORS preflight — the filter short-circuits before proxying")
+}
+
+// TestHandler_CORSFilter_SimpleRequestPassesThroughAndStampsHeaders verifies
+// the simple-request path: a GET with matched Origin reaches the backend AND
+// the response carries CORS headers on the way back.
+func TestHandler_CORSFilter_SimpleRequestPassesThroughAndStampsHeaders(t *testing.T) {
+	t.Parallel()
+
+	backend := newBackend(t, "primary")
+
+	router := proxy.NewRouter()
+	require.NoError(t, router.UpdateConfig(&proxy.Config{
+		Version: 1,
+		Rules: []proxy.RouteRule{
+			{
+				Hostnames: []string{"app.example.com"},
+				Matches:   []proxy.RouteMatch{{Path: &proxy.PathMatch{Type: proxy.PathMatchPathPrefix, Value: "/"}}},
+				Filters: []proxy.RouteFilter{
+					{
+						Type: proxy.FilterCORS,
+						CORS: &proxy.CORSConfig{
+							AllowOrigins:     []string{"https://www.foo.com"},
+							AllowCredentials: true,
+							ExposeHeaders:    []string{"x-extra"},
+						},
+					},
+				},
+				Backends: []proxy.BackendRef{{URL: backend.URL, Weight: 1}},
+			},
+		},
+	}))
+
+	handler := proxy.NewHandler(router)
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://app.example.com/", nil)
+	req.Header.Set("Origin", "https://www.foo.com")
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	resp := rec.Result()
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, "primary", resp.Header.Get("X-Backend"),
+		"simple request MUST reach the backend; CORS only stamps response headers")
+	assert.Equal(t, "https://www.foo.com", resp.Header.Get("Access-Control-Allow-Origin"))
+	assert.Equal(t, "true", resp.Header.Get("Access-Control-Allow-Credentials"))
+	assert.Equal(t, "x-extra", resp.Header.Get("Access-Control-Expose-Headers"))
+}
+
+// TestHandler_CORSFilter_NonMatchedOriginNoHeaders confirms a cross-origin
+// simple request from a non-allowed Origin reaches the backend but the
+// response carries NO CORS headers — the browser then fails the read.
+func TestHandler_CORSFilter_NonMatchedOriginNoHeaders(t *testing.T) {
+	t.Parallel()
+
+	backend := newBackend(t, "primary")
+
+	router := proxy.NewRouter()
+	require.NoError(t, router.UpdateConfig(&proxy.Config{
+		Version: 1,
+		Rules: []proxy.RouteRule{
+			{
+				Hostnames: []string{"app.example.com"},
+				Matches:   []proxy.RouteMatch{{Path: &proxy.PathMatch{Type: proxy.PathMatchPathPrefix, Value: "/"}}},
+				Filters: []proxy.RouteFilter{
+					{
+						Type: proxy.FilterCORS,
+						CORS: &proxy.CORSConfig{AllowOrigins: []string{"https://www.foo.com"}},
+					},
+				},
+				Backends: []proxy.BackendRef{{URL: backend.URL, Weight: 1}},
+			},
+		},
+	}))
+
+	handler := proxy.NewHandler(router)
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://app.example.com/", nil)
+	req.Header.Set("Origin", "https://attacker.com")
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	resp := rec.Result()
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Empty(t, resp.Header.Get("Access-Control-Allow-Origin"),
+		"non-allowed Origin MUST NOT receive Access-Control-Allow-Origin")
+}
+
 func TestHandler_BackendProtocolToggleSameHostPort(t *testing.T) {
 	t.Parallel()
 

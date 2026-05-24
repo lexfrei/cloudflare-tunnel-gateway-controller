@@ -572,6 +572,142 @@ func TestConvertHTTPRoutes_PerBackendFilters(t *testing.T) {
 	assert.Empty(t, cfg.Rules[0].Backends[1].Filters, "v2 backend declares no per-backend filters")
 }
 
+// TestConvertHTTPRoutes_CORSFilter pins the converter's mapping from
+// gatewayv1.HTTPCORSFilter to proxy.CORSConfig. Every field on the upstream
+// type that this controller honours must round-trip into the proxy config.
+func TestConvertHTTPRoutes_CORSFilter(t *testing.T) {
+	t.Parallel()
+
+	pathPrefix := gatewayv1.PathMatchPathPrefix
+	credentials := true
+
+	routes := []*gatewayv1.HTTPRoute{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "cors", Namespace: "default"},
+			Spec: gatewayv1.HTTPRouteSpec{
+				Hostnames: []gatewayv1.Hostname{"example.com"},
+				Rules: []gatewayv1.HTTPRouteRule{
+					{
+						Matches: []gatewayv1.HTTPRouteMatch{
+							{Path: &gatewayv1.HTTPPathMatch{Type: &pathPrefix, Value: new("/cors")}},
+						},
+						Filters: []gatewayv1.HTTPRouteFilter{
+							{
+								Type: gatewayv1.HTTPRouteFilterCORS,
+								CORS: &gatewayv1.HTTPCORSFilter{
+									AllowOrigins:     []gatewayv1.CORSOrigin{"https://www.foo.com", "https://*.bar.com"},
+									AllowCredentials: &credentials,
+									AllowMethods:     []gatewayv1.HTTPMethodWithWildcard{"GET", "OPTIONS"},
+									AllowHeaders:     []gatewayv1.HTTPHeaderName{"x-header-1", "x-header-2"},
+									ExposeHeaders:    []gatewayv1.HTTPHeaderName{"x-header-3"},
+									MaxAge:           3600,
+								},
+							},
+						},
+						BackendRefs: []gatewayv1.HTTPBackendRef{backendRef("v1", 80, 1)},
+					},
+				},
+			},
+		},
+	}
+
+	cfg := proxy.ConvertHTTPRoutes(context.Background(), routes, "cluster.local", nil, nil, nil)
+
+	require.Len(t, cfg.Rules, 1)
+	require.Len(t, cfg.Rules[0].Filters, 1, "CORS filter must land on the route's Filters slice")
+	assert.Equal(t, proxy.FilterCORS, cfg.Rules[0].Filters[0].Type)
+
+	require.NotNil(t, cfg.Rules[0].Filters[0].CORS)
+	cors := cfg.Rules[0].Filters[0].CORS
+
+	assert.Equal(t, []string{"https://www.foo.com", "https://*.bar.com"}, cors.AllowOrigins)
+	assert.True(t, cors.AllowCredentials)
+	assert.Equal(t, []string{"GET", "OPTIONS"}, cors.AllowMethods)
+	assert.Equal(t, []string{"x-header-1", "x-header-2"}, cors.AllowHeaders)
+	assert.Equal(t, []string{"x-header-3"}, cors.ExposeHeaders)
+	assert.Equal(t, int32(3600), cors.MaxAge)
+}
+
+// TestConvertHTTPRoutes_CORSFilter_NilCredentialsAndMaxAge confirms that
+// optional fields (AllowCredentials pointer, MaxAge default) round-trip
+// correctly: nil pointer → false, zero MaxAge stays zero (the proxy applies
+// the spec default of 5 seconds at emit time, not at conversion time).
+func TestConvertHTTPRoutes_CORSFilter_NilCredentialsAndMaxAge(t *testing.T) {
+	t.Parallel()
+
+	pathPrefix := gatewayv1.PathMatchPathPrefix
+
+	routes := []*gatewayv1.HTTPRoute{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "cors-minimal", Namespace: "default"},
+			Spec: gatewayv1.HTTPRouteSpec{
+				Hostnames: []gatewayv1.Hostname{"example.com"},
+				Rules: []gatewayv1.HTTPRouteRule{
+					{
+						Matches: []gatewayv1.HTTPRouteMatch{
+							{Path: &gatewayv1.HTTPPathMatch{Type: &pathPrefix, Value: new("/")}},
+						},
+						Filters: []gatewayv1.HTTPRouteFilter{
+							{
+								Type: gatewayv1.HTTPRouteFilterCORS,
+								CORS: &gatewayv1.HTTPCORSFilter{
+									AllowOrigins: []gatewayv1.CORSOrigin{"*"},
+									AllowMethods: []gatewayv1.HTTPMethodWithWildcard{"*"},
+								},
+							},
+						},
+						BackendRefs: []gatewayv1.HTTPBackendRef{backendRef("v1", 80, 1)},
+					},
+				},
+			},
+		},
+	}
+
+	cfg := proxy.ConvertHTTPRoutes(context.Background(), routes, "cluster.local", nil, nil, nil)
+	require.Len(t, cfg.Rules, 1)
+	require.Len(t, cfg.Rules[0].Filters, 1)
+
+	cors := cfg.Rules[0].Filters[0].CORS
+	require.NotNil(t, cors)
+	assert.False(t, cors.AllowCredentials, "nil AllowCredentials pointer must round-trip to false")
+	assert.Equal(t, int32(0), cors.MaxAge, "zero MaxAge must stay zero; spec default is applied at emit time")
+}
+
+// TestConvertHTTPRoutes_CORSFilter_NilConfig_Skips guards against a filter
+// entry with Type=CORS but no .CORS payload — that's a malformed HTTPRoute
+// that the CRD admission webhook normally blocks, but the converter must
+// skip it gracefully rather than panic.
+func TestConvertHTTPRoutes_CORSFilter_NilConfig_Skips(t *testing.T) {
+	t.Parallel()
+
+	pathPrefix := gatewayv1.PathMatchPathPrefix
+
+	routes := []*gatewayv1.HTTPRoute{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "cors-broken", Namespace: "default"},
+			Spec: gatewayv1.HTTPRouteSpec{
+				Hostnames: []gatewayv1.Hostname{"example.com"},
+				Rules: []gatewayv1.HTTPRouteRule{
+					{
+						Matches: []gatewayv1.HTTPRouteMatch{
+							{Path: &gatewayv1.HTTPPathMatch{Type: &pathPrefix, Value: new("/")}},
+						},
+						Filters: []gatewayv1.HTTPRouteFilter{
+							{Type: gatewayv1.HTTPRouteFilterCORS, CORS: nil},
+						},
+						BackendRefs: []gatewayv1.HTTPBackendRef{backendRef("v1", 80, 1)},
+					},
+				},
+			},
+		},
+	}
+
+	cfg := proxy.ConvertHTTPRoutes(context.Background(), routes, "cluster.local", nil, nil, nil)
+	require.Len(t, cfg.Rules, 1)
+	assert.Empty(t, cfg.Rules[0].Filters,
+		"CORS filter with nil .CORS payload must be dropped (no panic, no half-config)")
+}
+
 func TestConvertHTTPRoutes_MultipleMirrors(t *testing.T) {
 	t.Parallel()
 

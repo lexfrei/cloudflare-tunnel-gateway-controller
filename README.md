@@ -194,6 +194,8 @@ Cloudflare Tunnel has path matching behavior that differs from Gateway API:
 - HTTPS-listener Re-encrypt is not supported (Cloudflare terminates frontend TLS at the edge)
 - `RequestMirror` filter does NOT route mirrored traffic through the TLS-aware transport pool — when a `BackendTLSPolicy` targets a mirror destination the mirrored copy is sent in plaintext (the converter logs a WARN to surface this; tracked as a follow-up)
 
+The L7 proxy implements the Gateway API `HTTPRouteCORS` filter (preflight + simple requests, wildcard origin / methods / headers, credentials-aware echoing). The `HTTPRouteCORSAllowCredentialsBehavior` conformance subtest exercises an edge case (`credentials + wildcard`) that this implementation does not yet cover end-to-end and stays skipped.
+
 See [Path Matching Limitations](https://cf.k8s.lex.la/gateway-api/limitations/#cloudflare-tunnel-path-matching-limitations) and [Backend mTLS](https://cf.k8s.lex.la/gateway-api/limitations/#backend-mtls-backendtlspolicy) for details.
 
 See [Gateway API documentation](https://cf.k8s.lex.la/gateway-api/) for full details and examples.

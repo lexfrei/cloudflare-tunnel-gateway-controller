@@ -104,6 +104,7 @@ const (
 	FilterRequestRedirect        RouteFilterType = "RequestRedirect"
 	FilterURLRewrite             RouteFilterType = "URLRewrite"
 	FilterRequestMirror          RouteFilterType = "RequestMirror"
+	FilterCORS                   RouteFilterType = "CORS"
 )
 
 // RouteFilter defines a transformation to apply to matching requests.
@@ -114,6 +115,7 @@ type RouteFilter struct {
 	RequestRedirect        *RedirectConfig   `json:"requestRedirect,omitempty"`
 	URLRewrite             *URLRewriteConfig `json:"urlRewrite,omitempty"`
 	RequestMirror          *MirrorConfig     `json:"requestMirror,omitempty"`
+	CORS                   *CORSConfig       `json:"cors,omitempty"`
 }
 
 // HeaderModifier describes modifications to HTTP headers.
@@ -422,28 +424,60 @@ func (f *RouteFilter) validate() error {
 		if f.RequestHeaderModifier == nil {
 			return errors.New("requestHeaderModifier config is required")
 		}
+
+		return nil
 	case FilterResponseHeaderModifier:
 		if f.ResponseHeaderModifier == nil {
 			return errors.New("responseHeaderModifier config is required")
 		}
+
+		return nil
 	case FilterRequestRedirect:
 		if f.RequestRedirect == nil {
 			return errors.New("requestRedirect config is required")
 		}
+
+		return nil
 	case FilterURLRewrite:
 		if f.URLRewrite == nil {
 			return errors.New("urlRewrite config is required")
 		}
-	case FilterRequestMirror:
-		if f.RequestMirror == nil {
-			return errors.New("requestMirror config is required")
-		}
 
-		if pct := f.RequestMirror.Percent; pct != nil && (*pct < 0 || *pct > 100) {
-			return errors.Errorf("requestMirror percent must be in [0,100], got %d", *pct)
-		}
+		return nil
+	case FilterRequestMirror:
+		return validateMirrorFilter(f.RequestMirror)
+	case FilterCORS:
+		return validateCORSFilter(f.CORS)
 	default:
 		return errors.Wrapf(errUnknownFilterType, "%q", f.Type)
+	}
+}
+
+// validateMirrorFilter checks per-spec invariants on a RequestMirror filter
+// payload. Extracted so RouteFilter.validate stays under the cyclomatic budget
+// as new filter types land.
+func validateMirrorFilter(m *MirrorConfig) error {
+	if m == nil {
+		return errors.New("requestMirror config is required")
+	}
+
+	if pct := m.Percent; pct != nil && (*pct < 0 || *pct > 100) {
+		return errors.Errorf("requestMirror percent must be in [0,100], got %d", *pct)
+	}
+
+	return nil
+}
+
+// validateCORSFilter checks per-spec invariants on a CORS filter payload.
+// MaxAge is signed at the wire level so a negative value would emit a
+// nonsensical Access-Control-Max-Age; reject at validate time.
+func validateCORSFilter(c *CORSConfig) error {
+	if c == nil {
+		return errors.New("cors config is required")
+	}
+
+	if c.MaxAge < 0 {
+		return errors.Errorf("cors maxAge must be non-negative, got %d", c.MaxAge)
 	}
 
 	return nil
