@@ -208,7 +208,7 @@ transport. The supported Kubernetes-defined values:
 | --- | --- | --- |
 | _(unset)_ | Yes | Default — proxy speaks HTTP/1.1 to the backend |
 | `kubernetes.io/h2c` | Yes | Proxy speaks HTTP/2 cleartext (prior knowledge) |
-| `kubernetes.io/ws` | Yes | Default HTTP/1.1 transport; the WebSocket upgrade is decided per-request by the `Connection: Upgrade` + `Upgrade: websocket` headers and `httputil.ReverseProxy` hijacks the conn on the 101 response |
+| `kubernetes.io/ws` | Yes | The proxy detects `Connection: Upgrade` + `Upgrade: websocket` headers and routes the request through a dedicated WebSocket upgrade path that dials the backend, forwards the upgrade, writes the 101 to the response writer, and bidirectionally copies bytes after hijack. Plain HTTP requests to the same backend continue to use the default HTTP/1.1 transport |
 | `kubernetes.io/wss` | Yes | Requires a `BackendTLSPolicy` targeting the Service (same precondition as `appProtocol: https`); without one the proxy logs a WARN and falls back to plaintext, which the backend will refuse |
 | any other value | No | Logged with a warning at conversion time; proxy falls back to default HTTP/1.1 |
 
@@ -250,12 +250,14 @@ gating only on the client header would let any request bypass the route's
 declared deadlines by tacking on `Connection: Upgrade` — a slow-loris
 vector and a Gateway API spec violation on non-WebSocket routes.
 
-Once a real WS upgrade completes, the request context is what
-`httputil.ReverseProxy.handleUpgradeResponse` watches; cancelling it
-closes the hijacked conn from underneath the parties (see
-[golang.org/issue/35559](https://golang.org/issue/35559)). The gated
-skip ensures live WebSocket conns are not terminated at the timeout
-boundary on routes that legitimately serve them.
+Once a real WS upgrade completes, the proxy's dedicated upgrade path
+hands the conn pair to two `io.Copy` goroutines (bidirectional pipe
+between the hijacked client conn and the backend conn). The request
+context is no longer watched after hijack — the conns are detached
+from the HTTP request lifecycle. The gated skip ensures live
+WebSocket conns are not terminated at the timeout boundary on routes
+that legitimately serve them; the bidirectional pipe runs until
+either side closes its conn.
 
 ## Backend mTLS (BackendTLSPolicy)
 

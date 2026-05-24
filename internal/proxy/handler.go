@@ -112,11 +112,14 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, req *http.Request) {
 	// do with WebSocket — a slow-loris vector and a violation of the
 	// Gateway API timeout contract for non-WebSocket routes.
 	//
-	// Once a real WS upgrade completes, stdlib `httputil.ReverseProxy
-	// .handleUpgradeResponse` watches req.Context().Done() and closes both
-	// halves of the hijacked conn when ctx is canceled (see
-	// golang.org/issue/35559), so applying any request-scoped timeout to a
-	// live WebSocket would terminate it at the timeout boundary.
+	// Once a real WS upgrade completes, `proxyWebSocketUpgrade` hijacks
+	// the response writer and runs two `io.Copy` goroutines that survive
+	// past the request handler's return. Applying a request-scoped
+	// timeout to a live WebSocket would either cancel the still-pending
+	// pre-hijack request context (terminating the handshake) or, for
+	// any future `ReverseProxy`-based upgrade implementation, close the
+	// hijacked conn from underneath the parties; the skip prevents both
+	// failure modes for routes that legitimately serve WebSocket traffic.
 	if !shouldSkipUpgradeTimeout(req, ruleHasWebSocketBackend(result.Rule)) &&
 		result.Rule.Timeouts != nil && result.Rule.Timeouts.Request > 0 {
 		ctx, cancel := context.WithTimeout(req.Context(), result.Rule.Timeouts.Request)

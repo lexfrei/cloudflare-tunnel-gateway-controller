@@ -91,7 +91,7 @@ L7 proxy selects the upstream transport accordingly:
 | --- | --- | --- |
 | `kubernetes.io/h2c` | Yes | Proxy speaks HTTP/2 cleartext (prior knowledge) to the backend |
 | _(unset)_ | Yes | Proxy speaks HTTP/1.1 to the backend (default) |
-| `kubernetes.io/ws` | Yes | WebSocket over cleartext: `httputil.ReverseProxy` hijacks the conn on the 101 upgrade response; no transport switch needed |
+| `kubernetes.io/ws` | Yes | WebSocket over cleartext: the proxy detects upgrade headers and routes through a dedicated upgrade path that dials the backend, forwards the handshake, writes the 101 status, then bidirectionally pipes bytes after hijack |
 | `kubernetes.io/wss` | Yes | WebSocket over TLS: requires a matching `BackendTLSPolicy` (same precondition as `appProtocol: https`); see [Backend Protocol notes](limitations.md#backend-protocol-servicespecportsappprotocol) |
 | any other value | No | Logged with a warning; proxy falls back to default HTTP/1.1 |
 
