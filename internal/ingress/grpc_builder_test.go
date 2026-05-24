@@ -979,3 +979,78 @@ func TestGRPCBuild_NilClient_FallbackBehavior(t *testing.T) {
 	assert.Equal(t, "http://grpc-service.default.svc.cluster.local:50051", buildResult.Rules[0].Service.Value)
 	assert.Empty(t, buildResult.FailedRefs)
 }
+
+// TestGRPCBuild_NamedAndUnnamedRules_BothRoutable pins the build behaviour
+// exercised by the upstream conformance test GRPCRouteNamedRule: a GRPCRoute
+// with two rules — one carrying a rule Name, one without — must produce two
+// independently matchable ingress entries. The rule Name field is metadata
+// only and must not interfere with method-based dispatch.
+func TestGRPCBuild_NamedAndUnnamedRules_BothRoutable(t *testing.T) {
+	t.Parallel()
+
+	builder := ingress.NewGRPCBuilder("cluster.local", nil, nil, nil, nil)
+	ruleName := gatewayv1.SectionName("named-rule")
+	// Service / method names mirror the upstream fixture
+	// grpcroute-named-rule.yaml verbatim so the pin literally reflects
+	// the conformance fixture instead of an analogous-but-different shape.
+	service := "gateway_api_conformance.echo_basic.grpcecho.GrpcEcho"
+	namedMethod := "Echo"
+	unnamedMethod := "EchoTwo"
+	routes := []gatewayv1.GRPCRoute{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "grpc-named-rules", Namespace: "gateway-conformance-infra"},
+			Spec: gatewayv1.GRPCRouteSpec{
+				Hostnames: []gatewayv1.Hostname{"grpc.example.com"},
+				Rules: []gatewayv1.GRPCRouteRule{
+					{
+						Name: &ruleName,
+						Matches: []gatewayv1.GRPCRouteMatch{
+							{
+								Method: &gatewayv1.GRPCMethodMatch{
+									Service: &service,
+									Method:  &namedMethod,
+								},
+							},
+						},
+						BackendRefs: []gatewayv1.GRPCBackendRef{
+							newGRPCBackendRef("grpc-infra-backend-v1", nil, int32Ptr(8080)),
+						},
+					},
+					{
+						Matches: []gatewayv1.GRPCRouteMatch{
+							{
+								Method: &gatewayv1.GRPCMethodMatch{
+									Service: &service,
+									Method:  &unnamedMethod,
+								},
+							},
+						},
+						BackendRefs: []gatewayv1.GRPCBackendRef{
+							newGRPCBackendRef("grpc-infra-backend-v2", nil, int32Ptr(8080)),
+						},
+					},
+				},
+			},
+		},
+	}
+
+	buildResult := builder.Build(context.Background(), routes)
+
+	// Both rules must keep their distinct method paths and resolved backends —
+	// the Name field on one rule must not alter the output of the other.
+	require.Len(t, buildResult.Rules, 2)
+
+	pathToService := map[string]string{}
+	for _, rule := range buildResult.Rules {
+		pathToService[rule.Path.Value] = rule.Service.Value
+	}
+
+	assert.Equal(t,
+		"http://grpc-infra-backend-v1.gateway-conformance-infra.svc.cluster.local:8080",
+		pathToService["/gateway_api_conformance.echo_basic.grpcecho.GrpcEcho/Echo"],
+	)
+	assert.Equal(t,
+		"http://grpc-infra-backend-v2.gateway-conformance-infra.svc.cluster.local:8080",
+		pathToService["/gateway_api_conformance.echo_basic.grpcecho.GrpcEcho/EchoTwo"],
+	)
+}
