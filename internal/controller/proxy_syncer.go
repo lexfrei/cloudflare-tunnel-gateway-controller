@@ -108,7 +108,25 @@ func newGatewayClientCertResolver(c client.Client, controllerName string) proxy.
 		}
 
 		certPEM, keyPEM, err := loadGatewayClientCertPEM(ctx, c, &gateway, gatewayClientCertGrantChecker(c))
-		if err != nil || certPEM == nil || keyPEM == nil {
+		if err != nil {
+			// The Gateway-status emit path already reports the same error
+			// through ResolvedRefs; we also log on the syncer side so a
+			// 502-from-handshake-fail incident has a visible cause without
+			// scraping Gateway status. Transient API-server errors are
+			// excluded — those are expected to recover on the next reconcile
+			// without operator action.
+			if !errors.Is(err, errGatewayClientCertTransientError) {
+				slog.Warn("gateway client certificate resolution failed — backend mTLS handshake will be plaintext",
+					"error", err,
+					"namespace", gatewayNN.Namespace,
+					"gateway", gatewayNN.Name,
+				)
+			}
+
+			return nil
+		}
+
+		if certPEM == nil || keyPEM == nil {
 			return nil
 		}
 
