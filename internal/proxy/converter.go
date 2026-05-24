@@ -715,7 +715,7 @@ func convertBackendRef(
 	// pass through `appProtocol: https` (policy attached → suppressed) or warn
 	// (no policy → operator misconfigured a TLS hint with no actual TLS).
 	result.TLS, result.URL = resolveBackendTLS(ctx, tlsResolver, svcNamespace, serviceName, port, result.URL)
-	attachGatewayClientCert(result.TLS, clientCert)
+	result.TLS = attachGatewayClientCert(result.TLS, clientCert)
 	result.Protocol, result.URL = resolveBackendProtocol(ctx, resolver, svcNamespace, serviceName, port, result.URL, result.TLS != nil)
 
 	result.Filters = convertBackendFilters(ctx, backend.Filters, namespace, clusterDomain, validator, tlsResolver)
@@ -744,19 +744,28 @@ func initBackendRefBaseline(backend *gatewayv1.HTTPBackendRef) (BackendRef, bool
 	return result, true
 }
 
-// attachGatewayClientCert stamps the Gateway-level client keypair onto an
-// already-resolved backend TLS config. It is a no-op when either the backend
-// has no BackendTLSPolicy (tlsCfg == nil) or the parent Gateway does not
-// configure clientCertificateRef (clientCert == nil). The Gateway API spec
-// is explicit that the client cert is presented only when backend TLS is
-// active — sending a cert over plaintext makes no sense.
-func attachGatewayClientCert(tlsCfg *BackendTLSConfig, clientCert *ClientCertConfig) {
+// attachGatewayClientCert returns a backend TLS config that carries the
+// Gateway-level client keypair stamped on top of the supplied policy config.
+// When either input is nil — no BackendTLSPolicy targets the backend, or the
+// parent Gateway does not configure clientCertificateRef — the original
+// tlsCfg is returned unchanged. Per Gateway API spec the client cert is
+// presented only when backend TLS is active; sending a cert over plaintext
+// makes no sense.
+//
+// The supplied tlsCfg is treated as immutable — a shallow copy is taken
+// before mutation so a resolver implementation that caches and returns the
+// same *BackendTLSConfig pointer for multiple backends does not silently
+// cross-contaminate routes with each other's client cert.
+func attachGatewayClientCert(tlsCfg *BackendTLSConfig, clientCert *ClientCertConfig) *BackendTLSConfig {
 	if tlsCfg == nil || clientCert == nil {
-		return
+		return tlsCfg
 	}
 
-	tlsCfg.ClientCertPEM = clientCert.CertPEM
-	tlsCfg.ClientKeyPEM = clientCert.KeyPEM
+	stamped := *tlsCfg
+	stamped.ClientCertPEM = clientCert.CertPEM
+	stamped.ClientKeyPEM = clientCert.KeyPEM
+
+	return &stamped
 }
 
 // resolveBackendTLS applies the BackendTLSPolicy resolver. When a policy

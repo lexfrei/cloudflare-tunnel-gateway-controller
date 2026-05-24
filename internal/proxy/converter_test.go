@@ -2764,6 +2764,199 @@ func TestConvertHTTPRoutes_GatewayClientCert_AttachedWhenBackendTLSPolicyPresent
 	assert.Equal(t, clientCert.KeyPEM, cfg.Rules[0].Backends[0].TLS.ClientKeyPEM)
 }
 
+func TestConvertHTTPRoutes_GatewayClientCert_AliasingResolverDoesNotCrossContaminate(t *testing.T) {
+	t.Parallel()
+
+	pathPrefix := gatewayv1.PathMatchPathPrefix
+	certA := &proxy.ClientCertConfig{CertPEM: []byte("CERT-A"), KeyPEM: []byte("KEY-A")}
+	certB := &proxy.ClientCertConfig{CertPEM: []byte("CERT-B"), KeyPEM: []byte("KEY-B")}
+
+	// A resolver that returns the SAME *BackendTLSConfig pointer for every
+	// backend would cross-contaminate Gateways with each other's client cert
+	// if the converter mutated the returned struct in place. The fix is the
+	// shallow-clone path inside attachGatewayClientCert; this test pins it.
+	sharedTLS := &proxy.BackendTLSConfig{CABundlePEM: "shared-CA", ServerName: "shared-sni"}
+	tlsResolver := func(_ context.Context, _, _ string, _ int32) *proxy.BackendTLSConfig {
+		return sharedTLS
+	}
+
+	routes := []*gatewayv1.HTTPRoute{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "tenant-a", Namespace: "default"},
+			Spec: gatewayv1.HTTPRouteSpec{
+				CommonRouteSpec: gatewayv1.CommonRouteSpec{
+					ParentRefs: []gatewayv1.ParentReference{{Name: "gw-a"}},
+				},
+				Rules: []gatewayv1.HTTPRouteRule{
+					{
+						Matches:     []gatewayv1.HTTPRouteMatch{{Path: &gatewayv1.HTTPPathMatch{Type: &pathPrefix, Value: new("/")}}},
+						BackendRefs: []gatewayv1.HTTPBackendRef{backendRef("svc-a", 8443, 1)},
+					},
+				},
+			},
+		},
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "tenant-b", Namespace: "default"},
+			Spec: gatewayv1.HTTPRouteSpec{
+				CommonRouteSpec: gatewayv1.CommonRouteSpec{
+					ParentRefs: []gatewayv1.ParentReference{{Name: "gw-b"}},
+				},
+				Rules: []gatewayv1.HTTPRouteRule{
+					{
+						Matches:     []gatewayv1.HTTPRouteMatch{{Path: &gatewayv1.HTTPPathMatch{Type: &pathPrefix, Value: new("/")}}},
+						BackendRefs: []gatewayv1.HTTPBackendRef{backendRef("svc-b", 8443, 1)},
+					},
+				},
+			},
+		},
+	}
+
+	gatewayCertResolver := func(_ context.Context, nn ktypes.NamespacedName) *proxy.ClientCertConfig {
+		if nn.Name == "gw-a" {
+			return certA
+		}
+
+		return certB
+	}
+
+	cfg := proxy.ConvertHTTPRoutes(t.Context(), routes, "cluster.local", nil, nil, tlsResolver, gatewayCertResolver)
+
+	require.Len(t, cfg.Rules, 2)
+	require.NotNil(t, cfg.Rules[0].Backends[0].TLS)
+	require.NotNil(t, cfg.Rules[1].Backends[0].TLS)
+
+	assert.Equal(t, certA.CertPEM, cfg.Rules[0].Backends[0].TLS.ClientCertPEM, "tenant-a backend must carry cert A")
+	assert.Equal(t, certB.CertPEM, cfg.Rules[1].Backends[0].TLS.ClientCertPEM, "tenant-b backend must carry cert B")
+
+	// The shared TLS struct returned by the resolver must remain untouched —
+	// otherwise a caching resolver would silently leak certs between tenants.
+	assert.Empty(t, sharedTLS.ClientCertPEM, "resolver-returned struct must not be mutated")
+	assert.Empty(t, sharedTLS.ClientKeyPEM, "resolver-returned struct must not be mutated")
+}
+
+func TestConvertHTTPRoutes_GatewayClientCert_FirstParentWins(t *testing.T) {
+	t.Parallel()
+
+	pathPrefix := gatewayv1.PathMatchPathPrefix
+	certA := &proxy.ClientCertConfig{CertPEM: []byte("CERT-A"), KeyPEM: []byte("KEY-A")}
+	certB := &proxy.ClientCertConfig{CertPEM: []byte("CERT-B"), KeyPEM: []byte("KEY-B")}
+
+	tlsResolver := func(_ context.Context, _, _ string, _ int32) *proxy.BackendTLSConfig {
+		return &proxy.BackendTLSConfig{CABundlePEM: "CA", ServerName: "svc"}
+	}
+
+	t.Run("first parent's cert wins when both resolve", func(t *testing.T) {
+		t.Parallel()
+
+		route := &gatewayv1.HTTPRoute{
+			ObjectMeta: metav1.ObjectMeta{Name: "two-parents", Namespace: "default"},
+			Spec: gatewayv1.HTTPRouteSpec{
+				CommonRouteSpec: gatewayv1.CommonRouteSpec{
+					ParentRefs: []gatewayv1.ParentReference{
+						{Name: "gw-first"},
+						{Name: "gw-second"},
+					},
+				},
+				Rules: []gatewayv1.HTTPRouteRule{
+					{
+						Matches:     []gatewayv1.HTTPRouteMatch{{Path: &gatewayv1.HTTPPathMatch{Type: &pathPrefix, Value: new("/")}}},
+						BackendRefs: []gatewayv1.HTTPBackendRef{backendRef("svc", 8443, 1)},
+					},
+				},
+			},
+		}
+
+		resolver := func(_ context.Context, nn ktypes.NamespacedName) *proxy.ClientCertConfig {
+			if nn.Name == "gw-first" {
+				return certA
+			}
+
+			return certB
+		}
+
+		cfg := proxy.ConvertHTTPRoutes(t.Context(), []*gatewayv1.HTTPRoute{route}, "cluster.local", nil, nil, tlsResolver, resolver)
+
+		require.Len(t, cfg.Rules, 1)
+		require.NotNil(t, cfg.Rules[0].Backends[0].TLS)
+		assert.Equal(t, certA.CertPEM, cfg.Rules[0].Backends[0].TLS.ClientCertPEM)
+	})
+
+	t.Run("second parent's cert used when first parent has none", func(t *testing.T) {
+		t.Parallel()
+
+		route := &gatewayv1.HTTPRoute{
+			ObjectMeta: metav1.ObjectMeta{Name: "first-no-cert", Namespace: "default"},
+			Spec: gatewayv1.HTTPRouteSpec{
+				CommonRouteSpec: gatewayv1.CommonRouteSpec{
+					ParentRefs: []gatewayv1.ParentReference{
+						{Name: "gw-no-cert"},
+						{Name: "gw-with-cert"},
+					},
+				},
+				Rules: []gatewayv1.HTTPRouteRule{
+					{
+						Matches:     []gatewayv1.HTTPRouteMatch{{Path: &gatewayv1.HTTPPathMatch{Type: &pathPrefix, Value: new("/")}}},
+						BackendRefs: []gatewayv1.HTTPBackendRef{backendRef("svc", 8443, 1)},
+					},
+				},
+			},
+		}
+
+		resolver := func(_ context.Context, nn ktypes.NamespacedName) *proxy.ClientCertConfig {
+			if nn.Name == "gw-with-cert" {
+				return certB
+			}
+
+			return nil
+		}
+
+		cfg := proxy.ConvertHTTPRoutes(t.Context(), []*gatewayv1.HTTPRoute{route}, "cluster.local", nil, nil, tlsResolver, resolver)
+
+		require.Len(t, cfg.Rules, 1)
+		require.NotNil(t, cfg.Rules[0].Backends[0].TLS)
+		assert.Equal(t, certB.CertPEM, cfg.Rules[0].Backends[0].TLS.ClientCertPEM,
+			"second parent's cert must be used when first parent has none")
+	})
+
+	t.Run("non-Gateway parentRef is skipped", func(t *testing.T) {
+		t.Parallel()
+
+		serviceKind := gatewayv1.Kind("Service")
+		route := &gatewayv1.HTTPRoute{
+			ObjectMeta: metav1.ObjectMeta{Name: "mesh-and-gw", Namespace: "default"},
+			Spec: gatewayv1.HTTPRouteSpec{
+				CommonRouteSpec: gatewayv1.CommonRouteSpec{
+					ParentRefs: []gatewayv1.ParentReference{
+						{Name: "mesh-svc", Kind: &serviceKind},
+						{Name: "gw-real"},
+					},
+				},
+				Rules: []gatewayv1.HTTPRouteRule{
+					{
+						Matches:     []gatewayv1.HTTPRouteMatch{{Path: &gatewayv1.HTTPPathMatch{Type: &pathPrefix, Value: new("/")}}},
+						BackendRefs: []gatewayv1.HTTPBackendRef{backendRef("svc", 8443, 1)},
+					},
+				},
+			},
+		}
+
+		resolver := func(_ context.Context, nn ktypes.NamespacedName) *proxy.ClientCertConfig {
+			require.NotEqual(t, "mesh-svc", nn.Name, "resolver must not be called for non-Gateway parents")
+			if nn.Name == "gw-real" {
+				return certA
+			}
+
+			return nil
+		}
+
+		cfg := proxy.ConvertHTTPRoutes(t.Context(), []*gatewayv1.HTTPRoute{route}, "cluster.local", nil, nil, tlsResolver, resolver)
+
+		require.Len(t, cfg.Rules, 1)
+		require.NotNil(t, cfg.Rules[0].Backends[0].TLS)
+		assert.Equal(t, certA.CertPEM, cfg.Rules[0].Backends[0].TLS.ClientCertPEM)
+	})
+}
+
 func TestConvertHTTPRoutes_GatewayClientCert_NotAttachedWithoutBackendTLSPolicy(t *testing.T) {
 	t.Parallel()
 

@@ -50,6 +50,14 @@ var (
 	// do not parse as a valid keypair (tls.X509KeyPair rejects them).
 	errGatewayClientCertInvalidPEM = errors.New(
 		"gateway client cert: tls.crt/tls.key is not a valid PEM keypair")
+
+	// errGatewayClientCertTransientError marks a transient API-server failure
+	// (network, auth refresh, 5xx) returned when fetching the Secret. The ref
+	// itself is not necessarily invalid, so callers MUST NOT stamp the Gateway
+	// with InvalidClientCertificateRef on this — they leave the previous
+	// ResolvedRefs verdict in place and rely on the next reconcile to retry.
+	errGatewayClientCertTransientError = errors.New(
+		"gateway client cert: transient error fetching Secret")
 )
 
 // secretRefGrantChecker is the callback shape loadGatewayClientCertPEM uses to
@@ -110,7 +118,12 @@ func loadGatewayClientCertPEM(
 			return nil, nil, errGatewayClientCertSecretNotFound
 		}
 
-		return nil, nil, errors.Wrap(err, "failed to get client certificate Secret")
+		// Any non-NotFound error from the cached client is transient — auth
+		// refresh, API-server 5xx, or pre-informer-sync warmup. The ref itself
+		// is not necessarily invalid; wrap as the transient sentinel so the
+		// status emit path leaves the previous ResolvedRefs verdict alone
+		// instead of falsely declaring InvalidClientCertificateRef.
+		return nil, nil, errors.Wrapf(errGatewayClientCertTransientError, "Get %s/%s: %s", targetNS, string(ref.Name), err.Error())
 	}
 
 	if secret.Type != corev1.SecretTypeTLS {
@@ -139,24 +152,51 @@ func gatewayClientCertRef(gateway *gatewayv1.Gateway) *gatewayv1.SecretObjectRef
 	return gateway.Spec.TLS.Backend.ClientCertificateRef
 }
 
+// mergeClientCertCondition appends the resolved client-cert condition to base
+// when non-nil, returning the combined slice. A nil clientCertCond means the
+// outcome was transient and the caller should preserve the previous condition
+// state — represented here by not appending anything new. The helper centralises
+// the "leave it alone" semantics so every Gateway-status code path treats
+// transient errors identically.
+func mergeClientCertCondition(prev, base []metav1.Condition, clientCertCond *metav1.Condition) []metav1.Condition {
+	if clientCertCond != nil {
+		return append(base, *clientCertCond)
+	}
+
+	// Transient: preserve the previous ResolvedRefs condition if one existed.
+	for i := range prev {
+		if prev[i].Type == string(gatewayv1.GatewayConditionResolvedRefs) {
+			return append(base, prev[i])
+		}
+	}
+
+	return base
+}
+
 // buildClientCertResolvedRefsCondition maps the outcome of
-// loadGatewayClientCertPEM onto a Gateway-level ResolvedRefs condition.
+// loadGatewayClientCertPEM onto a Gateway-level ResolvedRefs condition, or
+// returns nil when the outcome should not move the condition at all.
+//
 // Per Gateway API spec on the GatewayBackendTLS type:
 //
 //   - nil error → ConditionTrue / Reason=ResolvedRefs.
 //   - cross-namespace denial → ConditionFalse / Reason=RefNotPermitted.
-//   - any other resolution error (unsupported kind, missing Secret, wrong
+//   - any other ref-validity error (unsupported kind, missing Secret, wrong
 //     type, missing tls.crt|tls.key, malformed PEM) →
 //     ConditionFalse / Reason=InvalidClientCertificateRef.
+//   - a transient API-server error (network, auth, 5xx) → returns nil so the
+//     caller preserves the previous verdict. The spec reserves
+//     InvalidClientCertificateRef for actual data problems, not transient
+//     control-plane hiccups — the next reconcile will retry.
 //
 // The FIRST-PR scope is intentionally narrow: this condition reflects only
 // the client-cert outcome. The spec also allows Gateway ResolvedRefs to be a
 // positive-polarity summary across listener-level ResolvedRefs; that broader
 // semantic is left for a follow-up since the upstream conformance test only
 // asserts the client-cert path.
-func buildClientCertResolvedRefsCondition(generation int64, now metav1.Time, err error) metav1.Condition {
+func buildClientCertResolvedRefsCondition(generation int64, now metav1.Time, err error) *metav1.Condition {
 	if err == nil {
-		return metav1.Condition{
+		return &metav1.Condition{
 			Type:               string(gatewayv1.GatewayConditionResolvedRefs),
 			Status:             metav1.ConditionTrue,
 			ObservedGeneration: generation,
@@ -166,12 +206,18 @@ func buildClientCertResolvedRefsCondition(generation int64, now metav1.Time, err
 		}
 	}
 
+	if errors.Is(err, errGatewayClientCertTransientError) {
+		// Leave the previous condition in place — the ref itself is fine,
+		// the API server just failed to answer. Next reconcile retries.
+		return nil
+	}
+
 	reason := gatewayv1.GatewayReasonInvalidClientCertificateRef
 	if errors.Is(err, errGatewayClientCertRefNotPermitted) {
 		reason = gatewayv1.GatewayReasonRefNotPermitted
 	}
 
-	return metav1.Condition{
+	return &metav1.Condition{
 		Type:               string(gatewayv1.GatewayConditionResolvedRefs),
 		Status:             metav1.ConditionFalse,
 		ObservedGeneration: generation,

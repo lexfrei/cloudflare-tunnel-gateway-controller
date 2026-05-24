@@ -269,18 +269,23 @@ let ALPN negotiate it during the handshake.
 
 ### Gateway client cert rotation has a propagation lag
 
-When the `Secret` referenced by `spec.tls.backend.clientCertificateRef` is
-rotated, the Gateway is re-enqueued by the controller's Secret watch and the
-next reconcile picks up the new keypair. The proxy transport pool is keyed
-by a hash of the client cert PEM, so the rotated cert evicts the old
+The controller's existing Secret watch only matches the GatewayClassConfig's
+`cloudflareCredentialsSecretRef` and `tunnelTokenSecretRef`. A rotation of the
+`Secret` referenced by `spec.tls.backend.clientCertificateRef` (or by a
+listener's `certificateRefs`) does NOT enqueue the Gateway on its own — the
+proxy continues to dial backends with the previous keypair until some
+unrelated event (HTTPRoute create/update, BackendTLSPolicy change, periodic
+resync, controller restart) drives the next reconcile. On that reconcile the
+new keypair is loaded, the converter stamps it onto every affected
+`BackendTLSConfig`, and the per-cert transport-pool hash evicts the stale
 transport on the next config push.
 
-Between the Secret update and the next route reconcile, in-flight backend
-connections continue using the old transport (and the old cert). This window
-is bounded by the next HTTPRoute / BackendTLSPolicy event in the Gateway's
-namespace — which is generally short in active clusters, but the controller
-does not yet eagerly push the new config on a Secret-only change. Active
-hot-reload triggered solely by Secret updates is a tracked follow-up.
+In active clusters the propagation window is short, but operators that
+rotate certs more frequently than other Gateway-namespace events occur will
+observe stale-cert traffic until the next reconcile fires. Active hot-reload
+on a Secret-only change is a tracked follow-up — extending
+`ConfigMapper.MapSecretToRequests` to also match Gateway-level
+`clientCertificateRef` Secrets is the planned fix.
 
 ### RequestMirror filter does not honour BackendTLSPolicy
 

@@ -426,7 +426,7 @@ func (r *GatewayReconciler) updateStatus(
 
 		_, _, clientCertErr := loadGatewayClientCertPEM(ctx, r.Client, &freshGateway, r.checkSecretReferenceGrant)
 
-		freshGateway.Status.Conditions = []metav1.Condition{
+		freshGateway.Status.Conditions = mergeClientCertCondition(freshGateway.Status.Conditions, []metav1.Condition{
 			{
 				Type:               string(gatewayv1.GatewayConditionAccepted),
 				Status:             metav1.ConditionTrue,
@@ -443,8 +443,7 @@ func (r *GatewayReconciler) updateStatus(
 				Reason:             string(gatewayv1.GatewayReasonProgrammed),
 				Message:            "Gateway programmed in Cloudflare Tunnel",
 			},
-			buildClientCertResolvedRefsCondition(freshGateway.Generation, now, clientCertErr),
-		}
+		}, buildClientCertResolvedRefsCondition(freshGateway.Generation, now, clientCertErr))
 
 		listenerStatuses := make([]gatewayv1.ListenerStatus, 0, len(freshGateway.Spec.Listeners))
 
@@ -538,7 +537,7 @@ func (r *GatewayReconciler) setConfigErrorStatus(
 
 		_, _, clientCertErr := loadGatewayClientCertPEM(ctx, r.Client, &freshGateway, r.checkSecretReferenceGrant)
 
-		freshGateway.Status.Conditions = []metav1.Condition{
+		freshGateway.Status.Conditions = mergeClientCertCondition(freshGateway.Status.Conditions, []metav1.Condition{
 			{
 				Type:               string(gatewayv1.GatewayConditionAccepted),
 				Status:             metav1.ConditionFalse,
@@ -555,8 +554,7 @@ func (r *GatewayReconciler) setConfigErrorStatus(
 				Reason:             string(gatewayv1.GatewayReasonInvalid),
 				Message:            errMsg,
 			},
-			buildClientCertResolvedRefsCondition(freshGateway.Generation, now, clientCertErr),
-		}
+		}, buildClientCertResolvedRefsCondition(freshGateway.Generation, now, clientCertErr))
 
 		// Clear listener statuses on config error
 		freshGateway.Status.Listeners = nil
@@ -598,7 +596,7 @@ func (r *GatewayReconciler) setCloudflaredErrorStatus(
 
 		_, _, clientCertErr := loadGatewayClientCertPEM(ctx, r.Client, &freshGateway, r.checkSecretReferenceGrant)
 
-		freshGateway.Status.Conditions = []metav1.Condition{
+		freshGateway.Status.Conditions = mergeClientCertCondition(freshGateway.Status.Conditions, []metav1.Condition{
 			{
 				Type:               string(gatewayv1.GatewayConditionAccepted),
 				Status:             metav1.ConditionTrue,
@@ -615,8 +613,7 @@ func (r *GatewayReconciler) setCloudflaredErrorStatus(
 				Reason:             "DeploymentFailed",
 				Message:            errMsg,
 			},
-			buildClientCertResolvedRefsCondition(freshGateway.Generation, now, clientCertErr),
-		}
+		}, buildClientCertResolvedRefsCondition(freshGateway.Generation, now, clientCertErr))
 
 		// Clear listener statuses on cloudflared error
 		freshGateway.Status.Listeners = nil

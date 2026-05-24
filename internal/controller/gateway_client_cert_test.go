@@ -348,6 +348,7 @@ func TestBuildClientCertResolvedRefsCondition_NilErr_TrueResolvedRefs(t *testing
 
 	cond := buildClientCertResolvedRefsCondition(7, metav1.Now(), nil)
 
+	require.NotNil(t, cond)
 	assert.Equal(t, string(gatewayv1.GatewayConditionResolvedRefs), cond.Type)
 	assert.Equal(t, metav1.ConditionTrue, cond.Status)
 	assert.Equal(t, string(gatewayv1.GatewayReasonResolvedRefs), cond.Reason)
@@ -367,6 +368,7 @@ func TestBuildClientCertResolvedRefsCondition_InvalidRef_FalseInvalidRef(t *test
 
 	for _, sentinel := range invalidRefSentinels {
 		cond := buildClientCertResolvedRefsCondition(11, metav1.Now(), sentinel)
+		require.NotNil(t, cond, "%v", sentinel)
 		assert.Equal(t, metav1.ConditionFalse, cond.Status, "%v", sentinel)
 		assert.Equal(t, string(gatewayv1.GatewayReasonInvalidClientCertificateRef), cond.Reason,
 			"sentinel %v must map to InvalidClientCertificateRef", sentinel)
@@ -380,6 +382,51 @@ func TestBuildClientCertResolvedRefsCondition_RefNotPermitted_FalseRefNotPermitt
 
 	cond := buildClientCertResolvedRefsCondition(3, metav1.Now(), errGatewayClientCertRefNotPermitted)
 
+	require.NotNil(t, cond)
 	assert.Equal(t, metav1.ConditionFalse, cond.Status)
 	assert.Equal(t, string(gatewayv1.GatewayReasonRefNotPermitted), cond.Reason)
+}
+
+func TestBuildClientCertResolvedRefsCondition_TransientError_NilCondition(t *testing.T) {
+	t.Parallel()
+
+	// A transient API-server failure (errGatewayClientCertTransientError) must
+	// not flip Accepted to InvalidClientCertificateRef — the ref itself is
+	// fine. The condition builder returns nil so the caller preserves the
+	// previous ResolvedRefs verdict until the next reconcile retries.
+	cond := buildClientCertResolvedRefsCondition(5, metav1.Now(), errGatewayClientCertTransientError)
+
+	assert.Nil(t, cond, "transient errors must leave the previous condition in place")
+}
+
+func TestMergeClientCertCondition_TransientPreservesPrevious(t *testing.T) {
+	t.Parallel()
+
+	// When the cert resolver returned a transient error the helper returns
+	// nil, so mergeClientCertCondition must surface any pre-existing
+	// ResolvedRefs condition from the prior reconcile instead of dropping it.
+	prevResolved := metav1.Condition{
+		Type:    string(gatewayv1.GatewayConditionResolvedRefs),
+		Status:  metav1.ConditionTrue,
+		Reason:  string(gatewayv1.GatewayReasonResolvedRefs),
+		Message: "All references resolved",
+	}
+	prev := []metav1.Condition{prevResolved}
+	base := []metav1.Condition{{Type: "Accepted", Status: metav1.ConditionTrue}}
+
+	merged := mergeClientCertCondition(prev, base, nil)
+
+	require.Len(t, merged, 2)
+	assert.Equal(t, prevResolved, merged[1])
+}
+
+func TestMergeClientCertCondition_TransientNoPrevious_DropsNothing(t *testing.T) {
+	t.Parallel()
+
+	base := []metav1.Condition{{Type: "Accepted", Status: metav1.ConditionTrue}}
+
+	merged := mergeClientCertCondition(nil, base, nil)
+
+	// No previous ResolvedRefs to preserve → the helper just returns base.
+	assert.Equal(t, base, merged)
 }
