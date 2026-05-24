@@ -291,15 +291,3 @@ func backendUpgradeTLSConfig(backendURL *url.URL, backendTLS *BackendTLSConfig) 
 
 	return buildBackendTLSConfig(backendTLS, rootCAs), nil
 }
-
-// copyHeaderValues performs a shallow copy of src into dst, preserving
-// multi-value headers. Used in the WS upgrade path; mirrors stdlib's
-// internal copyHeader without forcing a httputil dependency from this
-// file.
-func copyHeaderValues(dst, src http.Header) {
-	for key, values := range src {
-		for _, value := range values {
-			dst.Add(key, value)
-		}
-	}
-}
