@@ -338,6 +338,20 @@ proxy:
     name: ""
     # -- Key in the Secret containing the tunnel token
     key: "tunnel-token"
+  # -- WebSocket upgrade-path knobs. Both bound only the pre-upgrade
+  # phase: dialTimeout caps the TCP/TLS connect to the backend;
+  # handshakeTimeout caps the wait for the backend's 101 Switching
+  # Protocols response. Once the upgrade completes, neither bounds the
+  # long-lived post-101 bidirectional stream. Empty (the default)
+  # leaves both at the proxy binary's built-in 30s.
+  websocket:
+    # -- Backend TCP/TLS dial timeout (Go duration, e.g. "10s", "1m").
+    # Empty preserves the 30s default. Use a deliberately large value
+    # to effectively disable the bound rather than setting "0".
+    dialTimeout: ""
+    # -- 101-Switching-Protocols read deadline (Go duration).
+    # Empty preserves the 30s default.
+    handshakeTimeout: ""
   # -- Container resource requests and limits
   resources:
     limits:

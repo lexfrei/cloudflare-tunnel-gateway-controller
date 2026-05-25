@@ -40,6 +40,41 @@ type Handler struct {
 	//     not share the cached transport, or one route silently inherits
 	//     the other's deadline.
 	transports sync.Map // map[string]http.RoundTripper
+
+	// wsDialTimeout bounds proxyWebSocketUpgrade's per-attempt TCP/TLS
+	// dial to the backend. Zero means "use defaultWSDialTimeout". Set
+	// via WithWSDialTimeout at construction time.
+	wsDialTimeout time.Duration
+	// wsHandshakeReadTimeout bounds proxyWebSocketUpgrade's wait for the
+	// backend's 101 Switching Protocols response. Zero means "use
+	// defaultWSHandshakeReadTimeout". Set via WithWSHandshakeReadTimeout.
+	wsHandshakeReadTimeout time.Duration
+}
+
+// HandlerOption configures a Handler at construction time. Use the
+// With* helpers below to build option values; pass them to NewHandler.
+type HandlerOption func(*Handler)
+
+// WithWSDialTimeout overrides the default 30s WebSocket-backend dial
+// timeout. Zero or negative values are ignored (the default stays in
+// place); callers that want to disable the bound entirely should set
+// a deliberately large value rather than zero.
+func WithWSDialTimeout(d time.Duration) HandlerOption {
+	return func(h *Handler) {
+		if d > 0 {
+			h.wsDialTimeout = d
+		}
+	}
+}
+
+// WithWSHandshakeReadTimeout overrides the default 30s WebSocket 101
+// read deadline. Zero or negative values are ignored.
+func WithWSHandshakeReadTimeout(d time.Duration) HandlerOption {
+	return func(h *Handler) {
+		if d > 0 {
+			h.wsHandshakeReadTimeout = d
+		}
+	}
 }
 
 // ruleHeaderTimeout derives the *http.Transport.ResponseHeaderTimeout to
@@ -134,10 +169,19 @@ func tlsFingerprint(backendTLS *BackendTLSConfig) string {
 }
 
 // NewHandler creates a new proxy Handler backed by the given Router.
-func NewHandler(router *Router) *Handler {
-	return &Handler{
+// Optional HandlerOption arguments configure per-Handler knobs (WebSocket
+// dial / handshake timeouts, etc.); zero options leaves the package
+// defaults in place.
+func NewHandler(router *Router, opts ...HandlerOption) *Handler {
+	handler := &Handler{
 		router: router,
 	}
+
+	for _, opt := range opts {
+		opt(handler)
+	}
+
+	return handler
 }
 
 // ServeHTTP implements http.Handler.
@@ -213,6 +257,28 @@ func (h *Handler) PruneTransports(activeKeys map[string]bool) {
 
 		return true
 	})
+}
+
+// effectiveWSDialTimeout returns the configured WebSocket-backend dial
+// timeout or the package default when none was set. Method (not field
+// access) so the zero-value fallback lives next to the field rather
+// than at every call site.
+func (h *Handler) effectiveWSDialTimeout() time.Duration {
+	if h.wsDialTimeout > 0 {
+		return h.wsDialTimeout
+	}
+
+	return defaultWSDialTimeout
+}
+
+// effectiveWSHandshakeReadTimeout returns the configured 101-read
+// deadline or the package default when none was set.
+func (h *Handler) effectiveWSHandshakeReadTimeout() time.Duration {
+	if h.wsHandshakeReadTimeout > 0 {
+		return h.wsHandshakeReadTimeout
+	}
+
+	return defaultWSHandshakeReadTimeout
 }
 
 // proxyToBackend selects the backend from the route result and proxies the request.

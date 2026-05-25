@@ -52,6 +52,14 @@ spec:
                   name: {{ .Values.proxy.authTokenSecretRef.name }}
                   key: {{ .Values.proxy.authTokenSecretRef.key | default "auth-token" }}
             {{- end }}
+            {{- with .Values.proxy.websocket.dialTimeout }}
+            - name: PROXY_WS_DIAL_TIMEOUT
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.proxy.websocket.handshakeTimeout }}
+            - name: PROXY_WS_HANDSHAKE_TIMEOUT
+              value: {{ . | quote }}
+            {{- end }}
           ports:
             - name: config-api
               containerPort: {{ .Values.proxy.configAPIPort }}

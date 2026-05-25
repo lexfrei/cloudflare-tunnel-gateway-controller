@@ -47,7 +47,7 @@ func runTunnelMode(logger *slog.Logger, token string) {
 	configAddr := envOrDefault("PROXY_CONFIG_ADDR", defaultConfigAddr)
 
 	router := proxy.NewRouter()
-	proxyHandler := proxy.NewHandler(router)
+	proxyHandler := proxy.NewHandler(router, wsHandlerOptions(logger)...)
 	router.SetHandler(proxyHandler)
 
 	authToken := os.Getenv("PROXY_AUTH_TOKEN")
@@ -103,7 +103,7 @@ func runStandaloneMode(logger *slog.Logger) {
 	proxyAddr := envOrDefault("PROXY_ADDR", defaultProxyAddr)
 
 	router := proxy.NewRouter()
-	proxyHandler := proxy.NewHandler(router)
+	proxyHandler := proxy.NewHandler(router, wsHandlerOptions(logger)...)
 	router.SetHandler(proxyHandler)
 
 	authToken := os.Getenv("PROXY_AUTH_TOKEN")
@@ -238,4 +238,37 @@ func envOrDefault(key, defaultValue string) string {
 	}
 
 	return defaultValue
+}
+
+// wsHandlerOptions reads PROXY_WS_DIAL_TIMEOUT and
+// PROXY_WS_HANDSHAKE_TIMEOUT from the environment and turns them into
+// proxy.HandlerOption values for NewHandler. Unset / unparseable /
+// non-positive values are silently ignored (the proxy.With* helpers
+// gate on >0), so the package default (30s) stays in place. Logs a
+// WARN on parse failure so a typo'd env var doesn't silently fall back
+// to the default with no diagnostic.
+func wsHandlerOptions(logger *slog.Logger) []proxy.HandlerOption {
+	var opts []proxy.HandlerOption
+
+	if raw := os.Getenv("PROXY_WS_DIAL_TIMEOUT"); raw != "" {
+		parsed, err := time.ParseDuration(raw)
+		if err != nil {
+			logger.Warn("PROXY_WS_DIAL_TIMEOUT failed to parse -- keeping default 30s",
+				"value", raw, "error", err)
+		} else {
+			opts = append(opts, proxy.WithWSDialTimeout(parsed))
+		}
+	}
+
+	if raw := os.Getenv("PROXY_WS_HANDSHAKE_TIMEOUT"); raw != "" {
+		parsed, err := time.ParseDuration(raw)
+		if err != nil {
+			logger.Warn("PROXY_WS_HANDSHAKE_TIMEOUT failed to parse -- keeping default 30s",
+				"value", raw, "error", err)
+		} else {
+			opts = append(opts, proxy.WithWSHandshakeReadTimeout(parsed))
+		}
+	}
+
+	return opts
 }

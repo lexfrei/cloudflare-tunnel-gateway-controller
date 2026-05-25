@@ -20,6 +20,20 @@ func (h *Handler) Transports() *sync.Map {
 	return &h.transports
 }
 
+// EffectiveWSDialTimeoutForTest exposes the Handler's resolved WebSocket
+// dial timeout so unit tests can pin that WithWSDialTimeout overrides
+// flow through correctly and that the zero-value fallback returns the
+// package default.
+func (h *Handler) EffectiveWSDialTimeoutForTest() time.Duration {
+	return h.effectiveWSDialTimeout()
+}
+
+// EffectiveWSHandshakeReadTimeoutForTest exposes the Handler's resolved
+// WebSocket handshake read timeout for the same reason.
+func (h *Handler) EffectiveWSHandshakeReadTimeoutForTest() time.Duration {
+	return h.effectiveWSHandshakeReadTimeout()
+}
+
 // TransportKey exposes the per-host+protocol+tls+headerTimeout pool key
 // for testing purposes. Existing tests that predate the per-rule timeout
 // dimension pass 0 to mean "no header deadline" and behave exactly as
