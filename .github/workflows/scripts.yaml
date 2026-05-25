@@ -5,12 +5,14 @@ on:
     paths:
       - scripts/reflow-paragraphs.py
       - scripts/reflow_paragraphs_test.py
+      - scripts/requirements-reflow.txt
       - .github/workflows/scripts.yaml
   push:
     branches: [master]
     paths:
       - scripts/reflow-paragraphs.py
       - scripts/reflow_paragraphs_test.py
+      - scripts/requirements-reflow.txt
       - .github/workflows/scripts.yaml
   workflow_dispatch:
 
@@ -29,7 +31,7 @@ jobs:
           python-version: "3.14.5"
 
       - name: Install pytest
-        run: pip install --quiet pytest
+        run: pip install --quiet --requirement scripts/requirements-reflow.txt
 
       - name: Run reflow paragraphs tests
         # 16 pytest cases pin the list-item-continuation and nested-list

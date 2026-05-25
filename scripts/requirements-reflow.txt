@@ -1,0 +1,7 @@
+# Dependencies for scripts/reflow-paragraphs.py and its pytest sibling.
+# Pinned so a Renovate-trackable diff lands on every version bump (the
+# reflow script itself uses only stdlib; pytest is the test-only dep).
+#
+# Used by the reflow job in .github/workflows/scripts.yaml.
+
+pytest==9.0.3
