@@ -438,52 +438,84 @@ Before creating a PR, verify all checklist items from `.github/pull_request_temp
 
 ## GitHub Issue Labels
 
-When creating issues, apply labels from these categories:
+Labels follow the Kubernetes-style namespaced scheme. The authoritative source is `.github/labels.yml`, synced into the repo by `.github/workflows/labels.yaml` (EndBug/label-sync@v2). Edit the YAML and open a PR — the GitHub UI is effectively read-only because the next sync would overwrite manual edits.
 
-### Type (required)
+When creating issues, apply at minimum one `kind/*`, one `area/*`, one `priority/*`, and one `triage/*` (or `lifecycle/*` if already active). Size labels are applied manually — there is no auto-labeler workflow yet.
 
-- `bug` — Something isn't working
-- `enhancement` — New feature or request
-- `documentation` — Documentation improvements
-- `test` — Test coverage
-- `ci` — CI/CD and automation
-- `security` — Security-related
+### kind/ — issue or PR type (required)
 
-### Area (required)
+- `kind/bug` — Something isn't working
+- `kind/feature` — New feature or request
+- `kind/documentation` — Documentation improvements
+- `kind/cleanup` — Tech debt, refactor, code or process cleanup
+- `kind/regression` — Regression from a prior release
+- `kind/flake` — Flaky test
+- `kind/failing-test` — Consistently or frequently failing test
+- `kind/api-change` — Adds, removes, or otherwise changes an API
+- `kind/breaking-change` — Breaking API or behaviour change
+- `kind/support` — Support question
 
-- `area/controller` — Controller code
+### area/ — subsystem (required; extensible)
+
+- `area/controller` — Kubernetes controller (`internal/controller`, GatewayReconciler, route binding)
+- `area/proxy` — In-process L7 reverse proxy (`internal/proxy`, filters, transport)
+- `area/tunnel` — cloudflared tunnel bridge (`internal/tunnel`, GatewayOriginProxy, vendored fork)
+- `area/api` — GatewayClassConfig CRD and API types (`api/v1alpha1`)
 - `area/helm` — Helm chart
-- `area/api` — CRD and API types
-- `area/docs` — Documentation
+- `area/ci` — CI workflows and release automation
+- `area/docs` — docs site (`mkdocs`, `docs/`, README.md)
+- `area/testing` — Test infrastructure (`test/`, conformance, e2e, integration)
+- `area/dependencies` — Vendored deps, `go.mod`, Renovate updates
+- `area/uncategorized` — Fallback when no concrete `area/*` fits; pick a real area during triage or expand the taxonomy
 
-### Priority (required)
+Add a new `area/*` when there are 3+ open issues on the topic.
 
-- `priority/critical` — Blocks release, needs immediate attention
-- `priority/high` — Important for milestone
-- `priority/medium` — Should be done for milestone
-- `priority/low` — Nice to have, can defer
+Standalone labels not enumerated above (`epic`, `community`, `help wanted`, `good first issue`, `upstream-issue`, `automated`, `lgtm`, `ok-to-test`, `go`, `python`, `Container Available`) live in `.github/labels.yml` — that file is the authoritative full catalog.
 
-### Status (required)
+### priority/ — urgency (required)
 
-- `status/needs-triage` — Requires analysis
-- `status/needs-design` — Requires design/RFC
-- `status/ready` — Ready to work on
-- `status/in-progress` — Currently being worked on
-- `status/blocked` — Blocked by dependency
-- `status/needs-info` — Waiting for clarification
-- `status/needs-review` — Waiting for review/feedback
+- `priority/critical-urgent` — Must be top priority right now
+- `priority/important-soon` — Currently being staffed, ideally in time for the next release
+- `priority/important-longterm` — Important long-term, may need multiple releases
+- `priority/backlog` — General backlog priority
 
-### Size (required)
+### triage/ — review state (required for new issues)
 
-- `size/XS` — < 1 hour
-- `size/S` — 1-4 hours
-- `size/M` — 1-2 days
-- `size/L` — 3-5 days
-- `size/XL` — > 1 week
+- `triage/needs-triage` — Needs maintainer triage
+- `triage/accepted` — Ready to be actively worked on
+- `triage/needs-information` — More information needed
+- `triage/not-reproducible` — Cannot be reproduced as described
+- `triage/duplicate` — Duplicate of another issue
+- `triage/unresolved` — Cannot or will not be resolved
+
+### lifecycle/ — once work starts
+
+- `lifecycle/active` — Actively being worked on by a contributor
+- `lifecycle/frozen` — Should not auto-close due to staleness
+- `lifecycle/stale` — Stale due to no activity
+- `lifecycle/rotten` — Aged beyond stale; will auto-close
+
+### do-not-merge/ — PR merge blockers (Prow convention)
+
+- `do-not-merge/work-in-progress` — PR is a work in progress
+- `do-not-merge/hold` — Someone issued `/hold`; also used for "blocked by dependency"
+
+### size/ — PR size (apply manually)
+
+- `size/XS` — 0-9 lines
+- `size/S` — 10-29 lines
+- `size/M` — 30-99 lines
+- `size/L` — 100-499 lines
+- `size/XL` — 500-999 lines
+- `size/XXL` — 1000+ lines
+
+### security/ — security finding severity and status
+
+`security`, `security/critical`, `security/high`, `security/medium`, `security/low`, `security/triage-needed`, `security/confirmed`, `security/false-positive`, `security/accepted-risk`, `security/in-progress`, `security/fixed`.
 
 ### Milestone
 
-Always assign a milestone when creating issues (e.g., `v1.0.0`).
+Always assign a milestone when creating issues. The current active milestone is `v3.0.0`; anything bound to an earlier release line goes in the corresponding `vX.Y.Z` milestone if one exists.
 
 ## Conformance Testing
 

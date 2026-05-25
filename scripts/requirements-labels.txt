@@ -1,0 +1,8 @@
+# Dependencies for the labels validator (scripts/validate-labels.py and its
+# pytest sibling). Pinned so a Renovate-trackable diff lands on every
+# version bump.
+#
+# Used by the validate job in .github/workflows/labels.yaml.
+
+PyYAML==6.0.3
+pytest==9.0.3

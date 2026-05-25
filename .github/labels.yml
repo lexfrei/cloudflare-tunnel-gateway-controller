@@ -1,0 +1,338 @@
+# cloudflare-tunnel-gateway-controller repository labels
+#
+# Label conventions follow the Kubernetes scheme:
+# https://github.com/kubernetes/test-infra/blob/master/label_sync/labels.md
+#
+# Synced into the repository by .github/workflows/labels.yaml
+# (EndBug/label-sync@v2). Edit this file via pull request -- UI changes
+# will be overwritten on the next sync.
+#
+# Constraints (enforced by the validate job in labels.yaml):
+#   - description <= 100 characters (GitHub REST API limit)
+#   - color is a 6-character hex string (no leading #)
+#   - label names are unique
+#   - aliases do not collide with top-level names
+#
+# Categories:
+#   kind/         issue or PR type
+#   priority/     urgency
+#   triage/       review state
+#   lifecycle/    issue or PR lifecycle
+#   area/         subsystem; extensible -- add when 3+ open issues exist
+#   do-not-merge/ PR merge blockers
+#   security/     security-finding severity and status
+#   size/         PR size (apply manually for now; no auto-labeler is wired up)
+#
+# `aliases:` lets EndBug/label-sync rename existing labels without losing
+# references on already-tagged issues and PRs.
+
+# ----------------------------------------------
+# kind/ -- issue or PR type
+# ----------------------------------------------
+
+- name: kind/bug
+  color: 'd73a4a'
+  description: Categorizes issue or PR as related to a bug
+  aliases: ['bug']
+
+- name: kind/feature
+  color: 'a2eeef'
+  description: Categorizes issue or PR as related to a new feature
+  aliases: ['enhancement']
+
+- name: kind/documentation
+  color: '0075ca'
+  description: Categorizes issue or PR as related to documentation
+  aliases: ['documentation']
+
+- name: kind/support
+  color: 'd876e3'
+  description: Categorizes issue as a support question
+  aliases: ['question']
+
+- name: kind/cleanup
+  color: 'c7def8'
+  description: Categorizes issue or PR as related to cleanup of code, process, or technical debt
+
+- name: kind/regression
+  color: 'e11d21'
+  description: Categorizes issue or PR as related to a regression from a prior release
+
+- name: kind/flake
+  color: 'f7c6c7'
+  description: Categorizes issue or PR as related to a flaky test
+
+- name: kind/failing-test
+  color: 'e11d21'
+  description: Categorizes issue or PR as related to a consistently or frequently failing test
+
+- name: kind/api-change
+  color: 'c7def8'
+  description: Categorizes issue or PR as related to adding, removing, or otherwise changing an API
+
+- name: kind/breaking-change
+  color: 'e11d21'
+  description: Indicates the change introduces a breaking API or behaviour change
+
+# ----------------------------------------------
+# priority/ -- urgency
+# ----------------------------------------------
+
+- name: priority/critical-urgent
+  color: 'e11d21'
+  description: Highest priority. Must be actively worked on as someone's top priority right now
+  aliases: ['priority/critical']
+
+- name: priority/important-soon
+  color: 'eb6420'
+  description: Must be staffed and worked on either currently, or very soon, ideally in time for the next release
+  aliases: ['priority/high']
+
+- name: priority/important-longterm
+  color: 'fbca04'
+  description: Important over the long term, but may not be staffed and/or may need multiple releases to complete
+  aliases: ['priority/medium']
+
+- name: priority/backlog
+  color: 'fef2c0'
+  description: General backlog priority. Lower than priority/important-longterm
+  aliases: ['priority/low']
+
+# ----------------------------------------------
+# triage/ -- review state
+# ----------------------------------------------
+
+- name: triage/needs-triage
+  color: 'ededed'
+  description: Indicates an issue needs triage by a maintainer
+  aliases: ['status/needs-triage']
+
+- name: triage/accepted
+  color: '0e8a16'
+  description: Indicates an issue is ready to be actively worked on
+  aliases: ['status/ready']
+
+- name: triage/needs-information
+  color: 'fbca04'
+  description: Indicates an issue needs more information in order to work on it
+  aliases: ['status/needs-info', 'status/needs-design']
+
+- name: triage/not-reproducible
+  color: 'fbca04'
+  description: Indicates an issue can not be reproduced as described
+
+- name: triage/duplicate
+  color: 'cfd3d7'
+  description: Indicates an issue is a duplicate of another issue
+  aliases: ['duplicate']
+
+- name: triage/unresolved
+  color: 'cfd3d7'
+  description: Indicates an issue that can not or will not be resolved
+  aliases: ['wontfix']
+
+# ----------------------------------------------
+# lifecycle/ -- issue or PR lifecycle
+# ----------------------------------------------
+
+- name: lifecycle/active
+  color: '1d76db'
+  description: Indicates that an issue or PR is actively being worked on by a contributor
+  aliases: ['status/in-progress', 'status/needs-review']
+
+- name: lifecycle/frozen
+  color: 'db5dd6'
+  description: Indicates that an issue or PR should not be auto-closed due to staleness
+
+- name: lifecycle/stale
+  color: 'dadada'
+  description: Denotes an issue or PR has remained open with no activity and has become stale
+
+- name: lifecycle/rotten
+  color: '795548'
+  description: Denotes an issue or PR that has aged beyond stale and will be auto-closed
+
+# ----------------------------------------------
+# area/ -- subsystem (extensible)
+# Add a new area/* when there are 3+ open issues on the topic.
+# ----------------------------------------------
+
+- name: area/controller
+  color: 'bfd4f2'
+  description: Kubernetes controller (internal/controller, GatewayReconciler, route binding)
+
+- name: area/proxy
+  color: 'bfd4f2'
+  description: Issues or PRs related to the in-process L7 reverse proxy (internal/proxy, filters, transport)
+
+- name: area/tunnel
+  color: 'bfd4f2'
+  description: cloudflared tunnel bridge (internal/tunnel, GatewayOriginProxy, vendored fork)
+
+- name: area/api
+  color: 'bfd4f2'
+  description: Issues or PRs related to the GatewayClassConfig CRD and API types (api/v1alpha1)
+
+- name: area/helm
+  color: 'bfd4f2'
+  description: Issues or PRs related to the Helm chart (charts/cloudflare-tunnel-gateway-controller)
+
+- name: area/ci
+  color: 'bfd4f2'
+  description: Issues or PRs related to CI workflows, GitHub Actions, release automation
+  aliases: ['ci']
+
+- name: area/docs
+  color: 'bfd4f2'
+  description: Issues or PRs related to docs site (mkdocs, docs/, README.md)
+
+- name: area/testing
+  color: 'bfd4f2'
+  description: Issues or PRs related to test infrastructure (test/, conformance, e2e, integration)
+  aliases: ['test']
+
+- name: area/dependencies
+  color: 'bfd4f2'
+  description: Issues or PRs related to vendored dependencies, go.mod, Renovate updates
+  aliases: ['dependencies']
+
+- name: area/uncategorized
+  color: 'fbca04'
+  description: Fallback when no area/* fits; pick a concrete area when triaging or expand the taxonomy
+
+# ----------------------------------------------
+# do-not-merge/ -- PR merge blockers (Prow convention)
+# ----------------------------------------------
+
+- name: do-not-merge/work-in-progress
+  color: 'e11d21'
+  description: Indicates that a PR should not merge because it is a work in progress
+
+- name: do-not-merge/hold
+  color: 'e11d21'
+  description: Indicates that a PR should not merge because someone has issued /hold
+  aliases: ['status/blocked']
+
+# ----------------------------------------------
+# security/ -- security-finding severity and status
+# ----------------------------------------------
+
+- name: security
+  color: 'aaaaaa'
+  description: Security-related issues and features
+
+- name: security/critical
+  color: 'd73a4a'
+  description: Critical security vulnerability
+
+- name: security/high
+  color: 'e99695'
+  description: High severity security finding
+
+- name: security/medium
+  color: 'f9c513'
+  description: Medium severity security finding
+
+- name: security/low
+  color: '0e8a16'
+  description: Low severity security finding
+
+- name: security/triage-needed
+  color: 'fbca04'
+  description: Needs security triage
+
+- name: security/confirmed
+  color: '1d76db'
+  description: Confirmed vulnerability
+
+- name: security/false-positive
+  color: 'c5def5'
+  description: Triaged as false positive
+
+- name: security/accepted-risk
+  color: 'bfd4f2'
+  description: Risk accepted with justification
+
+- name: security/in-progress
+  color: '0075ca'
+  description: Fix in progress
+
+- name: security/fixed
+  color: '0e8a16'
+  description: Fix released
+
+# ----------------------------------------------
+# Community / standalone labels
+# ----------------------------------------------
+
+- name: epic
+  color: 'a335ee'
+  description: A large development increment that brings definite value to users
+
+- name: community
+  color: '97458a'
+  description: Community contributions are welcome in this issue
+
+- name: help wanted
+  color: '008672'
+  description: Extra attention is needed
+
+- name: good first issue
+  color: '7057ff'
+  description: Good for newcomers
+
+- name: upstream-issue
+  color: 'aaaaaa'
+  description: Requires resolving an issue in an upstream project
+
+- name: automated
+  color: 'ededed'
+  description: Created by automation
+
+- name: lgtm
+  color: '238636'
+  description: This PR has been approved by a maintainer
+
+- name: ok-to-test
+  color: '00ff00'
+  description: Indicates a non-member PR is safe to run CI on
+
+- name: go
+  color: '16e2e2'
+  description: Pull requests that update Go code (legacy Dependabot label; Renovate does not re-apply)
+
+- name: python
+  color: '2b67c6'
+  description: Pull requests that update Python code (legacy Dependabot label; Renovate does not re-apply)
+
+- name: Container Available
+  color: 'ededed'
+  description: Container image built and pushed for this PR (auto-applied by .github/workflows/pr-privileged.yaml)
+
+# ----------------------------------------------
+# size/ -- PR size (apply manually for now; no auto-labeler workflow exists)
+# ----------------------------------------------
+
+- name: size/XS
+  color: '00ff00'
+  description: This PR changes 0-9 lines, ignoring generated files
+
+- name: size/S
+  color: '77b800'
+  description: This PR changes 10-29 lines, ignoring generated files
+
+- name: size/M
+  color: 'ebb800'
+  description: This PR changes 30-99 lines, ignoring generated files
+
+- name: size/L
+  color: 'eb9500'
+  description: This PR changes 100-499 lines, ignoring generated files
+
+- name: size/XL
+  color: 'ff823f'
+  description: This PR changes 500-999 lines, ignoring generated files
+
+- name: size/XXL
+  color: 'ffb8b8'
+  description: This PR changes 1000+ lines, ignoring generated files
