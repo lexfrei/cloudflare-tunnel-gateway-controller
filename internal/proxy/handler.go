@@ -26,20 +26,69 @@ import (
 type Handler struct {
 	router *Router
 	// transports caches one http.RoundTripper per backend, keyed by
-	// host|protocol (see transportKey). Including the protocol in the key is
-	// what makes flipping a Service's appProtocol (e.g. http -> h2c) take effect
-	// without restarting the proxy: a stale HTTP/1.1 transport for the same
-	// host can no longer mask an h2c reconfiguration.
+	// host|protocol|tlsFingerprint|headerTimeout (see transportKey). Every
+	// dimension in the key is load-bearing for cache correctness:
+	//   - protocol: flipping a Service's appProtocol (e.g. http -> h2c)
+	//     evicts the stale HTTP/1.1 transport instead of masking the
+	//     reconfiguration with a cached entry.
+	//   - tlsFingerprint: adding, removing, or re-anchoring a
+	//     BackendTLSPolicy (or its client-cert keypair) forces a fresh
+	//     transport whose TLS config and presented identity match.
+	//   - headerTimeout: ResponseHeaderTimeout is a *http.Transport field
+	//     and stdlib does not let us override it per-call, so two routes
+	//     with different per-rule timeouts against the same backend must
+	//     not share the cached transport, or one route silently inherits
+	//     the other's deadline.
 	transports sync.Map // map[string]http.RoundTripper
 }
 
-// transportKey forms the cache key for a backend transport. Host, protocol
-// AND TLS identity all participate so that a config push which adds, removes,
-// or re-anchors a BackendTLSPolicy forces a fresh transport instead of reusing
-// a stale one. tlsFingerprint hashes the CA + ServerName + SANs into a short
-// stable string.
-func transportKey(host string, protocol BackendProtocol, backendTLS *BackendTLSConfig) string {
-	return host + "|" + string(protocol) + "|" + tlsFingerprint(backendTLS)
+// ruleHeaderTimeout derives the *http.Transport.ResponseHeaderTimeout to
+// apply for a route's per-rule timeouts. Both Gateway API knobs --
+// timeouts.request (total) and timeouts.backendRequest (per-attempt) --
+// collapse onto the same transport-level header-only timeout because this
+// proxy has no retry logic; a single backend attempt is the whole request.
+// When both knobs are set the stricter (min) value wins. When neither is
+// set the helper returns 0, which leaves ResponseHeaderTimeout at its
+// stdlib default (no timeout) -- callers can use the zero value as a
+// "skip this knob" signal.
+//
+// Streaming-response contract: ResponseHeaderTimeout bounds only the
+// time to receive response headers. Once headers arrive, the body
+// streams freely. SSE / chunked / large-file / gRPC-server-streaming
+// responses are no longer truncated at the timeout boundary, which
+// fixes the per-rule-timeouts-kill-streaming-responses bug. Tests
+// TestHandler_StreamingResponseSurvivesRequestTimeout and
+// TestHandler_StreamingResponseSurvivesBackendTimeout pin the
+// behaviour against regression.
+func ruleHeaderTimeout(timeouts *RouteTimeouts) time.Duration {
+	if timeouts == nil {
+		return 0
+	}
+
+	switch {
+	case timeouts.Request > 0 && timeouts.Backend > 0:
+		return min(timeouts.Request, timeouts.Backend)
+	case timeouts.Request > 0:
+		return timeouts.Request
+	case timeouts.Backend > 0:
+		return timeouts.Backend
+	default:
+		return 0
+	}
+}
+
+// transportKey forms the cache key for a backend transport. Host, protocol,
+// TLS identity, AND the response-header timeout all participate so that a
+// config push which adds, removes, or re-anchors a BackendTLSPolicy -- or
+// changes the rule's per-route timeouts -- forces a fresh transport instead
+// of reusing a stale one. tlsFingerprint hashes the CA + ServerName + SANs
+// into a short stable string. The header timeout participates because it is
+// set on the *http.Transport itself (ResponseHeaderTimeout) and stdlib does
+// not let us override it per-call; without including it in the key, a route
+// reconfigured from `Request: 5s` to `Request: 30s` would silently keep
+// using the cached 5s transport.
+func transportKey(host string, protocol BackendProtocol, backendTLS *BackendTLSConfig, headerTimeout time.Duration) string {
+	return host + "|" + string(protocol) + "|" + tlsFingerprint(backendTLS) + "|" + headerTimeout.String()
 }
 
 // tlsFingerprint returns a stable short hash of the TLS config, or "" when nil.
@@ -100,33 +149,12 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	// Apply Request timeout early: it covers the entire handler (filters +
-	// backend call) per Gateway API spec.
-	//
-	// Skip ONLY when (a) the client claims an HTTP/1.1 Upgrade AND (b) at
-	// least one backend on this rule was declared WebSocket-capable by the
-	// operator (`appProtocol: kubernetes.io/ws[s]`). The operator's
-	// declaration is the source of truth; gating solely on the
-	// client-controlled `Connection: Upgrade` header would let any request
-	// bypass the route's declared timeouts on routes that have nothing to
-	// do with WebSocket — a slow-loris vector and a violation of the
-	// Gateway API timeout contract for non-WebSocket routes.
-	//
-	// Once a real WS upgrade completes, `proxyWebSocketUpgrade` hijacks
-	// the response writer and runs two `io.Copy` goroutines that survive
-	// past the request handler's return. Applying a request-scoped
-	// timeout to a live WebSocket would either cancel the still-pending
-	// pre-hijack request context (terminating the handshake) or, for
-	// any future `ReverseProxy`-based upgrade implementation, close the
-	// hijacked conn from underneath the parties; the skip prevents both
-	// failure modes for routes that legitimately serve WebSocket traffic.
-	if !shouldSkipUpgradeTimeout(req, ruleHasWebSocketBackend(result.Rule)) &&
-		result.Rule.Timeouts != nil && result.Rule.Timeouts.Request > 0 {
-		ctx, cancel := context.WithTimeout(req.Context(), result.Rule.Timeouts.Request)
-		defer cancel()
-
-		req = req.WithContext(ctx)
-	}
+	// Per-rule timeouts (Request / BackendRequest) are enforced
+	// downstream by the cached transport's ResponseHeaderTimeout
+	// (set in newTransport from ruleHeaderTimeout's collapse). No
+	// context.WithTimeout wrapping here -- that would cancel the
+	// body read and truncate streaming responses. See ruleHeaderTimeout
+	// for the full rationale.
 
 	// Store matched prefix in request context for URL rewrite filters.
 	if result.MatchedPrefix != "" {
@@ -158,9 +186,13 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, req *http.Request) {
 	h.proxyToBackend(writer, req, result)
 }
 
-// PruneTransports removes cached transports whose (host, protocol) key is no
-// longer present in activeKeys, closing their idle connections to prevent
-// resource leaks. Keys are formed by transportKey(host, protocol).
+// PruneTransports removes cached transports whose composite key
+// (host|protocol|tlsFingerprint|headerTimeout) is no longer present in
+// activeKeys, closing their idle connections to prevent resource
+// leaks. Keys are formed by transportKey; activeKeys is derived from
+// the current config by extractActiveTransportKeys, which mirrors the
+// exact key composition used by getTransport so a config change in
+// any of those four dimensions cleanly evicts the stale entry.
 func (h *Handler) PruneTransports(activeKeys map[string]bool) {
 	h.transports.Range(func(rawKey, value any) bool {
 		key, ok := rawKey.(string)
@@ -229,31 +261,30 @@ func (h *Handler) proxyToBackend(writer http.ResponseWriter, req *http.Request, 
 	// instead of a successful upgrade. proxyWebSocketUpgrade does the
 	// dial/handshake/hijack/pipe sequence directly; see the comment on
 	// that method for the protocol-level details.
-	if shouldSkipUpgradeTimeout(req, backend.WebSocket) {
+	if shouldUseWebSocketUpgradePath(req, backend.WebSocket) {
 		h.proxyWebSocketUpgrade(writer, req, backendURL, backend.TLS, allFilters)
 
 		return
 	}
 
-	// Apply Backend timeout: covers only the reverse proxy call to the
-	// upstream. Skipped only when the operator declared THIS backend as
-	// WebSocket-capable AND the client is actually attempting an upgrade.
-	// Symmetric to the request-timeout gating in ServeHTTP — see the
-	// comment there for the security rationale.
-	if !shouldSkipUpgradeTimeout(req, backend.WebSocket) &&
-		result.Rule.Timeouts != nil && result.Rule.Timeouts.Backend > 0 {
-		ctx, cancel := context.WithTimeout(req.Context(), result.Rule.Timeouts.Backend)
-		defer cancel()
+	// Per-rule Backend timeout flows into the transport's
+	// ResponseHeaderTimeout (alongside the Request timeout, collapsed
+	// via ruleHeaderTimeout). The header-only timing isolates the
+	// header phase from the body phase, so streaming responses are
+	// not killed at the timeout boundary. See ServeHTTP's per-rule
+	// timeout comment for the rationale.
+	headerTimeout := ruleHeaderTimeout(result.Rule.Timeouts)
 
-		req = req.WithContext(ctx)
-	}
-
-	proxy := h.createReverseProxy(backendURL, backend.Protocol, backend.TLS, allFilters)
+	proxy := h.createReverseProxy(backendURL, backend.Protocol, backend.TLS, allFilters, headerTimeout)
 	proxy.ServeHTTP(writer, req)
 }
 
 // createReverseProxy builds an httputil.ReverseProxy for the given backend.
-func (h *Handler) createReverseProxy(backendURL *url.URL, protocol BackendProtocol, backendTLS *BackendTLSConfig, filters []Filter) *httputil.ReverseProxy {
+// headerTimeout (the rule-derived response-header deadline; see
+// ruleHeaderTimeout) becomes part of the transport cache key and the
+// resulting transport's ResponseHeaderTimeout. Zero means "no header
+// deadline".
+func (h *Handler) createReverseProxy(backendURL *url.URL, protocol BackendProtocol, backendTLS *BackendTLSConfig, filters []Filter, headerTimeout time.Duration) *httputil.ReverseProxy {
 	return &httputil.ReverseProxy{
 		Director: func(req *http.Request) {
 			req.URL.Scheme = backendURL.Scheme
@@ -283,7 +314,7 @@ func (h *Handler) createReverseProxy(backendURL *url.URL, protocol BackendProtoc
 				req.Header.Set("User-Agent", "")
 			}
 		},
-		Transport:    h.getTransport(backendURL.Host, protocol, backendTLS),
+		Transport:    h.getTransport(backendURL.Host, protocol, backendTLS, headerTimeout),
 		ErrorHandler: errorHandler,
 		ModifyResponse: func(resp *http.Response) error {
 			ApplyResponseFilters(filters, resp)
@@ -293,11 +324,14 @@ func (h *Handler) createReverseProxy(backendURL *url.URL, protocol BackendProtoc
 	}
 }
 
-// getTransport returns a shared transport for the given backend host/protocol/TLS.
-// The cache key includes protocol AND TLS identity so config flips that swap
-// out either don't silently reuse a stale transport.
-func (h *Handler) getTransport(host string, protocol BackendProtocol, backendTLS *BackendTLSConfig) http.RoundTripper {
-	key := transportKey(host, protocol, backendTLS)
+// getTransport returns a shared transport for the given backend host /
+// protocol / TLS / header-timeout tuple. The cache key includes the
+// header timeout because ResponseHeaderTimeout is a *http.Transport
+// field, not per-call -- two routes with different per-rule timeouts
+// against the same backend must NOT share the cached transport, or one
+// route silently inherits the other's deadline.
+func (h *Handler) getTransport(host string, protocol BackendProtocol, backendTLS *BackendTLSConfig, headerTimeout time.Duration) http.RoundTripper {
+	key := transportKey(host, protocol, backendTLS, headerTimeout)
 
 	if transport, ok := h.transports.Load(key); ok {
 		if rt, castOK := transport.(http.RoundTripper); castOK {
@@ -305,7 +339,7 @@ func (h *Handler) getTransport(host string, protocol BackendProtocol, backendTLS
 		}
 	}
 
-	transport := newTransport(protocol, backendTLS)
+	transport := newTransport(protocol, backendTLS, headerTimeout)
 	actual, _ := h.transports.LoadOrStore(key, transport)
 
 	if rt, ok := actual.(http.RoundTripper); ok {
@@ -349,14 +383,32 @@ func newH2CDialer() *net.Dialer {
 // TLS, so the protocol marker is intentionally ignored in that path. Otherwise
 // h2c uses an HTTP/2 plaintext transport; default is a clone of the stdlib
 // transport.
-func newTransport(protocol BackendProtocol, backendTLS *BackendTLSConfig) http.RoundTripper {
+//
+// headerTimeout (zero = unbounded) flows into the resulting *http.Transport
+// as ResponseHeaderTimeout for the cleartext and TLS paths. The h2c
+// path uses x/net/http2.Transport which does not expose an equivalent
+// knob; per-rule timeouts therefore do not bound the header phase on
+// h2c backends today (tracked as a follow-up). The pre-stream conn
+// dial is still bounded by the h2c dialer's Timeout, so a fully dead
+// backend still fails fast.
+func newTransport(protocol BackendProtocol, backendTLS *BackendTLSConfig, headerTimeout time.Duration) http.RoundTripper {
 	if backendTLS != nil {
-		return newTLSTransport(backendTLS)
+		return newTLSTransport(backendTLS, headerTimeout)
 	}
 
 	if protocol == BackendProtocolH2C {
 		dialer := newH2CDialer()
 
+		//nolint:godox // FIXME(#270) carries an issue-tracker reference and is the project's tracked-follow-up pattern
+		// FIXME(#270): per-rule headerTimeout is intentionally NOT
+		// applied here -- golang.org/x/net/http2.Transport has no
+		// ResponseHeaderTimeout-equivalent knob, so SSE / chunked /
+		// gRPC streaming bodies over h2c are already safe from the
+		// streaming-truncation bug this fix addresses for the
+		// stdlib path. The cost is that a slow-to-respond h2c
+		// backend is bounded only by the dialer's connect timeout,
+		// not by the per-rule header deadline. Issue #270 tracks
+		// the longer-term fix.
 		return &http2.Transport{
 			AllowHTTP: true,
 			DialTLSContext: func(ctx context.Context, network, addr string, _ *tls.Config) (net.Conn, error) {
@@ -368,7 +420,10 @@ func newTransport(protocol BackendProtocol, backendTLS *BackendTLSConfig) http.R
 	}
 
 	if defaultTransport, ok := http.DefaultTransport.(*http.Transport); ok {
-		return defaultTransport.Clone()
+		cloned := defaultTransport.Clone()
+		cloned.ResponseHeaderTimeout = headerTimeout
+
+		return cloned
 	}
 
 	return http.DefaultTransport
@@ -397,7 +452,7 @@ var (
 // In both modes a CA pool that fails to parse any PEM block is treated as a
 // hard failure so misconfigured operators see a TLS handshake error instead of
 // silently trusting nothing (gosec G402-safe path).
-func newTLSTransport(backendTLS *BackendTLSConfig) http.RoundTripper {
+func newTLSTransport(backendTLS *BackendTLSConfig, headerTimeout time.Duration) http.RoundTripper {
 	rootCAs := x509.NewCertPool()
 	if ok := rootCAs.AppendCertsFromPEM([]byte(backendTLS.CABundlePEM)); !ok {
 		slog.Error("BackendTLSPolicy CA bundle did not parse — all backend TLS handshakes will fail",
@@ -416,6 +471,7 @@ func newTLSTransport(backendTLS *BackendTLSConfig) http.RoundTripper {
 
 	transport := base.Clone()
 	transport.TLSClientConfig = tlsConfig
+	transport.ResponseHeaderTimeout = headerTimeout
 
 	return transport
 }
@@ -566,7 +622,12 @@ func matchAnyURISan(leaf *x509.Certificate, expected []string) bool {
 }
 
 // errorHandler handles proxy errors with appropriate HTTP status codes.
-// Returns 504 Gateway Timeout for deadline/cancellation errors, 502 Bad Gateway otherwise.
+// Returns 504 Gateway Timeout for context-deadline AND transport-level
+// header-timeout errors (the latter is how ResponseHeaderTimeout surfaces
+// when a slow backend doesn't send response headers in time -- the
+// returned error is not a wrapped context.DeadlineExceeded, just an
+// internal *timeoutError that satisfies a Timeout() bool interface).
+// Returns 502 Bad Gateway otherwise.
 func errorHandler(writer http.ResponseWriter, _ *http.Request, err error) {
 	if err == nil {
 		return
@@ -583,36 +644,40 @@ func errorHandler(writer http.ResponseWriter, _ *http.Request, err error) {
 		return
 	}
 
+	// http.Transport.ResponseHeaderTimeout returns a sentinel that
+	// satisfies the Timeout() bool method but is NOT a wrapped
+	// context.DeadlineExceeded -- check the interface explicitly so a
+	// header-timeout fires 504 just like a request-context deadline.
+	var timeoutErr interface{ Timeout() bool }
+	if errors.As(err, &timeoutErr) && timeoutErr.Timeout() {
+		http.Error(writer, "gateway timeout", http.StatusGatewayTimeout)
+
+		return
+	}
+
 	http.Error(writer, "bad gateway", http.StatusBadGateway)
 }
 
-// shouldSkipUpgradeTimeout combines the two predicates the timeout-skip path
-// needs: the client must actually be attempting an HTTP/1.1 upgrade AND the
-// operator must have declared the relevant scope (rule or backend) as
-// WebSocket-capable via `appProtocol: kubernetes.io/ws[s]`. Gating on the
-// client header alone would let any request bypass the route's declared
-// timeouts; gating on operator scope alone would skip timeouts for plain
-// HTTP requests that happen to hit a WS-marked route.
-func shouldSkipUpgradeTimeout(req *http.Request, operatorAllowsUpgrade bool) bool {
+// shouldUseWebSocketUpgradePath combines the two predicates that
+// decide whether a request goes through the dedicated
+// proxyWebSocketUpgrade path instead of httputil.ReverseProxy: the
+// client must actually be attempting an HTTP/1.1 upgrade AND the
+// selected backend must have been declared WebSocket-capable by the
+// operator via `appProtocol: kubernetes.io/ws[s]`. Gating on the
+// client header alone would let any request hijack non-WS routes;
+// gating on the operator declaration alone would force plain HTTP
+// requests on a WS-marked route through the upgrade path.
+//
+// The function was historically named shouldSkipUpgradeTimeout
+// because it ALSO governed a context.WithTimeout skip in the handler
+// (per-rule deadlines used to be wrapped around the whole request,
+// which broke WebSockets). That skip was removed when per-rule
+// timeouts moved to *http.Transport.ResponseHeaderTimeout -- the
+// upgrade path bypasses the cached transport entirely now, so no
+// explicit skip is needed. The predicate's only remaining job is
+// upgrade-path selection.
+func shouldUseWebSocketUpgradePath(req *http.Request, operatorAllowsUpgrade bool) bool {
 	return operatorAllowsUpgrade && isHTTPUpgradeRequest(req)
-}
-
-// ruleHasWebSocketBackend reports whether any backend on the rule was
-// declared WebSocket-capable. Used at rule-scope (before backend selection)
-// to decide whether the rule's Request timeout should be skipped for
-// upgrade requests.
-func ruleHasWebSocketBackend(rule *RouteRule) bool {
-	if rule == nil {
-		return false
-	}
-
-	for i := range rule.Backends {
-		if rule.Backends[i].WebSocket {
-			return true
-		}
-	}
-
-	return false
 }
 
 // isHTTPUpgradeRequest reports whether the request is an HTTP/1.1 upgrade
@@ -621,8 +686,8 @@ func ruleHasWebSocketBackend(rule *RouteRule) bool {
 // same predicate covers any upgrade (HTTP/2 prior knowledge over h2c
 // originally negotiated by Upgrade, etc.).
 //
-// Used together with `BackendRef.WebSocket` to gate the upgrade-aware
-// timeout skip: a client-controlled header alone is not enough — the
+// Used together with `BackendRef.WebSocket` to gate the upgrade-path
+// selection: a client-controlled header alone is not enough — the
 // operator must also have marked the relevant backend as WS-capable.
 func isHTTPUpgradeRequest(req *http.Request) bool {
 	if req == nil || req.Header == nil {

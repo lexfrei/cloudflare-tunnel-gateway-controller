@@ -601,3 +601,85 @@ func TestHandler_BackendProtocolWebSocket_TunnelMode_AppliesResponseFiltersTo101
 	_ = fake.HijackedClient().Close()
 	<-handlerDone
 }
+
+// TestHandler_StreamingResponseSurvivesRequestTimeout_TunnelMode pins
+// the per-rule-timeout streaming-survives contract on the production
+// response-writer path. The httptest-based pin
+// (TestHandler_StreamingResponseSurvivesRequestTimeout) covers the
+// HTTP/1.1 writer; this one drives the same scenario through the
+// fakeCloudflaredRespWriter so a future regression that special-cases
+// the cloudflared writer's body path (e.g. an over-eager Flush gate
+// or a Write that propagates context cancellation differently) is
+// caught here instead of through a production-only failure.
+//
+// Mechanism: SSE backend flushes headers immediately, emits four
+// "data:" frames over 2s; route's timeouts.request is 300ms; the
+// streaming-survives fix maps that to ResponseHeaderTimeout, so the
+// header phase clears within 300ms and the body streams freely. The
+// fake captures body bytes via its mutex-guarded buffer; all four
+// frames must land in fake.Body().
+func TestHandler_StreamingResponseSurvivesRequestTimeout_TunnelMode(t *testing.T) {
+	t.Parallel()
+
+	const frameCount = 4
+
+	const interFrame = 500 * time.Millisecond
+
+	backend := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Content-Type", "text/event-stream")
+		writer.Header().Set("Cache-Control", "no-cache")
+		writer.WriteHeader(http.StatusOK)
+
+		flusher, ok := writer.(http.Flusher)
+		require.True(t, ok)
+
+		flusher.Flush()
+
+		for idx := range frameCount {
+			fmt.Fprintf(writer, "data: event-%d\n\n", idx)
+			flusher.Flush()
+			time.Sleep(interFrame)
+		}
+	}))
+	t.Cleanup(backend.Close)
+
+	router := proxy.NewRouter()
+	require.NoError(t, router.UpdateConfig(&proxy.Config{
+		Version: 1,
+		Rules: []proxy.RouteRule{
+			{
+				Matches:  []proxy.RouteMatch{{Path: &proxy.PathMatch{Type: proxy.PathMatchPathPrefix, Value: "/"}}},
+				Timeouts: &proxy.RouteTimeouts{Request: 300 * time.Millisecond},
+				Backends: []proxy.BackendRef{{URL: backend.URL, Weight: 1, Protocol: proxy.BackendProtocolHTTP}},
+			},
+		},
+	}))
+
+	handler := proxy.NewHandler(router)
+	fake := newFakeCloudflaredRespWriter()
+
+	t.Cleanup(func() {
+		_ = fake.serverSide.Close()
+		_ = fake.clientSide.Close()
+	})
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://app.example.com/sse", nil)
+
+	start := time.Now()
+
+	handler.ServeHTTP(fake, req)
+
+	elapsed := time.Since(start)
+
+	assert.Equal(t, http.StatusOK, fake.Status(),
+		"streaming backend must reach 200 on the HTTP/2 writer; a non-200 here means the header timeout fired")
+
+	body := string(fake.Body())
+	for idx := range frameCount {
+		assert.Contains(t, body, fmt.Sprintf("data: event-%d", idx),
+			"frame %d must survive the per-rule timeout on the HTTP/2 writer path", idx)
+	}
+
+	assert.Greater(t, elapsed, 1500*time.Millisecond,
+		"test must run longer than 1.5s -- shorter means the body was truncated before the backend finished")
+}

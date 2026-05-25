@@ -2656,34 +2656,38 @@ func TestHandler_BackendProtocolWebSocket_AppliesResponseFiltersToNon101(t *test
 // WS conn would be a footgun — operators would set a 30s timeout for
 // regular traffic and discover their WS clients silently dropped.
 //
-// Without the upgrade-skip fix in Handler.ServeHTTP, stdlib's
-// httputil.ReverseProxy.handleUpgradeResponse watches req.Context() and
-// closes both ends of the hijacked conn when ctx is canceled — so a
-// request timeout of 1s would terminate the WS at the 1s mark regardless
-// of whether bytes were still flowing.
+// WS upgrades bypass the cached *http.Transport (and therefore its
+// ResponseHeaderTimeout) entirely: shouldUseWebSocketUpgradePath
+// routes the request into proxyWebSocketUpgrade, which dials a fresh
+// conn with its own wsDialTimeout / wsHandshakeReadTimeout knobs and
+// then hijacks. The per-rule deadline never reaches the post-hijack
+// bidirectional copy. This test pins that contract end-to-end with a
+// real WebSocket round trip.
 func TestHandler_WebSocket_NotTerminatedByRequestTimeout(t *testing.T) {
 	t.Parallel()
-	runWebSocketTimeoutSkipTest(t, &proxy.RouteTimeouts{Request: 500 * time.Millisecond})
+	runWebSocketSurvivesRouteTimeoutTest(t, &proxy.RouteTimeouts{Request: 500 * time.Millisecond})
 }
 
 // TestHandler_WebSocket_NotTerminatedByBackendTimeout is the sibling pin
-// for `timeouts.backend`. Both timeouts get the same upgrade-skip
-// treatment in Handler.proxyToBackend, but without an explicit test a
-// future change that drops the `!isHTTPUpgradeRequest(req)` guard on the
-// backend-timeout arm would sail through CI because the request-timeout
-// test on its own would still pass.
+// for `timeouts.backend`. Both knobs collapse to the same
+// transport-level header deadline via ruleHeaderTimeout, but a WS
+// upgrade bypasses the cached transport entirely (see the comment on
+// the Request variant above). An explicit test on the Backend knob
+// catches a future regression that routes only one of the two arms
+// back through the cached transport.
 func TestHandler_WebSocket_NotTerminatedByBackendTimeout(t *testing.T) {
 	t.Parallel()
-	runWebSocketTimeoutSkipTest(t, &proxy.RouteTimeouts{Backend: 500 * time.Millisecond})
+	runWebSocketSurvivesRouteTimeoutTest(t, &proxy.RouteTimeouts{Backend: 500 * time.Millisecond})
 }
 
-// runWebSocketTimeoutSkipTest sets up a WS echo backend, applies the given
-// per-rule timeouts to the route, opens a WebSocket, sleeps past the
-// configured deadline, and confirms the round trip still works. The
-// behaviour is identical for `Request` and `Backend` timeouts because
-// both arms of the handler now skip context.WithTimeout for HTTP/1.1
-// upgrade requests.
-func runWebSocketTimeoutSkipTest(t *testing.T, timeouts *proxy.RouteTimeouts) {
+// runWebSocketSurvivesRouteTimeoutTest sets up a WS echo backend,
+// applies the given per-rule timeouts to the route, opens a WebSocket,
+// sleeps past the configured deadline, and confirms the round trip
+// still works. The behaviour is identical for `Request` and `Backend`
+// because both feed the same ruleHeaderTimeout collapsed value, and
+// the upgrade path bypasses the cached transport regardless of which
+// knob is set.
+func runWebSocketSurvivesRouteTimeoutTest(t *testing.T, timeouts *proxy.RouteTimeouts) {
 	t.Helper()
 
 	backend := newWSEchoBackend(t, false)

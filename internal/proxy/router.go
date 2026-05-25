@@ -54,7 +54,10 @@ type wildcardEntry struct {
 }
 
 // transportPruner is implemented by Handler to prune stale transport entries.
-// activeKeys are host|protocol keys produced by transportKey().
+// activeKeys are the composite host|protocol|tlsFingerprint|headerTimeout
+// strings produced by transportKey, derived from the active config by
+// extractActiveTransportKeys. Mirroring the exact key composition ensures a
+// config edit in any of those four dimensions cleanly evicts the stale entry.
 type transportPruner interface {
 	PruneTransports(activeKeys map[string]bool)
 }
@@ -158,20 +161,25 @@ func (r *Router) UpdateConfig(cfg *Config) error {
 }
 
 // extractActiveTransportKeys collects all backend transport-pool keys from the
-// config's rules. Keys are formed by transportKey(host, protocol, tls) so
-// PruneTransports can evict stale entries when any of those change (e.g. on a
-// Service appProtocol flip or a BackendTLSPolicy swap).
+// config's rules. Keys are formed by transportKey(host, protocol, tls,
+// headerTimeout) so PruneTransports can evict stale entries when any of those
+// change (e.g. on a Service appProtocol flip, a BackendTLSPolicy swap, or a
+// per-rule timeouts edit). The header timeout is derived from
+// rule.Timeouts the same way getTransport's callers derive it -- see
+// ruleHeaderTimeout for the shared rule.
 func extractActiveTransportKeys(cfg *Config) map[string]bool {
 	keys := make(map[string]bool)
 
 	for _, rule := range cfg.Rules {
+		headerTimeout := ruleHeaderTimeout(rule.Timeouts)
+
 		for _, backend := range rule.Backends {
 			parsed, err := url.Parse(backend.URL)
 			if err != nil {
 				continue
 			}
 
-			keys[transportKey(parsed.Host, backend.Protocol, backend.TLS)] = true
+			keys[transportKey(parsed.Host, backend.Protocol, backend.TLS, headerTimeout)] = true
 		}
 	}
 
