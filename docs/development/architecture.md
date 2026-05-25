@@ -1,13 +1,10 @@
 # Architecture
 
-This document describes the internal architecture of the Cloudflare Tunnel
-Gateway Controller.
+This document describes the internal architecture of the Cloudflare Tunnel Gateway Controller.
 
 ## High-Level Overview
 
-The controller implements the Kubernetes Gateway API to configure Cloudflare
-Tunnel ingress rules. It watches Gateway and HTTPRoute resources and translates
-them into Cloudflare Tunnel configuration via the Cloudflare API.
+The controller implements the Kubernetes Gateway API to configure Cloudflare Tunnel ingress rules. It watches Gateway and HTTPRoute resources and translates them into Cloudflare Tunnel configuration via the Cloudflare API.
 
 ```mermaid
 flowchart TB
@@ -75,8 +72,7 @@ internal/
 
 ### GatewayClassConfig
 
-Cluster-scoped Custom Resource Definition (CRD) that provides tunnel
-configuration:
+Cluster-scoped Custom Resource Definition (CRD) that provides tunnel configuration:
 
 - **API Group**: `cf.k8s.lex.la/v1alpha1`
 - **Referenced by**: GatewayClass via `spec.parametersRef`
@@ -234,8 +230,7 @@ flowchart TB
 
 The controller follows these error handling patterns:
 
-1. **Retryable Errors**: Return `ctrl.Result{Requeue: true}` for transient
-   failures
+1. **Retryable Errors**: Return `ctrl.Result{Requeue: true}` for transient failures
 2. **Permanent Errors**: Log error and update resource status condition
 3. **API Errors**: Wrapped with context using `cockroachdb/errors`
 4. **Not Found**: Silently ignore (resource was deleted)
@@ -275,11 +270,7 @@ flowchart LR
 
 ## L7 Proxy Data Plane
 
-An in-process L7 proxy is embedded inside cloudflared via the
-`OverrideProxy` hook (using a [fork of cloudflared](https://github.com/lexfrei/cloudflared)).
-All tunnel traffic is intercepted by the proxy, which applies Gateway API
-routing rules before forwarding to backends. This removes most Cloudflare
-Tunnel ingress API limitations.
+An in-process L7 proxy is embedded inside cloudflared via the `OverrideProxy` hook (using a [fork of cloudflared](https://github.com/lexfrei/cloudflared)). All tunnel traffic is intercepted by the proxy, which applies Gateway API routing rules before forwarding to backends. This removes most Cloudflare Tunnel ingress API limitations.
 
 ```mermaid
 flowchart TB

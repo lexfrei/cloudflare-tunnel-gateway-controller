@@ -1,7 +1,6 @@
 # Supported Resources
 
-This document details the feature support matrix for each Gateway API resource
-type in the Cloudflare Tunnel Gateway Controller.
+This document details the feature support matrix for each Gateway API resource type in the Cloudflare Tunnel Gateway Controller.
 
 ## Resource Overview
 
@@ -26,9 +25,7 @@ type in the Cloudflare Tunnel Gateway Controller.
 
 ## Gateway
 
-The Gateway resource is fully processed. Listeners are used for route binding,
-status reporting, and validation. TLS termination is handled by Cloudflare edge,
-but TLS certificate references are validated (including ReferenceGrant checks).
+The Gateway resource is fully processed. Listeners are used for route binding, status reporting, and validation. TLS termination is handled by Cloudflare edge, but TLS certificate references are validated (including ReferenceGrant checks).
 
 | Field | Supported | Notes |
 | --- | --- | --- |
@@ -55,8 +52,7 @@ but TLS certificate references are validated (including ReferenceGrant checks).
 
 ## HTTPRoute
 
-The L7 proxy enables full Gateway API HTTPRoute support. Without the proxy,
-only path-based routing through the Cloudflare Tunnel API is available.
+The L7 proxy enables full Gateway API HTTPRoute support. Without the proxy, only path-based routing through the Cloudflare Tunnel API is available.
 
 | Field | Supported | Notes |
 | --- | --- | --- |
@@ -84,8 +80,7 @@ only path-based routing through the Cloudflare Tunnel API is available.
 
 ### Backend Protocol (`appProtocol`)
 
-When an HTTPRoute references a Service whose target port sets `appProtocol`, the
-L7 proxy selects the upstream transport accordingly:
+When an HTTPRoute references a Service whose target port sets `appProtocol`, the L7 proxy selects the upstream transport accordingly:
 
 | `Service.spec.ports[].appProtocol` | Supported | Notes |
 | --- | --- | --- |
@@ -144,8 +139,7 @@ The following HTTPRoute filters are supported with the L7 proxy enabled:
 
 ## ReferenceGrant
 
-ReferenceGrant enables cross-namespace backend references in HTTPRoute and
-GRPCRoute resources.
+ReferenceGrant enables cross-namespace backend references in HTTPRoute and GRPCRoute resources.
 
 | Field | Supported | Notes |
 | --- | --- | --- |
@@ -177,8 +171,7 @@ See [ReferenceGrant](referencegrant.md) for detailed examples.
 
 ## gRPC Method Matching
 
-gRPC methods are mapped to HTTP/2 paths using the standard format
-`/package.Service/Method`.
+gRPC methods are mapped to HTTP/2 paths using the standard format `/package.Service/Method`.
 
 | Match Type | Example | Cloudflare Rule |
 | --- | --- | --- |

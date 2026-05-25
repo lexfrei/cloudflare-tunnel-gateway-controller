@@ -1,14 +1,10 @@
 # Gateway API
 
-This section documents the Gateway API implementation in the Cloudflare Tunnel
-Gateway Controller.
+This section documents the Gateway API implementation in the Cloudflare Tunnel Gateway Controller.
 
 ## Overview
 
-The controller implements the [Kubernetes Gateway API](https://gateway-api.sigs.k8s.io/)
-to configure Cloudflare Tunnel ingress rules. It watches Gateway and Route
-resources and translates them into Cloudflare Tunnel configuration via the
-Cloudflare API.
+The controller implements the [Kubernetes Gateway API](https://gateway-api.sigs.k8s.io/) to configure Cloudflare Tunnel ingress rules. It watches Gateway and Route resources and translates them into Cloudflare Tunnel configuration via the Cloudflare API.
 
 ## Supported Resources
 

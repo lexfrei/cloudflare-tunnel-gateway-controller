@@ -1,7 +1,6 @@
 # HTTPRoute
 
-HTTPRoute is the primary resource for configuring HTTP routing through
-Cloudflare Tunnel.
+HTTPRoute is the primary resource for configuring HTTP routing through Cloudflare Tunnel.
 
 ## Feature Support
 
@@ -136,8 +135,7 @@ spec:
 
 ## Backend Selection with Weights
 
-When multiple backends are specified, the backend with the highest weight
-is selected:
+When multiple backends are specified, the backend with the highest weight is selected:
 
 ```yaml
 apiVersion: gateway.networking.k8s.io/v1
@@ -248,8 +246,7 @@ spec:
           port: 443
 ```
 
-The controller resolves ExternalName Services and routes traffic directly
-to the external hostname (`api.external.com:443` in this example).
+The controller resolves ExternalName Services and routes traffic directly to the external hostname (`api.external.com:443` in this example).
 
 !!! note "Port and Scheme"
 
@@ -341,8 +338,7 @@ Common causes:
 
 ### Cross-Namespace Reference Denied
 
-Ensure ReferenceGrant exists in the target namespace and allows your
-route's namespace.
+Ensure ReferenceGrant exists in the target namespace and allows your route's namespace.
 
 ```bash
 kubectl get referencegrant --namespace backend-namespace

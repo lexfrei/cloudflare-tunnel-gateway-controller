@@ -1,18 +1,12 @@
 # ReferenceGrant
 
-ReferenceGrant enables cross-namespace backend references in HTTPRoute and
-GRPCRoute resources. This is a security feature that requires explicit
-permission for a Route in one namespace to reference a Service in another
-namespace.
+ReferenceGrant enables cross-namespace backend references in HTTPRoute and GRPCRoute resources. This is a security feature that requires explicit permission for a Route in one namespace to reference a Service in another namespace.
 
 ## How It Works
 
-1. ReferenceGrant must be created in the **target namespace** (where the
-   Service is)
-2. It grants permission to routes in the **source namespace** to reference
-   Services in the target namespace
-3. Without a ReferenceGrant, cross-namespace backend references are denied
-   with `ResolvedRefs=False` status
+1. ReferenceGrant must be created in the **target namespace** (where the Service is)
+2. It grants permission to routes in the **source namespace** to reference Services in the target namespace
+3. Without a ReferenceGrant, cross-namespace backend references are denied with `ResolvedRefs=False` status
 
 ```mermaid
 flowchart LR
