@@ -1,0 +1,116 @@
+name: PR Labels
+
+# Auto-applies kind/*, area/*, and size/* labels to PRs based on the
+# Conventional Commit title and the changed files. Logic lives in
+# .github/scripts/pr-labels.js (unit-tested via node --test); this
+# workflow is the thin wiring layer that fetches PR data and calls
+# github.rest.issues.addLabels.
+#
+# Trigger choice: pull_request_target so forks get labelled too.
+# Permissions kept minimal -- pull-requests:write only, no contents:write.
+# Never removes labels a human applied (addLabels is additive).
+#
+# Trigger note: `pull_request_target` checks out the BASE branch
+# (master), not the PR branch, for security. Consequence: edits to
+# THIS workflow file or to .github/scripts/pr-labels.js only take
+# effect AFTER the PR merges to master. Editing scripts.yaml's
+# `pr-labels` job (which IS triggered on `pull_request`) is the
+# correct way to validate JS-module changes against the PR's own copy.
+#
+# PR-side validation of the JS module lives in scripts.yaml. The
+# `apply` step below loads the master-branch copy of pr-labels.js via
+# `require()`, which would throw if the module had a syntax error --
+# that's the only smoke check this workflow needs.
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, edited]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'PR number to relabel'
+        required: true
+        type: number
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  # Re-label only the latest event per PR; older queued runs are stale.
+  group: pr-labels-${{ github.event.pull_request.number || inputs.pr_number }}
+  cancel-in-progress: true
+
+jobs:
+  apply:
+    name: Apply derived labels
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Derive and apply labels
+        uses: actions/github-script@373c709c69115d41ff229c7e5df9f8788daa9553 # v9
+        with:
+          script: |
+            const { deriveLabels } = require('./.github/scripts/pr-labels.js');
+
+            // The `pr_number` workflow_dispatch input is typed
+            // `number` in the schema (GitHub coerces and rejects
+            // non-numeric strings at dispatch time), but the runtime
+            // value is still a JS number that can be 0, negative, or
+            // NaN if someone constructs the dispatch payload via API.
+            // Re-validate here so a malformed manual trigger fails
+            // loudly instead of calling the REST API with garbage.
+            const fromPayload = context.payload.pull_request?.number;
+            const fromInput = Number(context.payload.inputs?.pr_number);
+            const prNumber = fromPayload ?? fromInput;
+
+            if (!Number.isInteger(prNumber) || prNumber <= 0) {
+              core.setFailed(`Invalid PR number: ${prNumber}`);
+              return;
+            }
+
+            // For pull_request_target events the PR title arrives in
+            // the payload; only the workflow_dispatch path needs a
+            // REST call to fetch it. Avoids the extra round-trip on
+            // the common path.
+            let title = context.payload.pull_request?.title;
+            if (!title) {
+              const { data: pr } = await github.rest.pulls.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: prNumber,
+              });
+              title = pr.title;
+            }
+
+            // Paginate files -- a large PR can have >100 files.
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber,
+              per_page: 100,
+            });
+
+            const labels = deriveLabels(title, files);
+
+            core.info(`PR #${prNumber}: title="${title}"`);
+            core.info(`Derived labels: ${labels.join(', ')}`);
+
+            // addLabels is additive; never removes human-applied labels.
+            // Skip if no labels derived (edge case: deriveLabels always
+            // returns at least area/uncategorized + size/*, so empty is
+            // a defensive guard).
+            if (labels.length === 0) {
+              core.info('No labels derived; nothing to apply.');
+              return;
+            }
+
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+              labels,
+            });
+
+            core.info('Labels applied successfully.');

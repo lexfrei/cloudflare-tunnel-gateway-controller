@@ -440,7 +440,18 @@ Before creating a PR, verify all checklist items from `.github/pull_request_temp
 
 Labels follow the Kubernetes-style namespaced scheme. The authoritative source is `.github/labels.yml`, synced into the repo by `.github/workflows/labels.yaml` (EndBug/label-sync@v2). Edit the YAML and open a PR — the GitHub UI is effectively read-only because the next sync would overwrite manual edits.
 
-When creating issues, apply at minimum one `kind/*`, one `area/*`, one `priority/*`, and one `triage/*` (or `lifecycle/*` if already active). Size labels are applied manually — there is no auto-labeler workflow yet.
+When creating issues, apply at minimum one `kind/*`, one `area/*`, one `priority/*`, and one `triage/*` (or `lifecycle/*` if already active).
+
+PRs are labelled automatically by `.github/workflows/pr-labels.yaml`: `kind/*` and `area/*` are derived from the Conventional Commit title (`feat(proxy): …` → `kind/feature` + `area/proxy`), and `size/*` is derived from the line-change count of non-vendored / non-generated files. The mapping lives in `.github/scripts/pr-labels.js` (unit-tested via stdlib `node --test`); update both there and `.github/labels.yml` when the taxonomy changes. The autolabeler is **additive** — it never removes a label, including labels it added itself in a previous run. Consequence: if you rename a PR from `feat(proxy): …` → `fix(controller): …`, both `area/proxy` and `area/controller` end up applied. Manual overrides (`kind/breaking-change`, `priority/*`) also stick. Remove a stale label via the GitHub UI when you rename a PR scope.
+
+Trigger detail: `pull_request_target` fires on `opened` / `synchronize` / `reopened` / `edited`. `edited` covers title, body, and base-ref changes (not just the title); the labelling run is idempotent so this is cheap noise, not a bug. Renovate / Dependabot PRs also pass through and pick up `kind/cleanup` + `area/dependencies` + `size/*` on top of whatever the bot already applied (Renovate's own `area/dependencies` matches what the labeller would have derived, so the result is the same label, not a duplicate).
+
+CI coverage for the autolabeler is asymmetric:
+
+- `scripts.yaml`'s `pr-labels` job runs under `pull_request` with `paths:` filtered to `.github/scripts/pr-labels.{js,test.js}` + the workflow file. It checks out the **PR branch** and runs `node --test`, so a PR that edits the mapping module is validated against its own copy.
+- `pr-labels.yaml`'s `apply` job runs under `pull_request_target` on every PR (no `paths:` filter). It checks out **master** for the secure-token reasons `pull_request_target` exists, so the labelling itself uses the deployed mapping module and is unaffected by JS changes in the PR being labelled.
+
+Neither job is wired into branch-protection's required-status-checks today, so a maintainer can technically merge with them red — review them before merging a PR that touches the labeller code.
 
 ### kind/ — issue or PR type (required)
 
@@ -500,7 +511,7 @@ Standalone labels not enumerated above (`epic`, `community`, `help wanted`, `goo
 - `do-not-merge/work-in-progress` — PR is a work in progress
 - `do-not-merge/hold` — Someone issued `/hold`; also used for "blocked by dependency"
 
-### size/ — PR size (apply manually)
+### size/ — PR size (applied automatically by `.github/workflows/pr-labels.yaml`)
 
 - `size/XS` — 0-9 lines
 - `size/S` — 10-29 lines

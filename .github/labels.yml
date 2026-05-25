@@ -21,7 +21,7 @@
 #   area/         subsystem; extensible -- add when 3+ open issues exist
 #   do-not-merge/ PR merge blockers
 #   security/     security-finding severity and status
-#   size/         PR size (apply manually for now; no auto-labeler is wired up)
+#   size/         PR size (applied automatically by .github/workflows/pr-labels.yaml)
 #
 # `aliases:` lets EndBug/label-sync rename existing labels without losing
 # references on already-tagged issues and PRs.
@@ -310,7 +310,9 @@
   description: Container image built and pushed for this PR (auto-applied by .github/workflows/pr-privileged.yaml)
 
 # ----------------------------------------------
-# size/ -- PR size (apply manually for now; no auto-labeler workflow exists)
+# size/ -- PR size (applied automatically by .github/workflows/pr-labels.yaml).
+# Buckets MUST match SIZE_BUCKETS in .github/scripts/pr-labels.js; a
+# unit test pins the YAML-vs-JS correspondence.
 # ----------------------------------------------
 
 - name: size/XS

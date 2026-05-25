@@ -6,6 +6,13 @@ on:
       - scripts/reflow-paragraphs.py
       - scripts/reflow_paragraphs_test.py
       - scripts/requirements-reflow.txt
+      - .github/scripts/pr-labels.js
+      - .github/scripts/pr-labels.test.js
+      # labels.yml is included so the drift-pin tests
+      # (TYPE_TO_KIND/SCOPE_TO_AREA/SIZE_BUCKETS ↔ labels.yml) re-run
+      # when labels.yml changes. Cost: the reflow job also fires on
+      # labels.yml edits -- ~30s waste accepted to keep the pin live.
+      - .github/labels.yml
       - .github/workflows/scripts.yaml
   push:
     branches: [master]
@@ -13,6 +20,13 @@ on:
       - scripts/reflow-paragraphs.py
       - scripts/reflow_paragraphs_test.py
       - scripts/requirements-reflow.txt
+      - .github/scripts/pr-labels.js
+      - .github/scripts/pr-labels.test.js
+      # labels.yml is included so the drift-pin tests
+      # (TYPE_TO_KIND/SCOPE_TO_AREA/SIZE_BUCKETS ↔ labels.yml) re-run
+      # when labels.yml changes. Cost: the reflow job also fires on
+      # labels.yml edits -- ~30s waste accepted to keep the pin live.
+      - .github/labels.yml
       - .github/workflows/scripts.yaml
   workflow_dispatch:
 
@@ -41,3 +55,18 @@ jobs:
         # project's prose-wrap rule. The script is fire-and-forget but the
         # suite guards future hand-edits.
         run: python3 -m pytest scripts/reflow_paragraphs_test.py -v
+
+  pr-labels:
+    name: PR-labels mapping test (from PR checkout)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      # Why this job exists separately from pr-labels.yaml's own
+      # test-mapping step: pr-labels.yaml runs on pull_request_target,
+      # which checks out the BASE branch (master) for security -- so a
+      # PR that edits .github/scripts/pr-labels.js or its test file is
+      # NOT exercised by the labeller's own gate. Running the suite
+      # under `pull_request` here checks out the PR's branch and
+      # therefore catches breakage in the mapping module itself.
+      - name: Run pr-labels mapping tests
+        run: node --test .github/scripts/pr-labels.test.js
