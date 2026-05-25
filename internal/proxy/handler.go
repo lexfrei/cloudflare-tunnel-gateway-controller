@@ -14,10 +14,10 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"slices"
-	"strings"
 	"sync"
 	"time"
 
+	"golang.org/x/net/http/httpguts"
 	"golang.org/x/net/http2"
 )
 
@@ -689,6 +689,13 @@ func shouldUseWebSocketUpgradePath(req *http.Request, operatorAllowsUpgrade bool
 // Used together with `BackendRef.WebSocket` to gate the upgrade-path
 // selection: a client-controlled header alone is not enough — the
 // operator must also have marked the relevant backend as WS-capable.
+//
+// Connection header parsing delegates to httpguts.HeaderValuesContainsToken
+// — the same helper stdlib's net/http uses internally for the same RFC 7230
+// token rules — instead of a hand-rolled SplitSeq + EqualFold loop. Single
+// source of truth: any future tightening of RFC 7230 token parsing
+// (whitespace, quoted-string handling, etc.) lands in httpguts and we
+// inherit it for free.
 func isHTTPUpgradeRequest(req *http.Request) bool {
 	if req == nil || req.Header == nil {
 		return false
@@ -698,15 +705,7 @@ func isHTTPUpgradeRequest(req *http.Request) bool {
 		return false
 	}
 
-	for _, value := range req.Header.Values("Connection") {
-		for token := range strings.SplitSeq(value, ",") {
-			if strings.EqualFold(strings.TrimSpace(token), "upgrade") {
-				return true
-			}
-		}
-	}
-
-	return false
+	return httpguts.HeaderValuesContainsToken(req.Header.Values("Connection"), "upgrade")
 }
 
 // writeRedirectResponse writes a short-circuit redirect response.
