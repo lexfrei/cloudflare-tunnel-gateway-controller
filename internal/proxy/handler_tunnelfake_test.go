@@ -382,13 +382,21 @@ func TestFakeCloudflaredRespWriter_NonUpgradeStatusPassesThrough(t *testing.T) {
 	}
 }
 
+// rfc6455SampleWSKey is the Sec-WebSocket-Key from RFC 6455 §1.3's
+// worked example. Using the spec's literal makes the matching
+// Sec-WebSocket-Accept (`s3pPLMBiTxaQ9kYGzzhZRbK+xOo=`) deterministic
+// across tests that pin the upgrade-handshake contract; computing it
+// per-test from a random key would only obscure that the value comes
+// from a documented reference rather than from arbitrary chance.
+const rfc6455SampleWSKey = "dGhlIHNhbXBsZSBub25jZQ=="
+
 // TestHandler_BackendProtocolWebSocket_TunnelMode_HijackAfterStatus is
 // the load-bearing test that the fake exists for: it drives a real
 // WebSocket upgrade request through the proxy handler using the fake
 // cloudflared writer and asserts the handler reaches the post-101
 // hijack point with status written first. Without the custom upgrade
-// path landed in #244, this test fails because httputil.ReverseProxy
-// .handleUpgradeResponse hijacks before WriteHeader — exactly the
+// path, this test fails because httputil.ReverseProxy
+// .handleUpgradeResponse hijacks before WriteHeader -- exactly the
 // contract the fake enforces.
 //
 // Byte-level round-trip is deliberately NOT exercised here:
@@ -434,7 +442,7 @@ func TestHandler_BackendProtocolWebSocket_TunnelMode_HijackAfterStatus(t *testin
 	req.Header.Set("Connection", "Upgrade")
 	req.Header.Set("Upgrade", "websocket")
 	req.Header.Set("Sec-WebSocket-Version", "13")
-	req.Header.Set("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
+	req.Header.Set("Sec-WebSocket-Key", rfc6455SampleWSKey)
 
 	// Run the handler in a goroutine — after hijack it blocks in
 	// bidirectional copy until the pipe closes. Closing the client side
@@ -461,26 +469,29 @@ func TestHandler_BackendProtocolWebSocket_TunnelMode_HijackAfterStatus(t *testin
 }
 
 // TestReverseProxyUpgradeOverFakeWriter_ReproducesProductionFailure is
-// the true negative control: it runs the stdlib
-// httputil.ReverseProxy upgrade flow against a real WebSocket backend
-// using the fake cloudflared writer as the response writer, and
-// asserts the upgrade FAILS with the exact symptom we saw in
-// production (status != 101, hijack never succeeded).
+// the FAKE-CONTRACT guard: it runs stdlib's httputil.ReverseProxy
+// upgrade flow against a real WebSocket backend using the fake
+// cloudflared writer, and asserts the upgrade FAILS with the exact
+// symptom production hit on the prior ReverseProxy-based path
+// (status 502 from the default ErrorHandler, hijack never flipped).
 //
-// This is the regression pin we'd need to repurpose into a positive
-// test if anyone tries to revert the custom proxyWebSocketUpgrade path
-// in #244 and route WebSocket through ReverseProxy again. Run the
-// reverted handler over this fake → this test passes (in the wrong
-// way) → the rest of the proxy WS suite fails → the regression is
-// caught locally before push.
+// What this test pins is not the production code path -- the proxy
+// no longer routes WebSocket through ReverseProxy. It pins the
+// FAKE's hijack precondition itself: the fake must reject Hijack
+// when WriteHeader hasn't been called, mirroring cloudflared's
+// http2RespWriter, so the positive test
+// (TestHandler_BackendProtocolWebSocket_TunnelMode_HijackAfterStatus)
+// stays load-bearing. If a future refactor accidentally weakens
+// the fake's precondition (Hijack returns ok without
+// statusWritten=true), THIS test flips to a wrong-direction
+// success and the positive test silently loses its safety net.
+// Run this together with the positive test; both are needed to
+// trust the fake.
 //
 // Mechanism: ReverseProxy.handleUpgradeResponse calls Hijack BEFORE
-// writing 101. The fake's hijack precondition rejects (mirroring
-// cloudflared's http2RespWriter), the default error handler writes
-// 502, and we assert that 502 is what landed on the writer. Without
-// the fake faithfully reproducing the precondition, this test
-// silently flips to passing the wrong way and the load-bearing
-// regression pin disappears.
+// writing 101. The fake's hijack precondition rejects, the default
+// error handler writes 502, and we assert that 502 is what landed
+// on the writer.
 func TestReverseProxyUpgradeOverFakeWriter_ReproducesProductionFailure(t *testing.T) {
 	t.Parallel()
 
@@ -498,14 +509,15 @@ func TestReverseProxyUpgradeOverFakeWriter_ReproducesProductionFailure(t *testin
 	req.Header.Set("Connection", "Upgrade")
 	req.Header.Set("Upgrade", "websocket")
 	req.Header.Set("Sec-WebSocket-Version", "13")
-	req.Header.Set("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
+	req.Header.Set("Sec-WebSocket-Key", rfc6455SampleWSKey)
 
 	reverseProxy.ServeHTTP(fake, req)
 
 	// ReverseProxy.handleUpgradeResponse calls Hijack before WriteHeader.
 	// The fake rejects (statusWritten=false), and the default error
-	// handler writes 502 via fake.WriteHeader. Without the fix in #244
-	// this is exactly the production-visible failure.
+	// handler writes 502 via fake.WriteHeader. Anything other than
+	// 502 here means either the fake's precondition is broken or
+	// stdlib changed its upgrade flow.
 	assert.Equal(t, http.StatusBadGateway, fake.Status(),
 		"ReverseProxy over an HTTP/2-style writer must record 502 — the default error handler "+
 			"is the only path that runs when Hijack is rejected for missing WriteHeader. "+
@@ -572,7 +584,7 @@ func TestHandler_BackendProtocolWebSocket_TunnelMode_AppliesResponseFiltersTo101
 	req.Header.Set("Connection", "Upgrade")
 	req.Header.Set("Upgrade", "websocket")
 	req.Header.Set("Sec-WebSocket-Version", "13")
-	req.Header.Set("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
+	req.Header.Set("Sec-WebSocket-Key", rfc6455SampleWSKey)
 
 	handlerDone := make(chan struct{})
 

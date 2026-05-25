@@ -2429,7 +2429,7 @@ func dialAndReadUpgradeResponse(t *testing.T, proxyURL, path string) *http.Respo
 		"Host: " + parsed.Host + "\r\n" +
 		"Upgrade: websocket\r\n" +
 		"Connection: Upgrade\r\n" +
-		"Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n" +
+		"Sec-WebSocket-Key: " + rfc6455SampleWSKey + "\r\n" +
 		"Sec-WebSocket-Version: 13\r\n" +
 		"\r\n"
 
@@ -2481,7 +2481,7 @@ func TestWsRawUpgradeBackend_UnblocksOnConnClose(t *testing.T) {
 		"Host: " + parsed.Host + "\r\n" +
 		"Upgrade: websocket\r\n" +
 		"Connection: Upgrade\r\n" +
-		"Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n" +
+		"Sec-WebSocket-Key: " + rfc6455SampleWSKey + "\r\n" +
 		"Sec-WebSocket-Version: 13\r\n" +
 		"\r\n"
 
@@ -2784,7 +2784,7 @@ func TestHandler_NonWSBackend_TimeoutAppliesEvenWithUpgradeHeaders(t *testing.T)
 	req.Header.Set("Connection", "Upgrade")
 	req.Header.Set("Upgrade", "websocket")
 	req.Header.Set("Sec-WebSocket-Version", "13")
-	req.Header.Set("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
+	req.Header.Set("Sec-WebSocket-Key", rfc6455SampleWSKey)
 
 	start := time.Now()
 	rec := httptest.NewRecorder()
