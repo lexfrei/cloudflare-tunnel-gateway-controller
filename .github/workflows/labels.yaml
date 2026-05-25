@@ -5,11 +5,17 @@ on:
     paths:
       - .github/labels.yml
       - .github/workflows/labels.yaml
+      - scripts/validate-labels.py
+      - scripts/validate_labels_test.py
+      - scripts/requirements-labels.txt
   push:
     branches: [master]
     paths:
       - .github/labels.yml
       - .github/workflows/labels.yaml
+      - scripts/validate-labels.py
+      - scripts/validate_labels_test.py
+      - scripts/requirements-labels.txt
   workflow_dispatch:
   schedule:
     - cron: '17 4 * * 1'  # Mondays at 04:17 UTC
