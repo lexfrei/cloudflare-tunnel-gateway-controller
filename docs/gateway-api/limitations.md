@@ -232,6 +232,14 @@ operators can either drop the BackendTLSPolicy (if they actually wanted
 cleartext WebSocket) or flip the hint to `kubernetes.io/wss` (if they
 wanted the TLS-protected variant all along).
 
+### `ResponseHeaderModifier` MUST preserve WebSocket handshake headers
+
+The L7 proxy applies route-level + per-backend `ResponseHeaderModifier` filters to every backend response, including the 101 Switching Protocols response that carries the WebSocket handshake. Per Gateway API spec the filter pipeline runs unconditionally; the proxy makes no exception for upgrade responses. The operator-facing consequence: a `Remove` list that strips `Sec-WebSocket-Accept`, `Upgrade`, or `Connection` on a route whose backend is WS-marked silently breaks every upgrade on that route. The 101 reaches the client missing a header the RFC 6455 handshake requires, and the client just disconnects.
+
+The converter scans rule-level and per-backend `ResponseHeaderModifier` filters at HTTPRoute apply time. If a `Remove` list on a WS-marked route intersects `{Sec-WebSocket-Accept, Upgrade, Connection}`, the controller logs a WARN naming the offending header(s) and the filter scope (`rule` or `backend`). The filter still applies as configured — the warning is a diagnostic, not a hard rejection, because the misconfiguration is operator-fixable and bypassing the filter would silently violate spec.
+
+Same guidance applies symmetrically to `Set` overriding these headers with a non-handshake-compatible value, though that is rarer and not currently checked.
+
 ### Interaction with `spec.rules[].timeouts`
 
 `timeouts.request` and `timeouts.backendRequest` are enforced as **header-only

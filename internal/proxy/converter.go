@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -216,7 +217,109 @@ func convertHTTPRouteRule(
 		}
 	}
 
+	warnIfWSResponseFilterStripsHandshake(&proxyRule)
+
 	return proxyRule
+}
+
+// wsHandshakeRequiredHeaders is the set of response headers that RFC 6455
+// §4.2.2 makes load-bearing for a WebSocket upgrade. Stripping any of them
+// in a ResponseHeaderModifier filter on a WS-marked route breaks the
+// handshake silently from the client's perspective: the 101 reaches the
+// client missing a critical header, and the client just disconnects.
+//
+// Canonicalised because http.Header.Set/Get/Del normalise on the wire;
+// matching against the canonical form keeps the membership check
+// case-insensitive without per-call lower-casing.
+//
+//nolint:gochecknoglobals // RFC 6455 §4.2.2 reference set; package-level so the converter doesn't rebuild it per route
+var wsHandshakeRequiredHeaders = map[string]struct{}{
+	"Sec-Websocket-Accept": {}, // http.CanonicalMIMEHeaderKey form
+	"Upgrade":              {},
+	"Connection":           {},
+}
+
+// warnIfWSResponseFilterStripsHandshake fires a converter-time WARN when
+// a rule on a WebSocket-marked backend carries a ResponseHeaderModifier
+// whose Remove list intersects wsHandshakeRequiredHeaders. The proxy's
+// runtime path (proxyWebSocketUpgrade) faithfully applies the filter
+// pipeline to the 101 response per Gateway API spec, so a Remove list
+// that strips a handshake header silently breaks every upgrade on the
+// route. The warning surfaces the misconfiguration in controller logs
+// at apply time, before the operator's WS clients fail opaquely.
+//
+// The guard is intentionally scoped to WS-marked backends only.
+// Stripping the same headers on a plain-HTTP route is the operator's
+// call -- those headers have no special meaning on a regular HTTP
+// response, and warning would be noise on every route that defends
+// against client-side hijack-via-upgrade attempts.
+//
+// Filters are inspected at both rule scope (proxyRule.Filters) and
+// per-backend scope (backend.Filters); the same shape can land in
+// either place via HTTPRouteRule.Filters or HTTPBackendRef.Filters.
+func warnIfWSResponseFilterStripsHandshake(rule *RouteRule) {
+	hasWSBackend := false
+
+	for idx := range rule.Backends {
+		if rule.Backends[idx].WebSocket {
+			hasWSBackend = true
+
+			break
+		}
+	}
+
+	if !hasWSBackend {
+		return
+	}
+
+	// Rule-scope filters apply to every backend on the rule.
+	for idx := range rule.Filters {
+		warnIfHandshakeStrip(&rule.Filters[idx], "rule")
+	}
+
+	// Per-backend filters: only check filters on WS-marked backends.
+	for backendIdx := range rule.Backends {
+		if !rule.Backends[backendIdx].WebSocket {
+			continue
+		}
+
+		for filterIdx := range rule.Backends[backendIdx].Filters {
+			warnIfHandshakeStrip(&rule.Backends[backendIdx].Filters[filterIdx], "backend")
+		}
+	}
+}
+
+// warnIfHandshakeStrip checks a single RouteFilter for handshake-header
+// removal and emits the WARN. Scope ("rule" or "backend") goes into the
+// log attributes so an operator can correlate the warning back to the
+// exact HTTPRoute field they edited.
+func warnIfHandshakeStrip(filter *RouteFilter, scope string) {
+	if filter.Type != FilterResponseHeaderModifier || filter.ResponseHeaderModifier == nil {
+		return
+	}
+
+	var offending []string
+
+	// Echo the operator's original casing back in the log; canonicalise
+	// only for the membership check. The two differ because stdlib
+	// canonicalisation lower-cases the second letter of multi-letter
+	// words (`Sec-WebSocket-Accept` -> `Sec-Websocket-Accept`), which
+	// is not how operators write the value in HTTPRoute YAML.
+	for _, name := range filter.ResponseHeaderModifier.Remove {
+		if _, ok := wsHandshakeRequiredHeaders[http.CanonicalHeaderKey(name)]; ok {
+			offending = append(offending, name)
+		}
+	}
+
+	if len(offending) == 0 {
+		return
+	}
+
+	slog.Warn(
+		"ResponseHeaderModifier removes a WebSocket handshake header on a WS-marked backend; clients will fail to complete the upgrade",
+		"scope", scope,
+		"headers", offending,
+	)
 }
 
 func convertMatch(match gatewayv1.HTTPRouteMatch) RouteMatch {
