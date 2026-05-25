@@ -305,6 +305,7 @@ go test -v -race -tags e2e -count=1 -timeout=15m ./test/e2e/... \
 | `E2E_NAMESPACE` | `CONFORMANCE_NAMESPACE` | `cloudflare-tunnel-system` | Controller namespace |
 | `E2E_TEST_NAMESPACE` | `CONFORMANCE_TEST_NAMESPACE` | `e2e-test` | Test resources namespace |
 | `E2E_GATEWAY_NAME` | `CONFORMANCE_GATEWAY_NAME` | `e2e-gateway` | Gateway resource name |
+| `E2E_SKIP_CLEANUP_ON_FAILURE` | (none) | unset | When non-empty, retains test resources (HTTPRoutes, Services) after a failed test for post-mortem `kubectl` inspection. CI leaves it unset so resources never accumulate. **Caveat: pair this with `-run TestName/SubtestName` to isolate the failing case.** The cleanup helpers wipe the entire test namespace, so in a full-suite run a passing sibling that comes after the failing subtest will delete its retained state -- only the last failing subtest after the final passing sibling actually survives. Retention is also scoped to a single `go test` run; the initial `deleteAllRoutes` at the start of `TestHTTPRouteConformance` wipes leftover state from a previous invocation, so `kubectl`-inspect happens between runs, not across them. |
 
 ### E2E Test Coverage (24 tests)
 

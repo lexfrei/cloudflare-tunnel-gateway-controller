@@ -159,8 +159,17 @@ func waitForBackend(
 }
 
 // deleteAllRoutes removes all HTTPRoutes in the test namespace and waits for proxy to update.
+//
+// Honours skipCleanupOnFailure: if the test failed AND the opt-in env var
+// is set, returns early without touching the cluster so a maintainer can
+// inspect the state at the point of failure. See cleanup_retain_test.go
+// for the rationale and the env var name.
 func deleteAllRoutes(t *testing.T, k8sClient client.Client, cfg testConfig) {
 	t.Helper()
+
+	if skipCleanupOnFailure(t) {
+		return
+	}
 
 	ctx := context.Background()
 	routeList := &gatewayv1.HTTPRouteList{}
