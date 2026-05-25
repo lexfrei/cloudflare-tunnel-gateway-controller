@@ -1,7 +1,6 @@
 # Development Setup
 
-This guide covers setting up a development environment for the Cloudflare Tunnel
-Gateway Controller.
+This guide covers setting up a development environment for the Cloudflare Tunnel Gateway Controller.
 
 ## Prerequisites
 

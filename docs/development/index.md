@@ -1,7 +1,6 @@
 # Development
 
-This section covers development setup, architecture, and contribution guidelines
-for the Cloudflare Tunnel Gateway Controller.
+This section covers development setup, architecture, and contribution guidelines for the Cloudflare Tunnel Gateway Controller.
 
 ## Overview
 

@@ -1,7 +1,6 @@
 # Testing
 
-This guide covers testing standards and practices for the Cloudflare Tunnel
-Gateway Controller.
+This guide covers testing standards and practices for the Cloudflare Tunnel Gateway Controller.
 
 ## Running Tests
 
@@ -272,9 +271,7 @@ Tests run automatically in CI:
 
 ## Gateway API Conformance Tests
 
-Conformance tests validate that the controller implements the Gateway API
-specification correctly. These tests require a real Kubernetes cluster with
-a working Cloudflare Tunnel.
+Conformance tests validate that the controller implements the Gateway API specification correctly. These tests require a real Kubernetes cluster with a working Cloudflare Tunnel.
 
 ### Prerequisites
 
@@ -312,16 +309,12 @@ go test -v -race -tags e2e -count=1 -timeout=15m ./test/e2e/... \
 Tests cover both Cloudflare Tunnel and L7 proxy features:
 
 - **Core (4):** SimpleSameNamespace, PathPrefixMatching, ExactPathMatching, MatchingAcrossRoutes
-- **Extended (18):** HeaderMatching, MethodMatching, QueryParamMatching, Weight,
-  RequestHeaderModifier, ResponseHeaderModifier, RequestRedirect, RegexPathMatching,
-  RegexHeaderMatching, RegexQueryParamMatching, PathMatchOrder, URLRewritePath,
-  URLRewriteHost, RequestMirror, RedirectPort, RedirectPath, CombinedMatching, MultipleMatchesOR
+- **Extended (18):** HeaderMatching, MethodMatching, QueryParamMatching, Weight, RequestHeaderModifier, ResponseHeaderModifier, RequestRedirect, RegexPathMatching, RegexHeaderMatching, RegexQueryParamMatching, PathMatchOrder, URLRewritePath, URLRewriteHost, RequestMirror, RedirectPort, RedirectPath, CombinedMatching, MultipleMatchesOR
 - **Gateway (2):** AcceptedCondition, ObservedGenerationBump
 
 ### Official Gateway API Conformance Suite
 
-The project integrates the official `sigs.k8s.io/gateway-api/conformance` suite
-with a custom `TunnelRoundTripper` that routes requests through Cloudflare edge.
+The project integrates the official `sigs.k8s.io/gateway-api/conformance` suite with a custom `TunnelRoundTripper` that routes requests through Cloudflare edge.
 
 ```bash
 # Run conformance tests (requires deployed controller + tunnel)

@@ -240,34 +240,70 @@ func envOrDefault(key, defaultValue string) string {
 	return defaultValue
 }
 
-// wsHandlerOptions reads PROXY_WS_DIAL_TIMEOUT and
-// PROXY_WS_HANDSHAKE_TIMEOUT from the environment and turns them into
-// proxy.HandlerOption values for NewHandler. Unset / unparseable /
-// non-positive values are silently ignored (the proxy.With* helpers
-// gate on >0), so the package default (30s) stays in place. Logs a
-// WARN on parse failure so a typo'd env var doesn't silently fall back
-// to the default with no diagnostic.
-func wsHandlerOptions(logger *slog.Logger) []proxy.HandlerOption {
-	var opts []proxy.HandlerOption
+// parseWSEnvDurations reads PROXY_WS_DIAL_TIMEOUT and
+// PROXY_WS_HANDSHAKE_TIMEOUT from the environment and parses them as
+// time.Duration. Returns zero for unset / empty / unparseable values
+// so a downstream proxy.With* helper (which gates on > 0) treats them
+// as "no override". Logs a WARN on parse failure so a typo'd env var
+// doesn't silently fall back to the default with no diagnostic.
+//
+// Split from wsHandlerOptions so the env-var-to-duration translation
+// can be unit-tested directly without the HandlerOption indirection;
+// callers that need the proxy plumbing use wsHandlerOptions, which
+// composes this helper with the proxy.With* constructors.
+func parseWSEnvDurations(logger *slog.Logger) (time.Duration, time.Duration) {
+	dialTimeout := parseEnvDuration(logger, "PROXY_WS_DIAL_TIMEOUT")
+	handshakeTimeout := parseEnvDuration(logger, "PROXY_WS_HANDSHAKE_TIMEOUT")
 
-	if raw := os.Getenv("PROXY_WS_DIAL_TIMEOUT"); raw != "" {
-		parsed, err := time.ParseDuration(raw)
-		if err != nil {
-			logger.Warn("PROXY_WS_DIAL_TIMEOUT failed to parse -- keeping default 30s",
-				"value", raw, "error", err)
-		} else {
-			opts = append(opts, proxy.WithWSDialTimeout(parsed))
-		}
+	return dialTimeout, handshakeTimeout
+}
+
+// parseEnvDuration is the per-env-var primitive: zero on unset / empty
+// / parse failure, parsed duration otherwise. Note that negative
+// durations parse successfully (time.ParseDuration accepts "-5s") and
+// pass through as-is; the downstream > 0 gate in wsHandlerOptions
+// drops them so the proxy defaults still apply. WARN on parse failure
+// names both the env var and the offending value.
+//
+// "WARN + zero" rather than fail-loud is deliberate for these tunables:
+// the proxy MUST start with the package defaults if the operator's
+// override is malformed (a misconfigured timeout shouldn't kill the
+// whole tunnel). The WARN ensures the typo doesn't hide; the
+// downstream zero-fallback in wsHandlerOptions ensures the
+// previously-working behaviour stays the same. For non-tunable env
+// vars (credentials, tunnel ID), a parse failure should fail-loud --
+// don't copy this swallow pattern there.
+func parseEnvDuration(logger *slog.Logger, name string) time.Duration {
+	raw := os.Getenv(name)
+	if raw == "" {
+		return 0
 	}
 
-	if raw := os.Getenv("PROXY_WS_HANDSHAKE_TIMEOUT"); raw != "" {
-		parsed, err := time.ParseDuration(raw)
-		if err != nil {
-			logger.Warn("PROXY_WS_HANDSHAKE_TIMEOUT failed to parse -- keeping default 30s",
-				"value", raw, "error", err)
-		} else {
-			opts = append(opts, proxy.WithWSHandshakeReadTimeout(parsed))
-		}
+	parsed, err := time.ParseDuration(raw)
+	if err != nil {
+		logger.Warn(name+" failed to parse -- keeping default",
+			"value", raw, "error", err)
+
+		return 0
+	}
+
+	return parsed
+}
+
+// wsHandlerOptions composes parseWSEnvDurations with the proxy.With*
+// option constructors. Zero durations (unset / unparseable env vars)
+// flow through as no-op options because the With* helpers drop them.
+func wsHandlerOptions(logger *slog.Logger) []proxy.HandlerOption {
+	dialTimeout, handshakeTimeout := parseWSEnvDurations(logger)
+
+	var opts []proxy.HandlerOption
+
+	if dialTimeout > 0 {
+		opts = append(opts, proxy.WithWSDialTimeout(dialTimeout))
+	}
+
+	if handshakeTimeout > 0 {
+		opts = append(opts, proxy.WithWSHandshakeReadTimeout(handshakeTimeout))
 	}
 
 	return opts

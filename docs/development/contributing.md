@@ -1,12 +1,10 @@
 # Contributing
 
-Thank you for your interest in contributing to the Cloudflare Tunnel Gateway
-Controller!
+Thank you for your interest in contributing to the Cloudflare Tunnel Gateway Controller!
 
 ## Code of Conduct
 
-Be respectful and constructive in all interactions. We welcome contributors
-of all experience levels.
+Be respectful and constructive in all interactions. We welcome contributors of all experience levels.
 
 ## How to Contribute
 
@@ -88,9 +86,7 @@ chore(deps): update controller-runtime to v0.22.4
 
 ### Testing PR Changes
 
-Each PR automatically builds test artifacts. Links to test container images
-and Helm chart are posted as a comment on the PR, allowing you to test
-changes before merging.
+Each PR automatically builds test artifacts. Links to test container images and Helm chart are posted as a comment on the PR, allowing you to test changes before merging.
 
 ### PR Checklist
 
@@ -193,5 +189,4 @@ Releases are automated via GitHub Actions:
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under
-the BSD 3-Clause License.
+By contributing, you agree that your contributions will be licensed under the BSD 3-Clause License.

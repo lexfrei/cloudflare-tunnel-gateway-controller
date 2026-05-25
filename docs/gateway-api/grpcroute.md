@@ -1,7 +1,6 @@
 # GRPCRoute
 
-GRPCRoute enables routing gRPC traffic through Cloudflare Tunnel with
-service and method-level matching.
+GRPCRoute enables routing gRPC traffic through Cloudflare Tunnel with service and method-level matching.
 
 ## Basic Example
 
@@ -90,8 +89,7 @@ spec:
 
 ## Method Matching
 
-gRPC methods are mapped to HTTP/2 paths using the standard format
-`/package.Service/Method`.
+gRPC methods are mapped to HTTP/2 paths using the standard format `/package.Service/Method`.
 
 | Match Type | Example | Cloudflare Rule |
 |------------|---------|-----------------|
@@ -161,8 +159,7 @@ spec:
 
 ## Backend Selection with Weights
 
-When multiple backends are specified, the backend with the highest weight
-is selected:
+When multiple backends are specified, the backend with the highest weight is selected:
 
 ```yaml
 apiVersion: gateway.networking.k8s.io/v1
@@ -240,11 +237,9 @@ kubectl get grpcroute my-grpc-route --output jsonpath='{.status.parents[*].condi
 
 ### Traffic Splitting
 
-The controller does NOT implement traffic splitting. When multiple backends
-have weights, the highest weight backend receives 100% of traffic.
+The controller does NOT implement traffic splitting. When multiple backends have weights, the highest weight backend receives 100% of traffic.
 
-For actual traffic splitting, deploy a gRPC-aware load balancer (e.g., Envoy)
-and point the GRPCRoute to it.
+For actual traffic splitting, deploy a gRPC-aware load balancer (e.g., Envoy) and point the GRPCRoute to it.
 
 ## Troubleshooting
 
