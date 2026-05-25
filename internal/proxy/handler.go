@@ -210,6 +210,15 @@ func (h *Handler) proxyToBackend(writer http.ResponseWriter, req *http.Request, 
 		return
 	}
 
+	// Merge rule-level and backend-specific filters for response processing.
+	// slices.Concat allocates a fresh slice; using append on result.Filters
+	// would alias its backing array if cap > len and races against concurrent
+	// requests reading the same compiled rule. Computed once and shared
+	// between the WS upgrade and non-upgrade branches so both paths apply
+	// the same ResponseFilter pipeline, consistent with the non-upgrade
+	// path's httputil.ReverseProxy.ModifyResponse callback.
+	allFilters := slices.Concat(result.Filters, result.BackendFilters)
+
 	// WebSocket upgrade: bypass httputil.ReverseProxy. ReverseProxy's
 	// handleUpgradeResponse calls Hijack() on the writer BEFORE writing
 	// the 101 status, then writes the raw HTTP/1.1 status line onto the
@@ -221,7 +230,7 @@ func (h *Handler) proxyToBackend(writer http.ResponseWriter, req *http.Request, 
 	// dial/handshake/hijack/pipe sequence directly; see the comment on
 	// that method for the protocol-level details.
 	if shouldSkipUpgradeTimeout(req, backend.WebSocket) {
-		h.proxyWebSocketUpgrade(writer, req, backendURL, backend.TLS)
+		h.proxyWebSocketUpgrade(writer, req, backendURL, backend.TLS, allFilters)
 
 		return
 	}
@@ -238,12 +247,6 @@ func (h *Handler) proxyToBackend(writer http.ResponseWriter, req *http.Request, 
 
 		req = req.WithContext(ctx)
 	}
-
-	// Merge rule-level and backend-specific filters for response processing.
-	// slices.Concat allocates a fresh slice; using append on result.Filters
-	// would alias its backing array if cap > len and races against concurrent
-	// requests reading the same compiled rule.
-	allFilters := slices.Concat(result.Filters, result.BackendFilters)
 
 	proxy := h.createReverseProxy(backendURL, backend.Protocol, backend.TLS, allFilters)
 	proxy.ServeHTTP(writer, req)

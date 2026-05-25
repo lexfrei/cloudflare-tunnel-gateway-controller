@@ -249,7 +249,7 @@ func TestConvertHTTPRoutes_AppProtocolWS_NoWarn(t *testing.T) {
 	backend := cfg.Rules[0].Backends[0]
 	assert.Equal(t, proxy.BackendProtocolHTTP, backend.Protocol,
 		"appProtocol kubernetes.io/ws must use the default plaintext HTTP/1.1 transport — "+
-			"ReverseProxy hijacks the conn on the 101 upgrade response")
+			"the proxy's custom proxyWebSocketUpgrade path hijacks the conn on the 101 upgrade response")
 	assert.Contains(t, backend.URL, "http://",
 		"ws scheme stays http:// — TLS is irrelevant for the cleartext WebSocket variant")
 	assert.NotContains(t, logs.String(), "unsupported backend appProtocol",

@@ -1,12 +1,16 @@
 package proxy_test
 
 import (
+	"bufio"
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha1"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/base64"
 	"encoding/pem"
 	"io"
 	"math/big"
@@ -15,6 +19,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -2212,16 +2217,20 @@ func newWSEchoBackend(t *testing.T, tlsEnabled bool) *httptest.Server {
 }
 
 // TestHandler_BackendProtocolWebSocket_Echo pins the contract that
-// httputil.ReverseProxy's native 101 Switching Protocols handling survives
-// our Director. The Director currently only deletes X-Original-Host and
-// sets a default User-Agent — Connection/Upgrade/Sec-WebSocket-* flow
-// through. If anyone adds header sanitisation here in the future, this
-// test fails loudly: WebSocket support is silently broken without a real
-// upgrade handshake to prove otherwise.
+// the custom proxyWebSocketUpgrade path completes a real WebSocket
+// handshake end-to-end. The custom path is what replaced
+// httputil.ReverseProxy for WS (the stdlib hijack-before-WriteHeader
+// flow fails over cloudflared's HTTP/2 response writer); the
+// Connection/Upgrade/Sec-WebSocket-* headers must flow through to the
+// backend untouched and the 101 must reach the client with the right
+// shape. If anyone adds header sanitisation in proxyWebSocketUpgrade
+// or its buildBackendUpgradeRequest helper, this test fails loudly --
+// WebSocket support is silently broken without a real upgrade
+// handshake to prove otherwise.
 //
 // The proxy itself runs as a real httptest.Server because httptest
-// .NewRecorder does not implement http.Hijacker, which ReverseProxy needs
-// in handleUpgradeResponse to hijack the conn after the 101.
+// .NewRecorder does not implement http.Hijacker, which the custom
+// proxyWebSocketUpgrade path needs to hijack the conn after the 101.
 func TestHandler_BackendProtocolWebSocket_Echo(t *testing.T) {
 	t.Parallel()
 
@@ -2285,6 +2294,356 @@ func TestHandler_BackendProtocolWebSocket_TLS_Echo(t *testing.T) {
 	t.Cleanup(proxySrv.Close)
 
 	roundTripWSEcho(t, proxySrv, "wss-tls-round-trip")
+}
+
+// wsRawUpgradeBackend is a backend that completes a WebSocket upgrade by
+// hand-rolling the 101 response on the hijacked conn. Unlike newWSEchoBackend
+// (which uses x/net/websocket and exposes only the post-handshake conn), this
+// helper lets the test author dictate the EXACT response headers the backend
+// sends on the 101 -- needed when the contract under test is "the proxy
+// transforms the backend's 101 headers before they reach the client".
+//
+// After the handshake the conn just stays open until the proxy closes its
+// end of the TCP socket; the helper detects this via a single-byte
+// blocking Read that returns EOF as soon as the proxy's outer
+// proxyWebSocketUpgrade defer closes backendConn. The proxy-level tests
+// do not need an echo loop because they assert on the 101 response
+// headers, not on the post-upgrade bytestream.
+//
+// Goroutine-leak guard: the helper tracks every handler invocation via a
+// sync.WaitGroup and registers a t.Cleanup that waits for the group with
+// a deadline. The wait cleanup is registered FIRST so it runs LAST under
+// t.Cleanup's LIFO ordering, AFTER server.Close has fired and given the
+// hijacked conn a chance to drain. A timeout means a handler goroutine
+// is stuck post-hijack -- almost always a sign that a future refactor
+// broke the EOF-unblocks contract.
+//
+// The contract is pinned by TestWsRawUpgradeBackend_UnblocksOnConnClose
+// below; do not change the blocking primitive without re-running that
+// test.
+func wsRawUpgradeBackend(t *testing.T, extraHeaders map[string]string) *httptest.Server {
+	t.Helper()
+
+	var wg sync.WaitGroup
+
+	// Register the wait BEFORE server.Close so LIFO ordering runs
+	// server.Close first (triggers handler exit) and the wait second
+	// (observes that exit happened).
+	t.Cleanup(func() {
+		done := make(chan struct{})
+
+		go func() { wg.Wait(); close(done) }()
+
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			t.Errorf("wsRawUpgradeBackend handler did not exit within 2s of cleanup -- " +
+				"goroutine leak; check that the EOF-unblocks contract still holds")
+		}
+	})
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		wg.Add(1)
+		defer wg.Done()
+
+		if !strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
+			http.Error(w, "expected websocket upgrade", http.StatusBadRequest)
+
+			return
+		}
+
+		hj, ok := w.(http.Hijacker)
+		if !ok {
+			http.Error(w, "ResponseWriter does not implement Hijacker", http.StatusInternalServerError)
+
+			return
+		}
+
+		conn, _, hjErr := hj.Hijack()
+		if hjErr != nil {
+			return
+		}
+
+		defer func() { _ = conn.Close() }()
+
+		// RFC 6455 §4.2.2: Sec-WebSocket-Accept = base64(SHA-1(key || guid)).
+		const guid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+
+		sum := sha1.Sum([]byte(r.Header.Get("Sec-WebSocket-Key") + guid))
+		accept := base64.StdEncoding.EncodeToString(sum[:])
+
+		var builder strings.Builder
+
+		builder.WriteString("HTTP/1.1 101 Switching Protocols\r\n")
+		builder.WriteString("Upgrade: websocket\r\n")
+		builder.WriteString("Connection: Upgrade\r\n")
+		builder.WriteString("Sec-WebSocket-Accept: " + accept + "\r\n")
+
+		for k, v := range extraHeaders {
+			builder.WriteString(k + ": " + v + "\r\n")
+		}
+
+		builder.WriteString("\r\n")
+
+		_, _ = conn.Write([]byte(builder.String()))
+
+		// Block until the proxy closes its end of the TCP socket --
+		// arrives here as EOF on the read. Crucially we do NOT block
+		// on r.Context().Done(): per net/http.Hijacker's documented
+		// contract, the request Context is NOT cancelled after Hijack
+		// returns, and httptest.Server.Close() does not wait for
+		// hijacked conns either. The earlier <-r.Context().Done()
+		// version silently leaked a goroutine per invocation.
+		_, _ = conn.Read(make([]byte, 1))
+	}))
+
+	t.Cleanup(server.Close)
+
+	return server
+}
+
+// dialAndReadUpgradeResponse opens a raw TCP conn to the proxy, sends an
+// HTTP/1.1 WebSocket upgrade request for the given path, and parses the
+// response with http.ReadResponse. Returns the parsed response so callers
+// can assert on status and header transforms applied by the proxy. The
+// caller is responsible for closing resp.Body; both the conn and the body
+// are also registered for cleanup so leaks survive an assertion failure.
+func dialAndReadUpgradeResponse(t *testing.T, proxyURL, path string) *http.Response {
+	t.Helper()
+
+	parsed, err := url.Parse(proxyURL)
+	require.NoError(t, err, "proxy URL must parse")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+
+	t.Cleanup(cancel)
+
+	var dialer net.Dialer
+
+	conn, err := dialer.DialContext(ctx, "tcp", parsed.Host)
+	require.NoError(t, err, "TCP dial to proxy must succeed")
+
+	t.Cleanup(func() { _ = conn.Close() })
+
+	req := "GET " + path + " HTTP/1.1\r\n" +
+		"Host: " + parsed.Host + "\r\n" +
+		"Upgrade: websocket\r\n" +
+		"Connection: Upgrade\r\n" +
+		"Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n" +
+		"Sec-WebSocket-Version: 13\r\n" +
+		"\r\n"
+
+	_, err = conn.Write([]byte(req))
+	require.NoError(t, err, "writing upgrade request to proxy must succeed")
+
+	require.NoError(t, conn.SetReadDeadline(time.Now().Add(5*time.Second)))
+
+	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	require.NoError(t, err, "reading upgrade response from proxy must succeed")
+
+	t.Cleanup(func() { _ = resp.Body.Close() })
+
+	return resp
+}
+
+// TestWsRawUpgradeBackend_UnblocksOnConnClose pins the contract that
+// wsRawUpgradeBackend's handler goroutine exits when the proxy / client
+// closes its end of the TCP socket. The helper used to block on
+// `<-r.Context().Done()` -- per net/http.Hijacker's documented contract
+// that Context is NOT cancelled after Hijack, that variant silently
+// leaked a goroutine per invocation. The fix blocks on conn.Read
+// instead (returns EOF when the peer closes the socket); this test
+// drives the lifecycle directly and lets the helper's own wait cleanup
+// flag a timeout if the EOF-unblocks contract regresses.
+//
+// Mechanism: stand up the helper, dial it as a client, complete the
+// upgrade handshake, close the client conn, return. The wait cleanup
+// registered inside wsRawUpgradeBackend will t.Errorf with "did not
+// exit within 2s" if the handler is still blocked at cleanup time.
+// Under the correct contract the wait returns in milliseconds.
+func TestWsRawUpgradeBackend_UnblocksOnConnClose(t *testing.T) {
+	t.Parallel()
+
+	backend := wsRawUpgradeBackend(t, map[string]string{"X-Test": "ok"})
+
+	parsed, err := url.Parse(backend.URL)
+	require.NoError(t, err, "backend URL must parse")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	t.Cleanup(cancel)
+
+	var dialer net.Dialer
+
+	conn, err := dialer.DialContext(ctx, "tcp", parsed.Host)
+	require.NoError(t, err, "direct TCP dial to backend must succeed")
+
+	req := "GET /ws HTTP/1.1\r\n" +
+		"Host: " + parsed.Host + "\r\n" +
+		"Upgrade: websocket\r\n" +
+		"Connection: Upgrade\r\n" +
+		"Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n" +
+		"Sec-WebSocket-Version: 13\r\n" +
+		"\r\n"
+
+	_, err = conn.Write([]byte(req))
+	require.NoError(t, err, "writing upgrade request must succeed")
+
+	require.NoError(t, conn.SetReadDeadline(time.Now().Add(2*time.Second)))
+
+	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	require.NoError(t, err, "reading 101 from helper must succeed")
+	require.Equal(t, http.StatusSwitchingProtocols, resp.StatusCode)
+	require.NoError(t, resp.Body.Close())
+
+	// Close the client conn: the helper's handler is blocked on
+	// conn.Read; the peer close arrives as EOF and the handler exits.
+	// The wait cleanup inside wsRawUpgradeBackend then observes the
+	// goroutine has returned and completes without firing its timeout.
+	require.NoError(t, conn.Close())
+}
+
+// TestHandler_BackendProtocolWebSocket_AppliesResponseFiltersTo101 pins
+// the spec-compliance contract that rule-level ResponseHeaderModifier
+// filters apply to the WebSocket 101 response, not be silently bypassed
+// because proxyWebSocketUpgrade doesn't go through httputil.ReverseProxy's
+// ModifyResponse callback. Without ApplyResponseFilters wired into the
+// upgrade path, the backend's headers reach the client unmodified and an
+// operator using `Cache-Control: no-store`-style filters on a route that
+// ALSO carries WebSocket traffic gets inconsistent behavior depending on
+// whether the client upgraded.
+//
+// Three transformations are pinned simultaneously: Add (new header
+// injected), Set (backend header replaced), Remove (backend header
+// stripped). A single failing assertion narrows the regression to which
+// transform broke.
+func TestHandler_BackendProtocolWebSocket_AppliesResponseFiltersTo101(t *testing.T) {
+	t.Parallel()
+
+	backend := wsRawUpgradeBackend(t, map[string]string{
+		"X-Backend-Header":    "original",
+		"X-Backend-To-Remove": "removeme",
+	})
+
+	router := proxy.NewRouter()
+	require.NoError(t, router.UpdateConfig(&proxy.Config{
+		Version: 1,
+		Rules: []proxy.RouteRule{
+			{
+				Matches: []proxy.RouteMatch{{Path: &proxy.PathMatch{Type: proxy.PathMatchPathPrefix, Value: "/"}}},
+				Filters: []proxy.RouteFilter{
+					{
+						Type: proxy.FilterResponseHeaderModifier,
+						ResponseHeaderModifier: &proxy.HeaderModifier{
+							Add:    []proxy.HeaderValue{{Name: "X-Filter-Added", Value: "yes"}},
+							Set:    []proxy.HeaderValue{{Name: "X-Backend-Header", Value: "replaced"}},
+							Remove: []string{"X-Backend-To-Remove"},
+						},
+					},
+				},
+				Backends: []proxy.BackendRef{
+					{URL: backend.URL, Weight: 1, Protocol: proxy.BackendProtocolHTTP, WebSocket: true},
+				},
+			},
+		},
+	}))
+
+	proxySrv := httptest.NewServer(proxy.NewHandler(router))
+	t.Cleanup(proxySrv.Close)
+
+	resp := dialAndReadUpgradeResponse(t, proxySrv.URL, "/ws")
+	defer func() { _ = resp.Body.Close() }()
+
+	require.Equal(t, http.StatusSwitchingProtocols, resp.StatusCode,
+		"the proxy must propagate the backend's 101 status verbatim")
+
+	assert.Equal(t, "yes", resp.Header.Get("X-Filter-Added"),
+		"Add response filter must inject a new header into the 101")
+	assert.Equal(t, "replaced", resp.Header.Get("X-Backend-Header"),
+		"Set response filter must override the backend's header value on the 101")
+	assert.Empty(t, resp.Header.Get("X-Backend-To-Remove"),
+		"Remove response filter must strip the listed header from the 101")
+
+	// Pin the RFC 6455 §4.2.2 reference value to catch a filter-ordering
+	// regression that strips protocol-critical headers before the client
+	// sees them; without this pin a future `copyHeaderValues` mistake
+	// would let the upgrade silently fail at the websocket-client end.
+	assert.Equal(t, "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=", resp.Header.Get("Sec-WebSocket-Accept"),
+		"Sec-WebSocket-Accept must propagate from the backend to the client unchanged "+
+			"(reference value for key dGhlIHNhbXBsZSBub25jZQ== from RFC 6455 §1.3 example)")
+	assert.Equal(t, "websocket", strings.ToLower(resp.Header.Get("Upgrade")),
+		"the Upgrade header must reach the client -- without it the client closes the conn")
+	assert.Equal(t, "upgrade", strings.ToLower(resp.Header.Get("Connection")),
+		"the Connection: Upgrade header must reach the client -- without it the client closes the conn")
+}
+
+// TestHandler_BackendProtocolWebSocket_AppliesResponseFiltersToNon101
+// pins the same filter contract on the fallback path: the backend refuses
+// the upgrade and returns a regular HTTP response (4xx / 5xx). The proxy
+// forwards that response as a regular HTTP reply -- and the
+// ResponseHeaderModifier filter still has to apply there. Otherwise a
+// route that intentionally pairs the modifier with a WS-marked backend
+// loses its transforms whenever a client probes a non-WS path under the
+// same prefix.
+//
+// Also pins the non-101 fallback branch overall: prior to this test the
+// fallback was unpinned, so a refactor that broke the response-forwarding
+// path (or skipped filters on it) would have shipped silently.
+func TestHandler_BackendProtocolWebSocket_AppliesResponseFiltersToNon101(t *testing.T) {
+	t.Parallel()
+
+	// Backend refuses the upgrade with 400; the handler returns headers
+	// the filter then transforms.
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("X-Backend-Header", "original")
+		w.Header().Set("X-Backend-To-Remove", "removeme")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte("upgrade refused"))
+	}))
+	t.Cleanup(backend.Close)
+
+	router := proxy.NewRouter()
+	require.NoError(t, router.UpdateConfig(&proxy.Config{
+		Version: 1,
+		Rules: []proxy.RouteRule{
+			{
+				Matches: []proxy.RouteMatch{{Path: &proxy.PathMatch{Type: proxy.PathMatchPathPrefix, Value: "/"}}},
+				Filters: []proxy.RouteFilter{
+					{
+						Type: proxy.FilterResponseHeaderModifier,
+						ResponseHeaderModifier: &proxy.HeaderModifier{
+							Add:    []proxy.HeaderValue{{Name: "X-Filter-Added", Value: "yes"}},
+							Set:    []proxy.HeaderValue{{Name: "X-Backend-Header", Value: "replaced"}},
+							Remove: []string{"X-Backend-To-Remove"},
+						},
+					},
+				},
+				Backends: []proxy.BackendRef{
+					{URL: backend.URL, Weight: 1, Protocol: proxy.BackendProtocolHTTP, WebSocket: true},
+				},
+			},
+		},
+	}))
+
+	proxySrv := httptest.NewServer(proxy.NewHandler(router))
+	t.Cleanup(proxySrv.Close)
+
+	resp := dialAndReadUpgradeResponse(t, proxySrv.URL, "/ws")
+	defer func() { _ = resp.Body.Close() }()
+
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode,
+		"the proxy must propagate the backend's non-101 status verbatim")
+
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err, "reading the propagated body must succeed")
+	assert.Equal(t, "upgrade refused", string(body),
+		"the non-101 fallback must stream the backend's response body to the client unmodified")
+
+	assert.Equal(t, "yes", resp.Header.Get("X-Filter-Added"),
+		"Add response filter must inject a new header on the non-101 fallback")
+	assert.Equal(t, "replaced", resp.Header.Get("X-Backend-Header"),
+		"Set response filter must override the backend's header on the non-101 fallback")
+	assert.Empty(t, resp.Header.Get("X-Backend-To-Remove"),
+		"Remove response filter must strip the listed header on the non-101 fallback")
 }
 
 // TestHandler_WebSocket_NotTerminatedByRequestTimeout pins that a route's

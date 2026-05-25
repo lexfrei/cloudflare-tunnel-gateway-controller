@@ -3,9 +3,13 @@
 package e2e
 
 import (
+	"bufio"
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
+	"net"
+	"net/http"
 	"testing"
 	"time"
 
@@ -34,10 +38,16 @@ import (
 // The test path: client opens `wss://<tunnel hostname>/ws` against Cloudflare
 // edge. Cloudflare terminates TLS and forwards a plaintext HTTP/1.1 request
 // to cloudflared. cloudflared invokes the proxy's `GatewayOriginProxy`. The
-// proxy matches the route, sees a Connection: Upgrade header pair, and lets
-// `httputil.ReverseProxy.handleUpgradeResponse` hijack the conn on the 101
-// response. Bytes then flow bidirectionally between the test client and the
-// echo-basic backend's `/ws` endpoint.
+// proxy matches the route, sees a Connection: Upgrade header pair, and -- via
+// `Handler.proxyToBackend`'s `shouldSkipUpgradeTimeout` gate -- routes the
+// request to the custom `proxyWebSocketUpgrade` path instead of
+// `httputil.ReverseProxy`. The custom path dials the backend itself, parses
+// the 101 response, applies route-level ResponseFilters, then writes the 101
+// to the client and hijacks. Bytes then flow bidirectionally between the
+// test client and the echo-basic backend's `/ws` endpoint. The custom path
+// exists because stdlib's `ReverseProxy.handleUpgradeResponse` hijacks
+// BEFORE writing the 101 status, which the cloudflared HTTP/2 response
+// writer rejects -- the failure mode the production deployment hits.
 func TestHTTPRouteBackendProtocolWebSocket(t *testing.T) {
 	cfg := loadTestConfig()
 	k8sClient := newK8sClient(t, cfg.KubeContext)
@@ -140,6 +150,211 @@ func TestHTTPRouteBackendProtocolWebSocket(t *testing.T) {
 
 	assert.Equal(t, textPayload, textReply,
 		"echo round-trip through Cloudflare edge + tunnel + proxy + echo-basic backend must preserve payload verbatim")
+}
+
+// errProxySyncNotConverged exists primarily to satisfy err113's
+// "no dynamic errors" rule -- lifts the per-iteration status-code
+// surface out of a `fmt.Errorf("got status %d", ...)` literal and
+// into a wrapped sentinel. The wrapped status code surfaces in the
+// t.Logf line and the final require.NotNil message. Symbolic
+// `errors.Is` callers are not needed and not present.
+var errProxySyncNotConverged = errors.New("proxy sync not converged yet")
+
+// TestHTTPRouteBackendProtocolWebSocket_AppliesResponseFilters proves end
+// to end through the production Cloudflare Tunnel that a route-level
+// ResponseHeaderModifier filter applies to the WebSocket 101 response.
+// The unit + integration tests cover the contract inside the proxy,
+// but only an e2e run can confirm the filter-modified header survives
+// cloudflared's HTTP/2 ResponseUserHeaders blob and Cloudflare's edge
+// HTTP/1.1 re-serialization back to the client.
+//
+// Mechanism: stand up a separate ws backend (echo-v1-ws-filtered on
+// port 8083) and an HTTPRoute carrying a ResponseHeaderModifier.Add
+// filter. Then dial wss://<tunnel hostname>/ws-filtered manually --
+// tls.Dial + raw HTTP/1.1 upgrade request -- so the test can read
+// the 101 response and inspect the headers Cloudflare delivers. The
+// websocket.Dial helper used by the sibling test consumes the 101
+// internally and exposes no way to assert on it.
+//
+// Without ApplyResponseFilters wired into the upgrade path this test
+// fails because proxyWebSocketUpgrade used to bypass
+// httputil.ReverseProxy.ModifyResponse,
+// dropping the filter pipeline on the 101 path -- the client sees the
+// backend's original headers (no X-CF-Tunnel-E2E-Added) and the
+// assertion fails loudly.
+func TestHTTPRouteBackendProtocolWebSocket_AppliesResponseFilters(t *testing.T) {
+	cfg := loadTestConfig()
+	k8sClient := newK8sClient(t, cfg.KubeContext)
+
+	setupTestNamespace(t, k8sClient, cfg)
+	setupEchoBackends(t, k8sClient, cfg)
+	setupGateway(t, k8sClient, cfg)
+	deleteAllRoutes(t, k8sClient, cfg)
+
+	// Sibling service with a distinct port so the cluster-side state is
+	// independent of TestHTTPRouteBackendProtocolWebSocket. The path is
+	// /ws because that's where echo-basic serves its WebSocket handler;
+	// echo-basic responds 200 for any other path, which would mask the
+	// fix this test is meant to pin. Co-existence with the sibling test
+	// is safe because each test's deleteAllRoutes cleanup runs before
+	// the next test starts.
+	const (
+		wsServiceName = "echo-v1-ws-filtered"
+		wsServicePort = int32(8083)
+		filteredPath  = "/ws"
+		addedHeader   = "X-Cf-Tunnel-E2e-Added"
+		addedValue    = "yes"
+	)
+
+	setupWSBackendService(t, k8sClient, cfg.TestNamespace, wsServiceName, "echo-v1", wsServicePort)
+	t.Cleanup(func() { teardownWSBackendService(t, k8sClient, cfg.TestNamespace, wsServiceName) })
+
+	headerName := gatewayv1.HTTPHeaderName(addedHeader)
+	route := buildHTTPRoute("ws-backend-filtered", cfg, []gatewayv1.HTTPRouteRule{
+		{
+			Matches: []gatewayv1.HTTPRouteMatch{{Path: pathPrefix(filteredPath)}},
+			Filters: []gatewayv1.HTTPRouteFilter{
+				{
+					Type: gatewayv1.HTTPRouteFilterResponseHeaderModifier,
+					ResponseHeaderModifier: &gatewayv1.HTTPHeaderFilter{
+						Add: []gatewayv1.HTTPHeader{{Name: headerName, Value: addedValue}},
+					},
+				},
+			},
+			BackendRefs: []gatewayv1.HTTPBackendRef{backendRef(wsServiceName, wsServicePort, nil)},
+		},
+	})
+	createHTTPRoute(t, k8sClient, route)
+	t.Cleanup(func() { deleteAllRoutes(t, k8sClient, cfg) })
+
+	const (
+		dialTimeout  = 120 * time.Second
+		dialInterval = 3 * time.Second
+	)
+
+	deadline := time.Now().Add(dialTimeout)
+
+	var (
+		resp        *http.Response
+		lastDialErr error
+	)
+
+	var attemptConn net.Conn
+
+	for time.Now().Before(deadline) {
+		r, c, dialErr := readWSUpgradeResponseThroughTunnel(cfg.TunnelHostname, filteredPath)
+		if dialErr != nil {
+			lastDialErr = dialErr
+			t.Logf("WS upgrade dial through tunnel not ready yet: %v", dialErr)
+			time.Sleep(dialInterval)
+
+			continue
+		}
+
+		// 101 means the route is in the proxy AND the upgrade
+		// succeeded. Anything else (typically 404 during proxy
+		// sync) is transient -- retry until the proxy picks up the
+		// new route. Closing the intermediate raw conn + response
+		// body keeps per-iteration TLS sockets from leaking
+		// (bufio.NewReader does not propagate Close to the
+		// underlying conn, so resp.Body.Close on its own would not
+		// free the FD).
+		if r.StatusCode == http.StatusSwitchingProtocols {
+			resp = r
+			attemptConn = c
+
+			break
+		}
+
+		lastDialErr = fmt.Errorf("%w: got status %d", errProxySyncNotConverged, r.StatusCode)
+		_ = r.Body.Close()
+		_ = c.Close()
+		t.Logf("%v", lastDialErr)
+		time.Sleep(dialInterval)
+	}
+
+	require.NotNil(t, resp,
+		"WS upgrade through Cloudflare Tunnel must reach a 101 within %s; last error: %v",
+		dialTimeout, lastDialErr)
+
+	t.Cleanup(func() {
+		_ = resp.Body.Close()
+		_ = attemptConn.Close()
+	})
+
+	require.Equal(t, http.StatusSwitchingProtocols, resp.StatusCode,
+		"proxy must propagate the backend's 101 status verbatim through the tunnel")
+	assert.Equal(t, addedValue, resp.Header.Get(addedHeader),
+		"ResponseHeaderModifier.Add must inject %q into the 101 served through the tunnel — "+
+			"the unit / integration tests cover the contract inside the proxy, but only an "+
+			"e2e run can confirm cloudflared's HTTP/2 ResponseUserHeaders blob and Cloudflare's "+
+			"edge re-serialization preserve the filter-added header end-to-end",
+		addedHeader)
+}
+
+// readWSUpgradeResponseThroughTunnel performs the WS upgrade handshake
+// against the Cloudflare edge by hand: TLS dial, write the upgrade
+// request with Host = tunnel hostname, parse the 101 response with
+// http.ReadResponse. Returns the raw response AND the underlying conn
+// so callers can inspect headers and reliably close the TCP+TLS
+// socket -- bufio.NewReader does not propagate Close to the wrapped
+// conn, so closing only resp.Body would leak an FD per call. Used by
+// TestHTTPRouteBackendProtocolWebSocket_AppliesResponseFilters where
+// websocket.Dial would consume the 101 internally and hide it from
+// the assertion.
+//
+// The HTTP/1.1 upgrade request shape mirrors what the existing
+// websocket.DialConfig call sends, except the Sec-WebSocket-Key uses
+// the RFC 6455 §1.3 example so any reference checks (e.g. expected
+// Sec-WebSocket-Accept) are deterministic.
+func readWSUpgradeResponseThroughTunnel(tunnelHostname, path string) (*http.Response, net.Conn, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	tlsDialer := &tls.Dialer{
+		NetDialer: &net.Dialer{Timeout: 10 * time.Second},
+		Config: &tls.Config{
+			MinVersion: tls.VersionTLS12,
+			ServerName: tunnelHostname,
+		},
+	}
+
+	rawConn, err := tlsDialer.DialContext(ctx, "tcp", tunnelHostname+":443")
+	if err != nil {
+		return nil, nil, fmt.Errorf("tls dial to %s:443: %w", tunnelHostname, err)
+	}
+
+	req := "GET " + path + " HTTP/1.1\r\n" +
+		"Host: " + tunnelHostname + "\r\n" +
+		"Upgrade: websocket\r\n" +
+		"Connection: Upgrade\r\n" +
+		"Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n" +
+		"Sec-WebSocket-Version: 13\r\n" +
+		"Origin: https://" + tunnelHostname + "\r\n" +
+		"\r\n"
+
+	_, err = rawConn.Write([]byte(req))
+	if err != nil {
+		_ = rawConn.Close()
+
+		return nil, nil, fmt.Errorf("write upgrade request: %w", err)
+	}
+
+	deadlineErr := rawConn.SetReadDeadline(time.Now().Add(10 * time.Second))
+	if deadlineErr != nil {
+		_ = rawConn.Close()
+
+		return nil, nil, fmt.Errorf("set read deadline: %w", deadlineErr)
+	}
+
+	resp, err := http.ReadResponse(bufio.NewReader(rawConn), nil)
+	if err != nil {
+		_ = rawConn.Close()
+
+		return nil, nil, fmt.Errorf("read 101 response: %w", err)
+	}
+
+	return resp, rawConn, nil
 }
 
 // setupWSBackendService provisions a Service that exposes a ws-appProtocol
