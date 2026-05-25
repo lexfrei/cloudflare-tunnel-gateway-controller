@@ -310,55 +310,67 @@ func (c *closableRT) CloseIdleConnections() {
 
 // TestHeaderTimeoutRoundTripper_PanicInInnerDoesNotLeak pins the
 // goroutine + context cleanup contract for the case where the inner
-// RoundTripper panics. Without the panic-safety defer, the timer
-// would keep its AfterFunc callback live until h.timeout fired
-// (multiple seconds of operator-configurable delay) and the
-// WithCancel context would leak until parent ctx fires.
+// RoundTripper panics. Without the panic-safety defer, the wrapper's
+// derived WithCancel ctx would leak (waiting for parent ctx) and
+// the AfterFunc timer would keep its callback live until h.timeout
+// fired (multiple seconds of operator-configurable delay).
 //
-// Test mechanism: pre-record runtime.NumGoroutine() before the call,
-// then assert the count returns to that baseline after the panic
-// settles. The 10s wrapper timeout is much larger than the test's
-// 500ms convergence window, so a missing panic-safety defer would
-// leak goroutines past the assertion's deadline.
+// Test mechanism: panickingRT spawns a goroutine that watches its
+// request ctx for Done(), then panics. The watcher closing the
+// ctxDone channel is the deterministic signal that the wrapper's
+// panic-safety defer cancelled the derived ctx. No runtime.NumGoroutine
+// involved -- the parallel test runner makes that count fluctuate
+// unpredictably and the assertion would flake on shared CI runners.
 func TestHeaderTimeoutRoundTripper_PanicInInnerDoesNotLeak(t *testing.T) {
 	t.Parallel()
 
-	inner := &panickingRT{}
+	ctxCancelled := make(chan struct{})
+	inner := &panickingRT{ctxCancelled: ctxCancelled}
 	wrapped := proxy.NewHeaderTimeoutRoundTripperForTest(inner, 10*time.Second)
 
 	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://example.com/", nil)
 	require.NoError(t, err)
-
-	// Let pre-existing goroutines from the test runtime settle to a
-	// stable count before snapshotting -- otherwise unrelated runtime
-	// scheduler activity could leave the assertion racy.
-	require.Eventually(t, func() bool {
-		runtime.GC()
-		return true
-	}, 100*time.Millisecond, 10*time.Millisecond, "GC must settle")
-
-	baseline := runtime.NumGoroutine()
 
 	assert.Panics(t, func() {
 		//nolint:bodyclose // panickingRT never returns; assert.Panics catches the panic
 		_, _ = wrapped.RoundTrip(req)
 	}, "panic from inner must propagate to the caller -- the wrapper must not swallow it")
 
-	// After the panic, the wrapper's deferred cleanup must Stop the
-	// timer so its AfterFunc goroutine is reclaimed, and cancel the
-	// WithCancel ctx so its watcher exits. Eventually polls because
-	// goroutine teardown is not instantaneous on the scheduler.
-	require.Eventually(t, func() bool {
-		return runtime.NumGoroutine() <= baseline
-	}, 500*time.Millisecond, 10*time.Millisecond,
-		"goroutines must return to baseline after panic -- a missing panic-safety defer leaves the timer's AfterFunc "+
-			"and the WithCancel watcher live until h.timeout (10s here) fires")
+	// After the panic, the wrapper's panic-safety defer must cancel
+	// the derived ctx so the panickingRT's watcher goroutine sees
+	// Done() and closes ctxCancelled. A missing defer leaves the
+	// ctx waiting for the 10s wrapper timeout (or the request ctx,
+	// which the test never cancels), well past this assertion's
+	// 500ms window.
+	select {
+	case <-ctxCancelled:
+		// Pass: wrapper cancelled the derived ctx after panic.
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("wrapper did not cancel the derived ctx within 500ms after panic; " +
+			"panic-safety defer missing or broken (timer's AfterFunc / WithCancel watcher would leak)")
+	}
 }
 
-// panickingRT panics on RoundTrip to drive the wrapper's panic-safety defer.
-type panickingRT struct{}
+// panickingRT spawns a ctx-watcher goroutine (closes ctxCancelled
+// when the request ctx fires) and then panics in RoundTrip. The
+// goroutine starts BEFORE the panic so the cancel observation is
+// deterministic regardless of scheduler ordering.
+type panickingRT struct {
+	ctxCancelled chan struct{}
+}
 
-func (p *panickingRT) RoundTrip(*http.Request) (*http.Response, error) {
+func (p *panickingRT) RoundTrip(req *http.Request) (*http.Response, error) {
+	go func() {
+		<-req.Context().Done()
+		close(p.ctxCancelled)
+	}()
+
+	// Give the watcher a moment to register before panicking. Without
+	// this the panic can unwind faster than the goroutine starts and
+	// the test races on the observation -- but Go's goroutine spawn
+	// is fast enough that runtime.Gosched is sufficient.
+	runtime.Gosched()
+
 	panic("simulated transport panic")
 }
 

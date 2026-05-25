@@ -60,6 +60,12 @@ spec:
             - name: PROXY_WS_HANDSHAKE_TIMEOUT
               value: {{ . | quote }}
             {{- end }}
+            {{- if .Values.proxy.accessLog.enabled }}
+            - name: PROXY_ACCESS_LOG_ENABLED
+              value: "true"
+            - name: PROXY_ACCESS_LOG_SAMPLING_RATE
+              value: {{ .Values.proxy.accessLog.samplingRate | quote }}
+            {{- end }}
           ports:
             - name: config-api
               containerPort: {{ .Values.proxy.configAPIPort }}

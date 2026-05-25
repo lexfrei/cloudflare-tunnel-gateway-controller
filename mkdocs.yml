@@ -179,6 +179,7 @@ nav:
       - operations/index.md
       - Troubleshooting: operations/troubleshooting.md
       - Metrics & Alerting: operations/metrics.md
+      - Access Logging: operations/access-logging.md
       - Manual Installation: operations/manual-installation.md
   - Development:
       - development/index.md

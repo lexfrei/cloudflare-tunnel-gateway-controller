@@ -257,3 +257,135 @@ func TestWSHandlerOptions_OptionCount(t *testing.T) {
 		})
 	}
 }
+
+// TestAccessLogEnabled_Matrix pins the env-var truthy form list:
+// "1" / "true" / "TRUE" / " true " enable; unset / "" / "0" / "false"
+// / garbage disable. Keeps the YAML-bool vs shell-flag conventions
+// interchangeable so chart users and operators don't get bitten by
+// one of the two not working.
+func TestAccessLogEnabled_Matrix(t *testing.T) {
+	tests := []struct {
+		name string
+		envv string
+		want bool
+		set  bool
+	}{
+		{name: "unset is disabled", set: false, want: false},
+		{name: "empty is disabled", envv: "", set: true, want: false},
+		{name: "0 is disabled", envv: "0", set: true, want: false},
+		{name: "false is disabled", envv: "false", set: true, want: false},
+		{name: "1 is enabled", envv: "1", set: true, want: true},
+		{name: "true is enabled", envv: "true", set: true, want: true},
+		{name: "TRUE is enabled (case-insensitive)", envv: "TRUE", set: true, want: true},
+		{name: "  true   is enabled (trimmed)", envv: "  true   ", set: true, want: true},
+		{name: "garbage is disabled (typo-safe)", envv: "yesplease", set: true, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// t.Parallel skipped: t.Setenv mutates process env, must run sequentially.
+			if tt.set {
+				t.Setenv("PROXY_ACCESS_LOG_ENABLED", tt.envv)
+			} else {
+				_ = os.Unsetenv("PROXY_ACCESS_LOG_ENABLED")
+			}
+
+			assert.Equal(t, tt.want, accessLogEnabled(),
+				"PROXY_ACCESS_LOG_ENABLED=%q must yield enabled=%v", tt.envv, tt.want)
+		})
+	}
+}
+
+// TestParseAccessLogSamplingRate_Matrix pins the parse contract:
+// unset → 1.0 (log everything when feature enabled); valid float
+// passes through; parse failure → 1.0 + WARN. Out-of-range values
+// (negative, >1) intentionally pass through; downstream
+// shouldSampleAccessLog clamps them so the symptom is "always log"
+// or "errors-only" rather than silent "log nothing".
+func TestParseAccessLogSamplingRate_Matrix(t *testing.T) {
+	tests := []struct {
+		name     string
+		envv     string
+		set      bool
+		want     float64
+		wantWarn bool
+	}{
+		{name: "unset defaults to 1.0", set: false, want: 1.0},
+		{name: "empty defaults to 1.0", envv: "", set: true, want: 1.0},
+		{name: "0.5 passes through", envv: "0.5", set: true, want: 0.5},
+		{name: "0 passes through", envv: "0", set: true, want: 0},
+		{name: "1 passes through", envv: "1", set: true, want: 1.0},
+		{name: "negative passes through (clamped downstream)", envv: "-0.5", set: true, want: -0.5},
+		{name: "above 1 passes through (clamped downstream)", envv: "50", set: true, want: 50},
+		{name: "garbage defaults to 1.0 and warns", envv: "halfish", set: true, want: 1.0, wantWarn: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.set {
+				t.Setenv("PROXY_ACCESS_LOG_SAMPLING_RATE", tt.envv)
+			} else {
+				_ = os.Unsetenv("PROXY_ACCESS_LOG_SAMPLING_RATE")
+			}
+
+			var logBuf bytes.Buffer
+
+			logger := slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+
+			got := parseAccessLogSamplingRate(logger)
+			// InDelta over InEpsilon: InEpsilon barfs when expected=0
+			// (relative error denominator collapses). Our parse returns
+			// exact strconv values, so absolute delta = 0 is the
+			// honest assertion shape.
+			assert.InDelta(t, tt.want, got, 1e-9,
+				"PROXY_ACCESS_LOG_SAMPLING_RATE=%q parse must yield %v, got %v", tt.envv, tt.want, got)
+
+			if tt.wantWarn {
+				assert.Contains(t, logBuf.String(), "failed to parse",
+					"unparseable sampling rate must surface a WARN")
+			} else {
+				assert.NotContains(t, logBuf.String(), "failed to parse",
+					"parseable / unset sampling rate must NOT warn")
+			}
+		})
+	}
+}
+
+// TestHandlerOptions_AccessLogOnlyWhenEnabled pins the option-list
+// composition: ws options ALWAYS pass through (they have their own
+// > 0 gate inside the With* helpers); the access-log option appears
+// iff PROXY_ACCESS_LOG_ENABLED is truthy. Without this gate the
+// access-log option would be a no-op when the logger is nil
+// (proxy.WithAccessLog handles nil), but emitting a nil entry into
+// the slice would still cost an extra function call per request on
+// the cold-start path -- the gate keeps the slice precisely sized.
+func TestHandlerOptions_AccessLogOnlyWhenEnabled(t *testing.T) {
+	tests := []struct {
+		name           string
+		enabled        string
+		setEnabled     bool
+		wantOptionsMin int
+	}{
+		{name: "disabled by default", setEnabled: false, wantOptionsMin: 0},
+		{name: "enabled=true adds the access-log option", enabled: "true", setEnabled: true, wantOptionsMin: 1},
+		{name: "enabled=0 keeps base ws options only", enabled: "0", setEnabled: true, wantOptionsMin: 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.setEnabled {
+				t.Setenv("PROXY_ACCESS_LOG_ENABLED", tt.enabled)
+			} else {
+				_ = os.Unsetenv("PROXY_ACCESS_LOG_ENABLED")
+			}
+
+			_ = os.Unsetenv("PROXY_WS_DIAL_TIMEOUT")
+			_ = os.Unsetenv("PROXY_WS_HANDSHAKE_TIMEOUT")
+
+			logger := slog.New(slog.NewTextHandler(&bytes.Buffer{}, &slog.HandlerOptions{Level: slog.LevelWarn}))
+
+			opts := handlerOptions(logger)
+			assert.GreaterOrEqual(t, len(opts), tt.wantOptionsMin)
+		})
+	}
+}

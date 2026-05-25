@@ -5,12 +5,14 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/http/httputil"
 	"net/url"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -694,4 +696,126 @@ func TestHandler_StreamingResponseSurvivesRequestTimeout_TunnelMode(t *testing.T
 
 	assert.Greater(t, elapsed, 1500*time.Millisecond,
 		"test must run longer than 1.5s -- shorter means the body was truncated before the backend finished")
+}
+
+// TestHandler_AccessLog_TunnelMode_EmitsLineThroughCloudflaredWriter
+// pins that the access-log writer wrapping plays correctly with
+// cloudflared's HTTP/2 response writer. Without this test the
+// writer-wrap layer is only validated against httptest.NewRecorder
+// (HTTP/1.1 semantics), missing the production path. Per CLAUDE.md
+// `Validate the tunnel transport, not just httptest`.
+//
+// Asserts: a normal request through ServeHTTP with WithAccessLog
+// enabled and the fake cloudflared writer as the outer ResponseWriter
+// (1) succeeds on the fake (status=200 reaches it), (2) emits one
+// access-log JSON line with the right status / bytes_written /
+// duration_ms / fields, (3) does not break the fake's contract
+// (statusWritten=true, no double WriteHeader warnings).
+func TestHandler_AccessLog_TunnelMode_EmitsLineThroughCloudflaredWriter(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+
+	logger := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+
+	router := proxy.NewRouter()
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("pong"))
+	}))
+	defer backend.Close()
+
+	require.NoError(t, router.UpdateConfig(&proxy.Config{
+		Version: 1,
+		Rules: []proxy.RouteRule{{
+			Hostnames: []string{"app.example.com"},
+			Backends:  []proxy.BackendRef{{URL: backend.URL, Weight: 1}},
+		}},
+	}))
+
+	handler := proxy.NewHandler(router, proxy.WithAccessLog(logger, 1.0))
+
+	fake := newFakeCloudflaredRespWriter()
+	t.Cleanup(func() { _ = fake.serverSide.Close(); _ = fake.clientSide.Close() })
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://app.example.com/api/ping?trace=true", nil)
+
+	handler.ServeHTTP(fake, req)
+
+	assert.Equal(t, http.StatusOK, fake.Status(),
+		"non-WS request through the HTTP/2 writer must reach 200")
+	assert.Equal(t, []byte("pong"), fake.Body(),
+		"response body must reach the cloudflared writer unmodified by the access-log wrapper")
+
+	line := buf.String()
+	require.NotEmpty(t, line, "rate=1.0 + 200 response must emit one access log line through the wrapped HTTP/2 writer")
+
+	for _, want := range []string{
+		`"status":200`,
+		`"path":"/api/ping"`,
+		`"query":"trace=true"`,
+		`"bytes_written":4`,
+	} {
+		assert.Contains(t, line, want,
+			"access log line through cloudflared writer must contain field: %s", want)
+	}
+}
+
+// TestHandler_AccessLog_TunnelMode_SkipsStatus101OnHijackPath pins
+// the WS-upgrade carve-out specifically on the cloudflared HTTP/2
+// writer path. pipeWebSocket emits WriteHeader(101) then Hijack;
+// the wrapper records 101 (before cloudflared's 101→200 translation
+// because the wrapper sits OUTSIDE the cloudflared writer in the
+// call chain), and the deferred maybeEmitAccessLog must skip
+// emission so a WS upgrade through the HTTP/2 writer does NOT
+// produce a misleading "duration_ms == session length" log line.
+//
+// This test exercises the wrapper + cloudflared writer composition
+// directly because the full WS proxy stack would require a real
+// gorilla/x/net WS backend that's mostly orthogonal to the
+// access-log carve-out being pinned.
+func TestHandler_AccessLog_TunnelMode_SkipsStatus101OnHijackPath(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+
+	logger := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+
+	router := proxy.NewRouter()
+	handler := proxy.NewHandler(router, proxy.WithAccessLog(logger, 1.0))
+
+	fake := newFakeCloudflaredRespWriter()
+	t.Cleanup(func() { _ = fake.serverSide.Close(); _ = fake.clientSide.Close() })
+
+	counted := proxy.NewCountingResponseWriterForTest(fake)
+
+	// Mirror pipeWebSocket sequence: WriteHeader(101) THEN Hijack.
+	counted.WriteHeader(http.StatusSwitchingProtocols)
+
+	// Validate that the wrapper preserved 101 in its own counter
+	// (so the skip carve-out can fire) AND that the underlying
+	// cloudflared writer received the 101→200 translation
+	// (otherwise the production WS upgrade would fail on the wire).
+	assert.Equal(t, http.StatusSwitchingProtocols, counted.Status(),
+		"wrapper must preserve the original 101 so maybeEmitAccessLog's status check fires")
+	assert.Equal(t, http.StatusOK, fake.Status(),
+		"cloudflared writer must see the 101→200 translation (production HTTP/2 framing)")
+
+	// counted.Hijack must delegate to fake.Hijack and satisfy
+	// fake's statusWritten precondition (which our WriteHeader
+	// pass-through above set).
+	conn, brw, err := http.ResponseWriter(counted).(http.Hijacker).Hijack()
+	require.NoError(t, err, "Hijack through wrapper must succeed when inner is cloudflared writer with statusWritten=true")
+	require.NotNil(t, conn)
+	require.NotNil(t, brw)
+	assert.True(t, fake.Hijacked(), "fake cloudflared writer must record the Hijack happened through the wrapper")
+
+	// Now invoke the deferred emission directly (mirrors what
+	// ServeHTTP's defer would do at the end of pipeWebSocket).
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://app.example.com/ws", nil)
+	proxy.MaybeEmitAccessLogForTest(handler, counted, req, time.Now())
+
+	assert.Empty(t, strings.TrimSpace(buf.String()),
+		"WS upgrade through the cloudflared writer must NOT produce an access log line -- duration_ms / bytes_written would mislead")
 }

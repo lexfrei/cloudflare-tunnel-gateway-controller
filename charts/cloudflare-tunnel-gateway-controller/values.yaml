@@ -352,6 +352,24 @@ proxy:
     # -- 101-Switching-Protocols read deadline (Go duration).
     # Empty preserves the 30s default.
     handshakeTimeout: ""
+  # -- Structured per-request access logging on the in-process proxy.
+  # Off by default (zero allocation on the hot path). When enabled,
+  # emits one JSON line per request via the proxy's stdout slog
+  # (method, host, path, status, bytes_written, duration_ms,
+  # user_agent). Cluster logging stack scrapes stdout already, so no
+  # additional sink wiring is needed.
+  accessLog:
+    # -- Enable per-request access logging. Defaults to false; setting
+    # it true on a high-traffic gateway will materially increase log
+    # volume -- pair with samplingRate < 1.0.
+    enabled: false
+    # -- Fraction of non-5xx requests to log when enabled, in [0, 1].
+    # 1.0 logs everything; 0.0 logs only 5xx (server-side failures
+    # are always recorded regardless of rate so the operator never
+    # loses error signal). The proxy clamps out-of-range values:
+    # a typo like `samplingRate: 50` degrades to "always log" rather
+    # than "silently log nothing".
+    samplingRate: 1.0
   # -- Container resource requests and limits
   resources:
     limits:

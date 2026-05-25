@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math/rand/v2"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -49,6 +50,26 @@ type Handler struct {
 	// backend's 101 Switching Protocols response. Zero means "use
 	// defaultWSHandshakeReadTimeout". Set via WithWSHandshakeReadTimeout.
 	wsHandshakeReadTimeout time.Duration
+
+	// accessLog, when non-nil, emits a structured per-request log line
+	// at the deferred tail of ServeHTTP. See maybeEmitAccessLog for the
+	// exact field set. Nil = disabled = zero log volume on the happy
+	// path (the wrapper, defer, and timer.Now are all gated on
+	// non-nil). Set via WithAccessLog.
+	accessLog *slog.Logger
+	// accessLogSamplingRate is the [0,1] fraction of non-5xx requests
+	// that get logged when accessLog is set. 5xx is always logged
+	// regardless. Set via WithAccessLog; clamped by
+	// shouldSampleAccessLog so operator typos (e.g. 50 instead of 0.5)
+	// degrade to "always log" rather than "silently log nothing".
+	accessLogSamplingRate float64
+	// accessLogRandFn is the random source for sampling. Defaults to
+	// math/rand/v2.Float64 in NewHandler. Tests don't override this
+	// directly on a constructed Handler -- the per-fraction sampling
+	// contract is pinned by ShouldSampleAccessLogForTest, which calls
+	// shouldSampleAccessLog with a deterministic randFn argument
+	// without going through the Handler at all.
+	accessLogRandFn func() float64
 }
 
 // HandlerOption configures a Handler at construction time. Use the
@@ -74,6 +95,29 @@ func WithWSHandshakeReadTimeout(d time.Duration) HandlerOption {
 		if d > 0 {
 			h.wsHandshakeReadTimeout = d
 		}
+	}
+}
+
+// WithAccessLog enables structured per-request access logging on the
+// handler. Nil logger disables (the option becomes a no-op) so the
+// happy path stays zero-cost. samplingRate is the fraction of non-5xx
+// requests to log (5xx is always logged regardless); clamped to [0,1]
+// by shouldSampleAccessLog so operator typos degrade to "always log"
+// rather than "silently log nothing".
+//
+// Emitted fields: method, host, path, query, status, bytes_written,
+// duration_ms, user_agent. Route-binding context (matched hostname,
+// backend URL) is NOT plumbed today -- the router result isn't
+// visible to the deferred emission; a future enhancement can add a
+// route_id once the router exposes a stable identifier.
+func WithAccessLog(logger *slog.Logger, samplingRate float64) HandlerOption {
+	return func(handler *Handler) {
+		if logger == nil {
+			return
+		}
+
+		handler.accessLog = logger
+		handler.accessLogSamplingRate = samplingRate
 	}
 }
 
@@ -174,7 +218,8 @@ func tlsFingerprint(backendTLS *BackendTLSConfig) string {
 // defaults in place.
 func NewHandler(router *Router, opts ...HandlerOption) *Handler {
 	handler := &Handler{
-		router: router,
+		router:          router,
+		accessLogRandFn: rand.Float64,
 	}
 
 	for _, opt := range opts {
@@ -186,6 +231,32 @@ func NewHandler(router *Router, opts ...HandlerOption) *Handler {
 
 // ServeHTTP implements http.Handler.
 func (h *Handler) ServeHTTP(writer http.ResponseWriter, req *http.Request) {
+	// Access-log wrapping: zero cost when accessLog is nil -- the
+	// wrapper, defer, and time.Now() ALL sit inside the if branch
+	// so the disabled path skips them entirely.
+	//
+	// pre-filter snapshot: URL rewrite filters mutate req.URL.Path
+	// in place (see filter.go writeRewritePathFilter), so a deferred
+	// closure capturing `req` would log the rewritten path -- the
+	// operator-visible request path the client actually asked for
+	// would be invisible. Snapshot here before any filter runs so
+	// the access log shows what the client sent.
+	if h.accessLog != nil {
+		counted := newCountingResponseWriter(writer)
+		writer = counted
+
+		start := time.Now()
+		snapshot := &accessLogSnapshot{
+			method:    req.Method,
+			host:      req.Host,
+			path:      req.URL.Path,
+			query:     req.URL.RawQuery,
+			userAgent: req.UserAgent(),
+		}
+
+		defer h.maybeEmitAccessLog(counted, req, snapshot, start)
+	}
+
 	result := h.router.Route(req)
 	if result == nil {
 		http.Error(writer, "no matching route", http.StatusNotFound)
