@@ -37,6 +37,11 @@ temp/
 *.log
 site/
 
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+
 # Kubebuilder
 bin/
 testbin/

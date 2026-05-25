@@ -9,7 +9,7 @@
     "helpers:pinGitHubActionDigests"
   ],
   "labels": [
-    "dependencies"
+    "area/dependencies"
   ],
   "platformAutomerge": true,
   "automergeStrategy": "squash",
