@@ -453,10 +453,10 @@ func newH2CDialer() *net.Dialer {
 // headerTimeout (zero = unbounded) flows into the resulting *http.Transport
 // as ResponseHeaderTimeout for the cleartext and TLS paths. The h2c
 // path uses x/net/http2.Transport which does not expose an equivalent
-// knob; per-rule timeouts therefore do not bound the header phase on
-// h2c backends today (tracked as a follow-up). The pre-stream conn
-// dial is still bounded by the h2c dialer's Timeout, so a fully dead
-// backend still fails fast.
+// knob; we wrap that transport with headerTimeoutRoundTripper so the
+// same "bound time-to-first-response-byte but stream the body freely"
+// contract holds. The pre-stream conn dial is still bounded by the
+// h2c dialer's Timeout, so a fully dead backend still fails fast.
 func newTransport(protocol BackendProtocol, backendTLS *BackendTLSConfig, headerTimeout time.Duration) http.RoundTripper {
 	if backendTLS != nil {
 		return newTLSTransport(backendTLS, headerTimeout)
@@ -465,17 +465,7 @@ func newTransport(protocol BackendProtocol, backendTLS *BackendTLSConfig, header
 	if protocol == BackendProtocolH2C {
 		dialer := newH2CDialer()
 
-		//nolint:godox // FIXME(#270) carries an issue-tracker reference and is the project's tracked-follow-up pattern
-		// FIXME(#270): per-rule headerTimeout is intentionally NOT
-		// applied here -- golang.org/x/net/http2.Transport has no
-		// ResponseHeaderTimeout-equivalent knob, so SSE / chunked /
-		// gRPC streaming bodies over h2c are already safe from the
-		// streaming-truncation bug this fix addresses for the
-		// stdlib path. The cost is that a slow-to-respond h2c
-		// backend is bounded only by the dialer's connect timeout,
-		// not by the per-rule header deadline. Issue #270 tracks
-		// the longer-term fix.
-		return &http2.Transport{
+		h2cTransport := &http2.Transport{
 			AllowHTTP: true,
 			DialTLSContext: func(ctx context.Context, network, addr string, _ *tls.Config) (net.Conn, error) {
 				return dialer.DialContext(ctx, network, addr)
@@ -483,6 +473,12 @@ func newTransport(protocol BackendProtocol, backendTLS *BackendTLSConfig, header
 			ReadIdleTimeout: h2cReadIdleTimeout,
 			PingTimeout:     h2cPingTimeout,
 		}
+
+		// x/net/http2.Transport has no ResponseHeaderTimeout-equivalent
+		// knob, so we wrap it. Streaming bodies (SSE / chunked / gRPC
+		// server-streaming) are preserved past headerTimeout by the
+		// wrapper's body-Close-driven cancellation contract.
+		return newHeaderTimeoutRoundTripper(h2cTransport, headerTimeout)
 	}
 
 	if defaultTransport, ok := http.DefaultTransport.(*http.Transport); ok {
@@ -714,6 +710,11 @@ func errorHandler(writer http.ResponseWriter, _ *http.Request, err error) {
 	// satisfies the Timeout() bool method but is NOT a wrapped
 	// context.DeadlineExceeded -- check the interface explicitly so a
 	// header-timeout fires 504 just like a request-context deadline.
+	// This branch is live ONLY for the H/1.1 and TLS paths; the h2c
+	// path goes through headerTimeoutRoundTripper which translates its
+	// timer-fired failure to context.DeadlineExceeded and is caught by
+	// the earlier branch above. Do NOT delete this branch as
+	// "redundant" -- removing it silently breaks the H/1.1 path.
 	var timeoutErr interface{ Timeout() bool }
 	if errors.As(err, &timeoutErr) && timeoutErr.Timeout() {
 		http.Error(writer, "gateway timeout", http.StatusGatewayTimeout)

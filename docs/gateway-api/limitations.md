@@ -219,7 +219,7 @@ The same shift removes the slow-loris-upload protection the old context-based de
 
 WebSocket routes are naturally exempt: WS upgrades flow through the dedicated `proxyWebSocketUpgrade` path (because cloudflared's HTTP/2 response writer cannot be hijacked the way stdlib `httputil.ReverseProxy` expects), and that path bypasses the cached transport entirely. Once the upgrade completes, two `io.Copy` goroutines pipe bytes bidirectionally between the hijacked client conn and the backend conn; they run until either side closes its conn.
 
-The `BackendProtocol: H2C` path uses `golang.org/x/net/http2.Transport`, which does not expose a `ResponseHeaderTimeout` knob. Per-rule timeouts therefore do not bound the header phase for h2c backends today; the h2c dialer's own connect timeout still catches a fully dead backend. Tracked as a follow-up.
+The `BackendProtocol: H2C` path uses `golang.org/x/net/http2.Transport`, which does not expose a `ResponseHeaderTimeout` knob. The proxy synthesises one by wrapping the h2c transport with a `headerTimeoutRoundTripper` that cancels the request context if response headers do not arrive within the per-rule deadline, then releases the cancellation on body Close so streaming bodies (SSE / chunked / gRPC server-streaming) survive past the deadline. The h2c dialer's own connect timeout still catches a fully dead backend.
 
 ## Backend mTLS (BackendTLSPolicy)
 
