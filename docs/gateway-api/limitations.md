@@ -234,30 +234,63 @@ wanted the TLS-protected variant all along).
 
 ### Interaction with `spec.rules[].timeouts`
 
-`timeouts.request` and `timeouts.backend` are HTTP-request-scoped deadlines.
-The proxy skips them only when BOTH of these hold:
+`timeouts.request` and `timeouts.backendRequest` are enforced as **header-only
+deadlines** on the backend transport (`http.Transport.ResponseHeaderTimeout`),
+not as full-request context deadlines. The deadline bounds only the wait
+for backend response headers; once headers arrive, the body streams
+freely. Both Gateway API knobs collapse onto the same transport-level
+header timeout because this proxy has no retry logic — a single backend
+attempt is the whole request. When both knobs are set the stricter
+(`min(Request, Backend)`) value wins.
 
-1. The operator declared at least one backend on the route as WebSocket-
-   capable via `appProtocol: kubernetes.io/ws` or `kubernetes.io/wss`
-   (for `timeouts.request`) or — for `timeouts.backend` — the specific
-   selected backend.
-2. The client request itself carries the HTTP/1.1 upgrade headers
-   (`Connection: Upgrade` + a non-empty `Upgrade:` value, per RFC 7230).
+This is a deliberate spec interpretation. The spec is underspecified on
+whether `timeouts.request` should kill an in-flight streaming response
+(Server-Sent Events, chunked transfer, large file downloads, gRPC
+server-streaming). A context-based deadline cancels the body read
+mid-stream and truncates the response at the timeout boundary, which is
+hostile to any streaming workload. The header-only deadline avoids that
+while still catching slow-to-respond backends in the dial-and-headers
+phase — exactly where timeouts are operationally useful.
 
-Both conditions matter. Gating only on the operator signal would skip
-timeouts for plain HTTP requests that happen to hit a WS-marked route;
-gating only on the client header would let any request bypass the route's
-declared deadlines by tacking on `Connection: Upgrade` — a slow-loris
-vector and a Gateway API spec violation on non-WebSocket routes.
+Backends that take longer than the deadline to send response headers
+get a 504 Gateway Timeout to the client (the transport's
+`ResponseHeaderTimeout` error is mapped to 504 in `errorHandler`,
+parallel to the existing 504 for `context.DeadlineExceeded`).
 
-Once a real WS upgrade completes, the proxy's dedicated upgrade path
-hands the conn pair to two `io.Copy` goroutines (bidirectional pipe
-between the hijacked client conn and the backend conn). The request
-context is no longer watched after hijack — the conns are detached
-from the HTTP request lifecycle. The gated skip ensures live
-WebSocket conns are not terminated at the timeout boundary on routes
-that legitimately serve them; the bidirectional pipe runs until
-either side closes its conn.
+Symmetric consequence on request uploads: per the stdlib godoc,
+`ResponseHeaderTimeout` starts measuring only _after_ the request body
+is fully written. A streaming or very large request upload (chunked
+PUT, multipart, gRPC client-streaming) is therefore NOT bounded by
+`timeouts.request` either. Operators who expected `timeouts.request`
+to act as an upload budget should know that the deadline starts only
+when the upload completes and the wait for response headers begins.
+The transport's connect timeout (dial / TLS handshake) still bounds
+the establishment phase.
+
+The same shift removes the slow-loris-upload protection the old
+context-based deadline incidentally provided: a malicious client that
+drip-feeds request body bytes will keep the proxy → backend conn
+open as long as it sends at least one byte before the underlying TCP
+read timeout. The Cloudflare edge in front of the tunnel has its own
+upload deadlines, so the operational risk in production is bounded
+by edge policy rather than by `timeouts.request`. Per-rule
+upload-phase deadlines are out of scope for this knob and would need
+a separate mechanism (e.g. a wrapping `io.Reader` with its own
+inter-byte deadline) if ever required.
+
+WebSocket routes are naturally exempt: WS upgrades flow through the
+dedicated `proxyWebSocketUpgrade` path (because cloudflared's HTTP/2
+response writer cannot be hijacked the way stdlib `httputil.ReverseProxy`
+expects), and that path bypasses the cached transport entirely. Once
+the upgrade completes, two `io.Copy` goroutines pipe bytes
+bidirectionally between the hijacked client conn and the backend conn;
+they run until either side closes its conn.
+
+The `BackendProtocol: H2C` path uses `golang.org/x/net/http2.Transport`,
+which does not expose a `ResponseHeaderTimeout` knob. Per-rule timeouts
+therefore do not bound the header phase for h2c backends today; the
+h2c dialer's own connect timeout still catches a fully dead backend.
+Tracked as a follow-up.
 
 ## Backend mTLS (BackendTLSPolicy)
 

@@ -39,7 +39,7 @@ import (
 // edge. Cloudflare terminates TLS and forwards a plaintext HTTP/1.1 request
 // to cloudflared. cloudflared invokes the proxy's `GatewayOriginProxy`. The
 // proxy matches the route, sees a Connection: Upgrade header pair, and -- via
-// `Handler.proxyToBackend`'s `shouldSkipUpgradeTimeout` gate -- routes the
+// `Handler.proxyToBackend`'s `shouldUseWebSocketUpgradePath` gate -- routes the
 // request to the custom `proxyWebSocketUpgrade` path instead of
 // `httputil.ReverseProxy`. The custom path dials the backend itself, parses
 // the 101 response, applies route-level ResponseFilters, then writes the 101
