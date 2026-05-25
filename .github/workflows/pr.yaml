@@ -428,10 +428,21 @@ jobs:
           yq --inplace ".proxy.image.repository = \"${PROXY_IMAGE_REPO}\"" "${CHART_DIR}/values.yaml"
           yq --inplace ".proxy.image.tag = \"${IMAGE_TAG}\"" "${CHART_DIR}/values.yaml"
 
+          # PR charts publish a moving tag (pr-NNN-1d): same name, different
+          # digest on each push. The stable-release default (IfNotPresent)
+          # would keep the cached image on the node, so a rolling restart
+          # after a CI rebuild would NOT pull the new build. Flip both
+          # pullPolicy defaults to Always for PR charts only -- the source
+          # values.yaml is untouched on master, so stable releases keep
+          # IfNotPresent (production sanity).
+          yq --inplace ".image.pullPolicy = \"Always\"" "${CHART_DIR}/values.yaml"
+          yq --inplace ".proxy.image.pullPolicy = \"Always\"" "${CHART_DIR}/values.yaml"
+
           echo "Modified chart version: ${CHART_VERSION}"
           echo "Modified appVersion: ${APP_VERSION}"
           echo "Modified controller image: ${CONTROLLER_IMAGE_REPO}:${IMAGE_TAG}"
           echo "Modified proxy image:      ${PROXY_IMAGE_REPO}:${IMAGE_TAG}"
+          echo "Modified pullPolicy: Always (controller + proxy)"
 
       - name: Validate values.yaml image overrides
         run: |
@@ -443,8 +454,10 @@ jobs:
 
           controller_repo=$(yq --exit-status '.image.repository' "${CHART_DIR}/values.yaml")
           controller_tag=$(yq --exit-status '.image.tag' "${CHART_DIR}/values.yaml")
+          controller_pull=$(yq --exit-status '.image.pullPolicy' "${CHART_DIR}/values.yaml")
           proxy_repo=$(yq --exit-status '.proxy.image.repository' "${CHART_DIR}/values.yaml")
           proxy_tag=$(yq --exit-status '.proxy.image.tag' "${CHART_DIR}/values.yaml")
+          proxy_pull=$(yq --exit-status '.proxy.image.pullPolicy' "${CHART_DIR}/values.yaml")
 
           fail=0
           if [[ "${controller_repo}" != *-ctrl ]]; then
@@ -467,14 +480,22 @@ jobs:
             echo "ERROR: proxy.image.tag must equal ${EXPECTED_TAG}, got: ${proxy_tag}"
             fail=1
           fi
+          if [[ "${controller_pull}" != "Always" ]]; then
+            echo "ERROR: image.pullPolicy must equal Always for PR charts (so rolling restart picks up moving tag), got: ${controller_pull}"
+            fail=1
+          fi
+          if [[ "${proxy_pull}" != "Always" ]]; then
+            echo "ERROR: proxy.image.pullPolicy must equal Always for PR charts (so rolling restart picks up moving tag), got: ${proxy_pull}"
+            fail=1
+          fi
 
           if [[ ${fail} -ne 0 ]]; then
             exit 1
           fi
 
           echo "values.yaml image overrides verified:"
-          echo "  controller: ${controller_repo}:${controller_tag}"
-          echo "  proxy:      ${proxy_repo}:${proxy_tag}"
+          echo "  controller: ${controller_repo}:${controller_tag} (pullPolicy=${controller_pull})"
+          echo "  proxy:      ${proxy_repo}:${proxy_tag} (pullPolicy=${proxy_pull})"
 
       - name: Package chart
         run: |
@@ -484,7 +505,7 @@ jobs:
           helm package "${CHART_DIR}"
 
           # Show package info
-          ls -lh *.tgz
+          ls -lh -- *.tgz
 
       - name: Push chart to ttl.sh
         run: |
