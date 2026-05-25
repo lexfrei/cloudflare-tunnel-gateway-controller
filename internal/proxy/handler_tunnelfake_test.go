@@ -513,3 +513,91 @@ func TestReverseProxyUpgradeOverFakeWriter_ReproducesProductionFailure(t *testin
 	assert.False(t, fake.Hijacked(),
 		"a hijack-before-WriteHeader call must not flip the hijacked flag — otherwise the precondition is a no-op")
 }
+
+// TestHandler_BackendProtocolWebSocket_TunnelMode_AppliesResponseFiltersTo101
+// pins ResponseHeaderModifier application on the production response-writer
+// path. The httptest variants in integration_test.go cover the HTTP/1.1
+// writer, but per docs/development/proxy-architecture.md and the project
+// rule "Validate the tunnel transport, not just httptest", any code that
+// mutates response headers needs a fakeCloudflaredRespWriter pin so that
+// a future refactor cannot break filter application on the production
+// HTTP/2 path while keeping the httptest test green.
+//
+// Mechanism: drive a WS upgrade request through the handler using the
+// fake writer; the backend (wsRawUpgradeBackend) returns a 101 with two
+// known headers; the route's ResponseHeaderModifier adds, sets, and
+// removes headers; after the fake records the hijack, fake.Header()
+// holds the actual headers the production writer would serialize into
+// cf-cloudflared-response-headers. Assert all three transforms landed.
+func TestHandler_BackendProtocolWebSocket_TunnelMode_AppliesResponseFiltersTo101(t *testing.T) {
+	t.Parallel()
+
+	backend := wsRawUpgradeBackend(t, map[string]string{
+		"X-Backend-Header":    "original",
+		"X-Backend-To-Remove": "removeme",
+	})
+
+	router := proxy.NewRouter()
+	require.NoError(t, router.UpdateConfig(&proxy.Config{
+		Version: 1,
+		Rules: []proxy.RouteRule{
+			{
+				Matches: []proxy.RouteMatch{{Path: &proxy.PathMatch{Type: proxy.PathMatchPathPrefix, Value: "/"}}},
+				Filters: []proxy.RouteFilter{
+					{
+						Type: proxy.FilterResponseHeaderModifier,
+						ResponseHeaderModifier: &proxy.HeaderModifier{
+							Add:    []proxy.HeaderValue{{Name: "X-Filter-Added", Value: "yes"}},
+							Set:    []proxy.HeaderValue{{Name: "X-Backend-Header", Value: "replaced"}},
+							Remove: []string{"X-Backend-To-Remove"},
+						},
+					},
+				},
+				Backends: []proxy.BackendRef{
+					{URL: backend.URL, Weight: 1, Protocol: proxy.BackendProtocolHTTP, WebSocket: true},
+				},
+			},
+		},
+	}))
+
+	handler := proxy.NewHandler(router)
+	fake := newFakeCloudflaredRespWriter()
+
+	t.Cleanup(func() {
+		_ = fake.serverSide.Close()
+		_ = fake.clientSide.Close()
+	})
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://app.example.com/ws", nil)
+	req.Header.Set("Connection", "Upgrade")
+	req.Header.Set("Upgrade", "websocket")
+	req.Header.Set("Sec-WebSocket-Version", "13")
+	req.Header.Set("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
+
+	handlerDone := make(chan struct{})
+
+	go func() {
+		defer close(handlerDone)
+		handler.ServeHTTP(fake, req)
+	}()
+
+	require.Eventually(t, fake.Hijacked, 5*time.Second, 25*time.Millisecond,
+		"handler must reach the post-101 hijack within 5s — without ApplyResponseFilters wired "+
+			"into the upgrade path, the headers below would be the backend's originals, not the "+
+			"filter-modified ones")
+
+	headers := fake.Header()
+	assert.Equal(t, "yes", headers.Get("X-Filter-Added"),
+		"Add response filter must inject a header into the 101 served over the HTTP/2 writer")
+	assert.Equal(t, "replaced", headers.Get("X-Backend-Header"),
+		"Set response filter must override the backend header on the 101 served over the HTTP/2 writer")
+	assert.Empty(t, headers.Get("X-Backend-To-Remove"),
+		"Remove response filter must strip the listed header on the 101 served over the HTTP/2 writer")
+	assert.Equal(t, "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=", headers.Get("Sec-WebSocket-Accept"),
+		"Sec-WebSocket-Accept must propagate from the backend — RFC 6455 §4.2.2 reference value "+
+			"for key dGhlIHNhbXBsZSBub25jZQ==; if a future filter ordering bug strips it, the "+
+			"client handshake silently fails")
+
+	_ = fake.HijackedClient().Close()
+	<-handlerDone
+}

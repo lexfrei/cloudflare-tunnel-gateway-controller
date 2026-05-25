@@ -137,12 +137,13 @@ func TestGatewayOriginProxy_ProxyHTTP_WritesResponse(t *testing.T) {
 // and `Sec-Websocket-Version: 13` before forwarding to origin (see
 // vendor/github.com/cloudflare/cloudflared/proxy/proxy.go:proxyHTTPRequest).
 //
-// Our `httputil.ReverseProxy`-based handler keys its 101-hijack path on
-// those same RFC 7230 §6.1 headers. Without re-injection here the handler
-// sees a regular HTTP request, forwards it without upgrade headers, and
-// the backend returns 400 "not websocket protocol". This pin captures the
-// fix so a future revert breaks loudly with a deterministic mock instead
-// of an opaque e2e failure.
+// Our L7 handler routes the request through the custom
+// `proxyWebSocketUpgrade` path (not `httputil.ReverseProxy`) when it sees
+// those same RFC 7230 §6.1 headers via `isHTTPUpgradeRequest`. Without
+// re-injection here the handler sees a regular HTTP request, forwards it
+// without upgrade headers, and the backend returns 400 "not websocket
+// protocol". This pin captures the fix so a future revert breaks loudly
+// with a deterministic mock instead of an opaque e2e failure.
 func TestGatewayOriginProxy_ProxyHTTP_WebSocketReinjectsHeaders(t *testing.T) {
 	t.Parallel()
 
@@ -176,7 +177,8 @@ func TestGatewayOriginProxy_ProxyHTTP_WebSocketReinjectsHeaders(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "Upgrade", gotConnection,
 		"isWebsocket=true MUST re-inject Connection: Upgrade so the handler's "+
-			"isHTTPUpgradeRequest predicate fires and ReverseProxy hijacks on 101")
+			"isHTTPUpgradeRequest predicate fires and routes the request through the "+
+			"custom proxyWebSocketUpgrade path that hijacks on 101")
 	assert.Equal(t, "websocket", gotUpgrade,
 		"isWebsocket=true MUST re-inject Upgrade: websocket so the backend "+
 			"completes the RFC 6455 handshake instead of returning 400")

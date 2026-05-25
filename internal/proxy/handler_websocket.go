@@ -71,6 +71,7 @@ func (h *Handler) proxyWebSocketUpgrade(
 	req *http.Request,
 	backendURL *url.URL,
 	backendTLS *BackendTLSConfig,
+	filters []Filter,
 ) {
 	backendConn, err := dialBackendForUpgrade(req.Context(), backendURL, backendTLS)
 	if err != nil {
@@ -112,9 +113,23 @@ func (h *Handler) proxyWebSocketUpgrade(
 
 	_ = backendConn.SetReadDeadline(time.Time{})
 
+	// Apply rule-level + backend-level ResponseFilters (e.g.,
+	// ResponseHeaderModifier) to the backend's response BEFORE copying
+	// its headers to the client. The non-upgrade path runs the same
+	// pipeline via httputil.ReverseProxy.ModifyResponse; the upgrade
+	// path bypasses that callback, so we apply the filters here for both
+	// the 101 success branch and the non-101 fallback. Gateway API
+	// makes no exception for upgrade responses -- the spec-compliant
+	// behavior is to transform headers consistently regardless of which
+	// status code the backend returned.
+	ApplyResponseFilters(filters, resp)
+
 	if resp.StatusCode != http.StatusSwitchingProtocols {
-		// Backend refused the upgrade — forward the response as-is. Don't
-		// hijack; the bytestream is a regular HTTP response body.
+		// Backend refused the upgrade — forward the response to the
+		// client. Headers are already filter-modified by the
+		// ApplyResponseFilters call above; the body streams through
+		// unchanged. No hijack: the bytestream is a regular HTTP
+		// response body, not a post-101 WebSocket frame stream.
 		copyHeaderValues(w.Header(), resp.Header)
 		w.WriteHeader(resp.StatusCode)
 		_, _ = io.Copy(w, resp.Body)
