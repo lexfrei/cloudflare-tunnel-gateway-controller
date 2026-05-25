@@ -19,6 +19,90 @@ import (
 
 const rewrittenHost = "rewritten.example.com"
 
+// TestNewHandler_WSTimeoutOptions pins the truth table of the
+// WithWSDialTimeout / WithWSHandshakeReadTimeout options: positive
+// overrides stick, zero/negative inputs are silently dropped (so a
+// caller passing time.Duration(0) doesn't accidentally disable the
+// per-Handler protection), and no options at all leaves the package
+// default (30s) in place. Without these pins, a future refactor that
+// mishandles the zero check would silently let dial / handshake hang
+// forever on a slow backend.
+func TestNewHandler_WSTimeoutOptions(t *testing.T) {
+	t.Parallel()
+
+	const packageDefault = 30 * time.Second
+
+	tests := []struct {
+		name              string
+		opts              []proxy.HandlerOption
+		wantDial          time.Duration
+		wantHandshakeRead time.Duration
+	}{
+		{
+			name:              "no options yields package defaults",
+			opts:              nil,
+			wantDial:          packageDefault,
+			wantHandshakeRead: packageDefault,
+		},
+		{
+			name: "positive dial override sticks",
+			opts: []proxy.HandlerOption{
+				proxy.WithWSDialTimeout(5 * time.Second),
+			},
+			wantDial:          5 * time.Second,
+			wantHandshakeRead: packageDefault,
+		},
+		{
+			name: "positive handshake override sticks",
+			opts: []proxy.HandlerOption{
+				proxy.WithWSHandshakeReadTimeout(7 * time.Second),
+			},
+			wantDial:          packageDefault,
+			wantHandshakeRead: 7 * time.Second,
+		},
+		{
+			name: "both overrides set independently",
+			opts: []proxy.HandlerOption{
+				proxy.WithWSDialTimeout(2 * time.Second),
+				proxy.WithWSHandshakeReadTimeout(3 * time.Second),
+			},
+			wantDial:          2 * time.Second,
+			wantHandshakeRead: 3 * time.Second,
+		},
+		{
+			name: "zero is ignored, default preserved",
+			opts: []proxy.HandlerOption{
+				proxy.WithWSDialTimeout(0),
+				proxy.WithWSHandshakeReadTimeout(0),
+			},
+			wantDial:          packageDefault,
+			wantHandshakeRead: packageDefault,
+		},
+		{
+			name: "negative is ignored, default preserved",
+			opts: []proxy.HandlerOption{
+				proxy.WithWSDialTimeout(-1 * time.Second),
+				proxy.WithWSHandshakeReadTimeout(-5 * time.Second),
+			},
+			wantDial:          packageDefault,
+			wantHandshakeRead: packageDefault,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			handler := proxy.NewHandler(proxy.NewRouter(), tt.opts...)
+
+			assert.Equal(t, tt.wantDial, handler.EffectiveWSDialTimeoutForTest(),
+				"effective dial timeout must match expectation")
+			assert.Equal(t, tt.wantHandshakeRead, handler.EffectiveWSHandshakeReadTimeoutForTest(),
+				"effective handshake read timeout must match expectation")
+		})
+	}
+}
+
 func TestHandler_NoMatchReturns404(t *testing.T) {
 	t.Parallel()
 

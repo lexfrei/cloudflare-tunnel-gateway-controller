@@ -16,16 +16,19 @@ import (
 )
 
 const (
-	// wsDialTimeout bounds how long the handler waits for a TCP / TLS
-	// connection to the upstream WebSocket backend. The dial is the only
-	// pre-handshake slow path; once the conn is established the handshake
-	// is bound by wsHandshakeReadTimeout instead.
-	wsDialTimeout = 30 * time.Second
-	// wsHandshakeReadTimeout bounds how long the handler waits for the
-	// backend's 101 Switching Protocols response. Independent from the
+	// defaultWSDialTimeout bounds how long the handler waits for a TCP /
+	// TLS connection to the upstream WebSocket backend. The dial is the
+	// only pre-handshake slow path; once the conn is established the
+	// handshake is bound by defaultWSHandshakeReadTimeout instead. The
+	// effective per-Handler value can be overridden via
+	// WithWSDialTimeout; zero (or no option) means "use this default".
+	defaultWSDialTimeout = 30 * time.Second
+	// defaultWSHandshakeReadTimeout bounds how long the handler waits for
+	// the backend's 101 Switching Protocols response. Independent from the
 	// long-lived post-101 read window: the deadline is cleared before the
-	// bidirectional copy begins.
-	wsHandshakeReadTimeout = 30 * time.Second
+	// bidirectional copy begins. Overridable via
+	// WithWSHandshakeReadTimeout.
+	defaultWSHandshakeReadTimeout = 30 * time.Second
 )
 
 // errBackendCABundleInvalid is returned when a BackendTLSPolicy's CA
@@ -73,7 +76,7 @@ func (h *Handler) proxyWebSocketUpgrade(
 	backendTLS *BackendTLSConfig,
 	filters []Filter,
 ) {
-	backendConn, err := dialBackendForUpgrade(req.Context(), backendURL, backendTLS)
+	backendConn, err := h.dialBackendForUpgrade(req.Context(), backendURL, backendTLS)
 	if err != nil {
 		slog.Warn("websocket upgrade: backend dial failed",
 			"error", err, "backend", backendURL.Host)
@@ -97,7 +100,7 @@ func (h *Handler) proxyWebSocketUpgrade(
 	// Bound the wait for the 101 response separately from the long-lived
 	// post-101 stream — clearing the deadline before bidirectional copy
 	// below.
-	_ = backendConn.SetReadDeadline(time.Now().Add(wsHandshakeReadTimeout))
+	_ = backendConn.SetReadDeadline(time.Now().Add(h.effectiveWSHandshakeReadTimeout()))
 
 	backendReader := bufio.NewReader(backendConn)
 
@@ -247,12 +250,17 @@ func flushBufferedToBackend(clientBuf *bufio.ReadWriter, backendConn net.Conn) {
 // back to system roots so the handshake still completes against a
 // public-trust certificate — parity with stdlib http.Transport's
 // default behaviour.
-func dialBackendForUpgrade(
+//
+// Method on Handler (not a free function) so the per-Handler
+// effectiveWSDialTimeout flows in -- otherwise the function couldn't
+// see the WithWSDialTimeout override and would silently keep using
+// the 30s default.
+func (h *Handler) dialBackendForUpgrade(
 	ctx context.Context,
 	backendURL *url.URL,
 	backendTLS *BackendTLSConfig,
 ) (net.Conn, error) {
-	dialer := &net.Dialer{Timeout: wsDialTimeout}
+	dialer := &net.Dialer{Timeout: h.effectiveWSDialTimeout()}
 
 	if backendURL.Scheme != schemeHTTPS {
 		conn, err := dialer.DialContext(ctx, "tcp", backendURL.Host)

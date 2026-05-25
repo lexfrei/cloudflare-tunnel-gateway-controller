@@ -320,6 +320,151 @@ func TestConvertHTTPRoutes_AppProtocolWS_WithPolicy_Warns(t *testing.T) {
 			"symmetric to the existing h2c suppressed warning")
 }
 
+// TestConvertHTTPRoutes_WSBackendWithProtocolHeaderStrip_Warns pins the
+// operator-footgun guard: a ResponseHeaderModifier filter on a route whose
+// backend is WS-marked MUST NOT strip the three RFC 6455 handshake headers
+// (Sec-WebSocket-Accept, Upgrade, Connection). The proxy faithfully applies
+// the filter to the 101 response per Gateway API spec; if the filter removes
+// any of those three, the client never completes the upgrade and silently
+// disconnects.
+//
+// The converter cannot reject the route -- the filter is spec-legal in
+// isolation. It logs a WARN naming the offending header(s) so the
+// misconfiguration is visible in controller logs at apply time, before the
+// next WS upgrade attempt fails opaquely at the client end.
+func TestConvertHTTPRoutes_WSBackendWithProtocolHeaderStrip_Warns(t *testing.T) {
+	pathPrefix := gatewayv1.PathMatchPathPrefix
+	route := httpAppProtocolTestRoute(pathPrefix)
+	// Inject a ResponseHeaderModifier that strips a handshake-critical
+	// header. Sec-WebSocket-Accept is the most diagnostic single case
+	// because without it the client has no way to verify the handshake.
+	route.Spec.Rules[0].Filters = []gatewayv1.HTTPRouteFilter{
+		{
+			Type: gatewayv1.HTTPRouteFilterResponseHeaderModifier,
+			ResponseHeaderModifier: &gatewayv1.HTTPHeaderFilter{
+				Remove: []string{"Sec-WebSocket-Accept"},
+			},
+		},
+	}
+
+	protocolResolver := func(_ context.Context, _, _ string, _ int32) string { return "kubernetes.io/ws" }
+
+	logs, cleanup := captureWarnLogs()
+	t.Cleanup(cleanup)
+
+	cfg := proxy.ConvertHTTPRoutes(context.Background(), []*gatewayv1.HTTPRoute{route}, "cluster.local", nil, protocolResolver, nil, nil)
+
+	require.Len(t, cfg.Rules, 1)
+	require.Len(t, cfg.Rules[0].Backends, 1)
+	require.True(t, cfg.Rules[0].Backends[0].WebSocket,
+		"sanity: backend must be WS-marked for this scenario to exercise the guard")
+
+	assert.Contains(t, logs.String(), "ResponseHeaderModifier removes a WebSocket handshake header",
+		"the converter MUST warn when a WS-marked backend's response filter strips a handshake-critical header")
+	assert.Contains(t, logs.String(), "Sec-WebSocket-Accept",
+		"the warning MUST name the offending header so the operator can correlate to their HTTPRoute")
+}
+
+// TestConvertHTTPRoutes_WSBackendWithProtocolHeaderStrip_PerBackendFilter_Warns
+// is the per-backend filter variant. Operators can attach
+// ResponseHeaderModifier filters at HTTPRoute rule level OR at HTTPBackendRef
+// level. The guard must fire in either shape; otherwise an operator who
+// learned the rule-level rule and applies the same broken filter at the
+// backend level gets no warning.
+func TestConvertHTTPRoutes_WSBackendWithProtocolHeaderStrip_PerBackendFilter_Warns(t *testing.T) {
+	pathPrefix := gatewayv1.PathMatchPathPrefix
+	route := httpAppProtocolTestRoute(pathPrefix)
+	// Move the bad filter onto the BackendRef instead of the rule.
+	route.Spec.Rules[0].BackendRefs[0].Filters = []gatewayv1.HTTPRouteFilter{
+		{
+			Type: gatewayv1.HTTPRouteFilterResponseHeaderModifier,
+			ResponseHeaderModifier: &gatewayv1.HTTPHeaderFilter{
+				Remove: []string{"Upgrade"},
+			},
+		},
+	}
+
+	protocolResolver := func(_ context.Context, _, _ string, _ int32) string { return "kubernetes.io/ws" }
+
+	logs, cleanup := captureWarnLogs()
+	t.Cleanup(cleanup)
+
+	cfg := proxy.ConvertHTTPRoutes(context.Background(), []*gatewayv1.HTTPRoute{route}, "cluster.local", nil, protocolResolver, nil, nil)
+
+	require.Len(t, cfg.Rules, 1)
+	require.Len(t, cfg.Rules[0].Backends, 1)
+
+	assert.Contains(t, logs.String(), "ResponseHeaderModifier removes a WebSocket handshake header",
+		"per-backend ResponseHeaderModifier on a WS-marked backend MUST also trigger the guard")
+	assert.Contains(t, logs.String(), "Upgrade",
+		"the warning MUST name the offending header")
+}
+
+// TestConvertHTTPRoutes_WSBackendWithBenignFilter_NoWarn confirms the
+// happy path: ResponseHeaderModifier on a WS-marked route that does NOT
+// touch handshake headers is silent. Add/Set of unrelated headers is the
+// expected configuration; warning on that would be noise.
+func TestConvertHTTPRoutes_WSBackendWithBenignFilter_NoWarn(t *testing.T) {
+	pathPrefix := gatewayv1.PathMatchPathPrefix
+	route := httpAppProtocolTestRoute(pathPrefix)
+	route.Spec.Rules[0].Filters = []gatewayv1.HTTPRouteFilter{
+		{
+			Type: gatewayv1.HTTPRouteFilterResponseHeaderModifier,
+			ResponseHeaderModifier: &gatewayv1.HTTPHeaderFilter{
+				Add:    []gatewayv1.HTTPHeader{{Name: "X-Custom", Value: "yes"}},
+				Set:    []gatewayv1.HTTPHeader{{Name: "Cache-Control", Value: "no-store"}},
+				Remove: []string{"X-Backend-Internal"},
+			},
+		},
+	}
+
+	protocolResolver := func(_ context.Context, _, _ string, _ int32) string { return "kubernetes.io/ws" }
+
+	logs, cleanup := captureWarnLogs()
+	t.Cleanup(cleanup)
+
+	cfg := proxy.ConvertHTTPRoutes(context.Background(), []*gatewayv1.HTTPRoute{route}, "cluster.local", nil, protocolResolver, nil, nil)
+	require.Len(t, cfg.Rules, 1)
+
+	assert.NotContains(t, logs.String(), "ResponseHeaderModifier removes a WebSocket handshake header",
+		"benign ResponseHeaderModifier on a WS-marked backend must NOT warn")
+}
+
+// TestConvertHTTPRoutes_NonWSBackendWithProtocolHeaderStrip_NoWarn
+// pins the gate's scope: stripping `Upgrade` / `Connection` /
+// `Sec-WebSocket-Accept` on a route that does NOT carry WS traffic is
+// the operator's call -- those headers have no special meaning on a
+// regular HTTP response. The warning fires only when the WS backend
+// flag is set; otherwise it would be noise on every plain-HTTP route
+// that happens to strip one of these (perhaps to defeat client-side
+// upgrade hijack attempts).
+func TestConvertHTTPRoutes_NonWSBackendWithProtocolHeaderStrip_NoWarn(t *testing.T) {
+	pathPrefix := gatewayv1.PathMatchPathPrefix
+	route := httpAppProtocolTestRoute(pathPrefix)
+	route.Spec.Rules[0].Filters = []gatewayv1.HTTPRouteFilter{
+		{
+			Type: gatewayv1.HTTPRouteFilterResponseHeaderModifier,
+			ResponseHeaderModifier: &gatewayv1.HTTPHeaderFilter{
+				Remove: []string{"Sec-WebSocket-Accept", "Upgrade", "Connection"},
+			},
+		},
+	}
+
+	// No appProtocol resolver -> default http/1.1, WS=false.
+	protocolResolver := func(_ context.Context, _, _ string, _ int32) string { return "" }
+
+	logs, cleanup := captureWarnLogs()
+	t.Cleanup(cleanup)
+
+	cfg := proxy.ConvertHTTPRoutes(context.Background(), []*gatewayv1.HTTPRoute{route}, "cluster.local", nil, protocolResolver, nil, nil)
+	require.Len(t, cfg.Rules, 1)
+	require.False(t, cfg.Rules[0].Backends[0].WebSocket,
+		"sanity: backend must NOT be WS-marked for this scenario")
+
+	assert.NotContains(t, logs.String(), "ResponseHeaderModifier removes a WebSocket handshake header",
+		"protocol-header strip on a non-WS backend must NOT warn -- guard is scoped to WS-marked routes")
+}
+
 // TestConvertHTTPRoutes_AppProtocolWSS_WithPolicy_NoWarn confirms the happy
 // path: `appProtocol: kubernetes.io/wss` together with a BackendTLSPolicy
 // produces TLS-armed config and emits no warnings.
