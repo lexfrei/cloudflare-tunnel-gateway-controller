@@ -201,6 +201,8 @@ The L7 proxy implements the Gateway API `HTTPRouteCORS` filter (preflight + simp
 
 See [Path Matching Limitations](https://cf.k8s.lex.la/gateway-api/limitations/#cloudflare-tunnel-path-matching-limitations) and [Backend mTLS](https://cf.k8s.lex.la/gateway-api/limitations/#backend-mtls-backendtlspolicy) for details.
 
+The proxy can emit a structured per-request access log (method, host, path, query, status, bytes_written, duration_ms, user_agent) via `proxy.accessLog.enabled: true` in Helm values. Off by default; sampling-rate knob keeps log volume manageable on busy gateways. See [Access Logging](https://cf.k8s.lex.la/operations/access-logging/) for the full contract.
+
 See [Gateway API documentation](https://cf.k8s.lex.la/gateway-api/) for full details and examples.
 
 ## External-DNS Integration

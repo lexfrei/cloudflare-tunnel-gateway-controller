@@ -202,3 +202,57 @@ tests:
       - equal:
           path: spec.template.spec.containers[0].readinessProbe.httpGet.path
           value: /readyz
+
+  - it: should NOT emit any PROXY_ACCESS_LOG_* env when access log is disabled (default)
+    # Zero-cost-when-disabled invariant: the binary side gates on
+    # PROXY_ACCESS_LOG_ENABLED being truthy, so the env var being
+    # absent is the desired default state. matchSnapshot on the
+    # whole env block catches both shapes -- a regression emitting
+    # PROXY_ACCESS_LOG_ENABLED=false (which the binary would treat
+    # as disabled) AND a regression emitting it with value=true.
+    # The original notContains-with-value form passed on both.
+    set:
+      proxy:
+        enabled: true
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
+    asserts:
+      - notMatchRegex:
+          path: spec.template.spec.containers[0].env[*].name
+          pattern: "^PROXY_ACCESS_LOG_"
+
+  - it: should emit PROXY_ACCESS_LOG_* env vars when access log enabled
+    set:
+      proxy:
+        enabled: true
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
+        accessLog:
+          enabled: true
+          samplingRate: 0.1
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: PROXY_ACCESS_LOG_ENABLED
+            value: "true"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: PROXY_ACCESS_LOG_SAMPLING_RATE
+            value: "0.1"
+
+  - it: should emit default samplingRate "1" when access log enabled without override
+    set:
+      proxy:
+        enabled: true
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
+        accessLog:
+          enabled: true
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: PROXY_ACCESS_LOG_SAMPLING_RATE
+            value: "1"

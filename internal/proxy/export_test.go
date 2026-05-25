@@ -83,6 +83,56 @@ func NewHeaderTimeoutRoundTripperForTest(inner http.RoundTripper, timeout time.D
 	return newHeaderTimeoutRoundTripper(inner, timeout)
 }
 
+// CountingResponseWriterForTest is the exported alias of the concrete
+// counting-response-writer type. Tests use it directly so they can
+// call the inspection methods (Status, BytesWritten) without losing
+// the type to an http.ResponseWriter interface return.
+type CountingResponseWriterForTest = countingResponseWriter
+
+// NewCountingResponseWriterForTest exposes newCountingResponseWriter so
+// access-log writer-wrapping contracts can be pinned directly without
+// driving the full handler stack. Returned as the concrete pointer
+// type so Status / BytesWritten are callable; the type still
+// satisfies http.ResponseWriter / Flusher / Hijacker for the
+// interface-assertion test paths.
+func NewCountingResponseWriterForTest(inner http.ResponseWriter) *CountingResponseWriterForTest {
+	return newCountingResponseWriter(inner)
+}
+
+// ShouldSampleAccessLogForTest exposes shouldSampleAccessLog so the
+// sampling contract (errors-always-logged, rate clamping, deterministic
+// rand injection) can be pinned without spinning up the full handler.
+func ShouldSampleAccessLogForTest(rate float64, status int, randFn func() float64) bool {
+	return shouldSampleAccessLog(rate, status, randFn)
+}
+
+// ErrHijackNotSupportedForTest exposes errHijackNotSupported so the
+// non-Hijacker-fallback test in the _test package can assert on the
+// same sentinel value the production wrapper returns. Without an
+// exported handle the test would have to redeclare its own copy, and
+// errors.Is would never match (different package-level variables
+// hash to different identities even with identical messages).
+var ErrHijackNotSupportedForTest = errHijackNotSupported
+
+// MaybeEmitAccessLogForTest exposes Handler.maybeEmitAccessLog so
+// the status-101 skip carve-out can be pinned without driving the
+// full ServeHTTP pipeline. httputil.ReverseProxy translates a
+// backend 101 to a client-visible 502, so a normal ServeHTTP call
+// can't actually reach maybeEmitAccessLog with status=101; this
+// helper bypasses that translation by letting the test seed the
+// wrapped writer directly. The snapshot is synthesised from the
+// request so callers don't have to construct accessLogSnapshot
+// themselves -- the snapshot type stays unexported.
+func MaybeEmitAccessLogForTest(h *Handler, counted *CountingResponseWriterForTest, req *http.Request, start time.Time) {
+	h.maybeEmitAccessLog(counted, req, &accessLogSnapshot{
+		method:    req.Method,
+		host:      req.Host,
+		path:      req.URL.Path,
+		query:     req.URL.RawQuery,
+		userAgent: req.UserAgent(),
+	}, start)
+}
+
 // ErrorHandlerForTest exposes errorHandler so unit tests can pin its
 // HTTP-status mapping for every error class it recognises without
 // having to spin up a real backend that produces the right error

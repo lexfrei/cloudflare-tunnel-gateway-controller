@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -47,7 +49,7 @@ func runTunnelMode(logger *slog.Logger, token string) {
 	configAddr := envOrDefault("PROXY_CONFIG_ADDR", defaultConfigAddr)
 
 	router := proxy.NewRouter()
-	proxyHandler := proxy.NewHandler(router, wsHandlerOptions(logger)...)
+	proxyHandler := proxy.NewHandler(router, handlerOptions(logger)...)
 	router.SetHandler(proxyHandler)
 
 	authToken := os.Getenv("PROXY_AUTH_TOKEN")
@@ -103,7 +105,7 @@ func runStandaloneMode(logger *slog.Logger) {
 	proxyAddr := envOrDefault("PROXY_ADDR", defaultProxyAddr)
 
 	router := proxy.NewRouter()
-	proxyHandler := proxy.NewHandler(router, wsHandlerOptions(logger)...)
+	proxyHandler := proxy.NewHandler(router, handlerOptions(logger)...)
 	router.SetHandler(proxyHandler)
 
 	authToken := os.Getenv("PROXY_AUTH_TOKEN")
@@ -304,6 +306,75 @@ func wsHandlerOptions(logger *slog.Logger) []proxy.HandlerOption {
 
 	if handshakeTimeout > 0 {
 		opts = append(opts, proxy.WithWSHandshakeReadTimeout(handshakeTimeout))
+	}
+
+	return opts
+}
+
+// accessLogHandlerOption translates PROXY_ACCESS_LOG_ENABLED and
+// PROXY_ACCESS_LOG_SAMPLING_RATE into a proxy.HandlerOption.
+//
+// PROXY_ACCESS_LOG_ENABLED gates the whole feature. Unset / "" / "0" /
+// "false" → disabled (no option emitted, zero-cost on hot path).
+// "1" / "true" → enabled.
+//
+// PROXY_ACCESS_LOG_SAMPLING_RATE is parsed as a float64 in [0,1].
+// Unset → default 1.0 (log everything). Unparseable → WARN and fall
+// back to 1.0. Out-of-range values pass through; proxy.WithAccessLog
+// + shouldSampleAccessLog clamp them so operator typos degrade to
+// "always log" rather than "silently never log".
+//
+// Same "WARN + safe-default" pattern as parseEnvDuration -- proxy
+// MUST start even with a malformed tunable; the WARN ensures the
+// typo doesn't hide.
+func accessLogHandlerOption(logger *slog.Logger) proxy.HandlerOption {
+	if !accessLogEnabled() {
+		return nil
+	}
+
+	return proxy.WithAccessLog(logger, parseAccessLogSamplingRate(logger))
+}
+
+// accessLogEnabled reports whether PROXY_ACCESS_LOG_ENABLED requests
+// the feature. The "1" / "true" forms are accepted (case-insensitive)
+// so both shell-flag (`PROXY_ACCESS_LOG_ENABLED=1`) and YAML-bool
+// (`enabled: true`) styles work without surprise.
+func accessLogEnabled() bool {
+	raw := strings.ToLower(strings.TrimSpace(os.Getenv("PROXY_ACCESS_LOG_ENABLED")))
+
+	return raw == "1" || raw == "true"
+}
+
+// parseAccessLogSamplingRate reads PROXY_ACCESS_LOG_SAMPLING_RATE,
+// defaulting to 1.0 on unset / unparseable input. WARN logs surface
+// the typo so the operator notices.
+func parseAccessLogSamplingRate(logger *slog.Logger) float64 {
+	raw := strings.TrimSpace(os.Getenv("PROXY_ACCESS_LOG_SAMPLING_RATE"))
+	if raw == "" {
+		return 1.0
+	}
+
+	parsed, err := strconv.ParseFloat(raw, 64)
+	if err != nil {
+		logger.Warn("PROXY_ACCESS_LOG_SAMPLING_RATE failed to parse -- defaulting to 1.0",
+			"value", raw, "error", err)
+
+		return 1.0
+	}
+
+	return parsed
+}
+
+// handlerOptions composes every env-driven proxy.HandlerOption -- WS
+// tunables + access log -- into the slice passed to proxy.NewHandler.
+// Nil entries (e.g. accessLogHandlerOption when disabled) are
+// filtered so proxy.NewHandler doesn't see a nil HandlerOption (it
+// would panic invoking it).
+func handlerOptions(logger *slog.Logger) []proxy.HandlerOption {
+	opts := wsHandlerOptions(logger)
+
+	if accessOpt := accessLogHandlerOption(logger); accessOpt != nil {
+		opts = append(opts, accessOpt)
 	}
 
 	return opts
