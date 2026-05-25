@@ -5,7 +5,7 @@ go 1.26.3
 require (
 	github.com/Masterminds/semver/v3 v3.5.0
 	github.com/cloudflare/cloudflare-go/v7 v7.3.0
-	github.com/cloudflare/cloudflared v0.0.0-20260522215848-4494eee13d7c
+	github.com/cloudflare/cloudflared v0.0.0-20260525093209-f6f60e1059b1
 	github.com/cockroachdb/errors v1.13.0
 	github.com/go-logr/logr v1.4.3
 	github.com/google/uuid v1.6.0
