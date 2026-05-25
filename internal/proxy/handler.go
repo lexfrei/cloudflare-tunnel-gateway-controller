@@ -643,11 +643,20 @@ func isHTTPUpgradeRequest(req *http.Request) bool {
 
 // writeRedirectResponse writes a short-circuit redirect response.
 func writeRedirectResponse(writer http.ResponseWriter, resp *http.Response) {
-	for key, values := range resp.Header {
+	copyHeaderValues(writer.Header(), resp.Header)
+	writer.WriteHeader(resp.StatusCode)
+}
+
+// copyHeaderValues performs a shallow copy of src into dst, preserving
+// multi-value headers. Single shared helper for the package — used by
+// both the redirect short-circuit path here and the WebSocket upgrade
+// path in handler_websocket.go. Mirrors stdlib's internal `copyHeader`
+// (`net/http/httputil/reverseproxy.go`) without taking a `httputil`
+// import dependency in this file.
+func copyHeaderValues(dst, src http.Header) {
+	for key, values := range src {
 		for _, value := range values {
-			writer.Header().Add(key, value)
+			dst.Add(key, value)
 		}
 	}
-
-	writer.WriteHeader(resp.StatusCode)
 }
