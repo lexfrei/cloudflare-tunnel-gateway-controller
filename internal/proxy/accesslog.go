@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -116,6 +117,55 @@ func (c *countingResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	}
 
 	return conn, rw, nil
+}
+
+// ReadFrom delegates to the inner writer when it implements
+// io.ReaderFrom (which is how httputil.ReverseProxy hits the
+// splice/sendfile fast path on Linux for large bodies). When the
+// inner does not, falls back to io.Copy onto the inner ResponseWriter
+// (the `struct{ io.Writer }` wrapper prevents the Writer-only
+// adapter from re-detecting our own ReadFrom and recursing) and
+// increments bytesWritten explicitly.
+//
+// Both paths atomically increment bytesWritten so the access-log
+// emission reads the full response size whether the fast path was
+// taken or the fallback ran. Without this method,
+// httputil.ReverseProxy's ServeHTTP would type-assert
+// io.ReaderFrom on the wrapper, fail, and fall back to the generic
+// 32 KiB-buffer io.Copy loop -- correct, but it costs the
+// sendfile/splice acceleration that's worth a measurable percentage
+// on multi-MiB responses through Linux.
+func (c *countingResponseWriter) ReadFrom(src io.Reader) (int64, error) {
+	// Mirror the implicit-200 contract Write enforces: a caller that
+	// drives ReadFrom without an explicit WriteHeader must end up with
+	// Status()==200, not Status()==0. Without this, an access-log
+	// line for a ReadFrom-only path would render `status:0` and the
+	// 5xx sampling carve-out (which gates on `>= 500`) would
+	// misclassify the request.
+	if c.writeHeaderCalled.CompareAndSwap(false, true) {
+		c.status.Store(http.StatusOK)
+	}
+
+	readerFrom, ok := c.ResponseWriter.(io.ReaderFrom)
+	if !ok {
+		n, err := io.Copy(struct{ io.Writer }{c.ResponseWriter}, src)
+		c.bytesWritten.Add(n)
+
+		if err != nil {
+			return n, fmt.Errorf("counting response writer fallback copy: %w", err)
+		}
+
+		return n, nil
+	}
+
+	n, err := readerFrom.ReadFrom(src)
+	c.bytesWritten.Add(n)
+
+	if err != nil {
+		return n, fmt.Errorf("counting response writer ReadFrom: %w", err)
+	}
+
+	return n, nil
 }
 
 // accessLogSnapshot captures the request fields the access log

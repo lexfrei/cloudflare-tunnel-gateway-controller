@@ -65,6 +65,10 @@ spec:
               value: "true"
             - name: PROXY_ACCESS_LOG_SAMPLING_RATE
               value: {{ .Values.proxy.accessLog.samplingRate | quote }}
+            {{- if .Values.proxy.accessLog.stripQuery }}
+            - name: PROXY_ACCESS_LOG_STRIP_QUERY
+              value: "true"
+            {{- end }}
             {{- end }}
           ports:
             - name: config-api

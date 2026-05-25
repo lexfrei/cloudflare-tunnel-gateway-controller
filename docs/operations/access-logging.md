@@ -82,11 +82,10 @@ The `query` field is logged verbatim. URLs in some applications carry tokens (`?
 
 Mitigations:
 
+- **Source-level (recommended for token-bearing APIs)**: set `proxy.accessLog.stripQuery: true` (or `PROXY_ACCESS_LOG_STRIP_QUERY=true`). The proxy zeroes the `query` field on every line; `path` stays intact so operators still see which endpoint was hit, just not which parameters carried sensitive values. Defence-in-depth — the field never reaches the log sink in the first place, so no downstream scrubbing rule can be misconfigured into leaking it.
 - **Route-level**: design APIs so secrets ride in `Authorization` / `Cookie` headers, not query string. Headers other than `User-Agent` are NOT logged by this feature, so a token in `Authorization: Bearer …` is safe from this sink.
-- **Sink-level**: configure the cluster log pipeline (Fluent Bit / Vector / Promtail) to scrub `query` matching known token shapes before forwarding to long-term storage.
+- **Sink-level**: configure the cluster log pipeline (Fluent Bit / Vector / Promtail) to scrub `query` matching known token shapes before forwarding to long-term storage. Use when `stripQuery: true` is too coarse (e.g. you want to keep `?action=delete` triage signal but redact `?token=...`).
 - **Sampling**: set `samplingRate` < 1 to reduce the surface area; the always-log-5xx carve-out still surfaces every server-side failure.
-
-A `proxy.accessLog.stripQuery` toggle that elides the field at the source is tracked as a follow-up; today the field is unconditional when access logging is on.
 
 ## What is NOT logged
 

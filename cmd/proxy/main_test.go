@@ -389,3 +389,60 @@ func TestHandlerOptions_AccessLogOnlyWhenEnabled(t *testing.T) {
 		})
 	}
 }
+
+// TestAccessLogStripQueryOption_Matrix pins the strip-query env-var
+// gate: returns a non-nil HandlerOption iff PROXY_ACCESS_LOG_ENABLED
+// is truthy AND PROXY_ACCESS_LOG_STRIP_QUERY is truthy. Catches a
+// regression that wires the option even when access logging itself
+// is off (the option would be a no-op but its presence costs an
+// extra HandlerOption application during NewHandler construction).
+func TestAccessLogStripQueryOption_Matrix(t *testing.T) {
+	tests := []struct {
+		name       string
+		enabled    string
+		strip      string
+		setEnabled bool
+		setStrip   bool
+		wantNonNil bool
+	}{
+		{name: "both unset → nil", wantNonNil: false},
+		{name: "enabled=true, strip unset → nil", enabled: "true", setEnabled: true, wantNonNil: false},
+		{name: "enabled=false, strip=true → nil (strip pointless without emission)", enabled: "false", strip: "true", setEnabled: true, setStrip: true, wantNonNil: false},
+		{name: "enabled=true, strip=true → non-nil", enabled: "true", strip: "true", setEnabled: true, setStrip: true, wantNonNil: true},
+		{name: "enabled=true, strip=1 → non-nil", enabled: "true", strip: "1", setEnabled: true, setStrip: true, wantNonNil: true},
+		{name: "enabled=true, strip=TRUE → non-nil (case-insensitive)", enabled: "true", strip: "TRUE", setEnabled: true, setStrip: true, wantNonNil: true},
+		{name: "enabled=true, strip=garbage → nil (typo-safe)", enabled: "true", strip: "yesplease", setEnabled: true, setStrip: true, wantNonNil: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// t.Parallel skipped: t.Setenv mutates process env, must run sequentially.
+			//
+			// Unset-shaped cases use t.Setenv(name, "") rather than
+			// os.Unsetenv because the helper's TrimSpace+lower check
+			// treats "" identically to unset, and t.Setenv restores
+			// the prior value on cleanup -- a bare os.Unsetenv leaks
+			// the unset state across the parent test boundary.
+			if tt.setEnabled {
+				t.Setenv("PROXY_ACCESS_LOG_ENABLED", tt.enabled)
+			} else {
+				t.Setenv("PROXY_ACCESS_LOG_ENABLED", "")
+			}
+
+			if tt.setStrip {
+				t.Setenv("PROXY_ACCESS_LOG_STRIP_QUERY", tt.strip)
+			} else {
+				t.Setenv("PROXY_ACCESS_LOG_STRIP_QUERY", "")
+			}
+
+			opt := accessLogStripQueryOption()
+			if tt.wantNonNil {
+				assert.NotNil(t, opt,
+					"PROXY_ACCESS_LOG_ENABLED=%q + PROXY_ACCESS_LOG_STRIP_QUERY=%q must yield non-nil HandlerOption", tt.enabled, tt.strip)
+			} else {
+				assert.Nil(t, opt,
+					"PROXY_ACCESS_LOG_ENABLED=%q + PROXY_ACCESS_LOG_STRIP_QUERY=%q must yield nil HandlerOption", tt.enabled, tt.strip)
+			}
+		})
+	}
+}

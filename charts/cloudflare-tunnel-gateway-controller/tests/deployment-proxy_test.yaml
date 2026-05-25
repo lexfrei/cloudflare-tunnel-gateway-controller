@@ -256,3 +256,54 @@ tests:
           content:
             name: PROXY_ACCESS_LOG_SAMPLING_RATE
             value: "1"
+
+  - it: should NOT emit PROXY_ACCESS_LOG_STRIP_QUERY when stripQuery is false (default)
+    set:
+      proxy:
+        enabled: true
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
+        accessLog:
+          enabled: true
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          any: true
+          content:
+            name: PROXY_ACCESS_LOG_STRIP_QUERY
+
+  - it: should NOT emit PROXY_ACCESS_LOG_STRIP_QUERY when access log itself is disabled
+    # The cmd/proxy binary already no-ops the strip option when access
+    # logging is off, but the chart guards too so a stripQuery=true
+    # left over from a previous values rev doesn't show up in the env
+    # block when the operator turned access logging off.
+    set:
+      proxy:
+        enabled: true
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
+        accessLog:
+          enabled: false
+          stripQuery: true
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          any: true
+          content:
+            name: PROXY_ACCESS_LOG_STRIP_QUERY
+
+  - it: should emit PROXY_ACCESS_LOG_STRIP_QUERY=true when both enabled and stripQuery
+    set:
+      proxy:
+        enabled: true
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
+        accessLog:
+          enabled: true
+          stripQuery: true
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: PROXY_ACCESS_LOG_STRIP_QUERY
+            value: "true"
