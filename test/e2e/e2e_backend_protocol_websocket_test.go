@@ -186,8 +186,17 @@ func setupWSBackendService(
 
 // teardownWSBackendService removes the Service created by
 // setupWSBackendService. Best-effort: a missing service is not an error.
+//
+// Honours skipCleanupOnFailure: if the test failed AND the opt-in env var
+// is set, returns early without touching the cluster so a maintainer can
+// inspect the state at the point of failure. See cleanup_retain_test.go
+// for the rationale and the env var name.
 func teardownWSBackendService(t *testing.T, k8sClient client.Client, namespace, serviceName string) {
 	t.Helper()
+
+	if skipCleanupOnFailure(t) {
+		return
+	}
 
 	ctx := context.Background()
 	svc := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: serviceName, Namespace: namespace}}
