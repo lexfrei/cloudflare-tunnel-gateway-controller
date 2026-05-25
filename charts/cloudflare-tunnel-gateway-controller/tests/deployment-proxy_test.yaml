@@ -45,6 +45,32 @@ tests:
           path: spec.template.spec.containers[0].image
           pattern: "^ghcr\\.io/lexfrei/cloudflare-tunnel-gateway-controller-proxy:"
 
+  - it: should default to IfNotPresent pull policy
+    # Stable-release default. The PR-chart build flips this to Always via a
+    # workflow-side yq override so iteration picks up new pr-NNN-1d digests.
+    set:
+      proxy:
+        enabled: true
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].imagePullPolicy
+          value: "IfNotPresent"
+
+  - it: should set custom proxy pull policy
+    set:
+      proxy:
+        enabled: true
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
+        image:
+          pullPolicy: "Always"
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].imagePullPolicy
+          value: "Always"
+
   - it: should mount tunnel token from secret
     set:
       proxy:

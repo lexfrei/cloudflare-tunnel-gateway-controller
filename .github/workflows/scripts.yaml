@@ -1,0 +1,41 @@
+name: Scripts
+
+on:
+  pull_request:
+    paths:
+      - scripts/reflow-paragraphs.py
+      - scripts/reflow_paragraphs_test.py
+      - .github/workflows/scripts.yaml
+  push:
+    branches: [master]
+    paths:
+      - scripts/reflow-paragraphs.py
+      - scripts/reflow_paragraphs_test.py
+      - .github/workflows/scripts.yaml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  reflow:
+    name: Reflow paragraphs test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+        with:
+          python-version: "3.14.5"
+
+      - name: Install pytest
+        run: pip install --quiet pytest
+
+      - name: Run reflow paragraphs tests
+        # 16 pytest cases pin the list-item-continuation and nested-list
+        # indent-preservation contracts. A regression to either would
+        # silently produce mid-bullet wraps the next time someone runs
+        # `python3 scripts/reflow-paragraphs.py docs/**.md`, violating the
+        # project's prose-wrap rule. The script is fire-and-forget but the
+        # suite guards future hand-edits.
+        run: python3 -m pytest scripts/reflow_paragraphs_test.py -v

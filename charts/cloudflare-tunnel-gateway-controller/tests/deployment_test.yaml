@@ -220,6 +220,16 @@ tests:
           path: spec.template.spec.containers[0].image
           pattern: ":v1.2.3$"
 
+  - it: should default to IfNotPresent pull policy
+    # Stable-release default: production rollouts should NOT re-pull the same
+    # tag on every restart. The PR-chart build flips this to Always via a
+    # workflow-side yq override so iteration picks up new pr-NNN-1d digests.
+    asserts:
+      - template: deployment.yaml
+        equal:
+          path: spec.template.spec.containers[0].imagePullPolicy
+          value: "IfNotPresent"
+
   - it: should set custom pull policy
     set:
       image:
