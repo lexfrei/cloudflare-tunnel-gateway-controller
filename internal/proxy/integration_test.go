@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -131,6 +132,180 @@ func TestHandler_BackendProtocolH2C(t *testing.T) {
 	assert.Equal(t, "h2c", resp.Header.Get("X-Backend"))
 	assert.Equal(t, "HTTP/2.0", resp.Header.Get("X-Backend-Proto"),
 		"proxy must speak HTTP/2 cleartext (h2c) to a backend with appProtocol kubernetes.io/h2c")
+}
+
+// newSlowHeadersH2CBackend serves h2c and delays WriteHeader by the
+// given duration. Used to drive the header-timeout path for h2c
+// backends so the wrapper's deadline-on-headers-only contract can be
+// asserted without a real stalled service.
+func newSlowHeadersH2CBackend(t *testing.T, headerDelay time.Duration) *httptest.Server {
+	t.Helper()
+
+	backend := http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		time.Sleep(headerDelay)
+		writer.WriteHeader(http.StatusOK)
+	})
+
+	var protocols http.Protocols
+
+	protocols.SetHTTP1(true)
+	protocols.SetUnencryptedHTTP2(true)
+
+	server := httptest.NewUnstartedServer(backend)
+	server.Config.Protocols = &protocols
+	server.Start()
+	t.Cleanup(server.Close)
+
+	return server
+}
+
+// newStreamingH2CBackend serves h2c and emits frameCount data frames
+// over a total wall-clock duration of interFrame*frameCount. Headers
+// are flushed immediately so the body is the only thing that takes
+// time. Used to assert that the per-rule header timeout does NOT
+// truncate the streaming body once headers have arrived.
+func newStreamingH2CBackend(t *testing.T, frameCount int, interFrame time.Duration) *httptest.Server {
+	t.Helper()
+
+	backend := http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Content-Type", "text/event-stream")
+		writer.WriteHeader(http.StatusOK)
+
+		flusher, ok := writer.(http.Flusher)
+		require.True(t, ok, "h2c writer must implement http.Flusher for streaming")
+
+		flusher.Flush()
+
+		for idx := range frameCount {
+			_, _ = writer.Write([]byte("data: event-" + strconv.Itoa(idx) + "\n\n"))
+			flusher.Flush()
+			time.Sleep(interFrame)
+		}
+	})
+
+	var protocols http.Protocols
+
+	protocols.SetHTTP1(true)
+	protocols.SetUnencryptedHTTP2(true)
+
+	server := httptest.NewUnstartedServer(backend)
+	server.Config.Protocols = &protocols
+	server.Start()
+	t.Cleanup(server.Close)
+
+	return server
+}
+
+// TestHandler_HeaderTimeoutFiresOnSlowH2CBackend pins the
+// per-rule-header-timeout contract for the h2c path. The HTTP/1.1 and
+// TLS paths get this for free via http.Transport.ResponseHeaderTimeout;
+// the h2c path uses x/net/http2.Transport which has no equivalent
+// knob, so we wrap that transport with headerTimeoutRoundTripper.
+// Without the wrapper a backend that accepts the TCP connection then
+// stalls before sending headers held the proxy request indefinitely
+// (issue #270).
+func TestHandler_HeaderTimeoutFiresOnSlowH2CBackend(t *testing.T) {
+	t.Parallel()
+
+	// Backend takes 800ms to write headers; route timeout is 100ms.
+	backend := newSlowHeadersH2CBackend(t, 800*time.Millisecond)
+
+	router := proxy.NewRouter()
+
+	cfg := &proxy.Config{
+		Version: 1,
+		Rules: []proxy.RouteRule{
+			{
+				Hostnames: []string{"app.example.com"},
+				Timeouts:  &proxy.RouteTimeouts{Request: 100 * time.Millisecond},
+				Backends: []proxy.BackendRef{
+					{URL: backend.URL, Weight: 1, Protocol: proxy.BackendProtocolH2C},
+				},
+			},
+		},
+	}
+
+	require.NoError(t, router.UpdateConfig(cfg))
+
+	handler := proxy.NewHandler(router)
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://app.example.com/", nil)
+	rec := httptest.NewRecorder()
+
+	start := time.Now()
+
+	handler.ServeHTTP(rec, req)
+
+	elapsed := time.Since(start)
+
+	resp := rec.Result()
+	defer resp.Body.Close()
+
+	// errorHandler maps header-timeout cancellations to 504 Gateway
+	// Timeout. The exact status is the same one the H/1.1 path
+	// surfaces from ResponseHeaderTimeout firings.
+	assert.Equal(t, http.StatusGatewayTimeout, resp.StatusCode,
+		"slow-headers h2c backend must time out at the per-rule deadline, not stall the request")
+	assert.Less(t, elapsed, 500*time.Millisecond,
+		"timeout must fire near the 100ms deadline (with slack), not block for the full 800ms backend stall")
+}
+
+// TestHandler_StreamingResponseSurvivesRequestTimeout_H2C is the h2c
+// sibling of TestHandler_StreamingResponseSurvivesRequestTimeout. It
+// pins that timeouts.request bounds time-to-first-response-byte but
+// NOT the duration of a streaming body, even when the backend speaks
+// h2c. The wrapper's body-Close-driven cancellation contract is what
+// keeps the stream alive past the header deadline.
+func TestHandler_StreamingResponseSurvivesRequestTimeout_H2C(t *testing.T) {
+	t.Parallel()
+
+	const frameCount = 4
+
+	const interFrame = 500 * time.Millisecond
+
+	backend := newStreamingH2CBackend(t, frameCount, interFrame)
+
+	router := proxy.NewRouter()
+
+	cfg := &proxy.Config{
+		Version: 1,
+		Rules: []proxy.RouteRule{
+			{
+				Hostnames: []string{"app.example.com"},
+				Timeouts:  &proxy.RouteTimeouts{Request: 300 * time.Millisecond},
+				Backends: []proxy.BackendRef{
+					{URL: backend.URL, Weight: 1, Protocol: proxy.BackendProtocolH2C},
+				},
+			},
+		},
+	}
+
+	require.NoError(t, router.UpdateConfig(cfg))
+
+	handler := proxy.NewHandler(router)
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://app.example.com/sse", nil)
+	rec := httptest.NewRecorder()
+
+	start := time.Now()
+
+	handler.ServeHTTP(rec, req)
+
+	elapsed := time.Since(start)
+
+	require.Equal(t, http.StatusOK, rec.Code,
+		"streaming h2c response must propagate the backend's 200 -- a 504 here means the header timeout fired pre-headers")
+
+	body := rec.Body.String()
+	for idx := range frameCount {
+		assert.Contains(t, body, "data: event-"+strconv.Itoa(idx),
+			"frame %d must survive the per-rule timeout; truncated body indicates the header-timeout wrapper "+
+				"is still cancelling the streaming body read", idx)
+	}
+
+	assert.Greater(t, elapsed, 1500*time.Millisecond,
+		"test must take longer than 1.5s -- otherwise the streaming backend didn't actually run to completion "+
+			"and the assertion is not exercising the streaming contract")
 }
 
 func TestNewTransport_H2C_HasLivenessDefaults(t *testing.T) {

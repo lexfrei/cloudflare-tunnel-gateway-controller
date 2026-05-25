@@ -76,6 +76,13 @@ func NewH2CDialerForTest() *net.Dialer {
 	return newH2CDialer()
 }
 
+// NewHeaderTimeoutRoundTripperForTest exposes newHeaderTimeoutRoundTripper so
+// the wrapper's streaming-response contract can be pinned directly without
+// driving the full http2 backend stack.
+func NewHeaderTimeoutRoundTripperForTest(inner http.RoundTripper, timeout time.Duration) http.RoundTripper {
+	return newHeaderTimeoutRoundTripper(inner, timeout)
+}
+
 // ErrorHandlerForTest exposes errorHandler so unit tests can pin its
 // HTTP-status mapping for every error class it recognises without
 // having to spin up a real backend that produces the right error
