@@ -187,16 +187,23 @@ func TestParseWSEnvDurations_Matrix(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// t.Parallel skipped: t.Setenv mutates process env, must run sequentially.
+			//
+			// Unset-shaped cases use t.Setenv(name, "") rather than
+			// os.Unsetenv because parseWSEnvDurations's TrimSpace
+			// check treats "" identically to unset, and t.Setenv
+			// restores the prior value on cleanup -- a bare
+			// os.Unsetenv leaks the unset state across the parent
+			// test boundary, making subtest order load-bearing.
 			if tt.setDialEnv {
 				t.Setenv("PROXY_WS_DIAL_TIMEOUT", tt.dialEnv)
 			} else {
-				_ = os.Unsetenv("PROXY_WS_DIAL_TIMEOUT")
+				t.Setenv("PROXY_WS_DIAL_TIMEOUT", "")
 			}
 
 			if tt.setHandshakeEnv {
 				t.Setenv("PROXY_WS_HANDSHAKE_TIMEOUT", tt.handshakeEnv)
 			} else {
-				_ = os.Unsetenv("PROXY_WS_HANDSHAKE_TIMEOUT")
+				t.Setenv("PROXY_WS_HANDSHAKE_TIMEOUT", "")
 			}
 
 			var logBuf bytes.Buffer
@@ -284,10 +291,17 @@ func TestAccessLogEnabled_Matrix(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// t.Parallel skipped: t.Setenv mutates process env, must run sequentially.
+			//
+			// Unset-shaped cases use t.Setenv(name, "") rather than
+			// os.Unsetenv because accessLogEnabled's TrimSpace+lower
+			// check treats "" identically to unset, and t.Setenv
+			// restores the prior value on cleanup -- a bare
+			// os.Unsetenv leaks the unset state across the parent
+			// test boundary, making subtest order load-bearing.
 			if tt.set {
 				t.Setenv("PROXY_ACCESS_LOG_ENABLED", tt.envv)
 			} else {
-				_ = os.Unsetenv("PROXY_ACCESS_LOG_ENABLED")
+				t.Setenv("PROXY_ACCESS_LOG_ENABLED", "")
 			}
 
 			assert.Equal(t, tt.want, accessLogEnabled(),
@@ -322,10 +336,17 @@ func TestParseAccessLogSamplingRate_Matrix(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// Unset-shaped cases use t.Setenv(name, "") rather than
+			// os.Unsetenv because parseAccessLogSamplingRate's
+			// TrimSpace check treats "" identically to unset, and
+			// t.Setenv restores the prior value on cleanup -- a
+			// bare os.Unsetenv leaks the unset state across the
+			// parent test boundary, making subtest order
+			// load-bearing.
 			if tt.set {
 				t.Setenv("PROXY_ACCESS_LOG_SAMPLING_RATE", tt.envv)
 			} else {
-				_ = os.Unsetenv("PROXY_ACCESS_LOG_SAMPLING_RATE")
+				t.Setenv("PROXY_ACCESS_LOG_SAMPLING_RATE", "")
 			}
 
 			var logBuf bytes.Buffer
@@ -373,14 +394,23 @@ func TestHandlerOptions_AccessLogOnlyWhenEnabled(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// Unset-shaped cases use t.Setenv(name, "") rather than
+			// os.Unsetenv because the env helpers' TrimSpace+lower
+			// checks treat "" identically to unset, and t.Setenv
+			// restores the prior value on cleanup -- a bare
+			// os.Unsetenv leaks the unset state across the parent
+			// test boundary, making subtest order load-bearing.
+			// The two PROXY_WS_* clears below are unconditional
+			// (all subtests run with empty values) so they use the
+			// same t.Setenv pattern.
 			if tt.setEnabled {
 				t.Setenv("PROXY_ACCESS_LOG_ENABLED", tt.enabled)
 			} else {
-				_ = os.Unsetenv("PROXY_ACCESS_LOG_ENABLED")
+				t.Setenv("PROXY_ACCESS_LOG_ENABLED", "")
 			}
 
-			_ = os.Unsetenv("PROXY_WS_DIAL_TIMEOUT")
-			_ = os.Unsetenv("PROXY_WS_HANDSHAKE_TIMEOUT")
+			t.Setenv("PROXY_WS_DIAL_TIMEOUT", "")
+			t.Setenv("PROXY_WS_HANDSHAKE_TIMEOUT", "")
 
 			logger := slog.New(slog.NewTextHandler(&bytes.Buffer{}, &slog.HandlerOptions{Level: slog.LevelWarn}))
 
