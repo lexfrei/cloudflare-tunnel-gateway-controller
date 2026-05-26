@@ -103,31 +103,17 @@ func (r *GatewayClassConfigReconciler) validateConfig(
 	config *v1alpha1.GatewayClassConfig,
 ) []metav1.Condition {
 	now := metav1.Now()
-	secretsResolved := true
 
 	var validationErrors []string
 
 	// Validate credentials secret
 	credResolved, credErrors := r.validateCredentialsSecret(ctx, config)
-	if !credResolved {
-		secretsResolved = false
-	}
 
 	validationErrors = append(validationErrors, credErrors...)
 
-	// Validate tunnel token secret if cloudflared is enabled
-	if config.Spec.IsCloudflaredEnabled() {
-		tokenResolved, tokenErrors := r.validateTunnelTokenSecret(ctx, config)
-		if !tokenResolved {
-			secretsResolved = false
-		}
-
-		validationErrors = append(validationErrors, tokenErrors...)
-	}
-
 	// Build conditions
 	return []metav1.Condition{
-		r.buildSecretsCondition(secretsResolved, config.Generation, now),
+		r.buildSecretsCondition(credResolved, config.Generation, now),
 		r.buildValidCondition(validationErrors, config.Generation, now),
 	}
 }
@@ -162,44 +148,6 @@ func (r *GatewayClassConfigReconciler) validateCredentialsSecret(
 	apiTokenKey := credRef.GetAPITokenKey()
 	if _, ok := credSecret.Data[apiTokenKey]; !ok {
 		return false, []string{fmt.Sprintf("credentials secret missing key '%s'", apiTokenKey)}
-	}
-
-	return true, nil
-}
-
-func (r *GatewayClassConfigReconciler) validateTunnelTokenSecret(
-	ctx context.Context,
-	config *v1alpha1.GatewayClassConfig,
-) (bool, []string) {
-	if config.Spec.TunnelTokenSecretRef == nil {
-		return false, []string{"tunnelTokenSecretRef is required when cloudflared.enabled is true"}
-	}
-
-	tokenRef := config.Spec.TunnelTokenSecretRef
-
-	tokenNamespace := tokenRef.Namespace
-	if tokenNamespace == "" {
-		tokenNamespace = r.DefaultNamespace
-	}
-
-	tokenSecret := &corev1.Secret{}
-
-	tokenErr := r.Get(ctx, types.NamespacedName{Name: tokenRef.Name, Namespace: tokenNamespace}, tokenSecret)
-	if tokenErr != nil {
-		var errs []string
-		if apierrors.IsNotFound(tokenErr) {
-			errs = append(errs, fmt.Sprintf("tunnel token secret '%s' not found in namespace '%s'",
-				tokenRef.Name, tokenNamespace))
-		} else {
-			errs = append(errs, "failed to get tunnel token secret: "+tokenErr.Error())
-		}
-
-		return false, errs
-	}
-
-	tokenKey := tokenRef.GetTunnelTokenKey()
-	if _, ok := tokenSecret.Data[tokenKey]; !ok {
-		return false, []string{fmt.Sprintf("tunnel token secret missing key '%s'", tokenKey)}
 	}
 
 	return true, nil

@@ -8,11 +8,6 @@ import (
 	"github.com/cockroachdb/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"helm.sh/helm/v4/pkg/action"
-	"helm.sh/helm/v4/pkg/chart"
-	chartv2 "helm.sh/helm/v4/pkg/chart/v2"
-	"helm.sh/helm/v4/pkg/release"
-	v1release "helm.sh/helm/v4/pkg/release/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -30,71 +25,6 @@ import (
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/cfmetrics"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/config"
 )
-
-// mockHelmManager implements HelmManagement for testing.
-type mockHelmManager struct {
-	latestVersion  string
-	latestVersionE error
-	loadedChart    chart.Charter
-	loadChartE     error
-	actionConfig   *action.Configuration
-	actionConfigE  error
-	releaseExists  bool
-	installRel     release.Releaser
-	installE       error
-	getReleaseRel  release.Releaser
-	getReleaseE    error
-	upgradeRel     release.Releaser
-	upgradeE       error
-	uninstallE     error
-
-	// Track calls for assertions.
-	installCalled   bool
-	upgradeCalled   bool
-	uninstallCalled bool
-}
-
-func (m *mockHelmManager) GetLatestVersion(_ context.Context, _ string) (string, error) {
-	return m.latestVersion, m.latestVersionE
-}
-
-func (m *mockHelmManager) LoadChart(_ context.Context, _, _ string) (chart.Charter, error) {
-	return m.loadedChart, m.loadChartE
-}
-
-func (m *mockHelmManager) GetActionConfig(_ string) (*action.Configuration, error) {
-	return m.actionConfig, m.actionConfigE
-}
-
-func (m *mockHelmManager) ReleaseExists(_ *action.Configuration, _ string) bool {
-	return m.releaseExists
-}
-
-func (m *mockHelmManager) Install(
-	_ context.Context, _ *action.Configuration, _, _ string, _ chart.Charter, _ map[string]any,
-) (release.Releaser, error) {
-	m.installCalled = true
-
-	return m.installRel, m.installE
-}
-
-func (m *mockHelmManager) GetRelease(_ *action.Configuration, _ string) (release.Releaser, error) {
-	return m.getReleaseRel, m.getReleaseE
-}
-
-func (m *mockHelmManager) Upgrade(
-	_ context.Context, _ *action.Configuration, _ string, _ chart.Charter, _ map[string]any,
-) (release.Releaser, error) {
-	m.upgradeCalled = true
-
-	return m.upgradeRel, m.upgradeE
-}
-
-func (m *mockHelmManager) Uninstall(_ context.Context, _ *action.Configuration, _ string) error {
-	m.uninstallCalled = true
-
-	return m.uninstallE
-}
 
 func TestGatewayReconciler_WrongGatewayClass(t *testing.T) {
 	t.Parallel()
@@ -257,7 +187,6 @@ func TestGatewayReconciler_UpdateStatus(t *testing.T) {
 		},
 	}
 
-	disabled := false
 	gatewayClassConfig := &v1alpha1.GatewayClassConfig{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "test-config",
@@ -268,9 +197,6 @@ func TestGatewayReconciler_UpdateStatus(t *testing.T) {
 				Namespace: "default",
 			},
 			TunnelID: "12345678-1234-1234-1234-123456789abc",
-			Cloudflared: v1alpha1.CloudflaredConfig{
-				Enabled: &disabled,
-			},
 		},
 	}
 
@@ -295,7 +221,6 @@ func TestGatewayReconciler_UpdateStatus(t *testing.T) {
 		Scheme:         fakeClient.Scheme(),
 		ControllerName: "test-controller",
 		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
-		HelmManager:    nil,
 	}
 
 	result, err := reconciler.Reconcile(ctx, ctrl.Request{
@@ -317,65 +242,6 @@ func TestGatewayReconciler_UpdateStatus(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, updatedGateway.Status.Addresses, 1)
 	assert.Equal(t, "12345678-1234-1234-1234-123456789abc.cfargotunnel.com", updatedGateway.Status.Addresses[0].Value)
-}
-
-func TestCloudflaredReleaseName(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name        string
-		gateway     *gatewayv1.Gateway
-		expected    string
-		maxLen      int
-		shouldTrunc bool
-	}{
-		{
-			name: "short name",
-			gateway: &gatewayv1.Gateway{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "gw",
-					Namespace: "ns",
-				},
-			},
-			expected:    "cfd-ns-gw",
-			maxLen:      53,
-			shouldTrunc: false,
-		},
-		{
-			name: "normal name",
-			gateway: &gatewayv1.Gateway{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "my-gateway",
-					Namespace: "default",
-				},
-			},
-			expected:    "cfd-default-my-gateway",
-			maxLen:      53,
-			shouldTrunc: false,
-		},
-		{
-			name: "long name gets truncated",
-			gateway: &gatewayv1.Gateway{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "very-long-gateway-name-that-exceeds-the-limit",
-					Namespace: "very-long-namespace-name",
-				},
-			},
-			expected:    "cfd-very-long-namespace-name-very-long-gateway-name-t",
-			maxLen:      53,
-			shouldTrunc: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			result := cloudflaredReleaseName(tt.gateway)
-			assert.Equal(t, tt.expected, result)
-			assert.LessOrEqual(t, len(result), tt.maxLen)
-		})
-	}
 }
 
 func TestGatewayReconciler_CountAttachedRoutes(t *testing.T) {
@@ -686,60 +552,6 @@ func TestPtr(t *testing.T) {
 	assert.Equal(t, intVal, *intPtr)
 }
 
-func TestGatewayReconciler_BuildCloudflaredValues(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name string
-		cfg  *config.ResolvedConfig
-	}{
-		{
-			name: "basic values",
-			cfg: &config.ResolvedConfig{
-				TunnelToken:         "test-token",
-				CloudflaredProtocol: "quic",
-				CloudflaredReplicas: 2,
-			},
-		},
-		{
-			name: "with AWG sidecar",
-			cfg: &config.ResolvedConfig{
-				TunnelToken:         "test-token",
-				CloudflaredProtocol: "http2",
-				CloudflaredReplicas: 1,
-				AWGSecretName:       "awg-config",
-				AWGInterfacePrefix:  "my-awg",
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			reconciler := &GatewayReconciler{}
-			result := reconciler.buildCloudflaredValues(tt.cfg)
-
-			require.NotNil(t, result)
-			assert.Equal(t, tt.cfg.CloudflaredReplicas, int32(result["replicaCount"].(int)))
-
-			cloudflare, ok := result["cloudflare"].(map[string]any)
-			require.True(t, ok)
-			assert.Equal(t, tt.cfg.TunnelToken, cloudflare["tunnelToken"])
-			assert.Equal(t, "remote", cloudflare["mode"])
-
-			if tt.cfg.CloudflaredProtocol != "" {
-				assert.Equal(t, tt.cfg.CloudflaredProtocol, result["protocol"])
-			}
-
-			if tt.cfg.AWGSecretName != "" {
-				_, hasSidecar := result["sidecar"]
-				assert.True(t, hasSidecar)
-			}
-		})
-	}
-}
-
 func setupGatewayFakeClient(objs ...client.Object) client.WithWatch {
 	scheme := runtime.NewScheme()
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
@@ -775,40 +587,6 @@ func TestGatewayReconciler_GatewayClassToGateways_WrongType(t *testing.T) {
 	requests := reconciler.gatewayClassToGateways(ctx, notGatewayClass)
 
 	assert.Nil(t, requests)
-}
-
-func TestGatewayReconciler_HandleDeletion_NoFinalizer(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-
-	gateway := &gatewayv1.Gateway{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:       "test-gateway",
-			Namespace:  "default",
-			Finalizers: []string{},
-		},
-		Spec: gatewayv1.GatewaySpec{
-			GatewayClassName: "cloudflare-tunnel",
-		},
-	}
-
-	disabled := false
-	cfg := &config.ResolvedConfig{
-		CloudflaredEnabled: disabled,
-	}
-
-	fakeClient := setupGatewayFakeClient(gateway)
-
-	reconciler := &GatewayReconciler{
-		Client: fakeClient,
-		Scheme: fakeClient.Scheme(),
-	}
-
-	result, err := reconciler.handleDeletion(ctx, gateway, cfg)
-
-	require.NoError(t, err)
-	assert.Equal(t, ctrl.Result{}, result)
 }
 
 func TestGatewayReconciler_SetConfigErrorStatus(t *testing.T) {
@@ -879,7 +657,6 @@ func setupGatewayTestReconcilerWithManagedCloudflared() (*GatewayReconciler, cli
 		Scheme:         scheme,
 		ControllerName: "test-controller",
 		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
-		HelmManager:    nil,
 	}, fakeClient
 }
 
@@ -918,9 +695,7 @@ func TestGatewayReconciler_MapperIntegration(t *testing.T) {
 func TestConstants(t *testing.T) {
 	t.Parallel()
 
-	assert.Equal(t, "cloudflare-tunnel.gateway.networking.k8s.io/cloudflared", cloudflaredFinalizer)
 	assert.Equal(t, ".cfargotunnel.com", cfArgotunnelSuffix)
-	assert.Equal(t, 53, maxHelmReleaseName)
 }
 
 func TestGatewayStatusAddressFormat(t *testing.T) {
@@ -948,153 +723,6 @@ func TestNewReconcileRequest(t *testing.T) {
 
 	assert.Equal(t, "test", req.Name)
 	assert.Equal(t, "default", req.Namespace)
-}
-
-func TestGetNestedString(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name     string
-		m        map[string]any
-		keys     []string
-		expected string
-	}{
-		{
-			name:     "nil map",
-			m:        nil,
-			keys:     []string{"key"},
-			expected: "",
-		},
-		{
-			name:     "empty keys",
-			m:        map[string]any{"key": "value"},
-			keys:     []string{},
-			expected: "",
-		},
-		{
-			name:     "simple key",
-			m:        map[string]any{"key": "value"},
-			keys:     []string{"key"},
-			expected: "value",
-		},
-		{
-			name: "nested key",
-			m: map[string]any{
-				"cloudflare": map[string]any{
-					"tunnelToken": "test-token-123",
-				},
-			},
-			keys:     []string{"cloudflare", "tunnelToken"},
-			expected: "test-token-123",
-		},
-		{
-			name:     "missing key",
-			m:        map[string]any{"other": "value"},
-			keys:     []string{"missing"},
-			expected: "",
-		},
-		{
-			name: "non-string value",
-			m: map[string]any{
-				"number": 123,
-			},
-			keys:     []string{"number"},
-			expected: "",
-		},
-		{
-			name: "intermediate not a map",
-			m: map[string]any{
-				"cloudflare": "not-a-map",
-			},
-			keys:     []string{"cloudflare", "tunnelToken"},
-			expected: "",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			result := getNestedString(tt.m, tt.keys...)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
-func TestCloudflaredValuesChanged(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name          string
-		currentConfig map[string]any
-		desiredConfig map[string]any
-		expected      bool
-	}{
-		{
-			name: "same token - no change",
-			currentConfig: map[string]any{
-				"cloudflare": map[string]any{
-					"tunnelToken": "token-123",
-				},
-			},
-			desiredConfig: map[string]any{
-				"cloudflare": map[string]any{
-					"tunnelToken": "token-123",
-				},
-			},
-			expected: false,
-		},
-		{
-			name: "different token - changed",
-			currentConfig: map[string]any{
-				"cloudflare": map[string]any{
-					"tunnelToken": "old-token",
-				},
-			},
-			desiredConfig: map[string]any{
-				"cloudflare": map[string]any{
-					"tunnelToken": "new-token",
-				},
-			},
-			expected: true,
-		},
-		{
-			name:          "current config nil - changed",
-			currentConfig: nil,
-			desiredConfig: map[string]any{
-				"cloudflare": map[string]any{
-					"tunnelToken": "new-token",
-				},
-			},
-			expected: true,
-		},
-		{
-			name: "current token missing - changed",
-			currentConfig: map[string]any{
-				"otherKey": "value",
-			},
-			desiredConfig: map[string]any{
-				"cloudflare": map[string]any{
-					"tunnelToken": "new-token",
-				},
-			},
-			expected: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			// Create a mock release with the current config
-			rel := &v1release.Release{
-				Config: tt.currentConfig,
-			}
-
-			result := cloudflaredValuesChanged(rel, tt.desiredConfig)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
 }
 
 func TestTruncateMessage(t *testing.T) {
@@ -1136,146 +764,6 @@ func TestTruncateMessage(t *testing.T) {
 			assert.LessOrEqual(t, len(result), maxConditionMessageLength)
 		})
 	}
-}
-
-func TestGatewayReconciler_SetCloudflaredErrorStatus(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-
-	gateway := &gatewayv1.Gateway{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:       "test-gateway",
-			Namespace:  "default",
-			Generation: 2,
-		},
-		Spec: gatewayv1.GatewaySpec{
-			GatewayClassName: "cloudflare-tunnel",
-		},
-	}
-
-	fakeClient := setupGatewayFakeClient(gateway)
-
-	reconciler := &GatewayReconciler{
-		Client: fakeClient,
-		Scheme: fakeClient.Scheme(),
-	}
-
-	cfg := &config.ResolvedConfig{
-		TunnelID: "test-tunnel-id",
-	}
-
-	cloudflaredErr := assert.AnError
-	err := reconciler.setCloudflaredErrorStatus(ctx, gateway, cfg, cloudflaredErr)
-	require.NoError(t, err)
-
-	var updated gatewayv1.Gateway
-	err = fakeClient.Get(ctx, types.NamespacedName{
-		Name:      "test-gateway",
-		Namespace: "default",
-	}, &updated)
-	require.NoError(t, err)
-
-	// Verify addresses are set (tunnel exists even if cloudflared failed)
-	require.Len(t, updated.Status.Addresses, 1)
-	assert.Equal(t, "test-tunnel-id"+cfArgotunnelSuffix, updated.Status.Addresses[0].Value)
-
-	// Verify conditions
-	require.Len(t, updated.Status.Conditions, 3)
-
-	assert.Equal(t, string(gatewayv1.GatewayConditionAccepted), updated.Status.Conditions[0].Type)
-	assert.Equal(t, metav1.ConditionTrue, updated.Status.Conditions[0].Status)
-
-	assert.Equal(t, string(gatewayv1.GatewayConditionProgrammed), updated.Status.Conditions[1].Type)
-	assert.Equal(t, metav1.ConditionFalse, updated.Status.Conditions[1].Status)
-	assert.Equal(t, "DeploymentFailed", updated.Status.Conditions[1].Reason)
-
-	// Verify listeners are cleared
-	assert.Nil(t, updated.Status.Listeners)
-}
-
-func TestGatewayReconciler_HandleDeletion_WithFinalizer_NoHelmManager(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-
-	gateway := &gatewayv1.Gateway{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:       "test-gateway",
-			Namespace:  "default",
-			Finalizers: []string{cloudflaredFinalizer},
-		},
-		Spec: gatewayv1.GatewaySpec{
-			GatewayClassName: "cloudflare-tunnel",
-		},
-	}
-
-	cfg := &config.ResolvedConfig{
-		CloudflaredEnabled: true,
-	}
-
-	fakeClient := setupGatewayFakeClient(gateway)
-
-	reconciler := &GatewayReconciler{
-		Client:      fakeClient,
-		Scheme:      fakeClient.Scheme(),
-		HelmManager: nil, // No Helm manager
-	}
-
-	result, err := reconciler.handleDeletion(ctx, gateway, cfg)
-	require.NoError(t, err)
-	assert.Equal(t, ctrl.Result{}, result)
-
-	// Verify finalizer was removed
-	var updated gatewayv1.Gateway
-	err = fakeClient.Get(ctx, types.NamespacedName{
-		Name:      "test-gateway",
-		Namespace: "default",
-	}, &updated)
-	require.NoError(t, err)
-	assert.NotContains(t, updated.Finalizers, cloudflaredFinalizer)
-}
-
-func TestGatewayReconciler_HandleDeletion_WithFinalizer_CloudflaredDisabled(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-
-	gateway := &gatewayv1.Gateway{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:       "test-gateway",
-			Namespace:  "default",
-			Finalizers: []string{cloudflaredFinalizer},
-		},
-		Spec: gatewayv1.GatewaySpec{
-			GatewayClassName: "cloudflare-tunnel",
-		},
-	}
-
-	cfg := &config.ResolvedConfig{
-		CloudflaredEnabled: false,
-	}
-
-	fakeClient := setupGatewayFakeClient(gateway)
-
-	reconciler := &GatewayReconciler{
-		Client:      fakeClient,
-		Scheme:      fakeClient.Scheme(),
-		HelmManager: nil,
-	}
-
-	result, err := reconciler.handleDeletion(ctx, gateway, cfg)
-	require.NoError(t, err)
-	assert.Equal(t, ctrl.Result{}, result)
-
-	// Verify finalizer was removed even when cloudflared is disabled
-	var updated gatewayv1.Gateway
-	err = fakeClient.Get(ctx, types.NamespacedName{
-		Name:      "test-gateway",
-		Namespace: "default",
-	}, &updated)
-	require.NoError(t, err)
-	assert.NotContains(t, updated.Finalizers, cloudflaredFinalizer)
 }
 
 func TestGatewayReconciler_BuildResolvedRefsCondition(t *testing.T) {
@@ -2549,46 +2037,6 @@ func TestGatewayReconciler_CountAttachedRoutes_MixedNamespaces(t *testing.T) {
 	assert.Equal(t, int32(1), counts["http"])
 }
 
-func TestGatewayReconciler_HandleDeletion_WithFinalizer_CloudflaredEnabled_NoHelmManager(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-
-	// Gateway with cloudflared finalizer
-	gateway := &gatewayv1.Gateway{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:       "deleting-gateway",
-			Namespace:  "default",
-			Finalizers: []string{cloudflaredFinalizer},
-		},
-		Spec: gatewayv1.GatewaySpec{
-			GatewayClassName: "cloudflare-tunnel",
-		},
-	}
-
-	cfg := &config.ResolvedConfig{
-		CloudflaredEnabled: true,
-	}
-
-	fakeClient := setupGatewayFakeClient(gateway)
-
-	reconciler := &GatewayReconciler{
-		Client:      fakeClient,
-		Scheme:      fakeClient.Scheme(),
-		HelmManager: nil, // No Helm manager => skip cloudflared removal
-	}
-
-	result, err := reconciler.handleDeletion(ctx, gateway, cfg)
-	require.NoError(t, err)
-	assert.Equal(t, ctrl.Result{}, result)
-
-	// Verify finalizer was removed
-	var updated gatewayv1.Gateway
-	err = fakeClient.Get(ctx, types.NamespacedName{Name: "deleting-gateway", Namespace: "default"}, &updated)
-	require.NoError(t, err)
-	assert.NotContains(t, updated.Finalizers, cloudflaredFinalizer)
-}
-
 func TestGatewayReconciler_ValidateSingleCertRef_CrossNamespace_NoGrant(t *testing.T) {
 	t.Parallel()
 
@@ -2617,157 +2065,6 @@ func TestGatewayReconciler_ValidateSingleCertRef_CrossNamespace_NoGrant(t *testi
 	assert.Equal(t, metav1.ConditionFalse, status)
 	assert.Equal(t, string(gatewayv1.ListenerReasonRefNotPermitted), reason)
 	assert.Contains(t, msg, "not permitted")
-}
-
-func TestGatewayReconciler_Reconcile_SuccessPath_WithFinalizer(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-
-	gateway := &gatewayv1.Gateway{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-gateway",
-			Namespace: "default",
-		},
-		Spec: gatewayv1.GatewaySpec{
-			GatewayClassName: "cloudflare-tunnel",
-			Listeners: []gatewayv1.Listener{
-				{
-					Name:     "http",
-					Port:     80,
-					Protocol: gatewayv1.HTTPProtocolType,
-					AllowedRoutes: &gatewayv1.AllowedRoutes{
-						Namespaces: &gatewayv1.RouteNamespaces{
-							From: new(gatewayv1.NamespacesFromAll),
-						},
-					},
-				},
-				{
-					Name:     "https",
-					Port:     443,
-					Protocol: gatewayv1.HTTPSProtocolType,
-					AllowedRoutes: &gatewayv1.AllowedRoutes{
-						Namespaces: &gatewayv1.RouteNamespaces{
-							From: new(gatewayv1.NamespacesFromAll),
-						},
-					},
-				},
-			},
-		},
-	}
-
-	secret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "cf-credentials",
-			Namespace: "default",
-		},
-		Data: map[string][]byte{
-			"api-token": []byte("test-token"),
-		},
-	}
-
-	disabled := false
-	gatewayClassConfig := &v1alpha1.GatewayClassConfig{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: "test-config",
-		},
-		Spec: v1alpha1.GatewayClassConfigSpec{
-			CloudflareCredentialsSecretRef: v1alpha1.SecretReference{
-				Name:      "cf-credentials",
-				Namespace: "default",
-			},
-			TunnelID: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
-			Cloudflared: v1alpha1.CloudflaredConfig{
-				Enabled: &disabled,
-			},
-		},
-	}
-
-	gatewayClass := &gatewayv1.GatewayClass{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: "cloudflare-tunnel",
-		},
-		Spec: gatewayv1.GatewayClassSpec{
-			ControllerName: "test-controller",
-			ParametersRef: &gatewayv1.ParametersReference{
-				Group: config.ParametersRefGroup,
-				Kind:  config.ParametersRefKind,
-				Name:  "test-config",
-			},
-		},
-	}
-
-	// Add some HTTP routes so countAttachedRoutes exercises the success path
-	ns := gatewayv1.Namespace("default")
-	httpRoute := &gatewayv1.HTTPRoute{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "attached-route",
-			Namespace: "default",
-		},
-		Spec: gatewayv1.HTTPRouteSpec{
-			CommonRouteSpec: gatewayv1.CommonRouteSpec{
-				ParentRefs: []gatewayv1.ParentReference{
-					{Name: "test-gateway", Namespace: &ns},
-				},
-			},
-		},
-	}
-
-	grpcRoute := &gatewayv1.GRPCRoute{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "grpc-route",
-			Namespace: "default",
-		},
-		Spec: gatewayv1.GRPCRouteSpec{
-			CommonRouteSpec: gatewayv1.CommonRouteSpec{
-				ParentRefs: []gatewayv1.ParentReference{
-					{Name: "test-gateway", Namespace: &ns},
-				},
-			},
-		},
-	}
-
-	fakeClient := setupGatewayFakeClient(gateway, secret, gatewayClassConfig, gatewayClass, httpRoute, grpcRoute)
-
-	reconciler := &GatewayReconciler{
-		Client:         fakeClient,
-		Scheme:         fakeClient.Scheme(),
-		ControllerName: "test-controller",
-		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
-		HelmManager:    nil,
-	}
-
-	result, err := reconciler.Reconcile(ctx, ctrl.Request{
-		NamespacedName: types.NamespacedName{
-			Name:      "test-gateway",
-			Namespace: "default",
-		},
-	})
-
-	require.NoError(t, err)
-	assert.Equal(t, ctrl.Result{}, result)
-
-	// Verify status was set with addresses, conditions, and listener statuses
-	var updatedGateway gatewayv1.Gateway
-	err = fakeClient.Get(ctx, types.NamespacedName{Name: "test-gateway", Namespace: "default"}, &updatedGateway)
-	require.NoError(t, err)
-
-	// Address
-	require.Len(t, updatedGateway.Status.Addresses, 1)
-	assert.Equal(t, "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.cfargotunnel.com", updatedGateway.Status.Addresses[0].Value)
-
-	// Gateway conditions
-	require.Len(t, updatedGateway.Status.Conditions, 3)
-
-	// Listener statuses
-	require.Len(t, updatedGateway.Status.Listeners, 2)
-	assert.Equal(t, gatewayv1.SectionName("http"), updatedGateway.Status.Listeners[0].Name)
-	assert.Equal(t, gatewayv1.SectionName("https"), updatedGateway.Status.Listeners[1].Name)
-	// Each listener has 3 conditions: Accepted, Programmed, ResolvedRefs
-	require.Len(t, updatedGateway.Status.Listeners[0].Conditions, 3)
-
-	// Verify attached routes counted
-	assert.GreaterOrEqual(t, updatedGateway.Status.Listeners[0].AttachedRoutes, int32(1))
 }
 
 func TestGatewayReconciler_CountAttachedRoutes_MultipleHTTPAndGRPC(t *testing.T) {
@@ -3034,47 +2331,6 @@ func TestGatewayReconciler_ValidateSingleCertRef_CrossNamespace_WithNamedGrant(t
 	assert.Equal(t, metav1.ConditionTrue, status)
 }
 
-func TestGatewayReconciler_HandleDeletion_WithFinalizer_CloudflaredDisabledConfig(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-
-	gateway := &gatewayv1.Gateway{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:       "deleting-gw",
-			Namespace:  "default",
-			Finalizers: []string{cloudflaredFinalizer},
-		},
-		Spec: gatewayv1.GatewaySpec{
-			GatewayClassName: "cloudflare-tunnel",
-		},
-	}
-
-	disabled := false
-	cfg := &config.ResolvedConfig{
-		CloudflaredEnabled: disabled,
-		TunnelID:           "tunnel-id",
-	}
-
-	fakeClient := setupGatewayFakeClient(gateway)
-
-	reconciler := &GatewayReconciler{
-		Client:      fakeClient,
-		Scheme:      fakeClient.Scheme(),
-		HelmManager: nil,
-	}
-
-	result, err := reconciler.handleDeletion(ctx, gateway, cfg)
-	require.NoError(t, err)
-	assert.Equal(t, ctrl.Result{}, result)
-
-	// Verify finalizer was removed
-	var updated gatewayv1.Gateway
-	err = fakeClient.Get(ctx, types.NamespacedName{Name: "deleting-gw", Namespace: "default"}, &updated)
-	require.NoError(t, err)
-	assert.NotContains(t, updated.Finalizers, cloudflaredFinalizer)
-}
-
 func TestGatewayReconciler_UpdateStatus_WithUnsupportedRouteKind(t *testing.T) {
 	t.Parallel()
 
@@ -3109,7 +2365,6 @@ func TestGatewayReconciler_UpdateStatus_WithUnsupportedRouteKind(t *testing.T) {
 		},
 	}
 
-	disabled := false
 	gatewayClassConfig := &v1alpha1.GatewayClassConfig{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "test-config",
@@ -3120,9 +2375,6 @@ func TestGatewayReconciler_UpdateStatus_WithUnsupportedRouteKind(t *testing.T) {
 				Namespace: "default",
 			},
 			TunnelID: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
-			Cloudflared: v1alpha1.CloudflaredConfig{
-				Enabled: &disabled,
-			},
 		},
 	}
 
@@ -3157,7 +2409,6 @@ func TestGatewayReconciler_UpdateStatus_WithUnsupportedRouteKind(t *testing.T) {
 		Scheme:         fakeClient.Scheme(),
 		ControllerName: "test-controller",
 		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
-		HelmManager:    nil,
 	}
 
 	result, err := reconciler.Reconcile(ctx, ctrl.Request{
@@ -3298,172 +2549,6 @@ func TestGatewayReconciler_SetConfigErrorStatus_UpdateFailure(t *testing.T) {
 
 	require.Len(t, updatedGateway.Status.Conditions, 3)
 	assert.Equal(t, metav1.ConditionFalse, updatedGateway.Status.Conditions[0].Status)
-}
-
-func TestGatewayReconciler_SetCloudflaredErrorStatus_WithAddress(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-
-	gateway := &gatewayv1.Gateway{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:       "test-gw",
-			Namespace:  "default",
-			Generation: 1,
-		},
-		Spec: gatewayv1.GatewaySpec{
-			GatewayClassName: "cloudflare-tunnel",
-			Listeners: []gatewayv1.Listener{
-				{Name: "http", Port: 80, Protocol: "HTTP"},
-			},
-		},
-	}
-
-	cfg := &config.ResolvedConfig{
-		TunnelID:           "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
-		CloudflaredEnabled: true,
-	}
-
-	fakeClient := setupGatewayFakeClient(gateway)
-
-	reconciler := &GatewayReconciler{
-		Client:         fakeClient,
-		Scheme:         fakeClient.Scheme(),
-		ControllerName: "test-controller",
-	}
-
-	cloudflaredErr := errors.New("helm install failed")
-	err := reconciler.setCloudflaredErrorStatus(ctx, gateway, cfg, cloudflaredErr)
-	require.NoError(t, err)
-
-	var updatedGateway gatewayv1.Gateway
-	err = fakeClient.Get(ctx, types.NamespacedName{Name: "test-gw", Namespace: "default"}, &updatedGateway)
-	require.NoError(t, err)
-
-	require.Len(t, updatedGateway.Status.Conditions, 3)
-	// Should have address set even on cloudflared error
-	require.Len(t, updatedGateway.Status.Addresses, 1)
-	assert.Contains(t, updatedGateway.Status.Addresses[0].Value, "cfargotunnel.com")
-}
-
-func TestGetNestedString_EdgeCases(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name     string
-		m        map[string]any
-		keys     []string
-		expected string
-	}{
-		{
-			name:     "nil map",
-			m:        nil,
-			keys:     []string{"a"},
-			expected: "",
-		},
-		{
-			name:     "no keys",
-			m:        map[string]any{"a": "b"},
-			keys:     []string{},
-			expected: "",
-		},
-		{
-			name:     "key not found",
-			m:        map[string]any{"a": "b"},
-			keys:     []string{"missing"},
-			expected: "",
-		},
-		{
-			name:     "final value not string",
-			m:        map[string]any{"a": 42},
-			keys:     []string{"a"},
-			expected: "",
-		},
-		{
-			name:     "intermediate value not map",
-			m:        map[string]any{"a": "not-a-map"},
-			keys:     []string{"a", "b"},
-			expected: "",
-		},
-		{
-			name:     "nested value found",
-			m:        map[string]any{"cloudflare": map[string]any{"tunnelToken": "my-token"}},
-			keys:     []string{"cloudflare", "tunnelToken"},
-			expected: "my-token",
-		},
-		{
-			name:     "deeply nested missing key",
-			m:        map[string]any{"a": map[string]any{"b": map[string]any{}}},
-			keys:     []string{"a", "b", "c"},
-			expected: "",
-		},
-		{
-			name:     "single key string",
-			m:        map[string]any{"key": "value"},
-			keys:     []string{"key"},
-			expected: "value",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			result := getNestedString(tt.m, tt.keys...)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
-func TestCloudflaredValuesChanged_AdditionalCases(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name     string
-		rel      *v1release.Release
-		desired  map[string]any
-		expected bool
-	}{
-		{
-			name: "release has nil config - change needed",
-			rel: &v1release.Release{
-				Config: nil,
-			},
-			desired: map[string]any{
-				"cloudflare": map[string]any{
-					"tunnelToken": "new-token",
-				},
-			},
-			expected: true,
-		},
-		{
-			name: "both empty tokens - no change",
-			rel: &v1release.Release{
-				Config: map[string]any{},
-			},
-			desired:  map[string]any{},
-			expected: false,
-		},
-		{
-			name: "release config missing cloudflare key",
-			rel: &v1release.Release{
-				Config: map[string]any{"other": "value"},
-			},
-			desired: map[string]any{
-				"cloudflare": map[string]any{
-					"tunnelToken": "token",
-				},
-			},
-			expected: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			result := cloudflaredValuesChanged(tt.rel, tt.desired)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
 }
 
 func TestGatewayReconciler_ReferenceGrantToGateways_NoSecretsInNamespace(t *testing.T) {
@@ -3729,583 +2814,6 @@ func TestGatewayReconciler_GetAllManagedGateways_MultipleNamespaces(t *testing.T
 	assert.Contains(t, names, "gw3")
 }
 
-func TestGatewayReconciler_EnsureCloudflared_Install(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-
-	gateway := &gatewayv1.Gateway{
-		ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "default"},
-		Spec:       gatewayv1.GatewaySpec{GatewayClassName: "cloudflare-tunnel"},
-	}
-
-	mock := &mockHelmManager{
-		latestVersion: "1.0.0",
-		loadedChart:   nil,
-		actionConfig:  &action.Configuration{},
-		releaseExists: false,
-		installRel:    &v1release.Release{},
-	}
-
-	fakeClient := setupGatewayFakeClient(gateway)
-
-	reconciler := &GatewayReconciler{
-		Client:      fakeClient,
-		Scheme:      fakeClient.Scheme(),
-		HelmManager: mock,
-	}
-
-	cfg := &config.ResolvedConfig{
-		CloudflaredEnabled:   true,
-		CloudflaredNamespace: "default",
-		TunnelToken:          "test-token",
-	}
-
-	err := reconciler.ensureCloudflared(ctx, gateway, cfg)
-	require.NoError(t, err)
-	assert.True(t, mock.installCalled)
-	assert.False(t, mock.upgradeCalled)
-}
-
-func TestGatewayReconciler_EnsureCloudflared_UpgradeNeeded(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-
-	gateway := &gatewayv1.Gateway{
-		ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "default"},
-		Spec:       gatewayv1.GatewaySpec{GatewayClassName: "cloudflare-tunnel"},
-	}
-
-	existingRelease := &v1release.Release{
-		Chart: &chartv2.Chart{
-			Metadata: &chartv2.Metadata{
-				Version: "0.9.0",
-			},
-		},
-		Config: map[string]any{
-			"cloudflare": map[string]any{
-				"tunnelToken": "old-token",
-			},
-		},
-	}
-
-	mock := &mockHelmManager{
-		latestVersion: "1.0.0",
-		loadedChart:   nil,
-		actionConfig:  &action.Configuration{},
-		releaseExists: true,
-		getReleaseRel: existingRelease,
-		upgradeRel:    &v1release.Release{},
-	}
-
-	fakeClient := setupGatewayFakeClient(gateway)
-
-	reconciler := &GatewayReconciler{
-		Client:      fakeClient,
-		Scheme:      fakeClient.Scheme(),
-		HelmManager: mock,
-	}
-
-	cfg := &config.ResolvedConfig{
-		CloudflaredEnabled:   true,
-		CloudflaredNamespace: "default",
-		TunnelToken:          "new-token",
-	}
-
-	err := reconciler.ensureCloudflared(ctx, gateway, cfg)
-	require.NoError(t, err)
-	assert.False(t, mock.installCalled)
-	assert.True(t, mock.upgradeCalled)
-}
-
-func TestGatewayReconciler_EnsureCloudflared_GetLatestVersionError(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-
-	gateway := &gatewayv1.Gateway{
-		ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "default"},
-	}
-
-	mock := &mockHelmManager{
-		latestVersionE: errors.New("registry unreachable"),
-	}
-
-	reconciler := &GatewayReconciler{
-		HelmManager: mock,
-	}
-
-	cfg := &config.ResolvedConfig{CloudflaredNamespace: "default"}
-
-	err := reconciler.ensureCloudflared(ctx, gateway, cfg)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "latest chart version")
-}
-
-func TestGatewayReconciler_EnsureCloudflared_LoadChartError(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-
-	gateway := &gatewayv1.Gateway{
-		ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "default"},
-	}
-
-	mock := &mockHelmManager{
-		latestVersion: "1.0.0",
-		loadChartE:    errors.New("chart not found"),
-	}
-
-	reconciler := &GatewayReconciler{
-		HelmManager: mock,
-	}
-
-	cfg := &config.ResolvedConfig{CloudflaredNamespace: "default"}
-
-	err := reconciler.ensureCloudflared(ctx, gateway, cfg)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "load chart")
-}
-
-func TestGatewayReconciler_EnsureCloudflared_GetActionConfigError(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-
-	gateway := &gatewayv1.Gateway{
-		ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "default"},
-	}
-
-	mock := &mockHelmManager{
-		latestVersion: "1.0.0",
-		loadedChart:   nil,
-		actionConfigE: errors.New("config error"),
-	}
-
-	reconciler := &GatewayReconciler{
-		HelmManager: mock,
-	}
-
-	cfg := &config.ResolvedConfig{CloudflaredNamespace: "default"}
-
-	err := reconciler.ensureCloudflared(ctx, gateway, cfg)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "action config")
-}
-
-func TestGatewayReconciler_EnsureCloudflared_InstallError(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-
-	gateway := &gatewayv1.Gateway{
-		ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "default"},
-	}
-
-	mock := &mockHelmManager{
-		latestVersion: "1.0.0",
-		loadedChart:   nil,
-		actionConfig:  &action.Configuration{},
-		releaseExists: false,
-		installE:      errors.New("install failed"),
-	}
-
-	reconciler := &GatewayReconciler{
-		HelmManager: mock,
-	}
-
-	cfg := &config.ResolvedConfig{CloudflaredNamespace: "default"}
-
-	err := reconciler.ensureCloudflared(ctx, gateway, cfg)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "install release")
-}
-
-func TestGatewayReconciler_RemoveCloudflared_Success(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-
-	gateway := &gatewayv1.Gateway{
-		ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "default"},
-	}
-
-	mock := &mockHelmManager{
-		actionConfig:  &action.Configuration{},
-		releaseExists: true,
-	}
-
-	reconciler := &GatewayReconciler{
-		HelmManager: mock,
-	}
-
-	cfg := &config.ResolvedConfig{CloudflaredNamespace: "default"}
-
-	err := reconciler.removeCloudflared(ctx, gateway, cfg)
-	require.NoError(t, err)
-	assert.True(t, mock.uninstallCalled)
-}
-
-func TestGatewayReconciler_RemoveCloudflared_NotExists(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-
-	gateway := &gatewayv1.Gateway{
-		ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "default"},
-	}
-
-	mock := &mockHelmManager{
-		actionConfig:  &action.Configuration{},
-		releaseExists: false,
-	}
-
-	reconciler := &GatewayReconciler{
-		HelmManager: mock,
-	}
-
-	cfg := &config.ResolvedConfig{CloudflaredNamespace: "default"}
-
-	err := reconciler.removeCloudflared(ctx, gateway, cfg)
-	require.NoError(t, err)
-	assert.False(t, mock.uninstallCalled)
-}
-
-func TestGatewayReconciler_RemoveCloudflared_GetActionConfigError(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-
-	gateway := &gatewayv1.Gateway{
-		ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "default"},
-	}
-
-	mock := &mockHelmManager{
-		actionConfigE: errors.New("config error"),
-	}
-
-	reconciler := &GatewayReconciler{
-		HelmManager: mock,
-	}
-
-	cfg := &config.ResolvedConfig{CloudflaredNamespace: "default"}
-
-	err := reconciler.removeCloudflared(ctx, gateway, cfg)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "action config")
-}
-
-func TestGatewayReconciler_RemoveCloudflared_UninstallError(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-
-	gateway := &gatewayv1.Gateway{
-		ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "default"},
-	}
-
-	mock := &mockHelmManager{
-		actionConfig:  &action.Configuration{},
-		releaseExists: true,
-		uninstallE:    errors.New("uninstall failed"),
-	}
-
-	reconciler := &GatewayReconciler{
-		HelmManager: mock,
-	}
-
-	cfg := &config.ResolvedConfig{CloudflaredNamespace: "default"}
-
-	err := reconciler.removeCloudflared(ctx, gateway, cfg)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "uninstall")
-}
-
-func TestGatewayReconciler_UpgradeCloudflaredIfNeeded_NoChange(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-
-	existingRelease := &v1release.Release{
-		Chart: &chartv2.Chart{
-			Metadata: &chartv2.Metadata{
-				Version: "1.0.0",
-			},
-		},
-		Config: map[string]any{
-			"cloudflare": map[string]any{
-				"tunnelToken": "same-token",
-			},
-		},
-	}
-
-	mock := &mockHelmManager{
-		getReleaseRel: existingRelease,
-	}
-
-	reconciler := &GatewayReconciler{
-		HelmManager: mock,
-	}
-
-	values := map[string]any{
-		"cloudflare": map[string]any{
-			"tunnelToken": "same-token",
-		},
-	}
-
-	err := reconciler.upgradeCloudflaredIfNeeded(ctx, &action.Configuration{}, "gw", "1.0.0", nil, values)
-	require.NoError(t, err)
-	assert.False(t, mock.upgradeCalled)
-}
-
-func TestGatewayReconciler_UpgradeCloudflaredIfNeeded_VersionChanged(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-
-	existingRelease := &v1release.Release{
-		Chart: &chartv2.Chart{
-			Metadata: &chartv2.Metadata{
-				Version: "0.9.0",
-			},
-		},
-		Config: map[string]any{
-			"cloudflare": map[string]any{
-				"tunnelToken": "same-token",
-			},
-		},
-	}
-
-	mock := &mockHelmManager{
-		getReleaseRel: existingRelease,
-		upgradeRel:    &v1release.Release{},
-	}
-
-	reconciler := &GatewayReconciler{
-		HelmManager: mock,
-	}
-
-	values := map[string]any{
-		"cloudflare": map[string]any{
-			"tunnelToken": "same-token",
-		},
-	}
-
-	err := reconciler.upgradeCloudflaredIfNeeded(ctx, &action.Configuration{}, "gw", "1.0.0", nil, values)
-	require.NoError(t, err)
-	assert.True(t, mock.upgradeCalled)
-}
-
-func TestGatewayReconciler_UpgradeCloudflaredIfNeeded_ValuesChanged(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-
-	existingRelease := &v1release.Release{
-		Chart: &chartv2.Chart{
-			Metadata: &chartv2.Metadata{
-				Version: "1.0.0",
-			},
-		},
-		Config: map[string]any{
-			"cloudflare": map[string]any{
-				"tunnelToken": "old-token",
-			},
-		},
-	}
-
-	mock := &mockHelmManager{
-		getReleaseRel: existingRelease,
-		upgradeRel:    &v1release.Release{},
-	}
-
-	reconciler := &GatewayReconciler{
-		HelmManager: mock,
-	}
-
-	values := map[string]any{
-		"cloudflare": map[string]any{
-			"tunnelToken": "new-token",
-		},
-	}
-
-	err := reconciler.upgradeCloudflaredIfNeeded(ctx, &action.Configuration{}, "gw", "1.0.0", nil, values)
-	require.NoError(t, err)
-	assert.True(t, mock.upgradeCalled)
-}
-
-func TestGatewayReconciler_UpgradeCloudflaredIfNeeded_BothChanged(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-
-	existingRelease := &v1release.Release{
-		Chart: &chartv2.Chart{
-			Metadata: &chartv2.Metadata{
-				Version: "0.9.0",
-			},
-		},
-		Config: map[string]any{
-			"cloudflare": map[string]any{
-				"tunnelToken": "old-token",
-			},
-		},
-	}
-
-	mock := &mockHelmManager{
-		getReleaseRel: existingRelease,
-		upgradeRel:    &v1release.Release{},
-	}
-
-	reconciler := &GatewayReconciler{
-		HelmManager: mock,
-	}
-
-	values := map[string]any{
-		"cloudflare": map[string]any{
-			"tunnelToken": "new-token",
-		},
-	}
-
-	err := reconciler.upgradeCloudflaredIfNeeded(ctx, &action.Configuration{}, "gw", "1.0.0", nil, values)
-	require.NoError(t, err)
-	assert.True(t, mock.upgradeCalled)
-}
-
-func TestGatewayReconciler_UpgradeCloudflaredIfNeeded_GetReleaseError(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-
-	mock := &mockHelmManager{
-		getReleaseE: errors.New("release not found"),
-	}
-
-	reconciler := &GatewayReconciler{
-		HelmManager: mock,
-	}
-
-	err := reconciler.upgradeCloudflaredIfNeeded(ctx, &action.Configuration{}, "gw", "1.0.0", nil, nil)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "existing release")
-}
-
-func TestGatewayReconciler_UpgradeCloudflaredIfNeeded_UpgradeError(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-
-	existingRelease := &v1release.Release{
-		Chart: &chartv2.Chart{
-			Metadata: &chartv2.Metadata{
-				Version: "0.9.0",
-			},
-		},
-		Config: map[string]any{},
-	}
-
-	mock := &mockHelmManager{
-		getReleaseRel: existingRelease,
-		upgradeE:      errors.New("upgrade failed"),
-	}
-
-	reconciler := &GatewayReconciler{
-		HelmManager: mock,
-	}
-
-	err := reconciler.upgradeCloudflaredIfNeeded(ctx, &action.Configuration{}, "gw", "1.0.0", nil, nil)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "upgrade release")
-}
-
-func TestGatewayReconciler_HandleDeletion_WithHelmManager(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-
-	gateway := &gatewayv1.Gateway{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:       "deleting-gw",
-			Namespace:  "default",
-			Finalizers: []string{cloudflaredFinalizer},
-		},
-		Spec: gatewayv1.GatewaySpec{
-			GatewayClassName: "cloudflare-tunnel",
-		},
-	}
-
-	mock := &mockHelmManager{
-		actionConfig:  &action.Configuration{},
-		releaseExists: true,
-	}
-
-	fakeClient := setupGatewayFakeClient(gateway)
-
-	reconciler := &GatewayReconciler{
-		Client:      fakeClient,
-		Scheme:      fakeClient.Scheme(),
-		HelmManager: mock,
-	}
-
-	cfg := &config.ResolvedConfig{
-		CloudflaredEnabled:   true,
-		CloudflaredNamespace: "default",
-		TunnelID:             "tunnel-id",
-	}
-
-	result, err := reconciler.handleDeletion(ctx, gateway, cfg)
-	require.NoError(t, err)
-	assert.Equal(t, ctrl.Result{}, result)
-	assert.True(t, mock.uninstallCalled)
-
-	// Verify finalizer was removed
-	var updated gatewayv1.Gateway
-	err = fakeClient.Get(ctx, types.NamespacedName{Name: "deleting-gw", Namespace: "default"}, &updated)
-	require.NoError(t, err)
-	assert.NotContains(t, updated.Finalizers, cloudflaredFinalizer)
-}
-
-func TestGatewayReconciler_HandleDeletion_RemoveError(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-
-	gateway := &gatewayv1.Gateway{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:       "deleting-gw",
-			Namespace:  "default",
-			Finalizers: []string{cloudflaredFinalizer},
-		},
-		Spec: gatewayv1.GatewaySpec{
-			GatewayClassName: "cloudflare-tunnel",
-		},
-	}
-
-	mock := &mockHelmManager{
-		actionConfig:  &action.Configuration{},
-		releaseExists: true,
-		uninstallE:    errors.New("uninstall failed"),
-	}
-
-	fakeClient := setupGatewayFakeClient(gateway)
-
-	reconciler := &GatewayReconciler{
-		Client:      fakeClient,
-		Scheme:      fakeClient.Scheme(),
-		HelmManager: mock,
-	}
-
-	cfg := &config.ResolvedConfig{
-		CloudflaredEnabled:   true,
-		CloudflaredNamespace: "default",
-	}
-
-	_, err := reconciler.handleDeletion(ctx, gateway, cfg)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "remove cloudflared")
-}
-
 func TestGatewayReconciler_CountAttachedRoutes_RejectedByBinding(t *testing.T) {
 	t.Parallel()
 
@@ -4403,21 +2911,6 @@ func TestGatewayReconciler_CountAttachedRoutes_RejectedByBinding(t *testing.T) {
 
 // mockReleaser is a non-v1release.Release type that implements release.Releaser (empty interface).
 type mockReleaser struct{}
-
-func TestGatewayReconciler_CloudflaredValuesChanged_NotV1Release(t *testing.T) {
-	t.Parallel()
-
-	// Test with a non-v1 release type (triggers the !ok branch in type assertion)
-	desired := map[string]any{
-		"cloudflare": map[string]any{
-			"tunnelToken": "new-token",
-		},
-	}
-
-	// Use a mock releaser that is NOT *v1release.Release to trigger the !ok branch
-	result := cloudflaredValuesChanged(&mockReleaser{}, desired)
-	assert.True(t, result, "non-v1 release should indicate changed values (safe default)")
-}
 
 func TestGatewayReconciler_RouteToGateways_HTTPRoute(t *testing.T) {
 	t.Parallel()
@@ -4589,7 +3082,6 @@ func TestGatewayReconciler_UpdateStatus_UnresolvedRefs_ProgrammedFalse(t *testin
 		},
 	}
 
-	disabled := false
 	gatewayClassConfig := &v1alpha1.GatewayClassConfig{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "test-config",
@@ -4600,9 +3092,6 @@ func TestGatewayReconciler_UpdateStatus_UnresolvedRefs_ProgrammedFalse(t *testin
 				Namespace: "default",
 			},
 			TunnelID: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
-			Cloudflared: v1alpha1.CloudflaredConfig{
-				Enabled: &disabled,
-			},
 		},
 	}
 
@@ -4637,7 +3126,6 @@ func TestGatewayReconciler_UpdateStatus_UnresolvedRefs_ProgrammedFalse(t *testin
 		Scheme:         fakeClient.Scheme(),
 		ControllerName: "test-controller",
 		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
-		HelmManager:    nil,
 	}
 
 	result, err := reconciler.Reconcile(ctx, ctrl.Request{

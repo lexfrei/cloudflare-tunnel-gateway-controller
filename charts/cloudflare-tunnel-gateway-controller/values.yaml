@@ -1,8 +1,11 @@
 # Default values for cloudflare-tunnel-gateway-controller.
 
 # -- GatewayClassConfig configuration
-# This is the main configuration section for Cloudflare Tunnel settings.
-# All tunnel-specific settings are now in GatewayClassConfig CRD.
+# This section drives the optional GatewayClassConfig CRD rendered by the chart.
+# Starting v3 the chart no longer manages a separate cloudflared deployment;
+# the in-process L7 proxy embeds cloudflared transport and is deployed by the
+# chart itself. The tunnel token is supplied directly to the proxy via
+# `proxy.tunnelTokenSecretRef` (see below).
 gatewayClassConfig:
   # -- Create GatewayClassConfig resource
   create: false
@@ -20,49 +23,13 @@ gatewayClassConfig:
     # -- Key in the Secret containing the API token (defaults to "api-token")
     key: ""
 
+  # -- Cloudflare account ID. Optional - auto-detected when the API token has access to a single account.
+  accountId: ""
+
   # -- Cloudflare Tunnel ID (REQUIRED)
   # Get from: Zero Trust Dashboard > Networks > Tunnels
   # Example: "550e8400-e29b-41d4-a716-446655440000"
   tunnelID: ""
-
-  # -- Reference to Secret containing tunnel token (REQUIRED when cloudflared.enabled is true)
-  # The Secret must contain a "tunnel-token" key.
-  tunnelTokenSecretRef:
-    # -- Name of the Secret containing tunnel token
-    name: ""
-    # -- Namespace of the Secret (defaults to release namespace)
-    namespace: ""
-    # -- Key in the Secret containing the tunnel token (defaults to "tunnel-token")
-    key: ""
-
-  # -- Cloudflared deployment configuration
-  cloudflared:
-    # -- Enable cloudflared deployment management (default: true)
-    enabled: true
-    # -- Number of cloudflared replicas
-    replicas: 1
-    # -- Namespace for cloudflared deployment
-    namespace: "cloudflare-tunnel-system"
-    # -- Transport protocol (auto, quic, http2)
-    protocol: ""
-    # -- AmneziaWG sidecar configuration
-    awg:
-      # -- Secret name containing AWG config (enables AWG sidecar)
-      secretName: ""
-      # -- AWG interface name prefix (kernel auto-numbers: prefix0, prefix1, etc.)
-      interfacePrefix: "awg-cfd"
-    # -- Liveness probe configuration for cloudflared
-    livenessProbe:
-      # -- Seconds before liveness probe is initiated
-      initialDelaySeconds: 30
-      # -- Seconds after which probe times out
-      timeoutSeconds: 5
-      # -- How often to perform the probe
-      periodSeconds: 20
-      # -- Minimum consecutive successes for probe to be considered successful
-      successThreshold: 1
-      # -- Number of failures before container restart
-      failureThreshold: 3
 
 # -- Controller configuration
 controller:

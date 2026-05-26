@@ -33,70 +33,14 @@
             }
           }
         },
+        "accountId": {
+          "type": "string",
+          "description": "Cloudflare account ID (optional, auto-detected when omitted)"
+        },
         "tunnelID": {
           "type": "string",
           "pattern": "^([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})?$",
           "description": "Cloudflare Tunnel ID (UUID format, required when gatewayClassConfig.create is true)"
-        },
-        "tunnelTokenSecretRef": {
-          "type": "object",
-          "description": "Reference to Secret containing tunnel token",
-          "properties": {
-            "name": {
-              "type": "string",
-              "description": "Name of the Secret"
-            },
-            "namespace": {
-              "type": "string",
-              "description": "Namespace of the Secret"
-            },
-            "key": {
-              "type": "string",
-              "description": "Key in the Secret containing the tunnel token"
-            }
-          }
-        },
-        "cloudflared": {
-          "type": "object",
-          "description": "Cloudflared deployment configuration",
-          "properties": {
-            "enabled": {
-              "type": "boolean",
-              "description": "Enable cloudflared deployment management",
-              "default": true
-            },
-            "replicas": {
-              "type": "integer",
-              "minimum": 1,
-              "description": "Number of cloudflared replicas",
-              "default": 1
-            },
-            "namespace": {
-              "type": "string",
-              "description": "Namespace for cloudflared deployment",
-              "default": "cloudflare-tunnel-system"
-            },
-            "protocol": {
-              "type": "string",
-              "description": "Transport protocol",
-              "enum": ["", "auto", "quic", "http2"]
-            },
-            "awg": {
-              "type": "object",
-              "description": "AmneziaWG sidecar configuration",
-              "properties": {
-                "secretName": {
-                  "type": "string",
-                  "description": "Secret name containing AWG config"
-                },
-                "interfacePrefix": {
-                  "type": "string",
-                  "description": "AWG interface name prefix (kernel auto-numbers: prefix0, prefix1, etc.)",
-                  "default": "awg-cfd"
-                }
-              }
-            }
-          }
         }
       }
     },

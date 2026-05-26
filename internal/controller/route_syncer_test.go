@@ -1059,7 +1059,6 @@ func TestRouteSyncer_SyncAllRoutes_AccountIDResolveFailure(t *testing.T) {
 		},
 	}
 
-	disabled := false
 	gatewayClassConfig := &v1alpha1.GatewayClassConfig{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "test-config",
@@ -1070,9 +1069,6 @@ func TestRouteSyncer_SyncAllRoutes_AccountIDResolveFailure(t *testing.T) {
 				Namespace: "default",
 			},
 			TunnelID: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
-			Cloudflared: v1alpha1.CloudflaredConfig{
-				Enabled: &disabled,
-			},
 			// AccountID intentionally NOT set to trigger auto-detect
 		},
 	}
@@ -1133,7 +1129,6 @@ func TestRouteSyncer_SyncAllRoutes_TunnelConfigGetFailure(t *testing.T) {
 		},
 	}
 
-	disabled := false
 	gatewayClassConfig := &v1alpha1.GatewayClassConfig{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "test-config",
@@ -1145,9 +1140,6 @@ func TestRouteSyncer_SyncAllRoutes_TunnelConfigGetFailure(t *testing.T) {
 			},
 			TunnelID:  "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
 			AccountID: "test-account-id",
-			Cloudflared: v1alpha1.CloudflaredConfig{
-				Enabled: &disabled,
-			},
 		},
 	}
 

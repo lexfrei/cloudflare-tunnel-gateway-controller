@@ -7,10 +7,6 @@ import (
 	"time"
 
 	"github.com/cockroachdb/errors"
-	"helm.sh/helm/v4/pkg/action"
-	"helm.sh/helm/v4/pkg/chart"
-	"helm.sh/helm/v4/pkg/release"
-	v1release "helm.sh/helm/v4/pkg/release/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -19,7 +15,6 @@ import (
 	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -28,20 +23,15 @@ import (
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/api/v1alpha1"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/config"
-	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/helm"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/logging"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/routebinding"
 )
 
 const (
-	cloudflaredFinalizer = "cloudflare-tunnel.gateway.networking.k8s.io/cloudflared"
-	cfArgotunnelSuffix   = ".cfargotunnel.com"
+	cfArgotunnelSuffix = ".cfargotunnel.com"
 
 	// configErrorRequeueDelay is the delay before retrying when config resolution fails.
 	configErrorRequeueDelay = 30 * time.Second
-
-	// maxHelmReleaseName is the maximum length for Helm release names.
-	maxHelmReleaseName = 53
 
 	// msgReferencesResolved is the standard message for ResolvedRefs condition.
 	msgReferencesResolved = "References resolved"
@@ -67,32 +57,16 @@ func truncateMessage(msg string) string {
 	return msg
 }
 
-// HelmManagement defines the interface for Helm operations used by the gateway controller.
-// This interface exists to enable testing with mock implementations.
-type HelmManagement interface {
-	GetLatestVersion(ctx context.Context, chartRef string) (string, error)
-	LoadChart(ctx context.Context, chartRef, version string) (chart.Charter, error)
-	GetActionConfig(namespace string) (*action.Configuration, error)
-	ReleaseExists(cfg *action.Configuration, releaseName string) bool
-	Install(ctx context.Context, cfg *action.Configuration,
-		releaseName, namespace string, loadedChart chart.Charter, values map[string]any) (release.Releaser, error)
-	GetRelease(cfg *action.Configuration, releaseName string) (release.Releaser, error)
-	Upgrade(ctx context.Context, cfg *action.Configuration,
-		releaseName string, loadedChart chart.Charter, values map[string]any) (release.Releaser, error)
-	Uninstall(ctx context.Context, cfg *action.Configuration, releaseName string) error
-}
-
 // GatewayReconciler reconciles Gateway resources for the cloudflare-tunnel GatewayClass.
 //
 // It performs the following functions:
 //   - Watches Gateway resources whose GatewayClass matches the configured ControllerName
 //   - Reads configuration from GatewayClassConfig via parametersRef
 //   - Updates Gateway status with tunnel CNAME address (for external-dns integration)
-//   - Manages cloudflared deployment lifecycle via Helm (when enabled in config)
-//   - Handles Gateway deletion with proper cleanup of cloudflared resources
 //
-// The reconciler uses finalizers to ensure cloudflared is properly removed
-// when a Gateway is deleted.
+// Starting v3 the controller no longer manages a separate cloudflared deployment;
+// the in-process L7 proxy embeds cloudflared transport and is deployed alongside
+// the controller by the Helm chart. The controller only reconciles status.
 type GatewayReconciler struct {
 	client.Client
 
@@ -106,10 +80,6 @@ type GatewayReconciler struct {
 
 	// ConfigResolver resolves configuration from GatewayClassConfig.
 	ConfigResolver *config.Resolver
-
-	// HelmManager handles cloudflared deployment. If nil, cloudflared
-	// management is disabled regardless of config.
-	HelmManager HelmManagement
 }
 
 func (r *GatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -144,28 +114,9 @@ func (r *GatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	}
 
 	if !gateway.DeletionTimestamp.IsZero() {
-		return r.handleDeletion(ctx, &gateway, resolvedConfig)
-	}
-
-	//nolint:nestif // cloudflared management requires nested validation
-	if r.HelmManager != nil && resolvedConfig.CloudflaredEnabled {
-		if !controllerutil.ContainsFinalizer(&gateway, cloudflaredFinalizer) {
-			controllerutil.AddFinalizer(&gateway, cloudflaredFinalizer)
-
-			if err := r.Update(ctx, &gateway); err != nil {
-				return ctrl.Result{}, errors.Wrap(err, "failed to add finalizer")
-			}
-		}
-
-		if err := r.ensureCloudflared(ctx, &gateway, resolvedConfig); err != nil {
-			logger.Error(err, "failed to ensure cloudflared deployment")
-
-			if statusErr := r.setCloudflaredErrorStatus(ctx, &gateway, resolvedConfig, err); statusErr != nil {
-				logger.Error(statusErr, "failed to update gateway status")
-			}
-
-			return ctrl.Result{RequeueAfter: configErrorRequeueDelay}, nil
-		}
+		// Nothing to clean up - no finalizer is added since v3 (proxy lifecycle
+		// is managed by the Helm chart, not per-Gateway).
+		return ctrl.Result{}, nil
 	}
 
 	if err := r.updateStatus(ctx, &gateway, resolvedConfig); err != nil {
@@ -173,229 +124,6 @@ func (r *GatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	}
 
 	return ctrl.Result{}, nil
-}
-
-func (r *GatewayReconciler) handleDeletion(
-	ctx context.Context,
-	gateway *gatewayv1.Gateway,
-	cfg *config.ResolvedConfig,
-) (ctrl.Result, error) {
-	logger := log.FromContext(ctx)
-
-	if !controllerutil.ContainsFinalizer(gateway, cloudflaredFinalizer) {
-		return ctrl.Result{}, nil
-	}
-
-	if r.HelmManager != nil && cfg.CloudflaredEnabled {
-		releaseName := cloudflaredReleaseName(gateway)
-		logger.Info("removing cloudflared deployment", "release", releaseName)
-
-		removeErr := r.removeCloudflared(ctx, gateway, cfg)
-		if removeErr != nil {
-			return ctrl.Result{}, errors.Wrap(removeErr, "failed to remove cloudflared")
-		}
-	}
-
-	controllerutil.RemoveFinalizer(gateway, cloudflaredFinalizer)
-
-	updateErr := r.Update(ctx, gateway)
-	if updateErr != nil {
-		return ctrl.Result{}, errors.Wrap(updateErr, "failed to remove finalizer")
-	}
-
-	return ctrl.Result{}, nil
-}
-
-func (r *GatewayReconciler) ensureCloudflared(
-	ctx context.Context,
-	gateway *gatewayv1.Gateway,
-	cfg *config.ResolvedConfig,
-) error {
-	logger := log.FromContext(ctx)
-
-	namespace := cfg.CloudflaredNamespace
-	releaseName := cloudflaredReleaseName(gateway)
-
-	latestVersion, err := r.HelmManager.GetLatestVersion(ctx, helm.DefaultChartRef)
-	if err != nil {
-		return errors.Wrap(err, "failed to get latest chart version")
-	}
-
-	logger.Info("ensuring cloudflared", "release", releaseName, "version", latestVersion, "namespace", namespace)
-
-	loadedChart, err := r.HelmManager.LoadChart(ctx, helm.DefaultChartRef, latestVersion)
-	if err != nil {
-		return errors.Wrap(err, "failed to load chart")
-	}
-
-	values := r.buildCloudflaredValues(cfg)
-
-	actionCfg, err := r.HelmManager.GetActionConfig(namespace)
-	if err != nil {
-		return errors.Wrap(err, "failed to get action config")
-	}
-
-	if r.HelmManager.ReleaseExists(actionCfg, releaseName) {
-		return r.upgradeCloudflaredIfNeeded(ctx, actionCfg, releaseName, latestVersion, loadedChart, values)
-	}
-
-	logger.Info("installing cloudflared", "release", releaseName, "version", latestVersion)
-
-	_, err = r.HelmManager.Install(ctx, actionCfg, releaseName, namespace, loadedChart, values)
-	if err != nil {
-		return errors.Wrap(err, "failed to install release")
-	}
-
-	return nil
-}
-
-func (r *GatewayReconciler) upgradeCloudflaredIfNeeded(
-	ctx context.Context,
-	actionCfg *action.Configuration,
-	releaseName, latestVersion string,
-	loadedChart chart.Charter,
-	values map[string]any,
-) error {
-	logger := log.FromContext(ctx)
-
-	rel, err := r.HelmManager.GetRelease(actionCfg, releaseName)
-	if err != nil {
-		return errors.Wrap(err, "failed to get existing release")
-	}
-
-	relAccessor, err := release.NewAccessor(rel)
-	if err != nil {
-		return errors.Wrap(err, "failed to create release accessor")
-	}
-
-	chartAccessor, err := chart.NewAccessor(relAccessor.Chart())
-	if err != nil {
-		return errors.Wrap(err, "failed to create chart accessor")
-	}
-
-	currentVersion := chartAccessor.MetadataAsMap()["Version"]
-	versionChanged := currentVersion != latestVersion
-	valuesChanged := cloudflaredValuesChanged(rel, values)
-
-	if !versionChanged && !valuesChanged {
-		return nil
-	}
-
-	reason := "version"
-	if valuesChanged {
-		reason = "values"
-	}
-
-	if versionChanged && valuesChanged {
-		reason = "version and values"
-	}
-
-	logger.Info("upgrading cloudflared",
-		"release", releaseName,
-		"reason", reason,
-		"fromVersion", currentVersion,
-		"toVersion", latestVersion,
-	)
-
-	_, err = r.HelmManager.Upgrade(ctx, actionCfg, releaseName, loadedChart, values)
-	if err != nil {
-		return errors.Wrap(err, "failed to upgrade release")
-	}
-
-	return nil
-}
-
-// cloudflaredValuesChanged compares critical values between current and desired configurations.
-// Returns true if an upgrade is needed due to values change.
-func cloudflaredValuesChanged(rel release.Releaser, desired map[string]any) bool {
-	// Type assert to get access to Config field
-	v1rel, ok := rel.(*v1release.Release)
-	if !ok {
-		// If we can't determine current config, assume it changed to be safe
-		return true
-	}
-
-	currentToken := getNestedString(v1rel.Config, "cloudflare", "tunnelToken")
-	desiredToken := getNestedString(desired, "cloudflare", "tunnelToken")
-
-	return currentToken != desiredToken
-}
-
-// getNestedString extracts a string value from a nested map structure.
-// Returns empty string if path doesn't exist or value is not a string.
-func getNestedString(m map[string]any, keys ...string) string {
-	if len(keys) == 0 || m == nil {
-		return ""
-	}
-
-	current := m
-
-	for i, key := range keys {
-		val, ok := current[key]
-		if !ok {
-			return ""
-		}
-
-		if i == len(keys)-1 {
-			if str, ok := val.(string); ok {
-				return str
-			}
-
-			return ""
-		}
-
-		if nested, ok := val.(map[string]any); ok {
-			current = nested
-		} else {
-			return ""
-		}
-	}
-
-	return ""
-}
-
-func (r *GatewayReconciler) removeCloudflared(
-	ctx context.Context,
-	gateway *gatewayv1.Gateway,
-	cfg *config.ResolvedConfig,
-) error {
-	namespace := cfg.CloudflaredNamespace
-	releaseName := cloudflaredReleaseName(gateway)
-
-	actionCfg, err := r.HelmManager.GetActionConfig(namespace)
-	if err != nil {
-		return errors.Wrap(err, "failed to get action config")
-	}
-
-	if !r.HelmManager.ReleaseExists(actionCfg, releaseName) {
-		return nil
-	}
-
-	return errors.Wrap(r.HelmManager.Uninstall(ctx, actionCfg, releaseName), "failed to uninstall cloudflared")
-}
-
-func (r *GatewayReconciler) buildCloudflaredValues(cfg *config.ResolvedConfig) map[string]any {
-	cloudflaredValues := &helm.CloudflaredValues{
-		TunnelToken:  cfg.TunnelToken,
-		Protocol:     cfg.CloudflaredProtocol,
-		ReplicaCount: int(cfg.CloudflaredReplicas),
-		LivenessProbe: &helm.LivenessProbeValues{
-			InitialDelaySeconds: cfg.LivenessProbeInitialDelay,
-			TimeoutSeconds:      cfg.LivenessProbeTimeout,
-			PeriodSeconds:       cfg.LivenessProbePeriod,
-			SuccessThreshold:    cfg.LivenessProbeSuccess,
-			FailureThreshold:    cfg.LivenessProbeFailure,
-		},
-	}
-
-	if cfg.AWGSecretName != "" {
-		cloudflaredValues.Sidecar = &helm.SidecarConfig{
-			ConfigSecretName: cfg.AWGSecretName,
-			InterfacePrefix:  cfg.AWGInterfacePrefix,
-		}
-	}
-
-	return cloudflaredValues.BuildValues()
 }
 
 //nolint:funlen // status update logic with retry
@@ -557,65 +285,6 @@ func (r *GatewayReconciler) setConfigErrorStatus(
 		}, buildClientCertResolvedRefsCondition(freshGateway.Generation, now, clientCertErr))
 
 		// Clear listener statuses on config error
-		freshGateway.Status.Listeners = nil
-
-		if err := r.Status().Update(ctx, &freshGateway); err != nil {
-			return errors.Wrap(err, "failed to update gateway status")
-		}
-
-		return nil
-	})
-
-	return errors.Wrap(err, "failed to update gateway status after retries")
-}
-
-func (r *GatewayReconciler) setCloudflaredErrorStatus(
-	ctx context.Context,
-	gateway *gatewayv1.Gateway,
-	cfg *config.ResolvedConfig,
-	cloudflaredErr error,
-) error {
-	gatewayKey := types.NamespacedName{Name: gateway.Name, Namespace: gateway.Namespace}
-
-	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		var freshGateway gatewayv1.Gateway
-		if err := r.Get(ctx, gatewayKey, &freshGateway); err != nil {
-			return errors.Wrap(err, "failed to get fresh gateway")
-		}
-
-		now := metav1.Now()
-		errMsg := truncateMessage("Failed to deploy cloudflared: " + cloudflaredErr.Error())
-
-		// Set address even on error (tunnel exists, just cloudflared failed)
-		freshGateway.Status.Addresses = []gatewayv1.GatewayStatusAddress{
-			{
-				Type:  new(gatewayv1.HostnameAddressType),
-				Value: cfg.TunnelID + cfArgotunnelSuffix,
-			},
-		}
-
-		_, _, clientCertErr := loadGatewayClientCertPEM(ctx, r.Client, &freshGateway, r.checkSecretReferenceGrant)
-
-		freshGateway.Status.Conditions = mergeClientCertCondition(freshGateway.Status.Conditions, []metav1.Condition{
-			{
-				Type:               string(gatewayv1.GatewayConditionAccepted),
-				Status:             metav1.ConditionTrue,
-				ObservedGeneration: freshGateway.Generation,
-				LastTransitionTime: now,
-				Reason:             string(gatewayv1.GatewayReasonAccepted),
-				Message:            msgGatewayAccepted,
-			},
-			{
-				Type:               string(gatewayv1.GatewayConditionProgrammed),
-				Status:             metav1.ConditionFalse,
-				ObservedGeneration: freshGateway.Generation,
-				LastTransitionTime: now,
-				Reason:             "DeploymentFailed",
-				Message:            errMsg,
-			},
-		}, buildClientCertResolvedRefsCondition(freshGateway.Generation, now, clientCertErr))
-
-		// Clear listener statuses on cloudflared error
 		freshGateway.Status.Listeners = nil
 
 		if err := r.Status().Update(ctx, &freshGateway); err != nil {
@@ -999,18 +668,6 @@ func (r *GatewayReconciler) gatewayReferencesSecretsInNamespace(
 	}
 
 	return false
-}
-
-// cloudflaredReleaseName generates a unique Helm release name for cloudflared
-// based on the Gateway name and namespace. The name is truncated to fit Helm's
-// 53 character limit for release names.
-func cloudflaredReleaseName(gateway *gatewayv1.Gateway) string {
-	name := "cfd-" + gateway.Namespace + "-" + gateway.Name
-	if len(name) > maxHelmReleaseName {
-		return name[:maxHelmReleaseName]
-	}
-
-	return name
 }
 
 // validateTLSCertificateRefs validates TLS certificate references for a listener.

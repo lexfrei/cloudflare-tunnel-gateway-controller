@@ -10,92 +10,6 @@ import (
 
 const testModifiedValue = "modified"
 
-func TestIsCloudflaredEnabled_Default(t *testing.T) {
-	t.Parallel()
-
-	spec := &GatewayClassConfigSpec{
-		Cloudflared: CloudflaredConfig{
-			Enabled: nil,
-		},
-	}
-
-	assert.True(t, spec.IsCloudflaredEnabled())
-}
-
-func TestIsCloudflaredEnabled_ExplicitTrue(t *testing.T) {
-	t.Parallel()
-
-	enabled := true
-	spec := &GatewayClassConfigSpec{
-		Cloudflared: CloudflaredConfig{
-			Enabled: &enabled,
-		},
-	}
-
-	assert.True(t, spec.IsCloudflaredEnabled())
-}
-
-func TestIsCloudflaredEnabled_ExplicitFalse(t *testing.T) {
-	t.Parallel()
-
-	disabled := false
-	spec := &GatewayClassConfigSpec{
-		Cloudflared: CloudflaredConfig{
-			Enabled: &disabled,
-		},
-	}
-
-	assert.False(t, spec.IsCloudflaredEnabled())
-}
-
-func TestGetCloudflaredReplicas_Default(t *testing.T) {
-	t.Parallel()
-
-	spec := &GatewayClassConfigSpec{
-		Cloudflared: CloudflaredConfig{
-			Replicas: 0,
-		},
-	}
-
-	assert.Equal(t, int32(1), spec.GetCloudflaredReplicas())
-}
-
-func TestGetCloudflaredReplicas_Custom(t *testing.T) {
-	t.Parallel()
-
-	spec := &GatewayClassConfigSpec{
-		Cloudflared: CloudflaredConfig{
-			Replicas: 3,
-		},
-	}
-
-	assert.Equal(t, int32(3), spec.GetCloudflaredReplicas())
-}
-
-func TestGetCloudflaredNamespace_Default(t *testing.T) {
-	t.Parallel()
-
-	spec := &GatewayClassConfigSpec{
-		Cloudflared: CloudflaredConfig{
-			Namespace: "",
-		},
-	}
-
-	assert.Equal(t, "cloudflare-tunnel-system", spec.GetCloudflaredNamespace())
-}
-
-func TestGetCloudflaredNamespace_Custom(t *testing.T) {
-	t.Parallel()
-
-	spec := &GatewayClassConfigSpec{
-		Cloudflared: CloudflaredConfig{
-			Namespace: "custom-namespace",
-		},
-	}
-
-	assert.Equal(t, "custom-namespace", spec.GetCloudflaredNamespace())
-}
-
 func TestGetAPITokenKey_Default(t *testing.T) {
 	t.Parallel()
 
@@ -118,28 +32,6 @@ func TestGetAPITokenKey_Custom(t *testing.T) {
 	assert.Equal(t, "custom-key", ref.GetAPITokenKey())
 }
 
-func TestGetTunnelTokenKey_Default(t *testing.T) {
-	t.Parallel()
-
-	ref := &SecretReference{
-		Name: "my-secret",
-		Key:  "",
-	}
-
-	assert.Equal(t, "tunnel-token", ref.GetTunnelTokenKey())
-}
-
-func TestGetTunnelTokenKey_Custom(t *testing.T) {
-	t.Parallel()
-
-	ref := &SecretReference{
-		Name: "my-secret",
-		Key:  "custom-tunnel-key",
-	}
-
-	assert.Equal(t, "custom-tunnel-key", ref.GetTunnelTokenKey())
-}
-
 func TestSecretReference_FieldsPresent(t *testing.T) {
 	t.Parallel()
 
@@ -154,40 +46,6 @@ func TestSecretReference_FieldsPresent(t *testing.T) {
 	assert.Equal(t, "test-key", ref.Key)
 }
 
-func TestAWGConfig_FieldsPresent(t *testing.T) {
-	t.Parallel()
-
-	awg := AWGConfig{
-		SecretName:      "awg-secret",
-		InterfacePrefix: "awg-test",
-	}
-
-	assert.Equal(t, "awg-secret", awg.SecretName)
-	assert.Equal(t, "awg-test", awg.InterfacePrefix)
-}
-
-func TestCloudflaredConfig_FieldsPresent(t *testing.T) {
-	t.Parallel()
-
-	enabled := true
-	cfg := CloudflaredConfig{
-		Enabled:   &enabled,
-		Replicas:  2,
-		Namespace: "cf-ns",
-		Protocol:  "quic",
-		AWG: &AWGConfig{
-			SecretName: "awg-secret",
-		},
-	}
-
-	assert.True(t, *cfg.Enabled)
-	assert.Equal(t, int32(2), cfg.Replicas)
-	assert.Equal(t, "cf-ns", cfg.Namespace)
-	assert.Equal(t, "quic", cfg.Protocol)
-	assert.NotNil(t, cfg.AWG)
-	assert.Equal(t, "awg-secret", cfg.AWG.SecretName)
-}
-
 func TestGatewayClassConfigSpec_FieldsPresent(t *testing.T) {
 	t.Parallel()
 
@@ -197,19 +55,11 @@ func TestGatewayClassConfigSpec_FieldsPresent(t *testing.T) {
 		},
 		AccountID: "test-account",
 		TunnelID:  "test-tunnel",
-		TunnelTokenSecretRef: &SecretReference{
-			Name: "tunnel-token",
-		},
-		Cloudflared: CloudflaredConfig{
-			Replicas: 1,
-		},
 	}
 
 	assert.Equal(t, "cf-creds", spec.CloudflareCredentialsSecretRef.Name)
 	assert.Equal(t, "test-account", spec.AccountID)
 	assert.Equal(t, "test-tunnel", spec.TunnelID)
-	assert.NotNil(t, spec.TunnelTokenSecretRef)
-	assert.Equal(t, "tunnel-token", spec.TunnelTokenSecretRef.Name)
 }
 
 func TestGatewayClassConfig_TypeMeta(t *testing.T) {
@@ -292,124 +142,6 @@ func TestSecretReference_DeepCopy(t *testing.T) {
 	}
 }
 
-func TestAWGConfig_DeepCopy(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name string
-		in   *AWGConfig
-	}{
-		{
-			name: "nil input",
-			in:   nil,
-		},
-		{
-			name: "empty struct",
-			in:   &AWGConfig{},
-		},
-		{
-			name: "full struct",
-			in: &AWGConfig{
-				SecretName:      "awg-secret",
-				InterfacePrefix: "awg-test",
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			out := tt.in.DeepCopy()
-
-			if tt.in == nil {
-				assert.Nil(t, out)
-				return
-			}
-
-			require.NotNil(t, out)
-			assert.Equal(t, tt.in.SecretName, out.SecretName)
-			assert.Equal(t, tt.in.InterfacePrefix, out.InterfacePrefix)
-
-			out.SecretName = testModifiedValue
-			assert.NotEqual(t, tt.in.SecretName, out.SecretName)
-		})
-	}
-}
-
-func TestCloudflaredConfig_DeepCopy(t *testing.T) {
-	t.Parallel()
-
-	enabled := true
-	tests := []struct {
-		name string
-		in   *CloudflaredConfig
-	}{
-		{
-			name: "nil input",
-			in:   nil,
-		},
-		{
-			name: "empty struct",
-			in:   &CloudflaredConfig{},
-		},
-		{
-			name: "with enabled pointer",
-			in: &CloudflaredConfig{
-				Enabled:   &enabled,
-				Replicas:  2,
-				Namespace: "cf-ns",
-				Protocol:  "quic",
-			},
-		},
-		{
-			name: "with AWG config",
-			in: &CloudflaredConfig{
-				Enabled: &enabled,
-				AWG: &AWGConfig{
-					SecretName:      "awg-secret",
-					InterfacePrefix: "awg-test",
-				},
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			out := tt.in.DeepCopy()
-
-			if tt.in == nil {
-				assert.Nil(t, out)
-				return
-			}
-
-			require.NotNil(t, out)
-			assert.Equal(t, tt.in.Replicas, out.Replicas)
-			assert.Equal(t, tt.in.Namespace, out.Namespace)
-			assert.Equal(t, tt.in.Protocol, out.Protocol)
-
-			if tt.in.Enabled != nil {
-				require.NotNil(t, out.Enabled)
-				assert.Equal(t, *tt.in.Enabled, *out.Enabled)
-
-				newVal := false
-				out.Enabled = &newVal
-				assert.NotEqual(t, *tt.in.Enabled, *out.Enabled)
-			}
-
-			if tt.in.AWG != nil {
-				require.NotNil(t, out.AWG)
-				assert.Equal(t, tt.in.AWG.SecretName, out.AWG.SecretName)
-
-				out.AWG.SecretName = testModifiedValue
-				assert.NotEqual(t, tt.in.AWG.SecretName, out.AWG.SecretName)
-			}
-		})
-	}
-}
-
 func TestGatewayClassConfigSpec_DeepCopy(t *testing.T) {
 	t.Parallel()
 
@@ -426,7 +158,7 @@ func TestGatewayClassConfigSpec_DeepCopy(t *testing.T) {
 			in:   &GatewayClassConfigSpec{},
 		},
 		{
-			name: "with tunnel token ref",
+			name: "full struct",
 			in: &GatewayClassConfigSpec{
 				CloudflareCredentialsSecretRef: SecretReference{
 					Name:      "cf-creds",
@@ -434,9 +166,6 @@ func TestGatewayClassConfigSpec_DeepCopy(t *testing.T) {
 				},
 				AccountID: "test-account",
 				TunnelID:  "test-tunnel",
-				TunnelTokenSecretRef: &SecretReference{
-					Name: "tunnel-token",
-				},
 			},
 		},
 	}
@@ -455,14 +184,7 @@ func TestGatewayClassConfigSpec_DeepCopy(t *testing.T) {
 			require.NotNil(t, out)
 			assert.Equal(t, tt.in.AccountID, out.AccountID)
 			assert.Equal(t, tt.in.TunnelID, out.TunnelID)
-
-			if tt.in.TunnelTokenSecretRef != nil {
-				require.NotNil(t, out.TunnelTokenSecretRef)
-				assert.Equal(t, tt.in.TunnelTokenSecretRef.Name, out.TunnelTokenSecretRef.Name)
-
-				out.TunnelTokenSecretRef.Name = testModifiedValue
-				assert.NotEqual(t, tt.in.TunnelTokenSecretRef.Name, out.TunnelTokenSecretRef.Name)
-			}
+			assert.Equal(t, tt.in.CloudflareCredentialsSecretRef.Name, out.CloudflareCredentialsSecretRef.Name)
 		})
 	}
 }
@@ -664,176 +386,6 @@ func TestGatewayClassConfigList_DeepCopy(t *testing.T) {
 				out.Items[0].Name = testModifiedValue
 				assert.NotEqual(t, tt.in.Items[0].Name, out.Items[0].Name)
 			}
-		})
-	}
-}
-
-func TestLivenessProbeConfig_GetInitialDelaySeconds(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name     string
-		config   *LivenessProbeConfig
-		expected int32
-	}{
-		{
-			name:     "nil receiver returns default",
-			config:   nil,
-			expected: DefaultLivenessProbeInitialDelay,
-		},
-		{
-			name:     "nil field returns default",
-			config:   &LivenessProbeConfig{},
-			expected: DefaultLivenessProbeInitialDelay,
-		},
-		{
-			name:     "custom value",
-			config:   &LivenessProbeConfig{InitialDelaySeconds: new(int32(60))},
-			expected: 60,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			assert.Equal(t, tt.expected, tt.config.GetInitialDelaySeconds())
-		})
-	}
-}
-
-func TestLivenessProbeConfig_GetTimeoutSeconds(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name     string
-		config   *LivenessProbeConfig
-		expected int32
-	}{
-		{
-			name:     "nil receiver returns default",
-			config:   nil,
-			expected: DefaultLivenessProbeTimeout,
-		},
-		{
-			name:     "nil field returns default",
-			config:   &LivenessProbeConfig{},
-			expected: DefaultLivenessProbeTimeout,
-		},
-		{
-			name:     "custom value",
-			config:   &LivenessProbeConfig{TimeoutSeconds: new(int32(10))},
-			expected: 10,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			assert.Equal(t, tt.expected, tt.config.GetTimeoutSeconds())
-		})
-	}
-}
-
-func TestLivenessProbeConfig_GetPeriodSeconds(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name     string
-		config   *LivenessProbeConfig
-		expected int32
-	}{
-		{
-			name:     "nil receiver returns default",
-			config:   nil,
-			expected: DefaultLivenessProbePeriod,
-		},
-		{
-			name:     "nil field returns default",
-			config:   &LivenessProbeConfig{},
-			expected: DefaultLivenessProbePeriod,
-		},
-		{
-			name:     "custom value",
-			config:   &LivenessProbeConfig{PeriodSeconds: new(int32(45))},
-			expected: 45,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			assert.Equal(t, tt.expected, tt.config.GetPeriodSeconds())
-		})
-	}
-}
-
-func TestLivenessProbeConfig_GetSuccessThreshold(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name     string
-		config   *LivenessProbeConfig
-		expected int32
-	}{
-		{
-			name:     "nil receiver returns default",
-			config:   nil,
-			expected: DefaultLivenessProbeSuccess,
-		},
-		{
-			name:     "nil field returns default",
-			config:   &LivenessProbeConfig{},
-			expected: DefaultLivenessProbeSuccess,
-		},
-		{
-			name:     "custom value",
-			config:   &LivenessProbeConfig{SuccessThreshold: new(int32(2))},
-			expected: 2,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			assert.Equal(t, tt.expected, tt.config.GetSuccessThreshold())
-		})
-	}
-}
-
-func TestLivenessProbeConfig_GetFailureThreshold(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name     string
-		config   *LivenessProbeConfig
-		expected int32
-	}{
-		{
-			name:     "nil receiver returns default",
-			config:   nil,
-			expected: DefaultLivenessProbeFailure,
-		},
-		{
-			name:     "nil field returns default",
-			config:   &LivenessProbeConfig{},
-			expected: DefaultLivenessProbeFailure,
-		},
-		{
-			name:     "custom value",
-			config:   &LivenessProbeConfig{FailureThreshold: new(int32(5))},
-			expected: 5,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			assert.Equal(t, tt.expected, tt.config.GetFailureThreshold())
 		})
 	}
 }

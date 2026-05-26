@@ -230,32 +230,15 @@ spec:
 | fullnameOverride | string | `""` | Override the full release name |
 | gatewayClass | object | `{"create":true}` | GatewayClass configuration |
 | gatewayClass.create | bool | `true` | Create GatewayClass resource |
-| gatewayClassConfig | object | `{"cloudflareCredentialsSecretRef":{"key":"","name":"","namespace":""},"cloudflared":{"awg":{"interfacePrefix":"awg-cfd","secretName":""},"enabled":true,"livenessProbe":{"failureThreshold":3,"initialDelaySeconds":30,"periodSeconds":20,"successThreshold":1,"timeoutSeconds":5},"namespace":"cloudflare-tunnel-system","protocol":"","replicas":1},"create":false,"name":"","tunnelID":"","tunnelTokenSecretRef":{"key":"","name":"","namespace":""}}` | GatewayClassConfig configuration This is the main configuration section for Cloudflare Tunnel settings. All tunnel-specific settings are now in GatewayClassConfig CRD. |
+| gatewayClassConfig | object | `{"accountId":"","cloudflareCredentialsSecretRef":{"key":"","name":"","namespace":""},"create":false,"name":"","tunnelID":""}` | GatewayClassConfig configuration This section drives the optional GatewayClassConfig CRD rendered by the chart. Starting v3 the chart no longer manages a separate cloudflared deployment; the in-process L7 proxy embeds cloudflared transport and is deployed by the chart itself. The tunnel token is supplied directly to the proxy via `proxy.tunnelTokenSecretRef` (see below). |
+| gatewayClassConfig.accountId | string | `""` | Cloudflare account ID. Optional - auto-detected when the API token has access to a single account. |
 | gatewayClassConfig.cloudflareCredentialsSecretRef | object | `{"key":"","name":"","namespace":""}` | Reference to Secret containing Cloudflare API credentials (REQUIRED) The Secret must contain an "api-token" key with a valid Cloudflare API token. Optionally, it can contain an "account-id" key; if not present, account ID is auto-detected. |
 | gatewayClassConfig.cloudflareCredentialsSecretRef.key | string | `""` | Key in the Secret containing the API token (defaults to "api-token") |
 | gatewayClassConfig.cloudflareCredentialsSecretRef.name | string | `""` | Name of the Secret containing API credentials |
 | gatewayClassConfig.cloudflareCredentialsSecretRef.namespace | string | `""` | Namespace of the Secret (defaults to release namespace) |
-| gatewayClassConfig.cloudflared | object | `{"awg":{"interfacePrefix":"awg-cfd","secretName":""},"enabled":true,"livenessProbe":{"failureThreshold":3,"initialDelaySeconds":30,"periodSeconds":20,"successThreshold":1,"timeoutSeconds":5},"namespace":"cloudflare-tunnel-system","protocol":"","replicas":1}` | Cloudflared deployment configuration |
-| gatewayClassConfig.cloudflared.awg | object | `{"interfacePrefix":"awg-cfd","secretName":""}` | AmneziaWG sidecar configuration |
-| gatewayClassConfig.cloudflared.awg.interfacePrefix | string | `"awg-cfd"` | AWG interface name prefix (kernel auto-numbers: prefix0, prefix1, etc.) |
-| gatewayClassConfig.cloudflared.awg.secretName | string | `""` | Secret name containing AWG config (enables AWG sidecar) |
-| gatewayClassConfig.cloudflared.enabled | bool | `true` | Enable cloudflared deployment management (default: true) |
-| gatewayClassConfig.cloudflared.livenessProbe | object | `{"failureThreshold":3,"initialDelaySeconds":30,"periodSeconds":20,"successThreshold":1,"timeoutSeconds":5}` | Liveness probe configuration for cloudflared |
-| gatewayClassConfig.cloudflared.livenessProbe.failureThreshold | int | `3` | Number of failures before container restart |
-| gatewayClassConfig.cloudflared.livenessProbe.initialDelaySeconds | int | `30` | Seconds before liveness probe is initiated |
-| gatewayClassConfig.cloudflared.livenessProbe.periodSeconds | int | `20` | How often to perform the probe |
-| gatewayClassConfig.cloudflared.livenessProbe.successThreshold | int | `1` | Minimum consecutive successes for probe to be considered successful |
-| gatewayClassConfig.cloudflared.livenessProbe.timeoutSeconds | int | `5` | Seconds after which probe times out |
-| gatewayClassConfig.cloudflared.namespace | string | `"cloudflare-tunnel-system"` | Namespace for cloudflared deployment |
-| gatewayClassConfig.cloudflared.protocol | string | `""` | Transport protocol (auto, quic, http2) |
-| gatewayClassConfig.cloudflared.replicas | int | `1` | Number of cloudflared replicas |
 | gatewayClassConfig.create | bool | `false` | Create GatewayClassConfig resource |
 | gatewayClassConfig.name | string | `""` | Name of the GatewayClassConfig (defaults to release fullname) |
 | gatewayClassConfig.tunnelID | string | `""` | Cloudflare Tunnel ID (REQUIRED) Get from: Zero Trust Dashboard > Networks > Tunnels Example: "550e8400-e29b-41d4-a716-446655440000" |
-| gatewayClassConfig.tunnelTokenSecretRef | object | `{"key":"","name":"","namespace":""}` | Reference to Secret containing tunnel token (REQUIRED when cloudflared.enabled is true) The Secret must contain a "tunnel-token" key. |
-| gatewayClassConfig.tunnelTokenSecretRef.key | string | `""` | Key in the Secret containing the tunnel token (defaults to "tunnel-token") |
-| gatewayClassConfig.tunnelTokenSecretRef.name | string | `""` | Name of the Secret containing tunnel token |
-| gatewayClassConfig.tunnelTokenSecretRef.namespace | string | `""` | Namespace of the Secret (defaults to release namespace) |
 | healthProbes | object | `{"livenessProbe":{"enabled":true,"failureThreshold":3,"initialDelaySeconds":15,"periodSeconds":20,"timeoutSeconds":5},"readinessProbe":{"enabled":true,"failureThreshold":3,"initialDelaySeconds":5,"periodSeconds":10,"timeoutSeconds":3},"startupProbe":{"enabled":true,"failureThreshold":12,"initialDelaySeconds":0,"periodSeconds":5,"timeoutSeconds":3}}` | Health probes configuration |
 | healthProbes.livenessProbe | object | `{"enabled":true,"failureThreshold":3,"initialDelaySeconds":15,"periodSeconds":20,"timeoutSeconds":5}` | Liveness probe configuration Restarts container if probe fails |
 | healthProbes.readinessProbe | object | `{"enabled":true,"failureThreshold":3,"initialDelaySeconds":5,"periodSeconds":10,"timeoutSeconds":3}` | Readiness probe configuration Removes pod from service endpoints if probe fails |

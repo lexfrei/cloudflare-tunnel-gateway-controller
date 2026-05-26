@@ -20,7 +20,6 @@ import (
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/api/v1alpha1"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/cfmetrics"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/config"
-	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/helm"
 )
 
 // Config holds all configuration options for the controller manager.
@@ -132,20 +131,11 @@ func Run(ctx context.Context, cfg *Config) error {
 	// Uses slog.Default() which can be configured with TraceHandler at startup
 	baseLogger := slog.Default()
 
-	// Initialize Helm manager for cloudflared deployment
-	helmManager, helmErr := helm.NewManager(metricsCollector, baseLogger)
-	if helmErr != nil {
-		return errors.Wrap(helmErr, "failed to create helm manager")
-	}
-
-	logger.Info("helm manager initialized for cloudflared deployment")
-
 	gatewayReconciler := &GatewayReconciler{
 		Client:         mgr.GetClient(),
 		Scheme:         mgr.GetScheme(),
 		ControllerName: cfg.ControllerName,
 		ConfigResolver: configResolver,
-		HelmManager:    helmManager,
 	}
 
 	if err := gatewayReconciler.SetupWithManager(mgr); err != nil {
