@@ -126,7 +126,7 @@ func (r *MergeResult) ListenerSetSummary(listenerSet *gatewayv1.ListenerSet) Lis
 
 	for i := range r.Listeners {
 		entry := &r.Listeners[i]
-		if entry.ParentKind != ParentKindListenerSet || entry.ListenerSet != listenerSet {
+		if entry.ParentKind != ParentKindListenerSet || !sameListenerSet(entry.ListenerSet, listenerSet) {
 			continue
 		}
 
@@ -158,7 +158,7 @@ func (r *MergeResult) ListenerSetSummary(listenerSet *gatewayv1.ListenerSet) Lis
 // view that have at least one conflict-free listener (i.e. count as
 // "successfully attached" per Gateway API spec).
 func (r *MergeResult) AttachedListenerSets() int {
-	seenValid := make(map[*gatewayv1.ListenerSet]struct{})
+	seenValid := make(map[string]struct{})
 
 	for i := range r.Listeners {
 		entry := &r.Listeners[i]
@@ -166,10 +166,33 @@ func (r *MergeResult) AttachedListenerSets() int {
 			continue
 		}
 
-		seenValid[entry.ListenerSet] = struct{}{}
+		seenValid[listenerSetKey(entry.ListenerSet)] = struct{}{}
 	}
 
 	return len(seenValid)
+}
+
+// sameListenerSet returns true when both pointers reference the same
+// underlying ListenerSet (or both nil), using namespace+name identity. This
+// is safe across fresh Get / List copies of the same resource.
+func sameListenerSet(left, right *gatewayv1.ListenerSet) bool {
+	if left == right {
+		return true
+	}
+
+	if left == nil || right == nil {
+		return false
+	}
+
+	return left.Namespace == right.Namespace && left.Name == right.Name
+}
+
+func listenerSetKey(ls *gatewayv1.ListenerSet) string {
+	if ls == nil {
+		return ""
+	}
+
+	return ls.Namespace + "/" + ls.Name
 }
 
 func appendGatewayListeners(out []MergedListener, gateway *gatewayv1.Gateway) []MergedListener {

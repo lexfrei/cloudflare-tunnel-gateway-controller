@@ -31,6 +31,14 @@ import (
 const (
 	cfArgotunnelSuffix = ".cfargotunnel.com"
 
+	// Shared per-listener condition messages used by both Gateway and
+	// ListenerSet listener status writers.
+	listenerMsgAccepted              = "Listener accepted"
+	listenerMsgProgrammed            = "Listener programmed"
+	listenerMsgInvalidUnresolved     = "Listener has unresolved references"
+	listenerMsgNoSupportedRouteKinds = "None of the specified route kinds are supported"
+	listenerMsgInvalidRouteKinds     = "One or more specified route kinds are not supported"
+
 	// configErrorRequeueDelay is the delay before retrying when config resolution fails.
 	configErrorRequeueDelay = 30 * time.Second
 
@@ -236,13 +244,13 @@ func (r *GatewayReconciler) updateStatus(
 				ObservedGeneration: freshGateway.Generation,
 				LastTransitionTime: now,
 				Reason:             string(gatewayv1.ListenerReasonProgrammed),
-				Message:            "Listener programmed",
+				Message:            listenerMsgProgrammed,
 			}
 
 			if resolvedRefsCondition.Status == metav1.ConditionFalse {
 				programmedCondition.Status = metav1.ConditionFalse
 				programmedCondition.Reason = string(gatewayv1.ListenerReasonInvalid)
-				programmedCondition.Message = "Listener has unresolved references"
+				programmedCondition.Message = listenerMsgInvalidUnresolved
 			}
 
 			listenerStatuses = append(listenerStatuses, gatewayv1.ListenerStatus{
@@ -256,7 +264,7 @@ func (r *GatewayReconciler) updateStatus(
 						ObservedGeneration: freshGateway.Generation,
 						LastTransitionTime: now,
 						Reason:             string(gatewayv1.ListenerReasonAccepted),
-						Message:            "Listener accepted",
+						Message:            listenerMsgAccepted,
 					},
 					programmedCondition,
 					resolvedRefsCondition,
@@ -860,7 +868,7 @@ func (r *GatewayReconciler) buildResolvedRefsCondition(
 			ObservedGeneration: generation,
 			LastTransitionTime: now,
 			Reason:             string(gatewayv1.ListenerReasonInvalidRouteKinds),
-			Message:            "None of the specified route kinds are supported",
+			Message:            listenerMsgNoSupportedRouteKinds,
 		}
 	case hasInvalidKind:
 		// Some valid kinds exist, but some explicitly specified kinds are invalid
@@ -870,7 +878,7 @@ func (r *GatewayReconciler) buildResolvedRefsCondition(
 			ObservedGeneration: generation,
 			LastTransitionTime: now,
 			Reason:             string(gatewayv1.ListenerReasonInvalidRouteKinds),
-			Message:            "One or more specified route kinds are not supported",
+			Message:            listenerMsgInvalidRouteKinds,
 		}
 	case tlsStatus == metav1.ConditionFalse:
 		return metav1.Condition{
