@@ -8,8 +8,22 @@ RUN echo 'nobody:x:65534:65534:Nobody:/:' > /tmp/passwd && \
     apk add --no-cache ca-certificates
 
 WORKDIR /build
+
+# Copy module manifests first so `go mod download` lands in its own
+# layer; subsequent source-only changes keep the deps layer cached.
+COPY go.mod go.sum ./
+RUN --mount=type=cache,target=/go/pkg/mod \
+    go mod download
+
 COPY . .
-RUN CGO_ENABLED=0 go build -ldflags "-s -w -X main.Version=${VERSION} -X main.Gitsha=${REVISION}" -trimpath ./cmd/controller
+
+# Mount the BuildKit cache for the Go build cache and module cache so
+# successive CI builds reuse compiled artifacts (issue #257). The mount
+# targets map to the toolchain defaults in the upstream golang image:
+# GOMODCACHE=/go/pkg/mod, GOCACHE=/root/.cache/go-build.
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    --mount=type=cache,target=/go/pkg/mod \
+    CGO_ENABLED=0 go build -ldflags "-s -w -X main.Version=${VERSION} -X main.Gitsha=${REVISION}" -trimpath ./cmd/controller
 
 FROM scratch
 
