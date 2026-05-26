@@ -577,13 +577,8 @@
     },
     "proxy": {
       "type": "object",
-      "description": "L7 Proxy configuration (enhanced-cloudflared data plane)",
+      "description": "L7 Proxy configuration (enhanced-cloudflared data plane). The chart always renders the proxy resources starting v3; the pre-v3 `proxy.enabled` toggle has been removed.",
       "properties": {
-        "enabled": {
-          "type": "boolean",
-          "description": "Enable L7 proxy deployment",
-          "default": false
-        },
         "replicas": {
           "type": "integer",
           "minimum": 1,

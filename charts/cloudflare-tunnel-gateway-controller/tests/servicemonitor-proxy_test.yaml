@@ -2,35 +2,40 @@ suite: test servicemonitor-proxy
 templates:
   - servicemonitor-proxy.yaml
 tests:
-  - it: should not create ServiceMonitor when proxy is disabled
-    set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
-    asserts:
-      - hasDocuments:
-          count: 0
-
-  - it: should not create ServiceMonitor when proxy enabled but serviceMonitor disabled
+  - it: should not create ServiceMonitor by default
     set:
       cloudflare:
         tunnelId: "test-tunnel-id"
         apiToken: "test-api-token"
       proxy:
-        enabled: true
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: should not create ServiceMonitor when serviceMonitor explicitly disabled
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel-id"
+        apiToken: "test-api-token"
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
       serviceMonitor:
         enabled: false
     asserts:
       - hasDocuments:
           count: 0
 
-  - it: should create ServiceMonitor when both proxy and serviceMonitor enabled
+  - it: should create ServiceMonitor when serviceMonitor enabled
     set:
       cloudflare:
         tunnelId: "test-tunnel-id"
         apiToken: "test-api-token"
       proxy:
-        enabled: true
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
       serviceMonitor:
         enabled: true
     asserts:
@@ -48,7 +53,8 @@ tests:
         tunnelId: "test-tunnel-id"
         apiToken: "test-api-token"
       proxy:
-        enabled: true
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
       serviceMonitor:
         enabled: true
     asserts:
@@ -62,7 +68,8 @@ tests:
         tunnelId: "test-tunnel-id"
         apiToken: "test-api-token"
       proxy:
-        enabled: true
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
       serviceMonitor:
         enabled: true
     asserts:
@@ -79,7 +86,8 @@ tests:
         tunnelId: "test-tunnel-id"
         apiToken: "test-api-token"
       proxy:
-        enabled: true
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
       serviceMonitor:
         enabled: true
         labels:
@@ -99,7 +107,8 @@ tests:
         tunnelId: "test-tunnel-id"
         apiToken: "test-api-token"
       proxy:
-        enabled: true
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
       serviceMonitor:
         enabled: true
     asserts:
@@ -119,7 +128,8 @@ tests:
         tunnelId: "test-tunnel-id"
         apiToken: "test-api-token"
       proxy:
-        enabled: true
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
       serviceMonitor:
         enabled: true
     asserts:
@@ -133,7 +143,8 @@ tests:
         tunnelId: "test-tunnel-id"
         apiToken: "test-api-token"
       proxy:
-        enabled: true
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
       serviceMonitor:
         enabled: true
     asserts:
@@ -146,7 +157,8 @@ tests:
         tunnelId: "test-tunnel-id"
         apiToken: "test-api-token"
       proxy:
-        enabled: true
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
       serviceMonitor:
         enabled: true
         interval: "30s"

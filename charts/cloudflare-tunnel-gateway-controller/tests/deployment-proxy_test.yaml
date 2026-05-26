@@ -2,15 +2,9 @@ suite: test proxy deployment
 templates:
   - deployment-proxy.yaml
 tests:
-  - it: should not create proxy deployment when disabled
-    asserts:
-      - hasDocuments:
-          count: 0
-
-  - it: should create proxy deployment when enabled
+  - it: should create proxy deployment with default values
     set:
       proxy:
-        enabled: true
         tunnelTokenSecretRef:
           name: tunnel-token-secret
     asserts:
@@ -25,7 +19,6 @@ tests:
   - it: should set custom replicas
     set:
       proxy:
-        enabled: true
         replicas: 3
         tunnelTokenSecretRef:
           name: tunnel-token-secret
@@ -37,7 +30,6 @@ tests:
   - it: should use correct proxy image
     set:
       proxy:
-        enabled: true
         tunnelTokenSecretRef:
           name: tunnel-token-secret
     asserts:
@@ -50,7 +42,6 @@ tests:
     # workflow-side yq override so iteration picks up new pr-NNN-1d digests.
     set:
       proxy:
-        enabled: true
         tunnelTokenSecretRef:
           name: tunnel-token-secret
     asserts:
@@ -61,7 +52,6 @@ tests:
   - it: should set custom proxy pull policy
     set:
       proxy:
-        enabled: true
         tunnelTokenSecretRef:
           name: tunnel-token-secret
         image:
@@ -74,7 +64,6 @@ tests:
   - it: should mount tunnel token from secret
     set:
       proxy:
-        enabled: true
         tunnelTokenSecretRef:
           name: my-tunnel-secret
           key: my-key
@@ -91,7 +80,6 @@ tests:
   - it: should use default tunnel token key
     set:
       proxy:
-        enabled: true
         tunnelTokenSecretRef:
           name: my-tunnel-secret
     asserts:
@@ -107,7 +95,6 @@ tests:
   - it: should set config API and proxy ports
     set:
       proxy:
-        enabled: true
         configAPIPort: 9091
         proxyPort: 9090
         tunnelTokenSecretRef:
@@ -129,7 +116,6 @@ tests:
   - it: should apply security context defaults
     set:
       proxy:
-        enabled: true
         tunnelTokenSecretRef:
           name: tunnel-token-secret
     asserts:
@@ -149,7 +135,6 @@ tests:
   - it: should set resource limits
     set:
       proxy:
-        enabled: true
         tunnelTokenSecretRef:
           name: tunnel-token-secret
         resources:
@@ -170,7 +155,6 @@ tests:
   - it: should include proxy component label
     set:
       proxy:
-        enabled: true
         tunnelTokenSecretRef:
           name: tunnel-token-secret
     asserts:
@@ -181,7 +165,6 @@ tests:
   - it: should configure startup probe
     set:
       proxy:
-        enabled: true
         tunnelTokenSecretRef:
           name: tunnel-token-secret
     asserts:
@@ -195,7 +178,6 @@ tests:
   - it: should configure readiness probe
     set:
       proxy:
-        enabled: true
         tunnelTokenSecretRef:
           name: tunnel-token-secret
     asserts:
@@ -213,7 +195,6 @@ tests:
     # The original notContains-with-value form passed on both.
     set:
       proxy:
-        enabled: true
         tunnelTokenSecretRef:
           name: tunnel-token-secret
     asserts:
@@ -224,7 +205,6 @@ tests:
   - it: should emit PROXY_ACCESS_LOG_* env vars when access log enabled
     set:
       proxy:
-        enabled: true
         tunnelTokenSecretRef:
           name: tunnel-token-secret
         accessLog:
@@ -245,7 +225,6 @@ tests:
   - it: should emit default samplingRate "1" when access log enabled without override
     set:
       proxy:
-        enabled: true
         tunnelTokenSecretRef:
           name: tunnel-token-secret
         accessLog:
@@ -260,7 +239,6 @@ tests:
   - it: should NOT emit PROXY_ACCESS_LOG_STRIP_QUERY when stripQuery is false (default)
     set:
       proxy:
-        enabled: true
         tunnelTokenSecretRef:
           name: tunnel-token-secret
         accessLog:
@@ -279,7 +257,6 @@ tests:
     # block when the operator turned access logging off.
     set:
       proxy:
-        enabled: true
         tunnelTokenSecretRef:
           name: tunnel-token-secret
         accessLog:
@@ -295,7 +272,6 @@ tests:
   - it: should emit PROXY_ACCESS_LOG_STRIP_QUERY=true when both enabled and stripQuery
     set:
       proxy:
-        enabled: true
         tunnelTokenSecretRef:
           name: tunnel-token-secret
         accessLog:

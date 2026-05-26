@@ -2,35 +2,40 @@ suite: test networkpolicy-proxy
 templates:
   - networkpolicy-proxy.yaml
 tests:
-  - it: should not create NetworkPolicy when proxy is disabled
-    set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
-    asserts:
-      - hasDocuments:
-          count: 0
-
-  - it: should not create NetworkPolicy when proxy enabled but networkPolicy disabled
+  - it: should not create NetworkPolicy by default
     set:
       cloudflare:
         tunnelId: "test-tunnel-id"
         apiToken: "test-api-token"
       proxy:
-        enabled: true
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: should not create NetworkPolicy when networkPolicy explicitly disabled
+    set:
+      cloudflare:
+        tunnelId: "test-tunnel-id"
+        apiToken: "test-api-token"
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
         networkPolicy:
           enabled: false
     asserts:
       - hasDocuments:
           count: 0
 
-  - it: should create NetworkPolicy when both proxy and networkPolicy enabled
+  - it: should create NetworkPolicy when networkPolicy enabled
     set:
       cloudflare:
         tunnelId: "test-tunnel-id"
         apiToken: "test-api-token"
       proxy:
-        enabled: true
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
         networkPolicy:
           enabled: true
     asserts:
@@ -45,7 +50,8 @@ tests:
         tunnelId: "test-tunnel-id"
         apiToken: "test-api-token"
       proxy:
-        enabled: true
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
         networkPolicy:
           enabled: true
     asserts:
@@ -59,7 +65,8 @@ tests:
         tunnelId: "test-tunnel-id"
         apiToken: "test-api-token"
       proxy:
-        enabled: true
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
         networkPolicy:
           enabled: true
     asserts:
@@ -76,7 +83,8 @@ tests:
         tunnelId: "test-tunnel-id"
         apiToken: "test-api-token"
       proxy:
-        enabled: true
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
         networkPolicy:
           enabled: true
     asserts:
@@ -96,7 +104,8 @@ tests:
         tunnelId: "test-tunnel-id"
         apiToken: "test-api-token"
       proxy:
-        enabled: true
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
         networkPolicy:
           enabled: true
     asserts:
@@ -113,7 +122,8 @@ tests:
         tunnelId: "test-tunnel-id"
         apiToken: "test-api-token"
       proxy:
-        enabled: true
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
         configAPIPort: 8081
         networkPolicy:
           enabled: true
@@ -130,7 +140,8 @@ tests:
         tunnelId: "test-tunnel-id"
         apiToken: "test-api-token"
       proxy:
-        enabled: true
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
         proxyPort: 8080
         networkPolicy:
           enabled: true
@@ -147,7 +158,8 @@ tests:
         tunnelId: "test-tunnel-id"
         apiToken: "test-api-token"
       proxy:
-        enabled: true
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
         networkPolicy:
           enabled: true
     asserts:
@@ -163,7 +175,8 @@ tests:
         tunnelId: "test-tunnel-id"
         apiToken: "test-api-token"
       proxy:
-        enabled: true
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
         networkPolicy:
           enabled: true
     asserts:
@@ -179,7 +192,8 @@ tests:
         tunnelId: "test-tunnel-id"
         apiToken: "test-api-token"
       proxy:
-        enabled: true
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
         networkPolicy:
           enabled: true
     asserts:
@@ -195,7 +209,8 @@ tests:
         tunnelId: "test-tunnel-id"
         apiToken: "test-api-token"
       proxy:
-        enabled: true
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
         networkPolicy:
           enabled: true
     asserts:
@@ -211,7 +226,8 @@ tests:
         tunnelId: "test-tunnel-id"
         apiToken: "test-api-token"
       proxy:
-        enabled: true
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
         networkPolicy:
           enabled: true
     asserts:
@@ -242,7 +258,8 @@ tests:
         tunnelId: "test-tunnel-id"
         apiToken: "test-api-token"
       proxy:
-        enabled: true
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
         networkPolicy:
           enabled: true
     asserts:
@@ -261,7 +278,8 @@ tests:
         tunnelId: "test-tunnel-id"
         apiToken: "test-api-token"
       proxy:
-        enabled: true
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
         networkPolicy:
           enabled: true
     asserts:
@@ -274,7 +292,8 @@ tests:
         tunnelId: "test-tunnel-id"
         apiToken: "test-api-token"
       proxy:
-        enabled: true
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
         networkPolicy:
           enabled: true
           ingress:
