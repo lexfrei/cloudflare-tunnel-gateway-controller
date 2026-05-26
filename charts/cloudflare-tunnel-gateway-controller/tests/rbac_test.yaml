@@ -135,11 +135,12 @@ tests:
             resources: ["gatewayclasses/status", "gateways/status", "httproutes/status", "grpcroutes/status", "backendtlspolicies/status"]
             verbs: ["get", "update", "patch"]
 
-  - it: should have full CRUD permissions for secrets (Helm SDK)
-    set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
+  # The v3 controller only reads Secrets (Cloudflare credentials, TLS cert
+  # refs, BackendTLSPolicy CA bundles). The chart must NOT grant the
+  # write verbs that the v2 Helm SDK code path needed; if a future
+  # refactor restores them without restoring the matching code, this
+  # test fires.
+  - it: should grant only read access to Secrets
     asserts:
       - template: clusterrole.yaml
         contains:
@@ -147,27 +148,50 @@ tests:
           content:
             apiGroups: [""]
             resources: ["secrets"]
+            verbs: ["get", "list", "watch"]
+      - template: clusterrole.yaml
+        notContains:
+          path: rules
+          content:
+            apiGroups: [""]
+            resources: ["secrets"]
             verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 
-  - it: should have Helm SDK permissions for cloudflared deployment
-    set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
+  # ConfigMaps: BackendTLSPolicy can reference a ConfigMap holding the CA
+  # bundle. Read-only.
+  - it: should grant only read access to ConfigMaps
     asserts:
       - template: clusterrole.yaml
         contains:
           path: rules
           content:
             apiGroups: [""]
-            resources: ["serviceaccounts", "configmaps", "pods"]
-            verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+            resources: ["configmaps"]
+            verbs: ["get", "list", "watch"]
+
+  # v3 removed internal/helm/manager.go and every Helm-SDK call site.
+  # The chart must NOT grant the cluster-wide Pod/Deployment/ReplicaSet/
+  # ServiceAccount write verbs that path needed. These negative
+  # assertions lock the v3 RBAC boundary against accidental
+  # re-introduction.
+  - it: should NOT grant cluster-wide write on Deployments
+    asserts:
       - template: clusterrole.yaml
-        contains:
+        notContains:
           path: rules
           content:
             apiGroups: ["apps"]
             resources: ["deployments", "replicasets"]
+            verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  - it: should NOT grant cluster-wide write on ServiceAccounts/ConfigMaps/Pods
+    asserts:
+      - template: clusterrole.yaml
+        notContains:
+          path: rules
+          content:
+            apiGroups: [""]
+            resources: ["serviceaccounts", "configmaps", "pods"]
             verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 
   - it: should have permissions for GatewayClassConfig CRD

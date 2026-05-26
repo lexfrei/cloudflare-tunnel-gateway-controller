@@ -60,11 +60,12 @@ kubectl create secret generic tunnel-token \
   --namespace cloudflare-tunnel-system
 ```
 
-### 2. Enable proxy in Helm values
+### 2. Configure the proxy in Helm values
+
+The L7 proxy is always rendered by the v3 chart. Point it at the tunnel-token Secret and pick a replica count:
 
 ```yaml
 proxy:
-  enabled: true
   replicas: 2
   tunnelTokenSecretRef:
     name: tunnel-token
