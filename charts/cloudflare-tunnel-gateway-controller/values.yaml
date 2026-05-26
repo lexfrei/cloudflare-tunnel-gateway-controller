@@ -355,7 +355,7 @@ proxy:
   # -- Structured per-request access logging on the in-process proxy.
   # Off by default (zero allocation on the hot path). When enabled,
   # emits one JSON line per request via the proxy's stdout slog
-  # (method, host, path, status, bytes_written, duration_ms,
+  # (method, host, path, query, status, bytes_written, duration_ms,
   # user_agent). Cluster logging stack scrapes stdout already, so no
   # additional sink wiring is needed.
   accessLog:
@@ -370,6 +370,16 @@ proxy:
     # a typo like `samplingRate: 50` degrades to "always log" rather
     # than "silently log nothing".
     samplingRate: 1.0
+    # -- Zero the `query` field in every emitted line. For
+    # applications that ride tokens, signed-URL credentials, or PII
+    # in query parameters (?token=..., ?sid=..., ?email=...). The
+    # `path` field is unaffected -- operators still see WHICH endpoint
+    # was hit, just not WHICH parameters carried sensitive values.
+    # Defaults to false (verbatim query for triage signal); turn on
+    # when the application surface makes query-string privacy a real
+    # concern and route-level (headers vs query) / sink-level (log
+    # pipeline scrubbing) mitigations aren't viable.
+    stripQuery: false
   # -- Container resource requests and limits
   resources:
     limits:

@@ -70,6 +70,14 @@ type Handler struct {
 	// shouldSampleAccessLog with a deterministic randFn argument
 	// without going through the Handler at all.
 	accessLogRandFn func() float64
+	// accessLogStripQuery, when true, zeros the snapshot's query
+	// field before it reaches the emission step. Designed for
+	// operators whose applications carry tokens / signed-URL
+	// credentials / PII in query strings and who can't reshape
+	// upstream apps or scrub logs at the sink layer. Off by default
+	// -- triage signal (?action=delete vs ?action=read) is usually
+	// worth the bytes. Set via WithAccessLogStripQuery.
+	accessLogStripQuery bool
 }
 
 // HandlerOption configures a Handler at construction time. Use the
@@ -118,6 +126,24 @@ func WithAccessLog(logger *slog.Logger, samplingRate float64) HandlerOption {
 
 		handler.accessLog = logger
 		handler.accessLogSamplingRate = samplingRate
+	}
+}
+
+// WithAccessLogStripQuery toggles query-string elision in the
+// emitted access log. When true, the `query` field is set to "" on
+// every line regardless of the request URL -- defence-in-depth for
+// applications that ride tokens / signed-URL credentials / PII in
+// query parameters. The `path` field is unaffected (operators still
+// see which endpoint was hit, just not which parameters carried
+// token-shaped values). False (the default) keeps the verbatim
+// query for triage signal.
+//
+// Standalone option (not folded into WithAccessLog's signature) so
+// adding it doesn't churn the existing callers. No-op when access
+// logging is disabled.
+func WithAccessLogStripQuery(strip bool) HandlerOption {
+	return func(handler *Handler) {
+		handler.accessLogStripQuery = strip
 	}
 }
 
@@ -246,11 +272,17 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, req *http.Request) {
 		writer = counted
 
 		start := time.Now()
+		query := req.URL.RawQuery
+
+		if h.accessLogStripQuery {
+			query = ""
+		}
+
 		snapshot := &accessLogSnapshot{
 			method:    req.Method,
 			host:      req.Host,
 			path:      req.URL.Path,
-			query:     req.URL.RawQuery,
+			query:     query,
 			userAgent: req.UserAgent(),
 		}
 

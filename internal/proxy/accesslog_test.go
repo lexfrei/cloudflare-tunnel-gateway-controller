@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -649,4 +650,300 @@ func TestCountingResponseWriter_HijackDelegates_RealHijacker(t *testing.T) {
 	assert.Nil(t, conn)
 	assert.Nil(t, brw)
 	assert.True(t, called.Load(), "wrapper must delegate Hijack to inner when it implements http.Hijacker")
+}
+
+// readerFromRecorder wraps httptest.NewRecorder with an io.ReaderFrom
+// implementation so the test can drive the wrapper's ReadFrom
+// delegation path and verify (a) the fast path is taken when the
+// inner supports it, (b) the byte count includes those bytes, (c)
+// the inner's recorded body matches.
+type readerFromRecorder struct {
+	*httptest.ResponseRecorder
+
+	readFromCalls *atomic.Int32
+}
+
+func (r *readerFromRecorder) ReadFrom(src io.Reader) (int64, error) {
+	r.readFromCalls.Add(1)
+	n, err := io.Copy(r.Body, src)
+	if err != nil {
+		return n, fmt.Errorf("readerFromRecorder: %w", err)
+	}
+
+	return n, nil
+}
+
+// TestCountingResponseWriter_ReadFrom_DelegatesToInner pins the
+// performance contract: when the inner writer implements
+// io.ReaderFrom, the wrapper MUST delegate to it (splice / sendfile
+// fast path on Linux for large bodies) instead of falling back to
+// the generic io.Copy + Write loop. The wrapper's own
+// bytesWritten counter must include the delegated bytes so the
+// access-log line reports the real response size, not zero.
+func TestCountingResponseWriter_ReadFrom_DelegatesToInner(t *testing.T) {
+	t.Parallel()
+
+	var rfCount atomic.Int32
+
+	inner := &readerFromRecorder{
+		ResponseRecorder: httptest.NewRecorder(),
+		readFromCalls:    &rfCount,
+	}
+	wrapper := proxy.NewCountingResponseWriterForTest(inner)
+
+	const payload = "a-large-payload-that-would-be-spliced"
+
+	src := strings.NewReader(payload)
+
+	var rw http.ResponseWriter = wrapper
+
+	rf, ok := rw.(io.ReaderFrom)
+	require.True(t, ok, "wrapper must implement io.ReaderFrom when inner does")
+
+	n, err := rf.ReadFrom(src)
+	require.NoError(t, err)
+	assert.Equal(t, int64(len(payload)), n,
+		"ReadFrom must return the inner's byte count")
+	assert.Equal(t, int64(len(payload)), wrapper.BytesWritten(),
+		"wrapper.BytesWritten must reflect the bytes ReadFrom transferred")
+	assert.Equal(t, int32(1), rfCount.Load(),
+		"inner ReadFrom must be called exactly once (splice fast path)")
+	assert.Equal(t, payload, inner.Body.String(),
+		"inner's body buffer must contain the transferred payload")
+}
+
+// TestCountingResponseWriter_ReadFrom_FallbackWhenInnerLacksIt pins
+// the fallback contract: when the inner writer does NOT implement
+// io.ReaderFrom (e.g. cloudflared's HTTP/2 writer fake), the wrapper
+// MUST still satisfy io.ReaderFrom by falling back to the generic
+// Write loop, AND the bytesWritten counter must still reflect the
+// transferred bytes (otherwise the access log would report 0 for
+// every h2 response).
+func TestCountingResponseWriter_ReadFrom_FallbackWhenInnerLacksIt(t *testing.T) {
+	t.Parallel()
+
+	// httptest.ResponseRecorder does NOT implement io.ReaderFrom.
+	// noReadFromWriter wraps it as a future-proofing guard so the
+	// fallback path stays exercised even if a future stdlib bump
+	// adds io.ReaderFrom to the recorder. The type assertion below
+	// verifies the fake exposes only http.ResponseWriter so this
+	// test never silently flips to the fast path.
+	inner := &noReadFromWriter{
+		ResponseWriter: httptest.NewRecorder(),
+		writeBytes:     &bytes.Buffer{},
+	}
+
+	// Confirm the test fake does NOT implement io.ReaderFrom so the
+	// fallback path is the one we're actually exercising.
+	_, isReaderFrom := any(inner).(io.ReaderFrom)
+	require.False(t, isReaderFrom, "test fake must NOT implement io.ReaderFrom to exercise the fallback")
+
+	wrapper := proxy.NewCountingResponseWriterForTest(inner)
+
+	const payload = "fallback-payload"
+
+	src := strings.NewReader(payload)
+
+	var rw http.ResponseWriter = wrapper
+
+	rf, ok := rw.(io.ReaderFrom)
+	require.True(t, ok, "wrapper must still implement io.ReaderFrom even when inner doesn't")
+
+	n, err := rf.ReadFrom(src)
+	require.NoError(t, err)
+	assert.Equal(t, int64(len(payload)), n,
+		"fallback ReadFrom must return the full transferred byte count")
+	assert.Equal(t, int64(len(payload)), wrapper.BytesWritten(),
+		"bytesWritten must reflect the fallback transfer")
+	assert.Equal(t, payload, inner.writeBytes.String(),
+		"inner Write must receive the full payload via the fallback loop")
+}
+
+// noReadFromWriter is a test fake that wraps an http.ResponseWriter
+// but explicitly does NOT implement io.ReaderFrom. Used to drive the
+// counting wrapper's fallback path.
+type noReadFromWriter struct {
+	http.ResponseWriter
+
+	writeBytes *bytes.Buffer
+}
+
+func (n *noReadFromWriter) Write(p []byte) (int, error) {
+	written, err := n.writeBytes.Write(p)
+	if err != nil {
+		return written, fmt.Errorf("noReadFromWriter: %w", err)
+	}
+
+	return written, nil
+}
+
+// TestHandler_AccessLog_StripQuery_DefaultsOff pins the default
+// behaviour: WithAccessLog without stripQuery option logs the query
+// string verbatim. Catches a future regression that flips the
+// default to "always strip" -- operators triaging non-token query
+// params (?trace=true, ?action=delete) would lose the signal.
+func TestHandler_AccessLog_StripQuery_DefaultsOff(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+
+	logger := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+
+	router := proxy.NewRouter()
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer backend.Close()
+
+	require.NoError(t, router.UpdateConfig(&proxy.Config{
+		Version: 1,
+		Rules: []proxy.RouteRule{{
+			Hostnames: []string{"app.example.com"},
+			Backends:  []proxy.BackendRef{{URL: backend.URL, Weight: 1}},
+		}},
+	}))
+
+	handler := proxy.NewHandler(router, proxy.WithAccessLog(logger, 1.0))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet,
+		"http://app.example.com/api?trace=true&token=secret", nil)
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	assert.Contains(t, buf.String(), `"query":"trace=true&token=secret"`,
+		"WithAccessLog without WithAccessLogStripQuery must log query verbatim")
+}
+
+// TestHandler_AccessLog_StripQuery_ElidesQuery pins the opt-in
+// strip behaviour: WithAccessLogStripQuery(true) zeroes the query
+// field in every emitted line. The path / status / other fields are
+// untouched -- operators still see WHICH endpoint was hit, just not
+// WHICH parameters carried token-shaped values.
+func TestHandler_AccessLog_StripQuery_ElidesQuery(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+
+	logger := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+
+	router := proxy.NewRouter()
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer backend.Close()
+
+	require.NoError(t, router.UpdateConfig(&proxy.Config{
+		Version: 1,
+		Rules: []proxy.RouteRule{{
+			Hostnames: []string{"app.example.com"},
+			Backends:  []proxy.BackendRef{{URL: backend.URL, Weight: 1}},
+		}},
+	}))
+
+	handler := proxy.NewHandler(router,
+		proxy.WithAccessLog(logger, 1.0),
+		proxy.WithAccessLogStripQuery(true),
+	)
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet,
+		"http://app.example.com/api?token=secret&action=delete", nil)
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	line := buf.String()
+	assert.Contains(t, line, `"query":""`,
+		"stripQuery=true must zero the query field in the log line")
+	assert.NotContains(t, line, "token=secret",
+		"stripped query string must not leak through any field")
+	assert.NotContains(t, line, "action=delete",
+		"stripped query string must not leak through any field")
+	assert.Contains(t, line, `"path":"/api"`,
+		"path field must be unaffected by stripQuery")
+	assert.Contains(t, line, `"status":200`,
+		"status field must be unaffected by stripQuery")
+}
+
+// TestHandler_AccessLog_StripQuery_FalseIsNoop pins that explicitly
+// passing WithAccessLogStripQuery(false) is equivalent to not
+// passing it at all -- both produce the verbatim-query default.
+// Catches a regression where the option mistakenly always strips
+// regardless of the bool.
+func TestHandler_AccessLog_StripQuery_FalseIsNoop(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+
+	logger := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+
+	router := proxy.NewRouter()
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer backend.Close()
+
+	require.NoError(t, router.UpdateConfig(&proxy.Config{
+		Version: 1,
+		Rules: []proxy.RouteRule{{
+			Hostnames: []string{"app.example.com"},
+			Backends:  []proxy.BackendRef{{URL: backend.URL, Weight: 1}},
+		}},
+	}))
+
+	handler := proxy.NewHandler(router,
+		proxy.WithAccessLog(logger, 1.0),
+		proxy.WithAccessLogStripQuery(false),
+	)
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet,
+		"http://app.example.com/api?x=1", nil)
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	assert.Contains(t, buf.String(), `"query":"x=1"`,
+		"WithAccessLogStripQuery(false) must NOT strip; verbatim default holds")
+}
+
+// TestCountingResponseWriter_ReadFrom_SetsImplicitStatus200 pins
+// that ReadFrom honours the same implicit-200 contract Write does:
+// a caller that drives ReadFrom without an explicit WriteHeader
+// must end up with Status()==200. Without this the access-log
+// line would render `status:0` and the 5xx-always-log sampling
+// carve-out (which gates on >= 500) would misclassify the request.
+func TestCountingResponseWriter_ReadFrom_SetsImplicitStatus200(t *testing.T) {
+	t.Parallel()
+
+	rec := httptest.NewRecorder()
+	wrapper := proxy.NewCountingResponseWriterForTest(rec)
+
+	src := strings.NewReader("body")
+	_, err := wrapper.ReadFrom(src)
+	require.NoError(t, err)
+
+	assert.Equal(t, http.StatusOK, wrapper.Status(),
+		"ReadFrom without prior WriteHeader must default Status() to 200 (same as Write)")
+}
+
+// TestCountingResponseWriter_ReadFrom_DoesNotOverrideExplicitStatus
+// pins that ReadFrom MUST NOT clobber an explicit WriteHeader. If
+// the handler called WriteHeader(StatusTeapot) and then funneled
+// through ReadFrom, the access log must still record 418, not 200.
+func TestCountingResponseWriter_ReadFrom_DoesNotOverrideExplicitStatus(t *testing.T) {
+	t.Parallel()
+
+	rec := httptest.NewRecorder()
+	wrapper := proxy.NewCountingResponseWriterForTest(rec)
+
+	wrapper.WriteHeader(http.StatusTeapot)
+
+	src := strings.NewReader("body")
+	_, err := wrapper.ReadFrom(src)
+	require.NoError(t, err)
+
+	assert.Equal(t, http.StatusTeapot, wrapper.Status(),
+		"explicit WriteHeader before ReadFrom must NOT be clobbered by the implicit-200 path")
 }

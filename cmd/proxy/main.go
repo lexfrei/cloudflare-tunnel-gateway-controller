@@ -335,14 +335,49 @@ func accessLogHandlerOption(logger *slog.Logger) proxy.HandlerOption {
 	return proxy.WithAccessLog(logger, parseAccessLogSamplingRate(logger))
 }
 
+// accessLogStripQueryOption translates PROXY_ACCESS_LOG_STRIP_QUERY
+// into proxy.WithAccessLogStripQuery. Truthy forms: 1/true (case-
+// insensitive, trimmed). Returns nil when access logging itself is
+// disabled (strip is meaningless without emission) or when the
+// strip toggle is off (default-false; emitting WithAccessLogStripQuery(false)
+// would still be a correct no-op but adds an unused option entry).
+func accessLogStripQueryOption() proxy.HandlerOption {
+	if !accessLogEnabled() {
+		return nil
+	}
+
+	if !isTruthyEnv("PROXY_ACCESS_LOG_STRIP_QUERY") {
+		return nil
+	}
+
+	return proxy.WithAccessLogStripQuery(true)
+}
+
+// truthyEnvOne and truthyEnvTrue are the two accepted shell-flag /
+// YAML-bool forms for env vars that toggle proxy features. Hoisted
+// to constants so goconst doesn't trip across the per-feature
+// accessLogEnabled / accessLogStripQueryOption / etc. callers, and
+// so a future "accept TRUE only" rename happens in one place.
+const (
+	truthyEnvOne  = "1"
+	truthyEnvTrue = "true"
+)
+
+// isTruthyEnv reports whether an env-var raw value reads as boolean
+// true for the proxy's toggle convention. Trimmed + case-insensitive
+// match against the truthyEnv* constants.
+func isTruthyEnv(name string) bool {
+	raw := strings.ToLower(strings.TrimSpace(os.Getenv(name)))
+
+	return raw == truthyEnvOne || raw == truthyEnvTrue
+}
+
 // accessLogEnabled reports whether PROXY_ACCESS_LOG_ENABLED requests
 // the feature. The "1" / "true" forms are accepted (case-insensitive)
 // so both shell-flag (`PROXY_ACCESS_LOG_ENABLED=1`) and YAML-bool
 // (`enabled: true`) styles work without surprise.
 func accessLogEnabled() bool {
-	raw := strings.ToLower(strings.TrimSpace(os.Getenv("PROXY_ACCESS_LOG_ENABLED")))
-
-	return raw == "1" || raw == "true"
+	return isTruthyEnv("PROXY_ACCESS_LOG_ENABLED")
 }
 
 // parseAccessLogSamplingRate reads PROXY_ACCESS_LOG_SAMPLING_RATE,
@@ -375,6 +410,10 @@ func handlerOptions(logger *slog.Logger) []proxy.HandlerOption {
 
 	if accessOpt := accessLogHandlerOption(logger); accessOpt != nil {
 		opts = append(opts, accessOpt)
+	}
+
+	if stripOpt := accessLogStripQueryOption(); stripOpt != nil {
+		opts = append(opts, stripOpt)
 	}
 
 	return opts
