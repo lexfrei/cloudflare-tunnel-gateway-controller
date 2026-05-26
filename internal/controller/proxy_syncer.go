@@ -38,6 +38,14 @@ const configMapKind = "ConfigMap"
 
 // ProxySyncer converts HTTPRoute resources to proxy config
 // and pushes it to enhanced-cloudflared replicas via HTTP API.
+//
+// lastCfg caches the most recent successfully-built config so the
+// endpoint-watcher (see ProxyEndpointReconciler) can re-push to a
+// newly-joined proxy pod without waiting for the next HTTPRoute
+// reconcile. Before the first SyncRoutes call, lastCfg is nil and
+// ResyncEndpoints is a no-op -- there is nothing to push yet.
+// Guarded by syncMu so the cache update is consistent with the push
+// it follows.
 type ProxySyncer struct {
 	clusterDomain       string
 	logger              *slog.Logger
@@ -47,6 +55,7 @@ type ProxySyncer struct {
 	tlsResolver         proxy.BackendTLSResolver
 	gatewayCertResolver proxy.GatewayClientCertResolver
 	syncMu              sync.Mutex
+	lastCfg             *proxy.Config
 }
 
 // NewProxySyncer creates a ProxySyncer for pushing config to proxy replicas.
@@ -623,6 +632,73 @@ func (s *ProxySyncer) SyncRoutes(
 		"rules", len(cfg.Rules),
 		"version", cfg.Version,
 	)
+
+	// Cache the successfully-pushed config so ResyncEndpoints can replay
+	// it to a newly-joined proxy pod that arrives between HTTPRoute
+	// reconciles. We cache AFTER the push so a failed push does not poison
+	// the cache with a config the replicas never actually received.
+	s.lastCfg = cfg
+
+	return nil
+}
+
+// ResyncEndpoints replays the most recent successfully-pushed config to the
+// supplied endpoints without rebuilding from HTTPRoutes. The endpoint
+// watcher uses this to bring a newly-joined proxy pod up to date when the
+// HTTPRoute set has not changed; without it the new pod stays at
+// /readyz == 503 until the next HTTPRoute reconcile, which is the race
+// the workaround "kubectl rollout restart deployment <controller>" was
+// papering over.
+//
+// Before the first SyncRoutes call (or after a controller restart that
+// has not yet built any config) lastCfg is nil and this is a no-op --
+// nothing meaningful to push yet, and the next HTTPRoute reconcile will
+// reach the new endpoint along with the others.
+//
+// Push errors are returned but not fatal: a transient endpoint flake
+// gets corrected on the next endpoint-change event.
+func (s *ProxySyncer) ResyncEndpoints(ctx context.Context, endpoints []string) error {
+	// Resolve headless service DNS names before acquiring the lock so a
+	// slow DNS lookup does not block a concurrent SyncRoutes -- mirrors
+	// the same pattern in SyncRoutes for symmetric lock-hold time.
+	resolved := resolveEndpoints(ctx, endpoints)
+
+	s.syncMu.Lock()
+	defer s.syncMu.Unlock()
+
+	if s.lastCfg == nil {
+		return nil
+	}
+
+	logger := logging.FromContext(ctx)
+	if logger == slog.Default() {
+		logger = s.logger
+	}
+
+	logger.Info("resyncing cached proxy config to endpoints",
+		"endpoints", len(resolved),
+		"version", s.lastCfg.Version,
+	)
+
+	results := s.pusher.Push(ctx, s.lastCfg, resolved)
+
+	var pushErrors []error
+
+	for _, result := range results {
+		if result.Err != nil {
+			logger.Error("failed to resync config to endpoint",
+				"endpoint", result.Endpoint,
+				"error", result.Err,
+			)
+
+			pushErrors = append(pushErrors, result.Err)
+		}
+	}
+
+	if len(pushErrors) > 0 {
+		return fmt.Errorf("failed to resync config to %d/%d endpoints: %w",
+			len(pushErrors), len(resolved), errors.Join(pushErrors...))
+	}
 
 	return nil
 }

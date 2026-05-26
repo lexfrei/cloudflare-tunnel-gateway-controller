@@ -23,6 +23,26 @@ import (
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/config"
 )
 
+// installSchemes registers the Gateway API v1, v1beta1 (for ReferenceGrant)
+// and GatewayClassConfig CRD types into the manager's runtime scheme.
+// Extracted from Run so the per-reconciler setup chain in Run stays under
+// the cyclomatic-complexity gate.
+func installSchemes(mgr ctrl.Manager) error {
+	if err := gatewayv1.Install(mgr.GetScheme()); err != nil {
+		return errors.Wrap(err, "failed to add gateway-api scheme")
+	}
+
+	if err := gatewayv1beta1.Install(mgr.GetScheme()); err != nil {
+		return errors.Wrap(err, "failed to add gateway-api v1beta1 scheme")
+	}
+
+	if err := v1alpha1.AddToScheme(mgr.GetScheme()); err != nil {
+		return errors.Wrap(err, "failed to add GatewayClassConfig scheme")
+	}
+
+	return nil
+}
+
 // Config holds all configuration options for the controller manager.
 // Values are typically populated from CLI flags or environment variables.
 type Config struct {
@@ -114,19 +134,8 @@ func Run(ctx context.Context, cfg *Config) error {
 		return errors.Wrap(err, "failed to create manager")
 	}
 
-	// Register Gateway API types
-	if err := gatewayv1.Install(mgr.GetScheme()); err != nil {
-		return errors.Wrap(err, "failed to add gateway-api scheme")
-	}
-
-	// Register Gateway API v1beta1 types (required for ReferenceGrant)
-	if err := gatewayv1beta1.Install(mgr.GetScheme()); err != nil {
-		return errors.Wrap(err, "failed to add gateway-api v1beta1 scheme")
-	}
-
-	// Register GatewayClassConfig CRD types
-	if err := v1alpha1.AddToScheme(mgr.GetScheme()); err != nil {
-		return errors.Wrap(err, "failed to add GatewayClassConfig scheme")
+	if err := installSchemes(mgr); err != nil {
+		return err
 	}
 
 	// Create metrics collector and register with controller-runtime
@@ -202,6 +211,10 @@ func Run(ctx context.Context, cfg *Config) error {
 		return errors.Wrap(err, "failed to setup gatewayclassconfig controller")
 	}
 
+	if err := setupProxyEndpointReconciler(mgr, proxySyncer, proxyEndpoints); err != nil {
+		return err
+	}
+
 	if err := setupStatusReconcilers(mgr, cfg.ControllerName); err != nil {
 		return err
 	}
@@ -218,6 +231,28 @@ func Run(ctx context.Context, cfg *Config) error {
 
 	if err := mgr.Start(ctx); err != nil {
 		return errors.Wrap(err, "failed to start manager")
+	}
+
+	return nil
+}
+
+// setupProxyEndpointReconciler wires the EndpointSlice watcher that
+// re-pushes the cached proxy config whenever a new proxy pod joins (or
+// an old one leaves) the headless Service's endpoints. Without this, a
+// pod that becomes Ready BETWEEN HTTPRoute reconciles stays at
+// /readyz == 503 until the next HTTPRoute change. Issue #293.
+//
+// Extracted from Run so the per-reconciler setup chain in Run stays
+// under the cyclomatic-complexity gate.
+func setupProxyEndpointReconciler(mgr ctrl.Manager, proxySyncer *ProxySyncer, proxyEndpoints []string) error {
+	reconciler := &ProxyEndpointReconciler{
+		Client:         mgr.GetClient(),
+		ProxySyncer:    proxySyncer,
+		ProxyEndpoints: proxyEndpoints,
+	}
+
+	if err := reconciler.SetupWithManager(mgr); err != nil {
+		return errors.Wrap(err, "failed to setup proxy endpoint reconciler")
 	}
 
 	return nil
