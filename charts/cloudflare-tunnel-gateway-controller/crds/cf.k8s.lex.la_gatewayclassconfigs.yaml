@@ -59,6 +59,9 @@ spec:
                 accountId:
                   type: string
                   description: Cloudflare account ID. Optional - auto-detected if not set.
+                  x-kubernetes-validations:
+                    - rule: "self == '' || self.matches('^[a-f0-9]{32}$')"
+                      message: "accountID must be a 32-character lowercase hexadecimal string (Cloudflare account ID format)"
                 tunnelID:
                   type: string
                   description: Cloudflare Tunnel UUID.

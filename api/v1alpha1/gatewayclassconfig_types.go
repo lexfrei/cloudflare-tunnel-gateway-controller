@@ -31,7 +31,14 @@ type GatewayClassConfigSpec struct {
 	// AccountID is the Cloudflare account ID. Optional - if not specified, it will be
 	// read from the credentials secret ("account-id" key) or auto-detected if the API token
 	// has access to only one account.
+	//
+	// When set, must be a 32-character lowercase hexadecimal string -- the format
+	// Cloudflare uses for account IDs. Validated server-side via a CRD-level CEL
+	// rule (Kubernetes >= 1.25) so an invalid value is rejected at admission time,
+	// before the controller has to reconcile it. Empty string passes through
+	// because the field is optional. Closes #110.
 	// +optional
+	// +kubebuilder:validation:XValidation:rule="self == '' || self.matches('^[a-f0-9]{32}$')",message="accountID must be a 32-character lowercase hexadecimal string (Cloudflare account ID format)"
 	AccountID string `json:"accountId,omitempty"`
 
 	// TunnelID is the Cloudflare Tunnel UUID.
