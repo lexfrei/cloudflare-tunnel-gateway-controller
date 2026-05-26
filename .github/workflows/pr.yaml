@@ -63,12 +63,19 @@ jobs:
         uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
         with:
           go-version: '1.26.3'
+          # cache: true caches BOTH the module cache (~/go/pkg/mod) and the
+          # build cache (~/.cache/go-build) keyed off go.sum. Issue #257.
           cache: true
 
       - name: golangci-lint
+        # Pin to a specific golangci-lint version so the action's own
+        # download + ~/.cache/golangci-lint key stays stable across runs;
+        # `version: latest` would invalidate the cache on every upstream
+        # release. The action also persists ~/.cache/golangci-lint
+        # automatically when version is pinned (see action docs).
         uses: golangci/golangci-lint-action@82606bf257cbaff209d206a39f5134f0cfbfd2ee # v9
         with:
-          version: latest
+          version: v2.12.2
           args: --timeout=5m
 
       - name: markdownlint
@@ -87,7 +94,24 @@ jobs:
         uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
         with:
           go-version: '1.26.3'
+          # cache: true caches BOTH the module cache (~/go/pkg/mod) and
+          # the build cache (~/.cache/go-build) keyed off go.sum. The
+          # GOPATH/bin entry below picks up the setup-envtest binary
+          # that go install drops there. Issue #257.
           cache: true
+
+      # Cache the envtest control-plane binaries (kube-apiserver, etcd,
+      # kubectl) keyed off the setup-envtest tool name -- the version
+      # actually used is selected by `setup-envtest use` at runtime, so
+      # the path is stable across runs. Avoids the ~30 s redownload of
+      # the control-plane tarball on every CI run.
+      - name: Cache envtest binaries
+        uses: actions/cache@d4323d4df104b026a6aa633fdb11d772146be0bf # v4
+        with:
+          path: ~/.local/share/kubebuilder-envtest
+          key: envtest-${{ runner.os }}-${{ hashFiles('go.mod') }}
+          restore-keys: |
+            envtest-${{ runner.os }}-
 
       - name: Setup envtest
         run: |
