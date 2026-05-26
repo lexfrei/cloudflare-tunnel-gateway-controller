@@ -620,3 +620,20 @@ tests:
         contains:
           path: spec.template.spec.containers[0].args
           content: "--leader-election-namespace=my-namespace"
+
+  - it: should wire --proxy-token-secret to the tunnel-token Secret when configured
+    # The chart auto-derives --proxy-token-secret=<release-namespace>/<secret-name>
+    # from proxy.tunnelTokenSecretRef.name. Without this the controller-side
+    # SecretReconciler stays off and a rotated tunnel-token Secret never
+    # propagates into the proxy pods. Issue #114.
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: cloudflare-tunnel-token
+    release:
+      namespace: cloudflare-tunnel-system
+    asserts:
+      - template: deployment.yaml
+        contains:
+          path: spec.template.spec.containers[0].args
+          content: "--proxy-token-secret=cloudflare-tunnel-system/cloudflare-tunnel-token"

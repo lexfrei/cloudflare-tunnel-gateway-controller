@@ -38,6 +38,14 @@ rules:
   - apiGroups: ["discovery.k8s.io"]
     resources: ["endpointslices"]
     verbs: ["get", "list", "watch"]
+  # Deployments: the ProxySecretReconciler patches the proxy Deployment's
+  # pod-template annotation when the tunnel-token Secret rotates, so
+  # Kubernetes rolls the pods natively and cloudflared picks up the new
+  # credential. List + patch only; no create/delete -- the chart owns
+  # Deployment lifecycle. Issue #114.
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch", "patch"]
   # Secrets: the controller only reads them (Cloudflare credentials, TLS
   # certificate refs, BackendTLSPolicy CA bundles). It does not create,
   # mutate, or delete Secrets, so write verbs are intentionally absent.
