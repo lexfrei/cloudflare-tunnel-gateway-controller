@@ -158,13 +158,59 @@ func waitForBackend(
 	require.NoError(t, err, "timed out waiting for %s to route to %s*", path, podPrefix)
 }
 
-// deleteAllRoutes removes all HTTPRoutes in the test namespace and waits for proxy to update.
+// deleteAllRoutes removes the HTTPRoutes the *running subtest* created
+// (filtered by ownerLabelKey == subtestLabelValue(t.Name())) and waits
+// for the proxy to update. A failing sibling's resources are NOT
+// touched -- that's the fix for #265.
 //
-// Honours skipCleanupOnFailure: if the test failed AND the opt-in env var
-// is set, returns early without touching the cluster so a maintainer can
-// inspect the state at the point of failure. See cleanup_retain_test.go
-// for the rationale and the env var name.
+// For the top-level pre-test "clean slate" sweep that needs to wipe
+// the whole namespace (so leftovers from a prior interrupted run are
+// gone), use wipeAllRoutesInNamespace instead -- this function
+// deliberately does not have a "wipe everything" mode so that a
+// subtest can never reach across to a sibling.
+//
+// Honours skipCleanupOnFailure: if the test failed AND the opt-in env
+// var is set, returns early without touching the cluster so a
+// maintainer can inspect the state at the point of failure. See
+// cleanup_retain_test.go for the rationale and the env var name.
 func deleteAllRoutes(t *testing.T, k8sClient client.Client, cfg testConfig) {
+	t.Helper()
+
+	if skipCleanupOnFailure(t) {
+		return
+	}
+
+	ctx := context.Background()
+	routeList := &gatewayv1.HTTPRouteList{}
+
+	err := k8sClient.List(ctx, routeList,
+		client.InNamespace(cfg.TestNamespace),
+		client.MatchingLabels(subtestLabels(t)),
+	)
+	if err != nil {
+		return
+	}
+
+	for idx := range routeList.Items {
+		_ = k8sClient.Delete(ctx, &routeList.Items[idx])
+	}
+
+	// Wait for proxy to clear old routes.
+	if len(routeList.Items) > 0 {
+		time.Sleep(3 * time.Second)
+	}
+}
+
+// wipeAllRoutesInNamespace removes EVERY HTTPRoute in cfg.TestNamespace
+// regardless of owner labels. Used only as a top-level pre-test
+// "clean slate" so any leftover routes from a prior interrupted run
+// are gone before subtests start. The blanket scope is deliberate
+// here -- the per-subtest defers use deleteAllRoutes which filters
+// by owner.
+//
+// Honours skipCleanupOnFailure for symmetry with deleteAllRoutes,
+// though in practice this is called before any subtest can fail.
+func wipeAllRoutesInNamespace(t *testing.T, k8sClient client.Client, cfg testConfig) {
 	t.Helper()
 
 	if skipCleanupOnFailure(t) {
@@ -183,7 +229,6 @@ func deleteAllRoutes(t *testing.T, k8sClient client.Client, cfg testConfig) {
 		_ = k8sClient.Delete(ctx, &routeList.Items[idx])
 	}
 
-	// Wait for proxy to clear old routes.
 	if len(routeList.Items) > 0 {
 		time.Sleep(3 * time.Second)
 	}
@@ -202,8 +247,11 @@ func TestHTTPRouteConformance(t *testing.T) {
 	setupEchoBackends(t, k8sClient, cfg)
 	setupGateway(t, k8sClient, cfg)
 
-	// Clean slate.
-	deleteAllRoutes(t, k8sClient, cfg)
+	// Clean slate: wipe any leftover routes from a prior interrupted
+	// run, regardless of owner label. Subtest defers below use the
+	// label-scoped deleteAllRoutes so they only touch their own
+	// resources.
+	wipeAllRoutesInNamespace(t, k8sClient, cfg)
 
 	t.Run("Core", func(t *testing.T) {
 		t.Run("HTTPRouteSimpleSameNamespace", func(t *testing.T) {
@@ -819,6 +867,18 @@ func buildHTTPRoute(name string, cfg testConfig, rules []gatewayv1.HTTPRouteRule
 
 func createHTTPRoute(t *testing.T, k8sClient client.Client, route *gatewayv1.HTTPRoute) {
 	t.Helper()
+
+	// Stamp the subtest owner label so deleteAllRoutes can scope
+	// cleanup to just this subtest's routes. Preserve any labels the
+	// caller already set; the owner key is internal to e2e helpers
+	// and not expected to collide with test fixtures.
+	if route.Labels == nil {
+		route.Labels = map[string]string{}
+	}
+
+	for k, v := range subtestLabels(t) {
+		route.Labels[k] = v
+	}
 
 	ctx := context.Background()
 	existing := &gatewayv1.HTTPRoute{}
