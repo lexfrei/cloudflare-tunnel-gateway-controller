@@ -2,16 +2,9 @@
 
 !!! warning "Not supported in v3"
 
-    The v3 controller's in-process L7 proxy intercepts all tunnel
-    traffic and has no gRPC matcher, so GRPCRoute requests return
-    `404`. The CRD is still watched for status reasons, but no runtime
-    routing happens. See the [GRPCRoute limitation](limitations.md#grpcroute-is-not-supported-in-v3)
-    for the full explanation, and the [v2 → v3 migration guide](../upgrading/v2-to-v3.md)
-    for workarounds. Workaround: use HTTPRoute, or stay on the v2.x
-    chart line until gRPC support is reinstated in the proxy.
+    The v3 controller's in-process L7 proxy intercepts all tunnel traffic and has no gRPC matcher, so GRPCRoute requests return `404`. The CRD is still watched for status reasons, but no runtime routing happens. See the [GRPCRoute limitation](limitations.md#grpcroute-is-not-supported-in-v3) for the full explanation, and the [v2 → v3 migration guide](../upgrading/v2-to-v3.md) for workarounds. Workaround: use HTTPRoute, or stay on the v2.x chart line until gRPC support is reinstated in the proxy.
 
-The examples below describe the v0.8-era behaviour and remain in the
-docs for historical context only — none of this routes in v3.
+The examples below describe the v0.8-era behaviour and remain in the docs for historical context only — none of this routes in v3.
 
 GRPCRoute enables routing gRPC traffic through Cloudflare Tunnel with service and method-level matching.
 
