@@ -108,10 +108,20 @@ var retiredSubstrings = []struct {
 		needle: "cloudflare.apiToken",
 		why:    "this Helm value never existed in the current chart; gatewayClassConfig.cloudflareCredentialsSecretRef is the v3 path",
 	},
+	{
+		needle: "v2 proxy",
+		why:    "v3 has a single proxy data plane; 'v2 proxy' in comments is leftover from the dual-mode era",
+	},
+	{
+		needle: "v1 path",
+		why:    "v3 has no 'v1 path'; tunnel traffic always flows through the L7 proxy's OverrideProxy hook",
+	},
 }
 
-// trackedRoots is the list of doc trees this guard scans. Walked
-// recursively; non-text files are skipped by extension.
+// trackedRoots is the list of trees this guard scans. Walked
+// recursively; non-text files are skipped by extension. Covers both the
+// markdown docs corpus and the Go source — the "v2 proxy" / "v1 path"
+// vocabulary must not survive in either.
 //
 //nolint:gochecknoglobals // test data; package-level is idiomatic.
 var trackedRoots = []string{
@@ -120,6 +130,9 @@ var trackedRoots = []string{
 	"README.md",
 	"charts/cloudflare-tunnel-gateway-controller/README.md",
 	"charts/cloudflare-tunnel-gateway-controller/README.md.gotmpl",
+	"internal",
+	"cmd",
+	"api",
 }
 
 // trackedExtensions are the file types the guard inspects. Everything
@@ -129,6 +142,7 @@ var trackedRoots = []string{
 var trackedExtensions = map[string]bool{
 	".md":     true,
 	".gotmpl": true,
+	".go":     true,
 }
 
 // allowedFiles list paths that LEGITIMATELY mention retired vocabulary
@@ -176,6 +190,8 @@ var allowedFiles = map[string]map[string]bool{
 		"manageCloudflared":                       true,
 		"cloudflare.tunnelId":                     true,
 		"cloudflare.apiToken":                     true,
+		"v2 proxy":                                true,
+		"v1 path":                                 true,
 	},
 }
 

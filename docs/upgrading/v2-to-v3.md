@@ -34,6 +34,10 @@ v3 collapses the two data plane modes that the v1/v2 chart supported (a separate
 
 2. **Drop `proxy.enabled: false` if you ever set it.** v2 users who ran the controller with the L7 proxy disabled need to set `proxy.tunnelTokenSecretRef.name` before upgrading, otherwise the chart install fails on the required check. The proxy is the only data plane in v3.
 
+    !!! tip "Use `--reset-then-reuse-values` on `helm upgrade`"
+
+        The v3 chart introduces a required value (`proxy.tunnelTokenSecretRef.name`) that the v2 defaults didn't carry. `helm upgrade --reuse-values` only re-applies the user overrides from the previous release and drops new chart defaults — so the install fails with the chart's `required` error. Pass `--reset-then-reuse-values` (Helm 3.14+) so new defaults merge under your overrides.
+
 3. **Clean up the legacy in-cluster cloudflared releases**, if any. The controller no longer reconciles them, but a leftover `cfd-<gateway>` Helm release will keep an orphaned cloudflared Deployment running. Discover them and uninstall:
 
     ```bash
@@ -47,9 +51,9 @@ v3 collapses the two data plane modes that the v1/v2 chart supported (a separate
 
 4. **Make sure the controller deployment passes `--proxy-endpoints`.** The chart wires this unconditionally — only out-of-tree deployments that ran the controller binary directly need to add the flag. The expected value points at the proxy's headless Service (`http://<release>-proxy-headless.<namespace>.svc.<cluster-domain>:<proxy.configAPIPort>/config`).
 
-5. **No data migration is required for CRs.** The Kubernetes API server strips unknown fields when you apply the new CRD schema, so existing GatewayClassConfig resources continue to work — the removed fields are simply ignored. (`spec.additionalProperties` is deliberately left unset on the CRD schema so v2 CRs apply without modification.)
+5. **No data migration is required for CRs.** The Kubernetes API server prunes unknown fields when you apply the new CRD schema (the v3 CRD does not set `x-kubernetes-preserve-unknown-fields: true`, so apiextensions/v1's default pruning applies), so existing GatewayClassConfig resources continue to work — the removed `cloudflared` and `tunnelTokenSecretRef` fields are silently dropped on next read/write.
 
-6. **Legacy finalizer cleanup is automatic.** The v2 controller attached a `cloudflare-tunnel.gateway.networking.k8s.io/cloudflared` finalizer to every Gateway it reconciled. The v3 controller strips this finalizer on first reconcile when the Gateway is being deleted. No manual `kubectl patch` is required — but if you do `kubectl get gateway -o yaml` immediately after upgrade, you will still see the finalizer until the next reconcile event.
+6. **Legacy finalizer cleanup is automatic on delete.** The v2 controller attached a `cloudflare-tunnel.gateway.networking.k8s.io/cloudflared` finalizer to every Gateway it reconciled. The v3 controller does not strip the finalizer from live Gateways — it sits there harmlessly until the Gateway is actually deleted, at which point the deletion path removes it on the first reconcile and the Gateway proceeds with normal termination. If you want to clean it up proactively without deleting the Gateway, `kubectl patch gateway <name> -n <ns> --type=json -p='[{"op":"remove","path":"/metadata/finalizers/INDEX_OF_FINALIZER"}]'` works.
 
 ## AmneziaWG sidecar is gone
 

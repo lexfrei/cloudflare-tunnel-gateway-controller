@@ -17,7 +17,7 @@ Step 6's real-cluster verification is maintainer-only — it requires a Cloudfla
 
 ## Project Overview
 
-Kubernetes controller implementing Gateway API for Cloudflare Tunnel. Watches Gateway and HTTPRoute resources, automatically configures Cloudflare Tunnel ingress rules via API. Supports hot reload without cloudflared restart. Optional AmneziaWG (AWG) sidecar support for traffic obfuscation.
+Kubernetes controller implementing Gateway API for Cloudflare Tunnel. Watches Gateway and HTTPRoute resources, automatically configures Cloudflare Tunnel ingress rules via API. Supports hot reload without cloudflared restart. Ships a single L7 proxy data plane (embeds cloudflared transport in-process via the vendored fork's `OverrideProxy` hook).
 
 ## Build and Development Commands
 
@@ -80,7 +80,7 @@ helm template test charts/cloudflare-tunnel-gateway-controller --values charts/c
 
 ### Custom Resource Definition
 
-- **GatewayClassConfig** (`api/v1alpha1/`): Cluster-scoped CRD for configuring Cloudflare credentials and tunnel ID. Referenced by GatewayClass via `parametersRef`. Spec carries only `cloudflareCredentialsSecretRef`, optional `accountId`, and `tunnelID`. Proxy-side configuration (replicas, tunnel token, AWG, probes) lives in Helm chart values, not in the CRD.
+- **GatewayClassConfig** (`api/v1alpha1/`): Cluster-scoped CRD for configuring Cloudflare credentials and tunnel ID. Referenced by GatewayClass via `parametersRef`. Spec carries only `cloudflareCredentialsSecretRef`, optional `accountId`, and `tunnelID`. Proxy-side configuration (replicas, tunnel token, probes, access log, websocket timeouts) lives in Helm chart values, not in the CRD.
 
 ### Supporting Packages
 

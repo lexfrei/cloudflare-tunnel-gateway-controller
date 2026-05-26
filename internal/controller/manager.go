@@ -49,7 +49,7 @@ type Config struct {
 	// LeaderElectName is the name of the leader election lease.
 	LeaderElectName string
 
-	// ProxyEndpoints is a list of proxy config API URLs for v2 proxy sync.
+	// ProxyEndpoints is the list of L7 proxy config-API URLs.
 	// When non-empty, the controller pushes routing config to these endpoints.
 	// Example: ["http://proxy-0:8081", "http://proxy-1:8081"]
 	ProxyEndpoints []string
@@ -160,7 +160,7 @@ func Run(ctx context.Context, cfg *Config) error {
 		baseLogger,
 	)
 
-	// Create proxy syncer for v2 proxy config push (optional)
+	// Create proxy syncer for L7 proxy config push (mandatory in v3)
 	proxySyncer := initProxySyncer(cfg, mgr.GetClient(), baseLogger, logger)
 
 	httpRouteReconciler := &HTTPRouteReconciler{
