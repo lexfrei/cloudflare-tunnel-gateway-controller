@@ -251,55 +251,6 @@ kubectl auth can-i update gateways/status \
 
 **Solution**: Ensure ClusterRole has status subresource permissions
 
-## AmneziaWG Sidecar Issues
-
-### AWG Interface Creation Failures
-
-**Symptoms**:
-
-- Container crash with `Operation not permitted`
-- Interface conflicts: `device already exists`
-
-**Diagnosis**:
-
-```bash
-kubectl get deployment --namespace cloudflare-tunnel-system \
-  cloudflare-tunnel-gateway-controller --output yaml | grep -A 10 securityContext
-
-kubectl logs --namespace cloudflare-tunnel-system POD_NAME --container amneziawg
-```
-
-**Solutions**:
-
-1. AWG requires `NET_ADMIN` capability (chart handles this automatically)
-
-2. Use different interface prefixes for conflicts:
-
-    ```yaml
-    awg:
-      interfacePrefix: "awg-prod"
-    ```
-
-### AWG DNS Overwrites Cluster DNS
-
-**Problem**: cloudflared cannot resolve internal Kubernetes services
-
-**Symptoms**:
-
-- `/etc/resolv.conf` shows VPN DNS instead of CoreDNS
-- Logs show: `no such host` for internal service names
-
-**Solution**: This is handled automatically in chart version 0.2.x+. For older
-versions, remove `DNS = ...` line from AWG config file.
-
-**Verification**:
-
-```bash
-kubectl exec --namespace cloudflare-tunnel-system POD_NAME \
-  --container cloudflared -- cat /etc/resolv.conf
-# Should show CoreDNS IP (e.g., 10.96.0.10), not 1.1.1.1
-```
-
 ## Performance Issues
 
 ### High Memory Usage

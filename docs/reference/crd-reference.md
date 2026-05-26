@@ -14,7 +14,7 @@ referenced by a GatewayClass via `spec.parametersRef`.
 
 ### Spec
 
-Starting v3 the spec carries only the contract the controller needs for Cloudflare API calls. Proxy-side configuration (tunnel token, replicas, AWG sidecar, liveness probes) lives in the Helm chart `proxy.*` values; see [Helm chart reference](helm-chart.md).
+Starting v3 the spec carries only the contract the controller needs for Cloudflare API calls. Proxy-side configuration (tunnel token, replicas, liveness probes) lives in the Helm chart `proxy.*` values; see [Helm chart reference](helm-chart.md). The AmneziaWG sidecar that v2 attached to the controller-managed cloudflared deployment is **not** available in v3 — see [Upgrading v2 → v3](../upgrading/v2-to-v3.md).
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|

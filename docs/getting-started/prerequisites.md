@@ -90,7 +90,9 @@ stringData:
   api-token: "YOUR_API_TOKEN"
 ```
 
-### Tunnel Token Secret (if controller manages cloudflared)
+### Tunnel Token Secret
+
+The L7 proxy pod consumes this Secret via the chart's `proxy.tunnelTokenSecretRef` value. The Secret must exist before `helm install` (the chart references it but does not create it).
 
 ```yaml
 apiVersion: v1

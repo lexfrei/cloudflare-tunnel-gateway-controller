@@ -9,7 +9,7 @@ resources (Gateway, HTTPRoute, GRPCRoute).
 
 - Standard Gateway API implementation (GatewayClass, Gateway, HTTPRoute, GRPCRoute)
 - Hot reload of tunnel configuration (no cloudflared restart required)
-- Optional cloudflared lifecycle management via Helm SDK
+- In-process L7 proxy embeds cloudflared transport (single data plane, no separate cloudflared deployment)
 - Leader election for high availability deployments
 - Multi-arch container images (amd64, arm64)
 - Signed container images with cosign

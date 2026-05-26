@@ -11,9 +11,9 @@ Kubernetes Gateway API controller for Cloudflare Tunnel
 
 ## Features
 
-- Standard Gateway API implementation (GatewayClass, Gateway, HTTPRoute)
+- Standard Gateway API implementation (GatewayClass, Gateway, HTTPRoute, GRPCRoute)
 - Hot reload of tunnel configuration (no cloudflared restart required)
-- Optional cloudflared lifecycle management via Helm SDK
+- In-process L7 proxy embeds cloudflared transport (single data plane, no separate cloudflared deployment)
 - Leader election for high availability deployments
 - Multi-arch container images (amd64, arm64)
 - Signed container images with cosign
@@ -71,14 +71,29 @@ Account ID is auto-detected from the API token when not explicitly provided (wor
 
 ### Install from OCI Registry
 
+First create the credentials and tunnel-token Secrets:
+
+```bash
+kubectl create namespace cloudflare-tunnel-system
+kubectl create secret generic cloudflare-credentials \
+  --namespace cloudflare-tunnel-system \
+  --from-literal=api-token="YOUR_API_TOKEN"
+kubectl create secret generic cloudflare-tunnel-token \
+  --namespace cloudflare-tunnel-system \
+  --from-literal=tunnel-token="YOUR_TUNNEL_TOKEN"
+```
+
+Then install the chart:
+
 ```bash
 helm install cloudflare-tunnel-gateway-controller \
   oci://ghcr.io/lexfrei/charts/cloudflare-tunnel-gateway-controller \
   --version 1.0.0 \
   --namespace cloudflare-tunnel-system \
-  --create-namespace \
-  --set cloudflare.tunnelId="YOUR_TUNNEL_ID" \
-  --set cloudflare.apiToken="YOUR_API_TOKEN"
+  --set gatewayClassConfig.create=true \
+  --set gatewayClassConfig.tunnelID="YOUR_TUNNEL_ID" \
+  --set gatewayClassConfig.cloudflareCredentialsSecretRef.name=cloudflare-credentials \
+  --set proxy.tunnelTokenSecretRef.name=cloudflare-tunnel-token
 ```
 
 ### Verify Chart Signature
@@ -90,8 +105,6 @@ cosign verify ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller:1.0.0 \
   --certificate-identity-regexp="https://github.com/lexfrei/cloudflare-tunnel-gateway-controller" \
   --certificate-oidc-issuer="https://token.actions.githubusercontent.com"
 ```
-
-> **Note:** This controller uses [cloudflare-tunnel](https://github.com/lexfrei/charts/tree/main/charts/cloudflare-tunnel) Helm chart under the hood to deploy cloudflared. If you don't need Gateway API integration, you can use that chart directly.
 
 ## Configuration Examples
 
@@ -113,12 +126,18 @@ Full documentation lives at <https://cf.k8s.lex.la> (built from the `docs/` tree
 - [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) - Cloudflare Tunnel documentation
 - [Cloudflare API Tokens](https://dash.cloudflare.com/profile/api-tokens) - Create API tokens
 
-### Quick Start
+### Quick Start (values.yaml)
 
 ```yaml
-cloudflare:
-  tunnelId: "your-tunnel-id"
-  apiToken: "your-api-token"
+gatewayClassConfig:
+  create: true
+  tunnelID: "your-tunnel-id"
+  cloudflareCredentialsSecretRef:
+    name: cloudflare-credentials  # Secret with key "api-token"
+
+proxy:
+  tunnelTokenSecretRef:
+    name: cloudflare-tunnel-token  # Secret with key "tunnel-token"
 ```
 
 ## Usage
@@ -167,8 +186,10 @@ helm install controller-prod \
   --namespace cloudflare-system \
   --set controller.gatewayClassName=cloudflare-tunnel-prod \
   --set controller.controllerName=cf.k8s.lex.la/tunnel-prod \
-  --set cloudflare.tunnelId="PROD_TUNNEL_ID" \
-  --set cloudflare.apiToken="PROD_API_TOKEN"
+  --set gatewayClassConfig.create=true \
+  --set gatewayClassConfig.tunnelID="PROD_TUNNEL_ID" \
+  --set gatewayClassConfig.cloudflareCredentialsSecretRef.name=cloudflare-credentials-prod \
+  --set proxy.tunnelTokenSecretRef.name=cloudflare-tunnel-token-prod
 
 # Second tunnel for staging apps
 helm install controller-staging \
@@ -176,8 +197,10 @@ helm install controller-staging \
   --namespace cloudflare-system \
   --set controller.gatewayClassName=cloudflare-tunnel-staging \
   --set controller.controllerName=cf.k8s.lex.la/tunnel-staging \
-  --set cloudflare.tunnelId="STAGING_TUNNEL_ID" \
-  --set cloudflare.apiToken="STAGING_API_TOKEN"
+  --set gatewayClassConfig.create=true \
+  --set gatewayClassConfig.tunnelID="STAGING_TUNNEL_ID" \
+  --set gatewayClassConfig.cloudflareCredentialsSecretRef.name=cloudflare-credentials-staging \
+  --set proxy.tunnelTokenSecretRef.name=cloudflare-tunnel-token-staging
 ```
 
 Each controller instance discovers GatewayClasses by `spec.controllerName` (not by resource name) and manages their associated Gateways and routes independently.

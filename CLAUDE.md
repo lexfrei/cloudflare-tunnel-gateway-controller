@@ -109,7 +109,7 @@ helm template test charts/cloudflare-tunnel-gateway-controller --values charts/c
 
 - `sigs.k8s.io/controller-runtime` - Kubernetes controller framework
 - `sigs.k8s.io/gateway-api` - Gateway API types
-- `github.com/cloudflare/cloudflare-go/v6` - Cloudflare API client
+- `github.com/cloudflare/cloudflare-go/v7` - Cloudflare API client
 - `github.com/cockroachdb/errors` - Error wrapping
 
 ### Cloudflared Fork
@@ -301,7 +301,7 @@ docs/
 ├── getting-started/         # Installation, prerequisites, quickstart
 ├── configuration/           # Controller options, Helm values, GatewayClassConfig
 ├── gateway-api/             # HTTPRoute, GRPCRoute, ReferenceGrant, limitations
-├── guides/                  # AWG sidecar, external-DNS, cross-namespace
+├── guides/                  # L7 proxy, external-DNS, cross-namespace
 ├── operations/              # Troubleshooting, metrics, manual installation
 ├── development/             # Setup, architecture, contributing, testing
 └── reference/               # Helm chart, CRD reference, security

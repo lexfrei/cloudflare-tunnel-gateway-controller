@@ -34,7 +34,7 @@ kubectl create secret generic cloudflare-credentials \
   --namespace cloudflare-tunnel-system \
   --from-literal=api-token="YOUR_API_TOKEN"
 
-# Tunnel token (required for managed cloudflared)
+# Tunnel token (consumed by the L7 proxy pod via the chart's proxy.tunnelTokenSecretRef)
 kubectl create secret generic cloudflare-tunnel-token \
   --namespace cloudflare-tunnel-system \
   --from-literal=tunnel-token="YOUR_TUNNEL_TOKEN"
