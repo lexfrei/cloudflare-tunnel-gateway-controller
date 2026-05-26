@@ -152,13 +152,16 @@ func (r *ListenerSetReconciler) reconcileStatus(
 			meta.SetStatusCondition(&fresh.Status.Conditions, cond)
 		}
 
-		if acceptance.Accepted {
-			fresh.Status.Listeners = buildListenerSetEntryStatuses(&fresh, acceptance.MergeResult, fresh.Generation, now)
+		if acceptance.Accepted || acceptance.Reason == gatewayv1.ListenerSetReasonListenersNotValid {
+			// Either the ListenerSet is fully accepted, or it's been
+			// rejected only because individual entries failed (conflict or
+			// bad refs). Either way, the per-entry status is what users
+			// need — surface it from the merge view + refChecks.
+			fresh.Status.Listeners = buildListenerSetEntryStatuses(&fresh, acceptance, fresh.Generation, now)
 		} else {
-			// When the ListenerSet is outright rejected by allowedListeners
-			// or has no valid listener, surface the same reason on every
-			// per-entry status block so users can see why nothing was
-			// programmed.
+			// Resource-level rejection (NotAllowed / Pending / Invalid) —
+			// stamp the same reason on every entry so kubectl describe
+			// shows a coherent story.
 			fresh.Status.Listeners = buildListenerSetRejectedEntryStatuses(&fresh, acceptance, fresh.Generation, now)
 		}
 
@@ -173,14 +176,26 @@ func (r *ListenerSetReconciler) reconcileStatus(
 }
 
 // listenerSetAcceptanceResult bundles the data the status writer needs in
-// either branch (gateway-level allow + per-listener conflict view).
+// either branch (gateway-level allow + per-listener conflict view + per-
+// entry TLS verdicts).
 type listenerSetAcceptanceResult struct {
 	Accepted    bool
 	Reason      gatewayv1.ListenerSetConditionReason
 	Message     string
 	MergeResult *listenermerge.MergeResult
+	// RefChecks maps entry name to TLS-ref resolution verdict. Used both to
+	// roll up the aggregate Accepted condition (any entry with
+	// ResolvedRefs=False counts as invalid) and to surface per-entry
+	// ResolvedRefs condition.
+	RefChecks map[gatewayv1.SectionName]listenerEntryRefsCheck
+	// AttachedRoutes maps entry name to the number of routes whose
+	// parentRef targets this ListenerSet AND whose binding to that entry was
+	// Accepted. Populated only when the ListenerSet itself is accepted by
+	// the parent Gateway.
+	AttachedRoutes map[gatewayv1.SectionName]int32
 }
 
+//nolint:funlen // single sequential pipeline; splitting hurts readability
 func (r *ListenerSetReconciler) computeAcceptance(
 	ctx context.Context,
 	gateway *gatewayv1.Gateway,
@@ -214,14 +229,220 @@ func (r *ListenerSetReconciler) computeAcceptance(
 	}
 
 	merged := listenermerge.Merge(gateway, siblings)
-	summary := merged.ListenerSetSummary(listenerSet)
+
+	refChecks, refErr := r.collectListenerEntryRefChecks(ctx, listenerSet)
+	if refErr != nil {
+		return listenerSetAcceptanceResult{
+			Accepted: false,
+			Reason:   gatewayv1.ListenerSetReasonPending,
+			Message:  "Failed to evaluate ListenerSet TLS references: " + refErr.Error(),
+		}
+	}
+
+	accepted, summaryReason, summaryMessage := summariseListenerSet(merged, listenerSet, refChecks)
+
+	attached, attachErr := r.countAttachedRoutesPerEntry(ctx, listenerSet)
+	if attachErr != nil {
+		return listenerSetAcceptanceResult{
+			Accepted: false,
+			Reason:   gatewayv1.ListenerSetReasonPending,
+			Message:  "Failed to count attached routes: " + attachErr.Error(),
+		}
+	}
 
 	return listenerSetAcceptanceResult{
-		Accepted:    summary.Accepted,
-		Reason:      summary.Reason,
-		Message:     summary.Message,
-		MergeResult: merged,
+		Accepted:       accepted,
+		Reason:         summaryReason,
+		Message:        summaryMessage,
+		MergeResult:    merged,
+		RefChecks:      refChecks,
+		AttachedRoutes: attached,
 	}
+}
+
+// countAttachedRoutesPerEntry returns the number of accepted HTTPRoutes (and
+// GRPCRoutes) that bind to each entry of the ListenerSet via parentRef.
+// "Accepted" mirrors RouteSyncer's binding contract: hostname intersects,
+// allowedRoutes.namespaces permits the route, route kind is allowed.
+func (r *ListenerSetReconciler) countAttachedRoutesPerEntry(
+	ctx context.Context,
+	listenerSet *gatewayv1.ListenerSet,
+) (map[gatewayv1.SectionName]int32, error) {
+	out := make(map[gatewayv1.SectionName]int32, len(listenerSet.Spec.Listeners))
+	for i := range listenerSet.Spec.Listeners {
+		out[listenerSet.Spec.Listeners[i].Name] = 0
+	}
+
+	validator := routebinding.NewValidator(r.Client)
+
+	if err := r.countAttachedHTTPRoutes(ctx, listenerSet, validator, out); err != nil {
+		return nil, err
+	}
+
+	if err := r.countAttachedGRPCRoutes(ctx, listenerSet, validator, out); err != nil {
+		return nil, err
+	}
+
+	return out, nil
+}
+
+//nolint:dupl // mirrored on purpose against countAttachedGRPCRoutes — different list type prevents a generic
+func (r *ListenerSetReconciler) countAttachedHTTPRoutes(
+	ctx context.Context,
+	listenerSet *gatewayv1.ListenerSet,
+	validator *routebinding.Validator,
+	counts map[gatewayv1.SectionName]int32,
+) error {
+	var routes gatewayv1.HTTPRouteList
+	if err := r.List(ctx, &routes); err != nil {
+		return errors.Wrap(err, "failed to list httproutes")
+	}
+
+	for i := range routes.Items {
+		route := &routes.Items[i]
+		incrementListenerSetAttachedRoutes(
+			ctx, validator, listenerSet,
+			route.Namespace, route.Name, route.Spec.Hostnames,
+			routebinding.KindHTTPRoute, route.Spec.ParentRefs, counts,
+		)
+	}
+
+	return nil
+}
+
+//nolint:dupl // mirrored on purpose against countAttachedHTTPRoutes — different list type prevents a generic
+func (r *ListenerSetReconciler) countAttachedGRPCRoutes(
+	ctx context.Context,
+	listenerSet *gatewayv1.ListenerSet,
+	validator *routebinding.Validator,
+	counts map[gatewayv1.SectionName]int32,
+) error {
+	var routes gatewayv1.GRPCRouteList
+	if err := r.List(ctx, &routes); err != nil {
+		return errors.Wrap(err, "failed to list grpcroutes")
+	}
+
+	for i := range routes.Items {
+		route := &routes.Items[i]
+		incrementListenerSetAttachedRoutes(
+			ctx, validator, listenerSet,
+			route.Namespace, route.Name, route.Spec.Hostnames,
+			routebinding.KindGRPCRoute, route.Spec.ParentRefs, counts,
+		)
+	}
+
+	return nil
+}
+
+func incrementListenerSetAttachedRoutes(
+	ctx context.Context,
+	validator *routebinding.Validator,
+	listenerSet *gatewayv1.ListenerSet,
+	routeNamespace, routeName string,
+	hostnames []gatewayv1.Hostname,
+	kind gatewayv1.Kind,
+	parentRefs []gatewayv1.ParentReference,
+	counts map[gatewayv1.SectionName]int32,
+) {
+	for _, ref := range parentRefs {
+		if !parentRefSelectsListenerSet(ref, routeNamespace, listenerSet) {
+			continue
+		}
+
+		routeInfo := &routebinding.RouteInfo{
+			Name:        routeName,
+			Namespace:   routeNamespace,
+			Hostnames:   hostnames,
+			Kind:        kind,
+			SectionName: ref.SectionName,
+			Port:        ref.Port,
+		}
+
+		result, err := validator.ValidateBindingForListenerSet(ctx, listenerSet, routeInfo)
+		if err != nil || !result.Accepted {
+			continue
+		}
+
+		for _, section := range result.MatchedListeners {
+			counts[section]++
+		}
+	}
+}
+
+// parentRefSelectsListenerSet returns true when a route parentRef targets
+// the given ListenerSet — Kind=ListenerSet and name/namespace match.
+func parentRefSelectsListenerSet(
+	ref gatewayv1.ParentReference,
+	routeNamespace string,
+	listenerSet *gatewayv1.ListenerSet,
+) bool {
+	if ref.Kind == nil || string(*ref.Kind) != kindListenerSet {
+		return false
+	}
+
+	if string(ref.Name) != listenerSet.Name {
+		return false
+	}
+
+	namespace := routeNamespace
+	if ref.Namespace != nil {
+		namespace = string(*ref.Namespace)
+	}
+
+	return namespace == listenerSet.Namespace
+}
+
+// collectListenerEntryRefChecks runs TLS cert ref validation for every entry
+// in the ListenerSet. Returns a map keyed by entry name so the status writer
+// can stamp per-entry ResolvedRefs conditions.
+func (r *ListenerSetReconciler) collectListenerEntryRefChecks(
+	ctx context.Context,
+	listenerSet *gatewayv1.ListenerSet,
+) (map[gatewayv1.SectionName]listenerEntryRefsCheck, error) {
+	out := make(map[gatewayv1.SectionName]listenerEntryRefsCheck, len(listenerSet.Spec.Listeners))
+
+	for i := range listenerSet.Spec.Listeners {
+		entry := &listenerSet.Spec.Listeners[i]
+
+		check, err := resolveListenerEntryRefs(ctx, r.Client, listenerSet, entry)
+		if err != nil {
+			return nil, err
+		}
+
+		out[entry.Name] = check
+	}
+
+	return out, nil
+}
+
+// summariseListenerSet rolls the merged-view per-listener status plus the
+// per-entry TLS verdicts into the ListenerSet's top-level Accepted /
+// Programmed conditions. The contract:
+//
+//   - At least one entry must be conflict-free AND ResolvedRefs-True →
+//     Accepted=True / Reason=Accepted.
+//   - Otherwise → Accepted=False / Reason=ListenersNotValid.
+func summariseListenerSet(
+	merged *listenermerge.MergeResult,
+	listenerSet *gatewayv1.ListenerSet,
+	refChecks map[gatewayv1.SectionName]listenerEntryRefsCheck,
+) (bool, gatewayv1.ListenerSetConditionReason, string) {
+	for i := range listenerSet.Spec.Listeners {
+		entry := &listenerSet.Spec.Listeners[i]
+		mergedEntry := findMergedEntry(merged, listenerSet, entry.Name)
+
+		if mergedEntry != nil && mergedEntry.ConflictReason != "" {
+			continue
+		}
+
+		if check, ok := refChecks[entry.Name]; ok && check.Status == metav1.ConditionFalse {
+			continue
+		}
+
+		return true, gatewayv1.ListenerSetReasonAccepted, "ListenerSet attached to parent Gateway"
+	}
+
+	return false, gatewayv1.ListenerSetReasonListenersNotValid, listenerSetMsgListenersBad
 }
 
 // collectAcceptedSiblings returns the slice of ListenerSets — including the
@@ -357,7 +578,7 @@ func listenerSetMessageForProgrammed(result listenerSetAcceptanceResult) string 
 // Programmed / Conflicted conditions surface success or rejection.
 func buildListenerSetEntryStatuses(
 	listenerSet *gatewayv1.ListenerSet,
-	merged *listenermerge.MergeResult,
+	acceptance listenerSetAcceptanceResult,
 	generation int64,
 	now metav1.Time,
 ) []gatewayv1.ListenerEntryStatus {
@@ -365,19 +586,26 @@ func buildListenerSetEntryStatuses(
 
 	for i := range listenerSet.Spec.Listeners {
 		entry := &listenerSet.Spec.Listeners[i]
-		merge := findMergedEntry(merged, listenerSet, entry.Name)
+		merge := findMergedEntry(acceptance.MergeResult, listenerSet, entry.Name)
 
 		supportedKinds, hasValidKind, hasInvalidKind := routebinding.FilterSupportedKinds(entry.AllowedRoutes, entry.Protocol)
 		if !hasValidKind {
 			supportedKinds = []gatewayv1.RouteGroupKind{}
 		}
 
+		refCheck, hasRefCheck := acceptance.RefChecks[entry.Name]
+		attached := int32(0)
+
+		if counts, ok := acceptance.AttachedRoutes[entry.Name]; ok {
+			attached = counts
+		}
+
 		out = append(out, gatewayv1.ListenerEntryStatus{
 			Name:           entry.Name,
 			SupportedKinds: supportedKinds,
-			AttachedRoutes: 0,
+			AttachedRoutes: attached,
 			Conditions: listenerEntryConditions(
-				generation, now, merge, hasValidKind, hasInvalidKind,
+				generation, now, merge, hasValidKind, hasInvalidKind, refCheck, hasRefCheck,
 			),
 		})
 	}
@@ -402,7 +630,7 @@ func buildListenerSetRejectedEntryStatuses(
 	// disallowed). The per-entry reason for ListenersNotValid is more
 	// specific and built from the merge view.
 	if result.Reason == gatewayv1.ListenerSetReasonListenersNotValid && result.MergeResult != nil {
-		return buildListenerSetEntryStatuses(listenerSet, result.MergeResult, generation, now)
+		return buildListenerSetEntryStatuses(listenerSet, result, generation, now)
 	}
 
 	rejectionReason := listenerEntryReasonForListenerSetRejection(result.Reason)
@@ -499,15 +727,30 @@ func findMergedEntry(
 }
 
 // listenerEntryConditions produces the per-entry condition slice from a
-// merged-view entry. Conflict reasons drive the Accepted/Programmed/Conflicted
-// trio; clean entries report success.
+// merged-view entry plus the per-entry TLS-ref verdict. Conflict reasons
+// drive the Accepted/Programmed/Conflicted trio; clean entries report
+// success. The TLS-ref verdict, when present, overrides the kind-derived
+// ResolvedRefs condition.
 func listenerEntryConditions(
 	generation int64,
 	now metav1.Time,
 	merge *listenermerge.MergedListener,
 	hasValidKind, hasInvalidKind bool,
+	refCheck listenerEntryRefsCheck,
+	hasRefCheck bool,
 ) []metav1.Condition {
 	resolvedRefsCondition := listenerEntryResolvedRefsCondition(generation, now, hasValidKind, hasInvalidKind)
+
+	if hasRefCheck && refCheck.Status == metav1.ConditionFalse {
+		resolvedRefsCondition = metav1.Condition{
+			Type:               string(gatewayv1.ListenerConditionResolvedRefs),
+			Status:             metav1.ConditionFalse,
+			ObservedGeneration: generation,
+			LastTransitionTime: now,
+			Reason:             refCheck.Reason,
+			Message:            refCheck.Message,
+		}
+	}
 
 	if merge != nil && merge.ConflictReason != "" {
 		return conflictedEntryConditions(generation, now, merge, &resolvedRefsCondition)
