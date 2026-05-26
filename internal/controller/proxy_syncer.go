@@ -50,6 +50,7 @@ type ProxySyncer struct {
 	clusterDomain       string
 	logger              *slog.Logger
 	pusher              *proxy.ConfigPusher
+	k8sClient           client.Client
 	backendValidator    proxy.BackendRefValidator
 	protocolResolver    proxy.BackendProtocolResolver
 	tlsResolver         proxy.BackendTLSResolver
@@ -85,6 +86,7 @@ func NewProxySyncer(
 		pusher: proxy.NewConfigPusher(&http.Client{
 			Timeout: 10 * time.Second,
 		}, authToken),
+		k8sClient:           k8sClient,
 		backendValidator:    newBackendRefValidator(refGrantValidator),
 		protocolResolver:    newBackendProtocolResolver(k8sClient),
 		tlsResolver:         newBackendTLSResolver(k8sClient),
@@ -590,6 +592,12 @@ func (s *ProxySyncer) SyncRoutes(
 	}
 
 	logger.Info("syncing proxy config", "routes", len(routes))
+
+	// When a route binds to a Gateway listener or ListenerSet entry with a
+	// non-empty hostname and itself declares spec.hostnames empty, the proxy
+	// rule MUST serve only the parent listener's hostname. Augment in-memory
+	// before handing to the converter; the input routes are left untouched.
+	routes = withEffectiveHostnames(ctx, s.k8sClient, routes)
 
 	// Convert to proxy config with cross-namespace validation, backend
 	// protocol resolution (e.g. h2c from Service appProtocol), and
