@@ -133,7 +133,7 @@ kubectl apply --filename https://github.com/kubernetes-sigs/gateway-api/releases
 
 The chart renders two deployments:
 
-- **Controller** (`<release>-cloudflare-tunnel-gateway-controller`) — watches Gateway / HTTPRoute / GRPCRoute resources and pushes config to both Cloudflare's tunnel-ingress API and the in-cluster L7 proxy.
+- **Controller** (`<release>-cloudflare-tunnel-gateway-controller`) — watches Gateway / HTTPRoute resources and pushes config to both Cloudflare's tunnel-ingress API and the in-cluster L7 proxy. GRPCRoute is reconciled for status only in v3 (no runtime routing — see [limitations](../gateway-api/limitations.md#grpcroute-is-not-supported-in-v3)).
 - **Proxy** (`<release>-cloudflare-tunnel-gateway-controller-proxy`) — embeds cloudflared transport in-process (via the vendored fork's `OverrideProxy` hook) and terminates tunnel traffic. Requires `proxy.tunnelTokenSecretRef.name` to be set; the chart fails install otherwise.
 
 ## Helm Chart Testing

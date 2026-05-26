@@ -241,7 +241,7 @@ Planned features and improvements:
 | -- | L7 reverse proxy for full Gateway API HTTPRoute support | Done |
 | [#45](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/issues/45) | Weighted backend traffic splitting | Done |
 | [#44](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/issues/44) | Warning logs for partially ignored route configuration | Planned |
-| [#40](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/issues/40) | TCPRoute and TLSRoute support (GRPCRoute done in v0.8.0) | In Progress |
+| [#40](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/issues/40) | TCPRoute and TLSRoute support (GRPCRoute removed from the runtime in v3 — see [migration guide](https://cf.k8s.lex.la/upgrading/v2-to-v3/)) | In Progress |
 | [#33](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/issues/33) | Auto-generate artifacthub.io/changes from git history | Planned |
 | [#25](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/issues/25) | Increase unit test coverage for core packages | Ongoing |
 
