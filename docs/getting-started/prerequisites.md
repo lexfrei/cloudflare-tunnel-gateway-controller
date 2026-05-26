@@ -1,7 +1,6 @@
 # Prerequisites
 
-Before installing the Cloudflare Tunnel Gateway Controller, ensure you have
-the following prerequisites in place.
+Before installing the Cloudflare Tunnel Gateway Controller, ensure you have the following prerequisites in place.
 
 ## Kubernetes Cluster
 
@@ -13,8 +12,7 @@ You need a Kubernetes cluster with:
 
 ## Gateway API CRDs
 
-The controller requires Gateway API Custom Resource Definitions (CRDs) to be
-installed in your cluster:
+The controller requires Gateway API Custom Resource Definitions (CRDs) to be installed in your cluster:
 
 ```bash
 kubectl apply --filename https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.5.0/standard-install.yaml
@@ -22,8 +20,7 @@ kubectl apply --filename https://github.com/kubernetes-sigs/gateway-api/releases
 
 !!! tip "Version Compatibility"
 
-    The controller is tested with Gateway API v1.5.0. Using older versions
-    may result in missing features or compatibility issues.
+    The controller is tested with Gateway API v1.5.0. Using older versions may result in missing features or compatibility issues.
 
 ## Cloudflare Account
 
@@ -50,8 +47,7 @@ Before deploying the controller, create a Cloudflare Tunnel:
 
 ## Cloudflare API Token
 
-Create an API token at [Cloudflare Account API Tokens](https://dash.cloudflare.com/?to=/:account/api-tokens)
-with the following permissions:
+Create an API token at [Cloudflare Account API Tokens](https://dash.cloudflare.com/?to=/:account/api-tokens) with the following permissions:
 
 | Scope | Permission | Access |
 |-------|------------|--------|
@@ -59,8 +55,7 @@ with the following permissions:
 
 !!! note "Account ID"
 
-    Account ID is auto-detected from the API token when not explicitly provided
-    (works if the token has access to a single account).
+    Account ID is auto-detected from the API token when not explicitly provided (works if the token has access to a single account).
 
 ### Creating the API Token
 

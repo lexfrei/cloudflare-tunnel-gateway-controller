@@ -1,7 +1,6 @@
 # Operations
 
-This section covers operational aspects of running the Cloudflare Tunnel Gateway
-Controller in production.
+This section covers operational aspects of running the Cloudflare Tunnel Gateway Controller in production.
 
 ## Overview
 

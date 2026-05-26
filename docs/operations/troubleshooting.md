@@ -1,7 +1,6 @@
 # Troubleshooting
 
-This guide helps diagnose and resolve common issues with the Cloudflare Tunnel
-Gateway Controller.
+This guide helps diagnose and resolve common issues with the Cloudflare Tunnel Gateway Controller.
 
 ## Quick Diagnostics
 
@@ -50,8 +49,7 @@ kubectl get httproute --all-namespaces
     Error: cloudflareCredentialsSecretRef.name is required
     ```
 
-    **Solution**: Set `gatewayClassConfig.cloudflareCredentialsSecretRef.name` to
-    the name of a Secret containing an `api-token` key
+    **Solution**: Set `gatewayClassConfig.cloudflareCredentialsSecretRef.name` to the name of a Secret containing an `api-token` key
 
 **Verification**:
 

@@ -1,8 +1,6 @@
 # L7 Proxy Setup
 
-The L7 proxy runs cloudflared tunnel transport with a built-in reverse proxy
-that implements full Gateway API HTTPRoute routing in-process, removing the
-limitations of the Cloudflare Tunnel ingress API.
+The L7 proxy runs cloudflared tunnel transport with a built-in reverse proxy that implements full Gateway API HTTPRoute routing in-process, removing the limitations of the Cloudflare Tunnel ingress API.
 
 ## Architecture
 
@@ -83,8 +81,7 @@ helm upgrade --install cloudflare-tunnel \
 
 ## Features Enabled by L7 Proxy
 
-The L7 proxy enables the following Gateway API features that are not available
-with only the Cloudflare Tunnel API:
+The L7 proxy enables the following Gateway API features that are not available with only the Cloudflare Tunnel API:
 
 - Exact path matching
 - Header matching
@@ -101,8 +98,7 @@ with only the Cloudflare Tunnel API:
 
 ## Configuration
 
-The controller automatically discovers proxy pod endpoints via the headless
-Service and pushes routing configuration whenever HTTPRoute resources change.
+The controller automatically discovers proxy pod endpoints via the headless Service and pushes routing configuration whenever HTTPRoute resources change.
 
 ### Environment Variables
 
@@ -160,8 +156,7 @@ spec:
 
 ## Monitoring
 
-The proxy exposes Prometheus metrics on the config API port. Enable the
-ServiceMonitor to scrape them automatically:
+The proxy exposes Prometheus metrics on the config API port. Enable the ServiceMonitor to scrape them automatically:
 
 ```yaml
 serviceMonitor:

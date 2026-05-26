@@ -1,12 +1,10 @@
 # Monitoring
 
-This guide covers setting up monitoring for the Cloudflare Tunnel Gateway
-Controller using Prometheus and Grafana.
+This guide covers setting up monitoring for the Cloudflare Tunnel Gateway Controller using Prometheus and Grafana.
 
 ## Overview
 
-The controller exposes Prometheus metrics for monitoring reconciliation
-performance, errors, and resource usage.
+The controller exposes Prometheus metrics for monitoring reconciliation performance, errors, and resource usage.
 
 ## Endpoints
 

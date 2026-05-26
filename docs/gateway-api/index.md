@@ -87,9 +87,7 @@ flowchart TB
 
 !!! info "TLS Termination"
 
-    Cloudflare Tunnel terminates TLS at Cloudflare's edge network.
-    Gateway listener configuration for ports, protocols, and TLS settings
-    has no effect on routing behavior.
+    Cloudflare Tunnel terminates TLS at Cloudflare's edge network. Gateway listener configuration for ports, protocols, and TLS settings has no effect on routing behavior.
 
 !!! info "Full Sync"
 

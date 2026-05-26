@@ -1,12 +1,10 @@
 # Installation
 
-This guide covers installing the Cloudflare Tunnel Gateway Controller using
-Helm.
+This guide covers installing the Cloudflare Tunnel Gateway Controller using Helm.
 
 ## Helm Installation
 
-Helm is the only supported installation method. It handles CRD installation,
-RBAC setup, and provides a simple upgrade path.
+Helm is the only supported installation method. It handles CRD installation, RBAC setup, and provides a simple upgrade path.
 
 ### Basic Installation
 
@@ -122,14 +120,11 @@ helm uninstall cloudflare-tunnel-gateway-controller \
 
 !!! warning "Cleanup"
 
-    Uninstalling the Helm release will remove the controller and cloudflared
-    pods. The tunnel configuration in Cloudflare will remain. To fully clean
-    up, delete the tunnel from the Cloudflare dashboard.
+    Uninstalling the Helm release will remove the controller and cloudflared pods. The tunnel configuration in Cloudflare will remain. To fully clean up, delete the tunnel from the Cloudflare dashboard.
 
 ## Alternative: External Secrets
 
-For production deployments, consider using [external-secrets](https://external-secrets.io/)
-to manage Cloudflare credentials:
+For production deployments, consider using [external-secrets](https://external-secrets.io/) to manage Cloudflare credentials:
 
 ```yaml
 apiVersion: external-secrets.io/v1beta1
@@ -152,5 +147,4 @@ spec:
 
 ## Next Steps
 
-After installation, proceed to [Quick Start](quickstart.md) to create your
-first HTTPRoute.
+After installation, proceed to [Quick Start](quickstart.md) to create your first HTTPRoute.

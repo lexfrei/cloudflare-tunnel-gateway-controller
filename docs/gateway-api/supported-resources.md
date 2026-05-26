@@ -43,12 +43,7 @@ The Gateway resource is fully processed. Listeners are used for route binding, s
 
 !!! info "TLS Termination"
 
-    Cloudflare Tunnel terminates TLS at Cloudflare's edge network.
-    TLS certificate references on listeners are validated (existence,
-    ReferenceGrant for cross-namespace refs), but the actual TLS termination
-    is handled by Cloudflare, not by the controller. The listener `port` and
-    `protocol` fields are used for Gateway API route binding semantics, not
-    for configuring network listeners.
+    Cloudflare Tunnel terminates TLS at Cloudflare's edge network. TLS certificate references on listeners are validated (existence, ReferenceGrant for cross-namespace refs), but the actual TLS termination is handled by Cloudflare, not by the controller. The listener `port` and `protocol` fields are used for Gateway API route binding semantics, not for configuring network listeners.
 
 ## HTTPRoute
 
@@ -168,11 +163,7 @@ True weighted traffic splitting across multiple backends is performed by the in-
 
 !!! danger "No Fallback on Rejection"
 
-    If the highest-weight backend is rejected (e.g., due to missing
-    ReferenceGrant for cross-namespace reference), the controller does
-    **not** fall back to the next backend. The entire rule is skipped,
-    and the route status will show `ResolvedRefs=False`. This is per
-    Gateway API specification — weights indicate preference, not failover order.
+    If the highest-weight backend is rejected (e.g., due to missing ReferenceGrant for cross-namespace reference), the controller does **not** fall back to the next backend. The entire rule is skipped, and the route status will show `ResolvedRefs=False`. This is per Gateway API specification — weights indicate preference, not failover order.
 
 ## Status Conditions
 

@@ -2,9 +2,7 @@
 
 !!! warning "Not Recommended"
 
-    The recommended installation method is via Helm chart. Use manual
-    installation only if you have specific requirements that prevent
-    using Helm.
+    The recommended installation method is via Helm chart. Use manual installation only if you have specific requirements that prevent using Helm.
 
 ## Prerequisites
 
@@ -165,5 +163,4 @@ kubectl delete namespace cloudflare-tunnel-system
 - Custom modifications not supported by chart
 - Educational/debugging purposes
 
-For production deployments, the Helm chart is strongly recommended for its
-ease of use, upgrade path, and validation features.
+For production deployments, the Helm chart is strongly recommended for its ease of use, upgrade path, and validation features.

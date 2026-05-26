@@ -122,9 +122,7 @@ spec:
 
 !!! warning "Wildcard SSL"
 
-    Multi-level subdomains like `*.staging.example.com` require
-    [Advanced Certificate Manager](https://developers.cloudflare.com/ssl/edge-certificates/advanced-certificate-manager/)
-    for SSL certificates.
+    Multi-level subdomains like `*.staging.example.com` require [Advanced Certificate Manager](https://developers.cloudflare.com/ssl/edge-certificates/advanced-certificate-manager/) for SSL certificates.
 
 ## Backend Selection with Weights
 
@@ -241,8 +239,7 @@ The controller resolves ExternalName Services and routes traffic directly to the
 
 !!! note "Port and Scheme"
 
-    The scheme (`http` or `https`) is determined by the port:
-    port 443 uses HTTPS, all other ports use HTTP.
+    The scheme (`http` or `https`) is determined by the port: port 443 uses HTTPS, all other ports use HTTP.
 
 ## External-DNS Integration
 

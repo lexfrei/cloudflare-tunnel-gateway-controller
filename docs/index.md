@@ -2,8 +2,7 @@
 
 Kubernetes controller implementing Gateway API for Cloudflare Tunnel.
 
-Enables routing traffic through Cloudflare Tunnel using standard Gateway API
-resources (Gateway, HTTPRoute).
+Enables routing traffic through Cloudflare Tunnel using standard Gateway API resources (Gateway, HTTPRoute).
 
 ## Features
 
@@ -16,8 +15,7 @@ resources (Gateway, HTTPRoute).
 
 ### L7 Proxy
 
-An in-process L7 reverse proxy embedded inside cloudflared (via the
-`OverrideProxy` hook) provides full Gateway API HTTPRoute feature support:
+An in-process L7 reverse proxy embedded inside cloudflared (via the `OverrideProxy` hook) provides full Gateway API HTTPRoute feature support:
 
 - **Header-based routing** -- match requests by HTTP header values
 - **Query parameter matching** -- route based on URL query parameters
@@ -91,5 +89,4 @@ See [Getting Started](getting-started/index.md) for detailed setup instructions.
 
 ## License
 
-BSD 3-Clause License - see [LICENSE](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/blob/master/LICENSE)
-for details.
+BSD 3-Clause License - see [LICENSE](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/blob/master/LICENSE) for details.

@@ -105,9 +105,7 @@ spec:
 
 !!! warning "Wildcard Not Supported"
 
-    The Gateway API does not support wildcards in `namespace`. You must
-    create individual entries for each namespace, or create the
-    ReferenceGrant in each source namespace.
+    The Gateway API does not support wildcards in `namespace`. You must create individual entries for each namespace, or create the ReferenceGrant in each source namespace.
 
 ## Allow Specific Service
 
@@ -274,6 +272,4 @@ kubectl logs --selector app.kubernetes.io/name=cloudflare-tunnel-gateway-control
 
 !!! warning "Shared Namespaces"
 
-    Be careful with ReferenceGrants in namespaces containing sensitive
-    Services. A ReferenceGrant without `to[].name` allows access to ALL
-    Services in that namespace.
+    Be careful with ReferenceGrants in namespaces containing sensitive Services. A ReferenceGrant without `to[].name` allows access to ALL Services in that namespace.

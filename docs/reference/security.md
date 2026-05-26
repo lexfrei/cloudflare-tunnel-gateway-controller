@@ -1,7 +1,6 @@
 # Security
 
-This document covers the security policy and best practices for the
-Cloudflare Tunnel Gateway Controller.
+This document covers the security policy and best practices for the Cloudflare Tunnel Gateway Controller.
 
 ## Supported Versions
 
@@ -107,11 +106,7 @@ rules:
 ```
 
 !!! note "v3 RBAC scope"
-    The v3 controller is status-only and reads Secrets/ConfigMaps; it does not
-    create, mutate, or delete workloads. The v2 chart granted cluster-wide
-    write on Pods, Deployments, ReplicaSets and ServiceAccounts for the
-    Helm-SDK code path that managed cloudflared; those rules were removed
-    when that code path was deleted.
+    The v3 controller is status-only and reads Secrets/ConfigMaps; it does not create, mutate, or delete workloads. The v2 chart granted cluster-wide write on Pods, Deployments, ReplicaSets and ServiceAccounts for the Helm-SDK code path that managed cloudflared; those rules were removed when that code path was deleted.
 
 ### Container Security
 

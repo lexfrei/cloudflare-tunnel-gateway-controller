@@ -1,16 +1,12 @@
 # CRD Reference
 
-This document provides the API reference for Custom Resource Definitions (CRDs)
-used by the Cloudflare Tunnel Gateway Controller.
+This document provides the API reference for Custom Resource Definitions (CRDs) used by the Cloudflare Tunnel Gateway Controller.
 
 ## GatewayClassConfig
 
-**API Version**: `cf.k8s.lex.la/v1alpha1`
-**Kind**: `GatewayClassConfig`
-**Scope**: Cluster
+**API Version**: `cf.k8s.lex.la/v1alpha1` **Kind**: `GatewayClassConfig` **Scope**: Cluster
 
-GatewayClassConfig provides tunnel configuration for the controller. It is
-referenced by a GatewayClass via `spec.parametersRef`.
+GatewayClassConfig provides tunnel configuration for the controller. It is referenced by a GatewayClass via `spec.parametersRef`.
 
 ### Spec
 
@@ -53,14 +49,11 @@ GatewayClassConfig has a `status.conditions` subresource. The reconciler emits:
 
 ## Gateway API Resources
 
-The controller watches standard Gateway API resources. For their full
-specification, see the
-[Gateway API documentation](https://gateway-api.sigs.k8s.io/).
+The controller watches standard Gateway API resources. For their full specification, see the [Gateway API documentation](https://gateway-api.sigs.k8s.io/).
 
 ### GatewayClass
 
-Standard Gateway API GatewayClass with `parametersRef` pointing to
-GatewayClassConfig:
+Standard Gateway API GatewayClass with `parametersRef` pointing to GatewayClassConfig:
 
 ```yaml
 apiVersion: gateway.networking.k8s.io/v1
