@@ -1,7 +1,6 @@
 # Configuration
 
-This section covers all configuration options for the Cloudflare Tunnel Gateway
-Controller.
+This section covers all configuration options for the Cloudflare Tunnel Gateway Controller.
 
 ## Overview
 
@@ -43,8 +42,7 @@ The controller can be configured at multiple levels:
 
     ---
 
-    Helm values for the L7 reverse proxy: replicas, resources, health
-    probes, networking, and security contexts.
+    Helm values for the L7 reverse proxy: replicas, resources, health probes, networking, and security contexts.
 
     [:octicons-arrow-right-24: L7 Proxy Values](helm-values.md#l7-proxy-configuration)
 

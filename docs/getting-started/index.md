@@ -1,12 +1,10 @@
 # Getting Started
 
-This section covers everything you need to get the Cloudflare Tunnel Gateway
-Controller running in your Kubernetes cluster.
+This section covers everything you need to get the Cloudflare Tunnel Gateway Controller running in your Kubernetes cluster.
 
 ## Overview
 
-The controller enables routing traffic through Cloudflare Tunnel using standard
-Gateway API resources. Before installing, you need:
+The controller enables routing traffic through Cloudflare Tunnel using standard Gateway API resources. Before installing, you need:
 
 1. A Kubernetes cluster with Gateway API CRDs installed
 2. A Cloudflare account with a pre-created Cloudflare Tunnel

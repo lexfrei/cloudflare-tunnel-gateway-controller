@@ -1,7 +1,6 @@
 # Reference
 
-This section contains reference documentation for the Cloudflare Tunnel Gateway
-Controller.
+This section contains reference documentation for the Cloudflare Tunnel Gateway Controller.
 
 ## Sections
 

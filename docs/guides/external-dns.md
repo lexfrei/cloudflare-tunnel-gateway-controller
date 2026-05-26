@@ -1,14 +1,10 @@
 # External-DNS Integration
 
-This guide covers integrating the Cloudflare Tunnel Gateway Controller with
-[external-dns](https://github.com/kubernetes-sigs/external-dns) for automatic
-DNS record management.
+This guide covers integrating the Cloudflare Tunnel Gateway Controller with [external-dns](https://github.com/kubernetes-sigs/external-dns) for automatic DNS record management.
 
 ## Overview
 
-The controller sets `status.addresses` on the Gateway with the tunnel CNAME
-(`TUNNEL_ID.cfargotunnel.com`). When external-dns is configured with Gateway
-API source, it automatically creates DNS records for your HTTPRoute hostnames.
+The controller sets `status.addresses` on the Gateway with the tunnel CNAME (`TUNNEL_ID.cfargotunnel.com`). When external-dns is configured with Gateway API source, it automatically creates DNS records for your HTTPRoute hostnames.
 
 ## Prerequisites
 
@@ -52,8 +48,7 @@ The external-dns API token needs:
 
 !!! note "Separate Tokens"
 
-    Use separate API tokens for the tunnel controller (Tunnel Edit) and
-    external-dns (DNS Edit) following the principle of least privilege.
+    Use separate API tokens for the tunnel controller (Tunnel Edit) and external-dns (DNS Edit) following the principle of least privilege.
 
 ## HTTPRoute Annotations
 

@@ -1,7 +1,6 @@
 # Quick Start
 
-This guide walks you through creating your first HTTPRoute to expose a
-Kubernetes service through Cloudflare Tunnel.
+This guide walks you through creating your first HTTPRoute to expose a Kubernetes service through Cloudflare Tunnel.
 
 ## Prerequisites
 
@@ -59,8 +58,7 @@ Expected output includes `"type":"Accepted","status":"True"`.
 
 ## Configure DNS
 
-The controller sets the Gateway address to `TUNNEL_ID.cfargotunnel.com`.
-Create a CNAME record pointing your hostname to this address:
+The controller sets the Gateway address to `TUNNEL_ID.cfargotunnel.com`. Create a CNAME record pointing your hostname to this address:
 
 | Type | Name | Target |
 |------|------|--------|
@@ -68,9 +66,7 @@ Create a CNAME record pointing your hostname to this address:
 
 !!! tip "External-DNS"
 
-    If you have [external-dns](https://external-dns.io/) configured with
-    Gateway API source, DNS records are created automatically.
-    See [External-DNS Integration](../guides/external-dns.md) for setup.
+    If you have [external-dns](https://external-dns.io/) configured with Gateway API source, DNS records are created automatically. See [External-DNS Integration](../guides/external-dns.md) for setup.
 
 ## Access Your Application
 
@@ -140,8 +136,7 @@ spec:
 
 ## Advanced Routing
 
-When the L7 proxy is enabled, HTTPRoute gains full Gateway API matching and
-filter support. Below are short examples of the most common patterns.
+When the L7 proxy is enabled, HTTPRoute gains full Gateway API matching and filter support. Below are short examples of the most common patterns.
 
 ### Header-Based Routing
 
@@ -218,8 +213,7 @@ spec:
 
 !!! tip "Enable the proxy first"
 
-    These features require the L7 proxy. See the
-    [L7 Proxy Guide](../guides/l7-proxy.md) for installation instructions.
+    These features require the L7 proxy. See the [L7 Proxy Guide](../guides/l7-proxy.md) for installation instructions.
 
 ## Troubleshooting
 
@@ -245,8 +239,7 @@ Cloudflare's free Universal SSL covers:
 - `example.com`
 - `*.example.com`
 
-For multi-level subdomains like `app.dev.example.com`, you need
-[Advanced Certificate Manager](https://developers.cloudflare.com/ssl/edge-certificates/advanced-certificate-manager/).
+For multi-level subdomains like `app.dev.example.com`, you need [Advanced Certificate Manager](https://developers.cloudflare.com/ssl/edge-certificates/advanced-certificate-manager/).
 
 ## Next Steps
 

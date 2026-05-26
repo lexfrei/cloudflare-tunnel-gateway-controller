@@ -1,7 +1,6 @@
 # Guides
 
-This section contains step-by-step guides for common integration scenarios
-and advanced configurations.
+This section contains step-by-step guides for common integration scenarios and advanced configurations.
 
 ## Available Guides
 
@@ -27,8 +26,7 @@ and advanced configurations.
 
     ---
 
-    Enable the L7 reverse proxy for full HTTPRoute support including
-    header matching, traffic splitting, and request filters.
+    Enable the L7 reverse proxy for full HTTPRoute support including header matching, traffic splitting, and request filters.
 
     [:octicons-arrow-right-24: L7 Proxy](l7-proxy.md)
 

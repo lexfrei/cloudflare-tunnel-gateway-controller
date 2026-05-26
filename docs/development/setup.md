@@ -231,9 +231,7 @@ go mod tidy
 
 !!! warning "Do Not Manually Bump Versions"
 
-    Do not manually change `version` or `appVersion` in `Chart.yaml`.
-    The release workflow automatically sets both values based on the
-    release tag. Manual changes will cause conflicts.
+    Do not manually change `version` or `appVersion` in `Chart.yaml`. The release workflow automatically sets both values based on the release tag. Manual changes will cause conflicts.
 
 ### Generate Godoc
 

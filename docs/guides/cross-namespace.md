@@ -1,13 +1,10 @@
 # Cross-Namespace Routing
 
-This guide covers routing traffic to services in different namespaces using
-ReferenceGrant.
+This guide covers routing traffic to services in different namespaces using ReferenceGrant.
 
 ## Overview
 
-By default, Gateway API only allows Routes to reference Services in the same
-namespace. Cross-namespace references require explicit permission via
-ReferenceGrant.
+By default, Gateway API only allows Routes to reference Services in the same namespace. Cross-namespace references require explicit permission via ReferenceGrant.
 
 ## Use Cases
 
@@ -229,8 +226,7 @@ kubectl get httproute api-route --namespace frontend \
   --output jsonpath='{.status.parents[*].conditions}'
 ```
 
-Look for `ResolvedRefs: True`. If `False` with reason `RefNotPermitted`,
-the ReferenceGrant is missing or misconfigured.
+Look for `ResolvedRefs: True`. If `False` with reason `RefNotPermitted`, the ReferenceGrant is missing or misconfigured.
 
 ### Debug Missing Grants
 

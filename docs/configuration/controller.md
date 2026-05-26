@@ -1,7 +1,6 @@
 # Controller Options
 
-This document describes all configuration options for the controller binary.
-For Helm chart values, see [Helm Values](helm-values.md).
+This document describes all configuration options for the controller binary. For Helm chart values, see [Helm Values](helm-values.md).
 
 ## Command Line Flags
 
@@ -21,8 +20,7 @@ For Helm chart values, see [Helm Values](helm-values.md).
 
 ## Environment Variables
 
-All flags can be set via environment variables with the `CF_` prefix.
-Dashes in flag names are replaced with underscores.
+All flags can be set via environment variables with the `CF_` prefix. Dashes in flag names are replaced with underscores.
 
 Examples:
 
@@ -32,9 +30,7 @@ Examples:
 
 ## Cluster Domain Auto-Detection
 
-The controller automatically detects the Kubernetes cluster domain from
-`/etc/resolv.conf` search domains. If detection fails, it falls back to
-`cluster.local`.
+The controller automatically detects the Kubernetes cluster domain from `/etc/resolv.conf` search domains. If detection fails, it falls back to `cluster.local`.
 
 To override auto-detection:
 
@@ -50,16 +46,14 @@ CF_CLUSTER_DOMAIN=my-cluster.local
 
 ## Leader Election
 
-For high availability deployments with multiple controller replicas,
-enable leader election:
+For high availability deployments with multiple controller replicas, enable leader election:
 
 ```bash
 --leader-elect=true
 --leader-election-namespace=cloudflare-tunnel-system
 ```
 
-Only the leader processes events; other replicas remain on standby for
-automatic failover.
+Only the leader processes events; other replicas remain on standby for automatic failover.
 
 ```mermaid
 flowchart LR
