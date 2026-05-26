@@ -64,6 +64,8 @@ func init() {
 	// L7 proxy data plane configuration (--proxy-endpoints is required in v3)
 	rootCmd.Flags().StringSlice("proxy-endpoints", nil, "Proxy config API endpoints (e.g., http://proxy-0:8081,http://proxy-1:8081). Required; the chart wires this to the proxy's headless Service.")
 	rootCmd.Flags().String("proxy-auth-token", "", "Bearer token for authenticating proxy config push requests")
+	rootCmd.Flags().String("proxy-token-secret", "", "Tunnel-token Secret to watch in `<namespace>/<name>` form; when set, the controller rolls the proxy Deployment whenever the Secret data changes (issue #114). Empty disables the watcher.")
+	rootCmd.Flags().String("proxy-deployment-label", "", "Label selector identifying the proxy Deployment(s) to roll on tunnel-token change, in `key=value` form. Defaults to `app.kubernetes.io/component=proxy` (matches the chart).")
 
 	// Deprecated: --gateway-class-name is no longer used. The controller discovers
 	// GatewayClasses by spec.controllerName, not by name.
@@ -141,8 +143,10 @@ func runController(_ *cobra.Command, _ []string) error {
 		LeaderElectNS:   viper.GetString("leader-election-namespace"),
 		LeaderElectName: viper.GetString("leader-election-name"),
 
-		ProxyEndpoints: viper.GetStringSlice("proxy-endpoints"),
-		ProxyAuthToken: viper.GetString("proxy-auth-token"),
+		ProxyEndpoints:       viper.GetStringSlice("proxy-endpoints"),
+		ProxyAuthToken:       viper.GetString("proxy-auth-token"),
+		ProxyTokenSecret:     viper.GetString("proxy-token-secret"),
+		ProxyDeploymentLabel: viper.GetString("proxy-deployment-label"),
 	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

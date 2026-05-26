@@ -58,6 +58,9 @@ spec:
             {{- if .Values.proxy.authTokenSecretRef.name }}
             - "--proxy-auth-token=$(PROXY_AUTH_TOKEN)"
             {{- end }}
+            {{- if .Values.proxy.tunnelTokenSecretRef.name }}
+            - "--proxy-token-secret={{ .Release.Namespace }}/{{ .Values.proxy.tunnelTokenSecretRef.name }}"
+            {{- end }}
             {{- if .Values.leaderElection.enabled }}
             - "--leader-elect=true"
             - "--leader-election-name={{ .Values.leaderElection.leaseName }}"

@@ -8,7 +8,6 @@ import (
 
 	"github.com/cockroachdb/errors"
 	"github.com/go-logr/logr"
-	corev1 "k8s.io/api/core/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
@@ -78,6 +77,25 @@ type Config struct {
 	// ProxyAuthToken is the Bearer token for authenticating config push requests.
 	// When set, the controller includes "Authorization: Bearer <token>" in push requests.
 	ProxyAuthToken string
+
+	// ProxyTokenSecret identifies the Secret holding the tunnel token used by
+	// the proxy. Format: "<namespace>/<name>". When set, the controller
+	// watches the named Secret and patches the proxy Deployment's pod
+	// template with a revision annotation on every change, causing
+	// Kubernetes to roll the pods so cloudflared picks up the rotated
+	// credential. Issue #114.
+	//
+	// Empty value disables the watcher entirely -- safe default for setups
+	// that don't rotate the token, and for `helm template` rendering
+	// without a real Secret.
+	ProxyTokenSecret string
+
+	// ProxyDeploymentLabel selects the proxy Deployment(s) to roll on
+	// tunnel-token Secret change. Format: "key=value". When unset, the
+	// SecretReconciler falls back to the chart's standard proxy label set
+	// (`app.kubernetes.io/component=proxy`) within ProxyTokenSecret's
+	// namespace.
+	ProxyDeploymentLabel string
 }
 
 // Run initializes and starts the controller manager with the provided configuration.
@@ -215,6 +233,10 @@ func Run(ctx context.Context, cfg *Config) error {
 		return err
 	}
 
+	if err := setupProxySecretReconciler(mgr, cfg.ProxyTokenSecret, cfg.ProxyDeploymentLabel); err != nil {
+		return err
+	}
+
 	if err := setupStatusReconcilers(mgr, cfg.ControllerName); err != nil {
 		return err
 	}
@@ -231,6 +253,32 @@ func Run(ctx context.Context, cfg *Config) error {
 
 	if err := mgr.Start(ctx); err != nil {
 		return errors.Wrap(err, "failed to start manager")
+	}
+
+	return nil
+}
+
+// setupProxySecretReconciler wires the tunnel-token Secret watcher that
+// patches the proxy Deployment's pod template on Secret change so
+// Kubernetes natively rolls the pods (issue #114). When
+// proxyTokenSecret is empty the watcher is skipped entirely -- the
+// controller starts and runs without it, matching the behaviour of
+// clusters that don't rotate the token at runtime.
+//
+// Extracted from Run to keep the per-reconciler setup chain in Run
+// under the cyclomatic-complexity gate.
+func setupProxySecretReconciler(mgr ctrl.Manager, proxyTokenSecret, proxyDeploymentLabel string) error {
+	if strings.TrimSpace(proxyTokenSecret) == "" {
+		return nil
+	}
+
+	reconciler, err := NewProxySecretReconciler(mgr.GetClient(), proxyTokenSecret, proxyDeploymentLabel)
+	if err != nil {
+		return errors.Wrap(err, "failed to construct proxy secret reconciler")
+	}
+
+	if err := reconciler.SetupWithManager(mgr); err != nil {
+		return errors.Wrap(err, "failed to setup proxy secret reconciler")
 	}
 
 	return nil
@@ -315,10 +363,4 @@ func getControllerNamespace() string {
 
 	// Fallback to default
 	return "default"
-}
-
-// init registers core types needed for watching Secrets.
-func init() {
-	// corev1 is already registered by controller-runtime, but we ensure it's available
-	_ = corev1.AddToScheme
 }
