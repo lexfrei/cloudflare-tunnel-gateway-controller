@@ -6,7 +6,10 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
-const defaultRejectionMessage = "Route not accepted"
+const (
+	defaultRejectionMessage = "Route not accepted"
+	routeAcceptedMessage    = "Route accepted"
+)
 
 // RouteInfo contains information about a route for binding validation.
 type RouteInfo struct {
@@ -33,68 +36,97 @@ func (v *Validator) ValidateBinding(
 	gateway *gatewayv1.Gateway,
 	route *RouteInfo,
 ) (BindingResult, error) {
-	matchedListeners, rejectionReason, err := v.findMatchingListeners(ctx, gateway, route)
+	listeners := gateway.Spec.Listeners
+
+	matched, rejectionReason, err := findMatchingEntries(
+		len(listeners),
+		func(i int) (gatewayv1.SectionName, gatewayv1.PortNumber) {
+			return listeners[i].Name, listeners[i].Port
+		},
+		func(i int) (gatewayv1.RouteConditionReason, error) {
+			return v.listenerAcceptsRoute(ctx, &listeners[i], gateway.Namespace, route)
+		},
+		route.SectionName,
+		route.Port,
+	)
 	if err != nil {
 		return BindingResult{}, err
 	}
 
-	if len(matchedListeners) == 0 {
+	return makeBindingResult(matched, rejectionReason), nil
+}
+
+// makeBindingResult turns the (matched, rejectionReason) tuple returned by
+// findMatchingEntries into a public BindingResult, applying the standard
+// Accepted=True/Reason=Accepted treatment when at least one entry matched.
+func makeBindingResult(
+	matched []gatewayv1.SectionName,
+	rejectionReason gatewayv1.RouteConditionReason,
+) BindingResult {
+	if len(matched) == 0 {
 		return BindingResult{
 			Accepted:         false,
 			Reason:           rejectionReason,
 			Message:          getReasonMessage(rejectionReason),
 			MatchedListeners: nil,
-		}, nil
+		}
 	}
 
 	return BindingResult{
 		Accepted:         true,
 		Reason:           gatewayv1.RouteReasonAccepted,
-		Message:          "Route accepted",
-		MatchedListeners: matchedListeners,
-	}, nil
+		Message:          routeAcceptedMessage,
+		MatchedListeners: matched,
+	}
 }
 
-// findMatchingListeners finds all listeners that the route can bind to.
-// Returns matched listeners, rejection reason (if no matches), and error.
-func (v *Validator) findMatchingListeners(
-	ctx context.Context,
-	gateway *gatewayv1.Gateway,
-	route *RouteInfo,
+// findMatchingEntries is the shared section/port match + accept iteration used
+// by both Gateway listener binding and ListenerSet entry binding. The accept
+// callback returns the per-entry route condition reason; entries with reason
+// == Accepted are collected into the matched-section list. The first
+// observed non-accepted reason becomes the fallback rejection reason when no
+// entry matches.
+func findMatchingEntries(
+	count int,
+	nameAndPort func(int) (gatewayv1.SectionName, gatewayv1.PortNumber),
+	accept func(int) (gatewayv1.RouteConditionReason, error),
+	routeSectionName *gatewayv1.SectionName,
+	routePort *gatewayv1.PortNumber,
 ) ([]gatewayv1.SectionName, gatewayv1.RouteConditionReason, error) {
-	if len(gateway.Spec.Listeners) == 0 {
+	if count == 0 {
 		return nil, gatewayv1.RouteReasonNoMatchingParent, nil
 	}
 
-	var matchedListeners []gatewayv1.SectionName
+	var (
+		matched             []gatewayv1.SectionName
+		lastRejectionReason gatewayv1.RouteConditionReason
+	)
 
-	var lastRejectionReason gatewayv1.RouteConditionReason
+	for i := range count {
+		name, port := nameAndPort(i)
 
-	for i := range gateway.Spec.Listeners {
-		listener := &gateway.Spec.Listeners[i]
-
-		if route.SectionName != nil && *route.SectionName != listener.Name {
+		if routeSectionName != nil && *routeSectionName != name {
 			continue
 		}
 
-		if route.Port != nil && *route.Port != listener.Port {
+		if routePort != nil && *routePort != port {
 			continue
 		}
 
-		reason, err := v.listenerAcceptsRoute(ctx, listener, gateway.Namespace, route)
+		reason, err := accept(i)
 		if err != nil {
 			return nil, "", err
 		}
 
 		if reason == gatewayv1.RouteReasonAccepted {
-			matchedListeners = append(matchedListeners, listener.Name)
+			matched = append(matched, name)
 		} else {
 			lastRejectionReason = reason
 		}
 	}
 
-	if len(matchedListeners) == 0 {
-		if route.SectionName != nil || route.Port != nil {
+	if len(matched) == 0 {
+		if routeSectionName != nil || routePort != nil {
 			return nil, gatewayv1.RouteReasonNoMatchingParent, nil
 		}
 
@@ -105,7 +137,7 @@ func (v *Validator) findMatchingListeners(
 		return nil, lastRejectionReason, nil
 	}
 
-	return matchedListeners, "", nil
+	return matched, "", nil
 }
 
 // listenerAcceptsRoute checks if a single listener accepts the route.
@@ -116,11 +148,29 @@ func (v *Validator) listenerAcceptsRoute(
 	gatewayNamespace string,
 	route *RouteInfo,
 ) (gatewayv1.RouteConditionReason, error) {
-	if !HostnamesIntersect(listener.Hostname, route.Hostnames) {
+	return v.evaluateListenerBinding(
+		ctx, listener.Hostname, listener.AllowedRoutes, listener.Protocol,
+		gatewayNamespace, route,
+	)
+}
+
+// evaluateListenerBinding is the shared listener-vs-route check used by both
+// Gateway listeners and ListenerSet entries. The two carry different concrete
+// types (Listener vs ListenerEntry) but only the same set of fields matter
+// for binding: hostname, allowedRoutes, and protocol.
+func (v *Validator) evaluateListenerBinding(
+	ctx context.Context,
+	listenerHostname *gatewayv1.Hostname,
+	allowedRoutes *gatewayv1.AllowedRoutes,
+	protocol gatewayv1.ProtocolType,
+	parentNamespace string,
+	route *RouteInfo,
+) (gatewayv1.RouteConditionReason, error) {
+	if !HostnamesIntersect(listenerHostname, route.Hostnames) {
 		return gatewayv1.RouteReasonNoMatchingListenerHostname, nil
 	}
 
-	allowed, err := v.IsNamespaceAllowed(ctx, listener.AllowedRoutes, gatewayNamespace, route.Namespace)
+	allowed, err := v.IsNamespaceAllowed(ctx, allowedRoutes, parentNamespace, route.Namespace)
 	if err != nil {
 		return "", err
 	}
@@ -129,7 +179,7 @@ func (v *Validator) listenerAcceptsRoute(
 		return gatewayv1.RouteReasonNotAllowedByListeners, nil
 	}
 
-	if !IsRouteKindAllowed(listener.AllowedRoutes, listener.Protocol, route.Kind) {
+	if !IsRouteKindAllowed(allowedRoutes, protocol, route.Kind) {
 		return gatewayv1.RouteReasonNotAllowedByListeners, nil
 	}
 
