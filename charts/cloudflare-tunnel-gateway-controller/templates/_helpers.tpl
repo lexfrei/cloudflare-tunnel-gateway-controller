@@ -62,43 +62,6 @@ Create the name of the service account to use
 {{- end }}
 
 {{/*
-Create the name of the secret to use for API token
-*/}}
-{{- define "cf-tunnel-gw-ctrl.apiTokenSecretName" -}}
-{{- if .Values.cloudflare.apiTokenSecretName }}
-{{- .Values.cloudflare.apiTokenSecretName }}
-{{- else }}
-{{- include "cf-tunnel-gw-ctrl.fullname" . }}
-{{- end }}
-{{- end }}
-
-{{/*
-Create the name of the secret to use for tunnel token
-*/}}
-{{- define "cf-tunnel-gw-ctrl.tunnelTokenSecretName" -}}
-{{- if .Values.manageCloudflared.tunnelTokenSecretName }}
-{{- .Values.manageCloudflared.tunnelTokenSecretName }}
-{{- else }}
-{{- include "cf-tunnel-gw-ctrl.fullname" . }}
-{{- end }}
-{{- end }}
-
-{{/*
-Validate required configuration
-*/}}
-{{- define "cf-tunnel-gw-ctrl.validateConfig" -}}
-{{- if not .Values.cloudflare.tunnelId }}
-{{- fail "ERROR: cloudflare.tunnelId is required. Get it from: Zero Trust Dashboard > Networks > Tunnels" }}
-{{- end }}
-{{- if and (not .Values.cloudflare.apiToken) (not .Values.cloudflare.apiTokenSecretName) }}
-{{- fail "ERROR: Either cloudflare.apiToken or cloudflare.apiTokenSecretName must be set" }}
-{{- end }}
-{{- if and .Values.manageCloudflared.enabled (not .Values.manageCloudflared.tunnelToken) (not .Values.manageCloudflared.tunnelTokenSecretName) }}
-{{- fail "ERROR: When manageCloudflared.enabled=true, either tunnelToken or tunnelTokenSecretName must be set" }}
-{{- end }}
-{{- end }}
-
-{{/*
 Proxy fullname
 */}}
 {{- define "cf-tunnel-gw-ctrl.proxyFullname" -}}

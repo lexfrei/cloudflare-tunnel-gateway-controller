@@ -52,7 +52,7 @@ The Gateway resource is fully processed. Listeners are used for route binding, s
 
 ## HTTPRoute
 
-The L7 proxy enables full Gateway API HTTPRoute support. Without the proxy, only path-based routing through the Cloudflare Tunnel API is available.
+All HTTPRoute matching and filter behavior is performed by the in-process L7 proxy that the chart deploys alongside the controller.
 
 | Field | Supported | Notes |
 | --- | --- | --- |
@@ -64,19 +64,19 @@ The L7 proxy enables full Gateway API HTTPRoute support. Without the proxy, only
 | `spec.hostnames` | Yes | Wildcard `*` supported |
 | `spec.rules` | Yes | Routing rules |
 | `spec.rules[].name` | Yes | Metadata only; preserved on the spec but not consulted during matching |
-| `spec.rules[].matches` | Yes | Full matching with L7 proxy |
-| `spec.rules[].matches[].path` | Yes | PathPrefix, Exact; RegularExpression requires L7 proxy |
-| `spec.rules[].matches[].headers` | Yes | Requires L7 proxy |
-| `spec.rules[].matches[].queryParams` | Yes | Requires L7 proxy |
-| `spec.rules[].matches[].method` | Yes | Requires L7 proxy |
-| `spec.rules[].filters` | Yes | Requires L7 proxy; see [Filters](#filters) |
+| `spec.rules[].matches` | Yes | Full matching |
+| `spec.rules[].matches[].path` | Yes | PathPrefix, Exact, RegularExpression |
+| `spec.rules[].matches[].headers` | Yes | Exact and RegularExpression matchers |
+| `spec.rules[].matches[].queryParams` | Yes | Exact and RegularExpression matchers |
+| `spec.rules[].matches[].method` | Yes | All HTTP methods |
+| `spec.rules[].filters` | Yes | See [Filters](#filters) |
 | `spec.rules[].backendRefs` | Yes | Service backends only |
 | `spec.rules[].backendRefs[].name` | Yes | Service name |
 | `spec.rules[].backendRefs[].namespace` | Yes | Cross-namespace refs require ReferenceGrant |
 | `spec.rules[].backendRefs[].port` | Yes | Service port |
-| `spec.rules[].backendRefs[].weight` | Yes | Requires L7 proxy for traffic splitting; without proxy, highest weight wins |
-| `spec.rules[].backendRefs[].filters` | Yes | Per-backend filters applied after rule-level filters; requires L7 proxy |
-| `spec.rules[].timeouts` | Yes | Requires L7 proxy |
+| `spec.rules[].backendRefs[].weight` | Yes | True weighted traffic splitting across backends |
+| `spec.rules[].backendRefs[].filters` | Yes | Per-backend filters applied after rule-level filters |
+| `spec.rules[].timeouts` | Yes | Per-rule request and backend timeouts |
 
 ### Backend Protocol (`appProtocol`)
 
@@ -92,7 +92,7 @@ When an HTTPRoute references a Service whose target port sets `appProtocol`, the
 
 ### Filters
 
-The following HTTPRoute filters are supported with the L7 proxy enabled:
+The following HTTPRoute filters are supported:
 
 | Filter Type | Supported | Notes |
 | --- | --- | --- |
@@ -128,13 +128,13 @@ The following HTTPRoute filters are supported with the L7 proxy enabled:
 | `spec.rules[].matches[].method.service` | Yes | gRPC service name |
 | `spec.rules[].matches[].method.method` | Yes | gRPC method name |
 | `spec.rules[].matches[].method.type` | Yes | Exact or RegularExpression |
-| `spec.rules[].matches[].headers` | Yes | Requires L7 proxy |
-| `spec.rules[].filters` | Yes | Requires L7 proxy |
+| `spec.rules[].matches[].headers` | Yes | Exact and RegularExpression matchers |
+| `spec.rules[].filters` | Yes | RequestHeaderModifier, ResponseHeaderModifier |
 | `spec.rules[].backendRefs` | Yes | Service backends only |
 | `spec.rules[].backendRefs[].name` | Yes | Service name |
 | `spec.rules[].backendRefs[].namespace` | Yes | Cross-namespace refs require ReferenceGrant |
 | `spec.rules[].backendRefs[].port` | Yes | Service port |
-| `spec.rules[].backendRefs[].weight` | Yes | Requires L7 proxy for traffic splitting; without proxy, highest weight wins |
+| `spec.rules[].backendRefs[].weight` | Yes | True weighted traffic splitting across backends |
 | `spec.rules[].backendRefs[].filters` | No | Not implemented |
 
 ## ReferenceGrant
@@ -156,18 +156,13 @@ See [ReferenceGrant](referencegrant.md) for detailed examples.
 
 ## Path Matching
 
-| Type | Without L7 Proxy | With L7 Proxy |
-| --- | --- | --- |
-| `PathPrefix` | `/api` → `/api*` | Full prefix matching |
-| `Exact` | `/health` → `/health` (no true exact match) | True exact matching |
-| `RegularExpression` | Not supported | Full regex matching |
+All matching is performed by the in-process L7 proxy:
 
-!!! warning "Cloudflare Tunnel API Limitations"
-
-    Without the L7 proxy, path matching is handled by Cloudflare Tunnel's
-    native ingress rules, which have known limitations: no true exact match
-    (Exact paths may match sub-paths), and no regex support.
-    See [Limitations](limitations.md) for details.
+| Type | Behavior |
+| --- | --- |
+| `PathPrefix` | Full prefix matching |
+| `Exact` | True exact matching |
+| `RegularExpression` | Full regex matching (RE2) |
 
 ## gRPC Method Matching
 
@@ -181,19 +176,10 @@ gRPC methods are mapped to HTTP/2 paths using the standard format `/package.Serv
 
 ## Weight and Traffic Splitting
 
-| Mode | Behavior |
-| --- | --- |
-| Without L7 proxy | Backend with highest `weight` is selected; 100% traffic to single backend |
-| With L7 proxy | True weighted traffic splitting across multiple backends |
+True weighted traffic splitting across multiple backends is performed by the in-process L7 proxy.
 
 - **Default weight**: `1` (per Gateway API specification)
 - **Zero weight**: Backends with `weight: 0` are disabled
-- **Equal weights** (without proxy): First backend in list is selected
-
-!!! warning "Without L7 Proxy"
-
-    Without the L7 proxy, weight selection is NOT traffic splitting. The
-    controller always sends 100% of traffic to the highest-weight backend.
 
 !!! danger "No Fallback on Rejection"
 

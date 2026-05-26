@@ -32,38 +32,34 @@ and `Chart.yaml` files.
 
 ### Essential Values
 
-```yaml
-# Tunnel configuration
-config:
-  tunnelID: "550e8400-e29b-41d4-a716-446655440000"  # Required
-  apiToken: "your-api-token"                         # Or use existingSecrets
-  tunnelToken: "your-tunnel-token"                   # Required for cloudflared
-```
-
-### Using Existing Secrets
+The chart requires both a credentials Secret (for the controller's Cloudflare API calls) and a tunnel-token Secret (consumed by the proxy pod). Create those out-of-band, then point the chart at them:
 
 ```yaml
-config:
-  tunnelID: "550e8400-e29b-41d4-a716-446655440000"
-  existingSecrets:
-    apiToken:
-      name: cloudflare-credentials
-      key: api-token
-    tunnelToken:
-      name: cloudflare-tunnel-token
-      key: tunnel-token
+gatewayClassConfig:
+  create: true
+  tunnelID: "550e8400-e29b-41d4-a716-446655440000"   # Required
+  cloudflareCredentialsSecretRef:
+    name: cloudflare-credentials                       # Secret with key "api-token"
+
+proxy:
+  tunnelTokenSecretRef:
+    name: cloudflare-tunnel-token                      # Secret with key "tunnel-token"
 ```
+
+`proxy.tunnelTokenSecretRef.name` is mandatory in v3 — the chart's `required` check fails install otherwise.
 
 ### High Availability
 
 ```yaml
-controller:
-  replicas: 2
-  leaderElection:
-    enabled: true
+replicaCount: 2
 
-cloudflared:
+leaderElection:
+  enabled: true
+
+proxy:
   replicas: 2
+  tunnelTokenSecretRef:
+    name: cloudflare-tunnel-token
 
 podDisruptionBudget:
   enabled: true

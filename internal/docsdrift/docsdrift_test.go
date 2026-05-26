@@ -80,6 +80,34 @@ var retiredSubstrings = []struct {
 		needle: "AWG, external-dns",
 		why:    "docs navigation no longer advertises an AWG guide",
 	},
+	{
+		needle: "Without L7 Proxy",
+		why:    "v3 has a single data plane; with/without-proxy comparison tables are gone",
+	},
+	{
+		needle: "Without the L7 proxy",
+		why:    "v3 has a single data plane; with/without-proxy comparison tables are gone",
+	},
+	{
+		needle: "without L7 proxy",
+		why:    "v3 has a single data plane; with/without-proxy comparison tables are gone",
+	},
+	{
+		needle: "Requires L7 proxy",
+		why:    "v3 always has the proxy; per-feature 'requires proxy' annotations are stale",
+	},
+	{
+		needle: "manageCloudflared",
+		why:    "this Helm value never existed in the current chart and v3 strips even the dead helpers that referenced it",
+	},
+	{
+		needle: "cloudflare.tunnelId",
+		why:    "this Helm value never existed in the current chart; gatewayClassConfig.tunnelID is the v3 key",
+	},
+	{
+		needle: "cloudflare.apiToken",
+		why:    "this Helm value never existed in the current chart; gatewayClassConfig.cloudflareCredentialsSecretRef is the v3 path",
+	},
 }
 
 // trackedRoots is the list of doc trees this guard scans. Walked
@@ -141,6 +169,13 @@ var allowedFiles = map[string]map[string]bool{
 		"cloudflared.enabled: false":              true,
 		"AmneziaWG Sidecar Guide":                 true,
 		"AWG, external-dns":                       true,
+		"Without L7 Proxy":                        true,
+		"Without the L7 proxy":                    true,
+		"without L7 proxy":                        true,
+		"Requires L7 proxy":                       true,
+		"manageCloudflared":                       true,
+		"cloudflare.tunnelId":                     true,
+		"cloudflare.apiToken":                     true,
 	},
 }
 

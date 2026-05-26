@@ -64,16 +64,6 @@ func TestGatewayClassConfigReconciler_Reconcile_Valid(t *testing.T) {
 		},
 	}
 
-	tunnelTokenSecret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "tunnel-token",
-			Namespace: "default",
-		},
-		Data: map[string][]byte{
-			"tunnel-token": []byte("test-tunnel-token"),
-		},
-	}
-
 	config := &v1alpha1.GatewayClassConfig{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:       "test-config",
@@ -90,7 +80,7 @@ func TestGatewayClassConfigReconciler_Reconcile_Valid(t *testing.T) {
 
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(config, credentialsSecret, tunnelTokenSecret).
+		WithObjects(config, credentialsSecret).
 		WithStatusSubresource(config).
 		Build()
 

@@ -141,19 +141,21 @@ Create standard [Gateway API](https://gateway-api.sigs.k8s.io/) HTTPRoute or GRP
 
 The controller supports a subset of Gateway API fields that map to Cloudflare Tunnel ingress rules:
 
+All matching and filter behavior is performed by the in-process L7 proxy that the chart deploys alongside the controller.
+
 **HTTPRoute:**
 
 | Field | Supported | Notes |
 |-------|-----------|-------|
 | `spec.hostnames` | ✅ | Wildcard `*` supported |
-| `spec.rules[].matches[].path` | ✅ | PathPrefix, Exact; RegularExpression requires L7 proxy |
+| `spec.rules[].matches[].path` | ✅ | PathPrefix, Exact, RegularExpression |
+| `spec.rules[].matches[].headers` | ✅ | Exact and RegularExpression |
+| `spec.rules[].matches[].queryParams` | ✅ | Exact and RegularExpression |
+| `spec.rules[].matches[].method` | ✅ | All HTTP methods |
+| `spec.rules[].filters` | ✅ | Header modifier, redirect, URL rewrite, mirror |
 | `spec.rules[].backendRefs` | ✅ | Service name, namespace, port |
 | `spec.rules[].backendRefs[].namespace` | ✅ | Cross-namespace refs require ReferenceGrant |
-| `spec.rules[].matches[].headers` | ✅ | Requires L7 proxy |
-| `spec.rules[].matches[].queryParams` | ✅ | Requires L7 proxy |
-| `spec.rules[].matches[].method` | ✅ | Requires L7 proxy |
-| `spec.rules[].filters` | ✅ | Requires L7 proxy |
-| `spec.rules[].backendRefs[].weight` | ✅ | Requires L7 proxy for traffic splitting; without proxy, highest weight wins |
+| `spec.rules[].backendRefs[].weight` | ✅ | True weighted traffic splitting across backends |
 
 **GRPCRoute:**
 
@@ -162,19 +164,19 @@ The controller supports a subset of Gateway API fields that map to Cloudflare Tu
 | `spec.hostnames` | ✅ | Wildcard `*` supported |
 | `spec.rules[].matches[].method.service` | ✅ | Maps to `/Service/*` path |
 | `spec.rules[].matches[].method.method` | ✅ | Maps to `/Service/Method` path |
+| `spec.rules[].matches[].headers` | ✅ | Exact and RegularExpression |
+| `spec.rules[].filters` | ✅ | Header modifier |
 | `spec.rules[].backendRefs` | ✅ | Service name, namespace, port |
 | `spec.rules[].backendRefs[].namespace` | ✅ | Cross-namespace refs require ReferenceGrant |
-| `spec.rules[].matches[].headers` | ✅ | Requires L7 proxy |
-| `spec.rules[].filters` | ✅ | Requires L7 proxy |
-| `spec.rules[].backendRefs[].weight` | ✅ | Requires L7 proxy for traffic splitting; without proxy, highest weight wins |
+| `spec.rules[].backendRefs[].weight` | ✅ | True weighted traffic splitting across backends |
 
 > **Load Balancing:** All traffic flows through the in-process L7 proxy, so full weighted traffic splitting between multiple backends is supported end-to-end. See [Limitations](https://cf.k8s.lex.la/gateway-api/limitations/#traffic-splitting-and-load-balancing) for the edge-side caveats that still apply.
 
 ### Known Limitations
 
-These limitations apply when running without the L7 proxy (Cloudflare API-only mode). The L7 proxy removes all path matching limitations.
+The L7 proxy removes the v1/v2 Cloudflare-Tunnel-API path-matching limitations. Edge-side caveats (Cloudflare hostname registration, edge HTTPS termination, etc.) are documented in the [Limitations](https://cf.k8s.lex.la/gateway-api/limitations/) page.
 
-Cloudflare Tunnel has path matching behavior that differs from Gateway API:
+Historical context — Cloudflare Tunnel's native ingress rules have path matching behavior that differs from Gateway API:
 
 - **No true exact path match**: `/api` (Exact) will still match `/api/v1`
 - **Common prefix routing**: Paths like `/multi-v1`, `/multi-v2` may all route to the first backend
