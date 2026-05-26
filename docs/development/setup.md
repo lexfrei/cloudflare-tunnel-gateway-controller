@@ -92,9 +92,12 @@ kubectl create secret generic cloudflare-credentials \
 # Apply RBAC
 kubectl apply --filename deploy/rbac/
 
-# Run controller locally against cluster
+# Run controller locally against cluster.
+# --proxy-endpoints is mandatory in v3; point it at the proxy headless
+# Service in the cluster (or run the proxy binary locally on :8081).
 ./bin/controller \
-  --tunnel-id="${CF_TUNNEL_ID}" \
+  --controller-name=cf.k8s.lex.la/tunnel-controller \
+  --proxy-endpoints=http://127.0.0.1:8081/config \
   --log-level=debug
 ```
 
@@ -156,7 +159,8 @@ go install github.com/go-delve/delve/cmd/dlv@latest
 
 # Run with debugger
 dlv debug ./cmd/controller -- \
-  --tunnel-id="${CF_TUNNEL_ID}" \
+  --controller-name=cf.k8s.lex.la/tunnel-controller \
+  --proxy-endpoints=http://127.0.0.1:8081/config \
   --log-level=debug
 ```
 

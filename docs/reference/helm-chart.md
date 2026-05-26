@@ -32,38 +32,34 @@ and `Chart.yaml` files.
 
 ### Essential Values
 
-```yaml
-# Tunnel configuration
-config:
-  tunnelID: "550e8400-e29b-41d4-a716-446655440000"  # Required
-  apiToken: "your-api-token"                         # Or use existingSecrets
-  tunnelToken: "your-tunnel-token"                   # Required for cloudflared
-```
-
-### Using Existing Secrets
+The chart requires both a credentials Secret (for the controller's Cloudflare API calls) and a tunnel-token Secret (consumed by the proxy pod). Create those out-of-band, then point the chart at them:
 
 ```yaml
-config:
-  tunnelID: "550e8400-e29b-41d4-a716-446655440000"
-  existingSecrets:
-    apiToken:
-      name: cloudflare-credentials
-      key: api-token
-    tunnelToken:
-      name: cloudflare-tunnel-token
-      key: tunnel-token
+gatewayClassConfig:
+  create: true
+  tunnelID: "550e8400-e29b-41d4-a716-446655440000"   # Required
+  cloudflareCredentialsSecretRef:
+    name: cloudflare-credentials                       # Secret with key "api-token"
+
+proxy:
+  tunnelTokenSecretRef:
+    name: cloudflare-tunnel-token                      # Secret with key "tunnel-token"
 ```
+
+`proxy.tunnelTokenSecretRef.name` is mandatory in v3 — the chart's `required` check fails install otherwise.
 
 ### High Availability
 
 ```yaml
-controller:
-  replicas: 2
-  leaderElection:
-    enabled: true
+replicaCount: 2
 
-cloudflared:
+leaderElection:
+  enabled: true
+
+proxy:
   replicas: 2
+  tunnelTokenSecretRef:
+    name: cloudflare-tunnel-token
 
 podDisruptionBudget:
   enabled: true
@@ -80,15 +76,6 @@ serviceMonitor:
     release: prometheus
 ```
 
-### AmneziaWG Sidecar
-
-```yaml
-cloudflared:
-  awg:
-    enabled: true
-    secretName: awg-config
-```
-
 ## Example Values Files
 
 The chart includes example values files in the `examples/` directory:
@@ -96,9 +83,8 @@ The chart includes example values files in the `examples/` directory:
 | File | Description |
 |------|-------------|
 | `basic-values.yaml` | Minimal configuration |
-| `ha-values.yaml` | High availability setup |
+| `production-values.yaml` | Production HA setup |
 | `external-secrets-values.yaml` | External Secrets Operator integration |
-| `awg-values.yaml` | AmneziaWG sidecar configuration |
 
 ## Upgrading
 
@@ -143,11 +129,12 @@ installed separately:
 kubectl apply --filename https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.5.0/standard-install.yaml
 ```
 
-## Dependencies
+## Components
 
-The controller uses the
-[cloudflare-tunnel](https://github.com/lexfrei/charts/tree/main/charts/cloudflare-tunnel)
-Helm chart to deploy cloudflared when `cloudflared.enabled: true`.
+The chart renders two deployments:
+
+- **Controller** (`<release>-cloudflare-tunnel-gateway-controller`) — watches Gateway / HTTPRoute resources and pushes config to both Cloudflare's tunnel-ingress API and the in-cluster L7 proxy. GRPCRoute is reconciled for status only in v3 (no runtime routing — see [limitations](../gateway-api/limitations.md#grpcroute-is-not-supported-in-v3)).
+- **Proxy** (`<release>-cloudflare-tunnel-gateway-controller-proxy`) — embeds cloudflared transport in-process (via the vendored fork's `OverrideProxy` hook) and terminates tunnel traffic. Requires `proxy.tunnelTokenSecretRef.name` to be set; the chart fails install otherwise.
 
 ## Helm Chart Testing
 

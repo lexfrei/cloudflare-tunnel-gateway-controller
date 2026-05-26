@@ -8,8 +8,8 @@ The controller is built with:
 
 - **Go** - Primary programming language
 - **controller-runtime** - Kubernetes controller framework
-- **Helm SDK** - For cloudflared deployment management
 - **Cloudflare Go SDK** - For tunnel configuration API
+- **Vendored cloudflared fork** - Tunnel transport, exposed via the `OverrideProxy` hook so the in-process L7 proxy receives traffic directly
 
 ## Sections
 
@@ -70,14 +70,16 @@ golangci-lint run --timeout=5m
 
 ```text
 api/v1alpha1/            # GatewayClassConfig CRD types
-cmd/controller/          # Entrypoint and CLI
+cmd/controller/          # Controller entrypoint and CLI
+cmd/proxy/               # L7 proxy binary entrypoint
 internal/
   config/                # GatewayClassConfig resolver
-  controller/            # Kubernetes controllers
+  controller/            # Kubernetes controllers (Gateway, HTTPRoute, GRPCRoute, ProxySyncer)
   dns/                   # Cluster domain detection
-  helm/                  # Helm SDK operations
-  ingress/               # Route to ingress conversion
-charts/                  # Helm chart
+  ingress/               # HTTPRoute → Cloudflare ingress rule conversion
+  proxy/                 # L7 reverse proxy (router, matcher, filter, config API)
+  tunnel/                # cloudflared tunnel bootstrap and GatewayOriginProxy adapter
+charts/                  # Helm chart (controller + proxy)
 deploy/                  # Raw Kubernetes manifests
 ```
 

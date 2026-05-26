@@ -4,15 +4,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// Default liveness probe values for cloudflared.
-const (
-	DefaultLivenessProbeInitialDelay = 30
-	DefaultLivenessProbeTimeout      = 5
-	DefaultLivenessProbePeriod       = 20
-	DefaultLivenessProbeSuccess      = 1
-	DefaultLivenessProbeFailure      = 3
-)
-
 // SecretReference is a reference to a Kubernetes Secret.
 type SecretReference struct {
 	// Name of the Secret.
@@ -26,93 +17,8 @@ type SecretReference struct {
 
 	// Key in the Secret. Defaults depend on context:
 	// - For cloudflareCredentialsSecretRef: "api-token"
-	// - For tunnelTokenSecretRef: "tunnel-token"
 	// +optional
 	Key string `json:"key,omitempty"`
-}
-
-// AWGConfig configures the AmneziaWG sidecar for cloudflared.
-type AWGConfig struct {
-	// SecretName is the name of the Secret containing AWG configuration.
-	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:MinLength=1
-	SecretName string `json:"secretName"`
-
-	// InterfacePrefix is the AWG network interface name prefix.
-	// The kernel auto-numbers interfaces using this prefix (e.g., awg-cfd0, awg-cfd1).
-	// Different GatewayClassConfigs should use different prefixes to avoid conflicts.
-	// +optional
-	// +kubebuilder:default="awg-cfd"
-	InterfacePrefix string `json:"interfacePrefix,omitempty"`
-}
-
-// LivenessProbeConfig configures the liveness probe for cloudflared.
-type LivenessProbeConfig struct {
-	// InitialDelaySeconds is the number of seconds after the container has started
-	// before liveness probes are initiated.
-	// +optional
-	// +kubebuilder:validation:Minimum=1
-	// +kubebuilder:default=30
-	InitialDelaySeconds *int32 `json:"initialDelaySeconds,omitempty"`
-
-	// TimeoutSeconds is the number of seconds after which the probe times out.
-	// +optional
-	// +kubebuilder:validation:Minimum=1
-	// +kubebuilder:default=5
-	TimeoutSeconds *int32 `json:"timeoutSeconds,omitempty"`
-
-	// PeriodSeconds is how often (in seconds) to perform the probe.
-	// +optional
-	// +kubebuilder:validation:Minimum=1
-	// +kubebuilder:default=20
-	PeriodSeconds *int32 `json:"periodSeconds,omitempty"`
-
-	// SuccessThreshold is the minimum consecutive successes for the probe to be
-	// considered successful after having failed.
-	// +optional
-	// +kubebuilder:validation:Minimum=1
-	// +kubebuilder:default=1
-	SuccessThreshold *int32 `json:"successThreshold,omitempty"`
-
-	// FailureThreshold is the number of times the probe is allowed to fail before
-	// giving up. When exceeded, the container will be restarted.
-	// +optional
-	// +kubebuilder:validation:Minimum=1
-	// +kubebuilder:default=3
-	FailureThreshold *int32 `json:"failureThreshold,omitempty"`
-}
-
-// CloudflaredConfig configures the cloudflared deployment managed by the controller.
-type CloudflaredConfig struct {
-	// Enabled controls whether the controller manages cloudflared deployment.
-	// When true, the controller will deploy cloudflared via Helm.
-	// +optional
-	// +kubebuilder:default=true
-	Enabled *bool `json:"enabled,omitempty"`
-
-	// Replicas is the number of cloudflared pods to run.
-	// +optional
-	// +kubebuilder:default=1
-	// +kubebuilder:validation:Minimum=1
-	Replicas int32 `json:"replicas,omitempty"`
-
-	// Namespace is the namespace for cloudflared deployment.
-	// +optional
-	// +kubebuilder:default="cloudflare-tunnel-system"
-	Namespace string `json:"namespace,omitempty"`
-
-	// Protocol is the transport protocol for cloudflared.
-	// +optional
-	// +kubebuilder:validation:Enum=auto;quic;http2;""
-	Protocol string `json:"protocol,omitempty"`
-
-	// AWG configures the AmneziaWG sidecar.
-	// +optional
-	AWG *AWGConfig `json:"awg,omitempty"`
-
-	// LivenessProbe configures the liveness probe for cloudflared.
-	// +optional
-	LivenessProbe *LivenessProbeConfig `json:"livenessProbe,omitempty"`
 }
 
 // GatewayClassConfigSpec defines the desired state of GatewayClassConfig.
@@ -132,16 +38,6 @@ type GatewayClassConfigSpec struct {
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:Pattern=`^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$`
 	TunnelID string `json:"tunnelID"` //nolint:tagliatelle // Cloudflare API uses tunnelID
-
-	// TunnelTokenSecretRef references a Secret containing the tunnel token.
-	// Required when cloudflared.enabled is true.
-	// The Secret must contain a "tunnel-token" key.
-	// +optional
-	TunnelTokenSecretRef *SecretReference `json:"tunnelTokenSecretRef,omitempty"`
-
-	// Cloudflared configures the cloudflared deployment.
-	// +optional
-	Cloudflared CloudflaredConfig `json:"cloudflared,omitempty"`
 }
 
 // GatewayClassConfigStatus defines the observed state of GatewayClassConfig.
@@ -157,7 +53,6 @@ type GatewayClassConfigStatus struct {
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Cluster,shortName=gcconfig
 // +kubebuilder:printcolumn:name="Tunnel ID",type=string,JSONPath=`.spec.tunnelID`
-// +kubebuilder:printcolumn:name="Managed",type=boolean,JSONPath=`.spec.cloudflared.enabled`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 
 // GatewayClassConfig is the Schema for the gatewayclassconfigs API.
@@ -180,34 +75,6 @@ type GatewayClassConfigList struct {
 	Items []GatewayClassConfig `json:"items"`
 }
 
-// IsCloudflaredEnabled returns whether cloudflared management is enabled.
-// Defaults to true if not explicitly set.
-func (c *GatewayClassConfigSpec) IsCloudflaredEnabled() bool {
-	if c.Cloudflared.Enabled == nil {
-		return true
-	}
-
-	return *c.Cloudflared.Enabled
-}
-
-// GetCloudflaredReplicas returns the replica count, defaulting to 1.
-func (c *GatewayClassConfigSpec) GetCloudflaredReplicas() int32 {
-	if c.Cloudflared.Replicas == 0 {
-		return 1
-	}
-
-	return c.Cloudflared.Replicas
-}
-
-// GetCloudflaredNamespace returns the namespace, defaulting to "cloudflare-tunnel-system".
-func (c *GatewayClassConfigSpec) GetCloudflaredNamespace() string {
-	if c.Cloudflared.Namespace == "" {
-		return "cloudflare-tunnel-system"
-	}
-
-	return c.Cloudflared.Namespace
-}
-
 // GetAPITokenKey returns the key for API token in the secret.
 func (r *SecretReference) GetAPITokenKey() string {
 	if r.Key == "" {
@@ -215,58 +82,4 @@ func (r *SecretReference) GetAPITokenKey() string {
 	}
 
 	return r.Key
-}
-
-// GetTunnelTokenKey returns the key for tunnel token in the secret.
-func (r *SecretReference) GetTunnelTokenKey() string {
-	if r.Key == "" {
-		return "tunnel-token"
-	}
-
-	return r.Key
-}
-
-// GetInitialDelaySeconds returns the initial delay, defaulting to DefaultLivenessProbeInitialDelay.
-func (c *LivenessProbeConfig) GetInitialDelaySeconds() int32 {
-	if c == nil || c.InitialDelaySeconds == nil {
-		return DefaultLivenessProbeInitialDelay
-	}
-
-	return *c.InitialDelaySeconds
-}
-
-// GetTimeoutSeconds returns the timeout, defaulting to DefaultLivenessProbeTimeout.
-func (c *LivenessProbeConfig) GetTimeoutSeconds() int32 {
-	if c == nil || c.TimeoutSeconds == nil {
-		return DefaultLivenessProbeTimeout
-	}
-
-	return *c.TimeoutSeconds
-}
-
-// GetPeriodSeconds returns the period, defaulting to DefaultLivenessProbePeriod.
-func (c *LivenessProbeConfig) GetPeriodSeconds() int32 {
-	if c == nil || c.PeriodSeconds == nil {
-		return DefaultLivenessProbePeriod
-	}
-
-	return *c.PeriodSeconds
-}
-
-// GetSuccessThreshold returns the success threshold, defaulting to DefaultLivenessProbeSuccess.
-func (c *LivenessProbeConfig) GetSuccessThreshold() int32 {
-	if c == nil || c.SuccessThreshold == nil {
-		return DefaultLivenessProbeSuccess
-	}
-
-	return *c.SuccessThreshold
-}
-
-// GetFailureThreshold returns the failure threshold, defaulting to DefaultLivenessProbeFailure.
-func (c *LivenessProbeConfig) GetFailureThreshold() int32 {
-	if c == nil || c.FailureThreshold == nil {
-		return DefaultLivenessProbeFailure
-	}
-
-	return *c.FailureThreshold
 }

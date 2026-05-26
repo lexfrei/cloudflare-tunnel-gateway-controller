@@ -75,8 +75,9 @@ flowchart LR
 
 | Configuration | Source | Purpose |
 |---------------|--------|---------|
-| `--controller-name` | CLI flag | GatewayClass controller name |
-| `--manage-cloudflared` | CLI flag | Enable cloudflared deployment |
+| `--controller-name` | CLI flag | GatewayClass `spec.controllerName` this instance binds to |
+| `--proxy-endpoints` | CLI flag | Proxy config-API URLs (required; the chart wires this to the proxy headless Service) |
 | `tunnelID` | GatewayClassConfig | Cloudflare Tunnel UUID |
-| `cloudflareCredentialsSecretRef` | GatewayClassConfig | API token secret reference |
-| `tunnelTokenSecretRef` | GatewayClassConfig | Tunnel token for cloudflared |
+| `accountId` | GatewayClassConfig | Optional account ID override (auto-detected otherwise) |
+| `cloudflareCredentialsSecretRef` | GatewayClassConfig | API token Secret reference |
+| `proxy.tunnelTokenSecretRef` | Helm values | Tunnel token Secret reference (consumed by the proxy pod) |

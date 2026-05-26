@@ -23,9 +23,6 @@ spec:
         - name: Tunnel ID
           type: string
           jsonPath: .spec.tunnelID
-        - name: Managed
-          type: boolean
-          jsonPath: .spec.cloudflared.enabled
         - name: Age
           type: date
           jsonPath: .metadata.creationTimestamp
@@ -45,9 +42,6 @@ spec:
               required:
                 - cloudflareCredentialsSecretRef
                 - tunnelID
-              x-kubernetes-validations:
-                - rule: "(has(self.cloudflared) && has(self.cloudflared.enabled) && !self.cloudflared.enabled) || has(self.tunnelTokenSecretRef)"
-                  message: "tunnelTokenSecretRef is required when cloudflared.enabled is true (default)"
               properties:
                 cloudflareCredentialsSecretRef:
                   type: object
@@ -69,93 +63,6 @@ spec:
                   type: string
                   description: Cloudflare Tunnel UUID.
                   pattern: ^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$
-                tunnelTokenSecretRef:
-                  type: object
-                  description: Reference to Secret containing tunnel token.
-                  required:
-                    - name
-                  properties:
-                    name:
-                      type: string
-                      minLength: 1
-                    namespace:
-                      type: string
-                    key:
-                      type: string
-                cloudflared:
-                  type: object
-                  description: Cloudflared deployment configuration.
-                  properties:
-                    enabled:
-                      type: boolean
-                      default: true
-                      description: Enable cloudflared deployment management.
-                    replicas:
-                      type: integer
-                      format: int32
-                      minimum: 1
-                      default: 1
-                      description: Number of cloudflared replicas.
-                    namespace:
-                      type: string
-                      default: cloudflare-tunnel-system
-                      description: Namespace for cloudflared deployment.
-                    protocol:
-                      type: string
-                      enum:
-                        - ""
-                        - auto
-                        - quic
-                        - http2
-                      description: Transport protocol for cloudflared.
-                    awg:
-                      type: object
-                      description: AmneziaWG sidecar configuration.
-                      required:
-                        - secretName
-                      properties:
-                        secretName:
-                          type: string
-                          minLength: 1
-                          description: Secret containing AWG configuration.
-                        interfacePrefix:
-                          type: string
-                          default: awg-cfd
-                          description: AWG interface name prefix (kernel auto-numbers).
-                    livenessProbe:
-                      type: object
-                      description: Liveness probe configuration for cloudflared.
-                      properties:
-                        initialDelaySeconds:
-                          type: integer
-                          format: int32
-                          minimum: 1
-                          default: 30
-                          description: Seconds before liveness probe is initiated.
-                        timeoutSeconds:
-                          type: integer
-                          format: int32
-                          minimum: 1
-                          default: 5
-                          description: Seconds after which probe times out.
-                        periodSeconds:
-                          type: integer
-                          format: int32
-                          minimum: 1
-                          default: 20
-                          description: How often to perform the probe.
-                        successThreshold:
-                          type: integer
-                          format: int32
-                          minimum: 1
-                          default: 1
-                          description: Minimum consecutive successes.
-                        failureThreshold:
-                          type: integer
-                          format: int32
-                          minimum: 1
-                          default: 3
-                          description: Number of failures before restart.
             status:
               type: object
               properties:

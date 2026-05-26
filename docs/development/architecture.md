@@ -56,10 +56,6 @@ internal/
 │   └── detect.go        # Cluster domain auto-detection
 ├── ingress/
 │   └── builder.go       # HTTPRoute → Cloudflare rules conversion
-├── helm/
-│   ├── manager.go       # Helm SDK operations
-│   ├── cloudflared.go   # cloudflared chart values builder
-│   └── constants.go     # Chart reference, timeouts
 ├── referencegrant/      # ReferenceGrant validation for cross-namespace backends
 ├── routebinding/        # Route-to-Gateway binding validation
 ├── proxy/               # L7 reverse proxy (see Proxy Architecture doc)
@@ -76,7 +72,7 @@ Cluster-scoped Custom Resource Definition (CRD) that provides tunnel configurati
 
 - **API Group**: `cf.k8s.lex.la/v1alpha1`
 - **Referenced by**: GatewayClass via `spec.parametersRef`
-- **Configuration**: Cloudflare credentials, tunnel ID, cloudflared settings
+- **Spec fields (v3)**: `cloudflareCredentialsSecretRef`, optional `accountId`, `tunnelID`. Proxy-side configuration (tunnel token, replicas, etc.) lives in Helm chart `proxy.*` values.
 
 ```yaml
 apiVersion: cf.k8s.lex.la/v1alpha1
@@ -87,12 +83,7 @@ spec:
   tunnelID: "550e8400-e29b-41d4-a716-446655440000"
   cloudflareCredentialsSecretRef:
     name: cloudflare-credentials
-  tunnelTokenSecretRef:
-    name: cloudflare-tunnel-token
-  cloudflared:
-    enabled: true
-    awg:
-      secretName: awg-config  # Optional: enables AWG sidecar
+  # accountId: "1234567890abcdef"  # Optional, auto-detected
 ```
 
 ### ConfigResolver
@@ -101,32 +92,25 @@ Resolves GatewayClassConfig from GatewayClass `parametersRef`:
 
 1. Reads GatewayClassConfig by name from parametersRef
 2. Fetches Cloudflare credentials from referenced Secret
-3. Fetches tunnel token from referenced Secret (if cloudflared.enabled)
-4. Auto-detects account ID via Cloudflare API if not specified
+3. Auto-detects account ID via Cloudflare API if not specified
 
 ### GatewayReconciler
 
 Watches Gateway resources and performs the following:
 
 1. **Filtering**: Only processes Gateways whose GatewayClass has a matching `spec.controllerName`
-2. **Finalizers**: Adds finalizer for cleanup when Helm management is enabled
-3. **Helm Management**: Deploys/upgrades cloudflared via Helm chart
-4. **Status Update**: Sets Gateway address to `<tunnel-id>.cfargotunnel.com`
+2. **Status Update**: Sets Gateway address to `<tunnel-id>.cfargotunnel.com` so external-dns / DNS controllers can pick up the CNAME target
+
+Starting v3 the reconciler is status-only — the proxy data plane is deployed by the Helm chart, not by the controller, so there is no finalizer and no controller-side cloudflared lifecycle to wait on.
 
 ```mermaid
 sequenceDiagram
     participant K8s as Kubernetes API
     participant GR as GatewayReconciler
-    participant Helm as Helm Manager
-    participant CF as Cloudflare
 
     K8s->>GR: Gateway created/updated
     GR->>GR: Check GatewayClass match
-    alt Helm Management Enabled
-        GR->>GR: Add finalizer
-        GR->>Helm: Install/Upgrade cloudflared
-        Helm->>K8s: Deploy cloudflared pods
-    end
+    GR->>GR: Resolve GatewayClassConfig + credentials
     GR->>K8s: Update Gateway status
     Note over K8s: status.addresses = [tunnel-id.cfargotunnel.com]
 ```
@@ -174,13 +158,15 @@ Converts HTTPRoute specs to Cloudflare Tunnel ingress rules:
 2. Exact matches before prefix matches
 3. Longer paths before shorter paths
 
-### Helm Manager
+### ProxySyncer
 
-Manages cloudflared deployment lifecycle:
+Pushes routing config to the L7 proxy pods over HTTP:
 
-- **Chart Source**: `oci://ghcr.io/lexfrei/charts/cloudflare-tunnel`
-- **Auto-upgrade**: Detects and upgrades to latest stable version
-- **Values Builder**: Configures tunnel token, protocol, AWG sidecar
+- **Endpoint discovery**: Resolves the proxy's headless Service DNS name to per-pod URLs (`--proxy-endpoints` is a required CLI flag — `internal/controller/manager.go` rejects an empty value at startup).
+- **Conversion**: Translates HTTPRoute specs into the proxy's wire-format config via `internal/proxy/converter.go`.
+- **Auth**: When `proxy.authTokenSecretRef.name` is set, attaches the Bearer token to every push so unauthenticated clients cannot reprogram the proxy.
+
+GRPCRoutes are NOT pushed — the proxy converter does not yet support gRPC-specific routing semantics. v3's `OverrideProxy` hook intercepts ALL tunnel traffic, so gRPC requests reach the proxy without a matching route and return `404`. The Cloudflare-side ingress rules built by `internal/ingress/grpc_builder` exist only so the Cloudflare dashboard shows the expected hostname → service mapping — they are not consulted at runtime. See [GRPCRoute limitations](../gateway-api/limitations.md#grpcroute-is-not-supported-in-v3).
 
 ## Data Flow
 
@@ -332,7 +318,6 @@ For detailed proxy internals, see [Proxy Architecture](proxy-architecture.md).
 
 - `sigs.k8s.io/controller-runtime` - Kubernetes controller framework
 - `sigs.k8s.io/gateway-api` - Gateway API types
-- `github.com/cloudflare/cloudflare-go/v6` - Cloudflare API client
+- `github.com/cloudflare/cloudflare-go/v7` - Cloudflare API client
 - `github.com/lexfrei/cloudflared` - Cloudflare tunnel daemon (fork with OverrideProxy)
-- `helm.sh/helm/v4` - Helm SDK for cloudflared deployment
 - `github.com/cockroachdb/errors` - Error wrapping

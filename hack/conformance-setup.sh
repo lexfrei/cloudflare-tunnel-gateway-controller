@@ -161,12 +161,9 @@ helm upgrade --install "${RELEASE_NAME}" \
   --set gatewayClassConfig.create=true \
   --set gatewayClassConfig.tunnelID="${V2_TUNNEL_ID}" \
   --set gatewayClassConfig.cloudflareCredentialsSecretRef.name=cloudflare-credentials \
-  --set gatewayClassConfig.tunnelTokenSecretRef.name=cloudflare-tunnel-token \
-  --set gatewayClassConfig.cloudflared.enabled=false \
   --set image.repository="${CONTROLLER_IMAGE%%:*}" \
   --set image.tag="${CONTROLLER_IMAGE##*:}" \
   --set image.pullPolicy=Never \
-  --set proxy.enabled=true \
   --set proxy.image.repository="${PROXY_IMAGE%%:*}" \
   --set proxy.image.tag="${PROXY_IMAGE##*:}" \
   --set proxy.image.pullPolicy=Never \
@@ -181,15 +178,11 @@ kubectl --context "${KUBE_CONTEXT}" rollout status deployment \
   "${RELEASE_NAME}-cloudflare-tunnel-gateway-controller" \
   --timeout=120s
 
-if kubectl --context "${KUBE_CONTEXT}" get deployment \
+info "Waiting for proxy deployment..."
+kubectl --context "${KUBE_CONTEXT}" rollout status deployment \
   --namespace "${NAMESPACE}" \
-  "${RELEASE_NAME}-cloudflare-tunnel-gateway-controller-proxy" >/dev/null 2>&1; then
-  info "Waiting for proxy deployment..."
-  kubectl --context "${KUBE_CONTEXT}" rollout status deployment \
-    --namespace "${NAMESPACE}" \
-    "${RELEASE_NAME}-cloudflare-tunnel-gateway-controller-proxy" \
-    --timeout=120s
-fi
+  "${RELEASE_NAME}-cloudflare-tunnel-gateway-controller-proxy" \
+  --timeout=120s
 
 info "All deployments ready!"
 

@@ -4,31 +4,24 @@ HTTPRoute is the primary resource for configuring HTTP routing through Cloudflar
 
 ## Feature Support
 
+All matching and filter behavior is performed by the in-process L7 proxy that the chart deploys alongside the controller.
+
 | Feature | Supported | Notes |
 | --- | --- | --- |
 | Hostname matching | ✅ | Wildcard `*` supported |
-| Path matching (Prefix, Exact) | ✅ | |
-| Path matching (RegularExpression) | ✅ | Requires L7 proxy |
-| Header matching | ✅ | Requires L7 proxy |
-| Query parameter matching | ✅ | Requires L7 proxy |
-| HTTP method matching | ✅ | Requires L7 proxy |
-| Backend weight selection (highest wins) | ✅ | |
-| Weighted traffic splitting | ✅ | Requires L7 proxy |
-| RequestHeaderModifier filter | ✅ | Requires L7 proxy |
-| ResponseHeaderModifier filter | ✅ | Requires L7 proxy |
-| RequestRedirect filter | ✅ | Requires L7 proxy |
-| URLRewrite filter | ✅ | Requires L7 proxy |
-| RequestMirror filter | ✅ | Requires L7 proxy |
-| Per-route timeouts | ✅ | Requires L7 proxy |
+| Path matching (Prefix, Exact, RegularExpression) | ✅ | RE2 syntax for regex |
+| Header matching | ✅ | Exact and RegularExpression |
+| Query parameter matching | ✅ | Exact and RegularExpression |
+| HTTP method matching | ✅ | All HTTP methods |
+| Weighted traffic splitting | ✅ | True traffic distribution across backends |
+| RequestHeaderModifier filter | ✅ | |
+| ResponseHeaderModifier filter | ✅ | |
+| RequestRedirect filter | ✅ | |
+| URLRewrite filter | ✅ | |
+| RequestMirror filter | ✅ | |
+| Per-route timeouts | ✅ | |
 | Cross-namespace routing | ✅ | Via ReferenceGrant |
 | ExternalName service backends | ✅ | |
-| GRPCRoute | ✅ | |
-
-!!! note "L7 proxy requirement"
-
-    Header matching, query parameter matching, method matching, traffic
-    splitting, and filters require the L7 proxy to be enabled. See the
-    [L7 Proxy Guide](../guides/l7-proxy.md) for setup instructions.
 
 ## Basic Example
 
@@ -102,7 +95,7 @@ spec:
 | --- | --- | --- |
 | `PathPrefix` | Matches paths starting with value | |
 | `Exact` | Matches exact path only | |
-| `RegularExpression` | Matches path against regex pattern | Requires L7 proxy |
+| `RegularExpression` | Matches path against regex pattern (RE2) | |
 
 ## Multiple Hostnames
 
@@ -160,11 +153,9 @@ spec:
         # primary-service is selected (weight 80 > 20)
 ```
 
-!!! note "L7 proxy enables traffic splitting"
+!!! note "Traffic splitting"
 
-    Without the L7 proxy, the backend with the highest weight receives
-    100% of traffic. With the L7 proxy enabled, weights are used for
-    true percentage-based traffic splitting across backends.
+    Weights are used for true percentage-based traffic splitting across backends — the in-process L7 proxy performs the selection at request time.
 
 ## Cross-Namespace Routing
 

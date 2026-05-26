@@ -12,13 +12,6 @@ spec:
   cloudflareCredentialsSecretRef:
     name: cloudflare-credentials
 
-  # Reference to Secret containing tunnel token (required when cloudflared.enabled is true)
-  # Secret must contain "tunnel-token" key
-  tunnelTokenSecretRef:
-    name: cloudflare-tunnel-token
-
-  # Cloudflared deployment configuration
-  cloudflared:
-    enabled: true
-    replicas: 1
-    namespace: cloudflare-tunnel-system
+  # Optional: Cloudflare account ID (auto-detected when the API token has access
+  # to a single account).
+  # accountId: "your-cloudflare-account-id"

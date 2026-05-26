@@ -11,12 +11,21 @@ RBAC setup, and provides a simple upgrade path.
 ### Basic Installation
 
 ```bash
+kubectl create namespace cloudflare-tunnel-system
+kubectl create secret generic cloudflare-credentials \
+  --namespace cloudflare-tunnel-system \
+  --from-literal=api-token="YOUR_API_TOKEN"
+kubectl create secret generic cloudflare-tunnel-token \
+  --namespace cloudflare-tunnel-system \
+  --from-literal=tunnel-token="YOUR_TUNNEL_TOKEN"
+
 helm install cloudflare-tunnel-gateway-controller \
   oci://ghcr.io/lexfrei/charts/cloudflare-tunnel-gateway-controller \
   --namespace cloudflare-tunnel-system \
-  --create-namespace \
-  --set config.tunnelID=YOUR_TUNNEL_ID \
-  --set config.apiToken=YOUR_API_TOKEN
+  --set gatewayClassConfig.create=true \
+  --set gatewayClassConfig.tunnelID=YOUR_TUNNEL_ID \
+  --set gatewayClassConfig.cloudflareCredentialsSecretRef.name=cloudflare-credentials \
+  --set proxy.tunnelTokenSecretRef.name=cloudflare-tunnel-token
 ```
 
 ### Installation with Values File
@@ -24,32 +33,29 @@ helm install cloudflare-tunnel-gateway-controller \
 Create a `values.yaml` file:
 
 ```yaml
-config:
+gatewayClassConfig:
+  create: true
   tunnelID: "550e8400-e29b-41d4-a716-446655440000"
+  cloudflareCredentialsSecretRef:
+    name: cloudflare-credentials
 
-  # Use existing secrets instead of inline values
-  existingSecrets:
-    apiToken:
-      name: cloudflare-credentials
-      key: api-token
-    tunnelToken:
-      name: cloudflare-tunnel-token
-      key: tunnel-token
+# L7 proxy data plane (embeds cloudflared transport in-process).
+# tunnelTokenSecretRef.name is REQUIRED — the chart will fail install otherwise.
+proxy:
+  replicas: 2
+  tunnelTokenSecretRef:
+    name: cloudflare-tunnel-token
 
-# cloudflared deployment settings
-cloudflared:
+# Controller deployment
+replicaCount: 2
+resources:
+  limits:
+    memory: 256Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+leaderElection:
   enabled: true
-  replicas: 2
-
-# Controller settings
-controller:
-  replicas: 2
-  resources:
-    limits:
-      memory: 128Mi
-    requests:
-      cpu: 100m
-      memory: 64Mi
 ```
 
 Then install:
@@ -62,27 +68,11 @@ helm install cloudflare-tunnel-gateway-controller \
   --values values.yaml
 ```
 
-### L7 Proxy Mode
-
-To enable the L7 proxy (required for header matching, traffic splitting,
-and other advanced HTTPRoute features), add the `proxy` section to your
-values file:
-
-```yaml
-proxy:
-  enabled: true
-  tunnelTokenSecretRef:
-    name: cloudflare-tunnel-token
-    key: tunnel-token
-```
-
-The proxy runs in-process inside cloudflared via the `OverrideProxy` hook. For
-full configuration options and architecture details, see the
-[L7 Proxy Guide](../guides/l7-proxy.md).
+The chart always deploys the in-process L7 proxy alongside the controller (this is the only data plane in v3). For the full list of proxy knobs, see the [Helm values reference](../configuration/helm-values.md) and the [L7 Proxy Guide](../guides/l7-proxy.md).
 
 ## Verify Installation
 
-Check that the controller is running:
+Check that the controller and proxy pods are running:
 
 ```bash
 kubectl get pods --namespace cloudflare-tunnel-system
@@ -91,9 +81,10 @@ kubectl get pods --namespace cloudflare-tunnel-system
 Expected output:
 
 ```text
-NAME                                                      READY   STATUS    RESTARTS   AGE
-cloudflare-tunnel-gateway-controller-7d8f9b6c5d-x2j9k     1/1     Running   0          30s
-cloudflare-tunnel-cloudflared-5c4d8b7f6c-m8n3l            1/1     Running   0          30s
+NAME                                                            READY   STATUS    RESTARTS   AGE
+cloudflare-tunnel-gateway-controller-7d8f9b6c5d-x2j9k           1/1     Running   0          30s
+cloudflare-tunnel-gateway-controller-proxy-5c4d8b7f6c-m8n3l     1/1     Running   0          30s
+cloudflare-tunnel-gateway-controller-proxy-5c4d8b7f6c-pqr4t     1/1     Running   0          30s
 ```
 
 Check GatewayClass:

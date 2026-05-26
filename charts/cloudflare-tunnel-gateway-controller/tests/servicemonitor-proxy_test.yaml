@@ -2,35 +2,31 @@ suite: test servicemonitor-proxy
 templates:
   - servicemonitor-proxy.yaml
 tests:
-  - it: should not create ServiceMonitor when proxy is disabled
+  - it: should not create ServiceMonitor by default
     set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
     asserts:
       - hasDocuments:
           count: 0
 
-  - it: should not create ServiceMonitor when proxy enabled but serviceMonitor disabled
+  - it: should not create ServiceMonitor when serviceMonitor explicitly disabled
     set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
       proxy:
-        enabled: true
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
       serviceMonitor:
         enabled: false
     asserts:
       - hasDocuments:
           count: 0
 
-  - it: should create ServiceMonitor when both proxy and serviceMonitor enabled
+  - it: should create ServiceMonitor when serviceMonitor enabled
     set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
       proxy:
-        enabled: true
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
       serviceMonitor:
         enabled: true
     asserts:
@@ -44,11 +40,9 @@ tests:
 
   - it: should have correct name with -proxy suffix
     set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
       proxy:
-        enabled: true
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
       serviceMonitor:
         enabled: true
     asserts:
@@ -58,11 +52,9 @@ tests:
 
   - it: should have standard labels
     set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
       proxy:
-        enabled: true
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
       serviceMonitor:
         enabled: true
     asserts:
@@ -75,11 +67,9 @@ tests:
 
   - it: should add custom labels when specified
     set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
       proxy:
-        enabled: true
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
       serviceMonitor:
         enabled: true
         labels:
@@ -95,11 +85,9 @@ tests:
 
   - it: should select proxy pods with correct selector labels
     set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
       proxy:
-        enabled: true
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
       serviceMonitor:
         enabled: true
     asserts:
@@ -115,11 +103,9 @@ tests:
 
   - it: should scrape config-api endpoint
     set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
       proxy:
-        enabled: true
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
       serviceMonitor:
         enabled: true
     asserts:
@@ -129,11 +115,9 @@ tests:
 
   - it: should not set interval by default
     set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
       proxy:
-        enabled: true
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
       serviceMonitor:
         enabled: true
     asserts:
@@ -142,11 +126,9 @@ tests:
 
   - it: should set custom interval when specified
     set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
       proxy:
-        enabled: true
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
       serviceMonitor:
         enabled: true
         interval: "30s"

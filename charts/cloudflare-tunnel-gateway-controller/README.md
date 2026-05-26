@@ -11,9 +11,9 @@ Kubernetes Gateway API controller for Cloudflare Tunnel
 
 ## Features
 
-- Standard Gateway API implementation (GatewayClass, Gateway, HTTPRoute)
+- Standard Gateway API implementation (GatewayClass, Gateway, HTTPRoute). GRPCRoute is **not supported in v3** — see the [migration guide](https://cf.k8s.lex.la/upgrading/v2-to-v3/) for details.
 - Hot reload of tunnel configuration (no cloudflared restart required)
-- Optional cloudflared lifecycle management via Helm SDK
+- In-process L7 proxy embeds cloudflared transport (single data plane, no separate cloudflared deployment)
 - Leader election for high availability deployments
 - Multi-arch container images (amd64, arm64)
 - Signed container images with cosign
@@ -71,14 +71,29 @@ Account ID is auto-detected from the API token when not explicitly provided (wor
 
 ### Install from OCI Registry
 
+First create the credentials and tunnel-token Secrets:
+
+```bash
+kubectl create namespace cloudflare-tunnel-system
+kubectl create secret generic cloudflare-credentials \
+  --namespace cloudflare-tunnel-system \
+  --from-literal=api-token="YOUR_API_TOKEN"
+kubectl create secret generic cloudflare-tunnel-token \
+  --namespace cloudflare-tunnel-system \
+  --from-literal=tunnel-token="YOUR_TUNNEL_TOKEN"
+```
+
+Then install the chart:
+
 ```bash
 helm install cloudflare-tunnel-gateway-controller \
   oci://ghcr.io/lexfrei/charts/cloudflare-tunnel-gateway-controller \
   --version 1.0.0 \
   --namespace cloudflare-tunnel-system \
-  --create-namespace \
-  --set cloudflare.tunnelId="YOUR_TUNNEL_ID" \
-  --set cloudflare.apiToken="YOUR_API_TOKEN"
+  --set gatewayClassConfig.create=true \
+  --set gatewayClassConfig.tunnelID="YOUR_TUNNEL_ID" \
+  --set gatewayClassConfig.cloudflareCredentialsSecretRef.name=cloudflare-credentials \
+  --set proxy.tunnelTokenSecretRef.name=cloudflare-tunnel-token
 ```
 
 ### Verify Chart Signature
@@ -91,8 +106,6 @@ cosign verify ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller:1.0.0 \
   --certificate-oidc-issuer="https://token.actions.githubusercontent.com"
 ```
 
-> **Note:** This controller uses [cloudflare-tunnel](https://github.com/lexfrei/charts/tree/main/charts/cloudflare-tunnel) Helm chart under the hood to deploy cloudflared. If you don't need Gateway API integration, you can use that chart directly.
-
 ## Configuration Examples
 
 Complete example values files are available in the [examples/](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/tree/master/charts/cloudflare-tunnel-gateway-controller/examples) directory:
@@ -101,19 +114,11 @@ Complete example values files are available in the [examples/](https://github.co
 |---------|-------------|
 | [basic-values.yaml](examples/basic-values.yaml) | Minimal configuration |
 | [external-secrets-values.yaml](examples/external-secrets-values.yaml) | Using existing Kubernetes Secret |
-| [managed-cloudflared-values.yaml](examples/managed-cloudflared-values.yaml) | Helm-managed cloudflared deployment |
-| [awg-sidecar-values.yaml](examples/awg-sidecar-values.yaml) | AmneziaWG VPN sidecar |
 | [production-values.yaml](examples/production-values.yaml) | Production-ready with HA, monitoring, and security |
 
 ## Documentation
 
-| Document | Description |
-|----------|-------------|
-| [Architecture](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/blob/master/docs/ARCHITECTURE.md) | System architecture and design decisions |
-| [AWG Quick Start](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/blob/master/docs/AWG_QUICKSTART.md) | AmneziaWG sidecar setup guide |
-| [Gateway API](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/blob/master/docs/GATEWAY_API.md) | Supported Gateway API features |
-| [Metrics](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/blob/master/docs/METRICS.md) | Prometheus metrics and Grafana dashboard |
-| [Troubleshooting](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/blob/master/docs/TROUBLESHOOTING.md) | Common issues and solutions |
+Full documentation lives at <https://cf.k8s.lex.la> (built from the `docs/` tree).
 
 ## External Resources
 
@@ -121,12 +126,18 @@ Complete example values files are available in the [examples/](https://github.co
 - [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) - Cloudflare Tunnel documentation
 - [Cloudflare API Tokens](https://dash.cloudflare.com/profile/api-tokens) - Create API tokens
 
-### Quick Start
+### Quick Start (values.yaml)
 
 ```yaml
-cloudflare:
-  tunnelId: "your-tunnel-id"
-  apiToken: "your-api-token"
+gatewayClassConfig:
+  create: true
+  tunnelID: "your-tunnel-id"
+  cloudflareCredentialsSecretRef:
+    name: cloudflare-credentials  # Secret with key "api-token"
+
+proxy:
+  tunnelTokenSecretRef:
+    name: cloudflare-tunnel-token  # Secret with key "tunnel-token"
 ```
 
 ## Usage
@@ -175,8 +186,10 @@ helm install controller-prod \
   --namespace cloudflare-system \
   --set controller.gatewayClassName=cloudflare-tunnel-prod \
   --set controller.controllerName=cf.k8s.lex.la/tunnel-prod \
-  --set cloudflare.tunnelId="PROD_TUNNEL_ID" \
-  --set cloudflare.apiToken="PROD_API_TOKEN"
+  --set gatewayClassConfig.create=true \
+  --set gatewayClassConfig.tunnelID="PROD_TUNNEL_ID" \
+  --set gatewayClassConfig.cloudflareCredentialsSecretRef.name=cloudflare-credentials-prod \
+  --set proxy.tunnelTokenSecretRef.name=cloudflare-tunnel-token-prod
 
 # Second tunnel for staging apps
 helm install controller-staging \
@@ -184,8 +197,10 @@ helm install controller-staging \
   --namespace cloudflare-system \
   --set controller.gatewayClassName=cloudflare-tunnel-staging \
   --set controller.controllerName=cf.k8s.lex.la/tunnel-staging \
-  --set cloudflare.tunnelId="STAGING_TUNNEL_ID" \
-  --set cloudflare.apiToken="STAGING_API_TOKEN"
+  --set gatewayClassConfig.create=true \
+  --set gatewayClassConfig.tunnelID="STAGING_TUNNEL_ID" \
+  --set gatewayClassConfig.cloudflareCredentialsSecretRef.name=cloudflare-credentials-staging \
+  --set proxy.tunnelTokenSecretRef.name=cloudflare-tunnel-token-staging
 ```
 
 Each controller instance discovers GatewayClasses by `spec.controllerName` (not by resource name) and manages their associated Gateways and routes independently.
@@ -230,32 +245,15 @@ spec:
 | fullnameOverride | string | `""` | Override the full release name |
 | gatewayClass | object | `{"create":true}` | GatewayClass configuration |
 | gatewayClass.create | bool | `true` | Create GatewayClass resource |
-| gatewayClassConfig | object | `{"cloudflareCredentialsSecretRef":{"key":"","name":"","namespace":""},"cloudflared":{"awg":{"interfacePrefix":"awg-cfd","secretName":""},"enabled":true,"livenessProbe":{"failureThreshold":3,"initialDelaySeconds":30,"periodSeconds":20,"successThreshold":1,"timeoutSeconds":5},"namespace":"cloudflare-tunnel-system","protocol":"","replicas":1},"create":false,"name":"","tunnelID":"","tunnelTokenSecretRef":{"key":"","name":"","namespace":""}}` | GatewayClassConfig configuration This is the main configuration section for Cloudflare Tunnel settings. All tunnel-specific settings are now in GatewayClassConfig CRD. |
+| gatewayClassConfig | object | `{"accountId":"","cloudflareCredentialsSecretRef":{"key":"","name":"","namespace":""},"create":false,"name":"","tunnelID":""}` | GatewayClassConfig configuration This section drives the optional GatewayClassConfig CRD rendered by the chart. Starting v3 the chart no longer manages a separate cloudflared deployment; the in-process L7 proxy embeds cloudflared transport and is deployed by the chart itself. The tunnel token is supplied directly to the proxy via `proxy.tunnelTokenSecretRef` (see below). |
+| gatewayClassConfig.accountId | string | `""` | Cloudflare account ID. Optional - auto-detected when the API token has access to a single account. |
 | gatewayClassConfig.cloudflareCredentialsSecretRef | object | `{"key":"","name":"","namespace":""}` | Reference to Secret containing Cloudflare API credentials (REQUIRED) The Secret must contain an "api-token" key with a valid Cloudflare API token. Optionally, it can contain an "account-id" key; if not present, account ID is auto-detected. |
 | gatewayClassConfig.cloudflareCredentialsSecretRef.key | string | `""` | Key in the Secret containing the API token (defaults to "api-token") |
 | gatewayClassConfig.cloudflareCredentialsSecretRef.name | string | `""` | Name of the Secret containing API credentials |
 | gatewayClassConfig.cloudflareCredentialsSecretRef.namespace | string | `""` | Namespace of the Secret (defaults to release namespace) |
-| gatewayClassConfig.cloudflared | object | `{"awg":{"interfacePrefix":"awg-cfd","secretName":""},"enabled":true,"livenessProbe":{"failureThreshold":3,"initialDelaySeconds":30,"periodSeconds":20,"successThreshold":1,"timeoutSeconds":5},"namespace":"cloudflare-tunnel-system","protocol":"","replicas":1}` | Cloudflared deployment configuration |
-| gatewayClassConfig.cloudflared.awg | object | `{"interfacePrefix":"awg-cfd","secretName":""}` | AmneziaWG sidecar configuration |
-| gatewayClassConfig.cloudflared.awg.interfacePrefix | string | `"awg-cfd"` | AWG interface name prefix (kernel auto-numbers: prefix0, prefix1, etc.) |
-| gatewayClassConfig.cloudflared.awg.secretName | string | `""` | Secret name containing AWG config (enables AWG sidecar) |
-| gatewayClassConfig.cloudflared.enabled | bool | `true` | Enable cloudflared deployment management (default: true) |
-| gatewayClassConfig.cloudflared.livenessProbe | object | `{"failureThreshold":3,"initialDelaySeconds":30,"periodSeconds":20,"successThreshold":1,"timeoutSeconds":5}` | Liveness probe configuration for cloudflared |
-| gatewayClassConfig.cloudflared.livenessProbe.failureThreshold | int | `3` | Number of failures before container restart |
-| gatewayClassConfig.cloudflared.livenessProbe.initialDelaySeconds | int | `30` | Seconds before liveness probe is initiated |
-| gatewayClassConfig.cloudflared.livenessProbe.periodSeconds | int | `20` | How often to perform the probe |
-| gatewayClassConfig.cloudflared.livenessProbe.successThreshold | int | `1` | Minimum consecutive successes for probe to be considered successful |
-| gatewayClassConfig.cloudflared.livenessProbe.timeoutSeconds | int | `5` | Seconds after which probe times out |
-| gatewayClassConfig.cloudflared.namespace | string | `"cloudflare-tunnel-system"` | Namespace for cloudflared deployment |
-| gatewayClassConfig.cloudflared.protocol | string | `""` | Transport protocol (auto, quic, http2) |
-| gatewayClassConfig.cloudflared.replicas | int | `1` | Number of cloudflared replicas |
 | gatewayClassConfig.create | bool | `false` | Create GatewayClassConfig resource |
 | gatewayClassConfig.name | string | `""` | Name of the GatewayClassConfig (defaults to release fullname) |
 | gatewayClassConfig.tunnelID | string | `""` | Cloudflare Tunnel ID (REQUIRED) Get from: Zero Trust Dashboard > Networks > Tunnels Example: "550e8400-e29b-41d4-a716-446655440000" |
-| gatewayClassConfig.tunnelTokenSecretRef | object | `{"key":"","name":"","namespace":""}` | Reference to Secret containing tunnel token (REQUIRED when cloudflared.enabled is true) The Secret must contain a "tunnel-token" key. |
-| gatewayClassConfig.tunnelTokenSecretRef.key | string | `""` | Key in the Secret containing the tunnel token (defaults to "tunnel-token") |
-| gatewayClassConfig.tunnelTokenSecretRef.name | string | `""` | Name of the Secret containing tunnel token |
-| gatewayClassConfig.tunnelTokenSecretRef.namespace | string | `""` | Namespace of the Secret (defaults to release namespace) |
 | healthProbes | object | `{"livenessProbe":{"enabled":true,"failureThreshold":3,"initialDelaySeconds":15,"periodSeconds":20,"timeoutSeconds":5},"readinessProbe":{"enabled":true,"failureThreshold":3,"initialDelaySeconds":5,"periodSeconds":10,"timeoutSeconds":3},"startupProbe":{"enabled":true,"failureThreshold":12,"initialDelaySeconds":0,"periodSeconds":5,"timeoutSeconds":3}}` | Health probes configuration |
 | healthProbes.livenessProbe | object | `{"enabled":true,"failureThreshold":3,"initialDelaySeconds":15,"periodSeconds":20,"timeoutSeconds":5}` | Liveness probe configuration Restarts container if probe fails |
 | healthProbes.readinessProbe | object | `{"enabled":true,"failureThreshold":3,"initialDelaySeconds":5,"periodSeconds":10,"timeoutSeconds":3}` | Readiness probe configuration Removes pod from service endpoints if probe fails |
@@ -285,7 +283,7 @@ spec:
 | podLabels | object | `{}` | Additional labels to add to pods |
 | podSecurityContext | object | See values.yaml | Pod security context (secure defaults) |
 | priorityClassName | string | `""` | Priority class name for pod scheduling priority |
-| proxy | object | `{"accessLog":{"enabled":false,"samplingRate":1,"stripQuery":false},"affinity":{},"authTokenSecretRef":{"key":"auth-token","name":""},"configAPIPort":8081,"enabled":false,"healthProbes":{"livenessProbe":{"enabled":true,"failureThreshold":3,"initialDelaySeconds":15,"periodSeconds":20,"timeoutSeconds":5},"readinessProbe":{"enabled":true,"failureThreshold":3,"initialDelaySeconds":5,"periodSeconds":10,"timeoutSeconds":3},"startupProbe":{"enabled":true,"failureThreshold":30,"initialDelaySeconds":0,"periodSeconds":5,"timeoutSeconds":3}},"image":{"pullPolicy":"IfNotPresent","repository":"ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller-proxy","tag":""},"networkPolicy":{"enabled":false,"ingress":{"from":[]}},"nodeSelector":{},"podAnnotations":{},"podLabels":{},"podSecurityContext":{"runAsNonRoot":true,"runAsUser":65534,"seccompProfile":{"type":"RuntimeDefault"}},"proxyPort":8080,"replicas":2,"resources":{"limits":{"cpu":"500m","memory":"512Mi"},"requests":{"cpu":"100m","memory":"128Mi"}},"securityContext":{"allowPrivilegeEscalation":false,"capabilities":{"drop":["ALL"]},"readOnlyRootFilesystem":true},"service":{"annotations":{}},"tolerations":[],"topologySpreadConstraints":[],"tunnelTokenSecretRef":{"key":"tunnel-token","name":""},"websocket":{"dialTimeout":"","handshakeTimeout":""}}` | L7 Proxy configuration (enhanced-cloudflared data plane) When enabled, deploys proxy pods that run cloudflared tunnel transport with an L7 reverse proxy for full Gateway API HTTPRoute support. |
+| proxy | object | `{"accessLog":{"enabled":false,"samplingRate":1,"stripQuery":false},"affinity":{},"authTokenSecretRef":{"key":"auth-token","name":""},"configAPIPort":8081,"healthProbes":{"livenessProbe":{"enabled":true,"failureThreshold":3,"initialDelaySeconds":15,"periodSeconds":20,"timeoutSeconds":5},"readinessProbe":{"enabled":true,"failureThreshold":3,"initialDelaySeconds":5,"periodSeconds":10,"timeoutSeconds":3},"startupProbe":{"enabled":true,"failureThreshold":30,"initialDelaySeconds":0,"periodSeconds":5,"timeoutSeconds":3}},"image":{"pullPolicy":"IfNotPresent","repository":"ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller-proxy","tag":""},"networkPolicy":{"enabled":false,"ingress":{"from":[]}},"nodeSelector":{},"podAnnotations":{},"podLabels":{},"podSecurityContext":{"runAsNonRoot":true,"runAsUser":65534,"seccompProfile":{"type":"RuntimeDefault"}},"proxyPort":8080,"replicas":2,"resources":{"limits":{"cpu":"500m","memory":"512Mi"},"requests":{"cpu":"100m","memory":"128Mi"}},"securityContext":{"allowPrivilegeEscalation":false,"capabilities":{"drop":["ALL"]},"readOnlyRootFilesystem":true},"service":{"annotations":{}},"tolerations":[],"topologySpreadConstraints":[],"tunnelTokenSecretRef":{"key":"tunnel-token","name":""},"websocket":{"dialTimeout":"","handshakeTimeout":""}}` | L7 Proxy configuration (enhanced-cloudflared data plane). Starting v3 the L7 proxy is the ONLY data plane; the chart always renders the proxy Deployment + Service + (optional) NetworkPolicy and ServiceMonitor. The pre-v3 `proxy.enabled` toggle has been removed -- v2 chart users who ran with `proxy.enabled: false` must either set proxy.tunnelTokenSecretRef on upgrade or stay on v2.x. |
 | proxy.accessLog | object | `{"enabled":false,"samplingRate":1,"stripQuery":false}` | Structured per-request access logging on the in-process proxy. Off by default (zero allocation on the hot path). When enabled, emits one JSON line per request via the proxy's stdout slog (method, host, path, query, status, bytes_written, duration_ms, user_agent). Cluster logging stack scrapes stdout already, so no additional sink wiring is needed. |
 | proxy.accessLog.enabled | bool | `false` | Enable per-request access logging. Defaults to false; setting it true on a high-traffic gateway will materially increase log volume -- pair with samplingRate < 1.0. |
 | proxy.accessLog.samplingRate | float | `1` | Fraction of non-5xx requests to log when enabled, in [0, 1]. 1.0 logs everything; 0.0 logs only 5xx (server-side failures are always recorded regardless of rate so the operator never loses error signal). The proxy clamps out-of-range values: a typo like `samplingRate: 50` degrades to "always log" rather than "silently log nothing". |
@@ -295,7 +293,6 @@ spec:
 | proxy.authTokenSecretRef.key | string | `"auth-token"` | Key in the Secret containing the auth token |
 | proxy.authTokenSecretRef.name | string | `""` | Name of the Secret containing the auth token |
 | proxy.configAPIPort | int | `8081` | Config API port (controller pushes config here) |
-| proxy.enabled | bool | `false` | Enable L7 proxy deployment |
 | proxy.healthProbes | object | `{"livenessProbe":{"enabled":true,"failureThreshold":3,"initialDelaySeconds":15,"periodSeconds":20,"timeoutSeconds":5},"readinessProbe":{"enabled":true,"failureThreshold":3,"initialDelaySeconds":5,"periodSeconds":10,"timeoutSeconds":3},"startupProbe":{"enabled":true,"failureThreshold":30,"initialDelaySeconds":0,"periodSeconds":5,"timeoutSeconds":3}}` | Health probes configuration |
 | proxy.healthProbes.livenessProbe | object | `{"enabled":true,"failureThreshold":3,"initialDelaySeconds":15,"periodSeconds":20,"timeoutSeconds":5}` | Liveness probe |
 | proxy.healthProbes.readinessProbe | object | `{"enabled":true,"failureThreshold":3,"initialDelaySeconds":5,"periodSeconds":10,"timeoutSeconds":3}` | Readiness probe (ready when config loaded) |
@@ -320,7 +317,7 @@ spec:
 | proxy.service.annotations | object | `{}` | Service annotations |
 | proxy.tolerations | list | `[]` | Tolerations for pod scheduling |
 | proxy.topologySpreadConstraints | list | `[]` | Topology spread constraints for pod distribution |
-| proxy.tunnelTokenSecretRef | object | `{"key":"tunnel-token","name":""}` | Reference to Secret containing tunnel token (REQUIRED when proxy.enabled) |
+| proxy.tunnelTokenSecretRef | object | `{"key":"tunnel-token","name":""}` | Reference to Secret containing tunnel token (REQUIRED) |
 | proxy.tunnelTokenSecretRef.key | string | `"tunnel-token"` | Key in the Secret containing the tunnel token |
 | proxy.tunnelTokenSecretRef.name | string | `""` | Name of the Secret containing tunnel token |
 | proxy.websocket | object | `{"dialTimeout":"","handshakeTimeout":""}` | WebSocket upgrade-path knobs. Both bound only the pre-upgrade phase: dialTimeout caps the TCP/TLS connect to the backend; handshakeTimeout caps the wait for the backend's 101 Switching Protocols response. Once the upgrade completes, neither bounds the long-lived post-101 bidirectional stream. Empty (the default) leaves both at the proxy binary's built-in 30s. |

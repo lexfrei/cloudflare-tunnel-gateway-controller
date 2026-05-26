@@ -66,10 +66,10 @@ type HTTPRouteReconciler struct {
 	// RouteSyncer provides unified sync for both HTTP and GRPC routes.
 	RouteSyncer *RouteSyncer
 
-	// ProxySyncer pushes routing config to v2 proxy replicas (optional).
+	// ProxySyncer pushes routing config to the L7 proxy replicas.
 	ProxySyncer *ProxySyncer
 
-	// ProxyEndpoints is the list of proxy config API URLs for v2 proxy sync.
+	// ProxyEndpoints is the list of L7 proxy config-API URLs.
 	ProxyEndpoints []string
 
 	// bindingValidator validates route binding to Gateway listeners.

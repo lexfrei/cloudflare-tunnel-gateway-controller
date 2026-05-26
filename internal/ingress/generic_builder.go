@@ -131,7 +131,8 @@ func (b *GenericBuilder[R]) Build(ctx context.Context, routes []R) BuildResult {
 
 // entriesToIngressRules converts sorted route entries into Cloudflare ingress rules.
 // Wildcard entries (hostname == "*") are skipped — Cloudflare API rejects rules
-// with empty hostname (error 1056). These routes are handled by the v2 proxy.
+// with empty hostname (error 1056). These routes are handled by the in-process
+// L7 proxy via its OverrideProxy hook, not by Cloudflare's edge ingress.
 func entriesToIngressRules(
 	entries []routeEntry,
 	logger *slog.Logger,

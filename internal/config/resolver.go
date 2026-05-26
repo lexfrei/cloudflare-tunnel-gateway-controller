@@ -32,25 +32,7 @@ type ResolvedConfig struct {
 	AccountID string
 
 	// Tunnel configuration
-	TunnelID    string
-	TunnelToken string `json:"-"`
-
-	// Cloudflared deployment settings
-	CloudflaredEnabled   bool
-	CloudflaredReplicas  int32
-	CloudflaredNamespace string
-	CloudflaredProtocol  string
-
-	// AWG sidecar settings
-	AWGSecretName      string
-	AWGInterfacePrefix string
-
-	// Liveness probe settings
-	LivenessProbeInitialDelay int32
-	LivenessProbeTimeout      int32
-	LivenessProbePeriod       int32
-	LivenessProbeSuccess      int32
-	LivenessProbeFailure      int32
+	TunnelID string
 
 	// Reference to the source config for watch purposes
 	ConfigName string
@@ -119,7 +101,7 @@ func (r *Resolver) ResolveFromGatewayClassName(
 	return r.ResolveFromGatewayClass(ctx, gatewayClass)
 }
 
-//nolint:funcorder,wrapcheck,funlen // private helper, errors.Newf creates new errors
+//nolint:funcorder,wrapcheck // private helper, errors.Newf creates new errors
 func (r *Resolver) resolveConfig(ctx context.Context, config *v1alpha1.GatewayClassConfig) (*ResolvedConfig, error) {
 	// Validate required TunnelID
 	if config.Spec.TunnelID == "" {
@@ -127,31 +109,9 @@ func (r *Resolver) resolveConfig(ctx context.Context, config *v1alpha1.GatewayCl
 	}
 
 	resolved := &ResolvedConfig{
-		TunnelID:             config.Spec.TunnelID,
-		CloudflaredEnabled:   config.Spec.IsCloudflaredEnabled(),
-		CloudflaredReplicas:  config.Spec.GetCloudflaredReplicas(),
-		CloudflaredNamespace: config.Spec.GetCloudflaredNamespace(),
-		CloudflaredProtocol:  config.Spec.Cloudflared.Protocol,
-		ConfigName:           config.Name,
+		TunnelID:   config.Spec.TunnelID,
+		ConfigName: config.Name,
 	}
-
-	// Resolve AWG config
-	if config.Spec.Cloudflared.AWG != nil {
-		resolved.AWGSecretName = config.Spec.Cloudflared.AWG.SecretName
-
-		resolved.AWGInterfacePrefix = config.Spec.Cloudflared.AWG.InterfacePrefix
-		if resolved.AWGInterfacePrefix == "" {
-			resolved.AWGInterfacePrefix = "awg-cfd"
-		}
-	}
-
-	// Resolve liveness probe config with defaults
-	lp := config.Spec.Cloudflared.LivenessProbe
-	resolved.LivenessProbeInitialDelay = lp.GetInitialDelaySeconds()
-	resolved.LivenessProbeTimeout = lp.GetTimeoutSeconds()
-	resolved.LivenessProbePeriod = lp.GetPeriodSeconds()
-	resolved.LivenessProbeSuccess = lp.GetSuccessThreshold()
-	resolved.LivenessProbeFailure = lp.GetFailureThreshold()
 
 	// Resolve Cloudflare credentials from Secret
 	credentialsRef := config.Spec.CloudflareCredentialsSecretRef
@@ -181,35 +141,6 @@ func (r *Resolver) resolveConfig(ctx context.Context, config *v1alpha1.GatewayCl
 		resolved.AccountID = config.Spec.AccountID
 	} else if accountID, ok := credentialsSecret.Data["account-id"]; ok {
 		resolved.AccountID = string(accountID)
-	}
-
-	// Resolve tunnel token if cloudflared management is enabled
-	if resolved.CloudflaredEnabled {
-		if config.Spec.TunnelTokenSecretRef == nil {
-			return nil, errors.New("tunnelTokenSecretRef is required when cloudflared.enabled is true")
-		}
-
-		tokenRef := config.Spec.TunnelTokenSecretRef
-
-		tokenSecret, secretErr := r.getSecret(ctx, tokenRef.Name, tokenRef.Namespace)
-		if secretErr != nil {
-			return nil, errors.Wrap(secretErr, "failed to get tunnel token secret")
-		}
-
-		tokenKey := tokenRef.GetTunnelTokenKey()
-
-		tunnelToken, ok := tokenSecret.Data[tokenKey]
-		if !ok {
-			return nil, errors.Newf("secret %s/%s does not contain key %s",
-				tokenSecret.Namespace, tokenSecret.Name, tokenKey)
-		}
-
-		if len(tunnelToken) == 0 {
-			return nil, errors.Newf("secret %s/%s key %s is empty",
-				tokenSecret.Namespace, tokenSecret.Name, tokenKey)
-		}
-
-		resolved.TunnelToken = string(tunnelToken)
 	}
 
 	return resolved, nil

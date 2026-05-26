@@ -61,8 +61,8 @@ func init() {
 	rootCmd.Flags().String("leader-election-namespace", "", "Namespace for leader election lease (defaults to controller namespace)")
 	rootCmd.Flags().String("leader-election-name", "cloudflare-tunnel-gateway-controller-leader", "Name of the leader election lease")
 
-	// v2 proxy flags
-	rootCmd.Flags().StringSlice("proxy-endpoints", nil, "Proxy config API endpoints for v2 proxy sync (e.g., http://proxy-0:8081,http://proxy-1:8081)")
+	// L7 proxy data plane configuration (--proxy-endpoints is required in v3)
+	rootCmd.Flags().StringSlice("proxy-endpoints", nil, "Proxy config API endpoints (e.g., http://proxy-0:8081,http://proxy-1:8081). Required; the chart wires this to the proxy's headless Service.")
 	rootCmd.Flags().String("proxy-auth-token", "", "Bearer token for authenticating proxy config push requests")
 
 	// Deprecated: --gateway-class-name is no longer used. The controller discovers

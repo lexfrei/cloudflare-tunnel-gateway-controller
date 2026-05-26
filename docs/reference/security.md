@@ -66,26 +66,52 @@ The Cloudflare API token is sensitive and should be:
 The controller requires specific Kubernetes permissions:
 
 ```yaml
-# Minimum required permissions
+# Minimum required permissions (v3) -- matches charts/.../templates/clusterrole.yaml
 rules:
-  # Gateway API - read specs, write status
+  # Gateway API - read specs
   - apiGroups: ["gateway.networking.k8s.io"]
-    resources: ["gateways", "httproutes", "grpcroutes", "gatewayclasses", "referencegrants"]
+    resources: ["gatewayclasses", "httproutes", "grpcroutes", "referencegrants", "backendtlspolicies"]
     verbs: ["get", "list", "watch"]
+  # Gateways - finalizers + status patches require update/patch on the parent resource
   - apiGroups: ["gateway.networking.k8s.io"]
-    resources: ["gateways/status", "httproutes/status", "grpcroutes/status"]
+    resources: ["gateways"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+  # Gateway API status subresources - write status
+  - apiGroups: ["gateway.networking.k8s.io"]
+    resources: ["gatewayclasses/status", "gateways/status", "httproutes/status", "grpcroutes/status", "backendtlspolicies/status"]
     verbs: ["get", "update", "patch"]
 
-  # Services - read only for backend resolution
+  # Core API - read only
   - apiGroups: [""]
-    resources: ["services"]
+    resources: ["services", "namespaces"]
     verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["secrets", "configmaps"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+
+  # GatewayClassConfig CRD
+  - apiGroups: ["cf.k8s.lex.la"]
+    resources: ["gatewayclassconfigs"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["cf.k8s.lex.la"]
+    resources: ["gatewayclassconfigs/status"]
+    verbs: ["get", "update", "patch"]
 
   # Leader election
   - apiGroups: ["coordination.k8s.io"]
     resources: ["leases"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 ```
+
+!!! note "v3 RBAC scope"
+    The v3 controller is status-only and reads Secrets/ConfigMaps; it does not
+    create, mutate, or delete workloads. The v2 chart granted cluster-wide
+    write on Pods, Deployments, ReplicaSets and ServiceAccounts for the
+    Helm-SDK code path that managed cloudflared; those rules were removed
+    when that code path was deleted.
 
 ### Container Security
 

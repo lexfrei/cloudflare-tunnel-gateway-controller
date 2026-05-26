@@ -3,13 +3,13 @@
 Kubernetes controller implementing Gateway API for Cloudflare Tunnel.
 
 Enables routing traffic through Cloudflare Tunnel using standard Gateway API
-resources (Gateway, HTTPRoute, GRPCRoute).
+resources (Gateway, HTTPRoute).
 
 ## Features
 
-- Standard Gateway API implementation (GatewayClass, Gateway, HTTPRoute, GRPCRoute)
+- Standard Gateway API implementation (GatewayClass, Gateway, HTTPRoute). GRPCRoute is **not supported in v3** — see [migration](upgrading/v2-to-v3.md) for details.
 - Hot reload of tunnel configuration (no cloudflared restart required)
-- Optional cloudflared lifecycle management via Helm SDK
+- In-process L7 proxy embeds cloudflared transport (single data plane, no separate cloudflared deployment)
 - Leader election for high availability deployments
 - Multi-arch container images (amd64, arm64)
 - Signed container images with cosign
@@ -35,7 +35,7 @@ See the [L7 Proxy Guide](guides/l7-proxy.md) for setup and examples.
 !!! warning
 
     The controller assumes **exclusive ownership** of the tunnel configuration.
-    It will remove any ingress rules not managed by HTTPRoute/GRPCRoute resources.
+    It will remove any ingress rules not managed by HTTPRoute resources.
     Do not use a tunnel that has manually configured routes or is shared with
     other systems.
 
@@ -81,7 +81,7 @@ See [Getting Started](getting-started/index.md) for detailed setup instructions.
 | [Getting Started](getting-started/index.md) | Prerequisites, installation, and quick start guide |
 | [Configuration](configuration/index.md) | Controller options, Helm values, GatewayClassConfig |
 | [Gateway API](gateway-api/index.md) | Supported resources, examples, and limitations |
-| [Guides](guides/index.md) | Integration guides for AWG, external-dns, monitoring |
+| [Guides](guides/index.md) | Integration guides for L7 proxy, external-dns, monitoring |
 | [Operations](operations/index.md) | Troubleshooting, metrics, and manual installation |
 | [Development](development/index.md) | Architecture, contributing, and testing |
 | [Reference](reference/index.md) | Helm chart, CRD reference, security policy |

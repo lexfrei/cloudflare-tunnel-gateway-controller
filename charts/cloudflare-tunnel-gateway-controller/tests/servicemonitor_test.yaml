@@ -3,19 +3,12 @@ templates:
   - servicemonitor.yaml
 tests:
   - it: should not create ServiceMonitor by default
-    set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
     asserts:
       - hasDocuments:
           count: 0
 
   - it: should create ServiceMonitor when enabled
     set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
       serviceMonitor:
         enabled: true
     asserts:
@@ -29,9 +22,6 @@ tests:
 
   - it: should have correct name
     set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
       serviceMonitor:
         enabled: true
     asserts:
@@ -41,9 +31,6 @@ tests:
 
   - it: should have standard labels
     set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
       serviceMonitor:
         enabled: true
     asserts:
@@ -56,9 +43,6 @@ tests:
 
   - it: should add custom labels when specified
     set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
       serviceMonitor:
         enabled: true
         labels:
@@ -74,9 +58,6 @@ tests:
 
   - it: should select correct pods
     set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
       serviceMonitor:
         enabled: true
     asserts:
@@ -89,9 +70,6 @@ tests:
 
   - it: should scrape metrics endpoint
     set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
       serviceMonitor:
         enabled: true
     asserts:
@@ -101,9 +79,6 @@ tests:
 
   - it: should not set interval by default
     set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
       serviceMonitor:
         enabled: true
     asserts:
@@ -112,9 +87,6 @@ tests:
 
   - it: should set custom interval when specified
     set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
       serviceMonitor:
         enabled: true
         interval: "30s"
@@ -125,9 +97,6 @@ tests:
 
   - it: should work with fullnameOverride
     set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
       fullnameOverride: "custom-controller"
       serviceMonitor:
         enabled: true

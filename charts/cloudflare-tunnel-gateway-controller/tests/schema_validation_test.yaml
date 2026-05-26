@@ -12,6 +12,9 @@ tests:
     set:
       gatewayClassConfig:
         create: false
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token
     asserts:
       - template: deployment.yaml
         isKind:
@@ -24,6 +27,9 @@ tests:
         tunnelID: "550e8400-e29b-41d4-a716-446655440000"
         cloudflareCredentialsSecretRef:
           name: "cf-credentials"
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token
     asserts:
       - template: gatewayclassconfig.yaml
         isKind:
@@ -42,6 +48,9 @@ tests:
         tunnelID: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
         cloudflareCredentialsSecretRef:
           name: "cf-credentials"
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token
     asserts:
       - template: gatewayclassconfig.yaml
         equal:
@@ -55,71 +64,65 @@ tests:
         tunnelID: "12345678-1234-1234-1234-123456789012"
         cloudflareCredentialsSecretRef:
           name: "cf-credentials"
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token
     asserts:
       - template: gatewayclassconfig.yaml
         equal:
           path: spec.tunnelID
           value: "12345678-1234-1234-1234-123456789012"
 
-  - it: should set cloudflared replicas
-    set:
-      gatewayClassConfig:
-        create: true
-        tunnelID: "00000000-0000-0000-0000-000000000001"
-        cloudflareCredentialsSecretRef:
-          name: "cf-credentials"
-        cloudflared:
-          replicas: 3
-    asserts:
-      - template: gatewayclassconfig.yaml
-        equal:
-          path: spec.cloudflared.replicas
-          value: 3
-
-  - it: should set cloudflared protocol
-    set:
-      gatewayClassConfig:
-        create: true
-        tunnelID: "00000000-0000-0000-0000-000000000002"
-        cloudflareCredentialsSecretRef:
-          name: "cf-credentials"
-        cloudflared:
-          protocol: "quic"
-    asserts:
-      - template: gatewayclassconfig.yaml
-        equal:
-          path: spec.cloudflared.protocol
-          value: "quic"
-
-  - it: should set AWG configuration
-    set:
-      gatewayClassConfig:
-        create: true
-        tunnelID: "00000000-0000-0000-0000-000000000003"
-        cloudflareCredentialsSecretRef:
-          name: "cf-credentials"
-        cloudflared:
-          awg:
-            secretName: "awg-config"
-            interfacePrefix: "custom-awg"
-    asserts:
-      - template: gatewayclassconfig.yaml
-        equal:
-          path: spec.cloudflared.awg.secretName
-          value: "awg-config"
-      - template: gatewayclassconfig.yaml
-        equal:
-          path: spec.cloudflared.awg.interfacePrefix
-          value: "custom-awg"
-
   - it: should not create gatewayclassconfig when disabled
     set:
       gatewayClassConfig:
         create: false
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token
     asserts:
       - template: gatewayclassconfig.yaml
         hasDocuments:
           count: 0
+
+  # ---
+  # gatewayClassConfig.accountId rendering
+  # ---
+  # Pin the v3 CRD spec.accountId rendering: present in YAML only when set in
+  # values, absent otherwise. Catches a future template refactor that drops
+  # the {{- if .Values.gatewayClassConfig.accountId }} guard.
+
+  - it: should render spec.accountId when set
+    set:
+      gatewayClassConfig:
+        create: true
+        tunnelID: "00000000-0000-0000-0000-000000000004"
+        cloudflareCredentialsSecretRef:
+          name: "cf-credentials"
+        accountId: "1234567890abcdef"
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token
+    asserts:
+      - template: gatewayclassconfig.yaml
+        equal:
+          path: spec.accountId
+          value: "1234567890abcdef"
+
+  - it: should omit spec.accountId when not set
+    set:
+      gatewayClassConfig:
+        create: true
+        tunnelID: "00000000-0000-0000-0000-000000000005"
+        cloudflareCredentialsSecretRef:
+          name: "cf-credentials"
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token
+    asserts:
+      - template: gatewayclassconfig.yaml
+        notExists:
+          path: spec.accountId
 
   # ---
   # proxy.accessLog schema
@@ -128,7 +131,6 @@ tests:
   - it: should accept valid proxy.accessLog samplingRate (number in [0,1])
     set:
       proxy:
-        enabled: true
         tunnelTokenSecretRef:
           name: tunnel-token
         accessLog:
@@ -146,7 +148,6 @@ tests:
   - it: should reject string samplingRate (must be number)
     set:
       proxy:
-        enabled: true
         tunnelTokenSecretRef:
           name: tunnel-token
         accessLog:
@@ -158,7 +159,6 @@ tests:
   - it: should reject samplingRate above 1
     set:
       proxy:
-        enabled: true
         tunnelTokenSecretRef:
           name: tunnel-token
         accessLog:
@@ -170,7 +170,6 @@ tests:
   - it: should reject negative samplingRate
     set:
       proxy:
-        enabled: true
         tunnelTokenSecretRef:
           name: tunnel-token
         accessLog:
@@ -182,7 +181,6 @@ tests:
   - it: should reject non-boolean stripQuery
     set:
       proxy:
-        enabled: true
         tunnelTokenSecretRef:
           name: tunnel-token
         accessLog:
@@ -198,7 +196,6 @@ tests:
   - it: should accept valid Go duration websocket.dialTimeout
     set:
       proxy:
-        enabled: true
         tunnelTokenSecretRef:
           name: tunnel-token
         websocket:
@@ -215,7 +212,6 @@ tests:
   - it: should accept empty websocket.dialTimeout (chart default)
     set:
       proxy:
-        enabled: true
         tunnelTokenSecretRef:
           name: tunnel-token
         websocket:
@@ -234,7 +230,6 @@ tests:
     # helm lint while the proxy runtime would have accepted it.
     set:
       proxy:
-        enabled: true
         tunnelTokenSecretRef:
           name: tunnel-token
         websocket:
@@ -257,7 +252,6 @@ tests:
   - it: should accept three-component compound Go-duration (2h45m30s form)
     set:
       proxy:
-        enabled: true
         tunnelTokenSecretRef:
           name: tunnel-token
         websocket:
@@ -277,7 +271,6 @@ tests:
     # regex loosening doesn't quietly re-introduce the silent-drop.
     set:
       proxy:
-        enabled: true
         tunnelTokenSecretRef:
           name: tunnel-token
         websocket:
@@ -293,7 +286,6 @@ tests:
     # bare "0" / "60" typo is caught at chart-time.
     set:
       proxy:
-        enabled: true
         tunnelTokenSecretRef:
           name: tunnel-token
         websocket:
@@ -305,7 +297,6 @@ tests:
   - it: should reject malformed websocket.dialTimeout (not a Go duration)
     set:
       proxy:
-        enabled: true
         tunnelTokenSecretRef:
           name: tunnel-token
         websocket:
@@ -321,7 +312,6 @@ tests:
   - it: should accept valid authTokenSecretRef
     set:
       proxy:
-        enabled: true
         tunnelTokenSecretRef:
           name: tunnel-token
         authTokenSecretRef:
@@ -341,7 +331,6 @@ tests:
   - it: should reject non-string authTokenSecretRef.name
     set:
       proxy:
-        enabled: true
         tunnelTokenSecretRef:
           name: tunnel-token
         authTokenSecretRef:

@@ -14,44 +14,20 @@ referenced by a GatewayClass via `spec.parametersRef`.
 
 ### Spec
 
+Starting v3 the spec carries only the contract the controller needs for Cloudflare API calls. Proxy-side configuration (tunnel token, replicas, liveness probes) lives in the Helm chart `proxy.*` values; see [Helm chart reference](helm-chart.md). The AmneziaWG sidecar that v2 attached to the controller-managed cloudflared deployment is **not** available in v3 — see [Upgrading v2 → v3](../upgrading/v2-to-v3.md).
+
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `tunnelID` | string | Yes | Cloudflare Tunnel UUID |
-| `accountID` | string | No | Cloudflare Account ID (auto-detected if not specified) |
+| `accountId` | string | No | Cloudflare Account ID (auto-detected if not specified) |
 | `cloudflareCredentialsSecretRef` | SecretKeySelector | Yes | Reference to Secret containing API token |
-| `tunnelTokenSecretRef` | SecretKeySelector | Conditional | Reference to Secret containing tunnel token (required when `cloudflared.enabled=true`) |
-| `cloudflared` | CloudflaredSpec | No | cloudflared deployment configuration |
-
-### CloudflaredSpec
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `enabled` | bool | `true` | Deploy cloudflared via Helm |
-| `awg` | AWGSpec | - | AmneziaWG sidecar configuration |
-| `livenessProbe` | LivenessProbeSpec | - | Liveness probe configuration |
-
-### AWGSpec
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `secretName` | string | Name of Secret containing AWG configuration |
-
-### LivenessProbeSpec
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `initialDelaySeconds` | int32 | 30 | Seconds before probe starts |
-| `timeoutSeconds` | int32 | 5 | Probe timeout in seconds |
-| `periodSeconds` | int32 | 20 | How often to perform probe |
-| `successThreshold` | int32 | 1 | Min successes for healthy |
-| `failureThreshold` | int32 | 3 | Failures before restart |
 
 ### SecretKeySelector
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `name` | string | - | Secret name |
-| `key` | string | `api-token` or `tunnel-token` | Key within the Secret |
+| `key` | string | `api-token` | Key within the Secret |
 
 ### Example
 
@@ -62,22 +38,18 @@ metadata:
   name: cloudflare-tunnel-config
 spec:
   tunnelID: "550e8400-e29b-41d4-a716-446655440000"
-  # accountID: "1234567890abcdef"  # Optional, auto-detected
+  # accountId: "1234567890abcdef"  # Optional, auto-detected
   cloudflareCredentialsSecretRef:
     name: cloudflare-credentials
     key: api-token
-  tunnelTokenSecretRef:
-    name: cloudflare-tunnel-token
-    key: tunnel-token
-  cloudflared:
-    enabled: true
-    awg:
-      secretName: awg-config  # Optional
 ```
 
 ### Status
 
-GatewayClassConfig does not have a status subresource.
+GatewayClassConfig has a `status.conditions` subresource. The reconciler emits:
+
+- `SecretsResolved` — `True` when the referenced credentials Secret exists and carries the expected key, `False` otherwise.
+- `Valid` — `True` when all validation checks pass; `False` with the first failure message otherwise.
 
 ## Gateway API Resources
 
@@ -144,6 +116,15 @@ spec:
 ```
 
 ### GRPCRoute
+
+!!! warning "Not supported in v3"
+
+    GRPCRoute is recognised as a CRD kind but does not route in v3 —
+    the in-process L7 proxy has no gRPC matcher and requests return
+    `404`. The example below is preserved as a v0.8-era reference; use
+    HTTPRoute as a v3 workaround, or stay on the v2.x chart line. See
+    the [GRPCRoute limitation](../gateway-api/limitations.md#grpcroute-is-not-supported-in-v3)
+    for the full explanation.
 
 Standard Gateway API GRPCRoute:
 
@@ -216,7 +197,7 @@ spec:
 | GatewayClass | `gateway.networking.k8s.io` | `v1` | GA |
 | Gateway | `gateway.networking.k8s.io` | `v1` | GA |
 | HTTPRoute | `gateway.networking.k8s.io` | `v1` | GA |
-| GRPCRoute | `gateway.networking.k8s.io` | `v1` | GA |
+| GRPCRoute | `gateway.networking.k8s.io` | `v1` | GA (not consumed in v3 — see [limitations](../gateway-api/limitations.md#grpcroute-is-not-supported-in-v3)) |
 | ReferenceGrant | `gateway.networking.k8s.io` | `v1beta1` | Beta |
 
 ## Installing CRDs
@@ -232,5 +213,5 @@ kubectl apply --filename https://github.com/kubernetes-sigs/gateway-api/releases
 Installed automatically by the Helm chart. For manual installation:
 
 ```bash
-kubectl apply --filename deploy/crds/
+kubectl apply --filename charts/cloudflare-tunnel-gateway-controller/crds/
 ```

@@ -29,7 +29,6 @@ func TestGatewayReconciler_SetupWithManager(t *testing.T) {
 		Scheme:         envScheme,
 		ControllerName: "test-controller",
 		ConfigResolver: configResolver,
-		HelmManager:    nil, // not needed for setup test
 	}
 
 	err = r.SetupWithManager(mgr)

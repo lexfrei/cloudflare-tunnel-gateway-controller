@@ -34,7 +34,7 @@ kubectl create secret generic cloudflare-credentials \
   --namespace cloudflare-tunnel-system \
   --from-literal=api-token="YOUR_API_TOKEN"
 
-# Tunnel token (required for managed cloudflared)
+# Tunnel token (consumed by the L7 proxy pod via the chart's proxy.tunnelTokenSecretRef)
 kubectl create secret generic cloudflare-tunnel-token \
   --namespace cloudflare-tunnel-system \
   --from-literal=tunnel-token="YOUR_TUNNEL_TOKEN"
@@ -87,11 +87,10 @@ spec:
   tunnelID: "YOUR_TUNNEL_UUID"
   cloudflareCredentialsSecretRef:
     name: cloudflare-credentials
-  tunnelTokenSecretRef:
-    name: cloudflare-tunnel-token
-  cloudflared:
-    enabled: true
+  # accountId: "1234567890abcdef"  # Optional, auto-detected
 ```
+
+The tunnel token is consumed by the L7 proxy pod directly (via the `TUNNEL_TOKEN` env var wired by the Helm chart's `proxy.tunnelTokenSecretRef` value) — it is not part of the CRD spec.
 
 ## Sample GatewayClass
 

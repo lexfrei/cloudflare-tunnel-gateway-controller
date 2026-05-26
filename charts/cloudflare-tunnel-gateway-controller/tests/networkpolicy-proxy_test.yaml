@@ -2,35 +2,31 @@ suite: test networkpolicy-proxy
 templates:
   - networkpolicy-proxy.yaml
 tests:
-  - it: should not create NetworkPolicy when proxy is disabled
+  - it: should not create NetworkPolicy by default
     set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
     asserts:
       - hasDocuments:
           count: 0
 
-  - it: should not create NetworkPolicy when proxy enabled but networkPolicy disabled
+  - it: should not create NetworkPolicy when networkPolicy explicitly disabled
     set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
       proxy:
-        enabled: true
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
         networkPolicy:
           enabled: false
     asserts:
       - hasDocuments:
           count: 0
 
-  - it: should create NetworkPolicy when both proxy and networkPolicy enabled
+  - it: should create NetworkPolicy when networkPolicy enabled
     set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
       proxy:
-        enabled: true
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
         networkPolicy:
           enabled: true
     asserts:
@@ -41,11 +37,9 @@ tests:
 
   - it: should have correct name with -proxy suffix
     set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
       proxy:
-        enabled: true
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
         networkPolicy:
           enabled: true
     asserts:
@@ -55,11 +49,9 @@ tests:
 
   - it: should have correct labels
     set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
       proxy:
-        enabled: true
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
         networkPolicy:
           enabled: true
     asserts:
@@ -72,11 +64,9 @@ tests:
 
   - it: should select proxy pods with correct selector labels
     set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
       proxy:
-        enabled: true
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
         networkPolicy:
           enabled: true
     asserts:
@@ -92,11 +82,9 @@ tests:
 
   - it: should have both Ingress and Egress policy types
     set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
       proxy:
-        enabled: true
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
         networkPolicy:
           enabled: true
     asserts:
@@ -109,11 +97,9 @@ tests:
 
   - it: should allow ingress on configAPIPort
     set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
       proxy:
-        enabled: true
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
         configAPIPort: 8081
         networkPolicy:
           enabled: true
@@ -126,11 +112,9 @@ tests:
 
   - it: should allow ingress on proxyPort
     set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
       proxy:
-        enabled: true
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
         proxyPort: 8080
         networkPolicy:
           enabled: true
@@ -143,11 +127,9 @@ tests:
 
   - it: should allow DNS egress UDP
     set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
       proxy:
-        enabled: true
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
         networkPolicy:
           enabled: true
     asserts:
@@ -159,11 +141,9 @@ tests:
 
   - it: should allow DNS egress TCP
     set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
       proxy:
-        enabled: true
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
         networkPolicy:
           enabled: true
     asserts:
@@ -175,11 +155,9 @@ tests:
 
   - it: should allow Cloudflare edge egress on port 443 TCP
     set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
       proxy:
-        enabled: true
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
         networkPolicy:
           enabled: true
     asserts:
@@ -191,11 +169,9 @@ tests:
 
   - it: should allow Cloudflare edge egress on port 7844 UDP
     set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
       proxy:
-        enabled: true
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
         networkPolicy:
           enabled: true
     asserts:
@@ -207,11 +183,9 @@ tests:
 
   - it: should allow Cloudflare edge egress to specific IP ranges
     set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
       proxy:
-        enabled: true
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
         networkPolicy:
           enabled: true
     asserts:
@@ -238,11 +212,9 @@ tests:
 
   - it: should allow cluster services egress
     set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
       proxy:
-        enabled: true
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
         networkPolicy:
           enabled: true
     asserts:
@@ -257,11 +229,9 @@ tests:
 
   - it: should not have ingress from selector by default
     set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
       proxy:
-        enabled: true
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
         networkPolicy:
           enabled: true
     asserts:
@@ -270,11 +240,9 @@ tests:
 
   - it: should allow ingress from specific namespace
     set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
       proxy:
-        enabled: true
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
         networkPolicy:
           enabled: true
           ingress:

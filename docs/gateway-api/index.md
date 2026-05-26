@@ -13,7 +13,7 @@ The controller implements the [Kubernetes Gateway API](https://gateway-api.sigs.
 | GatewayClass | `gateway.networking.k8s.io/v1` | Supported |
 | Gateway | `gateway.networking.k8s.io/v1` | Supported |
 | HTTPRoute | `gateway.networking.k8s.io/v1` | Supported |
-| GRPCRoute | `gateway.networking.k8s.io/v1` | Supported |
+| GRPCRoute | `gateway.networking.k8s.io/v1` | Not supported in v3 — see [limitations](limitations.md#grpcroute-is-not-supported-in-v3) |
 | TCPRoute | `gateway.networking.k8s.io/v1alpha2` | Not supported |
 | TLSRoute | `gateway.networking.k8s.io/v1alpha2` | Not supported |
 | UDPRoute | `gateway.networking.k8s.io/v1alpha2` | Not supported |
@@ -37,14 +37,6 @@ The controller implements the [Kubernetes Gateway API](https://gateway-api.sigs.
     HTTP routing examples and configuration patterns.
 
     [:octicons-arrow-right-24: HTTPRoute](httproute.md)
-
--   :material-api:{ .lg .middle } **GRPCRoute**
-
-    ---
-
-    gRPC routing with service and method matching.
-
-    [:octicons-arrow-right-24: GRPCRoute](grpcroute.md)
 
 -   :material-key:{ .lg .middle } **ReferenceGrant**
 
@@ -101,6 +93,8 @@ flowchart TB
 
 !!! info "Full Sync"
 
-    Any change to HTTPRoute or GRPCRoute triggers a full configuration
-    sync to Cloudflare Tunnel. The controller rebuilds the entire ingress
-    configuration on each reconciliation.
+    Any change to HTTPRoute triggers a full configuration sync to
+    Cloudflare Tunnel. The controller rebuilds the entire ingress
+    configuration on each reconciliation. GRPCRoute is still watched
+    for status reasons but does not feed the runtime proxy in v3 — see
+    [limitations](limitations.md#grpcroute-is-not-supported-in-v3).

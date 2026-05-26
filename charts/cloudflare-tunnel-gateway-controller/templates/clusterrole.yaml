@@ -31,9 +31,17 @@ rules:
   - apiGroups: [""]
     resources: ["services", "namespaces"]
     verbs: ["get", "list", "watch"]
+  # Secrets: the controller only reads them (Cloudflare credentials, TLS
+  # certificate refs, BackendTLSPolicy CA bundles). It does not create,
+  # mutate, or delete Secrets, so write verbs are intentionally absent.
   - apiGroups: [""]
     resources: ["secrets"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+    verbs: ["get", "list", "watch"]
+  # ConfigMaps: BackendTLSPolicy can reference a ConfigMap holding the CA
+  # bundle (internal/controller/backendtlspolicy_controller.go). Read-only.
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch"]
   - apiGroups: [""]
     resources: ["events"]
     verbs: ["create", "patch"]
@@ -47,11 +55,4 @@ rules:
   # Leader election
   - apiGroups: ["coordination.k8s.io"]
     resources: ["leases"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  # Helm SDK for cloudflared deployment
-  - apiGroups: [""]
-    resources: ["serviceaccounts", "configmaps", "pods"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  - apiGroups: ["apps"]
-    resources: ["deployments", "replicasets"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]

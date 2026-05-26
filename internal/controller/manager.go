@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"strings"
 
 	"github.com/cockroachdb/errors"
 	"github.com/go-logr/logr"
@@ -20,7 +21,6 @@ import (
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/api/v1alpha1"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/cfmetrics"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/config"
-	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/helm"
 )
 
 // Config holds all configuration options for the controller manager.
@@ -50,7 +50,7 @@ type Config struct {
 	// LeaderElectName is the name of the leader election lease.
 	LeaderElectName string
 
-	// ProxyEndpoints is a list of proxy config API URLs for v2 proxy sync.
+	// ProxyEndpoints is the list of L7 proxy config-API URLs.
 	// When non-empty, the controller pushes routing config to these endpoints.
 	// Example: ["http://proxy-0:8081", "http://proxy-1:8081"]
 	ProxyEndpoints []string
@@ -65,17 +65,27 @@ type Config struct {
 // and blocks until the context is cancelled or an error occurs.
 //
 // The function performs the following steps:
-//  1. Initializes controller-runtime manager with metrics and health endpoints
-//  2. Registers GatewayClassConfig CRD scheme
-//  3. Creates ConfigResolver for reading GatewayClassConfig
-//  4. Sets up GatewayReconciler and HTTPRouteReconciler with watches
-//  5. Optionally initializes Helm manager for cloudflared deployment
-//  6. Starts the manager and blocks until shutdown
+//  1. Fails fast when ProxyEndpoints is empty (v3 requires a configured L7 proxy data plane)
+//  2. Initializes controller-runtime manager with metrics and health endpoints
+//  3. Registers GatewayClassConfig CRD scheme
+//  4. Creates ConfigResolver for reading GatewayClassConfig
+//  5. Sets up Gateway/HTTPRoute/GRPCRoute/GatewayClassConfig reconcilers with watches
+//  6. Wires the ProxySyncer that pushes HTTPRoute config to the proxy data plane
+//  7. Starts the manager and blocks until shutdown
 //
 //nolint:funlen // controller setup requires multiple sequential steps
 func Run(ctx context.Context, cfg *Config) error {
 	logger := log.FromContext(ctx).WithName("manager")
 	logger.Info("initializing controller manager")
+
+	// In v3 the L7 proxy is the only data plane; without endpoints to push to,
+	// the controller would silently no-op all HTTPRoutes. Fail loudly instead.
+	// Use a local instead of mutating the caller's Config -- a future
+	// retry-wrapper around Run shouldn't accumulate state across calls.
+	proxyEndpoints := sanitiseProxyEndpoints(cfg.ProxyEndpoints)
+	if len(proxyEndpoints) == 0 {
+		return errors.New("--proxy-endpoints is required: v3 controller cannot run without a configured L7 proxy data plane")
+	}
 
 	mgrOptions := ctrl.Options{
 		Metrics: server.Options{
@@ -132,20 +142,11 @@ func Run(ctx context.Context, cfg *Config) error {
 	// Uses slog.Default() which can be configured with TraceHandler at startup
 	baseLogger := slog.Default()
 
-	// Initialize Helm manager for cloudflared deployment
-	helmManager, helmErr := helm.NewManager(metricsCollector, baseLogger)
-	if helmErr != nil {
-		return errors.Wrap(helmErr, "failed to create helm manager")
-	}
-
-	logger.Info("helm manager initialized for cloudflared deployment")
-
 	gatewayReconciler := &GatewayReconciler{
 		Client:         mgr.GetClient(),
 		Scheme:         mgr.GetScheme(),
 		ControllerName: cfg.ControllerName,
 		ConfigResolver: configResolver,
-		HelmManager:    helmManager,
 	}
 
 	if err := gatewayReconciler.SetupWithManager(mgr); err != nil {
@@ -163,8 +164,8 @@ func Run(ctx context.Context, cfg *Config) error {
 		baseLogger,
 	)
 
-	// Create proxy syncer for v2 proxy config push (optional)
-	proxySyncer := initProxySyncer(cfg, mgr.GetClient(), baseLogger, logger)
+	// Create proxy syncer for L7 proxy config push (mandatory in v3)
+	proxySyncer := initProxySyncer(cfg, proxyEndpoints, mgr.GetClient(), baseLogger, logger)
 
 	httpRouteReconciler := &HTTPRouteReconciler{
 		Client:         mgr.GetClient(),
@@ -172,7 +173,7 @@ func Run(ctx context.Context, cfg *Config) error {
 		ControllerName: cfg.ControllerName,
 		RouteSyncer:    routeSyncer,
 		ProxySyncer:    proxySyncer,
-		ProxyEndpoints: cfg.ProxyEndpoints,
+		ProxyEndpoints: proxyEndpoints,
 	}
 
 	if err := httpRouteReconciler.SetupWithManager(mgr); err != nil {
@@ -222,18 +223,20 @@ func Run(ctx context.Context, cfg *Config) error {
 	return nil
 }
 
-// initProxySyncer creates a ProxySyncer if proxy endpoints are configured.
+// initProxySyncer creates a ProxySyncer. Starting v3 the L7 proxy is the
+// mandatory data plane, so the sanitised proxyEndpoints list MUST be
+// non-empty; callers validate that up-front and fail the controller
+// bootstrap otherwise. proxyEndpoints is the sanitised slice (not the
+// raw cfg.ProxyEndpoints) so the startup log reflects what the syncer
+// will actually push to, not what the operator typed in.
 func initProxySyncer(
 	cfg *Config,
+	proxyEndpoints []string,
 	k8sClient client.Client,
 	baseLogger *slog.Logger,
 	logger logr.Logger,
 ) *ProxySyncer {
-	if len(cfg.ProxyEndpoints) == 0 {
-		return nil
-	}
-
-	logger.Info("proxy syncer enabled", "endpoints", cfg.ProxyEndpoints)
+	logger.Info("proxy syncer enabled", "endpoints", proxyEndpoints)
 
 	return NewProxySyncer(
 		cfg.ClusterDomain,
@@ -242,6 +245,22 @@ func initProxySyncer(
 		k8sClient,
 		baseLogger,
 	)
+}
+
+// sanitiseProxyEndpoints trims whitespace from every endpoint and drops
+// empty entries. Callers pass the result through a `len(...) == 0` check
+// to reject malformed `--proxy-endpoints=` / `--proxy-endpoints=,` shapes
+// that would otherwise survive a raw len() guard.
+func sanitiseProxyEndpoints(endpoints []string) []string {
+	out := make([]string, 0, len(endpoints))
+
+	for _, ep := range endpoints {
+		if trimmed := strings.TrimSpace(ep); trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+
+	return out
 }
 
 // getControllerNamespace returns the namespace where the controller is running.

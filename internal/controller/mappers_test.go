@@ -386,57 +386,6 @@ func TestSecretMatchesConfig_CredentialsSecretEmptyNamespace(t *testing.T) {
 	assert.True(t, SecretMatchesConfig(secret, cfg))
 }
 
-func TestSecretMatchesConfig_TunnelTokenSecret(t *testing.T) {
-	t.Parallel()
-
-	secret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "tunnel-token",
-			Namespace: "default",
-		},
-	}
-
-	cfg := &v1alpha1.GatewayClassConfig{
-		Spec: v1alpha1.GatewayClassConfigSpec{
-			CloudflareCredentialsSecretRef: v1alpha1.SecretReference{
-				Name:      "cf-credentials",
-				Namespace: "default",
-			},
-			TunnelTokenSecretRef: &v1alpha1.SecretReference{
-				Name:      "tunnel-token",
-				Namespace: "default",
-			},
-		},
-	}
-
-	assert.True(t, SecretMatchesConfig(secret, cfg))
-}
-
-func TestSecretMatchesConfig_TunnelTokenSecretEmptyNamespace(t *testing.T) {
-	t.Parallel()
-
-	secret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "tunnel-token",
-			Namespace: "other-ns",
-		},
-	}
-
-	cfg := &v1alpha1.GatewayClassConfig{
-		Spec: v1alpha1.GatewayClassConfigSpec{
-			CloudflareCredentialsSecretRef: v1alpha1.SecretReference{
-				Name: "cf-credentials",
-			},
-			TunnelTokenSecretRef: &v1alpha1.SecretReference{
-				Name:      "tunnel-token",
-				Namespace: "",
-			},
-		},
-	}
-
-	assert.True(t, SecretMatchesConfig(secret, cfg))
-}
-
 func TestSecretMatchesConfig_NoMatch(t *testing.T) {
 	t.Parallel()
 
@@ -453,33 +402,6 @@ func TestSecretMatchesConfig_NoMatch(t *testing.T) {
 				Name:      "cf-credentials",
 				Namespace: "default",
 			},
-			TunnelTokenSecretRef: &v1alpha1.SecretReference{
-				Name:      "tunnel-token",
-				Namespace: "default",
-			},
-		},
-	}
-
-	assert.False(t, SecretMatchesConfig(secret, cfg))
-}
-
-func TestSecretMatchesConfig_NoTunnelTokenRef(t *testing.T) {
-	t.Parallel()
-
-	secret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "tunnel-token",
-			Namespace: "default",
-		},
-	}
-
-	cfg := &v1alpha1.GatewayClassConfig{
-		Spec: v1alpha1.GatewayClassConfigSpec{
-			CloudflareCredentialsSecretRef: v1alpha1.SecretReference{
-				Name:      "cf-credentials",
-				Namespace: "default",
-			},
-			TunnelTokenSecretRef: nil,
 		},
 	}
 

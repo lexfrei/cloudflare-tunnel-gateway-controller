@@ -2,28 +2,25 @@
 
 This document describes the known limitations of the Cloudflare Tunnel Gateway Controller and provides workarounds where applicable.
 
-## Cloudflare Tunnel API Constraints
+## Historical context (pre-v3 only)
 
-!!! note "L7 Proxy removes most limitations"
-    When using the [L7 proxy](../guides/l7-proxy.md), all features below
-    are fully supported. The proxy handles routing in-process, bypassing
-    Cloudflare Tunnel ingress API limitations.
+In the v1/v2 chart line, several HTTPRoute features required opting into the L7 proxy because the alternative path (Cloudflare Tunnel's native ingress) cannot express exact-path / header / query / method matching, weighted splitting, or filters. **v3 collapses this to a single data plane** — the proxy is always rendered, so all of those features work unconditionally. The bullets below are kept as historical context; if you are running v3 you can skip to the [Path Matching Limitations](#cloudflare-tunnel-path-matching-limitations) section.
 
-The following features require the L7 proxy and are **not** available when running with only the Cloudflare Tunnel API:
+??? note "v1/v2 feature matrix (kept for upgrade context)"
 
-| Feature | Without L7 proxy | With L7 proxy |
-| --- | --- | --- |
-| Exact path matching | No | Yes |
-| Header matching | No | Yes |
-| Query parameter matching | No | Yes |
-| Method matching | No | Yes |
-| Request header modification | No | Yes |
-| Response header modification | No | Yes |
-| Request redirect | No | Yes |
-| URL rewrite | No | Yes |
-| Request mirroring | No | Yes |
-| Traffic splitting (weighted) | No | Yes |
-| Regex path matching | No | Yes |
+    | Feature | v1/v2 without proxy | v1/v2 with proxy / v3 |
+    | --- | --- | --- |
+    | Exact path matching | No | Yes |
+    | Header matching | No | Yes |
+    | Query parameter matching | No | Yes |
+    | Method matching | No | Yes |
+    | Request header modification | No | Yes |
+    | Response header modification | No | Yes |
+    | Request redirect | No | Yes |
+    | URL rewrite | No | Yes |
+    | Request mirroring | No | Yes |
+    | Traffic splitting (weighted) | No | Yes |
+    | Regex path matching | No | Yes |
 
 ## Cloudflare Tunnel Path Matching Limitations
 
@@ -75,6 +72,16 @@ The controller sorts paths to ensure consistent behavior:
 3. Wildcard hostname `*` always comes last
 
 This ensures predictable routing despite Cloudflare's limitations.
+
+## GRPCRoute is not supported in v3
+
+The L7 proxy is the only data plane in v3 (the vendored cloudflared fork's `OverrideProxy` hook is always wired to it), and the proxy converter does not yet implement gRPC-specific route matching. As a consequence, gRPC traffic that flows through the tunnel reaches the proxy without a matching routing rule and returns `404 no matching route`.
+
+The controller continues to accept GRPCRoute resources and pushes a Cloudflare-side ingress config for them via `internal/ingress/grpc_builder.go`, but those edge-side rules are **not consulted at runtime in v3** — they exist only so the Cloudflare dashboard shows the expected hostname → service mapping.
+
+**v2 → v3 impact.** Users on v2 with `proxy.enabled: false` (the v2 default) had working GRPCRoute via cloudflared's native ingress. v3 removes that path. If you have any GRPCRoute resources today, migrate them to HTTPRoute before upgrading, or stay on the v2.x chart line until the proxy converter learns gRPC.
+
+GRPCRoute support inside the proxy converter is on the v3.x roadmap; the regression is intentional and documented rather than promised on a specific timeline.
 
 ## Controller Limitations
 
@@ -253,7 +260,7 @@ When a backend Service carries both `appProtocol: kubernetes.io/h2c` AND a `Back
 
 ### Gateway client cert rotation has a propagation lag
 
-The controller's existing Secret watch only matches the GatewayClassConfig's `cloudflareCredentialsSecretRef` and `tunnelTokenSecretRef`. A rotation of the `Secret` referenced by `spec.tls.backend.clientCertificateRef` (or by a listener's `certificateRefs`) does NOT enqueue the Gateway on its own — the proxy continues to dial backends with the previous keypair until some unrelated event (HTTPRoute create/update, BackendTLSPolicy change, periodic resync, controller restart) drives the next reconcile. On that reconcile the new keypair is loaded, the converter stamps it onto every affected `BackendTLSConfig`, and the per-cert transport-pool hash evicts the stale transport on the next config push.
+The controller's existing Secret watch only matches the GatewayClassConfig's `cloudflareCredentialsSecretRef`. A rotation of the `Secret` referenced by `spec.tls.backend.clientCertificateRef` (or by a listener's `certificateRefs`) does NOT enqueue the Gateway on its own — the proxy continues to dial backends with the previous keypair until some unrelated event (HTTPRoute create/update, BackendTLSPolicy change, periodic resync, controller restart) drives the next reconcile. On that reconcile the new keypair is loaded, the converter stamps it onto every affected `BackendTLSConfig`, and the per-cert transport-pool hash evicts the stale transport on the next config push.
 
 In active clusters the propagation window is short, but operators that rotate certs more frequently than other Gateway-namespace events occur will observe stale-cert traffic until the next reconcile fires. Active hot-reload on a Secret-only change is a tracked follow-up — extending `ConfigMapper.MapSecretToRequests` to also match Gateway-level `clientCertificateRef` Secrets is the planned fix.
 

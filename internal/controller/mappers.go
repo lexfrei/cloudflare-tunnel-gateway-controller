@@ -188,13 +188,6 @@ func SecretMatchesConfig(secret *corev1.Secret, cfg *v1alpha1.GatewayClassConfig
 		return true
 	}
 
-	if cfg.Spec.TunnelTokenSecretRef != nil {
-		tokenRef := cfg.Spec.TunnelTokenSecretRef
-		if secret.Name == tokenRef.Name && (tokenRef.Namespace == "" || tokenRef.Namespace == secret.Namespace) {
-			return true
-		}
-	}
-
 	return false
 }
 

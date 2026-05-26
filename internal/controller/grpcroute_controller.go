@@ -58,8 +58,15 @@ func (r *GRPCRouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 func (r *GRPCRouteReconciler) syncAndUpdateStatus(ctx context.Context) (ctrl.Result, error) {
 	return syncAndUpdateStatusCommon(ctx, syncUpdateParams{
 		routeSyncer: r.RouteSyncer,
-		// GRPC routes are not pushed to the v2 proxy — they use Cloudflare
-		// Tunnel natively. proxySyncer and proxyEndpoints are intentionally nil.
+		// GRPCRoutes are not pushed to the L7 proxy converter (which has no
+		// gRPC-specific routing semantics yet). v3's OverrideProxy hook
+		// intercepts ALL tunnel traffic, so gRPC requests reach the proxy
+		// without a matching route and return 404 — see
+		// docs/gateway-api/limitations.md#grpcroute-is-not-supported-in-v3.
+		// internal/ingress/grpc_builder still emits Cloudflare-side ingress
+		// rules for the Cloudflare dashboard view, but they are not
+		// consulted at runtime. proxySyncer and proxyEndpoints are
+		// intentionally nil for the GRPCRoute reconciler.
 		statusEntries: func(sr *SyncResult) []routeStatusEntry {
 			return sr.grpcStatusEntries(r.updateRouteStatus)
 		},

@@ -8,14 +8,14 @@
 
 Kubernetes controller implementing Gateway API for Cloudflare Tunnel.
 
-Enables routing traffic through Cloudflare Tunnel using standard Gateway API resources (Gateway, HTTPRoute, GRPCRoute).
+Enables routing traffic through Cloudflare Tunnel using standard Gateway API resources (Gateway, HTTPRoute).
 
 ## Features
 
-- Standard Gateway API implementation (GatewayClass, Gateway, HTTPRoute, GRPCRoute)
+- Standard Gateway API implementation (GatewayClass, Gateway, HTTPRoute). GRPCRoute is **not supported in v3** — see [migration](https://cf.k8s.lex.la/upgrading/v2-to-v3/) for details.
 - Cross-namespace backend references with ReferenceGrant support
 - Hot reload of tunnel configuration (no cloudflared restart required)
-- Optional cloudflared lifecycle management via Helm SDK
+- In-process L7 proxy embeds cloudflared transport (single data plane, no separate cloudflared deployment)
 - Leader election for high availability deployments
 - Multi-arch container images (amd64, arm64)
 - Signed container images with cosign
@@ -27,7 +27,7 @@ Enables routing traffic through Cloudflare Tunnel using standard Gateway API res
 - Weighted traffic splitting between backends
 - Regex path matching
 
-> **Warning:** The controller assumes **exclusive ownership** of the tunnel configuration. It will remove any ingress rules not managed by HTTPRoute/GRPCRoute resources. Do not use a tunnel that has manually configured routes or is shared with other systems.
+> **Warning:** The controller assumes **exclusive ownership** of the tunnel configuration. It will remove any ingress rules not managed by HTTPRoute resources. Do not use a tunnel that has manually configured routes or is shared with other systems.
 
 ## L7 Proxy
 
@@ -43,15 +43,25 @@ See [L7 Proxy Architecture](https://cf.k8s.lex.la/development/architecture/) for
 # 1. Install Gateway API CRDs
 kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.5.0/standard-install.yaml
 
-# 2. Install the controller
+# 2. Create credentials Secrets
+kubectl create namespace cloudflare-tunnel-system
+kubectl create secret generic cloudflare-credentials \
+  --namespace cloudflare-tunnel-system \
+  --from-literal=api-token="YOUR_API_TOKEN"
+kubectl create secret generic cloudflare-tunnel-token \
+  --namespace cloudflare-tunnel-system \
+  --from-literal=tunnel-token="YOUR_TUNNEL_TOKEN"
+
+# 3. Install the controller
 helm install cloudflare-tunnel-gateway-controller \
   oci://ghcr.io/lexfrei/charts/cloudflare-tunnel-gateway-controller \
   --namespace cloudflare-tunnel-system \
-  --create-namespace \
-  --set config.tunnelID=YOUR_TUNNEL_ID \
-  --set config.apiToken=YOUR_API_TOKEN
+  --set gatewayClassConfig.create=true \
+  --set gatewayClassConfig.tunnelID=YOUR_TUNNEL_ID \
+  --set gatewayClassConfig.cloudflareCredentialsSecretRef.name=cloudflare-credentials \
+  --set proxy.tunnelTokenSecretRef.name=cloudflare-tunnel-token
 
-# 3. Create HTTPRoute to expose your service
+# 4. Create HTTPRoute to expose your service
 kubectl apply -f - <<EOF
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
@@ -88,10 +98,7 @@ Before deploying the controller, you must create a Cloudflare Tunnel:
 4. Choose **Cloudflared** connector type
 5. Name your tunnel and save the **Tunnel ID** and **Tunnel Token**
 
-The controller manages tunnel ingress configuration via API. You can either:
-
-- Let the controller deploy cloudflared automatically (default behavior)
-- Deploy cloudflared yourself using the tunnel token (`cloudflared.enabled: false` in Helm values)
+The controller manages tunnel ingress configuration via the Cloudflare API. Tunnel traffic is terminated by the in-process L7 proxy that ships with the chart; supply the tunnel token via `proxy.tunnelTokenSecretRef` in Helm values.
 
 ### Cloudflare API Token Permissions
 
@@ -119,11 +126,9 @@ See [charts/cloudflare-tunnel-gateway-controller/README.md](charts/cloudflare-tu
 
 For manual installation without Helm, see [Manual Installation](https://cf.k8s.lex.la/operations/manual-installation/).
 
-> **Note:** This controller uses [cloudflare-tunnel](https://github.com/lexfrei/charts/tree/main/charts/cloudflare-tunnel) Helm chart under the hood to deploy cloudflared. If you don't need Gateway API integration, you can use that chart directly.
-
 ## Usage
 
-Create standard [Gateway API](https://gateway-api.sigs.k8s.io/) HTTPRoute or GRPCRoute resources referencing the `cloudflare-tunnel` Gateway. The controller automatically syncs routes to Cloudflare Tunnel configuration with hot reload (no cloudflared restart required).
+Create standard [Gateway API](https://gateway-api.sigs.k8s.io/) HTTPRoute resources referencing the `cloudflare-tunnel` Gateway. The controller automatically syncs routes to Cloudflare Tunnel configuration with hot reload (no cloudflared restart required). GRPCRoute is **not supported in v3** — see the [GRPCRoute limitation](https://cf.k8s.lex.la/gateway-api/limitations/#grpcroute-is-not-supported-in-v3) and the [migration guide](https://cf.k8s.lex.la/upgrading/v2-to-v3/).
 
 ### Supported Gateway Fields
 
@@ -132,7 +137,7 @@ Create standard [Gateway API](https://gateway-api.sigs.k8s.io/) HTTPRoute or GRP
 | `spec.gatewayClassName` | ✅ | Must match controller's GatewayClass |
 | `spec.listeners` | ✅ | Fully processed for route binding and status |
 | `spec.listeners[].name` | ✅ | Used for route binding, status reporting, attached route counting |
-| `spec.listeners[].protocol` | ✅ | Used for route kind filtering (HTTP/HTTPS → HTTPRoute/GRPCRoute) |
+| `spec.listeners[].protocol` | ✅ | Used for route kind filtering (HTTP/HTTPS → HTTPRoute; GRPCRoute filtering still applies but binding is broken in v3 — see Limitations) |
 | `spec.listeners[].port` | ✅ | Used for route binding when route specifies a port |
 | `spec.listeners[].hostname` | ✅ | Routes must have intersecting hostnames |
 | `spec.listeners[].tls` | ✅ | CertificateRefs validated with ReferenceGrant support |
@@ -146,40 +151,31 @@ Create standard [Gateway API](https://gateway-api.sigs.k8s.io/) HTTPRoute or GRP
 
 The controller supports a subset of Gateway API fields that map to Cloudflare Tunnel ingress rules:
 
+All matching and filter behavior is performed by the in-process L7 proxy that the chart deploys alongside the controller.
+
 **HTTPRoute:**
 
 | Field | Supported | Notes |
 |-------|-----------|-------|
 | `spec.hostnames` | ✅ | Wildcard `*` supported |
-| `spec.rules[].matches[].path` | ✅ | PathPrefix, Exact; RegularExpression requires L7 proxy |
+| `spec.rules[].matches[].path` | ✅ | PathPrefix, Exact, RegularExpression |
+| `spec.rules[].matches[].headers` | ✅ | Exact and RegularExpression |
+| `spec.rules[].matches[].queryParams` | ✅ | Exact and RegularExpression |
+| `spec.rules[].matches[].method` | ✅ | All HTTP methods |
+| `spec.rules[].filters` | ✅ | Header modifier, redirect, URL rewrite, mirror |
 | `spec.rules[].backendRefs` | ✅ | Service name, namespace, port |
 | `spec.rules[].backendRefs[].namespace` | ✅ | Cross-namespace refs require ReferenceGrant |
-| `spec.rules[].matches[].headers` | ✅ | Requires L7 proxy |
-| `spec.rules[].matches[].queryParams` | ✅ | Requires L7 proxy |
-| `spec.rules[].matches[].method` | ✅ | Requires L7 proxy |
-| `spec.rules[].filters` | ✅ | Requires L7 proxy |
-| `spec.rules[].backendRefs[].weight` | ✅ | Requires L7 proxy for traffic splitting; without proxy, highest weight wins |
+| `spec.rules[].backendRefs[].weight` | ✅ | True weighted traffic splitting across backends |
 
-**GRPCRoute:**
+**GRPCRoute:** ⚠️ **Not supported in v3** — see [GRPCRoute limitations](https://cf.k8s.lex.la/gateway-api/limitations/#grpcroute-is-not-supported-in-v3). v3's L7 proxy data plane has no gRPC matcher yet; requests return `404`. Use HTTPRoute as a workaround, or stay on the v2.x chart line.
 
-| Field | Supported | Notes |
-|-------|-----------|-------|
-| `spec.hostnames` | ✅ | Wildcard `*` supported |
-| `spec.rules[].matches[].method.service` | ✅ | Maps to `/Service/*` path |
-| `spec.rules[].matches[].method.method` | ✅ | Maps to `/Service/Method` path |
-| `spec.rules[].backendRefs` | ✅ | Service name, namespace, port |
-| `spec.rules[].backendRefs[].namespace` | ✅ | Cross-namespace refs require ReferenceGrant |
-| `spec.rules[].matches[].headers` | ✅ | Requires L7 proxy |
-| `spec.rules[].filters` | ✅ | Requires L7 proxy |
-| `spec.rules[].backendRefs[].weight` | ✅ | Requires L7 proxy for traffic splitting; without proxy, highest weight wins |
-
-> **Load Balancing:** Without the L7 proxy, the controller uses the highest-weight backend (Cloudflare Tunnel accepts only a single service URL per ingress rule). With the L7 proxy enabled, full weighted traffic splitting between multiple backends is supported. See [Limitations](https://cf.k8s.lex.la/gateway-api/limitations/#traffic-splitting-and-load-balancing) for details.
+> **Load Balancing:** All traffic flows through the in-process L7 proxy, so full weighted traffic splitting between multiple backends is supported end-to-end. See [Limitations](https://cf.k8s.lex.la/gateway-api/limitations/#traffic-splitting-and-load-balancing) for the edge-side caveats that still apply.
 
 ### Known Limitations
 
-These limitations apply when running without the L7 proxy (Cloudflare API-only mode). The L7 proxy removes all path matching limitations.
+The L7 proxy removes the v1/v2 Cloudflare-Tunnel-API path-matching limitations. Edge-side caveats (Cloudflare hostname registration, edge HTTPS termination, etc.) are documented in the [Limitations](https://cf.k8s.lex.la/gateway-api/limitations/) page.
 
-Cloudflare Tunnel has path matching behavior that differs from Gateway API:
+Historical context — Cloudflare Tunnel's native ingress rules have path matching behavior that differs from Gateway API:
 
 - **No true exact path match**: `/api` (Exact) will still match `/api/v1`
 - **Common prefix routing**: Paths like `/multi-v1`, `/multi-v2` may all route to the first backend
@@ -231,7 +227,7 @@ Full documentation is available at **[cf.k8s.lex.la](https://cf.k8s.lex.la)**.
 | [Getting Started](https://cf.k8s.lex.la/getting-started/) | Prerequisites, installation, and quick start |
 | [Configuration](https://cf.k8s.lex.la/configuration/) | Controller configuration and Helm values |
 | [Gateway API](https://cf.k8s.lex.la/gateway-api/) | Supported resources, examples, and limitations |
-| [Guides](https://cf.k8s.lex.la/guides/) | AWG sidecar, external-dns, cross-namespace, monitoring |
+| [Guides](https://cf.k8s.lex.la/guides/) | L7 proxy setup, external-dns, cross-namespace, monitoring |
 | [Operations](https://cf.k8s.lex.la/operations/) | Troubleshooting, metrics, manual installation |
 | [Development](https://cf.k8s.lex.la/development/) | Development setup, architecture, contributing |
 | [Reference](https://cf.k8s.lex.la/reference/) | CRD reference, Helm chart, security policy |
@@ -245,7 +241,7 @@ Planned features and improvements:
 | -- | L7 reverse proxy for full Gateway API HTTPRoute support | Done |
 | [#45](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/issues/45) | Weighted backend traffic splitting | Done |
 | [#44](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/issues/44) | Warning logs for partially ignored route configuration | Planned |
-| [#40](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/issues/40) | TCPRoute and TLSRoute support (GRPCRoute done in v0.8.0) | In Progress |
+| [#40](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/issues/40) | TCPRoute and TLSRoute support (GRPCRoute removed from the runtime in v3 — see [migration guide](https://cf.k8s.lex.la/upgrading/v2-to-v3/)) | In Progress |
 | [#33](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/issues/33) | Auto-generate artifacthub.io/changes from git history | Planned |
 | [#25](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/issues/25) | Increase unit test coverage for core packages | Ongoing |
 

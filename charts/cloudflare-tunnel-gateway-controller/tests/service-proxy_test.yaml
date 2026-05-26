@@ -3,16 +3,10 @@ templates:
   - service-proxy.yaml
   - service-proxy-headless.yaml
 tests:
-  - it: should not create services when proxy disabled
-    asserts:
-      - hasDocuments:
-          count: 0
-
-  - it: should create ClusterIP service when proxy enabled
+  - it: should create ClusterIP service
     template: service-proxy.yaml
     set:
       proxy:
-        enabled: true
         tunnelTokenSecretRef:
           name: tunnel-token-secret
     asserts:
@@ -24,11 +18,10 @@ tests:
           path: spec.type
           value: ClusterIP
 
-  - it: should create headless service when proxy enabled
+  - it: should create headless service
     template: service-proxy-headless.yaml
     set:
       proxy:
-        enabled: true
         tunnelTokenSecretRef:
           name: tunnel-token-secret
     asserts:
@@ -44,7 +37,6 @@ tests:
     template: service-proxy.yaml
     set:
       proxy:
-        enabled: true
         configAPIPort: 8081
         proxyPort: 8080
         tunnelTokenSecretRef:
@@ -69,7 +61,6 @@ tests:
     template: service-proxy-headless.yaml
     set:
       proxy:
-        enabled: true
         configAPIPort: 8081
         tunnelTokenSecretRef:
           name: tunnel-token-secret
