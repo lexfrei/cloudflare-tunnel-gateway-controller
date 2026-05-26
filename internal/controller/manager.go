@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"strings"
 
 	"github.com/cockroachdb/errors"
 	"github.com/go-logr/logr"
@@ -79,6 +80,7 @@ func Run(ctx context.Context, cfg *Config) error {
 
 	// In v3 the L7 proxy is the only data plane; without endpoints to push to,
 	// the controller would silently no-op all HTTPRoutes. Fail loudly instead.
+	cfg.ProxyEndpoints = sanitiseProxyEndpoints(cfg.ProxyEndpoints)
 	if len(cfg.ProxyEndpoints) == 0 {
 		return errors.New("--proxy-endpoints is required: v3 controller cannot run without a configured L7 proxy data plane")
 	}
@@ -237,6 +239,22 @@ func initProxySyncer(
 		k8sClient,
 		baseLogger,
 	)
+}
+
+// sanitiseProxyEndpoints trims whitespace from every endpoint and drops
+// empty entries. Callers pass the result through a `len(...) == 0` check
+// to reject malformed `--proxy-endpoints=` / `--proxy-endpoints=,` shapes
+// that would otherwise survive a raw len() guard.
+func sanitiseProxyEndpoints(endpoints []string) []string {
+	out := make([]string, 0, len(endpoints))
+
+	for _, ep := range endpoints {
+		if trimmed := strings.TrimSpace(ep); trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+
+	return out
 }
 
 // getControllerNamespace returns the namespace where the controller is running.

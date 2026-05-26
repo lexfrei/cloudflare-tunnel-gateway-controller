@@ -285,6 +285,87 @@ func TestGatewayReconciler_StripsLegacyFinalizerOnDelete_NoGatewayClass(t *testi
 	}
 }
 
+// TestGatewayReconciler_DoesNotStripLegacyFinalizerFromLiveGateway pins
+// the migration guide's "legacy finalizer sits harmlessly until delete"
+// promise. The strip path is gated on DeletionTimestamp != nil; this
+// test ensures a future refactor that drops the gate fires a red test
+// instead of silently changing the v2 -> v3 upgrade semantics.
+func TestGatewayReconciler_DoesNotStripLegacyFinalizerFromLiveGateway(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+
+	originalResourceVersion := "7"
+	gateway := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:            "live-gateway",
+			Namespace:       "default",
+			ResourceVersion: originalResourceVersion,
+			Finalizers: []string{
+				"cloudflare-tunnel.gateway.networking.k8s.io/cloudflared",
+			},
+		},
+		Spec: gatewayv1.GatewaySpec{
+			GatewayClassName: "cloudflare-tunnel",
+		},
+	}
+
+	gatewayClass := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "cloudflare-tunnel"},
+		Spec: gatewayv1.GatewayClassSpec{
+			ControllerName: "test-controller",
+			ParametersRef: &gatewayv1.ParametersReference{
+				Group: config.ParametersRefGroup,
+				Kind:  config.ParametersRefKind,
+				Name:  "test-config",
+			},
+		},
+	}
+
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "cf-credentials", Namespace: "default"},
+		Data:       map[string][]byte{"api-token": []byte("test")},
+	}
+
+	gatewayClassConfig := &v1alpha1.GatewayClassConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-config"},
+		Spec: v1alpha1.GatewayClassConfigSpec{
+			CloudflareCredentialsSecretRef: v1alpha1.SecretReference{
+				Name:      "cf-credentials",
+				Namespace: "default",
+			},
+			TunnelID: "12345678-1234-1234-1234-123456789abc",
+		},
+	}
+
+	fakeClient := setupGatewayFakeClient(gateway, gatewayClass, secret, gatewayClassConfig)
+
+	reconciler := &GatewayReconciler{
+		Client:         fakeClient,
+		Scheme:         fakeClient.Scheme(),
+		ControllerName: "test-controller",
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+	}
+
+	_, err := reconciler.Reconcile(ctx, ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "live-gateway", Namespace: "default"},
+	})
+	require.NoError(t, err)
+
+	var updated gatewayv1.Gateway
+
+	err = fakeClient.Get(ctx, types.NamespacedName{Name: "live-gateway", Namespace: "default"}, &updated)
+	require.NoError(t, err)
+
+	// Live Gateway: legacy finalizer must NOT be stripped (migration guide
+	// promise). The Gateway is reconciled normally (status update bumps
+	// ResourceVersion via the Status subresource), so the strip path is
+	// proven dormant by the finalizer remaining intact, not by RV stability.
+	assert.Contains(t, updated.Finalizers,
+		"cloudflare-tunnel.gateway.networking.k8s.io/cloudflared",
+		"legacy finalizer must stay on live Gateways; strip fires only on delete")
+}
+
 // TestGatewayReconciler_DeleteWithoutLegacyFinalizer_NoOp pins the
 // surgical nature of the strip: a Gateway that already has the legacy
 // finalizer removed (or never had it -- v3-created Gateway under

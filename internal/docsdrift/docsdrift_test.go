@@ -176,6 +176,12 @@ var allowedFiles = map[string]map[string]bool{
 	"charts/cloudflare-tunnel-gateway-controller/README.md.gotmpl": {
 		"proxy.enabled": true,
 	},
+	// limitations.md walks operators through the GRPCRoute regression and
+	// must reference the v2 default mode (`proxy.enabled: false`) by name
+	// so they recognise their setup.
+	"docs/gateway-api/limitations.md": {
+		"proxy.enabled": true,
+	},
 	"internal/docsdrift/docsdrift_test.go": {
 		"Helm SDK":                                true,
 		"manage-cloudflared":                      true,

@@ -166,7 +166,7 @@ Pushes routing config to the L7 proxy pods over HTTP:
 - **Conversion**: Translates HTTPRoute specs into the proxy's wire-format config via `internal/proxy/converter.go`.
 - **Auth**: When `proxy.authTokenSecretRef.name` is set, attaches the Bearer token to every push so unauthenticated clients cannot reprogram the proxy.
 
-GRPCRoutes are NOT pushed — gRPC traffic is routed by Cloudflare Tunnel's native ingress, the proxy converter does not yet support gRPC-specific routing semantics.
+GRPCRoutes are NOT pushed — the proxy converter does not yet support gRPC-specific routing semantics. v3's `OverrideProxy` hook intercepts ALL tunnel traffic, so gRPC requests reach the proxy without a matching route and return `404`. The Cloudflare-side ingress rules built by `internal/ingress/grpc_builder` exist only so the Cloudflare dashboard shows the expected hostname → service mapping — they are not consulted at runtime. See [GRPCRoute limitations](../gateway-api/limitations.md#grpcroute-is-not-supported-in-v3).
 
 ## Data Flow
 

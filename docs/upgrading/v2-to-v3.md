@@ -11,6 +11,16 @@ v3 collapses the two data plane modes that the v1/v2 chart supported (a separate
 
 ## Migration steps
 
+0. **Apply the v3 CRD BEFORE `helm upgrade`.** Helm 3's `crds/` directory installs CRDs only on the first `helm install`; `helm upgrade` deliberately never touches them. Without this step the v2 CRD's CEL validation (`tunnelTokenSecretRef is required when cloudflared.enabled is true`) fails the v3 template's stripped GatewayClassConfig, and the upgrade aborts with a confusing `admission webhook denied the request` error.
+
+    ```bash
+    # Apply the v3 CRD shipped with this release (replace <tag> with the v3.x.y
+    # version you're upgrading to).
+    kubectl apply --filename https://raw.githubusercontent.com/lexfrei/cloudflare-tunnel-gateway-controller/<tag>/charts/cloudflare-tunnel-gateway-controller/crds/cf.k8s.lex.la_gatewayclassconfigs.yaml
+    ```
+
+    The v3 CRD drops the CEL rule that mentioned `cloudflared.enabled` and `tunnelTokenSecretRef`; the rendered v3 `GatewayClassConfig` then validates cleanly.
+
 1. **Replace `gatewayClassConfig.cloudflared.*` and `gatewayClassConfig.tunnelTokenSecretRef` with proxy-side equivalents.** Move the tunnel token Secret reference from the CRD into the chart values:
 
     ```yaml
@@ -54,6 +64,10 @@ v3 collapses the two data plane modes that the v1/v2 chart supported (a separate
 5. **No data migration is required for CRs.** The Kubernetes API server prunes unknown fields when you apply the new CRD schema (the v3 CRD does not set `x-kubernetes-preserve-unknown-fields: true`, so apiextensions/v1's default pruning applies), so existing GatewayClassConfig resources continue to work — the removed `cloudflared` and `tunnelTokenSecretRef` fields are silently dropped on next read/write.
 
 6. **Legacy finalizer cleanup is automatic on delete.** The v2 controller attached a `cloudflare-tunnel.gateway.networking.k8s.io/cloudflared` finalizer to every Gateway it reconciled. The v3 controller does not strip the finalizer from live Gateways — it sits there harmlessly until the Gateway is actually deleted, at which point the deletion path removes it on the first reconcile and the Gateway proceeds with normal termination. If you want to clean it up proactively without deleting the Gateway, `kubectl patch gateway <name> -n <ns> --type=json -p='[{"op":"remove","path":"/metadata/finalizers/INDEX_OF_FINALIZER"}]'` works.
+
+## GRPCRoute is not supported in v3
+
+v2 (default) routed gRPC traffic via cloudflared's native ingress. v3 collapses everything to the L7 proxy, which has no gRPC matcher yet — gRPC requests get `404 no matching route`. If you have any `GRPCRoute` resources today, migrate them to `HTTPRoute` before upgrading, or stay on v2.x until the proxy converter learns gRPC. See [limitations](../gateway-api/limitations.md#grpcroute-is-not-supported-in-v3).
 
 ## AmneziaWG sidecar is gone
 

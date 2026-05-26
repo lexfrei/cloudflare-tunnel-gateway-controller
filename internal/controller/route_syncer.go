@@ -190,9 +190,12 @@ func syncAndUpdateStatusCommon(ctx context.Context, params syncUpdateParams) (ct
 	// Push config to the L7 proxy replicas (best-effort, non-blocking).
 	// Only HTTPRoutes are pushed — the proxy converter does not yet support
 	// gRPC-specific routing semantics. GRPCRoute traffic still flows through
-	// the proxy's OverrideProxy hook, but the routing rules come from the
-	// Cloudflare-side tunnel ingress config that the controller pushes
-	// alongside (see internal/ingress).
+	// the proxy's OverrideProxy hook (which intercepts ALL tunnel traffic in
+	// v3) but has no matching route in the proxy's router, so it returns
+	// 404. The Cloudflare-side tunnel ingress rules built by
+	// internal/ingress/grpc_builder are not consulted at runtime in v3 —
+	// they only populate the Cloudflare dashboard's edge-routing view.
+	// See docs/gateway-api/limitations.md#grpcroute-is-not-supported-in-v3.
 	// pushProxy is false for GRPCRoute reconciler to avoid redundant pushes.
 	if params.pushProxy && params.proxySyncer != nil && len(params.proxyEndpoints) > 0 && syncResult != nil {
 		routes := httpRoutePtrs(syncResult.HTTPRoutes)

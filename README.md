@@ -167,18 +167,7 @@ All matching and filter behavior is performed by the in-process L7 proxy that th
 | `spec.rules[].backendRefs[].namespace` | ✅ | Cross-namespace refs require ReferenceGrant |
 | `spec.rules[].backendRefs[].weight` | ✅ | True weighted traffic splitting across backends |
 
-**GRPCRoute:**
-
-| Field | Supported | Notes |
-|-------|-----------|-------|
-| `spec.hostnames` | ✅ | Wildcard `*` supported |
-| `spec.rules[].matches[].method.service` | ✅ | Maps to `/Service/*` path |
-| `spec.rules[].matches[].method.method` | ✅ | Maps to `/Service/Method` path |
-| `spec.rules[].matches[].headers` | ✅ | Exact and RegularExpression |
-| `spec.rules[].filters` | ✅ | Header modifier |
-| `spec.rules[].backendRefs` | ✅ | Service name, namespace, port |
-| `spec.rules[].backendRefs[].namespace` | ✅ | Cross-namespace refs require ReferenceGrant |
-| `spec.rules[].backendRefs[].weight` | ✅ | True weighted traffic splitting across backends |
+**GRPCRoute:** ⚠️ **Not supported in v3** — see [GRPCRoute limitations](https://cf.k8s.lex.la/gateway-api/limitations/#grpcroute-is-not-supported-in-v3). v3's L7 proxy data plane has no gRPC matcher yet; requests return `404`. Use HTTPRoute as a workaround, or stay on the v2.x chart line.
 
 > **Load Balancing:** All traffic flows through the in-process L7 proxy, so full weighted traffic splitting between multiple backends is supported end-to-end. See [Limitations](https://cf.k8s.lex.la/gateway-api/limitations/#traffic-splitting-and-load-balancing) for the edge-side caveats that still apply.
 

@@ -47,6 +47,55 @@ func TestRun_RequiresProxyEndpoints_EmptySlice(t *testing.T) {
 	assert.Contains(t, err.Error(), "--proxy-endpoints is required")
 }
 
+// TestRun_RequiresProxyEndpoints_BlanksOnly covers --proxy-endpoints=""
+// and --proxy-endpoints=, shapes that produce slices like []string{""}
+// or []string{"", ""} that would otherwise survive a raw len() guard
+// but contain no real targets. The sanitise step must drop them.
+func TestRun_RequiresProxyEndpoints_BlanksOnly(t *testing.T) {
+	t.Parallel()
+
+	for _, input := range [][]string{
+		{""},
+		{"", ""},
+		{"   "},
+		{"", " ", "\t"},
+	} {
+		err := Run(context.Background(), &Config{
+			ControllerName: "test-controller",
+			ProxyEndpoints: input,
+		})
+
+		require.Error(t, err, "input %v should be rejected", input)
+		assert.Contains(t, err.Error(), "--proxy-endpoints is required",
+			"input %v: %v", input, err)
+	}
+}
+
+func TestSanitiseProxyEndpoints(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		in   []string
+		want []string
+	}{
+		{"nil", nil, []string{}},
+		{"empty", []string{}, []string{}},
+		{"single blank", []string{""}, []string{}},
+		{"multiple blanks", []string{"", "  ", "\t"}, []string{}},
+		{"single valid", []string{"http://proxy:8081/config"}, []string{"http://proxy:8081/config"}},
+		{"trimmed", []string{"  http://proxy:8081/config  "}, []string{"http://proxy:8081/config"}},
+		{"mixed", []string{"http://p1:8081", "", "http://p2:8081", "   "}, []string{"http://p1:8081", "http://p2:8081"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.want, sanitiseProxyEndpoints(tt.in))
+		})
+	}
+}
+
 func TestGetControllerNamespace(t *testing.T) {
 	// Cannot use t.Parallel() because t.Setenv() requires sequential execution.
 	tests := []struct {
