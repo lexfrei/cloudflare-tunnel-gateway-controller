@@ -132,7 +132,7 @@ spec:
 | `Accepted` | `False` | `NotAllowed` | Gateway's `spec.allowedListeners` rejects this ListenerSet |
 | `Accepted` | `False` | `ListenersNotValid` | All entries are conflict-marked or have unresolved refs |
 | `Programmed` | `True` | `Programmed` | Attached and programmed against the parent Gateway |
-| `Programmed` | `False` | matches the `Accepted` reason | Not attached |
+| `Programmed` | `False` | `ListenersNotValid` / `NotAllowed` / `Pending` | Mirrors the `Accepted` reason when not programmed |
 
 ### Per-entry conditions (`status.listeners[]`)
 

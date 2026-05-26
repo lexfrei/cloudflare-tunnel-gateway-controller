@@ -370,12 +370,17 @@ func incrementListenerSetAttachedRoutes(
 }
 
 // parentRefSelectsListenerSet returns true when a route parentRef targets
-// the given ListenerSet — Kind=ListenerSet and name/namespace match.
+// the given ListenerSet — Group=gateway.networking.k8s.io (or unset),
+// Kind=ListenerSet, and name/namespace match.
 func parentRefSelectsListenerSet(
 	ref gatewayv1.ParentReference,
 	routeNamespace string,
 	listenerSet *gatewayv1.ListenerSet,
 ) bool {
+	if ref.Group != nil && string(*ref.Group) != "" && string(*ref.Group) != gatewayv1.GroupName {
+		return false
+	}
+
 	if ref.Kind == nil || string(*ref.Kind) != kindListenerSet {
 		return false
 	}
@@ -664,19 +669,44 @@ func buildListenerSetRejectedEntryStatuses(
 					Reason:             rejectionReason,
 					Message:            result.Message,
 				},
-				{
-					Type:               string(gatewayv1.ListenerConditionResolvedRefs),
-					Status:             metav1.ConditionTrue,
-					ObservedGeneration: generation,
-					LastTransitionTime: now,
-					Reason:             string(gatewayv1.ListenerReasonResolvedRefs),
-					Message:            msgReferencesResolved,
-				},
+				rejectedEntryResolvedRefsCondition(generation, now, result),
 			},
 		})
 	}
 
 	return out
+}
+
+// rejectedEntryResolvedRefsCondition produces the ResolvedRefs condition for
+// per-entry status when the ListenerSet is rejected at the resource level.
+// For "Pending" (e.g. transient TLS-ref evaluation error) we MUST NOT report
+// a confident "True", because that would be a misleading signal next to an
+// aggregate that says "we don't know yet". Other resource-level rejections
+// don't depend on refs being resolved either way and report True.
+func rejectedEntryResolvedRefsCondition(
+	generation int64,
+	now metav1.Time,
+	result listenerSetAcceptanceResult,
+) metav1.Condition {
+	if result.Reason == gatewayv1.ListenerSetReasonPending {
+		return metav1.Condition{
+			Type:               string(gatewayv1.ListenerConditionResolvedRefs),
+			Status:             metav1.ConditionUnknown,
+			ObservedGeneration: generation,
+			LastTransitionTime: now,
+			Reason:             string(gatewayv1.ListenerSetReasonPending),
+			Message:            result.Message,
+		}
+	}
+
+	return metav1.Condition{
+		Type:               string(gatewayv1.ListenerConditionResolvedRefs),
+		Status:             metav1.ConditionTrue,
+		ObservedGeneration: generation,
+		LastTransitionTime: now,
+		Reason:             string(gatewayv1.ListenerReasonResolvedRefs),
+		Message:            msgReferencesResolved,
+	}
 }
 
 func listenerEntryReasonForListenerSetRejection(reason gatewayv1.ListenerSetConditionReason) string {

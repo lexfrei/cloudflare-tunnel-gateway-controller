@@ -497,23 +497,12 @@ func routeReferencesOurGateways(
 	route Route,
 ) bool {
 	for _, ref := range route.GetParentRefs() {
-		if ref.Kind != nil && *ref.Kind != kindGateway {
+		gateway, found := resolveParentGatewayFromRef(ctx, cli, ref, route.GetNamespace())
+		if !found {
 			continue
 		}
 
-		namespace := route.GetNamespace()
-		if ref.Namespace != nil {
-			namespace = string(*ref.Namespace)
-		}
-
-		var gateway gatewayv1.Gateway
-
-		err := cli.Get(ctx, client.ObjectKey{Name: string(ref.Name), Namespace: namespace}, &gateway)
-		if err != nil {
-			continue
-		}
-
-		if isGatewayManagedByController(ctx, cli, &gateway, controllerName) {
+		if isGatewayManagedByController(ctx, cli, gateway, controllerName) {
 			return true
 		}
 	}
@@ -521,9 +510,56 @@ func routeReferencesOurGateways(
 	return false
 }
 
+// resolveParentGatewayFromRef returns the Gateway selected by a route's
+// parentRef. The ref may target the Gateway directly (Kind=Gateway) or via a
+// ListenerSet (Kind=ListenerSet), in which case the ListenerSet's
+// spec.parentRef is followed to the Gateway. Returns (nil, false) when the
+// ref's Group is foreign to the Gateway API, the Kind is anything other than
+// Gateway/ListenerSet, or the named resource cannot be loaded.
+func resolveParentGatewayFromRef(
+	ctx context.Context,
+	cli client.Client,
+	ref gatewayv1.ParentReference,
+	routeNamespace string,
+) (*gatewayv1.Gateway, bool) {
+	if ref.Group != nil && string(*ref.Group) != "" && string(*ref.Group) != gatewayv1.GroupName {
+		return nil, false
+	}
+
+	kind := kindGateway
+	if ref.Kind != nil {
+		kind = string(*ref.Kind)
+	}
+
+	namespace := routeNamespace
+	if ref.Namespace != nil {
+		namespace = string(*ref.Namespace)
+	}
+
+	switch kind {
+	case kindGateway:
+		var gateway gatewayv1.Gateway
+		if err := cli.Get(ctx, client.ObjectKey{Name: string(ref.Name), Namespace: namespace}, &gateway); err != nil {
+			return nil, false
+		}
+
+		return &gateway, true
+	case kindListenerSet:
+		var listenerSet gatewayv1.ListenerSet
+		if err := cli.Get(ctx, client.ObjectKey{Name: string(ref.Name), Namespace: namespace}, &listenerSet); err != nil {
+			return nil, false
+		}
+
+		return listenerSetParentGateway(ctx, cli, &listenerSet)
+	}
+
+	return nil, false
+}
+
 // IsRouteAcceptedByGateway checks if a route has at least one accepted binding
-// to a Gateway managed by the given controllerName. This is used by both HTTPRoute
-// and GRPCRoute controllers to determine if a route should be processed.
+// to a Gateway managed by the given controllerName, either directly or via
+// an attached ListenerSet. Used by both HTTPRoute and GRPCRoute controllers
+// to decide whether a route should be processed.
 func IsRouteAcceptedByGateway(
 	ctx context.Context,
 	cli client.Client,
@@ -531,50 +567,38 @@ func IsRouteAcceptedByGateway(
 	controllerName string,
 	route Route,
 ) bool {
+	routeInfoTemplate := &routebinding.RouteInfo{
+		Name:      route.GetName(),
+		Namespace: route.GetNamespace(),
+		Hostnames: route.GetHostnames(),
+		Kind:      route.GetRouteKind(),
+	}
+
 	for _, ref := range route.GetParentRefs() {
-		if ref.Kind != nil && *ref.Kind != kindGateway {
-			continue
-		}
-
-		namespace := route.GetNamespace()
-		if ref.Namespace != nil {
-			namespace = string(*ref.Namespace)
-		}
-
-		var gateway gatewayv1.Gateway
-
-		err := cli.Get(ctx, client.ObjectKey{Name: string(ref.Name), Namespace: namespace}, &gateway)
-		if err != nil {
-			continue
-		}
-
-		if !isGatewayManagedByController(ctx, cli, &gateway, controllerName) {
-			continue
-		}
-
-		routeInfo := &routebinding.RouteInfo{
-			Name:        route.GetName(),
-			Namespace:   route.GetNamespace(),
-			Hostnames:   route.GetHostnames(),
-			Kind:        route.GetRouteKind(),
-			SectionName: ref.SectionName,
-			Port:        ref.Port,
-		}
-
-		result, err := validator.ValidateBinding(ctx, &gateway, routeInfo)
+		binding, err := resolveRouteParentBinding(ctx, cli, validator, controllerName, ref, route.GetNamespace(), withRefFilters(routeInfoTemplate, ref))
 		if err != nil {
 			logging.FromContext(ctx).Error("failed to validate route binding",
 				"route", route.GetNamespace()+"/"+route.GetName(),
-				"gateway", gateway.Name,
 				"error", err)
 
 			continue
 		}
 
-		if result.Accepted {
+		if binding.ManagedByThisController && binding.Result.Accepted {
 			return true
 		}
 	}
 
 	return false
+}
+
+// withRefFilters returns a shallow copy of the RouteInfo template with the
+// per-ref SectionName/Port filters applied. Avoids mutating the template
+// across multiple parentRefs.
+func withRefFilters(template *routebinding.RouteInfo, ref gatewayv1.ParentReference) *routebinding.RouteInfo {
+	clone := *template
+	clone.SectionName = ref.SectionName
+	clone.Port = ref.Port
+
+	return &clone
 }

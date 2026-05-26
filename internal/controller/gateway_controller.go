@@ -522,7 +522,45 @@ func (r *GatewayReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			&gatewayv1.GRPCRoute{},
 			handler.EnqueueRequestsFromMapFunc(r.routeToGateways),
 		).
+		// Watch ListenerSets so status.attachedListenerSets refreshes when a
+		// ListenerSet is created, edited, or deleted — without this the count
+		// would stay stale until an unrelated event triggered a Gateway
+		// reconcile.
+		Watches(
+			&gatewayv1.ListenerSet{},
+			handler.EnqueueRequestsFromMapFunc(r.listenerSetToGateways),
+		).
 		Complete(r)
+}
+
+// listenerSetToGateways maps a ListenerSet event to a reconcile request for
+// the Gateway it points at, when the parent is one of ours.
+func (r *GatewayReconciler) listenerSetToGateways(
+	ctx context.Context,
+	obj client.Object,
+) []reconcile.Request {
+	listenerSet, ok := obj.(*gatewayv1.ListenerSet)
+	if !ok {
+		return nil
+	}
+
+	parent, found := listenerSetParentGateway(ctx, r.Client, listenerSet)
+	if !found {
+		return nil
+	}
+
+	classNames, err := managedClassNames(ctx, r.Client, r.ControllerName)
+	if err != nil {
+		return nil
+	}
+
+	if !classNames[string(parent.Spec.GatewayClassName)] {
+		return nil
+	}
+
+	return []reconcile.Request{{
+		NamespacedName: types.NamespacedName{Name: parent.Name, Namespace: parent.Namespace},
+	}}
 }
 
 // gatewayClassToGateways maps GatewayClass events to Gateway reconcile requests.

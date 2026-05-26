@@ -73,16 +73,17 @@ func reconcileRoute[T client.Object](
 // routeControllerSetupParams holds parameters for setting up a route controller
 // with standard watches (Gateway, GatewayClassConfig, Secret, ReferenceGrant).
 type routeControllerSetupParams struct {
-	routeObject           client.Object
-	reconciler            reconcile.Reconciler
-	runnable              manager.Runnable
-	k8sClient             client.Client
-	controllerName        string
-	configResolver        *config.Resolver
-	findRoutesForGateway  handler.MapFunc
-	findRoutesForRefGrant handler.MapFunc
-	findRoutesForService  handler.MapFunc
-	getAllRelevantRoutes  RequestsFunc
+	routeObject              client.Object
+	reconciler               reconcile.Reconciler
+	runnable                 manager.Runnable
+	k8sClient                client.Client
+	controllerName           string
+	configResolver           *config.Resolver
+	findRoutesForGateway     handler.MapFunc
+	findRoutesForListenerSet handler.MapFunc
+	findRoutesForRefGrant    handler.MapFunc
+	findRoutesForService     handler.MapFunc
+	getAllRelevantRoutes     RequestsFunc
 }
 
 // setupRouteController sets up the controller-runtime builder with standard
@@ -100,6 +101,10 @@ func setupRouteController(mgr ctrl.Manager, params *routeControllerSetupParams) 
 		Watches(
 			&gatewayv1.Gateway{},
 			handler.EnqueueRequestsFromMapFunc(params.findRoutesForGateway),
+		).
+		Watches(
+			&gatewayv1.ListenerSet{},
+			handler.EnqueueRequestsFromMapFunc(params.findRoutesForListenerSet),
 		).
 		Watches(
 			&v1alpha1.GatewayClassConfig{},
