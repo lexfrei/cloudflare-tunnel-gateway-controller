@@ -41,7 +41,15 @@ func TestChartAndDeployRBAC_Match(t *testing.T) {
 
 	helmBin, helmErr := exec.LookPath("helm")
 	if helmErr != nil {
-		t.Skip("helm not on PATH; skipping chart-vs-deploy RBAC drift check")
+		// Under CI the chart-vs-deploy RBAC contract MUST be enforced; a
+		// silent skip would let the drift guard go dark on a runner
+		// refresh that drops helm from PATH. Locally helm may be
+		// genuinely unavailable -- skip is fine there.
+		if os.Getenv("CI") != "" {
+			t.Fatalf("helm is required on PATH under CI but was not found: %v", helmErr)
+		}
+
+		t.Skip("helm not on PATH; skipping chart-vs-deploy RBAC drift check (local dev)")
 	}
 
 	repoRoot := findRepoRoot(t)

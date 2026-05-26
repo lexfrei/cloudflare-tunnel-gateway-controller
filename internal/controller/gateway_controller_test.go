@@ -285,6 +285,69 @@ func TestGatewayReconciler_StripsLegacyFinalizerOnDelete_NoGatewayClass(t *testi
 	}
 }
 
+// TestGatewayReconciler_ForeignGateway_NoOp pins that a live Gateway
+// belonging to a different controller AND without the legacy finalizer
+// is left completely untouched. Combined with the other finalizer tests
+// this covers the surgical-strip matrix:
+//
+//	             | has legacy fz | no legacy fz
+//	-------------+---------------+-------------
+//	delete, ours | strip+gc      | no-op
+//	delete, foreign-class | strip (legacy fz is project-unique) | no-op
+//	live, ours   | keep fz (migration promise) | normal reconcile
+//	live, foreign-class | n/a   | no-op (this test)
+//
+// A future refactor that decides to strip eagerly on every live Gateway
+// (regardless of class) fires red here.
+func TestGatewayReconciler_ForeignGateway_NoOp(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+
+	originalResourceVersion := "11"
+	gateway := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:            "foreign-gateway",
+			Namespace:       "default",
+			ResourceVersion: originalResourceVersion,
+			Finalizers:      []string{"other.example.com/keep-me"},
+		},
+		Spec: gatewayv1.GatewaySpec{
+			GatewayClassName: "other-controller-class",
+		},
+	}
+
+	foreignClass := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "other-controller-class"},
+		Spec: gatewayv1.GatewayClassSpec{
+			ControllerName: "other-controller", // NOT us
+		},
+	}
+
+	fakeClient := setupGatewayFakeClient(gateway, foreignClass)
+
+	reconciler := &GatewayReconciler{
+		Client:         fakeClient,
+		Scheme:         fakeClient.Scheme(),
+		ControllerName: "test-controller",
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+	}
+
+	_, err := reconciler.Reconcile(ctx, ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "foreign-gateway", Namespace: "default"},
+	})
+	require.NoError(t, err)
+
+	var updated gatewayv1.Gateway
+
+	err = fakeClient.Get(ctx, types.NamespacedName{Name: "foreign-gateway", Namespace: "default"}, &updated)
+	require.NoError(t, err)
+
+	assert.Equal(t, originalResourceVersion, updated.ResourceVersion,
+		"foreign Gateway without the legacy finalizer must be left untouched")
+	assert.Equal(t, []string{"other.example.com/keep-me"}, updated.Finalizers)
+}
+
 // TestGatewayReconciler_DoesNotStripLegacyFinalizerFromLiveGateway pins
 // the migration guide's "legacy finalizer sits harmlessly until delete"
 // promise. The strip path is gated on DeletionTimestamp != nil; this

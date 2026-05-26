@@ -63,7 +63,29 @@ v3 collapses the two data plane modes that the v1/v2 chart supported (a separate
 
 5. **No data migration is required for CRs.** The Kubernetes API server prunes unknown fields when you apply the new CRD schema (the v3 CRD does not set `x-kubernetes-preserve-unknown-fields: true`, so apiextensions/v1's default pruning applies), so existing GatewayClassConfig resources continue to work — the removed `cloudflared` and `tunnelTokenSecretRef` fields are silently dropped on next read/write.
 
-6. **Legacy finalizer cleanup is automatic on delete.** The v2 controller attached a `cloudflare-tunnel.gateway.networking.k8s.io/cloudflared` finalizer to every Gateway it reconciled. The v3 controller does not strip the finalizer from live Gateways — it sits there harmlessly until the Gateway is actually deleted, at which point the deletion path removes it on the first reconcile and the Gateway proceeds with normal termination. If you want to clean it up proactively without deleting the Gateway, `kubectl patch gateway <name> -n <ns> --type=json -p='[{"op":"remove","path":"/metadata/finalizers/INDEX_OF_FINALIZER"}]'` works.
+6. **Legacy finalizer cleanup is automatic on delete.** The v2 controller attached a `cloudflare-tunnel.gateway.networking.k8s.io/cloudflared` finalizer to every Gateway it reconciled. The v3 controller does not strip the finalizer from live Gateways — it sits there harmlessly until the Gateway is actually deleted, at which point the deletion path removes it on the first reconcile and the Gateway proceeds with normal termination.
+
+    If you want to strip it proactively without deleting the Gateway, use a **conditional JSON-patch** that aborts if the finalizer is not at the expected index — never a bare indexed `remove` that can silently delete the wrong finalizer if the list is reordered between your look-up and the patch:
+
+    ```bash
+    # Inspect the current finalizer list first.
+    kubectl get gateway <name> -n <ns> -o json | jq '.metadata.finalizers'
+
+    # Replace 0 with the index returned above. The `test` op makes the
+    # patch fail loudly if the index does not still point at the legacy
+    # finalizer, so the `remove` op cannot delete the wrong entry.
+    kubectl patch gateway <name> -n <ns> --type=json -p='[
+      {"op":"test","path":"/metadata/finalizers/0","value":"cloudflare-tunnel.gateway.networking.k8s.io/cloudflared"},
+      {"op":"remove","path":"/metadata/finalizers/0"}
+    ]'
+    ```
+
+    Alternatively, when the Gateway has no other finalizers (or you want to drop them all), use a merge patch that rewrites the list without the legacy entry — caveat: this replaces the entire list, so include any other finalizers you want to preserve:
+
+    ```bash
+    kubectl patch gateway <name> -n <ns> --type=merge \
+      -p '{"metadata":{"finalizers":[]}}'
+    ```
 
 ## GRPCRoute is not supported in v3
 

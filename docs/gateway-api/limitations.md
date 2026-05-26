@@ -84,7 +84,7 @@ The controller continues to accept GRPCRoute resources and pushes a Cloudflare-s
 
 **v2 → v3 impact.** Users on v2 with `proxy.enabled: false` (the v2 default) had working GRPCRoute via cloudflared's native ingress. v3 removes that path. If you have any GRPCRoute resources today, migrate them to HTTPRoute before upgrading, or stay on the v2.x chart line until the proxy converter learns gRPC.
 
-A tracking issue and follow-up PR will land GRPCRoute support inside the proxy converter; until then this limitation is the v3 cut's known regression.
+GRPCRoute support inside the proxy converter is on the v3.x roadmap; the regression is intentional and documented rather than promised on a specific timeline.
 
 ## Controller Limitations
 
