@@ -2,6 +2,7 @@ suite: test schema validation
 templates:
   - deployment.yaml
   - gatewayclassconfig.yaml
+  - deployment-proxy.yaml
 tests:
   # Note: These tests verify that schema validation works correctly.
   # Schema validation happens BEFORE template rendering in Helm,
@@ -119,3 +120,232 @@ tests:
       - template: gatewayclassconfig.yaml
         hasDocuments:
           count: 0
+
+  # ---
+  # proxy.accessLog schema
+  # ---
+
+  - it: should accept valid proxy.accessLog samplingRate (number in [0,1])
+    set:
+      proxy:
+        enabled: true
+        tunnelTokenSecretRef:
+          name: tunnel-token
+        accessLog:
+          enabled: true
+          samplingRate: 0.5
+          stripQuery: true
+    asserts:
+      - template: deployment-proxy.yaml
+        contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: PROXY_ACCESS_LOG_ENABLED
+            value: "true"
+
+  - it: should reject string samplingRate (must be number)
+    set:
+      proxy:
+        enabled: true
+        tunnelTokenSecretRef:
+          name: tunnel-token
+        accessLog:
+          samplingRate: "halfish"
+    asserts:
+      - failedTemplate:
+          errorPattern: samplingRate
+
+  - it: should reject samplingRate above 1
+    set:
+      proxy:
+        enabled: true
+        tunnelTokenSecretRef:
+          name: tunnel-token
+        accessLog:
+          samplingRate: 50
+    asserts:
+      - failedTemplate:
+          errorPattern: samplingRate
+
+  - it: should reject negative samplingRate
+    set:
+      proxy:
+        enabled: true
+        tunnelTokenSecretRef:
+          name: tunnel-token
+        accessLog:
+          samplingRate: -0.1
+    asserts:
+      - failedTemplate:
+          errorPattern: samplingRate
+
+  - it: should reject non-boolean stripQuery
+    set:
+      proxy:
+        enabled: true
+        tunnelTokenSecretRef:
+          name: tunnel-token
+        accessLog:
+          stripQuery: "yes-please"
+    asserts:
+      - failedTemplate:
+          errorPattern: stripQuery
+
+  # ---
+  # proxy.websocket schema
+  # ---
+
+  - it: should accept valid Go duration websocket.dialTimeout
+    set:
+      proxy:
+        enabled: true
+        tunnelTokenSecretRef:
+          name: tunnel-token
+        websocket:
+          dialTimeout: 10s
+          handshakeTimeout: 1m
+    asserts:
+      - template: deployment-proxy.yaml
+        contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: PROXY_WS_DIAL_TIMEOUT
+            value: "10s"
+
+  - it: should accept empty websocket.dialTimeout (chart default)
+    set:
+      proxy:
+        enabled: true
+        tunnelTokenSecretRef:
+          name: tunnel-token
+        websocket:
+          dialTimeout: ""
+    asserts:
+      - template: deployment-proxy.yaml
+        notContains:
+          path: spec.template.spec.containers[0].env
+          any: true
+          content:
+            name: PROXY_WS_DIAL_TIMEOUT
+
+  - it: should accept compound Go-duration websocket.dialTimeout (1h30m form)
+    # time.ParseDuration accepts concatenated units; the schema must
+    # match that so an operator widening "1m" to "1m30s" doesn't trip
+    # helm lint while the proxy runtime would have accepted it.
+    set:
+      proxy:
+        enabled: true
+        tunnelTokenSecretRef:
+          name: tunnel-token
+        websocket:
+          dialTimeout: "1h30m"
+          handshakeTimeout: "2m30s"
+    asserts:
+      - template: deployment-proxy.yaml
+        contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: PROXY_WS_DIAL_TIMEOUT
+            value: "1h30m"
+      - template: deployment-proxy.yaml
+        contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: PROXY_WS_HANDSHAKE_TIMEOUT
+            value: "2m30s"
+
+  - it: should accept three-component compound Go-duration (2h45m30s form)
+    set:
+      proxy:
+        enabled: true
+        tunnelTokenSecretRef:
+          name: tunnel-token
+        websocket:
+          dialTimeout: "2h45m30s"
+    asserts:
+      - template: deployment-proxy.yaml
+        contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: PROXY_WS_DIAL_TIMEOUT
+            value: "2h45m30s"
+
+  - it: should reject negative websocket.dialTimeout
+    # time.ParseDuration accepts "-5s" but the proxy's downstream
+    # > 0 gate drops negative values silently; schema rejection
+    # flags the typo at chart-time. Pin the rejection so a future
+    # regex loosening doesn't quietly re-introduce the silent-drop.
+    set:
+      proxy:
+        enabled: true
+        tunnelTokenSecretRef:
+          name: tunnel-token
+        websocket:
+          dialTimeout: "-5s"
+    asserts:
+      - failedTemplate:
+          errorPattern: dialTimeout
+
+  - it: should reject bare numeric websocket.dialTimeout (no unit suffix)
+    # Without a unit the value is meaningless. time.ParseDuration
+    # only accepts "0" as a no-unit value; the schema requires a
+    # unit suffix on every numeric value (including "0s") so a
+    # bare "0" / "60" typo is caught at chart-time.
+    set:
+      proxy:
+        enabled: true
+        tunnelTokenSecretRef:
+          name: tunnel-token
+        websocket:
+          dialTimeout: "0"
+    asserts:
+      - failedTemplate:
+          errorPattern: dialTimeout
+
+  - it: should reject malformed websocket.dialTimeout (not a Go duration)
+    set:
+      proxy:
+        enabled: true
+        tunnelTokenSecretRef:
+          name: tunnel-token
+        websocket:
+          dialTimeout: "10seconds"
+    asserts:
+      - failedTemplate:
+          errorPattern: dialTimeout
+
+  # ---
+  # proxy.authTokenSecretRef schema
+  # ---
+
+  - it: should accept valid authTokenSecretRef
+    set:
+      proxy:
+        enabled: true
+        tunnelTokenSecretRef:
+          name: tunnel-token
+        authTokenSecretRef:
+          name: proxy-auth
+          key: token
+    asserts:
+      - template: deployment-proxy.yaml
+        contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: PROXY_AUTH_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: proxy-auth
+                key: token
+
+  - it: should reject non-string authTokenSecretRef.name
+    set:
+      proxy:
+        enabled: true
+        tunnelTokenSecretRef:
+          name: tunnel-token
+        authTokenSecretRef:
+          name: 42
+    asserts:
+      - failedTemplate:
+          errorPattern: authTokenSecretRef
