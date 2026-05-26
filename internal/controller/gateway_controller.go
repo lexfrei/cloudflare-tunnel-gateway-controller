@@ -110,24 +110,17 @@ func (r *GatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 
 	logger.Info("reconciling gateway", "name", gateway.Name, "namespace", gateway.Namespace)
 
-	// Resolve configuration from the Gateway's GatewayClass
-	resolvedConfig, err := r.ConfigResolver.ResolveFromGatewayClassName(ctx, string(gateway.Spec.GatewayClassName))
-	if err != nil {
-		logger.Error(err, "failed to resolve config from GatewayClassConfig")
-		// Update Gateway status to reflect config error and requeue for retry
-		if statusErr := r.setConfigErrorStatus(ctx, &gateway, err); statusErr != nil {
-			logger.Error(statusErr, "failed to update gateway status")
-		}
-
-		return ctrl.Result{RequeueAfter: configErrorRequeueDelay, Priority: new(priorityGateway)}, nil
-	}
-
+	// Deletion path runs BEFORE config resolution. The legacy-finalizer strip
+	// must succeed even when the GatewayClassConfig or the credentials Secret
+	// is already gone (typical v2 -> v3 cleanup ordering: operator removes the
+	// stale config first, then drains Gateways). With config resolution above
+	// this branch, a delete + missing-config combination would leave the
+	// Gateway stuck in Terminating forever -- exactly the failure mode the
+	// strip was added to prevent.
 	if !gateway.DeletionTimestamp.IsZero() {
 		// v3 never adds a finalizer (proxy lifecycle is managed by the Helm
 		// chart, not per-Gateway), but Gateways created under v2 still carry
-		// the legacy cloudflared finalizer. Strip it once on first reconcile
-		// after the upgrade, otherwise the Gateway hangs in Terminating
-		// forever.
+		// the legacy cloudflared finalizer.
 		if controllerutil.ContainsFinalizer(&gateway, legacyCloudflaredFinalizer) {
 			controllerutil.RemoveFinalizer(&gateway, legacyCloudflaredFinalizer)
 
@@ -137,6 +130,20 @@ func (r *GatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		}
 
 		return ctrl.Result{}, nil
+	}
+
+	// Resolve configuration from the Gateway's GatewayClass.
+	// Only the live path needs the resolved config (status address comes from
+	// the resolved tunnel ID); the deletion path above handles itself.
+	resolvedConfig, err := r.ConfigResolver.ResolveFromGatewayClassName(ctx, string(gateway.Spec.GatewayClassName))
+	if err != nil {
+		logger.Error(err, "failed to resolve config from GatewayClassConfig")
+		// Update Gateway status to reflect config error and requeue for retry
+		if statusErr := r.setConfigErrorStatus(ctx, &gateway, err); statusErr != nil {
+			logger.Error(statusErr, "failed to update gateway status")
+		}
+
+		return ctrl.Result{RequeueAfter: configErrorRequeueDelay, Priority: new(priorityGateway)}, nil
 	}
 
 	if err := r.updateStatus(ctx, &gateway, resolvedConfig); err != nil {

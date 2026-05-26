@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -152,6 +153,80 @@ func TestGatewayReconciler_StripsLegacyFinalizerOnDelete(t *testing.T) {
 	assert.NotContains(t, updated.Finalizers,
 		"cloudflare-tunnel.gateway.networking.k8s.io/cloudflared")
 	assert.Contains(t, updated.Finalizers, "other.example.com/keep-me")
+}
+
+// TestGatewayReconciler_StripsLegacyFinalizerOnDelete_NoConfig pins the
+// v2 -> v3 upgrade scenario where the operator has already removed the
+// GatewayClassConfig (typical cleanup order: drop the stale CRD/credentials
+// after switching the chart, then drain Gateways). The deletion path must
+// strip the legacy finalizer even when config resolution fails -- otherwise
+// the Gateway hangs in Terminating forever and the migration guide's
+// "automatic on delete" promise is broken.
+func TestGatewayReconciler_StripsLegacyFinalizerOnDelete_NoConfig(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+
+	now := metav1.Now()
+	gateway := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "stuck-gateway",
+			Namespace:         "default",
+			DeletionTimestamp: &now,
+			Finalizers: []string{
+				"cloudflare-tunnel.gateway.networking.k8s.io/cloudflared",
+			},
+		},
+		Spec: gatewayv1.GatewaySpec{
+			GatewayClassName: "cloudflare-tunnel",
+		},
+	}
+
+	// GatewayClass references a parametersRef that does NOT resolve
+	// (no GatewayClassConfig in the cluster). With the bug, Reconcile
+	// hits setConfigErrorStatus + requeue without ever reaching the
+	// finalizer-strip branch, and the Gateway remains stuck.
+	gatewayClass := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "cloudflare-tunnel"},
+		Spec: gatewayv1.GatewayClassSpec{
+			ControllerName: "test-controller",
+			ParametersRef: &gatewayv1.ParametersReference{
+				Group: config.ParametersRefGroup,
+				Kind:  config.ParametersRefKind,
+				Name:  "missing-config",
+			},
+		},
+	}
+
+	fakeClient := setupGatewayFakeClient(gateway, gatewayClass)
+
+	reconciler := &GatewayReconciler{
+		Client:         fakeClient,
+		Scheme:         fakeClient.Scheme(),
+		ControllerName: "test-controller",
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+	}
+
+	_, err := reconciler.Reconcile(ctx, ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "stuck-gateway", Namespace: "default"},
+	})
+	require.NoError(t, err)
+
+	// Once the last finalizer is removed on a Gateway with DeletionTimestamp,
+	// Kubernetes garbage-collects the object. So the success criterion is
+	// either "Gateway is gone" or "Gateway exists without the legacy
+	// finalizer" -- both prove the strip path fired.
+	var updated gatewayv1.Gateway
+
+	getErr := fakeClient.Get(ctx, types.NamespacedName{Name: "stuck-gateway", Namespace: "default"}, &updated)
+	if getErr == nil {
+		assert.NotContains(t, updated.Finalizers,
+			"cloudflare-tunnel.gateway.networking.k8s.io/cloudflared",
+			"legacy finalizer must be stripped even when GatewayClassConfig is missing")
+	} else {
+		assert.True(t, apierrors.IsNotFound(getErr),
+			"Gateway either gone (GC after final finalizer removal) or accessible without legacy finalizer; got error: %v", getErr)
+	}
 }
 
 // TestGatewayReconciler_DeleteWithoutLegacyFinalizer_NoOp pins the

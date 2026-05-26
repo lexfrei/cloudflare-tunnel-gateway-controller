@@ -3,19 +3,12 @@ templates:
   - networkpolicy.yaml
 tests:
   - it: should not create NetworkPolicy by default
-    set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
     asserts:
       - hasDocuments:
           count: 0
 
   - it: should create NetworkPolicy when enabled
     set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
       networkPolicy:
         enabled: true
     asserts:
@@ -29,9 +22,6 @@ tests:
 
   - it: should have correct labels
     set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
       networkPolicy:
         enabled: true
     asserts:
@@ -44,9 +34,6 @@ tests:
 
   - it: should select correct pods
     set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
       networkPolicy:
         enabled: true
     asserts:
@@ -59,9 +46,6 @@ tests:
 
   - it: should have both Ingress and Egress policy types
     set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
       networkPolicy:
         enabled: true
     asserts:
@@ -74,9 +58,6 @@ tests:
 
   - it: should allow ingress on metrics port
     set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
       networkPolicy:
         enabled: true
       service:
@@ -90,9 +71,6 @@ tests:
 
   - it: should allow ingress on health port
     set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
       networkPolicy:
         enabled: true
       service:
@@ -106,9 +84,6 @@ tests:
 
   - it: should allow ingress on custom ports
     set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
       networkPolicy:
         enabled: true
       service:
@@ -128,9 +103,6 @@ tests:
 
   - it: should allow DNS egress UDP
     set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
       networkPolicy:
         enabled: true
     asserts:
@@ -142,9 +114,6 @@ tests:
 
   - it: should allow DNS egress TCP
     set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
       networkPolicy:
         enabled: true
     asserts:
@@ -156,9 +125,6 @@ tests:
 
   - it: should allow Kubernetes API egress
     set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
       networkPolicy:
         enabled: true
     asserts:
@@ -175,9 +141,6 @@ tests:
 
   - it: should allow Cloudflare API egress to specific IP ranges only
     set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
       networkPolicy:
         enabled: true
     asserts:
@@ -212,9 +175,6 @@ tests:
 
   - it: should NOT allow 0.0.0.0/0 egress (security hardening)
     set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
       networkPolicy:
         enabled: true
     asserts:
@@ -226,9 +186,6 @@ tests:
 
   - it: should not have ingress from selector by default
     set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
       networkPolicy:
         enabled: true
     asserts:
@@ -237,9 +194,6 @@ tests:
 
   - it: should allow ingress from specific namespace
     set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
       networkPolicy:
         enabled: true
         ingress:
@@ -257,9 +211,6 @@ tests:
 
   - it: should allow ingress from specific pods
     set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
       networkPolicy:
         enabled: true
         ingress:
@@ -277,9 +228,6 @@ tests:
 
   - it: should allow ingress from multiple sources
     set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
       networkPolicy:
         enabled: true
         ingress:

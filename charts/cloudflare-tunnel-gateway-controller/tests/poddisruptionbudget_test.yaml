@@ -3,10 +3,6 @@ templates:
   - poddisruptionbudget.yaml
 tests:
   - it: should not create PDB by default
-    set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
     asserts:
       - template: poddisruptionbudget.yaml
         hasDocuments:
@@ -14,9 +10,6 @@ tests:
 
   - it: should create PDB when enabled
     set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
       podDisruptionBudget:
         enabled: true
     asserts:
@@ -30,9 +23,6 @@ tests:
 
   - it: should set minAvailable when specified
     set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
       podDisruptionBudget:
         enabled: true
         minAvailable: 2
@@ -47,9 +37,6 @@ tests:
 
   - it: should set maxUnavailable when specified
     set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
       podDisruptionBudget:
         enabled: true
         minAvailable: null
@@ -65,9 +52,6 @@ tests:
 
   - it: should support percentage values for minAvailable
     set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
       podDisruptionBudget:
         enabled: true
         minAvailable: "50%"
@@ -79,9 +63,6 @@ tests:
 
   - it: should support percentage values for maxUnavailable
     set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
       podDisruptionBudget:
         enabled: true
         minAvailable: null
@@ -94,9 +75,6 @@ tests:
 
   - it: should set unhealthyPodEvictionPolicy when specified
     set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
       podDisruptionBudget:
         enabled: true
         unhealthyPodEvictionPolicy: "AlwaysAllow"
@@ -108,9 +86,6 @@ tests:
 
   - it: should not set unhealthyPodEvictionPolicy when null
     set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
       podDisruptionBudget:
         enabled: true
         unhealthyPodEvictionPolicy: null
@@ -121,9 +96,6 @@ tests:
 
   - it: should have correct selector labels
     set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
       podDisruptionBudget:
         enabled: true
     asserts:
@@ -138,9 +110,6 @@ tests:
 
   - it: should have correct labels
     set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
       podDisruptionBudget:
         enabled: true
     asserts:
@@ -158,9 +127,6 @@ tests:
 
   - it: should work with fullnameOverride
     set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
       fullnameOverride: "my-custom-pdb"
       podDisruptionBudget:
         enabled: true
@@ -172,9 +138,6 @@ tests:
 
   - it: should work with nameOverride
     set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
       nameOverride: "cf-ctrl"
       podDisruptionBudget:
         enabled: true

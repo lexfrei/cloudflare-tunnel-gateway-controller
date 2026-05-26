@@ -3,10 +3,6 @@ templates:
   - service.yaml
 tests:
   - it: should create a service
-    set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
     asserts:
       - template: service.yaml
         isKind:
@@ -17,10 +13,6 @@ tests:
           value: RELEASE-NAME-cloudflare-tunnel-gateway-controller
 
   - it: should use ClusterIP type by default
-    set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
     asserts:
       - template: service.yaml
         equal:
@@ -28,10 +20,6 @@ tests:
           value: ClusterIP
 
   - it: should expose metrics and health ports
-    set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
     asserts:
       - template: service.yaml
         contains:
@@ -52,9 +40,6 @@ tests:
 
   - it: should use custom ports when specified
     set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
       service:
         metricsPort: 9090
         healthPort: 9091
@@ -77,10 +62,6 @@ tests:
             protocol: TCP
 
   - it: should have correct labels
-    set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
     asserts:
       - template: service.yaml
         equal:
@@ -92,10 +73,6 @@ tests:
           value: RELEASE-NAME
 
   - it: should select correct pods
-    set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
     asserts:
       - template: service.yaml
         equal:
@@ -108,9 +85,6 @@ tests:
 
   - it: should use NodePort type when specified
     set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
       service:
         type: NodePort
     asserts:
@@ -121,9 +95,6 @@ tests:
 
   - it: should use LoadBalancer type when specified
     set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
       service:
         type: LoadBalancer
     asserts:
@@ -134,9 +105,6 @@ tests:
 
   - it: should work with fullnameOverride
     set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
       fullnameOverride: "custom-service"
     asserts:
       - template: service.yaml
@@ -146,9 +114,6 @@ tests:
 
   - it: should work with nameOverride
     set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
       nameOverride: "short-name"
     asserts:
       - template: service.yaml
@@ -157,10 +122,6 @@ tests:
           value: RELEASE-NAME-short-name
 
   - it: should not have annotations by default
-    set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
     asserts:
       - template: service.yaml
         notExists:
@@ -168,9 +129,6 @@ tests:
 
   - it: should add annotations when specified
     set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
       service:
         annotations:
           prometheus.io/scrape: "true"

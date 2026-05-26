@@ -5,10 +5,6 @@ templates:
   - clusterrolebinding.yaml
 tests:
   - it: should create a service account
-    set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
     asserts:
       - template: serviceaccount.yaml
         isKind:
@@ -19,10 +15,6 @@ tests:
           value: RELEASE-NAME-cloudflare-tunnel-gateway-controller
 
   - it: should create a cluster role
-    set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
     asserts:
       - template: clusterrole.yaml
         isKind:
@@ -33,10 +25,6 @@ tests:
           value: RELEASE-NAME-cloudflare-tunnel-gateway-controller
 
   - it: should have read-only permissions for GatewayClasses and HTTPRoutes
-    set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
     asserts:
       - template: clusterrole.yaml
         contains:
@@ -54,10 +42,6 @@ tests:
             verbs: ["get", "list", "watch"]
 
   - it: should have read-only permissions for GRPCRoutes and ReferenceGrants
-    set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
     asserts:
       - template: clusterrole.yaml
         contains:
@@ -75,10 +59,6 @@ tests:
             verbs: ["get", "list", "watch"]
 
   - it: should have read-only permissions for BackendTLSPolicy
-    set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
     asserts:
       - template: clusterrole.yaml
         contains:
@@ -94,10 +74,6 @@ tests:
       # a single-verb negative check can never trigger on a mixed-verb rule).
 
   - it: should have write permissions for Gateways (for finalizers)
-    set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
     asserts:
       - template: clusterrole.yaml
         contains:
@@ -108,10 +84,6 @@ tests:
             verbs: ["get", "list", "watch", "update", "patch"]
 
   - it: should NOT have write permissions for HTTPRoutes specs
-    set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
     asserts:
       - template: clusterrole.yaml
         notContains:
@@ -122,10 +94,6 @@ tests:
             verbs: ["get", "list", "watch", "update", "patch"]
 
   - it: should have write permissions only for status subresources
-    set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
     asserts:
       - template: clusterrole.yaml
         contains:
@@ -195,10 +163,6 @@ tests:
             verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 
   - it: should have permissions for GatewayClassConfig CRD
-    set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
     asserts:
       - template: clusterrole.yaml
         contains:
@@ -216,10 +180,6 @@ tests:
             verbs: ["get", "update", "patch"]
 
   - it: should create a cluster role binding
-    set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
     asserts:
       - template: clusterrolebinding.yaml
         isKind:
@@ -242,9 +202,6 @@ tests:
 
   - it: should add service account annotations when specified
     set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
       serviceAccount:
         annotations:
           eks.amazonaws.com/role-arn: "arn:aws:iam::123456789012:role/my-role"
@@ -256,9 +213,6 @@ tests:
 
   - it: should use custom service account name when specified
     set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
       serviceAccount:
         name: "my-custom-sa"
     asserts:

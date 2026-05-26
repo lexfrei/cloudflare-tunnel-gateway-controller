@@ -4,9 +4,6 @@ templates:
 tests:
   - it: should not create ServiceMonitor by default
     set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
       proxy:
         tunnelTokenSecretRef:
           name: tunnel-token-secret
@@ -16,9 +13,6 @@ tests:
 
   - it: should not create ServiceMonitor when serviceMonitor explicitly disabled
     set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
       proxy:
         tunnelTokenSecretRef:
           name: tunnel-token-secret
@@ -30,9 +24,6 @@ tests:
 
   - it: should create ServiceMonitor when serviceMonitor enabled
     set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
       proxy:
         tunnelTokenSecretRef:
           name: tunnel-token-secret
@@ -49,9 +40,6 @@ tests:
 
   - it: should have correct name with -proxy suffix
     set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
       proxy:
         tunnelTokenSecretRef:
           name: tunnel-token-secret
@@ -64,9 +52,6 @@ tests:
 
   - it: should have standard labels
     set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
       proxy:
         tunnelTokenSecretRef:
           name: tunnel-token-secret
@@ -82,9 +67,6 @@ tests:
 
   - it: should add custom labels when specified
     set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
       proxy:
         tunnelTokenSecretRef:
           name: tunnel-token-secret
@@ -103,9 +85,6 @@ tests:
 
   - it: should select proxy pods with correct selector labels
     set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
       proxy:
         tunnelTokenSecretRef:
           name: tunnel-token-secret
@@ -124,9 +103,6 @@ tests:
 
   - it: should scrape config-api endpoint
     set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
       proxy:
         tunnelTokenSecretRef:
           name: tunnel-token-secret
@@ -139,9 +115,6 @@ tests:
 
   - it: should not set interval by default
     set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
       proxy:
         tunnelTokenSecretRef:
           name: tunnel-token-secret
@@ -153,9 +126,6 @@ tests:
 
   - it: should set custom interval when specified
     set:
-      cloudflare:
-        tunnelId: "test-tunnel-id"
-        apiToken: "test-api-token"
       proxy:
         tunnelTokenSecretRef:
           name: tunnel-token-secret
