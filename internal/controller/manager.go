@@ -165,7 +165,7 @@ func Run(ctx context.Context, cfg *Config) error {
 	)
 
 	// Create proxy syncer for L7 proxy config push (mandatory in v3)
-	proxySyncer := initProxySyncer(cfg, mgr.GetClient(), baseLogger, logger)
+	proxySyncer := initProxySyncer(cfg, proxyEndpoints, mgr.GetClient(), baseLogger, logger)
 
 	httpRouteReconciler := &HTTPRouteReconciler{
 		Client:         mgr.GetClient(),
@@ -224,15 +224,19 @@ func Run(ctx context.Context, cfg *Config) error {
 }
 
 // initProxySyncer creates a ProxySyncer. Starting v3 the L7 proxy is the
-// mandatory data plane, so cfg.ProxyEndpoints MUST be non-empty; callers
-// validate that up-front and fail the controller bootstrap otherwise.
+// mandatory data plane, so the sanitised proxyEndpoints list MUST be
+// non-empty; callers validate that up-front and fail the controller
+// bootstrap otherwise. proxyEndpoints is the sanitised slice (not the
+// raw cfg.ProxyEndpoints) so the startup log reflects what the syncer
+// will actually push to, not what the operator typed in.
 func initProxySyncer(
 	cfg *Config,
+	proxyEndpoints []string,
 	k8sClient client.Client,
 	baseLogger *slog.Logger,
 	logger logr.Logger,
 ) *ProxySyncer {
-	logger.Info("proxy syncer enabled", "endpoints", cfg.ProxyEndpoints)
+	logger.Info("proxy syncer enabled", "endpoints", proxyEndpoints)
 
 	return NewProxySyncer(
 		cfg.ClusterDomain,

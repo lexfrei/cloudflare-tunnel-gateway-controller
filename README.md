@@ -27,7 +27,7 @@ Enables routing traffic through Cloudflare Tunnel using standard Gateway API res
 - Weighted traffic splitting between backends
 - Regex path matching
 
-> **Warning:** The controller assumes **exclusive ownership** of the tunnel configuration. It will remove any ingress rules not managed by HTTPRoute/GRPCRoute resources. Do not use a tunnel that has manually configured routes or is shared with other systems.
+> **Warning:** The controller assumes **exclusive ownership** of the tunnel configuration. It will remove any ingress rules not managed by HTTPRoute resources. Do not use a tunnel that has manually configured routes or is shared with other systems.
 
 ## L7 Proxy
 
@@ -128,7 +128,7 @@ For manual installation without Helm, see [Manual Installation](https://cf.k8s.l
 
 ## Usage
 
-Create standard [Gateway API](https://gateway-api.sigs.k8s.io/) HTTPRoute or GRPCRoute resources referencing the `cloudflare-tunnel` Gateway. The controller automatically syncs routes to Cloudflare Tunnel configuration with hot reload (no cloudflared restart required).
+Create standard [Gateway API](https://gateway-api.sigs.k8s.io/) HTTPRoute resources referencing the `cloudflare-tunnel` Gateway. The controller automatically syncs routes to Cloudflare Tunnel configuration with hot reload (no cloudflared restart required). GRPCRoute is **not supported in v3** — see the [GRPCRoute limitation](https://cf.k8s.lex.la/gateway-api/limitations/#grpcroute-is-not-supported-in-v3) and the [migration guide](https://cf.k8s.lex.la/upgrading/v2-to-v3/).
 
 ### Supported Gateway Fields
 
@@ -137,7 +137,7 @@ Create standard [Gateway API](https://gateway-api.sigs.k8s.io/) HTTPRoute or GRP
 | `spec.gatewayClassName` | ✅ | Must match controller's GatewayClass |
 | `spec.listeners` | ✅ | Fully processed for route binding and status |
 | `spec.listeners[].name` | ✅ | Used for route binding, status reporting, attached route counting |
-| `spec.listeners[].protocol` | ✅ | Used for route kind filtering (HTTP/HTTPS → HTTPRoute/GRPCRoute) |
+| `spec.listeners[].protocol` | ✅ | Used for route kind filtering (HTTP/HTTPS → HTTPRoute; GRPCRoute filtering still applies but binding is broken in v3 — see Limitations) |
 | `spec.listeners[].port` | ✅ | Used for route binding when route specifies a port |
 | `spec.listeners[].hostname` | ✅ | Routes must have intersecting hostnames |
 | `spec.listeners[].tls` | ✅ | CertificateRefs validated with ReferenceGrant support |
