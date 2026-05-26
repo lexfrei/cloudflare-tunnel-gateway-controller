@@ -165,6 +165,16 @@ Pushes routing config to the L7 proxy pods over HTTP:
 - **Endpoint discovery**: Resolves the proxy's headless Service DNS name to per-pod URLs (`--proxy-endpoints` is a required CLI flag — `internal/controller/manager.go` rejects an empty value at startup).
 - **Conversion**: Translates HTTPRoute specs into the proxy's wire-format config via `internal/proxy/converter.go`.
 - **Auth**: When `proxy.authTokenSecretRef.name` is set, attaches the Bearer token to every push so unauthenticated clients cannot reprogram the proxy.
+- **Last-config cache**: After every successful `SyncRoutes` push, ProxySyncer caches the built `*proxy.Config` under its mutex. `ResyncEndpoints(endpoints)` replays that cached config to a supplied endpoint list without rebuilding from HTTPRoutes — the bootstrap-race fix below depends on this.
+
+### Config push triggers
+
+Config push fires on TWO independent events:
+
+1. **HTTPRoute reconcile** — the canonical path. Any change to an HTTPRoute (create, update, delete, status flip) reconciles the route set, rebuilds the proxy config, caches it, and pushes to every endpoint currently visible to the headless-Service DNS lookup.
+2. **Proxy EndpointSlice change** — the bootstrap-race fix from issue #293. `ProxyEndpointReconciler` (`internal/controller/proxy_endpoint_reconciler.go`) watches EndpointSlices labelled `kubernetes.io/service-name=<headless-svc>` for each Service named in `--proxy-endpoints`. On any change it calls `ProxySyncer.ResyncEndpoints` with the static `--proxy-endpoints` URL list, which re-resolves DNS and pushes the cached config to every replica it finds — including the newly-joined ones.
+
+Without the second trigger a proxy pod that becomes Ready between HTTPRoute reconciles stays at `/readyz == 503` forever: the first HTTPRoute reconcile published config to the pods that existed at the time, and there is no next HTTPRoute change to fan out to the new pod. The historic workaround was `kubectl rollout restart deployment <controller>`; the watcher removes that requirement.
 
 GRPCRoutes are NOT pushed — the proxy converter does not yet support gRPC-specific routing semantics. v3's `OverrideProxy` hook intercepts ALL tunnel traffic, so gRPC requests reach the proxy without a matching route and return `404`. The Cloudflare-side ingress rules built by `internal/ingress/grpc_builder` exist only so the Cloudflare dashboard shows the expected hostname → service mapping — they are not consulted at runtime. See [GRPCRoute limitations](../gateway-api/limitations.md#grpcroute-is-not-supported-in-v3).
 

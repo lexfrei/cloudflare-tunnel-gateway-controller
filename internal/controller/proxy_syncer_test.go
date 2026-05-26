@@ -160,6 +160,123 @@ func TestProxySyncer_NoRoutes_PushesEmptyConfig(t *testing.T) {
 	assert.True(t, receivedConfig.Version > 0, "version should be positive even with no routes")
 }
 
+// TestProxySyncer_ResyncEndpoints_NoLastConfig pins the bootstrap-safe
+// no-op: before any SyncRoutes has succeeded the cache is empty, and
+// ResyncEndpoints must not invent a config or hit the wire. A new pod
+// arriving in this window catches up on the next HTTPRoute reconcile.
+func TestProxySyncer_ResyncEndpoints_NoLastConfig(t *testing.T) {
+	t.Parallel()
+
+	var pushCount atomic.Int32
+
+	configServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, req *http.Request) {
+		if req.Method == http.MethodPut {
+			pushCount.Add(1)
+		}
+
+		writer.WriteHeader(http.StatusOK)
+	}))
+	defer configServer.Close()
+
+	testClient := fake.NewClientBuilder().WithScheme(runtime.NewScheme()).Build()
+
+	syncer := controller.NewProxySyncer(
+		"cluster.local",
+		"",
+		"",
+		testClient,
+		slog.Default(),
+	)
+
+	err := syncer.ResyncEndpoints(context.Background(), []string{configServer.URL + "/config"})
+	require.NoError(t, err, "ResyncEndpoints must be a no-op before the first SyncRoutes")
+
+	assert.Equal(t, int32(0), pushCount.Load(), "no push must happen when lastCfg is nil")
+}
+
+// TestProxySyncer_ResyncEndpoints_ReplaysLastConfig pins issue #293's
+// fix: after a successful SyncRoutes, calling ResyncEndpoints with a
+// freshly-discovered endpoint pushes the cached config to it without
+// touching the HTTPRoute set. The cached version must be preserved
+// across the resync (no rebuild, no version bump).
+func TestProxySyncer_ResyncEndpoints_ReplaysLastConfig(t *testing.T) {
+	t.Parallel()
+
+	pathPrefix := gatewayv1.PathMatchPathPrefix
+
+	var (
+		firstReceived  proxy.Config
+		secondReceived proxy.Config
+		pushCount      atomic.Int32
+	)
+
+	configServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, req *http.Request) {
+		if req.Method == http.MethodPut {
+			count := pushCount.Add(1)
+			target := &firstReceived
+			if count == 2 {
+				target = &secondReceived
+			}
+
+			if decodeErr := json.NewDecoder(req.Body).Decode(target); decodeErr != nil {
+				writer.WriteHeader(http.StatusBadRequest)
+
+				return
+			}
+		}
+
+		writer.WriteHeader(http.StatusOK)
+	}))
+	defer configServer.Close()
+
+	testClient := fake.NewClientBuilder().WithScheme(runtime.NewScheme()).Build()
+
+	syncer := controller.NewProxySyncer(
+		"cluster.local",
+		"",
+		"",
+		testClient,
+		slog.Default(),
+	)
+
+	routes := []*gatewayv1.HTTPRoute{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "web-route", Namespace: "default"},
+			Spec: gatewayv1.HTTPRouteSpec{
+				Hostnames: []gatewayv1.Hostname{"example.com"},
+				Rules: []gatewayv1.HTTPRouteRule{
+					{
+						Matches: []gatewayv1.HTTPRouteMatch{
+							{Path: &gatewayv1.HTTPPathMatch{Type: &pathPrefix, Value: new("/")}},
+						},
+						BackendRefs: []gatewayv1.HTTPBackendRef{
+							makeBackendRef("web-svc", 80, 1),
+						},
+					},
+				},
+			},
+		},
+	}
+
+	endpoint := configServer.URL + "/config"
+
+	require.NoError(t, syncer.SyncRoutes(context.Background(), []string{endpoint}, routes, nil))
+	require.Equal(t, int32(1), pushCount.Load(), "first sync must push once")
+	require.NotEmpty(t, firstReceived.Rules, "first push must carry the built config")
+
+	// Simulate a newly-joined proxy endpoint URL; in production the URL
+	// itself is unchanged (the headless Service hostname resolves to a
+	// new IP set), but the syncer treats endpoints as opaque strings, so
+	// re-pushing to the same URL is a sound proxy for the real scenario.
+	require.NoError(t, syncer.ResyncEndpoints(context.Background(), []string{endpoint}))
+	require.Equal(t, int32(2), pushCount.Load(), "resync must push once more")
+
+	assert.Equal(t, firstReceived.Version, secondReceived.Version,
+		"resync must replay the cached config verbatim -- no version bump, no rebuild")
+	assert.Equal(t, len(firstReceived.Rules), len(secondReceived.Rules),
+		"resync must replay the cached rules verbatim")
+}
+
 func TestProxySyncer_SyncRoutes_H2CBackend(t *testing.T) {
 	t.Parallel()
 
