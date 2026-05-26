@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/pem"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/cockroachdb/errors"
@@ -24,6 +25,7 @@ import (
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/api/v1alpha1"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/config"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/listenermerge"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/logging"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/routebinding"
 )
@@ -64,6 +66,30 @@ const (
 	// when deleted. The deletion branch strips it on first reconcile.
 	legacyCloudflaredFinalizer = "cloudflare-tunnel.gateway.networking.k8s.io/cloudflared"
 )
+
+// attachedListenerSetCount renders the AttachedListenerSets pointer for the
+// Gateway status. We always emit the field (as 0 when nothing is attached) so
+// observers can distinguish "unset" from "explicitly zero".
+func attachedListenerSetCount(merged *listenermergeResult) *int32 {
+	count := int32(0)
+
+	if merged != nil {
+		// Gateway API caps ListenerSets per Gateway via CRD validation, but
+		// clamp explicitly so an unexpectedly large list can never overflow
+		// the int32 status field (broken validation webhook, future spec
+		// loosening, etc.).
+		clamped := min(merged.AttachedListenerSets(), math.MaxInt32)
+		count = int32(clamped) //nolint:gosec // clamped to MaxInt32 above
+	}
+
+	return &count
+}
+
+// listenermergeResult is a tiny alias so gateway_controller.go does not
+// import listenermerge directly (avoiding a cyclical-feel between two
+// internal packages already wired through controller helpers). Real type
+// stays in listenermerge; the alias is internal to this file.
+type listenermergeResult = listenermerge.MergeResult
 
 // truncateMessage truncates a message to maxConditionMessageLength.
 func truncateMessage(msg string) string {
@@ -185,6 +211,15 @@ func (r *GatewayReconciler) updateStatus(
 		now := metav1.Now()
 
 		attachedRoutes := r.countAttachedRoutes(ctx, &freshGateway)
+
+		merged, mergeErr := mergedListenersFor(ctx, r.Client, &freshGateway)
+		if mergeErr != nil {
+			log.FromContext(ctx).Error(mergeErr, "failed to compute listenerset merge view; continuing with empty view")
+
+			merged = nil
+		}
+
+		freshGateway.Status.AttachedListenerSets = attachedListenerSetCount(merged)
 
 		freshGateway.Status.Addresses = []gatewayv1.GatewayStatusAddress{
 			{

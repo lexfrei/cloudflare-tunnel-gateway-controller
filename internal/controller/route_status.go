@@ -97,7 +97,8 @@ func updateRouteParentStatuses(
 }
 
 // resolveParentRefStatus builds a RouteParentStatus for a single parentRef,
-// or returns nil if the ref doesn't belong to a managed Gateway.
+// or returns nil if the ref doesn't belong to a managed Gateway (directly or
+// via a ListenerSet attached to one).
 func resolveParentRefStatus(
 	ctx context.Context,
 	params routeStatusUpdateParams,
@@ -110,8 +111,9 @@ func resolveParentRefStatus(
 	failedRefs []ingress.BackendRefError,
 	syncErr error,
 ) *gatewayv1.RouteParentStatus {
-	if ref.Kind != nil && *ref.Kind != kindGateway {
-		return nil
+	kind := kindGateway
+	if ref.Kind != nil {
+		kind = string(*ref.Kind)
 	}
 
 	namespace := accessor.obj.GetNamespace()
@@ -119,15 +121,7 @@ func resolveParentRefStatus(
 		namespace = string(*ref.Namespace)
 	}
 
-	var gateway gatewayv1.Gateway
-	if err := params.k8sClient.Get(ctx, client.ObjectKey{
-		Name:      string(ref.Name),
-		Namespace: namespace,
-	}, &gateway); err != nil {
-		return nil
-	}
-
-	if !classNames[string(gateway.Spec.GatewayClassName)] {
+	if !parentRefSelectsManagedGateway(ctx, params.k8sClient, kind, namespace, string(ref.Name), classNames) {
 		return nil
 	}
 
@@ -139,6 +133,40 @@ func resolveParentRefStatus(
 	)
 
 	return &parentStatus
+}
+
+// parentRefSelectsManagedGateway returns true when a route parentRef
+// ultimately targets a Gateway managed by this controller — either directly
+// (Kind=Gateway) or via a ListenerSet whose parent Gateway is managed.
+func parentRefSelectsManagedGateway(
+	ctx context.Context,
+	cli client.Client,
+	kind, namespace, name string,
+	classNames map[string]bool,
+) bool {
+	switch kind {
+	case kindGateway:
+		var gateway gatewayv1.Gateway
+		if err := cli.Get(ctx, client.ObjectKey{Name: name, Namespace: namespace}, &gateway); err != nil {
+			return false
+		}
+
+		return classNames[string(gateway.Spec.GatewayClassName)]
+	case kindListenerSet:
+		var listenerSet gatewayv1.ListenerSet
+		if err := cli.Get(ctx, client.ObjectKey{Name: name, Namespace: namespace}, &listenerSet); err != nil {
+			return false
+		}
+
+		parent, ok := listenerSetParentGateway(ctx, cli, &listenerSet)
+		if !ok {
+			return false
+		}
+
+		return classNames[string(parent.Spec.GatewayClassName)]
+	}
+
+	return false
 }
 
 // buildParentStatus constructs a RouteParentStatus entry for a single parent ref.

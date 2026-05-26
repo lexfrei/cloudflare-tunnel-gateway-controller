@@ -92,8 +92,12 @@ func managedClassNames(
 	return names, nil
 }
 
-// kindGateway is the Gateway API kind for Gateway resources.
-const kindGateway = "Gateway"
+// kindGateway / kindListenerSet are the Gateway API kinds used when route
+// parentRefs and ReferenceGrant from/to entries select the resource type.
+const (
+	kindGateway     = "Gateway"
+	kindListenerSet = "ListenerSet"
+)
 
 // RequestsFunc returns reconcile requests for a given context.
 type RequestsFunc func(ctx context.Context) []reconcile.Request

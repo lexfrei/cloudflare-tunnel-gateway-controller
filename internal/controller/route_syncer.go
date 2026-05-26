@@ -532,26 +532,18 @@ type grpcRouteResult struct {
 	bindings map[string]routeBindingInfo
 }
 
-//nolint:funlen,dupl // complex binding validation logic; similar to GRPC but for HTTP types
+//nolint:dupl // mirrored on purpose against getRelevantGRPCRoutes — different list/result types prevent a clean generic
 func (s *RouteSyncer) getRelevantHTTPRoutes(
 	ctx context.Context,
 ) (*httpRouteResult, error) {
-	// Prefer context logger (with reconcile ID) over struct logger
 	logger := logging.FromContext(ctx)
 	if logger == slog.Default() {
 		logger = s.Logger
 	}
 
 	var routeList gatewayv1.HTTPRouteList
-
-	err := s.List(ctx, &routeList)
-	if err != nil {
+	if err := s.List(ctx, &routeList); err != nil {
 		return nil, errors.Wrap(err, "failed to list httproutes")
-	}
-
-	classNames, classErr := managedClassNames(ctx, s.Client, s.ControllerName)
-	if classErr != nil {
-		return nil, errors.Wrap(classErr, "failed to get managed class names for HTTPRoutes")
 	}
 
 	result := &httpRouteResult{
@@ -560,71 +552,16 @@ func (s *RouteSyncer) getRelevantHTTPRoutes(
 
 	for i := range routeList.Items {
 		route := &routeList.Items[i]
-		routeKey := route.Namespace + "/" + route.Name
-		bindingInfo := routeBindingInfo{
-			bindingResults: make(map[int]routebinding.BindingResult),
-		}
+		bindingInfo, accepted, referencesUs := s.bindRouteParents(
+			ctx, logger, route.Namespace, route.Name, route.Spec.Hostnames,
+			routebinding.KindHTTPRoute, route.Spec.ParentRefs,
+		)
+		result.bindings[route.Namespace+"/"+route.Name] = bindingInfo
 
-		hasAcceptedBinding := false
-		referencesOurGateway := false
-
-		for refIdx, ref := range route.Spec.ParentRefs {
-			if ref.Kind != nil && *ref.Kind != kindGateway {
-				continue
-			}
-
-			namespace := route.Namespace
-			if ref.Namespace != nil {
-				namespace = string(*ref.Namespace)
-			}
-
-			var gateway gatewayv1.Gateway
-
-			getErr := s.Get(ctx, client.ObjectKey{Name: string(ref.Name), Namespace: namespace}, &gateway)
-			if getErr != nil {
-				continue
-			}
-
-			if !classNames[string(gateway.Spec.GatewayClassName)] {
-				continue
-			}
-
-			referencesOurGateway = true
-
-			routeInfo := &routebinding.RouteInfo{
-				Name:        route.Name,
-				Namespace:   route.Namespace,
-				Hostnames:   route.Spec.Hostnames,
-				Kind:        routebinding.KindHTTPRoute,
-				SectionName: ref.SectionName,
-				Port:        ref.Port,
-			}
-
-			bindResult, bindErr := s.bindingValidator.ValidateBinding(ctx, &gateway, routeInfo)
-			if bindErr != nil {
-				logger.Error("failed to validate route binding",
-					"route", routeKey,
-					"gateway", gateway.Name,
-					"error", bindErr)
-
-				continue
-			}
-
-			bindingInfo.bindingResults[refIdx] = bindResult
-
-			if bindResult.Accepted {
-				hasAcceptedBinding = true
-			}
-		}
-
-		result.bindings[routeKey] = bindingInfo
-
-		if hasAcceptedBinding {
+		switch {
+		case accepted:
 			result.accepted = append(result.accepted, routeList.Items[i])
-		} else if referencesOurGateway {
-			// Route references our Gateway but binding was rejected
-			// (e.g., sectionName or port mismatch). Track it so we
-			// can update its status with Accepted=False.
+		case referencesUs:
 			result.rejected = append(result.rejected, routeList.Items[i])
 		}
 	}
@@ -632,26 +569,18 @@ func (s *RouteSyncer) getRelevantHTTPRoutes(
 	return result, nil
 }
 
-//nolint:funlen,dupl // complex binding validation logic; similar to HTTP but for GRPC types
+//nolint:dupl // mirrored on purpose against getRelevantHTTPRoutes — different list/result types prevent a clean generic
 func (s *RouteSyncer) getRelevantGRPCRoutes(
 	ctx context.Context,
 ) (*grpcRouteResult, error) {
-	// Prefer context logger (with reconcile ID) over struct logger
 	logger := logging.FromContext(ctx)
 	if logger == slog.Default() {
 		logger = s.Logger
 	}
 
 	var routeList gatewayv1.GRPCRouteList
-
-	err := s.List(ctx, &routeList)
-	if err != nil {
+	if err := s.List(ctx, &routeList); err != nil {
 		return nil, errors.Wrap(err, "failed to list grpcroutes")
-	}
-
-	classNames, classErr := managedClassNames(ctx, s.Client, s.ControllerName)
-	if classErr != nil {
-		return nil, errors.Wrap(classErr, "failed to get managed class names for GRPCRoutes")
 	}
 
 	result := &grpcRouteResult{
@@ -660,73 +589,73 @@ func (s *RouteSyncer) getRelevantGRPCRoutes(
 
 	for i := range routeList.Items {
 		route := &routeList.Items[i]
-		routeKey := route.Namespace + "/" + route.Name
-		bindingInfo := routeBindingInfo{
-			bindingResults: make(map[int]routebinding.BindingResult),
-		}
+		bindingInfo, accepted, referencesUs := s.bindRouteParents(
+			ctx, logger, route.Namespace, route.Name, route.Spec.Hostnames,
+			routebinding.KindGRPCRoute, route.Spec.ParentRefs,
+		)
+		result.bindings[route.Namespace+"/"+route.Name] = bindingInfo
 
-		hasAcceptedBinding := false
-		referencesOurGateway := false
-
-		for refIdx, ref := range route.Spec.ParentRefs {
-			if ref.Kind != nil && *ref.Kind != kindGateway {
-				continue
-			}
-
-			namespace := route.Namespace
-			if ref.Namespace != nil {
-				namespace = string(*ref.Namespace)
-			}
-
-			var gateway gatewayv1.Gateway
-
-			getErr := s.Get(ctx, client.ObjectKey{Name: string(ref.Name), Namespace: namespace}, &gateway)
-			if getErr != nil {
-				continue
-			}
-
-			if !classNames[string(gateway.Spec.GatewayClassName)] {
-				continue
-			}
-
-			referencesOurGateway = true
-
-			routeInfo := &routebinding.RouteInfo{
-				Name:        route.Name,
-				Namespace:   route.Namespace,
-				Hostnames:   route.Spec.Hostnames,
-				Kind:        routebinding.KindGRPCRoute,
-				SectionName: ref.SectionName,
-				Port:        ref.Port,
-			}
-
-			bindResult, bindErr := s.bindingValidator.ValidateBinding(ctx, &gateway, routeInfo)
-			if bindErr != nil {
-				logger.Error("failed to validate route binding",
-					"route", routeKey,
-					"gateway", gateway.Name,
-					"error", bindErr)
-
-				continue
-			}
-
-			bindingInfo.bindingResults[refIdx] = bindResult
-
-			if bindResult.Accepted {
-				hasAcceptedBinding = true
-			}
-		}
-
-		result.bindings[routeKey] = bindingInfo
-
-		if hasAcceptedBinding {
+		switch {
+		case accepted:
 			result.accepted = append(result.accepted, routeList.Items[i])
-		} else if referencesOurGateway {
+		case referencesUs:
 			result.rejected = append(result.rejected, routeList.Items[i])
 		}
 	}
 
 	return result, nil
+}
+
+// bindRouteParents walks a route's parentRefs through the shared
+// resolveRouteParentBinding helper and folds the per-ref outcomes into the
+// single routeBindingInfo + (accepted, referencesUs) summary that both
+// HTTP/GRPC syncer paths need.
+func (s *RouteSyncer) bindRouteParents(
+	ctx context.Context,
+	logger *slog.Logger,
+	routeNamespace, routeName string,
+	hostnames []gatewayv1.Hostname,
+	kind gatewayv1.Kind,
+	parentRefs []gatewayv1.ParentReference,
+) (routeBindingInfo, bool, bool) {
+	bindingInfo := routeBindingInfo{
+		bindingResults: make(map[int]routebinding.BindingResult),
+	}
+
+	hasAccepted := false
+	referencesUs := false
+
+	for refIdx, ref := range parentRefs {
+		routeInfo := &routebinding.RouteInfo{
+			Name:        routeName,
+			Namespace:   routeNamespace,
+			Hostnames:   hostnames,
+			Kind:        kind,
+			SectionName: ref.SectionName,
+			Port:        ref.Port,
+		}
+
+		binding, err := resolveRouteParentBinding(ctx, s.Client, s.bindingValidator, s.ControllerName, ref, routeNamespace, routeInfo)
+		if err != nil {
+			logger.Error("failed to resolve route parentRef",
+				"route", routeNamespace+"/"+routeName, "refIdx", refIdx, "error", err)
+
+			continue
+		}
+
+		if !binding.ManagedByThisController {
+			continue
+		}
+
+		referencesUs = true
+		bindingInfo.bindingResults[refIdx] = binding.Result
+
+		if binding.Result.Accepted {
+			hasAccepted = true
+		}
+	}
+
+	return bindingInfo, hasAccepted, referencesUs
 }
 
 // sortIngressRules sorts ingress rules: specific hostnames alphabetically first,
