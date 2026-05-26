@@ -2,6 +2,18 @@ suite: test proxy deployment
 templates:
   - deployment-proxy.yaml
 tests:
+  # Pin the v3 invariant: tunnelTokenSecretRef.name is mandatory.
+  # The chart's `required` helper must fail install when the value is
+  # empty (the default in values.yaml), otherwise the proxy would start
+  # without a tunnel token and silently fail to dial Cloudflare edge.
+  # A future refactor that turns the `required` into a soft default
+  # would convert the breaking-change-by-design into a silent breakage;
+  # this test fires before that lands.
+  - it: should fail to render when proxy.tunnelTokenSecretRef.name is empty
+    asserts:
+      - failedTemplate:
+          errorPattern: "proxy.tunnelTokenSecretRef.name is required"
+
   - it: should create proxy deployment with default values
     set:
       proxy:

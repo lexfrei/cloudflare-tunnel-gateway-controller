@@ -64,12 +64,13 @@ type Config struct {
 // and blocks until the context is cancelled or an error occurs.
 //
 // The function performs the following steps:
-//  1. Initializes controller-runtime manager with metrics and health endpoints
-//  2. Registers GatewayClassConfig CRD scheme
-//  3. Creates ConfigResolver for reading GatewayClassConfig
-//  4. Sets up GatewayReconciler and HTTPRouteReconciler with watches
-//  5. Optionally initializes Helm manager for cloudflared deployment
-//  6. Starts the manager and blocks until shutdown
+//  1. Fails fast when ProxyEndpoints is empty (v3 requires a configured L7 proxy data plane)
+//  2. Initializes controller-runtime manager with metrics and health endpoints
+//  3. Registers GatewayClassConfig CRD scheme
+//  4. Creates ConfigResolver for reading GatewayClassConfig
+//  5. Sets up Gateway/HTTPRoute/GRPCRoute/GatewayClassConfig reconcilers with watches
+//  6. Wires the ProxySyncer that pushes HTTPRoute config to the proxy data plane
+//  7. Starts the manager and blocks until shutdown
 //
 //nolint:funlen // controller setup requires multiple sequential steps
 func Run(ctx context.Context, cfg *Config) error {

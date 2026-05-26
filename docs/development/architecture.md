@@ -76,7 +76,7 @@ Cluster-scoped Custom Resource Definition (CRD) that provides tunnel configurati
 
 - **API Group**: `cf.k8s.lex.la/v1alpha1`
 - **Referenced by**: GatewayClass via `spec.parametersRef`
-- **Configuration**: Cloudflare credentials, tunnel ID, cloudflared settings
+- **Spec fields (v3)**: `cloudflareCredentialsSecretRef`, optional `accountId`, `tunnelID`. Proxy-side configuration (tunnel token, replicas, etc.) lives in Helm chart `proxy.*` values.
 
 ```yaml
 apiVersion: cf.k8s.lex.la/v1alpha1
@@ -87,12 +87,7 @@ spec:
   tunnelID: "550e8400-e29b-41d4-a716-446655440000"
   cloudflareCredentialsSecretRef:
     name: cloudflare-credentials
-  tunnelTokenSecretRef:
-    name: cloudflare-tunnel-token
-  cloudflared:
-    enabled: true
-    awg:
-      secretName: awg-config  # Optional: enables AWG sidecar
+  # accountId: "1234567890abcdef"  # Optional, auto-detected
 ```
 
 ### ConfigResolver
@@ -101,8 +96,7 @@ Resolves GatewayClassConfig from GatewayClass `parametersRef`:
 
 1. Reads GatewayClassConfig by name from parametersRef
 2. Fetches Cloudflare credentials from referenced Secret
-3. Fetches tunnel token from referenced Secret (if cloudflared.enabled)
-4. Auto-detects account ID via Cloudflare API if not specified
+3. Auto-detects account ID via Cloudflare API if not specified
 
 ### GatewayReconciler
 

@@ -19,7 +19,7 @@ Starting v3 the spec carries only the contract the controller needs for Cloudfla
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `tunnelID` | string | Yes | Cloudflare Tunnel UUID |
-| `accountID` | string | No | Cloudflare Account ID (auto-detected if not specified) |
+| `accountId` | string | No | Cloudflare Account ID (auto-detected if not specified) |
 | `cloudflareCredentialsSecretRef` | SecretKeySelector | Yes | Reference to Secret containing API token |
 
 ### SecretKeySelector
@@ -38,7 +38,7 @@ metadata:
   name: cloudflare-tunnel-config
 spec:
   tunnelID: "550e8400-e29b-41d4-a716-446655440000"
-  # accountID: "1234567890abcdef"  # Optional, auto-detected
+  # accountId: "1234567890abcdef"  # Optional, auto-detected
   cloudflareCredentialsSecretRef:
     name: cloudflare-credentials
     key: api-token

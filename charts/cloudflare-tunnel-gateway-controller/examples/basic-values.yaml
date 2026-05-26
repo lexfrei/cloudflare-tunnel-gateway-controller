@@ -33,7 +33,7 @@ gatewayClassConfig:
     name: "cloudflare-credentials"
 
 # The L7 proxy embeds cloudflared transport in-process. Supply the tunnel
-# token here; the chart wires it into the proxy pod via PROXY_TUNNEL_TOKEN.
+# token here; the chart wires it into the proxy pod via the TUNNEL_TOKEN env var.
 proxy:
   tunnelTokenSecretRef:
     name: "cloudflare-tunnel-token"

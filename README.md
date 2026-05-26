@@ -228,7 +228,7 @@ Full documentation is available at **[cf.k8s.lex.la](https://cf.k8s.lex.la)**.
 | [Getting Started](https://cf.k8s.lex.la/getting-started/) | Prerequisites, installation, and quick start |
 | [Configuration](https://cf.k8s.lex.la/configuration/) | Controller configuration and Helm values |
 | [Gateway API](https://cf.k8s.lex.la/gateway-api/) | Supported resources, examples, and limitations |
-| [Guides](https://cf.k8s.lex.la/guides/) | AWG sidecar, external-dns, cross-namespace, monitoring |
+| [Guides](https://cf.k8s.lex.la/guides/) | L7 proxy setup, external-dns, cross-namespace, monitoring |
 | [Operations](https://cf.k8s.lex.la/operations/) | Troubleshooting, metrics, manual installation |
 | [Development](https://cf.k8s.lex.la/development/) | Development setup, architecture, contributing |
 | [Reference](https://cf.k8s.lex.la/reference/) | CRD reference, Helm chart, security policy |

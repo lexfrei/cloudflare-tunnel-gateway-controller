@@ -86,6 +86,45 @@ tests:
           count: 0
 
   # ---
+  # gatewayClassConfig.accountId rendering
+  # ---
+  # Pin the v3 CRD spec.accountId rendering: present in YAML only when set in
+  # values, absent otherwise. Catches a future template refactor that drops
+  # the {{- if .Values.gatewayClassConfig.accountId }} guard.
+
+  - it: should render spec.accountId when set
+    set:
+      gatewayClassConfig:
+        create: true
+        tunnelID: "00000000-0000-0000-0000-000000000004"
+        cloudflareCredentialsSecretRef:
+          name: "cf-credentials"
+        accountId: "1234567890abcdef"
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token
+    asserts:
+      - template: gatewayclassconfig.yaml
+        equal:
+          path: spec.accountId
+          value: "1234567890abcdef"
+
+  - it: should omit spec.accountId when not set
+    set:
+      gatewayClassConfig:
+        create: true
+        tunnelID: "00000000-0000-0000-0000-000000000005"
+        cloudflareCredentialsSecretRef:
+          name: "cf-credentials"
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token
+    asserts:
+      - template: gatewayclassconfig.yaml
+        notExists:
+          path: spec.accountId
+
+  # ---
   # proxy.accessLog schema
   # ---
 

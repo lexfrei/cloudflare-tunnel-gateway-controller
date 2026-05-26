@@ -11,7 +11,7 @@ The GatewayClassConfig is referenced by a GatewayClass via `spec.parametersRef` 
 - Optional account ID override
 
 !!! note "v3 scope change"
-    Starting v3 the proxy-side configuration (tunnel token, replicas, AmneziaWG sidecar, liveness probes) lives in the Helm chart `proxy.*` values, not in the CRD. The in-process L7 proxy is the only data plane and is deployed by the chart. See [Upgrading v2 → v3](../upgrading/v2-to-v3.md) for the migration path.
+    Starting v3 the proxy-side configuration (tunnel token, replicas, liveness probes) lives in the Helm chart `proxy.*` values, not in the CRD. The in-process L7 proxy is the only data plane and is deployed by the chart. The AmneziaWG sidecar that v2 attached to the controller-managed cloudflared deployment is **not** available in v3 — see [Upgrading v2 → v3](../upgrading/v2-to-v3.md) for the migration path.
 
 ## API Reference
 
@@ -25,7 +25,7 @@ spec:
   tunnelID: "550e8400-e29b-41d4-a716-446655440000"
 
   # Optional: Cloudflare Account ID (auto-detected if not specified)
-  accountID: "1234567890abcdef"
+  accountId: "1234567890abcdef"
 
   # Required: Reference to Secret containing API token
   cloudflareCredentialsSecretRef:
@@ -44,13 +44,13 @@ spec:
   tunnelID: "550e8400-e29b-41d4-a716-446655440000"
 ```
 
-### `spec.accountID` (optional)
+### `spec.accountId` (optional)
 
 The Cloudflare account ID. If not specified, it is auto-detected from the API token when the token has access to a single account.
 
 ```yaml
 spec:
-  accountID: "1234567890abcdef"
+  accountId: "1234567890abcdef"
 ```
 
 ### `spec.cloudflareCredentialsSecretRef` (required)
@@ -88,7 +88,7 @@ proxy:
     # key: tunnel-token  # Default
 ```
 
-Additional knobs (replicas, image, resources, health probes, AmneziaWG, access log, websocket timeouts, auth token) are documented in the [Helm values reference](helm-values.md).
+Additional knobs (replicas, image, resources, health probes, access log, websocket timeouts, auth token) are documented in the [Helm values reference](helm-values.md).
 
 ## GatewayClass Reference
 
@@ -215,11 +215,11 @@ Ensure the Secret exists in the controller's namespace.
 
 ### Account ID Detection Failed
 
-If auto-detection fails, specify `accountID` explicitly:
+If auto-detection fails, specify `accountId` explicitly:
 
 ```yaml
 spec:
-  accountID: "YOUR_ACCOUNT_ID"
+  accountId: "YOUR_ACCOUNT_ID"
 ```
 
 You can find your account ID in the Cloudflare dashboard URL or via API.

@@ -101,19 +101,11 @@ Complete example values files are available in the [examples/](https://github.co
 |---------|-------------|
 | [basic-values.yaml](examples/basic-values.yaml) | Minimal configuration |
 | [external-secrets-values.yaml](examples/external-secrets-values.yaml) | Using existing Kubernetes Secret |
-| [managed-cloudflared-values.yaml](examples/managed-cloudflared-values.yaml) | Helm-managed cloudflared deployment |
-| [awg-sidecar-values.yaml](examples/awg-sidecar-values.yaml) | AmneziaWG VPN sidecar |
 | [production-values.yaml](examples/production-values.yaml) | Production-ready with HA, monitoring, and security |
 
 ## Documentation
 
-| Document | Description |
-|----------|-------------|
-| [Architecture](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/blob/master/docs/ARCHITECTURE.md) | System architecture and design decisions |
-| [AWG Quick Start](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/blob/master/docs/AWG_QUICKSTART.md) | AmneziaWG sidecar setup guide |
-| [Gateway API](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/blob/master/docs/GATEWAY_API.md) | Supported Gateway API features |
-| [Metrics](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/blob/master/docs/METRICS.md) | Prometheus metrics and Grafana dashboard |
-| [Troubleshooting](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/blob/master/docs/TROUBLESHOOTING.md) | Common issues and solutions |
+Full documentation lives at <https://cf.k8s.lex.la> (built from the `docs/` tree).
 
 ## External Resources
 

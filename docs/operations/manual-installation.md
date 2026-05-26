@@ -87,11 +87,10 @@ spec:
   tunnelID: "YOUR_TUNNEL_UUID"
   cloudflareCredentialsSecretRef:
     name: cloudflare-credentials
-  tunnelTokenSecretRef:
-    name: cloudflare-tunnel-token
-  cloudflared:
-    enabled: true
+  # accountId: "1234567890abcdef"  # Optional, auto-detected
 ```
+
+The tunnel token is consumed by the L7 proxy pod directly (via the `TUNNEL_TOKEN` env var wired by the Helm chart's `proxy.tunnelTokenSecretRef` value) — it is not part of the CRD spec.
 
 ## Sample GatewayClass
 

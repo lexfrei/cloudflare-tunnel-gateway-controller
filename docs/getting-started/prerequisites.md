@@ -44,13 +44,9 @@ Before deploying the controller, create a Cloudflare Tunnel:
     - **Tunnel ID** - UUID identifying the tunnel
     - **Tunnel Token** - Used by cloudflared to authenticate
 
-!!! info "Controller vs cloudflared"
+!!! info "Controller and proxy"
 
-    The controller manages tunnel ingress configuration via API. You can either:
-
-    - Let the controller deploy cloudflared automatically (default behavior)
-    - Deploy cloudflared yourself using the tunnel token
-      (`cloudflared.enabled: false` in Helm values)
+    The controller manages Cloudflare-side tunnel ingress configuration via API; tunnel traffic itself is terminated by the in-process L7 proxy that the Helm chart deploys alongside the controller. Supply the tunnel token via `proxy.tunnelTokenSecretRef` — see the [Helm values reference](../configuration/helm-values.md) for the full set of proxy knobs.
 
 ## Cloudflare API Token
 
