@@ -104,31 +104,37 @@ func (r *GatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		return ctrl.Result{}, errors.Wrap(err, "failed to get gateway")
 	}
 
+	// Legacy-finalizer strip runs BEFORE every other check. The finalizer
+	// name is unique to this controller's v2 incarnation so the strip is
+	// unambiguous even when:
+	//   - the GatewayClass has been deleted (typical v2 -> v3 cleanup order:
+	//     operator uninstalls the v2 Helm release first, then drains Gateways);
+	//   - the controller no longer owns the Gateway's GatewayClass (someone
+	//     repointed parametersRef);
+	//   - the GatewayClassConfig or credentials Secret is missing.
+	// Without this early strip the Gateway would hang in Terminating forever,
+	// contradicting the migration guide's "automatic on delete" promise.
+	if !gateway.DeletionTimestamp.IsZero() &&
+		controllerutil.ContainsFinalizer(&gateway, legacyCloudflaredFinalizer) {
+		controllerutil.RemoveFinalizer(&gateway, legacyCloudflaredFinalizer)
+
+		if err := r.Update(ctx, &gateway); err != nil {
+			return ctrl.Result{}, errors.Wrap(err, "failed to remove legacy cloudflared finalizer")
+		}
+
+		return ctrl.Result{}, nil
+	}
+
 	if !isGatewayManagedByController(ctx, r.Client, &gateway, r.ControllerName) {
 		return ctrl.Result{}, nil
 	}
 
 	logger.Info("reconciling gateway", "name", gateway.Name, "namespace", gateway.Namespace)
 
-	// Deletion path runs BEFORE config resolution. The legacy-finalizer strip
-	// must succeed even when the GatewayClassConfig or the credentials Secret
-	// is already gone (typical v2 -> v3 cleanup ordering: operator removes the
-	// stale config first, then drains Gateways). With config resolution above
-	// this branch, a delete + missing-config combination would leave the
-	// Gateway stuck in Terminating forever -- exactly the failure mode the
-	// strip was added to prevent.
+	// Deletion path for v3-managed Gateways without a legacy finalizer: nothing
+	// to do (proxy lifecycle is managed by the Helm chart, not per-Gateway).
+	// The legacy-finalizer strip above already returned for v2-tagged Gateways.
 	if !gateway.DeletionTimestamp.IsZero() {
-		// v3 never adds a finalizer (proxy lifecycle is managed by the Helm
-		// chart, not per-Gateway), but Gateways created under v2 still carry
-		// the legacy cloudflared finalizer.
-		if controllerutil.ContainsFinalizer(&gateway, legacyCloudflaredFinalizer) {
-			controllerutil.RemoveFinalizer(&gateway, legacyCloudflaredFinalizer)
-
-			if err := r.Update(ctx, &gateway); err != nil {
-				return ctrl.Result{}, errors.Wrap(err, "failed to remove legacy cloudflared finalizer")
-			}
-		}
-
 		return ctrl.Result{}, nil
 	}
 

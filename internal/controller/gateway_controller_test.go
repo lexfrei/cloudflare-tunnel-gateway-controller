@@ -229,6 +229,62 @@ func TestGatewayReconciler_StripsLegacyFinalizerOnDelete_NoConfig(t *testing.T) 
 	}
 }
 
+// TestGatewayReconciler_StripsLegacyFinalizerOnDelete_NoGatewayClass pins
+// the most-common v2 -> v3 cleanup ordering: operator uninstalls the v2
+// Helm release (which removes the GatewayClass) BEFORE draining Gateways.
+// With the early-strip path, the legacy finalizer must come off regardless
+// of controller-ownership checks -- the finalizer string is unique to this
+// controller's v2 incarnation so no other controller can claim it.
+func TestGatewayReconciler_StripsLegacyFinalizerOnDelete_NoGatewayClass(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+
+	now := metav1.Now()
+	gateway := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "stuck-gateway",
+			Namespace:         "default",
+			DeletionTimestamp: &now,
+			Finalizers: []string{
+				"cloudflare-tunnel.gateway.networking.k8s.io/cloudflared",
+			},
+		},
+		Spec: gatewayv1.GatewaySpec{
+			GatewayClassName: "cloudflare-tunnel",
+		},
+	}
+
+	// NO GatewayClass in the cluster -- isGatewayManagedByController would
+	// return false and abort. Without the early-strip, the finalizer never
+	// gets removed.
+	fakeClient := setupGatewayFakeClient(gateway)
+
+	reconciler := &GatewayReconciler{
+		Client:         fakeClient,
+		Scheme:         fakeClient.Scheme(),
+		ControllerName: "test-controller",
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+	}
+
+	_, err := reconciler.Reconcile(ctx, ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "stuck-gateway", Namespace: "default"},
+	})
+	require.NoError(t, err)
+
+	var updated gatewayv1.Gateway
+
+	getErr := fakeClient.Get(ctx, types.NamespacedName{Name: "stuck-gateway", Namespace: "default"}, &updated)
+	if getErr == nil {
+		assert.NotContains(t, updated.Finalizers,
+			"cloudflare-tunnel.gateway.networking.k8s.io/cloudflared",
+			"legacy finalizer must be stripped even when GatewayClass is missing")
+	} else {
+		assert.True(t, apierrors.IsNotFound(getErr),
+			"Gateway either gone (GC after final finalizer removal) or accessible without legacy finalizer; got error: %v", getErr)
+	}
+}
+
 // TestGatewayReconciler_DeleteWithoutLegacyFinalizer_NoOp pins the
 // surgical nature of the strip: a Gateway that already has the legacy
 // finalizer removed (or never had it -- v3-created Gateway under

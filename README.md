@@ -43,15 +43,25 @@ See [L7 Proxy Architecture](https://cf.k8s.lex.la/development/architecture/) for
 # 1. Install Gateway API CRDs
 kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.5.0/standard-install.yaml
 
-# 2. Install the controller
+# 2. Create credentials Secrets
+kubectl create namespace cloudflare-tunnel-system
+kubectl create secret generic cloudflare-credentials \
+  --namespace cloudflare-tunnel-system \
+  --from-literal=api-token="YOUR_API_TOKEN"
+kubectl create secret generic cloudflare-tunnel-token \
+  --namespace cloudflare-tunnel-system \
+  --from-literal=tunnel-token="YOUR_TUNNEL_TOKEN"
+
+# 3. Install the controller
 helm install cloudflare-tunnel-gateway-controller \
   oci://ghcr.io/lexfrei/charts/cloudflare-tunnel-gateway-controller \
   --namespace cloudflare-tunnel-system \
-  --create-namespace \
-  --set config.tunnelID=YOUR_TUNNEL_ID \
-  --set config.apiToken=YOUR_API_TOKEN
+  --set gatewayClassConfig.create=true \
+  --set gatewayClassConfig.tunnelID=YOUR_TUNNEL_ID \
+  --set gatewayClassConfig.cloudflareCredentialsSecretRef.name=cloudflare-credentials \
+  --set proxy.tunnelTokenSecretRef.name=cloudflare-tunnel-token
 
-# 3. Create HTTPRoute to expose your service
+# 4. Create HTTPRoute to expose your service
 kubectl apply -f - <<EOF
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute

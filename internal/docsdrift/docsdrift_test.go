@@ -128,8 +128,12 @@ var trackedRoots = []string{
 	"docs",
 	"CLAUDE.md",
 	"README.md",
+	"SECURITY.md",
 	"charts/cloudflare-tunnel-gateway-controller/README.md",
 	"charts/cloudflare-tunnel-gateway-controller/README.md.gotmpl",
+	"charts/cloudflare-tunnel-gateway-controller/templates",
+	"charts/cloudflare-tunnel-gateway-controller/examples",
+	"deploy",
 	"internal",
 	"cmd",
 	"api",
@@ -143,6 +147,10 @@ var trackedExtensions = map[string]bool{
 	".md":     true,
 	".gotmpl": true,
 	".go":     true,
+	".yaml":   true,
+	".yml":    true,
+	".txt":    true, // chart NOTES.txt
+	".sh":     true, // hack/conformance-setup.sh
 }
 
 // allowedFiles list paths that LEGITIMATELY mention retired vocabulary

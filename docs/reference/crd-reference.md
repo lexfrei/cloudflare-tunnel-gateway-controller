@@ -46,7 +46,10 @@ spec:
 
 ### Status
 
-GatewayClassConfig does not have a status subresource.
+GatewayClassConfig has a `status.conditions` subresource. The reconciler emits:
+
+- `SecretsResolved` — `True` when the referenced credentials Secret exists and carries the expected key, `False` otherwise.
+- `Valid` — `True` when all validation checks pass; `False` with the first failure message otherwise.
 
 ## Gateway API Resources
 
@@ -201,5 +204,5 @@ kubectl apply --filename https://github.com/kubernetes-sigs/gateway-api/releases
 Installed automatically by the Helm chart. For manual installation:
 
 ```bash
-kubectl apply --filename deploy/crds/
+kubectl apply --filename charts/cloudflare-tunnel-gateway-controller/crds/
 ```

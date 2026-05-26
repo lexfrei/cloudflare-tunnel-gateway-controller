@@ -11,12 +11,21 @@ RBAC setup, and provides a simple upgrade path.
 ### Basic Installation
 
 ```bash
+kubectl create namespace cloudflare-tunnel-system
+kubectl create secret generic cloudflare-credentials \
+  --namespace cloudflare-tunnel-system \
+  --from-literal=api-token="YOUR_API_TOKEN"
+kubectl create secret generic cloudflare-tunnel-token \
+  --namespace cloudflare-tunnel-system \
+  --from-literal=tunnel-token="YOUR_TUNNEL_TOKEN"
+
 helm install cloudflare-tunnel-gateway-controller \
   oci://ghcr.io/lexfrei/charts/cloudflare-tunnel-gateway-controller \
   --namespace cloudflare-tunnel-system \
-  --create-namespace \
-  --set config.tunnelID=YOUR_TUNNEL_ID \
-  --set config.apiToken=YOUR_API_TOKEN
+  --set gatewayClassConfig.create=true \
+  --set gatewayClassConfig.tunnelID=YOUR_TUNNEL_ID \
+  --set gatewayClassConfig.cloudflareCredentialsSecretRef.name=cloudflare-credentials \
+  --set proxy.tunnelTokenSecretRef.name=cloudflare-tunnel-token
 ```
 
 ### Installation with Values File
