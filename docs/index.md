@@ -34,10 +34,7 @@ See the [L7 Proxy Guide](guides/l7-proxy.md) for setup and examples.
 
 !!! warning
 
-    The controller assumes **exclusive ownership** of the tunnel configuration.
-    It will remove any ingress rules not managed by HTTPRoute resources.
-    Do not use a tunnel that has manually configured routes or is shared with
-    other systems.
+    The controller assumes **exclusive ownership** of the tunnel configuration. It will remove any ingress rules not managed by HTTPRoute resources. Do not use a tunnel that has manually configured routes or is shared with other systems.
 
 ## Quick Start
 

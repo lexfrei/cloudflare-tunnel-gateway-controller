@@ -93,8 +93,4 @@ flowchart TB
 
 !!! info "Full Sync"
 
-    Any change to HTTPRoute triggers a full configuration sync to
-    Cloudflare Tunnel. The controller rebuilds the entire ingress
-    configuration on each reconciliation. GRPCRoute is still watched
-    for status reasons but does not feed the runtime proxy in v3 — see
-    [limitations](limitations.md#grpcroute-is-not-supported-in-v3).
+    Any change to HTTPRoute triggers a full configuration sync to Cloudflare Tunnel. The controller rebuilds the entire ingress configuration on each reconciliation. GRPCRoute is still watched for status reasons but does not feed the runtime proxy in v3 — see [limitations](limitations.md#grpcroute-is-not-supported-in-v3).

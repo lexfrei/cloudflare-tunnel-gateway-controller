@@ -119,12 +119,7 @@ spec:
 
 !!! warning "Not supported in v3"
 
-    GRPCRoute is recognised as a CRD kind but does not route in v3 —
-    the in-process L7 proxy has no gRPC matcher and requests return
-    `404`. The example below is preserved as a v0.8-era reference; use
-    HTTPRoute as a v3 workaround, or stay on the v2.x chart line. See
-    the [GRPCRoute limitation](../gateway-api/limitations.md#grpcroute-is-not-supported-in-v3)
-    for the full explanation.
+    GRPCRoute is recognised as a CRD kind but does not route in v3 — the in-process L7 proxy has no gRPC matcher and requests return `404`. The example below is preserved as a v0.8-era reference; use HTTPRoute as a v3 workaround, or stay on the v2.x chart line. See the [GRPCRoute limitation](../gateway-api/limitations.md#grpcroute-is-not-supported-in-v3) for the full explanation.
 
 Standard Gateway API GRPCRoute:
 
