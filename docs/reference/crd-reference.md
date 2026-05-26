@@ -14,44 +14,20 @@ referenced by a GatewayClass via `spec.parametersRef`.
 
 ### Spec
 
+Starting v3 the spec carries only the contract the controller needs for Cloudflare API calls. Proxy-side configuration (tunnel token, replicas, AWG sidecar, liveness probes) lives in the Helm chart `proxy.*` values; see [Helm chart reference](helm-chart.md).
+
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `tunnelID` | string | Yes | Cloudflare Tunnel UUID |
 | `accountID` | string | No | Cloudflare Account ID (auto-detected if not specified) |
 | `cloudflareCredentialsSecretRef` | SecretKeySelector | Yes | Reference to Secret containing API token |
-| `tunnelTokenSecretRef` | SecretKeySelector | Conditional | Reference to Secret containing tunnel token (required when `cloudflared.enabled=true`) |
-| `cloudflared` | CloudflaredSpec | No | cloudflared deployment configuration |
-
-### CloudflaredSpec
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `enabled` | bool | `true` | Deploy cloudflared via Helm |
-| `awg` | AWGSpec | - | AmneziaWG sidecar configuration |
-| `livenessProbe` | LivenessProbeSpec | - | Liveness probe configuration |
-
-### AWGSpec
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `secretName` | string | Name of Secret containing AWG configuration |
-
-### LivenessProbeSpec
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `initialDelaySeconds` | int32 | 30 | Seconds before probe starts |
-| `timeoutSeconds` | int32 | 5 | Probe timeout in seconds |
-| `periodSeconds` | int32 | 20 | How often to perform probe |
-| `successThreshold` | int32 | 1 | Min successes for healthy |
-| `failureThreshold` | int32 | 3 | Failures before restart |
 
 ### SecretKeySelector
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `name` | string | - | Secret name |
-| `key` | string | `api-token` or `tunnel-token` | Key within the Secret |
+| `key` | string | `api-token` | Key within the Secret |
 
 ### Example
 
@@ -66,13 +42,6 @@ spec:
   cloudflareCredentialsSecretRef:
     name: cloudflare-credentials
     key: api-token
-  tunnelTokenSecretRef:
-    name: cloudflare-tunnel-token
-    key: tunnel-token
-  cloudflared:
-    enabled: true
-    awg:
-      secretName: awg-config  # Optional
 ```
 
 ### Status

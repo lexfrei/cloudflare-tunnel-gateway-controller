@@ -1,17 +1,17 @@
 # GatewayClassConfig
 
-GatewayClassConfig is a cluster-scoped Custom Resource Definition (CRD) that
-provides tunnel configuration for the controller.
+GatewayClassConfig is a cluster-scoped Custom Resource Definition (CRD) that provides tunnel configuration for the controller.
 
 ## Overview
 
-The GatewayClassConfig is referenced by a GatewayClass via `spec.parametersRef`
-and contains:
+The GatewayClassConfig is referenced by a GatewayClass via `spec.parametersRef` and carries the contract the controller needs for Cloudflare API calls:
 
-- Cloudflare credentials (API token, tunnel token)
+- Cloudflare API credentials
 - Tunnel ID
-- cloudflared deployment settings
-- AmneziaWG sidecar configuration (optional)
+- Optional account ID override
+
+!!! note "v3 scope change"
+    Starting v3 the proxy-side configuration (tunnel token, replicas, AmneziaWG sidecar, liveness probes) lives in the Helm chart `proxy.*` values, not in the CRD. The in-process L7 proxy is the only data plane and is deployed by the chart. See [Upgrading v2 → v3](../upgrading/v2-to-v3.md) for the migration path.
 
 ## API Reference
 
@@ -31,27 +31,13 @@ spec:
   cloudflareCredentialsSecretRef:
     name: cloudflare-credentials
     # key: api-token  # Default: "api-token"
-
-  # Required when cloudflared.enabled=true: Tunnel token for cloudflared
-  tunnelTokenSecretRef:
-    name: cloudflare-tunnel-token
-    # key: tunnel-token  # Default: "tunnel-token"
-
-  # cloudflared deployment configuration
-  cloudflared:
-    enabled: true  # Default: true
-
-    # AmneziaWG sidecar (optional)
-    awg:
-      secretName: awg-config
 ```
 
 ## Field Reference
 
 ### `spec.tunnelID` (required)
 
-The UUID of the Cloudflare Tunnel. You can find this in the Cloudflare Zero
-Trust dashboard under Networks > Tunnels.
+The UUID of the Cloudflare Tunnel. You can find this in the Cloudflare Zero Trust dashboard under Networks > Tunnels.
 
 ```yaml
 spec:
@@ -60,8 +46,7 @@ spec:
 
 ### `spec.accountID` (optional)
 
-The Cloudflare account ID. If not specified, it is auto-detected from the API
-token when the token has access to a single account.
+The Cloudflare account ID. If not specified, it is auto-detected from the API token when the token has access to a single account.
 
 ```yaml
 spec:
@@ -92,59 +77,18 @@ stringData:
   api-token: "YOUR_API_TOKEN"
 ```
 
-### `spec.tunnelTokenSecretRef` (required when `cloudflared.enabled=true`)
+## Proxy configuration
 
-Reference to a Kubernetes Secret containing the tunnel token for cloudflared.
+The L7 proxy that terminates the tunnel and applies HTTPRoute filters is configured via Helm chart values, not via the CRD. The minimum required value is:
 
 ```yaml
-spec:
+proxy:
   tunnelTokenSecretRef:
     name: cloudflare-tunnel-token
-    key: tunnel-token  # Optional, defaults to "tunnel-token"
+    # key: tunnel-token  # Default
 ```
 
-### `spec.cloudflared` (optional)
-
-Configuration for the cloudflared deployment.
-
-#### `spec.cloudflared.enabled`
-
-Whether the controller should deploy cloudflared via Helm. Default: `true`.
-
-Set to `false` if you manage cloudflared externally.
-
-#### `spec.cloudflared.awg.secretName`
-
-Name of the Secret containing AmneziaWG configuration for traffic obfuscation.
-
-See [AmneziaWG Sidecar Guide](../guides/awg-sidecar.md) for details.
-
-### `spec.cloudflared.livenessProbe` (optional)
-
-Configuration for the cloudflared liveness probe. These settings control how
-Kubernetes determines if cloudflared is healthy.
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `initialDelaySeconds` | int32 | 30 | Seconds before probe starts |
-| `timeoutSeconds` | int32 | 5 | Probe timeout |
-| `periodSeconds` | int32 | 20 | How often to probe |
-| `successThreshold` | int32 | 1 | Successes for healthy |
-| `failureThreshold` | int32 | 3 | Failures before restart |
-
-```yaml
-spec:
-  cloudflared:
-    livenessProbe:
-      initialDelaySeconds: 30
-      timeoutSeconds: 5
-      periodSeconds: 20
-      failureThreshold: 3
-```
-
-!!! note "Default values"
-    The default values are conservative to prevent unnecessary pod restarts
-    during QUIC reconnections or high traffic periods.
+Additional knobs (replicas, image, resources, health probes, AmneziaWG, access log, websocket timeouts, auth token) are documented in the [Helm values reference](helm-values.md).
 
 ## GatewayClass Reference
 
@@ -193,10 +137,6 @@ spec:
   tunnelID: "550e8400-e29b-41d4-a716-446655440000"
   cloudflareCredentialsSecretRef:
     name: cloudflare-credentials
-  tunnelTokenSecretRef:
-    name: cloudflare-tunnel-token
-  cloudflared:
-    enabled: true
 ---
 apiVersion: gateway.networking.k8s.io/v1
 kind: GatewayClass
@@ -247,7 +187,7 @@ flowchart LR
 
 1. GatewayClass references GatewayClassConfig via `parametersRef`
 2. Controller reads GatewayClassConfig
-3. Controller fetches referenced Secrets
+3. Controller fetches the referenced credentials Secret
 4. Controller auto-detects account ID if not specified
 5. Resolved configuration is used by controllers
 
@@ -265,13 +205,13 @@ Check that the name matches the `parametersRef.name` in GatewayClass.
 
 ### Secret Not Found
 
-If the controller cannot find referenced Secrets:
+If the controller cannot find the referenced Secret:
 
 ```bash
 kubectl get secret cloudflare-credentials --namespace cloudflare-tunnel-system
 ```
 
-Ensure Secrets exist in the controller's namespace.
+Ensure the Secret exists in the controller's namespace.
 
 ### Account ID Detection Failed
 

@@ -15,7 +15,7 @@ Enables routing traffic through Cloudflare Tunnel using standard Gateway API res
 - Standard Gateway API implementation (GatewayClass, Gateway, HTTPRoute, GRPCRoute)
 - Cross-namespace backend references with ReferenceGrant support
 - Hot reload of tunnel configuration (no cloudflared restart required)
-- Optional cloudflared lifecycle management via Helm SDK
+- In-process L7 proxy embeds cloudflared transport (single data plane, no separate cloudflared deployment)
 - Leader election for high availability deployments
 - Multi-arch container images (amd64, arm64)
 - Signed container images with cosign
@@ -88,10 +88,7 @@ Before deploying the controller, you must create a Cloudflare Tunnel:
 4. Choose **Cloudflared** connector type
 5. Name your tunnel and save the **Tunnel ID** and **Tunnel Token**
 
-The controller manages tunnel ingress configuration via API. You can either:
-
-- Let the controller deploy cloudflared automatically (default behavior)
-- Deploy cloudflared yourself using the tunnel token (`cloudflared.enabled: false` in Helm values)
+The controller manages tunnel ingress configuration via the Cloudflare API. Tunnel traffic is terminated by the in-process L7 proxy that ships with the chart; supply the tunnel token via `proxy.tunnelTokenSecretRef` in Helm values.
 
 ### Cloudflare API Token Permissions
 
@@ -173,7 +170,7 @@ The controller supports a subset of Gateway API fields that map to Cloudflare Tu
 | `spec.rules[].filters` | ✅ | Requires L7 proxy |
 | `spec.rules[].backendRefs[].weight` | ✅ | Requires L7 proxy for traffic splitting; without proxy, highest weight wins |
 
-> **Load Balancing:** Without the L7 proxy, the controller uses the highest-weight backend (Cloudflare Tunnel accepts only a single service URL per ingress rule). With the L7 proxy enabled, full weighted traffic splitting between multiple backends is supported. See [Limitations](https://cf.k8s.lex.la/gateway-api/limitations/#traffic-splitting-and-load-balancing) for details.
+> **Load Balancing:** All traffic flows through the in-process L7 proxy, so full weighted traffic splitting between multiple backends is supported end-to-end. See [Limitations](https://cf.k8s.lex.la/gateway-api/limitations/#traffic-splitting-and-load-balancing) for the edge-side caveats that still apply.
 
 ### Known Limitations
 

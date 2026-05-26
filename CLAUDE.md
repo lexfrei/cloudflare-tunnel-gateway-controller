@@ -70,25 +70,23 @@ helm template test charts/cloudflare-tunnel-gateway-controller --values charts/c
 
 ### Controllers (controller-runtime based)
 
-- **GatewayReconciler** (`internal/controller/gateway_controller.go`): Watches Gateway resources whose GatewayClass has a matching `spec.controllerName`. Resolves GatewayClassConfig for tunnel credentials. Optionally manages cloudflared deployment via Helm SDK. Updates Gateway status with tunnel CNAME address.
+- **GatewayReconciler** (`internal/controller/gateway_controller.go`): Watches Gateway resources whose GatewayClass has a matching `spec.controllerName`. Resolves GatewayClassConfig for tunnel credentials. Updates Gateway status with tunnel CNAME address. Status-only since v3 — the in-process L7 proxy embeds cloudflared transport, so the controller no longer deploys a separate cloudflared instance.
 
-- **HTTPRouteReconciler** (`internal/controller/httproute_controller.go`): Watches HTTPRoute resources referencing managed Gateways. Performs full sync of all relevant routes to Cloudflare Tunnel configuration on any change. Updates HTTPRoute status. Optionally pushes config to v2 proxy replicas via ProxySyncer.
+- **HTTPRouteReconciler** (`internal/controller/httproute_controller.go`): Watches HTTPRoute resources referencing managed Gateways. Performs full sync of all relevant routes to Cloudflare Tunnel configuration on any change. Updates HTTPRoute status. Pushes config to L7 proxy replicas via ProxySyncer.
 
-- **GRPCRouteReconciler** (`internal/controller/grpcroute_controller.go`): Watches GRPCRoute resources. Shares RouteSyncer with HTTPRouteReconciler for unified Cloudflare Tunnel sync. Does NOT push to v2 proxy (GRPC is tunnel-only).
+- **GRPCRouteReconciler** (`internal/controller/grpcroute_controller.go`): Watches GRPCRoute resources. Shares RouteSyncer with HTTPRouteReconciler for unified Cloudflare Tunnel sync. Does NOT push to L7 proxy (GRPC is tunnel-only).
 
 - **ProxySyncer** (`internal/controller/proxy_syncer.go`): Converts HTTPRoutes into proxy config and pushes to proxy endpoints via HTTP API. Resolves headless service DNS for endpoint discovery. Validates cross-namespace backends via ReferenceGrant.
 
 ### Custom Resource Definition
 
-- **GatewayClassConfig** (`api/v1alpha1/`): Cluster-scoped CRD for configuring tunnel credentials and cloudflared deployment. Referenced by GatewayClass via `parametersRef`. Supports AWG sidecar configuration.
+- **GatewayClassConfig** (`api/v1alpha1/`): Cluster-scoped CRD for configuring Cloudflare credentials and tunnel ID. Referenced by GatewayClass via `parametersRef`. Spec carries only `cloudflareCredentialsSecretRef`, optional `accountId`, and `tunnelID`. Proxy-side configuration (replicas, tunnel token, AWG, probes) lives in Helm chart values, not in the CRD.
 
 ### Supporting Packages
 
 - **internal/config/resolver.go**: Resolves GatewayClassConfig from GatewayClass parametersRef, reads credentials from Secrets, auto-detects account ID via Cloudflare API.
 
 - **internal/ingress/builder.go**: Converts HTTPRoute specs to Cloudflare tunnel ingress rules. Handles hostnames, path matching (prefix/exact), backend service resolution.
-
-- **internal/helm/manager.go**: Helm SDK wrapper for installing/upgrading cloudflared from OCI registry (`oci://ghcr.io/lexfrei/charts/cloudflare-tunnel`). Includes chart version caching.
 
 - **internal/dns/detect.go**: Auto-detects Kubernetes cluster domain from `/etc/resolv.conf` search domains.
 
@@ -112,7 +110,6 @@ helm template test charts/cloudflare-tunnel-gateway-controller --values charts/c
 - `sigs.k8s.io/controller-runtime` - Kubernetes controller framework
 - `sigs.k8s.io/gateway-api` - Gateway API types
 - `github.com/cloudflare/cloudflare-go/v6` - Cloudflare API client
-- `helm.sh/helm/v4` - Helm SDK for cloudflared deployment
 - `github.com/cockroachdb/errors` - Error wrapping
 
 ### Cloudflared Fork
@@ -134,14 +131,19 @@ The project uses a fork of cloudflared: `github.com/lexfrei/cloudflared` (via `r
 
 ### Configuration
 
-Configuration is provided via GatewayClassConfig CRD (referenced by GatewayClass parametersRef):
+Configuration is split between the GatewayClassConfig CRD (controller-side) and the Helm chart values (proxy data plane):
+
+GatewayClassConfig spec (referenced by GatewayClass parametersRef):
 
 - `cloudflareCredentialsSecretRef` - Secret with `api-token` key (required)
 - `tunnelID` - Cloudflare Tunnel UUID (required)
 - `accountId` - Auto-detected if API token has single account access
-- `tunnelTokenSecretRef` - Secret with `tunnel-token` key (required when cloudflared.enabled)
-- `cloudflared.enabled` - Deploy cloudflared via Helm (default: true)
-- `cloudflared.awg.secretName` - AWG config secret for traffic obfuscation
+
+Helm chart proxy values:
+
+- `proxy.tunnelTokenSecretRef` - Secret with `tunnel-token` key (required); supplied directly to the proxy pods, not via the CRD
+- `proxy.replicas`, `proxy.image.*`, `proxy.resources`, `proxy.healthProbes` - proxy deployment knobs
+- `proxy.accessLog.*`, `proxy.websocket.*`, `proxy.authTokenSecretRef` - proxy runtime tuning
 
 ## Project Structure
 
@@ -153,7 +155,6 @@ internal/
   config/                # GatewayClassConfig resolver and credential handling
   controller/            # Kubernetes controllers (Gateway, HTTPRoute, GRPCRoute, ProxySyncer)
   dns/                   # Cluster domain auto-detection
-  helm/                  # Helm SDK operations for cloudflared
   ingress/               # HTTPRoute → Cloudflare ingress rule conversion
   logging/               # Structured logging helpers (OpenTelemetry trace handler)
   cfmetrics/             # Cloudflare metrics collection
