@@ -28,13 +28,17 @@ func TestGatewayAPIConformance(t *testing.T) {
 	)
 
 	// --- Supported features ---
-	// These are features our v2 proxy actually implements.
+	// Features the v3 in-process L7 proxy implements.
 	opts.SupportedFeatures = sets.New[features.FeatureName](
 		// Core
 		features.SupportGateway,
 		features.SupportHTTPRoute,
 		features.SupportReferenceGrant,
-		features.SupportGRPCRoute,
+		// SupportGRPCRoute: not in v3. The proxy converter has no gRPC matcher
+		// yet, so gRPC requests get 404 from the proxy router. See
+		// docs/gateway-api/limitations.md#grpcroute-is-not-supported-in-v3.
+		// Re-add this flag once the converter learns gRPC and the matching
+		// conformance tests can pass through the proxy.
 
 		// Extended HTTPRoute (Standard channel feature gates; v1 CRD fields)
 		features.SupportHTTPRouteQueryParamMatching,

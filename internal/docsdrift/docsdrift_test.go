@@ -137,6 +137,7 @@ var trackedRoots = []string{
 	"internal",
 	"cmd",
 	"api",
+	"test",
 }
 
 // trackedExtensions are the file types the guard inspects. Everything

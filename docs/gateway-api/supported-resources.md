@@ -9,7 +9,7 @@ This document details the feature support matrix for each Gateway API resource t
 | GatewayClass | `gateway.networking.k8s.io/v1` | Supported |
 | Gateway | `gateway.networking.k8s.io/v1` | Supported |
 | HTTPRoute | `gateway.networking.k8s.io/v1` | Supported |
-| GRPCRoute | `gateway.networking.k8s.io/v1` | Supported |
+| GRPCRoute | `gateway.networking.k8s.io/v1` | Not supported in v3 — see [limitations](limitations.md#grpcroute-is-not-supported-in-v3) |
 | ReferenceGrant | `gateway.networking.k8s.io/v1beta1` | Supported |
 | TCPRoute | `gateway.networking.k8s.io/v1alpha2` | Not supported |
 | TLSRoute | `gateway.networking.k8s.io/v1alpha2` | Not supported |
@@ -114,28 +114,13 @@ The following HTTPRoute filters are supported:
 
 ## GRPCRoute
 
-| Field | Supported | Notes |
-| --- | --- | --- |
-| `spec.parentRefs` | Yes | References to Gateway |
-| `spec.parentRefs[].name` | Yes | Gateway name |
-| `spec.parentRefs[].namespace` | Yes | Gateway namespace |
-| `spec.parentRefs[].sectionName` | Yes | Listener name (optional) |
-| `spec.parentRefs[].port` | Yes | Listener port (optional) |
-| `spec.hostnames` | Yes | Wildcard `*` supported |
-| `spec.rules` | Yes | Routing rules |
-| `spec.rules[].name` | Yes | Metadata only; preserved on the spec but not consulted during matching |
-| `spec.rules[].matches` | Yes | Service/method matching |
-| `spec.rules[].matches[].method.service` | Yes | gRPC service name |
-| `spec.rules[].matches[].method.method` | Yes | gRPC method name |
-| `spec.rules[].matches[].method.type` | Yes | Exact or RegularExpression |
-| `spec.rules[].matches[].headers` | Yes | Exact and RegularExpression matchers |
-| `spec.rules[].filters` | Yes | RequestHeaderModifier, ResponseHeaderModifier |
-| `spec.rules[].backendRefs` | Yes | Service backends only |
-| `spec.rules[].backendRefs[].name` | Yes | Service name |
-| `spec.rules[].backendRefs[].namespace` | Yes | Cross-namespace refs require ReferenceGrant |
-| `spec.rules[].backendRefs[].port` | Yes | Service port |
-| `spec.rules[].backendRefs[].weight` | Yes | True weighted traffic splitting across backends |
-| `spec.rules[].backendRefs[].filters` | No | Not implemented |
+!!! danger "Not supported in v3"
+
+    v3's L7 proxy is the only data plane and the proxy converter has no gRPC matcher yet. GRPCRoute resources continue to be accepted (the controller pushes a Cloudflare-side ingress for them), but those edge rules are **not consulted at runtime** in v3 — the OverrideProxy hook intercepts all tunnel traffic and the proxy router returns `404 no matching route` for unmatched gRPC requests.
+
+    Workaround: re-express the routing as an HTTPRoute, or stay on the v2.x chart line until the proxy converter learns gRPC.
+
+    See [GRPCRoute is not supported in v3](limitations.md#grpcroute-is-not-supported-in-v3) for the full chain of facts and migration guidance.
 
 ## ReferenceGrant
 
