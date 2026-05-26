@@ -546,4 +546,3 @@ func TestGatewayClassConfigReconciler_DefaultNamespace(t *testing.T) {
 	require.NotNil(t, secretsCondition)
 	assert.Equal(t, metav1.ConditionTrue, secretsCondition.Status)
 }
-

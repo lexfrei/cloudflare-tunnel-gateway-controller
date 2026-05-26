@@ -104,14 +104,11 @@ func (r *GatewayClassConfigReconciler) validateConfig(
 ) []metav1.Condition {
 	now := metav1.Now()
 
-	var validationErrors []string
+	// Validate credentials secret. In v3 this is the only spec-level
+	// validation the controller performs — the legacy tunnel-token check
+	// is gone since the proxy receives its token directly from chart values.
+	credResolved, validationErrors := r.validateCredentialsSecret(ctx, config)
 
-	// Validate credentials secret
-	credResolved, credErrors := r.validateCredentialsSecret(ctx, config)
-
-	validationErrors = append(validationErrors, credErrors...)
-
-	// Build conditions
 	return []metav1.Condition{
 		r.buildSecretsCondition(credResolved, config.Generation, now),
 		r.buildValidCondition(validationErrors, config.Generation, now),

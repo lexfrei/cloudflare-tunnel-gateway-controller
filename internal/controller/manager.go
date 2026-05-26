@@ -76,6 +76,12 @@ func Run(ctx context.Context, cfg *Config) error {
 	logger := log.FromContext(ctx).WithName("manager")
 	logger.Info("initializing controller manager")
 
+	// In v3 the L7 proxy is the only data plane; without endpoints to push to,
+	// the controller would silently no-op all HTTPRoutes. Fail loudly instead.
+	if len(cfg.ProxyEndpoints) == 0 {
+		return errors.New("--proxy-endpoints is required: v3 controller cannot run without a configured L7 proxy data plane")
+	}
+
 	mgrOptions := ctrl.Options{
 		Metrics: server.Options{
 			BindAddress: cfg.MetricsAddr,
@@ -212,17 +218,15 @@ func Run(ctx context.Context, cfg *Config) error {
 	return nil
 }
 
-// initProxySyncer creates a ProxySyncer if proxy endpoints are configured.
+// initProxySyncer creates a ProxySyncer. Starting v3 the L7 proxy is the
+// mandatory data plane, so cfg.ProxyEndpoints MUST be non-empty; callers
+// validate that up-front and fail the controller bootstrap otherwise.
 func initProxySyncer(
 	cfg *Config,
 	k8sClient client.Client,
 	baseLogger *slog.Logger,
 	logger logr.Logger,
 ) *ProxySyncer {
-	if len(cfg.ProxyEndpoints) == 0 {
-		return nil
-	}
-
 	logger.Info("proxy syncer enabled", "endpoints", cfg.ProxyEndpoints)
 
 	return NewProxySyncer(

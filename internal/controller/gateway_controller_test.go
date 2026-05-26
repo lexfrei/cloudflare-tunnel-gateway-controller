@@ -2909,9 +2909,6 @@ func TestGatewayReconciler_CountAttachedRoutes_RejectedByBinding(t *testing.T) {
 	assert.Equal(t, int32(1), result["http"])
 }
 
-// mockReleaser is a non-v1release.Release type that implements release.Releaser (empty interface).
-type mockReleaser struct{}
-
 func TestGatewayReconciler_RouteToGateways_HTTPRoute(t *testing.T) {
 	t.Parallel()
 
