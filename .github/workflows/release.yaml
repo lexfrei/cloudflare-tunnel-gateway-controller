@@ -100,10 +100,11 @@ jobs:
             echo "No values.schema.json found, skipping schema validation"
           fi
 
-      - name: Template Chart
+      - name: Template Chart with defaults
         run: |
-          echo "Testing chart templating with default values..."
-          helm template test-release charts/cloudflare-tunnel-gateway-controller
+          echo "Testing chart templating with required proxy.tunnelTokenSecretRef..."
+          helm template test-release charts/cloudflare-tunnel-gateway-controller \
+            --set proxy.tunnelTokenSecretRef.name=tunnel-token-secret
 
       - name: Template Chart with GatewayClassConfig
         run: |
@@ -111,29 +112,21 @@ jobs:
           helm template test-release charts/cloudflare-tunnel-gateway-controller \
             --set gatewayClassConfig.create=true \
             --set gatewayClassConfig.tunnelID=550e8400-e29b-41d4-a716-446655440000 \
-            --set gatewayClassConfig.cloudflareCredentialsSecretRef.name=cloudflare-credentials
-
-      - name: Template Chart with cloudflared management
-        run: |
-          echo "Testing chart with cloudflared management enabled..."
-          helm template test-release charts/cloudflare-tunnel-gateway-controller \
-            --set gatewayClassConfig.create=true \
-            --set gatewayClassConfig.tunnelID=550e8400-e29b-41d4-a716-446655440000 \
             --set gatewayClassConfig.cloudflareCredentialsSecretRef.name=cloudflare-credentials \
-            --set gatewayClassConfig.tunnelTokenSecretRef.name=cloudflare-tunnel-token \
-            --set gatewayClassConfig.cloudflared.enabled=true
+            --set proxy.tunnelTokenSecretRef.name=cloudflare-tunnel-token
 
       - name: Template Chart with ServiceMonitor
         run: |
           echo "Testing chart with ServiceMonitor enabled..."
           helm template test-release charts/cloudflare-tunnel-gateway-controller \
-            --set serviceMonitor.enabled=true
+            --set serviceMonitor.enabled=true \
+            --set proxy.tunnelTokenSecretRef.name=tunnel-token-secret
 
-      - name: Template Chart with proxy enabled
+      - name: Template Chart with NetworkPolicy
         run: |
-          echo "Testing chart with proxy enabled..."
+          echo "Testing chart with proxy NetworkPolicy enabled..."
           helm template test-release charts/cloudflare-tunnel-gateway-controller \
-            --set proxy.enabled=true \
+            --set proxy.networkPolicy.enabled=true \
             --set proxy.tunnelTokenSecretRef.name=tunnel-token-secret
 
       - name: Validate helm-docs
