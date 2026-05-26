@@ -100,7 +100,7 @@ tests:
           path: rules
           content:
             apiGroups: ["gateway.networking.k8s.io"]
-            resources: ["gatewayclasses/status", "gateways/status", "httproutes/status", "grpcroutes/status", "backendtlspolicies/status"]
+            resources: ["gatewayclasses/status", "gateways/status", "httproutes/status", "grpcroutes/status", "backendtlspolicies/status", "listenersets/status"]
             verbs: ["get", "update", "patch"]
 
   # The v3 controller only reads Secrets (Cloudflare credentials, TLS cert
