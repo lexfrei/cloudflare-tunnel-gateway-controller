@@ -34,11 +34,22 @@ v3 collapses the two data plane modes that the v1/v2 chart supported (a separate
 
 2. **Drop `proxy.enabled: false` if you ever set it.** v2 users who ran the controller with the L7 proxy disabled need to set `proxy.tunnelTokenSecretRef.name` before upgrading, otherwise the chart install fails on the required check. The proxy is the only data plane in v3.
 
-3. **Clean up the legacy in-cluster cloudflared release**, if any. The controller no longer reconciles it, but a leftover `cfd-<gateway>` Helm release will keep an orphaned cloudflared Deployment running. Either uninstall it manually (`helm uninstall cfd-<gateway> --namespace <ns>`) or accept that it will stop receiving updates and tear it down on your own schedule.
+3. **Clean up the legacy in-cluster cloudflared releases**, if any. The controller no longer reconciles them, but a leftover `cfd-<gateway>` Helm release will keep an orphaned cloudflared Deployment running. Discover them and uninstall:
+
+    ```bash
+    # Legacy releases were created in the controller's own namespace
+    # (typically cloudflare-tunnel-system), one per managed Gateway.
+    helm list --all-namespaces --filter '^cfd-'
+
+    # Then for each one:
+    helm uninstall <release-name> --namespace <namespace>
+    ```
 
 4. **Make sure the controller deployment passes `--proxy-endpoints`.** The chart wires this unconditionally — only out-of-tree deployments that ran the controller binary directly need to add the flag. The expected value points at the proxy's headless Service (`http://<release>-proxy-headless.<namespace>.svc.<cluster-domain>:<proxy.configAPIPort>/config`).
 
-5. **No data migration is required for CRs.** The Kubernetes API server strips unknown fields when you apply the new CRD schema, so existing GatewayClassConfig resources continue to work — the removed fields are simply ignored.
+5. **No data migration is required for CRs.** The Kubernetes API server strips unknown fields when you apply the new CRD schema, so existing GatewayClassConfig resources continue to work — the removed fields are simply ignored. (`spec.additionalProperties` is deliberately left unset on the CRD schema so v2 CRs apply without modification.)
+
+6. **Legacy finalizer cleanup is automatic.** The v2 controller attached a `cloudflare-tunnel.gateway.networking.k8s.io/cloudflared` finalizer to every Gateway it reconciled. The v3 controller strips this finalizer on first reconcile when the Gateway is being deleted. No manual `kubectl patch` is required — but if you do `kubectl get gateway -o yaml` immediately after upgrade, you will still see the finalizer until the next reconcile event.
 
 ## AmneziaWG sidecar is gone
 

@@ -56,6 +56,30 @@ var retiredSubstrings = []struct {
 		needle: "proxy.enabled",
 		why:    "v3 chart removed the proxy.enabled toggle; the proxy is always rendered",
 	},
+	{
+		needle: "Helm chart to deploy cloudflared",
+		why:    "v3 has no separate cloudflared deployment; the proxy embeds cloudflared transport",
+	},
+	{
+		needle: "Helm chart under the hood",
+		why:    "v3 controller does not delegate to another Helm chart",
+	},
+	{
+		needle: "cloudflared.enabled: true",
+		why:    "v3 dropped the cloudflared toggle from chart values and the CRD",
+	},
+	{
+		needle: "cloudflared.enabled: false",
+		why:    "v3 dropped the cloudflared toggle from chart values and the CRD",
+	},
+	{
+		needle: "AmneziaWG Sidecar Guide",
+		why:    "v3 deleted docs/guides/awg-sidecar.md; no AWG sidecar in the proxy pod",
+	},
+	{
+		needle: "AWG, external-dns",
+		why:    "docs navigation no longer advertises an AWG guide",
+	},
 }
 
 // trackedRoots is the list of doc trees this guard scans. Walked
@@ -111,6 +135,12 @@ var allowedFiles = map[string]map[string]bool{
 		"cloudflare-go/v6":                        true,
 		"AmneziaWG Sidecar Issues":                true,
 		"proxy.enabled":                           true,
+		"Helm chart to deploy cloudflared":        true,
+		"Helm chart under the hood":               true,
+		"cloudflared.enabled: true":               true,
+		"cloudflared.enabled: false":              true,
+		"AmneziaWG Sidecar Guide":                 true,
+		"AWG, external-dns":                       true,
 	},
 }
 

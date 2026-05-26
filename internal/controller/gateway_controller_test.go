@@ -74,6 +74,166 @@ func TestGatewayReconciler_WrongGatewayClass(t *testing.T) {
 	assert.Equal(t, ctrl.Result{}, result)
 }
 
+// TestGatewayReconciler_StripsLegacyFinalizerOnDelete pins the v2 -> v3
+// upgrade safety net. v2 added a cloudflared finalizer to every Gateway
+// it owned; v3 never adds it but pre-existing Gateways still carry it.
+// Without explicit cleanup on the deletion path, deleting such a Gateway
+// after upgrade hangs forever in Terminating.
+func TestGatewayReconciler_StripsLegacyFinalizerOnDelete(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+
+	now := metav1.Now()
+	gateway := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "stuck-gateway",
+			Namespace:         "default",
+			DeletionTimestamp: &now,
+			Finalizers: []string{
+				"cloudflare-tunnel.gateway.networking.k8s.io/cloudflared",
+				"other.example.com/keep-me", // unrelated finalizer must survive
+			},
+		},
+		Spec: gatewayv1.GatewaySpec{
+			GatewayClassName: "cloudflare-tunnel",
+		},
+	}
+
+	gatewayClass := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "cloudflare-tunnel"},
+		Spec: gatewayv1.GatewayClassSpec{
+			ControllerName: "test-controller",
+			ParametersRef: &gatewayv1.ParametersReference{
+				Group: config.ParametersRefGroup,
+				Kind:  config.ParametersRefKind,
+				Name:  "test-config",
+			},
+		},
+	}
+
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "cf-credentials", Namespace: "default"},
+		Data:       map[string][]byte{"api-token": []byte("test")},
+	}
+
+	gatewayClassConfig := &v1alpha1.GatewayClassConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-config"},
+		Spec: v1alpha1.GatewayClassConfigSpec{
+			CloudflareCredentialsSecretRef: v1alpha1.SecretReference{
+				Name:      "cf-credentials",
+				Namespace: "default",
+			},
+			TunnelID: "12345678-1234-1234-1234-123456789abc",
+		},
+	}
+
+	fakeClient := setupGatewayFakeClient(gateway, gatewayClass, secret, gatewayClassConfig)
+
+	reconciler := &GatewayReconciler{
+		Client:         fakeClient,
+		Scheme:         fakeClient.Scheme(),
+		ControllerName: "test-controller",
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+	}
+
+	_, err := reconciler.Reconcile(ctx, ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "stuck-gateway", Namespace: "default"},
+	})
+	require.NoError(t, err)
+
+	var updated gatewayv1.Gateway
+
+	err = fakeClient.Get(ctx, types.NamespacedName{Name: "stuck-gateway", Namespace: "default"}, &updated)
+	require.NoError(t, err)
+
+	// Legacy finalizer must be gone; unrelated finalizer must remain so the
+	// strip is surgical, not a blanket finalizer reset.
+	assert.NotContains(t, updated.Finalizers,
+		"cloudflare-tunnel.gateway.networking.k8s.io/cloudflared")
+	assert.Contains(t, updated.Finalizers, "other.example.com/keep-me")
+}
+
+// TestGatewayReconciler_DeleteWithoutLegacyFinalizer_NoOp pins the
+// surgical nature of the strip: a Gateway that already has the legacy
+// finalizer removed (or never had it -- v3-created Gateway under
+// deletion) must not trip the strip path at all. No Update call, no
+// error, no spurious patches.
+func TestGatewayReconciler_DeleteWithoutLegacyFinalizer_NoOp(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+
+	now := metav1.Now()
+	originalResourceVersion := "5"
+	gateway := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "clean-gateway",
+			Namespace:         "default",
+			DeletionTimestamp: &now,
+			ResourceVersion:   originalResourceVersion,
+			Finalizers:        []string{"other.example.com/keep-me"},
+		},
+		Spec: gatewayv1.GatewaySpec{
+			GatewayClassName: "cloudflare-tunnel",
+		},
+	}
+
+	gatewayClass := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "cloudflare-tunnel"},
+		Spec: gatewayv1.GatewayClassSpec{
+			ControllerName: "test-controller",
+			ParametersRef: &gatewayv1.ParametersReference{
+				Group: config.ParametersRefGroup,
+				Kind:  config.ParametersRefKind,
+				Name:  "test-config",
+			},
+		},
+	}
+
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "cf-credentials", Namespace: "default"},
+		Data:       map[string][]byte{"api-token": []byte("test")},
+	}
+
+	gatewayClassConfig := &v1alpha1.GatewayClassConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-config"},
+		Spec: v1alpha1.GatewayClassConfigSpec{
+			CloudflareCredentialsSecretRef: v1alpha1.SecretReference{
+				Name:      "cf-credentials",
+				Namespace: "default",
+			},
+			TunnelID: "12345678-1234-1234-1234-123456789abc",
+		},
+	}
+
+	fakeClient := setupGatewayFakeClient(gateway, gatewayClass, secret, gatewayClassConfig)
+
+	reconciler := &GatewayReconciler{
+		Client:         fakeClient,
+		Scheme:         fakeClient.Scheme(),
+		ControllerName: "test-controller",
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+	}
+
+	_, err := reconciler.Reconcile(ctx, ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "clean-gateway", Namespace: "default"},
+	})
+	require.NoError(t, err)
+
+	var updated gatewayv1.Gateway
+
+	err = fakeClient.Get(ctx, types.NamespacedName{Name: "clean-gateway", Namespace: "default"}, &updated)
+	require.NoError(t, err)
+
+	// ResourceVersion bumps on every Update; if the strip path was hit
+	// despite the legacy finalizer not being present, the version would
+	// have changed.
+	assert.Equal(t, originalResourceVersion, updated.ResourceVersion,
+		"reconciler must not Update the Gateway when no legacy finalizer is present")
+	assert.Equal(t, []string{"other.example.com/keep-me"}, updated.Finalizers)
+}
+
 func TestGatewayReconciler_NotFound(t *testing.T) {
 	t.Parallel()
 

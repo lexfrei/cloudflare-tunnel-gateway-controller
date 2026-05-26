@@ -133,11 +133,12 @@ installed separately:
 kubectl apply --filename https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.5.0/standard-install.yaml
 ```
 
-## Dependencies
+## Components
 
-The controller uses the
-[cloudflare-tunnel](https://github.com/lexfrei/charts/tree/main/charts/cloudflare-tunnel)
-Helm chart to deploy cloudflared when `cloudflared.enabled: true`.
+The chart renders two deployments:
+
+- **Controller** (`<release>-cloudflare-tunnel-gateway-controller`) — watches Gateway / HTTPRoute / GRPCRoute resources and pushes config to both Cloudflare's tunnel-ingress API and the in-cluster L7 proxy.
+- **Proxy** (`<release>-cloudflare-tunnel-gateway-controller-proxy`) — embeds cloudflared transport in-process (via the vendored fork's `OverrideProxy` hook) and terminates tunnel traffic. Requires `proxy.tunnelTokenSecretRef.name` to be set; the chart fails install otherwise.
 
 ## Helm Chart Testing
 

@@ -15,6 +15,7 @@ import (
 	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -46,6 +47,14 @@ const (
 	// maxConditionMessageLength is the maximum length for condition messages.
 	// Used by truncateMessage to cap status condition messages.
 	maxConditionMessageLength = 256
+
+	// legacyCloudflaredFinalizer is the finalizer that the v2 controller
+	// attached to every Gateway it reconciled while it owned the cloudflared
+	// deployment lifecycle. v3 never adds it (the chart owns proxy lifecycle
+	// now), but Gateways that existed before the v3 upgrade still carry it,
+	// and without explicit cleanup they would hang forever in Terminating
+	// when deleted. The deletion branch strips it on first reconcile.
+	legacyCloudflaredFinalizer = "cloudflare-tunnel.gateway.networking.k8s.io/cloudflared"
 )
 
 // truncateMessage truncates a message to maxConditionMessageLength.
@@ -114,8 +123,19 @@ func (r *GatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	}
 
 	if !gateway.DeletionTimestamp.IsZero() {
-		// Nothing to clean up - no finalizer is added since v3 (proxy lifecycle
-		// is managed by the Helm chart, not per-Gateway).
+		// v3 never adds a finalizer (proxy lifecycle is managed by the Helm
+		// chart, not per-Gateway), but Gateways created under v2 still carry
+		// the legacy cloudflared finalizer. Strip it once on first reconcile
+		// after the upgrade, otherwise the Gateway hangs in Terminating
+		// forever.
+		if controllerutil.ContainsFinalizer(&gateway, legacyCloudflaredFinalizer) {
+			controllerutil.RemoveFinalizer(&gateway, legacyCloudflaredFinalizer)
+
+			if err := r.Update(ctx, &gateway); err != nil {
+				return ctrl.Result{}, errors.Wrap(err, "failed to remove legacy cloudflared finalizer")
+			}
+		}
+
 		return ctrl.Result{}, nil
 	}
 

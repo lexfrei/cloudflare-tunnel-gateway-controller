@@ -116,8 +116,6 @@ See [charts/cloudflare-tunnel-gateway-controller/README.md](charts/cloudflare-tu
 
 For manual installation without Helm, see [Manual Installation](https://cf.k8s.lex.la/operations/manual-installation/).
 
-> **Note:** This controller uses [cloudflare-tunnel](https://github.com/lexfrei/charts/tree/main/charts/cloudflare-tunnel) Helm chart under the hood to deploy cloudflared. If you don't need Gateway API integration, you can use that chart directly.
-
 ## Usage
 
 Create standard [Gateway API](https://gateway-api.sigs.k8s.io/) HTTPRoute or GRPCRoute resources referencing the `cloudflare-tunnel` Gateway. The controller automatically syncs routes to Cloudflare Tunnel configuration with hot reload (no cloudflared restart required).
