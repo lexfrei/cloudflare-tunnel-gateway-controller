@@ -55,7 +55,9 @@ func TestHTTPRouteBackendProtocolWebSocket(t *testing.T) {
 	setupTestNamespace(t, k8sClient, cfg)
 	setupEchoBackends(t, k8sClient, cfg)
 	setupGateway(t, k8sClient, cfg)
-	deleteAllRoutes(t, k8sClient, cfg)
+	// Clean slate: blanket wipe to catch leftover routes from a
+	// prior interrupted run, regardless of owner label.
+	wipeAllRoutesInNamespace(t, k8sClient, cfg)
 
 	// Provision a sibling Service `echo-v1-ws` that selects echo-v1 pods but
 	// exposes port 8082 with `appProtocol: kubernetes.io/ws` forwarding to
@@ -189,7 +191,9 @@ func TestHTTPRouteBackendProtocolWebSocket_AppliesResponseFilters(t *testing.T) 
 	setupTestNamespace(t, k8sClient, cfg)
 	setupEchoBackends(t, k8sClient, cfg)
 	setupGateway(t, k8sClient, cfg)
-	deleteAllRoutes(t, k8sClient, cfg)
+	// Clean slate: blanket wipe to catch leftover routes from a
+	// prior interrupted run, regardless of owner label.
+	wipeAllRoutesInNamespace(t, k8sClient, cfg)
 
 	// Sibling service with a distinct port so the cluster-side state is
 	// independent of TestHTTPRouteBackendProtocolWebSocket. The path is
