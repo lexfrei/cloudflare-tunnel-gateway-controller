@@ -22,7 +22,6 @@ All matching and filter behavior is performed by the in-process L7 proxy that th
 | Per-route timeouts | ✅ | |
 | Cross-namespace routing | ✅ | Via ReferenceGrant |
 | ExternalName service backends | ✅ | |
-| GRPCRoute | ✅ | |
 
 ## Basic Example
 

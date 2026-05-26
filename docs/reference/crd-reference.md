@@ -188,7 +188,7 @@ spec:
 | GatewayClass | `gateway.networking.k8s.io` | `v1` | GA |
 | Gateway | `gateway.networking.k8s.io` | `v1` | GA |
 | HTTPRoute | `gateway.networking.k8s.io` | `v1` | GA |
-| GRPCRoute | `gateway.networking.k8s.io` | `v1` | GA |
+| GRPCRoute | `gateway.networking.k8s.io` | `v1` | GA (not consumed in v3 — see [limitations](../gateway-api/limitations.md#grpcroute-is-not-supported-in-v3)) |
 | ReferenceGrant | `gateway.networking.k8s.io` | `v1beta1` | Beta |
 
 ## Installing CRDs

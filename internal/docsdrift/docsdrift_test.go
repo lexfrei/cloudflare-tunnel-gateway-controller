@@ -116,6 +116,18 @@ var retiredSubstrings = []struct {
 		needle: "v1 path",
 		why:    "v3 has no 'v1 path'; tunnel traffic always flows through the L7 proxy's OverrideProxy hook",
 	},
+	{
+		needle: "GRPCRoute | gateway.networking.k8s.io/v1 | Supported",
+		why:    "v3 dropped GRPCRoute routing support; the Supported-Resources table in docs/gateway-api/index.md must not re-advertise it as Supported",
+	},
+	{
+		needle: "gRPC routing with service and method matching",
+		why:    "v3 removed the GRPCRoute card from docs/gateway-api/index.md; its 'service and method matching' tagline is a v2 promise that no longer routes",
+	},
+	{
+		needle: "| GRPCRoute | ✅ |",
+		why:    "v3 dropped the stray GRPCRoute row from the HTTPRoute feature matrix in docs/gateway-api/httproute.md (it was both off-topic and false in v3)",
+	},
 }
 
 // trackedRoots is the list of trees this guard scans. Walked
@@ -207,6 +219,9 @@ var allowedFiles = map[string]map[string]bool{
 		"cloudflare.apiToken":                     true,
 		"v2 proxy":                                true,
 		"v1 path":                                 true,
+		"GRPCRoute | gateway.networking.k8s.io/v1 | Supported": true,
+		"gRPC routing with service and method matching":        true,
+		"| GRPCRoute | ✅ |":                                    true,
 	},
 }
 
