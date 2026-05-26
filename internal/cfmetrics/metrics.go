@@ -13,15 +13,12 @@ const (
 	labelStatus    = "status"
 	labelType      = "type"
 	labelMethod    = "method"
-	labelOperation = "operation"
 	labelErrorType = "error_type"
 	labelResource  = "resource"
 )
 
 // Collector provides metrics recording interface.
 // This allows components to record metrics without direct prometheus dependency.
-//
-//nolint:interfacebloat // All methods are needed for comprehensive metrics coverage
 type Collector interface {
 	// Sync metrics
 	RecordSyncDuration(ctx context.Context, status string, duration time.Duration)
@@ -33,11 +30,6 @@ type Collector interface {
 	// Cloudflare API metrics
 	RecordAPICall(ctx context.Context, method, resource, status string, duration time.Duration)
 	RecordAPIError(ctx context.Context, method, errorType string)
-
-	// Helm metrics
-	RecordHelmOperation(ctx context.Context, operation, status string, duration time.Duration)
-	RecordHelmError(ctx context.Context, operation, errorType string)
-	RecordHelmChartInfo(ctx context.Context, chart, version, appVersion string)
 
 	// Ingress builder metrics
 	RecordIngressBuildDuration(ctx context.Context, routeType string, duration time.Duration)
@@ -58,12 +50,6 @@ type prometheusCollector struct {
 	apiCallsTotal  *prometheus.CounterVec
 	apiErrorsTotal *prometheus.CounterVec
 
-	// Helm metrics
-	helmDuration    *prometheus.HistogramVec
-	helmOpsTotal    *prometheus.CounterVec
-	helmErrorsTotal *prometheus.CounterVec
-	helmChartInfo   *prometheus.GaugeVec
-
 	// Ingress builder metrics
 	ingressBuildDuration *prometheus.HistogramVec
 	backendRefValidation *prometheus.CounterVec
@@ -74,7 +60,6 @@ func NewCollector(reg prometheus.Registerer) Collector {
 	c := &prometheusCollector{}
 	c.initSyncMetrics()
 	c.initAPIMetrics()
-	c.initHelmMetrics()
 	c.initIngressMetrics()
 	c.register(reg)
 
@@ -119,26 +104,6 @@ func (c *prometheusCollector) RecordAPICall(
 // RecordAPIError records a Cloudflare API error.
 func (c *prometheusCollector) RecordAPIError(_ context.Context, method, errorType string) {
 	c.apiErrorsTotal.WithLabelValues(method, errorType).Inc()
-}
-
-// RecordHelmOperation records a Helm operation.
-func (c *prometheusCollector) RecordHelmOperation(
-	_ context.Context,
-	operation, status string,
-	duration time.Duration,
-) {
-	c.helmDuration.WithLabelValues(operation).Observe(duration.Seconds())
-	c.helmOpsTotal.WithLabelValues(operation, status).Inc()
-}
-
-// RecordHelmError records a Helm error.
-func (c *prometheusCollector) RecordHelmError(_ context.Context, operation, errorType string) {
-	c.helmErrorsTotal.WithLabelValues(operation, errorType).Inc()
-}
-
-// RecordHelmChartInfo records the deployed Helm chart version info.
-func (c *prometheusCollector) RecordHelmChartInfo(_ context.Context, chart, version, appVersion string) {
-	c.helmChartInfo.WithLabelValues(chart, version, appVersion).Set(1)
 }
 
 // RecordIngressBuildDuration records the duration of ingress rule building.
@@ -218,38 +183,6 @@ func (c *prometheusCollector) initAPIMetrics() {
 	)
 }
 
-func (c *prometheusCollector) initHelmMetrics() {
-	c.helmDuration = prometheus.NewHistogramVec(
-		prometheus.HistogramOpts{
-			Name:    "cftunnel_helm_operation_duration_seconds",
-			Help:    "Duration of Helm operations",
-			Buckets: []float64{0.5, 1, 2.5, 5, 10, 30, 60},
-		},
-		[]string{labelOperation},
-	)
-	c.helmOpsTotal = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: "cftunnel_helm_operations_total",
-			Help: "Total Helm operations",
-		},
-		[]string{labelOperation, labelStatus},
-	)
-	c.helmErrorsTotal = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: "cftunnel_helm_errors_total",
-			Help: "Total Helm errors by type",
-		},
-		[]string{labelOperation, labelErrorType},
-	)
-	c.helmChartInfo = prometheus.NewGaugeVec(
-		prometheus.GaugeOpts{
-			Name: "cftunnel_helm_chart_info",
-			Help: "Deployed Helm chart version info (always 1)",
-		},
-		[]string{"chart", "version", "app_version"},
-	)
-}
-
 func (c *prometheusCollector) initIngressMetrics() {
 	c.ingressBuildDuration = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
@@ -278,10 +211,6 @@ func (c *prometheusCollector) register(reg prometheus.Registerer) {
 		c.apiDuration,
 		c.apiCallsTotal,
 		c.apiErrorsTotal,
-		c.helmDuration,
-		c.helmOpsTotal,
-		c.helmErrorsTotal,
-		c.helmChartInfo,
 		c.ingressBuildDuration,
 		c.backendRefValidation,
 	)
@@ -315,15 +244,6 @@ func (c *NoopCollector) RecordAPICall(_ context.Context, _, _, _ string, _ time.
 
 // RecordAPIError is a no-op.
 func (c *NoopCollector) RecordAPIError(_ context.Context, _, _ string) {}
-
-// RecordHelmOperation is a no-op.
-func (c *NoopCollector) RecordHelmOperation(_ context.Context, _, _ string, _ time.Duration) {}
-
-// RecordHelmError is a no-op.
-func (c *NoopCollector) RecordHelmError(_ context.Context, _, _ string) {}
-
-// RecordHelmChartInfo is a no-op.
-func (c *NoopCollector) RecordHelmChartInfo(_ context.Context, _, _, _ string) {}
 
 // RecordIngressBuildDuration is a no-op.
 func (c *NoopCollector) RecordIngressBuildDuration(_ context.Context, _ string, _ time.Duration) {}

@@ -46,9 +46,6 @@ func TestNoopCollector(t *testing.T) {
 		collector.RecordSyncError(ctx, "timeout")
 		collector.RecordAPICall(ctx, "get", "tunnel_config", "success", time.Second)
 		collector.RecordAPIError(ctx, "get", "auth")
-		collector.RecordHelmOperation(ctx, "install", "success", time.Second)
-		collector.RecordHelmError(ctx, "install", "timeout")
-		collector.RecordHelmChartInfo(ctx, "cloudflare-tunnel", "0.1.0", "2024.1.0")
 		collector.RecordIngressBuildDuration(ctx, "http", time.Millisecond*100)
 		collector.RecordBackendRefValidation(ctx, "http", "accepted", "")
 	})
@@ -69,9 +66,6 @@ func TestMetricsRegistration(t *testing.T) {
 	collector.RecordSyncError(ctx, "test")
 	collector.RecordAPICall(ctx, "get", "tunnel_config", "success", time.Second)
 	collector.RecordAPIError(ctx, "get", "test")
-	collector.RecordHelmOperation(ctx, "install", "success", time.Second)
-	collector.RecordHelmError(ctx, "install", "test")
-	collector.RecordHelmChartInfo(ctx, "test", "1.0.0", "1.0.0")
 	collector.RecordIngressBuildDuration(ctx, "http", time.Millisecond)
 	collector.RecordBackendRefValidation(ctx, "http", "accepted", "")
 
@@ -88,12 +82,18 @@ func TestMetricsRegistration(t *testing.T) {
 		"cftunnel_cloudflare_api_duration_seconds",
 		"cftunnel_cloudflare_api_calls_total",
 		"cftunnel_cloudflare_api_errors_total",
+		"cftunnel_ingress_build_duration_seconds",
+		"cftunnel_backend_ref_validation_total",
+	}
+
+	// v3 retired the Helm-SDK metrics together with the internal/helm
+	// package. Pin their absence so a future refactor that re-adds them
+	// without restoring the consuming code path fails this assertion.
+	retiredMetrics := []string{
 		"cftunnel_helm_operation_duration_seconds",
 		"cftunnel_helm_operations_total",
 		"cftunnel_helm_errors_total",
 		"cftunnel_helm_chart_info",
-		"cftunnel_ingress_build_duration_seconds",
-		"cftunnel_backend_ref_validation_total",
 	}
 
 	registeredMetrics := make(map[string]bool)
@@ -103,6 +103,11 @@ func TestMetricsRegistration(t *testing.T) {
 
 	for _, expected := range expectedMetrics {
 		assert.True(t, registeredMetrics[expected], "metric %s should be registered", expected)
+	}
+
+	for _, retired := range retiredMetrics {
+		assert.False(t, registeredMetrics[retired],
+			"retired Helm metric %s must not be registered in v3", retired)
 	}
 }
 
@@ -208,49 +213,6 @@ func TestRecordAPIError(t *testing.T) {
 	collector.RecordAPIError(ctx, "get", "auth")
 
 	count := testutil.ToFloat64(collector.apiErrorsTotal.WithLabelValues("get", "auth"))
-	assert.Equal(t, float64(1), count)
-}
-
-func TestRecordHelmOperation(t *testing.T) {
-	t.Parallel()
-
-	reg := prometheus.NewRegistry()
-	collector := NewCollector(reg).(*prometheusCollector)
-	ctx := context.Background()
-
-	collector.RecordHelmOperation(ctx, "install", "success", time.Second)
-
-	// Check histogram and counter
-	durationCount := testutil.CollectAndCount(collector.helmDuration)
-	opsCount := testutil.ToFloat64(collector.helmOpsTotal.WithLabelValues("install", "success"))
-
-	assert.Equal(t, 1, durationCount)
-	assert.Equal(t, float64(1), opsCount)
-}
-
-func TestRecordHelmError(t *testing.T) {
-	t.Parallel()
-
-	reg := prometheus.NewRegistry()
-	collector := NewCollector(reg).(*prometheusCollector)
-	ctx := context.Background()
-
-	collector.RecordHelmError(ctx, "install", "timeout")
-
-	count := testutil.ToFloat64(collector.helmErrorsTotal.WithLabelValues("install", "timeout"))
-	assert.Equal(t, float64(1), count)
-}
-
-func TestRecordHelmChartInfo(t *testing.T) {
-	t.Parallel()
-
-	reg := prometheus.NewRegistry()
-	collector := NewCollector(reg).(*prometheusCollector)
-	ctx := context.Background()
-
-	collector.RecordHelmChartInfo(ctx, "cloudflare-tunnel", "0.1.0", "2024.1.0")
-
-	count := testutil.ToFloat64(collector.helmChartInfo.WithLabelValues("cloudflare-tunnel", "0.1.0", "2024.1.0"))
 	assert.Equal(t, float64(1), count)
 }
 

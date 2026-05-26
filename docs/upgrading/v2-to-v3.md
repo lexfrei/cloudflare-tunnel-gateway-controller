@@ -4,7 +4,7 @@ v3 collapses the two data plane modes that the v1/v2 chart supported (a separate
 
 ## What changed
 
-- **The chart no longer renders `proxy.enabled: false`.** The proxy Deployment, Services, NetworkPolicy and ServiceMonitor are always rendered; `proxy.tunnelTokenSecretRef.name` is now mandatory (the schema rejects empty values, and the template's `required` check fires on install).
+- **The chart no longer renders `proxy.enabled: false`.** The proxy Deployment, Services, NetworkPolicy and ServiceMonitor are always rendered; `proxy.tunnelTokenSecretRef.name` is now mandatory — the chart's template-level `{{ required "..." }}` check in `templates/deployment-proxy.yaml` fails the install when the value is empty.
 - **The controller no longer manages a separate cloudflared deployment.** All Helm SDK code paths inside the controller are gone — there is no longer an in-cluster Helm release named `cfd-<gateway>` for each Gateway. cloudflared transport now runs inside the proxy pod, configured via the chart's `proxy.tunnelTokenSecretRef`.
 - **The GatewayClassConfig CRD is slimmer.** `tunnelTokenSecretRef` and the entire `cloudflared` block (`enabled`, `replicas`, `namespace`, `protocol`, `awg`, `livenessProbe`) have been removed from the spec. Proxy-side configuration moves to chart values.
 - **`--proxy-endpoints` is required at controller startup.** The bootstrap fails fast with a clear error if the flag is empty.
