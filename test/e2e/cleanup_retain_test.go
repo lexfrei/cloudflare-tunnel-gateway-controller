@@ -14,42 +14,41 @@ import (
 // httproute -A`, proxy log inspection, etc.) without manually fishing
 // the right `--skip-cleanup` flag into every test.
 //
-// Scope of retention -- per-subtest predicate, NOT per-subtest
+// Scope of retention -- per-subtest predicate AND per-subtest
 // resource isolation. Each `t.Run` receives a fresh `*testing.T`
 // whose `Failed()` reports only that subtest's own failures, never
-// a sibling's (pinned by runDeferObservationHelper). So the
-// PREDICATE fires per-failing-subtest. But the CLEANUP it gates --
-// deleteAllRoutes -- is a blanket namespace wipe: it deletes every
-// HTTPRoute in cfg.TestNamespace regardless of which subtest
-// created it.
+// a sibling's (pinned by runDeferObservationHelper); so the
+// PREDICATE fires per-failing-subtest. The CLEANUP it gates --
+// deleteAllRoutes -- now also filters by ownerLabelKey ==
+// subtestLabelValue(t.Name()) so it only deletes the routes the
+// current subtest created. Issue #265 closed the regression where
+// a passing sibling's defer would wipe a failing subtest's
+// retained routes.
 //
 // Operational consequence in a full-suite run:
 //
 //  1. Subtest A fails. A's defer skips (predicate=true). A's
-//     routes stay in the namespace.
-//  2. Subtest B runs next, creates its own routes, passes.
+//     routes stay in the namespace with owner=hash(A).
+//  2. Subtest B runs next, creates its own routes with
+//     owner=hash(B), passes.
 //  3. B's defer runs (predicate=false because B passed) and
-//     deleteAllRoutes wipes the entire namespace -- including
-//     A's retained routes.
+//     deleteAllRoutes filters by owner=hash(B); A's routes survive.
 //
-// Only state from the LAST failing subtest after the final passing
-// sibling survives the run. In other words, the env var is mostly
-// useful when paired with `-run TestName/SubtestName` so the
-// failing subtest is the only one that touches the namespace.
-// Running the full suite with the env set and expecting to inspect
-// an early failure's state is the trap; use `-run` to avoid it.
-//
-// (Issue #265 tracks the larger refactor: scoping deleteAllRoutes
-// to a subtest-owned label set so siblings can't wipe each other's
-// state. Documenting the limitation here is the conservative fix.)
+// So `E2E_SKIP_CLEANUP_ON_FAILURE` now preserves the failing
+// subtest's state across the rest of the run without the operator
+// having to pair it with `-run TestName/SubtestName`. Pairing still
+// works (and is recommended if the failing subtest itself created
+// many routes you want to triage one at a time), but is no longer
+// load-bearing.
 //
 // Cross-invocation. Retention is scoped to a single `go test`
-// process. The next invocation's clean-slate `deleteAllRoutes` at
-// the top of `TestHTTPRouteConformance` runs with the parent's
-// `t.Failed() == false` and wipes anything left over -- intentional,
-// so a follow-up run starts from a known state once the operator has
-// finished inspecting. `kubectl` against the retained state must
-// happen between the failing run and the next `go test` invocation.
+// process. The next invocation's clean-slate `wipeAllRoutesInNamespace`
+// at the top of `TestHTTPRouteConformance` runs with the parent's
+// `t.Failed() == false` and wipes anything left over regardless of
+// owner -- intentional, so a follow-up run starts from a known
+// state once the operator has finished inspecting. `kubectl`
+// against the retained state must happen between the failing run
+// and the next `go test` invocation.
 //
 // Documented in docs/development/testing.md under "E2E Environment
 // Variables"; that doc row is asserted by TestEnvVarDocumented in
