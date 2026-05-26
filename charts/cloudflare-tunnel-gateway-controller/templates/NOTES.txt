@@ -91,13 +91,6 @@ App Version: {{ .Chart.AppVersion }}
                    name: monitoring
 {{- end }}
 
-{{- if .Values.gatewayClassConfig.cloudflared.awg.secretName }}
-
-  🔐 AmneziaWG: AWG sidecar is enabled with interface prefix {{ .Values.gatewayClassConfig.cloudflared.awg.interfacePrefix }}.
-     Interface names are auto-generated using kernel numbering (e.g., prefix0, prefix1).
-     Consider using pod anti-affinity to prevent multiple cloudflared pods on the same node.
-{{- end }}
-
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 📚 Resources:

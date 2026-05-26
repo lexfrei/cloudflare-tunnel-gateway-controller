@@ -149,43 +149,6 @@ cloudflared:
   replicas: 1
 ```
 
-### External cloudflared
-
-When managing cloudflared separately (e.g., on edge nodes):
-
-```yaml
-config:
-  tunnelID: "YOUR_TUNNEL_ID"
-  existingSecrets:
-    apiToken:
-      name: cloudflare-credentials
-      key: api-token
-
-cloudflared:
-  enabled: false  # Don't deploy cloudflared via Helm
-```
-
-### With AmneziaWG Sidecar
-
-```yaml
-config:
-  tunnelID: "YOUR_TUNNEL_ID"
-  existingSecrets:
-    apiToken:
-      name: cloudflare-credentials
-      key: api-token
-    tunnelToken:
-      name: cloudflare-tunnel-token
-      key: tunnel-token
-
-cloudflared:
-  awg:
-    enabled: true
-    secretName: awg-config
-```
-
-See [AmneziaWG Sidecar Guide](../guides/awg-sidecar.md) for details.
-
 ## Upgrading
 
 When upgrading the Helm release:

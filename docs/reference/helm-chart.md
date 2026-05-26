@@ -80,15 +80,6 @@ serviceMonitor:
     release: prometheus
 ```
 
-### AmneziaWG Sidecar
-
-```yaml
-cloudflared:
-  awg:
-    enabled: true
-    secretName: awg-config
-```
-
 ## Example Values Files
 
 The chart includes example values files in the `examples/` directory:
@@ -96,9 +87,8 @@ The chart includes example values files in the `examples/` directory:
 | File | Description |
 |------|-------------|
 | `basic-values.yaml` | Minimal configuration |
-| `ha-values.yaml` | High availability setup |
+| `production-values.yaml` | Production HA setup |
 | `external-secrets-values.yaml` | External Secrets Operator integration |
-| `awg-values.yaml` | AmneziaWG sidecar configuration |
 
 ## Upgrading
 

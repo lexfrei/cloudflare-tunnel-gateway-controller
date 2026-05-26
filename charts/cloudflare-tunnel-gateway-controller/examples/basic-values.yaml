@@ -7,7 +7,7 @@
 #        --namespace cloudflare-tunnel-system \
 #        --from-literal=api-token="your-api-token"
 #
-#   2. Create a secret with the tunnel token (when cloudflared management is enabled):
+#   2. Create a secret with the tunnel token (consumed by the proxy pod):
 #      kubectl create secret generic cloudflare-tunnel-token \
 #        --namespace cloudflare-tunnel-system \
 #        --from-literal=tunnel-token="your-tunnel-token"
@@ -32,16 +32,8 @@ gatewayClassConfig:
   cloudflareCredentialsSecretRef:
     name: "cloudflare-credentials"
 
-  # Reference to Secret containing tunnel token (required when cloudflared.enabled is true)
-  # Secret must have key: tunnel-token
+# The L7 proxy embeds cloudflared transport in-process. Supply the tunnel
+# token here; the chart wires it into the proxy pod via PROXY_TUNNEL_TOKEN.
+proxy:
   tunnelTokenSecretRef:
     name: "cloudflare-tunnel-token"
-
-  # Cloudflared deployment configuration
-  cloudflared:
-    # Enable cloudflared deployment management (default: true)
-    enabled: true
-    # Number of cloudflared replicas
-    replicas: 1
-    # Namespace for cloudflared deployment
-    namespace: "cloudflare-tunnel-system"

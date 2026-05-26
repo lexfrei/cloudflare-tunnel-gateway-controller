@@ -40,6 +40,10 @@ v3 collapses the two data plane modes that the v1/v2 chart supported (a separate
 
 5. **No data migration is required for CRs.** The Kubernetes API server strips unknown fields when you apply the new CRD schema, so existing GatewayClassConfig resources continue to work — the removed fields are simply ignored.
 
+## AmneziaWG sidecar is gone
+
+The AmneziaWG sidecar was a feature of the legacy cloudflared-managed-by-controller path: the controller's Helm SDK render of cloudflared wired in an AWG sidecar that intercepted the cloudflared egress. v3 has no separate cloudflared deployment, no Helm SDK render, and no sidecar slot on the proxy pod, so AWG is no longer offered as a built-in option. If you relied on AWG to obfuscate the tunnel transport, stay on the v2.x chart line until upstream re-introduces an equivalent.
+
 ## Why this is a breaking change
 
 The v2 chart supported two independent ways to terminate Cloudflare Tunnel traffic, and both were on by default. The L7 proxy was the path that actually receives Gateway API features (regex matching, filters, URL rewrites, CORS), so leaving the legacy cloudflared-only mode in place mostly led to silent feature gaps when users discovered their HTTPRoute filters were not being honoured. Collapsing to a single data plane removes the foot-gun and lets the controller's status reporting match what the data plane is actually doing.

@@ -7,14 +7,6 @@ and advanced configurations.
 
 <div class="grid cards" markdown>
 
--   :material-shield-lock:{ .lg .middle } **AmneziaWG Sidecar**
-
-    ---
-
-    Set up traffic obfuscation with AmneziaWG sidecar container.
-
-    [:octicons-arrow-right-24: AmneziaWG Sidecar](awg-sidecar.md)
-
 -   :material-dns:{ .lg .middle } **External-DNS Integration**
 
     ---
@@ -63,7 +55,6 @@ Before following these guides, ensure you have:
 | Use Case | Recommended Guide |
 |----------|-------------------|
 | Full HTTPRoute matching and filters | [L7 Proxy](l7-proxy.md) |
-| Traffic obfuscation in restricted networks | [AmneziaWG Sidecar](awg-sidecar.md) |
 | Automatic DNS record creation | [External-DNS](external-dns.md) |
 | Multi-namespace service mesh | [Cross-Namespace Routing](cross-namespace.md) |
 | Production observability | [Monitoring](monitoring.md) |

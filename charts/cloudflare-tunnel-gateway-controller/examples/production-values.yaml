@@ -43,16 +43,12 @@ gatewayClassConfig:
   cloudflareCredentialsSecretRef:
     name: "cloudflare-credentials"
 
-  # Reference to Secret containing tunnel token
+# Proxy data plane configuration. The L7 proxy embeds cloudflared transport
+# in-process; supply the tunnel token here. Run two replicas in production.
+proxy:
+  replicas: 2
   tunnelTokenSecretRef:
     name: "cloudflare-tunnel-token"
-
-  # Cloudflared deployment configuration
-  cloudflared:
-    enabled: true
-    replicas: 2
-    namespace: "cloudflare-tunnel-system"
-    # protocol: "quic"
 
 controller:
   # Production logging configuration

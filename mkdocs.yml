@@ -171,7 +171,6 @@ nav:
   - Guides:
       - guides/index.md
       - L7 Proxy Setup: guides/l7-proxy.md
-      - AmneziaWG Sidecar: guides/awg-sidecar.md
       - External-DNS Integration: guides/external-dns.md
       - Cross-Namespace Routing: guides/cross-namespace.md
       - Monitoring: guides/monitoring.md
