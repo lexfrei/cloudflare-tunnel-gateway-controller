@@ -8,11 +8,11 @@
 
 Kubernetes controller implementing Gateway API for Cloudflare Tunnel.
 
-Enables routing traffic through Cloudflare Tunnel using standard Gateway API resources (Gateway, HTTPRoute, GRPCRoute).
+Enables routing traffic through Cloudflare Tunnel using standard Gateway API resources (Gateway, HTTPRoute).
 
 ## Features
 
-- Standard Gateway API implementation (GatewayClass, Gateway, HTTPRoute, GRPCRoute)
+- Standard Gateway API implementation (GatewayClass, Gateway, HTTPRoute). GRPCRoute is **not supported in v3** — see [migration](https://cf.k8s.lex.la/upgrading/v2-to-v3/) for details.
 - Cross-namespace backend references with ReferenceGrant support
 - Hot reload of tunnel configuration (no cloudflared restart required)
 - In-process L7 proxy embeds cloudflared transport (single data plane, no separate cloudflared deployment)

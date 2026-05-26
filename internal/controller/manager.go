@@ -80,8 +80,10 @@ func Run(ctx context.Context, cfg *Config) error {
 
 	// In v3 the L7 proxy is the only data plane; without endpoints to push to,
 	// the controller would silently no-op all HTTPRoutes. Fail loudly instead.
-	cfg.ProxyEndpoints = sanitiseProxyEndpoints(cfg.ProxyEndpoints)
-	if len(cfg.ProxyEndpoints) == 0 {
+	// Use a local instead of mutating the caller's Config -- a future
+	// retry-wrapper around Run shouldn't accumulate state across calls.
+	proxyEndpoints := sanitiseProxyEndpoints(cfg.ProxyEndpoints)
+	if len(proxyEndpoints) == 0 {
 		return errors.New("--proxy-endpoints is required: v3 controller cannot run without a configured L7 proxy data plane")
 	}
 
@@ -171,7 +173,7 @@ func Run(ctx context.Context, cfg *Config) error {
 		ControllerName: cfg.ControllerName,
 		RouteSyncer:    routeSyncer,
 		ProxySyncer:    proxySyncer,
-		ProxyEndpoints: cfg.ProxyEndpoints,
+		ProxyEndpoints: proxyEndpoints,
 	}
 
 	if err := httpRouteReconciler.SetupWithManager(mgr); err != nil {
