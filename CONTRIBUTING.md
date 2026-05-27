@@ -31,10 +31,13 @@ Quick start:
 ```bash
 git clone https://github.com/lexfrei/cloudflare-tunnel-gateway-controller.git
 cd cloudflare-tunnel-gateway-controller
-go mod download
-go build ./...
-golangci-lint run
+make check-deps  # verify required tools are installed
+make build       # build the controller binary
+make test        # run tests
+make lint        # run linter
 ```
+
+Run `make help` to see all available targets.
 
 ## Commit Message Format
 
@@ -80,7 +83,7 @@ chore(deps): update controller-runtime to v0.22.4
 1. **Title**: Use conventional commit format
 2. **Description**: Fill out the PR template completely
 3. **Tests**: Add tests for new functionality
-4. **Linting**: Ensure `golangci-lint run` passes with no errors
+4. **Linting**: Ensure `make lint` passes with no errors
 5. **Documentation**: Update relevant docs
 6. **Review**: Address reviewer feedback
 
@@ -113,10 +116,13 @@ All linting errors must be fixed before merging:
 
 ```bash
 # Run linter
-golangci-lint run
+make lint
 
 # Auto-fix some issues
-golangci-lint run --fix
+make lint-fix
+
+# Lint markdown files
+make lint-md
 ```
 
 ### nolint Directives
@@ -134,19 +140,19 @@ func Run(ctx context.Context, cfg *Config) error {
 
 ```bash
 # All tests
-go test -v ./...
+make test
 
 # With race detector
-go test -race ./...
+make test-race
 
-# With coverage
-go test -coverprofile=coverage.out ./...
+# With coverage report (coverage.out)
+make test-coverage
 ```
 
 ### Helm Chart Tests
 
 ```bash
-helm unittest charts/cloudflare-tunnel-gateway-controller
+make helm-test
 ```
 
 ### Test Requirements
