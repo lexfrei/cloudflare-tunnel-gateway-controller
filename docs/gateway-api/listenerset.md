@@ -148,6 +148,21 @@ spec:
 | `ResolvedRefs` | `False` | `RefNotPermitted` | Cross-namespace cert ref denied by missing ReferenceGrant |
 | `ResolvedRefs` | `False` | `InvalidCertificateRef` | Cert Secret missing, wrong type, or missing data |
 
+## DNS automation (external-dns)
+
+If you rely on [external-dns](https://github.com/kubernetes-sigs/external-dns) to publish the tunnel CNAME for your hostnames, note that a route attached **only** via a `ListenerSet` parentRef needs external-dns to follow that parentRef to the parent Gateway's status address. external-dns supports this through the opt-in `--gateway-listener-sets` flag (available since external-dns v0.21.0). Without the flag, external-dns skips `Kind=ListenerSet` parentRefs and the hostname gets no DNS record even though the controller programs the route correctly.
+
+Two ways to handle it:
+
+- **Enable the flag** (recommended): add `--gateway-listener-sets` to the external-dns deployment args. external-dns then resolves the target through the ListenerSet → parent Gateway chain. The `external-dns.kubernetes.io/target` annotation is also honoured directly on `ListenerSet` resources, taking precedence over the parent Gateway's target annotation.
+- **Keep a direct Gateway parentRef** alongside the ListenerSet one: the route then has two parents, the controller programs it once, and external-dns resolves the DNS record via the Gateway parent regardless of the flag.
+
+This is an external-dns behaviour, not a controller limitation — the controller programs the route through the tunnel in both cases.
+
+!!! note "Accurate as of late spring 2026"
+
+    The flag name, the minimum external-dns version, and the ListenerSet handling above reflect external-dns as of late spring 2026. external-dns moves fast — before relying on this, confirm against the upstream [Gateway API source docs](https://kubernetes-sigs.github.io/external-dns/latest/docs/sources/gateway-api/), which are the authoritative source.
+
 ## Tunnel-specific notes
 
 Cloudflare Tunnel is a single ingress point — `port`, `protocol`, and `tls` on Gateway listeners are accepted for spec compliance but the real TLS termination happens at Cloudflare's edge. The same constraint applies to ListenerSet listeners: their TLS material is validated (existence, type, PEM, ReferenceGrant) but not used for cipher negotiation. Multi-port and protocol-specific behaviour (TCP/UDP) is not supported.
