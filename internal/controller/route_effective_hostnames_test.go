@@ -51,6 +51,49 @@ func TestWithEffectiveHostnames_InheritsFromGatewayListener(t *testing.T) {
 	assert.Equal(t, []gatewayv1.Hostname{gatewayHost}, out[0].Spec.Hostnames)
 }
 
+// TestWithEffectiveHostnamesGRPC_InheritsFromGatewayListener proves a GRPCRoute
+// with empty spec.hostnames inherits its parent listener's hostname, exactly
+// like the HTTPRoute path. Without it the gRPC rule would carry no hostnames
+// and the proxy router would treat it as a catch-all matching every Host —
+// answering gRPC for hostnames owned by other routes.
+func TestWithEffectiveHostnamesGRPC_InheritsFromGatewayListener(t *testing.T) {
+	t.Parallel()
+
+	gatewayHost := gatewayv1.Hostname("grpc-listener.example.com")
+	gw := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "infra"},
+		Spec: gatewayv1.GatewaySpec{
+			Listeners: []gatewayv1.Listener{
+				{
+					Name: "http", Port: 80, Protocol: gatewayv1.HTTPProtocolType, Hostname: &gatewayHost,
+					AllowedRoutes: &gatewayv1.AllowedRoutes{
+						Namespaces: &gatewayv1.RouteNamespaces{From: namespacesFromAllPtr()},
+					},
+				},
+			},
+		},
+	}
+
+	gwKind := gatewayv1.Kind(kindGateway)
+	gwNS := gatewayv1.Namespace("infra")
+	route := &gatewayv1.GRPCRoute{
+		ObjectMeta: metav1.ObjectMeta{Name: "r", Namespace: "team"},
+		Spec: gatewayv1.GRPCRouteSpec{
+			CommonRouteSpec: gatewayv1.CommonRouteSpec{
+				ParentRefs: []gatewayv1.ParentReference{
+					{Kind: &gwKind, Name: "gw", Namespace: &gwNS},
+				},
+			},
+		},
+	}
+
+	cli := buildGatewayFakeClient(t, gw)
+
+	out := withEffectiveHostnamesGRPC(context.Background(), cli, []*gatewayv1.GRPCRoute{route})
+	require.Len(t, out, 1)
+	assert.Equal(t, []gatewayv1.Hostname{gatewayHost}, out[0].Spec.Hostnames)
+}
+
 func TestWithEffectiveHostnames_InheritsFromListenerSetEntry(t *testing.T) {
 	t.Parallel()
 

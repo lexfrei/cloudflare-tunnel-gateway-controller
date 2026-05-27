@@ -676,6 +676,12 @@ func (s *ProxySyncer) buildProxyConfig(
 	// HTTP config's version (grpcCfg burns a version counter value that is
 	// discarded — only the pushed config's version is observed downstream).
 	if len(grpcRoutes) > 0 {
+		// gRPC routes inherit their parent listener's hostname when they declare
+		// none, exactly like HTTPRoutes — otherwise an empty-hostname gRPC rule
+		// becomes a catch-all answering every Host (including hostnames owned by
+		// other routes).
+		grpcRoutes = withEffectiveHostnamesGRPC(ctx, s.k8sClient, grpcRoutes)
+
 		// gRPC rules are appended after the HTTP rules, so failed-backend
 		// clearing for them starts at the current rule count. ConvertGRPCRoutes
 		// emits one rule per GRPCRoute rule, same 1:1 invariant the HTTP path
