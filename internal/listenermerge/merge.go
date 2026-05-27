@@ -78,14 +78,6 @@ type MergedListener struct {
 	ConflictMessage string
 }
 
-// ListenerSetAcceptance summarises whether a ListenerSet, considered as a
-// whole, is accepted by its parent Gateway given the merged view.
-type ListenerSetAcceptance struct {
-	Accepted bool
-	Reason   gatewayv1.ListenerSetConditionReason
-	Message  string
-}
-
 // MergeResult is the output of Merge.
 type MergeResult struct {
 	// Listeners is the precedence-ordered, conflict-annotated merged view.
@@ -114,85 +106,6 @@ func Merge(gateway *gatewayv1.Gateway, listenerSets []*gatewayv1.ListenerSet) *M
 	annotateConflicts(merged)
 
 	return &MergeResult{Listeners: merged}
-}
-
-// ListenerSetSummary returns the aggregate acceptance of a single ListenerSet
-// derived from the merged view: Accepted=True when at least one of the
-// ListenerSet's listeners is conflict-free, Accepted=False with reason
-// ListenersNotValid otherwise.
-func (r *MergeResult) ListenerSetSummary(listenerSet *gatewayv1.ListenerSet) ListenerSetAcceptance {
-	hasAny := false
-	hasValid := false
-
-	for i := range r.Listeners {
-		entry := &r.Listeners[i]
-		if entry.ParentKind != ParentKindListenerSet || !sameListenerSet(entry.ListenerSet, listenerSet) {
-			continue
-		}
-
-		hasAny = true
-
-		if entry.ConflictReason == "" {
-			hasValid = true
-
-			break
-		}
-	}
-
-	if !hasAny || !hasValid {
-		return ListenerSetAcceptance{
-			Accepted: false,
-			Reason:   gatewayv1.ListenerSetReasonListenersNotValid,
-			Message:  "No listener in this ListenerSet is conflict-free",
-		}
-	}
-
-	return ListenerSetAcceptance{
-		Accepted: true,
-		Reason:   gatewayv1.ListenerSetReasonAccepted,
-		Message:  "ListenerSet attached to parent Gateway",
-	}
-}
-
-// AttachedListenerSets is the number of distinct ListenerSets in the merged
-// view that have at least one conflict-free listener (i.e. count as
-// "successfully attached" per Gateway API spec).
-func (r *MergeResult) AttachedListenerSets() int {
-	seenValid := make(map[string]struct{})
-
-	for i := range r.Listeners {
-		entry := &r.Listeners[i]
-		if entry.ParentKind != ParentKindListenerSet || entry.ConflictReason != "" {
-			continue
-		}
-
-		seenValid[listenerSetKey(entry.ListenerSet)] = struct{}{}
-	}
-
-	return len(seenValid)
-}
-
-// sameListenerSet returns true when both pointers reference the same
-// underlying ListenerSet (or both nil), using namespace+name identity. This
-// is safe across fresh Get / List copies of the same resource.
-func sameListenerSet(left, right *gatewayv1.ListenerSet) bool {
-	if left == right {
-		return true
-	}
-
-	if left == nil || right == nil {
-		return false
-	}
-
-	return left.Namespace == right.Namespace && left.Name == right.Name
-}
-
-func listenerSetKey(ls *gatewayv1.ListenerSet) string {
-	if ls == nil {
-		return ""
-	}
-
-	return ls.Namespace + "/" + ls.Name
 }
 
 func appendGatewayListeners(out []MergedListener, gateway *gatewayv1.Gateway) []MergedListener {
