@@ -78,7 +78,7 @@ ci-go: ## Run all Go CI gates (test + lint)
 ci-helm: ## Run all Helm CI gates (test + lint + docs)
 	helm unittest $(CHART_PATH) && \
 	helm lint $(CHART_PATH) && \
-	helm-docs $(CHART_PATH)
+	helm-docs $(CHART_PATH) && git diff --exit-code $(CHART_PATH)/README.md
 
 ci-docs: ## Run docs CI gate
 	mkdocs build --strict
