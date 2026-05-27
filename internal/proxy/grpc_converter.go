@@ -126,7 +126,10 @@ func grpcMethodToPath(method *gatewayv1.GRPCMethodMatch) *PathMatch {
 	// segments or query, so generated regexes are fully anchored (^…$). The
 	// proxy's regex matcher is substring-based (regexp.MatchString), so
 	// without anchors a rule for method "Echo" would also match
-	// "/svc/EchoStream" and "/svcExtra/Echo".
+	// "/svc/EchoStream" and "/svcExtra/Echo". Each user pattern is wrapped in
+	// a non-capturing group so a top-level alternation (e.g. method "Foo|Bar")
+	// stays scoped to its segment — otherwise "^/svc/Foo|Bar$" parses as
+	// "(^/svc/Foo)|(Bar$)" and matches any path ending in "Bar".
 	if method.Type != nil && *method.Type == gatewayv1.GRPCMethodMatchRegularExpression {
 		svcPattern := service
 		if svcPattern == "" {
@@ -138,7 +141,7 @@ func grpcMethodToPath(method *gatewayv1.GRPCMethodMatch) *PathMatch {
 			methPattern = grpcSegmentPattern
 		}
 
-		return &PathMatch{Type: PathMatchRegularExpression, Value: "^/" + svcPattern + "/" + methPattern + "$"}
+		return &PathMatch{Type: PathMatchRegularExpression, Value: "^/(?:" + svcPattern + ")/(?:" + methPattern + ")$"}
 	}
 
 	switch {

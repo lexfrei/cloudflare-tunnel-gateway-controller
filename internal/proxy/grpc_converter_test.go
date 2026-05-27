@@ -2,6 +2,7 @@ package proxy_test
 
 import (
 	"context"
+	"regexp"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -135,8 +136,51 @@ func TestConvertGRPCRoutes_RegexMethod(t *testing.T) {
 	require.Len(t, cfg.Rules, 1)
 	require.NotNil(t, cfg.Rules[0].Matches[0].Path)
 	assert.Equal(t, proxy.PathMatchRegularExpression, cfg.Rules[0].Matches[0].Path.Type)
-	assert.Equal(t, "^/grpc.examples.echo.Echo/Unary.*$", cfg.Rules[0].Matches[0].Path.Value,
-		"generated gRPC regex must be fully anchored — the proxy regex matcher is substring-based")
+	assert.Equal(t, "^/(?:grpc.examples.echo.Echo)/(?:Unary.*)$", cfg.Rules[0].Matches[0].Path.Value,
+		"generated gRPC regex must be fully anchored and segment-scoped — the proxy regex matcher is substring-based")
+}
+
+// TestConvertGRPCRoutes_RegexAlternationAnchored proves a user RegularExpression
+// with top-level alternation stays scoped to its segment. Inserted raw into
+// "^/svc/Foo|Bar$" the alternation binds loosest and yields
+// "(^/svc/Foo)|(Bar$)" — matching any path ending in "Bar". Each user pattern
+// must be wrapped in a non-capturing group so the anchors apply to the whole
+// method name.
+func TestConvertGRPCRoutes_RegexAlternationAnchored(t *testing.T) {
+	t.Parallel()
+
+	svc := "svc"
+	method := "Foo|Bar"
+	routes := []*gatewayv1.GRPCRoute{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "alt", Namespace: "default"},
+			Spec: gatewayv1.GRPCRouteSpec{
+				Rules: []gatewayv1.GRPCRouteRule{
+					{
+						Matches: []gatewayv1.GRPCRouteMatch{
+							{Method: &gatewayv1.GRPCMethodMatch{Type: grpcRegex(), Service: &svc, Method: &method}},
+						},
+						BackendRefs: []gatewayv1.GRPCBackendRef{grpcBackendRef("alt-svc", 9000, 1)},
+					},
+				},
+			},
+		},
+	}
+
+	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil)
+
+	require.Len(t, cfg.Rules, 1)
+	require.NotNil(t, cfg.Rules[0].Matches[0].Path)
+
+	value := cfg.Rules[0].Matches[0].Path.Value
+	assert.Equal(t, "^/(?:svc)/(?:Foo|Bar)$", value,
+		"user alternation must be wrapped so it cannot escape the segment anchors")
+
+	re := regexp.MustCompile(value)
+	assert.True(t, re.MatchString("/svc/Foo"), "should match service svc method Foo")
+	assert.True(t, re.MatchString("/svc/Bar"), "should match service svc method Bar")
+	assert.False(t, re.MatchString("/other/Bar"), "alternation must not leak to any-path-ending-in-Bar")
+	assert.False(t, re.MatchString("/svc/FooBar"), "anchors must reject a longer method")
 }
 
 // TestConvertGRPCRoutes_MethodOnlyExact maps an Exact method-only match (no
@@ -184,8 +228,8 @@ func TestConvertGRPCRoutes_RegexEmptyServiceAndMethod(t *testing.T) {
 		method  *string
 		want    string
 	}{
-		{name: "empty service", service: nil, method: &method, want: "^/[^/]+/Bar.*$"},
-		{name: "empty method", service: &svc, method: nil, want: "^/svc.Foo/[^/]+$"},
+		{name: "empty service", service: nil, method: &method, want: "^/(?:[^/]+)/(?:Bar.*)$"},
+		{name: "empty method", service: &svc, method: nil, want: "^/(?:svc.Foo)/(?:[^/]+)$"},
 	}
 
 	for _, tt := range tests {
