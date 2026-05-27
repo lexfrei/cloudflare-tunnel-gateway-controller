@@ -3,6 +3,7 @@ package proxy_test
 import (
 	"context"
 	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -76,6 +77,43 @@ func TestConvertGRPCRoutes_ExactServiceMethod(t *testing.T) {
 	assert.Equal(t, "/grpc.examples.echo.Echo/UnaryEcho", rule.Matches[0].Path.Value)
 	require.Len(t, rule.Backends, 1)
 	assert.Equal(t, proxy.BackendProtocolH2C, rule.Backends[0].Protocol, "gRPC backend must be h2c")
+}
+
+// TestConvertGRPCRoutes_BackendPort443ForcesCleartextH2C pins the port-443
+// normalization: buildServiceURL emits https:// for port 443, but gRPC h2c is
+// cleartext, so the converter rewrites the scheme to http:// regardless of
+// port. Without the rewrite a gRPC backend on 443 would get an https URL the
+// h2c transport cannot dial.
+func TestConvertGRPCRoutes_BackendPort443ForcesCleartextH2C(t *testing.T) {
+	t.Parallel()
+
+	svc := "grpc.examples.echo.Echo"
+	method := "UnaryEcho"
+	routes := []*gatewayv1.GRPCRoute{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "echo", Namespace: "default"},
+			Spec: gatewayv1.GRPCRouteSpec{
+				Rules: []gatewayv1.GRPCRouteRule{
+					{
+						Matches: []gatewayv1.GRPCRouteMatch{
+							{Method: &gatewayv1.GRPCMethodMatch{Type: grpcExact(), Service: &svc, Method: &method}},
+						},
+						BackendRefs: []gatewayv1.GRPCBackendRef{grpcBackendRef("echo-svc", 443, 1)},
+					},
+				},
+			},
+		},
+	}
+
+	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil)
+
+	require.Len(t, cfg.Rules, 1)
+	require.Len(t, cfg.Rules[0].Backends, 1)
+	backend := cfg.Rules[0].Backends[0]
+	assert.True(t, strings.HasPrefix(backend.URL, "http://"),
+		"port-443 gRPC backend must be rewritten to cleartext http:// for h2c, got %q", backend.URL)
+	assert.NotContains(t, backend.URL, "https://", "no https scheme may survive for an h2c backend")
+	assert.Equal(t, proxy.BackendProtocolH2C, backend.Protocol)
 }
 
 // TestConvertGRPCRoutes_ServiceOnly maps a service-only match to a path-prefix
