@@ -9,6 +9,10 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
+// grpcSegmentPattern matches exactly one gRPC path segment (no slash) — used
+// to fill in an empty service or method in a RegularExpression method match.
+const grpcSegmentPattern = "[^/]+"
+
 // ConvertGRPCRoutes converts GRPCRoute resources into proxy Config rules.
 //
 // gRPC requests are HTTP/2 POSTs to the path /{service}/{method}, so each
@@ -118,18 +122,23 @@ func grpcMethodToPath(method *gatewayv1.GRPCMethodMatch) *PathMatch {
 		return nil
 	}
 
+	// gRPC request paths are exactly /{service}/{method} with no extra
+	// segments or query, so generated regexes are fully anchored (^…$). The
+	// proxy's regex matcher is substring-based (regexp.MatchString), so
+	// without anchors a rule for method "Echo" would also match
+	// "/svc/EchoStream" and "/svcExtra/Echo".
 	if method.Type != nil && *method.Type == gatewayv1.GRPCMethodMatchRegularExpression {
 		svcPattern := service
 		if svcPattern == "" {
-			svcPattern = "[^/]+"
+			svcPattern = grpcSegmentPattern
 		}
 
 		methPattern := meth
 		if methPattern == "" {
-			methPattern = ".*"
+			methPattern = grpcSegmentPattern
 		}
 
-		return &PathMatch{Type: PathMatchRegularExpression, Value: "/" + svcPattern + "/" + methPattern}
+		return &PathMatch{Type: PathMatchRegularExpression, Value: "^/" + svcPattern + "/" + methPattern + "$"}
 	}
 
 	switch {
@@ -140,7 +149,7 @@ func grpcMethodToPath(method *gatewayv1.GRPCMethodMatch) *PathMatch {
 	default:
 		// Exact method, any service (implementation-specific per spec):
 		// match any single service segment followed by the literal method.
-		return &PathMatch{Type: PathMatchRegularExpression, Value: "/[^/]+/" + regexp.QuoteMeta(meth)}
+		return &PathMatch{Type: PathMatchRegularExpression, Value: "^/" + grpcSegmentPattern + "/" + regexp.QuoteMeta(meth) + "$"}
 	}
 }
 
