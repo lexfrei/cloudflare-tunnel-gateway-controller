@@ -499,6 +499,40 @@ func TestConvertGRPCRoutes_HeaderMatch(t *testing.T) {
 	assert.Equal(t, proxy.HeaderMatchExact, cfg.Rules[0].Matches[0].Headers[0].Type)
 }
 
+// TestConvertGRPCRoutes_HeaderOnlyNoMethod pins the spec-allowed header-only
+// match: a GRPCRouteMatch with no Method but a header produces a RouteMatch
+// with a nil Path (matching every gRPC method) constrained only by the header.
+// The nil-Path arm is load-bearing — dropping it would silently break
+// header-only gRPC routing — so it must stay covered.
+func TestConvertGRPCRoutes_HeaderOnlyNoMethod(t *testing.T) {
+	t.Parallel()
+
+	routes := []*gatewayv1.GRPCRoute{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "hdr", Namespace: "default"},
+			Spec: gatewayv1.GRPCRouteSpec{
+				Rules: []gatewayv1.GRPCRouteRule{
+					{
+						Matches: []gatewayv1.GRPCRouteMatch{
+							{Headers: []gatewayv1.GRPCHeaderMatch{{Name: "x-tenant", Value: "blue"}}},
+						},
+						BackendRefs: []gatewayv1.GRPCBackendRef{grpcBackendRef("foo-svc", 9000, 1)},
+					},
+				},
+			},
+		},
+	}
+
+	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil)
+
+	require.Len(t, cfg.Rules, 1)
+	require.Len(t, cfg.Rules[0].Matches, 1)
+	assert.Nil(t, cfg.Rules[0].Matches[0].Path, "header-only match has no path → matches every gRPC method")
+	require.Len(t, cfg.Rules[0].Matches[0].Headers, 1)
+	assert.Equal(t, "x-tenant", cfg.Rules[0].Matches[0].Headers[0].Name)
+	assert.Equal(t, "blue", cfg.Rules[0].Matches[0].Headers[0].Value)
+}
+
 // TestConvertGRPCRoutes_NoMatchesMatchesAll: a rule with no matches routes all
 // gRPC traffic (no path constraint), backend still h2c.
 func TestConvertGRPCRoutes_NoMatchesMatchesAll(t *testing.T) {
