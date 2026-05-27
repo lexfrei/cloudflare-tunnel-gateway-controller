@@ -16,13 +16,15 @@ import (
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/routebinding"
 )
 
-// GRPCRouteReconciler reconciles GRPCRoute resources and synchronizes them
-// to Cloudflare Tunnel ingress configuration.
+// GRPCRouteReconciler reconciles GRPCRoute resources, synchronizing them to
+// both the Cloudflare Tunnel ingress configuration and the in-process L7
+// proxy (which serves gRPC traffic at runtime).
 //
 // Key behaviors:
 //   - Watches all GRPCRoute resources in the cluster
 //   - Filters routes by parent Gateway's GatewayClass
 //   - Uses shared RouteSyncer for unified sync with HTTPRoutes
+//   - Pushes the merged HTTP+gRPC config to the proxy via ProxySyncer
 //   - Updates GRPCRoute status with acceptance conditions
 type GRPCRouteReconciler struct {
 	client.Client
