@@ -73,16 +73,6 @@ The controller sorts paths to ensure consistent behavior:
 
 This ensures predictable routing despite Cloudflare's limitations.
 
-## GRPCRoute is not supported in v3
-
-The L7 proxy is the only data plane in v3 (the vendored cloudflared fork's `OverrideProxy` hook is always wired to it), and the proxy converter does not yet implement gRPC-specific route matching. As a consequence, gRPC traffic that flows through the tunnel reaches the proxy without a matching routing rule and returns `404 no matching route`.
-
-The controller continues to accept GRPCRoute resources and pushes a Cloudflare-side ingress config for them via `internal/ingress/grpc_builder.go`, but those edge-side rules are **not consulted at runtime in v3** — they exist only so the Cloudflare dashboard shows the expected hostname → service mapping.
-
-**v2 → v3 impact.** Users on v2 with `proxy.enabled: false` (the v2 default) had working GRPCRoute via cloudflared's native ingress. v3 removes that path. If you have any GRPCRoute resources today, migrate them to HTTPRoute before upgrading, or stay on the v2.x chart line until the proxy converter learns gRPC.
-
-GRPCRoute support inside the proxy converter is on the v3.x roadmap; the regression is intentional and documented rather than promised on a specific timeline.
-
 ## Controller Limitations
 
 | Limitation | Description |

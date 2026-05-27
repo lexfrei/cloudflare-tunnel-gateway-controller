@@ -9,7 +9,7 @@ This document details the feature support matrix for each Gateway API resource t
 | GatewayClass | `gateway.networking.k8s.io/v1` | Supported |
 | Gateway | `gateway.networking.k8s.io/v1` | Supported |
 | HTTPRoute | `gateway.networking.k8s.io/v1` | Supported |
-| GRPCRoute | `gateway.networking.k8s.io/v1` | Not supported in v3 — see [limitations](limitations.md#grpcroute-is-not-supported-in-v3) |
+| GRPCRoute | `gateway.networking.k8s.io/v1` | Supported |
 | ReferenceGrant | `gateway.networking.k8s.io/v1beta1` | Supported |
 | ListenerSet | `gateway.networking.k8s.io/v1` | Supported — see [ListenerSet](listenerset.md) |
 | TCPRoute | `gateway.networking.k8s.io/v1alpha2` | Not supported |
@@ -110,13 +110,29 @@ The following HTTPRoute filters are supported:
 
 ## GRPCRoute
 
-!!! danger "Not supported in v3"
+GRPCRoute is served by the in-process L7 proxy. gRPC requests are HTTP/2 POSTs to `/{service}/{method}`, so the converter maps each method match onto the proxy's path matcher and forces the upstream hop to h2c (cleartext HTTP/2).
 
-    v3's L7 proxy is the only data plane and the proxy converter has no gRPC matcher yet. GRPCRoute resources continue to be accepted (the controller pushes a Cloudflare-side ingress for them), but those edge rules are **not consulted at runtime** in v3 — the OverrideProxy hook intercepts all tunnel traffic and the proxy router returns `404 no matching route` for unmatched gRPC requests.
+| Field | Supported | Notes |
+| --- | --- | --- |
+| `spec.parentRefs` | Yes | Gateway or ListenerSet, same as HTTPRoute |
+| `spec.hostnames` | Yes | Wildcard `*` supported |
+| `spec.rules[].matches[].method` | Yes | `Exact` (service+method, service-only, method-only) and `RegularExpression` |
+| `spec.rules[].matches[].headers` | Yes | Exact and RegularExpression matchers (shared with HTTP) |
+| `spec.rules[].backendRefs` | Yes | Service backends; the proxy speaks h2c upstream |
+| `spec.rules[].filters` | No | gRPC filters are not yet applied by the proxy; logged and skipped |
 
-    Workaround: re-express the routing as an HTTPRoute, or stay on the v2.x chart line until the proxy converter learns gRPC.
+gRPC method matching maps to paths as follows:
 
-    See [GRPCRoute is not supported in v3](limitations.md#grpcroute-is-not-supported-in-v3) for the full chain of facts and migration guidance.
+| Method match | Proxy path rule |
+| --- | --- |
+| `Exact` service + method | exact `/{service}/{method}` |
+| `Exact` service only | prefix `/{service}/` (all methods) |
+| `Exact` method only | regex `/[^/]+/{method}` (any service) |
+| `RegularExpression` | regex `/{service}/{method}` (as written) |
+
+!!! note "Conformance dial limitation"
+
+    The upstream Gateway API gRPC conformance tests dial the Gateway address (`*.cfargotunnel.com`) directly. That hostname resolves to Cloudflare's ULA range, which is not externally routable, so those tests cannot reach this controller and remain skipped. gRPC routing is validated end-to-end by the in-house e2e suite against a real tunnel instead.
 
 ## ReferenceGrant
 

@@ -34,11 +34,14 @@ func TestGatewayAPIConformance(t *testing.T) {
 		features.SupportGateway,
 		features.SupportHTTPRoute,
 		features.SupportReferenceGrant,
-		// SupportGRPCRoute: not in v3. The proxy converter has no gRPC matcher
-		// yet, so gRPC requests get 404 from the proxy router. See
-		// docs/gateway-api/limitations.md#grpcroute-is-not-supported-in-v3.
-		// Re-add this flag once the converter learns gRPC and the matching
-		// conformance tests can pass through the proxy.
+		// GRPCRoute is served by the in-process proxy: the converter maps
+		// gRPC service/method matches onto /{service}/{method} path rules and
+		// forces h2c upstream. The upstream GRPCRoute conformance tests stay
+		// in SkipTests below because their gRPC client dials
+		// *.cfargotunnel.com directly (Cloudflare ULA, not externally
+		// routable); in-house e2e against the real tunnel is the end-to-end
+		// signal. The flag reflects actual proxy support.
+		features.SupportGRPCRoute,
 
 		// Extended HTTPRoute (Standard channel feature gates; v1 CRD fields)
 		features.SupportHTTPRouteQueryParamMatching,

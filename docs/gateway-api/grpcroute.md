@@ -1,12 +1,6 @@
 # GRPCRoute
 
-!!! warning "Not supported in v3"
-
-    The v3 controller's in-process L7 proxy intercepts all tunnel traffic and has no gRPC matcher, so GRPCRoute requests return `404`. The CRD is still watched for status reasons, but no runtime routing happens. See the [GRPCRoute limitation](limitations.md#grpcroute-is-not-supported-in-v3) for the full explanation, and the [v2 → v3 migration guide](../upgrading/v2-to-v3.md) for workarounds. Workaround: use HTTPRoute, or stay on the v2.x chart line until gRPC support is reinstated in the proxy.
-
-The examples below describe the v0.8-era behaviour and remain in the docs for historical context only — none of this routes in v3.
-
-GRPCRoute enables routing gRPC traffic through Cloudflare Tunnel with service and method-level matching.
+GRPCRoute enables routing gRPC traffic through Cloudflare Tunnel with service and method-level matching. It is served by the in-process L7 proxy: gRPC requests are HTTP/2 POSTs to `/{service}/{method}`, which the proxy matches with its path matcher; the upstream hop to the backend is forced to h2c (cleartext HTTP/2).
 
 ## Basic Example
 
@@ -97,10 +91,11 @@ spec:
 
 gRPC methods are mapped to HTTP/2 paths using the standard format `/package.Service/Method`.
 
-| Match Type | Example | Cloudflare Rule |
+| Match Type | Example | Proxy path rule |
 |------------|---------|-----------------|
-| Service only | `service: mypackage.MyService` | `/mypackage.MyService/*` |
-| Service + Method | `service: mypackage.MyService, method: GetUser` | `/mypackage.MyService/GetUser` |
+| Service only | `service: mypackage.MyService` | prefix `/mypackage.MyService/` |
+| Service + Method | `service: mypackage.MyService, method: GetUser` | exact `/mypackage.MyService/GetUser` |
+| Method only | `method: GetUser` | regex `/[^/]+/GetUser` (any service) |
 | No match | (empty) | Matches all gRPC traffic |
 
 ### Match Type Field
@@ -233,12 +228,13 @@ kubectl get grpcroute my-grpc-route --output jsonpath='{.status.parents[*].condi
 
 ## Limitations
 
-### Not Supported
+### Supported and not supported
 
-| Feature | Reason |
+| Feature | Status |
 |---------|--------|
-| Header matching | Cloudflare Tunnel limitation |
-| Filters | Not implemented |
+| Service / method matching (Exact, RegularExpression) | Supported |
+| Header matching (Exact, RegularExpression) | Supported |
+| Filters | Not implemented — logged and skipped |
 | Backend filters | Not implemented |
 
 ### Traffic Splitting
