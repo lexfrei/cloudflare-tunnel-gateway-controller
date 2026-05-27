@@ -523,3 +523,38 @@ func TestConvertGRPCRoutes_NoMatchesMatchesAll(t *testing.T) {
 	require.Len(t, cfg.Rules[0].Backends, 1)
 	assert.Equal(t, proxy.BackendProtocolH2C, cfg.Rules[0].Backends[0].Protocol)
 }
+
+// TestConvertGRPCRoutes_EmptyMatchMixedWithSpecificIsDropped pins the
+// deliberate handling of a nonsensical rule that mixes a match-all (empty)
+// match with a specific one in the same matches[] array: the empty match is
+// dropped, so the rule keeps only the specific constraint rather than being
+// promoted to a catch-all that would shadow other routes.
+func TestConvertGRPCRoutes_EmptyMatchMixedWithSpecificIsDropped(t *testing.T) {
+	t.Parallel()
+
+	svc := "svc.Foo"
+	method := "Bar"
+	routes := []*gatewayv1.GRPCRoute{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "mixed", Namespace: "default"},
+			Spec: gatewayv1.GRPCRouteSpec{
+				Rules: []gatewayv1.GRPCRouteRule{
+					{
+						Matches: []gatewayv1.GRPCRouteMatch{
+							{}, // match-all: nil method, no headers
+							{Method: &gatewayv1.GRPCMethodMatch{Type: grpcExact(), Service: &svc, Method: &method}},
+						},
+						BackendRefs: []gatewayv1.GRPCBackendRef{grpcBackendRef("foo-svc", 9000, 1)},
+					},
+				},
+			},
+		},
+	}
+
+	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil)
+
+	require.Len(t, cfg.Rules, 1)
+	require.Len(t, cfg.Rules[0].Matches, 1, "empty match dropped; only the specific match survives")
+	require.NotNil(t, cfg.Rules[0].Matches[0].Path)
+	assert.Equal(t, "/svc.Foo/Bar", cfg.Rules[0].Matches[0].Path.Value)
+}

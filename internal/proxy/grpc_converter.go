@@ -88,6 +88,13 @@ func convertGRPCRouteRule(
 // ok=false when the match carries no constraint at all (nil method + no
 // headers), which means "match every gRPC request" and is best expressed as
 // a rule with no matches rather than an empty RouteMatch.
+//
+// Consequence for the multi-match case: when a single rule's matches[] array
+// mixes an empty (match-all) match with specific ones, the empty match is
+// dropped, narrowing the rule from "match all" to "match only the specific
+// entries". That author configuration is nonsensical — a match-all sibling
+// makes the specific matches redundant — so we deliberately drop it rather
+// than promote the whole rule to a catch-all that would shadow other routes.
 func convertGRPCMatch(match gatewayv1.GRPCRouteMatch) (RouteMatch, bool) {
 	proxyMatch := RouteMatch{}
 
