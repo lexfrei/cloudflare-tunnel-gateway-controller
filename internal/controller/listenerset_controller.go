@@ -243,7 +243,7 @@ func (r *ListenerSetReconciler) computeAcceptance(
 
 	accepted, summaryReason, summaryMessage := summariseListenerSet(merged, listenerSet, refChecks)
 
-	attached, attachErr := r.countAttachedRoutesPerEntry(ctx, listenerSet)
+	attached, attachErr := r.countAttachedRoutesPerEntry(ctx, listenerSet, merged)
 	if attachErr != nil {
 		return listenerSetAcceptanceResult{
 			Accepted: false,
@@ -265,10 +265,14 @@ func (r *ListenerSetReconciler) computeAcceptance(
 // countAttachedRoutesPerEntry returns the number of accepted HTTPRoutes (and
 // GRPCRoutes) that bind to each entry of the ListenerSet via parentRef.
 // "Accepted" mirrors RouteSyncer's binding contract: hostname intersects,
-// allowedRoutes.namespaces permits the route, route kind is allowed.
+// allowedRoutes.namespaces permits the route, route kind is allowed. Entries
+// marked conflicted in the merged view are excluded — a route that "matches"
+// a conflicted listener is not counted as attached, because the entry will
+// not be programmed.
 func (r *ListenerSetReconciler) countAttachedRoutesPerEntry(
 	ctx context.Context,
 	listenerSet *gatewayv1.ListenerSet,
+	merged *listenermerge.MergeResult,
 ) (map[gatewayv1.SectionName]int32, error) {
 	out := make(map[gatewayv1.SectionName]int32, len(listenerSet.Spec.Listeners))
 	for i := range listenerSet.Spec.Listeners {
@@ -277,11 +281,11 @@ func (r *ListenerSetReconciler) countAttachedRoutesPerEntry(
 
 	validator := routebinding.NewValidator(r.Client)
 
-	if err := r.countAttachedHTTPRoutes(ctx, listenerSet, validator, out); err != nil {
+	if err := r.countAttachedHTTPRoutes(ctx, listenerSet, merged, validator, out); err != nil {
 		return nil, err
 	}
 
-	if err := r.countAttachedGRPCRoutes(ctx, listenerSet, validator, out); err != nil {
+	if err := r.countAttachedGRPCRoutes(ctx, listenerSet, merged, validator, out); err != nil {
 		return nil, err
 	}
 
@@ -292,6 +296,7 @@ func (r *ListenerSetReconciler) countAttachedRoutesPerEntry(
 func (r *ListenerSetReconciler) countAttachedHTTPRoutes(
 	ctx context.Context,
 	listenerSet *gatewayv1.ListenerSet,
+	merged *listenermerge.MergeResult,
 	validator *routebinding.Validator,
 	counts map[gatewayv1.SectionName]int32,
 ) error {
@@ -303,7 +308,7 @@ func (r *ListenerSetReconciler) countAttachedHTTPRoutes(
 	for i := range routes.Items {
 		route := &routes.Items[i]
 		incrementListenerSetAttachedRoutes(
-			ctx, validator, listenerSet,
+			ctx, validator, listenerSet, merged,
 			route.Namespace, route.Name, route.Spec.Hostnames,
 			routebinding.KindHTTPRoute, route.Spec.ParentRefs, counts,
 		)
@@ -316,6 +321,7 @@ func (r *ListenerSetReconciler) countAttachedHTTPRoutes(
 func (r *ListenerSetReconciler) countAttachedGRPCRoutes(
 	ctx context.Context,
 	listenerSet *gatewayv1.ListenerSet,
+	merged *listenermerge.MergeResult,
 	validator *routebinding.Validator,
 	counts map[gatewayv1.SectionName]int32,
 ) error {
@@ -327,7 +333,7 @@ func (r *ListenerSetReconciler) countAttachedGRPCRoutes(
 	for i := range routes.Items {
 		route := &routes.Items[i]
 		incrementListenerSetAttachedRoutes(
-			ctx, validator, listenerSet,
+			ctx, validator, listenerSet, merged,
 			route.Namespace, route.Name, route.Spec.Hostnames,
 			routebinding.KindGRPCRoute, route.Spec.ParentRefs, counts,
 		)
@@ -340,6 +346,7 @@ func incrementListenerSetAttachedRoutes(
 	ctx context.Context,
 	validator *routebinding.Validator,
 	listenerSet *gatewayv1.ListenerSet,
+	merged *listenermerge.MergeResult,
 	routeNamespace, routeName string,
 	hostnames []gatewayv1.Hostname,
 	kind gatewayv1.Kind,
@@ -366,6 +373,13 @@ func incrementListenerSetAttachedRoutes(
 		}
 
 		for _, section := range result.MatchedListeners {
+			// Skip conflicted entries — the merge view says they will not
+			// be programmed, so a route nominally "matching" them is not
+			// actually attached.
+			if entry := findMergedEntry(merged, listenerSet, section); entry != nil && entry.ConflictReason != "" {
+				continue
+			}
+
 			counts[section]++
 		}
 	}

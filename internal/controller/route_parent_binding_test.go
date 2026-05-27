@@ -152,6 +152,11 @@ func TestResolveRouteParentBinding_CrossNamespaceListenerSet(t *testing.T) {
 		},
 	}
 	platformNS := gatewayv1.Namespace("platform")
+	// Give the ListenerSet entry its own hostname so it doesn't share the
+	// (port=80, hostname="") tuple with the Gateway listener and trigger a
+	// HostnameConflict. The Gateway listener has no hostname (defaults to
+	// wildcard "*") and the LS entry has a specific host — distinct slots.
+	tenantHost := gatewayv1.Hostname("tenant.example.com")
 	ls := &gatewayv1.ListenerSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "ls", Namespace: "tenant"},
 		Spec: gatewayv1.ListenerSetSpec{
@@ -159,6 +164,7 @@ func TestResolveRouteParentBinding_CrossNamespaceListenerSet(t *testing.T) {
 			Listeners: []gatewayv1.ListenerEntry{
 				{
 					Name: "extra", Port: 80, Protocol: gatewayv1.HTTPProtocolType,
+					Hostname: &tenantHost,
 					AllowedRoutes: &gatewayv1.AllowedRoutes{
 						Namespaces: &gatewayv1.RouteNamespaces{From: namespacesFromAllPtr()},
 					},
@@ -179,6 +185,60 @@ func TestResolveRouteParentBinding_CrossNamespaceListenerSet(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, binding.ManagedByThisController)
 	assert.True(t, binding.Result.Accepted, "route attaches via the cross-namespace ListenerSet's entry")
+}
+
+// TestResolveRouteParentBinding_ConflictedListenerSetEntryRejected guards
+// the spec contract: a route attached to a ListenerSet entry that conflicts
+// with a higher-precedence Gateway listener (same port + same hostname)
+// MUST NOT be accepted. The merged-view conflict mark drives the rejection.
+func TestResolveRouteParentBinding_ConflictedListenerSetEntryRejected(t *testing.T) {
+	t.Parallel()
+
+	gc := managedGatewayClass()
+	fromSame := gatewayv1.NamespacesFromSame
+	conflictHost := gatewayv1.Hostname("conflict.example.com")
+	gw := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "infra"},
+		Spec: gatewayv1.GatewaySpec{
+			GatewayClassName: gatewayv1.ObjectName(gc.Name),
+			AllowedListeners: &gatewayv1.AllowedListeners{
+				Namespaces: &gatewayv1.ListenerNamespaces{From: &fromSame},
+			},
+			Listeners: []gatewayv1.Listener{
+				{Name: "gw-l1", Port: 80, Protocol: gatewayv1.HTTPProtocolType, Hostname: &conflictHost},
+			},
+		},
+	}
+	// Same (port, hostname) → conflict; Gateway wins, LS entry is marked.
+	ls := &gatewayv1.ListenerSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "ls", Namespace: "infra"},
+		Spec: gatewayv1.ListenerSetSpec{
+			ParentRef: gatewayv1.ParentGatewayReference{Name: "gw"},
+			Listeners: []gatewayv1.ListenerEntry{
+				{
+					Name: "conflicted", Port: 80, Protocol: gatewayv1.HTTPProtocolType,
+					Hostname: &conflictHost,
+					AllowedRoutes: &gatewayv1.AllowedRoutes{
+						Namespaces: &gatewayv1.RouteNamespaces{From: namespacesFromAllPtr()},
+					},
+				},
+			},
+		},
+	}
+
+	cli := buildGatewayFakeClient(t, gc, gw, ls)
+	validator := routebinding.NewValidator(cli)
+
+	lsKind := gatewayv1.Kind(kindListenerSet)
+	lsNS := gatewayv1.Namespace("infra")
+	ref := gatewayv1.ParentReference{Kind: &lsKind, Name: "ls", Namespace: &lsNS}
+	routeInfo := &routebinding.RouteInfo{Name: "r", Namespace: "team-a", Kind: routebinding.KindHTTPRoute}
+
+	binding, err := resolveRouteParentBinding(context.Background(), cli, validator, testListenerSetController, ref, "team-a", routeInfo)
+	require.NoError(t, err)
+	assert.True(t, binding.ManagedByThisController)
+	assert.False(t, binding.Result.Accepted, "binding to a conflicted LS entry must be rejected")
+	assert.Equal(t, gatewayv1.RouteReasonNoMatchingParent, binding.Result.Reason)
 }
 
 func namespacesFromAllPtr() *gatewayv1.FromNamespaces {

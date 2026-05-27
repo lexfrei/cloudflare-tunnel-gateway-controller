@@ -7,6 +7,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/listenermerge"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/routebinding"
 )
 
@@ -143,7 +144,59 @@ func resolveListenerSetParentBinding(
 		return parentRefBinding{}, errors.Wrap(bindErr, "failed to validate route binding against listenerset")
 	}
 
+	// The merge view marks listener entries that conflict with a higher-
+	// precedence listener (hostname or protocol). Routes attached to such an
+	// entry MUST NOT be accepted, otherwise we'd program a rule the spec
+	// says should not exist. Filter the matched sections through the merge
+	// view; if every match is conflicted, surface NoMatchingParent.
+	if bindResult.Accepted {
+		bindResult = filterMatchedListenersByConflict(ctx, cli, &listenerSet, parent, bindResult)
+	}
+
 	return parentRefBinding{ManagedByThisController: true, Result: bindResult}, nil
+}
+
+// filterMatchedListenersByConflict drops any matched section from the
+// binding result whose merged-view counterpart is conflicted. When every
+// match is filtered out the binding flips to NoMatchingParent.
+func filterMatchedListenersByConflict(
+	ctx context.Context,
+	cli client.Client,
+	listenerSet *gatewayv1.ListenerSet,
+	parent *gatewayv1.Gateway,
+	result routebinding.BindingResult,
+) routebinding.BindingResult {
+	siblings, err := collectAcceptedListenerSetsForGateway(ctx, cli, parent)
+	if err != nil {
+		// Best-effort: if we can't compute the merge view, leave the binding
+		// as-is. A later reconcile will retry.
+		return result
+	}
+
+	merged := listenermerge.Merge(parent, siblings)
+
+	kept := make([]gatewayv1.SectionName, 0, len(result.MatchedListeners))
+
+	for _, section := range result.MatchedListeners {
+		entry := findMergedEntry(merged, listenerSet, section)
+		if entry != nil && entry.ConflictReason != "" {
+			continue
+		}
+
+		kept = append(kept, section)
+	}
+
+	if len(kept) == 0 {
+		return routebinding.BindingResult{
+			Accepted: false,
+			Reason:   gatewayv1.RouteReasonNoMatchingParent,
+			Message:  "Matched listener entries are conflicted with higher-precedence listeners",
+		}
+	}
+
+	result.MatchedListeners = kept
+
+	return result
 }
 
 // listenerSetParentGateway loads the Gateway referenced by a ListenerSet's
