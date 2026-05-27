@@ -110,7 +110,7 @@ func TestProxySyncer_SyncRoutes(t *testing.T) {
 
 	endpoints := []string{configServer.URL + "/config"}
 
-	err := syncer.SyncRoutes(context.Background(), endpoints, routes, nil)
+	err := syncer.SyncRoutes(context.Background(), endpoints, routes, nil, nil)
 	require.NoError(t, err)
 
 	assert.Equal(t, int32(1), pushCount.Load())
@@ -152,7 +152,7 @@ func TestProxySyncer_NoRoutes_PushesEmptyConfig(t *testing.T) {
 
 	// Zero routes should still push a valid config with empty rules.
 	// The proxy will return 404 for all requests until routes are added.
-	err := syncer.SyncRoutes(context.Background(), []string{configServer.URL + "/config"}, nil, nil)
+	err := syncer.SyncRoutes(context.Background(), []string{configServer.URL + "/config"}, nil, nil, nil)
 	require.NoError(t, err)
 
 	assert.Equal(t, int32(1), pushCount.Load())
@@ -260,7 +260,7 @@ func TestProxySyncer_ResyncEndpoints_ReplaysLastConfig(t *testing.T) {
 
 	endpoint := configServer.URL + "/config"
 
-	require.NoError(t, syncer.SyncRoutes(context.Background(), []string{endpoint}, routes, nil))
+	require.NoError(t, syncer.SyncRoutes(context.Background(), []string{endpoint}, routes, nil, nil))
 	require.Equal(t, int32(1), pushCount.Load(), "first sync must push once")
 	require.NotEmpty(t, firstReceived.Rules, "first push must carry the built config")
 
@@ -336,7 +336,7 @@ func TestProxySyncer_SyncRoutes_H2CBackend(t *testing.T) {
 		},
 	}
 
-	err := syncer.SyncRoutes(context.Background(), []string{configServer.URL + "/config"}, routes, nil)
+	err := syncer.SyncRoutes(context.Background(), []string{configServer.URL + "/config"}, routes, nil, nil)
 	require.NoError(t, err)
 
 	require.Equal(t, int32(1), pushCount.Load())
@@ -344,6 +344,80 @@ func TestProxySyncer_SyncRoutes_H2CBackend(t *testing.T) {
 	require.Len(t, receivedConfig.Rules[0].Backends, 1)
 	assert.Equal(t, proxy.BackendProtocolH2C, receivedConfig.Rules[0].Backends[0].Protocol,
 		"backend on a Service port with appProtocol kubernetes.io/h2c must be marked h2c")
+}
+
+// TestProxySyncer_SyncRoutes_GRPCRoute pins the wiring (issue #305): a
+// GRPCRoute handed to SyncRoutes is converted and pushed to the proxy as a
+// rule matching the HTTP/2 path /{service}/{method} with an h2c backend,
+// merged alongside any HTTP rules.
+func TestProxySyncer_SyncRoutes_GRPCRoute(t *testing.T) {
+	t.Parallel()
+
+	var receivedConfig proxy.Config
+
+	var pushCount atomic.Int32
+
+	configServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, req *http.Request) {
+		if req.Method == http.MethodPut {
+			pushCount.Add(1)
+
+			if decodeErr := json.NewDecoder(req.Body).Decode(&receivedConfig); decodeErr != nil {
+				writer.WriteHeader(http.StatusBadRequest)
+
+				return
+			}
+		}
+
+		writer.WriteHeader(http.StatusOK)
+	}))
+	defer configServer.Close()
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
+	testClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+
+	syncer := controller.NewProxySyncer("cluster.local", "", "", testClient, slog.Default())
+
+	svc := "grpc.examples.echo.Echo"
+	method := "UnaryEcho"
+	exact := gatewayv1.GRPCMethodMatchExact
+	port := gatewayv1.PortNumber(9000)
+	weight := int32(1)
+	grpcRoutes := []*gatewayv1.GRPCRoute{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "echo", Namespace: "default"},
+			Spec: gatewayv1.GRPCRouteSpec{
+				Hostnames: []gatewayv1.Hostname{"grpc.example.com"},
+				Rules: []gatewayv1.GRPCRouteRule{
+					{
+						Matches: []gatewayv1.GRPCRouteMatch{
+							{Method: &gatewayv1.GRPCMethodMatch{Type: &exact, Service: &svc, Method: &method}},
+						},
+						BackendRefs: []gatewayv1.GRPCBackendRef{
+							{BackendRef: gatewayv1.BackendRef{
+								BackendObjectReference: gatewayv1.BackendObjectReference{
+									Name: "echo-svc", Port: &port,
+								},
+								Weight: &weight,
+							}},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	err := syncer.SyncRoutes(context.Background(), []string{configServer.URL + "/config"}, nil, grpcRoutes, nil)
+	require.NoError(t, err)
+
+	require.Equal(t, int32(1), pushCount.Load())
+	require.Len(t, receivedConfig.Rules, 1)
+	require.Len(t, receivedConfig.Rules[0].Matches, 1)
+	require.NotNil(t, receivedConfig.Rules[0].Matches[0].Path)
+	assert.Equal(t, proxy.PathMatchExact, receivedConfig.Rules[0].Matches[0].Path.Type)
+	assert.Equal(t, "/grpc.examples.echo.Echo/UnaryEcho", receivedConfig.Rules[0].Matches[0].Path.Value)
+	require.Len(t, receivedConfig.Rules[0].Backends, 1)
+	assert.Equal(t, proxy.BackendProtocolH2C, receivedConfig.Rules[0].Backends[0].Protocol)
 }
 
 // TestProxySyncer_SyncRoutes_BackendTLSPolicyMissingCA_FailsClosed verifies the
@@ -417,7 +491,7 @@ func TestProxySyncer_SyncRoutes_BackendTLSPolicyMissingCA_FailsClosed(t *testing
 		},
 	}
 
-	require.NoError(t, syncer.SyncRoutes(context.Background(), []string{configServer.URL + "/config"}, routes, nil))
+	require.NoError(t, syncer.SyncRoutes(context.Background(), []string{configServer.URL + "/config"}, routes, nil, nil))
 
 	require.Len(t, receivedConfig.Rules, 1)
 	require.Len(t, receivedConfig.Rules[0].Backends, 1)
@@ -510,7 +584,7 @@ func TestProxySyncer_SyncRoutes_BackendTLSPolicy_URISubjectAltName_PushesURIList
 		},
 	}
 
-	require.NoError(t, syncer.SyncRoutes(context.Background(), []string{configServer.URL + "/config"}, routes, nil))
+	require.NoError(t, syncer.SyncRoutes(context.Background(), []string{configServer.URL + "/config"}, routes, nil, nil))
 
 	require.Len(t, receivedConfig.Rules, 1)
 	require.Len(t, receivedConfig.Rules[0].Backends, 1)

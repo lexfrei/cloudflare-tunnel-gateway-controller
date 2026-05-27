@@ -212,6 +212,8 @@ func Run(ctx context.Context, cfg *Config) error {
 		Scheme:         mgr.GetScheme(),
 		ControllerName: cfg.ControllerName,
 		RouteSyncer:    routeSyncer,
+		ProxySyncer:    proxySyncer,
+		ProxyEndpoints: proxyEndpoints,
 	}
 
 	if err := grpcRouteReconciler.SetupWithManager(mgr); err != nil {

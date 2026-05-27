@@ -198,8 +198,10 @@ func syncAndUpdateStatusCommon(ctx context.Context, params syncUpdateParams) (ct
 	// See docs/gateway-api/limitations.md#grpcroute-is-not-supported-in-v3.
 	// pushProxy is false for GRPCRoute reconciler to avoid redundant pushes.
 	if params.pushProxy && params.proxySyncer != nil && len(params.proxyEndpoints) > 0 && syncResult != nil {
-		routes := httpRoutePtrs(syncResult.HTTPRoutes)
-		if proxyErr := params.proxySyncer.SyncRoutes(ctx, params.proxyEndpoints, routes, syncResult.HTTPFailedRefs); proxyErr != nil {
+		httpRoutes := httpRoutePtrs(syncResult.HTTPRoutes)
+		grpcRoutes := grpcRoutePtrs(syncResult.GRPCRoutes)
+
+		if proxyErr := params.proxySyncer.SyncRoutes(ctx, params.proxyEndpoints, httpRoutes, grpcRoutes, syncResult.HTTPFailedRefs); proxyErr != nil {
 			logger.Error("proxy sync failed (non-blocking)", "error", proxyErr)
 			params.routeSyncer.Metrics.RecordSyncError(ctx, "proxy_push")
 		}

@@ -37,6 +37,14 @@ type GRPCRouteReconciler struct {
 	// RouteSyncer provides unified sync for both HTTP and GRPC routes.
 	RouteSyncer *RouteSyncer
 
+	// ProxySyncer pushes the merged HTTP+GRPC routing config to the L7
+	// proxy replicas. A GRPCRoute change must re-push the proxy config so
+	// gRPC traffic routes through the in-process proxy (issue #305).
+	ProxySyncer *ProxySyncer
+
+	// ProxyEndpoints is the list of L7 proxy config-API URLs to push to.
+	ProxyEndpoints []string
+
 	// bindingValidator validates route binding to Gateway listeners.
 	bindingValidator *routebinding.Validator
 
@@ -57,16 +65,14 @@ func (r *GRPCRouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 func (r *GRPCRouteReconciler) syncAndUpdateStatus(ctx context.Context) (ctrl.Result, error) {
 	return syncAndUpdateStatusCommon(ctx, syncUpdateParams{
-		routeSyncer: r.RouteSyncer,
-		// GRPCRoutes are not pushed to the L7 proxy converter (which has no
-		// gRPC-specific routing semantics yet). v3's OverrideProxy hook
-		// intercepts ALL tunnel traffic, so gRPC requests reach the proxy
-		// without a matching route and return 404 — see
-		// docs/gateway-api/limitations.md#grpcroute-is-not-supported-in-v3.
-		// internal/ingress/grpc_builder still emits Cloudflare-side ingress
-		// rules for the Cloudflare dashboard view, but they are not
-		// consulted at runtime. proxySyncer and proxyEndpoints are
-		// intentionally nil for the GRPCRoute reconciler.
+		routeSyncer:    r.RouteSyncer,
+		proxySyncer:    r.ProxySyncer,
+		proxyEndpoints: r.ProxyEndpoints,
+		// GRPCRoute changes push the merged HTTP+GRPC config to the proxy so
+		// gRPC traffic routes through the in-process proxy (issue #305). The
+		// push rebuilds from the full SyncResult, so a gRPC-only change still
+		// re-pushes every route — same model as the HTTPRoute reconciler.
+		pushProxy: true,
 		statusEntries: func(sr *SyncResult) []routeStatusEntry {
 			return sr.grpcStatusEntries(r.updateRouteStatus)
 		},
