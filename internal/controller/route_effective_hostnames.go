@@ -5,11 +5,14 @@ import (
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
+
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/listenermerge"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/routebinding"
 )
 
 // withEffectiveHostnames returns copies of the given routes whose
 // Spec.Hostnames is augmented with the hostnames of each parentRef listener
-// the route binds to.
+// the route actually binds to.
 //
 // Why: when an HTTPRoute attaches to a Gateway listener or ListenerSet entry
 // with a non-empty hostname, and the route itself declares no hostnames in
@@ -19,6 +22,13 @@ import (
 // empty list there would make the rule a default-route catch-all, which is
 // wrong for ListenerSet-bound routes that should only serve the ListenerSet
 // listener's hostname.
+//
+// Critically, hostnames are inherited ONLY from listeners that actually
+// accept the route — the same per-listener namespace / kind / hostname /
+// sectionName checks the binding validator applies. A route bound to a
+// multi-listener ListenerSet where only some listeners permit the route's
+// namespace must NOT inherit the hostnames of the listeners that reject it,
+// otherwise it would answer on hostnames it has no business serving.
 //
 // The function never mutates the input routes; each output element is a
 // fresh shallow copy whose Spec.Hostnames slice has been replaced.
@@ -31,6 +41,7 @@ func withEffectiveHostnames(
 		return routes
 	}
 
+	validator := routebinding.NewValidator(cli)
 	out := make([]*gatewayv1.HTTPRoute, len(routes))
 
 	for i, route := range routes {
@@ -40,7 +51,7 @@ func withEffectiveHostnames(
 			continue
 		}
 
-		parentHostnames := collectParentListenerHostnames(ctx, cli, route.Namespace, route.Spec.ParentRefs)
+		parentHostnames := collectAcceptedListenerHostnames(ctx, cli, validator, route)
 		if len(parentHostnames) == 0 {
 			out[i] = route
 
@@ -55,21 +66,26 @@ func withEffectiveHostnames(
 	return out
 }
 
-// collectParentListenerHostnames returns every hostname declared on a
-// parent listener (Gateway listener or ListenerSet entry) selected by the
-// route's parentRefs. sectionName narrows the selection to a single listener
-// when set; otherwise all listeners on the parent contribute.
-func collectParentListenerHostnames(
+// collectAcceptedListenerHostnames walks the route's parentRefs and, for each
+// one that resolves to a managed Gateway (directly or via a ListenerSet),
+// collects the hostnames of the listeners the route is ACCEPTED on per the
+// binding validator. Rejected listeners (wrong namespace, kind, hostname, or
+// — for ListenerSet — conflicted) contribute nothing.
+func collectAcceptedListenerHostnames(
 	ctx context.Context,
 	cli client.Client,
-	routeNamespace string,
-	parentRefs []gatewayv1.ParentReference,
+	validator *routebinding.Validator,
+	route *gatewayv1.HTTPRoute,
 ) []gatewayv1.Hostname {
 	seen := make(map[gatewayv1.Hostname]struct{})
 
 	var out []gatewayv1.Hostname
 
 	add := func(hostname gatewayv1.Hostname) {
+		if hostname == "" {
+			return
+		}
+
 		if _, ok := seen[hostname]; ok {
 			return
 		}
@@ -78,102 +94,142 @@ func collectParentListenerHostnames(
 		out = append(out, hostname)
 	}
 
-	for _, ref := range parentRefs {
-		hosts := lookupParentHostnames(ctx, cli, routeNamespace, ref)
-		for _, host := range hosts {
-			add(host)
+	for _, ref := range route.Spec.ParentRefs {
+		for _, hostname := range acceptedHostnamesForParentRef(ctx, cli, validator, route, ref) {
+			add(hostname)
 		}
 	}
 
 	return out
 }
 
-func lookupParentHostnames(
+func acceptedHostnamesForParentRef(
 	ctx context.Context,
 	cli client.Client,
-	routeNamespace string,
+	validator *routebinding.Validator,
+	route *gatewayv1.HTTPRoute,
 	ref gatewayv1.ParentReference,
 ) []gatewayv1.Hostname {
+	if ref.Group != nil && string(*ref.Group) != "" && string(*ref.Group) != gatewayv1.GroupName {
+		return nil
+	}
+
 	kind := kindGateway
 	if ref.Kind != nil {
 		kind = string(*ref.Kind)
 	}
 
-	namespace := routeNamespace
+	namespace := route.Namespace
 	if ref.Namespace != nil {
 		namespace = string(*ref.Namespace)
 	}
 
+	routeInfo := &routebinding.RouteInfo{
+		Name:        route.Name,
+		Namespace:   route.Namespace,
+		Hostnames:   nil, // empty by definition — that's why we're inheriting
+		Kind:        routebinding.KindHTTPRoute,
+		SectionName: ref.SectionName,
+		Port:        ref.Port,
+	}
+
 	switch kind {
 	case kindGateway:
-		return gatewayListenerHostnames(ctx, cli, namespace, string(ref.Name), ref.SectionName)
+		return gatewayAcceptedHostnames(ctx, cli, validator, namespace, string(ref.Name), routeInfo)
 	case kindListenerSet:
-		return listenerSetEntryHostnames(ctx, cli, namespace, string(ref.Name), ref.SectionName)
+		return listenerSetAcceptedHostnames(ctx, cli, validator, namespace, string(ref.Name), routeInfo)
 	}
 
 	return nil
 }
 
-//nolint:dupl // mirrored on purpose against listenerSetEntryHostnames — different Get target prevents a generic
-func gatewayListenerHostnames(
+func gatewayAcceptedHostnames(
 	ctx context.Context,
 	cli client.Client,
+	validator *routebinding.Validator,
 	namespace, name string,
-	sectionName *gatewayv1.SectionName,
+	routeInfo *routebinding.RouteInfo,
 ) []gatewayv1.Hostname {
 	var gateway gatewayv1.Gateway
 	if err := cli.Get(ctx, client.ObjectKey{Name: name, Namespace: namespace}, &gateway); err != nil {
 		return nil
 	}
 
-	return collectListenerHostnames(
-		len(gateway.Spec.Listeners),
-		func(i int) (gatewayv1.SectionName, *gatewayv1.Hostname) {
-			return gateway.Spec.Listeners[i].Name, gateway.Spec.Listeners[i].Hostname
-		},
-		sectionName,
-	)
+	result, err := validator.ValidateBinding(ctx, &gateway, routeInfo)
+	if err != nil || !result.Accepted {
+		return nil
+	}
+
+	hostByName := make(map[gatewayv1.SectionName]*gatewayv1.Hostname, len(gateway.Spec.Listeners))
+	for i := range gateway.Spec.Listeners {
+		hostByName[gateway.Spec.Listeners[i].Name] = gateway.Spec.Listeners[i].Hostname
+	}
+
+	return hostnamesForSections(result.MatchedListeners, hostByName)
 }
 
-//nolint:dupl // mirrored on purpose against gatewayListenerHostnames — different Get target prevents a generic
-func listenerSetEntryHostnames(
+func listenerSetAcceptedHostnames(
 	ctx context.Context,
 	cli client.Client,
+	validator *routebinding.Validator,
 	namespace, name string,
-	sectionName *gatewayv1.SectionName,
+	routeInfo *routebinding.RouteInfo,
 ) []gatewayv1.Hostname {
 	var listenerSet gatewayv1.ListenerSet
 	if err := cli.Get(ctx, client.ObjectKey{Name: name, Namespace: namespace}, &listenerSet); err != nil {
 		return nil
 	}
 
-	return collectListenerHostnames(
-		len(listenerSet.Spec.Listeners),
-		func(i int) (gatewayv1.SectionName, *gatewayv1.Hostname) {
-			return listenerSet.Spec.Listeners[i].Name, listenerSet.Spec.Listeners[i].Hostname
-		},
-		sectionName,
-	)
+	result, err := validator.ValidateBindingForListenerSet(ctx, &listenerSet, routeInfo)
+	if err != nil || !result.Accepted {
+		return nil
+	}
+
+	matched := result.MatchedListeners
+
+	// Drop sections whose merged-view entry is conflicted — a conflicted
+	// listener is not programmed, so a route must not inherit its hostname.
+	if parent, found := listenerSetParentGateway(ctx, cli, &listenerSet); found {
+		if siblings, collectErr := collectAcceptedListenerSetsForGateway(ctx, cli, parent); collectErr == nil {
+			merged := listenermerge.Merge(parent, siblings)
+			matched = dropConflictedSections(merged, &listenerSet, matched)
+		}
+	}
+
+	hostByName := make(map[gatewayv1.SectionName]*gatewayv1.Hostname, len(listenerSet.Spec.Listeners))
+	for i := range listenerSet.Spec.Listeners {
+		hostByName[listenerSet.Spec.Listeners[i].Name] = listenerSet.Spec.Listeners[i].Hostname
+	}
+
+	return hostnamesForSections(matched, hostByName)
 }
 
-// collectListenerHostnames is the shared loop that iterates a slice of
-// either Gateway listeners or ListenerSet entries (selected via the
-// nameAndHostname accessor) and collects the non-empty hostnames whose
-// section name matches the sectionName filter.
-func collectListenerHostnames(
-	count int,
-	nameAndHostname func(int) (gatewayv1.SectionName, *gatewayv1.Hostname),
-	sectionName *gatewayv1.SectionName,
-) []gatewayv1.Hostname {
-	var out []gatewayv1.Hostname
+func dropConflictedSections(
+	merged *listenermerge.MergeResult,
+	listenerSet *gatewayv1.ListenerSet,
+	sections []gatewayv1.SectionName,
+) []gatewayv1.SectionName {
+	kept := make([]gatewayv1.SectionName, 0, len(sections))
 
-	for i := range count {
-		name, hostname := nameAndHostname(i)
-		if sectionName != nil && *sectionName != name {
+	for _, section := range sections {
+		if entry := findMergedEntry(merged, listenerSet, section); entry != nil && entry.ConflictReason != "" {
 			continue
 		}
 
-		if hostname != nil && *hostname != "" {
+		kept = append(kept, section)
+	}
+
+	return kept
+}
+
+func hostnamesForSections(
+	sections []gatewayv1.SectionName,
+	hostByName map[gatewayv1.SectionName]*gatewayv1.Hostname,
+) []gatewayv1.Hostname {
+	var out []gatewayv1.Hostname
+
+	for _, section := range sections {
+		if hostname, ok := hostByName[section]; ok && hostname != nil && *hostname != "" {
 			out = append(out, *hostname)
 		}
 	}

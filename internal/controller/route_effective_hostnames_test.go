@@ -21,7 +21,12 @@ func TestWithEffectiveHostnames_InheritsFromGatewayListener(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "infra"},
 		Spec: gatewayv1.GatewaySpec{
 			Listeners: []gatewayv1.Listener{
-				{Name: "http", Port: 80, Protocol: gatewayv1.HTTPProtocolType, Hostname: &gatewayHost},
+				{
+					Name: "http", Port: 80, Protocol: gatewayv1.HTTPProtocolType, Hostname: &gatewayHost,
+					AllowedRoutes: &gatewayv1.AllowedRoutes{
+						Namespaces: &gatewayv1.RouteNamespaces{From: namespacesFromAllPtr()},
+					},
+				},
 			},
 		},
 	}
@@ -55,7 +60,12 @@ func TestWithEffectiveHostnames_InheritsFromListenerSetEntry(t *testing.T) {
 		Spec: gatewayv1.ListenerSetSpec{
 			ParentRef: gatewayv1.ParentGatewayReference{Name: "gw"},
 			Listeners: []gatewayv1.ListenerEntry{
-				{Name: "only", Port: 80, Protocol: gatewayv1.HTTPProtocolType, Hostname: &entryHost},
+				{
+					Name: "only", Port: 80, Protocol: gatewayv1.HTTPProtocolType, Hostname: &entryHost,
+					AllowedRoutes: &gatewayv1.AllowedRoutes{
+						Namespaces: &gatewayv1.RouteNamespaces{From: namespacesFromAllPtr()},
+					},
+				},
 			},
 		},
 	}
@@ -90,8 +100,18 @@ func TestWithEffectiveHostnames_SectionNameNarrowsListenerSetEntries(t *testing.
 		Spec: gatewayv1.ListenerSetSpec{
 			ParentRef: gatewayv1.ParentGatewayReference{Name: "gw"},
 			Listeners: []gatewayv1.ListenerEntry{
-				{Name: "first", Port: 80, Protocol: gatewayv1.HTTPProtocolType, Hostname: &a},
-				{Name: "second", Port: 80, Protocol: gatewayv1.HTTPProtocolType, Hostname: &b},
+				{
+					Name: "first", Port: 80, Protocol: gatewayv1.HTTPProtocolType, Hostname: &a,
+					AllowedRoutes: &gatewayv1.AllowedRoutes{
+						Namespaces: &gatewayv1.RouteNamespaces{From: namespacesFromAllPtr()},
+					},
+				},
+				{
+					Name: "second", Port: 80, Protocol: gatewayv1.HTTPProtocolType, Hostname: &b,
+					AllowedRoutes: &gatewayv1.AllowedRoutes{
+						Namespaces: &gatewayv1.RouteNamespaces{From: namespacesFromAllPtr()},
+					},
+				},
 			},
 		},
 	}
@@ -151,6 +171,64 @@ func TestWithEffectiveHostnames_NoOpWhenRouteAlreadyDeclaresHostnames(t *testing
 	out := withEffectiveHostnames(context.Background(), cli, []*gatewayv1.HTTPRoute{route})
 	require.Len(t, out, 1)
 	assert.Equal(t, []gatewayv1.Hostname{declared}, out[0].Spec.Hostnames, "explicit route hostnames must not be overwritten")
+}
+
+// TestWithEffectiveHostnames_OnlyInheritsFromAcceptingListeners pins the
+// conformance contract that the ListenerSetAllowedRoutesNamespaces test
+// caught: a route bound to a multi-listener ListenerSet with no sectionName
+// inherits hostnames ONLY from the listeners whose allowedRoutes.namespaces
+// actually permits the route. A listener that rejects the route's namespace
+// must NOT lend its hostname, or the route would answer on a host it has no
+// business serving.
+func TestWithEffectiveHostnames_OnlyInheritsFromAcceptingListeners(t *testing.T) {
+	t.Parallel()
+
+	allHost := gatewayv1.Hostname("all.example.com")
+	sameHost := gatewayv1.Hostname("same.example.com")
+	fromSame := gatewayv1.NamespacesFromSame
+
+	ls := &gatewayv1.ListenerSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "ls", Namespace: "infra"},
+		Spec: gatewayv1.ListenerSetSpec{
+			ParentRef: gatewayv1.ParentGatewayReference{Name: "gw"},
+			Listeners: []gatewayv1.ListenerEntry{
+				{
+					Name: "all", Port: 80, Protocol: gatewayv1.HTTPProtocolType, Hostname: &allHost,
+					AllowedRoutes: &gatewayv1.AllowedRoutes{
+						Namespaces: &gatewayv1.RouteNamespaces{From: namespacesFromAllPtr()},
+					},
+				},
+				{
+					Name: "same", Port: 80, Protocol: gatewayv1.HTTPProtocolType, Hostname: &sameHost,
+					AllowedRoutes: &gatewayv1.AllowedRoutes{
+						Namespaces: &gatewayv1.RouteNamespaces{From: &fromSame},
+					},
+				},
+			},
+		},
+	}
+
+	lsKind := gatewayv1.Kind(kindListenerSet)
+	lsNS := gatewayv1.Namespace("infra")
+	// Route in a DIFFERENT namespace than the ListenerSet: the `all` listener
+	// accepts it, the `same` listener rejects it.
+	route := &gatewayv1.HTTPRoute{
+		ObjectMeta: metav1.ObjectMeta{Name: "r", Namespace: "team"},
+		Spec: gatewayv1.HTTPRouteSpec{
+			CommonRouteSpec: gatewayv1.CommonRouteSpec{
+				ParentRefs: []gatewayv1.ParentReference{
+					{Kind: &lsKind, Name: "ls", Namespace: &lsNS},
+				},
+			},
+		},
+	}
+
+	cli := buildGatewayFakeClient(t, ls)
+
+	out := withEffectiveHostnames(context.Background(), cli, []*gatewayv1.HTTPRoute{route})
+	require.Len(t, out, 1)
+	assert.Equal(t, []gatewayv1.Hostname{allHost}, out[0].Spec.Hostnames,
+		"route must inherit only the accepting listener's hostname, not the same-namespace-only listener's")
 }
 
 func TestWithEffectiveHostnames_StableWhenParentMissing(t *testing.T) {
