@@ -118,15 +118,15 @@ var retiredSubstrings = []struct {
 	},
 	{
 		needle: "grpcroute-is-not-supported-in-v3",
-		why:    "#305 made the in-process proxy serve GRPCRoute; the old limitations.md anchor is deleted, so no doc or code comment may link to it",
+		why:    "the in-process proxy now serves GRPCRoute; the old limitations.md anchor is deleted, so no doc or code comment may link to it",
 	},
 	{
 		needle: "Only HTTPRoutes are pushed",
-		why:    "#305 pushes both HTTP and gRPC routes to the proxy; the route_syncer comment claiming HTTP-only is stale",
+		why:    "the proxy push now carries both HTTP and gRPC routes; the route_syncer comment claiming HTTP-only is stale",
 	},
 	{
 		needle: "GRPCRoute is **not supported in v3**",
-		why:    "#305 makes the in-process proxy serve GRPCRoute; the chart README must not advertise it as unsupported (renders on Artifact Hub)",
+		why:    "the in-process proxy now serves GRPCRoute; the chart README must not advertise it as unsupported (renders on Artifact Hub)",
 	},
 }
 

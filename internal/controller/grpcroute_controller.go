@@ -41,7 +41,7 @@ type GRPCRouteReconciler struct {
 
 	// ProxySyncer pushes the merged HTTP+GRPC routing config to the L7
 	// proxy replicas. A GRPCRoute change must re-push the proxy config so
-	// gRPC traffic routes through the in-process proxy (issue #305).
+	// gRPC traffic routes through the in-process proxy.
 	ProxySyncer *ProxySyncer
 
 	// ProxyEndpoints is the list of L7 proxy config-API URLs to push to.
@@ -71,9 +71,9 @@ func (r *GRPCRouteReconciler) syncAndUpdateStatus(ctx context.Context) (ctrl.Res
 		proxySyncer:    r.ProxySyncer,
 		proxyEndpoints: r.ProxyEndpoints,
 		// GRPCRoute changes push the merged HTTP+GRPC config to the proxy so
-		// gRPC traffic routes through the in-process proxy (issue #305). The
-		// push rebuilds from the full SyncResult, so a gRPC-only change still
-		// re-pushes every route — same model as the HTTPRoute reconciler.
+		// gRPC traffic routes through the in-process proxy. The push rebuilds
+		// from the full SyncResult, so a gRPC-only change still re-pushes every
+		// route — same model as the HTTPRoute reconciler.
 		pushProxy: true,
 		statusEntries: func(sr *SyncResult) []routeStatusEntry {
 			return sr.grpcStatusEntries(r.updateRouteStatus)

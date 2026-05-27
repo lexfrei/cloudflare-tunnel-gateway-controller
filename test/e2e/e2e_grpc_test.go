@@ -36,7 +36,7 @@ const (
 // an exact service/method match, and dials a real gRPC client through the
 // Cloudflare tunnel. It asserts the call reaches the backend (the echo
 // response carries the fully-qualified method), proving GRPCRoute traffic
-// routes through the in-process proxy (issue #305).
+// routes through the in-process proxy.
 //
 //nolint:funlen // one end-to-end scenario with deploy + wait + gRPC dial steps
 func TestGRPCRouteEndToEnd(t *testing.T) {

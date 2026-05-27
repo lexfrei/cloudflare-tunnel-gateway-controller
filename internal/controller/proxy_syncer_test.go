@@ -347,7 +347,7 @@ func TestProxySyncer_SyncRoutes_H2CBackend(t *testing.T) {
 		"backend on a Service port with appProtocol kubernetes.io/h2c must be marked h2c")
 }
 
-// TestProxySyncer_SyncRoutes_GRPCRoute pins the wiring (issue #305): a
+// TestProxySyncer_SyncRoutes_GRPCRoute pins the wiring: a
 // GRPCRoute handed to SyncRoutes is converted and pushed to the proxy as a
 // rule matching the HTTP/2 path /{service}/{method} with an h2c backend,
 // merged alongside any HTTP rules.
@@ -426,8 +426,8 @@ func TestProxySyncer_SyncRoutes_GRPCRoute(t *testing.T) {
 // reports BackendNotFound via GRPCFailedRefs, which SyncRoutes must apply to
 // the pushed gRPC rule by clearing its backends — otherwise the converter
 // still emits a backend with a DNS URL to the dead Service and the proxy
-// returns 502 instead of 500 (issue #305 review). The converter alone never
-// detects a missing Service.
+// returns 502 instead of 500. The converter alone never detects a missing
+// Service.
 func TestProxySyncer_SyncRoutes_GRPCFailedRefCleared(t *testing.T) {
 	t.Parallel()
 
