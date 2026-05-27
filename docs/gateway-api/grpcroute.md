@@ -236,6 +236,11 @@ kubectl get grpcroute my-grpc-route --output jsonpath='{.status.parents[*].condi
 | Header matching (Exact, RegularExpression) | Supported |
 | Filters | Not implemented — logged and skipped |
 | Backend filters | Not implemented |
+| BackendTLSPolicy / Gateway `clientCertificateRef` | Not applied — see Backend TLS below |
+
+### Backend TLS
+
+The upstream hop to a gRPC backend is always cleartext h2c (HTTP/2 without TLS). Unlike HTTPRoute backends, a `BackendTLSPolicy` targeting a gRPC backend Service and the Gateway's `spec.tls.backend.clientCertificateRef` are **not** applied to gRPC traffic in this revision — they are silently ignored, and no WARN is logged. If your gRPC backend requires TLS, terminate it in front of the Service (for example with a sidecar or an in-cluster gRPC-aware proxy) and point the GRPCRoute at the cleartext side.
 
 ### Traffic Splitting
 

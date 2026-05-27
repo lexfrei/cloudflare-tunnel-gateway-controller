@@ -120,6 +120,7 @@ GRPCRoute is served by the in-process L7 proxy. gRPC requests are HTTP/2 POSTs t
 | `spec.rules[].matches[].headers` | Yes | Exact and RegularExpression matchers (shared with HTTP) |
 | `spec.rules[].backendRefs` | Yes | Service backends; the proxy speaks h2c upstream |
 | `spec.rules[].filters` | No | gRPC filters are not yet applied by the proxy; logged and skipped |
+| BackendTLSPolicy / Gateway `clientCertificateRef` | No | Not applied to gRPC backends in this revision; the upstream hop is always cleartext h2c and any TLS policy is silently ignored |
 
 gRPC method matching maps to paths as follows:
 

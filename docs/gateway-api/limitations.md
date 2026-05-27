@@ -248,6 +248,10 @@ When a `BackendTLSPolicy` targets a Service but cannot be enforced — the CA `C
 
 When a backend Service carries both `appProtocol: kubernetes.io/h2c` AND a `BackendTLSPolicy` targets it, the policy wins: the proxy dials TLS (HTTPS, with HTTP/2 negotiated via ALPN). h2c is by definition cleartext HTTP/2 and cannot coexist with backend TLS; the h2c marker is silently ignored on that hop. If you genuinely want HTTP/2 over TLS, omit the `appProtocol` hint and let ALPN negotiate it during the handshake.
 
+### gRPC backends are always cleartext h2c
+
+Unlike HTTPRoute backends, the upstream hop to a GRPCRoute backend is unconditionally cleartext h2c. A `BackendTLSPolicy` targeting a gRPC backend Service and the Gateway's `spec.tls.backend.clientCertificateRef` are NOT applied to gRPC traffic in this revision — and, unlike the h2c-vs-TLS collision above, no WARN is logged. If a gRPC backend requires TLS, terminate it in front of the Service and route to the cleartext side. Honoring backend TLS for gRPC is a tracked follow-up.
+
 ### Gateway client cert rotation has a propagation lag
 
 The controller's existing Secret watch only matches the GatewayClassConfig's `cloudflareCredentialsSecretRef`. A rotation of the `Secret` referenced by `spec.tls.backend.clientCertificateRef` (or by a listener's `certificateRefs`) does NOT enqueue the Gateway on its own — the proxy continues to dial backends with the previous keypair until some unrelated event (HTTPRoute create/update, BackendTLSPolicy change, periodic resync, controller restart) drives the next reconcile. On that reconcile the new keypair is loaded, the converter stamps it onto every affected `BackendTLSConfig`, and the per-cert transport-pool hash evicts the stale transport on the next config push.
