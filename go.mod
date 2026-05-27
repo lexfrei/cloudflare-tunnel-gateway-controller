@@ -4,7 +4,7 @@ go 1.26.3
 
 require (
 	github.com/cloudflare/cloudflare-go/v7 v7.3.0
-	github.com/cloudflare/cloudflared v0.0.0-20260525093209-f6f60e1059b1
+	github.com/cloudflare/cloudflared v0.0.0-20260526220454-4177dd6936d5
 	github.com/cockroachdb/errors v1.13.0
 	github.com/go-logr/logr v1.4.3
 	github.com/google/uuid v1.6.0
@@ -21,6 +21,7 @@ require (
 	sigs.k8s.io/controller-runtime v0.24.0
 	sigs.k8s.io/gateway-api v1.5.1
 	sigs.k8s.io/gateway-api/conformance v1.5.1
+	sigs.k8s.io/yaml v1.6.0
 )
 
 require (
@@ -157,7 +158,6 @@ require (
 	sigs.k8s.io/json v0.0.0-20250730193827-2d320260d730 // indirect
 	sigs.k8s.io/randfill v1.0.0 // indirect
 	sigs.k8s.io/structured-merge-diff/v6 v6.3.2 // indirect
-	sigs.k8s.io/yaml v1.6.0 // indirect
 	zombiezen.com/go/capnproto2 v2.18.0+incompatible // indirect
 )
 
