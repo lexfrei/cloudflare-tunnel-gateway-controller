@@ -111,18 +111,13 @@ func resolveParentRefStatus(
 	failedRefs []ingress.BackendRefError,
 	syncErr error,
 ) *gatewayv1.RouteParentStatus {
-	kind := kindGateway
-	if ref.Kind != nil {
-		kind = string(*ref.Kind)
+	if !parentRefSelectsManagedGateway(ctx, params.k8sClient, ref, accessor.obj.GetNamespace(), classNames) {
+		return nil
 	}
 
 	namespace := accessor.obj.GetNamespace()
 	if ref.Namespace != nil {
 		namespace = string(*ref.Namespace)
-	}
-
-	if !parentRefSelectsManagedGateway(ctx, params.k8sClient, kind, namespace, string(ref.Name), classNames) {
-		return nil
 	}
 
 	parentStatus := buildParentStatus(
@@ -137,36 +132,23 @@ func resolveParentRefStatus(
 
 // parentRefSelectsManagedGateway returns true when a route parentRef
 // ultimately targets a Gateway managed by this controller — either directly
-// (Kind=Gateway) or via a ListenerSet whose parent Gateway is managed.
+// (Kind=Gateway) or via a ListenerSet whose parent Gateway is managed. A ref
+// with an unrecognised Group (anything other than the Gateway API group or
+// empty/default) returns false so a foreign-group ListenerSet name collision
+// cannot poison the route's status.parents entries.
 func parentRefSelectsManagedGateway(
 	ctx context.Context,
 	cli client.Client,
-	kind, namespace, name string,
+	ref gatewayv1.ParentReference,
+	routeNamespace string,
 	classNames map[string]bool,
 ) bool {
-	switch kind {
-	case kindGateway:
-		var gateway gatewayv1.Gateway
-		if err := cli.Get(ctx, client.ObjectKey{Name: name, Namespace: namespace}, &gateway); err != nil {
-			return false
-		}
-
-		return classNames[string(gateway.Spec.GatewayClassName)]
-	case kindListenerSet:
-		var listenerSet gatewayv1.ListenerSet
-		if err := cli.Get(ctx, client.ObjectKey{Name: name, Namespace: namespace}, &listenerSet); err != nil {
-			return false
-		}
-
-		parent, ok := listenerSetParentGateway(ctx, cli, &listenerSet)
-		if !ok {
-			return false
-		}
-
-		return classNames[string(parent.Spec.GatewayClassName)]
+	gateway, found := resolveParentGatewayFromRef(ctx, cli, ref, routeNamespace)
+	if !found {
+		return false
 	}
 
-	return false
+	return classNames[string(gateway.Spec.GatewayClassName)]
 }
 
 // buildParentStatus constructs a RouteParentStatus entry for a single parent ref.

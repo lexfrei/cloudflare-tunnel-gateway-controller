@@ -241,6 +241,41 @@ func TestResolveRouteParentBinding_ConflictedListenerSetEntryRejected(t *testing
 	assert.Equal(t, gatewayv1.RouteReasonNoMatchingParent, binding.Result.Reason)
 }
 
+// TestParentRefSelectsManagedGateway_ForeignGroupRejected guards the status
+// writer's group filter: a parentRef with Kind=ListenerSet but a Group other
+// than gateway.networking.k8s.io must NOT register as a managed parent even
+// when a same-named Gateway-API ListenerSet exists in the cluster. Without
+// the group filter, the route's status.parents would gain an unintended
+// entry attributed to a third-party CRD ref.
+func TestParentRefSelectsManagedGateway_ForeignGroupRejected(t *testing.T) {
+	t.Parallel()
+
+	gc := managedGatewayClass()
+	gw := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "infra"},
+		Spec:       gatewayv1.GatewaySpec{GatewayClassName: gatewayv1.ObjectName(gc.Name)},
+	}
+	ls := &gatewayv1.ListenerSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "ls", Namespace: "infra"},
+		Spec: gatewayv1.ListenerSetSpec{
+			ParentRef: gatewayv1.ParentGatewayReference{Name: "gw"},
+		},
+	}
+
+	cli := buildGatewayFakeClient(t, gc, gw, ls)
+	classNames := map[string]bool{gc.Name: true}
+
+	foreignGroup := gatewayv1.Group("other.example.com")
+	kind := gatewayv1.Kind(kindListenerSet)
+	ns := gatewayv1.Namespace("infra")
+	ref := gatewayv1.ParentReference{Group: &foreignGroup, Kind: &kind, Name: "ls", Namespace: &ns}
+
+	assert.False(t,
+		parentRefSelectsManagedGateway(context.Background(), cli, ref, "team-a", classNames),
+		"foreign-group ListenerSet ref must not register as a managed parent",
+	)
+}
+
 func namespacesFromAllPtr() *gatewayv1.FromNamespaces {
 	v := gatewayv1.NamespacesFromAll
 	return &v
