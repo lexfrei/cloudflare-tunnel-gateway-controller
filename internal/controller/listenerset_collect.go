@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/cockroachdb/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
@@ -51,19 +52,65 @@ func collectAcceptedListenerSetsForGateway(
 	return out, nil
 }
 
-// mergedListenersFor produces the precedence-ordered, conflict-annotated
-// listener view for a Gateway. Shared by GatewayReconciler (for
-// status.attachedListenerSets) and ListenerSetReconciler (for the per-set
-// summary).
-func mergedListenersFor(
+// summariseAttachedListenerSets re-applies the same per-ListenerSet
+// acceptance contract the ListenerSetReconciler uses — at least one entry
+// must be conflict-free AND have ResolvedRefs=True — and returns the count
+// of ListenerSets that pass.
+//
+// Used by GatewayReconciler so status.attachedListenerSets matches the
+// per-resource Accepted condition: a ListenerSet with all-broken TLS refs
+// reports Accepted=False/ListenersNotValid, and the count here agrees.
+func summariseAttachedListenerSets(
 	ctx context.Context,
 	cli client.Client,
 	gateway *gatewayv1.Gateway,
-) (*listenermerge.MergeResult, error) {
+) (int, error) {
 	listenerSets, err := collectAcceptedListenerSetsForGateway(ctx, cli, gateway)
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
 
-	return listenermerge.Merge(gateway, listenerSets), nil
+	merged := listenermerge.Merge(gateway, listenerSets)
+	accepted := 0
+
+	for _, listenerSet := range listenerSets {
+		if listenerSetEntriesAccepted(ctx, cli, listenerSet, merged) {
+			accepted++
+		}
+	}
+
+	return accepted, nil
+}
+
+// listenerSetEntriesAccepted returns true when at least one entry of the
+// ListenerSet is conflict-free in the merged view AND has its TLS cert refs
+// resolved (or no TLS material at all). Mirrors summariseListenerSet in
+// listenerset_controller.go.
+func listenerSetEntriesAccepted(
+	ctx context.Context,
+	cli client.Client,
+	listenerSet *gatewayv1.ListenerSet,
+	merged *listenermerge.MergeResult,
+) bool {
+	for i := range listenerSet.Spec.Listeners {
+		entry := &listenerSet.Spec.Listeners[i]
+		mergedEntry := findMergedEntry(merged, listenerSet, entry.Name)
+
+		if mergedEntry != nil && mergedEntry.ConflictReason != "" {
+			continue
+		}
+
+		check, err := resolveListenerEntryRefs(ctx, cli, listenerSet, entry)
+		if err != nil {
+			continue
+		}
+
+		if check.Status == metav1.ConditionFalse {
+			continue
+		}
+
+		return true
+	}
+
+	return false
 }

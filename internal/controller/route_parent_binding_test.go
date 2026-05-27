@@ -1,0 +1,187 @@
+package controller
+
+import (
+	"context"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
+
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/routebinding"
+)
+
+func TestResolveRouteParentBinding_GatewayParentManaged(t *testing.T) {
+	t.Parallel()
+
+	gc := managedGatewayClass()
+	gw := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "infra"},
+		Spec: gatewayv1.GatewaySpec{
+			GatewayClassName: gatewayv1.ObjectName(gc.Name),
+			Listeners: []gatewayv1.Listener{
+				{
+					Name: "http", Port: 80, Protocol: gatewayv1.HTTPProtocolType,
+					AllowedRoutes: &gatewayv1.AllowedRoutes{
+						Namespaces: &gatewayv1.RouteNamespaces{From: namespacesFromAllPtr()},
+					},
+				},
+			},
+		},
+	}
+
+	cli := buildGatewayFakeClient(t, gc, gw)
+	validator := routebinding.NewValidator(cli)
+
+	gwKind := gatewayv1.Kind(kindGateway)
+	gwNS := gatewayv1.Namespace("infra")
+	ref := gatewayv1.ParentReference{Kind: &gwKind, Name: "gw", Namespace: &gwNS}
+	routeInfo := &routebinding.RouteInfo{
+		Name: "r", Namespace: "team-a",
+		Hostnames: nil, Kind: routebinding.KindHTTPRoute,
+	}
+
+	binding, err := resolveRouteParentBinding(context.Background(), cli, validator, testListenerSetController, ref, "team-a", routeInfo)
+	require.NoError(t, err)
+	assert.True(t, binding.ManagedByThisController)
+	assert.True(t, binding.Result.Accepted)
+}
+
+func TestResolveRouteParentBinding_GatewayManagedByForeignController(t *testing.T) {
+	t.Parallel()
+
+	foreignClass := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "other-class"},
+		Spec:       gatewayv1.GatewayClassSpec{ControllerName: "other.example.com/other"},
+	}
+	gw := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "infra"},
+		Spec:       gatewayv1.GatewaySpec{GatewayClassName: gatewayv1.ObjectName(foreignClass.Name)},
+	}
+
+	cli := buildGatewayFakeClient(t, foreignClass, gw)
+	validator := routebinding.NewValidator(cli)
+
+	gwKind := gatewayv1.Kind(kindGateway)
+	gwNS := gatewayv1.Namespace("infra")
+	ref := gatewayv1.ParentReference{Kind: &gwKind, Name: "gw", Namespace: &gwNS}
+	routeInfo := &routebinding.RouteInfo{Name: "r", Namespace: "team-a", Kind: routebinding.KindHTTPRoute}
+
+	binding, err := resolveRouteParentBinding(context.Background(), cli, validator, testListenerSetController, ref, "team-a", routeInfo)
+	require.NoError(t, err)
+	assert.False(t, binding.ManagedByThisController, "ref to a Gateway whose class is owned by a foreign controller must not register as ours")
+}
+
+func TestResolveRouteParentBinding_ListenerSetNotAllowedByGateway(t *testing.T) {
+	t.Parallel()
+
+	gc := managedGatewayClass()
+	gw := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "infra"},
+		Spec:       gatewayv1.GatewaySpec{GatewayClassName: gatewayv1.ObjectName(gc.Name)},
+	}
+	ls := &gatewayv1.ListenerSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "ls", Namespace: "infra"},
+		Spec: gatewayv1.ListenerSetSpec{
+			ParentRef: gatewayv1.ParentGatewayReference{Name: "gw"},
+			Listeners: []gatewayv1.ListenerEntry{
+				{
+					Name: "http", Port: 80, Protocol: gatewayv1.HTTPProtocolType,
+					AllowedRoutes: &gatewayv1.AllowedRoutes{
+						Namespaces: &gatewayv1.RouteNamespaces{From: namespacesFromAllPtr()},
+					},
+				},
+			},
+		},
+	}
+
+	cli := buildGatewayFakeClient(t, gc, gw, ls)
+	validator := routebinding.NewValidator(cli)
+
+	lsKind := gatewayv1.Kind(kindListenerSet)
+	lsNS := gatewayv1.Namespace("infra")
+	ref := gatewayv1.ParentReference{Kind: &lsKind, Name: "ls", Namespace: &lsNS}
+	routeInfo := &routebinding.RouteInfo{Name: "r", Namespace: "team-a", Kind: routebinding.KindHTTPRoute}
+
+	binding, err := resolveRouteParentBinding(context.Background(), cli, validator, testListenerSetController, ref, "team-a", routeInfo)
+	require.NoError(t, err)
+	assert.True(t, binding.ManagedByThisController, "Gateway IS managed, even though it rejects the ListenerSet — so the route still belongs to us")
+	assert.False(t, binding.Result.Accepted)
+	assert.Equal(t, gatewayv1.RouteReasonNoMatchingParent, binding.Result.Reason)
+}
+
+func TestResolveRouteParentBinding_ListenerSetParentGatewayMissing(t *testing.T) {
+	t.Parallel()
+
+	ls := &gatewayv1.ListenerSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "ls", Namespace: "infra"},
+		Spec: gatewayv1.ListenerSetSpec{
+			ParentRef: gatewayv1.ParentGatewayReference{Name: "missing-gw"},
+		},
+	}
+
+	cli := buildGatewayFakeClient(t, ls)
+	validator := routebinding.NewValidator(cli)
+
+	lsKind := gatewayv1.Kind(kindListenerSet)
+	lsNS := gatewayv1.Namespace("infra")
+	ref := gatewayv1.ParentReference{Kind: &lsKind, Name: "ls", Namespace: &lsNS}
+	routeInfo := &routebinding.RouteInfo{Name: "r", Namespace: "team-a", Kind: routebinding.KindHTTPRoute}
+
+	binding, err := resolveRouteParentBinding(context.Background(), cli, validator, testListenerSetController, ref, "team-a", routeInfo)
+	require.NoError(t, err)
+	assert.False(t, binding.ManagedByThisController, "missing parent Gateway leaves the ref unresolvable")
+}
+
+func TestResolveRouteParentBinding_CrossNamespaceListenerSet(t *testing.T) {
+	t.Parallel()
+
+	gc := managedGatewayClass()
+	fromAll := gatewayv1.NamespacesFromAll
+	gw := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "platform"},
+		Spec: gatewayv1.GatewaySpec{
+			GatewayClassName: gatewayv1.ObjectName(gc.Name),
+			AllowedListeners: &gatewayv1.AllowedListeners{
+				Namespaces: &gatewayv1.ListenerNamespaces{From: &fromAll},
+			},
+			Listeners: []gatewayv1.Listener{
+				{Name: "http", Port: 80, Protocol: gatewayv1.HTTPProtocolType},
+			},
+		},
+	}
+	platformNS := gatewayv1.Namespace("platform")
+	ls := &gatewayv1.ListenerSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "ls", Namespace: "tenant"},
+		Spec: gatewayv1.ListenerSetSpec{
+			ParentRef: gatewayv1.ParentGatewayReference{Name: "gw", Namespace: &platformNS},
+			Listeners: []gatewayv1.ListenerEntry{
+				{
+					Name: "extra", Port: 80, Protocol: gatewayv1.HTTPProtocolType,
+					AllowedRoutes: &gatewayv1.AllowedRoutes{
+						Namespaces: &gatewayv1.RouteNamespaces{From: namespacesFromAllPtr()},
+					},
+				},
+			},
+		},
+	}
+
+	cli := buildGatewayFakeClient(t, gc, gw, ls)
+	validator := routebinding.NewValidator(cli)
+
+	lsKind := gatewayv1.Kind(kindListenerSet)
+	lsNS := gatewayv1.Namespace("tenant")
+	ref := gatewayv1.ParentReference{Kind: &lsKind, Name: "ls", Namespace: &lsNS}
+	routeInfo := &routebinding.RouteInfo{Name: "r", Namespace: "team-a", Kind: routebinding.KindHTTPRoute}
+
+	binding, err := resolveRouteParentBinding(context.Background(), cli, validator, testListenerSetController, ref, "team-a", routeInfo)
+	require.NoError(t, err)
+	assert.True(t, binding.ManagedByThisController)
+	assert.True(t, binding.Result.Accepted, "route attaches via the cross-namespace ListenerSet's entry")
+}
+
+func namespacesFromAllPtr() *gatewayv1.FromNamespaces {
+	v := gatewayv1.NamespacesFromAll
+	return &v
+}

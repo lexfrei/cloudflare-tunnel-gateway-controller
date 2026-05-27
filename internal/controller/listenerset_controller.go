@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/cockroachdb/errors"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -16,6 +17,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
+	gatewayv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/listenermerge"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/routebinding"
@@ -907,9 +909,15 @@ func listenerEntryResolvedRefsCondition(
 }
 
 // SetupWithManager registers the ListenerSet reconciler with controller
-// runtime, watching ListenerSet resources directly and Gateway changes that
-// might flip AllowedListeners (re-evaluating all ListenerSets pointed at the
-// Gateway).
+// runtime. We watch every input the ListenerSet's status depends on so the
+// status field never drifts from the live cluster state:
+//
+//   - ListenerSet itself (For).
+//   - Gateway changes (allowedListeners flips, listeners added/removed change
+//     conflict markers).
+//   - HTTPRoute / GRPCRoute changes (AttachedRoutes count).
+//   - Secret changes (TLS cert refs → ResolvedRefs).
+//   - ReferenceGrant changes (cross-namespace cert refs).
 func (r *ListenerSetReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	//nolint:wrapcheck // controller-runtime builder pattern
 	return ctrl.NewControllerManagedBy(mgr).
@@ -918,7 +926,228 @@ func (r *ListenerSetReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			&gatewayv1.Gateway{},
 			handler.EnqueueRequestsFromMapFunc(r.gatewayToListenerSets),
 		).
+		Watches(
+			&gatewayv1.HTTPRoute{},
+			handler.EnqueueRequestsFromMapFunc(r.routeToListenerSets),
+		).
+		Watches(
+			&gatewayv1.GRPCRoute{},
+			handler.EnqueueRequestsFromMapFunc(r.routeToListenerSets),
+		).
+		Watches(
+			&corev1.Secret{},
+			handler.EnqueueRequestsFromMapFunc(r.secretToListenerSets),
+		).
+		Watches(
+			&gatewayv1beta1.ReferenceGrant{},
+			handler.EnqueueRequestsFromMapFunc(r.referenceGrantToListenerSets),
+		).
 		Complete(r)
+}
+
+// routeToListenerSets maps an HTTPRoute / GRPCRoute event to reconcile
+// requests for every ListenerSet whose entry the route's parentRefs target.
+// Without this, AttachedRoutes count would drift when routes are created /
+// edited / deleted.
+func (r *ListenerSetReconciler) routeToListenerSets(
+	ctx context.Context,
+	obj client.Object,
+) []reconcile.Request {
+	parentRefs, routeNamespace := extractRouteParentRefs(obj)
+	if len(parentRefs) == 0 {
+		return nil
+	}
+
+	return r.collectListenerSetsForParentRefs(ctx, parentRefs, routeNamespace)
+}
+
+// extractRouteParentRefs returns the parentRefs and namespace for an
+// HTTPRoute / GRPCRoute event, or (nil, "") if the object is neither.
+func extractRouteParentRefs(obj client.Object) ([]gatewayv1.ParentReference, string) {
+	switch route := obj.(type) {
+	case *gatewayv1.HTTPRoute:
+		return route.Spec.ParentRefs, route.Namespace
+	case *gatewayv1.GRPCRoute:
+		return route.Spec.ParentRefs, route.Namespace
+	}
+
+	return nil, ""
+}
+
+// collectListenerSetsForParentRefs walks the route's parentRefs, finds every
+// ListenerSet referenced (by Kind=ListenerSet), and returns reconcile
+// requests for each so its AttachedRoutes count can update.
+func (r *ListenerSetReconciler) collectListenerSetsForParentRefs(
+	ctx context.Context,
+	parentRefs []gatewayv1.ParentReference,
+	routeNamespace string,
+) []reconcile.Request {
+	seen := make(map[types.NamespacedName]struct{})
+	requests := make([]reconcile.Request, 0)
+
+	for _, ref := range parentRefs {
+		if ref.Group != nil && string(*ref.Group) != "" && string(*ref.Group) != gatewayv1.GroupName {
+			continue
+		}
+
+		if ref.Kind == nil || string(*ref.Kind) != kindListenerSet {
+			continue
+		}
+
+		namespace := routeNamespace
+		if ref.Namespace != nil {
+			namespace = string(*ref.Namespace)
+		}
+
+		key := types.NamespacedName{Name: string(ref.Name), Namespace: namespace}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+
+		var listenerSet gatewayv1.ListenerSet
+		if err := r.Get(ctx, key, &listenerSet); err != nil {
+			continue
+		}
+
+		seen[key] = struct{}{}
+		requests = append(requests, reconcile.Request{NamespacedName: key})
+	}
+
+	return requests
+}
+
+// secretToListenerSets maps a Secret event to reconcile requests for every
+// ListenerSet that references the Secret in a TLS cert ref. A new Secret
+// appearing or an existing one disappearing must re-evaluate
+// ResolvedRefs on every dependent ListenerSet entry.
+func (r *ListenerSetReconciler) secretToListenerSets(
+	ctx context.Context,
+	obj client.Object,
+) []reconcile.Request {
+	secret, ok := obj.(*corev1.Secret)
+	if !ok {
+		return nil
+	}
+
+	var all gatewayv1.ListenerSetList
+	if err := r.List(ctx, &all); err != nil {
+		return nil
+	}
+
+	requests := make([]reconcile.Request, 0)
+
+	for i := range all.Items {
+		listenerSet := &all.Items[i]
+		if !listenerSetReferencesSecret(listenerSet, secret.Namespace, secret.Name) {
+			continue
+		}
+
+		requests = append(requests, reconcile.Request{
+			NamespacedName: types.NamespacedName{Name: listenerSet.Name, Namespace: listenerSet.Namespace},
+		})
+	}
+
+	return requests
+}
+
+// referenceGrantToListenerSets maps a ReferenceGrant event to reconcile
+// requests for every ListenerSet that needs a ReferenceGrant from
+// Kind=ListenerSet to a Secret in the grant's namespace. Without this, a
+// ReferenceGrant create/delete leaves dependent ListenerSets with stale
+// ResolvedRefs status.
+func (r *ListenerSetReconciler) referenceGrantToListenerSets(
+	ctx context.Context,
+	obj client.Object,
+) []reconcile.Request {
+	grant, ok := obj.(*gatewayv1beta1.ReferenceGrant)
+	if !ok {
+		return nil
+	}
+
+	if !grantTargetsSecret(grant) {
+		return nil
+	}
+
+	var all gatewayv1.ListenerSetList
+	if err := r.List(ctx, &all); err != nil {
+		return nil
+	}
+
+	requests := make([]reconcile.Request, 0)
+
+	for i := range all.Items {
+		listenerSet := &all.Items[i]
+		if !listenerSetReferencesSecretsInNamespace(listenerSet, grant.Namespace) {
+			continue
+		}
+
+		requests = append(requests, reconcile.Request{
+			NamespacedName: types.NamespacedName{Name: listenerSet.Name, Namespace: listenerSet.Namespace},
+		})
+	}
+
+	return requests
+}
+
+// listenerSetReferencesSecret returns true when any TLS cert ref on any
+// entry of the ListenerSet points at the given Secret.
+func listenerSetReferencesSecret(listenerSet *gatewayv1.ListenerSet, namespace, name string) bool {
+	for i := range listenerSet.Spec.Listeners {
+		entry := &listenerSet.Spec.Listeners[i]
+		if entry.TLS == nil {
+			continue
+		}
+
+		for _, ref := range entry.TLS.CertificateRefs {
+			refNamespace := listenerSet.Namespace
+			if ref.Namespace != nil {
+				refNamespace = string(*ref.Namespace)
+			}
+
+			if refNamespace == namespace && string(ref.Name) == name {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// listenerSetReferencesSecretsInNamespace returns true when any TLS cert ref
+// on any entry of the ListenerSet points at a Secret in the given namespace
+// (the grant's target namespace).
+func listenerSetReferencesSecretsInNamespace(listenerSet *gatewayv1.ListenerSet, namespace string) bool {
+	for i := range listenerSet.Spec.Listeners {
+		entry := &listenerSet.Spec.Listeners[i]
+		if entry.TLS == nil {
+			continue
+		}
+
+		for _, ref := range entry.TLS.CertificateRefs {
+			refNamespace := listenerSet.Namespace
+			if ref.Namespace != nil {
+				refNamespace = string(*ref.Namespace)
+			}
+
+			if refNamespace == namespace {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// grantTargetsSecret returns true when the ReferenceGrant has any to-entry
+// for Kind=Secret with an empty group.
+func grantTargetsSecret(grant *gatewayv1beta1.ReferenceGrant) bool {
+	for _, target := range grant.Spec.To {
+		if target.Group == "" && target.Kind == kindSecret {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (r *ListenerSetReconciler) gatewayToListenerSets(

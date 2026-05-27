@@ -157,6 +157,15 @@ func validateListenerSetSecretExists(
 		}, nil
 	}
 
+	keyData, hasKey := secret.Data[corev1.TLSPrivateKeyKey]
+	if !hasKey || len(keyData) == 0 {
+		return listenerEntryRefsCheck{
+			Status:  metav1.ConditionFalse,
+			Reason:  string(gatewayv1.ListenerReasonInvalidCertificateRef),
+			Message: fmt.Sprintf("Secret %s/%s missing tls.key data", namespace, ref.Name),
+		}, nil
+	}
+
 	if block, _ := pem.Decode(certData); block == nil {
 		return listenerEntryRefsCheck{
 			Status:  metav1.ConditionFalse,
