@@ -163,6 +163,10 @@ func grpcMethodToPath(method *gatewayv1.GRPCMethodMatch) *PathMatch {
 	}
 }
 
+// convertGRPCHeaderMatch maps a gRPC header match onto the proxy header matcher.
+// Unlike path regexes, header regexes are passed through unanchored — the same
+// as HTTPRoute header matching, and Gateway API leaves header-regex semantics
+// implementation-specific — so this is deliberately consistent, not a gap.
 func convertGRPCHeaderMatch(header gatewayv1.GRPCHeaderMatch) HeaderMatch {
 	result := HeaderMatch{
 		Name:  string(header.Name),

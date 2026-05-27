@@ -116,6 +116,43 @@ func TestConvertGRPCRoutes_BackendPort443ForcesCleartextH2C(t *testing.T) {
 	assert.Equal(t, proxy.BackendProtocolH2C, backend.Protocol)
 }
 
+// TestConvertGRPCRoutes_NoBackendTLSAlwaysCleartextH2C pins the intentional
+// limitation that gRPC backends are always cleartext h2c: BackendTLSPolicy and
+// the Gateway clientCertificateRef are not applied to gRPC in this revision.
+// ConvertGRPCRoutes takes no TLS resolver, so the produced backend must carry
+// no TLS config and stay http://+h2c. If a future change starts honoring TLS
+// for gRPC, this test must be updated alongside the user-facing docs.
+func TestConvertGRPCRoutes_NoBackendTLSAlwaysCleartextH2C(t *testing.T) {
+	t.Parallel()
+
+	svc := "grpc.examples.echo.Echo"
+	method := "UnaryEcho"
+	routes := []*gatewayv1.GRPCRoute{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "echo", Namespace: "default"},
+			Spec: gatewayv1.GRPCRouteSpec{
+				Rules: []gatewayv1.GRPCRouteRule{
+					{
+						Matches: []gatewayv1.GRPCRouteMatch{
+							{Method: &gatewayv1.GRPCMethodMatch{Type: grpcExact(), Service: &svc, Method: &method}},
+						},
+						BackendRefs: []gatewayv1.GRPCBackendRef{grpcBackendRef("echo-svc", 9000, 1)},
+					},
+				},
+			},
+		},
+	}
+
+	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil)
+
+	require.Len(t, cfg.Rules, 1)
+	require.Len(t, cfg.Rules[0].Backends, 1)
+	backend := cfg.Rules[0].Backends[0]
+	assert.Nil(t, backend.TLS, "gRPC backend must carry no TLS config — BackendTLSPolicy is not applied")
+	assert.Equal(t, proxy.BackendProtocolH2C, backend.Protocol)
+	assert.True(t, strings.HasPrefix(backend.URL, "http://"), "gRPC backend stays cleartext, got %q", backend.URL)
+}
+
 // TestConvertGRPCRoutes_ServiceOnly maps a service-only match to a path-prefix
 // rule /{service}/ so every method of the service routes.
 func TestConvertGRPCRoutes_ServiceOnly(t *testing.T) {
