@@ -47,16 +47,17 @@ const configMapKind = "ConfigMap"
 // Guarded by syncMu so the cache update is consistent with the push
 // it follows.
 type ProxySyncer struct {
-	clusterDomain       string
-	logger              *slog.Logger
-	pusher              *proxy.ConfigPusher
-	k8sClient           client.Client
-	backendValidator    proxy.BackendRefValidator
-	protocolResolver    proxy.BackendProtocolResolver
-	tlsResolver         proxy.BackendTLSResolver
-	gatewayCertResolver proxy.GatewayClientCertResolver
-	syncMu              sync.Mutex
-	lastCfg             *proxy.Config
+	clusterDomain        string
+	logger               *slog.Logger
+	pusher               *proxy.ConfigPusher
+	k8sClient            client.Client
+	backendValidator     proxy.BackendRefValidator
+	grpcBackendValidator proxy.BackendRefValidator
+	protocolResolver     proxy.BackendProtocolResolver
+	tlsResolver          proxy.BackendTLSResolver
+	gatewayCertResolver  proxy.GatewayClientCertResolver
+	syncMu               sync.Mutex
+	lastCfg              *proxy.Config
 }
 
 // NewProxySyncer creates a ProxySyncer for pushing config to proxy replicas.
@@ -86,11 +87,12 @@ func NewProxySyncer(
 		pusher: proxy.NewConfigPusher(&http.Client{
 			Timeout: 10 * time.Second,
 		}, authToken),
-		k8sClient:           k8sClient,
-		backendValidator:    newBackendRefValidator(refGrantValidator),
-		protocolResolver:    newBackendProtocolResolver(k8sClient),
-		tlsResolver:         newBackendTLSResolver(k8sClient),
-		gatewayCertResolver: newGatewayClientCertResolver(k8sClient, controllerName),
+		k8sClient:            k8sClient,
+		backendValidator:     newBackendRefValidator(refGrantValidator, "HTTPRoute"),
+		grpcBackendValidator: newBackendRefValidator(refGrantValidator, "GRPCRoute"),
+		protocolResolver:     newBackendProtocolResolver(k8sClient),
+		tlsResolver:          newBackendTLSResolver(k8sClient),
+		gatewayCertResolver:  newGatewayClientCertResolver(k8sClient, controllerName),
 	}
 }
 
@@ -522,12 +524,17 @@ func portAppProtocol(svc *corev1.Service, port int32) string {
 	return ""
 }
 
-// newBackendRefValidator creates a BackendRefValidator from a referencegrant.Validator.
-func newBackendRefValidator(validator *referencegrant.Validator) proxy.BackendRefValidator {
+// newBackendRefValidator creates a BackendRefValidator from a
+// referencegrant.Validator. fromKind is the route kind the validator speaks for
+// ("HTTPRoute" or "GRPCRoute"): a ReferenceGrant's from.kind must match the
+// actual referencing route kind, so HTTP and gRPC conversion need separate
+// validators — sharing one would deny a gRPC route guarded by a GRPCRoute grant
+// (and wrongly allow one guarded by an HTTPRoute-only grant).
+func newBackendRefValidator(validator *referencegrant.Validator, fromKind string) proxy.BackendRefValidator {
 	return func(ctx context.Context, fromNamespace string, ref gatewayv1.BackendObjectReference) bool {
 		fromRef := referencegrant.Reference{
 			Group:     "gateway.networking.k8s.io",
-			Kind:      "HTTPRoute",
+			Kind:      fromKind,
 			Namespace: fromNamespace,
 		}
 
@@ -688,7 +695,7 @@ func (s *ProxySyncer) buildProxyConfig(
 		// relies on.
 		grpcStartIdx := len(cfg.Rules)
 
-		grpcCfg := proxy.ConvertGRPCRoutes(ctx, grpcRoutes, s.clusterDomain, s.backendValidator)
+		grpcCfg := proxy.ConvertGRPCRoutes(ctx, grpcRoutes, s.clusterDomain, s.grpcBackendValidator)
 		cfg.Rules = append(cfg.Rules, grpcCfg.Rules...)
 
 		clearFailedGRPCBackends(cfg, grpcStartIdx, grpcRoutes, grpcFailedRefs)

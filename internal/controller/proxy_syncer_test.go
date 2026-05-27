@@ -24,6 +24,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
+	gatewayv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/controller"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/ingress"
@@ -488,6 +489,100 @@ func TestProxySyncer_SyncRoutes_GRPCFailedRefCleared(t *testing.T) {
 	require.Len(t, receivedConfig.Rules, 1)
 	assert.Nil(t, receivedConfig.Rules[0].Backends,
 		"gRPC rule with a failed backend ref must have its backends cleared so the proxy returns 500, not 502")
+}
+
+// grpcCrossNamespaceBackendSurvives pushes a GRPCRoute whose backend lives in
+// another namespace, guarded by a ReferenceGrant whose from.kind is
+// grantFromKind, and reports whether the pushed rule kept its backend (the
+// reference was allowed) or had it dropped (denied). The proxy is the only v3
+// data plane, so the validator it uses for gRPC must check the grant against
+// from.kind=GRPCRoute, not HTTPRoute.
+func grpcCrossNamespaceBackendSurvives(t *testing.T, grantFromKind gatewayv1.Kind) bool {
+	t.Helper()
+
+	var receivedConfig proxy.Config
+
+	configServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, req *http.Request) {
+		if req.Method == http.MethodPut {
+			_ = json.NewDecoder(req.Body).Decode(&receivedConfig)
+		}
+
+		writer.WriteHeader(http.StatusOK)
+	}))
+	defer configServer.Close()
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
+	require.NoError(t, gatewayv1beta1.Install(scheme))
+
+	grant := &gatewayv1beta1.ReferenceGrant{
+		ObjectMeta: metav1.ObjectMeta{Name: "allow-grpc", Namespace: "backend-ns"},
+		Spec: gatewayv1beta1.ReferenceGrantSpec{
+			From: []gatewayv1beta1.ReferenceGrantFrom{
+				{Group: gatewayv1.GroupName, Kind: grantFromKind, Namespace: "route-ns"},
+			},
+			To: []gatewayv1beta1.ReferenceGrantTo{
+				{Group: "", Kind: "Service"},
+			},
+		},
+	}
+	testClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(grant).Build()
+
+	syncer := controller.NewProxySyncer("cluster.local", "", "", testClient, slog.Default())
+
+	svc := "grpc.examples.echo.Echo"
+	method := "UnaryEcho"
+	exact := gatewayv1.GRPCMethodMatchExact
+	port := gatewayv1.PortNumber(9000)
+	backendNS := gatewayv1.Namespace("backend-ns")
+	grpcRoutes := []*gatewayv1.GRPCRoute{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "echo", Namespace: "route-ns"},
+			Spec: gatewayv1.GRPCRouteSpec{
+				Rules: []gatewayv1.GRPCRouteRule{
+					{
+						Matches: []gatewayv1.GRPCRouteMatch{
+							{Method: &gatewayv1.GRPCMethodMatch{Type: &exact, Service: &svc, Method: &method}},
+						},
+						BackendRefs: []gatewayv1.GRPCBackendRef{
+							{BackendRef: gatewayv1.BackendRef{
+								BackendObjectReference: gatewayv1.BackendObjectReference{
+									Name: "echo-svc", Namespace: &backendNS, Port: &port,
+								},
+							}},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	err := syncer.SyncRoutes(context.Background(), []string{configServer.URL + "/config"}, nil, grpcRoutes, nil, nil)
+	require.NoError(t, err)
+
+	require.Len(t, receivedConfig.Rules, 1)
+
+	return len(receivedConfig.Rules[0].Backends) > 0
+}
+
+// TestProxySyncer_SyncRoutes_GRPCCrossNamespaceAllowedByGRPCGrant: a GRPCRoute
+// cross-namespace backend backed by a ReferenceGrant with from.kind=GRPCRoute
+// must be allowed by the proxy data plane.
+func TestProxySyncer_SyncRoutes_GRPCCrossNamespaceAllowedByGRPCGrant(t *testing.T) {
+	t.Parallel()
+
+	assert.True(t, grpcCrossNamespaceBackendSurvives(t, "GRPCRoute"),
+		"gRPC cross-namespace backend must survive when a GRPCRoute ReferenceGrant permits it")
+}
+
+// TestProxySyncer_SyncRoutes_GRPCCrossNamespaceDeniedByHTTPGrant: an
+// HTTPRoute-only ReferenceGrant must NOT authorize a GRPCRoute cross-namespace
+// backend — the from.kind must match the actual route kind.
+func TestProxySyncer_SyncRoutes_GRPCCrossNamespaceDeniedByHTTPGrant(t *testing.T) {
+	t.Parallel()
+
+	assert.False(t, grpcCrossNamespaceBackendSurvives(t, "HTTPRoute"),
+		"gRPC cross-namespace backend must be dropped when only an HTTPRoute ReferenceGrant exists")
 }
 
 // TestProxySyncer_SyncRoutes_BackendTLSPolicyMissingCA_FailsClosed verifies the
