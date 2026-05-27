@@ -200,7 +200,7 @@ func syncAndUpdateStatusCommon(ctx context.Context, params syncUpdateParams) (ct
 		httpRoutes := httpRoutePtrs(syncResult.HTTPRoutes)
 		grpcRoutes := grpcRoutePtrs(syncResult.GRPCRoutes)
 
-		if proxyErr := params.proxySyncer.SyncRoutes(ctx, params.proxyEndpoints, httpRoutes, grpcRoutes, syncResult.HTTPFailedRefs); proxyErr != nil {
+		if proxyErr := params.proxySyncer.SyncRoutes(ctx, params.proxyEndpoints, httpRoutes, grpcRoutes, syncResult.HTTPFailedRefs, syncResult.GRPCFailedRefs); proxyErr != nil {
 			logger.Error("proxy sync failed (non-blocking)", "error", proxyErr)
 			params.routeSyncer.Metrics.RecordSyncError(ctx, "proxy_push")
 		}

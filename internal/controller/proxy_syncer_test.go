@@ -26,6 +26,7 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/controller"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/ingress"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/proxy"
 )
 
@@ -110,7 +111,7 @@ func TestProxySyncer_SyncRoutes(t *testing.T) {
 
 	endpoints := []string{configServer.URL + "/config"}
 
-	err := syncer.SyncRoutes(context.Background(), endpoints, routes, nil, nil)
+	err := syncer.SyncRoutes(context.Background(), endpoints, routes, nil, nil, nil)
 	require.NoError(t, err)
 
 	assert.Equal(t, int32(1), pushCount.Load())
@@ -152,7 +153,7 @@ func TestProxySyncer_NoRoutes_PushesEmptyConfig(t *testing.T) {
 
 	// Zero routes should still push a valid config with empty rules.
 	// The proxy will return 404 for all requests until routes are added.
-	err := syncer.SyncRoutes(context.Background(), []string{configServer.URL + "/config"}, nil, nil, nil)
+	err := syncer.SyncRoutes(context.Background(), []string{configServer.URL + "/config"}, nil, nil, nil, nil)
 	require.NoError(t, err)
 
 	assert.Equal(t, int32(1), pushCount.Load())
@@ -260,7 +261,7 @@ func TestProxySyncer_ResyncEndpoints_ReplaysLastConfig(t *testing.T) {
 
 	endpoint := configServer.URL + "/config"
 
-	require.NoError(t, syncer.SyncRoutes(context.Background(), []string{endpoint}, routes, nil, nil))
+	require.NoError(t, syncer.SyncRoutes(context.Background(), []string{endpoint}, routes, nil, nil, nil))
 	require.Equal(t, int32(1), pushCount.Load(), "first sync must push once")
 	require.NotEmpty(t, firstReceived.Rules, "first push must carry the built config")
 
@@ -336,7 +337,7 @@ func TestProxySyncer_SyncRoutes_H2CBackend(t *testing.T) {
 		},
 	}
 
-	err := syncer.SyncRoutes(context.Background(), []string{configServer.URL + "/config"}, routes, nil, nil)
+	err := syncer.SyncRoutes(context.Background(), []string{configServer.URL + "/config"}, routes, nil, nil, nil)
 	require.NoError(t, err)
 
 	require.Equal(t, int32(1), pushCount.Load())
@@ -407,7 +408,7 @@ func TestProxySyncer_SyncRoutes_GRPCRoute(t *testing.T) {
 		},
 	}
 
-	err := syncer.SyncRoutes(context.Background(), []string{configServer.URL + "/config"}, nil, grpcRoutes, nil)
+	err := syncer.SyncRoutes(context.Background(), []string{configServer.URL + "/config"}, nil, grpcRoutes, nil, nil)
 	require.NoError(t, err)
 
 	require.Equal(t, int32(1), pushCount.Load())
@@ -418,6 +419,75 @@ func TestProxySyncer_SyncRoutes_GRPCRoute(t *testing.T) {
 	assert.Equal(t, "/grpc.examples.echo.Echo/UnaryEcho", receivedConfig.Rules[0].Matches[0].Path.Value)
 	require.Len(t, receivedConfig.Rules[0].Backends, 1)
 	assert.Equal(t, proxy.BackendProtocolH2C, receivedConfig.Rules[0].Backends[0].Protocol)
+}
+
+// TestProxySyncer_SyncRoutes_GRPCFailedRefCleared proves the spec-correct 500
+// path for a GRPCRoute pointing at a nonexistent Service. The ingress builder
+// reports BackendNotFound via GRPCFailedRefs, which SyncRoutes must apply to
+// the pushed gRPC rule by clearing its backends — otherwise the converter
+// still emits a backend with a DNS URL to the dead Service and the proxy
+// returns 502 instead of 500 (issue #305 review). The converter alone never
+// detects a missing Service.
+func TestProxySyncer_SyncRoutes_GRPCFailedRefCleared(t *testing.T) {
+	t.Parallel()
+
+	var receivedConfig proxy.Config
+
+	configServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, req *http.Request) {
+		if req.Method == http.MethodPut {
+			if decodeErr := json.NewDecoder(req.Body).Decode(&receivedConfig); decodeErr != nil {
+				writer.WriteHeader(http.StatusBadRequest)
+
+				return
+			}
+		}
+
+		writer.WriteHeader(http.StatusOK)
+	}))
+	defer configServer.Close()
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
+	testClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+
+	syncer := controller.NewProxySyncer("cluster.local", "", "", testClient, slog.Default())
+
+	svc := "grpc.examples.echo.Echo"
+	method := "UnaryEcho"
+	exact := gatewayv1.GRPCMethodMatchExact
+	port := gatewayv1.PortNumber(9000)
+	grpcRoutes := []*gatewayv1.GRPCRoute{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "echo", Namespace: "default"},
+			Spec: gatewayv1.GRPCRouteSpec{
+				Rules: []gatewayv1.GRPCRouteRule{
+					{
+						Matches: []gatewayv1.GRPCRouteMatch{
+							{Method: &gatewayv1.GRPCMethodMatch{Type: &exact, Service: &svc, Method: &method}},
+						},
+						BackendRefs: []gatewayv1.GRPCBackendRef{
+							{BackendRef: gatewayv1.BackendRef{
+								BackendObjectReference: gatewayv1.BackendObjectReference{
+									Name: "missing-svc", Port: &port,
+								},
+							}},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	grpcFailedRefs := []ingress.BackendRefError{
+		{RouteNamespace: "default", RouteName: "echo", BackendName: "missing-svc", Reason: "BackendNotFound"},
+	}
+
+	err := syncer.SyncRoutes(context.Background(), []string{configServer.URL + "/config"}, nil, grpcRoutes, nil, grpcFailedRefs)
+	require.NoError(t, err)
+
+	require.Len(t, receivedConfig.Rules, 1)
+	assert.Nil(t, receivedConfig.Rules[0].Backends,
+		"gRPC rule with a failed backend ref must have its backends cleared so the proxy returns 500, not 502")
 }
 
 // TestProxySyncer_SyncRoutes_BackendTLSPolicyMissingCA_FailsClosed verifies the
@@ -491,7 +561,7 @@ func TestProxySyncer_SyncRoutes_BackendTLSPolicyMissingCA_FailsClosed(t *testing
 		},
 	}
 
-	require.NoError(t, syncer.SyncRoutes(context.Background(), []string{configServer.URL + "/config"}, routes, nil, nil))
+	require.NoError(t, syncer.SyncRoutes(context.Background(), []string{configServer.URL + "/config"}, routes, nil, nil, nil))
 
 	require.Len(t, receivedConfig.Rules, 1)
 	require.Len(t, receivedConfig.Rules[0].Backends, 1)
@@ -584,7 +654,7 @@ func TestProxySyncer_SyncRoutes_BackendTLSPolicy_URISubjectAltName_PushesURIList
 		},
 	}
 
-	require.NoError(t, syncer.SyncRoutes(context.Background(), []string{configServer.URL + "/config"}, routes, nil, nil))
+	require.NoError(t, syncer.SyncRoutes(context.Background(), []string{configServer.URL + "/config"}, routes, nil, nil, nil))
 
 	require.Len(t, receivedConfig.Rules, 1)
 	require.Len(t, receivedConfig.Rules[0].Backends, 1)
