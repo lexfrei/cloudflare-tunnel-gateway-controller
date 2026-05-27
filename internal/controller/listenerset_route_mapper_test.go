@@ -11,6 +11,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
+
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/routebinding"
 )
 
 // TestRouteReferencesOurGateways_ListenerSetOnlyParent asserts that a route
@@ -157,6 +159,50 @@ func TestFindRoutesAttachedToListenerSet(t *testing.T) {
 	assert.Equal(t, "attached", got[0].Name)
 }
 
+// TestFindRoutesAttachedToListenerSet_GatewayBoundRouteNotEnqueued pins the
+// contract that a route attached directly to the parent Gateway is NOT
+// enqueued on a ListenerSet event — a Gateway-bound route inherits hostnames
+// only from the Gateway's own listeners and has no dependency on ListenerSet
+// changes.
+func TestFindRoutesAttachedToListenerSet_GatewayBoundRouteNotEnqueued(t *testing.T) {
+	t.Parallel()
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, gatewayv1.Install(scheme))
+
+	gc := managedGatewayClass()
+	gw := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "infra"},
+		Spec:       gatewayv1.GatewaySpec{GatewayClassName: gatewayv1.ObjectName(gc.Name)},
+	}
+	ls := &gatewayv1.ListenerSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "ls", Namespace: "infra"},
+		Spec: gatewayv1.ListenerSetSpec{
+			ParentRef: gatewayv1.ParentGatewayReference{Name: gatewayv1.ObjectName(gw.Name)},
+		},
+	}
+
+	ns := gatewayv1.Namespace("infra")
+	gwKind := gatewayv1.Kind(kindGateway)
+	routeOnGateway := &gatewayv1.HTTPRoute{
+		ObjectMeta: metav1.ObjectMeta{Name: "on-gateway", Namespace: "team-a"},
+		Spec: gatewayv1.HTTPRouteSpec{
+			CommonRouteSpec: gatewayv1.CommonRouteSpec{
+				ParentRefs: []gatewayv1.ParentReference{
+					{Kind: &gwKind, Name: gatewayv1.ObjectName(gw.Name), Namespace: &ns},
+				},
+			},
+		},
+	}
+
+	cli := fake.NewClientBuilder().WithScheme(scheme).WithObjects(gc, gw, ls).Build()
+
+	got := findRoutesAttachedToListenerSet(context.Background(), cli, ls, testListenerSetController,
+		[]Route{HTTPRouteWrapper{routeOnGateway}})
+
+	assert.Empty(t, got, "a Gateway-bound route must not be enqueued on a ListenerSet event")
+}
+
 // TestParentRefSelectsListenerSet_RejectsForeignGroup asserts that a parentRef
 // with Kind=ListenerSet but a Group OTHER than gateway.networking.k8s.io
 // does NOT match — guards against name-collision with a third-party CRD.
@@ -231,4 +277,47 @@ func TestRejectedEntryResolvedRefsCondition_NonPendingKeepsTrue(t *testing.T) {
 // Compile-time assertion that the helper exists with the right signature.
 var _ = []func(client.Client){
 	func(_ client.Client) {},
+}
+
+// TestIncrementListenerSetAttachedRoutes_DeduplicatesDuplicateParentRefs pins
+// that a single route listing the same ListenerSet entry twice in its
+// parentRefs is counted ONCE in AttachedRoutes — duplicate parentRefs must
+// not inflate the per-entry count.
+func TestIncrementListenerSetAttachedRoutes_DeduplicatesDuplicateParentRefs(t *testing.T) {
+	t.Parallel()
+
+	ls := &gatewayv1.ListenerSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "ls", Namespace: "infra"},
+		Spec: gatewayv1.ListenerSetSpec{
+			ParentRef: gatewayv1.ParentGatewayReference{Name: "gw"},
+			Listeners: []gatewayv1.ListenerEntry{
+				{
+					Name: "entry", Port: 80, Protocol: gatewayv1.HTTPProtocolType,
+					AllowedRoutes: &gatewayv1.AllowedRoutes{
+						Namespaces: &gatewayv1.RouteNamespaces{From: namespacesFromAllPtr()},
+					},
+				},
+			},
+		},
+	}
+
+	cli := buildGatewayFakeClient(t, ls)
+	validator := routebinding.NewValidator(cli)
+
+	lsKind := gatewayv1.Kind(kindListenerSet)
+	lsNS := gatewayv1.Namespace("infra")
+	// Same ListenerSet listed twice — degenerate but legal parentRefs.
+	dupRefs := []gatewayv1.ParentReference{
+		{Kind: &lsKind, Name: "ls", Namespace: &lsNS},
+		{Kind: &lsKind, Name: "ls", Namespace: &lsNS},
+	}
+
+	counts := map[gatewayv1.SectionName]int32{"entry": 0}
+
+	incrementListenerSetAttachedRoutes(
+		context.Background(), validator, ls, nil,
+		"team-a", "r", nil, routebinding.KindHTTPRoute, dupRefs, counts,
+	)
+
+	assert.Equal(t, int32(1), counts["entry"], "duplicate parentRefs to the same ListenerSet must count the route once")
 }

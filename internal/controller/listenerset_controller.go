@@ -353,6 +353,11 @@ func incrementListenerSetAttachedRoutes(
 	parentRefs []gatewayv1.ParentReference,
 	counts map[gatewayv1.SectionName]int32,
 ) {
+	// A single route counts at most once per listener entry, even if it
+	// lists the same ListenerSet in multiple parentRefs (degenerate but
+	// legal). Track which sections this route already counted.
+	countedThisRoute := make(map[gatewayv1.SectionName]struct{})
+
 	for _, ref := range parentRefs {
 		if !parentRefSelectsListenerSet(ref, routeNamespace, listenerSet) {
 			continue
@@ -380,6 +385,11 @@ func incrementListenerSetAttachedRoutes(
 				continue
 			}
 
+			if _, already := countedThisRoute[section]; already {
+				continue
+			}
+
+			countedThisRoute[section] = struct{}{}
 			counts[section]++
 		}
 	}

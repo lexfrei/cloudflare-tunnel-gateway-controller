@@ -157,9 +157,11 @@ func (r *HTTPRouteReconciler) SetupWithManager(mgr ctrl.Manager) error {
 }
 
 // findRoutesForListenerSet enqueues every HTTPRoute managed by our controller
-// whose parentRef targets the given ListenerSet (so the route gets a chance
-// to bind / unbind), plus routes targeting the ListenerSet's parent Gateway
-// (so hostname-inheritance recomputes when ListenerSet listeners change).
+// whose parentRef targets the given ListenerSet, so the route re-binds (and
+// recomputes its inherited hostnames) when the ListenerSet's listeners
+// change. Routes attached directly to the parent Gateway are intentionally
+// NOT enqueued here: a Gateway-bound route inherits hostnames only from the
+// Gateway's own listeners, so it has no dependency on ListenerSet changes.
 //
 //nolint:dupl // mirrored on purpose against GRPCRouteReconciler.findRoutesForListenerSet — different list/wrapper types prevent a clean generic
 func (r *HTTPRouteReconciler) findRoutesForListenerSet(
