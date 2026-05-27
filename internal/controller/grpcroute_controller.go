@@ -102,20 +102,47 @@ func (r *GRPCRouteReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	r.bindingValidator = routebinding.NewValidator(r.Client)
 
 	return setupRouteController(mgr, &routeControllerSetupParams{
-		routeObject:           &gatewayv1.GRPCRoute{},
-		reconciler:            r,
-		runnable:              r,
-		k8sClient:             r.Client,
-		controllerName:        r.ControllerName,
-		configResolver:        r.RouteSyncer.ConfigResolver,
-		findRoutesForGateway:  r.findRoutesForGateway,
-		findRoutesForRefGrant: r.findRoutesForReferenceGrant,
+		routeObject:              &gatewayv1.GRPCRoute{},
+		reconciler:               r,
+		runnable:                 r,
+		k8sClient:                r.Client,
+		controllerName:           r.ControllerName,
+		configResolver:           r.RouteSyncer.ConfigResolver,
+		findRoutesForGateway:     r.findRoutesForGateway,
+		findRoutesForListenerSet: r.findRoutesForListenerSet,
+		findRoutesForRefGrant:    r.findRoutesForReferenceGrant,
 		// GRPCRoute is tunnel-only; the tunnel ingress config is not
 		// protocol-aware, so Service-side changes (appProtocol or otherwise)
 		// don't require a re-sync. Watching Services here would only add
 		// reconcile churn.
 		getAllRelevantRoutes: r.getAllRelevantRoutes,
 	})
+}
+
+// findRoutesForListenerSet enqueues every GRPCRoute managed by our
+// controller whose parentRef targets the given ListenerSet.
+//
+//nolint:dupl // mirrored on purpose against HTTPRouteReconciler.findRoutesForListenerSet — different list/wrapper types prevent a clean generic
+func (r *GRPCRouteReconciler) findRoutesForListenerSet(
+	ctx context.Context,
+	obj client.Object,
+) []reconcile.Request {
+	listenerSet, ok := obj.(*gatewayv1.ListenerSet)
+	if !ok {
+		return nil
+	}
+
+	var routeList gatewayv1.GRPCRouteList
+	if err := r.List(ctx, &routeList); err != nil {
+		return nil
+	}
+
+	routes := make([]Route, len(routeList.Items))
+	for i := range routeList.Items {
+		routes[i] = GRPCRouteWrapper{&routeList.Items[i]}
+	}
+
+	return findRoutesAttachedToListenerSet(ctx, r.Client, listenerSet, r.ControllerName, routes)
 }
 
 // Start implements manager.Runnable for startup sync.

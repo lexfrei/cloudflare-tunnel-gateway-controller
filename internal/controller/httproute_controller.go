@@ -142,17 +142,48 @@ func (r *HTTPRouteReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	r.bindingValidator = routebinding.NewValidator(r.Client)
 
 	return setupRouteController(mgr, &routeControllerSetupParams{
-		routeObject:           &gatewayv1.HTTPRoute{},
-		reconciler:            r,
-		runnable:              r,
-		k8sClient:             r.Client,
-		controllerName:        r.ControllerName,
-		configResolver:        r.RouteSyncer.ConfigResolver,
-		findRoutesForGateway:  r.findRoutesForGateway,
-		findRoutesForRefGrant: r.findRoutesForReferenceGrant,
-		findRoutesForService:  r.findRoutesForService,
-		getAllRelevantRoutes:  r.getAllRelevantRoutes,
+		routeObject:              &gatewayv1.HTTPRoute{},
+		reconciler:               r,
+		runnable:                 r,
+		k8sClient:                r.Client,
+		controllerName:           r.ControllerName,
+		configResolver:           r.RouteSyncer.ConfigResolver,
+		findRoutesForGateway:     r.findRoutesForGateway,
+		findRoutesForListenerSet: r.findRoutesForListenerSet,
+		findRoutesForRefGrant:    r.findRoutesForReferenceGrant,
+		findRoutesForService:     r.findRoutesForService,
+		getAllRelevantRoutes:     r.getAllRelevantRoutes,
 	})
+}
+
+// findRoutesForListenerSet enqueues every HTTPRoute managed by our controller
+// whose parentRef targets the given ListenerSet, so the route re-binds (and
+// recomputes its inherited hostnames) when the ListenerSet's listeners
+// change. Routes attached directly to the parent Gateway are intentionally
+// NOT enqueued here: a Gateway-bound route inherits hostnames only from the
+// Gateway's own listeners, so it has no dependency on ListenerSet changes.
+//
+//nolint:dupl // mirrored on purpose against GRPCRouteReconciler.findRoutesForListenerSet — different list/wrapper types prevent a clean generic
+func (r *HTTPRouteReconciler) findRoutesForListenerSet(
+	ctx context.Context,
+	obj client.Object,
+) []reconcile.Request {
+	listenerSet, ok := obj.(*gatewayv1.ListenerSet)
+	if !ok {
+		return nil
+	}
+
+	var routeList gatewayv1.HTTPRouteList
+	if err := r.List(ctx, &routeList); err != nil {
+		return nil
+	}
+
+	routes := make([]Route, len(routeList.Items))
+	for i := range routeList.Items {
+		routes[i] = HTTPRouteWrapper{&routeList.Items[i]}
+	}
+
+	return findRoutesAttachedToListenerSet(ctx, r.Client, listenerSet, r.ControllerName, routes)
 }
 
 // Start implements manager.Runnable for startup sync.

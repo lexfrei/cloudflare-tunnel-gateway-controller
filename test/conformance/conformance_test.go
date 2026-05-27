@@ -80,6 +80,15 @@ func TestGatewayAPIConformance(t *testing.T) {
 		// any v1 cluster regardless of CRD channel.
 		features.SupportHTTPRouteDestinationPortMatching,
 
+		// ListenerSet is in the Gateway API Standard channel as of v1.5.1.
+		// The controller watches ListenerSet resources, honours
+		// spec.allowedListeners on the parent Gateway, applies the precedence
+		// + conflict view (Gateway > ListenerSet by creation time > namespace/
+		// name), validates TLS cert refs with a ListenerSet-scoped
+		// ReferenceGrant, and accepts HTTPRoute/GRPCRoute parentRefs with
+		// Kind=ListenerSet.
+		features.SupportListenerSet,
+
 		// NOTE: 303/307/308 redirect status codes work correctly in the proxy,
 		// but Cloudflare edge rewrites Location scheme to HTTPS, so conformance
 		// tests that verify http:// scheme in redirects will always fail.
@@ -98,7 +107,6 @@ func TestGatewayAPIConformance(t *testing.T) {
 		features.SupportGatewayFrontendClientCertificateValidation,
 		features.SupportGatewayFrontendClientCertificateValidationInsecureFallback,
 		features.SupportGatewayHTTPSListenerDetectMisdirectedRequests,
-		features.SupportListenerSet,
 
 		// Protocols not supported
 		features.SupportTLSRoute,

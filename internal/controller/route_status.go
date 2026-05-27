@@ -97,7 +97,8 @@ func updateRouteParentStatuses(
 }
 
 // resolveParentRefStatus builds a RouteParentStatus for a single parentRef,
-// or returns nil if the ref doesn't belong to a managed Gateway.
+// or returns nil if the ref doesn't belong to a managed Gateway (directly or
+// via a ListenerSet attached to one).
 func resolveParentRefStatus(
 	ctx context.Context,
 	params routeStatusUpdateParams,
@@ -110,25 +111,13 @@ func resolveParentRefStatus(
 	failedRefs []ingress.BackendRefError,
 	syncErr error,
 ) *gatewayv1.RouteParentStatus {
-	if ref.Kind != nil && *ref.Kind != kindGateway {
+	if !parentRefSelectsManagedGateway(ctx, params.k8sClient, ref, accessor.obj.GetNamespace(), classNames) {
 		return nil
 	}
 
 	namespace := accessor.obj.GetNamespace()
 	if ref.Namespace != nil {
 		namespace = string(*ref.Namespace)
-	}
-
-	var gateway gatewayv1.Gateway
-	if err := params.k8sClient.Get(ctx, client.ObjectKey{
-		Name:      string(ref.Name),
-		Namespace: namespace,
-	}, &gateway); err != nil {
-		return nil
-	}
-
-	if !classNames[string(gateway.Spec.GatewayClassName)] {
-		return nil
 	}
 
 	parentStatus := buildParentStatus(
@@ -139,6 +128,27 @@ func resolveParentRefStatus(
 	)
 
 	return &parentStatus
+}
+
+// parentRefSelectsManagedGateway returns true when a route parentRef
+// ultimately targets a Gateway managed by this controller — either directly
+// (Kind=Gateway) or via a ListenerSet whose parent Gateway is managed. A ref
+// with an unrecognised Group (anything other than the Gateway API group or
+// empty/default) returns false so a foreign-group ListenerSet name collision
+// cannot poison the route's status.parents entries.
+func parentRefSelectsManagedGateway(
+	ctx context.Context,
+	cli client.Client,
+	ref gatewayv1.ParentReference,
+	routeNamespace string,
+	classNames map[string]bool,
+) bool {
+	gateway, found := resolveParentGatewayFromRef(ctx, cli, ref, routeNamespace)
+	if !found {
+		return false
+	}
+
+	return classNames[string(gateway.Spec.GatewayClassName)]
 }
 
 // buildParentStatus constructs a RouteParentStatus entry for a single parent ref.

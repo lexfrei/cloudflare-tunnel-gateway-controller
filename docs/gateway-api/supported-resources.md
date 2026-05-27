@@ -11,6 +11,7 @@ This document details the feature support matrix for each Gateway API resource t
 | HTTPRoute | `gateway.networking.k8s.io/v1` | Supported |
 | GRPCRoute | `gateway.networking.k8s.io/v1` | Not supported in v3 — see [limitations](limitations.md#grpcroute-is-not-supported-in-v3) |
 | ReferenceGrant | `gateway.networking.k8s.io/v1beta1` | Supported |
+| ListenerSet | `gateway.networking.k8s.io/v1` | Supported — see [ListenerSet](listenerset.md) |
 | TCPRoute | `gateway.networking.k8s.io/v1alpha2` | Not supported |
 | TLSRoute | `gateway.networking.k8s.io/v1alpha2` | Not supported |
 | UDPRoute | `gateway.networking.k8s.io/v1alpha2` | Not supported |
