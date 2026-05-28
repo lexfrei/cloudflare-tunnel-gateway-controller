@@ -121,12 +121,68 @@ func TestConvertGRPCRoutes_BackendPort443NoPolicyStaysCleartextH2C(t *testing.T)
 	assert.Equal(t, proxy.BackendProtocolH2C, backend.Protocol)
 }
 
-// TestConvertGRPCRoutes_NoBackendTLSAlwaysCleartextH2C pins the intentional
-// limitation that gRPC backends are always cleartext h2c: BackendTLSPolicy and
-// the Gateway clientCertificateRef are not applied to gRPC in this revision.
-// ConvertGRPCRoutes takes no TLS resolver, so the produced backend must carry
-// no TLS config and stay http://+h2c. If a future change starts honoring TLS
-// for gRPC, this test must be updated alongside the user-facing docs.
+// TestConvertGRPCRoutes_PolicyOnBackendUpgradesToTLS pins the headline
+// behavior of #344: when a BackendTLSPolicy targets the gRPC backend's
+// Service, the converter stamps BackendTLSConfig onto the backend,
+// flips the scheme to https://, and switches Protocol to
+// BackendProtocolHTTPS. The proxy's transport layer then negotiates
+// HTTP/2 via ALPN — gRPC over TLS — instead of dialing cleartext h2c
+// and getting refused by a TLS-only backend.
+func TestConvertGRPCRoutes_PolicyOnBackendUpgradesToTLS(t *testing.T) {
+	t.Parallel()
+
+	svc := "grpc.examples.echo.Echo"
+	method := "UnaryEcho"
+	routes := []*gatewayv1.GRPCRoute{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "echo", Namespace: "default"},
+			Spec: gatewayv1.GRPCRouteSpec{
+				Rules: []gatewayv1.GRPCRouteRule{
+					{
+						Matches: []gatewayv1.GRPCRouteMatch{
+							{Method: &gatewayv1.GRPCMethodMatch{Type: grpcExact(), Service: &svc, Method: &method}},
+						},
+						BackendRefs: []gatewayv1.GRPCBackendRef{grpcBackendRef("echo-svc", 8443, 1)},
+					},
+				},
+			},
+		},
+	}
+
+	tlsResolver := func(_ context.Context, namespace, serviceName string, port int32) *proxy.BackendTLSConfig {
+		if namespace == "default" && serviceName == "echo-svc" && port == 8443 {
+			return &proxy.BackendTLSConfig{
+				CABundlePEM: "-----BEGIN CERTIFICATE-----\nFAKE\n-----END CERTIFICATE-----\n",
+				ServerName:  "echo-svc.default.svc.cluster.local",
+			}
+		}
+
+		return nil
+	}
+
+	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil, tlsResolver, nil)
+
+	require.Len(t, cfg.Rules, 1)
+	require.Len(t, cfg.Rules[0].Backends, 1)
+	backend := cfg.Rules[0].Backends[0]
+	require.NotNil(t, backend.TLS, "BackendTLSPolicy match MUST stamp TLS config on gRPC backend")
+	assert.Equal(t, "echo-svc.default.svc.cluster.local", backend.TLS.ServerName)
+	assert.True(t, strings.HasPrefix(backend.URL, "https://"),
+		"gRPC backend with BackendTLSPolicy MUST flip to https scheme, got %q", backend.URL)
+	// Protocol is empty (BackendProtocolHTTP) — when backendTLS is set,
+	// newTLSTransport's http.Transport with ALPN auto-negotiates HTTP/2.
+	// h2c is cleartext and cannot coexist with TLS (see handler.go:550-552
+	// and the HTTPRoute resolveH2C "TLS wins" branch).
+	assert.Equal(t, proxy.BackendProtocolHTTP, backend.Protocol,
+		"gRPC backend with BackendTLSPolicy MUST drop the h2c marker — ALPN negotiates HTTP/2 over TLS")
+}
+
+// TestConvertGRPCRoutes_NoBackendTLSAlwaysCleartextH2C pins the backward
+// compatibility property: when no BackendTLSPolicy targets the backend
+// AND no Gateway clientCertificateRef applies, the gRPC backend stays
+// cleartext h2c — same shape as before the TLS-upgrade work. The
+// renamed port-443 test pins the same property for the port-443 edge
+// case; this one pins it for a non-standard port.
 func TestConvertGRPCRoutes_NoBackendTLSAlwaysCleartextH2C(t *testing.T) {
 	t.Parallel()
 
