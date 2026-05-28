@@ -304,6 +304,19 @@ func (r *BackendTLSPolicyReconciler) conflictWinnerFor(
 // Service, but per GEP-713 it does NOT collide with a separate policy
 // that scopes itself to a specific named port (different scopes ⇒ no
 // conflict).
+//
+// Mismatch with the runtime resolver, by design: selectPolicyForServicePort
+// (internal/controller/proxy_syncer.go) resolves SectionName against the
+// actual Service port-name via a Service Get and matches when
+// SectionName == port-name. So a scoped (SectionName="https") and an
+// unscoped policy on a Service with a port named "https" both reach the
+// resolver for that port at runtime, where the older one wins. This
+// status-side mapper deliberately treats those as different scopes per
+// the spec, even though the proxy-side resolver sees the overlap. A
+// future maintainer reconciling the two layers (either by consulting
+// port names here, or by rephrasing the runtime selection to skip the
+// unscoped policy when a scoped one matches) should treat both call
+// sites as a pair.
 func normalizePolicyTargets(policy *gatewayv1.BackendTLSPolicy) map[targetKey]struct{} {
 	keys := map[targetKey]struct{}{}
 

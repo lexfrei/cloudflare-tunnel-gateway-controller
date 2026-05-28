@@ -26,9 +26,13 @@ const grpcSegmentPattern = "[^/]+"
 // gRPC header matches reuse the HTTP header matcher. By default backends are
 // dialed h2c (cleartext HTTP/2) — gRPC requires HTTP/2 and in-cluster gRPC is
 // conventionally cleartext. When a BackendTLSPolicy targets the backend's
-// Service OR the parent Gateway carries a clientCertificateRef, the converter
-// stamps BackendTLSConfig on the backend, flips the URL to https://, and
-// drops the h2c marker so newTLSTransport's ALPN negotiates HTTP/2 over TLS.
+// Service the converter stamps BackendTLSConfig on the backend, flips the URL
+// to https://, and drops the h2c marker so newTLSTransport's ALPN negotiates
+// HTTP/2 over TLS. The parent Gateway's clientCertificateRef is layered on
+// top of that TLS config for mTLS; on its own — with no policy — it has no
+// effect, because Gateway API spec forbids presenting a client cert over
+// plaintext (attachGatewayClientCert returns the original config unchanged
+// when tlsCfg is nil).
 //
 // gRPC-specific filters are not yet supported and are skipped with a warning.
 // Multiple backendRefs are weighted: every listed backend is emitted with its
@@ -207,10 +211,13 @@ func convertGRPCHeaderMatch(header gatewayv1.GRPCHeaderMatch) HeaderMatch {
 // convertGRPCBackendRef mirrors convertBackendRef. By default it forces h2c
 // and a cleartext URL scheme — gRPC is HTTP/2, and an in-cluster gRPC backend
 // is conventionally cleartext. When a BackendTLSPolicy targets the backend
-// Service OR the parent Gateway carries a clientCertificateRef, the
-// converter instead stamps BackendTLSConfig on the backend, keeps the
-// https:// URL, and drops the h2c marker so newTLSTransport's ALPN
-// negotiates HTTP/2 over TLS.
+// Service the converter instead stamps BackendTLSConfig on the backend, keeps
+// the https:// URL, and drops the h2c marker so newTLSTransport's ALPN
+// negotiates HTTP/2 over TLS. A parent-Gateway clientCertificateRef is
+// layered on top of the policy's TLS config (mTLS) only when the policy
+// itself put TLS on the wire; with no policy attached, the client cert is
+// silently dropped — sending a cert over plaintext is meaningless per
+// Gateway API spec.
 func convertGRPCBackendRef(
 	ctx context.Context,
 	backend *gatewayv1.GRPCBackendRef,

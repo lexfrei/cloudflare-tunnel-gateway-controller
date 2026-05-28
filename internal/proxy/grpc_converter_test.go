@@ -237,6 +237,65 @@ func TestConvertGRPCRoutes_GatewayClientCertStampedOnGRPCBackend(t *testing.T) {
 	assert.Equal(t, clientKeyPEM, backend.TLS.ClientKeyPEM)
 }
 
+// TestConvertGRPCRoutes_ClientCertOnlyWithoutPolicyStaysCleartext pins
+// the spec-level contract that a Gateway clientCertificateRef alone
+// does NOT trigger TLS on a gRPC backend — only a BackendTLSPolicy does
+// the upgrade, and the cert is layered on top. attachGatewayClientCert
+// returns the original config unchanged when tlsCfg is nil, so the
+// backend stays http://+h2c. Catches a future refactor that "widens
+// the trigger to include cert-only" and would silently break the
+// "cert over plaintext is meaningless" Gateway API rule.
+func TestConvertGRPCRoutes_ClientCertOnlyWithoutPolicyStaysCleartext(t *testing.T) {
+	t.Parallel()
+
+	svc := "grpc.examples.echo.Echo"
+	method := "UnaryEcho"
+	routes := []*gatewayv1.GRPCRoute{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "echo", Namespace: "default"},
+			Spec: gatewayv1.GRPCRouteSpec{
+				CommonRouteSpec: gatewayv1.CommonRouteSpec{
+					ParentRefs: []gatewayv1.ParentReference{{Name: gatewayv1.ObjectName("gw")}},
+				},
+				Rules: []gatewayv1.GRPCRouteRule{
+					{
+						Matches: []gatewayv1.GRPCRouteMatch{
+							{Method: &gatewayv1.GRPCMethodMatch{Type: grpcExact(), Service: &svc, Method: &method}},
+						},
+						BackendRefs: []gatewayv1.GRPCBackendRef{grpcBackendRef("echo-svc", 9000, 1)},
+					},
+				},
+			},
+		},
+	}
+
+	// tlsResolver returns nil for every Service — no policy in the cluster.
+	tlsResolver := func(_ context.Context, _, _ string, _ int32) *proxy.BackendTLSConfig {
+		return nil
+	}
+
+	// certResolver still returns a cert; this would be a misconfig under
+	// the spec, but the converter must not silently send it over plaintext.
+	certResolver := func(_ context.Context, _ types.NamespacedName) *proxy.ClientCertConfig {
+		return &proxy.ClientCertConfig{
+			CertPEM: []byte("-----BEGIN CERTIFICATE-----\nCLIENT-CERT\n-----END CERTIFICATE-----\n"),
+			KeyPEM:  []byte("-----BEGIN PRIVATE KEY-----\nCLIENT-KEY\n-----END PRIVATE KEY-----\n"),
+		}
+	}
+
+	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil, tlsResolver, certResolver)
+
+	require.Len(t, cfg.Rules, 1)
+	require.Len(t, cfg.Rules[0].Backends, 1)
+	backend := cfg.Rules[0].Backends[0]
+	assert.Nil(t, backend.TLS,
+		"cert-only without a BackendTLSPolicy MUST keep TLS nil — Gateway API spec forbids presenting a client cert over plaintext")
+	assert.True(t, strings.HasPrefix(backend.URL, "http://"),
+		"cert-only without a BackendTLSPolicy MUST stay http://, got %q", backend.URL)
+	assert.Equal(t, proxy.BackendProtocolH2C, backend.Protocol,
+		"cert-only without a BackendTLSPolicy MUST stay BackendProtocolH2C — the cert does NOT upgrade the hop")
+}
+
 // TestConvertGRPCRoutes_MixedTLSAndCleartextBackends pins that two
 // backends in the same rule are resolved independently — one with a
 // matching BackendTLSPolicy goes TLS+ALPN, the other without stays

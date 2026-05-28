@@ -950,7 +950,7 @@ func resolveBackendTLS(
 		return nil, rawURL
 	}
 
-	return tls, strings.Replace(rawURL, schemeHTTP+"://", schemeHTTPS+"://", 1)
+	return tls, forceHTTPSScheme(rawURL)
 }
 
 // resolveBackendProtocol applies the protocol resolver to a backend reference
