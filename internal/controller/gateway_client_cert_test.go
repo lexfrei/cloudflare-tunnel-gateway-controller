@@ -188,6 +188,41 @@ func TestLoadGatewayClientCertPEM_CrossNamespace_GrantDenied(t *testing.T) {
 	assert.ErrorIs(t, err, errGatewayClientCertRefNotPermitted)
 }
 
+// TestLoadGatewayClientCertPEM_RotationReturnsFreshBytes pins that the
+// loader does not cache the previous keypair: when the Secret is patched
+// in place, the next call returns the new bytes. The rotation watch in
+// mappers.go enqueues routes on the patch, the proxy syncer re-runs
+// ConvertHTTPRoutes which invokes this loader, and the new PEM lands on
+// the proxy via the per-cert transport-pool hash. Without this property
+// the matcher would do its job but the proxy would still dial with the
+// old keypair.
+func TestLoadGatewayClientCertPEM_RotationReturnsFreshBytes(t *testing.T) {
+	t.Parallel()
+
+	certV1, keyV1 := generateClientKeypair(t)
+	certV2, keyV2 := generateClientKeypair(t)
+	require.NotEqual(t, certV1, certV2, "test fixture must produce distinct keypairs")
+
+	secret := clientCertSecret("ns", "client-cert", certV1, keyV1)
+	gateway := gatewayWithClientCertRef("ns", "gw", "client-cert", nil)
+
+	scheme := newClientCertScheme(t)
+	cli := fake.NewClientBuilder().WithScheme(scheme).WithObjects(secret).Build()
+
+	gotCertV1, gotKeyV1, err := loadGatewayClientCertPEM(context.Background(), cli, gateway, alwaysAllowGrant)
+	require.NoError(t, err)
+	assert.Equal(t, certV1, gotCertV1)
+	assert.Equal(t, keyV1, gotKeyV1)
+
+	// Patch the Secret in place — same name and namespace, fresh keypair.
+	require.NoError(t, cli.Update(context.Background(), clientCertSecret("ns", "client-cert", certV2, keyV2)))
+
+	gotCertV2, gotKeyV2, err := loadGatewayClientCertPEM(context.Background(), cli, gateway, alwaysAllowGrant)
+	require.NoError(t, err)
+	assert.Equal(t, certV2, gotCertV2, "rotated Secret MUST yield new cert PEM on the next call")
+	assert.Equal(t, keyV2, gotKeyV2, "rotated Secret MUST yield new key PEM on the next call")
+}
+
 func TestLoadGatewayClientCertPEM_SecretNotFound(t *testing.T) {
 	t.Parallel()
 
