@@ -184,8 +184,18 @@ func (r *BackendTLSPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Req
 //   - CA reference invalid or unresolvable: Accepted=False, Reason=NoValidCACertificate;
 //     ResolvedRefs=False, Reason=InvalidCACertificateRef (or InvalidKind for
 //     Group/Kind mismatches).
+//   - Conflict with an older peer policy on at least one shared (Service,
+//     SectionName) target: Accepted=False, Reason=Conflicted; ResolvedRefs
+//     stays True because the policy's own refs are valid.
 //   - All happy: both True. Both DNS-Hostname and URI-type SubjectAltNames
 //     are honoured end-to-end by the proxy.
+//
+// CA validity is checked first — Reason=InvalidCACertificateRef (or
+// InvalidKind / NoValidCACertificate) dominates over Conflicted, because a
+// policy with a broken CA cannot be Accepted=True regardless of whether
+// another peer also targets the same Service. Operators see the actionable
+// error first; Conflicted is only emitted on policies that would otherwise
+// be Accepted=True.
 //
 // LastTransitionTime is left zero; callers route through meta.SetStatusCondition
 // in updateStatus so the timestamp reflects an actual transition rather than
@@ -198,7 +208,141 @@ func (r *BackendTLSPolicyReconciler) computeConditions(
 		return caInvalidConditions(policy.Generation, err)
 	}
 
+	if winner := r.conflictWinnerFor(ctx, policy); winner != nil {
+		return conflictedConditions(policy.Generation, winner)
+	}
+
 	return acceptedConditions(policy.Generation)
+}
+
+// conflictedConditions returns the Accepted=False/Reason=Conflicted +
+// ResolvedRefs=True pair stamped on a BackendTLSPolicy that lost the
+// precedence comparison against a peer targeting the same (Service,
+// SectionName). ResolvedRefs stays True because the loser's own CA refs
+// resolved cleanly — the conflict is about precedence, not about the
+// loser's own validity.
+func conflictedConditions(generation int64, winner *gatewayv1.BackendTLSPolicy) []metav1.Condition {
+	return []metav1.Condition{
+		{
+			Type:               string(gatewayv1.PolicyConditionAccepted),
+			Status:             metav1.ConditionFalse,
+			ObservedGeneration: generation,
+			Reason:             string(gatewayv1.PolicyReasonConflicted),
+			Message: fmt.Sprintf("conflicts with BackendTLSPolicy %s/%s",
+				winner.Namespace, winner.Name),
+		},
+		{
+			Type:               string(gatewayv1.BackendTLSPolicyConditionResolvedRefs),
+			Status:             metav1.ConditionTrue,
+			ObservedGeneration: generation,
+			Reason:             string(gatewayv1.BackendTLSPolicyReasonResolvedRefs),
+			Message:            "All CA certificate references resolved",
+		},
+	}
+}
+
+// conflictWinnerFor returns the peer BackendTLSPolicy that wins the
+// precedence comparison against `policy` on at least one shared
+// (Service, SectionName) target, or nil if `policy` itself wins or no
+// peers conflict.
+//
+// Fails open: a cluster-list error is logged and treated as "no
+// conflict" so Status does not flip on a transient cache miss. The
+// caller continues to Accepted=True, the next reconcile re-runs the
+// check, and the proxy-side resolver already enforces precedence
+// independently — there is no plaintext-bypass risk from a missed
+// Conflicted stamp.
+func (r *BackendTLSPolicyReconciler) conflictWinnerFor(
+	ctx context.Context,
+	policy *gatewayv1.BackendTLSPolicy,
+) *gatewayv1.BackendTLSPolicy {
+	ownTargets := normalizePolicyTargets(policy)
+	if len(ownTargets) == 0 {
+		return nil
+	}
+
+	var list gatewayv1.BackendTLSPolicyList
+	if err := r.List(ctx, &list, client.InNamespace(policy.Namespace)); err != nil {
+		log.FromContext(ctx).Error(err, "list BackendTLSPolicies for conflict check failed; treating as no conflict",
+			"namespace", policy.Namespace, "policy", policy.Name)
+
+		return nil
+	}
+
+	var winner *gatewayv1.BackendTLSPolicy
+
+	for peerIdx := range list.Items {
+		peer := &list.Items[peerIdx]
+		if peer.Name == policy.Name && peer.Namespace == policy.Namespace {
+			continue
+		}
+
+		if !policiesShareTarget(peer, ownTargets) {
+			continue
+		}
+
+		// We only care about peers strictly older than `policy` — peers
+		// younger than us are themselves the losers, and they will see us
+		// as the winner on their own reconcile.
+		if !isPolicyOlder(peer, policy) {
+			continue
+		}
+
+		if winner == nil || isPolicyOlder(peer, winner) {
+			winner = peer
+		}
+	}
+
+	return winner
+}
+
+// normalizePolicyTargets canonicalises a policy's Service-shaped
+// TargetRefs to a deduplicated set of (Name, SectionName) keys.
+// Non-Service kinds are skipped (BackendTLSPolicy's Standard channel
+// only supports Service targets today). SectionName comparison is
+// literal — a policy without SectionName covers ALL ports of the
+// Service, but per GEP-713 it does NOT collide with a separate policy
+// that scopes itself to a specific named port (different scopes ⇒ no
+// conflict).
+func normalizePolicyTargets(policy *gatewayv1.BackendTLSPolicy) map[targetKey]struct{} {
+	keys := map[targetKey]struct{}{}
+
+	for _, target := range policy.Spec.TargetRefs {
+		kind := string(target.Kind)
+		if kind != "" && kind != serviceKind {
+			continue
+		}
+
+		key := targetKey{name: string(target.Name)}
+		if target.SectionName != nil {
+			key.section = string(*target.SectionName)
+		}
+
+		keys[key] = struct{}{}
+	}
+
+	return keys
+}
+
+// policiesShareTarget reports whether `peer` has at least one
+// Service-shaped TargetRef that literally matches any (Name,
+// SectionName) key in `ownTargets`.
+func policiesShareTarget(peer *gatewayv1.BackendTLSPolicy, ownTargets map[targetKey]struct{}) bool {
+	for key := range normalizePolicyTargets(peer) {
+		if _, ok := ownTargets[key]; ok {
+			return true
+		}
+	}
+
+	return false
+}
+
+// targetKey is the canonical conflict-comparison key for a
+// BackendTLSPolicy TargetRef: the Service Name and its SectionName
+// (empty string when unset, covering all ports of the Service).
+type targetKey struct {
+	name    string
+	section string
 }
 
 // caInvalidConditions returns the Accepted=False/NoValidCACertificate +
@@ -231,6 +375,9 @@ func caInvalidConditions(generation int64, err error) []metav1.Condition {
 }
 
 // acceptedConditions returns the happy-path Accepted=True + ResolvedRefs=True pair.
+// Both happy-path and Conflicted-loser conditions reuse resolvedRefsMessage
+// (declared in httproute_controller.go) since the loser's own refs do
+// resolve — only the precedence comparison rejects it.
 func acceptedConditions(generation int64) []metav1.Condition {
 	return []metav1.Condition{
 		{
@@ -245,7 +392,7 @@ func acceptedConditions(generation int64) []metav1.Condition {
 			Status:             metav1.ConditionTrue,
 			ObservedGeneration: generation,
 			Reason:             string(gatewayv1.BackendTLSPolicyReasonResolvedRefs),
-			Message:            "All CA certificate references resolved",
+			Message:            resolvedRefsMessage,
 		},
 	}
 }
