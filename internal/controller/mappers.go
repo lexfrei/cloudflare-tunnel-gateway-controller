@@ -229,36 +229,57 @@ func (m *ConfigMapper) isSecretReferencedByManagedGateway(ctx context.Context, s
 			continue
 		}
 
-		ref := gatewayClientCertRef(gateway)
-		if ref == nil || !isCoreSecretRef(ref) {
-			continue
-		}
-
-		targetNS := gateway.Namespace
-		if ref.Namespace != nil {
-			targetNS = string(*ref.Namespace)
-		}
-
-		if targetNS != secret.Namespace || string(ref.Name) != secret.Name {
-			continue
-		}
-
-		// Same-ns ref: no ReferenceGrant required.
-		if targetNS == gateway.Namespace {
-			return true
-		}
-
-		// Cross-ns ref: a ReferenceGrant in the target namespace MUST
-		// permit Gateway → Secret access. Transient List errors are
-		// treated as not-permitted on this call; the next reconcile
-		// retries with a fresh cache view.
-		allowed, grantErr := checkSecretReferenceGrantForGateway(ctx, m.Client, gateway, targetNS, *ref)
-		if grantErr == nil && allowed {
+		if m.gatewayReferencesSecret(ctx, gateway, secret) {
 			return true
 		}
 	}
 
 	return false
+}
+
+// gatewayReferencesSecret reports whether `gateway`'s
+// spec.tls.backend.clientCertificateRef points at `secret`, honoring
+// same-namespace refs without a grant check and cross-namespace refs
+// guarded by a permitting ReferenceGrant.
+//
+// Fails open on a transient grant List error: a non-NotFound List
+// failure (auth refresh, API-server 5xx, pre-informer warmup) MUST NOT
+// drop the Secret rotation event, otherwise the proxy keeps the stale
+// keypair until an unrelated event fires. The reconcile path's
+// loadGatewayClientCertPEM re-runs the grant check authoritatively, so
+// the cost of failing open is one extra reconcile, no security risk.
+func (m *ConfigMapper) gatewayReferencesSecret(ctx context.Context, gateway *gatewayv1.Gateway, secret *corev1.Secret) bool {
+	ref := gatewayClientCertRef(gateway)
+	if ref == nil || !isCoreSecretRef(ref) {
+		return false
+	}
+
+	targetNS := gateway.Namespace
+	if ref.Namespace != nil {
+		targetNS = string(*ref.Namespace)
+	}
+
+	if targetNS != secret.Namespace || string(ref.Name) != secret.Name {
+		return false
+	}
+
+	if targetNS == gateway.Namespace {
+		return true
+	}
+
+	allowed, grantErr := checkSecretReferenceGrantForGateway(ctx, m.Client, gateway, targetNS, *ref)
+	if grantErr != nil {
+		logging.FromContext(ctx).Warn("transient ReferenceGrant List error during Secret rotation matcher — failing open and enqueueing the Secret event",
+			"gateway", gateway.Name,
+			"gateway_namespace", gateway.Namespace,
+			"secret", secret.Name,
+			"secret_namespace", secret.Namespace,
+			"error", grantErr)
+
+		return true
+	}
+
+	return allowed
 }
 
 // SecretMatchesConfig checks if a Secret is referenced by the GatewayClassConfig.

@@ -13,6 +13,7 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 	gatewayv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
@@ -685,6 +686,105 @@ func TestConfigMapper_MapSecretToRequests_GatewayClientCertSecret_CrossNsWithout
 
 	result := mapFunc(context.Background(), secret)
 	assert.Nil(t, result, "cross-ns Secret without ReferenceGrant MUST NOT enqueue — would trigger spurious reconciles on unrelated Secret rotations")
+}
+
+// TestConfigMapper_MapSecretToRequests_GatewayClientCertSecret_CrossNsTransientGrantListError_FailsOpen
+// pins fail-open behavior on a transient ReferenceGrant List error: a
+// non-NotFound List failure (auth refresh, API-server 5xx, pre-informer
+// warmup) MUST still enqueue the route resync. Otherwise the Secret
+// rotation event is dropped entirely — controller-runtime will not fire
+// another reconcile from this Secret patch, and the proxy keeps dialing
+// with the stale keypair until an unrelated event fires.
+//
+// The fail-open is safe because the reconcile path's loadGatewayClient
+// CertPEM re-runs the grant check authoritatively; if the grant is
+// genuinely missing the Gateway is stamped RefNotPermitted and the
+// proxy never receives the cert. The cost is one extra reconcile.
+func TestConfigMapper_MapSecretToRequests_GatewayClientCertSecret_CrossNsTransientGrantListError_FailsOpen(t *testing.T) {
+	t.Parallel()
+
+	const controllerName = "test-controller"
+
+	certNamespace := "cert-ns"
+
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "client-cert", Namespace: certNamespace},
+		Type:       corev1.SecretTypeTLS,
+	}
+
+	gatewayClassConfig := &v1alpha1.GatewayClassConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-config"},
+		Spec: v1alpha1.GatewayClassConfigSpec{
+			CloudflareCredentialsSecretRef: v1alpha1.SecretReference{Name: "cf-credentials", Namespace: "default"},
+			TunnelID:                       "test-tunnel",
+		},
+	}
+
+	gatewayClass := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "cloudflare-tunnel"},
+		Spec: gatewayv1.GatewayClassSpec{
+			ControllerName: controllerName,
+			ParametersRef: &gatewayv1.ParametersReference{
+				Group: config.ParametersRefGroup,
+				Kind:  config.ParametersRefKind,
+				Name:  "test-config",
+			},
+		},
+	}
+
+	certNs := gatewayv1.Namespace(certNamespace)
+	gateway := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "default"},
+		Spec: gatewayv1.GatewaySpec{
+			GatewayClassName: "cloudflare-tunnel",
+			TLS: &gatewayv1.GatewayTLSConfig{
+				Backend: &gatewayv1.GatewayBackendTLS{
+					ClientCertificateRef: &gatewayv1.SecretObjectReference{
+						Name:      "client-cert",
+						Namespace: &certNs,
+					},
+				},
+			},
+		},
+	}
+
+	scheme := runtime.NewScheme()
+	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
+	utilruntime.Must(gatewayv1.Install(scheme))
+	utilruntime.Must(gatewayv1beta1.Install(scheme))
+	utilruntime.Must(v1alpha1.AddToScheme(scheme))
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(secret, gatewayClassConfig, gatewayClass, gateway).
+		WithInterceptorFuncs(interceptor.Funcs{
+			List: func(ctx context.Context, c client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+				if _, ok := list.(*gatewayv1beta1.ReferenceGrantList); ok {
+					return errSimulatedCacheMiss
+				}
+
+				return c.List(ctx, list, opts...)
+			},
+		}).
+		Build()
+
+	mapper := &ConfigMapper{
+		Client:         fakeClient,
+		ControllerName: controllerName,
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+	}
+
+	expectedRequests := []reconcile.Request{
+		{NamespacedName: client.ObjectKey{Name: "route", Namespace: "default"}},
+	}
+
+	mapFunc := mapper.MapSecretToRequests(func(_ context.Context) []reconcile.Request {
+		return expectedRequests
+	})
+
+	result := mapFunc(context.Background(), secret)
+	require.NotNil(t, result, "transient grant List error MUST NOT drop the Secret rotation event — the reconcile path re-validates the grant authoritatively")
+	assert.Equal(t, expectedRequests, result)
 }
 
 func setupMapperFakeClient(objs ...client.Object) client.Client {
