@@ -153,6 +153,13 @@ func (r *Router) UpdateConfig(cfg *Config) error {
 		return errors.Wrapf(errStaleVersion, "version %d < current %d", cfg.Version, current.version)
 	}
 
+	// Wiring guard, not a runtime safety net: this check exists to fail
+	// loud at construction time when SetHandler was never called for a
+	// Router that compiles a TLS-bearing mirror filter. A future
+	// maintainer reordering this function MUST keep the check below the
+	// stale-version short-circuit but above compileRoutingTable so a
+	// production-wired Router (which always calls SetHandler before any
+	// UpdateConfig is reachable) never trips it.
 	if r.transportFactory == nil && configHasTLSMirror(cfg) {
 		return errTLSMirrorWithoutTransportFactory
 	}

@@ -251,8 +251,8 @@ Behavior matrix:
 | State | URL scheme | Protocol | TLS |
 |-------|------------|----------|-----|
 | No `BackendTLSPolicy`, no `clientCertificateRef` | `http://` | h2c | none |
-| `BackendTLSPolicy` targets the Service | `https://` | (ALPN-negotiated h2) | server-auth + optional mTLS |
-| Plus `clientCertificateRef` on the parent Gateway | `https://` | (ALPN-negotiated h2) | mTLS |
+| `BackendTLSPolicy` targets the Service | `https://` | h2 (ALPN) | server-auth + optional mTLS |
+| Plus `clientCertificateRef` on the parent Gateway | `https://` | h2 (ALPN) | mTLS |
 
 A gRPC backend on port 443 follows the same rule — if a policy targets it, TLS; otherwise h2c. The `buildServiceURL` helper emits `https://` for port 443 (the HTTPRoute convention); the gRPC converter undoes that to `http://` for the cleartext-h2c path because h2c is HTTP/2 without TLS and needs an `http://` URL.
 
