@@ -128,6 +128,18 @@ var retiredSubstrings = []struct {
 		needle: "GRPCRoute is **not supported in v3**",
 		why:    "the in-process proxy now serves GRPCRoute; the chart README must not advertise it as unsupported (renders on Artifact Hub)",
 	},
+	{
+		needle: "does not implement traffic splitting",
+		why:    "the in-process proxy does weighted-random splitting across backendRefs (HTTP + gRPC); the v2 'no traffic splitting' claim is false in v3",
+	},
+	{
+		needle: "highest weight is selected",
+		why:    "weighted splitting is proportional in v3, not winner-take-all; docs must not claim only the highest-weight backend is used",
+	},
+	{
+		needle: "sends 100% of traffic to it",
+		why:    "v3 splits traffic in proportion to weights; the winner-take-all phrasing contradicts the proxy's weighted-random selection",
+	},
 }
 
 // trackedRoots is the list of trees this guard scans. Walked
@@ -222,6 +234,9 @@ var allowedFiles = map[string]map[string]bool{
 		"grpcroute-is-not-supported-in-v3":        true,
 		"Only HTTPRoutes are pushed":              true,
 		"GRPCRoute is **not supported in v3**":    true,
+		"does not implement traffic splitting":    true,
+		"highest weight is selected":              true,
+		"sends 100% of traffic to it":             true,
 	},
 }
 

@@ -77,35 +77,17 @@ This ensures predictable routing despite Cloudflare's limitations.
 
 | Limitation | Description |
 |------------|-------------|
-| Single backend | Only highest-weight `backendRef` is used per rule |
 | Full sync | Any change triggers full config sync |
 | No cross-cluster | Only in-cluster services supported |
 | Service only | Only `Service` kind backends (ClusterIP, NodePort, LoadBalancer, ExternalName) |
 
 ## Traffic Splitting and Load Balancing
 
-**Design Decision:** This controller intentionally does not implement traffic splitting or weighted load balancing between multiple backends.
+The in-process L7 proxy performs weighted traffic splitting across the `backendRefs` of a rule, for both HTTPRoute and GRPCRoute. Each backend's `weight` is honoured by a weighted-random selection at request time: traffic is distributed in proportion to the weights, and a backend with `weight: 0` receives no traffic (a rule whose backends all have weight 0 serves nothing).
 
-### Why No Traffic Splitting?
+This is the v3 behaviour. In the v1/v2 native-tunnel path, Cloudflare Tunnel ingress rules accepted only a single service URL per rule, so the controller forwarded 100% of traffic to the highest-weight backend and weighted splitting required an external load balancer. v3 renders the proxy unconditionally, so splitting works without one.
 
-Cloudflare Tunnel ingress rules accept only a single service URL per rule. To support Gateway API's `backendRefs` with weights, the controller would need to:
-
-1. Create and manage intermediate Kubernetes Services
-2. Watch and synchronize Endpoints from all referenced services
-3. Handle cross-namespace references and RBAC
-4. Manage lifecycle of controller-created resources
-
-This approach introduces significant complexity, potential for orphaned resources, and creates an opaque traffic path that is difficult for users to debug.
-
-### Our Approach
-
-Provide the tunnel a single, stable entrypoint. The controller selects the backend with the highest weight and sends 100% of traffic to it.
-
-### Workarounds
-
-**Between pods of the same Deployment:**
-
-Use a standard Kubernetes Service (built-in round-robin load balancing):
+For plain round-robin between pods of one Deployment, a standard Kubernetes `Service` is still the simplest option — point the route at the Service and let kube-proxy balance:
 
 ```yaml
 apiVersion: v1
@@ -118,27 +100,6 @@ spec:
   ports:
     - port: 80
       targetPort: 8080
-```
-
-**Weighted traffic splitting or canary:**
-
-Deploy a dedicated load balancer (Traefik, Envoy, Nginx, HAProxy) and point the HTTPRoute to it:
-
-```yaml
-apiVersion: gateway.networking.k8s.io/v1
-kind: HTTPRoute
-metadata:
-  name: my-app
-spec:
-  parentRefs:
-    - name: cloudflare-tunnel
-      namespace: cloudflare-tunnel-system
-  hostnames:
-    - app.example.com
-  rules:
-    - backendRefs:
-        - name: traefik  # Traefik handles weighted routing internally
-          port: 80
 ```
 
 This keeps the controller simple and predictable, and gives you full control over load balancing behavior.

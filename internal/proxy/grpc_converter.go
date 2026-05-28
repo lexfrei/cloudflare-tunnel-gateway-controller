@@ -27,9 +27,10 @@ const grpcSegmentPattern = "[^/]+"
 // to h2c (cleartext HTTP/2) regardless of the Service port's appProtocol —
 // gRPC requires HTTP/2 and in-cluster gRPC is conventionally cleartext.
 //
-// gRPC-specific filters are not yet supported and are skipped with a warning;
-// weighted splitting across multiple backendRefs is not modelled (the proxy
-// selects all listed backends with their weights, same as HTTPRoute).
+// gRPC-specific filters are not yet supported and are skipped with a warning.
+// Multiple backendRefs are weighted: every listed backend is emitted with its
+// weight, and the proxy's weighted-random selection splits traffic in
+// proportion to those weights (same as HTTPRoute).
 func ConvertGRPCRoutes(
 	ctx context.Context,
 	routes []*gatewayv1.GRPCRoute,

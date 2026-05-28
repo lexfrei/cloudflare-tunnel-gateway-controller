@@ -160,7 +160,7 @@ spec:
 
 ## Backend Selection with Weights
 
-When multiple backends are specified, the backend with the highest weight is selected:
+When multiple backends are specified, traffic is split across them in proportion to their weights (a backend with weight 0 receives none):
 
 ```yaml
 apiVersion: gateway.networking.k8s.io/v1
@@ -180,10 +180,10 @@ spec:
       backendRefs:
         - name: primary-grpc
           port: 50051
-          weight: 100  # Selected
+          weight: 80   # ~80% of traffic
         - name: fallback-grpc
           port: 50051
-          weight: 0    # Disabled
+          weight: 20   # ~20% of traffic
 ```
 
 ## Multiple Hostnames
