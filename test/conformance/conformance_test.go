@@ -183,9 +183,6 @@ func envOrDefault(key, fallback string) string {
 // below can assert coverage without provisioning a cluster.
 func conformanceSkipTests() []string {
 	return []string{
-		// Cloudflare Tunnel uses prefix semantics for path matching internally.
-		"HTTPRouteExactPathMatching",
-
 		// Single logical listener — hostname intersection tests don't apply.
 		"HTTPRouteListenerHostnameMatching",
 		"HTTPRouteHostnameIntersection",
