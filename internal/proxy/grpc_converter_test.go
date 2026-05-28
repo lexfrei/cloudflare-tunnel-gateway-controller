@@ -80,11 +80,11 @@ func TestConvertGRPCRoutes_ExactServiceMethod(t *testing.T) {
 	assert.Equal(t, proxy.BackendProtocolH2C, rule.Backends[0].Protocol, "gRPC backend must be h2c")
 }
 
-// TestConvertGRPCRoutes_BackendPort443ForcesCleartextH2C pins the port-443
-// normalization: buildServiceURL emits https:// for port 443, but gRPC h2c is
-// cleartext, so the converter rewrites the scheme to http:// regardless of
-// port. Without the rewrite a gRPC backend on 443 would get an https URL the
-// h2c transport cannot dial.
+// TestConvertGRPCRoutes_BackendPort443NoPolicyStaysCleartextH2C pins the
+// port-443 normalization: buildServiceURL emits https:// for port 443, but
+// gRPC h2c is cleartext, so the converter rewrites the scheme to http://
+// regardless of port. Without the rewrite a gRPC backend on 443 would get
+// an https URL the h2c transport cannot dial.
 //
 // This is the backward-compat path: no BackendTLSPolicy attached, no Gateway
 // clientCertificateRef → the port-443 backend stays h2c. When a policy IS

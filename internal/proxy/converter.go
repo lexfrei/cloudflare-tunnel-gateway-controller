@@ -904,6 +904,14 @@ func initBackendRefBaseline(backend *gatewayv1.HTTPBackendRef) (BackendRef, bool
 // before mutation so a resolver implementation that caches and returns the
 // same *BackendTLSConfig pointer for multiple backends does not silently
 // cross-contaminate routes with each other's client cert.
+//
+// WARNING: only the scalar / byte-slice-assign fields (ClientCertPEM,
+// ClientKeyPEM) are safe to mutate via the shallow copy. BackendTLSConfig
+// also carries []string slices (SubjectAltNames, SubjectAltNameURIs); a
+// future maintainer who *appends* to those on `stamped` would write into
+// the shared backing array of the resolver's cached config and
+// cross-contaminate sibling backends. If you ever need to mutate a slice
+// field here, slices.Clone it first.
 func attachGatewayClientCert(tlsCfg *BackendTLSConfig, clientCert *ClientCertConfig) *BackendTLSConfig {
 	if tlsCfg == nil || clientCert == nil {
 		return tlsCfg

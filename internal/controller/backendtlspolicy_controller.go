@@ -236,7 +236,7 @@ func conflictedConditions(generation int64, winner *gatewayv1.BackendTLSPolicy) 
 			Status:             metav1.ConditionTrue,
 			ObservedGeneration: generation,
 			Reason:             string(gatewayv1.BackendTLSPolicyReasonResolvedRefs),
-			Message:            "All CA certificate references resolved",
+			Message:            backendTLSResolvedRefsMessage,
 		},
 	}
 }
@@ -374,10 +374,16 @@ func caInvalidConditions(generation int64, err error) []metav1.Condition {
 	}
 }
 
+// backendTLSResolvedRefsMessage is the BackendTLSPolicy-specific Message
+// for the ResolvedRefs=True condition. It is more specific than the
+// generic resolvedRefsMessage shared with HTTPRoute / Gateway, because
+// for this policy "references" unambiguously means CA certificate refs.
+// Both happy-path and Conflicted-loser conditions reuse the same string
+// — the loser's own CA refs do resolve, only the precedence comparison
+// rejects it.
+const backendTLSResolvedRefsMessage = "All CA certificate references resolved"
+
 // acceptedConditions returns the happy-path Accepted=True + ResolvedRefs=True pair.
-// Both happy-path and Conflicted-loser conditions reuse resolvedRefsMessage
-// (declared in httproute_controller.go) since the loser's own refs do
-// resolve — only the precedence comparison rejects it.
 func acceptedConditions(generation int64) []metav1.Condition {
 	return []metav1.Condition{
 		{
@@ -392,7 +398,7 @@ func acceptedConditions(generation int64) []metav1.Condition {
 			Status:             metav1.ConditionTrue,
 			ObservedGeneration: generation,
 			Reason:             string(gatewayv1.BackendTLSPolicyReasonResolvedRefs),
-			Message:            resolvedRefsMessage,
+			Message:            backendTLSResolvedRefsMessage,
 		},
 	}
 }
