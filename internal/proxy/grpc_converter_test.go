@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/proxy"
@@ -175,6 +176,119 @@ func TestConvertGRPCRoutes_PolicyOnBackendUpgradesToTLS(t *testing.T) {
 	// and the HTTPRoute resolveH2C "TLS wins" branch).
 	assert.Equal(t, proxy.BackendProtocolHTTP, backend.Protocol,
 		"gRPC backend with BackendTLSPolicy MUST drop the h2c marker — ALPN negotiates HTTP/2 over TLS")
+}
+
+// TestConvertGRPCRoutes_GatewayClientCertStampedOnGRPCBackend pins that
+// the parent Gateway's clientCertificateRef is presented during the gRPC
+// backend TLS handshake. Without this, an operator who attaches a
+// BackendTLSPolicy expecting mTLS would see one-way TLS and the server
+// would reject the handshake — same shape as the HTTPRoute mTLS path,
+// which the upstream conformance already covers.
+func TestConvertGRPCRoutes_GatewayClientCertStampedOnGRPCBackend(t *testing.T) {
+	t.Parallel()
+
+	svc := "grpc.examples.echo.Echo"
+	method := "UnaryEcho"
+	routes := []*gatewayv1.GRPCRoute{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "echo", Namespace: "default"},
+			Spec: gatewayv1.GRPCRouteSpec{
+				CommonRouteSpec: gatewayv1.CommonRouteSpec{
+					ParentRefs: []gatewayv1.ParentReference{{Name: gatewayv1.ObjectName("gw")}},
+				},
+				Rules: []gatewayv1.GRPCRouteRule{
+					{
+						Matches: []gatewayv1.GRPCRouteMatch{
+							{Method: &gatewayv1.GRPCMethodMatch{Type: grpcExact(), Service: &svc, Method: &method}},
+						},
+						BackendRefs: []gatewayv1.GRPCBackendRef{grpcBackendRef("echo-svc", 8443, 1)},
+					},
+				},
+			},
+		},
+	}
+
+	tlsResolver := func(_ context.Context, _, _ string, _ int32) *proxy.BackendTLSConfig {
+		return &proxy.BackendTLSConfig{
+			CABundlePEM: "-----BEGIN CERTIFICATE-----\nFAKE\n-----END CERTIFICATE-----\n",
+			ServerName:  "echo-svc.default.svc.cluster.local",
+		}
+	}
+
+	clientCertPEM := []byte("-----BEGIN CERTIFICATE-----\nCLIENT-CERT\n-----END CERTIFICATE-----\n")
+	clientKeyPEM := []byte("-----BEGIN PRIVATE KEY-----\nCLIENT-KEY\n-----END PRIVATE KEY-----\n")
+
+	certResolver := func(_ context.Context, gw types.NamespacedName) *proxy.ClientCertConfig {
+		if gw.Namespace == "default" && gw.Name == "gw" {
+			return &proxy.ClientCertConfig{CertPEM: clientCertPEM, KeyPEM: clientKeyPEM}
+		}
+
+		return nil
+	}
+
+	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil, tlsResolver, certResolver)
+
+	require.Len(t, cfg.Rules, 1)
+	require.Len(t, cfg.Rules[0].Backends, 1)
+	backend := cfg.Rules[0].Backends[0]
+	require.NotNil(t, backend.TLS)
+	assert.Equal(t, clientCertPEM, backend.TLS.ClientCertPEM,
+		"parent Gateway's clientCertificateRef MUST be stamped on the gRPC backend's TLS config")
+	assert.Equal(t, clientKeyPEM, backend.TLS.ClientKeyPEM)
+}
+
+// TestConvertGRPCRoutes_MixedTLSAndCleartextBackends pins that two
+// backends in the same rule are resolved independently — one with a
+// matching BackendTLSPolicy goes TLS+ALPN, the other without stays
+// h2c. Mixed rules are unusual but legal per the spec, and a future
+// refactor that hoists the TLS branch above the per-backend loop would
+// silently break the cleartext sibling.
+func TestConvertGRPCRoutes_MixedTLSAndCleartextBackends(t *testing.T) {
+	t.Parallel()
+
+	svc := "grpc.examples.echo.Echo"
+	method := "UnaryEcho"
+	routes := []*gatewayv1.GRPCRoute{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "echo", Namespace: "default"},
+			Spec: gatewayv1.GRPCRouteSpec{
+				Rules: []gatewayv1.GRPCRouteRule{
+					{
+						Matches: []gatewayv1.GRPCRouteMatch{
+							{Method: &gatewayv1.GRPCMethodMatch{Type: grpcExact(), Service: &svc, Method: &method}},
+						},
+						BackendRefs: []gatewayv1.GRPCBackendRef{
+							grpcBackendRef("echo-tls", 8443, 1),
+							grpcBackendRef("echo-plain", 9000, 1),
+						},
+					},
+				},
+			},
+		},
+	}
+
+	tlsResolver := func(_ context.Context, _, serviceName string, _ int32) *proxy.BackendTLSConfig {
+		if serviceName == "echo-tls" {
+			return &proxy.BackendTLSConfig{CABundlePEM: "FAKE", ServerName: "echo-tls"}
+		}
+
+		return nil
+	}
+
+	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil, tlsResolver, nil)
+
+	require.Len(t, cfg.Rules, 1)
+	require.Len(t, cfg.Rules[0].Backends, 2)
+
+	tlsBackend := cfg.Rules[0].Backends[0]
+	assert.Equal(t, "echo-tls", tlsBackend.TLS.ServerName, "first backend with policy MUST be TLS")
+	assert.True(t, strings.HasPrefix(tlsBackend.URL, "https://"))
+	assert.Equal(t, proxy.BackendProtocolHTTP, tlsBackend.Protocol)
+
+	plainBackend := cfg.Rules[0].Backends[1]
+	assert.Nil(t, plainBackend.TLS, "second backend without policy MUST stay cleartext")
+	assert.True(t, strings.HasPrefix(plainBackend.URL, "http://"))
+	assert.Equal(t, proxy.BackendProtocolH2C, plainBackend.Protocol)
 }
 
 // TestConvertGRPCRoutes_NoBackendTLSAlwaysCleartextH2C pins the backward
