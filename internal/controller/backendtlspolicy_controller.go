@@ -95,9 +95,14 @@ func getConfigMap(ctx context.Context, c client.Client, key client.ObjectKey) (*
 }
 
 // routeReferencesAnyService reports whether the HTTPRoute references any of
-// the named Services as a backend. Service-only refs are considered (group
-// "" or "core", kind "" or "Service").
-func routeReferencesAnyService(route *gatewayv1.HTTPRoute, targets map[string]struct{}) bool {
+// the named Services (in the targetNamespace) as a backend. Service-only refs
+// are considered (group "" or "core", kind "" or "Service"). The backendRef's
+// namespace is checked too: a route with backendRef
+// {Name: "svc", Namespace: "other-ns"} MUST NOT match a policy targeting "svc"
+// in targetNamespace, because the policy applies to its own-namespace Service
+// only (LocalPolicyTargetReferenceWithSectionName carries no Namespace field
+// per the BackendTLSPolicy spec).
+func routeReferencesAnyService(route *gatewayv1.HTTPRoute, targets map[string]struct{}, targetNamespace string) bool {
 	if len(targets) == 0 {
 		return false
 	}
@@ -105,11 +110,7 @@ func routeReferencesAnyService(route *gatewayv1.HTTPRoute, targets map[string]st
 	for ruleIdx := range route.Spec.Rules {
 		for refIdx := range route.Spec.Rules[ruleIdx].BackendRefs {
 			ref := &route.Spec.Rules[ruleIdx].BackendRefs[refIdx].BackendRef
-			if !proxy.IsServiceBackendRef(ref.BackendObjectReference) {
-				continue
-			}
-
-			if _, hit := targets[string(ref.Name)]; hit {
+			if backendRefMatchesTargetSet(ref.BackendObjectReference, route.Namespace, targets, targetNamespace) {
 				return true
 			}
 		}
@@ -119,11 +120,8 @@ func routeReferencesAnyService(route *gatewayv1.HTTPRoute, targets map[string]st
 }
 
 // grpcRouteReferencesAnyService is the GRPCRoute counterpart of
-// routeReferencesAnyService. Kept as a sibling rather than abstracted
-// behind a generic because GRPCBackendRef and HTTPBackendRef carry
-// different filter shapes — only the BackendRef.BackendObjectReference
-// part is uniform and worth iterating together.
-func grpcRouteReferencesAnyService(route *gatewayv1.GRPCRoute, targets map[string]struct{}) bool {
+// routeReferencesAnyService — same namespace-aware contract.
+func grpcRouteReferencesAnyService(route *gatewayv1.GRPCRoute, targets map[string]struct{}, targetNamespace string) bool {
 	if len(targets) == 0 {
 		return false
 	}
@@ -131,17 +129,37 @@ func grpcRouteReferencesAnyService(route *gatewayv1.GRPCRoute, targets map[strin
 	for ruleIdx := range route.Spec.Rules {
 		for refIdx := range route.Spec.Rules[ruleIdx].BackendRefs {
 			ref := &route.Spec.Rules[ruleIdx].BackendRefs[refIdx].BackendRef
-			if !proxy.IsServiceBackendRef(ref.BackendObjectReference) {
-				continue
-			}
-
-			if _, hit := targets[string(ref.Name)]; hit {
+			if backendRefMatchesTargetSet(ref.BackendObjectReference, route.Namespace, targets, targetNamespace) {
 				return true
 			}
 		}
 	}
 
 	return false
+}
+
+// backendRefMatchesTargetSet reports whether the supplied backend object
+// reference points at one of the Services in targets AND lives in
+// targetNamespace. The route's own namespace is used as the default
+// when the ref omits Namespace (per spec). Non-Service kinds are
+// skipped via IsServiceBackendRef.
+func backendRefMatchesTargetSet(ref gatewayv1.BackendObjectReference, routeNamespace string, targets map[string]struct{}, targetNamespace string) bool {
+	if !proxy.IsServiceBackendRef(ref) {
+		return false
+	}
+
+	refNamespace := routeNamespace
+	if ref.Namespace != nil {
+		refNamespace = string(*ref.Namespace)
+	}
+
+	if refNamespace != targetNamespace {
+		return false
+	}
+
+	_, hit := targets[string(ref.Name)]
+
+	return hit
 }
 
 // parentReferenceToKey resolves an HTTPRoute parentRef into a ClusterObjectKey,
@@ -550,7 +568,7 @@ func (r *BackendTLSPolicyReconciler) gatewaysForPolicy(
 		return nil, fmt.Errorf("list grpcroutes: %w", err)
 	}
 
-	gatewayKeys := collectGatewayKeys(httpRoutes.Items, grpcRoutes.Items, targetServices)
+	gatewayKeys := collectGatewayKeys(httpRoutes.Items, grpcRoutes.Items, targetServices, policy.Namespace)
 
 	gateways := make([]gatewayv1.Gateway, 0, len(gatewayKeys))
 
@@ -580,12 +598,13 @@ func collectGatewayKeys(
 	httpRoutes []gatewayv1.HTTPRoute,
 	grpcRoutes []gatewayv1.GRPCRoute,
 	targetServices map[string]struct{},
+	targetNamespace string,
 ) []client.ObjectKey {
 	gatewayKeySet := map[client.ObjectKey]struct{}{}
 
 	for routeIdx := range httpRoutes {
 		route := &httpRoutes[routeIdx]
-		if !routeReferencesAnyService(route, targetServices) {
+		if !routeReferencesAnyService(route, targetServices, targetNamespace) {
 			continue
 		}
 
@@ -594,7 +613,7 @@ func collectGatewayKeys(
 
 	for routeIdx := range grpcRoutes {
 		route := &grpcRoutes[routeIdx]
-		if !grpcRouteReferencesAnyService(route, targetServices) {
+		if !grpcRouteReferencesAnyService(route, targetServices, targetNamespace) {
 			continue
 		}
 
@@ -970,7 +989,7 @@ func (r *BackendTLSPolicyReconciler) policiesForRouteChange(ctx context.Context,
 // at least one Service that the route also references as a backend. Used by
 // policiesForRouteChange to skip irrelevant policies on every HTTPRoute edit.
 func policyTargetsAnyRouteBackend(policy *gatewayv1.BackendTLSPolicy, route *gatewayv1.HTTPRoute) bool {
-	return routeReferencesAnyService(route, policyTargetServiceNames(policy))
+	return routeReferencesAnyService(route, policyTargetServiceNames(policy), policy.Namespace)
 }
 
 // policiesForGRPCRouteChange is the GRPCRoute counterpart of
@@ -996,7 +1015,7 @@ func (r *BackendTLSPolicyReconciler) policiesForGRPCRouteChange(ctx context.Cont
 
 	for policyIdx := range policies.Items {
 		policy := &policies.Items[policyIdx]
-		if !grpcRouteReferencesAnyService(route, policyTargetServiceNames(policy)) {
+		if !grpcRouteReferencesAnyService(route, policyTargetServiceNames(policy), policy.Namespace) {
 			continue
 		}
 

@@ -772,6 +772,7 @@ func TestCollectGatewayKeys_SkipsNonGatewayParents(t *testing.T) {
 		[]gatewayv1.HTTPRoute{*httpRoute},
 		nil,
 		map[string]struct{}{"svc": {}},
+		"ns",
 	)
 
 	require.Len(t, keys, 1, "non-Gateway parents MUST be filtered out before the Gateway Get")
@@ -1094,7 +1095,7 @@ func TestRouteReferencesAnyService_MatchesServiceBackend(t *testing.T) {
 	route := httpRouteFor("ns", "r", "gw", "target")
 	targets := map[string]struct{}{"target": {}}
 
-	assert.True(t, routeReferencesAnyService(route, targets))
+	assert.True(t, routeReferencesAnyService(route, targets, "ns"))
 }
 
 func TestRouteReferencesAnyService_IgnoresNonServiceKind(t *testing.T) {
@@ -1106,14 +1107,46 @@ func TestRouteReferencesAnyService_IgnoresNonServiceKind(t *testing.T) {
 	route.Spec.Rules[0].BackendRefs[0].Kind = &nonService
 
 	targets := map[string]struct{}{"target": {}}
-	assert.False(t, routeReferencesAnyService(route, targets))
+	assert.False(t, routeReferencesAnyService(route, targets, "ns"))
 }
 
 func TestRouteReferencesAnyService_EmptyTargets(t *testing.T) {
 	t.Parallel()
 
 	route := httpRouteFor("ns", "r", "gw", "target")
-	assert.False(t, routeReferencesAnyService(route, map[string]struct{}{}))
+	assert.False(t, routeReferencesAnyService(route, map[string]struct{}{}, "ns"))
+}
+
+// TestRouteReferencesAnyService_CrossNamespaceBackendDoesNotMatch pins the
+// namespace-aware contract: a route whose backendRef points at a Service
+// in another namespace MUST NOT be considered "covered" by a policy
+// targeting a same-named Service in the policy's own namespace. Without
+// this check the policy's Status.Ancestors would falsely list the route's
+// parent Gateway, advertising enforcement of a Service the route does
+// not actually use.
+func TestRouteReferencesAnyService_CrossNamespaceBackendDoesNotMatch(t *testing.T) {
+	t.Parallel()
+
+	route := httpRouteFor("route-ns", "r", "gw", "svc")
+	otherNS := gatewayv1.Namespace("other-ns")
+	route.Spec.Rules[0].BackendRefs[0].Namespace = &otherNS
+
+	// Policy targets "svc" in policy-ns. Route's backend points to other-ns/svc.
+	assert.False(t, routeReferencesAnyService(route, map[string]struct{}{"svc": {}}, "policy-ns"),
+		"backendRef in other-ns MUST NOT match a policy targeting svc in policy-ns")
+}
+
+// TestGRPCRouteReferencesAnyService_CrossNamespaceBackendDoesNotMatch is
+// the GRPCRoute counterpart of the namespace-deny pin above.
+func TestGRPCRouteReferencesAnyService_CrossNamespaceBackendDoesNotMatch(t *testing.T) {
+	t.Parallel()
+
+	route := grpcRouteFor("route-ns", "r", "gw", "svc")
+	otherNS := gatewayv1.Namespace("other-ns")
+	route.Spec.Rules[0].BackendRefs[0].Namespace = &otherNS
+
+	assert.False(t, grpcRouteReferencesAnyService(route, map[string]struct{}{"svc": {}}, "policy-ns"),
+		"GRPC backendRef in other-ns MUST NOT match a policy targeting svc in policy-ns")
 }
 
 // ---- policyReferencesConfigMap / isConfigMapReferencedByBackendTLSPolicy ----
@@ -1165,7 +1198,7 @@ func TestCollectGatewayKeys_DeterministicSort(t *testing.T) {
 		*httpRouteFor("ns", "r-mu", "gw-m", "svc"),
 	}
 
-	keys := collectGatewayKeys(routes, nil, map[string]struct{}{"svc": {}})
+	keys := collectGatewayKeys(routes, nil, map[string]struct{}{"svc": {}}, "ns")
 
 	require.Len(t, keys, 3)
 	assert.Equal(t, "gw-a", keys[0].Name)
@@ -1179,7 +1212,7 @@ func TestCollectGatewayKeys_SkipsUnrelatedRoutes(t *testing.T) {
 	routes := []gatewayv1.HTTPRoute{
 		*httpRouteFor("ns", "r-other", "gw", "different-svc"),
 	}
-	keys := collectGatewayKeys(routes, nil, map[string]struct{}{"svc": {}})
+	keys := collectGatewayKeys(routes, nil, map[string]struct{}{"svc": {}}, "ns")
 
 	assert.Empty(t, keys)
 }
