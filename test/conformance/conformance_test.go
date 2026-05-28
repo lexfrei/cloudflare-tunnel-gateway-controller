@@ -4,12 +4,15 @@ package conformance
 
 import (
 	"os"
+	"slices"
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"sigs.k8s.io/gateway-api/conformance"
 	confv1 "sigs.k8s.io/gateway-api/conformance/apis/v1"
+	"sigs.k8s.io/gateway-api/conformance/tests"
 	"sigs.k8s.io/gateway-api/conformance/utils/config"
 	"sigs.k8s.io/gateway-api/conformance/utils/suite"
 	"sigs.k8s.io/gateway-api/pkg/features"
@@ -129,14 +132,63 @@ func TestGatewayAPIConformance(t *testing.T) {
 	// Tests that fail due to Cloudflare Tunnel semantics, not missing features.
 	// Also skip tests for unsupported protocols/features that ExemptFeatures
 	// does not reliably filter (conformance suite runs all profile tests).
-	opts.SkipTests = []string{
+	opts.SkipTests = conformanceSkipTests()
+
+	// --- Timeouts ---
+	// Increase timeouts for tunnel latency (Cloudflare edge round-trip).
+	timeouts := config.DefaultTimeoutConfig()
+	timeouts.RequestTimeout = 30 * time.Second
+	timeouts.MaxTimeToConsistency = 90 * time.Second
+	timeouts.HTTPRouteMustHaveCondition = 120 * time.Second
+	timeouts.GatewayMustHaveAddress = 300 * time.Second
+	timeouts.GatewayMustHaveCondition = 300 * time.Second
+	timeouts.LatestObservedGenerationSet = 120 * time.Second
+	timeouts.RouteMustHaveParents = 120 * time.Second
+	opts.TimeoutConfig = timeouts
+
+	// --- Custom RoundTripper ---
+	// Routes requests through Cloudflare edge via HTTPS instead of plain HTTP.
+	opts.RoundTripper = &TunnelRoundTripper{
+		Debug:         true,
+		TimeoutConfig: timeouts,
+	}
+
+	// --- Implementation metadata ---
+	opts.Implementation = confv1.Implementation{
+		Organization: "lexfrei",
+		Project:      "cloudflare-tunnel-gateway-controller",
+		URL:          "https://github.com/lexfrei/cloudflare-tunnel-gateway-controller",
+		Version:      envOrDefault("CONTROLLER_VERSION", "dev"),
+		Contact:      []string{"@lexfrei"},
+	}
+
+	// --- Report output ---
+	if path := os.Getenv("CONFORMANCE_REPORT_OUTPUT"); path != "" {
+		opts.ReportOutputPath = path
+	}
+
+	conformance.RunConformanceWithOptions(t, opts)
+}
+
+func envOrDefault(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+
+	return fallback
+}
+
+// conformanceSkipTests returns the conformance ShortNames skipped for Cloudflare
+// Tunnel semantics (not missing features). Extracted so the gRPC drift guard
+// below can assert coverage without provisioning a cluster.
+func conformanceSkipTests() []string {
+	return []string{
 		// Cloudflare Tunnel uses prefix semantics for path matching internally.
 		"HTTPRouteExactPathMatching",
 
 		// Single logical listener — hostname intersection tests don't apply.
 		"HTTPRouteListenerHostnameMatching",
 		"HTTPRouteHostnameIntersection",
-		"GRPCRouteListenerHostnameMatching",
 
 		// Cloudflare terminates TLS at edge — we don't control certs.
 		"HTTPRouteHTTPSListener",
@@ -233,53 +285,46 @@ func TestGatewayAPIConformance(t *testing.T) {
 		// GRPCRoute: the upstream suite uses grpc.NewClient against the
 		// Gateway address with no dialer-injection hook. Same Cloudflare
 		// ULA routing limitation as the WebSocket case above. Our gRPC
-		// routing is exercised by test/e2e/e2e_grpc_test.go through the real edge.
+		// routing is exercised by test/e2e/e2e_grpc_test.go through the real
+		// edge. ALL GRPCRoute tests must be listed here — the guard test
+		// TestGRPCConformanceTestsAreSkipped fails loudly if a suite bump
+		// adds one that is not skipped.
 		"GRPCExactMethodMatching",
 		"GRPCRouteHeaderMatching",
 		"GRPCRouteWeight",
 		"GRPCRouteNamedRule",
+		"GRPCRouteListenerHostnameMatching",
 	}
-
-	// --- Timeouts ---
-	// Increase timeouts for tunnel latency (Cloudflare edge round-trip).
-	timeouts := config.DefaultTimeoutConfig()
-	timeouts.RequestTimeout = 30 * time.Second
-	timeouts.MaxTimeToConsistency = 90 * time.Second
-	timeouts.HTTPRouteMustHaveCondition = 120 * time.Second
-	timeouts.GatewayMustHaveAddress = 300 * time.Second
-	timeouts.GatewayMustHaveCondition = 300 * time.Second
-	timeouts.LatestObservedGenerationSet = 120 * time.Second
-	timeouts.RouteMustHaveParents = 120 * time.Second
-	opts.TimeoutConfig = timeouts
-
-	// --- Custom RoundTripper ---
-	// Routes requests through Cloudflare edge via HTTPS instead of plain HTTP.
-	opts.RoundTripper = &TunnelRoundTripper{
-		Debug:         true,
-		TimeoutConfig: timeouts,
-	}
-
-	// --- Implementation metadata ---
-	opts.Implementation = confv1.Implementation{
-		Organization: "lexfrei",
-		Project:      "cloudflare-tunnel-gateway-controller",
-		URL:          "https://github.com/lexfrei/cloudflare-tunnel-gateway-controller",
-		Version:      envOrDefault("CONTROLLER_VERSION", "dev"),
-		Contact:      []string{"@lexfrei"},
-	}
-
-	// --- Report output ---
-	if path := os.Getenv("CONFORMANCE_REPORT_OUTPUT"); path != "" {
-		opts.ReportOutputPath = path
-	}
-
-	conformance.RunConformanceWithOptions(t, opts)
 }
 
-func envOrDefault(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
+// TestGRPCConformanceTestsAreSkipped guards against suite drift: every
+// conformance test that exercises SupportGRPCRoute (which this suite now
+// declares) must be in the skip list, because the upstream gRPC client dials
+// the Gateway address directly — *.cfargotunnel.com resolves to Cloudflare's
+// ULA (fd10::/8), unreachable from any external runner, so an unskipped gRPC
+// test hangs the mandatory pre-merge run. A future gateway-api bump that adds
+// a new gRPC test trips this guard instead of silently hanging conformance.
+func TestGRPCConformanceTestsAreSkipped(t *testing.T) {
+	t.Parallel()
+
+	skipped := sets.New(conformanceSkipTests()...)
+
+	grpcChecked := 0
+
+	for _, ct := range tests.ConformanceTests {
+		if !slices.Contains(ct.Features, features.SupportGRPCRoute) {
+			continue
+		}
+
+		grpcChecked++
+
+		assert.Truef(t, skipped.Has(ct.ShortName),
+			"GRPCRoute conformance test %q exercises SupportGRPCRoute but is not in conformanceSkipTests(); "+
+				"it dials the unroutable *.cfargotunnel.com ULA and will hang. Add it to the skip list.",
+			ct.ShortName)
 	}
 
-	return fallback
+	// Guard against a vacuous pass: if the vendored suite ever stops tagging
+	// gRPC tests with SupportGRPCRoute, the loop above would assert nothing.
+	assert.Positive(t, grpcChecked, "expected at least one SupportGRPCRoute conformance test in the vendored suite")
 }
