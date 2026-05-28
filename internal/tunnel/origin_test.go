@@ -298,7 +298,7 @@ func (w *trailerContractWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 }
 
 // TestGatewayOriginProxy_ProxyHTTP_ForwardsGRPCTrailers pins the production
-// hazard the homelab e2e surfaced: gRPC carries grpc-status in HTTP/2 trailers,
+// hazard the e2e suite surfaced: gRPC carries grpc-status in HTTP/2 trailers,
 // httputil.ReverseProxy emits them via the stdlib http.TrailerPrefix mechanism
 // onto the response writer's Header() map, but cloudflared's http2RespWriter
 // only serializes that map once (at WriteHeader) and emits trailers solely via
@@ -339,6 +339,48 @@ func TestGatewayOriginProxy_ProxyHTTP_ForwardsGRPCTrailers(t *testing.T) {
 	assert.Equal(t, "0", rw.trailers.Get("Grpc-Status"),
 		"grpc-status trailer must reach the wire via AddTrailer; ReverseProxy's "+
 			"stdlib-trailer write to Header() is dropped by the cloudflared writer")
+}
+
+// TestGatewayOriginProxy_ProxyHTTP_ForwardsAnnouncedTrailers covers the other
+// ReverseProxy trailer path: a backend that pre-declares its trailers in the
+// Trailer header. ReverseProxy then sets the trailer value as a plain
+// (non-prefixed) header after the body, so the bridge must recognize it via the
+// announced-trailer set and replay it through AddTrailer — without leaking it as
+// a regular wire header.
+func TestGatewayOriginProxy_ProxyHTTP_ForwardsAnnouncedTrailers(t *testing.T) {
+	t.Parallel()
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/grpc")
+		w.Header().Set("Trailer", "Grpc-Status")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("\x00\x00\x00\x00\x00"))
+		// Announced trailer value, set after the body per the stdlib contract.
+		w.Header().Set("Grpc-Status", "0")
+	}))
+	defer backend.Close()
+
+	backendURL, err := url.Parse(backend.URL)
+	require.NoError(t, err)
+
+	handler := httputil.NewSingleHostReverseProxy(backendURL)
+	proxy := tunnel.NewGatewayOriginProxy(handler, nil)
+
+	req := httptest.NewRequestWithContext(
+		t.Context(), http.MethodPost, "http://example.com/pkg.Svc/Method", http.NoBody,
+	)
+	req.Header.Set("Content-Type", "application/grpc")
+
+	zlog := zerolog.Nop()
+	tracedReq := tracing.NewTracedHTTPRequest(req, 0, &zlog)
+	rw := newTrailerContractWriter()
+
+	require.NoError(t, proxy.ProxyHTTP(rw, tracedReq, false))
+
+	assert.Equal(t, "0", rw.trailers.Get("Grpc-Status"),
+		"announced grpc-status trailer must reach the wire via AddTrailer")
+	assert.Empty(t, rw.wire.Get("Grpc-Status"),
+		"an announced trailer must not be duplicated as a serialized response header")
 }
 
 func TestGatewayOriginProxy_ProxyTCP_ReturnsError(t *testing.T) {
