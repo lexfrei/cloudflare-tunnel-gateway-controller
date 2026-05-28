@@ -162,6 +162,7 @@ func (r *HTTPRouteReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		findRoutesForListenerSet: r.findRoutesForListenerSet,
 		findRoutesForRefGrant:    r.findRoutesForReferenceGrant,
 		findRoutesForService:     r.findRoutesForService,
+		watchBackendTLS:          true,
 		getAllRelevantRoutes:     r.getAllRelevantRoutes,
 	})
 }

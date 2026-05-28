@@ -119,10 +119,11 @@ func (r *GRPCRouteReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		findRoutesForGateway:     r.findRoutesForGateway,
 		findRoutesForListenerSet: r.findRoutesForListenerSet,
 		findRoutesForRefGrant:    r.findRoutesForReferenceGrant,
-		// GRPCRoute is tunnel-only; the tunnel ingress config is not
-		// protocol-aware, so Service-side changes (appProtocol or otherwise)
-		// don't require a re-sync. Watching Services here would only add
-		// reconcile churn.
+		// gRPC is proxy-driving in v3, so watch Service: a route stuck at 500
+		// because its backend did not exist yet must recover when the Service
+		// appears. BackendTLSPolicy is NOT watched (watchBackendTLS stays
+		// false) — gRPC backends are always cleartext h2c and ignore it.
+		findRoutesForService: r.findRoutesForService,
 		getAllRelevantRoutes: r.getAllRelevantRoutes,
 	})
 }
@@ -211,6 +212,33 @@ func (r *GRPCRouteReconciler) findRoutesForReferenceGrant(
 	}
 
 	return FindRoutesForReferenceGrant(obj, routes)
+}
+
+// findRoutesForService enqueues every GRPCRoute managed by our controller that
+// references the changed Service in a backendRef. gRPC is proxy-driving in v3,
+// so a Service create must re-reconcile a route that was stuck at 500 because
+// its backend did not exist yet — the same self-heal the HTTPRoute reconciler
+// has. gRPC ignores Service appProtocol (it forces h2c), so this watch matters
+// only for backend existence, not protocol changes.
+func (r *GRPCRouteReconciler) findRoutesForService(
+	ctx context.Context,
+	obj client.Object,
+) []reconcile.Request {
+	var routeList gatewayv1.GRPCRouteList
+	if err := r.List(ctx, &routeList); err != nil {
+		return nil
+	}
+
+	routes := make([]Route, 0, len(routeList.Items))
+
+	for i := range routeList.Items {
+		route := &routeList.Items[i]
+		if r.isRouteForOurGateway(ctx, route) {
+			routes = append(routes, GRPCRouteWrapper{route})
+		}
+	}
+
+	return FindRoutesForService(obj, routes)
 }
 
 func (r *GRPCRouteReconciler) getAllRelevantRoutes(ctx context.Context) []reconcile.Request {

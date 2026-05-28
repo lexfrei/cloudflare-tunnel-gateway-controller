@@ -83,7 +83,12 @@ type routeControllerSetupParams struct {
 	findRoutesForListenerSet handler.MapFunc
 	findRoutesForRefGrant    handler.MapFunc
 	findRoutesForService     handler.MapFunc
-	getAllRelevantRoutes     RequestsFunc
+	// watchBackendTLS adds the BackendTLSPolicy + CA ConfigMap watches. Only
+	// HTTPRoute needs them — gRPC backends are always cleartext h2c and ignore
+	// BackendTLSPolicy, so watching those for gRPC would be dead reconcile
+	// churn. The Service watch is gated separately on findRoutesForService.
+	watchBackendTLS      bool
+	getAllRelevantRoutes RequestsFunc
 }
 
 // setupRouteController sets up the controller-runtime builder with standard
@@ -133,17 +138,26 @@ func setupRouteController(mgr ctrl.Manager, params *routeControllerSetupParams) 
 	return nil
 }
 
-// addProxyOnlyWatches adds the watches that only the proxy-driving (HTTPRoute)
-// controller needs: Service for appProtocol changes, BackendTLSPolicy for TLS
-// config churn, and ConfigMap for CA bundle edits (filtered to ones actually
-// referenced by a policy). GRPCRoute opts out by leaving findRoutesForService
-// nil. Extracted from setupRouteController to keep its function length within
-// the linter budget.
+// addProxyOnlyWatches adds the watches the proxy-driving route controllers
+// need. Both HTTPRoute and GRPCRoute watch Service so a route stuck at 500
+// because its backend did not exist yet recovers when the Service appears
+// (gated on findRoutesForService). Only HTTPRoute additionally watches
+// BackendTLSPolicy and the CA ConfigMap (gated on watchBackendTLS) — gRPC
+// backends are always cleartext h2c and ignore BackendTLSPolicy, so those
+// watches would be dead churn for it. Extracted from setupRouteController to
+// keep its function length within the linter budget.
 func addProxyOnlyWatches(
 	builder *ctrl.Builder,
 	params *routeControllerSetupParams,
 ) *ctrl.Builder {
-	if params.findRoutesForService == nil {
+	if params.findRoutesForService != nil {
+		builder = builder.Watches(
+			&corev1.Service{},
+			handler.EnqueueRequestsFromMapFunc(params.findRoutesForService),
+		)
+	}
+
+	if !params.watchBackendTLS {
 		return builder
 	}
 
@@ -168,7 +182,6 @@ func addProxyOnlyWatches(
 	)
 
 	return builder.
-		Watches(&corev1.Service{}, handler.EnqueueRequestsFromMapFunc(params.findRoutesForService)).
 		Watches(&gatewayv1.BackendTLSPolicy{}, enqueueAllRoutes).
 		Watches(&corev1.ConfigMap{}, enqueueRoutesForCAConfigMap)
 }
