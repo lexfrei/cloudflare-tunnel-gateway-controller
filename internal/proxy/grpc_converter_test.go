@@ -153,6 +153,49 @@ func TestConvertGRPCRoutes_NoBackendTLSAlwaysCleartextH2C(t *testing.T) {
 	assert.True(t, strings.HasPrefix(backend.URL, "http://"), "gRPC backend stays cleartext, got %q", backend.URL)
 }
 
+// TestConvertGRPCRoutes_MultipleWeightedBackends pins weighted traffic
+// splitting: a rule with two weighted backends emits both into the proxy
+// rule's Backends with their weights preserved, so the router's weighted
+// selection distributes traffic proportionally (same as HTTPRoute). The docs
+// describe this behavior, so it must stay covered.
+func TestConvertGRPCRoutes_MultipleWeightedBackends(t *testing.T) {
+	t.Parallel()
+
+	svc := "grpc.examples.echo.Echo"
+	method := "UnaryEcho"
+	routes := []*gatewayv1.GRPCRoute{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "echo", Namespace: "default"},
+			Spec: gatewayv1.GRPCRouteSpec{
+				Rules: []gatewayv1.GRPCRouteRule{
+					{
+						Matches: []gatewayv1.GRPCRouteMatch{
+							{Method: &gatewayv1.GRPCMethodMatch{Type: grpcExact(), Service: &svc, Method: &method}},
+						},
+						BackendRefs: []gatewayv1.GRPCBackendRef{
+							grpcBackendRef("primary-svc", 9000, 80),
+							grpcBackendRef("fallback-svc", 9000, 20),
+						},
+					},
+				},
+			},
+		},
+	}
+
+	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil)
+
+	require.Len(t, cfg.Rules, 1)
+	require.Len(t, cfg.Rules[0].Backends, 2, "both weighted backends must survive for proportional splitting")
+
+	weightByURL := map[string]int32{}
+	for _, b := range cfg.Rules[0].Backends {
+		weightByURL[b.URL] = b.Weight
+	}
+
+	assert.Equal(t, int32(80), weightByURL["http://primary-svc.default.svc.cluster.local:9000"])
+	assert.Equal(t, int32(20), weightByURL["http://fallback-svc.default.svc.cluster.local:9000"])
+}
+
 // TestConvertGRPCRoutes_ServiceOnly maps a service-only match to a path-prefix
 // rule /{service}/ so every method of the service routes.
 func TestConvertGRPCRoutes_ServiceOnly(t *testing.T) {
