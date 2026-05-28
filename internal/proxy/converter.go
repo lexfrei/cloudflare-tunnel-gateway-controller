@@ -556,29 +556,39 @@ func convertMirrorFilter(
 
 	mirrorURL := buildServiceURL(string(mirror.BackendRef.Name), mirrorNS, mirrorPort, clusterDomain)
 
-	// RequestMirror runs through a side-channel HTTP client that does NOT
-	// share the main proxy's TLS-aware transport pool. If a BackendTLSPolicy
-	// targets the mirror destination, the mirrored copy would be sent in
-	// plaintext, silently bypassing the operator's TLS intent. Document the
-	// gap loudly so operators see the silent downgrade; an actual TLS-aware
-	// mirror dial is tracked as a follow-up (see limitations.md).
+	mirrorConfig := &MirrorConfig{
+		BackendURL: mirrorURL,
+		Percent:    mirrorPercent(mirror),
+	}
+
+	// Resolve any BackendTLSPolicy targeting the mirror destination and
+	// stamp the resulting TLS config on MirrorConfig. When the proxy
+	// compiles this filter, the mirror Client borrows a per-cert
+	// RoundTripper from the Handler's transport pool — same shape the
+	// main leg uses — so the mirror dial actually honors the operator's
+	// TLS expectation instead of silently bypassing it.
 	if tlsResolver != nil {
 		if tls := tlsResolver(ctx, mirrorNS, string(mirror.BackendRef.Name), mirrorPort); tls != nil {
-			slog.Warn("RequestMirror target has a matching BackendTLSPolicy but the mirror filter dials plaintext — mirrored copy bypasses backend TLS enforcement",
-				"namespace", mirrorNS,
-				"service", string(mirror.BackendRef.Name),
-				"port", mirrorPort,
-			)
+			mirrorConfig.TLS = tls
+			mirrorConfig.BackendURL = forceHTTPSScheme(mirrorURL)
 		}
 	}
 
 	return &RouteFilter{
-		Type: FilterRequestMirror,
-		RequestMirror: &MirrorConfig{
-			BackendURL: mirrorURL,
-			Percent:    mirrorPercent(mirror),
-		},
+		Type:          FilterRequestMirror,
+		RequestMirror: mirrorConfig,
 	}
+}
+
+// forceHTTPSScheme rewrites the scheme of rawURL to https. Used when the
+// mirror destination carries a BackendTLSPolicy: the URL must dial over
+// TLS regardless of what buildServiceURL emitted for the port.
+func forceHTTPSScheme(rawURL string) string {
+	if rest, ok := strings.CutPrefix(rawURL, schemeHTTP+"://"); ok {
+		return schemeHTTPS + "://" + rest
+	}
+
+	return rawURL
 }
 
 // convertCORSFilter maps the upstream HTTPCORSFilter into the proxy's

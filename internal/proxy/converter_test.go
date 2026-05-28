@@ -594,13 +594,16 @@ func TestConvertHTTPRoutes_AppProtocolHTTPSWithPolicy_NoWarn(t *testing.T) {
 		"appProtocol https WITH a BackendTLSPolicy must NOT warn — the operator did the right thing")
 }
 
-// TestConvertHTTPRoutes_Mirror_TargetHasBackendTLSPolicy_Warns pins the
-// known gap: the RequestMirror filter dials through a side-channel HTTP
-// client that does NOT share the proxy's TLS-aware transport pool, so a
-// mirror destination protected by BackendTLSPolicy would receive plaintext
-// instead of TLS. Until an actual TLS-aware mirror dial lands, the converter
-// surfaces a WARN so operators don't ship a silent policy bypass.
-func TestConvertHTTPRoutes_Mirror_TargetHasBackendTLSPolicy_Warns(t *testing.T) {
+// TestConvertHTTPRoutes_Mirror_TargetHasBackendTLSPolicy_AttachesTLSConfig
+// pins the post-fix behavior of #343: when a BackendTLSPolicy targets the
+// mirror destination Service, the converter stamps TLS on MirrorConfig and
+// flips the BackendURL to https://. The proxy then borrows a per-cert
+// RoundTripper from the Handler's transport pool — same shape the main leg
+// uses — so the mirror dial honors the policy instead of silently bypassing
+// it. The previous-revision WARN at convert time is gone; a regression that
+// drops the stamp must surface here, not as a quiet plaintext mirror in
+// production.
+func TestConvertHTTPRoutes_Mirror_TargetHasBackendTLSPolicy_AttachesTLSConfig(t *testing.T) {
 	pathPrefix := gatewayv1.PathMatchPathPrefix
 	port := gatewayv1.PortNumber(443)
 
@@ -632,7 +635,6 @@ func TestConvertHTTPRoutes_Mirror_TargetHasBackendTLSPolicy_Warns(t *testing.T) 
 		},
 	}
 
-	// tlsResolver returns a TLS config for mirror-target → warn must fire.
 	tlsResolver := func(_ context.Context, _, serviceName string, _ int32) *proxy.BackendTLSConfig {
 		if serviceName == "mirror-target" {
 			return &proxy.BackendTLSConfig{
@@ -644,14 +646,16 @@ func TestConvertHTTPRoutes_Mirror_TargetHasBackendTLSPolicy_Warns(t *testing.T) 
 		return nil
 	}
 
-	logs, cleanup := captureWarnLogs()
-	t.Cleanup(cleanup)
+	cfg := proxy.ConvertHTTPRoutes(context.Background(), routes, "cluster.local", nil, nil, tlsResolver, nil)
 
-	proxy.ConvertHTTPRoutes(context.Background(), routes, "cluster.local", nil, nil, tlsResolver, nil)
-
-	assert.Contains(t, logs.String(), "mirror filter dials plaintext",
-		"a BackendTLSPolicy protecting a mirror target MUST surface a WARN — "+
-			"the mirror leg currently bypasses TLS enforcement and operators must be told")
+	require.Len(t, cfg.Rules, 1)
+	require.Len(t, cfg.Rules[0].Filters, 1)
+	mirror := cfg.Rules[0].Filters[0].RequestMirror
+	require.NotNil(t, mirror, "RequestMirror filter MUST be emitted")
+	require.NotNil(t, mirror.TLS, "BackendTLSPolicy on mirror target MUST be stamped on MirrorConfig.TLS")
+	assert.Equal(t, "mirror-target.default.svc.cluster.local", mirror.TLS.ServerName)
+	assert.True(t, strings.HasPrefix(mirror.BackendURL, "https://"),
+		"mirror BackendURL MUST flip to https when a policy attaches, got %q", mirror.BackendURL)
 }
 
 // TestConvertHTTPRoutes_BackendTLSPolicy_OverridesH2C verifies the docs claim
