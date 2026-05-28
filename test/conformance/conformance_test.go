@@ -233,7 +233,7 @@ func TestGatewayAPIConformance(t *testing.T) {
 		// GRPCRoute: the upstream suite uses grpc.NewClient against the
 		// Gateway address with no dialer-injection hook. Same Cloudflare
 		// ULA routing limitation as the WebSocket case above. Our gRPC
-		// routing is exercised by test/e2e/grpc_* through the real edge.
+		// routing is exercised by test/e2e/e2e_grpc_test.go through the real edge.
 		"GRPCExactMethodMatching",
 		"GRPCRouteHeaderMatching",
 		"GRPCRouteWeight",
