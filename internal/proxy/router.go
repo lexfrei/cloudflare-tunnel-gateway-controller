@@ -153,6 +153,10 @@ func (r *Router) UpdateConfig(cfg *Config) error {
 		return errors.Wrapf(errStaleVersion, "version %d < current %d", cfg.Version, current.version)
 	}
 
+	if r.transportFactory == nil && configHasTLSMirror(cfg) {
+		return errTLSMirrorWithoutTransportFactory
+	}
+
 	table, err := compileRoutingTable(cfg, r.transportFactory)
 	if err != nil {
 		return errors.Wrap(err, "failed to compile routing table")
@@ -205,10 +209,52 @@ func extractActiveTransportKeys(cfg *Config) map[string]bool {
 	return keys
 }
 
+// configHasTLSMirror reports whether any rule-level or per-backend
+// RequestMirror filter in cfg carries a non-nil TLS config. Router uses
+// this to fail UpdateConfig loudly when a TLS-aware mirror would
+// otherwise fall back to the global cleartext mirrorClient — that
+// fallback is fine for tests without a Handler but a production bypass
+// hazard if SetHandler was never called.
+func configHasTLSMirror(cfg *Config) bool {
+	for _, rule := range cfg.Rules {
+		if rulesHaveTLSMirror(rule.Filters) {
+			return true
+		}
+
+		for _, backend := range rule.Backends {
+			if rulesHaveTLSMirror(backend.Filters) {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// rulesHaveTLSMirror reports whether any RequestMirror filter in the
+// slice carries a non-nil TLS config.
+func rulesHaveTLSMirror(filters []RouteFilter) bool {
+	for filterIdx := range filters {
+		filter := &filters[filterIdx]
+		if filter.Type == FilterRequestMirror && filter.RequestMirror != nil && filter.RequestMirror.TLS != nil {
+			return true
+		}
+	}
+
+	return false
+}
+
 // collectMirrorTransportKeys adds the per-cert transport key for every
 // RequestMirror filter into keys. Mirror filters dial with headerTimeout=0
 // (NewRequestMirror's call to TransportFactory), so the key matches the
 // pool entry the filter borrows at compile time.
+//
+// A parse failure on BackendURL is logged at Error level rather than
+// silently skipped: the URL was emitted by convertMirrorFilter through
+// buildServiceURL + forceHTTPSScheme so a parse failure here means
+// upstream emitted a malformed URL. Silently dropping the key would
+// hand PruneTransports an incomplete active set and evict a perfectly
+// good per-cert transport the next time the filter is recompiled.
 func collectMirrorTransportKeys(keys map[string]bool, filters []RouteFilter) {
 	for filterIdx := range filters {
 		filter := &filters[filterIdx]
@@ -218,6 +264,10 @@ func collectMirrorTransportKeys(keys map[string]bool, filters []RouteFilter) {
 
 		parsed, err := url.Parse(filter.RequestMirror.BackendURL)
 		if err != nil {
+			slog.Error("mirror filter BackendURL failed to parse; per-cert transport key skipped (will be evicted on next prune)",
+				"url", filter.RequestMirror.BackendURL,
+				"error", err)
+
 			continue
 		}
 

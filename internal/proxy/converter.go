@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -129,13 +130,12 @@ func ConvertHTTPRoutes(
 	return cfg
 }
 
-// gatewayAPIGroup and kindGateway identify the parentRef shape we recognise
-// when walking parents looking for a client certificate. Shared by the
-// HTTPRoute and GRPCRoute helpers in this file and grpc_converter.go.
-const (
-	gatewayAPIGroup = "gateway.networking.k8s.io"
-	kindGateway     = "Gateway"
-)
+// kindGateway identifies the parentRef Kind we recognise when walking
+// parents looking for a client certificate. Shared by the HTTPRoute and
+// GRPCRoute helpers in this file and grpc_converter.go. The Group is
+// matched via gatewayv1.GroupName from the upstream package — no
+// proxy-side magic string.
+const kindGateway = "Gateway"
 
 // resolveFirstParentClientCert walks the HTTPRoute's parentRefs in declaration
 // order, asking gatewayCertResolver for each parent's client certificate, and
@@ -165,7 +165,7 @@ func resolveFirstParentClientCertFromRefs(
 	}
 
 	for _, ref := range parentRefs {
-		if ref.Group != nil && *ref.Group != "" && *ref.Group != gatewayAPIGroup {
+		if ref.Group != nil && *ref.Group != "" && *ref.Group != gatewayv1.GroupName {
 			continue
 		}
 
@@ -906,24 +906,22 @@ func initBackendRefBaseline(backend *gatewayv1.HTTPBackendRef) (BackendRef, bool
 // presented only when backend TLS is active; sending a cert over plaintext
 // makes no sense.
 //
-// The supplied tlsCfg is treated as immutable — a shallow copy is taken
-// before mutation so a resolver implementation that caches and returns the
-// same *BackendTLSConfig pointer for multiple backends does not silently
-// cross-contaminate routes with each other's client cert.
-//
-// WARNING: only the scalar / byte-slice-assign fields (ClientCertPEM,
-// ClientKeyPEM) are safe to mutate via the shallow copy. BackendTLSConfig
-// also carries []string slices (SubjectAltNames, SubjectAltNameURIs); a
-// future maintainer who *appends* to those on `stamped` would write into
-// the shared backing array of the resolver's cached config and
-// cross-contaminate sibling backends. If you ever need to mutate a slice
-// field here, slices.Clone it first.
+// The supplied tlsCfg is treated as immutable: a shallow struct copy is
+// taken before mutation, and the two slice fields (SubjectAltNames,
+// SubjectAltNameURIs) are slices.Clone'd so a downstream append on
+// `stamped` cannot reach back into the resolver's cached *BackendTLSConfig
+// and cross-contaminate sibling backends. This is defensive — the current
+// converter never appends to those fields here — but the cost is one
+// short slice allocation per matched backend and the guarantee is
+// enforced by code, not a comment.
 func attachGatewayClientCert(tlsCfg *BackendTLSConfig, clientCert *ClientCertConfig) *BackendTLSConfig {
 	if tlsCfg == nil || clientCert == nil {
 		return tlsCfg
 	}
 
 	stamped := *tlsCfg
+	stamped.SubjectAltNames = slices.Clone(tlsCfg.SubjectAltNames)
+	stamped.SubjectAltNameURIs = slices.Clone(tlsCfg.SubjectAltNameURIs)
 	stamped.ClientCertPEM = clientCert.CertPEM
 	stamped.ClientKeyPEM = clientCert.KeyPEM
 

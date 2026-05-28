@@ -155,6 +155,38 @@ func parentReferenceToKey(parentRef gatewayv1.ParentReference, routeNamespace st
 	return client.ObjectKey{Namespace: namespace, Name: string(parentRef.Name)}
 }
 
+// parentRefIsGateway reports whether the parentRef targets a Gateway
+// (Group "" / gateway.networking.k8s.io, Kind "" / "Gateway"). Filters
+// non-Gateway parents (ListenerSet, future kinds) out of the BackendTLS
+// Policy Ancestor walk so the subsequent Gateway Get does not waste a
+// round-trip on a guaranteed 404 — which would have silently dropped
+// the entry, masking the leak but leaving noisy reconciles.
+func parentRefIsGateway(parentRef gatewayv1.ParentReference) bool {
+	if parentRef.Group != nil && *parentRef.Group != "" && *parentRef.Group != gatewayv1.GroupName {
+		return false
+	}
+
+	if parentRef.Kind != nil && *parentRef.Kind != "" && *parentRef.Kind != kindGateway {
+		return false
+	}
+
+	return true
+}
+
+// collectGatewayParentKeys folds every Gateway-shaped parentRef into the
+// supplied key set, using the route's own namespace when the ref omits
+// the namespace field. Non-Gateway parents are skipped explicitly per
+// parentRefIsGateway.
+func collectGatewayParentKeys(set map[client.ObjectKey]struct{}, parentRefs []gatewayv1.ParentReference, routeNamespace string) {
+	for _, parentRef := range parentRefs {
+		if !parentRefIsGateway(parentRef) {
+			continue
+		}
+
+		set[parentReferenceToKey(parentRef, routeNamespace)] = struct{}{}
+	}
+}
+
 // BackendTLSPolicyReconciler maintains the status of BackendTLSPolicy
 // resources: validates the CA references, computes Accepted and ResolvedRefs
 // conditions, and writes them under each affected Gateway as a policy ancestor.
@@ -557,9 +589,7 @@ func collectGatewayKeys(
 			continue
 		}
 
-		for _, parentRef := range route.Spec.ParentRefs {
-			gatewayKeySet[parentReferenceToKey(parentRef, route.Namespace)] = struct{}{}
-		}
+		collectGatewayParentKeys(gatewayKeySet, route.Spec.ParentRefs, route.Namespace)
 	}
 
 	for routeIdx := range grpcRoutes {
@@ -568,9 +598,7 @@ func collectGatewayKeys(
 			continue
 		}
 
-		for _, parentRef := range route.Spec.ParentRefs {
-			gatewayKeySet[parentReferenceToKey(parentRef, route.Namespace)] = struct{}{}
-		}
+		collectGatewayParentKeys(gatewayKeySet, route.Spec.ParentRefs, route.Namespace)
 	}
 
 	gatewayKeys := make([]client.ObjectKey, 0, len(gatewayKeySet))

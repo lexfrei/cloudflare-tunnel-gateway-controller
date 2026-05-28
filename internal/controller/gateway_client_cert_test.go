@@ -188,15 +188,15 @@ func TestLoadGatewayClientCertPEM_CrossNamespace_GrantDenied(t *testing.T) {
 	assert.ErrorIs(t, err, errGatewayClientCertRefNotPermitted)
 }
 
-// TestLoadGatewayClientCertPEM_RotationReturnsFreshBytes pins that the
-// loader does not cache the previous keypair: when the Secret is patched
-// in place, the next call returns the new bytes. The rotation watch in
-// mappers.go enqueues routes on the patch, the proxy syncer re-runs
-// ConvertHTTPRoutes which invokes this loader, and the new PEM lands on
-// the proxy via the per-cert transport-pool hash. Without this property
-// the matcher would do its job but the proxy would still dial with the
-// old keypair.
-func TestLoadGatewayClientCertPEM_RotationReturnsFreshBytes(t *testing.T) {
+// TestLoadGatewayClientCertPEM_DoesNotCacheBetweenCalls pins that the
+// loader has no internal cache: when the Secret is patched in place,
+// the next call returns the new bytes. The fake client serves Get
+// straight from storage with no informer caching, so this is the
+// controller-side half of the rotation contract — the informer cache
+// is exercised separately by the envtest-shaped integration in the
+// proxy-syncer suite. Without this property the matcher would do its
+// job but the proxy would still dial with the old keypair.
+func TestLoadGatewayClientCertPEM_DoesNotCacheBetweenCalls(t *testing.T) {
 	t.Parallel()
 
 	certV1, keyV1 := generateClientKeypair(t)

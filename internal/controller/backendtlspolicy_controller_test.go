@@ -751,6 +751,34 @@ func TestPoliciesForGRPCRouteChange_OnlyMatchingPolicy(t *testing.T) {
 		"GRPCRoute change MUST enqueue only the policy whose target Service the route references")
 }
 
+// TestCollectGatewayKeys_SkipsNonGatewayParents pins the filter that
+// strips non-Gateway parentRefs (ListenerSet, future kinds) out of the
+// BackendTLSPolicy Ancestor walk. Without the filter, the subsequent
+// r.Get(&Gateway{}) would 404 on the ListenerSet name and silently drop
+// the entry — masking the leak but leaving noisy reconciles.
+func TestCollectGatewayKeys_SkipsNonGatewayParents(t *testing.T) {
+	t.Parallel()
+
+	listenerSetKind := gatewayv1.Kind("ListenerSet")
+	gatewayKind := gatewayv1.Kind("Gateway")
+
+	httpRoute := httpRouteFor("ns", "r", "gw", "svc")
+	httpRoute.Spec.ParentRefs = []gatewayv1.ParentReference{
+		{Name: gatewayv1.ObjectName("gw"), Kind: &gatewayKind},
+		{Name: gatewayv1.ObjectName("listenerset"), Kind: &listenerSetKind},
+	}
+
+	keys := collectGatewayKeys(
+		[]gatewayv1.HTTPRoute{*httpRoute},
+		nil,
+		map[string]struct{}{"svc": {}},
+	)
+
+	require.Len(t, keys, 1, "non-Gateway parents MUST be filtered out before the Gateway Get")
+	assert.Equal(t, "gw", keys[0].Name)
+	assert.Equal(t, "ns", keys[0].Namespace)
+}
+
 // TestPoliciesForPeerChange_DeletedWinnerEnqueuesLoser pins the deletion
 // recovery path that the For(&BackendTLSPolicy{}) watch alone cannot
 // cover: when the winning sibling is deleted, the loser keeps its
@@ -976,6 +1004,52 @@ func TestSelectPolicyForServicePort_SectionNameMatchesNamedPort(t *testing.T) {
 	winner = selectPolicyForServicePort(context.Background(), fakeClient,
 		[]gatewayv1.BackendTLSPolicy{policy}, "ns", "svc", 80)
 	assert.Nil(t, winner, "SectionName 'https' must NOT match port 80 (named 'http') — multi-port spec invariant")
+}
+
+// TestSelectPolicyForServicePort_ScopedAndUnscopedDoBothApplyAtRuntime
+// pins the runtime-side half of the documented status-vs-runtime
+// SectionName divergence. The status mapper in normalizePolicyTargets
+// treats scoped (SectionName="https") and unscoped policies on the same
+// Service as different scopes per GEP-713, so both get
+// Accepted=True. The runtime selector here walks ALL policies targeting
+// the Service and picks the older one regardless of scope.
+//
+// Concrete consequence pinned by this test: when both a scoped
+// SectionName="https" policy and an unscoped policy target the same
+// Service with a port named "https", the older policy wins for that
+// port at runtime — even if the status mapper considers them
+// non-overlapping. A future refactor that aligns the two layers (either
+// by tightening the runtime selector to prefer scoped on port-name
+// match, or by widening the status mapper to treat the overlap as
+// conflict) MUST update both call sites at once; this test is the
+// runtime anchor.
+func TestSelectPolicyForServicePort_ScopedAndUnscopedDoBothApplyAtRuntime(t *testing.T) {
+	t.Parallel()
+
+	scopedSectionName := gatewayv1.SectionName("https")
+
+	scoped := *backendTLSPolicyFor("ns", "scoped", "svc", "cm", time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC))
+	scoped.Spec.TargetRefs[0].SectionName = &scopedSectionName
+
+	unscoped := *backendTLSPolicyFor("ns", "unscoped", "svc", "cm", time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
+
+	scheme := newBackendTLSPolicyScheme(t)
+	svc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "ns", Name: "svc"},
+		Spec: corev1.ServiceSpec{
+			Ports: []corev1.ServicePort{
+				{Name: "http", Port: 80},
+				{Name: "https", Port: 8443},
+			},
+		},
+	}
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(svc).Build()
+
+	winner := selectPolicyForServicePort(context.Background(), fakeClient,
+		[]gatewayv1.BackendTLSPolicy{scoped, unscoped}, "ns", "svc", 8443)
+	require.NotNil(t, winner, "at runtime, port 8443 (named 'https') overlaps BOTH the scoped and the unscoped policy")
+	assert.Equal(t, "scoped", winner.Name,
+		"older scoped policy wins on the matching named port even though the status mapper considers it a different scope from the unscoped peer")
 }
 
 func TestPolicyTargetsServicePort_KindAliases(t *testing.T) {

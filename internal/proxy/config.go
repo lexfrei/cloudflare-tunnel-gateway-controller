@@ -22,6 +22,13 @@ var (
 	errPathValueRequired = errors.New("path: value is required")
 	errUnknownFilterType = errors.New("unknown filter type")
 	errStaleVersion      = errors.New("stale config version")
+	// errTLSMirrorWithoutTransportFactory is returned by Router.UpdateConfig
+	// when a config carries a RequestMirror filter whose TLS is set but the
+	// Router was never given a TransportFactory via SetHandler. Mirror
+	// filters would otherwise fall back to the global cleartext mirrorClient
+	// and silently bypass the operator's TLS expectation — the exact
+	// regression the per-cert pool integration was added to prevent.
+	errTLSMirrorWithoutTransportFactory = errors.New("config carries TLS-bearing RequestMirror filter but Router has no TransportFactory wired; call Router.SetHandler before UpdateConfig")
 )
 
 // Config is the top-level configuration pushed by the controller.

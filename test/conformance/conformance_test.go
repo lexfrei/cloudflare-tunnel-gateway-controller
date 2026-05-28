@@ -229,15 +229,11 @@ func conformanceSkipTests() []string {
 		// TLS at the edge so HTTPS listeners are not supported (see the
 		// HTTPRouteHTTPSListener skip above) and the parent test would fail on
 		// its first sub-test. The subsequent HTTP sub-tests are covered by the
-		// HTTPRoute_ extended suite.
-		// ConflictResolution, InvalidCACertificateRef, InvalidKind,
-		// ObservedGenerationBump, and SANValidation (both Hostname and URI
-		// types, including OR-matching) are enabled — the controller emits
-		// the conformance-required Reasons (including Conflicted on losing
-		// policies per GEP-713), updates ObservedGeneration on every
-		// reconcile, and the proxy matches DNS Hostname SANs via
-		// VerifyHostname (RFC 6125 wildcards) and URI SANs by exact string
-		// equality against the leaf's URIs.
+		// HTTPRoute_ extended suite. ConflictResolution is newly enabled this
+		// revision — the controller now emits Conflicted on losing policies
+		// per GEP-713 — alongside the previously-enabled
+		// InvalidCACertificateRef / InvalidKind / ObservedGenerationBump /
+		// SANValidation sub-tests.
 		"BackendTLSPolicy",
 
 		// Gateway features not applicable to tunnel architecture.
