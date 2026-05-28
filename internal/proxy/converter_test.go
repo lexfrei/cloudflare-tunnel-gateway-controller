@@ -658,6 +658,83 @@ func TestConvertHTTPRoutes_Mirror_TargetHasBackendTLSPolicy_AttachesTLSConfig(t 
 		"mirror BackendURL MUST flip to https when a policy attaches, got %q", mirror.BackendURL)
 }
 
+// TestConvertHTTPRoutes_Mirror_TargetHasBackendTLSPolicy_StampsGatewayClientCert
+// pins the mirror-mTLS path: when the mirror destination has a matching
+// BackendTLSPolicy AND the parent Gateway carries a clientCertificateRef,
+// the converter stamps the Gateway's client keypair on the mirror's
+// MirrorConfig.TLS the same way it stamps it on a normal backend leg.
+// Without this, the main leg does mTLS but the mirror leg falls back to
+// server-auth TLS only — silently bypassing the operator's mTLS intent
+// on the mirror copy, which the docs and PR title both claim is at
+// parity with the main leg.
+func TestConvertHTTPRoutes_Mirror_TargetHasBackendTLSPolicy_StampsGatewayClientCert(t *testing.T) {
+	pathPrefix := gatewayv1.PathMatchPathPrefix
+	port := gatewayv1.PortNumber(443)
+
+	routes := []*gatewayv1.HTTPRoute{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "mirror-route", Namespace: "default"},
+			Spec: gatewayv1.HTTPRouteSpec{
+				CommonRouteSpec: gatewayv1.CommonRouteSpec{
+					ParentRefs: []gatewayv1.ParentReference{{Name: gatewayv1.ObjectName("gw")}},
+				},
+				Hostnames: []gatewayv1.Hostname{"app.example.com"},
+				Rules: []gatewayv1.HTTPRouteRule{
+					{
+						Matches: []gatewayv1.HTTPRouteMatch{
+							{Path: &gatewayv1.HTTPPathMatch{Type: &pathPrefix, Value: new("/")}},
+						},
+						Filters: []gatewayv1.HTTPRouteFilter{
+							{
+								Type: gatewayv1.HTTPRouteFilterRequestMirror,
+								RequestMirror: &gatewayv1.HTTPRequestMirrorFilter{
+									BackendRef: gatewayv1.BackendObjectReference{
+										Name: "mirror-target",
+										Port: &port,
+									},
+								},
+							},
+						},
+						BackendRefs: []gatewayv1.HTTPBackendRef{backendRef("primary", 80, 1)},
+					},
+				},
+			},
+		},
+	}
+
+	tlsResolver := func(_ context.Context, _, serviceName string, _ int32) *proxy.BackendTLSConfig {
+		if serviceName == "mirror-target" {
+			return &proxy.BackendTLSConfig{
+				CABundlePEM: "-----BEGIN CERTIFICATE-----\nQUFBQQ==\n-----END CERTIFICATE-----\n",
+				ServerName:  "mirror-target.default.svc.cluster.local",
+			}
+		}
+
+		return nil
+	}
+
+	clientCertPEM := []byte("-----BEGIN CERTIFICATE-----\nCLIENT-CERT\n-----END CERTIFICATE-----\n")
+	clientKeyPEM := []byte("-----BEGIN PRIVATE KEY-----\nCLIENT-KEY\n-----END PRIVATE KEY-----\n")
+	certResolver := func(_ context.Context, gw ktypes.NamespacedName) *proxy.ClientCertConfig {
+		if gw.Namespace == "default" && gw.Name == "gw" {
+			return &proxy.ClientCertConfig{CertPEM: clientCertPEM, KeyPEM: clientKeyPEM}
+		}
+
+		return nil
+	}
+
+	cfg := proxy.ConvertHTTPRoutes(context.Background(), routes, "cluster.local", nil, nil, tlsResolver, certResolver)
+
+	require.Len(t, cfg.Rules, 1)
+	require.Len(t, cfg.Rules[0].Filters, 1)
+	mirror := cfg.Rules[0].Filters[0].RequestMirror
+	require.NotNil(t, mirror, "RequestMirror filter MUST be emitted")
+	require.NotNil(t, mirror.TLS, "BackendTLSPolicy on mirror target MUST be stamped on MirrorConfig.TLS")
+	assert.Equal(t, clientCertPEM, mirror.TLS.ClientCertPEM,
+		"parent Gateway's clientCertificateRef MUST be stamped on the mirror leg's TLS config — main leg does mTLS, mirror MUST do mTLS too")
+	assert.Equal(t, clientKeyPEM, mirror.TLS.ClientKeyPEM)
+}
+
 // TestConvertHTTPRoutes_BackendTLSPolicy_OverridesH2C verifies the docs claim
 // that when both `appProtocol: kubernetes.io/h2c` and a BackendTLSPolicy
 // target the same Service, TLS wins: the URL stays https://, the TLS config
