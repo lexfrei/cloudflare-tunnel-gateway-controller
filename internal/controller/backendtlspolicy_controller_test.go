@@ -504,6 +504,44 @@ func TestComputeConditions_URISANAccepted(t *testing.T) {
 	assert.Equal(t, int64(7), conditions[0].ObservedGeneration)
 }
 
+// ---- computeConditions: GEP-713 conflict resolution ----
+
+// TestComputeConditions_LoserStampedConflicted pins GEP-713 semantics:
+// when two BackendTLSPolicies target the same Service, the policy with the
+// older creationTimestamp wins (Accepted=True) and the newer one is stamped
+// Accepted=False, Reason=Conflicted, with a Message naming the winner so
+// operators can find the conflicting policy without grepping the whole
+// namespace.
+func TestComputeConditions_LoserStampedConflicted(t *testing.T) {
+	t.Parallel()
+
+	scheme := newBackendTLSPolicyScheme(t)
+	configMap := caConfigMap("ns", "cm", generateSelfSignedCAPEM(t))
+	winner := backendTLSPolicyFor("ns", "winner", "svc", "cm", time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC))
+	loser := backendTLSPolicyFor("ns", "loser", "svc", "cm", time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(configMap, winner, loser).
+		Build()
+	r := &BackendTLSPolicyReconciler{Client: fakeClient, Scheme: scheme, ControllerName: "test"}
+
+	loserConds := r.computeConditions(context.Background(), loser)
+	require.Len(t, loserConds, 2)
+
+	accepted := findCondition(loserConds, string(gatewayv1.PolicyConditionAccepted))
+	require.NotNil(t, accepted, "Accepted condition must be present on the losing policy")
+	assert.Equal(t, metav1.ConditionFalse, accepted.Status, "loser MUST be Accepted=False")
+	assert.Equal(t, string(gatewayv1.PolicyReasonConflicted), accepted.Reason)
+	assert.Contains(t, accepted.Message, "ns/winner",
+		"Conflicted Message must name the winner so operators can locate the conflict")
+
+	winnerConds := r.computeConditions(context.Background(), winner)
+	winnerAccepted := findCondition(winnerConds, string(gatewayv1.PolicyConditionAccepted))
+	require.NotNil(t, winnerAccepted)
+	assert.Equal(t, metav1.ConditionTrue, winnerAccepted.Status, "older policy must remain Accepted=True")
+}
+
 // ---- selectPolicyForService / isPolicyOlder / policyTargetsService ----
 
 // alwaysEmptyPortName is a resolvePortName stub for tests where SectionName
