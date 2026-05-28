@@ -811,6 +811,15 @@ func (r *BackendTLSPolicyReconciler) SetupWithManager(mgr ctrl.Manager) error {
 // status when its winner appears or disappears. Update events are also
 // covered so a peer's creationTimestamp change (rare, but possible via
 // an admin re-create) re-evaluates precedence.
+//
+// Cost: O(N) per call (one List + one walk of N peers, each peer's
+// normalizePolicyTargets is O(targetRefs)), and the resulting enqueues
+// each run a full Reconcile that internally is O(N). Worst-case O(N^2)
+// reconciles per policy mutation in a namespace where every policy
+// targets overlapping Services. Acceptable for realistic N (a single
+// Gateway / Cloudflare account rarely fronts hundreds of policies in
+// one namespace); call out here so a future maintainer hitting this in
+// a profile knows the trade-off was deliberate.
 func (r *BackendTLSPolicyReconciler) policiesForPeerChange(ctx context.Context, obj client.Object) []reconcile.Request {
 	changed, ok := obj.(*gatewayv1.BackendTLSPolicy)
 	if !ok {
@@ -935,6 +944,9 @@ func (r *BackendTLSPolicyReconciler) policiesForRouteChange(ctx context.Context,
 
 	var policies gatewayv1.BackendTLSPolicyList
 	if err := r.List(ctx, &policies, client.InNamespace(route.Namespace)); err != nil {
+		log.FromContext(ctx).Error(err, "list BackendTLSPolicies for HTTPRoute change failed; enqueue skipped, next reconcile from another source recovers",
+			"namespace", route.Namespace, "route", route.Name)
+
 		return nil
 	}
 
@@ -974,6 +986,9 @@ func (r *BackendTLSPolicyReconciler) policiesForGRPCRouteChange(ctx context.Cont
 
 	var policies gatewayv1.BackendTLSPolicyList
 	if err := r.List(ctx, &policies, client.InNamespace(route.Namespace)); err != nil {
+		log.FromContext(ctx).Error(err, "list BackendTLSPolicies for GRPCRoute change failed; enqueue skipped, next reconcile from another source recovers",
+			"namespace", route.Namespace, "route", route.Name)
+
 		return nil
 	}
 
