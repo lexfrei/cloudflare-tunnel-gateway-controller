@@ -44,6 +44,10 @@ spec:
               value: ":{{ .Values.proxy.configAPIPort }}"
             - name: PROXY_ADDR
               value: ":{{ .Values.proxy.proxyPort }}"
+            {{- with .Values.proxy.tunnel.protocol }}
+            - name: PROXY_TUNNEL_PROTOCOL
+              value: {{ . | quote }}
+            {{- end }}
             {{- if .Values.proxy.authTokenSecretRef.name }}
             - name: PROXY_AUTH_TOKEN
               valueFrom:

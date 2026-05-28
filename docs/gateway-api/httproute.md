@@ -126,7 +126,7 @@ spec:
 
 ## Backend Selection with Weights
 
-When multiple backends are specified, the backend with the highest weight is selected:
+When multiple backends are specified, traffic is split across them in proportion to their weights:
 
 ```yaml
 apiVersion: gateway.networking.k8s.io/v1
@@ -141,14 +141,14 @@ spec:
     - app.example.com
   rules:
     - backendRefs:
-        # Backend with highest weight is selected
+        # Traffic is split proportionally by weight
         - name: primary-service
           port: 80
           weight: 80
         - name: fallback-service
           port: 80
           weight: 20
-        # primary-service is selected (weight 80 > 20)
+        # ~80% to primary-service, ~20% to fallback-service
 ```
 
 !!! note "Traffic splitting"

@@ -73,49 +73,21 @@ The controller sorts paths to ensure consistent behavior:
 
 This ensures predictable routing despite Cloudflare's limitations.
 
-## GRPCRoute is not supported in v3
-
-The L7 proxy is the only data plane in v3 (the vendored cloudflared fork's `OverrideProxy` hook is always wired to it), and the proxy converter does not yet implement gRPC-specific route matching. As a consequence, gRPC traffic that flows through the tunnel reaches the proxy without a matching routing rule and returns `404 no matching route`.
-
-The controller continues to accept GRPCRoute resources and pushes a Cloudflare-side ingress config for them via `internal/ingress/grpc_builder.go`, but those edge-side rules are **not consulted at runtime in v3** — they exist only so the Cloudflare dashboard shows the expected hostname → service mapping.
-
-**v2 → v3 impact.** Users on v2 with `proxy.enabled: false` (the v2 default) had working GRPCRoute via cloudflared's native ingress. v3 removes that path. If you have any GRPCRoute resources today, migrate them to HTTPRoute before upgrading, or stay on the v2.x chart line until the proxy converter learns gRPC.
-
-GRPCRoute support inside the proxy converter is on the v3.x roadmap; the regression is intentional and documented rather than promised on a specific timeline.
-
 ## Controller Limitations
 
 | Limitation | Description |
 |------------|-------------|
-| Single backend | Only highest-weight `backendRef` is used per rule |
 | Full sync | Any change triggers full config sync |
 | No cross-cluster | Only in-cluster services supported |
 | Service only | Only `Service` kind backends (ClusterIP, NodePort, LoadBalancer, ExternalName) |
 
 ## Traffic Splitting and Load Balancing
 
-**Design Decision:** This controller intentionally does not implement traffic splitting or weighted load balancing between multiple backends.
+The in-process L7 proxy performs weighted traffic splitting across the `backendRefs` of a rule, for both HTTPRoute and GRPCRoute. Each backend's `weight` is honoured by a weighted-random selection at request time: traffic is distributed in proportion to the weights, and a backend with `weight: 0` receives no traffic (a rule whose backends all have weight 0 serves nothing).
 
-### Why No Traffic Splitting?
+This is the v3 behaviour. In the v1/v2 native-tunnel path, Cloudflare Tunnel ingress rules accepted only a single service URL per rule, so the controller forwarded 100% of traffic to the highest-weight backend and weighted splitting required an external load balancer. v3 renders the proxy unconditionally, so splitting works without one.
 
-Cloudflare Tunnel ingress rules accept only a single service URL per rule. To support Gateway API's `backendRefs` with weights, the controller would need to:
-
-1. Create and manage intermediate Kubernetes Services
-2. Watch and synchronize Endpoints from all referenced services
-3. Handle cross-namespace references and RBAC
-4. Manage lifecycle of controller-created resources
-
-This approach introduces significant complexity, potential for orphaned resources, and creates an opaque traffic path that is difficult for users to debug.
-
-### Our Approach
-
-Provide the tunnel a single, stable entrypoint. The controller selects the backend with the highest weight and sends 100% of traffic to it.
-
-### Workarounds
-
-**Between pods of the same Deployment:**
-
-Use a standard Kubernetes Service (built-in round-robin load balancing):
+For plain round-robin between pods of one Deployment, a standard Kubernetes `Service` is still the simplest option — point the route at the Service and let kube-proxy balance:
 
 ```yaml
 apiVersion: v1
@@ -128,27 +100,6 @@ spec:
   ports:
     - port: 80
       targetPort: 8080
-```
-
-**Weighted traffic splitting or canary:**
-
-Deploy a dedicated load balancer (Traefik, Envoy, Nginx, HAProxy) and point the HTTPRoute to it:
-
-```yaml
-apiVersion: gateway.networking.k8s.io/v1
-kind: HTTPRoute
-metadata:
-  name: my-app
-spec:
-  parentRefs:
-    - name: cloudflare-tunnel
-      namespace: cloudflare-tunnel-system
-  hostnames:
-    - app.example.com
-  rules:
-    - backendRefs:
-        - name: traefik  # Traefik handles weighted routing internally
-          port: 80
 ```
 
 This keeps the controller simple and predictable, and gives you full control over load balancing behavior.
@@ -257,6 +208,14 @@ When a `BackendTLSPolicy` targets a Service but cannot be enforced — the CA `C
 ### Interaction with `appProtocol: kubernetes.io/h2c`
 
 When a backend Service carries both `appProtocol: kubernetes.io/h2c` AND a `BackendTLSPolicy` targets it, the policy wins: the proxy dials TLS (HTTPS, with HTTP/2 negotiated via ALPN). h2c is by definition cleartext HTTP/2 and cannot coexist with backend TLS; the h2c marker is silently ignored on that hop. If you genuinely want HTTP/2 over TLS, omit the `appProtocol` hint and let ALPN negotiate it during the handshake.
+
+### gRPC requires the tunnel transport protocol `http2`
+
+cloudflared does not forward HTTP trailers over QUIC (its default transport): the QUIC response adapter's `AddTrailer` is a no-op. gRPC carries the mandatory `grpc-status` in a trailer, so over a QUIC tunnel that trailer is dropped at the edge and every gRPC call fails with `server closed the stream without sending trailers`. Set `proxy.tunnel.protocol: http2` (Helm value) so the tunnel negotiates HTTP/2, where trailers are forwarded. The controller logs an error when GRPCRoutes are present while the tunnel is not on `http2`. This is a cloudflared/Cloudflare limitation, not a controller bug. Separately, gRPC must be enabled on the Cloudflare zone (dashboard Network → gRPC); without it the edge returns 403 zone-wide for `content-type: application/grpc`.
+
+### gRPC backends are always cleartext h2c
+
+Unlike HTTPRoute backends, the upstream hop to a GRPCRoute backend is unconditionally cleartext h2c. A `BackendTLSPolicy` targeting a gRPC backend Service and the Gateway's `spec.tls.backend.clientCertificateRef` are NOT applied to gRPC traffic in this revision — and, unlike the h2c-vs-TLS collision above, no WARN is logged. If a gRPC backend requires TLS, terminate it in front of the Service and route to the cleartext side. Honoring backend TLS for gRPC is a tracked follow-up.
 
 ### Gateway client cert rotation has a propagation lag
 

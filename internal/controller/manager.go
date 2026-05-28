@@ -78,6 +78,11 @@ type Config struct {
 	// When set, the controller includes "Authorization: Bearer <token>" in push requests.
 	ProxyAuthToken string
 
+	// TunnelProtocol is the proxy's configured edge transport (auto|http2|quic).
+	// Used only to warn when GRPCRoutes are served over a non-http2 tunnel,
+	// where cloudflared drops the grpc-status trailer.
+	TunnelProtocol string
+
 	// ProxyTokenSecret identifies the Secret holding the tunnel token used by
 	// the proxy. Format: "<namespace>/<name>". When set, the controller
 	// watches the named Secret and patches the proxy Deployment's pod
@@ -212,6 +217,9 @@ func Run(ctx context.Context, cfg *Config) error {
 		Scheme:         mgr.GetScheme(),
 		ControllerName: cfg.ControllerName,
 		RouteSyncer:    routeSyncer,
+		ProxySyncer:    proxySyncer,
+		ProxyEndpoints: proxyEndpoints,
+		TunnelProtocol: cfg.TunnelProtocol,
 	}
 
 	if err := grpcRouteReconciler.SetupWithManager(mgr); err != nil {

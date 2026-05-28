@@ -637,3 +637,21 @@ tests:
         contains:
           path: spec.template.spec.containers[0].args
           content: "--proxy-token-secret=cloudflare-tunnel-system/cloudflare-tunnel-token"
+
+  - it: should pass --tunnel-protocol to the controller
+    set:
+      proxy:
+        tunnel:
+          protocol: http2
+    asserts:
+      - template: deployment.yaml
+        contains:
+          path: spec.template.spec.containers[0].args
+          content: "--tunnel-protocol=http2"
+
+  - it: should default --tunnel-protocol to auto
+    asserts:
+      - template: deployment.yaml
+        contains:
+          path: spec.template.spec.containers[0].args
+          content: "--tunnel-protocol=auto"

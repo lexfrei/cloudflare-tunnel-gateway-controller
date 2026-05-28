@@ -209,7 +209,7 @@ func TestBuildProtocolAndClient_Success(t *testing.T) {
 	token := newTestToken()
 	zlog := newZerologLogger()
 
-	selector, tunnelCfg, err := buildProtocolAndClient(t.Context(), token, &zlog)
+	selector, tunnelCfg, err := buildProtocolAndClient(t.Context(), token, connection.AutoSelectFlag, &zlog)
 
 	require.NoError(t, err)
 	assert.NotNil(t, selector)
@@ -229,7 +229,7 @@ func TestBuildProtocolAndClient_TokenEndpointPassedThrough(t *testing.T) {
 	token.Endpoint = "us"
 	zlog := newZerologLogger()
 
-	_, tunnelCfg, err := buildProtocolAndClient(t.Context(), token, &zlog)
+	_, tunnelCfg, err := buildProtocolAndClient(t.Context(), token, connection.AutoSelectFlag, &zlog)
 
 	require.NoError(t, err)
 	assert.Equal(t, "us", tunnelCfg.Region)
@@ -241,7 +241,7 @@ func TestBuildProtocolAndClient_QUICFlowControl(t *testing.T) {
 	token := newTestToken()
 	zlog := newZerologLogger()
 
-	_, tunnelCfg, err := buildProtocolAndClient(t.Context(), token, &zlog)
+	_, tunnelCfg, err := buildProtocolAndClient(t.Context(), token, connection.AutoSelectFlag, &zlog)
 
 	require.NoError(t, err)
 	assert.Equal(t, uint64(defaultQUICFlowControlConn), tunnelCfg.QUICConnectionLevelFlowControlLimit)
@@ -254,7 +254,7 @@ func TestBuildProtocolAndClient_CloseConnOnce(t *testing.T) {
 	token := newTestToken()
 	zlog := newZerologLogger()
 
-	_, tunnelCfg, err := buildProtocolAndClient(t.Context(), token, &zlog)
+	_, tunnelCfg, err := buildProtocolAndClient(t.Context(), token, connection.AutoSelectFlag, &zlog)
 
 	require.NoError(t, err)
 	assert.NotNil(t, tunnelCfg.CloseConnOnce, "CloseConnOnce must be initialized")
@@ -268,7 +268,7 @@ func TestBuildTunnelConfig_InvalidProxyURL(t *testing.T) {
 	token := newTestToken()
 	zlog := newZerologLogger()
 
-	_, _, err := buildTunnelConfig(t.Context(), token, "", &zlog)
+	_, _, err := buildTunnelConfig(t.Context(), token, "", connection.AutoSelectFlag, &zlog)
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "ingress")
@@ -539,7 +539,7 @@ func TestBuildTunnelConfig_EmptyProxyURL_ErrorMessage(t *testing.T) {
 	token := newTestToken()
 	zlog := newZerologLogger()
 
-	_, _, err := buildTunnelConfig(t.Context(), token, "", &zlog)
+	_, _, err := buildTunnelConfig(t.Context(), token, "", connection.AutoSelectFlag, &zlog)
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "build ingress rules")
@@ -559,7 +559,7 @@ func TestBuildProtocolAndClient_CancelledContext(t *testing.T) {
 
 	// buildProtocolAndClient may or may not error on cancelled context
 	// (depends on cloudflared internals). We verify it does not panic.
-	selector, tunnelCfg, err := buildProtocolAndClient(ctx, token, &zlog)
+	selector, tunnelCfg, err := buildProtocolAndClient(ctx, token, connection.AutoSelectFlag, &zlog)
 	if err != nil {
 		assert.Nil(t, selector)
 		assert.Nil(t, tunnelCfg)
@@ -577,7 +577,7 @@ func TestBuildProtocolAndClient_LogAndTransportFields(t *testing.T) {
 	token := newTestToken()
 	zlog := newZerologLogger()
 
-	_, tunnelCfg, err := buildProtocolAndClient(t.Context(), token, &zlog)
+	_, tunnelCfg, err := buildProtocolAndClient(t.Context(), token, connection.AutoSelectFlag, &zlog)
 
 	require.NoError(t, err)
 	assert.NotNil(t, tunnelCfg.Log, "Log field should be set")
@@ -592,7 +592,7 @@ func TestBuildProtocolAndClient_MaxEdgeAddrRetries(t *testing.T) {
 	token := newTestToken()
 	zlog := newZerologLogger()
 
-	_, tunnelCfg, err := buildProtocolAndClient(t.Context(), token, &zlog)
+	_, tunnelCfg, err := buildProtocolAndClient(t.Context(), token, connection.AutoSelectFlag, &zlog)
 
 	require.NoError(t, err)
 	assert.Equal(t, uint8(defaultMaxEdgeAddrRetries), tunnelCfg.MaxEdgeAddrRetries)
@@ -605,7 +605,7 @@ func TestBuildProtocolAndClient_ClientConfig(t *testing.T) {
 	token := newTestToken()
 	zlog := newZerologLogger()
 
-	_, tunnelCfg, err := buildProtocolAndClient(t.Context(), token, &zlog)
+	_, tunnelCfg, err := buildProtocolAndClient(t.Context(), token, connection.AutoSelectFlag, &zlog)
 
 	require.NoError(t, err)
 	assert.NotNil(t, tunnelCfg.ClientConfig, "ClientConfig should be set")
@@ -724,7 +724,7 @@ func TestBuildTunnelConfig_SuccessPath(t *testing.T) {
 	zlog := newZerologLogger()
 
 	withFreshRegisterer(func() {
-		tunnelCfg, orchCfg, err := buildTunnelConfig(t.Context(), token, "http://localhost:8080", &zlog)
+		tunnelCfg, orchCfg, err := buildTunnelConfig(t.Context(), token, "http://localhost:8080", connection.AutoSelectFlag, &zlog)
 
 		require.NoError(t, err)
 		require.NotNil(t, tunnelCfg)
@@ -852,4 +852,39 @@ func TestOrchestratorHasOverrideProxy(t *testing.T) {
 	// This test merely exercises the field to catch re-vendoring.
 	var orch orchestration.Orchestrator
 	_ = orch.OverrideProxy
+}
+
+func TestResolveProtocolFlag(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		in      string
+		want    string
+		wantErr bool
+	}{
+		{name: "empty defaults to auto", in: "", want: connection.AutoSelectFlag},
+		{name: "auto", in: "auto", want: connection.AutoSelectFlag},
+		{name: "http2", in: "http2", want: connection.HTTP2.String()},
+		{name: "quic", in: "quic", want: connection.QUIC.String()},
+		{name: "case-insensitive", in: "HTTP2", want: connection.HTTP2.String()},
+		{name: "surrounding space", in: "  quic  ", want: connection.QUIC.String()},
+		{name: "invalid", in: "h3", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := resolveProtocolFlag(tt.in)
+			if tt.wantErr {
+				require.Error(t, err)
+
+				return
+			}
+
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
 }

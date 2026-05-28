@@ -32,6 +32,8 @@ import (
 //
 // The function never mutates the input routes; each output element is a
 // fresh shallow copy whose Spec.Hostnames slice has been replaced.
+//
+//nolint:dupl // mirrored on purpose against withEffectiveHostnamesGRPC; the concrete HTTPRoute/GRPCRoute clone types prevent a clean generic.
 func withEffectiveHostnames(
 	ctx context.Context,
 	cli client.Client,
@@ -51,7 +53,50 @@ func withEffectiveHostnames(
 			continue
 		}
 
-		parentHostnames := collectAcceptedListenerHostnames(ctx, cli, validator, route)
+		parentHostnames := collectAcceptedListenerHostnames(ctx, cli, validator, HTTPRouteWrapper{route})
+		if len(parentHostnames) == 0 {
+			out[i] = route
+
+			continue
+		}
+
+		clone := *route
+		clone.Spec.Hostnames = parentHostnames
+		out[i] = &clone
+	}
+
+	return out
+}
+
+// withEffectiveHostnamesGRPC is the GRPCRoute counterpart of
+// withEffectiveHostnames. The Gateway API applies the same listener-hostname
+// inheritance to GRPCRoute as to HTTPRoute: a gRPC route with empty
+// spec.hostnames bound to a listener carrying a hostname must serve only that
+// hostname, not become a catch-all. The shared core
+// (collectAcceptedListenerHostnames) operates on the Route interface, so only
+// the slice type and the clone step differ from the HTTP path.
+//
+//nolint:dupl // mirrored on purpose against withEffectiveHostnames; the concrete HTTPRoute/GRPCRoute clone types prevent a clean generic.
+func withEffectiveHostnamesGRPC(
+	ctx context.Context,
+	cli client.Client,
+	routes []*gatewayv1.GRPCRoute,
+) []*gatewayv1.GRPCRoute {
+	if len(routes) == 0 {
+		return routes
+	}
+
+	validator := routebinding.NewValidator(cli)
+	out := make([]*gatewayv1.GRPCRoute, len(routes))
+
+	for i, route := range routes {
+		if len(route.Spec.Hostnames) > 0 {
+			out[i] = route
+
+			continue
+		}
+
+		parentHostnames := collectAcceptedListenerHostnames(ctx, cli, validator, GRPCRouteWrapper{route})
 		if len(parentHostnames) == 0 {
 			out[i] = route
 
@@ -75,7 +120,7 @@ func collectAcceptedListenerHostnames(
 	ctx context.Context,
 	cli client.Client,
 	validator *routebinding.Validator,
-	route *gatewayv1.HTTPRoute,
+	route Route,
 ) []gatewayv1.Hostname {
 	seen := make(map[gatewayv1.Hostname]struct{})
 
@@ -94,7 +139,7 @@ func collectAcceptedListenerHostnames(
 		out = append(out, hostname)
 	}
 
-	for _, ref := range route.Spec.ParentRefs {
+	for _, ref := range route.GetParentRefs() {
 		for _, hostname := range acceptedHostnamesForParentRef(ctx, cli, validator, route, ref) {
 			add(hostname)
 		}
@@ -107,7 +152,7 @@ func acceptedHostnamesForParentRef(
 	ctx context.Context,
 	cli client.Client,
 	validator *routebinding.Validator,
-	route *gatewayv1.HTTPRoute,
+	route Route,
 	ref gatewayv1.ParentReference,
 ) []gatewayv1.Hostname {
 	if ref.Group != nil && string(*ref.Group) != "" && string(*ref.Group) != gatewayv1.GroupName {
@@ -119,16 +164,16 @@ func acceptedHostnamesForParentRef(
 		kind = string(*ref.Kind)
 	}
 
-	namespace := route.Namespace
+	namespace := route.GetNamespace()
 	if ref.Namespace != nil {
 		namespace = string(*ref.Namespace)
 	}
 
 	routeInfo := &routebinding.RouteInfo{
-		Name:        route.Name,
-		Namespace:   route.Namespace,
+		Name:        route.GetName(),
+		Namespace:   route.GetNamespace(),
 		Hostnames:   nil, // empty by definition — that's why we're inheriting
-		Kind:        routebinding.KindHTTPRoute,
+		Kind:        route.GetRouteKind(),
 		SectionName: ref.SectionName,
 		Port:        ref.Port,
 	}

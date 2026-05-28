@@ -293,6 +293,13 @@ proxy:
   configAPIPort: 8081
   # -- Proxy port (internal, traffic arrives through tunnel)
   proxyPort: 8080
+  # -- Tunnel transport settings.
+  tunnel:
+    # -- Edge transport protocol: "auto" (QUIC with HTTP/2 fallback), "http2",
+    # or "quic". GRPCRoute requires "http2" — cloudflared does not forward HTTP
+    # trailers over QUIC, so grpc-status is dropped and gRPC calls fail. Leave
+    # "auto" unless you serve gRPC.
+    protocol: auto
   # -- Reference to Secret containing auth token for proxy config API.
   # When set, both controller and proxy use this token for authenticated config push.
   authTokenSecretRef:
