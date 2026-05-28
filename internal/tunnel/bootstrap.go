@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -50,6 +51,7 @@ var (
 	errMissingTunnelID  = errors.New("tunnel token missing tunnel ID")
 	errMissingSecret    = errors.New("tunnel token missing tunnel secret")
 	errUnknownTLS       = errors.New("unknown TLS settings for protocol")
+	errUnknownProtocol  = errors.New("unknown tunnel protocol (want auto, http2, or quic)")
 )
 
 // Config holds the configuration for starting a cloudflared tunnel.
@@ -65,6 +67,10 @@ type Config struct {
 	// When set, traffic is routed directly to this proxy without HTTP serialization.
 	// The ProxyURL field is ignored and a placeholder is used for orchestrator initialization.
 	OriginProxy connection.OriginProxy
+	// Protocol selects the edge transport: "" / "auto" (QUIC with HTTP/2
+	// fallback), "http2", or "quic". gRPC requires "http2" because cloudflared
+	// does not forward HTTP trailers over QUIC (grpc-status is dropped).
+	Protocol string
 }
 
 // Token mirrors the cloudflared token JSON structure.
@@ -177,7 +183,7 @@ func buildOrchestrator(
 		proxyURL = "http://localhost:0"
 	}
 
-	tunnelCfg, orchestratorCfg, err := buildTunnelConfig(ctx, token, proxyURL, &zlog)
+	tunnelCfg, orchestratorCfg, err := buildTunnelConfig(ctx, token, proxyURL, cfg.Protocol, &zlog)
 	if err != nil {
 		return nil, nil, errors.Wrap(err, "build tunnel config")
 	}
@@ -206,6 +212,7 @@ func buildTunnelConfig(
 	ctx context.Context,
 	token *Token,
 	proxyURL string,
+	protocol string,
 	zlog *zerolog.Logger,
 ) (*supervisor.TunnelConfig, *orchestration.Config, error) {
 	edgeTLSConfigs, err := buildEdgeTLSConfigs()
@@ -213,7 +220,7 @@ func buildTunnelConfig(
 		return nil, nil, errors.Wrap(err, "build edge TLS configs")
 	}
 
-	protocolSelector, tunnelCfg, err := buildProtocolAndClient(ctx, token, zlog)
+	protocolSelector, tunnelCfg, err := buildProtocolAndClient(ctx, token, protocol, zlog)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -255,13 +262,36 @@ func buildTunnelConfig(
 	return tunnelCfg, orchestratorCfg, nil
 }
 
+// resolveProtocolFlag maps the operator-facing protocol value onto the
+// cloudflared protocol-selector flag. "" and "auto" keep cloudflared's default
+// (QUIC with HTTP/2 fallback); "http2" and "quic" pin a single transport. gRPC
+// requires "http2" — cloudflared does not forward HTTP trailers over QUIC.
+func resolveProtocolFlag(protocol string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(protocol)) {
+	case "", connection.AutoSelectFlag:
+		return connection.AutoSelectFlag, nil
+	case connection.HTTP2.String():
+		return connection.HTTP2.String(), nil
+	case connection.QUIC.String():
+		return connection.QUIC.String(), nil
+	default:
+		return "", errors.Wrapf(errUnknownProtocol, "%q", protocol)
+	}
+}
+
 func buildProtocolAndClient(
 	ctx context.Context,
 	token *Token,
+	protocol string,
 	zlog *zerolog.Logger,
 ) (connection.ProtocolSelector, *supervisor.TunnelConfig, error) {
+	protocolFlag, err := resolveProtocolFlag(protocol)
+	if err != nil {
+		return nil, nil, err
+	}
+
 	protocolSelector, err := connection.NewProtocolSelector(
-		connection.AutoSelectFlag,
+		protocolFlag,
 		token.AccountTag,
 		true, // tunnelTokenProvided
 		edgediscovery.ProtocolPercentage,

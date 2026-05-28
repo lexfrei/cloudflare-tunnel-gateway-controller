@@ -560,6 +560,16 @@
           "maximum": 65535,
           "default": 8080
         },
+        "tunnel": {
+          "type": "object",
+          "properties": {
+            "protocol": {
+              "type": "string",
+              "enum": ["auto", "http2", "quic"],
+              "default": "auto"
+            }
+          }
+        },
         "tunnelTokenSecretRef": {
           "type": "object",
           "description": "Reference to Secret containing tunnel token",

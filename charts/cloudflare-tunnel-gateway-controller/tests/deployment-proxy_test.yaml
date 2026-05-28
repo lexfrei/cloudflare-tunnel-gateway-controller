@@ -295,3 +295,29 @@ tests:
           content:
             name: PROXY_ACCESS_LOG_STRIP_QUERY
             value: "true"
+
+  - it: should set PROXY_TUNNEL_PROTOCOL when proxy.tunnel.protocol is http2
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
+        tunnel:
+          protocol: http2
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: PROXY_TUNNEL_PROTOCOL
+            value: "http2"
+
+  - it: should default PROXY_TUNNEL_PROTOCOL to auto
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: PROXY_TUNNEL_PROTOCOL
+            value: "auto"

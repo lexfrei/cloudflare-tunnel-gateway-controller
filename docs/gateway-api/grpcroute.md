@@ -2,6 +2,10 @@
 
 GRPCRoute enables routing gRPC traffic through Cloudflare Tunnel with service and method-level matching. It is served by the in-process L7 proxy: gRPC requests are HTTP/2 POSTs to `/{service}/{method}`, which the proxy matches with its path matcher; the upstream hop to the backend is forced to h2c (cleartext HTTP/2).
 
+!!! danger "gRPC requires the tunnel transport protocol `http2`"
+
+    Set `proxy.tunnel.protocol: http2` in your Helm values. cloudflared does **not** forward HTTP trailers over QUIC (its default transport), and gRPC carries the mandatory `grpc-status` in a trailer. Over a QUIC tunnel the trailer is dropped at the edge and every gRPC call fails with `server closed the stream without sending trailers`. This is a cloudflared/Cloudflare limitation, not a controller bug. The controller logs an error when it sees GRPCRoutes while the tunnel is not on `http2`. Also enable gRPC on the Cloudflare zone (Network → gRPC), or the edge returns 403 for `application/grpc` requests.
+
 ## Basic Example
 
 ```yaml

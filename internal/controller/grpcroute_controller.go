@@ -2,6 +2,8 @@ package controller
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"sync/atomic"
 
 	"k8s.io/apimachinery/pkg/runtime"
@@ -15,6 +17,30 @@ import (
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/logging"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/routebinding"
 )
+
+// grpcProtocolWarning returns an operator-facing message (and true) when
+// GRPCRoutes are configured but the tunnel transport protocol is not http2.
+// cloudflared does not forward HTTP trailers over QUIC, so grpc-status never
+// reaches the client and every gRPC call fails. This is a cloudflared/Cloudflare
+// limitation, not a controller bug. Returns ("", false) when there is nothing
+// to warn about.
+func grpcProtocolWarning(protocol string, grpcRouteCount int) (string, bool) {
+	if grpcRouteCount == 0 {
+		return "", false
+	}
+
+	if strings.EqualFold(strings.TrimSpace(protocol), "http2") {
+		return "", false
+	}
+
+	return fmt.Sprintf(
+		"%d GRPCRoute(s) configured but the tunnel transport protocol is %q, not http2: "+
+			"cloudflared does not forward HTTP trailers over QUIC, so grpc-status is dropped at the "+
+			"edge and every gRPC call fails with \"server closed the stream without sending trailers\". "+
+			"Set proxy.tunnel.protocol=http2. This is a cloudflared/Cloudflare limitation, not on our side.",
+		grpcRouteCount, protocol,
+	), true
+}
 
 // GRPCRouteReconciler reconciles GRPCRoute resources, synchronizing them to
 // both the Cloudflare Tunnel ingress configuration and the in-process L7
@@ -47,6 +73,11 @@ type GRPCRouteReconciler struct {
 	// ProxyEndpoints is the list of L7 proxy config-API URLs to push to.
 	ProxyEndpoints []string
 
+	// TunnelProtocol is the configured edge transport (auto|http2|quic). Used
+	// to warn when GRPCRoutes are served over a non-http2 tunnel, where
+	// cloudflared drops the grpc-status trailer.
+	TunnelProtocol string
+
 	// bindingValidator validates route binding to Gateway listeners.
 	bindingValidator *routebinding.Validator
 
@@ -74,7 +105,8 @@ func (r *GRPCRouteReconciler) syncAndUpdateStatus(ctx context.Context) (ctrl.Res
 		// gRPC traffic routes through the in-process proxy. The push rebuilds
 		// from the full SyncResult, so a gRPC-only change still re-pushes every
 		// route — same model as the HTTPRoute reconciler.
-		pushProxy: true,
+		pushProxy:      true,
+		tunnelProtocol: r.TunnelProtocol,
 		statusEntries: func(sr *SyncResult) []routeStatusEntry {
 			return sr.grpcStatusEntries(r.updateRouteStatus)
 		},

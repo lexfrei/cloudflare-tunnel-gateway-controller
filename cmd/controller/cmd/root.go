@@ -66,6 +66,7 @@ func init() {
 	rootCmd.Flags().String("proxy-auth-token", "", "Bearer token for authenticating proxy config push requests")
 	rootCmd.Flags().String("proxy-token-secret", "", "Tunnel-token Secret to watch in `<namespace>/<name>` form; when set, the controller rolls the proxy Deployment whenever the Secret data changes (issue #114). Empty disables the watcher.")
 	rootCmd.Flags().String("proxy-deployment-label", "", "Label selector identifying the proxy Deployment(s) to roll on tunnel-token change, in `key=value` form. Defaults to `app.kubernetes.io/component=proxy` (matches the chart).")
+	rootCmd.Flags().String("tunnel-protocol", "auto", "The proxy's configured edge transport (auto|http2|quic); used to warn when GRPCRoutes are served over a non-http2 tunnel (cloudflared drops trailers over QUIC).")
 
 	// Deprecated: --gateway-class-name is no longer used. The controller discovers
 	// GatewayClasses by spec.controllerName, not by name.
@@ -87,6 +88,7 @@ func initConfig() {
 	viper.SetDefault("health-addr", ":8081")
 	viper.SetDefault("log-level", "info")
 	viper.SetDefault("log-format", "json")
+	viper.SetDefault("tunnel-protocol", "auto")
 	viper.SetDefault("leader-elect", false)
 	viper.SetDefault("leader-election-name", "cloudflare-tunnel-gateway-controller-leader")
 }
@@ -147,6 +149,7 @@ func runController(_ *cobra.Command, _ []string) error {
 		ProxyAuthToken:       viper.GetString("proxy-auth-token"),
 		ProxyTokenSecret:     viper.GetString("proxy-token-secret"),
 		ProxyDeploymentLabel: viper.GetString("proxy-deployment-label"),
+		TunnelProtocol:       viper.GetString("tunnel-protocol"),
 	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

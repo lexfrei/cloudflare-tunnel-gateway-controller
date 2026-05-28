@@ -209,6 +209,10 @@ When a `BackendTLSPolicy` targets a Service but cannot be enforced — the CA `C
 
 When a backend Service carries both `appProtocol: kubernetes.io/h2c` AND a `BackendTLSPolicy` targets it, the policy wins: the proxy dials TLS (HTTPS, with HTTP/2 negotiated via ALPN). h2c is by definition cleartext HTTP/2 and cannot coexist with backend TLS; the h2c marker is silently ignored on that hop. If you genuinely want HTTP/2 over TLS, omit the `appProtocol` hint and let ALPN negotiate it during the handshake.
 
+### gRPC requires the tunnel transport protocol `http2`
+
+cloudflared does not forward HTTP trailers over QUIC (its default transport): the QUIC response adapter's `AddTrailer` is a no-op. gRPC carries the mandatory `grpc-status` in a trailer, so over a QUIC tunnel that trailer is dropped at the edge and every gRPC call fails with `server closed the stream without sending trailers`. Set `proxy.tunnel.protocol: http2` (Helm value) so the tunnel negotiates HTTP/2, where trailers are forwarded. The controller logs an error when GRPCRoutes are present while the tunnel is not on `http2`. This is a cloudflared/Cloudflare limitation, not a controller bug. Separately, gRPC must be enabled on the Cloudflare zone (dashboard Network → gRPC); without it the edge returns 403 zone-wide for `content-type: application/grpc`.
+
 ### gRPC backends are always cleartext h2c
 
 Unlike HTTPRoute backends, the upstream hop to a GRPCRoute backend is unconditionally cleartext h2c. A `BackendTLSPolicy` targeting a gRPC backend Service and the Gateway's `spec.tls.backend.clientCertificateRef` are NOT applied to gRPC traffic in this revision — and, unlike the h2c-vs-TLS collision above, no WARN is logged. If a gRPC backend requires TLS, terminate it in front of the Service and route to the cleartext side. Honoring backend TLS for gRPC is a tracked follow-up.

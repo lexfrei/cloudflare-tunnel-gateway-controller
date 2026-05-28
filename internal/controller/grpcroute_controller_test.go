@@ -2165,3 +2165,36 @@ func TestGRPCRouteReconciler_Reconcile_RouteNotForOurGateway(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, ctrl.Result{}, result)
 }
+
+func TestGRPCProtocolWarning(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		protocol string
+		count    int
+		wantWarn bool
+	}{
+		{name: "http2 with routes is fine", protocol: "http2", count: 2, wantWarn: false},
+		{name: "http2 case-insensitive", protocol: "HTTP2", count: 1, wantWarn: false},
+		{name: "quic with routes warns", protocol: "quic", count: 1, wantWarn: true},
+		{name: "auto with routes warns", protocol: "auto", count: 1, wantWarn: true},
+		{name: "empty with routes warns", protocol: "", count: 1, wantWarn: true},
+		{name: "quic without routes is silent", protocol: "quic", count: 0, wantWarn: false},
+		{name: "http2 without routes is silent", protocol: "http2", count: 0, wantWarn: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			msg, warn := grpcProtocolWarning(tt.protocol, tt.count)
+			assert.Equal(t, tt.wantWarn, warn)
+
+			if tt.wantWarn {
+				assert.Contains(t, msg, "http2")
+				assert.Contains(t, msg, "grpc-status")
+			}
+		})
+	}
+}
