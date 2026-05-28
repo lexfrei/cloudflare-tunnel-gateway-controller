@@ -659,64 +659,58 @@ func TestComputeConditions_CAInvalidPrecedenceOverConflicted(t *testing.T) {
 // is not expected to matter (no SectionName on the policies under test).
 func alwaysEmptyPortName() string { return "" }
 
-// TestUpdateStatus_ConflictResolution_LoserSharesAcceptedTrue pins the
-// current gap from Gateway API's GEP-713 conflict-resolution semantics: when
-// two policies target the same Service, this controller picks the older one
-// as the "winner" (correctly) but does NOT stamp the loser with
-// `Accepted=False, Reason=Conflicted`. The loser shares the winner's
-// `Accepted=True` status, which is observable to clients reading either
-// policy's Status.Ancestors.
+// TestReconcile_ConflictResolution_LoserStampedConflictedEndToEnd drives
+// the full Reconcile pipeline against two BackendTLSPolicies that target
+// the same Service. After reconciling each policy, the older one's
+// Status.Ancestors carries Accepted=True and the newer one's carries
+// Accepted=False, Reason=Conflicted with a Message naming the winner.
 //
-// When the conflict-resolution logic lands (loser stamped with Conflicted
-// reason), flip this test to assert `Accepted=False, Reason=Conflicted` on
-// the losing policy and unskip BackendTLSPolicyConflictResolution in the
-// conformance suite (test/conformance/conformance_test.go).
-func TestUpdateStatus_ConflictResolution_LoserSharesAcceptedTrue(t *testing.T) {
+// This pins the GEP-713 conflict-resolution behavior end to end —
+// computeConditions + updateStatus + the surrounding Reconcile setup —
+// against the regression where updateStatus would be called with
+// acceptedConditions on a loser.
+func TestReconcile_ConflictResolution_LoserStampedConflictedEndToEnd(t *testing.T) {
 	t.Parallel()
 
 	scheme := newBackendTLSPolicyScheme(t)
 
-	// Two policies, same target Service, distinct creationTimestamps. Older
-	// wins; without conflict tracking the loser also gets Accepted=True from
-	// its own reconcile (it doesn't see the winner).
+	const controllerName = "github.com/lexfrei/test"
+
+	gatewayClass := gatewayClassFor("cf-class", controllerName)
+	gateway := gatewayFor("ns", "gw", "cf-class")
+	route := httpRouteFor("ns", "r", "gw", "svc")
+	configMap := caConfigMap("ns", "cm", generateSelfSignedCAPEM(t))
+
 	winner := backendTLSPolicyFor("ns", "winner", "svc", "cm", time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC))
 	loser := backendTLSPolicyFor("ns", "loser", "svc", "cm", time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
 
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(winner, loser).
+		WithObjects(gatewayClass, gateway, route, configMap, winner, loser).
 		WithStatusSubresource(winner, loser).
 		Build()
-	r := &BackendTLSPolicyReconciler{Client: fakeClient, Scheme: scheme, ControllerName: "test-controller"}
+	r := &BackendTLSPolicyReconciler{Client: fakeClient, Scheme: scheme, ControllerName: controllerName}
 
-	gateway := *gatewayFor("ns", "gw", "cf-class")
-	conditions := acceptedConditions(loser.Generation)
-
-	// Reconcile the loser as if no conflict exists — it gets Accepted=True.
-	require.NoError(t, r.updateStatus(context.Background(),
-		client.ObjectKey{Namespace: "ns", Name: "loser"},
-		[]gatewayv1.Gateway{gateway}, conditions))
-
-	var refreshed gatewayv1.BackendTLSPolicy
-	require.NoError(t, fakeClient.Get(context.Background(),
-		client.ObjectKey{Namespace: "ns", Name: "loser"}, &refreshed))
-	require.Len(t, refreshed.Status.Ancestors, 1)
-
-	// Pending follow-up: when conflict resolution lands the loser MUST be
-	// Accepted=False, Reason=Conflicted. Pinning the current gap here.
-	accepted := false
-
-	for _, condition := range refreshed.Status.Ancestors[0].Conditions {
-		if condition.Type == string(gatewayv1.PolicyConditionAccepted) && condition.Status == metav1.ConditionTrue {
-			accepted = true
-		}
+	for _, name := range []string{"winner", "loser"} {
+		_, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Namespace: "ns", Name: name}})
+		require.NoError(t, err, "reconcile %s", name)
 	}
 
-	assert.True(t, accepted,
-		"FIXME: currently the losing policy shares the winner's Accepted=True. "+
-			"When conflict tracking lands, flip this assertion to expect "+
-			"Accepted=False, Reason=Conflicted, and unskip BackendTLSPolicyConflictResolution "+
-			"in test/conformance/conformance_test.go.")
+	var refreshedWinner gatewayv1.BackendTLSPolicy
+	require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKey{Namespace: "ns", Name: "winner"}, &refreshedWinner))
+	require.Len(t, refreshedWinner.Status.Ancestors, 1)
+	winnerAccepted := findCondition(refreshedWinner.Status.Ancestors[0].Conditions, string(gatewayv1.PolicyConditionAccepted))
+	require.NotNil(t, winnerAccepted)
+	assert.Equal(t, metav1.ConditionTrue, winnerAccepted.Status, "older policy MUST stay Accepted=True")
+
+	var refreshedLoser gatewayv1.BackendTLSPolicy
+	require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKey{Namespace: "ns", Name: "loser"}, &refreshedLoser))
+	require.Len(t, refreshedLoser.Status.Ancestors, 1)
+	loserAccepted := findCondition(refreshedLoser.Status.Ancestors[0].Conditions, string(gatewayv1.PolicyConditionAccepted))
+	require.NotNil(t, loserAccepted)
+	assert.Equal(t, metav1.ConditionFalse, loserAccepted.Status, "newer policy MUST be Accepted=False")
+	assert.Equal(t, string(gatewayv1.PolicyReasonConflicted), loserAccepted.Reason)
+	assert.Contains(t, loserAccepted.Message, "ns/winner")
 }
 
 func TestSelectPolicyForServicePort_OlderWins(t *testing.T) {
