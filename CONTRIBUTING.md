@@ -24,7 +24,7 @@ Be respectful and constructive in all interactions. We welcome contributors of a
 
 ## Development Setup
 
-See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for detailed setup instructions.
+See [docs/development/setup.md](docs/development/setup.md) for detailed setup instructions.
 
 Quick start:
 
@@ -161,7 +161,7 @@ helm unittest charts/cloudflare-tunnel-gateway-controller
 ### What to Document
 
 - New features in README.md
-- API changes in docs/GATEWAY_API.md
+- API changes in [docs/gateway-api/index.md](docs/gateway-api/index.md)
 - Configuration options
 - Breaking changes
 
