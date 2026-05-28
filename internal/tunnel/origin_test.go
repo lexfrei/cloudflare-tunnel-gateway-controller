@@ -2,12 +2,15 @@ package tunnel_test
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"log/slog"
 	"maps"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
 	"sync/atomic"
 	"testing"
 
@@ -218,6 +221,124 @@ func TestGatewayOriginProxy_ProxyHTTP_NonWebSocketLeavesHeadersAlone(t *testing.
 	require.NoError(t, err)
 	assert.Empty(t, gotConnection, "non-websocket request must not gain a Connection: Upgrade header")
 	assert.Empty(t, gotUpgrade, "non-websocket request must not gain an Upgrade header")
+}
+
+// trailerContractWriter faithfully models cloudflared's http2RespWriter trailer
+// contract (vendor/.../connection/http2.go), which the httptest.ResponseRecorder
+// behind testResponseWriter does NOT: Header() returns a private map that is
+// serialized into the response exactly once at WriteHeader time, so anything
+// written to it afterwards (e.g. httputil.ReverseProxy's stdlib http.TrailerPrefix
+// trailers) is dropped. Trailers reach the wire ONLY via AddTrailer. A gRPC
+// response carries grpc-status in trailers, so without bridging stdlib trailers
+// onto AddTrailer the client sees "server closed the stream without sending
+// trailers".
+type trailerContractWriter struct {
+	header   http.Header
+	wire     http.Header
+	trailers http.Header
+	body     bytes.Buffer
+	status   int
+	written  bool
+}
+
+func newTrailerContractWriter() *trailerContractWriter {
+	return &trailerContractWriter{header: http.Header{}, wire: http.Header{}, trailers: http.Header{}}
+}
+
+func (w *trailerContractWriter) Header() http.Header { return w.header }
+
+func (w *trailerContractWriter) WriteHeader(status int) {
+	if w.written {
+		return
+	}
+
+	w.written = true
+	w.status = status
+
+	// Snapshot the header map once — mirrors WriteRespHeaders serializing the
+	// response headers a single time. Post-WriteHeader header mutations (where
+	// ReverseProxy stashes unannounced trailers) never reach the wire.
+	for k, v := range w.header {
+		w.wire[k] = append([]string(nil), v...)
+	}
+}
+
+func (w *trailerContractWriter) Write(b []byte) (int, error) {
+	if !w.written {
+		w.WriteHeader(http.StatusOK)
+	}
+
+	// bytes.Buffer.Write never returns an error.
+	n, _ := w.body.Write(b)
+
+	return n, nil
+}
+
+func (w *trailerContractWriter) WriteRespHeaders(status int, header http.Header) error {
+	maps.Copy(w.header, header)
+	w.WriteHeader(status)
+
+	return nil
+}
+
+// AddTrailer is the ONLY path that puts a trailer on the wire — exactly like
+// http2RespWriter, and it is ignored before the status is written.
+func (w *trailerContractWriter) AddTrailer(name, value string) {
+	if !w.written {
+		return
+	}
+
+	w.trailers.Add(name, value)
+}
+
+func (w *trailerContractWriter) Flush() {}
+
+func (w *trailerContractWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	return nil, nil, http.ErrNotSupported
+}
+
+// TestGatewayOriginProxy_ProxyHTTP_ForwardsGRPCTrailers pins the production
+// hazard the homelab e2e surfaced: gRPC carries grpc-status in HTTP/2 trailers,
+// httputil.ReverseProxy emits them via the stdlib http.TrailerPrefix mechanism
+// onto the response writer's Header() map, but cloudflared's http2RespWriter
+// only serializes that map once (at WriteHeader) and emits trailers solely via
+// AddTrailer. ProxyHTTP must bridge the two, or the gRPC client fails with
+// "server closed the stream without sending trailers". This uses a faithful
+// cloudflared-contract writer (not httptest) per the proxy design principle.
+func TestGatewayOriginProxy_ProxyHTTP_ForwardsGRPCTrailers(t *testing.T) {
+	t.Parallel()
+
+	// Backend emits an unannounced trailer the way a gRPC origin does: declared
+	// only via the http.TrailerPrefix mechanism after the body.
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/grpc")
+		w.Header().Set(http.TrailerPrefix+"Grpc-Status", "0")
+		w.Header().Set(http.TrailerPrefix+"Grpc-Message", "")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("\x00\x00\x00\x00\x00"))
+	}))
+	defer backend.Close()
+
+	backendURL, err := url.Parse(backend.URL)
+	require.NoError(t, err)
+
+	handler := httputil.NewSingleHostReverseProxy(backendURL)
+	proxy := tunnel.NewGatewayOriginProxy(handler, nil)
+
+	req := httptest.NewRequestWithContext(
+		t.Context(), http.MethodPost, "http://example.com/pkg.Svc/Method", http.NoBody,
+	)
+	req.Header.Set("Content-Type", "application/grpc")
+
+	zlog := zerolog.Nop()
+	tracedReq := tracing.NewTracedHTTPRequest(req, 0, &zlog)
+	rw := newTrailerContractWriter()
+
+	require.NoError(t, proxy.ProxyHTTP(rw, tracedReq, false))
+
+	assert.Equal(t, "0", rw.trailers.Get("Grpc-Status"),
+		"grpc-status trailer must reach the wire via AddTrailer; ReverseProxy's "+
+			"stdlib-trailer write to Header() is dropped by the cloudflared writer")
 }
 
 func TestGatewayOriginProxy_ProxyTCP_ReturnsError(t *testing.T) {
