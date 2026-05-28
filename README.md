@@ -173,14 +173,7 @@ All matching and filter behavior is performed by the in-process L7 proxy that th
 
 ### Known Limitations
 
-The L7 proxy removes the v1/v2 Cloudflare-Tunnel-API path-matching limitations. Edge-side caveats (Cloudflare hostname registration, edge HTTPS termination, etc.) are documented in the [Limitations](https://cf.k8s.lex.la/gateway-api/limitations/) page.
-
-Historical context — Cloudflare Tunnel's native ingress rules have path matching behavior that differs from Gateway API:
-
-- **No true exact path match**: `/api` (Exact) will still match `/api/v1`
-- **Common prefix routing**: Paths like `/multi-v1`, `/multi-v2` may all route to the first backend
-
-**Workaround:** Use distinct path prefixes (e.g., `/alpha`, `/beta`, `/gamma`), or enable the L7 proxy.
+The in-process L7 proxy handles routing for every tunnel request, so the v1/v2 Cloudflare-Tunnel-API path-matching quirks (no true exact match, prefix bleed across `/foo` siblings) no longer apply. Edge-side caveats (Cloudflare hostname registration, edge HTTPS termination, etc.) are documented in the [Limitations](https://cf.k8s.lex.la/gateway-api/limitations/) page.
 
 `BackendTLSPolicy` (proxy → backend TLS) is supported at minimum-viable scope:
 

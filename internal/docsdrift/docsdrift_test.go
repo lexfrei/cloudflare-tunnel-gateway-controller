@@ -144,6 +144,14 @@ var retiredSubstrings = []struct {
 		needle: "weights indicate preference, not failover order",
 		why:    "v3 has no highest-weight selection or failover order; weighted-random splitting makes the preference/failover framing wrong",
 	},
+	{
+		needle: "No true exact path match",
+		why:    "v3 in-process proxy does true exact path matching (r.URL.Path == m.path); the Cloudflare-ingress prefix-bleed limitation no longer applies to routing",
+	},
+	{
+		needle: "treats all paths as prefixes",
+		why:    "v3 routing is done by the in-process proxy with proper exact/prefix semantics; the Cloudflare-ingress prefix-treatment claim is stale for actual routing",
+	},
 }
 
 // trackedRoots is the list of trees this guard scans. Walked
@@ -242,6 +250,8 @@ var allowedFiles = map[string]map[string]bool{
 		"highest weight is selected":                      true,
 		"sends 100% of traffic to it":                     true,
 		"weights indicate preference, not failover order": true,
+		"No true exact path match":                        true,
+		"treats all paths as prefixes":                    true,
 	},
 }
 
