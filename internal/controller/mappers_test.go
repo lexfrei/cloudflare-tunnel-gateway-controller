@@ -463,10 +463,235 @@ func TestConfigMapper_IsConfigForOurClass_NoParametersRef(t *testing.T) {
 	assert.False(t, result)
 }
 
+// TestConfigMapper_MapSecretToRequests_GatewayClientCertSecret_SameNs pins
+// that a Secret referenced by a managed Gateway's
+// spec.tls.backend.clientCertificateRef enqueues the route resync the
+// same way the GatewayClassConfig credentials Secret does — without
+// this the proxy keeps presenting the previous keypair until some
+// unrelated event drives the next reconcile.
+func TestConfigMapper_MapSecretToRequests_GatewayClientCertSecret_SameNs(t *testing.T) {
+	t.Parallel()
+
+	const controllerName = "test-controller"
+
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "client-cert", Namespace: "default"},
+		Type:       corev1.SecretTypeTLS,
+	}
+
+	gatewayClassConfig := &v1alpha1.GatewayClassConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-config"},
+		Spec: v1alpha1.GatewayClassConfigSpec{
+			CloudflareCredentialsSecretRef: v1alpha1.SecretReference{Name: "cf-credentials", Namespace: "default"},
+			TunnelID:                       "test-tunnel",
+		},
+	}
+
+	gatewayClass := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "cloudflare-tunnel"},
+		Spec: gatewayv1.GatewayClassSpec{
+			ControllerName: controllerName,
+			ParametersRef: &gatewayv1.ParametersReference{
+				Group: config.ParametersRefGroup,
+				Kind:  config.ParametersRefKind,
+				Name:  "test-config",
+			},
+		},
+	}
+
+	gateway := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "default"},
+		Spec: gatewayv1.GatewaySpec{
+			GatewayClassName: "cloudflare-tunnel",
+			TLS: &gatewayv1.GatewayTLSConfig{
+				Backend: &gatewayv1.GatewayBackendTLS{
+					ClientCertificateRef: &gatewayv1.SecretObjectReference{Name: "client-cert"},
+				},
+			},
+		},
+	}
+
+	fakeClient := setupMapperFakeClient(secret, gatewayClassConfig, gatewayClass, gateway)
+	mapper := &ConfigMapper{
+		Client:         fakeClient,
+		ControllerName: controllerName,
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+	}
+
+	expectedRequests := []reconcile.Request{
+		{NamespacedName: client.ObjectKey{Name: "route", Namespace: "default"}},
+	}
+
+	mapFunc := mapper.MapSecretToRequests(func(_ context.Context) []reconcile.Request {
+		return expectedRequests
+	})
+
+	result := mapFunc(context.Background(), secret)
+	require.NotNil(t, result, "Secret referenced by Gateway.spec.tls.backend.clientCertificateRef MUST enqueue routes on rotation")
+	assert.Equal(t, expectedRequests, result)
+}
+
+// TestConfigMapper_MapSecretToRequests_GatewayClientCertSecret_CrossNsWithGrant
+// covers the cross-namespace clientCertificateRef path: a Secret in a
+// different namespace from the Gateway is honoured when a matching
+// ReferenceGrant (from: Gateway, to: Secret) exists in the target
+// namespace.
+func TestConfigMapper_MapSecretToRequests_GatewayClientCertSecret_CrossNsWithGrant(t *testing.T) {
+	t.Parallel()
+
+	const controllerName = "test-controller"
+
+	certNamespace := "cert-ns"
+
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "client-cert", Namespace: certNamespace},
+		Type:       corev1.SecretTypeTLS,
+	}
+
+	grant := &gatewayv1beta1.ReferenceGrant{
+		ObjectMeta: metav1.ObjectMeta{Name: "allow-cert", Namespace: certNamespace},
+		Spec: gatewayv1beta1.ReferenceGrantSpec{
+			From: []gatewayv1beta1.ReferenceGrantFrom{{
+				Group:     gatewayv1.GroupName,
+				Kind:      "Gateway",
+				Namespace: "default",
+			}},
+			To: []gatewayv1beta1.ReferenceGrantTo{{
+				Group: "",
+				Kind:  "Secret",
+			}},
+		},
+	}
+
+	gatewayClassConfig := &v1alpha1.GatewayClassConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-config"},
+		Spec: v1alpha1.GatewayClassConfigSpec{
+			CloudflareCredentialsSecretRef: v1alpha1.SecretReference{Name: "cf-credentials", Namespace: "default"},
+			TunnelID:                       "test-tunnel",
+		},
+	}
+
+	gatewayClass := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "cloudflare-tunnel"},
+		Spec: gatewayv1.GatewayClassSpec{
+			ControllerName: controllerName,
+			ParametersRef: &gatewayv1.ParametersReference{
+				Group: config.ParametersRefGroup,
+				Kind:  config.ParametersRefKind,
+				Name:  "test-config",
+			},
+		},
+	}
+
+	certNs := gatewayv1.Namespace(certNamespace)
+	gateway := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "default"},
+		Spec: gatewayv1.GatewaySpec{
+			GatewayClassName: "cloudflare-tunnel",
+			TLS: &gatewayv1.GatewayTLSConfig{
+				Backend: &gatewayv1.GatewayBackendTLS{
+					ClientCertificateRef: &gatewayv1.SecretObjectReference{
+						Name:      "client-cert",
+						Namespace: &certNs,
+					},
+				},
+			},
+		},
+	}
+
+	fakeClient := setupMapperFakeClient(secret, grant, gatewayClassConfig, gatewayClass, gateway)
+	mapper := &ConfigMapper{
+		Client:         fakeClient,
+		ControllerName: controllerName,
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+	}
+
+	expectedRequests := []reconcile.Request{
+		{NamespacedName: client.ObjectKey{Name: "route", Namespace: "default"}},
+	}
+
+	mapFunc := mapper.MapSecretToRequests(func(_ context.Context) []reconcile.Request {
+		return expectedRequests
+	})
+
+	result := mapFunc(context.Background(), secret)
+	require.NotNil(t, result, "cross-ns Secret with matching ReferenceGrant MUST enqueue routes on rotation")
+	assert.Equal(t, expectedRequests, result)
+}
+
+// TestConfigMapper_MapSecretToRequests_GatewayClientCertSecret_CrossNsWithoutGrant_NotEnqueued
+// is the deny side: a cross-namespace Secret without a permitting
+// ReferenceGrant MUST NOT enqueue — the controller would otherwise
+// trigger pointless reconciles every time an unrelated cross-ns Secret
+// rotated.
+func TestConfigMapper_MapSecretToRequests_GatewayClientCertSecret_CrossNsWithoutGrant_NotEnqueued(t *testing.T) {
+	t.Parallel()
+
+	const controllerName = "test-controller"
+
+	certNamespace := "cert-ns"
+
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "client-cert", Namespace: certNamespace},
+		Type:       corev1.SecretTypeTLS,
+	}
+
+	gatewayClassConfig := &v1alpha1.GatewayClassConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-config"},
+		Spec: v1alpha1.GatewayClassConfigSpec{
+			CloudflareCredentialsSecretRef: v1alpha1.SecretReference{Name: "cf-credentials", Namespace: "default"},
+			TunnelID:                       "test-tunnel",
+		},
+	}
+
+	gatewayClass := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "cloudflare-tunnel"},
+		Spec: gatewayv1.GatewayClassSpec{
+			ControllerName: controllerName,
+			ParametersRef: &gatewayv1.ParametersReference{
+				Group: config.ParametersRefGroup,
+				Kind:  config.ParametersRefKind,
+				Name:  "test-config",
+			},
+		},
+	}
+
+	certNs := gatewayv1.Namespace(certNamespace)
+	gateway := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "default"},
+		Spec: gatewayv1.GatewaySpec{
+			GatewayClassName: "cloudflare-tunnel",
+			TLS: &gatewayv1.GatewayTLSConfig{
+				Backend: &gatewayv1.GatewayBackendTLS{
+					ClientCertificateRef: &gatewayv1.SecretObjectReference{
+						Name:      "client-cert",
+						Namespace: &certNs,
+					},
+				},
+			},
+		},
+	}
+
+	fakeClient := setupMapperFakeClient(secret, gatewayClassConfig, gatewayClass, gateway)
+	mapper := &ConfigMapper{
+		Client:         fakeClient,
+		ControllerName: controllerName,
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+	}
+
+	mapFunc := mapper.MapSecretToRequests(func(_ context.Context) []reconcile.Request {
+		return []reconcile.Request{{NamespacedName: client.ObjectKey{Name: "route", Namespace: "default"}}}
+	})
+
+	result := mapFunc(context.Background(), secret)
+	assert.Nil(t, result, "cross-ns Secret without ReferenceGrant MUST NOT enqueue — would trigger spurious reconciles on unrelated Secret rotations")
+}
+
 func setupMapperFakeClient(objs ...client.Object) client.Client {
 	scheme := runtime.NewScheme()
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 	utilruntime.Must(gatewayv1.Install(scheme))
+	utilruntime.Must(gatewayv1beta1.Install(scheme))
 	utilruntime.Must(v1alpha1.AddToScheme(scheme))
 
 	return fake.NewClientBuilder().
