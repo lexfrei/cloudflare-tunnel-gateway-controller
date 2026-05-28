@@ -185,6 +185,20 @@ type MirrorConfig struct {
 	// on the Gateway API filter is normalized into Percent at conversion
 	// time so the proxy speaks one shape.
 	Percent *int32 `json:"percent,omitempty"`
+	// TLS, when non-nil, indicates that a BackendTLSPolicy targets the
+	// mirror destination Service. The filter borrows a per-cert TLS-aware
+	// RoundTripper from the Handler's transport pool — same shape the main
+	// leg uses — instead of dialing cleartext through the global
+	// mirrorClient. Without this, a TLS-only mirror backend would refuse
+	// the connection and the mirrored copy would be silently lost.
+	TLS *BackendTLSConfig `json:"tls,omitempty"`
+	// Protocol mirrors BackendRef.Protocol for the mirror destination so
+	// the transport pool key (host, protocol, TLS, headerTimeout) matches
+	// what the main leg would build for the same backend. Empty (default
+	// BackendProtocolHTTP) for every mirror destination today; carried as
+	// a field so future protocol marker additions to BackendRef
+	// automatically extend to the mirror leg.
+	Protocol BackendProtocol `json:"protocol,omitempty"`
 }
 
 // BackendProtocol identifies the application protocol the proxy must speak to a

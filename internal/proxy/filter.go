@@ -288,18 +288,56 @@ func (f *urlRewriter) rewritePath(req *http.Request) {
 // requestMirror sends a copy of the request to a mirror backend asynchronously.
 // percent is nil for unconditional mirroring (100%), otherwise an integer in
 // 0..100 that gates whether a given request is mirrored.
+//
+// When tlsCfg is non-nil (a BackendTLSPolicy targets the mirror destination),
+// client is built from the supplied TransportFactory so the dial reuses the
+// main leg's per-cert TLS-aware pool. Otherwise the filter falls back to the
+// global cleartext mirrorClient (legacy / nil-factory call sites).
 type requestMirror struct {
 	backendURL string
 	percent    *int32
+	client     *http.Client
 }
 
 // NewRequestMirror creates a filter that mirrors requests to a backend URL.
-// All mirror instances share a single HTTP client for connection pooling.
+//
 // percent (0-100) controls the fraction of requests mirrored; nil means 100%.
-func NewRequestMirror(backendURL string, percent *int32) Filter {
+//
+// tlsCfg, protocol, and factory together select the dial leg. When all three
+// are nil / empty, the filter uses the cleartext mirrorClient — backward-
+// compatible with callers that have not threaded a factory through yet.
+// When factory != nil, an http.Client is built from
+// factory(parsed-host, protocol, tlsCfg, 0) so the mirror dial honors any
+// BackendTLSPolicy attached to its destination instead of silently dialing
+// plaintext through the shared cleartext transport.
+func NewRequestMirror(backendURL string, percent *int32, tlsCfg *BackendTLSConfig, protocol BackendProtocol, factory TransportFactory) Filter {
+	client := mirrorClient
+	if factory != nil {
+		client = newMirrorClient(backendURL, tlsCfg, protocol, factory)
+	}
+
 	return &requestMirror{
 		backendURL: backendURL,
 		percent:    percent,
+		client:     client,
+	}
+}
+
+// newMirrorClient borrows a RoundTripper from the supplied factory and wraps
+// it in an http.Client with the mirror filter's timeout. The factory call is
+// scoped to the parsed host so the per-cert pool key matches the main leg's.
+// A parse failure falls back to the global cleartext client — the mirror
+// destination URL has already been validated at convert time, so this is
+// belt-and-suspenders defensive coding rather than a real failure mode.
+func newMirrorClient(backendURL string, tlsCfg *BackendTLSConfig, protocol BackendProtocol, factory TransportFactory) *http.Client {
+	parsed, err := url.Parse(backendURL)
+	if err != nil || parsed.Host == "" {
+		return mirrorClient
+	}
+
+	return &http.Client{
+		Timeout:   mirrorTimeout,
+		Transport: factory(parsed.Host, protocol, tlsCfg, 0),
 	}
 }
 
@@ -337,6 +375,11 @@ func (f *requestMirror) ProcessRequest(req *http.Request) *http.Response {
 		mirrorReq.ContentLength = int64(len(bodyBuf))
 	}
 
+	client := f.client
+	if client == nil {
+		client = mirrorClient
+	}
+
 	go func() {
 		defer cancel()
 		defer func() {
@@ -345,7 +388,7 @@ func (f *requestMirror) ProcessRequest(req *http.Request) *http.Response {
 			}
 		}()
 
-		resp, doErr := mirrorClient.Do(mirrorReq)
+		resp, doErr := client.Do(mirrorReq)
 		if doErr == nil {
 			resp.Body.Close()
 		}
@@ -423,11 +466,16 @@ func (f *requestMirror) shouldMirror() bool {
 }
 
 // CompileFilters converts RouteFilter specs into executable Filter instances.
-func CompileFilters(filters []RouteFilter) ([]Filter, error) {
+// factory is consulted only by the RequestMirror filter so it can borrow a
+// per-cert RoundTripper from the Handler's shared transport pool when a
+// BackendTLSPolicy targets the mirror destination. A nil factory falls every
+// mirror back to the global cleartext mirrorClient — fine for tests and
+// preserved for any call site that has not yet threaded the factory through.
+func CompileFilters(filters []RouteFilter, factory TransportFactory) ([]Filter, error) {
 	compiled := make([]Filter, 0, len(filters))
 
 	for idx, filter := range filters {
-		compiledFilter, err := compileFilter(filter)
+		compiledFilter, err := compileFilter(filter, factory)
 		if err != nil {
 			return nil, errors.Wrapf(err, "filter[%d]", idx)
 		}
@@ -438,7 +486,7 @@ func CompileFilters(filters []RouteFilter) ([]Filter, error) {
 	return compiled, nil
 }
 
-func compileFilter(filter RouteFilter) (Filter, error) {
+func compileFilter(filter RouteFilter, factory TransportFactory) (Filter, error) {
 	switch filter.Type {
 	case FilterRequestHeaderModifier:
 		return NewRequestHeaderModifier(filter.RequestHeaderModifier), nil
@@ -449,7 +497,13 @@ func compileFilter(filter RouteFilter) (Filter, error) {
 	case FilterURLRewrite:
 		return NewURLRewriter(filter.URLRewrite), nil
 	case FilterRequestMirror:
-		return NewRequestMirror(filter.RequestMirror.BackendURL, filter.RequestMirror.Percent), nil
+		return NewRequestMirror(
+			filter.RequestMirror.BackendURL,
+			filter.RequestMirror.Percent,
+			filter.RequestMirror.TLS,
+			filter.RequestMirror.Protocol,
+			factory,
+		), nil
 	case FilterCORS:
 		return NewCORSFilter(filter.CORS), nil
 	default:

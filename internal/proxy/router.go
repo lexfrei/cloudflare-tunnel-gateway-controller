@@ -64,9 +64,10 @@ type transportPruner interface {
 
 // Router provides thread-safe HTTP request routing with atomic config updates.
 type Router struct {
-	table    atomic.Pointer[routingTable]
-	updateMu sync.Mutex
-	pruner   transportPruner
+	table            atomic.Pointer[routingTable]
+	updateMu         sync.Mutex
+	pruner           transportPruner
+	transportFactory TransportFactory
 }
 
 // NewRouter creates a Router with an empty routing table.
@@ -79,9 +80,15 @@ func NewRouter() *Router {
 	return router
 }
 
-// SetHandler registers a handler whose transport pool will be pruned on config updates.
+// SetHandler registers a handler whose transport pool will be pruned on
+// config updates and whose per-cert transport factory is reused by mirror
+// filters so the mirror leg dials TLS the same way the main leg does. Two
+// concerns flow through one wiring point because both lifecycle-bind to the
+// Handler: the pool is owned by the Handler, the factory is the Handler's
+// closure over getTransport.
 func (r *Router) SetHandler(h *Handler) {
 	r.pruner = h
+	r.transportFactory = h.TransportFactory()
 }
 
 // ConfigVersion returns the version of the currently loaded configuration.
@@ -146,7 +153,7 @@ func (r *Router) UpdateConfig(cfg *Config) error {
 		return errors.Wrapf(errStaleVersion, "version %d < current %d", cfg.Version, current.version)
 	}
 
-	table, err := compileRoutingTable(cfg)
+	table, err := compileRoutingTable(cfg, r.transportFactory)
 	if err != nil {
 		return errors.Wrap(err, "failed to compile routing table")
 	}
@@ -186,8 +193,12 @@ func extractActiveTransportKeys(cfg *Config) map[string]bool {
 	return keys
 }
 
-// compileRoutingTable builds a routingTable from a Config.
-func compileRoutingTable(cfg *Config) (*routingTable, error) {
+// compileRoutingTable builds a routingTable from a Config. The
+// transportFactory is forwarded down to compileRule → CompileFilters →
+// compileFilter so the RequestMirror filter can borrow a per-cert
+// RoundTripper from the Handler's shared pool when a BackendTLSPolicy
+// targets the mirror destination.
+func compileRoutingTable(cfg *Config, factory TransportFactory) (*routingTable, error) {
 	table := &routingTable{
 		exactHosts: make(map[string][]*compiledRule),
 		version:    cfg.Version,
@@ -198,7 +209,7 @@ func compileRoutingTable(cfg *Config) (*routingTable, error) {
 	for ruleIdx := range cfg.Rules {
 		rule := &cfg.Rules[ruleIdx]
 
-		compiled, err := compileRule(rule, ruleIdx)
+		compiled, err := compileRule(rule, ruleIdx, factory)
 		if err != nil {
 			return nil, errors.Wrapf(err, "rule[%d]", ruleIdx)
 		}
@@ -244,8 +255,10 @@ func compileRoutingTable(cfg *Config) (*routingTable, error) {
 	return table, nil
 }
 
-// compileRule compiles a single RouteRule into a compiledRule.
-func compileRule(rule *RouteRule, ruleIndex int) (*compiledRule, error) {
+// compileRule compiles a single RouteRule into a compiledRule. factory is
+// forwarded to CompileFilters so the mirror filter can borrow the Handler's
+// per-cert RoundTripper.
+func compileRule(rule *RouteRule, ruleIndex int, factory TransportFactory) (*compiledRule, error) {
 	var matches []*CompiledMatch
 
 	for matchIdx, match := range rule.Matches {
@@ -257,7 +270,7 @@ func compileRule(rule *RouteRule, ruleIndex int) (*compiledRule, error) {
 		matches = append(matches, compiled)
 	}
 
-	filters, err := CompileFilters(rule.Filters)
+	filters, err := CompileFilters(rule.Filters, factory)
 	if err != nil {
 		return nil, errors.Wrap(err, "compile filters")
 	}
@@ -271,7 +284,7 @@ func compileRule(rule *RouteRule, ruleIndex int) (*compiledRule, error) {
 			continue
 		}
 
-		bf, bfErr := CompileFilters(backend.Filters)
+		bf, bfErr := CompileFilters(backend.Filters, factory)
 		if bfErr != nil {
 			return nil, errors.Wrapf(bfErr, "backend[%d] filters", backendIdx)
 		}

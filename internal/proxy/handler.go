@@ -493,6 +493,26 @@ func (h *Handler) createReverseProxy(backendURL *url.URL, protocol BackendProtoc
 	}
 }
 
+// TransportFactory hands out RoundTrippers from the Handler's shared
+// per-cert pool. Used by filters that need their own dial leg with the
+// same TLS / protocol / header-timeout semantics as the main backend
+// dial — chiefly the RequestMirror filter, which would otherwise dial
+// cleartext through the global mirrorClient and silently bypass any
+// BackendTLSPolicy attached to its destination.
+type TransportFactory func(host string, protocol BackendProtocol, backendTLS *BackendTLSConfig, headerTimeout time.Duration) http.RoundTripper
+
+// TransportFactory returns a closure over Handler.getTransport so
+// filters can borrow the same per-cert pool the main leg uses. The
+// returned function is a thin adapter — calling it has identical
+// semantics to a direct getTransport call, including pool sharing,
+// PruneTransports eviction, and the headerTimeout-as-part-of-key rule.
+//
+// Pure method: the Handler's hot-path is unchanged; no internal state
+// is mutated, no new fields are introduced.
+func (h *Handler) TransportFactory() TransportFactory {
+	return h.getTransport
+}
+
 // getTransport returns a shared transport for the given backend host /
 // protocol / TLS / header-timeout tuple. The cache key includes the
 // header timeout because ResponseHeaderTimeout is a *http.Transport
