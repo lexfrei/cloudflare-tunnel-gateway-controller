@@ -110,7 +110,7 @@ The following HTTPRoute filters are supported:
 
 ## GRPCRoute
 
-GRPCRoute is served by the in-process L7 proxy. gRPC requests are HTTP/2 POSTs to `/{service}/{method}`, so the converter maps each method match onto the proxy's path matcher and forces the upstream hop to h2c (cleartext HTTP/2).
+GRPCRoute is served by the in-process L7 proxy. gRPC requests are HTTP/2 POSTs to `/{service}/{method}`, so the converter maps each method match onto the proxy's path matcher. The upstream hop is cleartext h2c by default; attaching a `BackendTLSPolicy` upgrades the hop to TLS with HTTP/2 negotiated via ALPN, and the Gateway's `clientCertificateRef` is presented on the handshake for mTLS.
 
 | Field | Supported | Notes |
 | --- | --- | --- |
@@ -118,9 +118,9 @@ GRPCRoute is served by the in-process L7 proxy. gRPC requests are HTTP/2 POSTs t
 | `spec.hostnames` | Yes | Wildcard `*` supported |
 | `spec.rules[].matches[].method` | Yes | `Exact` (service+method, service-only, method-only) and `RegularExpression` |
 | `spec.rules[].matches[].headers` | Yes | Exact and RegularExpression matchers (shared with HTTP) |
-| `spec.rules[].backendRefs` | Yes | Service backends; the proxy speaks h2c upstream |
+| `spec.rules[].backendRefs` | Yes | Service backends; cleartext h2c by default, TLS + ALPN HTTP/2 when a BackendTLSPolicy targets the Service |
 | `spec.rules[].filters` | No | gRPC filters are not yet applied by the proxy; logged and skipped |
-| BackendTLSPolicy / Gateway `clientCertificateRef` | No | Not applied to gRPC backends in this revision; the upstream hop is always cleartext h2c and any TLS policy is silently ignored |
+| BackendTLSPolicy / Gateway `clientCertificateRef` | Yes | When a `BackendTLSPolicy` targets the backend Service, the proxy dials TLS with HTTP/2 negotiated via ALPN. The Gateway's `clientCertificateRef` is presented for mTLS only when a policy is also attached (Gateway API spec — a client cert over plaintext is meaningless). See [GRPCRoute docs](grpcroute.md#backend-tls). |
 
 gRPC method matching maps to paths as follows:
 
