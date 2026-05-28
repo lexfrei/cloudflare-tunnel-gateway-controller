@@ -262,12 +262,6 @@ func conformanceSkipTests() []string {
 		"HTTPRouteRedirectPath",
 		"HTTPRouteRedirectPort",
 
-		// HTTPRouteCORSAllowCredentialsBehavior exercises an edge case
-		// in the "credentials + wildcard" branch that this implementation
-		// does not yet cover end-to-end; the main HTTPRouteCORS test is
-		// enabled above.
-		"HTTPRouteCORSAllowCredentialsBehavior",
-
 		// WebSocket: the upstream test calls
 		// golang.org/x/net/websocket.Dial against the Gateway address and
 		// has no RoundTripper hook for a custom dialer. The Gateway address
