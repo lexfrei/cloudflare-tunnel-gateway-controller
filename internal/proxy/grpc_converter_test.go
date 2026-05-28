@@ -84,7 +84,12 @@ func TestConvertGRPCRoutes_ExactServiceMethod(t *testing.T) {
 // cleartext, so the converter rewrites the scheme to http:// regardless of
 // port. Without the rewrite a gRPC backend on 443 would get an https URL the
 // h2c transport cannot dial.
-func TestConvertGRPCRoutes_BackendPort443ForcesCleartextH2C(t *testing.T) {
+//
+// This is the backward-compat path: no BackendTLSPolicy attached, no Gateway
+// clientCertificateRef → the port-443 backend stays h2c. When a policy IS
+// attached, the gRPC backend is upgraded to TLS instead — pinned by
+// TestConvertGRPCRoutes_PolicyOnBackendUpgradesToTLS.
+func TestConvertGRPCRoutes_BackendPort443NoPolicyStaysCleartextH2C(t *testing.T) {
 	t.Parallel()
 
 	svc := "grpc.examples.echo.Echo"
