@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -463,6 +464,48 @@ func TestURLRewriter_Hostname(t *testing.T) {
 	assert.Equal(t, "new-host.example.com", req.Host)
 }
 
+// TestRequestMirror_HonorsBackendTLSPolicy pins the headline behavior of
+// #343: when the mirror destination is served over TLS (i.e. a
+// BackendTLSPolicy attached and the converter stamped the TLS config),
+// the mirror dial uses a TLS-aware RoundTripper from the supplied
+// factory — same per-cert transport the main leg uses — instead of the
+// global cleartext mirrorClient. Without this, a TLS-only mirror
+// backend would refuse the connection and the mirrored copy would be
+// silently lost.
+//
+// Wedge: NewRequestMirror does not yet accept the (tlsCfg, protocol,
+// factory) triple. Compile fails until the green commit widens the
+// signature.
+func TestRequestMirror_HonorsBackendTLSPolicy(t *testing.T) {
+	t.Parallel()
+
+	received := make(chan *http.Request, 1)
+
+	mirror := httptest.NewTLSServer(http.HandlerFunc(func(_ http.ResponseWriter, req *http.Request) {
+		received <- req
+	}))
+	defer mirror.Close()
+
+	// Trust the server's cert via the factory's RoundTripper.
+	transportFactory := func(_ string, _ proxy.BackendProtocol, _ *proxy.BackendTLSConfig, _ time.Duration) http.RoundTripper {
+		return mirror.Client().Transport
+	}
+
+	tlsCfg := &proxy.BackendTLSConfig{ServerName: "example"}
+	filter := proxy.NewRequestMirror(mirror.URL, nil, tlsCfg, proxy.BackendProtocolHTTP, transportFactory)
+
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "http://example.com/test", nil)
+
+	resp := filter.ProcessRequest(req) //nolint:bodyclose // mirror returns nil response
+	assert.Nil(t, resp, "mirror filter MUST NOT short-circuit the primary leg")
+
+	select {
+	case <-received:
+	case <-time.After(2 * time.Second):
+		t.Fatal("mirror request never reached the TLS-only backend — factory was not used")
+	}
+}
+
 func TestRequestMirror(t *testing.T) {
 	t.Parallel()
 
@@ -474,7 +517,7 @@ func TestRequestMirror(t *testing.T) {
 	}))
 	defer mirror.Close()
 
-	filter := proxy.NewRequestMirror(mirror.URL, nil)
+	filter := proxy.NewRequestMirror(mirror.URL, nil, nil, proxy.BackendProtocolHTTP, nil)
 
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "http://example.com/test", nil)
 
@@ -488,7 +531,7 @@ func TestRequestMirror(t *testing.T) {
 func TestRequestMirror_InvalidBackendURL(t *testing.T) {
 	t.Parallel()
 
-	filter := proxy.NewRequestMirror("://invalid\x00url", nil)
+	filter := proxy.NewRequestMirror("://invalid\x00url", nil, nil, proxy.BackendProtocolHTTP, nil)
 
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "http://example.com/test", nil)
 
@@ -517,7 +560,7 @@ func TestRequestMirror_PostBody(t *testing.T) {
 	}))
 	defer mirror.Close()
 
-	filter := proxy.NewRequestMirror(mirror.URL, nil)
+	filter := proxy.NewRequestMirror(mirror.URL, nil, nil, proxy.BackendProtocolHTTP, nil)
 
 	req := httptest.NewRequestWithContext(
 		context.Background(),
@@ -574,7 +617,7 @@ func TestCompileFilters(t *testing.T) {
 			},
 		}
 
-		compiled, err := proxy.CompileFilters(filters)
+		compiled, err := proxy.CompileFilters(filters, nil)
 		require.NoError(t, err)
 		assert.Len(t, compiled, len(filters))
 	})
@@ -586,7 +629,7 @@ func TestCompileFilters(t *testing.T) {
 			{Type: "Unknown"},
 		}
 
-		_, err := proxy.CompileFilters(filters)
+		_, err := proxy.CompileFilters(filters, nil)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "unknown filter type")
 	})
@@ -612,7 +655,7 @@ func TestApplyRequestFilters_ShortCircuit(t *testing.T) {
 		},
 	}
 
-	compiled, err := proxy.CompileFilters(filters)
+	compiled, err := proxy.CompileFilters(filters, nil)
 	require.NoError(t, err)
 
 	req := &http.Request{
@@ -641,7 +684,7 @@ func TestRedirectFilter_PreservesQueryParams(t *testing.T) {
 		},
 	}
 
-	compiled, err := proxy.CompileFilters(filters)
+	compiled, err := proxy.CompileFilters(filters, nil)
 	require.NoError(t, err)
 
 	req := &http.Request{
@@ -679,7 +722,7 @@ func TestURLRewriter_HostnameDoesNotCorruptRequest(t *testing.T) {
 		},
 	}
 
-	compiled, err := proxy.CompileFilters(filters)
+	compiled, err := proxy.CompileFilters(filters, nil)
 	require.NoError(t, err)
 
 	req := &http.Request{
@@ -709,7 +752,7 @@ func TestRequestMirror_BodyReadError_RestoresPartialBody(t *testing.T) {
 
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "http://example.com/test", failingBody)
 
-	filter := proxy.NewRequestMirror("http://mirror-backend:8080", nil)
+	filter := proxy.NewRequestMirror("http://mirror-backend:8080", nil, nil, proxy.BackendProtocolHTTP, nil)
 	resp := filter.ProcessRequest(req)
 
 	if resp != nil {
@@ -736,7 +779,7 @@ func TestRequestMirror_OversizeBody_SetsUnknownContentLength(t *testing.T) {
 	)
 	req.ContentLength = int64(len(oversizeBody))
 
-	filter := proxy.NewRequestMirror("http://mirror-backend:8080", nil)
+	filter := proxy.NewRequestMirror("http://mirror-backend:8080", nil, nil, proxy.BackendProtocolHTTP, nil)
 	resp := filter.ProcessRequest(req)
 
 	if resp != nil {

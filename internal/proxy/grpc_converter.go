@@ -23,9 +23,16 @@ const grpcSegmentPattern = "[^/]+"
 //   - Exact method-only      → regex       /[^/]+/{method} (any service)
 //   - RegularExpression      → regex       /{service}/{method} (service/method as written)
 //
-// gRPC header matches reuse the HTTP header matcher. All backends are forced
-// to h2c (cleartext HTTP/2) regardless of the Service port's appProtocol —
-// gRPC requires HTTP/2 and in-cluster gRPC is conventionally cleartext.
+// gRPC header matches reuse the HTTP header matcher. By default backends are
+// dialed h2c (cleartext HTTP/2) — gRPC requires HTTP/2 and in-cluster gRPC is
+// conventionally cleartext. When a BackendTLSPolicy targets the backend's
+// Service the converter stamps BackendTLSConfig on the backend, flips the URL
+// to https://, and drops the h2c marker so newTLSTransport's ALPN negotiates
+// HTTP/2 over TLS. The parent Gateway's clientCertificateRef is layered on
+// top of that TLS config for mTLS; on its own — with no policy — it has no
+// effect, because Gateway API spec forbids presenting a client cert over
+// plaintext (attachGatewayClientCert returns the original config unchanged
+// when tlsCfg is nil).
 //
 // gRPC-specific filters are not yet supported and are skipped with a warning.
 // Multiple backendRefs are weighted: every listed backend is emitted with its
@@ -36,6 +43,8 @@ func ConvertGRPCRoutes(
 	routes []*gatewayv1.GRPCRoute,
 	clusterDomain string,
 	validator BackendRefValidator,
+	tlsResolver BackendTLSResolver,
+	gatewayCertResolver GatewayClientCertResolver,
 ) *Config {
 	cfg := &Config{
 		Version: configVersionCounter.Add(1),
@@ -43,15 +52,27 @@ func ConvertGRPCRoutes(
 
 	for _, route := range routes {
 		hostnames := convertHostnames(route.Spec.Hostnames)
+		clientCert := resolveFirstParentClientCertForGRPCRoute(ctx, route, gatewayCertResolver)
 
 		for ruleIdx := range route.Spec.Rules {
 			cfg.Rules = append(cfg.Rules, convertGRPCRouteRule(
-				ctx, &route.Spec.Rules[ruleIdx], hostnames, route.Namespace, clusterDomain, validator,
+				ctx, &route.Spec.Rules[ruleIdx], hostnames, route.Namespace, clusterDomain,
+				validator, tlsResolver, clientCert,
 			))
 		}
 	}
 
 	return cfg
+}
+
+// resolveFirstParentClientCertForGRPCRoute is the GRPCRoute entry point into
+// the shared parent-cert walker — same first-wins rule HTTPRoute uses.
+func resolveFirstParentClientCertForGRPCRoute(
+	ctx context.Context,
+	route *gatewayv1.GRPCRoute,
+	resolver GatewayClientCertResolver,
+) *ClientCertConfig {
+	return resolveFirstParentClientCertFromRefs(ctx, route.Spec.ParentRefs, route.Namespace, resolver)
 }
 
 func convertGRPCRouteRule(
@@ -61,6 +82,8 @@ func convertGRPCRouteRule(
 	namespace string,
 	clusterDomain string,
 	validator BackendRefValidator,
+	tlsResolver BackendTLSResolver,
+	clientCert *ClientCertConfig,
 ) RouteRule {
 	proxyRule := RouteRule{Hostnames: hostnames}
 
@@ -76,7 +99,10 @@ func convertGRPCRouteRule(
 	}
 
 	for backendIdx := range rule.BackendRefs {
-		backend, ok := convertGRPCBackendRef(ctx, &rule.BackendRefs[backendIdx], namespace, clusterDomain, validator)
+		backend, ok := convertGRPCBackendRef(
+			ctx, &rule.BackendRefs[backendIdx], namespace, clusterDomain,
+			validator, tlsResolver, clientCert,
+		)
 		if ok {
 			proxyRule.Backends = append(proxyRule.Backends, backend)
 		}
@@ -182,16 +208,24 @@ func convertGRPCHeaderMatch(header gatewayv1.GRPCHeaderMatch) HeaderMatch {
 	return result
 }
 
-// convertGRPCBackendRef mirrors convertBackendRef but forces h2c and a
-// cleartext URL scheme — gRPC is HTTP/2, and the tunnel/proxy hop to an
-// in-cluster gRPC backend is cleartext. BackendTLSPolicy / Gateway client
-// certs are intentionally not applied to gRPC backends in this revision.
+// convertGRPCBackendRef mirrors convertBackendRef. By default it forces h2c
+// and a cleartext URL scheme — gRPC is HTTP/2, and an in-cluster gRPC backend
+// is conventionally cleartext. When a BackendTLSPolicy targets the backend
+// Service the converter instead stamps BackendTLSConfig on the backend, keeps
+// the https:// URL, and drops the h2c marker so newTLSTransport's ALPN
+// negotiates HTTP/2 over TLS. A parent-Gateway clientCertificateRef is
+// layered on top of the policy's TLS config (mTLS) only when the policy
+// itself put TLS on the wire; with no policy attached, the client cert is
+// silently dropped — sending a cert over plaintext is meaningless per
+// Gateway API spec.
 func convertGRPCBackendRef(
 	ctx context.Context,
 	backend *gatewayv1.GRPCBackendRef,
 	namespace string,
 	clusterDomain string,
 	validator BackendRefValidator,
+	tlsResolver BackendTLSResolver,
+	clientCert *ClientCertConfig,
 ) (BackendRef, bool) {
 	if !IsServiceBackendRef(backend.BackendObjectReference) {
 		slog.Warn("skipping non-Service gRPC backend kind", "kind", backend.Kind, "name", backend.Name)
@@ -232,11 +266,24 @@ func convertGRPCBackendRef(
 		return BackendRef{}, false
 	}
 
-	// buildServiceURL forces https on port 443; gRPC h2c is cleartext, so
-	// normalise the scheme to http regardless of port.
-	url := strings.Replace(buildServiceURL(serviceName, svcNamespace, port, clusterDomain), "https://", "http://", 1)
+	result.URL = buildServiceURL(serviceName, svcNamespace, port, clusterDomain)
 
-	result.URL = url
+	// Resolve TLS: when a BackendTLSPolicy targets the Service, stamp it on
+	// the backend and let resolveBackendTLS force the https:// scheme.
+	result.TLS, result.URL = resolveBackendTLS(ctx, tlsResolver, svcNamespace, serviceName, port, result.URL)
+	result.TLS = attachGatewayClientCert(result.TLS, clientCert)
+
+	if result.TLS != nil {
+		// TLS is on — newTLSTransport handles ALPN HTTP/2 negotiation, the
+		// h2c marker would be ignored on that path (and is misleading), so
+		// leave Protocol at the default and keep the https:// URL.
+		return result, true
+	}
+
+	// Backward-compat path: no policy, no client cert — force cleartext h2c.
+	// buildServiceURL emits https:// for port 443; rewrite to http:// so the
+	// h2c transport dials cleartext.
+	result.URL = strings.Replace(result.URL, "https://", "http://", 1)
 	result.Protocol = BackendProtocolH2C
 
 	return result, true

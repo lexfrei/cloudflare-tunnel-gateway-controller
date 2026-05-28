@@ -695,7 +695,7 @@ func (s *ProxySyncer) buildProxyConfig(
 		// relies on.
 		grpcStartIdx := len(cfg.Rules)
 
-		grpcCfg := proxy.ConvertGRPCRoutes(ctx, grpcRoutes, s.clusterDomain, s.grpcBackendValidator)
+		grpcCfg := proxy.ConvertGRPCRoutes(ctx, grpcRoutes, s.clusterDomain, s.grpcBackendValidator, s.tlsResolver, s.gatewayCertResolver)
 		cfg.Rules = append(cfg.Rules, grpcCfg.Rules...)
 
 		clearFailedGRPCBackends(cfg, grpcStartIdx, grpcRoutes, grpcFailedRefs)

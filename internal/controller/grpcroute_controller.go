@@ -153,10 +153,13 @@ func (r *GRPCRouteReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		findRoutesForRefGrant:    r.findRoutesForReferenceGrant,
 		// gRPC is proxy-driving in v3, so watch Service: a route stuck at 500
 		// because its backend did not exist yet must recover when the Service
-		// appears. BackendTLSPolicy is NOT watched (watchBackendTLS stays
-		// false) — gRPC backends are always cleartext h2c and ignore it.
+		// appears. BackendTLSPolicy IS watched (watchBackendTLS=true) — gRPC
+		// backends honor a matching policy by upgrading to TLS+ALPN HTTP/2;
+		// without the watch a policy create/edit would not re-converge the
+		// gRPC routes and the proxy would keep dialing cleartext.
 		findRoutesForService: r.findRoutesForService,
 		getAllRelevantRoutes: r.getAllRelevantRoutes,
+		watchBackendTLS:      true,
 	})
 }
 

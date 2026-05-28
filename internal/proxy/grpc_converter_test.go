@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/proxy"
@@ -66,7 +67,7 @@ func TestConvertGRPCRoutes_ExactServiceMethod(t *testing.T) {
 		},
 	}
 
-	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil)
+	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil, nil, nil)
 
 	require.Len(t, cfg.Rules, 1)
 	rule := cfg.Rules[0]
@@ -79,12 +80,17 @@ func TestConvertGRPCRoutes_ExactServiceMethod(t *testing.T) {
 	assert.Equal(t, proxy.BackendProtocolH2C, rule.Backends[0].Protocol, "gRPC backend must be h2c")
 }
 
-// TestConvertGRPCRoutes_BackendPort443ForcesCleartextH2C pins the port-443
-// normalization: buildServiceURL emits https:// for port 443, but gRPC h2c is
-// cleartext, so the converter rewrites the scheme to http:// regardless of
-// port. Without the rewrite a gRPC backend on 443 would get an https URL the
-// h2c transport cannot dial.
-func TestConvertGRPCRoutes_BackendPort443ForcesCleartextH2C(t *testing.T) {
+// TestConvertGRPCRoutes_BackendPort443NoPolicyStaysCleartextH2C pins the
+// port-443 normalization: buildServiceURL emits https:// for port 443, but
+// gRPC h2c is cleartext, so the converter rewrites the scheme to http://
+// regardless of port. Without the rewrite a gRPC backend on 443 would get
+// an https URL the h2c transport cannot dial.
+//
+// This is the backward-compat path: no BackendTLSPolicy attached, no Gateway
+// clientCertificateRef → the port-443 backend stays h2c. When a policy IS
+// attached, the gRPC backend is upgraded to TLS instead — pinned by
+// TestConvertGRPCRoutes_PolicyOnBackendUpgradesToTLS.
+func TestConvertGRPCRoutes_BackendPort443NoPolicyStaysCleartextH2C(t *testing.T) {
 	t.Parallel()
 
 	svc := "grpc.examples.echo.Echo"
@@ -105,7 +111,7 @@ func TestConvertGRPCRoutes_BackendPort443ForcesCleartextH2C(t *testing.T) {
 		},
 	}
 
-	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil)
+	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil, nil, nil)
 
 	require.Len(t, cfg.Rules, 1)
 	require.Len(t, cfg.Rules[0].Backends, 1)
@@ -116,12 +122,240 @@ func TestConvertGRPCRoutes_BackendPort443ForcesCleartextH2C(t *testing.T) {
 	assert.Equal(t, proxy.BackendProtocolH2C, backend.Protocol)
 }
 
-// TestConvertGRPCRoutes_NoBackendTLSAlwaysCleartextH2C pins the intentional
-// limitation that gRPC backends are always cleartext h2c: BackendTLSPolicy and
-// the Gateway clientCertificateRef are not applied to gRPC in this revision.
-// ConvertGRPCRoutes takes no TLS resolver, so the produced backend must carry
-// no TLS config and stay http://+h2c. If a future change starts honoring TLS
-// for gRPC, this test must be updated alongside the user-facing docs.
+// TestConvertGRPCRoutes_PolicyOnBackendUpgradesToTLS pins the headline
+// behavior of #344: when a BackendTLSPolicy targets the gRPC backend's
+// Service, the converter stamps BackendTLSConfig onto the backend,
+// flips the scheme to https://, and switches Protocol to
+// BackendProtocolHTTPS. The proxy's transport layer then negotiates
+// HTTP/2 via ALPN — gRPC over TLS — instead of dialing cleartext h2c
+// and getting refused by a TLS-only backend.
+func TestConvertGRPCRoutes_PolicyOnBackendUpgradesToTLS(t *testing.T) {
+	t.Parallel()
+
+	svc := "grpc.examples.echo.Echo"
+	method := "UnaryEcho"
+	routes := []*gatewayv1.GRPCRoute{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "echo", Namespace: "default"},
+			Spec: gatewayv1.GRPCRouteSpec{
+				Rules: []gatewayv1.GRPCRouteRule{
+					{
+						Matches: []gatewayv1.GRPCRouteMatch{
+							{Method: &gatewayv1.GRPCMethodMatch{Type: grpcExact(), Service: &svc, Method: &method}},
+						},
+						BackendRefs: []gatewayv1.GRPCBackendRef{grpcBackendRef("echo-svc", 8443, 1)},
+					},
+				},
+			},
+		},
+	}
+
+	tlsResolver := func(_ context.Context, namespace, serviceName string, port int32) *proxy.BackendTLSConfig {
+		if namespace == "default" && serviceName == "echo-svc" && port == 8443 {
+			return &proxy.BackendTLSConfig{
+				CABundlePEM: "-----BEGIN CERTIFICATE-----\nFAKE\n-----END CERTIFICATE-----\n",
+				ServerName:  "echo-svc.default.svc.cluster.local",
+			}
+		}
+
+		return nil
+	}
+
+	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil, tlsResolver, nil)
+
+	require.Len(t, cfg.Rules, 1)
+	require.Len(t, cfg.Rules[0].Backends, 1)
+	backend := cfg.Rules[0].Backends[0]
+	require.NotNil(t, backend.TLS, "BackendTLSPolicy match MUST stamp TLS config on gRPC backend")
+	assert.Equal(t, "echo-svc.default.svc.cluster.local", backend.TLS.ServerName)
+	assert.True(t, strings.HasPrefix(backend.URL, "https://"),
+		"gRPC backend with BackendTLSPolicy MUST flip to https scheme, got %q", backend.URL)
+	// Protocol is empty (BackendProtocolHTTP) — when backendTLS is set,
+	// newTLSTransport's http.Transport with ALPN auto-negotiates HTTP/2.
+	// h2c is cleartext and cannot coexist with TLS (see handler.go:550-552
+	// and the HTTPRoute resolveH2C "TLS wins" branch).
+	assert.Equal(t, proxy.BackendProtocolHTTP, backend.Protocol,
+		"gRPC backend with BackendTLSPolicy MUST drop the h2c marker — ALPN negotiates HTTP/2 over TLS")
+}
+
+// TestConvertGRPCRoutes_GatewayClientCertStampedOnGRPCBackend pins that
+// the parent Gateway's clientCertificateRef is presented during the gRPC
+// backend TLS handshake. Without this, an operator who attaches a
+// BackendTLSPolicy expecting mTLS would see one-way TLS and the server
+// would reject the handshake — same shape as the HTTPRoute mTLS path,
+// which the upstream conformance already covers.
+func TestConvertGRPCRoutes_GatewayClientCertStampedOnGRPCBackend(t *testing.T) {
+	t.Parallel()
+
+	svc := "grpc.examples.echo.Echo"
+	method := "UnaryEcho"
+	routes := []*gatewayv1.GRPCRoute{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "echo", Namespace: "default"},
+			Spec: gatewayv1.GRPCRouteSpec{
+				CommonRouteSpec: gatewayv1.CommonRouteSpec{
+					ParentRefs: []gatewayv1.ParentReference{{Name: gatewayv1.ObjectName("gw")}},
+				},
+				Rules: []gatewayv1.GRPCRouteRule{
+					{
+						Matches: []gatewayv1.GRPCRouteMatch{
+							{Method: &gatewayv1.GRPCMethodMatch{Type: grpcExact(), Service: &svc, Method: &method}},
+						},
+						BackendRefs: []gatewayv1.GRPCBackendRef{grpcBackendRef("echo-svc", 8443, 1)},
+					},
+				},
+			},
+		},
+	}
+
+	tlsResolver := func(_ context.Context, _, _ string, _ int32) *proxy.BackendTLSConfig {
+		return &proxy.BackendTLSConfig{
+			CABundlePEM: "-----BEGIN CERTIFICATE-----\nFAKE\n-----END CERTIFICATE-----\n",
+			ServerName:  "echo-svc.default.svc.cluster.local",
+		}
+	}
+
+	clientCertPEM := []byte("-----BEGIN CERTIFICATE-----\nCLIENT-CERT\n-----END CERTIFICATE-----\n")
+	clientKeyPEM := []byte("-----BEGIN PRIVATE KEY-----\nCLIENT-KEY\n-----END PRIVATE KEY-----\n")
+
+	certResolver := func(_ context.Context, gw types.NamespacedName) *proxy.ClientCertConfig {
+		if gw.Namespace == "default" && gw.Name == "gw" {
+			return &proxy.ClientCertConfig{CertPEM: clientCertPEM, KeyPEM: clientKeyPEM}
+		}
+
+		return nil
+	}
+
+	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil, tlsResolver, certResolver)
+
+	require.Len(t, cfg.Rules, 1)
+	require.Len(t, cfg.Rules[0].Backends, 1)
+	backend := cfg.Rules[0].Backends[0]
+	require.NotNil(t, backend.TLS)
+	assert.Equal(t, clientCertPEM, backend.TLS.ClientCertPEM,
+		"parent Gateway's clientCertificateRef MUST be stamped on the gRPC backend's TLS config")
+	assert.Equal(t, clientKeyPEM, backend.TLS.ClientKeyPEM)
+}
+
+// TestConvertGRPCRoutes_ClientCertOnlyWithoutPolicyStaysCleartext pins
+// the spec-level contract that a Gateway clientCertificateRef alone
+// does NOT trigger TLS on a gRPC backend — only a BackendTLSPolicy does
+// the upgrade, and the cert is layered on top. attachGatewayClientCert
+// returns the original config unchanged when tlsCfg is nil, so the
+// backend stays http://+h2c. Catches a future refactor that "widens
+// the trigger to include cert-only" and would silently break the
+// "cert over plaintext is meaningless" Gateway API rule.
+func TestConvertGRPCRoutes_ClientCertOnlyWithoutPolicyStaysCleartext(t *testing.T) {
+	t.Parallel()
+
+	svc := "grpc.examples.echo.Echo"
+	method := "UnaryEcho"
+	routes := []*gatewayv1.GRPCRoute{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "echo", Namespace: "default"},
+			Spec: gatewayv1.GRPCRouteSpec{
+				CommonRouteSpec: gatewayv1.CommonRouteSpec{
+					ParentRefs: []gatewayv1.ParentReference{{Name: gatewayv1.ObjectName("gw")}},
+				},
+				Rules: []gatewayv1.GRPCRouteRule{
+					{
+						Matches: []gatewayv1.GRPCRouteMatch{
+							{Method: &gatewayv1.GRPCMethodMatch{Type: grpcExact(), Service: &svc, Method: &method}},
+						},
+						BackendRefs: []gatewayv1.GRPCBackendRef{grpcBackendRef("echo-svc", 9000, 1)},
+					},
+				},
+			},
+		},
+	}
+
+	// tlsResolver returns nil for every Service — no policy in the cluster.
+	tlsResolver := func(_ context.Context, _, _ string, _ int32) *proxy.BackendTLSConfig {
+		return nil
+	}
+
+	// certResolver still returns a cert; this would be a misconfig under
+	// the spec, but the converter must not silently send it over plaintext.
+	certResolver := func(_ context.Context, _ types.NamespacedName) *proxy.ClientCertConfig {
+		return &proxy.ClientCertConfig{
+			CertPEM: []byte("-----BEGIN CERTIFICATE-----\nCLIENT-CERT\n-----END CERTIFICATE-----\n"),
+			KeyPEM:  []byte("-----BEGIN PRIVATE KEY-----\nCLIENT-KEY\n-----END PRIVATE KEY-----\n"),
+		}
+	}
+
+	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil, tlsResolver, certResolver)
+
+	require.Len(t, cfg.Rules, 1)
+	require.Len(t, cfg.Rules[0].Backends, 1)
+	backend := cfg.Rules[0].Backends[0]
+	assert.Nil(t, backend.TLS,
+		"cert-only without a BackendTLSPolicy MUST keep TLS nil — Gateway API spec forbids presenting a client cert over plaintext")
+	assert.True(t, strings.HasPrefix(backend.URL, "http://"),
+		"cert-only without a BackendTLSPolicy MUST stay http://, got %q", backend.URL)
+	assert.Equal(t, proxy.BackendProtocolH2C, backend.Protocol,
+		"cert-only without a BackendTLSPolicy MUST stay BackendProtocolH2C — the cert does NOT upgrade the hop")
+}
+
+// TestConvertGRPCRoutes_MixedTLSAndCleartextBackends pins that two
+// backends in the same rule are resolved independently — one with a
+// matching BackendTLSPolicy goes TLS+ALPN, the other without stays
+// h2c. Mixed rules are unusual but legal per the spec, and a future
+// refactor that hoists the TLS branch above the per-backend loop would
+// silently break the cleartext sibling.
+func TestConvertGRPCRoutes_MixedTLSAndCleartextBackends(t *testing.T) {
+	t.Parallel()
+
+	svc := "grpc.examples.echo.Echo"
+	method := "UnaryEcho"
+	routes := []*gatewayv1.GRPCRoute{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "echo", Namespace: "default"},
+			Spec: gatewayv1.GRPCRouteSpec{
+				Rules: []gatewayv1.GRPCRouteRule{
+					{
+						Matches: []gatewayv1.GRPCRouteMatch{
+							{Method: &gatewayv1.GRPCMethodMatch{Type: grpcExact(), Service: &svc, Method: &method}},
+						},
+						BackendRefs: []gatewayv1.GRPCBackendRef{
+							grpcBackendRef("echo-tls", 8443, 1),
+							grpcBackendRef("echo-plain", 9000, 1),
+						},
+					},
+				},
+			},
+		},
+	}
+
+	tlsResolver := func(_ context.Context, _, serviceName string, _ int32) *proxy.BackendTLSConfig {
+		if serviceName == "echo-tls" {
+			return &proxy.BackendTLSConfig{CABundlePEM: "FAKE", ServerName: "echo-tls"}
+		}
+
+		return nil
+	}
+
+	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil, tlsResolver, nil)
+
+	require.Len(t, cfg.Rules, 1)
+	require.Len(t, cfg.Rules[0].Backends, 2)
+
+	tlsBackend := cfg.Rules[0].Backends[0]
+	assert.Equal(t, "echo-tls", tlsBackend.TLS.ServerName, "first backend with policy MUST be TLS")
+	assert.True(t, strings.HasPrefix(tlsBackend.URL, "https://"))
+	assert.Equal(t, proxy.BackendProtocolHTTP, tlsBackend.Protocol)
+
+	plainBackend := cfg.Rules[0].Backends[1]
+	assert.Nil(t, plainBackend.TLS, "second backend without policy MUST stay cleartext")
+	assert.True(t, strings.HasPrefix(plainBackend.URL, "http://"))
+	assert.Equal(t, proxy.BackendProtocolH2C, plainBackend.Protocol)
+}
+
+// TestConvertGRPCRoutes_NoBackendTLSAlwaysCleartextH2C pins the backward
+// compatibility property: when no BackendTLSPolicy targets the backend
+// AND no Gateway clientCertificateRef applies, the gRPC backend stays
+// cleartext h2c — same shape as before the TLS-upgrade work. The
+// renamed port-443 test pins the same property for the port-443 edge
+// case; this one pins it for a non-standard port.
 func TestConvertGRPCRoutes_NoBackendTLSAlwaysCleartextH2C(t *testing.T) {
 	t.Parallel()
 
@@ -143,7 +377,7 @@ func TestConvertGRPCRoutes_NoBackendTLSAlwaysCleartextH2C(t *testing.T) {
 		},
 	}
 
-	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil)
+	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil, nil, nil)
 
 	require.Len(t, cfg.Rules, 1)
 	require.Len(t, cfg.Rules[0].Backends, 1)
@@ -182,7 +416,7 @@ func TestConvertGRPCRoutes_MultipleWeightedBackends(t *testing.T) {
 		},
 	}
 
-	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil)
+	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil, nil, nil)
 
 	require.Len(t, cfg.Rules, 1)
 	require.Len(t, cfg.Rules[0].Backends, 2, "both weighted backends must survive for proportional splitting")
@@ -218,7 +452,7 @@ func TestConvertGRPCRoutes_ServiceOnly(t *testing.T) {
 		},
 	}
 
-	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil)
+	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil, nil, nil)
 
 	require.Len(t, cfg.Rules, 1)
 	require.NotNil(t, cfg.Rules[0].Matches[0].Path)
@@ -249,7 +483,7 @@ func TestConvertGRPCRoutes_RegexMethod(t *testing.T) {
 		},
 	}
 
-	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil)
+	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil, nil, nil)
 
 	require.Len(t, cfg.Rules, 1)
 	require.NotNil(t, cfg.Rules[0].Matches[0].Path)
@@ -285,7 +519,7 @@ func TestConvertGRPCRoutes_RegexAlternationAnchored(t *testing.T) {
 		},
 	}
 
-	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil)
+	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil, nil, nil)
 
 	require.Len(t, cfg.Rules, 1)
 	require.NotNil(t, cfg.Rules[0].Matches[0].Path)
@@ -324,7 +558,7 @@ func TestConvertGRPCRoutes_MethodOnlyExact(t *testing.T) {
 		},
 	}
 
-	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil)
+	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil, nil, nil)
 
 	require.Len(t, cfg.Rules, 1)
 	require.NotNil(t, cfg.Rules[0].Matches[0].Path)
@@ -370,7 +604,7 @@ func TestConvertGRPCRoutes_RegexEmptyServiceAndMethod(t *testing.T) {
 				},
 			}
 
-			cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil)
+			cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil, nil, nil)
 
 			require.Len(t, cfg.Rules, 1)
 			require.NotNil(t, cfg.Rules[0].Matches[0].Path)
@@ -405,7 +639,7 @@ func TestConvertGRPCRoutes_HeaderRegexType(t *testing.T) {
 		},
 	}
 
-	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil)
+	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil, nil, nil)
 
 	require.Len(t, cfg.Rules, 1)
 	require.Len(t, cfg.Rules[0].Matches[0].Headers, 1)
@@ -437,7 +671,7 @@ func TestConvertGRPCRoutes_FiltersDropped(t *testing.T) {
 		},
 	}
 
-	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil)
+	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil, nil, nil)
 
 	require.Len(t, cfg.Rules, 1)
 	assert.Empty(t, cfg.Rules[0].Filters, "gRPC filters are not supported and must be dropped")
@@ -499,7 +733,7 @@ func TestConvertGRPCRoutes_BackendSkips(t *testing.T) {
 				},
 			}
 
-			cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil)
+			cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil, nil, nil)
 
 			require.Len(t, cfg.Rules, 1)
 			assert.Empty(t, cfg.Rules[0].Backends, "invalid backend must be dropped → rule has no backends")
@@ -539,7 +773,7 @@ func TestConvertGRPCRoutes_CrossNamespaceDenied(t *testing.T) {
 		},
 	}
 
-	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", denyAll)
+	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", denyAll, nil, nil)
 
 	require.Len(t, cfg.Rules, 1)
 	assert.Empty(t, cfg.Rules[0].Backends, "cross-namespace backend denied by ReferenceGrant must be dropped")
@@ -570,7 +804,7 @@ func TestConvertGRPCRoutes_HeaderMatch(t *testing.T) {
 		},
 	}
 
-	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil)
+	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil, nil, nil)
 
 	require.Len(t, cfg.Rules, 1)
 	require.Len(t, cfg.Rules[0].Matches[0].Headers, 1)
@@ -603,7 +837,7 @@ func TestConvertGRPCRoutes_HeaderOnlyNoMethod(t *testing.T) {
 		},
 	}
 
-	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil)
+	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil, nil, nil)
 
 	require.Len(t, cfg.Rules, 1)
 	require.Len(t, cfg.Rules[0].Matches, 1)
@@ -630,7 +864,7 @@ func TestConvertGRPCRoutes_NoMatchesMatchesAll(t *testing.T) {
 		},
 	}
 
-	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil)
+	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil, nil, nil)
 
 	require.Len(t, cfg.Rules, 1)
 	assert.Empty(t, cfg.Rules[0].Matches, "no method match → no match constraints (match all)")
@@ -665,7 +899,7 @@ func TestConvertGRPCRoutes_EmptyMatchMixedWithSpecificIsDropped(t *testing.T) {
 		},
 	}
 
-	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil)
+	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil, nil, nil)
 
 	require.Len(t, cfg.Rules, 1)
 	require.Len(t, cfg.Rules[0].Matches, 1, "empty match dropped; only the specific match survives")

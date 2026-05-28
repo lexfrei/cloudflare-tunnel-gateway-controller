@@ -1,6 +1,6 @@
 # GRPCRoute
 
-GRPCRoute enables routing gRPC traffic through Cloudflare Tunnel with service and method-level matching. It is served by the in-process L7 proxy: gRPC requests are HTTP/2 POSTs to `/{service}/{method}`, which the proxy matches with its path matcher; the upstream hop to the backend is forced to h2c (cleartext HTTP/2).
+GRPCRoute enables routing gRPC traffic through Cloudflare Tunnel with service and method-level matching. It is served by the in-process L7 proxy: gRPC requests are HTTP/2 POSTs to `/{service}/{method}`, which the proxy matches with its path matcher. The upstream hop to the backend is cleartext h2c by default; attaching a `BackendTLSPolicy` upgrades the hop to TLS with HTTP/2 negotiated via ALPN (see Backend TLS below).
 
 !!! danger "gRPC requires the tunnel transport protocol `http2`"
 
@@ -240,11 +240,21 @@ kubectl get grpcroute my-grpc-route --output jsonpath='{.status.parents[*].condi
 | Header matching (Exact, RegularExpression) | Supported |
 | Filters | Not implemented — logged and skipped |
 | Backend filters | Not implemented |
-| BackendTLSPolicy / Gateway `clientCertificateRef` | Not applied — see Backend TLS below |
+| BackendTLSPolicy / Gateway `clientCertificateRef` | Supported — see Backend TLS below |
 
 ### Backend TLS
 
-The upstream hop to a gRPC backend is always cleartext h2c (HTTP/2 without TLS). Unlike HTTPRoute backends, a `BackendTLSPolicy` targeting a gRPC backend Service and the Gateway's `spec.tls.backend.clientCertificateRef` are **not** applied to gRPC traffic in this revision — they are silently ignored, and no WARN is logged. If your gRPC backend requires TLS, terminate it in front of the Service (for example with a sidecar or an in-cluster gRPC-aware proxy) and point the GRPCRoute at the cleartext side.
+The default hop to a gRPC backend is cleartext h2c (HTTP/2 without TLS). When a `BackendTLSPolicy` targets the backend Service, the proxy upgrades the hop to TLS instead — `BackendTLSConfig` (CA bundle, ServerName, SANs) is stamped onto the backend, the URL is rewritten to `https://`, and HTTP/2 is auto-negotiated over the TLS handshake via ALPN. The Gateway's `spec.tls.backend.clientCertificateRef` is presented during the handshake the same way as for HTTPRoute, enabling mTLS.
+
+Behavior matrix:
+
+| State | URL scheme | Protocol | TLS |
+|-------|------------|----------|-----|
+| No `BackendTLSPolicy`, no `clientCertificateRef` | `http://` | h2c | none |
+| `BackendTLSPolicy` targets the Service | `https://` | h2 (ALPN) | server-auth + optional mTLS |
+| Plus `clientCertificateRef` on the parent Gateway | `https://` | h2 (ALPN) | mTLS |
+
+A gRPC backend on port 443 follows the same rule — if a policy targets it, TLS; otherwise h2c. The `buildServiceURL` helper emits `https://` for port 443 (the HTTPRoute convention); the gRPC converter undoes that to `http://` for the cleartext-h2c path because h2c is HTTP/2 without TLS and needs an `http://` URL.
 
 ### Traffic Splitting
 

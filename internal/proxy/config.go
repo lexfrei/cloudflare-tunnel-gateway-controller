@@ -22,6 +22,13 @@ var (
 	errPathValueRequired = errors.New("path: value is required")
 	errUnknownFilterType = errors.New("unknown filter type")
 	errStaleVersion      = errors.New("stale config version")
+	// errTLSMirrorWithoutTransportFactory is returned by Router.UpdateConfig
+	// when a config carries a RequestMirror filter whose TLS is set but the
+	// Router was never given a TransportFactory via SetHandler. Mirror
+	// filters would otherwise fall back to the global cleartext mirrorClient
+	// and silently bypass the operator's TLS expectation — the exact
+	// regression the per-cert pool integration was added to prevent.
+	errTLSMirrorWithoutTransportFactory = errors.New("config carries TLS-bearing RequestMirror filter but Router has no TransportFactory wired; call Router.SetHandler before UpdateConfig")
 )
 
 // Config is the top-level configuration pushed by the controller.
@@ -185,6 +192,20 @@ type MirrorConfig struct {
 	// on the Gateway API filter is normalized into Percent at conversion
 	// time so the proxy speaks one shape.
 	Percent *int32 `json:"percent,omitempty"`
+	// TLS, when non-nil, indicates that a BackendTLSPolicy targets the
+	// mirror destination Service. The filter borrows a per-cert TLS-aware
+	// RoundTripper from the Handler's transport pool — same shape the main
+	// leg uses — instead of dialing cleartext through the global
+	// mirrorClient. Without this, a TLS-only mirror backend would refuse
+	// the connection and the mirrored copy would be silently lost.
+	TLS *BackendTLSConfig `json:"tls,omitempty"`
+	// Protocol mirrors BackendRef.Protocol for the mirror destination so
+	// the transport pool key (host, protocol, TLS, headerTimeout) matches
+	// what the main leg would build for the same backend. Empty (default
+	// BackendProtocolHTTP) for every mirror destination today; carried as
+	// a field so future protocol marker additions to BackendRef
+	// automatically extend to the mirror leg.
+	Protocol BackendProtocol `json:"protocol,omitempty"`
 }
 
 // BackendProtocol identifies the application protocol the proxy must speak to a

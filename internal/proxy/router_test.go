@@ -59,6 +59,57 @@ func TestRouter_UpdateConfig(t *testing.T) {
 	assert.GreaterOrEqual(t, result.BackendIdx, 0)
 }
 
+// TestRouter_UpdateConfig_RejectsTLSMirrorWithoutTransportFactory pins
+// the safety contract introduced for #343: a Router that was never
+// given a TransportFactory via SetHandler MUST refuse a config carrying
+// a TLS-aware RequestMirror, rather than silently letting NewRequestMirror
+// fall back to the cleartext mirrorClient and bypass the operator's
+// TLS expectation on the mirror leg. A Router that owns no Handler is
+// allowed to compile cleartext-only configs (the test suite uses this
+// path heavily), so the check only fires on a TLS-bearing mirror.
+func TestRouter_UpdateConfig_RejectsTLSMirrorWithoutTransportFactory(t *testing.T) {
+	t.Parallel()
+
+	router := proxy.NewRouter()
+
+	cfgPlain := &proxy.Config{
+		Version: 1,
+		Rules: []proxy.RouteRule{{
+			Hostnames: []string{"app.example.com"},
+			Filters: []proxy.RouteFilter{{
+				Type: proxy.FilterRequestMirror,
+				RequestMirror: &proxy.MirrorConfig{
+					BackendURL: "http://mirror.example.com",
+				},
+			}},
+			Backends: []proxy.BackendRef{{URL: "http://primary:80", Weight: 1}},
+		}},
+	}
+	require.NoError(t, router.UpdateConfig(cfgPlain),
+		"a cleartext-only mirror with no factory MUST be allowed — falls back to cleartext mirrorClient by design")
+
+	cfgTLS := &proxy.Config{
+		Version: 2,
+		Rules: []proxy.RouteRule{{
+			Hostnames: []string{"app.example.com"},
+			Filters: []proxy.RouteFilter{{
+				Type: proxy.FilterRequestMirror,
+				RequestMirror: &proxy.MirrorConfig{
+					BackendURL: "https://mirror.example.com",
+					TLS:        &proxy.BackendTLSConfig{ServerName: "mirror.example.com"},
+				},
+			}},
+			Backends: []proxy.BackendRef{{URL: "http://primary:80", Weight: 1}},
+		}},
+	}
+
+	err := router.UpdateConfig(cfgTLS)
+	require.Error(t, err,
+		"TLS-bearing mirror MUST be rejected when no TransportFactory is wired — otherwise the mirror leg silently bypasses TLS")
+	assert.Contains(t, err.Error(), "TransportFactory",
+		"error message must name TransportFactory so operators can locate the wiring step they missed")
+}
+
 func TestRouter_ExactHostMatch(t *testing.T) {
 	t.Parallel()
 

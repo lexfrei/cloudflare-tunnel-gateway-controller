@@ -161,9 +161,20 @@ func (m *ConfigMapper) isConfigForOurClass(ctx context.Context, cfg *v1alpha1.Ga
 }
 
 func (m *ConfigMapper) isSecretReferencedByConfig(ctx context.Context, secret *corev1.Secret) bool {
+	if m.isSecretReferencedByCredentials(ctx, secret) {
+		return true
+	}
+
+	return m.isSecretReferencedByManagedGateway(ctx, secret)
+}
+
+// isSecretReferencedByCredentials matches Secrets that back the
+// GatewayClassConfig.cloudflareCredentialsSecretRef of any managed
+// GatewayClass. This is the original credentials-rotation path.
+func (m *ConfigMapper) isSecretReferencedByCredentials(ctx context.Context, secret *corev1.Secret) bool {
 	classes, err := listGatewayClassesForController(ctx, m.Client, m.ControllerName)
 	if err != nil {
-		logging.FromContext(ctx).Warn("failed to list GatewayClasses in isSecretReferencedByConfig",
+		logging.FromContext(ctx).Warn("failed to list GatewayClasses in isSecretReferencedByCredentials",
 			"error", err)
 
 		return false
@@ -183,6 +194,92 @@ func (m *ConfigMapper) isSecretReferencedByConfig(ctx context.Context, secret *c
 	}
 
 	return false
+}
+
+// isSecretReferencedByManagedGateway matches Secrets that back the
+// Gateway.spec.tls.backend.clientCertificateRef of any managed Gateway,
+// including cross-namespace refs guarded by a matching ReferenceGrant.
+// Without this match, a rotation of the backend client cert Secret does
+// not enqueue routes and the proxy keeps presenting the previous keypair
+// until some unrelated event drives the next reconcile.
+func (m *ConfigMapper) isSecretReferencedByManagedGateway(ctx context.Context, secret *corev1.Secret) bool {
+	classNames, err := managedClassNames(ctx, m.Client, m.ControllerName)
+	if err != nil {
+		logging.FromContext(ctx).Warn("failed to list GatewayClasses in isSecretReferencedByManagedGateway",
+			"error", err)
+
+		return false
+	}
+
+	if len(classNames) == 0 {
+		return false
+	}
+
+	var gateways gatewayv1.GatewayList
+	if listErr := m.Client.List(ctx, &gateways); listErr != nil {
+		logging.FromContext(ctx).Warn("failed to list Gateways in isSecretReferencedByManagedGateway",
+			"error", listErr)
+
+		return false
+	}
+
+	for i := range gateways.Items {
+		gateway := &gateways.Items[i]
+		if !classNames[string(gateway.Spec.GatewayClassName)] {
+			continue
+		}
+
+		if m.gatewayReferencesSecret(ctx, gateway, secret) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// gatewayReferencesSecret reports whether `gateway`'s
+// spec.tls.backend.clientCertificateRef points at `secret`, honoring
+// same-namespace refs without a grant check and cross-namespace refs
+// guarded by a permitting ReferenceGrant.
+//
+// Fails open on a transient grant List error: a non-NotFound List
+// failure (auth refresh, API-server 5xx, pre-informer warmup) MUST NOT
+// drop the Secret rotation event, otherwise the proxy keeps the stale
+// keypair until an unrelated event fires. The reconcile path's
+// loadGatewayClientCertPEM re-runs the grant check authoritatively, so
+// the cost of failing open is one extra reconcile, no security risk.
+func (m *ConfigMapper) gatewayReferencesSecret(ctx context.Context, gateway *gatewayv1.Gateway, secret *corev1.Secret) bool {
+	ref := gatewayClientCertRef(gateway)
+	if ref == nil || !isCoreSecretRef(ref) {
+		return false
+	}
+
+	targetNS := gateway.Namespace
+	if ref.Namespace != nil {
+		targetNS = string(*ref.Namespace)
+	}
+
+	if targetNS != secret.Namespace || string(ref.Name) != secret.Name {
+		return false
+	}
+
+	if targetNS == gateway.Namespace {
+		return true
+	}
+
+	allowed, grantErr := checkSecretReferenceGrantForGateway(ctx, m.Client, gateway, targetNS, *ref)
+	if grantErr != nil {
+		logging.FromContext(ctx).Warn("transient ReferenceGrant List error during Secret rotation matcher — failing open and enqueueing the Secret event",
+			"gateway", gateway.Name,
+			"gateway_namespace", gateway.Namespace,
+			"secret", secret.Name,
+			"secret_namespace", secret.Namespace,
+			"error", grantErr)
+
+		return true
+	}
+
+	return allowed
 }
 
 // SecretMatchesConfig checks if a Secret is referenced by the GatewayClassConfig.

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -129,7 +130,14 @@ func ConvertHTTPRoutes(
 	return cfg
 }
 
-// resolveFirstParentClientCert walks the route's parentRefs in declaration
+// kindGateway identifies the parentRef Kind we recognise when walking
+// parents looking for a client certificate. Shared by the HTTPRoute and
+// GRPCRoute helpers in this file and grpc_converter.go. The Group is
+// matched via gatewayv1.GroupName from the upstream package — no
+// proxy-side magic string.
+const kindGateway = "Gateway"
+
+// resolveFirstParentClientCert walks the HTTPRoute's parentRefs in declaration
 // order, asking gatewayCertResolver for each parent's client certificate, and
 // returns the first non-nil result. Multiple parents with conflicting certs
 // are a spec edge case the conformance suite does not exercise; this
@@ -139,20 +147,33 @@ func resolveFirstParentClientCert(
 	route *gatewayv1.HTTPRoute,
 	resolver GatewayClientCertResolver,
 ) *ClientCertConfig {
+	return resolveFirstParentClientCertFromRefs(ctx, route.Spec.ParentRefs, route.Namespace, resolver)
+}
+
+// resolveFirstParentClientCertFromRefs is the route-type-agnostic core of the
+// parent-cert lookup: it walks ParentReferences directly so HTTPRoute and
+// GRPCRoute can share the rule without forcing a generics dance over each
+// route type's ParentRefs accessor.
+func resolveFirstParentClientCertFromRefs(
+	ctx context.Context,
+	parentRefs []gatewayv1.ParentReference,
+	routeNamespace string,
+	resolver GatewayClientCertResolver,
+) *ClientCertConfig {
 	if resolver == nil {
 		return nil
 	}
 
-	for _, ref := range route.Spec.ParentRefs {
-		if ref.Group != nil && *ref.Group != "" && *ref.Group != "gateway.networking.k8s.io" {
+	for _, ref := range parentRefs {
+		if ref.Group != nil && *ref.Group != "" && *ref.Group != gatewayv1.GroupName {
 			continue
 		}
 
-		if ref.Kind != nil && *ref.Kind != "" && *ref.Kind != "Gateway" {
+		if ref.Kind != nil && *ref.Kind != "" && *ref.Kind != kindGateway {
 			continue
 		}
 
-		ns := route.Namespace
+		ns := routeNamespace
 		if ref.Namespace != nil {
 			ns = string(*ref.Namespace)
 		}
@@ -195,7 +216,7 @@ func convertHTTPRouteRule(
 	}
 
 	for filterIdx := range rule.Filters {
-		converted := convertFilter(ctx, &rule.Filters[filterIdx], namespace, clusterDomain, validator, tlsResolver)
+		converted := convertFilter(ctx, &rule.Filters[filterIdx], namespace, clusterDomain, validator, tlsResolver, clientCert)
 		if converted != nil {
 			proxyRule.Filters = append(proxyRule.Filters, *converted)
 		}
@@ -401,6 +422,7 @@ func convertFilter(
 	namespace, clusterDomain string,
 	validator BackendRefValidator,
 	tlsResolver BackendTLSResolver,
+	clientCert *ClientCertConfig,
 ) *RouteFilter {
 	switch filter.Type {
 	case gatewayv1.HTTPRouteFilterRequestHeaderModifier:
@@ -412,7 +434,7 @@ func convertFilter(
 	case gatewayv1.HTTPRouteFilterURLRewrite:
 		return convertURLRewriteFilter(filter.URLRewrite)
 	case gatewayv1.HTTPRouteFilterRequestMirror:
-		return convertMirrorFilter(ctx, filter.RequestMirror, namespace, clusterDomain, validator, tlsResolver)
+		return convertMirrorFilter(ctx, filter.RequestMirror, namespace, clusterDomain, validator, tlsResolver, clientCert)
 	case gatewayv1.HTTPRouteFilterCORS:
 		return convertCORSFilter(filter.CORS)
 	case gatewayv1.HTTPRouteFilterExtensionRef,
@@ -500,6 +522,7 @@ func convertMirrorFilter(
 	namespace, clusterDomain string,
 	validator BackendRefValidator,
 	tlsResolver BackendTLSResolver,
+	clientCert *ClientCertConfig,
 ) *RouteFilter {
 	if mirror == nil {
 		return nil
@@ -535,29 +558,43 @@ func convertMirrorFilter(
 
 	mirrorURL := buildServiceURL(string(mirror.BackendRef.Name), mirrorNS, mirrorPort, clusterDomain)
 
-	// RequestMirror runs through a side-channel HTTP client that does NOT
-	// share the main proxy's TLS-aware transport pool. If a BackendTLSPolicy
-	// targets the mirror destination, the mirrored copy would be sent in
-	// plaintext, silently bypassing the operator's TLS intent. Document the
-	// gap loudly so operators see the silent downgrade; an actual TLS-aware
-	// mirror dial is tracked as a follow-up (see limitations.md).
+	mirrorConfig := &MirrorConfig{
+		BackendURL: mirrorURL,
+		Percent:    mirrorPercent(mirror),
+	}
+
+	// Resolve any BackendTLSPolicy targeting the mirror destination and
+	// stamp the resulting TLS config on MirrorConfig. When the proxy
+	// compiles this filter, the mirror Client borrows a per-cert
+	// RoundTripper from the Handler's transport pool — same shape the
+	// main leg uses — so the mirror dial actually honors the operator's
+	// TLS expectation instead of silently bypassing it.
+	//
+	// The parent Gateway's clientCertificateRef is stamped on top of the
+	// TLS config the same way attachGatewayClientCert handles it for the
+	// main leg: with both inputs non-nil, the mirror leg does mTLS too.
 	if tlsResolver != nil {
 		if tls := tlsResolver(ctx, mirrorNS, string(mirror.BackendRef.Name), mirrorPort); tls != nil {
-			slog.Warn("RequestMirror target has a matching BackendTLSPolicy but the mirror filter dials plaintext — mirrored copy bypasses backend TLS enforcement",
-				"namespace", mirrorNS,
-				"service", string(mirror.BackendRef.Name),
-				"port", mirrorPort,
-			)
+			mirrorConfig.TLS = attachGatewayClientCert(tls, clientCert)
+			mirrorConfig.BackendURL = forceHTTPSScheme(mirrorURL)
 		}
 	}
 
 	return &RouteFilter{
-		Type: FilterRequestMirror,
-		RequestMirror: &MirrorConfig{
-			BackendURL: mirrorURL,
-			Percent:    mirrorPercent(mirror),
-		},
+		Type:          FilterRequestMirror,
+		RequestMirror: mirrorConfig,
 	}
+}
+
+// forceHTTPSScheme rewrites the scheme of rawURL to https. Used when the
+// mirror destination carries a BackendTLSPolicy: the URL must dial over
+// TLS regardless of what buildServiceURL emitted for the port.
+func forceHTTPSScheme(rawURL string) string {
+	if rest, ok := strings.CutPrefix(rawURL, schemeHTTP+"://"); ok {
+		return schemeHTTPS + "://" + rest
+	}
+
+	return rawURL
 }
 
 // convertCORSFilter maps the upstream HTTPCORSFilter into the proxy's
@@ -835,7 +872,7 @@ func convertBackendRef(
 	result.TLS = attachGatewayClientCert(result.TLS, clientCert)
 	result.Protocol, result.URL, result.WebSocket = resolveBackendProtocol(ctx, resolver, svcNamespace, serviceName, port, result.URL, result.TLS != nil)
 
-	result.Filters = convertBackendFilters(ctx, backend.Filters, namespace, clusterDomain, validator, tlsResolver)
+	result.Filters = convertBackendFilters(ctx, backend.Filters, namespace, clusterDomain, validator, tlsResolver, clientCert)
 
 	return result, true
 }
@@ -869,16 +906,22 @@ func initBackendRefBaseline(backend *gatewayv1.HTTPBackendRef) (BackendRef, bool
 // presented only when backend TLS is active; sending a cert over plaintext
 // makes no sense.
 //
-// The supplied tlsCfg is treated as immutable — a shallow copy is taken
-// before mutation so a resolver implementation that caches and returns the
-// same *BackendTLSConfig pointer for multiple backends does not silently
-// cross-contaminate routes with each other's client cert.
+// The supplied tlsCfg is treated as immutable: a shallow struct copy is
+// taken before mutation, and the two slice fields (SubjectAltNames,
+// SubjectAltNameURIs) are slices.Clone'd so a downstream append on
+// `stamped` cannot reach back into the resolver's cached *BackendTLSConfig
+// and cross-contaminate sibling backends. This is defensive — the current
+// converter never appends to those fields here — but the cost is one
+// short slice allocation per matched backend and the guarantee is
+// enforced by code, not a comment.
 func attachGatewayClientCert(tlsCfg *BackendTLSConfig, clientCert *ClientCertConfig) *BackendTLSConfig {
 	if tlsCfg == nil || clientCert == nil {
 		return tlsCfg
 	}
 
 	stamped := *tlsCfg
+	stamped.SubjectAltNames = slices.Clone(tlsCfg.SubjectAltNames)
+	stamped.SubjectAltNameURIs = slices.Clone(tlsCfg.SubjectAltNameURIs)
 	stamped.ClientCertPEM = clientCert.CertPEM
 	stamped.ClientKeyPEM = clientCert.KeyPEM
 
@@ -905,7 +948,7 @@ func resolveBackendTLS(
 		return nil, rawURL
 	}
 
-	return tls, strings.Replace(rawURL, schemeHTTP+"://", schemeHTTPS+"://", 1)
+	return tls, forceHTTPSScheme(rawURL)
 }
 
 // resolveBackendProtocol applies the protocol resolver to a backend reference
@@ -1042,12 +1085,16 @@ func warnCleartextHintSuppressed(message, namespace, serviceName string, port in
 
 // convertBackendFilters converts the per-backend HTTPRouteFilters into proxy
 // RouteFilters, skipping any that aren't supported or have nil config.
+// clientCert is forwarded so a per-backend RequestMirror filter on a
+// destination that also carries a BackendTLSPolicy receives the parent
+// Gateway's client cert the same way a rule-level mirror does.
 func convertBackendFilters(
 	ctx context.Context,
 	filters []gatewayv1.HTTPRouteFilter,
 	namespace, clusterDomain string,
 	validator BackendRefValidator,
 	tlsResolver BackendTLSResolver,
+	clientCert *ClientCertConfig,
 ) []RouteFilter {
 	if len(filters) == 0 {
 		return nil
@@ -1056,7 +1103,7 @@ func convertBackendFilters(
 	result := make([]RouteFilter, 0, len(filters))
 
 	for filterIdx := range filters {
-		converted := convertFilter(ctx, &filters[filterIdx], namespace, clusterDomain, validator, tlsResolver)
+		converted := convertFilter(ctx, &filters[filterIdx], namespace, clusterDomain, validator, tlsResolver, clientCert)
 		if converted != nil {
 			result = append(result, *converted)
 		}

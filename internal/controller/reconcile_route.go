@@ -83,10 +83,11 @@ type routeControllerSetupParams struct {
 	findRoutesForListenerSet handler.MapFunc
 	findRoutesForRefGrant    handler.MapFunc
 	findRoutesForService     handler.MapFunc
-	// watchBackendTLS adds the BackendTLSPolicy + CA ConfigMap watches. Only
-	// HTTPRoute needs them — gRPC backends are always cleartext h2c and ignore
-	// BackendTLSPolicy, so watching those for gRPC would be dead reconcile
-	// churn. The Service watch is gated separately on findRoutesForService.
+	// watchBackendTLS adds the BackendTLSPolicy + CA ConfigMap watches. Both
+	// HTTPRoute and GRPCRoute now honor BackendTLSPolicy (gRPC backends are
+	// upgraded to TLS + ALPN-negotiated HTTP/2 when a policy targets the
+	// Service), so both reconcilers flip this flag on. The Service watch is
+	// gated separately on findRoutesForService.
 	watchBackendTLS      bool
 	getAllRelevantRoutes RequestsFunc
 }
@@ -141,11 +142,11 @@ func setupRouteController(mgr ctrl.Manager, params *routeControllerSetupParams) 
 // addProxyOnlyWatches adds the watches the proxy-driving route controllers
 // need. Both HTTPRoute and GRPCRoute watch Service so a route stuck at 500
 // because its backend did not exist yet recovers when the Service appears
-// (gated on findRoutesForService). Only HTTPRoute additionally watches
-// BackendTLSPolicy and the CA ConfigMap (gated on watchBackendTLS) — gRPC
-// backends are always cleartext h2c and ignore BackendTLSPolicy, so those
-// watches would be dead churn for it. Extracted from setupRouteController to
-// keep its function length within the linter budget.
+// (gated on findRoutesForService). Both also watch BackendTLSPolicy and the
+// CA ConfigMap (gated on watchBackendTLS) now that gRPC backends honor a
+// matching policy by upgrading to TLS + ALPN-negotiated HTTP/2. Extracted
+// from setupRouteController to keep its function length within the linter
+// budget.
 func addProxyOnlyWatches(
 	builder *ctrl.Builder,
 	params *routeControllerSetupParams,

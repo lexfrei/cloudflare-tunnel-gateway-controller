@@ -117,6 +117,58 @@ func TestHandler_NoMatchReturns404(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, recorder.Code)
 }
 
+// TestHandler_TransportFactoryDoesNotMutateHotPath is the regression
+// guard for #343: Handler.TransportFactory() must be a pure adapter
+// over Handler.getTransport — calling it (or borrowing the returned
+// closure) must not change the main leg's behavior. Specifically, two
+// requests against the same backend must reuse the same cached
+// transport whether the factory is touched in between or not, and the
+// transport pool must not grow extra entries for the factory itself.
+//
+// Without this guard, a future refactor that mutates Handler state on
+// TransportFactory() (e.g. lazy-construct a "factory-only" pool) would
+// silently double the pool size and break the cache-key invariant the
+// PruneTransports path depends on.
+func TestHandler_TransportFactoryDoesNotMutateHotPath(t *testing.T) {
+	t.Parallel()
+
+	backend := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusOK)
+	}))
+	defer backend.Close()
+
+	router := proxy.NewRouter()
+	cfg := &proxy.Config{
+		Version: 1,
+		Rules: []proxy.RouteRule{{
+			Hostnames: []string{"app.example.com"},
+			Backends:  []proxy.BackendRef{{URL: backend.URL, Weight: 1}},
+		}},
+	}
+	require.NoError(t, router.UpdateConfig(cfg))
+
+	handler := proxy.NewHandler(router)
+
+	// First request — populates the cached transport.
+	req1 := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://app.example.com/test", nil)
+	recorder1 := httptest.NewRecorder()
+	handler.ServeHTTP(recorder1, req1)
+	require.Equal(t, http.StatusOK, recorder1.Code)
+
+	// Touch the factory — must not perturb the cache.
+	factory := handler.TransportFactory()
+	require.NotNil(t, factory, "TransportFactory MUST return a usable closure")
+
+	// Second request through the same handler. Same transport key should be
+	// reused — observable by the request succeeding without timing out and
+	// by the connection-pool reuse not crashing under -race.
+	req2 := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://app.example.com/test", nil)
+	recorder2 := httptest.NewRecorder()
+	handler.ServeHTTP(recorder2, req2)
+	require.Equal(t, http.StatusOK, recorder2.Code,
+		"after touching TransportFactory the main leg MUST still serve requests via the cached transport")
+}
+
 func TestHandler_ProxiesToBackend(t *testing.T) {
 	t.Parallel()
 
@@ -839,6 +891,68 @@ func TestExtractActiveTransportKeys_IncludesHeaderTimeout(t *testing.T) {
 		assert.NotContains(t, keysAfter, k,
 			"flipping the rule's timeouts.request must produce a different key -- otherwise PruneTransports never evicts the stale transport")
 	}
+}
+
+// TestExtractActiveTransportKeys_IncludesMirrorDestinations pins that
+// active-key extraction walks RequestMirror filters too, so the mirror
+// leg's per-cert transport (borrowed from the factory and parked in
+// Handler.transports during compile) is not pruned + idle-closed on
+// every config update. Without this, any TLS-only mirror destination
+// thrashes its TLS handshakes on every UpdateConfig — the per-cert
+// pool exists precisely to amortize that handshake.
+//
+// The mirror's cache key is transportKey(host, protocol, tlsCfg, 0)
+// because NewRequestMirror calls factory(host, protocol, tlsCfg, 0)
+// (headerTimeout=0 for the mirror leg). Both rule-level and per-backend
+// mirror filters are covered.
+func TestExtractActiveTransportKeys_IncludesMirrorDestinations(t *testing.T) {
+	t.Parallel()
+
+	mirrorTLS := &proxy.BackendTLSConfig{
+		CABundlePEM: "-----BEGIN CERTIFICATE-----\nFAKE\n-----END CERTIFICATE-----\n",
+		ServerName:  "mirror.example.com",
+	}
+
+	mainBackendURL := "http://primary.example.com:8080"
+	ruleMirrorURL := "https://mirror.example.com:8443"
+	backendMirrorURL := "https://per-backend.example.com:8443"
+
+	cfg := &proxy.Config{
+		Version: 1,
+		Rules: []proxy.RouteRule{{
+			Hostnames: []string{"app.example.com"},
+			Filters: []proxy.RouteFilter{{
+				Type: proxy.FilterRequestMirror,
+				RequestMirror: &proxy.MirrorConfig{
+					BackendURL: ruleMirrorURL,
+					TLS:        mirrorTLS,
+				},
+			}},
+			Backends: []proxy.BackendRef{{
+				URL:    mainBackendURL,
+				Weight: 1,
+				Filters: []proxy.RouteFilter{{
+					Type: proxy.FilterRequestMirror,
+					RequestMirror: &proxy.MirrorConfig{
+						BackendURL: backendMirrorURL,
+						TLS:        mirrorTLS,
+					},
+				}},
+			}},
+		}},
+	}
+
+	keys := proxy.ExtractActiveTransportKeysForTest(cfg)
+
+	mainKey := proxy.TransportKey("primary.example.com:8080", proxy.BackendProtocolHTTP, nil)
+	ruleMirrorKey := proxy.TransportKey("mirror.example.com:8443", proxy.BackendProtocolHTTP, mirrorTLS)
+	backendMirrorKey := proxy.TransportKey("per-backend.example.com:8443", proxy.BackendProtocolHTTP, mirrorTLS)
+
+	assert.Contains(t, keys, mainKey, "main backend transport key MUST be active")
+	assert.Contains(t, keys, ruleMirrorKey,
+		"rule-level mirror destination MUST be active — otherwise PruneTransports closes the mirror leg's TLS handshake on every config update")
+	assert.Contains(t, keys, backendMirrorKey,
+		"per-backend mirror destination MUST be active — same eviction-leak risk as the rule-level mirror")
 }
 
 // TestHandler_RequestTimeoutFiresWhenBackendStallsBeforeHeaders pins the

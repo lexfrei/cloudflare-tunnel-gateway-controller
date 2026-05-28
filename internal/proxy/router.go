@@ -64,9 +64,10 @@ type transportPruner interface {
 
 // Router provides thread-safe HTTP request routing with atomic config updates.
 type Router struct {
-	table    atomic.Pointer[routingTable]
-	updateMu sync.Mutex
-	pruner   transportPruner
+	table            atomic.Pointer[routingTable]
+	updateMu         sync.Mutex
+	pruner           transportPruner
+	transportFactory TransportFactory
 }
 
 // NewRouter creates a Router with an empty routing table.
@@ -79,9 +80,15 @@ func NewRouter() *Router {
 	return router
 }
 
-// SetHandler registers a handler whose transport pool will be pruned on config updates.
+// SetHandler registers a handler whose transport pool will be pruned on
+// config updates and whose per-cert transport factory is reused by mirror
+// filters so the mirror leg dials TLS the same way the main leg does. Two
+// concerns flow through one wiring point because both lifecycle-bind to the
+// Handler: the pool is owned by the Handler, the factory is the Handler's
+// closure over getTransport.
 func (r *Router) SetHandler(h *Handler) {
 	r.pruner = h
+	r.transportFactory = h.TransportFactory()
 }
 
 // ConfigVersion returns the version of the currently loaded configuration.
@@ -146,7 +153,18 @@ func (r *Router) UpdateConfig(cfg *Config) error {
 		return errors.Wrapf(errStaleVersion, "version %d < current %d", cfg.Version, current.version)
 	}
 
-	table, err := compileRoutingTable(cfg)
+	// Wiring guard, not a runtime safety net: this check exists to fail
+	// loud at construction time when SetHandler was never called for a
+	// Router that compiles a TLS-bearing mirror filter. A future
+	// maintainer reordering this function MUST keep the check below the
+	// stale-version short-circuit but above compileRoutingTable so a
+	// production-wired Router (which always calls SetHandler before any
+	// UpdateConfig is reachable) never trips it.
+	if r.transportFactory == nil && configHasTLSMirror(cfg) {
+		return errTLSMirrorWithoutTransportFactory
+	}
+
+	table, err := compileRoutingTable(cfg, r.transportFactory)
 	if err != nil {
 		return errors.Wrap(err, "failed to compile routing table")
 	}
@@ -167,6 +185,14 @@ func (r *Router) UpdateConfig(cfg *Config) error {
 // per-rule timeouts edit). The header timeout is derived from
 // rule.Timeouts the same way getTransport's callers derive it -- see
 // ruleHeaderTimeout for the shared rule.
+//
+// RequestMirror filters are walked too: NewRequestMirror calls the
+// TransportFactory with headerTimeout=0, parking a per-cert transport in
+// Handler.transports during compileRule. Without including mirror keys
+// here, every UpdateConfig would prune the mirror leg's transport and
+// CloseIdleConnections it, forcing a fresh TLS handshake on every push
+// for any TLS-only mirror destination — exactly the cost the per-cert
+// pool exists to amortize.
 func extractActiveTransportKeys(cfg *Config) map[string]bool {
 	keys := make(map[string]bool)
 
@@ -180,14 +206,88 @@ func extractActiveTransportKeys(cfg *Config) map[string]bool {
 			}
 
 			keys[transportKey(parsed.Host, backend.Protocol, backend.TLS, headerTimeout)] = true
+
+			collectMirrorTransportKeys(keys, backend.Filters)
 		}
+
+		collectMirrorTransportKeys(keys, rule.Filters)
 	}
 
 	return keys
 }
 
-// compileRoutingTable builds a routingTable from a Config.
-func compileRoutingTable(cfg *Config) (*routingTable, error) {
+// configHasTLSMirror reports whether any rule-level or per-backend
+// RequestMirror filter in cfg carries a non-nil TLS config. Router uses
+// this to fail UpdateConfig loudly when a TLS-aware mirror would
+// otherwise fall back to the global cleartext mirrorClient — that
+// fallback is fine for tests without a Handler but a production bypass
+// hazard if SetHandler was never called.
+func configHasTLSMirror(cfg *Config) bool {
+	for _, rule := range cfg.Rules {
+		if rulesHaveTLSMirror(rule.Filters) {
+			return true
+		}
+
+		for _, backend := range rule.Backends {
+			if rulesHaveTLSMirror(backend.Filters) {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// rulesHaveTLSMirror reports whether any RequestMirror filter in the
+// slice carries a non-nil TLS config.
+func rulesHaveTLSMirror(filters []RouteFilter) bool {
+	for filterIdx := range filters {
+		filter := &filters[filterIdx]
+		if filter.Type == FilterRequestMirror && filter.RequestMirror != nil && filter.RequestMirror.TLS != nil {
+			return true
+		}
+	}
+
+	return false
+}
+
+// collectMirrorTransportKeys adds the per-cert transport key for every
+// RequestMirror filter into keys. Mirror filters dial with headerTimeout=0
+// (NewRequestMirror's call to TransportFactory), so the key matches the
+// pool entry the filter borrows at compile time.
+//
+// A parse failure on BackendURL is logged at Error level rather than
+// silently skipped: the URL was emitted by convertMirrorFilter through
+// buildServiceURL + forceHTTPSScheme so a parse failure here means
+// upstream emitted a malformed URL. Silently dropping the key would
+// hand PruneTransports an incomplete active set and evict a perfectly
+// good per-cert transport the next time the filter is recompiled.
+func collectMirrorTransportKeys(keys map[string]bool, filters []RouteFilter) {
+	for filterIdx := range filters {
+		filter := &filters[filterIdx]
+		if filter.Type != FilterRequestMirror || filter.RequestMirror == nil {
+			continue
+		}
+
+		parsed, err := url.Parse(filter.RequestMirror.BackendURL)
+		if err != nil {
+			slog.Error("mirror filter BackendURL failed to parse; per-cert transport key skipped (will be evicted on next prune)",
+				"url", filter.RequestMirror.BackendURL,
+				"error", err)
+
+			continue
+		}
+
+		keys[transportKey(parsed.Host, filter.RequestMirror.Protocol, filter.RequestMirror.TLS, 0)] = true
+	}
+}
+
+// compileRoutingTable builds a routingTable from a Config. The
+// transportFactory is forwarded down to compileRule → CompileFilters →
+// compileFilter so the RequestMirror filter can borrow a per-cert
+// RoundTripper from the Handler's shared pool when a BackendTLSPolicy
+// targets the mirror destination.
+func compileRoutingTable(cfg *Config, factory TransportFactory) (*routingTable, error) {
 	table := &routingTable{
 		exactHosts: make(map[string][]*compiledRule),
 		version:    cfg.Version,
@@ -198,7 +298,7 @@ func compileRoutingTable(cfg *Config) (*routingTable, error) {
 	for ruleIdx := range cfg.Rules {
 		rule := &cfg.Rules[ruleIdx]
 
-		compiled, err := compileRule(rule, ruleIdx)
+		compiled, err := compileRule(rule, ruleIdx, factory)
 		if err != nil {
 			return nil, errors.Wrapf(err, "rule[%d]", ruleIdx)
 		}
@@ -244,8 +344,10 @@ func compileRoutingTable(cfg *Config) (*routingTable, error) {
 	return table, nil
 }
 
-// compileRule compiles a single RouteRule into a compiledRule.
-func compileRule(rule *RouteRule, ruleIndex int) (*compiledRule, error) {
+// compileRule compiles a single RouteRule into a compiledRule. factory is
+// forwarded to CompileFilters so the mirror filter can borrow the Handler's
+// per-cert RoundTripper.
+func compileRule(rule *RouteRule, ruleIndex int, factory TransportFactory) (*compiledRule, error) {
 	var matches []*CompiledMatch
 
 	for matchIdx, match := range rule.Matches {
@@ -257,7 +359,7 @@ func compileRule(rule *RouteRule, ruleIndex int) (*compiledRule, error) {
 		matches = append(matches, compiled)
 	}
 
-	filters, err := CompileFilters(rule.Filters)
+	filters, err := CompileFilters(rule.Filters, factory)
 	if err != nil {
 		return nil, errors.Wrap(err, "compile filters")
 	}
@@ -271,7 +373,7 @@ func compileRule(rule *RouteRule, ruleIndex int) (*compiledRule, error) {
 			continue
 		}
 
-		bf, bfErr := CompileFilters(backend.Filters)
+		bf, bfErr := CompileFilters(backend.Filters, factory)
 		if bfErr != nil {
 			return nil, errors.Wrapf(bfErr, "backend[%d] filters", backendIdx)
 		}
