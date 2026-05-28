@@ -542,6 +542,117 @@ func TestComputeConditions_LoserStampedConflicted(t *testing.T) {
 	assert.Equal(t, metav1.ConditionTrue, winnerAccepted.Status, "older policy must remain Accepted=True")
 }
 
+// TestComputeConditions_NotConflictedWithDistinctSectionName pins the
+// third sub-test of BackendTLSPolicyConflictResolution: one policy with
+// SectionName scoping itself to a specific named Service port, another
+// without SectionName covering all ports. Per GEP-713 these are
+// different scopes — both stay Accepted=True. The literal SectionName
+// comparison in normalizePolicyTargets implements this rule.
+func TestComputeConditions_NotConflictedWithDistinctSectionName(t *testing.T) {
+	t.Parallel()
+
+	scheme := newBackendTLSPolicyScheme(t)
+	configMap := caConfigMap("ns", "cm", generateSelfSignedCAPEM(t))
+
+	scoped := backendTLSPolicyFor("ns", "scoped", "svc", "cm", time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC))
+	sectionName := gatewayv1.SectionName("https")
+	scoped.Spec.TargetRefs[0].SectionName = &sectionName
+
+	unscoped := backendTLSPolicyFor("ns", "unscoped", "svc", "cm", time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(configMap, scoped, unscoped).
+		Build()
+	r := &BackendTLSPolicyReconciler{Client: fakeClient, Scheme: scheme, ControllerName: "test"}
+
+	for _, policy := range []*gatewayv1.BackendTLSPolicy{scoped, unscoped} {
+		t.Run(policy.Name, func(t *testing.T) {
+			t.Parallel()
+
+			conds := r.computeConditions(context.Background(), policy)
+
+			accepted := findCondition(conds, string(gatewayv1.PolicyConditionAccepted))
+			require.NotNil(t, accepted)
+			assert.Equal(t, metav1.ConditionTrue, accepted.Status,
+				"scoped (with SectionName) and unscoped (no SectionName) policies are different scopes per GEP-713 — neither conflicts with the other")
+			assert.Equal(t, string(gatewayv1.PolicyReasonAccepted), accepted.Reason)
+		})
+	}
+}
+
+// TestComputeConditions_TieBreakAlphabetical pins the deterministic
+// tie-break used when two conflicting policies share a creationTimestamp:
+// the lexicographically smaller name wins (Accepted=True), the larger
+// loses (Accepted=False, Reason=Conflicted). Without a deterministic
+// tie-break, the controller would flap between two "winners" depending
+// on List ordering, which is informer-cache-dependent and produces
+// non-deterministic Status.
+func TestComputeConditions_TieBreakAlphabetical(t *testing.T) {
+	t.Parallel()
+
+	scheme := newBackendTLSPolicyScheme(t)
+	configMap := caConfigMap("ns", "cm", generateSelfSignedCAPEM(t))
+	sameTime := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	alpha := backendTLSPolicyFor("ns", "alpha", "svc", "cm", sameTime)
+	beta := backendTLSPolicyFor("ns", "beta", "svc", "cm", sameTime)
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(configMap, alpha, beta).
+		Build()
+	r := &BackendTLSPolicyReconciler{Client: fakeClient, Scheme: scheme, ControllerName: "test"}
+
+	alphaAccepted := findCondition(r.computeConditions(context.Background(), alpha), string(gatewayv1.PolicyConditionAccepted))
+	require.NotNil(t, alphaAccepted)
+	assert.Equal(t, metav1.ConditionTrue, alphaAccepted.Status,
+		"lexicographically smaller name wins the tie")
+
+	betaAccepted := findCondition(r.computeConditions(context.Background(), beta), string(gatewayv1.PolicyConditionAccepted))
+	require.NotNil(t, betaAccepted)
+	assert.Equal(t, metav1.ConditionFalse, betaAccepted.Status)
+	assert.Equal(t, string(gatewayv1.PolicyReasonConflicted), betaAccepted.Reason)
+	assert.Contains(t, betaAccepted.Message, "ns/alpha")
+}
+
+// TestComputeConditions_CAInvalidPrecedenceOverConflicted pins the
+// precedence between two failure modes: a policy with an invalid CA ref
+// MUST surface Reason=NoValidCACertificate / InvalidCACertificateRef
+// even if it would also lose a conflict against an older sibling. The
+// CA-invalid error is more actionable for the operator ("fix your CA
+// first") and a broken-CA policy cannot be Accepted=True regardless of
+// peer state, so Conflicted is only emitted on policies that would
+// otherwise be Accepted=True.
+func TestComputeConditions_CAInvalidPrecedenceOverConflicted(t *testing.T) {
+	t.Parallel()
+
+	scheme := newBackendTLSPolicyScheme(t)
+	configMap := caConfigMap("ns", "cm", generateSelfSignedCAPEM(t))
+
+	// Winner has a valid CA. Loser points at a non-existent ConfigMap.
+	winner := backendTLSPolicyFor("ns", "winner", "svc", "cm", time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC))
+	loser := backendTLSPolicyFor("ns", "loser", "svc", "missing-cm", time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(configMap, winner, loser).
+		Build()
+	r := &BackendTLSPolicyReconciler{Client: fakeClient, Scheme: scheme, ControllerName: "test"}
+
+	conds := r.computeConditions(context.Background(), loser)
+	accepted := findCondition(conds, string(gatewayv1.PolicyConditionAccepted))
+	require.NotNil(t, accepted)
+	assert.Equal(t, metav1.ConditionFalse, accepted.Status)
+	assert.Equal(t, string(gatewayv1.BackendTLSPolicyReasonNoValidCACertificate), accepted.Reason,
+		"CA invalidity MUST dominate over Conflicted — fix-your-CA is the actionable error")
+
+	resolvedRefs := findCondition(conds, string(gatewayv1.BackendTLSPolicyConditionResolvedRefs))
+	require.NotNil(t, resolvedRefs)
+	assert.Equal(t, metav1.ConditionFalse, resolvedRefs.Status,
+		"loser's CA refs do not resolve — ResolvedRefs MUST also be False, unlike the pure-Conflicted path")
+}
+
 // ---- selectPolicyForService / isPolicyOlder / policyTargetsService ----
 
 // alwaysEmptyPortName is a resolvePortName stub for tests where SectionName
