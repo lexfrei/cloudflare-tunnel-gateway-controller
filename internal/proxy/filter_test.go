@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -461,6 +462,48 @@ func TestURLRewriter_Hostname(t *testing.T) {
 	resp := filter.ProcessRequest(req) //nolint:bodyclose // rewriter returns nil response
 	assert.Nil(t, resp)
 	assert.Equal(t, "new-host.example.com", req.Host)
+}
+
+// TestRequestMirror_HonorsBackendTLSPolicy pins the headline behavior of
+// #343: when the mirror destination is served over TLS (i.e. a
+// BackendTLSPolicy attached and the converter stamped the TLS config),
+// the mirror dial uses a TLS-aware RoundTripper from the supplied
+// factory — same per-cert transport the main leg uses — instead of the
+// global cleartext mirrorClient. Without this, a TLS-only mirror
+// backend would refuse the connection and the mirrored copy would be
+// silently lost.
+//
+// Wedge: NewRequestMirror does not yet accept the (tlsCfg, protocol,
+// factory) triple. Compile fails until the green commit widens the
+// signature.
+func TestRequestMirror_HonorsBackendTLSPolicy(t *testing.T) {
+	t.Parallel()
+
+	received := make(chan *http.Request, 1)
+
+	mirror := httptest.NewTLSServer(http.HandlerFunc(func(_ http.ResponseWriter, req *http.Request) {
+		received <- req
+	}))
+	defer mirror.Close()
+
+	// Trust the server's cert via the factory's RoundTripper.
+	transportFactory := func(_ string, _ proxy.BackendProtocol, _ *proxy.BackendTLSConfig, _ time.Duration) http.RoundTripper {
+		return mirror.Client().Transport
+	}
+
+	tlsCfg := &proxy.BackendTLSConfig{ServerName: "example"}
+	filter := proxy.NewRequestMirror(mirror.URL, nil, tlsCfg, proxy.BackendProtocolHTTP, transportFactory)
+
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "http://example.com/test", nil)
+
+	resp := filter.ProcessRequest(req) //nolint:bodyclose // mirror returns nil response
+	assert.Nil(t, resp, "mirror filter MUST NOT short-circuit the primary leg")
+
+	select {
+	case <-received:
+	case <-time.After(2 * time.Second):
+		t.Fatal("mirror request never reached the TLS-only backend — factory was not used")
+	}
 }
 
 func TestRequestMirror(t *testing.T) {
