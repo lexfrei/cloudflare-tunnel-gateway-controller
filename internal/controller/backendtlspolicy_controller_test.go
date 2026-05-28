@@ -653,6 +653,104 @@ func TestComputeConditions_CAInvalidPrecedenceOverConflicted(t *testing.T) {
 		"loser's CA refs do not resolve — ResolvedRefs MUST also be False, unlike the pure-Conflicted path")
 }
 
+// grpcRouteFor builds a GRPCRoute with one rule pointing at the given
+// backend Service. parentGwName is recorded as the only parentRef in
+// the same namespace.
+func grpcRouteFor(namespace, name, parentGwName, backendServiceName string) *gatewayv1.GRPCRoute {
+	return &gatewayv1.GRPCRoute{
+		ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: name},
+		Spec: gatewayv1.GRPCRouteSpec{
+			CommonRouteSpec: gatewayv1.CommonRouteSpec{
+				ParentRefs: []gatewayv1.ParentReference{
+					{Name: gatewayv1.ObjectName(parentGwName)},
+				},
+			},
+			Rules: []gatewayv1.GRPCRouteRule{
+				{
+					BackendRefs: []gatewayv1.GRPCBackendRef{
+						{
+							BackendRef: gatewayv1.BackendRef{
+								BackendObjectReference: gatewayv1.BackendObjectReference{
+									Name: gatewayv1.ObjectName(backendServiceName),
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+// TestReconcile_GRPCRouteAttachment_PopulatesAncestor pins parity with
+// HTTPRoute on the status side: a BackendTLSPolicy whose target Service
+// is referenced by a managed GRPCRoute MUST surface the parent Gateway
+// in Status.Ancestors, just like the HTTPRoute path does. Without this,
+// gatewaysForPolicy returns an empty set and the policy reconciles with
+// Ancestors: [] — non-conformant per GEP-713, which requires the
+// Ancestor to name each Gateway the policy affects.
+func TestReconcile_GRPCRouteAttachment_PopulatesAncestor(t *testing.T) {
+	t.Parallel()
+
+	scheme := newBackendTLSPolicyScheme(t)
+
+	const controllerName = "github.com/lexfrei/test"
+
+	gatewayClass := gatewayClassFor("cf-class", controllerName)
+	gateway := gatewayFor("ns", "gw", "cf-class")
+	grpcRoute := grpcRouteFor("ns", "r", "gw", "svc")
+	configMap := caConfigMap("ns", "cm", generateSelfSignedCAPEM(t))
+	policy := backendTLSPolicyFor("ns", "p", "svc", "cm", time.Time{})
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(gatewayClass, gateway, grpcRoute, configMap, policy).
+		WithStatusSubresource(policy).
+		Build()
+	r := &BackendTLSPolicyReconciler{Client: fakeClient, Scheme: scheme, ControllerName: controllerName}
+
+	_, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Namespace: "ns", Name: "p"}})
+	require.NoError(t, err)
+
+	var refreshed gatewayv1.BackendTLSPolicy
+	require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKey{Namespace: "ns", Name: "p"}, &refreshed))
+	require.Len(t, refreshed.Status.Ancestors, 1,
+		"policy targeting a Service referenced only by a GRPCRoute MUST still populate Status.Ancestors with the parent Gateway")
+	require.NotNil(t, refreshed.Status.Ancestors[0].AncestorRef.Name)
+	assert.Equal(t, "gw", string(refreshed.Status.Ancestors[0].AncestorRef.Name))
+}
+
+// TestPoliciesForGRPCRouteChange_OnlyMatchingPolicy mirrors the existing
+// HTTPRoute variant for the GRPCRoute watch wiring. A change to a
+// GRPCRoute referencing a policy's target Service MUST enqueue that
+// policy and only that policy.
+func TestPoliciesForGRPCRouteChange_OnlyMatchingPolicy(t *testing.T) {
+	t.Parallel()
+
+	scheme := newBackendTLSPolicyScheme(t)
+
+	matching := backendTLSPolicyFor("ns", "matching", "svc", "cm", time.Time{})
+	unrelated := backendTLSPolicyFor("ns", "unrelated", "other-svc", "cm", time.Time{})
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(matching, unrelated).
+		Build()
+	r := &BackendTLSPolicyReconciler{Client: fakeClient, Scheme: scheme, ControllerName: "test"}
+
+	grpcRoute := grpcRouteFor("ns", "r", "gw", "svc")
+
+	requests := r.policiesForGRPCRouteChange(context.Background(), grpcRoute)
+
+	names := make([]string, 0, len(requests))
+	for _, req := range requests {
+		names = append(names, req.Name)
+	}
+
+	assert.ElementsMatch(t, []string{"matching"}, names,
+		"GRPCRoute change MUST enqueue only the policy whose target Service the route references")
+}
+
 // TestPoliciesForPeerChange_DeletedWinnerEnqueuesLoser pins the deletion
 // recovery path that the For(&BackendTLSPolicy{}) watch alone cannot
 // cover: when the winning sibling is deleted, the loser keeps its
@@ -993,7 +1091,7 @@ func TestCollectGatewayKeys_DeterministicSort(t *testing.T) {
 		*httpRouteFor("ns", "r-mu", "gw-m", "svc"),
 	}
 
-	keys := collectGatewayKeys(routes, map[string]struct{}{"svc": {}})
+	keys := collectGatewayKeys(routes, nil, map[string]struct{}{"svc": {}})
 
 	require.Len(t, keys, 3)
 	assert.Equal(t, "gw-a", keys[0].Name)
@@ -1007,7 +1105,7 @@ func TestCollectGatewayKeys_SkipsUnrelatedRoutes(t *testing.T) {
 	routes := []gatewayv1.HTTPRoute{
 		*httpRouteFor("ns", "r-other", "gw", "different-svc"),
 	}
-	keys := collectGatewayKeys(routes, map[string]struct{}{"svc": {}})
+	keys := collectGatewayKeys(routes, nil, map[string]struct{}{"svc": {}})
 
 	assert.Empty(t, keys)
 }

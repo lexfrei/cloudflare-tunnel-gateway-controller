@@ -118,6 +118,32 @@ func routeReferencesAnyService(route *gatewayv1.HTTPRoute, targets map[string]st
 	return false
 }
 
+// grpcRouteReferencesAnyService is the GRPCRoute counterpart of
+// routeReferencesAnyService. Kept as a sibling rather than abstracted
+// behind a generic because GRPCBackendRef and HTTPBackendRef carry
+// different filter shapes — only the BackendRef.BackendObjectReference
+// part is uniform and worth iterating together.
+func grpcRouteReferencesAnyService(route *gatewayv1.GRPCRoute, targets map[string]struct{}) bool {
+	if len(targets) == 0 {
+		return false
+	}
+
+	for ruleIdx := range route.Spec.Rules {
+		for refIdx := range route.Spec.Rules[ruleIdx].BackendRefs {
+			ref := &route.Spec.Rules[ruleIdx].BackendRefs[refIdx].BackendRef
+			if !proxy.IsServiceBackendRef(ref.BackendObjectReference) {
+				continue
+			}
+
+			if _, hit := targets[string(ref.Name)]; hit {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
 // parentReferenceToKey resolves an HTTPRoute parentRef into a ClusterObjectKey,
 // using the route's own namespace when the ref omits the namespace field.
 func parentReferenceToKey(parentRef gatewayv1.ParentReference, routeNamespace string) client.ObjectKey {
@@ -482,12 +508,17 @@ func (r *BackendTLSPolicyReconciler) gatewaysForPolicy(
 		targetServices[string(target.Name)] = struct{}{}
 	}
 
-	var routes gatewayv1.HTTPRouteList
-	if err := r.List(ctx, &routes, client.InNamespace(policy.Namespace)); err != nil {
+	var httpRoutes gatewayv1.HTTPRouteList
+	if err := r.List(ctx, &httpRoutes, client.InNamespace(policy.Namespace)); err != nil {
 		return nil, fmt.Errorf("list httproutes: %w", err)
 	}
 
-	gatewayKeys := collectGatewayKeys(routes.Items, targetServices)
+	var grpcRoutes gatewayv1.GRPCRouteList
+	if err := r.List(ctx, &grpcRoutes, client.InNamespace(policy.Namespace)); err != nil {
+		return nil, fmt.Errorf("list grpcroutes: %w", err)
+	}
+
+	gatewayKeys := collectGatewayKeys(httpRoutes.Items, grpcRoutes.Items, targetServices)
 
 	gateways := make([]gatewayv1.Gateway, 0, len(gatewayKeys))
 
@@ -509,19 +540,31 @@ func (r *BackendTLSPolicyReconciler) gatewaysForPolicy(
 }
 
 // collectGatewayKeys returns the deterministic, sorted set of Gateway keys
-// reached by HTTPRoutes that reference any of the target services. Sorting by
-// {namespace, name} keeps Status.Ancestors stable across reconciles, which
-// matters once a policy fronts more than 16 Gateways and updateStatus has to
-// truncate.
+// reached by HTTPRoutes and GRPCRoutes that reference any of the target
+// services. Sorting by {namespace, name} keeps Status.Ancestors stable
+// across reconciles, which matters once a policy fronts more than 16
+// Gateways and updateStatus has to truncate.
 func collectGatewayKeys(
-	routes []gatewayv1.HTTPRoute,
+	httpRoutes []gatewayv1.HTTPRoute,
+	grpcRoutes []gatewayv1.GRPCRoute,
 	targetServices map[string]struct{},
 ) []client.ObjectKey {
 	gatewayKeySet := map[client.ObjectKey]struct{}{}
 
-	for routeIdx := range routes {
-		route := &routes[routeIdx]
+	for routeIdx := range httpRoutes {
+		route := &httpRoutes[routeIdx]
 		if !routeReferencesAnyService(route, targetServices) {
+			continue
+		}
+
+		for _, parentRef := range route.Spec.ParentRefs {
+			gatewayKeySet[parentReferenceToKey(parentRef, route.Namespace)] = struct{}{}
+		}
+	}
+
+	for routeIdx := range grpcRoutes {
+		route := &grpcRoutes[routeIdx]
+		if !grpcRouteReferencesAnyService(route, targetServices) {
 			continue
 		}
 
@@ -717,6 +760,10 @@ func (r *BackendTLSPolicyReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			handler.EnqueueRequestsFromMapFunc(r.policiesForRouteChange),
 		).
 		Watches(
+			&gatewayv1.GRPCRoute{},
+			handler.EnqueueRequestsFromMapFunc(r.policiesForGRPCRouteChange),
+		).
+		Watches(
 			&corev1.ConfigMap{},
 			handler.EnqueueRequestsFromMapFunc(r.policiesForConfigMapChange),
 		).
@@ -883,6 +930,44 @@ func (r *BackendTLSPolicyReconciler) policiesForRouteChange(ctx context.Context,
 // at least one Service that the route also references as a backend. Used by
 // policiesForRouteChange to skip irrelevant policies on every HTTPRoute edit.
 func policyTargetsAnyRouteBackend(policy *gatewayv1.BackendTLSPolicy, route *gatewayv1.HTTPRoute) bool {
+	return routeReferencesAnyService(route, policyTargetServiceNames(policy))
+}
+
+// policiesForGRPCRouteChange is the GRPCRoute counterpart of
+// policiesForRouteChange — enqueues only the BackendTLSPolicies whose
+// TargetRefs intersect the GRPCRoute's backendRefs. Without this watch
+// a GRPCRoute referencing a Service freshly targeted by a policy would
+// not re-enqueue the policy and the Ancestor list would remain stale.
+func (r *BackendTLSPolicyReconciler) policiesForGRPCRouteChange(ctx context.Context, obj client.Object) []reconcile.Request {
+	route, ok := obj.(*gatewayv1.GRPCRoute)
+	if !ok {
+		return nil
+	}
+
+	var policies gatewayv1.BackendTLSPolicyList
+	if err := r.List(ctx, &policies, client.InNamespace(route.Namespace)); err != nil {
+		return nil
+	}
+
+	requests := make([]reconcile.Request, 0, len(policies.Items))
+
+	for policyIdx := range policies.Items {
+		policy := &policies.Items[policyIdx]
+		if !grpcRouteReferencesAnyService(route, policyTargetServiceNames(policy)) {
+			continue
+		}
+
+		requests = append(requests, reconcile.Request{
+			NamespacedName: client.ObjectKey{Namespace: policy.Namespace, Name: policy.Name},
+		})
+	}
+
+	return requests
+}
+
+// policyTargetServiceNames returns the Service names targeted by a
+// policy. Shared by the HTTPRoute and GRPCRoute backend-overlap checks.
+func policyTargetServiceNames(policy *gatewayv1.BackendTLSPolicy) map[string]struct{} {
 	targets := map[string]struct{}{}
 
 	for _, target := range policy.Spec.TargetRefs {
@@ -894,5 +979,5 @@ func policyTargetsAnyRouteBackend(policy *gatewayv1.BackendTLSPolicy, route *gat
 		targets[string(target.Name)] = struct{}{}
 	}
 
-	return routeReferencesAnyService(route, targets)
+	return targets
 }
