@@ -685,9 +685,20 @@ func setupStatusReconcilers(mgr ctrl.Manager, controllerName string) error {
 // The ConfigMap watch is what lets policy status flip from
 // NoValidCACertificate to Accepted when an absent CA ConfigMap is later
 // created (or back, when its ca.crt key is emptied).
+//
+// The second Watches on BackendTLSPolicy itself (with the peer-change
+// mapper) is what lets a loser flip back to Accepted=True when its older
+// sibling — the conflict winner — is deleted. The implicit watch from
+// For() only enqueues the policy whose own object changed; without the
+// peer mapper, deleting the winner would leave the loser stuck on
+// Reason=Conflicted forever.
 func (r *BackendTLSPolicyReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	err := ctrl.NewControllerManagedBy(mgr).
 		For(&gatewayv1.BackendTLSPolicy{}).
+		Watches(
+			&gatewayv1.BackendTLSPolicy{},
+			handler.EnqueueRequestsFromMapFunc(r.policiesForPeerChange),
+		).
 		Watches(
 			&gatewayv1.HTTPRoute{},
 			handler.EnqueueRequestsFromMapFunc(r.policiesForRouteChange),
@@ -702,6 +713,53 @@ func (r *BackendTLSPolicyReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	}
 
 	return nil
+}
+
+// policiesForPeerChange enqueues every BackendTLSPolicy in the changed
+// policy's namespace that shares at least one (Service, SectionName)
+// target with it — excluding the changed policy itself, which the
+// implicit For() watch already enqueues. Fires on create / update /
+// delete; the create + delete paths are what guarantees the loser flips
+// status when its winner appears or disappears. Update events are also
+// covered so a peer's creationTimestamp change (rare, but possible via
+// an admin re-create) re-evaluates precedence.
+func (r *BackendTLSPolicyReconciler) policiesForPeerChange(ctx context.Context, obj client.Object) []reconcile.Request {
+	changed, ok := obj.(*gatewayv1.BackendTLSPolicy)
+	if !ok {
+		return nil
+	}
+
+	ownTargets := normalizePolicyTargets(changed)
+	if len(ownTargets) == 0 {
+		return nil
+	}
+
+	var policies gatewayv1.BackendTLSPolicyList
+	if err := r.List(ctx, &policies, client.InNamespace(changed.Namespace)); err != nil {
+		log.FromContext(ctx).Error(err, "list BackendTLSPolicies for peer-change failed",
+			"namespace", changed.Namespace, "policy", changed.Name)
+
+		return nil
+	}
+
+	requests := make([]reconcile.Request, 0)
+
+	for policyIdx := range policies.Items {
+		peer := &policies.Items[policyIdx]
+		if peer.Name == changed.Name && peer.Namespace == changed.Namespace {
+			continue
+		}
+
+		if !policiesShareTarget(peer, ownTargets) {
+			continue
+		}
+
+		requests = append(requests, reconcile.Request{
+			NamespacedName: client.ObjectKey{Namespace: peer.Namespace, Name: peer.Name},
+		})
+	}
+
+	return requests
 }
 
 // policiesForConfigMapChange enqueues every BackendTLSPolicy in the changed

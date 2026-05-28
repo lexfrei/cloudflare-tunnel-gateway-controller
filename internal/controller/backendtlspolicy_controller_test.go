@@ -653,6 +653,99 @@ func TestComputeConditions_CAInvalidPrecedenceOverConflicted(t *testing.T) {
 		"loser's CA refs do not resolve — ResolvedRefs MUST also be False, unlike the pure-Conflicted path")
 }
 
+// TestPoliciesForPeerChange_DeletedWinnerEnqueuesLoser pins the deletion
+// recovery path that the For(&BackendTLSPolicy{}) watch alone cannot
+// cover: when the winning sibling is deleted, the loser keeps its
+// Accepted=False, Reason=Conflicted Status forever unless something
+// outside its own object change triggers a reconcile. A peer-change
+// mapper takes the deleted winner, lists policies in the same namespace
+// that share at least one (Service, SectionName) target, and enqueues
+// them so they re-evaluate the conflict and flip back to Accepted=True.
+func TestPoliciesForPeerChange_DeletedWinnerEnqueuesLoser(t *testing.T) {
+	t.Parallel()
+
+	scheme := newBackendTLSPolicyScheme(t)
+
+	winner := backendTLSPolicyFor("ns", "winner", "svc", "cm", time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC))
+	loser := backendTLSPolicyFor("ns", "loser", "svc", "cm", time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
+	unrelated := backendTLSPolicyFor("ns", "other-target", "other-svc", "cm", time.Time{})
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(loser, unrelated).
+		Build()
+	r := &BackendTLSPolicyReconciler{Client: fakeClient, Scheme: scheme, ControllerName: "test"}
+
+	requests := r.policiesForPeerChange(context.Background(), winner)
+
+	names := make([]string, 0, len(requests))
+	for _, req := range requests {
+		names = append(names, req.Name)
+	}
+
+	assert.ElementsMatch(t, []string{"loser"}, names,
+		"peer-change mapper MUST enqueue the loser policy on winner deletion — and only the loser, not the unrelated sibling on a different Service")
+}
+
+// TestReconcile_ConflictResolution_DeletedWinnerFlipsLoserToAccepted
+// drives the full deletion-recovery flow against the live Reconcile
+// pipeline. After both policies have stamped their status, the winner is
+// deleted; the loser is then re-reconciled (mimicking the peer-change
+// mapper firing) and must flip from Accepted=False/Conflicted back to
+// Accepted=True with the ResolvedRefs=True it has always carried.
+func TestReconcile_ConflictResolution_DeletedWinnerFlipsLoserToAccepted(t *testing.T) {
+	t.Parallel()
+
+	scheme := newBackendTLSPolicyScheme(t)
+
+	const controllerName = "github.com/lexfrei/test"
+
+	gatewayClass := gatewayClassFor("cf-class", controllerName)
+	gateway := gatewayFor("ns", "gw", "cf-class")
+	route := httpRouteFor("ns", "r", "gw", "svc")
+	configMap := caConfigMap("ns", "cm", generateSelfSignedCAPEM(t))
+
+	winner := backendTLSPolicyFor("ns", "winner", "svc", "cm", time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC))
+	loser := backendTLSPolicyFor("ns", "loser", "svc", "cm", time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(gatewayClass, gateway, route, configMap, winner, loser).
+		WithStatusSubresource(winner, loser).
+		Build()
+	r := &BackendTLSPolicyReconciler{Client: fakeClient, Scheme: scheme, ControllerName: controllerName}
+
+	// First wave: both policies reconcile while both exist. Loser ends up Conflicted.
+	for _, name := range []string{"winner", "loser"} {
+		_, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Namespace: "ns", Name: name}})
+		require.NoError(t, err, "reconcile %s", name)
+	}
+
+	var loserBefore gatewayv1.BackendTLSPolicy
+	require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKey{Namespace: "ns", Name: "loser"}, &loserBefore))
+	require.Len(t, loserBefore.Status.Ancestors, 1)
+	loserAcceptedBefore := findCondition(loserBefore.Status.Ancestors[0].Conditions, string(gatewayv1.PolicyConditionAccepted))
+	require.NotNil(t, loserAcceptedBefore)
+	require.Equal(t, metav1.ConditionFalse, loserAcceptedBefore.Status, "precondition: loser starts Accepted=False")
+	require.Equal(t, string(gatewayv1.PolicyReasonConflicted), loserAcceptedBefore.Reason)
+
+	// Delete the winner. The peer-change mapper would normally re-enqueue
+	// the loser here; in this test we drive the reconcile manually.
+	require.NoError(t, fakeClient.Delete(context.Background(), winner))
+
+	_, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Namespace: "ns", Name: "loser"}})
+	require.NoError(t, err)
+
+	var loserAfter gatewayv1.BackendTLSPolicy
+	require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKey{Namespace: "ns", Name: "loser"}, &loserAfter))
+	require.Len(t, loserAfter.Status.Ancestors, 1)
+	loserAcceptedAfter := findCondition(loserAfter.Status.Ancestors[0].Conditions, string(gatewayv1.PolicyConditionAccepted))
+	require.NotNil(t, loserAcceptedAfter)
+	assert.Equal(t, metav1.ConditionTrue, loserAcceptedAfter.Status,
+		"after winner deletion the loser MUST flip back to Accepted=True — staying Conflicted would mislead operators about which policy is enforcing TLS on the Service")
+	assert.Equal(t, string(gatewayv1.PolicyReasonAccepted), loserAcceptedAfter.Reason)
+}
+
 // ---- selectPolicyForService / isPolicyOlder / policyTargetsService ----
 
 // alwaysEmptyPortName is a resolvePortName stub for tests where SectionName
