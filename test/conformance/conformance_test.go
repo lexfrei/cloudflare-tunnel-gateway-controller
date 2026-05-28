@@ -46,6 +46,14 @@ func TestGatewayAPIConformance(t *testing.T) {
 		// signal. The flag reflects actual proxy support.
 		features.SupportGRPCRoute,
 
+		// Extended Gateway: the reconciler writes Status.Addresses with the
+		// tunnel CNAME unconditionally and never reads spec.addresses, so a
+		// Gateway whose spec.addresses entry carries no value is still Accepted
+		// and surfaces an address in status — the GatewayOptionalAddressValue
+		// contract. (Distinct from SupportGatewayStaticAddresses, exempt below:
+		// the tunnel address is not user-supplied.)
+		features.SupportGatewayAddressEmpty,
+
 		// Extended HTTPRoute (Standard channel feature gates; v1 CRD fields)
 		features.SupportHTTPRouteQueryParamMatching,
 		features.SupportHTTPRouteMethodMatching,
@@ -109,7 +117,6 @@ func TestGatewayAPIConformance(t *testing.T) {
 		features.SupportGatewayHTTPListenerIsolation,
 		features.SupportGatewayInfrastructurePropagation,
 		features.SupportGatewayPort8080,
-		features.SupportGatewayAddressEmpty,
 		features.SupportGatewayFrontendClientCertificateValidation,
 		features.SupportGatewayFrontendClientCertificateValidationInsecureFallback,
 		features.SupportGatewayHTTPSListenerDetectMisdirectedRequests,
@@ -242,7 +249,6 @@ func conformanceSkipTests() []string {
 		"GatewayFrontendInvalidDefaultClientCertificateValidation",
 		"GatewayInvalidFrontendClientCertificateValidation",
 		"GatewayWithAttachedRoutesWithPort8080",
-		"GatewayOptionalAddressValue",
 
 		// Cloudflare edge always rewrites redirect Location scheme to HTTPS.
 		// Our proxy sets scheme correctly, but Cloudflare overrides it.
