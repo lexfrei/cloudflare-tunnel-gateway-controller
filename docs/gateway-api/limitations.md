@@ -168,11 +168,11 @@ A rotation of the `Secret` referenced by `Gateway.spec.tls.backend.clientCertifi
 
 Frontend listener `certificateRefs` are not in scope — Cloudflare terminates TLS at the edge, so frontend HTTPS listeners are structurally unsupported (see the HTTPRoute HTTPS Listener limitation).
 
-### RequestMirror filter does not honour BackendTLSPolicy
+### RequestMirror filter honours BackendTLSPolicy
 
-The Gateway API `RequestMirror` filter sends a fire-and-forget copy of the request to a secondary backend through a side-channel HTTP client that does NOT share the proxy's TLS-aware transport pool. If a `BackendTLSPolicy` targets the mirror destination Service, the mirrored copy is sent in plaintext — the primary leg still respects the policy, but the mirror leg silently bypasses it.
+The Gateway API `RequestMirror` filter sends a fire-and-forget copy of the request to a secondary backend. When a `BackendTLSPolicy` targets the mirror destination Service, the converter stamps the resulting `BackendTLSConfig` on the filter's `MirrorConfig` and the proxy borrows a per-cert `RoundTripper` from the same transport pool the main leg uses. The mirror dial then completes a TLS handshake exactly the way the main leg would, so a TLS-only mirror backend receives the mirrored copy correctly and the operator's TLS expectation is preserved on both legs.
 
-The converter surfaces a WARN log when a mirror destination has a matching policy so operators don't ship a silent bypass. A TLS-aware mirror dial path is a tracked follow-up; until then, if the mirror destination MUST receive TLS, route mirror traffic through a separate Service without a policy or use weighted `backendRefs` instead of the mirror filter.
+Cross-namespace mirror destinations follow the same `ReferenceGrant` rule as cross-namespace `backendRefs` — without a permitting grant the mirror is dropped entirely.
 
 ### Interaction with `appProtocol: https` / `HTTPS`
 
