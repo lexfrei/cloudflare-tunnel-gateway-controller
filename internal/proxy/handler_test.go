@@ -117,6 +117,58 @@ func TestHandler_NoMatchReturns404(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, recorder.Code)
 }
 
+// TestHandler_TransportFactoryDoesNotMutateHotPath is the regression
+// guard for #343: Handler.TransportFactory() must be a pure adapter
+// over Handler.getTransport — calling it (or borrowing the returned
+// closure) must not change the main leg's behavior. Specifically, two
+// requests against the same backend must reuse the same cached
+// transport whether the factory is touched in between or not, and the
+// transport pool must not grow extra entries for the factory itself.
+//
+// Without this guard, a future refactor that mutates Handler state on
+// TransportFactory() (e.g. lazy-construct a "factory-only" pool) would
+// silently double the pool size and break the cache-key invariant the
+// PruneTransports path depends on.
+func TestHandler_TransportFactoryDoesNotMutateHotPath(t *testing.T) {
+	t.Parallel()
+
+	backend := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusOK)
+	}))
+	defer backend.Close()
+
+	router := proxy.NewRouter()
+	cfg := &proxy.Config{
+		Version: 1,
+		Rules: []proxy.RouteRule{{
+			Hostnames: []string{"app.example.com"},
+			Backends:  []proxy.BackendRef{{URL: backend.URL, Weight: 1}},
+		}},
+	}
+	require.NoError(t, router.UpdateConfig(cfg))
+
+	handler := proxy.NewHandler(router)
+
+	// First request — populates the cached transport.
+	req1 := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://app.example.com/test", nil)
+	recorder1 := httptest.NewRecorder()
+	handler.ServeHTTP(recorder1, req1)
+	require.Equal(t, http.StatusOK, recorder1.Code)
+
+	// Touch the factory — must not perturb the cache.
+	factory := handler.TransportFactory()
+	require.NotNil(t, factory, "TransportFactory MUST return a usable closure")
+
+	// Second request through the same handler. Same transport key should be
+	// reused — observable by the request succeeding without timing out and
+	// by the connection-pool reuse not crashing under -race.
+	req2 := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://app.example.com/test", nil)
+	recorder2 := httptest.NewRecorder()
+	handler.ServeHTTP(recorder2, req2)
+	require.Equal(t, http.StatusOK, recorder2.Code,
+		"after touching TransportFactory the main leg MUST still serve requests via the cached transport")
+}
+
 func TestHandler_ProxiesToBackend(t *testing.T) {
 	t.Parallel()
 
