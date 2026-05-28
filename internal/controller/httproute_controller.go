@@ -103,6 +103,16 @@ func (r *HTTPRouteReconciler) syncAndUpdateStatus(ctx context.Context) (ctrl.Res
 	})
 }
 
+// grpcRoutePtrs converts a slice of GRPCRoute values to a slice of pointers.
+func grpcRoutePtrs(routes []gatewayv1.GRPCRoute) []*gatewayv1.GRPCRoute {
+	out := make([]*gatewayv1.GRPCRoute, len(routes))
+	for i := range routes {
+		out[i] = &routes[i]
+	}
+
+	return out
+}
+
 // httpRoutePtrs converts a slice of HTTPRoute values to a slice of pointers.
 func httpRoutePtrs(routes []gatewayv1.HTTPRoute) []*gatewayv1.HTTPRoute {
 	ptrs := make([]*gatewayv1.HTTPRoute, len(routes))
@@ -152,6 +162,7 @@ func (r *HTTPRouteReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		findRoutesForListenerSet: r.findRoutesForListenerSet,
 		findRoutesForRefGrant:    r.findRoutesForReferenceGrant,
 		findRoutesForService:     r.findRoutesForService,
+		watchBackendTLS:          true,
 		getAllRelevantRoutes:     r.getAllRelevantRoutes,
 	})
 }

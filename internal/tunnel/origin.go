@@ -1,9 +1,12 @@
 package tunnel
 
 import (
+	"bufio"
 	"context"
 	"log/slog"
+	"net"
 	"net/http"
+	"strings"
 
 	"github.com/cockroachdb/errors"
 
@@ -67,11 +70,134 @@ func (p *GatewayOriginProxy) ProxyHTTP(
 		req.Header.Set("Sec-Websocket-Version", "13")
 		req.ContentLength = 0
 		req.Body = nil
+
+		// WebSocket hijacks the connection and carries no HTTP trailers; pass
+		// the raw cloudflared writer straight through so the delicate 101 +
+		// Hijack contract is untouched.
+		p.handler.ServeHTTP(writer, req)
+
+		return nil
 	}
 
-	p.handler.ServeHTTP(writer, req)
+	// Non-WebSocket requests may carry HTTP trailers (gRPC puts grpc-status
+	// there). httputil.ReverseProxy emits trailers via the stdlib
+	// http.TrailerPrefix mechanism on the writer's Header() map, but
+	// cloudflared's http2RespWriter serializes that map only once at
+	// WriteHeader and emits trailers solely via AddTrailer. Bridge the two so
+	// gRPC clients receive grpc-status instead of "server closed the stream
+	// without sending trailers".
+	bridge := newTrailerBridge(writer)
+	p.handler.ServeHTTP(bridge, req)
+	bridge.flushTrailers()
 
 	return nil
+}
+
+// trailerBridge wraps a connection.ResponseWriter and forwards HTTP trailers a
+// handler emits via the stdlib mechanism onto cloudflared's AddTrailer, which
+// is the only path that puts trailers on the HTTP/2 wire. Response headers
+// written before the status are passed straight through; trailers (entries
+// keyed with http.TrailerPrefix, plus values for keys announced in the Trailer
+// header) are replayed via AddTrailer once the handler returns.
+type trailerBridge struct {
+	connection.ResponseWriter
+
+	header      http.Header
+	announced   map[string]struct{}
+	wroteHeader bool
+	hijacked    bool
+}
+
+func newTrailerBridge(w connection.ResponseWriter) *trailerBridge {
+	return &trailerBridge{
+		ResponseWriter: w,
+		header:         http.Header{},
+		announced:      make(map[string]struct{}),
+	}
+}
+
+func (b *trailerBridge) Header() http.Header { return b.header }
+
+func (b *trailerBridge) WriteHeader(status int) {
+	if b.wroteHeader {
+		return
+	}
+
+	b.wroteHeader = true
+
+	dst := b.ResponseWriter.Header()
+
+	for key, values := range b.header {
+		switch {
+		case http.CanonicalHeaderKey(key) == "Trailer":
+			for _, value := range values {
+				for name := range strings.SplitSeq(value, ",") {
+					b.announced[http.CanonicalHeaderKey(strings.TrimSpace(name))] = struct{}{}
+				}
+			}
+		case strings.HasPrefix(key, http.TrailerPrefix):
+			// Trailer set before the body — replayed in flushTrailers, not as a header.
+		default:
+			dst[key] = values
+		}
+	}
+
+	b.ResponseWriter.WriteHeader(status)
+}
+
+func (b *trailerBridge) Write(payload []byte) (int, error) {
+	if !b.wroteHeader {
+		b.WriteHeader(http.StatusOK)
+	}
+
+	//nolint:wrapcheck // transparent pass-through to the cloudflared writer.
+	return b.ResponseWriter.Write(payload)
+}
+
+// Flush re-exposes the underlying writer's flush capability. The
+// connection.ResponseWriter interface does not include http.Flusher, so
+// embedding alone would hide cloudflared's Flush from httputil.ReverseProxy
+// (which keys streaming on it).
+func (b *trailerBridge) Flush() {
+	if flusher, ok := b.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
+func (b *trailerBridge) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	b.hijacked = true
+
+	//nolint:wrapcheck // transparent pass-through to the cloudflared writer.
+	return b.ResponseWriter.Hijack()
+}
+
+// flushTrailers replays accumulated trailers via the cloudflared writer's
+// AddTrailer. A hijacked or never-written response carries no trailers.
+func (b *trailerBridge) flushTrailers() {
+	if b.hijacked || !b.wroteHeader {
+		return
+	}
+
+	for key, values := range b.header {
+		name := ""
+
+		switch {
+		case strings.HasPrefix(key, http.TrailerPrefix):
+			name = strings.TrimPrefix(key, http.TrailerPrefix)
+		default:
+			if _, ok := b.announced[http.CanonicalHeaderKey(key)]; ok {
+				name = key
+			}
+		}
+
+		if name == "" {
+			continue
+		}
+
+		for _, value := range values {
+			b.AddTrailer(name, value)
+		}
+	}
 }
 
 // Handler returns the underlying http.Handler for testing purposes.

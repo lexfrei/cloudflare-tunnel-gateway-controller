@@ -2,6 +2,8 @@ package controller
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"sync/atomic"
 
 	"k8s.io/apimachinery/pkg/runtime"
@@ -16,13 +18,39 @@ import (
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/routebinding"
 )
 
-// GRPCRouteReconciler reconciles GRPCRoute resources and synchronizes them
-// to Cloudflare Tunnel ingress configuration.
+// grpcProtocolWarning returns an operator-facing message (and true) when
+// GRPCRoutes are configured but the tunnel transport protocol is not http2.
+// cloudflared does not forward HTTP trailers over QUIC, so grpc-status never
+// reaches the client and every gRPC call fails. This is a cloudflared/Cloudflare
+// limitation, not a controller bug. Returns ("", false) when there is nothing
+// to warn about.
+func grpcProtocolWarning(protocol string, grpcRouteCount int) (string, bool) {
+	if grpcRouteCount == 0 {
+		return "", false
+	}
+
+	if strings.EqualFold(strings.TrimSpace(protocol), "http2") {
+		return "", false
+	}
+
+	return fmt.Sprintf(
+		"%d GRPCRoute(s) configured but the tunnel transport protocol is %q, not http2: "+
+			"cloudflared does not forward HTTP trailers over QUIC, so grpc-status is dropped at the "+
+			"edge and every gRPC call fails with \"server closed the stream without sending trailers\". "+
+			"Set proxy.tunnel.protocol=http2. This is a cloudflared/Cloudflare limitation, not on our side.",
+		grpcRouteCount, protocol,
+	), true
+}
+
+// GRPCRouteReconciler reconciles GRPCRoute resources, synchronizing them to
+// both the Cloudflare Tunnel ingress configuration and the in-process L7
+// proxy (which serves gRPC traffic at runtime).
 //
 // Key behaviors:
 //   - Watches all GRPCRoute resources in the cluster
 //   - Filters routes by parent Gateway's GatewayClass
 //   - Uses shared RouteSyncer for unified sync with HTTPRoutes
+//   - Pushes the merged HTTP+gRPC config to the proxy via ProxySyncer
 //   - Updates GRPCRoute status with acceptance conditions
 type GRPCRouteReconciler struct {
 	client.Client
@@ -36,6 +64,19 @@ type GRPCRouteReconciler struct {
 
 	// RouteSyncer provides unified sync for both HTTP and GRPC routes.
 	RouteSyncer *RouteSyncer
+
+	// ProxySyncer pushes the merged HTTP+GRPC routing config to the L7
+	// proxy replicas. A GRPCRoute change must re-push the proxy config so
+	// gRPC traffic routes through the in-process proxy.
+	ProxySyncer *ProxySyncer
+
+	// ProxyEndpoints is the list of L7 proxy config-API URLs to push to.
+	ProxyEndpoints []string
+
+	// TunnelProtocol is the configured edge transport (auto|http2|quic). Used
+	// to warn when GRPCRoutes are served over a non-http2 tunnel, where
+	// cloudflared drops the grpc-status trailer.
+	TunnelProtocol string
 
 	// bindingValidator validates route binding to Gateway listeners.
 	bindingValidator *routebinding.Validator
@@ -57,16 +98,15 @@ func (r *GRPCRouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 func (r *GRPCRouteReconciler) syncAndUpdateStatus(ctx context.Context) (ctrl.Result, error) {
 	return syncAndUpdateStatusCommon(ctx, syncUpdateParams{
-		routeSyncer: r.RouteSyncer,
-		// GRPCRoutes are not pushed to the L7 proxy converter (which has no
-		// gRPC-specific routing semantics yet). v3's OverrideProxy hook
-		// intercepts ALL tunnel traffic, so gRPC requests reach the proxy
-		// without a matching route and return 404 — see
-		// docs/gateway-api/limitations.md#grpcroute-is-not-supported-in-v3.
-		// internal/ingress/grpc_builder still emits Cloudflare-side ingress
-		// rules for the Cloudflare dashboard view, but they are not
-		// consulted at runtime. proxySyncer and proxyEndpoints are
-		// intentionally nil for the GRPCRoute reconciler.
+		routeSyncer:    r.RouteSyncer,
+		proxySyncer:    r.ProxySyncer,
+		proxyEndpoints: r.ProxyEndpoints,
+		// GRPCRoute changes push the merged HTTP+GRPC config to the proxy so
+		// gRPC traffic routes through the in-process proxy. The push rebuilds
+		// from the full SyncResult, so a gRPC-only change still re-pushes every
+		// route — same model as the HTTPRoute reconciler.
+		pushProxy:      true,
+		tunnelProtocol: r.TunnelProtocol,
 		statusEntries: func(sr *SyncResult) []routeStatusEntry {
 			return sr.grpcStatusEntries(r.updateRouteStatus)
 		},
@@ -111,10 +151,11 @@ func (r *GRPCRouteReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		findRoutesForGateway:     r.findRoutesForGateway,
 		findRoutesForListenerSet: r.findRoutesForListenerSet,
 		findRoutesForRefGrant:    r.findRoutesForReferenceGrant,
-		// GRPCRoute is tunnel-only; the tunnel ingress config is not
-		// protocol-aware, so Service-side changes (appProtocol or otherwise)
-		// don't require a re-sync. Watching Services here would only add
-		// reconcile churn.
+		// gRPC is proxy-driving in v3, so watch Service: a route stuck at 500
+		// because its backend did not exist yet must recover when the Service
+		// appears. BackendTLSPolicy is NOT watched (watchBackendTLS stays
+		// false) — gRPC backends are always cleartext h2c and ignore it.
+		findRoutesForService: r.findRoutesForService,
 		getAllRelevantRoutes: r.getAllRelevantRoutes,
 	})
 }
@@ -203,6 +244,33 @@ func (r *GRPCRouteReconciler) findRoutesForReferenceGrant(
 	}
 
 	return FindRoutesForReferenceGrant(obj, routes)
+}
+
+// findRoutesForService enqueues every GRPCRoute managed by our controller that
+// references the changed Service in a backendRef. gRPC is proxy-driving in v3,
+// so a Service create must re-reconcile a route that was stuck at 500 because
+// its backend did not exist yet — the same self-heal the HTTPRoute reconciler
+// has. gRPC ignores Service appProtocol (it forces h2c), so this watch matters
+// only for backend existence, not protocol changes.
+func (r *GRPCRouteReconciler) findRoutesForService(
+	ctx context.Context,
+	obj client.Object,
+) []reconcile.Request {
+	var routeList gatewayv1.GRPCRouteList
+	if err := r.List(ctx, &routeList); err != nil {
+		return nil
+	}
+
+	routes := make([]Route, 0, len(routeList.Items))
+
+	for i := range routeList.Items {
+		route := &routeList.Items[i]
+		if r.isRouteForOurGateway(ctx, route) {
+			routes = append(routes, GRPCRouteWrapper{route})
+		}
+	}
+
+	return FindRoutesForService(obj, routes)
 }
 
 func (r *GRPCRouteReconciler) getAllRelevantRoutes(ctx context.Context) []reconcile.Request {

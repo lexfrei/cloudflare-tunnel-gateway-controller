@@ -56,6 +56,11 @@ func TestPrefixPathMatcher(t *testing.T) {
 		{name: "root matches root", prefix: "/", path: "/", want: true},
 		{name: "partial word no match", prefix: "/app", path: "/application", want: false},
 		{name: "case sensitive", prefix: "/API", path: "/api/v1", want: false},
+		// gRPC service-only match compiles to a /{service}/ prefix. The trailing
+		// slash must keep a sibling service whose name shares a prefix from
+		// matching: /svc.A/ must not catch /svc.AB/Method.
+		{name: "grpc service prefix matches method", prefix: "/svc.A/", path: "/svc.A/AnyMethod", want: true},
+		{name: "grpc service prefix rejects sibling service", prefix: "/svc.A/", path: "/svc.AB/Method", want: false},
 	}
 
 	for _, tt := range tests {

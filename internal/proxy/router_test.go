@@ -755,6 +755,43 @@ func TestRouter_ZeroWeightBackendsReturnNoBackend(t *testing.T) {
 	}
 }
 
+// TestRouter_SingleZeroWeightBackendReturnsNoBackend pins the Gateway API rule
+// that a backendRef with weight 0 receives no traffic — including the
+// single-backend case. The weighted selector must not short-circuit a lone
+// backend to 100% when its weight is explicitly 0.
+func TestRouter_SingleZeroWeightBackendReturnsNoBackend(t *testing.T) {
+	t.Parallel()
+
+	router := proxy.NewRouter()
+
+	cfg := &proxy.Config{
+		Version: 1,
+		Rules: []proxy.RouteRule{
+			{
+				Hostnames: []string{"example.com"},
+				Backends: []proxy.BackendRef{
+					{URL: "http://a:80", Weight: 0},
+				},
+			},
+		},
+	}
+
+	require.NoError(t, router.UpdateConfig(cfg))
+
+	req := &http.Request{
+		Method: http.MethodGet,
+		Host:   "example.com",
+		URL:    &url.URL{Path: "/"},
+		Header: http.Header{},
+	}
+
+	for range 100 {
+		result := router.Route(req)
+		require.NotNil(t, result)
+		assert.Equal(t, -1, result.BackendIdx, "a single weight-0 backend must receive no traffic")
+	}
+}
+
 func TestRouter_LargeWeightsNoOverflow(t *testing.T) {
 	t.Parallel()
 

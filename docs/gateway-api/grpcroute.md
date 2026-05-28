@@ -1,12 +1,10 @@
 # GRPCRoute
 
-!!! warning "Not supported in v3"
+GRPCRoute enables routing gRPC traffic through Cloudflare Tunnel with service and method-level matching. It is served by the in-process L7 proxy: gRPC requests are HTTP/2 POSTs to `/{service}/{method}`, which the proxy matches with its path matcher; the upstream hop to the backend is forced to h2c (cleartext HTTP/2).
 
-    The v3 controller's in-process L7 proxy intercepts all tunnel traffic and has no gRPC matcher, so GRPCRoute requests return `404`. The CRD is still watched for status reasons, but no runtime routing happens. See the [GRPCRoute limitation](limitations.md#grpcroute-is-not-supported-in-v3) for the full explanation, and the [v2 → v3 migration guide](../upgrading/v2-to-v3.md) for workarounds. Workaround: use HTTPRoute, or stay on the v2.x chart line until gRPC support is reinstated in the proxy.
+!!! danger "gRPC requires the tunnel transport protocol `http2`"
 
-The examples below describe the v0.8-era behaviour and remain in the docs for historical context only — none of this routes in v3.
-
-GRPCRoute enables routing gRPC traffic through Cloudflare Tunnel with service and method-level matching.
+    Set `proxy.tunnel.protocol: http2` in your Helm values. cloudflared does **not** forward HTTP trailers over QUIC (its default transport), and gRPC carries the mandatory `grpc-status` in a trailer. Over a QUIC tunnel the trailer is dropped at the edge and every gRPC call fails with `server closed the stream without sending trailers`. This is a cloudflared/Cloudflare limitation, not a controller bug. The controller logs an error when it sees GRPCRoutes while the tunnel is not on `http2`. Also enable gRPC on the Cloudflare zone (Network → gRPC), or the edge returns 403 for `application/grpc` requests.
 
 ## Basic Example
 
@@ -97,10 +95,11 @@ spec:
 
 gRPC methods are mapped to HTTP/2 paths using the standard format `/package.Service/Method`.
 
-| Match Type | Example | Cloudflare Rule |
+| Match Type | Example | Proxy path rule |
 |------------|---------|-----------------|
-| Service only | `service: mypackage.MyService` | `/mypackage.MyService/*` |
-| Service + Method | `service: mypackage.MyService, method: GetUser` | `/mypackage.MyService/GetUser` |
+| Service only | `service: mypackage.MyService` | prefix `/mypackage.MyService/` |
+| Service + Method | `service: mypackage.MyService, method: GetUser` | exact `/mypackage.MyService/GetUser` |
+| Method only | `method: GetUser` | regex `/[^/]+/GetUser` (any service) |
 | No match | (empty) | Matches all gRPC traffic |
 
 ### Match Type Field
@@ -165,7 +164,7 @@ spec:
 
 ## Backend Selection with Weights
 
-When multiple backends are specified, the backend with the highest weight is selected:
+When multiple backends are specified, traffic is split across them in proportion to their weights (a backend with weight 0 receives none):
 
 ```yaml
 apiVersion: gateway.networking.k8s.io/v1
@@ -185,10 +184,10 @@ spec:
       backendRefs:
         - name: primary-grpc
           port: 50051
-          weight: 100  # Selected
+          weight: 80   # ~80% of traffic
         - name: fallback-grpc
           port: 50051
-          weight: 0    # Disabled
+          weight: 20   # ~20% of traffic
 ```
 
 ## Multiple Hostnames
@@ -233,19 +232,25 @@ kubectl get grpcroute my-grpc-route --output jsonpath='{.status.parents[*].condi
 
 ## Limitations
 
-### Not Supported
+### Supported and not supported
 
-| Feature | Reason |
+| Feature | Status |
 |---------|--------|
-| Header matching | Cloudflare Tunnel limitation |
-| Filters | Not implemented |
+| Service / method matching (Exact, RegularExpression) | Supported |
+| Header matching (Exact, RegularExpression) | Supported |
+| Filters | Not implemented — logged and skipped |
 | Backend filters | Not implemented |
+| BackendTLSPolicy / Gateway `clientCertificateRef` | Not applied — see Backend TLS below |
+
+### Backend TLS
+
+The upstream hop to a gRPC backend is always cleartext h2c (HTTP/2 without TLS). Unlike HTTPRoute backends, a `BackendTLSPolicy` targeting a gRPC backend Service and the Gateway's `spec.tls.backend.clientCertificateRef` are **not** applied to gRPC traffic in this revision — they are silently ignored, and no WARN is logged. If your gRPC backend requires TLS, terminate it in front of the Service (for example with a sidecar or an in-cluster gRPC-aware proxy) and point the GRPCRoute at the cleartext side.
 
 ### Traffic Splitting
 
-The controller does NOT implement traffic splitting. When multiple backends have weights, the highest weight backend receives 100% of traffic.
+Weighted traffic splitting is supported: when a rule lists multiple backends with weights, the in-process L7 proxy distributes requests across them in proportion to their weights at request time (the same weighted selection used for HTTPRoute). A backend with weight `0` receives no traffic, and a rule whose backends all have weight `0` sends no traffic.
 
-For actual traffic splitting, deploy a gRPC-aware load balancer (e.g., Envoy) and point the GRPCRoute to it.
+Note that gRPC connections are long-lived (HTTP/2 multiplexes many calls over one connection), so the split applies per request the proxy routes, not per TCP connection — a single client holding one connection still has its individual calls distributed by weight.
 
 ## Troubleshooting
 
@@ -266,10 +271,10 @@ Common causes:
 
 ### gRPC Connection Issues
 
-1. Verify cloudflared is running and connected:
+1. Verify the proxy pods (which embed the cloudflared tunnel in-process) are running and connected:
 
 ```bash
-kubectl logs --selector app=cloudflared \
+kubectl logs --selector app.kubernetes.io/component=proxy \
   --namespace cloudflare-tunnel-system
 ```
 

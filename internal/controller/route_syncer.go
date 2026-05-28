@@ -177,6 +177,10 @@ type syncUpdateParams struct {
 	proxySyncer    *ProxySyncer
 	proxyEndpoints []string
 	pushProxy      bool
+	// tunnelProtocol, when non-empty, enables the gRPC-over-non-http2 warning
+	// (only the GRPCRoute reconciler sets it). cloudflared drops trailers over
+	// QUIC, so gRPC needs an http2 tunnel.
+	tunnelProtocol string
 	statusEntries  func(*SyncResult) []routeStatusEntry
 }
 
@@ -188,20 +192,30 @@ func syncAndUpdateStatusCommon(ctx context.Context, params syncUpdateParams) (ct
 	result, syncResult, syncErr := params.routeSyncer.SyncAllRoutes(ctx)
 
 	// Push config to the L7 proxy replicas (best-effort, non-blocking).
-	// Only HTTPRoutes are pushed — the proxy converter does not yet support
-	// gRPC-specific routing semantics. GRPCRoute traffic still flows through
-	// the proxy's OverrideProxy hook (which intercepts ALL tunnel traffic in
-	// v3) but has no matching route in the proxy's router, so it returns
-	// 404. The Cloudflare-side tunnel ingress rules built by
-	// internal/ingress/grpc_builder are not consulted at runtime in v3 —
-	// they only populate the Cloudflare dashboard's edge-routing view.
-	// See docs/gateway-api/limitations.md#grpcroute-is-not-supported-in-v3.
-	// pushProxy is false for GRPCRoute reconciler to avoid redundant pushes.
+	// Both HTTPRoutes and GRPCRoutes are pushed: the converter maps gRPC
+	// service/method matches onto /{service}/{method} path rules and forces
+	// h2c upstream (internal/proxy/grpc_converter.go), so gRPC traffic routes
+	// through the same in-process proxy as HTTP. The Cloudflare-side tunnel
+	// ingress rules built by internal/ingress/grpc_builder are not consulted
+	// at runtime in v3 — they only populate the Cloudflare dashboard's
+	// edge-routing view. Both route reconcilers set pushProxy=true; each push
+	// rebuilds the full merged config from the SyncResult.
 	if params.pushProxy && params.proxySyncer != nil && len(params.proxyEndpoints) > 0 && syncResult != nil {
-		routes := httpRoutePtrs(syncResult.HTTPRoutes)
-		if proxyErr := params.proxySyncer.SyncRoutes(ctx, params.proxyEndpoints, routes, syncResult.HTTPFailedRefs); proxyErr != nil {
+		httpRoutes := httpRoutePtrs(syncResult.HTTPRoutes)
+		grpcRoutes := grpcRoutePtrs(syncResult.GRPCRoutes)
+
+		if proxyErr := params.proxySyncer.SyncRoutes(ctx, params.proxyEndpoints, httpRoutes, grpcRoutes, syncResult.HTTPFailedRefs, syncResult.GRPCFailedRefs); proxyErr != nil {
 			logger.Error("proxy sync failed (non-blocking)", "error", proxyErr)
 			params.routeSyncer.Metrics.RecordSyncError(ctx, "proxy_push")
+		}
+	}
+
+	// Warn when GRPCRoutes are served but the tunnel is not on http2 — cloudflared
+	// drops the grpc-status trailer over QUIC, so gRPC calls fail. Only the
+	// GRPCRoute reconciler sets tunnelProtocol, so HTTP-only reconciles stay quiet.
+	if params.tunnelProtocol != "" && syncResult != nil {
+		if msg, warn := grpcProtocolWarning(params.tunnelProtocol, len(syncResult.GRPCRoutes)); warn {
+			logger.Error(msg)
 		}
 	}
 

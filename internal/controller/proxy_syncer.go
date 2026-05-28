@@ -47,16 +47,17 @@ const configMapKind = "ConfigMap"
 // Guarded by syncMu so the cache update is consistent with the push
 // it follows.
 type ProxySyncer struct {
-	clusterDomain       string
-	logger              *slog.Logger
-	pusher              *proxy.ConfigPusher
-	k8sClient           client.Client
-	backendValidator    proxy.BackendRefValidator
-	protocolResolver    proxy.BackendProtocolResolver
-	tlsResolver         proxy.BackendTLSResolver
-	gatewayCertResolver proxy.GatewayClientCertResolver
-	syncMu              sync.Mutex
-	lastCfg             *proxy.Config
+	clusterDomain        string
+	logger               *slog.Logger
+	pusher               *proxy.ConfigPusher
+	k8sClient            client.Client
+	backendValidator     proxy.BackendRefValidator
+	grpcBackendValidator proxy.BackendRefValidator
+	protocolResolver     proxy.BackendProtocolResolver
+	tlsResolver          proxy.BackendTLSResolver
+	gatewayCertResolver  proxy.GatewayClientCertResolver
+	syncMu               sync.Mutex
+	lastCfg              *proxy.Config
 }
 
 // NewProxySyncer creates a ProxySyncer for pushing config to proxy replicas.
@@ -86,11 +87,12 @@ func NewProxySyncer(
 		pusher: proxy.NewConfigPusher(&http.Client{
 			Timeout: 10 * time.Second,
 		}, authToken),
-		k8sClient:           k8sClient,
-		backendValidator:    newBackendRefValidator(refGrantValidator),
-		protocolResolver:    newBackendProtocolResolver(k8sClient),
-		tlsResolver:         newBackendTLSResolver(k8sClient),
-		gatewayCertResolver: newGatewayClientCertResolver(k8sClient, controllerName),
+		k8sClient:            k8sClient,
+		backendValidator:     newBackendRefValidator(refGrantValidator, "HTTPRoute"),
+		grpcBackendValidator: newBackendRefValidator(refGrantValidator, "GRPCRoute"),
+		protocolResolver:     newBackendProtocolResolver(k8sClient),
+		tlsResolver:          newBackendTLSResolver(k8sClient),
+		gatewayCertResolver:  newGatewayClientCertResolver(k8sClient, controllerName),
 	}
 }
 
@@ -522,12 +524,17 @@ func portAppProtocol(svc *corev1.Service, port int32) string {
 	return ""
 }
 
-// newBackendRefValidator creates a BackendRefValidator from a referencegrant.Validator.
-func newBackendRefValidator(validator *referencegrant.Validator) proxy.BackendRefValidator {
+// newBackendRefValidator creates a BackendRefValidator from a
+// referencegrant.Validator. fromKind is the route kind the validator speaks for
+// ("HTTPRoute" or "GRPCRoute"): a ReferenceGrant's from.kind must match the
+// actual referencing route kind, so HTTP and gRPC conversion need separate
+// validators — sharing one would deny a gRPC route guarded by a GRPCRoute grant
+// (and wrongly allow one guarded by an HTTPRoute-only grant).
+func newBackendRefValidator(validator *referencegrant.Validator, fromKind string) proxy.BackendRefValidator {
 	return func(ctx context.Context, fromNamespace string, ref gatewayv1.BackendObjectReference) bool {
 		fromRef := referencegrant.Reference{
 			Group:     "gateway.networking.k8s.io",
-			Kind:      "HTTPRoute",
+			Kind:      fromKind,
 			Namespace: fromNamespace,
 		}
 
@@ -569,15 +576,22 @@ func newBackendRefValidator(validator *referencegrant.Validator) proxy.BackendRe
 	}
 }
 
-// SyncRoutes converts pre-collected HTTPRoutes to proxy config and pushes to all endpoints.
-// Routes should come from the RouteSyncer's SyncResult to avoid redundant API calls.
-// failedRefs contains backend refs that failed validation in the ingress builder — routes
-// with failed refs will have their backends cleared so the proxy returns HTTP 500.
+// SyncRoutes converts pre-collected HTTPRoutes and GRPCRoutes to proxy config
+// and pushes to all endpoints. Routes should come from the RouteSyncer's
+// SyncResult to avoid redundant API calls. failedRefs / grpcFailedRefs contain
+// the HTTP / gRPC backend refs that failed validation in the ingress builder.
+// Both route families get their backends cleared for rules with failed refs so
+// the proxy returns HTTP 500 (no backend) instead of dialing a nonexistent
+// Service and surfacing a 502 — the converter alone does not detect a missing
+// Service (it only drops kind/port/ReferenceGrant failures), so the builder's
+// BackendNotFound findings must be applied here.
 func (s *ProxySyncer) SyncRoutes(
 	ctx context.Context,
 	endpoints []string,
 	routes []*gatewayv1.HTTPRoute,
+	grpcRoutes []*gatewayv1.GRPCRoute,
 	failedRefs []ingress.BackendRefError,
+	grpcFailedRefs []ingress.BackendRefError,
 ) error {
 	// Resolve headless service DNS names before acquiring the lock
 	// to avoid blocking concurrent reconciles during slow DNS lookups.
@@ -591,23 +605,9 @@ func (s *ProxySyncer) SyncRoutes(
 		logger = s.logger
 	}
 
-	logger.Info("syncing proxy config", "routes", len(routes))
+	logger.Info("syncing proxy config", "httpRoutes", len(routes), "grpcRoutes", len(grpcRoutes))
 
-	// When a route binds to a Gateway listener or ListenerSet entry with a
-	// non-empty hostname and itself declares spec.hostnames empty, the proxy
-	// rule MUST serve only the parent listener's hostname. Augment in-memory
-	// before handing to the converter; the input routes are left untouched.
-	routes = withEffectiveHostnames(ctx, s.k8sClient, routes)
-
-	// Convert to proxy config with cross-namespace validation, backend
-	// protocol resolution (e.g. h2c from Service appProtocol), and
-	// BackendTLSPolicy lookup for the proxy → backend TLS hop.
-	cfg := proxy.ConvertHTTPRoutes(ctx, routes, s.clusterDomain, s.backendValidator, s.protocolResolver, s.tlsResolver, s.gatewayCertResolver)
-
-	// Clear backends for routes that have failed backend refs.
-	// This ensures the proxy returns 500 (no backend available) instead of
-	// trying to connect to a nonexistent service (which would return 502).
-	clearFailedBackends(cfg, routes, failedRefs)
+	cfg := s.buildProxyConfig(ctx, routes, grpcRoutes, failedRefs, grpcFailedRefs)
 
 	logger.Info("resolved endpoints",
 		"original", len(endpoints),
@@ -648,6 +648,60 @@ func (s *ProxySyncer) SyncRoutes(
 	s.lastCfg = cfg
 
 	return nil
+}
+
+// buildProxyConfig converts the HTTP and gRPC route sets into a single merged
+// proxy Config. HTTP routes inherit parent-listener hostnames and get failed
+// backend refs cleared (→ 500); gRPC routes are appended with backends forced
+// to h2c and the same failed-ref clearing applied at their offset. Extracted
+// from SyncRoutes to keep that function under the funlen budget.
+func (s *ProxySyncer) buildProxyConfig(
+	ctx context.Context,
+	routes []*gatewayv1.HTTPRoute,
+	grpcRoutes []*gatewayv1.GRPCRoute,
+	failedRefs []ingress.BackendRefError,
+	grpcFailedRefs []ingress.BackendRefError,
+) *proxy.Config {
+	// When a route binds to a Gateway listener or ListenerSet entry with a
+	// non-empty hostname and itself declares spec.hostnames empty, the proxy
+	// rule MUST serve only the parent listener's hostname. Augment in-memory
+	// before handing to the converter; the input routes are left untouched.
+	routes = withEffectiveHostnames(ctx, s.k8sClient, routes)
+
+	// Convert to proxy config with cross-namespace validation, backend
+	// protocol resolution (e.g. h2c from Service appProtocol), and
+	// BackendTLSPolicy lookup for the proxy → backend TLS hop.
+	cfg := proxy.ConvertHTTPRoutes(ctx, routes, s.clusterDomain, s.backendValidator, s.protocolResolver, s.tlsResolver, s.gatewayCertResolver)
+
+	// Clear backends for routes that have failed backend refs.
+	// This ensures the proxy returns 500 (no backend available) instead of
+	// trying to connect to a nonexistent service (which would return 502).
+	clearFailedBackends(cfg, routes, failedRefs)
+
+	// Append GRPCRoute rules. gRPC method matching maps onto the same proxy
+	// path matcher; backends are forced to h2c. The merged config keeps the
+	// HTTP config's version (grpcCfg burns a version counter value that is
+	// discarded — only the pushed config's version is observed downstream).
+	if len(grpcRoutes) > 0 {
+		// gRPC routes inherit their parent listener's hostname when they declare
+		// none, exactly like HTTPRoutes — otherwise an empty-hostname gRPC rule
+		// becomes a catch-all answering every Host (including hostnames owned by
+		// other routes).
+		grpcRoutes = withEffectiveHostnamesGRPC(ctx, s.k8sClient, grpcRoutes)
+
+		// gRPC rules are appended after the HTTP rules, so failed-backend
+		// clearing for them starts at the current rule count. ConvertGRPCRoutes
+		// emits one rule per GRPCRoute rule, same 1:1 invariant the HTTP path
+		// relies on.
+		grpcStartIdx := len(cfg.Rules)
+
+		grpcCfg := proxy.ConvertGRPCRoutes(ctx, grpcRoutes, s.clusterDomain, s.grpcBackendValidator)
+		cfg.Rules = append(cfg.Rules, grpcCfg.Rules...)
+
+		clearFailedGRPCBackends(cfg, grpcStartIdx, grpcRoutes, grpcFailedRefs)
+	}
+
+	return cfg
 }
 
 // ResyncEndpoints replays the most recent successfully-pushed config to the
@@ -711,23 +765,42 @@ func (s *ProxySyncer) ResyncEndpoints(ctx context.Context, endpoints []string) e
 	return nil
 }
 
+// failedBackendKeySet builds the lookup set of "routeNS/routeName/backendName"
+// keys that failed validation in the ingress builder, used to blank out the
+// proxy rules that reference them.
+func failedBackendKeySet(failedRefs []ingress.BackendRefError) map[string]bool {
+	set := make(map[string]bool, len(failedRefs))
+	for _, ref := range failedRefs {
+		set[ref.RouteNamespace+"/"+ref.RouteName+"/"+ref.BackendName] = true
+	}
+
+	return set
+}
+
+// ruleHasFailedBackend reports whether any of the rule's backend names (keyed
+// by the route's namespace/name) appears in the failed set.
+func ruleHasFailedBackend(namespace, name string, backendNames []string, failed map[string]bool) bool {
+	for _, backendName := range backendNames {
+		if failed[namespace+"/"+name+"/"+backendName] {
+			return true
+		}
+	}
+
+	return false
+}
+
 // clearFailedBackends removes backends from proxy config rules where the
-// corresponding route rule has failed backend refs. This ensures the proxy
+// corresponding HTTPRoute rule has failed backend refs. This ensures the proxy
 // returns 500 (no backend available) for rules with unresolvable backends,
-// while leaving sibling rules with valid backends intact.
+// while leaving sibling rules with valid backends intact. ConvertHTTPRoutes
+// generates one proxy rule per route rule, so the walk matches cfg.Rules 1:1
+// starting at index 0.
 func clearFailedBackends(cfg *proxy.Config, routes []*gatewayv1.HTTPRoute, failedRefs []ingress.BackendRefError) {
 	if len(failedRefs) == 0 {
 		return
 	}
 
-	// Build a set of failed backend keys: "routeNS/routeName/backendName".
-	failedBackends := make(map[string]bool, len(failedRefs))
-	for _, ref := range failedRefs {
-		failedBackends[ref.RouteNamespace+"/"+ref.RouteName+"/"+ref.BackendName] = true
-	}
-
-	// Walk routes and their rules in order, matching proxy config rules 1:1.
-	// ConvertHTTPRoutes generates one proxy rule per route rule.
+	failed := failedBackendKeySet(failedRefs)
 	ruleIdx := 0
 
 	for _, route := range routes {
@@ -736,19 +809,52 @@ func clearFailedBackends(cfg *proxy.Config, routes []*gatewayv1.HTTPRoute, faile
 				break
 			}
 
-			// Check if any backend ref in this rule failed.
-			ruleHasFailedRef := false
-
+			names := make([]string, 0, len(rule.BackendRefs))
 			for _, backendRef := range rule.BackendRefs {
-				key := route.Namespace + "/" + route.Name + "/" + string(backendRef.Name)
-				if failedBackends[key] {
-					ruleHasFailedRef = true
-
-					break
-				}
+				names = append(names, string(backendRef.Name))
 			}
 
-			if ruleHasFailedRef {
+			if ruleHasFailedBackend(route.Namespace, route.Name, names, failed) {
+				cfg.Rules[ruleIdx].Backends = nil
+			}
+
+			ruleIdx++
+		}
+	}
+}
+
+// clearFailedGRPCBackends mirrors clearFailedBackends for GRPCRoutes. The gRPC
+// rules are appended after the HTTP rules in the merged config, so the walk
+// starts at startIdx (= number of HTTP rules). ConvertGRPCRoutes also emits one
+// proxy rule per GRPCRoute rule, keeping the walk 1:1. Without this, a gRPC
+// route pointing at a nonexistent Service would still get a backend (the
+// converter never checks Service existence) and the proxy would return 502
+// instead of the spec-correct 500.
+func clearFailedGRPCBackends(
+	cfg *proxy.Config,
+	startIdx int,
+	grpcRoutes []*gatewayv1.GRPCRoute,
+	failedRefs []ingress.BackendRefError,
+) {
+	if len(failedRefs) == 0 {
+		return
+	}
+
+	failed := failedBackendKeySet(failedRefs)
+	ruleIdx := startIdx
+
+	for _, route := range grpcRoutes {
+		for _, rule := range route.Spec.Rules {
+			if ruleIdx >= len(cfg.Rules) {
+				break
+			}
+
+			names := make([]string, 0, len(rule.BackendRefs))
+			for _, backendRef := range rule.BackendRefs {
+				names = append(names, string(backendRef.Name))
+			}
+
+			if ruleHasFailedBackend(route.Namespace, route.Name, names, failed) {
 				cfg.Rules[ruleIdx].Backends = nil
 			}
 

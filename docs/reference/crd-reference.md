@@ -110,9 +110,7 @@ spec:
 
 ### GRPCRoute
 
-!!! warning "Not supported in v3"
-
-    GRPCRoute is recognised as a CRD kind but does not route in v3 — the in-process L7 proxy has no gRPC matcher and requests return `404`. The example below is preserved as a v0.8-era reference; use HTTPRoute as a v3 workaround, or stay on the v2.x chart line. See the [GRPCRoute limitation](../gateway-api/limitations.md#grpcroute-is-not-supported-in-v3) for the full explanation.
+GRPCRoute is served by the in-process L7 proxy — gRPC service/method matches map onto `/{service}/{method}` path rules and the upstream hop is h2c. See [GRPCRoute](../gateway-api/grpcroute.md) for the full field support matrix.
 
 Standard Gateway API GRPCRoute:
 
@@ -185,7 +183,7 @@ spec:
 | GatewayClass | `gateway.networking.k8s.io` | `v1` | GA |
 | Gateway | `gateway.networking.k8s.io` | `v1` | GA |
 | HTTPRoute | `gateway.networking.k8s.io` | `v1` | GA |
-| GRPCRoute | `gateway.networking.k8s.io` | `v1` | GA (not consumed in v3 — see [limitations](../gateway-api/limitations.md#grpcroute-is-not-supported-in-v3)) |
+| GRPCRoute | `gateway.networking.k8s.io` | `v1` | GA |
 | ReferenceGrant | `gateway.networking.k8s.io` | `v1beta1` | Beta |
 
 ## Installing CRDs

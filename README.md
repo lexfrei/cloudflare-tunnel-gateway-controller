@@ -12,7 +12,7 @@ Enables routing traffic through Cloudflare Tunnel using standard Gateway API res
 
 ## Features
 
-- Standard Gateway API implementation (GatewayClass, Gateway, HTTPRoute). GRPCRoute is **not supported in v3** — see [migration](https://cf.k8s.lex.la/upgrading/v2-to-v3/) for details.
+- Standard Gateway API implementation (GatewayClass, Gateway, HTTPRoute, GRPCRoute, ListenerSet)
 - Cross-namespace backend references with ReferenceGrant support
 - Hot reload of tunnel configuration (no cloudflared restart required)
 - In-process L7 proxy embeds cloudflared transport (single data plane, no separate cloudflared deployment)
@@ -128,7 +128,7 @@ For manual installation without Helm, see [Manual Installation](https://cf.k8s.l
 
 ## Usage
 
-Create standard [Gateway API](https://gateway-api.sigs.k8s.io/) HTTPRoute resources referencing the `cloudflare-tunnel` Gateway. The controller automatically syncs routes to Cloudflare Tunnel configuration with hot reload (no cloudflared restart required). GRPCRoute is **not supported in v3** — see the [GRPCRoute limitation](https://cf.k8s.lex.la/gateway-api/limitations/#grpcroute-is-not-supported-in-v3) and the [migration guide](https://cf.k8s.lex.la/upgrading/v2-to-v3/).
+Create standard [Gateway API](https://gateway-api.sigs.k8s.io/) HTTPRoute or GRPCRoute resources referencing the `cloudflare-tunnel` Gateway. The controller automatically syncs routes to Cloudflare Tunnel configuration with hot reload (no cloudflared restart required). Both HTTPRoute and GRPCRoute route through the in-process L7 proxy at runtime.
 
 ### Supported Gateway Fields
 
@@ -167,20 +167,13 @@ All matching and filter behavior is performed by the in-process L7 proxy that th
 | `spec.rules[].backendRefs[].namespace` | ✅ | Cross-namespace refs require ReferenceGrant |
 | `spec.rules[].backendRefs[].weight` | ✅ | True weighted traffic splitting across backends |
 
-**GRPCRoute:** ⚠️ **Not supported in v3** — see [GRPCRoute limitations](https://cf.k8s.lex.la/gateway-api/limitations/#grpcroute-is-not-supported-in-v3). v3's L7 proxy data plane has no gRPC matcher yet; requests return `404`. Use HTTPRoute as a workaround, or stay on the v2.x chart line.
+**GRPCRoute:** ✅ Supported — served by the in-process L7 proxy. gRPC service/method matches map onto `/{service}/{method}` path rules and the upstream hop is h2c. See [GRPCRoute docs](https://cf.k8s.lex.la/gateway-api/grpcroute/).
 
 > **Load Balancing:** All traffic flows through the in-process L7 proxy, so full weighted traffic splitting between multiple backends is supported end-to-end. See [Limitations](https://cf.k8s.lex.la/gateway-api/limitations/#traffic-splitting-and-load-balancing) for the edge-side caveats that still apply.
 
 ### Known Limitations
 
-The L7 proxy removes the v1/v2 Cloudflare-Tunnel-API path-matching limitations. Edge-side caveats (Cloudflare hostname registration, edge HTTPS termination, etc.) are documented in the [Limitations](https://cf.k8s.lex.la/gateway-api/limitations/) page.
-
-Historical context — Cloudflare Tunnel's native ingress rules have path matching behavior that differs from Gateway API:
-
-- **No true exact path match**: `/api` (Exact) will still match `/api/v1`
-- **Common prefix routing**: Paths like `/multi-v1`, `/multi-v2` may all route to the first backend
-
-**Workaround:** Use distinct path prefixes (e.g., `/alpha`, `/beta`, `/gamma`), or enable the L7 proxy.
+The in-process L7 proxy handles routing for every tunnel request, so the v1/v2 Cloudflare-Tunnel-API path-matching quirks (no true exact match, prefix bleed across `/foo` siblings) no longer apply. Edge-side caveats (Cloudflare hostname registration, edge HTTPS termination, etc.) are documented in the [Limitations](https://cf.k8s.lex.la/gateway-api/limitations/) page.
 
 `BackendTLSPolicy` (proxy → backend TLS) is supported at minimum-viable scope:
 

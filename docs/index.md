@@ -6,7 +6,7 @@ Enables routing traffic through Cloudflare Tunnel using standard Gateway API res
 
 ## Features
 
-- Standard Gateway API implementation (GatewayClass, Gateway, HTTPRoute). GRPCRoute is **not supported in v3** — see [migration](upgrading/v2-to-v3.md) for details.
+- Standard Gateway API implementation (GatewayClass, Gateway, HTTPRoute, GRPCRoute, ListenerSet)
 - Hot reload of tunnel configuration (no cloudflared restart required)
 - In-process L7 proxy embeds cloudflared transport (single data plane, no separate cloudflared deployment)
 - Leader election for high availability deployments
