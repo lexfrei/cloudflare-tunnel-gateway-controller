@@ -166,11 +166,11 @@ cloudflared does not forward HTTP trailers over QUIC (its default transport): th
 
 Unlike HTTPRoute backends, the upstream hop to a GRPCRoute backend is unconditionally cleartext h2c. A `BackendTLSPolicy` targeting a gRPC backend Service and the Gateway's `spec.tls.backend.clientCertificateRef` are NOT applied to gRPC traffic in this revision — and, unlike the h2c-vs-TLS collision above, no WARN is logged. If a gRPC backend requires TLS, terminate it in front of the Service and route to the cleartext side. Honoring backend TLS for gRPC is a tracked follow-up.
 
-### Gateway client cert rotation has a propagation lag
+### Gateway client cert rotation is hot-reloaded
 
-The controller's existing Secret watch only matches the GatewayClassConfig's `cloudflareCredentialsSecretRef`. A rotation of the `Secret` referenced by `spec.tls.backend.clientCertificateRef` (or by a listener's `certificateRefs`) does NOT enqueue the Gateway on its own — the proxy continues to dial backends with the previous keypair until some unrelated event (HTTPRoute create/update, BackendTLSPolicy change, periodic resync, controller restart) drives the next reconcile. On that reconcile the new keypair is loaded, the converter stamps it onto every affected `BackendTLSConfig`, and the per-cert transport-pool hash evicts the stale transport on the next config push.
+A rotation of the `Secret` referenced by `Gateway.spec.tls.backend.clientCertificateRef` enqueues the affected routes directly — `ConfigMapper.MapSecretToRequests` matches credentials and Gateway-level client-cert Secrets, including cross-namespace refs guarded by a matching `ReferenceGrant` (`from: Gateway`, `to: Secret`). On the resulting reconcile the new keypair is loaded by `loadGatewayClientCertPEM`, the converter stamps it onto every affected `BackendTLSConfig`, and the per-cert transport-pool hash on the proxy evicts the stale transport. The next request to that backend handshakes with the rotated keypair.
 
-In active clusters the propagation window is short, but operators that rotate certs more frequently than other Gateway-namespace events occur will observe stale-cert traffic until the next reconcile fires. Active hot-reload on a Secret-only change is a tracked follow-up — extending `ConfigMapper.MapSecretToRequests` to also match Gateway-level `clientCertificateRef` Secrets is the planned fix.
+Frontend listener `certificateRefs` are not in scope — Cloudflare terminates TLS at the edge, so frontend HTTPS listeners are structurally unsupported (see the HTTPRoute HTTPS Listener limitation).
 
 ### RequestMirror filter does not honour BackendTLSPolicy
 
