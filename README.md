@@ -242,6 +242,15 @@ Planned features and improvements:
 
 Contributions are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
+Common development tasks are available via `make`:
+
+```bash
+make help        # list all targets
+make check-deps  # verify required tools are installed
+make test        # run tests
+make lint        # run linter
+```
+
 ## Security
 
 For security issues, please see [SECURITY.md](SECURITY.md).
