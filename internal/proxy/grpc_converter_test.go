@@ -66,7 +66,7 @@ func TestConvertGRPCRoutes_ExactServiceMethod(t *testing.T) {
 		},
 	}
 
-	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil)
+	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil, nil, nil)
 
 	require.Len(t, cfg.Rules, 1)
 	rule := cfg.Rules[0]
@@ -110,7 +110,7 @@ func TestConvertGRPCRoutes_BackendPort443NoPolicyStaysCleartextH2C(t *testing.T)
 		},
 	}
 
-	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil)
+	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil, nil, nil)
 
 	require.Len(t, cfg.Rules, 1)
 	require.Len(t, cfg.Rules[0].Backends, 1)
@@ -204,7 +204,7 @@ func TestConvertGRPCRoutes_NoBackendTLSAlwaysCleartextH2C(t *testing.T) {
 		},
 	}
 
-	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil)
+	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil, nil, nil)
 
 	require.Len(t, cfg.Rules, 1)
 	require.Len(t, cfg.Rules[0].Backends, 1)
@@ -243,7 +243,7 @@ func TestConvertGRPCRoutes_MultipleWeightedBackends(t *testing.T) {
 		},
 	}
 
-	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil)
+	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil, nil, nil)
 
 	require.Len(t, cfg.Rules, 1)
 	require.Len(t, cfg.Rules[0].Backends, 2, "both weighted backends must survive for proportional splitting")
@@ -279,7 +279,7 @@ func TestConvertGRPCRoutes_ServiceOnly(t *testing.T) {
 		},
 	}
 
-	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil)
+	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil, nil, nil)
 
 	require.Len(t, cfg.Rules, 1)
 	require.NotNil(t, cfg.Rules[0].Matches[0].Path)
@@ -310,7 +310,7 @@ func TestConvertGRPCRoutes_RegexMethod(t *testing.T) {
 		},
 	}
 
-	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil)
+	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil, nil, nil)
 
 	require.Len(t, cfg.Rules, 1)
 	require.NotNil(t, cfg.Rules[0].Matches[0].Path)
@@ -346,7 +346,7 @@ func TestConvertGRPCRoutes_RegexAlternationAnchored(t *testing.T) {
 		},
 	}
 
-	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil)
+	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil, nil, nil)
 
 	require.Len(t, cfg.Rules, 1)
 	require.NotNil(t, cfg.Rules[0].Matches[0].Path)
@@ -385,7 +385,7 @@ func TestConvertGRPCRoutes_MethodOnlyExact(t *testing.T) {
 		},
 	}
 
-	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil)
+	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil, nil, nil)
 
 	require.Len(t, cfg.Rules, 1)
 	require.NotNil(t, cfg.Rules[0].Matches[0].Path)
@@ -431,7 +431,7 @@ func TestConvertGRPCRoutes_RegexEmptyServiceAndMethod(t *testing.T) {
 				},
 			}
 
-			cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil)
+			cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil, nil, nil)
 
 			require.Len(t, cfg.Rules, 1)
 			require.NotNil(t, cfg.Rules[0].Matches[0].Path)
@@ -466,7 +466,7 @@ func TestConvertGRPCRoutes_HeaderRegexType(t *testing.T) {
 		},
 	}
 
-	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil)
+	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil, nil, nil)
 
 	require.Len(t, cfg.Rules, 1)
 	require.Len(t, cfg.Rules[0].Matches[0].Headers, 1)
@@ -498,7 +498,7 @@ func TestConvertGRPCRoutes_FiltersDropped(t *testing.T) {
 		},
 	}
 
-	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil)
+	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil, nil, nil)
 
 	require.Len(t, cfg.Rules, 1)
 	assert.Empty(t, cfg.Rules[0].Filters, "gRPC filters are not supported and must be dropped")
@@ -560,7 +560,7 @@ func TestConvertGRPCRoutes_BackendSkips(t *testing.T) {
 				},
 			}
 
-			cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil)
+			cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil, nil, nil)
 
 			require.Len(t, cfg.Rules, 1)
 			assert.Empty(t, cfg.Rules[0].Backends, "invalid backend must be dropped → rule has no backends")
@@ -600,7 +600,7 @@ func TestConvertGRPCRoutes_CrossNamespaceDenied(t *testing.T) {
 		},
 	}
 
-	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", denyAll)
+	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", denyAll, nil, nil)
 
 	require.Len(t, cfg.Rules, 1)
 	assert.Empty(t, cfg.Rules[0].Backends, "cross-namespace backend denied by ReferenceGrant must be dropped")
@@ -631,7 +631,7 @@ func TestConvertGRPCRoutes_HeaderMatch(t *testing.T) {
 		},
 	}
 
-	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil)
+	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil, nil, nil)
 
 	require.Len(t, cfg.Rules, 1)
 	require.Len(t, cfg.Rules[0].Matches[0].Headers, 1)
@@ -664,7 +664,7 @@ func TestConvertGRPCRoutes_HeaderOnlyNoMethod(t *testing.T) {
 		},
 	}
 
-	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil)
+	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil, nil, nil)
 
 	require.Len(t, cfg.Rules, 1)
 	require.Len(t, cfg.Rules[0].Matches, 1)
@@ -691,7 +691,7 @@ func TestConvertGRPCRoutes_NoMatchesMatchesAll(t *testing.T) {
 		},
 	}
 
-	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil)
+	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil, nil, nil)
 
 	require.Len(t, cfg.Rules, 1)
 	assert.Empty(t, cfg.Rules[0].Matches, "no method match → no match constraints (match all)")
@@ -726,7 +726,7 @@ func TestConvertGRPCRoutes_EmptyMatchMixedWithSpecificIsDropped(t *testing.T) {
 		},
 	}
 
-	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil)
+	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil, nil, nil)
 
 	require.Len(t, cfg.Rules, 1)
 	require.Len(t, cfg.Rules[0].Matches, 1, "empty match dropped; only the specific match survives")

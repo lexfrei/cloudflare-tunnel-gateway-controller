@@ -129,7 +129,15 @@ func ConvertHTTPRoutes(
 	return cfg
 }
 
-// resolveFirstParentClientCert walks the route's parentRefs in declaration
+// gatewayAPIGroup and kindGateway identify the parentRef shape we recognise
+// when walking parents looking for a client certificate. Shared by the
+// HTTPRoute and GRPCRoute helpers in this file and grpc_converter.go.
+const (
+	gatewayAPIGroup = "gateway.networking.k8s.io"
+	kindGateway     = "Gateway"
+)
+
+// resolveFirstParentClientCert walks the HTTPRoute's parentRefs in declaration
 // order, asking gatewayCertResolver for each parent's client certificate, and
 // returns the first non-nil result. Multiple parents with conflicting certs
 // are a spec edge case the conformance suite does not exercise; this
@@ -139,20 +147,33 @@ func resolveFirstParentClientCert(
 	route *gatewayv1.HTTPRoute,
 	resolver GatewayClientCertResolver,
 ) *ClientCertConfig {
+	return resolveFirstParentClientCertFromRefs(ctx, route.Spec.ParentRefs, route.Namespace, resolver)
+}
+
+// resolveFirstParentClientCertFromRefs is the route-type-agnostic core of the
+// parent-cert lookup: it walks ParentReferences directly so HTTPRoute and
+// GRPCRoute can share the rule without forcing a generics dance over each
+// route type's ParentRefs accessor.
+func resolveFirstParentClientCertFromRefs(
+	ctx context.Context,
+	parentRefs []gatewayv1.ParentReference,
+	routeNamespace string,
+	resolver GatewayClientCertResolver,
+) *ClientCertConfig {
 	if resolver == nil {
 		return nil
 	}
 
-	for _, ref := range route.Spec.ParentRefs {
-		if ref.Group != nil && *ref.Group != "" && *ref.Group != "gateway.networking.k8s.io" {
+	for _, ref := range parentRefs {
+		if ref.Group != nil && *ref.Group != "" && *ref.Group != gatewayAPIGroup {
 			continue
 		}
 
-		if ref.Kind != nil && *ref.Kind != "" && *ref.Kind != "Gateway" {
+		if ref.Kind != nil && *ref.Kind != "" && *ref.Kind != kindGateway {
 			continue
 		}
 
-		ns := route.Namespace
+		ns := routeNamespace
 		if ref.Namespace != nil {
 			ns = string(*ref.Namespace)
 		}
