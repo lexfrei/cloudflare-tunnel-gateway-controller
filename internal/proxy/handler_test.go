@@ -893,6 +893,68 @@ func TestExtractActiveTransportKeys_IncludesHeaderTimeout(t *testing.T) {
 	}
 }
 
+// TestExtractActiveTransportKeys_IncludesMirrorDestinations pins that
+// active-key extraction walks RequestMirror filters too, so the mirror
+// leg's per-cert transport (borrowed from the factory and parked in
+// Handler.transports during compile) is not pruned + idle-closed on
+// every config update. Without this, any TLS-only mirror destination
+// thrashes its TLS handshakes on every UpdateConfig — the per-cert
+// pool exists precisely to amortize that handshake.
+//
+// The mirror's cache key is transportKey(host, protocol, tlsCfg, 0)
+// because NewRequestMirror calls factory(host, protocol, tlsCfg, 0)
+// (headerTimeout=0 for the mirror leg). Both rule-level and per-backend
+// mirror filters are covered.
+func TestExtractActiveTransportKeys_IncludesMirrorDestinations(t *testing.T) {
+	t.Parallel()
+
+	mirrorTLS := &proxy.BackendTLSConfig{
+		CABundlePEM: "-----BEGIN CERTIFICATE-----\nFAKE\n-----END CERTIFICATE-----\n",
+		ServerName:  "mirror.example.com",
+	}
+
+	mainBackendURL := "http://primary.example.com:8080"
+	ruleMirrorURL := "https://mirror.example.com:8443"
+	backendMirrorURL := "https://per-backend.example.com:8443"
+
+	cfg := &proxy.Config{
+		Version: 1,
+		Rules: []proxy.RouteRule{{
+			Hostnames: []string{"app.example.com"},
+			Filters: []proxy.RouteFilter{{
+				Type: proxy.FilterRequestMirror,
+				RequestMirror: &proxy.MirrorConfig{
+					BackendURL: ruleMirrorURL,
+					TLS:        mirrorTLS,
+				},
+			}},
+			Backends: []proxy.BackendRef{{
+				URL:    mainBackendURL,
+				Weight: 1,
+				Filters: []proxy.RouteFilter{{
+					Type: proxy.FilterRequestMirror,
+					RequestMirror: &proxy.MirrorConfig{
+						BackendURL: backendMirrorURL,
+						TLS:        mirrorTLS,
+					},
+				}},
+			}},
+		}},
+	}
+
+	keys := proxy.ExtractActiveTransportKeysForTest(cfg)
+
+	mainKey := proxy.TransportKey("primary.example.com:8080", proxy.BackendProtocolHTTP, nil)
+	ruleMirrorKey := proxy.TransportKey("mirror.example.com:8443", proxy.BackendProtocolHTTP, mirrorTLS)
+	backendMirrorKey := proxy.TransportKey("per-backend.example.com:8443", proxy.BackendProtocolHTTP, mirrorTLS)
+
+	assert.Contains(t, keys, mainKey, "main backend transport key MUST be active")
+	assert.Contains(t, keys, ruleMirrorKey,
+		"rule-level mirror destination MUST be active — otherwise PruneTransports closes the mirror leg's TLS handshake on every config update")
+	assert.Contains(t, keys, backendMirrorKey,
+		"per-backend mirror destination MUST be active — same eviction-leak risk as the rule-level mirror")
+}
+
 // TestHandler_RequestTimeoutFiresWhenBackendStallsBeforeHeaders pins the
 // pre-headers half of the per-rule Request timeout contract: when the
 // backend takes longer than timeouts.request to send response headers,

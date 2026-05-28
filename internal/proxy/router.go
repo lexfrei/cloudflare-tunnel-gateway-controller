@@ -174,6 +174,14 @@ func (r *Router) UpdateConfig(cfg *Config) error {
 // per-rule timeouts edit). The header timeout is derived from
 // rule.Timeouts the same way getTransport's callers derive it -- see
 // ruleHeaderTimeout for the shared rule.
+//
+// RequestMirror filters are walked too: NewRequestMirror calls the
+// TransportFactory with headerTimeout=0, parking a per-cert transport in
+// Handler.transports during compileRule. Without including mirror keys
+// here, every UpdateConfig would prune the mirror leg's transport and
+// CloseIdleConnections it, forcing a fresh TLS handshake on every push
+// for any TLS-only mirror destination — exactly the cost the per-cert
+// pool exists to amortize.
 func extractActiveTransportKeys(cfg *Config) map[string]bool {
 	keys := make(map[string]bool)
 
@@ -187,10 +195,34 @@ func extractActiveTransportKeys(cfg *Config) map[string]bool {
 			}
 
 			keys[transportKey(parsed.Host, backend.Protocol, backend.TLS, headerTimeout)] = true
+
+			collectMirrorTransportKeys(keys, backend.Filters)
 		}
+
+		collectMirrorTransportKeys(keys, rule.Filters)
 	}
 
 	return keys
+}
+
+// collectMirrorTransportKeys adds the per-cert transport key for every
+// RequestMirror filter into keys. Mirror filters dial with headerTimeout=0
+// (NewRequestMirror's call to TransportFactory), so the key matches the
+// pool entry the filter borrows at compile time.
+func collectMirrorTransportKeys(keys map[string]bool, filters []RouteFilter) {
+	for filterIdx := range filters {
+		filter := &filters[filterIdx]
+		if filter.Type != FilterRequestMirror || filter.RequestMirror == nil {
+			continue
+		}
+
+		parsed, err := url.Parse(filter.RequestMirror.BackendURL)
+		if err != nil {
+			continue
+		}
+
+		keys[transportKey(parsed.Host, filter.RequestMirror.Protocol, filter.RequestMirror.TLS, 0)] = true
+	}
 }
 
 // compileRoutingTable builds a routingTable from a Config. The
