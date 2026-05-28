@@ -179,9 +179,9 @@ True weighted traffic splitting across multiple backends is performed by the in-
 - **Default weight**: `1` (per Gateway API specification)
 - **Zero weight**: Backends with `weight: 0` are disabled
 
-!!! danger "No Fallback on Rejection"
+!!! danger "A failed backend ref clears the whole rule"
 
-    If the highest-weight backend is rejected (e.g., due to missing ReferenceGrant for cross-namespace reference), the controller does **not** fall back to the next backend. The entire rule is skipped, and the route status will show `ResolvedRefs=False`. This is per Gateway API specification — weights indicate preference, not failover order.
+    If any backend ref in a rule fails validation — cross-namespace denial (`RefNotPermitted`), a missing Service (`BackendNotFound`), or an unsupported kind/port — that rule's backends are all cleared so the proxy returns HTTP 500 (no backend), and the route status shows `ResolvedRefs=False`. Sibling rules with valid backends are unaffected. Weighting is not failover: valid backends within a rule share traffic in proportion to their weights, but one invalid ref fails the entire rule closed rather than silently shifting its traffic to the others.
 
 ## Status Conditions
 
