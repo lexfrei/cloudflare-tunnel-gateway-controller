@@ -434,9 +434,10 @@ func selectBackend(backends []BackendRef) int {
 		return -1
 	}
 
-	if len(backends) == 1 {
-		return 0
-	}
+	// No single-backend short-circuit: a lone backend with weight 0 must still
+	// receive no traffic per the Gateway API spec, which the totalWeight<=0
+	// guard below handles. A lone backend with weight > 0 falls through to the
+	// cumulative walk and selects index 0 as expected.
 
 	// Use int64 to avoid overflow when multiple backends have large weights.
 	totalWeight := int64(0)

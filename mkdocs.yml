@@ -167,6 +167,7 @@ nav:
       - HTTPRoute: gateway-api/httproute.md
       - GRPCRoute: gateway-api/grpcroute.md
       - ReferenceGrant: gateway-api/referencegrant.md
+      - ListenerSet: gateway-api/listenerset.md
       - Limitations: gateway-api/limitations.md
   - Guides:
       - guides/index.md

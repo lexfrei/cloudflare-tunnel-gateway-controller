@@ -87,9 +87,9 @@ v3 collapses the two data plane modes that the v1/v2 chart supported (a separate
       -p '{"metadata":{"finalizers":[]}}'
     ```
 
-## GRPCRoute is not supported in v3
+## GRPCRoute routing
 
-v2 (default) routed gRPC traffic via cloudflared's native ingress. v3 collapses everything to the L7 proxy, which has no gRPC matcher yet — gRPC requests get `404 no matching route`. If you have any `GRPCRoute` resources today, migrate them to `HTTPRoute` before upgrading, or stay on v2.x until the proxy converter learns gRPC. See [limitations](../gateway-api/limitations.md#grpcroute-is-not-supported-in-v3).
+v2 (default) routed gRPC traffic via cloudflared's native ingress. v3 collapses everything to the L7 proxy. Early v3 builds had no gRPC matcher and returned `404 no matching route`; current v3 serves GRPCRoute through the proxy — gRPC service/method matches map onto `/{service}/{method}` path rules and the upstream hop is h2c. No migration is needed for `GRPCRoute` resources; they route as before. See [GRPCRoute](../gateway-api/grpcroute.md).
 
 ## AmneziaWG sidecar is gone
 

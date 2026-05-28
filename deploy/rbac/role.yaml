@@ -22,9 +22,16 @@ rules:
   - apiGroups: ["gateway.networking.k8s.io"]
     resources: ["backendtlspolicies"]
     verbs: ["get", "list", "watch"]
+  # ListenerSet: the ListenerSetReconciler watches ListenerSet resources,
+  # validates them against the parent Gateway's allowedListeners filter, and
+  # surfaces Accepted / Programmed / per-entry conditions. Read-only on the
+  # spec; status writes go through the status subresource below.
+  - apiGroups: ["gateway.networking.k8s.io"]
+    resources: ["listenersets"]
+    verbs: ["get", "list", "watch"]
   # Gateway API status subresources - write access for status updates only
   - apiGroups: ["gateway.networking.k8s.io"]
-    resources: ["gatewayclasses/status", "gateways/status", "httproutes/status", "grpcroutes/status", "backendtlspolicies/status"]
+    resources: ["gatewayclasses/status", "gateways/status", "httproutes/status", "grpcroutes/status", "backendtlspolicies/status", "listenersets/status"]
     verbs: ["get", "update", "patch"]
   - apiGroups: [""]
     resources: ["services", "namespaces"]

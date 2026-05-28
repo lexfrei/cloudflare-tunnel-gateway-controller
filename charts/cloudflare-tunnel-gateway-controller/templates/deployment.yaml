@@ -61,6 +61,9 @@ spec:
             {{- if .Values.proxy.tunnelTokenSecretRef.name }}
             - "--proxy-token-secret={{ .Release.Namespace }}/{{ .Values.proxy.tunnelTokenSecretRef.name }}"
             {{- end }}
+            {{- with .Values.proxy.tunnel.protocol }}
+            - "--tunnel-protocol={{ . }}"
+            {{- end }}
             {{- if .Values.leaderElection.enabled }}
             - "--leader-elect=true"
             - "--leader-election-name={{ .Values.leaderElection.leaseName }}"

@@ -15,12 +15,14 @@ You need a Kubernetes cluster with:
 The controller requires Gateway API Custom Resource Definitions (CRDs) to be installed in your cluster:
 
 ```bash
-kubectl apply --filename https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.5.0/standard-install.yaml
+kubectl apply --filename https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.5.1/standard-install.yaml
 ```
 
-!!! tip "Version Compatibility"
+!!! warning "v1.5.1 is the minimum supported version"
 
-    The controller is tested with Gateway API v1.5.0. Using older versions may result in missing features or compatibility issues.
+    The controller watches `ListenerSet` resources as part of its core reconcile loop. The `listenersets.gateway.networking.k8s.io` CRD entered the **Standard** channel in Gateway API v1.5.1. Installing the controller against an older Gateway API bundle (including v1.5.0) leaves the manager unable to start because the watch target is missing.
+
+    If you previously installed v1.5.0, apply the v1.5.1 standard bundle before upgrading this controller.
 
 ## Cloudflare Account
 

@@ -87,6 +87,9 @@ func runTunnelMode(logger *slog.Logger, token string) {
 		Token:       token,
 		Logger:      logger,
 		OriginProxy: originProxy,
+		// PROXY_TUNNEL_PROTOCOL selects the edge transport (auto|http2|quic).
+		// gRPC requires http2 — cloudflared drops HTTP trailers over QUIC.
+		Protocol: os.Getenv("PROXY_TUNNEL_PROTOCOL"),
 	})
 
 	gracefulShutdown(logger, configServer)

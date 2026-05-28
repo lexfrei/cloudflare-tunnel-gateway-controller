@@ -651,6 +651,84 @@ func TestGRPCRouteReconciler_FindRoutesForGateway(t *testing.T) {
 	assert.Equal(t, "default", requests[0].Namespace)
 }
 
+// TestGRPCRouteReconciler_FindRoutesForService proves a Service create/change
+// enqueues the referencing GRPCRoute, so a route stuck at 500 because its
+// backend Service did not exist yet recovers once the Service appears — the
+// same self-heal the HTTPRoute reconciler has. Without the Service watch the
+// gRPC route would stay at 500 until an unrelated event drove a reconcile.
+func TestGRPCRouteReconciler_FindRoutesForService(t *testing.T) {
+	t.Parallel()
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, gatewayv1.Install(scheme))
+	require.NoError(t, corev1.AddToScheme(scheme))
+
+	port := gatewayv1.PortNumber(9000)
+
+	gatewayClass := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "cloudflare-tunnel"},
+		Spec:       gatewayv1.GatewayClassSpec{ControllerName: "cloudflare-tunnel"},
+	}
+
+	gateway := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-gateway", Namespace: "default"},
+		Spec: gatewayv1.GatewaySpec{
+			GatewayClassName: "cloudflare-tunnel",
+			Listeners: []gatewayv1.Listener{
+				{Name: "grpc", Port: 443, Protocol: gatewayv1.HTTPSProtocolType},
+			},
+		},
+	}
+
+	routeRef := &gatewayv1.GRPCRoute{
+		ObjectMeta: metav1.ObjectMeta{Name: "route-ref", Namespace: "default"},
+		Spec: gatewayv1.GRPCRouteSpec{
+			CommonRouteSpec: gatewayv1.CommonRouteSpec{
+				ParentRefs: []gatewayv1.ParentReference{{Name: "test-gateway"}},
+			},
+			Rules: []gatewayv1.GRPCRouteRule{
+				{BackendRefs: []gatewayv1.GRPCBackendRef{{BackendRef: gatewayv1.BackendRef{
+					BackendObjectReference: gatewayv1.BackendObjectReference{Name: "echo-svc", Port: &port},
+				}}}},
+			},
+		},
+	}
+
+	routeOther := &gatewayv1.GRPCRoute{
+		ObjectMeta: metav1.ObjectMeta{Name: "route-other", Namespace: "default"},
+		Spec: gatewayv1.GRPCRouteSpec{
+			CommonRouteSpec: gatewayv1.CommonRouteSpec{
+				ParentRefs: []gatewayv1.ParentReference{{Name: "test-gateway"}},
+			},
+			Rules: []gatewayv1.GRPCRouteRule{
+				{BackendRefs: []gatewayv1.GRPCBackendRef{{BackendRef: gatewayv1.BackendRef{
+					BackendObjectReference: gatewayv1.BackendObjectReference{Name: "other-svc", Port: &port},
+				}}}},
+			},
+		},
+	}
+
+	svc := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "echo-svc", Namespace: "default"}}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(gatewayClass, gateway, routeRef, routeOther, svc).
+		Build()
+
+	r := &GRPCRouteReconciler{
+		Client:           fakeClient,
+		Scheme:           scheme,
+		ControllerName:   "cloudflare-tunnel",
+		bindingValidator: routebinding.NewValidator(fakeClient),
+	}
+
+	requests := r.findRoutesForService(context.Background(), svc)
+
+	require.Len(t, requests, 1, "only the GRPCRoute referencing echo-svc should be enqueued")
+	assert.Equal(t, "route-ref", requests[0].Name)
+	assert.Equal(t, "default", requests[0].Namespace)
+}
+
 func TestGRPCRouteReconciler_FindRoutesForGateway_WrongType(t *testing.T) {
 	t.Parallel()
 
@@ -2086,4 +2164,37 @@ func TestGRPCRouteReconciler_Reconcile_RouteNotForOurGateway(t *testing.T) {
 
 	assert.NoError(t, err)
 	assert.Equal(t, ctrl.Result{}, result)
+}
+
+func TestGRPCProtocolWarning(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		protocol string
+		count    int
+		wantWarn bool
+	}{
+		{name: "http2 with routes is fine", protocol: "http2", count: 2, wantWarn: false},
+		{name: "http2 case-insensitive", protocol: "HTTP2", count: 1, wantWarn: false},
+		{name: "quic with routes warns", protocol: "quic", count: 1, wantWarn: true},
+		{name: "auto with routes warns", protocol: "auto", count: 1, wantWarn: true},
+		{name: "empty with routes warns", protocol: "", count: 1, wantWarn: true},
+		{name: "quic without routes is silent", protocol: "quic", count: 0, wantWarn: false},
+		{name: "http2 without routes is silent", protocol: "http2", count: 0, wantWarn: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			msg, warn := grpcProtocolWarning(tt.protocol, tt.count)
+			assert.Equal(t, tt.wantWarn, warn)
+
+			if tt.wantWarn {
+				assert.Contains(t, msg, "http2")
+				assert.Contains(t, msg, "grpc-status")
+			}
+		})
+	}
 }

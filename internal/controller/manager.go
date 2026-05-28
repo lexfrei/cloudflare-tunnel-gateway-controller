@@ -78,6 +78,11 @@ type Config struct {
 	// When set, the controller includes "Authorization: Bearer <token>" in push requests.
 	ProxyAuthToken string
 
+	// TunnelProtocol is the proxy's configured edge transport (auto|http2|quic).
+	// Used only to warn when GRPCRoutes are served over a non-http2 tunnel,
+	// where cloudflared drops the grpc-status trailer.
+	TunnelProtocol string
+
 	// ProxyTokenSecret identifies the Secret holding the tunnel token used by
 	// the proxy. Format: "<namespace>/<name>". When set, the controller
 	// watches the named Secret and patches the proxy Deployment's pod
@@ -111,7 +116,7 @@ type Config struct {
 //  6. Wires the ProxySyncer that pushes HTTPRoute config to the proxy data plane
 //  7. Starts the manager and blocks until shutdown
 //
-//nolint:funlen // controller setup requires multiple sequential steps
+//nolint:funlen,gocyclo,cyclop // controller setup requires multiple sequential reconciler wires
 func Run(ctx context.Context, cfg *Config) error {
 	logger := log.FromContext(ctx).WithName("manager")
 	logger.Info("initializing controller manager")
@@ -212,10 +217,17 @@ func Run(ctx context.Context, cfg *Config) error {
 		Scheme:         mgr.GetScheme(),
 		ControllerName: cfg.ControllerName,
 		RouteSyncer:    routeSyncer,
+		ProxySyncer:    proxySyncer,
+		ProxyEndpoints: proxyEndpoints,
+		TunnelProtocol: cfg.TunnelProtocol,
 	}
 
 	if err := grpcRouteReconciler.SetupWithManager(mgr); err != nil {
 		return errors.Wrap(err, "failed to setup grpcroute controller")
+	}
+
+	if err := setupListenerSetReconciler(mgr, cfg.ControllerName); err != nil {
+		return err
 	}
 
 	// Setup GatewayClassConfig controller for status updates
@@ -253,6 +265,23 @@ func Run(ctx context.Context, cfg *Config) error {
 
 	if err := mgr.Start(ctx); err != nil {
 		return errors.Wrap(err, "failed to start manager")
+	}
+
+	return nil
+}
+
+// setupListenerSetReconciler wires the ListenerSet controller. Extracted
+// from Run so the per-reconciler setup chain in Run stays under the
+// cyclomatic-complexity gate.
+func setupListenerSetReconciler(mgr ctrl.Manager, controllerName string) error {
+	reconciler := &ListenerSetReconciler{
+		Client:         mgr.GetClient(),
+		Scheme:         mgr.GetScheme(),
+		ControllerName: controllerName,
+	}
+
+	if err := reconciler.SetupWithManager(mgr); err != nil {
+		return errors.Wrap(err, "failed to setup listenerset controller")
 	}
 
 	return nil

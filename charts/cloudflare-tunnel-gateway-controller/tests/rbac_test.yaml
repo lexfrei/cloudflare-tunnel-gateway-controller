@@ -100,8 +100,25 @@ tests:
           path: rules
           content:
             apiGroups: ["gateway.networking.k8s.io"]
-            resources: ["gatewayclasses/status", "gateways/status", "httproutes/status", "grpcroutes/status", "backendtlspolicies/status"]
+            resources: ["gatewayclasses/status", "gateways/status", "httproutes/status", "grpcroutes/status", "backendtlspolicies/status", "listenersets/status"]
             verbs: ["get", "update", "patch"]
+
+  - it: should grant read-only access on ListenerSet spec
+    asserts:
+      - template: clusterrole.yaml
+        contains:
+          path: rules
+          content:
+            apiGroups: ["gateway.networking.k8s.io"]
+            resources: ["listenersets"]
+            verbs: ["get", "list", "watch"]
+      - template: clusterrole.yaml
+        notContains:
+          path: rules
+          content:
+            apiGroups: ["gateway.networking.k8s.io"]
+            resources: ["listenersets"]
+            verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 
   # The v3 controller only reads Secrets (Cloudflare credentials, TLS cert
   # refs, BackendTLSPolicy CA bundles). The chart must NOT grant the
