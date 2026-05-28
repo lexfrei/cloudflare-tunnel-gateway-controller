@@ -244,9 +244,9 @@ The upstream hop to a gRPC backend is always cleartext h2c (HTTP/2 without TLS).
 
 ### Traffic Splitting
 
-The controller does NOT implement traffic splitting. When multiple backends have weights, the highest weight backend receives 100% of traffic.
+Weighted traffic splitting is supported: when a rule lists multiple backends with weights, the in-process L7 proxy distributes requests across them in proportion to their weights at request time (the same weighted selection used for HTTPRoute). A backend with weight `0` receives no traffic, and a rule whose backends all have weight `0` sends no traffic.
 
-For actual traffic splitting, deploy a gRPC-aware load balancer (e.g., Envoy) and point the GRPCRoute to it.
+Note that gRPC connections are long-lived (HTTP/2 multiplexes many calls over one connection), so the split applies per request the proxy routes, not per TCP connection — a single client holding one connection still has its individual calls distributed by weight.
 
 ## Troubleshooting
 
