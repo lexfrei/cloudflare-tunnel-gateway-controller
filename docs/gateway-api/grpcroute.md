@@ -267,10 +267,10 @@ Common causes:
 
 ### gRPC Connection Issues
 
-1. Verify cloudflared is running and connected:
+1. Verify the proxy pods (which embed the cloudflared tunnel in-process) are running and connected:
 
 ```bash
-kubectl logs --selector app=cloudflared \
+kubectl logs --selector app.kubernetes.io/component=proxy \
   --namespace cloudflare-tunnel-system
 ```
 
