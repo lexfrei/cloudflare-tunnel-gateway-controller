@@ -2,6 +2,7 @@ package proxy_test
 
 import (
 	"context"
+	"net/http"
 	"regexp"
 	"strings"
 	"testing"
@@ -677,8 +678,10 @@ func TestConvertGRPCRoutes_FiltersDropped(t *testing.T) {
 	assert.Empty(t, cfg.Rules[0].Filters, "gRPC filters are not supported and must be dropped")
 }
 
-// TestConvertGRPCRoutes_BackendSkips exercises the backend drop paths: a
-// dropped backend leaves the rule with no backends (→ proxy returns 500).
+// TestConvertGRPCRoutes_BackendSkips exercises the backend handling for invalid
+// refs: a weight>0 invalid backend stays in the weighted pool marked 500 for its
+// traffic fraction (Gateway API spec), while a backend that carries no traffic
+// (negative/zero weight) is dropped.
 func TestConvertGRPCRoutes_BackendSkips(t *testing.T) {
 	t.Parallel()
 
@@ -689,8 +692,9 @@ func TestConvertGRPCRoutes_BackendSkips(t *testing.T) {
 	port := gatewayv1.PortNumber(9000)
 
 	tests := []struct {
-		name    string
-		backend gatewayv1.GRPCBackendRef
+		name       string
+		backend    gatewayv1.GRPCBackendRef
+		expectDrop bool // negative/zero weight → no traffic → dropped
 	}{
 		{
 			name: "non-Service kind",
@@ -710,6 +714,7 @@ func TestConvertGRPCRoutes_BackendSkips(t *testing.T) {
 				BackendObjectReference: gatewayv1.BackendObjectReference{Name: "svc", Port: &port},
 				Weight:                 &negWeight,
 			}},
+			expectDrop: true,
 		},
 	}
 
@@ -736,7 +741,16 @@ func TestConvertGRPCRoutes_BackendSkips(t *testing.T) {
 			cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil, nil, nil)
 
 			require.Len(t, cfg.Rules, 1)
-			assert.Empty(t, cfg.Rules[0].Backends, "invalid backend must be dropped → rule has no backends")
+
+			if tt.expectDrop {
+				assert.Empty(t, cfg.Rules[0].Backends, "a backend carrying no traffic is dropped")
+
+				return
+			}
+
+			require.Len(t, cfg.Rules[0].Backends, 1, "a weight>0 invalid backend stays in the pool marked 500")
+			assert.Equal(t, http.StatusInternalServerError, cfg.Rules[0].Backends[0].UnavailableStatus,
+				"an invalid gRPC backend must be marked 500 for its traffic fraction, not dropped")
 		})
 	}
 }
@@ -776,7 +790,9 @@ func TestConvertGRPCRoutes_CrossNamespaceDenied(t *testing.T) {
 	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", denyAll, nil, nil)
 
 	require.Len(t, cfg.Rules, 1)
-	assert.Empty(t, cfg.Rules[0].Backends, "cross-namespace backend denied by ReferenceGrant must be dropped")
+	require.Len(t, cfg.Rules[0].Backends, 1, "a weight>0 denied cross-namespace backend stays in the pool marked 500")
+	assert.Equal(t, http.StatusInternalServerError, cfg.Rules[0].Backends[0].UnavailableStatus,
+		"a cross-namespace backend denied by ReferenceGrant must be marked 500 for its traffic fraction, not dropped")
 }
 
 // TestConvertGRPCRoutes_HeaderMatch carries gRPC header matches through to the

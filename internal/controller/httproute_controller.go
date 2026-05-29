@@ -152,18 +152,19 @@ func (r *HTTPRouteReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	r.bindingValidator = routebinding.NewValidator(r.Client)
 
 	return setupRouteController(mgr, &routeControllerSetupParams{
-		routeObject:              &gatewayv1.HTTPRoute{},
-		reconciler:               r,
-		runnable:                 r,
-		k8sClient:                r.Client,
-		controllerName:           r.ControllerName,
-		configResolver:           r.RouteSyncer.ConfigResolver,
-		findRoutesForGateway:     r.findRoutesForGateway,
-		findRoutesForListenerSet: r.findRoutesForListenerSet,
-		findRoutesForRefGrant:    r.findRoutesForReferenceGrant,
-		findRoutesForService:     r.findRoutesForService,
-		watchBackendTLS:          true,
-		getAllRelevantRoutes:     r.getAllRelevantRoutes,
+		routeObject:                &gatewayv1.HTTPRoute{},
+		reconciler:                 r,
+		runnable:                   r,
+		k8sClient:                  r.Client,
+		controllerName:             r.ControllerName,
+		configResolver:             r.RouteSyncer.ConfigResolver,
+		findRoutesForGateway:       r.findRoutesForGateway,
+		findRoutesForListenerSet:   r.findRoutesForListenerSet,
+		findRoutesForRefGrant:      r.findRoutesForReferenceGrant,
+		findRoutesForService:       r.findRoutesForService,
+		findRoutesForEndpointSlice: r.findRoutesForEndpointSlice,
+		watchBackendTLS:            true,
+		getAllRelevantRoutes:       r.getAllRelevantRoutes,
 	})
 }
 
@@ -260,6 +261,30 @@ func (r *HTTPRouteReconciler) findRoutesForService(
 	}
 
 	return FindRoutesForService(obj, routes)
+}
+
+// findRoutesForEndpointSlice enqueues every managed HTTPRoute that references
+// the Service owning the changed EndpointSlice, so the proxy's
+// zero-ready-endpoint 503 marking refreshes when pods become Ready/NotReady.
+func (r *HTTPRouteReconciler) findRoutesForEndpointSlice(
+	ctx context.Context,
+	obj client.Object,
+) []reconcile.Request {
+	var routeList gatewayv1.HTTPRouteList
+	if err := r.List(ctx, &routeList); err != nil {
+		return nil
+	}
+
+	routes := make([]Route, 0, len(routeList.Items))
+
+	for i := range routeList.Items {
+		route := &routeList.Items[i]
+		if r.isRouteForOurGateway(ctx, route) {
+			routes = append(routes, HTTPRouteWrapper{route})
+		}
+	}
+
+	return FindRoutesForEndpointSlice(obj, routes)
 }
 
 func (r *HTTPRouteReconciler) findRoutesForReferenceGrant(

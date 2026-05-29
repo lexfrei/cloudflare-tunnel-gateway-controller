@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -686,6 +687,116 @@ func TestHandler_AllZeroWeightBackendsReturns500(t *testing.T) {
 
 	assert.Equal(t, http.StatusInternalServerError, recorder.Code)
 	assert.Contains(t, recorder.Body.String(), "no backend available")
+}
+
+// TestHandler_MarkedBackendReturnsStatusWithoutDialing pins the core of the
+// per-fraction unavailable-backend behaviour: a backend carrying a non-zero
+// UnavailableStatus is still selected from the weighted pool, but the handler
+// returns that status directly instead of dialing the backend (which would
+// surface a 502). The backend server records every connection, so the test can
+// assert it was never contacted.
+func TestHandler_MarkedBackendReturnsStatusWithoutDialing(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		status int
+	}{
+		{name: "invalid ref 500", status: http.StatusInternalServerError},
+		{name: "zero ready endpoints 503", status: http.StatusServiceUnavailable},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var dialed atomic.Bool
+
+			backend := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+				dialed.Store(true)
+				writer.WriteHeader(http.StatusOK)
+			}))
+			defer backend.Close()
+
+			router := proxy.NewRouter()
+
+			cfg := &proxy.Config{
+				Version: 1,
+				Rules: []proxy.RouteRule{
+					{
+						Hostnames: []string{"app.example.com"},
+						Matches: []proxy.RouteMatch{
+							{Path: &proxy.PathMatch{Type: proxy.PathMatchPathPrefix, Value: "/"}},
+						},
+						Backends: []proxy.BackendRef{
+							{URL: backend.URL, Weight: 1, UnavailableStatus: tt.status},
+						},
+					},
+				},
+			}
+
+			require.NoError(t, router.UpdateConfig(cfg))
+
+			handler := proxy.NewHandler(router)
+
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://app.example.com/test", nil)
+			recorder := httptest.NewRecorder()
+
+			handler.ServeHTTP(recorder, req)
+
+			assert.Equal(t, tt.status, recorder.Code,
+				"a marked backend must return its UnavailableStatus, not dial and 502")
+			assert.False(t, dialed.Load(),
+				"a marked backend must NOT be dialed")
+		})
+	}
+}
+
+// TestHandler_MarkedBackendPreservesValidSiblingFraction pins that marking one
+// backend in a weighted pool does not affect a valid sibling: a request that
+// selects the valid backend still reaches it and gets 200, while the marked
+// sibling would return its status. Here both backends are present; the valid one
+// has all the weight so it is always selected, proving the marked sibling does
+// not poison the rule.
+func TestHandler_MarkedBackendPreservesValidSiblingFraction(t *testing.T) {
+	t.Parallel()
+
+	backend := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("X-Backend", "reached")
+		writer.WriteHeader(http.StatusOK)
+	}))
+	defer backend.Close()
+
+	router := proxy.NewRouter()
+
+	cfg := &proxy.Config{
+		Version: 1,
+		Rules: []proxy.RouteRule{
+			{
+				Hostnames: []string{"app.example.com"},
+				Matches: []proxy.RouteMatch{
+					{Path: &proxy.PathMatch{Type: proxy.PathMatchPathPrefix, Value: "/"}},
+				},
+				Backends: []proxy.BackendRef{
+					{URL: backend.URL, Weight: 1},
+					{URL: "http://dead.default.svc.cluster.local:80", Weight: 0, UnavailableStatus: http.StatusInternalServerError},
+				},
+			},
+		},
+	}
+
+	require.NoError(t, router.UpdateConfig(cfg))
+
+	handler := proxy.NewHandler(router)
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://app.example.com/test", nil)
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, req)
+
+	assert.Equal(t, http.StatusOK, recorder.Code,
+		"the all-weight valid backend must serve; the marked zero-weight sibling must not poison the rule")
+	assert.Equal(t, "reached", recorder.Header().Get("X-Backend"))
 }
 
 func TestHandler_PruneTransportsPreservesActiveHosts(t *testing.T) {

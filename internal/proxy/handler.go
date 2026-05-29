@@ -424,6 +424,16 @@ func (h *Handler) proxyToBackend(writer http.ResponseWriter, req *http.Request, 
 
 	backend := result.Rule.Backends[result.BackendIdx]
 
+	// An invalid backendRef stays in the weighted pool (so its traffic
+	// fraction is preserved) but must not be dialed: return the marked status
+	// — 500 for an invalid ref per the Gateway API spec — instead of dialing a
+	// dead address and surfacing a 502. See BackendRef.UnavailableStatus.
+	if backend.UnavailableStatus != 0 {
+		http.Error(writer, "backend unavailable", backend.UnavailableStatus)
+
+		return
+	}
+
 	backendURL, err := url.Parse(backend.URL)
 	if err != nil {
 		http.Error(writer, "invalid backend URL", http.StatusInternalServerError)

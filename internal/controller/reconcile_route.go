@@ -6,6 +6,7 @@ import (
 
 	"github.com/cockroachdb/errors"
 	corev1 "k8s.io/api/core/v1"
+	discoveryv1 "k8s.io/api/discovery/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -83,6 +84,11 @@ type routeControllerSetupParams struct {
 	findRoutesForListenerSet handler.MapFunc
 	findRoutesForRefGrant    handler.MapFunc
 	findRoutesForService     handler.MapFunc
+	// findRoutesForEndpointSlice enqueues routes referencing the Service that
+	// owns a changed EndpointSlice, so the proxy's zero-ready-endpoint 503
+	// marking refreshes when pods go Ready/NotReady. Gated like the Service
+	// watch: nil means no EndpointSlice watch is registered.
+	findRoutesForEndpointSlice handler.MapFunc
 	// watchBackendTLS adds the BackendTLSPolicy + CA ConfigMap watches. Both
 	// HTTPRoute and GRPCRoute now honor BackendTLSPolicy (gRPC backends are
 	// upgraded to TLS + ALPN-negotiated HTTP/2 when a policy targets the
@@ -155,6 +161,13 @@ func addProxyOnlyWatches(
 		builder = builder.Watches(
 			&corev1.Service{},
 			handler.EnqueueRequestsFromMapFunc(params.findRoutesForService),
+		)
+	}
+
+	if params.findRoutesForEndpointSlice != nil {
+		builder = builder.Watches(
+			&discoveryv1.EndpointSlice{},
+			handler.EnqueueRequestsFromMapFunc(params.findRoutesForEndpointSlice),
 		)
 	}
 

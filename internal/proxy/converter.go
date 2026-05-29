@@ -831,14 +831,6 @@ func convertBackendRef(
 	tlsResolver BackendTLSResolver,
 	clientCert *ClientCertConfig,
 ) (BackendRef, bool) {
-	if !IsServiceBackendRef(backend.BackendObjectReference) {
-		slog.Warn("skipping non-Service backend kind",
-			"kind", backend.Kind,
-			"name", backend.Name)
-
-		return BackendRef{}, false
-	}
-
 	result, ok := initBackendRefBaseline(backend)
 	if !ok {
 		return BackendRef{}, false
@@ -851,16 +843,24 @@ func convertBackendRef(
 		port = *backend.Port
 	}
 
-	if !validatePort(port) {
-		slog.Warn("skipping backend with invalid port", "service", serviceName, "port", port)
-
-		return BackendRef{}, false
-	}
-
 	svcNamespace := resolveBackendNamespace(backend, namespace)
 
+	// An invalid backendRef MUST return 500 for its traffic fraction per the
+	// Gateway API spec, not be silently dropped (which would hand its share to
+	// the valid siblings). A weight>0 invalid ref therefore stays in the
+	// weighted pool marked 500; a weight-0 ref carries no traffic and is
+	// dropped. markInvalidBackend enforces that.
+	if !IsServiceBackendRef(backend.BackendObjectReference) {
+		return markInvalidBackend(result.Weight, serviceName, svcNamespace, port, clusterDomain, "unsupported backend kind")
+	}
+
+	if !validatePort(port) {
+		return markInvalidBackend(result.Weight, serviceName, svcNamespace, port, clusterDomain, "invalid port")
+	}
+
 	if !validateCrossNamespace(ctx, svcNamespace, namespace, serviceName, backend.BackendObjectReference, validator) {
-		return BackendRef{}, false
+		return markInvalidBackend(result.Weight, serviceName, svcNamespace, port, clusterDomain,
+			"cross-namespace reference not permitted by ReferenceGrant")
 	}
 
 	result.URL = buildServiceURL(serviceName, svcNamespace, port, clusterDomain)
@@ -877,9 +877,51 @@ func convertBackendRef(
 	return result, true
 }
 
-// initBackendRefBaseline validates a backend ref's kind and weight, returning
-// a partially-initialised BackendRef when both checks pass. Extracted from
-// convertBackendRef to keep that function under the funlen budget.
+// markInvalidBackend handles a backendRef that failed validation (unsupported
+// Kind, invalid port, or unauthorized cross-namespace reference). Per the
+// Gateway API spec an invalid backendRef MUST return 500 for the proportion of
+// traffic that would have been routed to it. A backend that carries traffic
+// (weight > 0) is therefore kept in the weighted pool with UnavailableStatus
+// set to 500 — the handler returns that status without dialing, so the
+// placeholder URL is never contacted — while a zero-weight invalid backend is
+// dropped because it carries no traffic and so loses no fraction.
+//
+// The placeholder URL is built from the ref's own name/namespace/port (falling
+// back to the default port when the port itself is what's invalid) purely so
+// the backend has a stable, parseable host for the router; it is never dialed.
+//
+// Note on the invalid-port case: the controller's separate failed-ref path
+// (ingress builder → markUnavailableBackends) reports the real, out-of-range
+// port, so its host key (e.g. ...:70000) does NOT match this placeholder's
+// (...:80) and that redundant marking is a no-op. That is harmless precisely
+// because this function already marked the backend 500 inline — the 500 does
+// not depend on the controller's path matching. The two paths are independent
+// and either one alone is sufficient.
+func markInvalidBackend(weight int32, name, svcNamespace string, port int32, clusterDomain, reason string) (BackendRef, bool) {
+	if weight <= 0 {
+		slog.Warn("dropping zero-weight invalid backend", "service", name, "reason", reason)
+
+		return BackendRef{}, false
+	}
+
+	urlPort := port
+	if !validatePort(urlPort) {
+		urlPort = int32(defaultServicePort)
+	}
+
+	slog.Warn("marking invalid backend 500 for its traffic fraction",
+		"service", name, "reason", reason, "weight", weight)
+
+	return BackendRef{
+		Weight:            weight,
+		URL:               buildServiceURL(name, svcNamespace, urlPort, clusterDomain),
+		UnavailableStatus: http.StatusInternalServerError,
+	}, true
+}
+
+// initBackendRefBaseline validates a backend ref's weight, returning a
+// partially-initialised BackendRef when the weight is non-negative. Extracted
+// from convertBackendRef to keep that function under the funlen budget.
 func initBackendRefBaseline(backend *gatewayv1.HTTPBackendRef) (BackendRef, bool) {
 	result := BackendRef{Weight: 1}
 	if backend.Weight != nil {

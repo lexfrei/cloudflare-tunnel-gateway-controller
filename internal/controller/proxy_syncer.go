@@ -651,10 +651,10 @@ func (s *ProxySyncer) SyncRoutes(
 }
 
 // buildProxyConfig converts the HTTP and gRPC route sets into a single merged
-// proxy Config. HTTP routes inherit parent-listener hostnames and get failed
-// backend refs cleared (→ 500); gRPC routes are appended with backends forced
-// to h2c and the same failed-ref clearing applied at their offset. Extracted
-// from SyncRoutes to keep that function under the funlen budget.
+// proxy Config. HTTP routes inherit parent-listener hostnames and get invalid
+// backend refs marked unavailable (→ 500 for that backend's fraction); gRPC
+// routes are appended with backends forced to h2c and the same marking applied.
+// Extracted from SyncRoutes to keep that function under the funlen budget.
 func (s *ProxySyncer) buildProxyConfig(
 	ctx context.Context,
 	routes []*gatewayv1.HTTPRoute,
@@ -681,10 +681,11 @@ func (s *ProxySyncer) buildProxyConfig(
 	// BackendTLSPolicy lookup for the proxy → backend TLS hop.
 	cfg := proxy.ConvertHTTPRoutes(ctx, routes, s.clusterDomain, s.backendValidator, s.protocolResolver, s.tlsResolver, s.gatewayCertResolver)
 
-	// Clear backends for routes that have failed backend refs.
-	// This ensures the proxy returns 500 (no backend available) instead of
-	// trying to connect to a nonexistent service (which would return 502).
-	clearFailedBackends(cfg, routes, failedRefs)
+	// Mark each invalid backendRef (a nonexistent Service) so the proxy returns
+	// 500 for that backend's traffic fraction instead of dialing a dead address
+	// and surfacing a 502. The backend stays in the weighted pool so the
+	// fraction is preserved per the Gateway API spec.
+	markUnavailableBackends(cfg, s.clusterDomain, failedRefs)
 
 	// Append GRPCRoute rules. gRPC method matching maps onto the same proxy
 	// path matcher; backends are forced to h2c. The merged config keeps the
@@ -697,17 +698,20 @@ func (s *ProxySyncer) buildProxyConfig(
 		// other routes).
 		grpcRoutes = withEffectiveHostnamesGRPC(ctx, s.k8sClient, grpcRoutes)
 
-		// gRPC rules are appended after the HTTP rules, so failed-backend
-		// clearing for them starts at the current rule count. ConvertGRPCRoutes
-		// emits one rule per GRPCRoute rule, same 1:1 invariant the HTTP path
-		// relies on.
-		grpcStartIdx := len(cfg.Rules)
-
 		grpcCfg := proxy.ConvertGRPCRoutes(ctx, grpcRoutes, s.clusterDomain, s.grpcBackendValidator, s.tlsResolver, s.gatewayCertResolver)
 		cfg.Rules = append(cfg.Rules, grpcCfg.Rules...)
 
-		clearFailedGRPCBackends(cfg, grpcStartIdx, grpcRoutes, grpcFailedRefs)
+		// Mark invalid gRPC backendRefs the same way as HTTP. Matching is by
+		// service host:port across all rules, so no rule-offset bookkeeping is
+		// needed.
+		markUnavailableBackends(cfg, s.clusterDomain, grpcFailedRefs)
 	}
+
+	// After the 500 (invalid-ref) markings, mark any backend whose Service
+	// exists but has no ready endpoints with 503 (Gateway API SHOULD). Runs
+	// last so the first-marking-wins rule keeps 500 for a backend that is both
+	// nonexistent and endpoint-less.
+	markZeroEndpointBackends(ctx, s.k8sClient, cfg, s.clusterDomain, routes, grpcRoutes)
 
 	return cfg
 }
@@ -771,104 +775,6 @@ func (s *ProxySyncer) ResyncEndpoints(ctx context.Context, endpoints []string) e
 	}
 
 	return nil
-}
-
-// failedBackendKeySet builds the lookup set of "routeNS/routeName/backendName"
-// keys that failed validation in the ingress builder, used to blank out the
-// proxy rules that reference them.
-func failedBackendKeySet(failedRefs []ingress.BackendRefError) map[string]bool {
-	set := make(map[string]bool, len(failedRefs))
-	for _, ref := range failedRefs {
-		set[ref.RouteNamespace+"/"+ref.RouteName+"/"+ref.BackendName] = true
-	}
-
-	return set
-}
-
-// ruleHasFailedBackend reports whether any of the rule's backend names (keyed
-// by the route's namespace/name) appears in the failed set.
-func ruleHasFailedBackend(namespace, name string, backendNames []string, failed map[string]bool) bool {
-	for _, backendName := range backendNames {
-		if failed[namespace+"/"+name+"/"+backendName] {
-			return true
-		}
-	}
-
-	return false
-}
-
-// clearFailedBackends removes backends from proxy config rules where the
-// corresponding HTTPRoute rule has failed backend refs. This ensures the proxy
-// returns 500 (no backend available) for rules with unresolvable backends,
-// while leaving sibling rules with valid backends intact. ConvertHTTPRoutes
-// generates one proxy rule per route rule, so the walk matches cfg.Rules 1:1
-// starting at index 0.
-func clearFailedBackends(cfg *proxy.Config, routes []*gatewayv1.HTTPRoute, failedRefs []ingress.BackendRefError) {
-	if len(failedRefs) == 0 {
-		return
-	}
-
-	failed := failedBackendKeySet(failedRefs)
-	ruleIdx := 0
-
-	for _, route := range routes {
-		for _, rule := range route.Spec.Rules {
-			if ruleIdx >= len(cfg.Rules) {
-				break
-			}
-
-			names := make([]string, 0, len(rule.BackendRefs))
-			for _, backendRef := range rule.BackendRefs {
-				names = append(names, string(backendRef.Name))
-			}
-
-			if ruleHasFailedBackend(route.Namespace, route.Name, names, failed) {
-				cfg.Rules[ruleIdx].Backends = nil
-			}
-
-			ruleIdx++
-		}
-	}
-}
-
-// clearFailedGRPCBackends mirrors clearFailedBackends for GRPCRoutes. The gRPC
-// rules are appended after the HTTP rules in the merged config, so the walk
-// starts at startIdx (= number of HTTP rules). ConvertGRPCRoutes also emits one
-// proxy rule per GRPCRoute rule, keeping the walk 1:1. Without this, a gRPC
-// route pointing at a nonexistent Service would still get a backend (the
-// converter never checks Service existence) and the proxy would return 502
-// instead of the spec-correct 500.
-func clearFailedGRPCBackends(
-	cfg *proxy.Config,
-	startIdx int,
-	grpcRoutes []*gatewayv1.GRPCRoute,
-	failedRefs []ingress.BackendRefError,
-) {
-	if len(failedRefs) == 0 {
-		return
-	}
-
-	failed := failedBackendKeySet(failedRefs)
-	ruleIdx := startIdx
-
-	for _, route := range grpcRoutes {
-		for _, rule := range route.Spec.Rules {
-			if ruleIdx >= len(cfg.Rules) {
-				break
-			}
-
-			names := make([]string, 0, len(rule.BackendRefs))
-			for _, backendRef := range rule.BackendRefs {
-				names = append(names, string(backendRef.Name))
-			}
-
-			if ruleHasFailedBackend(route.Namespace, route.Name, names, failed) {
-				cfg.Rules[ruleIdx].Backends = nil
-			}
-
-			ruleIdx++
-		}
-	}
 }
 
 // dnsLookupTimeout is the maximum time to wait for a single DNS resolution.

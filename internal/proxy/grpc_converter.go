@@ -227,12 +227,6 @@ func convertGRPCBackendRef(
 	tlsResolver BackendTLSResolver,
 	clientCert *ClientCertConfig,
 ) (BackendRef, bool) {
-	if !IsServiceBackendRef(backend.BackendObjectReference) {
-		slog.Warn("skipping non-Service gRPC backend kind", "kind", backend.Kind, "name", backend.Name)
-
-		return BackendRef{}, false
-	}
-
 	result := BackendRef{Weight: 1}
 	if backend.Weight != nil {
 		result.Weight = *backend.Weight
@@ -251,19 +245,26 @@ func convertGRPCBackendRef(
 		port = *backend.Port
 	}
 
-	if !validatePort(port) {
-		slog.Warn("skipping gRPC backend with invalid port", "service", serviceName, "port", port)
-
-		return BackendRef{}, false
-	}
-
 	svcNamespace := namespace
 	if backend.Namespace != nil {
 		svcNamespace = string(*backend.Namespace)
 	}
 
+	// An invalid backendRef MUST return 500 for its traffic fraction per the
+	// Gateway API spec rather than be dropped (mirrors convertBackendRef): a
+	// weight>0 invalid ref stays in the weighted pool marked 500, a weight-0 ref
+	// is dropped.
+	if !IsServiceBackendRef(backend.BackendObjectReference) {
+		return markInvalidBackend(result.Weight, serviceName, svcNamespace, port, clusterDomain, "unsupported backend kind")
+	}
+
+	if !validatePort(port) {
+		return markInvalidBackend(result.Weight, serviceName, svcNamespace, port, clusterDomain, "invalid port")
+	}
+
 	if !validateCrossNamespace(ctx, svcNamespace, namespace, serviceName, backend.BackendObjectReference, validator) {
-		return BackendRef{}, false
+		return markInvalidBackend(result.Weight, serviceName, svcNamespace, port, clusterDomain,
+			"cross-namespace reference not permitted by ReferenceGrant")
 	}
 
 	result.URL = buildServiceURL(serviceName, svcNamespace, port, clusterDomain)

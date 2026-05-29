@@ -53,6 +53,17 @@ spec:
 
 This keeps the controller simple and predictable, and gives you full control over load balancing behavior.
 
+### Unavailable backends return a status, not a dial error
+
+When a rule's `backendRefs` include a backend that cannot serve traffic, the proxy returns an HTTP status for _that backend's traffic fraction_ rather than dialing a dead address (which would surface as a generic 502). The backend stays in the weighted pool, so the fraction is preserved and the other backends keep serving their share. This matches the Gateway API spec, which applies the per-backend status to the proportion of requests that would otherwise have been routed to the failing backend.
+
+Two cases are handled:
+
+- **Invalid `backendRef` → 500.** The `backendRef` is invalid for any reason the spec recognises: it names a Service that does not exist, a cross-namespace Service with no permitting `ReferenceGrant`, a non-`Service` kind, or an out-of-range port. As long as the ref carries traffic (`weight` greater than 0) it stays in the weighted pool and requests routed to it receive `500` for its fraction. A `weight: 0` invalid ref carries no traffic, so it is dropped rather than marked (no fraction is lost).
+- **Service with no ready endpoints → 503.** The Service exists (and is authorized) but currently has zero ready endpoints (for example, all pods are `NotReady` during a rollout or a scale-to-zero). Requests routed to this backend receive `503`. An `ExternalName` Service is never treated this way — it has no `EndpointSlices` yet is legitimately reachable. As pods become Ready/NotReady the controller re-evaluates the marking (it watches `EndpointSlices`), so the `503` clears automatically once an endpoint is ready.
+
+If a backend is both nonexistent and endpoint-less the `500` (invalid-ref) status wins. A single-backend rule whose only backend is unavailable returns the corresponding status for all of its traffic.
+
 ## SSL Certificate Limitations
 
 Cloudflare's free [Universal SSL](https://developers.cloudflare.com/ssl/edge-certificates/universal-ssl/limitations/) certificates only cover root and first-level subdomains:

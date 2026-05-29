@@ -53,12 +53,10 @@ func (a GRPCRouteAdapter) ExtractEntries(
 		for _, rule := range route.Spec.Rules {
 			a.logFilters(resolver, route.Namespace, route.Name, rule.Filters)
 
-			service, backendErr := a.resolveBackendRef(ctx, resolver, route.Namespace, route.Name, rule.BackendRefs)
-			if service == "" {
-				if backendErr != nil {
-					failedRefs = append(failedRefs, *backendErr)
-				}
+			service, ruleFailedRefs := a.resolveBackendRef(ctx, resolver, route.Namespace, route.Name, rule.BackendRefs)
+			failedRefs = append(failedRefs, ruleFailedRefs...)
 
+			if service == "" {
 				continue
 			}
 
@@ -146,12 +144,20 @@ func (GRPCRouteAdapter) extractGRPCPath(methodMatch *gatewayv1.GRPCMethodMatch) 
 	return "/" + service + "/" + method, 1
 }
 
+// resolveBackendRef validates every traffic-receiving backend in the rule and
+// returns the highest-weight backend's URL plus a BackendRefError for each
+// invalid backend. Every backend with weight > 0 is validated (not just the
+// highest-weight one) so an invalid lower-weight backend is reported and the
+// proxy can return 500 for its traffic fraction per the Gateway API spec.
+// Weight-0 backends receive no traffic and are skipped.
+//
+//nolint:dupl // mirrored on purpose against HTTPRouteAdapter.resolveBackendRef — the concrete HTTPBackendRef/GRPCBackendRef element types prevent a clean generic.
 func (a GRPCRouteAdapter) resolveBackendRef(
 	ctx context.Context,
 	resolver *backendResolver,
 	namespace, routeName string,
 	refs []gatewayv1.GRPCBackendRef,
-) (string, *BackendRefError) {
+) (string, []BackendRefError) {
 	if len(refs) == 0 {
 		return "", nil
 	}
@@ -164,7 +170,36 @@ func (a GRPCRouteAdapter) resolveBackendRef(
 		return "", nil
 	}
 
-	return resolveValidatedBackend(ctx, resolver, refs[selectedIdx].BackendRef, namespace, routeName, "GRPCRoute")
+	var failedRefs []BackendRefError
+
+	serviceURL := ""
+
+	for i := range refs {
+		if grpcBackendWeight(&refs[i]) == 0 {
+			continue
+		}
+
+		url, failedRef := resolveValidatedBackend(ctx, resolver, refs[i].BackendRef, namespace, routeName, "GRPCRoute")
+		if failedRef != nil {
+			failedRefs = append(failedRefs, *failedRef)
+		}
+
+		if i == selectedIdx {
+			serviceURL = url
+		}
+	}
+
+	return serviceURL, failedRefs
+}
+
+// grpcBackendWeight returns the effective weight of a backend (default 1 when
+// unset), matching SelectHighestWeightIndex's weight semantics.
+func grpcBackendWeight(ref *gatewayv1.GRPCBackendRef) int32 {
+	if ref.Weight != nil {
+		return *ref.Weight
+	}
+
+	return DefaultBackendWeight
 }
 
 func (GRPCRouteAdapter) logMultipleBackends(resolver *backendResolver, namespace, routeName string, totalBackends int) {

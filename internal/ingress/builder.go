@@ -107,6 +107,7 @@ type BackendRefError struct {
 	RouteName      string
 	BackendName    string
 	BackendNS      string
+	Port           int32  // backend port, used to map the failure to a specific proxy backend
 	Reason         string // "RefNotPermitted" or other Gateway API reason
 	Message        string
 }
