@@ -63,6 +63,8 @@
 
 # [CustomCertificates](custom_certificates/api.md)
 
+# [CustomCsrs](custom_csrs/api.md)
+
 # [CustomHostnames](custom_hostnames/api.md)
 
 # [CustomNameservers](custom_nameservers/api.md)
@@ -120,6 +122,8 @@
 # [Spectrum](spectrum/api.md)
 
 # [Addressing](addressing/api.md)
+
+# [DLS](dls/api.md)
 
 # [AuditLogs](audit_logs/api.md)
 
@@ -232,6 +236,8 @@
 # [AbuseReports](abuse_reports/api.md)
 
 # [AI](ai/api.md)
+
+# [AIAudit](ai_audit/api.md)
 
 # [AISearch](ai_search/api.md)
 

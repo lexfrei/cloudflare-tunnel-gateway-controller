@@ -7,14 +7,17 @@ import (
 	"net/http"
 	"os"
 	"slices"
+	"strings"
 
 	"github.com/cloudflare/cloudflare-go/v7/abuse_reports"
 	"github.com/cloudflare/cloudflare-go/v7/accounts"
 	"github.com/cloudflare/cloudflare-go/v7/acm"
 	"github.com/cloudflare/cloudflare-go/v7/addressing"
 	"github.com/cloudflare/cloudflare-go/v7/ai"
+	"github.com/cloudflare/cloudflare-go/v7/ai_audit"
 	"github.com/cloudflare/cloudflare-go/v7/ai_gateway"
 	"github.com/cloudflare/cloudflare-go/v7/ai_search"
+	"github.com/cloudflare/cloudflare-go/v7/ai_security"
 	"github.com/cloudflare/cloudflare-go/v7/alerting"
 	"github.com/cloudflare/cloudflare-go/v7/api_gateway"
 	"github.com/cloudflare/cloudflare-go/v7/argo"
@@ -33,6 +36,7 @@ import (
 	"github.com/cloudflare/cloudflare-go/v7/connectivity"
 	"github.com/cloudflare/cloudflare-go/v7/content_scanning"
 	"github.com/cloudflare/cloudflare-go/v7/custom_certificates"
+	"github.com/cloudflare/cloudflare-go/v7/custom_csrs"
 	"github.com/cloudflare/cloudflare-go/v7/custom_hostnames"
 	"github.com/cloudflare/cloudflare-go/v7/custom_nameservers"
 	"github.com/cloudflare/cloudflare-go/v7/custom_pages"
@@ -40,6 +44,7 @@ import (
 	"github.com/cloudflare/cloudflare-go/v7/dcv_delegation"
 	"github.com/cloudflare/cloudflare-go/v7/ddos_protection"
 	"github.com/cloudflare/cloudflare-go/v7/diagnostics"
+	"github.com/cloudflare/cloudflare-go/v7/dls"
 	"github.com/cloudflare/cloudflare-go/v7/dns"
 	"github.com/cloudflare/cloudflare-go/v7/dns_firewall"
 	"github.com/cloudflare/cloudflare-go/v7/durable_objects"
@@ -117,7 +122,6 @@ import (
 	"github.com/cloudflare/cloudflare-go/v7/zaraz"
 	"github.com/cloudflare/cloudflare-go/v7/zero_trust"
 	"github.com/cloudflare/cloudflare-go/v7/zones"
-	"github.com/cloudflare/cloudflare-go/v7/ai_security"
 )
 
 // Client creates a struct with services and top level methods that help with
@@ -140,6 +144,7 @@ type Client struct {
 	CertificateAuthorities *certificate_authorities.CertificateAuthorityService
 	ClientCertificates     *client_certificates.ClientCertificateService
 	CustomCertificates     *custom_certificates.CustomCertificateService
+	CustomCsrs             *custom_csrs.CustomCsrService
 	CustomHostnames        *custom_hostnames.CustomHostnameService
 	CustomNameservers      *custom_nameservers.CustomNameserverService
 	DNSFirewall            *dns_firewall.DNSFirewallService
@@ -177,6 +182,7 @@ type Client struct {
 	URLNormalization            *url_normalization.URLNormalizationService
 	Spectrum                    *spectrum.SpectrumService
 	Addressing                  *addressing.AddressingService
+	DLS                         *dls.DLSService
 	AuditLogs                   *audit_logs.AuditLogService
 	Billing                     *billing.BillingService
 	BrandProtection             *brand_protection.BrandProtectionService
@@ -233,6 +239,7 @@ type Client struct {
 	AISecurity                  *ai_security.AISecurityService
 	AbuseReports                *abuse_reports.AbuseReportService
 	AI                          *ai.AIService
+	AIAudit                     *ai_audit.AIAuditService
 	AISearch                    *ai_search.AISearchService
 	SecurityCenter              *security_center.SecurityCenterService
 	BrowserRendering            *browser_rendering.BrowserRenderingService
@@ -247,7 +254,7 @@ type Client struct {
 // CLOUDFLARE_API_USER_SERVICE_KEY, CLOUDFLARE_API_TOKEN, CLOUDFLARE_EMAIL,
 // CLOUDFLARE_BASE_URL). This should be used to initialize new clients.
 func DefaultClientOptions() []option.RequestOption {
-	defaults := []option.RequestOption{option.WithEnvironmentProduction()}
+	defaults := []option.RequestOption{option.WithHTTPClient(defaultHTTPClient()), option.WithEnvironmentProduction()}
 	if o, ok := os.LookupEnv("CLOUDFLARE_BASE_URL"); ok {
 		defaults = append(defaults, option.WithBaseURL(o))
 	}
@@ -262,6 +269,14 @@ func DefaultClientOptions() []option.RequestOption {
 	}
 	if o, ok := os.LookupEnv("CLOUDFLARE_API_USER_SERVICE_KEY"); ok {
 		defaults = append(defaults, option.WithUserServiceKey(o))
+	}
+	if o, ok := os.LookupEnv("CLOUDFLARE_CUSTOM_HEADERS"); ok {
+		for _, line := range strings.Split(o, "\n") {
+			colon := strings.Index(line, ":")
+			if colon >= 0 {
+				defaults = append(defaults, option.WithHeader(strings.TrimSpace(line[:colon]), strings.TrimSpace(line[colon+1:])))
+			}
+		}
 	}
 	return defaults
 }
@@ -291,6 +306,7 @@ func NewClient(opts ...option.RequestOption) (r *Client) {
 	r.CertificateAuthorities = certificate_authorities.NewCertificateAuthorityService(opts...)
 	r.ClientCertificates = client_certificates.NewClientCertificateService(opts...)
 	r.CustomCertificates = custom_certificates.NewCustomCertificateService(opts...)
+	r.CustomCsrs = custom_csrs.NewCustomCsrService(opts...)
 	r.CustomHostnames = custom_hostnames.NewCustomHostnameService(opts...)
 	r.CustomNameservers = custom_nameservers.NewCustomNameserverService(opts...)
 	r.DNSFirewall = dns_firewall.NewDNSFirewallService(opts...)
@@ -320,6 +336,7 @@ func NewClient(opts ...option.RequestOption) (r *Client) {
 	r.URLNormalization = url_normalization.NewURLNormalizationService(opts...)
 	r.Spectrum = spectrum.NewSpectrumService(opts...)
 	r.Addressing = addressing.NewAddressingService(opts...)
+	r.DLS = dls.NewDLSService(opts...)
 	r.AuditLogs = audit_logs.NewAuditLogService(opts...)
 	r.Billing = billing.NewBillingService(opts...)
 	r.BrandProtection = brand_protection.NewBrandProtectionService(opts...)
@@ -376,6 +393,7 @@ func NewClient(opts ...option.RequestOption) (r *Client) {
 	r.AISecurity = ai_security.NewAISecurityService(opts...)
 	r.AbuseReports = abuse_reports.NewAbuseReportService(opts...)
 	r.AI = ai.NewAIService(opts...)
+	r.AIAudit = ai_audit.NewAIAuditService(opts...)
 	r.AISearch = ai_search.NewAISearchService(opts...)
 	r.SecurityCenter = security_center.NewSecurityCenterService(opts...)
 	r.BrowserRendering = browser_rendering.NewBrowserRenderingService(opts...)
