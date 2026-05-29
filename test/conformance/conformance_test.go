@@ -46,6 +46,14 @@ func TestGatewayAPIConformance(t *testing.T) {
 		// signal. The flag reflects actual proxy support.
 		features.SupportGRPCRoute,
 
+		// Extended Gateway: the reconciler writes Status.Addresses with the
+		// tunnel CNAME unconditionally and never reads spec.addresses, so a
+		// Gateway whose spec.addresses entry carries no value is still Accepted
+		// and surfaces an address in status — the GatewayOptionalAddressValue
+		// contract. (Distinct from SupportGatewayStaticAddresses, exempt below:
+		// the tunnel address is not user-supplied.)
+		features.SupportGatewayAddressEmpty,
+
 		// Extended HTTPRoute (Standard channel feature gates; v1 CRD fields)
 		features.SupportHTTPRouteQueryParamMatching,
 		features.SupportHTTPRouteMethodMatching,
@@ -95,10 +103,15 @@ func TestGatewayAPIConformance(t *testing.T) {
 		// Kind=ListenerSet.
 		features.SupportListenerSet,
 
-		// NOTE: 303/307/308 redirect status codes work correctly in the proxy,
-		// but Cloudflare edge rewrites Location scheme to HTTPS, so conformance
-		// tests that verify http:// scheme in redirects will always fail.
-		// Moved to ExemptFeatures.
+		// Redirect status codes. An e2e probe through the real Cloudflare edge
+		// (test/e2e: HTTPRouteRedirectSchemeProbe) confirmed the edge passes a
+		// Location: http://... response through untouched for 303/307/308 — the
+		// earlier "edge rewrites the redirect scheme to HTTPS" rationale was
+		// never observed and does not hold. The proxy emits the correct scheme,
+		// status, host, and path, so these run normally.
+		features.SupportHTTPRoute303RedirectStatusCode,
+		features.SupportHTTPRoute307RedirectStatusCode,
+		features.SupportHTTPRoute308RedirectStatusCode,
 	)
 
 	// --- Exempt features ---
@@ -109,7 +122,6 @@ func TestGatewayAPIConformance(t *testing.T) {
 		features.SupportGatewayHTTPListenerIsolation,
 		features.SupportGatewayInfrastructurePropagation,
 		features.SupportGatewayPort8080,
-		features.SupportGatewayAddressEmpty,
 		features.SupportGatewayFrontendClientCertificateValidation,
 		features.SupportGatewayFrontendClientCertificateValidationInsecureFallback,
 		features.SupportGatewayHTTPSListenerDetectMisdirectedRequests,
@@ -120,12 +132,6 @@ func TestGatewayAPIConformance(t *testing.T) {
 		features.SupportTLSRouteModeMixed,
 		features.SupportUDPRoute,
 		features.SupportMesh,
-
-		// Redirect status codes: proxy implements them, but Cloudflare edge
-		// rewrites Location scheme to HTTPS — conformance tests fail.
-		features.SupportHTTPRoute303RedirectStatusCode,
-		features.SupportHTTPRoute307RedirectStatusCode,
-		features.SupportHTTPRoute308RedirectStatusCode,
 	)
 
 	// --- Skip tests ---
@@ -183,9 +189,6 @@ func envOrDefault(key, fallback string) string {
 // below can assert coverage without provisioning a cluster.
 func conformanceSkipTests() []string {
 	return []string{
-		// Cloudflare Tunnel uses prefix semantics for path matching internally.
-		"HTTPRouteExactPathMatching",
-
 		// Single logical listener — hostname intersection tests don't apply.
 		"HTTPRouteListenerHostnameMatching",
 		"HTTPRouteHostnameIntersection",
@@ -245,25 +248,6 @@ func conformanceSkipTests() []string {
 		"GatewayFrontendInvalidDefaultClientCertificateValidation",
 		"GatewayInvalidFrontendClientCertificateValidation",
 		"GatewayWithAttachedRoutesWithPort8080",
-		"GatewayOptionalAddressValue",
-
-		// Cloudflare edge always rewrites redirect Location scheme to HTTPS.
-		// Our proxy sets scheme correctly, but Cloudflare overrides it.
-		"HTTPRoute303Redirect",
-		"HTTPRoute307Redirect",
-		"HTTPRoute308Redirect",
-
-		// Redirect tests that check Location scheme: Cloudflare edge rewrites
-		// http:// to https:// in Location header regardless of proxy response.
-		"HTTPRouteRedirectHostAndStatus",
-		"HTTPRouteRedirectPath",
-		"HTTPRouteRedirectPort",
-
-		// HTTPRouteCORSAllowCredentialsBehavior exercises an edge case
-		// in the "credentials + wildcard" branch that this implementation
-		// does not yet cover end-to-end; the main HTTPRouteCORS test is
-		// enabled above.
-		"HTTPRouteCORSAllowCredentialsBehavior",
 
 		// WebSocket: the upstream test calls
 		// golang.org/x/net/websocket.Dial against the Gateway address and
@@ -321,4 +305,36 @@ func TestGRPCConformanceTestsAreSkipped(t *testing.T) {
 	// Guard against a vacuous pass: if the vendored suite ever stops tagging
 	// gRPC tests with SupportGRPCRoute, the loop above would assert nothing.
 	assert.Positive(t, grpcChecked, "expected at least one SupportGRPCRoute conformance test in the vendored suite")
+}
+
+// TestStaleSkipsStayLifted pins the conformance tests that were de-skipped
+// once the v3 data plane was shown to satisfy them: exact path matching, the
+// optional Gateway address value, the credentials-aware CORS subtest, and the
+// 3xx redirect family (the inherited "Cloudflare edge rewrites the Location
+// scheme" rationale was disproven by an empirical edge probe). Each of these
+// is also documented as supported in README.md / docs/gateway-api, so this
+// guard is the machine-checkable counterpart: if a future change silently
+// re-adds one of these skips, this test fails and points at the doc drift.
+func TestStaleSkipsStayLifted(t *testing.T) {
+	t.Parallel()
+
+	skipped := sets.New(conformanceSkipTests()...)
+
+	lifted := []string{
+		"HTTPRouteExactPathMatching",
+		"GatewayOptionalAddressValue",
+		"HTTPRouteCORSAllowCredentialsBehavior",
+		"HTTPRoute303Redirect",
+		"HTTPRoute307Redirect",
+		"HTTPRoute308Redirect",
+		"HTTPRouteRedirectHostAndStatus",
+		"HTTPRouteRedirectPath",
+		"HTTPRouteRedirectPort",
+	}
+
+	for _, name := range lifted {
+		assert.Falsef(t, skipped.Has(name),
+			"%q was de-skipped because the v3 proxy satisfies it (see README.md / docs/gateway-api); "+
+				"if it must be skipped again, update the docs in the same change.", name)
+	}
 }

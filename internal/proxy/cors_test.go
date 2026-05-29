@@ -420,6 +420,83 @@ func TestCORSFilter_SimpleRequest_NonMatchedOrigin_NoOps(t *testing.T) {
 	assert.Empty(t, resp.Header.Get("Access-Control-Allow-Credentials"))
 }
 
+// TestCORSFilter_AllowCredentialsBehavior pins the credentials contract on the
+// simple-request (ProcessResponse) path. The upstream
+// HTTPRouteCORSAllowCredentialsBehavior conformance test is literal-origin,
+// simple-GET only (no wildcards, no preflight), and the first three cases
+// mirror it exactly: Access-Control-Allow-Credentials is emitted only when
+// AllowCredentials=true AND the request Origin matches the allow list. The
+// final case goes one step further than that conformance test to pin the
+// Fetch-spec rule the credentials branch hinges on — a "*" origin policy
+// under credentials echoes the concrete request Origin, never "*".
+func TestCORSFilter_AllowCredentialsBehavior(t *testing.T) {
+	t.Parallel()
+
+	const allowedOrigin = "https://app.example"
+
+	tests := []struct {
+		name             string
+		allowOrigins     []string
+		allowCredentials bool
+		requestOrigin    string
+		wantAllowOrigin  string
+		wantCredentials  string
+	}{
+		{
+			name:             "credentials disabled omits Allow-Credentials",
+			allowOrigins:     []string{allowedOrigin},
+			allowCredentials: false,
+			requestOrigin:    allowedOrigin,
+			wantAllowOrigin:  allowedOrigin,
+			wantCredentials:  "",
+		},
+		{
+			name:             "credentials enabled but origin not matched gets no CORS headers",
+			allowOrigins:     []string{allowedOrigin},
+			allowCredentials: true,
+			requestOrigin:    "http://not-app.example",
+			wantAllowOrigin:  "",
+			wantCredentials:  "",
+		},
+		{
+			name:             "credentials enabled with matched origin echoes origin and true",
+			allowOrigins:     []string{allowedOrigin},
+			allowCredentials: true,
+			requestOrigin:    allowedOrigin,
+			wantAllowOrigin:  allowedOrigin,
+			wantCredentials:  "true",
+		},
+		{
+			name:             "wildcard origin with credentials echoes concrete origin not star",
+			allowOrigins:     []string{"*"},
+			allowCredentials: true,
+			requestOrigin:    "https://other.example",
+			wantAllowOrigin:  "https://other.example",
+			wantCredentials:  "true",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := &CORSConfig{
+				AllowOrigins:     tt.allowOrigins,
+				AllowCredentials: tt.allowCredentials,
+			}
+			f := NewCORSFilter(cfg)
+			req := corsTestRequest(t, http.MethodGet, tt.requestOrigin, "", "")
+			resp := corsTestResponse(req)
+			defer resp.Body.Close()
+
+			f.ProcessResponse(resp)
+
+			assert.Equal(t, tt.wantAllowOrigin, resp.Header.Get("Access-Control-Allow-Origin"))
+			assert.Equal(t, tt.wantCredentials, resp.Header.Get("Access-Control-Allow-Credentials"))
+		})
+	}
+}
+
 // TestCORSFilter_ExposeHeadersWildcardCredentialsBranching pins the spec
 // rule that `Access-Control-Expose-Headers: *` is forbidden when the request
 // is credentialed. With AllowCredentials=true the proxy MUST omit the

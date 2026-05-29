@@ -356,6 +356,11 @@ func TestHTTPRouteConformance(t *testing.T) {
 			testHTTPRouteRedirectPath(t, httpClient, k8sClient, cfg)
 		})
 
+		t.Run("HTTPRouteRedirectSchemeProbe", func(t *testing.T) {
+			defer deleteAllRoutes(t, k8sClient, cfg)
+			testHTTPRouteRedirectSchemeProbe(t, httpClient, k8sClient, cfg)
+		})
+
 		t.Run("HTTPRouteCombinedMatching", func(t *testing.T) {
 			defer deleteAllRoutes(t, k8sClient, cfg)
 			testHTTPRouteCombinedMatching(t, httpClient, k8sClient, cfg)
@@ -1254,6 +1259,89 @@ func testHTTPRouteRedirectPath(
 
 	location := resp.Header.Get("Location")
 	assert.Contains(t, location, "/new-dest", "Location should contain /new-dest")
+}
+
+// testHTTPRouteRedirectSchemeProbe asserts that the Cloudflare edge preserves
+// the redirect Location scheme. The conformance suite previously skipped the
+// HTTPRoute303/307/308Redirect + RedirectHostAndStatus/Path/Port tests on the
+// inherited, never-traced claim that the edge rewrites "http://" -> "https://"
+// in 3xx Location headers; those tests default their expected redirect scheme
+// to the request scheme, so a rewrite would fail them. An empirical run that
+// forced a RequestRedirect filter with an explicit Scheme: http and read the
+// raw Location after the edge showed passthrough for 303/307/308, disproving
+// the claim and unblocking the de-skip.
+//
+// This test now guards that behavior end-to-end: the filter emits "http://"
+// and the test asserts the client still observes "http://". If the edge ever
+// starts rewriting the scheme, this fails alongside the lifted redirect
+// conformance tests, pointing at the same root cause (and signalling that the
+// redirect skips need revisiting).
+func testHTTPRouteRedirectSchemeProbe(
+	t *testing.T, httpClient *http.Client, k8sClient client.Client, cfg testConfig,
+) {
+	t.Helper()
+
+	const (
+		redirectHost = "redirect-scheme-probe.invalid"
+		redirectPath = "/probed"
+	)
+
+	for _, statusCode := range []int{303, 307, 308} {
+		path := fmt.Sprintf("/redir-scheme-%d", statusCode)
+
+		route := buildHTTPRoute(fmt.Sprintf("redir-scheme-%d", statusCode), cfg, []gatewayv1.HTTPRouteRule{
+			{
+				Matches: []gatewayv1.HTTPRouteMatch{{Path: pathPrefix(path)}},
+				Filters: []gatewayv1.HTTPRouteFilter{
+					{
+						Type: gatewayv1.HTTPRouteFilterRequestRedirect,
+						RequestRedirect: &gatewayv1.HTTPRequestRedirectFilter{
+							Scheme:   new("http"),
+							Hostname: new(gatewayv1.PreciseHostname(redirectHost)),
+							Path: &gatewayv1.HTTPPathModifier{
+								Type:            gatewayv1.FullPathHTTPPathModifier,
+								ReplaceFullPath: new(redirectPath),
+							},
+							StatusCode: &statusCode,
+						},
+					},
+				},
+			},
+		})
+
+		createHTTPRoute(t, k8sClient, route)
+
+		err := wait.PollUntilContextTimeout(context.Background(), 2*time.Second, 60*time.Second, true,
+			func(_ context.Context) (bool, error) {
+				_, resp, reqErr := makeRequest(t, httpClient, cfg.TunnelHostname, http.MethodGet, path, nil)
+				if reqErr != nil {
+					return false, nil //nolint:nilerr // transient errors are expected during polling
+				}
+
+				return resp.StatusCode == statusCode, nil
+			},
+		)
+		require.NoErrorf(t, err, "redirect route did not return %d", statusCode)
+
+		_, resp, reqErr := makeRequest(t, httpClient, cfg.TunnelHostname, http.MethodGet, path, nil)
+		require.NoError(t, reqErr)
+		assert.Equal(t, statusCode, resp.StatusCode)
+
+		location := resp.Header.Get("Location")
+		require.NotEmpty(t, location, "redirect must carry a Location header")
+
+		// Invariants the edge is not claimed to alter.
+		assert.Contains(t, location, redirectHost, "Location should preserve the redirect host")
+		assert.Contains(t, location, redirectPath, "Location should preserve the redirect path")
+
+		// The proxy emitted http://; assert the edge preserved it. A failure
+		// here means the edge began rewriting the redirect scheme to https://,
+		// which would also break the lifted redirect conformance tests — revisit
+		// the de-skip if this fires.
+		assert.Truef(t, strings.HasPrefix(location, "http://"),
+			"status=%d: expected the edge to preserve http:// in the redirect Location, got %q",
+			statusCode, location)
+	}
 }
 
 func testHTTPRouteCombinedMatching(
