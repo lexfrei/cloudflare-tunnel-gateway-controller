@@ -668,6 +668,14 @@ func (s *ProxySyncer) buildProxyConfig(
 	// before handing to the converter; the input routes are left untouched.
 	routes = withEffectiveHostnames(ctx, s.k8sClient, routes)
 
+	// A RequestRedirect filter that leaves scheme empty must default to the
+	// scheme of the request, which behind the tunnel means the parent
+	// listener's protocol (cloudflared terminates TLS at the edge, so the
+	// origin request carries no usable scheme). Resolve it here so the
+	// converter sees an explicit scheme instead of the proxy's hardcoded
+	// https fallback. Input routes are left untouched.
+	routes = withDefaultRedirectScheme(ctx, s.k8sClient, routes)
+
 	// Convert to proxy config with cross-namespace validation, backend
 	// protocol resolution (e.g. h2c from Service appProtocol), and
 	// BackendTLSPolicy lookup for the proxy → backend TLS hop.
