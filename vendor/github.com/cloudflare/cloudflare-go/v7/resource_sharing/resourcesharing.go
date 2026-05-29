@@ -1141,12 +1141,25 @@ func (r ResourceSharingNewParams) MarshalJSON() (data []byte, err error) {
 	return apijson.MarshalRoot(r)
 }
 
-// Account or organization ID must be provided.
+// Optionally specify `recipient_account_id` to target a specific account, or
+// `organization_id` to target the caller's whole organization. If neither is
+// provided, the caller's organization is used. The legacy field `account_id` is
+// accepted as a synonym for `recipient_account_id` during the deprecation period
+// (see `x-sunset` on that field).
 type ResourceSharingNewParamsRecipient struct {
-	// Account identifier.
+	// Deprecated alias for `recipient_account_id`. Use `recipient_account_id` instead.
+	// The body field collided with the URL path parameter of the same name, which
+	// prevented SDK generators from distinguishing the source account (in the URL)
+	// from the recipient account (in the body). Both names will continue to be
+	// accepted until 2027-05-26 (see `x-sunset`).
+	//
+	// Deprecated: This field has been renamed to `recipient_account_id`. Both names
+	// are accepted during the deprecation period.
 	AccountID param.Field[string] `json:"account_id"`
 	// Organization identifier.
 	OrganizationID param.Field[string] `json:"organization_id"`
+	// The account that will receive the share.
+	RecipientAccountID param.Field[string] `json:"recipient_account_id"`
 }
 
 func (r ResourceSharingNewParamsRecipient) MarshalJSON() (data []byte, err error) {
@@ -1264,9 +1277,12 @@ type ResourceSharingListParams struct {
 	Kind param.Field[ResourceSharingListParamsKind] `query:"kind"`
 	// Order shares by values in the given field.
 	Order param.Field[ResourceSharingListParamsOrder] `query:"order"`
-	// Page number.
+	// Page number. Defaults to `1` when `per_page` is supplied without `page`. May be
+	// omitted entirely along with `per_page` to receive a non-paginated response.
 	Page param.Field[int64] `query:"page"`
-	// Number of objects to return per page.
+	// Number of objects to return per page. Defaults to `20` when `page` is supplied
+	// without `per_page`. May be omitted entirely along with `page` to receive a
+	// non-paginated response.
 	PerPage param.Field[int64] `query:"per_page"`
 	// Filter share resources by resource_types.
 	ResourceTypes param.Field[[]ResourceSharingListParamsResourceType] `query:"resource_types"`

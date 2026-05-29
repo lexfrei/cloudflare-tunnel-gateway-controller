@@ -9,7 +9,7 @@ github.com/beorn7/perks/quantile
 # github.com/cespare/xxhash/v2 v2.3.0
 ## explicit; go 1.11
 github.com/cespare/xxhash/v2
-# github.com/cloudflare/cloudflare-go/v7 v7.3.0
+# github.com/cloudflare/cloudflare-go/v7 v7.4.0
 ## explicit; go 1.22
 github.com/cloudflare/cloudflare-go/v7
 github.com/cloudflare/cloudflare-go/v7/abuse_reports
@@ -17,6 +17,7 @@ github.com/cloudflare/cloudflare-go/v7/accounts
 github.com/cloudflare/cloudflare-go/v7/acm
 github.com/cloudflare/cloudflare-go/v7/addressing
 github.com/cloudflare/cloudflare-go/v7/ai
+github.com/cloudflare/cloudflare-go/v7/ai_audit
 github.com/cloudflare/cloudflare-go/v7/ai_gateway
 github.com/cloudflare/cloudflare-go/v7/ai_search
 github.com/cloudflare/cloudflare-go/v7/ai_security
@@ -38,6 +39,7 @@ github.com/cloudflare/cloudflare-go/v7/cloudforce_one
 github.com/cloudflare/cloudflare-go/v7/connectivity
 github.com/cloudflare/cloudflare-go/v7/content_scanning
 github.com/cloudflare/cloudflare-go/v7/custom_certificates
+github.com/cloudflare/cloudflare-go/v7/custom_csrs
 github.com/cloudflare/cloudflare-go/v7/custom_hostnames
 github.com/cloudflare/cloudflare-go/v7/custom_nameservers
 github.com/cloudflare/cloudflare-go/v7/custom_pages
@@ -45,6 +47,7 @@ github.com/cloudflare/cloudflare-go/v7/d1
 github.com/cloudflare/cloudflare-go/v7/dcv_delegation
 github.com/cloudflare/cloudflare-go/v7/ddos_protection
 github.com/cloudflare/cloudflare-go/v7/diagnostics
+github.com/cloudflare/cloudflare-go/v7/dls
 github.com/cloudflare/cloudflare-go/v7/dns
 github.com/cloudflare/cloudflare-go/v7/dns_firewall
 github.com/cloudflare/cloudflare-go/v7/durable_objects

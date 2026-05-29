@@ -30,7 +30,9 @@ func (UnionString) ImplementsObservabilityTelemetryQueryResponseCalculationsSeri
 }
 func (UnionString) ImplementsObservabilityTelemetryQueryResponseCompareAggregatesGroupsValueUnion() {}
 func (UnionString) ImplementsObservabilityTelemetryQueryResponseCompareSeriesDataGroupsValueUnion() {}
+func (UnionString) ImplementsObservabilityTelemetryQueryResponseEventsEventsSourceUnion()           {}
 func (UnionString) ImplementsObservabilityTelemetryQueryResponseEventsSeriesDataGroupsUnion()       {}
+func (UnionString) ImplementsObservabilityTelemetryQueryResponseInvocationsSourceUnion()            {}
 func (UnionString) ImplementsObservabilityTelemetryValuesResponseValueUnion()                       {}
 func (UnionString) ImplementsObservabilityTelemetryKeysParamsFiltersObjectFiltersWorkersObservabilityFilterLeafValueUnion() {
 }
@@ -38,6 +40,10 @@ func (UnionString) ImplementsObservabilityTelemetryKeysParamsFiltersWorkersObser
 }
 func (UnionString) ImplementsObservabilityTelemetryKeysParamsKeyNeedleValueUnion() {}
 func (UnionString) ImplementsObservabilityTelemetryKeysParamsNeedleValueUnion()    {}
+func (UnionString) ImplementsObservabilityTelemetryLiveTailParamsFiltersObjectFiltersWorkersObservabilityFilterLeafValueUnion() {
+}
+func (UnionString) ImplementsObservabilityTelemetryLiveTailParamsFiltersWorkersObservabilityFilterLeafValueUnion() {
+}
 func (UnionString) ImplementsObservabilityTelemetryQueryParamsParametersFiltersObjectFiltersWorkersObservabilityFilterLeafValueUnion() {
 }
 func (UnionString) ImplementsObservabilityTelemetryQueryParamsParametersFiltersWorkersObservabilityFilterLeafValueUnion() {
@@ -56,7 +62,25 @@ func (UnionString) ImplementsObservabilityQueryListResponseParametersFiltersWork
 func (UnionString) ImplementsObservabilityQueryListResponseParametersNeedleValueUnion() {}
 func (UnionString) ImplementsObservabilityQueryNewParamsParametersFiltersWorkersObservabilityFilterLeafValueUnion() {
 }
-func (UnionString) ImplementsObservabilityQueryNewParamsParametersNeedleValueUnion()               {}
+func (UnionString) ImplementsObservabilityQueryNewParamsParametersNeedleValueUnion() {}
+func (UnionString) ImplementsObservabilitySharedQueryGetResponseRunQueryParametersFiltersWorkersObservabilityFilterLeafValueUnion() {
+}
+func (UnionString) ImplementsObservabilitySharedQueryGetResponseRunQueryParametersNeedleValueUnion() {
+}
+func (UnionString) ImplementsObservabilitySharedQueryGetResponseCalculationsAggregatesGroupsValueUnion() {
+}
+func (UnionString) ImplementsObservabilitySharedQueryGetResponseCalculationsSeriesDataGroupsValueUnion() {
+}
+func (UnionString) ImplementsObservabilitySharedQueryGetResponseCompareAggregatesGroupsValueUnion() {}
+func (UnionString) ImplementsObservabilitySharedQueryGetResponseCompareSeriesDataGroupsValueUnion() {}
+func (UnionString) ImplementsObservabilitySharedQueryGetResponseEventsEventsSourceUnion()           {}
+func (UnionString) ImplementsObservabilitySharedQueryGetResponseEventsSeriesDataGroupsUnion()       {}
+func (UnionString) ImplementsObservabilitySharedQueryGetResponseInvocationsSourceUnion()            {}
+func (UnionString) ImplementsObservabilitySharedQueryNewParamsParametersFiltersObjectFiltersWorkersObservabilityFilterLeafValueUnion() {
+}
+func (UnionString) ImplementsObservabilitySharedQueryNewParamsParametersFiltersWorkersObservabilityFilterLeafValueUnion() {
+}
+func (UnionString) ImplementsObservabilitySharedQueryNewParamsParametersNeedleValueUnion()         {}
 func (UnionString) ImplementsNamespaceBulkGetResponseWorkersKVBulkGetResultValuesUnion()           {}
 func (UnionString) ImplementsNamespaceKeyBulkGetResponseWorkersKVBulkGetResultValuesUnion()        {}
 func (UnionString) ImplementsNamespaceValueUpdateParamsValueUnion()                                {}
@@ -196,6 +220,10 @@ func (UnionBool) ImplementsObservabilityTelemetryKeysParamsFiltersWorkersObserva
 }
 func (UnionBool) ImplementsObservabilityTelemetryKeysParamsKeyNeedleValueUnion() {}
 func (UnionBool) ImplementsObservabilityTelemetryKeysParamsNeedleValueUnion()    {}
+func (UnionBool) ImplementsObservabilityTelemetryLiveTailParamsFiltersObjectFiltersWorkersObservabilityFilterLeafValueUnion() {
+}
+func (UnionBool) ImplementsObservabilityTelemetryLiveTailParamsFiltersWorkersObservabilityFilterLeafValueUnion() {
+}
 func (UnionBool) ImplementsObservabilityTelemetryQueryParamsParametersFiltersObjectFiltersWorkersObservabilityFilterLeafValueUnion() {
 }
 func (UnionBool) ImplementsObservabilityTelemetryQueryParamsParametersFiltersWorkersObservabilityFilterLeafValueUnion() {
@@ -214,7 +242,22 @@ func (UnionBool) ImplementsObservabilityQueryListResponseParametersFiltersWorker
 func (UnionBool) ImplementsObservabilityQueryListResponseParametersNeedleValueUnion() {}
 func (UnionBool) ImplementsObservabilityQueryNewParamsParametersFiltersWorkersObservabilityFilterLeafValueUnion() {
 }
-func (UnionBool) ImplementsObservabilityQueryNewParamsParametersNeedleValueUnion()        {}
+func (UnionBool) ImplementsObservabilityQueryNewParamsParametersNeedleValueUnion() {}
+func (UnionBool) ImplementsObservabilitySharedQueryGetResponseRunQueryParametersFiltersWorkersObservabilityFilterLeafValueUnion() {
+}
+func (UnionBool) ImplementsObservabilitySharedQueryGetResponseRunQueryParametersNeedleValueUnion() {}
+func (UnionBool) ImplementsObservabilitySharedQueryGetResponseCalculationsAggregatesGroupsValueUnion() {
+}
+func (UnionBool) ImplementsObservabilitySharedQueryGetResponseCalculationsSeriesDataGroupsValueUnion() {
+}
+func (UnionBool) ImplementsObservabilitySharedQueryGetResponseCompareAggregatesGroupsValueUnion() {}
+func (UnionBool) ImplementsObservabilitySharedQueryGetResponseCompareSeriesDataGroupsValueUnion() {}
+func (UnionBool) ImplementsObservabilitySharedQueryGetResponseEventsSeriesDataGroupsUnion()       {}
+func (UnionBool) ImplementsObservabilitySharedQueryNewParamsParametersFiltersObjectFiltersWorkersObservabilityFilterLeafValueUnion() {
+}
+func (UnionBool) ImplementsObservabilitySharedQueryNewParamsParametersFiltersWorkersObservabilityFilterLeafValueUnion() {
+}
+func (UnionBool) ImplementsObservabilitySharedQueryNewParamsParametersNeedleValueUnion()  {}
 func (UnionBool) ImplementsNamespaceBulkGetResponseWorkersKVBulkGetResultValuesUnion()    {}
 func (UnionBool) ImplementsNamespaceKeyBulkGetResponseWorkersKVBulkGetResultValuesUnion() {}
 func (UnionBool) ImplementsDispatchNamespaceScriptUpdateParamsMetadataAssetsConfigRunWorkerFirstUnion() {
@@ -281,6 +324,10 @@ func (UnionFloat) ImplementsObservabilityTelemetryKeysParamsFiltersWorkersObserv
 }
 func (UnionFloat) ImplementsObservabilityTelemetryKeysParamsKeyNeedleValueUnion() {}
 func (UnionFloat) ImplementsObservabilityTelemetryKeysParamsNeedleValueUnion()    {}
+func (UnionFloat) ImplementsObservabilityTelemetryLiveTailParamsFiltersObjectFiltersWorkersObservabilityFilterLeafValueUnion() {
+}
+func (UnionFloat) ImplementsObservabilityTelemetryLiveTailParamsFiltersWorkersObservabilityFilterLeafValueUnion() {
+}
 func (UnionFloat) ImplementsObservabilityTelemetryQueryParamsParametersFiltersObjectFiltersWorkersObservabilityFilterLeafValueUnion() {
 }
 func (UnionFloat) ImplementsObservabilityTelemetryQueryParamsParametersFiltersWorkersObservabilityFilterLeafValueUnion() {
@@ -299,7 +346,22 @@ func (UnionFloat) ImplementsObservabilityQueryListResponseParametersFiltersWorke
 func (UnionFloat) ImplementsObservabilityQueryListResponseParametersNeedleValueUnion() {}
 func (UnionFloat) ImplementsObservabilityQueryNewParamsParametersFiltersWorkersObservabilityFilterLeafValueUnion() {
 }
-func (UnionFloat) ImplementsObservabilityQueryNewParamsParametersNeedleValueUnion()            {}
+func (UnionFloat) ImplementsObservabilityQueryNewParamsParametersNeedleValueUnion() {}
+func (UnionFloat) ImplementsObservabilitySharedQueryGetResponseRunQueryParametersFiltersWorkersObservabilityFilterLeafValueUnion() {
+}
+func (UnionFloat) ImplementsObservabilitySharedQueryGetResponseRunQueryParametersNeedleValueUnion() {}
+func (UnionFloat) ImplementsObservabilitySharedQueryGetResponseCalculationsAggregatesGroupsValueUnion() {
+}
+func (UnionFloat) ImplementsObservabilitySharedQueryGetResponseCalculationsSeriesDataGroupsValueUnion() {
+}
+func (UnionFloat) ImplementsObservabilitySharedQueryGetResponseCompareAggregatesGroupsValueUnion() {}
+func (UnionFloat) ImplementsObservabilitySharedQueryGetResponseCompareSeriesDataGroupsValueUnion() {}
+func (UnionFloat) ImplementsObservabilitySharedQueryGetResponseEventsSeriesDataGroupsUnion()       {}
+func (UnionFloat) ImplementsObservabilitySharedQueryNewParamsParametersFiltersObjectFiltersWorkersObservabilityFilterLeafValueUnion() {
+}
+func (UnionFloat) ImplementsObservabilitySharedQueryNewParamsParametersFiltersWorkersObservabilityFilterLeafValueUnion() {
+}
+func (UnionFloat) ImplementsObservabilitySharedQueryNewParamsParametersNeedleValueUnion()      {}
 func (UnionFloat) ImplementsNamespaceBulkGetResponseWorkersKVBulkGetResultValuesUnion()        {}
 func (UnionFloat) ImplementsNamespaceKeyBulkGetResponseWorkersKVBulkGetResultValuesUnion()     {}
 func (UnionFloat) ImplementsRankingTimeseriesGroupsResponseSerie0Union()                       {}
