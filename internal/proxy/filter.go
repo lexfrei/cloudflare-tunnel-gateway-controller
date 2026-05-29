@@ -169,6 +169,13 @@ func (f *requestRedirect) buildRedirectURL(req *http.Request) string {
 
 // buildRedirectBase constructs the base URL (scheme + host) for a redirect.
 func buildRedirectBase(req *http.Request, config *RedirectConfig) *url.URL {
+	// Per spec, an empty redirect scheme means "the scheme of the request".
+	// Behind the tunnel cloudflared terminates TLS at the edge, so the origin
+	// request carries no usable scheme — the controller resolves the intended
+	// scheme from the parent listener's protocol and stamps it into
+	// config.Scheme (see withDefaultRedirectScheme). This https fallback only
+	// applies when neither an explicit nor a listener-resolved scheme is
+	// available (e.g. no managed parent resolved the route).
 	scheme := req.URL.Scheme
 	if scheme == "" {
 		scheme = schemeHTTPS

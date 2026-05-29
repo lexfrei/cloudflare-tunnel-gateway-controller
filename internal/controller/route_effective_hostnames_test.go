@@ -312,3 +312,68 @@ func buildGatewayFakeClient(t *testing.T, objs ...client.Object) client.Client {
 
 	return builder.Build()
 }
+
+// TestWithEffectiveHostnames_ListenerSetConflictedEntryNotInherited pins the
+// hostname side of the shared nonConflictedSections drop: when the route's
+// matched ListenerSet entry is conflicted in the merged view (a
+// higher-precedence Gateway listener on the same port claims the same
+// hostname), that entry is not programmed, so the route must NOT inherit its
+// hostname. Without the conflict drop the route would wrongly serve the
+// conflicted listener's hostname. The redirect-scheme path has a sibling test;
+// both callers of nonConflictedSections need independent coverage.
+func TestWithEffectiveHostnames_ListenerSetConflictedEntryNotInherited(t *testing.T) {
+	t.Parallel()
+
+	host := gatewayv1.Hostname("dup.example.com")
+	fromAll := gatewayv1.NamespacesFromAll
+	gw := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "infra"},
+		Spec: gatewayv1.GatewaySpec{
+			AllowedListeners: &gatewayv1.AllowedListeners{
+				Namespaces: &gatewayv1.ListenerNamespaces{From: &fromAll},
+			},
+			Listeners: []gatewayv1.Listener{
+				{
+					Name: "g", Port: 80, Protocol: gatewayv1.HTTPProtocolType, Hostname: &host,
+					AllowedRoutes: &gatewayv1.AllowedRoutes{
+						Namespaces: &gatewayv1.RouteNamespaces{From: namespacesFromAllPtr()},
+					},
+				},
+			},
+		},
+	}
+	ls := &gatewayv1.ListenerSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "ls", Namespace: "infra"},
+		Spec: gatewayv1.ListenerSetSpec{
+			ParentRef: gatewayv1.ParentGatewayReference{Name: "gw"},
+			Listeners: []gatewayv1.ListenerEntry{
+				{
+					Name: "only", Port: 80, Protocol: gatewayv1.HTTPProtocolType, Hostname: &host,
+					AllowedRoutes: &gatewayv1.AllowedRoutes{
+						Namespaces: &gatewayv1.RouteNamespaces{From: namespacesFromAllPtr()},
+					},
+				},
+			},
+		},
+	}
+
+	lsKind := gatewayv1.Kind(kindListenerSet)
+	lsNS := gatewayv1.Namespace("infra")
+	route := &gatewayv1.HTTPRoute{
+		ObjectMeta: metav1.ObjectMeta{Name: "r", Namespace: "team"},
+		Spec: gatewayv1.HTTPRouteSpec{
+			CommonRouteSpec: gatewayv1.CommonRouteSpec{
+				ParentRefs: []gatewayv1.ParentReference{
+					{Kind: &lsKind, Name: "ls", Namespace: &lsNS},
+				},
+			},
+		},
+	}
+
+	cli := buildGatewayFakeClient(t, gw, ls)
+
+	out := withEffectiveHostnames(context.Background(), cli, []*gatewayv1.HTTPRoute{route})
+	require.Len(t, out, 1)
+	assert.Empty(t, out[0].Spec.Hostnames,
+		"a conflicted ListenerSet entry is not programmed → its hostname must not be inherited")
+}

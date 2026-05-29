@@ -166,6 +166,62 @@ func TestRequestRedirect_Basic(t *testing.T) {
 	assert.Equal(t, "https://new.example.com/path", resp.Header.Get("Location"))
 }
 
+// TestRequestRedirect_ConfigSchemeOverridesEmptyRequestScheme is the seam test
+// for the redirect-scheme defaulting: behind the tunnel cloudflared hands the
+// proxy a scheme-less request (req.URL.Scheme == ""), and the controller stamps
+// the parent listener's scheme into RedirectConfig.Scheme. This proves the
+// stamped scheme reaches the emitted Location — an http listener yields an
+// http:// redirect, not the https:// the bare fallback would emit.
+func TestRequestRedirect_ConfigSchemeOverridesEmptyRequestScheme(t *testing.T) {
+	t.Parallel()
+
+	scheme := "http"
+	statusCode := http.StatusFound
+
+	filter := proxy.NewRequestRedirect(&proxy.RedirectConfig{
+		Scheme:     &scheme,
+		StatusCode: &statusCode,
+	})
+
+	// Scheme-less URL, exactly what the tunnel origin request carries.
+	req := &http.Request{
+		Host:   "app.example.com",
+		URL:    &url.URL{Host: "app.example.com", Path: "/p"},
+		Header: http.Header{},
+	}
+
+	resp := filter.ProcessRequest(req)
+	require.NotNil(t, resp)
+	defer resp.Body.Close()
+	assert.Equal(t, "http://app.example.com/p", resp.Header.Get("Location"),
+		"the controller-stamped http scheme must reach the Location header")
+}
+
+// TestRequestRedirect_EmptySchemeFallsBackToHTTPS pins the documented fallback:
+// when neither the request carries a scheme nor the config sets one (no managed
+// parent resolved a listener scheme), the proxy emits https://.
+func TestRequestRedirect_EmptySchemeFallsBackToHTTPS(t *testing.T) {
+	t.Parallel()
+
+	statusCode := http.StatusFound
+
+	filter := proxy.NewRequestRedirect(&proxy.RedirectConfig{
+		StatusCode: &statusCode,
+	})
+
+	req := &http.Request{
+		Host:   "app.example.com",
+		URL:    &url.URL{Host: "app.example.com", Path: "/p"},
+		Header: http.Header{},
+	}
+
+	resp := filter.ProcessRequest(req)
+	require.NotNil(t, resp)
+	defer resp.Body.Close()
+	assert.Equal(t, "https://app.example.com/p", resp.Header.Get("Location"),
+		"with no request scheme and no config scheme, the fallback is https")
+}
+
 func TestRequestRedirect_PortAndPath(t *testing.T) {
 	t.Parallel()
 

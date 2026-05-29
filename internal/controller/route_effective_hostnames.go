@@ -230,16 +230,7 @@ func listenerSetAcceptedHostnames(
 		return nil
 	}
 
-	matched := result.MatchedListeners
-
-	// Drop sections whose merged-view entry is conflicted — a conflicted
-	// listener is not programmed, so a route must not inherit its hostname.
-	if parent, found := listenerSetParentGateway(ctx, cli, &listenerSet); found {
-		if siblings, collectErr := collectAcceptedListenerSetsForGateway(ctx, cli, parent); collectErr == nil {
-			merged := listenermerge.Merge(parent, siblings)
-			matched = dropConflictedSections(merged, &listenerSet, matched)
-		}
-	}
+	matched := nonConflictedSections(ctx, cli, &listenerSet, result.MatchedListeners)
 
 	hostByName := make(map[gatewayv1.SectionName]*gatewayv1.Hostname, len(listenerSet.Spec.Listeners))
 	for i := range listenerSet.Spec.Listeners {
@@ -247,6 +238,34 @@ func listenerSetAcceptedHostnames(
 	}
 
 	return hostnamesForSections(matched, hostByName)
+}
+
+// nonConflictedSections drops, from sections, any matched listener whose
+// merged-view entry (across the parent Gateway and its sibling ListenerSets) is
+// conflicted and therefore not programmed. A route binds to neither the
+// hostname nor the protocol of a conflicted listener, so both the
+// hostname-inheritance and redirect-scheme passes route their accepted
+// sections through this. When the parent Gateway cannot be resolved the input
+// sections are returned unchanged (best-effort, matching the prior behaviour).
+func nonConflictedSections(
+	ctx context.Context,
+	cli client.Client,
+	listenerSet *gatewayv1.ListenerSet,
+	sections []gatewayv1.SectionName,
+) []gatewayv1.SectionName {
+	parent, found := listenerSetParentGateway(ctx, cli, listenerSet)
+	if !found {
+		return sections
+	}
+
+	siblings, err := collectAcceptedListenerSetsForGateway(ctx, cli, parent)
+	if err != nil {
+		return sections
+	}
+
+	merged := listenermerge.Merge(parent, siblings)
+
+	return dropConflictedSections(merged, listenerSet, sections)
 }
 
 func dropConflictedSections(
