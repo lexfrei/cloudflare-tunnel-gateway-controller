@@ -506,6 +506,43 @@ func TestRequestMirror_HonorsBackendTLSPolicy(t *testing.T) {
 	}
 }
 
+// TestRequestMirror_DeliversThroughProductionTransportFactory asserts the
+// mirror copy actually reaches the backend when the filter is built with the
+// production transport factory (newTransport, via NewTransportForTest), not
+// only with the legacy global cleartext client or a mock factory that returns
+// the test server's own transport. This guards the factory-built delivery
+// path — the gap that made a transient mirror-delivery issue look like a code
+// regression.
+func TestRequestMirror_DeliversThroughProductionTransportFactory(t *testing.T) {
+	t.Parallel()
+
+	received := make(chan *http.Request, 1)
+
+	backend := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, req *http.Request) {
+		received <- req
+	}))
+	defer backend.Close()
+
+	// Adapter so the production transport builder satisfies TransportFactory.
+	factory := func(_ string, protocol proxy.BackendProtocol, tlsCfg *proxy.BackendTLSConfig, _ time.Duration) http.RoundTripper {
+		return proxy.NewTransportForTest(protocol, tlsCfg)
+	}
+
+	filter := proxy.NewRequestMirror(backend.URL, nil, nil, proxy.BackendProtocolHTTP, factory)
+
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "http://example.com/mirror", nil)
+
+	resp := filter.ProcessRequest(req) //nolint:bodyclose // mirror returns nil response
+	assert.Nil(t, resp, "mirror filter MUST NOT short-circuit the primary leg")
+
+	select {
+	case got := <-received:
+		assert.Equal(t, "/mirror", got.URL.Path, "mirror must preserve the request path")
+	case <-time.After(2 * time.Second):
+		t.Fatal("mirror request never reached the backend via the production transport factory")
+	}
+}
+
 func TestRequestMirror(t *testing.T) {
 	t.Parallel()
 
