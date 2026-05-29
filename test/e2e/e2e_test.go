@@ -1137,11 +1137,14 @@ func testHTTPRouteRequestMirror(
 ) {
 	t.Helper()
 
+	clientset := newClientset(t, cfg.KubeContext)
 	mirrorPort := gatewayv1.PortNumber(80)
+
+	const mirrorPath = "/mirror-test"
 
 	route := buildHTTPRoute("mirror-test", cfg, []gatewayv1.HTTPRouteRule{
 		{
-			Matches: []gatewayv1.HTTPRouteMatch{{Path: pathPrefix("/mirror-test")}},
+			Matches: []gatewayv1.HTTPRouteMatch{{Path: pathPrefix(mirrorPath)}},
 			Filters: []gatewayv1.HTTPRouteFilter{
 				{
 					Type: gatewayv1.HTTPRouteFilterRequestMirror,
@@ -1158,13 +1161,28 @@ func testHTTPRouteRequestMirror(
 	})
 
 	createHTTPRoute(t, k8sClient, route)
-	waitForBackend(t, httpClient, cfg.TunnelHostname, "/mirror-test", "echo-v1-", 60*time.Second)
+	waitForBackend(t, httpClient, cfg.TunnelHostname, mirrorPath, "echo-v1-", 60*time.Second)
 
 	// Response should come from echo-v1 (mirror is fire-and-forget).
-	echo, resp, err := makeRequest(t, httpClient, cfg.TunnelHostname, http.MethodGet, "/mirror-test", nil)
+	echo, resp, err := makeRequest(t, httpClient, cfg.TunnelHostname, http.MethodGet, mirrorPath, nil)
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.True(t, strings.HasPrefix(echo.Pod, "echo-v1-"), "response from primary → echo-v1, got: %s", echo.Pod)
+
+	// The mirror copy must actually reach echo-v3. Mirroring is fire-and-forget,
+	// so poll the mirror backend's logs (the echo-basic server logs every
+	// request it receives) with a bounded timeout. Each poll re-sends the
+	// request so a single transient mirror drop does not fail the test. Without
+	// this assertion the test passes even when mirror delivery is fully broken.
+	require.Eventually(t, func() bool {
+		if _, _, reqErr := makeRequest(t, httpClient, cfg.TunnelHostname, http.MethodGet, mirrorPath, nil); reqErr != nil {
+			return false
+		}
+
+		logs := backendPodLogs(t, context.Background(), clientset, cfg.TestNamespace, "echo-v3")
+
+		return strings.Contains(logs, mirrorPath)
+	}, 30*time.Second, 2*time.Second, "mirror copy never reached echo-v3 (path %q absent from its logs)", mirrorPath)
 }
 
 func testHTTPRouteRedirectPort(

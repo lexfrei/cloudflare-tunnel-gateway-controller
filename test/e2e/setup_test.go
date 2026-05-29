@@ -4,6 +4,8 @@ package e2e
 
 import (
 	"context"
+	"io"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,6 +17,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/clientcmd"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -47,8 +50,72 @@ func newK8sClient(t *testing.T, kubeContext string) client.Client {
 	return k8sClient
 }
 
-// setupEchoBackends deploys echo-v1 and echo-v2 backends using the official
-// Gateway API conformance echo-basic server.
+// newClientset creates a typed Kubernetes clientset for the given kubeconfig
+// context. It is used for operations the controller-runtime client does not
+// support, such as streaming pod logs.
+func newClientset(t *testing.T, kubeContext string) *kubernetes.Clientset {
+	t.Helper()
+
+	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
+	configOverrides := &clientcmd.ConfigOverrides{
+		CurrentContext: kubeContext,
+	}
+
+	kubeConfig := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, configOverrides)
+
+	restConfig, err := kubeConfig.ClientConfig()
+	require.NoError(t, err, "failed to get kubeconfig for context %s", kubeContext)
+
+	clientset, err := kubernetes.NewForConfig(restConfig)
+	require.NoError(t, err, "failed to create kubernetes clientset")
+
+	return clientset
+}
+
+// backendPodLogs returns the concatenated logs of every pod matching
+// app=<appLabel> in the given namespace. The echo-basic server logs each
+// request it receives, so this is used to verify a mirror copy actually
+// reached the mirror backend, mirroring the conformance suite's DumpEchoLogs.
+func backendPodLogs(t *testing.T, ctx context.Context, clientset *kubernetes.Clientset, namespace, appLabel string) string {
+	t.Helper()
+
+	pods, err := clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: "app=" + appLabel,
+	})
+	require.NoError(t, err, "failed to list pods for app=%s", appLabel)
+
+	var builder strings.Builder
+
+	for i := range pods.Items {
+		pod := &pods.Items[i]
+
+		stream, streamErr := clientset.CoreV1().
+			Pods(namespace).
+			GetLogs(pod.Name, &corev1.PodLogOptions{}).
+			Stream(ctx)
+		if streamErr != nil {
+			t.Logf("failed to stream logs for pod %s: %v", pod.Name, streamErr)
+
+			continue
+		}
+
+		data, readErr := io.ReadAll(stream)
+		_ = stream.Close()
+
+		if readErr != nil {
+			t.Logf("failed to read logs for pod %s: %v", pod.Name, readErr)
+
+			continue
+		}
+
+		builder.Write(data)
+	}
+
+	return builder.String()
+}
+
+// setupEchoBackends deploys the echo-v1, echo-v2, and echo-v3 backends using
+// the official Gateway API conformance echo-basic server.
 func setupEchoBackends(t *testing.T, k8sClient client.Client, cfg testConfig) {
 	t.Helper()
 

@@ -297,6 +297,7 @@ type requestMirror struct {
 	backendURL string
 	percent    *int32
 	client     *http.Client
+	logger     *slog.Logger
 }
 
 // NewRequestMirror creates a filter that mirrors requests to a backend URL.
@@ -320,6 +321,7 @@ func NewRequestMirror(backendURL string, percent *int32, tlsCfg *BackendTLSConfi
 		backendURL: backendURL,
 		percent:    percent,
 		client:     client,
+		logger:     slog.Default(),
 	}
 }
 
@@ -389,9 +391,17 @@ func (f *requestMirror) ProcessRequest(req *http.Request) *http.Response {
 		}()
 
 		resp, doErr := client.Do(mirrorReq)
-		if doErr == nil {
-			resp.Body.Close()
+		if doErr != nil {
+			// Mirroring is fire-and-forget, so a failed dial must not affect
+			// the primary leg — but it must be visible in the logs, otherwise
+			// a mirror-delivery problem is undiagnosable from the proxy.
+			f.logger.Warn("mirror: request dispatch failed",
+				"backend", f.backendURL, "error", doErr)
+
+			return
 		}
+
+		resp.Body.Close()
 	}()
 
 	return nil
