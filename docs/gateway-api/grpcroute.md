@@ -6,7 +6,7 @@ GRPCRoute enables routing gRPC traffic through Cloudflare Tunnel with service an
 
     cloudflared does **not** forward HTTP trailers over QUIC (its default transport), and gRPC carries the mandatory `grpc-status` in a trailer. Over a QUIC tunnel the trailer is dropped at the edge and every gRPC call fails with `server closed the stream without sending trailers`. This is a cloudflared/Cloudflare limitation, not a controller bug.
 
-    With the default `proxy.tunnel.protocol: auto` (or unset) you do not need to change anything: the proxy dials `http2` at startup when a GRPCRoute is present. A GRPCRoute added after the proxy has already dialed a non-`http2` transport needs a proxy restart (the proxy logs a restart-needed error). An explicit `proxy.tunnel.protocol: quic` is never upgraded and cannot serve gRPC — the controller logs an error in that case. Also enable gRPC on the Cloudflare zone (Network → gRPC), or the edge returns 403 for `application/grpc` requests.
+    With the default `proxy.tunnel.protocol: auto` (or unset) you do not need to change anything: the proxy dials `http2` at startup when a GRPCRoute is present. A GRPCRoute added after the proxy has already dialed a non-`http2` transport needs a proxy restart (the proxy logs a restart-needed error). An explicit `proxy.tunnel.protocol: quic` is never upgraded and cannot serve gRPC — the controller logs an error and sets the GRPCRoute's `Accepted` condition to `False` / `UnsupportedProtocol` with an actionable message. Also enable gRPC on the Cloudflare zone (Network → gRPC), or the edge returns 403 for `application/grpc` requests.
 
 ## Basic Example
 
