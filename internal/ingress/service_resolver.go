@@ -81,11 +81,17 @@ func resolveValidatedBackend(
 	ref gatewayv1.BackendRef,
 	namespace, routeName, routeKind string,
 ) (string, *BackendRefError) {
+	svcNamespace, port := resolveBackendNamespacePort(ref, namespace)
+
+	// port originates from gatewayv1.PortNumber (int32) or DefaultHTTPPort, so
+	// it is always in [1,65535] and the conversion cannot overflow.
+	portI32 := int32(port) //nolint:gosec // port is a Gateway PortNumber, never overflows int32
+
 	if validErr := validateBackendGroupKind(ref, namespace, routeName); validErr != nil {
+		validErr.Port = portI32
+
 		return "", validErr
 	}
-
-	svcNamespace, port := resolveBackendNamespacePort(ref, namespace)
 
 	url, backendErr := resolveServiceURL(ctx, &serviceResolveParams{
 		client: resolver.client, validator: resolver.validator,
@@ -93,6 +99,10 @@ func resolveValidatedBackend(
 		routeKind: routeKind, routeNS: namespace, routeName: routeName,
 		svcName: string(ref.Name), svcNS: svcNamespace, port: port,
 	})
+
+	if backendErr != nil {
+		backendErr.Port = portI32
+	}
 
 	if resolver.metrics != nil {
 		kind := strings.ToLower(strings.TrimSuffix(routeKind, "Route"))

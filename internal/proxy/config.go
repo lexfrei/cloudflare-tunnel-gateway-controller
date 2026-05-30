@@ -302,6 +302,14 @@ type BackendRef struct {
 	// slow-loris vector and violating the Gateway API timeout contract
 	// for non-WebSocket routes.
 	WebSocket bool `json:"websocket,omitempty"`
+	// UnavailableStatus, when non-zero, makes the proxy return this HTTP status
+	// for requests routed to this backend instead of dialing it. The backend
+	// stays in the weighted pool so its traffic fraction is preserved per the
+	// Gateway API spec. The controller sets 500 for an invalid backendRef (a
+	// nonexistent Service) and 503 for a Service that exists but has no ready
+	// endpoints, applied to the proportion of requests that would otherwise have
+	// been routed to this backend.
+	UnavailableStatus int `json:"unavailableStatus,omitempty"`
 }
 
 // RouteTimeouts configures timeout durations for proxied requests.

@@ -422,14 +422,15 @@ func TestProxySyncer_SyncRoutes_GRPCRoute(t *testing.T) {
 	assert.Equal(t, proxy.BackendProtocolH2C, receivedConfig.Rules[0].Backends[0].Protocol)
 }
 
-// TestProxySyncer_SyncRoutes_GRPCFailedRefCleared proves the spec-correct 500
+// TestProxySyncer_SyncRoutes_GRPCFailedRefMarked proves the spec-correct 500
 // path for a GRPCRoute pointing at a nonexistent Service. The ingress builder
 // reports BackendNotFound via GRPCFailedRefs, which SyncRoutes must apply to
-// the pushed gRPC rule by clearing its backends — otherwise the converter
-// still emits a backend with a DNS URL to the dead Service and the proxy
-// returns 502 instead of 500. The converter alone never detects a missing
-// Service.
-func TestProxySyncer_SyncRoutes_GRPCFailedRefCleared(t *testing.T) {
+// the pushed gRPC rule by marking that backend unavailable (kept in the pool
+// with its weight) — otherwise the converter emits a backend with a DNS URL to
+// the dead Service and the proxy dials it and returns 502 instead of the
+// spec-correct 500 for that fraction. The converter alone never detects a
+// missing Service.
+func TestProxySyncer_SyncRoutes_GRPCFailedRefMarked(t *testing.T) {
 	t.Parallel()
 
 	var receivedConfig proxy.Config
@@ -480,23 +481,96 @@ func TestProxySyncer_SyncRoutes_GRPCFailedRefCleared(t *testing.T) {
 	}
 
 	grpcFailedRefs := []ingress.BackendRefError{
-		{RouteNamespace: "default", RouteName: "echo", BackendName: "missing-svc", Reason: "BackendNotFound"},
+		{RouteNamespace: "default", RouteName: "echo", BackendName: "missing-svc", BackendNS: "default", Port: 9000, Reason: "BackendNotFound"},
 	}
 
 	err := syncer.SyncRoutes(context.Background(), []string{configServer.URL + "/config"}, nil, grpcRoutes, nil, grpcFailedRefs)
 	require.NoError(t, err)
 
 	require.Len(t, receivedConfig.Rules, 1)
-	assert.Nil(t, receivedConfig.Rules[0].Backends,
-		"gRPC rule with a failed backend ref must have its backends cleared so the proxy returns 500, not 502")
+	require.Len(t, receivedConfig.Rules[0].Backends, 1, "the invalid gRPC backend stays in the weighted pool")
+	assert.Equal(t, http.StatusInternalServerError, receivedConfig.Rules[0].Backends[0].UnavailableStatus,
+		"gRPC rule with an invalid backend ref must mark it 500 (not clear it)")
+}
+
+// TestProxySyncer_SyncRoutes_InvalidPortBackendMarked500 pins the end-to-end 500
+// for an out-of-range port through the full SyncRoutes path. The converter marks
+// such a backend 500 inline (the ingress builder's failed-ref for it carries the
+// real, invalid port and so host-misses in markUnavailableBackends — harmless,
+// because the converter already marked it). This test guards that the backend
+// ends up 500 regardless of which path does the marking.
+func TestProxySyncer_SyncRoutes_InvalidPortBackendMarked500(t *testing.T) {
+	t.Parallel()
+
+	var receivedConfig proxy.Config
+
+	configServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, req *http.Request) {
+		if req.Method == http.MethodPut {
+			if decodeErr := json.NewDecoder(req.Body).Decode(&receivedConfig); decodeErr != nil {
+				writer.WriteHeader(http.StatusBadRequest)
+
+				return
+			}
+		}
+
+		writer.WriteHeader(http.StatusOK)
+	}))
+	defer configServer.Close()
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
+	testClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+
+	syncer := controller.NewProxySyncer("cluster.local", "", "", testClient, slog.Default())
+
+	badPort := gatewayv1.PortNumber(70000) // out of range
+	pathPrefix := gatewayv1.PathMatchPathPrefix
+	httpRoutes := []*gatewayv1.HTTPRoute{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "bad-port", Namespace: "default"},
+			Spec: gatewayv1.HTTPRouteSpec{
+				Hostnames: []gatewayv1.Hostname{"app.example.com"},
+				Rules: []gatewayv1.HTTPRouteRule{
+					{
+						Matches: []gatewayv1.HTTPRouteMatch{
+							{Path: &gatewayv1.HTTPPathMatch{Type: &pathPrefix, Value: new("/")}},
+						},
+						BackendRefs: []gatewayv1.HTTPBackendRef{
+							{BackendRef: gatewayv1.BackendRef{
+								BackendObjectReference: gatewayv1.BackendObjectReference{
+									Name: "svc", Port: &badPort,
+								},
+							}},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	httpFailedRefs := []ingress.BackendRefError{
+		{RouteNamespace: "default", RouteName: "bad-port", BackendName: "svc", BackendNS: "default", Port: 70000, Reason: "InvalidPort"},
+	}
+
+	err := syncer.SyncRoutes(context.Background(), []string{configServer.URL + "/config"}, httpRoutes, nil, httpFailedRefs, nil)
+	require.NoError(t, err)
+
+	require.Len(t, receivedConfig.Rules, 1)
+	require.Len(t, receivedConfig.Rules[0].Backends, 1, "the invalid-port backend stays in the weighted pool")
+	assert.Equal(t, http.StatusInternalServerError, receivedConfig.Rules[0].Backends[0].UnavailableStatus,
+		"an out-of-range port must mark the backend 500 through the full sync path")
 }
 
 // grpcCrossNamespaceBackendSurvives pushes a GRPCRoute whose backend lives in
 // another namespace, guarded by a ReferenceGrant whose from.kind is
-// grantFromKind, and reports whether the pushed rule kept its backend (the
-// reference was allowed) or had it dropped (denied). The proxy is the only v3
-// data plane, so the validator it uses for gRPC must check the grant against
-// from.kind=GRPCRoute, not HTTPRoute.
+// grantFromKind, and reports whether the reference was authorized — i.e. the
+// pushed rule kept the backend as a VALID, dialable entry. A denied
+// cross-namespace ref is invalid, so per the Gateway API spec it now stays in
+// the weighted pool marked 500 for its traffic fraction rather than being
+// dropped; presence alone therefore no longer implies authorization, an
+// unmarked backend does. The proxy is the only v3 data plane, so the validator
+// it uses for gRPC must check the grant against from.kind=GRPCRoute, not
+// HTTPRoute.
 func grpcCrossNamespaceBackendSurvives(t *testing.T, grantFromKind gatewayv1.Kind) bool {
 	t.Helper()
 
@@ -562,7 +636,15 @@ func grpcCrossNamespaceBackendSurvives(t *testing.T, grantFromKind gatewayv1.Kin
 
 	require.Len(t, receivedConfig.Rules, 1)
 
-	return len(receivedConfig.Rules[0].Backends) > 0
+	// Authorized ⇔ a valid (unmarked) backend survives. An invalid ref that the
+	// grant did not permit is kept but marked 500, which is NOT survival.
+	for _, b := range receivedConfig.Rules[0].Backends {
+		if b.UnavailableStatus == 0 {
+			return true
+		}
+	}
+
+	return false
 }
 
 // TestProxySyncer_SyncRoutes_GRPCCrossNamespaceAllowedByGRPCGrant: a GRPCRoute

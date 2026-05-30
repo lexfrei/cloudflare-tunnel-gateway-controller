@@ -157,9 +157,10 @@ func (r *GRPCRouteReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		// backends honor a matching policy by upgrading to TLS+ALPN HTTP/2;
 		// without the watch a policy create/edit would not re-converge the
 		// gRPC routes and the proxy would keep dialing cleartext.
-		findRoutesForService: r.findRoutesForService,
-		getAllRelevantRoutes: r.getAllRelevantRoutes,
-		watchBackendTLS:      true,
+		findRoutesForService:       r.findRoutesForService,
+		findRoutesForEndpointSlice: r.findRoutesForEndpointSlice,
+		getAllRelevantRoutes:       r.getAllRelevantRoutes,
+		watchBackendTLS:            true,
 	})
 }
 
@@ -247,6 +248,30 @@ func (r *GRPCRouteReconciler) findRoutesForReferenceGrant(
 	}
 
 	return FindRoutesForReferenceGrant(obj, routes)
+}
+
+// findRoutesForEndpointSlice enqueues every managed GRPCRoute that references
+// the Service owning the changed EndpointSlice, so the proxy's
+// zero-ready-endpoint 503 marking refreshes when pods become Ready/NotReady.
+func (r *GRPCRouteReconciler) findRoutesForEndpointSlice(
+	ctx context.Context,
+	obj client.Object,
+) []reconcile.Request {
+	var routeList gatewayv1.GRPCRouteList
+	if err := r.List(ctx, &routeList); err != nil {
+		return nil
+	}
+
+	routes := make([]Route, 0, len(routeList.Items))
+
+	for i := range routeList.Items {
+		route := &routeList.Items[i]
+		if r.isRouteForOurGateway(ctx, route) {
+			routes = append(routes, GRPCRouteWrapper{route})
+		}
+	}
+
+	return FindRoutesForEndpointSlice(obj, routes)
 }
 
 // findRoutesForService enqueues every GRPCRoute managed by our controller that

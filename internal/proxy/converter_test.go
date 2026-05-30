@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"log/slog"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -1821,7 +1822,12 @@ func TestConvertHTTPRoutes_NonServiceBackendSkipped(t *testing.T) {
 	cfg := proxy.ConvertHTTPRoutes(context.Background(), routes, "cluster.local", nil, nil, nil, nil)
 
 	require.Len(t, cfg.Rules, 1, "rule with unresolvable backend should still be present for 500 response")
-	assert.Empty(t, cfg.Rules[0].Backends, "non-Service backend should not be in backends list")
+	// A non-Service backend is invalid but carries traffic (default weight 1):
+	// per the Gateway API spec it stays in the weighted pool marked 500 for its
+	// fraction rather than being silently dropped.
+	require.Len(t, cfg.Rules[0].Backends, 1, "a weight>0 invalid backend stays in the pool marked 500")
+	assert.Equal(t, http.StatusInternalServerError, cfg.Rules[0].Backends[0].UnavailableStatus,
+		"a non-Service (invalid-kind) backend must be marked 500, not dropped")
 }
 
 func TestConvertQueryMatch(t *testing.T) {
@@ -2603,14 +2609,14 @@ func TestConvertBackendRef_InvalidPort(t *testing.T) {
 	tests := []struct {
 		name          string
 		port          int
-		expectSkipped bool
+		expectInvalid bool
 	}{
-		{name: "port zero", port: 0, expectSkipped: true},
-		{name: "negative port", port: -1, expectSkipped: true},
-		{name: "port exceeds max", port: 65536, expectSkipped: true},
-		{name: "valid port min", port: 1, expectSkipped: false},
-		{name: "valid port max", port: 65535, expectSkipped: false},
-		{name: "valid port common", port: 8080, expectSkipped: false},
+		{name: "port zero", port: 0, expectInvalid: true},
+		{name: "negative port", port: -1, expectInvalid: true},
+		{name: "port exceeds max", port: 65536, expectInvalid: true},
+		{name: "valid port min", port: 1, expectInvalid: false},
+		{name: "valid port max", port: 65535, expectInvalid: false},
+		{name: "valid port common", port: 8080, expectInvalid: false},
 	}
 
 	for _, tt := range tests {
@@ -2638,12 +2644,14 @@ func TestConvertBackendRef_InvalidPort(t *testing.T) {
 
 			cfg := proxy.ConvertHTTPRoutes(context.Background(), []*gatewayv1.HTTPRoute{route}, "cluster.local", nil, nil, nil, nil)
 
-			if tt.expectSkipped {
-				require.Len(t, cfg.Rules, 1, "rule with invalid backend should still be present for 500 response")
-				assert.Empty(t, cfg.Rules[0].Backends, "invalid backend should not be in backends list")
+			require.Len(t, cfg.Rules, 1)
+			require.Len(t, cfg.Rules[0].Backends, 1, "a weight>0 backend stays in the pool (marked 500 when invalid)")
+
+			if tt.expectInvalid {
+				assert.Equal(t, http.StatusInternalServerError, cfg.Rules[0].Backends[0].UnavailableStatus,
+					"an invalid port marks the backend 500 for its traffic fraction")
 			} else {
-				require.Len(t, cfg.Rules, 1, "rule with valid backend should be kept")
-				require.Len(t, cfg.Rules[0].Backends, 1, "backend with valid port should be kept")
+				assert.Zero(t, cfg.Rules[0].Backends[0].UnavailableStatus, "a valid backend is not marked")
 			}
 		})
 	}
@@ -2732,7 +2740,63 @@ func TestConvertBackendRef_NonServiceKind(t *testing.T) {
 	cfg := proxy.ConvertHTTPRoutes(context.Background(), []*gatewayv1.HTTPRoute{route}, "cluster.local", nil, nil, nil, nil)
 
 	require.Len(t, cfg.Rules, 1, "rule with unresolvable backend should still be present for 500 response")
-	assert.Empty(t, cfg.Rules[0].Backends, "non-Service backend should not be in backends list")
+	require.Len(t, cfg.Rules[0].Backends, 1, "a weight>0 non-Service backend stays in the pool marked 500")
+	assert.Equal(t, http.StatusInternalServerError, cfg.Rules[0].Backends[0].UnavailableStatus,
+		"a non-Service backend must be marked 500 for its traffic fraction, not dropped")
+}
+
+// TestConvertHTTPRoutes_MixedValidAndInvalidBackend pins the per-fraction
+// behaviour: a rule with a valid high-weight backend and an invalid-kind
+// low-weight backend keeps BOTH in the weighted pool. The valid one is
+// unmarked (serves its share); the invalid one is marked 500 (returns 500 for
+// its share) — its weight is preserved, not silently absorbed by the sibling.
+func TestConvertHTTPRoutes_MixedValidAndInvalidBackend(t *testing.T) {
+	t.Parallel()
+
+	pathPrefix := gatewayv1.PathMatchPathPrefix
+	bucketKind := gatewayv1.Kind("Bucket")
+	bucketGroup := gatewayv1.Group("objectbucket.io")
+	portNum := gatewayv1.PortNumber(80)
+	invalidWeight := int32(20)
+
+	route := &gatewayv1.HTTPRoute{
+		ObjectMeta: metav1.ObjectMeta{Name: "mixed", Namespace: "default"},
+		Spec: gatewayv1.HTTPRouteSpec{
+			Hostnames: []gatewayv1.Hostname{"example.com"},
+			Rules: []gatewayv1.HTTPRouteRule{
+				{
+					Matches: []gatewayv1.HTTPRouteMatch{
+						{Path: &gatewayv1.HTTPPathMatch{Type: &pathPrefix, Value: new("/")}},
+					},
+					BackendRefs: []gatewayv1.HTTPBackendRef{
+						backendRef("valid", 80, 80),
+						{
+							BackendRef: gatewayv1.BackendRef{
+								BackendObjectReference: gatewayv1.BackendObjectReference{
+									Group: &bucketGroup, Kind: &bucketKind, Name: "bad", Port: &portNum,
+								},
+								Weight: &invalidWeight,
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	cfg := proxy.ConvertHTTPRoutes(context.Background(), []*gatewayv1.HTTPRoute{route}, "cluster.local", nil, nil, nil, nil)
+
+	require.Len(t, cfg.Rules, 1)
+	require.Len(t, cfg.Rules[0].Backends, 2, "both backends stay in the weighted pool")
+
+	valid := cfg.Rules[0].Backends[0]
+	invalid := cfg.Rules[0].Backends[1]
+
+	assert.EqualValues(t, 80, valid.Weight, "valid backend keeps its weight")
+	assert.Zero(t, valid.UnavailableStatus, "valid backend is not marked")
+	assert.EqualValues(t, 20, invalid.Weight, "invalid backend keeps its weight fraction")
+	assert.Equal(t, http.StatusInternalServerError, invalid.UnavailableStatus,
+		"invalid backend is marked 500 for its traffic fraction")
 }
 
 func TestConvertMirrorFilter_NonServiceKind(t *testing.T) {
@@ -2800,7 +2864,9 @@ func TestConvertBackendRef_CrossNamespaceRejected(t *testing.T) {
 	cfg := proxy.ConvertHTTPRoutes(context.Background(), []*gatewayv1.HTTPRoute{route}, "cluster.local", rejectAll, nil, nil, nil)
 
 	require.Len(t, cfg.Rules, 1, "rule with rejected cross-namespace backend should still be present for 500 response")
-	assert.Empty(t, cfg.Rules[0].Backends, "rejected cross-namespace backend should not be in backends list")
+	require.Len(t, cfg.Rules[0].Backends, 1, "a weight>0 rejected cross-namespace backend stays in the pool marked 500")
+	assert.Equal(t, http.StatusInternalServerError, cfg.Rules[0].Backends[0].UnavailableStatus,
+		"an unauthorized cross-namespace backend must be marked 500 for its traffic fraction, not dropped")
 }
 
 func TestConvertBackendRef_CrossNamespaceAllowed(t *testing.T) {

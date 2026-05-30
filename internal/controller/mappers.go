@@ -6,6 +6,7 @@ import (
 	"slices"
 
 	corev1 "k8s.io/api/core/v1"
+	discoveryv1 "k8s.io/api/discovery/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -324,6 +325,43 @@ func FindRoutesForService(
 
 	for _, route := range routes {
 		if !route.ReferencesService(svc.Namespace, svc.Name) {
+			continue
+		}
+
+		requests = append(requests, reconcile.Request{
+			NamespacedName: client.ObjectKey{
+				Name:      route.GetName(),
+				Namespace: route.GetNamespace(),
+			},
+		})
+	}
+
+	return requests
+}
+
+// FindRoutesForEndpointSlice enqueues every route that references the Service
+// owning the given EndpointSlice. An endpoint readiness change (a pod going
+// Ready/NotReady) updates the EndpointSlice, not the Service, so the proxy's
+// zero-ready-endpoint 503 marking would go stale without this watch. The owning
+// Service is identified by the standard kubernetes.io/service-name label.
+func FindRoutesForEndpointSlice(
+	obj client.Object,
+	routes []Route,
+) []reconcile.Request {
+	slice, ok := obj.(*discoveryv1.EndpointSlice)
+	if !ok {
+		return nil
+	}
+
+	serviceName := slice.Labels[discoveryv1.LabelServiceName]
+	if serviceName == "" {
+		return nil
+	}
+
+	var requests []reconcile.Request
+
+	for _, route := range routes {
+		if !route.ReferencesService(slice.Namespace, serviceName) {
 			continue
 		}
 
