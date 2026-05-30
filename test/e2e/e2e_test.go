@@ -43,6 +43,11 @@ type testConfig struct {
 	Namespace      string
 	TestNamespace  string
 	GatewayName    string
+	// TunnelProtocol is the edge transport the proxy under test is deployed
+	// with (auto|http2|quic). It drives the gRPC suite's fast-fail guard:
+	// gRPC only works on http2 (cloudflared drops trailers over QUIC).
+	// Defaults to http2 to match the conformance setup script.
+	TunnelProtocol string
 }
 
 func loadTestConfig() testConfig {
@@ -52,6 +57,7 @@ func loadTestConfig() testConfig {
 		Namespace:      envWithFallback("E2E_NAMESPACE", "CONFORMANCE_NAMESPACE", "cloudflare-tunnel-system"),
 		TestNamespace:  envWithFallback("E2E_TEST_NAMESPACE", "CONFORMANCE_TEST_NAMESPACE", "e2e-test"),
 		GatewayName:    envWithFallback("E2E_GATEWAY_NAME", "CONFORMANCE_GATEWAY_NAME", "e2e-gateway"),
+		TunnelProtocol: envWithFallback("E2E_TUNNEL_PROTOCOL", "CONFORMANCE_TUNNEL_PROTOCOL", "http2"),
 	}
 }
 
