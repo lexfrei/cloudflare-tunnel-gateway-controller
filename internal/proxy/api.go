@@ -115,10 +115,9 @@ func (a *ConfigAPI) handleGetConfig(writer http.ResponseWriter, req *http.Reques
 		return
 	}
 
-	version := a.router.ConfigVersion()
 	status := ConfigStatus{
-		Version: version,
-		Ready:   version > 0,
+		Version: a.router.ConfigVersion(),
+		Ready:   a.router.IsReady(),
 	}
 
 	data, err := json.Marshal(status)
@@ -161,6 +160,16 @@ func (a *ConfigAPI) handleHealthz(writer http.ResponseWriter, _ *http.Request) {
 func (a *ConfigAPI) handleReadyz(writer http.ResponseWriter, _ *http.Request) {
 	if a.router.ConfigVersion() == 0 {
 		http.Error(writer, "not ready: no config loaded", http.StatusServiceUnavailable)
+
+		return
+	}
+
+	// The proxy can have config yet still be unable to serve: in tunnel mode
+	// the edge returns 530 until cloudflared registers a connection. Gate
+	// readiness on the real tunnel state so the pod goes Ready only when it can
+	// actually receive traffic. Standalone mode latches this at startup.
+	if !a.router.TunnelConnected() {
+		http.Error(writer, "not ready: tunnel not connected to edge", http.StatusServiceUnavailable)
 
 		return
 	}

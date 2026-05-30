@@ -71,6 +71,12 @@ type Config struct {
 	// fallback), "http2", or "quic". gRPC requires "http2" because cloudflared
 	// does not forward HTTP trailers over QUIC (grpc-status is dropped).
 	Protocol string
+	// OnConnected, when set, is invoked once when cloudflared registers its
+	// first connection with the Cloudflare edge. The proxy entrypoint uses it to
+	// flip readiness, so the pod reports Ready only after the tunnel can actually
+	// receive traffic (before that the edge returns 530). Runs on the signal
+	// goroutine; keep it non-blocking.
+	OnConnected func()
 }
 
 // Token mirrors the cloudflared token JSON structure.
@@ -116,7 +122,7 @@ func ParseTunnelToken(tokenStr string) (*Token, error) {
 
 // StartTunnel starts a cloudflared tunnel daemon with the given configuration.
 // It blocks until the context is cancelled or the tunnel fails.
-func StartTunnel(ctx context.Context, cfg Config) error {
+func StartTunnel(ctx context.Context, cfg *Config) error {
 	token, err := ParseTunnelToken(cfg.Token)
 	if err != nil {
 		return errors.Wrap(err, "parse tunnel token")
@@ -127,7 +133,7 @@ func StartTunnel(ctx context.Context, cfg Config) error {
 		logger = slog.Default()
 	}
 
-	orchestrator, tunnelCfg, err := buildOrchestrator(ctx, &cfg, token, logger)
+	orchestrator, tunnelCfg, err := buildOrchestrator(ctx, cfg, token, logger)
 	if err != nil {
 		return err
 	}
@@ -141,13 +147,7 @@ func StartTunnel(ctx context.Context, cfg Config) error {
 		close(graceShutdownC)
 	}()
 
-	go func() {
-		select {
-		case <-connectedSignal.Wait():
-			logger.Info("tunnel connected to Cloudflare edge")
-		case <-ctx.Done():
-		}
-	}()
+	go waitConnected(ctx, connectedSignal, logger, cfg.OnConnected)
 
 	logger.Info("starting tunnel daemon",
 		"tunnelID", token.TunnelID.String(),
@@ -164,6 +164,24 @@ func StartTunnel(ctx context.Context, cfg Config) error {
 	)
 
 	return errors.Wrap(err, "tunnel daemon")
+}
+
+// waitConnected blocks until the tunnel registers its first connection with the
+// Cloudflare edge or the context is cancelled. On connection it logs and invokes
+// onConnected (when non-nil) exactly once — the proxy entrypoint passes a
+// callback that flips readiness, so the pod reports Ready only after the edge is
+// reachable. On context cancellation it returns without invoking onConnected, so
+// a tunnel that never connects never reports ready.
+func waitConnected(ctx context.Context, connected *cfdsignal.Signal, logger *slog.Logger, onConnected func()) {
+	select {
+	case <-connected.Wait():
+		logger.Info("tunnel connected to Cloudflare edge")
+
+		if onConnected != nil {
+			onConnected()
+		}
+	case <-ctx.Done():
+	}
 }
 
 // buildOrchestrator creates the orchestration.Orchestrator and tunnel config.

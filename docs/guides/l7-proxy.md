@@ -116,7 +116,7 @@ The proxy binary accepts the following environment variables:
 | Endpoint | Port | Description |
 | --- | --- | --- |
 | `/healthz` | Config API | Liveness check |
-| `/readyz` | Config API | Readiness (config loaded at least once) |
+| `/readyz` | Config API | Readiness: config loaded at least once AND, in tunnel mode, the tunnel has connected to the Cloudflare edge (standalone mode latches the tunnel condition at startup) |
 
 ## Example HTTPRoute
 

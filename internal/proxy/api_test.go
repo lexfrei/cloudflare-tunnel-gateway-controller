@@ -252,14 +252,20 @@ func TestConfigAPI_ReadyEndpoint(t *testing.T) {
 	router := proxy.NewRouter()
 	api := proxy.NewConfigAPI(router, "")
 
+	readyz := func() int {
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/readyz", nil)
+		recorder := httptest.NewRecorder()
+		api.ServeHTTP(recorder, req)
+
+		return recorder.Code
+	}
+
 	// Not ready before config is loaded.
-	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/readyz", nil)
-	recorder := httptest.NewRecorder()
+	assert.Equal(t, http.StatusServiceUnavailable, readyz(), "no config and no tunnel must not be ready")
 
-	api.ServeHTTP(recorder, req)
-	assert.Equal(t, http.StatusServiceUnavailable, recorder.Code)
-
-	// Ready after config loaded.
+	// Still not ready with config but no tunnel connection: the pod would go
+	// Ready while cloudflared is still dialing the edge, and the edge returns
+	// 530 until the tunnel registers.
 	cfg := &proxy.Config{
 		Version: 1,
 		Rules:   []proxy.RouteRule{{Backends: []proxy.BackendRef{{URL: "http://svc:80", Weight: 1}}}},
@@ -268,11 +274,29 @@ func TestConfigAPI_ReadyEndpoint(t *testing.T) {
 	err := router.UpdateConfig(cfg)
 	require.NoError(t, err)
 
-	req = httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/readyz", nil)
-	recorder = httptest.NewRecorder()
+	assert.Equal(t, http.StatusServiceUnavailable, readyz(), "config present but tunnel not connected must not be ready")
 
+	// Ready once the tunnel has connected to the edge as well.
+	router.SetTunnelConnected()
+
+	assert.Equal(t, http.StatusOK, readyz(), "config present and tunnel connected must be ready")
+}
+
+func TestConfigAPI_ReadyEndpoint_TunnelWithoutConfig(t *testing.T) {
+	t.Parallel()
+
+	router := proxy.NewRouter()
+	api := proxy.NewConfigAPI(router, "")
+
+	// Tunnel connected but no config yet: still not ready — the proxy has
+	// nothing to route with.
+	router.SetTunnelConnected()
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/readyz", nil)
+	recorder := httptest.NewRecorder()
 	api.ServeHTTP(recorder, req)
-	assert.Equal(t, http.StatusOK, recorder.Code)
+
+	assert.Equal(t, http.StatusServiceUnavailable, recorder.Code)
 }
 
 func TestConfigAPI_OversizeBody(t *testing.T) {

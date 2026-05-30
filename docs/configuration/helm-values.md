@@ -126,7 +126,7 @@ The `proxy` section configures the in-process L7 reverse proxy. The proxy embeds
 | `proxy.healthProbes.startupProbe.failureThreshold` | int | `30` | Startup probe failure threshold |
 | `proxy.healthProbes.livenessProbe.enabled` | bool | `true` | Enable liveness probe |
 | `proxy.healthProbes.livenessProbe.periodSeconds` | int | `20` | Liveness probe interval |
-| `proxy.healthProbes.readinessProbe.enabled` | bool | `true` | Enable readiness probe (ready when config loaded) |
+| `proxy.healthProbes.readinessProbe.enabled` | bool | `true` | Enable readiness probe (ready when config is loaded and, in tunnel mode, the tunnel has connected to the edge) |
 | `proxy.healthProbes.readinessProbe.periodSeconds` | int | `10` | Readiness probe interval |
 
 ### Access Log
