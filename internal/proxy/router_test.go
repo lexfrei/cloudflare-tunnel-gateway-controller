@@ -1,6 +1,8 @@
 package proxy_test
 
 import (
+	"bytes"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -13,6 +15,32 @@ import (
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/proxy"
 )
+
+// TestRouter_WarnsRestartOnceForGRPCOverNonHTTP2 pins the runtime restart-needed
+// signal: when the proxy dialed a non-http2 transport and a config later brings
+// in a GRPCRoute, UpdateConfig logs an actionable error exactly once (not on
+// every subsequent push). Not parallel: it swaps the global slog default to
+// capture the log; Go runs non-parallel tests while parallel ones are paused.
+func TestRouter_WarnsRestartOnceForGRPCOverNonHTTP2(t *testing.T) {
+	var buf bytes.Buffer
+
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelError})))
+
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	router := proxy.NewRouter()
+	router.SetDialedProtocol("auto")
+
+	require.NoError(t, router.UpdateConfig(&proxy.Config{Version: 1, HasGRPCRoute: true}))
+	require.NoError(t, router.UpdateConfig(&proxy.Config{Version: 2, HasGRPCRoute: true}))
+
+	out := buf.String()
+	assert.Contains(t, out, "restart")
+	assert.Contains(t, out, "http2")
+	assert.Equal(t, 1, strings.Count(out, "GRPCRoute"),
+		"the restart-needed warning must be logged at most once, not on every push")
+}
 
 // TestRouter_FirstConfigLoaded_SignalsOnceWithGRPCFlag pins the startup
 // signal the proxy uses to choose its edge transport: the first applied

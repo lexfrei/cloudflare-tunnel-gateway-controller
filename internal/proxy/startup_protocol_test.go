@@ -64,3 +64,30 @@ func TestResolveStartupProtocol_CtxCancelled(t *testing.T) {
 	got := proxy.ResolveStartupProtocol(ctx, "auto", make(chan *proxy.Config), time.Hour, slog.Default())
 	assert.Equal(t, "auto", got)
 }
+
+func TestGRPCRestartNeeded(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		dialed  string
+		hasGRPC bool
+		want    bool
+	}{
+		{name: "no gRPC never needs restart", dialed: "quic", hasGRPC: false, want: false},
+		{name: "not yet dialed (empty) does not warn", dialed: "", hasGRPC: true, want: false},
+		{name: "dialed http2 serves gRPC fine", dialed: "http2", hasGRPC: true, want: false},
+		{name: "dialed http2 case-insensitive", dialed: "HTTP2", hasGRPC: true, want: false},
+		{name: "dialed auto plus gRPC needs restart", dialed: "auto", hasGRPC: true, want: true},
+		{name: "dialed quic plus gRPC needs restart", dialed: "quic", hasGRPC: true, want: true},
+		{name: "dialed auto without gRPC is fine", dialed: "auto", hasGRPC: false, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			assert.Equal(t, tt.want, proxy.GRPCRestartNeeded(tt.dialed, tt.hasGRPC))
+		})
+	}
+}

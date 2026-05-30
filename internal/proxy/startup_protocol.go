@@ -66,3 +66,19 @@ func ResolveStartupProtocol(
 		return protocolAuto
 	}
 }
+
+// GRPCRestartNeeded reports whether a freshly-applied config requires a proxy
+// restart to serve gRPC. It is true when the config carries a GRPCRoute but the
+// proxy dialed a non-http2 edge transport (auto or quic), which cannot carry the
+// grpc-status trailer over QUIC. dialedProtocol is the transport chosen at
+// startup; an empty value means the proxy has not dialed yet, so no restart is
+// implied (the startup resolver still owns the decision).
+func GRPCRestartNeeded(dialedProtocol string, hasGRPCRoute bool) bool {
+	if !hasGRPCRoute {
+		return false
+	}
+
+	dialed := strings.ToLower(strings.TrimSpace(dialedProtocol))
+
+	return dialed != "" && dialed != protocolHTTP2
+}

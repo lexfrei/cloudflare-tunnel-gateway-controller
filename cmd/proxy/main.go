@@ -102,6 +102,11 @@ func runTunnelMode(logger *slog.Logger, token string) {
 		logger,
 	)
 
+	// Record the dialed transport so the router can warn (once) if a GRPCRoute
+	// arrives later on a non-http2 transport, where a live re-dial is unsafe and
+	// the operator must restart the proxy.
+	router.SetDialedProtocol(effectiveProtocol)
+
 	logger.Info("starting cloudflared tunnel with in-process proxy", "protocol", effectiveProtocol)
 
 	err := tunnel.StartTunnel(ctx, tunnel.Config{
