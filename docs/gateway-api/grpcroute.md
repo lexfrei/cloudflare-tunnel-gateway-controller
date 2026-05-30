@@ -2,9 +2,11 @@
 
 GRPCRoute enables routing gRPC traffic through Cloudflare Tunnel with service and method-level matching. It is served by the in-process L7 proxy: gRPC requests are HTTP/2 POSTs to `/{service}/{method}`, which the proxy matches with its path matcher. The upstream hop to the backend is cleartext h2c by default; attaching a `BackendTLSPolicy` upgrades the hop to TLS with HTTP/2 negotiated via ALPN (see Backend TLS below).
 
-!!! danger "gRPC requires the tunnel transport protocol `http2`"
+!!! warning "gRPC needs the `http2` tunnel transport — `auto` upgrades for you"
 
-    Set `proxy.tunnel.protocol: http2` in your Helm values. cloudflared does **not** forward HTTP trailers over QUIC (its default transport), and gRPC carries the mandatory `grpc-status` in a trailer. Over a QUIC tunnel the trailer is dropped at the edge and every gRPC call fails with `server closed the stream without sending trailers`. This is a cloudflared/Cloudflare limitation, not a controller bug. The controller logs an error when it sees GRPCRoutes while the tunnel is not on `http2`. Also enable gRPC on the Cloudflare zone (Network → gRPC), or the edge returns 403 for `application/grpc` requests.
+    cloudflared does **not** forward HTTP trailers over QUIC (its default transport), and gRPC carries the mandatory `grpc-status` in a trailer. Over a QUIC tunnel the trailer is dropped at the edge and every gRPC call fails with `server closed the stream without sending trailers`. This is a cloudflared/Cloudflare limitation, not a controller bug.
+
+    With the default `proxy.tunnel.protocol: auto` (or unset) you do not need to change anything: the proxy dials `http2` at startup when a GRPCRoute is present. A GRPCRoute added after the proxy has already dialed a non-`http2` transport needs a proxy restart (the proxy logs a restart-needed error). An explicit `proxy.tunnel.protocol: quic` is never upgraded and cannot serve gRPC — the controller logs an error in that case. Also enable gRPC on the Cloudflare zone (Network → gRPC), or the edge returns 403 for `application/grpc` requests.
 
 ## Basic Example
 

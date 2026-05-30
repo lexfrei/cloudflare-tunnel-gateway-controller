@@ -318,7 +318,7 @@ spec:
 | proxy.tolerations | list | `[]` | Tolerations for pod scheduling |
 | proxy.topologySpreadConstraints | list | `[]` | Topology spread constraints for pod distribution |
 | proxy.tunnel | object | `{"protocol":"auto"}` | Tunnel transport settings. |
-| proxy.tunnel.protocol | string | `"auto"` | Edge transport protocol: "auto" (QUIC with HTTP/2 fallback), "http2", or "quic". GRPCRoute requires "http2" — cloudflared does not forward HTTP trailers over QUIC, so grpc-status is dropped and gRPC calls fail. Leave "auto" unless you serve gRPC. |
+| proxy.tunnel.protocol | string | `"auto"` | Edge transport protocol: "auto" (QUIC with HTTP/2 fallback), "http2", or "quic". gRPC needs http2 (cloudflared drops HTTP trailers over QUIC, so grpc-status is lost). With "auto" (or unset) the proxy upgrades to http2 at startup when a GRPCRoute is present, so gRPC works without changing this; a GRPCRoute added after startup needs a proxy restart. An explicit "quic" is never upgraded and cannot serve gRPC. |
 | proxy.tunnelTokenSecretRef | object | `{"key":"tunnel-token","name":""}` | Reference to Secret containing tunnel token (REQUIRED) |
 | proxy.tunnelTokenSecretRef.key | string | `"tunnel-token"` | Key in the Secret containing the tunnel token |
 | proxy.tunnelTokenSecretRef.name | string | `""` | Name of the Secret containing tunnel token |

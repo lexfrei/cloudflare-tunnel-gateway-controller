@@ -169,9 +169,13 @@ When a `BackendTLSPolicy` targets a Service but cannot be enforced — the CA `C
 
 When a backend Service carries both `appProtocol: kubernetes.io/h2c` AND a `BackendTLSPolicy` targets it, the policy wins: the proxy dials TLS (HTTPS, with HTTP/2 negotiated via ALPN). h2c is by definition cleartext HTTP/2 and cannot coexist with backend TLS; the h2c marker is silently ignored on that hop. If you genuinely want HTTP/2 over TLS, omit the `appProtocol` hint and let ALPN negotiate it during the handshake.
 
-### gRPC requires the tunnel transport protocol `http2`
+### gRPC needs the `http2` tunnel transport (auto upgrades for you)
 
-cloudflared does not forward HTTP trailers over QUIC (its default transport): the QUIC response adapter's `AddTrailer` is a no-op. gRPC carries the mandatory `grpc-status` in a trailer, so over a QUIC tunnel that trailer is dropped at the edge and every gRPC call fails with `server closed the stream without sending trailers`. Set `proxy.tunnel.protocol: http2` (Helm value) so the tunnel negotiates HTTP/2, where trailers are forwarded. The controller logs an error when GRPCRoutes are present while the tunnel is not on `http2`. This is a cloudflared/Cloudflare limitation, not a controller bug. Separately, gRPC must be enabled on the Cloudflare zone (dashboard Network → gRPC); without it the edge returns 403 zone-wide for `content-type: application/grpc`.
+cloudflared does not forward HTTP trailers over QUIC (its default transport): the QUIC response adapter's `AddTrailer` is a no-op. gRPC carries the mandatory `grpc-status` in a trailer, so over a QUIC tunnel that trailer is dropped at the edge and every gRPC call fails with `server closed the stream without sending trailers`. This is a cloudflared/Cloudflare limitation, not a controller bug.
+
+With the default `proxy.tunnel.protocol: auto` (or unset) you do not need to do anything for the common case: the proxy waits briefly for the controller's first config push at startup and, when a GRPCRoute is present, dials `http2` instead of letting cloudflared negotiate QUIC. A steady-state deploy that already has GRPCRoutes therefore serves gRPC on the default transport. If a GRPCRoute is added _after_ the proxy has already dialed a non-`http2` transport, a live re-dial is not safe, so the proxy logs a restart-needed error; restart the proxy (it re-dials on `http2`) or pin `proxy.tunnel.protocol: http2`. An explicit `proxy.tunnel.protocol: quic` is never upgraded — it cannot serve gRPC, and the controller logs an error when GRPCRoutes are present on it.
+
+Separately, gRPC must be enabled on the Cloudflare zone (dashboard Network → gRPC); without it the edge returns 403 zone-wide for `content-type: application/grpc`.
 
 ### Gateway client cert rotation is hot-reloaded
 
