@@ -177,9 +177,10 @@ type syncUpdateParams struct {
 	proxySyncer    *ProxySyncer
 	proxyEndpoints []string
 	pushProxy      bool
-	// tunnelProtocol, when non-empty, enables the gRPC-over-non-http2 warning
-	// (only the GRPCRoute reconciler sets it). cloudflared drops trailers over
-	// QUIC, so gRPC needs an http2 tunnel.
+	// tunnelProtocol, when non-empty, enables the gRPC-over-quic warning (only
+	// the GRPCRoute reconciler sets it). cloudflared drops trailers over QUIC, so
+	// gRPC needs http2; auto/unset is upgraded to http2 by the proxy, so only an
+	// explicit quic warns.
 	tunnelProtocol string
 	statusEntries  func(*SyncResult) []routeStatusEntry
 }
@@ -210,9 +211,10 @@ func syncAndUpdateStatusCommon(ctx context.Context, params syncUpdateParams) (ct
 		}
 	}
 
-	// Warn when GRPCRoutes are served but the tunnel is not on http2 — cloudflared
-	// drops the grpc-status trailer over QUIC, so gRPC calls fail. Only the
-	// GRPCRoute reconciler sets tunnelProtocol, so HTTP-only reconciles stay quiet.
+	// Warn when GRPCRoutes are present on an explicit quic tunnel — cloudflared
+	// drops the grpc-status trailer over QUIC, so gRPC calls fail. auto/unset is
+	// upgraded to http2 by the proxy, so it does not warn. Only the GRPCRoute
+	// reconciler sets tunnelProtocol, so HTTP-only reconciles stay quiet.
 	if params.tunnelProtocol != "" && syncResult != nil {
 		if msg, warn := grpcProtocolWarning(params.tunnelProtocol, len(syncResult.GRPCRoutes)); warn {
 			logger.Error(msg)

@@ -81,8 +81,9 @@ type GRPCRouteReconciler struct {
 	ProxyEndpoints []string
 
 	// TunnelProtocol is the configured edge transport (auto|http2|quic). Used
-	// to warn when GRPCRoutes are served over a non-http2 tunnel, where
-	// cloudflared drops the grpc-status trailer.
+	// to warn when GRPCRoutes are present on an explicit quic tunnel, where
+	// cloudflared drops the grpc-status trailer. auto/unset is upgraded to http2
+	// by the proxy when a GRPCRoute is present, so it is not flagged.
 	TunnelProtocol string
 
 	// bindingValidator validates route binding to Gateway listeners.
