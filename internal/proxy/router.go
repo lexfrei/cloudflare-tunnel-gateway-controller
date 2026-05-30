@@ -68,16 +68,33 @@ type Router struct {
 	updateMu         sync.Mutex
 	pruner           transportPruner
 	transportFactory TransportFactory
+	// firstConfigCh delivers the first config applied via UpdateConfig exactly
+	// once (guarded by firstConfigOnce). Buffered (size 1) so the send never
+	// blocks even when nothing is waiting yet. The proxy's startup protocol
+	// resolver reads it to learn whether a GRPCRoute is present before dialing.
+	firstConfigCh   chan *Config
+	firstConfigOnce sync.Once
 }
 
 // NewRouter creates a Router with an empty routing table.
 func NewRouter() *Router {
-	router := &Router{}
+	router := &Router{
+		firstConfigCh: make(chan *Config, 1),
+	}
 	router.table.Store(&routingTable{
 		exactHosts: make(map[string][]*compiledRule),
 	})
 
 	return router
+}
+
+// FirstConfigLoaded returns a channel that delivers the first config applied
+// via UpdateConfig, exactly once. The proxy's startup protocol resolver reads
+// it to decide whether to upgrade an auto/unset edge transport to http2 — gRPC
+// needs http2 because cloudflared drops HTTP trailers over QUIC. For an explicit
+// http2/quic transport the resolver returns immediately and never reads this.
+func (r *Router) FirstConfigLoaded() <-chan *Config {
+	return r.firstConfigCh
 }
 
 // SetHandler registers a handler whose transport pool will be pruned on
@@ -174,6 +191,15 @@ func (r *Router) UpdateConfig(cfg *Config) error {
 	if r.pruner != nil {
 		r.pruner.PruneTransports(extractActiveTransportKeys(cfg))
 	}
+
+	// Signal the first successfully-applied config exactly once so the proxy's
+	// startup protocol resolver can learn whether a GRPCRoute is present before
+	// it dials the edge. The channel is buffered (size 1) so this send never
+	// blocks while holding updateMu; sync.Once keeps later pushes from
+	// re-signalling.
+	r.firstConfigOnce.Do(func() {
+		r.firstConfigCh <- cfg
+	})
 
 	return nil
 }

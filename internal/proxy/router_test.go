@@ -6,12 +6,47 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/proxy"
 )
+
+// TestRouter_FirstConfigLoaded_SignalsOnceWithGRPCFlag pins the startup
+// signal the proxy uses to choose its edge transport: the first applied
+// config is delivered once on FirstConfigLoaded() carrying HasGRPCRoute, and
+// later config pushes do NOT re-signal (the resolver reads exactly once).
+func TestRouter_FirstConfigLoaded_SignalsOnceWithGRPCFlag(t *testing.T) {
+	t.Parallel()
+
+	router := proxy.NewRouter()
+
+	select {
+	case <-router.FirstConfigLoaded():
+		t.Fatal("FirstConfigLoaded fired before any config was applied")
+	default:
+	}
+
+	require.NoError(t, router.UpdateConfig(&proxy.Config{Version: 1, HasGRPCRoute: true}))
+
+	select {
+	case got := <-router.FirstConfigLoaded():
+		require.NotNil(t, got)
+		assert.True(t, got.HasGRPCRoute, "first-config signal must carry the gRPC marker")
+	case <-time.After(2 * time.Second):
+		t.Fatal("FirstConfigLoaded did not fire after the first UpdateConfig")
+	}
+
+	require.NoError(t, router.UpdateConfig(&proxy.Config{Version: 2, HasGRPCRoute: false}))
+
+	select {
+	case <-router.FirstConfigLoaded():
+		t.Fatal("FirstConfigLoaded fired a second time; it must signal only the first config")
+	case <-time.After(50 * time.Millisecond):
+	}
+}
 
 func TestRouter_EmptyConfig(t *testing.T) {
 	t.Parallel()

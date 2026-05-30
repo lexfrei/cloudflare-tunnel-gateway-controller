@@ -106,6 +106,34 @@ func TestConstants(t *testing.T) {
 // proxy package's TestNewHandler_WSTimeoutOptions exhaustively pins
 // that translation. Testing the env-parse boundary here closes the
 // gap end-to-end.
+func TestStartupProtocolWait_Matrix(t *testing.T) {
+	tests := []struct {
+		name string
+		env  string
+		set  bool
+		want time.Duration
+	}{
+		{name: "unset defaults to 30s", want: 30 * time.Second},
+		{name: "valid duration is used", env: "5s", set: true, want: 5 * time.Second},
+		{name: "empty defaults to 30s", env: "", set: true, want: 30 * time.Second},
+		{name: "zero falls back to default", env: "0s", set: true, want: 30 * time.Second},
+		{name: "negative falls back to default", env: "-5s", set: true, want: 30 * time.Second},
+		{name: "garbage falls back to default", env: "soon", set: true, want: 30 * time.Second},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.set {
+				t.Setenv("PROXY_TUNNEL_PROTOCOL_WAIT", tt.env)
+			}
+
+			logger := slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))
+			got := startupProtocolWait(logger)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
 func TestParseWSEnvDurations_Matrix(t *testing.T) {
 	tests := []struct {
 		name              string
