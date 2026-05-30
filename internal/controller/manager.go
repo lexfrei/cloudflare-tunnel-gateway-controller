@@ -79,8 +79,9 @@ type Config struct {
 	ProxyAuthToken string
 
 	// TunnelProtocol is the proxy's configured edge transport (auto|http2|quic).
-	// Used only to warn when GRPCRoutes are served over a non-http2 tunnel,
-	// where cloudflared drops the grpc-status trailer.
+	// Used only to warn when GRPCRoutes are present on an explicit quic tunnel,
+	// where cloudflared drops the grpc-status trailer. auto/unset is upgraded to
+	// http2 by the proxy when a GRPCRoute is present, so it is not flagged.
 	TunnelProtocol string
 
 	// ProxyTokenSecret identifies the Secret holding the tunnel token used by

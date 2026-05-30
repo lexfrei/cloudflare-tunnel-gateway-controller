@@ -36,6 +36,13 @@ var (
 type Config struct {
 	Version int64       `json:"version"`
 	Rules   []RouteRule `json:"rules"`
+	// HasGRPCRoute is true when at least one GRPCRoute contributed to this
+	// config. The proxy reads it at startup to upgrade an "auto"/unset edge
+	// transport to http2: gRPC requires http2 because cloudflared drops HTTP
+	// trailers over QUIC (grpc-status is lost). On the wire gRPC rules are
+	// indistinguishable from HTTP rules with h2c backends, so the controller
+	// marks the presence of gRPC explicitly rather than having the proxy guess.
+	HasGRPCRoute bool `json:"hasGrpcRoute,omitempty"`
 }
 
 // RouteRule represents a single routing rule derived from a Gateway API HTTPRoute.

@@ -338,3 +338,34 @@ tests:
     asserts:
       - failedTemplate:
           errorPattern: authTokenSecretRef
+
+  # ---
+  # proxy.tunnel.protocol schema
+  # ---
+  # Accepted: auto, http2, quic, and the empty string (equivalent to auto --
+  # the template omits the env var and the proxy treats unset as auto). The
+  # empty string is in the enum on purpose so an operator can set it explicitly
+  # to mean "default transport" without tripping schema validation at install.
+
+  - it: should accept empty proxy.tunnel.protocol (equivalent to auto)
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token
+        tunnel:
+          protocol: ""
+    asserts:
+      - template: deployment-proxy.yaml
+        isKind:
+          of: Deployment
+
+  - it: should reject invalid proxy.tunnel.protocol
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token
+        tunnel:
+          protocol: quik
+    asserts:
+      - failedTemplate:
+          errorPattern: protocol

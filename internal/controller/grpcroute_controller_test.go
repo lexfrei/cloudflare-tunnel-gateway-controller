@@ -2177,9 +2177,16 @@ func TestGRPCProtocolWarning(t *testing.T) {
 	}{
 		{name: "http2 with routes is fine", protocol: "http2", count: 2, wantWarn: false},
 		{name: "http2 case-insensitive", protocol: "HTTP2", count: 1, wantWarn: false},
-		{name: "quic with routes warns", protocol: "quic", count: 1, wantWarn: true},
-		{name: "auto with routes warns", protocol: "auto", count: 1, wantWarn: true},
-		{name: "empty with routes warns", protocol: "", count: 1, wantWarn: true},
+		{name: "explicit quic with routes warns", protocol: "quic", count: 1, wantWarn: true},
+		{name: "quic case-insensitive warns", protocol: "QUIC", count: 1, wantWarn: true},
+		{name: "quic padded warns", protocol: " quic ", count: 1, wantWarn: true},
+		// auto/unset is upgraded to http2 by the proxy when a GRPCRoute is
+		// present (or it logs a restart-needed notice), so the controller must
+		// NOT raise the "you're broken" warning for it -- only an explicit quic
+		// is a deliberate, unhandled misconfiguration.
+		{name: "auto with routes is handled (no warn)", protocol: "auto", count: 1, wantWarn: false},
+		{name: "auto case-insensitive is handled (no warn)", protocol: "AUTO", count: 1, wantWarn: false},
+		{name: "empty with routes is handled (no warn)", protocol: "", count: 1, wantWarn: false},
 		{name: "quic without routes is silent", protocol: "quic", count: 0, wantWarn: false},
 		{name: "http2 without routes is silent", protocol: "http2", count: 0, wantWarn: false},
 	}

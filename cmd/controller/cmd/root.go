@@ -66,7 +66,7 @@ func init() {
 	rootCmd.Flags().String("proxy-auth-token", "", "Bearer token for authenticating proxy config push requests")
 	rootCmd.Flags().String("proxy-token-secret", "", "Tunnel-token Secret to watch in `<namespace>/<name>` form; when set, the controller rolls the proxy Deployment whenever the Secret data changes (issue #114). Empty disables the watcher.")
 	rootCmd.Flags().String("proxy-deployment-label", "", "Label selector identifying the proxy Deployment(s) to roll on tunnel-token change, in `key=value` form. Defaults to `app.kubernetes.io/component=proxy` (matches the chart).")
-	rootCmd.Flags().String("tunnel-protocol", "auto", "The proxy's configured edge transport (auto|http2|quic); used to warn when GRPCRoutes are served over a non-http2 tunnel (cloudflared drops trailers over QUIC).")
+	rootCmd.Flags().String("tunnel-protocol", "auto", "The proxy's configured edge transport (auto|http2|quic); used to warn when GRPCRoutes are present on an explicit quic tunnel, which cannot carry gRPC trailers (auto/unset is upgraded to http2 by the proxy).")
 
 	// Deprecated: --gateway-class-name is no longer used. The controller discovers
 	// GatewayClasses by spec.controllerName, not by name.

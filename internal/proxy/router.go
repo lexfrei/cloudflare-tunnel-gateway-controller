@@ -68,16 +68,48 @@ type Router struct {
 	updateMu         sync.Mutex
 	pruner           transportPruner
 	transportFactory TransportFactory
+	// firstConfigCh delivers the first config applied via UpdateConfig exactly
+	// once (guarded by firstConfigOnce). Buffered (size 1) so the send never
+	// blocks even when nothing is waiting yet. The proxy's startup protocol
+	// resolver reads it to learn whether a GRPCRoute is present before dialing.
+	firstConfigCh   chan *Config
+	firstConfigOnce sync.Once
+	// dialedProtocol is the edge transport the proxy actually dialed, recorded
+	// once at startup via SetDialedProtocol. UpdateConfig reads it to warn when a
+	// GRPCRoute arrives after the proxy dialed a non-http2 transport.
+	dialedProtocol atomic.Pointer[string]
+	// grpcRestartWarned makes the restart-needed warning fire at most once
+	// rather than on every config push.
+	grpcRestartWarned atomic.Bool
 }
 
 // NewRouter creates a Router with an empty routing table.
 func NewRouter() *Router {
-	router := &Router{}
+	router := &Router{
+		firstConfigCh: make(chan *Config, 1),
+	}
 	router.table.Store(&routingTable{
 		exactHosts: make(map[string][]*compiledRule),
 	})
 
 	return router
+}
+
+// SetDialedProtocol records the edge transport the proxy dialed at startup so
+// UpdateConfig can warn when a GRPCRoute later arrives on a non-http2 transport.
+// The proxy entrypoint calls it once after resolving the transport, before
+// dialing the tunnel.
+func (r *Router) SetDialedProtocol(protocol string) {
+	r.dialedProtocol.Store(&protocol)
+}
+
+// FirstConfigLoaded returns a channel that delivers the first config applied
+// via UpdateConfig, exactly once. The proxy's startup protocol resolver reads
+// it to decide whether to upgrade an auto/unset edge transport to http2 — gRPC
+// needs http2 because cloudflared drops HTTP trailers over QUIC. For an explicit
+// http2/quic transport the resolver returns immediately and never reads this.
+func (r *Router) FirstConfigLoaded() <-chan *Config {
+	return r.firstConfigCh
 }
 
 // SetHandler registers a handler whose transport pool will be pruned on
@@ -175,7 +207,41 @@ func (r *Router) UpdateConfig(cfg *Config) error {
 		r.pruner.PruneTransports(extractActiveTransportKeys(cfg))
 	}
 
+	// Signal the first successfully-applied config exactly once so the proxy's
+	// startup protocol resolver can learn whether a GRPCRoute is present before
+	// it dials the edge. The channel is buffered (size 1) so this send never
+	// blocks while holding updateMu; sync.Once keeps later pushes from
+	// re-signalling.
+	r.firstConfigOnce.Do(func() {
+		r.firstConfigCh <- cfg
+	})
+
+	r.warnGRPCRestartIfNeeded(cfg)
+
 	return nil
+}
+
+// warnGRPCRestartIfNeeded logs an actionable error, at most once, when a
+// GRPCRoute is now served but the proxy dialed a non-http2 transport at
+// startup. A live re-dial is not safe (cloudflared registers its metrics on the
+// global Prometheus registry and panics on a second orchestrator build), so the
+// operator must restart the proxy; the startup resolver then re-dials on http2
+// because the GRPCRoute is present from the first config push.
+func (r *Router) warnGRPCRestartIfNeeded(cfg *Config) {
+	dialed := r.dialedProtocol.Load()
+	if dialed == nil || !GRPCRestartNeeded(*dialed, cfg.HasGRPCRoute) {
+		return
+	}
+
+	if !r.grpcRestartWarned.CompareAndSwap(false, true) {
+		return
+	}
+
+	slog.Error("a GRPCRoute is now configured but the tunnel was dialed with the "+*dialed+
+		" transport, which cannot carry gRPC (cloudflared drops HTTP trailers over QUIC, so "+
+		"grpc-status is lost). The proxy must be restarted to re-dial on http2, or set "+
+		"proxy.tunnel.protocol=http2.",
+		"dialedProtocol", *dialed)
 }
 
 // extractActiveTransportKeys collects all backend transport-pool keys from the

@@ -1,17 +1,80 @@
 package proxy_test
 
 import (
+	"bytes"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/proxy"
 )
+
+// TestRouter_WarnsRestartOnceForGRPCOverNonHTTP2 pins the runtime restart-needed
+// signal: when the proxy dialed a non-http2 transport and a config later brings
+// in a GRPCRoute, UpdateConfig logs an actionable error exactly once (not on
+// every subsequent push). Not parallel: it swaps the global slog default to
+// capture the log; Go runs non-parallel tests while parallel ones are paused.
+func TestRouter_WarnsRestartOnceForGRPCOverNonHTTP2(t *testing.T) {
+	var buf bytes.Buffer
+
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelError})))
+
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	router := proxy.NewRouter()
+	router.SetDialedProtocol("auto")
+
+	require.NoError(t, router.UpdateConfig(&proxy.Config{Version: 1, HasGRPCRoute: true}))
+	require.NoError(t, router.UpdateConfig(&proxy.Config{Version: 2, HasGRPCRoute: true}))
+
+	out := buf.String()
+	assert.Contains(t, out, "restart")
+	assert.Contains(t, out, "http2")
+	assert.Equal(t, 1, strings.Count(out, "GRPCRoute"),
+		"the restart-needed warning must be logged at most once, not on every push")
+}
+
+// TestRouter_FirstConfigLoaded_SignalsOnceWithGRPCFlag pins the startup
+// signal the proxy uses to choose its edge transport: the first applied
+// config is delivered once on FirstConfigLoaded() carrying HasGRPCRoute, and
+// later config pushes do NOT re-signal (the resolver reads exactly once).
+func TestRouter_FirstConfigLoaded_SignalsOnceWithGRPCFlag(t *testing.T) {
+	t.Parallel()
+
+	router := proxy.NewRouter()
+
+	select {
+	case <-router.FirstConfigLoaded():
+		t.Fatal("FirstConfigLoaded fired before any config was applied")
+	default:
+	}
+
+	require.NoError(t, router.UpdateConfig(&proxy.Config{Version: 1, HasGRPCRoute: true}))
+
+	select {
+	case got := <-router.FirstConfigLoaded():
+		require.NotNil(t, got)
+		assert.True(t, got.HasGRPCRoute, "first-config signal must carry the gRPC marker")
+	case <-time.After(2 * time.Second):
+		t.Fatal("FirstConfigLoaded did not fire after the first UpdateConfig")
+	}
+
+	require.NoError(t, router.UpdateConfig(&proxy.Config{Version: 2, HasGRPCRoute: false}))
+
+	select {
+	case <-router.FirstConfigLoaded():
+		t.Fatal("FirstConfigLoaded fired a second time; it must signal only the first config")
+	case <-time.After(50 * time.Millisecond):
+	}
+}
 
 func TestRouter_EmptyConfig(t *testing.T) {
 	t.Parallel()
