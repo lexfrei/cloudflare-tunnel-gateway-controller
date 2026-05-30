@@ -346,6 +346,8 @@ func TestProxySyncer_SyncRoutes_H2CBackend(t *testing.T) {
 	require.Len(t, receivedConfig.Rules[0].Backends, 1)
 	assert.Equal(t, proxy.BackendProtocolH2C, receivedConfig.Rules[0].Backends[0].Protocol,
 		"backend on a Service port with appProtocol kubernetes.io/h2c must be marked h2c")
+	assert.False(t, receivedConfig.HasGRPCRoute,
+		"an HTTPRoute with an h2c backend is not a GRPCRoute -- HasGRPCRoute must stay false")
 }
 
 // TestProxySyncer_SyncRoutes_GRPCRoute pins the wiring: a
@@ -420,6 +422,8 @@ func TestProxySyncer_SyncRoutes_GRPCRoute(t *testing.T) {
 	assert.Equal(t, "/grpc.examples.echo.Echo/UnaryEcho", receivedConfig.Rules[0].Matches[0].Path.Value)
 	require.Len(t, receivedConfig.Rules[0].Backends, 1)
 	assert.Equal(t, proxy.BackendProtocolH2C, receivedConfig.Rules[0].Backends[0].Protocol)
+	assert.True(t, receivedConfig.HasGRPCRoute,
+		"a pushed config carrying a GRPCRoute must set HasGRPCRoute so the proxy can pick http2 at startup")
 }
 
 // TestProxySyncer_SyncRoutes_GRPCFailedRefMarked proves the spec-correct 500

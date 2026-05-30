@@ -713,6 +713,12 @@ func (s *ProxySyncer) buildProxyConfig(
 	// nonexistent and endpoint-less.
 	markZeroEndpointBackends(ctx, s.k8sClient, cfg, s.clusterDomain, routes, grpcRoutes)
 
+	// Mark whether any GRPCRoute contributed to this config so the proxy can
+	// upgrade an "auto"/unset edge transport to http2 at startup (gRPC needs
+	// http2; cloudflared drops trailers over QUIC). gRPC rules look identical
+	// to h2c HTTP rules on the wire, so the signal must be explicit.
+	cfg.HasGRPCRoute = len(grpcRoutes) > 0
+
 	return cfg
 }
 
