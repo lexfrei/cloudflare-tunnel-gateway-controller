@@ -992,6 +992,151 @@ func TestGRPCRouteReconciler_UpdateRouteStatus_Integration(t *testing.T) {
 	assert.Equal(t, string(gatewayv1.RouteReasonAccepted), acceptedCondition.Reason)
 }
 
+func TestGRPCRouteReconciler_UpdateRouteStatus_QuicUnsupportedProtocol(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		// bindingOverride, when set, replaces the default accepted binding so a
+		// case can exercise a rejected binding alongside the quic override.
+		bindingOverride *routebinding.BindingResult
+		protocol        string
+		syncErr         error
+		wantStatus      metav1.ConditionStatus
+		wantReason      string
+		wantMessage     []string // substrings the message must contain (UnsupportedProtocol case)
+	}{
+		{
+			name:        "explicit quic with a gRPC route is not accepted",
+			protocol:    "quic",
+			wantStatus:  metav1.ConditionFalse,
+			wantReason:  string(gatewayv1.RouteReasonUnsupportedProtocol),
+			wantMessage: []string{"quic", "http2"},
+		},
+		{
+			// Binding rejection is more specific than the quic incompatibility and
+			// must keep precedence over the override.
+			name:     "binding rejection takes precedence over the quic override",
+			protocol: "quic",
+			bindingOverride: &routebinding.BindingResult{
+				Accepted: false,
+				Reason:   gatewayv1.RouteReasonNoMatchingParent,
+				Message:  "No matching listener found",
+			},
+			wantStatus: metav1.ConditionFalse,
+			wantReason: string(gatewayv1.RouteReasonNoMatchingParent),
+		},
+		{
+			name:       "http2 accepts the gRPC route",
+			protocol:   "http2",
+			wantStatus: metav1.ConditionTrue,
+			wantReason: string(gatewayv1.RouteReasonAccepted),
+		},
+		{
+			name:       "auto accepts the gRPC route (proxy upgrades to http2)",
+			protocol:   "auto",
+			wantStatus: metav1.ConditionTrue,
+			wantReason: string(gatewayv1.RouteReasonAccepted),
+		},
+		{
+			name:       "unset accepts the gRPC route",
+			protocol:   "",
+			wantStatus: metav1.ConditionTrue,
+			wantReason: string(gatewayv1.RouteReasonAccepted),
+		},
+		{
+			// A sync error is a more specific, higher-precedence problem than the
+			// quic incompatibility, so it must win the Accepted reason.
+			name:       "sync error takes precedence over the quic incompatibility",
+			protocol:   "quic",
+			syncErr:    assert.AnError,
+			wantStatus: metav1.ConditionFalse,
+			wantReason: string(gatewayv1.RouteReasonPending),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			scheme := runtime.NewScheme()
+			require.NoError(t, gatewayv1.Install(scheme))
+			require.NoError(t, corev1.AddToScheme(scheme))
+			require.NoError(t, v1alpha1.AddToScheme(scheme))
+
+			gatewayClass := &gatewayv1.GatewayClass{
+				ObjectMeta: metav1.ObjectMeta{Name: "cloudflare-tunnel"},
+				Spec:       gatewayv1.GatewayClassSpec{ControllerName: "test-controller"},
+			}
+			gateway := &gatewayv1.Gateway{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-gateway", Namespace: "default"},
+				Spec: gatewayv1.GatewaySpec{
+					GatewayClassName: "cloudflare-tunnel",
+					Listeners: []gatewayv1.Listener{
+						{Name: "grpc", Port: 443, Protocol: gatewayv1.HTTPSProtocolType},
+					},
+				},
+			}
+			route := &gatewayv1.GRPCRoute{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-route", Namespace: "default"},
+				Spec: gatewayv1.GRPCRouteSpec{
+					CommonRouteSpec: gatewayv1.CommonRouteSpec{
+						ParentRefs: []gatewayv1.ParentReference{{Name: "test-gateway"}},
+					},
+				},
+			}
+
+			fakeClient := fake.NewClientBuilder().
+				WithScheme(scheme).
+				WithObjects(gatewayClass, gateway, route).
+				WithStatusSubresource(route).
+				Build()
+
+			configResolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector())
+			routeSyncer := NewRouteSyncer(fakeClient, scheme, "cluster.local", "cloudflare-tunnel", configResolver, cfmetrics.NewNoopCollector(), nil)
+
+			r := &GRPCRouteReconciler{
+				Client:         fakeClient,
+				Scheme:         scheme,
+				ControllerName: "test-controller",
+				RouteSyncer:    routeSyncer,
+				TunnelProtocol: tt.protocol,
+			}
+
+			binding := routebinding.BindingResult{Accepted: true, Reason: gatewayv1.RouteReasonAccepted, Message: "Route accepted"}
+			if tt.bindingOverride != nil {
+				binding = *tt.bindingOverride
+			}
+
+			bindingInfo := routeBindingInfo{
+				bindingResults: map[int]routebinding.BindingResult{0: binding},
+			}
+
+			require.NoError(t, r.updateRouteStatus(context.Background(), route, bindingInfo, nil, tt.syncErr))
+
+			var updated gatewayv1.GRPCRoute
+			require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKey{Name: "test-route", Namespace: "default"}, &updated))
+			require.Len(t, updated.Status.Parents, 1)
+
+			var accepted *metav1.Condition
+			for i := range updated.Status.Parents[0].Conditions {
+				if updated.Status.Parents[0].Conditions[i].Type == string(gatewayv1.RouteConditionAccepted) {
+					accepted = &updated.Status.Parents[0].Conditions[i]
+
+					break
+				}
+			}
+			require.NotNil(t, accepted)
+			assert.Equal(t, tt.wantStatus, accepted.Status)
+			assert.Equal(t, tt.wantReason, accepted.Reason)
+
+			for _, sub := range tt.wantMessage {
+				assert.Contains(t, accepted.Message, sub)
+			}
+		})
+	}
+}
+
 func TestGRPCRouteReconciler_UpdateRouteStatus_NotAccepted(t *testing.T) {
 	t.Parallel()
 

@@ -29,6 +29,20 @@ type routeAccessor struct {
 type routeStatusUpdateParams struct {
 	k8sClient      client.Client
 	controllerName string
+	// acceptedOverride, when non-nil, downgrades an otherwise-Accepted route to
+	// Accepted=False with this reason/message. The GRPCRoute reconciler sets it
+	// for gRPC served over an explicit quic tunnel (cloudflared drops HTTP
+	// trailers over QUIC, so grpc-status is lost). A sync error or a binding
+	// rejection is a more specific problem and takes precedence, so the override
+	// only applies when the route would otherwise be Accepted=True.
+	acceptedOverride *acceptedConditionOverride
+}
+
+// acceptedConditionOverride carries the reason/message used to downgrade an
+// otherwise-Accepted route condition to Accepted=False.
+type acceptedConditionOverride struct {
+	reason  string
+	message string
 }
 
 // updateRouteStatusGeneric updates the status of a route with per-parent binding conditions.
@@ -125,6 +139,7 @@ func resolveParentRefStatus(
 		accessor.generation(), now,
 		bindingInfo, refIdx,
 		failedRefs, syncErr,
+		params.acceptedOverride,
 	)
 
 	return &parentStatus
@@ -162,6 +177,7 @@ func buildParentStatus(
 	refIdx int,
 	failedRefs []ingress.BackendRefError,
 	syncErr error,
+	acceptedOverride *acceptedConditionOverride,
 ) gatewayv1.RouteParentStatus {
 	parentNS := gatewayv1.Namespace(namespace)
 
@@ -176,7 +192,7 @@ func buildParentStatus(
 		},
 		ControllerName: gatewayv1.GatewayController(controllerName),
 		Conditions: []metav1.Condition{
-			buildAcceptedCondition(generation, now, bindingInfo, refIdx, syncErr),
+			buildAcceptedCondition(generation, now, bindingInfo, refIdx, syncErr, acceptedOverride),
 			buildResolvedRefsCondition(generation, now, failedRefs),
 		},
 	}
@@ -188,6 +204,7 @@ func buildAcceptedCondition(
 	bindingInfo routeBindingInfo,
 	refIdx int,
 	syncErr error,
+	override *acceptedConditionOverride,
 ) metav1.Condition {
 	status := metav1.ConditionTrue
 	reason := string(gatewayv1.RouteReasonAccepted)
@@ -201,6 +218,13 @@ func buildAcceptedCondition(
 		status = metav1.ConditionFalse
 		reason = string(bindingResult.Reason)
 		message = bindingResult.Message
+	} else if override != nil {
+		// The route binds fine but cannot be served as written (e.g. gRPC over an
+		// explicit quic tunnel). Lowest precedence: a sync error or binding
+		// rejection above is the more specific problem.
+		status = metav1.ConditionFalse
+		reason = override.reason
+		message = override.message
 	}
 
 	return metav1.Condition{

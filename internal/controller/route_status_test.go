@@ -32,7 +32,7 @@ func TestBuildParentStatus_IncludesPort(t *testing.T) {
 
 	status := buildParentStatus(
 		ref, "default", "test-controller", 1,
-		metav1.Now(), routeBindingInfo{}, 0, nil, nil,
+		metav1.Now(), routeBindingInfo{}, 0, nil, nil, nil,
 	)
 
 	require.NotNil(t, status.ParentRef.Port)
@@ -48,7 +48,7 @@ func TestBuildParentStatus_NilPort(t *testing.T) {
 
 	status := buildParentStatus(
 		ref, "default", "test-controller", 1,
-		metav1.Now(), routeBindingInfo{}, 0, nil, nil,
+		metav1.Now(), routeBindingInfo{}, 0, nil, nil, nil,
 	)
 
 	assert.Nil(t, status.ParentRef.Port)
@@ -83,7 +83,7 @@ func TestBuildParentStatus_NoMatchingParent_ConformancePin(t *testing.T) {
 
 	status := buildParentStatus(
 		ref, "gateway-conformance-infra", "test-controller", 7,
-		metav1.Now(), bindingInfo, 0, nil, nil,
+		metav1.Now(), bindingInfo, 0, nil, nil, nil,
 	)
 
 	require.NotNil(t, status.ParentRef.Port)
@@ -119,12 +119,12 @@ func TestBuildAcceptedCondition_OnlySyncErrorTriggersPending(t *testing.T) {
 	now := metav1.Now()
 
 	// Healthy sync, healthy binding → Accepted=True.
-	cond := buildAcceptedCondition(1, now, routeBindingInfo{}, 0, nil)
+	cond := buildAcceptedCondition(1, now, routeBindingInfo{}, 0, nil, nil)
 	assert.Equal(t, metav1.ConditionTrue, cond.Status)
 	assert.Equal(t, string(gatewayv1.RouteReasonAccepted), cond.Reason)
 
 	// Cloudflare sync failure → Accepted=False, Reason=Pending.
-	cond = buildAcceptedCondition(1, now, routeBindingInfo{}, 0, errCloudflareSync)
+	cond = buildAcceptedCondition(1, now, routeBindingInfo{}, 0, errCloudflareSync, nil)
 	assert.Equal(t, metav1.ConditionFalse, cond.Status)
 	assert.Equal(t, string(gatewayv1.RouteReasonPending), cond.Reason)
 	assert.Equal(t, errCloudflareSync.Error(), cond.Message)
@@ -142,13 +142,13 @@ func TestBuildAcceptedCondition_OnlySyncErrorTriggersPending(t *testing.T) {
 			},
 		},
 	}
-	cond = buildAcceptedCondition(1, now, bindingInfo, 0, nil)
+	cond = buildAcceptedCondition(1, now, bindingInfo, 0, nil, nil)
 	assert.Equal(t, metav1.ConditionFalse, cond.Status)
 	assert.Equal(t, string(gatewayv1.RouteReasonNoMatchingParent), cond.Reason)
 
 	// syncErr wins over a rejected binding: when Cloudflare sync fails we
 	// surface the sync error first so operators see the actionable cause.
-	cond = buildAcceptedCondition(1, now, bindingInfo, 0, errCloudflareSync)
+	cond = buildAcceptedCondition(1, now, bindingInfo, 0, errCloudflareSync, nil)
 	assert.Equal(t, metav1.ConditionFalse, cond.Status)
 	assert.Equal(t, string(gatewayv1.RouteReasonPending), cond.Reason)
 }
