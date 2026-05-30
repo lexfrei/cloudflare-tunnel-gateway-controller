@@ -666,7 +666,18 @@ func testHTTPRouteWeight(
 	createHTTPRoute(t, k8sClient, route)
 	waitForBackend(t, httpClient, cfg.TunnelHostname, "/wt-test", "echo-v", 60*time.Second)
 
-	const total = 30
+	// Weighted backend selection is an independent per-request draw: the proxy
+	// re-runs selectBackend on every request, so connection reuse never pins a
+	// backend (the e2e client also sets DisableKeepAlives). With a 90:10 split,
+	// the chance echo-v2 receives zero requests is 0.9^total. At total=150 that
+	// is ~1.4e-7, making the "echo-v2 got at least one" assertion effectively
+	// deterministic. A small sample (e.g. 30 → 0.9^30 ≈ 4.2%) flakes. We
+	// deliberately avoid a tight upper proportion bound (e.g. "echo-v1 ≤ 98%"):
+	// its tail probability (~1e-4 at this sample size) is orders of magnitude
+	// larger and would reintroduce the same sampling flake from the other side.
+	// The majority check on echo-v1 is the symmetric sanity guard against an
+	// inverted-weight routing bug.
+	const total = 150
 
 	v1, v2 := 0, 0
 
