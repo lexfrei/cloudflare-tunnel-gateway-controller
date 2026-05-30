@@ -168,6 +168,7 @@ helm upgrade --install "${RELEASE_NAME}" \
   --set proxy.image.tag="${PROXY_IMAGE##*:}" \
   --set proxy.image.pullPolicy=Never \
   --set proxy.tunnelTokenSecretRef.name=cloudflare-tunnel-token \
+  --set proxy.tunnel.protocol=http2 \
   --set controller.logLevel=debug \
   --wait --timeout 120s
 
