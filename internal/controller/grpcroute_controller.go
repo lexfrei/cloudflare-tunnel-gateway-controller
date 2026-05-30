@@ -18,6 +18,22 @@ import (
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/routebinding"
 )
 
+// grpcQUICUnsupportedStatusMessage is the actionable GRPCRoute status message
+// for an explicit quic tunnel, surfaced on the route's Accepted=False /
+// UnsupportedProtocol condition. It names the incompatibility and the exact
+// remediation so an operator can act without reading source.
+const grpcQUICUnsupportedStatusMessage = "gRPC is not compatible with the \"quic\" tunnel transport " +
+	"(cloudflared drops HTTP trailers over QUIC, so grpc-status is lost). Set proxy.tunnel.protocol " +
+	"to \"http2\" (or \"auto\"/unset, which the controller will upgrade to http2 for gRPC) to enable this route."
+
+// isExplicitQUIC reports whether the operator deliberately pinned the tunnel
+// transport to quic (case-insensitive, trimmed). Only an explicit quic is a
+// gRPC misconfiguration the controller flags: auto/unset is upgraded to http2
+// by the proxy when a GRPCRoute is present, and http2 carries trailers.
+func isExplicitQUIC(protocol string) bool {
+	return strings.EqualFold(strings.TrimSpace(protocol), "quic")
+}
+
 // grpcProtocolWarning returns an operator-facing message (and true) when
 // GRPCRoutes are configured AND the operator has explicitly pinned the tunnel
 // transport to quic. cloudflared does not forward HTTP trailers over QUIC, so
@@ -35,7 +51,7 @@ func grpcProtocolWarning(protocol string, grpcRouteCount int) (string, bool) {
 		return "", false
 	}
 
-	if !strings.EqualFold(strings.TrimSpace(protocol), "quic") {
+	if !isExplicitQUIC(protocol) {
 		return "", false
 	}
 
@@ -132,12 +148,25 @@ func (r *GRPCRouteReconciler) updateRouteStatus(
 	failedRefs []ingress.BackendRefError,
 	syncErr error,
 ) error {
+	params := routeStatusUpdateParams{
+		k8sClient:      r.Client,
+		controllerName: r.ControllerName,
+	}
+
+	// gRPC over an explicit quic tunnel cannot be served (cloudflared drops HTTP
+	// trailers over QUIC, so grpc-status is lost), so surface it on the route as
+	// Accepted=False / UnsupportedProtocol. auto/unset is upgraded to http2 by
+	// the proxy when a GRPCRoute is present, so it is not flagged here.
+	if isExplicitQUIC(r.TunnelProtocol) {
+		params.acceptedOverride = &acceptedConditionOverride{
+			reason:  string(gatewayv1.RouteReasonUnsupportedProtocol),
+			message: grpcQUICUnsupportedStatusMessage,
+		}
+	}
+
 	return updateRouteStatusGeneric(
 		ctx,
-		routeStatusUpdateParams{
-			k8sClient:      r.Client,
-			controllerName: r.ControllerName,
-		},
+		params,
 		types.NamespacedName{Name: route.Name, Namespace: route.Namespace},
 		newGRPCRouteAccessor,
 		bindingInfo,
