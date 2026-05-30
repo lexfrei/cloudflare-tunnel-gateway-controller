@@ -565,7 +565,8 @@
           "properties": {
             "protocol": {
               "type": "string",
-              "enum": ["auto", "http2", "quic"],
+              "description": "Edge transport: 'auto' (QUIC with HTTP/2 fallback), 'http2', or 'quic'. Empty string is allowed and is equivalent to 'auto' (the template omits the env var, and the proxy treats unset as auto). GRPCRoute needs http2; auto/unset is upgraded to http2 by the proxy when a GRPCRoute is present.",
+              "enum": ["", "auto", "http2", "quic"],
               "default": "auto"
             }
           }

@@ -321,3 +321,19 @@ tests:
           content:
             name: PROXY_TUNNEL_PROTOCOL
             value: "auto"
+
+  - it: should omit PROXY_TUNNEL_PROTOCOL when proxy.tunnel.protocol is empty
+    # Empty string is a schema-valid value equivalent to "auto": the
+    # {{- with }} guard omits the env var entirely, and the proxy treats an
+    # unset PROXY_TUNNEL_PROTOCOL as auto. An operator may set it explicitly to
+    # "" to mean "use the default transport".
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
+        tunnel:
+          protocol: ""
+    asserts:
+      - notMatchRegex:
+          path: spec.template.spec.containers[0].env[*].name
+          pattern: "^PROXY_TUNNEL_PROTOCOL$"
