@@ -6,6 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -213,6 +214,229 @@ func TestListenerSetReconciler_MarksAllListenersValidNotValidWhenAllConflict(t *
 	assert.Equal(t, string(gatewayv1.ListenerReasonHostnameConflict), entryConflicted.Reason)
 }
 
+// TestListenerSetReconciler_ConflictedEntryStillCountsAttachedRoutes pins that a
+// route attached to a conflicted ListenerSet entry is still counted in
+// AttachedRoutes. Per the Gateway API spec, attachment depends solely on
+// AllowedRoutes + ParentRefs; the listener's own status (here Conflicted /
+// Programmed=False) MUST NOT reduce the count.
+func TestListenerSetReconciler_ConflictedEntryStillCountsAttachedRoutes(t *testing.T) {
+	t.Parallel()
+
+	from := gatewayv1.NamespacesFromSame
+	conflictHost := gatewayv1.Hostname("conflict.example.com")
+	section := gatewayv1.SectionName("only")
+	lsKind := gatewayv1.Kind(kindListenerSet)
+
+	gc := managedGatewayClass()
+	gw := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "infra"},
+		Spec: gatewayv1.GatewaySpec{
+			GatewayClassName: gatewayv1.ObjectName(gc.Name),
+			AllowedListeners: &gatewayv1.AllowedListeners{
+				Namespaces: &gatewayv1.ListenerNamespaces{From: &from},
+			},
+			Listeners: []gatewayv1.Listener{
+				{Name: "gw-l1", Port: 80, Protocol: gatewayv1.HTTPProtocolType, Hostname: &conflictHost},
+			},
+		},
+	}
+	ls := &gatewayv1.ListenerSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "ls", Namespace: "infra"},
+		Spec: gatewayv1.ListenerSetSpec{
+			ParentRef: gatewayv1.ParentGatewayReference{Name: gatewayv1.ObjectName(gw.Name)},
+			Listeners: []gatewayv1.ListenerEntry{
+				{
+					Name: section, Port: 80, Protocol: gatewayv1.HTTPProtocolType, Hostname: &conflictHost,
+					AllowedRoutes: &gatewayv1.AllowedRoutes{
+						Namespaces: &gatewayv1.RouteNamespaces{From: namespacesFromAllPtr()},
+					},
+				},
+			},
+		},
+	}
+	route := &gatewayv1.HTTPRoute{
+		ObjectMeta: metav1.ObjectMeta{Name: "r", Namespace: "infra"},
+		Spec: gatewayv1.HTTPRouteSpec{
+			CommonRouteSpec: gatewayv1.CommonRouteSpec{
+				ParentRefs: []gatewayv1.ParentReference{
+					{Kind: &lsKind, Name: gatewayv1.ObjectName(ls.Name), SectionName: &section},
+				},
+			},
+		},
+	}
+
+	r, cli := newListenerSetReconcilerWithObjects(t, newListenerSetScheme(t), gc, gw, ls, route)
+
+	_, err := r.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: ls.Name, Namespace: ls.Namespace},
+	})
+	require.NoError(t, err)
+
+	updated := getListenerSet(t, cli, ls.Name, ls.Namespace)
+	require.Len(t, updated.Status.Listeners, 1)
+	entry := updated.Status.Listeners[0]
+
+	// The entry IS conflicted (and therefore not programmed)...
+	entryConflicted := findCondition(entry.Conditions, string(gatewayv1.ListenerConditionConflicted))
+	require.NotNil(t, entryConflicted)
+	assert.Equal(t, metav1.ConditionTrue, entryConflicted.Status)
+
+	// ...yet the attached route is still counted.
+	assert.Equal(t, int32(1), entry.AttachedRoutes,
+		"a route attached to a conflicted listener is still counted per Gateway API AttachedRoutes semantics")
+}
+
+// TestListenerSetReconciler_UnresolvedTLSRefStillCountsAttachedRoutes pins that
+// a route attached to an HTTPS ListenerSet entry whose TLS certificate ref fails
+// to resolve (ResolvedRefs=False, Programmed=False) is still counted in
+// AttachedRoutes. The Gateway API spec makes attachment depend solely on
+// AllowedRoutes + ParentRefs, independent of the listener's own status, so the
+// non-zero count is correct, not a defect.
+func TestListenerSetReconciler_UnresolvedTLSRefStillCountsAttachedRoutes(t *testing.T) {
+	t.Parallel()
+
+	from := gatewayv1.NamespacesFromSame
+	section := gatewayv1.SectionName("https")
+	lsKind := gatewayv1.Kind(kindListenerSet)
+
+	gc := managedGatewayClass()
+	gw := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "infra"},
+		Spec: gatewayv1.GatewaySpec{
+			GatewayClassName: gatewayv1.ObjectName(gc.Name),
+			AllowedListeners: &gatewayv1.AllowedListeners{
+				Namespaces: &gatewayv1.ListenerNamespaces{From: &from},
+			},
+			Listeners: []gatewayv1.Listener{
+				{Name: "gw-l1", Port: 80, Protocol: gatewayv1.HTTPProtocolType},
+			},
+		},
+	}
+	ls := &gatewayv1.ListenerSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "ls", Namespace: "infra"},
+		Spec: gatewayv1.ListenerSetSpec{
+			ParentRef: gatewayv1.ParentGatewayReference{Name: gatewayv1.ObjectName(gw.Name)},
+			Listeners: []gatewayv1.ListenerEntry{
+				{
+					Name: section, Port: 443, Protocol: gatewayv1.HTTPSProtocolType,
+					TLS: &gatewayv1.ListenerTLSConfig{
+						CertificateRefs: []gatewayv1.SecretObjectReference{{Name: "missing"}},
+					},
+					AllowedRoutes: &gatewayv1.AllowedRoutes{
+						Namespaces: &gatewayv1.RouteNamespaces{From: namespacesFromAllPtr()},
+					},
+				},
+			},
+		},
+	}
+	route := &gatewayv1.HTTPRoute{
+		ObjectMeta: metav1.ObjectMeta{Name: "r", Namespace: "infra"},
+		Spec: gatewayv1.HTTPRouteSpec{
+			CommonRouteSpec: gatewayv1.CommonRouteSpec{
+				ParentRefs: []gatewayv1.ParentReference{
+					{Kind: &lsKind, Name: gatewayv1.ObjectName(ls.Name), SectionName: &section},
+				},
+			},
+		},
+	}
+
+	scheme := newListenerSetScheme(t)
+	require.NoError(t, corev1.AddToScheme(scheme))
+	r, cli := newListenerSetReconcilerWithObjects(t, scheme, gc, gw, ls, route)
+
+	_, err := r.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: ls.Name, Namespace: ls.Namespace},
+	})
+	require.NoError(t, err)
+
+	updated := getListenerSet(t, cli, ls.Name, ls.Namespace)
+	require.Len(t, updated.Status.Listeners, 1)
+	entry := updated.Status.Listeners[0]
+
+	// The cert ref did not resolve, so the entry is not programmed...
+	entryResolved := findCondition(entry.Conditions, string(gatewayv1.ListenerConditionResolvedRefs))
+	require.NotNil(t, entryResolved)
+	assert.Equal(t, metav1.ConditionFalse, entryResolved.Status)
+
+	entryProgrammed := findCondition(entry.Conditions, string(gatewayv1.ListenerConditionProgrammed))
+	require.NotNil(t, entryProgrammed)
+	assert.Equal(t, metav1.ConditionFalse, entryProgrammed.Status)
+
+	// ...yet the attached route is still counted.
+	assert.Equal(t, int32(1), entry.AttachedRoutes,
+		"a route attached to a listener with unresolved TLS refs is still counted per Gateway API AttachedRoutes semantics")
+}
+
+// TestListenerSetReconciler_RejectedListenerSetReportsZeroAttachedRoutes pins
+// that a ListenerSet rejected at the resource level (NotAllowed by the parent
+// Gateway's allowedListeners) reports AttachedRoutes=0 for its entries even when
+// a route targets them. The entries are not part of any merged Gateway, so no
+// route can be Accepted on them, and the spec counts only Accepted routes — this
+// is deliberately different from a conflicted entry on an accepted ListenerSet,
+// which does count its attached routes.
+func TestListenerSetReconciler_RejectedListenerSetReportsZeroAttachedRoutes(t *testing.T) {
+	t.Parallel()
+
+	section := gatewayv1.SectionName("only")
+	lsKind := gatewayv1.Kind(kindListenerSet)
+
+	gc := managedGatewayClass()
+	// No AllowedListeners on the Gateway → the ListenerSet is NotAllowed.
+	gw := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "infra"},
+		Spec: gatewayv1.GatewaySpec{
+			GatewayClassName: gatewayv1.ObjectName(gc.Name),
+			Listeners: []gatewayv1.Listener{
+				{Name: "gw-l1", Port: 80, Protocol: gatewayv1.HTTPProtocolType},
+			},
+		},
+	}
+	ls := &gatewayv1.ListenerSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "ls", Namespace: "infra"},
+		Spec: gatewayv1.ListenerSetSpec{
+			ParentRef: gatewayv1.ParentGatewayReference{Name: gatewayv1.ObjectName(gw.Name)},
+			Listeners: []gatewayv1.ListenerEntry{
+				{
+					Name: section, Port: 80, Protocol: gatewayv1.HTTPProtocolType,
+					AllowedRoutes: &gatewayv1.AllowedRoutes{
+						Namespaces: &gatewayv1.RouteNamespaces{From: namespacesFromAllPtr()},
+					},
+				},
+			},
+		},
+	}
+	route := &gatewayv1.HTTPRoute{
+		ObjectMeta: metav1.ObjectMeta{Name: "r", Namespace: "infra"},
+		Spec: gatewayv1.HTTPRouteSpec{
+			CommonRouteSpec: gatewayv1.CommonRouteSpec{
+				ParentRefs: []gatewayv1.ParentReference{
+					{Kind: &lsKind, Name: gatewayv1.ObjectName(ls.Name), SectionName: &section},
+				},
+			},
+		},
+	}
+
+	r, cli := newListenerSetReconcilerWithObjects(t, newListenerSetScheme(t), gc, gw, ls, route)
+
+	_, err := r.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: ls.Name, Namespace: ls.Namespace},
+	})
+	require.NoError(t, err)
+
+	updated := getListenerSet(t, cli, ls.Name, ls.Namespace)
+
+	// The ListenerSet is rejected at the resource level...
+	accepted := findCondition(updated.Status.Conditions, string(gatewayv1.ListenerSetConditionAccepted))
+	require.NotNil(t, accepted)
+	assert.Equal(t, metav1.ConditionFalse, accepted.Status)
+	assert.Equal(t, string(gatewayv1.ListenerSetReasonNotAllowed), accepted.Reason)
+
+	// ...so its entries report zero attached routes despite the targeting route.
+	require.Len(t, updated.Status.Listeners, 1)
+	assert.Equal(t, int32(0), updated.Status.Listeners[0].AttachedRoutes,
+		"a route targeting a resource-level-rejected ListenerSet is not Accepted and must not be counted")
+}
+
 func TestListenerSetReconciler_SkipsWhenParentNotManaged(t *testing.T) {
 	t.Parallel()
 
@@ -267,6 +491,26 @@ func newListenerSetReconciler(
 	cli := fake.NewClientBuilder().
 		WithScheme(scheme).
 		WithObjects(gc, gw, ls).
+		WithStatusSubresource(&gatewayv1.ListenerSet{}, &gatewayv1.Gateway{}).
+		Build()
+
+	return &ListenerSetReconciler{
+		Client:         cli,
+		Scheme:         scheme,
+		ControllerName: testListenerSetController,
+	}, cli
+}
+
+func newListenerSetReconcilerWithObjects(
+	t *testing.T,
+	scheme *runtime.Scheme,
+	objs ...client.Object,
+) (*ListenerSetReconciler, client.Client) {
+	t.Helper()
+
+	cli := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(objs...).
 		WithStatusSubresource(&gatewayv1.ListenerSet{}, &gatewayv1.Gateway{}).
 		Build()
 

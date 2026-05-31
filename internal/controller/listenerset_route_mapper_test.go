@@ -315,7 +315,7 @@ func TestIncrementListenerSetAttachedRoutes_DeduplicatesDuplicateParentRefs(t *t
 	counts := map[gatewayv1.SectionName]int32{"entry": 0}
 
 	incrementListenerSetAttachedRoutes(
-		context.Background(), validator, ls, nil,
+		context.Background(), validator, ls,
 		"team-a", "r", nil, routebinding.KindHTTPRoute, dupRefs, counts,
 	)
 

@@ -243,7 +243,7 @@ func (r *ListenerSetReconciler) computeAcceptance(
 
 	accepted, summaryReason, summaryMessage := summariseListenerSet(merged, listenerSet, refChecks)
 
-	attached, attachErr := r.countAttachedRoutesPerEntry(ctx, listenerSet, merged)
+	attached, attachErr := r.countAttachedRoutesPerEntry(ctx, listenerSet)
 	if attachErr != nil {
 		return listenerSetAcceptanceResult{
 			Accepted: false,
@@ -265,14 +265,23 @@ func (r *ListenerSetReconciler) computeAcceptance(
 // countAttachedRoutesPerEntry returns the number of accepted HTTPRoutes (and
 // GRPCRoutes) that bind to each entry of the ListenerSet via parentRef.
 // "Accepted" mirrors RouteSyncer's binding contract: hostname intersects,
-// allowedRoutes.namespaces permits the route, route kind is allowed. Entries
-// marked conflicted in the merged view are excluded — a route that "matches"
-// a conflicted listener is not counted as attached, because the entry will
-// not be programmed.
+// allowedRoutes.namespaces permits the route, route kind is allowed.
+//
+// Per the Gateway API spec (ListenerEntryStatus.AttachedRoutes), attachment
+// depends SOLELY on AllowedRoutes + ParentRefs plus the route's own Accepted
+// state: "the AttachedRoutes field count MUST be set for Listeners, even if the
+// Accepted condition of an individual Listener is set to False". Only the route's
+// binding-Accepted verdict gates the count; a listener's own status — whether
+// Conflicted, or Programmed=False because a TLS cert ref did not resolve — never
+// changes it. The count is observational (blast radius) and intentionally
+// decoupled from programming: a route on a Conflicted entry is counted here even
+// though the data plane drops it (see filterMatchedListenersByConflict in
+// route_parent_binding.go and dropConflictedSections in
+// route_effective_hostnames.go). Do not re-add a listener-status gate to "fix"
+// that apparent mismatch — the divergence is spec-mandated.
 func (r *ListenerSetReconciler) countAttachedRoutesPerEntry(
 	ctx context.Context,
 	listenerSet *gatewayv1.ListenerSet,
-	merged *listenermerge.MergeResult,
 ) (map[gatewayv1.SectionName]int32, error) {
 	out := make(map[gatewayv1.SectionName]int32, len(listenerSet.Spec.Listeners))
 	for i := range listenerSet.Spec.Listeners {
@@ -281,11 +290,11 @@ func (r *ListenerSetReconciler) countAttachedRoutesPerEntry(
 
 	validator := routebinding.NewValidator(r.Client)
 
-	if err := r.countAttachedHTTPRoutes(ctx, listenerSet, merged, validator, out); err != nil {
+	if err := r.countAttachedHTTPRoutes(ctx, listenerSet, validator, out); err != nil {
 		return nil, err
 	}
 
-	if err := r.countAttachedGRPCRoutes(ctx, listenerSet, merged, validator, out); err != nil {
+	if err := r.countAttachedGRPCRoutes(ctx, listenerSet, validator, out); err != nil {
 		return nil, err
 	}
 
@@ -296,7 +305,6 @@ func (r *ListenerSetReconciler) countAttachedRoutesPerEntry(
 func (r *ListenerSetReconciler) countAttachedHTTPRoutes(
 	ctx context.Context,
 	listenerSet *gatewayv1.ListenerSet,
-	merged *listenermerge.MergeResult,
 	validator *routebinding.Validator,
 	counts map[gatewayv1.SectionName]int32,
 ) error {
@@ -308,7 +316,7 @@ func (r *ListenerSetReconciler) countAttachedHTTPRoutes(
 	for i := range routes.Items {
 		route := &routes.Items[i]
 		incrementListenerSetAttachedRoutes(
-			ctx, validator, listenerSet, merged,
+			ctx, validator, listenerSet,
 			route.Namespace, route.Name, route.Spec.Hostnames,
 			routebinding.KindHTTPRoute, route.Spec.ParentRefs, counts,
 		)
@@ -321,7 +329,6 @@ func (r *ListenerSetReconciler) countAttachedHTTPRoutes(
 func (r *ListenerSetReconciler) countAttachedGRPCRoutes(
 	ctx context.Context,
 	listenerSet *gatewayv1.ListenerSet,
-	merged *listenermerge.MergeResult,
 	validator *routebinding.Validator,
 	counts map[gatewayv1.SectionName]int32,
 ) error {
@@ -333,7 +340,7 @@ func (r *ListenerSetReconciler) countAttachedGRPCRoutes(
 	for i := range routes.Items {
 		route := &routes.Items[i]
 		incrementListenerSetAttachedRoutes(
-			ctx, validator, listenerSet, merged,
+			ctx, validator, listenerSet,
 			route.Namespace, route.Name, route.Spec.Hostnames,
 			routebinding.KindGRPCRoute, route.Spec.ParentRefs, counts,
 		)
@@ -346,7 +353,6 @@ func incrementListenerSetAttachedRoutes(
 	ctx context.Context,
 	validator *routebinding.Validator,
 	listenerSet *gatewayv1.ListenerSet,
-	merged *listenermerge.MergeResult,
 	routeNamespace, routeName string,
 	hostnames []gatewayv1.Hostname,
 	kind gatewayv1.Kind,
@@ -372,19 +378,17 @@ func incrementListenerSetAttachedRoutes(
 			Port:        ref.Port,
 		}
 
+		// Count is gated only by the route's binding-Accepted verdict — the
+		// Gateway API "Routes with the Accepted condition set to True" rule. A
+		// listener's own status (Conflicted, or Programmed=False from an
+		// unresolved TLS cert ref) is never consulted; the spec requires the
+		// count to be set even when the listener is not Accepted.
 		result, err := validator.ValidateBindingForListenerSet(ctx, listenerSet, routeInfo)
 		if err != nil || !result.Accepted {
 			continue
 		}
 
 		for _, section := range result.MatchedListeners {
-			// Skip conflicted entries — the merge view says they will not
-			// be programmed, so a route nominally "matching" them is not
-			// actually attached.
-			if entry := findMergedEntry(merged, listenerSet, section); entry != nil && entry.ConflictReason != "" {
-				continue
-			}
-
 			if _, already := countedThisRoute[section]; already {
 				continue
 			}
@@ -677,6 +681,11 @@ func buildListenerSetRejectedEntryStatuses(
 		out = append(out, gatewayv1.ListenerEntryStatus{
 			Name:           entry.Name,
 			SupportedKinds: supportedKinds,
+			// Zero, not a real count: a resource-level-rejected ListenerSet is
+			// not part of any merged Gateway, so its entries are not valid
+			// attachment points and no route can be Accepted on them. The spec
+			// counts only Accepted routes, so zero is correct here — unlike a
+			// conflicted entry on an accepted ListenerSet, which does count.
 			AttachedRoutes: 0,
 			Conditions: []metav1.Condition{
 				{
