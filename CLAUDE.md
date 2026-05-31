@@ -74,7 +74,7 @@ helm template test charts/cloudflare-tunnel-gateway-controller --values charts/c
 
 - **HTTPRouteReconciler** (`internal/controller/httproute_controller.go`): Watches HTTPRoute resources referencing managed Gateways. Performs full sync of all relevant routes to Cloudflare Tunnel configuration on any change. Updates HTTPRoute status. Pushes config to L7 proxy replicas via ProxySyncer.
 
-- **GRPCRouteReconciler** (`internal/controller/grpcroute_controller.go`): Watches GRPCRoute resources. Shares RouteSyncer with HTTPRouteReconciler for unified Cloudflare Tunnel sync. Does NOT push to L7 proxy (GRPC is tunnel-only).
+- **GRPCRouteReconciler** (`internal/controller/grpcroute_controller.go`): Watches GRPCRoute resources. Shares RouteSyncer with HTTPRouteReconciler for unified Cloudflare Tunnel sync, and pushes the merged HTTP+gRPC config to the L7 proxy via ProxySyncer — the in-process proxy serves gRPC at runtime (HTTP/2 POSTs to `/{service}/{method}`), so gRPC is not tunnel-only.
 
 - **ProxySyncer** (`internal/controller/proxy_syncer.go`): Converts HTTPRoutes into proxy config and pushes to proxy endpoints via HTTP API. Resolves headless service DNS for endpoint discovery. Validates cross-namespace backends via ReferenceGrant.
 
