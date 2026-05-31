@@ -104,7 +104,7 @@ func TestParseTunnelToken_MissingSecret(t *testing.T) {
 func TestStartTunnel_InvalidToken(t *testing.T) {
 	t.Parallel()
 
-	err := tunnel.StartTunnel(t.Context(), tunnel.Config{
+	err := tunnel.StartTunnel(t.Context(), &tunnel.Config{
 		Token: "invalid",
 	})
 

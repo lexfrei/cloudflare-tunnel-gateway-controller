@@ -385,7 +385,7 @@ proxy:
     readOnlyRootFilesystem: true
   # -- Health probes configuration
   healthProbes:
-    # -- Startup probe (gives tunnel time to connect)
+    # -- Startup probe (hits /healthz; gives the process time to start serving — waiting for the tunnel is the readiness probe's job)
     startupProbe:
       enabled: true
       initialDelaySeconds: 0
@@ -399,7 +399,7 @@ proxy:
       periodSeconds: 20
       timeoutSeconds: 5
       failureThreshold: 3
-    # -- Readiness probe (ready when config loaded)
+    # -- Readiness probe (ready when config is loaded and, in tunnel mode, the tunnel has connected to the edge)
     readinessProbe:
       enabled: true
       initialDelaySeconds: 5

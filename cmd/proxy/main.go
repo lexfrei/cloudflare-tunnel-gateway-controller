@@ -109,11 +109,15 @@ func runTunnelMode(logger *slog.Logger, token string) {
 
 	logger.Info("starting cloudflared tunnel with in-process proxy", "protocol", effectiveProtocol)
 
-	err := tunnel.StartTunnel(ctx, tunnel.Config{
+	err := tunnel.StartTunnel(ctx, &tunnel.Config{
 		Token:       token,
 		Logger:      logger,
 		OriginProxy: originProxy,
 		Protocol:    effectiveProtocol,
+		// Flip readiness only once the tunnel registers with the edge, so the
+		// pod reports Ready when it can actually receive traffic (before that
+		// the edge returns 530). Combined with config presence in /readyz.
+		OnConnected: router.SetTunnelConnected,
 	})
 
 	gracefulShutdown(logger, configServer)
@@ -134,6 +138,11 @@ func runStandaloneMode(logger *slog.Logger) {
 	router := proxy.NewRouter()
 	proxyHandler := proxy.NewHandler(router, handlerOptions(logger)...)
 	router.SetHandler(proxyHandler)
+
+	// Standalone mode has no tunnel to wait for, so readiness gates on config
+	// alone — latch the tunnel-connected state up front. (Tunnel mode flips it
+	// from the cloudflared connected-signal instead.)
+	router.SetTunnelConnected()
 
 	authToken := os.Getenv("PROXY_AUTH_TOKEN")
 	warnIfNoAuth(logger, authToken)

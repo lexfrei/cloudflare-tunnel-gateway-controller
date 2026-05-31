@@ -23,6 +23,20 @@ const (
 	mirrorMaxIdlePerHost  = 10
 	mirrorMaxConnsPerHost = 50
 	mirrorIdleTimeout     = 30 * time.Second
+
+	// mirrorMaxAttempts bounds the total number of dispatch attempts for a
+	// single mirrored request. A 100% mirror is expected to be delivered (the
+	// conformance suite sends one request and polls the mirror backend), so a
+	// transient transport failure — connection reset, stale idle-conn reuse, a
+	// backend that is momentarily not ready — on the first attempt must not
+	// drop the only copy. Each attempt has its own mirrorTimeout context.
+	mirrorMaxAttempts = 3
+
+	// mirrorRetryBaseBackoff is the unit delay before a retried dispatch;
+	// attempt N waits (N-1) × base. Short and bounded — the mirror leg is
+	// cluster-internal, so the worst-case added latency stays well under both
+	// mirrorTimeout and the conformance poll budget.
+	mirrorRetryBaseBackoff = 100 * time.Millisecond
 )
 
 // mirrorClient is a shared HTTP client for all mirror filter instances.
@@ -367,21 +381,24 @@ func (f *requestMirror) ProcessRequest(req *http.Request) *http.Response {
 		return nil
 	}
 
-	// Use a detached context so the mirror is fire-and-forget,
-	// not cancelled when the original request completes.
-	mirrorCtx, cancel := context.WithTimeout(context.Background(), mirrorTimeout)
-	mirrorReq := req.Clone(mirrorCtx)
-	mirrorReq.URL = mirrorURL
-	mirrorReq.Host = mirrorURL.Host
-	mirrorReq.RequestURI = ""
+	// Build a template for the mirror leg before returning: the primary handler
+	// will consume and mutate req, so the mirror must snapshot what it needs
+	// now (URL, Host, and any headers a preceding modify-headers filter set).
+	// Each dispatch attempt derives its own context and body from this template
+	// inside dispatchWithRetry, so a retry never reuses a consumed body or a
+	// cancelled context. The context is detached (Background) so the mirror is
+	// fire-and-forget — not cancelled when the original request completes.
+	tmpl := req.Clone(context.Background())
+	tmpl.URL = mirrorURL
+	tmpl.Host = mirrorURL.Host
+	tmpl.RequestURI = ""
 
-	// After Clone, both req and mirrorReq share the same body reader.
-	// Give each its own independent reader from the buffered data.
+	// After Clone, req and the template share the same body reader. Give the
+	// primary leg its own independent reader from the buffered data; each
+	// mirror attempt gets a fresh reader inside dispatchWithRetry.
 	if bodyBuf != nil {
 		req.Body = io.NopCloser(bytes.NewReader(bodyBuf))
 		req.ContentLength = int64(len(bodyBuf))
-		mirrorReq.Body = io.NopCloser(bytes.NewReader(bodyBuf))
-		mirrorReq.ContentLength = int64(len(bodyBuf))
 	}
 
 	client := f.client
@@ -389,27 +406,7 @@ func (f *requestMirror) ProcessRequest(req *http.Request) *http.Response {
 		client = mirrorClient
 	}
 
-	go func() {
-		defer cancel()
-		defer func() {
-			if recovered := recover(); recovered != nil {
-				slog.Error("mirror: panic in mirror request goroutine", "panic", recovered)
-			}
-		}()
-
-		resp, doErr := client.Do(mirrorReq)
-		if doErr != nil {
-			// Mirroring is fire-and-forget, so a failed dial must not affect
-			// the primary leg — but it must be visible in the logs, otherwise
-			// a mirror-delivery problem is undiagnosable from the proxy.
-			f.logger.Warn("mirror: request dispatch failed",
-				"backend", f.backendURL, "error", doErr)
-
-			return
-		}
-
-		resp.Body.Close()
-	}()
+	go f.dispatchWithRetry(client, tmpl, bodyBuf)
 
 	return nil
 }
@@ -480,6 +477,73 @@ func (f *requestMirror) shouldMirror() bool {
 	}
 	//nolint:gosec // math/rand is fine for traffic mirroring sampling
 	return rand.Int32N(100) < pct
+}
+
+// dispatchWithRetry delivers the mirrored request, retrying a transient
+// transport failure up to mirrorMaxAttempts times. Mirroring is fire-and-forget
+// and best-effort, but a 100% mirror is expected to be delivered (the
+// conformance suite sends one request and polls the mirror backend), so a
+// transient dial failure on the first attempt must not drop the only copy.
+//
+// Retrying changes delivery from at-most-once to bounded at-least-once: a copy
+// whose request reached the backend but whose response was lost may be sent
+// twice. That is acceptable for mirror (shadow) traffic and is what the
+// conformance "copy arrived" assertion expects. Only transport-level failures
+// retry — an HTTP error status is a delivered copy and is left alone.
+func (f *requestMirror) dispatchWithRetry(client *http.Client, tmpl *http.Request, bodyBuf []byte) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			slog.Error("mirror: panic in mirror request goroutine", "panic", recovered)
+		}
+	}()
+
+	var lastErr error
+
+	for attempt := 1; attempt <= mirrorMaxAttempts; attempt++ {
+		if attempt > 1 {
+			time.Sleep(time.Duration(attempt-1) * mirrorRetryBaseBackoff)
+		}
+
+		err := dispatchMirrorOnce(client, tmpl, bodyBuf)
+		if err != nil {
+			lastErr = err
+
+			continue
+		}
+
+		return
+	}
+
+	// All attempts failed — fire-and-forget, so this never affects the primary
+	// leg, but it must be visible: a mirror-delivery problem is otherwise
+	// undiagnosable from the proxy.
+	f.logger.Warn("mirror: request dispatch failed after retries",
+		"backend", f.backendURL, "attempts", mirrorMaxAttempts, "error", lastErr)
+}
+
+// dispatchMirrorOnce performs a single mirror dispatch with its own
+// mirrorTimeout context and a fresh body reader from bodyBuf, so it is safe to
+// call repeatedly for retries. It returns a non-nil error only on a
+// transport-level failure; a delivered response (any status) is drained and
+// reported as success.
+func dispatchMirrorOnce(client *http.Client, tmpl *http.Request, bodyBuf []byte) error {
+	ctx, cancel := context.WithTimeout(context.Background(), mirrorTimeout)
+	defer cancel()
+
+	mirrorReq := tmpl.Clone(ctx)
+	if bodyBuf != nil {
+		mirrorReq.Body = io.NopCloser(bytes.NewReader(bodyBuf))
+		mirrorReq.ContentLength = int64(len(bodyBuf))
+	}
+
+	resp, err := client.Do(mirrorReq)
+	if err != nil {
+		return errors.Wrap(err, "mirror dispatch")
+	}
+
+	resp.Body.Close()
+
+	return nil
 }
 
 // CompileFilters converts RouteFilter specs into executable Filter instances.

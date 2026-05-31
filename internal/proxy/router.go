@@ -81,6 +81,16 @@ type Router struct {
 	// grpcRestartWarned makes the restart-needed warning fire at most once
 	// rather than on every config push.
 	grpcRestartWarned atomic.Bool
+	// tunnelConnected latches true once the edge transport has registered a
+	// tunnel connection (tunnel mode) or immediately at startup (standalone
+	// mode, no tunnel to wait for). Readiness gates on it so the proxy reports
+	// Ready only when it can actually receive traffic — without it the pod goes
+	// Ready while cloudflared is still dialing the edge and the edge returns 530.
+	// One-shot: the cloudflared connected-signal fires once on first
+	// registration and the proxy is the tunnel origin (traffic arrives via the
+	// tunnel, not a Service), so a later drop is not tracked here — flapping
+	// readiness would not change traffic delivery and would only churn rollouts.
+	tunnelConnected atomic.Bool
 }
 
 // NewRouter creates a Router with an empty routing table.
@@ -126,6 +136,28 @@ func (r *Router) SetHandler(h *Handler) {
 // ConfigVersion returns the version of the currently loaded configuration.
 func (r *Router) ConfigVersion() int64 {
 	return r.table.Load().version
+}
+
+// SetTunnelConnected latches the tunnel-connected state to true. Tunnel mode
+// calls it from the cloudflared connected-signal hook on first edge
+// registration; standalone mode calls it at startup (no tunnel to wait for).
+// It only ever transitions false→true (see the tunnelConnected field comment).
+func (r *Router) SetTunnelConnected() {
+	r.tunnelConnected.Store(true)
+}
+
+// TunnelConnected reports whether the edge transport has registered a tunnel
+// connection (or, in standalone mode, whether startup latched it).
+func (r *Router) TunnelConnected() bool {
+	return r.tunnelConnected.Load()
+}
+
+// IsReady reports whether the proxy can serve traffic: it has a config to route
+// with AND the tunnel has connected to the edge. Readiness (GET /readyz) and the
+// GET /config status both derive from this single definition so they never
+// disagree.
+func (r *Router) IsReady() bool {
+	return r.ConfigVersion() > 0 && r.TunnelConnected()
 }
 
 // RouteResult contains the result of a routing decision.

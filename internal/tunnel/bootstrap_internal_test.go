@@ -13,6 +13,7 @@ import (
 
 	"github.com/cloudflare/cloudflared/connection"
 	"github.com/cloudflare/cloudflared/orchestration"
+	cfdsignal "github.com/cloudflare/cloudflared/signal"
 )
 
 func TestBuildCatchAllIngress(t *testing.T) {
@@ -298,7 +299,7 @@ func TestStartTunnel_InvalidToken_ErrorPath(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
-	err := StartTunnel(ctx, Config{
+	err := StartTunnel(ctx, &Config{
 		Token:    "not-valid-base64!!!",
 		ProxyURL: "http://localhost:8080",
 	})
@@ -312,13 +313,50 @@ func TestStartTunnel_InvalidToken_ErrorPath(t *testing.T) {
 func TestStartTunnel_EmptyToken_ErrorPath(t *testing.T) {
 	t.Parallel()
 
-	err := StartTunnel(t.Context(), Config{
+	err := StartTunnel(t.Context(), &Config{
 		Token:    "",
 		ProxyURL: "http://localhost:8080",
 	})
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "tunnel token is empty")
+}
+
+// TestWaitConnected_FiresCallbackOnConnect pins that the connected-signal hook
+// invokes OnConnected exactly once when the tunnel registers with the edge.
+// This is the half of the readiness feature that flips a tunnel-mode pod to
+// Ready; without it the pod would never become Ready.
+func TestWaitConnected_FiresCallbackOnConnect(t *testing.T) {
+	t.Parallel()
+
+	sig := cfdsignal.New(make(chan struct{}))
+	sig.Notify() // edge connection registered
+
+	calls := 0
+
+	// ctx stays live, so only the connected branch is ready and is selected
+	// deterministically. waitConnected returns after invoking the callback.
+	waitConnected(t.Context(), sig, slog.Default(), func() { calls++ })
+
+	assert.Equal(t, 1, calls, "OnConnected must fire exactly once when the tunnel connects")
+}
+
+// TestWaitConnected_NoCallbackOnContextCancel pins that a tunnel which never
+// connects (context cancelled first) does not flip readiness — OnConnected must
+// not fire, so the pod stays NotReady.
+func TestWaitConnected_NoCallbackOnContextCancel(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel() // cancelled before any connection
+
+	sig := cfdsignal.New(make(chan struct{})) // never notified
+
+	calls := 0
+
+	waitConnected(ctx, sig, slog.Default(), func() { calls++ })
+
+	assert.Equal(t, 0, calls, "OnConnected must not fire when the context is cancelled before connecting")
 }
 
 func TestConstants(t *testing.T) {
@@ -423,7 +461,7 @@ func TestParseTunnelToken_MalformedInputs(t *testing.T) {
 func TestStartTunnel_NilLogger_BuildOrchestratorError(t *testing.T) {
 	t.Parallel()
 
-	err := StartTunnel(t.Context(), Config{
+	err := StartTunnel(t.Context(), &Config{
 		Token:    validTestTokenBase64(),
 		Logger:   nil,
 		ProxyURL: "",
@@ -439,7 +477,7 @@ func TestStartTunnel_NilLogger_BuildOrchestratorError(t *testing.T) {
 func TestStartTunnel_ExplicitLogger_BuildOrchestratorError(t *testing.T) {
 	t.Parallel()
 
-	err := StartTunnel(t.Context(), Config{
+	err := StartTunnel(t.Context(), &Config{
 		Token:    validTestTokenBase64(),
 		Logger:   slog.Default(),
 		ProxyURL: "",
@@ -455,7 +493,7 @@ func TestStartTunnel_ValidBase64InvalidJSON_ErrorPath(t *testing.T) {
 	t.Parallel()
 
 	// "not json" in base64
-	err := StartTunnel(t.Context(), Config{
+	err := StartTunnel(t.Context(), &Config{
 		Token:    "bm90IGpzb24=",
 		ProxyURL: "http://localhost:8080",
 	})
@@ -471,7 +509,7 @@ func TestStartTunnel_EmptyJSONObject_ErrorPath(t *testing.T) {
 	t.Parallel()
 
 	// "{}" in base64
-	err := StartTunnel(t.Context(), Config{
+	err := StartTunnel(t.Context(), &Config{
 		Token:    "e30=",
 		ProxyURL: "http://localhost:8080",
 	})
@@ -487,7 +525,7 @@ func TestStartTunnel_PartialFields_ErrorPath(t *testing.T) {
 	t.Parallel()
 
 	// {"a":"acct"} in base64 — has account but no tunnel ID or secret
-	err := StartTunnel(t.Context(), Config{
+	err := StartTunnel(t.Context(), &Config{
 		Token:    "eyJhIjoiYWNjdCJ9",
 		ProxyURL: "http://localhost:8080",
 	})
@@ -806,7 +844,7 @@ func TestStartTunnel_SuccessPath_CancelledContext(t *testing.T) {
 	cancel()
 
 	withFreshRegisterer(func() {
-		err := StartTunnel(ctx, Config{
+		err := StartTunnel(ctx, &Config{
 			Token:    validTestTokenBase64(),
 			Logger:   slog.Default(),
 			ProxyURL: "http://localhost:8080",
@@ -829,7 +867,7 @@ func TestStartTunnel_NilLogger_SuccessPath_CancelledContext(t *testing.T) {
 	cancel()
 
 	withFreshRegisterer(func() {
-		err := StartTunnel(ctx, Config{
+		err := StartTunnel(ctx, &Config{
 			Token:    validTestTokenBase64(),
 			Logger:   nil,
 			ProxyURL: "http://localhost:8080",

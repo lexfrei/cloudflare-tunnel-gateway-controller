@@ -295,8 +295,8 @@ spec:
 | proxy.configAPIPort | int | `8081` | Config API port (controller pushes config here) |
 | proxy.healthProbes | object | `{"livenessProbe":{"enabled":true,"failureThreshold":3,"initialDelaySeconds":15,"periodSeconds":20,"timeoutSeconds":5},"readinessProbe":{"enabled":true,"failureThreshold":3,"initialDelaySeconds":5,"periodSeconds":10,"timeoutSeconds":3},"startupProbe":{"enabled":true,"failureThreshold":30,"initialDelaySeconds":0,"periodSeconds":5,"timeoutSeconds":3}}` | Health probes configuration |
 | proxy.healthProbes.livenessProbe | object | `{"enabled":true,"failureThreshold":3,"initialDelaySeconds":15,"periodSeconds":20,"timeoutSeconds":5}` | Liveness probe |
-| proxy.healthProbes.readinessProbe | object | `{"enabled":true,"failureThreshold":3,"initialDelaySeconds":5,"periodSeconds":10,"timeoutSeconds":3}` | Readiness probe (ready when config loaded) |
-| proxy.healthProbes.startupProbe | object | `{"enabled":true,"failureThreshold":30,"initialDelaySeconds":0,"periodSeconds":5,"timeoutSeconds":3}` | Startup probe (gives tunnel time to connect) |
+| proxy.healthProbes.readinessProbe | object | `{"enabled":true,"failureThreshold":3,"initialDelaySeconds":5,"periodSeconds":10,"timeoutSeconds":3}` | Readiness probe (ready when config is loaded and, in tunnel mode, the tunnel has connected to the edge) |
+| proxy.healthProbes.startupProbe | object | `{"enabled":true,"failureThreshold":30,"initialDelaySeconds":0,"periodSeconds":5,"timeoutSeconds":3}` | Startup probe (hits /healthz; gives the process time to start serving — waiting for the tunnel is the readiness probe's job) |
 | proxy.image | object | `{"pullPolicy":"IfNotPresent","repository":"ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller-proxy","tag":""}` | Proxy container image |
 | proxy.image.pullPolicy | string | `"IfNotPresent"` | Image pull policy |
 | proxy.image.repository | string | `"ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller-proxy"` | Proxy image repository |

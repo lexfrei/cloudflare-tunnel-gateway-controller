@@ -2,14 +2,24 @@ package proxy
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 )
+
+// errSimulatedTransientFailure is the transport-level error flakyRoundTripper
+// returns for the attempts it is configured to fail. A package-level sentinel
+// keeps err113 satisfied (no dynamically constructed errors).
+var errSimulatedTransientFailure = errors.New("simulated transient transport failure")
 
 // chanHandler is a minimal slog.Handler that forwards every record to a
 // channel. It lets tests deterministically observe a fire-and-forget
@@ -78,6 +88,123 @@ func TestRequestMirror_DispatchError_LogsWarn(t *testing.T) {
 		assert.NotEmpty(t, attrs["error"], "log must include the dial error")
 	case <-time.After(2 * time.Second):
 		t.Fatal("mirror dispatch error was not logged")
+	}
+}
+
+// flakyRoundTripper fails the first failFirst RoundTrip calls with a
+// transport-level error, then delegates to inner. It models a transient
+// proxy → mirror-backend dispatch failure (connection reset, stale idle-conn
+// reuse, momentary backend unreadiness) deterministically, without depending
+// on TCP timing.
+type flakyRoundTripper struct {
+	failFirst int32
+	attempts  atomic.Int32
+	inner     http.RoundTripper
+}
+
+func (f *flakyRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	if f.attempts.Add(1) <= f.failFirst {
+		// A real transport consumes/closes the body on the attempt; drop it so
+		// a retry that does not supply a fresh reader would observe an empty
+		// body (and fail the body-replay assertions below).
+		if req.Body != nil {
+			_ = req.Body.Close()
+		}
+
+		return nil, errSimulatedTransientFailure
+	}
+
+	resp, err := f.inner.RoundTrip(req)
+	if err != nil {
+		return nil, fmt.Errorf("flaky inner roundtrip: %w", err)
+	}
+
+	return resp, nil
+}
+
+// TestRequestMirror_TransientDispatchFailure_Retries pins the #361 fix: a 100%
+// mirror whose first dispatch attempt fails with a transient transport error
+// must still be delivered. The conformance suite sends a single request and
+// polls the mirror backend, so a one-shot fire-and-forget dispatch that drops
+// the only copy on a transient failure flakes deterministically. With the
+// bounded retry the copy lands on a later attempt. Before the fix this test is
+// RED — the single client.Do drops the copy and the backend never sees it.
+func TestRequestMirror_TransientDispatchFailure_Retries(t *testing.T) {
+	t.Parallel()
+
+	records := make(chan slog.Record, 8)
+	logger := slog.New(&chanHandler{records: records})
+
+	received := make(chan struct{}, 1)
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		received <- struct{}{}
+	}))
+	defer backend.Close()
+
+	mirror := &requestMirror{
+		backendURL: backend.URL,
+		client: &http.Client{
+			Timeout:   mirrorTimeout,
+			Transport: &flakyRoundTripper{failFirst: 1, inner: http.DefaultTransport},
+		},
+		logger: logger,
+	}
+
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "http://example.com/test", nil)
+
+	resp := mirror.ProcessRequest(req) //nolint:bodyclose // mirror returns a nil response
+	assert.Nil(t, resp, "mirror filter must not short-circuit the primary leg")
+
+	select {
+	case <-received:
+	case <-time.After(3 * time.Second):
+		t.Fatal("mirror copy was dropped after a transient dispatch failure; expected a retry to deliver it")
+	}
+}
+
+// TestRequestMirror_TransientDispatchFailure_RetriesWithBody pins that a retry
+// supplies a fresh body reader from the buffered data, not the consumed reader
+// from the failed attempt. Without per-attempt body replay the retried request
+// would carry an empty body, so the backend must observe the full payload.
+func TestRequestMirror_TransientDispatchFailure_RetriesWithBody(t *testing.T) {
+	t.Parallel()
+
+	const payload = "mirror-body-payload"
+
+	gotBody := make(chan string, 1)
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+		gotBody <- string(body)
+	}))
+	defer backend.Close()
+
+	mirror := &requestMirror{
+		backendURL: backend.URL,
+		client: &http.Client{
+			Timeout:   mirrorTimeout,
+			Transport: &flakyRoundTripper{failFirst: 1, inner: http.DefaultTransport},
+		},
+		logger: slog.New(&chanHandler{records: make(chan slog.Record, 8)}),
+	}
+
+	req := httptest.NewRequestWithContext(
+		context.Background(), http.MethodPost, "http://example.com/test", strings.NewReader(payload),
+	)
+
+	resp := mirror.ProcessRequest(req) //nolint:bodyclose // mirror returns a nil response
+	assert.Nil(t, resp, "mirror filter must not short-circuit the primary leg")
+
+	// The primary leg must still see the full body after buffering.
+	primaryBody, _ := io.ReadAll(req.Body)
+	assert.Equal(t, payload, string(primaryBody), "primary leg body must be restored after mirror buffering")
+
+	select {
+	case got := <-gotBody:
+		assert.Equal(t, payload, got, "retried mirror copy must carry the full body, not an empty reader")
+	case <-time.After(3 * time.Second):
+		t.Fatal("mirror copy with body was dropped after a transient dispatch failure")
 	}
 }
 
