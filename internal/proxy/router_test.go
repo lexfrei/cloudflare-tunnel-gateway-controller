@@ -262,6 +262,14 @@ func TestRouter_WildcardHostMatch(t *testing.T) {
 	require.NotNil(t, result)
 	assert.Equal(t, "http://wildcard:80", result.Rule.Backends[0].URL)
 
+	// Wildcard matches multi-label subdomains too: per the Gateway API
+	// Hostname spec, "*." matches one OR MORE leading labels.
+	req.Host = "multiple.prefixes.example.com"
+
+	result = router.Route(req)
+	require.NotNil(t, result, "wildcard *.example.com must match multi-label host")
+	assert.Equal(t, "http://wildcard:80", result.Rule.Backends[0].URL)
+
 	// Wildcard does not match bare domain
 	req.Host = "example.com"
 
