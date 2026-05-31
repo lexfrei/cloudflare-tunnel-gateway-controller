@@ -6,17 +6,19 @@
 #   2. Deletes old v2-test-* kind clusters
 #   3. Creates a fresh kind cluster with random suffix
 #   4. Installs Gateway API CRDs (experimental channel)
-#   5. Builds controller + proxy images
-#   6. Loads images into kind
+#   5. Builds controller + proxy images          (skipped in --use-ci-images mode)
+#   6. Loads images into kind                     (skipped in --use-ci-images mode)
 #   7. Creates secrets from .env
-#   8. Deploys controller via helm
+#   8. Deploys controller via helm               (local chart, or PR's ttl.sh chart)
 #   9. Waits for readiness
 #  10. Optionally runs conformance tests
 #
 # Usage:
-#   ./hack/conformance-setup.sh              # full setup (fresh cluster)
-#   ./hack/conformance-setup.sh --test       # setup + run tests
-#   ./hack/conformance-setup.sh --skip-build # skip image build (reuse existing)
+#   ./hack/conformance-setup.sh                  # full setup (fresh cluster, local build)
+#   ./hack/conformance-setup.sh --test           # setup + run tests
+#   ./hack/conformance-setup.sh --skip-build     # skip image build (reuse existing)
+#   ./hack/conformance-setup.sh --use-ci-images N  # deploy PR #N's published ttl.sh
+#                                                  # chart+images (no local build)
 #
 # Prerequisites:
 #   - .env file in repo root with: CF_API_TOKEN, CF_ACCOUNT_ID, V2_TUNNEL_ID, V2_TUNNEL_TOKEN
@@ -41,14 +43,7 @@ GATEWAY_API_VERSION="v1.5.1"
 # --- Flags ---
 RUN_TESTS=false
 SKIP_BUILD=false
-
-for arg in "$@"; do
-  case "${arg}" in
-    --test) RUN_TESTS=true ;;
-    --skip-build) SKIP_BUILD=true ;;
-    *) echo "Unknown flag: ${arg}"; exit 1 ;;
-  esac
-done
+CI_PR_NUMBER=""
 
 # --- Helpers ---
 info()  { echo "==> $*"; }
@@ -58,6 +53,26 @@ die()   { echo "ERROR: $*" >&2; exit 1; }
 check_tool() {
   command -v "$1" >/dev/null 2>&1 || die "$1 is not installed"
 }
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --test) RUN_TESTS=true ;;
+    --skip-build) SKIP_BUILD=true ;;
+    --use-ci-images)
+      shift
+      [[ $# -gt 0 ]] || die "--use-ci-images requires a PR number"
+      CI_PR_NUMBER="$1"
+      [[ "${CI_PR_NUMBER}" =~ ^[0-9]+$ ]] || die "--use-ci-images PR number must be numeric, got '${CI_PR_NUMBER}'"
+      ;;
+    *) die "Unknown flag: $1" ;;
+  esac
+  shift
+done
+
+# --use-ci-images is itself a no-build path; combining with --skip-build is contradictory.
+if [[ -n "${CI_PR_NUMBER}" && "${SKIP_BUILD}" == "true" ]]; then
+  die "--use-ci-images and --skip-build are mutually exclusive"
+fi
 
 # --- Pre-flight checks ---
 info "Checking prerequisites..."
@@ -79,6 +94,15 @@ for var in CF_API_TOKEN CF_ACCOUNT_ID V2_TUNNEL_ID V2_TUNNEL_TOKEN; do
     die "Required variable ${var} is not set in .env"
   fi
 done
+
+# --- CI-images mode: fail fast if the PR chart is gone before building a cluster ---
+if [[ -n "${CI_PR_NUMBER}" ]]; then
+  CI_CHART_VERSION="0.0.0-pr.${CI_PR_NUMBER}-1d"
+  info "Checking ttl.sh chart for PR #${CI_PR_NUMBER} (${CI_CHART_VERSION})..."
+  helm show chart "oci://ttl.sh/cloudflare-tunnel-gateway-controller" \
+    --version "${CI_CHART_VERSION}" >/dev/null 2>&1 \
+    || die "Chart ${CI_CHART_VERSION} not found on ttl.sh. ttl.sh artifacts expire after 24h (the '1d' tag) — re-run PR #${CI_PR_NUMBER}'s CI to republish."
+fi
 
 # --- Step 1: Ensure colima is running ---
 info "Checking colima..."
@@ -113,7 +137,9 @@ kubectl --context "${KUBE_CONTEXT}" apply \
   --filename "https://github.com/kubernetes-sigs/gateway-api/releases/download/${GATEWAY_API_VERSION}/experimental-install.yaml"
 
 # --- Step 5: Build images ---
-if [[ "${SKIP_BUILD}" == "false" ]]; then
+if [[ -n "${CI_PR_NUMBER}" ]]; then
+  info "Using CI images from PR #${CI_PR_NUMBER} (ttl.sh) — skipping local build + kind load"
+elif [[ "${SKIP_BUILD}" == "false" ]]; then
   info "Building controller image..."
   docker build --tag "${CONTROLLER_IMAGE}" --file Containerfile .
 
@@ -124,9 +150,13 @@ else
 fi
 
 # --- Step 6: Load images into kind ---
-info "Loading images into kind cluster..."
-kind load docker-image "${CONTROLLER_IMAGE}" --name "${CLUSTER_NAME}"
-kind load docker-image "${PROXY_IMAGE}" --name "${CLUSTER_NAME}"
+# In --use-ci-images mode there are no local images; kind nodes pull from
+# ttl.sh at pod start (the PR chart ships pullPolicy=Always).
+if [[ -z "${CI_PR_NUMBER}" ]]; then
+  info "Loading images into kind cluster..."
+  kind load docker-image "${CONTROLLER_IMAGE}" --name "${CLUSTER_NAME}"
+  kind load docker-image "${PROXY_IMAGE}" --name "${CLUSTER_NAME}"
+fi
 
 # --- Step 7: Create namespace and secrets ---
 info "Creating namespace '${NAMESPACE}'..."
@@ -153,20 +183,40 @@ kubectl --context "${KUBE_CONTEXT}" create secret generic cloudflare-tunnel-toke
   | kubectl --context "${KUBE_CONTEXT}" apply --filename -
 
 # --- Step 8: Deploy via helm ---
+# Default: install the local chart and point it at the locally-built images.
+# --use-ci-images: install the PR's published ttl.sh chart, which already
+# carries the ttl.sh image refs + pullPolicy=Always baked into its values.yaml,
+# so no --set image.* overrides are needed (or wanted) in that mode.
+HELM_CHART_REF="${REPO_ROOT}/charts/cloudflare-tunnel-gateway-controller"
+HELM_VERSION_ARGS=()
+HELM_IMAGE_ARGS=(
+  --set image.repository="${CONTROLLER_IMAGE%%:*}"
+  --set image.tag="${CONTROLLER_IMAGE##*:}"
+  --set image.pullPolicy=Never
+  --set proxy.image.repository="${PROXY_IMAGE%%:*}"
+  --set proxy.image.tag="${PROXY_IMAGE##*:}"
+  --set proxy.image.pullPolicy=Never
+)
+if [[ -n "${CI_PR_NUMBER}" ]]; then
+  HELM_CHART_REF="oci://ttl.sh/cloudflare-tunnel-gateway-controller"
+  HELM_VERSION_ARGS=(--version "${CI_CHART_VERSION}")
+  HELM_IMAGE_ARGS=()
+fi
+
+# proxy.tunnel.protocol=http2 is mandatory in both modes: the chart defaults to
+# "auto" (QUIC-first) and kind/Colima blocks QUIC egress to the CF edge (530/1033).
+# The "${arr[@]+...}" idiom expands an empty array to nothing without tripping
+# `set -u` on bash < 4.4 (stock macOS ships 3.2).
 info "Deploying controller via helm..."
 helm upgrade --install "${RELEASE_NAME}" \
-  "${REPO_ROOT}/charts/cloudflare-tunnel-gateway-controller" \
+  "${HELM_CHART_REF}" \
+  "${HELM_VERSION_ARGS[@]+"${HELM_VERSION_ARGS[@]}"}" \
   --kube-context "${KUBE_CONTEXT}" \
   --namespace "${NAMESPACE}" \
   --set gatewayClassConfig.create=true \
   --set gatewayClassConfig.tunnelID="${V2_TUNNEL_ID}" \
   --set gatewayClassConfig.cloudflareCredentialsSecretRef.name=cloudflare-credentials \
-  --set image.repository="${CONTROLLER_IMAGE%%:*}" \
-  --set image.tag="${CONTROLLER_IMAGE##*:}" \
-  --set image.pullPolicy=Never \
-  --set proxy.image.repository="${PROXY_IMAGE%%:*}" \
-  --set proxy.image.tag="${PROXY_IMAGE##*:}" \
-  --set proxy.image.pullPolicy=Never \
+  "${HELM_IMAGE_ARGS[@]+"${HELM_IMAGE_ARGS[@]}"}" \
   --set proxy.tunnelTokenSecretRef.name=cloudflare-tunnel-token \
   --set proxy.tunnel.protocol=http2 \
   --set controller.logLevel=debug \
