@@ -34,6 +34,13 @@ type TunnelRoundTripper struct {
 	TimeoutConfig config.TimeoutConfig
 }
 
+// originalHostHeader carries the test's intended host (the HTTP Host or the
+// gRPC :authority) to the in-cluster proxy when the wire host must be the
+// Cloudflare edge hostname instead. The proxy's extractHost reads it before the
+// real Host, so it is the only signal that lets a non-edge hostname match.
+// Shared by TunnelRoundTripper (HTTP) and TunnelGRPCClient (gRPC).
+const originalHostHeader = "X-Original-Host"
+
 // tunnelHostname returns the hostname used to reach the tunnel via Cloudflare edge.
 func tunnelHostname() string {
 	if h := os.Getenv("CONFORMANCE_TUNNEL_HOSTNAME"); h != "" {
@@ -49,30 +56,76 @@ func tunnelHostname() string {
 // H2CPriorKnowledge, we always send HTTPS to the Cloudflare edge (the edge is
 // HTTPS-only). The backend-protocol features (h2c, etc.) are validated by what
 // the proxy-to-backend leg negotiates, not by the test client's wire format.
+//
+//nolint:gocritic // request is passed by value to match the roundtripper.RoundTripper interface signature.
 func (t *TunnelRoundTripper) CaptureRoundTrip(request roundtripper.Request) (*roundtripper.CapturedRequest, *roundtripper.CapturedResponse, error) {
+	edgeHost := tunnelHostname()
+	method := requestMethod(&request)
+
+	ctx, cancel := context.WithTimeout(context.Background(), t.TimeoutConfig.RequestTimeout)
+	defer cancel()
+
+	req, err := buildEdgeRequest(ctx, &request, edgeHost, method)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if t.Debug && request.T != nil {
+		dump, _ := httputil.DumpRequestOut(req, true)
+		request.T.Logf("TunnelRoundTripper request:\n%s\n", string(dump))
+	}
+
+	resp, err := t.edgeHTTPClient(request.UnfollowRedirect, edgeHost).Do(req)
+	if err != nil {
+		return nil, nil, fmt.Errorf("executing request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if t.Debug && request.T != nil {
+		dump, _ := httputil.DumpResponse(resp, true)
+		request.T.Logf("TunnelRoundTripper response:\n%s\n", string(dump))
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, nil, fmt.Errorf("reading response body: %w", err)
+	}
+
+	return captureRequest(resp, body, method), captureResponse(resp), nil
+}
+
+// requestMethod returns the request method, defaulting to GET.
+func requestMethod(request *roundtripper.Request) string {
+	if request.Method == "" {
+		return http.MethodGet
+	}
+
+	return request.Method
+}
+
+// buildEdgeRequest targets the request at the tunnel edge hostname while
+// carrying the test's intended Host via X-Original-Host so the in-cluster proxy
+// can still route on it. Cloudflare edge validates the wire Host against
+// configured DNS records, so any hostname not registered on the account
+// (example.com, rewrite.example, etc.) must travel out-of-band.
+func buildEdgeRequest(
+	ctx context.Context,
+	request *roundtripper.Request,
+	edgeHost, method string,
+) (*http.Request, error) {
 	host := request.Host
 	if host == "" {
 		host = request.URL.Host
 	}
 
-	edgeHost := tunnelHostname()
-
-	// Build URL targeting the tunnel hostname (for DNS resolution) but
-	// preserving the original path and query from the test request.
+	// Target the tunnel hostname (for DNS resolution) but preserve the
+	// original path and query from the test request.
 	cfURL := url.URL{
 		Scheme:   "https",
 		Host:     edgeHost,
 		Path:     request.URL.Path,
 		RawQuery: request.URL.RawQuery,
 	}
-
-	method := request.Method
-	if method == "" {
-		method = http.MethodGet
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), t.TimeoutConfig.RequestTimeout)
-	defer cancel()
 
 	var reqBody io.Reader
 	if request.Body != "" {
@@ -81,18 +134,11 @@ func (t *TunnelRoundTripper) CaptureRoundTrip(request roundtripper.Request) (*ro
 
 	req, err := http.NewRequestWithContext(ctx, method, cfURL.String(), reqBody)
 	if err != nil {
-		return nil, nil, fmt.Errorf("building request: %w", err)
+		return nil, fmt.Errorf("building request: %w", err)
 	}
 
-	// Cloudflare edge validates Host header against configured DNS records.
-	// Any hostname not registered with our Cloudflare account (example.com,
-	// rewrite.example, etc.) gets a 403 Forbidden from edge. We must always
-	// use the edge hostname as the HTTP Host to pass through Cloudflare.
-	//
-	// The original Host is forwarded via X-Original-Host so the proxy can
-	// still route based on the intended hostname from the test.
 	if host != edgeHost {
-		req.Header.Set("X-Original-Host", host)
+		req.Header.Set(originalHostHeader, host)
 	}
 
 	req.Host = edgeHost
@@ -103,6 +149,12 @@ func (t *TunnelRoundTripper) CaptureRoundTrip(request roundtripper.Request) (*ro
 		}
 	}
 
+	return req, nil
+}
+
+// edgeHTTPClient builds an HTTP client that always dials the tunnel edge
+// hostname with SNI set to it, so Cloudflare routes to our tunnel.
+func (t *TunnelRoundTripper) edgeHTTPClient(unfollowRedirect bool, edgeHost string) *http.Client {
 	transport := &http.Transport{
 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 			// Replace the target with the tunnel hostname for DNS resolution.
@@ -126,43 +178,38 @@ func (t *TunnelRoundTripper) CaptureRoundTrip(request roundtripper.Request) (*ro
 		Timeout:   t.TimeoutConfig.RequestTimeout,
 	}
 
-	if request.UnfollowRedirect {
+	if unfollowRedirect {
 		client.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
 			return http.ErrUseLastResponse
 		}
 	}
 
-	if t.Debug && request.T != nil {
-		dump, _ := httputil.DumpRequestOut(req, true)
-		request.T.Logf("TunnelRoundTripper request:\n%s\n", string(dump))
-	}
+	return client
+}
 
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, nil, fmt.Errorf("executing request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if t.Debug && request.T != nil {
-		dump, _ := httputil.DumpResponse(resp, true)
-		request.T.Logf("TunnelRoundTripper response:\n%s\n", string(dump))
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, nil, fmt.Errorf("reading response body: %w", err)
-	}
-
+// captureRequest decodes the echo backend's JSON reflection of the request the
+// proxy delivered. A non-JSON body (or a decode failure) falls back to just the
+// method, matching the upstream DefaultRoundTripper.
+func captureRequest(resp *http.Response, body []byte, method string) *roundtripper.CapturedRequest {
 	cReq := &roundtripper.CapturedRequest{}
 
-	if resp.Header.Get("Content-Type") == "application/json" {
-		if jsonErr := json.Unmarshal(body, cReq); jsonErr != nil {
-			cReq.Method = method
-		}
-	} else {
+	if resp.Header.Get("Content-Type") != "application/json" {
+		cReq.Method = method
+
+		return cReq
+	}
+
+	err := json.Unmarshal(body, cReq)
+	if err != nil {
 		cReq.Method = method
 	}
 
+	return cReq
+}
+
+// captureResponse builds the CapturedResponse, including peer certificates and
+// the parsed redirect target when the status is a redirect.
+func captureResponse(resp *http.Response) *roundtripper.CapturedResponse {
 	cRes := &roundtripper.CapturedResponse{
 		StatusCode:    resp.StatusCode,
 		ContentLength: resp.ContentLength,
@@ -186,5 +233,5 @@ func (t *TunnelRoundTripper) CaptureRoundTrip(request roundtripper.Request) (*ro
 		}
 	}
 
-	return cReq, cRes, nil
+	return cRes
 }

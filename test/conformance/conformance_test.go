@@ -159,6 +159,16 @@ func TestGatewayAPIConformance(t *testing.T) {
 		TimeoutConfig: timeouts,
 	}
 
+	// --- Custom gRPC client ---
+	// The default gRPC client dials the Gateway address directly; that
+	// address is a tunnel CNAME (Cloudflare ULA, unroutable from a test
+	// runner). TunnelGRPCClient routes every RPC through the edge instead,
+	// mirroring TunnelRoundTripper.
+	opts.GRPCClient = &TunnelGRPCClient{
+		Debug:         true,
+		TimeoutConfig: timeouts,
+	}
+
 	// --- Implementation metadata ---
 	opts.Implementation = confv1.Implementation{
 		Organization: "lexfrei",
@@ -260,32 +270,56 @@ func conformanceSkipTests() []string {
 		// above so the conformance report reflects actual support.
 		"HTTPRouteBackendProtocolWebSocket",
 
-		// GRPCRoute: the upstream suite uses grpc.NewClient against the
-		// Gateway address with no dialer-injection hook. Same Cloudflare
-		// ULA routing limitation as the WebSocket case above. Our gRPC
-		// routing is exercised by test/e2e/e2e_grpc_test.go through the real
-		// edge. ALL GRPCRoute tests must be listed here — the guard test
-		// TestGRPCConformanceTestsAreSkipped fails loudly if a suite bump
-		// adds one that is not skipped.
-		"GRPCExactMethodMatching",
-		"GRPCRouteHeaderMatching",
+		// GRPCRouteWeight: the distribution sampler news its own
+		// grpc.DefaultClient (grpcroute-weight.go) instead of the injectable
+		// suite.GRPCClient, so it dials the unroutable *.cfargotunnel.com
+		// directly and cannot be redirected to the Cloudflare edge — the same
+		// structural class as the WebSocket skip above. Filed upstream as
+		// kubernetes-sigs/gateway-api#4926. The other GRPCRoute tests run via
+		// TunnelGRPCClient.
 		"GRPCRouteWeight",
-		"GRPCRouteNamedRule",
+
+		// GRPCRouteListenerHostnameMatching: exercises a wildcard listener
+		// (*.bar.com) against multi-label request hosts (multiple.prefixes.
+		// bar.com). The proxy's matchesWildcard only accepts a single label
+		// before the suffix, so multi-label hosts fall through to 404 — a
+		// spec deviation tracked in #371. The HTTP sibling
+		// (HTTPRouteListenerHostnameMatching) is skipped for the same matcher.
+		// Lift once #371 lands.
 		"GRPCRouteListenerHostnameMatching",
 	}
 }
 
-// TestGRPCConformanceTestsAreSkipped guards against suite drift: every
-// conformance test that exercises SupportGRPCRoute (which this suite now
-// declares) must be in the skip list, because the upstream gRPC client dials
-// the Gateway address directly — *.cfargotunnel.com resolves to Cloudflare's
-// ULA (fd10::/8), unreachable from any external runner, so an unskipped gRPC
-// test hangs the mandatory pre-merge run. A future gateway-api bump that adds
-// a new gRPC test trips this guard instead of silently hanging conformance.
-func TestGRPCConformanceTestsAreSkipped(t *testing.T) {
+// TestGRPCConformanceTestsRunThroughTunnelClient guards GRPCRoute coverage.
+// The north-south GRPCRoute tests fall into two buckets that this guard pins so
+// the split can't drift silently:
+//
+//   - runViaTunnel: run through TunnelGRPCClient (opts.GRPCClient), which dials
+//     the Cloudflare edge instead of the unroutable Gateway address, and MUST
+//     NOT be skipped.
+//   - skippedWithReason: cannot run through the injected client and stay in
+//     conformanceSkipTests with a documented reason (GRPCRouteWeight bypasses
+//     opts.GRPCClient via its own DefaultClient — kubernetes-sigs/gateway-api#4926;
+//     GRPCRouteListenerHostnameMatching needs the wildcard matcher fix — #371).
+//
+// Every SupportGRPCRoute test must appear in exactly one bucket, so a
+// gateway-api bump that adds a new gRPC test trips this guard and forces a
+// conscious decision instead of silently running — or hanging — in the
+// mandatory pre-merge run.
+func TestGRPCConformanceTestsRunThroughTunnelClient(t *testing.T) {
 	t.Parallel()
 
 	skipped := sets.New(conformanceSkipTests()...)
+
+	runViaTunnel := sets.New(
+		"GRPCExactMethodMatching",
+		"GRPCRouteHeaderMatching",
+		"GRPCRouteNamedRule",
+	)
+	skippedWithReason := sets.New(
+		"GRPCRouteWeight",
+		"GRPCRouteListenerHostnameMatching",
+	)
 
 	grpcChecked := 0
 
@@ -294,12 +328,33 @@ func TestGRPCConformanceTestsAreSkipped(t *testing.T) {
 			continue
 		}
 
+		// Mesh gRPC tests (e.g. MeshGRPCRouteWeight) also carry
+		// SupportGRPCRoute but stay in the general mesh skip — this controller
+		// is north-south tunnel ingress, not a service mesh. Only the
+		// north-south GRPCRoute tests run through TunnelGRPCClient.
+		if slices.Contains(ct.Features, features.SupportMesh) {
+			continue
+		}
+
 		grpcChecked++
 
-		assert.Truef(t, skipped.Has(ct.ShortName),
-			"GRPCRoute conformance test %q exercises SupportGRPCRoute but is not in conformanceSkipTests(); "+
-				"it dials the unroutable *.cfargotunnel.com ULA and will hang. Add it to the skip list.",
+		assert.Truef(t, runViaTunnel.Has(ct.ShortName) || skippedWithReason.Has(ct.ShortName),
+			"GRPCRoute conformance test %q exercises SupportGRPCRoute but is in neither bucket; either confirm "+
+				"TunnelGRPCClient routes it (add to runViaTunnel) or skip it with a documented reason "+
+				"(add to skippedWithReason and conformanceSkipTests).",
 			ct.ShortName)
+
+		if runViaTunnel.Has(ct.ShortName) {
+			assert.Falsef(t, skipped.Has(ct.ShortName),
+				"GRPCRoute conformance test %q must run through TunnelGRPCClient (opts.GRPCClient), not be skipped.",
+				ct.ShortName)
+		}
+
+		if skippedWithReason.Has(ct.ShortName) {
+			assert.Truef(t, skipped.Has(ct.ShortName),
+				"GRPCRoute conformance test %q is recorded as un-runnable but is not in conformanceSkipTests().",
+				ct.ShortName)
+		}
 	}
 
 	// Guard against a vacuous pass: if the vendored suite ever stops tagging
@@ -330,6 +385,10 @@ func TestStaleSkipsStayLifted(t *testing.T) {
 		"HTTPRouteRedirectHostAndStatus",
 		"HTTPRouteRedirectPath",
 		"HTTPRouteRedirectPort",
+		// GRPCRoute tests now routed through TunnelGRPCClient (opts.GRPCClient).
+		"GRPCExactMethodMatching",
+		"GRPCRouteHeaderMatching",
+		"GRPCRouteNamedRule",
 	}
 
 	for _, name := range lifted {
