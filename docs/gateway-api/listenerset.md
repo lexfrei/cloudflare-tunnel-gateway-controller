@@ -148,6 +148,10 @@ spec:
 | `ResolvedRefs` | `False` | `RefNotPermitted` | Cross-namespace cert ref denied by missing ReferenceGrant |
 | `ResolvedRefs` | `False` | `InvalidCertificateRef` | Cert Secret missing, wrong type, or missing data |
 
+## AttachedRoutes
+
+Each per-entry status reports `attachedRoutes` — the number of Routes bound to that listener entry. Per the Gateway API spec, attachment depends solely on the entry's `allowedRoutes` and the Route's `parentRefs` (plus the Route's own `Accepted` state); the listener's own status does not change the count. A Route attached to an entry that is `Conflicted`, or whose `Programmed` is `False` because its TLS certificate ref failed to resolve, is still counted — the spec requires `attachedRoutes` to be set even when the entry's own `Accepted` condition is `False`. The field therefore measures binding and blast radius, not whether the entry currently serves traffic. A ListenerSet rejected at the resource level (not permitted by the parent Gateway's `allowedListeners`) reports `attachedRoutes: 0` for every entry, because the entries are not part of any merged Gateway.
+
 ## DNS automation (external-dns)
 
 If you rely on [external-dns](https://github.com/kubernetes-sigs/external-dns) to publish the tunnel CNAME for your hostnames, note that a route attached **only** via a `ListenerSet` parentRef needs external-dns to follow that parentRef to the parent Gateway's status address. external-dns supports this through the opt-in `--gateway-listener-sets` flag (available since external-dns v0.21.0). Without the flag, external-dns skips `Kind=ListenerSet` parentRefs and the hostname gets no DNS record even though the controller programs the route correctly.
