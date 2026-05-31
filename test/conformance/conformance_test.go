@@ -278,15 +278,6 @@ func conformanceSkipTests() []string {
 		// kubernetes-sigs/gateway-api#4926. The other GRPCRoute tests run via
 		// TunnelGRPCClient.
 		"GRPCRouteWeight",
-
-		// GRPCRouteListenerHostnameMatching: exercises a wildcard listener
-		// (*.bar.com) against multi-label request hosts (multiple.prefixes.
-		// bar.com). The proxy's matchesWildcard only accepts a single label
-		// before the suffix, so multi-label hosts fall through to 404 — a
-		// spec deviation tracked in #371. The HTTP sibling
-		// (HTTPRouteListenerHostnameMatching) is skipped for the same matcher.
-		// Lift once #371 lands.
-		"GRPCRouteListenerHostnameMatching",
 	}
 }
 
@@ -299,8 +290,7 @@ func conformanceSkipTests() []string {
 //     NOT be skipped.
 //   - skippedWithReason: cannot run through the injected client and stay in
 //     conformanceSkipTests with a documented reason (GRPCRouteWeight bypasses
-//     opts.GRPCClient via its own DefaultClient — kubernetes-sigs/gateway-api#4926;
-//     GRPCRouteListenerHostnameMatching needs the wildcard matcher fix — #371).
+//     opts.GRPCClient via its own DefaultClient — kubernetes-sigs/gateway-api#4926).
 //
 // Every SupportGRPCRoute test must appear in exactly one bucket, so a
 // gateway-api bump that adds a new gRPC test trips this guard and forces a
@@ -315,10 +305,10 @@ func TestGRPCConformanceTestsRunThroughTunnelClient(t *testing.T) {
 		"GRPCExactMethodMatching",
 		"GRPCRouteHeaderMatching",
 		"GRPCRouteNamedRule",
+		"GRPCRouteListenerHostnameMatching",
 	)
 	skippedWithReason := sets.New(
 		"GRPCRouteWeight",
-		"GRPCRouteListenerHostnameMatching",
 	)
 
 	grpcChecked := 0
@@ -389,6 +379,8 @@ func TestStaleSkipsStayLifted(t *testing.T) {
 		"GRPCExactMethodMatching",
 		"GRPCRouteHeaderMatching",
 		"GRPCRouteNamedRule",
+		// Lifted once the proxy wildcard matcher accepted multi-label hosts (#371).
+		"GRPCRouteListenerHostnameMatching",
 	}
 
 	for _, name := range lifted {
