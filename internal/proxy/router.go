@@ -689,14 +689,14 @@ func extractHost(req *http.Request) string {
 }
 
 // matchesWildcard checks if a hostname matches a wildcard suffix.
-// e.g., "app.example.com" matches ".example.com" (from "*.example.com").
+// suffix is the dot-prefixed remainder of a "*." pattern, e.g. ".example.com"
+// from "*.example.com".
+//
+// Per the Gateway API Hostname spec, "*." matches one OR MORE leading labels:
+// both "app.example.com" and "deep.app.example.com" match "*.example.com". The
+// apex ("example.com") never matches — the dot-prefixed suffix plus the
+// non-empty-prefix length check exclude it. This mirrors the permissive
+// semantics in internal/routebinding so binding and runtime routing agree.
 func matchesWildcard(host, suffix string) bool {
-	if !strings.HasSuffix(host, suffix) {
-		return false
-	}
-
-	// The part before the suffix must be a single label (no dots).
-	prefix := host[:len(host)-len(suffix)]
-
-	return prefix != "" && !strings.Contains(prefix, ".")
+	return strings.HasSuffix(host, suffix) && len(host) > len(suffix)
 }

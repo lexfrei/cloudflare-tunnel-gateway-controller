@@ -199,8 +199,17 @@ func envOrDefault(key, fallback string) string {
 // below can assert coverage without provisioning a cluster.
 func conformanceSkipTests() []string {
 	return []string{
-		// Single logical listener — hostname intersection tests don't apply.
-		"HTTPRouteListenerHostnameMatching",
+		// HTTPRouteHostnameIntersection asserts that a request whose Host
+		// matches NO listener hostname is rejected (404), even when an attached
+		// route would otherwise serve it. The single tunnel ingress flattens
+		// every listener into one routing table, so a route bound to one
+		// listener still answers hosts that only the (absent) listener
+		// boundary should have excluded — the negative cases (non.matching.com,
+		// the wildcard.io apex, foo.specific.com) return 200 instead of 404.
+		// This is the same listener-isolation gap as the exempt
+		// GatewayHTTPListenerIsolation feature, not a hostname-matching bug:
+		// the positive multi-label cases all pass (see
+		// HTTPRouteListenerHostnameMatching, which is run).
 		"HTTPRouteHostnameIntersection",
 
 		// Cloudflare terminates TLS at edge — we don't control certs.
@@ -278,15 +287,6 @@ func conformanceSkipTests() []string {
 		// kubernetes-sigs/gateway-api#4926. The other GRPCRoute tests run via
 		// TunnelGRPCClient.
 		"GRPCRouteWeight",
-
-		// GRPCRouteListenerHostnameMatching: exercises a wildcard listener
-		// (*.bar.com) against multi-label request hosts (multiple.prefixes.
-		// bar.com). The proxy's matchesWildcard only accepts a single label
-		// before the suffix, so multi-label hosts fall through to 404 — a
-		// spec deviation tracked in #371. The HTTP sibling
-		// (HTTPRouteListenerHostnameMatching) is skipped for the same matcher.
-		// Lift once #371 lands.
-		"GRPCRouteListenerHostnameMatching",
 	}
 }
 
@@ -299,8 +299,7 @@ func conformanceSkipTests() []string {
 //     NOT be skipped.
 //   - skippedWithReason: cannot run through the injected client and stay in
 //     conformanceSkipTests with a documented reason (GRPCRouteWeight bypasses
-//     opts.GRPCClient via its own DefaultClient — kubernetes-sigs/gateway-api#4926;
-//     GRPCRouteListenerHostnameMatching needs the wildcard matcher fix — #371).
+//     opts.GRPCClient via its own DefaultClient — kubernetes-sigs/gateway-api#4926).
 //
 // Every SupportGRPCRoute test must appear in exactly one bucket, so a
 // gateway-api bump that adds a new gRPC test trips this guard and forces a
@@ -315,10 +314,10 @@ func TestGRPCConformanceTestsRunThroughTunnelClient(t *testing.T) {
 		"GRPCExactMethodMatching",
 		"GRPCRouteHeaderMatching",
 		"GRPCRouteNamedRule",
+		"GRPCRouteListenerHostnameMatching",
 	)
 	skippedWithReason := sets.New(
 		"GRPCRouteWeight",
-		"GRPCRouteListenerHostnameMatching",
 	)
 
 	grpcChecked := 0
@@ -389,6 +388,9 @@ func TestStaleSkipsStayLifted(t *testing.T) {
 		"GRPCExactMethodMatching",
 		"GRPCRouteHeaderMatching",
 		"GRPCRouteNamedRule",
+		// Lifted once the proxy wildcard matcher accepted multi-label hosts (#371).
+		"GRPCRouteListenerHostnameMatching",
+		"HTTPRouteListenerHostnameMatching",
 	}
 
 	for _, name := range lifted {
