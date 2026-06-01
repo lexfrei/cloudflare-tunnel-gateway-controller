@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -620,7 +621,7 @@ func (h *Handler) createReverseProxy(backendURL *url.URL, protocol BackendProtoc
 				req.Header.Set("User-Agent", "")
 			}
 		},
-		Transport:    h.getTransport(backendURL.Host, protocol, backendTLS, headerTimeout),
+		Transport:    h.backendTransport(backendURL.Host, protocol, backendTLS, headerTimeout),
 		ErrorHandler: errorHandler,
 		ModifyResponse: func(resp *http.Response) error {
 			ApplyResponseFilters(filters, resp)
@@ -628,6 +629,26 @@ func (h *Handler) createReverseProxy(backendURL *url.URL, protocol BackendProtoc
 			return nil
 		},
 	}
+}
+
+// backendTransport returns the round tripper for a backend dial. When tracing
+// is enabled it wraps the cached transport with otelhttp.NewTransport so the
+// proxy emits a SpanKindClient span per backend call and injects the server
+// span's W3C trace context (traceparent / tracestate) into the outbound
+// request, giving the backend a parent that points at the proxy's client span.
+//
+// The wrap is applied here at the use site, NOT stored in the pool: the pool
+// caches the underlying *http.Transport / *http2.Transport, which is what
+// PruneTransports needs to reach for CloseIdleConnections. otelhttp.Transport
+// does not expose CloseIdleConnections, so caching the wrapper would leak idle
+// connections on eviction.
+func (h *Handler) backendTransport(host string, protocol BackendProtocol, backendTLS *BackendTLSConfig, headerTimeout time.Duration) http.RoundTripper {
+	rt := h.getTransport(host, protocol, backendTLS, headerTimeout)
+	if !h.tracingEnabled {
+		return rt
+	}
+
+	return otelhttp.NewTransport(rt)
 }
 
 // getTransport returns a shared transport for the given backend host /
