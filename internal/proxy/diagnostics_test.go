@@ -190,3 +190,52 @@ func TestConvertGRPCRoutes_FiltersFailClosedWithDiagnostic(t *testing.T) {
 	assert.True(t, diag.WholeRule, "gRPC filters fail the whole rule closed")
 	assert.True(t, strings.Contains(diag.Message, "filter"), "message must mention filters")
 }
+
+// TestConvertGRPCRoutes_BackendFiltersFailClosedWithDiagnostic pins that a
+// GRPCRoute *backend*-scoped filter (none are supported yet) fails that backend
+// closed — its traffic fraction returns HTTP 500 — and records a backend-scope
+// diagnostic, rather than being silently dropped while the rule serves on. This
+// is the gRPC analogue of the HTTP per-backend filter fail-closed.
+func TestConvertGRPCRoutes_BackendFiltersFailClosedWithDiagnostic(t *testing.T) {
+	t.Parallel()
+
+	svc := gatewayv1.ObjectName("grpc-svc")
+	port := gatewayv1.PortNumber(9000)
+	routes := []*gatewayv1.GRPCRoute{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "grpc", Namespace: "default"},
+			Spec: gatewayv1.GRPCRouteSpec{
+				Hostnames: []gatewayv1.Hostname{"grpc.example.com"},
+				Rules: []gatewayv1.GRPCRouteRule{
+					{
+						BackendRefs: []gatewayv1.GRPCBackendRef{
+							{
+								BackendRef: gatewayv1.BackendRef{
+									BackendObjectReference: gatewayv1.BackendObjectReference{Name: svc, Port: &port},
+								},
+								Filters: []gatewayv1.GRPCRouteFilter{
+									{Type: gatewayv1.GRPCRouteFilterRequestHeaderModifier},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil, nil, nil)
+
+	require.Len(t, cfg.Rules, 1)
+	assert.Zero(t, cfg.Rules[0].UnavailableStatus, "a backend-scoped filter must not fail the whole rule closed")
+	require.Len(t, cfg.Rules[0].Backends, 1)
+	assert.Equal(t, http.StatusInternalServerError, cfg.Rules[0].Backends[0].UnavailableStatus,
+		"the backend carrying an unsupported filter must fail that backend closed")
+
+	require.Len(t, cfg.Diagnostics, 1)
+	diag := cfg.Diagnostics[0]
+	assert.Equal(t, proxy.DiagnosticAccepted, diag.Target)
+	assert.Equal(t, string(gatewayv1.RouteReasonUnsupportedValue), diag.Reason)
+	assert.False(t, diag.WholeRule, "a backend-scoped filter affects only the backend fraction")
+	assert.Contains(t, diag.Message, "filter", "message must mention filters")
+}

@@ -123,7 +123,7 @@ func convertGRPCRouteRule(
 	for backendIdx := range rule.BackendRefs {
 		backend, ok := convertGRPCBackendRef(
 			ctx, &rule.BackendRefs[backendIdx], namespace, clusterDomain,
-			validator, tlsResolver, clientCert,
+			validator, tlsResolver, clientCert, sink,
 		)
 		if ok {
 			proxyRule.Backends = append(proxyRule.Backends, backend)
@@ -143,6 +143,41 @@ func grpcFiltersUnsupportedMessage(count int) string {
 			"to restore routing.",
 		count,
 	)
+}
+
+// grpcBackendFiltersUnsupportedMessage builds the actionable status message for
+// a GRPCRoute backendRef whose per-backend filters the proxy cannot serve. Only
+// that backend's traffic fraction fails closed; the rule keeps serving.
+func grpcBackendFiltersUnsupportedMessage(serviceName string, count int) string {
+	return fmt.Sprintf(
+		"%d GRPCRoute filter(s) on the backendRef to Service %q are not supported by the proxy; "+
+			"requests routed to that backend receive HTTP 500. Remove the filters from the backendRef "+
+			"to restore routing to it.",
+		count, serviceName,
+	)
+}
+
+// grpcBackendFiltersUnsupported reports whether a GRPCRoute backendRef carries
+// per-backend filters the proxy cannot serve (none are supported yet). When it
+// does, it records a backend-scope diagnostic and returns true so the caller
+// fails that backend's traffic fraction closed (HTTP 500). The rule itself keeps
+// serving its other backends — the gRPC analogue of the HTTP per-backend
+// filter fail-closed.
+func grpcBackendFiltersUnsupported(filters []gatewayv1.GRPCRouteFilter, namespace, serviceName string, sink *diagSink) bool {
+	if len(filters) == 0 {
+		return false
+	}
+
+	sink.add(
+		DiagnosticAccepted,
+		string(gatewayv1.RouteReasonUnsupportedValue),
+		grpcBackendFiltersUnsupportedMessage(serviceName, len(filters)),
+		false,
+	)
+	slog.Warn("failing GRPCRoute backend closed: per-backend filters not supported by the proxy",
+		"namespace", namespace, "service", serviceName, "filters", len(filters))
+
+	return true
 }
 
 // convertGRPCMatch maps a GRPCRouteMatch to a proxy RouteMatch. Returns
@@ -260,6 +295,7 @@ func convertGRPCBackendRef(
 	validator BackendRefValidator,
 	tlsResolver BackendTLSResolver,
 	clientCert *ClientCertConfig,
+	sink *diagSink,
 ) (BackendRef, bool) {
 	result := BackendRef{Weight: 1}
 	if backend.Weight != nil {
@@ -303,8 +339,27 @@ func convertGRPCBackendRef(
 
 	result.URL = buildServiceURL(serviceName, svcNamespace, port, clusterDomain)
 
-	// Resolve TLS: when a BackendTLSPolicy targets the Service, stamp it on
-	// the backend and let resolveBackendTLS force the https:// scheme.
+	if grpcBackendFiltersUnsupported(backend.Filters, svcNamespace, serviceName, sink) {
+		result.UnavailableStatus = http.StatusInternalServerError
+	}
+
+	applyGRPCBackendTransport(ctx, &result, tlsResolver, clientCert, svcNamespace, serviceName, port)
+
+	return result, true
+}
+
+// applyGRPCBackendTransport resolves the proxy → gRPC-backend transport on
+// result: a BackendTLSPolicy (with optional Gateway client cert) puts TLS on the
+// wire and ALPN negotiates HTTP/2; with no policy the backend is dialed cleartext
+// h2c. Extracted from convertGRPCBackendRef to keep it within the funlen budget.
+func applyGRPCBackendTransport(
+	ctx context.Context,
+	result *BackendRef,
+	tlsResolver BackendTLSResolver,
+	clientCert *ClientCertConfig,
+	svcNamespace, serviceName string,
+	port int32,
+) {
 	result.TLS, result.URL = resolveBackendTLS(ctx, tlsResolver, svcNamespace, serviceName, port, result.URL)
 	result.TLS = attachGatewayClientCert(result.TLS, clientCert)
 
@@ -312,7 +367,7 @@ func convertGRPCBackendRef(
 		// TLS is on — newTLSTransport handles ALPN HTTP/2 negotiation, the
 		// h2c marker would be ignored on that path (and is misleading), so
 		// leave Protocol at the default and keep the https:// URL.
-		return result, true
+		return
 	}
 
 	// Backward-compat path: no policy, no client cert — force cleartext h2c.
@@ -320,8 +375,6 @@ func convertGRPCBackendRef(
 	// h2c transport dials cleartext.
 	result.URL = strings.Replace(result.URL, "https://", "http://", 1)
 	result.Protocol = BackendProtocolH2C
-
-	return result, true
 }
 
 func derefString(s *string) string {
