@@ -7,6 +7,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -73,6 +74,11 @@ type HTTPRouteReconciler struct {
 	// ProxyEndpoints is the list of L7 proxy config-API URLs.
 	ProxyEndpoints []string
 
+	// Recorder emits Kubernetes Events for benign config overrides (e.g. an
+	// appProtocol cleartext hint superseded by a BackendTLSPolicy). May be nil
+	// in unit tests, in which case event emission is a no-op.
+	Recorder events.EventRecorder
+
 	// bindingValidator validates route binding to Gateway listeners.
 	bindingValidator *routebinding.Validator
 
@@ -136,6 +142,8 @@ func (r *HTTPRouteReconciler) updateRouteStatus(
 	diagnostics []proxy.RouteDiagnostic,
 	syncErr error,
 ) error {
+	emitDiagnosticEvents(r.Recorder, route, diagnostics)
+
 	return updateRouteStatusGeneric(
 		ctx,
 		routeStatusUpdateParams{

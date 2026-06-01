@@ -7,8 +7,11 @@ import (
 	"strings"
 
 	"github.com/cockroachdb/errors"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/events"
 	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
@@ -431,6 +434,41 @@ func firstResolvedRefsDiagnostic(diagnostics []proxy.RouteDiagnostic) (proxy.Rou
 	}
 
 	return proxy.RouteDiagnostic{}, false
+}
+
+// Event reason / action tokens for a benign config override. Kubernetes Events
+// require CamelCase machine-readable reason and action tokens distinct from the
+// human-readable note.
+const (
+	eventReasonConfigOverridden = "ConfigOverridden"
+	eventActionConvert          = "Convert"
+)
+
+// emitDiagnosticEvents emits a Kubernetes Event for each Event-target
+// diagnostic — benign overrides that applied successfully but ignored or
+// superseded a hint (e.g. an appProtocol cleartext hint overridden by a
+// BackendTLSPolicy, or a ResponseHeaderModifier that strips a WebSocket
+// handshake header). These have no standard Gateway API condition, so an Event
+// is the surface. Non-Event diagnostics are skipped — they drive conditions.
+// A nil recorder is a no-op so reconcilers constructed without one (e.g. in
+// unit tests) do not panic.
+func emitDiagnosticEvents(recorder events.EventRecorder, route runtime.Object, diagnostics []proxy.RouteDiagnostic) {
+	if recorder == nil {
+		return
+	}
+
+	for _, diag := range diagnostics {
+		if diag.Target != proxy.DiagnosticEvent {
+			continue
+		}
+
+		eventType := diag.EventType
+		if eventType != corev1.EventTypeWarning {
+			eventType = corev1.EventTypeNormal
+		}
+
+		recorder.Eventf(route, nil, eventType, eventReasonConfigOverridden, eventActionConvert, diag.Message)
+	}
 }
 
 func buildFailedRefsMessage(failedRefs []ingress.BackendRefError) string {

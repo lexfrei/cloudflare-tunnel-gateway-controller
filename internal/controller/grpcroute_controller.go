@@ -8,6 +8,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -97,6 +98,10 @@ type GRPCRouteReconciler struct {
 	// ProxyEndpoints is the list of L7 proxy config-API URLs to push to.
 	ProxyEndpoints []string
 
+	// Recorder emits Kubernetes Events for benign config overrides. May be nil
+	// in unit tests, in which case event emission is a no-op.
+	Recorder events.EventRecorder
+
 	// TunnelProtocol is the configured edge transport (auto|http2|quic). Used
 	// to warn when GRPCRoutes are present on an explicit quic tunnel, where
 	// cloudflared drops the grpc-status trailer. auto/unset is upgraded to http2
@@ -150,6 +155,8 @@ func (r *GRPCRouteReconciler) updateRouteStatus(
 	diagnostics []proxy.RouteDiagnostic,
 	syncErr error,
 ) error {
+	emitDiagnosticEvents(r.Recorder, route, diagnostics)
+
 	params := routeStatusUpdateParams{
 		k8sClient:      r.Client,
 		controllerName: r.ControllerName,

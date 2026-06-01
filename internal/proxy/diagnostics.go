@@ -16,6 +16,22 @@ const (
 	// resolved or declares an app protocol this implementation does not support.
 	// The controller sets ResolvedRefs=False.
 	DiagnosticResolvedRefs DiagnosticTarget = "ResolvedRefs"
+	// DiagnosticEvent means the config was applied successfully but a redundant
+	// or conflicting hint was overridden (a benign override, e.g. an appProtocol
+	// cleartext hint superseded by a BackendTLSPolicy, or a ResponseHeaderModifier
+	// that strips a WebSocket handshake header). No standard Gateway API condition
+	// fits, so the controller emits a Kubernetes Event instead of a condition.
+	DiagnosticEvent DiagnosticTarget = "Event"
+)
+
+// Kubernetes Event types for a RouteDiagnostic whose Target is DiagnosticEvent.
+const (
+	// EventTypeNormal marks a benign override the proxy handled correctly (e.g.
+	// "TLS wins" over a cleartext appProtocol hint).
+	EventTypeNormal = "Normal"
+	// EventTypeWarning marks an operator-authored conflict honored as written but
+	// with a consequence worth flagging (e.g. stripping a WS handshake header).
+	EventTypeWarning = "Warning"
 )
 
 // RouteDiagnostic records a piece of a route's spec the controller will not
@@ -39,6 +55,9 @@ type RouteDiagnostic struct {
 	// (every rule wholly unservable) versus PartiallyInvalid=True (some rules or
 	// backends degraded while the route still serves).
 	WholeRule bool
+	// EventType is "Normal" or "Warning"; only meaningful when Target is
+	// DiagnosticEvent. The controller passes it to EventRecorder.Event.
+	EventType string
 }
 
 // diagSink accumulates RouteDiagnostics during a single conversion pass. It is
@@ -90,5 +109,22 @@ func (s *diagSink) add(target DiagnosticTarget, reason, message string, wholeRul
 		Reason:    reason,
 		Message:   message,
 		WholeRule: wholeRule,
+	})
+}
+
+// event records a benign-override diagnostic surfaced as a Kubernetes Event.
+// eventType is EventTypeNormal or EventTypeWarning.
+func (s *diagSink) event(eventType, message string) {
+	if s == nil {
+		return
+	}
+
+	s.items = append(s.items, RouteDiagnostic{
+		Namespace: s.namespace,
+		Name:      s.name,
+		RuleIndex: s.rule,
+		Target:    DiagnosticEvent,
+		Message:   message,
+		EventType: eventType,
 	})
 }

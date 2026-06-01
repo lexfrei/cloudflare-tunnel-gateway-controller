@@ -260,7 +260,7 @@ func convertHTTPRouteRule(
 		}
 	}
 
-	warnIfWSResponseFilterStripsHandshake(&proxyRule)
+	warnIfWSResponseFilterStripsHandshake(&proxyRule, sink)
 
 	return proxyRule
 }
@@ -300,7 +300,7 @@ var wsHandshakeRequiredHeaders = map[string]struct{}{
 // Filters are inspected at both rule scope (proxyRule.Filters) and
 // per-backend scope (backend.Filters); the same shape can land in
 // either place via HTTPRouteRule.Filters or HTTPBackendRef.Filters.
-func warnIfWSResponseFilterStripsHandshake(rule *RouteRule) {
+func warnIfWSResponseFilterStripsHandshake(rule *RouteRule, sink *diagSink) {
 	hasWSBackend := false
 
 	for idx := range rule.Backends {
@@ -317,7 +317,7 @@ func warnIfWSResponseFilterStripsHandshake(rule *RouteRule) {
 
 	// Rule-scope filters apply to every backend on the rule.
 	for idx := range rule.Filters {
-		warnIfHandshakeStrip(&rule.Filters[idx], "rule")
+		warnIfHandshakeStrip(&rule.Filters[idx], filterScopeRule, sink)
 	}
 
 	// Per-backend filters: only check filters on WS-marked backends.
@@ -327,16 +327,19 @@ func warnIfWSResponseFilterStripsHandshake(rule *RouteRule) {
 		}
 
 		for filterIdx := range rule.Backends[backendIdx].Filters {
-			warnIfHandshakeStrip(&rule.Backends[backendIdx].Filters[filterIdx], "backend")
+			warnIfHandshakeStrip(&rule.Backends[backendIdx].Filters[filterIdx], filterScopeBackend, sink)
 		}
 	}
 }
 
-// warnIfHandshakeStrip checks a single RouteFilter for handshake-header
-// removal and emits the WARN. Scope ("rule" or "backend") goes into the
-// log attributes so an operator can correlate the warning back to the
-// exact HTTPRoute field they edited.
-func warnIfHandshakeStrip(filter *RouteFilter, scope string) {
+// warnIfHandshakeStrip checks a single RouteFilter for handshake-header removal.
+// The filter is honored as written (per spec the pipeline runs unconditionally),
+// but stripping a load-bearing WebSocket handshake header silently breaks every
+// upgrade on the route, so it is surfaced as a Warning Event diagnostic — an
+// operator-authored conflict, not a controller-side drop. Scope ("rule" or
+// "backend") goes into the log attributes and the Event message so an operator
+// can correlate it back to the exact HTTPRoute field they edited.
+func warnIfHandshakeStrip(filter *RouteFilter, scope string, sink *diagSink) {
 	if filter.Type != FilterResponseHeaderModifier || filter.ResponseHeaderModifier == nil {
 		return
 	}
@@ -362,6 +365,17 @@ func warnIfHandshakeStrip(filter *RouteFilter, scope string) {
 		"ResponseHeaderModifier removes a WebSocket handshake header on a WS-marked backend; clients will fail to complete the upgrade",
 		"scope", scope,
 		"headers", offending,
+	)
+	sink.event(EventTypeWarning, wsHandshakeStripMessage(scope, offending))
+}
+
+// wsHandshakeStripMessage builds the Event message for a ResponseHeaderModifier
+// that strips WebSocket handshake headers.
+func wsHandshakeStripMessage(scope string, headers []string) string {
+	return fmt.Sprintf(
+		"A %s-scope ResponseHeaderModifier removes WebSocket handshake header(s) %v on a WebSocket backend; "+
+			"clients will fail to complete the upgrade. Remove %v from the filter's removeHeaders to keep WebSocket working.",
+		scope, headers, headers,
 	)
 }
 
@@ -1156,14 +1170,14 @@ func resolveBackendProtocol(
 
 	switch appProto {
 	case appProtocolH2C:
-		proto, u := resolveH2C(rawURL, tlsAttached, namespace, serviceName, port)
+		proto, u := resolveH2C(rawURL, tlsAttached, namespace, serviceName, port, sink)
 
 		return proto, u, false, false
 	case appProtocolWS:
 		if tlsAttached {
 			warnCleartextHintSuppressed(
 				"appProtocol kubernetes.io/ws suppressed by BackendTLSPolicy on the same Service — WebSocket will run over TLS (consider appProtocol kubernetes.io/wss instead)",
-				namespace, serviceName, port)
+				namespace, serviceName, port, sink)
 		}
 
 		return BackendProtocolHTTP, rawURL, true, false
@@ -1261,11 +1275,11 @@ func unknownAppProtocolMessage(serviceName, appProto string) string {
 // suppressed h2c hint so the operator sees the conflict. Otherwise rewrite
 // any https:// URL (which buildServiceURL emits for port 443) back to
 // http:// so the h2c transport dials cleartext.
-func resolveH2C(rawURL string, tlsAttached bool, namespace, serviceName string, port int32) (BackendProtocol, string) {
+func resolveH2C(rawURL string, tlsAttached bool, namespace, serviceName string, port int32, sink *diagSink) (BackendProtocol, string) {
 	if tlsAttached {
 		warnCleartextHintSuppressed(
 			"appProtocol kubernetes.io/h2c suppressed by BackendTLSPolicy on the same Service — HTTP/2 will be negotiated over TLS via ALPN",
-			namespace, serviceName, port)
+			namespace, serviceName, port, sink)
 
 		return BackendProtocolHTTP, rawURL
 	}
@@ -1273,18 +1287,20 @@ func resolveH2C(rawURL string, tlsAttached bool, namespace, serviceName string, 
 	return BackendProtocolH2C, strings.Replace(rawURL, schemeHTTPS+"://", schemeHTTP+"://", 1)
 }
 
-// warnCleartextHintSuppressed logs a WARN when an operator declared a
-// cleartext appProtocol (h2c, ws) but a BackendTLSPolicy attached to the
-// same Service forced TLS anyway. The proxy still does the right thing —
-// TLS wins because it's the higher-priority signal — but surfacing the
-// conflict lets the operator notice the contradictory hint instead of
-// shipping a misleading appProtocol value forever.
-func warnCleartextHintSuppressed(message, namespace, serviceName string, port int32) {
+// warnCleartextHintSuppressed logs a WARN and records a Normal Event diagnostic
+// when an operator declared a cleartext appProtocol (h2c, ws) but a
+// BackendTLSPolicy attached to the same Service forced TLS anyway. The proxy
+// still does the right thing — TLS wins because it's the higher-priority signal
+// — so this is a benign override surfaced as a Kubernetes Event, not a
+// condition: the route is fully Accepted, the operator is just told the
+// contradictory hint was superseded.
+func warnCleartextHintSuppressed(message, namespace, serviceName string, port int32, sink *diagSink) {
 	slog.Warn(message,
 		"namespace", namespace,
 		"service", serviceName,
 		"port", port,
 	)
+	sink.event(EventTypeNormal, message)
 }
 
 // convertBackendFilters converts the per-backend HTTPRouteFilters into proxy
