@@ -245,7 +245,16 @@ func convertHTTPRouteRule(
 	if rule.Timeouts != nil {
 		timeouts, err := convertTimeouts(rule.Timeouts)
 		if err != nil {
-			slog.Warn("skipping invalid route timeouts", "error", err)
+			// The rule still serves, just without the unparseable timeout, so
+			// this is report-only: WholeRule=false drives PartiallyInvalid, not
+			// Accepted=False.
+			sink.add(
+				DiagnosticAccepted,
+				string(gatewayv1.RouteReasonUnsupportedValue),
+				invalidTimeoutsMessage(err),
+				false,
+			)
+			slog.Warn("dropping invalid route timeouts", "error", err)
 		} else {
 			proxyRule.Timeouts = timeouts
 		}
@@ -1326,6 +1335,16 @@ func buildServiceURL(name, namespace string, port int32, clusterDomain string) s
 // format (only s, ms, h, m are specified). Using time.ParseDuration is
 // intentionally permissive — Kubernetes admission webhooks validate the
 // format before it reaches the controller.
+// invalidTimeoutsMessage builds the actionable status message for a rule whose
+// timeouts could not be parsed. The rule still serves without the timeout.
+func invalidTimeoutsMessage(err error) string {
+	return fmt.Sprintf(
+		"The rule's timeout could not be parsed (%v); the rule is served without it. "+
+			"Use a GEP-2257 duration (e.g. \"10s\", \"500ms\") or remove the timeout.",
+		err,
+	)
+}
+
 func convertTimeouts(timeouts *gatewayv1.HTTPRouteTimeouts) (*RouteTimeouts, error) {
 	result := &RouteTimeouts{}
 
