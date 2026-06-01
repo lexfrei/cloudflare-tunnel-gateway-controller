@@ -82,6 +82,10 @@ type HTTPRouteReconciler struct {
 	// bindingValidator validates route binding to Gateway listeners.
 	bindingValidator *routebinding.Validator
 
+	// ViewStore caches the per-Gateway ListenerSet merge view across reconciles
+	// (issue #332). Shared with the other reconcilers. May be nil.
+	ViewStore *mergeViewStore
+
 	// startupComplete indicates whether the startup sync has completed.
 	// This prevents race conditions between startup sync and reconcile loop.
 	startupComplete atomic.Bool
@@ -131,7 +135,8 @@ func httpRoutePtrs(routes []gatewayv1.HTTPRoute) []*gatewayv1.HTTPRoute {
 }
 
 func (r *HTTPRouteReconciler) isRouteForOurGateway(ctx context.Context, route *gatewayv1.HTTPRoute) bool {
-	return IsRouteAcceptedByGateway(ctx, r.Client, r.bindingValidator, r.ControllerName, HTTPRouteWrapper{route})
+	return IsRouteAcceptedByGateway(ctx, r.Client, r.bindingValidator, r.ControllerName, HTTPRouteWrapper{route},
+		newListenerViewCache(r.Client, r.ViewStore))
 }
 
 func (r *HTTPRouteReconciler) updateRouteStatus(
@@ -335,5 +340,6 @@ func (r *HTTPRouteReconciler) getAllRelevantRoutes(ctx context.Context) []reconc
 		routes[i] = HTTPRouteWrapper{&routeList.Items[i]}
 	}
 
-	return FilterAcceptedRoutes(ctx, r.Client, r.bindingValidator, r.ControllerName, routes)
+	return FilterAcceptedRoutes(ctx, r.Client, r.bindingValidator, r.ControllerName, routes,
+		newListenerViewCache(r.Client, r.ViewStore))
 }

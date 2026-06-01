@@ -175,11 +175,17 @@ func Run(ctx context.Context, cfg *Config) error {
 	// Uses slog.Default() which can be configured with TraceHandler at startup
 	baseLogger := slog.Default()
 
+	// Shared per-Gateway merge-view cache (issue #332). One instance threaded
+	// through every reconciler/syncer that needs the ListenerSet merge view so
+	// a burst of reconciles from one event reuses a single computation.
+	viewStore := newMergeViewStore()
+
 	gatewayReconciler := &GatewayReconciler{
 		Client:         mgr.GetClient(),
 		Scheme:         mgr.GetScheme(),
 		ControllerName: cfg.ControllerName,
 		ConfigResolver: configResolver,
+		ViewStore:      viewStore,
 	}
 
 	if err := gatewayReconciler.SetupWithManager(mgr); err != nil {
@@ -196,9 +202,11 @@ func Run(ctx context.Context, cfg *Config) error {
 		metricsCollector,
 		baseLogger,
 	)
+	routeSyncer.ViewStore = viewStore
 
 	// Create proxy syncer for L7 proxy config push (mandatory in v3)
 	proxySyncer := initProxySyncer(cfg, proxyEndpoints, mgr.GetClient(), baseLogger, logger)
+	proxySyncer.ViewStore = viewStore
 
 	httpRouteReconciler := &HTTPRouteReconciler{
 		Client:         mgr.GetClient(),
@@ -208,6 +216,7 @@ func Run(ctx context.Context, cfg *Config) error {
 		ProxySyncer:    proxySyncer,
 		ProxyEndpoints: proxyEndpoints,
 		Recorder:       mgr.GetEventRecorder("httproute-controller"),
+		ViewStore:      viewStore,
 	}
 
 	if err := httpRouteReconciler.SetupWithManager(mgr); err != nil {
@@ -223,13 +232,14 @@ func Run(ctx context.Context, cfg *Config) error {
 		ProxyEndpoints: proxyEndpoints,
 		TunnelProtocol: cfg.TunnelProtocol,
 		Recorder:       mgr.GetEventRecorder("grpcroute-controller"),
+		ViewStore:      viewStore,
 	}
 
 	if err := grpcRouteReconciler.SetupWithManager(mgr); err != nil {
 		return errors.Wrap(err, "failed to setup grpcroute controller")
 	}
 
-	if err := setupListenerSetReconciler(mgr, cfg.ControllerName); err != nil {
+	if err := setupListenerSetReconciler(mgr, cfg.ControllerName, viewStore); err != nil {
 		return err
 	}
 
@@ -276,11 +286,12 @@ func Run(ctx context.Context, cfg *Config) error {
 // setupListenerSetReconciler wires the ListenerSet controller. Extracted
 // from Run so the per-reconciler setup chain in Run stays under the
 // cyclomatic-complexity gate.
-func setupListenerSetReconciler(mgr ctrl.Manager, controllerName string) error {
+func setupListenerSetReconciler(mgr ctrl.Manager, controllerName string, viewStore *mergeViewStore) error {
 	reconciler := &ListenerSetReconciler{
 		Client:         mgr.GetClient(),
 		Scheme:         mgr.GetScheme(),
 		ControllerName: controllerName,
+		ViewStore:      viewStore,
 	}
 
 	if err := reconciler.SetupWithManager(mgr); err != nil {

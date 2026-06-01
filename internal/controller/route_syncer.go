@@ -45,6 +45,12 @@ type RouteSyncer struct {
 	grpcBuilder      *ingress.GRPCBuilder
 	bindingValidator *routebinding.Validator
 
+	// ViewStore caches the per-Gateway ListenerSet merge view across reconciles
+	// (issue #332). Set by the manager after construction and shared with the
+	// other reconcilers. nil disables cross-reconcile reuse (per-pass dedup
+	// still applies).
+	ViewStore *mergeViewStore
+
 	// syncMu protects concurrent calls to SyncAllRoutes.
 	// Both HTTPRouteReconciler and GRPCRouteReconciler may call SyncAllRoutes
 	// concurrently, and this mutex ensures serialized access to Cloudflare API.
@@ -354,8 +360,9 @@ func parametersRefEqual(left, right *gatewayv1.ParametersReference) bool {
 // Used when early errors occur (before routes are collected) to ensure
 // route statuses are updated to reflect the error.
 func (s *RouteSyncer) buildResultForError(ctx context.Context) *SyncResult {
-	httpResult, _ := s.getRelevantHTTPRoutes(ctx)
-	grpcResult, _ := s.getRelevantGRPCRoutes(ctx)
+	views := newListenerViewCache(s.Client, s.ViewStore)
+	httpResult, _ := s.getRelevantHTTPRoutes(ctx, views)
+	grpcResult, _ := s.getRelevantGRPCRoutes(ctx, views)
 
 	result := &SyncResult{}
 
@@ -431,14 +438,19 @@ func (s *RouteSyncer) SyncAllRoutes(ctx context.Context) (ctrl.Result, *SyncResu
 
 	s.Metrics.RecordAPICall(ctx, "get", "tunnel_config", "success", time.Since(getStart))
 
+	// One merge-view cache for the whole sync: every route's ListenerSet
+	// parentRefs that resolve to the same Gateway reuse a single merge instead
+	// of rebuilding it per route (issue #332).
+	views := newListenerViewCache(s.Client, s.ViewStore)
+
 	// Collect all relevant HTTPRoutes with binding validation
-	httpResult, err := s.getRelevantHTTPRoutes(ctx)
+	httpResult, err := s.getRelevantHTTPRoutes(ctx, views)
 	if err != nil {
 		return ctrl.Result{}, nil, errors.Wrap(err, "failed to list httproutes")
 	}
 
 	// Collect all relevant GRPCRoutes with binding validation
-	grpcResult, err := s.getRelevantGRPCRoutes(ctx)
+	grpcResult, err := s.getRelevantGRPCRoutes(ctx, views)
 	if err != nil {
 		return ctrl.Result{}, nil, errors.Wrap(err, "failed to list grpcroutes")
 	}
@@ -569,6 +581,7 @@ type grpcRouteResult struct {
 //nolint:dupl // mirrored on purpose against getRelevantGRPCRoutes — different list/result types prevent a clean generic
 func (s *RouteSyncer) getRelevantHTTPRoutes(
 	ctx context.Context,
+	views *listenerViewCache,
 ) (*httpRouteResult, error) {
 	logger := logging.FromContext(ctx)
 	if logger == slog.Default() {
@@ -588,7 +601,7 @@ func (s *RouteSyncer) getRelevantHTTPRoutes(
 		route := &routeList.Items[i]
 		bindingInfo, accepted, referencesUs := s.bindRouteParents(
 			ctx, logger, route.Namespace, route.Name, route.Spec.Hostnames,
-			routebinding.KindHTTPRoute, route.Spec.ParentRefs,
+			routebinding.KindHTTPRoute, route.Spec.ParentRefs, views,
 		)
 		result.bindings[route.Namespace+"/"+route.Name] = bindingInfo
 
@@ -606,6 +619,7 @@ func (s *RouteSyncer) getRelevantHTTPRoutes(
 //nolint:dupl // mirrored on purpose against getRelevantHTTPRoutes — different list/result types prevent a clean generic
 func (s *RouteSyncer) getRelevantGRPCRoutes(
 	ctx context.Context,
+	views *listenerViewCache,
 ) (*grpcRouteResult, error) {
 	logger := logging.FromContext(ctx)
 	if logger == slog.Default() {
@@ -625,7 +639,7 @@ func (s *RouteSyncer) getRelevantGRPCRoutes(
 		route := &routeList.Items[i]
 		bindingInfo, accepted, referencesUs := s.bindRouteParents(
 			ctx, logger, route.Namespace, route.Name, route.Spec.Hostnames,
-			routebinding.KindGRPCRoute, route.Spec.ParentRefs,
+			routebinding.KindGRPCRoute, route.Spec.ParentRefs, views,
 		)
 		result.bindings[route.Namespace+"/"+route.Name] = bindingInfo
 
@@ -651,6 +665,7 @@ func (s *RouteSyncer) bindRouteParents(
 	hostnames []gatewayv1.Hostname,
 	kind gatewayv1.Kind,
 	parentRefs []gatewayv1.ParentReference,
+	views *listenerViewCache,
 ) (routeBindingInfo, bool, bool) {
 	bindingInfo := routeBindingInfo{
 		bindingResults: make(map[int]routebinding.BindingResult),
@@ -669,7 +684,7 @@ func (s *RouteSyncer) bindRouteParents(
 			Port:        ref.Port,
 		}
 
-		binding, err := resolveRouteParentBinding(ctx, s.Client, s.bindingValidator, s.ControllerName, ref, routeNamespace, routeInfo)
+		binding, err := resolveRouteParentBinding(ctx, s.Client, s.bindingValidator, s.ControllerName, ref, routeNamespace, routeInfo, views)
 		if err != nil {
 			logger.Error("failed to resolve route parentRef",
 				"route", routeNamespace+"/"+routeName, "refIdx", refIdx, "error", err)

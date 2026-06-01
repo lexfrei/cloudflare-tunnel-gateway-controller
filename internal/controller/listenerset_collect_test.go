@@ -105,7 +105,7 @@ func TestSummariseAttachedListenerSets_BrokenTLSRefNotCounted(t *testing.T) {
 
 	cli := buildTLSFakeClient(t, ls, gw)
 
-	count, err := summariseAttachedListenerSets(context.Background(), cli, gw)
+	count, err := summariseAttachedListenerSets(context.Background(), cli, gw, nil)
 	require.NoError(t, err)
 	assert.Equal(t, 0, count, "a ListenerSet with an unresolved TLS cert ref must not be counted as attached")
 }
@@ -139,7 +139,7 @@ func TestSummariseAttachedListenerSets_HealthyCounted(t *testing.T) {
 
 	cli := buildTLSFakeClient(t, ls, gw)
 
-	count, err := summariseAttachedListenerSets(context.Background(), cli, gw)
+	count, err := summariseAttachedListenerSets(context.Background(), cli, gw, nil)
 	require.NoError(t, err)
 	assert.Equal(t, 1, count)
 }

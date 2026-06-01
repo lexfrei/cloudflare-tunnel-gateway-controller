@@ -38,11 +38,13 @@ func withEffectiveHostnames(
 	ctx context.Context,
 	cli client.Client,
 	routes []*gatewayv1.HTTPRoute,
+	views *listenerViewCache,
 ) []*gatewayv1.HTTPRoute {
 	if len(routes) == 0 {
 		return routes
 	}
 
+	views = views.orNew(cli)
 	validator := routebinding.NewValidator(cli)
 	out := make([]*gatewayv1.HTTPRoute, len(routes))
 
@@ -53,7 +55,7 @@ func withEffectiveHostnames(
 			continue
 		}
 
-		parentHostnames := collectAcceptedListenerHostnames(ctx, cli, validator, HTTPRouteWrapper{route})
+		parentHostnames := collectAcceptedListenerHostnames(ctx, cli, validator, HTTPRouteWrapper{route}, views)
 		if len(parentHostnames) == 0 {
 			out[i] = route
 
@@ -81,11 +83,13 @@ func withEffectiveHostnamesGRPC(
 	ctx context.Context,
 	cli client.Client,
 	routes []*gatewayv1.GRPCRoute,
+	views *listenerViewCache,
 ) []*gatewayv1.GRPCRoute {
 	if len(routes) == 0 {
 		return routes
 	}
 
+	views = views.orNew(cli)
 	validator := routebinding.NewValidator(cli)
 	out := make([]*gatewayv1.GRPCRoute, len(routes))
 
@@ -96,7 +100,7 @@ func withEffectiveHostnamesGRPC(
 			continue
 		}
 
-		parentHostnames := collectAcceptedListenerHostnames(ctx, cli, validator, GRPCRouteWrapper{route})
+		parentHostnames := collectAcceptedListenerHostnames(ctx, cli, validator, GRPCRouteWrapper{route}, views)
 		if len(parentHostnames) == 0 {
 			out[i] = route
 
@@ -121,6 +125,7 @@ func collectAcceptedListenerHostnames(
 	cli client.Client,
 	validator *routebinding.Validator,
 	route Route,
+	views *listenerViewCache,
 ) []gatewayv1.Hostname {
 	seen := make(map[gatewayv1.Hostname]struct{})
 
@@ -140,7 +145,7 @@ func collectAcceptedListenerHostnames(
 	}
 
 	for _, ref := range route.GetParentRefs() {
-		for _, hostname := range acceptedHostnamesForParentRef(ctx, cli, validator, route, ref) {
+		for _, hostname := range acceptedHostnamesForParentRef(ctx, cli, validator, route, ref, views) {
 			add(hostname)
 		}
 	}
@@ -154,6 +159,7 @@ func acceptedHostnamesForParentRef(
 	validator *routebinding.Validator,
 	route Route,
 	ref gatewayv1.ParentReference,
+	views *listenerViewCache,
 ) []gatewayv1.Hostname {
 	if ref.Group != nil && string(*ref.Group) != "" && string(*ref.Group) != gatewayv1.GroupName {
 		return nil
@@ -182,7 +188,7 @@ func acceptedHostnamesForParentRef(
 	case kindGateway:
 		return gatewayAcceptedHostnames(ctx, cli, validator, namespace, string(ref.Name), routeInfo)
 	case kindListenerSet:
-		return listenerSetAcceptedHostnames(ctx, cli, validator, namespace, string(ref.Name), routeInfo)
+		return listenerSetAcceptedHostnames(ctx, cli, validator, namespace, string(ref.Name), routeInfo, views)
 	}
 
 	return nil
@@ -219,6 +225,7 @@ func listenerSetAcceptedHostnames(
 	validator *routebinding.Validator,
 	namespace, name string,
 	routeInfo *routebinding.RouteInfo,
+	views *listenerViewCache,
 ) []gatewayv1.Hostname {
 	var listenerSet gatewayv1.ListenerSet
 	if err := cli.Get(ctx, client.ObjectKey{Name: name, Namespace: namespace}, &listenerSet); err != nil {
@@ -230,7 +237,7 @@ func listenerSetAcceptedHostnames(
 		return nil
 	}
 
-	matched := nonConflictedSections(ctx, cli, &listenerSet, result.MatchedListeners)
+	matched := nonConflictedSections(ctx, cli, &listenerSet, result.MatchedListeners, views)
 
 	hostByName := make(map[gatewayv1.SectionName]*gatewayv1.Hostname, len(listenerSet.Spec.Listeners))
 	for i := range listenerSet.Spec.Listeners {
@@ -252,20 +259,19 @@ func nonConflictedSections(
 	cli client.Client,
 	listenerSet *gatewayv1.ListenerSet,
 	sections []gatewayv1.SectionName,
+	views *listenerViewCache,
 ) []gatewayv1.SectionName {
 	parent, found := listenerSetParentGateway(ctx, cli, listenerSet)
 	if !found {
 		return sections
 	}
 
-	siblings, err := collectAcceptedListenerSetsForGateway(ctx, cli, parent)
+	view, err := views.orNew(cli).forGateway(ctx, parent)
 	if err != nil {
 		return sections
 	}
 
-	merged := listenermerge.Merge(parent, siblings)
-
-	return dropConflictedSections(merged, listenerSet, sections)
+	return dropConflictedSections(view.merged, listenerSet, sections)
 }
 
 func dropConflictedSections(

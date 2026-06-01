@@ -7,7 +7,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
-	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/listenermerge"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/routebinding"
 )
 
@@ -42,6 +41,7 @@ func resolveRouteParentBinding(
 	ref gatewayv1.ParentReference,
 	routeNamespace string,
 	routeInfo *routebinding.RouteInfo,
+	views *listenerViewCache,
 ) (parentRefBinding, error) {
 	kind := kindGateway
 	if ref.Kind != nil {
@@ -52,7 +52,7 @@ func resolveRouteParentBinding(
 	case kindGateway:
 		return resolveGatewayParentBinding(ctx, cli, validator, controllerName, ref, routeNamespace, routeInfo)
 	case kindListenerSet:
-		return resolveListenerSetParentBinding(ctx, cli, validator, controllerName, ref, routeNamespace, routeInfo)
+		return resolveListenerSetParentBinding(ctx, cli, validator, controllerName, ref, routeNamespace, routeInfo, views)
 	}
 
 	return parentRefBinding{}, nil
@@ -100,6 +100,7 @@ func resolveListenerSetParentBinding(
 	ref gatewayv1.ParentReference,
 	routeNamespace string,
 	routeInfo *routebinding.RouteInfo,
+	views *listenerViewCache,
 ) (parentRefBinding, error) {
 	namespace := routeNamespace
 	if ref.Namespace != nil {
@@ -150,7 +151,7 @@ func resolveListenerSetParentBinding(
 	// says should not exist. Filter the matched sections through the merge
 	// view; if every match is conflicted, surface NoMatchingParent.
 	if bindResult.Accepted {
-		bindResult = filterMatchedListenersByConflict(ctx, cli, &listenerSet, parent, bindResult)
+		bindResult = filterMatchedListenersByConflict(ctx, cli, &listenerSet, parent, bindResult, views)
 	}
 
 	return parentRefBinding{ManagedByThisController: true, Result: bindResult}, nil
@@ -165,21 +166,19 @@ func filterMatchedListenersByConflict(
 	listenerSet *gatewayv1.ListenerSet,
 	parent *gatewayv1.Gateway,
 	result routebinding.BindingResult,
+	views *listenerViewCache,
 ) routebinding.BindingResult {
-	siblings, err := collectAcceptedListenerSetsForGateway(ctx, cli, parent)
+	view, err := views.orNew(cli).forGateway(ctx, parent)
 	if err != nil {
 		// Best-effort: if we can't compute the merge view, leave the binding
 		// as-is. A later reconcile will retry.
 		return result
 	}
 
-	merged := listenermerge.Merge(parent, siblings)
-
 	kept := make([]gatewayv1.SectionName, 0, len(result.MatchedListeners))
 
 	for _, section := range result.MatchedListeners {
-		entry := findMergedEntry(merged, listenerSet, section)
-		if entry != nil && entry.ConflictReason != "" {
+		if view.conflictReason(listenerSet, section) != "" {
 			continue
 		}
 

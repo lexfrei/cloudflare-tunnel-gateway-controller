@@ -1294,6 +1294,7 @@ func TestIsRouteAcceptedByGateway(t *testing.T) {
 				validator,
 				tt.controllerName,
 				tt.route,
+				nil,
 			)
 
 			assert.Equal(t, tt.expected, result)
@@ -1631,6 +1632,7 @@ func TestFilterAcceptedRoutes(t *testing.T) {
 				validator,
 				tt.controllerName,
 				tt.routes,
+				nil,
 			)
 
 			assert.Len(t, result, tt.expectedCount)
@@ -1682,7 +1684,7 @@ func TestIsRouteAcceptedByGateway_NonGatewayKind(t *testing.T) {
 		},
 	}}
 
-	result := IsRouteAcceptedByGateway(context.Background(), fakeClient, validator, "test-controller", route)
+	result := IsRouteAcceptedByGateway(context.Background(), fakeClient, validator, "test-controller", route, nil)
 	assert.False(t, result)
 }
 
@@ -1707,7 +1709,7 @@ func TestIsRouteAcceptedByGateway_GatewayNotFound(t *testing.T) {
 		},
 	}}
 
-	result := IsRouteAcceptedByGateway(context.Background(), fakeClient, validator, "test-controller", route)
+	result := IsRouteAcceptedByGateway(context.Background(), fakeClient, validator, "test-controller", route, nil)
 	assert.False(t, result)
 }
 
@@ -1753,7 +1755,7 @@ func TestIsRouteAcceptedByGateway_CrossNamespaceExplicit(t *testing.T) {
 		},
 	}}
 
-	result := IsRouteAcceptedByGateway(context.Background(), fakeClient, validator, "test-controller", route)
+	result := IsRouteAcceptedByGateway(context.Background(), fakeClient, validator, "test-controller", route, nil)
 	assert.True(t, result)
 }
 

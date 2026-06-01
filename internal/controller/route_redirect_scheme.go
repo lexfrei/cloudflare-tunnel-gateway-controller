@@ -42,16 +42,18 @@ func withDefaultRedirectScheme(
 	ctx context.Context,
 	cli client.Client,
 	routes []*gatewayv1.HTTPRoute,
+	views *listenerViewCache,
 ) []*gatewayv1.HTTPRoute {
 	if len(routes) == 0 {
 		return routes
 	}
 
+	views = views.orNew(cli)
 	validator := routebinding.NewValidator(cli)
 	out := make([]*gatewayv1.HTTPRoute, len(routes))
 
 	for i, route := range routes {
-		out[i] = defaultRedirectSchemeForRoute(ctx, cli, validator, route)
+		out[i] = defaultRedirectSchemeForRoute(ctx, cli, validator, route, views)
 	}
 
 	return out
@@ -65,12 +67,13 @@ func defaultRedirectSchemeForRoute(
 	cli client.Client,
 	validator *routebinding.Validator,
 	route *gatewayv1.HTTPRoute,
+	views *listenerViewCache,
 ) *gatewayv1.HTTPRoute {
 	if !routeHasEmptyRedirectScheme(route) {
 		return route
 	}
 
-	scheme := acceptedListenerScheme(ctx, cli, validator, HTTPRouteWrapper{route})
+	scheme := acceptedListenerScheme(ctx, cli, validator, HTTPRouteWrapper{route}, views)
 	if scheme == "" {
 		return route
 	}
@@ -151,11 +154,12 @@ func acceptedListenerScheme(
 	cli client.Client,
 	validator *routebinding.Validator,
 	route Route,
+	views *listenerViewCache,
 ) string {
 	sawHTTP := false
 
 	for _, ref := range route.GetParentRefs() {
-		for _, protocol := range acceptedProtocolsForParentRef(ctx, cli, validator, route, ref) {
+		for _, protocol := range acceptedProtocolsForParentRef(ctx, cli, validator, route, ref, views) {
 			switch protocol {
 			case gatewayv1.HTTPSProtocolType:
 				return redirectSchemeHTTPS
@@ -186,6 +190,7 @@ func acceptedProtocolsForParentRef(
 	validator *routebinding.Validator,
 	route Route,
 	ref gatewayv1.ParentReference,
+	views *listenerViewCache,
 ) []gatewayv1.ProtocolType {
 	if ref.Group != nil && string(*ref.Group) != "" && string(*ref.Group) != gatewayv1.GroupName {
 		return nil
@@ -218,7 +223,7 @@ func acceptedProtocolsForParentRef(
 	case kindGateway:
 		return gatewayAcceptedProtocols(ctx, cli, validator, namespace, string(ref.Name), routeInfo)
 	case kindListenerSet:
-		return listenerSetAcceptedProtocols(ctx, cli, validator, namespace, string(ref.Name), routeInfo)
+		return listenerSetAcceptedProtocols(ctx, cli, validator, namespace, string(ref.Name), routeInfo, views)
 	}
 
 	return nil
@@ -255,6 +260,7 @@ func listenerSetAcceptedProtocols(
 	validator *routebinding.Validator,
 	namespace, name string,
 	routeInfo *routebinding.RouteInfo,
+	views *listenerViewCache,
 ) []gatewayv1.ProtocolType {
 	var listenerSet gatewayv1.ListenerSet
 	if err := cli.Get(ctx, client.ObjectKey{Name: name, Namespace: namespace}, &listenerSet); err != nil {
@@ -269,7 +275,7 @@ func listenerSetAcceptedProtocols(
 	// Drop sections whose merged-view entry is conflicted — a conflicted
 	// listener is not programmed, so a route must not infer its scheme from
 	// that listener's protocol. Same step the hostname-inheritance path takes.
-	matched := nonConflictedSections(ctx, cli, &listenerSet, result.MatchedListeners)
+	matched := nonConflictedSections(ctx, cli, &listenerSet, result.MatchedListeners, views)
 
 	protoByName := make(map[gatewayv1.SectionName]gatewayv1.ProtocolType, len(listenerSet.Spec.Listeners))
 	for i := range listenerSet.Spec.Listeners {

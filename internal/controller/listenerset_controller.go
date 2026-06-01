@@ -40,6 +40,10 @@ type ListenerSetReconciler struct {
 
 	Scheme         *runtime.Scheme
 	ControllerName string
+
+	// ViewStore caches the per-Gateway ListenerSet merge view across reconciles
+	// (issue #332). Shared with the other reconcilers. May be nil.
+	ViewStore *mergeViewStore
 }
 
 // Reconcile is the main entrypoint. It is safe to call against non-existent
@@ -221,7 +225,11 @@ func (r *ListenerSetReconciler) computeAcceptance(
 		}
 	}
 
-	siblings, err := r.collectAcceptedSiblings(ctx, gateway, listenerSet)
+	// The merged view spans the parent Gateway plus every sibling ListenerSet
+	// allowed to attach (including this one — it has just passed the
+	// allowedListeners check above). Shared with the Gateway and route
+	// reconcilers through the cross-reconcile store (issue #332).
+	view, err := newListenerViewCache(r.Client, r.ViewStore).forGateway(ctx, gateway)
 	if err != nil {
 		return listenerSetAcceptanceResult{
 			Accepted: false,
@@ -230,7 +238,7 @@ func (r *ListenerSetReconciler) computeAcceptance(
 		}
 	}
 
-	merged := listenermerge.Merge(gateway, siblings)
+	merged := view.merged
 
 	refChecks, refErr := r.collectListenerEntryRefChecks(ctx, listenerSet)
 	if refErr != nil {
@@ -478,51 +486,6 @@ func summariseListenerSet(
 	}
 
 	return false, gatewayv1.ListenerSetReasonListenersNotValid, listenerSetMsgListenersBad
-}
-
-// collectAcceptedSiblings returns the slice of ListenerSets — including the
-// one being reconciled — that point at the parent Gateway and are themselves
-// allowed by the Gateway's allowedListeners filter. This is the input to the
-// precedence + conflict view so that hostname/protocol conflicts between
-// siblings are visible.
-func (r *ListenerSetReconciler) collectAcceptedSiblings(
-	ctx context.Context,
-	gateway *gatewayv1.Gateway,
-	current *gatewayv1.ListenerSet,
-) ([]*gatewayv1.ListenerSet, error) {
-	var all gatewayv1.ListenerSetList
-	if err := r.List(ctx, &all); err != nil {
-		return nil, errors.Wrap(err, "failed to list listenersets")
-	}
-
-	validator := routebinding.NewValidator(r.Client)
-	siblings := make([]*gatewayv1.ListenerSet, 0, len(all.Items))
-
-	for i := range all.Items {
-		item := &all.Items[i]
-
-		if !listenerSetTargetsGateway(item, gateway) {
-			continue
-		}
-
-		// Always include the current ListenerSet (we've already checked it).
-		if item.Name == current.Name && item.Namespace == current.Namespace {
-			siblings = append(siblings, item)
-
-			continue
-		}
-
-		acceptance, err := validator.EvaluateListenerSetAcceptance(ctx, gateway, item)
-		if err != nil {
-			return nil, errors.Wrap(err, "failed to evaluate sibling listenerset")
-		}
-
-		if acceptance.Accepted {
-			siblings = append(siblings, item)
-		}
-	}
-
-	return siblings, nil
 }
 
 // listenerSetTargetsGateway returns true when the ListenerSet's spec.parentRef
