@@ -640,6 +640,28 @@
             }
           }
         },
+        "tracing": {
+          "type": "object",
+          "description": "Distributed tracing (OpenTelemetry) on the in-process proxy. Off by default. Spans export over OTLP/gRPC; W3C trace context is propagated to backends.",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Enable distributed tracing on the proxy.",
+              "default": false
+            },
+            "endpoint": {
+              "type": "string",
+              "description": "OTLP/gRPC collector endpoint. Bare host:port uses plaintext gRPC; an http:// or https:// prefix selects plaintext vs TLS. Empty defers to the standard OTEL_EXPORTER_OTLP_ENDPOINT environment variables."
+            },
+            "sampleRate": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "description": "Head-sampling probability in [0, 1], applied at the trace root via ParentBased(TraceIDRatioBased). 1.0 samples every trace.",
+              "default": 1.0
+            }
+          }
+        },
         "resources": {
           "type": "object",
           "description": "Container resource requirements"

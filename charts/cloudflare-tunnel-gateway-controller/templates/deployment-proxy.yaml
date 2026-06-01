@@ -73,6 +73,16 @@ spec:
               value: "true"
             {{- end }}
             {{- end }}
+            {{- if .Values.proxy.tracing.enabled }}
+            - name: PROXY_TRACING_ENABLED
+              value: "true"
+            {{- with .Values.proxy.tracing.endpoint }}
+            - name: PROXY_TRACING_ENDPOINT
+              value: {{ . | quote }}
+            {{- end }}
+            - name: PROXY_TRACING_SAMPLE_RATE
+              value: {{ .Values.proxy.tracing.sampleRate | quote }}
+            {{- end }}
           ports:
             - name: config-api
               containerPort: {{ .Values.proxy.configAPIPort }}

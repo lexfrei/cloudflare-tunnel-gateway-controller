@@ -504,3 +504,126 @@ func TestAccessLogStripQueryOption_Matrix(t *testing.T) {
 		})
 	}
 }
+
+// TestTracingEnabled_Matrix pins PROXY_TRACING_ENABLED parsing: the same
+// truthy convention as the other proxy toggles (1 / true, case-insensitive,
+// trimmed; anything else disabled).
+func TestTracingEnabled_Matrix(t *testing.T) {
+	tests := []struct {
+		name string
+		envv string
+		set  bool
+		want bool
+	}{
+		{name: "unset is disabled", set: false, want: false},
+		{name: "empty is disabled", envv: "", set: true, want: false},
+		{name: "0 is disabled", envv: "0", set: true, want: false},
+		{name: "false is disabled", envv: "false", set: true, want: false},
+		{name: "1 is enabled", envv: "1", set: true, want: true},
+		{name: "true is enabled", envv: "true", set: true, want: true},
+		{name: "TRUE is enabled (case-insensitive)", envv: "TRUE", set: true, want: true},
+		{name: "garbage is disabled (typo-safe)", envv: "yesplease", set: true, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.set {
+				t.Setenv("PROXY_TRACING_ENABLED", tt.envv)
+			} else {
+				t.Setenv("PROXY_TRACING_ENABLED", "")
+			}
+
+			assert.Equal(t, tt.want, tracingEnabled(),
+				"PROXY_TRACING_ENABLED=%q must yield enabled=%v", tt.envv, tt.want)
+		})
+	}
+}
+
+// TestParseTracingSampleRate_Matrix pins the parse contract: unset -> 1.0,
+// valid float passes through, parse failure -> 1.0 + WARN.
+func TestParseTracingSampleRate_Matrix(t *testing.T) {
+	tests := []struct {
+		name     string
+		envv     string
+		set      bool
+		want     float64
+		wantWarn bool
+	}{
+		{name: "unset defaults to 1.0", set: false, want: 1.0},
+		{name: "0.25 passes through", envv: "0.25", set: true, want: 0.25},
+		{name: "0 passes through", envv: "0", set: true, want: 0},
+		{name: "garbage defaults to 1.0 and warns", envv: "halfish", set: true, want: 1.0, wantWarn: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.set {
+				t.Setenv("PROXY_TRACING_SAMPLE_RATE", tt.envv)
+			} else {
+				t.Setenv("PROXY_TRACING_SAMPLE_RATE", "")
+			}
+
+			var logBuf bytes.Buffer
+
+			logger := slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+
+			got := parseTracingSampleRate(logger)
+			assert.InDelta(t, tt.want, got, 1e-9,
+				"PROXY_TRACING_SAMPLE_RATE=%q parse must yield %v, got %v", tt.envv, tt.want, got)
+
+			if tt.wantWarn {
+				assert.Contains(t, logBuf.String(), "failed to parse",
+					"unparseable sample rate must surface a WARN")
+			}
+		})
+	}
+}
+
+// TestTracingConfigFromEnv builds the tracing.Config from env and asserts the
+// fields the proxy controls map through.
+func TestTracingConfigFromEnv(t *testing.T) {
+	t.Setenv("PROXY_TRACING_ENABLED", "true")
+	t.Setenv("PROXY_TRACING_ENDPOINT", "http://otel-collector.observability:4317")
+	t.Setenv("PROXY_TRACING_SAMPLE_RATE", "0.5")
+
+	logger := slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))
+
+	cfg := tracingConfigFromEnv(logger)
+
+	assert.True(t, cfg.Enabled)
+	assert.Equal(t, "http://otel-collector.observability:4317", cfg.Endpoint)
+	assert.InDelta(t, 0.5, cfg.SampleRate, 1e-9)
+	assert.Equal(t, "proxy", cfg.ServiceName)
+}
+
+// TestTracingHandlerOption pins that the WithTracing option is emitted iff
+// PROXY_TRACING_ENABLED is truthy.
+func TestTracingHandlerOption(t *testing.T) {
+	tests := []struct {
+		name       string
+		enabled    string
+		setEnabled bool
+		wantNonNil bool
+	}{
+		{name: "disabled by default", setEnabled: false, wantNonNil: false},
+		{name: "enabled=true emits the option", enabled: "true", setEnabled: true, wantNonNil: true},
+		{name: "enabled=0 emits nothing", enabled: "0", setEnabled: true, wantNonNil: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.setEnabled {
+				t.Setenv("PROXY_TRACING_ENABLED", tt.enabled)
+			} else {
+				t.Setenv("PROXY_TRACING_ENABLED", "")
+			}
+
+			opt := tracingHandlerOption()
+			if tt.wantNonNil {
+				assert.NotNil(t, opt, "PROXY_TRACING_ENABLED=%q must yield a non-nil HandlerOption", tt.enabled)
+			} else {
+				assert.Nil(t, opt, "PROXY_TRACING_ENABLED=%q must yield a nil HandlerOption", tt.enabled)
+			}
+		})
+	}
+}

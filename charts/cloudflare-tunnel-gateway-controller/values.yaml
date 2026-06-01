@@ -360,6 +360,26 @@ proxy:
     # concern and route-level (headers vs query) / sink-level (log
     # pipeline scrubbing) mitigations aren't viable.
     stripQuery: false
+  # -- Distributed tracing (OpenTelemetry) on the in-process proxy.
+  # Off by default (zero cost on the hot path). When enabled, each
+  # request gets a server span, backend calls get a linked client span,
+  # and W3C traceparent / tracestate are propagated to backends. Spans
+  # export over OTLP/gRPC; the existing log enrichment then surfaces
+  # trace_id / span_id on structured log lines.
+  tracing:
+    # -- Enable distributed tracing on the proxy. Defaults to false.
+    enabled: false
+    # -- OTLP/gRPC collector endpoint. A bare host:port (e.g.
+    # "otel-collector.observability:4317") uses plaintext gRPC; prefix
+    # with http:// or https:// to choose plaintext vs TLS explicitly.
+    # Empty defers to the standard OTEL_EXPORTER_OTLP_ENDPOINT /
+    # OTEL_EXPORTER_OTLP_TRACES_ENDPOINT environment variables.
+    endpoint: ""
+    # -- Head-sampling probability in [0, 1], applied at the trace root
+    # via ParentBased(TraceIDRatioBased). 1.0 samples every trace; 0.1
+    # samples a tenth. An upstream sampling decision is respected, so
+    # partial traces stay intact when the proxy sits behind the edge.
+    sampleRate: 1.0
   # -- Container resource requests and limits
   resources:
     limits:

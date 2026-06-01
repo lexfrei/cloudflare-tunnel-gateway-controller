@@ -337,3 +337,65 @@ tests:
       - notMatchRegex:
           path: spec.template.spec.containers[0].env[*].name
           pattern: "^PROXY_TUNNEL_PROTOCOL$"
+
+  - it: should NOT emit any PROXY_TRACING_* env when tracing is disabled (default)
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
+    asserts:
+      - notMatchRegex:
+          path: spec.template.spec.containers[0].env[*].name
+          pattern: "^PROXY_TRACING_"
+
+  - it: should emit PROXY_TRACING_* env vars when tracing enabled
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
+        tracing:
+          enabled: true
+          endpoint: "http://otel-collector.observability:4317"
+          sampleRate: 0.5
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: PROXY_TRACING_ENABLED
+            value: "true"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: PROXY_TRACING_ENDPOINT
+            value: "http://otel-collector.observability:4317"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: PROXY_TRACING_SAMPLE_RATE
+            value: "0.5"
+
+  - it: should emit default sampleRate "1" when tracing enabled without override
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
+        tracing:
+          enabled: true
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: PROXY_TRACING_SAMPLE_RATE
+            value: "1"
+
+  - it: should NOT emit PROXY_TRACING_ENDPOINT when endpoint is empty
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
+        tracing:
+          enabled: true
+    asserts:
+      - notMatchRegex:
+          path: spec.template.spec.containers[0].env[*].name
+          pattern: "^PROXY_TRACING_ENDPOINT$"
