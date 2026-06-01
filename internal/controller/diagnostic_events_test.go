@@ -71,6 +71,29 @@ func TestEmitDiagnosticEvents_NormalAndWarning(t *testing.T) {
 	assert.Contains(t, warning, "Sec-WebSocket-Accept", "Warning event must carry the conflict message")
 }
 
+// TestEmitDiagnosticEvents_MessageWithPercentIsLiteral pins that a diagnostic
+// message containing a literal % is emitted verbatim. Eventf treats its note as
+// a format string, so passing diag.Message as the format (instead of a "%s"
+// argument) would render "50%!(NOVERB)" garbage for any future message that
+// embeds user-controlled data with a percent sign.
+func TestEmitDiagnosticEvents_MessageWithPercentIsLiteral(t *testing.T) {
+	t.Parallel()
+
+	route := &gatewayv1.HTTPRoute{ObjectMeta: metav1.ObjectMeta{Name: "web", Namespace: "default"}}
+	diagnostics := []proxy.RouteDiagnostic{
+		{Target: proxy.DiagnosticEvent, EventType: proxy.EventTypeNormal, Message: "appProtocol foo%bar overridden; 50% applied"},
+	}
+
+	rec := events.NewFakeRecorder(5)
+	emitDiagnosticEvents(rec, route, diagnostics)
+
+	got := drainEvents(rec)
+	require.Len(t, got, 1)
+	assert.Contains(t, got[0], "foo%bar", "a literal %% in the message must survive verbatim")
+	assert.Contains(t, got[0], "50% applied")
+	assert.NotContains(t, got[0], "NOVERB", "the message must not be mis-parsed as a format string")
+}
+
 // TestEmitDiagnosticEvents_NilRecorder is a no-op-safety pin: a nil recorder
 // (e.g. a reconciler constructed in a test without one) must not panic.
 func TestEmitDiagnosticEvents_NilRecorder(t *testing.T) {

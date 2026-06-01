@@ -467,7 +467,10 @@ func emitDiagnosticEvents(recorder events.EventRecorder, route runtime.Object, d
 			eventType = corev1.EventTypeNormal
 		}
 
-		recorder.Eventf(route, nil, eventType, eventReasonConfigOverridden, eventActionConvert, diag.Message)
+		// Eventf treats the note as a format string. diag.Message is already
+		// fully formatted (and may contain a literal %), so pass it as a "%s"
+		// argument rather than as the format itself.
+		recorder.Eventf(route, nil, eventType, eventReasonConfigOverridden, eventActionConvert, "%s", diag.Message)
 	}
 }
 
