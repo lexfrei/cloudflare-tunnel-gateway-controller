@@ -475,7 +475,7 @@ func convertFilter(
 	case gatewayv1.HTTPRouteFilterURLRewrite:
 		return convertURLRewriteFilter(filter.URLRewrite), false
 	case gatewayv1.HTTPRouteFilterRequestMirror:
-		return convertMirrorFilter(ctx, filter.RequestMirror, namespace, clusterDomain, validator, tlsResolver, clientCert), false
+		return convertMirrorFilter(ctx, filter.RequestMirror, namespace, clusterDomain, validator, tlsResolver, clientCert, sink), false
 	case gatewayv1.HTTPRouteFilterCORS:
 		return convertCORSFilter(filter.CORS), false
 	case gatewayv1.HTTPRouteFilterExtensionRef, gatewayv1.HTTPRouteFilterExternalAuth:
@@ -577,24 +577,39 @@ func IsServiceBackendRef(ref gatewayv1.BackendObjectReference) bool {
 	return true
 }
 
-func convertMirrorFilter(
+// mirrorDropDiagnostic records a ResolvedRefs-target diagnostic for a dropped
+// RequestMirror. The mirror is best-effort — dropping it does not break the
+// main request — so it is report-only (WholeRule=false): the route stays
+// Accepted, the dropped mirror shows on ResolvedRefs.
+func mirrorDropDiagnostic(sink *diagSink, reason gatewayv1.RouteConditionReason, mirrorName, detail string) {
+	sink.add(
+		DiagnosticResolvedRefs,
+		string(reason),
+		fmt.Sprintf("The RequestMirror to Service %q was dropped because %s; the main request is unaffected.", mirrorName, detail),
+		false,
+	)
+}
+
+// validateMirrorBackendRef validates a RequestMirror's backendRef and, on any
+// failure, records a report-only ResolvedRefs diagnostic (a dropped mirror does
+// not break the main request) and returns ok=false. On success it returns the
+// resolved namespace and port for the mirror destination.
+func validateMirrorBackendRef(
 	ctx context.Context,
 	mirror *gatewayv1.HTTPRequestMirrorFilter,
-	namespace, clusterDomain string,
+	namespace string,
 	validator BackendRefValidator,
-	tlsResolver BackendTLSResolver,
-	clientCert *ClientCertConfig,
-) *RouteFilter {
-	if mirror == nil {
-		return nil
-	}
+	sink *diagSink,
+) (string, int32, bool) {
+	mirrorName := string(mirror.BackendRef.Name)
 
 	if !IsServiceBackendRef(mirror.BackendRef) {
+		mirrorDropDiagnostic(sink, gatewayv1.RouteReasonInvalidKind, mirrorName,
+			"its backendRef is not a Service")
 		slog.Warn("skipping mirror with non-Service backend kind",
-			"kind", mirror.BackendRef.Kind,
-			"name", mirror.BackendRef.Name)
+			"kind", mirror.BackendRef.Kind, "name", mirror.BackendRef.Name)
 
-		return nil
+		return "", 0, false
 	}
 
 	mirrorPort := int32(defaultServicePort)
@@ -603,9 +618,11 @@ func convertMirrorFilter(
 	}
 
 	if !validatePort(mirrorPort) {
-		slog.Warn("skipping mirror with invalid port", "service", string(mirror.BackendRef.Name), "port", mirrorPort)
+		mirrorDropDiagnostic(sink, gatewayv1.RouteReasonUnsupportedValue, mirrorName,
+			fmt.Sprintf("its backendRef port %d is out of range", mirrorPort))
+		slog.Warn("skipping mirror with invalid port", "service", mirrorName, "port", mirrorPort)
 
-		return nil
+		return "", 0, false
 	}
 
 	mirrorNS := namespace
@@ -613,7 +630,31 @@ func convertMirrorFilter(
 		mirrorNS = string(*mirror.BackendRef.Namespace)
 	}
 
-	if !validateCrossNamespace(ctx, mirrorNS, namespace, string(mirror.BackendRef.Name), mirror.BackendRef, validator) {
+	if !validateCrossNamespace(ctx, mirrorNS, namespace, mirrorName, mirror.BackendRef, validator) {
+		mirrorDropDiagnostic(sink, gatewayv1.RouteReasonRefNotPermitted, mirrorName,
+			fmt.Sprintf("its cross-namespace backendRef to %q is not permitted by a ReferenceGrant", mirrorNS))
+
+		return "", 0, false
+	}
+
+	return mirrorNS, mirrorPort, true
+}
+
+func convertMirrorFilter(
+	ctx context.Context,
+	mirror *gatewayv1.HTTPRequestMirrorFilter,
+	namespace, clusterDomain string,
+	validator BackendRefValidator,
+	tlsResolver BackendTLSResolver,
+	clientCert *ClientCertConfig,
+	sink *diagSink,
+) *RouteFilter {
+	if mirror == nil {
+		return nil
+	}
+
+	mirrorNS, mirrorPort, ok := validateMirrorBackendRef(ctx, mirror, namespace, validator, sink)
+	if !ok {
 		return nil
 	}
 
