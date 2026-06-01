@@ -196,6 +196,26 @@ tests:
             resources: ["gatewayclassconfigs/status"]
             verbs: ["get", "update", "patch"]
 
+  - it: should grant event create/patch on both core and events.k8s.io groups
+    asserts:
+      # controller-runtime's GetEventRecorder writes to events.k8s.io/v1; the
+      # legacy broadcaster it also starts writes core v1 events. Both groups must
+      # be granted or the EventRecorder is denied at runtime.
+      - template: clusterrole.yaml
+        contains:
+          path: rules
+          content:
+            apiGroups: [""]
+            resources: ["events"]
+            verbs: ["create", "patch"]
+      - template: clusterrole.yaml
+        contains:
+          path: rules
+          content:
+            apiGroups: ["events.k8s.io"]
+            resources: ["events"]
+            verbs: ["create", "patch"]
+
   - it: should create a cluster role binding
     asserts:
       - template: clusterrolebinding.yaml
