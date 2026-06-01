@@ -37,6 +37,9 @@ When the controller will not serve a piece of route config exactly as written, i
 - **`Accepted=False` / `UnsupportedValue`** — the whole route cannot be served. This fires when every rule of the route is unservable, e.g. each rule carries an unsupported filter type.
 - **`PartiallyInvalid=True`** (alongside `Accepted=True`) — some rules or backends are dropped while the route still serves the rest. The message starts with the spec-mandated `Dropped Rule` prefix and names the affected rule indices. This covers a single unsupported filter among several rules, an unsupported per-backend filter (only that backend's traffic fraction fails closed), and an unparseable rule `timeouts` value (the rule serves without it).
 - **`ResolvedRefs=False`** — a backend or object reference cannot be resolved or declares an unsupported app protocol. This covers the existing missing-Service / wrong-kind / unauthorized-cross-namespace `backendRef` failures, plus `appProtocol: https`/`wss` without a `BackendTLSPolicy` (`Reason=UnsupportedProtocol`), an unrecognised `appProtocol`, and a dropped `RequestMirror` backendRef.
+- **Kubernetes Event** (`reason=ConfigOverridden`) — config applied successfully but a redundant or conflicting hint was overridden, where no standard condition fits. A Normal event covers a cleartext `appProtocol` (`h2c`, `ws`) superseded by a `BackendTLSPolicy` ("TLS wins"); a Warning event covers a `ResponseHeaderModifier` that strips a WebSocket handshake header (honored as written, but it breaks the upgrade).
+
+Separately, Gateway and ListenerSet listeners whose protocol this controller cannot serve (`TCP`, `TLS`, `UDP`) are marked `Accepted=False, Reason=UnsupportedProtocol` on the listener status.
 
 Unsupported filters fail closed: per the Gateway API spec an `ExtensionRef`, `ExternalAuth`, or unknown HTTPRoute filter type — and any GRPCRoute filter, none of which are served yet — must not be silently skipped. Requests matching the affected rule receive HTTP 500 (a rule-level filter takes the whole rule down; a per-backend filter fails only that backend's traffic fraction) rather than being served without the dropped filter.
 
@@ -102,12 +105,12 @@ Gateway listeners follow Gateway API specification. Some fields are ignored beca
 | Field | Status | Notes |
 |-------|--------|-------|
 | `port` | Ignored | Cloudflare uses 443/80 |
-| `protocol` | Ignored | Cloudflare handles protocols |
+| `protocol` | Validated | Only `HTTP` and `HTTPS` listeners are served (they carry HTTPRoute / GRPCRoute). A `TCP`, `TLS`, or `UDP` listener has no data plane here and is marked `Accepted=False, Reason=UnsupportedProtocol` (and not Programmed) on its listener status |
 | `hostname` | Supported | Routes must have intersecting hostnames |
 | `tls` | Ignored | Cloudflare manages TLS |
 | `allowedRoutes` | Supported | Namespace (Same/All/Selector) and kind filtering |
 
-This is because Cloudflare Tunnel terminates TLS at Cloudflare's edge, not in the cluster. However, `hostname` and `allowedRoutes` are validated per Gateway API specification.
+This is because Cloudflare Tunnel terminates TLS at Cloudflare's edge, not in the cluster. However, `hostname` and `allowedRoutes` are validated per Gateway API specification. The same `Accepted=False, Reason=UnsupportedProtocol` listener verdict applies to ListenerSet entries.
 
 ## Backend Protocol (`Service.spec.ports[].appProtocol`)
 
@@ -125,13 +128,13 @@ The upstream conformance test `HTTPRouteBackendProtocolWebSocket` is not testabl
 
 ### Interaction with `appProtocol: kubernetes.io/ws`
 
-When a backend Service carries both `appProtocol: kubernetes.io/ws` AND a `BackendTLSPolicy` targeting the same Service, the TLS policy wins: `resolveBackendTLS` rewrites the URL to `https://`, the proxy completes a TLS handshake, and the WebSocket upgrade runs over TLS regardless of the cleartext appProtocol hint. A WARN surfaces the suppressed `ws` hint so operators can either drop the BackendTLSPolicy (if they actually wanted cleartext WebSocket) or flip the hint to `kubernetes.io/wss` (if they wanted the TLS-protected variant all along).
+When a backend Service carries both `appProtocol: kubernetes.io/ws` AND a `BackendTLSPolicy` targeting the same Service, the TLS policy wins: `resolveBackendTLS` rewrites the URL to `https://`, the proxy completes a TLS handshake, and the WebSocket upgrade runs over TLS regardless of the cleartext appProtocol hint. The config is applied successfully, so this is surfaced as a Normal Kubernetes Event (reason `ConfigOverridden`) on the route — not a condition — so operators can either drop the BackendTLSPolicy (if they actually wanted cleartext WebSocket) or flip the hint to `kubernetes.io/wss` (if they wanted the TLS-protected variant all along). The same Normal event fires for `appProtocol: kubernetes.io/h2c` suppressed by a BackendTLSPolicy.
 
 ### `ResponseHeaderModifier` MUST preserve WebSocket handshake headers
 
 The L7 proxy applies route-level + per-backend `ResponseHeaderModifier` filters to every backend response, including the 101 Switching Protocols response that carries the WebSocket handshake. Per Gateway API spec the filter pipeline runs unconditionally; the proxy makes no exception for upgrade responses. The operator-facing consequence: a `Remove` list that strips `Sec-WebSocket-Accept`, `Upgrade`, or `Connection` on a route whose backend is WS-marked silently breaks every upgrade on that route. The 101 reaches the client missing a header the RFC 6455 handshake requires, and the client just disconnects.
 
-The converter scans rule-level and per-backend `ResponseHeaderModifier` filters at HTTPRoute apply time. If a `Remove` list on a WS-marked route intersects `{Sec-WebSocket-Accept, Upgrade, Connection}`, the controller logs a WARN naming the offending header(s) and the filter scope (`rule` or `backend`). The filter still applies as configured — the warning is a diagnostic, not a hard rejection, because the misconfiguration is operator-fixable and bypassing the filter would silently violate spec.
+The converter scans rule-level and per-backend `ResponseHeaderModifier` filters at HTTPRoute apply time. If a `Remove` list on a WS-marked route intersects `{Sec-WebSocket-Accept, Upgrade, Connection}`, the controller emits a Warning Kubernetes Event (reason `ConfigOverridden`) on the route naming the offending header(s) and the filter scope (`rule` or `backend`). The filter still applies as configured — the event is a diagnostic, not a hard rejection, because the misconfiguration is operator-fixable and bypassing the filter would silently violate spec.
 
 Same guidance applies symmetrically to `Set` overriding these headers with a non-handshake-compatible value, though that is rarer and not currently checked.
 

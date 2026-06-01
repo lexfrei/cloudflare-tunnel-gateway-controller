@@ -640,7 +640,7 @@ func buildListenerSetEntryStatuses(
 			SupportedKinds: supportedKinds,
 			AttachedRoutes: attached,
 			Conditions: listenerEntryConditions(
-				generation, now, merge, hasValidKind, hasInvalidKind, refCheck, hasRefCheck,
+				generation, now, merge, entry.Protocol, hasValidKind, hasInvalidKind, refCheck, hasRefCheck,
 			),
 		})
 	}
@@ -800,6 +800,7 @@ func listenerEntryConditions(
 	generation int64,
 	now metav1.Time,
 	merge *listenermerge.MergedListener,
+	protocol gatewayv1.ProtocolType,
 	hasValidKind, hasInvalidKind bool,
 	refCheck listenerEntryRefsCheck,
 	hasRefCheck bool,
@@ -821,7 +822,7 @@ func listenerEntryConditions(
 		return conflictedEntryConditions(generation, now, merge, &resolvedRefsCondition)
 	}
 
-	return acceptedEntryConditions(generation, now, &resolvedRefsCondition)
+	return acceptedEntryConditions(generation, now, protocol, &resolvedRefsCondition)
 }
 
 func conflictedEntryConditions(
@@ -864,27 +865,30 @@ func conflictedEntryConditions(
 func acceptedEntryConditions(
 	generation int64,
 	now metav1.Time,
+	protocol gatewayv1.ProtocolType,
 	resolvedRefs *metav1.Condition,
 ) []metav1.Condition {
+	acceptedCondition := buildListenerAcceptedCondition(protocol, generation, now)
+
 	programmedStatus := metav1.ConditionTrue
 	programmedReason := string(gatewayv1.ListenerReasonProgrammed)
 	programmedMessage := listenerMsgProgrammed
 
-	if resolvedRefs.Status == metav1.ConditionFalse {
+	// An unservable protocol or an unresolved ref both mean the entry is not
+	// programmed; the protocol rejection is the more fundamental of the two.
+	switch {
+	case acceptedCondition.Status == metav1.ConditionFalse:
+		programmedStatus = metav1.ConditionFalse
+		programmedReason = string(gatewayv1.ListenerReasonInvalid)
+		programmedMessage = acceptedCondition.Message
+	case resolvedRefs.Status == metav1.ConditionFalse:
 		programmedStatus = metav1.ConditionFalse
 		programmedReason = string(gatewayv1.ListenerReasonInvalid)
 		programmedMessage = listenerMsgInvalidUnresolved
 	}
 
 	return []metav1.Condition{
-		{
-			Type:               string(gatewayv1.ListenerConditionAccepted),
-			Status:             metav1.ConditionTrue,
-			ObservedGeneration: generation,
-			LastTransitionTime: now,
-			Reason:             string(gatewayv1.ListenerReasonAccepted),
-			Message:            listenerMsgAccepted,
-		},
+		acceptedCondition,
 		{
 			Type:               string(gatewayv1.ListenerConditionProgrammed),
 			Status:             programmedStatus,
