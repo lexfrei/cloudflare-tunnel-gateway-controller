@@ -30,6 +30,18 @@ In the v1/v2 chart line, several HTTPRoute features required opting into the L7 
 | No cross-cluster | Only in-cluster services supported |
 | Service only | Only `Service` kind backends (ClusterIP, NodePort, LoadBalancer, ExternalName); evaluating non-Service kinds is tracked in [#337](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/issues/337) |
 
+## Unsupported config is surfaced on resource status
+
+When the controller will not serve a piece of route config exactly as written, it surfaces the decision on the resource's status conditions — not only in a log line — so `kubectl describe httproute` / `grpcroute` shows the problem and the fix. Three shapes are used, chosen per the Gateway API spec:
+
+- **`Accepted=False` / `UnsupportedValue`** — the whole route cannot be served. This fires when every rule of the route is unservable, e.g. each rule carries an unsupported filter type.
+- **`PartiallyInvalid=True`** (alongside `Accepted=True`) — some rules or backends are dropped while the route still serves the rest. The message starts with the spec-mandated `Dropped Rule` prefix and names the affected rule indices. This covers a single unsupported filter among several rules, an unsupported per-backend filter (only that backend's traffic fraction fails closed), and an unparseable rule `timeouts` value (the rule serves without it).
+- **`ResolvedRefs=False`** — a backend or object reference cannot be resolved or declares an unsupported app protocol. This covers the existing missing-Service / wrong-kind / unauthorized-cross-namespace `backendRef` failures, plus `appProtocol: https`/`wss` without a `BackendTLSPolicy` (`Reason=UnsupportedProtocol`), an unrecognised `appProtocol`, and a dropped `RequestMirror` backendRef.
+
+Unsupported filters fail closed: per the Gateway API spec an `ExtensionRef`, `ExternalAuth`, or unknown HTTPRoute filter type — and any GRPCRoute filter, none of which are served yet — must not be silently skipped. Requests matching the affected rule receive HTTP 500 (a rule-level filter takes the whole rule down; a per-backend filter fails only that backend's traffic fraction) rather than being served without the dropped filter.
+
+A TLS `appProtocol` (`https`, `kubernetes.io/wss`) without a `BackendTLSPolicy` fails the backend closed (HTTP 502) rather than dialing plaintext to a TLS backend. An unrecognised `appProtocol` is report-only: the proxy keeps serving over HTTP/1.1 and records the diagnostic so the ignored hint is visible.
+
 ## Traffic Splitting and Load Balancing
 
 The in-process L7 proxy performs weighted traffic splitting across the `backendRefs` of a rule, for both HTTPRoute and GRPCRoute. Each backend's `weight` is honoured by a weighted-random selection at request time: traffic is distributed in proportion to the weights, and a backend with `weight: 0` receives no traffic (a rule whose backends all have weight 0 serves nothing).
@@ -106,8 +118,8 @@ The L7 proxy reads the backend Service port's `appProtocol` to pick the upstream
 | _(unset)_ | Yes | Default — proxy speaks HTTP/1.1 to the backend |
 | `kubernetes.io/h2c` | Yes | Proxy speaks HTTP/2 cleartext (prior knowledge) |
 | `kubernetes.io/ws` | Yes | The proxy detects `Connection: Upgrade` + `Upgrade: websocket` headers and routes the request through a dedicated WebSocket upgrade path that dials the backend, forwards the upgrade, writes the 101 to the response writer, and bidirectionally copies bytes after hijack. Plain HTTP requests to the same backend continue to use the default HTTP/1.1 transport |
-| `kubernetes.io/wss` | Yes | Requires a `BackendTLSPolicy` targeting the Service (same precondition as `appProtocol: https`); without one the proxy logs a WARN and falls back to plaintext, which the backend will refuse |
-| any other value | No | Logged with a warning at conversion time; proxy falls back to default HTTP/1.1 |
+| `kubernetes.io/wss` | Yes | Requires a `BackendTLSPolicy` targeting the Service (same precondition as `appProtocol: https`); without one the proxy fails the backend closed (HTTP 502) and sets `ResolvedRefs=False, Reason=UnsupportedProtocol` on the route — dialing plaintext to a TLS backend would silently fail |
+| any other value | No | Report-only: the proxy serves over HTTP/1.1 (a safe default the backend may speak) and sets `ResolvedRefs=False, Reason=UnsupportedProtocol` on the route so the ignored hint is visible |
 
 The upstream conformance test `HTTPRouteBackendProtocolWebSocket` is not testable through Cloudflare Tunnel: it dials the Gateway address directly via `golang.org/x/net/websocket.Dial`, and our Gateway address is `<tunnel-id>.cfargotunnel.com` whose AAAA records point at Cloudflare's ULA (`fd10::/8`), which is unreachable from any test runner. Unlike the HTTP suite (custom `RoundTripper`) and the gRPC suite (custom gRPC client) — both of which let us redirect the dial to the Cloudflare edge — the WebSocket test exposes no injection point for a custom dialer, so it cannot be redirected and stays skipped. This gap is filed upstream as [kubernetes-sigs/gateway-api#4925](https://github.com/kubernetes-sigs/gateway-api/issues/4925). `test/e2e/e2e_backend_protocol_websocket_test.go` is the substitute proof — it runs an end-to-end WebSocket round trip against the real tunnel hostname.
 
@@ -138,6 +150,8 @@ The same shift removes the slow-loris-upload protection the old context-based de
 WebSocket routes are naturally exempt: WS upgrades flow through the dedicated `proxyWebSocketUpgrade` path (because cloudflared's HTTP/2 response writer cannot be hijacked the way stdlib `httputil.ReverseProxy` expects), and that path bypasses the cached transport entirely. Once the upgrade completes, two `io.Copy` goroutines pipe bytes bidirectionally between the hijacked client conn and the backend conn; they run until either side closes its conn.
 
 The `BackendProtocol: H2C` path uses `golang.org/x/net/http2.Transport`, which does not expose a `ResponseHeaderTimeout` knob. The proxy synthesises one by wrapping the h2c transport with a `headerTimeoutRoundTripper` that cancels the request context if response headers do not arrive within the per-rule deadline, then releases the cancellation on body Close so streaming bodies (SSE / chunked / gRPC server-streaming) survive past the deadline. The h2c dialer's own connect timeout still catches a fully dead backend.
+
+When a rule's `timeouts` value cannot be parsed (not a valid GEP-2257 duration), the rule is still served without the timeout and the route is marked `PartiallyInvalid=True` with a `Dropped Rule` message naming the rule, so the dropped timeout is visible on `kubectl describe httproute` rather than only in a log line.
 
 ## Backend mTLS (BackendTLSPolicy)
 
@@ -189,14 +203,14 @@ Frontend listener `certificateRefs` are not in scope — Cloudflare terminates T
 
 The Gateway API `RequestMirror` filter sends a fire-and-forget copy of the request to a secondary backend. When a `BackendTLSPolicy` targets the mirror destination Service, the converter stamps the resulting `BackendTLSConfig` on the filter's `MirrorConfig` and the proxy borrows a per-cert `RoundTripper` from the same transport pool the main leg uses. The mirror dial then completes a TLS handshake exactly the way the main leg would, so a TLS-only mirror backend receives the mirrored copy correctly and the operator's TLS expectation is preserved on both legs.
 
-Cross-namespace mirror destinations follow the same `ReferenceGrant` rule as cross-namespace `backendRefs` — without a permitting grant the mirror is dropped entirely.
+Cross-namespace mirror destinations follow the same `ReferenceGrant` rule as cross-namespace `backendRefs` — without a permitting grant the mirror is dropped entirely. A dropped mirror (non-Service kind, out-of-range port, or unauthorized cross-namespace ref) is surfaced as `ResolvedRefs=False` on the route with the mirror-specific reason (`InvalidKind` / `UnsupportedValue` / `RefNotPermitted`); the main request is unaffected, so the route stays `Accepted`.
 
 ### Interaction with `appProtocol: https` / `HTTPS`
 
 `appProtocol: https` (or `HTTPS`) is treated as a hint that the backend expects TLS — but the proxy cannot dial TLS on its own without a CA to verify against. The behaviour:
 
 - With a matching `BackendTLSPolicy`: the policy provides the CA, the proxy dials TLS, and the request goes through normally. The `appProtocol` hint is redundant but accepted silently.
-- Without a matching `BackendTLSPolicy`: the proxy logs a WARN and falls back to plaintext HTTP/1.1. The misconfiguration is visible in logs so operators don't ship a broken TLS expectation. Attach a `BackendTLSPolicy` to upgrade the hop to authenticated TLS.
+- Without a matching `BackendTLSPolicy`: the backend fails closed — requests routed to it receive HTTP 502 instead of being dialed in plaintext — and the route's `ResolvedRefs` condition is set to `False, Reason=UnsupportedProtocol` with a message naming the fix. `kubectl describe httproute` shows the dropped backend; attach a `BackendTLSPolicy` to upgrade the hop to authenticated TLS.
 
 ## HTTP CORS filter (`HTTPRouteCORS`)
 
