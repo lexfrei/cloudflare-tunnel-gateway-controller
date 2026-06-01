@@ -22,7 +22,11 @@ import (
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/logging"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/proxy"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/referencegrant"
+	tracingpkg "github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/tracing"
 )
+
+// proxyPushTimeout bounds each controller -> proxy config-push request.
+const proxyPushTimeout = 10 * time.Second
 
 // serviceKind is the default Kind a Gateway API BackendObjectReference falls
 // back to when Group/Kind are unset.
@@ -79,25 +83,55 @@ func NewProxySyncer(
 	controllerName string,
 	k8sClient client.Client,
 	logger *slog.Logger,
+	opts ...ProxySyncerOption,
 ) *ProxySyncer {
 	if logger == nil {
 		logger = slog.Default()
 	}
 
+	var settings proxySyncerSettings
+	for _, opt := range opts {
+		opt(&settings)
+	}
+
 	refGrantValidator := referencegrant.NewValidator(k8sClient)
 
 	return &ProxySyncer{
-		clusterDomain: clusterDomain,
-		logger:        logger.With("component", "proxy-syncer"),
-		pusher: proxy.NewConfigPusher(&http.Client{
-			Timeout: 10 * time.Second,
-		}, authToken),
+		clusterDomain:        clusterDomain,
+		logger:               logger.With("component", "proxy-syncer"),
+		pusher:               proxy.NewConfigPusher(proxyPushClient(settings.tracing), authToken),
 		k8sClient:            k8sClient,
 		backendValidator:     newBackendRefValidator(refGrantValidator, "HTTPRoute"),
 		grpcBackendValidator: newBackendRefValidator(refGrantValidator, "GRPCRoute"),
 		protocolResolver:     newBackendProtocolResolver(k8sClient),
 		tlsResolver:          newBackendTLSResolver(k8sClient),
 		gatewayCertResolver:  newGatewayClientCertResolver(k8sClient, controllerName),
+	}
+}
+
+// proxySyncerSettings holds the options parsed at NewProxySyncer time.
+type proxySyncerSettings struct {
+	tracing bool
+}
+
+// ProxySyncerOption configures a ProxySyncer at construction.
+type ProxySyncerOption func(*proxySyncerSettings)
+
+// WithSyncerTracing instruments the controller -> proxy config-push HTTP client
+// with OpenTelemetry so each push emits a client span linked to the active trace.
+func WithSyncerTracing() ProxySyncerOption {
+	return func(s *proxySyncerSettings) {
+		s.tracing = true
+	}
+}
+
+// proxyPushClient builds the config-push HTTP client. When tracing is enabled
+// its transport is wrapped with otelhttp; when disabled Transport stays nil so
+// the stdlib default transport is used unchanged.
+func proxyPushClient(tracing bool) *http.Client {
+	return &http.Client{
+		Timeout:   proxyPushTimeout,
+		Transport: tracingpkg.WrapTransport(nil, tracing),
 	}
 }
 

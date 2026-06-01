@@ -321,8 +321,9 @@ For multi-cluster scenarios:
 
 The controller provides Prometheus metrics for monitoring, but:
 
-- No distributed tracing integration
 - Per-request access logs are off by default. Enable via `proxy.accessLog.enabled: true` in Helm values; see [Access Logging](../operations/access-logging.md) for the contract, sampling semantics, and the WS-upgrade carve-out. The Cloudflare dashboard remains the only edge-side view (TLS termination, geographic distribution, etc.).
-- Limited visibility into Cloudflare API operations
+- Edge-side request visibility (traffic volume, geographic distribution, WAF/firewall events) is available only through the Cloudflare dashboard, not from in-cluster metrics.
+
+Distributed tracing is supported (off by default) via OpenTelemetry. Controller-side Cloudflare API calls and the in-cluster request path both emit spans when enabled. See [Distributed Tracing](../operations/tracing.md) for the end-to-end span model, propagation, and the one known gap (WebSocket backend handshakes are not yet span-propagated).
 
 See [Metrics & Alerting](../operations/metrics.md) for available metrics.

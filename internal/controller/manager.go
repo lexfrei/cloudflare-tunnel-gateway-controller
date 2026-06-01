@@ -102,6 +102,12 @@ type Config struct {
 	// (`app.kubernetes.io/component=proxy`) within ProxyTokenSecret's
 	// namespace.
 	ProxyDeploymentLabel string
+
+	// Tracing enables OpenTelemetry instrumentation of the controller's
+	// outbound HTTP clients (Cloudflare API + proxy config push). The global
+	// TracerProvider is installed by the binary entrypoint; this flag only
+	// gates whether those clients wrap their transports with otelhttp.
+	Tracing bool
 }
 
 // Run initializes and starts the controller manager with the provided configuration.
@@ -168,8 +174,14 @@ func Run(ctx context.Context, cfg *Config) error {
 	// Determine default namespace for secret lookups
 	defaultNamespace := getControllerNamespace()
 
-	// Create config resolver
-	configResolver := config.NewResolver(mgr.GetClient(), defaultNamespace, metricsCollector)
+	// Create config resolver. When tracing is on, instrument the Cloudflare
+	// API client so outbound API calls emit client spans.
+	var resolverOpts []config.ResolverOption
+	if cfg.Tracing {
+		resolverOpts = append(resolverOpts, config.WithCloudflareTracing())
+	}
+
+	configResolver := config.NewResolver(mgr.GetClient(), defaultNamespace, metricsCollector, resolverOpts...)
 
 	// Create base logger for component injection
 	// Uses slog.Default() which can be configured with TraceHandler at startup
@@ -364,12 +376,18 @@ func initProxySyncer(
 ) *ProxySyncer {
 	logger.Info("proxy syncer enabled", "endpoints", proxyEndpoints)
 
+	var syncerOpts []ProxySyncerOption
+	if cfg.Tracing {
+		syncerOpts = append(syncerOpts, WithSyncerTracing())
+	}
+
 	return NewProxySyncer(
 		cfg.ClusterDomain,
 		cfg.ProxyAuthToken,
 		cfg.ControllerName,
 		k8sClient,
 		baseLogger,
+		syncerOpts...,
 	)
 }
 

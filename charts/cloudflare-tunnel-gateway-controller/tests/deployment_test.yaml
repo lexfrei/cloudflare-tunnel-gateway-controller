@@ -655,3 +655,46 @@ tests:
         contains:
           path: spec.template.spec.containers[0].args
           content: "--tunnel-protocol=auto"
+
+  - it: should NOT set any --tracing-* arg when tracing disabled (default)
+    asserts:
+      - template: deployment.yaml
+        notMatchRegex:
+          path: spec.template.spec.containers[0].args[*]
+          pattern: "^--tracing-"
+
+  - it: should set --tracing-* args when tracing enabled
+    set:
+      controller:
+        tracing:
+          enabled: true
+          endpoint: "http://otel-collector.observability:4317"
+          sampleRate: 0.5
+    asserts:
+      - template: deployment.yaml
+        contains:
+          path: spec.template.spec.containers[0].args
+          content: "--tracing-enabled=true"
+      - template: deployment.yaml
+        contains:
+          path: spec.template.spec.containers[0].args
+          content: "--tracing-endpoint=http://otel-collector.observability:4317"
+      - template: deployment.yaml
+        contains:
+          path: spec.template.spec.containers[0].args
+          content: "--tracing-sample-rate=0.5"
+
+  - it: should omit --tracing-endpoint when endpoint is empty
+    set:
+      controller:
+        tracing:
+          enabled: true
+    asserts:
+      - template: deployment.yaml
+        notMatchRegex:
+          path: spec.template.spec.containers[0].args[*]
+          pattern: "^--tracing-endpoint="
+      - template: deployment.yaml
+        contains:
+          path: spec.template.spec.containers[0].args
+          content: "--tracing-sample-rate=1"

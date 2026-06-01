@@ -2,6 +2,7 @@ package config
 
 import (
 	"context"
+	"net/http"
 	"sync"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/api/v1alpha1"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/cfmetrics"
+	tracingpkg "github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/tracing"
 )
 
 const (
@@ -44,18 +46,41 @@ type Resolver struct {
 	defaultNamespace string
 	metrics          cfmetrics.Collector
 
+	// tracing, when true, instruments the Cloudflare API HTTP client with
+	// otelhttp so outbound API calls emit client spans. Set via
+	// WithCloudflareTracing.
+	tracing bool
+
 	// accountIDCache caches resolved account IDs by config name to avoid
 	// repeated API calls. Key is config name, value is account ID.
 	accountIDCache sync.Map
 }
 
+// ResolverOption configures a Resolver at construction time.
+type ResolverOption func(*Resolver)
+
+// WithCloudflareTracing instruments the Cloudflare API HTTP client with
+// OpenTelemetry so outbound API calls (config resolution, account detection)
+// emit client spans linked to the active trace.
+func WithCloudflareTracing() ResolverOption {
+	return func(r *Resolver) {
+		r.tracing = true
+	}
+}
+
 // NewResolver creates a new config Resolver.
-func NewResolver(c client.Client, defaultNamespace string, metricsCollector cfmetrics.Collector) *Resolver {
-	return &Resolver{
+func NewResolver(c client.Client, defaultNamespace string, metricsCollector cfmetrics.Collector, opts ...ResolverOption) *Resolver {
+	resolver := &Resolver{
 		client:           c,
 		defaultNamespace: defaultNamespace,
 		metrics:          metricsCollector,
 	}
+
+	for _, opt := range opts {
+		opt(resolver)
+	}
+
+	return resolver
 }
 
 //nolint:wrapcheck // errors.Newf creates new errors
@@ -164,7 +189,23 @@ func (r *Resolver) getSecret(ctx context.Context, name, namespace string) (*core
 
 // CreateCloudflareClient creates a Cloudflare API client from resolved config.
 func (r *Resolver) CreateCloudflareClient(resolved *ResolvedConfig) *cloudflare.Client {
-	return cloudflare.NewClient(option.WithAPIToken(resolved.APIToken))
+	return cloudflare.NewClient(cloudflareRequestOptions(resolved.APIToken, r.tracing)...)
+}
+
+// cloudflareRequestOptions builds the cloudflare-go request options. When
+// tracing is enabled it adds a traced HTTP client so outbound API calls emit
+// client spans; when disabled it passes only the API token so cloudflare-go
+// keeps its own default client (outbound path unchanged).
+func cloudflareRequestOptions(token string, tracing bool) []option.RequestOption {
+	opts := []option.RequestOption{option.WithAPIToken(token)}
+
+	if tracing {
+		opts = append(opts, option.WithHTTPClient(&http.Client{
+			Transport: tracingpkg.WrapTransport(http.DefaultTransport, true),
+		}))
+	}
+
+	return opts
 }
 
 //nolint:wrapcheck // errors.Newf creates new errors

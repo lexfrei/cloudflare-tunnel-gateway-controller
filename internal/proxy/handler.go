@@ -18,6 +18,12 @@ import (
 	"sync"
 	"time"
 
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/net/http/httpguts"
 	"golang.org/x/net/http2"
 )
@@ -78,6 +84,18 @@ type Handler struct {
 	// -- triage signal (?action=delete vs ?action=read) is usually
 	// worth the bytes. Set via WithAccessLogStripQuery.
 	accessLogStripQuery bool
+
+	// tracingEnabled gates server-span creation in ServeHTTP. When false
+	// (the default), ServeHTTP skips trace-context extraction, span start,
+	// and the request-context rebuild entirely, so the disabled path stays
+	// allocation-identical to before tracing existed. Set via WithTracing.
+	tracingEnabled bool
+	// tracer is the OpenTelemetry tracer used to start server spans. It is
+	// captured from the global TracerProvider at construction; the global is
+	// a delegating wrapper, so a provider installed by tracing.Setup before
+	// or after NewHandler is honored at Start time. Only consulted when
+	// tracingEnabled is true.
+	tracer trace.Tracer
 }
 
 // HandlerOption configures a Handler at construction time. Use the
@@ -144,6 +162,22 @@ func WithAccessLog(logger *slog.Logger, samplingRate float64) HandlerOption {
 func WithAccessLogStripQuery(strip bool) HandlerOption {
 	return func(handler *Handler) {
 		handler.accessLogStripQuery = strip
+	}
+}
+
+// WithTracing enables OpenTelemetry server spans on the handler. When set,
+// ServeHTTP extracts the inbound W3C trace context, starts a SpanKindServer
+// span, and stores it on the request context so outbound backend calls link
+// back and access-log lines correlate by trace ID. instrumentationName labels
+// the tracer (conventionally the service name, e.g. "proxy").
+//
+// The flag also gates the per-request countingResponseWriter and the request-
+// context rebuild, so a handler built without this option performs exactly as
+// it did before tracing existed — no extraction, no span, no extra allocation.
+func WithTracing(instrumentationName string) HandlerOption {
+	return func(handler *Handler) {
+		handler.tracingEnabled = true
+		handler.tracer = otel.Tracer(instrumentationName)
 	}
 }
 
@@ -274,34 +308,38 @@ func writeRuleUnavailable(writer http.ResponseWriter, rule *RouteRule) bool {
 }
 
 func (h *Handler) ServeHTTP(writer http.ResponseWriter, req *http.Request) {
-	// Access-log wrapping: zero cost when accessLog is nil -- the
-	// wrapper, defer, and time.Now() ALL sit inside the if branch
-	// so the disabled path skips them entirely.
-	//
-	// pre-filter snapshot: URL rewrite filters mutate req.URL.Path
-	// in place (see filter.go writeRewritePathFilter), so a deferred
-	// closure capturing `req` would log the rewritten path -- the
-	// operator-visible request path the client actually asked for
-	// would be invisible. Snapshot here before any filter runs so
-	// the access log shows what the client sent.
-	if h.accessLog != nil {
-		counted := newCountingResponseWriter(writer)
+	// Response-status capture is shared by access logging and tracing: both
+	// read the final status off the same countingResponseWriter. It is
+	// created only when at least one consumer is enabled, so the disabled
+	// path skips the wrapper entirely. The wrapper delegates Hijack / Flush /
+	// ReadFrom to the inner writer, so it stays transparent to the tunnel-mode
+	// WebSocket hijack and gRPC trailer bridge.
+	var counted *countingResponseWriter
+	if h.accessLog != nil || h.tracingEnabled {
+		counted = newCountingResponseWriter(writer)
 		writer = counted
+	}
 
-		start := time.Now()
-		query := req.URL.RawQuery
+	// Server span: extract the inbound W3C trace context, start a server span,
+	// and carry it on the request context so backend calls link back and logs
+	// correlate. Done before the access-log snapshot so the emitted line sees
+	// the traced context. Gated on tracingEnabled so the disabled path adds no
+	// extraction, span, or context rebuild.
+	if h.tracingEnabled {
+		var span trace.Span
 
-		if h.accessLogStripQuery {
-			query = ""
-		}
+		req, span = startServerSpan(h.tracer, req)
 
-		snapshot := &accessLogSnapshot{
-			method:    req.Method,
-			host:      req.Host,
-			path:      req.URL.Path,
-			query:     query,
-			userAgent: req.UserAgent(),
-		}
+		defer endServerSpan(span, counted)
+	}
+
+	// Access-log wrapping: zero cost when accessLog is nil -- the snapshot,
+	// defer, and time.Now() ALL sit inside the if branch so the disabled path
+	// skips them entirely. Snapshot is taken before filters run so a URL
+	// rewrite (filter.go writeRewritePathFilter mutates req.URL.Path in place)
+	// cannot hide the client-observable original path from the log.
+	if h.accessLog != nil {
+		snapshot, start := newAccessLogSnapshot(req, h.accessLogStripQuery)
 
 		defer h.maybeEmitAccessLog(counted, req, snapshot, start)
 	}
@@ -352,6 +390,55 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, req *http.Request) {
 	}
 
 	h.proxyToBackend(writer, req, result)
+}
+
+// startServerSpan extracts the inbound W3C trace context and starts a
+// SpanKindServer span, returning the request re-based onto the span's context
+// plus the span itself. The span name is the HTTP method (low cardinality — no
+// route template is available at this layer).
+//
+// The returned span is ended by the caller via endServerSpan in a deferred
+// call; spancheck cannot follow that cross-function lifecycle.
+//
+//nolint:spancheck // span is ended by the caller's deferred endServerSpan
+func startServerSpan(tracer trace.Tracer, req *http.Request) (*http.Request, trace.Span) {
+	ctx := otel.GetTextMapPropagator().Extract(req.Context(), propagation.HeaderCarrier(req.Header))
+
+	ctx, span := tracer.Start(ctx, req.Method,
+		trace.WithSpanKind(trace.SpanKindServer),
+		trace.WithAttributes(
+			attribute.String("http.request.method", req.Method),
+			attribute.String("url.path", req.URL.Path),
+			attribute.String("server.address", req.Host),
+		),
+	)
+
+	return req.WithContext(ctx), span
+}
+
+// endServerSpan records the response outcome on the server span and ends it.
+// When counted is nil (no status captured) it just ends the span.
+//
+// The status 101 carve-out mirrors maybeEmitAccessLog: a WebSocket upgrade
+// hijacks the connection and the span's duration spans the whole session, so
+// recording latency-shaped status attributes would mislead — instead the span
+// is tagged as an upgrade. A 5xx status marks the span as an error so it
+// surfaces in trace-backend error views.
+func endServerSpan(span trace.Span, counted *countingResponseWriter) {
+	if counted != nil {
+		switch status := counted.Status(); {
+		case status == http.StatusSwitchingProtocols:
+			span.SetAttributes(attribute.Bool("http.connection.upgrade", true))
+		case status != 0:
+			span.SetAttributes(attribute.Int("http.response.status_code", status))
+
+			if status >= http.StatusInternalServerError {
+				span.SetStatus(codes.Error, http.StatusText(status))
+			}
+		}
+	}
+
+	span.End()
 }
 
 // PruneTransports removes cached transports whose composite key
@@ -534,7 +621,7 @@ func (h *Handler) createReverseProxy(backendURL *url.URL, protocol BackendProtoc
 				req.Header.Set("User-Agent", "")
 			}
 		},
-		Transport:    h.getTransport(backendURL.Host, protocol, backendTLS, headerTimeout),
+		Transport:    h.backendTransport(backendURL.Host, protocol, backendTLS, headerTimeout),
 		ErrorHandler: errorHandler,
 		ModifyResponse: func(resp *http.Response) error {
 			ApplyResponseFilters(filters, resp)
@@ -542,6 +629,26 @@ func (h *Handler) createReverseProxy(backendURL *url.URL, protocol BackendProtoc
 			return nil
 		},
 	}
+}
+
+// backendTransport returns the round tripper for a backend dial. When tracing
+// is enabled it wraps the cached transport with otelhttp.NewTransport so the
+// proxy emits a SpanKindClient span per backend call and injects the server
+// span's W3C trace context (traceparent / tracestate) into the outbound
+// request, giving the backend a parent that points at the proxy's client span.
+//
+// The wrap is applied here at the use site, NOT stored in the pool: the pool
+// caches the underlying *http.Transport / *http2.Transport, which is what
+// PruneTransports needs to reach for CloseIdleConnections. otelhttp.Transport
+// does not expose CloseIdleConnections, so caching the wrapper would leak idle
+// connections on eviction.
+func (h *Handler) backendTransport(host string, protocol BackendProtocol, backendTLS *BackendTLSConfig, headerTimeout time.Duration) http.RoundTripper {
+	rt := h.getTransport(host, protocol, backendTLS, headerTimeout)
+	if !h.tracingEnabled {
+		return rt
+	}
+
+	return otelhttp.NewTransport(rt)
 }
 
 // getTransport returns a shared transport for the given backend host /

@@ -183,6 +183,24 @@ type accessLogSnapshot struct {
 	userAgent string
 }
 
+// newAccessLogSnapshot captures the pre-filter request fields and the start
+// time for the deferred access-log emission. stripQuery zeroes the query field
+// for operators whose URLs carry tokens / PII.
+func newAccessLogSnapshot(req *http.Request, stripQuery bool) (*accessLogSnapshot, time.Time) {
+	query := req.URL.RawQuery
+	if stripQuery {
+		query = ""
+	}
+
+	return &accessLogSnapshot{
+		method:    req.Method,
+		host:      req.Host,
+		path:      req.URL.Path,
+		query:     query,
+		userAgent: req.UserAgent(),
+	}, time.Now()
+}
+
 // maybeEmitAccessLog is the deferred tail of ServeHTTP when access
 // logging is enabled. Consults shouldSampleAccessLog with the
 // handler's configured rate, the recorded status, and the injected

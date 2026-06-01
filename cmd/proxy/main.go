@@ -12,8 +12,20 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/logging"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/proxy"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/tracing"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/tunnel"
+)
+
+// Version and Gitsha are injected at build time via -ldflags (see
+// Containerfile.proxy). They feed the OpenTelemetry service.version resource
+// attribute and startup logs.
+//
+//nolint:gochecknoglobals // set by ldflags at build time
+var (
+	Version = "development"
+	Gitsha  = "development"
 )
 
 const (
@@ -35,11 +47,19 @@ const (
 )
 
 func main() {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+	// Wrap with TraceHandler so structured logs carry trace_id / span_id
+	// whenever a request context holds an active span (no-op otherwise).
+	logger := slog.New(logging.NewTraceHandler(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
-	}))
+	})))
 
 	slog.SetDefault(logger)
+
+	// Install the global TracerProvider + propagator before building the
+	// handler so its tracer binds to the configured provider. No-op when
+	// PROXY_TRACING_ENABLED is unset.
+	shutdownTracing := setupTracing(logger)
+	defer shutdownTracing()
 
 	tunnelToken := os.Getenv("TUNNEL_TOKEN")
 
@@ -48,6 +68,72 @@ func main() {
 	} else {
 		runStandaloneMode(logger)
 	}
+}
+
+// setupTracing reads the PROXY_TRACING_* env and installs a global OpenTelemetry
+// TracerProvider + propagator via internal/tracing. It returns a shutdown
+// function to flush the exporter; when tracing is disabled the function is a
+// no-op. A setup failure is logged and the proxy continues without tracing
+// rather than refusing to start.
+func setupTracing(logger *slog.Logger) func() {
+	cfg := tracingConfigFromEnv(logger)
+
+	shutdown, err := tracing.Setup(context.Background(), cfg)
+	if err != nil {
+		logger.Error("tracing setup failed -- continuing without tracing", "error", err)
+
+		return func() {}
+	}
+
+	if cfg.Enabled {
+		logger.Info("distributed tracing enabled",
+			"endpoint", cfg.Endpoint, "sampleRate", cfg.SampleRate, "version", Version, "gitsha", Gitsha)
+	}
+
+	return func() {
+		ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		defer cancel()
+
+		cerr := shutdown(ctx)
+		if cerr != nil {
+			logger.Error("tracing shutdown error", "error", cerr)
+		}
+	}
+}
+
+// tracingConfigFromEnv builds the tracing.Config from the PROXY_TRACING_* env.
+// An empty endpoint defers to the standard OTEL_EXPORTER_OTLP_* variables.
+func tracingConfigFromEnv(logger *slog.Logger) tracing.Config {
+	return tracing.Config{
+		Enabled:     tracingEnabled(),
+		Endpoint:    strings.TrimSpace(os.Getenv("PROXY_TRACING_ENDPOINT")),
+		SampleRate:  parseTracingSampleRate(logger),
+		ServiceName: "proxy",
+		Version:     Version,
+	}
+}
+
+// tracingEnabled reports whether PROXY_TRACING_ENABLED requests tracing, using
+// the same truthy convention as the other proxy toggles.
+func tracingEnabled() bool {
+	return isTruthyEnv("PROXY_TRACING_ENABLED")
+}
+
+// parseTracingSampleRate reads PROXY_TRACING_SAMPLE_RATE, defaulting to 1.0 on
+// unset / unparseable input with a WARN.
+func parseTracingSampleRate(logger *slog.Logger) float64 {
+	return parseSampleRateEnv(logger, "PROXY_TRACING_SAMPLE_RATE")
+}
+
+// tracingHandlerOption emits proxy.WithTracing iff PROXY_TRACING_ENABLED is
+// truthy, so the server-span + backend-transport instrumentation is active only
+// when the exporter is wired.
+func tracingHandlerOption() proxy.HandlerOption {
+	if !tracingEnabled() {
+		return nil
+	}
+
+	return proxy.WithTracing("proxy")
 }
 
 // runTunnelMode starts the proxy with cloudflared tunnel integration.
@@ -370,9 +456,10 @@ func wsHandlerOptions(logger *slog.Logger) []proxy.HandlerOption {
 //
 // PROXY_ACCESS_LOG_SAMPLING_RATE is parsed as a float64 in [0,1].
 // Unset → default 1.0 (log everything). Unparseable → WARN and fall
-// back to 1.0. Out-of-range values pass through; proxy.WithAccessLog
-// + shouldSampleAccessLog clamp them so operator typos degrade to
-// "always log" rather than "silently never log".
+// back to 1.0. Out-of-range values pass through and shouldSampleAccessLog
+// clamps them: a `> 1` typo logs everything, a `< 0` typo logs only 5xx.
+// Either way 5xx is always logged, so a sampling typo never hides
+// server-side failures.
 //
 // Same "WARN + safe-default" pattern as parseEnvDuration -- proxy
 // MUST start even with a malformed tunable; the WARN ensures the
@@ -434,14 +521,24 @@ func accessLogEnabled() bool {
 // defaulting to 1.0 on unset / unparseable input. WARN logs surface
 // the typo so the operator notices.
 func parseAccessLogSamplingRate(logger *slog.Logger) float64 {
-	raw := strings.TrimSpace(os.Getenv("PROXY_ACCESS_LOG_SAMPLING_RATE"))
+	return parseSampleRateEnv(logger, "PROXY_ACCESS_LOG_SAMPLING_RATE")
+}
+
+// parseSampleRateEnv reads a sampling-rate env var, defaulting to 1.0 on
+// unset / unparseable input with a WARN naming the offending value. The parsed
+// value is returned verbatim, including out-of-range values — each consumer
+// applies its own range handling (the access log clamps via shouldSampleAccessLog;
+// tracing clamps via clampSampleRate). Shared by the access-log and tracing
+// sample-rate knobs.
+func parseSampleRateEnv(logger *slog.Logger, name string) float64 {
+	raw := strings.TrimSpace(os.Getenv(name))
 	if raw == "" {
 		return 1.0
 	}
 
 	parsed, err := strconv.ParseFloat(raw, 64)
 	if err != nil {
-		logger.Warn("PROXY_ACCESS_LOG_SAMPLING_RATE failed to parse -- defaulting to 1.0",
+		logger.Warn(name+" failed to parse -- defaulting to 1.0",
 			"value", raw, "error", err)
 
 		return 1.0
@@ -464,6 +561,10 @@ func handlerOptions(logger *slog.Logger) []proxy.HandlerOption {
 
 	if stripOpt := accessLogStripQueryOption(); stripOpt != nil {
 		opts = append(opts, stripOpt)
+	}
+
+	if tracingOpt := tracingHandlerOption(); tracingOpt != nil {
+		opts = append(opts, tracingOpt)
 	}
 
 	return opts

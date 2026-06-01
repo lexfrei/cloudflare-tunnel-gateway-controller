@@ -5,7 +5,9 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
+	"time"
 
 	"github.com/cockroachdb/errors"
 	"github.com/go-logr/logr"
@@ -16,7 +18,11 @@ import (
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/controller"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/dns"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/logging"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/tracing"
 )
+
+// tracingShutdownTimeout bounds the OTLP exporter flush on shutdown.
+const tracingShutdownTimeout = 30 * time.Second
 
 //nolint:gochecknoglobals // set by SetVersion from main
 var (
@@ -68,6 +74,13 @@ func init() {
 	rootCmd.Flags().String("proxy-deployment-label", "", "Label selector identifying the proxy Deployment(s) to roll on tunnel-token change, in `key=value` form. Defaults to `app.kubernetes.io/component=proxy` (matches the chart).")
 	rootCmd.Flags().String("tunnel-protocol", "auto", "The proxy's configured edge transport (auto|http2|quic); used to warn when GRPCRoutes are present on an explicit quic tunnel, which cannot carry gRPC trailers (auto/unset is upgraded to http2 by the proxy).")
 
+	// Distributed tracing (OpenTelemetry). Off by default. When enabled, the
+	// controller instruments its outbound Cloudflare API and proxy config-push
+	// clients and exports spans over OTLP/gRPC.
+	rootCmd.Flags().Bool("tracing-enabled", false, "Enable OpenTelemetry distributed tracing for the controller.")
+	rootCmd.Flags().String("tracing-endpoint", "", "OTLP/gRPC collector endpoint. Bare host:port uses plaintext gRPC; an http:// or https:// prefix selects plaintext vs TLS. Empty defers to the standard OTEL_EXPORTER_OTLP_ENDPOINT variables.")
+	rootCmd.Flags().Float64("tracing-sample-rate", 1.0, "Head-sampling probability in [0,1], applied at the trace root via ParentBased(TraceIDRatioBased).")
+
 	// Deprecated: --gateway-class-name is no longer used. The controller discovers
 	// GatewayClasses by spec.controllerName, not by name.
 	rootCmd.Flags().String("gateway-class-name", "", "DEPRECATED: no longer used, will be removed in a future release")
@@ -81,6 +94,10 @@ func init() {
 
 func initConfig() {
 	viper.SetEnvPrefix("CF")
+	// Map hyphenated flag keys to underscore env names: the key `tracing-enabled`
+	// becomes CF_TRACING_ENABLED. Without this, viper looks up the impossible
+	// `CF_TRACING-ENABLED` and every hyphenated CF_* env var is silently ignored.
+	viper.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
 	viper.AutomaticEnv()
 
 	viper.SetDefault("controller-name", "cf.k8s.lex.la/tunnel-controller")
@@ -91,6 +108,8 @@ func initConfig() {
 	viper.SetDefault("tunnel-protocol", "auto")
 	viper.SetDefault("leader-elect", false)
 	viper.SetDefault("leader-election-name", "cloudflare-tunnel-gateway-controller-leader")
+	viper.SetDefault("tracing-enabled", false)
+	viper.SetDefault("tracing-sample-rate", 1.0)
 }
 
 func Execute() error {
@@ -135,6 +154,14 @@ func runController(_ *cobra.Command, _ []string) error {
 	logger.Info("starting cloudflare-tunnel-gateway-controller",
 		"version", version, "gitsha", gitsha)
 
+	tracingEnabled := viper.GetBool("tracing-enabled")
+
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+
+	shutdownTracing := setupTracing(ctx, logger, tracingEnabled)
+	defer shutdownTracing()
+
 	cfg := controller.Config{
 		ClusterDomain:  resolveClusterDomain(logger),
 		ControllerName: viper.GetString("controller-name"),
@@ -150,16 +177,54 @@ func runController(_ *cobra.Command, _ []string) error {
 		ProxyTokenSecret:     viper.GetString("proxy-token-secret"),
 		ProxyDeploymentLabel: viper.GetString("proxy-deployment-label"),
 		TunnelProtocol:       viper.GetString("tunnel-protocol"),
+		Tracing:              tracingEnabled,
 	}
-
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer cancel()
 
 	if err := controller.Run(ctx, &cfg); err != nil {
 		return errors.Wrap(err, "failed to run controller")
 	}
 
 	return nil
+}
+
+// setupTracing installs a global OpenTelemetry TracerProvider + propagator via
+// internal/tracing and returns a shutdown function. When disabled the function
+// is a no-op. A setup failure is logged and the controller continues without
+// tracing rather than refusing to start.
+func setupTracing(ctx context.Context, logger *slog.Logger, enabled bool) func() {
+	cfg := tracing.Config{
+		Enabled:     enabled,
+		Endpoint:    viper.GetString("tracing-endpoint"),
+		SampleRate:  viper.GetFloat64("tracing-sample-rate"),
+		ServiceName: "controller",
+		Version:     version,
+	}
+
+	shutdown, err := tracing.Setup(ctx, cfg)
+	if err != nil {
+		logger.Error("tracing setup failed -- continuing without tracing", "error", err)
+
+		return func() {}
+	}
+
+	if enabled {
+		logger.Info("distributed tracing enabled",
+			"endpoint", cfg.Endpoint, "sampleRate", cfg.SampleRate)
+	}
+
+	// Deliberately a fresh context, not derived from the run ctx: this runs at
+	// defer time after SIGTERM has already cancelled the run context, and the
+	// OTLP exporter must still get a window to flush.
+	//nolint:contextcheck // shutdown must outlive the cancelled run context to flush spans
+	return func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), tracingShutdownTimeout)
+		defer cancel()
+
+		serr := shutdown(shutdownCtx)
+		if serr != nil {
+			logger.Error("tracing shutdown error", "error", serr)
+		}
+	}
 }
 
 // resolveClusterDomain determines the cluster domain to use.
