@@ -21,6 +21,7 @@ import (
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/config"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/ingress"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/logging"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/proxy"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/referencegrant"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/routebinding"
 )
@@ -108,11 +109,12 @@ type SyncResult struct {
 // httpStatusEntries builds routeStatusEntry slice for HTTP routes,
 // including rejected routes that need Accepted=False status.
 func (sr *SyncResult) httpStatusEntries(
-	updateFn func(ctx context.Context, route *gatewayv1.HTTPRoute, bi routeBindingInfo, fr []ingress.BackendRefError, se error) error,
+	diagnostics []proxy.RouteDiagnostic,
+	updateFn func(ctx context.Context, route *gatewayv1.HTTPRoute, bi routeBindingInfo, fr []ingress.BackendRefError, diags []proxy.RouteDiagnostic, se error) error,
 ) []routeStatusEntry {
-	entries := buildStatusEntries(sr.HTTPRoutes, sr.HTTPRouteBindings, sr.HTTPFailedRefs, updateFn)
+	entries := buildStatusEntries(sr.HTTPRoutes, sr.HTTPRouteBindings, sr.HTTPFailedRefs, diagnostics, updateFn)
 	// Rejected routes have no failed refs — they were rejected at binding level.
-	entries = append(entries, buildStatusEntries(sr.RejectedHTTPRoutes, sr.HTTPRouteBindings, nil, updateFn)...)
+	entries = append(entries, buildStatusEntries(sr.RejectedHTTPRoutes, sr.HTTPRouteBindings, nil, nil, updateFn)...)
 
 	return entries
 }
@@ -120,10 +122,11 @@ func (sr *SyncResult) httpStatusEntries(
 // grpcStatusEntries builds routeStatusEntry slice for GRPC routes,
 // including rejected routes that need Accepted=False status.
 func (sr *SyncResult) grpcStatusEntries(
-	updateFn func(ctx context.Context, route *gatewayv1.GRPCRoute, bi routeBindingInfo, fr []ingress.BackendRefError, se error) error,
+	diagnostics []proxy.RouteDiagnostic,
+	updateFn func(ctx context.Context, route *gatewayv1.GRPCRoute, bi routeBindingInfo, fr []ingress.BackendRefError, diags []proxy.RouteDiagnostic, se error) error,
 ) []routeStatusEntry {
-	entries := buildStatusEntries(sr.GRPCRoutes, sr.GRPCRouteBindings, sr.GRPCFailedRefs, updateFn)
-	entries = append(entries, buildStatusEntries(sr.RejectedGRPCRoutes, sr.GRPCRouteBindings, nil, updateFn)...)
+	entries := buildStatusEntries(sr.GRPCRoutes, sr.GRPCRouteBindings, sr.GRPCFailedRefs, diagnostics, updateFn)
+	entries = append(entries, buildStatusEntries(sr.RejectedGRPCRoutes, sr.GRPCRouteBindings, nil, nil, updateFn)...)
 
 	return entries
 }
@@ -138,7 +141,8 @@ func buildStatusEntries[T routeObject](
 	routes []T,
 	bindings map[string]routeBindingInfo,
 	failedRefs []ingress.BackendRefError,
-	updateFn func(ctx context.Context, route *T, bi routeBindingInfo, fr []ingress.BackendRefError, se error) error,
+	diagnostics []proxy.RouteDiagnostic,
+	updateFn func(ctx context.Context, route *T, bi routeBindingInfo, fr []ingress.BackendRefError, diags []proxy.RouteDiagnostic, se error) error,
 ) []routeStatusEntry {
 	entries := make([]routeStatusEntry, 0, len(routes))
 
@@ -162,8 +166,9 @@ func buildStatusEntries[T routeObject](
 			namespace:   namespace,
 			bindingInfo: bindings[routeKey],
 			failedRefs:  filterFailedRefs(failedRefs, namespace, name),
-			update: func(ctx context.Context, bi routeBindingInfo, fr []ingress.BackendRefError, se error) error {
-				return updateFn(ctx, route, bi, fr, se)
+			diagnostics: filterDiagnostics(diagnostics, namespace, name),
+			update: func(ctx context.Context, bi routeBindingInfo, fr []ingress.BackendRefError, diags []proxy.RouteDiagnostic, se error) error {
+				return updateFn(ctx, route, bi, fr, diags, se)
 			},
 		})
 	}
@@ -182,7 +187,7 @@ type syncUpdateParams struct {
 	// gRPC needs http2; auto/unset is upgraded to http2 by the proxy, so only an
 	// explicit quic warns.
 	tunnelProtocol string
-	statusEntries  func(*SyncResult) []routeStatusEntry
+	statusEntries  func(*SyncResult, []proxy.RouteDiagnostic) []routeStatusEntry
 }
 
 // syncAndUpdateStatusCommon performs a full route sync, pushes proxy config,
@@ -201,11 +206,18 @@ func syncAndUpdateStatusCommon(ctx context.Context, params syncUpdateParams) (ct
 	// at runtime in v3 — they only populate the Cloudflare dashboard's
 	// edge-routing view. Both route reconcilers set pushProxy=true; each push
 	// rebuilds the full merged config from the SyncResult.
+	var diagnostics []proxy.RouteDiagnostic
+
 	if params.pushProxy && params.proxySyncer != nil && len(params.proxyEndpoints) > 0 && syncResult != nil {
 		httpRoutes := httpRoutePtrs(syncResult.HTTPRoutes)
 		grpcRoutes := grpcRoutePtrs(syncResult.GRPCRoutes)
 
-		if proxyErr := params.proxySyncer.SyncRoutes(ctx, params.proxyEndpoints, httpRoutes, grpcRoutes, syncResult.HTTPFailedRefs, syncResult.GRPCFailedRefs); proxyErr != nil {
+		// Diagnostics are returned even when the push errors: they describe the
+		// route specs, not the push, and must reach the route status regardless.
+		diags, proxyErr := params.proxySyncer.SyncRoutes(ctx, params.proxyEndpoints, httpRoutes, grpcRoutes, syncResult.HTTPFailedRefs, syncResult.GRPCFailedRefs)
+		diagnostics = diags
+
+		if proxyErr != nil {
 			logger.Error("proxy sync failed (non-blocking)", "error", proxyErr)
 			params.routeSyncer.Metrics.RecordSyncError(ctx, "proxy_push")
 		}
@@ -224,7 +236,7 @@ func syncAndUpdateStatusCommon(ctx context.Context, params syncUpdateParams) (ct
 	var statusUpdateErr error
 
 	if syncResult != nil {
-		statusUpdateErr = updateRoutesStatus(ctx, logger, params.statusEntries(syncResult), syncErr)
+		statusUpdateErr = updateRoutesStatus(ctx, logger, params.statusEntries(syncResult, diagnostics), syncErr)
 	}
 
 	if syncErr != nil {

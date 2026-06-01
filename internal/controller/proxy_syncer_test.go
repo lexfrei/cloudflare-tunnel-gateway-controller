@@ -112,7 +112,7 @@ func TestProxySyncer_SyncRoutes(t *testing.T) {
 
 	endpoints := []string{configServer.URL + "/config"}
 
-	err := syncer.SyncRoutes(context.Background(), endpoints, routes, nil, nil, nil)
+	_, err := syncer.SyncRoutes(context.Background(), endpoints, routes, nil, nil, nil)
 	require.NoError(t, err)
 
 	assert.Equal(t, int32(1), pushCount.Load())
@@ -154,7 +154,7 @@ func TestProxySyncer_NoRoutes_PushesEmptyConfig(t *testing.T) {
 
 	// Zero routes should still push a valid config with empty rules.
 	// The proxy will return 404 for all requests until routes are added.
-	err := syncer.SyncRoutes(context.Background(), []string{configServer.URL + "/config"}, nil, nil, nil, nil)
+	_, err := syncer.SyncRoutes(context.Background(), []string{configServer.URL + "/config"}, nil, nil, nil, nil)
 	require.NoError(t, err)
 
 	assert.Equal(t, int32(1), pushCount.Load())
@@ -262,7 +262,9 @@ func TestProxySyncer_ResyncEndpoints_ReplaysLastConfig(t *testing.T) {
 
 	endpoint := configServer.URL + "/config"
 
-	require.NoError(t, syncer.SyncRoutes(context.Background(), []string{endpoint}, routes, nil, nil, nil))
+	_, syncErr := syncer.SyncRoutes(context.Background(), []string{endpoint}, routes, nil, nil, nil)
+
+	require.NoError(t, syncErr)
 	require.Equal(t, int32(1), pushCount.Load(), "first sync must push once")
 	require.NotEmpty(t, firstReceived.Rules, "first push must carry the built config")
 
@@ -338,7 +340,7 @@ func TestProxySyncer_SyncRoutes_H2CBackend(t *testing.T) {
 		},
 	}
 
-	err := syncer.SyncRoutes(context.Background(), []string{configServer.URL + "/config"}, routes, nil, nil, nil)
+	_, err := syncer.SyncRoutes(context.Background(), []string{configServer.URL + "/config"}, routes, nil, nil, nil)
 	require.NoError(t, err)
 
 	require.Equal(t, int32(1), pushCount.Load())
@@ -411,7 +413,7 @@ func TestProxySyncer_SyncRoutes_GRPCRoute(t *testing.T) {
 		},
 	}
 
-	err := syncer.SyncRoutes(context.Background(), []string{configServer.URL + "/config"}, nil, grpcRoutes, nil, nil)
+	_, err := syncer.SyncRoutes(context.Background(), []string{configServer.URL + "/config"}, nil, grpcRoutes, nil, nil)
 	require.NoError(t, err)
 
 	require.Equal(t, int32(1), pushCount.Load())
@@ -488,7 +490,7 @@ func TestProxySyncer_SyncRoutes_GRPCFailedRefMarked(t *testing.T) {
 		{RouteNamespace: "default", RouteName: "echo", BackendName: "missing-svc", BackendNS: "default", Port: 9000, Reason: "BackendNotFound"},
 	}
 
-	err := syncer.SyncRoutes(context.Background(), []string{configServer.URL + "/config"}, nil, grpcRoutes, nil, grpcFailedRefs)
+	_, err := syncer.SyncRoutes(context.Background(), []string{configServer.URL + "/config"}, nil, grpcRoutes, nil, grpcFailedRefs)
 	require.NoError(t, err)
 
 	require.Len(t, receivedConfig.Rules, 1)
@@ -556,7 +558,7 @@ func TestProxySyncer_SyncRoutes_InvalidPortBackendMarked500(t *testing.T) {
 		{RouteNamespace: "default", RouteName: "bad-port", BackendName: "svc", BackendNS: "default", Port: 70000, Reason: "InvalidPort"},
 	}
 
-	err := syncer.SyncRoutes(context.Background(), []string{configServer.URL + "/config"}, httpRoutes, nil, httpFailedRefs, nil)
+	_, err := syncer.SyncRoutes(context.Background(), []string{configServer.URL + "/config"}, httpRoutes, nil, httpFailedRefs, nil)
 	require.NoError(t, err)
 
 	require.Len(t, receivedConfig.Rules, 1)
@@ -635,7 +637,7 @@ func grpcCrossNamespaceBackendSurvives(t *testing.T, grantFromKind gatewayv1.Kin
 		},
 	}
 
-	err := syncer.SyncRoutes(context.Background(), []string{configServer.URL + "/config"}, nil, grpcRoutes, nil, nil)
+	_, err := syncer.SyncRoutes(context.Background(), []string{configServer.URL + "/config"}, nil, grpcRoutes, nil, nil)
 	require.NoError(t, err)
 
 	require.Len(t, receivedConfig.Rules, 1)
@@ -742,7 +744,9 @@ func TestProxySyncer_SyncRoutes_BackendTLSPolicyMissingCA_FailsClosed(t *testing
 		},
 	}
 
-	require.NoError(t, syncer.SyncRoutes(context.Background(), []string{configServer.URL + "/config"}, routes, nil, nil, nil))
+	_, syncErr := syncer.SyncRoutes(context.Background(), []string{configServer.URL + "/config"}, routes, nil, nil, nil)
+
+	require.NoError(t, syncErr)
 
 	require.Len(t, receivedConfig.Rules, 1)
 	require.Len(t, receivedConfig.Rules[0].Backends, 1)
@@ -835,7 +839,9 @@ func TestProxySyncer_SyncRoutes_BackendTLSPolicy_URISubjectAltName_PushesURIList
 		},
 	}
 
-	require.NoError(t, syncer.SyncRoutes(context.Background(), []string{configServer.URL + "/config"}, routes, nil, nil, nil))
+	_, syncErr := syncer.SyncRoutes(context.Background(), []string{configServer.URL + "/config"}, routes, nil, nil, nil)
+
+	require.NoError(t, syncErr)
 
 	require.Len(t, receivedConfig.Rules, 1)
 	require.Len(t, receivedConfig.Rules[0].Backends, 1)

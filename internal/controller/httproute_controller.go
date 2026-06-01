@@ -14,6 +14,7 @@ import (
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/ingress"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/logging"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/proxy"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/routebinding"
 )
 
@@ -97,8 +98,8 @@ func (r *HTTPRouteReconciler) syncAndUpdateStatus(ctx context.Context) (ctrl.Res
 		proxySyncer:    r.ProxySyncer,
 		proxyEndpoints: r.ProxyEndpoints,
 		pushProxy:      true,
-		statusEntries: func(sr *SyncResult) []routeStatusEntry {
-			return sr.httpStatusEntries(r.updateRouteStatus)
+		statusEntries: func(sr *SyncResult, diags []proxy.RouteDiagnostic) []routeStatusEntry {
+			return sr.httpStatusEntries(diags, r.updateRouteStatus)
 		},
 	})
 }
@@ -132,6 +133,7 @@ func (r *HTTPRouteReconciler) updateRouteStatus(
 	route *gatewayv1.HTTPRoute,
 	bindingInfo routeBindingInfo,
 	failedRefs []ingress.BackendRefError,
+	diagnostics []proxy.RouteDiagnostic,
 	syncErr error,
 ) error {
 	return updateRouteStatusGeneric(
@@ -139,6 +141,7 @@ func (r *HTTPRouteReconciler) updateRouteStatus(
 		routeStatusUpdateParams{
 			k8sClient:      r.Client,
 			controllerName: r.ControllerName,
+			diagnostics:    diagnostics,
 		},
 		types.NamespacedName{Name: route.Name, Namespace: route.Namespace},
 		newHTTPRouteAccessor,

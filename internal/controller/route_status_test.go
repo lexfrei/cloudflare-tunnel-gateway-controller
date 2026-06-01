@@ -33,6 +33,7 @@ func TestBuildParentStatus_IncludesPort(t *testing.T) {
 	status := buildParentStatus(
 		ref, "default", "test-controller", 1,
 		metav1.Now(), routeBindingInfo{}, 0, nil, nil, nil,
+		nil, 0,
 	)
 
 	require.NotNil(t, status.ParentRef.Port)
@@ -49,6 +50,7 @@ func TestBuildParentStatus_NilPort(t *testing.T) {
 	status := buildParentStatus(
 		ref, "default", "test-controller", 1,
 		metav1.Now(), routeBindingInfo{}, 0, nil, nil, nil,
+		nil, 0,
 	)
 
 	assert.Nil(t, status.ParentRef.Port)
@@ -84,6 +86,7 @@ func TestBuildParentStatus_NoMatchingParent_ConformancePin(t *testing.T) {
 	status := buildParentStatus(
 		ref, "gateway-conformance-infra", "test-controller", 7,
 		metav1.Now(), bindingInfo, 0, nil, nil, nil,
+		nil, 0,
 	)
 
 	require.NotNil(t, status.ParentRef.Port)

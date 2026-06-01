@@ -15,6 +15,7 @@ import (
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/ingress"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/logging"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/proxy"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/routebinding"
 )
 
@@ -131,8 +132,8 @@ func (r *GRPCRouteReconciler) syncAndUpdateStatus(ctx context.Context) (ctrl.Res
 		// route — same model as the HTTPRoute reconciler.
 		pushProxy:      true,
 		tunnelProtocol: r.TunnelProtocol,
-		statusEntries: func(sr *SyncResult) []routeStatusEntry {
-			return sr.grpcStatusEntries(r.updateRouteStatus)
+		statusEntries: func(sr *SyncResult, diags []proxy.RouteDiagnostic) []routeStatusEntry {
+			return sr.grpcStatusEntries(diags, r.updateRouteStatus)
 		},
 	})
 }
@@ -146,11 +147,13 @@ func (r *GRPCRouteReconciler) updateRouteStatus(
 	route *gatewayv1.GRPCRoute,
 	bindingInfo routeBindingInfo,
 	failedRefs []ingress.BackendRefError,
+	diagnostics []proxy.RouteDiagnostic,
 	syncErr error,
 ) error {
 	params := routeStatusUpdateParams{
 		k8sClient:      r.Client,
 		controllerName: r.ControllerName,
+		diagnostics:    diagnostics,
 	}
 
 	// gRPC over an explicit quic tunnel cannot be served (cloudflared drops HTTP
