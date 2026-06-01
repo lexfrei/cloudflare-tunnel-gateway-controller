@@ -425,7 +425,13 @@ func buildResolvedRefsCondition(
 }
 
 // firstResolvedRefsDiagnostic returns the first ResolvedRefs-target diagnostic,
-// if any. The status writer surfaces it on the ResolvedRefs condition.
+// if any. The status writer surfaces it on the ResolvedRefs condition. A single
+// condition carries one reason/message, so when a route has several ResolvedRefs
+// problems (e.g. a dropped mirror and an unpoliced TLS appProtocol) only the
+// first is surfaced on the condition — the rest remain in the converter logs.
+// This mirrors the existing failedRefs[0] behaviour for the ingress-builder
+// reasons; the Accepted/PartiallyInvalid path, by contrast, does aggregate all
+// of its messages.
 func firstResolvedRefsDiagnostic(diagnostics []proxy.RouteDiagnostic) (proxy.RouteDiagnostic, bool) {
 	for _, diag := range diagnostics {
 		if diag.Target == proxy.DiagnosticResolvedRefs {

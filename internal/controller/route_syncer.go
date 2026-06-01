@@ -206,6 +206,12 @@ func syncAndUpdateStatusCommon(ctx context.Context, params syncUpdateParams) (ct
 	// at runtime in v3 — they only populate the Cloudflare dashboard's
 	// edge-routing view. Both route reconcilers set pushProxy=true; each push
 	// rebuilds the full merged config from the SyncResult.
+	// Converter diagnostics (unsupported/dropped config surfaced on route status)
+	// are produced by buildProxyConfig and returned by SyncRoutes, so they are
+	// only collected on the proxy-push path below. In v3 the proxy is the sole
+	// data plane and there are always proxy endpoints, so this is always taken;
+	// if a deployment ever ran with zero proxy endpoints the status surfacing
+	// would go dark along with the data plane itself.
 	var diagnostics []proxy.RouteDiagnostic
 
 	if params.pushProxy && params.proxySyncer != nil && len(params.proxyEndpoints) > 0 && syncResult != nil {
