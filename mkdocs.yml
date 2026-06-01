@@ -180,6 +180,7 @@ nav:
       - Troubleshooting: operations/troubleshooting.md
       - Metrics & Alerting: operations/metrics.md
       - Access Logging: operations/access-logging.md
+      - Distributed Tracing: operations/tracing.md
       - Manual Installation: operations/manual-installation.md
   - Development:
       - development/index.md
