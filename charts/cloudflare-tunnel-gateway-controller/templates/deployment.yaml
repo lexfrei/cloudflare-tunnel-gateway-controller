@@ -73,6 +73,13 @@ spec:
             - "--leader-election-namespace={{ .Release.Namespace }}"
             {{- end }}
             {{- end }}
+            {{- if .Values.controller.tracing.enabled }}
+            - "--tracing-enabled=true"
+            {{- with .Values.controller.tracing.endpoint }}
+            - "--tracing-endpoint={{ . }}"
+            {{- end }}
+            - "--tracing-sample-rate={{ .Values.controller.tracing.sampleRate }}"
+            {{- end }}
           {{- if .Values.proxy.authTokenSecretRef.name }}
           env:
             - name: PROXY_AUTH_TOKEN

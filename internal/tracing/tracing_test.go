@@ -2,11 +2,13 @@ package tracing
 
 import (
 	"context"
+	"net/http"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
@@ -176,4 +178,35 @@ func TestNewTracerProvider_ZeroRateDropsRootSpan(t *testing.T) {
 	require.NoError(t, provider.Shutdown(context.Background()))
 
 	var _ sdktrace.SpanExporter = exporter
+}
+
+// TestWrapTransport pins the client-instrumentation helper: disabled returns
+// the base round tripper unchanged (byte-identical outbound path); enabled
+// returns an otelhttp transport wrapping the base.
+func TestWrapTransport(t *testing.T) {
+	t.Parallel()
+
+	base := http.DefaultTransport
+
+	assert.Same(t, base, WrapTransport(base, false),
+		"disabled must return the base round tripper unchanged")
+
+	wrapped := WrapTransport(base, true)
+	require.NotNil(t, wrapped)
+	assert.NotSame(t, base, wrapped, "enabled must return a new wrapping round tripper")
+
+	_, ok := wrapped.(*otelhttp.Transport)
+	assert.True(t, ok, "enabled must wrap with *otelhttp.Transport")
+}
+
+// TestWrapTransport_NilBaseEnabled confirms a nil base defaults to
+// http.DefaultTransport under the otelhttp wrapper rather than panicking.
+func TestWrapTransport_NilBaseEnabled(t *testing.T) {
+	t.Parallel()
+
+	wrapped := WrapTransport(nil, true)
+	require.NotNil(t, wrapped)
+
+	_, ok := wrapped.(*otelhttp.Transport)
+	assert.True(t, ok)
 }

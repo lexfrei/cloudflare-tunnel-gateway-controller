@@ -7,9 +7,11 @@ package tracing
 
 import (
 	"context"
+	"net/http"
 	"strings"
 
 	"github.com/cockroachdb/errors"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	"go.opentelemetry.io/otel/propagation"
@@ -67,6 +69,23 @@ func Setup(ctx context.Context, cfg Config) (func(context.Context) error, error)
 	))
 
 	return provider.Shutdown, nil
+}
+
+// WrapTransport returns base wrapped with otelhttp.NewTransport when enabled,
+// so an outbound HTTP client emits a SpanKindClient span per call and injects
+// the active span's W3C trace context into the request. When disabled it
+// returns base unchanged, keeping the outbound path byte-identical. A nil base
+// with enabled defaults to http.DefaultTransport under the wrapper.
+func WrapTransport(base http.RoundTripper, enabled bool) http.RoundTripper {
+	if !enabled {
+		return base
+	}
+
+	if base == nil {
+		base = http.DefaultTransport
+	}
+
+	return otelhttp.NewTransport(base)
 }
 
 // newExporter builds the OTLP/gRPC span exporter. The gRPC client dials lazily,

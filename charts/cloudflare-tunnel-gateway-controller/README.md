@@ -234,12 +234,16 @@ spec:
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | affinity | object | `{}` | Affinity rules for pod scheduling |
-| controller | object | `{"clusterDomain":"","controllerName":"cf.k8s.lex.la/tunnel-controller","gatewayClassName":"cloudflare-tunnel","logFormat":"json","logLevel":"info"}` | Controller configuration |
+| controller | object | `{"clusterDomain":"","controllerName":"cf.k8s.lex.la/tunnel-controller","gatewayClassName":"cloudflare-tunnel","logFormat":"json","logLevel":"info","tracing":{"enabled":false,"endpoint":"","sampleRate":1}}` | Controller configuration |
 | controller.clusterDomain | string | auto-detected from /etc/resolv.conf, fallback: cluster.local | Kubernetes cluster domain for service DNS resolution |
 | controller.controllerName | string | `"cf.k8s.lex.la/tunnel-controller"` | Value for GatewayClass spec.controllerName — this is how the controller discovers its GatewayClasses (must be unique per controller instance) |
 | controller.gatewayClassName | string | `"cloudflare-tunnel"` | Name of the GatewayClass resource to create |
 | controller.logFormat | string | `"json"` | Log format (json, text) |
 | controller.logLevel | string | `"info"` | Log level (debug, info, warn, error) |
+| controller.tracing | object | `{"enabled":false,"endpoint":"","sampleRate":1}` | Distributed tracing (OpenTelemetry) for the controller. Off by default. When enabled, the controller instruments its outbound Cloudflare API and proxy config-push clients and exports spans over OTLP/gRPC. This is independent of proxy.tracing (the data-plane knob). |
+| controller.tracing.enabled | bool | `false` | Enable distributed tracing on the controller. Defaults to false. |
+| controller.tracing.endpoint | string | `""` | OTLP/gRPC collector endpoint. A bare host:port uses plaintext gRPC; prefix with http:// or https:// to choose plaintext vs TLS. Empty defers to the standard OTEL_EXPORTER_OTLP_ENDPOINT / OTEL_EXPORTER_OTLP_TRACES_ENDPOINT environment variables. |
+| controller.tracing.sampleRate | float | `1` | Head-sampling probability in [0, 1], applied at the trace root via ParentBased(TraceIDRatioBased). 1.0 samples every trace. |
 | dnsConfig | object | `{}` | Custom DNS configuration for pod Example for custom DNS servers:   nameservers:     - 1.1.1.1     - 8.8.8.8   searches:     - cloudflare-tunnel-system.svc.cluster.local     - svc.cluster.local     - cluster.local   options:     - name: ndots       value: "2" |
 | dnsPolicy | string | `""` | DNS policy for pod (ClusterFirst, Default, ClusterFirstWithHostNet, None) Use "None" with dnsConfig for custom DNS configuration |
 | fullnameOverride | string | `""` | Override the full release name |

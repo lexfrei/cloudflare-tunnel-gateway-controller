@@ -1,11 +1,69 @@
 package cmd
 
 import (
+	"context"
+	"log/slog"
 	"testing"
+	"time"
 
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel"
 )
+
+func discardLogger() *slog.Logger {
+	return slog.New(slog.DiscardHandler)
+}
+
+// TestSetupTracing_Disabled pins that the disabled path returns a callable
+// no-op and does not install a propagator (the global stays untouched).
+func TestSetupTracing_Disabled(t *testing.T) {
+	// no t.Parallel: setupTracing mutates process-global OTel state when enabled;
+	// keep the setupTracing tests serial.
+	prevProp := otel.GetTextMapPropagator()
+
+	shutdown := setupTracing(context.Background(), discardLogger(), false)
+	require.NotNil(t, shutdown, "shutdown must be non-nil even when disabled")
+
+	assert.Equal(t, prevProp.Fields(), otel.GetTextMapPropagator().Fields(),
+		"disabled setup must not install a propagator")
+	assert.NotPanics(t, shutdown, "the disabled shutdown must be a callable no-op")
+}
+
+// TestSetupTracing_Enabled pins that the enabled path installs the composite
+// propagator and returns a shutdown that flushes without panicking (no live
+// collector needed — the OTLP gRPC client dials lazily).
+func TestSetupTracing_Enabled(t *testing.T) {
+	prevTP := otel.GetTracerProvider()
+	prevProp := otel.GetTextMapPropagator()
+
+	t.Cleanup(func() {
+		otel.SetTracerProvider(prevTP)
+		otel.SetTextMapPropagator(prevProp)
+	})
+
+	viper.Reset()
+	initConfig()
+
+	shutdown := setupTracing(context.Background(), discardLogger(), true)
+	require.NotNil(t, shutdown)
+
+	assert.Contains(t, otel.GetTextMapPropagator().Fields(), "traceparent",
+		"enabled setup must install the W3C TraceContext propagator")
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		shutdown()
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("tracing shutdown did not return within 10s")
+	}
+}
 
 func TestSetVersion(t *testing.T) {
 	// Save original values
@@ -56,6 +114,25 @@ func TestInitConfig_EnvPrefix(t *testing.T) {
 
 	// Verify the env prefix is set correctly
 	assert.Equal(t, "CF", viper.GetEnvPrefix())
+}
+
+// TestInitConfig_EnvKeyReplacer pins that hyphenated config keys are reachable
+// via CF_-prefixed environment variables. Without an env-key replacer, viper
+// maps the bound key `tracing-enabled` to the impossible env name
+// `CF_TRACING-ENABLED` (literal hyphen) and the env is silently ignored — which
+// would make the documented CF_TRACING_ENABLED / CF_LOG_LEVEL toggles dead.
+func TestInitConfig_EnvKeyReplacer(t *testing.T) {
+	viper.Reset()
+
+	t.Setenv("CF_TRACING_ENABLED", "true")
+	t.Setenv("CF_LOG_LEVEL", "debug")
+
+	initConfig()
+
+	assert.True(t, viper.GetBool("tracing-enabled"),
+		"CF_TRACING_ENABLED must map to the tracing-enabled key via the - -> _ replacer")
+	assert.Equal(t, "debug", viper.GetString("log-level"),
+		"CF_LOG_LEVEL must map to the log-level key via the - -> _ replacer")
 }
 
 func TestSetupLogger_Levels(t *testing.T) {

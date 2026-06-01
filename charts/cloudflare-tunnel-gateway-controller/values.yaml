@@ -44,6 +44,21 @@ controller:
   logLevel: "info"
   # -- Log format (json, text)
   logFormat: "json"
+  # -- Distributed tracing (OpenTelemetry) for the controller. Off by
+  # default. When enabled, the controller instruments its outbound
+  # Cloudflare API and proxy config-push clients and exports spans over
+  # OTLP/gRPC. This is independent of proxy.tracing (the data-plane knob).
+  tracing:
+    # -- Enable distributed tracing on the controller. Defaults to false.
+    enabled: false
+    # -- OTLP/gRPC collector endpoint. A bare host:port uses plaintext
+    # gRPC; prefix with http:// or https:// to choose plaintext vs TLS.
+    # Empty defers to the standard OTEL_EXPORTER_OTLP_ENDPOINT /
+    # OTEL_EXPORTER_OTLP_TRACES_ENDPOINT environment variables.
+    endpoint: ""
+    # -- Head-sampling probability in [0, 1], applied at the trace root
+    # via ParentBased(TraceIDRatioBased). 1.0 samples every trace.
+    sampleRate: 1.0
 
 # -- Leader election configuration for high availability
 leaderElection:
