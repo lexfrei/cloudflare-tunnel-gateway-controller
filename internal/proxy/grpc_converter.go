@@ -2,7 +2,9 @@ package proxy
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"net/http"
 	"regexp"
 	"strings"
 
@@ -50,17 +52,23 @@ func ConvertGRPCRoutes(
 		Version: configVersionCounter.Add(1),
 	}
 
+	sink := &diagSink{}
+
 	for _, route := range routes {
+		sink.route(route.Namespace, route.Name)
 		hostnames := convertHostnames(route.Spec.Hostnames)
 		clientCert := resolveFirstParentClientCertForGRPCRoute(ctx, route, gatewayCertResolver)
 
 		for ruleIdx := range route.Spec.Rules {
+			sink.at(ruleIdx)
 			cfg.Rules = append(cfg.Rules, convertGRPCRouteRule(
 				ctx, &route.Spec.Rules[ruleIdx], hostnames, route.Namespace, clusterDomain,
-				validator, tlsResolver, clientCert,
+				validator, tlsResolver, clientCert, sink,
 			))
 		}
 	}
+
+	cfg.Diagnostics = sink.items
 
 	return cfg
 }
@@ -84,6 +92,7 @@ func convertGRPCRouteRule(
 	validator BackendRefValidator,
 	tlsResolver BackendTLSResolver,
 	clientCert *ClientCertConfig,
+	sink *diagSink,
 ) RouteRule {
 	proxyRule := RouteRule{Hostnames: hostnames}
 
@@ -94,7 +103,20 @@ func convertGRPCRouteRule(
 	}
 
 	if len(rule.Filters) > 0 {
-		slog.Warn("skipping GRPCRoute filters — not supported by the proxy yet",
+		// The proxy serves no GRPCRoute filters yet. Per the Gateway API spec an
+		// unsupported filter MUST NOT be silently dropped — the rule fails closed
+		// (matched gRPC requests receive HTTP 500) and the route status carries
+		// the UnsupportedValue so the operator is not left guessing.
+		sink.add(
+			DiagnosticAccepted,
+			string(gatewayv1.RouteReasonUnsupportedValue),
+			grpcFiltersUnsupportedMessage(len(rule.Filters)),
+			true,
+		)
+
+		proxyRule.UnavailableStatus = http.StatusInternalServerError
+
+		slog.Warn("failing GRPCRoute rule closed: filters not supported by the proxy",
 			"namespace", namespace, "filters", len(rule.Filters))
 	}
 
@@ -109,6 +131,18 @@ func convertGRPCRouteRule(
 	}
 
 	return proxyRule
+}
+
+// grpcFiltersUnsupportedMessage builds the actionable status message for a
+// GRPCRoute rule whose filters the proxy cannot serve. It names the count, the
+// consequence (HTTP 500 for matching requests), and the remediation.
+func grpcFiltersUnsupportedMessage(count int) string {
+	return fmt.Sprintf(
+		"%d GRPCRoute filter(s) on this rule are not supported by the proxy; "+
+			"matching requests receive HTTP 500. Remove the filters from the rule "+
+			"to restore routing.",
+		count,
+	)
 }
 
 // convertGRPCMatch maps a GRPCRouteMatch to a proxy RouteMatch. Returns

@@ -109,14 +109,18 @@ func ConvertHTTPRoutes(
 		Version: configVersionCounter.Add(1),
 	}
 
+	sink := &diagSink{}
+
 	for _, route := range routes {
+		sink.route(route.Namespace, route.Name)
 		hostnames := convertHostnames(route.Spec.Hostnames)
 		clientCert := resolveFirstParentClientCert(ctx, route, gatewayCertResolver)
 
 		for ruleIdx := range route.Spec.Rules {
+			sink.at(ruleIdx)
 			proxyRule := convertHTTPRouteRule(
 				ctx, &route.Spec.Rules[ruleIdx], hostnames,
-				route.Namespace, clusterDomain, validator, protocolResolver, tlsResolver, clientCert,
+				route.Namespace, clusterDomain, validator, protocolResolver, tlsResolver, clientCert, sink,
 			)
 
 			// Rules with no backends and no redirect filter are kept —
@@ -126,6 +130,8 @@ func ConvertHTTPRoutes(
 			cfg.Rules = append(cfg.Rules, proxyRule)
 		}
 	}
+
+	cfg.Diagnostics = sink.items
 
 	return cfg
 }
@@ -206,6 +212,7 @@ func convertHTTPRouteRule(
 	resolver BackendProtocolResolver,
 	tlsResolver BackendTLSResolver,
 	clientCert *ClientCertConfig,
+	sink *diagSink,
 ) RouteRule {
 	proxyRule := RouteRule{
 		Hostnames: hostnames,
@@ -216,14 +223,20 @@ func convertHTTPRouteRule(
 	}
 
 	for filterIdx := range rule.Filters {
-		converted := convertFilter(ctx, &rule.Filters[filterIdx], namespace, clusterDomain, validator, tlsResolver, clientCert)
+		converted, failClosed := convertFilter(
+			ctx, &rule.Filters[filterIdx], namespace, clusterDomain, validator, tlsResolver, clientCert, sink, filterScopeRule,
+		)
+		if failClosed {
+			proxyRule.UnavailableStatus = http.StatusInternalServerError
+		}
+
 		if converted != nil {
 			proxyRule.Filters = append(proxyRule.Filters, *converted)
 		}
 	}
 
 	for backendIdx := range rule.BackendRefs {
-		backend, ok := convertBackendRef(ctx, &rule.BackendRefs[backendIdx], namespace, clusterDomain, validator, resolver, tlsResolver, clientCert)
+		backend, ok := convertBackendRef(ctx, &rule.BackendRefs[backendIdx], namespace, clusterDomain, validator, resolver, tlsResolver, clientCert, sink)
 		if ok {
 			proxyRule.Backends = append(proxyRule.Backends, backend)
 		}
@@ -416,6 +429,23 @@ func convertQueryMatch(query gatewayv1.HTTPQueryParamMatch) QueryParamMatch {
 	return result
 }
 
+// filterScopeRule and filterScopeBackend label where an unsupported filter was
+// found, for the diagnostic message and to decide whether the whole rule (rule
+// scope) or only a backend fraction (backend scope) fails closed.
+const (
+	filterScopeRule    = "rule"
+	filterScopeBackend = "backend"
+)
+
+// convertFilter maps a single HTTPRouteFilter into the proxy wire shape. The
+// boolean return reports whether the filter type is unsupported and the rule
+// must therefore fail closed: per the Gateway API spec an unresolvable custom
+// filter (ExtensionRef) or unknown filter type MUST NOT be silently skipped —
+// matched requests MUST receive an HTTP error response, and the route's status
+// MUST reflect the UnsupportedValue. The caller stamps the rule (or backend)
+// with UnavailableStatus and the converter records a diagnostic via sink. A nil
+// return with failClosed=false is a benign skip (nil filter payload, which the
+// CRD admission webhook already prevents) and leaves the rule servable.
 func convertFilter(
 	ctx context.Context,
 	filter *gatewayv1.HTTPRouteFilter,
@@ -423,30 +453,52 @@ func convertFilter(
 	validator BackendRefValidator,
 	tlsResolver BackendTLSResolver,
 	clientCert *ClientCertConfig,
-) *RouteFilter {
+	sink *diagSink,
+	scope string,
+) (*RouteFilter, bool) {
 	switch filter.Type {
 	case gatewayv1.HTTPRouteFilterRequestHeaderModifier:
-		return convertRequestHeaderFilter(filter.RequestHeaderModifier)
+		return convertRequestHeaderFilter(filter.RequestHeaderModifier), false
 	case gatewayv1.HTTPRouteFilterResponseHeaderModifier:
-		return convertResponseHeaderFilter(filter.ResponseHeaderModifier)
+		return convertResponseHeaderFilter(filter.ResponseHeaderModifier), false
 	case gatewayv1.HTTPRouteFilterRequestRedirect:
-		return convertRedirectFilter(filter.RequestRedirect)
+		return convertRedirectFilter(filter.RequestRedirect), false
 	case gatewayv1.HTTPRouteFilterURLRewrite:
-		return convertURLRewriteFilter(filter.URLRewrite)
+		return convertURLRewriteFilter(filter.URLRewrite), false
 	case gatewayv1.HTTPRouteFilterRequestMirror:
-		return convertMirrorFilter(ctx, filter.RequestMirror, namespace, clusterDomain, validator, tlsResolver, clientCert)
+		return convertMirrorFilter(ctx, filter.RequestMirror, namespace, clusterDomain, validator, tlsResolver, clientCert), false
 	case gatewayv1.HTTPRouteFilterCORS:
-		return convertCORSFilter(filter.CORS)
-	case gatewayv1.HTTPRouteFilterExtensionRef,
-		gatewayv1.HTTPRouteFilterExternalAuth:
-		slog.Warn("skipping unsupported filter type", "type", filter.Type)
-
-		return nil
+		return convertCORSFilter(filter.CORS), false
+	case gatewayv1.HTTPRouteFilterExtensionRef, gatewayv1.HTTPRouteFilterExternalAuth:
+		// Unsupported: handled by the fail-closed path below. Listed explicitly so
+		// the exhaustive linter confirms every enum value is accounted for.
 	}
 
-	slog.Warn("skipping unknown filter type", "type", filter.Type)
+	// ExtensionRef, ExternalAuth, and any unknown type are unsupported: fail the
+	// rule (or backend) closed and surface it on the route status. A rule-scoped
+	// filter takes the whole rule down; a backend-scoped one only the backend's
+	// traffic fraction.
+	sink.add(
+		DiagnosticAccepted,
+		string(gatewayv1.RouteReasonUnsupportedValue),
+		unsupportedFilterMessage(scope, string(filter.Type)),
+		scope == filterScopeRule,
+	)
+	slog.Warn("failing closed: unsupported filter type", "type", filter.Type, "scope", scope)
 
-	return nil
+	return nil, true
+}
+
+// unsupportedFilterMessage builds the actionable status message for a filter
+// type the proxy cannot serve. It names the offending type, the consequence
+// (HTTP 500 for matched requests), and the supported alternatives.
+func unsupportedFilterMessage(scope, filterType string) string {
+	return fmt.Sprintf(
+		"%s filter type %q is not supported; matching requests receive HTTP 500. "+
+			"Remove the filter or replace it with a supported type "+
+			"(RequestHeaderModifier, ResponseHeaderModifier, RequestRedirect, URLRewrite, RequestMirror, CORS).",
+		scope, filterType,
+	)
 }
 
 func convertRequestHeaderFilter(modifier *gatewayv1.HTTPHeaderFilter) *RouteFilter {
@@ -830,6 +882,7 @@ func convertBackendRef(
 	resolver BackendProtocolResolver,
 	tlsResolver BackendTLSResolver,
 	clientCert *ClientCertConfig,
+	sink *diagSink,
 ) (BackendRef, bool) {
 	result, ok := initBackendRefBaseline(backend)
 	if !ok {
@@ -872,7 +925,15 @@ func convertBackendRef(
 	result.TLS = attachGatewayClientCert(result.TLS, clientCert)
 	result.Protocol, result.URL, result.WebSocket = resolveBackendProtocol(ctx, resolver, svcNamespace, serviceName, port, result.URL, result.TLS != nil)
 
-	result.Filters = convertBackendFilters(ctx, backend.Filters, namespace, clusterDomain, validator, tlsResolver, clientCert)
+	var backendFiltersFailClosed bool
+
+	result.Filters, backendFiltersFailClosed = convertBackendFilters(ctx, backend.Filters, namespace, clusterDomain, validator, tlsResolver, clientCert, sink)
+	if backendFiltersFailClosed {
+		// An unsupported per-backend filter must fail closed for this backend's
+		// traffic fraction, exactly like an invalid backendRef: requests routed
+		// to it receive HTTP 500 rather than being served without the filter.
+		result.UnavailableStatus = http.StatusInternalServerError
+	}
 
 	return result, true
 }
@@ -1137,21 +1198,30 @@ func convertBackendFilters(
 	validator BackendRefValidator,
 	tlsResolver BackendTLSResolver,
 	clientCert *ClientCertConfig,
-) []RouteFilter {
+	sink *diagSink,
+) ([]RouteFilter, bool) {
 	if len(filters) == 0 {
-		return nil
+		return nil, false
 	}
 
 	result := make([]RouteFilter, 0, len(filters))
 
+	var failClosed bool
+
 	for filterIdx := range filters {
-		converted := convertFilter(ctx, &filters[filterIdx], namespace, clusterDomain, validator, tlsResolver, clientCert)
+		converted, filterFailClosed := convertFilter(
+			ctx, &filters[filterIdx], namespace, clusterDomain, validator, tlsResolver, clientCert, sink, filterScopeBackend,
+		)
+		if filterFailClosed {
+			failClosed = true
+		}
+
 		if converted != nil {
 			result = append(result, *converted)
 		}
 	}
 
-	return result
+	return result, failClosed
 }
 
 func resolveBackendNamespace(backend *gatewayv1.HTTPBackendRef, fallback string) string {
