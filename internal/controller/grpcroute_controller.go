@@ -111,6 +111,10 @@ type GRPCRouteReconciler struct {
 	// bindingValidator validates route binding to Gateway listeners.
 	bindingValidator *routebinding.Validator
 
+	// ViewStore caches the per-Gateway ListenerSet merge view across reconciles
+	// (issue #332). Shared with the other reconcilers. May be nil.
+	ViewStore *mergeViewStore
+
 	// startupComplete indicates whether the startup sync has completed.
 	startupComplete atomic.Bool
 }
@@ -144,7 +148,8 @@ func (r *GRPCRouteReconciler) syncAndUpdateStatus(ctx context.Context) (ctrl.Res
 }
 
 func (r *GRPCRouteReconciler) isRouteForOurGateway(ctx context.Context, route *gatewayv1.GRPCRoute) bool {
-	return IsRouteAcceptedByGateway(ctx, r.Client, r.bindingValidator, r.ControllerName, GRPCRouteWrapper{route})
+	return IsRouteAcceptedByGateway(ctx, r.Client, r.bindingValidator, r.ControllerName, GRPCRouteWrapper{route},
+		newListenerViewCache(r.Client, r.ViewStore))
 }
 
 func (r *GRPCRouteReconciler) updateRouteStatus(
@@ -361,5 +366,6 @@ func (r *GRPCRouteReconciler) getAllRelevantRoutes(ctx context.Context) []reconc
 		routes[i] = GRPCRouteWrapper{&routeList.Items[i]}
 	}
 
-	return FilterAcceptedRoutes(ctx, r.Client, r.bindingValidator, r.ControllerName, routes)
+	return FilterAcceptedRoutes(ctx, r.Client, r.bindingValidator, r.ControllerName, routes,
+		newListenerViewCache(r.Client, r.ViewStore))
 }

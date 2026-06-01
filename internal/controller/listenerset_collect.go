@@ -16,10 +16,31 @@ import (
 // the given Gateway as its spec.parentRef AND is permitted to attach by the
 // Gateway's spec.allowedListeners filter.
 //
-// Used by GatewayReconciler to compute status.attachedListenerSets and by
-// ListenerSetReconciler to compute the merged view that drives status
-// conditions for the ListenerSet under reconciliation.
+// Production no longer calls this directly — every consumer goes through the
+// per-Gateway merge-view cache (see buildGatewayListenerView / forGateway in
+// listenerset_view.go). It is retained as the independent oracle the merge-view
+// equivalence test composes against, asserting the cache yields the same
+// accepted set + merge a from-scratch computation would.
 func collectAcceptedListenerSetsForGateway(
+	ctx context.Context,
+	cli client.Client,
+	gateway *gatewayv1.Gateway,
+) ([]*gatewayv1.ListenerSet, error) {
+	candidates, err := listTargetingListenerSets(ctx, cli, gateway)
+	if err != nil {
+		return nil, err
+	}
+
+	return acceptedFromCandidates(ctx, routebinding.NewValidator(cli), gateway, candidates)
+}
+
+// listTargetingListenerSets lists every ListenerSet whose spec.parentRef names
+// the given Gateway, without applying the Gateway's allowedListeners filter.
+// This pre-acceptance candidate set is what the merge-view cache fingerprints
+// on: it captures membership and per-ListenerSet generation, which is exactly
+// what the merged view depends on. The List reads the controller-runtime
+// informer cache (no API round-trip).
+func listTargetingListenerSets(
 	ctx context.Context,
 	cli client.Client,
 	gateway *gatewayv1.Gateway,
@@ -29,16 +50,28 @@ func collectAcceptedListenerSetsForGateway(
 		return nil, errors.Wrap(err, "failed to list listenersets")
 	}
 
-	validator := routebinding.NewValidator(cli)
 	out := make([]*gatewayv1.ListenerSet, 0, len(all.Items))
 
 	for i := range all.Items {
-		listenerSet := &all.Items[i]
-
-		if !listenerSetTargetsGateway(listenerSet, gateway) {
-			continue
+		if listenerSetTargetsGateway(&all.Items[i], gateway) {
+			out = append(out, &all.Items[i])
 		}
+	}
 
+	return out, nil
+}
+
+// acceptedFromCandidates filters targeting ListenerSets down to those the
+// Gateway's spec.allowedListeners filter permits to attach.
+func acceptedFromCandidates(
+	ctx context.Context,
+	validator *routebinding.Validator,
+	gateway *gatewayv1.Gateway,
+	candidates []*gatewayv1.ListenerSet,
+) ([]*gatewayv1.ListenerSet, error) {
+	out := make([]*gatewayv1.ListenerSet, 0, len(candidates))
+
+	for _, listenerSet := range candidates {
 		acceptance, err := validator.EvaluateListenerSetAcceptance(ctx, gateway, listenerSet)
 		if err != nil {
 			return nil, errors.Wrap(err, "failed to evaluate listenerset acceptance")
@@ -64,17 +97,17 @@ func summariseAttachedListenerSets(
 	ctx context.Context,
 	cli client.Client,
 	gateway *gatewayv1.Gateway,
+	views *listenerViewCache,
 ) (int, error) {
-	listenerSets, err := collectAcceptedListenerSetsForGateway(ctx, cli, gateway)
+	view, err := views.orNew(cli).forGateway(ctx, gateway)
 	if err != nil {
 		return 0, err
 	}
 
-	merged := listenermerge.Merge(gateway, listenerSets)
 	accepted := 0
 
-	for _, listenerSet := range listenerSets {
-		if listenerSetEntriesAccepted(ctx, cli, listenerSet, merged) {
+	for _, listenerSet := range view.acceptedSets {
+		if listenerSetEntriesAccepted(ctx, cli, listenerSet, view.merged) {
 			accepted++
 		}
 	}

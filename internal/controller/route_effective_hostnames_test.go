@@ -46,7 +46,7 @@ func TestWithEffectiveHostnames_InheritsFromGatewayListener(t *testing.T) {
 
 	cli := buildGatewayFakeClient(t, gw)
 
-	out := withEffectiveHostnames(context.Background(), cli, []*gatewayv1.HTTPRoute{route})
+	out := withEffectiveHostnames(context.Background(), cli, []*gatewayv1.HTTPRoute{route}, nil)
 	require.Len(t, out, 1)
 	assert.Equal(t, []gatewayv1.Hostname{gatewayHost}, out[0].Spec.Hostnames)
 }
@@ -89,7 +89,7 @@ func TestWithEffectiveHostnamesGRPC_InheritsFromGatewayListener(t *testing.T) {
 
 	cli := buildGatewayFakeClient(t, gw)
 
-	out := withEffectiveHostnamesGRPC(context.Background(), cli, []*gatewayv1.GRPCRoute{route})
+	out := withEffectiveHostnamesGRPC(context.Background(), cli, []*gatewayv1.GRPCRoute{route}, nil)
 	require.Len(t, out, 1)
 	assert.Equal(t, []gatewayv1.Hostname{gatewayHost}, out[0].Spec.Hostnames)
 }
@@ -128,7 +128,7 @@ func TestWithEffectiveHostnames_InheritsFromListenerSetEntry(t *testing.T) {
 
 	cli := buildGatewayFakeClient(t, ls)
 
-	out := withEffectiveHostnames(context.Background(), cli, []*gatewayv1.HTTPRoute{route})
+	out := withEffectiveHostnames(context.Background(), cli, []*gatewayv1.HTTPRoute{route}, nil)
 	require.Len(t, out, 1)
 	assert.Equal(t, []gatewayv1.Hostname{entryHost}, out[0].Spec.Hostnames)
 }
@@ -175,7 +175,7 @@ func TestWithEffectiveHostnames_SectionNameNarrowsListenerSetEntries(t *testing.
 
 	cli := buildGatewayFakeClient(t, ls)
 
-	out := withEffectiveHostnames(context.Background(), cli, []*gatewayv1.HTTPRoute{route})
+	out := withEffectiveHostnames(context.Background(), cli, []*gatewayv1.HTTPRoute{route}, nil)
 	require.Len(t, out, 1)
 	assert.Equal(t, []gatewayv1.Hostname{b}, out[0].Spec.Hostnames, "only the sectionName-matched entry's hostname should be inherited")
 }
@@ -211,7 +211,7 @@ func TestWithEffectiveHostnames_NoOpWhenRouteAlreadyDeclaresHostnames(t *testing
 
 	cli := buildGatewayFakeClient(t, ls)
 
-	out := withEffectiveHostnames(context.Background(), cli, []*gatewayv1.HTTPRoute{route})
+	out := withEffectiveHostnames(context.Background(), cli, []*gatewayv1.HTTPRoute{route}, nil)
 	require.Len(t, out, 1)
 	assert.Equal(t, []gatewayv1.Hostname{declared}, out[0].Spec.Hostnames, "explicit route hostnames must not be overwritten")
 }
@@ -268,7 +268,7 @@ func TestWithEffectiveHostnames_OnlyInheritsFromAcceptingListeners(t *testing.T)
 
 	cli := buildGatewayFakeClient(t, ls)
 
-	out := withEffectiveHostnames(context.Background(), cli, []*gatewayv1.HTTPRoute{route})
+	out := withEffectiveHostnames(context.Background(), cli, []*gatewayv1.HTTPRoute{route}, nil)
 	require.Len(t, out, 1)
 	assert.Equal(t, []gatewayv1.Hostname{allHost}, out[0].Spec.Hostnames,
 		"route must inherit only the accepting listener's hostname, not the same-namespace-only listener's")
@@ -292,7 +292,7 @@ func TestWithEffectiveHostnames_StableWhenParentMissing(t *testing.T) {
 
 	cli := buildGatewayFakeClient(t)
 
-	out := withEffectiveHostnames(context.Background(), cli, []*gatewayv1.HTTPRoute{route})
+	out := withEffectiveHostnames(context.Background(), cli, []*gatewayv1.HTTPRoute{route}, nil)
 	require.Len(t, out, 1)
 	assert.Empty(t, out[0].Spec.Hostnames, "missing parent must not synthesise hostnames")
 }
@@ -372,7 +372,7 @@ func TestWithEffectiveHostnames_ListenerSetConflictedEntryNotInherited(t *testin
 
 	cli := buildGatewayFakeClient(t, gw, ls)
 
-	out := withEffectiveHostnames(context.Background(), cli, []*gatewayv1.HTTPRoute{route})
+	out := withEffectiveHostnames(context.Background(), cli, []*gatewayv1.HTTPRoute{route}, nil)
 	require.Len(t, out, 1)
 	assert.Empty(t, out[0].Spec.Hostnames,
 		"a conflicted ListenerSet entry is not programmed → its hostname must not be inherited")

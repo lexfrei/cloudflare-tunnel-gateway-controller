@@ -42,7 +42,7 @@ func TestResolveRouteParentBinding_GatewayParentManaged(t *testing.T) {
 		Hostnames: nil, Kind: routebinding.KindHTTPRoute,
 	}
 
-	binding, err := resolveRouteParentBinding(context.Background(), cli, validator, testListenerSetController, ref, "team-a", routeInfo)
+	binding, err := resolveRouteParentBinding(context.Background(), cli, validator, testListenerSetController, ref, "team-a", routeInfo, nil)
 	require.NoError(t, err)
 	assert.True(t, binding.ManagedByThisController)
 	assert.True(t, binding.Result.Accepted)
@@ -68,7 +68,7 @@ func TestResolveRouteParentBinding_GatewayManagedByForeignController(t *testing.
 	ref := gatewayv1.ParentReference{Kind: &gwKind, Name: "gw", Namespace: &gwNS}
 	routeInfo := &routebinding.RouteInfo{Name: "r", Namespace: "team-a", Kind: routebinding.KindHTTPRoute}
 
-	binding, err := resolveRouteParentBinding(context.Background(), cli, validator, testListenerSetController, ref, "team-a", routeInfo)
+	binding, err := resolveRouteParentBinding(context.Background(), cli, validator, testListenerSetController, ref, "team-a", routeInfo, nil)
 	require.NoError(t, err)
 	assert.False(t, binding.ManagedByThisController, "ref to a Gateway whose class is owned by a foreign controller must not register as ours")
 }
@@ -104,7 +104,7 @@ func TestResolveRouteParentBinding_ListenerSetNotAllowedByGateway(t *testing.T) 
 	ref := gatewayv1.ParentReference{Kind: &lsKind, Name: "ls", Namespace: &lsNS}
 	routeInfo := &routebinding.RouteInfo{Name: "r", Namespace: "team-a", Kind: routebinding.KindHTTPRoute}
 
-	binding, err := resolveRouteParentBinding(context.Background(), cli, validator, testListenerSetController, ref, "team-a", routeInfo)
+	binding, err := resolveRouteParentBinding(context.Background(), cli, validator, testListenerSetController, ref, "team-a", routeInfo, nil)
 	require.NoError(t, err)
 	assert.True(t, binding.ManagedByThisController, "Gateway IS managed, even though it rejects the ListenerSet — so the route still belongs to us")
 	assert.False(t, binding.Result.Accepted)
@@ -129,7 +129,7 @@ func TestResolveRouteParentBinding_ListenerSetParentGatewayMissing(t *testing.T)
 	ref := gatewayv1.ParentReference{Kind: &lsKind, Name: "ls", Namespace: &lsNS}
 	routeInfo := &routebinding.RouteInfo{Name: "r", Namespace: "team-a", Kind: routebinding.KindHTTPRoute}
 
-	binding, err := resolveRouteParentBinding(context.Background(), cli, validator, testListenerSetController, ref, "team-a", routeInfo)
+	binding, err := resolveRouteParentBinding(context.Background(), cli, validator, testListenerSetController, ref, "team-a", routeInfo, nil)
 	require.NoError(t, err)
 	assert.False(t, binding.ManagedByThisController, "missing parent Gateway leaves the ref unresolvable")
 }
@@ -181,7 +181,7 @@ func TestResolveRouteParentBinding_CrossNamespaceListenerSet(t *testing.T) {
 	ref := gatewayv1.ParentReference{Kind: &lsKind, Name: "ls", Namespace: &lsNS}
 	routeInfo := &routebinding.RouteInfo{Name: "r", Namespace: "team-a", Kind: routebinding.KindHTTPRoute}
 
-	binding, err := resolveRouteParentBinding(context.Background(), cli, validator, testListenerSetController, ref, "team-a", routeInfo)
+	binding, err := resolveRouteParentBinding(context.Background(), cli, validator, testListenerSetController, ref, "team-a", routeInfo, nil)
 	require.NoError(t, err)
 	assert.True(t, binding.ManagedByThisController)
 	assert.True(t, binding.Result.Accepted, "route attaches via the cross-namespace ListenerSet's entry")
@@ -234,7 +234,7 @@ func TestResolveRouteParentBinding_ConflictedListenerSetEntryRejected(t *testing
 	ref := gatewayv1.ParentReference{Kind: &lsKind, Name: "ls", Namespace: &lsNS}
 	routeInfo := &routebinding.RouteInfo{Name: "r", Namespace: "team-a", Kind: routebinding.KindHTTPRoute}
 
-	binding, err := resolveRouteParentBinding(context.Background(), cli, validator, testListenerSetController, ref, "team-a", routeInfo)
+	binding, err := resolveRouteParentBinding(context.Background(), cli, validator, testListenerSetController, ref, "team-a", routeInfo, nil)
 	require.NoError(t, err)
 	assert.True(t, binding.ManagedByThisController)
 	assert.False(t, binding.Result.Accepted, "binding to a conflicted LS entry must be rejected")

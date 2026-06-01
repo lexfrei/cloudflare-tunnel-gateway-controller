@@ -265,7 +265,7 @@ func TestRouteSyncer_GetRelevantHTTPRoutes(t *testing.T) {
 				nil,
 			)
 
-			result, err := syncer.getRelevantHTTPRoutes(context.Background())
+			result, err := syncer.getRelevantHTTPRoutes(context.Background(), nil)
 
 			require.NoError(t, err)
 			assert.Len(t, result.accepted, tt.expectedCount)
@@ -389,7 +389,7 @@ func TestRouteSyncer_GetRelevantGRPCRoutes(t *testing.T) {
 				nil,
 			)
 
-			result, err := syncer.getRelevantGRPCRoutes(context.Background())
+			result, err := syncer.getRelevantGRPCRoutes(context.Background(), nil)
 
 			require.NoError(t, err)
 			assert.Len(t, result.accepted, tt.expectedCount)
@@ -857,7 +857,7 @@ func TestRouteSyncer_GetRelevantGRPCRoutes_WithExplicitNamespace(t *testing.T) {
 				nil,
 			)
 
-			result, err := syncer.getRelevantGRPCRoutes(context.Background())
+			result, err := syncer.getRelevantGRPCRoutes(context.Background(), nil)
 
 			require.NoError(t, err)
 			assert.Len(t, result.accepted, tt.expectedCount)

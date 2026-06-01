@@ -95,7 +95,7 @@ func TestRouteSyncer_CrossNamespaceRef_WithoutGrant(t *testing.T) {
 	ctx := context.Background()
 
 	// Get relevant routes (should include our route)
-	httpResult, err := syncer.getRelevantHTTPRoutes(ctx)
+	httpResult, err := syncer.getRelevantHTTPRoutes(ctx, nil)
 	require.NoError(t, err)
 	require.Len(t, httpResult.accepted, 1)
 	assert.Equal(t, "cross-ns-route", httpResult.accepted[0].Name)
@@ -379,7 +379,7 @@ func TestRouteSyncer_GRPCRoute_CrossNamespaceRef_WithGrant(t *testing.T) {
 	ctx := context.Background()
 
 	// Get relevant routes
-	grpcResult, err := syncer.getRelevantGRPCRoutes(ctx)
+	grpcResult, err := syncer.getRelevantGRPCRoutes(ctx, nil)
 	require.NoError(t, err)
 	require.Len(t, grpcResult.accepted, 1)
 
@@ -541,7 +541,7 @@ func TestRouteSyncer_ReferenceGrant_SpecificName(t *testing.T) {
 	ctx := context.Background()
 
 	// Get relevant routes
-	httpResult2, err := syncer.getRelevantHTTPRoutes(ctx)
+	httpResult2, err := syncer.getRelevantHTTPRoutes(ctx, nil)
 	require.NoError(t, err)
 	require.Len(t, httpResult2.accepted, 2)
 

@@ -109,6 +109,10 @@ type GatewayReconciler struct {
 
 	// ConfigResolver resolves configuration from GatewayClassConfig.
 	ConfigResolver *config.Resolver
+
+	// ViewStore caches the per-Gateway ListenerSet merge view across reconciles.
+	// Shared with the route and ListenerSet reconcilers (issue #332). May be nil.
+	ViewStore *mergeViewStore
 }
 
 func (r *GatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -118,6 +122,10 @@ func (r *GatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 
 	if err := r.Get(ctx, req.NamespacedName, &gateway); err != nil {
 		if apierrors.IsNotFound(err) {
+			// Gateway is gone: drop its cached merge view so the shared store
+			// does not retain entries for deleted Gateways (issue #332).
+			r.ViewStore.forget(req.NamespacedName)
+
 			return ctrl.Result{}, nil
 		}
 
@@ -198,7 +206,9 @@ func (r *GatewayReconciler) updateStatus(
 
 		attachedRoutes := r.countAttachedRoutes(ctx, &freshGateway)
 
-		attachedCount, mergeErr := summariseAttachedListenerSets(ctx, r.Client, &freshGateway)
+		views := newListenerViewCache(r.Client, r.ViewStore)
+
+		attachedCount, mergeErr := summariseAttachedListenerSets(ctx, r.Client, &freshGateway, views)
 		if mergeErr != nil {
 			log.FromContext(ctx).Error(mergeErr, "failed to summarise attached listenersets; reporting 0")
 

@@ -603,11 +603,14 @@ func FilterAcceptedRoutes(
 	validator *routebinding.Validator,
 	controllerName string,
 	routes []Route,
+	views *listenerViewCache,
 ) []reconcile.Request {
+	views = views.orNew(cli)
+
 	var requests []reconcile.Request
 
 	for _, route := range routes {
-		if IsRouteAcceptedByGateway(ctx, cli, validator, controllerName, route) {
+		if IsRouteAcceptedByGateway(ctx, cli, validator, controllerName, route, views) {
 			requests = append(requests, reconcile.Request{
 				NamespacedName: client.ObjectKey{
 					Name:      route.GetName(),
@@ -701,7 +704,10 @@ func IsRouteAcceptedByGateway(
 	validator *routebinding.Validator,
 	controllerName string,
 	route Route,
+	views *listenerViewCache,
 ) bool {
+	views = views.orNew(cli)
+
 	routeInfoTemplate := &routebinding.RouteInfo{
 		Name:      route.GetName(),
 		Namespace: route.GetNamespace(),
@@ -710,7 +716,7 @@ func IsRouteAcceptedByGateway(
 	}
 
 	for _, ref := range route.GetParentRefs() {
-		binding, err := resolveRouteParentBinding(ctx, cli, validator, controllerName, ref, route.GetNamespace(), withRefFilters(routeInfoTemplate, ref))
+		binding, err := resolveRouteParentBinding(ctx, cli, validator, controllerName, ref, route.GetNamespace(), withRefFilters(routeInfoTemplate, ref), views)
 		if err != nil {
 			logging.FromContext(ctx).Error("failed to validate route binding",
 				"route", route.GetNamespace()+"/"+route.GetName(),

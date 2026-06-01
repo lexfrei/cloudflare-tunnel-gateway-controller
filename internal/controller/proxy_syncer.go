@@ -58,6 +58,11 @@ type ProxySyncer struct {
 	gatewayCertResolver  proxy.GatewayClientCertResolver
 	syncMu               sync.Mutex
 	lastCfg              *proxy.Config
+
+	// ViewStore caches the per-Gateway ListenerSet merge view across reconciles
+	// (issue #332). Set by the manager after construction and shared with the
+	// other reconcilers. nil disables cross-reconcile reuse.
+	ViewStore *mergeViewStore
 }
 
 // NewProxySyncer creates a ProxySyncer for pushing config to proxy replicas.
@@ -668,11 +673,16 @@ func (s *ProxySyncer) buildProxyConfig(
 	failedRefs []ingress.BackendRefError,
 	grpcFailedRefs []ingress.BackendRefError,
 ) *proxy.Config {
+	// One merge-view cache for this whole proxy-config build: the hostname and
+	// redirect-scheme passes both resolve the same Gateways, so they share a
+	// single merge instead of rebuilding it per route per pass (issue #332).
+	views := newListenerViewCache(s.k8sClient, s.ViewStore)
+
 	// When a route binds to a Gateway listener or ListenerSet entry with a
 	// non-empty hostname and itself declares spec.hostnames empty, the proxy
 	// rule MUST serve only the parent listener's hostname. Augment in-memory
 	// before handing to the converter; the input routes are left untouched.
-	routes = withEffectiveHostnames(ctx, s.k8sClient, routes)
+	routes = withEffectiveHostnames(ctx, s.k8sClient, routes, views)
 
 	// A RequestRedirect filter that leaves scheme empty must default to the
 	// scheme of the request, which behind the tunnel means the parent
@@ -680,7 +690,7 @@ func (s *ProxySyncer) buildProxyConfig(
 	// origin request carries no usable scheme). Resolve it here so the
 	// converter sees an explicit scheme instead of the proxy's hardcoded
 	// https fallback. Input routes are left untouched.
-	routes = withDefaultRedirectScheme(ctx, s.k8sClient, routes)
+	routes = withDefaultRedirectScheme(ctx, s.k8sClient, routes, views)
 
 	// Convert to proxy config with cross-namespace validation, backend
 	// protocol resolution (e.g. h2c from Service appProtocol), and
@@ -702,7 +712,7 @@ func (s *ProxySyncer) buildProxyConfig(
 		// none, exactly like HTTPRoutes — otherwise an empty-hostname gRPC rule
 		// becomes a catch-all answering every Host (including hostnames owned by
 		// other routes).
-		grpcRoutes = withEffectiveHostnamesGRPC(ctx, s.k8sClient, grpcRoutes)
+		grpcRoutes = withEffectiveHostnamesGRPC(ctx, s.k8sClient, grpcRoutes, views)
 
 		grpcCfg := proxy.ConvertGRPCRoutes(ctx, grpcRoutes, s.clusterDomain, s.grpcBackendValidator, s.tlsResolver, s.gatewayCertResolver)
 		cfg.Rules = append(cfg.Rules, grpcCfg.Rules...)
