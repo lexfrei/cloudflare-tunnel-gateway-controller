@@ -923,7 +923,17 @@ func convertBackendRef(
 	// (no policy → operator misconfigured a TLS hint with no actual TLS).
 	result.TLS, result.URL = resolveBackendTLS(ctx, tlsResolver, svcNamespace, serviceName, port, result.URL)
 	result.TLS = attachGatewayClientCert(result.TLS, clientCert)
-	result.Protocol, result.URL, result.WebSocket = resolveBackendProtocol(ctx, resolver, svcNamespace, serviceName, port, result.URL, result.TLS != nil)
+
+	var protoFailClosed bool
+
+	result.Protocol, result.URL, result.WebSocket, protoFailClosed = resolveBackendProtocol(
+		ctx, resolver, svcNamespace, serviceName, port, result.URL, result.TLS != nil, sink,
+	)
+	if protoFailClosed {
+		// A TLS appProtocol without a BackendTLSPolicy: dialing plaintext would
+		// fail anyway, so return 502 for this backend's traffic fraction.
+		result.UnavailableStatus = http.StatusBadGateway
+	}
 
 	var backendFiltersFailClosed bool
 
@@ -1086,16 +1096,19 @@ func resolveBackendProtocol(
 	port int32,
 	rawURL string,
 	tlsAttached bool,
-) (BackendProtocol, string, bool) {
+	sink *diagSink,
+) (BackendProtocol, string, bool, bool) {
 	if resolver == nil {
-		return BackendProtocolHTTP, rawURL, false
+		return BackendProtocolHTTP, rawURL, false, false
 	}
 
 	appProto := resolver(ctx, namespace, serviceName, port)
 
 	switch appProto {
 	case appProtocolH2C:
-		return resolveH2C(rawURL, tlsAttached, namespace, serviceName, port)
+		proto, u := resolveH2C(rawURL, tlsAttached, namespace, serviceName, port)
+
+		return proto, u, false, false
 	case appProtocolWS:
 		if tlsAttached {
 			warnCleartextHintSuppressed(
@@ -1103,23 +1116,31 @@ func resolveBackendProtocol(
 				namespace, serviceName, port)
 		}
 
-		return BackendProtocolHTTP, rawURL, true
+		return BackendProtocolHTTP, rawURL, true, false
 	case appProtocolWSS:
-		warnUnpolicedTLSHint(tlsAttached,
-			"backend declares appProtocol wss but no BackendTLSPolicy targets it — WebSocket upgrade will be attempted in plaintext",
-			namespace, serviceName, port, appProto)
+		// TLS-bearing WebSocket: without a BackendTLSPolicy the proxy has no
+		// trust anchor and the upgrade would fail. Fail the backend closed
+		// (502) and surface it, instead of dialing plaintext to a TLS backend.
+		fc := unpolicedTLSAppProtocol(tlsAttached, namespace, serviceName, port, appProto, sink)
 
-		return BackendProtocolHTTP, rawURL, true
+		return BackendProtocolHTTP, rawURL, true, fc
 	case "https", "HTTPS":
-		warnUnpolicedTLSHint(tlsAttached,
-			"backend declares appProtocol https but no BackendTLSPolicy targets it — request will be sent in plaintext",
-			namespace, serviceName, port, appProto)
+		fc := unpolicedTLSAppProtocol(tlsAttached, namespace, serviceName, port, appProto, sink)
 
-		return BackendProtocolHTTP, rawURL, false
+		return BackendProtocolHTTP, rawURL, false, fc
 	case "", "http", "HTTP":
 		// Default / cleartext hints match the default transport — silent.
-		return BackendProtocolHTTP, rawURL, false
+		return BackendProtocolHTTP, rawURL, false, false
 	default:
+		// Unrecognised appProtocol: HTTP/1.1 is a safe default the backend may
+		// well speak, so keep serving (report-only) but surface that the hint
+		// was not honoured.
+		sink.add(
+			DiagnosticResolvedRefs,
+			string(gatewayv1.RouteReasonUnsupportedProtocol),
+			unknownAppProtocolMessage(serviceName, appProto),
+			false,
+		)
 		slog.Warn("unsupported backend appProtocol; falling back to HTTP/1.1",
 			"namespace", namespace,
 			"service", serviceName,
@@ -1127,8 +1148,57 @@ func resolveBackendProtocol(
 			"appProtocol", appProto,
 		)
 
-		return BackendProtocolHTTP, rawURL, false
+		return BackendProtocolHTTP, rawURL, false, false
 	}
+}
+
+// unpolicedTLSAppProtocol handles a TLS-bearing appProtocol (https, wss). When a
+// BackendTLSPolicy is attached the hint is honoured silently. Without one the
+// proxy has no CA to verify against, so per the Gateway API spec this is an
+// unsupported app protocol: the backend fails closed (502) and a
+// ResolvedRefs-target diagnostic is recorded. Returns whether the backend must
+// fail closed.
+func unpolicedTLSAppProtocol(tlsAttached bool, namespace, serviceName string, port int32, appProto string, sink *diagSink) bool {
+	if tlsAttached {
+		return false
+	}
+
+	sink.add(
+		DiagnosticResolvedRefs,
+		string(gatewayv1.RouteReasonUnsupportedProtocol),
+		unpolicedTLSMessage(serviceName, appProto),
+		false,
+	)
+	slog.Warn("failing backend closed: TLS appProtocol without a BackendTLSPolicy",
+		"namespace", namespace,
+		"service", serviceName,
+		"port", port,
+		"appProtocol", appProto,
+	)
+
+	return true
+}
+
+// unpolicedTLSMessage builds the actionable status message for a TLS appProtocol
+// declared without a BackendTLSPolicy.
+func unpolicedTLSMessage(serviceName, appProto string) string {
+	return fmt.Sprintf(
+		"Service %q declares appProtocol %q but no BackendTLSPolicy targets it; "+
+			"the proxy has no CA to verify the backend, so requests to it receive HTTP 502. "+
+			"Attach a BackendTLSPolicy to the Service to enable TLS to this backend.",
+		serviceName, appProto,
+	)
+}
+
+// unknownAppProtocolMessage builds the status message for an unrecognised
+// appProtocol value the proxy falls back to HTTP/1.1 for.
+func unknownAppProtocolMessage(serviceName, appProto string) string {
+	return fmt.Sprintf(
+		"Service %q declares an unsupported appProtocol %q; the proxy serves it over HTTP/1.1. "+
+			"Use a supported value (kubernetes.io/h2c, kubernetes.io/ws, kubernetes.io/wss, https) "+
+			"or remove the appProtocol if HTTP/1.1 is correct.",
+		serviceName, appProto,
+	)
 }
 
 // resolveH2C handles the `kubernetes.io/h2c` branch. Extracted so
@@ -1141,35 +1211,16 @@ func resolveBackendProtocol(
 // suppressed h2c hint so the operator sees the conflict. Otherwise rewrite
 // any https:// URL (which buildServiceURL emits for port 443) back to
 // http:// so the h2c transport dials cleartext.
-func resolveH2C(rawURL string, tlsAttached bool, namespace, serviceName string, port int32) (BackendProtocol, string, bool) {
+func resolveH2C(rawURL string, tlsAttached bool, namespace, serviceName string, port int32) (BackendProtocol, string) {
 	if tlsAttached {
 		warnCleartextHintSuppressed(
 			"appProtocol kubernetes.io/h2c suppressed by BackendTLSPolicy on the same Service — HTTP/2 will be negotiated over TLS via ALPN",
 			namespace, serviceName, port)
 
-		return BackendProtocolHTTP, rawURL, false
+		return BackendProtocolHTTP, rawURL
 	}
 
-	return BackendProtocolH2C, strings.Replace(rawURL, schemeHTTPS+"://", schemeHTTP+"://", 1), false
-}
-
-// warnUnpolicedTLSHint logs a WARN when an operator declared a TLS-bearing
-// appProtocol (https, wss) without attaching a BackendTLSPolicy. Without a
-// CA the proxy cannot verify and will dial plaintext — the backend will
-// reject the request and the operator deserves a clear signal about the
-// misconfiguration. Extracted from resolveBackendProtocol because the
-// pattern is shared by both `https` and `wss`.
-func warnUnpolicedTLSHint(tlsAttached bool, message, namespace, serviceName string, port int32, appProto string) {
-	if tlsAttached {
-		return
-	}
-
-	slog.Warn(message,
-		"namespace", namespace,
-		"service", serviceName,
-		"port", port,
-		"appProtocol", appProto,
-	)
+	return BackendProtocolH2C, strings.Replace(rawURL, schemeHTTPS+"://", schemeHTTP+"://", 1)
 }
 
 // warnCleartextHintSuppressed logs a WARN when an operator declared a

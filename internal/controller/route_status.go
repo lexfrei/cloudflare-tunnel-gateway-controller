@@ -215,7 +215,7 @@ func buildParentStatus(
 
 	conditions := []metav1.Condition{
 		accepted,
-		buildResolvedRefsCondition(generation, now, failedRefs),
+		buildResolvedRefsCondition(generation, now, failedRefs, diagnostics),
 	}
 
 	// PartiallyInvalid is only meaningful when the route is otherwise accepted —
@@ -374,21 +374,41 @@ func buildResolvedRefsCondition(
 	generation int64,
 	now metav1.Time,
 	failedRefs []ingress.BackendRefError,
+	diagnostics []proxy.RouteDiagnostic,
 ) metav1.Condition {
 	status := metav1.ConditionTrue
 	reason := string(gatewayv1.RouteReasonResolvedRefs)
 	message := resolvedRefsMessage
 
-	if len(failedRefs) > 0 {
+	switch {
+	case len(failedRefs) > 0:
+		// A hard unresolved backend reference (missing Service, bad kind/port,
+		// unauthorized cross-namespace) is the most fundamental problem and
+		// outranks softer converter diagnostics. Gateway API spec requires
+		// specific reasons like InvalidKind, RefNotPermitted, BackendNotFound.
 		status = metav1.ConditionFalse
-		// Use the reason from the first failed ref — Gateway API spec requires
-		// specific reasons like InvalidKind, RefNotPermitted, BackendNotFound, etc.
 		reason = failedRefs[0].Reason
+
 		if reason == "" {
 			reason = string(gatewayv1.RouteReasonRefNotPermitted)
 		}
 
 		message = buildFailedRefsMessage(failedRefs)
+	default:
+		// Otherwise fold in any ResolvedRefs-target converter diagnostic (e.g. a
+		// backend declaring a TLS appProtocol with no BackendTLSPolicy, or an
+		// unrecognised appProtocol). These reach the status only via the
+		// converter — the ingress builder does not see them.
+		if diag, ok := firstResolvedRefsDiagnostic(diagnostics); ok {
+			status = metav1.ConditionFalse
+			reason = diag.Reason
+
+			if reason == "" {
+				reason = string(gatewayv1.RouteReasonUnsupportedProtocol)
+			}
+
+			message = diag.Message
+		}
 	}
 
 	return metav1.Condition{
@@ -399,6 +419,18 @@ func buildResolvedRefsCondition(
 		Reason:             reason,
 		Message:            message,
 	}
+}
+
+// firstResolvedRefsDiagnostic returns the first ResolvedRefs-target diagnostic,
+// if any. The status writer surfaces it on the ResolvedRefs condition.
+func firstResolvedRefsDiagnostic(diagnostics []proxy.RouteDiagnostic) (proxy.RouteDiagnostic, bool) {
+	for _, diag := range diagnostics {
+		if diag.Target == proxy.DiagnosticResolvedRefs {
+			return diag, true
+		}
+	}
+
+	return proxy.RouteDiagnostic{}, false
 }
 
 func buildFailedRefsMessage(failedRefs []ingress.BackendRefError) string {

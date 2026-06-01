@@ -260,9 +260,9 @@ func TestConvertHTTPRoutes_AppProtocolWS_NoWarn(t *testing.T) {
 
 // TestConvertHTTPRoutes_AppProtocolWSS_WithoutPolicy_Warns pins that declaring
 // `appProtocol: kubernetes.io/wss` without a matching BackendTLSPolicy logs a
-// WARN — operators hinted TLS but provided no trust anchor, so the proxy will
-// dial plaintext and the backend (expecting TLS) will refuse the upgrade.
-// Identical fail-closed semantics to the existing `appProtocol: https` path.
+// Fail-closed: operators hinted TLS but provided no trust anchor, so the proxy
+// cannot verify the backend. Rather than dial plaintext to a TLS backend, it
+// fails the backend closed (502) and records a ResolvedRefs diagnostic.
 func TestConvertHTTPRoutes_AppProtocolWSS_WithoutPolicy_Warns(t *testing.T) {
 	pathPrefix := gatewayv1.PathMatchPathPrefix
 	routes := []*gatewayv1.HTTPRoute{httpAppProtocolTestRoute(pathPrefix)}
@@ -278,10 +278,10 @@ func TestConvertHTTPRoutes_AppProtocolWSS_WithoutPolicy_Warns(t *testing.T) {
 	require.Len(t, cfg.Rules[0].Backends, 1)
 	assert.Equal(t, proxy.BackendProtocolHTTP, cfg.Rules[0].Backends[0].Protocol)
 	assert.Nil(t, cfg.Rules[0].Backends[0].TLS, "no policy attached → no TLS config")
-	assert.Contains(t, logs.String(), "appProtocol wss but no BackendTLSPolicy",
-		"appProtocol wss without a policy MUST log a warning so the misconfiguration is visible")
+	assert.Contains(t, logs.String(), "failing backend closed: TLS appProtocol without a BackendTLSPolicy",
+		"appProtocol wss without a policy MUST log so the fail-closed is visible")
 	assert.NotContains(t, logs.String(), "unsupported backend appProtocol",
-		"wss is a known appProtocol — must not be classified as 'unsupported'")
+		"wss is a known appProtocol — must not be classified as the generic 'unsupported' fallback")
 }
 
 // TestConvertHTTPRoutes_AppProtocolWS_WithPolicy_Warns surfaces the same
@@ -534,9 +534,9 @@ func TestConvertHTTPRoutes_AppProtocolPlaintextPassThrough(t *testing.T) {
 }
 
 // TestConvertHTTPRoutes_AppProtocolHTTPSWithoutPolicy_Warns confirms that
-// declaring `appProtocol: https` without a matching BackendTLSPolicy logs a
-// WARN — the proxy would otherwise dial in plaintext, silently violating the
-// operator's TLS intent.
+// declaring `appProtocol: https` without a matching BackendTLSPolicy fails the
+// backend closed and logs it — the proxy would otherwise dial plaintext,
+// silently violating the operator's TLS intent.
 func TestConvertHTTPRoutes_AppProtocolHTTPSWithoutPolicy_Warns(t *testing.T) {
 	cases := []struct {
 		name        string
@@ -562,8 +562,8 @@ func TestConvertHTTPRoutes_AppProtocolHTTPSWithoutPolicy_Warns(t *testing.T) {
 			require.Len(t, cfg.Rules[0].Backends, 1)
 			assert.Equal(t, proxy.BackendProtocolHTTP, cfg.Rules[0].Backends[0].Protocol)
 			assert.Nil(t, cfg.Rules[0].Backends[0].TLS, "no policy attached → no TLS config")
-			assert.Contains(t, logs.String(), "appProtocol https but no BackendTLSPolicy",
-				"appProtocol https without a policy MUST log a warning so the misconfiguration is visible")
+			assert.Contains(t, logs.String(), "failing backend closed: TLS appProtocol without a BackendTLSPolicy",
+				"appProtocol https without a policy MUST log so the fail-closed is visible")
 		})
 	}
 }
