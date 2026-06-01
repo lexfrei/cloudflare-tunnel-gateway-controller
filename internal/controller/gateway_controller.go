@@ -274,19 +274,22 @@ func (r *GatewayReconciler) updateStatus(
 				programmedCondition.Message = listenerMsgInvalidUnresolved
 			}
 
+			acceptedCondition := buildListenerAcceptedCondition(listener.Protocol, freshGateway.Generation, now)
+
+			// A listener this controller cannot serve at all (unsupported
+			// protocol) is not programmed either.
+			if acceptedCondition.Status == metav1.ConditionFalse {
+				programmedCondition.Status = metav1.ConditionFalse
+				programmedCondition.Reason = string(gatewayv1.ListenerReasonInvalid)
+				programmedCondition.Message = acceptedCondition.Message
+			}
+
 			listenerStatuses = append(listenerStatuses, gatewayv1.ListenerStatus{
 				Name:           listener.Name,
 				SupportedKinds: supportedKinds,
 				AttachedRoutes: attachedRoutes[listener.Name],
 				Conditions: []metav1.Condition{
-					{
-						Type:               string(gatewayv1.ListenerConditionAccepted),
-						Status:             metav1.ConditionTrue,
-						ObservedGeneration: freshGateway.Generation,
-						LastTransitionTime: now,
-						Reason:             string(gatewayv1.ListenerReasonAccepted),
-						Message:            listenerMsgAccepted,
-					},
+					acceptedCondition,
 					programmedCondition,
 					resolvedRefsCondition,
 				},
@@ -768,6 +771,38 @@ func (r *GatewayReconciler) gatewayReferencesSecretsInNamespace(
 	}
 
 	return false
+}
+
+// buildListenerAcceptedCondition builds the per-listener Accepted condition.
+// This controller serves only HTTP and HTTPS listeners (which carry HTTPRoute /
+// GRPCRoute through the in-process proxy). TCP, TLS, and UDP listeners have no
+// data plane here — Cloudflare Tunnel is HTTP-focused and terminates TLS at the
+// edge — so they are Accepted=False / UnsupportedProtocol per the Gateway API
+// spec rather than the misleading Accepted=True they would otherwise get.
+func buildListenerAcceptedCondition(protocol gatewayv1.ProtocolType, generation int64, now metav1.Time) metav1.Condition {
+	condition := metav1.Condition{
+		Type:               string(gatewayv1.ListenerConditionAccepted),
+		Status:             metav1.ConditionTrue,
+		ObservedGeneration: generation,
+		LastTransitionTime: now,
+		Reason:             string(gatewayv1.ListenerReasonAccepted),
+		Message:            listenerMsgAccepted,
+	}
+
+	switch protocol {
+	case gatewayv1.HTTPProtocolType, gatewayv1.HTTPSProtocolType:
+		return condition
+	case gatewayv1.TCPProtocolType, gatewayv1.TLSProtocolType, gatewayv1.UDPProtocolType:
+		// No TCP/TLS/UDPRoute data plane — fall through to unsupported below.
+	}
+
+	condition.Status = metav1.ConditionFalse
+	condition.Reason = string(gatewayv1.ListenerReasonUnsupportedProtocol)
+	condition.Message = "Listener protocol " + string(protocol) + " is not supported; " +
+		"this controller serves only HTTP and HTTPS listeners (HTTPRoute / GRPCRoute) through Cloudflare Tunnel. " +
+		"Use an HTTP or HTTPS listener."
+
+	return condition
 }
 
 // validateTLSCertificateRefs validates TLS certificate references for a listener.

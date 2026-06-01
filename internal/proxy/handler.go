@@ -256,6 +256,23 @@ func NewHandler(router *Router, opts ...HandlerOption) *Handler {
 }
 
 // ServeHTTP implements http.Handler.
+// writeRuleUnavailable handles the rule-level fail-closed path: when the
+// controller marked a matched rule unservable as written (e.g. it carries an
+// unsupported filter type whose effect cannot be honoured), the Gateway API
+// spec requires matched requests to receive an HTTP error rather than be served
+// without the dropped config. Returns true when it wrote the error, so the
+// caller short-circuits before backend selection, the WebSocket upgrade, and
+// the filter pipeline — all of which would otherwise reach the backend.
+func writeRuleUnavailable(writer http.ResponseWriter, rule *RouteRule) bool {
+	if rule == nil || rule.UnavailableStatus == 0 {
+		return false
+	}
+
+	http.Error(writer, http.StatusText(rule.UnavailableStatus), rule.UnavailableStatus)
+
+	return true
+}
+
 func (h *Handler) ServeHTTP(writer http.ResponseWriter, req *http.Request) {
 	// Access-log wrapping: zero cost when accessLog is nil -- the
 	// wrapper, defer, and time.Now() ALL sit inside the if branch
@@ -293,6 +310,10 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, req *http.Request) {
 	if result == nil {
 		http.Error(writer, "no matching route", http.StatusNotFound)
 
+		return
+	}
+
+	if writeRuleUnavailable(writer, result.Rule) {
 		return
 	}
 

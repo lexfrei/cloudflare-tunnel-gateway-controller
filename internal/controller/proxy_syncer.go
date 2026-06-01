@@ -592,7 +592,7 @@ func (s *ProxySyncer) SyncRoutes(
 	grpcRoutes []*gatewayv1.GRPCRoute,
 	failedRefs []ingress.BackendRefError,
 	grpcFailedRefs []ingress.BackendRefError,
-) error {
+) ([]proxy.RouteDiagnostic, error) {
 	// Resolve headless service DNS names before acquiring the lock
 	// to avoid blocking concurrent reconciles during slow DNS lookups.
 	resolved := resolveEndpoints(ctx, endpoints)
@@ -608,6 +608,12 @@ func (s *ProxySyncer) SyncRoutes(
 	logger.Info("syncing proxy config", "httpRoutes", len(routes), "grpcRoutes", len(grpcRoutes))
 
 	cfg := s.buildProxyConfig(ctx, routes, grpcRoutes, failedRefs, grpcFailedRefs)
+
+	// Diagnostics are computed by the converter and are valid regardless of
+	// whether the push below succeeds — they describe the route specs, not the
+	// push. Capture them up front so a push failure still surfaces config the
+	// controller will not serve as written on the route status.
+	diagnostics := cfg.Diagnostics
 
 	logger.Info("resolved endpoints",
 		"original", len(endpoints),
@@ -631,7 +637,7 @@ func (s *ProxySyncer) SyncRoutes(
 	}
 
 	if len(pushErrors) > 0 {
-		return fmt.Errorf("failed to push config to %d/%d endpoints: %w",
+		return diagnostics, fmt.Errorf("failed to push config to %d/%d endpoints: %w",
 			len(pushErrors), len(resolved), errors.Join(pushErrors...))
 	}
 
@@ -647,7 +653,7 @@ func (s *ProxySyncer) SyncRoutes(
 	// the cache with a config the replicas never actually received.
 	s.lastCfg = cfg
 
-	return nil
+	return diagnostics, nil
 }
 
 // buildProxyConfig converts the HTTP and gRPC route sets into a single merged
@@ -700,6 +706,7 @@ func (s *ProxySyncer) buildProxyConfig(
 
 		grpcCfg := proxy.ConvertGRPCRoutes(ctx, grpcRoutes, s.clusterDomain, s.grpcBackendValidator, s.tlsResolver, s.gatewayCertResolver)
 		cfg.Rules = append(cfg.Rules, grpcCfg.Rules...)
+		cfg.Diagnostics = append(cfg.Diagnostics, grpcCfg.Diagnostics...)
 
 		// Mark invalid gRPC backendRefs the same way as HTTP. Matching is by
 		// service host:port across all rules, so no rule-offset bookkeeping is

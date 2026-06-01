@@ -64,7 +64,15 @@ rules:
   - apiGroups: [""]
     resources: ["configmaps"]
     verbs: ["get", "list", "watch"]
+  # Events: the route reconcilers emit Kubernetes Events for benign config
+  # overrides via controller-runtime's EventRecorder. The new (events.k8s.io)
+  # recorder writes to events.k8s.io/v1; the legacy broadcaster that
+  # controller-runtime also starts writes core v1 events. Grant both so
+  # neither path is denied.
   - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+  - apiGroups: ["events.k8s.io"]
     resources: ["events"]
     verbs: ["create", "patch"]
   # GatewayClassConfig CRD

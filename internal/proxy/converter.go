@@ -109,14 +109,18 @@ func ConvertHTTPRoutes(
 		Version: configVersionCounter.Add(1),
 	}
 
+	sink := &diagSink{}
+
 	for _, route := range routes {
+		sink.route(route.Namespace, route.Name)
 		hostnames := convertHostnames(route.Spec.Hostnames)
 		clientCert := resolveFirstParentClientCert(ctx, route, gatewayCertResolver)
 
 		for ruleIdx := range route.Spec.Rules {
+			sink.at(ruleIdx)
 			proxyRule := convertHTTPRouteRule(
 				ctx, &route.Spec.Rules[ruleIdx], hostnames,
-				route.Namespace, clusterDomain, validator, protocolResolver, tlsResolver, clientCert,
+				route.Namespace, clusterDomain, validator, protocolResolver, tlsResolver, clientCert, sink,
 			)
 
 			// Rules with no backends and no redirect filter are kept —
@@ -126,6 +130,8 @@ func ConvertHTTPRoutes(
 			cfg.Rules = append(cfg.Rules, proxyRule)
 		}
 	}
+
+	cfg.Diagnostics = sink.items
 
 	return cfg
 }
@@ -206,6 +212,7 @@ func convertHTTPRouteRule(
 	resolver BackendProtocolResolver,
 	tlsResolver BackendTLSResolver,
 	clientCert *ClientCertConfig,
+	sink *diagSink,
 ) RouteRule {
 	proxyRule := RouteRule{
 		Hostnames: hostnames,
@@ -216,14 +223,20 @@ func convertHTTPRouteRule(
 	}
 
 	for filterIdx := range rule.Filters {
-		converted := convertFilter(ctx, &rule.Filters[filterIdx], namespace, clusterDomain, validator, tlsResolver, clientCert)
+		converted, failClosed := convertFilter(
+			ctx, &rule.Filters[filterIdx], namespace, clusterDomain, validator, tlsResolver, clientCert, sink, filterScopeRule,
+		)
+		if failClosed {
+			proxyRule.UnavailableStatus = http.StatusInternalServerError
+		}
+
 		if converted != nil {
 			proxyRule.Filters = append(proxyRule.Filters, *converted)
 		}
 	}
 
 	for backendIdx := range rule.BackendRefs {
-		backend, ok := convertBackendRef(ctx, &rule.BackendRefs[backendIdx], namespace, clusterDomain, validator, resolver, tlsResolver, clientCert)
+		backend, ok := convertBackendRef(ctx, &rule.BackendRefs[backendIdx], namespace, clusterDomain, validator, resolver, tlsResolver, clientCert, sink)
 		if ok {
 			proxyRule.Backends = append(proxyRule.Backends, backend)
 		}
@@ -232,13 +245,22 @@ func convertHTTPRouteRule(
 	if rule.Timeouts != nil {
 		timeouts, err := convertTimeouts(rule.Timeouts)
 		if err != nil {
-			slog.Warn("skipping invalid route timeouts", "error", err)
+			// The rule still serves, just without the unparseable timeout, so
+			// this is report-only: WholeRule=false drives PartiallyInvalid, not
+			// Accepted=False.
+			sink.add(
+				DiagnosticAccepted,
+				string(gatewayv1.RouteReasonUnsupportedValue),
+				invalidTimeoutsMessage(err),
+				false,
+			)
+			slog.Warn("dropping invalid route timeouts", "error", err)
 		} else {
 			proxyRule.Timeouts = timeouts
 		}
 	}
 
-	warnIfWSResponseFilterStripsHandshake(&proxyRule)
+	warnIfWSResponseFilterStripsHandshake(&proxyRule, sink)
 
 	return proxyRule
 }
@@ -278,7 +300,7 @@ var wsHandshakeRequiredHeaders = map[string]struct{}{
 // Filters are inspected at both rule scope (proxyRule.Filters) and
 // per-backend scope (backend.Filters); the same shape can land in
 // either place via HTTPRouteRule.Filters or HTTPBackendRef.Filters.
-func warnIfWSResponseFilterStripsHandshake(rule *RouteRule) {
+func warnIfWSResponseFilterStripsHandshake(rule *RouteRule, sink *diagSink) {
 	hasWSBackend := false
 
 	for idx := range rule.Backends {
@@ -295,7 +317,7 @@ func warnIfWSResponseFilterStripsHandshake(rule *RouteRule) {
 
 	// Rule-scope filters apply to every backend on the rule.
 	for idx := range rule.Filters {
-		warnIfHandshakeStrip(&rule.Filters[idx], "rule")
+		warnIfHandshakeStrip(&rule.Filters[idx], filterScopeRule, sink)
 	}
 
 	// Per-backend filters: only check filters on WS-marked backends.
@@ -305,16 +327,19 @@ func warnIfWSResponseFilterStripsHandshake(rule *RouteRule) {
 		}
 
 		for filterIdx := range rule.Backends[backendIdx].Filters {
-			warnIfHandshakeStrip(&rule.Backends[backendIdx].Filters[filterIdx], "backend")
+			warnIfHandshakeStrip(&rule.Backends[backendIdx].Filters[filterIdx], filterScopeBackend, sink)
 		}
 	}
 }
 
-// warnIfHandshakeStrip checks a single RouteFilter for handshake-header
-// removal and emits the WARN. Scope ("rule" or "backend") goes into the
-// log attributes so an operator can correlate the warning back to the
-// exact HTTPRoute field they edited.
-func warnIfHandshakeStrip(filter *RouteFilter, scope string) {
+// warnIfHandshakeStrip checks a single RouteFilter for handshake-header removal.
+// The filter is honored as written (per spec the pipeline runs unconditionally),
+// but stripping a load-bearing WebSocket handshake header silently breaks every
+// upgrade on the route, so it is surfaced as a Warning Event diagnostic — an
+// operator-authored conflict, not a controller-side drop. Scope ("rule" or
+// "backend") goes into the log attributes and the Event message so an operator
+// can correlate it back to the exact HTTPRoute field they edited.
+func warnIfHandshakeStrip(filter *RouteFilter, scope string, sink *diagSink) {
 	if filter.Type != FilterResponseHeaderModifier || filter.ResponseHeaderModifier == nil {
 		return
 	}
@@ -340,6 +365,17 @@ func warnIfHandshakeStrip(filter *RouteFilter, scope string) {
 		"ResponseHeaderModifier removes a WebSocket handshake header on a WS-marked backend; clients will fail to complete the upgrade",
 		"scope", scope,
 		"headers", offending,
+	)
+	sink.event(EventTypeWarning, wsHandshakeStripMessage(scope, offending))
+}
+
+// wsHandshakeStripMessage builds the Event message for a ResponseHeaderModifier
+// that strips WebSocket handshake headers.
+func wsHandshakeStripMessage(scope string, headers []string) string {
+	return fmt.Sprintf(
+		"A %s-scope ResponseHeaderModifier removes WebSocket handshake header(s) %v on a WebSocket backend; "+
+			"clients will fail to complete the upgrade. Remove %v from the filter's removeHeaders to keep WebSocket working.",
+		scope, headers, headers,
 	)
 }
 
@@ -416,6 +452,23 @@ func convertQueryMatch(query gatewayv1.HTTPQueryParamMatch) QueryParamMatch {
 	return result
 }
 
+// filterScopeRule and filterScopeBackend label where an unsupported filter was
+// found, for the diagnostic message and to decide whether the whole rule (rule
+// scope) or only a backend fraction (backend scope) fails closed.
+const (
+	filterScopeRule    = "rule"
+	filterScopeBackend = "backend"
+)
+
+// convertFilter maps a single HTTPRouteFilter into the proxy wire shape. The
+// boolean return reports whether the filter type is unsupported and the rule
+// must therefore fail closed: per the Gateway API spec an unresolvable custom
+// filter (ExtensionRef) or unknown filter type MUST NOT be silently skipped —
+// matched requests MUST receive an HTTP error response, and the route's status
+// MUST reflect the UnsupportedValue. The caller stamps the rule (or backend)
+// with UnavailableStatus and the converter records a diagnostic via sink. A nil
+// return with failClosed=false is a benign skip (nil filter payload, which the
+// CRD admission webhook already prevents) and leaves the rule servable.
 func convertFilter(
 	ctx context.Context,
 	filter *gatewayv1.HTTPRouteFilter,
@@ -423,30 +476,52 @@ func convertFilter(
 	validator BackendRefValidator,
 	tlsResolver BackendTLSResolver,
 	clientCert *ClientCertConfig,
-) *RouteFilter {
+	sink *diagSink,
+	scope string,
+) (*RouteFilter, bool) {
 	switch filter.Type {
 	case gatewayv1.HTTPRouteFilterRequestHeaderModifier:
-		return convertRequestHeaderFilter(filter.RequestHeaderModifier)
+		return convertRequestHeaderFilter(filter.RequestHeaderModifier), false
 	case gatewayv1.HTTPRouteFilterResponseHeaderModifier:
-		return convertResponseHeaderFilter(filter.ResponseHeaderModifier)
+		return convertResponseHeaderFilter(filter.ResponseHeaderModifier), false
 	case gatewayv1.HTTPRouteFilterRequestRedirect:
-		return convertRedirectFilter(filter.RequestRedirect)
+		return convertRedirectFilter(filter.RequestRedirect), false
 	case gatewayv1.HTTPRouteFilterURLRewrite:
-		return convertURLRewriteFilter(filter.URLRewrite)
+		return convertURLRewriteFilter(filter.URLRewrite), false
 	case gatewayv1.HTTPRouteFilterRequestMirror:
-		return convertMirrorFilter(ctx, filter.RequestMirror, namespace, clusterDomain, validator, tlsResolver, clientCert)
+		return convertMirrorFilter(ctx, filter.RequestMirror, namespace, clusterDomain, validator, tlsResolver, clientCert, sink), false
 	case gatewayv1.HTTPRouteFilterCORS:
-		return convertCORSFilter(filter.CORS)
-	case gatewayv1.HTTPRouteFilterExtensionRef,
-		gatewayv1.HTTPRouteFilterExternalAuth:
-		slog.Warn("skipping unsupported filter type", "type", filter.Type)
-
-		return nil
+		return convertCORSFilter(filter.CORS), false
+	case gatewayv1.HTTPRouteFilterExtensionRef, gatewayv1.HTTPRouteFilterExternalAuth:
+		// Unsupported: handled by the fail-closed path below. Listed explicitly so
+		// the exhaustive linter confirms every enum value is accounted for.
 	}
 
-	slog.Warn("skipping unknown filter type", "type", filter.Type)
+	// ExtensionRef, ExternalAuth, and any unknown type are unsupported: fail the
+	// rule (or backend) closed and surface it on the route status. A rule-scoped
+	// filter takes the whole rule down; a backend-scoped one only the backend's
+	// traffic fraction.
+	sink.add(
+		DiagnosticAccepted,
+		string(gatewayv1.RouteReasonUnsupportedValue),
+		unsupportedFilterMessage(scope, string(filter.Type)),
+		scope == filterScopeRule,
+	)
+	slog.Warn("failing closed: unsupported filter type", "type", filter.Type, "scope", scope)
 
-	return nil
+	return nil, true
+}
+
+// unsupportedFilterMessage builds the actionable status message for a filter
+// type the proxy cannot serve. It names the offending type, the consequence
+// (HTTP 500 for matched requests), and the supported alternatives.
+func unsupportedFilterMessage(scope, filterType string) string {
+	return fmt.Sprintf(
+		"%s filter type %q is not supported; matching requests receive HTTP 500. "+
+			"Remove the filter or replace it with a supported type "+
+			"(RequestHeaderModifier, ResponseHeaderModifier, RequestRedirect, URLRewrite, RequestMirror, CORS).",
+		scope, filterType,
+	)
 }
 
 func convertRequestHeaderFilter(modifier *gatewayv1.HTTPHeaderFilter) *RouteFilter {
@@ -516,24 +591,39 @@ func IsServiceBackendRef(ref gatewayv1.BackendObjectReference) bool {
 	return true
 }
 
-func convertMirrorFilter(
+// mirrorDropDiagnostic records a ResolvedRefs-target diagnostic for a dropped
+// RequestMirror. The mirror is best-effort — dropping it does not break the
+// main request — so it is report-only (WholeRule=false): the route stays
+// Accepted, the dropped mirror shows on ResolvedRefs.
+func mirrorDropDiagnostic(sink *diagSink, reason gatewayv1.RouteConditionReason, mirrorName, detail string) {
+	sink.add(
+		DiagnosticResolvedRefs,
+		string(reason),
+		fmt.Sprintf("The RequestMirror to Service %q was dropped because %s; the main request is unaffected.", mirrorName, detail),
+		false,
+	)
+}
+
+// validateMirrorBackendRef validates a RequestMirror's backendRef and, on any
+// failure, records a report-only ResolvedRefs diagnostic (a dropped mirror does
+// not break the main request) and returns ok=false. On success it returns the
+// resolved namespace and port for the mirror destination.
+func validateMirrorBackendRef(
 	ctx context.Context,
 	mirror *gatewayv1.HTTPRequestMirrorFilter,
-	namespace, clusterDomain string,
+	namespace string,
 	validator BackendRefValidator,
-	tlsResolver BackendTLSResolver,
-	clientCert *ClientCertConfig,
-) *RouteFilter {
-	if mirror == nil {
-		return nil
-	}
+	sink *diagSink,
+) (string, int32, bool) {
+	mirrorName := string(mirror.BackendRef.Name)
 
 	if !IsServiceBackendRef(mirror.BackendRef) {
+		mirrorDropDiagnostic(sink, gatewayv1.RouteReasonInvalidKind, mirrorName,
+			"its backendRef is not a Service")
 		slog.Warn("skipping mirror with non-Service backend kind",
-			"kind", mirror.BackendRef.Kind,
-			"name", mirror.BackendRef.Name)
+			"kind", mirror.BackendRef.Kind, "name", mirror.BackendRef.Name)
 
-		return nil
+		return "", 0, false
 	}
 
 	mirrorPort := int32(defaultServicePort)
@@ -542,9 +632,11 @@ func convertMirrorFilter(
 	}
 
 	if !validatePort(mirrorPort) {
-		slog.Warn("skipping mirror with invalid port", "service", string(mirror.BackendRef.Name), "port", mirrorPort)
+		mirrorDropDiagnostic(sink, gatewayv1.RouteReasonUnsupportedValue, mirrorName,
+			fmt.Sprintf("its backendRef port %d is out of range", mirrorPort))
+		slog.Warn("skipping mirror with invalid port", "service", mirrorName, "port", mirrorPort)
 
-		return nil
+		return "", 0, false
 	}
 
 	mirrorNS := namespace
@@ -552,7 +644,31 @@ func convertMirrorFilter(
 		mirrorNS = string(*mirror.BackendRef.Namespace)
 	}
 
-	if !validateCrossNamespace(ctx, mirrorNS, namespace, string(mirror.BackendRef.Name), mirror.BackendRef, validator) {
+	if !validateCrossNamespace(ctx, mirrorNS, namespace, mirrorName, mirror.BackendRef, validator) {
+		mirrorDropDiagnostic(sink, gatewayv1.RouteReasonRefNotPermitted, mirrorName,
+			fmt.Sprintf("its cross-namespace backendRef to %q is not permitted by a ReferenceGrant", mirrorNS))
+
+		return "", 0, false
+	}
+
+	return mirrorNS, mirrorPort, true
+}
+
+func convertMirrorFilter(
+	ctx context.Context,
+	mirror *gatewayv1.HTTPRequestMirrorFilter,
+	namespace, clusterDomain string,
+	validator BackendRefValidator,
+	tlsResolver BackendTLSResolver,
+	clientCert *ClientCertConfig,
+	sink *diagSink,
+) *RouteFilter {
+	if mirror == nil {
+		return nil
+	}
+
+	mirrorNS, mirrorPort, ok := validateMirrorBackendRef(ctx, mirror, namespace, validator, sink)
+	if !ok {
 		return nil
 	}
 
@@ -830,6 +946,7 @@ func convertBackendRef(
 	resolver BackendProtocolResolver,
 	tlsResolver BackendTLSResolver,
 	clientCert *ClientCertConfig,
+	sink *diagSink,
 ) (BackendRef, bool) {
 	result, ok := initBackendRefBaseline(backend)
 	if !ok {
@@ -870,9 +987,27 @@ func convertBackendRef(
 	// (no policy → operator misconfigured a TLS hint with no actual TLS).
 	result.TLS, result.URL = resolveBackendTLS(ctx, tlsResolver, svcNamespace, serviceName, port, result.URL)
 	result.TLS = attachGatewayClientCert(result.TLS, clientCert)
-	result.Protocol, result.URL, result.WebSocket = resolveBackendProtocol(ctx, resolver, svcNamespace, serviceName, port, result.URL, result.TLS != nil)
 
-	result.Filters = convertBackendFilters(ctx, backend.Filters, namespace, clusterDomain, validator, tlsResolver, clientCert)
+	var protoFailClosed bool
+
+	result.Protocol, result.URL, result.WebSocket, protoFailClosed = resolveBackendProtocol(
+		ctx, resolver, svcNamespace, serviceName, port, result.URL, result.TLS != nil, sink,
+	)
+	if protoFailClosed {
+		// A TLS appProtocol without a BackendTLSPolicy: dialing plaintext would
+		// fail anyway, so return 502 for this backend's traffic fraction.
+		result.UnavailableStatus = http.StatusBadGateway
+	}
+
+	var backendFiltersFailClosed bool
+
+	result.Filters, backendFiltersFailClosed = convertBackendFilters(ctx, backend.Filters, namespace, clusterDomain, validator, tlsResolver, clientCert, sink)
+	if backendFiltersFailClosed {
+		// An unsupported per-backend filter must fail closed for this backend's
+		// traffic fraction, exactly like an invalid backendRef: requests routed
+		// to it receive HTTP 500 rather than being served without the filter.
+		result.UnavailableStatus = http.StatusInternalServerError
+	}
 
 	return result, true
 }
@@ -1025,40 +1160,51 @@ func resolveBackendProtocol(
 	port int32,
 	rawURL string,
 	tlsAttached bool,
-) (BackendProtocol, string, bool) {
+	sink *diagSink,
+) (BackendProtocol, string, bool, bool) {
 	if resolver == nil {
-		return BackendProtocolHTTP, rawURL, false
+		return BackendProtocolHTTP, rawURL, false, false
 	}
 
 	appProto := resolver(ctx, namespace, serviceName, port)
 
 	switch appProto {
 	case appProtocolH2C:
-		return resolveH2C(rawURL, tlsAttached, namespace, serviceName, port)
+		proto, u := resolveH2C(rawURL, tlsAttached, namespace, serviceName, port, sink)
+
+		return proto, u, false, false
 	case appProtocolWS:
 		if tlsAttached {
 			warnCleartextHintSuppressed(
 				"appProtocol kubernetes.io/ws suppressed by BackendTLSPolicy on the same Service — WebSocket will run over TLS (consider appProtocol kubernetes.io/wss instead)",
-				namespace, serviceName, port)
+				namespace, serviceName, port, sink)
 		}
 
-		return BackendProtocolHTTP, rawURL, true
+		return BackendProtocolHTTP, rawURL, true, false
 	case appProtocolWSS:
-		warnUnpolicedTLSHint(tlsAttached,
-			"backend declares appProtocol wss but no BackendTLSPolicy targets it — WebSocket upgrade will be attempted in plaintext",
-			namespace, serviceName, port, appProto)
+		// TLS-bearing WebSocket: without a BackendTLSPolicy the proxy has no
+		// trust anchor and the upgrade would fail. Fail the backend closed
+		// (502) and surface it, instead of dialing plaintext to a TLS backend.
+		fc := unpolicedTLSAppProtocol(tlsAttached, namespace, serviceName, port, appProto, sink)
 
-		return BackendProtocolHTTP, rawURL, true
+		return BackendProtocolHTTP, rawURL, true, fc
 	case "https", "HTTPS":
-		warnUnpolicedTLSHint(tlsAttached,
-			"backend declares appProtocol https but no BackendTLSPolicy targets it — request will be sent in plaintext",
-			namespace, serviceName, port, appProto)
+		fc := unpolicedTLSAppProtocol(tlsAttached, namespace, serviceName, port, appProto, sink)
 
-		return BackendProtocolHTTP, rawURL, false
+		return BackendProtocolHTTP, rawURL, false, fc
 	case "", "http", "HTTP":
 		// Default / cleartext hints match the default transport — silent.
-		return BackendProtocolHTTP, rawURL, false
+		return BackendProtocolHTTP, rawURL, false, false
 	default:
+		// Unrecognised appProtocol: HTTP/1.1 is a safe default the backend may
+		// well speak, so keep serving (report-only) but surface that the hint
+		// was not honoured.
+		sink.add(
+			DiagnosticResolvedRefs,
+			string(gatewayv1.RouteReasonUnsupportedProtocol),
+			unknownAppProtocolMessage(serviceName, appProto),
+			false,
+		)
 		slog.Warn("unsupported backend appProtocol; falling back to HTTP/1.1",
 			"namespace", namespace,
 			"service", serviceName,
@@ -1066,8 +1212,57 @@ func resolveBackendProtocol(
 			"appProtocol", appProto,
 		)
 
-		return BackendProtocolHTTP, rawURL, false
+		return BackendProtocolHTTP, rawURL, false, false
 	}
+}
+
+// unpolicedTLSAppProtocol handles a TLS-bearing appProtocol (https, wss). When a
+// BackendTLSPolicy is attached the hint is honoured silently. Without one the
+// proxy has no CA to verify against, so per the Gateway API spec this is an
+// unsupported app protocol: the backend fails closed (502) and a
+// ResolvedRefs-target diagnostic is recorded. Returns whether the backend must
+// fail closed.
+func unpolicedTLSAppProtocol(tlsAttached bool, namespace, serviceName string, port int32, appProto string, sink *diagSink) bool {
+	if tlsAttached {
+		return false
+	}
+
+	sink.add(
+		DiagnosticResolvedRefs,
+		string(gatewayv1.RouteReasonUnsupportedProtocol),
+		unpolicedTLSMessage(serviceName, appProto),
+		false,
+	)
+	slog.Warn("failing backend closed: TLS appProtocol without a BackendTLSPolicy",
+		"namespace", namespace,
+		"service", serviceName,
+		"port", port,
+		"appProtocol", appProto,
+	)
+
+	return true
+}
+
+// unpolicedTLSMessage builds the actionable status message for a TLS appProtocol
+// declared without a BackendTLSPolicy.
+func unpolicedTLSMessage(serviceName, appProto string) string {
+	return fmt.Sprintf(
+		"Service %q declares appProtocol %q but no BackendTLSPolicy targets it; "+
+			"the proxy has no CA to verify the backend, so requests to it receive HTTP 502. "+
+			"Attach a BackendTLSPolicy to the Service to enable TLS to this backend.",
+		serviceName, appProto,
+	)
+}
+
+// unknownAppProtocolMessage builds the status message for an unrecognised
+// appProtocol value the proxy falls back to HTTP/1.1 for.
+func unknownAppProtocolMessage(serviceName, appProto string) string {
+	return fmt.Sprintf(
+		"Service %q declares an unsupported appProtocol %q; the proxy serves it over HTTP/1.1. "+
+			"Use a supported value (kubernetes.io/h2c, kubernetes.io/ws, kubernetes.io/wss, https) "+
+			"or remove the appProtocol if HTTP/1.1 is correct.",
+		serviceName, appProto,
+	)
 }
 
 // resolveH2C handles the `kubernetes.io/h2c` branch. Extracted so
@@ -1080,49 +1275,32 @@ func resolveBackendProtocol(
 // suppressed h2c hint so the operator sees the conflict. Otherwise rewrite
 // any https:// URL (which buildServiceURL emits for port 443) back to
 // http:// so the h2c transport dials cleartext.
-func resolveH2C(rawURL string, tlsAttached bool, namespace, serviceName string, port int32) (BackendProtocol, string, bool) {
+func resolveH2C(rawURL string, tlsAttached bool, namespace, serviceName string, port int32, sink *diagSink) (BackendProtocol, string) {
 	if tlsAttached {
 		warnCleartextHintSuppressed(
 			"appProtocol kubernetes.io/h2c suppressed by BackendTLSPolicy on the same Service — HTTP/2 will be negotiated over TLS via ALPN",
-			namespace, serviceName, port)
+			namespace, serviceName, port, sink)
 
-		return BackendProtocolHTTP, rawURL, false
+		return BackendProtocolHTTP, rawURL
 	}
 
-	return BackendProtocolH2C, strings.Replace(rawURL, schemeHTTPS+"://", schemeHTTP+"://", 1), false
+	return BackendProtocolH2C, strings.Replace(rawURL, schemeHTTPS+"://", schemeHTTP+"://", 1)
 }
 
-// warnUnpolicedTLSHint logs a WARN when an operator declared a TLS-bearing
-// appProtocol (https, wss) without attaching a BackendTLSPolicy. Without a
-// CA the proxy cannot verify and will dial plaintext — the backend will
-// reject the request and the operator deserves a clear signal about the
-// misconfiguration. Extracted from resolveBackendProtocol because the
-// pattern is shared by both `https` and `wss`.
-func warnUnpolicedTLSHint(tlsAttached bool, message, namespace, serviceName string, port int32, appProto string) {
-	if tlsAttached {
-		return
-	}
-
-	slog.Warn(message,
-		"namespace", namespace,
-		"service", serviceName,
-		"port", port,
-		"appProtocol", appProto,
-	)
-}
-
-// warnCleartextHintSuppressed logs a WARN when an operator declared a
-// cleartext appProtocol (h2c, ws) but a BackendTLSPolicy attached to the
-// same Service forced TLS anyway. The proxy still does the right thing —
-// TLS wins because it's the higher-priority signal — but surfacing the
-// conflict lets the operator notice the contradictory hint instead of
-// shipping a misleading appProtocol value forever.
-func warnCleartextHintSuppressed(message, namespace, serviceName string, port int32) {
+// warnCleartextHintSuppressed logs a WARN and records a Normal Event diagnostic
+// when an operator declared a cleartext appProtocol (h2c, ws) but a
+// BackendTLSPolicy attached to the same Service forced TLS anyway. The proxy
+// still does the right thing — TLS wins because it's the higher-priority signal
+// — so this is a benign override surfaced as a Kubernetes Event, not a
+// condition: the route is fully Accepted, the operator is just told the
+// contradictory hint was superseded.
+func warnCleartextHintSuppressed(message, namespace, serviceName string, port int32, sink *diagSink) {
 	slog.Warn(message,
 		"namespace", namespace,
 		"service", serviceName,
 		"port", port,
 	)
+	sink.event(EventTypeNormal, message)
 }
 
 // convertBackendFilters converts the per-backend HTTPRouteFilters into proxy
@@ -1137,21 +1315,30 @@ func convertBackendFilters(
 	validator BackendRefValidator,
 	tlsResolver BackendTLSResolver,
 	clientCert *ClientCertConfig,
-) []RouteFilter {
+	sink *diagSink,
+) ([]RouteFilter, bool) {
 	if len(filters) == 0 {
-		return nil
+		return nil, false
 	}
 
 	result := make([]RouteFilter, 0, len(filters))
 
+	var failClosed bool
+
 	for filterIdx := range filters {
-		converted := convertFilter(ctx, &filters[filterIdx], namespace, clusterDomain, validator, tlsResolver, clientCert)
+		converted, filterFailClosed := convertFilter(
+			ctx, &filters[filterIdx], namespace, clusterDomain, validator, tlsResolver, clientCert, sink, filterScopeBackend,
+		)
+		if filterFailClosed {
+			failClosed = true
+		}
+
 		if converted != nil {
 			result = append(result, *converted)
 		}
 	}
 
-	return result
+	return result, failClosed
 }
 
 func resolveBackendNamespace(backend *gatewayv1.HTTPBackendRef, fallback string) string {
@@ -1205,6 +1392,16 @@ func buildServiceURL(name, namespace string, port int32, clusterDomain string) s
 // format (only s, ms, h, m are specified). Using time.ParseDuration is
 // intentionally permissive — Kubernetes admission webhooks validate the
 // format before it reaches the controller.
+// invalidTimeoutsMessage builds the actionable status message for a rule whose
+// timeouts could not be parsed. The rule still serves without the timeout.
+func invalidTimeoutsMessage(err error) string {
+	return fmt.Sprintf(
+		"The rule's timeout could not be parsed (%v); the rule is served without it. "+
+			"Use a GEP-2257 duration (e.g. \"10s\", \"500ms\") or remove the timeout.",
+		err,
+	)
+}
+
 func convertTimeouts(timeouts *gatewayv1.HTTPRouteTimeouts) (*RouteTimeouts, error) {
 	result := &RouteTimeouts{}
 

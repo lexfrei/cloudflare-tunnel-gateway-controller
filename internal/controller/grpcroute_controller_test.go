@@ -969,7 +969,7 @@ func TestGRPCRouteReconciler_UpdateRouteStatus_Integration(t *testing.T) {
 			},
 		},
 	}
-	err := r.updateRouteStatus(context.Background(), route, bindingInfo, nil, nil)
+	err := r.updateRouteStatus(context.Background(), route, bindingInfo, nil, nil, nil)
 	require.NoError(t, err)
 
 	var updatedRoute gatewayv1.GRPCRoute
@@ -1112,7 +1112,7 @@ func TestGRPCRouteReconciler_UpdateRouteStatus_QuicUnsupportedProtocol(t *testin
 				bindingResults: map[int]routebinding.BindingResult{0: binding},
 			}
 
-			require.NoError(t, r.updateRouteStatus(context.Background(), route, bindingInfo, nil, tt.syncErr))
+			require.NoError(t, r.updateRouteStatus(context.Background(), route, bindingInfo, nil, nil, tt.syncErr))
 
 			var updated gatewayv1.GRPCRoute
 			require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKey{Name: "test-route", Namespace: "default"}, &updated))
@@ -1207,7 +1207,7 @@ func TestGRPCRouteReconciler_UpdateRouteStatus_NotAccepted(t *testing.T) {
 			},
 		},
 	}
-	err := r.updateRouteStatus(context.Background(), route, bindingInfo, nil, nil)
+	err := r.updateRouteStatus(context.Background(), route, bindingInfo, nil, nil, nil)
 	require.NoError(t, err)
 
 	var updatedRoute gatewayv1.GRPCRoute
@@ -1443,7 +1443,7 @@ func TestGRPCRouteReconciler_UpdateRouteStatus_WithSyncError(t *testing.T) {
 			0: {Accepted: true, Reason: gatewayv1.RouteReasonAccepted, Message: "Accepted"},
 		},
 	}
-	err := r.updateRouteStatus(context.Background(), route, bindingInfo, nil, syncErr)
+	err := r.updateRouteStatus(context.Background(), route, bindingInfo, nil, nil, syncErr)
 	require.NoError(t, err)
 
 	var updatedRoute gatewayv1.GRPCRoute
@@ -1538,7 +1538,7 @@ func TestGRPCRouteReconciler_UpdateRouteStatus_WithFailedBackendRefs(t *testing.
 		},
 	}
 
-	err := r.updateRouteStatus(context.Background(), route, bindingInfo, failedRefs, nil)
+	err := r.updateRouteStatus(context.Background(), route, bindingInfo, failedRefs, nil, nil)
 	require.NoError(t, err)
 
 	var updatedRoute gatewayv1.GRPCRoute
@@ -1606,7 +1606,7 @@ func TestGRPCRouteReconciler_UpdateRouteStatus_NonGatewayParentRef(t *testing.T)
 	}
 
 	bindingInfo := routeBindingInfo{bindingResults: map[int]routebinding.BindingResult{}}
-	err := r.updateRouteStatus(context.Background(), route, bindingInfo, nil, nil)
+	err := r.updateRouteStatus(context.Background(), route, bindingInfo, nil, nil, nil)
 	require.NoError(t, err)
 
 	var updatedRoute gatewayv1.GRPCRoute
@@ -1814,7 +1814,7 @@ func TestGRPCRouteReconciler_UpdateRouteStatus_MultipleParents(t *testing.T) {
 		},
 	}
 
-	err := r.updateRouteStatus(context.Background(), route, bindingInfo, nil, nil)
+	err := r.updateRouteStatus(context.Background(), route, bindingInfo, nil, nil, nil)
 	require.NoError(t, err)
 
 	var updatedRoute gatewayv1.GRPCRoute
@@ -1915,7 +1915,7 @@ func TestGRPCRouteReconciler_UpdateRouteStatus_ExplicitNamespace(t *testing.T) {
 		},
 	}
 
-	err := r.updateRouteStatus(context.Background(), route, bindingInfo, nil, nil)
+	err := r.updateRouteStatus(context.Background(), route, bindingInfo, nil, nil, nil)
 	require.NoError(t, err)
 
 	var updatedRoute gatewayv1.GRPCRoute
@@ -1993,7 +1993,7 @@ func TestGRPCRouteReconciler_UpdateRouteStatus_MultipleFailedBackendRefs(t *test
 		{RouteNamespace: "default", RouteName: "test-route", BackendNS: "ns2", BackendName: "svc2"},
 	}
 
-	err := r.updateRouteStatus(context.Background(), route, bindingInfo, failedRefs, nil)
+	err := r.updateRouteStatus(context.Background(), route, bindingInfo, failedRefs, nil, nil)
 	require.NoError(t, err)
 
 	var updatedRoute gatewayv1.GRPCRoute

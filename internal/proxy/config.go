@@ -43,6 +43,13 @@ type Config struct {
 	// indistinguishable from HTTP rules with h2c backends, so the controller
 	// marks the presence of gRPC explicitly rather than having the proxy guess.
 	HasGRPCRoute bool `json:"hasGrpcRoute,omitempty"`
+	// Diagnostics carries the converter's per-route findings about config it
+	// will not serve exactly as written (dropped filters, unsupported app
+	// protocols, fail-closed rules, benign overrides). It is a controller-side
+	// concern only: the json:"-" tag keeps it off the proxy wire so the pushed
+	// payload is byte-identical to before, and the proxy never reads it. The
+	// controller turns each entry into a status condition or a Kubernetes Event.
+	Diagnostics []RouteDiagnostic `json:"-"`
 }
 
 // RouteRule represents a single routing rule derived from a Gateway API HTTPRoute.
@@ -53,6 +60,14 @@ type RouteRule struct {
 	Filters   []RouteFilter  `json:"filters,omitempty"`
 	Backends  []BackendRef   `json:"backends"`
 	Timeouts  *RouteTimeouts `json:"timeouts,omitempty"`
+	// UnavailableStatus, when non-zero, makes the proxy return this HTTP status
+	// for every request matching the rule, short-circuiting backend selection.
+	// The controller sets it when a rule cannot be served as written — for
+	// example a rule carrying an unsupported filter type — so that matched
+	// requests fail closed with an HTTP error instead of being served silently
+	// without the dropped config, as the Gateway API spec requires. This is the
+	// rule-level analogue of BackendRef.UnavailableStatus.
+	UnavailableStatus int `json:"unavailableStatus,omitempty"`
 }
 
 // RouteMatch defines conditions that must all be true for a request to match.

@@ -1153,7 +1153,7 @@ func TestHTTPRouteReconciler_UpdateRouteStatus_Integration(t *testing.T) {
 			},
 		},
 	}
-	err := r.updateRouteStatus(context.Background(), route, bindingInfo, nil, nil)
+	err := r.updateRouteStatus(context.Background(), route, bindingInfo, nil, nil, nil)
 	require.NoError(t, err)
 
 	// Verify status was updated
@@ -1248,7 +1248,7 @@ func TestHTTPRouteReconciler_UpdateRouteStatus_NotAccepted(t *testing.T) {
 			},
 		},
 	}
-	err := r.updateRouteStatus(context.Background(), route, bindingInfo, nil, nil)
+	err := r.updateRouteStatus(context.Background(), route, bindingInfo, nil, nil, nil)
 	require.NoError(t, err)
 
 	// Verify status was updated
@@ -1493,7 +1493,7 @@ func TestHTTPRouteReconciler_UpdateRouteStatus_WithSyncError(t *testing.T) {
 	}
 
 	syncErr := assert.AnError
-	err := r.updateRouteStatus(context.Background(), route, bindingInfo, nil, syncErr)
+	err := r.updateRouteStatus(context.Background(), route, bindingInfo, nil, nil, syncErr)
 	require.NoError(t, err)
 
 	var updatedRoute gatewayv1.HTTPRoute
@@ -1589,7 +1589,7 @@ func TestHTTPRouteReconciler_UpdateRouteStatus_WithFailedBackendRefs(t *testing.
 		},
 	}
 
-	err := r.updateRouteStatus(context.Background(), route, bindingInfo, failedRefs, nil)
+	err := r.updateRouteStatus(context.Background(), route, bindingInfo, failedRefs, nil, nil)
 	require.NoError(t, err)
 
 	var updatedRoute gatewayv1.HTTPRoute
@@ -1690,7 +1690,7 @@ func TestHTTPRouteReconciler_UpdateRouteStatus_MultipleParents(t *testing.T) {
 		},
 	}
 
-	err := r.updateRouteStatus(context.Background(), route, bindingInfo, nil, nil)
+	err := r.updateRouteStatus(context.Background(), route, bindingInfo, nil, nil, nil)
 	require.NoError(t, err)
 
 	var updatedRoute gatewayv1.HTTPRoute
@@ -1749,7 +1749,7 @@ func TestHTTPRouteReconciler_UpdateRouteStatus_NonGatewayParentRef(t *testing.T)
 		bindingResults: map[int]routebinding.BindingResult{},
 	}
 
-	err := r.updateRouteStatus(context.Background(), route, bindingInfo, nil, nil)
+	err := r.updateRouteStatus(context.Background(), route, bindingInfo, nil, nil, nil)
 	require.NoError(t, err)
 
 	var updatedRoute gatewayv1.HTTPRoute
@@ -1989,7 +1989,7 @@ func TestHTTPRouteReconciler_UpdateRouteStatus_ParentRefWithExplicitNamespace(t 
 		},
 	}
 
-	err := r.updateRouteStatus(context.Background(), route, bindingInfo, nil, nil)
+	err := r.updateRouteStatus(context.Background(), route, bindingInfo, nil, nil, nil)
 	require.NoError(t, err)
 
 	var updatedRoute gatewayv1.HTTPRoute

@@ -207,6 +207,7 @@ func Run(ctx context.Context, cfg *Config) error {
 		RouteSyncer:    routeSyncer,
 		ProxySyncer:    proxySyncer,
 		ProxyEndpoints: proxyEndpoints,
+		Recorder:       mgr.GetEventRecorder("httproute-controller"),
 	}
 
 	if err := httpRouteReconciler.SetupWithManager(mgr); err != nil {
@@ -221,6 +222,7 @@ func Run(ctx context.Context, cfg *Config) error {
 		ProxySyncer:    proxySyncer,
 		ProxyEndpoints: proxyEndpoints,
 		TunnelProtocol: cfg.TunnelProtocol,
+		Recorder:       mgr.GetEventRecorder("grpcroute-controller"),
 	}
 
 	if err := grpcRouteReconciler.SetupWithManager(mgr); err != nil {

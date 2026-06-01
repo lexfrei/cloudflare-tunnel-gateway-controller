@@ -17,6 +17,7 @@ import (
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/api/v1alpha1"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/cfmetrics"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/config"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/proxy"
 )
 
 // httpListener creates a standard HTTP listener for testing.
@@ -1448,7 +1449,7 @@ func TestSyncAndUpdateStatusCommon_PropagatesError(t *testing.T) {
 
 	params := syncUpdateParams{
 		routeSyncer: syncer,
-		statusEntries: func(_ *SyncResult) []routeStatusEntry {
+		statusEntries: func(_ *SyncResult, _ []proxy.RouteDiagnostic) []routeStatusEntry {
 			return nil
 		},
 	}
@@ -1503,7 +1504,7 @@ func TestSyncAndUpdateStatusCommon_PropagatesErrorWhenNoRequeue(t *testing.T) {
 
 	params := syncUpdateParams{
 		routeSyncer: syncer,
-		statusEntries: func(_ *SyncResult) []routeStatusEntry {
+		statusEntries: func(_ *SyncResult, _ []proxy.RouteDiagnostic) []routeStatusEntry {
 			return nil
 		},
 	}

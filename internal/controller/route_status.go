@@ -2,17 +2,23 @@ package controller
 
 import (
 	"context"
+	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/cockroachdb/errors"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/events"
 	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/ingress"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/logging"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/proxy"
 )
 
 // routeAccessor provides type-agnostic access to Gateway API route fields
@@ -23,6 +29,7 @@ type routeAccessor struct {
 	parentRefs  func() []gatewayv1.ParentReference
 	routeStatus func() *gatewayv1.RouteStatus
 	generation  func() int64
+	ruleCount   func() int
 }
 
 // routeStatusUpdateParams holds the common parameters for updating route status.
@@ -36,6 +43,16 @@ type routeStatusUpdateParams struct {
 	// rejection is a more specific problem and takes precedence, so the override
 	// only applies when the route would otherwise be Accepted=True.
 	acceptedOverride *acceptedConditionOverride
+	// diagnostics are the converter's per-route findings about config that will
+	// not be served exactly as written (e.g. unsupported filters). The status
+	// writer turns them into an Accepted=False/UnsupportedValue override (when
+	// every rule is wholly unservable) or a PartiallyInvalid=True condition
+	// (when only some rules/backends are affected and the route still serves).
+	diagnostics []proxy.RouteDiagnostic
+	// ruleCount is the number of rules in the route spec. It lets the status
+	// writer tell "every rule is unservable" (Accepted=False) apart from "some
+	// rules dropped" (PartiallyInvalid=True).
+	ruleCount int
 }
 
 // acceptedConditionOverride carries the reason/message used to downgrade an
@@ -94,6 +111,10 @@ func updateRouteParentStatuses(
 	routeStatus := accessor.routeStatus()
 	routeStatus.Parents = nil
 
+	// ruleCount comes from the freshly-fetched spec so the diagnostic
+	// aggregation can tell "every rule unservable" from "some rules dropped".
+	params.ruleCount = accessor.ruleCount()
+
 	for refIdx, ref := range accessor.parentRefs() {
 		parentStatus := resolveParentRefStatus(
 			ctx, params, accessor, ref, refIdx, classNames, now, bindingInfo, failedRefs, syncErr,
@@ -140,6 +161,7 @@ func resolveParentRefStatus(
 		bindingInfo, refIdx,
 		failedRefs, syncErr,
 		params.acceptedOverride,
+		params.diagnostics, params.ruleCount,
 	)
 
 	return &parentStatus
@@ -178,8 +200,33 @@ func buildParentStatus(
 	failedRefs []ingress.BackendRefError,
 	syncErr error,
 	acceptedOverride *acceptedConditionOverride,
+	diagnostics []proxy.RouteDiagnostic,
+	ruleCount int,
 ) gatewayv1.RouteParentStatus {
 	parentNS := gatewayv1.Namespace(namespace)
+
+	// Derive the Accepted override and the optional PartiallyInvalid condition
+	// from the converter diagnostics. A caller-supplied override (e.g. the
+	// GRPCRoute reconciler's gRPC-over-quic case) is more specific, so it wins
+	// over a diagnostic-derived whole-route override.
+	diagOverride, partiallyInvalid := diagnosticConditions(diagnostics, ruleCount, generation, now)
+	if acceptedOverride == nil {
+		acceptedOverride = diagOverride
+	}
+
+	accepted := buildAcceptedCondition(generation, now, bindingInfo, refIdx, syncErr, acceptedOverride)
+
+	conditions := []metav1.Condition{
+		accepted,
+		buildResolvedRefsCondition(generation, now, failedRefs, diagnostics),
+	}
+
+	// PartiallyInvalid is only meaningful when the route is otherwise accepted —
+	// the spec mandates it be set only to True, alongside Accepted=True. If the
+	// whole route was rejected, the rejection already tells the full story.
+	if partiallyInvalid != nil && accepted.Status == metav1.ConditionTrue {
+		conditions = append(conditions, *partiallyInvalid)
+	}
 
 	return gatewayv1.RouteParentStatus{
 		ParentRef: gatewayv1.ParentReference{
@@ -191,11 +238,100 @@ func buildParentStatus(
 			SectionName: ref.SectionName,
 		},
 		ControllerName: gatewayv1.GatewayController(controllerName),
-		Conditions: []metav1.Condition{
-			buildAcceptedCondition(generation, now, bindingInfo, refIdx, syncErr, acceptedOverride),
-			buildResolvedRefsCondition(generation, now, failedRefs),
-		},
+		Conditions:     conditions,
 	}
+}
+
+// diagnosticConditions derives, from the converter's per-route Accepted-target
+// diagnostics, either an Accepted=False/UnsupportedValue override (when every
+// rule of the route is wholly unservable) or a PartiallyInvalid=True condition
+// (when only some rules or backend fractions are affected and the route still
+// serves the rest). Returns (nil, nil) when there are no Accepted-target
+// diagnostics. At most one of the two results is non-nil.
+func diagnosticConditions(
+	diagnostics []proxy.RouteDiagnostic,
+	ruleCount int,
+	generation int64,
+	now metav1.Time,
+) (*acceptedConditionOverride, *metav1.Condition) {
+	var accepted []proxy.RouteDiagnostic
+
+	wholeRuleIdx := make(map[int]struct{})
+
+	for _, diag := range diagnostics {
+		if diag.Target != proxy.DiagnosticAccepted {
+			continue
+		}
+
+		accepted = append(accepted, diag)
+
+		if diag.WholeRule {
+			wholeRuleIdx[diag.RuleIndex] = struct{}{}
+		}
+	}
+
+	if len(accepted) == 0 {
+		return nil, nil
+	}
+
+	// Every rule wholly unservable → the route cannot be served at all.
+	if ruleCount > 0 && len(wholeRuleIdx) >= ruleCount {
+		return &acceptedConditionOverride{
+			reason:  string(gatewayv1.RouteReasonUnsupportedValue),
+			message: droppedConfigMessage(accepted, false),
+		}, nil
+	}
+
+	// Otherwise some rules/backends are dropped but the route still serves.
+	return nil, &metav1.Condition{
+		Type:               string(gatewayv1.RouteConditionPartiallyInvalid),
+		Status:             metav1.ConditionTrue,
+		ObservedGeneration: generation,
+		LastTransitionTime: now,
+		Reason:             string(gatewayv1.RouteReasonUnsupportedValue),
+		Message:            droppedConfigMessage(accepted, true),
+	}
+}
+
+// droppedConfigMessage builds the human-facing condition message for a set of
+// Accepted-target diagnostics. When partial is true the message starts with the
+// "Dropped Rule" prefix the Gateway API spec mandates for the drop-rule
+// PartiallyInvalid approach and lists the affected rule indices; the per-cause
+// detail follows so the operator sees both which rules and why.
+func droppedConfigMessage(diagnostics []proxy.RouteDiagnostic, partial bool) string {
+	ruleIdx := make([]int, 0, len(diagnostics))
+	seenIdx := make(map[int]struct{})
+
+	details := make([]string, 0, len(diagnostics))
+	seenMsg := make(map[string]struct{})
+
+	for _, diag := range diagnostics {
+		if _, ok := seenIdx[diag.RuleIndex]; !ok {
+			seenIdx[diag.RuleIndex] = struct{}{}
+
+			ruleIdx = append(ruleIdx, diag.RuleIndex)
+		}
+
+		if _, ok := seenMsg[diag.Message]; !ok {
+			seenMsg[diag.Message] = struct{}{}
+
+			details = append(details, diag.Message)
+		}
+	}
+
+	slices.Sort(ruleIdx)
+
+	idxStrs := make([]string, 0, len(ruleIdx))
+	for _, idx := range ruleIdx {
+		idxStrs = append(idxStrs, strconv.Itoa(idx))
+	}
+
+	detail := strings.Join(details, " ")
+	if !partial {
+		return detail
+	}
+
+	return "Dropped Rule " + strings.Join(idxStrs, ", ") + ": " + detail
 }
 
 func buildAcceptedCondition(
@@ -241,21 +377,41 @@ func buildResolvedRefsCondition(
 	generation int64,
 	now metav1.Time,
 	failedRefs []ingress.BackendRefError,
+	diagnostics []proxy.RouteDiagnostic,
 ) metav1.Condition {
 	status := metav1.ConditionTrue
 	reason := string(gatewayv1.RouteReasonResolvedRefs)
 	message := resolvedRefsMessage
 
-	if len(failedRefs) > 0 {
+	switch {
+	case len(failedRefs) > 0:
+		// A hard unresolved backend reference (missing Service, bad kind/port,
+		// unauthorized cross-namespace) is the most fundamental problem and
+		// outranks softer converter diagnostics. Gateway API spec requires
+		// specific reasons like InvalidKind, RefNotPermitted, BackendNotFound.
 		status = metav1.ConditionFalse
-		// Use the reason from the first failed ref — Gateway API spec requires
-		// specific reasons like InvalidKind, RefNotPermitted, BackendNotFound, etc.
 		reason = failedRefs[0].Reason
+
 		if reason == "" {
 			reason = string(gatewayv1.RouteReasonRefNotPermitted)
 		}
 
 		message = buildFailedRefsMessage(failedRefs)
+	default:
+		// Otherwise fold in any ResolvedRefs-target converter diagnostic (e.g. a
+		// backend declaring a TLS appProtocol with no BackendTLSPolicy, or an
+		// unrecognised appProtocol). These reach the status only via the
+		// converter — the ingress builder does not see them.
+		if diag, ok := firstResolvedRefsDiagnostic(diagnostics); ok {
+			status = metav1.ConditionFalse
+			reason = diag.Reason
+
+			if reason == "" {
+				reason = string(gatewayv1.RouteReasonUnsupportedProtocol)
+			}
+
+			message = diag.Message
+		}
 	}
 
 	return metav1.Condition{
@@ -265,6 +421,62 @@ func buildResolvedRefsCondition(
 		LastTransitionTime: now,
 		Reason:             reason,
 		Message:            message,
+	}
+}
+
+// firstResolvedRefsDiagnostic returns the first ResolvedRefs-target diagnostic,
+// if any. The status writer surfaces it on the ResolvedRefs condition. A single
+// condition carries one reason/message, so when a route has several ResolvedRefs
+// problems (e.g. a dropped mirror and an unpoliced TLS appProtocol) only the
+// first is surfaced on the condition — the rest remain in the converter logs.
+// This mirrors the existing failedRefs[0] behaviour for the ingress-builder
+// reasons; the Accepted/PartiallyInvalid path, by contrast, does aggregate all
+// of its messages.
+func firstResolvedRefsDiagnostic(diagnostics []proxy.RouteDiagnostic) (proxy.RouteDiagnostic, bool) {
+	for _, diag := range diagnostics {
+		if diag.Target == proxy.DiagnosticResolvedRefs {
+			return diag, true
+		}
+	}
+
+	return proxy.RouteDiagnostic{}, false
+}
+
+// Event reason / action tokens for a benign config override. Kubernetes Events
+// require CamelCase machine-readable reason and action tokens distinct from the
+// human-readable note.
+const (
+	eventReasonConfigOverridden = "ConfigOverridden"
+	eventActionConvert          = "Convert"
+)
+
+// emitDiagnosticEvents emits a Kubernetes Event for each Event-target
+// diagnostic — benign overrides that applied successfully but ignored or
+// superseded a hint (e.g. an appProtocol cleartext hint overridden by a
+// BackendTLSPolicy, or a ResponseHeaderModifier that strips a WebSocket
+// handshake header). These have no standard Gateway API condition, so an Event
+// is the surface. Non-Event diagnostics are skipped — they drive conditions.
+// A nil recorder is a no-op so reconcilers constructed without one (e.g. in
+// unit tests) do not panic.
+func emitDiagnosticEvents(recorder events.EventRecorder, route runtime.Object, diagnostics []proxy.RouteDiagnostic) {
+	if recorder == nil {
+		return
+	}
+
+	for _, diag := range diagnostics {
+		if diag.Target != proxy.DiagnosticEvent {
+			continue
+		}
+
+		eventType := diag.EventType
+		if eventType != corev1.EventTypeWarning {
+			eventType = corev1.EventTypeNormal
+		}
+
+		// Eventf treats the note as a format string. diag.Message is already
+		// fully formatted (and may contain a literal %), so pass it as a "%s"
+		// argument rather than as the format itself.
+		recorder.Eventf(route, nil, eventType, eventReasonConfigOverridden, eventActionConvert, "%s", diag.Message)
 	}
 }
 
@@ -290,7 +502,8 @@ type routeStatusEntry struct {
 	namespace   string
 	bindingInfo routeBindingInfo
 	failedRefs  []ingress.BackendRefError
-	update      func(ctx context.Context, bindingInfo routeBindingInfo, failedRefs []ingress.BackendRefError, syncErr error) error
+	diagnostics []proxy.RouteDiagnostic
+	update      func(ctx context.Context, bindingInfo routeBindingInfo, failedRefs []ingress.BackendRefError, diagnostics []proxy.RouteDiagnostic, syncErr error) error
 }
 
 // updateRoutesStatus iterates over route entries and updates status for each.
@@ -304,7 +517,7 @@ func updateRoutesStatus(
 	var firstErr error
 
 	for _, entry := range entries {
-		if err := entry.update(ctx, entry.bindingInfo, entry.failedRefs, syncErr); err != nil {
+		if err := entry.update(ctx, entry.bindingInfo, entry.failedRefs, entry.diagnostics, syncErr); err != nil {
 			logger.Error("failed to update route status", "error", err, "route", entry.namespace+"/"+entry.name)
 
 			if firstErr == nil {
@@ -329,6 +542,19 @@ func filterFailedRefs(allFailedRefs []ingress.BackendRefError, routeNamespace, r
 	return result
 }
 
+// filterDiagnostics returns converter diagnostics that belong to the specified route.
+func filterDiagnostics(all []proxy.RouteDiagnostic, routeNamespace, routeName string) []proxy.RouteDiagnostic {
+	var result []proxy.RouteDiagnostic
+
+	for _, diag := range all {
+		if diag.Namespace == routeNamespace && diag.Name == routeName {
+			result = append(result, diag)
+		}
+	}
+
+	return result
+}
+
 func newHTTPRouteAccessor() routeAccessor {
 	route := &gatewayv1.HTTPRoute{}
 
@@ -337,6 +563,7 @@ func newHTTPRouteAccessor() routeAccessor {
 		parentRefs:  func() []gatewayv1.ParentReference { return route.Spec.ParentRefs },
 		routeStatus: func() *gatewayv1.RouteStatus { return &route.Status.RouteStatus },
 		generation:  func() int64 { return route.Generation },
+		ruleCount:   func() int { return len(route.Spec.Rules) },
 	}
 }
 
@@ -348,5 +575,6 @@ func newGRPCRouteAccessor() routeAccessor {
 		parentRefs:  func() []gatewayv1.ParentReference { return route.Spec.ParentRefs },
 		routeStatus: func() *gatewayv1.RouteStatus { return &route.Status.RouteStatus },
 		generation:  func() int64 { return route.Generation },
+		ruleCount:   func() int { return len(route.Spec.Rules) },
 	}
 }

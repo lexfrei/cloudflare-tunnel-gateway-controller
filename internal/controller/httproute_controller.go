@@ -7,6 +7,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/ingress"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/logging"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/proxy"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/routebinding"
 )
 
@@ -72,6 +74,11 @@ type HTTPRouteReconciler struct {
 	// ProxyEndpoints is the list of L7 proxy config-API URLs.
 	ProxyEndpoints []string
 
+	// Recorder emits Kubernetes Events for benign config overrides (e.g. an
+	// appProtocol cleartext hint superseded by a BackendTLSPolicy). May be nil
+	// in unit tests, in which case event emission is a no-op.
+	Recorder events.EventRecorder
+
 	// bindingValidator validates route binding to Gateway listeners.
 	bindingValidator *routebinding.Validator
 
@@ -97,8 +104,8 @@ func (r *HTTPRouteReconciler) syncAndUpdateStatus(ctx context.Context) (ctrl.Res
 		proxySyncer:    r.ProxySyncer,
 		proxyEndpoints: r.ProxyEndpoints,
 		pushProxy:      true,
-		statusEntries: func(sr *SyncResult) []routeStatusEntry {
-			return sr.httpStatusEntries(r.updateRouteStatus)
+		statusEntries: func(sr *SyncResult, diags []proxy.RouteDiagnostic) []routeStatusEntry {
+			return sr.httpStatusEntries(diags, r.updateRouteStatus)
 		},
 	})
 }
@@ -132,13 +139,17 @@ func (r *HTTPRouteReconciler) updateRouteStatus(
 	route *gatewayv1.HTTPRoute,
 	bindingInfo routeBindingInfo,
 	failedRefs []ingress.BackendRefError,
+	diagnostics []proxy.RouteDiagnostic,
 	syncErr error,
 ) error {
+	emitDiagnosticEvents(r.Recorder, route, diagnostics)
+
 	return updateRouteStatusGeneric(
 		ctx,
 		routeStatusUpdateParams{
 			k8sClient:      r.Client,
 			controllerName: r.ControllerName,
+			diagnostics:    diagnostics,
 		},
 		types.NamespacedName{Name: route.Name, Namespace: route.Namespace},
 		newHTTPRouteAccessor,
