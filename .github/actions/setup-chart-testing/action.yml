@@ -30,7 +30,7 @@ runs:
           # renovate: datasource=pypi depName=yamllint
           YAMLLINT_VERSION="1.33.0"
           # renovate: datasource=pypi depName=yamale
-          YAMALE_VERSION="6.0.0"
+          YAMALE_VERSION="6.1.0"
 
           if [[ "$(uname -m)" == "aarch64" ]]; then arch=arm64; else arch=amd64; fi
           ver="${CT_VERSION#v}"
