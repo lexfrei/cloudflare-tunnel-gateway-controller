@@ -1,10 +1,10 @@
 # Architecture
 
-This document describes the internal architecture of the Cloudflare Tunnel Gateway Controller.
+This document describes the internal architecture of the Cloudflare Tunnel Gateway Controller and its in-process L7 proxy data plane.
 
 ## High-Level Overview
 
-The controller implements the Kubernetes Gateway API to configure Cloudflare Tunnel ingress rules. It watches Gateway and HTTPRoute resources and translates them into Cloudflare Tunnel configuration via the Cloudflare API.
+The controller implements the Kubernetes Gateway API to configure Cloudflare Tunnel ingress rules. It watches Gateway and HTTPRoute resources, translates them into Cloudflare Tunnel configuration via the Cloudflare API, and pushes route state to the in-process L7 proxy that carries tunnel traffic.
 
 ```mermaid
 flowchart TB
@@ -13,7 +13,7 @@ flowchart TB
         HR[HTTPRoute]
         SVC[Services]
         CTRL[Controller]
-        CFD[cloudflared]
+        PROXY[Proxy Pod<br/>embedded cloudflared transport]
     end
 
     subgraph Cloudflare["Cloudflare Edge"]
@@ -25,10 +25,11 @@ flowchart TB
     HR -->|watch| CTRL
     SVC -->|resolve| CTRL
     CTRL -->|configure| API
-    API -->|push config| CFD
-    CFD -->|tunnel| EDGE
-    EDGE -->|traffic| CFD
-    CFD -->|route| SVC
+    CTRL -->|sync routes| PROXY
+    API -->|tunnel config| PROXY
+    PROXY -->|tunnel| EDGE
+    EDGE -->|traffic| PROXY
+    PROXY -->|route| SVC
 ```
 
 ## Package Structure

@@ -2,26 +2,6 @@
 
 This document describes the known limitations of the Cloudflare Tunnel Gateway Controller and provides workarounds where applicable.
 
-## Historical context (pre-v3 only)
-
-In the v1/v2 chart line, several HTTPRoute features required opting into the L7 proxy because the alternative path (Cloudflare Tunnel's native ingress) cannot express exact-path / header / query / method matching, weighted splitting, or filters. **v3 collapses this to a single data plane** — the proxy is always rendered, so all of those features work unconditionally. The bullets below are kept as historical context; if you are running v3 you can skip to the [Controller Limitations](#controller-limitations) section.
-
-??? note "v1/v2 feature matrix (kept for upgrade context)"
-
-    | Feature | v1/v2 without proxy | v1/v2 with proxy / v3 |
-    | --- | --- | --- |
-    | Exact path matching | No | Yes |
-    | Header matching | No | Yes |
-    | Query parameter matching | No | Yes |
-    | Method matching | No | Yes |
-    | Request header modification | No | Yes |
-    | Response header modification | No | Yes |
-    | Request redirect | No | Yes |
-    | URL rewrite | No | Yes |
-    | Request mirroring | No | Yes |
-    | Traffic splitting (weighted) | No | Yes |
-    | Regex path matching | No | Yes |
-
 ## Controller Limitations
 
 | Limitation | Description |
@@ -55,9 +35,7 @@ A cross-namespace `ServiceImport` or `ExternalBackend` `backendRef` requires a `
 
 ## Traffic Splitting and Load Balancing
 
-The in-process L7 proxy performs weighted traffic splitting across the `backendRefs` of a rule, for both HTTPRoute and GRPCRoute. Each backend's `weight` is honoured by a weighted-random selection at request time: traffic is distributed in proportion to the weights, and a backend with `weight: 0` receives no traffic (a rule whose backends all have weight 0 serves nothing).
-
-This is the v3 behaviour. In the v1/v2 native-tunnel path, Cloudflare Tunnel ingress rules accepted only a single service URL per rule, so the controller forwarded 100% of traffic to the highest-weight backend and weighted splitting required an external load balancer. v3 renders the proxy unconditionally, so splitting works without one.
+The in-process L7 proxy performs weighted traffic splitting across the `backendRefs` of a rule, for both HTTPRoute and GRPCRoute. Each backend's `weight` is honoured by a weighted-random selection at request time: traffic is distributed in proportion to the weights, and a backend with `weight: 0` receives no traffic (a rule whose backends all have weight 0 serves nothing). Weighted splitting works directly in the proxy and does not require an external load balancer.
 
 For plain round-robin between pods of one Deployment, a standard Kubernetes `Service` is still the simplest option — point the route at the Service and let kube-proxy balance:
 
