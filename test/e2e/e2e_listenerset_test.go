@@ -33,7 +33,7 @@ import (
 //
 //nolint:funlen // single end-to-end scenario with several wait/assert steps
 func TestListenerSetEndToEnd(t *testing.T) {
-	cfg := loadTestConfig()
+	cfg := loadTestConfig(t)
 	httpClient := tunnelClient()
 	k8sClient := newK8sClient(t, cfg.KubeContext)
 

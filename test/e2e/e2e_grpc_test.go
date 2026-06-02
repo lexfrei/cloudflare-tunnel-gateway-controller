@@ -40,7 +40,7 @@ const (
 //
 //nolint:funlen // one end-to-end scenario with deploy + wait + gRPC dial steps
 func TestGRPCRouteEndToEnd(t *testing.T) {
-	cfg := loadTestConfig()
+	cfg := loadTestConfig(t)
 
 	// gRPC only works over the http2 tunnel transport; skip fast (with an
 	// actionable message) rather than poll for ~90s against a transport that
