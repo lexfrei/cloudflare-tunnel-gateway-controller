@@ -15,6 +15,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -596,6 +597,7 @@ func (h *Handler) createReverseProxy(backendURL *url.URL, protocol BackendProtoc
 		Director: func(req *http.Request) {
 			req.URL.Scheme = backendURL.Scheme
 			req.URL.Host = backendURL.Host
+			applyBackendBasePath(req.URL, backendURL.Path)
 
 			// Preserve the original Host header per Gateway API spec.
 			// Only override it if a URLRewrite filter explicitly set a new host.
@@ -628,6 +630,39 @@ func (h *Handler) createReverseProxy(backendURL *url.URL, protocol BackendProtoc
 
 			return nil
 		},
+	}
+}
+
+// applyBackendBasePath prepends a backend base path (e.g. an ExternalBackend's
+// spec.path) to u's path, joining with exactly one slash — the single-host join
+// httputil.NewSingleHostReverseProxy performs that the hand-written Director
+// (and the WebSocket upgrade builder) otherwise skip. A base of "" or "/" — the
+// form every Service / ServiceImport backend URL takes — is a no-op, so only an
+// ExternalBackend with a declared base path is affected.
+func applyBackendBasePath(target *url.URL, base string) {
+	if base == "" || base == "/" {
+		return
+	}
+
+	target.Path = joinBackendBasePath(base, target.Path)
+	if target.RawPath != "" {
+		target.RawPath = joinBackendBasePath(base, target.RawPath)
+	}
+}
+
+// joinBackendBasePath joins a base path and a request path with exactly one
+// slash, mirroring net/http/httputil's unexported singleJoiningSlash.
+func joinBackendBasePath(base, reqPath string) string {
+	baseSlash := strings.HasSuffix(base, "/")
+	reqSlash := strings.HasPrefix(reqPath, "/")
+
+	switch {
+	case baseSlash && reqSlash:
+		return base + reqPath[1:]
+	case !baseSlash && !reqSlash:
+		return base + "/" + reqPath
+	default:
+		return base + reqPath
 	}
 }
 
