@@ -576,9 +576,23 @@ func convertURLRewriteFilter(rewrite *gatewayv1.HTTPURLRewriteFilter) *RouteFilt
 	}
 }
 
+const (
+	// ServiceImportGroup is the API group of a multicluster.x-k8s.io ServiceImport.
+	ServiceImportGroup = "multicluster.x-k8s.io"
+	// ServiceImportKind is the Kind of a ServiceImport backendRef.
+	ServiceImportKind = "ServiceImport"
+	// ClustersetDomain is the DNS domain under which multicluster (ServiceImport)
+	// Services resolve, per the KEP-1645 / mcs-api convention.
+	ClustersetDomain = "clusterset.local"
+)
+
 // IsServiceBackendRef reports whether the BackendObjectReference points at a
 // core Service (the default Kind when Group/Kind are nil). Exported so the
 // controller package can reuse the same predicate without duplicating it.
+//
+// This predicate intentionally stays Service-only: callers that key Service
+// EndpointSlice lookups, the zero-endpoint 503 probe, or BackendTLSPolicy
+// targeting on it must NOT begin matching ServiceImport/ExternalBackend.
 func IsServiceBackendRef(ref gatewayv1.BackendObjectReference) bool {
 	if ref.Group != nil && *ref.Group != "" && *ref.Group != "core" {
 		return false
@@ -589,6 +603,30 @@ func IsServiceBackendRef(ref gatewayv1.BackendObjectReference) bool {
 	}
 
 	return true
+}
+
+// IsServiceImportBackendRef reports whether the ref targets a
+// multicluster.x-k8s.io ServiceImport. Unlike Service, ServiceImport has no
+// implicit default, so the group must be set explicitly.
+func IsServiceImportBackendRef(ref gatewayv1.BackendObjectReference) bool {
+	return ref.Group != nil && string(*ref.Group) == ServiceImportGroup &&
+		ref.Kind != nil && string(*ref.Kind) == ServiceImportKind
+}
+
+// IsSupportedBackendRef reports whether the ref is a backend kind the proxy can
+// resolve to a dialable URL: a core Service or a multicluster ServiceImport.
+func IsSupportedBackendRef(ref gatewayv1.BackendObjectReference) bool {
+	return IsServiceBackendRef(ref) || IsServiceImportBackendRef(ref)
+}
+
+// backendDomain returns the DNS domain the backend resolves under: the
+// clusterset domain for a ServiceImport, otherwise the local cluster domain.
+func backendDomain(ref gatewayv1.BackendObjectReference, clusterDomain string) string {
+	if IsServiceImportBackendRef(ref) {
+		return ClustersetDomain
+	}
+
+	return clusterDomain
 }
 
 // mirrorDropDiagnostic records a ResolvedRefs-target diagnostic for a dropped
@@ -617,10 +655,10 @@ func validateMirrorBackendRef(
 ) (string, int32, bool) {
 	mirrorName := string(mirror.BackendRef.Name)
 
-	if !IsServiceBackendRef(mirror.BackendRef) {
+	if !IsSupportedBackendRef(mirror.BackendRef) {
 		mirrorDropDiagnostic(sink, gatewayv1.RouteReasonInvalidKind, mirrorName,
-			"its backendRef is not a Service")
-		slog.Warn("skipping mirror with non-Service backend kind",
+			"its backendRef is not a Service or ServiceImport")
+		slog.Warn("skipping mirror with unsupported backend kind",
 			"kind", mirror.BackendRef.Kind, "name", mirror.BackendRef.Name)
 
 		return "", 0, false
@@ -672,7 +710,7 @@ func convertMirrorFilter(
 		return nil
 	}
 
-	mirrorURL := buildServiceURL(string(mirror.BackendRef.Name), mirrorNS, mirrorPort, clusterDomain)
+	mirrorURL := buildServiceURL(string(mirror.BackendRef.Name), mirrorNS, mirrorPort, backendDomain(mirror.BackendRef, clusterDomain))
 
 	mirrorConfig := &MirrorConfig{
 		BackendURL: mirrorURL,
@@ -967,7 +1005,7 @@ func convertBackendRef(
 	// the valid siblings). A weight>0 invalid ref therefore stays in the
 	// weighted pool marked 500; a weight-0 ref carries no traffic and is
 	// dropped. markInvalidBackend enforces that.
-	if !IsServiceBackendRef(backend.BackendObjectReference) {
+	if !IsSupportedBackendRef(backend.BackendObjectReference) {
 		return markInvalidBackend(result.Weight, serviceName, svcNamespace, port, clusterDomain, "unsupported backend kind")
 	}
 
@@ -980,7 +1018,7 @@ func convertBackendRef(
 			"cross-namespace reference not permitted by ReferenceGrant")
 	}
 
-	result.URL = buildServiceURL(serviceName, svcNamespace, port, clusterDomain)
+	result.URL = buildServiceURL(serviceName, svcNamespace, port, backendDomain(backend.BackendObjectReference, clusterDomain))
 
 	// Resolve TLS first so the protocol resolver can know whether to silently
 	// pass through `appProtocol: https` (policy attached → suppressed) or warn

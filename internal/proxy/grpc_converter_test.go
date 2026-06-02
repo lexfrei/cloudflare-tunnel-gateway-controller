@@ -461,6 +461,57 @@ func TestConvertGRPCRoutes_ServiceOnly(t *testing.T) {
 	assert.Equal(t, "/grpc.examples.echo.Echo/", cfg.Rules[0].Matches[0].Path.Value)
 }
 
+// TestConvertGRPCRoutes_ServiceImportBackendResolved proves a ServiceImport
+// gRPC backend is accepted and resolved to a clusterset.local URL (h2c), not
+// marked 500.
+func TestConvertGRPCRoutes_ServiceImportBackendResolved(t *testing.T) {
+	t.Parallel()
+
+	svc := "grpc.examples.echo.Echo"
+	siGroup := gatewayv1.Group("multicluster.x-k8s.io")
+	siKind := gatewayv1.Kind("ServiceImport")
+	port := gatewayv1.PortNumber(9000)
+	weight := int32(1)
+	routes := []*gatewayv1.GRPCRoute{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "echo", Namespace: "default"},
+			Spec: gatewayv1.GRPCRouteSpec{
+				Rules: []gatewayv1.GRPCRouteRule{
+					{
+						Matches: []gatewayv1.GRPCRouteMatch{
+							{Method: &gatewayv1.GRPCMethodMatch{Type: grpcExact(), Service: &svc}},
+						},
+						BackendRefs: []gatewayv1.GRPCBackendRef{
+							{
+								BackendRef: gatewayv1.BackendRef{
+									BackendObjectReference: gatewayv1.BackendObjectReference{
+										Group: &siGroup,
+										Kind:  &siKind,
+										Name:  "imported",
+										Port:  &port,
+									},
+									Weight: &weight,
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil, nil, nil)
+
+	require.Len(t, cfg.Rules, 1)
+	require.Len(t, cfg.Rules[0].Backends, 1)
+	assert.Equal(t, 0, cfg.Rules[0].Backends[0].UnavailableStatus,
+		"a ServiceImport gRPC backend is supported and must not be marked 500")
+	assert.Equal(t, "http://imported.default.svc.clusterset.local:9000", cfg.Rules[0].Backends[0].URL,
+		"ServiceImport gRPC backend must resolve to a clusterset.local URL")
+	assert.Equal(t, proxy.BackendProtocolH2C, cfg.Rules[0].Backends[0].Protocol,
+		"gRPC backends are forced to h2c")
+}
+
 // TestConvertGRPCRoutes_RegexMethod maps a RegularExpression method match to a
 // regex path rule.
 func TestConvertGRPCRoutes_RegexMethod(t *testing.T) {

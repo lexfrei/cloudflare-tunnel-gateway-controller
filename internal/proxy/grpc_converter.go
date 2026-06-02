@@ -324,7 +324,7 @@ func convertGRPCBackendRef(
 	// Gateway API spec rather than be dropped (mirrors convertBackendRef): a
 	// weight>0 invalid ref stays in the weighted pool marked 500, a weight-0 ref
 	// is dropped.
-	if !IsServiceBackendRef(backend.BackendObjectReference) {
+	if !IsSupportedBackendRef(backend.BackendObjectReference) {
 		return markInvalidBackend(result.Weight, serviceName, svcNamespace, port, clusterDomain, "unsupported backend kind")
 	}
 
@@ -337,7 +337,7 @@ func convertGRPCBackendRef(
 			"cross-namespace reference not permitted by ReferenceGrant")
 	}
 
-	result.URL = buildServiceURL(serviceName, svcNamespace, port, clusterDomain)
+	result.URL = buildServiceURL(serviceName, svcNamespace, port, backendDomain(backend.BackendObjectReference, clusterDomain))
 
 	if grpcBackendFiltersUnsupported(backend.Filters, svcNamespace, serviceName, sink) {
 		result.UnavailableStatus = http.StatusInternalServerError
