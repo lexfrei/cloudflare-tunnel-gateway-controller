@@ -21,7 +21,8 @@
 #                                                  # chart+images (no local build)
 #
 # Prerequisites:
-#   - .env file in repo root with: CF_API_TOKEN, CF_ACCOUNT_ID, V2_TUNNEL_ID, V2_TUNNEL_TOKEN
+#   - .env file in repo root with: CF_API_TOKEN, CF_ACCOUNT_ID, V2_TUNNEL_ID,
+#     V2_TUNNEL_TOKEN, V2_TUNNEL_HOSTNAME (the edge hostname routing to the tunnel)
 #   - colima, docker, kind, helm, kubectl, go installed
 
 set -euo pipefail
@@ -89,9 +90,9 @@ fi
 # shellcheck source=/dev/null
 source "${ENV_FILE}"
 
-for var in CF_API_TOKEN CF_ACCOUNT_ID V2_TUNNEL_ID V2_TUNNEL_TOKEN; do
+for var in CF_API_TOKEN CF_ACCOUNT_ID V2_TUNNEL_ID V2_TUNNEL_TOKEN V2_TUNNEL_HOSTNAME; do
   if [[ -z "${!var:-}" ]]; then
-    die "Required variable ${var} is not set in .env"
+    die "Required variable ${var} is not set in .env (see .env.example)"
   fi
 done
 
@@ -265,16 +266,17 @@ echo ""
 
 # --- Step 11: Run tests (optional) ---
 if [[ "${RUN_TESTS}" == "true" ]]; then
-  info "Running conformance tests..."
+  info "Running conformance tests against ${V2_TUNNEL_HOSTNAME}..."
   CONFORMANCE_KUBE_CONTEXT="${KUBE_CONTEXT}" \
+  CONFORMANCE_TUNNEL_HOSTNAME="${V2_TUNNEL_HOSTNAME}" \
     go test -v -race -tags conformance -count=1 -timeout=60m -parallel 10 ./test/conformance/...
 else
   echo ""
   info "Setup complete! To run conformance tests:"
-  echo "  CONFORMANCE_KUBE_CONTEXT=${KUBE_CONTEXT} go test -v -race -tags conformance -count=1 -timeout=30m ./test/conformance/..."
+  echo "  CONFORMANCE_KUBE_CONTEXT=${KUBE_CONTEXT} CONFORMANCE_TUNNEL_HOSTNAME=${V2_TUNNEL_HOSTNAME} go test -v -race -tags conformance -count=1 -timeout=30m ./test/conformance/..."
   echo ""
   info "To run E2E tests:"
-  echo "  CONFORMANCE_KUBE_CONTEXT=${KUBE_CONTEXT} go test -v -race -tags e2e -count=1 -timeout=15m ./test/e2e/..."
+  echo "  CONFORMANCE_KUBE_CONTEXT=${KUBE_CONTEXT} E2E_TUNNEL_HOSTNAME=${V2_TUNNEL_HOSTNAME} go test -v -race -tags e2e -count=1 -timeout=15m ./test/e2e/..."
   echo ""
   info "To tear down:"
   echo "  kind delete cluster --name ${CLUSTER_NAME}"

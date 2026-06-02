@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/test/internal/tunnelhost"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
@@ -50,9 +51,16 @@ type testConfig struct {
 	TunnelProtocol string
 }
 
-func loadTestConfig() testConfig {
+func loadTestConfig(tb testing.TB) testConfig {
+	tb.Helper()
+
+	hostname, err := tunnelhost.Resolve("E2E_TUNNEL_HOSTNAME", "CONFORMANCE_TUNNEL_HOSTNAME")
+	if err != nil {
+		tb.Fatal(err)
+	}
+
 	return testConfig{
-		TunnelHostname: envWithFallback("E2E_TUNNEL_HOSTNAME", "CONFORMANCE_TUNNEL_HOSTNAME", "v2-test.lex.la"),
+		TunnelHostname: hostname,
 		KubeContext:    envWithFallback("E2E_KUBE_CONTEXT", "CONFORMANCE_KUBE_CONTEXT", "kind-v2-test"),
 		Namespace:      envWithFallback("E2E_NAMESPACE", "CONFORMANCE_NAMESPACE", "cloudflare-tunnel-system"),
 		TestNamespace:  envWithFallback("E2E_TEST_NAMESPACE", "CONFORMANCE_TEST_NAMESPACE", "e2e-test"),
@@ -245,7 +253,7 @@ func wipeAllRoutesInNamespace(t *testing.T, k8sClient client.Client, cfg testCon
 //
 // Run with: go test -v -tags e2e -timeout 10m ./test/e2e/
 func TestHTTPRouteConformance(t *testing.T) {
-	cfg := loadTestConfig()
+	cfg := loadTestConfig(t)
 	httpClient := tunnelClient()
 	k8sClient := newK8sClient(t, cfg.KubeContext)
 

@@ -569,11 +569,11 @@ Official Gateway API conformance suite (`sigs.k8s.io/gateway-api/conformance` v1
 # to also run the suite. ttl.sh artifacts expire 24h after the PR's CI ran.
 ./hack/conformance-setup.sh --use-ci-images <PR-number>
 
-# Run all conformance tests on existing cluster
-go test -v -tags conformance -count=1 -timeout=60m -parallel 10 ./test/conformance/...
+# Run all conformance tests on existing cluster (CONFORMANCE_TUNNEL_HOSTNAME is required)
+CONFORMANCE_TUNNEL_HOSTNAME=<your-tunnel-hostname> go test -v -tags conformance -count=1 -timeout=60m -parallel 10 ./test/conformance/...
 
 # Run specific failing test
-go test -v -tags conformance -count=1 -timeout=10m ./test/conformance/... -run "HTTPRouteMatchingAcrossRoutes"
+CONFORMANCE_TUNNEL_HOSTNAME=<your-tunnel-hostname> go test -v -tags conformance -count=1 -timeout=10m ./test/conformance/... -run "HTTPRouteMatchingAcrossRoutes"
 
 # Rebuild and redeploy images without recreating cluster
 docker build --tag controller:dev --file Containerfile .
@@ -593,6 +593,6 @@ kubectl --context kind-<cluster-name> rollout restart deployment --namespace clo
 
 ### Environment Variables
 
-- `CONFORMANCE_TUNNEL_HOSTNAME` — Edge hostname (default: `v2-test.lex.la`)
+- `CONFORMANCE_TUNNEL_HOSTNAME` — Edge hostname routing to the test tunnel (required; no default — see `.env.example`)
 - `CONFORMANCE_GATEWAY_CLASS` — GatewayClass name (default: `cloudflare-tunnel`)
 - `CONFORMANCE_REPORT_OUTPUT` — Path for YAML conformance report

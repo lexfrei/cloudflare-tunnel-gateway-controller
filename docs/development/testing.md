@@ -282,14 +282,16 @@ Conformance tests validate that the controller implements the Gateway API specif
 
 ### Running E2E Tests
 
-E2E tests run against a live kind cluster with Cloudflare Tunnel and L7 proxy deployed.
+E2E tests run against a live kind cluster with Cloudflare Tunnel and L7 proxy deployed. `E2E_TUNNEL_HOSTNAME` is required — the suite fails fast without it. `hack/conformance-setup.sh` threads it automatically from `.env` (`V2_TUNNEL_HOSTNAME`); set it explicitly when running `go test` by hand.
 
 ```bash
 # Run all E2E tests
-go test -v -race -tags e2e -count=1 -timeout=15m ./test/e2e/...
+E2E_TUNNEL_HOSTNAME=<your-tunnel-hostname> \
+  go test -v -race -tags e2e -count=1 -timeout=15m ./test/e2e/...
 
 # Run a single test
-go test -v -race -tags e2e -count=1 -timeout=15m ./test/e2e/... \
+E2E_TUNNEL_HOSTNAME=<your-tunnel-hostname> \
+  go test -v -race -tags e2e -count=1 -timeout=15m ./test/e2e/... \
   -run TestHTTPRouteSimpleSameNamespace
 ```
 
@@ -297,7 +299,7 @@ go test -v -race -tags e2e -count=1 -timeout=15m ./test/e2e/... \
 
 | Variable | Fallback | Default | Description |
 | --- | --- | --- | --- |
-| `E2E_TUNNEL_HOSTNAME` | `CONFORMANCE_TUNNEL_HOSTNAME` | `v2-test.lex.la` | Tunnel hostname for requests |
+| `E2E_TUNNEL_HOSTNAME` | `CONFORMANCE_TUNNEL_HOSTNAME` | none (required) | Edge hostname routing to the test tunnel; see `.env.example` |
 | `E2E_KUBE_CONTEXT` | `CONFORMANCE_KUBE_CONTEXT` | `kind-v2-test` | kubectl context |
 | `E2E_NAMESPACE` | `CONFORMANCE_NAMESPACE` | `cloudflare-tunnel-system` | Controller namespace |
 | `E2E_TEST_NAMESPACE` | `CONFORMANCE_TEST_NAMESPACE` | `e2e-test` | Test resources namespace |
@@ -316,17 +318,22 @@ Tests cover both Cloudflare Tunnel and L7 proxy features:
 
 The project integrates the official `sigs.k8s.io/gateway-api/conformance` suite with a custom `TunnelRoundTripper` that routes requests through Cloudflare edge.
 
+`CONFORMANCE_TUNNEL_HOSTNAME` is required — the suite fails fast without it. `hack/conformance-setup.sh` threads it automatically from `.env` (`V2_TUNNEL_HOSTNAME`); set it explicitly when running `go test` by hand.
+
 ```bash
 # Run conformance tests (requires deployed controller + tunnel)
-go test -v -tags conformance -count=1 -timeout=30m ./test/conformance/...
+CONFORMANCE_TUNNEL_HOSTNAME=<your-tunnel-hostname> \
+  go test -v -tags conformance -count=1 -timeout=30m ./test/conformance/...
 
 # Generate conformance report
+CONFORMANCE_TUNNEL_HOSTNAME=<your-tunnel-hostname> \
 CONFORMANCE_REPORT_OUTPUT=./conformance-report.yaml \
   go test -v -tags conformance -count=1 -timeout=30m ./test/conformance/...
 ```
 
 | Variable | Default | Description |
 | --- | --- | --- |
+| `CONFORMANCE_TUNNEL_HOSTNAME` | none (required) | Edge hostname routing to the test tunnel; see `.env.example` |
 | `CONFORMANCE_GATEWAY_CLASS` | `cloudflare-tunnel` | GatewayClass name |
 | `CONFORMANCE_REPORT_OUTPUT` | (none) | Path for YAML conformance report |
 | `CONTROLLER_VERSION` | `dev` | Version for report metadata |

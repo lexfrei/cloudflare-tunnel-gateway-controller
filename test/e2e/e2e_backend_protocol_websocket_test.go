@@ -49,7 +49,7 @@ import (
 // BEFORE writing the 101 status, which the cloudflared HTTP/2 response
 // writer rejects -- the failure mode the production deployment hits.
 func TestHTTPRouteBackendProtocolWebSocket(t *testing.T) {
-	cfg := loadTestConfig()
+	cfg := loadTestConfig(t)
 	k8sClient := newK8sClient(t, cfg.KubeContext)
 
 	setupTestNamespace(t, k8sClient, cfg)
@@ -185,7 +185,7 @@ var errProxySyncNotConverged = errors.New("proxy sync not converged yet")
 // backend's original headers (no X-CF-Tunnel-E2E-Added) and the
 // assertion fails loudly.
 func TestHTTPRouteBackendProtocolWebSocket_AppliesResponseFilters(t *testing.T) {
-	cfg := loadTestConfig()
+	cfg := loadTestConfig(t)
 	k8sClient := newK8sClient(t, cfg.KubeContext)
 
 	setupTestNamespace(t, k8sClient, cfg)

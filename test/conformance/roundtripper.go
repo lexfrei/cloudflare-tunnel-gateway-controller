@@ -25,8 +25,8 @@ import (
 //
 // The *.cfargotunnel.com CNAME used as Gateway address only has AAAA records
 // pointing to Cloudflare ULA (fd10::/8) which are not publicly routable.
-// Instead, we connect to the real tunnel hostname (e.g. v2-test.lex.la) which
-// has proper DNS pointing to Cloudflare edge. TLS SNI uses the tunnel hostname
+// Instead, we connect to the real tunnel hostname (from CONFORMANCE_TUNNEL_HOSTNAME)
+// which has proper DNS pointing to Cloudflare edge. TLS SNI uses the tunnel hostname
 // so Cloudflare routes traffic to our tunnel. The HTTP Host header carries the
 // test-specific hostname for our proxy to route on.
 type TunnelRoundTripper struct {
@@ -41,13 +41,17 @@ type TunnelRoundTripper struct {
 // Shared by TunnelRoundTripper (HTTP) and TunnelGRPCClient (gRPC).
 const originalHostHeader = "X-Original-Host"
 
-// tunnelHostname returns the hostname used to reach the tunnel via Cloudflare edge.
-func tunnelHostname() string {
-	if h := os.Getenv("CONFORMANCE_TUNNEL_HOSTNAME"); h != "" {
-		return h
-	}
+// envTunnelHostname names the env var that carries the edge hostname the
+// conformance suite routes through (TLS SNI + the wire Host; the test's intended
+// host rides X-Original-Host). TestGatewayAPIConformance enforces it is set via
+// tunnelhost.Resolve before any request runs.
+const envTunnelHostname = "CONFORMANCE_TUNNEL_HOSTNAME"
 
-	return "v2-test.lex.la"
+// tunnelHostname returns the configured edge hostname. The conformance entry
+// point validates it is set (tunnelhost.Resolve) before any request runs, so the
+// roundtripper and gRPC client read it directly here.
+func tunnelHostname() string {
+	return os.Getenv(envTunnelHostname)
 }
 
 // CaptureRoundTrip implements roundtripper.RoundTripper.

@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/test/internal/tunnelhost"
 	"github.com/stretchr/testify/assert"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"sigs.k8s.io/gateway-api/conformance"
@@ -19,6 +20,15 @@ import (
 )
 
 func TestGatewayAPIConformance(t *testing.T) {
+	// Fail fast when the edge hostname is unset: without it every request would
+	// route at an empty host and the suite would only fail deep inside its poll
+	// timeouts. There is no default — the deployed tunnel's hostname must be
+	// supplied (hack/conformance-setup.sh threads it from .env).
+	_, err := tunnelhost.Resolve(envTunnelHostname)
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	opts := conformance.DefaultOptions(t)
 
 	opts.GatewayClassName = envOrDefault("CONFORMANCE_GATEWAY_CLASS", "cloudflare-tunnel")
