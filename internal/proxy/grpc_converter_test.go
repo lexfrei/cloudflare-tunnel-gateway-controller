@@ -557,6 +557,88 @@ func TestConvertGRPCRoutes_ExternalBackendSentinel(t *testing.T) {
 		"gRPC ExternalBackend stays h2c until the controller resolves an https scheme")
 }
 
+// TestConvertGRPCRoutes_ExternalBackendSkipsBackendTLSResolver pins #395: the
+// gRPC ExternalBackend path must mirror the HTTP convertExternalBackendRef path
+// and run NO BackendTLSPolicy resolver. A BackendTLSPolicy targetRef is
+// Service-shaped, so resolving an ExternalBackend by namespace/name/port can
+// only ever cross-wire a like-named Service's TLS config onto it. The TLS
+// decision is scheme-driven instead: the backend stays h2c here and the
+// controller flips it to plain HTTP for an https-scheme ExternalBackend so ALPN
+// negotiates HTTP/2 over TLS. A parent-Gateway client cert is likewise not
+// stamped — cert over plaintext is meaningless, same contract as the HTTP path.
+func TestConvertGRPCRoutes_ExternalBackendSkipsBackendTLSResolver(t *testing.T) {
+	t.Parallel()
+
+	svc := "grpc.examples.echo.Echo"
+	group := gatewayv1.Group("cf.k8s.lex.la")
+	kind := gatewayv1.Kind("ExternalBackend")
+	weight := int32(1)
+	routes := []*gatewayv1.GRPCRoute{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "echo", Namespace: "default"},
+			Spec: gatewayv1.GRPCRouteSpec{
+				CommonRouteSpec: gatewayv1.CommonRouteSpec{
+					ParentRefs: []gatewayv1.ParentReference{{Name: gatewayv1.ObjectName("gw")}},
+				},
+				Rules: []gatewayv1.GRPCRouteRule{
+					{
+						Matches: []gatewayv1.GRPCRouteMatch{
+							{Method: &gatewayv1.GRPCMethodMatch{Type: grpcExact(), Service: &svc}},
+						},
+						BackendRefs: []gatewayv1.GRPCBackendRef{
+							{
+								BackendRef: gatewayv1.BackendRef{
+									BackendObjectReference: gatewayv1.BackendObjectReference{
+										Group: &group, Kind: &kind, Name: "ext-grpc",
+									},
+									Weight: &weight,
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	// A BackendTLSPolicy resolver that, if consulted, would cross-wire TLS onto
+	// the ExternalBackend (modelling a like-named Service collision).
+	resolverCalled := false
+	tlsResolver := func(_ context.Context, _, _ string, _ int32) *proxy.BackendTLSConfig {
+		resolverCalled = true
+
+		return &proxy.BackendTLSConfig{
+			CABundlePEM: "-----BEGIN CERTIFICATE-----\nFAKE\n-----END CERTIFICATE-----\n",
+			ServerName:  "ext-grpc.default.svc.cluster.local",
+		}
+	}
+
+	certResolver := func(_ context.Context, gw types.NamespacedName) *proxy.ClientCertConfig {
+		if gw.Namespace == "default" && gw.Name == "gw" {
+			return &proxy.ClientCertConfig{
+				CertPEM: []byte("-----BEGIN CERTIFICATE-----\nCLIENT-CERT\n-----END CERTIFICATE-----\n"),
+				KeyPEM:  []byte("-----BEGIN PRIVATE KEY-----\nCLIENT-KEY\n-----END PRIVATE KEY-----\n"),
+			}
+		}
+
+		return nil
+	}
+
+	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil, tlsResolver, certResolver)
+
+	require.Len(t, cfg.Rules, 1)
+	require.Len(t, cfg.Rules[0].Backends, 1)
+	backend := cfg.Rules[0].Backends[0]
+
+	assert.False(t, resolverCalled,
+		"gRPC ExternalBackend path MUST NOT invoke the BackendTLSPolicy resolver (mirrors the HTTP path)")
+	assert.Nil(t, backend.TLS,
+		"gRPC ExternalBackend must carry no TLS config — no cross-wired policy, no client cert")
+	assert.Equal(t, proxy.BackendProtocolH2C, backend.Protocol,
+		"gRPC ExternalBackend stays h2c until the controller resolves an https scheme")
+	assert.Equal(t, proxy.ExternalBackendSentinelURL("default", "ext-grpc"), backend.URL)
+}
+
 // TestConvertGRPCRoutes_RegexMethod maps a RegularExpression method match to a
 // regex path rule.
 func TestConvertGRPCRoutes_RegexMethod(t *testing.T) {

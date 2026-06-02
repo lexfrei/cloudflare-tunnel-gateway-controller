@@ -332,7 +332,7 @@ func convertGRPCBackendRef(
 	// sentinel); the backendRef port is ignored in favour of spec.port.
 	if IsExternalBackendRef(backend.BackendObjectReference) {
 		return convertGRPCExternalBackendRef(ctx, result.Weight, backend, namespace, svcNamespace, serviceName,
-			clusterDomain, validator, tlsResolver, clientCert, sink)
+			clusterDomain, validator, sink)
 	}
 
 	if !validatePort(port) {
@@ -356,18 +356,20 @@ func convertGRPCBackendRef(
 }
 
 // convertGRPCExternalBackendRef builds a gRPC BackendRef for an ExternalBackend
-// ref. Like the HTTP path it emits a sentinel URL the controller rewrites; the
-// backend is left h2c (gRPC default), and when the resolved ExternalBackend uses
-// the https scheme the controller clears h2c so the TLS transport negotiates
-// HTTP/2 over ALPN instead.
+// ref. Like the HTTP convertExternalBackendRef path it emits a sentinel URL the
+// controller rewrites from the ExternalBackend spec and runs NO BackendTLSPolicy
+// resolver: a BackendTLSPolicy targetRef is Service-shaped and cannot
+// legitimately target an ExternalBackend, so resolving here would only risk
+// cross-wiring a like-named Service's TLS config (same namespace/name/port) onto
+// it. The TLS decision is scheme-driven instead — the backend is left h2c (gRPC
+// default), and when the resolved ExternalBackend uses the https scheme the
+// controller clears h2c so the default transport negotiates HTTP/2 over ALPN.
 func convertGRPCExternalBackendRef(
 	ctx context.Context,
 	weight int32,
 	backend *gatewayv1.GRPCBackendRef,
 	namespace, svcNamespace, serviceName, clusterDomain string,
 	validator BackendRefValidator,
-	tlsResolver BackendTLSResolver,
-	clientCert *ClientCertConfig,
 	sink *diagSink,
 ) (BackendRef, bool) {
 	if !validateCrossNamespace(ctx, svcNamespace, namespace, serviceName, backend.BackendObjectReference, validator) {
@@ -375,13 +377,15 @@ func convertGRPCExternalBackendRef(
 			"cross-namespace reference not permitted by ReferenceGrant")
 	}
 
-	result := BackendRef{Weight: weight, URL: ExternalBackendSentinelURL(svcNamespace, serviceName)}
+	result := BackendRef{
+		Weight:   weight,
+		URL:      ExternalBackendSentinelURL(svcNamespace, serviceName),
+		Protocol: BackendProtocolH2C,
+	}
 
 	if grpcBackendFiltersUnsupported(backend.Filters, svcNamespace, serviceName, sink) {
 		result.UnavailableStatus = http.StatusInternalServerError
 	}
-
-	applyGRPCBackendTransport(ctx, &result, tlsResolver, clientCert, svcNamespace, serviceName, defaultServicePort)
 
 	return result, true
 }
