@@ -27,8 +27,7 @@ In the v1/v2 chart line, several HTTPRoute features required opting into the L7 
 | Limitation | Description |
 |------------|-------------|
 | Full sync | Any change triggers full config sync |
-| No cross-cluster | Only in-cluster services supported |
-| Service only | Only `Service` kind backends (ClusterIP, NodePort, LoadBalancer, ExternalName); evaluating non-Service kinds is tracked in [#337](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/issues/337) |
+| Backend kinds | `Service` (ClusterIP, NodePort, LoadBalancer, ExternalName), `ServiceImport` (multicluster.x-k8s.io, resolved via `clusterset.local` DNS), and `ExternalBackend` (`cf.k8s.lex.la`, an out-of-cluster HTTP(S) URL). Any other kind → `ResolvedRefs=False, InvalidKind`. |
 
 ## Unsupported config is surfaced on resource status
 
@@ -36,7 +35,7 @@ When the controller will not serve a piece of route config exactly as written, i
 
 - **`Accepted=False` / `UnsupportedValue`** — the whole route cannot be served. This fires when every rule of the route is unservable, e.g. each rule carries an unsupported filter type.
 - **`PartiallyInvalid=True`** (alongside `Accepted=True`) — some rules or backends are dropped while the route still serves the rest. The message starts with the spec-mandated `Dropped Rule` prefix and names the affected rule indices. This covers a single unsupported filter among several rules, an unsupported per-backend filter (only that backend's traffic fraction fails closed), and an unparseable rule `timeouts` value (the rule serves without it).
-- **`ResolvedRefs=False`** — a backend or object reference cannot be resolved or declares an unsupported app protocol. This covers the existing missing-Service / wrong-kind / unauthorized-cross-namespace `backendRef` failures, plus `appProtocol: https`/`wss` without a `BackendTLSPolicy` (`Reason=UnsupportedProtocol`), an unrecognised `appProtocol`, and a dropped `RequestMirror` backendRef.
+- **`ResolvedRefs=False`** — a backend or object reference cannot be resolved or declares an unsupported app protocol. This covers a missing `Service`, a missing `ServiceImport` (or one that does not export the requested port), a missing `ExternalBackend`, a backend kind outside the supported set (`Reason=InvalidKind`), an unauthorized cross-namespace `backendRef` (`Reason=RefNotPermitted`), plus `appProtocol: https`/`wss` without a `BackendTLSPolicy` (`Reason=UnsupportedProtocol`), an unrecognised `appProtocol`, and a dropped `RequestMirror` backendRef.
 - **Kubernetes Event** (`reason=ConfigOverridden`) — config applied successfully but a redundant or conflicting hint was overridden, where no standard condition fits. A Normal event covers a cleartext `appProtocol` (`h2c`, `ws`) superseded by a `BackendTLSPolicy` ("TLS wins"); a Warning event covers a `ResponseHeaderModifier` that strips a WebSocket handshake header (honored as written, but it breaks the upgrade).
 
 Separately, Gateway and ListenerSet listeners whose protocol this controller cannot serve (`TCP`, `TLS`, `UDP`) are marked `Accepted=False, Reason=UnsupportedProtocol` on the listener status.
@@ -44,6 +43,15 @@ Separately, Gateway and ListenerSet listeners whose protocol this controller can
 Unsupported filters fail closed: per the Gateway API spec an `ExtensionRef`, `ExternalAuth`, or unknown HTTPRoute filter type — and any GRPCRoute filter, none of which are served yet — must not be silently skipped. Requests matching the affected rule (or backend) receive HTTP 500 rather than being served without the dropped filter. A rule-level filter takes the whole rule down; a per-backend filter (HTTPRoute or GRPCRoute `backendRef.filters`) fails only that backend's traffic fraction while the rule keeps serving its other backends.
 
 A TLS `appProtocol` (`https`, `kubernetes.io/wss`) without a `BackendTLSPolicy` fails the backend closed (HTTP 502) rather than dialing plaintext to a TLS backend. An unrecognised `appProtocol` is report-only: the proxy keeps serving over HTTP/1.1 and records the diagnostic so the ignored hint is visible.
+
+## Non-Service backend kinds
+
+Because the v3 data plane is a generic in-process L7 proxy that ultimately dials a URL, a `backendRef` may target more than a core `Service`:
+
+- **`ServiceImport` (`multicluster.x-k8s.io`)** — a multicluster Service imported by the Multi-Cluster Services (MCS) API. The controller reads `spec.ports` to validate the requested port and resolves the backend to `<name>.<namespace>.svc.clusterset.local:<port>`, letting the cluster's MCS DNS plane route to the imported endpoints. An absent `ServiceImport`, or one that does not export the requested port, is surfaced as `ResolvedRefs=False, BackendNotFound`. The cluster must run an MCS implementation that serves `clusterset.local`; the zero-ready-endpoint 503 probe (applied to core Services) is **not** applied to `ServiceImport`, since MCS `EndpointSlice` labelling is implementation-specific.
+- **`ExternalBackend` (`cf.k8s.lex.la`)** — a namespaced CRD declaring an out-of-cluster HTTP(S) origin (`spec.scheme` / `spec.host` / `spec.port` / optional `spec.path`). The proxy dials that URL directly from the pod. The `backendRef` port is ignored in favour of `spec.port`. A missing `ExternalBackend` is surfaced as `ResolvedRefs=False, BackendNotFound` and returns HTTP 500 for its traffic fraction. There is no SSRF allowlist: an `ExternalBackend` is operator-authored and the trust boundary is namespace write-access plus `ReferenceGrant`, identical to a `Service` of type `ExternalName`. gRPC over an `ExternalBackend` uses h2c when `scheme: http` and HTTP/2 over TLS (ALPN) when `scheme: https`.
+
+A cross-namespace `ServiceImport` or `ExternalBackend` `backendRef` requires a `ReferenceGrant` whose `to` entry names the matching `group`/`kind` (`multicluster.x-k8s.io`/`ServiceImport` or `cf.k8s.lex.la`/`ExternalBackend`) — a Service-only grant does not authorize them.
 
 ## Traffic Splitting and Load Balancing
 
