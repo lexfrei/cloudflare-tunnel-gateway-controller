@@ -83,6 +83,51 @@ jobs:
         with:
           globs: '**/*.md'
 
+  # Lint shell scripts and GitHub Actions workflows. actionlint validates the
+  # workflow YAML and runs shellcheck on inline `run:` blocks; the standalone
+  # shellcheck pass covers hack/*.sh. Both tools are installed at a pinned,
+  # Renovate-tracked version into /usr/local/bin (ahead of the runner's
+  # /usr/bin) so actionlint picks up the pinned shellcheck for inline blocks.
+  lint-workflows:
+    name: Lint Workflows
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout PR code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Install shellcheck and actionlint
+        run: |
+          set -euo pipefail
+
+          # renovate: datasource=github-releases depName=koalaman/shellcheck
+          SHELLCHECK_VERSION="v0.11.0"
+          # renovate: datasource=github-releases depName=rhysd/actionlint
+          ACTIONLINT_VERSION="v1.7.12"
+
+          tmp="$(mktemp -d)"
+
+          curl --retry 5 --retry-delay 1 -sSLo "${tmp}/shellcheck.tar.xz" \
+            "https://github.com/koalaman/shellcheck/releases/download/${SHELLCHECK_VERSION}/shellcheck-${SHELLCHECK_VERSION}.linux.x86_64.tar.xz"
+          tar -xJf "${tmp}/shellcheck.tar.xz" -C "${tmp}"
+          sudo install "${tmp}/shellcheck-${SHELLCHECK_VERSION}/shellcheck" /usr/local/bin/shellcheck
+
+          curl --retry 5 --retry-delay 1 -sSLo "${tmp}/actionlint.tar.gz" \
+            "https://github.com/rhysd/actionlint/releases/download/${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION#v}_linux_amd64.tar.gz"
+          tar -xzf "${tmp}/actionlint.tar.gz" -C "${tmp}" actionlint
+          sudo install "${tmp}/actionlint" /usr/local/bin/actionlint
+
+          shellcheck --version
+          actionlint --version
+
+      - name: Run shellcheck (hack scripts)
+        run: shellcheck hack/*.sh
+
+      - name: Run actionlint (workflows)
+        run: actionlint -color
+
+      - name: Run shellcheck (composite action inline shell)
+        run: ./hack/lint-action-shell.sh
+
   test:
     name: Test
     runs-on: ubuntu-latest
@@ -120,7 +165,11 @@ jobs:
 
       - name: Run tests
         run: |
-          export KUBEBUILDER_ASSETS="$(setup-envtest use -p path)"
+          # Declare then export separately: `export VAR="$(cmd)"` would mask a
+          # non-zero exit from setup-envtest behind export's always-0 status
+          # (shellcheck SC2155).
+          KUBEBUILDER_ASSETS="$(setup-envtest use -p path)"
+          export KUBEBUILDER_ASSETS
           go test -v -race -tags=envtest -coverprofile=coverage.out -covermode=atomic ./...
 
       - name: Upload coverage
@@ -133,7 +182,7 @@ jobs:
   # Build containers only after lint, test and security succeed
   build-and-push:
     name: Build and Push (${{ matrix.component }}/${{ matrix.arch }})
-    needs: [security, lint, test]
+    needs: [security, lint, lint-workflows, test]
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -410,7 +459,7 @@ jobs:
   build-chart:
     name: Build Chart
     runs-on: ubuntu-latest
-    needs: [security, lint, test, lint-chart]
+    needs: [security, lint, lint-workflows, test, lint-chart]
     steps:
       - name: Checkout PR code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
