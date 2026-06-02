@@ -620,6 +620,15 @@ func IsSupportedBackendRef(ref gatewayv1.BackendObjectReference) bool {
 	return IsServiceBackendRef(ref) || IsServiceImportBackendRef(ref) || IsExternalBackendRef(ref)
 }
 
+// isMirrorableBackendRef reports whether the ref can be a RequestMirror
+// destination. Only kinds with an in-cluster DNS form qualify (Service,
+// ServiceImport): the converter builds the mirror URL directly via
+// buildServiceURL, with no controller-side sentinel rewrite, so an
+// ExternalBackend — whose URL lives in its spec — cannot be a mirror target.
+func isMirrorableBackendRef(ref gatewayv1.BackendObjectReference) bool {
+	return IsServiceBackendRef(ref) || IsServiceImportBackendRef(ref)
+}
+
 // backendDomain returns the DNS domain the backend resolves under: the
 // clusterset domain for a ServiceImport, otherwise the local cluster domain.
 func backendDomain(ref gatewayv1.BackendObjectReference, clusterDomain string) string {
@@ -656,9 +665,15 @@ func validateMirrorBackendRef(
 ) (string, int32, bool) {
 	mirrorName := string(mirror.BackendRef.Name)
 
-	if !IsSupportedBackendRef(mirror.BackendRef) {
+	// A mirror destination must have an in-cluster DNS form (Service or
+	// ServiceImport). An ExternalBackend is excluded: the converter has no
+	// client to resolve its real URL and the sentinel-rewrite step does not walk
+	// mirror filters, so accepting it would silently mirror to a bogus
+	// cluster-local address. ExternalBackend is a valid primary backend, just
+	// not a mirror destination.
+	if !isMirrorableBackendRef(mirror.BackendRef) {
 		mirrorDropDiagnostic(sink, gatewayv1.RouteReasonInvalidKind, mirrorName,
-			"its backendRef is not a Service or ServiceImport")
+			"its backendRef must be a Service or ServiceImport (ExternalBackend is not supported as a mirror destination)")
 		slog.Warn("skipping mirror with unsupported backend kind",
 			"kind", mirror.BackendRef.Kind, "name", mirror.BackendRef.Name)
 

@@ -1267,6 +1267,55 @@ func TestConvertHTTPRoutes_MirrorServiceImportBackend(t *testing.T) {
 		"ServiceImport mirror destination must resolve under clusterset.local")
 }
 
+func TestConvertHTTPRoutes_MirrorExternalBackendDropped(t *testing.T) {
+	t.Parallel()
+
+	// An ExternalBackend has no in-cluster DNS form, so it cannot be a mirror
+	// destination (the converter has no client to resolve its real URL, and the
+	// sentinel-rewrite step does not walk mirror filters). It must be dropped
+	// with a report-only InvalidKind diagnostic, never silently mirrored to a
+	// bogus cluster-local address.
+	pathPrefix := gatewayv1.PathMatchPathPrefix
+	group := gatewayv1.Group("cf.k8s.lex.la")
+	kind := gatewayv1.Kind("ExternalBackend")
+
+	routes := []*gatewayv1.HTTPRoute{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "ext-mirror", Namespace: "default"},
+			Spec: gatewayv1.HTTPRouteSpec{
+				Hostnames: []gatewayv1.Hostname{"example.com"},
+				Rules: []gatewayv1.HTTPRouteRule{
+					{
+						Matches: []gatewayv1.HTTPRouteMatch{
+							{Path: &gatewayv1.HTTPPathMatch{Type: &pathPrefix, Value: new("/")}},
+						},
+						Filters: []gatewayv1.HTTPRouteFilter{
+							{
+								Type: gatewayv1.HTTPRouteFilterRequestMirror,
+								RequestMirror: &gatewayv1.HTTPRequestMirrorFilter{
+									BackendRef: gatewayv1.BackendObjectReference{
+										Group: &group, Kind: &kind, Name: "ext-api",
+									},
+								},
+							},
+						},
+						BackendRefs: []gatewayv1.HTTPBackendRef{backendRef("primary", 80, 1)},
+					},
+				},
+			},
+		},
+	}
+
+	cfg := proxy.ConvertHTTPRoutes(context.Background(), routes, "cluster.local", nil, nil, nil, nil)
+
+	require.Len(t, cfg.Rules, 1)
+
+	for _, f := range cfg.Rules[0].Filters {
+		assert.NotEqual(t, proxy.FilterRequestMirror, f.Type,
+			"a mirror to an ExternalBackend must be dropped, not built with a bogus cluster URL")
+	}
+}
+
 func TestConvertHTTPRoutes_MirrorFractionLargeDenominatorNoOverflow(t *testing.T) {
 	t.Parallel()
 

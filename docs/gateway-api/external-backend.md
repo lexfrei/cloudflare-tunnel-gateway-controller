@@ -79,6 +79,7 @@ spec:
 
 - A missing `ExternalBackend` surfaces `ResolvedRefs=False, BackendNotFound` on the referencing route and returns HTTP 500 for that backend's traffic fraction (other weighted backends keep serving).
 - An unauthorized cross-namespace reference surfaces `ResolvedRefs=False, RefNotPermitted`.
+- An `ExternalBackend` may be a primary `backendRef` but **not** a `RequestMirror` destination — a mirror target must resolve to an in-cluster DNS name (`Service` or `ServiceImport`). A mirror to an `ExternalBackend` is dropped with `Reason=InvalidKind`; the main request is unaffected.
 
 !!! note "No SSRF allowlist"
     The proxy egresses to the operator-authored URL directly. There is no built-in destination allowlist: an `ExternalBackend` is cluster/namespace-authored config, so the trust boundary is namespace write-access plus `ReferenceGrant`, identical to a `Service` of type `ExternalName`.

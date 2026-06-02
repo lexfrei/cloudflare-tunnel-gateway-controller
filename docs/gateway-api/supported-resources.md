@@ -67,9 +67,9 @@ All HTTPRoute matching and filter behavior is performed by the in-process L7 pro
 | `spec.rules[].matches[].method` | Yes | All HTTP methods |
 | `spec.rules[].filters` | Yes | See [Filters](#filters) |
 | `spec.rules[].backendRefs` | Yes | `Service`, `ServiceImport`, or `ExternalBackend` — see [Supported Backend Kinds](#supported-backend-kinds) |
-| `spec.rules[].backendRefs[].name` | Yes | Service name |
-| `spec.rules[].backendRefs[].namespace` | Yes | Cross-namespace refs require ReferenceGrant |
-| `spec.rules[].backendRefs[].port` | Yes | Service port |
+| `spec.rules[].backendRefs[].name` | Yes | Name of the Service / ServiceImport / ExternalBackend |
+| `spec.rules[].backendRefs[].namespace` | Yes | Cross-namespace refs require ReferenceGrant (keyed on the backend group/kind) |
+| `spec.rules[].backendRefs[].port` | Yes | Service / ServiceImport port; ignored for ExternalBackend (its `spec.port` wins) |
 | `spec.rules[].backendRefs[].weight` | Yes | True weighted traffic splitting across backends |
 | `spec.rules[].backendRefs[].filters` | Yes | Per-backend filters applied after rule-level filters |
 | `spec.rules[].timeouts` | Yes | Per-rule request and backend timeouts |

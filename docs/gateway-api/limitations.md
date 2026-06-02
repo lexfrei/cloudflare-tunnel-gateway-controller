@@ -214,7 +214,9 @@ Frontend listener `certificateRefs` are not in scope — Cloudflare terminates T
 
 The Gateway API `RequestMirror` filter sends a fire-and-forget copy of the request to a secondary backend. When a `BackendTLSPolicy` targets the mirror destination Service, the converter stamps the resulting `BackendTLSConfig` on the filter's `MirrorConfig` and the proxy borrows a per-cert `RoundTripper` from the same transport pool the main leg uses. The mirror dial then completes a TLS handshake exactly the way the main leg would, so a TLS-only mirror backend receives the mirrored copy correctly and the operator's TLS expectation is preserved on both legs.
 
-Cross-namespace mirror destinations follow the same `ReferenceGrant` rule as cross-namespace `backendRefs` — without a permitting grant the mirror is dropped entirely. A dropped mirror (non-Service kind, out-of-range port, or unauthorized cross-namespace ref) is surfaced as `ResolvedRefs=False` on the route with the mirror-specific reason (`InvalidKind` / `UnsupportedValue` / `RefNotPermitted`); the main request is unaffected, so the route stays `Accepted`.
+Cross-namespace mirror destinations follow the same `ReferenceGrant` rule as cross-namespace `backendRefs` — without a permitting grant the mirror is dropped entirely. A dropped mirror (unsupported kind, out-of-range port, or unauthorized cross-namespace ref) is surfaced as `ResolvedRefs=False` on the route with the mirror-specific reason (`InvalidKind` / `UnsupportedValue` / `RefNotPermitted`); the main request is unaffected, so the route stays `Accepted`.
+
+A mirror destination must be a `Service` or a `ServiceImport` — both resolve to an in-cluster DNS name the converter can build directly. An `ExternalBackend` is **not** supported as a mirror destination (only as a primary backend): its URL lives in the CRD spec, which the converter cannot read, and the sentinel-rewrite step does not walk mirror filters. An `ExternalBackend` mirror ref is therefore dropped with `Reason=InvalidKind`.
 
 ### Interaction with `appProtocol: https` / `HTTPS`
 
