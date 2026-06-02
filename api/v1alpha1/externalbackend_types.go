@@ -57,7 +57,10 @@ type ExternalBackendSpec struct {
 	Port int32 `json:"port"`
 
 	// Path is an optional base path prepended to the request path when the
-	// proxy dials the backend. Must begin with "/".
+	// proxy dials the backend. Must begin with "/". It may include a query
+	// string (e.g. "/v1?token=abc"); those query parameters are merged into
+	// every dialed request, with the request's own parameters taking
+	// precedence on a key conflict.
 	// +optional
 	// +kubebuilder:validation:Pattern=`^/.*$`
 	Path string `json:"path,omitempty"`

@@ -16,7 +16,7 @@ Use an `ExternalBackend` when the upstream is not a cluster `Service` and you ne
 | `scheme` | Yes | `http` or `https` (enum). |
 | `host` | Yes | Hostname or IP (no scheme, port, or path). Bracket IPv6 literals, e.g. `[2001:db8::1]`. |
 | `port` | Yes | TCP port, `1`–`65535`. |
-| `path` | No | Optional base path prepended when dialing; must begin with `/`. |
+| `path` | No | Optional base path prepended when dialing; must begin with `/`. May include a query string (e.g. `/v1?token=abc`) — see [Base path and query](#base-path-and-query). |
 
 ```yaml
 apiVersion: cf.k8s.lex.la/v1alpha1
@@ -30,6 +30,24 @@ spec:
   port: 8443
   path: /v1
 ```
+
+## Base path and query
+
+`spec.path` is prepended to the incoming request path when the proxy dials the backend, joined with exactly one slash. A request for `/users` against the example above is dialed as `/v1/users`.
+
+The base path may also carry a query string. Those parameters are merged into every dialed request, which is useful for pinning a fixed parameter (for example an API version or a static token) on all traffic to the backend:
+
+```yaml
+spec:
+  scheme: https
+  host: api.example.com
+  port: 8443
+  path: /v1?token=abc
+```
+
+A request for `/users?page=2` is dialed as `/v1/users?page=2&token=abc`.
+
+The request's own parameters take precedence: if a key appears both in the request and in the base query, the request value is kept and the base value is dropped. Base parameters whose keys are absent from the request are appended after the request's parameters, which are preserved verbatim.
 
 ## Referencing it from a route
 

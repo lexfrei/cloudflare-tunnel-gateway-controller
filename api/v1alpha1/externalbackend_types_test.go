@@ -31,6 +31,11 @@ func TestExternalBackendSpec_URL(t *testing.T) {
 			want: "https://api.example.com:8443/v1",
 		},
 		{
+			name: "base path with query preserved",
+			spec: ExternalBackendSpec{Scheme: ExternalBackendSchemeHTTPS, Host: "api.example.com", Port: 8443, Path: "/v1?token=abc"},
+			want: "https://api.example.com:8443/v1?token=abc",
+		},
+		{
 			name: "bracketed IPv6 literal preserved",
 			spec: ExternalBackendSpec{Scheme: ExternalBackendSchemeHTTP, Host: "[2001:db8::1]", Port: 80},
 			want: "http://[2001:db8::1]:80",
@@ -62,6 +67,10 @@ func TestExternalBackendSpec_Validate(t *testing.T) {
 		{
 			name: "valid https with path",
 			spec: ExternalBackendSpec{Scheme: ExternalBackendSchemeHTTPS, Host: "api.example.com", Port: 443, Path: "/base"},
+		},
+		{
+			name: "valid path with query string",
+			spec: ExternalBackendSpec{Scheme: ExternalBackendSchemeHTTPS, Host: "api.example.com", Port: 443, Path: "/base?token=abc"},
 		},
 		{
 			name:    "invalid scheme",

@@ -209,9 +209,10 @@ func buildBackendUpgradeRequest(req *http.Request, backendURL *url.URL) *http.Re
 		Path:     req.URL.Path,
 		RawQuery: req.URL.RawQuery,
 	}
-	// Prepend the backend's base path (e.g. an ExternalBackend's spec.path),
-	// matching the non-WebSocket Director; a no-op for Service/ServiceImport URLs.
-	applyBackendBasePath(outReq.URL, backendURL.Path)
+	// Prepend the backend's base path and merge its query (e.g. an
+	// ExternalBackend's spec.path "/v1?x=1"), matching the non-WebSocket
+	// Director; a no-op for Service/ServiceImport URLs.
+	applyBackendBasePath(outReq.URL, backendURL.Path, backendURL.RawQuery)
 	outReq.RequestURI = ""
 	outReq.Host = backendURL.Host
 

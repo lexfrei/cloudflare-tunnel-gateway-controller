@@ -597,7 +597,7 @@ func (h *Handler) createReverseProxy(backendURL *url.URL, protocol BackendProtoc
 		Director: func(req *http.Request) {
 			req.URL.Scheme = backendURL.Scheme
 			req.URL.Host = backendURL.Host
-			applyBackendBasePath(req.URL, backendURL.Path)
+			applyBackendBasePath(req.URL, backendURL.Path, backendURL.RawQuery)
 
 			// Preserve the original Host header per Gateway API spec.
 			// Only override it if a URLRewrite filter explicitly set a new host.
@@ -634,20 +634,59 @@ func (h *Handler) createReverseProxy(backendURL *url.URL, protocol BackendProtoc
 }
 
 // applyBackendBasePath prepends a backend base path (e.g. an ExternalBackend's
-// spec.path) to u's path, joining with exactly one slash — the single-host join
-// httputil.NewSingleHostReverseProxy performs that the hand-written Director
-// (and the WebSocket upgrade builder) otherwise skip. A base of "" or "/" — the
-// form every Service / ServiceImport backend URL takes — is a no-op, so only an
-// ExternalBackend with a declared base path is affected.
-func applyBackendBasePath(target *url.URL, base string) {
-	if base == "" || base == "/" {
-		return
+// spec.path) to target's path, joining with exactly one slash — the single-host
+// join httputil.NewSingleHostReverseProxy performs that the hand-written
+// Director (and the WebSocket upgrade builder) otherwise skip. It also merges
+// the base path's query parameters (the "x=1" in a spec.path of "/v1?x=1") into
+// target's query via mergeBackendBaseQuery. A base of "" or "/" with no query —
+// the form every Service / ServiceImport backend URL takes — is a no-op, so only
+// an ExternalBackend with a declared base path or query is affected.
+func applyBackendBasePath(target *url.URL, base, baseRawQuery string) {
+	if base != "" && base != "/" {
+		target.Path = joinBackendBasePath(base, target.Path)
+		if target.RawPath != "" {
+			target.RawPath = joinBackendBasePath(base, target.RawPath)
+		}
 	}
 
-	target.Path = joinBackendBasePath(base, target.Path)
-	if target.RawPath != "" {
-		target.RawPath = joinBackendBasePath(base, target.RawPath)
+	if baseRawQuery != "" {
+		target.RawQuery = mergeBackendBaseQuery(baseRawQuery, target.RawQuery)
 	}
+}
+
+// mergeBackendBaseQuery merges a backend base path's query parameters into the
+// request's query. Request parameters take precedence: a key present in the
+// request keeps its request value(s), and only base keys absent from the request
+// are appended. The request's RawQuery is preserved verbatim (order and
+// encoding) so an order-sensitive backend sees the client's parameters
+// unchanged, with the base defaults appended after, sorted among themselves.
+func mergeBackendBaseQuery(baseRawQuery, reqRawQuery string) string {
+	// A malformed base query yields whatever ParseQuery could decode; an empty
+	// result simply leaves the request query untouched.
+	baseValues, _ := url.ParseQuery(baseRawQuery)
+	if len(baseValues) == 0 {
+		return reqRawQuery
+	}
+
+	reqValues, _ := url.ParseQuery(reqRawQuery)
+
+	extra := url.Values{}
+
+	for key, vals := range baseValues {
+		if _, present := reqValues[key]; !present {
+			extra[key] = vals
+		}
+	}
+
+	if len(extra) == 0 {
+		return reqRawQuery
+	}
+
+	if reqRawQuery == "" {
+		return extra.Encode()
+	}
+
+	return reqRawQuery + "&" + extra.Encode()
 }
 
 // joinBackendBasePath joins a base path and a request path with exactly one
