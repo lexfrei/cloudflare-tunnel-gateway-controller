@@ -19,7 +19,10 @@ var (
 )
 
 func addKnownTypes(scheme *runtime.Scheme) error {
-	scheme.AddKnownTypes(GroupVersion, &GatewayClassConfig{}, &GatewayClassConfigList{})
+	scheme.AddKnownTypes(GroupVersion,
+		&GatewayClassConfig{}, &GatewayClassConfigList{},
+		&ExternalBackend{}, &ExternalBackendList{},
+	)
 	metav1.AddToGroupVersion(scheme, GroupVersion)
 
 	return nil
