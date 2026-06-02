@@ -22,6 +22,12 @@ rules:
   - apiGroups: ["gateway.networking.k8s.io"]
     resources: ["backendtlspolicies"]
     verbs: ["get", "list", "watch"]
+  # ServiceImport (multicluster.x-k8s.io): a backendRef may target an imported
+  # multicluster Service. The controller reads spec.ports to validate the
+  # requested port and resolves a clusterset.local backend URL. Read-only.
+  - apiGroups: ["multicluster.x-k8s.io"]
+    resources: ["serviceimports"]
+    verbs: ["get", "list", "watch"]
   # ListenerSet: the ListenerSetReconciler watches ListenerSet resources,
   # validates them against the parent Gateway's allowedListeners filter, and
   # surfaces Accepted / Programmed / per-entry conditions. Read-only on the
@@ -80,6 +86,12 @@ rules:
   - apiGroups: ["cf.k8s.lex.la"]
     resources: ["gatewayclassconfigs/status"]
     verbs: ["get", "update", "patch"]
+  # ExternalBackend CRD: a backendRef may target an out-of-cluster HTTP(S)
+  # endpoint declared by an ExternalBackend. The controller reads its spec to
+  # resolve the backend URL. Read-only.
+  - apiGroups: ["cf.k8s.lex.la"]
+    resources: ["externalbackends"]
+    verbs: ["get", "list", "watch"]
   # Leader election
   - apiGroups: ["coordination.k8s.io"]
     resources: ["leases"]
