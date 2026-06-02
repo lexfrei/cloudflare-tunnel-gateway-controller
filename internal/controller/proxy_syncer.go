@@ -764,6 +764,11 @@ func (s *ProxySyncer) buildProxyConfig(
 	// nonexistent and endpoint-less.
 	markZeroEndpointBackends(ctx, s.k8sClient, cfg, s.clusterDomain, routes, grpcRoutes)
 
+	// Rewrite ExternalBackend sentinel URLs to the real scheme://host:port/path
+	// from each ExternalBackend's spec (the converter has no client and emits a
+	// sentinel). A missing ExternalBackend is marked 500 for its fraction.
+	resolveExternalBackends(ctx, s.k8sClient, cfg)
+
 	// Mark whether any GRPCRoute contributed to this config so the proxy can
 	// upgrade an "auto"/unset edge transport to http2 at startup (gRPC needs
 	// http2; cloudflared drops trailers over QUIC). gRPC rules look identical

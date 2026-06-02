@@ -89,6 +89,10 @@ type routeControllerSetupParams struct {
 	// marking refreshes when pods go Ready/NotReady. Gated like the Service
 	// watch: nil means no EndpointSlice watch is registered.
 	findRoutesForEndpointSlice handler.MapFunc
+	// findRoutesForExternalBackend enqueues routes referencing a changed
+	// ExternalBackend, so editing or creating one re-syncs the proxy config and
+	// clears a route's BackendNotFound condition. nil means no watch.
+	findRoutesForExternalBackend handler.MapFunc
 	// watchBackendTLS adds the BackendTLSPolicy + CA ConfigMap watches. Both
 	// HTTPRoute and GRPCRoute now honor BackendTLSPolicy (gRPC backends are
 	// upgraded to TLS + ALPN-negotiated HTTP/2 when a policy targets the
@@ -168,6 +172,13 @@ func addProxyOnlyWatches(
 		builder = builder.Watches(
 			&discoveryv1.EndpointSlice{},
 			handler.EnqueueRequestsFromMapFunc(params.findRoutesForEndpointSlice),
+		)
+	}
+
+	if params.findRoutesForExternalBackend != nil {
+		builder = builder.Watches(
+			&v1alpha1.ExternalBackend{},
+			handler.EnqueueRequestsFromMapFunc(params.findRoutesForExternalBackend),
 		)
 	}
 

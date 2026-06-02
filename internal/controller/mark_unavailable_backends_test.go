@@ -74,6 +74,37 @@ func TestMarkUnavailableBackends_AllInvalidAllMarked(t *testing.T) {
 	}
 }
 
+// TestMarkUnavailableBackends_ServiceImportDomain proves a ServiceImport
+// failed-ref is matched against the clusterset host (carried on the ref's
+// Domain), not the local cluster domain — without it the host would not match
+// the converter-synthesized clusterset.local URL and the 500 would be lost.
+func TestMarkUnavailableBackends_ServiceImportDomain(t *testing.T) {
+	t.Parallel()
+
+	cfg := &proxy.Config{
+		Rules: []proxy.RouteRule{
+			{
+				Backends: []proxy.BackendRef{
+					{URL: "http://imported.default.svc.clusterset.local:80", Weight: 1},
+				},
+			},
+		},
+	}
+
+	failedRefs := []ingress.BackendRefError{
+		{
+			RouteNamespace: "default", RouteName: "r",
+			BackendName: "imported", BackendNS: "default", Port: 80,
+			Reason: "BackendNotFound", Domain: "clusterset.local",
+		},
+	}
+
+	markUnavailableBackends(cfg, "cluster.local", failedRefs)
+
+	assert.Equal(t, http.StatusInternalServerError, cfg.Rules[0].Backends[0].UnavailableStatus,
+		"a ServiceImport backend must be marked 500 via its clusterset host")
+}
+
 // TestMarkUnavailableBackends_NoFailedRefsNoop proves a clean config is left
 // untouched when there are no failed refs.
 func TestMarkUnavailableBackends_NoFailedRefsNoop(t *testing.T) {

@@ -16,6 +16,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 	gatewayv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
+	mcsv1alpha1 "sigs.k8s.io/mcs-api/pkg/apis/v1alpha1"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/api/v1alpha1"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/cfmetrics"
@@ -37,6 +38,10 @@ func installSchemes(mgr ctrl.Manager) error {
 
 	if err := v1alpha1.AddToScheme(mgr.GetScheme()); err != nil {
 		return errors.Wrap(err, "failed to add GatewayClassConfig scheme")
+	}
+
+	if err := mcsv1alpha1.Install(mgr.GetScheme()); err != nil {
+		return errors.Wrap(err, "failed to add mcs-api (ServiceImport) scheme")
 	}
 
 	return nil

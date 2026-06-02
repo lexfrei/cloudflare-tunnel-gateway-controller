@@ -2006,6 +2006,50 @@ func TestFindRoutesForService_Direct(t *testing.T) {
 	})
 }
 
+func TestFindRoutesForExternalBackend_Direct(t *testing.T) {
+	t.Parallel()
+
+	group := gatewayv1.Group("cf.k8s.lex.la")
+	kind := gatewayv1.Kind("ExternalBackend")
+
+	mkRoute := func(name, refName string) *gatewayv1.HTTPRoute {
+		return &gatewayv1.HTTPRoute{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"},
+			Spec: gatewayv1.HTTPRouteSpec{
+				Rules: []gatewayv1.HTTPRouteRule{{BackendRefs: []gatewayv1.HTTPBackendRef{
+					{BackendRef: gatewayv1.BackendRef{BackendObjectReference: gatewayv1.BackendObjectReference{
+						Group: &group, Kind: &kind, Name: gatewayv1.ObjectName(refName),
+					}}},
+				}}},
+			},
+		}
+	}
+
+	external := &v1alpha1.ExternalBackend{ObjectMeta: metav1.ObjectMeta{Name: "ext-x", Namespace: "default"}}
+
+	routes := []Route{
+		HTTPRouteWrapper{mkRoute("hit", "ext-x")},
+		HTTPRouteWrapper{mkRoute("miss", "ext-other")},
+	}
+
+	t.Run("matches routes referencing the ExternalBackend", func(t *testing.T) {
+		t.Parallel()
+
+		got := FindRoutesForExternalBackend(external, routes)
+		require.Len(t, got, 1)
+		assert.Equal(t, "default/hit", got[0].String())
+	})
+
+	t.Run("non-ExternalBackend object returns nil", func(t *testing.T) {
+		t.Parallel()
+
+		got := FindRoutesForExternalBackend(&corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{Name: "cm", Namespace: "default"},
+		}, routes)
+		assert.Nil(t, got)
+	})
+}
+
 func TestGRPCRouteWrapper_ReferencesService(t *testing.T) {
 	t.Parallel()
 

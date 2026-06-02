@@ -1220,6 +1220,102 @@ func TestConvertHTTPRoutes_MirrorWithPercent(t *testing.T) {
 	assert.Equal(t, int32(20), *cfg.Rules[0].Filters[0].RequestMirror.Percent)
 }
 
+func TestConvertHTTPRoutes_MirrorServiceImportBackend(t *testing.T) {
+	t.Parallel()
+
+	// A ServiceImport mirror destination is a supported kind: the mirror is kept
+	// (not dropped) and its URL resolves under the clusterset domain.
+	pathPrefix := gatewayv1.PathMatchPathPrefix
+	port := gatewayv1.PortNumber(80)
+	siGroup := gatewayv1.Group("multicluster.x-k8s.io")
+	siKind := gatewayv1.Kind("ServiceImport")
+
+	routes := []*gatewayv1.HTTPRoute{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "import-mirror", Namespace: "default"},
+			Spec: gatewayv1.HTTPRouteSpec{
+				Hostnames: []gatewayv1.Hostname{"example.com"},
+				Rules: []gatewayv1.HTTPRouteRule{
+					{
+						Matches: []gatewayv1.HTTPRouteMatch{
+							{Path: &gatewayv1.HTTPPathMatch{Type: &pathPrefix, Value: new("/")}},
+						},
+						Filters: []gatewayv1.HTTPRouteFilter{
+							{
+								Type: gatewayv1.HTTPRouteFilterRequestMirror,
+								RequestMirror: &gatewayv1.HTTPRequestMirrorFilter{
+									BackendRef: gatewayv1.BackendObjectReference{
+										Group: &siGroup, Kind: &siKind, Name: "mirror-import", Port: &port,
+									},
+								},
+							},
+						},
+						BackendRefs: []gatewayv1.HTTPBackendRef{backendRef("primary", 80, 1)},
+					},
+				},
+			},
+		},
+	}
+
+	cfg := proxy.ConvertHTTPRoutes(context.Background(), routes, "cluster.local", nil, nil, nil, nil)
+
+	require.Len(t, cfg.Rules, 1)
+	require.Len(t, cfg.Rules[0].Filters, 1)
+	require.NotNil(t, cfg.Rules[0].Filters[0].RequestMirror, "ServiceImport mirror must not be dropped")
+	assert.Equal(t, "http://mirror-import.default.svc.clusterset.local:80",
+		cfg.Rules[0].Filters[0].RequestMirror.BackendURL,
+		"ServiceImport mirror destination must resolve under clusterset.local")
+}
+
+func TestConvertHTTPRoutes_MirrorExternalBackendDropped(t *testing.T) {
+	t.Parallel()
+
+	// An ExternalBackend has no in-cluster DNS form, so it cannot be a mirror
+	// destination (the converter has no client to resolve its real URL, and the
+	// sentinel-rewrite step does not walk mirror filters). It must be dropped
+	// with a report-only InvalidKind diagnostic, never silently mirrored to a
+	// bogus cluster-local address.
+	pathPrefix := gatewayv1.PathMatchPathPrefix
+	group := gatewayv1.Group("cf.k8s.lex.la")
+	kind := gatewayv1.Kind("ExternalBackend")
+
+	routes := []*gatewayv1.HTTPRoute{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "ext-mirror", Namespace: "default"},
+			Spec: gatewayv1.HTTPRouteSpec{
+				Hostnames: []gatewayv1.Hostname{"example.com"},
+				Rules: []gatewayv1.HTTPRouteRule{
+					{
+						Matches: []gatewayv1.HTTPRouteMatch{
+							{Path: &gatewayv1.HTTPPathMatch{Type: &pathPrefix, Value: new("/")}},
+						},
+						Filters: []gatewayv1.HTTPRouteFilter{
+							{
+								Type: gatewayv1.HTTPRouteFilterRequestMirror,
+								RequestMirror: &gatewayv1.HTTPRequestMirrorFilter{
+									BackendRef: gatewayv1.BackendObjectReference{
+										Group: &group, Kind: &kind, Name: "ext-api",
+									},
+								},
+							},
+						},
+						BackendRefs: []gatewayv1.HTTPBackendRef{backendRef("primary", 80, 1)},
+					},
+				},
+			},
+		},
+	}
+
+	cfg := proxy.ConvertHTTPRoutes(context.Background(), routes, "cluster.local", nil, nil, nil, nil)
+
+	require.Len(t, cfg.Rules, 1)
+
+	for _, f := range cfg.Rules[0].Filters {
+		assert.NotEqual(t, proxy.FilterRequestMirror, f.Type,
+			"a mirror to an ExternalBackend must be dropped, not built with a bogus cluster URL")
+	}
+}
+
 func TestConvertHTTPRoutes_MirrorFractionLargeDenominatorNoOverflow(t *testing.T) {
 	t.Parallel()
 
@@ -1828,6 +1924,136 @@ func TestConvertHTTPRoutes_NonServiceBackendSkipped(t *testing.T) {
 	require.Len(t, cfg.Rules[0].Backends, 1, "a weight>0 invalid backend stays in the pool marked 500")
 	assert.Equal(t, http.StatusInternalServerError, cfg.Rules[0].Backends[0].UnavailableStatus,
 		"a non-Service (invalid-kind) backend must be marked 500, not dropped")
+}
+
+func TestConvertHTTPRoutes_ServiceImportBackendResolved(t *testing.T) {
+	t.Parallel()
+
+	// A multicluster.x-k8s.io ServiceImport backend is a supported kind: the
+	// converter accepts it and synthesizes a clusterset.local URL so the proxy
+	// dials the imported service via multicluster DNS. It must NOT be marked 500.
+	siGroup := gatewayv1.Group("multicluster.x-k8s.io")
+	siKind := gatewayv1.Kind("ServiceImport")
+	routes := []*gatewayv1.HTTPRoute{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "import-route", Namespace: "default"},
+			Spec: gatewayv1.HTTPRouteSpec{
+				Hostnames: []gatewayv1.Hostname{"app.example.com"},
+				Rules: []gatewayv1.HTTPRouteRule{
+					{
+						BackendRefs: []gatewayv1.HTTPBackendRef{
+							{
+								BackendRef: gatewayv1.BackendRef{
+									BackendObjectReference: gatewayv1.BackendObjectReference{
+										Group: &siGroup,
+										Kind:  &siKind,
+										Name:  "imported",
+										Port:  new(gatewayv1.PortNumber(8080)),
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	cfg := proxy.ConvertHTTPRoutes(context.Background(), routes, "cluster.local", nil, nil, nil, nil)
+
+	require.Len(t, cfg.Rules, 1)
+	require.Len(t, cfg.Rules[0].Backends, 1)
+	assert.Equal(t, 0, cfg.Rules[0].Backends[0].UnavailableStatus,
+		"a ServiceImport backend is supported and must not be marked 500")
+	assert.Equal(t, "http://imported.default.svc.clusterset.local:8080", cfg.Rules[0].Backends[0].URL,
+		"ServiceImport must resolve to a clusterset.local URL, not the local cluster domain")
+}
+
+func TestConvertHTTPRoutes_ExternalBackendSentinel(t *testing.T) {
+	t.Parallel()
+
+	// An ExternalBackend's real URL lives in its spec, which the converter cannot
+	// read; it emits a sentinel the controller rewrites. The backend is accepted
+	// (not marked 500) and carries the sentinel URL.
+	group := gatewayv1.Group("cf.k8s.lex.la")
+	kind := gatewayv1.Kind("ExternalBackend")
+	routes := []*gatewayv1.HTTPRoute{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "ext-route", Namespace: "default"},
+			Spec: gatewayv1.HTTPRouteSpec{
+				Hostnames: []gatewayv1.Hostname{"app.example.com"},
+				Rules: []gatewayv1.HTTPRouteRule{
+					{
+						BackendRefs: []gatewayv1.HTTPBackendRef{
+							{
+								BackendRef: gatewayv1.BackendRef{
+									BackendObjectReference: gatewayv1.BackendObjectReference{
+										Group: &group,
+										Kind:  &kind,
+										Name:  "ext-api",
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	cfg := proxy.ConvertHTTPRoutes(context.Background(), routes, "cluster.local", nil, nil, nil, nil)
+
+	require.Len(t, cfg.Rules, 1)
+	require.Len(t, cfg.Rules[0].Backends, 1)
+	assert.Equal(t, 0, cfg.Rules[0].Backends[0].UnavailableStatus,
+		"an ExternalBackend is a supported kind and must not be marked 500")
+	assert.Equal(t, proxy.ExternalBackendSentinelURL("default", "ext-api"), cfg.Rules[0].Backends[0].URL,
+		"an ExternalBackend must carry the sentinel URL for the controller to rewrite")
+}
+
+func TestConvertHTTPRoutes_ExternalBackendCrossNamespaceRejected(t *testing.T) {
+	t.Parallel()
+
+	// A cross-namespace ExternalBackend ref the validator denies must be marked
+	// 500 for its traffic fraction (it carries weight), never emitting a sentinel
+	// the controller would resolve.
+	group := gatewayv1.Group("cf.k8s.lex.la")
+	kind := gatewayv1.Kind("ExternalBackend")
+	otherNS := gatewayv1.Namespace("other-ns")
+
+	routes := []*gatewayv1.HTTPRoute{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "ext-xns", Namespace: "default"},
+			Spec: gatewayv1.HTTPRouteSpec{
+				Hostnames: []gatewayv1.Hostname{"app.example.com"},
+				Rules: []gatewayv1.HTTPRouteRule{
+					{
+						BackendRefs: []gatewayv1.HTTPBackendRef{
+							{
+								BackendRef: gatewayv1.BackendRef{
+									BackendObjectReference: gatewayv1.BackendObjectReference{
+										Group: &group, Kind: &kind, Name: "ext-api", Namespace: &otherNS,
+									},
+									Weight: new(int32(1)),
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	rejectAll := func(_ context.Context, _ string, _ gatewayv1.BackendObjectReference) bool {
+		return false
+	}
+
+	cfg := proxy.ConvertHTTPRoutes(context.Background(), routes, "cluster.local", rejectAll, nil, nil, nil)
+
+	require.Len(t, cfg.Rules, 1)
+	require.Len(t, cfg.Rules[0].Backends, 1)
+	assert.Equal(t, http.StatusInternalServerError, cfg.Rules[0].Backends[0].UnavailableStatus,
+		"a denied cross-namespace ExternalBackend ref must be marked 500, not emitted as a sentinel")
 }
 
 func TestConvertQueryMatch(t *testing.T) {

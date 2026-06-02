@@ -306,6 +306,9 @@ type Route interface {
 	// ReferencesService reports whether any backendRef on this route resolves
 	// to the Service identified by (namespace, name).
 	ReferencesService(namespace, name string) bool
+	// ReferencesExternalBackend reports whether any backendRef on this route
+	// resolves to the ExternalBackend identified by (namespace, name).
+	ReferencesExternalBackend(namespace, name string) bool
 }
 
 // FindRoutesForService returns reconcile requests for routes that reference the
@@ -325,6 +328,38 @@ func FindRoutesForService(
 
 	for _, route := range routes {
 		if !route.ReferencesService(svc.Namespace, svc.Name) {
+			continue
+		}
+
+		requests = append(requests, reconcile.Request{
+			NamespacedName: client.ObjectKey{
+				Name:      route.GetName(),
+				Namespace: route.GetNamespace(),
+			},
+		})
+	}
+
+	return requests
+}
+
+// FindRoutesForExternalBackend returns reconcile requests for routes that
+// reference the changed ExternalBackend object in any of their backendRefs.
+// Editing an ExternalBackend (e.g. repointing its host) must re-sync every
+// route that targets it, and creating a previously-missing ExternalBackend must
+// clear the route's BackendNotFound condition.
+func FindRoutesForExternalBackend(
+	obj client.Object,
+	routes []Route,
+) []reconcile.Request {
+	external, ok := obj.(*v1alpha1.ExternalBackend)
+	if !ok {
+		return nil
+	}
+
+	var requests []reconcile.Request
+
+	for _, route := range routes {
+		if !route.ReferencesExternalBackend(external.Namespace, external.Name) {
 			continue
 		}
 
@@ -428,6 +463,22 @@ func backendRefMatchesService(ref *gatewayv1.BackendRef, routeNamespace, svcName
 	return refNS == svcNamespace && string(ref.Name) == svcName
 }
 
+// backendRefMatchesExternalBackend reports whether a backendRef points at the
+// ExternalBackend identified by (ebNamespace, ebName). routeNamespace is the
+// fallback used when the backendRef omits an explicit namespace.
+func backendRefMatchesExternalBackend(ref *gatewayv1.BackendRef, routeNamespace, ebNamespace, ebName string) bool {
+	if !proxy.IsExternalBackendRef(ref.BackendObjectReference) {
+		return false
+	}
+
+	refNS := routeNamespace
+	if ref.Namespace != nil {
+		refNS = string(*ref.Namespace)
+	}
+
+	return refNS == ebNamespace && string(ref.Name) == ebName
+}
+
 // extractCrossNamespaceBackends returns unique namespaces from backend refs
 // that differ from the route's own namespace.
 func extractCrossNamespaceBackends(routeNamespace string, refs []gatewayv1.BackendRef) []string {
@@ -485,6 +536,20 @@ func (w HTTPRouteWrapper) ReferencesService(namespace, name string) bool {
 	return false
 }
 
+// ReferencesExternalBackend reports whether this HTTPRoute has any
+// ExternalBackend backendRef matching (namespace, name).
+func (w HTTPRouteWrapper) ReferencesExternalBackend(namespace, name string) bool {
+	for ruleIdx := range w.Spec.Rules {
+		for refIdx := range w.Spec.Rules[ruleIdx].BackendRefs {
+			if backendRefMatchesExternalBackend(&w.Spec.Rules[ruleIdx].BackendRefs[refIdx].BackendRef, w.Namespace, namespace, name) {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
 // GRPCRouteWrapper wraps GRPCRoute to implement Route.
 type GRPCRouteWrapper struct {
 	*gatewayv1.GRPCRoute
@@ -514,6 +579,20 @@ func (w GRPCRouteWrapper) ReferencesService(namespace, name string) bool {
 	for ruleIdx := range w.Spec.Rules {
 		for refIdx := range w.Spec.Rules[ruleIdx].BackendRefs {
 			if backendRefMatchesService(&w.Spec.Rules[ruleIdx].BackendRefs[refIdx].BackendRef, w.Namespace, namespace, name) {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// ReferencesExternalBackend reports whether this GRPCRoute has any
+// ExternalBackend backendRef matching (namespace, name).
+func (w GRPCRouteWrapper) ReferencesExternalBackend(namespace, name string) bool {
+	for ruleIdx := range w.Spec.Rules {
+		for refIdx := range w.Spec.Rules[ruleIdx].BackendRefs {
+			if backendRefMatchesExternalBackend(&w.Spec.Rules[ruleIdx].BackendRefs[refIdx].BackendRef, w.Namespace, namespace, name) {
 				return true
 			}
 		}

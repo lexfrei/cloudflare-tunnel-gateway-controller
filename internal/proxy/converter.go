@@ -576,9 +576,23 @@ func convertURLRewriteFilter(rewrite *gatewayv1.HTTPURLRewriteFilter) *RouteFilt
 	}
 }
 
+const (
+	// ServiceImportGroup is the API group of a multicluster.x-k8s.io ServiceImport.
+	ServiceImportGroup = "multicluster.x-k8s.io"
+	// ServiceImportKind is the Kind of a ServiceImport backendRef.
+	ServiceImportKind = "ServiceImport"
+	// ClustersetDomain is the DNS domain under which multicluster (ServiceImport)
+	// Services resolve, per the KEP-1645 / mcs-api convention.
+	ClustersetDomain = "clusterset.local"
+)
+
 // IsServiceBackendRef reports whether the BackendObjectReference points at a
 // core Service (the default Kind when Group/Kind are nil). Exported so the
 // controller package can reuse the same predicate without duplicating it.
+//
+// This predicate intentionally stays Service-only: callers that key Service
+// EndpointSlice lookups, the zero-endpoint 503 probe, or BackendTLSPolicy
+// targeting on it must NOT begin matching ServiceImport/ExternalBackend.
 func IsServiceBackendRef(ref gatewayv1.BackendObjectReference) bool {
 	if ref.Group != nil && *ref.Group != "" && *ref.Group != "core" {
 		return false
@@ -589,6 +603,40 @@ func IsServiceBackendRef(ref gatewayv1.BackendObjectReference) bool {
 	}
 
 	return true
+}
+
+// IsServiceImportBackendRef reports whether the ref targets a
+// multicluster.x-k8s.io ServiceImport. Unlike Service, ServiceImport has no
+// implicit default, so the group must be set explicitly.
+func IsServiceImportBackendRef(ref gatewayv1.BackendObjectReference) bool {
+	return ref.Group != nil && string(*ref.Group) == ServiceImportGroup &&
+		ref.Kind != nil && string(*ref.Kind) == ServiceImportKind
+}
+
+// IsSupportedBackendRef reports whether the ref is a backend kind the proxy can
+// resolve to a dialable URL: a core Service, a multicluster ServiceImport, or a
+// cf.k8s.lex.la ExternalBackend.
+func IsSupportedBackendRef(ref gatewayv1.BackendObjectReference) bool {
+	return IsServiceBackendRef(ref) || IsServiceImportBackendRef(ref) || IsExternalBackendRef(ref)
+}
+
+// isMirrorableBackendRef reports whether the ref can be a RequestMirror
+// destination. Only kinds with an in-cluster DNS form qualify (Service,
+// ServiceImport): the converter builds the mirror URL directly via
+// buildServiceURL, with no controller-side sentinel rewrite, so an
+// ExternalBackend — whose URL lives in its spec — cannot be a mirror target.
+func isMirrorableBackendRef(ref gatewayv1.BackendObjectReference) bool {
+	return IsServiceBackendRef(ref) || IsServiceImportBackendRef(ref)
+}
+
+// backendDomain returns the DNS domain the backend resolves under: the
+// clusterset domain for a ServiceImport, otherwise the local cluster domain.
+func backendDomain(ref gatewayv1.BackendObjectReference, clusterDomain string) string {
+	if IsServiceImportBackendRef(ref) {
+		return ClustersetDomain
+	}
+
+	return clusterDomain
 }
 
 // mirrorDropDiagnostic records a ResolvedRefs-target diagnostic for a dropped
@@ -617,10 +665,16 @@ func validateMirrorBackendRef(
 ) (string, int32, bool) {
 	mirrorName := string(mirror.BackendRef.Name)
 
-	if !IsServiceBackendRef(mirror.BackendRef) {
+	// A mirror destination must have an in-cluster DNS form (Service or
+	// ServiceImport). An ExternalBackend is excluded: the converter has no
+	// client to resolve its real URL and the sentinel-rewrite step does not walk
+	// mirror filters, so accepting it would silently mirror to a bogus
+	// cluster-local address. ExternalBackend is a valid primary backend, just
+	// not a mirror destination.
+	if !isMirrorableBackendRef(mirror.BackendRef) {
 		mirrorDropDiagnostic(sink, gatewayv1.RouteReasonInvalidKind, mirrorName,
-			"its backendRef is not a Service")
-		slog.Warn("skipping mirror with non-Service backend kind",
+			"its backendRef must be a Service or ServiceImport (ExternalBackend is not supported as a mirror destination)")
+		slog.Warn("skipping mirror with unsupported backend kind",
 			"kind", mirror.BackendRef.Kind, "name", mirror.BackendRef.Name)
 
 		return "", 0, false
@@ -672,7 +726,7 @@ func convertMirrorFilter(
 		return nil
 	}
 
-	mirrorURL := buildServiceURL(string(mirror.BackendRef.Name), mirrorNS, mirrorPort, clusterDomain)
+	mirrorURL := buildServiceURL(string(mirror.BackendRef.Name), mirrorNS, mirrorPort, backendDomain(mirror.BackendRef, clusterDomain))
 
 	mirrorConfig := &MirrorConfig{
 		BackendURL: mirrorURL,
@@ -967,8 +1021,15 @@ func convertBackendRef(
 	// the valid siblings). A weight>0 invalid ref therefore stays in the
 	// weighted pool marked 500; a weight-0 ref carries no traffic and is
 	// dropped. markInvalidBackend enforces that.
-	if !IsServiceBackendRef(backend.BackendObjectReference) {
+	if !IsSupportedBackendRef(backend.BackendObjectReference) {
 		return markInvalidBackend(result.Weight, serviceName, svcNamespace, port, clusterDomain, "unsupported backend kind")
+	}
+
+	// An ExternalBackend's URL lives in its spec (resolved controller-side); its
+	// backendRef port is ignored in favour of spec.port, so skip port validation.
+	if IsExternalBackendRef(backend.BackendObjectReference) {
+		return convertExternalBackendRef(ctx, result.Weight, backend, namespace, svcNamespace, serviceName,
+			clusterDomain, validator, tlsResolver, clientCert, sink)
 	}
 
 	if !validatePort(port) {
@@ -980,7 +1041,7 @@ func convertBackendRef(
 			"cross-namespace reference not permitted by ReferenceGrant")
 	}
 
-	result.URL = buildServiceURL(serviceName, svcNamespace, port, clusterDomain)
+	result.URL = buildServiceURL(serviceName, svcNamespace, port, backendDomain(backend.BackendObjectReference, clusterDomain))
 
 	// Resolve TLS first so the protocol resolver can know whether to silently
 	// pass through `appProtocol: https` (policy attached → suppressed) or warn
@@ -999,17 +1060,57 @@ func convertBackendRef(
 		result.UnavailableStatus = http.StatusBadGateway
 	}
 
-	var backendFiltersFailClosed bool
-
-	result.Filters, backendFiltersFailClosed = convertBackendFilters(ctx, backend.Filters, namespace, clusterDomain, validator, tlsResolver, clientCert, sink)
-	if backendFiltersFailClosed {
-		// An unsupported per-backend filter must fail closed for this backend's
-		// traffic fraction, exactly like an invalid backendRef: requests routed
-		// to it receive HTTP 500 rather than being served without the filter.
-		result.UnavailableStatus = http.StatusInternalServerError
-	}
+	applyBackendFilters(ctx, &result, backend.Filters, namespace, clusterDomain, validator, tlsResolver, clientCert, sink)
 
 	return result, true
+}
+
+// convertExternalBackendRef builds a BackendRef for an ExternalBackend ref. The
+// converter has no Kubernetes client, so it cannot read the ExternalBackend's
+// scheme/host/port; it emits a sentinel URL (encoding namespace/name) that the
+// controller rewrites to the real URL before pushing the config. Cross-namespace
+// refs are still validated here against a ReferenceGrant keyed on the
+// ExternalBackend group/kind; per-backend filters are applied as usual.
+func convertExternalBackendRef(
+	ctx context.Context,
+	weight int32,
+	backend *gatewayv1.HTTPBackendRef,
+	namespace, svcNamespace, serviceName, clusterDomain string,
+	validator BackendRefValidator,
+	tlsResolver BackendTLSResolver,
+	clientCert *ClientCertConfig,
+	sink *diagSink,
+) (BackendRef, bool) {
+	if !validateCrossNamespace(ctx, svcNamespace, namespace, serviceName, backend.BackendObjectReference, validator) {
+		return markInvalidBackend(weight, serviceName, svcNamespace, defaultServicePort, clusterDomain,
+			"cross-namespace reference not permitted by ReferenceGrant")
+	}
+
+	result := BackendRef{Weight: weight, URL: ExternalBackendSentinelURL(svcNamespace, serviceName)}
+	applyBackendFilters(ctx, &result, backend.Filters, namespace, clusterDomain, validator, tlsResolver, clientCert, sink)
+
+	return result, true
+}
+
+// applyBackendFilters resolves per-backend HTTPRoute filters onto result. An
+// unsupported filter fails closed for this backend's traffic fraction (HTTP
+// 500), matching an invalid backendRef rather than serving without the filter.
+func applyBackendFilters(
+	ctx context.Context,
+	result *BackendRef,
+	filters []gatewayv1.HTTPRouteFilter,
+	namespace, clusterDomain string,
+	validator BackendRefValidator,
+	tlsResolver BackendTLSResolver,
+	clientCert *ClientCertConfig,
+	sink *diagSink,
+) {
+	var failClosed bool
+
+	result.Filters, failClosed = convertBackendFilters(ctx, filters, namespace, clusterDomain, validator, tlsResolver, clientCert, sink)
+	if failClosed {
+		result.UnavailableStatus = http.StatusInternalServerError
+	}
 }
 
 // markInvalidBackend handles a backendRef that failed validation (unsupported
