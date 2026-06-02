@@ -93,6 +93,16 @@ func TestExternalBackendSpec_Validate(t *testing.T) {
 			wantErr: true,
 			wantSub: "must begin with",
 		},
+		{
+			name:    "host with embedded port rejected",
+			spec:    ExternalBackendSpec{Scheme: ExternalBackendSchemeHTTP, Host: "internal-api:8080", Port: 80},
+			wantErr: true,
+			wantSub: "valid URL",
+		},
+		{
+			name: "bracketed IPv6 literal accepted",
+			spec: ExternalBackendSpec{Scheme: ExternalBackendSchemeHTTPS, Host: "[2001:db8::1]", Port: 443},
+		},
 	}
 
 	for _, tt := range tests {

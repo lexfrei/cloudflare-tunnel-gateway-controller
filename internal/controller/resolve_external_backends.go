@@ -46,6 +46,18 @@ func resolveExternalBackends(ctx context.Context, c client.Reader, cfg *proxy.Co
 				continue
 			}
 
+			// A malformed spec (e.g. a bare host:port that slipped past the CRD
+			// host pattern) would dial a URL that fails to parse and 500 opaquely.
+			// Mark it 500 here without pushing the bad URL; the ingress builder
+			// surfaces the matching ResolvedRefs=False on the route.
+			if external.Spec.Validate() != nil {
+				if backends[backendIdx].UnavailableStatus == 0 {
+					backends[backendIdx].UnavailableStatus = http.StatusInternalServerError
+				}
+
+				continue
+			}
+
 			backends[backendIdx].URL = external.Spec.URL()
 
 			if backends[backendIdx].Protocol == proxy.BackendProtocolH2C &&

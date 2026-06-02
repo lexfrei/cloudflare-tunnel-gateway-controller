@@ -61,6 +61,32 @@ func TestResolveExternalBackends_MissingMarks500(t *testing.T) {
 		"a missing ExternalBackend must be marked 500 for its traffic fraction")
 }
 
+func TestResolveExternalBackends_MalformedMarks500(t *testing.T) {
+	t.Parallel()
+
+	// host:port in the host field slips past the CRD pattern; the resolved URL
+	// would fail url.Parse. Mark 500 without pushing the bad URL to the proxy.
+	eb := &v1alpha1.ExternalBackend{
+		ObjectMeta: metav1.ObjectMeta{Name: "ext-bad", Namespace: "default"},
+		Spec: v1alpha1.ExternalBackendSpec{
+			Scheme: v1alpha1.ExternalBackendSchemeHTTPS, Host: "internal-api:8080", Port: 443,
+		},
+	}
+	cli := fake.NewClientBuilder().WithScheme(ebScheme(t)).WithObjects(eb).Build()
+
+	sentinel := proxy.ExternalBackendSentinelURL("default", "ext-bad")
+	cfg := &proxy.Config{Rules: []proxy.RouteRule{{Backends: []proxy.BackendRef{
+		{URL: sentinel, Weight: 1},
+	}}}}
+
+	resolveExternalBackends(context.Background(), cli, cfg)
+
+	assert.Equal(t, http.StatusInternalServerError, cfg.Rules[0].Backends[0].UnavailableStatus,
+		"a malformed ExternalBackend must be marked 500, not pushed as a bad URL")
+	assert.Equal(t, sentinel, cfg.Rules[0].Backends[0].URL,
+		"the malformed URL must not be written into the pushed config")
+}
+
 func TestResolveExternalBackends_ClearsH2COnHTTPS(t *testing.T) {
 	t.Parallel()
 

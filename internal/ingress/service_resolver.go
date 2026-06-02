@@ -330,5 +330,20 @@ func resolveExternalBackendURL(ctx context.Context, params *serviceResolveParams
 		return "", nil
 	}
 
+	// The CRD host pattern permits a colon (for bracketed IPv6), so a bare
+	// host:port slips through admission and would dial a URL that fails to parse.
+	// Surface it on the route status instead of a green status + silent 500.
+	validErr := external.Spec.Validate()
+	if validErr != nil {
+		return "", &BackendRefError{
+			RouteNamespace: params.routeNS,
+			RouteName:      params.routeName,
+			BackendName:    params.svcName,
+			BackendNS:      params.svcNS,
+			Reason:         string(gatewayv1.RouteReasonUnsupportedValue),
+			Message:        fmt.Sprintf("ExternalBackend %s/%s is malformed: %v", params.svcNS, params.svcName, validErr),
+		}
+	}
+
 	return external.Spec.URL(), nil
 }

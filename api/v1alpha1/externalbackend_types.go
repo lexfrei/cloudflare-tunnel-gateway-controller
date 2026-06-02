@@ -2,6 +2,7 @@ package v1alpha1
 
 import (
 	"fmt"
+	"net/url"
 	"strings"
 
 	"github.com/cockroachdb/errors"
@@ -13,6 +14,7 @@ var (
 	errEmptyHost      = errors.New("host must not be empty")
 	errPortOutOfRange = errors.New("port out of range [1,65535]")
 	errPathPrefix     = errors.New("path must begin with \"/\"")
+	errMalformedURL   = errors.New("spec does not form a valid URL (check host — embed neither a port nor a scheme; bracket IPv6 literals)")
 )
 
 // ExternalBackendScheme is the wire protocol used to reach an external backend.
@@ -94,12 +96,12 @@ type ExternalBackendList struct {
 // optional base path. The host is emitted verbatim, so a bracketed IPv6 literal
 // stays bracketed.
 func (b *ExternalBackendSpec) URL() string {
-	url := fmt.Sprintf("%s://%s:%d", b.Scheme, b.Host, b.Port)
+	raw := fmt.Sprintf("%s://%s:%d", b.Scheme, b.Host, b.Port)
 	if b.Path != "" {
-		url += b.Path
+		raw += b.Path
 	}
 
-	return url
+	return raw
 }
 
 // Validate reports whether the spec is internally consistent beyond what the
@@ -123,6 +125,15 @@ func (b *ExternalBackendSpec) Validate() error {
 
 	if b.Path != "" && !strings.HasPrefix(b.Path, "/") {
 		return errors.Wrapf(errPathPrefix, "got %q", b.Path)
+	}
+
+	// Final parse of the assembled URL. The CRD host pattern permits a colon
+	// (for bracketed IPv6 literals), so a bare host:port slips through admission
+	// — this catches it before the proxy dials a URL that fails url.Parse and
+	// returns an opaque 500.
+	_, err := url.Parse(b.URL())
+	if err != nil {
+		return errors.Wrapf(errMalformedURL, "%v", err)
 	}
 
 	return nil

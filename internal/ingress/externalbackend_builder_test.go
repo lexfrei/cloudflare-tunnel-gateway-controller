@@ -87,6 +87,24 @@ func TestBuild_ExternalBackendNotFound(t *testing.T) {
 	assert.Equal(t, "missing", buildResult.FailedRefs[0].BackendName)
 }
 
+func TestBuild_ExternalBackendMalformed(t *testing.T) {
+	t.Parallel()
+
+	// A bare host:port slips past the CRD host pattern (which permits a colon for
+	// bracketed IPv6). It must surface ResolvedRefs=False, not a green status.
+	eb := newExternalBackend("ext-bad", "default", "https", "internal-api:8080", 443, "")
+	cli := fake.NewClientBuilder().WithScheme(ebBuilderScheme(t)).WithObjects(eb).Build()
+
+	builder := ingress.NewBuilder("cluster.local", nil, cli, nil, nil)
+	routes := []gatewayv1.HTTPRoute{siRoute("test-route", "default", externalBackendRef("ext-bad", nil))}
+
+	buildResult := builder.Build(context.Background(), routes)
+
+	require.Len(t, buildResult.FailedRefs, 1)
+	assert.Equal(t, string(gatewayv1.RouteReasonUnsupportedValue), buildResult.FailedRefs[0].Reason,
+		"a malformed ExternalBackend must surface ResolvedRefs=False, not a silent dial-time 500")
+}
+
 func TestBuild_ExternalBackendCrossNamespace_WithGrant(t *testing.T) {
 	t.Parallel()
 
