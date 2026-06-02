@@ -28,7 +28,7 @@ runs:
           # renovate: datasource=github-releases depName=helm/chart-testing
           CT_VERSION="v3.14.0"
           # renovate: datasource=pypi depName=yamllint
-          YAMLLINT_VERSION="1.33.0"
+          YAMLLINT_VERSION="1.38.0"
           # renovate: datasource=pypi depName=yamale
           YAMALE_VERSION="6.1.0"
 
