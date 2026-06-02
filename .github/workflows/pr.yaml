@@ -120,7 +120,11 @@ jobs:
 
       - name: Run tests
         run: |
-          export KUBEBUILDER_ASSETS="$(setup-envtest use -p path)"
+          # Declare then export separately: `export VAR="$(cmd)"` would mask a
+          # non-zero exit from setup-envtest behind export's always-0 status
+          # (shellcheck SC2155).
+          KUBEBUILDER_ASSETS="$(setup-envtest use -p path)"
+          export KUBEBUILDER_ASSETS
           go test -v -race -tags=envtest -coverprofile=coverage.out -covermode=atomic ./...
 
       - name: Upload coverage
