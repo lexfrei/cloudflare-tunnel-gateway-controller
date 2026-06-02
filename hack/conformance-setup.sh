@@ -95,6 +95,24 @@ for var in CF_API_TOKEN CF_ACCOUNT_ID V2_TUNNEL_ID V2_TUNNEL_TOKEN; do
   fi
 done
 
+# --- Pre-flight: validate the Cloudflare token against the real tunnel endpoint ---
+# A non-empty token is not enough: an expired/invalid token deploys fine but then
+# 401s on every cfd_tunnel/.../configurations call, Gateways never reach
+# Accepted=True, and the conformance suite silently polls until timeout. Hit the
+# exact endpoint the controller uses and fail fast instead.
+# NB: do NOT use /user/tokens/verify — a minimum-privilege account token
+# (Account -> Cloudflare Tunnel -> Edit) lacks user-level token introspection, so
+# verify returns success:false / code 1000 for a working token. The
+# configurations endpoint is the authoritative signal.
+info "Validating Cloudflare API token against tunnel ${V2_TUNNEL_ID}..."
+token_http_code="$(curl --silent --output /dev/null --write-out '%{http_code}' \
+  --retry 3 --retry-delay 1 --max-time 15 \
+  --header "Authorization: Bearer ${CF_API_TOKEN}" \
+  "https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/cfd_tunnel/${V2_TUNNEL_ID}/configurations" || true)"
+if [[ "${token_http_code}" != "200" ]]; then
+  die "CF_API_TOKEN cannot read tunnel ${V2_TUNNEL_ID} (HTTP ${token_http_code:-no-response}). Refresh the token (Cloudflare dashboard -> account -> Cloudflare Tunnel -> Edit) before re-running."
+fi
+
 # --- CI-images mode: fail fast if the PR chart is gone before building a cluster ---
 if [[ -n "${CI_PR_NUMBER}" ]]; then
   CI_CHART_VERSION="0.0.0-pr.${CI_PR_NUMBER}-1d"

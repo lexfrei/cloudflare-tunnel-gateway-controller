@@ -77,7 +77,8 @@
       "customType": "regex",
       "description": "Update versioned binaries in GitHub Actions workflows",
       "fileMatch": [
-        "^\\.github/workflows/.*\\.ya?ml$"
+        "^\\.github/workflows/.*\\.ya?ml$",
+        "^\\.github/actions/.*\\.ya?ml$"
       ],
       "matchStrings": [
         "# renovate: datasource=(?<datasource>.*?) depName=(?<depName>.*?)\\n\\s+[A-Z_]+VERSION=\"(?<currentValue>.*?)\""
