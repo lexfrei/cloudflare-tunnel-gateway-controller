@@ -26,11 +26,16 @@ const (
 	DefaultHTTPSPort = 443
 
 	// Backend reference constants.
-	backendGroupCore      = ""     // Core resources (Service, Pod, etc.) use empty group
-	backendGroupCoreAlias = "core" // Accept "core" as backwards-compatible alias
-	backendKindService    = "Service"
-	schemeHTTP            = "http"
-	schemeHTTPS           = "https"
+	backendGroupCore          = ""     // Core resources (Service, Pod, etc.) use empty group
+	backendGroupCoreAlias     = "core" // Accept "core" as backwards-compatible alias
+	backendKindService        = "Service"
+	backendGroupServiceImport = "multicluster.x-k8s.io"
+	backendKindServiceImport  = "ServiceImport"
+	// clustersetDomain is the DNS domain multicluster (ServiceImport) Services
+	// resolve under, per the KEP-1645 / mcs-api convention.
+	clustersetDomain = "clusterset.local"
+	schemeHTTP       = "http"
+	schemeHTTPS      = "https"
 )
 
 // Builder converts Gateway API HTTPRoute resources to Cloudflare Tunnel
@@ -110,6 +115,11 @@ type BackendRefError struct {
 	Port           int32  // backend port, used to map the failure to a specific proxy backend
 	Reason         string // "RefNotPermitted" or other Gateway API reason
 	Message        string
+	// Domain is the DNS domain the backend's proxy URL is built under, used by
+	// the controller to compute the host that matches the failed ref to a
+	// specific proxy backend. Empty means the local cluster domain (the default
+	// for a Service); a ServiceImport sets it to the clusterset domain.
+	Domain string
 }
 
 // BuildResult contains the build output including rules and any failed references.
@@ -134,12 +144,16 @@ func (b *Builder) Build(ctx context.Context, routes []gatewayv1.HTTPRoute) Build
 }
 
 // validateCrossNamespaceRef validates cross-namespace backend references using ReferenceGrant.
+// toGroup/toKind identify the backend resource the grant must permit (e.g. core
+// Service, or multicluster.x-k8s.io ServiceImport), so the check is keyed on the
+// actual backend kind rather than always Service.
 // Returns true if the reference is allowed, false otherwise.
 func validateCrossNamespaceRef(
 	ctx context.Context,
 	validator *referencegrant.Validator,
 	logger *slog.Logger,
 	routeKind, namespace, routeName, svcNamespace, svcName string,
+	toGroup, toKind string,
 ) bool {
 	if validator == nil {
 		return true // No validator means validation is disabled
@@ -153,8 +167,8 @@ func validateCrossNamespaceRef(
 	}
 
 	toRef := referencegrant.Reference{
-		Group:     backendGroupCore,
-		Kind:      backendKindService,
+		Group:     toGroup,
+		Kind:      toKind,
 		Namespace: svcNamespace,
 		Name:      svcName,
 	}

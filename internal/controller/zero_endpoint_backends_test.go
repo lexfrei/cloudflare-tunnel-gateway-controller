@@ -184,6 +184,45 @@ func TestMarkZeroEndpointBackends_SkipsExternalNameService(t *testing.T) {
 	assert.Zero(t, cfg.Rules[0].Backends[0].UnavailableStatus, "ExternalName Service must not be marked 503")
 }
 
+// TestMarkZeroEndpointBackends_SkipsServiceImport proves a ServiceImport-backed
+// route is never subjected to the core-Service zero-endpoint 503 probe: it is
+// gated on IsServiceBackendRef, so a ServiceImport ref is skipped (no core
+// Service lookup, no 503, no panic). MCS EndpointSlice labelling is
+// implementation-specific, so the imported service's readiness is left to the
+// remote cluster's DNS/MCS plane.
+func TestMarkZeroEndpointBackends_SkipsServiceImport(t *testing.T) {
+	t.Parallel()
+
+	cli := fake.NewClientBuilder().WithScheme(zeScheme(t)).Build()
+
+	cfg := &proxy.Config{Rules: []proxy.RouteRule{{Backends: []proxy.BackendRef{
+		{URL: "http://imported.default.svc.clusterset.local:80", Weight: 1},
+	}}}}
+
+	group := gatewayv1.Group("multicluster.x-k8s.io")
+	kind := gatewayv1.Kind("ServiceImport")
+	port := gatewayv1.PortNumber(80)
+	routes := []*gatewayv1.HTTPRoute{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "r", Namespace: "default"},
+			Spec: gatewayv1.HTTPRouteSpec{
+				Rules: []gatewayv1.HTTPRouteRule{
+					{BackendRefs: []gatewayv1.HTTPBackendRef{
+						{BackendRef: gatewayv1.BackendRef{BackendObjectReference: gatewayv1.BackendObjectReference{
+							Group: &group, Kind: &kind, Name: "imported", Port: &port,
+						}}},
+					}},
+				},
+			},
+		},
+	}
+
+	markZeroEndpointBackends(context.Background(), cli, cfg, "cluster.local", routes, nil)
+
+	assert.Zero(t, cfg.Rules[0].Backends[0].UnavailableStatus,
+		"a ServiceImport backend must not be subjected to the core-Service 503 probe")
+}
+
 // TestMarkZeroEndpointBackends_SkipsMissingService proves a nonexistent Service
 // is left for the 500 invalid-ref path (not marked 503 here).
 func TestMarkZeroEndpointBackends_SkipsMissingService(t *testing.T) {

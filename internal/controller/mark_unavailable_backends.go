@@ -21,8 +21,17 @@ import (
 func markUnavailableBackends(cfg *proxy.Config, clusterDomain string, failedRefs []ingress.BackendRefError) {
 	for i := range failedRefs {
 		ref := &failedRefs[i]
+
+		// A ServiceImport failed-ref carries its own (clusterset) domain so the
+		// matched host equals the URL the converter synthesized; an empty Domain
+		// means the local cluster domain (the default for a Service).
+		domain := clusterDomain
+		if ref.Domain != "" {
+			domain = ref.Domain
+		}
+
 		proxy.MarkUnavailableBackends(
-			cfg, clusterDomain, ref.BackendNS, ref.BackendName, ref.Port, http.StatusInternalServerError,
+			cfg, domain, ref.BackendNS, ref.BackendName, ref.Port, http.StatusInternalServerError,
 		)
 	}
 }
