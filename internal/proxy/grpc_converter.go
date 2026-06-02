@@ -328,6 +328,13 @@ func convertGRPCBackendRef(
 		return markInvalidBackend(result.Weight, serviceName, svcNamespace, port, clusterDomain, "unsupported backend kind")
 	}
 
+	// ExternalBackend: URL comes from the CRD (resolved controller-side via a
+	// sentinel); the backendRef port is ignored in favour of spec.port.
+	if IsExternalBackendRef(backend.BackendObjectReference) {
+		return convertGRPCExternalBackendRef(ctx, result.Weight, backend, namespace, svcNamespace, serviceName,
+			clusterDomain, validator, tlsResolver, clientCert, sink)
+	}
+
 	if !validatePort(port) {
 		return markInvalidBackend(result.Weight, serviceName, svcNamespace, port, clusterDomain, "invalid port")
 	}
@@ -344,6 +351,37 @@ func convertGRPCBackendRef(
 	}
 
 	applyGRPCBackendTransport(ctx, &result, tlsResolver, clientCert, svcNamespace, serviceName, port)
+
+	return result, true
+}
+
+// convertGRPCExternalBackendRef builds a gRPC BackendRef for an ExternalBackend
+// ref. Like the HTTP path it emits a sentinel URL the controller rewrites; the
+// backend is left h2c (gRPC default), and when the resolved ExternalBackend uses
+// the https scheme the controller clears h2c so the TLS transport negotiates
+// HTTP/2 over ALPN instead.
+func convertGRPCExternalBackendRef(
+	ctx context.Context,
+	weight int32,
+	backend *gatewayv1.GRPCBackendRef,
+	namespace, svcNamespace, serviceName, clusterDomain string,
+	validator BackendRefValidator,
+	tlsResolver BackendTLSResolver,
+	clientCert *ClientCertConfig,
+	sink *diagSink,
+) (BackendRef, bool) {
+	if !validateCrossNamespace(ctx, svcNamespace, namespace, serviceName, backend.BackendObjectReference, validator) {
+		return markInvalidBackend(weight, serviceName, svcNamespace, defaultServicePort, clusterDomain,
+			"cross-namespace reference not permitted by ReferenceGrant")
+	}
+
+	result := BackendRef{Weight: weight, URL: ExternalBackendSentinelURL(svcNamespace, serviceName)}
+
+	if grpcBackendFiltersUnsupported(backend.Filters, svcNamespace, serviceName, sink) {
+		result.UnavailableStatus = http.StatusInternalServerError
+	}
+
+	applyGRPCBackendTransport(ctx, &result, tlsResolver, clientCert, svcNamespace, serviceName, defaultServicePort)
 
 	return result, true
 }

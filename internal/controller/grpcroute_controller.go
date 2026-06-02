@@ -209,10 +209,11 @@ func (r *GRPCRouteReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		// backends honor a matching policy by upgrading to TLS+ALPN HTTP/2;
 		// without the watch a policy create/edit would not re-converge the
 		// gRPC routes and the proxy would keep dialing cleartext.
-		findRoutesForService:       r.findRoutesForService,
-		findRoutesForEndpointSlice: r.findRoutesForEndpointSlice,
-		getAllRelevantRoutes:       r.getAllRelevantRoutes,
-		watchBackendTLS:            true,
+		findRoutesForService:         r.findRoutesForService,
+		findRoutesForEndpointSlice:   r.findRoutesForEndpointSlice,
+		findRoutesForExternalBackend: r.findRoutesForExternalBackend,
+		getAllRelevantRoutes:         r.getAllRelevantRoutes,
+		watchBackendTLS:              true,
 	})
 }
 
@@ -351,6 +352,30 @@ func (r *GRPCRouteReconciler) findRoutesForService(
 	}
 
 	return FindRoutesForService(obj, routes)
+}
+
+// findRoutesForExternalBackend enqueues every managed GRPCRoute that references
+// the changed ExternalBackend, so editing or (re)creating one re-syncs the
+// proxy config and refreshes the route's ResolvedRefs condition.
+func (r *GRPCRouteReconciler) findRoutesForExternalBackend(
+	ctx context.Context,
+	obj client.Object,
+) []reconcile.Request {
+	var routeList gatewayv1.GRPCRouteList
+	if err := r.List(ctx, &routeList); err != nil {
+		return nil
+	}
+
+	routes := make([]Route, 0, len(routeList.Items))
+
+	for i := range routeList.Items {
+		route := &routeList.Items[i]
+		if r.isRouteForOurGateway(ctx, route) {
+			routes = append(routes, GRPCRouteWrapper{route})
+		}
+	}
+
+	return FindRoutesForExternalBackend(obj, routes)
 }
 
 func (r *GRPCRouteReconciler) getAllRelevantRoutes(ctx context.Context) []reconcile.Request {

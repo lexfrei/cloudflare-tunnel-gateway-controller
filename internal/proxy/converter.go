@@ -614,9 +614,10 @@ func IsServiceImportBackendRef(ref gatewayv1.BackendObjectReference) bool {
 }
 
 // IsSupportedBackendRef reports whether the ref is a backend kind the proxy can
-// resolve to a dialable URL: a core Service or a multicluster ServiceImport.
+// resolve to a dialable URL: a core Service, a multicluster ServiceImport, or a
+// cf.k8s.lex.la ExternalBackend.
 func IsSupportedBackendRef(ref gatewayv1.BackendObjectReference) bool {
-	return IsServiceBackendRef(ref) || IsServiceImportBackendRef(ref)
+	return IsServiceBackendRef(ref) || IsServiceImportBackendRef(ref) || IsExternalBackendRef(ref)
 }
 
 // backendDomain returns the DNS domain the backend resolves under: the
@@ -1009,6 +1010,13 @@ func convertBackendRef(
 		return markInvalidBackend(result.Weight, serviceName, svcNamespace, port, clusterDomain, "unsupported backend kind")
 	}
 
+	// An ExternalBackend's URL lives in its spec (resolved controller-side); its
+	// backendRef port is ignored in favour of spec.port, so skip port validation.
+	if IsExternalBackendRef(backend.BackendObjectReference) {
+		return convertExternalBackendRef(ctx, result.Weight, backend, namespace, svcNamespace, serviceName,
+			clusterDomain, validator, tlsResolver, clientCert, sink)
+	}
+
 	if !validatePort(port) {
 		return markInvalidBackend(result.Weight, serviceName, svcNamespace, port, clusterDomain, "invalid port")
 	}
@@ -1037,17 +1045,57 @@ func convertBackendRef(
 		result.UnavailableStatus = http.StatusBadGateway
 	}
 
-	var backendFiltersFailClosed bool
-
-	result.Filters, backendFiltersFailClosed = convertBackendFilters(ctx, backend.Filters, namespace, clusterDomain, validator, tlsResolver, clientCert, sink)
-	if backendFiltersFailClosed {
-		// An unsupported per-backend filter must fail closed for this backend's
-		// traffic fraction, exactly like an invalid backendRef: requests routed
-		// to it receive HTTP 500 rather than being served without the filter.
-		result.UnavailableStatus = http.StatusInternalServerError
-	}
+	applyBackendFilters(ctx, &result, backend.Filters, namespace, clusterDomain, validator, tlsResolver, clientCert, sink)
 
 	return result, true
+}
+
+// convertExternalBackendRef builds a BackendRef for an ExternalBackend ref. The
+// converter has no Kubernetes client, so it cannot read the ExternalBackend's
+// scheme/host/port; it emits a sentinel URL (encoding namespace/name) that the
+// controller rewrites to the real URL before pushing the config. Cross-namespace
+// refs are still validated here against a ReferenceGrant keyed on the
+// ExternalBackend group/kind; per-backend filters are applied as usual.
+func convertExternalBackendRef(
+	ctx context.Context,
+	weight int32,
+	backend *gatewayv1.HTTPBackendRef,
+	namespace, svcNamespace, serviceName, clusterDomain string,
+	validator BackendRefValidator,
+	tlsResolver BackendTLSResolver,
+	clientCert *ClientCertConfig,
+	sink *diagSink,
+) (BackendRef, bool) {
+	if !validateCrossNamespace(ctx, svcNamespace, namespace, serviceName, backend.BackendObjectReference, validator) {
+		return markInvalidBackend(weight, serviceName, svcNamespace, defaultServicePort, clusterDomain,
+			"cross-namespace reference not permitted by ReferenceGrant")
+	}
+
+	result := BackendRef{Weight: weight, URL: ExternalBackendSentinelURL(svcNamespace, serviceName)}
+	applyBackendFilters(ctx, &result, backend.Filters, namespace, clusterDomain, validator, tlsResolver, clientCert, sink)
+
+	return result, true
+}
+
+// applyBackendFilters resolves per-backend HTTPRoute filters onto result. An
+// unsupported filter fails closed for this backend's traffic fraction (HTTP
+// 500), matching an invalid backendRef rather than serving without the filter.
+func applyBackendFilters(
+	ctx context.Context,
+	result *BackendRef,
+	filters []gatewayv1.HTTPRouteFilter,
+	namespace, clusterDomain string,
+	validator BackendRefValidator,
+	tlsResolver BackendTLSResolver,
+	clientCert *ClientCertConfig,
+	sink *diagSink,
+) {
+	var failClosed bool
+
+	result.Filters, failClosed = convertBackendFilters(ctx, filters, namespace, clusterDomain, validator, tlsResolver, clientCert, sink)
+	if failClosed {
+		result.UnavailableStatus = http.StatusInternalServerError
+	}
 }
 
 // markInvalidBackend handles a backendRef that failed validation (unsupported

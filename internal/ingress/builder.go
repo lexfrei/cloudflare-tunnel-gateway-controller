@@ -31,6 +31,8 @@ const (
 	backendKindService        = "Service"
 	backendGroupServiceImport = "multicluster.x-k8s.io"
 	backendKindServiceImport  = "ServiceImport"
+	backendGroupExternal      = "cf.k8s.lex.la"
+	backendKindExternal       = "ExternalBackend"
 	// clustersetDomain is the DNS domain multicluster (ServiceImport) Services
 	// resolve under, per the KEP-1645 / mcs-api convention.
 	clustersetDomain = "clusterset.local"

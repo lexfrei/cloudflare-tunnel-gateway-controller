@@ -168,19 +168,20 @@ func (r *HTTPRouteReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	r.bindingValidator = routebinding.NewValidator(r.Client)
 
 	return setupRouteController(mgr, &routeControllerSetupParams{
-		routeObject:                &gatewayv1.HTTPRoute{},
-		reconciler:                 r,
-		runnable:                   r,
-		k8sClient:                  r.Client,
-		controllerName:             r.ControllerName,
-		configResolver:             r.RouteSyncer.ConfigResolver,
-		findRoutesForGateway:       r.findRoutesForGateway,
-		findRoutesForListenerSet:   r.findRoutesForListenerSet,
-		findRoutesForRefGrant:      r.findRoutesForReferenceGrant,
-		findRoutesForService:       r.findRoutesForService,
-		findRoutesForEndpointSlice: r.findRoutesForEndpointSlice,
-		watchBackendTLS:            true,
-		getAllRelevantRoutes:       r.getAllRelevantRoutes,
+		routeObject:                  &gatewayv1.HTTPRoute{},
+		reconciler:                   r,
+		runnable:                     r,
+		k8sClient:                    r.Client,
+		controllerName:               r.ControllerName,
+		configResolver:               r.RouteSyncer.ConfigResolver,
+		findRoutesForGateway:         r.findRoutesForGateway,
+		findRoutesForListenerSet:     r.findRoutesForListenerSet,
+		findRoutesForRefGrant:        r.findRoutesForReferenceGrant,
+		findRoutesForService:         r.findRoutesForService,
+		findRoutesForEndpointSlice:   r.findRoutesForEndpointSlice,
+		findRoutesForExternalBackend: r.findRoutesForExternalBackend,
+		watchBackendTLS:              true,
+		getAllRelevantRoutes:         r.getAllRelevantRoutes,
 	})
 }
 
@@ -277,6 +278,30 @@ func (r *HTTPRouteReconciler) findRoutesForService(
 	}
 
 	return FindRoutesForService(obj, routes)
+}
+
+// findRoutesForExternalBackend enqueues every managed HTTPRoute that references
+// the changed ExternalBackend, so editing or (re)creating one re-syncs the
+// proxy config and refreshes the route's ResolvedRefs condition.
+func (r *HTTPRouteReconciler) findRoutesForExternalBackend(
+	ctx context.Context,
+	obj client.Object,
+) []reconcile.Request {
+	var routeList gatewayv1.HTTPRouteList
+	if err := r.List(ctx, &routeList); err != nil {
+		return nil
+	}
+
+	routes := make([]Route, 0, len(routeList.Items))
+
+	for i := range routeList.Items {
+		route := &routeList.Items[i]
+		if r.isRouteForOurGateway(ctx, route) {
+			routes = append(routes, HTTPRouteWrapper{route})
+		}
+	}
+
+	return FindRoutesForExternalBackend(obj, routes)
 }
 
 // findRoutesForEndpointSlice enqueues every managed HTTPRoute that references

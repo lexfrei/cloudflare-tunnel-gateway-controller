@@ -13,6 +13,7 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 	mcsv1alpha1 "sigs.k8s.io/mcs-api/pkg/apis/v1alpha1"
 
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/api/v1alpha1"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/referencegrant"
 )
 
@@ -23,6 +24,7 @@ type backendTargetKind int
 const (
 	backendTargetService backendTargetKind = iota
 	backendTargetServiceImport
+	backendTargetExternal
 )
 
 // serviceResolveParams contains all parameters needed to resolve a backend service URL.
@@ -61,6 +63,8 @@ func validateBackendGroupKind(
 		return backendTargetService, nil
 	case group == backendGroupServiceImport && kind == backendKindServiceImport:
 		return backendTargetServiceImport, nil
+	case group == backendGroupExternal && kind == backendKindExternal:
+		return backendTargetExternal, nil
 	default:
 		return backendTargetService, &BackendRefError{
 			RouteNamespace: namespace,
@@ -68,7 +72,7 @@ func validateBackendGroupKind(
 			BackendName:    string(ref.Name),
 			Reason:         string(gatewayv1.RouteReasonInvalidKind),
 			Message: fmt.Sprintf(
-				"unsupported backend %s/%s, only Service and ServiceImport are supported", group, kind),
+				"unsupported backend %s/%s, only Service, ServiceImport and ExternalBackend are supported", group, kind),
 		}
 	}
 }
@@ -124,6 +128,8 @@ func resolveValidatedBackend(
 	switch targetKind {
 	case backendTargetServiceImport:
 		url, backendErr = resolveServiceImportURL(ctx, params)
+	case backendTargetExternal:
+		url, backendErr = resolveExternalBackendURL(ctx, params)
 	case backendTargetService:
 		url, backendErr = resolveServiceURL(ctx, params)
 	}
@@ -280,4 +286,49 @@ func serviceImportNotFoundError(params *serviceResolveParams, message string) *B
 		Reason:         string(gatewayv1.RouteReasonBackendNotFound),
 		Message:        message,
 	}
+}
+
+// resolveExternalBackendURL resolves an ExternalBackend backendRef to its
+// declared scheme://host:port/path URL. A cross-namespace ref is validated
+// against an ExternalBackend-keyed ReferenceGrant; an absent ExternalBackend is
+// reported as BackendNotFound so the route surfaces ResolvedRefs=False. The URL
+// is used for the Cloudflare edge rule and route status; the in-cluster proxy
+// resolves its own copy via the converter sentinel.
+func resolveExternalBackendURL(ctx context.Context, params *serviceResolveParams) (string, *BackendRefError) {
+	if params.routeNS != params.svcNS {
+		if !validateCrossNamespaceRef(ctx, params.validator, params.logger, params.routeKind, params.routeNS, params.routeName, params.svcNS, params.svcName, backendGroupExternal, backendKindExternal) {
+			return "", crossNamespaceDeniedError(params)
+		}
+	}
+
+	if params.client == nil {
+		return "", nil
+	}
+
+	external := &v1alpha1.ExternalBackend{}
+
+	err := params.client.Get(ctx, types.NamespacedName{Name: params.svcName, Namespace: params.svcNS}, external)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return "", &BackendRefError{
+				RouteNamespace: params.routeNS,
+				RouteName:      params.routeName,
+				BackendName:    params.svcName,
+				BackendNS:      params.svcNS,
+				Reason:         string(gatewayv1.RouteReasonBackendNotFound),
+				Message:        fmt.Sprintf("ExternalBackend %s/%s not found", params.svcNS, params.svcName),
+			}
+		}
+		// Transient read error: no DNS fallback exists for an ExternalBackend, so
+		// skip the edge rule this round rather than report a false failure; the
+		// next reconcile retries.
+		params.logger.Warn("failed to fetch ExternalBackend",
+			"externalbackend", fmt.Sprintf("%s/%s", params.svcNS, params.svcName),
+			"error", err.Error(),
+		)
+
+		return "", nil
+	}
+
+	return external.Spec.URL(), nil
 }

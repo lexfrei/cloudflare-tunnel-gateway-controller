@@ -1920,6 +1920,48 @@ func TestConvertHTTPRoutes_ServiceImportBackendResolved(t *testing.T) {
 		"ServiceImport must resolve to a clusterset.local URL, not the local cluster domain")
 }
 
+func TestConvertHTTPRoutes_ExternalBackendSentinel(t *testing.T) {
+	t.Parallel()
+
+	// An ExternalBackend's real URL lives in its spec, which the converter cannot
+	// read; it emits a sentinel the controller rewrites. The backend is accepted
+	// (not marked 500) and carries the sentinel URL.
+	group := gatewayv1.Group("cf.k8s.lex.la")
+	kind := gatewayv1.Kind("ExternalBackend")
+	routes := []*gatewayv1.HTTPRoute{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "ext-route", Namespace: "default"},
+			Spec: gatewayv1.HTTPRouteSpec{
+				Hostnames: []gatewayv1.Hostname{"app.example.com"},
+				Rules: []gatewayv1.HTTPRouteRule{
+					{
+						BackendRefs: []gatewayv1.HTTPBackendRef{
+							{
+								BackendRef: gatewayv1.BackendRef{
+									BackendObjectReference: gatewayv1.BackendObjectReference{
+										Group: &group,
+										Kind:  &kind,
+										Name:  "ext-api",
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	cfg := proxy.ConvertHTTPRoutes(context.Background(), routes, "cluster.local", nil, nil, nil, nil)
+
+	require.Len(t, cfg.Rules, 1)
+	require.Len(t, cfg.Rules[0].Backends, 1)
+	assert.Equal(t, 0, cfg.Rules[0].Backends[0].UnavailableStatus,
+		"an ExternalBackend is a supported kind and must not be marked 500")
+	assert.Equal(t, proxy.ExternalBackendSentinelURL("default", "ext-api"), cfg.Rules[0].Backends[0].URL,
+		"an ExternalBackend must carry the sentinel URL for the controller to rewrite")
+}
+
 func TestConvertQueryMatch(t *testing.T) {
 	t.Parallel()
 
