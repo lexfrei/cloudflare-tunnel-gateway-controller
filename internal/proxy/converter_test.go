@@ -2011,6 +2011,51 @@ func TestConvertHTTPRoutes_ExternalBackendSentinel(t *testing.T) {
 		"an ExternalBackend must carry the sentinel URL for the controller to rewrite")
 }
 
+func TestConvertHTTPRoutes_ExternalBackendCrossNamespaceRejected(t *testing.T) {
+	t.Parallel()
+
+	// A cross-namespace ExternalBackend ref the validator denies must be marked
+	// 500 for its traffic fraction (it carries weight), never emitting a sentinel
+	// the controller would resolve.
+	group := gatewayv1.Group("cf.k8s.lex.la")
+	kind := gatewayv1.Kind("ExternalBackend")
+	otherNS := gatewayv1.Namespace("other-ns")
+
+	routes := []*gatewayv1.HTTPRoute{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "ext-xns", Namespace: "default"},
+			Spec: gatewayv1.HTTPRouteSpec{
+				Hostnames: []gatewayv1.Hostname{"app.example.com"},
+				Rules: []gatewayv1.HTTPRouteRule{
+					{
+						BackendRefs: []gatewayv1.HTTPBackendRef{
+							{
+								BackendRef: gatewayv1.BackendRef{
+									BackendObjectReference: gatewayv1.BackendObjectReference{
+										Group: &group, Kind: &kind, Name: "ext-api", Namespace: &otherNS,
+									},
+									Weight: new(int32(1)),
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	rejectAll := func(_ context.Context, _ string, _ gatewayv1.BackendObjectReference) bool {
+		return false
+	}
+
+	cfg := proxy.ConvertHTTPRoutes(context.Background(), routes, "cluster.local", rejectAll, nil, nil, nil)
+
+	require.Len(t, cfg.Rules, 1)
+	require.Len(t, cfg.Rules[0].Backends, 1)
+	assert.Equal(t, http.StatusInternalServerError, cfg.Rules[0].Backends[0].UnavailableStatus,
+		"a denied cross-namespace ExternalBackend ref must be marked 500, not emitted as a sentinel")
+}
+
 func TestConvertQueryMatch(t *testing.T) {
 	t.Parallel()
 

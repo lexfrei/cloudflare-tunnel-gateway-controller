@@ -223,6 +223,42 @@ func TestMarkZeroEndpointBackends_SkipsServiceImport(t *testing.T) {
 		"a ServiceImport backend must not be subjected to the core-Service 503 probe")
 }
 
+// TestMarkZeroEndpointBackends_SkipsExternalBackend proves an ExternalBackend
+// route (carrying a sentinel URL in the config) is never subjected to the
+// core-Service zero-endpoint 503 probe: it is gated on IsServiceBackendRef, so
+// the sentinel backend is left unmarked and no core Service lookup is attempted.
+func TestMarkZeroEndpointBackends_SkipsExternalBackend(t *testing.T) {
+	t.Parallel()
+
+	cli := fake.NewClientBuilder().WithScheme(zeScheme(t)).Build()
+
+	cfg := &proxy.Config{Rules: []proxy.RouteRule{{Backends: []proxy.BackendRef{
+		{URL: proxy.ExternalBackendSentinelURL("default", "ext-api"), Weight: 1},
+	}}}}
+
+	group := gatewayv1.Group("cf.k8s.lex.la")
+	kind := gatewayv1.Kind("ExternalBackend")
+	routes := []*gatewayv1.HTTPRoute{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "r", Namespace: "default"},
+			Spec: gatewayv1.HTTPRouteSpec{
+				Rules: []gatewayv1.HTTPRouteRule{
+					{BackendRefs: []gatewayv1.HTTPBackendRef{
+						{BackendRef: gatewayv1.BackendRef{BackendObjectReference: gatewayv1.BackendObjectReference{
+							Group: &group, Kind: &kind, Name: "ext-api",
+						}}},
+					}},
+				},
+			},
+		},
+	}
+
+	markZeroEndpointBackends(context.Background(), cli, cfg, "cluster.local", routes, nil)
+
+	assert.Zero(t, cfg.Rules[0].Backends[0].UnavailableStatus,
+		"an ExternalBackend sentinel backend must not be subjected to the core-Service 503 probe")
+}
+
 // TestMarkZeroEndpointBackends_SkipsMissingService proves a nonexistent Service
 // is left for the 500 invalid-ref path (not marked 503 here).
 func TestMarkZeroEndpointBackends_SkipsMissingService(t *testing.T) {
