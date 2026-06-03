@@ -448,6 +448,13 @@ func firstResolvedRefsDiagnostic(diagnostics []proxy.RouteDiagnostic) (proxy.Rou
 const (
 	eventReasonConfigOverridden = "ConfigOverridden"
 	eventActionConvert          = "Convert"
+
+	// Event reason / action tokens for the GRPCRoute edge-toggle breadcrumb (see
+	// emitGRPCEdgeHint). The Cloudflare zone gRPC toggle is dashboard-only with no
+	// API to read, so the controller cannot validate it; this Normal Event is the
+	// only in-cluster signal an operator gets when the edge 403s application/grpc.
+	eventReasonGRPCEdgeProxyingRequired = "GRPCEdgeProxyingRequired"
+	eventActionVerifyEdgeConfig         = "VerifyEdgeConfig"
 )
 
 // emitDiagnosticEvents emits a Kubernetes Event for each Event-target

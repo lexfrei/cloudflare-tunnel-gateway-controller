@@ -180,7 +180,19 @@ With the default `proxy.tunnel.protocol: auto` (or unset) you do not need to do 
 
 Startup-latency tradeoff of `auto`: because the `auto` choice must learn whether a GRPCRoute is present before dialing, an `auto`/unset proxy waits for the controller's first config push — bounded by a cap (~30s) — before establishing the tunnel. On a cluster that has routes, the first push arrives within seconds, so the delay is negligible. But a route-less cluster (no HTTPRoutes or GRPCRoutes yet) has nothing to push, so every `auto` proxy pod waits the full cap on each start before the tunnel comes up. There is no traffic to serve in that state, so it is harmless in practice — but if you see an `auto` proxy slow to establish its tunnel on a route-less cluster, that wait is the cause; pin `proxy.tunnel.protocol: http2` or `quic` to dial immediately (an explicit transport skips the wait).
 
-Separately, gRPC must be enabled on the Cloudflare zone (dashboard Network → gRPC); without it the edge returns 403 zone-wide for `content-type: application/grpc`.
+### gRPC requires Cloudflare zone gRPC proxying
+
+Separate from the tunnel transport above, the Cloudflare _zone_ must have gRPC proxying enabled (dashboard → Network → gRPC). When it is disabled, the Cloudflare edge returns `403` with `content-type: text/html` zone-wide for any request whose `content-type` is `application/grpc` — the request never reaches the in-cluster proxy.
+
+Because the 403 happens at the edge, upstream of the tunnel, the controller never sees it: the GRPCRoute reports `Accepted=True` / `ResolvedRefs=True` while every gRPC call fails. The client-side symptom is opaque:
+
+```text
+rpc error: code = PermissionDenied desc = unexpected HTTP status code received from server: 403 (Forbidden); transport: received unexpected content-type "text/html"
+```
+
+The toggle is dashboard-only: there is no zone-settings API for it (`PATCH /settings/grpc` returns `400` / code `1006` "Unrecognized zone setting name" even with a full-scope token) and the Terraform provider has no resource, so the controller cannot read the setting to validate it. As a breadcrumb, the controller emits a Normal Kubernetes Event (`reason: GRPCEdgeProxyingRequired`) on every accepted GRPCRoute naming this prerequisite, so `kubectl describe grpcroute <name>` points at the fix without edge packet inspection.
+
+**Fix:** enable Network → gRPC for the zone in the Cloudflare dashboard.
 
 ### Gateway client cert rotation is hot-reloaded
 

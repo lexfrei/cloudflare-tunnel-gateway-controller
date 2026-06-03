@@ -6,7 +6,11 @@ GRPCRoute enables routing gRPC traffic through Cloudflare Tunnel with service an
 
     cloudflared does **not** forward HTTP trailers over QUIC (its default transport), and gRPC carries the mandatory `grpc-status` in a trailer. Over a QUIC tunnel the trailer is dropped at the edge and every gRPC call fails with `server closed the stream without sending trailers`. This is a cloudflared/Cloudflare limitation, not a controller bug.
 
-    With the default `proxy.tunnel.protocol: auto` (or unset) you do not need to change anything: the proxy dials `http2` at startup when a GRPCRoute is present. A GRPCRoute added after the proxy has already dialed a non-`http2` transport needs a proxy restart (the proxy logs a restart-needed error). An explicit `proxy.tunnel.protocol: quic` is never upgraded and cannot serve gRPC — the controller logs an error and sets the GRPCRoute's `Accepted` condition to `False` / `UnsupportedProtocol` with an actionable message. Also enable gRPC on the Cloudflare zone (Network → gRPC), or the edge returns 403 for `application/grpc` requests.
+    With the default `proxy.tunnel.protocol: auto` (or unset) you do not need to change anything: the proxy dials `http2` at startup when a GRPCRoute is present. A GRPCRoute added after the proxy has already dialed a non-`http2` transport needs a proxy restart (the proxy logs a restart-needed error). An explicit `proxy.tunnel.protocol: quic` is never upgraded and cannot serve gRPC — the controller logs an error and sets the GRPCRoute's `Accepted` condition to `False` / `UnsupportedProtocol` with an actionable message.
+
+!!! note "Prerequisite: enable gRPC on the Cloudflare zone"
+
+    Separate from the tunnel transport, the Cloudflare **zone** must have gRPC proxying enabled (dashboard → **Network → gRPC**). If it is disabled, the Cloudflare edge returns `403` with `content-type: text/html` zone-wide for every `application/grpc` request — upstream of the tunnel, so the request never reaches the proxy. The GRPCRoute still reports `Accepted=True` while every gRPC call fails with the opaque client error `rpc error: code = PermissionDenied ... received unexpected content-type "text/html"`. As a breadcrumb the controller emits a Normal Event (`reason: GRPCEdgeProxyingRequired`) on accepted GRPCRoutes naming this prerequisite. See [Limitations](limitations.md#grpc-requires-cloudflare-zone-grpc-proxying).
 
 ## Basic Example
 

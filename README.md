@@ -173,7 +173,7 @@ All matching and filter behavior is performed by the in-process L7 proxy that th
 
 ### Known Limitations
 
-The in-process L7 proxy handles routing for every tunnel request. Edge-side caveats (Cloudflare hostname registration, edge HTTPS termination, etc.) are documented in the [Limitations](https://cf.k8s.lex.la/gateway-api/limitations/) page.
+The in-process L7 proxy handles routing for every tunnel request. Edge-side caveats (Cloudflare hostname registration, edge HTTPS termination, etc.) are documented in the [Limitations](https://cf.k8s.lex.la/gateway-api/limitations/) page. In particular, a GRPCRoute also needs Cloudflare zone gRPC proxying enabled (dashboard → Network → gRPC); if disabled, the edge returns `403` zone-wide for `application/grpc` and gRPC fails before reaching the proxy ([details](https://cf.k8s.lex.la/gateway-api/limitations/#grpc-requires-cloudflare-zone-grpc-proxying)).
 
 `BackendTLSPolicy` (proxy → backend TLS) is supported at minimum-viable scope:
 

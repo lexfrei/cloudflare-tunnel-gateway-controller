@@ -6,6 +6,8 @@ import (
 	"strings"
 	"sync/atomic"
 
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/events"
@@ -27,6 +29,15 @@ import (
 const grpcQUICUnsupportedStatusMessage = "gRPC is not compatible with the \"quic\" tunnel transport " +
 	"(cloudflared drops HTTP trailers over QUIC, so grpc-status is lost). Set proxy.tunnel.protocol " +
 	"to \"http2\" (or \"auto\"/unset, which the controller will upgrade to http2 for gRPC) to enable this route."
+
+// grpcEdgeHintMessage is the breadcrumb surfaced as a Normal Event on every
+// accepted GRPCRoute (see emitGRPCEdgeHint). It names the Cloudflare zone
+// prerequisite and the exact failure mode so an operator who sees gRPC failing
+// on a route that reports Accepted=True has something actionable to find.
+const grpcEdgeHintMessage = "gRPC traffic requires Cloudflare zone gRPC proxying enabled (dashboard Network → gRPC). " +
+	"If it is disabled the Cloudflare edge returns 403 (content-type text/html) for application/grpc requests " +
+	"zone-wide, so gRPC calls fail before reaching the proxy. This is a Cloudflare edge prerequisite, not a " +
+	"controller error."
 
 // isExplicitQUIC reports whether the operator deliberately pinned the tunnel
 // transport to quic (case-insensitive, trimmed). Only an explicit quic is a
@@ -65,6 +76,48 @@ func grpcProtocolWarning(protocol string, grpcRouteCount int) (string, bool) {
 			"This is a cloudflared/Cloudflare limitation, not on our side.",
 		grpcRouteCount, protocol,
 	), true
+}
+
+// emitGRPCEdgeHint emits a non-fatal Normal Event reminding the operator that a
+// GRPCRoute only works if the Cloudflare zone has gRPC proxying enabled
+// (dashboard Network → gRPC). The toggle is dashboard-only with no API to read,
+// so the controller cannot validate it; this breadcrumb gives the operator
+// something to find via `kubectl describe grpcroute` instead of an opaque edge
+// 403. A nil recorder is a no-op (matches emitDiagnosticEvents, e.g. in unit
+// tests). k8s deduplicates repeats by reason+message, so emitting once per
+// reconcile is not spammy.
+func emitGRPCEdgeHint(recorder events.EventRecorder, route runtime.Object) {
+	if recorder == nil {
+		return
+	}
+
+	recorder.Eventf(route, nil, corev1.EventTypeNormal,
+		eventReasonGRPCEdgeProxyingRequired, eventActionVerifyEdgeConfig, "%s", grpcEdgeHintMessage)
+}
+
+// grpcRouteWillBeAccepted reports whether the route's Accepted condition will be
+// True for at least one managed parent. It folds the same inputs buildParentStatus
+// passes to buildAcceptedCondition: no sync error (else Pending), at least one
+// bound parent (else a binding rejection), no caller override (the explicit-quic
+// UnsupportedProtocol case), and no diagnostic-derived whole-route override (every
+// rule unservable → UnsupportedValue). diagnosticConditions is the single source
+// of truth for that last input, so the gate cannot drift from the condition the
+// operator sees. The zero generation/time are unused — only the override (first
+// return) is read, and its presence does not depend on them.
+func grpcRouteWillBeAccepted(
+	bindingInfo routeBindingInfo,
+	diagnostics []proxy.RouteDiagnostic,
+	ruleCount int,
+	syncErr error,
+	override *acceptedConditionOverride,
+) bool {
+	if syncErr != nil || override != nil || !bindingInfo.hasAcceptedParent() {
+		return false
+	}
+
+	diagOverride, _ := diagnosticConditions(diagnostics, ruleCount, 0, metav1.Time{})
+
+	return diagOverride == nil
 }
 
 // GRPCRouteReconciler reconciles GRPCRoute resources, synchronizing them to
@@ -177,6 +230,17 @@ func (r *GRPCRouteReconciler) updateRouteStatus(
 			reason:  string(gatewayv1.RouteReasonUnsupportedProtocol),
 			message: grpcQUICUnsupportedStatusMessage,
 		}
+	}
+
+	// Edge breadcrumb: emit only when the route's Accepted condition will be True,
+	// so the reminder never lands on a route this same update reports Accepted=False
+	// for an already-surfaced reason (explicit-quic UnsupportedProtocol, a sync
+	// Pending, a binding rejection — updateRouteStatus also runs over
+	// RejectedGRPCRoutes — or a diagnostic that marks every rule unservable). The
+	// gate mirrors buildParentStatus' inputs so it cannot diverge from the
+	// condition the operator sees.
+	if grpcRouteWillBeAccepted(bindingInfo, diagnostics, len(route.Spec.Rules), syncErr, params.acceptedOverride) {
+		emitGRPCEdgeHint(r.Recorder, route)
 	}
 
 	return updateRouteStatusGeneric(
