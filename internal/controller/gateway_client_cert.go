@@ -7,6 +7,7 @@ import (
 	"github.com/cockroachdb/errors"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -152,25 +153,27 @@ func gatewayClientCertRef(gateway *gatewayv1.Gateway) *gatewayv1.SecretObjectRef
 	return gateway.Spec.TLS.Backend.ClientCertificateRef
 }
 
-// mergeClientCertCondition appends the resolved client-cert condition to base
-// when non-nil, returning the combined slice. A nil clientCertCond means the
-// outcome was transient and the caller should preserve the previous condition
-// state — represented here by not appending anything new. The helper centralises
-// the "leave it alone" semantics so every Gateway-status code path treats
-// transient errors identically.
-func mergeClientCertCondition(prev, base []metav1.Condition, clientCertCond *metav1.Condition) []metav1.Condition {
+// applyGatewayConditions merges the controller-owned Gateway-level conditions
+// (Accepted, Programmed, and the optional client-cert ResolvedRefs) into the
+// existing condition slice via meta.SetStatusCondition. Merging by type — rather
+// than reassigning the whole slice — preserves condition types this controller
+// does not own, as the Gateway API spec requires: "Implementations MUST NOT
+// remove or reorder Conditions that they are not directly responsible for"
+// (gateway_types.go:994-997). meta.SetStatusCondition also manages
+// LastTransitionTime, so a condition's timestamp only moves on an actual
+// status change.
+//
+// A nil clientCertCond means the client-cert outcome was transient: the
+// previous ResolvedRefs condition is left untouched (not overwritten), since
+// SetStatusCondition is simply not called for it.
+func applyGatewayConditions(conditions *[]metav1.Condition, owned []metav1.Condition, clientCertCond *metav1.Condition) {
+	for i := range owned {
+		meta.SetStatusCondition(conditions, owned[i])
+	}
+
 	if clientCertCond != nil {
-		return append(base, *clientCertCond)
+		meta.SetStatusCondition(conditions, *clientCertCond)
 	}
-
-	// Transient: preserve the previous ResolvedRefs condition if one existed.
-	for i := range prev {
-		if prev[i].Type == string(gatewayv1.GatewayConditionResolvedRefs) {
-			return append(base, prev[i])
-		}
-	}
-
-	return base
 }
 
 // buildClientCertResolvedRefsCondition maps the outcome of

@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -677,6 +678,93 @@ func TestGatewayReconciler_UpdateStatus(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, updatedGateway.Status.Addresses, 1)
 	assert.Equal(t, "12345678-1234-1234-1234-123456789abc.cfargotunnel.com", updatedGateway.Status.Addresses[0].Value)
+}
+
+// TestGatewayReconciler_PreservesForeignStatusConditions pins the Gateway API
+// requirement (gateway_types.go:994-997): an implementation MUST NOT remove or
+// reorder conditions it is not directly responsible for. A reconcile must merge
+// the controller's own conditions (Accepted/Programmed/ResolvedRefs) into the
+// existing slice, leaving a third-party condition type untouched.
+func TestGatewayReconciler_PreservesForeignStatusConditions(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+
+	gateway := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-gateway", Namespace: "default"},
+		Spec: gatewayv1.GatewaySpec{
+			GatewayClassName: "cloudflare-tunnel",
+			Listeners: []gatewayv1.Listener{
+				{Name: "http", Port: 80, Protocol: "HTTP"},
+			},
+		},
+		Status: gatewayv1.GatewayStatus{
+			Conditions: []metav1.Condition{
+				{
+					Type:               "special.io/SomeField",
+					Status:             metav1.ConditionTrue,
+					ObservedGeneration: 1,
+					LastTransitionTime: metav1.Now(),
+					Reason:             "ExternalReason",
+					Message:            "set by another controller",
+				},
+			},
+		},
+	}
+
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "cf-credentials", Namespace: "default"},
+		Data:       map[string][]byte{"api-token": []byte("test-token")},
+	}
+
+	gatewayClassConfig := &v1alpha1.GatewayClassConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-config"},
+		Spec: v1alpha1.GatewayClassConfigSpec{
+			CloudflareCredentialsSecretRef: v1alpha1.SecretReference{Name: "cf-credentials", Namespace: "default"},
+			TunnelID:                       "12345678-1234-1234-1234-123456789abc",
+		},
+	}
+
+	gatewayClass := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "cloudflare-tunnel"},
+		Spec: gatewayv1.GatewayClassSpec{
+			ControllerName: "test-controller",
+			ParametersRef: &gatewayv1.ParametersReference{
+				Group: config.ParametersRefGroup,
+				Kind:  config.ParametersRefKind,
+				Name:  "test-config",
+			},
+		},
+	}
+
+	fakeClient := setupGatewayFakeClient(gateway, secret, gatewayClassConfig, gatewayClass)
+	reconciler := &GatewayReconciler{
+		Client:         fakeClient,
+		Scheme:         fakeClient.Scheme(),
+		ControllerName: "test-controller",
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+	}
+
+	_, err := reconciler.Reconcile(ctx, ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "test-gateway", Namespace: "default"},
+	})
+	require.NoError(t, err)
+
+	var updated gatewayv1.Gateway
+	require.NoError(t, fakeClient.Get(ctx,
+		types.NamespacedName{Name: "test-gateway", Namespace: "default"}, &updated))
+
+	foreign := meta.FindStatusCondition(updated.Status.Conditions, "special.io/SomeField")
+	require.NotNil(t, foreign,
+		"controller MUST NOT remove conditions it does not own (gateway_types.go:994-997)")
+	assert.Equal(t, "ExternalReason", foreign.Reason)
+	assert.Equal(t, "set by another controller", foreign.Message)
+
+	// The controller's own conditions must still be present alongside it.
+	assert.NotNil(t, meta.FindStatusCondition(updated.Status.Conditions,
+		string(gatewayv1.GatewayConditionAccepted)))
+	assert.NotNil(t, meta.FindStatusCondition(updated.Status.Conditions,
+		string(gatewayv1.GatewayConditionProgrammed)))
 }
 
 func TestGatewayReconciler_CountAttachedRoutes(t *testing.T) {

@@ -226,7 +226,7 @@ func (r *GatewayReconciler) updateStatus(
 
 		_, _, clientCertErr := loadGatewayClientCertPEM(ctx, r.Client, &freshGateway, r.checkSecretReferenceGrant)
 
-		freshGateway.Status.Conditions = mergeClientCertCondition(freshGateway.Status.Conditions, []metav1.Condition{
+		applyGatewayConditions(&freshGateway.Status.Conditions, []metav1.Condition{
 			{
 				Type:               string(gatewayv1.GatewayConditionAccepted),
 				Status:             metav1.ConditionTrue,
@@ -340,7 +340,7 @@ func (r *GatewayReconciler) setConfigErrorStatus(
 
 		_, _, clientCertErr := loadGatewayClientCertPEM(ctx, r.Client, &freshGateway, r.checkSecretReferenceGrant)
 
-		freshGateway.Status.Conditions = mergeClientCertCondition(freshGateway.Status.Conditions, []metav1.Condition{
+		applyGatewayConditions(&freshGateway.Status.Conditions, []metav1.Condition{
 			{
 				Type:               string(gatewayv1.GatewayConditionAccepted),
 				Status:             metav1.ConditionFalse,
