@@ -175,7 +175,17 @@ func TestGRPCRouteReconciler_updateRouteStatus_EmitsEvent(t *testing.T) {
 
 	require.NoError(t, r.updateRouteStatus(context.Background(), route, routeBindingInfo{}, nil, diagnostics, nil))
 
-	got := drainEvents(rec)
-	require.Len(t, got, 1, "the GRPCRoute reconciler must emit the Event-target diagnostic")
-	assert.Contains(t, got[0], "h2c suppressed")
+	// updateRouteStatus also emits the unconditional gRPC edge-toggle breadcrumb
+	// on this gRPC-capable transport, so filter to the diagnostic Event under test
+	// rather than asserting a single total.
+	var diagEvents []string
+
+	for _, e := range drainEvents(rec) {
+		if strings.Contains(e, "h2c suppressed") {
+			diagEvents = append(diagEvents, e)
+		}
+	}
+
+	require.Len(t, diagEvents, 1, "the GRPCRoute reconciler must emit the Event-target diagnostic")
+	assert.Contains(t, diagEvents[0], "h2c suppressed")
 }

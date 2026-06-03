@@ -95,6 +95,20 @@ type routeBindingInfo struct {
 	bindingResults map[int]routebinding.BindingResult
 }
 
+// hasAcceptedParent reports whether the route bound to at least one managed
+// Gateway parent (the same condition bindRouteParents folds into its accepted
+// return). A route in this state is programmed into the tunnel; a route with no
+// accepted parent is in RejectedGRPCRoutes/RejectedHTTPRoutes with Accepted=False.
+func (b routeBindingInfo) hasAcceptedParent() bool {
+	for _, result := range b.bindingResults {
+		if result.Accepted {
+			return true
+		}
+	}
+
+	return false
+}
+
 // SyncResult contains the results of a sync operation.
 type SyncResult struct {
 	HTTPRoutes        []gatewayv1.HTTPRoute
