@@ -41,6 +41,13 @@ rules:
   - apiGroups: ["gateway.networking.k8s.io"]
     resources: ["gatewayclasses/status", "gateways/status", "httproutes/status", "grpcroutes/status", "backendtlspolicies/status", "listenersets/status"]
     verbs: ["get", "update", "patch"]
+  # CustomResourceDefinitions: the GatewayClass reconciler reads the installed
+  # Gateway API CRD's bundle-version annotation to set the SupportedVersion
+  # condition. A single uncached Get by name -- no informer, so only get is
+  # needed and the controller never mutates CRDs.
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["get"]
   - apiGroups: [""]
     resources: ["services", "namespaces"]
     verbs: ["get", "list", "watch"]
