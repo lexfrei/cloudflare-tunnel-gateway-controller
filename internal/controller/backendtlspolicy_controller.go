@@ -280,6 +280,15 @@ func (r *BackendTLSPolicyReconciler) computeConditions(
 	ctx context.Context,
 	policy *gatewayv1.BackendTLSPolicy,
 ) []metav1.Condition {
+	// WellKnownCACertificates is not supported — only explicit CACertificateRefs
+	// are honoured. The CRD CEL admits a WellKnown-only policy (empty
+	// caCertificateRefs + wellKnownCACertificates set), and the Gateway API spec
+	// mandates Accepted=False/Invalid for an unsupported WellKnown value, not the
+	// generic NoValidCACertificate that an empty-refs policy would otherwise get.
+	if len(policy.Spec.Validation.CACertificateRefs) == 0 && policy.Spec.Validation.WellKnownCACertificates != nil {
+		return wellKnownUnsupportedConditions(policy.Generation, *policy.Spec.Validation.WellKnownCACertificates)
+	}
+
 	if err := r.validateCARefs(ctx, policy); err != nil {
 		return caInvalidConditions(policy.Generation, err)
 	}
@@ -459,6 +468,35 @@ func caInvalidConditions(generation int64, err error) []metav1.Condition {
 			ObservedGeneration: generation,
 			Reason:             string(resolvedRefsReason),
 			Message:            err.Error(),
+		},
+	}
+}
+
+// wellKnownUnsupportedConditions returns the Accepted=False/Invalid +
+// ResolvedRefs=False pair for a policy that relies solely on
+// WellKnownCACertificates, which this controller does not support. Per the
+// Gateway API spec (backendtlspolicy_types.go:206-209) an implementation that
+// does not support WellKnownCACertificates MUST set Accepted=False with
+// Reason=Invalid; the generic NoValidCACertificate reason would mislead the
+// operator into hunting for a CA ref that the policy never declared.
+func wellKnownUnsupportedConditions(generation int64, value gatewayv1.WellKnownCACertificatesType) []metav1.Condition {
+	msg := fmt.Sprintf(
+		"WellKnownCACertificates %q is not supported; configure explicit caCertificateRefs instead", value)
+
+	return []metav1.Condition{
+		{
+			Type:               string(gatewayv1.PolicyConditionAccepted),
+			Status:             metav1.ConditionFalse,
+			ObservedGeneration: generation,
+			Reason:             string(gatewayv1.PolicyReasonInvalid),
+			Message:            msg,
+		},
+		{
+			Type:               string(gatewayv1.BackendTLSPolicyConditionResolvedRefs),
+			Status:             metav1.ConditionFalse,
+			ObservedGeneration: generation,
+			Reason:             string(gatewayv1.BackendTLSPolicyReasonNoValidCACertificate),
+			Message:            msg,
 		},
 	}
 }

@@ -386,14 +386,50 @@ func TestComputeConditions_InvalidCACertificateRef(t *testing.T) {
 	assert.Equal(t, string(gatewayv1.BackendTLSPolicyReasonInvalidCACertificateRef), conditions[1].Reason)
 }
 
+// TestComputeConditions_WellKnownUnsupportedEmitsInvalid pins the Gateway API
+// requirement (backendtlspolicy_types.go:206-209): if an implementation does not
+// support the WellKnownCACertificates field, it MUST set Accepted=False with
+// Reason=Invalid. This controller supports only explicit CACertificateRefs, so a
+// WellKnown-only policy — which the CRD CEL admits (empty caCertificateRefs +
+// wellKnownCACertificates set) — must surface Reason=Invalid, not the generic
+// NoValidCACertificate.
+func TestComputeConditions_WellKnownUnsupportedEmitsInvalid(t *testing.T) {
+	t.Parallel()
+
+	scheme := newBackendTLSPolicyScheme(t)
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+	r := &BackendTLSPolicyReconciler{Client: fakeClient, Scheme: scheme, ControllerName: "test"}
+
+	system := gatewayv1.WellKnownCACertificatesSystem
+	policy := &gatewayv1.BackendTLSPolicy{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "ns", Name: "p", Generation: 7},
+		Spec: gatewayv1.BackendTLSPolicySpec{
+			Validation: gatewayv1.BackendTLSPolicyValidation{
+				WellKnownCACertificates: &system,
+			},
+		},
+	}
+
+	conditions := r.computeConditions(context.Background(), policy)
+
+	accepted := findCondition(conditions, string(gatewayv1.PolicyConditionAccepted))
+	require.NotNil(t, accepted)
+	assert.Equal(t, metav1.ConditionFalse, accepted.Status)
+	assert.Equal(t, string(gatewayv1.PolicyReasonInvalid), accepted.Reason,
+		"unsupported WellKnownCACertificates MUST yield Accepted=False/Invalid per backendtlspolicy_types.go:206-209")
+	assert.Equal(t, int64(7), accepted.ObservedGeneration)
+}
+
 // TestComputeConditions_NeverEmitsPolicyReasonInvalid pins the invariant
 // that — since this controller fully supports both Hostname and URI
 // SubjectAltNames — `computeConditions` MUST NOT stamp the Accepted Reason
-// with `PolicyReasonInvalid`. The previous controller emitted that Reason
-// when it rejected URI SANs; that path is gone and the docs (fail-closed
-// section in docs/gateway-api/limitations.md) no longer mention it. A
-// regression that silently reintroduces the rejection branch must surface
-// here, not at conformance time on homelab.
+// with `PolicyReasonInvalid` for a policy with valid CA references. The
+// previous controller emitted that Reason when it rejected URI SANs; that
+// path is gone. (The unsupported-WellKnownCACertificates path legitimately
+// does emit Invalid — see TestComputeConditions_WellKnownUnsupportedEmitsInvalid;
+// every policy here carries explicit CACertificateRefs so it is unaffected.)
+// A regression that silently reintroduces the SAN rejection branch must
+// surface here, not at conformance time on homelab.
 func TestComputeConditions_NeverEmitsPolicyReasonInvalid(t *testing.T) {
 	t.Parallel()
 
