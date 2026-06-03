@@ -81,6 +81,14 @@ func TestGatewayAPIConformance(t *testing.T) {
 		features.SupportHTTPRouteBackendProtocolH2C,
 		features.SupportHTTPRouteBackendProtocolWebSocket,
 		features.SupportHTTPRouteRequestMultipleMirrors,
+		// SupportHTTPRouteRequestPercentageMirror can flake on sampling variance
+		// over the real tunnel: the subtest asserts the observed mirror rate
+		// lands in an 85-115% band over a 500-request sample, and an individual
+		// attempt occasionally lands just outside (78%/116% observed) before
+		// passing within the suite's retry budget. The tolerance and sample size
+		// are hardcoded upstream, so this is documented as a known statistical
+		// non-regression rather than tuned — see docs/development/testing.md
+		// "Known conformance flakes" and kubernetes-sigs/gateway-api#4933.
 		features.SupportHTTPRouteRequestPercentageMirror,
 		features.SupportBackendTLSPolicy,
 		features.SupportBackendTLSPolicySANValidation,
