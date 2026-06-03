@@ -19,8 +19,11 @@ const (
 	// encodes the ref's namespace/name into this sentinel, which the controller
 	// rewrites to the real scheme://host:port/path before the config is pushed
 	// (see resolveExternalBackends). A sentinel that somehow survives to the
-	// proxy is never dialed because the same step marks an unresolvable backend
-	// 500.
+	// proxy is never dialed: resolveExternalBackends marks an unresolvable
+	// backend 500, and proxyToBackend defensively rejects any backend URL still
+	// carrying this scheme with a 500 before dialing, so the guarantee holds even
+	// if a future ordering regression leaves a sentinel with UnavailableStatus
+	// == 0.
 	externalBackendScheme = "externalbackend"
 )
 

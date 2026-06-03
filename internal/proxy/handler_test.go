@@ -752,6 +752,50 @@ func TestHandler_MarkedBackendReturnsStatusWithoutDialing(t *testing.T) {
 	}
 }
 
+// TestHandler_ExternalBackendSentinelSchemeReturns500WithoutDialing pins the
+// defensive guard for an ExternalBackend sentinel URL that reached the proxy
+// unresolved with UnavailableStatus == 0 (only reachable via a future ordering
+// regression in buildProxyConfig, since resolveExternalBackends normally either
+// rewrites the sentinel to a real URL or marks it 500). The handler must return
+// a clean 500 instead of dialing the unknown scheme — a dial would fail the
+// transport's RoundTrip with "unsupported protocol scheme" and surface an
+// opaque 502. Asserting 500-not-502 is the no-dial proof: 502 is exactly what a
+// dial attempt on the sentinel scheme produces.
+func TestHandler_ExternalBackendSentinelSchemeReturns500WithoutDialing(t *testing.T) {
+	t.Parallel()
+
+	router := proxy.NewRouter()
+
+	cfg := &proxy.Config{
+		Version: 1,
+		Rules: []proxy.RouteRule{
+			{
+				Hostnames: []string{"app.example.com"},
+				Matches: []proxy.RouteMatch{
+					{Path: &proxy.PathMatch{Type: proxy.PathMatchPathPrefix, Value: "/"}},
+				},
+				Backends: []proxy.BackendRef{
+					{URL: proxy.ExternalBackendSentinelURL("default", "ext-api"), Weight: 1},
+				},
+			},
+		},
+	}
+
+	require.NoError(t, router.UpdateConfig(cfg))
+
+	handler := proxy.NewHandler(router)
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://app.example.com/test", nil)
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, req)
+
+	assert.Equal(t, http.StatusInternalServerError, recorder.Code,
+		"a stray ExternalBackend sentinel must return a clean 500")
+	assert.NotEqual(t, http.StatusBadGateway, recorder.Code,
+		"a 502 would mean the sentinel scheme was dialed; the guard must fire before any dial")
+}
+
 // TestHandler_MarkedBackendPreservesValidSiblingFraction pins that marking one
 // backend in a weighted pool does not affect a valid sibling: a request that
 // selects the valid backend still reaches it and gets 200, while the marked

@@ -550,6 +550,18 @@ func (h *Handler) proxyToBackend(writer http.ResponseWriter, req *http.Request, 
 		return
 	}
 
+	// A backend URL still carrying the ExternalBackend sentinel scheme means it
+	// escaped resolveExternalBackends with UnavailableStatus == 0 (only reachable
+	// via a future ordering regression in buildProxyConfig). Return a clean 500
+	// here rather than letting the unknown scheme reach a dial and surface an
+	// opaque 502 — this is what makes the "never dialed" guarantee on
+	// externalBackendScheme literally true.
+	if backendURL.Scheme == externalBackendScheme {
+		http.Error(writer, "backend unavailable", http.StatusInternalServerError)
+
+		return
+	}
+
 	// Merge rule-level and backend-specific filters for response processing.
 	// slices.Concat allocates a fresh slice; using append on result.Filters
 	// would alias its backing array if cap > len and races against concurrent
