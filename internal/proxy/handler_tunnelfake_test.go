@@ -819,3 +819,44 @@ func TestHandler_AccessLog_TunnelMode_SkipsStatus101OnHijackPath(t *testing.T) {
 	assert.Empty(t, strings.TrimSpace(buf.String()),
 		"WS upgrade through the cloudflared writer must NOT produce an access log line -- duration_ms / bytes_written would mislead")
 }
+
+// TestHandler_ExternalBackendSentinelScheme_TunnelMode_Returns500 mirrors the
+// httptest sentinel-guard test against the production cloudflared HTTP/2 writer
+// (per the project's "validate the tunnel transport, not just httptest"
+// principle). The guard returns the 500 before any hijack, so ServeHTTP runs
+// synchronously; the assertion confirms the status is written cleanly through
+// the cloudflared writer (plain WriteHeader(500), no hijack, no 101→200
+// translation involved).
+func TestHandler_ExternalBackendSentinelScheme_TunnelMode_Returns500(t *testing.T) {
+	t.Parallel()
+
+	router := proxy.NewRouter()
+	require.NoError(t, router.UpdateConfig(&proxy.Config{
+		Version: 1,
+		Rules: []proxy.RouteRule{
+			{
+				Hostnames: []string{"app.example.com"},
+				Matches: []proxy.RouteMatch{
+					{Path: &proxy.PathMatch{Type: proxy.PathMatchPathPrefix, Value: "/"}},
+				},
+				Backends: []proxy.BackendRef{
+					{URL: proxy.ExternalBackendSentinelURL("default", "ext-api"), Weight: 1},
+				},
+			},
+		},
+	}))
+
+	handler := proxy.NewHandler(router)
+
+	fake := newFakeCloudflaredRespWriter()
+	t.Cleanup(func() { _ = fake.serverSide.Close(); _ = fake.clientSide.Close() })
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://app.example.com/test", nil)
+
+	handler.ServeHTTP(fake, req)
+
+	assert.Equal(t, http.StatusInternalServerError, fake.Status(),
+		"a stray ExternalBackend sentinel must return a clean 500 through the cloudflared HTTP/2 writer")
+	assert.False(t, fake.Hijacked(),
+		"the sentinel guard must return before any hijack")
+}
