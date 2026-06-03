@@ -93,6 +93,12 @@ func NewRouteSyncer(
 type routeBindingInfo struct {
 	// bindingResults maps ParentRef index to binding result for that parent.
 	bindingResults map[int]routebinding.BindingResult
+
+	// acceptedGateways is the set of managed Gateway keys ("namespace/name")
+	// this route is accepted on. It drives cross-route-type (HTTPRoute vs
+	// GRPCRoute) conflict resolution: two routes of different types conflict
+	// only when they share a Gateway and their hostnames intersect.
+	acceptedGateways map[string]bool
 }
 
 // hasAcceptedParent reports whether the route bound to at least one managed
@@ -378,6 +384,12 @@ func (s *RouteSyncer) buildResultForError(ctx context.Context) *SyncResult {
 	httpResult, _ := s.getRelevantHTTPRoutes(ctx, views)
 	grpcResult, _ := s.getRelevantGRPCRoutes(ctx, views)
 
+	// Cross-route-type conflict resolution is intentionally NOT applied here: on
+	// the config-error path a sync error drives every route to
+	// Accepted=False/Pending (which dominates the Conflicted reason), so resolving
+	// conflicts would only mask which routes reference us without changing any
+	// surfaced status.
+
 	result := &SyncResult{}
 
 	if httpResult != nil {
@@ -468,6 +480,12 @@ func (s *RouteSyncer) SyncAllRoutes(ctx context.Context) (ctrl.Result, *SyncResu
 	if err != nil {
 		return ctrl.Result{}, nil, errors.Wrap(err, "failed to list grpcroutes")
 	}
+
+	// Resolve cross-route-type (HTTPRoute vs GRPCRoute) attachment conflicts
+	// before building any config or status: the loser is moved from accepted to
+	// rejected with Accepted=False/Conflicted so it is neither served nor
+	// reported as accepted.
+	resolveCrossTypeConflicts(httpResult, grpcResult)
 
 	logger.Info("syncing routes to cloudflare",
 		"httpRoutes", len(httpResult.accepted),
@@ -682,7 +700,8 @@ func (s *RouteSyncer) bindRouteParents(
 	views *listenerViewCache,
 ) (routeBindingInfo, bool, bool) {
 	bindingInfo := routeBindingInfo{
-		bindingResults: make(map[int]routebinding.BindingResult),
+		bindingResults:   make(map[int]routebinding.BindingResult),
+		acceptedGateways: make(map[string]bool),
 	}
 
 	hasAccepted := false
@@ -715,6 +734,10 @@ func (s *RouteSyncer) bindRouteParents(
 
 		if binding.Result.Accepted {
 			hasAccepted = true
+
+			if binding.GatewayKey != "" {
+				bindingInfo.acceptedGateways[binding.GatewayKey] = true
+			}
 		}
 	}
 

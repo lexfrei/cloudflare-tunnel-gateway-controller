@@ -18,6 +18,100 @@ import (
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/proxy"
 )
 
+// crossRouteHTTPRoute builds an HTTPRoute with one rule, a single PathPrefix "/"
+// match (so two such routes tie on GEP-1722 priority), and one backendRef to the
+// named Service. Used to exercise the cross-Route precedence tiebreak.
+func crossRouteHTTPRoute(namespace, name string, created metav1.Time, hostname, svc string) *gatewayv1.HTTPRoute {
+	pathPrefix := gatewayv1.PathMatchPathPrefix
+	root := "/"
+	port := gatewayv1.PortNumber(80)
+	svcName := gatewayv1.ObjectName(svc)
+
+	return &gatewayv1.HTTPRoute{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace, CreationTimestamp: created},
+		Spec: gatewayv1.HTTPRouteSpec{
+			Hostnames: []gatewayv1.Hostname{gatewayv1.Hostname(hostname)},
+			Rules: []gatewayv1.HTTPRouteRule{
+				{
+					Matches: []gatewayv1.HTTPRouteMatch{
+						{Path: &gatewayv1.HTTPPathMatch{Type: &pathPrefix, Value: &root}},
+					},
+					BackendRefs: []gatewayv1.HTTPBackendRef{
+						{BackendRef: gatewayv1.BackendRef{
+							BackendObjectReference: gatewayv1.BackendObjectReference{Name: svcName, Port: &port},
+						}},
+					},
+				},
+			},
+		},
+	}
+}
+
+// TestConvertHTTPRoutes_CrossRoutePrecedenceByCreationTimestamp pins the Gateway
+// API cross-Route match precedence tiebreak (httproute_types.go:192-197): when
+// two equally-specific rules from different Routes tie, the oldest Route by
+// creationTimestamp wins. The routes are passed loser-first to prove the
+// resolution is by creationTimestamp, not input/list order.
+func TestConvertHTTPRoutes_CrossRoutePrecedenceByCreationTimestamp(t *testing.T) {
+	t.Parallel()
+
+	older := metav1.NewTime(time.Unix(1000, 0))
+	newer := metav1.NewTime(time.Unix(2000, 0))
+
+	// a-route is alphabetically first but NEWER; b-route is alphabetically later
+	// but OLDER. The spec's first tiebreak is creationTimestamp, so b-route wins.
+	aRoute := crossRouteHTTPRoute("default", "a-route", newer, "app.example.com", "a-svc")
+	bRoute := crossRouteHTTPRoute("default", "b-route", older, "app.example.com", "b-svc")
+
+	// Loser-first input order.
+	cfg := proxy.ConvertHTTPRoutes(context.Background(),
+		[]*gatewayv1.HTTPRoute{aRoute, bRoute}, "cluster.local", nil, nil, nil, nil)
+
+	router := proxy.NewRouter()
+	require.NoError(t, router.UpdateConfig(cfg))
+
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "http://app.example.com/", nil)
+	require.NoError(t, err)
+	req.Host = "app.example.com"
+
+	result := router.Route(req)
+	require.NotNil(t, result)
+	require.NotEmpty(t, result.Rule.Backends)
+	assert.Equal(t, "http://b-svc.default.svc.cluster.local:80", result.Rule.Backends[0].URL,
+		"oldest Route by creationTimestamp must win an equal-priority cross-Route tie")
+}
+
+// TestConvertHTTPRoutes_CrossRoutePrecedenceAlphabeticalTiebreak pins the spec's
+// second cross-Route tiebreak (httproute_types.go:192-197): when two
+// equally-specific rules share a creationTimestamp, the Route first
+// alphabetically by {namespace}/{name} wins.
+func TestConvertHTTPRoutes_CrossRoutePrecedenceAlphabeticalTiebreak(t *testing.T) {
+	t.Parallel()
+
+	same := metav1.NewTime(time.Unix(1000, 0))
+
+	aRoute := crossRouteHTTPRoute("default", "a-route", same, "app.example.com", "a-svc")
+	bRoute := crossRouteHTTPRoute("default", "b-route", same, "app.example.com", "b-svc")
+
+	// Pass alphabetically-later route first to prove the resolution is by name,
+	// not input order.
+	cfg := proxy.ConvertHTTPRoutes(context.Background(),
+		[]*gatewayv1.HTTPRoute{bRoute, aRoute}, "cluster.local", nil, nil, nil, nil)
+
+	router := proxy.NewRouter()
+	require.NoError(t, router.UpdateConfig(cfg))
+
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "http://app.example.com/", nil)
+	require.NoError(t, err)
+	req.Host = "app.example.com"
+
+	result := router.Route(req)
+	require.NotNil(t, result)
+	require.NotEmpty(t, result.Rule.Backends)
+	assert.Equal(t, "http://a-svc.default.svc.cluster.local:80", result.Rule.Backends[0].URL,
+		"the alphabetically-first Route by {namespace}/{name} must win an equal-timestamp tie")
+}
+
 func TestConvertHTTPRoutes_Basic(t *testing.T) {
 	t.Parallel()
 

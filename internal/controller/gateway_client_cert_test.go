@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -434,36 +435,61 @@ func TestBuildClientCertResolvedRefsCondition_TransientError_NilCondition(t *tes
 	assert.Nil(t, cond, "transient errors must leave the previous condition in place")
 }
 
-func TestMergeClientCertCondition_TransientPreservesPrevious(t *testing.T) {
+func TestApplyGatewayConditions_TransientPreservesPreviousAndForeign(t *testing.T) {
 	t.Parallel()
 
-	// When the cert resolver returned a transient error the helper returns
-	// nil, so mergeClientCertCondition must surface any pre-existing
-	// ResolvedRefs condition from the prior reconcile instead of dropping it.
+	// A transient client-cert error yields a nil clientCertCond, so
+	// applyGatewayConditions must leave the prior ResolvedRefs untouched and must
+	// not disturb a foreign condition type owned by another controller.
 	prevResolved := metav1.Condition{
 		Type:    string(gatewayv1.GatewayConditionResolvedRefs),
 		Status:  metav1.ConditionTrue,
 		Reason:  string(gatewayv1.GatewayReasonResolvedRefs),
 		Message: "All references resolved",
 	}
-	prev := []metav1.Condition{prevResolved}
-	base := []metav1.Condition{{Type: "Accepted", Status: metav1.ConditionTrue}}
+	foreign := metav1.Condition{
+		Type:    "special.io/SomeField",
+		Status:  metav1.ConditionTrue,
+		Reason:  "ExternalReason",
+		Message: "owned by another controller",
+	}
+	conditions := []metav1.Condition{foreign, prevResolved}
 
-	merged := mergeClientCertCondition(prev, base, nil)
+	owned := []metav1.Condition{{
+		Type:   string(gatewayv1.GatewayConditionAccepted),
+		Status: metav1.ConditionTrue,
+		Reason: string(gatewayv1.GatewayReasonAccepted),
+	}}
 
-	require.Len(t, merged, 2)
-	assert.Equal(t, prevResolved, merged[1])
+	applyGatewayConditions(&conditions, owned, nil)
+
+	assert.NotNil(t, meta.FindStatusCondition(conditions, "special.io/SomeField"),
+		"foreign condition must be preserved")
+
+	resolved := meta.FindStatusCondition(conditions, string(gatewayv1.GatewayConditionResolvedRefs))
+	require.NotNil(t, resolved, "transient client-cert error must leave the prior ResolvedRefs in place")
+	assert.Equal(t, string(gatewayv1.GatewayReasonResolvedRefs), resolved.Reason)
+
+	assert.NotNil(t, meta.FindStatusCondition(conditions, string(gatewayv1.GatewayConditionAccepted)),
+		"the controller's own Accepted condition must be merged in")
 }
 
-func TestMergeClientCertCondition_TransientNoPrevious_DropsNothing(t *testing.T) {
+func TestApplyGatewayConditions_TransientNoPrevious_AddsNothingExtra(t *testing.T) {
 	t.Parallel()
 
-	base := []metav1.Condition{{Type: "Accepted", Status: metav1.ConditionTrue}}
+	conditions := []metav1.Condition{}
+	owned := []metav1.Condition{{
+		Type:   string(gatewayv1.GatewayConditionAccepted),
+		Status: metav1.ConditionTrue,
+		Reason: string(gatewayv1.GatewayReasonAccepted),
+	}}
 
-	merged := mergeClientCertCondition(nil, base, nil)
+	applyGatewayConditions(&conditions, owned, nil)
 
-	// No previous ResolvedRefs to preserve → the helper just returns base.
-	assert.Equal(t, base, merged)
+	require.Len(t, conditions, 1)
+	assert.Equal(t, string(gatewayv1.GatewayConditionAccepted), conditions[0].Type)
+	assert.Nil(t, meta.FindStatusCondition(conditions, string(gatewayv1.GatewayConditionResolvedRefs)),
+		"no previous ResolvedRefs to preserve and a nil clientCertCond means none is invented")
 }
 
 // failingListClient wraps a fake client so List calls always fail. Used to

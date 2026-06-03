@@ -36,7 +36,9 @@ const grpcSegmentPattern = "[^/]+"
 // plaintext (attachGatewayClientCert returns the original config unchanged
 // when tlsCfg is nil).
 //
-// gRPC-specific filters are not yet supported and are skipped with a warning.
+// The core RequestHeaderModifier and extended ResponseHeaderModifier filters
+// are served through the shared header-modifier pipeline; RequestMirror and
+// ExtensionRef are not served yet and fail closed (HTTP 500).
 // Multiple backendRefs are weighted: every listed backend is emitted with its
 // weight, and the proxy's weighted-random selection splits traffic in
 // proportion to those weights (same as HTTPRoute).
@@ -54,7 +56,7 @@ func ConvertGRPCRoutes(
 
 	sink := &diagSink{}
 
-	for _, route := range routes {
+	for _, route := range sortRoutesByPrecedence(routes) {
 		sink.route(route.Namespace, route.Name)
 		hostnames := convertHostnames(route.Spec.Hostnames)
 		clientCert := resolveFirstParentClientCertForGRPCRoute(ctx, route, gatewayCertResolver)
@@ -102,22 +104,15 @@ func convertGRPCRouteRule(
 		}
 	}
 
-	if len(rule.Filters) > 0 {
-		// The proxy serves no GRPCRoute filters yet. Per the Gateway API spec an
-		// unsupported filter MUST NOT be silently dropped — the rule fails closed
-		// (matched gRPC requests receive HTTP 500) and the route status carries
-		// the UnsupportedValue so the operator is not left guessing.
-		sink.add(
-			DiagnosticAccepted,
-			string(gatewayv1.RouteReasonUnsupportedValue),
-			grpcFiltersUnsupportedMessage(len(rule.Filters)),
-			true,
-		)
+	for filterIdx := range rule.Filters {
+		converted, failClosed := convertGRPCFilter(&rule.Filters[filterIdx], filterScopeRule, sink)
+		if failClosed {
+			proxyRule.UnavailableStatus = http.StatusInternalServerError
+		}
 
-		proxyRule.UnavailableStatus = http.StatusInternalServerError
-
-		slog.Warn("failing GRPCRoute rule closed: filters not supported by the proxy",
-			"namespace", namespace, "filters", len(rule.Filters))
+		if converted != nil {
+			proxyRule.Filters = append(proxyRule.Filters, *converted)
+		}
 	}
 
 	for backendIdx := range rule.BackendRefs {
@@ -133,51 +128,65 @@ func convertGRPCRouteRule(
 	return proxyRule
 }
 
-// grpcFiltersUnsupportedMessage builds the actionable status message for a
-// GRPCRoute rule whose filters the proxy cannot serve. It names the count, the
-// consequence (HTTP 500 for matching requests), and the remediation.
-func grpcFiltersUnsupportedMessage(count int) string {
-	return fmt.Sprintf(
-		"%d GRPCRoute filter(s) on this rule are not supported by the proxy; "+
-			"matching requests receive HTTP 500. Remove the filters from the rule "+
-			"to restore routing.",
-		count,
-	)
-}
-
-// grpcBackendFiltersUnsupportedMessage builds the actionable status message for
-// a GRPCRoute backendRef whose per-backend filters the proxy cannot serve. Only
-// that backend's traffic fraction fails closed; the rule keeps serving.
-func grpcBackendFiltersUnsupportedMessage(serviceName string, count int) string {
-	return fmt.Sprintf(
-		"%d GRPCRoute filter(s) on the backendRef to Service %q are not supported by the proxy; "+
-			"requests routed to that backend receive HTTP 500. Remove the filters from the backendRef "+
-			"to restore routing to it.",
-		count, serviceName,
-	)
-}
-
-// grpcBackendFiltersUnsupported reports whether a GRPCRoute backendRef carries
-// per-backend filters the proxy cannot serve (none are supported yet). When it
-// does, it records a backend-scope diagnostic and returns true so the caller
-// fails that backend's traffic fraction closed (HTTP 500). The rule itself keeps
-// serving its other backends — the gRPC analogue of the HTTP per-backend
-// filter fail-closed.
-func grpcBackendFiltersUnsupported(filters []gatewayv1.GRPCRouteFilter, namespace, serviceName string, sink *diagSink) bool {
-	if len(filters) == 0 {
-		return false
+// convertGRPCFilter maps a single GRPCRouteFilter into the proxy wire shape. The
+// core RequestHeaderModifier and the extended ResponseHeaderModifier are served
+// through the same header-modifier pipeline as HTTPRoute — gRPC metadata is
+// carried as HTTP/2 headers, so the header-modifier code applies unchanged.
+// RequestMirror (extended) and ExtensionRef (implementation-specific) are not
+// served yet: per the Gateway API spec an unsupported filter MUST NOT be
+// silently dropped, so they fail closed (matched requests receive HTTP 500) and
+// the route status carries the UnsupportedValue. scope controls whether a
+// fail-closed filter takes the whole rule down or only the backend fraction.
+func convertGRPCFilter(filter *gatewayv1.GRPCRouteFilter, scope string, sink *diagSink) (*RouteFilter, bool) {
+	switch filter.Type {
+	case gatewayv1.GRPCRouteFilterRequestHeaderModifier:
+		return convertRequestHeaderFilter(filter.RequestHeaderModifier), false
+	case gatewayv1.GRPCRouteFilterResponseHeaderModifier:
+		return convertResponseHeaderFilter(filter.ResponseHeaderModifier), false
+	case gatewayv1.GRPCRouteFilterRequestMirror, gatewayv1.GRPCRouteFilterExtensionRef:
+		// Unsupported: handled by the fail-closed path below. Listed explicitly so
+		// the exhaustive linter confirms every enum value is accounted for.
 	}
 
 	sink.add(
 		DiagnosticAccepted,
 		string(gatewayv1.RouteReasonUnsupportedValue),
-		grpcBackendFiltersUnsupportedMessage(serviceName, len(filters)),
-		false,
+		unsupportedGRPCFilterMessage(scope, string(filter.Type)),
+		scope == filterScopeRule,
 	)
-	slog.Warn("failing GRPCRoute backend closed: per-backend filters not supported by the proxy",
-		"namespace", namespace, "service", serviceName, "filters", len(filters))
+	slog.Warn("failing closed: unsupported GRPCRoute filter type", "type", filter.Type, "scope", scope)
 
-	return true
+	return nil, true
+}
+
+// applyGRPCBackendFilters converts a GRPCRoute backendRef's per-backend filters
+// and applies them to result: supported header modifiers are appended to
+// result.Filters; an unsupported filter (RequestMirror, ExtensionRef) fails only
+// this backend's traffic fraction closed (HTTP 500), the gRPC analogue of the
+// HTTP per-backend filter fail-closed. The rule keeps serving its other backends.
+func applyGRPCBackendFilters(result *BackendRef, filters []gatewayv1.GRPCRouteFilter, sink *diagSink) {
+	for filterIdx := range filters {
+		converted, failClosed := convertGRPCFilter(&filters[filterIdx], filterScopeBackend, sink)
+		if failClosed {
+			result.UnavailableStatus = http.StatusInternalServerError
+		}
+
+		if converted != nil {
+			result.Filters = append(result.Filters, *converted)
+		}
+	}
+}
+
+// unsupportedGRPCFilterMessage builds the actionable status message for a
+// GRPCRoute filter type the proxy cannot serve. It names the offending type, the
+// consequence (HTTP 500 for matched requests), and the supported alternatives.
+func unsupportedGRPCFilterMessage(scope, filterType string) string {
+	return fmt.Sprintf(
+		"GRPCRoute filter type %q on this %s is not supported; matching requests receive HTTP 500. "+
+			"Remove the filter or replace it with a supported type "+
+			"(RequestHeaderModifier, ResponseHeaderModifier).",
+		filterType, scope,
+	)
 }
 
 // convertGRPCMatch maps a GRPCRouteMatch to a proxy RouteMatch. Returns
@@ -346,9 +355,7 @@ func convertGRPCBackendRef(
 
 	result.URL = buildServiceURL(serviceName, svcNamespace, port, backendDomain(backend.BackendObjectReference, clusterDomain))
 
-	if grpcBackendFiltersUnsupported(backend.Filters, svcNamespace, serviceName, sink) {
-		result.UnavailableStatus = http.StatusInternalServerError
-	}
+	applyGRPCBackendFilters(&result, backend.Filters, sink)
 
 	applyGRPCBackendTransport(ctx, &result, tlsResolver, clientCert, svcNamespace, serviceName, port)
 
@@ -383,9 +390,7 @@ func convertGRPCExternalBackendRef(
 		Protocol: BackendProtocolH2C,
 	}
 
-	if grpcBackendFiltersUnsupported(backend.Filters, svcNamespace, serviceName, sink) {
-		result.UnavailableStatus = http.StatusInternalServerError
-	}
+	applyGRPCBackendFilters(&result, backend.Filters, sink)
 
 	return result, true
 }

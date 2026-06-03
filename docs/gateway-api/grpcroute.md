@@ -244,8 +244,9 @@ kubectl get grpcroute my-grpc-route --output jsonpath='{.status.parents[*].condi
 |---------|--------|
 | Service / method matching (Exact, RegularExpression) | Supported |
 | Header matching (Exact, RegularExpression) | Supported |
-| Filters | Not implemented — logged and skipped |
-| Backend filters | Not implemented |
+| Filters (`RequestHeaderModifier`, `ResponseHeaderModifier`) | Supported — served via the shared header-modifier pipeline |
+| Filters (`RequestMirror`, `ExtensionRef`) | Not served — fail closed (matching requests receive HTTP 500) |
+| Backend filters | Same as rule filters: header modifiers served, others fail closed |
 | BackendTLSPolicy / Gateway `clientCertificateRef` | Supported — see Backend TLS below |
 
 ### Backend TLS

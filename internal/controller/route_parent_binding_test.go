@@ -241,6 +241,56 @@ func TestResolveRouteParentBinding_ConflictedListenerSetEntryRejected(t *testing
 	assert.Equal(t, gatewayv1.RouteReasonNoMatchingParent, binding.Result.Reason)
 }
 
+// TestResolveRouteParentBinding_ConflictedGatewayListenerRejected guards the
+// spec contract for the plain-Gateway path: a route pinned (via sectionName) to
+// a Gateway-owned listener that conflicts with a higher-precedence listener
+// MUST NOT be accepted (gateway_types.go:181-184). Mirrors the ListenerSet case.
+func TestResolveRouteParentBinding_ConflictedGatewayListenerRejected(t *testing.T) {
+	t.Parallel()
+
+	gc := managedGatewayClass()
+	host := gatewayv1.Hostname("conflict.example.com")
+	gw := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "infra"},
+		Spec: gatewayv1.GatewaySpec{
+			GatewayClassName: gatewayv1.ObjectName(gc.Name),
+			Listeners: []gatewayv1.Listener{
+				// Two listeners share (port=80, hostname) → the second is Conflicted.
+				{
+					Name: "gw-l1", Port: 80, Protocol: gatewayv1.HTTPProtocolType, Hostname: &host,
+					AllowedRoutes: &gatewayv1.AllowedRoutes{
+						Namespaces: &gatewayv1.RouteNamespaces{From: namespacesFromAllPtr()},
+					},
+				},
+				{
+					Name: "gw-l2", Port: 80, Protocol: gatewayv1.HTTPProtocolType, Hostname: &host,
+					AllowedRoutes: &gatewayv1.AllowedRoutes{
+						Namespaces: &gatewayv1.RouteNamespaces{From: namespacesFromAllPtr()},
+					},
+				},
+			},
+		},
+	}
+
+	cli := buildGatewayFakeClient(t, gc, gw)
+	validator := routebinding.NewValidator(cli)
+
+	gwKind := gatewayv1.Kind(kindGateway)
+	gwNS := gatewayv1.Namespace("infra")
+	section := gatewayv1.SectionName("gw-l2")
+	ref := gatewayv1.ParentReference{Kind: &gwKind, Name: "gw", Namespace: &gwNS, SectionName: &section}
+	routeInfo := &routebinding.RouteInfo{
+		Name: "r", Namespace: "team-a",
+		Hostnames: []gatewayv1.Hostname{host}, Kind: routebinding.KindHTTPRoute, SectionName: &section,
+	}
+
+	binding, err := resolveRouteParentBinding(context.Background(), cli, validator, testListenerSetController, ref, "team-a", routeInfo, nil)
+	require.NoError(t, err)
+	assert.True(t, binding.ManagedByThisController)
+	assert.False(t, binding.Result.Accepted, "a route pinned to a conflicted Gateway listener must be rejected")
+	assert.Equal(t, gatewayv1.RouteReasonNoMatchingParent, binding.Result.Reason)
+}
+
 // TestParentRefSelectsManagedGateway_ForeignGroupRejected guards the status
 // writer's group filter: a parentRef with Kind=ListenerSet but a Group other
 // than gateway.networking.k8s.io must NOT register as a managed parent even

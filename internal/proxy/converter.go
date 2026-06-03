@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
@@ -87,6 +88,38 @@ type ClientCertConfig struct {
 // wins) and stamps the result onto every backend's BackendTLSConfig.
 type GatewayClientCertResolver func(ctx context.Context, gatewayNN types.NamespacedName) *ClientCertConfig
 
+// sortRoutesByPrecedence returns a copy of routes ordered by the Gateway API
+// cross-Route match precedence tiebreak (httproute_types.go:192-197 /
+// grpcroute_types.go:205-209 / listenerset_types.go:192): oldest Route by
+// creationTimestamp first, then alphabetically by {namespace}/{name}. Flattening
+// rules in this order makes the router's stable ruleIndex tiebreak resolve
+// equal-priority cross-Route ties exactly as the spec mandates, and makes the
+// generated config deterministic regardless of the API List order the routes
+// arrived in. The input slice is left untouched.
+func sortRoutesByPrecedence[T metav1.Object](routes []T) []T {
+	sorted := make([]T, len(routes))
+	copy(sorted, routes)
+
+	slices.SortStableFunc(sorted, func(left, right T) int {
+		lt, rt := left.GetCreationTimestamp(), right.GetCreationTimestamp()
+		if !lt.Equal(&rt) {
+			if lt.Before(&rt) {
+				return -1
+			}
+
+			return 1
+		}
+
+		if c := strings.Compare(left.GetNamespace(), right.GetNamespace()); c != 0 {
+			return c
+		}
+
+		return strings.Compare(left.GetName(), right.GetName())
+	})
+
+	return sorted
+}
+
 // ConvertHTTPRoutes converts Gateway API HTTPRoute resources into a proxy Config.
 //
 // validator, protocolResolver, tlsResolver and gatewayCertResolver may all be nil:
@@ -111,7 +144,7 @@ func ConvertHTTPRoutes(
 
 	sink := &diagSink{}
 
-	for _, route := range routes {
+	for _, route := range sortRoutesByPrecedence(routes) {
 		sink.route(route.Namespace, route.Name)
 		hostnames := convertHostnames(route.Spec.Hostnames)
 		clientCert := resolveFirstParentClientCert(ctx, route, gatewayCertResolver)
