@@ -273,13 +273,13 @@ For large deployments:
 
 ## Route Conflict Resolution
 
-Routes are processed in order:
+A request first selects a hostname bucket — exact hostname over wildcard over the default (no-hostname) bucket — and then the matching rules within that bucket are ordered by match specificity, highest first:
 
-1. Exact path matches first
-2. Longer prefix paths before shorter
-3. Alphabetically by hostname
+1. Path match type: exact, then regex, then prefix
+2. Longer path value before shorter
+3. Then method, header-count, and query-count specificity
 
-If routes conflict, the first match wins. The controller does not merge rules from different routes.
+The most specific match wins, and the controller does not merge rules from different routes. Hostname only selects the bucket; it is **not** a precedence tiebreaker among matching rules. When two equally-specific rules from different Routes still tie, the cross-Route tiebreak is applied per the Gateway API spec (`httproute_types.go:192-197`): the oldest Route by creationTimestamp wins, then the Route first alphabetically by `{namespace}/{name}`. The within-Route fallback is the first matching rule in list order.
 
 ### Example Conflict
 
@@ -316,6 +316,16 @@ For multi-cluster scenarios:
 1. Deploy the controller in each cluster with separate tunnels
 2. Use Cloudflare Load Balancing to distribute traffic between tunnels
 3. Consider a service mesh with cross-cluster capabilities
+
+## GatewayClass behaviour
+
+### GatewayClass changes propagate to existing Gateways
+
+The Gateway API spec (`gatewayclass_types.go:43`) recommends snapshotting GatewayClass configuration when a Gateway is created and NOT propagating later GatewayClass changes; an implementation that does propagate MUST document it. This controller propagates: it watches GatewayClass and re-reconciles every managed Gateway whenever the GatewayClass spec changes — notably `parametersRef`, which points at the `GatewayClassConfig` holding the Cloudflare credentials and tunnel ID. Credential and tunnel-config updates therefore take effect on already-running Gateways without recreating them.
+
+### `SupportedVersion` condition is asserted, not verified
+
+The GatewayClass `SupportedVersion` condition is an Experimental-channel surface (`gatewayclass_types.go:244`, marked `// <gateway:experimental>`); this controller pins and runs the Standard channel (Gateway API v1.5.1), where `SupportedVersion` is not a required condition. The controller reports `SupportedVersion=True` without inspecting the `gateway.networking.k8s.io/bundle-version` annotation on the installed Gateway API CRDs, so the value is asserted rather than verified against the cluster's CRD bundle. The spec's "set it to False on a missing or unrecognised bundle version" requirement (`gatewayclass_types.go:222`) binds only on the Experimental channel, and the controller ships and pins a compatible CRD bundle via its Helm chart. This would become a real obligation if the project ever adopts the Experimental channel.
 
 ## Metrics and Observability
 
