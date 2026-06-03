@@ -132,7 +132,7 @@ GRPCRoute is served by the in-process L7 proxy. gRPC requests are HTTP/2 POSTs t
 | `spec.rules[].matches[].method` | Yes | `Exact` (service+method, service-only, method-only) and `RegularExpression` |
 | `spec.rules[].matches[].headers` | Yes | Exact and RegularExpression matchers (shared with HTTP) |
 | `spec.rules[].backendRefs` | Yes | Service backends; cleartext h2c by default, TLS + ALPN HTTP/2 when a BackendTLSPolicy targets the Service |
-| `spec.rules[].filters` | No | gRPC filters are not yet applied by the proxy; logged and skipped |
+| `spec.rules[].filters` | Partial | Core `RequestHeaderModifier` and extended `ResponseHeaderModifier` are served through the shared header-modifier pipeline (rule- and backend-scoped). `RequestMirror` and `ExtensionRef` are not served yet and fail closed (matching requests receive HTTP 500). |
 | BackendTLSPolicy / Gateway `clientCertificateRef` | Yes | When a `BackendTLSPolicy` targets the backend Service, the proxy dials TLS with HTTP/2 negotiated via ALPN. The Gateway's `clientCertificateRef` is presented for mTLS only when a policy is also attached (Gateway API spec — a client cert over plaintext is meaningless). See [GRPCRoute docs](grpcroute.md#backend-tls). |
 
 gRPC method matching maps to paths as follows:
