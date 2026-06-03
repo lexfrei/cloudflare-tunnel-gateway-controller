@@ -24,6 +24,12 @@ type parentRefBinding struct {
 	// Result is the binding result (Accepted, Reason, matched section names).
 	// Zero value when ManagedByThisController is false.
 	Result routebinding.BindingResult
+
+	// GatewayKey is the "namespace/name" of the resolved parent Gateway (the
+	// Gateway itself for a Gateway parentRef, or the ListenerSet's parent
+	// Gateway). Set when ManagedByThisController is true. Drives cross-route-type
+	// conflict resolution, which is scoped to routes sharing a Gateway.
+	GatewayKey string
 }
 
 // resolveRouteParentBinding looks up the resource named by ref (Gateway or
@@ -89,7 +95,11 @@ func resolveGatewayParentBinding(
 		return parentRefBinding{}, errors.Wrap(bindErr, "failed to validate route binding against gateway")
 	}
 
-	return parentRefBinding{ManagedByThisController: true, Result: bindResult}, nil
+	return parentRefBinding{
+		ManagedByThisController: true,
+		Result:                  bindResult,
+		GatewayKey:              gateway.Namespace + "/" + gateway.Name,
+	}, nil
 }
 
 func resolveListenerSetParentBinding(
@@ -132,6 +142,7 @@ func resolveListenerSetParentBinding(
 	if !allowed.Accepted {
 		return parentRefBinding{
 			ManagedByThisController: true,
+			GatewayKey:              parent.Namespace + "/" + parent.Name,
 			Result: routebinding.BindingResult{
 				Accepted: false,
 				Reason:   gatewayv1.RouteReasonNoMatchingParent,
@@ -154,7 +165,11 @@ func resolveListenerSetParentBinding(
 		bindResult = filterMatchedListenersByConflict(ctx, cli, &listenerSet, parent, bindResult, views)
 	}
 
-	return parentRefBinding{ManagedByThisController: true, Result: bindResult}, nil
+	return parentRefBinding{
+		ManagedByThisController: true,
+		Result:                  bindResult,
+		GatewayKey:              parent.Namespace + "/" + parent.Name,
+	}, nil
 }
 
 // filterMatchedListenersByConflict drops any matched section from the
