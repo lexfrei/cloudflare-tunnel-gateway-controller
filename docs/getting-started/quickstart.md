@@ -9,6 +9,40 @@ Ensure you have completed:
 - [Prerequisites](prerequisites.md) - Cloudflare Tunnel and API token created
 - [Installation](installation.md) - Controller installed and running
 
+## Create a Gateway
+
+The chart installs the `cloudflare-tunnel` GatewayClass, but you create the Gateway that HTTPRoutes attach to. Create one in the controller namespace:
+
+```yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: cloudflare-tunnel
+  namespace: cloudflare-tunnel-system
+spec:
+  gatewayClassName: cloudflare-tunnel
+  listeners:
+    - name: https
+      port: 443
+      protocol: HTTPS
+      allowedRoutes:
+        namespaces:
+          from: All
+```
+
+Apply it:
+
+```bash
+kubectl apply --filename gateway.yaml
+```
+
+Cloudflare terminates TLS at its edge, so the listener carries no `certificateRefs` — the `port`/`protocol` are accepted for route binding but the actual TLS is handled by Cloudflare. Once the controller reconciles it, the Gateway's status address is set to `<tunnel-id>.cfargotunnel.com`:
+
+```bash
+kubectl get gateway cloudflare-tunnel --namespace cloudflare-tunnel-system \
+  --output jsonpath='{.status.addresses[*].value}'
+```
+
 ## Deploy a Sample Application
 
 First, deploy a simple application to expose:
