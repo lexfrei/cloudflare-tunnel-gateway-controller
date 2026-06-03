@@ -4,7 +4,7 @@ This guide covers setting up a development environment for the Cloudflare Tunnel
 
 ## Prerequisites
 
-- Go 1.26.1 or later
+- Go 1.26.4 or later
 - kubectl configured with cluster access
 - A Kubernetes cluster (kind, minikube, or remote)
 - Cloudflare account with a tunnel configured
@@ -64,13 +64,12 @@ docker buildx build --platform linux/amd64,linux/arm64 \
 
 ### With kubeconfig
 
-```bash
-# Set required environment variables
-export CF_TUNNEL_ID="your-tunnel-id"
-export CF_API_TOKEN="your-api-token"
+The controller binary takes no credential environment variables. In v3, Cloudflare credentials and the tunnel UUID live in a Kubernetes Secret referenced by the GatewayClassConfig CRD, not in the controller process. The only mandatory flag is `--proxy-endpoints`, which points the controller at the in-process L7 proxy's config API.
 
-# Run controller
+```bash
+# Run controller (--proxy-endpoints is required in v3)
 ./bin/controller \
+  --proxy-endpoints=http://127.0.0.1:8081/config \
   --log-level=debug \
   --log-format=text
 ```
@@ -79,7 +78,7 @@ export CF_API_TOKEN="your-api-token"
 
 ```bash
 # Install Gateway API CRDs
-kubectl apply --filename https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.5.0/standard-install.yaml
+kubectl apply --filename https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.5.1/standard-install.yaml
 
 # Create namespace
 kubectl create namespace cloudflare-tunnel-system
@@ -192,7 +191,7 @@ Settings (`.vscode/settings.json`):
 1. Enable golangci-lint integration:
    - Settings → Go → Linters → Enable golangci-lint
 2. Configure run configuration:
-   - Add environment variables: `CF_TUNNEL_ID`, `CF_API_TOKEN`
+   - Add environment variables the controller reads via viper (the `CF` prefix maps each flag, with `-` replaced by `_`): `CF_PROXY_ENDPOINTS` (required), and optionally `CF_CONTROLLER_NAME`, `CF_LOG_LEVEL`, `CF_LOG_FORMAT`
    - Set working directory to project root
 
 ## Common Tasks
@@ -223,7 +222,7 @@ go get -u ./...
 go mod tidy
 
 # Update specific dependency
-go get -u github.com/cloudflare/cloudflare-go/v4@latest
+go get -u github.com/cloudflare/cloudflare-go/v7@latest
 go mod tidy
 ```
 

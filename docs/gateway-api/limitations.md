@@ -81,7 +81,7 @@ Cloudflare's free [Universal SSL](https://developers.cloudflare.com/ssl/edge-cer
 
 For multi-level subdomains, you need:
 
-- [Advanced Certificate Manager](https://developers.cloudflare.com/ssl/edge-certificates/advanced-certificate-manager/) ($10/month)
+- [Advanced Certificate Manager](https://developers.cloudflare.com/ssl/edge-certificates/advanced-certificate-manager/) (paid add-on — see Cloudflare pricing)
 - Business or Enterprise plan
 
 ## Gateway Listener Configuration
@@ -154,13 +154,13 @@ The L7 proxy supports Gateway API `BackendTLSPolicy` for proxy → backend TLS, 
 | `SubjectAltNames` of type `Hostname` (OR-matching) | Yes | Cert must match at least one entry. Wildcards in the cert SAN list are honoured via `x509.Certificate.VerifyHostname` |
 | `SubjectAltNames` of type `URI` (e.g. SPIFFE) | Yes | Matched by exact string equality against the leaf cert's `URIs` field. OR-matched alongside Hostname SANs in the same policy — either path passing accepts the handshake (matches `BackendTLSPolicySANValidation` conformance) |
 | SNI / authentication split when SANs are set | Yes | When ANY `SubjectAltNames` entry is present (Hostname OR URI), `Hostname` is used only for SNI and NOT for authentication, per Gateway API spec. Authentication runs against the SAN list |
-| `WellKnownCACertificates: System` | No | Only explicit `CACertificateRefs` are honoured |
+| `WellKnownCACertificates: System` | No | Only explicit `CACertificateRefs` are honoured. A policy relying solely on `WellKnownCACertificates` is rejected with `Accepted=False, Reason=Invalid` and a message naming the unsupported value and directing the operator to configure explicit `caCertificateRefs` instead |
 | Multiple `targetRefs` per policy | Yes | All targeted Services share the same TLS config |
 | `SectionName` per-port targeting | Yes | When a `TargetRef` carries `sectionName`, only the matching named Service port receives TLS; siblings on the same Service stay plaintext |
 | Conflict resolution across multiple policies on the same target | Yes | Oldest-creationTimestamp wins, alphabetical name on tie. Losers are stamped `Accepted=False, Reason=Conflicted, Message="conflicts with BackendTLSPolicy <ns/name>"` per GEP-713; the upstream `BackendTLSPolicyConflictResolution` conformance subtest passes. Distinct `SectionName` scopes do not conflict (a policy targeting all Service ports and another scoped to a specific named port are different scopes). When a losing policy also has an invalid CA, `Reason=InvalidCACertificateRef` / `NoValidCACertificate` dominates over `Conflicted` — the actionable CA error surfaces first |
 | Cross-namespace CA refs | No | Same-namespace only |
 | `GatewayBackendClientCertificate` (mutual TLS) | Yes | The Gateway's `spec.tls.backend.clientCertificateRef` (Standard channel) loads a `kubernetes.io/tls` Secret and the proxy presents the keypair during backend TLS handshakes. Cross-namespace refs require ReferenceGrant. The client cert is attached **only** when the target Service has a `BackendTLSPolicy` — sending a cert over plaintext is meaningless. When an HTTPRoute attaches to multiple Gateways, the first parentRef managed by this controller that has a resolvable client cert wins; foreign-controller parents and parents without a cert are skipped, not blocking. The conformance test does not exercise this multi-parent edge case |
-| HTTPS-listener Re-encrypt (frontend TLS termination + backend TLS) | No | Cloudflare terminates TLS at the edge, so HTTPS listeners aren't supported (see the HTTPRoute HTTPS Listener limitation). The upstream `BackendTLSPolicy` parent test is skipped for the same reason |
+| HTTPS-listener Re-encrypt (frontend TLS termination + backend TLS) | No | Cloudflare terminates TLS at the edge, so frontend `protocol: HTTPS` listeners have no in-cluster TLS-termination data plane and re-encrypt is structurally unsupported (see [Gateway Listener Configuration](#gateway-listener-configuration)). The upstream `BackendTLSPolicy` parent test is skipped for the same reason |
 
 Policy status (`Accepted` / `ResolvedRefs`) is maintained per-Gateway-ancestor. Edits to the CA `ConfigMap` (creation, content patch, or deletion) re-trigger status reconciliation. The `Status.Ancestors` slice is capped at the spec's limit of 16 entries; entries are sorted deterministically by `{namespace, name}` so the truncated set stays stable across reconciles. `LastTransitionTime` is maintained via `meta.SetStatusCondition`, so it only flips when `Status`, `Reason`, or `Message` actually changes.
 
@@ -198,7 +198,7 @@ The toggle is dashboard-only: there is no zone-settings API for it (`PATCH /sett
 
 A rotation of the `Secret` referenced by `Gateway.spec.tls.backend.clientCertificateRef` enqueues the affected routes directly — `ConfigMapper.MapSecretToRequests` matches credentials and Gateway-level client-cert Secrets, including cross-namespace refs guarded by a matching `ReferenceGrant` (`from: Gateway`, `to: Secret`). On the resulting reconcile the new keypair is loaded by `loadGatewayClientCertPEM`, the converter stamps it onto every affected `BackendTLSConfig`, and the per-cert transport-pool hash on the proxy evicts the stale transport. The next request to that backend handshakes with the rotated keypair.
 
-Frontend listener `certificateRefs` are not in scope — Cloudflare terminates TLS at the edge, so frontend HTTPS listeners are structurally unsupported (see the HTTPRoute HTTPS Listener limitation).
+Frontend listener `certificateRefs` are not in scope — Cloudflare terminates TLS at the edge, so frontend `protocol: HTTPS` listeners have no in-cluster TLS-termination data plane and are structurally unsupported (see [Gateway Listener Configuration](#gateway-listener-configuration)).
 
 ### RequestMirror filter honours BackendTLSPolicy
 
@@ -255,11 +255,12 @@ Any change to an HTTPRoute or GRPCRoute triggers a full configuration sync to Cl
 1. Controller lists all HTTPRoutes and GRPCRoutes
 2. Filters by GatewayClass
 3. Rebuilds entire ingress configuration
-4. Pushes to Cloudflare API
+4. Pushes hostname/edge routing to the Cloudflare API (one GET + one PUT)
+5. Pushes the rebuilt L7 routing config to every in-process proxy replica (the primary v3 data-plane mechanism)
 
 ### Implications
 
-- More API calls than incremental updates
+- Every change triggers a full desired-state rebuild, but the controller diffs the result and makes a single Cloudflare API update (one GET + one PUT) regardless of how many routes changed
 - Brief delay when many routes are present
 - All routes are re-evaluated on any change
 
@@ -305,9 +306,9 @@ rules:
 
 Route B's `/api/v2` matches first (longer path), then Route A's `/api` matches remaining traffic.
 
-## No Multi-Cluster Support
+## No Native Multi-Cluster Discovery
 
-The controller only routes to Services within the same Kubernetes cluster. Cross-cluster routing is not supported.
+The controller performs no direct peer-cluster discovery or mesh-style cross-cluster routing on its own. It does not connect clusters together or watch endpoints in remote clusters. Cross-cluster backends ARE reachable, however, through the Multi-Cluster Services (MCS) API: a `backendRef` targeting a `ServiceImport` (`multicluster.x-k8s.io`) resolves to the `clusterset.local` DNS plane, so the cluster's own MCS implementation routes to the imported remote endpoints (see [Non-Service backend kinds](#non-service-backend-kinds)).
 
 ### Workaround
 

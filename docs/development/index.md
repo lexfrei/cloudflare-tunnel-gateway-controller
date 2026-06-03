@@ -69,12 +69,12 @@ golangci-lint run --timeout=5m
 ## Project Structure
 
 ```text
-api/v1alpha1/            # GatewayClassConfig CRD types
+api/v1alpha1/            # GatewayClassConfig and ExternalBackend CRD types
 cmd/controller/          # Controller entrypoint and CLI
 cmd/proxy/               # L7 proxy binary entrypoint
 internal/
   config/                # GatewayClassConfig resolver
-  controller/            # Kubernetes controllers (Gateway, HTTPRoute, GRPCRoute, ProxySyncer)
+  controller/            # Kubernetes controllers (GatewayClass, GatewayClassConfig, Gateway, ListenerSet, HTTPRoute, GRPCRoute, BackendTLSPolicy, ProxySyncer)
   dns/                   # Cluster domain detection
   ingress/               # HTTPRoute → Cloudflare ingress rule conversion
   proxy/                 # L7 reverse proxy (router, matcher, filter, config API)

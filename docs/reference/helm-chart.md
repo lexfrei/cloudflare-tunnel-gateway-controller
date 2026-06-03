@@ -100,7 +100,7 @@ Pin to specific versions in production:
 ```bash
 helm upgrade cloudflare-tunnel-gateway-controller \
   oci://ghcr.io/lexfrei/charts/cloudflare-tunnel-gateway-controller \
-  --version 0.8.0 \
+  --version 1.0.0 \
   --namespace cloudflare-tunnel-system \
   --values values.yaml
 ```
@@ -114,14 +114,14 @@ helm uninstall cloudflare-tunnel-gateway-controller \
 
 !!! warning "Cleanup"
 
-    Uninstalling the Helm release removes the controller and cloudflared pods. The tunnel configuration in Cloudflare will remain. To fully clean up, delete the tunnel from the Cloudflare dashboard.
+    Uninstalling the Helm release removes the controller and proxy pods. The tunnel configuration in Cloudflare will remain. To fully clean up, delete the tunnel from the Cloudflare dashboard.
 
 ## CRDs
 
-The chart installs the GatewayClassConfig CRD. Gateway API CRDs must be installed separately:
+The chart installs two CRDs: `GatewayClassConfig` and `ExternalBackend`. Gateway API CRDs must be installed separately:
 
 ```bash
-kubectl apply --filename https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.5.0/standard-install.yaml
+kubectl apply --filename https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.5.1/standard-install.yaml
 ```
 
 ## Components

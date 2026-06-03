@@ -58,6 +58,23 @@ spec:
 | `controller_runtime_max_concurrent_reconciles` | Gauge | Max concurrent reconciles |
 | `controller_runtime_active_workers` | Gauge | Current active workers |
 
+### Custom Controller Metrics
+
+These `cftunnel_*` metrics are emitted by the controller itself on the same `/metrics` endpoint (port 8080).
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `cftunnel_sync_duration_seconds` | Histogram | Duration of route synchronization to Cloudflare (labelled by `status`) |
+| `cftunnel_synced_routes` | Gauge | Number of routes synced (labelled by `type`) |
+| `cftunnel_ingress_rules` | Gauge | Total ingress rules in tunnel config |
+| `cftunnel_failed_backend_refs` | Gauge | Number of failed backend references (labelled by `type`) |
+| `cftunnel_sync_errors_total` | Counter | Total sync errors (labelled by `error_type`) |
+| `cftunnel_cloudflare_api_duration_seconds` | Histogram | Duration of Cloudflare API calls (labelled by `method`, `resource`) |
+| `cftunnel_cloudflare_api_calls_total` | Counter | Total Cloudflare API calls (labelled by `method`, `resource`, `status`) |
+| `cftunnel_cloudflare_api_errors_total` | Counter | Total Cloudflare API errors (labelled by `method`, `error_type`) |
+| `cftunnel_ingress_build_duration_seconds` | Histogram | Duration of ingress rule building (labelled by `type`) |
+| `cftunnel_backend_ref_validation_total` | Counter | Backend reference validation results (labelled by `type`, `result`, `reason`) |
+
 ### Workqueue Metrics
 
 | Metric | Type | Description |

@@ -105,7 +105,7 @@ spec:
 
 !!! warning "Wildcard Not Supported"
 
-    The Gateway API does not support wildcards in `namespace`. You must create individual entries for each namespace, or create the ReferenceGrant in each source namespace.
+    The Gateway API does not support wildcards in `namespace`. You must create individual `from[]` entries for each source namespace in a single ReferenceGrant that resides in the target namespace (where the Service is).
 
 ## Allow Specific Service
 
@@ -207,7 +207,7 @@ status:
         - type: ResolvedRefs
           status: "False"
           reason: RefNotPermitted
-          message: "Cross-namespace reference not permitted by ReferenceGrant"
+          message: "cross-namespace reference not permitted by ReferenceGrant"
 ```
 
 ## Checking ReferenceGrants

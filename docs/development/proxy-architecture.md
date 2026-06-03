@@ -90,10 +90,11 @@ The router uses `atomic.Pointer[routingTable]` for lock-free reads during config
 ### Precedence (Gateway API spec)
 
 1. Longest hostname (exact before wildcard)
-2. Longest path match
-3. Method present
-4. Most header matches
-5. Most query parameter matches
+2. Path type: Exact > Regex > Prefix
+3. Longest path value
+4. Method present
+5. Most header matches
+6. Most query parameter matches
 
 ## Config Push
 
@@ -120,6 +121,7 @@ Config versioning prevents stale updates. Each push includes a monotonically inc
 | RequestRedirect | Request | Return redirect response (short-circuit) |
 | URLRewrite | Request | Modify URL path and/or host |
 | RequestMirror | Request | Clone request to mirror backend (async) |
+| CORS | Response | Short-circuit preflight (204 + CORS headers) and attach CORS headers to simple cross-origin responses |
 
 ## Backend Selection
 
@@ -143,8 +145,9 @@ Weighted random selection using cumulative weight sums:
 - Build edge TLS configs (Cloudflare root CAs + system pool)
 - Create protocol selector (auto: QUIC preferred)
 - **In-process mode** (default): Set `OverrideProxy` on supervisor config to route all requests directly to `proxy.Handler`, bypassing ingress rules entirely
-- **Standalone mode**: Build catch-all ingress to `http://localhost:PROXY_PORT` so cloudflared forwards traffic to the local proxy HTTP server
 - Start `supervisor.StartTunnelDaemon`
+
+When `TUNNEL_TOKEN` is unset the binary runs in **standalone mode** instead: `runStandaloneMode` (`cmd/proxy/main.go`) starts a plain HTTP server on `PROXY_ADDR` (default `:8080`) that serves `proxy.Handler` directly, plus the config API on `PROXY_CONFIG_ADDR`. `StartTunnel` is never called, so no cloudflared tunnel is started — this mode is for local development and testing.
 
 ## Tunnel-Mode Response Writer Semantics
 

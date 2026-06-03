@@ -66,7 +66,7 @@ The controller sets the Gateway address to `TUNNEL_ID.cfargotunnel.com`. Create 
 
 !!! tip "External-DNS"
 
-    If you have [external-dns](https://external-dns.io/) configured with Gateway API source, DNS records are created automatically. See [External-DNS Integration](../guides/external-dns.md) for setup.
+    If you have [external-dns](https://github.com/kubernetes-sigs/external-dns) configured with Gateway API source, DNS records are created automatically. See [External-DNS Integration](../guides/external-dns.md) for setup.
 
 ## Access Your Application
 
@@ -136,7 +136,7 @@ spec:
 
 ## Advanced Routing
 
-When the L7 proxy is enabled, HTTPRoute gains full Gateway API matching and filter support. Below are short examples of the most common patterns.
+The in-process L7 proxy is the only data plane in v3, so full Gateway API matching and filter support is always available. Below are short examples of the most common patterns.
 
 ### Header-Based Routing
 
@@ -211,9 +211,9 @@ spec:
             statusCode: 301
 ```
 
-!!! tip "Enable the proxy first"
+!!! tip "L7 proxy configuration"
 
-    These features require the L7 proxy. See the [L7 Proxy Guide](../guides/l7-proxy.md) for installation instructions.
+    These features are served by the always-on in-process L7 proxy. See the [L7 Proxy Guide](../guides/l7-proxy.md) for proxy configuration options and tuning.
 
 ## Troubleshooting
 

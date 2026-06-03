@@ -6,7 +6,8 @@ This document covers the security policy and best practices for the Cloudflare T
 
 | Version | Supported |
 |---------|-----------|
-| 0.x.x | Yes |
+| 3.x.x | Yes |
+| 2.x.x | No |
 
 ## Reporting Vulnerabilities
 
@@ -69,16 +70,20 @@ The controller requires specific Kubernetes permissions:
 rules:
   # Gateway API - read specs
   - apiGroups: ["gateway.networking.k8s.io"]
-    resources: ["gatewayclasses", "httproutes", "grpcroutes", "referencegrants", "backendtlspolicies"]
+    resources: ["gatewayclasses", "httproutes", "grpcroutes", "referencegrants", "backendtlspolicies", "listenersets"]
     verbs: ["get", "list", "watch"]
-  # Gateways - finalizers + status patches require update/patch on the parent resource
+  # Gateways - status patches require update/patch on the parent resource
   - apiGroups: ["gateway.networking.k8s.io"]
     resources: ["gateways"]
     verbs: ["get", "list", "watch", "update", "patch"]
   # Gateway API status subresources - write status
   - apiGroups: ["gateway.networking.k8s.io"]
-    resources: ["gatewayclasses/status", "gateways/status", "httproutes/status", "grpcroutes/status", "backendtlspolicies/status"]
+    resources: ["gatewayclasses/status", "gateways/status", "httproutes/status", "grpcroutes/status", "backendtlspolicies/status", "listenersets/status"]
     verbs: ["get", "update", "patch"]
+  # ServiceImport - a backendRef may target an imported multicluster Service
+  - apiGroups: ["multicluster.x-k8s.io"]
+    resources: ["serviceimports"]
+    verbs: ["get", "list", "watch"]
 
   # Core API - read only
   - apiGroups: [""]
@@ -87,9 +92,26 @@ rules:
   - apiGroups: [""]
     resources: ["secrets", "configmaps"]
     verbs: ["get", "list", "watch"]
+  # EndpointSlice - the proxy endpoint reconciler discovers proxy pods so a
+  # newly-joined replica gets the cached config pushed immediately
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
+    verbs: ["get", "list", "watch"]
+  # Events - route reconcilers emit Events via both the core (v1) and the new
+  # (events.k8s.io/v1) recorders; grant both so neither path is denied
   - apiGroups: [""]
     resources: ["events"]
     verbs: ["create", "patch"]
+  - apiGroups: ["events.k8s.io"]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+
+  # Deployments - the proxy Secret reconciler patches the proxy Deployment's
+  # pod-template annotation to roll pods when the tunnel-token Secret rotates;
+  # patch only, no create/delete (the chart owns Deployment lifecycle)
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch", "patch"]
 
   # GatewayClassConfig CRD
   - apiGroups: ["cf.k8s.lex.la"]
@@ -98,6 +120,10 @@ rules:
   - apiGroups: ["cf.k8s.lex.la"]
     resources: ["gatewayclassconfigs/status"]
     verbs: ["get", "update", "patch"]
+  # ExternalBackend CRD - a backendRef may target an out-of-cluster endpoint
+  - apiGroups: ["cf.k8s.lex.la"]
+    resources: ["externalbackends"]
+    verbs: ["get", "list", "watch"]
 
   # Leader election
   - apiGroups: ["coordination.k8s.io"]
@@ -106,7 +132,7 @@ rules:
 ```
 
 !!! note "v3 RBAC scope"
-    The v3 controller is status-only and reads Secrets/ConfigMaps; it does not create, mutate, or delete workloads. The v2 chart granted cluster-wide write on Pods, Deployments, ReplicaSets and ServiceAccounts for the Helm-SDK code path that managed cloudflared; those rules were removed when that code path was deleted.
+    The v3 controller reads Secrets and ConfigMaps and writes only status subresources; it does not create or delete workloads. The one workload mutation it makes is patching the proxy Deployment's pod-template annotation when the tunnel-token Secret rotates (to trigger a native rolling restart) — it does not manage Deployment lifecycle. The v2 chart additionally granted cluster-wide write on Pods, ReplicaSets and ServiceAccounts for the Helm-SDK code path that managed cloudflared; those rules were removed when that code path was deleted.
 
 ### Container Security
 
@@ -184,7 +210,7 @@ cosign verify ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller:latest \
 ### Helm Chart Verification
 
 ```bash
-helm verify cloudflare-tunnel-gateway-controller-0.1.0.tgz
+helm verify cloudflare-tunnel-gateway-controller-1.0.0.tgz
 ```
 
 ## Secrets in Logs

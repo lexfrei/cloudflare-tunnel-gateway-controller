@@ -41,22 +41,6 @@ Track Cloudflare API interactions for performance and reliability monitoring.
 - `status`: `success`, `error`
 - `error_type`: `auth`, `rate_limit`, `timeout`, `server_error`, `network`
 
-### Helm Operations Metrics
-
-When cloudflared is managed by the controller via Helm.
-
-| Metric | Type | Labels | Description |
-|--------|------|--------|-------------|
-| `cftunnel_helm_operation_duration_seconds` | Histogram | `operation` | Helm operation latency |
-| `cftunnel_helm_operations_total` | Counter | `operation`, `status` | Helm operations count |
-| `cftunnel_helm_errors_total` | Counter | `operation`, `error_type` | Helm errors |
-| `cftunnel_helm_chart_info` | Gauge | `chart`, `version`, `app_version` | Deployed chart version info |
-
-**Label values:**
-
-- `operation`: `install`, `upgrade`, `uninstall`, `get_version`, `load_chart`
-- `status`: `success`, `error`
-
 ### Ingress Builder Metrics
 
 Track the conversion of Gateway API routes to Cloudflare ingress rules.
@@ -185,20 +169,6 @@ histogram_quantile(0.99,
 
 # API errors by type
 sum(rate(cftunnel_cloudflare_api_errors_total[5m])) by (method, error_type)
-```
-
-### Helm Operations
-
-```promql
-# Helm operation success rate
-sum(rate(cftunnel_helm_operations_total{status="success"}[5m])) by (operation)
-/
-sum(rate(cftunnel_helm_operations_total[5m])) by (operation)
-
-# Helm operation latency P95
-histogram_quantile(0.95,
-  sum(rate(cftunnel_helm_operation_duration_seconds_bucket[5m])) by (le, operation)
-)
 ```
 
 ### Reconciliation Rate

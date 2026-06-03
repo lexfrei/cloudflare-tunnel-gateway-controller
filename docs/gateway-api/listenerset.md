@@ -1,6 +1,6 @@
 # ListenerSet
 
-`ListenerSet` (`gateway.networking.k8s.io/v1`, Standard channel as of v1.5.1) lets a separate resource attach additional listeners to an existing Gateway without modifying the Gateway itself. The typical use case is multi-tenant Gateway management — a platform team owns the Gateway, individual teams own a `ListenerSet` per tenant that contributes hostnames and route-binding rules without ever touching the Gateway spec.
+`ListenerSet` (`gateway.networking.k8s.io/v1`, Standard channel as of v1.5.0) lets a separate resource attach additional listeners to an existing Gateway without modifying the Gateway itself. The typical use case is multi-tenant Gateway management — a platform team owns the Gateway, individual teams own a `ListenerSet` per tenant that contributes hostnames and route-binding rules without ever touching the Gateway spec.
 
 ## Quick example
 
@@ -86,7 +86,7 @@ The route's effective hostname is the parent listener's `team-a.example.com` (in
 A `ListenerSet` is successfully attached to a Gateway when:
 
 1. The parent Gateway's `spec.allowedListeners.namespaces.from` permits the ListenerSet's namespace (`Same`, `All`, `Selector`, or unset/`None` to reject).
-2. The ListenerSet has `Accepted: True` on its status — at least one of its listener entries is conflict-free.
+2. The ListenerSet has `Accepted: True` on its status — at least one of its listener entries is conflict-free AND has its TLS cert refs resolved (`ResolvedRefs: True`, or it carries no TLS material).
 
 The Gateway's `status.attachedListenerSets` field is the count of ListenerSets meeting both criteria.
 
@@ -100,7 +100,7 @@ Per Gateway API spec the effective listener list is concatenated as follows:
 
 When two listeners share the same `(port, hostname)` tuple, the higher-precedence one wins; the lower-precedence one is marked `Conflicted: true` with reason `HostnameConflict` and `Accepted: false`. When two listeners share a port but disagree on `protocol`, the same precedence applies with reason `ProtocolConflict`. Gateway listeners always win conflicts against ListenerSets.
 
-A ListenerSet with at least one conflict-free listener still surfaces `Accepted: true` overall; only the individual conflicting entries are rejected. A ListenerSet whose every listener conflicts gets `Accepted: false / ListenersNotValid`.
+A ListenerSet with at least one conflict-free, fully-resolved (`ResolvedRefs: True`) listener still surfaces `Accepted: true` overall; only the individual conflicting or unresolved entries are rejected. A ListenerSet whose every listener conflicts (or has unresolved refs) gets `Accepted: false / ListenersNotValid`.
 
 ## ReferenceGrant scoping
 

@@ -15,7 +15,7 @@
 ### 1. Install Gateway API CRDs
 
 ```bash
-kubectl apply --filename https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.5.0/standard-install.yaml
+kubectl apply --filename https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.5.1/standard-install.yaml
 ```
 
 ### 2. Create Namespace
@@ -45,6 +45,10 @@ kubectl apply --filename deploy/rbac/
 kubectl apply --filename deploy/controller/
 ```
 
+!!! danger "Manual manifests ship the controller only — the L7 proxy is not included"
+
+    Under v3 the in-process L7 proxy is the only data plane, and the controller pushes routing config to it at the `--proxy-endpoints` URL. The `deploy/` manifests intentionally ship only the controller (and the RBAC it needs); they do NOT include the proxy Deployment, Services, or config. Without the proxy running, no HTTPRoute or GRPCRoute takes effect and all traffic is silently non-functional — even though step 3 created the `cloudflare-tunnel-token` Secret. Use the [Helm chart](../getting-started/installation.md) for a complete, working v3 installation, or supply your own proxy Deployment that consumes the tunnel token and serves the config API at the `--proxy-endpoints` URL.
+
 ### 5. Create GatewayClassConfig, GatewayClass, and Gateway
 
 Edit `deploy/samples/gatewayclassconfig.yaml` with your tunnel ID:
@@ -62,9 +66,9 @@ The `deploy/` directory contains:
 ```text
 deploy/
 ├── rbac/
-│   ├── serviceaccount.yaml
-│   ├── clusterrole.yaml
-│   └── clusterrolebinding.yaml
+│   ├── service_account.yaml
+│   ├── role.yaml
+│   └── role_binding.yaml
 ├── controller/
 │   └── deployment.yaml
 └── samples/
@@ -88,7 +92,7 @@ spec:
   # accountId: "1234567890abcdef"  # Optional, auto-detected
 ```
 
-The tunnel token is consumed by the L7 proxy pod directly (via the `TUNNEL_TOKEN` env var wired by the Helm chart's `proxy.tunnelTokenSecretRef` value) — it is not part of the CRD spec.
+The tunnel token is passed to the L7 proxy pod as the `TUNNEL_TOKEN` environment variable. In the Helm chart this is wired via `proxy.tunnelTokenSecretRef`; for a manual proxy deployment, expose the `cloudflare-tunnel-token` Secret to the proxy container the same way. The token is not part of the GatewayClassConfig CRD spec.
 
 ## Sample GatewayClass
 
@@ -116,9 +120,13 @@ metadata:
 spec:
   gatewayClassName: cloudflare-tunnel
   listeners:
-    - name: http
-      port: 80
-      protocol: HTTP
+    - name: https
+      port: 443
+      protocol: HTTPS
+      # Allow HTTPRoutes from all namespaces
+      allowedRoutes:
+        namespaces:
+          from: All
 ```
 
 ## Upgrading

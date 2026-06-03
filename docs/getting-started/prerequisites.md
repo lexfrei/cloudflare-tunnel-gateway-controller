@@ -18,11 +18,11 @@ The controller requires Gateway API Custom Resource Definitions (CRDs) to be ins
 kubectl apply --filename https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.5.1/standard-install.yaml
 ```
 
-!!! warning "v1.5.1 is the minimum supported version"
+!!! warning "v1.5.0 is the minimum supported version"
 
-    The controller watches `ListenerSet` resources as part of its core reconcile loop. The `listenersets.gateway.networking.k8s.io` CRD entered the **Standard** channel in Gateway API v1.5.1. Installing the controller against an older Gateway API bundle (including v1.5.0) leaves the manager unable to start because the watch target is missing.
+    The controller watches `ListenerSet` resources as part of its core reconcile loop. The `listenersets.gateway.networking.k8s.io` CRD entered the **Standard** channel in Gateway API v1.5.0. Installing the controller against an older Gateway API bundle (v1.4.x or earlier) leaves the manager unable to start because the watch target is missing. The controller is built and tested against v1.5.1, which is the recommended bundle.
 
-    If you previously installed v1.5.0, apply the v1.5.1 standard bundle before upgrading this controller.
+    If you are on an older Gateway API bundle, apply the v1.5.1 standard bundle before installing this controller.
 
 ## Cloudflare Account
 

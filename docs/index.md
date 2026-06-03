@@ -38,17 +38,27 @@ See the [L7 Proxy Guide](guides/l7-proxy.md) for setup and examples.
 
 ```bash
 # 1. Install Gateway API CRDs
-kubectl apply --filename https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.5.0/standard-install.yaml
+kubectl apply --filename https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.5.1/standard-install.yaml
 
-# 2. Install the controller
+# 2. Create the credentials and tunnel-token Secrets
+kubectl create namespace cloudflare-tunnel-system
+kubectl create secret generic cloudflare-credentials \
+  --namespace cloudflare-tunnel-system \
+  --from-literal=api-token="YOUR_API_TOKEN"
+kubectl create secret generic cloudflare-tunnel-token \
+  --namespace cloudflare-tunnel-system \
+  --from-literal=tunnel-token="YOUR_TUNNEL_TOKEN"
+
+# 3. Install the controller
 helm install cloudflare-tunnel-gateway-controller \
   oci://ghcr.io/lexfrei/charts/cloudflare-tunnel-gateway-controller \
   --namespace cloudflare-tunnel-system \
-  --create-namespace \
-  --set config.tunnelID=YOUR_TUNNEL_ID \
-  --set config.apiToken=YOUR_API_TOKEN
+  --set gatewayClassConfig.create=true \
+  --set gatewayClassConfig.tunnelID=YOUR_TUNNEL_ID \
+  --set gatewayClassConfig.cloudflareCredentialsSecretRef.name=cloudflare-credentials \
+  --set proxy.tunnelTokenSecretRef.name=cloudflare-tunnel-token
 
-# 3. Create HTTPRoute to expose your service
+# 4. Create HTTPRoute to expose your service
 kubectl apply --filename - <<EOF
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
@@ -67,7 +77,7 @@ spec:
 EOF
 ```
 
-See [Getting Started](getting-started/index.md) for detailed setup instructions.
+See [Getting Started](getting-started/index.md) for detailed setup instructions, including full Secret creation and `gatewayClassConfig` reference.
 
 ## Documentation Sections
 

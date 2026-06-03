@@ -177,12 +177,13 @@ All matching is performed by the in-process L7 proxy:
 
 ## gRPC Method Matching
 
-gRPC methods are mapped to HTTP/2 paths using the standard format `/package.Service/Method`.
+gRPC methods are mapped to HTTP/2 paths using the standard format `/package.Service/Method`. All matching happens inside the in-process L7 proxy (see the [GRPCRoute](#grpcroute) table above for the same mapping in the route context).
 
-| Match Type | Example | Cloudflare Rule |
+| Match Type | Example | Proxy path rule |
 | --- | --- | --- |
-| Service only | `service: mypackage.MyService` | `/mypackage.MyService/*` |
-| Service + Method | `service: mypackage.MyService, method: GetUser` | `/mypackage.MyService/GetUser` |
+| Service only | `service: mypackage.MyService` | prefix `/mypackage.MyService/` |
+| Service + Method | `service: mypackage.MyService, method: GetUser` | exact `/mypackage.MyService/GetUser` |
+| Method only | `method: GetUser` | regex `/[^/]+/GetUser` (any service) |
 | No match | (empty) | Matches all gRPC traffic |
 
 ## Weight and Traffic Splitting
@@ -192,9 +193,9 @@ True weighted traffic splitting across multiple backends is performed by the in-
 - **Default weight**: `1` (per Gateway API specification)
 - **Zero weight**: Backends with `weight: 0` are disabled
 
-!!! danger "A failed backend ref clears the whole rule"
+!!! warning "An invalid backend ref fails its own traffic fraction"
 
-    If any backend ref in a rule fails validation — cross-namespace denial (`RefNotPermitted`), a missing Service (`BackendNotFound`), or an unsupported kind/port — that rule's backends are all cleared so the proxy returns HTTP 500 (no backend), and the route status shows `ResolvedRefs=False`. Sibling rules with valid backends are unaffected. Weighting is not failover: valid backends within a rule share traffic in proportion to their weights, but one invalid ref fails the entire rule closed rather than silently shifting its traffic to the others.
+    If a backend ref in a rule fails validation — cross-namespace denial (`RefNotPermitted`), a missing Service (`BackendNotFound`), or an unsupported kind/port — it stays in the weighted pool and the proxy returns HTTP 500 for its traffic fraction only; the other backends in the same rule keep serving their proportional share. The route status shows `ResolvedRefs=False`. Weighting is not failover: an invalid ref fails closed for its fraction rather than silently shifting that traffic to the healthy backends. Only when *every* backend in a rule is unavailable (or all carry `weight: 0`) does the rule return 500 for all of its traffic. A `weight: 0` invalid ref carries no traffic, so it is dropped rather than marked. See [Unavailable backends return a status, not a dial error](limitations.md#unavailable-backends-return-a-status-not-a-dial-error).
 
 ## Status Conditions
 
@@ -203,6 +204,7 @@ True weighted traffic splitting across multiple backends is performed by the in-
 | Type | Status | Reason | Description |
 | --- | --- | --- | --- |
 | `Accepted` | `True` | `Accepted` | Gateway accepted by controller |
+| `Accepted` | `False` | `ListenersNotValid` | One or more of the Gateway's own listeners conflict (carry `Conflicted=True`) |
 | `Programmed` | `True` | `Programmed` | Gateway configured in Cloudflare |
 
 ### Gateway Listener Conditions
@@ -210,8 +212,11 @@ True weighted traffic splitting across multiple backends is performed by the in-
 | Type | Status | Reason | Description |
 | --- | --- | --- | --- |
 | `Accepted` | `True` | `Accepted` | Listener accepted |
+| `Accepted` | `False` | `HostnameConflict` / `ProtocolConflict` | Listener conflicts with a higher-precedence listener on the same port |
 | `Programmed` | `True` | `Programmed` | Listener programmed |
 | `Programmed` | `False` | `Invalid` | Listener has unresolved references |
+| `Programmed` | `False` | `HostnameConflict` / `ProtocolConflict` | Listener conflicts with a higher-precedence listener |
+| `Conflicted` | `True` | `HostnameConflict` / `ProtocolConflict` | Listener clashes with another listener on hostname (same port + hostname) or protocol (different protocol on the same port) |
 | `ResolvedRefs` | `True` | `ResolvedRefs` | References resolved |
 | `ResolvedRefs` | `False` | `InvalidCertificateRef` | TLS certificate reference invalid |
 | `ResolvedRefs` | `False` | `RefNotPermitted` | Cross-namespace TLS ref denied by ReferenceGrant |
@@ -225,6 +230,7 @@ True weighted traffic splitting across multiple backends is performed by the in-
 | `Accepted` | `False` | `NoMatchingParent` | No matching listener found |
 | `Accepted` | `False` | `NoMatchingListenerHostname` | Route hostnames don't intersect with listener |
 | `Accepted` | `False` | `NotAllowedByListeners` | Route namespace or kind not allowed by listener |
+| `Accepted` | `False` | `Conflicted` | Route lost a cross-route-type conflict (HTTPRoute vs GRPCRoute on a shared Gateway with intersecting hostnames); the oldest Route by `creationTimestamp` is accepted |
 | `ResolvedRefs` | `True` | `ResolvedRefs` | Backend references resolved |
 | `ResolvedRefs` | `False` | `RefNotPermitted` | Cross-namespace reference denied |
 | `ResolvedRefs` | `False` | `BackendNotFound` | Backend Service not found |

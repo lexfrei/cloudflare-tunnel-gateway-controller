@@ -26,7 +26,7 @@ This section contains step-by-step guides for common integration scenarios and a
 
     ---
 
-    Enable the L7 reverse proxy for full HTTPRoute support including header matching, traffic splitting, and request filters.
+    Configure the built-in L7 reverse proxy for full HTTPRoute support including header matching, traffic splitting, and request filters.
 
     [:octicons-arrow-right-24: L7 Proxy](l7-proxy.md)
 
@@ -52,7 +52,7 @@ Before following these guides, ensure you have:
 
 | Use Case | Recommended Guide |
 |----------|-------------------|
-| Full HTTPRoute matching and filters | [L7 Proxy](l7-proxy.md) |
+| L7 proxy configuration and tuning | [L7 Proxy](l7-proxy.md) |
 | Automatic DNS record creation | [External-DNS](external-dns.md) |
 | Multi-namespace service mesh | [Cross-Namespace Routing](cross-namespace.md) |
 | Production observability | [Monitoring](monitoring.md) |

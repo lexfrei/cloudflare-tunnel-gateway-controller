@@ -27,10 +27,10 @@ kubectl get httproute --all-namespaces
 
 **Common causes**:
 
-1. Empty or invalid `tunnelID`:
+1. Empty `tunnelID`:
 
     ```text
-    Error: at '/gatewayClassConfig/tunnelID': minLength: got 0, want 1
+    Error: execution error at (...gatewayclassconfig.yaml:20:16): gatewayClassConfig.tunnelID is required
     ```
 
     **Solution**: Provide a valid Tunnel ID from Cloudflare Zero Trust Dashboard
@@ -41,15 +41,23 @@ kubectl get httproute --all-namespaces
     Error: at '/gatewayClassConfig/tunnelID': pattern mismatch
     ```
 
-    **Solution**: Use only alphanumeric characters and hyphens
+    **Solution**: Use a valid UUID from the Cloudflare Zero Trust Dashboard (format: `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx` with lowercase hex digits a-f and 0-9 only)
 
 3. Missing API credentials:
 
     ```text
-    Error: cloudflareCredentialsSecretRef.name is required
+    Error: execution error at (...gatewayclassconfig.yaml:10:12): gatewayClassConfig.cloudflareCredentialsSecretRef.name is required
     ```
 
     **Solution**: Set `gatewayClassConfig.cloudflareCredentialsSecretRef.name` to the name of a Secret containing an `api-token` key
+
+4. Missing proxy tunnel token:
+
+    ```text
+    Error: execution error at (...deployment-proxy.yaml:41:18): proxy.tunnelTokenSecretRef.name is required
+    ```
+
+    **Solution**: Set `proxy.tunnelTokenSecretRef.name` to the name of a Secret containing a `tunnel-token` key (see Getting Started / Prerequisites). This field is required on every install, before any `gatewayClassConfig.*` value.
 
 **Verification**:
 
@@ -129,7 +137,7 @@ curl --header "Authorization: Bearer $CF_API_TOKEN" \
 **Solution**:
 
 1. Create new API token with required scopes:
-   - Account.Cloudflare Tunnel:Edit
+   - Account > Cloudflare Tunnel > Edit
 
 2. Update secret:
 

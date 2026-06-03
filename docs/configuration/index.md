@@ -8,7 +8,7 @@ The controller can be configured at multiple levels:
 
 1. **Controller Options** - CLI flags and environment variables
 2. **Helm Values** - Deployment configuration via Helm chart
-3. **GatewayClassConfig** - Tunnel credentials and cloudflared settings
+3. **GatewayClassConfig** - Cloudflare API credentials and tunnel UUID
 
 ## Sections
 
@@ -34,7 +34,7 @@ The controller can be configured at multiple levels:
 
     ---
 
-    Custom Resource for tunnel credentials and cloudflared configuration.
+    Custom Resource for tunnel credentials and tunnel identity (Cloudflare API token + Tunnel UUID).
 
     [:octicons-arrow-right-24: GatewayClassConfig](gatewayclassconfig.md)
 

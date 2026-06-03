@@ -302,7 +302,7 @@ Expected output includes `"type":"Accepted","status":"True"`.
 
 | Condition | Meaning |
 |-----------|---------|
-| `Accepted: True` | Route is active and synced to Cloudflare |
+| `Accepted: True` | Route is accepted and programmed in the in-process proxy; Cloudflare Tunnel config updated (L7 routing happens in-cluster, not at the Cloudflare edge) |
 | `Accepted: False` | Route was rejected (check reason) |
 | `ResolvedRefs: True` | All backend references resolved |
 | `ResolvedRefs: False` | Backend reference failed (missing service or ReferenceGrant) |

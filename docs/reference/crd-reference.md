@@ -1,6 +1,6 @@
 # CRD Reference
 
-This document provides the API reference for Custom Resource Definitions (CRDs) used by the Cloudflare Tunnel Gateway Controller.
+This document provides the API reference for Custom Resource Definitions (CRDs) used by the Cloudflare Tunnel Gateway Controller. The controller ships two project-owned CRDs, `GatewayClassConfig` and `ExternalBackend`, and watches the standard Gateway API resources.
 
 ## GatewayClassConfig
 
@@ -14,15 +14,16 @@ Starting v3 the spec carries only the contract the controller needs for Cloudfla
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `tunnelID` | string | Yes | Cloudflare Tunnel UUID |
-| `accountId` | string | No | Cloudflare Account ID (auto-detected if not specified) |
-| `cloudflareCredentialsSecretRef` | SecretKeySelector | Yes | Reference to Secret containing API token |
+| `tunnelID` | string | Yes | Cloudflare Tunnel UUID. Must match the pattern `^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$` |
+| `accountId` | string | No | Cloudflare Account ID. If unset, it is read from the `account-id` key in the credentials Secret; if that key is also absent, it is auto-detected from the Cloudflare API when the token has access to a single account. When set, it must be a 32-character lowercase hexadecimal string (validated by a CRD-level CEL rule) |
+| `cloudflareCredentialsSecretRef` | SecretReference | Yes | Reference to the Secret containing the Cloudflare API token |
 
-### SecretKeySelector
+### SecretReference
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `name` | string | - | Secret name |
+| `name` | string | - | Secret name (required) |
+| `namespace` | string | controller namespace | Namespace of the Secret. Defaults to the controller's own namespace; set it to place the Secret in a different namespace |
 | `key` | string | `api-token` | Key within the Secret |
 
 ### Example
@@ -34,7 +35,7 @@ metadata:
   name: cloudflare-tunnel-config
 spec:
   tunnelID: "550e8400-e29b-41d4-a716-446655440000"
-  # accountId: "1234567890abcdef"  # Optional, auto-detected
+  # accountId: "0123456789abcdef0123456789abcdef"  # Optional 32-char hex; auto-detected if omitted
   cloudflareCredentialsSecretRef:
     name: cloudflare-credentials
     key: api-token
@@ -46,6 +47,36 @@ GatewayClassConfig has a `status.conditions` subresource. The reconciler emits:
 
 - `SecretsResolved` — `True` when the referenced credentials Secret exists and carries the expected key, `False` otherwise.
 - `Valid` — `True` when all validation checks pass; `False` with the first failure message otherwise.
+
+## ExternalBackend
+
+**API Version**: `cf.k8s.lex.la/v1alpha1` **Kind**: `ExternalBackend` **Scope**: Namespaced
+
+ExternalBackend defines an out-of-cluster HTTP(S) endpoint that an HTTPRoute or GRPCRoute may target as a `backendRef`. The in-process L7 proxy ultimately dials a URL, so a route can point at an arbitrary external origin without a Service standing in for it. Unlike a Service of type `ExternalName` (which only carries a DNS name and infers the scheme from the port), ExternalBackend makes the scheme explicit and lets the host be an address that is not a valid Service name. It is a spec-only resource (no status): a route referencing a missing or malformed ExternalBackend surfaces the failure on the route's own `ResolvedRefs` condition, mirroring how an unresolvable Service backendRef is reported. See [ExternalBackend](../gateway-api/external-backend.md) for usage details.
+
+### ExternalBackend Spec
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `scheme` | string | Yes | Protocol used to dial the backend: `http` or `https` |
+| `host` | string | Yes | Backend hostname or IP address (no scheme, port, or path). IPv6 literals must be bracketed, e.g. `[2001:db8::1]` |
+| `port` | integer | Yes | Backend TCP port (1-65535) |
+| `path` | string | No | Optional base path prepended to the request path; must begin with `/`. May include a query string whose parameters merge into every dialed request (the request's own parameters win on a key conflict) |
+
+### ExternalBackend Example
+
+```yaml
+apiVersion: cf.k8s.lex.la/v1alpha1
+kind: ExternalBackend
+metadata:
+  name: external-api
+  namespace: default
+spec:
+  scheme: https
+  host: api.example.com
+  port: 443
+  path: /v1
+```
 
 ## Gateway API Resources
 
@@ -159,7 +190,10 @@ spec:
 | Condition | Status | Reason | Description |
 |-----------|--------|--------|-------------|
 | `Accepted` | `True` | `Accepted` | Gateway accepted by controller |
+| `Accepted` | `False` | `ListenersNotValid` | Gateway has conflicted own listeners (one or more own listeners carry `Conflicted: True`); per-listener status reports the conflict |
+| `Accepted` | `False` | `InvalidParameters` | GatewayClassConfig referenced by the GatewayClass cannot be resolved |
 | `Programmed` | `True` | `Programmed` | Gateway configured in Cloudflare |
+| `Programmed` | `False` | `Invalid` | GatewayClassConfig referenced by the GatewayClass cannot be resolved |
 
 ### HTTPRoute/GRPCRoute Status
 
@@ -169,8 +203,9 @@ spec:
 | `Accepted` | `False` | `NoMatchingParent` | No listener matched the parentRef's `sectionName` or `port`; also fires when hostname is the failure reason and the parentRef pinned a `sectionName` or `port` |
 | `Accepted` | `False` | `NoMatchingListenerHostname` | Route hostnames do not intersect with any listener hostname (no `sectionName`/`port` pin on the parentRef) |
 | `Accepted` | `False` | `NotAllowedByListeners` | Route namespace or kind not allowed by listener |
-| `Accepted` | `False` | `Pending` | Sync to the Cloudflare Tunnel API failed; reconcile will retry. Proxy-push failures are best-effort: they are logged and counted via the `proxy_push` sync-error metric but do **not** flip `Accepted` to False / Reason=`Pending` |
+| `Accepted` | `False` | `Pending` | Sync to the Cloudflare Tunnel API failed; reconcile will retry. Proxy-push failures are best-effort: they are logged and counted via the `cftunnel_sync_errors_total{error_type="proxy_push"}` counter but do **not** flip `Accepted` to False / Reason=`Pending` |
 | `Accepted` | `False` | `UnsupportedProtocol` | GRPCRoute only: gRPC cannot be served over an explicit `proxy.tunnel.protocol: quic` tunnel (cloudflared drops HTTP trailers over QUIC, losing `grpc-status`). Switch to `http2`, or `auto`/unset which the proxy upgrades to `http2` for gRPC |
+| `Accepted` | `False` | `Conflicted` | An HTTPRoute and a GRPCRoute conflict on the same Gateway with intersecting hostnames; the oldest Route by `creationTimestamp` (ties broken by `{namespace}/{name}`) is accepted and the other is rejected |
 | `ResolvedRefs` | `True` | `ResolvedRefs` | Backend references resolved |
 | `ResolvedRefs` | `False` | `RefNotPermitted` | Cross-namespace reference denied |
 | `ResolvedRefs` | `False` | `BackendNotFound` | Backend Service not found |
@@ -181,6 +216,7 @@ spec:
 | Resource | API Group | Version | Status |
 |----------|-----------|---------|--------|
 | GatewayClassConfig | `cf.k8s.lex.la` | `v1alpha1` | Alpha |
+| ExternalBackend | `cf.k8s.lex.la` | `v1alpha1` | Alpha |
 | GatewayClass | `gateway.networking.k8s.io` | `v1` | GA |
 | Gateway | `gateway.networking.k8s.io` | `v1` | GA |
 | HTTPRoute | `gateway.networking.k8s.io` | `v1` | GA |
@@ -192,10 +228,10 @@ spec:
 ### Gateway API CRDs
 
 ```bash
-kubectl apply --filename https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.5.0/standard-install.yaml
+kubectl apply --filename https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.5.1/standard-install.yaml
 ```
 
-### GatewayClassConfig CRD
+### Project CRDs (GatewayClassConfig and ExternalBackend)
 
 Installed automatically by the Helm chart. For manual installation:
 

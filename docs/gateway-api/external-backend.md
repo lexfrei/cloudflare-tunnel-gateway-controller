@@ -93,6 +93,8 @@ spec:
       kind: ExternalBackend
 ```
 
+The `from` entry is keyed on the referencing route's kind. For a cross-namespace GRPCRoute reference, replace `kind: HTTPRoute` with `kind: GRPCRoute` — an HTTPRoute-keyed grant does not authorize a GRPCRoute backendRef.
+
 ## Status and failure modes
 
 - A missing `ExternalBackend` surfaces `ResolvedRefs=False, BackendNotFound` on the referencing route and returns HTTP 500 for that backend's traffic fraction (other weighted backends keep serving).

@@ -95,20 +95,25 @@ sequenceDiagram
     participant ExtDNS as external-dns
     participant CF as Cloudflare
 
+    User->>K8s: Create Gateway
+    K8s->>Ctrl: Watch event (GatewayReconciler)
+    Ctrl->>K8s: Set Gateway status.addresses to tunnel CNAME
     User->>K8s: Create HTTPRoute
-    K8s->>Ctrl: Watch event
+    K8s->>Ctrl: Watch event (RouteReconciler)
     Ctrl->>CF: Update tunnel config
-    Ctrl->>K8s: Update Gateway status.addresses
+    Ctrl->>K8s: Update HTTPRoute status
     K8s->>ExtDNS: Watch Gateway/HTTPRoute
     ExtDNS->>CF: Create DNS CNAME record
     Note over CF: app.example.com → TUNNEL_ID.cfargotunnel.com
 ```
 
-1. User creates HTTPRoute with hostnames
-2. Controller updates tunnel configuration in Cloudflare
-3. Controller sets Gateway `status.addresses` to tunnel CNAME
-4. external-dns watches Gateway and HTTPRoute
-5. external-dns creates CNAME record pointing to tunnel
+The two controller writes come from separate reconcilers. `GatewayReconciler` sets `status.addresses` when the Gateway is first accepted, while the route reconcilers update the Cloudflare tunnel config and route status when an HTTPRoute or GRPCRoute changes. Creating an HTTPRoute re-enqueues the Gateway only to refresh `AttachedRoutes` and listener conditions, not to set `status.addresses` for the first time.
+
+1. User creates a Gateway; the controller sets Gateway `status.addresses` to the tunnel CNAME once the Gateway is accepted
+2. User creates an HTTPRoute with hostnames
+3. Controller updates the tunnel configuration in Cloudflare and the HTTPRoute status
+4. external-dns watches the Gateway and HTTPRoute
+5. external-dns creates a CNAME record pointing to the tunnel
 
 ## Verifying DNS Records
 
@@ -186,6 +191,10 @@ extraArgs:
 
 ## Example: Complete Setup
 
+!!! note "external-dns version"
+
+    Use external-dns `v0.21.0` or later. The controller stores Gateway, HTTPRoute, and GRPCRoute resources under the stable `gateway.networking.k8s.io/v1` API. external-dns migrated its Gateway API sources to `v1` in `v0.21.0`; older releases query `v1alpha2` and find no routes. This matches the minimum version cited in the [ListenerSet guide](../gateway-api/listenerset.md).
+
 ```yaml
 ---
 # external-dns deployment
@@ -205,7 +214,7 @@ spec:
     spec:
       containers:
         - name: external-dns
-          image: registry.k8s.io/external-dns/external-dns:v0.14.0
+          image: registry.k8s.io/external-dns/external-dns:v0.21.0
           args:
             - --source=gateway-httproute
             - --source=gateway-grpcroute
