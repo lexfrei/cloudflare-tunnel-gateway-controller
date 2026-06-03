@@ -802,6 +802,9 @@ func setupStatusReconcilers(mgr ctrl.Manager, controllerName string) error {
 		Client:         mgr.GetClient(),
 		Scheme:         mgr.GetScheme(),
 		ControllerName: controllerName,
+		// APIReader is uncached: the SupportedVersion check reads a single CRD
+		// on demand, so there is no reason to watch every CRD cluster-wide.
+		BundleVersionReader: mgr.GetAPIReader(),
 	}
 
 	if err := gatewayClassReconciler.SetupWithManager(mgr); err != nil {

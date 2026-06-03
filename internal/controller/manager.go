@@ -8,6 +8,7 @@ import (
 
 	"github.com/cockroachdb/errors"
 	"github.com/go-logr/logr"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
@@ -42,6 +43,12 @@ func installSchemes(mgr ctrl.Manager) error {
 
 	if err := mcsv1alpha1.Install(mgr.GetScheme()); err != nil {
 		return errors.Wrap(err, "failed to add mcs-api (ServiceImport) scheme")
+	}
+
+	// apiextensions types let the GatewayClass reconciler read the installed
+	// Gateway API CRD bundle-version annotation for the SupportedVersion check.
+	if err := apiextensionsv1.AddToScheme(mgr.GetScheme()); err != nil {
+		return errors.Wrap(err, "failed to add apiextensions scheme")
 	}
 
 	return nil
