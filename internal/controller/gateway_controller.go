@@ -226,15 +226,27 @@ func (r *GatewayReconciler) updateStatus(
 
 		_, _, clientCertErr := loadGatewayClientCertPEM(ctx, r.Client, &freshGateway, r.checkSecretReferenceGrant)
 
+		accepted := metav1.Condition{
+			Type:               string(gatewayv1.GatewayConditionAccepted),
+			Status:             metav1.ConditionTrue,
+			ObservedGeneration: freshGateway.Generation,
+			LastTransitionTime: now,
+			Reason:             string(gatewayv1.GatewayReasonAccepted),
+			Message:            msgGatewayAccepted,
+		}
+
+		// A Gateway that contains conflicted listeners (its own listeners or
+		// merged ListenerSet entries that clash on hostname/protocol) MUST be
+		// marked ListenersNotValid per the spec, whether or not the listeners
+		// accept the Gateway (gateway_types.go:187).
+		if conflictMsg, conflicted := gatewayConflictedListenersMessage(ctx, views, &freshGateway); conflicted {
+			accepted.Status = metav1.ConditionFalse
+			accepted.Reason = string(gatewayv1.GatewayReasonListenersNotValid)
+			accepted.Message = conflictMsg
+		}
+
 		applyGatewayConditions(&freshGateway.Status.Conditions, []metav1.Condition{
-			{
-				Type:               string(gatewayv1.GatewayConditionAccepted),
-				Status:             metav1.ConditionTrue,
-				ObservedGeneration: freshGateway.Generation,
-				LastTransitionTime: now,
-				Reason:             string(gatewayv1.GatewayReasonAccepted),
-				Message:            msgGatewayAccepted,
-			},
+			accepted,
 			{
 				Type:               string(gatewayv1.GatewayConditionProgrammed),
 				Status:             metav1.ConditionTrue,
@@ -246,6 +258,11 @@ func (r *GatewayReconciler) updateStatus(
 		}, buildClientCertResolvedRefsCondition(freshGateway.Generation, now, clientCertErr))
 
 		listenerStatuses := make([]gatewayv1.ListenerStatus, 0, len(freshGateway.Spec.Listeners))
+
+		// The merged view (cached) annotates each Gateway-owned listener that
+		// conflicts with a higher-precedence one, used below to emit the
+		// per-listener Conflicted condition.
+		gwView, _ := views.forGateway(ctx, &freshGateway)
 
 		for i := range freshGateway.Spec.Listeners {
 			listener := &freshGateway.Spec.Listeners[i]
@@ -294,15 +311,22 @@ func (r *GatewayReconciler) updateStatus(
 				programmedCondition.Message = acceptedCondition.Message
 			}
 
+			conditions := []metav1.Condition{acceptedCondition, programmedCondition, resolvedRefsCondition}
+
+			// A Gateway-owned listener that conflicts with a higher-precedence
+			// listener MUST carry Conflicted=True and is neither Accepted nor
+			// Programmed (gateway_types.go:168-170).
+			if conflicted := conflictedGatewayListenerConditions(
+				gwView, listener.Name, freshGateway.Generation, now, &resolvedRefsCondition,
+			); conflicted != nil {
+				conditions = conflicted
+			}
+
 			listenerStatuses = append(listenerStatuses, gatewayv1.ListenerStatus{
 				Name:           listener.Name,
 				SupportedKinds: supportedKinds,
 				AttachedRoutes: attachedRoutes[listener.Name],
-				Conditions: []metav1.Condition{
-					acceptedCondition,
-					programmedCondition,
-					resolvedRefsCondition,
-				},
+				Conditions:     conditions,
 			})
 		}
 

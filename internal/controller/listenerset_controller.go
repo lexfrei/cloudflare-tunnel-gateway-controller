@@ -754,6 +754,27 @@ func findMergedEntry(
 	return nil
 }
 
+// findMergedGatewayEntry returns the merged-view entry for the Gateway's own
+// listener named name (ParentKind==Gateway), or nil when absent. The Gateway
+// analogue of findMergedEntry.
+func findMergedGatewayEntry(
+	merged *listenermerge.MergeResult,
+	name gatewayv1.SectionName,
+) *listenermerge.MergedListener {
+	if merged == nil {
+		return nil
+	}
+
+	for i := range merged.Listeners {
+		entry := &merged.Listeners[i]
+		if entry.ParentKind == listenermerge.ParentKindGateway && entry.Name == name {
+			return entry
+		}
+	}
+
+	return nil
+}
+
 // listenerEntryConditions produces the per-entry condition slice from a
 // merged-view entry plus the per-entry TLS-ref verdict. Conflict reasons
 // drive the Accepted/Programmed/Conflicted trio; clean entries report

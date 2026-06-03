@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
@@ -40,6 +41,80 @@ func (v *gatewayListenerView) conflictReason(
 	}
 
 	entry := findMergedEntry(v.merged, listenerSet, name)
+	if entry == nil {
+		return ""
+	}
+
+	return entry.ConflictReason
+}
+
+// gatewayConflictedListenersMessage reports whether the Gateway's merged listener
+// view contains any entry annotated with a conflict reason (its own listeners or
+// merged ListenerSet entries clashing on hostname/protocol) and, when it does,
+// returns a message naming the conflicted listeners. It drives the Gateway-level
+// ListenersNotValid condition (gateway_types.go:187), whose message SHOULD
+// indicate which listeners are conflicted (gateway_types.go:188). A view that
+// cannot be built is treated as conflict-free — a transient build error must not
+// flip a Gateway to ListenersNotValid; the next reconcile retries.
+func gatewayConflictedListenersMessage(ctx context.Context, views *listenerViewCache, gateway *gatewayv1.Gateway) (string, bool) {
+	view, err := views.forGateway(ctx, gateway)
+	if err != nil || view == nil || view.merged == nil {
+		return "", false
+	}
+
+	var names []string
+
+	for i := range view.merged.Listeners {
+		entry := &view.merged.Listeners[i]
+		// Only the Gateway's OWN listeners drive the Gateway-level
+		// ListenersNotValid condition; a conflicted ListenerSet entry is reported
+		// on the ListenerSet's own status and must not flip the parent Gateway
+		// (gateway_types.go:187 — the Gateway's listeners, not attached ones).
+		if entry.ParentKind == listenermerge.ParentKindGateway && entry.ConflictReason != "" {
+			names = append(names, string(entry.Name))
+		}
+	}
+
+	if len(names) == 0 {
+		return "", false
+	}
+
+	return "Gateway has conflicted listeners: " + strings.Join(names, ", "), true
+}
+
+// conflictedGatewayListenerConditions returns the Accepted=False / Programmed=False
+// / Conflicted=True trio (plus the supplied ResolvedRefs) for a Gateway-owned
+// listener that conflicts with a higher-precedence listener, or nil when the
+// listener is conflict-free. Per the spec a conflicted listener MUST carry
+// Conflicted=True (gateway_types.go:168-170).
+func conflictedGatewayListenerConditions(
+	view *gatewayListenerView,
+	name gatewayv1.SectionName,
+	generation int64,
+	now metav1.Time,
+	resolvedRefs *metav1.Condition,
+) []metav1.Condition {
+	if view == nil {
+		return nil
+	}
+
+	entry := findMergedGatewayEntry(view.merged, name)
+	if entry == nil || entry.ConflictReason == "" {
+		return nil
+	}
+
+	return conflictedEntryConditions(generation, now, entry, resolvedRefs)
+}
+
+// gatewayListenerConflictReason returns the conflict reason annotated on the
+// Gateway's own listener named name, or "" when conflict-free or absent. Drives
+// the route-binding filter that keeps routes off conflicted Gateway listeners.
+func gatewayListenerConflictReason(view *gatewayListenerView, name gatewayv1.SectionName) gatewayv1.ListenerConditionReason {
+	if view == nil {
+		return ""
+	}
+
+	entry := findMergedGatewayEntry(view.merged, name)
 	if entry == nil {
 		return ""
 	}

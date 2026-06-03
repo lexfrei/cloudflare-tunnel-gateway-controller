@@ -21,6 +21,54 @@ import (
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/listenermerge"
 )
 
+// TestGatewayConflictedListenersMessage_IgnoresListenerSetConflicts pins that a
+// conflict contributed by a ListenerSet entry (reported on the ListenerSet's own
+// status) does NOT flip the parent Gateway to ListenersNotValid. The Gateway-level
+// ListenersNotValid condition is for the Gateway's OWN listeners only
+// (gateway_types.go:187); a ListenerSet whose entry loses precedence stays the
+// ListenerSet's concern. Required by the upstream ListenerSet*Conflict conformance
+// tests, which assert the parent Gateway is Accepted=True.
+func TestGatewayConflictedListenersMessage_IgnoresListenerSetConflicts(t *testing.T) {
+	t.Parallel()
+
+	gc := managedGatewayClass()
+	fromAll := gatewayv1.NamespacesFromAll
+	host := gatewayv1.Hostname("conflict.example.com")
+
+	gw := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "infra"},
+		Spec: gatewayv1.GatewaySpec{
+			GatewayClassName: gatewayv1.ObjectName(gc.Name),
+			AllowedListeners: &gatewayv1.AllowedListeners{
+				Namespaces: &gatewayv1.ListenerNamespaces{From: &fromAll},
+			},
+			// The Gateway's own listener wins precedence and is conflict-free.
+			Listeners: []gatewayv1.Listener{
+				{Name: "gw-l", Port: 80, Protocol: gatewayv1.HTTPProtocolType, Hostname: &host},
+			},
+		},
+	}
+	// A ListenerSet entry on the same (port, hostname) loses to the Gateway
+	// listener and is marked Conflicted on the ListenerSet — not the Gateway.
+	ls := &gatewayv1.ListenerSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "ls", Namespace: "infra"},
+		Spec: gatewayv1.ListenerSetSpec{
+			ParentRef: gatewayv1.ParentGatewayReference{Name: "gw"},
+			Listeners: []gatewayv1.ListenerEntry{
+				{Name: "ls-l", Port: 80, Protocol: gatewayv1.HTTPProtocolType, Hostname: &host},
+			},
+		},
+	}
+
+	cli := buildGatewayFakeClient(t, gc, gw, ls)
+	views := newListenerViewCache(cli, nil)
+
+	msg, conflicted := gatewayConflictedListenersMessage(context.Background(), views, gw)
+	assert.False(t, conflicted,
+		"a ListenerSet-entry conflict must not flip the parent Gateway to ListenersNotValid")
+	assert.Empty(t, msg)
+}
+
 // listSpyClient counts List(ListenerSetList) calls so tests can assert how
 // often the merge view re-lists.
 type listSpyClient struct {

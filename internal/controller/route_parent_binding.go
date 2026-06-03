@@ -10,6 +10,10 @@ import (
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/routebinding"
 )
 
+// msgConflictedListeners is the binding rejection message used when every
+// listener a route matched is conflicted with a higher-precedence listener.
+const msgConflictedListeners = "Matched listener entries are conflicted with higher-precedence listeners"
+
 // parentRefBinding is the per-ref binding outcome surfaced to the route
 // reconcilers. It is identical between Gateway and ListenerSet parents from
 // the route reconciler's point of view — what the syncer needs is whether
@@ -56,7 +60,7 @@ func resolveRouteParentBinding(
 
 	switch kind {
 	case kindGateway:
-		return resolveGatewayParentBinding(ctx, cli, validator, controllerName, ref, routeNamespace, routeInfo)
+		return resolveGatewayParentBinding(ctx, cli, validator, controllerName, ref, routeNamespace, routeInfo, views)
 	case kindListenerSet:
 		return resolveListenerSetParentBinding(ctx, cli, validator, controllerName, ref, routeNamespace, routeInfo, views)
 	}
@@ -72,6 +76,7 @@ func resolveGatewayParentBinding(
 	ref gatewayv1.ParentReference,
 	routeNamespace string,
 	routeInfo *routebinding.RouteInfo,
+	views *listenerViewCache,
 ) (parentRefBinding, error) {
 	namespace := routeNamespace
 	if ref.Namespace != nil {
@@ -95,11 +100,59 @@ func resolveGatewayParentBinding(
 		return parentRefBinding{}, errors.Wrap(bindErr, "failed to validate route binding against gateway")
 	}
 
+	// A route attached to a conflicted Gateway-owned listener MUST NOT be
+	// accepted — the spec says conflicted listeners are not processed
+	// (gateway_types.go:181-184). Mirror the ListenerSet conflict filter.
+	if bindResult.Accepted {
+		bindResult = filterMatchedGatewayListenersByConflict(ctx, cli, &gateway, bindResult, views)
+	}
+
 	return parentRefBinding{
 		ManagedByThisController: true,
 		Result:                  bindResult,
 		GatewayKey:              gateway.Namespace + "/" + gateway.Name,
 	}, nil
+}
+
+// filterMatchedGatewayListenersByConflict drops any matched Gateway-owned
+// listener whose merged-view counterpart is conflicted. When every match is
+// filtered out the binding flips to NoMatchingParent. The Gateway analogue of
+// filterMatchedListenersByConflict.
+func filterMatchedGatewayListenersByConflict(
+	ctx context.Context,
+	cli client.Client,
+	gateway *gatewayv1.Gateway,
+	result routebinding.BindingResult,
+	views *listenerViewCache,
+) routebinding.BindingResult {
+	view, err := views.orNew(cli).forGateway(ctx, gateway)
+	if err != nil {
+		// Best-effort: if we can't compute the merge view, leave the binding
+		// as-is. A later reconcile will retry.
+		return result
+	}
+
+	kept := make([]gatewayv1.SectionName, 0, len(result.MatchedListeners))
+
+	for _, section := range result.MatchedListeners {
+		if gatewayListenerConflictReason(view, section) != "" {
+			continue
+		}
+
+		kept = append(kept, section)
+	}
+
+	if len(kept) == 0 {
+		return routebinding.BindingResult{
+			Accepted: false,
+			Reason:   gatewayv1.RouteReasonNoMatchingParent,
+			Message:  msgConflictedListeners,
+		}
+	}
+
+	result.MatchedListeners = kept
+
+	return result
 }
 
 func resolveListenerSetParentBinding(
@@ -204,7 +257,7 @@ func filterMatchedListenersByConflict(
 		return routebinding.BindingResult{
 			Accepted: false,
 			Reason:   gatewayv1.RouteReasonNoMatchingParent,
-			Message:  "Matched listener entries are conflicted with higher-precedence listeners",
+			Message:  msgConflictedListeners,
 		}
 	}
 
