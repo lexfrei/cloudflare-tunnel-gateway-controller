@@ -173,7 +173,7 @@ All matching and filter behavior is performed by the in-process L7 proxy that th
 
 ### Known Limitations
 
-The in-process L7 proxy handles routing for every tunnel request, so the v1/v2 Cloudflare-Tunnel-API path-matching quirks (no true exact match, prefix bleed across `/foo` siblings) no longer apply. Edge-side caveats (Cloudflare hostname registration, edge HTTPS termination, etc.) are documented in the [Limitations](https://cf.k8s.lex.la/gateway-api/limitations/) page.
+The in-process L7 proxy handles routing for every tunnel request. Edge-side caveats (Cloudflare hostname registration, edge HTTPS termination, etc.) are documented in the [Limitations](https://cf.k8s.lex.la/gateway-api/limitations/) page.
 
 `BackendTLSPolicy` (proxy → backend TLS) is supported at minimum-viable scope:
 
