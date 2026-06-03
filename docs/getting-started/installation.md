@@ -120,7 +120,7 @@ helm uninstall cloudflare-tunnel-gateway-controller \
 
 !!! warning "Cleanup"
 
-    Uninstalling the Helm release will remove the controller and cloudflared pods. The tunnel configuration in Cloudflare will remain. To fully clean up, delete the tunnel from the Cloudflare dashboard.
+    Uninstalling the Helm release will remove the controller and proxy pods. The tunnel configuration in Cloudflare will remain. To fully clean up, delete the tunnel from the Cloudflare dashboard.
 
 ## Alternative: External Secrets
 

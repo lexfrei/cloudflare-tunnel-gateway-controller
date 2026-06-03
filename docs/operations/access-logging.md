@@ -4,7 +4,7 @@ The in-process L7 proxy can emit a structured access log for every request it ro
 
 ## Why
 
-Without access logging, diagnosing incidents that flow through Cloudflare Tunnel is a black box from inside the cluster: the proxy emits warnings about config churn and connection errors, but there is no per-request record of who saw what status. Cluster log aggregators end up with cloudflared's edge-side logs only, which lack the post-routing context (matched hostname, observed status, response size).
+Without access logging, diagnosing incidents that flow through Cloudflare Tunnel is a black box from inside the cluster: the proxy emits warnings about config churn and connection errors, but there is no per-request record of who saw what status. Cluster log aggregators end up with cloudflared's tunnel/connection logs only, which lack the post-routing context (matched hostname, observed status, response size).
 
 When enabled, the proxy emits one JSON line per request via the same stdout `slog` sink the controller already uses, so existing cluster logging pipelines pick it up without additional wiring.
 
@@ -90,7 +90,7 @@ Mitigations:
 ## What is NOT logged
 
 - **WebSocket upgrades (`101 Switching Protocols`).** `pipeWebSocket` writes the 101 status BEFORE hijacking the conn, so the wrapper records `status=101`; the access-log emission is then suppressed for that status. Without the skip, every WS upgrade would produce a log line whose `duration_ms` equals the entire WS session lifetime (because the deferred emission runs after the bidirectional copy goroutines exit) and `bytes_written=0` (post-Hijack bytes bypass the wrapper). Both signals would mislead triage. The WS upgrade path emits its own diagnostics.
-- **Headers** beyond `User-Agent`. Per-route filters (`HTTPRoute.spec.rules[].filters[].requestHeaderModifier`) are not summarised. If you need that level of detail, add a `responseHeaderModifier` to inject the desired headers into the response, which the access log will then record on the client-visible side.
+- **Headers** beyond `User-Agent`. Per-route filters (`HTTPRoute.spec.rules[].filters[].requestHeaderModifier`) are not summarised. The access log emits a fixed set of fields and never reads request or response headers other than `User-Agent`. If you need deeper per-request inspection (e.g. which header values the proxy added or removed), use distributed tracing (see the tracing page) or structured sidecar logging of the backend responses.
 - **Request bodies.** Streaming and large uploads make body logging both expensive and a privacy hazard.
 - **Backend URL** the proxy forwarded to. The router decision context isn't visible to the deferred log emission today; a future enhancement can plumb a `route_id` once the router exposes a stable identifier.
 

@@ -15,8 +15,16 @@ This document describes all configuration options for the controller binary. For
 | `--leader-elect` | `CF_LEADER_ELECT` | `false` | Enable leader election for HA |
 | `--leader-election-namespace` | `CF_LEADER_ELECTION_NAMESPACE` | | Namespace for leader election lease |
 | `--leader-election-name` | `CF_LEADER_ELECTION_NAME` | `cloudflare-tunnel-gateway-controller-leader` | Leader election lease name |
-| `--proxy-endpoints` | `CF_PROXY_ENDPOINTS` | | Proxy config API endpoints for L7 proxy sync |
+| `--proxy-endpoints` | `CF_PROXY_ENDPOINTS` | | Proxy config API endpoints for L7 proxy sync (required in v3) |
 | `--proxy-auth-token` | `CF_PROXY_AUTH_TOKEN` | | Bearer token for proxy config push authentication |
+| `--proxy-token-secret` | `CF_PROXY_TOKEN_SECRET` | | Tunnel-token Secret to watch in `<namespace>/<name>` form; the controller rolls the proxy Deployment when the Secret data changes. Empty disables the watcher |
+| `--proxy-deployment-label` | `CF_PROXY_DEPLOYMENT_LABEL` | `app.kubernetes.io/component=proxy` | Label selector (`key=value`) identifying the proxy Deployment(s) to roll on tunnel-token change |
+| `--tunnel-protocol` | `CF_TUNNEL_PROTOCOL` | `auto` | Edge transport protocol (`auto`, `http2`, `quic`); used to warn when GRPCRoutes are present on an explicit `quic` tunnel |
+| `--tracing-enabled` | `CF_TRACING_ENABLED` | `false` | Enable OpenTelemetry distributed tracing |
+| `--tracing-endpoint` | `CF_TRACING_ENDPOINT` | | OTLP/gRPC collector endpoint (defers to `OTEL_EXPORTER_OTLP_ENDPOINT` when empty) |
+| `--tracing-sample-rate` | `CF_TRACING_SAMPLE_RATE` | `1.0` | Head-sampling probability in `[0,1]` |
+
+For full distributed-tracing setup, see [Distributed Tracing](../operations/tracing.md).
 
 ## Environment Variables
 

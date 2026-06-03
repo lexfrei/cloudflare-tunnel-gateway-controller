@@ -282,11 +282,13 @@ kubectl get service api-service --namespace backend
 
 If using NetworkPolicy, ensure traffic is allowed between namespaces:
 
+In v3 all backend traffic originates from the in-process proxy pod, which runs in the controller release namespace (for example `cloudflare-tunnel-system`). There is no separate cloudflared pod. Select that pod precisely with a compound `namespaceSelector` + `podSelector`:
+
 ```yaml
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: allow-from-cloudflared
+  name: allow-from-gateway-proxy
   namespace: backend
 spec:
   podSelector: {}
@@ -295,4 +297,7 @@ spec:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: cloudflare-tunnel-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/component: proxy
 ```

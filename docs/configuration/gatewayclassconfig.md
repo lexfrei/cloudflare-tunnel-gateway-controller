@@ -24,8 +24,8 @@ spec:
   # Required: Cloudflare Tunnel UUID
   tunnelID: "550e8400-e29b-41d4-a716-446655440000"
 
-  # Optional: Cloudflare Account ID (auto-detected if not specified)
-  accountId: "1234567890abcdef"
+  # Optional: Cloudflare Account ID (32-character lowercase hex; auto-detected if not specified)
+  accountId: "0123456789abcdef0123456789abcdef"
 
   # Required: Reference to Secret containing API token
   cloudflareCredentialsSecretRef:
@@ -46,11 +46,11 @@ spec:
 
 ### `spec.accountId` (optional)
 
-The Cloudflare account ID. If not specified, it is auto-detected from the API token when the token has access to a single account.
+The Cloudflare account ID. Must be a 32-character lowercase hexadecimal string (the format Cloudflare uses for account IDs); a value that does not match this pattern is rejected at admission time by a CRD-level CEL rule. If not specified, it is read from the `account-id` key in the credentials Secret; if that key is also absent, it is auto-detected from the Cloudflare API when the token has access to a single account. Tokens with access to multiple accounts must set this field (or the `account-id` Secret key) explicitly.
 
 ```yaml
 spec:
-  accountId: "1234567890abcdef"
+  accountId: "0123456789abcdef0123456789abcdef"
 ```
 
 ### `spec.cloudflareCredentialsSecretRef` (required)
@@ -61,10 +61,11 @@ Reference to a Kubernetes Secret containing the Cloudflare API token.
 spec:
   cloudflareCredentialsSecretRef:
     name: cloudflare-credentials
+    # namespace: cloudflare-tunnel-system  # Optional, defaults to the controller namespace
     key: api-token  # Optional, defaults to "api-token"
 ```
 
-The referenced Secret must exist in the same namespace as the controller:
+The reference accepts three fields: `name` (required), `namespace` (optional), and `key` (optional). The referenced Secret defaults to the controller's own namespace. To place the Secret in a different namespace, set `cloudflareCredentialsSecretRef.namespace` explicitly:
 
 ```yaml
 apiVersion: v1
@@ -188,7 +189,7 @@ flowchart LR
 1. GatewayClass references GatewayClassConfig via `parametersRef`
 2. Controller reads GatewayClassConfig
 3. Controller fetches the referenced credentials Secret
-4. Controller auto-detects account ID if not specified
+4. Controller resolves the account ID: `spec.accountId` first, then the `account-id` key in the credentials Secret, then auto-detection via the Cloudflare API
 5. Resolved configuration is used by controllers
 
 ## Troubleshooting
@@ -211,7 +212,7 @@ If the controller cannot find the referenced Secret:
 kubectl get secret cloudflare-credentials --namespace cloudflare-tunnel-system
 ```
 
-Ensure the Secret exists in the controller's namespace.
+Ensure the Secret exists in the controller's namespace, or set `cloudflareCredentialsSecretRef.namespace` to the namespace where it actually lives.
 
 ### Account ID Detection Failed
 

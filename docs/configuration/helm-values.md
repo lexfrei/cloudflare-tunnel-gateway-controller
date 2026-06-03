@@ -71,7 +71,7 @@ podDisruptionBudget:
 
 ```yaml
 serviceMonitor:
-  enabled: true       # Creates ServiceMonitor for the proxy's /metrics endpoint
+  enabled: true       # Creates two ServiceMonitors: one for the controller (Prometheus /metrics on port 8080) and one for the proxy (config-API health on port 8081)
   interval: 30s
   labels:
     prometheus: kube-prometheus

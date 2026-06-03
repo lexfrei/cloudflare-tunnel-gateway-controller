@@ -155,7 +155,7 @@ Converts HTTPRoute specs to Cloudflare Tunnel ingress rules:
 
 **Rule Ordering**:
 
-1. Alphabetically by hostname
+1. Specific hostnames before the wildcard `*` (Cloudflare requirement), then alphabetically among specific hostnames
 2. Exact matches before prefix matches
 3. Longer paths before shorter paths
 
@@ -210,16 +210,14 @@ flowchart TB
     CHECK -->|No| SKIP[Skip]
     CHECK -->|Yes| DELETED{Resource<br/>deleted?}
 
-    DELETED -->|Yes| CLEANUP[Cleanup]
+    DELETED -->|Yes| GONE[Nothing to do<br/>proxy lifecycle managed by Helm chart]
     DELETED -->|No| RECONCILE[Reconcile]
 
     RECONCILE --> SYNC[Sync to Cloudflare]
     SYNC --> STATUS[Update Status]
 
-    CLEANUP --> FINALIZER[Remove Finalizer]
-
     STATUS --> END([Complete])
-    FINALIZER --> END
+    GONE --> END
     SKIP --> END
 ```
 

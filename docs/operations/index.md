@@ -38,6 +38,22 @@ Operating the controller effectively requires understanding:
 
     [:octicons-arrow-right-24: Manual Installation](manual-installation.md)
 
+-   :material-text-box-outline:{ .lg .middle } **Access Logging**
+
+    ---
+
+    Structured per-request access logs from the in-process L7 proxy.
+
+    [:octicons-arrow-right-24: Access Logging](access-logging.md)
+
+-   :material-transit-connection-variant:{ .lg .middle } **Distributed Tracing**
+
+    ---
+
+    OpenTelemetry tracing for the controller and proxy.
+
+    [:octicons-arrow-right-24: Distributed Tracing](tracing.md)
+
 </div>
 
 ## Quick Diagnostics
@@ -65,4 +81,4 @@ kubectl get httproute --all-namespaces \
 - [ ] Prometheus ServiceMonitor deployed
 - [ ] Alerting rules configured
 - [ ] Log aggregation set up
-- [ ] Backup strategy for GatewayClassConfig secrets
+- [ ] Backup strategy for proxy tunnel-token Secret and (if used) GatewayClassConfig credentials Secret

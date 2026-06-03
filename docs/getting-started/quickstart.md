@@ -9,6 +9,40 @@ Ensure you have completed:
 - [Prerequisites](prerequisites.md) - Cloudflare Tunnel and API token created
 - [Installation](installation.md) - Controller installed and running
 
+## Create a Gateway
+
+The chart installs the `cloudflare-tunnel` GatewayClass, but you create the Gateway that HTTPRoutes attach to. Create one in the controller namespace:
+
+```yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: cloudflare-tunnel
+  namespace: cloudflare-tunnel-system
+spec:
+  gatewayClassName: cloudflare-tunnel
+  listeners:
+    - name: https
+      port: 443
+      protocol: HTTPS
+      allowedRoutes:
+        namespaces:
+          from: All
+```
+
+Apply it:
+
+```bash
+kubectl apply --filename gateway.yaml
+```
+
+Cloudflare terminates TLS at its edge, so the listener carries no `certificateRefs` — the `port`/`protocol` are accepted for route binding but the actual TLS is handled by Cloudflare. Once the controller reconciles it, the Gateway's status address is set to `<tunnel-id>.cfargotunnel.com`:
+
+```bash
+kubectl get gateway cloudflare-tunnel --namespace cloudflare-tunnel-system \
+  --output jsonpath='{.status.addresses[*].value}'
+```
+
 ## Deploy a Sample Application
 
 First, deploy a simple application to expose:
@@ -66,7 +100,7 @@ The controller sets the Gateway address to `TUNNEL_ID.cfargotunnel.com`. Create 
 
 !!! tip "External-DNS"
 
-    If you have [external-dns](https://external-dns.io/) configured with Gateway API source, DNS records are created automatically. See [External-DNS Integration](../guides/external-dns.md) for setup.
+    If you have [external-dns](https://github.com/kubernetes-sigs/external-dns) configured with Gateway API source, DNS records are created automatically. See [External-DNS Integration](../guides/external-dns.md) for setup.
 
 ## Access Your Application
 
@@ -136,7 +170,7 @@ spec:
 
 ## Advanced Routing
 
-When the L7 proxy is enabled, HTTPRoute gains full Gateway API matching and filter support. Below are short examples of the most common patterns.
+The in-process L7 proxy is the only data plane in v3, so full Gateway API matching and filter support is always available. Below are short examples of the most common patterns.
 
 ### Header-Based Routing
 
@@ -211,9 +245,9 @@ spec:
             statusCode: 301
 ```
 
-!!! tip "Enable the proxy first"
+!!! tip "L7 proxy configuration"
 
-    These features require the L7 proxy. See the [L7 Proxy Guide](../guides/l7-proxy.md) for installation instructions.
+    These features are served by the always-on in-process L7 proxy. See the [L7 Proxy Guide](../guides/l7-proxy.md) for proxy configuration options and tuning.
 
 ## Troubleshooting
 

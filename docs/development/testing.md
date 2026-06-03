@@ -261,10 +261,10 @@ Tests run automatically in CI:
 ```yaml
 # .github/workflows/pr.yaml
 - name: Run tests
-  run: go test -v -race -coverprofile=coverage.out ./...
+  run: go test -v -race -tags=envtest -coverprofile=coverage.out -covermode=atomic ./...
 
 - name: Upload coverage
-  uses: codecov/codecov-action@v4
+  uses: codecov/codecov-action@v6
   with:
     files: coverage.out
 ```
@@ -292,7 +292,7 @@ E2E_TUNNEL_HOSTNAME=<your-tunnel-hostname> \
 # Run a single test
 E2E_TUNNEL_HOSTNAME=<your-tunnel-hostname> \
   go test -v -race -tags e2e -count=1 -timeout=15m ./test/e2e/... \
-  -run TestHTTPRouteSimpleSameNamespace
+  -run TestHTTPRouteConformance/Core/HTTPRouteSimpleSameNamespace
 ```
 
 ### E2E Environment Variables
@@ -304,14 +304,14 @@ E2E_TUNNEL_HOSTNAME=<your-tunnel-hostname> \
 | `E2E_NAMESPACE` | `CONFORMANCE_NAMESPACE` | `cloudflare-tunnel-system` | Controller namespace |
 | `E2E_TEST_NAMESPACE` | `CONFORMANCE_TEST_NAMESPACE` | `e2e-test` | Test resources namespace |
 | `E2E_GATEWAY_NAME` | `CONFORMANCE_GATEWAY_NAME` | `e2e-gateway` | Gateway resource name |
-| `E2E_SKIP_CLEANUP_ON_FAILURE` | (none) | unset | When non-empty, retains test resources (HTTPRoutes, Services) after a failed test for post-mortem `kubectl` inspection. CI leaves it unset so resources never accumulate. **Caveat: pair this with `-run TestName/SubtestName` to isolate the failing case.** The cleanup helpers wipe the entire test namespace, so in a full-suite run a passing sibling that comes after the failing subtest will delete its retained state -- only the last failing subtest after the final passing sibling actually survives. Retention is also scoped to a single `go test` run; the initial `deleteAllRoutes` at the start of `TestHTTPRouteConformance` wipes leftover state from a previous invocation, so `kubectl`-inspect happens between runs, not across them. |
+| `E2E_SKIP_CLEANUP_ON_FAILURE` | (none) | unset | When non-empty, retains test resources (HTTPRoutes, Services) after a failed test for post-mortem `kubectl` inspection. CI leaves it unset so resources never accumulate. **Caveat: pair this with `-run TestName/SubtestName` to isolate the failing case.** The cleanup helpers wipe the entire test namespace, so in a full-suite run a passing sibling that comes after the failing subtest will delete its retained state -- only the last failing subtest after the final passing sibling actually survives. Retention is also scoped to a single `go test` run; the initial `wipeAllRoutesInNamespace` at the start of `TestHTTPRouteConformance` wipes leftover state from a previous invocation, so `kubectl`-inspect happens between runs, not across them. |
 
-### E2E Test Coverage (24 tests)
+### E2E Test Coverage (25 tests)
 
 Tests cover both Cloudflare Tunnel and L7 proxy features:
 
 - **Core (4):** SimpleSameNamespace, PathPrefixMatching, ExactPathMatching, MatchingAcrossRoutes
-- **Extended (18):** HeaderMatching, MethodMatching, QueryParamMatching, Weight, RequestHeaderModifier, ResponseHeaderModifier, RequestRedirect, RegexPathMatching, RegexHeaderMatching, RegexQueryParamMatching, PathMatchOrder, URLRewritePath, URLRewriteHost, RequestMirror, RedirectPort, RedirectPath, CombinedMatching, MultipleMatchesOR
+- **Extended (19):** HeaderMatching, MethodMatching, QueryParamMatching, Weight, RequestHeaderModifier, ResponseHeaderModifier, RequestRedirect, RegexPathMatching, RegexHeaderMatching, RegexQueryParamMatching, PathMatchOrder, URLRewritePath, URLRewriteHost, RequestMirror, RedirectPort, RedirectPath, RedirectSchemeProbe, CombinedMatching, MultipleMatchesOR
 - **Gateway (2):** AcceptedCondition, ObservedGenerationBump
 
 ### Official Gateway API Conformance Suite

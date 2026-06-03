@@ -72,7 +72,7 @@ fix(ingress): handle empty hostnames correctly
 
 docs(readme): add installation instructions
 
-chore(deps): update controller-runtime to v0.22.4
+chore(deps): update controller-runtime to v0.24.0
 ```
 
 ## Pull Request Process

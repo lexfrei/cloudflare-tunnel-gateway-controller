@@ -4,7 +4,7 @@ This section documents the Gateway API implementation in the Cloudflare Tunnel G
 
 ## Overview
 
-The controller implements the [Kubernetes Gateway API](https://gateway-api.sigs.k8s.io/) to configure Cloudflare Tunnel ingress rules. It watches Gateway and Route resources and translates them into Cloudflare Tunnel configuration via the Cloudflare API.
+The controller implements the [Kubernetes Gateway API](https://gateway-api.sigs.k8s.io/) to manage an in-process L7 reverse proxy data plane. It watches Gateway and Route resources, pushes routing configuration to the in-cluster proxy, and registers tunnel endpoints with the Cloudflare API for DNS/edge connectivity. All L7 routing, matching, and filter logic executes in the in-cluster proxy; the Cloudflare API is used only for edge configuration.
 
 ## Supported Resources
 
@@ -65,7 +65,7 @@ flowchart TB
         HR[HTTPRoute]
         SVC[Services]
         CTRL[Controller]
-        CFD[cloudflared]
+        PROXY[Proxy Pod<br/>embedded cloudflared transport]
     end
 
     subgraph Cloudflare["Cloudflare Edge"]
@@ -77,18 +77,19 @@ flowchart TB
     HR -->|watch| CTRL
     SVC -->|resolve| CTRL
     CTRL -->|configure| API
-    API -->|push config| CFD
-    CFD -->|tunnel| EDGE
-    EDGE -->|traffic| CFD
-    CFD -->|route| SVC
+    CTRL -->|sync routes| PROXY
+    API -->|tunnel config| PROXY
+    PROXY -->|tunnel| EDGE
+    EDGE -->|traffic| PROXY
+    PROXY -->|route| SVC
 ```
 
 ## Key Concepts
 
 !!! info "TLS Termination"
 
-    Cloudflare Tunnel terminates TLS at Cloudflare's edge network. Gateway listener configuration for ports, protocols, and TLS settings has no effect on routing behavior.
+    Cloudflare Tunnel terminates TLS at Cloudflare's edge network; in-cluster TLS termination settings on Gateway listeners have no effect. Listener port and protocol still govern route binding per the Gateway API spec.
 
 !!! info "Full Sync"
 
-    Any change to an HTTPRoute or GRPCRoute triggers a full configuration sync to Cloudflare Tunnel. The controller rebuilds the entire ingress configuration and re-pushes the merged proxy config on each reconciliation.
+    Any change to an HTTPRoute or GRPCRoute triggers a full configuration sync. The controller rebuilds the entire route table and pushes the merged config to every proxy replica (via `PUT /config`), then updates edge registration with the Cloudflare API.

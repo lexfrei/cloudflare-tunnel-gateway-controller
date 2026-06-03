@@ -41,7 +41,7 @@ See [L7 Proxy Architecture](https://cf.k8s.lex.la/development/architecture/) for
 
 ```bash
 # 1. Install Gateway API CRDs
-kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.5.0/standard-install.yaml
+kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.5.1/standard-install.yaml
 
 # 2. Create credentials Secrets
 kubectl create namespace cloudflare-tunnel-system
