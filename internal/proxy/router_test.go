@@ -319,6 +319,47 @@ func TestRouter_DefaultRules(t *testing.T) {
 	assert.Equal(t, "http://default:80", result.Rule.Backends[0].URL)
 }
 
+// TestRouter_RegexPathOutranksPrefix pins the implementation-specific path-type
+// precedence (exact > regex > prefix) documented at computePriority and in
+// docs/gateway-api/limitations.md, so the priority constants and the comment
+// cannot silently re-drift.
+func TestRouter_RegexPathOutranksPrefix(t *testing.T) {
+	t.Parallel()
+
+	router := proxy.NewRouter()
+
+	cfg := &proxy.Config{
+		Version: 1,
+		Rules: []proxy.RouteRule{
+			{
+				Hostnames: []string{"example.com"},
+				Matches:   []proxy.RouteMatch{{Path: &proxy.PathMatch{Type: proxy.PathMatchPathPrefix, Value: "/api"}}},
+				Backends:  []proxy.BackendRef{{URL: "http://prefix:80", Weight: 1}},
+			},
+			{
+				Hostnames: []string{"example.com"},
+				Matches:   []proxy.RouteMatch{{Path: &proxy.PathMatch{Type: proxy.PathMatchRegularExpression, Value: "/api/.*"}}},
+				Backends:  []proxy.BackendRef{{URL: "http://regex:80", Weight: 1}},
+			},
+		},
+	}
+
+	require.NoError(t, router.UpdateConfig(cfg))
+
+	req := &http.Request{
+		Method: http.MethodGet,
+		Host:   "example.com",
+		URL:    &url.URL{Path: "/api/v1"},
+		Header: http.Header{},
+	}
+
+	result := router.Route(req)
+	require.NotNil(t, result)
+	require.NotEmpty(t, result.Rule.Backends)
+	assert.Equal(t, "http://regex:80", result.Rule.Backends[0].URL,
+		"a RegularExpression path match outranks a Prefix match (exact > regex > prefix)")
+}
+
 func TestRouter_PathPrecedence(t *testing.T) {
 	t.Parallel()
 

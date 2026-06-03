@@ -495,7 +495,9 @@ func compileRule(rule *RouteRule, ruleIndex int, factory TransportFactory) (*com
 // Gateway API precedence (from spec, GEP-1722):
 //
 //  1. Longest hostname (handled by exact > wildcard > default lookup order)
-//  2. Exact path > Prefix path > Regex path
+//  2. Exact path > Regex path > Prefix path (matching the priority constants
+//     above; RegularExpression path precedence is implementation-specific per
+//     httproute_types.go:189)
 //  3. Longest path value
 //  4. Method match present
 //  5. Most header matches

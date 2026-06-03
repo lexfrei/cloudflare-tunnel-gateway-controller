@@ -36,7 +36,9 @@ const grpcSegmentPattern = "[^/]+"
 // plaintext (attachGatewayClientCert returns the original config unchanged
 // when tlsCfg is nil).
 //
-// gRPC-specific filters are not yet supported and are skipped with a warning.
+// The core RequestHeaderModifier and extended ResponseHeaderModifier filters
+// are served through the shared header-modifier pipeline; RequestMirror and
+// ExtensionRef are not served yet and fail closed (HTTP 500).
 // Multiple backendRefs are weighted: every listed backend is emitted with its
 // weight, and the proxy's weighted-random selection splits traffic in
 // proportion to those weights (same as HTTPRoute).
@@ -54,7 +56,7 @@ func ConvertGRPCRoutes(
 
 	sink := &diagSink{}
 
-	for _, route := range routes {
+	for _, route := range sortRoutesByPrecedence(routes) {
 		sink.route(route.Namespace, route.Name)
 		hostnames := convertHostnames(route.Spec.Hostnames)
 		clientCert := resolveFirstParentClientCertForGRPCRoute(ctx, route, gatewayCertResolver)
