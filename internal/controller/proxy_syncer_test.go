@@ -20,8 +20,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
+	discoveryv1 "k8s.io/api/discovery/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 	gatewayv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
@@ -869,4 +871,119 @@ func makeBackendRef(name string, port, weight int) gatewayv1.HTTPBackendRef {
 			Weight: &weightInt,
 		},
 	}
+}
+
+// syncHeadlessRouteConfig builds a headless Service (clusterIP: None, port 8080 →
+// targetPort 3000) with one EndpointSlice whose two endpoints carry the given
+// readiness, hands a route referencing it to SyncRoutes, and returns the pushed
+// proxy config. Shared by the headless expand / 503 integration tests.
+func syncHeadlessRouteConfig(t *testing.T, ready bool) proxy.Config {
+	t.Helper()
+
+	var receivedConfig proxy.Config
+
+	configServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, req *http.Request) {
+		if req.Method == http.MethodPut {
+			if decodeErr := json.NewDecoder(req.Body).Decode(&receivedConfig); decodeErr != nil {
+				writer.WriteHeader(http.StatusBadRequest)
+
+				return
+			}
+		}
+
+		writer.WriteHeader(http.StatusOK)
+	}))
+	defer configServer.Close()
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
+	require.NoError(t, discoveryv1.AddToScheme(scheme))
+
+	portName := "first-port"
+	endpointPort := int32(3000)
+	epReady := ready
+
+	svc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: "head", Namespace: "default"},
+		Spec: corev1.ServiceSpec{
+			Type:      corev1.ServiceTypeClusterIP,
+			ClusterIP: corev1.ClusterIPNone,
+			Ports: []corev1.ServicePort{
+				{Name: portName, Port: 8080, TargetPort: intstr.FromInt32(3000), Protocol: corev1.ProtocolTCP},
+			},
+		},
+	}
+	slice := &discoveryv1.EndpointSlice{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "head-ip4",
+			Namespace: "default",
+			Labels:    map[string]string{discoveryv1.LabelServiceName: "head"},
+		},
+		AddressType: discoveryv1.AddressTypeIPv4,
+		Ports:       []discoveryv1.EndpointPort{{Name: &portName, Port: &endpointPort}},
+		Endpoints: []discoveryv1.Endpoint{
+			{Addresses: []string{"10.1.0.1"}, Conditions: discoveryv1.EndpointConditions{Ready: &epReady}},
+			{Addresses: []string{"10.1.0.2"}, Conditions: discoveryv1.EndpointConditions{Ready: &epReady}},
+		},
+	}
+
+	testClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(svc, slice).Build()
+	syncer := controller.NewProxySyncer("cluster.local", "", "", testClient, slog.Default())
+
+	pathPrefix := gatewayv1.PathMatchPathPrefix
+	routes := []*gatewayv1.HTTPRoute{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "head-route", Namespace: "default"},
+			Spec: gatewayv1.HTTPRouteSpec{
+				Hostnames: []gatewayv1.Hostname{"head.example.com"},
+				Rules: []gatewayv1.HTTPRouteRule{
+					{
+						Matches:     []gatewayv1.HTTPRouteMatch{{Path: &gatewayv1.HTTPPathMatch{Type: &pathPrefix, Value: new("/")}}},
+						BackendRefs: []gatewayv1.HTTPBackendRef{makeBackendRef("head", 8080, 1)},
+					},
+				},
+			},
+		},
+	}
+
+	_, err := syncer.SyncRoutes(context.Background(), []string{configServer.URL + "/config"}, routes, nil, nil, nil)
+	require.NoError(t, err)
+
+	return receivedConfig
+}
+
+// TestProxySyncer_SyncRoutes_HeadlessBackend pins the end-to-end wiring: a route
+// to a headless Service with ready endpoints is pushed to the proxy as one
+// backend per endpoint, dialing the targetPort (3000) — not the Service port.
+func TestProxySyncer_SyncRoutes_HeadlessBackend(t *testing.T) {
+	t.Parallel()
+
+	cfg := syncHeadlessRouteConfig(t, true)
+
+	require.Len(t, cfg.Rules, 1)
+
+	urls := make([]string, 0, len(cfg.Rules[0].Backends))
+	for i := range cfg.Rules[0].Backends {
+		urls = append(urls, cfg.Rules[0].Backends[i].URL)
+		assert.Zero(t, cfg.Rules[0].Backends[i].UnavailableStatus, "ready endpoints are dialable, not marked")
+	}
+
+	assert.ElementsMatch(t, []string{"http://10.1.0.1:3000", "http://10.1.0.2:3000"}, urls,
+		"a headless Service expands to one backend per ready endpoint at the targetPort")
+}
+
+// TestProxySyncer_SyncRoutes_HeadlessNoReadyEndpoints503 pins the ordering: a
+// headless Service with no ready endpoints keeps its FQDN backend and is marked
+// 503 by the zero-endpoint pass (not silently dropped, not expanded).
+func TestProxySyncer_SyncRoutes_HeadlessNoReadyEndpoints503(t *testing.T) {
+	t.Parallel()
+
+	cfg := syncHeadlessRouteConfig(t, false)
+
+	require.Len(t, cfg.Rules, 1)
+	require.Len(t, cfg.Rules[0].Backends, 1)
+	assert.Equal(t, "http://head.default.svc.cluster.local:8080", cfg.Rules[0].Backends[0].URL,
+		"no ready endpoints → the FQDN backend is kept")
+	assert.Equal(t, http.StatusServiceUnavailable, cfg.Rules[0].Backends[0].UnavailableStatus,
+		"and is marked 503 by the zero-endpoint pass")
 }

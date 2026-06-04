@@ -7,7 +7,7 @@ This document describes the known limitations of the Cloudflare Tunnel Gateway C
 | Limitation | Description |
 |------------|-------------|
 | Full sync | Any change triggers full config sync |
-| Backend kinds | `Service` (ClusterIP, NodePort, LoadBalancer, ExternalName — but not headless `clusterIP: None`, see [Headless Service backends](#headless-service-backends)), `ServiceImport` (multicluster.x-k8s.io, resolved via `clusterset.local` DNS), and `ExternalBackend` (`cf.k8s.lex.la`, an out-of-cluster HTTP(S) URL). Any other kind → `ResolvedRefs=False, InvalidKind`. |
+| Backend kinds | `Service` (ClusterIP, NodePort, LoadBalancer, ExternalName, and headless `clusterIP: None` — expanded to one backend per ready endpoint), `ServiceImport` (multicluster.x-k8s.io, resolved via `clusterset.local` DNS), and `ExternalBackend` (`cf.k8s.lex.la`, an out-of-cluster HTTP(S) URL). Any other kind → `ResolvedRefs=False, InvalidKind`. |
 
 ## Unsupported config is surfaced on resource status
 
@@ -33,17 +33,11 @@ Because the v3 data plane is a generic in-process L7 proxy that ultimately dials
 
 A cross-namespace `ServiceImport` or `ExternalBackend` `backendRef` requires a `ReferenceGrant` whose `to` entry names the matching `group`/`kind` (`multicluster.x-k8s.io`/`ServiceImport` or `cf.k8s.lex.la`/`ExternalBackend`) — a Service-only grant does not authorize them.
 
-## Headless Service backends
-
-A `backendRef` targeting a **headless** `Service` (`spec.clusterIP: None`) is not supported and returns HTTP 502. The proxy dials each backend as the Service FQDN at the `backendRef` port — `<name>.<namespace>.svc.<cluster-domain>:<port>` — and relies on kube-proxy to translate the Service VIP port to the endpoint `targetPort`. A headless Service has no VIP: its FQDN resolves straight to the endpoint pod IPs, so the proxy dials those IPs at the Service port while the pods listen on the (usually different) `targetPort`, and the connection fails.
-
-A normal `Service` works regardless of how its `EndpointSlices` are managed — including a selector-less Service with hand-authored `EndpointSlices` — because the request still goes through the Service VIP and kube-proxy. Only the headless case is affected.
-
-Workaround: give the backend Service a ClusterIP (omit `clusterIP: None`). Headless backend support is tracked in [#426](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/issues/426); the conformance `HTTPRouteServiceTypes` test is skipped until it lands.
-
 ## Traffic Splitting and Load Balancing
 
 The in-process L7 proxy performs weighted traffic splitting across the `backendRefs` of a rule, for both HTTPRoute and GRPCRoute. Each backend's `weight` is honoured by a weighted-random selection at request time: traffic is distributed in proportion to the weights, and a backend with `weight: 0` receives no traffic (a rule whose backends all have weight 0 serves nothing). Weighted splitting works directly in the proxy and does not require an external load balancer.
+
+A headless `Service` (`spec.clusterIP: None`) has no VIP for kube-proxy to balance, so the controller resolves its `EndpointSlices` and expands the `backendRef` into one backend per ready endpoint, dialing each pod at its `targetPort`. The endpoints share the `backendRef`'s weight equally, so a headless Service is load-balanced per-endpoint by the proxy's own weighted-random selection while preserving the `backendRef`'s overall traffic proportion against any siblings. A normal Service with a ClusterIP is left to route through its VIP and kube-proxy.
 
 For plain round-robin between pods of one Deployment, a standard Kubernetes `Service` is still the simplest option — point the route at the Service and let kube-proxy balance:
 

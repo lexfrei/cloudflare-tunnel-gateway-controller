@@ -43,79 +43,10 @@ func markZeroEndpointBackends(
 		return
 	}
 
-	authorized := proxy.UnmarkedBackendHosts(cfg)
-	if len(authorized) == 0 {
-		return
-	}
-
-	scope := &zeroEndpointScope{
-		cli: cli, cfg: cfg, clusterDomain: clusterDomain,
-		authorized: authorized, seen: make(map[string]struct{}),
-	}
-
-	for _, route := range routes {
-		for ruleIdx := range route.Spec.Rules {
-			for _, ref := range route.Spec.Rules[ruleIdx].BackendRefs {
-				scope.visit(ctx, route.Namespace, ref.BackendObjectReference)
-			}
-		}
-	}
-
-	for _, route := range grpcRoutes {
-		for ruleIdx := range route.Spec.Rules {
-			for _, ref := range route.Spec.Rules[ruleIdx].BackendRefs {
-				scope.visit(ctx, route.Namespace, ref.BackendObjectReference)
-			}
-		}
-	}
-}
-
-// zeroEndpointScope carries the per-reconcile state for the 503 marking pass:
-// the set of authorized, unmarked backend hosts from cfg and the set of Service
-// identities already inspected this reconcile (dedup).
-type zeroEndpointScope struct {
-	cli           client.Client
-	cfg           *proxy.Config
-	clusterDomain string
-	authorized    map[string]struct{}
-	seen          map[string]struct{}
-}
-
-// visit inspects one backendRef: it is skipped unless it is a Service ref that
-// is present and unmarked in cfg (the converter's authorization decision) and
-// has not already been inspected this reconcile.
-func (s *zeroEndpointScope) visit(ctx context.Context, routeNamespace string, ref gatewayv1.BackendObjectReference) {
-	if !proxy.IsServiceBackendRef(ref) {
-		return
-	}
-
-	svcNamespace := routeNamespace
-	if ref.Namespace != nil {
-		svcNamespace = string(*ref.Namespace)
-	}
-
-	port := defaultBackendPort
-	if ref.Port != nil {
-		// gatewayv1.PortNumber is a type alias for int32, so no conversion.
-		port = *ref.Port
-	}
-
-	name := string(ref.Name)
-
-	host := proxy.ServiceBackendHost(s.clusterDomain, svcNamespace, name, port)
-	if _, ok := s.authorized[host]; !ok {
-		// Dropped by the converter (unauthorized / invalid) or already
-		// marked 500 — not ours to inspect.
-		return
-	}
-
-	if _, dup := s.seen[host]; dup {
-		return
-	}
-
-	s.seen[host] = struct{}{}
-
-	markBackendIfZeroEndpoints(ctx, s.cli, s.cfg, s.clusterDomain, svcNamespace, name, port)
+	visitAuthorizedServiceBackends(ctx, cfg, clusterDomain, routes, grpcRoutes,
+		func(ctx context.Context, svcNamespace, name string, port int32) {
+			markBackendIfZeroEndpoints(ctx, cli, cfg, clusterDomain, svcNamespace, name, port)
+		})
 }
 
 // markBackendIfZeroEndpoints marks the backend 503 when the named Service is a
