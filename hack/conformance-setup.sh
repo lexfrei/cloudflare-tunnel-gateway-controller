@@ -5,7 +5,7 @@
 #   1. Ensures colima is running
 #   2. Deletes old v2-test-* kind clusters
 #   3. Creates a fresh kind cluster with random suffix
-#   4. Installs Gateway API CRDs (experimental channel)
+#   4. Installs Gateway API CRDs (channel selectable via --channel)
 #   5. Builds controller + proxy images          (skipped in --use-ci-images mode)
 #   6. Loads images into kind                     (skipped in --use-ci-images mode)
 #   7. Creates secrets from .env
@@ -16,6 +16,8 @@
 # Usage:
 #   ./hack/conformance-setup.sh                  # full setup (fresh cluster, local build)
 #   ./hack/conformance-setup.sh --test           # setup + run tests
+#   ./hack/conformance-setup.sh --channel standard # install standard-channel CRDs
+#                                                  # (default: experimental)
 #   ./hack/conformance-setup.sh --skip-build     # skip image build (reuse existing)
 #   ./hack/conformance-setup.sh --use-ci-images N  # deploy PR #N's published ttl.sh
 #                                                  # chart+images (no local build)
@@ -45,6 +47,12 @@ GATEWAY_API_VERSION="v1.5.1"
 RUN_TESTS=false
 SKIP_BUILD=false
 CI_PR_NUMBER=""
+# Gateway API CRD release channel. "experimental" is the default (superset of
+# CRD fields used by the established pre-merge gate); "standard" installs only
+# the standard-channel CRDs, which the conformance suite reports as
+# gatewayAPIChannel=standard (it reads the channel annotation off the installed
+# CRDs and rejects a mix of channels).
+CHANNEL="experimental"
 
 # --- Helpers ---
 info()  { echo "==> $*"; }
@@ -58,6 +66,13 @@ check_tool() {
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --test) RUN_TESTS=true ;;
+    --channel)
+      shift
+      [[ $# -gt 0 ]] || die "--channel requires a value (standard|experimental)"
+      CHANNEL="$1"
+      [[ "${CHANNEL}" =~ ^(standard|experimental)$ ]] \
+        || die "--channel must be 'standard' or 'experimental', got '${CHANNEL}'"
+      ;;
     --skip-build) SKIP_BUILD=true ;;
     --use-ci-images)
       shift
@@ -149,11 +164,11 @@ KINDEOF
 kubectl --context "${KUBE_CONTEXT}" cluster-info --request-timeout=5s >/dev/null 2>&1 \
   || die "Cannot connect to cluster '${KUBE_CONTEXT}'"
 
-# --- Step 4: Install Gateway API CRDs (experimental channel) ---
-info "Installing Gateway API CRDs (${GATEWAY_API_VERSION}, experimental)..."
+# --- Step 4: Install Gateway API CRDs (channel selectable via --channel) ---
+info "Installing Gateway API CRDs (${GATEWAY_API_VERSION}, ${CHANNEL})..."
 kubectl --context "${KUBE_CONTEXT}" apply \
   --server-side --force-conflicts \
-  --filename "https://github.com/kubernetes-sigs/gateway-api/releases/download/${GATEWAY_API_VERSION}/experimental-install.yaml"
+  --filename "https://github.com/kubernetes-sigs/gateway-api/releases/download/${GATEWAY_API_VERSION}/${CHANNEL}-install.yaml"
 
 # --- Step 5: Build images ---
 if [[ -n "${CI_PR_NUMBER}" ]]; then
