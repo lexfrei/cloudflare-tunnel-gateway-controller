@@ -8,6 +8,10 @@ on:
       - scripts/requirements-reflow.txt
       - .github/scripts/pr-labels.js
       - .github/scripts/pr-labels.test.js
+      - .github/scripts/check-404-redirect.test.js
+      - docs/404.html
+      - hack/check-doc-links.sh
+      - hack/check-doc-links_test.sh
       # labels.yml is included so the drift-pin tests
       # (TYPE_TO_KIND/SCOPE_TO_AREA/SIZE_BUCKETS ↔ labels.yml) re-run
       # when labels.yml changes. Cost: the reflow job also fires on
@@ -22,6 +26,10 @@ on:
       - scripts/requirements-reflow.txt
       - .github/scripts/pr-labels.js
       - .github/scripts/pr-labels.test.js
+      - .github/scripts/check-404-redirect.test.js
+      - docs/404.html
+      - hack/check-doc-links.sh
+      - hack/check-doc-links_test.sh
       # labels.yml is included so the drift-pin tests
       # (TYPE_TO_KIND/SCOPE_TO_AREA/SIZE_BUCKETS ↔ labels.yml) re-run
       # when labels.yml changes. Cost: the reflow job also fires on
@@ -70,3 +78,24 @@ jobs:
       # therefore catches breakage in the mapping module itself.
       - name: Run pr-labels mapping tests
         run: node --test .github/scripts/pr-labels.test.js
+
+  check-404-redirect:
+    name: 404 redirect test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      # Pins the versionless-link redirect shipped inline in docs/404.html by
+      # extracting and running the real script against stubbed window.location.
+      - name: Run 404 redirect tests
+        run: node --test .github/scripts/check-404-redirect.test.js
+
+  check-doc-links:
+    name: Doc-link guard test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      # Pins hack/check-doc-links.sh (the live gate runs in pr.yaml's lint job).
+      - name: Run doc-link guard tests
+        run: bash hack/check-doc-links_test.sh

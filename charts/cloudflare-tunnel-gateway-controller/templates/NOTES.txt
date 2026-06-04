@@ -97,7 +97,7 @@ App Version: {{ .Chart.AppVersion }}
 
   Documentation: https://github.com/lexfrei/cloudflare-tunnel-gateway-controller
   Examples: https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/tree/master/charts/cloudflare-tunnel-gateway-controller/examples
-  Troubleshooting: https://cf.k8s.lex.la/operations/troubleshooting/
+  Troubleshooting: https://cf.k8s.lex.la/latest/operations/troubleshooting/
   Issues: https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/issues
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
