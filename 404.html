@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Redirecting...</title>
+  <script>
+    // The docs site is versioned with mike: real pages live under /latest/
+    // (and /vX.Y/). A versionless path like /gateway-api/limitations/ lands
+    // here as a 404 — redirect it to its /latest/ equivalent.
+    //
+    // The first path segment is left alone when it already looks like a mike
+    // version or a build asset, so /latest/, /dev/, /3.0.0/, /v3.0/ and
+    // /assets/ are not rewritten (and a 404 already under /latest/ doesn't
+    // loop). Matching is anchored to the whole segment so a real section like
+    // /development/ is not mistaken for the /dev/ alias.
+    var path = window.location.pathname;
+    var firstSegment = path.split('/').filter(Boolean)[0] || '';
+    var looksVersioned = /^(latest|dev|assets|v?\d+\.\d+.*)$/.test(firstSegment);
+
+    if (firstSegment && !looksVersioned) {
+      window.location.replace('/latest' + path + window.location.search + window.location.hash);
+    }
+  </script>
+</head>
+<body>
+  <p>Redirecting...</p>
+  <p>If not redirected, go to <a href="/latest/">documentation</a>.</p>
+</body>
+</html>
