@@ -83,6 +83,13 @@ jobs:
         with:
           globs: '**/*.md'
 
+      # The docs site is versioned with mike, so a versionless
+      # https://cf.k8s.lex.la/<page>/ link 404s. mkdocs build --strict does not
+      # catch http(s) absolutes. Runs on every PR (no path filter) so a bad
+      # link in any markdown file -- README included -- fails the build.
+      - name: Check documentation links
+        run: ./hack/check-doc-links.sh
+
   # Lint shell scripts and GitHub Actions workflows. actionlint validates the
   # workflow YAML and runs shellcheck on inline `run:` blocks; the standalone
   # shellcheck pass covers hack/*.sh. Both tools are installed at a pinned,

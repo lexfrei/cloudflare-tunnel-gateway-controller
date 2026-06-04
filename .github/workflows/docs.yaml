@@ -83,3 +83,29 @@ jobs:
           else
             mike deploy --push "${VERSION}"
           fi
+
+      - name: Publish versionless 404 redirect to gh-pages root
+        run: |
+          set -euo pipefail
+
+          # mike deploy --push lays each version under its own gh-pages subdir
+          # but never writes a root 404.html. GitHub Pages serves <root>/404.html
+          # for any unmatched path, so copy our redirect there -- it sends
+          # versionless links and stale bookmarks to their /latest/ equivalent.
+          # Done in a throwaway worktree so the main checkout's branch is
+          # untouched; idempotent, so steady-state runs push nothing.
+          cp docs/404.html "${RUNNER_TEMP}/404.html"
+
+          git fetch origin gh-pages
+          git worktree add "${RUNNER_TEMP}/ghp" origin/gh-pages
+          cp "${RUNNER_TEMP}/404.html" "${RUNNER_TEMP}/ghp/404.html"
+          git -C "${RUNNER_TEMP}/ghp" add 404.html
+
+          if git -C "${RUNNER_TEMP}/ghp" diff --cached --quiet; then
+            echo "404.html already current at gh-pages root"
+          else
+            git -C "${RUNNER_TEMP}/ghp" commit -m "docs: publish versionless 404 redirect to site root"
+            git -C "${RUNNER_TEMP}/ghp" push origin HEAD:gh-pages
+          fi
+
+          git worktree remove --force "${RUNNER_TEMP}/ghp"
