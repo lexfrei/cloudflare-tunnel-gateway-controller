@@ -7,7 +7,7 @@ This document describes the known limitations of the Cloudflare Tunnel Gateway C
 | Limitation | Description |
 |------------|-------------|
 | Full sync | Any change triggers full config sync |
-| Backend kinds | `Service` (ClusterIP, NodePort, LoadBalancer, ExternalName), `ServiceImport` (multicluster.x-k8s.io, resolved via `clusterset.local` DNS), and `ExternalBackend` (`cf.k8s.lex.la`, an out-of-cluster HTTP(S) URL). Any other kind → `ResolvedRefs=False, InvalidKind`. |
+| Backend kinds | `Service` (ClusterIP, NodePort, LoadBalancer, ExternalName — but not headless `clusterIP: None`, see [Headless Service backends](#headless-service-backends)), `ServiceImport` (multicluster.x-k8s.io, resolved via `clusterset.local` DNS), and `ExternalBackend` (`cf.k8s.lex.la`, an out-of-cluster HTTP(S) URL). Any other kind → `ResolvedRefs=False, InvalidKind`. |
 
 ## Unsupported config is surfaced on resource status
 
@@ -32,6 +32,14 @@ Because the v3 data plane is a generic in-process L7 proxy that ultimately dials
 - **`ExternalBackend` (`cf.k8s.lex.la`)** — a namespaced CRD declaring an out-of-cluster HTTP(S) origin (`spec.scheme` / `spec.host` / `spec.port` / optional `spec.path`). The proxy dials that URL directly from the pod. The `backendRef` port is ignored in favour of `spec.port`. A missing `ExternalBackend` is surfaced as `ResolvedRefs=False, BackendNotFound` and returns HTTP 500 for its traffic fraction. There is no SSRF allowlist: an `ExternalBackend` is operator-authored and the trust boundary is namespace write-access plus `ReferenceGrant`, identical to a `Service` of type `ExternalName`. gRPC over an `ExternalBackend` uses h2c when `scheme: http` and HTTP/2 over TLS (ALPN) when `scheme: https`.
 
 A cross-namespace `ServiceImport` or `ExternalBackend` `backendRef` requires a `ReferenceGrant` whose `to` entry names the matching `group`/`kind` (`multicluster.x-k8s.io`/`ServiceImport` or `cf.k8s.lex.la`/`ExternalBackend`) — a Service-only grant does not authorize them.
+
+## Headless Service backends
+
+A `backendRef` targeting a **headless** `Service` (`spec.clusterIP: None`) is not supported and returns HTTP 502. The proxy dials each backend as the Service FQDN at the `backendRef` port — `<name>.<namespace>.svc.<cluster-domain>:<port>` — and relies on kube-proxy to translate the Service VIP port to the endpoint `targetPort`. A headless Service has no VIP: its FQDN resolves straight to the endpoint pod IPs, so the proxy dials those IPs at the Service port while the pods listen on the (usually different) `targetPort`, and the connection fails.
+
+A normal `Service` works regardless of how its `EndpointSlices` are managed — including a selector-less Service with hand-authored `EndpointSlices` — because the request still goes through the Service VIP and kube-proxy. Only the headless case is affected.
+
+Workaround: give the backend Service a ClusterIP (omit `clusterIP: None`). Headless backend support is tracked in [#426](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/issues/426); the conformance `HTTPRouteServiceTypes` test is skipped until it lands.
 
 ## Traffic Splitting and Load Balancing
 
