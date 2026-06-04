@@ -758,6 +758,15 @@ func (s *ProxySyncer) buildProxyConfig(
 		markUnavailableBackends(cfg, s.clusterDomain, grpcFailedRefs)
 	}
 
+	// Expand each headless Service (clusterIP: None) into one backend per ready
+	// endpoint, dialing the endpoint targetPort. A headless Service has no VIP, so
+	// the FQDN resolves to the pod IPs and dialing the Service port would reach a
+	// pod listening on the targetPort and 502. Runs after the 500 markings (so a
+	// dropped/invalid ref is never expanded) and before the 503 marking (so a
+	// headless Service with ready endpoints loses its FQDN host before the 503 pass
+	// looks, while one with no ready endpoints keeps it and gets marked 503).
+	expandHeadlessBackends(ctx, s.k8sClient, cfg, s.clusterDomain, routes, grpcRoutes)
+
 	// After the 500 (invalid-ref) markings, mark any backend whose Service
 	// exists but has no ready endpoints with 503 (Gateway API SHOULD). Runs
 	// last so the first-marking-wins rule keeps 500 for a backend that is both
