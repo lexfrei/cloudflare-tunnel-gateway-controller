@@ -237,7 +237,20 @@ func conformanceSkipTests() []string {
 		// Tunnel doesn't expose multiple ports.
 		"HTTPRouteListenerPortMatching",
 
-		// We only support ClusterIP backends.
+		// HTTPRouteServiceTypes routes to three backends: a normal ClusterIP
+		// Service with manual EndpointSlices (passes), and two headless
+		// Services (clusterIP: None) — one with a selector, one with manual
+		// EndpointSlices (both 502). The proxy builds upstreams as the Service
+		// FQDN at the Service port (converter.go buildServiceURL) and relies on
+		// kube-proxy to translate the Service VIP port to the endpoint
+		// targetPort. A headless Service has no VIP, so the FQDN resolves to the
+		// endpoint IPs and the proxy dials them at the Service port (8080) while
+		// the endpoints listen on the targetPort (3000) -> connection fails.
+		// Headless backend support is tracked in #426; until then the whole test
+		// is skipped (the suite cannot skip individual sub-cases). The
+		// manual-endpointslices sub-case already passes, so the earlier "only
+		// ClusterIP backends" reason was inaccurate — non-headless Services with
+		// hand-managed EndpointSlices route fine.
 		"HTTPRouteServiceTypes",
 
 		// Mesh: not supported — tunnel architecture, no service mesh.
