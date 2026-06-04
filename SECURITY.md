@@ -60,7 +60,7 @@ The Cloudflare API token is sensitive and should be:
 
 The controller requires specific Kubernetes permissions:
 
-The canonical v3 RBAC scope is rendered by the Helm chart; see [docs/reference/security.md](https://cf.k8s.lex.la/reference/security/#rbac-configuration) for the rendered ClusterRole. The controller reads Secrets / ConfigMaps, writes Gateway status subresources, and updates `gateways` finalizers (legacy v2 finalizer strip on delete) — no cluster-wide write on Pods, Deployments, ReplicaSets, or ServiceAccounts.
+The canonical v3 RBAC scope is rendered by the Helm chart; see [docs/reference/security.md](https://cf.k8s.lex.la/latest/reference/security/#rbac-configuration) for the rendered ClusterRole. The controller reads Secrets / ConfigMaps, writes Gateway status subresources, and updates `gateways` finalizers (legacy v2 finalizer strip on delete) — no cluster-wide write on Pods, Deployments, ReplicaSets, or ServiceAccounts.
 
 The v3 controller is status-only — it does not create or mutate workloads. The v2 chart granted cluster-wide write on Pods, Deployments, ReplicaSets and ServiceAccounts for the Helm-SDK code path that managed cloudflared in-cluster; those rules were removed when the code path itself was deleted.
 

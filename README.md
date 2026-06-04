@@ -35,7 +35,7 @@ The controller runs an in-process L7 reverse proxy inside the cloudflared proces
 
 All tunnel traffic is intercepted by the in-process proxy, which applies Gateway API routing rules before forwarding requests to backends. Cloudflare Tunnel API configuration is used only for DNS/edge routing — actual request routing is handled entirely by the proxy.
 
-See [L7 Proxy Architecture](https://cf.k8s.lex.la/development/architecture/) for full details.
+See [L7 Proxy Architecture](https://cf.k8s.lex.la/latest/development/architecture/) for full details.
 
 ## Quick Start
 
@@ -124,7 +124,7 @@ helm install cloudflare-tunnel-gateway-controller \
 
 See [charts/cloudflare-tunnel-gateway-controller/README.md](charts/cloudflare-tunnel-gateway-controller/README.md) for all configuration options.
 
-For manual installation without Helm, see [Manual Installation](https://cf.k8s.lex.la/operations/manual-installation/).
+For manual installation without Helm, see [Manual Installation](https://cf.k8s.lex.la/latest/operations/manual-installation/).
 
 ## Usage
 
@@ -167,13 +167,13 @@ All matching and filter behavior is performed by the in-process L7 proxy that th
 | `spec.rules[].backendRefs[].namespace` | ✅ | Cross-namespace refs require ReferenceGrant |
 | `spec.rules[].backendRefs[].weight` | ✅ | True weighted traffic splitting across backends |
 
-**GRPCRoute:** ✅ Supported — served by the in-process L7 proxy. gRPC service/method matches map onto `/{service}/{method}` path rules. The upstream hop is cleartext h2c by default; attaching a `BackendTLSPolicy` upgrades the hop to TLS with HTTP/2 negotiated via ALPN, and the Gateway's `clientCertificateRef` is presented on the handshake for mTLS. See [GRPCRoute docs](https://cf.k8s.lex.la/gateway-api/grpcroute/).
+**GRPCRoute:** ✅ Supported — served by the in-process L7 proxy. gRPC service/method matches map onto `/{service}/{method}` path rules. The upstream hop is cleartext h2c by default; attaching a `BackendTLSPolicy` upgrades the hop to TLS with HTTP/2 negotiated via ALPN, and the Gateway's `clientCertificateRef` is presented on the handshake for mTLS. See [GRPCRoute docs](https://cf.k8s.lex.la/latest/gateway-api/grpcroute/).
 
-> **Load Balancing:** All traffic flows through the in-process L7 proxy, so full weighted traffic splitting between multiple backends is supported end-to-end. See [Limitations](https://cf.k8s.lex.la/gateway-api/limitations/#traffic-splitting-and-load-balancing) for the edge-side caveats that still apply.
+> **Load Balancing:** All traffic flows through the in-process L7 proxy, so full weighted traffic splitting between multiple backends is supported end-to-end. See [Limitations](https://cf.k8s.lex.la/latest/gateway-api/limitations/#traffic-splitting-and-load-balancing) for the edge-side caveats that still apply.
 
 ### Known Limitations
 
-The in-process L7 proxy handles routing for every tunnel request. Edge-side caveats (Cloudflare hostname registration, edge HTTPS termination, etc.) are documented in the [Limitations](https://cf.k8s.lex.la/gateway-api/limitations/) page. In particular, a GRPCRoute also needs Cloudflare zone gRPC proxying enabled (dashboard → Network → gRPC); if disabled, the edge returns `403` zone-wide for `application/grpc` and gRPC fails before reaching the proxy ([details](https://cf.k8s.lex.la/gateway-api/limitations/#grpc-requires-cloudflare-zone-grpc-proxying)).
+The in-process L7 proxy handles routing for every tunnel request. Edge-side caveats (Cloudflare hostname registration, edge HTTPS termination, etc.) are documented in the [Limitations](https://cf.k8s.lex.la/latest/gateway-api/limitations/) page. In particular, a GRPCRoute also needs Cloudflare zone gRPC proxying enabled (dashboard → Network → gRPC); if disabled, the edge returns `403` zone-wide for `application/grpc` and gRPC fails before reaching the proxy ([details](https://cf.k8s.lex.la/latest/gateway-api/limitations/#grpc-requires-cloudflare-zone-grpc-proxying)).
 
 `BackendTLSPolicy` (proxy → backend TLS) is supported at minimum-viable scope:
 
@@ -186,17 +186,17 @@ The in-process L7 proxy handles routing for every tunnel request. Edge-side cave
 - Backend WebSocket is supported via `Service.spec.ports[].appProtocol: kubernetes.io/ws` (and `kubernetes.io/wss` when paired with a `BackendTLSPolicy`). The proxy handles the upgrade on a custom path (`proxyWebSocketUpgrade`) rather than `httputil.ReverseProxy`, because the stdlib path hijacks the conn before writing the 101 status — which fails over cloudflared's HTTP/2 response writer. Route-level `ResponseHeaderModifier` filters apply to the 101 (and to the non-101 fallback when the backend refuses the upgrade), matching how filters apply to plain HTTP responses. If `kubernetes.io/wss` is declared without a `BackendTLSPolicy` the proxy logs a WARN at conversion time and falls through to plaintext — the backend will then reject the upgrade. The proxy does not enforce the precondition; operators must attach the policy themselves.
 - `spec.rules[].timeouts.request` and `timeouts.backendRequest` are enforced as header-only deadlines on the backend transport (`http.Transport.ResponseHeaderTimeout`), not as full-request context deadlines. The deadline bounds only the wait for backend response headers; once headers arrive the body streams freely. This keeps Server-Sent Events, chunked transfer, large file downloads, and gRPC server-streaming responses alive past the timeout boundary — a context-based deadline would have truncated them at the timeout mark. Backends that miss the header deadline get a 504 to the client. WebSocket routes are naturally exempt (the upgrade path bypasses the cached transport). The `BackendProtocol: H2C` path uses `golang.org/x/net/http2.Transport`, which has no `ResponseHeaderTimeout` knob; the proxy synthesises one by wrapping the h2c transport with a `headerTimeoutRoundTripper` so h2c backends honour the same streaming-friendly contract.
 
-Besides a core `Service`, a `backendRef` may target a `ServiceImport` (`multicluster.x-k8s.io`, resolved via `clusterset.local` DNS) or an `ExternalBackend` (`cf.k8s.lex.la`, an out-of-cluster HTTP(S) URL). A kind outside that set is reported `ResolvedRefs=False, InvalidKind`. Cross-namespace `ServiceImport`/`ExternalBackend` refs need a `ReferenceGrant` keyed on the matching group/kind. See [Limitations](https://cf.k8s.lex.la/gateway-api/limitations/#non-service-backend-kinds) for details.
+Besides a core `Service`, a `backendRef` may target a `ServiceImport` (`multicluster.x-k8s.io`, resolved via `clusterset.local` DNS) or an `ExternalBackend` (`cf.k8s.lex.la`, an out-of-cluster HTTP(S) URL). A kind outside that set is reported `ResolvedRefs=False, InvalidKind`. Cross-namespace `ServiceImport`/`ExternalBackend` refs need a `ReferenceGrant` keyed on the matching group/kind. See [Limitations](https://cf.k8s.lex.la/latest/gateway-api/limitations/#non-service-backend-kinds) for details.
 
-An unavailable backend in a weighted rule returns an HTTP status for its traffic fraction rather than dialing a dead address (a generic 502): an invalid `backendRef` (nonexistent Service, missing `ServiceImport`/`ExternalBackend`, unauthorized cross-namespace ref, or unsupported kind) returns `500`, and an authorized Service with no ready endpoints returns `503`. The backend stays in the weighted pool so the other backends keep serving their share, and the `503` clears automatically once an endpoint becomes ready. See [Limitations](https://cf.k8s.lex.la/gateway-api/limitations/#unavailable-backends-return-a-status-not-a-dial-error) for details.
+An unavailable backend in a weighted rule returns an HTTP status for its traffic fraction rather than dialing a dead address (a generic 502): an invalid `backendRef` (nonexistent Service, missing `ServiceImport`/`ExternalBackend`, unauthorized cross-namespace ref, or unsupported kind) returns `500`, and an authorized Service with no ready endpoints returns `503`. The backend stays in the weighted pool so the other backends keep serving their share, and the `503` clears automatically once an endpoint becomes ready. See [Limitations](https://cf.k8s.lex.la/latest/gateway-api/limitations/#unavailable-backends-return-a-status-not-a-dial-error) for details.
 
 The L7 proxy implements the Gateway API `HTTPRouteCORS` filter (preflight + simple requests, wildcard origin / methods / headers, credentials-aware echoing), including the `HTTPRouteCORSAllowCredentialsBehavior` conformance subtest: `Access-Control-Allow-Credentials` is emitted only for a matched origin, and a credentialed response echoes the concrete request origin rather than `*`.
 
-See [Backend mTLS](https://cf.k8s.lex.la/gateway-api/limitations/#backend-mtls-backendtlspolicy) for details.
+See [Backend mTLS](https://cf.k8s.lex.la/latest/gateway-api/limitations/#backend-mtls-backendtlspolicy) for details.
 
-The proxy can emit a structured per-request access log (method, host, path, query, status, bytes_written, duration_ms, user_agent) via `proxy.accessLog.enabled: true` in Helm values. Off by default; sampling-rate knob keeps log volume manageable on busy gateways. See [Access Logging](https://cf.k8s.lex.la/operations/access-logging/) for the full contract.
+The proxy can emit a structured per-request access log (method, host, path, query, status, bytes_written, duration_ms, user_agent) via `proxy.accessLog.enabled: true` in Helm values. Off by default; sampling-rate knob keeps log volume manageable on busy gateways. See [Access Logging](https://cf.k8s.lex.la/latest/operations/access-logging/) for the full contract.
 
-See [Gateway API documentation](https://cf.k8s.lex.la/gateway-api/) for full details and examples.
+See [Gateway API documentation](https://cf.k8s.lex.la/latest/gateway-api/) for full details and examples.
 
 ## External-DNS Integration
 
@@ -221,13 +221,13 @@ Full documentation is available at **[cf.k8s.lex.la](https://cf.k8s.lex.la)**.
 
 | Section | Description |
 |---------|-------------|
-| [Getting Started](https://cf.k8s.lex.la/getting-started/) | Prerequisites, installation, and quick start |
-| [Configuration](https://cf.k8s.lex.la/configuration/) | Controller configuration and Helm values |
-| [Gateway API](https://cf.k8s.lex.la/gateway-api/) | Supported resources, examples, and limitations |
-| [Guides](https://cf.k8s.lex.la/guides/) | L7 proxy setup, external-dns, cross-namespace, monitoring |
-| [Operations](https://cf.k8s.lex.la/operations/) | Troubleshooting, metrics, manual installation |
-| [Development](https://cf.k8s.lex.la/development/) | Development setup, architecture, contributing |
-| [Reference](https://cf.k8s.lex.la/reference/) | CRD reference, Helm chart, security policy |
+| [Getting Started](https://cf.k8s.lex.la/latest/getting-started/) | Prerequisites, installation, and quick start |
+| [Configuration](https://cf.k8s.lex.la/latest/configuration/) | Controller configuration and Helm values |
+| [Gateway API](https://cf.k8s.lex.la/latest/gateway-api/) | Supported resources, examples, and limitations |
+| [Guides](https://cf.k8s.lex.la/latest/guides/) | L7 proxy setup, external-dns, cross-namespace, monitoring |
+| [Operations](https://cf.k8s.lex.la/latest/operations/) | Troubleshooting, metrics, manual installation |
+| [Development](https://cf.k8s.lex.la/latest/development/) | Development setup, architecture, contributing |
+| [Reference](https://cf.k8s.lex.la/latest/reference/) | CRD reference, Helm chart, security policy |
 
 ## Roadmap
 
@@ -238,7 +238,7 @@ Planned features and improvements:
 | -- | L7 reverse proxy for full Gateway API HTTPRoute support | Done |
 | [#45](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/issues/45) | Weighted backend traffic splitting | Done |
 | [#44](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/issues/44) | Warning logs for partially ignored route configuration | Planned |
-| [#40](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/issues/40) | TCPRoute and TLSRoute support (GRPCRoute removed from the runtime in v3 — see [migration guide](https://cf.k8s.lex.la/upgrading/v2-to-v3/)) | In Progress |
+| [#40](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/issues/40) | TCPRoute and TLSRoute support (GRPCRoute removed from the runtime in v3 — see [migration guide](https://cf.k8s.lex.la/latest/upgrading/v2-to-v3/)) | In Progress |
 | [#33](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/issues/33) | Auto-generate artifacthub.io/changes from git history | Planned |
 | [#25](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/issues/25) | Increase unit test coverage for core packages | Ongoing |
 
