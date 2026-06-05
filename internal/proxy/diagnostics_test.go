@@ -178,7 +178,7 @@ func TestConvertGRPCRoutes_FiltersFailClosedWithDiagnostic(t *testing.T) {
 		},
 	}
 
-	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil, nil, nil)
+	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil, nil, nil, nil)
 
 	require.Len(t, cfg.Rules, 1)
 	assert.Equal(t, http.StatusInternalServerError, cfg.Rules[0].UnavailableStatus)
@@ -226,7 +226,7 @@ func TestConvertGRPCRoutes_BackendFiltersFailClosedWithDiagnostic(t *testing.T) 
 		},
 	}
 
-	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil, nil, nil)
+	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil, nil, nil, nil)
 
 	require.Len(t, cfg.Rules, 1)
 	assert.Zero(t, cfg.Rules[0].UnavailableStatus, "a backend-scoped filter must not fail the whole rule closed")
@@ -287,7 +287,7 @@ func TestConvertGRPCRoutes_RequestHeaderModifierServed(t *testing.T) {
 		},
 	}
 
-	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil, nil, nil)
+	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil, nil, nil, nil)
 
 	require.Len(t, cfg.Rules, 1)
 	assert.Zero(t, cfg.Rules[0].UnavailableStatus, "core header-modifier filters must serve, not fail closed")
@@ -340,7 +340,7 @@ func TestConvertGRPCRoutes_BackendHeaderModifierServed(t *testing.T) {
 		},
 	}
 
-	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil, nil, nil)
+	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil, nil, nil, nil)
 
 	require.Len(t, cfg.Rules, 1)
 	assert.Zero(t, cfg.Rules[0].UnavailableStatus)
