@@ -22,6 +22,7 @@ exclude_docs: |
   gateway-api/_spec-audit/01-clause-inventory.md
   gateway-api/_spec-audit/02-gep-notes.md
   gateway-api/_spec-audit/rows-*.md
+  gateway-api/_spec-audit/shouldmay-*.md
 
 # Theme configuration
 theme:

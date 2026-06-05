@@ -49,19 +49,30 @@ Conformance ground truth: 76 top-level subtests PASS, 54 SKIP (documented TLS/TC
 2. **Status writers lack an observedGeneration regression guard (SH-51, GC-21, GW-81, GW-100, POL-11; MUST NOT).** Status conditions are stamped with the current generation unconditionally; the spec forbids updating a condition whose stored observedGeneration is greater than the writer's known generation. Mitigated by fresh-Get + RetryOnConflict (narrow race), so low severity. Fix: a shared guard, or an accepted-risk note.
 3. **HTTPRoute/GRPCRoute rule-name uniqueness not enforced (HR-04, GR-16; MUST).** The uniqueness CEL is experimental-channel; the shipped Standard CRD omits it and the controller does not validate. Minor. Fix: controller-side validation or a documented limitation.
 
-### SHOULD deviations (feed the SHOULD audit)
-
-- **GC-05** — bad `parametersRef` surfaced on Gateway status, not as GatewayClass `Accepted=False`/`InvalidParameters`.
-- **GC-02** — `gateway-exists-finalizer.gateway.networking.k8s.io` not added to in-use GatewayClasses.
-
 ### Documentation additions (justified deviations, recorded in limitations.md by this change)
 
 - spec.addresses is not honoured/validated (tunnel address is not user-selectable; same basis as the exempt static-addresses feature) — recorded under Gateway Listener Configuration.
 - ExternalName Service support now cites CVE-2021-25740 in its existing trust-boundary rationale.
 - Case-variant duplicate header match names (`Foo` vs `foo`) bypass the case-sensitive CRD listMapKey and are ANDed rather than first-wins — negligible header-only edge (query-param names are exact-match, so unaffected); recorded under Route Conflict Resolution.
 
+## SHOULD / MAY tiers (verified)
+
+The SHOULD and MAY tiers were re-verified in a second pass after the MUST audit — per-type adversarial review for SHOULD, catalogue for MAY. Per-clause detail in `shouldmay-<TYPE>.md`.
+
+### SHOULD / SHOULD NOT (51 clauses)
+
+- HONOURED-TESTED (~20) and N/A for the tunnel architecture (~23) account for the bulk.
+- HONOURED-UNTESTED (7): HR-21, HR-24, HR-63, BTLS-06, SH-31, SH-32, LS-05 — honoured but not pinned by a regression test; test candidates for the SHOULD-coverage follow-up.
+- DEVIATED-DOCUMENTED (5): GW-74, BTLS-04, GC-05, SH-43, OR-03 — permitted deviations with a written rationale in limitations.md.
+- DEVIATED-SILENT (4 distinct gaps across 6 clause IDs) — the actionable gaps: GR-44 / GR-45 (gRPC silently dials cleartext when a Service declares a TLS appProtocol without a BackendTLSPolicy, while the HTTP path fails closed — filed as #438); GC-02 and its v1beta1 alias OTHER-45 (gateway-exists-finalizer not added); GEP-08 (policy discoverability condition written on the policy ancestor status, not stamped on the affected Gateway/Service); HR-61 (no redirect-port fallback to the listener port — unreachable through the Standard CRD scheme enum http/https, so a documentation note rather than a behaviour fix).
+
+### MAY (34 clauses)
+
+Catalogued implemented / intentionally-omitted; zero worthwhile candidates surfaced. Every MAY is either IMPLEMENTED or OMITTED-INTENTIONAL (edge-terminated TLS, status-only reconciler, single flattened ingress). The optional surface is a deliberate product choice.
+
 ## Provenance
 
 - `01-clause-inventory.md` — verbatim clause extraction (376 rows).
 - `02-gep-notes.md` — GEP/concept cross-cutting requirements.
 - `rows-<TYPE>.md` — first-pass per-clause classification + evidence (GW, HR, GR, SH, GC, RG, BTLS, LS, OTHER). For the 25 first-pass GAPs, the verdicts in the verification table above supersede the per-row status.
+- shouldmay-<TYPE>.md — verified SHOULD-tier verdicts and MAY catalogue, per type.
