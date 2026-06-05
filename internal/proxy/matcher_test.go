@@ -216,6 +216,9 @@ func TestExactQueryMatcher(t *testing.T) {
 		{name: "empty query", param: "format", value: "json", query: "", want: false},
 		{name: "multiple params", param: "b", value: "2", query: "a=1&b=2&c=3", want: true},
 		{name: "multiple values", param: "tag", value: "v2", query: "tag=v1&tag=v2", want: true},
+		// Query-param names are an exact (case-sensitive) string match per spec,
+		// unlike header names — so a case-variant param name must NOT match.
+		{name: "case-sensitive param name", param: "Format", value: "json", query: "format=json", want: false},
 	}
 
 	for _, tt := range tests {
