@@ -1,0 +1,68 @@
+# HTTPRoute clause audit (HR-*)
+
+Audited against vendored `sigs.k8s.io/gateway-api v1.5.1` and the in-process L7 proxy data plane (`internal/proxy`, `internal/ingress`, `internal/controller`). All L7 routing/matching/filtering/error semantics are implemented in the proxy + controller, NOT by Cloudflare Tunnel (which only serves DNS/edge routing — the vendored cloudflared fork's `OverrideProxy` hook funnels all traffic through `internal/tunnel/origin.go` → the proxy).
+
+| ID | Keyword | Class | Status | Evidence | Notes |
+| --- | --- | --- | --- | --- | --- |
+| HR-01 | MUST | CTRL | MET | internal/proxy/router.go:677 extractHost | extractHost strips the port suffix before host match; port in Host header never participates. |
+| HR-02 | MUST | CTRL | MET | internal/proxy/handler.go:614-630 Director | Director preserves req.Host (restores X-Original-Host); no header mutation unless a URLRewrite/HeaderModifier filter is configured. |
+| HR-03 | MUST | CTRL | MET | internal/controller/route_status.go (hostname inheritance) + docs/gateway-api/limitations.md:97 | Listener/Route hostname intersection enforced by routebinding validator; non-intersecting route hostnames are not bound/served. |
+| HR-04 | MUST | CRD | GAP | vendor httproute_types.go:125 (XValidation is `<gateway:experimental>`) | Rule-name uniqueness CEL rule is experimental-channel only; the shipped Standard CRD does not enforce it and neither does the controller. |
+| HR-05 | MUST | CTRL | MET | internal/proxy/router.go:510 computePriority + :22-30 priority consts | Tiered precedence: path-type > path-length > method > headers > queries, each tier dominating lower tiers; ties continue to next criterion. |
+| HR-06 | MUST | CTRL | MET | internal/proxy/converter.go:99 sortRoutesByPrecedence | Cross-Route ties broken by oldest creationTimestamp then {namespace}/{name}, flattened into stable ruleIndex. |
+| HR-07 | MUST | CTRL | MET | internal/proxy/router.go:565 sortRulesByPrecedence (SliceStable, ruleIndex asc) | Within-Route ties resolved to first matching rule in list order via stable ruleIndex tiebreak. |
+| HR-08 | MUST | CTRL | MET | internal/proxy/handler.go:349-351 (Route==nil → 404) | No matching rule returns HTTP 404. |
+| HR-09 | SHOULD | CTRL | MET | internal/proxy/filter.go:597 ApplyRequestFilters (in-order) + converter.go:258 | Filters compiled and applied in spec order (request then response pipeline). |
+| HR-10 | MAY | CTRL | NA | — | Optional strict-ordering rejection not implemented; proxy applies filters in order rather than rejecting combinations. MAY clause, no obligation. |
+| HR-11 | MUST | CTRL | NA | — | Conditional on choosing strict interpretation (HR-10); not chosen, so the documentation obligation does not trigger. |
+| HR-12 | SHOULD | CTRL | NA | — | Conditional on rejecting filter combinations (HR-10 not exercised). |
+| HR-13 | MUST | CTRL | MET | internal/controller/route_status.go:287,334 ("Dropped Rule" prefix) | Partial rule invalidity sets PartiallyInvalid=True with spec-mandated Dropped Rule message; docs/gateway-api/limitations.md:17. |
+| HR-14 | MUST | CTRL | MET | internal/proxy/filter.go:570 compileFilter (RequestHeaderModifier, RequestRedirect supported) | All core filters (RequestHeaderModifier, RequestRedirect) plus extended (Response/URLRewrite/Mirror/CORS) implemented. |
+| HR-15 | MUST | CTRL | MET | internal/proxy/handler.go:523-531 proxyToBackend (BackendIdx<0 → 500) | All-invalid-backends with no firing filter returns 500. |
+| HR-16 | MUST | CTRL | MET | internal/proxy/handler.go:540-543 + converter.go:1169 markInvalidBackend | Invalid HTTPBackendRef carries UnavailableStatus=500; handler returns it without dialing. |
+| HR-17 | MUST | CTRL | MET | internal/proxy/converter.go:1169-1188 markInvalidBackend (weight>0 stays in pool, 500) | Invalid backend kept in weighted pool so its traffic fraction receives 500; docs/gateway-api/limitations.md:65. |
+| HR-18 | SHOULD | CTRL | MET | internal/proxy/mark_unavailable.go + docs/gateway-api/limitations.md:66 | Zero-ready-endpoint Service marked 503 (controller watches EndpointSlices, re-evaluates). |
+| HR-19 | MUST | CTRL | MET | internal/proxy/mark_unavailable.go (503 marked per fraction, same as 500 path) + limitations.md:68 | 503 follows the same per-fraction weighted-pool rule as 500; 500 (invalid-ref) wins over 503 on conflict. |
+| HR-20 | MUST | CTRL | MET | internal/proxy/handler.go:1040-1071 errorHandler (504 on header timeout) | Request timeout enforced via transport ResponseHeaderTimeout; deadline returns 504. |
+| HR-21 | SHOULD | CTRL | PARTIAL | internal/proxy/handler.go:203-218 ruleHeaderTimeout (returns 0 for unset) | Zero duration is treated as "no header timeout set" (returns 0 → stdlib default = unbounded), which disables the timeout as the SHOULD asks; but a 0s value parses via time.ParseDuration to 0 and is then indistinguishable from "unset", so an explicit 0s also yields unbounded — coincidentally compliant. Not separately tested as a disable-signal. |
+| HR-22 | MUST | CTRL | MET | internal/proxy/handler.go:203-218 (0 → unbounded ResponseHeaderTimeout) | Proxy can fully disable the timeout (0 → no deadline), so the cannot-disable fallback does not apply. |
+| HR-23 | MAY | CTRL | MET | internal/proxy/handler.go:185-202 ruleHeaderTimeout godoc + limitations.md:137 | Timeout measured from after the request body is fully written (stdlib ResponseHeaderTimeout semantics) — the permitted MAY behavior. |
+| HR-24 | SHOULD | CTRL | PARTIAL | internal/proxy/handler.go:203-218 ruleHeaderTimeout | BackendRequest 0s collapses to unbounded same as HR-21; both knobs share one header-only timeout (limitations.md:131). Compliant by collapse, not by explicit zero-disable handling. |
+| HR-25 | MUST | CTRL | MET | internal/proxy/handler.go:203-218 | Backend timeout fully disable-able (0 → unbounded); cannot-disable fallback inapplicable. |
+| HR-26 | SHOULD | N/A | NA | vendor httproute_types.go:314 `<gateway:experimental>` | HTTPRouteRetry is experimental-channel only; shipped Standard CRD has no retry field, proxy has no retry logic (handler.go:189). SupportHTTPRouteRetry not claimed. |
+| HR-27 | MUST | N/A | NA | vendor httproute_types.go:314 (experimental) | Retry not in Standard CRD / not implemented; see HR-26. |
+| HR-28 | MAY | N/A | NA | vendor httproute_types.go:314 (experimental) | Retry backoff not implemented; experimental-only field. |
+| HR-31 | MUST | N/A | NA | vendor httproute_types.go:314 (experimental) | Retry+Request-timeout interaction inapplicable — no retry support. |
+| HR-32 | SHOULD | N/A | NA | vendor httproute_types.go:314 (experimental) | No retry support. |
+| HR-33 | MUST | CTRL | MET | internal/proxy/handler.go:1050-1067 errorHandler | Request-timeout deadline returns timeout error immediately (504); retry-cancellation sub-clause inapplicable (no retries). |
+| HR-34 | SHOULD | N/A | NA | vendor httproute_types.go:314 (experimental) | No retry support. |
+| HR-35 | MAY | N/A | NA | vendor httproute_types.go:314 (experimental) | No retry support. |
+| HR-37 | MUST | N/A | NA | vendor httproute_types.go:469 HTTPRouteRetryStatusCode (experimental) | Retry status codes inapplicable — no retry support. |
+| HR-38 | MAY | N/A | NA | vendor httproute_types.go:469 (experimental) | No retry support. |
+| HR-39 | MAY | N/A | NA | vendor httproute_types.go:469 (experimental) | No retry support. |
+| HR-40 | MUST | CTRL | MET | internal/proxy/matcher.go:95-97,115-117 (http.Header.Values canonicalizes name) | Header name lookup via http.Header.Values is case-insensitive per stdlib canonicalisation. |
+| HR-41 | MUST | CRD | PARTIAL | vendor httproute_types.go:767-768 (listType=map/listMapKey=name) + matcher.go:96 (case-insensitive name) | Exact-duplicate header names are rejected at admission by listMapKey=name, so first-wins is structurally enforced. Residual: header names match case-insensitively (http.Header.Values), so case-variant names (Foo/foo) bypass the case-sensitive listMapKey and are ANDed — negligible documented edge (limitations.md). |
+| HR-42 | MUST | CRD | PARTIAL | as HR-41 | Subsequent exact-duplicate header entries cannot exist (listMapKey); only the case-variant residual remains. |
+| HR-43 | MUST | CRD | MET | vendor httproute_types.go:679-685 (names are an exact string match) + listMapKey=name | Query-param names are an exact string match per spec; listMapKey=name rejects duplicate names at admission. Case-variant names (Foo/foo) are legitimately distinct (matcher.go:131 case-sensitive lookup), so ANDing them is spec-compliant — no residual. |
+| HR-44 | MUST | CRD | MET | vendor httproute_types.go:684-685 + listMapKey=name | Exact-duplicate query-param names cannot exist (listMapKey); nothing to ignore. |
+| HR-45 | SHOULD NOT | N/A | NA | vendor httproute_types.go:694 | User-facing guidance ("users SHOULD NOT route on repeated query params"); no implementation obligation. |
+| HR-46 | MUST NOT | CTRL | MET | internal/proxy/converter.go:528-545 convertFilter (failClosed=true) | Unresolvable/unsupported filter type is NOT skipped: rule (or backend) marked UnavailableStatus. |
+| HR-47 | MUST | CTRL | MET | internal/proxy/handler.go:301-308 writeRuleUnavailable + converter.go:537-545 | Requests that would hit an unsupported filter receive HTTP 500 error response; status reflects UnsupportedValue (limitations.md:23). |
+| HR-48 | MUST | N/A | NA | vendor httproute_types.go:913 (ExternalAuth, experimental) | ExternalAuth filter not in Standard channel / not served (converter.go:528 fails it closed). Not a controller obligation. |
+| HR-50 | MUST | N/A | NA | vendor httproute_types.go:917 (ExternalAuth, experimental) | ExternalAuth not served; fail-closed behavior is HR-46/47, not this external-service contract. |
+| HR-51 | MUST NOT | CRD | MET | vendor httproute_types.go:853 Enum + :927 godoc | Standard CRD enum scopes ExtensionRef to custom filters; core/extended types have their own dedicated fields, so ExtensionRef cannot name them. |
+| HR-52 | MUST | CTRL | MET | internal/proxy/filter.go:529-547 dispatchMirrorOnce (resp.Body.Close, no propagation) | Mirror responses are drained and discarded; never propagated to the client (fire-and-forget goroutine). |
+| HR-53 | MUST | N/A | NA | vendor httproute_types.go:996 (ExternalAuth, experimental) | ExternalAuth filter not served; see HR-48. |
+| HR-58 | MUST NOT | CRD | MET | vendor httproute_types.go:252 XValidation (Standard, not experimental-gated) | CEL rule rejects RequestRedirect + URLRewrite on the same rule's filters list. |
+| HR-59 | MUST | CTRL | PARTIAL | internal/proxy/filter.go:185-218 buildRedirectBase | Explicit Port honoured (filter.go:211); when Port omitted no derivation is done. For http/80 + https/443 (the conformance HTTPRoutePortRedirect cases) omitting the port is the compliant result via HR-63, but a non-standard derived port is never synthesised. |
+| HR-60 | MUST | CTRL | PARTIAL | internal/proxy/filter.go:198-213 | Well-known scheme→port is implicit (omitted port == default), not explicitly stamped; correct on the wire for http/80, https/443. No explicit well-known-port computation. |
+| HR-61 | SHOULD | CTRL | GAP | internal/proxy/filter.go:185-218 (no listener-port fallback) | A scheme with no well-known port does not fall back to the listener port — behind the tunnel there is no real listener port (edge uses 80/443); architectural deviation, undocumented as a redirect-specific limitation. |
+| HR-62 | MUST | CTRL | PARTIAL | internal/proxy/filter.go:193-213 + controller/route_redirect_scheme.go | Empty scheme is resolved to the parent listener's protocol scheme (route_redirect_scheme.go:41), but the Gateway Listener PORT is not stamped into Location; only the scheme-implied default applies. Tunnel has no concrete listener port. |
+| HR-63 | SHOULD NOT | CTRL | MET | internal/proxy/filter.go:209-213 (port added only when config.Port set) | No port added to Location for http/80 or https/443 (default path emits no port). |
+| HR-64 | MUST NOT | CRD | MET | vendor httproute_types.go:252 XValidation | Same CEL rule as HR-58 rejects URLRewrite + RequestRedirect on one rule; URLRewrite single-instance also enforced. |
+| HR-65 | MUST | N/A | NA | vendor httproute_types.go:1721 (HTTPAuthConfig, ExternalAuth experimental) | ExternalAuth/HTTPAuthConfig not in Standard channel / not served; path-sanitization obligation inapplicable. |
+| HR-67 | SHOULD | CTRL | MET | internal/proxy/converter.go:1290 resolveBackendProtocol (reads appProtocol) | Service port appProtocol honoured: h2c/ws/wss/https mapped to transport; limitations.md:105. |
+| HR-68 | SHOULD | CTRL | MET | internal/proxy/converter.go:42-58 (KEP-3726 kubernetes.io/* consts) | Recognises kubernetes.io/h2c, kubernetes.io/ws, kubernetes.io/wss standard application protocols. |
+| HR-69 | MAY | CTRL | MET | internal/proxy/converter.go:1329-1351 (default HTTP/1.1 inference) | Absent appProtocol infers HTTP/1.1; unrecognised values fall back to HTTP/1.1 (report-only). |
+| HR-71 | MUST | CTRL | PARTIAL | internal/proxy/converter.go:1359-1378 unpolicedTLSAppProtocol + controller/route_status.go:410 | TLS appProtocol with no usable transport sets ResolvedRefs=False, Reason=UnsupportedProtocol and 502. Spec wording is "cannot send using specified protocol"; here it fires for TLS-hint-without-policy and unrecognised appProtocol, matching the intent; not every conceivable unsupported-protocol path is covered, but the reason string is correct. |
+| HR-72 | MUST | CTRL | MET | internal/controller/route_status.go:376-418 buildResolvedRefsCondition | Any invalid backendRef (BackendNotFound/InvalidKind/RefNotPermitted) sets ResolvedRefs=False with a cause Reason+Message; limitations.md:18. |

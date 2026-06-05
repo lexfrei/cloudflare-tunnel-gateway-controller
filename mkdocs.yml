@@ -16,6 +16,13 @@ edit_uri: edit/master/docs/
 # Copyright
 copyright: Copyright &copy; 2024-2025 Aleksei Sviridkin
 
+# Exclude bulky spec-audit provenance from the built site (keep in repo for traceability).
+# The published synthesis (00-compliance-matrix.md) is intentionally NOT excluded.
+exclude_docs: |
+  gateway-api/_spec-audit/01-clause-inventory.md
+  gateway-api/_spec-audit/02-gep-notes.md
+  gateway-api/_spec-audit/rows-*.md
+
 # Theme configuration
 theme:
   name: material
@@ -170,6 +177,7 @@ nav:
       - ListenerSet: gateway-api/listenerset.md
       - ExternalBackend: gateway-api/external-backend.md
       - Limitations: gateway-api/limitations.md
+      - Spec compliance matrix: gateway-api/_spec-audit/00-compliance-matrix.md
   - Guides:
       - guides/index.md
       - L7 Proxy Setup: guides/l7-proxy.md
