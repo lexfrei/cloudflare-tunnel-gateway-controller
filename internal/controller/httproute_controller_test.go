@@ -1702,6 +1702,122 @@ func TestHTTPRouteReconciler_UpdateRouteStatus_MultipleParents(t *testing.T) {
 	assert.Equal(t, gatewayv1.ObjectName("test-gateway"), updatedRoute.Status.Parents[0].ParentRef.Name)
 }
 
+// TestHTTPRouteReconciler_UpdateRouteStatus_PreservesForeignParentStatus pins
+// the Gateway API rule that a controller MUST NOT remove or modify
+// RouteParentStatus entries owned by a different controllerName. A Route
+// co-managed by another implementation keeps that implementation's entry across
+// our reconcile.
+func TestHTTPRouteReconciler_UpdateRouteStatus_PreservesForeignParentStatus(t *testing.T) {
+	t.Parallel()
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, gatewayv1.Install(scheme))
+	require.NoError(t, corev1.AddToScheme(scheme))
+	require.NoError(t, v1alpha1.AddToScheme(scheme))
+
+	gatewayClass := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "cloudflare-tunnel"},
+		Spec:       gatewayv1.GatewayClassSpec{ControllerName: "test-controller"},
+	}
+
+	gateway := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-gateway", Namespace: "default"},
+		Spec: gatewayv1.GatewaySpec{
+			GatewayClassName: "cloudflare-tunnel",
+			Listeners: []gatewayv1.Listener{
+				{Name: "http", Port: 80, Protocol: gatewayv1.HTTPProtocolType},
+			},
+		},
+	}
+
+	// A RouteParentStatus written by a different controller for a parent we do
+	// not manage. Gateway API requires we leave it untouched.
+	foreignParent := gatewayv1.RouteParentStatus{
+		ParentRef:      gatewayv1.ParentReference{Name: "foreign-gateway"},
+		ControllerName: "other.example.com/controller",
+		Conditions: []metav1.Condition{
+			{
+				Type:               string(gatewayv1.RouteConditionAccepted),
+				Status:             metav1.ConditionTrue,
+				ObservedGeneration: 1,
+				LastTransitionTime: metav1.Now(),
+				Reason:             string(gatewayv1.RouteReasonAccepted),
+				Message:            "owned by another controller",
+			},
+		},
+	}
+
+	route := &gatewayv1.HTTPRoute{
+		ObjectMeta: metav1.ObjectMeta{Name: "shared-route", Namespace: "default"},
+		Spec: gatewayv1.HTTPRouteSpec{
+			CommonRouteSpec: gatewayv1.CommonRouteSpec{
+				ParentRefs: []gatewayv1.ParentReference{
+					{Name: "test-gateway"},
+				},
+			},
+		},
+		Status: gatewayv1.HTTPRouteStatus{
+			RouteStatus: gatewayv1.RouteStatus{
+				Parents: []gatewayv1.RouteParentStatus{foreignParent},
+			},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(gatewayClass, gateway, route).
+		WithStatusSubresource(route).
+		Build()
+
+	// Seed the foreign entry through the status subresource so it is durably
+	// stored before our reconcile reads it back.
+	require.NoError(t, fakeClient.Status().Update(context.Background(), route))
+
+	configResolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector())
+	routeSyncer := NewRouteSyncer(fakeClient, scheme, "cluster.local", "test-controller", configResolver, cfmetrics.NewNoopCollector(), nil)
+
+	r := &HTTPRouteReconciler{
+		Client:         fakeClient,
+		Scheme:         scheme,
+		ControllerName: "test-controller",
+		RouteSyncer:    routeSyncer,
+	}
+
+	bindingInfo := routeBindingInfo{
+		bindingResults: map[int]routebinding.BindingResult{
+			0: {Accepted: true, Reason: gatewayv1.RouteReasonAccepted},
+		},
+	}
+
+	err := r.updateRouteStatus(context.Background(), route, bindingInfo, nil, nil, nil)
+	require.NoError(t, err)
+
+	var updatedRoute gatewayv1.HTTPRoute
+	require.NoError(t, fakeClient.Get(
+		context.Background(), client.ObjectKey{Name: "shared-route", Namespace: "default"}, &updatedRoute))
+
+	// Our managed parent is (re)written and the foreign controller's entry survives.
+	require.Len(t, updatedRoute.Status.Parents, 2)
+
+	var ours, foreign *gatewayv1.RouteParentStatus
+
+	for i := range updatedRoute.Status.Parents {
+		switch updatedRoute.Status.Parents[i].ParentRef.Name {
+		case "test-gateway":
+			ours = &updatedRoute.Status.Parents[i]
+		case "foreign-gateway":
+			foreign = &updatedRoute.Status.Parents[i]
+		}
+	}
+
+	require.NotNil(t, ours, "our managed parent status must be present")
+	assert.Equal(t, gatewayv1.GatewayController("test-controller"), ours.ControllerName)
+
+	require.NotNil(t, foreign, "foreign controller's parent status must be preserved")
+	assert.Equal(t, gatewayv1.GatewayController("other.example.com/controller"), foreign.ControllerName)
+	assert.Equal(t, "owned by another controller", foreign.Conditions[0].Message)
+}
+
 func TestHTTPRouteReconciler_UpdateRouteStatus_NonGatewayParentRef(t *testing.T) {
 	t.Parallel()
 
