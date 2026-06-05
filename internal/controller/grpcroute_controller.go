@@ -395,8 +395,9 @@ func (r *GRPCRouteReconciler) findRoutesForEndpointSlice(
 // references the changed Service in a backendRef. gRPC is proxy-driving in v3,
 // so a Service create must re-reconcile a route that was stuck at 500 because
 // its backend did not exist yet — the same self-heal the HTTPRoute reconciler
-// has. gRPC ignores Service appProtocol (it forces h2c), so this watch matters
-// only for backend existence, not protocol changes.
+// has. gRPC reads Service appProtocol only for the TLS-vs-cleartext decision (a
+// TLS appProtocol without a BackendTLSPolicy fails the backend closed), keeping
+// the h2c default otherwise, so this watch matters mainly for backend existence.
 func (r *GRPCRouteReconciler) findRoutesForService(
 	ctx context.Context,
 	obj client.Object,

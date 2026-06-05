@@ -177,7 +177,7 @@ Config push fires on TWO independent events:
 
 Without the second trigger a proxy pod that becomes Ready between HTTPRoute reconciles stays at `/readyz == 503` forever: the first HTTPRoute reconcile published config to the pods that existed at the time, and there is no next HTTPRoute change to fan out to the new pod. The historic workaround was `kubectl rollout restart deployment <controller>`; the watcher removes that requirement.
 
-GRPCRoutes are pushed to the proxy alongside HTTPRoutes: `internal/proxy/grpc_converter.go` maps gRPC service/method matches onto `/{service}/{method}` path rules and forces h2c upstream, and `ProxySyncer.SyncRoutes` merges them into the pushed config. The Cloudflare-side ingress rules built by `internal/ingress/grpc_builder` populate the dashboard's hostname → service view but are not consulted at runtime (the `OverrideProxy` hook intercepts all tunnel traffic). See [GRPCRoute](../gateway-api/grpcroute.md).
+GRPCRoutes are pushed to the proxy alongside HTTPRoutes: `internal/proxy/grpc_converter.go` maps gRPC service/method matches onto `/{service}/{method}` path rules and dials h2c upstream by default (a `BackendTLSPolicy` puts TLS on the wire instead, and a TLS Service `appProtocol` with no policy fails the backend closed, mirroring the HTTPRoute path), and `ProxySyncer.SyncRoutes` merges them into the pushed config. The Cloudflare-side ingress rules built by `internal/ingress/grpc_builder` populate the dashboard's hostname → service view but are not consulted at runtime (the `OverrideProxy` hook intercepts all tunnel traffic). See [GRPCRoute](../gateway-api/grpcroute.md).
 
 ## Data Flow
 

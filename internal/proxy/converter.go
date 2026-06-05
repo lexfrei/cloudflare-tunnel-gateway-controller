@@ -38,6 +38,9 @@ const (
 
 	schemeHTTP  = "http"
 	schemeHTTPS = "https"
+	// schemeHTTPSUpper is the uppercase appProtocol spelling some operators set;
+	// treated identically to schemeHTTPS for the TLS-vs-cleartext decision.
+	schemeHTTPSUpper = "HTTPS"
 
 	// appProtocolH2C is the Kubernetes Service appProtocol value selecting
 	// HTTP/2 cleartext to the backend.
@@ -1322,7 +1325,7 @@ func resolveBackendProtocol(
 		fc := unpolicedTLSAppProtocol(tlsAttached, namespace, serviceName, port, appProto, sink)
 
 		return BackendProtocolHTTP, rawURL, true, fc
-	case "https", "HTTPS":
+	case schemeHTTPS, schemeHTTPSUpper:
 		fc := unpolicedTLSAppProtocol(tlsAttached, namespace, serviceName, port, appProto, sink)
 
 		return BackendProtocolHTTP, rawURL, false, fc
@@ -1348,6 +1351,31 @@ func resolveBackendProtocol(
 
 		return BackendProtocolHTTP, rawURL, false, false
 	}
+}
+
+// isTLSAppProtocol reports whether a Service-port appProtocol selects a TLS
+// transport (https, HTTPS, or kubernetes.io/wss). These values require a
+// BackendTLSPolicy; without one the backend must fail closed rather than be
+// dialed cleartext. Kept in sync with the TLS-bearing cases of
+// resolveBackendProtocol, and reused by the gRPC transport path
+// (applyGRPCBackendTransport) so both routes make the same TLS-vs-cleartext call.
+func isTLSAppProtocol(appProto string) bool {
+	switch appProto {
+	case schemeHTTPS, schemeHTTPSUpper, appProtocolWSS:
+		return true
+	default:
+		return false
+	}
+}
+
+// lookupAppProtocol returns the Service-port appProtocol via the resolver, or ""
+// when the resolver is nil (no backend-protocol resolution wired in).
+func lookupAppProtocol(ctx context.Context, resolver BackendProtocolResolver, namespace, serviceName string, port int32) string {
+	if resolver == nil {
+		return ""
+	}
+
+	return resolver(ctx, namespace, serviceName, port)
 }
 
 // unpolicedTLSAppProtocol handles a TLS-bearing appProtocol (https, wss). When a

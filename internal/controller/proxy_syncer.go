@@ -738,7 +738,9 @@ func (s *ProxySyncer) buildProxyConfig(
 	markUnavailableBackends(cfg, s.clusterDomain, failedRefs)
 
 	// Append GRPCRoute rules. gRPC method matching maps onto the same proxy
-	// path matcher; backends are forced to h2c. The merged config keeps the
+	// path matcher; backends are dialed h2c unless a BackendTLSPolicy puts TLS on
+	// the wire, and a TLS appProtocol with no policy fails the backend closed
+	// (the protocolResolver feeds that decision). The merged config keeps the
 	// HTTP config's version (grpcCfg burns a version counter value that is
 	// discarded — only the pushed config's version is observed downstream).
 	if len(grpcRoutes) > 0 {
@@ -748,7 +750,7 @@ func (s *ProxySyncer) buildProxyConfig(
 		// other routes).
 		grpcRoutes = withEffectiveHostnamesGRPC(ctx, s.k8sClient, grpcRoutes, views)
 
-		grpcCfg := proxy.ConvertGRPCRoutes(ctx, grpcRoutes, s.clusterDomain, s.grpcBackendValidator, s.tlsResolver, s.gatewayCertResolver)
+		grpcCfg := proxy.ConvertGRPCRoutes(ctx, grpcRoutes, s.clusterDomain, s.grpcBackendValidator, s.protocolResolver, s.tlsResolver, s.gatewayCertResolver)
 		cfg.Rules = append(cfg.Rules, grpcCfg.Rules...)
 		cfg.Diagnostics = append(cfg.Diagnostics, grpcCfg.Diagnostics...)
 

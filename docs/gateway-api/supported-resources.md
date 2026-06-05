@@ -86,6 +86,8 @@ When an HTTPRoute references a Service whose target port sets `appProtocol`, the
 | `kubernetes.io/wss` | Yes | WebSocket over TLS: requires a matching `BackendTLSPolicy` (same precondition as `appProtocol: https`); see [Backend Protocol notes](limitations.md#backend-protocol-servicespecportsappprotocol) |
 | any other value | No | Logged with a warning; proxy falls back to default HTTP/1.1 |
 
+A GRPCRoute backend is HTTP/2 by definition, so it is dialed h2c by default and only the TLS-vs-cleartext decision applies: a TLS `appProtocol` (`https` / `HTTPS` / `kubernetes.io/wss`) with no `BackendTLSPolicy` fails the backend closed (HTTP 502, `ResolvedRefs=False, Reason=UnsupportedProtocol`), identical to the HTTPRoute path. See [gRPC backends and appProtocol](limitations.md#grpc-backends-and-appprotocol).
+
 ### Filters
 
 The following HTTPRoute filters are supported:

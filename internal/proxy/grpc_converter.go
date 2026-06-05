@@ -36,6 +36,14 @@ const grpcSegmentPattern = "[^/]+"
 // plaintext (attachGatewayClientCert returns the original config unchanged
 // when tlsCfg is nil).
 //
+// protocolResolver reads the backend Service port's appProtocol. gRPC is HTTP/2
+// by definition, so the only meaningful appProtocol axis here is TLS-vs-cleartext:
+// a TLS appProtocol (https / HTTPS / kubernetes.io/wss) with no BackendTLSPolicy
+// fails the backend closed (HTTP 502, ResolvedRefs=False / UnsupportedProtocol),
+// mirroring the HTTP path, instead of silently dialing cleartext h2c. Every other
+// value (nil resolver, unset, kubernetes.io/h2c, or unrecognised) keeps the h2c
+// default — the correct gRPC transport regardless.
+//
 // The core RequestHeaderModifier and extended ResponseHeaderModifier filters
 // are served through the shared header-modifier pipeline; RequestMirror and
 // ExtensionRef are not served yet and fail closed (HTTP 500).
@@ -47,6 +55,7 @@ func ConvertGRPCRoutes(
 	routes []*gatewayv1.GRPCRoute,
 	clusterDomain string,
 	validator BackendRefValidator,
+	protocolResolver BackendProtocolResolver,
 	tlsResolver BackendTLSResolver,
 	gatewayCertResolver GatewayClientCertResolver,
 ) *Config {
@@ -65,7 +74,7 @@ func ConvertGRPCRoutes(
 			sink.at(ruleIdx)
 			cfg.Rules = append(cfg.Rules, convertGRPCRouteRule(
 				ctx, &route.Spec.Rules[ruleIdx], hostnames, route.Namespace, clusterDomain,
-				validator, tlsResolver, clientCert, sink,
+				validator, protocolResolver, tlsResolver, clientCert, sink,
 			))
 		}
 	}
@@ -92,6 +101,7 @@ func convertGRPCRouteRule(
 	namespace string,
 	clusterDomain string,
 	validator BackendRefValidator,
+	protocolResolver BackendProtocolResolver,
 	tlsResolver BackendTLSResolver,
 	clientCert *ClientCertConfig,
 	sink *diagSink,
@@ -118,7 +128,7 @@ func convertGRPCRouteRule(
 	for backendIdx := range rule.BackendRefs {
 		backend, ok := convertGRPCBackendRef(
 			ctx, &rule.BackendRefs[backendIdx], namespace, clusterDomain,
-			validator, tlsResolver, clientCert, sink,
+			validator, protocolResolver, tlsResolver, clientCert, sink,
 		)
 		if ok {
 			proxyRule.Backends = append(proxyRule.Backends, backend)
@@ -295,13 +305,17 @@ func convertGRPCHeaderMatch(header gatewayv1.GRPCHeaderMatch) HeaderMatch {
 // layered on top of the policy's TLS config (mTLS) only when the policy
 // itself put TLS on the wire; with no policy attached, the client cert is
 // silently dropped — sending a cert over plaintext is meaningless per
-// Gateway API spec.
+// Gateway API spec. When the Service port declares a TLS appProtocol
+// (https / kubernetes.io/wss) but no BackendTLSPolicy attached, the backend
+// fails closed instead of being dialed cleartext h2c (see
+// applyGRPCBackendTransport), mirroring the HTTP path.
 func convertGRPCBackendRef(
 	ctx context.Context,
 	backend *gatewayv1.GRPCBackendRef,
 	namespace string,
 	clusterDomain string,
 	validator BackendRefValidator,
+	protocolResolver BackendProtocolResolver,
 	tlsResolver BackendTLSResolver,
 	clientCert *ClientCertConfig,
 	sink *diagSink,
@@ -357,7 +371,7 @@ func convertGRPCBackendRef(
 
 	applyGRPCBackendFilters(&result, backend.Filters, sink)
 
-	applyGRPCBackendTransport(ctx, &result, tlsResolver, clientCert, svcNamespace, serviceName, port)
+	applyGRPCBackendTransport(ctx, &result, protocolResolver, tlsResolver, clientCert, svcNamespace, serviceName, port, sink)
 
 	return result, true
 }
@@ -398,14 +412,21 @@ func convertGRPCExternalBackendRef(
 // applyGRPCBackendTransport resolves the proxy → gRPC-backend transport on
 // result: a BackendTLSPolicy (with optional Gateway client cert) puts TLS on the
 // wire and ALPN negotiates HTTP/2; with no policy the backend is dialed cleartext
-// h2c. Extracted from convertGRPCBackendRef to keep it within the funlen budget.
+// h2c — unless the Service port declares a TLS appProtocol (https / HTTPS /
+// kubernetes.io/wss), in which case the operator asked for TLS but there is no CA
+// to verify the backend, so the backend fails closed (HTTP 502, ResolvedRefs=False
+// / UnsupportedProtocol) rather than being silently dialed cleartext. Mirrors the
+// HTTP path (convertBackendRef → unpolicedTLSAppProtocol). Extracted from
+// convertGRPCBackendRef to keep it within the funlen budget.
 func applyGRPCBackendTransport(
 	ctx context.Context,
 	result *BackendRef,
+	protocolResolver BackendProtocolResolver,
 	tlsResolver BackendTLSResolver,
 	clientCert *ClientCertConfig,
 	svcNamespace, serviceName string,
 	port int32,
+	sink *diagSink,
 ) {
 	result.TLS, result.URL = resolveBackendTLS(ctx, tlsResolver, svcNamespace, serviceName, port, result.URL)
 	result.TLS = attachGatewayClientCert(result.TLS, clientCert)
@@ -417,7 +438,24 @@ func applyGRPCBackendTransport(
 		return
 	}
 
-	// Backward-compat path: no policy, no client cert — force cleartext h2c.
+	// No BackendTLSPolicy. A TLS appProtocol means the operator asked for TLS but
+	// there is no CA to verify the backend — fail closed instead of silently
+	// dialing cleartext h2c, the same as the HTTP path. gRPC is HTTP/2 by
+	// definition, so every other appProtocol value (unset, h2c, or unrecognised)
+	// keeps the h2c default below — the correct gRPC transport regardless.
+	if appProto := lookupAppProtocol(ctx, protocolResolver, svcNamespace, serviceName, port); isTLSAppProtocol(appProto) {
+		// tlsAttached is false here (past the result.TLS != nil return), so
+		// unpolicedTLSAppProtocol always records the ResolvedRefs / UnsupportedProtocol
+		// diagnostic and reports fail-closed; call it for that side-effect and set
+		// the 502 unconditionally.
+		unpolicedTLSAppProtocol(false, svcNamespace, serviceName, port, appProto, sink)
+
+		result.UnavailableStatus = http.StatusBadGateway
+
+		return
+	}
+
+	// Backward-compat path: no policy, cleartext appProtocol — force cleartext h2c.
 	// buildServiceURL emits https:// for port 443; rewrite to http:// so the
 	// h2c transport dials cleartext.
 	result.URL = strings.Replace(result.URL, "https://", "http://", 1)

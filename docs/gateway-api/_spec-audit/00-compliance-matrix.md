@@ -61,10 +61,10 @@ The SHOULD and MAY tiers were re-verified in a second pass after the MUST audit 
 
 ### SHOULD / SHOULD NOT (51 clauses)
 
-- HONOURED-TESTED (~20) and N/A for the tunnel architecture (~23) account for the bulk.
+- HONOURED-TESTED (~22) and N/A for the tunnel architecture (~23) account for the bulk.
 - HONOURED-UNTESTED (7): HR-21, HR-24, HR-63, BTLS-06, SH-31, SH-32, LS-05 — honoured but not pinned by a regression test; test candidates for the SHOULD-coverage follow-up.
 - DEVIATED-DOCUMENTED (5): GW-74, BTLS-04, GC-05, SH-43, OR-03 — permitted deviations with a written rationale in limitations.md.
-- DEVIATED-SILENT (4 distinct gaps across 6 clause IDs) — the actionable gaps: GR-44 / GR-45 (gRPC silently dials cleartext when a Service declares a TLS appProtocol without a BackendTLSPolicy, while the HTTP path fails closed — filed as #438); GC-02 and its v1beta1 alias OTHER-45 (gateway-exists-finalizer not added); GEP-08 (policy discoverability condition written on the policy ancestor status, not stamped on the affected Gateway/Service); HR-61 (no redirect-port fallback to the listener port — unreachable through the Standard CRD scheme enum http/https, so a documentation note rather than a behaviour fix).
+- DEVIATED-SILENT (3 distinct gaps across 4 clause IDs) — the actionable gaps: GC-02 and its v1beta1 alias OTHER-45 (gateway-exists-finalizer not added); GEP-08 (policy discoverability condition written on the policy ancestor status, not stamped on the affected Gateway/Service); HR-61 (no redirect-port fallback to the listener port — unreachable through the Standard CRD scheme enum http/https, so a documentation note rather than a behaviour fix). Resolved since the audit: GR-44 / GR-45 (gRPC silently dialing cleartext when a Service declared a TLS appProtocol without a BackendTLSPolicy) now fails the backend closed, matching the HTTP path — #438.
 
 ### MAY (34 clauses)
 
