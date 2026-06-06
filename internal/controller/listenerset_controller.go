@@ -133,6 +133,28 @@ func (r *ListenerSetReconciler) isManagedGateway(
 	return classes[string(gateway.Spec.GatewayClassName)], nil
 }
 
+// listenerSetStatusStale reports whether the freshly-fetched ListenerSet
+// already carries status conditions stamped with a generation newer than
+// reconciledGen, in which case this reconcile MUST NOT overwrite the status
+// (observedGeneration regression guard). Only our own top-level conditions
+// count — a foreign condition's generation is unrelated; the per-entry listener
+// status array is wholly owned here.
+func listenerSetStatusStale(reconciledGen int64, listenerSet *gatewayv1.ListenerSet) bool {
+	if ownedConditionsStale(listenerSet.Status.Conditions, reconciledGen,
+		string(gatewayv1.ListenerSetConditionAccepted),
+		string(gatewayv1.ListenerSetConditionProgrammed),
+	) {
+		return true
+	}
+
+	entryConds := make([][]metav1.Condition, 0, len(listenerSet.Status.Listeners))
+	for i := range listenerSet.Status.Listeners {
+		entryConds = append(entryConds, listenerSet.Status.Listeners[i].Conditions)
+	}
+
+	return statusGenerationStale(reconciledGen, entryConds...)
+}
+
 // reconcileStatus computes and writes the ListenerSet status (top-level
 // Accepted/Programmed plus per-entry listener conditions). It uses
 // retry.RetryOnConflict so a parallel reconcile cannot lose updates.
@@ -147,6 +169,12 @@ func (r *ListenerSetReconciler) reconcileStatus(
 		var fresh gatewayv1.ListenerSet
 		if err := r.Get(ctx, key, &fresh); err != nil {
 			return errors.Wrap(err, "failed to get fresh listenerset")
+		}
+
+		// Skip if a newer reconcile already advanced this ListenerSet's status
+		// past the generation we observed (observedGeneration regression guard).
+		if listenerSetStatusStale(listenerSet.Generation, &fresh) {
+			return nil
 		}
 
 		now := metav1.Now()

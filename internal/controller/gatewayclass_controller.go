@@ -68,14 +68,18 @@ func (r *GatewayClassReconciler) Reconcile(ctx context.Context, req ctrl.Request
 
 	logger.Info("reconciling GatewayClass", "name", gatewayClass.Name)
 
-	if err := r.updateStatus(ctx, req.NamespacedName); err != nil {
+	if err := r.updateStatus(ctx, req.NamespacedName, gatewayClass.Generation); err != nil {
 		return ctrl.Result{}, errors.Wrap(err, "failed to update GatewayClass status")
 	}
 
 	return ctrl.Result{}, nil
 }
 
-func (r *GatewayClassReconciler) updateStatus(ctx context.Context, key types.NamespacedName) error {
+func (r *GatewayClassReconciler) updateStatus(
+	ctx context.Context,
+	key types.NamespacedName,
+	reconciledGen int64,
+) error {
 	//nolint:wrapcheck // retry wrapper handles errors internally
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		var freshClass gatewayv1.GatewayClass
@@ -84,6 +88,17 @@ func (r *GatewayClassReconciler) updateStatus(ctx context.Context, key types.Nam
 		}
 
 		if string(freshClass.Spec.ControllerName) != r.ControllerName {
+			return nil
+		}
+
+		// Skip if a newer reconcile already advanced this GatewayClass's status
+		// past the generation we observed (observedGeneration regression guard).
+		// Only our own condition types count — a foreign condition's generation
+		// is unrelated and MUST NOT be touched.
+		if ownedConditionsStale(freshClass.Status.Conditions, reconciledGen,
+			string(gatewayv1.GatewayClassConditionStatusAccepted),
+			string(gatewayv1.GatewayClassConditionStatusSupportedVersion),
+		) {
 			return nil
 		}
 

@@ -1281,7 +1281,7 @@ func TestUpdateStatus_PreservesOtherControllers(t *testing.T) {
 	gateway := *gatewayFor("ns", "our-gw", "cf-class")
 	conditions := acceptedConditions(policy.Generation)
 
-	err := r.updateStatus(context.Background(), client.ObjectKey{Namespace: "ns", Name: "p"}, []gatewayv1.Gateway{gateway}, conditions)
+	err := r.updateStatus(context.Background(), client.ObjectKey{Namespace: "ns", Name: "p"}, []gatewayv1.Gateway{gateway}, conditions, policy.Generation)
 	require.NoError(t, err)
 
 	var refreshed gatewayv1.BackendTLSPolicy
@@ -1291,6 +1291,62 @@ func TestUpdateStatus_PreservesOtherControllers(t *testing.T) {
 	assert.Equal(t, gatewayv1.GatewayController("other-controller"), refreshed.Status.Ancestors[0].ControllerName)
 	assert.Equal(t, gatewayv1.GatewayController("test-controller"), refreshed.Status.Ancestors[1].ControllerName)
 	assert.Equal(t, gatewayv1.ObjectName("our-gw"), refreshed.Status.Ancestors[1].AncestorRef.Name)
+}
+
+// TestUpdateStatus_SkipsObservedGenerationRegression pins the Gateway API rule
+// that a reconcile MUST NOT overwrite an ancestor status condition already
+// stamped with an observedGeneration newer than the generation this reconcile
+// observed.
+func TestUpdateStatus_SkipsObservedGenerationRegression(t *testing.T) {
+	t.Parallel()
+
+	scheme := newBackendTLSPolicyScheme(t)
+
+	const newerGen = 5
+
+	// Our own ancestor entry, already stamped with a generation newer than the
+	// one this reconcile observed.
+	ours := gatewayv1.PolicyAncestorStatus{
+		AncestorRef:    gatewayv1.ParentReference{Name: "our-gw"},
+		ControllerName: gatewayv1.GatewayController("test-controller"),
+		Conditions: []metav1.Condition{
+			{
+				Type:               string(gatewayv1.PolicyConditionAccepted),
+				Status:             metav1.ConditionTrue,
+				ObservedGeneration: newerGen,
+				Reason:             "Accepted",
+				Message:            "written by a newer reconcile",
+			},
+		},
+	}
+
+	policy := backendTLSPolicyFor("ns", "p", "svc", "cm", time.Time{})
+	policy.Status.Ancestors = []gatewayv1.PolicyAncestorStatus{ours}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(policy).
+		WithStatusSubresource(policy).
+		Build()
+	r := &BackendTLSPolicyReconciler{Client: fakeClient, Scheme: scheme, ControllerName: "test-controller"}
+
+	gateway := *gatewayFor("ns", "our-gw", "cf-class")
+
+	// reconciledGen 3 < stored 5 → the write is skipped.
+	require.NoError(t, r.updateStatus(context.Background(),
+		client.ObjectKey{Namespace: "ns", Name: "p"},
+		[]gatewayv1.Gateway{gateway},
+		acceptedConditions(3),
+		3,
+	))
+
+	var refreshed gatewayv1.BackendTLSPolicy
+	require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKey{Namespace: "ns", Name: "p"}, &refreshed))
+	require.Len(t, refreshed.Status.Ancestors, 1)
+	require.Len(t, refreshed.Status.Ancestors[0].Conditions, 1)
+	assert.Equal(t, int64(newerGen), refreshed.Status.Ancestors[0].Conditions[0].ObservedGeneration,
+		"stale reconcile must not overwrite a newer ancestor status")
+	assert.Equal(t, "written by a newer reconcile", refreshed.Status.Ancestors[0].Conditions[0].Message)
 }
 
 func TestUpdateStatus_PreservesOtherControllersUnderCap(t *testing.T) {
@@ -1338,6 +1394,7 @@ func TestUpdateStatus_PreservesOtherControllersUnderCap(t *testing.T) {
 		client.ObjectKey{Namespace: "ns", Name: "p"},
 		gateways,
 		acceptedConditions(policy.Generation),
+		policy.Generation,
 	))
 
 	var refreshed gatewayv1.BackendTLSPolicy
@@ -1384,7 +1441,7 @@ func TestUpdateStatus_CapsAncestorsAt16(t *testing.T) {
 
 	conditions := acceptedConditions(policy.Generation)
 
-	err := r.updateStatus(context.Background(), client.ObjectKey{Namespace: "ns", Name: "p"}, gateways, conditions)
+	err := r.updateStatus(context.Background(), client.ObjectKey{Namespace: "ns", Name: "p"}, gateways, conditions, policy.Generation)
 	require.NoError(t, err)
 
 	var refreshed gatewayv1.BackendTLSPolicy
@@ -1414,7 +1471,7 @@ func TestUpdateStatus_SetsLastTransitionTime(t *testing.T) {
 	gateway := *gatewayFor("ns", "gw", "cf-class")
 	conditions := acceptedConditions(policy.Generation)
 
-	require.NoError(t, r.updateStatus(context.Background(), client.ObjectKey{Namespace: "ns", Name: "p"}, []gatewayv1.Gateway{gateway}, conditions))
+	require.NoError(t, r.updateStatus(context.Background(), client.ObjectKey{Namespace: "ns", Name: "p"}, []gatewayv1.Gateway{gateway}, conditions, policy.Generation))
 
 	var refreshed gatewayv1.BackendTLSPolicy
 	require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKey{Namespace: "ns", Name: "p"}, &refreshed))
@@ -1677,6 +1734,7 @@ func TestUpdateStatus_ObservedGenerationMatchesPolicyGeneration(t *testing.T) {
 		client.ObjectKey{Namespace: "ns", Name: "p"},
 		[]gatewayv1.Gateway{gateway},
 		conditions,
+		policy.Generation,
 	))
 
 	var refreshed gatewayv1.BackendTLSPolicy

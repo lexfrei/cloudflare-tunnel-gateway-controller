@@ -247,7 +247,7 @@ func (r *BackendTLSPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		"gateways", len(gateways),
 	)
 
-	if err := r.updateStatus(ctx, req.NamespacedName, gateways, conditions); err != nil {
+	if err := r.updateStatus(ctx, req.NamespacedName, gateways, conditions, policy.Generation); err != nil {
 		return ctrl.Result{}, errors.Wrap(err, "failed to update BackendTLSPolicy status")
 	}
 
@@ -701,6 +701,7 @@ func (r *BackendTLSPolicyReconciler) updateStatus(
 	policyKey client.ObjectKey,
 	gateways []gatewayv1.Gateway,
 	conditions []metav1.Condition,
+	reconciledGen int64,
 ) error {
 	//nolint:wrapcheck // retry wrapper handles errors internally
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
@@ -713,20 +714,12 @@ func (r *BackendTLSPolicyReconciler) updateStatus(
 			return err //nolint:wrapcheck // unwrapped to participate in retry
 		}
 
-		existing := map[client.ObjectKey][]metav1.Condition{}
-		otherControllerEntries := make([]gatewayv1.PolicyAncestorStatus, 0, len(fresh.Status.Ancestors))
-
-		for _, ancestor := range fresh.Status.Ancestors {
-			if string(ancestor.ControllerName) != r.ControllerName {
-				otherControllerEntries = append(otherControllerEntries, ancestor)
-
-				continue
-			}
-
-			// Remember our previous conditions per Gateway so SetStatusCondition
-			// can decide whether LastTransitionTime needs to flip.
-			key := ancestorRefKey(ancestor.AncestorRef, fresh.Namespace)
-			existing[key] = ancestor.Conditions
+		// Split current ancestors into our previous conditions (for merge) and
+		// other controllers' entries (preserved). stale=true means a newer
+		// reconcile already advanced our status, so we MUST NOT overwrite it.
+		existing, otherControllerEntries, stale := r.partitionAncestors(&fresh, reconciledGen)
+		if stale {
+			return nil
 		}
 
 		ourEntries := make([]gatewayv1.PolicyAncestorStatus, 0, len(gateways))
@@ -765,6 +758,37 @@ func (r *BackendTLSPolicyReconciler) updateStatus(
 
 		return r.Status().Update(ctx, &fresh) //nolint:wrapcheck // unwrapped to participate in retry
 	})
+}
+
+// partitionAncestors splits the policy's current ancestors into this
+// controller's previous conditions (keyed by Gateway, so SetStatusCondition can
+// preserve LastTransitionTime on merge) and the entries owned by other
+// controllers (preserved verbatim). stale is true when any of our entries was
+// already stamped with a generation newer than reconciledGen, in which case the
+// caller MUST NOT overwrite the status (observedGeneration regression guard).
+func (r *BackendTLSPolicyReconciler) partitionAncestors(
+	fresh *gatewayv1.BackendTLSPolicy,
+	reconciledGen int64,
+) (map[client.ObjectKey][]metav1.Condition, []gatewayv1.PolicyAncestorStatus, bool) {
+	existing := map[client.ObjectKey][]metav1.Condition{}
+	others := make([]gatewayv1.PolicyAncestorStatus, 0, len(fresh.Status.Ancestors))
+
+	for _, ancestor := range fresh.Status.Ancestors {
+		if string(ancestor.ControllerName) != r.ControllerName {
+			others = append(others, ancestor)
+
+			continue
+		}
+
+		if statusGenerationStale(reconciledGen, ancestor.Conditions) {
+			return existing, others, true
+		}
+
+		key := ancestorRefKey(ancestor.AncestorRef, fresh.Namespace)
+		existing[key] = ancestor.Conditions
+	}
+
+	return existing, others, false
 }
 
 // gatewayAncestorRef returns the ParentReference identifying the supplied

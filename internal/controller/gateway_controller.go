@@ -202,6 +202,13 @@ func (r *GatewayReconciler) updateStatus(
 			return errors.Wrap(err, "failed to get fresh gateway")
 		}
 
+		// Skip if a newer reconcile already advanced this Gateway's status past
+		// the generation we observed; Gateway API forbids regressing
+		// observedGeneration, and that reconcile will write the current view.
+		if gatewayStatusStale(gateway.Generation, &freshGateway) {
+			return nil
+		}
+
 		now := metav1.Now()
 
 		attachedRoutes := r.countAttachedRoutes(ctx, &freshGateway)
@@ -342,6 +349,31 @@ func (r *GatewayReconciler) updateStatus(
 	return errors.Wrap(err, "failed to update gateway status after retries")
 }
 
+// gatewayStatusStale reports whether the freshly-fetched Gateway already
+// carries status conditions (top-level or per-listener) stamped with a
+// generation newer than reconciledGen, in which case this reconcile MUST NOT
+// overwrite the status (Gateway API observedGeneration regression guard).
+//
+// Only this controller's own top-level conditions count: a foreign controller's
+// condition (e.g. special.io/...) carries an unrelated generation and MUST NOT
+// be touched. The per-listener status array, by contrast, is wholly owned here.
+func gatewayStatusStale(reconciledGen int64, gateway *gatewayv1.Gateway) bool {
+	if ownedConditionsStale(gateway.Status.Conditions, reconciledGen,
+		string(gatewayv1.GatewayConditionAccepted),
+		string(gatewayv1.GatewayConditionProgrammed),
+		string(gatewayv1.GatewayConditionResolvedRefs),
+	) {
+		return true
+	}
+
+	listenerConds := make([][]metav1.Condition, 0, len(gateway.Status.Listeners))
+	for i := range gateway.Status.Listeners {
+		listenerConds = append(listenerConds, gateway.Status.Listeners[i].Conditions)
+	}
+
+	return statusGenerationStale(reconciledGen, listenerConds...)
+}
+
 func (r *GatewayReconciler) setConfigErrorStatus(
 	ctx context.Context,
 	gateway *gatewayv1.Gateway,
@@ -354,6 +386,12 @@ func (r *GatewayReconciler) setConfigErrorStatus(
 		var freshGateway gatewayv1.Gateway
 		if err := r.Get(ctx, gatewayKey, &freshGateway); err != nil {
 			return errors.Wrap(err, "failed to get fresh gateway")
+		}
+
+		// Skip if a newer reconcile already advanced this Gateway's status past
+		// the generation we observed (observedGeneration regression guard).
+		if gatewayStatusStale(gateway.Generation, &freshGateway) {
+			return nil
 		}
 
 		now := metav1.Now()

@@ -53,6 +53,12 @@ type routeStatusUpdateParams struct {
 	// writer tell "every rule is unservable" (Accepted=False) apart from "some
 	// rules dropped" (PartiallyInvalid=True).
 	ruleCount int
+	// reconciledGeneration is the route's metadata.generation at the time this
+	// reconcile read the spec and computed its conclusions. It is used to skip
+	// the write when a newer reconcile has already advanced our entries past it
+	// (see statusGenerationStale); the writer still stamps observedGeneration
+	// from the freshly-fetched generation.
+	reconciledGeneration int64
 }
 
 // acceptedConditionOverride carries the reason/message used to downgrade an
@@ -72,7 +78,7 @@ const routeParentStatusMaxCount = 32
 // It fetches a fresh copy, builds parent status entries, and writes the update with retry.
 func updateRouteStatusGeneric(
 	ctx context.Context,
-	params routeStatusUpdateParams,
+	params *routeStatusUpdateParams,
 	routeKey types.NamespacedName,
 	newAccessor func() routeAccessor,
 	bindingInfo routeBindingInfo,
@@ -101,7 +107,7 @@ func updateRouteStatusGeneric(
 // updateRouteParentStatuses fetches a fresh route, builds parent statuses, and writes the update.
 func updateRouteParentStatuses(
 	ctx context.Context,
-	params routeStatusUpdateParams,
+	params *routeStatusUpdateParams,
 	routeKey types.NamespacedName,
 	accessor routeAccessor,
 	classNames map[string]bool,
@@ -126,6 +132,16 @@ func updateRouteParentStatuses(
 	for _, parent := range routeStatus.Parents {
 		if string(parent.ControllerName) != params.controllerName {
 			foreignEntries = append(foreignEntries, parent)
+
+			continue
+		}
+
+		// A newer reconcile already advanced our entry past the generation we
+		// reconciled; skip the write and let that reconcile own the status
+		// (Gateway API MUST NOT overwrite a condition stamped with a newer
+		// observedGeneration).
+		if statusGenerationStale(params.reconciledGeneration, parent.Conditions) {
+			return nil
 		}
 	}
 
@@ -167,7 +183,7 @@ func updateRouteParentStatuses(
 // via a ListenerSet attached to one).
 func resolveParentRefStatus(
 	ctx context.Context,
-	params routeStatusUpdateParams,
+	params *routeStatusUpdateParams,
 	accessor routeAccessor,
 	ref gatewayv1.ParentReference,
 	refIdx int,
