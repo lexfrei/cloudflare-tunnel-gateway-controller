@@ -77,3 +77,66 @@ func TestStatusGenerationStale(t *testing.T) {
 		})
 	}
 }
+
+func TestOwnedConditionsStale(t *testing.T) {
+	t.Parallel()
+
+	const ownedType = "Accepted"
+
+	stored := func(condType string, gen int64) []metav1.Condition {
+		return []metav1.Condition{{Type: condType, Status: metav1.ConditionTrue, ObservedGeneration: gen}}
+	}
+
+	tests := []struct {
+		name          string
+		stored        []metav1.Condition
+		reconciledGen int64
+		ownedTypes    []string
+		want          bool
+	}{
+		{
+			name:          "owned type at newer generation is stale",
+			stored:        stored(ownedType, 6),
+			reconciledGen: 5,
+			ownedTypes:    []string{ownedType},
+			want:          true,
+		},
+		{
+			name:          "owned type at equal generation is not stale",
+			stored:        stored(ownedType, 5),
+			reconciledGen: 5,
+			ownedTypes:    []string{ownedType},
+			want:          false,
+		},
+		{
+			name:          "owned type at older generation is not stale",
+			stored:        stored(ownedType, 3),
+			reconciledGen: 5,
+			ownedTypes:    []string{ownedType},
+			want:          false,
+		},
+		{
+			name:          "newer foreign condition type is ignored",
+			stored:        stored("special.io/SomeField", 9),
+			reconciledGen: 5,
+			ownedTypes:    []string{ownedType},
+			want:          false,
+		},
+		{
+			name:          "missing owned type is not stale",
+			stored:        nil,
+			reconciledGen: 5,
+			ownedTypes:    []string{ownedType},
+			want:          false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := ownedConditionsStale(tt.stored, tt.reconciledGen, tt.ownedTypes...)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}

@@ -899,6 +899,100 @@ func TestGRPCRouteReconciler_Start(t *testing.T) {
 	assert.True(t, r.startupComplete.Load())
 }
 
+// TestGRPCRouteReconciler_UpdateRouteStatus_SkipsObservedGenerationRegression
+// pins, for GRPCRoute, the Gateway API rule that a reconcile MUST NOT overwrite
+// a status condition already stamped with an observedGeneration newer than the
+// one this reconcile observed.
+func TestGRPCRouteReconciler_UpdateRouteStatus_SkipsObservedGenerationRegression(t *testing.T) {
+	t.Parallel()
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, gatewayv1.Install(scheme))
+	require.NoError(t, corev1.AddToScheme(scheme))
+	require.NoError(t, v1alpha1.AddToScheme(scheme))
+
+	gatewayClass := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "cloudflare-tunnel"},
+		Spec:       gatewayv1.GatewayClassSpec{ControllerName: "test-controller"},
+	}
+
+	gateway := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-gateway", Namespace: "default"},
+		Spec: gatewayv1.GatewaySpec{
+			GatewayClassName: "cloudflare-tunnel",
+			Listeners: []gatewayv1.Listener{
+				{Name: "grpc", Port: 443, Protocol: gatewayv1.HTTPSProtocolType},
+			},
+		},
+	}
+
+	const newerGen = 5
+
+	advanced := gatewayv1.RouteParentStatus{
+		ParentRef:      gatewayv1.ParentReference{Name: "test-gateway"},
+		ControllerName: "test-controller",
+		Conditions: []metav1.Condition{
+			{
+				Type:               string(gatewayv1.RouteConditionAccepted),
+				Status:             metav1.ConditionTrue,
+				ObservedGeneration: newerGen,
+				LastTransitionTime: metav1.Now(),
+				Reason:             string(gatewayv1.RouteReasonAccepted),
+				Message:            "written by a newer reconcile",
+			},
+		},
+	}
+
+	route := &gatewayv1.GRPCRoute{
+		ObjectMeta: metav1.ObjectMeta{Name: "stale-route", Namespace: "default", Generation: 3},
+		Spec: gatewayv1.GRPCRouteSpec{
+			CommonRouteSpec: gatewayv1.CommonRouteSpec{
+				ParentRefs: []gatewayv1.ParentReference{{Name: "test-gateway"}},
+			},
+		},
+		Status: gatewayv1.GRPCRouteStatus{
+			RouteStatus: gatewayv1.RouteStatus{Parents: []gatewayv1.RouteParentStatus{advanced}},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(gatewayClass, gateway, route).
+		WithStatusSubresource(route).
+		Build()
+	require.NoError(t, fakeClient.Status().Update(context.Background(), route))
+
+	configResolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector())
+	routeSyncer := NewRouteSyncer(fakeClient, scheme, "cluster.local", "test-controller", configResolver, cfmetrics.NewNoopCollector(), nil)
+
+	r := &GRPCRouteReconciler{
+		Client:         fakeClient,
+		Scheme:         scheme,
+		ControllerName: "test-controller",
+		RouteSyncer:    routeSyncer,
+	}
+
+	bindingInfo := routeBindingInfo{
+		bindingResults: map[int]routebinding.BindingResult{
+			0: {Accepted: true, Reason: gatewayv1.RouteReasonAccepted},
+		},
+	}
+
+	require.NoError(t, r.updateRouteStatus(context.Background(), route, bindingInfo, nil, nil, nil))
+
+	var updated gatewayv1.GRPCRoute
+	require.NoError(t, fakeClient.Get(
+		context.Background(), client.ObjectKey{Name: "stale-route", Namespace: "default"}, &updated))
+
+	require.Len(t, updated.Status.Parents, 1)
+	require.Len(t, updated.Status.Parents[0].Conditions, 1)
+
+	accepted := updated.Status.Parents[0].Conditions[0]
+	assert.Equal(t, int64(newerGen), accepted.ObservedGeneration,
+		"stale reconcile must not overwrite a newer GRPCRoute status")
+	assert.Equal(t, "written by a newer reconcile", accepted.Message)
+}
+
 func TestGRPCRouteReconciler_UpdateRouteStatus_Integration(t *testing.T) {
 	t.Parallel()
 

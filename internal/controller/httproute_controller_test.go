@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -1816,6 +1817,112 @@ func TestHTTPRouteReconciler_UpdateRouteStatus_PreservesForeignParentStatus(t *t
 	require.NotNil(t, foreign, "foreign controller's parent status must be preserved")
 	assert.Equal(t, gatewayv1.GatewayController("other.example.com/controller"), foreign.ControllerName)
 	assert.Equal(t, "owned by another controller", foreign.Conditions[0].Message)
+}
+
+// TestHTTPRouteReconciler_UpdateRouteStatus_TruncatesOwnEntriesNotForeign pins
+// the overflow rule for the RouteStatus.Parents 32-entry cap: when the combined
+// set of our managed entries plus other controllers' entries exceeds the cap,
+// only OUR entries are truncated — every foreign entry survives.
+func TestHTTPRouteReconciler_UpdateRouteStatus_TruncatesOwnEntriesNotForeign(t *testing.T) {
+	t.Parallel()
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, gatewayv1.Install(scheme))
+	require.NoError(t, corev1.AddToScheme(scheme))
+	require.NoError(t, v1alpha1.AddToScheme(scheme))
+
+	gatewayClass := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "cloudflare-tunnel"},
+		Spec:       gatewayv1.GatewayClassSpec{ControllerName: "test-controller"},
+	}
+
+	gateway := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-gateway", Namespace: "default"},
+		Spec: gatewayv1.GatewaySpec{
+			GatewayClassName: "cloudflare-tunnel",
+			Listeners: []gatewayv1.Listener{
+				{Name: "http", Port: 80, Protocol: gatewayv1.HTTPProtocolType},
+			},
+		},
+	}
+
+	// 28 foreign entries + 8 of our managed parentRefs = 36, over the 32 cap.
+	const (
+		foreignCount = 28
+		ourCount     = 8
+	)
+
+	foreign := make([]gatewayv1.RouteParentStatus, 0, foreignCount)
+	for i := range foreignCount {
+		foreign = append(foreign, gatewayv1.RouteParentStatus{
+			ParentRef:      gatewayv1.ParentReference{Name: gatewayv1.ObjectName("foreign-" + strconv.Itoa(i))},
+			ControllerName: "other.example.com/controller",
+			Conditions: []metav1.Condition{
+				{
+					Type:               string(gatewayv1.RouteConditionAccepted),
+					Status:             metav1.ConditionTrue,
+					Reason:             string(gatewayv1.RouteReasonAccepted),
+					LastTransitionTime: metav1.Now(),
+				},
+			},
+		})
+	}
+
+	parentRefs := make([]gatewayv1.ParentReference, 0, ourCount)
+	for i := range ourCount {
+		sectionName := gatewayv1.SectionName("http-" + strconv.Itoa(i))
+		parentRefs = append(parentRefs, gatewayv1.ParentReference{Name: "test-gateway", SectionName: &sectionName})
+	}
+
+	route := &gatewayv1.HTTPRoute{
+		ObjectMeta: metav1.ObjectMeta{Name: "capped-route", Namespace: "default"},
+		Spec: gatewayv1.HTTPRouteSpec{
+			CommonRouteSpec: gatewayv1.CommonRouteSpec{ParentRefs: parentRefs},
+		},
+		Status: gatewayv1.HTTPRouteStatus{
+			RouteStatus: gatewayv1.RouteStatus{Parents: foreign},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(gatewayClass, gateway, route).
+		WithStatusSubresource(route).
+		Build()
+	require.NoError(t, fakeClient.Status().Update(context.Background(), route))
+
+	configResolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector())
+	routeSyncer := NewRouteSyncer(fakeClient, scheme, "cluster.local", "test-controller", configResolver, cfmetrics.NewNoopCollector(), nil)
+
+	r := &HTTPRouteReconciler{
+		Client:         fakeClient,
+		Scheme:         scheme,
+		ControllerName: "test-controller",
+		RouteSyncer:    routeSyncer,
+	}
+
+	require.NoError(t, r.updateRouteStatus(context.Background(), route, routeBindingInfo{}, nil, nil, nil))
+
+	var updated gatewayv1.HTTPRoute
+	require.NoError(t, fakeClient.Get(
+		context.Background(), client.ObjectKey{Name: "capped-route", Namespace: "default"}, &updated))
+
+	require.Len(t, updated.Status.Parents, routeParentStatusMaxCount)
+
+	var foreignSurvivors, ourSurvivors int
+
+	for i := range updated.Status.Parents {
+		if string(updated.Status.Parents[i].ControllerName) == "test-controller" {
+			ourSurvivors++
+		} else {
+			foreignSurvivors++
+		}
+	}
+
+	assert.Equal(t, foreignCount, foreignSurvivors,
+		"all foreign controllers' entries MUST survive truncation")
+	assert.Equal(t, routeParentStatusMaxCount-foreignCount, ourSurvivors,
+		"only our entries are truncated to fit the cap")
 }
 
 // TestHTTPRouteReconciler_UpdateRouteStatus_SkipsObservedGenerationRegression

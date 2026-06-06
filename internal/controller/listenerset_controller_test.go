@@ -479,6 +479,106 @@ func TestListenerSetReconciler_SkipsWhenParentNotManaged(t *testing.T) {
 	assert.Empty(t, updated.Status.Conditions, "controller should not touch ListenerSets attached to other-class Gateways")
 }
 
+// TestListenerSetReconciler_SkipsObservedGenerationRegression pins the Gateway
+// API rule that a reconcile MUST NOT overwrite a status condition already
+// stamped with an observedGeneration newer than the one this reconcile
+// observed. It covers both the top-level conditions and the wholly-owned
+// per-listener entry conditions.
+func TestListenerSetReconciler_SkipsObservedGenerationRegression(t *testing.T) {
+	t.Parallel()
+
+	const newerGen = 5
+
+	tests := []struct {
+		name  string
+		seed  func(ls *gatewayv1.ListenerSet)
+		check func(t *testing.T, updated *gatewayv1.ListenerSet)
+	}{
+		{
+			name: "newer generation on a top-level condition",
+			seed: func(ls *gatewayv1.ListenerSet) {
+				ls.Status.Conditions = []metav1.Condition{{
+					Type:               string(gatewayv1.ListenerSetConditionAccepted),
+					Status:             metav1.ConditionTrue,
+					ObservedGeneration: newerGen,
+					LastTransitionTime: metav1.Now(),
+					Reason:             "Accepted",
+					Message:            "written by a newer reconcile",
+				}}
+			},
+			check: func(t *testing.T, updated *gatewayv1.ListenerSet) {
+				t.Helper()
+
+				cond := findCondition(updated.Status.Conditions, string(gatewayv1.ListenerSetConditionAccepted))
+				require.NotNil(t, cond)
+				assert.Equal(t, int64(newerGen), cond.ObservedGeneration)
+				assert.Equal(t, "written by a newer reconcile", cond.Message)
+			},
+		},
+		{
+			name: "newer generation on a per-listener entry condition",
+			seed: func(ls *gatewayv1.ListenerSet) {
+				ls.Status.Listeners = []gatewayv1.ListenerEntryStatus{{
+					Name: gatewayv1.SectionName("ls-l1"),
+					Conditions: []metav1.Condition{{
+						Type:               "Programmed",
+						Status:             metav1.ConditionTrue,
+						ObservedGeneration: newerGen,
+						LastTransitionTime: metav1.Now(),
+						Reason:             "Programmed",
+						Message:            "entry written by a newer reconcile",
+					}},
+				}}
+			},
+			check: func(t *testing.T, updated *gatewayv1.ListenerSet) {
+				t.Helper()
+
+				require.Len(t, updated.Status.Listeners, 1)
+				require.Len(t, updated.Status.Listeners[0].Conditions, 1)
+				assert.Equal(t, int64(newerGen), updated.Status.Listeners[0].Conditions[0].ObservedGeneration)
+				assert.Equal(t, "entry written by a newer reconcile", updated.Status.Listeners[0].Conditions[0].Message)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			gc := managedGatewayClass()
+			gw := &gatewayv1.Gateway{
+				ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "infra"},
+				Spec: gatewayv1.GatewaySpec{
+					GatewayClassName: gatewayv1.ObjectName(gc.Name),
+					Listeners: []gatewayv1.Listener{
+						{Name: "gw-l1", Port: 80, Protocol: gatewayv1.HTTPProtocolType},
+					},
+				},
+			}
+			ls := &gatewayv1.ListenerSet{
+				ObjectMeta: metav1.ObjectMeta{Name: "ls", Namespace: "infra", Generation: 3},
+				Spec: gatewayv1.ListenerSetSpec{
+					ParentRef: gatewayv1.ParentGatewayReference{Name: gatewayv1.ObjectName(gw.Name)},
+					Listeners: []gatewayv1.ListenerEntry{
+						{Name: "ls-l1", Port: 80, Protocol: gatewayv1.HTTPProtocolType},
+					},
+				},
+			}
+			tt.seed(ls)
+
+			r, cli := newListenerSetReconciler(t, gc, gw, ls)
+
+			_, err := r.Reconcile(context.Background(), ctrl.Request{
+				NamespacedName: types.NamespacedName{Name: ls.Name, Namespace: ls.Namespace},
+			})
+			require.NoError(t, err)
+
+			updated := getListenerSet(t, cli, ls.Name, ls.Namespace)
+			tt.check(t, updated)
+		})
+	}
+}
+
 func newListenerSetReconciler(
 	t *testing.T,
 	gc *gatewayv1.GatewayClass,

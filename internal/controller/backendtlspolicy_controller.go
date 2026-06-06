@@ -781,7 +781,9 @@ func (r *BackendTLSPolicyReconciler) partitionAncestors(
 		}
 
 		if statusGenerationStale(reconciledGen, ancestor.Conditions) {
-			return existing, others, true
+			// Stale: the caller skips the write, so the partial existing/others
+			// built so far is meaningless — return nil to make that explicit.
+			return nil, nil, true
 		}
 
 		key := ancestorRefKey(ancestor.AncestorRef, fresh.Namespace)
