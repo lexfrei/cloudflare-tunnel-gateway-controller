@@ -23,8 +23,8 @@
 #                                                  # chart+images (no local build)
 #
 # Prerequisites:
-#   - .env file in repo root with: CF_API_TOKEN, CF_ACCOUNT_ID, V2_TUNNEL_ID,
-#     V2_TUNNEL_TOKEN, V2_TUNNEL_HOSTNAME (the edge hostname routing to the tunnel)
+#   - .env file in repo root with: CF_API_TOKEN, CF_ACCOUNT_ID, CF_TUNNEL_ID,
+#     CF_TUNNEL_TOKEN, CF_TUNNEL_HOSTNAME (the edge hostname routing to the tunnel)
 #   - colima, docker, kind, helm, kubectl, go installed
 
 set -euo pipefail
@@ -105,7 +105,7 @@ fi
 # shellcheck source=/dev/null
 source "${ENV_FILE}"
 
-for var in CF_API_TOKEN CF_ACCOUNT_ID V2_TUNNEL_ID V2_TUNNEL_TOKEN V2_TUNNEL_HOSTNAME; do
+for var in CF_API_TOKEN CF_ACCOUNT_ID CF_TUNNEL_ID CF_TUNNEL_TOKEN CF_TUNNEL_HOSTNAME; do
   if [[ -z "${!var:-}" ]]; then
     die "Required variable ${var} is not set in .env (see .env.example)"
   fi
@@ -120,13 +120,13 @@ done
 # (Account -> Cloudflare Tunnel -> Edit) lacks user-level token introspection, so
 # verify returns success:false / code 1000 for a working token. The
 # configurations endpoint is the authoritative signal.
-info "Validating Cloudflare API token against tunnel ${V2_TUNNEL_ID}..."
+info "Validating Cloudflare API token against tunnel ${CF_TUNNEL_ID}..."
 token_http_code="$(curl --silent --output /dev/null --write-out '%{http_code}' \
   --retry 3 --retry-delay 1 --max-time 15 \
   --header "Authorization: Bearer ${CF_API_TOKEN}" \
-  "https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/cfd_tunnel/${V2_TUNNEL_ID}/configurations" || true)"
+  "https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/cfd_tunnel/${CF_TUNNEL_ID}/configurations" || true)"
 if [[ "${token_http_code}" != "200" ]]; then
-  die "CF_API_TOKEN cannot read tunnel ${V2_TUNNEL_ID} (HTTP ${token_http_code:-no-response}). Refresh the token (Cloudflare dashboard -> account -> Cloudflare Tunnel -> Edit) before re-running."
+  die "CF_API_TOKEN cannot read tunnel ${CF_TUNNEL_ID} (HTTP ${token_http_code:-no-response}). Refresh the token (Cloudflare dashboard -> account -> Cloudflare Tunnel -> Edit) before re-running."
 fi
 
 # --- CI-images mode: fail fast if the PR chart is gone before building a cluster ---
@@ -212,7 +212,7 @@ kubectl --context "${KUBE_CONTEXT}" create secret generic cloudflare-credentials
 info "Creating tunnel token secret..."
 kubectl --context "${KUBE_CONTEXT}" create secret generic cloudflare-tunnel-token \
   --namespace "${NAMESPACE}" \
-  --from-literal=tunnel-token="${V2_TUNNEL_TOKEN}" \
+  --from-literal=tunnel-token="${CF_TUNNEL_TOKEN}" \
   --dry-run=client --output yaml \
   | kubectl --context "${KUBE_CONTEXT}" apply --filename -
 
@@ -248,7 +248,7 @@ helm upgrade --install "${RELEASE_NAME}" \
   --kube-context "${KUBE_CONTEXT}" \
   --namespace "${NAMESPACE}" \
   --set gatewayClassConfig.create=true \
-  --set gatewayClassConfig.tunnelID="${V2_TUNNEL_ID}" \
+  --set gatewayClassConfig.tunnelID="${CF_TUNNEL_ID}" \
   --set gatewayClassConfig.cloudflareCredentialsSecretRef.name=cloudflare-credentials \
   "${HELM_IMAGE_ARGS[@]+"${HELM_IMAGE_ARGS[@]}"}" \
   --set proxy.tunnelTokenSecretRef.name=cloudflare-tunnel-token \
@@ -281,17 +281,17 @@ echo ""
 
 # --- Step 11: Run tests (optional) ---
 if [[ "${RUN_TESTS}" == "true" ]]; then
-  info "Running conformance tests against ${V2_TUNNEL_HOSTNAME}..."
+  info "Running conformance tests against ${CF_TUNNEL_HOSTNAME}..."
   CONFORMANCE_KUBE_CONTEXT="${KUBE_CONTEXT}" \
-  CONFORMANCE_TUNNEL_HOSTNAME="${V2_TUNNEL_HOSTNAME}" \
+  CONFORMANCE_TUNNEL_HOSTNAME="${CF_TUNNEL_HOSTNAME}" \
     go test -v -race -tags conformance -count=1 -timeout=60m -parallel 10 ./test/conformance/...
 else
   echo ""
   info "Setup complete! To run conformance tests:"
-  echo "  CONFORMANCE_KUBE_CONTEXT=${KUBE_CONTEXT} CONFORMANCE_TUNNEL_HOSTNAME=${V2_TUNNEL_HOSTNAME} go test -v -race -tags conformance -count=1 -timeout=30m ./test/conformance/..."
+  echo "  CONFORMANCE_KUBE_CONTEXT=${KUBE_CONTEXT} CONFORMANCE_TUNNEL_HOSTNAME=${CF_TUNNEL_HOSTNAME} go test -v -race -tags conformance -count=1 -timeout=30m ./test/conformance/..."
   echo ""
   info "To run E2E tests:"
-  echo "  CONFORMANCE_KUBE_CONTEXT=${KUBE_CONTEXT} E2E_TUNNEL_HOSTNAME=${V2_TUNNEL_HOSTNAME} go test -v -race -tags e2e -count=1 -timeout=15m ./test/e2e/..."
+  echo "  CONFORMANCE_KUBE_CONTEXT=${KUBE_CONTEXT} E2E_TUNNEL_HOSTNAME=${CF_TUNNEL_HOSTNAME} go test -v -race -tags e2e -count=1 -timeout=15m ./test/e2e/..."
   echo ""
   info "To tear down:"
   echo "  kind delete cluster --name ${CLUSTER_NAME}"

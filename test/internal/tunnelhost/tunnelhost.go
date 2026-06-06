@@ -17,7 +17,7 @@ import (
 // set. Resolve wraps it with the specific keys it tried so the message names
 // what to export.
 var errUnset = errors.New(
-	"tunnel hostname not set; see .env.example (hack/conformance-setup.sh sources it from .env via V2_TUNNEL_HOSTNAME)")
+	"tunnel hostname not set; see .env.example (hack/conformance-setup.sh sources it from .env via CF_TUNNEL_HOSTNAME)")
 
 // Resolve returns the first non-empty value among the given env keys, checked
 // in order. It errors when none is set so callers can fail fast with a clear
