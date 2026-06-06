@@ -128,6 +128,63 @@ func TestGatewayClassConfigReconciler_Reconcile_Valid(t *testing.T) {
 	assert.Equal(t, "Valid", validCondition.Reason)
 }
 
+// TestGatewayClassConfigReconciler_Reconcile_SkipsObservedGenerationRegression
+// pins the Gateway API rule that a reconcile MUST NOT overwrite a status
+// condition already stamped with an observedGeneration newer than the one this
+// reconcile observed.
+func TestGatewayClassConfigReconciler_Reconcile_SkipsObservedGenerationRegression(t *testing.T) {
+	t.Parallel()
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, v1alpha1.AddToScheme(scheme))
+	require.NoError(t, corev1.AddToScheme(scheme))
+
+	const newerGen = 5
+
+	config := &v1alpha1.GatewayClassConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-config", Generation: 3},
+		Spec: v1alpha1.GatewayClassConfigSpec{
+			TunnelID: "test-tunnel-id",
+			CloudflareCredentialsSecretRef: v1alpha1.SecretReference{
+				Name:      "cf-credentials",
+				Namespace: "default",
+			},
+		},
+		Status: v1alpha1.GatewayClassConfigStatus{
+			Conditions: []metav1.Condition{
+				{
+					Type:               ConditionTypeValid,
+					Status:             metav1.ConditionTrue,
+					ObservedGeneration: newerGen,
+					LastTransitionTime: metav1.Now(),
+					Reason:             "Valid",
+					Message:            "written by a newer reconcile",
+				},
+			},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(config).
+		WithStatusSubresource(config).
+		Build()
+	require.NoError(t, fakeClient.Status().Update(context.Background(), config))
+
+	r := &GatewayClassConfigReconciler{Client: fakeClient, Scheme: scheme, DefaultNamespace: "default"}
+
+	_, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Name: "test-config"}})
+	require.NoError(t, err)
+
+	var updated v1alpha1.GatewayClassConfig
+	require.NoError(t, fakeClient.Get(context.Background(), types.NamespacedName{Name: "test-config"}, &updated))
+
+	require.Len(t, updated.Status.Conditions, 1)
+	assert.Equal(t, int64(newerGen), updated.Status.Conditions[0].ObservedGeneration,
+		"stale reconcile must not overwrite a newer GatewayClassConfig status")
+	assert.Equal(t, "written by a newer reconcile", updated.Status.Conditions[0].Message)
+}
+
 func TestGatewayClassConfigReconciler_Reconcile_MissingCredentialsSecret(t *testing.T) {
 	t.Parallel()
 

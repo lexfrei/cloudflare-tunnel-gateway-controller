@@ -537,7 +537,7 @@ func TestGatewayClassReconciler_UpdateStatus_ControllerMismatch(t *testing.T) {
 	}
 
 	// updateStatus should silently return nil for non-matching controllers
-	err := r.updateStatus(context.Background(), types.NamespacedName{Name: "other-class"})
+	err := r.updateStatus(context.Background(), types.NamespacedName{Name: "other-class"}, 0)
 	assert.NoError(t, err)
 
 	// Verify no conditions were set
@@ -563,7 +563,7 @@ func TestGatewayClassReconciler_UpdateStatus_NotFound(t *testing.T) {
 		ControllerName: "test-controller",
 	}
 
-	err := r.updateStatus(context.Background(), types.NamespacedName{Name: "non-existent"})
+	err := r.updateStatus(context.Background(), types.NamespacedName{Name: "non-existent"}, 0)
 	assert.Error(t, err)
 }
 
@@ -616,6 +616,64 @@ func TestGatewayClassReconciler_Reconcile_IdempotentStatusUpdate(t *testing.T) {
 	err = fakeClient.Get(context.Background(), types.NamespacedName{Name: "cloudflare-tunnel"}, &updatedClass)
 	require.NoError(t, err)
 	assert.Len(t, updatedClass.Status.Conditions, 2)
+}
+
+// TestGatewayClassReconciler_UpdateStatus_SkipsObservedGenerationRegression pins
+// the Gateway API rule that a reconcile MUST NOT overwrite a status condition
+// already stamped with an observedGeneration newer than the generation this
+// reconcile observed.
+func TestGatewayClassReconciler_UpdateStatus_SkipsObservedGenerationRegression(t *testing.T) {
+	t.Parallel()
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, gatewayv1.Install(scheme))
+
+	const newerGen = 5
+
+	gatewayClass := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "cloudflare-tunnel", Generation: 3},
+		Spec:       gatewayv1.GatewayClassSpec{ControllerName: "test-controller"},
+		Status: gatewayv1.GatewayClassStatus{
+			Conditions: []metav1.Condition{
+				{
+					Type:               string(gatewayv1.GatewayClassConditionStatusAccepted),
+					Status:             metav1.ConditionTrue,
+					ObservedGeneration: newerGen,
+					LastTransitionTime: metav1.Now(),
+					Reason:             string(gatewayv1.GatewayClassReasonAccepted),
+					Message:            "written by a newer reconcile",
+				},
+			},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(gatewayClass).
+		WithStatusSubresource(gatewayClass).
+		Build()
+	require.NoError(t, fakeClient.Status().Update(context.Background(), gatewayClass))
+
+	r := &GatewayClassReconciler{Client: fakeClient, Scheme: scheme, ControllerName: "test-controller"}
+
+	// reconciledGen 3 < stored 5 → the write is skipped.
+	require.NoError(t, r.updateStatus(context.Background(), types.NamespacedName{Name: "cloudflare-tunnel"}, 3))
+
+	var updated gatewayv1.GatewayClass
+	require.NoError(t, fakeClient.Get(context.Background(), types.NamespacedName{Name: "cloudflare-tunnel"}, &updated))
+
+	var accepted *metav1.Condition
+
+	for i := range updated.Status.Conditions {
+		if updated.Status.Conditions[i].Type == string(gatewayv1.GatewayClassConditionStatusAccepted) {
+			accepted = &updated.Status.Conditions[i]
+		}
+	}
+
+	require.NotNil(t, accepted)
+	assert.Equal(t, int64(newerGen), accepted.ObservedGeneration,
+		"stale reconcile must not overwrite a newer GatewayClass status")
+	assert.Equal(t, "written by a newer reconcile", accepted.Message)
 }
 
 func TestGatewayClassReconciler_Reconcile_WrongType(t *testing.T) {

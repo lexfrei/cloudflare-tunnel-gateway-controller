@@ -287,6 +287,19 @@ gatewayClass:
   # -- Create GatewayClass resource
   create: true
 
+# -- Optional ValidatingAdmissionPolicy that rejects HTTPRoutes/GRPCRoutes whose
+# rules carry duplicate `name` values, enforcing the Gateway API uniqueness MUST
+# at admission (the Standard-channel CRDs omit the experimental CEL that does
+# this). Disabled by default because it is cluster-scoped and a deliberate
+# operator choice: the policy matches ALL HTTPRoutes/GRPCRoutes in the cluster
+# (a Route carries no controllerName at admission, so it cannot be limited to
+# this controller's routes) and can block updates to routes that already have
+# duplicate rule names. Requires a cluster with admissionregistration.k8s.io/v1
+# ValidatingAdmissionPolicy (Kubernetes >= 1.30).
+ruleNameUniquenessPolicy:
+  # -- Install the rule-name uniqueness ValidatingAdmissionPolicy and its binding
+  enabled: false
+
 # -- L7 Proxy configuration (enhanced-cloudflared data plane).
 # Starting v3 the L7 proxy is the ONLY data plane; the chart always
 # renders the proxy Deployment + Service + (optional) NetworkPolicy

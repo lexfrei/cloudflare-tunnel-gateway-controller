@@ -151,10 +151,11 @@ func (r *HTTPRouteReconciler) updateRouteStatus(
 
 	return updateRouteStatusGeneric(
 		ctx,
-		routeStatusUpdateParams{
-			k8sClient:      r.Client,
-			controllerName: r.ControllerName,
-			diagnostics:    diagnostics,
+		&routeStatusUpdateParams{
+			k8sClient:            r.Client,
+			controllerName:       r.ControllerName,
+			diagnostics:          diagnostics,
+			reconciledGeneration: route.Generation,
 		},
 		types.NamespacedName{Name: route.Name, Namespace: route.Namespace},
 		newHTTPRouteAccessor,

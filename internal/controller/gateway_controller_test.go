@@ -767,6 +767,88 @@ func TestGatewayReconciler_PreservesForeignStatusConditions(t *testing.T) {
 		string(gatewayv1.GatewayConditionProgrammed)))
 }
 
+// TestGatewayReconciler_UpdateStatus_SkipsObservedGenerationRegression pins the
+// Gateway API rule that a reconcile MUST NOT overwrite a status condition
+// already stamped with an observedGeneration newer than the generation this
+// reconcile observed.
+func TestGatewayReconciler_UpdateStatus_SkipsObservedGenerationRegression(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+
+	const newerGen = 5
+
+	gateway := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-gateway", Namespace: "default", Generation: 3},
+		Spec: gatewayv1.GatewaySpec{
+			GatewayClassName: "cloudflare-tunnel",
+			Listeners: []gatewayv1.Listener{
+				{Name: "http", Port: 80, Protocol: "HTTP"},
+			},
+		},
+		Status: gatewayv1.GatewayStatus{
+			Conditions: []metav1.Condition{
+				{
+					Type:               string(gatewayv1.GatewayConditionAccepted),
+					Status:             metav1.ConditionTrue,
+					ObservedGeneration: newerGen,
+					LastTransitionTime: metav1.Now(),
+					Reason:             string(gatewayv1.GatewayReasonAccepted),
+					Message:            "written by a newer reconcile",
+				},
+			},
+		},
+	}
+
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "cf-credentials", Namespace: "default"},
+		Data:       map[string][]byte{"api-token": []byte("test-token")},
+	}
+
+	gatewayClassConfig := &v1alpha1.GatewayClassConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-config"},
+		Spec: v1alpha1.GatewayClassConfigSpec{
+			CloudflareCredentialsSecretRef: v1alpha1.SecretReference{Name: "cf-credentials", Namespace: "default"},
+			TunnelID:                       "12345678-1234-1234-1234-123456789abc",
+		},
+	}
+
+	gatewayClass := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "cloudflare-tunnel"},
+		Spec: gatewayv1.GatewayClassSpec{
+			ControllerName: "test-controller",
+			ParametersRef: &gatewayv1.ParametersReference{
+				Group: config.ParametersRefGroup,
+				Kind:  config.ParametersRefKind,
+				Name:  "test-config",
+			},
+		},
+	}
+
+	fakeClient := setupGatewayFakeClient(gateway, secret, gatewayClassConfig, gatewayClass)
+	reconciler := &GatewayReconciler{
+		Client:         fakeClient,
+		Scheme:         fakeClient.Scheme(),
+		ControllerName: "test-controller",
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+	}
+
+	_, err := reconciler.Reconcile(ctx, ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "test-gateway", Namespace: "default"},
+	})
+	require.NoError(t, err)
+
+	var updated gatewayv1.Gateway
+	require.NoError(t, fakeClient.Get(ctx,
+		types.NamespacedName{Name: "test-gateway", Namespace: "default"}, &updated))
+
+	accepted := meta.FindStatusCondition(updated.Status.Conditions, string(gatewayv1.GatewayConditionAccepted))
+	require.NotNil(t, accepted)
+	assert.Equal(t, int64(newerGen), accepted.ObservedGeneration,
+		"stale reconcile must not overwrite a newer Gateway status")
+	assert.Equal(t, "written by a newer reconcile", accepted.Message)
+}
+
 // TestGatewayReconciler_ConflictedListenersSetListenersNotValid pins the Gateway
 // API requirement (gateway_types.go:187): when the Gateway contains conflicted
 // listeners, the implementation MUST set a ListenersNotValid condition. Two HTTP

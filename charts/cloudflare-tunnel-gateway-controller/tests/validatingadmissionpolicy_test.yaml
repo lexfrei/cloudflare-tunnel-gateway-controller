@@ -1,0 +1,64 @@
+suite: test validatingadmissionpolicy
+templates:
+  - validatingadmissionpolicy.yaml
+tests:
+  - it: should not render by default
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: should render both the policy and its binding when enabled
+    set:
+      ruleNameUniquenessPolicy:
+        enabled: true
+    asserts:
+      - hasDocuments:
+          count: 2
+
+  - it: should render a ValidatingAdmissionPolicy with the uniqueness CEL
+    set:
+      ruleNameUniquenessPolicy:
+        enabled: true
+    documentIndex: 0
+    asserts:
+      - isKind:
+          of: ValidatingAdmissionPolicy
+      - isAPIVersion:
+          of: admissionregistration.k8s.io/v1
+      - equal:
+          path: spec.failurePolicy
+          value: Fail
+      - equal:
+          path: spec.matchConstraints.resourceRules[0].resources
+          value:
+            - httproutes
+            - grpcroutes
+      - equal:
+          path: spec.matchConstraints.resourceRules[0].operations
+          value:
+            - CREATE
+            - UPDATE
+      - equal:
+          path: spec.validations[0].reason
+          value: Invalid
+      - matchRegex:
+          path: spec.validations[0].expression
+          pattern: exists_one
+
+  - it: should render a binding with Deny action referencing the policy
+    set:
+      ruleNameUniquenessPolicy:
+        enabled: true
+    documentIndex: 1
+    asserts:
+      - isKind:
+          of: ValidatingAdmissionPolicyBinding
+      - isAPIVersion:
+          of: admissionregistration.k8s.io/v1
+      - equal:
+          path: spec.validationActions
+          value:
+            - Deny
+      - matchRegex:
+          path: spec.policyName
+          pattern: route-rule-name-unique$

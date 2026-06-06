@@ -67,6 +67,12 @@ func (r *GatewayClassConfigReconciler) Reconcile(ctx context.Context, req ctrl.R
 			return errors.Wrap(err, "failed to get fresh GatewayClassConfig")
 		}
 
+		// Skip if a newer reconcile already advanced this config's status past
+		// the generation we observed (observedGeneration regression guard).
+		if statusGenerationStale(config.Generation, freshConfig.Status.Conditions) {
+			return nil
+		}
+
 		// Validate secrets and collect conditions
 		conditions := r.validateConfig(ctx, &freshConfig)
 		freshConfig.Status.Conditions = conditions

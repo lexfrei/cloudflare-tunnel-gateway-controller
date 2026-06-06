@@ -215,10 +215,11 @@ func (r *GRPCRouteReconciler) updateRouteStatus(
 ) error {
 	emitDiagnosticEvents(r.Recorder, route, diagnostics)
 
-	params := routeStatusUpdateParams{
-		k8sClient:      r.Client,
-		controllerName: r.ControllerName,
-		diagnostics:    diagnostics,
+	params := &routeStatusUpdateParams{
+		k8sClient:            r.Client,
+		controllerName:       r.ControllerName,
+		diagnostics:          diagnostics,
+		reconciledGeneration: route.Generation,
 	}
 
 	// gRPC over an explicit quic tunnel cannot be served (cloudflared drops HTTP

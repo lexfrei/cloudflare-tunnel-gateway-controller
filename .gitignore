@@ -28,6 +28,11 @@ temp/
 
 # Secrets and credentials
 *credentials*.yaml
+# ...but vendored upstream code is never a secret. The pattern above otherwise
+# swallows the Gateway API conformance manifest
+# httproute-cors-allow-credentials-behavior.yaml, which makes that conformance
+# test fail with "route not found" on a fresh checkout.
+!vendor/**/*credentials*.yaml
 *.key
 *.pem
 .env

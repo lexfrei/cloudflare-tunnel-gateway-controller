@@ -335,6 +335,8 @@ spec:
 | proxy.websocket.handshakeTimeout | string | `""` | 101-Switching-Protocols read deadline (Go duration). Empty preserves the 30s default. |
 | replicaCount | int | `1` | Number of controller replicas |
 | resources | object | See values.yaml for recommended production defaults | Container resource requests and limits When resources is empty ({}), the chart will use recommended defaults. Specify explicit values to override defaults. |
+| ruleNameUniquenessPolicy | object | `{"enabled":false}` | Optional ValidatingAdmissionPolicy that rejects HTTPRoutes/GRPCRoutes whose rules carry duplicate `name` values, enforcing the Gateway API uniqueness MUST at admission (the Standard-channel CRDs omit the experimental CEL that does this). Disabled by default because it is cluster-scoped and a deliberate operator choice: the policy matches ALL HTTPRoutes/GRPCRoutes in the cluster (a Route carries no controllerName at admission, so it cannot be limited to this controller's routes) and can block updates to routes that already have duplicate rule names. Requires a cluster with admissionregistration.k8s.io/v1 ValidatingAdmissionPolicy (Kubernetes >= 1.30). |
+| ruleNameUniquenessPolicy.enabled | bool | `false` | Install the rule-name uniqueness ValidatingAdmissionPolicy and its binding |
 | securityContext | object | See values.yaml | Container security context (secure defaults) |
 | service | object | `{"annotations":{},"healthPort":8081,"metricsPort":8080,"type":"ClusterIP"}` | Service configuration |
 | service.annotations | object | `{}` | Service annotations Example: Prometheus scraping annotations   prometheus.io/scrape: "true"   prometheus.io/port: "8080"   prometheus.io/path: "/metrics" |

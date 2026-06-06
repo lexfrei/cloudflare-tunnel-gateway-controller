@@ -282,7 +282,7 @@ Conformance tests validate that the controller implements the Gateway API specif
 
 ### Running E2E Tests
 
-E2E tests run against a live kind cluster with Cloudflare Tunnel and L7 proxy deployed. `E2E_TUNNEL_HOSTNAME` is required — the suite fails fast without it. `hack/conformance-setup.sh` threads it automatically from `.env` (`V2_TUNNEL_HOSTNAME`); set it explicitly when running `go test` by hand.
+E2E tests run against a live kind cluster with Cloudflare Tunnel and L7 proxy deployed. `E2E_TUNNEL_HOSTNAME` is required — the suite fails fast without it. `hack/conformance-setup.sh` threads it automatically from `.env` (`CF_TUNNEL_HOSTNAME`); set it explicitly when running `go test` by hand.
 
 ```bash
 # Run all E2E tests
@@ -318,7 +318,7 @@ Tests cover both Cloudflare Tunnel and L7 proxy features:
 
 The project integrates the official `sigs.k8s.io/gateway-api/conformance` suite with a custom `TunnelRoundTripper` that routes requests through Cloudflare edge.
 
-`CONFORMANCE_TUNNEL_HOSTNAME` is required — the suite fails fast without it. `hack/conformance-setup.sh` threads it automatically from `.env` (`V2_TUNNEL_HOSTNAME`); set it explicitly when running `go test` by hand.
+`CONFORMANCE_TUNNEL_HOSTNAME` is required — the suite fails fast without it. `hack/conformance-setup.sh` threads it automatically from `.env` (`CF_TUNNEL_HOSTNAME`); set it explicitly when running `go test` by hand.
 
 ```bash
 # Run conformance tests (requires deployed controller + tunnel)
