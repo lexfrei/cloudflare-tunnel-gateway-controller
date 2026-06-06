@@ -196,6 +196,8 @@ See [Backend mTLS](https://cf.k8s.lex.la/latest/gateway-api/limitations/#backend
 
 The proxy can emit a structured per-request access log (method, host, path, query, status, bytes_written, duration_ms, user_agent) via `proxy.accessLog.enabled: true` in Helm values. Off by default; sampling-rate knob keeps log volume manageable on busy gateways. See [Access Logging](https://cf.k8s.lex.la/latest/operations/access-logging/) for the full contract.
 
+Per Gateway API, `HTTPRouteRule.name` / `GRPCRouteRule.name` must be unique within a Route, but the Standard-channel CRDs do not enforce it (the uniqueness CEL is experimental-channel only) and rule names are cosmetic, so duplicates do not affect routing. To enforce uniqueness at admission, enable the opt-in `ruleNameUniquenessPolicy` Helm value, which installs a cluster-scoped `ValidatingAdmissionPolicy` (Kubernetes 1.30+). See [Limitations](https://cf.k8s.lex.la/latest/gateway-api/limitations/#route-rule-name-uniqueness-specrulesname) for the trade-offs.
+
 See [Gateway API documentation](https://cf.k8s.lex.la/latest/gateway-api/) for full details and examples.
 
 ## External-DNS Integration

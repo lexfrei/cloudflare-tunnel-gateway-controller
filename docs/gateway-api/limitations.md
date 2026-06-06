@@ -320,6 +320,18 @@ Route B's `/api/v2` matches first (longer path), then Route A's `/api` matches r
 
 HTTP header match names are compared case-insensitively at request time (Go's `http.Header.Values` canonicalises the key), but the CRD enforces name uniqueness case-sensitively via its list-map key. Two header matches in one rule that differ only in case (for example `Foo` and `foo`) are therefore both admitted and both required to match, where the spec treats them as equivalent and says only the first should be considered. The effect is a single over-strict (never-matching) rule, not mis-routing; impact is negligible. Query-parameter match names are exact (case-sensitive) string matches per the spec, so `Foo` and `foo` are legitimately distinct parameters and are not affected.
 
+## Route rule name uniqueness (`spec.rules[].name`)
+
+Gateway API states that `HTTPRouteRule.name` / `GRPCRouteRule.name` MUST be unique within a Route when set. Upstream enforces this only through a CEL admission rule that ships in the **experimental**-channel CRDs; the **Standard**-channel CRDs this controller targets omit it, so by default the apiserver admits a Route whose rules share a `name`. Rule names are used only for status diagnostics, not for routing, so a duplicate does not affect traffic — but the normative MUST is unenforced.
+
+The controller does not add an equivalent runtime check: Gateway API defines no status condition for this violation, the `HTTPRoute`/`GRPCRoute` CRDs are owned upstream (the project cannot add the CEL to them), and flagging a working Route as `Accepted=False` would misreport reality.
+
+To enforce uniqueness at admission, enable the bundled opt-in `ValidatingAdmissionPolicy` (`ruleNameUniquenessPolicy.enabled=true` in the Helm chart). It replicates the upstream experimental CEL natively in the apiserver — no webhook server, no CRD ownership — and rejects a Route with duplicate rule names.
+
+### Why it is off by default
+
+The policy is cluster-scoped: it applies to every `HTTPRoute`/`GRPCRoute` in the cluster (a Route carries no `controllerName` at admission, so it cannot be limited to this controller's routes) and can block updates to routes that already have duplicate names. It also requires a cluster with `admissionregistration.k8s.io/v1` ValidatingAdmissionPolicy (Kubernetes 1.30+). Enable it deliberately when those trade-offs are acceptable.
+
 ## No Native Multi-Cluster Discovery
 
 The controller performs no direct peer-cluster discovery or mesh-style cross-cluster routing on its own. It does not connect clusters together or watch endpoints in remote clusters. Cross-cluster backends ARE reachable, however, through the Multi-Cluster Services (MCS) API: a `backendRef` targeting a `ServiceImport` (`multicluster.x-k8s.io`) resolves to the `clusterset.local` DNS plane, so the cluster's own MCS implementation routes to the imported remote endpoints (see [Non-Service backend kinds](#non-service-backend-kinds)).

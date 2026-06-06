@@ -541,6 +541,16 @@
         }
       }
     },
+    "ruleNameUniquenessPolicy": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Install the rule-name uniqueness ValidatingAdmissionPolicy and its binding",
+          "default": false
+        }
+      }
+    },
     "proxy": {
       "type": "object",
       "description": "L7 Proxy configuration (enhanced-cloudflared data plane). The chart always renders the proxy resources starting v3; the pre-v3 `proxy.enabled` toggle has been removed.",
