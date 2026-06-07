@@ -413,7 +413,7 @@ jobs:
           # and content digest (Renovate's docker datasource auto-bumps the
           # tag without a separate sha256 line to drift).
           # renovate: datasource=docker depName=mikefarah/yq
-          YQ_VERSION="4.53.2"
+          YQ_VERSION="4.53.3"
           docker create --name yq-tmp "mikefarah/yq:${YQ_VERSION}"
           sudo docker cp yq-tmp:/usr/bin/yq /usr/local/bin/yq
           docker rm yq-tmp
