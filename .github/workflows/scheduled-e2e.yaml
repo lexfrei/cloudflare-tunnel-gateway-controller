@@ -10,6 +10,9 @@ on:
     - cron: '17 5 * * 1'
   workflow_dispatch: {}
 
+# Serializes scheduled runs against each other only. NB: the run shares the
+# test tunnel with local kind-based conformance/e2e runs -- a concurrent local
+# run against the same tunnel ID will fight over the tunnel config and flake.
 concurrency:
   group: ${{ github.workflow }}
   cancel-in-progress: false
@@ -79,8 +82,16 @@ jobs:
           title="Scheduled e2e against the live tunnel failed"
           run_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
+          # failure() also covers a failed infrastructure step (checkout,
+          # toolchain install) before the suite ever ran -- say which it was.
+          if [[ "${{ steps.attempt2.outcome }}" == "failure" ]]; then
+            summary="The weekly scheduled e2e run against the live test tunnel failed twice in a row (one retry to rule out transients), which may indicate a Cloudflare edge/tunnel behaviour change rather than a code regression -- no code changed to trigger this run."
+          else
+            summary="The weekly scheduled e2e run failed before completing both e2e attempts (checkout/toolchain/setup step), so this is more likely a CI infrastructure problem than a Cloudflare edge change."
+          fi
+
           {
-            echo "The weekly scheduled e2e run against the live test tunnel failed twice in a row (one retry to rule out transients), which may indicate a Cloudflare edge/tunnel behaviour change rather than a code regression -- no code changed to trigger this run."
+            echo "${summary}"
             echo ""
             echo "Failed run: ${run_url}"
             echo ""

@@ -123,7 +123,7 @@ fi
 
 for var in CF_API_TOKEN CF_ACCOUNT_ID CF_TUNNEL_ID CF_TUNNEL_TOKEN CF_TUNNEL_HOSTNAME; do
   if [[ -z "${!var:-}" ]]; then
-    die "Required variable ${var} is not set in .env (see .env.example)"
+    die "Required variable ${var} is not set (provide via .env or the environment; see .env.example)"
   fi
 done
 
