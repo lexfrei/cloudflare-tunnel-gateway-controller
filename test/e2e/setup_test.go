@@ -76,7 +76,7 @@ func newClientset(t *testing.T, kubeContext string) *kubernetes.Clientset {
 // app=<appLabel> in the given namespace. The echo-basic server logs each
 // request it receives, so this is used to verify a mirror copy actually
 // reached the mirror backend, mirroring the conformance suite's DumpEchoLogs.
-func backendPodLogs(t *testing.T, ctx context.Context, clientset *kubernetes.Clientset, namespace, appLabel string) string {
+func backendPodLogs(ctx context.Context, t *testing.T, clientset *kubernetes.Clientset, namespace, appLabel string) string {
 	t.Helper()
 
 	pods, err := clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
@@ -130,23 +130,24 @@ func setupEchoBackends(t *testing.T, k8sClient client.Client, cfg testConfig) {
 	}
 
 	for _, backend := range backends {
-		deployEchoBackend(t, ctx, k8sClient, cfg.TestNamespace, backend.name)
+		deployEchoBackend(ctx, t, k8sClient, cfg.TestNamespace, backend.name)
 	}
 
 	// Wait for backends to be ready.
 	for _, backend := range backends {
-		waitForDeployment(t, ctx, k8sClient, cfg.TestNamespace, backend.name, 120*time.Second)
+		waitForDeployment(ctx, t, k8sClient, cfg.TestNamespace, backend.name, 120*time.Second)
 	}
 }
 
-func deployEchoBackend(t *testing.T, ctx context.Context, k8sClient client.Client, namespace, name string) {
+func deployEchoBackend(ctx context.Context, t *testing.T, k8sClient client.Client, namespace, name string) {
 	t.Helper()
 
 	replicas := int32(1)
 
 	// Check if deployment already exists.
 	existing := &appsv1.Deployment{}
-	if err := k8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, existing); err == nil {
+	err := k8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, existing)
+	if err == nil {
 		t.Logf("deployment %s/%s already exists, skipping", namespace, name)
 		return
 	}
@@ -226,14 +227,15 @@ func deployEchoBackend(t *testing.T, ctx context.Context, k8sClient client.Clien
 	t.Logf("created service %s/%s", namespace, name)
 }
 
-func waitForDeployment(t *testing.T, ctx context.Context, k8sClient client.Client, namespace, name string, timeout time.Duration) {
+func waitForDeployment(ctx context.Context, t *testing.T, k8sClient client.Client, namespace, name string, timeout time.Duration) {
 	t.Helper()
 
 	err := wait.PollUntilContextTimeout(ctx, 2*time.Second, timeout, true,
 		func(pollCtx context.Context) (bool, error) {
 			deploy := &appsv1.Deployment{}
-			if getErr := k8sClient.Get(pollCtx, types.NamespacedName{Name: name, Namespace: namespace}, deploy); getErr != nil {
-				return false, nil
+			getErr := k8sClient.Get(pollCtx, types.NamespacedName{Name: name, Namespace: namespace}, deploy)
+			if getErr != nil {
+				return false, nil //nolint:nilerr // transient API errors are expected while polling; retry until timeout
 			}
 
 			return deploy.Status.ReadyReplicas >= 1, nil
@@ -251,7 +253,8 @@ func setupGateway(t *testing.T, k8sClient client.Client, cfg testConfig) {
 
 	// Check if Gateway already exists.
 	existing := &gatewayv1.Gateway{}
-	if err := k8sClient.Get(ctx, types.NamespacedName{Name: cfg.GatewayName, Namespace: cfg.Namespace}, existing); err == nil {
+	getErr := k8sClient.Get(ctx, types.NamespacedName{Name: cfg.GatewayName, Namespace: cfg.Namespace}, existing)
+	if getErr == nil {
 		t.Logf("gateway %s/%s already exists, skipping", cfg.Namespace, cfg.GatewayName)
 		return
 	}
@@ -285,8 +288,9 @@ func setupGateway(t *testing.T, k8sClient client.Client, cfg testConfig) {
 	err := wait.PollUntilContextTimeout(ctx, 2*time.Second, 60*time.Second, true,
 		func(pollCtx context.Context) (bool, error) {
 			gw := &gatewayv1.Gateway{}
-			if getErr := k8sClient.Get(pollCtx, types.NamespacedName{Name: cfg.GatewayName, Namespace: cfg.Namespace}, gw); getErr != nil {
-				return false, nil
+			getErr := k8sClient.Get(pollCtx, types.NamespacedName{Name: cfg.GatewayName, Namespace: cfg.Namespace}, gw)
+			if getErr != nil {
+				return false, nil //nolint:nilerr // transient API errors are expected while polling; retry until timeout
 			}
 
 			for _, condition := range gw.Status.Conditions {

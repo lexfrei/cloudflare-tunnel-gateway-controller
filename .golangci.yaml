@@ -110,6 +110,11 @@ linters:
           - perfsprint
           - paralleltest
           - maintidx
+          # envtest suites share TestMain-initialized state (test environment,
+          # client, scheme) via package globals -- the idiomatic
+          # controller-runtime pattern; a struct would have to thread through
+          # every helper for no isolation gain in test binaries.
+          - gochecknoglobals
         path: _test\.go
       - linters:
           - forbidigo

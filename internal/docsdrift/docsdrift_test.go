@@ -18,8 +18,6 @@ import (
 // retiredSubstrings lists v2 vocabulary that must not appear in the docs.
 // Each entry has a why-it-was-removed explanation so a future maintainer
 // who hits this test understands the v3 boundary.
-//
-//nolint:gochecknoglobals // test data table; package-level slice is the standard Go test pattern.
 var retiredSubstrings = []struct {
 	needle string
 	why    string
@@ -158,8 +156,6 @@ var retiredSubstrings = []struct {
 // recursively; non-text files are skipped by extension. Covers both the
 // markdown docs corpus and the Go source — the "v2 proxy" / "v1 path"
 // vocabulary must not survive in either.
-//
-//nolint:gochecknoglobals // test data; package-level is idiomatic.
 var trackedRoots = []string{
 	"docs",
 	"CLAUDE.md",
@@ -178,8 +174,6 @@ var trackedRoots = []string{
 
 // trackedExtensions are the file types the guard inspects. Everything
 // else (images, lockfiles, binaries) is skipped.
-//
-//nolint:gochecknoglobals // test data; package-level is idiomatic.
 var trackedExtensions = map[string]bool{
 	".md":     true,
 	".gotmpl": true,
@@ -194,8 +188,6 @@ var trackedExtensions = map[string]bool{
 // (the v2→v3 migration guide must call out what was removed; this test
 // must reference the strings it's guarding against). One per file +
 // substring pair.
-//
-//nolint:gochecknoglobals // test data; package-level is idiomatic.
 var allowedFiles = map[string]map[string]bool{
 	"docs/upgrading/v2-to-v3.md": {
 		"Helm SDK":                                true,

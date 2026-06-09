@@ -30,8 +30,6 @@ import (
 // (which the shared setupGateway intentionally does not set so other tests
 // aren't affected by the multi-listener attach semantic) and restores it on
 // cleanup. This is the only e2e test that mutates the shared Gateway spec.
-//
-//nolint:funlen // single end-to-end scenario with several wait/assert steps
 func TestListenerSetEndToEnd(t *testing.T) {
 	cfg := loadTestConfig(t)
 	httpClient := tunnelClient()
@@ -63,7 +61,7 @@ func TestListenerSetEndToEnd(t *testing.T) {
 
 	waitForBackend(t, httpClient, cfg.TunnelHostname, "/ls-e2e", "echo-v1-", 90*time.Second)
 
-	echo, resp, err := makeRequest(t, httpClient, cfg.TunnelHostname, http.MethodGet, "/ls-e2e", nil)
+	echo, resp, err := makeRequest(context.Background(), t, httpClient, cfg.TunnelHostname, http.MethodGet, "/ls-e2e", nil)
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, "/ls-e2e", echo.Path)
@@ -102,7 +100,8 @@ func allowListenerSetAttachment(t *testing.T, k8sClient client.Client, cfg testC
 
 	return func() {
 		fresh := &gatewayv1.Gateway{}
-		if err := k8sClient.Get(context.Background(), key, fresh); err != nil {
+		err := k8sClient.Get(context.Background(), key, fresh)
+		if err != nil {
 			return
 		}
 
@@ -164,8 +163,9 @@ func waitForListenerSetAccepted(t *testing.T, k8sClient client.Client, ls *gatew
 	err := wait.PollUntilContextTimeout(context.Background(), 2*time.Second, 90*time.Second, true,
 		func(pollCtx context.Context) (bool, error) {
 			current := &gatewayv1.ListenerSet{}
-			if getErr := k8sClient.Get(pollCtx, types.NamespacedName{Name: ls.Name, Namespace: ls.Namespace}, current); getErr != nil {
-				return false, nil
+			getErr := k8sClient.Get(pollCtx, types.NamespacedName{Name: ls.Name, Namespace: ls.Namespace}, current)
+			if getErr != nil {
+				return false, nil //nolint:nilerr // transient API errors are expected while polling; retry until timeout
 			}
 
 			accepted := false
@@ -193,8 +193,9 @@ func waitForGatewayAttachedListenerSets(t *testing.T, k8sClient client.Client, c
 	err := wait.PollUntilContextTimeout(context.Background(), 2*time.Second, 60*time.Second, true,
 		func(pollCtx context.Context) (bool, error) {
 			gw := &gatewayv1.Gateway{}
-			if getErr := k8sClient.Get(pollCtx, types.NamespacedName{Name: cfg.GatewayName, Namespace: cfg.Namespace}, gw); getErr != nil {
-				return false, nil
+			getErr := k8sClient.Get(pollCtx, types.NamespacedName{Name: cfg.GatewayName, Namespace: cfg.Namespace}, gw)
+			if getErr != nil {
+				return false, nil //nolint:nilerr // transient API errors are expected while polling; retry until timeout
 			}
 
 			if gw.Status.AttachedListenerSets == nil {
