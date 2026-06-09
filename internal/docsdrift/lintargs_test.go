@@ -15,16 +15,16 @@ import (
 	"testing"
 )
 
-// lintCommandDocs are the files whose golangci-lint invocations must match
-// the CI arguments. Every line mentioning `golangci-lint run` in these
-// files must carry the CI --build-tags value.
+// lintCommandDocs are the files and trees whose golangci-lint invocations
+// must match the CI arguments. Every line mentioning `golangci-lint run`
+// in any tracked markdown file must carry the CI --build-tags value.
+// Directories are walked recursively so a new doc page cannot dodge the
+// guard by not being enumerated.
 var lintCommandDocs = []string{
 	"CLAUDE.md",
+	"README.md",
 	".github/pull_request_template.md",
-	"docs/development/index.md",
-	"docs/development/setup.md",
-	"docs/development/contributing.md",
-	"docs/development/testing.md",
+	"docs",
 }
 
 // ciLintBuildTags extracts the --build-tags value from the lint job in
@@ -54,20 +54,61 @@ func TestDocumentedLintCommandsCarryCIBuildTags(t *testing.T) {
 	want := "--build-tags " + tags
 
 	for _, rel := range lintCommandDocs {
-		body, err := os.ReadFile(filepath.Join(repoRoot, rel))
+		abs := filepath.Join(repoRoot, rel)
+
+		info, err := os.Stat(abs)
 		if err != nil {
-			t.Fatalf("read %s: %v", rel, err)
+			t.Fatalf("stat %s: %v", rel, err)
 		}
 
-		for i, line := range strings.Split(string(body), "\n") {
-			if !strings.Contains(line, "golangci-lint run") {
-				continue
+		if !info.IsDir() {
+			checkLintCommands(t, repoRoot, abs, want)
+
+			continue
+		}
+
+		walkErr := filepath.Walk(abs, func(path string, fi os.FileInfo, err error) error {
+			if err != nil {
+				return err
 			}
 
-			if !strings.Contains(line, want) {
-				t.Errorf("%s:%d documents a golangci-lint invocation without %q (CI lints with it; docs must match or tag-gated packages silently pass locally):\n  %s",
-					rel, i+1, want, strings.TrimSpace(line))
+			if fi.IsDir() || filepath.Ext(path) != ".md" {
+				return nil
 			}
+
+			checkLintCommands(t, repoRoot, path, want)
+
+			return nil
+		})
+		if walkErr != nil {
+			t.Fatalf("walk %s: %v", rel, walkErr)
+		}
+	}
+}
+
+// checkLintCommands asserts every golangci-lint invocation in the file
+// carries the CI --build-tags value.
+func checkLintCommands(t *testing.T, repoRoot, absPath, want string) {
+	t.Helper()
+
+	rel, err := filepath.Rel(repoRoot, absPath)
+	if err != nil {
+		rel = absPath
+	}
+
+	body, err := os.ReadFile(absPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", rel, err)
+	}
+
+	for i, line := range strings.Split(string(body), "\n") {
+		if !strings.Contains(line, "golangci-lint run") {
+			continue
+		}
+
+		if !strings.Contains(line, want) {
+			t.Errorf("%s:%d documents a golangci-lint invocation without %q (CI lints with it; docs must match or tag-gated packages silently pass locally):\n  %s",
+				rel, i+1, want, strings.TrimSpace(line))
 		}
 	}
 }

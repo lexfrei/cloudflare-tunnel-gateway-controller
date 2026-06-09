@@ -233,8 +233,9 @@ jobs:
       # blob writes ("error writing layer blob: not_found"), failing the leg
       # after a clean build. Tolerate one transient push failure with a
       # duplicate step: the first attempt is continue-on-error, the retry only
-      # runs when the first attempt failed, and the gha layer cache makes the
-      # retry effectively push-only. Issue #423.
+      # runs when the first attempt failed, and the gha layer cache keeps the
+      # retry cheap (push-only when the first attempt got as far as writing
+      # cache-to). Issue #423.
       - name: Build and Push to ttl.sh by digest
         id: build
         continue-on-error: true
