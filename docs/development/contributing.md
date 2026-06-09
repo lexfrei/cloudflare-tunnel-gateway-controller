@@ -33,7 +33,7 @@ git clone https://github.com/lexfrei/cloudflare-tunnel-gateway-controller.git
 cd cloudflare-tunnel-gateway-controller
 go mod download
 go build ./...
-golangci-lint run
+golangci-lint run --timeout=5m --build-tags e2e,conformance,envtest
 ```
 
 ## Commit Message Format
@@ -80,7 +80,7 @@ chore(deps): update controller-runtime to v0.24.0
 1. **Title**: Use conventional commit format
 2. **Description**: Fill out the PR template completely
 3. **Tests**: Add tests for new functionality
-4. **Linting**: Ensure `golangci-lint run` passes with no errors
+4. **Linting**: Ensure `golangci-lint run --timeout=5m --build-tags e2e,conformance,envtest` passes with no errors
 5. **Documentation**: Update relevant docs
 6. **Review**: Address reviewer feedback
 
@@ -114,10 +114,10 @@ All linting errors must be fixed before merging:
 
 ```bash
 # Run linter
-golangci-lint run
+golangci-lint run --timeout=5m --build-tags e2e,conformance,envtest
 
 # Auto-fix some issues
-golangci-lint run --fix
+golangci-lint run --fix --build-tags e2e,conformance,envtest
 ```
 
 ### nolint Directives

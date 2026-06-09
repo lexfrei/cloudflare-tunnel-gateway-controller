@@ -85,7 +85,7 @@ jobs:
           # failure() also covers a failed infrastructure step (checkout,
           # toolchain install) before the suite ever ran -- say which it was.
           if [[ "${{ steps.attempt2.outcome }}" == "failure" ]]; then
-            summary="The weekly scheduled e2e run against the live test tunnel failed twice in a row (one retry to rule out transients), which may indicate a Cloudflare edge/tunnel behaviour change rather than a code regression -- no code changed to trigger this run."
+            summary="The e2e run against the live test tunnel failed twice in a row (one retry to rule out transients), which may indicate a Cloudflare edge/tunnel behaviour change rather than a code regression -- this is a scheduled/manual run, not a merge gate, so no code change triggered it."
           else
             summary="The weekly scheduled e2e run failed before completing both e2e attempts (checkout/toolchain/setup step), so this is more likely a CI infrastructure problem than a Cloudflare edge change."
           fi

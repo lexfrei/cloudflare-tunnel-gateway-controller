@@ -27,7 +27,7 @@ go build -o bin/controller ./cmd/controller
 go test -v ./...
 
 # Run linter
-golangci-lint run
+golangci-lint run --timeout=5m --build-tags e2e,conformance,envtest
 ```
 
 ## Building
@@ -106,13 +106,13 @@ The project uses golangci-lint with strict configuration:
 
 ```bash
 # Run linter
-golangci-lint run
+golangci-lint run --timeout=5m --build-tags e2e,conformance,envtest
 
 # Run with timeout for CI
-golangci-lint run --timeout=5m
+golangci-lint run --timeout=5m --build-tags e2e,conformance,envtest
 
 # Auto-fix issues
-golangci-lint run --fix
+golangci-lint run --fix --build-tags e2e,conformance,envtest
 ```
 
 ### Key Linter Settings
