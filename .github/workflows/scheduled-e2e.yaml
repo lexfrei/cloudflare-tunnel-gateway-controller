@@ -23,6 +23,9 @@ permissions:
 jobs:
   e2e:
     name: E2E against live tunnel
+    # Forks have no CF_* secrets and no business hitting the live tunnel; a
+    # manually dispatched fork run would only fail and file a noise issue.
+    if: github.repository == 'lexfrei/cloudflare-tunnel-gateway-controller'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     permissions:

@@ -320,7 +320,7 @@ else
   echo "  CONFORMANCE_KUBE_CONTEXT=${KUBE_CONTEXT} CONFORMANCE_TUNNEL_HOSTNAME=${CF_TUNNEL_HOSTNAME} go test -v -race -tags conformance -count=1 -timeout=30m ./test/conformance/..."
   echo ""
   info "To run E2E tests:"
-  echo "  CONFORMANCE_KUBE_CONTEXT=${KUBE_CONTEXT} E2E_TUNNEL_HOSTNAME=${CF_TUNNEL_HOSTNAME} go test -v -race -tags e2e -count=1 -timeout=15m ./test/e2e/..."
+  echo "  E2E_KUBE_CONTEXT=${KUBE_CONTEXT} E2E_TUNNEL_HOSTNAME=${CF_TUNNEL_HOSTNAME} go test -v -race -tags e2e -count=1 -timeout=15m ./test/e2e/..."
   echo ""
   info "To tear down:"
   echo "  kind delete cluster --name ${CLUSTER_NAME}"
