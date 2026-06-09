@@ -110,7 +110,7 @@ jobs:
             --jq '.[0].number // empty')"
 
           if [[ -n "${existing}" ]]; then
-            gh issue comment "${existing}" --body "Still failing: ${run_url}"
+            gh issue comment "${existing}" --body "Still failing: ${run_url} -- ${summary}"
           else
             gh issue create \
               --title "${title}" \

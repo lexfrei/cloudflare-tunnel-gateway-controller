@@ -333,8 +333,10 @@ jobs:
               ok=1
               break
             fi
-            echo "imagetools create failed (attempt ${attempt}); retrying in 5s..."
-            sleep 5
+            if [[ "${attempt}" -lt 3 ]]; then
+              echo "imagetools create failed (attempt ${attempt}); retrying in 5s..."
+              sleep 5
+            fi
           done
           [[ "${ok}" -eq 1 ]]
 
@@ -636,8 +638,10 @@ jobs:
               ok=1
               break
             fi
-            echo "helm push failed (attempt ${attempt}); retrying in 5s..."
-            sleep 5
+            if [[ "${attempt}" -lt 3 ]]; then
+              echo "helm push failed (attempt ${attempt}); retrying in 5s..."
+              sleep 5
+            fi
           done
           [[ "${ok}" -eq 1 ]]
 

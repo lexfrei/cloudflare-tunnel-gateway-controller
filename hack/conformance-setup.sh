@@ -98,6 +98,12 @@ if [[ -n "${CI_PR_NUMBER}" && "${SKIP_BUILD}" == "true" ]]; then
   die "--use-ci-images and --skip-build are mutually exclusive"
 fi
 
+# The test runner below is an either/or branch; accepting both flags would
+# silently drop one suite.
+if [[ "${RUN_TESTS}" == "true" && "${RUN_E2E}" == "true" ]]; then
+  die "--test and --test-e2e are mutually exclusive (run them as separate invocations)"
+fi
+
 # --- Pre-flight checks ---
 # colima is the macOS docker backend; GitHub Actions runners have a native
 # docker daemon, so the requirement (and the start step below) is skipped there.
