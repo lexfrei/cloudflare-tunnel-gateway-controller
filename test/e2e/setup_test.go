@@ -325,6 +325,9 @@ func applyObject(ctx context.Context, t *testing.T, k8sClient client.Client, obj
 	existing := obj.DeepCopyObject().(client.Object)
 
 	err := k8sClient.Get(ctx, types.NamespacedName{Name: obj.GetName(), Namespace: obj.GetNamespace()}, existing)
+	require.True(t, err == nil || apierrors.IsNotFound(err),
+		"probing for an existing %s/%s failed: %v", obj.GetNamespace(), obj.GetName(), err)
+
 	if err == nil {
 		require.NoError(t, k8sClient.Delete(ctx, existing))
 

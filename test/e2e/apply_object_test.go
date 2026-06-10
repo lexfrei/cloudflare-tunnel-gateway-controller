@@ -15,7 +15,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -98,5 +97,5 @@ func TestApplyObject_CreatesWhenAbsent(t *testing.T) {
 	var got corev1.ConfigMap
 	err := cli.Get(context.Background(), types.NamespacedName{Name: "cm", Namespace: "ns"}, &got)
 	require.NoError(t, err)
-	assert.False(t, apierrors.IsNotFound(err))
+	assert.Equal(t, map[string]string{"k": "v"}, got.Data)
 }
