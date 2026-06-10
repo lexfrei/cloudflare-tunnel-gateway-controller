@@ -549,7 +549,7 @@ func (s *RouteSyncer) SyncAllRoutes(ctx context.Context) (ctrl.Result, *SyncResu
 	// path constantly; a real route change still writes the full document.
 	if ingress.RulesUnchanged(currentConfig.Config.Ingress, finalRules) {
 		logger.Debug("tunnel configuration unchanged; skipping update", "rules", len(finalRules))
-		s.recordSyncSuccessMetrics(ctx, startTime, httpResult, grpcResult, httpBuildResult, grpcBuildResult, len(finalRules))
+		s.recordSyncSuccessMetrics(ctx, "skipped", startTime, httpResult, grpcResult, httpBuildResult, grpcBuildResult, len(finalRules))
 
 		return ctrl.Result{}, buildSyncResult(httpResult, grpcResult, httpBuildResult, grpcBuildResult), nil
 	}
@@ -581,7 +581,7 @@ func (s *RouteSyncer) SyncAllRoutes(ctx context.Context) (ctrl.Result, *SyncResu
 	logger.Info("successfully updated tunnel configuration", "rules", len(finalRules))
 
 	// Record success metrics
-	s.recordSyncSuccessMetrics(ctx, startTime, httpResult, grpcResult, httpBuildResult, grpcBuildResult, len(finalRules))
+	s.recordSyncSuccessMetrics(ctx, "success", startTime, httpResult, grpcResult, httpBuildResult, grpcBuildResult, len(finalRules))
 
 	return ctrl.Result{}, buildSyncResult(httpResult, grpcResult, httpBuildResult, grpcBuildResult), nil
 }
@@ -605,17 +605,19 @@ func buildSyncResult(
 	}
 }
 
-// recordSyncSuccessMetrics records the per-sync success metric set, shared by
-// the skip path and the write path.
+// recordSyncSuccessMetrics records the per-sync metric set shared by the
+// skip path and the write path. status distinguishes a write ("success")
+// from a steady-state no-op ("skipped") so the skip rate is observable.
 func (s *RouteSyncer) recordSyncSuccessMetrics(
 	ctx context.Context,
+	status string,
 	startTime time.Time,
 	httpResult *httpRouteResult,
 	grpcResult *grpcRouteResult,
 	httpBuildResult, grpcBuildResult ingress.BuildResult,
 	ruleCount int,
 ) {
-	s.Metrics.RecordSyncDuration(ctx, "success", time.Since(startTime))
+	s.Metrics.RecordSyncDuration(ctx, status, time.Since(startTime))
 	s.Metrics.RecordSyncedRoutes(ctx, "http", len(httpResult.accepted))
 	s.Metrics.RecordSyncedRoutes(ctx, "grpc", len(grpcResult.accepted))
 	s.Metrics.RecordIngressRules(ctx, ruleCount)

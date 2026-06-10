@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"net/http"
+	"sort"
 
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
@@ -123,6 +124,19 @@ func resolveHeadlessEndpoints(
 		endpoints = append(endpoints, eps...)
 		hadReady = hadReady || ready
 	}
+
+	// The informer cache lists EndpointSlices in map-iteration order, so a
+	// Service whose endpoints span several slices (dual-stack, >100
+	// endpoints) would otherwise produce a different backend order on every
+	// rebuild -- flapping the proxy-config content hash and silently
+	// disabling the steady-state push skip. Sort for a deterministic config.
+	sort.Slice(endpoints, func(i, j int) bool {
+		if endpoints[i].Host != endpoints[j].Host {
+			return endpoints[i].Host < endpoints[j].Host
+		}
+
+		return endpoints[i].Port < endpoints[j].Port
+	})
 
 	return endpoints, hadReady
 }

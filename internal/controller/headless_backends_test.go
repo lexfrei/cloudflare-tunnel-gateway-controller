@@ -454,3 +454,47 @@ func backendURLsCtrl(backends []proxy.BackendRef) []string {
 
 	return urls
 }
+
+// TestResolveHeadlessEndpoints_DeterministicAcrossSliceOrder pins the
+// ordering contract the proxy-config content hash depends on: a Service
+// whose endpoints span several EndpointSlices (dual-stack, >100 endpoints)
+// must resolve to the SAME backend order regardless of the order the
+// informer cache lists the slices in -- the cache iterates a map, so
+// without sorting the config hash would flap between identical rebuilds
+// and silently disable the steady-state push skip.
+func TestResolveHeadlessEndpoints_DeterministicAcrossSliceOrder(t *testing.T) {
+	t.Parallel()
+
+	svc := headlessSvc("head", "default", svcPort("first-port", 8080, 3000))
+	sliceOne := headlessSlice("head-a", "default", "head", discoveryv1.AddressTypeIPv4,
+		[]discoveryv1.EndpointPort{epPort("first-port", 3000)},
+		[]epAddr{{"10.1.0.9", true}, {"10.1.0.2", true}})
+	sliceTwo := headlessSlice("head-b", "default", "head", discoveryv1.AddressTypeIPv4,
+		[]discoveryv1.EndpointPort{epPort("first-port", 3000)},
+		[]epAddr{{"10.1.0.5", true}, {"10.1.0.1", true}})
+
+	expected := []proxy.ResolvedEndpoint{
+		{Host: "10.1.0.1", Port: 3000},
+		{Host: "10.1.0.2", Port: 3000},
+		{Host: "10.1.0.5", Port: 3000},
+		{Host: "10.1.0.9", Port: 3000},
+	}
+
+	for _, objects := range [][]struct {
+		name  string
+		slice *discoveryv1.EndpointSlice
+	}{
+		{{"one-first", sliceOne}, {"two-second", sliceTwo}},
+		{{"two-first", sliceTwo}, {"one-second", sliceOne}},
+	} {
+		cli := fake.NewClientBuilder().WithScheme(zeScheme(t)).WithObjects(
+			svc.DeepCopy(), objects[0].slice.DeepCopy(), objects[1].slice.DeepCopy(),
+		).Build()
+
+		endpoints, hadReady := resolveHeadlessEndpoints(context.Background(), cli, svc, "default", "head", 8080)
+
+		assert.True(t, hadReady)
+		assert.Equal(t, expected, endpoints,
+			"endpoint order must be deterministic regardless of slice list order")
+	}
+}
