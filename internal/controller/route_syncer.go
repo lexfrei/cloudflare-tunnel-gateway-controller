@@ -55,6 +55,21 @@ type RouteSyncer struct {
 	// Both HTTPRouteReconciler and GRPCRouteReconciler may call SyncAllRoutes
 	// concurrently, and this mutex ensures serialized access to Cloudflare API.
 	syncMu sync.Mutex
+
+	// CloudflareClientFactory overrides how the Cloudflare API client is built
+	// from the resolved credentials. nil uses the ConfigResolver's default;
+	// tests inject a factory pointing at an httptest server.
+	CloudflareClientFactory func(resolved *config.ResolvedConfig) *cloudflare.Client
+}
+
+// cloudflareClient builds the API client via the injected factory when set,
+// the ConfigResolver default otherwise.
+func (s *RouteSyncer) cloudflareClient(resolved *config.ResolvedConfig) *cloudflare.Client {
+	if s.CloudflareClientFactory != nil {
+		return s.CloudflareClientFactory(resolved)
+	}
+
+	return s.ConfigResolver.CreateCloudflareClient(resolved)
 }
 
 // NewRouteSyncer creates a new RouteSyncer.
@@ -434,7 +449,7 @@ func (s *RouteSyncer) SyncAllRoutes(ctx context.Context) (ctrl.Result, *SyncResu
 	}
 
 	// Create Cloudflare client with resolved credentials
-	cfClient := s.ConfigResolver.CreateCloudflareClient(resolvedConfig)
+	cfClient := s.cloudflareClient(resolvedConfig)
 
 	// Resolve account ID (auto-detect if not in config)
 	accountID, err := s.ConfigResolver.ResolveAccountID(ctx, cfClient, resolvedConfig)
@@ -536,6 +551,33 @@ func (s *RouteSyncer) SyncAllRoutes(ctx context.Context) (ctrl.Result, *SyncResu
 		}
 
 		return ctrl.Result{}, result, limitErr
+	}
+
+	// The Cloudflare configurations endpoint is a whole-document update — there
+	// is no rule-level PATCH — so the only way to cut API write traffic is to
+	// skip the write when the desired document is identical to the deployed
+	// one. Steady-state reconciles (status updates, endpoint events) hit this
+	// path constantly; a real route change still writes the full document.
+	if ingress.RulesUnchanged(currentConfig.Config.Ingress, finalRules) {
+		logger.Info("tunnel configuration unchanged; skipping update", "rules", len(finalRules))
+
+		s.Metrics.RecordSyncDuration(ctx, "success", time.Since(startTime))
+		s.Metrics.RecordSyncedRoutes(ctx, "http", len(httpResult.accepted))
+		s.Metrics.RecordSyncedRoutes(ctx, "grpc", len(grpcResult.accepted))
+		s.Metrics.RecordIngressRules(ctx, len(finalRules))
+		s.Metrics.RecordFailedBackendRefs(ctx, "http", len(httpBuildResult.FailedRefs))
+		s.Metrics.RecordFailedBackendRefs(ctx, "grpc", len(grpcBuildResult.FailedRefs))
+
+		return ctrl.Result{}, &SyncResult{
+			HTTPRoutes:         httpResult.accepted,
+			GRPCRoutes:         grpcResult.accepted,
+			HTTPRouteBindings:  httpResult.bindings,
+			GRPCRouteBindings:  grpcResult.bindings,
+			HTTPFailedRefs:     httpBuildResult.FailedRefs,
+			GRPCFailedRefs:     grpcBuildResult.FailedRefs,
+			RejectedHTTPRoutes: httpResult.rejected,
+			RejectedGRPCRoutes: grpcResult.rejected,
+		}, nil
 	}
 
 	cfConfig := zero_trust.TunnelCloudflaredConfigurationUpdateParams{

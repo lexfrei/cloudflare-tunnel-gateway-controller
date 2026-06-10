@@ -260,23 +260,27 @@ For non-HTTP traffic:
 
 ## Full Sync Behavior
 
-Any change to an HTTPRoute or GRPCRoute triggers a full configuration sync to Cloudflare Tunnel. This means:
+Any change to an HTTPRoute or GRPCRoute triggers a full desired-state rebuild from the controller's informer cache:
 
-1. Controller lists all HTTPRoutes and GRPCRoutes
+1. Controller lists all HTTPRoutes and GRPCRoutes (cached, no API traffic)
 2. Filters by GatewayClass
-3. Rebuilds entire ingress configuration
-4. Pushes hostname/edge routing to the Cloudflare API (one GET + one PUT)
-5. Pushes the rebuilt L7 routing config to every in-process proxy replica (the primary v3 data-plane mechanism)
+3. Rebuilds the entire ingress configuration and diffs it against the deployed one
+4. Writes hostname/edge routing to the Cloudflare API **only when the resulting document differs** (one GET always; the PUT is skipped on steady-state syncs)
+5. Pushes the rebuilt L7 routing config to the in-process proxy replicas **only when the config content or the replica set changed** (content-hash deduplication; a new replica always receives the current config)
+
+### Why there is no true incremental sync
+
+The Cloudflare Tunnel configurations endpoint is a whole-document update — there is no rule-level PATCH — so a "delta" write to Cloudflare is not expressible: any change requires writing the full ingress document. The controller therefore optimises the only thing it can: it never writes when nothing changed. The full rebuild itself is cheap — benchmarked at roughly 2 ms for a 500-route fleet (`BenchmarkRebuildAndDiff_500Routes`) — so reconcile latency is dominated by the (skippable) network calls, not by the rebuild.
 
 ### Implications
 
-- Every change triggers a full desired-state rebuild, but the controller diffs the result and makes a single Cloudflare API update (one GET + one PUT) regardless of how many routes changed
-- Brief delay when many routes are present
-- All routes are re-evaluated on any change
+- A real route change costs one GET + one PUT to Cloudflare and one config push per proxy replica, regardless of how many routes changed.
+- Steady-state reconciles (status updates, endpoint events, periodic resyncs) cost one Cloudflare GET and zero PUTs, and no proxy pushes.
+- All routes are re-evaluated on any change; full sync remains the startup and recovery path (drift introduced out-of-band is corrected on the next change-triggering sync).
 
 ### Mitigation
 
-For large deployments:
+For very large deployments:
 
 - Batch route changes when possible
 - Monitor Cloudflare API rate limits
