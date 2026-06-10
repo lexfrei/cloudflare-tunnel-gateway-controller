@@ -26,9 +26,18 @@ type projectedRule struct {
 }
 
 // extractProjectedEntries is the shared rule-walking skeleton behind every
-// adapter's entry extraction. The per-hostname loop deliberately re-projects
-// and re-resolves per hostname, matching the historical behaviour (logging
-// and failed-ref accounting repeat per hostname).
+// adapter's entry extraction. Rules are projected and their backends
+// resolved exactly once per route — neither depends on the hostname — and
+// the hostname list only multiplies the resulting entries. (Historically
+// resolution ran inside the hostname loop, duplicating every
+// BackendRefError, its log lines, and the failed-ref metric N× for an
+// N-hostname route.)
+//
+// Unsupported-feature warnings are emitted during projection for every rule,
+// including rules whose backends do not resolve — the features are ignored
+// regardless of backend resolvability, so gating the warnings on a resolved
+// backend (as the historical per-kind code did) hid them exactly when an
+// operator was debugging a broken rule.
 func extractProjectedEntries[R any](
 	ctx context.Context,
 	adapter RouteAdapter[R],
@@ -42,19 +51,19 @@ func extractProjectedEntries[R any](
 	namespace, name := adapter.GetMeta(route)
 	hostnames := adapter.GetHostnames(route)
 
-	for _, hostname := range hostnames {
-		for _, rule := range adapter.ProjectRules(route, resolver) {
-			logIgnoredFilters(resolver, namespace, name, rule.ignoredFilters)
+	for _, rule := range adapter.ProjectRules(route, resolver) {
+		logIgnoredFilters(resolver, namespace, name, rule.ignoredFilters)
 
-			service, ruleFailedRefs := resolveRuleBackendRefs(
-				ctx, resolver, namespace, name, adapter.GatewayKind(), rule.backendRefs,
-			)
-			failedRefs = append(failedRefs, ruleFailedRefs...)
+		service, ruleFailedRefs := resolveRuleBackendRefs(
+			ctx, resolver, namespace, name, adapter.GatewayKind(), rule.backendRefs,
+		)
+		failedRefs = append(failedRefs, ruleFailedRefs...)
 
-			if service == "" {
-				continue
-			}
+		if service == "" {
+			continue
+		}
 
+		for _, hostname := range hostnames {
 			if len(rule.matches) == 0 {
 				entries = append(entries, routeEntry{
 					hostname: string(hostname),

@@ -1,7 +1,9 @@
 package ingress_test
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -262,4 +264,76 @@ func TestGenericBuilder_BackendResolutionEquivalentAcrossKinds(t *testing.T) {
 		"equivalent backendRefs must resolve identically through the shared path for both route kinds")
 	assert.Contains(t, httpResult.Rules[0].Service.Value, "svc-high.other.svc.cluster.local",
 		"the shared selection must pick the highest-weight backend")
+}
+
+// TestGenericBuilder_FailedRefsNotDuplicatedPerHostname pins that a route
+// listing N hostnames reports each invalid backendRef exactly once -- the
+// failed-ref set describes the route's backends, which do not vary by
+// hostname. Historically the resolution ran inside the hostname loop and a
+// 2-hostname route doubled every BackendRefError (inflating the failed-ref
+// metric and duplicating the ResolvedRefs message).
+func TestGenericBuilder_FailedRefsNotDuplicatedPerHostname(t *testing.T) {
+	t.Parallel()
+
+	badKind := gatewayv1.Kind("ConfigMap")
+	port := gatewayv1.PortNumber(8080)
+
+	builder := ingress.NewGenericBuilder[gatewayv1.HTTPRoute](
+		"cluster.local", nil, nil, nil, nil, ingress.HTTPRouteAdapter{},
+	)
+
+	routes := []gatewayv1.HTTPRoute{{
+		ObjectMeta: metav1.ObjectMeta{Name: "r", Namespace: "default"},
+		Spec: gatewayv1.HTTPRouteSpec{
+			Hostnames: []gatewayv1.Hostname{"a.example.com", "b.example.com"},
+			Rules: []gatewayv1.HTTPRouteRule{{
+				BackendRefs: []gatewayv1.HTTPBackendRef{
+					{BackendRef: gatewayv1.BackendRef{
+						BackendObjectReference: gatewayv1.BackendObjectReference{Name: "bad", Kind: &badKind, Port: &port},
+					}},
+				},
+			}},
+		},
+	}}
+
+	result := builder.Build(context.Background(), routes)
+
+	assert.Len(t, result.FailedRefs, 1,
+		"one invalid backendRef on a two-hostname route must be reported exactly once")
+}
+
+// TestGenericBuilder_UnsupportedFeatureWarningsNotGatedOnBackends pins the
+// deliberate logging behaviour of the projection split: unsupported-feature
+// warnings describe the rule's matches, which are ignored by the tunnel
+// ingress regardless of backend resolvability, so they are emitted even for
+// a rule with no resolvable backend (historically they were silently skipped
+// exactly when an operator was debugging such a rule).
+func TestGenericBuilder_UnsupportedFeatureWarningsNotGatedOnBackends(t *testing.T) {
+	t.Parallel()
+
+	var logBuf bytes.Buffer
+
+	logger := slog.New(slog.NewTextHandler(&logBuf, nil))
+
+	builder := ingress.NewGenericBuilder[gatewayv1.HTTPRoute](
+		"cluster.local", nil, nil, nil, logger, ingress.HTTPRouteAdapter{},
+	)
+
+	method := gatewayv1.HTTPMethodPost
+	routes := []gatewayv1.HTTPRoute{{
+		ObjectMeta: metav1.ObjectMeta{Name: "r", Namespace: "default"},
+		Spec: gatewayv1.HTTPRouteSpec{
+			Hostnames: []gatewayv1.Hostname{"app.example.com"},
+			Rules: []gatewayv1.HTTPRouteRule{{
+				// A method match the tunnel ingress cannot express, and NO
+				// backendRefs -- the rule can never resolve a backend.
+				Matches: []gatewayv1.HTTPRouteMatch{{Method: &method}},
+			}},
+		},
+	}}
+
+	builder.Build(context.Background(), routes)
+
+	assert.Contains(t, logBuf.String(), "method matching not supported by Cloudflare Tunnel",
+		"the unsupported-feature warning must be emitted even when the rule has no resolvable backend")
 }
