@@ -136,7 +136,7 @@ github.com/cloudflare/cloudflare-go/v7/workflows
 github.com/cloudflare/cloudflare-go/v7/zaraz
 github.com/cloudflare/cloudflare-go/v7/zero_trust
 github.com/cloudflare/cloudflare-go/v7/zones
-# github.com/cloudflare/cloudflared v0.0.0-20260608181609-57f7d693bb76 => github.com/lexfrei/cloudflared v0.0.0-20260520094334-64f9140bdb77
+# github.com/cloudflare/cloudflared v0.0.0-20260608181609-57f7d693bb76 => github.com/lexfrei/cloudflared v0.0.0-20260610013342-cf1b1c138221
 ## explicit; go 1.26
 github.com/cloudflare/cloudflared/carrier
 github.com/cloudflare/cloudflared/cfapi
@@ -706,7 +706,7 @@ go.yaml.in/yaml/v2
 # go.yaml.in/yaml/v3 v3.0.4
 ## explicit; go 1.16
 go.yaml.in/yaml/v3
-# golang.org/x/crypto v0.51.0
+# golang.org/x/crypto v0.52.0
 ## explicit; go 1.25.0
 golang.org/x/crypto/blake2b
 golang.org/x/crypto/chacha20
@@ -1519,5 +1519,5 @@ zombiezen.com/go/capnproto2/rpc/internal/refcount
 zombiezen.com/go/capnproto2/schemas
 zombiezen.com/go/capnproto2/server
 zombiezen.com/go/capnproto2/std/capnp/rpc
-# github.com/cloudflare/cloudflared => github.com/lexfrei/cloudflared v0.0.0-20260520094334-64f9140bdb77
+# github.com/cloudflare/cloudflared => github.com/lexfrei/cloudflared v0.0.0-20260610013342-cf1b1c138221
 # github.com/quic-go/quic-go => github.com/chungthuang/quic-go v0.45.1

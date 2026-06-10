@@ -127,6 +127,7 @@ The project uses a fork of cloudflared: `github.com/lexfrei/cloudflared` (via `r
 - Patch: single commit adding `OverrideProxy` field to `orchestration/orchestrator.go`
 - **NEVER patch vendor directly** — always update the fork and re-vendor
 - When upgrading cloudflared version: rebase fork's master onto new upstream tag/commit, re-apply patch, update `replace` directive and pseudo-version in `go.mod`, then `go mod tidy && go mod vendor`
+- **Rebase cadence: monthly, or on any notable upstream cloudflared release.** Renovate bumps only the `require` digest, which the `replace` directive overrides — a Renovate bump is the signal that the fork is stale, not a real upgrade. Keep `require` and `replace` on the same upstream base so the pins do not mislead
 - **Canary tests post-rebase**: `TestVendoredCloudflaredUpgradeConstantsPinned` (`internal/tunnel/origin_vendor_drift_test.go`) fails loudly if the WebSocket signalling header / token constants drift. If it fires, audit `internal/tunnel/origin.go` `GatewayOriginProxy.ProxyHTTP` and any sibling behavioural tests (notably `TestGatewayOriginProxy_ProxyHTTP_WebSocketReinjectsHeaders`) before re-pinning the constants.
 
 ### Configuration
