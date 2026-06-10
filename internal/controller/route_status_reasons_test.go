@@ -30,9 +30,10 @@ var reasonSourceDirs = []string{
 // ownCRDReasonFiles write conditions on this project's own CRDs
 // (GatewayClassConfig), where the Gateway API reason vocabulary does not
 // apply -- their custom reasons are the API contract of that CRD, not a
-// deviation from the Gateway API spec.
+// deviation from the Gateway API spec. Keyed by dir-relative path so a
+// same-named file in another scanned package is still checked.
 var ownCRDReasonFiles = map[string]bool{
-	"gatewayclassconfig_controller.go": true,
+	"internal/controller/gatewayclassconfig_controller.go": true,
 }
 
 func TestRouteStatusReasons_NoCustomReasonLiterals(t *testing.T) {
@@ -54,7 +55,7 @@ func TestRouteStatusReasons_NoCustomReasonLiterals(t *testing.T) {
 				continue
 			}
 
-			if ownCRDReasonFiles[name] {
+			if ownCRDReasonFiles[dir+"/"+name] {
 				continue
 			}
 

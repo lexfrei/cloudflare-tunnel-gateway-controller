@@ -3,8 +3,9 @@ package controller
 // Error-path pins for the read-modify-write route status update (the spec
 // requires Get + Update under conflict retry): a failing fresh Get must
 // surface as an error so the reconcile requeues, and a failing GatewayClass
-// list (used only to scope which parents are ours) must degrade gracefully
-// instead of blocking the status write.
+// list must propagate the same way -- with a nil managed-class set every
+// parentRef would look foreign and the write would wipe our own
+// RouteParentStatus entries while reporting success.
 
 import (
 	"context"
