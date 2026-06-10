@@ -2797,6 +2797,29 @@ func TestConvertTimeouts(t *testing.T) {
 			expectedRequest: 500 * time.Millisecond,
 			expectedBackend: 0,
 		},
+		{
+			// Spec (HTTPRouteTimeouts.Request): an explicit "0s" SHOULD
+			// disable the timeout entirely. It parses to zero, which the
+			// handler treats as unbounded -- pinned here so the disable
+			// semantic cannot silently regress.
+			name: "explicit zero request timeout disables the timeout",
+			timeouts: &gatewayv1.HTTPRouteTimeouts{
+				Request: durationPtr("0s"),
+			},
+			expectedRequest: 0,
+			expectedBackend: 0,
+		},
+		{
+			// Spec (HTTPRouteTimeouts.BackendRequest): same disable
+			// semantic as Request.
+			name: "explicit zero backend timeout disables the timeout",
+			timeouts: &gatewayv1.HTTPRouteTimeouts{
+				Request:        durationPtr("10s"),
+				BackendRequest: durationPtr("0s"),
+			},
+			expectedRequest: 10 * time.Second,
+			expectedBackend: 0,
+		},
 	}
 
 	for _, tt := range tests {

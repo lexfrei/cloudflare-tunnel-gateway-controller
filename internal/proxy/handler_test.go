@@ -1606,3 +1606,4 @@ func TestIsHTTPUpgradeRequest_NilGuards(t *testing.T) {
 	assert.False(t, proxy.IsHTTPUpgradeRequestForTest(req),
 		"request with nil Header must return false, not panic")
 }
+

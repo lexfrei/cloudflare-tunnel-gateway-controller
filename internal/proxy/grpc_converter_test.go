@@ -1100,3 +1100,99 @@ func TestConvertGRPCRoutes_EmptyMatchMixedWithSpecificIsDropped(t *testing.T) {
 	require.NotNil(t, cfg.Rules[0].Matches[0].Path)
 	assert.Equal(t, "/svc.Foo/Bar", cfg.Rules[0].Matches[0].Path.Value)
 }
+
+// TestConvertRoutes_BackendTLSEquivalentAcrossRouteKinds pins the spec
+// expectation that BackendTLSPolicy behaves consistently for every way a
+// Service backend is reached: the HTTP and gRPC converters must hand the
+// SAME (namespace, service, port) tuple to the resolver and stamp the SAME
+// TLS material onto the backend. If either path diverges -- different key,
+// dropped SANs, scheme handled differently -- this fails.
+func TestConvertRoutes_BackendTLSEquivalentAcrossRouteKinds(t *testing.T) {
+	t.Parallel()
+
+	type resolverCall struct {
+		namespace string
+		service   string
+		port      int32
+	}
+
+	tlsConfig := &proxy.BackendTLSConfig{
+		CABundlePEM:        "-----BEGIN CERTIFICATE-----\nFAKE\n-----END CERTIFICATE-----\n",
+		ServerName:         "echo-svc.default.svc.cluster.local",
+		SubjectAltNames:    []string{"alt.example.com"},
+		SubjectAltNameURIs: []string{"spiffe://cluster.local/ns/default/sa/echo"},
+	}
+
+	var calls []resolverCall
+
+	tlsResolver := func(_ context.Context, namespace, serviceName string, port int32) *proxy.BackendTLSConfig {
+		calls = append(calls, resolverCall{namespace: namespace, service: serviceName, port: port})
+
+		cfgCopy := *tlsConfig
+
+		return &cfgCopy
+	}
+
+	grpcService := "grpc.examples.echo.Echo"
+	grpcMethod := "UnaryEcho"
+	grpcRoutes := []*gatewayv1.GRPCRoute{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "echo-grpc", Namespace: "default"},
+			Spec: gatewayv1.GRPCRouteSpec{
+				Rules: []gatewayv1.GRPCRouteRule{
+					{
+						Matches: []gatewayv1.GRPCRouteMatch{
+							{Method: &gatewayv1.GRPCMethodMatch{Type: grpcExact(), Service: &grpcService, Method: &grpcMethod}},
+						},
+						BackendRefs: []gatewayv1.GRPCBackendRef{grpcBackendRef("echo-svc", 8443, 1)},
+					},
+				},
+			},
+		},
+	}
+
+	httpPort := gatewayv1.PortNumber(8443)
+	httpRoutes := []*gatewayv1.HTTPRoute{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "echo-http", Namespace: "default"},
+			Spec: gatewayv1.HTTPRouteSpec{
+				Rules: []gatewayv1.HTTPRouteRule{
+					{
+						BackendRefs: []gatewayv1.HTTPBackendRef{
+							{
+								BackendRef: gatewayv1.BackendRef{
+									BackendObjectReference: gatewayv1.BackendObjectReference{
+										Name: "echo-svc",
+										Port: &httpPort,
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	httpCfg := proxy.ConvertHTTPRoutes(context.Background(), httpRoutes, "cluster.local", nil, nil, tlsResolver, nil)
+	grpcCfg := proxy.ConvertGRPCRoutes(context.Background(), grpcRoutes, "cluster.local", nil, nil, tlsResolver, nil)
+
+	require.Len(t, calls, 2, "both converters must consult the resolver exactly once for the backend")
+	assert.Equal(t, calls[0], calls[1],
+		"HTTP and gRPC converters must resolve BackendTLS with an identical (namespace, service, port) key")
+
+	require.Len(t, httpCfg.Rules, 1)
+	require.Len(t, httpCfg.Rules[0].Backends, 1)
+	require.Len(t, grpcCfg.Rules, 1)
+	require.Len(t, grpcCfg.Rules[0].Backends, 1)
+
+	httpBackend := httpCfg.Rules[0].Backends[0]
+	grpcBackend := grpcCfg.Rules[0].Backends[0]
+
+	require.NotNil(t, httpBackend.TLS)
+	require.NotNil(t, grpcBackend.TLS)
+	assert.Equal(t, httpBackend.TLS, grpcBackend.TLS,
+		"the same policy must produce identical TLS material on HTTP and gRPC backends")
+	assert.Equal(t, httpBackend.URL, grpcBackend.URL,
+		"the same Service backend must dial the same https URL from both route kinds")
+}

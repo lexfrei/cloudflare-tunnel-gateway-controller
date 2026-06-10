@@ -897,3 +897,32 @@ type errorReader struct {
 func (r *errorReader) Read(_ []byte) (int, error) {
 	return 0, r.err
 }
+
+// TestRequestRedirect_NoPortInLocationWhenPortUnset pins the spec's SHOULD NOT
+// (HTTPRequestRedirectFilter.Port): when Port is not specified, the Location
+// host carries no port at all — the well-known scheme port is implied, never
+// echoed. A request arriving with an explicit port keeps the redirect clean
+// too: the incoming port is stripped, not propagated.
+func TestRequestRedirect_NoPortInLocationWhenPortUnset(t *testing.T) {
+	t.Parallel()
+
+	scheme := testSchemeHTTPS
+
+	filter := proxy.NewRequestRedirect(&proxy.RedirectConfig{
+		Scheme: &scheme,
+	})
+
+	req := &http.Request{
+		Host:   "app.example.com:8443",
+		URL:    &url.URL{Scheme: "https", Host: "app.example.com:8443", Path: "/path"},
+		Header: http.Header{},
+	}
+
+	resp := filter.ProcessRequest(req)
+	require.NotNil(t, resp, "redirect should short-circuit")
+
+	defer resp.Body.Close()
+
+	assert.Equal(t, "https://app.example.com/path", resp.Header.Get("Location"),
+		"unset Port must not surface any port in Location, including the request's own")
+}

@@ -914,7 +914,7 @@ func acceptedEntryConditions(
 			Status:             metav1.ConditionFalse,
 			ObservedGeneration: generation,
 			LastTransitionTime: now,
-			Reason:             "NoConflicts",
+			Reason:             string(gatewayv1.ListenerReasonNoConflicts),
 			Message:            "Listener does not conflict with any other listener",
 		},
 		*resolvedRefs,
