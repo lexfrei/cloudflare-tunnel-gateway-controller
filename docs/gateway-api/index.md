@@ -92,4 +92,4 @@ flowchart TB
 
 !!! info "Full Sync"
 
-    Any change to an HTTPRoute or GRPCRoute triggers a full configuration sync. The controller rebuilds the entire route table and pushes the merged config to every proxy replica (via `PUT /config`), then updates edge registration with the Cloudflare API.
+    Any change to an HTTPRoute or GRPCRoute triggers a full desired-state rebuild. The merged config is pushed to the proxy replicas (via `PUT /config`) only when its content or the replica set changed, and the Cloudflare edge registration is rewritten only when the resulting ingress document differs from the deployed one — steady-state reconciles skip both writes. See [Full Sync Behavior](limitations.md#full-sync-behavior).

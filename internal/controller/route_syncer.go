@@ -548,7 +548,7 @@ func (s *RouteSyncer) SyncAllRoutes(ctx context.Context) (ctrl.Result, *SyncResu
 	// one. Steady-state reconciles (status updates, endpoint events) hit this
 	// path constantly; a real route change still writes the full document.
 	if ingress.RulesUnchanged(currentConfig.Config.Ingress, finalRules) {
-		logger.Info("tunnel configuration unchanged; skipping update", "rules", len(finalRules))
+		logger.Debug("tunnel configuration unchanged; skipping update", "rules", len(finalRules))
 		s.recordSyncSuccessMetrics(ctx, startTime, httpResult, grpcResult, httpBuildResult, grpcBuildResult, len(finalRules))
 
 		return ctrl.Result{}, buildSyncResult(httpResult, grpcResult, httpBuildResult, grpcBuildResult), nil

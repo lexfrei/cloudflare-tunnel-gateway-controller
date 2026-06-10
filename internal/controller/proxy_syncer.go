@@ -677,7 +677,7 @@ func (s *ProxySyncer) SyncRoutes(
 	// constantly in large fleets.
 	cfgHash := hashProxyConfig(cfg)
 	if shouldSkipPush(cfgHash, s.lastPushedHash, s.lastPushedEndpoints, resolved) {
-		logger.Info("proxy config unchanged; skipping push",
+		logger.Debug("proxy config unchanged; skipping push",
 			"endpoints", len(resolved),
 			"rules", len(cfg.Rules),
 		)
