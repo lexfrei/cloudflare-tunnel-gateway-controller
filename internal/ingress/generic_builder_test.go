@@ -1,7 +1,9 @@
 package ingress_test
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -194,4 +196,144 @@ func TestGenericBuilder_EmptyRoutes(t *testing.T) {
 
 	require.Len(t, result.Rules, 1)
 	assert.Equal(t, ingress.CatchAllService, result.Rules[0].Service.Value)
+}
+
+// TestGenericBuilder_BackendResolutionEquivalentAcrossKinds pins #400's
+// single-source guarantee: HTTPRoute and GRPCRoute backendRefs flow through
+// ONE shared resolution path (projection to plain BackendRef + shared
+// selection/validation), so equivalent inputs must yield equivalent ingress
+// rules and identical failed-ref reporting modulo the route kind name.
+func TestGenericBuilder_BackendResolutionEquivalentAcrossKinds(t *testing.T) {
+	t.Parallel()
+
+	lowWeight := int32(10)
+	highWeight := int32(90)
+	port := gatewayv1.PortNumber(8080)
+	crossNS := gatewayv1.Namespace("other")
+
+	httpBuilder := ingress.NewGenericBuilder[gatewayv1.HTTPRoute](
+		"cluster.local", nil, nil, nil, nil, ingress.HTTPRouteAdapter{},
+	)
+	grpcBuilder := ingress.NewGenericBuilder[gatewayv1.GRPCRoute](
+		"cluster.local", nil, nil, nil, nil, ingress.GRPCRouteAdapter{},
+	)
+
+	// Two weighted backends (highest wins) plus a cross-namespace ref that is
+	// permitted (nil validator) — the same shape for both kinds.
+	httpRefs := []gatewayv1.HTTPBackendRef{
+		{BackendRef: gatewayv1.BackendRef{
+			BackendObjectReference: gatewayv1.BackendObjectReference{Name: "svc-low", Port: &port},
+			Weight:                 &lowWeight,
+		}},
+		{BackendRef: gatewayv1.BackendRef{
+			BackendObjectReference: gatewayv1.BackendObjectReference{Name: "svc-high", Port: &port, Namespace: &crossNS},
+			Weight:                 &highWeight,
+		}},
+	}
+	grpcRefs := []gatewayv1.GRPCBackendRef{
+		{BackendRef: httpRefs[0].BackendRef},
+		{BackendRef: httpRefs[1].BackendRef},
+	}
+
+	httpRoutes := []gatewayv1.HTTPRoute{{
+		ObjectMeta: metav1.ObjectMeta{Name: "r", Namespace: "default"},
+		Spec: gatewayv1.HTTPRouteSpec{
+			Hostnames: []gatewayv1.Hostname{"app.example.com"},
+			Rules:     []gatewayv1.HTTPRouteRule{{BackendRefs: httpRefs}},
+		},
+	}}
+	grpcRoutes := []gatewayv1.GRPCRoute{{
+		ObjectMeta: metav1.ObjectMeta{Name: "r", Namespace: "default"},
+		Spec: gatewayv1.GRPCRouteSpec{
+			Hostnames: []gatewayv1.Hostname{"app.example.com"},
+			Rules:     []gatewayv1.GRPCRouteRule{{BackendRefs: grpcRefs}},
+		},
+	}}
+
+	httpResult := httpBuilder.Build(context.Background(), httpRoutes)
+	grpcResult := grpcBuilder.Build(context.Background(), grpcRoutes)
+
+	require.Empty(t, httpResult.FailedRefs)
+	require.Empty(t, grpcResult.FailedRefs)
+
+	// HTTP appends a catch-all rule; the route-derived rules before it must be
+	// identical to the gRPC ones (same highest-weight backend URL, same host).
+	require.NotEmpty(t, httpResult.Rules)
+	require.NotEmpty(t, grpcResult.Rules)
+	assert.Equal(t, grpcResult.Rules, httpResult.Rules[:len(httpResult.Rules)-1],
+		"equivalent backendRefs must resolve identically through the shared path for both route kinds")
+	assert.Contains(t, httpResult.Rules[0].Service.Value, "svc-high.other.svc.cluster.local",
+		"the shared selection must pick the highest-weight backend")
+}
+
+// TestGenericBuilder_FailedRefsNotDuplicatedPerHostname pins that a route
+// listing N hostnames reports each invalid backendRef exactly once -- the
+// failed-ref set describes the route's backends, which do not vary by
+// hostname. Historically the resolution ran inside the hostname loop and a
+// 2-hostname route doubled every BackendRefError (inflating the failed-ref
+// metric and duplicating the ResolvedRefs message).
+func TestGenericBuilder_FailedRefsNotDuplicatedPerHostname(t *testing.T) {
+	t.Parallel()
+
+	badKind := gatewayv1.Kind("ConfigMap")
+	port := gatewayv1.PortNumber(8080)
+
+	builder := ingress.NewGenericBuilder[gatewayv1.HTTPRoute](
+		"cluster.local", nil, nil, nil, nil, ingress.HTTPRouteAdapter{},
+	)
+
+	routes := []gatewayv1.HTTPRoute{{
+		ObjectMeta: metav1.ObjectMeta{Name: "r", Namespace: "default"},
+		Spec: gatewayv1.HTTPRouteSpec{
+			Hostnames: []gatewayv1.Hostname{"a.example.com", "b.example.com"},
+			Rules: []gatewayv1.HTTPRouteRule{{
+				BackendRefs: []gatewayv1.HTTPBackendRef{
+					{BackendRef: gatewayv1.BackendRef{
+						BackendObjectReference: gatewayv1.BackendObjectReference{Name: "bad", Kind: &badKind, Port: &port},
+					}},
+				},
+			}},
+		},
+	}}
+
+	result := builder.Build(context.Background(), routes)
+
+	assert.Len(t, result.FailedRefs, 1,
+		"one invalid backendRef on a two-hostname route must be reported exactly once")
+}
+
+// TestGenericBuilder_UnsupportedFeatureWarningsNotGatedOnBackends pins the
+// deliberate logging behaviour of the projection split: unsupported-feature
+// warnings describe the rule's matches, which are ignored by the tunnel
+// ingress regardless of backend resolvability, so they are emitted even for
+// a rule with no resolvable backend (historically they were silently skipped
+// exactly when an operator was debugging such a rule).
+func TestGenericBuilder_UnsupportedFeatureWarningsNotGatedOnBackends(t *testing.T) {
+	t.Parallel()
+
+	var logBuf bytes.Buffer
+
+	logger := slog.New(slog.NewTextHandler(&logBuf, nil))
+
+	builder := ingress.NewGenericBuilder[gatewayv1.HTTPRoute](
+		"cluster.local", nil, nil, nil, logger, ingress.HTTPRouteAdapter{},
+	)
+
+	method := gatewayv1.HTTPMethodPost
+	routes := []gatewayv1.HTTPRoute{{
+		ObjectMeta: metav1.ObjectMeta{Name: "r", Namespace: "default"},
+		Spec: gatewayv1.HTTPRouteSpec{
+			Hostnames: []gatewayv1.Hostname{"app.example.com"},
+			Rules: []gatewayv1.HTTPRouteRule{{
+				// A method match the tunnel ingress cannot express, and NO
+				// backendRefs -- the rule can never resolve a backend.
+				Matches: []gatewayv1.HTTPRouteMatch{{Method: &method}},
+			}},
+		},
+	}}
+
+	builder.Build(context.Background(), routes)
+
+	assert.Contains(t, logBuf.String(), "method matching not supported by Cloudflare Tunnel",
+		"the unsupported-feature warning must be emitted even when the rule has no resolvable backend")
 }

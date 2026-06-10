@@ -16,9 +16,18 @@ import (
 
 // RouteAdapter defines the interface for adapting different route types
 // (HTTPRoute, GRPCRoute) to a common format for ingress rule generation.
+// Adapters are pure projections: they translate their typed rules into the
+// kind-neutral projectedRule shape, and every downstream step (filter
+// logging, backend resolution, entry assembly) runs through one shared
+// implementation so the route kinds cannot drift.
 type RouteAdapter[R any] interface {
-	// RouteKind returns the kind of route (e.g., "HTTPRoute", "GRPCRoute").
+	// RouteKind returns the short route kind used for metrics labeling
+	// (e.g., "http", "grpc").
 	RouteKind() string
+
+	// GatewayKind returns the Gateway API kind name used in ReferenceGrant
+	// checks and failed-ref reporting (e.g., "HTTPRoute", "GRPCRoute").
+	GatewayKind() string
 
 	// GetMeta returns route metadata (namespace, name).
 	GetMeta(route *R) (string, string)
@@ -27,13 +36,10 @@ type RouteAdapter[R any] interface {
 	// Returns ["*"] if no hostnames are specified.
 	GetHostnames(route *R) []gatewayv1.Hostname
 
-	// ExtractEntries extracts route entries from a single route.
-	// This includes processing all rules, matches, and backend refs.
-	ExtractEntries(
-		ctx context.Context,
-		route *R,
-		resolver *backendResolver,
-	) ([]routeEntry, []BackendRefError)
+	// ProjectRules translates the route's typed rules into the kind-neutral
+	// projection, logging any per-kind features the tunnel ingress cannot
+	// express along the way.
+	ProjectRules(route *R, resolver *backendResolver) []projectedRule
 
 	// AddCatchAll returns true if a catch-all rule should be added.
 	AddCatchAll() bool
@@ -104,7 +110,7 @@ func (b *GenericBuilder[R]) Build(ctx context.Context, routes []R) BuildResult {
 	var failedRefs []BackendRefError
 
 	for i := range routes {
-		routeEntries, routeFailedRefs := b.adapter.ExtractEntries(ctx, &routes[i], resolver)
+		routeEntries, routeFailedRefs := extractProjectedEntries(ctx, b.adapter, &routes[i], resolver)
 		entries = append(entries, routeEntries...)
 		failedRefs = append(failedRefs, routeFailedRefs...)
 	}
