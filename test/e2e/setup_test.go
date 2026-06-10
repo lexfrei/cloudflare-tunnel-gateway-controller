@@ -22,6 +22,8 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
+
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/api/v1alpha1"
 )
 
 // echoBasicImage is the official Gateway API conformance echo server.
@@ -43,6 +45,7 @@ func newK8sClient(t *testing.T, kubeContext string) client.Client {
 
 	s := scheme.Scheme
 	require.NoError(t, gatewayv1.Install(s))
+	require.NoError(t, v1alpha1.AddToScheme(s))
 
 	k8sClient, err := client.New(restConfig, client.Options{Scheme: s})
 	require.NoError(t, err, "failed to create kubernetes client")

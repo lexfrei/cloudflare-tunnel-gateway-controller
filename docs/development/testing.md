@@ -349,6 +349,38 @@ A few conformance subtests are statistical by nature and occasionally need the s
 
 The same sampling-variance reasoning is applied inline for weighted backend selection in the custom e2e suite (`test/e2e/e2e_test.go`), where a deliberately wide proportion bound avoids reintroducing the flake from the opposite tail.
 
+## Live-Tunnel Coverage Matrix
+
+What actually gets exercised against a real Cloudflare Tunnel, and by which suite. "Conformance" is the official Gateway API suite (`test/conformance`, both profiles); "e2e" is the custom suite (`test/e2e`). Features marked unit-only are the deliberate residue — each carries a reason.
+
+| Feature | Live coverage | Notes |
+| --- | --- | --- |
+| HTTPRoute core + extended matching (path/header/query/method, regex, ordering) | conformance + e2e | e2e re-checks through the real edge hostname (no `X-Original-Host` rewrite) |
+| Filters: header modifiers, redirects (301/302/303/307/308, port/scheme/path), rewrites, mirrors (multiple, percentage) | conformance + e2e | percentage-mirror flake is suite-side, documented upstream |
+| CORS filter | conformance | `SupportHTTPRouteCORS` |
+| Timeouts (request / backendRequest) | conformance | explicit-`0s` disable semantics pinned by unit tests |
+| Weighted traffic splitting | conformance + e2e | |
+| Service types: ClusterIP, headless, ExternalName | conformance (`HTTPRouteServiceTypes`) | headless targetPort resolution covered |
+| BackendTLSPolicy (CA ConfigMap, SNI hostname, DNS + URI SANs) — HTTP path | conformance | `SupportBackendTLSPolicy` + `SANValidation` |
+| BackendTLSPolicy — gRPC path | e2e (`TestGRPCRouteOverTLSBackend`) | official gRPC client cannot dial through the tunnel |
+| Gateway client certificate (backend mTLS) | conformance | multi-parent edge case unit-only (documented in limitations) |
+| GRPCRoute matching + header modifiers through the tunnel transport | e2e (`TestGRPCRouteEndToEnd`) | official suite's gRPC dialer cannot reach `*.cfargotunnel.com`; suite-side tests run where possible |
+| WebSocket upgrade through the tunnel (+ response filters) | conformance + e2e | `ws` cleartext; `wss` (TLS WebSocket backend) is unit-only, see below |
+| `appProtocol` semantics: `kubernetes.io/h2c` | conformance | |
+| `appProtocol` TLS hint without BackendTLSPolicy (fail-closed 502) | e2e (`TestBackendAppProtocolTLSWithoutPolicyFailsClosed`) | spec SHOULD: never silently dial cleartext |
+| ExternalBackend CRD (direct-dial URL, base path) | e2e (`TestExternalBackendEndToEnd`) | proxy dials the URL directly, no Service resolution |
+| ListenerSet (attach, conditions, AttachedRoutes, routing) | conformance + e2e | |
+| ReferenceGrant (cross-namespace backends) | conformance | |
+| Gateway / route status conditions, observedGeneration | conformance + e2e | |
+
+Unit-only by design (each needs infrastructure a kind cluster does not have, or is not data-plane behaviour):
+
+- **ServiceImport (MCS)** — kind has no `multicluster.x-k8s.io` API or `clusterset.local` DNS; resolution logic is unit-tested (`serviceimport_builder_test.go`). Revisit if a multi-cluster test rig ever exists.
+- **`wss` backends (TLS WebSocket)** — needs a TLS-terminating WebSocket echo; the transport decision (policy → TLS, ALPN) is shared with the tested HTTPS path, so the marginal live value is low.
+- **GatewayClass finalizer, status writers, sync skip internals** — control-plane behaviour with no data-plane signal; envtest/unit cover them, and a wrongly-skipped push would fail the routing e2e immediately.
+
+When adding a user-visible feature, add its row here and decide the live-coverage story explicitly — an empty cell is a decision, not an oversight.
+
 ## Best Practices
 
 1. **Fast tests**: Unit tests should run in milliseconds
