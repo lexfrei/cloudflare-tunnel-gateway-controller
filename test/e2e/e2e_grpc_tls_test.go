@@ -21,7 +21,6 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -102,6 +101,15 @@ func TestGRPCRouteOverTLSBackend(t *testing.T) {
 				return false, nil
 			}
 
+			// A successful Echo served by a DIFFERENT pod means a lingering
+			// cleartext route on the same method answered first -- keep
+			// polling until THIS backend's pod serves the call.
+			if !strings.HasPrefix(r.GetAssertions().GetContext().GetPod(), backendName+"-") {
+				t.Logf("Echo answered by foreign pod %q; waiting for the TLS backend", r.GetAssertions().GetContext().GetPod())
+
+				return false, nil
+			}
+
 			resp = r
 
 			return true, nil
@@ -113,9 +121,6 @@ func TestGRPCRouteOverTLSBackend(t *testing.T) {
 
 	assert.Contains(t, resp.GetAssertions().GetFullyQualifiedMethod(), grpcEchoService,
 		"echo response should report the GrpcEcho service it was dispatched to")
-	assert.True(t, strings.HasPrefix(resp.GetAssertions().GetContext().GetPod(), backendName+"-"),
-		"the call must be served by the TLS backend's pod, not a lingering cleartext route; got pod %q",
-		resp.GetAssertions().GetContext().GetPod())
 }
 
 // generateBackendCA builds a throwaway CA plus a server certificate for the
@@ -276,20 +281,4 @@ func createBackendTLSPolicy(t *testing.T, k8sClient client.Client, policy *gatew
 	t.Helper()
 	applyObject(context.Background(), t, k8sClient, policy)
 	t.Logf("created BackendTLSPolicy %s/%s", policy.Namespace, policy.Name)
-}
-
-// applyObject create-or-replaces a namespaced object: existing objects are
-// deleted first so reruns against a reused cluster start from the new spec.
-func applyObject(ctx context.Context, t *testing.T, k8sClient client.Client, obj client.Object) {
-	t.Helper()
-
-	existing := obj.DeepCopyObject().(client.Object)
-
-	err := k8sClient.Get(ctx, types.NamespacedName{Name: obj.GetName(), Namespace: obj.GetNamespace()}, existing)
-	if err == nil {
-		require.NoError(t, k8sClient.Delete(ctx, existing))
-		time.Sleep(time.Second)
-	}
-
-	require.NoError(t, k8sClient.Create(ctx, obj))
 }

@@ -314,3 +314,19 @@ func mustParseQuantity(s string) *resource.Quantity {
 	q := resource.MustParse(s)
 	return &q
 }
+
+// applyObject create-or-replaces a namespaced object: existing objects are
+// deleted first so reruns against a reused cluster start from the new spec.
+func applyObject(ctx context.Context, t *testing.T, k8sClient client.Client, obj client.Object) {
+	t.Helper()
+
+	existing := obj.DeepCopyObject().(client.Object)
+
+	err := k8sClient.Get(ctx, types.NamespacedName{Name: obj.GetName(), Namespace: obj.GetNamespace()}, existing)
+	if err == nil {
+		require.NoError(t, k8sClient.Delete(ctx, existing))
+		time.Sleep(time.Second)
+	}
+
+	require.NoError(t, k8sClient.Create(ctx, obj))
+}

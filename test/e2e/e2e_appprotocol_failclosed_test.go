@@ -67,9 +67,16 @@ func TestBackendAppProtocolTLSWithoutPolicyFailsClosed(t *testing.T) {
 		_ = k8sClient.Delete(context.Background(), route)
 	})
 
-	// The proxy must answer 502 (Bad Gateway) for the route -- never 200
-	// (which would mean a silent cleartext dial) and eventually not 404
-	// (route not yet programmed).
+	// Status first: ResolvedRefs=False/UnsupportedProtocol proves the
+	// controller has SEEN the TLS hint and pushed the fail-closed config
+	// (the config push happens before the status write), which closes the
+	// stale-cache window where an early reconcile could briefly serve
+	// cleartext before the Service lands in the informer cache. Only after
+	// that is a 200 a genuine spec violation.
+	waitForRouteResolvedRefsFalse(t, k8sClient, route, string(gatewayv1.RouteReasonUnsupportedProtocol))
+
+	// Data plane: the proxy must answer 502 (Bad Gateway) for the route --
+	// never 200 (which would now mean a silent cleartext dial).
 	err := wait.PollUntilContextTimeout(ctx, 2*time.Second, 90*time.Second, true,
 		func(pollCtx context.Context) (bool, error) {
 			_, resp, reqErr := makeRequest(pollCtx, t, httpClient, cfg.TunnelHostname, http.MethodGet, "/fail-closed", nil)
@@ -85,10 +92,6 @@ func TestBackendAppProtocolTLSWithoutPolicyFailsClosed(t *testing.T) {
 		},
 	)
 	require.NoError(t, err, "a TLS appProtocol without a BackendTLSPolicy must answer 502, never reach the backend in cleartext")
-
-	// The status side of the same contract: ResolvedRefs=False with the
-	// UnsupportedProtocol reason.
-	waitForRouteResolvedRefsFalse(t, k8sClient, route, string(gatewayv1.RouteReasonUnsupportedProtocol))
 }
 
 // errStrictFailClosed aborts the poll immediately: a 200 means the proxy
