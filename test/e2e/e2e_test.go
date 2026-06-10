@@ -100,10 +100,13 @@ func tunnelClient() *http.Client {
 
 // echoHTTPResponse carries the response metadata the tests assert on. The
 // underlying body is fully consumed and closed inside makeRequest, so there
-// is nothing left for callers to close.
+// is nothing left for callers to close. Body carries the raw payload so
+// error-path tests can distinguish the proxy's own responses (e.g. "backend
+// unavailable") from intermediary error pages with the same status code.
 type echoHTTPResponse struct {
 	StatusCode int
 	Header     http.Header
+	Body       string
 }
 
 // makeRequest sends a request through the Cloudflare tunnel and parses the
@@ -142,6 +145,8 @@ func makeRequest(
 	if err != nil {
 		return nil, meta, fmt.Errorf("reading response body from %s: %w", reqURL, err)
 	}
+
+	meta.Body = string(body)
 
 	var echo echoResponse
 	if resp.Header.Get("Content-Type") == "application/json" {

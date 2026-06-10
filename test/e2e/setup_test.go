@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -316,7 +317,8 @@ func mustParseQuantity(s string) *resource.Quantity {
 }
 
 // applyObject create-or-replaces a namespaced object: existing objects are
-// deleted first so reruns against a reused cluster start from the new spec.
+// deleted first (waiting until the deletion is actually observable, not a
+// fixed sleep) so reruns against a reused cluster start from the new spec.
 func applyObject(ctx context.Context, t *testing.T, k8sClient client.Client, obj client.Object) {
 	t.Helper()
 
@@ -325,7 +327,16 @@ func applyObject(ctx context.Context, t *testing.T, k8sClient client.Client, obj
 	err := k8sClient.Get(ctx, types.NamespacedName{Name: obj.GetName(), Namespace: obj.GetNamespace()}, existing)
 	if err == nil {
 		require.NoError(t, k8sClient.Delete(ctx, existing))
-		time.Sleep(time.Second)
+
+		waitErr := wait.PollUntilContextTimeout(ctx, 200*time.Millisecond, 30*time.Second, true,
+			func(pollCtx context.Context) (bool, error) {
+				probe := obj.DeepCopyObject().(client.Object)
+				getErr := k8sClient.Get(pollCtx, types.NamespacedName{Name: obj.GetName(), Namespace: obj.GetNamespace()}, probe)
+
+				return apierrors.IsNotFound(getErr), nil
+			},
+		)
+		require.NoError(t, waitErr, "previous %s/%s never finished deleting", obj.GetNamespace(), obj.GetName())
 	}
 
 	require.NoError(t, k8sClient.Create(ctx, obj))

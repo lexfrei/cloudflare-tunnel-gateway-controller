@@ -4,7 +4,9 @@ package e2e
 
 import (
 	"context"
+	"errors"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -88,20 +90,20 @@ func TestBackendAppProtocolTLSWithoutPolicyFailsClosed(t *testing.T) {
 				return false, errStrictFailClosed
 			}
 
-			return resp.StatusCode == http.StatusBadGateway, nil
+			// Only the proxy's own fail-closed answer counts: a transient
+			// edge 502 (HTML error page) must keep the poll going, or the
+			// test would pass on a tunnel hiccup with fail-closed broken.
+			return resp.StatusCode == http.StatusBadGateway &&
+				strings.Contains(resp.Body, "backend unavailable"), nil
 		},
 	)
-	require.NoError(t, err, "a TLS appProtocol without a BackendTLSPolicy must answer 502, never reach the backend in cleartext")
+	require.NoError(t, err, "a TLS appProtocol without a BackendTLSPolicy must answer the proxy's own 502, never reach the backend in cleartext")
 }
 
 // errStrictFailClosed aborts the poll immediately: a 200 means the proxy
 // dialed the backend in cleartext despite the TLS hint -- the exact
 // behaviour the spec forbids, and waiting longer cannot fix it.
-var errStrictFailClosed = failClosedError("appProtocol https without policy answered 200: silent cleartext dial")
-
-type failClosedError string
-
-func (e failClosedError) Error() string { return string(e) }
+var errStrictFailClosed = errors.New("appProtocol https without policy answered 200: silent cleartext dial")
 
 // waitForRouteResolvedRefsFalse polls the route until one of its parents
 // carries ResolvedRefs=False with the given reason.

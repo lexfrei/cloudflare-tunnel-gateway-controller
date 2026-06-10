@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
@@ -40,6 +41,9 @@ func TestExternalBackendEndToEnd(t *testing.T) {
 			Scheme: v1alpha1.ExternalBackendSchemeHTTP,
 			Host:   "echo-v2." + cfg.TestNamespace + ".svc.cluster.local",
 			Port:   80,
+			// Base path: the proxy must prepend it to every dialed request,
+			// so the backend sees /ext-base<request-path>.
+			Path: "/ext-base",
 		},
 	}
 
@@ -72,12 +76,25 @@ func TestExternalBackendEndToEnd(t *testing.T) {
 		_ = k8sClient.Delete(context.Background(), route)
 	})
 
-	waitForBackend(t, httpClient, cfg.TunnelHostname, "/ext-backend", "echo-v2-", 90*time.Second)
+	// waitForBackend polls until the route serves; the echo pod reports the
+	// path it RECEIVED, which must carry the ExternalBackend base path.
+	err := wait.PollUntilContextTimeout(context.Background(), 2*time.Second, 90*time.Second, true,
+		func(pollCtx context.Context) (bool, error) {
+			echo, resp, reqErr := makeRequest(pollCtx, t, httpClient, cfg.TunnelHostname, http.MethodGet, "/ext-backend", nil)
+			if reqErr != nil || resp.StatusCode != http.StatusOK {
+				return false, nil //nolint:nilerr // transient edge/tunnel errors are expected while polling; retry until timeout
+			}
+
+			return strings.HasPrefix(echo.Pod, "echo-v2-"), nil
+		},
+	)
+	require.NoError(t, err, "the ExternalBackend route never started serving")
 
 	echo, resp, err := makeRequest(context.Background(), t, httpClient, cfg.TunnelHostname, http.MethodGet, "/ext-backend", nil)
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Equal(t, "/ext-backend", echo.Path)
+	assert.Equal(t, "/ext-base/ext-backend", echo.Path,
+		"the backend must receive the request path prefixed with the ExternalBackend base path")
 	assert.True(t, strings.HasPrefix(echo.Pod, "echo-v2-"),
 		"the ExternalBackend URL must be dialed directly and reach the echo pod, got pod %q", echo.Pod)
 }
