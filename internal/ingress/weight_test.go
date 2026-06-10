@@ -4,16 +4,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
-
-// mockWeightedRef is a test implementation of WeightedRef.
-type mockWeightedRef struct {
-	weight *int32
-}
-
-func (m mockWeightedRef) GetWeight() *int32 {
-	return m.weight
-}
 
 func int32Ptr(i int32) *int32 {
 	return new(i)
@@ -98,9 +90,9 @@ func TestSelectHighestWeightIndex(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			refs := make([]mockWeightedRef, len(tt.weights))
+			refs := make([]gatewayv1.BackendRef, len(tt.weights))
 			for i, w := range tt.weights {
-				refs[i] = mockWeightedRef{weight: w}
+				refs[i] = gatewayv1.BackendRef{Weight: w}
 			}
 
 			result := SelectHighestWeightIndex(refs)

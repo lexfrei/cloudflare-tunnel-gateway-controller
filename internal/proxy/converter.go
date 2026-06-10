@@ -132,6 +132,8 @@ func sortRoutesByPrecedence[T metav1.Object](routes []T) []T {
 //   - nil tlsResolver: no BackendTLSPolicy is applied; plaintext to backends.
 //   - nil gatewayCertResolver: no Gateway-level client certificate is attached
 //     to any backend TLS handshake (one-way TLS only).
+//
+//nolint:dupl // the two Convert*Routes wrappers are intentionally parallel lambda wiring into convertRoutesGeneric; the route types differ, so they cannot merge further.
 func ConvertHTTPRoutes(
 	ctx context.Context,
 	routes []*gatewayv1.HTTPRoute,
@@ -141,35 +143,22 @@ func ConvertHTTPRoutes(
 	tlsResolver BackendTLSResolver,
 	gatewayCertResolver GatewayClientCertResolver,
 ) *Config {
-	cfg := &Config{
-		Version: configVersionCounter.Add(1),
-	}
-
-	sink := &diagSink{}
-
-	for _, route := range sortRoutesByPrecedence(routes) {
-		sink.route(route.Namespace, route.Name)
-		hostnames := convertHostnames(route.Spec.Hostnames)
-		clientCert := resolveFirstParentClientCert(ctx, route, gatewayCertResolver)
-
-		for ruleIdx := range route.Spec.Rules {
-			sink.at(ruleIdx)
-			proxyRule := convertHTTPRouteRule(
+	// Rules with no backends and no redirect filter are kept — per Gateway API
+	// spec, unresolvable backend refs must return HTTP 500. The proxy handler
+	// returns 500 when no backend is available.
+	return convertRoutesGeneric(ctx, routes, gatewayCertResolver, routeKindView[*gatewayv1.HTTPRoute]{
+		hostnames:  func(route *gatewayv1.HTTPRoute) []gatewayv1.Hostname { return route.Spec.Hostnames },
+		parentRefs: func(route *gatewayv1.HTTPRoute) []gatewayv1.ParentReference { return route.Spec.ParentRefs },
+		ruleCount:  func(route *gatewayv1.HTTPRoute) int { return len(route.Spec.Rules) },
+		convertRule: func(ctx context.Context, route *gatewayv1.HTTPRoute, ruleIdx int,
+			hostnames []string, clientCert *ClientCertConfig, sink *diagSink,
+		) RouteRule {
+			return convertHTTPRouteRule(
 				ctx, &route.Spec.Rules[ruleIdx], hostnames,
 				route.Namespace, clusterDomain, validator, protocolResolver, tlsResolver, clientCert, sink,
 			)
-
-			// Rules with no backends and no redirect filter are kept —
-			// per Gateway API spec, unresolvable backend refs must return HTTP 500.
-			// The proxy handler returns 500 when no backend is available.
-
-			cfg.Rules = append(cfg.Rules, proxyRule)
-		}
-	}
-
-	cfg.Diagnostics = sink.items
-
-	return cfg
+		},
+	})
 }
 
 // kindGateway identifies the parentRef Kind we recognise when walking
@@ -178,19 +167,6 @@ func ConvertHTTPRoutes(
 // matched via gatewayv1.GroupName from the upstream package — no
 // proxy-side magic string.
 const kindGateway = "Gateway"
-
-// resolveFirstParentClientCert walks the HTTPRoute's parentRefs in declaration
-// order, asking gatewayCertResolver for each parent's client certificate, and
-// returns the first non-nil result. Multiple parents with conflicting certs
-// are a spec edge case the conformance suite does not exercise; this
-// "first-wins" rule is documented in docs/gateway-api/limitations.md.
-func resolveFirstParentClientCert(
-	ctx context.Context,
-	route *gatewayv1.HTTPRoute,
-	resolver GatewayClientCertResolver,
-) *ClientCertConfig {
-	return resolveFirstParentClientCertFromRefs(ctx, route.Spec.ParentRefs, route.Namespace, resolver)
-}
 
 // resolveFirstParentClientCertFromRefs is the route-type-agnostic core of the
 // parent-cert lookup: it walks ParentReferences directly so HTTPRoute and
@@ -460,6 +436,11 @@ func convertPathMatch(pathMatch *gatewayv1.HTTPPathMatch) *PathMatch {
 	return result
 }
 
+// convertHeaderMatch mirrors convertGRPCHeaderMatch (grpc_converter.go) by
+// design: the two Gateway API header-match types are structurally identical
+// but nominally distinct with no common underlying type, so a generic would
+// cost accessor indirection for a 10-line primitive. Deliberate per-kind
+// mirror, not drift.
 func convertHeaderMatch(header gatewayv1.HTTPHeaderMatch) HeaderMatch {
 	result := HeaderMatch{
 		Name:  string(header.Name),
@@ -1038,46 +1019,23 @@ func convertBackendRef(
 	clientCert *ClientCertConfig,
 	sink *diagSink,
 ) (BackendRef, bool) {
-	result, ok := initBackendRefBaseline(backend)
-	if !ok {
+	common := resolveCommonBackendRef(ctx, &backend.BackendRef, namespace, clusterDomain, validator)
+
+	switch common.outcome {
+	case backendRefDropped:
 		return BackendRef{}, false
+	case backendRefFinal:
+		return common.backend, common.keep
+	case backendRefExternal:
+		return convertExternalBackendRef(ctx, common.backend.Weight, backend, namespace, common.svcNamespace,
+			common.serviceName, clusterDomain, validator, tlsResolver, clientCert, sink)
+	case backendRefResolved:
 	}
 
-	serviceName := string(backend.Name)
-
-	port := int32(defaultServicePort)
-	if backend.Port != nil {
-		port = *backend.Port
-	}
-
-	svcNamespace := resolveBackendNamespace(backend, namespace)
-
-	// An invalid backendRef MUST return 500 for its traffic fraction per the
-	// Gateway API spec, not be silently dropped (which would hand its share to
-	// the valid siblings). A weight>0 invalid ref therefore stays in the
-	// weighted pool marked 500; a weight-0 ref carries no traffic and is
-	// dropped. markInvalidBackend enforces that.
-	if !IsSupportedBackendRef(backend.BackendObjectReference) {
-		return markInvalidBackend(result.Weight, serviceName, svcNamespace, port, clusterDomain, "unsupported backend kind")
-	}
-
-	// An ExternalBackend's URL lives in its spec (resolved controller-side); its
-	// backendRef port is ignored in favour of spec.port, so skip port validation.
-	if IsExternalBackendRef(backend.BackendObjectReference) {
-		return convertExternalBackendRef(ctx, result.Weight, backend, namespace, svcNamespace, serviceName,
-			clusterDomain, validator, tlsResolver, clientCert, sink)
-	}
-
-	if !validatePort(port) {
-		return markInvalidBackend(result.Weight, serviceName, svcNamespace, port, clusterDomain, "invalid port")
-	}
-
-	if !validateCrossNamespace(ctx, svcNamespace, namespace, serviceName, backend.BackendObjectReference, validator) {
-		return markInvalidBackend(result.Weight, serviceName, svcNamespace, port, clusterDomain,
-			"cross-namespace reference not permitted by ReferenceGrant")
-	}
-
-	result.URL = buildServiceURL(serviceName, svcNamespace, port, backendDomain(backend.BackendObjectReference, clusterDomain))
+	result := common.backend
+	serviceName := common.serviceName
+	svcNamespace := common.svcNamespace
+	port := common.port
 
 	// Resolve TLS first so the protocol resolver can know whether to silently
 	// pass through `appProtocol: https` (policy attached → suppressed) or warn
@@ -1189,27 +1147,6 @@ func markInvalidBackend(weight int32, name, svcNamespace string, port int32, clu
 		URL:               buildServiceURL(name, svcNamespace, urlPort, clusterDomain),
 		UnavailableStatus: http.StatusInternalServerError,
 	}, true
-}
-
-// initBackendRefBaseline validates a backend ref's weight, returning a
-// partially-initialised BackendRef when the weight is non-negative. Extracted
-// from convertBackendRef to keep that function under the funlen budget.
-func initBackendRefBaseline(backend *gatewayv1.HTTPBackendRef) (BackendRef, bool) {
-	result := BackendRef{Weight: 1}
-	if backend.Weight != nil {
-		result.Weight = *backend.Weight
-	}
-
-	if result.Weight < 0 {
-		slog.Warn("skipping backend with negative weight",
-			"name", string(backend.Name),
-			"weight", result.Weight,
-		)
-
-		return BackendRef{}, false
-	}
-
-	return result, true
 }
 
 // attachGatewayClientCert returns a backend TLS config that carries the
@@ -1501,14 +1438,6 @@ func convertBackendFilters(
 	}
 
 	return result, failClosed
-}
-
-func resolveBackendNamespace(backend *gatewayv1.HTTPBackendRef, fallback string) string {
-	if backend.Namespace != nil {
-		return string(*backend.Namespace)
-	}
-
-	return fallback
 }
 
 func validateCrossNamespace(

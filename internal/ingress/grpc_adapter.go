@@ -1,7 +1,6 @@
 package ingress
 
 import (
-	"context"
 	"fmt"
 
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
@@ -13,6 +12,12 @@ type GRPCRouteAdapter struct{}
 // RouteKind returns "grpc" for metrics labeling.
 func (GRPCRouteAdapter) RouteKind() string {
 	return "grpc"
+}
+
+// GatewayKind returns the Gateway API kind for ReferenceGrant checks and
+// failed-ref reporting.
+func (GRPCRouteAdapter) GatewayKind() string {
+	return "GRPCRoute"
 }
 
 // GetMeta returns the namespace and name of the route.
@@ -35,67 +40,42 @@ func (GRPCRouteAdapter) AddCatchAll() bool {
 	return false
 }
 
-// ExtractEntries extracts route entries from a GRPCRoute.
+// ProjectRules translates GRPCRoute rules into the kind-neutral projection,
+// logging the gRPC-specific match features the tunnel ingress cannot express
+// (header matches) and mapping method matches onto HTTP paths.
 //
-//nolint:revive // routeEntry is intentionally unexported as internal implementation detail
-func (a GRPCRouteAdapter) ExtractEntries(
-	ctx context.Context,
-	route *gatewayv1.GRPCRoute,
-	resolver *backendResolver,
-) ([]routeEntry, []BackendRefError) {
-	var entries []routeEntry
+//nolint:revive // projectedRule is intentionally unexported as internal implementation detail
+func (a GRPCRouteAdapter) ProjectRules(route *gatewayv1.GRPCRoute, resolver *backendResolver) []projectedRule {
+	rules := make([]projectedRule, 0, len(route.Spec.Rules))
 
-	var failedRefs []BackendRefError
-
-	hostnames := a.GetHostnames(route)
-
-	for _, hostname := range hostnames {
-		for _, rule := range route.Spec.Rules {
-			a.logFilters(resolver, route.Namespace, route.Name, rule.Filters)
-
-			service, ruleFailedRefs := a.resolveBackendRef(ctx, resolver, route.Namespace, route.Name, rule.BackendRefs)
-			failedRefs = append(failedRefs, ruleFailedRefs...)
-
-			if service == "" {
-				continue
-			}
-
-			if len(rule.Matches) == 0 {
-				entries = append(entries, routeEntry{
-					hostname: string(hostname),
-					path:     "",
-					service:  service,
-					priority: 0,
-				})
-
-				continue
-			}
-
-			for _, match := range rule.Matches {
-				a.logUnsupportedHeaders(resolver, route.Namespace, route.Name, match.Headers)
-
-				path, priority := a.extractGRPCPath(match.Method)
-				entries = append(entries, routeEntry{
-					hostname: string(hostname),
-					path:     path,
-					service:  service,
-					priority: priority,
-				})
-			}
+	for _, rule := range route.Spec.Rules {
+		projected := projectedRule{
+			ignoredFilters: len(rule.Filters),
+			backendRefs:    grpcBackendRefs(rule.BackendRefs),
 		}
+
+		for _, match := range rule.Matches {
+			a.logUnsupportedHeaders(resolver, route.Namespace, route.Name, match.Headers)
+
+			path, priority := a.extractGRPCPath(match.Method)
+			projected.matches = append(projected.matches, projectedMatch{path: path, priority: priority})
+		}
+
+		rules = append(rules, projected)
 	}
 
-	return entries, failedRefs
+	return rules
 }
 
-func (GRPCRouteAdapter) logFilters(resolver *backendResolver, namespace, name string, filters []gatewayv1.GRPCRouteFilter) {
-	if len(filters) > 0 {
-		resolver.logger.Info("route configuration partially applied",
-			"route", fmt.Sprintf("%s/%s", namespace, name),
-			"reason", "filters not supported by Cloudflare Tunnel",
-			"ignored_filters", len(filters),
-		)
+// grpcBackendRefs projects GRPCBackendRefs to the embedded plain BackendRefs
+// (the per-backend filters are not expressible in tunnel ingress rules).
+func grpcBackendRefs(refs []gatewayv1.GRPCBackendRef) []gatewayv1.BackendRef {
+	out := make([]gatewayv1.BackendRef, len(refs))
+	for i := range refs {
+		out[i] = refs[i].BackendRef
 	}
+
+	return out
 }
 
 func (GRPCRouteAdapter) logUnsupportedHeaders(resolver *backendResolver, namespace, name string, headers []gatewayv1.GRPCHeaderMatch) {
@@ -142,87 +122,4 @@ func (GRPCRouteAdapter) extractGRPCPath(methodMatch *gatewayv1.GRPCMethodMatch) 
 
 	// Both service and method - exact match
 	return "/" + service + "/" + method, 1
-}
-
-// resolveBackendRef validates every traffic-receiving backend in the rule and
-// returns the highest-weight backend's URL plus a BackendRefError for each
-// invalid backend. Every backend with weight > 0 is validated (not just the
-// highest-weight one) so an invalid lower-weight backend is reported and the
-// proxy can return 500 for its traffic fraction per the Gateway API spec.
-// Weight-0 backends receive no traffic and are skipped.
-//
-//nolint:dupl // mirrored on purpose against HTTPRouteAdapter.resolveBackendRef — the concrete HTTPBackendRef/GRPCBackendRef element types prevent a clean generic.
-func (a GRPCRouteAdapter) resolveBackendRef(
-	ctx context.Context,
-	resolver *backendResolver,
-	namespace, routeName string,
-	refs []gatewayv1.GRPCBackendRef,
-) (string, []BackendRefError) {
-	if len(refs) == 0 {
-		return "", nil
-	}
-
-	a.logMultipleBackends(resolver, namespace, routeName, len(refs))
-	a.logBackendWeights(resolver, namespace, routeName, refs)
-
-	selectedIdx := SelectHighestWeightIndex(wrapGRPCBackendRefs(refs))
-	if selectedIdx == -1 {
-		return "", nil
-	}
-
-	var failedRefs []BackendRefError
-
-	serviceURL := ""
-
-	for i := range refs {
-		if grpcBackendWeight(&refs[i]) == 0 {
-			continue
-		}
-
-		url, failedRef := resolveValidatedBackend(ctx, resolver, refs[i].BackendRef, namespace, routeName, "GRPCRoute")
-		if failedRef != nil {
-			failedRefs = append(failedRefs, *failedRef)
-		}
-
-		if i == selectedIdx {
-			serviceURL = url
-		}
-	}
-
-	return serviceURL, failedRefs
-}
-
-// grpcBackendWeight returns the effective weight of a backend (default 1 when
-// unset), matching SelectHighestWeightIndex's weight semantics.
-func grpcBackendWeight(ref *gatewayv1.GRPCBackendRef) int32 {
-	if ref.Weight != nil {
-		return *ref.Weight
-	}
-
-	return DefaultBackendWeight
-}
-
-func (GRPCRouteAdapter) logMultipleBackends(resolver *backendResolver, namespace, routeName string, totalBackends int) {
-	if totalBackends > 1 {
-		resolver.logger.Info("route configuration partially applied",
-			"route", fmt.Sprintf("%s/%s", namespace, routeName),
-			"reason", "multiple backendRefs specified, using only highest weight",
-			"total_backends", totalBackends,
-			"ignored_backends", totalBackends-1,
-		)
-	}
-}
-
-func (GRPCRouteAdapter) logBackendWeights(resolver *backendResolver, namespace, routeName string, refs []gatewayv1.GRPCBackendRef) {
-	for i, backendRef := range refs {
-		if backendRef.Weight != nil && *backendRef.Weight != 1 {
-			resolver.logger.Info("route configuration partially applied",
-				"route", fmt.Sprintf("%s/%s", namespace, routeName),
-				"reason", "backendRef weight ignored, traffic splitting not supported",
-				"backend", string(backendRef.Name),
-				"backend_index", i,
-				"weight", *backendRef.Weight,
-			)
-		}
-	}
 }

@@ -195,3 +195,71 @@ func TestGenericBuilder_EmptyRoutes(t *testing.T) {
 	require.Len(t, result.Rules, 1)
 	assert.Equal(t, ingress.CatchAllService, result.Rules[0].Service.Value)
 }
+
+// TestGenericBuilder_BackendResolutionEquivalentAcrossKinds pins #400's
+// single-source guarantee: HTTPRoute and GRPCRoute backendRefs flow through
+// ONE shared resolution path (projection to plain BackendRef + shared
+// selection/validation), so equivalent inputs must yield equivalent ingress
+// rules and identical failed-ref reporting modulo the route kind name.
+func TestGenericBuilder_BackendResolutionEquivalentAcrossKinds(t *testing.T) {
+	t.Parallel()
+
+	lowWeight := int32(10)
+	highWeight := int32(90)
+	port := gatewayv1.PortNumber(8080)
+	crossNS := gatewayv1.Namespace("other")
+
+	httpBuilder := ingress.NewGenericBuilder[gatewayv1.HTTPRoute](
+		"cluster.local", nil, nil, nil, nil, ingress.HTTPRouteAdapter{},
+	)
+	grpcBuilder := ingress.NewGenericBuilder[gatewayv1.GRPCRoute](
+		"cluster.local", nil, nil, nil, nil, ingress.GRPCRouteAdapter{},
+	)
+
+	// Two weighted backends (highest wins) plus a cross-namespace ref that is
+	// permitted (nil validator) — the same shape for both kinds.
+	httpRefs := []gatewayv1.HTTPBackendRef{
+		{BackendRef: gatewayv1.BackendRef{
+			BackendObjectReference: gatewayv1.BackendObjectReference{Name: "svc-low", Port: &port},
+			Weight:                 &lowWeight,
+		}},
+		{BackendRef: gatewayv1.BackendRef{
+			BackendObjectReference: gatewayv1.BackendObjectReference{Name: "svc-high", Port: &port, Namespace: &crossNS},
+			Weight:                 &highWeight,
+		}},
+	}
+	grpcRefs := []gatewayv1.GRPCBackendRef{
+		{BackendRef: httpRefs[0].BackendRef},
+		{BackendRef: httpRefs[1].BackendRef},
+	}
+
+	httpRoutes := []gatewayv1.HTTPRoute{{
+		ObjectMeta: metav1.ObjectMeta{Name: "r", Namespace: "default"},
+		Spec: gatewayv1.HTTPRouteSpec{
+			Hostnames: []gatewayv1.Hostname{"app.example.com"},
+			Rules:     []gatewayv1.HTTPRouteRule{{BackendRefs: httpRefs}},
+		},
+	}}
+	grpcRoutes := []gatewayv1.GRPCRoute{{
+		ObjectMeta: metav1.ObjectMeta{Name: "r", Namespace: "default"},
+		Spec: gatewayv1.GRPCRouteSpec{
+			Hostnames: []gatewayv1.Hostname{"app.example.com"},
+			Rules:     []gatewayv1.GRPCRouteRule{{BackendRefs: grpcRefs}},
+		},
+	}}
+
+	httpResult := httpBuilder.Build(context.Background(), httpRoutes)
+	grpcResult := grpcBuilder.Build(context.Background(), grpcRoutes)
+
+	require.Empty(t, httpResult.FailedRefs)
+	require.Empty(t, grpcResult.FailedRefs)
+
+	// HTTP appends a catch-all rule; the route-derived rules before it must be
+	// identical to the gRPC ones (same highest-weight backend URL, same host).
+	require.NotEmpty(t, httpResult.Rules)
+	require.NotEmpty(t, grpcResult.Rules)
+	assert.Equal(t, grpcResult.Rules, httpResult.Rules[:len(httpResult.Rules)-1],
+		"equivalent backendRefs must resolve identically through the shared path for both route kinds")
+	assert.Contains(t, httpResult.Rules[0].Service.Value, "svc-high.other.svc.cluster.local",
+		"the shared selection must pick the highest-weight backend")
+}

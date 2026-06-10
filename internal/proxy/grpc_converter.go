@@ -50,6 +50,8 @@ const grpcSegmentPattern = "[^/]+"
 // Multiple backendRefs are weighted: every listed backend is emitted with its
 // weight, and the proxy's weighted-random selection splits traffic in
 // proportion to those weights (same as HTTPRoute).
+//
+//nolint:dupl // the two Convert*Routes wrappers are intentionally parallel lambda wiring into convertRoutesGeneric; the route types differ, so they cannot merge further.
 func ConvertGRPCRoutes(
 	ctx context.Context,
 	routes []*gatewayv1.GRPCRoute,
@@ -59,39 +61,19 @@ func ConvertGRPCRoutes(
 	tlsResolver BackendTLSResolver,
 	gatewayCertResolver GatewayClientCertResolver,
 ) *Config {
-	cfg := &Config{
-		Version: configVersionCounter.Add(1),
-	}
-
-	sink := &diagSink{}
-
-	for _, route := range sortRoutesByPrecedence(routes) {
-		sink.route(route.Namespace, route.Name)
-		hostnames := convertHostnames(route.Spec.Hostnames)
-		clientCert := resolveFirstParentClientCertForGRPCRoute(ctx, route, gatewayCertResolver)
-
-		for ruleIdx := range route.Spec.Rules {
-			sink.at(ruleIdx)
-			cfg.Rules = append(cfg.Rules, convertGRPCRouteRule(
+	return convertRoutesGeneric(ctx, routes, gatewayCertResolver, routeKindView[*gatewayv1.GRPCRoute]{
+		hostnames:  func(route *gatewayv1.GRPCRoute) []gatewayv1.Hostname { return route.Spec.Hostnames },
+		parentRefs: func(route *gatewayv1.GRPCRoute) []gatewayv1.ParentReference { return route.Spec.ParentRefs },
+		ruleCount:  func(route *gatewayv1.GRPCRoute) int { return len(route.Spec.Rules) },
+		convertRule: func(ctx context.Context, route *gatewayv1.GRPCRoute, ruleIdx int,
+			hostnames []string, clientCert *ClientCertConfig, sink *diagSink,
+		) RouteRule {
+			return convertGRPCRouteRule(
 				ctx, &route.Spec.Rules[ruleIdx], hostnames, route.Namespace, clusterDomain,
 				validator, protocolResolver, tlsResolver, clientCert, sink,
-			))
-		}
-	}
-
-	cfg.Diagnostics = sink.items
-
-	return cfg
-}
-
-// resolveFirstParentClientCertForGRPCRoute is the GRPCRoute entry point into
-// the shared parent-cert walker — same first-wins rule HTTPRoute uses.
-func resolveFirstParentClientCertForGRPCRoute(
-	ctx context.Context,
-	route *gatewayv1.GRPCRoute,
-	resolver GatewayClientCertResolver,
-) *ClientCertConfig {
-	return resolveFirstParentClientCertFromRefs(ctx, route.Spec.ParentRefs, route.Namespace, resolver)
+			)
+		},
+	})
 }
 
 func convertGRPCRouteRule(
@@ -320,58 +302,27 @@ func convertGRPCBackendRef(
 	clientCert *ClientCertConfig,
 	sink *diagSink,
 ) (BackendRef, bool) {
-	result := BackendRef{Weight: 1}
-	if backend.Weight != nil {
-		result.Weight = *backend.Weight
-	}
+	common := resolveCommonBackendRef(ctx, &backend.BackendRef, namespace, clusterDomain, validator)
 
-	if result.Weight < 0 {
-		slog.Warn("skipping gRPC backend with negative weight", "name", string(backend.Name), "weight", result.Weight)
-
+	switch common.outcome {
+	case backendRefDropped:
 		return BackendRef{}, false
+	case backendRefFinal:
+		return common.backend, common.keep
+	case backendRefExternal:
+		// ExternalBackend: URL comes from the CRD (resolved controller-side via
+		// a sentinel); the backendRef port is ignored in favour of spec.port.
+		return convertGRPCExternalBackendRef(ctx, common.backend.Weight, backend, namespace, common.svcNamespace,
+			common.serviceName, clusterDomain, validator, sink)
+	case backendRefResolved:
 	}
 
-	serviceName := string(backend.Name)
-
-	port := int32(defaultServicePort)
-	if backend.Port != nil {
-		port = *backend.Port
-	}
-
-	svcNamespace := namespace
-	if backend.Namespace != nil {
-		svcNamespace = string(*backend.Namespace)
-	}
-
-	// An invalid backendRef MUST return 500 for its traffic fraction per the
-	// Gateway API spec rather than be dropped (mirrors convertBackendRef): a
-	// weight>0 invalid ref stays in the weighted pool marked 500, a weight-0 ref
-	// is dropped.
-	if !IsSupportedBackendRef(backend.BackendObjectReference) {
-		return markInvalidBackend(result.Weight, serviceName, svcNamespace, port, clusterDomain, "unsupported backend kind")
-	}
-
-	// ExternalBackend: URL comes from the CRD (resolved controller-side via a
-	// sentinel); the backendRef port is ignored in favour of spec.port.
-	if IsExternalBackendRef(backend.BackendObjectReference) {
-		return convertGRPCExternalBackendRef(ctx, result.Weight, backend, namespace, svcNamespace, serviceName,
-			clusterDomain, validator, sink)
-	}
-
-	if !validatePort(port) {
-		return markInvalidBackend(result.Weight, serviceName, svcNamespace, port, clusterDomain, "invalid port")
-	}
-
-	if !validateCrossNamespace(ctx, svcNamespace, namespace, serviceName, backend.BackendObjectReference, validator) {
-		return markInvalidBackend(result.Weight, serviceName, svcNamespace, port, clusterDomain,
-			"cross-namespace reference not permitted by ReferenceGrant")
-	}
-
-	result.URL = buildServiceURL(serviceName, svcNamespace, port, backendDomain(backend.BackendObjectReference, clusterDomain))
+	result := common.backend
 
 	applyGRPCBackendFilters(&result, backend.Filters, sink)
 
-	applyGRPCBackendTransport(ctx, &result, protocolResolver, tlsResolver, clientCert, svcNamespace, serviceName, port, sink)
+	applyGRPCBackendTransport(ctx, &result, protocolResolver, tlsResolver, clientCert,
+		common.svcNamespace, common.serviceName, common.port, sink)
 
 	return result, true
 }
