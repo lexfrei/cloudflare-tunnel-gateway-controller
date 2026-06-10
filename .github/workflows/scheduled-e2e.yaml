@@ -52,7 +52,7 @@ jobs:
           set -euo pipefail
 
           # renovate: datasource=github-releases depName=kubernetes-sigs/kind
-          KIND_VERSION="v0.30.0"
+          KIND_VERSION="v0.32.0"
 
           curl --retry 5 --retry-delay 1 -sSLo /tmp/kind \
             "https://github.com/kubernetes-sigs/kind/releases/download/${KIND_VERSION}/kind-linux-amd64"
