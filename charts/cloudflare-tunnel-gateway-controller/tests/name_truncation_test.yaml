@@ -1,0 +1,40 @@
+suite: test resource name truncation
+release:
+  # Long enough that naive suffix concatenation would overflow the 63-char
+  # DNS label limit on the suffixed proxy resource names.
+  name: extremely-long-release-name-for-truncation-checks
+templates:
+  - service-proxy-headless.yaml
+  - service-proxy.yaml
+  - deployment-proxy.yaml
+  - deployment.yaml
+set:
+  proxy:
+    tunnelTokenSecretRef:
+      name: tunnel-token-secret
+tests:
+  - it: keeps every suffixed resource name within the 63-character DNS label limit
+    asserts:
+      - template: service-proxy-headless.yaml
+        matchRegex:
+          path: metadata.name
+          pattern: ^.{1,63}$
+      - template: service-proxy.yaml
+        matchRegex:
+          path: metadata.name
+          pattern: ^.{1,63}$
+      - template: deployment-proxy.yaml
+        matchRegex:
+          path: metadata.name
+          pattern: ^.{1,63}$
+      - template: deployment.yaml
+        matchRegex:
+          path: metadata.name
+          pattern: ^.{1,63}$
+
+  - it: keeps the controller's proxy-endpoints flag consistent with the headless service name
+    asserts:
+      - template: deployment.yaml
+        contains:
+          path: spec.template.spec.containers[0].args
+          content: "--proxy-endpoints=http://extremely-long-release-name-for-truncation-check-proxy-headless.NAMESPACE.svc.cluster.local:8081/config"

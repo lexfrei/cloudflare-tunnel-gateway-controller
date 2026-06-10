@@ -17,7 +17,6 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/ingress"
-	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/logging"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/proxy"
 )
 
@@ -87,12 +86,13 @@ func updateRouteStatusGeneric(
 ) error {
 	// Compute managed class names once outside the retry loop.
 	// The set does not change between retries (conflict retries happen in milliseconds).
+	// A failing list MUST propagate: with a nil set every parentRef would look
+	// foreign, the write would wipe our own RouteParentStatus entries, and a
+	// transient apiserver hiccup would masquerade as "this controller manages
+	// nothing here". Requeue instead, exactly like a failing fresh Get.
 	classNames, classErr := managedClassNames(ctx, params.k8sClient, params.controllerName)
 	if classErr != nil {
-		logging.FromContext(ctx).Warn("failed to get managed class names for route status update",
-			"error", classErr)
-
-		classNames = nil
+		return errors.Wrap(classErr, "failed to get managed class names for route status update")
 	}
 
 	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {

@@ -354,6 +354,18 @@ The Gateway API spec (`gatewayclass_types.go:43`) recommends snapshotting Gatewa
 
 The GatewayClass `SupportedVersion` condition is an Experimental-channel surface (`gatewayclass_types.go:244`, marked `// <gateway:experimental>`); this controller pins and runs the Standard channel (Gateway API v1.5.1), where `SupportedVersion` is not a required condition. The controller populates it anyway as a best-effort operator signal: on each GatewayClass reconcile it reads the `gateway.networking.k8s.io/bundle-version` annotation on the installed `gatewayclasses` CRD and compares its `major.minor` to the Gateway API version the controller is built against (`consts.BundleVersion`). A matching `major.minor` sets `SupportedVersion=True` (patch releases are treated as compatible); an older or newer minor, a missing annotation, or an unreadable CRD sets `SupportedVersion=False` with reason `UnsupportedVersion` and a message naming the mismatch, so a CRD/controller version skew surfaces on status rather than as silent field-drift at runtime.
 
+### The gateway-exists finalizer is managed
+
+The Gateway API spec recommends adding the `gateway-exists-finalizer.gateway.networking.k8s.io` finalizer to a GatewayClass while at least one Gateway uses it. The controller honours this: the finalizer is added when the first Gateway referencing the class appears and removed when the last one goes away, so deleting an in-use GatewayClass blocks until its Gateways are gone.
+
+## Policy discoverability conditions stay on the policy
+
+GEP-713 recommends that implementations surface a policy's effect by writing a condition onto the **affected** objects (the Gateway, or the targeted Service) for discoverability. This controller deviates: BackendTLSPolicy acceptance, conflict, and resolution verdicts are written to the policy's own `status.ancestors` (namespaced per ancestor Gateway and controller, per GEP-713's ancestor-status mechanism), but no condition is stamped onto the affected Gateway or Service objects. Rationale: Services are user-owned objects whose `status` this controller deliberately never writes, and the ancestor entries on the policy already name every affected Gateway — `kubectl describe backendtlspolicy` shows the full effect surface. Use the policy's status, not the Service's, to discover what applies to a backend.
+
+## Redirect port defaulting never needs the listener fallback
+
+The spec says that when a `RequestRedirect` filter sets a scheme with no well-known port and no explicit `port`, the redirect SHOULD fall back to the Gateway listener's port. With the Standard-channel CRD the `scheme` enum is `http`/`https` only — both have well-known ports — so the listener-port fallback branch is unreachable and is not implemented. An explicit `port` in the filter is always honoured; an omitted `port` emits no port in `Location` (the scheme's well-known port is implied).
+
 ## Metrics and Observability
 
 The controller provides Prometheus metrics for monitoring, but:

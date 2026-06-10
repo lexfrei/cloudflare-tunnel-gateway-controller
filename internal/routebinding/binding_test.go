@@ -599,3 +599,50 @@ func TestValidateBinding_WithNamespaceSelector(t *testing.T) {
 	assert.Equal(t, gatewayv1.RouteReasonAccepted, result.Reason)
 	assert.Equal(t, []gatewayv1.SectionName{"http"}, result.MatchedListeners)
 }
+
+// TestValidateBinding_SelectorErrorPropagates pins the AllowedRoutes
+// namespace-filtering error path: an unparseable label selector must surface
+// as an error from ValidateBinding (so the caller requeues) instead of being
+// swallowed as a silent not-allowed verdict that would mislabel the route
+// NotAllowedByListeners.
+func TestValidateBinding_SelectorErrorPropagates(t *testing.T) {
+	t.Parallel()
+
+	fromSelector := gatewayv1.NamespacesFromSelector
+	hostname := gatewayv1.Hostname("app.example.com")
+
+	gateway := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "infra"},
+		Spec: gatewayv1.GatewaySpec{
+			Listeners: []gatewayv1.Listener{
+				{
+					Name:     "https",
+					Port:     443,
+					Protocol: gatewayv1.HTTPSProtocolType,
+					Hostname: &hostname,
+					AllowedRoutes: &gatewayv1.AllowedRoutes{
+						Namespaces: &gatewayv1.RouteNamespaces{
+							From: &fromSelector,
+							Selector: &metav1.LabelSelector{
+								MatchExpressions: []metav1.LabelSelectorRequirement{
+									{Key: "team", Operator: "BogusOperator", Values: []string{"x"}},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	route := &RouteInfo{
+		Namespace: "apps",
+		Hostnames: []gatewayv1.Hostname{hostname},
+	}
+
+	validator := NewValidator(setupFakeClient())
+
+	_, err := validator.ValidateBinding(context.Background(), gateway, route)
+	require.Error(t, err, "an invalid AllowedRoutes selector must propagate as an error, not a silent rejection")
+	assert.Contains(t, err.Error(), "invalid label selector")
+}

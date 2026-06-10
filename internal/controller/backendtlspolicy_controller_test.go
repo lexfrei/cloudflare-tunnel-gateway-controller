@@ -1820,3 +1820,64 @@ func TestReconcile_HappyPath_StampsAcceptedAndResolvedRefs(t *testing.T) {
 		assert.Equal(t, refreshed.Generation, condition.ObservedGeneration)
 	}
 }
+
+// TestGatewaysForPolicy_EdgeTargetRefs pins the GEP-713 ancestor-walk edges:
+// a policy with no targetRefs affects nothing (no ancestors), and a
+// targetRef of a non-Service kind is skipped rather than treated as a
+// Service name -- in both cases the policy must reconcile cleanly with an
+// empty ancestor set instead of erroring or inventing parents.
+func TestGatewaysForPolicy_EdgeTargetRefs(t *testing.T) {
+	t.Parallel()
+
+	const controllerName = "github.com/lexfrei/test"
+
+	tests := []struct {
+		name   string
+		mutate func(policy *gatewayv1.BackendTLSPolicy)
+	}{
+		{
+			name: "no targetRefs",
+			mutate: func(policy *gatewayv1.BackendTLSPolicy) {
+				policy.Spec.TargetRefs = nil
+			},
+		},
+		{
+			name: "non-Service kind skipped",
+			mutate: func(policy *gatewayv1.BackendTLSPolicy) {
+				policy.Spec.TargetRefs[0].Kind = "ConfigMap"
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			scheme := newBackendTLSPolicyScheme(t)
+
+			gatewayClass := gatewayClassFor("cf-class", controllerName)
+			gateway := gatewayFor("ns", "gw", "cf-class")
+			// An HTTPRoute references the same name the policy targets, so a
+			// regression that stops filtering by kind would surface ancestors.
+			httpRoute := httpRouteFor("ns", "r", "gw", "svc")
+			configMap := caConfigMap("ns", "cm", generateSelfSignedCAPEM(t))
+			policy := backendTLSPolicyFor("ns", "p", "svc", "cm", time.Time{})
+			tt.mutate(policy)
+
+			fakeClient := fake.NewClientBuilder().
+				WithScheme(scheme).
+				WithObjects(gatewayClass, gateway, httpRoute, configMap, policy).
+				WithStatusSubresource(policy).
+				Build()
+			r := &BackendTLSPolicyReconciler{Client: fakeClient, Scheme: scheme, ControllerName: controllerName}
+
+			_, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Namespace: "ns", Name: "p"}})
+			require.NoError(t, err)
+
+			var refreshed gatewayv1.BackendTLSPolicy
+			require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKey{Namespace: "ns", Name: "p"}, &refreshed))
+			assert.Empty(t, refreshed.Status.Ancestors,
+				"a policy that targets nothing resolvable must not invent ancestor entries")
+		})
+	}
+}

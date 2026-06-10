@@ -15,8 +15,13 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 	"sigs.k8s.io/gateway-api/pkg/consts"
 )
@@ -68,11 +73,64 @@ func (r *GatewayClassReconciler) Reconcile(ctx context.Context, req ctrl.Request
 
 	logger.Info("reconciling GatewayClass", "name", gatewayClass.Name)
 
+	if err := r.reconcileFinalizer(ctx, &gatewayClass); err != nil {
+		return ctrl.Result{}, errors.Wrap(err, "failed to reconcile GatewayClass finalizer")
+	}
+
+	// A class in deletion gets no status writes: removing our finalizer above
+	// may have let the object vanish, and stamping conditions onto a
+	// terminating object is pointless anyway.
+	if !gatewayClass.DeletionTimestamp.IsZero() {
+		return ctrl.Result{}, nil
+	}
+
 	if err := r.updateStatus(ctx, req.NamespacedName, gatewayClass.Generation); err != nil {
 		return ctrl.Result{}, errors.Wrap(err, "failed to update GatewayClass status")
 	}
 
 	return ctrl.Result{}, nil
+}
+
+// reconcileFinalizer keeps the spec-defined gateway-exists finalizer in sync
+// with actual usage: present while at least one Gateway references the class
+// (so a delete cannot pull the class out from under running Gateways), absent
+// once nothing uses it. Foreign finalizers are never touched. The finalizer
+// is never ADDED to a class already in deletion -- the API server rejects new
+// finalizers on deleting objects -- but removal during deletion is exactly
+// what unblocks the delete and must always run.
+func (r *GatewayClassReconciler) reconcileFinalizer(ctx context.Context, gatewayClass *gatewayv1.GatewayClass) error {
+	var gateways gatewayv1.GatewayList
+	if err := r.List(ctx, &gateways); err != nil {
+		return errors.Wrap(err, "failed to list Gateways for finalizer accounting")
+	}
+
+	inUse := false
+
+	for i := range gateways.Items {
+		if string(gateways.Items[i].Spec.GatewayClassName) == gatewayClass.Name {
+			inUse = true
+
+			break
+		}
+	}
+
+	hasFinalizer := controllerutil.ContainsFinalizer(gatewayClass, gatewayv1.GatewayClassFinalizerGatewaysExist)
+	deleting := !gatewayClass.DeletionTimestamp.IsZero()
+
+	switch {
+	case inUse && !hasFinalizer && !deleting:
+		controllerutil.AddFinalizer(gatewayClass, gatewayv1.GatewayClassFinalizerGatewaysExist)
+	case !inUse && hasFinalizer:
+		controllerutil.RemoveFinalizer(gatewayClass, gatewayv1.GatewayClassFinalizerGatewaysExist)
+	default:
+		return nil
+	}
+
+	if err := r.Update(ctx, gatewayClass); err != nil {
+		return errors.Wrap(err, "failed to update GatewayClass finalizers")
+	}
+
+	return nil
 }
 
 func (r *GatewayClassReconciler) updateStatus(
@@ -260,16 +318,41 @@ func parseMajorMinor(version string) (int, int, bool) {
 
 // SetupWithManager sets up the controller with the Manager.
 //
-// It watches only GatewayClass, not the Gateway API CRDs. This is deliberate:
+// It watches GatewayClass and Gateways (for finalizer accounting), but
+// deliberately not the Gateway API CRDs:
 // the SupportedVersion bundle check is a best-effort signal, and watching CRDs
 // would mean a cluster-wide CRD informer plus list/watch RBAC just to react to
 // a bundle upgrade. The trade-off is that SupportedVersion is recomputed only
 // on the next GatewayClass reconcile (spec change, periodic resync, or
 // controller restart), not the instant the CRD bundle changes — a CRD upgrade
 // in practice rolls the controller image, which forces that reconcile anyway.
+// The Gateway watch keeps the gateway-exists finalizer current: a Gateway
+// appearing or disappearing re-reconciles its class so the finalizer is added
+// the moment the class comes into use and removed once the last user is gone.
 func (r *GatewayClassReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	//nolint:wrapcheck // controller-runtime builder pattern
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&gatewayv1.GatewayClass{}).
+		// GenerationChangedPredicate keeps Gateway status writes (every
+		// GatewayReconciler pass) from re-reconciling the class; finalizer
+		// accounting only needs create/delete and spec changes (which include
+		// gatewayClassName moves -- the map func sees both old and new).
+		Watches(&gatewayv1.Gateway{},
+			handler.EnqueueRequestsFromMapFunc(gatewayClassForGateway),
+			builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Complete(r)
+}
+
+// gatewayClassForGateway maps a Gateway event to a reconcile request for the
+// GatewayClass it references. The Reconcile controllerName check filters out
+// foreign classes, so no filtering is needed here.
+func gatewayClassForGateway(_ context.Context, obj client.Object) []reconcile.Request {
+	gateway, ok := obj.(*gatewayv1.Gateway)
+	if !ok {
+		return nil
+	}
+
+	return []reconcile.Request{
+		{NamespacedName: types.NamespacedName{Name: string(gateway.Spec.GatewayClassName)}},
+	}
 }

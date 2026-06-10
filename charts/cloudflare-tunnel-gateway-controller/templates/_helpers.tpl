@@ -65,7 +65,18 @@ Create the name of the service account to use
 Proxy fullname
 */}}
 {{- define "cf-tunnel-gw-ctrl.proxyFullname" -}}
-{{ include "cf-tunnel-gw-ctrl.fullname" . }}-proxy
+{{- printf "%s-proxy" (include "cf-tunnel-gw-ctrl.fullname" . | trunc 57 | trimSuffix "-") }}
+{{- end }}
+
+{{/*
+Proxy headless service name. The base is truncated BEFORE the suffixes are
+appended so the full name stays within the 63-character DNS label limit and
+the "-proxy-headless" suffix is never cut off (which would collide with the
+proxy Service name). The controller's --proxy-endpoints flag uses this same
+helper, so the DNS name it resolves always matches the rendered Service.
+*/}}
+{{- define "cf-tunnel-gw-ctrl.proxyHeadlessName" -}}
+{{- printf "%s-proxy-headless" (include "cf-tunnel-gw-ctrl.fullname" . | trunc 48 | trimSuffix "-") }}
 {{- end }}
 
 {{/*
