@@ -115,3 +115,70 @@ func TestListenerSetStatus_NeverLeaksSecretContents(t *testing.T) {
 	assert.NotContains(t, string(statusJSON), siblingSecretMarker,
 		"ListenerSet status must not echo a sibling's Secret contents")
 }
+
+// TestListenerSetReconciler_GRPCRouteCountedOncePerEntry pins two
+// AttachedRoutes MUSTs for the ListenerSet path: GRPCRoutes attached to a
+// ListenerSet entry are counted (parity with HTTPRoute), and a route listing
+// the same entry through multiple parentRefs (degenerate but legal) counts
+// at most once.
+func TestListenerSetReconciler_GRPCRouteCountedOncePerEntry(t *testing.T) {
+	t.Parallel()
+
+	from := gatewayv1.NamespacesFromSame
+	section := gatewayv1.SectionName("grpc")
+	lsKind := gatewayv1.Kind("ListenerSet")
+
+	gc := managedGatewayClass()
+	gw := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "infra"},
+		Spec: gatewayv1.GatewaySpec{
+			GatewayClassName: gatewayv1.ObjectName(gc.Name),
+			AllowedListeners: &gatewayv1.AllowedListeners{
+				Namespaces: &gatewayv1.ListenerNamespaces{From: &from},
+			},
+			Listeners: []gatewayv1.Listener{
+				{Name: "gw-l1", Port: 80, Protocol: gatewayv1.HTTPProtocolType},
+			},
+		},
+	}
+	ls := &gatewayv1.ListenerSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "ls", Namespace: "infra"},
+		Spec: gatewayv1.ListenerSetSpec{
+			ParentRef: gatewayv1.ParentGatewayReference{Name: gatewayv1.ObjectName(gw.Name)},
+			Listeners: []gatewayv1.ListenerEntry{
+				{
+					Name: section, Port: 8080, Protocol: gatewayv1.HTTPProtocolType,
+					AllowedRoutes: &gatewayv1.AllowedRoutes{
+						Namespaces: &gatewayv1.RouteNamespaces{From: namespacesFromAllPtr()},
+					},
+				},
+			},
+		},
+	}
+	route := &gatewayv1.GRPCRoute{
+		ObjectMeta: metav1.ObjectMeta{Name: "grpc-r", Namespace: "infra"},
+		Spec: gatewayv1.GRPCRouteSpec{
+			CommonRouteSpec: gatewayv1.CommonRouteSpec{
+				// Two parentRefs naming the same ListenerSet section: legal,
+				// degenerate, must count once.
+				ParentRefs: []gatewayv1.ParentReference{
+					{Kind: &lsKind, Name: gatewayv1.ObjectName(ls.Name), SectionName: &section},
+					{Kind: &lsKind, Name: gatewayv1.ObjectName(ls.Name), SectionName: &section},
+				},
+			},
+		},
+	}
+
+	scheme := newListenerSetScheme(t)
+	r, cli := newListenerSetReconcilerWithObjects(t, scheme, gc, gw, ls, route)
+
+	_, err := r.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: ls.Name, Namespace: ls.Namespace},
+	})
+	require.NoError(t, err)
+
+	updated := getListenerSet(t, cli, ls.Name, ls.Namespace)
+	require.Len(t, updated.Status.Listeners, 1)
+	assert.Equal(t, int32(1), updated.Status.Listeners[0].AttachedRoutes,
+		"a GRPCRoute with duplicate parentRefs to one entry must count exactly once")
+}

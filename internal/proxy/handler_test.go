@@ -1607,3 +1607,96 @@ func TestIsHTTPUpgradeRequest_NilGuards(t *testing.T) {
 		"request with nil Header must return false, not panic")
 }
 
+// TestHandler_PreservesOriginalHostHeader pins the spec MUST that the proxy
+// forwards the client's Host header to the backend unchanged when no filter
+// rewrites it -- the reverse-proxy default of swapping Host for the backend
+// URL's host would break name-based virtual hosting behind the Gateway.
+func TestHandler_PreservesOriginalHostHeader(t *testing.T) {
+	t.Parallel()
+
+	receivedHost := make(chan string, 1)
+
+	backend := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, req *http.Request) {
+		receivedHost <- req.Host
+		writer.WriteHeader(http.StatusOK)
+	}))
+	defer backend.Close()
+
+	router := proxy.NewRouter()
+
+	cfg := &proxy.Config{
+		Version: 1,
+		Rules: []proxy.RouteRule{
+			{
+				Hostnames: []string{"app.example.com"},
+				Backends:  []proxy.BackendRef{{URL: backend.URL, Weight: 1}},
+			},
+		},
+	}
+
+	require.NoError(t, router.UpdateConfig(cfg))
+
+	handler := proxy.NewHandler(router)
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://app.example.com/test", nil)
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, req)
+
+	assert.Equal(t, http.StatusOK, recorder.Code)
+	assert.Equal(t, "app.example.com", <-receivedHost,
+		"the client's Host header must reach the backend unchanged")
+}
+
+// TestHandler_XOriginalHostRestoredWithoutRewrite pins the tunnel-transport
+// seam: when X-Original-Host is present (the conformance round-tripper's
+// mechanism for carrying the intended hostname past Cloudflare edge Host
+// validation) and no rewrite filter runs, the backend must see that hostname
+// as the request Host and the X-Original-Host header itself must not leak
+// through to the backend.
+func TestHandler_XOriginalHostRestoredWithoutRewrite(t *testing.T) {
+	t.Parallel()
+
+	type hostObservation struct {
+		host          string
+		xOriginalHost string
+	}
+
+	received := make(chan hostObservation, 1)
+
+	backend := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, req *http.Request) {
+		received <- hostObservation{host: req.Host, xOriginalHost: req.Header.Get("X-Original-Host")}
+		writer.WriteHeader(http.StatusOK)
+	}))
+	defer backend.Close()
+
+	router := proxy.NewRouter()
+
+	cfg := &proxy.Config{
+		Version: 1,
+		Rules: []proxy.RouteRule{
+			{
+				Hostnames: []string{"app.example.com"},
+				Backends:  []proxy.BackendRef{{URL: backend.URL, Weight: 1}},
+			},
+		},
+	}
+
+	require.NoError(t, router.UpdateConfig(cfg))
+
+	handler := proxy.NewHandler(router)
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://edge.cloudflare.com/test", nil)
+	req.Header.Set("X-Original-Host", "app.example.com")
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, req)
+
+	assert.Equal(t, http.StatusOK, recorder.Code)
+
+	obs := <-received
+	assert.Equal(t, "app.example.com", obs.host,
+		"X-Original-Host must be restored as the backend-facing Host")
+	assert.Empty(t, obs.xOriginalHost,
+		"the X-Original-Host transport header must be stripped before the backend")
+}
