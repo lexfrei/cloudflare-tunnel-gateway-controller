@@ -316,7 +316,8 @@ func parseMajorMinor(version string) (int, int, bool) {
 
 // SetupWithManager sets up the controller with the Manager.
 //
-// It watches only GatewayClass, not the Gateway API CRDs. This is deliberate:
+// It watches GatewayClass and Gateways (for finalizer accounting), but
+// deliberately not the Gateway API CRDs:
 // the SupportedVersion bundle check is a best-effort signal, and watching CRDs
 // would mean a cluster-wide CRD informer plus list/watch RBAC just to react to
 // a bundle upgrade. The trade-off is that SupportedVersion is recomputed only
