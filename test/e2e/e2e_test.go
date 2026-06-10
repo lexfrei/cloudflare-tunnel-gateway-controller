@@ -100,7 +100,9 @@ func tunnelClient() *http.Client {
 
 // echoHTTPResponse carries the response metadata the tests assert on. The
 // underlying body is fully consumed and closed inside makeRequest, so there
-// is nothing left for callers to close.
+// is nothing left for callers to close. The raw body is deliberately NOT
+// exposed: Cloudflare's edge replaces origin 5xx bodies with its own error
+// page, so error-path tests cannot assert on origin payloads anyway.
 type echoHTTPResponse struct {
 	StatusCode int
 	Header     http.Header

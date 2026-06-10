@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -22,6 +23,8 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
+
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/api/v1alpha1"
 )
 
 // echoBasicImage is the official Gateway API conformance echo server.
@@ -43,6 +46,7 @@ func newK8sClient(t *testing.T, kubeContext string) client.Client {
 
 	s := scheme.Scheme
 	require.NoError(t, gatewayv1.Install(s))
+	require.NoError(t, v1alpha1.AddToScheme(s))
 
 	k8sClient, err := client.New(restConfig, client.Options{Scheme: s})
 	require.NoError(t, err, "failed to create kubernetes client")
@@ -310,4 +314,33 @@ func setupGateway(t *testing.T, k8sClient client.Client, cfg testConfig) {
 func mustParseQuantity(s string) *resource.Quantity {
 	q := resource.MustParse(s)
 	return &q
+}
+
+// applyObject create-or-replaces a namespaced object: existing objects are
+// deleted first (waiting until the deletion is actually observable, not a
+// fixed sleep) so reruns against a reused cluster start from the new spec.
+func applyObject(ctx context.Context, t *testing.T, k8sClient client.Client, obj client.Object) {
+	t.Helper()
+
+	existing := obj.DeepCopyObject().(client.Object)
+
+	err := k8sClient.Get(ctx, types.NamespacedName{Name: obj.GetName(), Namespace: obj.GetNamespace()}, existing)
+	require.True(t, err == nil || apierrors.IsNotFound(err),
+		"probing for an existing %s/%s failed: %v", obj.GetNamespace(), obj.GetName(), err)
+
+	if err == nil {
+		require.NoError(t, k8sClient.Delete(ctx, existing))
+
+		waitErr := wait.PollUntilContextTimeout(ctx, 200*time.Millisecond, 30*time.Second, true,
+			func(pollCtx context.Context) (bool, error) {
+				probe := obj.DeepCopyObject().(client.Object)
+				getErr := k8sClient.Get(pollCtx, types.NamespacedName{Name: obj.GetName(), Namespace: obj.GetNamespace()}, probe)
+
+				return apierrors.IsNotFound(getErr), nil
+			},
+		)
+		require.NoError(t, waitErr, "previous %s/%s never finished deleting", obj.GetNamespace(), obj.GetName())
+	}
+
+	require.NoError(t, k8sClient.Create(ctx, obj))
 }
