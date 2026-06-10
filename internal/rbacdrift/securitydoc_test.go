@@ -64,8 +64,9 @@ func TestSecurityDocRBAC_MatchesDeployRole(t *testing.T) {
 	var doc struct {
 		Rules []rbacRule `json:"rules"`
 	}
-	if err := yaml.Unmarshal(fence[1], &doc); err != nil {
-		t.Fatalf("parse security.md rules block: %v", err)
+	unmarshalErr := yaml.Unmarshal(fence[1], &doc)
+	if unmarshalErr != nil {
+		t.Fatalf("parse security.md rules block: %v", unmarshalErr)
 	}
 
 	deployRules := loadDeployClusterRole(t, filepath.Join(repoRoot, "deploy", "rbac", "role.yaml"))
