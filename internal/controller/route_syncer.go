@@ -56,17 +56,17 @@ type RouteSyncer struct {
 	// concurrently, and this mutex ensures serialized access to Cloudflare API.
 	syncMu sync.Mutex
 
-	// CloudflareClientFactory overrides how the Cloudflare API client is built
+	// cloudflareClientFactory overrides how the Cloudflare API client is built
 	// from the resolved credentials. nil uses the ConfigResolver's default;
 	// tests inject a factory pointing at an httptest server.
-	CloudflareClientFactory func(resolved *config.ResolvedConfig) *cloudflare.Client
+	cloudflareClientFactory func(resolved *config.ResolvedConfig) *cloudflare.Client
 }
 
 // cloudflareClient builds the API client via the injected factory when set,
 // the ConfigResolver default otherwise.
 func (s *RouteSyncer) cloudflareClient(resolved *config.ResolvedConfig) *cloudflare.Client {
-	if s.CloudflareClientFactory != nil {
-		return s.CloudflareClientFactory(resolved)
+	if s.cloudflareClientFactory != nil {
+		return s.cloudflareClientFactory(resolved)
 	}
 
 	return s.ConfigResolver.CreateCloudflareClient(resolved)

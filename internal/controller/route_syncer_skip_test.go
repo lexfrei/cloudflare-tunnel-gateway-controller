@@ -119,7 +119,7 @@ func newSkipTestSyncer(t *testing.T, api *fakeTunnelAPI) *RouteSyncer {
 
 	resolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector())
 	syncer := NewRouteSyncer(fakeClient, scheme, "cluster.local", skipTestControllerName, resolver, cfmetrics.NewNoopCollector(), slog.Default())
-	syncer.CloudflareClientFactory = func(_ *config.ResolvedConfig) *cloudflare.Client {
+	syncer.cloudflareClientFactory = func(_ *config.ResolvedConfig) *cloudflare.Client {
 		return cloudflare.NewClient(
 			option.WithAPIToken("test-token"),
 			option.WithBaseURL(api.server.URL),

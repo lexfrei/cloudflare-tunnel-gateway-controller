@@ -1186,3 +1186,149 @@ func TestProxySyncer_PartialPushFailureInvalidatesSkip(t *testing.T) {
 		"the rollback after a partial push must be delivered, not skipped")
 	assert.Equal(t, int32(2), pushCountB.Load())
 }
+
+// TestProxySyncer_ResyncSuccessUpdatesSkipKey pins the resync side of the
+// steady-state skip: after a successful ResyncEndpoints delivers the cached
+// config to a grown replica set, the next SyncRoutes with the identical
+// config and the same endpoints must NOT push again.
+func TestProxySyncer_ResyncSuccessUpdatesSkipKey(t *testing.T) {
+	t.Parallel()
+
+	pathPrefix := gatewayv1.PathMatchPathPrefix
+
+	var pushCountA, pushCountB atomic.Int32
+
+	serverA := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, req *http.Request) {
+		if req.Method == http.MethodPut {
+			pushCountA.Add(1)
+		}
+
+		writer.WriteHeader(http.StatusOK)
+	}))
+	defer serverA.Close()
+
+	serverB := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, req *http.Request) {
+		if req.Method == http.MethodPut {
+			pushCountB.Add(1)
+		}
+
+		writer.WriteHeader(http.StatusOK)
+	}))
+	defer serverB.Close()
+
+	testClient := fake.NewClientBuilder().WithScheme(runtime.NewScheme()).Build()
+	syncer := controller.NewProxySyncer("cluster.local", "", "", testClient, slog.Default())
+
+	path := "/"
+	routes := []*gatewayv1.HTTPRoute{{
+		ObjectMeta: metav1.ObjectMeta{Name: "web-route", Namespace: "default"},
+		Spec: gatewayv1.HTTPRouteSpec{
+			Hostnames: []gatewayv1.Hostname{"example.com"},
+			Rules: []gatewayv1.HTTPRouteRule{{
+				Matches: []gatewayv1.HTTPRouteMatch{
+					{Path: &gatewayv1.HTTPPathMatch{Type: &pathPrefix, Value: &path}},
+				},
+				BackendRefs: []gatewayv1.HTTPBackendRef{makeBackendRef("web-svc", 80, 1)},
+			}},
+		},
+	}}
+
+	endpointA := serverA.URL + "/config"
+	endpointB := serverB.URL + "/config"
+
+	_, err := syncer.SyncRoutes(context.Background(), []string{endpointA}, routes, nil, nil, nil)
+	require.NoError(t, err)
+	require.Equal(t, int32(1), pushCountA.Load())
+
+	// Replica B joins; the endpoint reconciler resyncs the cached config to
+	// the full set.
+	require.NoError(t, syncer.ResyncEndpoints(context.Background(), []string{endpointA, endpointB}))
+	require.Equal(t, int32(1), pushCountB.Load(), "resync must deliver the cached config to the new replica")
+
+	// The next route reconcile sees the same config and the same (grown)
+	// endpoint set: everything is already delivered, so no push.
+	_, err = syncer.SyncRoutes(context.Background(), []string{endpointA, endpointB}, routes, nil, nil, nil)
+	require.NoError(t, err)
+	assert.Equal(t, int32(2), pushCountA.Load(), "no redundant re-push after a successful resync")
+	assert.Equal(t, int32(1), pushCountB.Load(), "no redundant re-push after a successful resync")
+}
+
+// TestProxySyncer_ResyncPartialFailureInvalidatesSkip pins the failure side:
+// a partially-failed resync (one replica errored) must drop the skip key so
+// the next SyncRoutes re-pushes unconditionally -- otherwise the errored
+// replica would stay configless until an unrelated change.
+func TestProxySyncer_ResyncPartialFailureInvalidatesSkip(t *testing.T) {
+	t.Parallel()
+
+	pathPrefix := gatewayv1.PathMatchPathPrefix
+
+	var pushCountA atomic.Int32
+
+	var pushCountB atomic.Int32
+
+	var failB atomic.Bool
+
+	serverA := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, req *http.Request) {
+		if req.Method == http.MethodPut {
+			pushCountA.Add(1)
+		}
+
+		writer.WriteHeader(http.StatusOK)
+	}))
+	defer serverA.Close()
+
+	serverB := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, req *http.Request) {
+		if req.Method == http.MethodPut {
+			if failB.Load() {
+				writer.WriteHeader(http.StatusInternalServerError)
+
+				return
+			}
+
+			pushCountB.Add(1)
+		}
+
+		writer.WriteHeader(http.StatusOK)
+	}))
+	defer serverB.Close()
+
+	testClient := fake.NewClientBuilder().WithScheme(runtime.NewScheme()).Build()
+	syncer := controller.NewProxySyncer("cluster.local", "", "", testClient, slog.Default())
+
+	path := "/"
+	routes := []*gatewayv1.HTTPRoute{{
+		ObjectMeta: metav1.ObjectMeta{Name: "web-route", Namespace: "default"},
+		Spec: gatewayv1.HTTPRouteSpec{
+			Hostnames: []gatewayv1.Hostname{"example.com"},
+			Rules: []gatewayv1.HTTPRouteRule{{
+				Matches: []gatewayv1.HTTPRouteMatch{
+					{Path: &gatewayv1.HTTPPathMatch{Type: &pathPrefix, Value: &path}},
+				},
+				BackendRefs: []gatewayv1.HTTPBackendRef{makeBackendRef("web-svc", 80, 1)},
+			}},
+		},
+	}}
+
+	endpointA := serverA.URL + "/config"
+	endpointB := serverB.URL + "/config"
+	both := []string{endpointA, endpointB}
+
+	_, err := syncer.SyncRoutes(context.Background(), both, routes, nil, nil, nil)
+	require.NoError(t, err)
+	require.Equal(t, int32(1), pushCountA.Load())
+	require.Equal(t, int32(1), pushCountB.Load())
+
+	// Replica B restarts and its resync flakes: partial failure.
+	failB.Store(true)
+	require.Error(t, syncer.ResyncEndpoints(context.Background(), both),
+		"a partially-failed resync must surface as an error")
+
+	// The next route reconcile must re-push even though the config and the
+	// endpoint set both match the last fully-successful push.
+	failB.Store(false)
+
+	_, err = syncer.SyncRoutes(context.Background(), both, routes, nil, nil, nil)
+	require.NoError(t, err)
+	assert.Equal(t, int32(3), pushCountA.Load(), "skip key must be dropped after a partial resync failure")
+	assert.Equal(t, int32(2), pushCountB.Load(), "the errored replica must receive the config on the next sync")
+}
