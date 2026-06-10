@@ -51,10 +51,7 @@ func TestBackendAppProtocolTLSWithoutPolicyFailsClosed(t *testing.T) {
 		},
 	}
 
-	createErr := k8sClient.Create(ctx, svc)
-	if createErr != nil {
-		t.Logf("service create: %v (may already exist)", createErr)
-	}
+	applyObject(ctx, t, k8sClient, svc)
 
 	t.Cleanup(func() {
 		_ = k8sClient.Delete(context.Background(), svc)

@@ -12,6 +12,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"math/big"
+	"strings"
 	"testing"
 	"time"
 
@@ -35,9 +36,11 @@ import (
 // TestGRPCRouteOverTLSBackend pins the gRPC-over-TLS-backend path through the
 // real tunnel: a BackendTLSPolicy targeting the gRPC backend's Service makes
 // the proxy dial the backend over TLS (ALPN-negotiated HTTP/2) and verify it
-// against the policy's CA. The backend serves TLS ONLY, so a successful Echo
-// call through the tunnel proves the TLS handshake actually happened -- a
-// cleartext h2c dial (the no-policy default) would be refused outright.
+// against the policy's CA. The Service exposes only the echo's TLS listener,
+// so a successful Echo call through the tunnel proves the TLS handshake
+// actually happened -- a cleartext h2c dial (the no-policy default) would be
+// refused outright. The serving-pod assertion pins that the answer came from
+// THIS backend, not a lingering cleartext route on the same method.
 func TestGRPCRouteOverTLSBackend(t *testing.T) {
 	cfg := loadTestConfig(t)
 
@@ -110,6 +113,9 @@ func TestGRPCRouteOverTLSBackend(t *testing.T) {
 
 	assert.Contains(t, resp.GetAssertions().GetFullyQualifiedMethod(), grpcEchoService,
 		"echo response should report the GrpcEcho service it was dispatched to")
+	assert.True(t, strings.HasPrefix(resp.GetAssertions().GetContext().GetPod(), backendName+"-"),
+		"the call must be served by the TLS backend's pod, not a lingering cleartext route; got pod %q",
+		resp.GetAssertions().GetContext().GetPod())
 }
 
 // generateBackendCA builds a throwaway CA plus a server certificate for the
@@ -163,9 +169,11 @@ func generateBackendCA(t *testing.T, dnsName string) (string, string, string) {
 }
 
 // deployTLSGRPCEchoBackend deploys the echo-basic image in gRPC TLS mode: the
-// server cert/key are mounted from a Secret and the echo serves TLS-only gRPC
-// on container port 3000. A ConfigMap with the CA is created for the
-// BackendTLSPolicy to reference.
+// server cert/key are mounted from a Secret and the echo serves TLS gRPC on
+// its HTTPS_PORT (8443, the only port the Service exposes; the echo's
+// always-on cleartext listener on 3000 is not reachable through the
+// Service). A ConfigMap with the CA is created for the BackendTLSPolicy to
+// reference.
 func deployTLSGRPCEchoBackend(t *testing.T, k8sClient client.Client, namespace, name, caPEM, certPEM, keyPEM string) {
 	t.Helper()
 	ctx := context.Background()
@@ -204,7 +212,7 @@ func deployTLSGRPCEchoBackend(t *testing.T, k8sClient client.Client, namespace, 
 						Env: []corev1.EnvVar{
 							{Name: "GRPC_ECHO_SERVER", Value: "1"},
 							{Name: "TLS_SERVER_CERT", Value: "/tls/tls.crt"},
-							{Name: "TLS_SERVER_PRIVKEY", Value: "/tls/tls.key"},
+							{Name: "TLS_SERVER_PRIV_KEY", Value: "/tls/tls.key"},
 							{Name: "POD_NAME", ValueFrom: &corev1.EnvVarSource{
 								FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.name"},
 							}},
@@ -228,7 +236,10 @@ func deployTLSGRPCEchoBackend(t *testing.T, k8sClient client.Client, namespace, 
 		Spec: corev1.ServiceSpec{
 			Selector: map[string]string{"app": name},
 			Ports: []corev1.ServicePort{
-				{Name: "grpc-tls", Port: 8080, TargetPort: intstr.FromInt32(3000), Protocol: corev1.ProtocolTCP},
+				// 8443 is the gRPC echo's HTTPS_PORT (TLS listener); the always-on
+				// cleartext h2c listener stays on 3000 and is deliberately NOT
+				// exposed, so via this Service the backend is TLS-only.
+				{Name: "grpc-tls", Port: 8080, TargetPort: intstr.FromInt32(8443), Protocol: corev1.ProtocolTCP},
 			},
 		},
 	}
@@ -263,17 +274,7 @@ func buildBackendTLSPolicy(serviceName, namespace, hostname string) *gatewayv1.B
 // createBackendTLSPolicy creates (or replaces) the policy.
 func createBackendTLSPolicy(t *testing.T, k8sClient client.Client, policy *gatewayv1.BackendTLSPolicy) {
 	t.Helper()
-	ctx := context.Background()
-
-	existing := &gatewayv1.BackendTLSPolicy{}
-
-	err := k8sClient.Get(ctx, types.NamespacedName{Name: policy.Name, Namespace: policy.Namespace}, existing)
-	if err == nil {
-		require.NoError(t, k8sClient.Delete(ctx, existing))
-		time.Sleep(time.Second)
-	}
-
-	require.NoError(t, k8sClient.Create(ctx, policy))
+	applyObject(context.Background(), t, k8sClient, policy)
 	t.Logf("created BackendTLSPolicy %s/%s", policy.Namespace, policy.Name)
 }
 

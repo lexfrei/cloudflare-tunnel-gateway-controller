@@ -12,7 +12,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
@@ -86,17 +85,6 @@ func TestExternalBackendEndToEnd(t *testing.T) {
 // createExternalBackend creates (or replaces) an ExternalBackend CR.
 func createExternalBackend(t *testing.T, k8sClient client.Client, backend *v1alpha1.ExternalBackend) {
 	t.Helper()
-
-	ctx := context.Background()
-
-	existing := &v1alpha1.ExternalBackend{}
-
-	err := k8sClient.Get(ctx, types.NamespacedName{Name: backend.Name, Namespace: backend.Namespace}, existing)
-	if err == nil {
-		require.NoError(t, k8sClient.Delete(ctx, existing))
-		time.Sleep(time.Second)
-	}
-
-	require.NoError(t, k8sClient.Create(ctx, backend))
+	applyObject(context.Background(), t, k8sClient, backend)
 	t.Logf("created ExternalBackend %s/%s", backend.Namespace, backend.Name)
 }
