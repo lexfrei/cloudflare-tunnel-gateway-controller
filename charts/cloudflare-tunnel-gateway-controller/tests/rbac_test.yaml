@@ -24,7 +24,7 @@ tests:
           path: metadata.name
           value: RELEASE-NAME-cloudflare-tunnel-gateway-controller
 
-  - it: should have read-only permissions for GatewayClasses and HTTPRoutes
+  - it: should have finalizer-write permissions for GatewayClasses and read-only for HTTPRoutes
     asserts:
       - template: clusterrole.yaml
         contains:
@@ -32,7 +32,7 @@ tests:
           content:
             apiGroups: ["gateway.networking.k8s.io"]
             resources: ["gatewayclasses"]
-            verbs: ["get", "list", "watch"]
+            verbs: ["get", "list", "watch", "update", "patch"]
       - template: clusterrole.yaml
         contains:
           path: rules

@@ -75,6 +75,13 @@ func (r *GatewayClassReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{}, errors.Wrap(err, "failed to reconcile GatewayClass finalizer")
 	}
 
+	// A class in deletion gets no status writes: removing our finalizer above
+	// may have let the object vanish, and stamping conditions onto a
+	// terminating object is pointless anyway.
+	if !gatewayClass.DeletionTimestamp.IsZero() {
+		return ctrl.Result{}, nil
+	}
+
 	if err := r.updateStatus(ctx, req.NamespacedName, gatewayClass.Generation); err != nil {
 		return ctrl.Result{}, errors.Wrap(err, "failed to update GatewayClass status")
 	}
@@ -85,7 +92,10 @@ func (r *GatewayClassReconciler) Reconcile(ctx context.Context, req ctrl.Request
 // reconcileFinalizer keeps the spec-defined gateway-exists finalizer in sync
 // with actual usage: present while at least one Gateway references the class
 // (so a delete cannot pull the class out from under running Gateways), absent
-// once nothing uses it. Foreign finalizers are never touched.
+// once nothing uses it. Foreign finalizers are never touched. The finalizer
+// is never ADDED to a class already in deletion -- the API server rejects new
+// finalizers on deleting objects -- but removal during deletion is exactly
+// what unblocks the delete and must always run.
 func (r *GatewayClassReconciler) reconcileFinalizer(ctx context.Context, gatewayClass *gatewayv1.GatewayClass) error {
 	var gateways gatewayv1.GatewayList
 	if err := r.List(ctx, &gateways); err != nil {
@@ -103,9 +113,10 @@ func (r *GatewayClassReconciler) reconcileFinalizer(ctx context.Context, gateway
 	}
 
 	hasFinalizer := controllerutil.ContainsFinalizer(gatewayClass, gatewayv1.GatewayClassFinalizerGatewaysExist)
+	deleting := !gatewayClass.DeletionTimestamp.IsZero()
 
 	switch {
-	case inUse && !hasFinalizer:
+	case inUse && !hasFinalizer && !deleting:
 		controllerutil.AddFinalizer(gatewayClass, gatewayv1.GatewayClassFinalizerGatewaysExist)
 	case !inUse && hasFinalizer:
 		controllerutil.RemoveFinalizer(gatewayClass, gatewayv1.GatewayClassFinalizerGatewaysExist)
