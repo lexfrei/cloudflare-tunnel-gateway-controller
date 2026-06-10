@@ -676,7 +676,7 @@ func (s *ProxySyncer) SyncRoutes(
 	// triggered by status updates or endpoint heartbeats hit this path
 	// constantly in large fleets.
 	cfgHash := hashProxyConfig(cfg)
-	if cfgHash == s.lastPushedHash && endpointSetsEqual(s.lastPushedEndpoints, resolved) {
+	if shouldSkipPush(cfgHash, s.lastPushedHash, s.lastPushedEndpoints, resolved) {
 		logger.Info("proxy config unchanged; skipping push",
 			"endpoints", len(resolved),
 			"rules", len(cfg.Rules),
@@ -686,6 +686,15 @@ func (s *ProxySyncer) SyncRoutes(
 	}
 
 	if err := s.pushToEndpoints(ctx, logger, cfg, resolved); err != nil {
+		// A failed push may have PARTIALLY succeeded (the pusher fans out
+		// concurrently): some replicas may already hold the new config.
+		// Invalidate the skip key so the next sync re-pushes even when its
+		// desired config equals the last fully-successful one -- otherwise a
+		// rollback after a partial push would be skipped and the
+		// half-updated replica would stay stale until an unrelated change.
+		s.lastPushedHash = ""
+		s.lastPushedEndpoints = nil
+
 		return diagnostics, err
 	}
 
@@ -738,6 +747,16 @@ func (s *ProxySyncer) pushToEndpoints(ctx context.Context, logger *slog.Logger, 
 	return nil
 }
 
+// shouldSkipPush reports whether the rebuilt config is already held by every
+// resolved endpoint: the content hash matches the last fully-successful push
+// and the replica set is unchanged. An empty hash never skips -- "" is both
+// the hash-failure sentinel and the zero value of the last-pushed key (and
+// the invalidation value after a partial push), so treating it as a match
+// would skip a push that must happen.
+func shouldSkipPush(cfgHash, lastPushedHash string, lastPushedEndpoints map[string]struct{}, resolved []string) bool {
+	return cfgHash != "" && cfgHash == lastPushedHash && endpointSetsEqual(lastPushedEndpoints, resolved)
+}
+
 // hashProxyConfig returns a content hash of the config with the Version
 // counter zeroed: the counter increments on every build, so two
 // semantically-identical configs would otherwise never compare equal.
@@ -748,7 +767,9 @@ func hashProxyConfig(cfg *proxy.Config) string {
 	payload, err := json.Marshal(&versionless)
 	if err != nil {
 		// Marshal of the wire-format config cannot realistically fail; an
-		// empty hash simply disables the skip for this sync (fail open).
+		// empty hash disables the skip for this sync AND for the comparison
+		// against it (shouldSkipPush never matches on ""), so the push
+		// always proceeds.
 		return ""
 	}
 
@@ -921,8 +942,24 @@ func (s *ProxySyncer) ResyncEndpoints(ctx context.Context, endpoints []string) e
 	}
 
 	if len(pushErrors) > 0 {
+		// Mirror SyncRoutes: a partial resync means some replicas may hold the
+		// cached config while others do not -- drop the skip key so the next
+		// SyncRoutes re-pushes unconditionally.
+		s.lastPushedHash = ""
+		s.lastPushedEndpoints = nil
+
 		return fmt.Errorf("failed to resync config to %d/%d endpoints: %w",
 			len(pushErrors), len(resolved), errors.Join(pushErrors...))
+	}
+
+	// Every resolved endpoint now holds lastCfg: update the skip key so the
+	// next SyncRoutes does not re-push the identical config just because the
+	// replica set grew.
+	s.lastPushedHash = hashProxyConfig(s.lastCfg)
+	s.lastPushedEndpoints = make(map[string]struct{}, len(resolved))
+
+	for _, endpoint := range resolved {
+		s.lastPushedEndpoints[endpoint] = struct{}{}
 	}
 
 	return nil

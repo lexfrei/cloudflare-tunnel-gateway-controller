@@ -424,7 +424,7 @@ func (s *RouteSyncer) buildResultForError(ctx context.Context) *SyncResult {
 
 // SyncAllRoutes synchronizes all HTTPRoute and GRPCRoute resources to Cloudflare Tunnel.
 //
-//nolint:funlen,wrapcheck // complex sync logic requires length; Cloudflare API errors are intentionally unwrapped
+//nolint:funlen // complex sync logic requires length
 func (s *RouteSyncer) SyncAllRoutes(ctx context.Context) (ctrl.Result, *SyncResult, error) {
 	// Serialize concurrent sync calls to prevent race conditions when
 	// both HTTPRouteReconciler and GRPCRouteReconciler trigger syncs.
@@ -539,18 +539,7 @@ func (s *RouteSyncer) SyncAllRoutes(ctx context.Context) (ctrl.Result, *SyncResu
 		s.Metrics.RecordSyncDuration(ctx, "error", time.Since(startTime))
 		s.Metrics.RecordSyncError(ctx, "limit_exceeded")
 
-		result := &SyncResult{
-			HTTPRoutes:         httpResult.accepted,
-			GRPCRoutes:         grpcResult.accepted,
-			HTTPRouteBindings:  httpResult.bindings,
-			GRPCRouteBindings:  grpcResult.bindings,
-			HTTPFailedRefs:     httpBuildResult.FailedRefs,
-			GRPCFailedRefs:     grpcBuildResult.FailedRefs,
-			RejectedHTTPRoutes: httpResult.rejected,
-			RejectedGRPCRoutes: grpcResult.rejected,
-		}
-
-		return ctrl.Result{}, result, limitErr
+		return ctrl.Result{}, buildSyncResult(httpResult, grpcResult, httpBuildResult, grpcBuildResult), limitErr
 	}
 
 	// The Cloudflare configurations endpoint is a whole-document update — there
@@ -560,24 +549,9 @@ func (s *RouteSyncer) SyncAllRoutes(ctx context.Context) (ctrl.Result, *SyncResu
 	// path constantly; a real route change still writes the full document.
 	if ingress.RulesUnchanged(currentConfig.Config.Ingress, finalRules) {
 		logger.Info("tunnel configuration unchanged; skipping update", "rules", len(finalRules))
+		s.recordSyncSuccessMetrics(ctx, startTime, httpResult, grpcResult, httpBuildResult, grpcBuildResult, len(finalRules))
 
-		s.Metrics.RecordSyncDuration(ctx, "success", time.Since(startTime))
-		s.Metrics.RecordSyncedRoutes(ctx, "http", len(httpResult.accepted))
-		s.Metrics.RecordSyncedRoutes(ctx, "grpc", len(grpcResult.accepted))
-		s.Metrics.RecordIngressRules(ctx, len(finalRules))
-		s.Metrics.RecordFailedBackendRefs(ctx, "http", len(httpBuildResult.FailedRefs))
-		s.Metrics.RecordFailedBackendRefs(ctx, "grpc", len(grpcBuildResult.FailedRefs))
-
-		return ctrl.Result{}, &SyncResult{
-			HTTPRoutes:         httpResult.accepted,
-			GRPCRoutes:         grpcResult.accepted,
-			HTTPRouteBindings:  httpResult.bindings,
-			GRPCRouteBindings:  grpcResult.bindings,
-			HTTPFailedRefs:     httpBuildResult.FailedRefs,
-			GRPCFailedRefs:     grpcBuildResult.FailedRefs,
-			RejectedHTTPRoutes: httpResult.rejected,
-			RejectedGRPCRoutes: grpcResult.rejected,
-		}, nil
+		return ctrl.Result{}, buildSyncResult(httpResult, grpcResult, httpBuildResult, grpcBuildResult), nil
 	}
 
 	cfConfig := zero_trust.TunnelCloudflaredConfigurationUpdateParams{
@@ -599,32 +573,27 @@ func (s *RouteSyncer) SyncAllRoutes(ctx context.Context) (ctrl.Result, *SyncResu
 		s.Metrics.RecordSyncDuration(ctx, "error", time.Since(startTime))
 		s.Metrics.RecordSyncError(ctx, cfmetrics.ClassifyCloudflareError(err))
 
-		result := &SyncResult{
-			HTTPRoutes:         httpResult.accepted,
-			GRPCRoutes:         grpcResult.accepted,
-			HTTPRouteBindings:  httpResult.bindings,
-			GRPCRouteBindings:  grpcResult.bindings,
-			HTTPFailedRefs:     httpBuildResult.FailedRefs,
-			GRPCFailedRefs:     grpcBuildResult.FailedRefs,
-			RejectedHTTPRoutes: httpResult.rejected,
-			RejectedGRPCRoutes: grpcResult.rejected,
-		}
-
-		return ctrl.Result{RequeueAfter: apiErrorRequeueDelay, Priority: new(priorityRoute)}, result, err
+		return ctrl.Result{RequeueAfter: apiErrorRequeueDelay, Priority: new(priorityRoute)},
+			buildSyncResult(httpResult, grpcResult, httpBuildResult, grpcBuildResult), err
 	}
 
 	s.Metrics.RecordAPICall(ctx, "update", "tunnel_config", "success", time.Since(updateStart))
 	logger.Info("successfully updated tunnel configuration", "rules", len(finalRules))
 
 	// Record success metrics
-	s.Metrics.RecordSyncDuration(ctx, "success", time.Since(startTime))
-	s.Metrics.RecordSyncedRoutes(ctx, "http", len(httpResult.accepted))
-	s.Metrics.RecordSyncedRoutes(ctx, "grpc", len(grpcResult.accepted))
-	s.Metrics.RecordIngressRules(ctx, len(finalRules))
-	s.Metrics.RecordFailedBackendRefs(ctx, "http", len(httpBuildResult.FailedRefs))
-	s.Metrics.RecordFailedBackendRefs(ctx, "grpc", len(grpcBuildResult.FailedRefs))
+	s.recordSyncSuccessMetrics(ctx, startTime, httpResult, grpcResult, httpBuildResult, grpcBuildResult, len(finalRules))
 
-	result := &SyncResult{
+	return ctrl.Result{}, buildSyncResult(httpResult, grpcResult, httpBuildResult, grpcBuildResult), nil
+}
+
+// buildSyncResult assembles the SyncResult shared by every SyncAllRoutes exit
+// path that has completed route collection and rule building.
+func buildSyncResult(
+	httpResult *httpRouteResult,
+	grpcResult *grpcRouteResult,
+	httpBuildResult, grpcBuildResult ingress.BuildResult,
+) *SyncResult {
+	return &SyncResult{
 		HTTPRoutes:         httpResult.accepted,
 		GRPCRoutes:         grpcResult.accepted,
 		HTTPRouteBindings:  httpResult.bindings,
@@ -634,8 +603,24 @@ func (s *RouteSyncer) SyncAllRoutes(ctx context.Context) (ctrl.Result, *SyncResu
 		RejectedHTTPRoutes: httpResult.rejected,
 		RejectedGRPCRoutes: grpcResult.rejected,
 	}
+}
 
-	return ctrl.Result{}, result, nil
+// recordSyncSuccessMetrics records the per-sync success metric set, shared by
+// the skip path and the write path.
+func (s *RouteSyncer) recordSyncSuccessMetrics(
+	ctx context.Context,
+	startTime time.Time,
+	httpResult *httpRouteResult,
+	grpcResult *grpcRouteResult,
+	httpBuildResult, grpcBuildResult ingress.BuildResult,
+	ruleCount int,
+) {
+	s.Metrics.RecordSyncDuration(ctx, "success", time.Since(startTime))
+	s.Metrics.RecordSyncedRoutes(ctx, "http", len(httpResult.accepted))
+	s.Metrics.RecordSyncedRoutes(ctx, "grpc", len(grpcResult.accepted))
+	s.Metrics.RecordIngressRules(ctx, ruleCount)
+	s.Metrics.RecordFailedBackendRefs(ctx, "http", len(httpBuildResult.FailedRefs))
+	s.Metrics.RecordFailedBackendRefs(ctx, "grpc", len(grpcBuildResult.FailedRefs))
 }
 
 // httpRouteResult holds accepted and rejected HTTPRoutes from binding validation.

@@ -1103,3 +1103,86 @@ func TestProxySyncer_EndpointSetChangePushesUnchangedConfig(t *testing.T) {
 	assert.Equal(t, int32(2), pushCountA.Load(), "existing replica gets the re-push when the set changes")
 	assert.Equal(t, int32(1), pushCountB.Load(), "new replica must receive the config")
 }
+
+// TestProxySyncer_PartialPushFailureInvalidatesSkip pins the recovery
+// contract of the steady-state skip: after a push that partially succeeded
+// (one replica took the new config, another errored), a subsequent sync back
+// to the previous config MUST push -- the skip key must be invalidated on
+// failure, or a rollback after a partial push leaves the half-updated
+// replica stale forever.
+func TestProxySyncer_PartialPushFailureInvalidatesSkip(t *testing.T) {
+	t.Parallel()
+
+	pathPrefix := gatewayv1.PathMatchPathPrefix
+
+	var pushCountA, pushCountB atomic.Int32
+
+	var failB atomic.Bool
+
+	serverA := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, req *http.Request) {
+		if req.Method == http.MethodPut {
+			pushCountA.Add(1)
+		}
+
+		writer.WriteHeader(http.StatusOK)
+	}))
+	defer serverA.Close()
+
+	serverB := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, req *http.Request) {
+		if req.Method == http.MethodPut {
+			if failB.Load() {
+				writer.WriteHeader(http.StatusInternalServerError)
+
+				return
+			}
+
+			pushCountB.Add(1)
+		}
+
+		writer.WriteHeader(http.StatusOK)
+	}))
+	defer serverB.Close()
+
+	testClient := fake.NewClientBuilder().WithScheme(runtime.NewScheme()).Build()
+	syncer := controller.NewProxySyncer("cluster.local", "", "", testClient, slog.Default())
+
+	makeRoutes := func(path string) []*gatewayv1.HTTPRoute {
+		return []*gatewayv1.HTTPRoute{{
+			ObjectMeta: metav1.ObjectMeta{Name: "web-route", Namespace: "default"},
+			Spec: gatewayv1.HTTPRouteSpec{
+				Hostnames: []gatewayv1.Hostname{"example.com"},
+				Rules: []gatewayv1.HTTPRouteRule{{
+					Matches: []gatewayv1.HTTPRouteMatch{
+						{Path: &gatewayv1.HTTPPathMatch{Type: &pathPrefix, Value: &path}},
+					},
+					BackendRefs: []gatewayv1.HTTPBackendRef{makeBackendRef("web-svc", 80, 1)},
+				}},
+			},
+		}}
+	}
+
+	endpoints := []string{serverA.URL + "/config", serverB.URL + "/config"}
+
+	// Config A reaches both replicas.
+	_, err := syncer.SyncRoutes(context.Background(), endpoints, makeRoutes("/a"), nil, nil, nil)
+	require.NoError(t, err)
+	require.Equal(t, int32(1), pushCountA.Load())
+	require.Equal(t, int32(1), pushCountB.Load())
+
+	// Config B partially succeeds: replica A takes it, replica B errors.
+	failB.Store(true)
+
+	_, err = syncer.SyncRoutes(context.Background(), endpoints, makeRoutes("/b"), nil, nil, nil)
+	require.Error(t, err, "a partial push must surface as an error")
+	require.Equal(t, int32(2), pushCountA.Load(), "replica A accepted config B")
+
+	// Roll back to config A: replica A still holds B, so the sync MUST push
+	// even though config A matches the last fully-successful push.
+	failB.Store(false)
+
+	_, err = syncer.SyncRoutes(context.Background(), endpoints, makeRoutes("/a"), nil, nil, nil)
+	require.NoError(t, err)
+	assert.Equal(t, int32(3), pushCountA.Load(),
+		"the rollback after a partial push must be delivered, not skipped")
+	assert.Equal(t, int32(2), pushCountB.Load())
+}
