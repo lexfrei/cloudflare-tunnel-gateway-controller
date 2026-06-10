@@ -302,7 +302,7 @@ func convertGRPCBackendRef(
 	clientCert *ClientCertConfig,
 	sink *diagSink,
 ) (BackendRef, bool) {
-	common := resolveCommonBackendRef(ctx, &backend.BackendRef, namespace, clusterDomain, validator)
+	common := resolveCommonBackendRef(ctx, &backend.BackendRef, namespace, clusterDomain, validator, "GRPCRoute")
 
 	switch common.outcome {
 	case backendRefDropped:

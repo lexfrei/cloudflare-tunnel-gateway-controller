@@ -50,6 +50,7 @@ func resolveCommonBackendRef(
 	routeNamespace string,
 	clusterDomain string,
 	validator BackendRefValidator,
+	routeKind string,
 ) resolvedBackendRef {
 	result := BackendRef{Weight: 1}
 	if ref.Weight != nil {
@@ -60,6 +61,7 @@ func resolveCommonBackendRef(
 		slog.Warn("skipping backend with negative weight",
 			"name", string(ref.Name),
 			"weight", result.Weight,
+			"route_kind", routeKind,
 		)
 
 		return resolvedBackendRef{outcome: backendRefDropped}

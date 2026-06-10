@@ -1019,7 +1019,7 @@ func convertBackendRef(
 	clientCert *ClientCertConfig,
 	sink *diagSink,
 ) (BackendRef, bool) {
-	common := resolveCommonBackendRef(ctx, &backend.BackendRef, namespace, clusterDomain, validator)
+	common := resolveCommonBackendRef(ctx, &backend.BackendRef, namespace, clusterDomain, validator, "HTTPRoute")
 
 	switch common.outcome {
 	case backendRefDropped:

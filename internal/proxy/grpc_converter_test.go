@@ -1196,3 +1196,67 @@ func TestConvertRoutes_BackendTLSEquivalentAcrossRouteKinds(t *testing.T) {
 	assert.Equal(t, httpBackend.URL, grpcBackend.URL,
 		"the same Service backend must dial the same https URL from both route kinds")
 }
+
+// TestConvertRoutes_InvalidBackendOutcomesEquivalentAcrossRouteKinds is the
+// proxy-side counterpart of the ingress cross-kind equivalence pin: identical
+// invalid backendRefs (unsupported kind, out-of-range port, denied
+// cross-namespace ref) must produce identical outcomes through the shared
+// resolution path for HTTPRoute and GRPCRoute — same weight kept, same 500
+// marking, never silently dropped.
+func TestConvertRoutes_InvalidBackendOutcomesEquivalentAcrossRouteKinds(t *testing.T) {
+	t.Parallel()
+
+	badKind := gatewayv1.Kind("ConfigMap")
+	badPort := gatewayv1.PortNumber(70000)
+	deniedNS := gatewayv1.Namespace("denied")
+	okPort := gatewayv1.PortNumber(8080)
+	weight := int32(7)
+
+	denyAll := func(_ context.Context, _ string, _ gatewayv1.BackendObjectReference) bool { return false }
+
+	refs := []gatewayv1.BackendRef{
+		{BackendObjectReference: gatewayv1.BackendObjectReference{Name: "bad-kind", Kind: &badKind, Port: &okPort}, Weight: &weight},
+		{BackendObjectReference: gatewayv1.BackendObjectReference{Name: "bad-port", Port: &badPort}, Weight: &weight},
+		{BackendObjectReference: gatewayv1.BackendObjectReference{Name: "denied", Port: &okPort, Namespace: &deniedNS}, Weight: &weight},
+	}
+
+	httpRefs := make([]gatewayv1.HTTPBackendRef, len(refs))
+	grpcRefs := make([]gatewayv1.GRPCBackendRef, len(refs))
+
+	for i, ref := range refs {
+		httpRefs[i] = gatewayv1.HTTPBackendRef{BackendRef: ref}
+		grpcRefs[i] = gatewayv1.GRPCBackendRef{BackendRef: ref}
+	}
+
+	httpRoutes := []*gatewayv1.HTTPRoute{{
+		ObjectMeta: metav1.ObjectMeta{Name: "r", Namespace: "default"},
+		Spec:       gatewayv1.HTTPRouteSpec{Rules: []gatewayv1.HTTPRouteRule{{BackendRefs: httpRefs}}},
+	}}
+	grpcRoutes := []*gatewayv1.GRPCRoute{{
+		ObjectMeta: metav1.ObjectMeta{Name: "r", Namespace: "default"},
+		Spec:       gatewayv1.GRPCRouteSpec{Rules: []gatewayv1.GRPCRouteRule{{BackendRefs: grpcRefs}}},
+	}}
+
+	httpCfg := proxy.ConvertHTTPRoutes(context.Background(), httpRoutes, "cluster.local", denyAll, nil, nil, nil)
+	grpcCfg := proxy.ConvertGRPCRoutes(context.Background(), grpcRoutes, "cluster.local", denyAll, nil, nil, nil)
+
+	require.Len(t, httpCfg.Rules, 1)
+	require.Len(t, grpcCfg.Rules, 1)
+	require.Len(t, httpCfg.Rules[0].Backends, len(refs),
+		"every weight>0 invalid backend must stay in the pool with its 500 marker")
+	require.Len(t, grpcCfg.Rules[0].Backends, len(refs))
+
+	for i := range refs {
+		httpBackend := httpCfg.Rules[0].Backends[i]
+		grpcBackend := grpcCfg.Rules[0].Backends[i]
+
+		assert.Equal(t, httpBackend.Weight, grpcBackend.Weight,
+			"backend %d: weight must survive identically on both kinds", i)
+		assert.Equal(t, httpBackend.UnavailableStatus, grpcBackend.UnavailableStatus,
+			"backend %d: the 500 invalid-ref marking must be identical on both kinds", i)
+		assert.Equal(t, http.StatusInternalServerError, httpBackend.UnavailableStatus,
+			"backend %d: an invalid ref must carry the 500 marker", i)
+		assert.Equal(t, httpBackend.URL, grpcBackend.URL,
+			"backend %d: the placeholder URL must be identical on both kinds", i)
+	}
+}
