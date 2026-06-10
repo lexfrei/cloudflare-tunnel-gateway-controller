@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"strings"
 	"testing"
 	"time"
 
@@ -78,11 +77,22 @@ func TestBackendAppProtocolTLSWithoutPolicyFailsClosed(t *testing.T) {
 	waitForRouteResolvedRefsFalse(t, k8sClient, route, string(gatewayv1.RouteReasonUnsupportedProtocol))
 
 	// Data plane: the proxy must answer 502 (Bad Gateway) for the route --
-	// never 200 (which would now mean a silent cleartext dial).
+	// never 200 (which would now mean a silent cleartext dial). The origin's
+	// response body is NOT inspectable here: Cloudflare's edge replaces an
+	// origin 502 body with its own ("error code: 502", verified empirically),
+	// so the proxy's "backend unavailable" payload never reaches the client.
+	// A transient edge 502 is instead ruled out by requiring the 502 to be
+	// STABLE: three consecutive polls (an edge blip clears between polls,
+	// the fail-closed answer does not), on top of the status gate above
+	// which already proved the fail-closed config reached the proxy.
+	consecutive502 := 0
+
 	err := wait.PollUntilContextTimeout(ctx, 2*time.Second, 90*time.Second, true,
 		func(pollCtx context.Context) (bool, error) {
 			_, resp, reqErr := makeRequest(pollCtx, t, httpClient, cfg.TunnelHostname, http.MethodGet, "/fail-closed", nil)
 			if reqErr != nil {
+				consecutive502 = 0
+
 				return false, nil //nolint:nilerr // transient edge/tunnel errors are expected while polling; retry until timeout
 			}
 
@@ -90,14 +100,18 @@ func TestBackendAppProtocolTLSWithoutPolicyFailsClosed(t *testing.T) {
 				return false, errStrictFailClosed
 			}
 
-			// Only the proxy's own fail-closed answer counts: a transient
-			// edge 502 (HTML error page) must keep the poll going, or the
-			// test would pass on a tunnel hiccup with fail-closed broken.
-			return resp.StatusCode == http.StatusBadGateway &&
-				strings.Contains(resp.Body, "backend unavailable"), nil
+			if resp.StatusCode != http.StatusBadGateway {
+				consecutive502 = 0
+
+				return false, nil
+			}
+
+			consecutive502++
+
+			return consecutive502 >= 3, nil
 		},
 	)
-	require.NoError(t, err, "a TLS appProtocol without a BackendTLSPolicy must answer the proxy's own 502, never reach the backend in cleartext")
+	require.NoError(t, err, "a TLS appProtocol without a BackendTLSPolicy must answer a stable 502, never reach the backend in cleartext")
 }
 
 // errStrictFailClosed aborts the poll immediately: a 200 means the proxy
