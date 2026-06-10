@@ -200,3 +200,26 @@ func convertGetToUpdate(
 
 	return result
 }
+
+// RulesUnchanged reports whether the desired ingress document is identical to
+// the currently-deployed one. The comparison is order-sensitive — cloudflared
+// ingress rules are first-match — and covers the full document including the
+// catch-all. Used to skip the Cloudflare configuration write entirely on
+// steady-state syncs: the configurations endpoint is a whole-document update,
+// so the only way to reduce API traffic is to not write at all.
+func RulesUnchanged(
+	current []zero_trust.TunnelCloudflaredConfigurationGetResponseConfigIngress,
+	desired []zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress,
+) bool {
+	if len(current) != len(desired) {
+		return false
+	}
+
+	for idx := range current {
+		if !RulesEqual(RuleFromGet(&current[idx]), RuleFromUpdate(&desired[idx])) {
+			return false
+		}
+	}
+
+	return true
+}

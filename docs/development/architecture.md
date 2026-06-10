@@ -121,8 +121,8 @@ sequenceDiagram
 Watches HTTPRoute resources and synchronizes them to Cloudflare:
 
 1. **Filtering**: Only processes routes referencing managed Gateways
-2. **Full Sync**: On any change, rebuilds entire tunnel configuration
-3. **API Update**: Pushes configuration to Cloudflare API
+2. **Full Sync**: On any change, rebuilds the entire desired tunnel configuration
+3. **API Update**: Diffs against the deployed configuration and writes to the Cloudflare API only when the document changed (the configurations endpoint is whole-document; steady-state syncs skip the write)
 4. **Status Update**: Sets route acceptance conditions
 
 ```mermaid
@@ -138,8 +138,14 @@ sequenceDiagram
     HR->>Builder: Build ingress rules
     Builder->>Builder: Sort by priority
     Builder-->>HR: Cloudflare ingress config
-    HR->>CF: Update tunnel configuration
-    CF-->>HR: Success
+    HR->>CF: Get current tunnel configuration
+    CF-->>HR: Deployed ingress document
+    alt document changed
+        HR->>CF: Update tunnel configuration
+        CF-->>HR: Success
+    else unchanged
+        HR->>HR: Skip write
+    end
     HR->>K8s: Update HTTPRoute status
 ```
 

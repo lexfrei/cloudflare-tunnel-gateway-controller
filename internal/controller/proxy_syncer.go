@@ -2,6 +2,9 @@ package controller
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net"
@@ -62,6 +65,14 @@ type ProxySyncer struct {
 	gatewayCertResolver  proxy.GatewayClientCertResolver
 	syncMu               sync.Mutex
 	lastCfg              *proxy.Config
+
+	// lastPushedHash / lastPushedEndpoints key the steady-state skip: when a
+	// rebuilt config hashes identically to the last successful push AND the
+	// resolved endpoint set is unchanged, the push is a no-op (every replica
+	// already holds this config). Guarded by syncMu. A push failure leaves
+	// them untouched so the next sync retries.
+	lastPushedHash      string
+	lastPushedEndpoints map[string]struct{}
 
 	// ViewStore caches the per-Gateway ListenerSet merge view across reconciles
 	// (issue #332). Set by the manager after construction and shared with the
@@ -659,7 +670,54 @@ func (s *ProxySyncer) SyncRoutes(
 		"resolved", len(resolved),
 	)
 
-	// Push to all endpoints.
+	// Steady-state skip: when the rebuilt config is identical to the last
+	// successful push and the replica set is unchanged, every endpoint
+	// already holds this config — re-pushing it is pure churn. Reconciles
+	// triggered by status updates or endpoint heartbeats hit this path
+	// constantly in large fleets.
+	cfgHash := hashProxyConfig(cfg)
+	if shouldSkipPush(cfgHash, s.lastPushedHash, s.lastPushedEndpoints, resolved) {
+		logger.Debug("proxy config unchanged; skipping push",
+			"endpoints", len(resolved),
+			"rules", len(cfg.Rules),
+		)
+
+		return diagnostics, nil
+	}
+
+	if err := s.pushToEndpoints(ctx, logger, cfg, resolved); err != nil {
+		// A failed push may have PARTIALLY succeeded (the pusher fans out
+		// concurrently): some replicas may already hold the new config.
+		// Invalidate the skip key so the next sync re-pushes even when its
+		// desired config equals the last fully-successful one -- otherwise a
+		// rollback after a partial push would be skipped and the
+		// half-updated replica would stay stale until an unrelated change.
+		s.lastPushedHash = ""
+		s.lastPushedEndpoints = nil
+
+		return diagnostics, err
+	}
+
+	// Cache the successfully-pushed config so ResyncEndpoints can replay
+	// it to a newly-joined proxy pod that arrives between HTTPRoute
+	// reconciles. We cache AFTER the push so a failed push does not poison
+	// the cache with a config the replicas never actually received. The
+	// hash/endpoint-set pair keys the steady-state skip above.
+	s.lastCfg = cfg
+	s.lastPushedHash = cfgHash
+	s.lastPushedEndpoints = make(map[string]struct{}, len(resolved))
+
+	for _, endpoint := range resolved {
+		s.lastPushedEndpoints[endpoint] = struct{}{}
+	}
+
+	return diagnostics, nil
+}
+
+// pushToEndpoints delivers cfg to every resolved endpoint, aggregating
+// per-endpoint failures into one error. Extracted from SyncRoutes to keep it
+// within the funlen budget.
+func (s *ProxySyncer) pushToEndpoints(ctx context.Context, logger *slog.Logger, cfg *proxy.Config, resolved []string) error {
 	results := s.pusher.Push(ctx, cfg, resolved)
 
 	var pushErrors []error
@@ -676,7 +734,7 @@ func (s *ProxySyncer) SyncRoutes(
 	}
 
 	if len(pushErrors) > 0 {
-		return diagnostics, fmt.Errorf("failed to push config to %d/%d endpoints: %w",
+		return fmt.Errorf("failed to push config to %d/%d endpoints: %w",
 			len(pushErrors), len(resolved), errors.Join(pushErrors...))
 	}
 
@@ -686,13 +744,54 @@ func (s *ProxySyncer) SyncRoutes(
 		"version", cfg.Version,
 	)
 
-	// Cache the successfully-pushed config so ResyncEndpoints can replay
-	// it to a newly-joined proxy pod that arrives between HTTPRoute
-	// reconciles. We cache AFTER the push so a failed push does not poison
-	// the cache with a config the replicas never actually received.
-	s.lastCfg = cfg
+	return nil
+}
 
-	return diagnostics, nil
+// shouldSkipPush reports whether the rebuilt config is already held by every
+// resolved endpoint: the content hash matches the last fully-successful push
+// and the replica set is unchanged. An empty hash never skips -- "" is both
+// the hash-failure sentinel and the zero value of the last-pushed key (and
+// the invalidation value after a partial push), so treating it as a match
+// would skip a push that must happen.
+func shouldSkipPush(cfgHash, lastPushedHash string, lastPushedEndpoints map[string]struct{}, resolved []string) bool {
+	return cfgHash != "" && cfgHash == lastPushedHash && endpointSetsEqual(lastPushedEndpoints, resolved)
+}
+
+// hashProxyConfig returns a content hash of the config with the Version
+// counter zeroed: the counter increments on every build, so two
+// semantically-identical configs would otherwise never compare equal.
+func hashProxyConfig(cfg *proxy.Config) string {
+	versionless := *cfg
+	versionless.Version = 0
+
+	payload, err := json.Marshal(&versionless)
+	if err != nil {
+		// Marshal of the wire-format config cannot realistically fail; an
+		// empty hash disables the skip for this sync AND for the comparison
+		// against it (shouldSkipPush never matches on ""), so the push
+		// always proceeds.
+		return ""
+	}
+
+	sum := sha256.Sum256(payload)
+
+	return hex.EncodeToString(sum[:])
+}
+
+// endpointSetsEqual reports whether the previously-pushed endpoint set covers
+// exactly the newly-resolved endpoints.
+func endpointSetsEqual(previous map[string]struct{}, resolved []string) bool {
+	if len(previous) != len(resolved) {
+		return false
+	}
+
+	for _, endpoint := range resolved {
+		if _, ok := previous[endpoint]; !ok {
+			return false
+		}
+	}
+
+	return true
 }
 
 // buildProxyConfig converts the HTTP and gRPC route sets into a single merged
@@ -843,8 +942,24 @@ func (s *ProxySyncer) ResyncEndpoints(ctx context.Context, endpoints []string) e
 	}
 
 	if len(pushErrors) > 0 {
+		// Mirror SyncRoutes: a partial resync means some replicas may hold the
+		// cached config while others do not -- drop the skip key so the next
+		// SyncRoutes re-pushes unconditionally.
+		s.lastPushedHash = ""
+		s.lastPushedEndpoints = nil
+
 		return fmt.Errorf("failed to resync config to %d/%d endpoints: %w",
 			len(pushErrors), len(resolved), errors.Join(pushErrors...))
+	}
+
+	// Every resolved endpoint now holds lastCfg: update the skip key so the
+	// next SyncRoutes does not re-push the identical config just because the
+	// replica set grew.
+	s.lastPushedHash = hashProxyConfig(s.lastCfg)
+	s.lastPushedEndpoints = make(map[string]struct{}, len(resolved))
+
+	for _, endpoint := range resolved {
+		s.lastPushedEndpoints[endpoint] = struct{}{}
 	}
 
 	return nil

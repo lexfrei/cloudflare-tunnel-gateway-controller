@@ -3,6 +3,8 @@ package ingress_test
 import (
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+
 	"github.com/cloudflare/cloudflare-go/v7"
 	"github.com/cloudflare/cloudflare-go/v7/zero_trust"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/ingress"
@@ -319,4 +321,40 @@ func TestEnsureCatchAll(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestRulesUnchanged pins the no-op detection used to skip the Cloudflare
+// configuration write: the comparison is order-sensitive (cloudflared ingress
+// is first-match) and covers the full document including the catch-all.
+func TestRulesUnchanged(t *testing.T) {
+	t.Parallel()
+
+	current := []zero_trust.TunnelCloudflaredConfigurationGetResponseConfigIngress{
+		{Hostname: "a.example.com", Service: "http://svc-a.default.svc.cluster.local:80"},
+		{Hostname: "b.example.com", Path: "/api*", Service: "http://svc-b.default.svc.cluster.local:80"},
+		{Service: ingress.CatchAllService},
+	}
+
+	identical := []zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress{
+		{Hostname: cloudflare.F("a.example.com"), Service: cloudflare.F("http://svc-a.default.svc.cluster.local:80")},
+		{Hostname: cloudflare.F("b.example.com"), Path: cloudflare.F("/api*"), Service: cloudflare.F("http://svc-b.default.svc.cluster.local:80")},
+		{Service: cloudflare.F(ingress.CatchAllService)},
+	}
+
+	assert.True(t, ingress.RulesUnchanged(current, identical), "identical documents must compare equal")
+
+	reordered := []zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress{
+		identical[1], identical[0], identical[2],
+	}
+	assert.False(t, ingress.RulesUnchanged(current, reordered), "order matters: cloudflared ingress is first-match")
+
+	differentService := []zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress{
+		identical[0],
+		{Hostname: cloudflare.F("b.example.com"), Path: cloudflare.F("/api*"), Service: cloudflare.F("http://svc-c.default.svc.cluster.local:80")},
+		identical[2],
+	}
+	assert.False(t, ingress.RulesUnchanged(current, differentService))
+
+	shorter := identical[:2]
+	assert.False(t, ingress.RulesUnchanged(current, shorter), "length difference must compare unequal")
 }
