@@ -61,13 +61,42 @@ func TestUpdateRouteStatusGeneric_FreshGetErrorPropagates(t *testing.T) {
 	assert.ErrorIs(t, err, errStatusGetBoom)
 }
 
-func TestUpdateRouteStatusGeneric_ClassListFailureStillWritesStatus(t *testing.T) {
+func TestUpdateRouteStatusGeneric_ClassListFailurePropagatesAndPreservesStatus(t *testing.T) {
 	t.Parallel()
 
 	scheme := newListenerSetScheme(t)
 
+	// The route already carries one of OUR parent status entries; a transient
+	// GatewayClass list failure must not wipe it (a nil managed-class set
+	// would make every parentRef look foreign and the write would erase our
+	// entries while reporting success).
+	gwName := gatewayv1.ObjectName("gw")
 	route := &gatewayv1.HTTPRoute{
 		ObjectMeta: metav1.ObjectMeta{Name: "r", Namespace: "ns", Generation: 1},
+		Spec: gatewayv1.HTTPRouteSpec{
+			CommonRouteSpec: gatewayv1.CommonRouteSpec{
+				ParentRefs: []gatewayv1.ParentReference{{Name: gwName}},
+			},
+		},
+		Status: gatewayv1.HTTPRouteStatus{
+			RouteStatus: gatewayv1.RouteStatus{
+				Parents: []gatewayv1.RouteParentStatus{
+					{
+						ParentRef:      gatewayv1.ParentReference{Name: gwName},
+						ControllerName: "test",
+						Conditions: []metav1.Condition{
+							{
+								Type:               string(gatewayv1.RouteConditionAccepted),
+								Status:             metav1.ConditionTrue,
+								Reason:             string(gatewayv1.RouteReasonAccepted),
+								Message:            "ok",
+								LastTransitionTime: metav1.Now(),
+							},
+						},
+					},
+				},
+			},
+		},
 	}
 
 	listFails := fake.NewClientBuilder().
@@ -95,6 +124,13 @@ func TestUpdateRouteStatusGeneric_ClassListFailureStillWritesStatus(t *testing.T
 		nil,
 	)
 
-	assert.NoError(t, err,
-		"a failing GatewayClass list (scoping only) must degrade gracefully, not block the status write")
+	require.Error(t, err,
+		"a failing GatewayClass list must propagate so the reconcile requeues -- proceeding would wipe our parent entries")
+	assert.ErrorIs(t, err, errStatusGetBoom)
+
+	var refreshed gatewayv1.HTTPRoute
+	require.NoError(t, listFails.Get(context.Background(), types.NamespacedName{Name: "r", Namespace: "ns"}, &refreshed))
+	require.Len(t, refreshed.Status.Parents, 1,
+		"existing parent status entries must survive a transient class-list failure untouched")
+	assert.Equal(t, gatewayv1.GatewayController("test"), refreshed.Status.Parents[0].ControllerName)
 }

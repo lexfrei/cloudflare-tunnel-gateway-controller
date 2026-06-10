@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -67,7 +68,7 @@ func TestListenerSetStatus_NeverLeaksSecretContents(t *testing.T) {
 	sibling := &gatewayv1.ListenerSet{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "ls-older", Namespace: "infra",
-			CreationTimestamp: metav1.Time{Time: metav1.Now().Add(-3600e9)},
+			CreationTimestamp: metav1.Time{Time: metav1.Now().Add(-time.Hour)},
 		},
 		Spec: gatewayv1.ListenerSetSpec{
 			ParentRef: gatewayv1.ParentGatewayReference{Name: gatewayv1.ObjectName(gw.Name)},

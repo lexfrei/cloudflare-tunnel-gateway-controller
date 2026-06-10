@@ -15,10 +15,12 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 	"sigs.k8s.io/gateway-api/pkg/consts"
@@ -331,7 +333,13 @@ func (r *GatewayClassReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	//nolint:wrapcheck // controller-runtime builder pattern
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&gatewayv1.GatewayClass{}).
-		Watches(&gatewayv1.Gateway{}, handler.EnqueueRequestsFromMapFunc(gatewayClassForGateway)).
+		// GenerationChangedPredicate keeps Gateway status writes (every
+		// GatewayReconciler pass) from re-reconciling the class; finalizer
+		// accounting only needs create/delete and spec changes (which include
+		// gatewayClassName moves -- the map func sees both old and new).
+		Watches(&gatewayv1.Gateway{},
+			handler.EnqueueRequestsFromMapFunc(gatewayClassForGateway),
+			builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Complete(r)
 }
 
