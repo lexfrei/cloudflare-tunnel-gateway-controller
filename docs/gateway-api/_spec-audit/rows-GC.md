@@ -3,7 +3,7 @@
 | ID | Keyword | Class | Status | Evidence | Notes |
 | --- | --- | --- | --- | --- | --- |
 | GC-01 | MUST | CTRL | MET | docs/gateway-api/limitations.md:325-327 | Controller propagates GatewayClass changes to existing Gateways; documented as required. |
-| GC-02 | SHOULD | CTRL | GAP | internal/controller/gatewayclass_controller.go | Never adds gateway-exists-finalizer.gateway.networking.k8s.io; reconciler only writes status, no finalizer logic. |
+| GC-02 | SHOULD | CTRL | MET | internal/controller/gatewayclass_controller.go reconcileFinalizer; gatewayclass_finalizer_test.go | gateway-exists-finalizer.gateway.networking.k8s.io is managed: added while any Gateway uses the class, removed when none do; deletion-path covered by tests. |
 | GC-03 | MUST | CTRL | MET | internal/controller/gatewayclass_controller.go:65-75 | Status populated for every GatewayClass whose controllerName matches r.ControllerName. |
 | GC-04 | MUST | CRD | NA | api/v1alpha1 (n/a); vendor gatewayclass_types.go:88 | controllerName format is the writer's obligation; CRD has only an immutability CEL rule, no domain-prefixed-path pattern. Controller does string equality, no format check. |
 | GC-05 | SHOULD | CTRL | GAP | internal/controller/gatewayclass_controller.go:104-114 | setAcceptedConditions always sets Accepted=True; never validates parametersRef nor sets Accepted=False/InvalidParameters. Resolver (internal/config/resolver.go:91-101) detects bad refs but its errors never reach GatewayClass status. |

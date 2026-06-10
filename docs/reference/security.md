@@ -70,8 +70,13 @@ The controller requires specific Kubernetes permissions:
 rules:
   # Gateway API - read specs
   - apiGroups: ["gateway.networking.k8s.io"]
-    resources: ["gatewayclasses", "httproutes", "grpcroutes", "referencegrants", "backendtlspolicies", "listenersets"]
+    resources: ["httproutes", "grpcroutes", "referencegrants", "backendtlspolicies", "listenersets"]
     verbs: ["get", "list", "watch"]
+  # GatewayClasses - the controller manages the spec-defined gateway-exists
+  # finalizer (metadata write outside the status subresource)
+  - apiGroups: ["gateway.networking.k8s.io"]
+    resources: ["gatewayclasses"]
+    verbs: ["get", "list", "watch", "update", "patch"]
   # Gateways - status patches require update/patch on the parent resource
   - apiGroups: ["gateway.networking.k8s.io"]
     resources: ["gateways"]
@@ -84,6 +89,11 @@ rules:
   - apiGroups: ["multicluster.x-k8s.io"]
     resources: ["serviceimports"]
     verbs: ["get", "list", "watch"]
+  # CustomResourceDefinitions - single Get of the gatewayclasses CRD to read
+  # the bundle-version annotation for the SupportedVersion condition
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["get"]
 
   # Core API - read only
   - apiGroups: [""]

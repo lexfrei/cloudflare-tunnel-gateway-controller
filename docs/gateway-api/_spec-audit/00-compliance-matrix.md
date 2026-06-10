@@ -30,7 +30,7 @@ Conformance ground truth: 76 top-level subtests PASS, 54 SKIP (documented TLS/TC
 | SH-51, GC-21 | GAP (also GW-81, GW-100, POL-11 same class) | **CONFIRMED (MUST NOT), low** | No observedGeneration regression guard; status writers stamp `ObservedGeneration: generation` unconditionally. Get+RetryOnConflict guards resourceVersion only, not a stale-generation overwrite. Narrow race. |
 | HR-04 (and GR-16) | GAP | **CONFIRMED (MUST), minor** | Rule-name uniqueness CEL is experimental-channel only (httproute_types.go:125); shipped Standard CRD strips it; no controller-side uniqueness check. |
 | GC-05 | GAP | CONFIRMED but **SHOULD** | Bad parametersRef is surfaced on Gateway status, not as GatewayClass Accepted=False/InvalidParameters. Defensible design deviation; feeds the SHOULD audit. |
-| GC-02 | GAP | CONFIRMED but **SHOULD** | `gateway-exists-finalizer` not added. Feeds the SHOULD audit. |
+| GC-02 | GAP | RESOLVED (was: CONFIRMED but **SHOULD**) | `gateway-exists-finalizer` is now managed by the GatewayClass reconciler (added while any Gateway uses the class, removed when none do). |
 | GW-31, GW-87 | GAP | DOWNGRADE-NA | spec.addresses is never user-selectable for a tunnel; same territory as the exempt SupportGatewayStaticAddresses. Doc note only. |
 | GW-75, GW-86 | GAP | DOWNGRADE-MET | Precondition is "if empty value NOT supported"; the controller supports empty (claims SupportGatewayAddressEmpty, always auto-assigns the tunnel CNAME), so the obligation is vacuously satisfied. |
 | GC-09 | GAP | DOWNGRADE-DEFENSIBLE | Controller reconciles only classes naming its controllerName and supports all of them, so Accepted=True is correct; no "will not support" scenario arises. |
@@ -62,9 +62,9 @@ The SHOULD and MAY tiers were re-verified in a second pass after the MUST audit 
 ### SHOULD / SHOULD NOT (51 clauses)
 
 - HONOURED-TESTED (~22) and N/A for the tunnel architecture (~23) account for the bulk.
-- HONOURED-UNTESTED (7): HR-21, HR-24, HR-63, BTLS-06, SH-31, SH-32, LS-05 — honoured but not pinned by a regression test; test candidates for the SHOULD-coverage follow-up.
+- HONOURED-TESTED since the audit (was HONOURED-UNTESTED, 7): HR-21, HR-24, HR-63, BTLS-06, SH-31, SH-32, LS-05 — each now pinned by a regression test (explicit-zero timeouts, redirect Location port, BackendTLS HTTP/gRPC equivalence, reason-vocabulary AST guard, ListenerSet status leak guard).
 - DEVIATED-DOCUMENTED (5): GW-74, BTLS-04, GC-05, SH-43, OR-03 — permitted deviations with a written rationale in limitations.md.
-- DEVIATED-SILENT (3 distinct gaps across 4 clause IDs) — the actionable gaps: GC-02 and its v1beta1 alias OTHER-45 (gateway-exists-finalizer not added); GEP-08 (policy discoverability condition written on the policy ancestor status, not stamped on the affected Gateway/Service); HR-61 (no redirect-port fallback to the listener port — unreachable through the Standard CRD scheme enum http/https, so a documentation note rather than a behaviour fix). Resolved since the audit: GR-44 / GR-45 (gRPC silently dialing cleartext when a Service declared a TLS appProtocol without a BackendTLSPolicy) now fails the backend closed, matching the HTTP path — #438.
+- DEVIATED-SILENT (originally 3 distinct gaps across 4 clause IDs) — all resolved since the audit: GC-02 and its v1beta1 alias OTHER-45 are HONOURED (the reconciler now manages the gateway-exists-finalizer); GEP-08 (discoverability condition on the policy ancestor status, not the affected Gateway/Service) and HR-61 (no redirect-port fallback to the listener port — unreachable through the Standard CRD scheme enum http/https) are DEVIATED-DOCUMENTED with rationales in limitations.md. Also resolved earlier: GR-44 / GR-45 (gRPC silently dialing cleartext when a Service declared a TLS appProtocol without a BackendTLSPolicy) now fails the backend closed, matching the HTTP path — #438.
 
 ### MAY (34 clauses)
 
