@@ -21,11 +21,17 @@
 #   ./hack/conformance-setup.sh --skip-build     # skip image build (reuse existing)
 #   ./hack/conformance-setup.sh --use-ci-images N  # deploy PR #N's published ttl.sh
 #                                                  # chart+images (no local build)
+#   ./hack/conformance-setup.sh --test-e2e       # setup + run the custom e2e suite
+#                                                  # (smoke-level; lighter than --test)
 #
 # Prerequisites:
 #   - .env file in repo root with: CF_API_TOKEN, CF_ACCOUNT_ID, CF_TUNNEL_ID,
-#     CF_TUNNEL_TOKEN, CF_TUNNEL_HOSTNAME (the edge hostname routing to the tunnel)
-#   - colima, docker, kind, helm, kubectl, go installed
+#     CF_TUNNEL_TOKEN, CF_TUNNEL_HOSTNAME (the edge hostname routing to the tunnel);
+#     alternatively (CI) the same variables already exported in the environment
+#   - colima (macOS only), docker, kind, helm, kubectl, go installed
+#
+# In GitHub Actions (GITHUB_ACTIONS=true) the colima requirement is skipped:
+# the runner's native docker daemon is used directly.
 
 set -euo pipefail
 
@@ -45,6 +51,7 @@ GATEWAY_API_VERSION="v1.5.1"
 
 # --- Flags ---
 RUN_TESTS=false
+RUN_E2E=false
 SKIP_BUILD=false
 CI_PR_NUMBER=""
 # Gateway API CRD release channel. "experimental" is the default (superset of
@@ -66,6 +73,7 @@ check_tool() {
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --test) RUN_TESTS=true ;;
+    --test-e2e) RUN_E2E=true ;;
     --channel)
       shift
       [[ $# -gt 0 ]] || die "--channel requires a value (standard|experimental)"
@@ -90,24 +98,38 @@ if [[ -n "${CI_PR_NUMBER}" && "${SKIP_BUILD}" == "true" ]]; then
   die "--use-ci-images and --skip-build are mutually exclusive"
 fi
 
+# The test runner below is an either/or branch; accepting both flags would
+# silently drop one suite.
+if [[ "${RUN_TESTS}" == "true" && "${RUN_E2E}" == "true" ]]; then
+  die "--test and --test-e2e are mutually exclusive (run them as separate invocations)"
+fi
+
 # --- Pre-flight checks ---
+# colima is the macOS docker backend; GitHub Actions runners have a native
+# docker daemon, so the requirement (and the start step below) is skipped there.
 info "Checking prerequisites..."
-for tool in colima docker kind helm kubectl go; do
+TOOLS=(docker kind helm kubectl go)
+if [[ "${GITHUB_ACTIONS:-}" != "true" ]]; then
+  TOOLS+=(colima)
+fi
+for tool in "${TOOLS[@]}"; do
   check_tool "${tool}"
 done
 
 # --- Load .env ---
+# CI exports the CF_* variables directly (repo secrets); a missing .env is
+# only fatal when the variables are not already in the environment.
 ENV_FILE="${REPO_ROOT}/.env"
-if [[ ! -f "${ENV_FILE}" ]]; then
-  die ".env file not found at ${ENV_FILE}. See .env.example or MEMORY.md for required variables."
+if [[ -f "${ENV_FILE}" ]]; then
+  # shellcheck source=/dev/null
+  source "${ENV_FILE}"
+elif [[ -z "${CF_API_TOKEN:-}" ]]; then
+  die ".env file not found at ${ENV_FILE} and CF_* variables are not exported. See .env.example for required variables."
 fi
-
-# shellcheck source=/dev/null
-source "${ENV_FILE}"
 
 for var in CF_API_TOKEN CF_ACCOUNT_ID CF_TUNNEL_ID CF_TUNNEL_TOKEN CF_TUNNEL_HOSTNAME; do
   if [[ -z "${!var:-}" ]]; then
-    die "Required variable ${var} is not set in .env (see .env.example)"
+    die "Required variable ${var} is not set (provide via .env or the environment; see .env.example)"
   fi
 done
 
@@ -138,11 +160,13 @@ if [[ -n "${CI_PR_NUMBER}" ]]; then
     || die "Chart ${CI_CHART_VERSION} not found on ttl.sh. ttl.sh artifacts expire after 24h (the '1d' tag) — re-run PR #${CI_PR_NUMBER}'s CI to republish."
 fi
 
-# --- Step 1: Ensure colima is running ---
-info "Checking colima..."
-if ! colima status >/dev/null 2>&1; then
-  info "Starting colima..."
-  colima start
+# --- Step 1: Ensure colima is running (macOS only; CI uses native docker) ---
+if [[ "${GITHUB_ACTIONS:-}" != "true" ]]; then
+  info "Checking colima..."
+  if ! colima status >/dev/null 2>&1; then
+    info "Starting colima..."
+    colima start
+  fi
 fi
 
 # --- Step 2: Delete old v2-test-* clusters ---
@@ -285,13 +309,18 @@ if [[ "${RUN_TESTS}" == "true" ]]; then
   CONFORMANCE_KUBE_CONTEXT="${KUBE_CONTEXT}" \
   CONFORMANCE_TUNNEL_HOSTNAME="${CF_TUNNEL_HOSTNAME}" \
     go test -v -race -tags conformance -count=1 -timeout=60m -parallel 10 ./test/conformance/...
+elif [[ "${RUN_E2E}" == "true" ]]; then
+  info "Running e2e tests against ${CF_TUNNEL_HOSTNAME}..."
+  E2E_KUBE_CONTEXT="${KUBE_CONTEXT}" \
+  E2E_TUNNEL_HOSTNAME="${CF_TUNNEL_HOSTNAME}" \
+    go test -v -race -tags e2e -count=1 -timeout=15m ./test/e2e/...
 else
   echo ""
   info "Setup complete! To run conformance tests:"
   echo "  CONFORMANCE_KUBE_CONTEXT=${KUBE_CONTEXT} CONFORMANCE_TUNNEL_HOSTNAME=${CF_TUNNEL_HOSTNAME} go test -v -race -tags conformance -count=1 -timeout=30m ./test/conformance/..."
   echo ""
   info "To run E2E tests:"
-  echo "  CONFORMANCE_KUBE_CONTEXT=${KUBE_CONTEXT} E2E_TUNNEL_HOSTNAME=${CF_TUNNEL_HOSTNAME} go test -v -race -tags e2e -count=1 -timeout=15m ./test/e2e/..."
+  echo "  E2E_KUBE_CONTEXT=${KUBE_CONTEXT} E2E_TUNNEL_HOSTNAME=${CF_TUNNEL_HOSTNAME} go test -v -race -tags e2e -count=1 -timeout=15m ./test/e2e/..."
   echo ""
   info "To tear down:"
   echo "  kind delete cluster --name ${CLUSTER_NAME}"

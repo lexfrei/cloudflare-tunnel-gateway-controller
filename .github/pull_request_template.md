@@ -13,7 +13,7 @@ Brief description of what this PR does and why.
 ## Testing
 
 - [ ] All tests pass locally (`go test ./...`)
-- [ ] Linters pass locally (`golangci-lint run`)
+- [ ] Linters pass locally (`golangci-lint run --timeout=5m --build-tags e2e,conformance,envtest`)
 - [ ] Markdown linting passes (`markdownlint **/*.md`)
 - [ ] Manual testing completed (if applicable)
 

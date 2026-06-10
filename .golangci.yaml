@@ -11,6 +11,9 @@ linters:
     - errchkjson
     - ireturn
     - gocheckcompilerdirectives
+    # Deprecated since v2.12; gomodguard_v2 (enabled via default: all)
+    # replaces it. Keeping both active only produces a warning per run.
+    - gomodguard
   settings:
     dupl:
       threshold: 100
@@ -110,6 +113,12 @@ linters:
           - perfsprint
           - paralleltest
           - maintidx
+          # Test binaries legitimately use package globals: envtest suites
+          # share TestMain-initialized state (test environment, client,
+          # scheme) per the idiomatic controller-runtime pattern, and
+          # table-driven guards keep package-level data tables. Threading
+          # either through every helper buys no isolation in a test binary.
+          - gochecknoglobals
         path: _test\.go
       - linters:
           - forbidigo

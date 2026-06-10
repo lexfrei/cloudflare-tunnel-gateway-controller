@@ -1,0 +1,133 @@
+name: Scheduled E2E
+
+# Cloudflare edge / tunnel behaviour can change without notice. The pre-merge
+# gates catch OUR regressions; this scheduled run catches THEIRS: a weekly
+# smoke-level e2e against the live test tunnel so an edge-side break is
+# detected the same week it ships, not via a user report. Issue #441.
+on:
+  schedule:
+    # Weekly, Monday 05:17 UTC (off the full hour to avoid the cron rush).
+    - cron: '17 5 * * 1'
+  workflow_dispatch: {}
+
+# Serializes scheduled runs against each other only. NB: the run shares the
+# test tunnel with local kind-based conformance/e2e runs -- a concurrent local
+# run against the same tunnel ID will fight over the tunnel config and flake.
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    name: E2E against live tunnel
+    # Forks have no CF_* secrets and no business hitting the live tunnel; a
+    # manually dispatched fork run would only fail and file a noise issue.
+    if: github.repository == 'lexfrei/cloudflare-tunnel-gateway-controller'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      issues: write
+    env:
+      CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+      CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+      CF_TUNNEL_ID: ${{ secrets.CF_TUNNEL_ID }}
+      CF_TUNNEL_TOKEN: ${{ secrets.CF_TUNNEL_TOKEN }}
+      CF_TUNNEL_HOSTNAME: ${{ secrets.CF_TUNNEL_HOSTNAME }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - name: Setup Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
+        with:
+          go-version: '1.26.4'
+          cache: true
+
+      - name: Install kind
+        run: |
+          set -euo pipefail
+
+          # renovate: datasource=github-releases depName=kubernetes-sigs/kind
+          KIND_VERSION="v0.30.0"
+
+          curl --retry 5 --retry-delay 1 -sSLo /tmp/kind \
+            "https://github.com/kubernetes-sigs/kind/releases/download/${KIND_VERSION}/kind-linux-amd64"
+          sudo install /tmp/kind /usr/local/bin/kind
+          kind version
+
+      # The setup script builds images, creates a kind cluster, deploys the
+      # controller against the live test tunnel, and runs the e2e suite.
+      # A failure here can be a transient (registry hiccup, edge blip), so the
+      # first attempt is continue-on-error and a full second attempt decides.
+      - name: Setup cluster and run e2e (attempt 1)
+        id: attempt1
+        continue-on-error: true
+        run: ./hack/conformance-setup.sh --test-e2e
+
+      - name: Setup cluster and run e2e (attempt 2)
+        id: attempt2
+        if: steps.attempt1.outcome == 'failure'
+        run: ./hack/conformance-setup.sh --test-e2e
+
+      # A red scheduled run nobody looks at is indistinguishable from no run
+      # at all -- surface persistent failures as an issue.
+      - name: Open or update failure issue
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          title="Scheduled e2e against the live tunnel failed"
+          run_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+          # failure() also covers a failed infrastructure step (checkout,
+          # toolchain install) before the suite ever ran -- say which it was.
+          if [[ "${{ steps.attempt2.outcome }}" == "failure" ]]; then
+            summary="The e2e run against the live test tunnel failed twice in a row (one retry to rule out transients), which may indicate a Cloudflare edge/tunnel behaviour change rather than a code regression -- this is a scheduled/manual run, not a merge gate, so no code change triggered it."
+          else
+            summary="The weekly scheduled e2e run failed before completing both e2e attempts (checkout/toolchain/setup step), so this is more likely a CI infrastructure problem than a Cloudflare edge change."
+          fi
+
+          {
+            echo "${summary}"
+            echo ""
+            echo "Failed run: ${run_url}"
+            echo ""
+            echo "Triage hints:"
+            echo ""
+            echo "- Check the run logs for which suite/step failed (cluster setup vs e2e assertions)."
+            echo "- A symmetric failure across all routes usually means tunnel/edge connectivity, not routing logic."
+            echo "- Compare with the previous green scheduled run to bound when the behaviour changed."
+          } > /tmp/issue-body.md
+
+          existing="$(gh issue list \
+            --state open \
+            --label kind/failing-test \
+            --search "\"${title}\" in:title" \
+            --json number \
+            --jq '.[0].number // empty')"
+
+          if [[ -n "${existing}" ]]; then
+            gh issue comment "${existing}" --body "Still failing: ${run_url} -- ${summary}"
+          else
+            gh issue create \
+              --title "${title}" \
+              --body-file /tmp/issue-body.md \
+              --label kind/failing-test \
+              --label area/testing \
+              --label area/ci \
+              --label priority/important-soon \
+              --label triage/needs-triage
+          fi
+
+      - name: Cleanup kind clusters
+        if: always()
+        run: |
+          for cluster in $(kind get clusters 2>/dev/null | grep '^v2-test' || true); do
+            kind delete cluster --name "${cluster}"
+          done

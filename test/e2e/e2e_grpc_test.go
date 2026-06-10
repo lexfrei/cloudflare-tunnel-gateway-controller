@@ -37,8 +37,6 @@ const (
 // Cloudflare tunnel. It asserts the call reaches the backend (the echo
 // response carries the fully-qualified method), proving GRPCRoute traffic
 // routes through the in-process proxy.
-//
-//nolint:funlen // one end-to-end scenario with deploy + wait + gRPC dial steps
 func TestGRPCRouteEndToEnd(t *testing.T) {
 	cfg := loadTestConfig(t)
 
@@ -117,7 +115,8 @@ func deployGRPCEchoBackend(t *testing.T, k8sClient client.Client, namespace, nam
 	grpcEnv := "1"
 
 	existing := &appsv1.Deployment{}
-	if err := k8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, existing); err == nil {
+	err := k8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, existing)
+	if err == nil {
 		t.Logf("deployment %s/%s already exists, skipping", namespace, name)
 	} else {
 		deploy := &appsv1.Deployment{
@@ -163,11 +162,12 @@ func deployGRPCEchoBackend(t *testing.T, k8sClient client.Client, namespace, nam
 			},
 		},
 	}
-	if err := k8sClient.Create(ctx, svc); err != nil {
-		t.Logf("service %s/%s create: %v (may already exist)", namespace, name, err)
+	createErr := k8sClient.Create(ctx, svc)
+	if createErr != nil {
+		t.Logf("service %s/%s create: %v (may already exist)", namespace, name, createErr)
 	}
 
-	waitForDeployment(t, ctx, k8sClient, namespace, name, 120*time.Second)
+	waitForDeployment(ctx, t, k8sClient, namespace, name, 120*time.Second)
 }
 
 func buildGRPCRoute(name string, cfg testConfig, backend string) *gatewayv1.GRPCRoute {
@@ -210,7 +210,8 @@ func createGRPCRoute(t *testing.T, k8sClient client.Client, route *gatewayv1.GRP
 	ctx := context.Background()
 
 	existing := &gatewayv1.GRPCRoute{}
-	if err := k8sClient.Get(ctx, types.NamespacedName{Name: route.Name, Namespace: route.Namespace}, existing); err == nil {
+	err := k8sClient.Get(ctx, types.NamespacedName{Name: route.Name, Namespace: route.Namespace}, existing)
+	if err == nil {
 		require.NoError(t, k8sClient.Delete(ctx, existing))
 		time.Sleep(time.Second)
 	}
@@ -225,8 +226,9 @@ func waitForGRPCRouteAccepted(t *testing.T, k8sClient client.Client, route *gate
 	err := wait.PollUntilContextTimeout(context.Background(), 2*time.Second, 90*time.Second, true,
 		func(pollCtx context.Context) (bool, error) {
 			current := &gatewayv1.GRPCRoute{}
-			if getErr := k8sClient.Get(pollCtx, types.NamespacedName{Name: route.Name, Namespace: route.Namespace}, current); getErr != nil {
-				return false, nil
+			getErr := k8sClient.Get(pollCtx, types.NamespacedName{Name: route.Name, Namespace: route.Namespace}, current)
+			if getErr != nil {
+				return false, nil //nolint:nilerr // transient API errors are expected while polling; retry until timeout
 			}
 
 			for _, parent := range current.Status.Parents {

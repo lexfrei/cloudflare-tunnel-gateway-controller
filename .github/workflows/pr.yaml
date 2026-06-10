@@ -76,7 +76,10 @@ jobs:
         uses: golangci/golangci-lint-action@82606bf257cbaff209d206a39f5134f0cfbfd2ee # v9
         with:
           version: v2.12.2
-          args: --timeout=5m
+          # --build-tags makes the linter compile the tag-gated test packages
+          # (test/e2e, test/conformance, envtest suites) that a plain run
+          # silently skips. Issue #402.
+          args: --timeout=5m --build-tags e2e,conformance,envtest
 
       - name: markdownlint
         uses: DavidAnson/markdownlint-cli2-action@ded1f9488f68a970bc66ea5619e13e9b52e601cd # v23
@@ -226,8 +229,31 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4
 
+      # ttl.sh is an anonymous ephemeral registry that intermittently drops
+      # blob writes ("error writing layer blob: not_found"), failing the leg
+      # after a clean build. Tolerate one transient push failure with a
+      # duplicate step: the first attempt is continue-on-error, the retry only
+      # runs when the first attempt failed, and the gha layer cache keeps the
+      # retry cheap (push-only when the first attempt got as far as writing
+      # cache-to). Issue #423.
       - name: Build and Push to ttl.sh by digest
         id: build
+        continue-on-error: true
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7
+        with:
+          context: .
+          file: ./${{ matrix.file }}
+          platforms: ${{ matrix.platform }}
+          outputs: type=image,name=${{ matrix.image }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=build-${{ matrix.component }}-${{ matrix.arch }}
+          cache-to: type=gha,scope=build-${{ matrix.component }}-${{ matrix.arch }},mode=max
+          build-args: |
+            VERSION=pr-${{ github.event.pull_request.number }}
+            REVISION=${{ github.event.pull_request.head.sha }}
+
+      - name: Build and Push to ttl.sh by digest (retry)
+        id: build-retry
+        if: steps.build.outcome == 'failure'
         uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7
         with:
           context: .
@@ -243,7 +269,11 @@ jobs:
       - name: Export digest
         run: |
           mkdir -p /tmp/digests
-          digest="${{ steps.build.outputs.digest }}"
+          if [[ "${{ steps.build.outcome }}" == "success" ]]; then
+            digest="${{ steps.build.outputs.digest }}"
+          else
+            digest="${{ steps.build-retry.outputs.digest }}"
+          fi
           touch "/tmp/digests/${digest#sha256:}"
 
       - name: Upload digest
@@ -293,10 +323,23 @@ jobs:
             images+=("${IMAGE_NAME}@sha256:${digest_file}")
           done
 
-          # Create multi-arch manifest
-          docker buildx imagetools create \
-            --tag "${IMAGE_NAME}:${TAG}" \
-            "${images[@]}"
+          # Create multi-arch manifest. The push to ttl.sh can drop writes
+          # transiently (issue #423), so retry a couple of times before
+          # failing the job.
+          ok=0
+          for attempt in 1 2 3; do
+            if docker buildx imagetools create \
+              --tag "${IMAGE_NAME}:${TAG}" \
+              "${images[@]}"; then
+              ok=1
+              break
+            fi
+            if [[ "${attempt}" -lt 3 ]]; then
+              echo "imagetools create failed (attempt ${attempt}); retrying in 5s..."
+              sleep 5
+            fi
+          done
+          [[ "${ok}" -eq 1 ]]
 
       - name: Inspect image
         run: |
@@ -588,8 +631,20 @@ jobs:
           CHART_VERSION="0.0.0-pr.${PR_NUMBER}-1d"
           CHART_PKG="cloudflare-tunnel-gateway-controller-${CHART_VERSION}.tgz"
 
-          # Push to ttl.sh OCI registry
-          helm push "${CHART_PKG}" oci://ttl.sh
+          # Push to ttl.sh OCI registry. ttl.sh drops writes transiently
+          # (issue #423), so retry a couple of times before failing the job.
+          ok=0
+          for attempt in 1 2 3; do
+            if helm push "${CHART_PKG}" oci://ttl.sh; then
+              ok=1
+              break
+            fi
+            if [[ "${attempt}" -lt 3 ]]; then
+              echo "helm push failed (attempt ${attempt}); retrying in 5s..."
+              sleep 5
+            fi
+          done
+          [[ "${ok}" -eq 1 ]]
 
           echo "Chart pushed to: oci://ttl.sh/cloudflare-tunnel-gateway-controller:${CHART_VERSION}"
 

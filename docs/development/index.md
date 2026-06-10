@@ -63,7 +63,7 @@ go build -o bin/controller ./cmd/controller
 go test -v -race ./...
 
 # Run linter
-golangci-lint run --timeout=5m
+golangci-lint run --timeout=5m --build-tags e2e,conformance,envtest
 ```
 
 ## Project Structure
@@ -88,5 +88,5 @@ deploy/                  # Raw Kubernetes manifests
 All changes must pass:
 
 - `go test -race ./...` - Unit tests with race detection
-- `golangci-lint run` - Linting (all errors must be fixed)
+- `golangci-lint run --timeout=5m --build-tags e2e,conformance,envtest` - Linting (all errors must be fixed)
 - `markdownlint-cli2 '**/*.md'` - Markdown linting

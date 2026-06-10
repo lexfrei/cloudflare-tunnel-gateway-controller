@@ -35,7 +35,7 @@ go test -v -race -coverprofile=coverage.out ./...
 go test -v -race ./internal/dns/... -run TestDetectClusterDomain
 
 # Run linter (all errors must be fixed before committing)
-golangci-lint run --timeout=5m
+golangci-lint run --timeout=5m --build-tags e2e,conformance,envtest
 
 # Lint markdown files
 markdownlint-cli2 '**/*.md'
@@ -382,7 +382,7 @@ Run checks relevant to the files you changed:
 
 | Changed Files | Required Checks |
 |---------------|-----------------|
-| `*.go` | `go test -race ./...` and `golangci-lint run --timeout=5m` |
+| `*.go` | `go test -race ./...` and `golangci-lint run --timeout=5m --build-tags e2e,conformance,envtest` |
 | `charts/**` | `helm unittest`, `helm lint`, `helm-docs` |
 | `**/*.md` | `markdownlint-cli2 '**/*.md'` |
 | `docs/**` | `mkdocs build --strict` |
@@ -391,7 +391,7 @@ Quick reference commands:
 
 ```bash
 # Go code changes
-go test -race ./... && golangci-lint run --timeout=5m
+go test -race ./... && golangci-lint run --timeout=5m --build-tags e2e,conformance,envtest
 
 # Helm chart changes
 helm unittest charts/cloudflare-tunnel-gateway-controller && \
@@ -413,7 +413,7 @@ Before creating a PR, verify all checklist items from `.github/pull_request_temp
 
 1. **Testing**
    - All tests pass locally (`go test ./...`)
-   - Linters pass locally (`golangci-lint run`)
+   - Linters pass locally (`golangci-lint run --timeout=5m --build-tags e2e,conformance,envtest`)
    - Markdown linting passes (`markdownlint-cli2 '**/*.md'`)
    - Helm tests pass (`helm unittest charts/cloudflare-tunnel-gateway-controller`)
    - Helm lint passes (`helm lint charts/cloudflare-tunnel-gateway-controller`)
@@ -527,7 +527,7 @@ Standalone labels not enumerated above (`epic`, `community`, `help wanted`, `goo
 
 ### Milestone
 
-Always assign a milestone when creating issues. The current active milestone is `v3.0.0`; anything bound to an earlier release line goes in the corresponding `vX.Y.Z` milestone if one exists.
+Always assign a milestone when creating issues. The current active milestone is `v3.1.0`; anything bound to an earlier release line goes in the corresponding `vX.Y.Z` milestone if one exists. Exception: issues filed automatically by workflows (e.g. the scheduled-e2e failure alert) carry no milestone — the right release target is unknown until a human triages them.
 
 ## Conformance Testing
 
@@ -563,6 +563,9 @@ Official Gateway API conformance suite (`sigs.k8s.io/gateway-api/conformance` v1
 
 # Setup only (reuse for iterative testing)
 ./hack/conformance-setup.sh
+
+# Setup + run the custom e2e suite (smoke-level; lighter than --test)
+./hack/conformance-setup.sh --test-e2e
 
 # Verify a PR's CI artifact: skip the local build, deploy the PR's published
 # ttl.sh chart+images (the chart already pins the ttl.sh image refs). Add --test

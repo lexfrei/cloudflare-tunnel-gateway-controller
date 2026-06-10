@@ -98,23 +98,32 @@ func tunnelClient() *http.Client {
 	}
 }
 
+// echoHTTPResponse carries the response metadata the tests assert on. The
+// underlying body is fully consumed and closed inside makeRequest, so there
+// is nothing left for callers to close.
+type echoHTTPResponse struct {
+	StatusCode int
+	Header     http.Header
+}
+
 // makeRequest sends a request through the Cloudflare tunnel and parses the
 // echo-basic JSON response.
 func makeRequest(
+	ctx context.Context,
 	t *testing.T,
 	httpClient *http.Client,
 	tunnelHostname string,
 	method string,
 	path string,
 	headers map[string]string,
-) (*echoResponse, *http.Response, error) {
+) (*echoResponse, *echoHTTPResponse, error) {
 	t.Helper()
 
 	reqURL := fmt.Sprintf("https://%s%s", tunnelHostname, path)
 
-	req, err := http.NewRequestWithContext(context.Background(), method, reqURL, nil)
+	req, err := http.NewRequestWithContext(ctx, method, reqURL, nil)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("building %s request for %s: %w", method, reqURL, err)
 	}
 
 	for key, val := range headers {
@@ -123,25 +132,28 @@ func makeRequest(
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("sending %s request to %s: %w", method, reqURL, err)
 	}
 	defer resp.Body.Close()
 
+	meta := &echoHTTPResponse{StatusCode: resp.StatusCode, Header: resp.Header}
+
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, resp, err
+		return nil, meta, fmt.Errorf("reading response body from %s: %w", reqURL, err)
 	}
 
 	var echo echoResponse
 	if resp.Header.Get("Content-Type") == "application/json" {
-		if jsonErr := json.Unmarshal(body, &echo); jsonErr != nil {
-			return nil, resp, fmt.Errorf("failed to parse echo response: %w (body: %s)", jsonErr, string(body))
+		jsonErr := json.Unmarshal(body, &echo)
+		if jsonErr != nil {
+			return nil, meta, fmt.Errorf("failed to parse echo response: %w (body: %s)", jsonErr, string(body))
 		}
 	} else {
 		echo.Method = method
 	}
 
-	return &echo, resp, nil
+	return &echo, meta, nil
 }
 
 // waitForBackend polls until the given path routes to a pod matching podPrefix.
@@ -156,10 +168,10 @@ func waitForBackend(
 	t.Helper()
 
 	err := wait.PollUntilContextTimeout(context.Background(), 2*time.Second, timeout, true,
-		func(_ context.Context) (bool, error) {
-			echo, resp, reqErr := makeRequest(t, httpClient, tunnelHostname, http.MethodGet, path, nil)
+		func(pollCtx context.Context) (bool, error) {
+			echo, resp, reqErr := makeRequest(pollCtx, t, httpClient, tunnelHostname, http.MethodGet, path, nil)
 			if reqErr != nil {
-				return false, nil
+				return false, nil //nolint:nilerr // transient edge/tunnel errors are expected while polling; retry until timeout
 			}
 
 			if resp.StatusCode == http.StatusNotFound {
@@ -251,7 +263,7 @@ func wipeAllRoutesInNamespace(t *testing.T, k8sClient client.Client, cfg testCon
 // TestHTTPRouteConformance runs Gateway API HTTPRoute conformance-style tests
 // against a live Cloudflare Tunnel deployment.
 //
-// Run with: go test -v -tags e2e -timeout 10m ./test/e2e/
+// Run with: go test -v -tags e2e -timeout 10m ./test/e2e/...
 func TestHTTPRouteConformance(t *testing.T) {
 	cfg := loadTestConfig(t)
 	httpClient := tunnelClient()
@@ -418,14 +430,14 @@ func testHTTPRouteSimpleSameNamespace(
 	createHTTPRoute(t, k8sClient, route)
 	waitForBackend(t, httpClient, cfg.TunnelHostname, "/simple", "echo-v1-", 60*time.Second)
 
-	echo, resp, err := makeRequest(t, httpClient, cfg.TunnelHostname, http.MethodGet, "/simple", nil)
+	echo, resp, err := makeRequest(context.Background(), t, httpClient, cfg.TunnelHostname, http.MethodGet, "/simple", nil)
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, "/simple", echo.Path)
 	assert.Equal(t, cfg.TestNamespace, echo.Namespace)
 	assert.True(t, strings.HasPrefix(echo.Pod, "echo-v1-"), "pod should be echo-v1, got: %s", echo.Pod)
 
-	echo, resp, err = makeRequest(t, httpClient, cfg.TunnelHostname, http.MethodGet, "/simple/sub", nil)
+	echo, resp, err = makeRequest(context.Background(), t, httpClient, cfg.TunnelHostname, http.MethodGet, "/simple/sub", nil)
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, "/simple/sub", echo.Path)
@@ -450,15 +462,15 @@ func testHTTPRoutePathPrefixMatching(
 	createHTTPRoute(t, k8sClient, route)
 	waitForBackend(t, httpClient, cfg.TunnelHostname, "/prefix-a", "echo-v1-", 60*time.Second)
 
-	echo, _, err := makeRequest(t, httpClient, cfg.TunnelHostname, http.MethodGet, "/prefix-a", nil)
+	echo, _, err := makeRequest(context.Background(), t, httpClient, cfg.TunnelHostname, http.MethodGet, "/prefix-a", nil)
 	require.NoError(t, err)
 	assert.True(t, strings.HasPrefix(echo.Pod, "echo-v1-"))
 
-	echo, _, err = makeRequest(t, httpClient, cfg.TunnelHostname, http.MethodGet, "/prefix-b", nil)
+	echo, _, err = makeRequest(context.Background(), t, httpClient, cfg.TunnelHostname, http.MethodGet, "/prefix-b", nil)
 	require.NoError(t, err)
 	assert.True(t, strings.HasPrefix(echo.Pod, "echo-v2-"))
 
-	echo, _, err = makeRequest(t, httpClient, cfg.TunnelHostname, http.MethodGet, "/prefix-a/sub", nil)
+	echo, _, err = makeRequest(context.Background(), t, httpClient, cfg.TunnelHostname, http.MethodGet, "/prefix-a/sub", nil)
 	require.NoError(t, err)
 	assert.True(t, strings.HasPrefix(echo.Pod, "echo-v1-"))
 }
@@ -483,7 +495,7 @@ func testHTTPRouteExactPathMatching(
 	waitForBackend(t, httpClient, cfg.TunnelHostname, "/exact-only", "echo-v1-", 60*time.Second)
 
 	// Exact match → echo-v1.
-	echo, _, err := makeRequest(t, httpClient, cfg.TunnelHostname, http.MethodGet, "/exact-only", nil)
+	echo, _, err := makeRequest(context.Background(), t, httpClient, cfg.TunnelHostname, http.MethodGet, "/exact-only", nil)
 	require.NoError(t, err)
 	assert.True(t, strings.HasPrefix(echo.Pod, "echo-v1-"), "exact match → echo-v1, got: %s", echo.Pod)
 
@@ -491,7 +503,7 @@ func testHTTPRouteExactPathMatching(
 	// the tunnel may return 404 or route to either backend depending on internal
 	// ingress rule ordering.  We only verify the sub-path does NOT reach echo-v2,
 	// which would indicate the prefix rule incorrectly won over the exact rule.
-	echo, resp, err := makeRequest(t, httpClient, cfg.TunnelHostname, http.MethodGet, "/exact-only/sub", nil)
+	echo, resp, err := makeRequest(context.Background(), t, httpClient, cfg.TunnelHostname, http.MethodGet, "/exact-only/sub", nil)
 	require.NoError(t, err)
 	assert.False(t, strings.HasPrefix(echo.Pod, "echo-v2-"),
 		"sub-path must NOT match prefix /exact → echo-v2 (status %d, pod: %s)", resp.StatusCode, echo.Pod)
@@ -520,11 +532,11 @@ func testHTTPRouteMatchingAcrossRoutes(
 	waitForBackend(t, httpClient, cfg.TunnelHostname, "/across/route-a", "echo-v1-", 60*time.Second)
 	waitForBackend(t, httpClient, cfg.TunnelHostname, "/across/route-b", "echo-v2-", 30*time.Second)
 
-	echo, _, err := makeRequest(t, httpClient, cfg.TunnelHostname, http.MethodGet, "/across/route-a", nil)
+	echo, _, err := makeRequest(context.Background(), t, httpClient, cfg.TunnelHostname, http.MethodGet, "/across/route-a", nil)
 	require.NoError(t, err)
 	assert.True(t, strings.HasPrefix(echo.Pod, "echo-v1-"))
 
-	echo, _, err = makeRequest(t, httpClient, cfg.TunnelHostname, http.MethodGet, "/across/route-b", nil)
+	echo, _, err = makeRequest(context.Background(), t, httpClient, cfg.TunnelHostname, http.MethodGet, "/across/route-b", nil)
 	require.NoError(t, err)
 	assert.True(t, strings.HasPrefix(echo.Pod, "echo-v2-"))
 }
@@ -560,18 +572,18 @@ func testHTTPRouteHeaderMatching(
 	waitForBackend(t, httpClient, cfg.TunnelHostname, "/hdr-test", "echo-v1-", 60*time.Second)
 
 	// Without header → echo-v1.
-	echo, _, err := makeRequest(t, httpClient, cfg.TunnelHostname, http.MethodGet, "/hdr-test", nil)
+	echo, _, err := makeRequest(context.Background(), t, httpClient, cfg.TunnelHostname, http.MethodGet, "/hdr-test", nil)
 	require.NoError(t, err)
 	assert.True(t, strings.HasPrefix(echo.Pod, "echo-v1-"), "no header → echo-v1, got: %s", echo.Pod)
 
 	// With matching header → echo-v2.
-	echo, _, err = makeRequest(t, httpClient, cfg.TunnelHostname, http.MethodGet, "/hdr-test",
+	echo, _, err = makeRequest(context.Background(), t, httpClient, cfg.TunnelHostname, http.MethodGet, "/hdr-test",
 		map[string]string{"X-Test-Backend": "v2"})
 	require.NoError(t, err)
 	assert.True(t, strings.HasPrefix(echo.Pod, "echo-v2-"), "matching header → echo-v2, got: %s", echo.Pod)
 
 	// Non-matching header → echo-v1.
-	echo, _, err = makeRequest(t, httpClient, cfg.TunnelHostname, http.MethodGet, "/hdr-test",
+	echo, _, err = makeRequest(context.Background(), t, httpClient, cfg.TunnelHostname, http.MethodGet, "/hdr-test",
 		map[string]string{"X-Test-Backend": "v1"})
 	require.NoError(t, err)
 	assert.True(t, strings.HasPrefix(echo.Pod, "echo-v1-"), "wrong header → echo-v1, got: %s", echo.Pod)
@@ -603,11 +615,11 @@ func testHTTPRouteMethodMatching(
 	createHTTPRoute(t, k8sClient, route)
 	waitForBackend(t, httpClient, cfg.TunnelHostname, "/meth-test", "echo-v1-", 60*time.Second)
 
-	echo, _, err := makeRequest(t, httpClient, cfg.TunnelHostname, http.MethodGet, "/meth-test", nil)
+	echo, _, err := makeRequest(context.Background(), t, httpClient, cfg.TunnelHostname, http.MethodGet, "/meth-test", nil)
 	require.NoError(t, err)
 	assert.True(t, strings.HasPrefix(echo.Pod, "echo-v1-"), "GET → echo-v1, got: %s", echo.Pod)
 
-	echo, _, err = makeRequest(t, httpClient, cfg.TunnelHostname, http.MethodPost, "/meth-test", nil)
+	echo, _, err = makeRequest(context.Background(), t, httpClient, cfg.TunnelHostname, http.MethodPost, "/meth-test", nil)
 	require.NoError(t, err)
 	assert.True(t, strings.HasPrefix(echo.Pod, "echo-v2-"), "POST → echo-v2, got: %s", echo.Pod)
 }
@@ -640,15 +652,15 @@ func testHTTPRouteQueryParamMatching(
 	createHTTPRoute(t, k8sClient, route)
 	waitForBackend(t, httpClient, cfg.TunnelHostname, "/qp-test", "echo-v1-", 60*time.Second)
 
-	echo, _, err := makeRequest(t, httpClient, cfg.TunnelHostname, http.MethodGet, "/qp-test", nil)
+	echo, _, err := makeRequest(context.Background(), t, httpClient, cfg.TunnelHostname, http.MethodGet, "/qp-test", nil)
 	require.NoError(t, err)
 	assert.True(t, strings.HasPrefix(echo.Pod, "echo-v1-"), "no qp → echo-v1, got: %s", echo.Pod)
 
-	echo, _, err = makeRequest(t, httpClient, cfg.TunnelHostname, http.MethodGet, "/qp-test?version=v2", nil)
+	echo, _, err = makeRequest(context.Background(), t, httpClient, cfg.TunnelHostname, http.MethodGet, "/qp-test?version=v2", nil)
 	require.NoError(t, err)
 	assert.True(t, strings.HasPrefix(echo.Pod, "echo-v2-"), "matching qp → echo-v2, got: %s", echo.Pod)
 
-	echo, _, err = makeRequest(t, httpClient, cfg.TunnelHostname, http.MethodGet, "/qp-test?version=v1", nil)
+	echo, _, err = makeRequest(context.Background(), t, httpClient, cfg.TunnelHostname, http.MethodGet, "/qp-test?version=v1", nil)
 	require.NoError(t, err)
 	assert.True(t, strings.HasPrefix(echo.Pod, "echo-v1-"), "wrong qp → echo-v1, got: %s", echo.Pod)
 }
@@ -690,7 +702,7 @@ func testHTTPRouteWeight(
 	v1, v2 := 0, 0
 
 	for range total {
-		echo, _, err := makeRequest(t, httpClient, cfg.TunnelHostname, http.MethodGet, "/wt-test", nil)
+		echo, _, err := makeRequest(context.Background(), t, httpClient, cfg.TunnelHostname, http.MethodGet, "/wt-test", nil)
 		require.NoError(t, err)
 
 		switch {
@@ -737,7 +749,7 @@ func testHTTPRouteRequestHeaderModifier(
 	createHTTPRoute(t, k8sClient, route)
 	waitForBackend(t, httpClient, cfg.TunnelHostname, "/req-hdr-mod", "echo-v1-", 60*time.Second)
 
-	echo, _, err := makeRequest(t, httpClient, cfg.TunnelHostname, http.MethodGet, "/req-hdr-mod",
+	echo, _, err := makeRequest(context.Background(), t, httpClient, cfg.TunnelHostname, http.MethodGet, "/req-hdr-mod",
 		map[string]string{"X-Remove-Me": "should-be-removed"})
 	require.NoError(t, err)
 
@@ -784,7 +796,7 @@ func testHTTPRouteResponseHeaderModifier(
 	createHTTPRoute(t, k8sClient, route)
 	waitForBackend(t, httpClient, cfg.TunnelHostname, "/resp-hdr-mod", "echo-v1-", 60*time.Second)
 
-	_, resp, err := makeRequest(t, httpClient, cfg.TunnelHostname, http.MethodGet, "/resp-hdr-mod", nil)
+	_, resp, err := makeRequest(context.Background(), t, httpClient, cfg.TunnelHostname, http.MethodGet, "/resp-hdr-mod", nil)
 	require.NoError(t, err)
 
 	// Response headers may be modified by Cloudflare CDN.
@@ -820,10 +832,10 @@ func testHTTPRouteRequestRedirect(
 
 	// Wait for 301 response (redirect has no echo body).
 	err := wait.PollUntilContextTimeout(context.Background(), 2*time.Second, 60*time.Second, true,
-		func(_ context.Context) (bool, error) {
-			_, resp, reqErr := makeRequest(t, httpClient, cfg.TunnelHostname, http.MethodGet, "/redir-test", nil)
+		func(pollCtx context.Context) (bool, error) {
+			_, resp, reqErr := makeRequest(pollCtx, t, httpClient, cfg.TunnelHostname, http.MethodGet, "/redir-test", nil)
 			if reqErr != nil {
-				return false, nil
+				return false, nil //nolint:nilerr // transient edge/tunnel errors are expected while polling; retry until timeout
 			}
 
 			return resp.StatusCode == http.StatusMovedPermanently, nil
@@ -831,7 +843,7 @@ func testHTTPRouteRequestRedirect(
 	)
 	require.NoError(t, err, "redirect route did not return 301")
 
-	_, resp, reqErr := makeRequest(t, httpClient, cfg.TunnelHostname, http.MethodGet, "/redir-test", nil)
+	_, resp, reqErr := makeRequest(context.Background(), t, httpClient, cfg.TunnelHostname, http.MethodGet, "/redir-test", nil)
 	require.NoError(t, reqErr)
 	assert.Equal(t, http.StatusMovedPermanently, resp.StatusCode)
 
@@ -858,13 +870,11 @@ func pathRegex(pattern string) *gatewayv1.HTTPPathMatch {
 }
 
 func backendRef(name string, port int32, weight *int32) gatewayv1.HTTPBackendRef {
-	p := gatewayv1.PortNumber(port)
-
 	return gatewayv1.HTTPBackendRef{
 		BackendRef: gatewayv1.BackendRef{
 			BackendObjectReference: gatewayv1.BackendObjectReference{
 				Name: gatewayv1.ObjectName(name),
-				Port: &p,
+				Port: &port,
 			},
 			Weight: weight,
 		},
@@ -961,17 +971,17 @@ func testHTTPRouteRegexPathMatching(
 	waitForBackend(t, httpClient, cfg.TunnelHostname, "/rgx/other", "echo-v2-", 60*time.Second)
 
 	// Regex match → echo-v1.
-	echo, _, err := makeRequest(t, httpClient, cfg.TunnelHostname, http.MethodGet, "/rgx/item-42", nil)
+	echo, _, err := makeRequest(context.Background(), t, httpClient, cfg.TunnelHostname, http.MethodGet, "/rgx/item-42", nil)
 	require.NoError(t, err)
 	assert.True(t, strings.HasPrefix(echo.Pod, "echo-v1-"), "regex match → echo-v1, got: %s", echo.Pod)
 
 	// Non-numeric suffix → falls to prefix → echo-v2.
-	echo, _, err = makeRequest(t, httpClient, cfg.TunnelHostname, http.MethodGet, "/rgx/item-abc", nil)
+	echo, _, err = makeRequest(context.Background(), t, httpClient, cfg.TunnelHostname, http.MethodGet, "/rgx/item-abc", nil)
 	require.NoError(t, err)
 	assert.True(t, strings.HasPrefix(echo.Pod, "echo-v2-"), "no regex match → echo-v2, got: %s", echo.Pod)
 
 	// Other path under /rgx → prefix fallback → echo-v2.
-	echo, _, err = makeRequest(t, httpClient, cfg.TunnelHostname, http.MethodGet, "/rgx/other", nil)
+	echo, _, err = makeRequest(context.Background(), t, httpClient, cfg.TunnelHostname, http.MethodGet, "/rgx/other", nil)
 	require.NoError(t, err)
 	assert.True(t, strings.HasPrefix(echo.Pod, "echo-v2-"), "prefix fallback → echo-v2, got: %s", echo.Pod)
 }
@@ -1005,19 +1015,19 @@ func testHTTPRouteRegexHeaderMatching(
 	waitForBackend(t, httpClient, cfg.TunnelHostname, "/rgx-hdr", "echo-v1-", 60*time.Second)
 
 	// Header matching regex → echo-v2.
-	echo, _, err := makeRequest(t, httpClient, cfg.TunnelHostname, http.MethodGet, "/rgx-hdr",
+	echo, _, err := makeRequest(context.Background(), t, httpClient, cfg.TunnelHostname, http.MethodGet, "/rgx-hdr",
 		map[string]string{"X-Api-Version": "v2"})
 	require.NoError(t, err)
 	assert.True(t, strings.HasPrefix(echo.Pod, "echo-v2-"), "regex header match → echo-v2, got: %s", echo.Pod)
 
 	// Header not matching regex → echo-v1.
-	echo, _, err = makeRequest(t, httpClient, cfg.TunnelHostname, http.MethodGet, "/rgx-hdr",
+	echo, _, err = makeRequest(context.Background(), t, httpClient, cfg.TunnelHostname, http.MethodGet, "/rgx-hdr",
 		map[string]string{"X-Api-Version": "latest"})
 	require.NoError(t, err)
 	assert.True(t, strings.HasPrefix(echo.Pod, "echo-v1-"), "non-matching header → echo-v1, got: %s", echo.Pod)
 
 	// No header → echo-v1.
-	echo, _, err = makeRequest(t, httpClient, cfg.TunnelHostname, http.MethodGet, "/rgx-hdr", nil)
+	echo, _, err = makeRequest(context.Background(), t, httpClient, cfg.TunnelHostname, http.MethodGet, "/rgx-hdr", nil)
 	require.NoError(t, err)
 	assert.True(t, strings.HasPrefix(echo.Pod, "echo-v1-"), "no header → echo-v1, got: %s", echo.Pod)
 }
@@ -1051,17 +1061,17 @@ func testHTTPRouteRegexQueryParamMatching(
 	waitForBackend(t, httpClient, cfg.TunnelHostname, "/rgx-qp", "echo-v1-", 60*time.Second)
 
 	// Numeric query param → echo-v2.
-	echo, _, err := makeRequest(t, httpClient, cfg.TunnelHostname, http.MethodGet, "/rgx-qp?id=123", nil)
+	echo, _, err := makeRequest(context.Background(), t, httpClient, cfg.TunnelHostname, http.MethodGet, "/rgx-qp?id=123", nil)
 	require.NoError(t, err)
 	assert.True(t, strings.HasPrefix(echo.Pod, "echo-v2-"), "regex qp match → echo-v2, got: %s", echo.Pod)
 
 	// Non-numeric query param → echo-v1.
-	echo, _, err = makeRequest(t, httpClient, cfg.TunnelHostname, http.MethodGet, "/rgx-qp?id=abc", nil)
+	echo, _, err = makeRequest(context.Background(), t, httpClient, cfg.TunnelHostname, http.MethodGet, "/rgx-qp?id=abc", nil)
 	require.NoError(t, err)
 	assert.True(t, strings.HasPrefix(echo.Pod, "echo-v1-"), "non-matching qp → echo-v1, got: %s", echo.Pod)
 
 	// No query param → echo-v1.
-	echo, _, err = makeRequest(t, httpClient, cfg.TunnelHostname, http.MethodGet, "/rgx-qp", nil)
+	echo, _, err = makeRequest(context.Background(), t, httpClient, cfg.TunnelHostname, http.MethodGet, "/rgx-qp", nil)
 	require.NoError(t, err)
 	assert.True(t, strings.HasPrefix(echo.Pod, "echo-v1-"), "no qp → echo-v1, got: %s", echo.Pod)
 }
@@ -1086,12 +1096,12 @@ func testHTTPRoutePathMatchOrder(
 	waitForBackend(t, httpClient, cfg.TunnelHostname, "/pmo/other", "echo-v2-", 60*time.Second)
 
 	// Exact match wins → echo-v1.
-	echo, _, err := makeRequest(t, httpClient, cfg.TunnelHostname, http.MethodGet, "/pmo/specific", nil)
+	echo, _, err := makeRequest(context.Background(), t, httpClient, cfg.TunnelHostname, http.MethodGet, "/pmo/specific", nil)
 	require.NoError(t, err)
 	assert.True(t, strings.HasPrefix(echo.Pod, "echo-v1-"), "exact wins → echo-v1, got: %s", echo.Pod)
 
 	// Prefix fallback → echo-v2.
-	echo, _, err = makeRequest(t, httpClient, cfg.TunnelHostname, http.MethodGet, "/pmo/other", nil)
+	echo, _, err = makeRequest(context.Background(), t, httpClient, cfg.TunnelHostname, http.MethodGet, "/pmo/other", nil)
 	require.NoError(t, err)
 	assert.True(t, strings.HasPrefix(echo.Pod, "echo-v2-"), "prefix fallback → echo-v2, got: %s", echo.Pod)
 }
@@ -1122,7 +1132,7 @@ func testHTTPRouteURLRewritePath(
 	createHTTPRoute(t, k8sClient, route)
 	waitForBackend(t, httpClient, cfg.TunnelHostname, "/rewrite-test", "echo-v1-", 60*time.Second)
 
-	echo, _, err := makeRequest(t, httpClient, cfg.TunnelHostname, http.MethodGet, "/rewrite-test/anything", nil)
+	echo, _, err := makeRequest(context.Background(), t, httpClient, cfg.TunnelHostname, http.MethodGet, "/rewrite-test/anything", nil)
 	require.NoError(t, err)
 	assert.Equal(t, "/replaced", echo.Path, "path should be rewritten to /replaced")
 }
@@ -1152,7 +1162,7 @@ func testHTTPRouteURLRewriteHost(
 	createHTTPRoute(t, k8sClient, route)
 	waitForBackend(t, httpClient, cfg.TunnelHostname, "/rewrite-host", "echo-v1-", 60*time.Second)
 
-	echo, _, err := makeRequest(t, httpClient, cfg.TunnelHostname, http.MethodGet, "/rewrite-host", nil)
+	echo, _, err := makeRequest(context.Background(), t, httpClient, cfg.TunnelHostname, http.MethodGet, "/rewrite-host", nil)
 	require.NoError(t, err)
 	assert.Equal(t, "rewritten.internal", echo.Host, "host should be rewritten to rewritten.internal")
 }
@@ -1189,7 +1199,7 @@ func testHTTPRouteRequestMirror(
 	waitForBackend(t, httpClient, cfg.TunnelHostname, mirrorPath, "echo-v1-", 60*time.Second)
 
 	// Response should come from echo-v1 (mirror is fire-and-forget).
-	echo, resp, err := makeRequest(t, httpClient, cfg.TunnelHostname, http.MethodGet, mirrorPath, nil)
+	echo, resp, err := makeRequest(context.Background(), t, httpClient, cfg.TunnelHostname, http.MethodGet, mirrorPath, nil)
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.True(t, strings.HasPrefix(echo.Pod, "echo-v1-"), "response from primary → echo-v1, got: %s", echo.Pod)
@@ -1200,11 +1210,12 @@ func testHTTPRouteRequestMirror(
 	// request so a single transient mirror drop does not fail the test. Without
 	// this assertion the test passes even when mirror delivery is fully broken.
 	require.Eventually(t, func() bool {
-		if _, _, reqErr := makeRequest(t, httpClient, cfg.TunnelHostname, http.MethodGet, mirrorPath, nil); reqErr != nil {
+		_, _, reqErr := makeRequest(context.Background(), t, httpClient, cfg.TunnelHostname, http.MethodGet, mirrorPath, nil)
+		if reqErr != nil {
 			return false
 		}
 
-		logs := backendPodLogs(t, context.Background(), clientset, cfg.TestNamespace, "echo-v3")
+		logs := backendPodLogs(context.Background(), t, clientset, cfg.TestNamespace, "echo-v3")
 
 		return strings.Contains(logs, mirrorPath)
 	}, 30*time.Second, 2*time.Second, "mirror copy never reached echo-v3 (path %q absent from its logs)", mirrorPath)
@@ -1237,8 +1248,8 @@ func testHTTPRouteRedirectPort(
 
 	// Wait for redirect response.
 	err := wait.PollUntilContextTimeout(context.Background(), 2*time.Second, 60*time.Second, true,
-		func(_ context.Context) (bool, error) {
-			_, resp, reqErr := makeRequest(t, httpClient, cfg.TunnelHostname, http.MethodGet, "/redir-port", nil)
+		func(pollCtx context.Context) (bool, error) {
+			_, resp, reqErr := makeRequest(pollCtx, t, httpClient, cfg.TunnelHostname, http.MethodGet, "/redir-port", nil)
 			if reqErr != nil {
 				return false, nil //nolint:nilerr // transient errors are expected during polling
 			}
@@ -1248,7 +1259,7 @@ func testHTTPRouteRedirectPort(
 	)
 	require.NoError(t, err, "redirect route did not return 302")
 
-	_, resp, reqErr := makeRequest(t, httpClient, cfg.TunnelHostname, http.MethodGet, "/redir-port", nil)
+	_, resp, reqErr := makeRequest(context.Background(), t, httpClient, cfg.TunnelHostname, http.MethodGet, "/redir-port", nil)
 	require.NoError(t, reqErr)
 	assert.Equal(t, http.StatusFound, resp.StatusCode)
 
@@ -1285,8 +1296,8 @@ func testHTTPRouteRedirectPath(
 
 	// Wait for redirect response.
 	err := wait.PollUntilContextTimeout(context.Background(), 2*time.Second, 60*time.Second, true,
-		func(_ context.Context) (bool, error) {
-			_, resp, reqErr := makeRequest(t, httpClient, cfg.TunnelHostname, http.MethodGet, "/redir-path", nil)
+		func(pollCtx context.Context) (bool, error) {
+			_, resp, reqErr := makeRequest(pollCtx, t, httpClient, cfg.TunnelHostname, http.MethodGet, "/redir-path", nil)
 			if reqErr != nil {
 				return false, nil //nolint:nilerr // transient errors are expected during polling
 			}
@@ -1296,7 +1307,7 @@ func testHTTPRouteRedirectPath(
 	)
 	require.NoError(t, err, "redirect route did not return 301")
 
-	_, resp, reqErr := makeRequest(t, httpClient, cfg.TunnelHostname, http.MethodGet, "/redir-path", nil)
+	_, resp, reqErr := makeRequest(context.Background(), t, httpClient, cfg.TunnelHostname, http.MethodGet, "/redir-path", nil)
 	require.NoError(t, reqErr)
 	assert.Equal(t, http.StatusMovedPermanently, resp.StatusCode)
 
@@ -1355,8 +1366,8 @@ func testHTTPRouteRedirectSchemeProbe(
 		createHTTPRoute(t, k8sClient, route)
 
 		err := wait.PollUntilContextTimeout(context.Background(), 2*time.Second, 60*time.Second, true,
-			func(_ context.Context) (bool, error) {
-				_, resp, reqErr := makeRequest(t, httpClient, cfg.TunnelHostname, http.MethodGet, path, nil)
+			func(pollCtx context.Context) (bool, error) {
+				_, resp, reqErr := makeRequest(pollCtx, t, httpClient, cfg.TunnelHostname, http.MethodGet, path, nil)
 				if reqErr != nil {
 					return false, nil //nolint:nilerr // transient errors are expected during polling
 				}
@@ -1366,7 +1377,7 @@ func testHTTPRouteRedirectSchemeProbe(
 		)
 		require.NoErrorf(t, err, "redirect route did not return %d", statusCode)
 
-		_, resp, reqErr := makeRequest(t, httpClient, cfg.TunnelHostname, http.MethodGet, path, nil)
+		_, resp, reqErr := makeRequest(context.Background(), t, httpClient, cfg.TunnelHostname, http.MethodGet, path, nil)
 		require.NoError(t, reqErr)
 		assert.Equal(t, statusCode, resp.StatusCode)
 
@@ -1422,24 +1433,24 @@ func testHTTPRouteCombinedMatching(
 	waitForBackend(t, httpClient, cfg.TunnelHostname, "/combo", "echo-v1-", 60*time.Second)
 
 	// All 4 conditions met → echo-v2.
-	echo, _, err := makeRequest(t, httpClient, cfg.TunnelHostname, http.MethodGet, "/combo?format=json",
+	echo, _, err := makeRequest(context.Background(), t, httpClient, cfg.TunnelHostname, http.MethodGet, "/combo?format=json",
 		map[string]string{"X-Env": "prod"})
 	require.NoError(t, err)
 	assert.True(t, strings.HasPrefix(echo.Pod, "echo-v2-"), "all conditions → echo-v2, got: %s", echo.Pod)
 
 	// Missing header → echo-v1.
-	echo, _, err = makeRequest(t, httpClient, cfg.TunnelHostname, http.MethodGet, "/combo?format=json", nil)
+	echo, _, err = makeRequest(context.Background(), t, httpClient, cfg.TunnelHostname, http.MethodGet, "/combo?format=json", nil)
 	require.NoError(t, err)
 	assert.True(t, strings.HasPrefix(echo.Pod, "echo-v1-"), "missing header → echo-v1, got: %s", echo.Pod)
 
 	// Missing query param → echo-v1.
-	echo, _, err = makeRequest(t, httpClient, cfg.TunnelHostname, http.MethodGet, "/combo",
+	echo, _, err = makeRequest(context.Background(), t, httpClient, cfg.TunnelHostname, http.MethodGet, "/combo",
 		map[string]string{"X-Env": "prod"})
 	require.NoError(t, err)
 	assert.True(t, strings.HasPrefix(echo.Pod, "echo-v1-"), "missing qp → echo-v1, got: %s", echo.Pod)
 
 	// Wrong method (POST) → echo-v1.
-	echo, _, err = makeRequest(t, httpClient, cfg.TunnelHostname, http.MethodPost, "/combo?format=json",
+	echo, _, err = makeRequest(context.Background(), t, httpClient, cfg.TunnelHostname, http.MethodPost, "/combo?format=json",
 		map[string]string{"X-Env": "prod"})
 	require.NoError(t, err)
 	assert.True(t, strings.HasPrefix(echo.Pod, "echo-v1-"), "wrong method → echo-v1, got: %s", echo.Pod)
@@ -1464,17 +1475,17 @@ func testHTTPRouteMultipleMatchesOR(
 	waitForBackend(t, httpClient, cfg.TunnelHostname, "/or-a", "echo-v1-", 60*time.Second)
 
 	// /or-a → echo-v1.
-	echo, _, err := makeRequest(t, httpClient, cfg.TunnelHostname, http.MethodGet, "/or-a", nil)
+	echo, _, err := makeRequest(context.Background(), t, httpClient, cfg.TunnelHostname, http.MethodGet, "/or-a", nil)
 	require.NoError(t, err)
 	assert.True(t, strings.HasPrefix(echo.Pod, "echo-v1-"), "/or-a → echo-v1, got: %s", echo.Pod)
 
 	// /or-b → echo-v1.
-	echo, _, err = makeRequest(t, httpClient, cfg.TunnelHostname, http.MethodGet, "/or-b", nil)
+	echo, _, err = makeRequest(context.Background(), t, httpClient, cfg.TunnelHostname, http.MethodGet, "/or-b", nil)
 	require.NoError(t, err)
 	assert.True(t, strings.HasPrefix(echo.Pod, "echo-v1-"), "/or-b → echo-v1, got: %s", echo.Pod)
 
 	// /or-c → 404 (no match).
-	_, resp, err := makeRequest(t, httpClient, cfg.TunnelHostname, http.MethodGet, "/or-c", nil)
+	_, resp, err := makeRequest(context.Background(), t, httpClient, cfg.TunnelHostname, http.MethodGet, "/or-c", nil)
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusNotFound, resp.StatusCode, "/or-c should be 404")
 }
