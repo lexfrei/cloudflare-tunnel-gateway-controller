@@ -3,10 +3,13 @@ kind: ClusterRole
 metadata:
   name: cloudflare-tunnel-gateway-controller
 rules:
-  # Gateway API resources - read-only access to specs
+  # GatewayClass: read plus update/patch on the main resource -- the
+  # controller manages the spec-defined gateway-exists finalizer (added while
+  # any Gateway uses the class, removed when none do), which is a metadata
+  # write outside the status subresource.
   - apiGroups: ["gateway.networking.k8s.io"]
     resources: ["gatewayclasses"]
-    verbs: ["get", "list", "watch"]
+    verbs: ["get", "list", "watch", "update", "patch"]
   - apiGroups: ["gateway.networking.k8s.io"]
     resources: ["gateways"]
     verbs: ["get", "list", "watch", "update", "patch"]
