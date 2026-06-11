@@ -3,7 +3,7 @@ module github.com/lexfrei/cloudflare-tunnel-gateway-controller
 go 1.26.4
 
 require (
-	github.com/cloudflare/cloudflare-go/v7 v7.4.0
+	github.com/cloudflare/cloudflare-go/v7 v7.5.0
 	github.com/cloudflare/cloudflared v0.0.0-20260608181609-57f7d693bb76
 	github.com/cockroachdb/errors v1.13.0
 	github.com/go-logr/logr v1.4.3
