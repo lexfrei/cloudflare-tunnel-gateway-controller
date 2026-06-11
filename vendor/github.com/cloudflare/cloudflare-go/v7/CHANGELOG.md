@@ -1,5 +1,28 @@
 # Changelog
 
+## 7.5.0 (2026-06-10)
+
+Full Changelog: [v7.4.0...v7.5.0](https://github.com/cloudflare/cloudflare-go/compare/v7.4.0...v7.5.0)
+
+### Features
+
+* **addressing:** add regional hostname methods ([058abc9](https://github.com/cloudflare/cloudflare-go/commit/058abc9e6fec5e908d76f58e97d0b2dd9ce76644))
+* **resource_tagging:** add summary sub-resource ([db6483e](https://github.com/cloudflare/cloudflare-go/commit/db6483ef4295f2c99b014c765a4e77cd3158af6e))
+
+
+### Chores
+
+* **ai_gateway:** update generated types and methods ([8bf2b97](https://github.com/cloudflare/cloudflare-go/commit/8bf2b97555171d4bf6af44b1d2299d0f31d6eb74))
+* **billing:** update generated types and methods ([d796827](https://github.com/cloudflare/cloudflare-go/commit/d796827bafec8e395cf1a66aa534a0bc345bf2a5))
+* **browser_rendering:** update generated types and methods ([f065879](https://github.com/cloudflare/cloudflare-go/commit/f0658794e2c68ef22405d103489d38e781634d58))
+* **dns_firewall:** update generated types and methods ([93863b5](https://github.com/cloudflare/cloudflare-go/commit/93863b55ff933772e263c64665564c8006cc4169))
+* **intel:** update generated types and methods ([436e04d](https://github.com/cloudflare/cloudflare-go/commit/436e04d00e58dc7200e7d1e9352d7435410db4d3))
+* **magic_transit:** update generated types and methods ([47c5778](https://github.com/cloudflare/cloudflare-go/commit/47c57785c59c6babe028d8582ebc72c3f52099d1))
+* **organizations:** update generated types and methods ([247eb53](https://github.com/cloudflare/cloudflare-go/commit/247eb53ee0f5d1085a69261a836dfb1b20cb3a7d))
+* **r2:** update generated types and methods ([49ef9d9](https://github.com/cloudflare/cloudflare-go/commit/49ef9d9855f6a752ad4a20505715e24842edf93e))
+* sync infrastructure packages from staging-next ([ac9ea70](https://github.com/cloudflare/cloudflare-go/commit/ac9ea70a1a056c39470929e5c47ea28781187cbd))
+* sync shared codegen files from staging-next ([bf14c7e](https://github.com/cloudflare/cloudflare-go/commit/bf14c7e1d7ce2790d5f13ce72d2b81b8534a0e40))
+
 ## 7.4.0 (2026-05-29)
 
 Full Changelog: [v7.3.0...v7.4.0](https://github.com/cloudflare/cloudflare-go/compare/v7.3.0...v7.4.0)
