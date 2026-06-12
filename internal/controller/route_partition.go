@@ -171,6 +171,77 @@ func partitionKeysFor(binding routeBindingInfo, infra map[string]*infraGateway) 
 	return keys
 }
 
+// unionPartitionRoutes rewrites each partition's route set to the UNION of
+// all partitions sharing its tunnel. Cloudflare load-balances a tunnel's
+// requests across ALL its connectors, so every data plane on one tunnel must
+// know every route of that tunnel — otherwise a request landing on the
+// "wrong" plane's connector 404s nondeterministically. Partitions on
+// distinct tunnels keep their disjoint configs: that distinctness IS the
+// isolation, and merging only happens when the operator already chose to
+// share a tunnel.
+func unionPartitionRoutes(partitions []routePartition, sharedTunnelID string) []routePartition {
+	tunnelOf := func(partition *routePartition) string {
+		if partition.PerGateway != nil {
+			return partition.PerGateway.TunnelID
+		}
+
+		return sharedTunnelID
+	}
+
+	type routeUnion struct {
+		http     []gatewayv1.HTTPRoute
+		grpc     []gatewayv1.GRPCRoute
+		seenHTTP map[string]bool
+		seenGRPC map[string]bool
+	}
+
+	unions := make(map[string]*routeUnion)
+
+	for i := range partitions {
+		partition := &partitions[i]
+		tunnelID := tunnelOf(partition)
+
+		union, ok := unions[tunnelID]
+		if !ok {
+			union = &routeUnion{seenHTTP: make(map[string]bool), seenGRPC: make(map[string]bool)}
+			unions[tunnelID] = union
+		}
+
+		for routeIdx := range partition.HTTPRoutes {
+			key := partition.HTTPRoutes[routeIdx].Namespace + "/" + partition.HTTPRoutes[routeIdx].Name
+			if union.seenHTTP[key] {
+				continue
+			}
+
+			union.seenHTTP[key] = true
+
+			union.http = append(union.http, partition.HTTPRoutes[routeIdx])
+		}
+
+		for routeIdx := range partition.GRPCRoutes {
+			key := partition.GRPCRoutes[routeIdx].Namespace + "/" + partition.GRPCRoutes[routeIdx].Name
+			if union.seenGRPC[key] {
+				continue
+			}
+
+			union.seenGRPC[key] = true
+
+			union.grpc = append(union.grpc, partition.GRPCRoutes[routeIdx])
+		}
+	}
+
+	out := make([]routePartition, len(partitions))
+
+	for i := range partitions {
+		out[i] = partitions[i]
+		union := unions[tunnelOf(&partitions[i])]
+		out[i].HTTPRoutes = union.http
+		out[i].GRPCRoutes = union.grpc
+	}
+
+	return out
+}
+
 // routeKeysOfPartition returns the "namespace/name" keys of every route in
 // the partition — used to map a tunnel-group sync failure back onto exactly
 // the routes it affects.

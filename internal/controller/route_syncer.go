@@ -165,6 +165,12 @@ type SyncResult struct {
 	// where the push falls back to treating everything as shared.
 	Partitions []routePartition
 
+	// SharedTunnelID is the class-resolved tunnel of the shared partition;
+	// the proxy push uses it to detect per-Gateway partitions sharing the
+	// shared tunnel (their configs must be unioned — see
+	// unionPartitionRoutes).
+	SharedTunnelID string
+
 	// RouteSyncErrors maps "namespace/name" to the sync error of the tunnel
 	// group that failed for that route's partition, when only SOME groups
 	// failed. The status writers prefer it over the global sync error so one
@@ -343,6 +349,11 @@ func pushPartitionConfigs(
 			GRPCRoutes: syncResult.GRPCRoutes,
 		}}
 	}
+
+	// Same-tunnel partitions must push identical (unioned) configs: the edge
+	// load-balances a tunnel's requests across all its connectors, so every
+	// data plane on one tunnel has to know every route of that tunnel.
+	partitions = unionPartitionRoutes(partitions, syncResult.SharedTunnelID)
 
 	keep := make(map[string]bool, len(partitions))
 
@@ -585,6 +596,7 @@ func (s *RouteSyncer) SyncAllRoutes(ctx context.Context) (ctrl.Result, *SyncResu
 
 	syncResult := buildSyncResult(httpResult, grpcResult, outcome.httpFailedRefs, outcome.grpcFailedRefs)
 	syncResult.Partitions = partitions
+	syncResult.SharedTunnelID = resolvedConfig.TunnelID
 	syncResult.RouteSyncErrors = outcome.routeErrs
 
 	// All groups failed: total sync outage — global error, every route goes
