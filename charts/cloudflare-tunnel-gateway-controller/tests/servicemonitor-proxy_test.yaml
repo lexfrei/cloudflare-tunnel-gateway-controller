@@ -22,6 +22,21 @@ tests:
       - hasDocuments:
           count: 0
 
+  # The scrape would be a guaranteed 404 without the exporter: the monitor
+  # must follow the metrics toggle, not just its own.
+  - it: should not create ServiceMonitor when proxy metrics are disabled
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
+        metrics:
+          enabled: false
+      serviceMonitor:
+        enabled: true
+    asserts:
+      - hasDocuments:
+          count: 0
+
   - it: should create ServiceMonitor when serviceMonitor enabled
     set:
       proxy:

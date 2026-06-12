@@ -53,6 +53,10 @@ func TestProxyMetricsEndpoint(t *testing.T) {
 
 	var exposition string
 
+	// ProxyGet load-balances across the proxy replicas, and only the replica
+	// that served the request carries the 2xx sample — so the poll condition
+	// must include EVERYTHING the assertions below require of one exposition
+	// snapshot, or the test flakes on whichever replica answered last.
 	err := wait.PollUntilContextTimeout(ctx, 2*time.Second, 60*time.Second, true,
 		func(pollCtx context.Context) (bool, error) {
 			raw, getErr := clientset.CoreV1().Services(cfg.Namespace).
@@ -64,10 +68,11 @@ func TestProxyMetricsEndpoint(t *testing.T) {
 
 			exposition = string(raw)
 
-			return strings.Contains(exposition, "cftunnel_proxy_requests_total"), nil
+			return strings.Contains(exposition, "cftunnel_proxy_requests_total") &&
+				strings.Contains(exposition, `status_class="2xx"`), nil
 		},
 	)
-	require.NoError(t, err, "proxy /metrics never exposed the data-plane instruments")
+	require.NoError(t, err, "proxy /metrics never exposed the data-plane instruments with a counted 2xx request")
 
 	assert.Contains(t, exposition, `cftunnel_proxy_requests_total`, "request counters must be exposed")
 	assert.Contains(t, exposition, `status_class="2xx"`, "the live request must have been counted")

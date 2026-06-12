@@ -182,6 +182,7 @@ func (r *HTTPRouteReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		findRoutesForEndpointSlice:   r.findRoutesForEndpointSlice,
 		findRoutesForExternalBackend: r.findRoutesForExternalBackend,
 		watchBackendTLS:              true,
+		watchNamespaceLabels:         r.RouteSyncer.HostnameOwnership != nil,
 		getAllRelevantRoutes:         r.getAllRelevantRoutes,
 	})
 }

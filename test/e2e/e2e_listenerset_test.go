@@ -4,6 +4,7 @@ package e2e
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -15,6 +16,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
@@ -30,7 +32,8 @@ import (
 // The test temporarily patches the e2e Gateway to opt into allowedListeners
 // (which the shared setupGateway intentionally does not set so other tests
 // aren't affected by the multi-listener attach semantic) and restores it on
-// cleanup. This is the only e2e test that mutates the shared Gateway spec.
+// cleanup. The selector-delegation test below shares this patch helper, so
+// restoration must be conflict-safe — both tests mutate the shared Gateway.
 func TestListenerSetEndToEnd(t *testing.T) {
 	cfg := loadTestConfig(t)
 	httpClient := tunnelClient()
@@ -316,15 +319,24 @@ func allowListenerSetSelector(
 	require.NoError(t, k8sClient.Update(ctx, patched))
 
 	return func() {
-		fresh := &gatewayv1.Gateway{}
+		// Restore with conflict retry: a swallowed conflict here leaves the
+		// shared Gateway opted into allowedListeners and poisons every later
+		// test run on a reused cluster.
+		restoreErr := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			fresh := &gatewayv1.Gateway{}
 
-		err := k8sClient.Get(context.Background(), key, fresh)
-		if err != nil {
-			return
+			getErr := k8sClient.Get(context.Background(), key, fresh)
+			if getErr != nil {
+				return fmt.Errorf("get gateway for restore: %w", getErr)
+			}
+
+			fresh.Spec.AllowedListeners = originalAllowed
+
+			return k8sClient.Update(context.Background(), fresh)
+		})
+		if restoreErr != nil {
+			t.Errorf("failed to restore the shared Gateway's allowedListeners: %v", restoreErr)
 		}
-
-		fresh.Spec.AllowedListeners = originalAllowed
-		_ = k8sClient.Update(context.Background(), fresh)
 	}
 }
 

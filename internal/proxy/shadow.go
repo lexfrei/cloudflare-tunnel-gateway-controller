@@ -46,20 +46,44 @@ type shadowKey struct {
 	matchKey string
 }
 
-// DetectShadowedRules walks the flattened config in router order and flags
-// every (hostname, match) pair that is EXACTLY claimed by an earlier rule from
-// another route. Exact equality is provably the zero-traffic case in this data
-// plane: identical matches compute identical router priorities, and the stable
-// ruleIndex tiebreak (flattening order = spec precedence: HTTPRoutes before
-// GRPCRoutes, then oldest creationTimestamp, then {namespace}/{name}) means
-// the earlier claimant always wins. Cross-bucket overlaps (wildcard vs exact
-// hostname, prefix vs exact path) are deliberately NOT flagged — the later
-// rule still serves traffic there.
+// shadowClaimant is one rule's claim on a (hostname, match) pair, carrying
+// the data the router actually orders by: rule priority (max across the
+// rule's ORed matches — computePriority, the router's own function) and the
+// flattened index (the router's stable tiebreak).
+type shadowClaimant struct {
+	provenance RuleProvenance
+	priority   int
+	flatIdx    int
+}
+
+// beats reports whether c is served BEFORE other by the router: higher
+// priority first, then lower flattened index (sortRulesByPrecedence).
+func (c *shadowClaimant) beats(other *shadowClaimant) bool {
+	if c.priority != other.priority {
+		return c.priority > other.priority
+	}
+
+	return c.flatIdx < other.flatIdx
+}
+
+// DetectShadowedRules flags every (hostname, match) pair that is EXACTLY
+// claimed by two routes, attributing winner and loser by the ROUTER's actual
+// ordering: rule priority descending (a rule's priority is the max across its
+// ORed matches), then flattened index — NOT flattening order alone. The
+// distinction matters: a newer route [prefix /, exact /admin] outranks an
+// older route [prefix /] because its exact arm lifts the whole rule, and its
+// "prefix /" arm then swallows the older route's traffic — the OLDER route is
+// the starved one. Exact pair equality is the zero-traffic case: the winning
+// rule matches every request the losing pair would, and the router serves the
+// winner first. Cross-bucket overlaps (wildcard vs exact hostname, prefix vs
+// exact path) are deliberately NOT flagged — the other rule still serves
+// traffic there.
 //
 // Returns one DiagnosticShadowed entry per shadowed pair, stamped with the
 // LOSING route's identity so the existing per-route status pipeline delivers
 // it. Rules with UnavailableStatus still claim keys: they match requests and
-// answer them (fail closed), so a later identical rule is just as shadowed.
+// answer them (fail closed), so an outranked identical rule is just as
+// shadowed.
 //
 // A config without provenance (hand-built in tests) yields nothing.
 func DetectShadowedRules(cfg *Config) []RouteDiagnostic {
@@ -67,35 +91,49 @@ func DetectShadowedRules(cfg *Config) []RouteDiagnostic {
 		return nil
 	}
 
-	claims := make(map[shadowKey]RuleProvenance)
+	claims := make(map[shadowKey]shadowClaimant)
 
 	var diags []RouteDiagnostic
 
 	for ruleIdx := range cfg.Rules {
 		rule := &cfg.Rules[ruleIdx]
-		provenance := cfg.Provenance[ruleIdx]
+		claimant := shadowClaimant{
+			provenance: cfg.Provenance[ruleIdx],
+			priority:   computePriority(rule),
+			flatIdx:    ruleIdx,
+		}
 
 		for _, key := range ruleShadowKeys(rule) {
-			winner, claimed := claims[key]
+			incumbent, claimed := claims[key]
 			if !claimed {
-				claims[key] = provenance
+				claims[key] = claimant
 
 				continue
 			}
 
-			if winner.sameRoute(&provenance) {
-				// Within-route duplicates are the route author's own first-rule-wins
-				// ordering, spec'd separately — not a cross-tenant collision.
+			winner, loser := &incumbent, &claimant
+			if claimant.beats(&incumbent) {
+				winner, loser = &claimant, &incumbent
+			}
+
+			// The claim always tracks the rule the router serves, so later
+			// claimants compare against the real winner.
+			claims[key] = *winner
+
+			if winner.provenance.sameRoute(&loser.provenance) {
+				// Within-route duplicates are the route author's own
+				// first-rule-wins ordering, spec'd separately — not a
+				// cross-tenant collision.
 				continue
 			}
 
 			diags = append(diags, RouteDiagnostic{
-				Namespace: provenance.Namespace,
-				Name:      provenance.Name,
-				RuleIndex: provenance.RuleIndex,
+				Namespace: loser.provenance.Namespace,
+				Name:      loser.provenance.Name,
+				RuleIndex: loser.provenance.RuleIndex,
 				Target:    DiagnosticShadowed,
 				Reason:    reasonHostnameMatchShadowed,
-				Message:   shadowedMessage(&provenance, key, &winner),
+				Message:   shadowedMessage(loser, key, winner),
 				WholeRule: false,
 			})
 		}
@@ -187,19 +225,25 @@ func normalizeQueryMatches(params []QueryParamMatch) []QueryParamMatch {
 	return norm
 }
 
-// shadowBasis names the precedence criterion that decided the collision, per
-// the Gateway API ordering: creationTimestamp, then {namespace}/{name}. The
-// only remaining tie is cross-kind, where HTTPRoute rules precede GRPCRoute
-// rules in the generated configuration — reported honestly rather than
-// pretending a timestamp decided it.
-func shadowBasis(winner, loser *RuleProvenance) string {
-	if winner.CreationTimestamp.Before(&loser.CreationTimestamp) {
+// shadowBasis names the criterion that decided the collision. A priority gap
+// means the winning RULE outranks the loser on Gateway API match specificity
+// (its most specific ORed match sets the whole rule's rank). Equal priorities
+// fall back to flattening order = spec precedence: creationTimestamp, then
+// {namespace}/{name}; the only remaining tie is cross-kind, where HTTPRoute
+// rules precede GRPCRoute rules in the generated configuration — reported
+// honestly rather than pretending a timestamp decided it.
+func shadowBasis(winner, loser *shadowClaimant) string {
+	if winner.priority != loser.priority {
+		return "higher match specificity — the winning rule's most specific match ranks the whole rule above this one"
+	}
+
+	if winner.provenance.CreationTimestamp.Before(&loser.provenance.CreationTimestamp) {
 		return "older creationTimestamp"
 	}
 
-	if winner.CreationTimestamp.Equal(&loser.CreationTimestamp) {
-		winnerKey := winner.Namespace + "/" + winner.Name
-		loserKey := loser.Namespace + "/" + loser.Name
+	if winner.provenance.CreationTimestamp.Equal(&loser.provenance.CreationTimestamp) {
+		winnerKey := winner.provenance.Namespace + "/" + winner.provenance.Name
+		loserKey := loser.provenance.Namespace + "/" + loser.provenance.Name
 
 		if winnerKey < loserKey {
 			return "alphabetical {namespace}/{name} precedence"
@@ -211,7 +255,7 @@ func shadowBasis(winner, loser *RuleProvenance) string {
 
 // shadowedMessage builds the actionable operator-facing message: which pair is
 // shadowed, who wins, why, and that the route stays Accepted.
-func shadowedMessage(loser *RuleProvenance, key shadowKey, winner *RuleProvenance) string {
+func shadowedMessage(loser *shadowClaimant, key shadowKey, winner *shadowClaimant) string {
 	hostname := key.hostname
 	if hostname == "" {
 		hostname = "<any>"
@@ -220,6 +264,6 @@ func shadowedMessage(loser *RuleProvenance, key shadowKey, winner *RuleProvenanc
 	return fmt.Sprintf(
 		"rule %d match (host %q, match %s) is shadowed by %s (%s); matching requests are served by that route. "+
 			"This route remains Accepted. Resolve by removing the duplicate match or scoping hostnames per tenant.",
-		loser.RuleIndex, hostname, key.matchKey, winner.String(), shadowBasis(winner, loser),
+		loser.provenance.RuleIndex, hostname, key.matchKey, winner.provenance.String(), shadowBasis(winner, loser),
 	)
 }

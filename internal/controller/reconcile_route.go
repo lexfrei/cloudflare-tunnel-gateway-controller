@@ -9,6 +9,7 @@ import (
 	discoveryv1 "k8s.io/api/discovery/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	ctrl "sigs.k8s.io/controller-runtime"
+	ctrlbuilder "sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
@@ -98,8 +99,35 @@ type routeControllerSetupParams struct {
 	// upgraded to TLS + ALPN-negotiated HTTP/2 when a policy targets the
 	// Service), so both reconcilers flip this flag on. The Service watch is
 	// gated separately on findRoutesForService.
-	watchBackendTLS      bool
+	watchBackendTLS bool
+	// watchNamespaceLabels adds a Namespace watch keyed on LABEL changes:
+	// hostname-ownership binds a namespace to its allowed suffix via a label,
+	// and relabelling must re-converge the namespace's routes both ways
+	// (revocation rejects programmed violators, a granted label clears
+	// HostnameNotPermitted). Label edits do not bump generation, which is why
+	// this watch carries its own predicate. Off when ownership enforcement is
+	// disabled — namespace labels then influence nothing.
+	watchNamespaceLabels bool
 	getAllRelevantRoutes RequestsFunc
+}
+
+// namespaceScopedRequests narrows getAllRelevantRoutes to the routes of the
+// event namespace. Any single enqueued route triggers a full sync (which
+// re-evaluates ownership for every route), so the namespace's own routes are
+// exactly the right granularity — they are also the ones whose statuses must
+// change.
+func namespaceScopedRequests(getAll RequestsFunc) handler.MapFunc {
+	return func(ctx context.Context, obj client.Object) []reconcile.Request {
+		var scoped []reconcile.Request
+
+		for _, req := range getAll(ctx) {
+			if req.Namespace == obj.GetName() {
+				scoped = append(scoped, req)
+			}
+		}
+
+		return scoped
+	}
 }
 
 // setupRouteController sets up the controller-runtime builder with standard
@@ -111,29 +139,47 @@ func setupRouteController(mgr ctrl.Manager, params *routeControllerSetupParams) 
 		ConfigResolver: params.configResolver,
 	}
 
+	// The generation predicate is applied PER WATCH (replicating the former
+	// global WithEventFilter verbatim), not globally: the Namespace watch
+	// below must see label-only updates, which a global generation filter
+	// would eat — namespace label edits do not bump generation.
+	generationChanged := ctrlbuilder.WithPredicates(predicate.GenerationChangedPredicate{})
+
 	builder := ctrl.NewControllerManagedBy(mgr).
-		For(params.routeObject).
-		WithEventFilter(predicate.GenerationChangedPredicate{}).
+		For(params.routeObject, generationChanged).
 		Watches(
 			&gatewayv1.Gateway{},
 			handler.EnqueueRequestsFromMapFunc(params.findRoutesForGateway),
+			generationChanged,
 		).
 		Watches(
 			&gatewayv1.ListenerSet{},
 			handler.EnqueueRequestsFromMapFunc(params.findRoutesForListenerSet),
+			generationChanged,
 		).
 		Watches(
 			&v1alpha1.GatewayClassConfig{},
 			handler.EnqueueRequestsFromMapFunc(mapper.MapConfigToRequests(params.getAllRelevantRoutes)),
+			generationChanged,
 		).
 		Watches(
 			&corev1.Secret{},
 			handler.EnqueueRequestsFromMapFunc(mapper.MapSecretToRequests(params.getAllRelevantRoutes)),
+			generationChanged,
 		).
 		Watches(
 			&gatewayv1beta1.ReferenceGrant{},
 			handler.EnqueueRequestsFromMapFunc(params.findRoutesForRefGrant),
+			generationChanged,
 		)
+
+	if params.watchNamespaceLabels {
+		builder = builder.Watches(
+			&corev1.Namespace{},
+			handler.EnqueueRequestsFromMapFunc(namespaceScopedRequests(params.getAllRelevantRoutes)),
+			ctrlbuilder.WithPredicates(predicate.LabelChangedPredicate{}),
+		)
+	}
 
 	builder = addProxyOnlyWatches(builder, params)
 
@@ -161,10 +207,15 @@ func addProxyOnlyWatches(
 	builder *ctrl.Builder,
 	params *routeControllerSetupParams,
 ) *ctrl.Builder {
+	// Same per-watch replication of the former global generation filter as in
+	// setupRouteController — these watches keep their historic event surface.
+	generationChanged := ctrlbuilder.WithPredicates(predicate.GenerationChangedPredicate{})
+
 	if params.findRoutesForService != nil {
 		builder = builder.Watches(
 			&corev1.Service{},
 			handler.EnqueueRequestsFromMapFunc(params.findRoutesForService),
+			generationChanged,
 		)
 	}
 
@@ -172,6 +223,7 @@ func addProxyOnlyWatches(
 		builder = builder.Watches(
 			&discoveryv1.EndpointSlice{},
 			handler.EnqueueRequestsFromMapFunc(params.findRoutesForEndpointSlice),
+			generationChanged,
 		)
 	}
 
@@ -179,6 +231,7 @@ func addProxyOnlyWatches(
 		builder = builder.Watches(
 			&v1alpha1.ExternalBackend{},
 			handler.EnqueueRequestsFromMapFunc(params.findRoutesForExternalBackend),
+			generationChanged,
 		)
 	}
 
@@ -207,6 +260,6 @@ func addProxyOnlyWatches(
 	)
 
 	return builder.
-		Watches(&gatewayv1.BackendTLSPolicy{}, enqueueAllRoutes).
-		Watches(&corev1.ConfigMap{}, enqueueRoutesForCAConfigMap)
+		Watches(&gatewayv1.BackendTLSPolicy{}, enqueueAllRoutes, generationChanged).
+		Watches(&corev1.ConfigMap{}, enqueueRoutesForCAConfigMap, generationChanged)
 }

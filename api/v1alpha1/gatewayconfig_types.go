@@ -145,7 +145,11 @@ type GatewayConfigSpec struct {
 	Image string `json:"image,omitempty"`
 }
 
-// GatewayConfigStatus defines the observed state of GatewayConfig.
+// GatewayConfigStatus defines the observed state of GatewayConfig. Reserved:
+// the controller does not write it today (config problems surface on the
+// REFERENCING Gateway as Accepted=False/InvalidParameters, the actionable
+// place), and its RBAC deliberately grants no status write. The subresource
+// exists so adding conditions later is not a breaking CRD change.
 type GatewayConfigStatus struct {
 	// Conditions describe the current state of the GatewayConfig.
 	// +optional

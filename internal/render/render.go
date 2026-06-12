@@ -44,12 +44,15 @@ const (
 	// 30s) + 15s headroom so kubelet never SIGKILLs mid-drain.
 	terminationGracePeriodSeconds int64 = 45
 
-	containerName     = "proxy"
-	configPortName    = "config-api"
-	proxyPortName     = "proxy"
-	namePrefix        = "cf-proxy-"
-	configNameSuffix  = "-config"
-	maxDNSLabelLength = 63
+	containerName    = "proxy"
+	configPortName   = "config-api"
+	proxyPortName    = "proxy"
+	namePrefix       = "cf-proxy-"
+	configNameSuffix = "-config"
+	// MaxDNSLabelLength is the Kubernetes object-name segment / label-value
+	// length cap; exported for consumers reasoning about truncated
+	// GatewayLabel values.
+	MaxDNSLabelLength = 63
 	nameHashLength    = 8
 
 	tunnelTokenKey = "tunnel-token"
@@ -92,12 +95,22 @@ func ConfigEndpointURL(gateway *gatewayv1.Gateway, clusterDomain string) string 
 		ConfigServiceName(gateway), gateway.Namespace, clusterDomain, configAPIPort)
 }
 
+// GatewayLabelValue returns the GatewayLabel value for a Gateway name. Label
+// values cap at 63 characters while Gateway names go up to 253, so long names
+// truncate with the same deterministic hash-suffix scheme as resource names —
+// an over-long raw value would make the apiserver reject the whole render on
+// every reconcile. Consumers mapping a label value back to a Gateway must
+// compare through this function, never against raw names.
+func GatewayLabelValue(gatewayName string) string {
+	return truncateName(gatewayName)
+}
+
 // selectorLabels is the immutable Deployment selector / Service selector set.
 // Deliberately minimal: selectors cannot be changed after creation.
 func selectorLabels(gateway *gatewayv1.Gateway) map[string]string {
 	return map[string]string{
 		"app.kubernetes.io/name": "cloudflare-tunnel-gateway-proxy",
-		GatewayLabel:             gateway.Name,
+		GatewayLabel:             GatewayLabelValue(gateway.Name),
 	}
 }
 
@@ -354,13 +367,13 @@ func ConfigService(input Input) *corev1.Service {
 // replacing the tail with a deterministic hash suffix on overflow so long
 // Gateway names stay collision-free.
 func truncateName(name string) string {
-	if len(name) <= maxDNSLabelLength {
+	if len(name) <= MaxDNSLabelLength {
 		return name
 	}
 
 	sum := sha256.Sum256([]byte(name))
 	suffix := hex.EncodeToString(sum[:])[:nameHashLength]
-	keep := maxDNSLabelLength - nameHashLength - 1
+	keep := MaxDNSLabelLength - nameHashLength - 1
 
 	return strings.TrimRight(name[:keep], "-") + "-" + suffix
 }

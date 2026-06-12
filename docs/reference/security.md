@@ -142,9 +142,6 @@ rules:
   - apiGroups: ["cf.k8s.lex.la"]
     resources: ["gatewayconfigs"]
     verbs: ["get", "list", "watch"]
-  - apiGroups: ["cf.k8s.lex.la"]
-    resources: ["gatewayconfigs/status"]
-    verbs: ["get", "update", "patch"]
 
   # GatewayClassConfig CRD
   - apiGroups: ["cf.k8s.lex.la"]

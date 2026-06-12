@@ -7,9 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
+	"sync/atomic"
 	"testing"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -101,6 +104,65 @@ func TestStatusClass(t *testing.T) {
 			assert.Equal(t, tt.want, statusClass(tt.status))
 		})
 	}
+}
+
+// TestMetricsOnUpgrade_HijackWithoutStatusCountsAsUpgrade pins the standalone
+// WebSocket accounting path: stdlib httputil.ReverseProxy writes the "101
+// Switching Protocols" bytes DIRECTLY to the hijacked connection, bypassing
+// the counting ResponseWriter — so at hijack time no status was recorded. A
+// successful hijack IS a successful upgrade and must count as "1xx", not
+// "aborted" (which would make every standalone WS session look like a failed
+// exchange on dashboards).
+func TestMetricsOnUpgrade_HijackWithoutStatusCountsAsUpgrade(t *testing.T) {
+	t.Parallel()
+
+	reg := prometheus.NewRegistry()
+	metrics := NewMetrics(reg)
+
+	counted := newCountingResponseWriter(nil)
+	state := metrics.beginRequest(counted, &http.Request{})
+	state.setHostname("ws.example.com")
+
+	// Simulate the stdlib path: hijack fires with NO WriteHeader call.
+	state.onUpgrade()
+	state.finish()
+
+	value := testutil.ToFloat64(metrics.requestsTotal.WithLabelValues("ws.example.com", "1xx"))
+	assert.InDelta(t, 1.0, value, 0,
+		"a hijack with no recorded status is a successful upgrade, not an aborted exchange")
+
+	aborted := testutil.ToFloat64(metrics.requestsTotal.WithLabelValues("ws.example.com", "aborted"))
+	assert.InDelta(t, 0.0, aborted, 0)
+}
+
+// readSentinelError is compared by IDENTITY below — the wrapper must hand it
+// back unchanged.
+var errReadSentinel = errors.New("read sentinel")
+
+type sentinelReader struct{}
+
+func (sentinelReader) Read([]byte) (int, error) { return 3, errReadSentinel }
+func (sentinelReader) Close() error             { return nil }
+
+// TestCountingBody_ReadErrorsPassThroughUnwrapped pins the invisibility
+// contract of the byte-counting body wrapper: stdlib transports and handlers
+// compare read errors by identity (not just io.EOF — http.ErrBodyReadAfterClose,
+// net sentinel errors), so instrumentation must return the inner error AS IS
+// while still counting the bytes that were read.
+func TestCountingBody_ReadErrorsPassThroughUnwrapped(t *testing.T) {
+	t.Parallel()
+
+	var counter atomic.Int64
+
+	body := &countingBody{inner: sentinelReader{}, counter: &counter}
+
+	n, err := body.Read(make([]byte, 8))
+	assert.Equal(t, 3, n)
+	assert.Equal(t, int64(3), counter.Load(), "bytes preceding the error must still count")
+
+	//nolint:errorlint,err113 // identity comparison IS the contract under test
+	assert.True(t, err == errReadSentinel,
+		"the inner error must come back by identity, not wrapped")
 }
 
 // timeoutSentinelError satisfies the net.Error-style Timeout() interface the

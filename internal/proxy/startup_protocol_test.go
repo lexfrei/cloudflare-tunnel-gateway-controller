@@ -46,7 +46,7 @@ func TestResolveStartupProtocol(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			got := proxy.ResolveStartupProtocol(context.Background(), tt.configured, tt.firstCfg, tt.wait, slog.Default())
+			got := proxy.ResolveStartupProtocol(context.Background(), tt.configured, tt.firstCfg, tt.wait, nil, slog.Default())
 			assert.Equal(t, tt.want, got)
 		})
 	}
@@ -61,8 +61,28 @@ func TestResolveStartupProtocol_CtxCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	got := proxy.ResolveStartupProtocol(ctx, "auto", make(chan *proxy.Config), time.Hour, slog.Default())
+	got := proxy.ResolveStartupProtocol(ctx, "auto", make(chan *proxy.Config), time.Hour, nil, slog.Default())
 	assert.Equal(t, "auto", got)
+}
+
+// TestResolveStartupProtocol_DrainSignalCutsTheWait pins the two-stage
+// shutdown contract during the startup window: SIGTERM closes the DRAIN
+// channel (the context deliberately stays alive so in-flight work finishes),
+// and a pod terminated before its first config push must not burn the
+// startup-protocol wait out of its termination grace — that window can be a
+// large fraction of the grace budget and risks SIGKILL mid-drain.
+func TestResolveStartupProtocol_DrainSignalCutsTheWait(t *testing.T) {
+	t.Parallel()
+
+	drain := make(chan struct{})
+	close(drain)
+
+	start := time.Now()
+	got := proxy.ResolveStartupProtocol(context.Background(), "auto", make(chan *proxy.Config), time.Hour, drain, slog.Default())
+
+	assert.Equal(t, "auto", got)
+	assert.Less(t, time.Since(start), 10*time.Second,
+		"a closed drain channel must cut the startup wait immediately")
 }
 
 func TestGRPCRestartNeeded(t *testing.T) {

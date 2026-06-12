@@ -173,11 +173,14 @@ func runTunnelMode(logger *slog.Logger, token string) {
 	// the controller's first config push so the proxy can upgrade to http2 when
 	// a GRPCRoute is present — cloudflared drops HTTP trailers over QUIC, so gRPC
 	// needs http2. Explicit http2/quic dial immediately without waiting.
+	// graceC rides along so a SIGTERM during this window does not burn the
+	// startup wait out of the pod's termination grace budget.
 	effectiveProtocol := proxy.ResolveStartupProtocol(
 		ctx,
 		os.Getenv("PROXY_TUNNEL_PROTOCOL"),
 		router.FirstConfigLoaded(),
 		startupProtocolWait(logger),
+		graceC,
 		logger,
 	)
 

@@ -209,6 +209,40 @@ func TestDetectShadowedRules_PartialShadowEmitsPerPair(t *testing.T) {
 	assert.NotContains(t, diags[0].Message, "/v2")
 }
 
+// TestDetectShadowedRules_HigherPriorityLaterRuleWins pins winner attribution
+// against the ROUTER's actual ordering, not flattening order. The router ranks
+// a rule by the MAX priority across its ORed matches and serves a request with
+// the first rule (priority desc) whose ANY match hits. So an older route A
+// [prefix /] loses its traffic to a newer route B [prefix /, exact /admin]:
+// B's exact match lifts the whole rule above A, and B's "prefix /" arm
+// swallows every request A would have served. The diagnostic must land on A
+// (the starved route), naming B as the winner — flagging B would invert
+// winner and loser exactly when the observability matters.
+func TestDetectShadowedRules_HigherPriorityLaterRuleWins(t *testing.T) {
+	t.Parallel()
+
+	cfg := &proxy.Config{
+		Rules: []proxy.RouteRule{
+			{Hostnames: []string{"app.example.com"}, Matches: []proxy.RouteMatch{pathPrefixMatch("/")}},
+			{Hostnames: []string{"app.example.com"}, Matches: []proxy.RouteMatch{
+				pathPrefixMatch("/"), pathExactMatch("/admin"),
+			}},
+		},
+		Provenance: []proxy.RuleProvenance{
+			prov("HTTPRoute", "team-a", "older-starved", shadowT0, 0),
+			prov("HTTPRoute", "team-b", "newer-winner", shadowT1, 0),
+		},
+	}
+
+	diags := proxy.DetectShadowedRules(cfg)
+	require.Len(t, diags, 1)
+	assert.Equal(t, "older-starved", diags[0].Name,
+		"the route the router actually starves must carry the diagnostic")
+	assert.Equal(t, "team-a", diags[0].Namespace)
+	assert.Contains(t, diags[0].Message, "HTTPRoute team-b/newer-winner",
+		"the winner named in the message must be the route the router serves")
+}
+
 // TestDetectShadowedRules_HeaderOrderNormalized pins the canonical match key:
 // the same header set listed in a different order is the SAME match and must
 // collide.

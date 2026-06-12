@@ -64,6 +64,16 @@ func allowedVectors() []Vector {
 			Hostnames:   []string{"a.team-a.example.com", "b.team-a.example.com"},
 			WantAllowed: true,
 		},
+		{
+			// Label VALUES may carry uppercase; DNS comparison is
+			// case-insensitive. Both layers normalize the suffix (CEL
+			// lowerAscii, Go ToLower); route hostnames are lowercase by CRD
+			// schema.
+			Name:        "uppercase suffix label normalized",
+			Suffix:      "Team-A.Example.COM",
+			Hostnames:   []string{vectorInsideHost},
+			WantAllowed: true,
+		},
 	}
 }
 
@@ -98,6 +108,16 @@ func deniedVectors() []Vector {
 			Name:      "no hostnames denied",
 			Suffix:    vectorSuffix,
 			Hostnames: nil,
+		},
+		{
+			// Distinct from nil ON THE WIRE: `hostnames: []` is a present
+			// field, and CEL's has() semantics for present-but-empty lists is
+			// exactly the trap this table exists to pin (the e2e sends the
+			// empty list explicitly via unstructured — typed clients drop it
+			// through omitempty).
+			Name:      "present-but-empty hostnames denied",
+			Suffix:    vectorSuffix,
+			Hostnames: []string{},
 		},
 		{
 			Name:      "missing ownership label denied",

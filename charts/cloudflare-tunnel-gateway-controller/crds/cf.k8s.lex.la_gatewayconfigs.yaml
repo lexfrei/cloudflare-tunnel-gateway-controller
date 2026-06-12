@@ -242,7 +242,12 @@ spec:
                 the replica count when autoscaling is set'
               rule: '!(has(self.replicas) && has(self.autoscaling))'
           status:
-            description: GatewayConfigStatus defines the observed state of GatewayConfig.
+            description: |-
+              GatewayConfigStatus defines the observed state of GatewayConfig. Reserved:
+              the controller does not write it today (config problems surface on the
+              REFERENCING Gateway as Accepted=False/InvalidParameters, the actionable
+              place), and its RBAC deliberately grants no status write. The subresource
+              exists so adding conditions later is not a breaking CRD change.
             properties:
               conditions:
                 description: Conditions describe the current state of the GatewayConfig.

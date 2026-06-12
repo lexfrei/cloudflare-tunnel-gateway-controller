@@ -328,7 +328,10 @@ tests:
             apiGroups: ["cf.k8s.lex.la"]
             resources: ["gatewayconfigs"]
             verbs: ["get", "list", "watch"]
-      - contains:
+      # Deliberately NO gatewayconfigs/status grant: the controller never
+      # writes GatewayConfig status (config problems surface on the
+      # referencing Gateway), and an unused write grant is attack surface.
+      - notContains:
           path: rules
           content:
             apiGroups: ["cf.k8s.lex.la"]

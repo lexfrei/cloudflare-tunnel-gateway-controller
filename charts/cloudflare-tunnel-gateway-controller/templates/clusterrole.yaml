@@ -112,14 +112,11 @@ rules:
     resources: ["gatewayclassconfigs/status"]
     verbs: ["get", "update", "patch"]
   # GatewayConfig CRD: per-Gateway data-plane parameters referenced from
-  # Gateway.spec.infrastructure.parametersRef (issue #479). Read-only on the
-  # spec; status writes go through the status subresource.
+  # Gateway.spec.infrastructure.parametersRef. Read-only: the controller
+  # consumes the spec and writes no GatewayConfig status.
   - apiGroups: ["cf.k8s.lex.la"]
     resources: ["gatewayconfigs"]
     verbs: ["get", "list", "watch"]
-  - apiGroups: ["cf.k8s.lex.la"]
-    resources: ["gatewayconfigs/status"]
-    verbs: ["get", "update", "patch"]
   # ExternalBackend CRD: a backendRef may target an out-of-cluster HTTP(S)
   # endpoint declared by an ExternalBackend. The controller reads its spec to
   # resolve the backend URL. Read-only.

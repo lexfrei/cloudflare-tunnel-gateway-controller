@@ -27,6 +27,10 @@ const (
 	backendErrReasonOther       = "other"
 )
 
+// statusClassUpgrade is the requests_total status_class for successful
+// protocol upgrades (101 lands in the 1xx class).
+const statusClassUpgrade = "1xx"
+
 // statusClassAborted is the requests_total status_class for requests where
 // the handler wrote no response at all (client canceled before any write).
 const statusClassAborted = "aborted"
@@ -112,7 +116,7 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		}, []string{metricLabelHostname}),
 		requestsTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "cftunnel_proxy_requests_total",
-			Help: "Completed exchanges by matched hostname pattern and status class.",
+			Help: "Completed exchanges by matched hostname pattern and status class (1xx..5xx; aborted = no response written; other = status outside 100-599).",
 		}, []string{metricLabelHostname, "status_class"}),
 		backendErrors: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "cftunnel_proxy_backend_errors_total",
@@ -186,13 +190,22 @@ func (s *metricsRequestState) setHostname(hostname string) {
 // onUpgrade runs at successful hijack time (WebSocket upgrade): the HTTP
 // exchange is over, so the request leaves the in-flight gauge, enters the
 // session gauge, observes time-to-upgrade, and counts by the written status
-// (101 → "1xx"). The post-upgrade session is accounted by finish.
+// (101 → "1xx"). A hijack with NO recorded status is also a successful
+// upgrade: stdlib httputil.ReverseProxy (the standalone-mode path) writes the
+// 101 bytes directly to the hijacked connection, bypassing the counting
+// writer. The post-upgrade session is accounted by finish.
 func (s *metricsRequestState) onUpgrade() {
 	s.upgraded = true
 	s.metrics.requestsInFlight.Dec()
 	s.metrics.wsActiveSessions.Inc()
 	s.metrics.requestDuration.WithLabelValues(s.hostname).Observe(time.Since(s.start).Seconds())
-	s.metrics.requestsTotal.WithLabelValues(s.hostname, statusClass(s.counted.Status())).Inc()
+
+	class := statusClass(s.counted.Status())
+	if s.counted.Status() == 0 {
+		class = statusClassUpgrade
+	}
+
+	s.metrics.requestsTotal.WithLabelValues(s.hostname, class).Inc()
 }
 
 // finish is the deferred tail of an instrumented request. For an upgraded
@@ -241,8 +254,9 @@ func (h *Handler) proxyErrorHandler(hostname string) func(http.ResponseWriter, *
 }
 
 // countingBody wraps a request body to count bytes actually read from the
-// client. io.EOF passes through unwrapped — stdlib readers compare against
-// it by identity in places, and the wrapper must stay invisible to them.
+// client. EVERY error passes through unwrapped — stdlib transports and
+// handlers compare read errors by identity (io.EOF, ErrBodyReadAfterClose,
+// net sentinels), and instrumentation must stay invisible to them.
 type countingBody struct {
 	inner   io.ReadCloser
 	counter *atomic.Int64
@@ -252,11 +266,7 @@ func (b *countingBody) Read(p []byte) (int, error) {
 	n, err := b.inner.Read(p)
 	b.counter.Add(int64(n))
 
-	if err != nil && !errors.Is(err, io.EOF) {
-		return n, fmt.Errorf("counting request body: %w", err)
-	}
-
-	return n, err //nolint:wrapcheck // io.EOF must pass through unwrapped (see type comment)
+	return n, err //nolint:wrapcheck // errors must pass through by identity (see type comment)
 }
 
 func (b *countingBody) Close() error {
@@ -269,7 +279,8 @@ func (b *countingBody) Close() error {
 }
 
 // statusClass maps an HTTP status to its requests_total label class. Zero is
-// the counting writer's "no response written" sentinel → "aborted"; 100-599
+// the counting writer's "no response written" sentinel and 1-99 are
+// impossible wire statuses — both land in "aborted"; 100-599
 // map to "1xx".."5xx"; anything else (a handler writing a nonsense status)
 // lands in "other" rather than minting a new label value.
 func statusClass(status int) string {
@@ -279,7 +290,7 @@ func statusClass(status int) string {
 	case status < 100:
 		return statusClassAborted
 	case status < maxValidHTTPStatus:
-		classes := [...]string{"1xx", "2xx", "3xx", "4xx", "5xx"}
+		classes := [...]string{statusClassUpgrade, "2xx", "3xx", "4xx", "5xx"}
 
 		return classes[status/100-1]
 	default:

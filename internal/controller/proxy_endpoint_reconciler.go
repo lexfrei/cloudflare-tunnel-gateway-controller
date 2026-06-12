@@ -12,6 +12,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
+	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/logging"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/render"
@@ -85,8 +86,20 @@ func (r *ProxyEndpointReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 	// A per-Gateway data plane's EndpointSlice carries the Gateway label
 	// (mirrored from its rendered Service); resync just that partition.
-	if gatewayName := slice.Labels[render.GatewayLabel]; gatewayName != "" {
-		if err := r.ProxySyncer.ResyncPartition(ctx, slice.Namespace+"/"+gatewayName); err != nil {
+	if labelValue := slice.Labels[render.GatewayLabel]; labelValue != "" {
+		key, ok := r.partitionKeyForLabel(ctx, slice.Namespace, labelValue)
+		if !ok {
+			// The label value cannot be attributed to a live Gateway (it is
+			// a truncated form of a name that no longer exists, or foreign):
+			// replay every cached partition — cheap and correct.
+			if resyncErr := r.ProxySyncer.ResyncAllPartitions(ctx); resyncErr != nil {
+				return ctrl.Result{}, errors.Wrap(resyncErr, "resync all proxy partitions")
+			}
+
+			return ctrl.Result{}, nil
+		}
+
+		if err := r.ProxySyncer.ResyncPartition(ctx, key); err != nil {
 			return ctrl.Result{}, errors.Wrap(err, "resync per-gateway proxy partition")
 		}
 
@@ -101,6 +114,39 @@ func (r *ProxyEndpointReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 
 	return ctrl.Result{}, nil
+}
+
+// partitionKeyForLabel maps a GatewayLabel value back onto the partition key
+// (full "namespace/name"). Label values truncate at 63 characters while
+// Gateway names go to 253: a short value IS the name (truncation never
+// produces sub-63 output), a 63-character value may be a truncated form and
+// is resolved by scanning the namespace's Gateways through the same
+// truncation function.
+func (r *ProxyEndpointReconciler) partitionKeyForLabel(
+	ctx context.Context,
+	namespace, labelValue string,
+) (string, bool) {
+	if labelValue != render.GatewayLabelValue(labelValue) {
+		// Not a possible output of the truncation scheme — foreign label.
+		return "", false
+	}
+
+	if len(labelValue) < render.MaxDNSLabelLength {
+		return namespace + "/" + labelValue, true
+	}
+
+	var gateways gatewayv1.GatewayList
+	if err := r.Client.List(ctx, &gateways, client.InNamespace(namespace)); err != nil {
+		return "", false
+	}
+
+	for i := range gateways.Items {
+		if render.GatewayLabelValue(gateways.Items[i].Name) == labelValue {
+			return namespace + "/" + gateways.Items[i].Name, true
+		}
+	}
+
+	return "", false
 }
 
 // SetupWithManager wires the reconciler into the manager with an

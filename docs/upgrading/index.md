@@ -17,5 +17,5 @@ This section documents version-to-version upgrade paths and the breaking changes
 Helm installs the files under the chart's `crds/` directory only on the FIRST `helm install`; `helm upgrade` deliberately never touches them. After upgrading to a chart version that adds a CRD (for example `GatewayConfig` for per-Gateway data planes), apply the new CRDs once:
 
 ```bash
-kubectl apply -f https://raw.githubusercontent.com/lexfrei/cloudflare-tunnel-gateway-controller/master/charts/cloudflare-tunnel-gateway-controller/crds/cf.k8s.lex.la_gatewayconfigs.yaml
+kubectl apply --filename https://raw.githubusercontent.com/lexfrei/cloudflare-tunnel-gateway-controller/master/charts/cloudflare-tunnel-gateway-controller/crds/cf.k8s.lex.la_gatewayconfigs.yaml
 ```

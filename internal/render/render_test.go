@@ -92,6 +92,31 @@ func TestProxyDeployment_CoreShape(t *testing.T) {
 		deployment.Spec.Template.Labels, deployment.Spec.Selector.MatchLabels))
 }
 
+// TestProxyDeployment_LongGatewayNameLabelTruncated pins label-value validity
+// for Gateway names past the 63-character label cap (names go to 253): the
+// raw name as a label value would make the apiserver reject the whole render
+// on every reconcile. The truncated value must stay consistent between the
+// selector and the pod template (the selector is immutable), and
+// GatewayLabelValue is the only sanctioned mapping.
+func TestProxyDeployment_LongGatewayNameLabelTruncated(t *testing.T) {
+	t.Parallel()
+
+	longName := strings.Repeat("very-long-gateway-name-", 4)
+	input := testInput(longName)
+
+	deployment := render.ProxyDeployment(input)
+
+	labelValue := deployment.Spec.Selector.MatchLabels["cf.k8s.lex.la/gateway"]
+	assert.LessOrEqual(t, len(labelValue), 63, "label values cap at 63 characters")
+	assert.Equal(t, render.GatewayLabelValue(longName), labelValue)
+	assert.Equal(t, labelValue, deployment.Spec.Template.Labels["cf.k8s.lex.la/gateway"],
+		"selector and template must agree or the Deployment is invalid")
+
+	service := render.ConfigService(input)
+	assert.Equal(t, labelValue, service.Spec.Selector["cf.k8s.lex.la/gateway"],
+		"the Service must select the same pods")
+}
+
 func filterKeys(all map[string]string, want map[string]string) map[string]string {
 	out := make(map[string]string, len(want))
 

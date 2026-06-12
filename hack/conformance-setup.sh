@@ -278,7 +278,15 @@ helm upgrade --install "${RELEASE_NAME}" \
   --set proxy.tunnelTokenSecretRef.name=cloudflare-tunnel-token \
   --set proxy.tunnel.protocol=http2 \
   --set controller.logLevel=debug \
+  --set hostnameOwnershipPolicy.enabled=true \
+  --set-json 'hostnameOwnershipPolicy.namespaceSelector={"matchLabels":{"cf-e2e-hostname-policy":"enforced"}}' \
   --wait --timeout 120s
+
+# hostnameOwnershipPolicy above is scoped to the e2e marker label: only the
+# hostname-policy e2e's own namespaces are policed (both layers), so the
+# conformance suite and the rest of the e2e suite run unaffected. The flag
+# exists here to exercise the controller-side enforcement layer end to end
+# (TestHostnameOwnershipRelabelReconverges needs the live controller flags).
 
 # --- Step 9: Wait for readiness ---
 info "Waiting for controller deployment..."
