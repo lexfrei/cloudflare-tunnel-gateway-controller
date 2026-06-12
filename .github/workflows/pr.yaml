@@ -383,7 +383,7 @@ jobs:
         uses: azure/setup-helm@dda3372f752e03dde6b3237bc9431cdc2f7a02a2 # v5
         with:
           # renovate: datasource=github-releases depName=helm/helm
-          version: 'v3.21.1'
+          version: 'v4.2.0'
 
       - name: Set up Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
@@ -395,8 +395,13 @@ jobs:
 
       - name: Install tools
         run: |
-          # helm-unittest
-          helm plugin install https://github.com/helm-unittest/helm-unittest.git
+          # helm-unittest. Helm 4 defaults --verify=true, but its git/VCS
+          # plugin installer cannot verify signatures (verification applies
+          # only to .tgz archives), so requesting it on a .git source
+          # hard-errors with "plugin source does not support verification".
+          # Disable it explicitly — the flag is needed for the source type,
+          # not because the plugin is unsigned.
+          helm plugin install https://github.com/helm-unittest/helm-unittest.git --verify=false
 
           # JSON schema validator
           pip install check-jsonschema
@@ -429,7 +434,10 @@ jobs:
           CHART_DIR="charts/cloudflare-tunnel-gateway-controller"
           if [ -d "$CHART_DIR/tests" ]; then
             echo "Running unit tests..."
-            helm unittest "$CHART_DIR" --color --with-subchart=false
+            # No --color: Helm 4 added a global "--color string" flag that
+            # collides with helm-unittest's own boolean --color, so every
+            # --color form errors ("invalid color mode"). Output stays plain.
+            helm unittest "$CHART_DIR" --with-subchart=false
           else
             echo "No tests directory found, skipping unit tests"
           fi
@@ -517,7 +525,8 @@ jobs:
       - name: Set up Helm
         uses: azure/setup-helm@dda3372f752e03dde6b3237bc9431cdc2f7a02a2 # v5
         with:
-          version: 'latest'
+          # renovate: datasource=github-releases depName=helm/helm
+          version: 'v4.2.0'
 
       - name: Modify Chart.yaml and values.yaml
         run: |
