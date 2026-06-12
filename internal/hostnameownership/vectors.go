@@ -59,12 +59,6 @@ func allowedVectors() []Vector {
 			WantAllowed: true,
 		},
 		{
-			Name:        "uppercase hostname normalised",
-			Suffix:      vectorSuffix,
-			Hostnames:   []string{"APP.Team-A.Example.Com"},
-			WantAllowed: true,
-		},
-		{
 			Name:        "multiple in-suffix hostnames allowed",
 			Suffix:      vectorSuffix,
 			Hostnames:   []string{"a.team-a.example.com", "b.team-a.example.com"},

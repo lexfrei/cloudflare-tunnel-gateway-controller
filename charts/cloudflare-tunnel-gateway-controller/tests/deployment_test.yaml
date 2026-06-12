@@ -698,3 +698,48 @@ tests:
         contains:
           path: spec.template.spec.containers[0].args
           content: "--tracing-sample-rate=1"
+
+  # Master switch hostnameOwnershipPolicy.enabled wires BOTH layers: the VAP
+  # (separate template) and the controller-side enforcement flags here. One
+  # knob, two independent enforcement points.
+  - it: should not pass hostname-ownership flags by default
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: "--hostname-ownership-enforce=true"
+
+  - it: should pass hostname-ownership flags when the policy is enabled
+    set:
+      hostnameOwnershipPolicy:
+        enabled: true
+        labelKey: cf.k8s.lex.la/hostname-suffix
+        namespaceSelector:
+          matchLabels:
+            tenancy: enforced
+          matchExpressions:
+            - key: kubernetes.io/metadata.name
+              operator: NotIn
+              values: [kube-system]
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--hostname-ownership-enforce=true"
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--hostname-ownership-label-key=cf.k8s.lex.la/hostname-suffix"
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--hostname-ownership-namespace-selector=tenancy=enforced,kubernetes.io/metadata.name notin (kube-system)"
+
+  - it: should omit the selector flag when the selector is empty
+    set:
+      hostnameOwnershipPolicy:
+        enabled: true
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--hostname-ownership-enforce=true"
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: "--hostname-ownership-namespace-selector="
+

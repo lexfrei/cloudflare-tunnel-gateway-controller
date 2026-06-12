@@ -64,6 +64,16 @@ spec:
             {{- with .Values.proxy.tunnel.protocol }}
             - "--tunnel-protocol={{ . }}"
             {{- end }}
+            {{- if .Values.hostnameOwnershipPolicy.enabled }}
+            # Controller-side hostname-ownership layer; the admission policy
+            # (separate template) is the fail-fast layer of the same rule.
+            - "--hostname-ownership-enforce=true"
+            - "--hostname-ownership-label-key={{ .Values.hostnameOwnershipPolicy.labelKey }}"
+            {{- $ownershipSelector := include "cf-tunnel-gw-ctrl.labelSelectorString" .Values.hostnameOwnershipPolicy.namespaceSelector }}
+            {{- if $ownershipSelector }}
+            - "--hostname-ownership-namespace-selector={{ $ownershipSelector }}"
+            {{- end }}
+            {{- end }}
             {{- if .Values.leaderElection.enabled }}
             - "--leader-elect=true"
             - "--leader-election-name={{ .Values.leaderElection.leaseName }}"

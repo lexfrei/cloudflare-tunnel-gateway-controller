@@ -52,6 +52,24 @@ func TestPolicy_Evaluate_SharedVectors(t *testing.T) {
 	}
 }
 
+// TestPolicy_UppercaseHostnameNormalised is a Go-layer-only case (NOT a
+// shared vector): the Gateway API CRD pattern already rejects uppercase
+// hostnames at admission, so the CEL layer can never see one — but the
+// controller layer normalises defensively in case an object bypassed CRD
+// validation.
+func TestPolicy_UppercaseHostnameNormalised(t *testing.T) {
+	t.Parallel()
+
+	policy, err := hostnameownership.New(testLabelKey, "")
+	require.NoError(t, err)
+
+	verdict := policy.Evaluate(
+		map[string]string{testLabelKey: "team-a.example.com"},
+		toHostnames([]string{"APP.Team-A.Example.Com"}),
+	)
+	assert.True(t, verdict.Allowed)
+}
+
 // TestPolicy_NamespaceSelectorScopesEnforcement pins the policing scope: a
 // namespace outside the selector is NOT policed (allowed regardless of
 // labels), while a namespace inside the selector is held to the full

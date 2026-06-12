@@ -541,6 +541,50 @@
         }
       }
     },
+    "hostnameOwnershipPolicy": {
+      "type": "object",
+      "description": "Per-namespace hostname-ownership policy: admission layer (ValidatingAdmissionPolicy, K8s 1.30+) plus controller-side enforcement, both driven by one namespace label.",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Master switch: install the admission policy and enable controller-side enforcement.",
+          "default": false
+        },
+        "labelKey": {
+          "type": "string",
+          "description": "Namespace label carrying the tenant's allowed hostname suffix.",
+          "default": "cf.k8s.lex.la/hostname-suffix"
+        },
+        "namespaceSelector": {
+          "type": "object",
+          "description": "LabelSelector scoping which namespaces are policed (applied to both layers). Empty polices every namespace.",
+          "properties": {
+            "matchLabels": {
+              "type": "object",
+              "additionalProperties": {"type": "string"}
+            },
+            "matchExpressions": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["key", "operator"],
+                "properties": {
+                  "key": {"type": "string"},
+                  "operator": {"type": "string", "enum": ["In", "NotIn", "Exists", "DoesNotExist"]},
+                  "values": {"type": "array", "items": {"type": "string"}}
+                }
+              }
+            }
+          }
+        },
+        "admissionPolicy": {
+          "type": "boolean",
+          "description": "Render the ValidatingAdmissionPolicy (requires Kubernetes 1.30+). False keeps only the controller-side layer.",
+          "default": true
+        }
+      }
+    },
     "ruleNameUniquenessPolicy": {
       "type": "object",
       "properties": {

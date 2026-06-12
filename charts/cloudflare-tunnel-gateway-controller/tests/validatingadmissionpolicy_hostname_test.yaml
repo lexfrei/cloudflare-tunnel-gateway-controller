@@ -1,0 +1,111 @@
+suite: test hostname-ownership ValidatingAdmissionPolicy
+templates:
+  - validatingadmissionpolicy-hostname-ownership.yaml
+tests:
+  - it: should not render by default
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  # Policy and binding ship in ONE template, policy first: a binding without
+  # its policy + failurePolicy=Fail would deny every matched write during a
+  # partial rollout.
+  - it: should render policy and binding when enabled
+    set:
+      hostnameOwnershipPolicy:
+        enabled: true
+    asserts:
+      - hasDocuments:
+          count: 2
+      - isKind:
+          of: ValidatingAdmissionPolicy
+        documentIndex: 0
+      - isKind:
+          of: ValidatingAdmissionPolicyBinding
+        documentIndex: 1
+      - equal:
+          path: spec.failurePolicy
+          value: Fail
+        documentIndex: 0
+      - equal:
+          path: spec.validationActions
+          value: [Deny]
+        documentIndex: 1
+
+  - it: should match HTTPRoute and GRPCRoute create and update
+    set:
+      hostnameOwnershipPolicy:
+        enabled: true
+    asserts:
+      - equal:
+          path: spec.matchConstraints.resourceRules[0].resources
+          value: [httproutes, grpcroutes]
+        documentIndex: 0
+      - equal:
+          path: spec.matchConstraints.resourceRules[0].operations
+          value: [CREATE, UPDATE]
+        documentIndex: 0
+
+  - it: should carry the configured label key in the suffix variable
+    set:
+      hostnameOwnershipPolicy:
+        enabled: true
+        labelKey: tenancy.example.com/suffix
+    asserts:
+      - matchRegex:
+          path: spec.variables[0].expression
+          pattern: "tenancy\\.example\\.com/suffix"
+        documentIndex: 0
+
+  # Fail-closed contract: three validations — label required, explicit
+  # hostnames required, suffix match required.
+  - it: should render the three fail-closed validations
+    set:
+      hostnameOwnershipPolicy:
+        enabled: true
+    asserts:
+      - lengthEqual:
+          path: spec.validations
+          count: 3
+        documentIndex: 0
+      - matchRegex:
+          path: spec.validations[1].expression
+          pattern: "hostnames"
+        documentIndex: 0
+      - matchRegex:
+          path: spec.validations[2].expression
+          pattern: "endsWith"
+        documentIndex: 0
+
+  - it: should pass the namespaceSelector through to the binding
+    set:
+      hostnameOwnershipPolicy:
+        enabled: true
+        namespaceSelector:
+          matchLabels:
+            tenancy: enforced
+    asserts:
+      - equal:
+          path: spec.matchResources.namespaceSelector.matchLabels.tenancy
+          value: enforced
+        documentIndex: 1
+
+  - it: should police all namespaces when the selector is empty
+    set:
+      hostnameOwnershipPolicy:
+        enabled: true
+    asserts:
+      - notExists:
+          path: spec.matchResources
+        documentIndex: 1
+
+  # The admissionPolicy sub-toggle exists for pre-1.30 clusters where only the
+  # controller-side layer can run.
+  - it: should not render when admissionPolicy sub-toggle is off
+    set:
+      hostnameOwnershipPolicy:
+        enabled: true
+        admissionPolicy: false
+    asserts:
+      - hasDocuments:
+          count: 0
