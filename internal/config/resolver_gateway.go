@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/cockroachdb/errors"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
@@ -23,12 +24,14 @@ const (
 )
 
 // ErrInvalidParameters classifies a Gateway whose
-// infrastructure.parametersRef cannot be honoured: unsupported group/kind,
-// missing referent, or invalid referenced material (absent/garbled connector
-// token). The Gateway reconciler maps it onto Accepted=False with reason
-// InvalidParameters, the condition shape the Gateway API recommends for this
-// failure class. Transient infrastructure failures (API errors) are
-// deliberately NOT wrapped with this sentinel.
+// infrastructure.parametersRef cannot be honoured for a DETERMINISTIC,
+// user-fixable reason: unsupported group/kind, NotFound referents, a missing
+// Secret key, or a connector token that does not parse. The Gateway
+// reconciler maps it onto Accepted=False with reason InvalidParameters, the
+// condition shape the Gateway API recommends for this failure class.
+// Transient infrastructure failures (apiserver timeouts, throttling) are
+// deliberately NOT wrapped with this sentinel — they must keep their own
+// identity so callers retry with backoff instead of blaming the user's spec.
 var ErrInvalidParameters = errors.New("invalid infrastructure parametersRef")
 
 // PerGatewayConfig is the resolution result for a Gateway opted into a
@@ -138,8 +141,15 @@ func (r *Resolver) getGatewayConfig(
 
 	err := r.client.Get(ctx, types.NamespacedName{Name: ref.Name, Namespace: gateway.Namespace}, gwConfig)
 	if err != nil {
-		return nil, errors.Wrapf(ErrInvalidParameters,
-			"GatewayConfig %s/%s: %v", gateway.Namespace, ref.Name, err)
+		// Only a deterministic referent failure is the USER's parametersRef
+		// being invalid; a transient apiserver error keeps its own identity so
+		// callers retry with backoff instead of stamping InvalidParameters.
+		if apierrors.IsNotFound(err) {
+			return nil, errors.Wrapf(ErrInvalidParameters,
+				"GatewayConfig %s/%s: %v", gateway.Namespace, ref.Name, err)
+		}
+
+		return nil, errors.Wrapf(err, "reading GatewayConfig %s/%s", gateway.Namespace, ref.Name)
 	}
 
 	return gwConfig, nil
@@ -156,8 +166,12 @@ func (r *Resolver) readTunnelToken(
 
 	secret, err := r.getSecret(ctx, ref.Name, namespace)
 	if err != nil {
-		return "", secretName, errors.Wrapf(ErrInvalidParameters,
-			"tunnel token secret %s/%s: %v", namespace, ref.Name, err)
+		if apierrors.IsNotFound(err) {
+			return "", secretName, errors.Wrapf(ErrInvalidParameters,
+				"tunnel token secret %s/%s: %v", namespace, ref.Name, err)
+		}
+
+		return "", secretName, errors.Wrapf(err, "reading tunnel token secret %s/%s", namespace, ref.Name)
 	}
 
 	key := ref.KeyOr(tunnelTokenSecretKey)
@@ -181,26 +195,7 @@ func (r *Resolver) resolveGatewayAPIToken(
 	gwConfig *v1alpha1.GatewayConfig,
 ) (string, error) {
 	if override := gwConfig.Spec.CloudflareCredentialsSecretRef; override != nil {
-		namespace := override.Namespace
-		if namespace == "" {
-			namespace = gwConfig.Namespace
-		}
-
-		secret, err := r.getSecret(ctx, override.Name, namespace)
-		if err != nil {
-			return "", errors.Wrapf(ErrInvalidParameters,
-				"cloudflare credentials secret %s/%s: %v", namespace, override.Name, err)
-		}
-
-		key := override.GetAPITokenKey()
-
-		token := secret.Data[key]
-		if len(token) == 0 {
-			return "", errors.Wrapf(ErrInvalidParameters,
-				"cloudflare credentials secret %s/%s has no %q key (or it is empty)", namespace, override.Name, key)
-		}
-
-		return string(token), nil
+		return r.readCredentialOverride(ctx, gwConfig, override)
 	}
 
 	classResolved, err := r.ResolveFromGatewayClassName(ctx, string(gateway.Spec.GatewayClassName))
@@ -212,6 +207,39 @@ func (r *Resolver) resolveGatewayAPIToken(
 	}
 
 	return classResolved.APIToken, nil
+}
+
+// readCredentialOverride fetches the GatewayConfig-level Cloudflare API
+// token, defaulting the Secret namespace to the GatewayConfig's own.
+func (r *Resolver) readCredentialOverride(
+	ctx context.Context,
+	gwConfig *v1alpha1.GatewayConfig,
+	override *v1alpha1.SecretReference,
+) (string, error) {
+	namespace := override.Namespace
+	if namespace == "" {
+		namespace = gwConfig.Namespace
+	}
+
+	secret, err := r.getSecret(ctx, override.Name, namespace)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return "", errors.Wrapf(ErrInvalidParameters,
+				"cloudflare credentials secret %s/%s: %v", namespace, override.Name, err)
+		}
+
+		return "", errors.Wrapf(err, "reading cloudflare credentials secret %s/%s", namespace, override.Name)
+	}
+
+	key := override.GetAPITokenKey()
+
+	token := secret.Data[key]
+	if len(token) == 0 {
+		return "", errors.Wrapf(ErrInvalidParameters,
+			"cloudflare credentials secret %s/%s has no %q key (or it is empty)", namespace, override.Name, key)
+	}
+
+	return string(token), nil
 }
 
 // readAuthToken fetches the optional config-API bearer token.
@@ -227,8 +255,12 @@ func (r *Resolver) readAuthToken(
 
 	secret, err := r.getSecret(ctx, ref.Name, namespace)
 	if err != nil {
-		return "", errors.Wrapf(ErrInvalidParameters,
-			"auth token secret %s/%s: %v", namespace, ref.Name, err)
+		if apierrors.IsNotFound(err) {
+			return "", errors.Wrapf(ErrInvalidParameters,
+				"auth token secret %s/%s: %v", namespace, ref.Name, err)
+		}
+
+		return "", errors.Wrapf(err, "reading auth token secret %s/%s", namespace, ref.Name)
 	}
 
 	key := ref.KeyOr(authTokenSecretKey)

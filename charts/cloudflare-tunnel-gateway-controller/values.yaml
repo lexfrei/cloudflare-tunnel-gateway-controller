@@ -321,6 +321,11 @@ hostnameOwnershipPolicy:
   # flag, derived from this same value). Empty polices EVERY namespace —
   # fail-closed everywhere; scope it to tenant namespaces, e.g.
   # matchExpressions excluding kube-system and the controller namespace.
+  # NOTE: the admission layer matches ALL HTTPRoute/GRPCRoute writes in
+  # policed namespaces, including routes for OTHER Gateway implementations
+  # (admission cannot resolve parentRefs); the controller layer polices only
+  # routes binding to this controller's Gateways. On multi-implementation
+  # clusters scope the selector accordingly or set admissionPolicy: false.
   namespaceSelector: {}
   # -- Render the ValidatingAdmissionPolicy (requires Kubernetes 1.30+). Set
   # false on older clusters to keep only the controller-side layer.
@@ -360,7 +365,9 @@ proxy:
   # connector metrics (cloudflared_tunnel_*).
   metrics:
     # -- Expose request-level metrics (in-flight, duration, status classes,
-    # bytes, backend errors) on the config API port.
+    # bytes, backend errors) on the config API port. When disabled while
+    # serviceMonitor.enabled is on, the ServiceMonitor's /metrics scrape
+    # returns 404 — disable the ServiceMonitor too or expect scrape errors.
     enabled: true
   # -- Tunnel transport settings.
   tunnel:

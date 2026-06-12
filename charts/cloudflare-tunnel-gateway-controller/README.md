@@ -266,7 +266,7 @@ spec:
 | hostnameOwnershipPolicy.admissionPolicy | bool | `true` | Render the ValidatingAdmissionPolicy (requires Kubernetes 1.30+). Set false on older clusters to keep only the controller-side layer. |
 | hostnameOwnershipPolicy.enabled | bool | `false` | Master switch: installs the admission policy AND enables the controller-side enforcement flags. |
 | hostnameOwnershipPolicy.labelKey | string | `"cf.k8s.lex.la/hostname-suffix"` | Namespace label carrying the tenant's allowed hostname suffix (lowercase, e.g. "team-a.example.com"). |
-| hostnameOwnershipPolicy.namespaceSelector | object | `{}` | LabelSelector scoping which namespaces are policed. Applied to BOTH layers (the admission binding's namespaceSelector and the controller flag, derived from this same value). Empty polices EVERY namespace — fail-closed everywhere; scope it to tenant namespaces, e.g. matchExpressions excluding kube-system and the controller namespace. |
+| hostnameOwnershipPolicy.namespaceSelector | object | `{}` | LabelSelector scoping which namespaces are policed. Applied to BOTH layers (the admission binding's namespaceSelector and the controller flag, derived from this same value). Empty polices EVERY namespace — fail-closed everywhere; scope it to tenant namespaces, e.g. matchExpressions excluding kube-system and the controller namespace. NOTE: the admission layer matches ALL HTTPRoute/GRPCRoute writes in policed namespaces, including routes for OTHER Gateway implementations (admission cannot resolve parentRefs); the controller layer polices only routes binding to this controller's Gateways. On multi-implementation clusters scope the selector accordingly or set admissionPolicy: false. |
 | image | object | `{"pullPolicy":"IfNotPresent","repository":"ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller","tag":""}` | Container image configuration |
 | image.pullPolicy | string | `"IfNotPresent"` | Image pull policy |
 | image.repository | string | `"ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller"` | Image repository |
@@ -312,7 +312,7 @@ spec:
 | proxy.image.repository | string | `"ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller-proxy"` | Proxy image repository |
 | proxy.image.tag | string | `""` | Image tag (defaults to appVersion) |
 | proxy.metrics | object | `{"enabled":true}` | Data-plane Prometheus metrics, served at /metrics on the config API port (no auth — the endpoint carries no secrets and the port is cluster-internal). The endpoint also exposes the embedded cloudflared connector metrics (cloudflared_tunnel_*). |
-| proxy.metrics.enabled | bool | `true` | Expose request-level metrics (in-flight, duration, status classes, bytes, backend errors) on the config API port. |
+| proxy.metrics.enabled | bool | `true` | Expose request-level metrics (in-flight, duration, status classes, bytes, backend errors) on the config API port. When disabled while serviceMonitor.enabled is on, the ServiceMonitor's /metrics scrape returns 404 — disable the ServiceMonitor too or expect scrape errors. |
 | proxy.networkPolicy | object | `{"enabled":false,"ingress":{"from":[]}}` | NetworkPolicy configuration for proxy pods |
 | proxy.networkPolicy.enabled | bool | `false` | Enable NetworkPolicy for proxy pods |
 | proxy.networkPolicy.ingress | object | `{"from":[]}` | Ingress source configuration |

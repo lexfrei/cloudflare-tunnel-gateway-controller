@@ -115,8 +115,10 @@ spec:
                 - targetInflightPerPod
                 type: object
                 x-kubernetes-validations:
-                - message: maxReplicas must be >= minReplicas
-                  rule: '!has(self.minReplicas) || self.maxReplicas >= self.minReplicas'
+                - message: maxReplicas must be >= minReplicas (minReplicas defaults
+                    to 2 when unset)
+                  rule: 'has(self.minReplicas) ? self.maxReplicas >= self.minReplicas
+                    : self.maxReplicas >= 2'
               cloudflareCredentialsSecretRef:
                 description: |-
                   CloudflareCredentialsSecretRef optionally overrides the API credentials

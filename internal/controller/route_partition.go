@@ -40,13 +40,41 @@ type infraGateway struct {
 	perGateway *config.PerGatewayConfig
 }
 
-// resolveInfraGateways returns every managed Gateway opted into a dedicated
-// data plane, keyed "namespace/name", with its resolved configuration. A
-// Gateway whose parametersRef does not resolve is SKIPPED (not an error):
-// its routes then belong to no partition — deliberately not served anywhere,
+// infraGateways is the per-sync view of opted-in Gateways: resolved holds the
+// data planes that can be served; broken holds the Gateways that OPTED IN but
+// whose configuration did not resolve. The distinction is load-bearing:
+// resolved Gateways get their own partitions, broken ones FAIL CLOSED — their
+// routes belong to no partition at all, and in particular never fall back to
+// the shared plane (that fallback would be a cross-tenant leak).
+type infraGateways struct {
+	resolved map[string]*infraGateway
+	broken   map[string]bool
+}
+
+// isBroken reports whether the Gateway key opted in but failed to resolve.
+// Nil-safe (a nil view has no infra Gateways at all).
+func (g *infraGateways) isBroken(key string) bool {
+	return g != nil && g.broken[key]
+}
+
+// resolvedEntry returns the resolved data plane for the key, if any. Nil-safe.
+func (g *infraGateways) resolvedEntry(key string) (*infraGateway, bool) {
+	if g == nil {
+		return nil, false
+	}
+
+	entry, ok := g.resolved[key]
+
+	return entry, ok
+}
+
+// resolveInfraGateways returns the per-sync view of every managed Gateway
+// opted into a dedicated data plane, keyed "namespace/name". A Gateway whose
+// parametersRef does not resolve lands in the broken set (not an error): its
+// routes then belong to no partition — deliberately not served anywhere,
 // fail closed — and the Gateway reconciler surfaces InvalidParameters on its
 // status.
-func (s *RouteSyncer) resolveInfraGateways(ctx context.Context) (map[string]*infraGateway, error) {
+func (s *RouteSyncer) resolveInfraGateways(ctx context.Context) (*infraGateways, error) {
 	classNames, err := managedClassNames(ctx, s.Client, s.ControllerName)
 	if err != nil {
 		return nil, errors.Wrap(err, "listing managed gateway classes")
@@ -58,7 +86,10 @@ func (s *RouteSyncer) resolveInfraGateways(ctx context.Context) (map[string]*inf
 	}
 
 	logger := logging.FromContext(ctx)
-	out := make(map[string]*infraGateway)
+	out := &infraGateways{
+		resolved: make(map[string]*infraGateway),
+		broken:   make(map[string]bool),
+	}
 
 	for i := range gateways.Items {
 		gateway := &gateways.Items[i]
@@ -67,15 +98,19 @@ func (s *RouteSyncer) resolveInfraGateways(ctx context.Context) (map[string]*inf
 			continue
 		}
 
+		key := gateway.Namespace + "/" + gateway.Name
+
 		perGateway, resolveErr := s.ConfigResolver.ResolveForGateway(ctx, gateway)
 		if resolveErr != nil || perGateway == nil {
-			logger.Warn("skipping per-gateway partition: configuration did not resolve",
-				"gateway", gateway.Namespace+"/"+gateway.Name, "error", resolveErr)
+			logger.Warn("per-gateway configuration did not resolve; failing the gateway's routes closed",
+				"gateway", key, "error", resolveErr)
+
+			out.broken[key] = true
 
 			continue
 		}
 
-		out[gateway.Namespace+"/"+gateway.Name] = &infraGateway{
+		out.resolved[key] = &infraGateway{
 			gateway:    gateways.Items[i],
 			perGateway: perGateway,
 		}
@@ -94,17 +129,19 @@ func (s *RouteSyncer) resolveInfraGateways(ctx context.Context) (map[string]*inf
 func partitionRoutes(
 	httpResult *httpRouteResult,
 	grpcResult *grpcRouteResult,
-	infra map[string]*infraGateway,
+	infra *infraGateways,
 ) []routePartition {
 	byKey := map[string]*routePartition{
 		sharedPartitionKey: {Key: sharedPartitionKey},
 	}
 
-	for key, entry := range infra {
-		byKey[key] = &routePartition{
-			Key:        key,
-			Gateway:    &entry.gateway,
-			PerGateway: entry.perGateway,
+	if infra != nil {
+		for key, entry := range infra.resolved {
+			byKey[key] = &routePartition{
+				Key:        key,
+				Gateway:    &entry.gateway,
+				PerGateway: entry.perGateway,
+			}
 		}
 	}
 
@@ -147,16 +184,23 @@ func partitionRoutes(
 }
 
 // partitionKeysFor maps a route's accepted Gateways onto partition keys:
-// every accepted infra Gateway contributes its own key; any accepted
+// every RESOLVED infra Gateway contributes its own key; a BROKEN infra
+// Gateway contributes nothing at all (fail closed — falling back to shared
+// would leak the tenant's hostnames into another data plane); any accepted
 // non-infra Gateway contributes the shared key (once).
-func partitionKeysFor(binding routeBindingInfo, infra map[string]*infraGateway) []string {
+func partitionKeysFor(binding routeBindingInfo, infra *infraGateways) []string {
 	keys := make([]string, 0, len(binding.acceptedGateways))
 	sharedSeen := false
 
 	for gatewayKey := range binding.acceptedGateways {
-		if _, isInfra := infra[gatewayKey]; isInfra {
+		if _, isInfra := infra.resolvedEntry(gatewayKey); isInfra {
 			keys = append(keys, gatewayKey)
 
+			continue
+		}
+
+		if infra.isBroken(gatewayKey) {
+			// Opted in but unresolvable: serve nowhere.
 			continue
 		}
 

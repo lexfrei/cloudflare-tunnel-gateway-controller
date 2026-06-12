@@ -20,7 +20,11 @@ func Autoscaler(input Input) *autoscalingv2.HorizontalPodAutoscaler {
 		return nil
 	}
 
-	minReplicas := auto.EffectiveMinReplicas()
+	// Clamp the (possibly defaulted) min to max so the rendered object is
+	// always apiserver-valid: CEL rejects the explicit min>max case, but the
+	// implicit default (2) with maxReplicas below it must degrade gracefully
+	// rather than produce an HPA the apiserver rejects on every reconcile.
+	minReplicas := min(auto.EffectiveMinReplicas(), auto.MaxReplicas)
 	target := resource.NewQuantity(int64(auto.TargetInflightPerPod), resource.DecimalSI)
 
 	return &autoscalingv2.HorizontalPodAutoscaler{

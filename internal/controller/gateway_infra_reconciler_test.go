@@ -294,3 +294,47 @@ func TestGatewayInfraReconciler_IgnoresForeignGateways(t *testing.T) {
 		types.NamespacedName{Name: "cf-proxy-edge", Namespace: infraNamespace}, &deployment)
 	assert.Error(t, err)
 }
+
+// TestGatewayInfraReconciler_NoProxyImageRendersNothing pins the
+// misconfiguration guard: with no --proxy-image configured and no per-Gateway
+// image override, rendering would produce a Deployment with an empty image
+// that the apiserver rejects on every reconcile. The reconciler must instead
+// render nothing and surface the problem via Event (manual installs that do
+// not pass the flag hit this).
+func TestGatewayInfraReconciler_NoProxyImageRendersNothing(t *testing.T) {
+	t.Parallel()
+
+	reconciler := newInfraReconciler(t, infraFixtures(t)...)
+	reconciler.RenderDefaults.ProxyImage = ""
+
+	reconcileEdge(t, reconciler)
+
+	var deployment appsv1.Deployment
+	err := reconciler.Get(context.Background(),
+		types.NamespacedName{Name: "cf-proxy-edge", Namespace: infraNamespace}, &deployment)
+	assert.Error(t, err, "no Deployment may be rendered without a resolvable proxy image")
+}
+
+// TestGatewayInfraReconciler_SpecImageWorksWithoutDefault pins the override
+// path: a GatewayConfig-level image makes rendering possible even when the
+// controller-level default is absent.
+func TestGatewayInfraReconciler_SpecImageWorksWithoutDefault(t *testing.T) {
+	t.Parallel()
+
+	objects := infraFixtures(t)
+	for _, obj := range objects {
+		if gwConfig, ok := obj.(*v1alpha1.GatewayConfig); ok {
+			gwConfig.Spec.Image = "example.com/tenant-proxy:v1"
+		}
+	}
+
+	reconciler := newInfraReconciler(t, objects...)
+	reconciler.RenderDefaults.ProxyImage = ""
+
+	reconcileEdge(t, reconciler)
+
+	var deployment appsv1.Deployment
+	require.NoError(t, reconciler.Get(context.Background(),
+		types.NamespacedName{Name: "cf-proxy-edge", Namespace: infraNamespace}, &deployment))
+	assert.Equal(t, "example.com/tenant-proxy:v1", deployment.Spec.Template.Spec.Containers[0].Image)
+}

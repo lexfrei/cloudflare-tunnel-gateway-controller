@@ -70,6 +70,20 @@ func TestGatewayConfig_CELValidation(t *testing.T) {
 			wantSub: "mutually exclusive",
 		},
 		{
+			name: "maxReplicas below defaulted minReplicas rejected",
+			spec: v1alpha1.GatewayConfigSpec{
+				TunnelTokenSecretRef: v1alpha1.LocalSecretReference{Name: "tunnel-token"},
+				Autoscaling: &v1alpha1.ProxyAutoscaling{
+					// minReplicas unset → defaults to 2; max=1 must not pass
+					// just because the default is implicit.
+					MaxReplicas:          1,
+					TargetInflightPerPod: 50,
+				},
+			},
+			wantErr: true,
+			wantSub: "maxReplicas",
+		},
+		{
 			name: "maxReplicas below minReplicas rejected",
 			spec: v1alpha1.GatewayConfigSpec{
 				TunnelTokenSecretRef: v1alpha1.LocalSecretReference{Name: "tunnel-token"},

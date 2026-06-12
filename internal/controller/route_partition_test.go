@@ -28,10 +28,10 @@ func bindingOn(gateways ...string) routeBindingInfo {
 	return routeBindingInfo{acceptedGateways: accepted}
 }
 
-func testInfraGateways(keys ...string) map[string]*infraGateway {
-	out := make(map[string]*infraGateway, len(keys))
+func testInfraGateways(keys ...string) *infraGateways {
+	out := &infraGateways{resolved: make(map[string]*infraGateway, len(keys))}
 	for _, key := range keys {
-		out[key] = &infraGateway{perGateway: &config.PerGatewayConfig{}}
+		out.resolved[key] = &infraGateway{perGateway: &config.PerGatewayConfig{}}
 	}
 
 	return out
@@ -139,6 +139,41 @@ func TestPartitionRoutes_DeterministicOrder(t *testing.T) {
 	assert.Equal(t, sharedPartitionKey, partitions[0].Key)
 	assert.Equal(t, "default/aa-gw", partitions[1].Key)
 	assert.Equal(t, "default/zz-gw", partitions[2].Key)
+}
+
+// TestPartitionRoutes_BrokenInfraGatewayFailsClosed pins the fail-closed
+// contract for an opted-in Gateway whose GatewayConfig did NOT resolve
+// (deleted Secret, garbled token, dangling ref): its routes belong to NO
+// partition — they must neither leak into the shared tunnel/proxy nor be
+// served by a half-configured dedicated plane. The Gateway's own status
+// (InvalidParameters) is the operator signal.
+func TestPartitionRoutes_BrokenInfraGatewayFailsClosed(t *testing.T) {
+	t.Parallel()
+
+	httpResult := &httpRouteResult{
+		accepted: []gatewayv1.HTTPRoute{
+			partRoute("broken-only"),
+			partRoute("broken-and-shared"),
+		},
+		bindings: map[string]routeBindingInfo{
+			"default/broken-only":       bindingOn("default/broken-gw"),
+			"default/broken-and-shared": bindingOn("default/broken-gw", "default/shared-gw"),
+		},
+	}
+
+	infra := testInfraGateways()
+	infra.broken = map[string]bool{"default/broken-gw": true}
+
+	partitions := partitionRoutes(httpResult, &grpcRouteResult{}, infra)
+
+	for _, partition := range partitions {
+		assert.NotContains(t, routeNames(partition.HTTPRoutes), "broken-only",
+			"a route accepted ONLY on a broken opted-in Gateway must be served nowhere (partition %q)", partition.Key)
+	}
+
+	require.Len(t, partitions, 1, "a broken gateway contributes no partition")
+	assert.ElementsMatch(t, []string{"broken-and-shared"}, routeNames(partitions[0].HTTPRoutes),
+		"the multi-parent route keeps serving via its healthy shared parent only")
 }
 
 // TestPartitionRoutes_InfraOnlyRouteNeverLeaksToShared is the negative-space

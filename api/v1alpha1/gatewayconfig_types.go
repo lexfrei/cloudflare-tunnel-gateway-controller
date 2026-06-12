@@ -130,7 +130,7 @@ type GatewayConfigSpec struct {
 	// Autoscaling renders a HorizontalPodAutoscaler for the proxy Deployment
 	// instead of a fixed replica count.
 	// +optional
-	// +kubebuilder:validation:XValidation:rule="!has(self.minReplicas) || self.maxReplicas >= self.minReplicas",message="maxReplicas must be >= minReplicas"
+	// +kubebuilder:validation:XValidation:rule="has(self.minReplicas) ? self.maxReplicas >= self.minReplicas : self.maxReplicas >= 2",message="maxReplicas must be >= minReplicas (minReplicas defaults to 2 when unset)"
 	Autoscaling *ProxyAutoscaling `json:"autoscaling,omitempty"`
 
 	// Resources sets the proxy container's resource requests and limits.

@@ -93,6 +93,15 @@ Do not pair a VerticalPodAutoscaler in apply mode with these Deployments: applyi
 
 If a per-Gateway token points at the SAME tunnel as the shared plane (or another Gateway), the controller merges their ingress documents into one write and pushes the UNION of that tunnel's routes to every data plane on it — Cloudflare load-balances a tunnel's requests across all its connectors, so every connector must know every route. This keeps a shared-tunnel setup working (useful for migrations), but the isolation properties only hold for distinct tunnels.
 
+## Securing a tenant data plane
+
+Two hardening steps are strongly recommended for any tenant-facing data plane:
+
+1. **Set `authTokenSecretRef`.** Without it the rendered proxy's config API (port 8081) accepts unauthenticated `PUT /config` from anything that can reach the pod — any workload in the cluster absent network policy. With it, only the controller (which authenticates its pushes with the same token) can replace the routing table.
+2. **Add a NetworkPolicy.** The controller does not render one for per-Gateway planes. Restrict ingress on the config API port to the controller's namespace; the proxy's data port needs no ingress at all (traffic arrives through the outbound tunnel).
+
+Also note the RBAC equivalence: `create` on `GatewayConfig` (plus a Gateway referencing it) lets a user run an arbitrary image via `spec.image` under the namespace's default ServiceAccount — see the [security reference](../reference/security.md).
+
 ## Operational notes
 
 - **Drain:** on pod shutdown the proxy unregisters its connectors from the edge and gives in-flight requests a grace period before exiting; the rendered `terminationGracePeriodSeconds` covers the window.

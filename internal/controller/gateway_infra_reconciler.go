@@ -126,6 +126,19 @@ func (r *GatewayInfraReconciler) applyRendered(
 		Defaults:    r.RenderDefaults,
 	}
 
+	// Misconfiguration guard: with no controller-level --proxy-image and no
+	// per-Gateway image override, the rendered Deployment would carry an
+	// empty image the apiserver rejects on every reconcile. Render nothing
+	// and surface the problem instead (manual installs without the flag).
+	if perGateway.GatewayConfig.Spec.Image == "" && r.RenderDefaults.ProxyImage == "" {
+		message := "per-gateway data plane not rendered: no proxy image configured — " +
+			"set the controller's --proxy-image flag or GatewayConfig.spec.image"
+		log.FromContext(ctx).Info(message)
+		r.event(gateway, corev1.EventTypeWarning, eventReasonRenderFailed, message)
+
+		return nil
+	}
+
 	deploymentOp, err := r.applyDeployment(ctx, gateway, input)
 	if err != nil {
 		r.event(gateway, corev1.EventTypeWarning, eventReasonRenderFailed, err.Error())

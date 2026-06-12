@@ -30,7 +30,11 @@ spec:
   matchConstraints:
     resourceRules:
       - apiGroups: ["gateway.networking.k8s.io"]
-        apiVersions: ["v1", "v1alpha2"]
+        # Wildcard on purpose: the route CRDs serve multiple versions (v1 AND
+        # v1beta1 for httproutes in gateway-api v1.5.1). Pinning a version
+        # list would let a write through any unlisted served version bypass
+        # this policy entirely.
+        apiVersions: ["*"]
         operations: ["CREATE", "UPDATE"]
         resources: ["httproutes", "grpcroutes"]
   variables:

@@ -578,7 +578,19 @@ func emitDiagnosticEvents(recorder events.EventRecorder, route runtime.Object, d
 		return
 	}
 
+	// A route living in several data-plane partitions converts once per
+	// partition, so identical diagnostics can repeat; emit each distinct
+	// (target, message) once per sync.
+	seen := make(map[string]struct{}, len(diagnostics))
+
 	for _, diag := range diagnostics {
+		dedupeKey := string(diag.Target) + "\x00" + diag.Message
+		if _, duplicate := seen[dedupeKey]; duplicate {
+			continue
+		}
+
+		seen[dedupeKey] = struct{}{}
+
 		switch diag.Target {
 		case proxy.DiagnosticEvent:
 			eventType := diag.EventType

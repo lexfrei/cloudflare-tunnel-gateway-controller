@@ -32,6 +32,11 @@ spec:
             # Replace 'cloudflare-tunnel-system' with the namespace where the
             # proxy Deployment runs if different from the controller's.
             - --proxy-endpoints=http://cloudflare-tunnel-gateway-controller-proxy-headless.cloudflare-tunnel-system.svc.cluster.local:8081/config
+            # --proxy-image is the image for per-Gateway rendered proxy
+            # Deployments (GatewayConfig data planes). Keep it in lockstep
+            # with the proxy Deployment's image; without it, opted-in
+            # Gateways are not rendered (a Warning Event explains why).
+            - --proxy-image=ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller-proxy:latest
             - --metrics-addr=:8080
             - --health-addr=:8081
             # cluster-domain is auto-detected from /etc/resolv.conf; uncomment

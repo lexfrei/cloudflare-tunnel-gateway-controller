@@ -99,6 +99,9 @@ Both layers are fail-closed within the policed scope:
 
 Model constraints: label values cannot contain `*` or `,`, so each namespace gets exactly one lowercase suffix. An empty `namespaceSelector` polices every namespace — fail-closed everywhere, including system namespaces — so scope it deliberately (a marker label as above, or `matchExpressions` excluding `kube-system` and the controller namespace).
 
+!!! warning "Scope difference between the two layers"
+    The admission policy matches **every** `HTTPRoute`/`GRPCRoute` written in a policed namespace, regardless of which Gateway implementation the route targets — admission cannot resolve parentRefs. The controller layer polices only routes binding to THIS controller's Gateways. On a cluster running multiple Gateway API implementations (Istio, Envoy Gateway, …), enabling the admission layer will also constrain routes meant for those implementations; scope `namespaceSelector` to namespaces that only use this controller, or run with `admissionPolicy: false` and rely on the controller layer alone.
+
 ## Detecting collisions
 
 Same-hostname routes merge legally per the Gateway API, so a collision is not an error — but it should never be invisible. When a route's `(hostname, match)` pair is exactly claimed by a higher-precedence route, the losing route carries a dedicated condition (its `Accepted` stays `True`):

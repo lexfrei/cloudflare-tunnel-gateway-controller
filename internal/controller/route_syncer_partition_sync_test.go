@@ -292,3 +292,32 @@ func TestSyncAllRoutes_SameTunnelPartitionsMerge(t *testing.T) {
 	assert.Contains(t, hosts, "shared.example.com")
 	assert.Contains(t, hosts, "tenant.example.com")
 }
+
+// TestSyncAllRoutes_BrokenGatewayConfigFailsClosed pins the isolation
+// fail-mode: when an opted-in Gateway's GatewayConfig cannot resolve (here:
+// its token Secret is gone), its routes must NOT fall back into the shared
+// tunnel document — fail closed, surfaced on the Gateway status, never
+// silently served by another tenant's plane.
+func TestSyncAllRoutes_BrokenGatewayConfigFailsClosed(t *testing.T) {
+	t.Parallel()
+
+	api := newRecordingTunnelAPI(t)
+	syncer := newPartitionSyncSyncer(t, api, "99999999-9999-4999-8999-999999999999")
+
+	// Break the per-Gateway config: delete the token Secret.
+	require.NoError(t, syncer.Delete(context.Background(), &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "infra-token", Namespace: "default"},
+	}))
+
+	_, result, err := syncer.SyncAllRoutes(context.Background())
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	sharedHosts := api.hostnamesFor("99999999-9999-4999-8999-999999999999")
+	assert.Contains(t, sharedHosts, "shared.example.com")
+	assert.NotContains(t, sharedHosts, "tenant.example.com",
+		"a broken GatewayConfig must fail closed, not leak the tenant hostname into the shared tunnel")
+
+	assert.Empty(t, api.hostnamesFor(tenantTunnelUUID),
+		"no document may be written for the unresolvable tunnel")
+}

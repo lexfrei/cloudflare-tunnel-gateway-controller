@@ -824,6 +824,10 @@ func (s *RouteSyncer) syncTunnelGroup(
 		return result
 	}
 
+	// One GET per tunnel per sync (the PUT is skipped when unchanged, the GET
+	// is not). Cloudflare API rate limits scale with tunnel count; fine for
+	// tens of tenants, revisit with a per-tunnel config cache if a deployment
+	// ever runs hundreds of dedicated planes.
 	getStart := time.Now()
 
 	currentConfig, err := cfClient.ZeroTrust.Tunnels.Cloudflared.Configurations.Get(

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -11,7 +12,9 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/api/v1alpha1"
@@ -295,4 +298,66 @@ func TestHasInfrastructureParametersRef(t *testing.T) {
 
 	assert.False(t, config.HasInfrastructureParametersRef(&gatewayv1.Gateway{}))
 	assert.True(t, config.HasInfrastructureParametersRef(gatewayWithInfra("cf.k8s.lex.la", "GatewayConfig", "x")))
+}
+
+// errTransientAPIServer simulates an infrastructure failure (apiserver
+// timeout, throttling) — NOT a user-fixable referent problem.
+var errTransientAPIServer = errors.New("apiserver timeout")
+
+// TestResolveForGateway_TransientErrorsAreNotInvalidParameters pins the
+// sentinel's contract: only deterministic referent failures (NotFound,
+// missing key, garbled token) classify as ErrInvalidParameters. A transient
+// infrastructure error must keep its own identity so the reconcilers retry
+// with backoff instead of (a) stamping Accepted=False/InvalidParameters on a
+// healthy Gateway and (b) failing its routes closed for the duration of an
+// apiserver hiccup.
+func TestResolveForGateway_TransientErrorsAreNotInvalidParameters(t *testing.T) {
+	t.Parallel()
+
+	gwConfig := &v1alpha1.GatewayConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "edge-config", Namespace: testGwNamespace},
+		Spec: v1alpha1.GatewayConfigSpec{
+			TunnelTokenSecretRef: v1alpha1.LocalSecretReference{Name: "edge-tunnel-token"},
+		},
+	}
+
+	tests := []struct {
+		name   string
+		failOn string // object name whose Get fails transiently
+	}{
+		{name: "transient GatewayConfig read failure", failOn: "edge-config"},
+		{name: "transient token Secret read failure", failOn: "edge-tunnel-token"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			objects := append(classFixtures(), gwConfig.DeepCopy(), tokenSecret(t))
+
+			builder := fake.NewClientBuilder().WithScheme(perGatewayScheme(t))
+			for _, obj := range objects {
+				builder = builder.WithRuntimeObjects(obj)
+			}
+
+			failOn := tt.failOn
+			builder = builder.WithInterceptorFuncs(interceptor.Funcs{
+				Get: func(ctx context.Context, cli client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+					if key.Name == failOn {
+						return errTransientAPIServer
+					}
+
+					return cli.Get(ctx, key, obj, opts...)
+				},
+			})
+
+			resolver := config.NewResolver(builder.Build(), "cf-system", cfmetrics.NewNoopCollector())
+
+			_, err := resolver.ResolveForGateway(context.Background(),
+				gatewayWithInfra("cf.k8s.lex.la", "GatewayConfig", "edge-config"))
+			require.Error(t, err)
+			assert.NotErrorIs(t, err, config.ErrInvalidParameters,
+				"a transient infrastructure error must NOT classify as InvalidParameters")
+		})
+	}
 }

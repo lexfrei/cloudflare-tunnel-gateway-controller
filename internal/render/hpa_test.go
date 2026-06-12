@@ -70,3 +70,23 @@ func TestAutoscaler_Overrides(t *testing.T) {
 	assert.Equal(t, int32(1), *hpa.Spec.MinReplicas)
 	assert.Equal(t, "custom_inflight", hpa.Spec.Metrics[0].Pods.Metric.Name)
 }
+
+// TestAutoscaler_DefaultMinClampedToMax pins the defaulting edge: with
+// minReplicas unset (defaults to 2) and maxReplicas below that, the rendered
+// HPA must stay valid — min is clamped to max instead of producing min>max,
+// which the apiserver would reject on every reconcile.
+func TestAutoscaler_DefaultMinClampedToMax(t *testing.T) {
+	t.Parallel()
+
+	input := testInput("edge")
+	input.Config.Spec.Autoscaling = &v1alpha1.ProxyAutoscaling{
+		MaxReplicas:          1,
+		TargetInflightPerPod: 50,
+	}
+
+	hpa := render.Autoscaler(input)
+	require.NotNil(t, hpa)
+	require.NotNil(t, hpa.Spec.MinReplicas)
+	assert.Equal(t, int32(1), *hpa.Spec.MinReplicas, "default min (2) must clamp to maxReplicas")
+	assert.Equal(t, int32(1), hpa.Spec.MaxReplicas)
+}

@@ -171,6 +171,9 @@ rules:
 
 Tenant isolation is layered: admission-level scoping (per-tenant listeners, `allowedListeners`/`allowedRoutes`, the opt-in hostname-ownership `ValidatingAdmissionPolicy`), an independent controller-side enforcement of the same hostname-ownership rule (a route that bypasses admission is still never programmed), and optional hard data-plane isolation with a dedicated proxy and tunnel per Gateway. The boundaries and trade-offs are documented in the [Multi-Tenancy guide](../guides/multi-tenancy.md) and the [Per-Gateway Isolation guide](../guides/per-gateway-isolation.md).
 
+!!! warning "GatewayConfig is workload-creation-equivalent"
+    Because the controller renders Deployments for opted-in Gateways and `GatewayConfig.spec.image` selects the container image, **granting a user `create` on `GatewayConfig` (plus a Gateway with `infrastructure.parametersRef`) is privilege-equivalent to granting `create` on Deployments in that namespace**: the controller becomes the deputy that runs the chosen image under the namespace's default ServiceAccount. Treat RBAC on `gatewayconfigs` accordingly. Additionally, a rendered data plane's config API is unauthenticated unless `authTokenSecretRef` is set, and no NetworkPolicy is rendered — set the auth token and add a NetworkPolicy for tenant data planes (see the [Per-Gateway Isolation guide](../guides/per-gateway-isolation.md)).
+
 ### Container Security
 
 The controller container follows security best practices:
