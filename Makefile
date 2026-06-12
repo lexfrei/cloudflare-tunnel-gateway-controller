@@ -92,7 +92,7 @@ check-deps: ## Check all required tools are installed
 	@which mkdocs > /dev/null 2>&1 && echo "OK: mkdocs" || echo "MISSING: mkdocs        pip install -r requirements-docs.txt"
 	@which podman > /dev/null 2>&1 && echo "OK: podman" || echo "MISSING: podman        https://podman.io/getting-started/installation"
 	@which markdownlint-cli2 > /dev/null 2>&1 && echo "OK: markdownlint-cli2" || echo "MISSING: markdownlint-cli2  npm install -g markdownlint-cli2"
-	@helm plugin list 2>/dev/null | grep -q unittest && echo "OK: helm-unittest" || echo "MISSING: helm-unittest  helm plugin install https://github.com/helm-unittest/helm-unittest"
+	@helm plugin list 2>/dev/null | grep -q unittest && echo "OK: helm-unittest" || echo "MISSING: helm-unittest  helm plugin install https://github.com/helm-unittest/helm-unittest.git --verify=false"
 	@which helm-docs > /dev/null 2>&1 && echo "OK: helm-docs" || echo "MISSING: helm-docs     https://github.com/norwoodj/helm-docs#installation"
 
 help: ## Print this help message

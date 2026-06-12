@@ -35,9 +35,16 @@ go tool cover -func=coverage.out
 
 ### Helm Chart Tests
 
+CI is pinned to Helm v4.2.0. The `helm-unittest` plugin install below uses Helm 4 syntax (`--verify=false`); the test run and chart install themselves work on Helm 3+ as well.
+
 ```bash
-# Install helm-unittest plugin
-helm plugin install https://github.com/helm-unittest/helm-unittest
+# Install helm-unittest plugin (matches CI).
+# helm-unittest installs from a .git source, which Helm 4's installer
+# cannot verify — signature verification only applies to .tgz archives.
+# Helm 4 defaults plugin install to --verify=true, so a .git source
+# hard-errors unless you opt out. Plugin verification (and the --verify
+# flag) did not exist before Helm 4.
+helm plugin install https://github.com/helm-unittest/helm-unittest.git --verify=false
 
 # Run chart tests
 helm unittest charts/cloudflare-tunnel-gateway-controller
