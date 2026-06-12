@@ -95,10 +95,17 @@ rules:
     resources: ["customresourcedefinitions"]
     verbs: ["get"]
 
-  # Core API - read only
+  # Core API
   - apiGroups: [""]
-    resources: ["services", "namespaces"]
+    resources: ["namespaces"]
     verbs: ["get", "list", "watch"]
+  # Services - read everywhere (backend resolution) plus full write for the
+  # per-Gateway data planes: the controller renders a headless config Service
+  # per opted-in Gateway. Rendered objects are controller-owned via
+  # ownerReferences and deleted only when owned.
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: [""]
     resources: ["secrets", "configmaps"]
     verbs: ["get", "list", "watch"]
@@ -117,11 +124,27 @@ rules:
     verbs: ["create", "patch"]
 
   # Deployments - the proxy Secret reconciler patches the proxy Deployment's
-  # pod-template annotation to roll pods when the tunnel-token Secret rotates;
-  # patch only, no create/delete (the chart owns Deployment lifecycle)
+  # pod-template annotation to roll pods when the tunnel-token Secret rotates,
+  # and the per-Gateway data planes render a dedicated proxy Deployment per
+  # opted-in Gateway (full write, cluster-wide, because Gateways live in
+  # arbitrary namespaces)
   - apiGroups: ["apps"]
     resources: ["deployments"]
-    verbs: ["get", "list", "watch", "patch"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # HorizontalPodAutoscalers - rendered per opted-in Gateway when its
+  # GatewayConfig requests autoscaling
+  - apiGroups: ["autoscaling"]
+    resources: ["horizontalpodautoscalers"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  # GatewayConfig CRD - per-Gateway data-plane parameters referenced from
+  # Gateway.spec.infrastructure.parametersRef
+  - apiGroups: ["cf.k8s.lex.la"]
+    resources: ["gatewayconfigs"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["cf.k8s.lex.la"]
+    resources: ["gatewayconfigs/status"]
+    verbs: ["get", "update", "patch"]
 
   # GatewayClassConfig CRD
   - apiGroups: ["cf.k8s.lex.la"]
@@ -141,8 +164,8 @@ rules:
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 ```
 
-!!! note "v3 RBAC scope"
-    The v3 controller reads Secrets and ConfigMaps and writes only status subresources; it does not create or delete workloads. The one workload mutation it makes is patching the proxy Deployment's pod-template annotation when the tunnel-token Secret rotates (to trigger a native rolling restart) — it does not manage Deployment lifecycle. The v2 chart additionally granted cluster-wide write on Pods, ReplicaSets and ServiceAccounts for the Helm-SDK code path that managed cloudflared; those rules were removed when that code path was deleted.
+!!! note "RBAC scope"
+    The controller reads Secrets and ConfigMaps and writes status subresources. Its workload writes are scoped to the data planes it owns: patching the shared proxy Deployment's pod-template annotation when the tunnel-token Secret rotates (a native rolling restart), and rendering a dedicated proxy Deployment, headless config Service, and optional HorizontalPodAutoscaler for each Gateway opted into a per-Gateway data plane via `infrastructure.parametersRef`. Those rendered objects are controller-owned via ownerReferences, kept in sync against drift, and deleted only when actually owned — a name collision with a user resource can never turn into a deletion. Workload write access is cluster-wide because Gateways live in arbitrary namespaces.
 
 ### Container Security
 

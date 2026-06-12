@@ -298,3 +298,40 @@ tests:
         equal:
           path: metadata.name
           value: my-custom-sa
+
+  # Per-Gateway data planes (#479): the controller renders Deployments,
+  # Services, and HPAs for opted-in Gateways and reads GatewayConfig objects.
+  - it: should grant write access for per-gateway data-plane resources
+    template: clusterrole.yaml
+    asserts:
+      - contains:
+          path: rules
+          content:
+            apiGroups: ["apps"]
+            resources: ["deployments"]
+            verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+      - contains:
+          path: rules
+          content:
+            apiGroups: [""]
+            resources: ["services"]
+            verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+      - contains:
+          path: rules
+          content:
+            apiGroups: ["autoscaling"]
+            resources: ["horizontalpodautoscalers"]
+            verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+      - contains:
+          path: rules
+          content:
+            apiGroups: ["cf.k8s.lex.la"]
+            resources: ["gatewayconfigs"]
+            verbs: ["get", "list", "watch"]
+      - contains:
+          path: rules
+          content:
+            apiGroups: ["cf.k8s.lex.la"]
+            resources: ["gatewayconfigs/status"]
+            verbs: ["get", "update", "patch"]
+

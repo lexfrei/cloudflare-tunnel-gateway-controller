@@ -55,6 +55,9 @@ spec:
             - "--log-level={{ .Values.controller.logLevel }}"
             - "--log-format={{ .Values.controller.logFormat }}"
             - "--proxy-endpoints=http://{{ include "cf-tunnel-gw-ctrl.proxyHeadlessName" . }}.{{ .Release.Namespace }}.svc.{{ .Values.controller.clusterDomain | default "cluster.local" }}:{{ .Values.proxy.configAPIPort }}/config"
+            # Image for per-Gateway rendered proxy Deployments (GatewayConfig
+            # data planes); always the release's proxy image.
+            - "--proxy-image={{ .Values.proxy.image.repository }}:{{ .Values.proxy.image.tag | default .Chart.AppVersion }}"
             {{- if .Values.proxy.authTokenSecretRef.name }}
             - "--proxy-auth-token=$(PROXY_AUTH_TOKEN)"
             {{- end }}

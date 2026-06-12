@@ -743,3 +743,15 @@ tests:
           path: spec.template.spec.containers[0].args
           content: "--hostname-ownership-namespace-selector="
 
+  # The controller renders per-Gateway proxy Deployments and must know the
+  # release's proxy image; the chart always passes it.
+  - it: should always pass the proxy image to the controller
+    set:
+      proxy:
+        image:
+          tag: v9.9.9
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--proxy-image=ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller-proxy:v9.9.9"
+
