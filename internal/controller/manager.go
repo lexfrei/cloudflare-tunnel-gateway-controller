@@ -22,6 +22,7 @@ import (
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/api/v1alpha1"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/cfmetrics"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/config"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/hostnameownership"
 )
 
 // installSchemes registers the Gateway API v1, v1beta1 (for ReferenceGrant)
@@ -95,6 +96,22 @@ type Config struct {
 	// where cloudflared drops the grpc-status trailer. auto/unset is upgraded to
 	// http2 by the proxy when a GRPCRoute is present, so it is not flagged.
 	TunnelProtocol string
+
+	// HostnameOwnershipEnforce enables the controller-side layer of the
+	// per-namespace hostname-ownership policy (#475): routes whose hostnames
+	// fall outside their namespace's allowed suffix are rejected at binding
+	// time and never programmed. Independent of (and in addition to) the CEL
+	// ValidatingAdmissionPolicy the chart can install — defence in depth.
+	HostnameOwnershipEnforce bool
+
+	// HostnameOwnershipLabelKey is the namespace label carrying the allowed
+	// hostname suffix. Must match the admission policy's labelKey.
+	HostnameOwnershipLabelKey string
+
+	// HostnameOwnershipNamespaceSelector scopes which namespaces are policed
+	// (kubectl label-selector syntax; empty = all namespaces, fail-closed
+	// everywhere). Must match the admission policy binding's namespaceSelector.
+	HostnameOwnershipNamespaceSelector string
 
 	// ProxyTokenSecret identifies the Secret holding the tunnel token used by
 	// the proxy. Format: "<namespace>/<name>". When set, the controller
@@ -227,6 +244,22 @@ func Run(ctx context.Context, cfg *Config) error {
 		baseLogger,
 	)
 	routeSyncer.ViewStore = viewStore
+
+	if cfg.HostnameOwnershipEnforce {
+		ownershipPolicy, ownershipErr := hostnameownership.New(
+			cfg.HostnameOwnershipLabelKey, cfg.HostnameOwnershipNamespaceSelector)
+		if ownershipErr != nil {
+			// Fail loud at startup: a malformed policy must not silently run
+			// with enforcement off.
+			return errors.Wrap(ownershipErr, "failed to compile hostname-ownership policy")
+		}
+
+		routeSyncer.HostnameOwnership = ownershipPolicy
+
+		logger.Info("hostname-ownership enforcement enabled",
+			"labelKey", cfg.HostnameOwnershipLabelKey,
+			"namespaceSelector", cfg.HostnameOwnershipNamespaceSelector)
+	}
 
 	// Create proxy syncer for L7 proxy config push (mandatory in v3)
 	proxySyncer := initProxySyncer(cfg, proxyEndpoints, mgr.GetClient(), baseLogger, logger)

@@ -1,0 +1,122 @@
+// Package hostnameownership implements the controller-side enforcement layer
+// of the per-namespace hostname-ownership policy (issue #475).
+//
+// The policy binds a namespace to one allowed hostname suffix via a namespace
+// label and rejects routes whose hostnames fall outside it. It ships in TWO
+// independent layers — defence in depth ("make it impossible twice"):
+//
+//  1. A CEL ValidatingAdmissionPolicy (Helm-rendered, fail-fast at admission).
+//  2. THIS package, evaluated by the controller during route binding: a
+//     violating route is never programmed into the proxy config or the
+//     Cloudflare ingress document, even when the admission layer is absent
+//     (pre-1.30 cluster, policy deleted, object written behind the apiserver).
+//
+// The two layers MUST agree bit-for-bit. The shared semantic contract lives
+// in Vectors(): the package unit tests drive it through Evaluate, the e2e
+// suite drives the SAME table through the rendered ValidatingAdmissionPolicy.
+// Change the semantics in one place only by changing the vectors first.
+package hostnameownership
+
+import (
+	"fmt"
+	"strings"
+
+	"github.com/cockroachdb/errors"
+	"k8s.io/apimachinery/pkg/labels"
+	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
+)
+
+// RouteReasonHostnameNotPermitted is the Accepted=False condition reason for
+// a route rejected by the ownership policy. Implementation-specific reason —
+// the Gateway API defines no route-to-route hostname ownership; condition
+// reasons are open for implementations.
+const RouteReasonHostnameNotPermitted gatewayv1.RouteConditionReason = "HostnameNotPermitted"
+
+var errEmptyLabelKey = errors.New("hostname ownership: label key must not be empty")
+
+// Policy is the compiled controller-side ownership rule.
+type Policy struct {
+	labelKey string
+	// selector scopes which namespaces are policed. nil (from an empty
+	// selector string) polices EVERY namespace — fail-closed everywhere.
+	selector labels.Selector
+}
+
+// Verdict is the outcome of one route evaluation.
+type Verdict struct {
+	Allowed bool
+	// Message is the operator-facing denial explanation; empty when allowed.
+	Message string
+}
+
+// New compiles a Policy. namespaceSelector uses kubectl label-selector syntax
+// ("" = police all namespaces); a malformed selector errors at construction so
+// a typo fails the controller loudly instead of silently policing nothing.
+func New(labelKey, namespaceSelector string) (*Policy, error) {
+	if strings.TrimSpace(labelKey) == "" {
+		return nil, errEmptyLabelKey
+	}
+
+	policy := &Policy{labelKey: labelKey}
+
+	if strings.TrimSpace(namespaceSelector) != "" {
+		selector, err := labels.Parse(namespaceSelector)
+		if err != nil {
+			return nil, errors.Wrap(err, "hostname ownership: parse namespace selector")
+		}
+
+		policy.selector = selector
+	}
+
+	return policy, nil
+}
+
+// Evaluate applies the policy to a route's namespace labels and declared
+// hostnames. Semantics mirror the CEL ValidatingAdmissionPolicy exactly
+// (see Vectors for the shared contract):
+//
+//   - A namespace outside the selector scope is not policed → allowed.
+//   - A policed namespace MUST carry the ownership label → fail closed.
+//   - The route MUST declare explicit hostnames (an empty list inherits the
+//     listener hostname — the exact capture vector) → fail closed.
+//   - Every hostname, after stripping a leading "*.", must equal the suffix
+//     or be a subdomain of it ("evil<suffix>" does not pass — the subdomain
+//     check requires the "." boundary).
+func (p *Policy) Evaluate(nsLabels map[string]string, hostnames []gatewayv1.Hostname) Verdict {
+	if p.selector != nil && !p.selector.Matches(labels.Set(nsLabels)) {
+		return Verdict{Allowed: true}
+	}
+
+	suffix := strings.ToLower(strings.TrimSpace(nsLabels[p.labelKey]))
+	if suffix == "" {
+		return Verdict{Allowed: false, Message: fmt.Sprintf(
+			"namespace is policed by the hostname-ownership policy but carries no %q label; "+
+				"label the namespace with its allowed hostname suffix or exclude it from the policy scope", p.labelKey)}
+	}
+
+	if len(hostnames) == 0 {
+		return Verdict{Allowed: false, Message: fmt.Sprintf(
+			"routes in hostname-ownership-policed namespaces must declare spec.hostnames explicitly "+
+				"(an empty list would capture the listener hostname); allowed suffix: %q", suffix)}
+	}
+
+	for _, hostname := range hostnames {
+		if !hostnameWithinSuffix(string(hostname), suffix) {
+			return Verdict{Allowed: false, Message: fmt.Sprintf(
+				"hostname %q is outside the namespace's allowed suffix %q; "+
+					"all route hostnames must equal the suffix or be subdomains of it", string(hostname), suffix)}
+		}
+	}
+
+	return Verdict{Allowed: true}
+}
+
+// hostnameWithinSuffix reports whether hostname (with an optional "*." prefix
+// stripped) equals suffix or is a subdomain of it. Comparison is lowercase —
+// DNS names are case-insensitive.
+func hostnameWithinSuffix(hostname, suffix string) bool {
+	candidate := strings.ToLower(hostname)
+	candidate = strings.TrimPrefix(candidate, "*.")
+
+	return candidate == suffix || strings.HasSuffix(candidate, "."+suffix)
+}

@@ -12,13 +12,16 @@ import (
 	"github.com/cloudflare/cloudflare-go/v7"
 	"github.com/cloudflare/cloudflare-go/v7/zero_trust"
 	"github.com/cockroachdb/errors"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/cfmetrics"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/config"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/hostnameownership"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/ingress"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/logging"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/proxy"
@@ -44,6 +47,15 @@ type RouteSyncer struct {
 	httpBuilder      *ingress.Builder
 	grpcBuilder      *ingress.GRPCBuilder
 	bindingValidator *routebinding.Validator
+
+	// HostnameOwnership, when non-nil, enables the controller-side layer of
+	// the per-namespace hostname-ownership policy (#475): a route whose
+	// hostnames fall outside its namespace's allowed suffix is rejected at
+	// binding time (Accepted=False/HostnameNotPermitted) and never programmed
+	// into the proxy config or the Cloudflare ingress document. Independent of
+	// the CEL ValidatingAdmissionPolicy by design — defence in depth: the data
+	// plane stays clean even when the admission layer is absent or bypassed.
+	HostnameOwnership *hostnameownership.Policy
 
 	// ViewStore caches the per-Gateway ListenerSet merge view across reconciles
 	// (issue #332). Set by the manager after construction and shared with the
@@ -770,7 +782,74 @@ func (s *RouteSyncer) bindRouteParents(
 		}
 	}
 
+	// Hostname-ownership enforcement (#475, controller layer) runs AFTER the
+	// regular binding so its rejection replaces only otherwise-accepted
+	// bindings — a route that failed binding keeps its more specific reason.
+	if hasAccepted && s.HostnameOwnership != nil {
+		if denied := s.rejectIfHostnameNotOwned(ctx, logger, routeNamespace, routeName, hostnames, &bindingInfo); denied {
+			hasAccepted = false
+		}
+	}
+
 	return bindingInfo, hasAccepted, referencesUs
+}
+
+// rejectIfHostnameNotOwned evaluates the hostname-ownership policy for the
+// route and, on denial, downgrades every accepted parent binding to
+// Accepted=False/HostnameNotPermitted and clears the accepted-Gateway set so
+// the route is excluded from the data plane. Returns true when denied.
+//
+// A namespace read failure also denies (fail closed): an unreadable namespace
+// must not become an enforcement bypass.
+func (s *RouteSyncer) rejectIfHostnameNotOwned(
+	ctx context.Context,
+	logger *slog.Logger,
+	routeNamespace, routeName string,
+	hostnames []gatewayv1.Hostname,
+	bindingInfo *routeBindingInfo,
+) bool {
+	verdict := s.evaluateHostnameOwnership(ctx, routeNamespace, hostnames)
+	if verdict.Allowed {
+		return false
+	}
+
+	logger.Warn("route rejected by hostname-ownership policy",
+		"route", routeNamespace+"/"+routeName, "reason", verdict.Message)
+
+	for refIdx, result := range bindingInfo.bindingResults {
+		if !result.Accepted {
+			continue
+		}
+
+		bindingInfo.bindingResults[refIdx] = routebinding.BindingResult{
+			Accepted: false,
+			Reason:   hostnameownership.RouteReasonHostnameNotPermitted,
+			Message:  verdict.Message,
+		}
+	}
+
+	bindingInfo.acceptedGateways = make(map[string]bool)
+
+	return true
+}
+
+// evaluateHostnameOwnership reads the route's namespace labels and applies
+// the compiled policy. Fail closed on a namespace read error.
+func (s *RouteSyncer) evaluateHostnameOwnership(
+	ctx context.Context,
+	routeNamespace string,
+	hostnames []gatewayv1.Hostname,
+) hostnameownership.Verdict {
+	var namespace corev1.Namespace
+	if err := s.Get(ctx, types.NamespacedName{Name: routeNamespace}, &namespace); err != nil {
+		return hostnameownership.Verdict{
+			Allowed: false,
+			Message: fmt.Sprintf(
+				"hostname-ownership policy could not read namespace %q (%v); failing closed", routeNamespace, err),
+		}
+	}
+
+	return s.HostnameOwnership.Evaluate(namespace.Labels, hostnames)
 }
 
 // sortIngressRules sorts ingress rules: specific hostnames alphabetically first,

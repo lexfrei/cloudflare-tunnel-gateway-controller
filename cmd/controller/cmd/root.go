@@ -74,6 +74,11 @@ func init() {
 	rootCmd.Flags().String("proxy-deployment-label", "", "Label selector identifying the proxy Deployment(s) to roll on tunnel-token change, in `key=value` form. Defaults to `app.kubernetes.io/component=proxy` (matches the chart).")
 	rootCmd.Flags().String("tunnel-protocol", "auto", "The proxy's configured edge transport (auto|http2|quic); used to warn when GRPCRoutes are present on an explicit quic tunnel, which cannot carry gRPC trailers (auto/unset is upgraded to http2 by the proxy).")
 
+	// Hostname-ownership enforcement (issue #475, controller-side layer).
+	rootCmd.Flags().Bool("hostname-ownership-enforce", false, "Enforce per-namespace hostname ownership in the controller: routes whose hostnames fall outside their namespace's allowed-suffix label are rejected and never programmed. Complements (and is independent of) the chart's ValidatingAdmissionPolicy.")
+	rootCmd.Flags().String("hostname-ownership-label-key", "cf.k8s.lex.la/hostname-suffix", "Namespace label carrying the tenant's allowed hostname suffix.")
+	rootCmd.Flags().String("hostname-ownership-namespace-selector", "", "Label selector scoping which namespaces are policed (kubectl syntax). Empty polices every namespace (fail-closed).")
+
 	// Distributed tracing (OpenTelemetry). Off by default. When enabled, the
 	// controller instruments its outbound Cloudflare API and proxy config-push
 	// clients and exports spans over OTLP/gRPC.
@@ -178,6 +183,10 @@ func runController(_ *cobra.Command, _ []string) error {
 		ProxyDeploymentLabel: viper.GetString("proxy-deployment-label"),
 		TunnelProtocol:       viper.GetString("tunnel-protocol"),
 		Tracing:              tracingEnabled,
+
+		HostnameOwnershipEnforce:           viper.GetBool("hostname-ownership-enforce"),
+		HostnameOwnershipLabelKey:          viper.GetString("hostname-ownership-label-key"),
+		HostnameOwnershipNamespaceSelector: viper.GetString("hostname-ownership-namespace-selector"),
 	}
 
 	if err := controller.Run(ctx, &cfg); err != nil {
