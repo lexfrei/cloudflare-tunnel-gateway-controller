@@ -1,0 +1,364 @@
+// Package render builds the per-Gateway data-plane resources (proxy
+// Deployment, config Service, optional HPA) from a Gateway + GatewayConfig
+// pair. Pure functions — no client, no status, no ownerRefs (the reconciler
+// owns those) — so every rendering decision is unit-testable in isolation.
+package render
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"maps"
+	"strings"
+
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
+	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
+
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/api/v1alpha1"
+)
+
+// GatewayLabel is the per-Gateway selector label stamped on every rendered
+// resource. The proxy endpoint watcher and the config pusher key on it.
+const GatewayLabel = "cf.k8s.lex.la/gateway"
+
+// tokenHashAnnotation carries a digest of the connector token on the pod
+// template so a token rotation rolls the pods.
+//
+//nolint:gosec // G101 false positive: this is an annotation KEY, not a credential
+const tokenHashAnnotation = "cf.k8s.lex.la/tunnel-token-hash"
+
+// Data-plane contract constants. The rendered pods run the proxy binary with
+// its built-in defaults; these mirror them and the chart's shared-proxy
+// conventions.
+// nobodyUID is the chart-parity runAsUser for the proxy pods.
+const nobodyUID int64 = 65534
+
+const (
+	configAPIPort = 8081
+	proxyPort     = 8080
+	// terminationGracePeriodSeconds = connector drain window (proxy default
+	// 30s) + 15s headroom so kubelet never SIGKILLs mid-drain.
+	terminationGracePeriodSeconds int64 = 45
+
+	containerName     = "proxy"
+	configPortName    = "config-api"
+	proxyPortName     = "proxy"
+	namePrefix        = "cf-proxy-"
+	configNameSuffix  = "-config"
+	maxDNSLabelLength = 63
+	nameHashLength    = 8
+
+	tunnelTokenKey = "tunnel-token"
+	authTokenKey   = "auth-token"
+)
+
+// Defaults carries the controller-level rendering defaults (Helm-wired).
+type Defaults struct {
+	// ProxyImage is the image for rendered proxy containers (the controller's
+	// --proxy-image flag); GatewayConfig.spec.image overrides per Gateway.
+	ProxyImage string
+	// TunnelProtocol is the proxy's edge transport (--tunnel-protocol).
+	// "auto"/"" is the binary default and is not rendered.
+	TunnelProtocol string
+}
+
+// Input is everything a render pass needs.
+type Input struct {
+	Gateway *gatewayv1.Gateway
+	Config  *v1alpha1.GatewayConfig
+	// TunnelToken is the raw connector token; only its hash is rendered.
+	TunnelToken string
+	Defaults    Defaults
+}
+
+// DeploymentName returns the per-Gateway proxy Deployment name.
+func DeploymentName(gateway *gatewayv1.Gateway) string {
+	return truncateName(namePrefix + gateway.Name)
+}
+
+// ConfigServiceName returns the per-Gateway headless config Service name.
+func ConfigServiceName(gateway *gatewayv1.Gateway) string {
+	return truncateName(namePrefix + gateway.Name + configNameSuffix)
+}
+
+// ConfigEndpointURL returns the config-push endpoint for the Gateway's
+// rendered data plane, in the same form the chart wires for the shared proxy.
+func ConfigEndpointURL(gateway *gatewayv1.Gateway, clusterDomain string) string {
+	return fmt.Sprintf("http://%s.%s.svc.%s:%d/config",
+		ConfigServiceName(gateway), gateway.Namespace, clusterDomain, configAPIPort)
+}
+
+// selectorLabels is the immutable Deployment selector / Service selector set.
+// Deliberately minimal: selectors cannot be changed after creation.
+func selectorLabels(gateway *gatewayv1.Gateway) map[string]string {
+	return map[string]string{
+		"app.kubernetes.io/name": "cloudflare-tunnel-gateway-proxy",
+		GatewayLabel:             gateway.Name,
+	}
+}
+
+// resourceLabels is the full label set for rendered resource metadata:
+// infrastructure.labels first (Gateway API SHOULD), controller-owned keys on
+// top so a tenant cannot spoof the selector or management markers.
+func resourceLabels(gateway *gatewayv1.Gateway) map[string]string {
+	labels := make(map[string]string)
+
+	if gateway.Spec.Infrastructure != nil {
+		for key, value := range gateway.Spec.Infrastructure.Labels {
+			labels[string(key)] = string(value)
+		}
+	}
+
+	maps.Copy(labels, selectorLabels(gateway))
+
+	labels["app.kubernetes.io/component"] = "proxy"
+	labels["app.kubernetes.io/managed-by"] = "cloudflare-tunnel-gateway-controller"
+
+	return labels
+}
+
+// resourceAnnotations propagates infrastructure.annotations.
+func resourceAnnotations(gateway *gatewayv1.Gateway) map[string]string {
+	if gateway.Spec.Infrastructure == nil || len(gateway.Spec.Infrastructure.Annotations) == 0 {
+		return nil
+	}
+
+	annotations := make(map[string]string, len(gateway.Spec.Infrastructure.Annotations))
+	for key, value := range gateway.Spec.Infrastructure.Annotations {
+		annotations[string(key)] = string(value)
+	}
+
+	return annotations
+}
+
+// ProxyDeployment renders the per-Gateway proxy Deployment.
+func ProxyDeployment(input Input) *appsv1.Deployment {
+	podAnnotations := resourceAnnotations(input.Gateway)
+	if podAnnotations == nil {
+		podAnnotations = make(map[string]string, 1)
+	}
+
+	podAnnotations[tokenHashAnnotation] = hashToken(input.TunnelToken)
+
+	return &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        DeploymentName(input.Gateway),
+			Namespace:   input.Gateway.Namespace,
+			Labels:      resourceLabels(input.Gateway),
+			Annotations: resourceAnnotations(input.Gateway),
+		},
+		Spec: appsv1.DeploymentSpec{
+			Replicas: replicaCount(input.Config),
+			Selector: &metav1.LabelSelector{MatchLabels: selectorLabels(input.Gateway)},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels:      resourceLabels(input.Gateway),
+					Annotations: podAnnotations,
+				},
+				Spec: corev1.PodSpec{
+					TerminationGracePeriodSeconds: new(terminationGracePeriodSeconds),
+					SecurityContext:               podSecurityContext(),
+					Containers:                    []corev1.Container{proxyContainer(input)},
+				},
+			},
+		},
+	}
+}
+
+// replicaCount: explicit replicas win; autoscaling leaves the count nil so
+// the HPA owns it (a rendered value would fight the autoscaler on every
+// reconcile); otherwise the HA default.
+func replicaCount(config *v1alpha1.GatewayConfig) *int32 {
+	if config.Spec.Autoscaling != nil {
+		return nil
+	}
+
+	if config.Spec.Replicas != nil {
+		return new(*config.Spec.Replicas)
+	}
+
+	return new(v1alpha1.DefaultProxyReplicas)
+}
+
+func hashToken(token string) string {
+	sum := sha256.Sum256([]byte(token))
+
+	return hex.EncodeToString(sum[:])
+}
+
+// proxyContainer renders the single proxy container, mirroring the chart's
+// shared-proxy deployment (ports, probes, security context, env contract).
+func proxyContainer(input Input) corev1.Container {
+	return corev1.Container{
+		Name:            containerName,
+		Image:           proxyImage(input),
+		ImagePullPolicy: corev1.PullIfNotPresent,
+		SecurityContext: containerSecurityContext(),
+		Env:             proxyEnv(input),
+		Ports: []corev1.ContainerPort{
+			{Name: configPortName, ContainerPort: configAPIPort, Protocol: corev1.ProtocolTCP},
+			{Name: proxyPortName, ContainerPort: proxyPort, Protocol: corev1.ProtocolTCP},
+		},
+		StartupProbe:   httpProbe("/healthz", startupProbeSpec),
+		LivenessProbe:  httpProbe("/healthz", livenessProbeSpec),
+		ReadinessProbe: httpProbe("/readyz", readinessProbeSpec),
+		Resources:      proxyResources(input.Config),
+	}
+}
+
+func proxyImage(input Input) string {
+	if input.Config.Spec.Image != "" {
+		return input.Config.Spec.Image
+	}
+
+	return input.Defaults.ProxyImage
+}
+
+// proxyEnv wires the connector token (and optional knobs) exactly like the
+// chart does for the shared proxy. Binary defaults (ports, grace period,
+// metrics-on) are deliberately not rendered.
+func proxyEnv(input Input) []corev1.EnvVar {
+	env := []corev1.EnvVar{
+		{
+			Name: "TUNNEL_TOKEN",
+			ValueFrom: &corev1.EnvVarSource{
+				SecretKeyRef: &corev1.SecretKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: input.Config.Spec.TunnelTokenSecretRef.Name,
+					},
+					Key: input.Config.Spec.TunnelTokenSecretRef.KeyOr(tunnelTokenKey),
+				},
+			},
+		},
+	}
+
+	if ref := input.Config.Spec.AuthTokenSecretRef; ref != nil {
+		env = append(env, corev1.EnvVar{
+			Name: "PROXY_AUTH_TOKEN",
+			ValueFrom: &corev1.EnvVarSource{
+				SecretKeyRef: &corev1.SecretKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{Name: ref.Name},
+					Key:                  ref.KeyOr(authTokenKey),
+				},
+			},
+		})
+	}
+
+	if protocol := input.Defaults.TunnelProtocol; protocol != "" && protocol != "auto" {
+		env = append(env, corev1.EnvVar{Name: "PROXY_TUNNEL_PROTOCOL", Value: protocol})
+	}
+
+	return env
+}
+
+func proxyResources(config *v1alpha1.GatewayConfig) corev1.ResourceRequirements {
+	if config.Spec.Resources != nil {
+		return *config.Spec.Resources
+	}
+
+	// Chart parity: the shared proxy's default requests/limits.
+	return corev1.ResourceRequirements{
+		Limits: corev1.ResourceList{
+			corev1.ResourceCPU:    resource.MustParse("500m"),
+			corev1.ResourceMemory: resource.MustParse("512Mi"),
+		},
+		Requests: corev1.ResourceList{
+			corev1.ResourceCPU:    resource.MustParse("100m"),
+			corev1.ResourceMemory: resource.MustParse("128Mi"),
+		},
+	}
+}
+
+func podSecurityContext() *corev1.PodSecurityContext {
+	return &corev1.PodSecurityContext{
+		RunAsNonRoot:   new(true),
+		RunAsUser:      new(nobodyUID),
+		SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
+	}
+}
+
+func containerSecurityContext() *corev1.SecurityContext {
+	return &corev1.SecurityContext{
+		AllowPrivilegeEscalation: new(false),
+		ReadOnlyRootFilesystem:   new(true),
+		Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+	}
+}
+
+// probeSpec bundles probe timings (chart parity with the shared proxy).
+type probeSpec struct {
+	initialDelay, period, timeout, failureThreshold int32
+}
+
+// Probe timings mirror the chart's shared-proxy defaults verbatim. The field
+// names in the struct literals ARE the documentation; hoisting twelve
+// one-use numeric constants would only obscure the table.
+//
+//nolint:gochecknoglobals,mnd // chart-parity timing table, field-named literals
+var (
+	startupProbeSpec   = probeSpec{initialDelay: 0, period: 5, timeout: 3, failureThreshold: 12}
+	livenessProbeSpec  = probeSpec{initialDelay: 15, period: 20, timeout: 5, failureThreshold: 3}
+	readinessProbeSpec = probeSpec{initialDelay: 5, period: 10, timeout: 3, failureThreshold: 3}
+)
+
+func httpProbe(path string, spec probeSpec) *corev1.Probe {
+	return &corev1.Probe{
+		ProbeHandler: corev1.ProbeHandler{
+			HTTPGet: &corev1.HTTPGetAction{
+				Path: path,
+				Port: intstr.FromString(configPortName),
+			},
+		},
+		InitialDelaySeconds: spec.initialDelay,
+		PeriodSeconds:       spec.period,
+		TimeoutSeconds:      spec.timeout,
+		FailureThreshold:    spec.failureThreshold,
+	}
+}
+
+// ConfigService renders the per-Gateway headless config Service. Pod IPs are
+// published before readiness because the controller pushes config to
+// not-yet-ready pods — their readiness depends on that very config.
+func ConfigService(input Input) *corev1.Service {
+	return &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        ConfigServiceName(input.Gateway),
+			Namespace:   input.Gateway.Namespace,
+			Labels:      resourceLabels(input.Gateway),
+			Annotations: resourceAnnotations(input.Gateway),
+		},
+		Spec: corev1.ServiceSpec{
+			Type:                     corev1.ServiceTypeClusterIP,
+			ClusterIP:                corev1.ClusterIPNone,
+			PublishNotReadyAddresses: true,
+			Selector:                 selectorLabels(input.Gateway),
+			Ports: []corev1.ServicePort{
+				{
+					Name:       configPortName,
+					Port:       configAPIPort,
+					TargetPort: intstr.FromString(configPortName),
+					Protocol:   corev1.ProtocolTCP,
+				},
+			},
+		},
+	}
+}
+
+// truncateName bounds a rendered name to the 63-char DNS label limit,
+// replacing the tail with a deterministic hash suffix on overflow so long
+// Gateway names stay collision-free.
+func truncateName(name string) string {
+	if len(name) <= maxDNSLabelLength {
+		return name
+	}
+
+	sum := sha256.Sum256([]byte(name))
+	suffix := hex.EncodeToString(sum[:])[:nameHashLength]
+	keep := maxDNSLabelLength - nameHashLength - 1
+
+	return strings.TrimRight(name[:keep], "-") + "-" + suffix
+}
