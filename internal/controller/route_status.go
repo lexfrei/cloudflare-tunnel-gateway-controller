@@ -623,7 +623,12 @@ type routeStatusEntry struct {
 	bindingInfo routeBindingInfo
 	failedRefs  []ingress.BackendRefError
 	diagnostics []proxy.RouteDiagnostic
-	update      func(ctx context.Context, bindingInfo routeBindingInfo, failedRefs []ingress.BackendRefError, diagnostics []proxy.RouteDiagnostic, syncErr error) error
+	// syncErrOverride, when non-nil, replaces the global sync error for this
+	// route: with partitioned data planes (#479) only the routes of a FAILED
+	// tunnel group go Pending — one tenant's broken tunnel must not flip
+	// other tenants' route statuses.
+	syncErrOverride error
+	update          func(ctx context.Context, bindingInfo routeBindingInfo, failedRefs []ingress.BackendRefError, diagnostics []proxy.RouteDiagnostic, syncErr error) error
 }
 
 // updateRoutesStatus iterates over route entries and updates status for each.
@@ -637,7 +642,12 @@ func updateRoutesStatus(
 	var firstErr error
 
 	for _, entry := range entries {
-		if err := entry.update(ctx, entry.bindingInfo, entry.failedRefs, entry.diagnostics, syncErr); err != nil {
+		effectiveErr := syncErr
+		if entry.syncErrOverride != nil {
+			effectiveErr = entry.syncErrOverride
+		}
+
+		if err := entry.update(ctx, entry.bindingInfo, entry.failedRefs, entry.diagnostics, effectiveErr); err != nil {
 			logger.Error("failed to update route status", "error", err, "route", entry.namespace+"/"+entry.name)
 
 			if firstErr == nil {

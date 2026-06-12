@@ -14,6 +14,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/logging"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/render"
 )
 
 // ipv4SegmentCount is the number of dotted segments in an IPv4 address;
@@ -71,6 +72,27 @@ func (r *ProxyEndpointReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 	ctx = logging.WithLogger(ctx, logger)
 
+	var slice discoveryv1.EndpointSlice
+	if err := r.Client.Get(ctx, req.NamespacedName, &slice); err != nil {
+		// Deleted or unreadable: we cannot attribute the event to one data
+		// plane, so replay every cached partition — cheap and correct.
+		if resyncErr := r.ProxySyncer.ResyncAllPartitions(ctx); resyncErr != nil {
+			return ctrl.Result{}, errors.Wrap(resyncErr, "resync all proxy partitions")
+		}
+
+		return ctrl.Result{}, nil
+	}
+
+	// A per-Gateway data plane's EndpointSlice carries the Gateway label
+	// (mirrored from its rendered Service); resync just that partition.
+	if gatewayName := slice.Labels[render.GatewayLabel]; gatewayName != "" {
+		if err := r.ProxySyncer.ResyncPartition(ctx, slice.Namespace+"/"+gatewayName); err != nil {
+			return ctrl.Result{}, errors.Wrap(err, "resync per-gateway proxy partition")
+		}
+
+		return ctrl.Result{}, nil
+	}
+
 	if err := r.ProxySyncer.ResyncEndpoints(ctx, r.ProxyEndpoints); err != nil {
 		// Non-fatal: the next endpoint-change event (or the next
 		// HTTPRoute reconcile) gets another chance. Surface as an
@@ -119,6 +141,12 @@ func (r *ProxyEndpointReconciler) endpointSliceMatchesProxy() predicate.Predicat
 		slice, ok := obj.(*discoveryv1.EndpointSlice)
 		if !ok {
 			return false
+		}
+
+		// Per-Gateway data planes: the rendered Service's labels (including
+		// the Gateway marker) are mirrored onto its EndpointSlices.
+		if slice.Labels[render.GatewayLabel] != "" {
+			return true
 		}
 
 		serviceName := slice.Labels[discoveryv1.LabelServiceName]
