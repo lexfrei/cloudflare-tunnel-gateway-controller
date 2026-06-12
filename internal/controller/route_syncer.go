@@ -333,8 +333,16 @@ func syncAndUpdateStatusCommon(ctx context.Context, params syncUpdateParams) (ct
 // (default auth token), each per-Gateway partition to its rendered config
 // Service with its OWN token. Push failures are logged non-blocking (the
 // route statuses already reflect the tunnel sync), and stale partition
-// caches are evicted. Falls back to a single shared push when the sync
-// produced no partition split (early-error paths).
+// caches are evicted.
+//
+// A result WITHOUT partitions (the early-error paths via
+// buildResultForError) pushes nothing and evicts nothing: that route set was
+// never partitioned, so pushing it to the shared endpoints would serve
+// tenant routes from the shared data plane — a cross-tenant leak — and
+// evicting the partition caches would drop tenant replay state over a
+// transient error. Every successful sync always carries at least the shared
+// partition (partitionRoutes), so skipping here never starves a healthy
+// plane.
 func pushPartitionConfigs(
 	ctx context.Context,
 	logger *slog.Logger,
@@ -343,11 +351,9 @@ func pushPartitionConfigs(
 ) []proxy.RouteDiagnostic {
 	partitions := syncResult.Partitions
 	if len(partitions) == 0 {
-		partitions = []routePartition{{
-			Key:        sharedPartitionKey,
-			HTTPRoutes: syncResult.HTTPRoutes,
-			GRPCRoutes: syncResult.GRPCRoutes,
-		}}
+		logger.Info("skipping proxy push: sync produced no partition split (early error)")
+
+		return nil
 	}
 
 	// Same-tunnel partitions must push identical (unioned) configs: the edge

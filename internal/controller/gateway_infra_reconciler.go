@@ -332,6 +332,11 @@ func (r *GatewayInfraReconciler) deleteIfOwned(
 func (r *GatewayInfraReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	//nolint:wrapcheck // controller-runtime builder pattern
 	return ctrl.NewControllerManagedBy(mgr).
+		// controller-runtime derives controller names from the For type;
+		// GatewayReconciler already owns the implicit "gateway" name, so this
+		// second Gateway-typed controller MUST carry an explicit name or
+		// manager startup fails with a duplicate-name error.
+		Named("gateway-infra").
 		For(&gatewayv1.Gateway{}).
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.Service{}).
@@ -340,6 +345,12 @@ func (r *GatewayInfraReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			&v1alpha1.GatewayConfig{},
 			handler.EnqueueRequestsFromMapFunc(r.namespaceInfraGateways),
 		).
+		// The Secret watch is deliberately unfiltered: tenant token/auth
+		// Secrets carry no identifying label this controller could predicate
+		// on, and rotation must roll the rendered pods. The cost is bounded
+		// by the mapper, not a predicate — every Secret write runs one
+		// cache-served namespace List and enqueues nothing unless the
+		// namespace holds an opted-in Gateway.
 		Watches(
 			&corev1.Secret{},
 			handler.EnqueueRequestsFromMapFunc(r.namespaceInfraGateways),

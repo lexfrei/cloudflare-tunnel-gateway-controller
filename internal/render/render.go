@@ -294,13 +294,15 @@ type probeSpec struct {
 	initialDelay, period, timeout, failureThreshold int32
 }
 
-// Probe timings mirror the chart's shared-proxy defaults verbatim. The field
-// names in the struct literals ARE the documentation; hoisting twelve
-// one-use numeric constants would only obscure the table.
+// Probe timings mirror the chart's shared-proxy defaults verbatim (the
+// startup budget of 30×5s=150s exists because connector registration against
+// the Cloudflare edge can be slow on cold starts). The field names in the
+// struct literals ARE the documentation; hoisting twelve one-use numeric
+// constants would only obscure the table.
 //
 //nolint:gochecknoglobals,mnd // chart-parity timing table, field-named literals
 var (
-	startupProbeSpec   = probeSpec{initialDelay: 0, period: 5, timeout: 3, failureThreshold: 12}
+	startupProbeSpec   = probeSpec{initialDelay: 0, period: 5, timeout: 3, failureThreshold: 30}
 	livenessProbeSpec  = probeSpec{initialDelay: 15, period: 20, timeout: 5, failureThreshold: 3}
 	readinessProbeSpec = probeSpec{initialDelay: 5, period: 10, timeout: 3, failureThreshold: 3}
 )

@@ -382,8 +382,23 @@ func buildShadowedCondition(
 		ObservedGeneration: generation,
 		LastTransitionTime: now,
 		Reason:             routeReasonShadowed,
-		Message:            strings.Join(messages, " | "),
+		Message:            truncateConditionMessage(strings.Join(messages, " | ")),
 	}
+}
+
+// conditionMessageMaxLength is metav1.Condition's Message MaxLength. A joined
+// multi-pair message past it fails CRD validation for the WHOLE status
+// update, losing Accepted/ResolvedRefs along with the diagnostic.
+const conditionMessageMaxLength = 32768
+
+// truncateConditionMessage caps a condition message at the metav1 limit,
+// marking the cut.
+func truncateConditionMessage(msg string) string {
+	if len(msg) > conditionMessageMaxLength {
+		return msg[:conditionMessageMaxLength-3] + "..."
+	}
+
+	return msg
 }
 
 // droppedConfigMessage builds the human-facing condition message for a set of

@@ -77,6 +77,14 @@ func TestProxyDeployment_CoreShape(t *testing.T) {
 	require.NotNil(t, container.LivenessProbe)
 	assert.Equal(t, "/healthz", container.LivenessProbe.HTTPGet.Path)
 
+	// Chart parity: the chart's proxy startupProbe budget is 30×5s=150s —
+	// tunnel connector registration against the Cloudflare edge can be slow
+	// on cold starts, and a tighter rendered budget would crash-loop planes
+	// the shared chart deployment tolerates.
+	require.NotNil(t, container.StartupProbe)
+	assert.Equal(t, int32(30), container.StartupProbe.FailureThreshold)
+	assert.Equal(t, int32(5), container.StartupProbe.PeriodSeconds)
+
 	// The selector is the contract with the Service and must carry the
 	// per-Gateway label so endpoint discovery is Gateway-scoped.
 	assert.Equal(t, "edge", deployment.Spec.Selector.MatchLabels["cf.k8s.lex.la/gateway"])

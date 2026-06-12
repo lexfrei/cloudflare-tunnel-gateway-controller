@@ -8,10 +8,16 @@ import (
 	"github.com/stretchr/testify/require"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/api/v1alpha1"
@@ -146,6 +152,62 @@ func TestGatewayReconciler_PerGateway_ProgrammedTrueWhenReady(t *testing.T) {
 	programmed := findCondition(updated.Status.Conditions, string(gatewayv1.GatewayConditionProgrammed))
 	require.NotNil(t, programmed)
 	assert.Equal(t, metav1.ConditionTrue, programmed.Status)
+}
+
+// TestGatewayReconciler_PerGateway_TransientResolveErrorKeepsStatus pins the
+// sentinel/transient split end to end: ResolveForGateway deliberately keeps a
+// transient API failure's identity (only deterministic spec problems classify
+// as ErrInvalidParameters), so the reconciler must NOT stamp
+// Accepted=False/InvalidParameters over it — that would misreport a healthy
+// spec and clear the listener statuses on every API hiccup. Transient errors
+// propagate for controller-runtime backoff; the last written status stands.
+func TestGatewayReconciler_PerGateway_TransientResolveErrorKeepsStatus(t *testing.T) {
+	t.Parallel()
+
+	scheme := runtime.NewScheme()
+	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
+	utilruntime.Must(gatewayv1.Install(scheme))
+	utilruntime.Must(v1alpha1.AddToScheme(scheme))
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(perGatewayStatusFixtures(t)...).
+		WithStatusSubresource(&gatewayv1.Gateway{}).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Get: func(ctx context.Context, cl client.WithWatch, key client.ObjectKey,
+				obj client.Object, opts ...client.GetOption,
+			) error {
+				if _, ok := obj.(*v1alpha1.GatewayConfig); ok {
+					return apierrors.NewInternalError(errSimulatedCacheMiss)
+				}
+
+				return cl.Get(ctx, key, obj, opts...)
+			},
+		}).
+		Build()
+
+	reconciler := &GatewayReconciler{
+		Client:         fakeClient,
+		Scheme:         fakeClient.Scheme(),
+		ControllerName: "test-controller",
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+	}
+
+	ctx := context.Background()
+
+	_, err := reconciler.Reconcile(ctx, ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "pg-gateway", Namespace: "default"},
+	})
+	require.Error(t, err, "a transient resolve failure must propagate for backoff, not be swallowed")
+
+	var updated gatewayv1.Gateway
+	require.NoError(t, fakeClient.Get(ctx, types.NamespacedName{Name: "pg-gateway", Namespace: "default"}, &updated))
+
+	accepted := findCondition(updated.Status.Conditions, string(gatewayv1.GatewayConditionAccepted))
+	if accepted != nil {
+		assert.NotEqual(t, string(gatewayv1.GatewayReasonInvalidParameters), accepted.Reason,
+			"a momentary API failure must not be reported as a spec problem")
+	}
 }
 
 // TestGatewayReconciler_PerGateway_InvalidParametersSurfaceOnStatus pins the

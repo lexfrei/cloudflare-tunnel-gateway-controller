@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 
@@ -85,6 +86,27 @@ func TestBuildParentStatus_ShadowedOmittedWhenRejected(t *testing.T) {
 	require.Equal(t, metav1.ConditionFalse, accepted.Status)
 
 	assert.Nil(t, findCondition(status.Conditions, routeConditionShadowed))
+}
+
+// TestBuildShadowedCondition_TruncatesOverlongMessage pins the CRD-validation
+// guard: metav1.Condition caps Message at 32768, and a route with very many
+// shadowed pairs would otherwise join past the cap and fail the WHOLE status
+// update — losing Accepted/ResolvedRefs along with the diagnostic.
+func TestBuildShadowedCondition_TruncatesOverlongMessage(t *testing.T) {
+	t.Parallel()
+
+	diagnostics := make([]proxy.RouteDiagnostic, 0, 400)
+	for i := range 400 {
+		diagnostics = append(diagnostics, shadowedDiag(
+			strings.Repeat("x", 100)+" pair "+strconv.Itoa(i)+" shadowed"))
+	}
+
+	shadowed := buildShadowedCondition(diagnostics, 1, metav1.Now())
+	require.NotNil(t, shadowed)
+	assert.LessOrEqual(t, len(shadowed.Message), 32768,
+		"the joined message must fit metav1.Condition's MaxLength or the status update fails validation")
+	assert.True(t, strings.HasSuffix(shadowed.Message, "..."),
+		"a truncated message must signal the cut")
 }
 
 // TestBuildParentStatus_ShadowedAggregatesMessages pins that multiple shadowed
