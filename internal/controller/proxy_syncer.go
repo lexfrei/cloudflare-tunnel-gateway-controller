@@ -137,12 +137,28 @@ func WithSyncerTracing() ProxySyncerOption {
 }
 
 // proxyPushClient builds the config-push HTTP client. When tracing is enabled
-// its transport is wrapped with otelhttp; when disabled Transport stays nil so
-// the stdlib default transport is used unchanged.
+// its transport is wrapped with otelhttp; either way the controller owns its
+// transport rather than the process-global http.DefaultTransport.
+//
+// Leaving Transport nil would make net/http fall back to http.DefaultTransport,
+// a singleton shared with every other HTTP client in the process. A
+// CloseIdleConnections call on that shared transport — from unrelated code or,
+// in tests, a sibling parallel case — can tear down an in-flight config push
+// ("transport connection broken: http: CloseIdleConnections called"). Cloning
+// DefaultTransport gives an isolated connection pool with the same defaults.
 func proxyPushClient(tracing bool) *http.Client {
+	// Always an isolated transport. Clone DefaultTransport for its tuned
+	// defaults on the normal path; the bare *http.Transport fallback (an
+	// unreachable case — DefaultTransport is always *http.Transport in the
+	// stdlib) still avoids sharing the global pool.
+	transport := &http.Transport{}
+	if defaultTransport, ok := http.DefaultTransport.(*http.Transport); ok {
+		transport = defaultTransport.Clone()
+	}
+
 	return &http.Client{
 		Timeout:   proxyPushTimeout,
-		Transport: tracingpkg.WrapTransport(nil, tracing),
+		Transport: tracingpkg.WrapTransport(transport, tracing),
 	}
 }
 

@@ -8,14 +8,16 @@ import (
 )
 
 // TestProxyPushClient_TracingTogglesTransport pins that the config-push client
-// wraps its transport with otelhttp only when tracing is enabled; disabled
-// leaves Transport nil so the stdlib default transport is used unchanged.
+// wraps its transport with otelhttp only when tracing is enabled. Transport
+// isolation (never the shared http.DefaultTransport) is pinned separately in
+// TestProxyPushClient_OwnsIsolatedTransport.
 func TestProxyPushClient_TracingTogglesTransport(t *testing.T) {
 	t.Parallel()
 
 	plain := proxyPushClient(false)
-	assert.Nil(t, plain.Transport,
-		"tracing disabled must leave Transport nil (stdlib default, outbound path unchanged)")
+
+	_, plainWrapped := plain.Transport.(*otelhttp.Transport)
+	assert.False(t, plainWrapped, "tracing disabled must not wrap the transport with otelhttp")
 
 	traced := proxyPushClient(true)
 
