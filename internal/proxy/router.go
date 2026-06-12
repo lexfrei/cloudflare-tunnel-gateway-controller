@@ -167,6 +167,12 @@ type RouteResult struct {
 	BackendFilters []Filter
 	BackendIdx     int
 	MatchedPrefix  string
+	// MatchedHostname is the hostname PATTERN of the routing-table bucket the
+	// request matched: the exact configured hostname, the "*.suffix" wildcard
+	// pattern, or "" for default-bucket matches. Always config-bounded (never
+	// the raw request Host), which is what makes it safe as a metric label
+	// value — clients cannot mint new series by varying the Host header.
+	MatchedHostname string
 }
 
 // Route finds the best matching rule for the request and selects a backend.
@@ -175,9 +181,12 @@ func (r *Router) Route(req *http.Request) *RouteResult {
 	table := r.table.Load()
 	host := extractHost(req)
 
-	// Try exact host match first.
+	// Try exact host match first. The map key only matches when the request
+	// host equals a configured hostname, so it is config-bounded.
 	if rules, ok := table.exactHosts[host]; ok {
 		if result := matchRules(rules, req); result != nil {
+			result.MatchedHostname = host
+
 			return result
 		}
 	}
@@ -186,12 +195,14 @@ func (r *Router) Route(req *http.Request) *RouteResult {
 	for _, wildcard := range table.wildcardHosts {
 		if matchesWildcard(host, wildcard.suffix) {
 			if result := matchRules(wildcard.rules, req); result != nil {
+				result.MatchedHostname = "*" + wildcard.suffix
+
 				return result
 			}
 		}
 	}
 
-	// Try default (no hostname) rules.
+	// Try default (no hostname) rules; MatchedHostname stays "".
 	if result := matchRules(table.defaultRules, req); result != nil {
 		return result
 	}

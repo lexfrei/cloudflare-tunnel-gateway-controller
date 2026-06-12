@@ -75,11 +75,13 @@ func (h *Handler) proxyWebSocketUpgrade(
 	backendURL *url.URL,
 	backendTLS *BackendTLSConfig,
 	filters []Filter,
+	hostname string,
 ) {
 	backendConn, err := h.dialBackendForUpgrade(req.Context(), backendURL, backendTLS)
 	if err != nil {
 		slog.Warn("websocket upgrade: backend dial failed",
 			"error", err, "backend", backendURL.Host)
+		h.recordBackendError(hostname, backendErrReasonWSDial)
 		http.Error(w, "bad gateway", http.StatusBadGateway)
 
 		return
@@ -92,6 +94,7 @@ func (h *Handler) proxyWebSocketUpgrade(
 	err = outReq.Write(backendConn)
 	if err != nil {
 		slog.Warn("websocket upgrade: writing request to backend failed", "error", err)
+		h.recordBackendError(hostname, backendErrReasonWSHandshake)
 		http.Error(w, "bad gateway", http.StatusBadGateway)
 
 		return
@@ -107,6 +110,7 @@ func (h *Handler) proxyWebSocketUpgrade(
 	resp, err := http.ReadResponse(backendReader, outReq)
 	if err != nil {
 		slog.Warn("websocket upgrade: reading backend response failed", "error", err)
+		h.recordBackendError(hostname, backendErrReasonWSHandshake)
 		http.Error(w, "bad gateway", http.StatusBadGateway)
 
 		return

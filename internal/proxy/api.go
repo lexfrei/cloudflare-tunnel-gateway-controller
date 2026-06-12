@@ -19,24 +19,46 @@ type ConfigStatus struct {
 // ConfigAPI provides HTTP endpoints for runtime config management.
 // When authToken is set, PUT /config requires Bearer token authentication.
 type ConfigAPI struct {
-	router    *Router
-	mux       *http.ServeMux
-	authToken string
+	router         *Router
+	mux            *http.ServeMux
+	authToken      string
+	metricsHandler http.Handler
+}
+
+// ConfigAPIOption configures optional ConfigAPI behaviour at construction.
+type ConfigAPIOption func(*ConfigAPI)
+
+// WithMetricsHandler serves the given Prometheus exposition handler at
+// GET /metrics. The endpoint is deliberately exempt from Bearer auth, like
+// /healthz and /readyz: a Prometheus scrape carries no credentials and the
+// exposition contains no secrets — the Bearer token protects config WRITES.
+func WithMetricsHandler(handler http.Handler) ConfigAPIOption {
+	return func(api *ConfigAPI) {
+		api.metricsHandler = handler
+	}
 }
 
 // NewConfigAPI creates a ConfigAPI handler for the given Router.
 // If authToken is non-empty, PUT /config requires "Authorization: Bearer <token>".
-func NewConfigAPI(router *Router, authToken string) *ConfigAPI {
+func NewConfigAPI(router *Router, authToken string, opts ...ConfigAPIOption) *ConfigAPI {
 	api := &ConfigAPI{
 		router:    router,
 		mux:       http.NewServeMux(),
 		authToken: authToken,
 	}
 
+	for _, opt := range opts {
+		opt(api)
+	}
+
 	api.mux.HandleFunc("PUT /config", api.handlePutConfig)
 	api.mux.HandleFunc("GET /config", api.handleGetConfig)
 	api.mux.HandleFunc("GET /healthz", api.handleHealthz)
 	api.mux.HandleFunc("GET /readyz", api.handleReadyz)
+
+	if api.metricsHandler != nil {
+		api.mux.Handle("GET /metrics", api.metricsHandler)
+	}
 
 	return api
 }

@@ -592,6 +592,17 @@
           "maximum": 65535,
           "default": 8080
         },
+        "metrics": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Expose request-level Prometheus metrics at /metrics on the config API port (also surfaces embedded cloudflared connector metrics).",
+              "default": true
+            }
+          }
+        },
         "gracePeriodSeconds": {
           "type": "integer",
           "description": "Connector drain window in seconds: on SIGTERM the proxy unregisters its tunnel connectors and gives in-flight requests this long to finish. Pod terminationGracePeriodSeconds is derived as this value + 15s. Capped at 180 (3m) by cloudflared.",

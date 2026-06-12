@@ -86,6 +86,12 @@ type Handler struct {
 	// worth the bytes. Set via WithAccessLogStripQuery.
 	accessLogStripQuery bool
 
+	// metrics, when non-nil, records per-request data-plane instruments
+	// (in-flight gauge, duration histogram, status-class counters, bytes,
+	// backend errors). Nil = disabled = zero instrumentation cost on the hot
+	// path. Set via WithMetrics.
+	metrics *Metrics
+
 	// tracingEnabled gates server-span creation in ServeHTTP. When false
 	// (the default), ServeHTTP skips trace-context extraction, span start,
 	// and the request-context rebuild entirely, so the disabled path stays
@@ -163,6 +169,15 @@ func WithAccessLog(logger *slog.Logger, samplingRate float64) HandlerOption {
 func WithAccessLogStripQuery(strip bool) HandlerOption {
 	return func(handler *Handler) {
 		handler.accessLogStripQuery = strip
+	}
+}
+
+// WithMetrics enables data-plane Prometheus instrumentation on the handler.
+// A nil Metrics leaves the handler uninstrumented (no-op option), keeping the
+// disabled hot path byte-identical to the pre-metrics behaviour.
+func WithMetrics(metrics *Metrics) HandlerOption {
+	return func(handler *Handler) {
+		handler.metrics = metrics
 	}
 }
 
@@ -309,41 +324,9 @@ func writeRuleUnavailable(writer http.ResponseWriter, rule *RouteRule) bool {
 }
 
 func (h *Handler) ServeHTTP(writer http.ResponseWriter, req *http.Request) {
-	// Response-status capture is shared by access logging and tracing: both
-	// read the final status off the same countingResponseWriter. It is
-	// created only when at least one consumer is enabled, so the disabled
-	// path skips the wrapper entirely. The wrapper delegates Hijack / Flush /
-	// ReadFrom to the inner writer, so it stays transparent to the tunnel-mode
-	// WebSocket hijack and gRPC trailer bridge.
-	var counted *countingResponseWriter
-	if h.accessLog != nil || h.tracingEnabled {
-		counted = newCountingResponseWriter(writer)
-		writer = counted
-	}
+	writer, req, finishInstrumentation, metricsState := h.instrumentRequest(writer, req)
 
-	// Server span: extract the inbound W3C trace context, start a server span,
-	// and carry it on the request context so backend calls link back and logs
-	// correlate. Done before the access-log snapshot so the emitted line sees
-	// the traced context. Gated on tracingEnabled so the disabled path adds no
-	// extraction, span, or context rebuild.
-	if h.tracingEnabled {
-		var span trace.Span
-
-		req, span = startServerSpan(h.tracer, req)
-
-		defer endServerSpan(span, counted)
-	}
-
-	// Access-log wrapping: zero cost when accessLog is nil -- the snapshot,
-	// defer, and time.Now() ALL sit inside the if branch so the disabled path
-	// skips them entirely. Snapshot is taken before filters run so a URL
-	// rewrite (filter.go writeRewritePathFilter mutates req.URL.Path in place)
-	// cannot hide the client-observable original path from the log.
-	if h.accessLog != nil {
-		snapshot, start := newAccessLogSnapshot(req, h.accessLogStripQuery)
-
-		defer h.maybeEmitAccessLog(counted, req, snapshot, start)
-	}
+	defer finishInstrumentation()
 
 	result := h.router.Route(req)
 	if result == nil {
@@ -351,6 +334,10 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, req *http.Request) {
 
 		return
 	}
+
+	// Backfill the config-bounded hostname pattern for the metric labels
+	// (nil-safe; "" when metrics are disabled or no hostname matched).
+	metricsState.setHostname(result.MatchedHostname)
 
 	if writeRuleUnavailable(writer, result.Rule) {
 		return
@@ -365,6 +352,7 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, req *http.Request) {
 
 	// Store matched prefix in request context for URL rewrite filters.
 	if result.MatchedPrefix != "" {
+		//nolint:contextcheck // derived from req.Context(); contextcheck loses request provenance through instrumentRequest's returned request
 		req = req.WithContext(context.WithValue(req.Context(), matchedPrefixKey{}, result.MatchedPrefix))
 	}
 
@@ -491,6 +479,70 @@ func (h *Handler) TransportFactory() TransportFactory {
 	return h.getTransport
 }
 
+// instrumentRequest assembles the per-request observability pipeline shared
+// by metrics, tracing, and access logging:
+//
+//   - countingResponseWriter: created only when at least one consumer is
+//     enabled, so the fully-disabled path skips the wrapper entirely. The
+//     wrapper delegates Hijack / Flush / ReadFrom, staying transparent to the
+//     tunnel-mode WebSocket hijack and gRPC trailer bridge.
+//   - metrics: in-flight accounting starts here; the hostname label is
+//     backfilled by ServeHTTP right after routing via the returned state.
+//   - tracing: the server span is started before the access-log snapshot so
+//     the emitted line sees the traced context.
+//   - access log: the snapshot is taken before filters run so a URL rewrite
+//     cannot hide the client-observable original path from the log.
+//
+// Returns the (possibly wrapped) writer and (possibly span-rebased) request
+// plus a single tail the caller MUST defer; the tail preserves the historic
+// emission order (access log, then span end) and releases the metrics gauges
+// last.
+func (h *Handler) instrumentRequest(
+	writer http.ResponseWriter,
+	req *http.Request,
+) (http.ResponseWriter, *http.Request, func(), *metricsRequestState) {
+	var counted *countingResponseWriter
+	if h.accessLog != nil || h.tracingEnabled || h.metrics != nil {
+		counted = newCountingResponseWriter(writer)
+		writer = counted
+	}
+
+	var metricsState *metricsRequestState
+	if h.metrics != nil {
+		metricsState = h.metrics.beginRequest(counted, req)
+	}
+
+	var span trace.Span
+	if h.tracingEnabled {
+		req, span = startServerSpan(h.tracer, req)
+	}
+
+	var (
+		snapshot *accessLogSnapshot
+		start    time.Time
+	)
+
+	if h.accessLog != nil {
+		snapshot, start = newAccessLogSnapshot(req, h.accessLogStripQuery)
+	}
+
+	finish := func() {
+		if h.accessLog != nil {
+			h.maybeEmitAccessLog(counted, req, snapshot, start)
+		}
+
+		if h.tracingEnabled {
+			endServerSpan(span, counted)
+		}
+
+		if metricsState != nil {
+			metricsState.finish()
+		}
+	}
+
+	return writer, req, finish, metricsState
+}
+
 // effectiveWSDialTimeout returns the configured WebSocket-backend dial
 // timeout or the package default when none was set. Method (not field
 // access) so the zero-value fallback lives next to the field rather
@@ -582,7 +634,7 @@ func (h *Handler) proxyToBackend(writer http.ResponseWriter, req *http.Request, 
 	// dial/handshake/hijack/pipe sequence directly; see the comment on
 	// that method for the protocol-level details.
 	if shouldUseWebSocketUpgradePath(req, backend.WebSocket) {
-		h.proxyWebSocketUpgrade(writer, req, backendURL, backend.TLS, allFilters)
+		h.proxyWebSocketUpgrade(writer, req, backendURL, backend.TLS, allFilters, result.MatchedHostname)
 
 		return
 	}
@@ -595,7 +647,7 @@ func (h *Handler) proxyToBackend(writer http.ResponseWriter, req *http.Request, 
 	// timeout comment for the rationale.
 	headerTimeout := ruleHeaderTimeout(result.Rule.Timeouts)
 
-	proxy := h.createReverseProxy(backendURL, backend.Protocol, backend.TLS, allFilters, headerTimeout)
+	proxy := h.createReverseProxy(backendURL, backend.Protocol, backend.TLS, allFilters, headerTimeout, result.MatchedHostname)
 	proxy.ServeHTTP(writer, req)
 }
 
@@ -603,8 +655,9 @@ func (h *Handler) proxyToBackend(writer http.ResponseWriter, req *http.Request, 
 // headerTimeout (the rule-derived response-header deadline; see
 // ruleHeaderTimeout) becomes part of the transport cache key and the
 // resulting transport's ResponseHeaderTimeout. Zero means "no header
-// deadline".
-func (h *Handler) createReverseProxy(backendURL *url.URL, protocol BackendProtocol, backendTLS *BackendTLSConfig, filters []Filter, headerTimeout time.Duration) *httputil.ReverseProxy {
+// deadline". hostname is the matched config pattern used to label
+// backend-error metrics.
+func (h *Handler) createReverseProxy(backendURL *url.URL, protocol BackendProtocol, backendTLS *BackendTLSConfig, filters []Filter, headerTimeout time.Duration, hostname string) *httputil.ReverseProxy {
 	return &httputil.ReverseProxy{
 		Director: func(req *http.Request) {
 			req.URL.Scheme = backendURL.Scheme
@@ -636,7 +689,7 @@ func (h *Handler) createReverseProxy(backendURL *url.URL, protocol BackendProtoc
 			}
 		},
 		Transport:    h.backendTransport(backendURL.Host, protocol, backendTLS, headerTimeout),
-		ErrorHandler: errorHandler,
+		ErrorHandler: h.proxyErrorHandler(hostname),
 		ModifyResponse: func(resp *http.Response) error {
 			ApplyResponseFilters(filters, resp)
 

@@ -101,7 +101,7 @@ tests:
           path: spec.selector.matchLabels["app.kubernetes.io/component"]
           value: proxy
 
-  - it: should scrape config-api endpoint
+  - it: should scrape config-api endpoint at /metrics
     set:
       proxy:
         tunnelTokenSecretRef:
@@ -112,6 +112,9 @@ tests:
       - equal:
           path: spec.endpoints[0].port
           value: config-api
+      - equal:
+          path: spec.endpoints[0].path
+          value: /metrics
 
   - it: should not set interval by default
     set:

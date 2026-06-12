@@ -48,6 +48,8 @@ spec:
               value: ":{{ .Values.proxy.proxyPort }}"
             - name: PROXY_GRACE_PERIOD
               value: "{{ int .Values.proxy.gracePeriodSeconds }}s"
+            - name: PROXY_METRICS_ENABLED
+              value: {{ .Values.proxy.metrics.enabled | quote }}
             {{- with .Values.proxy.tunnel.protocol }}
             - name: PROXY_TUNNEL_PROTOCOL
               value: {{ . | quote }}

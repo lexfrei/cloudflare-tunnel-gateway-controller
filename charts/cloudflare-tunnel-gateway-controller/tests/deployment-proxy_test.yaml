@@ -74,6 +74,34 @@ tests:
             name: PROXY_GRACE_PERIOD
             value: "60s"
 
+  # Data-plane metrics are default-ON; the env var is rendered explicitly in
+  # both states so the deployed intent is visible in the pod spec.
+  - it: should enable proxy metrics by default
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: PROXY_METRICS_ENABLED
+            value: "true"
+
+  - it: should disable proxy metrics when proxy.metrics.enabled is false
+    set:
+      proxy:
+        metrics:
+          enabled: false
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: PROXY_METRICS_ENABLED
+            value: "false"
+
   - it: should use correct proxy image
     set:
       proxy:

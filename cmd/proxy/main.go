@@ -13,6 +13,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/logging"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/proxy"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/tracing"
@@ -143,14 +146,8 @@ func tracingHandlerOption() proxy.HandlerOption {
 func runTunnelMode(logger *slog.Logger, token string) {
 	configAddr := envOrDefault("PROXY_CONFIG_ADDR", defaultConfigAddr)
 
-	router := proxy.NewRouter()
-	proxyHandler := proxy.NewHandler(router, handlerOptions(logger)...)
-	router.SetHandler(proxyHandler)
-
-	authToken := os.Getenv("PROXY_AUTH_TOKEN")
-	warnIfNoAuth(logger, authToken)
-
-	configServer := newServer(configAddr, proxy.NewConfigAPI(router, authToken))
+	router, proxyHandler, configAPI := buildDataPlane(logger)
+	configServer := newServer(configAddr, configAPI)
 
 	// Create in-process origin proxy — traffic flows directly from cloudflared
 	// to our handler without HTTP serialization or localhost TCP hop.
@@ -224,19 +221,14 @@ func runStandaloneMode(logger *slog.Logger) {
 	configAddr := envOrDefault("PROXY_CONFIG_ADDR", defaultConfigAddr)
 	proxyAddr := envOrDefault("PROXY_ADDR", defaultProxyAddr)
 
-	router := proxy.NewRouter()
-	proxyHandler := proxy.NewHandler(router, handlerOptions(logger)...)
-	router.SetHandler(proxyHandler)
+	router, proxyHandler, configAPI := buildDataPlane(logger)
 
 	// Standalone mode has no tunnel to wait for, so readiness gates on config
 	// alone — latch the tunnel-connected state up front. (Tunnel mode flips it
 	// from the cloudflared connected-signal instead.)
 	router.SetTunnelConnected()
 
-	authToken := os.Getenv("PROXY_AUTH_TOKEN")
-	warnIfNoAuth(logger, authToken)
-
-	configServer := newServer(configAddr, proxy.NewConfigAPI(router, authToken))
+	configServer := newServer(configAddr, configAPI)
 	proxyServer := newProxyServer(proxyAddr, proxyHandler)
 
 	errChan := make(chan error, 2)
@@ -395,6 +387,71 @@ func drainErrors(logger *slog.Logger, errChan <-chan error) {
 	}
 }
 
+// buildDataPlane assembles the shared data-plane pieces for both run modes:
+// the router, the request handler (env-driven options plus metrics when
+// enabled), and the config API (with the /metrics exposition handler when
+// enabled).
+func buildDataPlane(logger *slog.Logger) (*proxy.Router, *proxy.Handler, *proxy.ConfigAPI) {
+	router := proxy.NewRouter()
+
+	opts := handlerOptions(logger)
+
+	metricsOpt, metricsHandler := buildProxyMetrics()
+	if metricsOpt != nil {
+		opts = append(opts, metricsOpt)
+	}
+
+	proxyHandler := proxy.NewHandler(router, opts...)
+	router.SetHandler(proxyHandler)
+
+	authToken := os.Getenv("PROXY_AUTH_TOKEN")
+	warnIfNoAuth(logger, authToken)
+
+	var apiOpts []proxy.ConfigAPIOption
+	if metricsHandler != nil {
+		apiOpts = append(apiOpts, proxy.WithMetricsHandler(metricsHandler))
+	}
+
+	return router, proxyHandler, proxy.NewConfigAPI(router, authToken, apiOpts...)
+}
+
+// buildProxyMetrics constructs the data-plane Prometheus instrumentation when
+// PROXY_METRICS_ENABLED allows it (default on). The instruments register on a
+// DEDICATED registry — the embedded cloudflared MustRegisters its collectors
+// on the global default and panics on duplicates. The /metrics handler
+// gathers the dedicated registry MERGED with prometheus.DefaultGatherer so
+// the cloudflared connector metrics (cloudflared_tunnel_*) and the
+// client_golang go/process collectors ship from the same endpoint.
+// ContinueOnError keeps a transient gather inconsistency in one registry
+// from failing the scrape of the other's series.
+func buildProxyMetrics() (proxy.HandlerOption, http.Handler) {
+	if !metricsEnabled() {
+		return nil, nil
+	}
+
+	reg := prometheus.NewRegistry()
+	metrics := proxy.NewMetrics(reg)
+
+	exposition := promhttp.HandlerFor(
+		prometheus.Gatherers{reg, prometheus.DefaultGatherer},
+		promhttp.HandlerOpts{ErrorHandling: promhttp.ContinueOnError},
+	)
+
+	return proxy.WithMetrics(metrics), exposition
+}
+
+// metricsEnabled reports whether the /metrics endpoint and per-request
+// instrumentation are on. Default TRUE — the inverse of the isTruthyEnv
+// convention, deliberately: metrics are cheap and secret-free, operators
+// should get them without setting anything. Only an explicit "0" / "false"
+// (case-insensitive, trimmed) disables.
+func metricsEnabled() bool {
+	raw := strings.ToLower(strings.TrimSpace(os.Getenv("PROXY_METRICS_ENABLED")))
+
+	return raw != "0" && raw != "false"
+}
+
+// warnIfNoAuth logs the missing-auth warning shared by both run modes.
 func warnIfNoAuth(logger *slog.Logger, authToken string) {
 	if authToken == "" {
 		logger.Warn("config API running WITHOUT authentication -- set PROXY_AUTH_TOKEN for production use")

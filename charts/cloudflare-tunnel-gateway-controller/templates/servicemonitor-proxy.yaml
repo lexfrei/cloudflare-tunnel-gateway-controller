@@ -14,6 +14,7 @@ spec:
       {{- include "cf-tunnel-gw-ctrl.proxySelectorLabels" . | nindent 6 }}
   endpoints:
     - port: config-api
+      path: /metrics
       {{- if .Values.serviceMonitor.interval }}
       interval: {{ .Values.serviceMonitor.interval }}
       {{- end }}

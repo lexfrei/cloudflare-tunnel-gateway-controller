@@ -328,6 +328,14 @@ proxy:
   # headroom so kubelet never SIGKILLs mid-drain. Capped at 180 (3m) by
   # cloudflared.
   gracePeriodSeconds: 30
+  # -- Data-plane Prometheus metrics, served at /metrics on the config API
+  # port (no auth — the endpoint carries no secrets and the port is
+  # cluster-internal). The endpoint also exposes the embedded cloudflared
+  # connector metrics (cloudflared_tunnel_*).
+  metrics:
+    # -- Expose request-level metrics (in-flight, duration, status classes,
+    # bytes, backend errors) on the config API port.
+    enabled: true
   # -- Tunnel transport settings.
   tunnel:
     # -- Edge transport protocol: "auto" (QUIC with HTTP/2 fallback), "http2",
