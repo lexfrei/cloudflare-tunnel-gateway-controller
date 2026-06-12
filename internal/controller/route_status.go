@@ -275,6 +275,13 @@ func buildParentStatus(
 		conditions = append(conditions, *partiallyInvalid)
 	}
 
+	// Same gating for the shadowed condition: only an accepted route can be
+	// meaningfully "shadowed" — a rejected route is not programmed at all.
+	if shadowed := buildShadowedCondition(diagnostics, generation, now); shadowed != nil &&
+		accepted.Status == metav1.ConditionTrue {
+		conditions = append(conditions, *shadowed)
+	}
+
 	return gatewayv1.RouteParentStatus{
 		ParentRef: gatewayv1.ParentReference{
 			Group:       ref.Group,
@@ -337,6 +344,45 @@ func diagnosticConditions(
 		LastTransitionTime: now,
 		Reason:             string(gatewayv1.RouteReasonUnsupportedValue),
 		Message:            droppedConfigMessage(accepted, true),
+	}
+}
+
+// buildShadowedCondition aggregates Shadowed-target diagnostics into one
+// Status=True condition (present only when at least one pair is shadowed —
+// absence IS the cleared state, since our parent-status entries are fully
+// rebuilt each sync). Duplicate messages are deduplicated; order is preserved.
+func buildShadowedCondition(
+	diagnostics []proxy.RouteDiagnostic,
+	generation int64,
+	now metav1.Time,
+) *metav1.Condition {
+	messages := make([]string, 0, len(diagnostics))
+	seen := make(map[string]struct{})
+
+	for _, diag := range diagnostics {
+		if diag.Target != proxy.DiagnosticShadowed {
+			continue
+		}
+
+		if _, ok := seen[diag.Message]; ok {
+			continue
+		}
+
+		seen[diag.Message] = struct{}{}
+		messages = append(messages, diag.Message)
+	}
+
+	if len(messages) == 0 {
+		return nil
+	}
+
+	return &metav1.Condition{
+		Type:               routeConditionShadowed,
+		Status:             metav1.ConditionTrue,
+		ObservedGeneration: generation,
+		LastTransitionTime: now,
+		Reason:             routeReasonShadowed,
+		Message:            strings.Join(messages, " | "),
 	}
 }
 
@@ -492,9 +538,24 @@ func firstResolvedRefsDiagnostic(diagnostics []proxy.RouteDiagnostic) (proxy.Rou
 // Event reason / action tokens for a benign config override. Kubernetes Events
 // require CamelCase machine-readable reason and action tokens distinct from the
 // human-readable note.
+// Dedicated condition type for a route whose (hostname, match) pairs are
+// shadowed by a higher-precedence route (#474). Domain-prefixed: the Gateway
+// API reserves the bare condition namespace, and the spec defines no
+// route-to-route hostname ownership — same-hostname routes merge legally, so
+// Accepted stays True and this condition is the observability surface.
+const (
+	routeConditionShadowed = "cf.k8s.lex.la/RouteShadowed"
+	routeReasonShadowed    = "HostnameMatchShadowed"
+)
+
 const (
 	eventReasonConfigOverridden = "ConfigOverridden"
 	eventActionConvert          = "Convert"
+	// eventReasonRouteShadowed marks the Warning Event mirror of the
+	// RouteShadowed condition, so collision visibility also lands in
+	// `kubectl events` and event-driven alerting.
+	eventReasonRouteShadowed = "RouteShadowed"
+	eventActionRouteSync     = "Sync"
 
 	// Event reason / action tokens for the GRPCRoute edge-toggle breadcrumb (see
 	// emitGRPCEdgeHint). The Cloudflare zone gRPC toggle is dashboard-only with no
@@ -518,19 +579,24 @@ func emitDiagnosticEvents(recorder events.EventRecorder, route runtime.Object, d
 	}
 
 	for _, diag := range diagnostics {
-		if diag.Target != proxy.DiagnosticEvent {
-			continue
-		}
+		switch diag.Target {
+		case proxy.DiagnosticEvent:
+			eventType := diag.EventType
+			if eventType != corev1.EventTypeWarning {
+				eventType = corev1.EventTypeNormal
+			}
 
-		eventType := diag.EventType
-		if eventType != corev1.EventTypeWarning {
-			eventType = corev1.EventTypeNormal
+			// Eventf treats the note as a format string. diag.Message is already
+			// fully formatted (and may contain a literal %), so pass it as a "%s"
+			// argument rather than as the format itself.
+			recorder.Eventf(route, nil, eventType, eventReasonConfigOverridden, eventActionConvert, "%s", diag.Message)
+		case proxy.DiagnosticShadowed:
+			// Mirror the RouteShadowed condition as a Warning Event so the
+			// collision also surfaces in `kubectl events` and event alerting.
+			recorder.Eventf(route, nil, corev1.EventTypeWarning, eventReasonRouteShadowed, eventActionRouteSync, "%s", diag.Message)
+		case proxy.DiagnosticAccepted, proxy.DiagnosticResolvedRefs:
+			// Condition-driving targets; no Event surface.
 		}
-
-		// Eventf treats the note as a format string. diag.Message is already
-		// fully formatted (and may contain a literal %), so pass it as a "%s"
-		// argument rather than as the format itself.
-		recorder.Eventf(route, nil, eventType, eventReasonConfigOverridden, eventActionConvert, "%s", diag.Message)
 	}
 }
 

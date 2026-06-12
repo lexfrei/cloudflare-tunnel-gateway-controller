@@ -867,6 +867,9 @@ func (s *ProxySyncer) buildProxyConfig(
 
 		grpcCfg := proxy.ConvertGRPCRoutes(ctx, grpcRoutes, s.clusterDomain, s.grpcBackendValidator, s.protocolResolver, s.tlsResolver, s.gatewayCertResolver)
 		cfg.Rules = append(cfg.Rules, grpcCfg.Rules...)
+		// Provenance MUST grow in lockstep with Rules (parallel slices) so the
+		// shadow detection below attributes every flattened rule correctly.
+		cfg.Provenance = append(cfg.Provenance, grpcCfg.Provenance...)
 		cfg.Diagnostics = append(cfg.Diagnostics, grpcCfg.Diagnostics...)
 
 		// Mark invalid gRPC backendRefs the same way as HTTP. Matching is by
@@ -900,6 +903,13 @@ func (s *ProxySyncer) buildProxyConfig(
 	// http2; cloudflared drops trailers over QUIC). gRPC rules look identical
 	// to h2c HTTP rules on the wire, so the signal must be explicit.
 	cfg.HasGRPCRoute = len(grpcRoutes) > 0
+
+	// Cross-route shadow detection (#474) runs LAST, over the exact rule
+	// stream the router will serve — after effective-hostname inheritance and
+	// the gRPC merge — so a collision an operator can hit is a collision this
+	// flags. Status/observability only: the diagnostics ride the existing
+	// pipeline into a dedicated condition + Warning Event on the losing route.
+	cfg.Diagnostics = append(cfg.Diagnostics, proxy.DetectShadowedRules(cfg)...)
 
 	return cfg
 }

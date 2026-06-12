@@ -147,6 +147,7 @@ func ConvertHTTPRoutes(
 	// spec, unresolvable backend refs must return HTTP 500. The proxy handler
 	// returns 500 when no backend is available.
 	return convertRoutesGeneric(ctx, routes, gatewayCertResolver, routeKindView[*gatewayv1.HTTPRoute]{
+		kind:       "HTTPRoute",
 		hostnames:  func(route *gatewayv1.HTTPRoute) []gatewayv1.Hostname { return route.Spec.Hostnames },
 		parentRefs: func(route *gatewayv1.HTTPRoute) []gatewayv1.ParentReference { return route.Spec.ParentRefs },
 		ruleCount:  func(route *gatewayv1.HTTPRoute) int { return len(route.Spec.Rules) },
