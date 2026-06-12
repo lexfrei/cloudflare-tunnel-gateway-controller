@@ -15,6 +15,8 @@ Every feature/fix follows the gates below. No shortcuts: each gate must close be
 
 Step 6's real-cluster verification is maintainer-only — it requires a Cloudflare account, a registered tunnel, and a Kubernetes cluster the maintainer can reach. Contributors finishing a branch should leave the PR in draft and ping the maintainer; the verification + merge is owned by them.
 
+**User-facing docs are part of the change, not a follow-up.** Any PR that changes something a user can observe — a new or changed feature, flag, default, supported Gateway API field, CLI command, install step, or limitation — MUST update `README.md` and the relevant `docs/` pages in the same PR. Before opening the PR, diff the change against what the docs currently claim: if `README.md` or the docs site would now describe the product incorrectly or incompletely, fix them here, not later. `README.md` describes only the product's current behaviour — it MUST NOT contain historical data ("changed in vX", "removed in vY", migration narration); that belongs in release notes and git history. Keep the README slop-free and crisp: lead with what the product does, and push deep technical detail to the docs site with the README keeping a short pointer. Purely internal changes (refactors, test-only, CI tooling) that surface nothing to a user are exempt — state that exemption in the PR body rather than skipping the check silently.
+
 ## Project Overview
 
 Kubernetes controller implementing Gateway API for Cloudflare Tunnel. Watches Gateway and HTTPRoute resources, automatically configures Cloudflare Tunnel ingress rules via API. Supports hot reload without cloudflared restart. Ships a single L7 proxy data plane (embeds cloudflared transport in-process via the vendored fork's `OverrideProxy` hook).
@@ -528,7 +530,7 @@ Standalone labels not enumerated above (`epic`, `community`, `help wanted`, `goo
 
 ### Milestone
 
-Always assign a milestone when creating issues. The current active milestone is `v3.1.0`; anything bound to an earlier release line goes in the corresponding `vX.Y.Z` milestone if one exists. Exception: issues filed automatically by workflows (e.g. the scheduled-e2e failure alert) carry no milestone — the right release target is unknown until a human triages them.
+Always assign a milestone when creating issues. Use the lowest-numbered open `vX.Y.Z` milestone as the current target (run `gh api repos/lexfrei/cloudflare-tunnel-gateway-controller/milestones --jq '.[].title'` to list them); anything bound to a specific later release line goes in the corresponding milestone if one exists. Exception: issues filed automatically by workflows (e.g. the scheduled-e2e failure alert) carry no milestone — the right release target is unknown until a human triages them.
 
 ## Conformance Testing
 
