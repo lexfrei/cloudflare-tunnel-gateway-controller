@@ -77,6 +77,21 @@ type Config struct {
 	// receive traffic (before that the edge returns 530). Runs on the signal
 	// goroutine; keep it non-blocking.
 	OnConnected func()
+	// GraceShutdownC, when non-nil, starts a graceful connector drain when
+	// closed: cloudflared unregisters from the edge (which is the ONLY layer
+	// that stops new requests — the edge routes to tunnel connections, not to
+	// the Kubernetes Service) and then waits GracePeriod for in-flight
+	// requests before the daemon exits. The ctx passed to StartTunnel MUST
+	// stay alive for the whole drain: the unregister RPC and the grace wait
+	// both run on it, and a cancelled ctx skips them entirely (see
+	// waitForUnregister in the vendored cloudflared). When nil, the drain
+	// trigger is derived from ctx.Done(), which preserves the legacy
+	// hard-stop behaviour — no graceful drain is possible in that mode.
+	GraceShutdownC <-chan struct{}
+	// GracePeriod bounds the in-flight drain window after the connector
+	// unregisters. Zero or negative selects the 30s default; values above
+	// cloudflared's MaxGracePeriod (3m) are clamped to it.
+	GracePeriod time.Duration
 }
 
 // Token mirrors the cloudflared token JSON structure.
@@ -140,18 +155,15 @@ func StartTunnel(ctx context.Context, cfg *Config) error {
 
 	connectedSignal := cfdsignal.New(make(chan struct{}))
 	reconnectCh := make(chan supervisor.ReconnectSignal, defaultHAConnections)
-	graceShutdownC := make(chan struct{})
-
-	go func() {
-		<-ctx.Done()
-		close(graceShutdownC)
-	}()
+	graceShutdownC := graceChannel(ctx, cfg.GraceShutdownC)
+	tunnelCfg.GracePeriod = resolveGracePeriod(cfg.GracePeriod)
 
 	go waitConnected(ctx, connectedSignal, logger, cfg.OnConnected)
 
 	logger.Info("starting tunnel daemon",
 		"tunnelID", token.TunnelID.String(),
 		"haConnections", defaultHAConnections,
+		"gracePeriod", tunnelCfg.GracePeriod,
 	)
 
 	err = supervisor.StartTunnelDaemon(
@@ -182,6 +194,42 @@ func waitConnected(ctx context.Context, connected *cfdsignal.Signal, logger *slo
 		}
 	case <-ctx.Done():
 	}
+}
+
+// graceChannel returns the channel whose close triggers cloudflared's
+// graceful connector drain. An explicit channel is used as-is so the caller
+// can drain while keeping ctx alive; nil derives the trigger from ctx
+// cancellation, preserving the legacy behaviour for callers that never drain
+// (that form cannot drain gracefully — the cancelled ctx aborts the
+// unregister RPC inside the vendored supervisor).
+func graceChannel(ctx context.Context, explicit <-chan struct{}) <-chan struct{} {
+	if explicit != nil {
+		return explicit
+	}
+
+	derived := make(chan struct{})
+
+	go func() {
+		<-ctx.Done()
+		close(derived)
+	}()
+
+	return derived
+}
+
+// resolveGracePeriod clamps the configured drain window: zero or negative
+// selects the default, values above cloudflared's MaxGracePeriod are clamped
+// to it (the edge enforces that bound on the unregister RPC anyway).
+func resolveGracePeriod(period time.Duration) time.Duration {
+	if period <= 0 {
+		return defaultGracePeriod
+	}
+
+	if period > connection.MaxGracePeriod {
+		return connection.MaxGracePeriod
+	}
+
+	return period
 }
 
 // buildOrchestrator creates the orchestration.Orchestrator and tunnel config.

@@ -592,6 +592,13 @@
           "maximum": 65535,
           "default": 8080
         },
+        "gracePeriodSeconds": {
+          "type": "integer",
+          "description": "Connector drain window in seconds: on SIGTERM the proxy unregisters its tunnel connectors and gives in-flight requests this long to finish. Pod terminationGracePeriodSeconds is derived as this value + 15s. Capped at 180 (3m) by cloudflared.",
+          "minimum": 1,
+          "maximum": 180,
+          "default": 30
+        },
         "tunnel": {
           "type": "object",
           "properties": {

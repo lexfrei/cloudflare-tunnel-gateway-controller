@@ -321,6 +321,13 @@ proxy:
   configAPIPort: 8081
   # -- Proxy port (internal, traffic arrives through tunnel)
   proxyPort: 8080
+  # -- Connector drain window in seconds. On SIGTERM the proxy unregisters its
+  # tunnel connectors from the Cloudflare edge (stopping new requests) and
+  # gives in-flight requests this long to finish before exiting. The pod's
+  # terminationGracePeriodSeconds is derived as this value plus 15s of
+  # headroom so kubelet never SIGKILLs mid-drain. Capped at 180 (3m) by
+  # cloudflared.
+  gracePeriodSeconds: 30
   # -- Tunnel transport settings.
   tunnel:
     # -- Edge transport protocol: "auto" (QUIC with HTTP/2 fallback), "http2",

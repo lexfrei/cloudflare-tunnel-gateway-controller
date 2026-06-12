@@ -39,6 +39,41 @@ tests:
           path: spec.replicas
           value: 3
 
+  # The pod's terminationGracePeriodSeconds must exceed the connector drain
+  # window (PROXY_GRACE_PERIOD) so kubelet's SIGKILL never lands while
+  # cloudflared is still draining in-flight requests. The chart derives both
+  # from one knob: gracePeriodSeconds → env, +15s headroom → pod field.
+  - it: should derive terminationGracePeriodSeconds and PROXY_GRACE_PERIOD from default gracePeriodSeconds
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
+    asserts:
+      - equal:
+          path: spec.template.spec.terminationGracePeriodSeconds
+          value: 45
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: PROXY_GRACE_PERIOD
+            value: "30s"
+
+  - it: should derive terminationGracePeriodSeconds and PROXY_GRACE_PERIOD from custom gracePeriodSeconds
+    set:
+      proxy:
+        gracePeriodSeconds: 60
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
+    asserts:
+      - equal:
+          path: spec.template.spec.terminationGracePeriodSeconds
+          value: 75
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: PROXY_GRACE_PERIOD
+            value: "60s"
+
   - it: should use correct proxy image
     set:
       proxy:

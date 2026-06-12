@@ -40,7 +40,37 @@ func TestNewServer(t *testing.T) {
 	assert.Equal(t, configWriteTimeout, server.WriteTimeout)
 }
 
-func TestHandleSignals_CancelOnSignal(t *testing.T) {
+// TestHandleDrainSignals_FirstSignalDrainsNotCancels pins the two-stage
+// shutdown contract for tunnel mode: the FIRST signal must start the graceful
+// connector drain while keeping the run context alive — cancelling it would
+// abort cloudflared's unregister RPC and cut in-flight requests (the exact bug
+// this function exists to fix).
+func TestHandleDrainSignals_FirstSignalDrainsNotCancels(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	sigChan := make(chan os.Signal, 1)
+	drained := make(chan struct{})
+	logger := slog.Default()
+
+	go handleDrainSignals(ctx, logger, func() { close(drained) }, cancel, sigChan)
+
+	sigChan <- os.Interrupt
+
+	select {
+	case <-drained:
+	case <-time.After(time.Second):
+		t.Fatal("drain not invoked on first signal")
+	}
+
+	require.NoError(t, ctx.Err(), "context must stay alive during graceful drain")
+}
+
+// TestHandleDrainSignals_SecondSignalForcesCancel pins the escalation path: a
+// second signal during the drain forces immediate shutdown via context cancel.
+func TestHandleDrainSignals_SecondSignalForcesCancel(t *testing.T) {
 	t.Parallel()
 
 	ctx, cancel := context.WithCancel(t.Context())
@@ -49,21 +79,22 @@ func TestHandleSignals_CancelOnSignal(t *testing.T) {
 	sigChan := make(chan os.Signal, 1)
 	logger := slog.Default()
 
-	done := make(chan struct{})
+	go handleDrainSignals(ctx, logger, func() {}, cancel, sigChan)
 
-	go func() {
-		handleSignals(ctx, logger, cancel, sigChan)
-		close(done)
-	}()
-
-	// Send signal — handler should cancel context.
+	sigChan <- os.Interrupt
 	sigChan <- os.Interrupt
 
-	<-done
-	assert.Error(t, ctx.Err(), "context should be cancelled after signal")
+	select {
+	case <-ctx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("context not cancelled on second signal")
+	}
 }
 
-func TestHandleSignals_ContextCancelled(t *testing.T) {
+// TestHandleDrainSignals_ContextCancelledExits pins that the goroutine exits
+// cleanly when another path (e.g. tunnel failure) cancels the context first,
+// without invoking drain.
+func TestHandleDrainSignals_ContextCancelledExits(t *testing.T) {
 	t.Parallel()
 
 	ctx, cancel := context.WithCancel(t.Context())
@@ -73,14 +104,17 @@ func TestHandleSignals_ContextCancelled(t *testing.T) {
 	done := make(chan struct{})
 
 	go func() {
-		handleSignals(ctx, logger, cancel, sigChan)
+		handleDrainSignals(ctx, logger, func() { t.Error("drain must not run on context cancel") }, cancel, sigChan)
 		close(done)
 	}()
 
-	// Cancel context — handler should exit without signal.
 	cancel()
 
-	<-done
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("handleDrainSignals did not exit on context cancel")
+	}
 }
 
 func TestConstants(t *testing.T) {

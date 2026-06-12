@@ -25,7 +25,9 @@ spec:
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      terminationGracePeriodSeconds: 30
+      # Drain window + 15s headroom: kubelet must not SIGKILL while cloudflared
+      # is still unregistering connectors / draining in-flight requests.
+      terminationGracePeriodSeconds: {{ add (int .Values.proxy.gracePeriodSeconds) 15 }}
       securityContext:
         {{- toYaml .Values.proxy.podSecurityContext | nindent 8 }}
       containers:
@@ -44,6 +46,8 @@ spec:
               value: ":{{ .Values.proxy.configAPIPort }}"
             - name: PROXY_ADDR
               value: ":{{ .Values.proxy.proxyPort }}"
+            - name: PROXY_GRACE_PERIOD
+              value: "{{ int .Values.proxy.gracePeriodSeconds }}s"
             {{- with .Values.proxy.tunnel.protocol }}
             - name: PROXY_TUNNEL_PROTOCOL
               value: {{ . | quote }}

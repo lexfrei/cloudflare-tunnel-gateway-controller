@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -155,15 +156,10 @@ func runTunnelMode(logger *slog.Logger, token string) {
 	// to our handler without HTTP serialization or localhost TCP hop.
 	originProxy := tunnel.NewGatewayOriginProxy(proxyHandler, logger)
 
-	// Register signal handler before starting tunnel to prevent signal loss
-	// during startup. The goroutine waits for either a signal or context cancellation.
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGTERM, syscall.SIGINT)
-
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go handleSignals(ctx, logger, cancel, sigChan)
+	graceC := setupDrainSignals(ctx, logger, cancel)
 
 	go func() {
 		logger.Info("starting config API server", "addr", configAddr)
@@ -204,8 +200,15 @@ func runTunnelMode(logger *slog.Logger, token string) {
 		// pod reports Ready when it can actually receive traffic (before that
 		// the edge returns 530). Combined with config presence in /readyz.
 		OnConnected: router.SetTunnelConnected,
+		// Two-stage shutdown: SIGTERM closes graceC (drain), the context stays
+		// alive so the connector can unregister and in-flight requests finish.
+		GraceShutdownC: graceC,
+		GracePeriod:    parseEnvDuration(logger, "PROXY_GRACE_PERIOD"),
 	})
 
+	// The daemon has exited (drained, failed, or force-cancelled) — release the
+	// signal goroutine before shutting the config server down.
+	cancel()
 	gracefulShutdown(logger, configServer)
 
 	if err != nil && !errors.Is(err, context.Canceled) {
@@ -283,15 +286,57 @@ func newProxyServer(addr string, handler http.Handler) *http.Server {
 	}
 }
 
-func handleSignals(ctx context.Context, logger *slog.Logger, cancel context.CancelFunc, sigChan <-chan os.Signal) {
+// setupDrainSignals registers the two-stage SIGTERM/SIGINT handling for
+// tunnel mode (registered before the tunnel starts so no signal is lost
+// during startup) and returns the channel whose close starts cloudflared's
+// connector drain: the connector unregisters from the edge (stopping NEW
+// requests — the edge routes to tunnel connections, not the Kubernetes
+// Service) and in-flight requests get the grace period to finish. The run
+// context MUST stay alive during the drain; cancelling it aborts the
+// unregister RPC.
+func setupDrainSignals(ctx context.Context, logger *slog.Logger, cancel context.CancelFunc) <-chan struct{} {
+	// Buffered for two signals: the first starts the drain, the second forces
+	// immediate shutdown.
+	sigChan := make(chan os.Signal, 2)
+	signal.Notify(sigChan, syscall.SIGTERM, syscall.SIGINT)
+
+	graceC := make(chan struct{})
+
+	go handleDrainSignals(ctx, logger, sync.OnceFunc(func() { close(graceC) }), cancel, sigChan)
+
+	return graceC
+}
+
+// handleDrainSignals implements the two-stage shutdown for tunnel mode. The
+// first SIGTERM/SIGINT starts the graceful connector drain (drain is invoked;
+// the context deliberately stays alive so cloudflared can unregister from the
+// edge and in-flight requests can finish within the grace period). A second
+// signal escalates to an immediate shutdown by cancelling the context. The
+// goroutine exits when the context is cancelled by any path (tunnel exit,
+// forced shutdown).
+func handleDrainSignals(
+	ctx context.Context,
+	logger *slog.Logger,
+	drain func(),
+	cancel context.CancelFunc,
+	sigChan <-chan os.Signal,
+) {
 	select {
 	case sig := <-sigChan:
-		logger.Info("received signal, shutting down", "signal", sig)
+		logger.Info("received signal, draining tunnel connections", "signal", sig)
+
+		drain()
+	case <-ctx.Done():
+		// Context was cancelled by another path (e.g., tunnel exit).
+		return
+	}
+
+	select {
+	case sig := <-sigChan:
+		logger.Info("received second signal, forcing shutdown", "signal", sig)
 
 		cancel()
 	case <-ctx.Done():
-		// Context was cancelled by another path (e.g., tunnel exit).
-		// Nothing to do — just let the goroutine exit cleanly.
 	}
 }
 
