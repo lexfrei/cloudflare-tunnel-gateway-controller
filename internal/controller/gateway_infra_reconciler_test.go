@@ -1,0 +1,296 @@
+package controller
+
+import (
+	"context"
+	"encoding/base64"
+	"encoding/json"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	appsv1 "k8s.io/api/apps/v1"
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
+
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/api/v1alpha1"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/cfmetrics"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/config"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/render"
+)
+
+const infraNamespace = "tenant-a"
+
+func infraTunnelToken(t *testing.T) string {
+	t.Helper()
+
+	payload, err := json.Marshal(map[string]any{
+		"a": "abcdef0123456789abcdef0123456789",
+		"s": base64.StdEncoding.EncodeToString([]byte("secret")),
+		"t": "550e8400-e29b-41d4-a716-446655440000",
+	})
+	require.NoError(t, err)
+
+	return base64.StdEncoding.EncodeToString(payload)
+}
+
+// infraFixtures builds the full per-Gateway opt-in object set: managed
+// GatewayClass chain, Gateway with infrastructure.parametersRef,
+// GatewayConfig, and the connector-token Secret.
+func infraFixtures(t *testing.T) []runtime.Object {
+	t.Helper()
+
+	return []runtime.Object{
+		&gatewayv1.GatewayClass{
+			ObjectMeta: metav1.ObjectMeta{Name: "cloudflare-tunnel"},
+			Spec: gatewayv1.GatewayClassSpec{
+				ControllerName: "cf.k8s.lex.la/tunnel-controller",
+				ParametersRef: &gatewayv1.ParametersReference{
+					Group: "cf.k8s.lex.la", Kind: "GatewayClassConfig", Name: "class-config",
+				},
+			},
+		},
+		&v1alpha1.GatewayClassConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "class-config"},
+			Spec: v1alpha1.GatewayClassConfigSpec{
+				TunnelID: "99999999-9999-4999-8999-999999999999",
+				CloudflareCredentialsSecretRef: v1alpha1.SecretReference{
+					Name: "class-credentials", Namespace: "cf-system",
+				},
+			},
+		},
+		&corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: "class-credentials", Namespace: "cf-system"},
+			Data:       map[string][]byte{"api-token": []byte("class-api-token")},
+		},
+		&gatewayv1.Gateway{
+			ObjectMeta: metav1.ObjectMeta{Name: "edge", Namespace: infraNamespace, UID: "gw-uid-1"},
+			Spec: gatewayv1.GatewaySpec{
+				GatewayClassName: "cloudflare-tunnel",
+				Infrastructure: &gatewayv1.GatewayInfrastructure{
+					ParametersRef: &gatewayv1.LocalParametersReference{
+						Group: "cf.k8s.lex.la", Kind: "GatewayConfig", Name: "edge-config",
+					},
+				},
+			},
+		},
+		&v1alpha1.GatewayConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "edge-config", Namespace: infraNamespace},
+			Spec: v1alpha1.GatewayConfigSpec{
+				TunnelTokenSecretRef: v1alpha1.LocalSecretReference{Name: "edge-token"},
+			},
+		},
+		&corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: "edge-token", Namespace: infraNamespace},
+			Data:       map[string][]byte{"tunnel-token": []byte(infraTunnelToken(t))},
+		},
+	}
+}
+
+func newInfraReconciler(t *testing.T, objects ...runtime.Object) *GatewayInfraReconciler {
+	t.Helper()
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, gatewayv1.Install(scheme))
+	require.NoError(t, v1alpha1.AddToScheme(scheme))
+	require.NoError(t, corev1.AddToScheme(scheme))
+	require.NoError(t, appsv1.AddToScheme(scheme))
+	require.NoError(t, autoscalingv2.AddToScheme(scheme))
+
+	builder := fake.NewClientBuilder().WithScheme(scheme)
+	for _, obj := range objects {
+		builder = builder.WithRuntimeObjects(obj)
+	}
+
+	fakeClient := builder.Build()
+
+	return &GatewayInfraReconciler{
+		Client:         fakeClient,
+		Scheme:         scheme,
+		ControllerName: "cf.k8s.lex.la/tunnel-controller",
+		ConfigResolver: config.NewResolver(fakeClient, "cf-system", cfmetrics.NewNoopCollector()),
+		RenderDefaults: render.Defaults{ProxyImage: "ghcr.io/example/proxy:v1.2.3"},
+	}
+}
+
+func reconcileEdge(t *testing.T, reconciler *GatewayInfraReconciler) {
+	t.Helper()
+
+	_, err := reconciler.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "edge", Namespace: infraNamespace},
+	})
+	require.NoError(t, err)
+}
+
+// TestGatewayInfraReconciler_RendersDataPlane pins the core contract: a
+// Gateway opted in via infrastructure.parametersRef gets a proxy Deployment
+// and a headless config Service in its namespace, both controller-owned (the
+// ownerRef is the GC mechanism on Gateway deletion).
+func TestGatewayInfraReconciler_RendersDataPlane(t *testing.T) {
+	t.Parallel()
+
+	reconciler := newInfraReconciler(t, infraFixtures(t)...)
+	reconcileEdge(t, reconciler)
+
+	var deployment appsv1.Deployment
+	require.NoError(t, reconciler.Get(context.Background(),
+		types.NamespacedName{Name: "cf-proxy-edge", Namespace: infraNamespace}, &deployment))
+
+	assert.Equal(t, "ghcr.io/example/proxy:v1.2.3", deployment.Spec.Template.Spec.Containers[0].Image)
+
+	require.Len(t, deployment.OwnerReferences, 1)
+	assert.Equal(t, "Gateway", deployment.OwnerReferences[0].Kind)
+	assert.Equal(t, "edge", deployment.OwnerReferences[0].Name)
+	require.NotNil(t, deployment.OwnerReferences[0].Controller)
+	assert.True(t, *deployment.OwnerReferences[0].Controller)
+
+	var service corev1.Service
+	require.NoError(t, reconciler.Get(context.Background(),
+		types.NamespacedName{Name: "cf-proxy-edge-config", Namespace: infraNamespace}, &service))
+	assert.True(t, service.Spec.PublishNotReadyAddresses)
+	require.Len(t, service.OwnerReferences, 1)
+	assert.Equal(t, "edge", service.OwnerReferences[0].Name)
+}
+
+// TestGatewayInfraReconciler_HealsDrift pins self-healing: a manual edit to
+// the rendered Deployment is reverted on the next reconcile.
+func TestGatewayInfraReconciler_HealsDrift(t *testing.T) {
+	t.Parallel()
+
+	reconciler := newInfraReconciler(t, infraFixtures(t)...)
+	reconcileEdge(t, reconciler)
+
+	ctx := context.Background()
+	key := types.NamespacedName{Name: "cf-proxy-edge", Namespace: infraNamespace}
+
+	var deployment appsv1.Deployment
+	require.NoError(t, reconciler.Get(ctx, key, &deployment))
+	deployment.Spec.Template.Spec.Containers[0].Image = "evil/image:latest"
+	require.NoError(t, reconciler.Update(ctx, &deployment))
+
+	reconcileEdge(t, reconciler)
+
+	require.NoError(t, reconciler.Get(ctx, key, &deployment))
+	assert.Equal(t, "ghcr.io/example/proxy:v1.2.3", deployment.Spec.Template.Spec.Containers[0].Image,
+		"the reconciler must restore the rendered spec")
+}
+
+// TestGatewayInfraReconciler_PreservesHPAOwnedReplicas pins replica
+// ownership: with autoscaling configured the reconciler must NOT reset the
+// replica count the HPA set.
+func TestGatewayInfraReconciler_PreservesHPAOwnedReplicas(t *testing.T) {
+	t.Parallel()
+
+	objects := infraFixtures(t)
+	for _, obj := range objects {
+		if gwConfig, ok := obj.(*v1alpha1.GatewayConfig); ok {
+			gwConfig.Spec.Autoscaling = &v1alpha1.ProxyAutoscaling{MaxReplicas: 10, TargetInflightPerPod: 50}
+		}
+	}
+
+	reconciler := newInfraReconciler(t, objects...)
+	reconcileEdge(t, reconciler)
+
+	ctx := context.Background()
+	key := types.NamespacedName{Name: "cf-proxy-edge", Namespace: infraNamespace}
+
+	// Simulate the HPA scaling to 7.
+	var deployment appsv1.Deployment
+	require.NoError(t, reconciler.Get(ctx, key, &deployment))
+	seven := int32(7)
+	deployment.Spec.Replicas = &seven
+	require.NoError(t, reconciler.Update(ctx, &deployment))
+
+	reconcileEdge(t, reconciler)
+
+	require.NoError(t, reconciler.Get(ctx, key, &deployment))
+	require.NotNil(t, deployment.Spec.Replicas)
+	assert.Equal(t, int32(7), *deployment.Spec.Replicas,
+		"autoscaling mode: the HPA owns the replica count, the reconciler must not fight it")
+}
+
+// TestGatewayInfraReconciler_SharedModeCleansUp pins the opt-out path:
+// removing infrastructure.parametersRef deletes the previously-rendered
+// resources (the Gateway is alive, so ownerRef GC alone cannot do it).
+func TestGatewayInfraReconciler_SharedModeCleansUp(t *testing.T) {
+	t.Parallel()
+
+	reconciler := newInfraReconciler(t, infraFixtures(t)...)
+	reconcileEdge(t, reconciler)
+
+	ctx := context.Background()
+
+	var gateway gatewayv1.Gateway
+	require.NoError(t, reconciler.Get(ctx, types.NamespacedName{Name: "edge", Namespace: infraNamespace}, &gateway))
+	gateway.Spec.Infrastructure = nil
+	require.NoError(t, reconciler.Update(ctx, &gateway))
+
+	reconcileEdge(t, reconciler)
+
+	var deployment appsv1.Deployment
+	err := reconciler.Get(ctx, types.NamespacedName{Name: "cf-proxy-edge", Namespace: infraNamespace}, &deployment)
+	assert.Error(t, err, "rendered Deployment must be deleted when the Gateway opts back out")
+
+	var service corev1.Service
+	err = reconciler.Get(ctx, types.NamespacedName{Name: "cf-proxy-edge-config", Namespace: infraNamespace}, &service)
+	assert.Error(t, err, "rendered Service must be deleted when the Gateway opts back out")
+}
+
+// TestGatewayInfraReconciler_InvalidParametersRendersNothing pins fail-safe
+// behaviour: an invalid parametersRef renders nothing and does NOT error the
+// reconcile (the watches re-trigger when the user fixes the referent; the
+// status surface is the Gateway reconciler's InvalidParameters condition).
+func TestGatewayInfraReconciler_InvalidParametersRendersNothing(t *testing.T) {
+	t.Parallel()
+
+	objects := infraFixtures(t)
+	// Drop the GatewayConfig so the ref dangles.
+	filtered := make([]runtime.Object, 0, len(objects))
+
+	for _, obj := range objects {
+		if _, ok := obj.(*v1alpha1.GatewayConfig); ok {
+			continue
+		}
+
+		filtered = append(filtered, obj)
+	}
+
+	reconciler := newInfraReconciler(t, filtered...)
+	reconcileEdge(t, reconciler)
+
+	var deployment appsv1.Deployment
+	err := reconciler.Get(context.Background(),
+		types.NamespacedName{Name: "cf-proxy-edge", Namespace: infraNamespace}, &deployment)
+	assert.Error(t, err, "nothing must be rendered for an invalid parametersRef")
+}
+
+// TestGatewayInfraReconciler_IgnoresForeignGateways pins scoping: Gateways of
+// another controller are left untouched even when they carry a parametersRef.
+func TestGatewayInfraReconciler_IgnoresForeignGateways(t *testing.T) {
+	t.Parallel()
+
+	objects := infraFixtures(t)
+	objects = append(objects, &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "other-class"},
+		Spec:       gatewayv1.GatewayClassSpec{ControllerName: "example.com/other"},
+	})
+
+	for _, obj := range objects {
+		if gateway, ok := obj.(*gatewayv1.Gateway); ok {
+			gateway.Spec.GatewayClassName = "other-class"
+		}
+	}
+
+	reconciler := newInfraReconciler(t, objects...)
+	reconcileEdge(t, reconciler)
+
+	var deployment appsv1.Deployment
+	err := reconciler.Get(context.Background(),
+		types.NamespacedName{Name: "cf-proxy-edge", Namespace: infraNamespace}, &deployment)
+	assert.Error(t, err)
+}

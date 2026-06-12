@@ -23,6 +23,7 @@ import (
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/cfmetrics"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/config"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/hostnameownership"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/render"
 )
 
 // installSchemes registers the Gateway API v1, v1beta1 (for ReferenceGrant)
@@ -112,6 +113,11 @@ type Config struct {
 	// (kubectl label-selector syntax; empty = all namespaces, fail-closed
 	// everywhere). Must match the admission policy binding's namespaceSelector.
 	HostnameOwnershipNamespaceSelector string
+
+	// ProxyImage is the container image for per-Gateway rendered proxy
+	// Deployments (GatewayConfig data planes). The chart wires it to the
+	// release's proxy image; GatewayConfig.spec.image overrides per Gateway.
+	ProxyImage string
 
 	// ProxyTokenSecret identifies the Secret holding the tunnel token used by
 	// the proxy. Format: "<namespace>/<name>". When set, the controller
@@ -231,6 +237,25 @@ func Run(ctx context.Context, cfg *Config) error {
 
 	if err := gatewayReconciler.SetupWithManager(mgr); err != nil {
 		return errors.Wrap(err, "failed to setup gateway controller")
+	}
+
+	// Per-Gateway data planes (#479): renders a dedicated proxy Deployment +
+	// config Service (+ optional HPA) for Gateways carrying
+	// infrastructure.parametersRef. Status stays with gatewayReconciler.
+	gatewayInfraReconciler := &GatewayInfraReconciler{
+		Client:         mgr.GetClient(),
+		Scheme:         mgr.GetScheme(),
+		ControllerName: cfg.ControllerName,
+		ConfigResolver: configResolver,
+		Recorder:       mgr.GetEventRecorder("gateway-infra-controller"),
+		RenderDefaults: render.Defaults{
+			ProxyImage:     cfg.ProxyImage,
+			TunnelProtocol: cfg.TunnelProtocol,
+		},
+	}
+
+	if err := gatewayInfraReconciler.SetupWithManager(mgr); err != nil {
+		return errors.Wrap(err, "failed to setup gateway infra controller")
 	}
 
 	// Create shared route syncer for unified HTTP and GRPC route synchronization

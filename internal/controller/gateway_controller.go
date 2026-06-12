@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/cockroachdb/errors"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -26,6 +27,7 @@ import (
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/api/v1alpha1"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/config"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/logging"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/render"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/routebinding"
 )
 
@@ -166,13 +168,10 @@ func (r *GatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		return ctrl.Result{}, nil
 	}
 
-	// Resolve configuration from the Gateway's GatewayClass.
-	// Only the live path needs the resolved config (status address comes from
-	// the resolved tunnel ID); the deletion path above handles itself.
-	resolvedConfig, err := r.ConfigResolver.ResolveFromGatewayClassName(ctx, string(gateway.Spec.GatewayClassName))
+	resolvedConfig, perGatewayMode, err := r.resolveGatewayConfig(ctx, &gateway)
 	if err != nil {
-		logger.Error(err, "failed to resolve config from GatewayClassConfig")
-		// Update Gateway status to reflect config error and requeue for retry
+		logger.Error(err, "failed to resolve gateway configuration")
+
 		if statusErr := r.setConfigErrorStatus(ctx, &gateway, err); statusErr != nil {
 			logger.Error(statusErr, "failed to update gateway status")
 		}
@@ -180,11 +179,38 @@ func (r *GatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		return ctrl.Result{RequeueAfter: configErrorRequeueDelay, Priority: new(priorityGateway)}, nil
 	}
 
-	if err := r.updateStatus(ctx, &gateway, resolvedConfig); err != nil {
+	if err := r.updateStatus(ctx, &gateway, resolvedConfig, perGatewayMode); err != nil {
 		return ctrl.Result{}, errors.Wrap(err, "failed to update gateway status")
 	}
 
 	return ctrl.Result{}, nil
+}
+
+// resolveGatewayConfig resolves the Gateway's effective configuration: the
+// per-Gateway data plane (infrastructure.parametersRef → tunnel identity from
+// the connector token) when opted in, the GatewayClass chain otherwise. The
+// bool reports per-Gateway mode so the status writer gates Programmed on the
+// rendered Deployment. An invalid parametersRef errors with
+// config.ErrInvalidParameters, surfacing as Accepted=False/InvalidParameters.
+func (r *GatewayReconciler) resolveGatewayConfig(
+	ctx context.Context,
+	gateway *gatewayv1.Gateway,
+) (*config.ResolvedConfig, bool, error) {
+	perGateway, err := r.ConfigResolver.ResolveForGateway(ctx, gateway)
+	if err != nil {
+		return nil, false, errors.Wrap(err, "per-gateway configuration")
+	}
+
+	if perGateway != nil {
+		return &perGateway.ResolvedConfig, true, nil
+	}
+
+	classConfig, err := r.ConfigResolver.ResolveFromGatewayClassName(ctx, string(gateway.Spec.GatewayClassName))
+	if err != nil {
+		return nil, false, errors.Wrap(err, "GatewayClass configuration")
+	}
+
+	return classConfig, false, nil
 }
 
 //nolint:funlen // status update logic with retry
@@ -192,6 +218,7 @@ func (r *GatewayReconciler) updateStatus(
 	ctx context.Context,
 	gateway *gatewayv1.Gateway,
 	cfg *config.ResolvedConfig,
+	perGatewayMode bool,
 ) error {
 	gatewayKey := types.NamespacedName{Name: gateway.Name, Namespace: gateway.Namespace}
 
@@ -252,16 +279,26 @@ func (r *GatewayReconciler) updateStatus(
 			accepted.Message = conflictMsg
 		}
 
+		programmed := metav1.Condition{
+			Type:               string(gatewayv1.GatewayConditionProgrammed),
+			Status:             metav1.ConditionTrue,
+			ObservedGeneration: freshGateway.Generation,
+			LastTransitionTime: now,
+			Reason:             string(gatewayv1.GatewayReasonProgrammed),
+			Message:            "Gateway programmed in Cloudflare Tunnel",
+		}
+
+		// A dedicated data plane is only "programmed" once it can actually
+		// carry traffic: the rendered proxy Deployment needs at least one
+		// ready replica (= a registered tunnel connector). The shared plane
+		// keeps the historic semantics (chart-managed proxy, always present).
+		if perGatewayMode {
+			programmed = r.perGatewayProgrammedCondition(ctx, &freshGateway, now)
+		}
+
 		applyGatewayConditions(&freshGateway.Status.Conditions, []metav1.Condition{
 			accepted,
-			{
-				Type:               string(gatewayv1.GatewayConditionProgrammed),
-				Status:             metav1.ConditionTrue,
-				ObservedGeneration: freshGateway.Generation,
-				LastTransitionTime: now,
-				Reason:             string(gatewayv1.GatewayReasonProgrammed),
-				Message:            "Gateway programmed in Cloudflare Tunnel",
-			},
+			programmed,
 		}, buildClientCertResolvedRefsCondition(freshGateway.Generation, now, clientCertErr))
 
 		listenerStatuses := make([]gatewayv1.ListenerStatus, 0, len(freshGateway.Spec.Listeners))
@@ -349,6 +386,44 @@ func (r *GatewayReconciler) updateStatus(
 	return errors.Wrap(err, "failed to update gateway status after retries")
 }
 
+// perGatewayProgrammedCondition derives Programmed for a Gateway with a
+// dedicated data plane from its rendered proxy Deployment: at least one ready
+// replica means a tunnel connector is registered and traffic can flow.
+func (r *GatewayReconciler) perGatewayProgrammedCondition(
+	ctx context.Context,
+	gateway *gatewayv1.Gateway,
+	now metav1.Time,
+) metav1.Condition {
+	condition := metav1.Condition{
+		Type:               string(gatewayv1.GatewayConditionProgrammed),
+		Status:             metav1.ConditionFalse,
+		ObservedGeneration: gateway.Generation,
+		LastTransitionTime: now,
+		Reason:             string(gatewayv1.GatewayReasonPending),
+	}
+
+	var deployment appsv1.Deployment
+
+	err := r.Get(ctx, types.NamespacedName{
+		Name: render.DeploymentName(gateway), Namespace: gateway.Namespace,
+	}, &deployment)
+
+	switch {
+	case apierrors.IsNotFound(err):
+		condition.Message = "Per-Gateway proxy deployment not yet created"
+	case err != nil:
+		condition.Message = truncateMessage("Failed to read per-Gateway proxy deployment: " + err.Error())
+	case deployment.Status.ReadyReplicas >= 1:
+		condition.Status = metav1.ConditionTrue
+		condition.Reason = string(gatewayv1.GatewayReasonProgrammed)
+		condition.Message = "Per-Gateway proxy deployment has ready replicas"
+	default:
+		condition.Message = "Per-Gateway proxy deployment has no ready replicas yet"
+	}
+
+	return condition
+}
+
 // gatewayStatusStale reports whether the freshly-fetched Gateway already
 // carries status conditions (top-level or per-listener) stamped with a
 // generation newer than reconciledGen, in which case this reconcile MUST NOT
@@ -395,7 +470,7 @@ func (r *GatewayReconciler) setConfigErrorStatus(
 		}
 
 		now := metav1.Now()
-		errMsg := truncateMessage("Failed to resolve GatewayClassConfig: " + configErr.Error())
+		errMsg := truncateMessage("Failed to resolve Gateway configuration: " + configErr.Error())
 
 		// Clear addresses on config error (no valid tunnel to point to)
 		freshGateway.Status.Addresses = nil
@@ -582,6 +657,12 @@ func (r *GatewayReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Watches(
 			&gatewayv1.GRPCRoute{},
 			handler.EnqueueRequestsFromMapFunc(r.routeToGateways),
+		).
+		// Watch rendered per-Gateway proxy Deployments (controller-owned by
+		// their Gateway) so Programmed refreshes when replica readiness flips.
+		Watches(
+			&appsv1.Deployment{},
+			handler.EnqueueRequestForOwner(mgr.GetScheme(), mgr.GetRESTMapper(), &gatewayv1.Gateway{}, handler.OnlyControllerOwner()),
 		).
 		// Watch ListenerSets so status.attachedListenerSets refreshes when a
 		// ListenerSet is created, edited, or deleted — without this the count
