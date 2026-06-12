@@ -167,6 +167,10 @@ rules:
 !!! note "RBAC scope"
     The controller reads Secrets and ConfigMaps and writes status subresources. Its workload writes are scoped to the data planes it owns: patching the shared proxy Deployment's pod-template annotation when the tunnel-token Secret rotates (a native rolling restart), and rendering a dedicated proxy Deployment, headless config Service, and optional HorizontalPodAutoscaler for each Gateway opted into a per-Gateway data plane via `infrastructure.parametersRef`. Those rendered objects are controller-owned via ownerReferences, kept in sync against drift, and deleted only when actually owned — a name collision with a user resource can never turn into a deletion. Workload write access is cluster-wide because Gateways live in arbitrary namespaces.
 
+### Multi-Tenancy
+
+Tenant isolation is layered: admission-level scoping (per-tenant listeners, `allowedListeners`/`allowedRoutes`, the opt-in hostname-ownership `ValidatingAdmissionPolicy`), an independent controller-side enforcement of the same hostname-ownership rule (a route that bypasses admission is still never programmed), and optional hard data-plane isolation with a dedicated proxy and tunnel per Gateway. The boundaries and trade-offs are documented in the [Multi-Tenancy guide](../guides/multi-tenancy.md) and the [Per-Gateway Isolation guide](../guides/per-gateway-isolation.md).
+
 ### Container Security
 
 The controller container follows security best practices:

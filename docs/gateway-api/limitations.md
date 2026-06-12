@@ -67,6 +67,10 @@ Two cases are handled:
 
 If a backend is both nonexistent and endpoint-less the `500` (invalid-ref) status wins. A single-backend rule whose only backend is unavailable returns the corresponding status for all of its traffic.
 
+## Multi-Tenant Isolation Boundary
+
+By default all Gateways of the class share one proxy process and one Cloudflare Tunnel; route-level scoping (`allowedRoutes`, hostname intersection, the optional hostname-ownership policy) is admission/control-plane isolation only. The Gateway API defines no route-to-route hostname ownership — same-hostname routes merge by precedence, and a shadowed route is reported via the `cf.k8s.lex.la/RouteShadowed` condition rather than rejected. Per-ListenerSet TLS certificate refs are validated for status, never served (TLS terminates at the Cloudflare edge). For hard isolation a Gateway can opt into a dedicated proxy + tunnel. See the [Multi-Tenancy](../guides/multi-tenancy.md) and [Per-Gateway Isolation](../guides/per-gateway-isolation.md) guides.
+
 ## SSL Certificate Limitations
 
 Cloudflare's free [Universal SSL](https://developers.cloudflare.com/ssl/edge-certificates/universal-ssl/limitations/) certificates only cover root and first-level subdomains:

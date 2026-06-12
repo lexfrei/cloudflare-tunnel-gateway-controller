@@ -188,6 +188,34 @@ proxy:
 
 For architecture details, see the [L7 Proxy Guide](../guides/l7-proxy.md).
 
+### Metrics
+
+```yaml
+proxy:
+  metrics:
+    enabled: true   # /metrics on the config API port; also exposes cloudflared connector metrics
+```
+
+### Graceful Drain
+
+```yaml
+proxy:
+  gracePeriodSeconds: 30   # connector drain window; pod terminationGracePeriodSeconds = this + 15
+```
+
+## Multi-Tenancy
+
+```yaml
+# Per-namespace hostname ownership, enforced twice (admission + controller).
+hostnameOwnershipPolicy:
+  enabled: false
+  labelKey: cf.k8s.lex.la/hostname-suffix
+  namespaceSelector: {}     # empty polices EVERY namespace — scope deliberately
+  admissionPolicy: true     # set false on clusters older than Kubernetes 1.30
+```
+
+See the [Multi-Tenancy guide](../guides/multi-tenancy.md) for the namespace-label convention and fail-closed semantics, and the [Per-Gateway Isolation guide](../guides/per-gateway-isolation.md) for dedicated data planes (configured via the `GatewayConfig` CRD, not Helm values).
+
 ## Upgrading
 
 ```bash

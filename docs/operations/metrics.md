@@ -90,6 +90,60 @@ Built-in metrics from controller-runtime.
 | `process_resident_memory_bytes` | Gauge | Resident memory |
 | `process_open_fds` | Gauge | Open file descriptors |
 
+### Proxy (Data-Plane) Metrics
+
+The in-process L7 proxy serves its own exposition at `/metrics` on the config API port (8081, no auth — the endpoint carries no secrets; the Bearer token protects config writes). The chart's proxy ServiceMonitor scrapes it when `serviceMonitor.enabled` is set; metrics are on by default and can be disabled with `proxy.metrics.enabled: false`. The same endpoint also surfaces the embedded cloudflared connector metrics (`cloudflared_tunnel_*`).
+
+The `hostname` label always carries the MATCHED route hostname pattern (exact host, `*.suffix` wildcard pattern, or empty for default-bucket and unmatched requests) — never the raw client Host — so series cardinality is bounded by the pushed config.
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `cftunnel_proxy_requests_in_flight` | Gauge | — | Requests currently being served (excluding hijacked WebSocket sessions). The saturation signal for horizontal scaling. |
+| `cftunnel_proxy_websocket_active_sessions` | Gauge | — | Live post-upgrade WebSocket sessions. |
+| `cftunnel_proxy_request_duration_seconds` | Histogram | `hostname` | Wall time from arrival to response completion; WebSocket upgrades observe time-to-upgrade, not session lifetime. |
+| `cftunnel_proxy_requests_total` | Counter | `hostname`, `status_class` | Completed exchanges by status class (`1xx`..`5xx`, `aborted`). A WebSocket upgrade counts as `1xx` at hijack time. |
+| `cftunnel_proxy_backend_errors_total` | Counter | `hostname`, `reason` | Backend dial/connect failures (`dial`, `timeout`, `tls`, `canceled`, `ws_dial`, `ws_handshake`, `other`). |
+| `cftunnel_proxy_response_bytes_total` | Counter | `hostname` | Response body bytes written (post-hijack WebSocket bytes excluded). |
+| `cftunnel_proxy_request_bytes_total` | Counter | `hostname` | Request body bytes read. |
+
+#### Scaling the proxy on concurrency
+
+The proxy is an I/O-bound L7 hop behind an outbound tunnel: CPU is a poor saturation proxy and there is no Service load balancer producing ingress signals. Scale on the in-flight gauge instead. Two ways to feed it to an HPA:
+
+**KEDA** (Prometheus scaler):
+
+```yaml
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: proxy-inflight
+spec:
+  scaleTargetRef:
+    name: <proxy-deployment>
+  triggers:
+    - type: prometheus
+      metadata:
+        serverAddress: http://prometheus.monitoring:9090
+        query: sum(cftunnel_proxy_requests_in_flight{job="<release>-proxy"})
+        threshold: "50"
+```
+
+**prometheus-adapter** (Pods metric for a native `autoscaling/v2` HPA):
+
+```yaml
+# prometheus-adapter values: expose the gauge through the custom-metrics API
+rules:
+  custom:
+    - seriesQuery: 'cftunnel_proxy_requests_in_flight{namespace!="",pod!=""}'
+      resources:
+        overrides:
+          namespace: {resource: "namespace"}
+          pod: {resource: "pod"}
+      metricsQuery: sum(<<.Series>>{<<.LabelMatchers>>}) by (<<.GroupBy>>)
+```
+
+Per-Gateway data planes render this HPA automatically when `GatewayConfig.spec.autoscaling` is set — see [Per-Gateway Isolation](../guides/per-gateway-isolation.md).
+
 ## Prometheus Configuration
 
 ### ServiceMonitor (Prometheus Operator)

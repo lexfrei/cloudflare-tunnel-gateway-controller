@@ -38,6 +38,22 @@ This section contains step-by-step guides for common integration scenarios and a
 
     [:octicons-arrow-right-24: Monitoring](monitoring.md)
 
+-   :material-account-group:{ .lg .middle } **Multi-Tenancy**
+
+    ---
+
+    Scope listeners per tenant, enforce hostname ownership twice, and detect route collisions.
+
+    [:octicons-arrow-right-24: Multi-Tenancy](multi-tenancy.md)
+
+-   :material-shield-lock:{ .lg .middle } **Per-Gateway Isolation**
+
+    ---
+
+    Give a Gateway its own proxy Deployment and Cloudflare Tunnel for hard data-plane isolation.
+
+    [:octicons-arrow-right-24: Per-Gateway Isolation](per-gateway-isolation.md)
+
 </div>
 
 ## Prerequisites
@@ -56,3 +72,5 @@ Before following these guides, ensure you have:
 | Automatic DNS record creation | [External-DNS](external-dns.md) |
 | Multi-namespace service mesh | [Cross-Namespace Routing](cross-namespace.md) |
 | Production observability | [Monitoring](monitoring.md) |
+| Shared cluster with multiple teams | [Multi-Tenancy](multi-tenancy.md) |
+| Hard tenant isolation (own proxy + tunnel) | [Per-Gateway Isolation](per-gateway-isolation.md) |

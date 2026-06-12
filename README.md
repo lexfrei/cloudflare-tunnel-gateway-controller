@@ -21,6 +21,8 @@ Expose in-cluster services through a Cloudflare Tunnel using standard Gateway AP
 - HTTPRoute CORS filter
 - Cross-namespace backend references gated by ReferenceGrant
 - Backend TLS (`BackendTLSPolicy`) and backend WebSocket via `appProtocol`
+- Multi-tenant isolation: per-namespace hostname-ownership enforcement (admission policy + controller), route-collision detection, and optional per-Gateway data planes (a dedicated proxy and tunnel per Gateway)
+- Request-level Prometheus metrics from the proxy data plane (per-hostname rates, latency, in-flight gauge for autoscaling)
 - Leader election for high-availability deployments
 - Multi-arch images (amd64, arm64), signed with cosign
 
@@ -227,6 +229,8 @@ make lint        # run linter
 ## Security
 
 For security issues, please see [SECURITY.md](SECURITY.md).
+
+For multi-tenant deployments — isolation boundaries, hostname-ownership enforcement, and per-Gateway data planes — see the [Multi-Tenancy guide](https://cf.k8s.lex.la/latest/guides/multi-tenancy/).
 
 ## License
 

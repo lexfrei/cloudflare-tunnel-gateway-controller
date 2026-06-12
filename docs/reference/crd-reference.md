@@ -48,6 +48,40 @@ GatewayClassConfig has a `status.conditions` subresource. The reconciler emits:
 - `SecretsResolved` — `True` when the referenced credentials Secret exists and carries the expected key, `False` otherwise.
 - `Valid` — `True` when all validation checks pass; `False` with the first failure message otherwise.
 
+## GatewayConfig
+
+`GatewayConfig` is a namespaced CRD carrying per-Gateway data-plane parameters, referenced from `Gateway.spec.infrastructure.parametersRef` (group `cf.k8s.lex.la`, kind `GatewayConfig`, same namespace). Its presence opts the Gateway into a dedicated proxy Deployment and a dedicated Cloudflare Tunnel.
+
+### GatewayConfig Spec
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `tunnelTokenSecretRef` | object | Yes | Connector-token Secret in the same namespace (`name`, optional `key`, default `tunnel-token`). The tunnel ID and account are parsed from the token. |
+| `cloudflareCredentialsSecretRef` | object | No | API-token override for this Gateway's tunnel-document writes; defaults to the GatewayClass → GatewayClassConfig credentials. |
+| `authTokenSecretRef` | object | No | Bearer token (same namespace, default key `auth-token`) protecting this data plane's config API. |
+| `replicas` | integer | No | Fixed proxy replica count (default 2). Mutually exclusive with `autoscaling` (CEL-enforced). |
+| `autoscaling` | object | No | `minReplicas` (default 2), `maxReplicas`, `targetInflightPerPod`, optional `metricName` — renders an HPA on the proxy's in-flight gauge. |
+| `resources` | object | No | Proxy container resource requirements. |
+| `image` | string | No | Proxy image override; defaults to the controller's `--proxy-image`. |
+
+### GatewayConfig Example
+
+```yaml
+apiVersion: cf.k8s.lex.la/v1alpha1
+kind: GatewayConfig
+metadata:
+  name: edge-config
+  namespace: tenant-a
+spec:
+  tunnelTokenSecretRef:
+    name: edge-tunnel-token
+  autoscaling:
+    maxReplicas: 10
+    targetInflightPerPod: 50
+```
+
+See the [Per-Gateway Isolation guide](../guides/per-gateway-isolation.md) for the full workflow.
+
 ## ExternalBackend
 
 **API Version**: `cf.k8s.lex.la/v1alpha1` **Kind**: `ExternalBackend` **Scope**: Namespaced
