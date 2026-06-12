@@ -4,7 +4,7 @@ go 1.26.4
 
 require (
 	github.com/cloudflare/cloudflare-go/v7 v7.5.0
-	github.com/cloudflare/cloudflared v0.0.0-20260611123150-4d95ab73f584
+	github.com/cloudflare/cloudflared v0.0.0-20260612062426-68620efbce4c
 	github.com/cockroachdb/errors v1.13.0
 	github.com/go-logr/logr v1.4.3
 	github.com/google/uuid v1.6.0
