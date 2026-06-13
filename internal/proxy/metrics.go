@@ -195,6 +195,14 @@ func (s *metricsRequestState) setHostname(hostname string) {
 // 101 bytes directly to the hijacked connection, bypassing the counting
 // writer. The post-upgrade session is accounted by finish.
 func (s *metricsRequestState) onUpgrade() {
+	if s.upgraded {
+		// A second hijack on the same request must not double-count: it would
+		// double-Dec the in-flight gauge (driving it negative) and double-Inc
+		// the session gauge. Single-hijack-per-flow holds today; this makes the
+		// no-double-count contract enforced rather than convention-dependent.
+		return
+	}
+
 	s.upgraded = true
 	s.metrics.requestsInFlight.Dec()
 	s.metrics.wsActiveSessions.Inc()

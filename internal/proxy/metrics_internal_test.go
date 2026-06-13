@@ -163,6 +163,28 @@ func TestMetricsUpgrade_RequestBodyBytesCounted(t *testing.T) {
 		"the upgraded path must record the request body bytes read before hijack")
 }
 
+// TestMetricsOnUpgrade_Idempotent pins that a second onUpgrade is a no-op: it
+// must not double-Dec the in-flight gauge (which would drive it negative) nor
+// double-Inc the session gauge.
+func TestMetricsOnUpgrade_Idempotent(t *testing.T) {
+	t.Parallel()
+
+	reg := prometheus.NewRegistry()
+	metrics := NewMetrics(reg)
+
+	counted := newCountingResponseWriter(nil)
+	state := metrics.beginRequest(counted, &http.Request{})
+	state.setHostname("ws.example.com")
+
+	state.onUpgrade()
+	state.onUpgrade() // a second hijack must not double-count
+
+	assert.InDelta(t, 0.0, testutil.ToFloat64(metrics.requestsInFlight), 0,
+		"in-flight must drop to 0 exactly once, never negative")
+	assert.InDelta(t, 1.0, testutil.ToFloat64(metrics.wsActiveSessions), 0,
+		"the session gauge must increment exactly once")
+}
+
 // TestMetrics_FinishRunsOnPanicNoGaugeLeak pins the load-bearing guarantee
 // behind the deferred finish: a handler that PANICS mid-request must still
 // release the in-flight gauge. A leaked increment would peg
