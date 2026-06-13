@@ -102,6 +102,13 @@ func (s *RouteSyncer) resolveInfraGateways(ctx context.Context) (*infraGateways,
 
 		perGateway, resolveErr := s.ConfigResolver.ResolveForGateway(ctx, gateway)
 		if resolveErr != nil || perGateway == nil {
+			// DELIBERATE: transient resolve failures land in broken alongside
+			// deterministic ErrInvalidParameters ones. For an isolation
+			// feature, fail-closed is the right bias — serving a tenant's
+			// routes from a possibly-wrong plane during a blip is worse than
+			// briefly not programming route CHANGES (the running data plane
+			// keeps its last pushed config either way). The Gateway
+			// reconciler still distinguishes the classes for status.
 			logger.Warn("per-gateway configuration did not resolve; failing the gateway's routes closed",
 				"gateway", key, "error", resolveErr)
 

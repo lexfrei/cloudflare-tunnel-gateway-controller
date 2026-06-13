@@ -104,6 +104,26 @@ func TestPushPartitionConfigs_EarlyErrorResultDoesNotLeakToShared(t *testing.T) 
 		"a transient sync error must not evict tenant partition caches")
 }
 
+// TestResyncTarget_DoesNotResurrectEvictedPartition pins the TOCTOU edge
+// between ResyncPartition's unlock and resyncTarget's re-lock: a concurrent
+// RetainPartitions can evict the key in that window, and resyncTarget must
+// NOT re-create an empty push target for it — the resurrected garbage entry
+// would linger in the map until the next retain pass.
+func TestResyncTarget_DoesNotResurrectEvictedPartition(t *testing.T) {
+	t.Parallel()
+
+	testClient := fake.NewClientBuilder().WithScheme(runtime.NewScheme()).Build()
+	proxySyncer := NewProxySyncer("cluster.local", "", "", testClient, slog.Default())
+
+	require.NoError(t, proxySyncer.resyncTarget(context.Background(), "default/evicted", nil, ""))
+
+	proxySyncer.syncMu.Lock()
+	_, exists := proxySyncer.targets["default/evicted"]
+	proxySyncer.syncMu.Unlock()
+
+	assert.False(t, exists, "a resync of an evicted partition must not re-create its push state")
+}
+
 func pushFallbackRoute(name, hostname string) *gatewayv1.HTTPRoute {
 	pathPrefix := gatewayv1.PathMatchPathPrefix
 	port := gatewayv1.PortNumber(80)

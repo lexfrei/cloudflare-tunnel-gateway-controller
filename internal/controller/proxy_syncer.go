@@ -1066,8 +1066,12 @@ func (s *ProxySyncer) resyncTarget(ctx context.Context, key string, endpoints []
 	s.syncMu.Lock()
 	defer s.syncMu.Unlock()
 
-	target := s.targetLocked(key)
-	if target.lastCfg == nil {
+	// Plain lookup, NOT targetLocked: RetainPartitions can evict the key
+	// between the caller's read-unlock and this re-lock, and re-creating an
+	// empty target here would resurrect a garbage entry that lingers until
+	// the next retain pass.
+	target, ok := s.targets[key]
+	if !ok || target.lastCfg == nil {
 		return nil
 	}
 
