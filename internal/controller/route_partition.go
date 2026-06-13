@@ -284,6 +284,10 @@ func unionPartitionRoutes(partitions []routePartition, sharedTunnelID string) []
 
 	out := make([]routePartition, len(partitions))
 
+	// Every partition on the same tunnel shares ONE union slice (read-only):
+	// the merged route set is identical for all of them. Treat these slices as
+	// immutable downstream — an in-place sort or filter would mutate every
+	// sibling partition's view. Copy before mutating if you ever need to.
 	for i := range partitions {
 		out[i] = partitions[i]
 		union := unions[tunnelOf(&partitions[i])]

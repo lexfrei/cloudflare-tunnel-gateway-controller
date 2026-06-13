@@ -200,8 +200,10 @@ func (s *metricsRequestState) onUpgrade() {
 	s.metrics.wsActiveSessions.Inc()
 	s.metrics.requestDuration.WithLabelValues(s.hostname).Observe(time.Since(s.start).Seconds())
 
-	class := statusClass(s.counted.Status())
-	if s.counted.Status() == 0 {
+	status := s.counted.Status()
+
+	class := statusClass(status)
+	if status == 0 {
 		class = statusClassUpgrade
 	}
 

@@ -292,14 +292,6 @@ func newProxyServer(addr string, handler http.Handler) *http.Server {
 	}
 }
 
-// setupDrainSignals registers the two-stage SIGTERM/SIGINT handling for
-// tunnel mode (registered before the tunnel starts so no signal is lost
-// during startup) and returns the channel whose close starts cloudflared's
-// connector drain: the connector unregisters from the edge (stopping NEW
-// requests — the edge routes to tunnel connections, not the Kubernetes
-// Service) and in-flight requests get the grace period to finish. The run
-// context MUST stay alive during the drain; cancelling it aborts the
-// unregister RPC.
 // drainSignalled reports whether the drain channel is already closed,
 // without blocking.
 func drainSignalled(graceC <-chan struct{}) bool {
@@ -311,6 +303,14 @@ func drainSignalled(graceC <-chan struct{}) bool {
 	}
 }
 
+// setupDrainSignals registers the two-stage SIGTERM/SIGINT handling for
+// tunnel mode (registered before the tunnel starts so no signal is lost
+// during startup) and returns the channel whose close starts cloudflared's
+// connector drain: the connector unregisters from the edge (stopping NEW
+// requests — the edge routes to tunnel connections, not the Kubernetes
+// Service) and in-flight requests get the grace period to finish. The run
+// context MUST stay alive during the drain; cancelling it aborts the
+// unregister RPC.
 func setupDrainSignals(ctx context.Context, logger *slog.Logger, cancel context.CancelFunc) <-chan struct{} {
 	// Buffered for two signals: the first starts the drain, the second forces
 	// immediate shutdown.
