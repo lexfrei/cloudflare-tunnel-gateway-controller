@@ -117,24 +117,18 @@ func (r *ProxyEndpointReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 }
 
 // partitionKeyForLabel maps a GatewayLabel value back onto the partition key
-// (full "namespace/name"). Label values truncate at 63 characters while
-// Gateway names go to 253: a short value IS the name (truncation never
-// produces sub-63 output), a 63-character value may be a truncated form and
-// is resolved by scanning the namespace's Gateways through the same
-// truncation function.
+// (full "namespace/name") by scanning the namespace's Gateways through the
+// same truncation function that produced the value. No length shortcut: a
+// truncated value is NOT length-distinguishable from a literal name —
+// truncateName trims trailing dashes before appending the hash, so a long
+// name cut on a dash boundary yields a SUB-63 value, and treating that as a
+// literal name would resync a partition that does not exist (silently
+// starving the Gateway's data plane of endpoint-driven replays). The List is
+// cache-served and namespace-bounded.
 func (r *ProxyEndpointReconciler) partitionKeyForLabel(
 	ctx context.Context,
 	namespace, labelValue string,
 ) (string, bool) {
-	if labelValue != render.GatewayLabelValue(labelValue) {
-		// Not a possible output of the truncation scheme — foreign label.
-		return "", false
-	}
-
-	if len(labelValue) < render.MaxDNSLabelLength {
-		return namespace + "/" + labelValue, true
-	}
-
 	var gateways gatewayv1.GatewayList
 	if err := r.Client.List(ctx, &gateways, client.InNamespace(namespace)); err != nil {
 		return "", false
