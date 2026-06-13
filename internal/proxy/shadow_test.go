@@ -428,6 +428,36 @@ func TestDetectShadowedRules_CrossKindBasis(t *testing.T) {
 	assert.Contains(t, diags[0].Message, "HTTPRoute rules precede GRPCRoute rules")
 }
 
+// TestDetectShadowedRules_CrossKindOlderHTTPReportsKindOrder pins that a
+// cross-kind win is attributed to the flattening order even when the HTTP
+// winner is OLDER than the gRPC loser. HTTP rules always precede gRPC rules in
+// the generated config, so the HTTPRoute wins regardless of timestamp —
+// reporting "older creationTimestamp" would name a cause that did not decide
+// it (the win is identical if the HTTP route were newer).
+func TestDetectShadowedRules_CrossKindOlderHTTPReportsKindOrder(t *testing.T) {
+	t.Parallel()
+
+	cfg := &proxy.Config{
+		Rules: []proxy.RouteRule{
+			{Hostnames: []string{"grpc.example.com"}, Matches: []proxy.RouteMatch{pathExactMatch("/pkg.Svc/Method")}},
+			{Hostnames: []string{"grpc.example.com"}, Matches: []proxy.RouteMatch{pathExactMatch("/pkg.Svc/Method")}},
+		},
+		Provenance: []proxy.RuleProvenance{
+			// HTTP winner is OLDER than the gRPC loser; the win is still by
+			// flattening order, not timestamp.
+			prov("HTTPRoute", "ns", "http", shadowT0, 0),
+			prov("GRPCRoute", "ns", "grpc", shadowT1, 0),
+		},
+	}
+
+	diags := proxy.DetectShadowedRules(cfg)
+	require.Len(t, diags, 1)
+	assert.Equal(t, "grpc", diags[0].Name)
+	assert.Contains(t, diags[0].Message, "HTTPRoute rules precede GRPCRoute rules")
+	assert.NotContains(t, diags[0].Message, "older creationTimestamp",
+		"the cross-kind win is by flattening order, not the (coincidentally older) timestamp")
+}
+
 // TestDetectShadowedRules_UnavailableRuleStillClaims pins that a fail-closed
 // rule (UnavailableStatus != 0) still claims its keys: it matches requests and
 // answers them (with an error), so a later identical rule is still shadowed.

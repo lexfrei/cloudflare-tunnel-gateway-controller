@@ -260,6 +260,17 @@ func shadowBasis(winner, loser *shadowClaimant) string {
 		return "higher match specificity — the winning rule's most specific match ranks the whole rule above this one"
 	}
 
+	// Cross-kind ties are decided by the flattening order: gRPC rules are
+	// appended after HTTP, so an HTTPRoute always holds the lower flatIdx (and
+	// wins) regardless of timestamp or name. Check this BEFORE timestamp/name
+	// so a coincidentally-older HTTP winner is not credited to its timestamp,
+	// which did not decide the win.
+	if winner.provenance.Kind == kindHTTPRoute && loser.provenance.Kind == kindGRPCRoute {
+		return "HTTPRoute rules precede GRPCRoute rules in the generated configuration"
+	}
+
+	// Same-kind ties: the converter flattens in spec-precedence order, so a
+	// lower flatIdx means an older creationTimestamp, then alphabetical name.
 	if winner.provenance.CreationTimestamp.Before(&loser.provenance.CreationTimestamp) {
 		return "older creationTimestamp"
 	}
@@ -274,13 +285,7 @@ func shadowBasis(winner, loser *shadowClaimant) string {
 	}
 
 	// The winner sorts later by timestamp/name yet still serves first: it holds
-	// the lower flattened index. When the kinds differ that order IS the
-	// HTTPRoute-before-GRPCRoute convention; for same-kind routes name the
-	// order itself rather than a cross-kind reason that did not apply.
-	if winner.provenance.Kind == kindHTTPRoute && loser.provenance.Kind == kindGRPCRoute {
-		return "HTTPRoute rules precede GRPCRoute rules in the generated configuration"
-	}
-
+	// the lower flattened index with no timestamp/name/kind reason that applied.
 	return "earlier position in the generated configuration order"
 }
 
