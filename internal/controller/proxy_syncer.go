@@ -89,6 +89,7 @@ type ProxySyncer struct {
 type pushTarget struct {
 	lastCfg             *proxy.Config
 	lastPushedHash      string
+	lastPushedToken     string
 	lastPushedEndpoints map[string]struct{}
 	endpointURLs        []string
 	authToken           string
@@ -734,7 +735,7 @@ func (s *ProxySyncer) SyncPartition(
 	// triggered by status updates or endpoint heartbeats hit this path
 	// constantly in large fleets.
 	cfgHash := hashProxyConfig(cfg)
-	if shouldSkipPush(cfgHash, target.lastPushedHash, target.lastPushedEndpoints, resolved) {
+	if shouldSkipPush(cfgHash, target.lastPushedHash, authToken, target.lastPushedToken, target.lastPushedEndpoints, resolved) {
 		logger.Debug("proxy config unchanged; skipping push",
 			"partition", key,
 			"endpoints", len(resolved),
@@ -764,6 +765,7 @@ func (s *ProxySyncer) SyncPartition(
 	// hash/endpoint-set pair keys the steady-state skip above.
 	target.lastCfg = cfg
 	target.lastPushedHash = cfgHash
+	target.lastPushedToken = authToken
 	target.lastPushedEndpoints = make(map[string]struct{}, len(resolved))
 
 	for _, endpoint := range resolved {
@@ -891,13 +893,22 @@ func (s *ProxySyncer) pushToEndpoints(ctx context.Context, logger *slog.Logger, 
 }
 
 // shouldSkipPush reports whether the rebuilt config is already held by every
-// resolved endpoint: the content hash matches the last fully-successful push
-// and the replica set is unchanged. An empty hash never skips -- "" is both
-// the hash-failure sentinel and the zero value of the last-pushed key (and
-// the invalidation value after a partial push), so treating it as a match
-// would skip a push that must happen.
-func shouldSkipPush(cfgHash, lastPushedHash string, lastPushedEndpoints map[string]struct{}, resolved []string) bool {
-	return cfgHash != "" && cfgHash == lastPushedHash && endpointSetsEqual(lastPushedEndpoints, resolved)
+// resolved endpoint: the content hash matches the last fully-successful push,
+// the auth token is unchanged, and the replica set is unchanged. An empty hash
+// never skips -- "" is both the hash-failure sentinel and the zero value of the
+// last-pushed key (and the invalidation value after a partial push), so
+// treating it as a match would skip a push that must happen. The token is part
+// of the key so a token rotation on otherwise-unchanged routes/endpoints still
+// re-authenticates to every replica instead of waiting for the next genuine
+// config change.
+func shouldSkipPush(
+	cfgHash, lastPushedHash, authToken, lastPushedToken string,
+	lastPushedEndpoints map[string]struct{},
+	resolved []string,
+) bool {
+	return cfgHash != "" && cfgHash == lastPushedHash &&
+		authToken == lastPushedToken &&
+		endpointSetsEqual(lastPushedEndpoints, resolved)
 }
 
 // hashProxyConfig returns a content hash of the config with the Version
@@ -1122,6 +1133,7 @@ func (s *ProxySyncer) resyncTarget(ctx context.Context, key string, endpoints []
 	// key so the next sync does not re-push the identical config just
 	// because the replica set grew.
 	target.lastPushedHash = hashProxyConfig(target.lastCfg)
+	target.lastPushedToken = authToken
 	target.lastPushedEndpoints = make(map[string]struct{}, len(resolved))
 
 	for _, endpoint := range resolved {

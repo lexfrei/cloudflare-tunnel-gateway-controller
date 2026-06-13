@@ -283,6 +283,62 @@ func TestProxySyncer_ResyncEndpoints_ReplaysLastConfig(t *testing.T) {
 		"resync must replay the cached rules verbatim")
 }
 
+// TestProxySyncer_SyncPartition_TokenRotationForcesPush pins that an auth
+// token rotation on an otherwise-unchanged partition (same routes, same
+// endpoints) re-pushes to re-authenticate to the replicas, rather than being
+// swallowed by the steady-state skip until the next genuine config change.
+func TestProxySyncer_SyncPartition_TokenRotationForcesPush(t *testing.T) {
+	t.Parallel()
+
+	pathPrefix := gatewayv1.PathMatchPathPrefix
+
+	var pushCount atomic.Int32
+
+	configServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, req *http.Request) {
+		if req.Method == http.MethodPut {
+			pushCount.Add(1)
+		}
+
+		writer.WriteHeader(http.StatusOK)
+	}))
+	defer configServer.Close()
+
+	testClient := fake.NewClientBuilder().WithScheme(runtime.NewScheme()).Build()
+	syncer := controller.NewProxySyncer("cluster.local", "", "", testClient, slog.Default())
+
+	routes := []*gatewayv1.HTTPRoute{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "web-route", Namespace: "default"},
+			Spec: gatewayv1.HTTPRouteSpec{
+				Hostnames: []gatewayv1.Hostname{"example.com"},
+				Rules: []gatewayv1.HTTPRouteRule{
+					{
+						Matches: []gatewayv1.HTTPRouteMatch{
+							{Path: &gatewayv1.HTTPPathMatch{Type: &pathPrefix, Value: new("/")}},
+						},
+						BackendRefs: []gatewayv1.HTTPBackendRef{makeBackendRef("web-svc", 80, 1)},
+					},
+				},
+			},
+		},
+	}
+
+	endpoints := []string{configServer.URL + "/config"}
+	ctx := context.Background()
+
+	_, err := syncer.SyncPartition(ctx, "tenant-a/edge", "tok-a", endpoints, routes, nil, nil, nil)
+	require.NoError(t, err)
+	require.Equal(t, int32(1), pushCount.Load(), "first sync must push once")
+
+	_, err = syncer.SyncPartition(ctx, "tenant-a/edge", "tok-a", endpoints, routes, nil, nil, nil)
+	require.NoError(t, err)
+	require.Equal(t, int32(1), pushCount.Load(), "identical routes, endpoints, and token: steady-state skip")
+
+	_, err = syncer.SyncPartition(ctx, "tenant-a/edge", "tok-b", endpoints, routes, nil, nil, nil)
+	require.NoError(t, err)
+	require.Equal(t, int32(2), pushCount.Load(), "token rotated: must re-push to re-authenticate")
+}
+
 func TestProxySyncer_SyncRoutes_H2CBackend(t *testing.T) {
 	t.Parallel()
 
