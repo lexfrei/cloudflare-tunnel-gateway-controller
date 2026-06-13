@@ -44,6 +44,14 @@ const (
 	// 30s) + 15s headroom so kubelet never SIGKILLs mid-drain.
 	terminationGracePeriodSeconds int64 = 45
 
+	// apiserver-defaulted Deployment/pod fields, rendered explicitly so the
+	// reconciler's full-spec apply converges instead of looping (see
+	// ProxyDeployment).
+	revisionHistoryLimit      int32 = 10
+	progressDeadlineSeconds   int32 = 600
+	defaultServiceAccountName       = "default"
+	defaultSchedulerName            = "default-scheduler"
+
 	containerName    = "proxy"
 	configPortName   = "config-api"
 	proxyPortName    = "proxy"
@@ -176,6 +184,20 @@ func ProxyDeployment(input Input) *appsv1.Deployment {
 		Spec: appsv1.DeploymentSpec{
 			Replicas: replicaCount(input.Config),
 			Selector: &metav1.LabelSelector{MatchLabels: selectorLabels(input.Gateway)},
+			// Render the apiserver-defaulted fields explicitly so the rendered
+			// spec equals what the apiserver stores. Without them, the
+			// reconciler's full-spec apply re-zeroes the defaulted values every
+			// reconcile, so CreateOrUpdate always sees a diff and Updates
+			// forever (a hot-loop pinned by the convergence envtest).
+			Strategy: appsv1.DeploymentStrategy{
+				Type: appsv1.RollingUpdateDeploymentStrategyType,
+				RollingUpdate: &appsv1.RollingUpdateDeployment{
+					MaxUnavailable: new(intstr.FromString("25%")),
+					MaxSurge:       new(intstr.FromString("25%")),
+				},
+			},
+			RevisionHistoryLimit:    new(revisionHistoryLimit),
+			ProgressDeadlineSeconds: new(progressDeadlineSeconds),
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
 					Labels:      resourceLabels(input.Gateway),
@@ -189,6 +211,13 @@ func ProxyDeployment(input Input) *appsv1.Deployment {
 					AutomountServiceAccountToken: new(false),
 					SecurityContext:              podSecurityContext(),
 					Containers:                   []corev1.Container{proxyContainer(input)},
+					// apiserver-defaulted pod fields, rendered explicitly (see
+					// the Strategy comment above).
+					RestartPolicy:            corev1.RestartPolicyAlways,
+					DNSPolicy:                corev1.DNSClusterFirst,
+					SchedulerName:            defaultSchedulerName,
+					ServiceAccountName:       defaultServiceAccountName,
+					DeprecatedServiceAccount: defaultServiceAccountName,
 				},
 			},
 		},
@@ -223,8 +252,12 @@ func proxyContainer(input Input) corev1.Container {
 		Name:            containerName,
 		Image:           proxyImage(input),
 		ImagePullPolicy: corev1.PullIfNotPresent,
-		SecurityContext: containerSecurityContext(),
-		Env:             proxyEnv(input),
+		// apiserver-defaulted container fields, rendered explicitly so the
+		// reconciler's full-spec apply converges (see ProxyDeployment).
+		TerminationMessagePath:   corev1.TerminationMessagePathDefault,
+		TerminationMessagePolicy: corev1.TerminationMessageReadFile,
+		SecurityContext:          containerSecurityContext(),
+		Env:                      proxyEnv(input),
 		Ports: []corev1.ContainerPort{
 			{Name: configPortName, ContainerPort: configAPIPort, Protocol: corev1.ProtocolTCP},
 			{Name: proxyPortName, ContainerPort: proxyPort, Protocol: corev1.ProtocolTCP},
@@ -343,14 +376,18 @@ func httpProbe(path string, spec probeSpec) *corev1.Probe {
 	return &corev1.Probe{
 		ProbeHandler: corev1.ProbeHandler{
 			HTTPGet: &corev1.HTTPGetAction{
-				Path: path,
-				Port: intstr.FromString(configPortName),
+				Path:   path,
+				Port:   intstr.FromString(configPortName),
+				Scheme: corev1.URISchemeHTTP,
 			},
 		},
 		InitialDelaySeconds: spec.initialDelay,
 		PeriodSeconds:       spec.period,
 		TimeoutSeconds:      spec.timeout,
 		FailureThreshold:    spec.failureThreshold,
+		// apiserver defaults SuccessThreshold to 1 (and requires exactly 1 for
+		// liveness/startup); render it so the apply converges.
+		SuccessThreshold: 1,
 	}
 }
 
