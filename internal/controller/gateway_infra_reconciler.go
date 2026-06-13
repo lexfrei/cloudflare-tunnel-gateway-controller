@@ -275,7 +275,7 @@ func (r *GatewayInfraReconciler) applyRendered(
 		return err
 	}
 
-	if err := r.applyAutoscaler(ctx, gateway, input); err != nil {
+	if _, err := r.applyAutoscaler(ctx, gateway, input); err != nil {
 		r.event(gateway, corev1.EventTypeWarning, eventReasonRenderFailed, err.Error())
 
 		return err
@@ -451,10 +451,10 @@ func (r *GatewayInfraReconciler) applyAutoscaler(
 	ctx context.Context,
 	gateway *gatewayv1.Gateway,
 	input render.Input,
-) error {
+) (controllerutil.OperationResult, error) {
 	desired := render.Autoscaler(input)
 	if desired == nil {
-		return r.deleteIfOwned(ctx, gateway, &autoscalingv2.HorizontalPodAutoscaler{
+		return controllerutil.OperationResultNone, r.deleteIfOwned(ctx, gateway, &autoscalingv2.HorizontalPodAutoscaler{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: render.DeploymentName(gateway), Namespace: gateway.Namespace,
 			},
@@ -465,7 +465,7 @@ func (r *GatewayInfraReconciler) applyAutoscaler(
 		ObjectMeta: metav1.ObjectMeta{Name: desired.Name, Namespace: desired.Namespace},
 	}
 
-	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, existing, func() error {
+	operation, err := controllerutil.CreateOrUpdate(ctx, r.Client, existing, func() error {
 		if err := assertAdoptable(existing, gateway); err != nil {
 			return err
 		}
@@ -477,10 +477,10 @@ func (r *GatewayInfraReconciler) applyAutoscaler(
 		return controllerutil.SetControllerReference(gateway, existing, r.Scheme)
 	})
 	if err != nil {
-		return errors.Wrap(err, "failed to apply per-gateway autoscaler")
+		return operation, errors.Wrap(err, "failed to apply per-gateway autoscaler")
 	}
 
-	return nil
+	return operation, nil
 }
 
 // cleanupRendered removes the per-Gateway resources after an opt-out. Missing

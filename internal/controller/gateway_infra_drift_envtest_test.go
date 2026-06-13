@@ -139,11 +139,14 @@ func TestGatewayInfraReconciler_ApplyConvergesAgainstAPIServer(t *testing.T) {
 			},
 		}
 
-		require.NoError(t, reconciler.applyAutoscaler(ctx, gateway, input))
+		op, err := reconciler.applyAutoscaler(ctx, gateway, input)
+		require.NoError(t, err)
+		require.Equal(t, controllerutil.OperationResultCreated, op, "first apply must create")
 
-		// applyAutoscaler returns no OperationResult; assert convergence by
-		// reapplying and confirming the HPA is unchanged across reapplies.
-		require.NoError(t, reconciler.applyAutoscaler(ctx, gateway, input))
-		require.NoError(t, reconciler.applyAutoscaler(ctx, gateway, input))
+		for i := range 2 {
+			op, err := reconciler.applyAutoscaler(ctx, gateway, input)
+			require.NoError(t, err)
+			assert.Equalf(t, controllerutil.OperationResultNone, op, "autoscaler re-apply %d must be a no-op", i+1)
+		}
 	})
 }
