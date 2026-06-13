@@ -9,6 +9,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/hostnameownership"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/routebinding"
 )
 
@@ -64,6 +65,28 @@ func TestBuildAcceptedCondition_GlobalSyncErrAppliesToAllParents(t *testing.T) {
 	cond := buildAcceptedCondition(1, metav1.Now(), binding, 0, errTunnelGroupFailed, nil)
 	assert.Equal(t, metav1.ConditionFalse, cond.Status)
 	assert.Equal(t, string(gatewayv1.RouteReasonPending), cond.Reason)
+}
+
+// TestBuildAcceptedCondition_BindingRejectionOutranksSyncError pins precedence:
+// a binding rejection (e.g. HostnameNotPermitted) keeps its specific,
+// actionable reason even during a TOTAL tunnel outage. The route is never
+// programmed regardless of tunnel health, so the rejection — not a transient
+// Pending — is the authoritative condition for the operator to act on.
+func TestBuildAcceptedCondition_BindingRejectionOutranksSyncError(t *testing.T) {
+	t.Parallel()
+
+	binding := routeBindingInfo{
+		bindingResults: map[int]routebinding.BindingResult{
+			0: {Accepted: false, Reason: hostnameownership.RouteReasonHostnameNotPermitted, Message: "hostname outside the namespace suffix"},
+		},
+		parentGateways: map[int]string{0: "team-a/gw"},
+	}
+
+	cond := buildAcceptedCondition(1, metav1.Now(), binding, 0, errTunnelGroupFailed, nil)
+	assert.Equal(t, metav1.ConditionFalse, cond.Status)
+	assert.Equal(t, string(hostnameownership.RouteReasonHostnameNotPermitted), cond.Reason,
+		"a binding rejection outranks a transient global sync error")
+	assert.Contains(t, cond.Message, "hostname outside")
 }
 
 // TestInjectPartitionSyncErrors_AttributesPerGateway pins the partition →

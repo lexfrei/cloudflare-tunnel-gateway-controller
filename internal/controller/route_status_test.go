@@ -134,8 +134,6 @@ func TestBuildAcceptedCondition_OnlySyncErrorTriggersPending(t *testing.T) {
 
 	// Binding rejection without sync error → Accepted=False, Reason from
 	// the binding result (NoMatchingParent / NoMatchingListenerHostname / etc.).
-	// Confirms the function takes the binding result into account only when
-	// the syncer succeeded, matching the precedence in route_status.go.
 	bindingInfo := routeBindingInfo{
 		bindingResults: map[int]routebinding.BindingResult{
 			0: {
@@ -149,9 +147,11 @@ func TestBuildAcceptedCondition_OnlySyncErrorTriggersPending(t *testing.T) {
 	assert.Equal(t, metav1.ConditionFalse, cond.Status)
 	assert.Equal(t, string(gatewayv1.RouteReasonNoMatchingParent), cond.Reason)
 
-	// syncErr wins over a rejected binding: when Cloudflare sync fails we
-	// surface the sync error first so operators see the actionable cause.
+	// A binding rejection wins over a sync error: a route that does not bind is
+	// never programmed regardless of tunnel health, so its specific reason is
+	// the actionable cause — a transient Pending would mask the permanent
+	// problem (the route's parentRef/hostname is wrong, not the tunnel).
 	cond = buildAcceptedCondition(1, now, bindingInfo, 0, errCloudflareSync, nil)
 	assert.Equal(t, metav1.ConditionFalse, cond.Status)
-	assert.Equal(t, string(gatewayv1.RouteReasonPending), cond.Reason)
+	assert.Equal(t, string(gatewayv1.RouteReasonNoMatchingParent), cond.Reason)
 }

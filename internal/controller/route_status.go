@@ -473,19 +473,23 @@ func buildAcceptedCondition(
 	reason := string(gatewayv1.RouteReasonAccepted)
 	message := routeAcceptedMessage
 
-	effectiveErr := perParentSyncErr(bindingInfo, refIdx, syncErr)
-	if effectiveErr != nil {
-		status = metav1.ConditionFalse
-		reason = string(gatewayv1.RouteReasonPending)
-		message = effectiveErr.Error()
-	} else if bindingResult, hasBinding := bindingInfo.bindingResults[refIdx]; hasBinding && !bindingResult.Accepted {
+	if bindingResult, hasBinding := bindingInfo.bindingResults[refIdx]; hasBinding && !bindingResult.Accepted {
+		// A binding rejection (e.g. HostnameNotPermitted) is authoritative and
+		// permanent: the route never binds to this parent, so it is never
+		// programmed regardless of tunnel health. Its specific, actionable
+		// reason outranks a transient sync error — even a total tunnel outage
+		// must not mask it with a generic Pending.
 		status = metav1.ConditionFalse
 		reason = string(bindingResult.Reason)
 		message = bindingResult.Message
+	} else if effectiveErr := perParentSyncErr(bindingInfo, refIdx, syncErr); effectiveErr != nil {
+		status = metav1.ConditionFalse
+		reason = string(gatewayv1.RouteReasonPending)
+		message = effectiveErr.Error()
 	} else if override != nil {
 		// The route binds fine but cannot be served as written (e.g. gRPC over an
-		// explicit quic tunnel). Lowest precedence: a sync error or binding
-		// rejection above is the more specific problem.
+		// explicit quic tunnel). Lowest precedence: a binding rejection or sync
+		// error above is the more specific problem.
 		status = metav1.ConditionFalse
 		reason = override.reason
 		message = override.message
