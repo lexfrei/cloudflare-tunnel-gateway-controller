@@ -1,6 +1,6 @@
 # CRD Reference
 
-This document provides the API reference for Custom Resource Definitions (CRDs) used by the Cloudflare Tunnel Gateway Controller. The controller ships two project-owned CRDs, `GatewayClassConfig` and `ExternalBackend`, and watches the standard Gateway API resources.
+This document provides the API reference for Custom Resource Definitions (CRDs) used by the Cloudflare Tunnel Gateway Controller. The controller ships three project-owned CRDs — `GatewayClassConfig`, `ExternalBackend`, and `GatewayConfig` (per-Gateway data planes) — and watches the standard Gateway API resources.
 
 ## GatewayClassConfig
 
@@ -59,8 +59,10 @@ GatewayClassConfig has a `status.conditions` subresource. The reconciler emits:
 | `tunnelTokenSecretRef` | object | Yes | Connector-token Secret in the same namespace (`name`, optional `key`, default `tunnel-token`). The tunnel ID and account are parsed from the token. |
 | `cloudflareCredentialsSecretRef` | object | No | API-token override for this Gateway's tunnel-document writes, from a Secret in the SAME namespace (key `api-token` by default); defaults to the GatewayClass → GatewayClassConfig credentials. |
 | `authTokenSecretRef` | object | No | Bearer token (same namespace, default key `auth-token`) protecting this data plane's config API. |
-| `replicas` | integer | No | Fixed proxy replica count (default 2). Mutually exclusive with `autoscaling` (CEL-enforced). |
-| `autoscaling` | object | No | `minReplicas` (default 2), `maxReplicas`, `targetInflightPerPod`, optional `metricName` — renders an HPA on the proxy's in-flight gauge. |
+| `replicas` | integer | No | Fixed proxy replica count (default 2, max 100). Mutually exclusive with `autoscaling` (CEL-enforced). |
+| `autoscaling` | object | No | `minReplicas` (default 2, max 100), `maxReplicas` (max 100), `targetInflightPerPod`, optional `metricName` — renders an HPA on the proxy's in-flight gauge. |
+
+Replica counts (`replicas`, `minReplicas`, `maxReplicas`) are capped at 100: they are tenant-controlled input on a shared cluster, and an unbounded value is a noisy-neighbour attack. The cap bounds one Gateway, not a tenant — use a per-namespace ResourceQuota for the aggregate.
 | `resources` | object | No | Proxy container resource requirements. |
 | `image` | string | No | Proxy image override; defaults to the controller's `--proxy-image`. |
 
@@ -251,6 +253,7 @@ spec:
 |----------|-----------|---------|--------|
 | GatewayClassConfig | `cf.k8s.lex.la` | `v1alpha1` | Alpha |
 | ExternalBackend | `cf.k8s.lex.la` | `v1alpha1` | Alpha |
+| GatewayConfig | `cf.k8s.lex.la` | `v1alpha1` | Alpha |
 | GatewayClass | `gateway.networking.k8s.io` | `v1` | GA |
 | Gateway | `gateway.networking.k8s.io` | `v1` | GA |
 | HTTPRoute | `gateway.networking.k8s.io` | `v1` | GA |

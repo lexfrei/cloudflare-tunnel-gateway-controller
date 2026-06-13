@@ -87,7 +87,11 @@ func (p *Policy) Evaluate(nsLabels map[string]string, hostnames []gatewayv1.Host
 		return Verdict{Allowed: true}
 	}
 
-	suffix := strings.ToLower(strings.TrimSpace(nsLabels[p.labelKey]))
+	// Only lowercase — matching the CEL layer's lowerAscii() exactly. No
+	// TrimSpace: the apiserver's label-value regex forbids leading/trailing
+	// whitespace, so trimming would be dead code that makes the two layers'
+	// normalisation diverge on paper. The contract is bit-for-bit identical.
+	suffix := strings.ToLower(nsLabels[p.labelKey])
 	if suffix == "" {
 		return Verdict{Allowed: false, Message: fmt.Sprintf(
 			"namespace is policed by the hostname-ownership policy but carries no %q label; "+

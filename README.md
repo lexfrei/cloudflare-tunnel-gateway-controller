@@ -140,7 +140,8 @@ Create standard [Gateway API](https://gateway-api.sigs.k8s.io/) HTTPRoute or GRP
 | `spec.listeners[].tls` | ✅ | CertificateRefs validated with ReferenceGrant support |
 | `spec.listeners[].allowedRoutes` | ✅ | Namespace (Same/All/Selector) and kind filtering |
 | `spec.addresses` | ❌ | Ignored; tunnel CNAME set in status |
-| `spec.infrastructure` | ❌ | Not implemented |
+| `spec.infrastructure.parametersRef` | ✅ | Opts the Gateway into a dedicated data plane (`GatewayConfig`, group `cf.k8s.lex.la`) — its own proxy and tunnel |
+| `spec.infrastructure.labels` / `.annotations` | ✅ | Propagated to the rendered per-Gateway resources and pod template |
 
 > **Note:** Cloudflare Tunnel terminates TLS at its edge. TLS certificate references on listeners are validated (including cross-namespace ReferenceGrant checks), but the actual TLS termination is handled by Cloudflare, not by the controller.
 

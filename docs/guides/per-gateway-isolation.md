@@ -66,8 +66,8 @@ A Gateway without `infrastructure.parametersRef` keeps the shared data plane, un
 | `tunnelTokenSecretRef` | yes | Connector-token Secret in the SAME namespace (key `tunnel-token` by default). Token rotation rolls the proxy pods automatically. |
 | `cloudflareCredentialsSecretRef` | no | API-token override for this Gateway's tunnel-document writes, from a Secret in the SAME namespace (key `api-token` by default); defaults to the GatewayClass → GatewayClassConfig credentials. |
 | `authTokenSecretRef` | no | Bearer token (key `auth-token`) protecting this plane's config API; the controller pushes with it. |
-| `replicas` | no | Fixed replica count; default 2 (the HA floor — one connector pod is a tunnel availability hazard). Mutually exclusive with `autoscaling`. |
-| `autoscaling` | no | Renders a HorizontalPodAutoscaler — see below. |
+| `replicas` | no | Fixed replica count; default 2 (the HA floor — one connector pod is a tunnel availability hazard), max 100. Mutually exclusive with `autoscaling`. |
+| `autoscaling` | no | Renders a HorizontalPodAutoscaler — see below. `minReplicas`/`maxReplicas` cap at 100. |
 | `resources` | no | Proxy container resources; chart-parity defaults when unset. |
 | `image` | no | Proxy image override; defaults to the release's proxy image. |
 
