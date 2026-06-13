@@ -301,6 +301,18 @@ func Run(ctx context.Context, cfg *Config) error {
 		ViewStore:      viewStore,
 	}
 
+	// A newly-rendered per-Gateway data plane needs an initial config push to
+	// pass /readyz (config version > 0), just as the shared plane gets one
+	// from the startup sync. Route reconciles are route-event-driven, so a
+	// data plane with no routes would never be synced — wire the infra
+	// reconciler to run a full route sync (cache + push to every partition)
+	// when it creates a data plane.
+	gatewayInfraReconciler.TriggerRouteSync = func(ctx context.Context) error {
+		_, err := httpRouteReconciler.syncAndUpdateStatus(ctx)
+
+		return err
+	}
+
 	if err := httpRouteReconciler.SetupWithManager(mgr); err != nil {
 		return errors.Wrap(err, "failed to setup httproute controller")
 	}

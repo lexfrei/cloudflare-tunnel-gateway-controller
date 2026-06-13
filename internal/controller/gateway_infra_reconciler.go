@@ -70,6 +70,13 @@ type GatewayInfraReconciler struct {
 	// RenderDefaults carries the Helm-wired defaults (proxy image, tunnel
 	// protocol) for rendered data planes.
 	RenderDefaults render.Defaults
+	// TriggerRouteSync runs a full route sync (cache + push to every
+	// partition). It is invoked once when a data plane is first CREATED so the
+	// new partition's config is cached and delivered — a per-Gateway proxy
+	// needs an initial config push to pass /readyz, and route reconciles are
+	// route-event-driven, so a data plane with no routes would otherwise never
+	// be synced. Nil is a no-op (unit tests without the route syncer wired).
+	TriggerRouteSync func(context.Context) error
 }
 
 func (r *GatewayInfraReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -262,6 +269,18 @@ func (r *GatewayInfraReconciler) applyRendered(
 	if deploymentOp == controllerutil.OperationResultCreated {
 		r.event(gateway, corev1.EventTypeNormal, eventReasonProxyProvisioned,
 			"dedicated proxy data plane provisioned for this Gateway")
+
+		// A freshly-created data plane has no cached config; trigger a route
+		// sync so its partition is synced (the empty config is enough for the
+		// proxy to pass /readyz, and ResyncPartition replays it once the pod's
+		// endpoint appears). Best-effort: a failure here is retried by the
+		// next route reconcile; never fail the render over it.
+		if r.TriggerRouteSync != nil {
+			if err := r.TriggerRouteSync(ctx); err != nil {
+				log.FromContext(ctx).Info("initial route sync after data-plane creation failed; will retry on next route reconcile",
+					"error", err.Error())
+			}
+		}
 	}
 
 	return nil

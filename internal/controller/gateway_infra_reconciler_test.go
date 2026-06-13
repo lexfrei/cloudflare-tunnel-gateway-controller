@@ -245,6 +245,33 @@ func TestGatewayInfraReconciler_SharedModeCleansUp(t *testing.T) {
 	assert.Error(t, err, "rendered Service must be deleted when the Gateway opts back out")
 }
 
+// TestGatewayInfraReconciler_TriggersRouteSyncOnCreate pins the readiness
+// bootstrap: a freshly-rendered per-Gateway proxy needs an initial config
+// push to pass /readyz (config version > 0), exactly as the shared proxy gets
+// one from the startup sync. Route reconciles are route-event-driven, so a
+// data plane with no routes yet would never be synced — the reconciler must
+// trigger a full route sync when it CREATES a data plane so the new
+// partition's (possibly empty) config is cached and delivered.
+func TestGatewayInfraReconciler_TriggersRouteSyncOnCreate(t *testing.T) {
+	t.Parallel()
+
+	var syncs int
+
+	reconciler := newInfraReconciler(t, infraFixtures(t)...)
+	reconciler.TriggerRouteSync = func(context.Context) error {
+		syncs++
+
+		return nil
+	}
+
+	reconcileEdge(t, reconciler)
+	assert.Equal(t, 1, syncs, "creating a data plane must trigger a route sync so the new proxy gets its initial config")
+
+	// A second reconcile (no creation) must NOT re-trigger — avoid sync storms.
+	reconcileEdge(t, reconciler)
+	assert.Equal(t, 1, syncs, "a steady-state reconcile must not re-trigger a full route sync")
+}
+
 // TestGatewayInfraReconciler_OptOutSucceedsWithoutSecretDelete pins the
 // least-privilege cleanup contract: the controller's RBAC grants
 // create-but-not-delete on Secrets, so opt-out must NOT issue a Secret Delete
