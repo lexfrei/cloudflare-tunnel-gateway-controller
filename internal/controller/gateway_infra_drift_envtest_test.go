@@ -8,8 +8,10 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
@@ -91,6 +93,46 @@ func TestGatewayInfraReconciler_ApplyConvergesAgainstAPIServer(t *testing.T) {
 			assert.Equalf(t, controllerutil.OperationResultNone, op,
 				"re-apply %d must be a no-op — apiserver-default drift would loop forever", i+1)
 		}
+	})
+
+	t.Run("deployment (autoscaling mode, nil replicas)", func(t *testing.T) {
+		namespace := driftNamespace(ctx, t)
+		gateway := driftGateway(namespace)
+		minReplicas := int32(2)
+		input := render.Input{
+			Gateway:     gateway,
+			TunnelToken: "token",
+			Defaults:    reconciler.RenderDefaults,
+			Config: &v1alpha1.GatewayConfig{
+				ObjectMeta: metav1.ObjectMeta{Name: "edge-config", Namespace: namespace},
+				Spec: v1alpha1.GatewayConfigSpec{
+					TunnelTokenSecretRef: v1alpha1.LocalSecretReference{Name: "edge-token"},
+					Autoscaling:          &v1alpha1.ProxyAutoscaling{MinReplicas: &minReplicas, MaxReplicas: 5, TargetInflightPerPod: 100},
+				},
+			},
+		}
+
+		op, err := reconciler.applyDeployment(ctx, gateway, input)
+		require.NoError(t, err)
+		require.Equal(t, controllerutil.OperationResultCreated, op, "first apply must create")
+
+		// Render leaves replicas nil so the HPA owns the count. On CREATE the
+		// apiserver defaults nil to 1 (NOT the configured min) — a brief
+		// startup window at 1 replica until the HPA's first reconcile lifts it
+		// to min. The applies must still converge: re-apply preserves the
+		// (apiserver/HPA-owned) value, so it is a no-op, never a hot-loop.
+		for i := range 2 {
+			op, err := reconciler.applyDeployment(ctx, gateway, input)
+			require.NoError(t, err)
+			assert.Equalf(t, controllerutil.OperationResultNone, op,
+				"autoscaling-mode re-apply %d must be a no-op (HPA-owned replicas preserved)", i+1)
+		}
+
+		var deployment appsv1.Deployment
+		require.NoError(t, reconciler.Get(ctx, client.ObjectKeyFromObject(render.ProxyDeployment(input)), &deployment))
+		require.NotNil(t, deployment.Spec.Replicas)
+		assert.Equal(t, int32(1), *deployment.Spec.Replicas,
+			"autoscaling mode starts at the apiserver default of 1 until the HPA scales to min")
 	})
 
 	t.Run("service", func(t *testing.T) {

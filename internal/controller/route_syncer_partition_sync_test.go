@@ -37,8 +37,25 @@ const tenantTunnelUUID = "550e8400-e29b-41d4-a716-446655440000"
 type recordingTunnelAPI struct {
 	server *httptest.Server
 
-	mu   sync.Mutex
-	puts map[string][]string // tunnelID -> hostnames in the written document
+	mu           sync.Mutex
+	puts         map[string][]string // tunnelID -> hostnames in the written document
+	failTunnelID string              // PUTs to this tunnel ID return 500
+}
+
+// failTunnel makes every PUT to tunnelID return a 5xx, simulating one tunnel's
+// Cloudflare write failing while others succeed.
+func (a *recordingTunnelAPI) failTunnel(tunnelID string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	a.failTunnelID = tunnelID
+}
+
+func (a *recordingTunnelAPI) shouldFail(tunnelID string) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	return a.failTunnelID == tunnelID
 }
 
 func newRecordingTunnelAPI(t *testing.T) *recordingTunnelAPI {
@@ -61,6 +78,16 @@ func newRecordingTunnelAPI(t *testing.T) *recordingTunnelAPI {
 			// Path: /accounts/<acct>/cfd_tunnel/<tunnelID>/configurations
 			segments := strings.Split(strings.Trim(req.URL.Path, "/"), "/")
 			tunnelID := segments[len(segments)-2]
+
+			if api.shouldFail(tunnelID) {
+				writer.WriteHeader(http.StatusInternalServerError)
+				_ = json.NewEncoder(writer).Encode(map[string]any{
+					"success": false,
+					"errors":  []any{map[string]any{"code": 1000, "message": "simulated tunnel write failure"}},
+				})
+
+				return
+			}
 
 			var body struct {
 				Config struct {
@@ -276,6 +303,39 @@ func TestSyncAllRoutes_PartitionsByTunnel(t *testing.T) {
 		"shared hostname leaked into the tenant tunnel document")
 
 	require.Len(t, result.Partitions, 2, "SyncResult must carry the partition split for the proxy push")
+}
+
+// TestSyncAllRoutes_DistinctTunnelWriteFailureIsolated pins per-tunnel failure
+// isolation end-to-end: when ONE of two distinct tunnels fails its Cloudflare
+// write, the healthy tunnel's document is still written and ITS route stays
+// unflagged, while only the failed tunnel's route carries a per-parent sync
+// error. A single tunnel outage must not flip a sibling tenant's route.
+func TestSyncAllRoutes_DistinctTunnelWriteFailureIsolated(t *testing.T) {
+	t.Parallel()
+
+	api := newRecordingTunnelAPI(t)
+	const sharedTunnel = "99999999-9999-4999-8999-999999999999"
+
+	syncer := newPartitionSyncSyncer(t, api, sharedTunnel)
+	api.failTunnel(tenantTunnelUUID) // the tenant (infra-gw) tunnel write fails
+
+	_, result, err := syncer.SyncAllRoutes(context.Background())
+	require.NoError(t, err, "a single tunnel's write failure must NOT become a global sync error")
+	require.NotNil(t, result)
+
+	// The healthy shared tunnel was still written.
+	assert.Contains(t, api.hostnamesFor(sharedTunnel), "shared.example.com",
+		"the healthy tunnel's document must be written despite the other tunnel failing")
+
+	// The tenant route's parent carries a sync error; the shared route's does not.
+	tenantBinding, ok := result.HTTPRouteBindings["default/tenant-route"]
+	require.True(t, ok)
+	assert.NotEmpty(t, tenantBinding.syncErrByGateway, "the failed tunnel's route must carry a per-parent sync error")
+
+	sharedBinding, ok := result.HTTPRouteBindings["default/shared-route"]
+	require.True(t, ok)
+	assert.Empty(t, sharedBinding.syncErrByGateway,
+		"the healthy tunnel's route must stay unflagged when a sibling tunnel fails")
 }
 
 // TestSyncAllRoutes_SameTunnelPartitionsMerge pins the same-tunnel grouping:
