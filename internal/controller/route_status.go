@@ -580,7 +580,10 @@ func firstResolvedRefsDiagnostic(diagnostics []proxy.RouteDiagnostic) (proxy.Rou
 // Accepted stays True and this condition is the observability surface.
 const (
 	routeConditionShadowed = "cf.k8s.lex.la/RouteShadowed"
-	routeReasonShadowed    = "HostnameMatchShadowed"
+	// routeReasonShadowed aliases the proxy's diagnostic reason so the two
+	// declarations cannot drift — the shadow detector stamps it on the
+	// diagnostic, the status writer mirrors it onto the condition.
+	routeReasonShadowed = proxy.ReasonHostnameMatchShadowed
 )
 
 const (

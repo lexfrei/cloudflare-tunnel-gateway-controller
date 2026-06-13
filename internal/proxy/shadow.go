@@ -9,11 +9,11 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// reasonHostnameMatchShadowed is the condition/diagnostic reason for a rule
+// ReasonHostnameMatchShadowed is the condition/diagnostic reason for a rule
 // whose (hostname, match) pair is exactly claimed by a higher-precedence rule
 // from another route. Implementation-specific reason (the Gateway API defines
 // no route-to-route hostname ownership; same-hostname routes legally merge).
-const reasonHostnameMatchShadowed = "HostnameMatchShadowed"
+const ReasonHostnameMatchShadowed = "HostnameMatchShadowed"
 
 // RuleProvenance identifies the source route of one flattened Config rule.
 // Config.Provenance parallels Config.Rules index-for-index; both are appended
@@ -147,7 +147,7 @@ func DetectShadowedRules(cfg *Config) []RouteDiagnostic {
 			Name:      claim.claimant.provenance.Name,
 			RuleIndex: claim.claimant.provenance.RuleIndex,
 			Target:    DiagnosticShadowed,
-			Reason:    reasonHostnameMatchShadowed,
+			Reason:    ReasonHostnameMatchShadowed,
 			Message:   shadowedMessage(&claim.claimant, claim.key, &winner),
 			WholeRule: false,
 		})
