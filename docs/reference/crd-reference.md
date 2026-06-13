@@ -61,10 +61,10 @@ GatewayClassConfig has a `status.conditions` subresource. The reconciler emits:
 | `authTokenSecretRef` | object | No | Bearer token (same namespace, default key `auth-token`) protecting this data plane's config API. |
 | `replicas` | integer | No | Fixed proxy replica count (default 2, max 100). Mutually exclusive with `autoscaling` (CEL-enforced). |
 | `autoscaling` | object | No | `minReplicas` (default 2, max 100), `maxReplicas` (max 100), `targetInflightPerPod`, optional `metricName` — renders an HPA on the proxy's in-flight gauge. |
-
-Replica counts (`replicas`, `minReplicas`, `maxReplicas`) are capped at 100: they are tenant-controlled input on a shared cluster, and an unbounded value is a noisy-neighbour attack. The cap bounds one Gateway, not a tenant — use a per-namespace ResourceQuota for the aggregate.
 | `resources` | object | No | Proxy container resource requirements. |
 | `image` | string | No | Proxy image override; defaults to the controller's `--proxy-image`. |
+
+Replica counts (`replicas`, `minReplicas`, `maxReplicas`) are capped at 100: they are tenant-controlled input on a shared cluster, and an unbounded value is a noisy-neighbour attack. The cap bounds one Gateway, not a tenant — use a per-namespace ResourceQuota for the aggregate.
 
 ### GatewayConfig Example
 
