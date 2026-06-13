@@ -91,9 +91,20 @@ func DetectShadowedRules(cfg *Config) []RouteDiagnostic {
 		return nil
 	}
 
-	claims := make(map[shadowKey]shadowClaimant)
+	// Pass 1: collect every claim and reduce each key to the rule the router
+	// ACTUALLY serves. Two passes on purpose: the message promises "matching
+	// requests are served by that route", and with three or more claimants on
+	// one key the true winner is only known after all of them are seen —
+	// emitting against the running incumbent would name an intermediate
+	// claimant that itself serves zero traffic on the pair.
+	type shadowClaim struct {
+		key      shadowKey
+		claimant shadowClaimant
+	}
 
-	var diags []RouteDiagnostic
+	winners := make(map[shadowKey]shadowClaimant)
+
+	var claims []shadowClaim
 
 	for ruleIdx := range cfg.Rules {
 		rule := &cfg.Rules[ruleIdx]
@@ -104,39 +115,42 @@ func DetectShadowedRules(cfg *Config) []RouteDiagnostic {
 		}
 
 		for _, key := range ruleShadowKeys(rule) {
-			incumbent, claimed := claims[key]
-			if !claimed {
-				claims[key] = claimant
+			claims = append(claims, shadowClaim{key: key, claimant: claimant})
 
-				continue
+			incumbent, claimed := winners[key]
+			if !claimed || claimant.beats(&incumbent) {
+				winners[key] = claimant
 			}
-
-			winner, loser := &incumbent, &claimant
-			if claimant.beats(&incumbent) {
-				winner, loser = &claimant, &incumbent
-			}
-
-			// The claim always tracks the rule the router serves, so later
-			// claimants compare against the real winner.
-			claims[key] = *winner
-
-			if winner.provenance.sameRoute(&loser.provenance) {
-				// Within-route duplicates are the route author's own
-				// first-rule-wins ordering, spec'd separately — not a
-				// cross-tenant collision.
-				continue
-			}
-
-			diags = append(diags, RouteDiagnostic{
-				Namespace: loser.provenance.Namespace,
-				Name:      loser.provenance.Name,
-				RuleIndex: loser.provenance.RuleIndex,
-				Target:    DiagnosticShadowed,
-				Reason:    reasonHostnameMatchShadowed,
-				Message:   shadowedMessage(loser, key, winner),
-				WholeRule: false,
-			})
 		}
+	}
+
+	// Pass 2: every losing claim gets a diagnostic naming the final winner.
+	var diags []RouteDiagnostic
+
+	for i := range claims {
+		claim := &claims[i]
+
+		winner := winners[claim.key]
+		if winner.flatIdx == claim.claimant.flatIdx {
+			continue // this claim IS the winner
+		}
+
+		if winner.provenance.sameRoute(&claim.claimant.provenance) {
+			// Within-route duplicates are the route author's own
+			// first-rule-wins ordering, spec'd separately — not a
+			// cross-tenant collision.
+			continue
+		}
+
+		diags = append(diags, RouteDiagnostic{
+			Namespace: claim.claimant.provenance.Namespace,
+			Name:      claim.claimant.provenance.Name,
+			RuleIndex: claim.claimant.provenance.RuleIndex,
+			Target:    DiagnosticShadowed,
+			Reason:    reasonHostnameMatchShadowed,
+			Message:   shadowedMessage(&claim.claimant, claim.key, &winner),
+			WholeRule: false,
+		})
 	}
 
 	return diags
@@ -177,12 +191,13 @@ func ruleShadowKeys(rule *RouteRule) []shadowKey {
 // header names are case-insensitive), so two spec-equal matches written in
 // different order collide as they should.
 func canonicalMatchKey(match RouteMatch) string {
-	norm := RouteMatch{
-		Path:        match.Path,
-		Method:      match.Method,
-		Headers:     normalizeHeaderMatches(match.Headers),
-		QueryParams: normalizeQueryMatches(match.QueryParams),
-	}
+	// Full struct copy, then overwrite ONLY the normalized slices: an
+	// explicit field-by-field copy would silently exclude any future
+	// RouteMatch field from the identity, making matches that differ only in
+	// that field falsely collide.
+	norm := match
+	norm.Headers = normalizeHeaderMatches(match.Headers)
+	norm.QueryParams = normalizeQueryMatches(match.QueryParams)
 
 	encoded, err := json.Marshal(norm)
 	if err != nil {

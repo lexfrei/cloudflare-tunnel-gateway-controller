@@ -122,22 +122,21 @@ spec:
               cloudflareCredentialsSecretRef:
                 description: |-
                   CloudflareCredentialsSecretRef optionally overrides the API credentials
-                  used to write this Gateway's tunnel ingress document. Defaults to the
+                  used to write this Gateway's tunnel ingress document, from a Secret in
+                  the SAME namespace under the "api-token" key (or Key). Defaults to the
                   credentials resolved from the Gateway's GatewayClass → GatewayClassConfig
-                  (class defaults, Gateway overrides).
+                  (class defaults, Gateway overrides). Namespace-local like every other
+                  reference here — a cross-namespace option would let a tenant point the
+                  controller at another tenant's credentials.
                 properties:
                   key:
                     description: |-
-                      Key in the Secret. Defaults depend on context:
-                      - For cloudflareCredentialsSecretRef: "api-token"
+                      Key in the Secret. Defaults depend on context: "tunnel-token" for
+                      tunnelTokenSecretRef, "auth-token" for authTokenSecretRef.
                     type: string
                   name:
                     description: Name of the Secret.
                     minLength: 1
-                    type: string
-                  namespace:
-                    description: Namespace of the Secret. Defaults to the namespace
-                      of the referencing resource.
                     type: string
                 required:
                 - name

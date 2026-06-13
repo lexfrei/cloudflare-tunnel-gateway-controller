@@ -74,6 +74,24 @@ tests:
             name: PROXY_GRACE_PERIOD
             value: "60s"
 
+  # An explicit null override removes the key from values; the template must
+  # fall back to the default instead of computing a 0s drain + 15s TGPS.
+  - it: should fall back to the default grace when gracePeriodSeconds is null
+    set:
+      proxy:
+        gracePeriodSeconds: null
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
+    asserts:
+      - equal:
+          path: spec.template.spec.terminationGracePeriodSeconds
+          value: 45
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: PROXY_GRACE_PERIOD
+            value: "30s"
+
   # Data-plane metrics are default-ON; the env var is rendered explicitly in
   # both states so the deployed intent is visible in the pod spec.
   - it: should enable proxy metrics by default

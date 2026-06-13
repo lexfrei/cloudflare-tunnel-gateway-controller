@@ -602,7 +602,9 @@
         "labelKey": {
           "type": "string",
           "description": "Namespace label carrying the tenant's allowed hostname suffix.",
-          "default": "cf.k8s.lex.la/hostname-suffix"
+          "default": "cf.k8s.lex.la/hostname-suffix",
+          "pattern": "^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?[a-zA-Z0-9]([-a-zA-Z0-9_.]*[a-zA-Z0-9])?$",
+          "maxLength": 317
         },
         "namespaceSelector": {
           "type": "object",

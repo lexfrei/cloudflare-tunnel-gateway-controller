@@ -27,7 +27,7 @@ spec:
       {{- end }}
       # Drain window + 15s headroom: kubelet must not SIGKILL while cloudflared
       # is still unregistering connectors / draining in-flight requests.
-      terminationGracePeriodSeconds: {{ add (int .Values.proxy.gracePeriodSeconds) 15 }}
+      terminationGracePeriodSeconds: {{ add (int (.Values.proxy.gracePeriodSeconds | default 30)) 15 }}
       securityContext:
         {{- toYaml .Values.proxy.podSecurityContext | nindent 8 }}
       containers:
@@ -47,7 +47,7 @@ spec:
             - name: PROXY_ADDR
               value: ":{{ .Values.proxy.proxyPort }}"
             - name: PROXY_GRACE_PERIOD
-              value: "{{ int .Values.proxy.gracePeriodSeconds }}s"
+              value: "{{ int (.Values.proxy.gracePeriodSeconds | default 30) }}s"
             - name: PROXY_METRICS_ENABLED
               value: {{ .Values.proxy.metrics.enabled | quote }}
             {{- with .Values.proxy.tunnel.protocol }}

@@ -24,6 +24,9 @@ func TestValuesSchemaNamespaceSelectorClosed(t *testing.T) {
 			HostnameOwnershipPolicy struct {
 				AdditionalProperties *bool `json:"additionalProperties"`
 				Properties           struct {
+					LabelKey struct {
+						Pattern string `json:"pattern"`
+					} `json:"labelKey"`
 					NamespaceSelector struct {
 						AdditionalProperties *bool `json:"additionalProperties"`
 						Properties           struct {
@@ -57,5 +60,12 @@ func TestValuesSchemaNamespaceSelectorClosed(t *testing.T) {
 	items := selector.Properties.MatchExpressions.Items
 	if items.AdditionalProperties == nil || *items.AdditionalProperties {
 		t.Error("namespaceSelector.matchExpressions items must set additionalProperties: false")
+	}
+
+	// labelKey is interpolated into the rendered CEL expression: without a
+	// qualified-name pattern, a value containing a quote produces uncompilable
+	// CEL, which under failurePolicy=Fail denies EVERY route write in scope.
+	if schema.Properties.HostnameOwnershipPolicy.Properties.LabelKey.Pattern == "" {
+		t.Error("hostnameOwnershipPolicy.labelKey must carry a qualified-name pattern — CEL-breaking characters in the key brick admission")
 	}
 }

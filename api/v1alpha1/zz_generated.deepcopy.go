@@ -245,7 +245,7 @@ func (in *GatewayConfigSpec) DeepCopyInto(out *GatewayConfigSpec) {
 	out.TunnelTokenSecretRef = in.TunnelTokenSecretRef
 	if in.CloudflareCredentialsSecretRef != nil {
 		in, out := &in.CloudflareCredentialsSecretRef, &out.CloudflareCredentialsSecretRef
-		*out = new(SecretReference)
+		*out = new(LocalSecretReference)
 		**out = **in
 	}
 	if in.AuthTokenSecretRef != nil {

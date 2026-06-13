@@ -57,7 +57,7 @@ GatewayClassConfig has a `status.conditions` subresource. The reconciler emits:
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `tunnelTokenSecretRef` | object | Yes | Connector-token Secret in the same namespace (`name`, optional `key`, default `tunnel-token`). The tunnel ID and account are parsed from the token. |
-| `cloudflareCredentialsSecretRef` | object | No | API-token override for this Gateway's tunnel-document writes; defaults to the GatewayClass → GatewayClassConfig credentials. |
+| `cloudflareCredentialsSecretRef` | object | No | API-token override for this Gateway's tunnel-document writes, from a Secret in the SAME namespace (key `api-token` by default); defaults to the GatewayClass → GatewayClassConfig credentials. |
 | `authTokenSecretRef` | object | No | Bearer token (same namespace, default key `auth-token`) protecting this data plane's config API. |
 | `replicas` | integer | No | Fixed proxy replica count (default 2). Mutually exclusive with `autoscaling` (CEL-enforced). |
 | `autoscaling` | object | No | `minReplicas` (default 2), `maxReplicas`, `targetInflightPerPod`, optional `metricName` — renders an HPA on the proxy's in-flight gauge. |

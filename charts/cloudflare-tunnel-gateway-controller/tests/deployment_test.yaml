@@ -739,9 +739,10 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].args
           content: "--hostname-ownership-enforce=true"
-      - notContains:
-          path: spec.template.spec.containers[0].args
-          content: "--hostname-ownership-namespace-selector="
+      # Raw-output regex, not an exact-element notContains: the latter would
+      # still pass if the flag rendered WITH a value.
+      - notMatchRegexRaw:
+          pattern: hostname-ownership-namespace-selector
 
   # The controller renders per-Gateway proxy Deployments and must know the
   # release's proxy image; the chart always passes it.

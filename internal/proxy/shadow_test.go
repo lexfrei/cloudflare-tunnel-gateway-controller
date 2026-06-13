@@ -243,6 +243,51 @@ func TestDetectShadowedRules_HigherPriorityLaterRuleWins(t *testing.T) {
 		"the winner named in the message must be the route the router serves")
 }
 
+// TestDetectShadowedRules_ThreeWayCollisionNamesTheFinalWinner pins winner
+// attribution under ≥3 claimants on one pair: every loser's message must name
+// the route the router ACTUALLY serves ("matching requests are served by that
+// route"), which is only known after all claimants are seen. With claimants
+// low → mid → high (by priority, in flattening order), the low-priority
+// route's diagnostic must name the high-priority route — not the mid one it
+// happened to lose to first, which itself serves zero traffic on the pair.
+func TestDetectShadowedRules_ThreeWayCollisionNamesTheFinalWinner(t *testing.T) {
+	t.Parallel()
+
+	cfg := &proxy.Config{
+		Rules: []proxy.RouteRule{
+			{Hostnames: []string{"app.example.com"}, Matches: []proxy.RouteMatch{pathPrefixMatch("/")}},
+			{Hostnames: []string{"app.example.com"}, Matches: []proxy.RouteMatch{
+				pathPrefixMatch("/"), pathPrefixMatch("/mid-priority-arm"),
+			}},
+			{Hostnames: []string{"app.example.com"}, Matches: []proxy.RouteMatch{
+				pathPrefixMatch("/"), pathExactMatch("/high-priority-arm"),
+			}},
+		},
+		Provenance: []proxy.RuleProvenance{
+			prov("HTTPRoute", "ns", "low", shadowT0, 0),
+			prov("HTTPRoute", "ns", "mid", shadowT1, 0),
+			prov("HTTPRoute", "ns", "high", shadowT1, 0),
+		},
+	}
+
+	diags := proxy.DetectShadowedRules(cfg)
+
+	byLoser := make(map[string]string)
+	for _, diag := range diags {
+		byLoser[diag.Name] = diag.Message
+	}
+
+	require.Contains(t, byLoser, "low")
+	require.Contains(t, byLoser, "mid")
+	assert.NotContains(t, byLoser, "high", "the final winner must not be flagged")
+
+	assert.Contains(t, byLoser["low"], "HTTPRoute ns/high",
+		"the loser's message must name the route that actually serves the pair")
+	assert.NotContains(t, byLoser["low"], "HTTPRoute ns/mid",
+		"naming an intermediate claimant that serves zero traffic misleads the operator")
+	assert.Contains(t, byLoser["mid"], "HTTPRoute ns/high")
+}
+
 // TestDetectShadowedRules_HeaderOrderNormalized pins the canonical match key:
 // the same header set listed in a different order is the SAME match and must
 // collide.

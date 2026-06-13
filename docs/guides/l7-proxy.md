@@ -110,6 +110,8 @@ The proxy binary accepts the following environment variables:
 | `PROXY_CONFIG_ADDR` | `:8081` | Config API listen address |
 | `PROXY_ADDR` | `:8080` | Proxy listen address |
 | `PROXY_AUTH_TOKEN` | `""` (empty, no auth) | Bearer token for config push API authentication. If unset, the API is unauthenticated. |
+| `PROXY_METRICS_ENABLED` | `true` | Expose the data-plane Prometheus metrics at `/metrics` on the config API port. Set `false`/`0` to disable. |
+| `PROXY_GRACE_PERIOD` | `30s` | Connector drain window on shutdown (Go duration, capped at 3m): the proxy unregisters from the edge and gives in-flight requests this long before exiting. |
 
 ### Health Endpoints
 

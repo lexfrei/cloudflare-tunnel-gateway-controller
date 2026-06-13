@@ -109,11 +109,14 @@ type GatewayConfigSpec struct {
 	TunnelTokenSecretRef LocalSecretReference `json:"tunnelTokenSecretRef"`
 
 	// CloudflareCredentialsSecretRef optionally overrides the API credentials
-	// used to write this Gateway's tunnel ingress document. Defaults to the
+	// used to write this Gateway's tunnel ingress document, from a Secret in
+	// the SAME namespace under the "api-token" key (or Key). Defaults to the
 	// credentials resolved from the Gateway's GatewayClass → GatewayClassConfig
-	// (class defaults, Gateway overrides).
+	// (class defaults, Gateway overrides). Namespace-local like every other
+	// reference here — a cross-namespace option would let a tenant point the
+	// controller at another tenant's credentials.
 	// +optional
-	CloudflareCredentialsSecretRef *SecretReference `json:"cloudflareCredentialsSecretRef,omitempty"`
+	CloudflareCredentialsSecretRef *LocalSecretReference `json:"cloudflareCredentialsSecretRef,omitempty"`
 
 	// AuthTokenSecretRef optionally references a Secret (same namespace) with
 	// a bearer token (key "auth-token" or Key) protecting this Gateway's proxy

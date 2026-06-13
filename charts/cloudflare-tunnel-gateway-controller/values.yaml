@@ -365,9 +365,9 @@ proxy:
   # connector metrics (cloudflared_tunnel_*).
   metrics:
     # -- Expose request-level metrics (in-flight, duration, status classes,
-    # bytes, backend errors) on the config API port. When disabled while
-    # serviceMonitor.enabled is on, the ServiceMonitor's /metrics scrape
-    # returns 404 — disable the ServiceMonitor too or expect scrape errors.
+    # bytes, backend errors) on the config API port. Disabling this also
+    # suppresses the proxy ServiceMonitor (its template is gated on BOTH
+    # toggles) — a scrape against a metrics-less proxy would 404.
     enabled: true
   # -- Tunnel transport settings.
   tunnel:

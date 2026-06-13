@@ -182,7 +182,7 @@ func TestResolveForGateway_CredentialOverride(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "edge-config", Namespace: testGwNamespace},
 		Spec: v1alpha1.GatewayConfigSpec{
 			TunnelTokenSecretRef:           v1alpha1.LocalSecretReference{Name: "edge-tunnel-token"},
-			CloudflareCredentialsSecretRef: &v1alpha1.SecretReference{Name: "tenant-credentials"},
+			CloudflareCredentialsSecretRef: &v1alpha1.LocalSecretReference{Name: "tenant-credentials"},
 		},
 	}
 	tenantCredentials := &corev1.Secret{

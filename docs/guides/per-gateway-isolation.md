@@ -64,7 +64,7 @@ A Gateway without `infrastructure.parametersRef` keeps the shared data plane, un
 | Field | Required | Meaning |
 | --- | --- | --- |
 | `tunnelTokenSecretRef` | yes | Connector-token Secret in the SAME namespace (key `tunnel-token` by default). Token rotation rolls the proxy pods automatically. |
-| `cloudflareCredentialsSecretRef` | no | API-token override for this Gateway's tunnel-document writes; defaults to the GatewayClass → GatewayClassConfig credentials. |
+| `cloudflareCredentialsSecretRef` | no | API-token override for this Gateway's tunnel-document writes, from a Secret in the SAME namespace (key `api-token` by default); defaults to the GatewayClass → GatewayClassConfig credentials. |
 | `authTokenSecretRef` | no | Bearer token (key `auth-token`) protecting this plane's config API; the controller pushes with it. |
 | `replicas` | no | Fixed replica count; default 2 (the HA floor — one connector pod is a tunnel availability hazard). Mutually exclusive with `autoscaling`. |
 | `autoscaling` | no | Renders a HorizontalPodAutoscaler — see below. |
@@ -104,6 +104,7 @@ Also note the RBAC equivalence: `create` on `GatewayConfig` (plus a Gateway refe
 
 ## Operational notes
 
+- **Events:** the controller emits `ProxyProvisioned` (Normal) on the Gateway when the data plane is rendered, and `RenderFailed` (Warning) when rendering cannot proceed (missing proxy image, apply failures) — `kubectl describe gateway` shows both.
 - **Drain:** on pod shutdown the proxy unregisters its connectors from the edge and gives in-flight requests a grace period before exiting; the rendered `terminationGracePeriodSeconds` covers the window.
 - **RBAC:** rendering requires cluster-wide write on Deployments/Services/HPAs (Gateways live in arbitrary namespaces); see the [security reference](../reference/security.md) for the exact rules and ownership guards.
 - **Failure containment:** a tunnel-sync failure for one Gateway's tunnel marks only THAT Gateway's routes Pending; other tenants' route statuses are untouched.

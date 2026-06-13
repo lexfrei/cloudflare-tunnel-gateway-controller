@@ -312,7 +312,7 @@ spec:
 | proxy.image.repository | string | `"ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller-proxy"` | Proxy image repository |
 | proxy.image.tag | string | `""` | Image tag (defaults to appVersion) |
 | proxy.metrics | object | `{"enabled":true}` | Data-plane Prometheus metrics, served at /metrics on the config API port (no auth — the endpoint carries no secrets and the port is cluster-internal). The endpoint also exposes the embedded cloudflared connector metrics (cloudflared_tunnel_*). |
-| proxy.metrics.enabled | bool | `true` | Expose request-level metrics (in-flight, duration, status classes, bytes, backend errors) on the config API port. When disabled while serviceMonitor.enabled is on, the ServiceMonitor's /metrics scrape returns 404 — disable the ServiceMonitor too or expect scrape errors. |
+| proxy.metrics.enabled | bool | `true` | Expose request-level metrics (in-flight, duration, status classes, bytes, backend errors) on the config API port. Disabling this also suppresses the proxy ServiceMonitor (its template is gated on BOTH toggles) — a scrape against a metrics-less proxy would 404. |
 | proxy.networkPolicy | object | `{"enabled":false,"ingress":{"from":[]}}` | NetworkPolicy configuration for proxy pods |
 | proxy.networkPolicy.enabled | bool | `false` | Enable NetworkPolicy for proxy pods |
 | proxy.networkPolicy.ingress | object | `{"from":[]}` | Ingress source configuration |

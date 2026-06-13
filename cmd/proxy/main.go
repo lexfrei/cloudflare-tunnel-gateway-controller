@@ -189,6 +189,17 @@ func runTunnelMode(logger *slog.Logger, token string) {
 	// the operator must restart the proxy.
 	router.SetDialedProtocol(effectiveProtocol)
 
+	// A drain signalled before the dial means the pod is already terminating:
+	// dialing the edge only to immediately unregister would burn termination
+	// grace for nothing — skip straight to shutdown.
+	if drainSignalled(graceC) {
+		logger.Info("drain signalled before tunnel start; exiting without dialing the edge")
+		cancel()
+		gracefulShutdown(logger, configServer)
+
+		return
+	}
+
 	logger.Info("starting cloudflared tunnel with in-process proxy", "protocol", effectiveProtocol)
 
 	err := tunnel.StartTunnel(ctx, &tunnel.Config{
@@ -289,6 +300,17 @@ func newProxyServer(addr string, handler http.Handler) *http.Server {
 // Service) and in-flight requests get the grace period to finish. The run
 // context MUST stay alive during the drain; cancelling it aborts the
 // unregister RPC.
+// drainSignalled reports whether the drain channel is already closed,
+// without blocking.
+func drainSignalled(graceC <-chan struct{}) bool {
+	select {
+	case <-graceC:
+		return true
+	default:
+		return false
+	}
+}
+
 func setupDrainSignals(ctx context.Context, logger *slog.Logger, cancel context.CancelFunc) <-chan struct{} {
 	// Buffered for two signals: the first starts the drain, the second forces
 	// immediate shutdown.

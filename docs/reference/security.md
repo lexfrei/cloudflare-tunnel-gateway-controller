@@ -105,7 +105,7 @@ rules:
   # ownerReferences and deleted only when owned.
   - apiGroups: [""]
     resources: ["services"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+    verbs: ["get", "list", "watch", "create", "update", "delete"]
   - apiGroups: [""]
     resources: ["secrets", "configmaps"]
     verbs: ["get", "list", "watch"]
@@ -135,7 +135,7 @@ rules:
   # GatewayConfig requests autoscaling
   - apiGroups: ["autoscaling"]
     resources: ["horizontalpodautoscalers"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+    verbs: ["get", "list", "watch", "create", "update", "delete"]
 
   # GatewayConfig CRD - per-Gateway data-plane parameters referenced from
   # Gateway.spec.infrastructure.parametersRef

@@ -310,18 +310,21 @@ tests:
             apiGroups: ["apps"]
             resources: ["deployments"]
             verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+      # No patch verb: the reconciler writes through CreateOrUpdate
+      # (get/create/update) and Delete only — an unused write verb is
+      # gratuitous attack surface.
       - contains:
           path: rules
           content:
             apiGroups: [""]
             resources: ["services"]
-            verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+            verbs: ["get", "list", "watch", "create", "update", "delete"]
       - contains:
           path: rules
           content:
             apiGroups: ["autoscaling"]
             resources: ["horizontalpodautoscalers"]
-            verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+            verbs: ["get", "list", "watch", "create", "update", "delete"]
       - contains:
           path: rules
           content:

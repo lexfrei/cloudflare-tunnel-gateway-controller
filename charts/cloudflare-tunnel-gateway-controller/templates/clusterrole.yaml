@@ -60,7 +60,7 @@ rules:
   # controller-owned via ownerReferences and deleted only when owned.
   - apiGroups: [""]
     resources: ["services"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+    verbs: ["get", "list", "watch", "create", "update", "delete"]
   # EndpointSlice: the ProxyEndpointReconciler watches EndpointSlices owned
   # by the proxy headless Service so that a newly-joined proxy pod gets
   # the cached config pushed to it immediately, rather than waiting for
@@ -81,7 +81,7 @@ rules:
   # GatewayConfig requests autoscaling (issue #479).
   - apiGroups: ["autoscaling"]
     resources: ["horizontalpodautoscalers"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+    verbs: ["get", "list", "watch", "create", "update", "delete"]
   # Secrets: the controller only reads them (Cloudflare credentials, TLS
   # certificate refs, BackendTLSPolicy CA bundles). It does not create,
   # mutate, or delete Secrets, so write verbs are intentionally absent.

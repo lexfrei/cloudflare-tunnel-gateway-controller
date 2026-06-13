@@ -21,6 +21,7 @@ const GatewayParametersRefKind = "GatewayConfig"
 const (
 	tunnelTokenSecretKey = "tunnel-token"
 	authTokenSecretKey   = "auth-token"
+	apiTokenSecretKey    = "api-token"
 )
 
 // ErrInvalidParameters classifies a Gateway whose
@@ -186,9 +187,9 @@ func (r *Resolver) readTunnelToken(
 }
 
 // resolveGatewayAPIToken returns the Cloudflare API token for the Gateway's
-// tunnel-document writes: the GatewayConfig-level override when set
-// (namespace defaulting to the GatewayConfig's own namespace), otherwise the
-// token resolved from the Gateway's GatewayClass → GatewayClassConfig chain.
+// tunnel-document writes: the GatewayConfig-level override when set (read
+// from the GatewayConfig's OWN namespace only), otherwise the token resolved
+// from the Gateway's GatewayClass → GatewayClassConfig chain.
 func (r *Resolver) resolveGatewayAPIToken(
 	ctx context.Context,
 	gateway *gatewayv1.Gateway,
@@ -210,16 +211,14 @@ func (r *Resolver) resolveGatewayAPIToken(
 }
 
 // readCredentialOverride fetches the GatewayConfig-level Cloudflare API
-// token, defaulting the Secret namespace to the GatewayConfig's own.
+// token. The Secret is read from the GatewayConfig's OWN namespace only —
+// the reference type carries no namespace by design (tenancy boundary).
 func (r *Resolver) readCredentialOverride(
 	ctx context.Context,
 	gwConfig *v1alpha1.GatewayConfig,
-	override *v1alpha1.SecretReference,
+	override *v1alpha1.LocalSecretReference,
 ) (string, error) {
-	namespace := override.Namespace
-	if namespace == "" {
-		namespace = gwConfig.Namespace
-	}
+	namespace := gwConfig.Namespace
 
 	secret, err := r.getSecret(ctx, override.Name, namespace)
 	if err != nil {
@@ -231,7 +230,7 @@ func (r *Resolver) readCredentialOverride(
 		return "", errors.Wrapf(err, "reading cloudflare credentials secret %s/%s", namespace, override.Name)
 	}
 
-	key := override.GetAPITokenKey()
+	key := override.KeyOr(apiTokenSecretKey)
 
 	token := secret.Data[key]
 	if len(token) == 0 {
