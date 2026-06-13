@@ -392,7 +392,12 @@ func ConfigService(input Input) *corev1.Service {
 func truncateName(name string) string {
 	sanitized := sanitizeDNSLabel(name)
 
-	if sanitized == name && len(name) <= MaxDNSLabelLength {
+	// Pass through only a name that is ALREADY a valid rendered name: no
+	// sanitization needed, within the length cap, and starting+ending on an
+	// alphanumeric (a leading/trailing dash is a valid char but an invalid
+	// DNS-1123 label). Anything else takes the hash path, which trims the
+	// edges. Real Gateway names (DNS-1123 subdomains) always pass through.
+	if sanitized == name && len(name) <= MaxDNSLabelLength && isAlphanumericEdged(name) {
 		return name
 	}
 
@@ -400,7 +405,16 @@ func truncateName(name string) string {
 	suffix := hex.EncodeToString(sum[:])[:nameHashLength]
 	keep := min(len(sanitized), MaxDNSLabelLength-nameHashLength-1)
 
-	return strings.TrimRight(sanitized[:keep], "-") + "-" + suffix
+	// Trim dashes from BOTH ends: a leading dash (e.g. ".edge" → "-edge")
+	// would make the result an invalid DNS-1123 label. The hash suffix is
+	// always alphanumeric, so the tail stays valid; an all-dash body trims to
+	// empty and the name becomes just the hash.
+	body := strings.Trim(sanitized[:keep], "-")
+	if body == "" {
+		return suffix
+	}
+
+	return body + "-" + suffix
 }
 
 // sanitizeDNSLabel lowercases and replaces every character that is not a
@@ -422,4 +436,22 @@ func sanitizeDNSLabel(name string) string {
 	}
 
 	return builder.String()
+}
+
+// isAlphanumericEdged reports whether name is non-empty and both its first and
+// last bytes are lowercase ASCII alphanumerics. A DNS-1123 label must start and
+// end on an alphanumeric, so a name with a leading or trailing dash (e.g.
+// "-edge", "edge-") is rejected here and routed to the hash path, which trims
+// the edges. Callers use this only on the early-return path where name already
+// equals its lowercased sanitized form, so checking bytes is sufficient.
+func isAlphanumericEdged(name string) bool {
+	if name == "" {
+		return false
+	}
+
+	isAlnum := func(b byte) bool {
+		return (b >= 'a' && b <= 'z') || (b >= '0' && b <= '9')
+	}
+
+	return isAlnum(name[0]) && isAlnum(name[len(name)-1])
 }

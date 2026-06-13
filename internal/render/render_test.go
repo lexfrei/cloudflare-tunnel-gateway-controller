@@ -155,6 +155,7 @@ func TestRenderedNames_AlwaysValidDNS1123(t *testing.T) {
 
 	names := []string{
 		"edge", "My.Edge", "UPPER", strings.Repeat("a-", 40), "a.b.c.d", "x---y",
+		".edge", "-edge", "edge.", "...", "9-lead",
 	}
 
 	for _, name := range names {
