@@ -380,6 +380,38 @@ func TestResolveForGateway_ClassFallbackMissingSecretIsInvalidParameters(t *test
 		"a missing class credentials Secret is a deterministic user-fixable problem -> InvalidParameters")
 }
 
+// TestResolveForGateway_ClassFallbackEmptyTokenIsInvalidParameters pins that a
+// deterministic non-NotFound failure in the class-credential fallback (here:
+// the class credentials Secret exists but its api-token key is empty)
+// classifies as ErrInvalidParameters too — not just the NotFound case — so the
+// Gateway surfaces Accepted=False instead of backing off forever.
+func TestResolveForGateway_ClassFallbackEmptyTokenIsInvalidParameters(t *testing.T) {
+	t.Parallel()
+
+	gwConfig := &v1alpha1.GatewayConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "edge-config", Namespace: testGwNamespace},
+		Spec: v1alpha1.GatewayConfigSpec{
+			TunnelTokenSecretRef: v1alpha1.LocalSecretReference{Name: "edge-tunnel-token"},
+		},
+	}
+
+	// Replace the class-credentials Secret with one whose api-token key is
+	// present but empty — a deterministic, user-fixable config error.
+	fixtures := classFixtures()
+	emptyTokenSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "class-credentials", Namespace: "cf-system"},
+		Data:       map[string][]byte{"api-token": []byte("")},
+	}
+	objects := append(fixtures[:2:2], emptyTokenSecret, gwConfig, tokenSecret(t), generatedAuthSecret())
+
+	resolver := newGatewayResolver(t, objects...)
+
+	_, err := resolver.ResolveForGateway(context.Background(), gatewayWithInfra("cf.k8s.lex.la", "GatewayConfig", "edge-config"))
+	require.Error(t, err)
+	assert.ErrorIs(t, err, config.ErrInvalidParameters,
+		"an empty class api-token key is a deterministic user-fixable problem -> InvalidParameters")
+}
+
 // TestHasInfrastructureParametersRef pins the opt-in predicate the sync
 // partitioner uses.
 func TestHasInfrastructureParametersRef(t *testing.T) {

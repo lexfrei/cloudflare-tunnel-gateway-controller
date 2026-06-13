@@ -214,22 +214,35 @@ func (r *Resolver) resolveGatewayAPIToken(
 
 	classResolved, err := r.ResolveFromGatewayClassName(ctx, string(gateway.Spec.GatewayClassName))
 	if err != nil {
-		// A missing referent in the class chain (GatewayClassConfig or its
-		// credentials Secret) is a deterministic, user-fixable problem — the
-		// per-Gateway plane cannot write its tunnel document. Classify it as
-		// ErrInvalidParameters like the override path so the Gateway surfaces
-		// Accepted=False instead of backing off silently with no status.
-		// Non-NotFound failures stay un-sentinelled (transient apiserver
-		// errors retry, class-level misconfig has its own surfacing).
-		if apierrors.IsNotFound(err) {
-			return "", errors.Wrapf(ErrInvalidParameters,
-				"class credentials for per-Gateway data plane: %v", err)
+		// Only genuinely-retryable apiserver failures (timeout, throttling,
+		// 5xx) keep backing off without stamping the Gateway. EVERY other
+		// class-chain failure is a deterministic, user-fixable config problem
+		// (missing/invalid parametersRef, absent GatewayClassConfig or its
+		// Secret, empty tunnelID, empty api-token key) — the per-Gateway plane
+		// can never write its tunnel document, so classify it as
+		// ErrInvalidParameters and surface Accepted=False instead of backing
+		// off forever with no status. (A transient Cloudflare-API error during
+		// account auto-detection is conservatively treated as InvalidParameters
+		// here and self-heals on the next config/Secret event.)
+		if isRetryableAPIError(err) {
+			return "", errors.Wrap(err, "resolving class credentials for per-Gateway data plane")
 		}
 
-		return "", errors.Wrap(err, "resolving class credentials for per-Gateway data plane")
+		return "", errors.Wrapf(ErrInvalidParameters,
+			"class credentials for per-Gateway data plane: %v", err)
 	}
 
 	return classResolved.APIToken, nil
+}
+
+// isRetryableAPIError reports whether err is a transient apiserver failure that
+// warrants backoff rather than a deterministic, user-fixable config error.
+func isRetryableAPIError(err error) bool {
+	return apierrors.IsServerTimeout(err) ||
+		apierrors.IsTimeout(err) ||
+		apierrors.IsTooManyRequests(err) ||
+		apierrors.IsInternalError(err) ||
+		apierrors.IsServiceUnavailable(err)
 }
 
 // readCredentialOverride fetches the GatewayConfig-level Cloudflare API
