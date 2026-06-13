@@ -101,6 +101,28 @@ func TestParseTunnelToken_MissingSecret(t *testing.T) {
 	assert.Contains(t, err.Error(), "missing tunnel secret")
 }
 
+// TestParseTunnelToken_DoesNotLeakSecret pins a security boundary: a token
+// whose secret field is malformed must produce an error that never echoes the
+// secret bytes. Parse errors are logged and surfaced on Gateway status, so a
+// leak here would expose tunnel credentials to anyone who can read logs or
+// status. The secret value below is not valid base64, so the []byte decode
+// fails inside json.Unmarshal — the wrapped error must carry only the failure
+// (offset/kind), not the input.
+func TestParseTunnelToken_DoesNotLeakSecret(t *testing.T) {
+	t.Parallel()
+
+	const secretSentinel = "SUPERSECRETtunnelVALUE"
+
+	tokenJSON := `{"a":"abc123","t":"550e8400-e29b-41d4-a716-446655440000","s":"` + secretSentinel + `_!!!"}`
+	encoded := base64.StdEncoding.EncodeToString([]byte(tokenJSON))
+
+	_, err := tunnel.ParseTunnelToken(encoded)
+
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), secretSentinel,
+		"a malformed secret field must never appear in the parse error")
+}
+
 func TestStartTunnel_InvalidToken(t *testing.T) {
 	t.Parallel()
 
