@@ -609,6 +609,16 @@ func (s *RouteSyncer) SyncAllRoutes(ctx context.Context) (ctrl.Result, *SyncResu
 			"tunnel", collision.tunnelID, "gateways", strings.Join(collision.gateways, ","))
 	}
 
+	// A dedicated Gateway sharing the class tunnel has its credential override
+	// silently dropped for the merged write (same tunnel ⇒ one credential).
+	// Benign, but surface it so the operator is not surprised the override
+	// has no effect.
+	for _, drop := range sharedTunnelCredentialDrops(groups) {
+		logger.Warn("per-Gateway Cloudflare credential override ignored: this Gateway shares the class tunnel, "+
+			"so the class credential writes the merged ingress document — move it to its own tunnel to use a distinct credential",
+			"tunnel", drop.tunnelID, "gateway", drop.gateway)
+	}
+
 	logger.Info("syncing routes to cloudflare",
 		"httpRoutes", len(httpResult.accepted),
 		"grpcRoutes", len(grpcResult.accepted),
@@ -769,6 +779,62 @@ func sharedInfraTunnelCollisions(groups []tunnelGroup) []tunnelCollision {
 	}
 
 	return collisions
+}
+
+// credentialOverrideDrop names a per-Gateway partition whose resolved
+// Cloudflare credential differs from the credential that actually writes its
+// tunnel's ingress document (the group owner's). Same tunnel ⇒ one document ⇒
+// one credential, so the override is silently ignored.
+type credentialOverrideDrop struct {
+	tunnelID string
+	gateway  string
+}
+
+// sharedTunnelCredentialDrops reports infra Gateways that share the CLASS
+// tunnel (the shared partition's group) but resolve a different credential
+// than the class — their GatewayConfig credential override is dropped for the
+// merged write. This is benign (the same tunnel belongs to one account, so the
+// account tag matches), but a silent operator surprise worth surfacing.
+// infra+infra groups are NOT reported here — sharedInfraTunnelCollisions
+// already flags those loudly as a cross-tenant exposure.
+func sharedTunnelCredentialDrops(groups []tunnelGroup) []credentialOverrideDrop {
+	var drops []credentialOverrideDrop
+
+	for i := range groups {
+		group := &groups[i]
+
+		hasShared := false
+
+		for _, partition := range group.partitions {
+			if partition.PerGateway == nil {
+				hasShared = true
+
+				break
+			}
+		}
+
+		if !hasShared {
+			continue
+		}
+
+		// The shared partition is always first, so group.resolved is the class
+		// credential that writes the merged document.
+		for _, partition := range group.partitions {
+			if partition.PerGateway == nil {
+				continue
+			}
+
+			resolved := &partition.PerGateway.ResolvedConfig
+			if resolved.APIToken != group.resolved.APIToken || resolved.AccountID != group.resolved.AccountID {
+				drops = append(drops, credentialOverrideDrop{
+					tunnelID: group.resolved.TunnelID,
+					gateway:  partition.Key,
+				})
+			}
+		}
+	}
+
+	return drops
 }
 
 // tunnelGroupsOutcome aggregates the per-group sync results.
