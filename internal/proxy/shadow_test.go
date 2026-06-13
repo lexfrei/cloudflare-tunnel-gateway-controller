@@ -89,6 +89,35 @@ func TestDetectShadowedRules_TimestampTieUsesNamespaceName(t *testing.T) {
 	assert.Contains(t, diags[0].Message, "alphabetical {namespace}/{name}")
 }
 
+// TestDetectShadowedRules_FlatIndexTieReportsConfigOrder pins that when the
+// winner is decided purely by flattened index — same kind, same timestamp, and
+// the winner sorts alphabetically AFTER the loser — the basis is reported as
+// the generated-config order, NOT the cross-kind "HTTPRoute precede GRPCRoute"
+// reason (both routes are HTTPRoutes; that text would be a lie).
+func TestDetectShadowedRules_FlatIndexTieReportsConfigOrder(t *testing.T) {
+	t.Parallel()
+
+	cfg := &proxy.Config{
+		Rules: []proxy.RouteRule{
+			{Hostnames: []string{"app.example.com"}, Matches: []proxy.RouteMatch{pathExactMatch("/v1")}},
+			{Hostnames: []string{"app.example.com"}, Matches: []proxy.RouteMatch{pathExactMatch("/v1")}},
+		},
+		Provenance: []proxy.RuleProvenance{
+			// Winner sorts alphabetically AFTER the loser, yet holds the lower
+			// flattened index, so beats() awards it the pair on flatIdx alone.
+			prov("HTTPRoute", "team-z", "app", shadowT0, 0),
+			prov("HTTPRoute", "team-a", "app", shadowT0, 0),
+		},
+	}
+
+	diags := proxy.DetectShadowedRules(cfg)
+	require.Len(t, diags, 1)
+	assert.Equal(t, "team-a", diags[0].Namespace, "the loser is the higher-flatIdx route")
+	assert.Contains(t, diags[0].Message, "earlier position in the generated configuration order")
+	assert.NotContains(t, diags[0].Message, "HTTPRoute rules precede GRPCRoute",
+		"both routes are HTTPRoutes — the cross-kind reason must not be reported")
+}
+
 // TestDetectShadowedRules_NoFalsePositives pins the deliberately-out-of-scope
 // cases: same-route duplicates (within-route first-wins is spec'd separately),
 // different hostnames, prefix-vs-exact on the same path value, and

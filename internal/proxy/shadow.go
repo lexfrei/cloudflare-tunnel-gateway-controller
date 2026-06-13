@@ -15,6 +15,12 @@ import (
 // no route-to-route hostname ownership; same-hostname routes legally merge).
 const ReasonHostnameMatchShadowed = "HostnameMatchShadowed"
 
+// Route kinds stamped on RuleProvenance.Kind by the converters.
+const (
+	kindHTTPRoute = "HTTPRoute"
+	kindGRPCRoute = "GRPCRoute"
+)
+
 // RuleProvenance identifies the source route of one flattened Config rule.
 // Config.Provenance parallels Config.Rules index-for-index; both are appended
 // together by the converters and by buildProxyConfig's gRPC merge, and nothing
@@ -201,9 +207,11 @@ func canonicalMatchKey(match RouteMatch) string {
 
 	encoded, err := json.Marshal(norm)
 	if err != nil {
-		// RouteMatch is plain data; Marshal cannot realistically fail. An
-		// unkeyable match must never alias another, so make the key unique.
-		return fmt.Sprintf("unmarshalable-%p", &match)
+		// RouteMatch is plain data; Marshal cannot realistically fail. Fall
+		// back to a CONTENT representation (not the loop-local address, which
+		// repeats across calls): equal matches must still collide, distinct
+		// ones must not.
+		return fmt.Sprintf("unmarshalable-%#v", norm)
 	}
 
 	return string(encoded)
@@ -243,10 +251,10 @@ func normalizeQueryMatches(params []QueryParamMatch) []QueryParamMatch {
 // shadowBasis names the criterion that decided the collision. A priority gap
 // means the winning RULE outranks the loser on Gateway API match specificity
 // (its most specific ORed match sets the whole rule's rank). Equal priorities
-// fall back to flattening order = spec precedence: creationTimestamp, then
-// {namespace}/{name}; the only remaining tie is cross-kind, where HTTPRoute
-// rules precede GRPCRoute rules in the generated configuration — reported
-// honestly rather than pretending a timestamp decided it.
+// are decided by beats() PURELY on flattened index, so a timestamp/name reason
+// is reported only when it actually agrees with that order; otherwise the
+// honest answer is the generated-config order itself (e.g. HTTPRoute rules
+// precede GRPCRoute rules) — never a timestamp or name that did not decide it.
 func shadowBasis(winner, loser *shadowClaimant) string {
 	if winner.priority != loser.priority {
 		return "higher match specificity — the winning rule's most specific match ranks the whole rule above this one"
@@ -265,7 +273,15 @@ func shadowBasis(winner, loser *shadowClaimant) string {
 		}
 	}
 
-	return "HTTPRoute rules precede GRPCRoute rules in the generated configuration"
+	// The winner sorts later by timestamp/name yet still serves first: it holds
+	// the lower flattened index. When the kinds differ that order IS the
+	// HTTPRoute-before-GRPCRoute convention; for same-kind routes name the
+	// order itself rather than a cross-kind reason that did not apply.
+	if winner.provenance.Kind == kindHTTPRoute && loser.provenance.Kind == kindGRPCRoute {
+		return "HTTPRoute rules precede GRPCRoute rules in the generated configuration"
+	}
+
+	return "earlier position in the generated configuration order"
 }
 
 // shadowedMessage builds the actionable operator-facing message: which pair is
