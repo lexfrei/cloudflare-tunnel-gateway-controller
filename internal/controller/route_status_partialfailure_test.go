@@ -106,3 +106,27 @@ func TestInjectPartitionSyncErrors_AttributesPerGateway(t *testing.T) {
 	assert.ErrorIs(t, shared["sys/shared-gw"], errTunnelGroupFailed,
 		"a shared-partition failure maps onto the route's shared (non-infra) parent")
 }
+
+// TestInjectPartitionSyncErrors_BrokenGatewayFlagged pins that a route accepted
+// only on an opted-in Gateway whose data plane did NOT resolve carries a
+// per-parent error even when no tunnel sync failed — the route is served
+// nowhere, so its parent must not report Accepted=True.
+func TestInjectPartitionSyncErrors_BrokenGatewayFlagged(t *testing.T) {
+	t.Parallel()
+
+	bindings := map[string]routeBindingInfo{
+		"team-a/orphan": {acceptedGateways: map[string]bool{"team-a/gw-broken": true}},
+	}
+
+	infra := &infraGateways{
+		resolved: map[string]*infraGateway{},
+		broken:   map[string]bool{"team-a/gw-broken": true},
+	}
+
+	// No tunnel failed — only the data plane is unresolvable.
+	injectPartitionSyncErrors(bindings, map[string]error{}, infra)
+
+	require.NotNil(t, bindings["team-a/orphan"].syncErrByGateway)
+	assert.Error(t, bindings["team-a/orphan"].syncErrByGateway["team-a/gw-broken"],
+		"a route on a broken (unresolvable) data plane must carry a per-parent error")
+}

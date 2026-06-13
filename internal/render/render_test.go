@@ -1,6 +1,7 @@
 package render_test
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 
@@ -140,6 +141,35 @@ func TestRenderedNames_SanitizeDots(t *testing.T) {
 		render.ProxyDeployment(testInput("my.edge")).Name,
 		render.ProxyDeployment(testInput("my-edge")).Name,
 		"distinct Gateway names must not collide on the rendered name")
+}
+
+// TestRenderedNames_AlwaysValidDNS1123 pins that every rendered name is a
+// valid DNS-1123 label (lowercase alphanumeric or '-', starts/ends
+// alphanumeric, <= 63 chars) across ordinary, dotted, uppercase, long, and
+// dash-heavy Gateway names — the apiserver rejects anything else on every
+// reconcile.
+func TestRenderedNames_AlwaysValidDNS1123(t *testing.T) {
+	t.Parallel()
+
+	dns1123 := regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
+
+	names := []string{
+		"edge", "My.Edge", "UPPER", strings.Repeat("a-", 40), "a.b.c.d", "x---y",
+	}
+
+	for _, name := range names {
+		input := testInput(name)
+
+		for label, value := range map[string]string{
+			"deployment": render.DeploymentName(input.Gateway),
+			"service":    render.ConfigServiceName(input.Gateway),
+			"authsecret": render.GeneratedAuthSecretName(input.Gateway),
+			"labelvalue": render.GatewayLabelValue(name),
+		} {
+			assert.LessOrEqual(t, len(value), 63, "%s for %q exceeds 63 chars", label, name)
+			assert.Regexp(t, dns1123, value, "%s for %q is not a valid DNS-1123 label", label, name)
+		}
+	}
 }
 
 func filterKeys(all map[string]string, want map[string]string) map[string]string {

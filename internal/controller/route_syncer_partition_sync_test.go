@@ -326,4 +326,14 @@ func TestSyncAllRoutes_BrokenGatewayConfigFailsClosed(t *testing.T) {
 
 	assert.Empty(t, api.hostnamesFor(tenantTunnelUUID),
 		"no document may be written for the unresolvable tunnel")
+
+	// The route bound only to the broken Gateway is served nowhere, so its
+	// status MUST NOT claim Accepted=True: the binding carries a per-parent
+	// sync error for the broken Gateway, which the status writer turns into
+	// Accepted=False (a route reporting health it does not have is a
+	// black-hole).
+	binding := result.HTTPRouteBindings["default/tenant-route"]
+	require.NotNil(t, binding.syncErrByGateway)
+	assert.Error(t, binding.syncErrByGateway["default/infra-gw"],
+		"a route on a broken data plane must carry a per-parent sync error so it is not reported Accepted=True")
 }

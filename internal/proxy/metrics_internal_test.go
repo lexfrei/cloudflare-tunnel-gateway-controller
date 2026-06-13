@@ -135,6 +135,31 @@ func TestMetricsOnUpgrade_HijackWithoutStatusCountsAsUpgrade(t *testing.T) {
 	assert.InDelta(t, 0.0, aborted, 0)
 }
 
+// TestMetrics_FinishRunsOnPanicNoGaugeLeak pins the load-bearing guarantee
+// behind the deferred finish: a handler that PANICS mid-request must still
+// release the in-flight gauge. A leaked increment would peg
+// cftunnel_proxy_requests_in_flight above zero forever and make the HPA scale
+// up without bound — the exact failure the deferred finish guards against.
+func TestMetrics_FinishRunsOnPanicNoGaugeLeak(t *testing.T) {
+	t.Parallel()
+
+	reg := prometheus.NewRegistry()
+	metrics := NewMetrics(reg)
+	counted := newCountingResponseWriter(nil)
+
+	func() {
+		defer func() { _ = recover() }()
+
+		state := metrics.beginRequest(counted, &http.Request{})
+		defer state.finish()
+
+		panic("backend exploded mid-request")
+	}()
+
+	assert.InDelta(t, 0.0, testutil.ToFloat64(metrics.requestsInFlight), 0,
+		"a panicking request must not leak the in-flight gauge")
+}
+
 // readSentinelError is compared by IDENTITY below — the wrapper must hand it
 // back unchanged.
 var errReadSentinel = errors.New("read sentinel")

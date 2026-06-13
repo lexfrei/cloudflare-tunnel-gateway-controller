@@ -288,6 +288,55 @@ func TestDetectShadowedRules_ThreeWayCollisionNamesTheFinalWinner(t *testing.T) 
 	assert.Contains(t, byLoser["mid"], "HTTPRoute ns/high")
 }
 
+// TestDetectShadowedRules_MultiHostnameCrossProduct pins the (hostname × match)
+// cross-product in ruleShadowKeys: a rule listing two hostnames collides with a
+// lower-precedence rule on EACH shared hostname independently. Two hostnames
+// both shadowed → two diagnostics.
+func TestDetectShadowedRules_MultiHostnameCrossProduct(t *testing.T) {
+	t.Parallel()
+
+	cfg := &proxy.Config{
+		Rules: []proxy.RouteRule{
+			{Hostnames: []string{"a.example.com", "b.example.com"}, Matches: []proxy.RouteMatch{pathExactMatch("/v1")}},
+			{Hostnames: []string{"a.example.com", "b.example.com"}, Matches: []proxy.RouteMatch{pathExactMatch("/v1")}},
+		},
+		Provenance: []proxy.RuleProvenance{
+			prov("HTTPRoute", "ns", "winner", shadowT0, 0),
+			prov("HTTPRoute", "ns", "loser", shadowT1, 0),
+		},
+	}
+
+	diags := proxy.DetectShadowedRules(cfg)
+	require.Len(t, diags, 2, "each shadowed hostname yields its own diagnostic")
+
+	joined := diags[0].Message + " " + diags[1].Message
+	assert.Contains(t, joined, "a.example.com")
+	assert.Contains(t, joined, "b.example.com")
+}
+
+// TestDetectShadowedRules_WildcardVsWildcardCollides pins a positive
+// wildcard-vs-wildcard case: two rules claiming the SAME wildcard pattern
+// collide (the pattern is the bucket key), unlike wildcard-vs-exact which does
+// not.
+func TestDetectShadowedRules_WildcardVsWildcardCollides(t *testing.T) {
+	t.Parallel()
+
+	cfg := &proxy.Config{
+		Rules: []proxy.RouteRule{
+			{Hostnames: []string{"*.example.com"}, Matches: []proxy.RouteMatch{pathPrefixMatch("/")}},
+			{Hostnames: []string{"*.example.com"}, Matches: []proxy.RouteMatch{pathPrefixMatch("/")}},
+		},
+		Provenance: []proxy.RuleProvenance{
+			prov("HTTPRoute", "ns", "winner", shadowT0, 0),
+			prov("HTTPRoute", "ns", "loser", shadowT1, 0),
+		},
+	}
+
+	diags := proxy.DetectShadowedRules(cfg)
+	require.Len(t, diags, 1)
+	assert.Equal(t, "loser", diags[0].Name)
+}
+
 // TestDetectShadowedRules_HeaderOrderNormalized pins the canonical match key:
 // the same header set listed in a different order is the SAME match and must
 // collide.

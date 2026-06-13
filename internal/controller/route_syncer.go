@@ -691,6 +691,11 @@ func buildTunnelGroups(shared *config.ResolvedConfig, partitions []routePartitio
 			resolved = &partition.PerGateway.ResolvedConfig
 		}
 
+		// Same tunnel ⇒ one document ⇒ one credential: the FIRST partition's
+		// resolved config wins for the whole group. When an infra Gateway
+		// shares the class tunnel, a GatewayConfig credential override is
+		// silently ignored for that merged write — benign (same tunnel ⇒ same
+		// account), and shared-tunnel use is the migration path, not isolation.
 		group, ok := byTunnel[resolved.TunnelID]
 		if !ok {
 			group = &tunnelGroup{resolved: resolved}
@@ -766,32 +771,32 @@ func (s *RouteSyncer) syncTunnelGroups(
 	return outcome
 }
 
-// injectPartitionSyncErrors records, on each route binding, the sync error of
-// the tunnel serving each Gateway the route is accepted on. A Gateway maps to
-// its own partition when it runs a dedicated data plane, or the shared
-// partition otherwise; only Gateways whose partition failed get an entry, so a
-// parent on a healthy tunnel carries no error. No-op when nothing failed.
+// errBrokenDataPlane marks a route parent bound to an opted-in Gateway whose
+// dedicated data plane did not resolve. Such a route is served nowhere (fail
+// closed), so its parent must report Accepted=False rather than silently
+// claiming health — the black-hole the per-Gateway Gateway also surfaces as
+// InvalidParameters.
+var errBrokenDataPlane = errors.New(
+	"the Gateway's dedicated data plane is unavailable (InvalidParameters); the route is not programmed")
+
+// injectPartitionSyncErrors records, on each route binding, the sync error
+// affecting each Gateway the route is accepted on, attributed per Gateway so
+// the status writer flips only the affected parents. A parent is affected
+// when (a) its Gateway opted into a dedicated data plane that did NOT resolve
+// (broken → served nowhere), or (b) the tunnel serving its partition failed
+// to sync. A parent on a healthy tunnel carries no error.
 func injectPartitionSyncErrors(
 	bindings map[string]routeBindingInfo,
 	failedPartitions map[string]error,
 	infra *infraGateways,
 ) {
-	if len(failedPartitions) == 0 {
-		return
-	}
-
 	for key := range bindings {
 		binding := bindings[key]
 
 		var errs map[string]error
 
 		for gatewayKey := range binding.acceptedGateways {
-			partitionKey := sharedPartitionKey
-			if infra.isResolved(gatewayKey) {
-				partitionKey = gatewayKey
-			}
-
-			err := failedPartitions[partitionKey]
+			err := gatewaySyncError(gatewayKey, failedPartitions, infra)
 			if err == nil {
 				continue
 			}
@@ -808,6 +813,23 @@ func injectPartitionSyncErrors(
 			bindings[key] = binding
 		}
 	}
+}
+
+// gatewaySyncError returns the error affecting a route accepted on gatewayKey:
+// the broken-data-plane sentinel for an opted-in Gateway that failed to
+// resolve, otherwise the sync error of the partition (own, or shared) serving
+// it, or nil when healthy.
+func gatewaySyncError(gatewayKey string, failedPartitions map[string]error, infra *infraGateways) error {
+	if infra.isBroken(gatewayKey) {
+		return errBrokenDataPlane
+	}
+
+	partitionKey := sharedPartitionKey
+	if infra.isResolved(gatewayKey) {
+		partitionKey = gatewayKey
+	}
+
+	return failedPartitions[partitionKey]
 }
 
 // tunnelGroupResult is one group's sync outcome.

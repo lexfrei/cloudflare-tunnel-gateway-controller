@@ -791,6 +791,12 @@ func (s *ProxySyncer) targetLocked(key string) *pushTarget {
 
 // RetainPartitions evicts push state for partitions not in keep (deleted
 // Gateways). The shared partition is always retained.
+//
+// Concurrency note: a slower concurrent reconcile carrying a stale keep set
+// can transiently evict a partition another reconcile just pushed (push and
+// retain are separate lock acquisitions). This self-heals on the next
+// reconcile or endpoint event and is never a cross-tenant leak — a missing
+// cache only forces a re-push, it never routes a tenant's config elsewhere.
 func (s *ProxySyncer) RetainPartitions(keep map[string]bool) {
 	s.syncMu.Lock()
 	defer s.syncMu.Unlock()
