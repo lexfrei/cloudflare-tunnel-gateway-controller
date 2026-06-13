@@ -352,6 +352,34 @@ func TestResolveForGateway_InvalidParameters(t *testing.T) {
 	}
 }
 
+// TestResolveForGateway_ClassFallbackMissingSecretIsInvalidParameters pins
+// that a deterministic failure in the CLASS-credential fallback path (here:
+// the class credentials Secret is gone) classifies as ErrInvalidParameters,
+// just like the override path — so the Gateway surfaces Accepted=False
+// instead of silently backing off forever with no status.
+func TestResolveForGateway_ClassFallbackMissingSecretIsInvalidParameters(t *testing.T) {
+	t.Parallel()
+
+	gwConfig := &v1alpha1.GatewayConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "edge-config", Namespace: testGwNamespace},
+		Spec: v1alpha1.GatewayConfigSpec{
+			TunnelTokenSecretRef: v1alpha1.LocalSecretReference{Name: "edge-tunnel-token"},
+		},
+	}
+
+	// classFixtures()[2] is the class-credentials Secret; drop it so the class
+	// fallback's Secret Get returns NotFound.
+	fixtures := classFixtures()
+	objects := append(fixtures[:2:2], gwConfig, tokenSecret(t), generatedAuthSecret())
+
+	resolver := newGatewayResolver(t, objects...)
+
+	_, err := resolver.ResolveForGateway(context.Background(), gatewayWithInfra("cf.k8s.lex.la", "GatewayConfig", "edge-config"))
+	require.Error(t, err)
+	assert.ErrorIs(t, err, config.ErrInvalidParameters,
+		"a missing class credentials Secret is a deterministic user-fixable problem -> InvalidParameters")
+}
+
 // TestHasInfrastructureParametersRef pins the opt-in predicate the sync
 // partitioner uses.
 func TestHasInfrastructureParametersRef(t *testing.T) {

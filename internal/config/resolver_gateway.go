@@ -214,9 +214,18 @@ func (r *Resolver) resolveGatewayAPIToken(
 
 	classResolved, err := r.ResolveFromGatewayClassName(ctx, string(gateway.Spec.GatewayClassName))
 	if err != nil {
-		// Class-chain failures are not the Gateway's parametersRef being
-		// invalid — keep them un-sentinelled (transient or class-level
-		// misconfiguration with its own surfacing).
+		// A missing referent in the class chain (GatewayClassConfig or its
+		// credentials Secret) is a deterministic, user-fixable problem — the
+		// per-Gateway plane cannot write its tunnel document. Classify it as
+		// ErrInvalidParameters like the override path so the Gateway surfaces
+		// Accepted=False instead of backing off silently with no status.
+		// Non-NotFound failures stay un-sentinelled (transient apiserver
+		// errors retry, class-level misconfig has its own surfacing).
+		if apierrors.IsNotFound(err) {
+			return "", errors.Wrapf(ErrInvalidParameters,
+				"class credentials for per-Gateway data plane: %v", err)
+		}
+
 		return "", errors.Wrap(err, "resolving class credentials for per-Gateway data plane")
 	}
 
