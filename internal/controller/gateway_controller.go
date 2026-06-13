@@ -650,6 +650,14 @@ func (r *GatewayReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			&v1alpha1.GatewayClassConfig{},
 			handler.EnqueueRequestsFromMapFunc(mapper.MapConfigToRequests(r.getAllManagedGateways)),
 		).
+		// Watch GatewayConfig (per-Gateway data planes) so an edit that does
+		// not change the rendered Deployment still refreshes the Gateway's
+		// status (the single status writer lives here, not in the infra
+		// reconciler).
+		Watches(
+			&v1alpha1.GatewayConfig{},
+			handler.EnqueueRequestsFromMapFunc(r.gatewayConfigToGateways),
+		).
 		// Watch Secrets for credential changes
 		Watches(
 			&corev1.Secret{},
@@ -762,6 +770,39 @@ func (r *GatewayReconciler) getAllManagedGateways(ctx context.Context) []reconci
 				},
 			})
 		}
+	}
+
+	return requests
+}
+
+// gatewayConfigToGateways maps a GatewayConfig event to the managed Gateways
+// in its namespace that reference it via infrastructure.parametersRef. Without
+// this, an edit that does not change the rendered Deployment (e.g. swapping
+// the credential ref, or editing the GatewayConfig before the Gateway exists)
+// would not re-trigger the single status writer, leaving the Gateway status
+// stale.
+func (r *GatewayReconciler) gatewayConfigToGateways(ctx context.Context, obj client.Object) []reconcile.Request {
+	var gateways gatewayv1.GatewayList
+	if err := r.List(ctx, &gateways, client.InNamespace(obj.GetNamespace())); err != nil {
+		return nil
+	}
+
+	var requests []reconcile.Request
+
+	for i := range gateways.Items {
+		gateway := &gateways.Items[i]
+
+		if !config.HasInfrastructureParametersRef(gateway) {
+			continue
+		}
+
+		if gateway.Spec.Infrastructure.ParametersRef.Name != obj.GetName() {
+			continue
+		}
+
+		requests = append(requests, reconcile.Request{NamespacedName: types.NamespacedName{
+			Name: gateway.Name, Namespace: gateway.Namespace,
+		}})
 	}
 
 	return requests
