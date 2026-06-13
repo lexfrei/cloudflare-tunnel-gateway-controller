@@ -108,16 +108,20 @@ func ParseTunnelToken(tokenStr string) (*Token, error) {
 		return nil, errEmptyToken
 	}
 
+	// SECURITY: never wrap with the stdlib base64/json error string — it embeds
+	// the offending decoded bytes (the connector token's own content), and this
+	// error is surfaced on the tenant-readable Gateway status. The static
+	// sentinels already say what failed.
 	decoded, err := base64.StdEncoding.DecodeString(tokenStr)
 	if err != nil {
-		return nil, errors.Wrap(errInvalidBase64, err.Error())
+		return nil, errInvalidBase64
 	}
 
 	var token Token
 
 	err = json.Unmarshal(decoded, &token)
 	if err != nil {
-		return nil, errors.Wrap(errInvalidTokenJSON, err.Error())
+		return nil, errInvalidTokenJSON
 	}
 
 	if token.AccountTag == "" {
