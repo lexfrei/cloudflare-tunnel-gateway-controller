@@ -70,6 +70,25 @@ func TestPolicy_UppercaseHostnameNormalised(t *testing.T) {
 	assert.True(t, verdict.Allowed)
 }
 
+// TestPolicy_TrailingDotHostnameDenied pins that a trailing-dot FQDN is NOT
+// special-cased: it neither equals the suffix nor ends with "."+suffix, so it
+// is denied. This is not a shared vector — the Gateway API CRD hostname
+// pattern rejects a trailing dot before admission, so it cannot be created as
+// a real route in the e2e — but both layers reach the same denial by the same
+// string logic, and this pins the controller side of it.
+func TestPolicy_TrailingDotHostnameDenied(t *testing.T) {
+	t.Parallel()
+
+	policy, err := hostnameownership.New(testLabelKey, "")
+	require.NoError(t, err)
+
+	verdict := policy.Evaluate(
+		map[string]string{testLabelKey: "team-a.example.com"},
+		toHostnames([]string{"team-a.example.com."}),
+	)
+	assert.False(t, verdict.Allowed, "a trailing-dot FQDN is not within the suffix")
+}
+
 // TestPolicy_NamespaceSelectorScopesEnforcement pins the policing scope: a
 // namespace outside the selector is NOT policed (allowed regardless of
 // labels), while a namespace inside the selector is held to the full

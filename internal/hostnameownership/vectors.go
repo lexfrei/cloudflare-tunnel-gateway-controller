@@ -66,9 +66,12 @@ func allowedVectors() []Vector {
 		},
 		{
 			// Label VALUES may carry uppercase; DNS comparison is
-			// case-insensitive. Both layers normalize the suffix (CEL
-			// lowerAscii, Go ToLower); route hostnames are lowercase by CRD
-			// schema.
+			// case-insensitive. Both layers normalize the suffix AND the route
+			// hostname (CEL lowerAscii, Go ToLower) — the CRD schema already
+			// guarantees lowercase route hostnames, but neither layer depends
+			// on that. An uppercase ROUTE hostname can't be a shared vector
+			// (the CRD rejects it before admission), so the controller-side
+			// case-insensitivity is pinned by TestPolicy_UppercaseHostnameNormalised.
 			Name:        "uppercase suffix label normalized",
 			Suffix:      "Team-A.Example.COM",
 			Hostnames:   []string{vectorInsideHost},
