@@ -11,10 +11,20 @@
 //     Cloudflare ingress document, even when the admission layer is absent
 //     (pre-1.30 cluster, policy deleted, object written behind the apiserver).
 //
-// The two layers MUST agree bit-for-bit. The shared semantic contract lives
-// in Vectors(): the package unit tests drive it through Evaluate, the e2e
-// suite drives the SAME table through the rendered ValidatingAdmissionPolicy.
-// Change the semantics in one place only by changing the vectors first.
+// The two layers MUST agree bit-for-bit ON THE SUFFIX DECISION — given the same
+// namespace label and hostname, both reach the same allow/deny verdict. The
+// shared semantic contract lives in Vectors(): the package unit tests drive it
+// through Evaluate, the e2e suite drives the SAME table through the rendered
+// ValidatingAdmissionPolicy. Change the semantics in one place only by changing
+// the vectors first.
+//
+// The layers deliberately differ in WHICH routes they evaluate (the matched
+// set, not the decision): the admission policy polices every HTTPRoute and
+// GRPCRoute in a policed namespace regardless of parentRef, while this layer
+// only rejects routes binding to THIS controller's Gateways. On a
+// multi-implementation cluster a route targeting a foreign GatewayClass is
+// denied at admission but never reaches Evaluate. This scope difference is
+// intentional and documented in the chart values; it is not a contract drift.
 package hostnameownership
 
 import (
@@ -90,7 +100,7 @@ func (p *Policy) Evaluate(nsLabels map[string]string, hostnames []gatewayv1.Host
 	// Only lowercase — matching the CEL layer's lowerAscii() exactly. No
 	// TrimSpace: the apiserver's label-value regex forbids leading/trailing
 	// whitespace, so trimming would be dead code that makes the two layers'
-	// normalisation diverge on paper. The contract is bit-for-bit identical.
+	// normalisation diverge on paper. The normalisation is bit-for-bit identical.
 	suffix := strings.ToLower(nsLabels[p.labelKey])
 	if suffix == "" {
 		return Verdict{Allowed: false, Message: fmt.Sprintf(
