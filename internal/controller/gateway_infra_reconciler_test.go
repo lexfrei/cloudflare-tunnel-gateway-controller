@@ -569,6 +569,74 @@ func TestGatewayInfraReconciler_RefusesToAdoptForeignObject(t *testing.T) {
 	assert.Empty(t, deployment.OwnerReferences, "the foreign object must not be adopted")
 }
 
+// TestGatewayInfraReconciler_RefusesForeignAuthSecret pins that the
+// generated-auth-Secret bootstrap never adopts a pre-existing Secret it does
+// not own. Wiring the data plane's push auth to material the controller
+// neither generated nor owns would break the same never-adopt invariant every
+// apply path enforces, and silently use unverified token bytes.
+func TestGatewayInfraReconciler_RefusesForeignAuthSecret(t *testing.T) {
+	t.Parallel()
+
+	foreign := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "cf-proxy-edge-auth", Namespace: infraNamespace,
+			Labels: map[string]string{"owned-by": "some-user"},
+		},
+		Data: map[string][]byte{"auth-token": []byte("foreign-token")},
+	}
+
+	objects := append(infraFixtures(t), foreign)
+	reconciler := newInfraReconciler(t, objects...)
+
+	_, err := reconciler.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "edge", Namespace: infraNamespace},
+	})
+	require.Error(t, err, "the reconcile must refuse to adopt a foreign auth Secret")
+	assert.ErrorIs(t, err, errRefusedAdoption)
+
+	var secret corev1.Secret
+	require.NoError(t, reconciler.Get(context.Background(),
+		types.NamespacedName{Name: "cf-proxy-edge-auth", Namespace: infraNamespace}, &secret))
+
+	assert.Equal(t, []byte("foreign-token"), secret.Data["auth-token"],
+		"the foreign Secret's token must be left untouched")
+	assert.Empty(t, secret.OwnerReferences, "the foreign Secret must not be adopted")
+}
+
+// TestGatewayInfraReconciler_RepairsTokenlessOwnedAuthSecret pins that an
+// owned generated-auth Secret whose token key is empty (a wedged data plane:
+// readAuthToken fails closed forever) is repaired in place with a fresh token
+// rather than left broken.
+func TestGatewayInfraReconciler_RepairsTokenlessOwnedAuthSecret(t *testing.T) {
+	t.Parallel()
+
+	owned := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "cf-proxy-edge-auth", Namespace: infraNamespace,
+			OwnerReferences: []metav1.OwnerReference{{
+				APIVersion: gatewayv1.GroupVersion.String(),
+				Kind:       "Gateway",
+				Name:       "edge",
+				UID:        "gw-uid-1",
+				Controller: new(true),
+			}},
+		},
+		Data: map[string][]byte{"auth-token": []byte("")},
+	}
+
+	objects := append(infraFixtures(t), owned)
+	reconciler := newInfraReconciler(t, objects...)
+
+	reconcileEdge(t, reconciler)
+
+	var secret corev1.Secret
+	require.NoError(t, reconciler.Get(context.Background(),
+		types.NamespacedName{Name: "cf-proxy-edge-auth", Namespace: infraNamespace}, &secret))
+
+	assert.NotEmpty(t, secret.Data["auth-token"],
+		"the wedged owned auth Secret must be repaired with a fresh token")
+}
+
 // TestGatewayInfraReconciler_SpecImageWorksWithoutDefault pins the override
 // path: a GatewayConfig-level image makes rendering possible even when the
 // controller-level default is absent.

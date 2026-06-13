@@ -174,7 +174,22 @@ func (r *GatewayInfraReconciler) ensureGeneratedAuthSecret(
 
 	var existing corev1.Secret
 	if err := r.Get(ctx, key, &existing); err == nil {
-		return nil // already created; never rotate
+		// Never adopt a Secret at our deterministic name that we do not own:
+		// wiring the data plane's push auth to unverified material would break
+		// the same never-adopt invariant the apply paths enforce.
+		if err := assertAdoptable(&existing, gateway); err != nil {
+			return err
+		}
+
+		// Owned and already holding a usable token: never rotate (a fresh
+		// token every reconcile rolls the proxy pods endlessly).
+		if len(existing.Data[generatedAuthTokenKey]) > 0 {
+			return nil
+		}
+
+		// Owned but tokenless (empty/missing key) wedges the plane forever —
+		// readAuthToken fails closed on every reconcile. Repair in place.
+		return r.repairGeneratedAuthSecret(ctx, &existing)
 	} else if !apierrors.IsNotFound(err) {
 		return errors.Wrapf(err, "checking generated auth secret %s", key)
 	}
@@ -195,6 +210,30 @@ func (r *GatewayInfraReconciler) ensureGeneratedAuthSecret(
 
 	if err := r.Create(ctx, secret); err != nil && !apierrors.IsAlreadyExists(err) {
 		return errors.Wrapf(err, "creating generated auth secret %s", key)
+	}
+
+	return nil
+}
+
+// repairGeneratedAuthSecret rewrites a fresh token onto an owned generated-auth
+// Secret whose token key is empty. The empty-token state wedges the data plane
+// permanently (readAuthToken fails closed every reconcile), so unlike the
+// create-only happy path this DOES write — but only on a Secret already proven
+// adoptable by the caller, and only when the token is unusable.
+func (r *GatewayInfraReconciler) repairGeneratedAuthSecret(ctx context.Context, secret *corev1.Secret) error {
+	token, err := generateAuthToken()
+	if err != nil {
+		return errors.Wrap(err, "generating config-api auth token")
+	}
+
+	if secret.Data == nil {
+		secret.Data = map[string][]byte{}
+	}
+
+	secret.Data[generatedAuthTokenKey] = []byte(token)
+
+	if err := r.Update(ctx, secret); err != nil {
+		return errors.Wrapf(err, "repairing tokenless auth secret %s/%s", secret.Namespace, secret.Name)
 	}
 
 	return nil
