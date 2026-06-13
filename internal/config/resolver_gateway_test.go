@@ -114,6 +114,16 @@ func tokenSecret(t *testing.T) *corev1.Secret {
 	}
 }
 
+// generatedAuthSecret is the controller-created config-API auth Secret a
+// Gateway named "edge" (the gatewayWithInfra fixture) gets when its
+// GatewayConfig declares no explicit authTokenSecretRef.
+func generatedAuthSecret() *corev1.Secret {
+	return &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "cf-proxy-edge-auth", Namespace: testGwNamespace},
+		Data:       map[string][]byte{"auth-token": []byte("generated-bearer")},
+	}
+}
+
 func newGatewayResolver(t *testing.T, objects ...runtime.Object) *config.Resolver {
 	t.Helper()
 
@@ -155,7 +165,7 @@ func TestResolveForGateway_HappyPath_ClassCredentialFallback(t *testing.T) {
 		},
 	}
 
-	objects := append(classFixtures(), gwConfig, tokenSecret(t))
+	objects := append(classFixtures(), gwConfig, tokenSecret(t), generatedAuthSecret())
 	resolver := newGatewayResolver(t, objects...)
 
 	resolved, err := resolver.ResolveForGateway(context.Background(), gatewayWithInfra("cf.k8s.lex.la", "GatewayConfig", "edge-config"))
@@ -190,7 +200,7 @@ func TestResolveForGateway_CredentialOverride(t *testing.T) {
 		Data:       map[string][]byte{"api-token": []byte("tenant-api-token")},
 	}
 
-	objects := append(classFixtures(), gwConfig, tokenSecret(t), tenantCredentials)
+	objects := append(classFixtures(), gwConfig, tokenSecret(t), tenantCredentials, generatedAuthSecret())
 	resolver := newGatewayResolver(t, objects...)
 
 	resolved, err := resolver.ResolveForGateway(context.Background(), gatewayWithInfra("cf.k8s.lex.la", "GatewayConfig", "edge-config"))
@@ -220,6 +230,57 @@ func TestResolveForGateway_AuthToken(t *testing.T) {
 	resolved, err := resolver.ResolveForGateway(context.Background(), gatewayWithInfra("cf.k8s.lex.la", "GatewayConfig", "edge-config"))
 	require.NoError(t, err)
 	assert.Equal(t, "bearer-secret", resolved.AuthToken)
+}
+
+// TestResolveForGateway_GeneratedAuthTokenFallback pins the fail-secure
+// default: a GatewayConfig WITHOUT authTokenSecretRef resolves its push auth
+// from the controller-generated Secret — never an empty token, which would
+// push to (and render) an unauthenticated tenant config API.
+func TestResolveForGateway_GeneratedAuthTokenFallback(t *testing.T) {
+	t.Parallel()
+
+	gwConfig := &v1alpha1.GatewayConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "edge-config", Namespace: testGwNamespace},
+		Spec: v1alpha1.GatewayConfigSpec{
+			TunnelTokenSecretRef: v1alpha1.LocalSecretReference{Name: "edge-tunnel-token"},
+		},
+	}
+	generated := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "cf-proxy-edge-auth", Namespace: testGwNamespace},
+		Data:       map[string][]byte{"auth-token": []byte("generated-bearer")},
+	}
+
+	objects := append(classFixtures(), gwConfig, tokenSecret(t), generated)
+	resolver := newGatewayResolver(t, objects...)
+
+	resolved, err := resolver.ResolveForGateway(context.Background(), gatewayWithInfra("cf.k8s.lex.la", "GatewayConfig", "edge-config"))
+	require.NoError(t, err)
+	assert.Equal(t, "generated-bearer", resolved.AuthToken,
+		"without an explicit ref the generated Secret IS the push credential")
+}
+
+// TestResolveForGateway_MissingGeneratedAuthSecretIsTransient pins the
+// bootstrap window: the generated Secret is created by the infra reconciler,
+// so its absence is a self-healing not-yet state — a plain error for backoff,
+// NOT ErrInvalidParameters (nothing in the user's spec is wrong), and never a
+// silent empty token.
+func TestResolveForGateway_MissingGeneratedAuthSecretIsTransient(t *testing.T) {
+	t.Parallel()
+
+	gwConfig := &v1alpha1.GatewayConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "edge-config", Namespace: testGwNamespace},
+		Spec: v1alpha1.GatewayConfigSpec{
+			TunnelTokenSecretRef: v1alpha1.LocalSecretReference{Name: "edge-tunnel-token"},
+		},
+	}
+
+	objects := append(classFixtures(), gwConfig, tokenSecret(t))
+	resolver := newGatewayResolver(t, objects...)
+
+	_, err := resolver.ResolveForGateway(context.Background(), gatewayWithInfra("cf.k8s.lex.la", "GatewayConfig", "edge-config"))
+	require.Error(t, err, "an absent generated auth Secret must not resolve to an unauthenticated plane")
+	assert.NotErrorIs(t, err, config.ErrInvalidParameters,
+		"the bootstrap window is transient, not a user spec problem")
 }
 
 // TestResolveForGateway_InvalidParameters pins the spec-mandated rejection

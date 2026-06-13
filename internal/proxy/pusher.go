@@ -163,6 +163,15 @@ func (p *ConfigPusher) fetchProxyVersion(ctx context.Context, endpoint, authToke
 	}
 	defer resp.Body.Close()
 
+	// Check the status BEFORE decoding: a 401 (token mismatch in the
+	// multi-token world) or any non-200 returns a non-JSON body, and decoding
+	// it would mask the real cause as a confusing "invalid character" error.
+	if resp.StatusCode != http.StatusOK {
+		_, _ = io.Copy(io.Discard, resp.Body)
+
+		return 0, errors.Wrapf(errUnexpectedStatusCode, "fetching proxy version: %d", resp.StatusCode)
+	}
+
 	var status ConfigStatus
 
 	decodeErr := json.NewDecoder(resp.Body).Decode(&status)

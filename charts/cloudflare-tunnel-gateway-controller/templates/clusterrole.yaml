@@ -87,7 +87,12 @@ rules:
   # mutate, or delete Secrets, so write verbs are intentionally absent.
   - apiGroups: [""]
     resources: ["secrets"]
-    verbs: ["get", "list", "watch"]
+    # create is for the generated per-Gateway config-API auth Secret (#479):
+    # a tenant data plane without an explicit authTokenSecretRef gets a
+    # controller-generated bearer token rather than an unauthenticated config
+    # API. No update/delete — the token is never rotated, and ownerRef GC
+    # removes it with the Gateway.
+    verbs: ["get", "list", "watch", "create"]
   # ConfigMaps: BackendTLSPolicy can reference a ConfigMap holding the CA
   # bundle (internal/controller/backendtlspolicy_controller.go). Read-only.
   - apiGroups: [""]

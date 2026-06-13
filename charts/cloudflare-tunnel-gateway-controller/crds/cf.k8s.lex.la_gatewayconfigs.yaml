@@ -87,8 +87,13 @@ spec:
                   instead of a fixed replica count.
                 properties:
                   maxReplicas:
-                    description: MaxReplicas is the upper bound.
+                    description: |-
+                      MaxReplicas is the upper bound. Capped at 100: replica counts are
+                      tenant-controlled input on a shared cluster, and an unbounded value is
+                      a noisy-neighbour attack. Aggregate resource usage still needs a
+                      per-namespace ResourceQuota — the cap bounds one Gateway, not a tenant.
                     format: int32
+                    maximum: 100
                     minimum: 1
                     type: integer
                   metricName:
@@ -101,6 +106,7 @@ spec:
                       MinReplicas is the lower bound. Defaults to 2 — the HA floor for
                       tunnel connectors.
                     format: int32
+                    maximum: 100
                     minimum: 1
                     type: integer
                   targetInflightPerPod:
@@ -150,8 +156,10 @@ spec:
               replicas:
                 description: |-
                   Replicas is the fixed proxy replica count. Defaults to 2 (the HA floor
-                  for tunnel connectors). Mutually exclusive with autoscaling.
+                  for tunnel connectors). Mutually exclusive with autoscaling. Capped at
+                  100 — see Autoscaling.MaxReplicas for the rationale.
                 format: int32
+                maximum: 100
                 minimum: 1
                 type: integer
               resources:

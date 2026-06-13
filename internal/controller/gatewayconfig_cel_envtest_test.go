@@ -102,6 +102,30 @@ func TestGatewayConfig_CELValidation(t *testing.T) {
 			wantErr: true,
 			wantSub: "tunnelTokenSecretRef",
 		},
+		// Replica counts are tenant-controlled input on a shared cluster: an
+		// unbounded value is a noisy-neighbour attack (schedule 100k proxy
+		// pods), defeating the isolation guarantee the CRD exists for.
+		{
+			name: "huge fixed replicas rejected",
+			spec: v1alpha1.GatewayConfigSpec{
+				TunnelTokenSecretRef: v1alpha1.LocalSecretReference{Name: "tunnel-token"},
+				Replicas:             new(int32(100000)),
+			},
+			wantErr: true,
+			wantSub: "less than or equal to 100",
+		},
+		{
+			name: "huge autoscaling maxReplicas rejected",
+			spec: v1alpha1.GatewayConfigSpec{
+				TunnelTokenSecretRef: v1alpha1.LocalSecretReference{Name: "tunnel-token"},
+				Autoscaling: &v1alpha1.ProxyAutoscaling{
+					MaxReplicas:          100000,
+					TargetInflightPerPod: 50,
+				},
+			},
+			wantErr: true,
+			wantSub: "less than or equal to 100",
+		},
 	}
 
 	for _, tc := range cases {

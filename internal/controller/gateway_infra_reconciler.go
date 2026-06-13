@@ -2,6 +2,11 @@ package controller
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"maps"
+	"slices"
+	"strings"
 
 	"github.com/cockroachdb/errors"
 	appsv1 "k8s.io/api/apps/v1"
@@ -32,6 +37,16 @@ const (
 	eventActionRender           = "Render"
 )
 
+// Generated config-API auth Secret parameters.
+const (
+	generatedAuthTokenKey   = "auth-token"
+	generatedAuthTokenBytes = 32
+)
+
+// errRefusedAdoption is returned when a rendered resource's name collides with
+// an existing object this Gateway does not own.
+var errRefusedAdoption = errors.New("refusing to adopt an existing object not owned by this Gateway")
+
 // GatewayInfraReconciler owns the per-Gateway data plane: for every managed
 // Gateway carrying infrastructure.parametersRef it renders and keeps in sync
 // a dedicated proxy Deployment and headless config Service (and, when
@@ -58,8 +73,6 @@ type GatewayInfraReconciler struct {
 }
 
 func (r *GatewayInfraReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	logger := log.FromContext(ctx)
-
 	var gateway gatewayv1.Gateway
 	if err := r.Get(ctx, req.NamespacedName, &gateway); err != nil {
 		if apierrors.IsNotFound(err) {
@@ -79,28 +92,110 @@ func (r *GatewayInfraReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{}, nil
 	}
 
-	perGateway, err := r.ConfigResolver.ResolveForGateway(ctx, &gateway)
-	if err != nil {
-		if errors.Is(err, config.ErrInvalidParameters) {
-			// User-fixable: render nothing, surface via Event; the
-			// GatewayConfig/Secret watches re-trigger when the referent heals,
-			// and GatewayReconciler surfaces InvalidParameters on the status.
-			logger.Info("per-gateway data plane not rendered: invalid parametersRef", "error", err.Error())
-			r.event(&gateway, corev1.EventTypeWarning, eventReasonRenderFailed, err.Error())
-
-			return ctrl.Result{}, nil
-		}
-
-		return ctrl.Result{}, errors.Wrap(err, "failed to resolve per-gateway config")
-	}
-
-	if perGateway == nil {
+	if !config.HasInfrastructureParametersRef(&gateway) {
 		// Shared mode. Clean up anything a previous opt-in rendered — the
 		// Gateway is alive, so ownerRef GC alone cannot.
 		return ctrl.Result{}, r.cleanupRendered(ctx, &gateway)
 	}
 
+	// The generated auth Secret must exist BEFORE ResolveForGateway can read
+	// it (the resolver returns a transient error otherwise), so this
+	// controller — the Secret's owner — ensures it first. Bootstrapping it
+	// here, not in the resolver, keeps the resolver read-only for its other
+	// callers (route syncer, status writer).
+	gwConfig, err := r.ConfigResolver.GetGatewayConfig(ctx, &gateway)
+	if err != nil {
+		return r.handleResolveError(ctx, &gateway, err)
+	}
+
+	if err := r.ensureGeneratedAuthSecret(ctx, &gateway, gwConfig); err != nil {
+		r.event(&gateway, corev1.EventTypeWarning, eventReasonRenderFailed, err.Error())
+
+		return ctrl.Result{}, err
+	}
+
+	perGateway, err := r.ConfigResolver.ResolveForGateway(ctx, &gateway)
+	if err != nil {
+		return r.handleResolveError(ctx, &gateway, err)
+	}
+
 	return ctrl.Result{}, r.applyRendered(ctx, &gateway, perGateway)
+}
+
+// handleResolveError maps a resolution failure onto the right outcome: a
+// deterministic ErrInvalidParameters renders nothing and surfaces an Event
+// (the GatewayConfig/Secret watches re-trigger on heal, and GatewayReconciler
+// stamps InvalidParameters on the status); a transient error propagates for
+// backoff.
+func (r *GatewayInfraReconciler) handleResolveError(
+	ctx context.Context,
+	gateway *gatewayv1.Gateway,
+	err error,
+) (ctrl.Result, error) {
+	if errors.Is(err, config.ErrInvalidParameters) {
+		log.FromContext(ctx).Info("per-gateway data plane not rendered: invalid parametersRef", "error", err.Error())
+		r.event(gateway, corev1.EventTypeWarning, eventReasonRenderFailed, err.Error())
+
+		return ctrl.Result{}, nil
+	}
+
+	return ctrl.Result{}, errors.Wrap(err, "failed to resolve per-gateway config")
+}
+
+// ensureGeneratedAuthSecret guarantees a config-API auth Secret exists for a
+// Gateway whose GatewayConfig declares no explicit authTokenSecretRef. It is
+// CREATE-ONLY: the token is generated once and never rotated on subsequent
+// reconciles (a fresh token every reconcile would roll the proxy pods
+// endlessly). The Secret is controller-owned so Gateway deletion GCs it.
+func (r *GatewayInfraReconciler) ensureGeneratedAuthSecret(
+	ctx context.Context,
+	gateway *gatewayv1.Gateway,
+	gwConfig *v1alpha1.GatewayConfig,
+) error {
+	if gwConfig.Spec.AuthTokenSecretRef != nil {
+		return nil // tenant supplied its own token Secret
+	}
+
+	name := render.GeneratedAuthSecretName(gateway)
+	key := types.NamespacedName{Name: name, Namespace: gateway.Namespace}
+
+	var existing corev1.Secret
+	if err := r.Get(ctx, key, &existing); err == nil {
+		return nil // already created; never rotate
+	} else if !apierrors.IsNotFound(err) {
+		return errors.Wrapf(err, "checking generated auth secret %s", key)
+	}
+
+	token, err := generateAuthToken()
+	if err != nil {
+		return errors.Wrap(err, "generating config-api auth token")
+	}
+
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: gateway.Namespace},
+		Data:       map[string][]byte{generatedAuthTokenKey: []byte(token)},
+	}
+
+	if err := controllerutil.SetControllerReference(gateway, secret, r.Scheme); err != nil {
+		return errors.Wrap(err, "setting owner on generated auth secret")
+	}
+
+	if err := r.Create(ctx, secret); err != nil && !apierrors.IsAlreadyExists(err) {
+		return errors.Wrapf(err, "creating generated auth secret %s", key)
+	}
+
+	return nil
+}
+
+// generateAuthToken returns a 32-byte cryptographically-random bearer token,
+// hex-encoded.
+func generateAuthToken() (string, error) {
+	buf := make([]byte, generatedAuthTokenBytes)
+	if _, err := rand.Read(buf); err != nil {
+		return "", errors.Wrap(err, "reading random bytes")
+	}
+
+	return hex.EncodeToString(buf), nil
 }
 
 // event emits via the recorder when one is wired; no-op otherwise.
@@ -167,6 +262,70 @@ func (r *GatewayInfraReconciler) applyRendered(
 }
 
 // applyDeployment renders and applies the proxy Deployment. Replica
+// managedAnnotationsKey records which annotation keys THIS controller
+// rendered onto an object, so a subsequent reconcile can drop ones the tenant
+// removed without clobbering annotations set by other actors.
+const managedAnnotationsKey = "cf.k8s.lex.la/managed-annotations"
+
+// mergeManagedAnnotations overlays the desired (controller-rendered)
+// annotations onto the existing ones WITHOUT replacing the whole map. A flat
+// replace wipes annotations other controllers own — notably
+// deployment.kubernetes.io/revision, which kube-controller-manager re-adds on
+// every Deployment sync, producing an endless write ping-pong. Keys this
+// controller previously rendered (tracked in managedAnnotationsKey) but no
+// longer desires are removed; foreign keys are preserved.
+func mergeManagedAnnotations(existing, desired map[string]string) map[string]string {
+	result := make(map[string]string, len(existing)+len(desired))
+	maps.Copy(result, existing)
+
+	for key := range strings.SplitSeq(existing[managedAnnotationsKey], ",") {
+		if key == "" {
+			continue
+		}
+
+		if _, stillDesired := desired[key]; !stillDesired {
+			delete(result, key)
+		}
+	}
+
+	managed := make([]string, 0, len(desired))
+
+	for key, value := range desired {
+		result[key] = value
+		managed = append(managed, key)
+	}
+
+	slices.Sort(managed)
+
+	if len(managed) == 0 {
+		delete(result, managedAnnotationsKey)
+	} else {
+		result[managedAnnotationsKey] = strings.Join(managed, ",")
+	}
+
+	return result
+}
+
+// assertAdoptable guards against silently adopting (and later GC-deleting) a
+// user-created object that happens to share a rendered resource's name: a
+// CreateOrUpdate mutate runs on an existing object with a populated
+// ResourceVersion, and SetControllerReference would adopt it unless it
+// already has a DIFFERENT controller. An existing object NOT owned by this
+// Gateway is refused.
+func assertAdoptable(existing client.Object, gateway *gatewayv1.Gateway) error {
+	if existing.GetResourceVersion() == "" {
+		return nil // being created
+	}
+
+	owner := metav1.GetControllerOf(existing)
+	if owner != nil && owner.UID == gateway.UID {
+		return nil // already ours
+	}
+
+	return errors.Wrapf(errRefusedAdoption, "%T %s/%s (rename it or the Gateway)",
+		existing, existing.GetNamespace(), existing.GetName())
+}
+
 // ownership: when the render leaves replicas nil (autoscaling mode), the
 // existing count — set by the HPA — is preserved instead of being reset.
 func (r *GatewayInfraReconciler) applyDeployment(
@@ -181,10 +340,14 @@ func (r *GatewayInfraReconciler) applyDeployment(
 	}
 
 	operation, err := controllerutil.CreateOrUpdate(ctx, r.Client, existing, func() error {
+		if err := assertAdoptable(existing, gateway); err != nil {
+			return err
+		}
+
 		hpaOwnedReplicas := existing.Spec.Replicas
 
 		existing.Labels = desired.Labels
-		existing.Annotations = desired.Annotations
+		existing.Annotations = mergeManagedAnnotations(existing.Annotations, desired.Annotations)
 		existing.Spec = desired.Spec
 
 		if desired.Spec.Replicas == nil {
@@ -217,8 +380,12 @@ func (r *GatewayInfraReconciler) applyService(
 	}
 
 	operation, err := controllerutil.CreateOrUpdate(ctx, r.Client, existing, func() error {
+		if err := assertAdoptable(existing, gateway); err != nil {
+			return err
+		}
+
 		existing.Labels = desired.Labels
-		existing.Annotations = desired.Annotations
+		existing.Annotations = mergeManagedAnnotations(existing.Annotations, desired.Annotations)
 		existing.Spec.Type = desired.Spec.Type
 		existing.Spec.Selector = desired.Spec.Selector
 		existing.Spec.Ports = desired.Spec.Ports
@@ -259,8 +426,12 @@ func (r *GatewayInfraReconciler) applyAutoscaler(
 	}
 
 	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, existing, func() error {
+		if err := assertAdoptable(existing, gateway); err != nil {
+			return err
+		}
+
 		existing.Labels = desired.Labels
-		existing.Annotations = desired.Annotations
+		existing.Annotations = mergeManagedAnnotations(existing.Annotations, desired.Annotations)
 		existing.Spec = desired.Spec
 
 		return controllerutil.SetControllerReference(gateway, existing, r.Scheme)
@@ -285,6 +456,9 @@ func (r *GatewayInfraReconciler) cleanupRendered(ctx context.Context, gateway *g
 		}},
 		&autoscalingv2.HorizontalPodAutoscaler{ObjectMeta: metav1.ObjectMeta{
 			Name: render.DeploymentName(gateway), Namespace: gateway.Namespace,
+		}},
+		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{
+			Name: render.GeneratedAuthSecretName(gateway), Namespace: gateway.Namespace,
 		}},
 	}
 

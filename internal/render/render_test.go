@@ -117,6 +117,31 @@ func TestProxyDeployment_LongGatewayNameLabelTruncated(t *testing.T) {
 		"the Service must select the same pods")
 }
 
+// TestRenderedNames_SanitizeDots pins valid rendered names for a Gateway whose
+// name contains dots: Gateway names are DNS-1123 subdomains (dots legal),
+// Service and label names are DNS-1123 labels (dots illegal). Unsanitized,
+// `my.edge` → Service `cf-proxy-my.edge-config`, rejected by the apiserver on
+// every reconcile. Distinct inputs must not collide on the rendered name.
+func TestRenderedNames_SanitizeDots(t *testing.T) {
+	t.Parallel()
+
+	dotted := testInput("my.edge")
+
+	deployment := render.ProxyDeployment(dotted)
+	assert.NotContains(t, deployment.Name, ".", "rendered names must be DNS-1123 labels")
+
+	service := render.ConfigService(dotted)
+	assert.NotContains(t, service.Name, ".")
+	assert.NotContains(t, service.Spec.Selector["cf.k8s.lex.la/gateway"], ".",
+		"selector label values must not contain dots")
+
+	// "my.edge" and "my-edge" must render to DIFFERENT names (no collision).
+	assert.NotEqual(t,
+		render.ProxyDeployment(testInput("my.edge")).Name,
+		render.ProxyDeployment(testInput("my-edge")).Name,
+		"distinct Gateway names must not collide on the rendered name")
+}
+
 func filterKeys(all map[string]string, want map[string]string) map[string]string {
 	out := make(map[string]string, len(want))
 
@@ -127,6 +152,55 @@ func filterKeys(all map[string]string, want map[string]string) map[string]string
 	}
 
 	return out
+}
+
+// TestProxyDeployment_AuthTokenAlwaysWired pins the fail-secure default for
+// the per-Gateway config API: WITHOUT an explicit authTokenSecretRef the env
+// must wire to the controller-GENERATED auth Secret — an unauthenticated
+// tenant config API would accept PUT /config from any pod that can reach it,
+// the exact cross-tenant hijack the dedicated plane exists to prevent.
+func TestProxyDeployment_AuthTokenAlwaysWired(t *testing.T) {
+	t.Parallel()
+
+	deployment := render.ProxyDeployment(testInput("edge"))
+	container := deployment.Spec.Template.Spec.Containers[0]
+
+	var authEnv *corev1.EnvVar
+
+	for i := range container.Env {
+		if container.Env[i].Name == "PROXY_AUTH_TOKEN" {
+			authEnv = &container.Env[i]
+		}
+	}
+
+	require.NotNil(t, authEnv, "PROXY_AUTH_TOKEN must be wired even without an explicit authTokenSecretRef")
+	require.NotNil(t, authEnv.ValueFrom.SecretKeyRef)
+	assert.Equal(t, render.GeneratedAuthSecretName(testInput("edge").Gateway), authEnv.ValueFrom.SecretKeyRef.Name)
+	assert.Equal(t, "auth-token", authEnv.ValueFrom.SecretKeyRef.Key)
+
+	explicit := testInput("edge")
+	explicit.Config.Spec.AuthTokenSecretRef = &v1alpha1.LocalSecretReference{Name: "tenant-auth"}
+	explicitContainer := render.ProxyDeployment(explicit).Spec.Template.Spec.Containers[0]
+
+	for _, env := range explicitContainer.Env {
+		if env.Name == "PROXY_AUTH_TOKEN" {
+			assert.Equal(t, "tenant-auth", env.ValueFrom.SecretKeyRef.Name,
+				"an explicit ref must win over the generated Secret")
+		}
+	}
+}
+
+// TestProxyDeployment_NoServiceAccountTokenAutomount pins the hardening for
+// tenant-chosen images: the proxy never talks to the Kubernetes API, and the
+// pod would otherwise mount the namespace default ServiceAccount token —
+// handing whatever that SA can do to an arbitrary spec.image.
+func TestProxyDeployment_NoServiceAccountTokenAutomount(t *testing.T) {
+	t.Parallel()
+
+	deployment := render.ProxyDeployment(testInput("edge"))
+
+	require.NotNil(t, deployment.Spec.Template.Spec.AutomountServiceAccountToken)
+	assert.False(t, *deployment.Spec.Template.Spec.AutomountServiceAccountToken)
 }
 
 // TestProxyDeployment_ReplicaModes pins the replica ownership contract:

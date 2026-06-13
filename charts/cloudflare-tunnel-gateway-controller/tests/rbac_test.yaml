@@ -156,7 +156,10 @@ tests:
   # write verbs that the v2 Helm SDK code path needed; if a future
   # refactor restores them without restoring the matching code, this
   # test fires.
-  - it: should grant only read access to Secrets
+  # Secrets: read for credentials, create for the generated per-Gateway
+  # config-API auth Secret (#479). NO update/delete — the token is never
+  # rotated and ownerRef GC removes it.
+  - it: should grant read and create on Secrets
     asserts:
       - template: clusterrole.yaml
         contains:
@@ -164,7 +167,7 @@ tests:
           content:
             apiGroups: [""]
             resources: ["secrets"]
-            verbs: ["get", "list", "watch"]
+            verbs: ["get", "list", "watch", "create"]
       - template: clusterrole.yaml
         notContains:
           path: rules

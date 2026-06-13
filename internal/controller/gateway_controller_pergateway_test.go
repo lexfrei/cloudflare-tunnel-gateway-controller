@@ -55,6 +55,12 @@ func perGatewayStatusFixtures(t *testing.T) []client.Object {
 			ObjectMeta: metav1.ObjectMeta{Name: "pg-token", Namespace: "default"},
 			Data:       map[string][]byte{"tunnel-token": []byte(infraTunnelToken(t))},
 		},
+		// The generated config-API auth Secret the infra reconciler creates
+		// for a GatewayConfig without an explicit authTokenSecretRef.
+		&corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: "cf-proxy-pg-gateway-auth", Namespace: "default"},
+			Data:       map[string][]byte{"auth-token": []byte("generated-bearer")},
+		},
 		&gatewayv1.GatewayClass{
 			ObjectMeta: metav1.ObjectMeta{Name: "cloudflare-tunnel"},
 			Spec: gatewayv1.GatewayClassSpec{

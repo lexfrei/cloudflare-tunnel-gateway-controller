@@ -315,6 +315,128 @@ func TestGatewayInfraReconciler_NoProxyImageRendersNothing(t *testing.T) {
 	assert.Error(t, err, "no Deployment may be rendered without a resolvable proxy image")
 }
 
+// TestGatewayInfraReconciler_GeneratesAuthSecret pins the fail-secure
+// default: a GatewayConfig without an explicit authTokenSecretRef gets a
+// controller-generated, controller-owned auth Secret with a non-empty token,
+// and the rendered Deployment wires PROXY_AUTH_TOKEN to it.
+func TestGatewayInfraReconciler_GeneratesAuthSecret(t *testing.T) {
+	t.Parallel()
+
+	reconciler := newInfraReconciler(t, infraFixtures(t)...)
+	reconcileEdge(t, reconciler)
+
+	var secret corev1.Secret
+	require.NoError(t, reconciler.Get(context.Background(),
+		types.NamespacedName{Name: "cf-proxy-edge-auth", Namespace: infraNamespace}, &secret))
+
+	assert.NotEmpty(t, secret.Data["auth-token"], "the generated auth token must not be empty")
+	require.Len(t, secret.OwnerReferences, 1)
+	assert.Equal(t, "edge", secret.OwnerReferences[0].Name, "the Secret must be GC-owned by the Gateway")
+
+	var deployment appsv1.Deployment
+	require.NoError(t, reconciler.Get(context.Background(),
+		types.NamespacedName{Name: "cf-proxy-edge", Namespace: infraNamespace}, &deployment))
+
+	var wired bool
+
+	for _, env := range deployment.Spec.Template.Spec.Containers[0].Env {
+		if env.Name == "PROXY_AUTH_TOKEN" && env.ValueFrom.SecretKeyRef.Name == "cf-proxy-edge-auth" {
+			wired = true
+		}
+	}
+
+	assert.True(t, wired, "PROXY_AUTH_TOKEN must reference the generated Secret")
+}
+
+// TestGatewayInfraReconciler_NeverRotatesGeneratedAuthToken pins the
+// create-only contract: a second reconcile must NOT mint a fresh token (that
+// would roll the proxy pods on every reconcile).
+func TestGatewayInfraReconciler_NeverRotatesGeneratedAuthToken(t *testing.T) {
+	t.Parallel()
+
+	reconciler := newInfraReconciler(t, infraFixtures(t)...)
+	reconcileEdge(t, reconciler)
+
+	var first corev1.Secret
+	require.NoError(t, reconciler.Get(context.Background(),
+		types.NamespacedName{Name: "cf-proxy-edge-auth", Namespace: infraNamespace}, &first))
+
+	reconcileEdge(t, reconciler)
+
+	var second corev1.Secret
+	require.NoError(t, reconciler.Get(context.Background(),
+		types.NamespacedName{Name: "cf-proxy-edge-auth", Namespace: infraNamespace}, &second))
+
+	assert.Equal(t, first.Data["auth-token"], second.Data["auth-token"],
+		"the generated token must be stable across reconciles")
+}
+
+// TestGatewayInfraReconciler_PreservesForeignAnnotations pins the no-write-loop
+// fix: a reconcile must not wipe annotations set by other actors (e.g.
+// deployment.kubernetes.io/revision from kube-controller-manager), which would
+// ping-pong writes forever.
+func TestGatewayInfraReconciler_PreservesForeignAnnotations(t *testing.T) {
+	t.Parallel()
+
+	reconciler := newInfraReconciler(t, infraFixtures(t)...)
+	reconcileEdge(t, reconciler)
+
+	var deployment appsv1.Deployment
+	key := types.NamespacedName{Name: "cf-proxy-edge", Namespace: infraNamespace}
+	require.NoError(t, reconciler.Get(context.Background(), key, &deployment))
+
+	// Simulate kube-controller-manager stamping its revision annotation.
+	if deployment.Annotations == nil {
+		deployment.Annotations = map[string]string{}
+	}
+
+	deployment.Annotations["deployment.kubernetes.io/revision"] = "7"
+	require.NoError(t, reconciler.Update(context.Background(), &deployment))
+
+	reconcileEdge(t, reconciler)
+
+	require.NoError(t, reconciler.Get(context.Background(), key, &deployment))
+	assert.Equal(t, "7", deployment.Annotations["deployment.kubernetes.io/revision"],
+		"a foreign annotation must survive reconcile or the controller fights KCM forever")
+}
+
+// TestGatewayInfraReconciler_RefusesToAdoptForeignObject pins the adoption
+// guard: an existing object NOT owned by this Gateway is never overwritten or
+// adopted (which would later GC-delete a user's resource).
+func TestGatewayInfraReconciler_RefusesToAdoptForeignObject(t *testing.T) {
+	t.Parallel()
+
+	foreign := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "cf-proxy-edge", Namespace: infraNamespace,
+			Labels: map[string]string{"owned-by": "some-user"},
+		},
+		Spec: appsv1.DeploymentSpec{
+			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "user-app"}},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": "user-app"}},
+				Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "c", Image: "user/app:v1"}}},
+			},
+		},
+	}
+
+	objects := append(infraFixtures(t), foreign)
+	reconciler := newInfraReconciler(t, objects...)
+
+	_, err := reconciler.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "edge", Namespace: infraNamespace},
+	})
+	require.Error(t, err, "the reconcile must refuse to adopt a foreign Deployment")
+
+	var deployment appsv1.Deployment
+	require.NoError(t, reconciler.Get(context.Background(),
+		types.NamespacedName{Name: "cf-proxy-edge", Namespace: infraNamespace}, &deployment))
+
+	assert.Equal(t, "user-app", deployment.Spec.Selector.MatchLabels["app"],
+		"the user's Deployment must be left untouched")
+	assert.Empty(t, deployment.OwnerReferences, "the foreign object must not be adopted")
+}
+
 // TestGatewayInfraReconciler_SpecImageWorksWithoutDefault pins the override
 // path: a GatewayConfig-level image makes rendering possible even when the
 // controller-level default is absent.

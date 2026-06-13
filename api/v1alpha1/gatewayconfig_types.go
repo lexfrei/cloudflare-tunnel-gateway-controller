@@ -52,11 +52,16 @@ type ProxyAutoscaling struct {
 	// tunnel connectors.
 	// +optional
 	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=100
 	MinReplicas *int32 `json:"minReplicas,omitempty"`
 
-	// MaxReplicas is the upper bound.
+	// MaxReplicas is the upper bound. Capped at 100: replica counts are
+	// tenant-controlled input on a shared cluster, and an unbounded value is
+	// a noisy-neighbour attack. Aggregate resource usage still needs a
+	// per-namespace ResourceQuota — the cap bounds one Gateway, not a tenant.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=100
 	MaxReplicas int32 `json:"maxReplicas"`
 
 	// TargetInflightPerPod is the average in-flight request count per pod the
@@ -125,9 +130,11 @@ type GatewayConfigSpec struct {
 	AuthTokenSecretRef *LocalSecretReference `json:"authTokenSecretRef,omitempty"`
 
 	// Replicas is the fixed proxy replica count. Defaults to 2 (the HA floor
-	// for tunnel connectors). Mutually exclusive with autoscaling.
+	// for tunnel connectors). Mutually exclusive with autoscaling. Capped at
+	// 100 — see Autoscaling.MaxReplicas for the rationale.
 	// +optional
 	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=100
 	Replicas *int32 `json:"replicas,omitempty"`
 
 	// Autoscaling renders a HorizontalPodAutoscaler for the proxy Deployment

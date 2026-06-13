@@ -9,6 +9,7 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/api/v1alpha1"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/render"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/tunnel"
 )
 
@@ -103,7 +104,7 @@ func (r *Resolver) ResolveForGateway(
 		return nil, err
 	}
 
-	authToken, err := r.readAuthToken(ctx, gateway.Namespace, gwConfig)
+	authToken, err := r.readAuthToken(ctx, gateway, gwConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -121,6 +122,18 @@ func (r *Resolver) ResolveForGateway(
 		AuthToken:         authToken,
 		GatewayConfig:     gwConfig,
 	}, nil
+}
+
+// GetGatewayConfig resolves and returns the GatewayConfig referenced by the
+// Gateway's infrastructure.parametersRef, applying the same group/kind
+// validation and ErrInvalidParameters classification as ResolveForGateway.
+// Exposed for the infra reconciler, which must ensure the generated auth
+// Secret exists BEFORE ResolveForGateway can read it.
+func (r *Resolver) GetGatewayConfig(
+	ctx context.Context,
+	gateway *gatewayv1.Gateway,
+) (*v1alpha1.GatewayConfig, error) {
+	return r.getGatewayConfig(ctx, gateway)
 }
 
 // getGatewayConfig validates the parametersRef group/kind and fetches the
@@ -241,33 +254,49 @@ func (r *Resolver) readCredentialOverride(
 	return string(token), nil
 }
 
-// readAuthToken fetches the optional config-API bearer token.
+// readAuthToken resolves the config-API bearer token. Push auth is NEVER
+// optional: without an explicit authTokenSecretRef the token comes from the
+// controller-generated Secret (render.GeneratedAuthSecretName), so a tenant
+// data plane is never rendered or pushed to without authentication — an
+// unauthenticated config API would accept PUT /config from any pod that can
+// reach it. An absent explicit Secret is a user spec error
+// (ErrInvalidParameters); an absent GENERATED Secret is the bootstrap window
+// before the infra reconciler creates it — transient, so callers retry
+// instead of stamping InvalidParameters on a healthy spec.
 func (r *Resolver) readAuthToken(
 	ctx context.Context,
-	namespace string,
+	gateway *gatewayv1.Gateway,
 	gwConfig *v1alpha1.GatewayConfig,
 ) (string, error) {
-	ref := gwConfig.Spec.AuthTokenSecretRef
-	if ref == nil {
-		return "", nil
+	namespace := gateway.Namespace
+
+	name, key := render.GeneratedAuthSecretName(gateway), authTokenSecretKey
+	generated := true
+
+	if ref := gwConfig.Spec.AuthTokenSecretRef; ref != nil {
+		name, key, generated = ref.Name, ref.KeyOr(authTokenSecretKey), false
 	}
 
-	secret, err := r.getSecret(ctx, ref.Name, namespace)
+	secret, err := r.getSecret(ctx, name, namespace)
 	if err != nil {
-		if apierrors.IsNotFound(err) {
-			return "", errors.Wrapf(ErrInvalidParameters,
-				"auth token secret %s/%s: %v", namespace, ref.Name, err)
+		if apierrors.IsNotFound(err) && generated {
+			// Bootstrap window: keep the error's own identity for backoff.
+			return "", errors.Wrapf(err,
+				"generated auth token secret %s/%s not yet created", namespace, name)
 		}
 
-		return "", errors.Wrapf(err, "reading auth token secret %s/%s", namespace, ref.Name)
-	}
+		if apierrors.IsNotFound(err) {
+			return "", errors.Wrapf(ErrInvalidParameters,
+				"auth token secret %s/%s: %v", namespace, name, err)
+		}
 
-	key := ref.KeyOr(authTokenSecretKey)
+		return "", errors.Wrapf(err, "reading auth token secret %s/%s", namespace, name)
+	}
 
 	token := secret.Data[key]
 	if len(token) == 0 {
 		return "", errors.Wrapf(ErrInvalidParameters,
-			"auth token secret %s/%s has no %q key (or it is empty)", namespace, ref.Name, key)
+			"auth token secret %s/%s has no %q key (or it is empty)", namespace, name, key)
 	}
 
 	return string(token), nil

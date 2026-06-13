@@ -95,6 +95,15 @@ func ConfigEndpointURL(gateway *gatewayv1.Gateway, clusterDomain string) string 
 		ConfigServiceName(gateway), gateway.Namespace, clusterDomain, configAPIPort)
 }
 
+// GeneratedAuthSecretName returns the name of the controller-generated
+// config-API auth Secret for a Gateway whose GatewayConfig declares no
+// authTokenSecretRef. The data plane is NEVER rendered without push auth —
+// an unauthenticated tenant config API would accept PUT /config from any pod
+// that can reach it.
+func GeneratedAuthSecretName(gateway *gatewayv1.Gateway) string {
+	return truncateName(namePrefix + gateway.Name + "-auth")
+}
+
 // GatewayLabelValue returns the GatewayLabel value for a Gateway name. Label
 // values cap at 63 characters while Gateway names go up to 253, so long names
 // truncate with the same deterministic hash-suffix scheme as resource names —
@@ -174,8 +183,12 @@ func ProxyDeployment(input Input) *appsv1.Deployment {
 				},
 				Spec: corev1.PodSpec{
 					TerminationGracePeriodSeconds: new(terminationGracePeriodSeconds),
-					SecurityContext:               podSecurityContext(),
-					Containers:                    []corev1.Container{proxyContainer(input)},
+					// The proxy never talks to the Kubernetes API, and
+					// spec.image is tenant-chosen: do not hand the namespace
+					// default ServiceAccount token to an arbitrary image.
+					AutomountServiceAccountToken: new(false),
+					SecurityContext:              podSecurityContext(),
+					Containers:                   []corev1.Container{proxyContainer(input)},
 				},
 			},
 		},
@@ -249,17 +262,23 @@ func proxyEnv(input Input) []corev1.EnvVar {
 		},
 	}
 
+	// Push auth is ALWAYS wired — fail secure: without an explicit ref the
+	// controller-generated Secret protects the config API (an unauthenticated
+	// tenant plane would accept PUT /config from any pod that reaches it).
+	authName, authKey := GeneratedAuthSecretName(input.Gateway), authTokenKey
 	if ref := input.Config.Spec.AuthTokenSecretRef; ref != nil {
-		env = append(env, corev1.EnvVar{
-			Name: "PROXY_AUTH_TOKEN",
-			ValueFrom: &corev1.EnvVarSource{
-				SecretKeyRef: &corev1.SecretKeySelector{
-					LocalObjectReference: corev1.LocalObjectReference{Name: ref.Name},
-					Key:                  ref.KeyOr(authTokenKey),
-				},
-			},
-		})
+		authName, authKey = ref.Name, ref.KeyOr(authTokenKey)
 	}
+
+	env = append(env, corev1.EnvVar{
+		Name: "PROXY_AUTH_TOKEN",
+		ValueFrom: &corev1.EnvVarSource{
+			SecretKeyRef: &corev1.SecretKeySelector{
+				LocalObjectReference: corev1.LocalObjectReference{Name: authName},
+				Key:                  authKey,
+			},
+		},
+	})
 
 	if protocol := input.Defaults.TunnelProtocol; protocol != "" && protocol != "auto" {
 		env = append(env, corev1.EnvVar{Name: "PROXY_TUNNEL_PROTOCOL", Value: protocol})
@@ -363,17 +382,44 @@ func ConfigService(input Input) *corev1.Service {
 	}
 }
 
-// truncateName bounds a rendered name to the 63-char DNS label limit,
-// replacing the tail with a deterministic hash suffix on overflow so long
-// Gateway names stay collision-free.
+// truncateName turns a Gateway name into a valid rendered resource name. It
+// bounds the result to the 63-char DNS label limit AND sanitizes characters
+// that are legal in a Gateway name (a DNS-1123 SUBDOMAIN, dots allowed, up to
+// 253 chars) but illegal in a Service/label name (a DNS-1123 LABEL, no dots).
+// Whenever the name overflows OR sanitization changed it, a deterministic
+// hash of the ORIGINAL name replaces the tail so distinct inputs (e.g.
+// "my.edge" vs "my-edge") never collide on the same rendered name.
 func truncateName(name string) string {
-	if len(name) <= MaxDNSLabelLength {
+	sanitized := sanitizeDNSLabel(name)
+
+	if sanitized == name && len(name) <= MaxDNSLabelLength {
 		return name
 	}
 
 	sum := sha256.Sum256([]byte(name))
 	suffix := hex.EncodeToString(sum[:])[:nameHashLength]
-	keep := MaxDNSLabelLength - nameHashLength - 1
+	keep := min(len(sanitized), MaxDNSLabelLength-nameHashLength-1)
 
-	return strings.TrimRight(name[:keep], "-") + "-" + suffix
+	return strings.TrimRight(sanitized[:keep], "-") + "-" + suffix
+}
+
+// sanitizeDNSLabel lowercases and replaces every character that is not a
+// lowercase alphanumeric with a dash, yielding a DNS-1123-label-safe body
+// (the caller guarantees length and uniqueness via the hash suffix).
+func sanitizeDNSLabel(name string) string {
+	var builder strings.Builder
+
+	builder.Grow(len(name))
+
+	for _, r := range strings.ToLower(name) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' {
+			builder.WriteRune(r)
+
+			continue
+		}
+
+		builder.WriteByte('-')
+	}
+
+	return builder.String()
 }

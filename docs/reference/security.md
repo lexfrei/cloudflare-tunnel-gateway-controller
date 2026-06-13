@@ -106,8 +106,12 @@ rules:
   - apiGroups: [""]
     resources: ["services"]
     verbs: ["get", "list", "watch", "create", "update", "delete"]
+  # Secrets - read for credentials; create for the generated per-Gateway config-API auth Secret (no update/delete: token never rotated, ownerRef GC removes it).
   - apiGroups: [""]
-    resources: ["secrets", "configmaps"]
+    resources: ["secrets"]
+    verbs: ["get", "list", "watch", "create"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
     verbs: ["get", "list", "watch"]
   # EndpointSlice - the proxy endpoint reconciler discovers proxy pods so a
   # newly-joined replica gets the cached config pushed immediately

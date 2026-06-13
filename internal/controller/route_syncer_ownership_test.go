@@ -7,9 +7,12 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/api/v1alpha1"
@@ -150,6 +153,73 @@ func TestRouteSyncer_HostnameOwnership_FailClosedOnUnlabelledNamespace(t *testin
 
 	assert.Empty(t, result.accepted)
 	require.Len(t, result.rejected, 1)
+}
+
+// TestRouteSyncer_HostnameOwnership_FailClosedOnNamespaceReadError pins the
+// security-critical branch: if the namespace label cannot be read, the policy
+// must DENY (an unreadable namespace must never become an enforcement bypass),
+// not fall through to programming the route.
+func TestRouteSyncer_HostnameOwnership_FailClosedOnNamespaceReadError(t *testing.T) {
+	t.Parallel()
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, gatewayv1.Install(scheme))
+	require.NoError(t, v1alpha1.AddToScheme(scheme))
+	require.NoError(t, corev1.AddToScheme(scheme))
+
+	fromAll := gatewayv1.NamespacesFromAll
+	gateway := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-gateway", Namespace: "default"},
+		Spec: gatewayv1.GatewaySpec{
+			GatewayClassName: "cloudflare-tunnel",
+			Listeners: []gatewayv1.Listener{{
+				Name: "http", Port: 80, Protocol: gatewayv1.HTTPProtocolType,
+				AllowedRoutes: &gatewayv1.AllowedRoutes{Namespaces: &gatewayv1.RouteNamespaces{From: &fromAll}},
+			}},
+		},
+	}
+	gatewayClass := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "cloudflare-tunnel"},
+		Spec:       gatewayv1.GatewayClassSpec{ControllerName: "cloudflare-tunnel"},
+	}
+	namespace := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{
+		Name:   "team-b",
+		Labels: map[string]string{ownershipLabelKey: "team-b.example.com"},
+	}}
+	// An OWNED hostname — it would be accepted if the namespace read succeeded.
+	route := ownershipHTTPRoute("team-b", "owned-host", "app.team-b.example.com")
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(gateway, gatewayClass, namespace, route).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Get: func(ctx context.Context, cl client.WithWatch, key client.ObjectKey,
+				obj client.Object, opts ...client.GetOption,
+			) error {
+				if _, ok := obj.(*corev1.Namespace); ok {
+					return apierrors.NewInternalError(errSimulatedCacheMiss)
+				}
+
+				return cl.Get(ctx, key, obj, opts...)
+			},
+		}).
+		Build()
+
+	syncer := NewRouteSyncer(fakeClient, scheme, "cluster.local", "cloudflare-tunnel",
+		config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		cfmetrics.NewNoopCollector(), nil)
+
+	policy, err := hostnameownership.New(ownershipLabelKey, "")
+	require.NoError(t, err)
+
+	syncer.HostnameOwnership = policy
+
+	result, err := syncer.getRelevantHTTPRoutes(context.Background(), nil)
+	require.NoError(t, err)
+
+	assert.Empty(t, result.accepted, "an unreadable namespace must fail closed, not bypass enforcement")
+	require.Len(t, result.rejected, 1)
+	assert.Equal(t, "owned-host", result.rejected[0].Name)
 }
 
 // TestRouteSyncer_HostnameOwnership_DisabledKeepsCurrentBehaviour pins the

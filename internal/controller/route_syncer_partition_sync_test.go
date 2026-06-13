@@ -214,6 +214,12 @@ func newPartitionSyncSyncer(t *testing.T, api *recordingTunnelAPI, classTunnelID
 			ObjectMeta: metav1.ObjectMeta{Name: "infra-token", Namespace: "default"},
 			Data:       map[string][]byte{"tunnel-token": []byte(partitionSyncToken(t))},
 		},
+		// The generated config-API auth Secret the infra reconciler would
+		// create (no explicit authTokenSecretRef on the GatewayConfig).
+		&corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: "cf-proxy-infra-gw-auth", Namespace: "default"},
+			Data:       map[string][]byte{"auth-token": []byte("generated-bearer")},
+		},
 		&corev1.Service{
 			ObjectMeta: metav1.ObjectMeta{Name: "svc", Namespace: "default"},
 			Spec: corev1.ServiceSpec{
