@@ -18,30 +18,56 @@ import (
 func TestPartitionUnion_CloudflareAndProxyAgree(t *testing.T) {
 	t.Parallel()
 
-	mkRoute := func(ns, name string) gatewayv1.HTTPRoute {
+	mkHTTP := func(ns, name string) gatewayv1.HTTPRoute {
 		return gatewayv1.HTTPRoute{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: name}}
 	}
+	mkGRPC := func(ns, name string) gatewayv1.GRPCRoute {
+		return gatewayv1.GRPCRoute{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: name}}
+	}
 
-	// Two partitions on the SAME tunnel ("shared"): each carries one shared
-	// route plus one of its own.
+	// Two partitions on the SAME tunnel: each carries one shared route plus one
+	// of its own, for both HTTP and gRPC.
 	partitions := []routePartition{
-		{Key: sharedPartitionKey, HTTPRoutes: []gatewayv1.HTTPRoute{mkRoute("a", "common"), mkRoute("a", "only-shared")}},
-		{Key: "ns/gw", HTTPRoutes: []gatewayv1.HTTPRoute{mkRoute("a", "common"), mkRoute("b", "only-gw")}},
+		{
+			Key:        sharedPartitionKey,
+			HTTPRoutes: []gatewayv1.HTTPRoute{mkHTTP("a", "common"), mkHTTP("a", "only-shared")},
+			GRPCRoutes: []gatewayv1.GRPCRoute{mkGRPC("a", "g-common"), mkGRPC("a", "g-only-shared")},
+		},
+		{
+			Key:        "ns/gw",
+			HTTPRoutes: []gatewayv1.HTTPRoute{mkHTTP("a", "common"), mkHTTP("b", "only-gw")},
+			GRPCRoutes: []gatewayv1.GRPCRoute{mkGRPC("a", "g-common"), mkGRPC("b", "g-only-gw")},
+		},
 	}
 
 	// Proxy side.
 	unioned := unionPartitionRoutes(partitions, "tunnel-1")
-	proxySet := httpRouteKeys(unioned[0].HTTPRoutes)
+	proxyHTTP := httpRouteKeys(unioned[0].HTTPRoutes)
+	proxyGRPC := grpcRouteKeys(unioned[0].GRPCRoutes)
 
 	// Cloudflare side: both partitions share tunnel-1, so they form one group.
 	group := tunnelGroup{partitions: []*routePartition{&partitions[0], &partitions[1]}}
-	cfRoutes, _ := groupRoutes(&group)
-	cfSet := httpRouteKeys(cfRoutes)
+	cfHTTP, cfGRPC := groupRoutes(&group)
 
-	assert.Equal(t, cfSet, proxySet,
-		"the Cloudflare write and the proxy push must union same-tunnel routes identically")
-	assert.Equal(t, []string{"a/common", "a/only-shared", "b/only-gw"}, cfSet,
-		"the union is deduplicated by namespace/name")
+	assert.Equal(t, httpRouteKeys(cfHTTP), proxyHTTP,
+		"the Cloudflare write and the proxy push must union same-tunnel HTTP routes identically")
+	assert.Equal(t, grpcRouteKeys(cfGRPC), proxyGRPC,
+		"the Cloudflare write and the proxy push must union same-tunnel gRPC routes identically")
+	assert.Equal(t, []string{"a/common", "a/only-shared", "b/only-gw"}, httpRouteKeys(cfHTTP),
+		"the HTTP union is deduplicated by namespace/name")
+	assert.Equal(t, []string{"a/g-common", "a/g-only-shared", "b/g-only-gw"}, grpcRouteKeys(cfGRPC),
+		"the gRPC union is deduplicated by namespace/name")
+}
+
+func grpcRouteKeys(routes []gatewayv1.GRPCRoute) []string {
+	keys := make([]string, 0, len(routes))
+	for i := range routes {
+		keys = append(keys, routes[i].Namespace+"/"+routes[i].Name)
+	}
+
+	sort.Strings(keys)
+
+	return keys
 }
 
 func httpRouteKeys(routes []gatewayv1.HTTPRoute) []string {
