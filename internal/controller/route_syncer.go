@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -596,6 +597,18 @@ func (s *RouteSyncer) SyncAllRoutes(ctx context.Context) (ctrl.Result, *SyncResu
 	partitions := partitionRoutes(httpResult, grpcResult, infra)
 	groups := buildTunnelGroups(resolvedConfig, partitions)
 
+	// Two DISTINCT opted-in Gateways whose connector tokens parse to the SAME
+	// tunnel collapse their isolation: the edge load-balances the tunnel's
+	// requests across all connectors, so each tenant's proxy receives the
+	// union of both tenants' routes. Shared+infra on one tunnel is the
+	// documented migration path, but infra+infra is a silent cross-tenant
+	// exposure — warn loudly so the operator sees the misconfiguration.
+	for _, collision := range sharedInfraTunnelCollisions(groups) {
+		logger.Error("multiple dedicated Gateways share one tunnel; their routes are unioned across tenants — "+
+			"give each isolated Gateway its own Cloudflare Tunnel",
+			"tunnel", collision.tunnelID, "gateways", strings.Join(collision.gateways, ","))
+	}
+
 	logger.Info("syncing routes to cloudflare",
 		"httpRoutes", len(httpResult.accepted),
 		"grpcRoutes", len(grpcResult.accepted),
@@ -719,6 +732,43 @@ func buildTunnelGroups(shared *config.ResolvedConfig, partitions []routePartitio
 	}
 
 	return groups
+}
+
+// tunnelCollision names the opted-in Gateways that share one tunnel — an
+// isolation-defeating misconfiguration.
+type tunnelCollision struct {
+	tunnelID string
+	gateways []string
+}
+
+// sharedInfraTunnelCollisions reports tunnel groups holding two or more
+// DISTINCT dedicated (infra) Gateways. A shared+infra group is the documented
+// migration path and is NOT reported; only infra+infra — where two tenants
+// each believe they have an isolated plane — is a cross-tenant exposure.
+func sharedInfraTunnelCollisions(groups []tunnelGroup) []tunnelCollision {
+	var collisions []tunnelCollision
+
+	for i := range groups {
+		group := &groups[i]
+
+		var infraKeys []string
+
+		for _, partition := range group.partitions {
+			if partition.PerGateway != nil {
+				infraKeys = append(infraKeys, partition.Key)
+			}
+		}
+
+		if len(infraKeys) >= 2 {
+			slices.Sort(infraKeys)
+			collisions = append(collisions, tunnelCollision{
+				tunnelID: group.resolved.TunnelID,
+				gateways: infraKeys,
+			})
+		}
+	}
+
+	return collisions
 }
 
 // tunnelGroupsOutcome aggregates the per-group sync results.
