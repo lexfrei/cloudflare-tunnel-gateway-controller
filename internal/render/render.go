@@ -322,6 +322,9 @@ func proxyEnv(input Input) []corev1.EnvVar {
 
 func proxyResources(config *v1alpha1.GatewayConfig) corev1.ResourceRequirements {
 	if config.Spec.Resources != nil {
+		// An explicit value wins — INCLUDING a non-nil empty {}: `resources: {}`
+		// is a deliberate opt-out of the chart-parity defaults (no
+		// requests/limits), not a request to re-apply them.
 		return *config.Spec.Resources
 	}
 

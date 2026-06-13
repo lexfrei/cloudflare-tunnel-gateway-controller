@@ -298,6 +298,21 @@ func TestProxyDeployment_InfrastructureLabelsPropagate(t *testing.T) {
 	assert.Equal(t, "edge", deployment.Spec.Template.Labels["cf.k8s.lex.la/gateway"])
 }
 
+// TestProxyDeployment_ExplicitEmptyResourcesDropDefaults pins that a non-nil
+// empty `resources: {}` is a deliberate opt-out of the chart-parity defaults,
+// not a request to re-apply them — the rendered container carries no
+// requests/limits.
+func TestProxyDeployment_ExplicitEmptyResourcesDropDefaults(t *testing.T) {
+	t.Parallel()
+
+	input := testInput("edge")
+	input.Config.Spec.Resources = &corev1.ResourceRequirements{}
+
+	container := render.ProxyDeployment(input).Spec.Template.Spec.Containers[0]
+	assert.Empty(t, container.Resources.Limits, "explicit empty resources must not re-apply default limits")
+	assert.Empty(t, container.Resources.Requests, "explicit empty resources must not re-apply default requests")
+}
+
 // TestProxyDeployment_OptionalKnobs pins image/resources/auth/protocol
 // overrides.
 func TestProxyDeployment_OptionalKnobs(t *testing.T) {

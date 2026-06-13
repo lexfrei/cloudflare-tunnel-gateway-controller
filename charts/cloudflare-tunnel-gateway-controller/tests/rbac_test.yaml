@@ -188,19 +188,19 @@ tests:
             resources: ["configmaps"]
             verbs: ["get", "list", "watch"]
 
-  # v3 removed internal/helm/manager.go and every Helm-SDK call site.
-  # The chart must NOT grant the cluster-wide Pod/Deployment/ReplicaSet/
-  # ServiceAccount write verbs that path needed. These negative
-  # assertions lock the v3 RBAC boundary against accidental
-  # re-introduction.
-  - it: should NOT grant cluster-wide write on Deployments
+  # The controller manages per-Gateway proxy Deployments directly, so it DOES
+  # hold Deployment write (asserted positively elsewhere). It must NOT manage
+  # ReplicaSets or Pods — those belong to the Deployment controller and kubelet
+  # — nor the ServiceAccounts/ConfigMaps/Pods the removed Helm-SDK path needed.
+  # These negative assertions lock that boundary against accidental widening.
+  - it: should NOT grant write on ReplicaSets
     asserts:
       - template: clusterrole.yaml
         notContains:
           path: rules
           content:
             apiGroups: ["apps"]
-            resources: ["deployments", "replicasets"]
+            resources: ["replicasets"]
             verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 
   - it: should NOT grant cluster-wide write on ServiceAccounts/ConfigMaps/Pods

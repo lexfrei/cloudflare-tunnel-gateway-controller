@@ -253,7 +253,7 @@ cosign verify ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller:latest \
 ### Helm Chart Verification
 
 ```bash
-helm verify cloudflare-tunnel-gateway-controller-1.0.0.tgz
+helm verify cloudflare-tunnel-gateway-controller-<version>.tgz
 ```
 
 ## Secrets in Logs

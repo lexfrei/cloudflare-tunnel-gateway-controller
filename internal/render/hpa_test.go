@@ -74,7 +74,10 @@ func TestAutoscaler_Overrides(t *testing.T) {
 // TestAutoscaler_DefaultMinClampedToMax pins the defaulting edge: with
 // minReplicas unset (defaults to 2) and maxReplicas below that, the rendered
 // HPA must stay valid — min is clamped to max instead of producing min>max,
-// which the apiserver would reject on every reconcile.
+// which the apiserver would reject on every reconcile. The shipped CRD CEL
+// (maxReplicas >= minReplicas, min defaulting to 2) rejects this input at
+// admission, so the guard only matters on a CEL-disabled cluster — defence in
+// depth, not a path reachable when the CRD validation is active.
 func TestAutoscaler_DefaultMinClampedToMax(t *testing.T) {
 	t.Parallel()
 
