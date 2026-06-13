@@ -603,12 +603,25 @@ func TestGatewayInfraReconciler_RefusesForeignAuthSecret(t *testing.T) {
 	assert.Empty(t, secret.OwnerReferences, "the foreign Secret must not be adopted")
 }
 
-// TestGatewayInfraReconciler_RepairsTokenlessOwnedAuthSecret pins that an
-// owned generated-auth Secret whose token key is empty (a wedged data plane:
-// readAuthToken fails closed forever) is repaired in place with a fresh token
-// rather than left broken.
-func TestGatewayInfraReconciler_RepairsTokenlessOwnedAuthSecret(t *testing.T) {
+// TestGatewayInfraReconciler_TokenlessOwnedAuthSecretFailsClosedWithoutUpdate
+// pins that an owned generated-auth Secret whose token key is empty fails
+// CLOSED — the data plane is not rendered — WITHOUT the bootstrap writing to
+// the Secret. The controller holds only secrets create (no update/delete) by
+// deliberate least-privilege design, so the interceptor forbids any secrets
+// Update: a bootstrap that tried to repair the Secret in place would hit
+// `forbidden` on a real cluster and wedge the plane permanently. The tokenless
+// state can only arise from external mutation; it surfaces downstream
+// (readAuthToken -> ErrInvalidParameters -> RenderFailed) and heals when the
+// Secret is deleted (the create path regenerates it).
+func TestGatewayInfraReconciler_TokenlessOwnedAuthSecretFailsClosedWithoutUpdate(t *testing.T) {
 	t.Parallel()
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, gatewayv1.Install(scheme))
+	require.NoError(t, v1alpha1.AddToScheme(scheme))
+	require.NoError(t, corev1.AddToScheme(scheme))
+	require.NoError(t, appsv1.AddToScheme(scheme))
+	require.NoError(t, autoscalingv2.AddToScheme(scheme))
 
 	owned := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
@@ -624,17 +637,49 @@ func TestGatewayInfraReconciler_RepairsTokenlessOwnedAuthSecret(t *testing.T) {
 		Data: map[string][]byte{"auth-token": []byte("")},
 	}
 
-	objects := append(infraFixtures(t), owned)
-	reconciler := newInfraReconciler(t, objects...)
+	builder := fake.NewClientBuilder().WithScheme(scheme)
+	for _, obj := range append(infraFixtures(t), owned) {
+		builder = builder.WithRuntimeObjects(obj)
+	}
 
+	var secretUpdates int
+
+	fakeClient := builder.WithInterceptorFuncs(interceptor.Funcs{
+		Update: func(ctx context.Context, cl client.WithWatch, obj client.Object, opts ...client.UpdateOption) error {
+			if _, ok := obj.(*corev1.Secret); ok {
+				secretUpdates++
+
+				return apierrors.NewForbidden(
+					schema.GroupResource{Resource: "secrets"}, obj.GetName(), errSimulatedCacheMiss)
+			}
+
+			return cl.Update(ctx, obj, opts...)
+		},
+	}).Build()
+
+	reconciler := &GatewayInfraReconciler{
+		Client:         fakeClient,
+		Scheme:         scheme,
+		ControllerName: "cf.k8s.lex.la/tunnel-controller",
+		ConfigResolver: config.NewResolver(fakeClient, "cf-system", cfmetrics.NewNoopCollector()),
+		RenderDefaults: render.Defaults{ProxyImage: "ghcr.io/example/proxy:v1.2.3"},
+	}
+
+	// Fails closed without erroring the reconcile: ErrInvalidParameters renders
+	// nothing and surfaces an Event rather than requeuing forever.
 	reconcileEdge(t, reconciler)
+
+	assert.Zero(t, secretUpdates, "the bootstrap must never write to an existing Secret (create-only RBAC)")
+
+	var deployment appsv1.Deployment
+	err := reconciler.Get(context.Background(),
+		types.NamespacedName{Name: "cf-proxy-edge", Namespace: infraNamespace}, &deployment)
+	assert.True(t, apierrors.IsNotFound(err), "a tokenless auth Secret must fail closed — no data plane rendered")
 
 	var secret corev1.Secret
 	require.NoError(t, reconciler.Get(context.Background(),
 		types.NamespacedName{Name: "cf-proxy-edge-auth", Namespace: infraNamespace}, &secret))
-
-	assert.NotEmpty(t, secret.Data["auth-token"],
-		"the wedged owned auth Secret must be repaired with a fresh token")
+	assert.Empty(t, secret.Data["auth-token"], "the tokenless Secret must be left untouched, not rewritten")
 }
 
 // TestGatewayInfraReconciler_SpecImageWorksWithoutDefault pins the override

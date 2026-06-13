@@ -181,15 +181,15 @@ func (r *GatewayInfraReconciler) ensureGeneratedAuthSecret(
 			return err
 		}
 
-		// Owned and already holding a usable token: never rotate (a fresh
-		// token every reconcile rolls the proxy pods endlessly).
-		if len(existing.Data[generatedAuthTokenKey]) > 0 {
-			return nil
-		}
-
-		// Owned but tokenless (empty/missing key) wedges the plane forever —
-		// readAuthToken fails closed on every reconcile. Repair in place.
-		return r.repairGeneratedAuthSecret(ctx, &existing)
+		// Owned: reuse as-is and never write to it. The controller holds only
+		// secrets create (no update/delete) by deliberate least privilege, and
+		// the create-once token is never rotated (a fresh token every reconcile
+		// would roll the proxy pods endlessly). An owned Secret with an empty
+		// token can only arise from external mutation; it fails closed
+		// downstream (readAuthToken returns ErrInvalidParameters -> the data
+		// plane is not rendered, a RenderFailed Event is surfaced) and heals
+		// when the Secret is deleted — the create path below regenerates it.
+		return nil
 	} else if !apierrors.IsNotFound(err) {
 		return errors.Wrapf(err, "checking generated auth secret %s", key)
 	}
@@ -210,30 +210,6 @@ func (r *GatewayInfraReconciler) ensureGeneratedAuthSecret(
 
 	if err := r.Create(ctx, secret); err != nil && !apierrors.IsAlreadyExists(err) {
 		return errors.Wrapf(err, "creating generated auth secret %s", key)
-	}
-
-	return nil
-}
-
-// repairGeneratedAuthSecret rewrites a fresh token onto an owned generated-auth
-// Secret whose token key is empty. The empty-token state wedges the data plane
-// permanently (readAuthToken fails closed every reconcile), so unlike the
-// create-only happy path this DOES write — but only on a Secret already proven
-// adoptable by the caller, and only when the token is unusable.
-func (r *GatewayInfraReconciler) repairGeneratedAuthSecret(ctx context.Context, secret *corev1.Secret) error {
-	token, err := generateAuthToken()
-	if err != nil {
-		return errors.Wrap(err, "generating config-api auth token")
-	}
-
-	if secret.Data == nil {
-		secret.Data = map[string][]byte{}
-	}
-
-	secret.Data[generatedAuthTokenKey] = []byte(token)
-
-	if err := r.Update(ctx, secret); err != nil {
-		return errors.Wrapf(err, "repairing tokenless auth secret %s/%s", secret.Namespace, secret.Name)
 	}
 
 	return nil
