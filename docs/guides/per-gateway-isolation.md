@@ -95,10 +95,9 @@ If a per-Gateway token points at the SAME tunnel as the shared plane (or another
 
 ## Securing a tenant data plane
 
-Two hardening steps are strongly recommended for any tenant-facing data plane:
+The config API is authenticated by default: when a GatewayConfig declares no `authTokenSecretRef`, the controller generates a random bearer-token Secret (`cf-proxy-<gateway>-auth`, controller-owned, never rotated) and wires the proxy to it, so a tenant plane is never exposed unauthenticated. `authTokenSecretRef` is a bring-your-own-token OVERRIDE for operators who want to manage the token themselves (rotation, external secret stores). One further hardening step is recommended:
 
-1. **Set `authTokenSecretRef`.** Without it the rendered proxy's config API (port 8081) accepts unauthenticated `PUT /config` from anything that can reach the pod — any workload in the cluster absent network policy. With it, only the controller (which authenticates its pushes with the same token) can replace the routing table.
-2. **Add a NetworkPolicy.** The controller does not render one for per-Gateway planes. Restrict ingress on the config API port to the controller's namespace AND your monitoring namespace — `/metrics` is served on the same port, and a policy that admits only the controller silently breaks Prometheus scraping and therefore the rendered HPA (it reports `FailedGetPodsMetric` and holds `minReplicas`). The proxy's data port needs no ingress at all (traffic arrives through the outbound tunnel).
+- **Add a NetworkPolicy.** The controller does not render one for per-Gateway planes. Restrict ingress on the config API port to the controller's namespace AND your monitoring namespace — `/metrics` is served on the same port, and a policy that admits only the controller silently breaks Prometheus scraping and therefore the rendered HPA (it reports `FailedGetPodsMetric` and holds `minReplicas`). The proxy's data port needs no ingress at all (traffic arrives through the outbound tunnel).
 
 Also note the RBAC equivalence: `create` on `GatewayConfig` (plus a Gateway referencing it) lets a user run an arbitrary image via `spec.image` under the namespace's default ServiceAccount — see the [security reference](../reference/security.md).
 

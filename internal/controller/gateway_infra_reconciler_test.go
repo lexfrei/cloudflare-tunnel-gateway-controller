@@ -11,11 +11,15 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/api/v1alpha1"
@@ -239,6 +243,77 @@ func TestGatewayInfraReconciler_SharedModeCleansUp(t *testing.T) {
 	var service corev1.Service
 	err = reconciler.Get(ctx, types.NamespacedName{Name: "cf-proxy-edge-config", Namespace: infraNamespace}, &service)
 	assert.Error(t, err, "rendered Service must be deleted when the Gateway opts back out")
+}
+
+// TestGatewayInfraReconciler_OptOutSucceedsWithoutSecretDelete pins the
+// least-privilege cleanup contract: the controller's RBAC grants
+// create-but-not-delete on Secrets, so opt-out must NOT issue a Secret Delete
+// (which would 403 in production and wedge the reconcile in a requeue loop).
+// The generated Secret survives opt-out and is GC'd only on Gateway deletion;
+// the Deployment and Service ARE deleted.
+func TestGatewayInfraReconciler_OptOutSucceedsWithoutSecretDelete(t *testing.T) {
+	t.Parallel()
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, gatewayv1.Install(scheme))
+	require.NoError(t, v1alpha1.AddToScheme(scheme))
+	require.NoError(t, corev1.AddToScheme(scheme))
+	require.NoError(t, appsv1.AddToScheme(scheme))
+	require.NoError(t, autoscalingv2.AddToScheme(scheme))
+
+	builder := fake.NewClientBuilder().WithScheme(scheme)
+	for _, obj := range infraFixtures(t) {
+		builder = builder.WithRuntimeObjects(obj)
+	}
+
+	var secretDeletes int
+
+	fakeClient := builder.WithInterceptorFuncs(interceptor.Funcs{
+		Delete: func(ctx context.Context, cl client.WithWatch, obj client.Object, opts ...client.DeleteOption) error {
+			if _, ok := obj.(*corev1.Secret); ok {
+				secretDeletes++
+
+				return apierrors.NewForbidden(
+					schema.GroupResource{Resource: "secrets"}, obj.GetName(), errSimulatedCacheMiss)
+			}
+
+			return cl.Delete(ctx, obj, opts...)
+		},
+	}).Build()
+
+	reconciler := &GatewayInfraReconciler{
+		Client:         fakeClient,
+		Scheme:         scheme,
+		ControllerName: "cf.k8s.lex.la/tunnel-controller",
+		ConfigResolver: config.NewResolver(fakeClient, "cf-system", cfmetrics.NewNoopCollector()),
+		RenderDefaults: render.Defaults{ProxyImage: "ghcr.io/example/proxy:v1.2.3"},
+	}
+
+	reconcileEdge(t, reconciler)
+
+	ctx := context.Background()
+
+	var gateway gatewayv1.Gateway
+	require.NoError(t, reconciler.Get(ctx, types.NamespacedName{Name: "edge", Namespace: infraNamespace}, &gateway))
+	gateway.Spec.Infrastructure = nil
+	require.NoError(t, reconciler.Update(ctx, &gateway))
+
+	// Opt-out cleanup must succeed under a Secret-delete-forbidding client.
+	_, err := reconciler.Reconcile(ctx, ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "edge", Namespace: infraNamespace},
+	})
+	require.NoError(t, err, "opt-out must not depend on Secret delete (RBAC grants no delete on Secrets)")
+	assert.Zero(t, secretDeletes, "cleanup must never attempt to delete the generated Secret")
+
+	var deployment appsv1.Deployment
+	assert.Error(t, reconciler.Get(ctx,
+		types.NamespacedName{Name: "cf-proxy-edge", Namespace: infraNamespace}, &deployment),
+		"the Deployment must be deleted on opt-out")
+
+	var secret corev1.Secret
+	assert.NoError(t, reconciler.Get(ctx,
+		types.NamespacedName{Name: "cf-proxy-edge-auth", Namespace: infraNamespace}, &secret),
+		"the generated Secret survives opt-out (GC'd on Gateway deletion via ownerRef)")
 }
 
 // TestGatewayInfraReconciler_InvalidParametersRendersNothing pins fail-safe

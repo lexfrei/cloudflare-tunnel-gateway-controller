@@ -446,6 +446,12 @@ func (r *GatewayInfraReconciler) applyAutoscaler(
 // cleanupRendered removes the per-Gateway resources after an opt-out. Missing
 // objects are fine; objects NOT owned by this Gateway are left untouched so a
 // name collision with user resources cannot turn into a deletion.
+//
+// The generated auth Secret is DELIBERATELY not deleted here: the controller's
+// RBAC grants create-but-not-delete on Secrets (least privilege), and the
+// Secret is ownerRef'd to the Gateway, so Gateway deletion GCs it. A stale
+// auth Secret on an opted-out-but-alive Gateway is harmless — if the Gateway
+// opts back in, ensureGeneratedAuthSecret reuses it.
 func (r *GatewayInfraReconciler) cleanupRendered(ctx context.Context, gateway *gatewayv1.Gateway) error {
 	objects := []client.Object{
 		&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{
@@ -456,9 +462,6 @@ func (r *GatewayInfraReconciler) cleanupRendered(ctx context.Context, gateway *g
 		}},
 		&autoscalingv2.HorizontalPodAutoscaler{ObjectMeta: metav1.ObjectMeta{
 			Name: render.DeploymentName(gateway), Namespace: gateway.Namespace,
-		}},
-		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{
-			Name: render.GeneratedAuthSecretName(gateway), Namespace: gateway.Namespace,
 		}},
 	}
 
