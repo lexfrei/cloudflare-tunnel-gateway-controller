@@ -412,6 +412,85 @@ func TestResolveForGateway_ClassFallbackEmptyTokenIsInvalidParameters(t *testing
 		"an empty class api-token key is a deterministic user-fixable problem -> InvalidParameters")
 }
 
+// TestResolveForGateway_OverrideCredentialFailClosedArms pins the
+// GatewayConfig-level cloudflareCredentialsSecretRef override's fail-closed
+// branches — a missing Secret and a present-but-empty api-token key — both
+// classify as ErrInvalidParameters (the security-relevant arms, previously
+// covered only on the class-fallback path).
+func TestResolveForGateway_OverrideCredentialFailClosedArms(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		objects []runtime.Object
+	}{
+		{
+			name: "override credentials Secret missing",
+			objects: []runtime.Object{&corev1.Secret{
+				// the override Secret "override-creds" is deliberately absent
+				ObjectMeta: metav1.ObjectMeta{Name: "unrelated", Namespace: testGwNamespace},
+			}},
+		},
+		{
+			name: "override credentials api-token key empty",
+			objects: []runtime.Object{&corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: "override-creds", Namespace: testGwNamespace},
+				Data:       map[string][]byte{"api-token": []byte("")},
+			}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			gwConfig := &v1alpha1.GatewayConfig{
+				ObjectMeta: metav1.ObjectMeta{Name: "edge-config", Namespace: testGwNamespace},
+				Spec: v1alpha1.GatewayConfigSpec{
+					TunnelTokenSecretRef:           v1alpha1.LocalSecretReference{Name: "edge-tunnel-token"},
+					CloudflareCredentialsSecretRef: &v1alpha1.LocalSecretReference{Name: "override-creds"},
+				},
+			}
+
+			objects := append(classFixtures(), gwConfig, tokenSecret(t), generatedAuthSecret())
+			objects = append(objects, tt.objects...)
+			resolver := newGatewayResolver(t, objects...)
+
+			_, err := resolver.ResolveForGateway(context.Background(),
+				gatewayWithInfra("cf.k8s.lex.la", "GatewayConfig", "edge-config"))
+			require.Error(t, err)
+			assert.ErrorIs(t, err, config.ErrInvalidParameters,
+				"an unusable override credential is a user-fixable spec problem -> InvalidParameters")
+		})
+	}
+}
+
+// TestResolveForGateway_ExplicitAuthSecretMissingIsInvalidParameters pins that
+// an explicit authTokenSecretRef pointing at an absent Secret fails closed as
+// ErrInvalidParameters — distinct from the generated-Secret bootstrap window,
+// which is transient (the user named a Secret that does not exist, so it is a
+// spec problem, not a self-healing not-yet state).
+func TestResolveForGateway_ExplicitAuthSecretMissingIsInvalidParameters(t *testing.T) {
+	t.Parallel()
+
+	gwConfig := &v1alpha1.GatewayConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "edge-config", Namespace: testGwNamespace},
+		Spec: v1alpha1.GatewayConfigSpec{
+			TunnelTokenSecretRef: v1alpha1.LocalSecretReference{Name: "edge-tunnel-token"},
+			AuthTokenSecretRef:   &v1alpha1.LocalSecretReference{Name: "absent-auth"},
+		},
+	}
+
+	objects := append(classFixtures(), gwConfig, tokenSecret(t))
+	resolver := newGatewayResolver(t, objects...)
+
+	_, err := resolver.ResolveForGateway(context.Background(),
+		gatewayWithInfra("cf.k8s.lex.la", "GatewayConfig", "edge-config"))
+	require.Error(t, err)
+	assert.ErrorIs(t, err, config.ErrInvalidParameters,
+		"a named-but-absent auth Secret is a user spec problem -> InvalidParameters")
+}
+
 // TestHasInfrastructureParametersRef pins the opt-in predicate the sync
 // partitioner uses.
 func TestHasInfrastructureParametersRef(t *testing.T) {

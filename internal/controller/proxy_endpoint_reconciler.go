@@ -135,6 +135,12 @@ func (r *ProxyEndpointReconciler) partitionKeyForLabel(
 	}
 
 	for i := range gateways.Items {
+		// First match wins. The label value is a truncated name with an 8-hex
+		// hash suffix, so a collision needs two Gateway names that both truncate
+		// AND hash-collide in one namespace — astronomically unlikely. Even
+		// then the only consequence is a misdirected endpoint RESYNC (a re-push
+		// of already-correct config), never a cross-tenant leak, and it
+		// self-heals on the next genuine config change.
 		if render.GatewayLabelValue(gateways.Items[i].Name) == labelValue {
 			return namespace + "/" + gateways.Items[i].Name, true
 		}

@@ -312,6 +312,54 @@ func TestHandlerMetrics_RequestBodyBytesCounted(t *testing.T) {
 	assert.InDelta(t, 10.0, gatherValue(t, reg, "cftunnel_proxy_request_bytes_total", hostOnly), 0.001)
 }
 
+// TestHandlerMetrics_WebSocketDialFailure_InFlightReturnsToZero pins that a WS
+// upgrade whose backend dial fails releases the in-flight gauge and never
+// increments the session gauge — the one WS path where a future refactor could
+// leak the gauge (no onUpgrade fires, so finish() must run the non-upgraded
+// release).
+func TestHandlerMetrics_WebSocketDialFailure_InFlightReturnsToZero(t *testing.T) {
+	t.Parallel()
+
+	// Reserve a port, then close the listener so the WS backend dial is refused.
+	dead := httptest.NewServer(http.NotFoundHandler())
+	deadURL := dead.URL
+	dead.Close()
+
+	reg := prometheus.NewRegistry()
+	metrics := proxy.NewMetrics(reg)
+	router := proxy.NewRouter()
+	handler := proxy.NewHandler(router, proxy.WithMetrics(metrics))
+	router.SetHandler(handler)
+
+	require.NoError(t, router.UpdateConfig(&proxy.Config{
+		Version: 1,
+		Rules: []proxy.RouteRule{
+			{
+				Hostnames: []string{"app.example.com"},
+				Matches:   []proxy.RouteMatch{{Path: &proxy.PathMatch{Type: proxy.PathMatchPathPrefix, Value: "/"}}},
+				Backends: []proxy.BackendRef{
+					{URL: deadURL, Weight: 1, Protocol: proxy.BackendProtocolHTTP, WebSocket: true},
+				},
+			},
+		},
+	}))
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://app.example.com/ws", nil)
+	req.Header.Set("Connection", "Upgrade")
+	req.Header.Set("Upgrade", "websocket")
+	req.Header.Set("Sec-WebSocket-Version", "13")
+	req.Header.Set("Sec-WebSocket-Key", rfc6455SampleWSKey)
+
+	handler.ServeHTTP(httptest.NewRecorder(), req)
+
+	assert.InDelta(t, 0.0, gatherValue(t, reg, "cftunnel_proxy_requests_in_flight", nil), 0.001,
+		"a failed WS dial must release the in-flight gauge — no upgrade fired")
+	assert.InDelta(t, 0.0, gatherValue(t, reg, "cftunnel_proxy_websocket_active_sessions", nil), 0.001,
+		"a failed WS dial must not enter the session gauge")
+	assert.InDelta(t, 1.0, gatherValue(t, reg, "cftunnel_proxy_backend_errors_total",
+		map[string]string{"hostname": "app.example.com", "reason": "ws_dial"}), 0.001)
+}
+
 // TestHandlerMetrics_WebSocketUpgrade_TunnelMode pins the hijack-path
 // accounting against the cloudflared HTTP/2 writer contract: at upgrade time
 // the request leaves the in-flight gauge, enters the websocket session gauge,
