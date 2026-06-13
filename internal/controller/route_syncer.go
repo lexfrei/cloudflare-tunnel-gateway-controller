@@ -127,6 +127,19 @@ type routeBindingInfo struct {
 	// GRPCRoute) conflict resolution: two routes of different types conflict
 	// only when they share a Gateway and their hostnames intersect.
 	acceptedGateways map[string]bool
+
+	// parentGateways maps ParentRef index to the managed Gateway key
+	// ("namespace/name") that parent binds to. It lets the status writer
+	// attribute a tunnel-group sync failure to exactly the parents on that
+	// tunnel — RouteParentStatus is per-parent, so a multi-parent route with
+	// one failed and one healthy tunnel must not flip the healthy parent.
+	parentGateways map[int]string
+
+	// syncErrByGateway maps a managed Gateway key to the sync error of the
+	// tunnel serving it, populated AFTER the tunnel-group sync. A parent whose
+	// Gateway is absent here synced fine. Nil on the early-error path, where
+	// the global syncErr applies to every parent instead.
+	syncErrByGateway map[string]error
 }
 
 // hasAcceptedParent reports whether the route bound to at least one managed
@@ -170,12 +183,6 @@ type SyncResult struct {
 	// shared tunnel (their configs must be unioned — see
 	// unionPartitionRoutes).
 	SharedTunnelID string
-
-	// RouteSyncErrors maps "namespace/name" to the sync error of the tunnel
-	// group that failed for that route's partition, when only SOME groups
-	// failed. The status writers prefer it over the global sync error so one
-	// tenant's broken tunnel does not flip other tenants' routes to Pending.
-	RouteSyncErrors map[string]error
 }
 
 // httpStatusEntries builds routeStatusEntry slice for HTTP routes,
@@ -184,9 +191,9 @@ func (sr *SyncResult) httpStatusEntries(
 	diagnostics []proxy.RouteDiagnostic,
 	updateFn func(ctx context.Context, route *gatewayv1.HTTPRoute, bi routeBindingInfo, fr []ingress.BackendRefError, diags []proxy.RouteDiagnostic, se error) error,
 ) []routeStatusEntry {
-	entries := buildStatusEntries(sr.HTTPRoutes, sr.HTTPRouteBindings, sr.HTTPFailedRefs, diagnostics, sr.RouteSyncErrors, updateFn)
+	entries := buildStatusEntries(sr.HTTPRoutes, sr.HTTPRouteBindings, sr.HTTPFailedRefs, diagnostics, updateFn)
 	// Rejected routes have no failed refs — they were rejected at binding level.
-	entries = append(entries, buildStatusEntries(sr.RejectedHTTPRoutes, sr.HTTPRouteBindings, nil, nil, nil, updateFn)...)
+	entries = append(entries, buildStatusEntries(sr.RejectedHTTPRoutes, sr.HTTPRouteBindings, nil, nil, updateFn)...)
 
 	return entries
 }
@@ -197,8 +204,8 @@ func (sr *SyncResult) grpcStatusEntries(
 	diagnostics []proxy.RouteDiagnostic,
 	updateFn func(ctx context.Context, route *gatewayv1.GRPCRoute, bi routeBindingInfo, fr []ingress.BackendRefError, diags []proxy.RouteDiagnostic, se error) error,
 ) []routeStatusEntry {
-	entries := buildStatusEntries(sr.GRPCRoutes, sr.GRPCRouteBindings, sr.GRPCFailedRefs, diagnostics, sr.RouteSyncErrors, updateFn)
-	entries = append(entries, buildStatusEntries(sr.RejectedGRPCRoutes, sr.GRPCRouteBindings, nil, nil, nil, updateFn)...)
+	entries := buildStatusEntries(sr.GRPCRoutes, sr.GRPCRouteBindings, sr.GRPCFailedRefs, diagnostics, updateFn)
+	entries = append(entries, buildStatusEntries(sr.RejectedGRPCRoutes, sr.GRPCRouteBindings, nil, nil, updateFn)...)
 
 	return entries
 }
@@ -214,7 +221,6 @@ func buildStatusEntries[T routeObject](
 	bindings map[string]routeBindingInfo,
 	failedRefs []ingress.BackendRefError,
 	diagnostics []proxy.RouteDiagnostic,
-	routeSyncErrors map[string]error,
 	updateFn func(ctx context.Context, route *T, bi routeBindingInfo, fr []ingress.BackendRefError, diags []proxy.RouteDiagnostic, se error) error,
 ) []routeStatusEntry {
 	entries := make([]routeStatusEntry, 0, len(routes))
@@ -235,12 +241,11 @@ func buildStatusEntries[T routeObject](
 		routeKey := namespace + "/" + name
 
 		entries = append(entries, routeStatusEntry{
-			name:            name,
-			namespace:       namespace,
-			bindingInfo:     bindings[routeKey],
-			failedRefs:      filterFailedRefs(failedRefs, namespace, name),
-			diagnostics:     filterDiagnostics(diagnostics, namespace, name),
-			syncErrOverride: routeSyncErrors[routeKey],
+			name:        name,
+			namespace:   namespace,
+			bindingInfo: bindings[routeKey],
+			failedRefs:  filterFailedRefs(failedRefs, namespace, name),
+			diagnostics: filterDiagnostics(diagnostics, namespace, name),
 			update: func(ctx context.Context, bi routeBindingInfo, fr []ingress.BackendRefError, diags []proxy.RouteDiagnostic, se error) error {
 				return updateFn(ctx, route, bi, fr, diags, se)
 			},
@@ -600,10 +605,17 @@ func (s *RouteSyncer) SyncAllRoutes(ctx context.Context) (ctrl.Result, *SyncResu
 
 	outcome := s.syncTunnelGroups(ctx, logger, groups)
 
+	// Attribute each failed tunnel group to exactly the parents on it: a
+	// route's parent binds to a Gateway, which maps to a partition (its own,
+	// for an infra Gateway; the shared partition otherwise). Per-parent
+	// status precision — a multi-parent route stays Accepted on the parents
+	// whose tunnel synced fine.
+	injectPartitionSyncErrors(httpResult.bindings, outcome.failedPartitions, infra)
+	injectPartitionSyncErrors(grpcResult.bindings, outcome.failedPartitions, infra)
+
 	syncResult := buildSyncResult(httpResult, grpcResult, outcome.httpFailedRefs, outcome.grpcFailedRefs)
 	syncResult.Partitions = partitions
 	syncResult.SharedTunnelID = resolvedConfig.TunnelID
-	syncResult.RouteSyncErrors = outcome.routeErrs
 
 	// All groups failed: total sync outage — global error, every route goes
 	// Pending (matches the historic single-tunnel failure shape).
@@ -711,7 +723,12 @@ type tunnelGroupsOutcome struct {
 	totalRules     int
 	anyWritten     bool
 	groupErrs      []error
-	routeErrs      map[string]error
+	// failedPartitions maps a partition key (sharedPartitionKey or an infra
+	// Gateway's "namespace/name") to the sync error of the tunnel serving it.
+	// The per-route, per-Gateway attribution is derived from this against the
+	// route bindings, so a multi-parent route reports the failure only on the
+	// parents whose tunnel actually failed.
+	failedPartitions map[string]error
 }
 
 // syncTunnelGroups runs the ingress-document sync for every tunnel group,
@@ -721,7 +738,7 @@ func (s *RouteSyncer) syncTunnelGroups(
 	logger *slog.Logger,
 	groups []tunnelGroup,
 ) tunnelGroupsOutcome {
-	outcome := tunnelGroupsOutcome{routeErrs: make(map[string]error)}
+	outcome := tunnelGroupsOutcome{failedPartitions: make(map[string]error)}
 
 	for i := range groups {
 		group := &groups[i]
@@ -742,13 +759,55 @@ func (s *RouteSyncer) syncTunnelGroups(
 		outcome.groupErrs = append(outcome.groupErrs, result.err)
 
 		for _, partition := range group.partitions {
-			for _, routeKey := range routeKeysOfPartition(partition) {
-				outcome.routeErrs[routeKey] = result.err
-			}
+			outcome.failedPartitions[partition.Key] = result.err
 		}
 	}
 
 	return outcome
+}
+
+// injectPartitionSyncErrors records, on each route binding, the sync error of
+// the tunnel serving each Gateway the route is accepted on. A Gateway maps to
+// its own partition when it runs a dedicated data plane, or the shared
+// partition otherwise; only Gateways whose partition failed get an entry, so a
+// parent on a healthy tunnel carries no error. No-op when nothing failed.
+func injectPartitionSyncErrors(
+	bindings map[string]routeBindingInfo,
+	failedPartitions map[string]error,
+	infra *infraGateways,
+) {
+	if len(failedPartitions) == 0 {
+		return
+	}
+
+	for key := range bindings {
+		binding := bindings[key]
+
+		var errs map[string]error
+
+		for gatewayKey := range binding.acceptedGateways {
+			partitionKey := sharedPartitionKey
+			if infra.isResolved(gatewayKey) {
+				partitionKey = gatewayKey
+			}
+
+			err := failedPartitions[partitionKey]
+			if err == nil {
+				continue
+			}
+
+			if errs == nil {
+				errs = make(map[string]error)
+			}
+
+			errs[gatewayKey] = err
+		}
+
+		if errs != nil {
+			binding.syncErrByGateway = errs
+			bindings[key] = binding
+		}
+	}
 }
 
 // tunnelGroupResult is one group's sync outcome.
@@ -1044,43 +1103,16 @@ func (s *RouteSyncer) bindRouteParents(
 	bindingInfo := routeBindingInfo{
 		bindingResults:   make(map[int]routebinding.BindingResult),
 		acceptedGateways: make(map[string]bool),
+		parentGateways:   make(map[int]string),
 	}
 
 	hasAccepted := false
 	referencesUs := false
 
 	for refIdx, ref := range parentRefs {
-		routeInfo := &routebinding.RouteInfo{
-			Name:        routeName,
-			Namespace:   routeNamespace,
-			Hostnames:   hostnames,
-			Kind:        kind,
-			SectionName: ref.SectionName,
-			Port:        ref.Port,
-		}
-
-		binding, err := resolveRouteParentBinding(ctx, s.Client, s.bindingValidator, s.ControllerName, ref, routeNamespace, routeInfo, views)
-		if err != nil {
-			logger.Error("failed to resolve route parentRef",
-				"route", routeNamespace+"/"+routeName, "refIdx", refIdx, "error", err)
-
-			continue
-		}
-
-		if !binding.ManagedByThisController {
-			continue
-		}
-
-		referencesUs = true
-		bindingInfo.bindingResults[refIdx] = binding.Result
-
-		if binding.Result.Accepted {
-			hasAccepted = true
-
-			if binding.GatewayKey != "" {
-				bindingInfo.acceptedGateways[binding.GatewayKey] = true
-			}
-		}
+		referenced, accepted := s.bindOneParent(ctx, logger, routeNamespace, routeName, hostnames, kind, ref, refIdx, views, &bindingInfo)
+		referencesUs = referencesUs || referenced
+		hasAccepted = hasAccepted || accepted
 	}
 
 	// Hostname-ownership enforcement (#475, controller layer) runs AFTER the
@@ -1093,6 +1125,55 @@ func (s *RouteSyncer) bindRouteParents(
 	}
 
 	return bindingInfo, hasAccepted, referencesUs
+}
+
+// bindOneParent resolves and records one parentRef into bindingInfo, returning
+// whether the ref references a Gateway we manage and whether it was accepted.
+// parentGateways[refIdx] is recorded for every managed ref (accepted or not)
+// so the status writer can attribute a per-tunnel sync failure to it.
+func (s *RouteSyncer) bindOneParent(
+	ctx context.Context,
+	logger *slog.Logger,
+	routeNamespace, routeName string,
+	hostnames []gatewayv1.Hostname,
+	kind gatewayv1.Kind,
+	ref gatewayv1.ParentReference,
+	refIdx int,
+	views *listenerViewCache,
+	bindingInfo *routeBindingInfo,
+) (bool, bool) {
+	routeInfo := &routebinding.RouteInfo{
+		Name:        routeName,
+		Namespace:   routeNamespace,
+		Hostnames:   hostnames,
+		Kind:        kind,
+		SectionName: ref.SectionName,
+		Port:        ref.Port,
+	}
+
+	binding, err := resolveRouteParentBinding(ctx, s.Client, s.bindingValidator, s.ControllerName, ref, routeNamespace, routeInfo, views)
+	if err != nil {
+		logger.Error("failed to resolve route parentRef",
+			"route", routeNamespace+"/"+routeName, "refIdx", refIdx, "error", err)
+
+		return false, false
+	}
+
+	if !binding.ManagedByThisController {
+		return false, false
+	}
+
+	bindingInfo.bindingResults[refIdx] = binding.Result
+
+	if binding.GatewayKey != "" {
+		bindingInfo.parentGateways[refIdx] = binding.GatewayKey
+	}
+
+	if binding.Result.Accepted && binding.GatewayKey != "" {
+		bindingInfo.acceptedGateways[binding.GatewayKey] = true
+	}
+
+	return true, binding.Result.Accepted
 }
 
 // rejectIfHostnameNotOwned evaluates the hostname-ownership policy for the

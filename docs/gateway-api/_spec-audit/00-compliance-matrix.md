@@ -15,9 +15,9 @@ Clause-by-clause audit of the implementation against the normative (RFC-2119) su
 | Status | Count |
 | --- | --- |
 | MET | 221 |
-| PARTIAL | 31 |
+| PARTIAL | 34 |
 | GAP (first pass) | 25 |
-| N/A (tunnel architecture / exempt) | 99 |
+| N/A (tunnel architecture / exempt) | 96 |
 
 Conformance ground truth: 76 top-level subtests PASS, 54 SKIP (documented TLS/TCP/UDP/Mesh/WebSocket/GRPCRouteWeight/HTTPS-listener), **0 FAIL** (`go test ... ok 293s`). The suite is green; the audit's value is the normative surface the suite does not exercise.
 

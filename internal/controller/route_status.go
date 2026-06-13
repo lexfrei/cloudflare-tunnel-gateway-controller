@@ -442,6 +442,25 @@ func droppedConfigMessage(diagnostics []proxy.RouteDiagnostic, partial bool) str
 	return "Dropped Rule " + strings.Join(idxStrs, ", ") + ": " + detail
 }
 
+// perParentSyncErr resolves the sync error for a single parentRef. A
+// tunnel-group failure affects only the parents on that tunnel: the global
+// syncErr (early-error path, before partitioning) applies to every parent,
+// while a per-Gateway error overrides it for that parent only — so a healthy
+// parent of a multi-parent route stays Accepted when a sibling parent's tunnel
+// failed.
+func perParentSyncErr(bindingInfo routeBindingInfo, refIdx int, globalErr error) error {
+	gwKey, ok := bindingInfo.parentGateways[refIdx]
+	if !ok {
+		return globalErr
+	}
+
+	if perParent, present := bindingInfo.syncErrByGateway[gwKey]; present {
+		return perParent
+	}
+
+	return globalErr
+}
+
 func buildAcceptedCondition(
 	generation int64,
 	now metav1.Time,
@@ -454,10 +473,11 @@ func buildAcceptedCondition(
 	reason := string(gatewayv1.RouteReasonAccepted)
 	message := routeAcceptedMessage
 
-	if syncErr != nil {
+	effectiveErr := perParentSyncErr(bindingInfo, refIdx, syncErr)
+	if effectiveErr != nil {
 		status = metav1.ConditionFalse
 		reason = string(gatewayv1.RouteReasonPending)
-		message = syncErr.Error()
+		message = effectiveErr.Error()
 	} else if bindingResult, hasBinding := bindingInfo.bindingResults[refIdx]; hasBinding && !bindingResult.Accepted {
 		status = metav1.ConditionFalse
 		reason = string(bindingResult.Reason)
@@ -644,18 +664,19 @@ func buildFailedRefsMessage(failedRefs []ingress.BackendRefError) string {
 }
 
 // routeStatusEntry represents a single route that needs status update.
+//
+// Partial-failure isolation (#479) is per parent, not per route: the binding's
+// syncErrByGateway carries the sync error of each parent's tunnel, so a
+// multi-parent route reports Pending only on the parents whose tunnel failed.
+// The global syncErr below covers the early-error path (sync failed before
+// partitioning), where every parent goes Pending.
 type routeStatusEntry struct {
 	name        string
 	namespace   string
 	bindingInfo routeBindingInfo
 	failedRefs  []ingress.BackendRefError
 	diagnostics []proxy.RouteDiagnostic
-	// syncErrOverride, when non-nil, replaces the global sync error for this
-	// route: with partitioned data planes (#479) only the routes of a FAILED
-	// tunnel group go Pending — one tenant's broken tunnel must not flip
-	// other tenants' route statuses.
-	syncErrOverride error
-	update          func(ctx context.Context, bindingInfo routeBindingInfo, failedRefs []ingress.BackendRefError, diagnostics []proxy.RouteDiagnostic, syncErr error) error
+	update      func(ctx context.Context, bindingInfo routeBindingInfo, failedRefs []ingress.BackendRefError, diagnostics []proxy.RouteDiagnostic, syncErr error) error
 }
 
 // updateRoutesStatus iterates over route entries and updates status for each.
@@ -668,13 +689,10 @@ func updateRoutesStatus(
 ) error {
 	var firstErr error
 
-	for _, entry := range entries {
-		effectiveErr := syncErr
-		if entry.syncErrOverride != nil {
-			effectiveErr = entry.syncErrOverride
-		}
+	for i := range entries {
+		entry := &entries[i]
 
-		if err := entry.update(ctx, entry.bindingInfo, entry.failedRefs, entry.diagnostics, effectiveErr); err != nil {
+		if err := entry.update(ctx, entry.bindingInfo, entry.failedRefs, entry.diagnostics, syncErr); err != nil {
 			logger.Error("failed to update route status", "error", err, "route", entry.namespace+"/"+entry.name)
 
 			if firstErr == nil {

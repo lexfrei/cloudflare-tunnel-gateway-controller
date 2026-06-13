@@ -57,15 +57,16 @@ func (g *infraGateways) isBroken(key string) bool {
 	return g != nil && g.broken[key]
 }
 
-// resolvedEntry returns the resolved data plane for the key, if any. Nil-safe.
-func (g *infraGateways) resolvedEntry(key string) (*infraGateway, bool) {
+// isResolved reports whether the key is a Gateway that opted in and resolved
+// to its own data plane (and therefore its own partition). Nil-safe.
+func (g *infraGateways) isResolved(key string) bool {
 	if g == nil {
-		return nil, false
+		return false
 	}
 
-	entry, ok := g.resolved[key]
+	_, ok := g.resolved[key]
 
-	return entry, ok
+	return ok
 }
 
 // resolveInfraGateways returns the per-sync view of every managed Gateway
@@ -200,7 +201,7 @@ func partitionKeysFor(binding routeBindingInfo, infra *infraGateways) []string {
 	sharedSeen := false
 
 	for gatewayKey := range binding.acceptedGateways {
-		if _, isInfra := infra.resolvedEntry(gatewayKey); isInfra {
+		if infra.isResolved(gatewayKey) {
 			keys = append(keys, gatewayKey)
 
 			continue
@@ -291,23 +292,6 @@ func unionPartitionRoutes(partitions []routePartition, sharedTunnelID string) []
 	}
 
 	return out
-}
-
-// routeKeysOfPartition returns the "namespace/name" keys of every route in
-// the partition — used to map a tunnel-group sync failure back onto exactly
-// the routes it affects.
-func routeKeysOfPartition(partition *routePartition) []string {
-	keys := make([]string, 0, len(partition.HTTPRoutes)+len(partition.GRPCRoutes))
-
-	for i := range partition.HTTPRoutes {
-		keys = append(keys, partition.HTTPRoutes[i].Namespace+"/"+partition.HTTPRoutes[i].Name)
-	}
-
-	for i := range partition.GRPCRoutes {
-		keys = append(keys, partition.GRPCRoutes[i].Namespace+"/"+partition.GRPCRoutes[i].Name)
-	}
-
-	return keys
 }
 
 // partitionDisplay renders partition keys for logs.
