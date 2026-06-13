@@ -316,6 +316,36 @@ func TestGatewayInfraReconciler_OptOutSucceedsWithoutSecretDelete(t *testing.T) 
 		"the generated Secret survives opt-out (GC'd on Gateway deletion via ownerRef)")
 }
 
+// TestGatewayInfraReconciler_PostRenderInvalidationRetainsResources pins the
+// fail-closed-keep-last-state behaviour: a Gateway whose config breaks AFTER a
+// healthy render keeps its last-good Deployment/Service running, rather than
+// tearing down a serving proxy on a mid-edit invalid spec. Cleanup is reserved
+// for explicit opt-out or Gateway deletion.
+func TestGatewayInfraReconciler_PostRenderInvalidationRetainsResources(t *testing.T) {
+	t.Parallel()
+
+	reconciler := newInfraReconciler(t, infraFixtures(t)...)
+	reconcileEdge(t, reconciler)
+
+	ctx := context.Background()
+
+	// Confirm the healthy render exists, then break the config: delete the
+	// connector-token Secret so resolution fails with InvalidParameters.
+	var deployment appsv1.Deployment
+	require.NoError(t, reconciler.Get(ctx,
+		types.NamespacedName{Name: "cf-proxy-edge", Namespace: infraNamespace}, &deployment))
+
+	require.NoError(t, reconciler.Delete(ctx, &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "edge-token", Namespace: infraNamespace},
+	}))
+
+	reconcileEdge(t, reconciler)
+
+	assert.NoError(t, reconciler.Get(ctx,
+		types.NamespacedName{Name: "cf-proxy-edge", Namespace: infraNamespace}, &deployment),
+		"a post-render config breakage must NOT tear down the last-good data plane")
+}
+
 // TestGatewayInfraReconciler_InvalidParametersRendersNothing pins fail-safe
 // behaviour: an invalid parametersRef renders nothing and does NOT error the
 // reconcile (the watches re-trigger when the user fixes the referent; the

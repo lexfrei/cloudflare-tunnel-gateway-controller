@@ -127,6 +127,12 @@ func (r *GatewayInfraReconciler) Reconcile(ctx context.Context, req ctrl.Request
 // (the GatewayConfig/Secret watches re-trigger on heal, and GatewayReconciler
 // stamps InvalidParameters on the status); a transient error propagates for
 // backoff.
+//
+// Deliberately, neither path deletes already-rendered resources: a Gateway
+// whose config breaks AFTER a healthy render keeps its last-good data plane
+// running (fail-closed-keep-last-state) rather than tearing down a serving
+// proxy on a transient blip or a mid-edit invalid spec. Cleanup happens only
+// on an explicit opt-out (parametersRef removed) or Gateway deletion.
 func (r *GatewayInfraReconciler) handleResolveError(
 	ctx context.Context,
 	gateway *gatewayv1.Gateway,
