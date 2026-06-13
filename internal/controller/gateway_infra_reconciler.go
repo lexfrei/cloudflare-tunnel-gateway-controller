@@ -284,17 +284,21 @@ func (r *GatewayInfraReconciler) applyRendered(
 	if deploymentOp == controllerutil.OperationResultCreated {
 		r.event(gateway, corev1.EventTypeNormal, eventReasonProxyProvisioned,
 			"dedicated proxy data plane provisioned for this Gateway")
+	}
 
-		// A freshly-created data plane has no cached config; trigger a route
-		// sync so its partition is synced (the empty config is enough for the
-		// proxy to pass /readyz, and ResyncPartition replays it once the pod's
-		// endpoint appears). Best-effort: a failure here is retried by the
-		// next route reconcile; never fail the render over it.
-		if r.TriggerRouteSync != nil {
-			if err := r.TriggerRouteSync(ctx); err != nil {
-				log.FromContext(ctx).Info("initial route sync after data-plane creation failed; will retry on next route reconcile",
-					"error", err.Error())
-			}
+	// Trigger a full route sync whenever the data plane's SPEC changed (Created
+	// OR Updated), not just on creation. No route controller watches
+	// GatewayConfig, so a config edit that rotates the connector or push-auth
+	// token re-renders the Deployment (new token hash / env secret ref) but
+	// would otherwise leave the Cloudflare document and the proxy push on the
+	// OLD tunnel/token until an unrelated route or Secret event. A
+	// readiness-only reconcile returns None and does not re-sync, so this does
+	// not fire on every Deployment status flip. Best-effort: a failure here is
+	// retried by the next route reconcile; never fail the render over it.
+	if deploymentOp != controllerutil.OperationResultNone && r.TriggerRouteSync != nil {
+		if err := r.TriggerRouteSync(ctx); err != nil {
+			log.FromContext(ctx).Info("route sync after data-plane render failed; will retry on next route reconcile",
+				"error", err.Error())
 		}
 	}
 

@@ -33,10 +33,18 @@ const infraNamespace = "tenant-a"
 func infraTunnelToken(t *testing.T) string {
 	t.Helper()
 
+	return infraTunnelTokenFor(t, "550e8400-e29b-41d4-a716-446655440000")
+}
+
+// infraTunnelTokenFor builds a valid connector token for a specific tunnel ID,
+// so a test can simulate a token ROTATION to a different tunnel.
+func infraTunnelTokenFor(t *testing.T, tunnelID string) string {
+	t.Helper()
+
 	payload, err := json.Marshal(map[string]any{
 		"a": "abcdef0123456789abcdef0123456789",
 		"s": base64.StdEncoding.EncodeToString([]byte("secret")),
-		"t": "550e8400-e29b-41d4-a716-446655440000",
+		"t": tunnelID,
 	})
 	require.NoError(t, err)
 
@@ -341,6 +349,45 @@ func TestGatewayInfraReconciler_OptOutSucceedsWithoutSecretDelete(t *testing.T) 
 	assert.NoError(t, reconciler.Get(ctx,
 		types.NamespacedName{Name: "cf-proxy-edge-auth", Namespace: infraNamespace}, &secret),
 		"the generated Secret survives opt-out (GC'd on Gateway deletion via ownerRef)")
+}
+
+// TestGatewayInfraReconciler_RotationTriggersRouteSync pins that a
+// GatewayConfig change that re-renders the data plane (here: a connector-token
+// rotation to a new tunnel) triggers a full route sync. No route controller
+// watches GatewayConfig, so without this the Cloudflare document and the proxy
+// push would keep the OLD tunnel/token until an unrelated route or Secret
+// event — a stale, unprogrammed data plane after a rotation.
+func TestGatewayInfraReconciler_RotationTriggersRouteSync(t *testing.T) {
+	t.Parallel()
+
+	reconciler := newInfraReconciler(t, infraFixtures(t)...)
+
+	var routeSyncs int
+	reconciler.TriggerRouteSync = func(context.Context) error {
+		routeSyncs++
+
+		return nil
+	}
+
+	ctx := context.Background()
+
+	reconcileEdge(t, reconciler)
+	require.Equal(t, 1, routeSyncs, "creating the data plane triggers the initial route sync")
+
+	// Rotate the connector token to a different tunnel — re-renders the
+	// Deployment (new token hash), an Update, not a Create.
+	var secret corev1.Secret
+	require.NoError(t, reconciler.Get(ctx,
+		types.NamespacedName{Name: "edge-token", Namespace: infraNamespace}, &secret))
+	secret.Data["tunnel-token"] = []byte(infraTunnelTokenFor(t, "660e8400-e29b-41d4-a716-446655440099"))
+	require.NoError(t, reconciler.Update(ctx, &secret))
+
+	reconcileEdge(t, reconciler)
+	assert.Equal(t, 2, routeSyncs, "a rotation that re-renders the data plane must re-trigger the route sync")
+
+	// A steady-state reconcile (no spec change) must NOT re-sync.
+	reconcileEdge(t, reconciler)
+	assert.Equal(t, 2, routeSyncs, "a no-op reconcile must not trigger a redundant route sync")
 }
 
 // TestGatewayInfraReconciler_OptOutLeavesOwnerRefStrippedObjectAsOrphan pins
