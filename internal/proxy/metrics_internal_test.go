@@ -6,8 +6,10 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -133,6 +135,32 @@ func TestMetricsOnUpgrade_HijackWithoutStatusCountsAsUpgrade(t *testing.T) {
 
 	aborted := testutil.ToFloat64(metrics.requestsTotal.WithLabelValues("ws.example.com", "aborted"))
 	assert.InDelta(t, 0.0, aborted, 0)
+}
+
+// TestMetricsUpgrade_RequestBodyBytesCounted pins that request-body bytes read
+// before a hijack are recorded on the upgraded path's finish(). The full WS
+// flow never reads an upgrade request's body, so this regression — dropping
+// the requestBytes Add for upgraded requests — is only catchable here.
+func TestMetricsUpgrade_RequestBodyBytesCounted(t *testing.T) {
+	t.Parallel()
+
+	reg := prometheus.NewRegistry()
+	metrics := NewMetrics(reg)
+
+	counted := newCountingResponseWriter(nil)
+	req := &http.Request{Body: io.NopCloser(strings.NewReader("hello world"))}
+	state := metrics.beginRequest(counted, req)
+	state.setHostname("ws.example.com")
+
+	// A handler that reads the upgrade request's body before hijacking.
+	_, _ = io.ReadAll(req.Body)
+
+	state.onUpgrade()
+	state.finish()
+
+	value := testutil.ToFloat64(metrics.requestBytes.WithLabelValues("ws.example.com"))
+	assert.InDelta(t, float64(len("hello world")), value, 0,
+		"the upgraded path must record the request body bytes read before hijack")
 }
 
 // TestMetrics_FinishRunsOnPanicNoGaugeLeak pins the load-bearing guarantee

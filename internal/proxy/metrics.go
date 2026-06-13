@@ -311,6 +311,11 @@ func classifyBackendError(err error) string {
 	}
 
 	if errors.Is(err, context.Canceled) {
+		// A client mid-request disconnect surfaces here too, so it lands in
+		// the "backend errors" family despite not being a backend fault. This
+		// is a conscious choice: it gets its OWN "canceled" bucket (never
+		// conflated with dial/timeout/tls), so a dashboard can separate client
+		// aborts from genuine backend failures without an extra metric.
 		return backendErrReasonCanceled
 	}
 
