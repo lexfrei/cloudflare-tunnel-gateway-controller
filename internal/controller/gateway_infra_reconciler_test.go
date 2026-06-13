@@ -343,6 +343,39 @@ func TestGatewayInfraReconciler_OptOutSucceedsWithoutSecretDelete(t *testing.T) 
 		"the generated Secret survives opt-out (GC'd on Gateway deletion via ownerRef)")
 }
 
+// TestGatewayInfraReconciler_OptOutLeavesOwnerRefStrippedObjectAsOrphan pins
+// the deleteIfOwned contract: opt-out does NOT delete a rendered object whose
+// ownerRef has been stripped. "Never delete what we cannot prove we own"
+// outranks "always clean up", so a re-parented or collision object survives
+// opt-out as an orphan rather than being deleted.
+func TestGatewayInfraReconciler_OptOutLeavesOwnerRefStrippedObjectAsOrphan(t *testing.T) {
+	t.Parallel()
+
+	reconciler := newInfraReconciler(t, infraFixtures(t)...)
+	reconcileEdge(t, reconciler)
+
+	ctx := context.Background()
+	deploymentKey := types.NamespacedName{Name: "cf-proxy-edge", Namespace: infraNamespace}
+
+	// Strip the controller ownerRef from the rendered Deployment.
+	var deployment appsv1.Deployment
+	require.NoError(t, reconciler.Get(ctx, deploymentKey, &deployment))
+	deployment.OwnerReferences = nil
+	require.NoError(t, reconciler.Update(ctx, &deployment))
+
+	// Opt out.
+	var gateway gatewayv1.Gateway
+	require.NoError(t, reconciler.Get(ctx, types.NamespacedName{Name: "edge", Namespace: infraNamespace}, &gateway))
+	gateway.Spec.Infrastructure = nil
+	require.NoError(t, reconciler.Update(ctx, &gateway))
+
+	_, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: types.NamespacedName{Name: "edge", Namespace: infraNamespace}})
+	require.NoError(t, err)
+
+	assert.NoError(t, reconciler.Get(ctx, deploymentKey, &deployment),
+		"an ownerRef-stripped object must survive opt-out as an orphan, never be deleted")
+}
+
 // TestGatewayInfraReconciler_PostRenderInvalidationRetainsResources pins the
 // fail-closed-keep-last-state behaviour: a Gateway whose config breaks AFTER a
 // healthy render keeps its last-good Deployment/Service running, rather than

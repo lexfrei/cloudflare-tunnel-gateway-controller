@@ -784,6 +784,9 @@ func (r *GatewayReconciler) getAllManagedGateways(ctx context.Context) []reconci
 func (r *GatewayReconciler) gatewayConfigToGateways(ctx context.Context, obj client.Object) []reconcile.Request {
 	var gateways gatewayv1.GatewayList
 	if err := r.List(ctx, &gateways, client.InNamespace(obj.GetNamespace())); err != nil {
+		log.FromContext(ctx).Error(err, "listing Gateways for a GatewayConfig event; status-refresh trigger dropped",
+			"namespace", obj.GetNamespace())
+
 		return nil
 	}
 

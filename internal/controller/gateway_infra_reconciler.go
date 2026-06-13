@@ -515,7 +515,13 @@ func (r *GatewayInfraReconciler) cleanupRendered(ctx context.Context, gateway *g
 }
 
 // deleteIfOwned deletes obj only when it exists AND is controller-owned by
-// the Gateway.
+// the Gateway. CONTRACT: opt-out cleanup is not guaranteed to converge to zero
+// — if the ownerRef has been stripped (by a tenant or a foreign controller),
+// the object is left as an orphan rather than deleted. This is deliberate:
+// "never delete what we cannot prove we own" outranks "always clean up", so a
+// name collision or a re-parented object can never turn opt-out into the
+// deletion of a resource this controller no longer owns. An operator who wants
+// the orphan gone deletes it by hand.
 func (r *GatewayInfraReconciler) deleteIfOwned(
 	ctx context.Context,
 	gateway *gatewayv1.Gateway,
@@ -585,6 +591,9 @@ func (r *GatewayInfraReconciler) namespaceInfraGateways(
 ) []reconcile.Request {
 	var gateways gatewayv1.GatewayList
 	if err := r.List(ctx, &gateways, client.InNamespace(obj.GetNamespace())); err != nil {
+		log.FromContext(ctx).Error(err, "listing Gateways to map a watched object; re-render trigger dropped",
+			"namespace", obj.GetNamespace())
+
 		return nil
 	}
 
