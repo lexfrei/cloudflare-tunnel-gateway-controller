@@ -13,6 +13,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -52,11 +53,13 @@ const (
 	defaultServiceAccountName       = "default"
 	defaultSchedulerName            = "default-scheduler"
 
-	containerName    = "proxy"
-	configPortName   = "config-api"
-	proxyPortName    = "proxy"
-	namePrefix       = "cf-proxy-"
-	configNameSuffix = "-config"
+	containerName      = "proxy"
+	configPortName     = "config-api"
+	proxyPortName      = "proxy"
+	namePrefix         = "cf-proxy-"
+	configNameSuffix   = "-config"
+	netpolNameSuffix   = "-netpol"
+	namespaceNameLabel = "kubernetes.io/metadata.name"
 	// MaxDNSLabelLength is the Kubernetes object-name segment / label-value
 	// length cap; exported for consumers reasoning about truncated
 	// GatewayLabel values.
@@ -77,6 +80,20 @@ type Defaults struct {
 	TunnelProtocol string
 }
 
+// NetworkPolicyInput carries the controller-level config the per-Gateway
+// NetworkPolicy needs beyond the Gateway itself. Kept separate from the
+// per-render Input so the heavy Input struct stays value-passable.
+type NetworkPolicyInput struct {
+	Gateway *gatewayv1.Gateway
+	// ControllerNamespace is the only namespace that legitimately pushes config
+	// to a per-Gateway proxy; the policy admits the config-API port from here.
+	ControllerNamespace string
+	// MonitoringNamespaceSelector, when set, additionally admits the config-API
+	// port (which also serves /metrics) from matching namespaces so Prometheus
+	// can scrape. Nil = controller namespace only.
+	MonitoringNamespaceSelector *metav1.LabelSelector
+}
+
 // Input is everything a render pass needs.
 type Input struct {
 	Gateway *gatewayv1.Gateway
@@ -94,6 +111,11 @@ func DeploymentName(gateway *gatewayv1.Gateway) string {
 // ConfigServiceName returns the per-Gateway headless config Service name.
 func ConfigServiceName(gateway *gatewayv1.Gateway) string {
 	return truncateName(namePrefix + gateway.Name + configNameSuffix)
+}
+
+// NetworkPolicyName returns the per-Gateway proxy NetworkPolicy name.
+func NetworkPolicyName(gateway *gatewayv1.Gateway) string {
+	return truncateName(namePrefix + gateway.Name + netpolNameSuffix)
 }
 
 // ConfigEndpointURL returns the config-push endpoint for the Gateway's
@@ -416,6 +438,48 @@ func ConfigService(input Input) *corev1.Service {
 					Port:       configAPIPort,
 					TargetPort: intstr.FromString(configPortName),
 					Protocol:   corev1.ProtocolTCP,
+				},
+			},
+		},
+	}
+}
+
+// ProxyNetworkPolicy renders an ingress-only NetworkPolicy locking the
+// per-Gateway proxy's config-API port (8081) to the controller namespace (the
+// config pusher) plus an optional monitoring selector (for /metrics scrape).
+// The proxy port (8080) takes NO in-cluster ingress — traffic arrives through
+// the outbound tunnel, not an inbound connection. Egress is left open (the
+// proxy must reach arbitrary backends and the Cloudflare edge). PolicyTypes is
+// set explicitly so the apiserver never infers it and drifts the apply.
+func ProxyNetworkPolicy(input NetworkPolicyInput) *networkingv1.NetworkPolicy {
+	protocolTCP := corev1.ProtocolTCP
+	configPort := intstr.FromInt32(configAPIPort)
+
+	from := []networkingv1.NetworkPolicyPeer{
+		{NamespaceSelector: &metav1.LabelSelector{
+			MatchLabels: map[string]string{namespaceNameLabel: input.ControllerNamespace},
+		}},
+	}
+	if input.MonitoringNamespaceSelector != nil {
+		from = append(from, networkingv1.NetworkPolicyPeer{
+			NamespaceSelector: input.MonitoringNamespaceSelector.DeepCopy(),
+		})
+	}
+
+	return &networkingv1.NetworkPolicy{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        NetworkPolicyName(input.Gateway),
+			Namespace:   input.Gateway.Namespace,
+			Labels:      resourceLabels(input.Gateway),
+			Annotations: resourceAnnotations(input.Gateway),
+		},
+		Spec: networkingv1.NetworkPolicySpec{
+			PodSelector: metav1.LabelSelector{MatchLabels: selectorLabels(input.Gateway)},
+			PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeIngress},
+			Ingress: []networkingv1.NetworkPolicyIngressRule{
+				{
+					From:  from,
+					Ports: []networkingv1.NetworkPolicyPort{{Protocol: &protocolTCP, Port: &configPort}},
 				},
 			},
 		},

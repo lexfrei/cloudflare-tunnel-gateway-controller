@@ -12,6 +12,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -70,6 +71,14 @@ type GatewayInfraReconciler struct {
 	// RenderDefaults carries the Helm-wired defaults (proxy image, tunnel
 	// protocol) for rendered data planes.
 	RenderDefaults render.Defaults
+	// ControllerNamespace is this controller's own namespace — the only
+	// namespace that pushes config to a per-Gateway proxy. The rendered
+	// NetworkPolicy admits the config-API port from here.
+	ControllerNamespace string
+	// MonitoringNamespaceSelector, when set, additionally admits the config-API
+	// port (which also serves /metrics) from matching namespaces. Nil =
+	// controller namespace only.
+	MonitoringNamespaceSelector *metav1.LabelSelector
 	// TriggerRouteSync runs a full route sync (cache + push to every
 	// partition). It is invoked once when a data plane is first CREATED so the
 	// new partition's config is cached and delivered — a per-Gateway proxy
@@ -281,6 +290,12 @@ func (r *GatewayInfraReconciler) applyRendered(
 		return err
 	}
 
+	if _, err := r.applyNetworkPolicy(ctx, gateway); err != nil {
+		r.event(gateway, corev1.EventTypeWarning, eventReasonRenderFailed, err.Error())
+
+		return err
+	}
+
 	if deploymentOp == controllerutil.OperationResultCreated {
 		r.event(gateway, corev1.EventTypeNormal, eventReasonProxyProvisioned,
 			"dedicated proxy data plane provisioned for this Gateway")
@@ -449,6 +464,41 @@ func (r *GatewayInfraReconciler) applyService(
 	return operation, nil
 }
 
+// applyNetworkPolicy renders and applies the ingress-only NetworkPolicy that
+// locks the proxy's config-API port to the controller (+ monitoring)
+// namespaces — network-layer defense-in-depth on top of the bearer token.
+func (r *GatewayInfraReconciler) applyNetworkPolicy(
+	ctx context.Context,
+	gateway *gatewayv1.Gateway,
+) (controllerutil.OperationResult, error) {
+	desired := render.ProxyNetworkPolicy(render.NetworkPolicyInput{
+		Gateway:                     gateway,
+		ControllerNamespace:         r.ControllerNamespace,
+		MonitoringNamespaceSelector: r.MonitoringNamespaceSelector,
+	})
+
+	existing := &networkingv1.NetworkPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: desired.Name, Namespace: desired.Namespace},
+	}
+
+	operation, err := controllerutil.CreateOrUpdate(ctx, r.Client, existing, func() error {
+		if err := assertAdoptable(existing, gateway); err != nil {
+			return err
+		}
+
+		existing.Labels = desired.Labels
+		existing.Annotations = mergeManagedAnnotations(existing.Annotations, desired.Annotations)
+		existing.Spec = desired.Spec
+
+		return controllerutil.SetControllerReference(gateway, existing, r.Scheme)
+	})
+	if err != nil {
+		return operation, errors.Wrap(err, "failed to apply per-gateway network policy")
+	}
+
+	return operation, nil
+}
+
 // applyAutoscaler renders and applies the HPA when autoscaling is set, and
 // deletes a previously-rendered (owned) HPA when it is not.
 func (r *GatewayInfraReconciler) applyAutoscaler(
@@ -506,6 +556,9 @@ func (r *GatewayInfraReconciler) cleanupRendered(ctx context.Context, gateway *g
 		}},
 		&autoscalingv2.HorizontalPodAutoscaler{ObjectMeta: metav1.ObjectMeta{
 			Name: render.DeploymentName(gateway), Namespace: gateway.Namespace,
+		}},
+		&networkingv1.NetworkPolicy{ObjectMeta: metav1.ObjectMeta{
+			Name: render.NetworkPolicyName(gateway), Namespace: gateway.Namespace,
 		}},
 	}
 
@@ -568,6 +621,7 @@ func (r *GatewayInfraReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.Service{}).
 		Owns(&autoscalingv2.HorizontalPodAutoscaler{}).
+		Owns(&networkingv1.NetworkPolicy{}).
 		Watches(
 			&v1alpha1.GatewayConfig{},
 			handler.EnqueueRequestsFromMapFunc(r.namespaceInfraGateways),

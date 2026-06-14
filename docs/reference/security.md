@@ -140,6 +140,11 @@ rules:
   - apiGroups: ["autoscaling"]
     resources: ["horizontalpodautoscalers"]
     verbs: ["get", "list", "watch", "create", "update", "delete"]
+  # NetworkPolicies - rendered per opted-in Gateway to lock the proxy's
+  # config-API port to the controller (+ monitoring) namespaces
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 
   # GatewayConfig CRD - per-Gateway data-plane parameters referenced from
   # Gateway.spec.infrastructure.parametersRef

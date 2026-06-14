@@ -11,6 +11,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -113,6 +114,7 @@ func newInfraReconciler(t *testing.T, objects ...runtime.Object) *GatewayInfraRe
 	require.NoError(t, corev1.AddToScheme(scheme))
 	require.NoError(t, appsv1.AddToScheme(scheme))
 	require.NoError(t, autoscalingv2.AddToScheme(scheme))
+	require.NoError(t, networkingv1.AddToScheme(scheme))
 
 	builder := fake.NewClientBuilder().WithScheme(scheme)
 	for _, obj := range objects {
@@ -122,11 +124,12 @@ func newInfraReconciler(t *testing.T, objects ...runtime.Object) *GatewayInfraRe
 	fakeClient := builder.Build()
 
 	return &GatewayInfraReconciler{
-		Client:         fakeClient,
-		Scheme:         scheme,
-		ControllerName: "cf.k8s.lex.la/tunnel-controller",
-		ConfigResolver: config.NewResolver(fakeClient, "cf-system", cfmetrics.NewNoopCollector()),
-		RenderDefaults: render.Defaults{ProxyImage: "ghcr.io/example/proxy:v1.2.3"},
+		Client:              fakeClient,
+		Scheme:              scheme,
+		ControllerName:      "cf.k8s.lex.la/tunnel-controller",
+		ConfigResolver:      config.NewResolver(fakeClient, "cf-system", cfmetrics.NewNoopCollector()),
+		RenderDefaults:      render.Defaults{ProxyImage: "ghcr.io/example/proxy:v1.2.3"},
+		ControllerNamespace: "cf-system",
 	}
 }
 
@@ -167,6 +170,42 @@ func TestGatewayInfraReconciler_RendersDataPlane(t *testing.T) {
 	assert.True(t, service.Spec.PublishNotReadyAddresses)
 	require.Len(t, service.OwnerReferences, 1)
 	assert.Equal(t, "edge", service.OwnerReferences[0].Name)
+}
+
+// TestGatewayInfraReconciler_RendersNetworkPolicy pins that the data plane
+// includes an ingress-only NetworkPolicy locking the config-API port to the
+// controller namespace, owned by the Gateway (GC'd on delete), and that it is
+// deleted on opt-out.
+func TestGatewayInfraReconciler_RendersNetworkPolicy(t *testing.T) {
+	t.Parallel()
+
+	reconciler := newInfraReconciler(t, infraFixtures(t)...)
+	reconcileEdge(t, reconciler)
+
+	ctx := context.Background()
+	key := types.NamespacedName{Name: "cf-proxy-edge-netpol", Namespace: infraNamespace}
+
+	var netpol networkingv1.NetworkPolicy
+	require.NoError(t, reconciler.Get(ctx, key, &netpol))
+
+	require.Equal(t, []networkingv1.PolicyType{networkingv1.PolicyTypeIngress}, netpol.Spec.PolicyTypes)
+	require.Len(t, netpol.Spec.Ingress, 1)
+	require.Len(t, netpol.Spec.Ingress[0].Ports, 1)
+	assert.Equal(t, int32(8081), netpol.Spec.Ingress[0].Ports[0].Port.IntVal, "only the config-API port is admitted")
+	assert.Equal(t, "cf-system",
+		netpol.Spec.Ingress[0].From[0].NamespaceSelector.MatchLabels["kubernetes.io/metadata.name"])
+
+	require.Len(t, netpol.OwnerReferences, 1)
+	assert.Equal(t, "edge", netpol.OwnerReferences[0].Name)
+
+	// Opt out — the NetworkPolicy must be cleaned up.
+	var gateway gatewayv1.Gateway
+	require.NoError(t, reconciler.Get(ctx, types.NamespacedName{Name: "edge", Namespace: infraNamespace}, &gateway))
+	gateway.Spec.Infrastructure = nil
+	require.NoError(t, reconciler.Update(ctx, &gateway))
+	reconcileEdge(t, reconciler)
+
+	assert.Error(t, reconciler.Get(ctx, key, &netpol), "the NetworkPolicy must be deleted on opt-out")
 }
 
 // TestGatewayInfraReconciler_HealsDrift pins self-healing: a manual edit to
@@ -295,6 +334,7 @@ func TestGatewayInfraReconciler_OptOutSucceedsWithoutSecretDelete(t *testing.T) 
 	require.NoError(t, corev1.AddToScheme(scheme))
 	require.NoError(t, appsv1.AddToScheme(scheme))
 	require.NoError(t, autoscalingv2.AddToScheme(scheme))
+	require.NoError(t, networkingv1.AddToScheme(scheme))
 
 	builder := fake.NewClientBuilder().WithScheme(scheme)
 	for _, obj := range infraFixtures(t) {
@@ -702,6 +742,7 @@ func TestGatewayInfraReconciler_TokenlessOwnedAuthSecretFailsClosedWithoutUpdate
 	require.NoError(t, corev1.AddToScheme(scheme))
 	require.NoError(t, appsv1.AddToScheme(scheme))
 	require.NoError(t, autoscalingv2.AddToScheme(scheme))
+	require.NoError(t, networkingv1.AddToScheme(scheme))
 
 	owned := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{

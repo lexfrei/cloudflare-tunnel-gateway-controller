@@ -25,11 +25,12 @@ import (
 // apiserver client.
 func driftReconciler() *GatewayInfraReconciler {
 	return &GatewayInfraReconciler{
-		Client:         envK8sClient,
-		Scheme:         envScheme,
-		ControllerName: "test-controller",
-		ConfigResolver: config.NewResolver(envK8sClient, "default", cfmetrics.NewNoopCollector()),
-		RenderDefaults: render.Defaults{ProxyImage: "example.com/proxy:v1"},
+		Client:              envK8sClient,
+		Scheme:              envScheme,
+		ControllerName:      "test-controller",
+		ConfigResolver:      config.NewResolver(envK8sClient, "default", cfmetrics.NewNoopCollector()),
+		RenderDefaults:      render.Defaults{ProxyImage: "example.com/proxy:v1"},
+		ControllerNamespace: "cf-system",
 	}
 }
 
@@ -156,6 +157,22 @@ func TestGatewayInfraReconciler_ApplyConvergesAgainstAPIServer(t *testing.T) {
 			op, err := reconciler.applyService(ctx, gateway, input)
 			require.NoError(t, err)
 			assert.Equalf(t, controllerutil.OperationResultNone, op, "service re-apply %d must be a no-op", i+1)
+		}
+	})
+
+	t.Run("networkpolicy", func(t *testing.T) {
+		namespace := driftNamespace(ctx, t)
+		gateway := driftGateway(namespace)
+
+		op, err := reconciler.applyNetworkPolicy(ctx, gateway)
+		require.NoError(t, err)
+		require.Equal(t, controllerutil.OperationResultCreated, op, "first apply must create")
+
+		for i := range 2 {
+			op, err := reconciler.applyNetworkPolicy(ctx, gateway)
+			require.NoError(t, err)
+			assert.Equalf(t, controllerutil.OperationResultNone, op,
+				"networkpolicy re-apply %d must be a no-op (PolicyTypes rendered explicitly so the apiserver never infers and drifts it)", i+1)
 		}
 	})
 

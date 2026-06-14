@@ -80,6 +80,7 @@ func init() {
 	rootCmd.Flags().Bool("hostname-ownership-enforce", false, "Enforce per-namespace hostname ownership in the controller: routes whose hostnames fall outside their namespace's allowed-suffix label are rejected and never programmed. Complements (and is independent of) the chart's ValidatingAdmissionPolicy.")
 	rootCmd.Flags().String("hostname-ownership-label-key", "cf.k8s.lex.la/hostname-suffix", "Namespace label carrying the tenant's allowed hostname suffix.")
 	rootCmd.Flags().String("hostname-ownership-namespace-selector", "", "Label selector scoping which namespaces are policed (kubectl syntax). Empty polices every namespace (fail-closed).")
+	rootCmd.Flags().String("monitoring-namespace-selector", "", "Label selector (kubectl syntax) for namespaces additionally allowed to reach a per-Gateway proxy's config-API/metrics port in the rendered NetworkPolicy. Empty allows the controller namespace only.")
 
 	// Distributed tracing (OpenTelemetry). Off by default. When enabled, the
 	// controller instruments its outbound Cloudflare API and proxy config-push
@@ -191,6 +192,7 @@ func runController(_ *cobra.Command, _ []string) error {
 		HostnameOwnershipEnforce:           viper.GetBool("hostname-ownership-enforce"),
 		HostnameOwnershipLabelKey:          viper.GetString("hostname-ownership-label-key"),
 		HostnameOwnershipNamespaceSelector: viper.GetString("hostname-ownership-namespace-selector"),
+		MonitoringNamespaceSelector:        viper.GetString("monitoring-namespace-selector"),
 	}
 
 	if err := controller.Run(ctx, &cfg); err != nil {

@@ -9,6 +9,7 @@ import (
 	"github.com/cockroachdb/errors"
 	"github.com/go-logr/logr"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
@@ -113,6 +114,12 @@ type Config struct {
 	// (kubectl label-selector syntax; empty = all namespaces, fail-closed
 	// everywhere). Must match the admission policy binding's namespaceSelector.
 	HostnameOwnershipNamespaceSelector string
+
+	// MonitoringNamespaceSelector (kubectl label-selector syntax; empty =
+	// controller namespace only) additionally admits the per-Gateway proxy's
+	// config-API port — which also serves /metrics — in the rendered
+	// NetworkPolicy, so Prometheus in the matching namespaces can scrape.
+	MonitoringNamespaceSelector string
 
 	// ProxyImage is the container image for per-Gateway rendered proxy
 	// Deployments (GatewayConfig data planes). The chart wires it to the
@@ -242,6 +249,11 @@ func Run(ctx context.Context, cfg *Config) error {
 	// Per-Gateway data planes (#479): renders a dedicated proxy Deployment +
 	// config Service (+ optional HPA) for Gateways carrying
 	// infrastructure.parametersRef. Status stays with gatewayReconciler.
+	monitoringSelector, err := parseNamespaceSelector(cfg.MonitoringNamespaceSelector)
+	if err != nil {
+		return errors.Wrap(err, "invalid --monitoring-namespace-selector")
+	}
+
 	gatewayInfraReconciler := &GatewayInfraReconciler{
 		Client:         mgr.GetClient(),
 		Scheme:         mgr.GetScheme(),
@@ -252,6 +264,8 @@ func Run(ctx context.Context, cfg *Config) error {
 			ProxyImage:     cfg.ProxyImage,
 			TunnelProtocol: cfg.TunnelProtocol,
 		},
+		ControllerNamespace:         defaultNamespace,
+		MonitoringNamespaceSelector: monitoringSelector,
 	}
 
 	if err := gatewayInfraReconciler.SetupWithManager(mgr); err != nil {
@@ -487,6 +501,23 @@ func sanitiseProxyEndpoints(endpoints []string) []string {
 	}
 
 	return out
+}
+
+// parseNamespaceSelector parses a kubectl label-selector string into a
+// structured *metav1.LabelSelector. An empty string yields nil — "no selector"
+// is a meaningful value (e.g. the monitoring allowance defaults to none).
+func parseNamespaceSelector(selectorStr string) (*metav1.LabelSelector, error) {
+	if strings.TrimSpace(selectorStr) == "" {
+		//nolint:nilnil // nil selector is the meaningful "none configured" result
+		return nil, nil
+	}
+
+	selector, err := metav1.ParseToLabelSelector(selectorStr)
+	if err != nil {
+		return nil, errors.Wrap(err, "parsing namespace selector")
+	}
+
+	return selector, nil
 }
 
 // getControllerNamespace returns the namespace where the controller is running.

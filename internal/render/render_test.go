@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
@@ -34,6 +35,56 @@ func testInput(gatewayName string) render.Input {
 			TunnelProtocol: "auto",
 		},
 	}
+}
+
+// TestProxyNetworkPolicy_LocksConfigAPI pins the ingress-only NetworkPolicy:
+// it selects the proxy pods, opens ONLY the config-API port (8081) to the
+// controller namespace (+ optional monitoring), never the proxy port (8080),
+// and declares no egress.
+func TestProxyNetworkPolicy_LocksConfigAPI(t *testing.T) {
+	t.Parallel()
+
+	gateway := testInput("edge").Gateway
+
+	netpol := render.ProxyNetworkPolicy(render.NetworkPolicyInput{
+		Gateway:             gateway,
+		ControllerNamespace: "cf-system",
+	})
+
+	assert.Equal(t, "cf-proxy-edge-netpol", netpol.Name)
+	assert.Equal(t, "tenant-a", netpol.Namespace)
+	assert.Empty(t, netpol.OwnerReferences, "ownerRefs are the reconciler's job, not the renderer's")
+	assert.Equal(t, "cloudflare-tunnel-gateway-proxy", netpol.Spec.PodSelector.MatchLabels["app.kubernetes.io/name"])
+	assert.Equal(t, "edge", netpol.Spec.PodSelector.MatchLabels[render.GatewayLabel])
+
+	require.Equal(t, []networkingv1.PolicyType{networkingv1.PolicyTypeIngress}, netpol.Spec.PolicyTypes,
+		"ingress-only — egress must stay open")
+	assert.Empty(t, netpol.Spec.Egress)
+
+	require.Len(t, netpol.Spec.Ingress, 1)
+	rule := netpol.Spec.Ingress[0]
+	require.Len(t, rule.Ports, 1, "only the config-API port is admitted, never the proxy port")
+	assert.Equal(t, int32(8081), rule.Ports[0].Port.IntVal)
+
+	require.Len(t, rule.From, 1, "controller namespace only when no monitoring selector")
+	assert.Equal(t, "cf-system", rule.From[0].NamespaceSelector.MatchLabels["kubernetes.io/metadata.name"])
+}
+
+// TestProxyNetworkPolicy_AdmitsMonitoring pins that a monitoring selector adds
+// a second allowed source (for /metrics scrape on the shared config-API port).
+func TestProxyNetworkPolicy_AdmitsMonitoring(t *testing.T) {
+	t.Parallel()
+
+	monitoring := &metav1.LabelSelector{MatchLabels: map[string]string{"team": "observability"}}
+
+	netpol := render.ProxyNetworkPolicy(render.NetworkPolicyInput{
+		Gateway:                     testInput("edge").Gateway,
+		ControllerNamespace:         "cf-system",
+		MonitoringNamespaceSelector: monitoring,
+	})
+
+	require.Len(t, netpol.Spec.Ingress[0].From, 2)
+	assert.Equal(t, "observability", netpol.Spec.Ingress[0].From[1].NamespaceSelector.MatchLabels["team"])
 }
 
 // TestProxyDeployment_CoreShape pins the load-bearing parts of the rendered
