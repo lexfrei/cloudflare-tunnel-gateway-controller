@@ -116,6 +116,14 @@ type Input struct {
 	Defaults  Defaults
 }
 
+// The name builders share a prefix and differ by suffix, so an adversarial
+// Gateway name CAN make two builders alias across kinds (e.g.
+// DeploymentName("x-config") == ConfigServiceName("x")). That is benign: every
+// apply path is kind-scoped and adoption is owner-UID-guarded (assertAdoptable),
+// so a Service apply never touches a Deployment of the same name. The property
+// that matters — same-kind names stay distinct across Gateways — is pinned by
+// TestRenderedNames_NoSameKindCollisionAcrossGateways.
+
 // DeploymentName returns the per-Gateway proxy Deployment name.
 func DeploymentName(gateway *gatewayv1.Gateway) string {
 	return truncateName(namePrefix + gateway.Name)

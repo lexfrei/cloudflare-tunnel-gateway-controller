@@ -322,6 +322,39 @@ func TestProxyDeployment_TokenHashAnnotation(t *testing.T) {
 		"a rotated token must change the pod template (rolling restart)")
 }
 
+// TestRenderedNames_NoSameKindCollisionAcrossGateways pins the property
+// adoption safety actually relies on: SAME-kind rendered names stay distinct
+// across distinct Gateways, even for adversarial names that embed another
+// builder's suffix. Cross-KIND string aliasing (e.g. DeploymentName("x-config")
+// == ConfigServiceName("x")) is possible but benign — adoption is kind-scoped
+// and owner-UID-guarded — whereas a same-kind collision would let two tenants'
+// Deployments fight over one object.
+func TestRenderedNames_NoSameKindCollisionAcrossGateways(t *testing.T) {
+	t.Parallel()
+
+	gatewayNames := []string{"edge", "edge-config", "edge-netpol", "edge-auth", "other", "edge-config-config"}
+
+	builders := map[string]func(string) string{
+		"Deployment":    func(n string) string { return render.DeploymentName(testInput(n).Gateway) },
+		"ConfigService": func(n string) string { return render.ConfigServiceName(testInput(n).Gateway) },
+		"NetworkPolicy": func(n string) string { return render.NetworkPolicyName(testInput(n).Gateway) },
+		"AuthSecret":    func(n string) string { return render.GeneratedAuthSecretName(testInput(n).Gateway) },
+	}
+
+	for kind, build := range builders {
+		seen := make(map[string]string, len(gatewayNames))
+
+		for _, gatewayName := range gatewayNames {
+			rendered := build(gatewayName)
+			if prev, dup := seen[rendered]; dup {
+				t.Fatalf("%s name collision: Gateways %q and %q both render %q", kind, prev, gatewayName, rendered)
+			}
+
+			seen[rendered] = gatewayName
+		}
+	}
+}
+
 // TestProxyDeployment_AuthTokenHashAnnotation pins the config-API auth-token
 // rotation contract: the pod template carries a hash of the bearer token so a
 // rotated authTokenSecretRef rolls the pods. Without it the proxy keeps the
