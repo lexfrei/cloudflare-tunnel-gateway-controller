@@ -221,9 +221,10 @@ func (r *Resolver) resolveGatewayAPIToken(
 		// Secret, empty tunnelID, empty api-token key) — the per-Gateway plane
 		// can never write its tunnel document, so classify it as
 		// ErrInvalidParameters and surface Accepted=False instead of backing
-		// off forever with no status. (A transient Cloudflare-API error during
-		// account auto-detection is conservatively treated as InvalidParameters
-		// here and self-heals on the next config/Secret event.)
+		// off forever with no status. ResolveFromGatewayClassName only reads
+		// Kubernetes objects (no Cloudflare-API account auto-detection happens
+		// on this token-only path), so the retryable arm is purely about
+		// transient apiserver reads and self-heals on the next reconcile.
 		if isRetryableAPIError(err) {
 			return "", errors.Wrap(err, "resolving class credentials for per-Gateway data plane")
 		}

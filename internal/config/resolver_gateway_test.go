@@ -4,12 +4,12 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -501,8 +501,12 @@ func TestHasInfrastructureParametersRef(t *testing.T) {
 }
 
 // errTransientAPIServer simulates an infrastructure failure (apiserver
-// timeout, throttling) — NOT a user-fixable referent problem.
-var errTransientAPIServer = errors.New("apiserver timeout")
+// timeout, throttling) — NOT a user-fixable referent problem. It is a real
+// apimachinery StatusError (Reason=Timeout) rather than a bare error, because
+// the class-credential fallback path classifies retryability via
+// apierrors.Is* predicates: a bare error there would be misread as a permanent
+// config problem, which is not what a genuine apiserver timeout is.
+var errTransientAPIServer = apierrors.NewTimeoutError("apiserver timeout", 1)
 
 // TestResolveForGateway_TransientErrorsAreNotInvalidParameters pins the
 // sentinel's contract: only deterministic referent failures (NotFound,
@@ -527,6 +531,15 @@ func TestResolveForGateway_TransientErrorsAreNotInvalidParameters(t *testing.T) 
 	}{
 		{name: "transient GatewayConfig read failure", failOn: "edge-config"},
 		{name: "transient token Secret read failure", failOn: "edge-tunnel-token"},
+		// The class-credential API-token fallback (gwConfig sets no
+		// CloudflareCredentialsSecretRef override) reads the GatewayClass →
+		// GatewayClassConfig → class-credentials Secret chain. A transient
+		// failure on any link must propagate as retryable, exercising the
+		// isRetryableAPIError arm in resolveGatewayAPIToken rather than being
+		// misclassified as a permanent InvalidParameters.
+		{name: "transient GatewayClass read failure", failOn: "cloudflare-tunnel"},
+		{name: "transient GatewayClassConfig read failure", failOn: "class-config"},
+		{name: "transient class-credentials Secret read failure", failOn: "class-credentials"},
 	}
 
 	for _, tt := range tests {
