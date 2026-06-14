@@ -128,6 +128,14 @@ func (p *Policy) Evaluate(nsLabels map[string]string, hostnames []gatewayv1.Host
 // hostnameWithinSuffix reports whether hostname (with an optional "*." prefix
 // stripped) equals suffix or is a subdomain of it. Comparison is lowercase —
 // DNS names are case-insensitive.
+//
+// strings.ToLower folds Unicode (e.g. U+212A KELVIN SIGN → "k"), while the CEL
+// admission layer uses lowerAscii(). That divergence is a deny↔allow axis ONLY
+// if a non-ASCII rune can reach this function — and it cannot: the Gateway API
+// CRD Hostname pattern and the namespace label-value regex are both
+// ASCII-lowercase-only, so hostname and suffix are always ASCII here. If that
+// CRD pattern is ever relaxed to admit Unicode, this homograph axis reopens and
+// both layers must switch to one shared normalization.
 func hostnameWithinSuffix(hostname, suffix string) bool {
 	candidate := strings.ToLower(hostname)
 	candidate = strings.TrimPrefix(candidate, "*.")
