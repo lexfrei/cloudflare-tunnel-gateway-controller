@@ -217,8 +217,21 @@ func (r *GatewayInfraReconciler) ensureGeneratedAuthSecret(
 		return errors.Wrap(err, "setting owner on generated auth secret")
 	}
 
-	if err := r.Create(ctx, secret); err != nil && !apierrors.IsAlreadyExists(err) {
-		return errors.Wrapf(err, "creating generated auth secret %s", key)
+	if err := r.Create(ctx, secret); err != nil {
+		if !apierrors.IsAlreadyExists(err) {
+			return errors.Wrapf(err, "creating generated auth secret %s", key)
+		}
+
+		// Lost the create race: a Secret landed at our name between the Get
+		// above and this Create. Re-read and re-assert ownership rather than
+		// proceed — swallowing AlreadyExists here would wire the data plane's
+		// push auth to whatever material the racer wrote, the exact never-adopt
+		// hole the Get path guards against.
+		if err := r.Get(ctx, key, &existing); err != nil {
+			return errors.Wrapf(err, "re-reading generated auth secret after create race %s", key)
+		}
+
+		return assertAdoptable(&existing, gateway)
 	}
 
 	return nil

@@ -723,6 +723,81 @@ func TestGatewayInfraReconciler_RefusesForeignAuthSecret(t *testing.T) {
 	assert.Empty(t, secret.OwnerReferences, "the foreign Secret must not be adopted")
 }
 
+// TestGatewayInfraReconciler_RefusesForeignAuthSecretOnCreateRace pins the
+// never-adopt invariant on the CREATE path. If a foreign Secret lands at the
+// generated name in the TOCTOU window between the bootstrap's existence Get
+// (which missed it) and its Create, the AlreadyExists must NOT be swallowed:
+// the controller re-reads and re-asserts ownership, refusing to wire the data
+// plane's push auth to unverified material — exactly like the Get path.
+func TestGatewayInfraReconciler_RefusesForeignAuthSecretOnCreateRace(t *testing.T) {
+	t.Parallel()
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, gatewayv1.Install(scheme))
+	require.NoError(t, v1alpha1.AddToScheme(scheme))
+	require.NoError(t, corev1.AddToScheme(scheme))
+	require.NoError(t, appsv1.AddToScheme(scheme))
+	require.NoError(t, autoscalingv2.AddToScheme(scheme))
+	require.NoError(t, networkingv1.AddToScheme(scheme))
+
+	foreign := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "cf-proxy-edge-auth", Namespace: infraNamespace,
+			Labels: map[string]string{"owned-by": "some-user"},
+		},
+		Data: map[string][]byte{"auth-token": []byte("foreign-token")},
+	}
+
+	var authGets int
+
+	builder := fake.NewClientBuilder().WithScheme(scheme)
+	for _, obj := range append(infraFixtures(t), foreign) {
+		builder = builder.WithRuntimeObjects(obj)
+	}
+
+	fakeClient := builder.WithInterceptorFuncs(interceptor.Funcs{
+		Get: func(ctx context.Context, cl client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+			// Hide the foreign Secret on the FIRST read only: the bootstrap's
+			// existence check misses it (the TOCTOU window), proceeds to Create,
+			// and the create then loses the race with AlreadyExists.
+			if _, isSecret := obj.(*corev1.Secret); isSecret && key.Name == "cf-proxy-edge-auth" {
+				authGets++
+				if authGets == 1 {
+					return apierrors.NewNotFound(schema.GroupResource{Resource: "secrets"}, key.Name)
+				}
+			}
+
+			return cl.Get(ctx, key, obj, opts...)
+		},
+	}).Build()
+
+	reconciler := &GatewayInfraReconciler{
+		Client:              fakeClient,
+		Scheme:              scheme,
+		ControllerName:      "cf.k8s.lex.la/tunnel-controller",
+		ConfigResolver:      config.NewResolver(fakeClient, "cf-system", cfmetrics.NewNoopCollector()),
+		RenderDefaults:      render.Defaults{ProxyImage: "ghcr.io/example/proxy:v1.2.3"},
+		ControllerNamespace: "cf-system",
+	}
+
+	gateway := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "edge", Namespace: infraNamespace, UID: "gw-uid-1"},
+	}
+	gwConfig := &v1alpha1.GatewayConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "edge-config", Namespace: infraNamespace},
+	}
+
+	err := reconciler.ensureGeneratedAuthSecret(context.Background(), gateway, gwConfig)
+	require.Error(t, err, "a foreign Secret racing into the create window must be refused, not silently adopted")
+	assert.ErrorIs(t, err, errRefusedAdoption)
+
+	var secret corev1.Secret
+	require.NoError(t, fakeClient.Get(context.Background(),
+		types.NamespacedName{Name: "cf-proxy-edge-auth", Namespace: infraNamespace}, &secret))
+	assert.Equal(t, []byte("foreign-token"), secret.Data["auth-token"], "the foreign Secret must be left untouched")
+	assert.Empty(t, secret.OwnerReferences, "the foreign Secret must not be adopted")
+}
+
 // TestGatewayInfraReconciler_TokenlessOwnedAuthSecretFailsClosedWithoutUpdate
 // pins that an owned generated-auth Secret whose token key is empty fails
 // CLOSED — the data plane is not rendered — WITHOUT the bootstrap writing to
