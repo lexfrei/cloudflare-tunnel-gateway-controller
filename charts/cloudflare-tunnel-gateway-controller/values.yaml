@@ -507,14 +507,30 @@ proxy:
   service:
     # -- Service annotations
     annotations: {}
-  # -- NetworkPolicy configuration for proxy pods
+  # -- NetworkPolicy configuration for proxy pods. On by default: it locks the
+  # config-API port (which can hijack routing via PUT /config) to the
+  # controller namespace. No-op where the CNI does not enforce NetworkPolicy.
   networkPolicy:
-    # -- Enable NetworkPolicy for proxy pods
-    enabled: false
+    # -- Render the proxy NetworkPolicy (ingress-only; locks the config-API
+    # port to the controller namespace by default)
+    enabled: true
+    # -- Also restrict EGRESS to DNS + the Cloudflare edge + cluster services.
+    # Off by default: the static Cloudflare CIDR list can drift and break the
+    # tunnel. Enable only if you keep cloudflareIpRanges current.
+    egressRestricted: false
     # -- Ingress source configuration
     ingress:
-      # -- Allow ingress from specific namespaces/pods
+      # -- Namespaces/pods allowed to reach the config-API port. EMPTY defaults
+      # to the release namespace (the controller). Add your monitoring
+      # namespace here to allow Prometheus to scrape /metrics — locking the
+      # config-API port also restricts the /metrics it co-serves.
       from: []
+    # -- Label selector for namespaces additionally allowed to reach the
+    # config-API/metrics port in the PER-GATEWAY (tenant) NetworkPolicies the
+    # controller renders (passed to --monitoring-namespace-selector). Empty =
+    # controller namespace only. For the SHARED proxy's policy, use
+    # `ingress.from` above instead.
+    monitoringNamespaceSelector: {}
   # -- Node selector for pod scheduling
   nodeSelector: {}
   # -- Tolerations for pod scheduling

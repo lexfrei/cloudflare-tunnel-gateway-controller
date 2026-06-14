@@ -77,6 +77,12 @@ spec:
             - "--hostname-ownership-namespace-selector={{ $ownershipSelector }}"
             {{- end }}
             {{- end }}
+            {{- $monitoringSelector := include "cf-tunnel-gw-ctrl.labelSelectorString" .Values.proxy.networkPolicy.monitoringNamespaceSelector }}
+            {{- if $monitoringSelector }}
+            # Namespaces allowed to scrape /metrics on the per-Gateway proxies'
+            # config-API port in the rendered NetworkPolicy.
+            - "--monitoring-namespace-selector={{ $monitoringSelector }}"
+            {{- end }}
             {{- if .Values.leaderElection.enabled }}
             - "--leader-elect=true"
             - "--leader-election-name={{ .Values.leaderElection.leaseName }}"

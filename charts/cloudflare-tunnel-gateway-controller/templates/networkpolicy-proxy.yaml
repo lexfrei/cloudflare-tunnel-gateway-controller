@@ -11,18 +11,28 @@ spec:
       {{- include "cf-tunnel-gw-ctrl.proxySelectorLabels" . | nindent 6 }}
   policyTypes:
     - Ingress
+    {{- if .Values.proxy.networkPolicy.egressRestricted }}
     - Egress
+    {{- end }}
   ingress:
-    # Allow config push from controller and metrics scraping
-    - {{- if .Values.proxy.networkPolicy.ingress.from }}
-      from:
+    # Lock the config-API port (8081, also serves /metrics) to the controller
+    # (the config pusher) by default. The proxy port (8080) takes NO in-cluster
+    # ingress — traffic arrives through the outbound tunnel. An empty
+    # ingress.from defaults to the release namespace (where the controller
+    # runs); set ingress.from to also admit your monitoring namespace for
+    # Prometheus scraping (locking 8081 also restricts /metrics).
+    - from:
+        {{- if .Values.proxy.networkPolicy.ingress.from }}
         {{- toYaml .Values.proxy.networkPolicy.ingress.from | nindent 8 }}
-      {{- end }}
+        {{- else }}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Release.Namespace }}
+        {{- end }}
       ports:
         - protocol: TCP
           port: {{ .Values.proxy.configAPIPort }}
-        - protocol: TCP
-          port: {{ .Values.proxy.proxyPort }}
+  {{- if .Values.proxy.networkPolicy.egressRestricted }}
   egress:
     # DNS
     - ports:
@@ -50,4 +60,5 @@ spec:
         - namespaceSelector: {}
       ports:
         - protocol: TCP
+  {{- end }}
 {{- end }}

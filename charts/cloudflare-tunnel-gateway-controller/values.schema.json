@@ -946,6 +946,10 @@
           "properties": {
             "enabled": {
               "type": "boolean",
+              "default": true
+            },
+            "egressRestricted": {
+              "type": "boolean",
               "default": false
             },
             "ingress": {
@@ -955,6 +959,9 @@
                   "type": "array"
                 }
               }
+            },
+            "monitoringNamespaceSelector": {
+              "type": "object"
             }
           }
         },
