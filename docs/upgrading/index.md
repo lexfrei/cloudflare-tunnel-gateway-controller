@@ -5,6 +5,7 @@ This section documents version-to-version upgrade paths and the breaking changes
 ## Available guides
 
 - [v2 → v3](v2-to-v3.md) — the v3 chart collapses to a single L7-proxy data plane, slims the GatewayClassConfig CRD spec, drops the AmneziaWG sidecar, and tightens RBAC.
+- [v3.0 → v3.1](v3-to-v3.1.md) — multi-tenant isolation hardening: data-plane metrics and config-API NetworkPolicy default on, a new `RouteShadowed` condition/Event, and a longer proxy drain window. No CRD or values migration.
 
 ## Conventions
 

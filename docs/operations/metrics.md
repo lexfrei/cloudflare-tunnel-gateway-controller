@@ -94,7 +94,7 @@ Built-in metrics from controller-runtime.
 
 The in-process L7 proxy serves its own exposition at `/metrics` on the config API port (8081, no auth — the endpoint carries no secrets; the Bearer token protects config writes). The chart's proxy ServiceMonitor scrapes it when `serviceMonitor.enabled` is set (and `proxy.metrics.enabled` is on — the template is gated on both); metrics are on by default and can be disabled with `proxy.metrics.enabled: false`. The same endpoint also surfaces the embedded cloudflared connector metrics (`cloudflared_tunnel_*`).
 
-On a multi-tenant shared plane the exposition reveals per-tenant hostname series to anything that can reach the pod: restrict ingress on the config API port to your monitoring and controller namespaces with a NetworkPolicy.
+On a multi-tenant shared plane the exposition reveals per-tenant hostname series to anything that can reach the pod, so the chart ships this NetworkPolicy on by default (`proxy.networkPolicy.enabled: true`) — it admits the config API port (and therefore `/metrics`) only from the controller's own namespace. To keep Prometheus scraping working, admit your monitoring namespace too: add it to `proxy.networkPolicy.ingress.from` for the shared proxy, or set `proxy.networkPolicy.monitoringNamespaceSelector` for the per-Gateway data planes the controller renders. Where the CNI does not enforce NetworkPolicy this is a no-op and scraping is unaffected.
 
 Series count scales with the number of CONFIGURED hostnames — a tenant can legitimately mint series by creating many hostnames under its allowed suffix, so budget Prometheus accordingly on hostname-heavy shared planes.
 

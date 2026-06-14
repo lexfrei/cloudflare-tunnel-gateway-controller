@@ -27,6 +27,7 @@ This document describes all configuration options for the controller binary. For
 | `--hostname-ownership-enforce` | `CF_HOSTNAME_OWNERSHIP_ENFORCE` | `false` | Controller-side hostname-ownership layer: routes whose hostnames fall outside their namespace's allowed-suffix label are rejected (`HostnameNotPermitted`) and never programmed. Independent of the chart's `ValidatingAdmissionPolicy` — see [Multi-Tenancy](../guides/multi-tenancy.md) |
 | `--hostname-ownership-label-key` | `CF_HOSTNAME_OWNERSHIP_LABEL_KEY` | `cf.k8s.lex.la/hostname-suffix` | Namespace label carrying the tenant's allowed hostname suffix |
 | `--hostname-ownership-namespace-selector` | `CF_HOSTNAME_OWNERSHIP_NAMESPACE_SELECTOR` | | Label selector (kubectl syntax) scoping which namespaces are policed; empty polices every namespace (fail-closed) |
+| `--monitoring-namespace-selector` | `CF_MONITORING_NAMESPACE_SELECTOR` | | Label selector (kubectl syntax) for namespaces additionally allowed to reach a per-Gateway proxy's config-API/metrics port in the rendered NetworkPolicy; empty admits the controller namespace only — see [Per-Gateway Isolation](../guides/per-gateway-isolation.md) |
 
 For full distributed-tracing setup, see [Distributed Tracing](../operations/tracing.md).
 
