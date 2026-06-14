@@ -32,6 +32,13 @@ const GatewayLabel = "cf.k8s.lex.la/gateway"
 //nolint:gosec // G101 false positive: this is an annotation KEY, not a credential
 const tokenHashAnnotation = "cf.k8s.lex.la/tunnel-token-hash"
 
+// authTokenHashAnnotation carries a digest of the config-API bearer token on
+// the pod template so rotating an authTokenSecretRef rolls the pods (the proxy
+// reads PROXY_AUTH_TOKEN once at start; without the roll it 401s every push).
+//
+//nolint:gosec // G101 false positive: this is an annotation KEY, not a credential
+const authTokenHashAnnotation = "cf.k8s.lex.la/auth-token-hash"
+
 // Data-plane contract constants. The rendered pods run the proxy binary with
 // its built-in defaults; these mirror them and the chart's shared-proxy
 // conventions.
@@ -81,8 +88,9 @@ type Defaults struct {
 }
 
 // NetworkPolicyInput carries the controller-level config the per-Gateway
-// NetworkPolicy needs beyond the Gateway itself. Kept separate from the
-// per-render Input so the heavy Input struct stays value-passable.
+// NetworkPolicy needs beyond the Gateway itself (controller namespace,
+// monitoring selector) — a different concern from the per-render Input, so it
+// is a separate parameter rather than more fields on Input.
 type NetworkPolicyInput struct {
 	Gateway *gatewayv1.Gateway
 	// ControllerNamespace is the only namespace that legitimately pushes config
@@ -100,7 +108,12 @@ type Input struct {
 	Config  *v1alpha1.GatewayConfig
 	// TunnelToken is the raw connector token; only its hash is rendered.
 	TunnelToken string
-	Defaults    Defaults
+	// AuthToken is the resolved config-API bearer token (BYO override or the
+	// controller-generated one); only its hash is rendered, so a rotated
+	// authTokenSecretRef rolls the pods instead of stranding them on the old
+	// PROXY_AUTH_TOKEN env value.
+	AuthToken string
+	Defaults  Defaults
 }
 
 // DeploymentName returns the per-Gateway proxy Deployment name.
@@ -187,14 +200,22 @@ func resourceAnnotations(gateway *gatewayv1.Gateway) map[string]string {
 	return annotations
 }
 
-// ProxyDeployment renders the per-Gateway proxy Deployment.
-func ProxyDeployment(input Input) *appsv1.Deployment {
+// ProxyDeployment renders the per-Gateway proxy Deployment. Input is taken by
+// pointer: it is at the gocritic hugeParam budget, and both rotation tokens
+// live in it.
+func ProxyDeployment(input *Input) *appsv1.Deployment {
 	podAnnotations := resourceAnnotations(input.Gateway)
 	if podAnnotations == nil {
-		podAnnotations = make(map[string]string, 1)
+		podAnnotations = make(map[string]string, 2)
 	}
 
+	// Hash BOTH rotation-relevant tokens into the pod template so rotating
+	// either Secret produces a different template and rolls the pods. Both
+	// reach the proxy via SecretKeyRef env vars (read once at start), so
+	// without this a rotated token would strand the running pod on the old
+	// value while the controller starts using the new one.
 	podAnnotations[tokenHashAnnotation] = hashToken(input.TunnelToken)
+	podAnnotations[authTokenHashAnnotation] = hashToken(input.AuthToken)
 
 	return &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
@@ -269,7 +290,7 @@ func hashToken(token string) string {
 
 // proxyContainer renders the single proxy container, mirroring the chart's
 // shared-proxy deployment (ports, probes, security context, env contract).
-func proxyContainer(input Input) corev1.Container {
+func proxyContainer(input *Input) corev1.Container {
 	return corev1.Container{
 		Name:            containerName,
 		Image:           proxyImage(input),
@@ -291,7 +312,7 @@ func proxyContainer(input Input) corev1.Container {
 	}
 }
 
-func proxyImage(input Input) string {
+func proxyImage(input *Input) string {
 	if input.Config.Spec.Image != "" {
 		return input.Config.Spec.Image
 	}
@@ -302,7 +323,7 @@ func proxyImage(input Input) string {
 // proxyEnv wires the connector token (and optional knobs) exactly like the
 // chart does for the shared proxy. Binary defaults (ports, grace period,
 // metrics-on) are deliberately not rendered.
-func proxyEnv(input Input) []corev1.EnvVar {
+func proxyEnv(input *Input) []corev1.EnvVar {
 	env := []corev1.EnvVar{
 		{
 			Name: "TUNNEL_TOKEN",
@@ -419,7 +440,7 @@ func httpProbe(path string, spec probeSpec) *corev1.Probe {
 // ConfigService renders the per-Gateway headless config Service. Pod IPs are
 // published before readiness because the controller pushes config to
 // not-yet-ready pods — their readiness depends on that very config.
-func ConfigService(input Input) *corev1.Service {
+func ConfigService(input *Input) *corev1.Service {
 	return &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        ConfigServiceName(input.Gateway),

@@ -255,6 +255,7 @@ func (r *GatewayInfraReconciler) applyRendered(
 		Gateway:     gateway,
 		Config:      perGateway.GatewayConfig,
 		TunnelToken: perGateway.TunnelToken,
+		AuthToken:   perGateway.AuthToken,
 		Defaults:    r.RenderDefaults,
 	}
 
@@ -271,20 +272,20 @@ func (r *GatewayInfraReconciler) applyRendered(
 		return nil
 	}
 
-	deploymentOp, err := r.applyDeployment(ctx, gateway, input)
+	deploymentOp, err := r.applyDeployment(ctx, gateway, &input)
 	if err != nil {
 		r.event(gateway, corev1.EventTypeWarning, eventReasonRenderFailed, err.Error())
 
 		return err
 	}
 
-	if _, err := r.applyService(ctx, gateway, input); err != nil {
+	if _, err := r.applyService(ctx, gateway, &input); err != nil {
 		r.event(gateway, corev1.EventTypeWarning, eventReasonRenderFailed, err.Error())
 
 		return err
 	}
 
-	if _, err := r.applyAutoscaler(ctx, gateway, input); err != nil {
+	if _, err := r.applyAutoscaler(ctx, gateway, &input); err != nil {
 		r.event(gateway, corev1.EventTypeWarning, eventReasonRenderFailed, err.Error())
 
 		return err
@@ -390,7 +391,7 @@ func assertAdoptable(existing client.Object, gateway *gatewayv1.Gateway) error {
 func (r *GatewayInfraReconciler) applyDeployment(
 	ctx context.Context,
 	gateway *gatewayv1.Gateway,
-	input render.Input,
+	input *render.Input,
 ) (controllerutil.OperationResult, error) {
 	desired := render.ProxyDeployment(input)
 
@@ -430,7 +431,7 @@ func (r *GatewayInfraReconciler) applyDeployment(
 func (r *GatewayInfraReconciler) applyService(
 	ctx context.Context,
 	gateway *gatewayv1.Gateway,
-	input render.Input,
+	input *render.Input,
 ) (controllerutil.OperationResult, error) {
 	desired := render.ConfigService(input)
 
@@ -504,7 +505,7 @@ func (r *GatewayInfraReconciler) applyNetworkPolicy(
 func (r *GatewayInfraReconciler) applyAutoscaler(
 	ctx context.Context,
 	gateway *gatewayv1.Gateway,
-	input render.Input,
+	input *render.Input,
 ) (controllerutil.OperationResult, error) {
 	desired := render.Autoscaler(input)
 	if desired == nil {

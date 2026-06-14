@@ -17,8 +17,8 @@ import (
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/render"
 )
 
-func testInput(gatewayName string) render.Input {
-	return render.Input{
+func testInput(gatewayName string) *render.Input {
+	return &render.Input{
 		Gateway: &gatewayv1.Gateway{
 			ObjectMeta: metav1.ObjectMeta{Name: gatewayName, Namespace: "tenant-a"},
 			Spec:       gatewayv1.GatewaySpec{GatewayClassName: "cloudflare-tunnel"},
@@ -320,6 +320,36 @@ func TestProxyDeployment_TokenHashAnnotation(t *testing.T) {
 	second := render.ProxyDeployment(rotated)
 	assert.NotEqual(t, hash, second.Spec.Template.Annotations["cf.k8s.lex.la/tunnel-token-hash"],
 		"a rotated token must change the pod template (rolling restart)")
+}
+
+// TestProxyDeployment_AuthTokenHashAnnotation pins the config-API auth-token
+// rotation contract: the pod template carries a hash of the bearer token so a
+// rotated authTokenSecretRef rolls the pods. Without it the proxy keeps the
+// old PROXY_AUTH_TOKEN (a SecretKeyRef env, read once at start) while the
+// controller pushes with the new token — every push 401s until a manual
+// rollout. The Secret watch already re-renders on rotation; this annotation is
+// what makes that re-render a non-identical pod template.
+func TestProxyDeployment_AuthTokenHashAnnotation(t *testing.T) {
+	t.Parallel()
+
+	base := testInput("edge")
+	base.AuthToken = "auth-token-v1"
+
+	first := render.ProxyDeployment(base)
+	hash := first.Spec.Template.Annotations["cf.k8s.lex.la/auth-token-hash"]
+	require.NotEmpty(t, hash, "the pod template must hash the config-API auth token")
+
+	rotated := testInput("edge")
+	rotated.AuthToken = "auth-token-v2"
+	second := render.ProxyDeployment(rotated)
+	assert.NotEqual(t, hash, second.Spec.Template.Annotations["cf.k8s.lex.la/auth-token-hash"],
+		"a rotated auth token must change the pod template (rolling restart)")
+
+	// The two token hashes are independent: rotating only the auth token must
+	// not disturb the connector-token hash, and vice versa.
+	assert.Equal(t, first.Spec.Template.Annotations["cf.k8s.lex.la/tunnel-token-hash"],
+		second.Spec.Template.Annotations["cf.k8s.lex.la/tunnel-token-hash"],
+		"rotating only the auth token must leave the connector-token hash untouched")
 }
 
 // TestProxyDeployment_InfrastructureLabelsPropagate pins the Gateway API

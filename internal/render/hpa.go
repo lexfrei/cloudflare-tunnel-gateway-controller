@@ -14,7 +14,7 @@ import (
 // (prometheus-adapter or KEDA) exposing it through the custom-metrics API;
 // without one the HPA reports FailedGetPodsMetric and holds minReplicas —
 // visible degradation, never silent.
-func Autoscaler(input Input) *autoscalingv2.HorizontalPodAutoscaler {
+func Autoscaler(input *Input) *autoscalingv2.HorizontalPodAutoscaler {
 	auto := input.Config.Spec.Autoscaling
 	if auto == nil {
 		return nil

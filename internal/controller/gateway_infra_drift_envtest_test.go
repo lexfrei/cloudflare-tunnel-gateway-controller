@@ -71,7 +71,7 @@ func TestGatewayInfraReconciler_ApplyConvergesAgainstAPIServer(t *testing.T) {
 		namespace := driftNamespace(ctx, t)
 		gateway := driftGateway(namespace)
 		replicas := int32(2)
-		input := render.Input{
+		input := &render.Input{
 			Gateway:     gateway,
 			TunnelToken: "token",
 			Defaults:    reconciler.RenderDefaults,
@@ -96,11 +96,51 @@ func TestGatewayInfraReconciler_ApplyConvergesAgainstAPIServer(t *testing.T) {
 		}
 	})
 
+	t.Run("auth-token rotation rolls the deployment", func(t *testing.T) {
+		namespace := driftNamespace(ctx, t)
+		gateway := driftGateway(namespace)
+		base := &render.Input{
+			Gateway:     gateway,
+			TunnelToken: "token",
+			AuthToken:   "auth-token-v1",
+			Defaults:    reconciler.RenderDefaults,
+			Config: &v1alpha1.GatewayConfig{
+				ObjectMeta: metav1.ObjectMeta{Name: "edge-config", Namespace: namespace},
+				Spec:       v1alpha1.GatewayConfigSpec{TunnelTokenSecretRef: v1alpha1.LocalSecretReference{Name: "edge-token"}},
+			},
+		}
+
+		op, err := reconciler.applyDeployment(ctx, gateway, base)
+		require.NoError(t, err)
+		require.Equal(t, controllerutil.OperationResultCreated, op, "first apply must create")
+
+		// Re-applying the SAME token must converge: the new auth-token-hash
+		// annotation must not introduce spurious drift.
+		op, err = reconciler.applyDeployment(ctx, gateway, base)
+		require.NoError(t, err)
+		require.Equal(t, controllerutil.OperationResultNone, op, "a stable auth token must not roll the pods")
+
+		// Rotating the auth token must change the pod template so the Deployment
+		// rolls and the proxy re-reads PROXY_AUTH_TOKEN — without this the
+		// running pod keeps the old token and the controller's pushes 401.
+		rotated := *base
+		rotated.AuthToken = "auth-token-v2"
+
+		op, err = reconciler.applyDeployment(ctx, gateway, &rotated)
+		require.NoError(t, err)
+		assert.Equal(t, controllerutil.OperationResultUpdated, op, "a rotated auth token must roll the deployment")
+
+		var deployment appsv1.Deployment
+		require.NoError(t, reconciler.Get(ctx, client.ObjectKeyFromObject(render.ProxyDeployment(&rotated)), &deployment))
+		assert.NotEmpty(t, deployment.Spec.Template.Annotations["cf.k8s.lex.la/auth-token-hash"],
+			"the rolled pod template must carry the auth-token hash")
+	})
+
 	t.Run("deployment (autoscaling mode, nil replicas)", func(t *testing.T) {
 		namespace := driftNamespace(ctx, t)
 		gateway := driftGateway(namespace)
 		minReplicas := int32(2)
-		input := render.Input{
+		input := &render.Input{
 			Gateway:     gateway,
 			TunnelToken: "token",
 			Defaults:    reconciler.RenderDefaults,
@@ -139,7 +179,7 @@ func TestGatewayInfraReconciler_ApplyConvergesAgainstAPIServer(t *testing.T) {
 	t.Run("service", func(t *testing.T) {
 		namespace := driftNamespace(ctx, t)
 		gateway := driftGateway(namespace)
-		input := render.Input{
+		input := &render.Input{
 			Gateway:     gateway,
 			TunnelToken: "token",
 			Defaults:    reconciler.RenderDefaults,
@@ -181,7 +221,7 @@ func TestGatewayInfraReconciler_ApplyConvergesAgainstAPIServer(t *testing.T) {
 		gateway := driftGateway(namespace)
 		minReplicas := int32(2)
 		maxReplicas := int32(5)
-		input := render.Input{
+		input := &render.Input{
 			Gateway:     gateway,
 			TunnelToken: "token",
 			Defaults:    reconciler.RenderDefaults,
