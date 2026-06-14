@@ -317,7 +317,7 @@ spec:
 | proxy.networkPolicy.egressRestricted | bool | `false` | Also restrict EGRESS to DNS + the Cloudflare edge + cluster services. Off by default: the static Cloudflare CIDR list can drift and break the tunnel. Enable only if you keep cloudflareIpRanges current. |
 | proxy.networkPolicy.enabled | bool | `true` | Render the proxy NetworkPolicy (ingress-only; locks the config-API port to the controller namespace by default) |
 | proxy.networkPolicy.ingress | object | `{"from":[]}` | Ingress source configuration |
-| proxy.networkPolicy.ingress.from | list | `[]` | Namespaces/pods allowed to reach the config-API port. EMPTY defaults to the release namespace (the controller). Add your monitoring namespace here to allow Prometheus to scrape /metrics — locking the config-API port also restricts the /metrics it co-serves. |
+| proxy.networkPolicy.ingress.from | list | `[]` | EXTRA namespaces/pods allowed to reach the config-API port, ADDED to the release (controller) namespace — which is always admitted so a config push is never locked out. Add your monitoring namespace here to let Prometheus scrape /metrics (locking the config-API port also restricts the /metrics it co-serves). |
 | proxy.networkPolicy.monitoringNamespaceSelector | object | `{}` | Label selector for namespaces additionally allowed to reach the config-API/metrics port in the PER-GATEWAY (tenant) NetworkPolicies the controller renders (passed to --monitoring-namespace-selector). Empty = controller namespace only. For the SHARED proxy's policy, use `ingress.from` above instead. |
 | proxy.nodeSelector | object | `{}` | Node selector for pod scheduling |
 | proxy.podAnnotations | object | `{}` | Annotations to add to proxy pods |

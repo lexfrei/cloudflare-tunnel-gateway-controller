@@ -90,7 +90,7 @@ tests:
               matchLabels:
                 kubernetes.io/metadata.name: cf-system
 
-  - it: should let ingress.from override the controller-namespace default
+  - it: should ADD ingress.from to the controller namespace, never replace it
     set:
       proxy:
         tunnelTokenSecretRef:
@@ -102,13 +102,16 @@ tests:
                   matchLabels:
                     kubernetes.io/metadata.name: monitoring
     asserts:
+      # The extra peer is admitted...
       - contains:
           path: spec.ingress[0].from
           content:
             namespaceSelector:
               matchLabels:
                 kubernetes.io/metadata.name: monitoring
-      - notContains:
+      # ...AND the controller namespace stays admitted, so a config push is
+      # never locked out by setting ingress.from (the docs promise "also").
+      - contains:
           path: spec.ingress[0].from
           content:
             namespaceSelector:

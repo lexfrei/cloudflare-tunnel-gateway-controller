@@ -16,18 +16,18 @@ spec:
     {{- end }}
   ingress:
     # Lock the config-API port (8081, also serves /metrics) to the controller
-    # (the config pusher) by default. The proxy port (8080) takes NO in-cluster
-    # ingress — traffic arrives through the outbound tunnel. An empty
-    # ingress.from defaults to the release namespace (where the controller
-    # runs); set ingress.from to also admit your monitoring namespace for
-    # Prometheus scraping (locking 8081 also restricts /metrics).
+    # (the config pusher). The release namespace — where the controller runs —
+    # is ALWAYS admitted so a config push can never be locked out; ingress.from
+    # is ADDITIVE on top of it, so add your monitoring namespace there for
+    # Prometheus scraping (locking 8081 also restricts /metrics). The proxy port
+    # (8080) takes NO in-cluster ingress — traffic arrives through the outbound
+    # tunnel.
     - from:
-        {{- if .Values.proxy.networkPolicy.ingress.from }}
-        {{- toYaml .Values.proxy.networkPolicy.ingress.from | nindent 8 }}
-        {{- else }}
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: {{ .Release.Namespace }}
+        {{- with .Values.proxy.networkPolicy.ingress.from }}
+        {{- toYaml . | nindent 8 }}
         {{- end }}
       ports:
         - protocol: TCP

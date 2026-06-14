@@ -36,18 +36,15 @@ Re-admit your monitoring namespace:
 ```yaml
 proxy:
   networkPolicy:
-    # Shared proxy plane: list the namespaces allowed to reach the config API /
-    # metrics port. Setting ingress.from REPLACES the controller-namespace
-    # default, so include the controller namespace too if the controller still
-    # pushes config from there.
+    # Shared proxy plane: EXTRA namespaces allowed to reach the config API /
+    # metrics port. ingress.from is ADDED to the controller namespace (always
+    # admitted, so a config push is never locked out) — list only your
+    # monitoring namespace here.
     ingress:
       from:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: monitoring
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: cloudflare-tunnel-system
     # Per-Gateway (tenant) data planes the controller renders: a label selector
     # for namespaces additionally admitted to their config API / metrics port.
     # The controller namespace is always admitted; this only adds to it.

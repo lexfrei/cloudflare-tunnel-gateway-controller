@@ -520,10 +520,11 @@ proxy:
     egressRestricted: false
     # -- Ingress source configuration
     ingress:
-      # -- Namespaces/pods allowed to reach the config-API port. EMPTY defaults
-      # to the release namespace (the controller). Add your monitoring
-      # namespace here to allow Prometheus to scrape /metrics — locking the
-      # config-API port also restricts the /metrics it co-serves.
+      # -- EXTRA namespaces/pods allowed to reach the config-API port, ADDED to
+      # the release (controller) namespace — which is always admitted so a
+      # config push is never locked out. Add your monitoring namespace here to
+      # let Prometheus scrape /metrics (locking the config-API port also
+      # restricts the /metrics it co-serves).
       from: []
     # -- Label selector for namespaces additionally allowed to reach the
     # config-API/metrics port in the PER-GATEWAY (tenant) NetworkPolicies the
