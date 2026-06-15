@@ -427,6 +427,42 @@ func TestDetectShadowedRules_HeaderOrderNormalized(t *testing.T) {
 	assert.Len(t, diags, 1, "header order and name case must not defeat the collision detection")
 }
 
+// TestDetectShadowedRules_QueryParamOrderNormalized mirrors the header-order
+// test for query params: two matches differing only in query-param ORDER claim
+// the same key, so the lower-precedence one is still detected as shadowed.
+func TestDetectShadowedRules_QueryParamOrderNormalized(t *testing.T) {
+	t.Parallel()
+
+	matchAB := proxy.RouteMatch{
+		Path: &proxy.PathMatch{Type: proxy.PathMatchPathPrefix, Value: "/"},
+		QueryParams: []proxy.QueryParamMatch{
+			{Type: proxy.QueryParamMatchExact, Name: "a", Value: "1"},
+			{Type: proxy.QueryParamMatchExact, Name: "b", Value: "2"},
+		},
+	}
+	matchBA := proxy.RouteMatch{
+		Path: &proxy.PathMatch{Type: proxy.PathMatchPathPrefix, Value: "/"},
+		QueryParams: []proxy.QueryParamMatch{
+			{Type: proxy.QueryParamMatchExact, Name: "b", Value: "2"},
+			{Type: proxy.QueryParamMatchExact, Name: "a", Value: "1"},
+		},
+	}
+
+	cfg := &proxy.Config{
+		Rules: []proxy.RouteRule{
+			{Hostnames: []string{"a.example.com"}, Matches: []proxy.RouteMatch{matchAB}},
+			{Hostnames: []string{"a.example.com"}, Matches: []proxy.RouteMatch{matchBA}},
+		},
+		Provenance: []proxy.RuleProvenance{
+			prov("HTTPRoute", "ns", "winner", shadowT0, 0),
+			prov("HTTPRoute", "ns", "loser", shadowT1, 0),
+		},
+	}
+
+	diags := proxy.DetectShadowedRules(cfg)
+	assert.Len(t, diags, 1, "query-param order must not defeat the collision detection")
+}
+
 // TestDetectShadowedRules_CrossKindBasis pins the honest basis label for the
 // only remaining tie: an HTTPRoute rule beats an equal-precedence GRPCRoute
 // rule purely because HTTP rules precede gRPC rules in the generated config.

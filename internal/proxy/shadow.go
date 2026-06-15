@@ -229,14 +229,29 @@ func canonicalMatchKey(match RouteMatch) string {
 
 	encoded, err := json.Marshal(norm)
 	if err != nil {
-		// RouteMatch is plain data; Marshal cannot realistically fail. Fall
-		// back to a CONTENT representation (not the loop-local address, which
-		// repeats across calls): equal matches must still collide, distinct
-		// ones must not.
-		return fmt.Sprintf("unmarshalable-%#v", norm)
+		// RouteMatch is plain data; Marshal cannot realistically fail. The
+		// fallback must still key by CONTENT so equal matches collide.
+		return unmarshalableMatchKey(norm)
 	}
 
 	return string(encoded)
+}
+
+// unmarshalableMatchKey is the content-stable fallback for canonicalMatchKey
+// when json.Marshal fails. RouteMatch.Path is a pointer, so a bare %#v would
+// render its ADDRESS — making two spec-identical matches produce different keys
+// and silently miss the shadow collision. Dereference Path explicitly (the only
+// pointer field) and drop the pointer from the struct dump so the rest of the
+// fields (slices, strings) contribute their content.
+func unmarshalableMatchKey(norm RouteMatch) string {
+	path := "nil"
+	if norm.Path != nil {
+		path = fmt.Sprintf("%#v", *norm.Path)
+	}
+
+	norm.Path = nil
+
+	return fmt.Sprintf("unmarshalable|path=%s|%#v", path, norm)
 }
 
 func normalizeHeaderMatches(headers []HeaderMatch) []HeaderMatch {
