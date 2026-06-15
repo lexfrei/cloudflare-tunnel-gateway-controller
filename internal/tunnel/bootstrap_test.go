@@ -112,14 +112,23 @@ func TestParseTunnelToken_DoesNotLeakSecret(t *testing.T) {
 
 	const secretSentinel = "SUPERSECRETtunnelVALUE"
 
-	t.Run("malformed secret field", func(t *testing.T) {
+	t.Run("base64-invalid secret field", func(t *testing.T) {
 		t.Parallel()
 
+		// TunnelSecret is a []byte field, so json.Unmarshal base64-decodes the
+		// "s" string; an invalid value makes the unmarshal fail with a stdlib
+		// base64 detail ("illegal base64 data at input byte N"). The wrapped
+		// error must collapse to the static JSON sentinel, never carry that
+		// detail — asserting only NotContains(secret) is vacuous here because
+		// the base64 error reports an offset, not the bytes.
 		tokenJSON := `{"a":"abc123","t":"550e8400-e29b-41d4-a716-446655440000","s":"` + secretSentinel + `_!!!"}`
 		_, err := tunnel.ParseTunnelToken(base64.StdEncoding.EncodeToString([]byte(tokenJSON)))
 
 		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not valid JSON", "must collapse to the static sentinel")
 		assert.NotContains(t, err.Error(), secretSentinel)
+		assert.NotContains(t, err.Error(), "illegal base64",
+			"the stdlib base64 detail from the json []byte decode must not propagate")
 	})
 
 	t.Run("decoded bytes are not JSON", func(t *testing.T) {

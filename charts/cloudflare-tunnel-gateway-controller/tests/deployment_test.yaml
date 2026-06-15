@@ -744,6 +744,27 @@ tests:
       - notMatchRegexRaw:
           pattern: hostname-ownership-namespace-selector
 
+  # The controller passes the monitoring-namespace selector to the per-Gateway
+  # NetworkPolicy renderer; it is wired from proxy.networkPolicy.
+  - it: should pass the monitoring-namespace selector when set
+    set:
+      proxy:
+        networkPolicy:
+          monitoringNamespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--monitoring-namespace-selector=kubernetes.io/metadata.name=monitoring"
+
+  - it: should omit the monitoring-namespace selector flag when empty
+    asserts:
+      # Raw-output regex: an exact-element notContains would still pass if the
+      # flag rendered WITH a value.
+      - notMatchRegexRaw:
+          pattern: monitoring-namespace-selector
+
   # The controller renders per-Gateway proxy Deployments and must know the
   # release's proxy image; the chart always passes it.
   - it: should always pass the proxy image to the controller
