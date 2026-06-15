@@ -66,6 +66,31 @@ func TestDetectShadowedRules_ExactDuplicateAcrossRoutes(t *testing.T) {
 	assert.Contains(t, diag.Message, "app.example.com")
 }
 
+// TestDetectShadowedRules_DuplicateMatchesEmitOneDiagnostic pins that a losing
+// rule with duplicate (hostname, match) claims — two identical matches in one
+// rule, which the CRD list-map-key dedup does NOT catch for path-only matches —
+// produces a SINGLE diagnostic, not one per duplicate claim. Otherwise the
+// controller writes redundant Shadowed conditions/Events for one rule.
+func TestDetectShadowedRules_DuplicateMatchesEmitOneDiagnostic(t *testing.T) {
+	t.Parallel()
+
+	cfg := &proxy.Config{
+		Rules: []proxy.RouteRule{
+			{Hostnames: []string{"app.example.com"}, Matches: []proxy.RouteMatch{pathPrefixMatch("/")}},
+			{Hostnames: []string{"app.example.com"}, Matches: []proxy.RouteMatch{pathPrefixMatch("/"), pathPrefixMatch("/")}},
+		},
+		Provenance: []proxy.RuleProvenance{
+			prov("HTTPRoute", "team-a", "app", shadowT0, 0),
+			prov("HTTPRoute", "team-b", "intruder", shadowT1, 0),
+		},
+	}
+
+	diags := proxy.DetectShadowedRules(cfg)
+	require.Len(t, diags, 1, "duplicate claims within one losing rule must collapse to a single diagnostic")
+	assert.Equal(t, "team-b", diags[0].Namespace)
+	assert.Equal(t, "intruder", diags[0].Name)
+}
+
 // TestDetectShadowedRules_TimestampTieUsesNamespaceName pins the second
 // precedence criterion: equal creationTimestamps fall back to alphabetical
 // {namespace}/{name}.

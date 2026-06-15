@@ -103,11 +103,6 @@ func DetectShadowedRules(cfg *Config) []RouteDiagnostic {
 	// one key the true winner is only known after all of them are seen —
 	// emitting against the running incumbent would name an intermediate
 	// claimant that itself serves zero traffic on the pair.
-	type shadowClaim struct {
-		key      shadowKey
-		claimant shadowClaimant
-	}
-
 	winners := make(map[shadowKey]shadowClaimant)
 
 	var claims []shadowClaim
@@ -130,8 +125,28 @@ func DetectShadowedRules(cfg *Config) []RouteDiagnostic {
 		}
 	}
 
-	// Pass 2: every losing claim gets a diagnostic naming the final winner.
+	return shadowDiagnostics(claims, winners)
+}
+
+type shadowClaim struct {
+	key      shadowKey
+	claimant shadowClaimant
+}
+
+// shadowDiagnostics is Pass 2: every losing claim gets a diagnostic naming the
+// final winner. A rule can claim the same key more than once — duplicate
+// matches, which the CRD list-map-key does not dedup for path-only matches — so
+// it collapses to one diagnostic per (losing rule, key) to avoid redundant
+// conditions/Events.
+func shadowDiagnostics(claims []shadowClaim, winners map[shadowKey]shadowClaimant) []RouteDiagnostic {
+	type emittedClaim struct {
+		flatIdx int
+		key     shadowKey
+	}
+
 	var diags []RouteDiagnostic
+
+	emitted := make(map[emittedClaim]struct{}, len(claims))
 
 	for i := range claims {
 		claim := &claims[i]
@@ -147,6 +162,13 @@ func DetectShadowedRules(cfg *Config) []RouteDiagnostic {
 			// cross-tenant collision.
 			continue
 		}
+
+		dedupe := emittedClaim{flatIdx: claim.claimant.flatIdx, key: claim.key}
+		if _, done := emitted[dedupe]; done {
+			continue // a duplicate match already emitted this exact diagnostic
+		}
+
+		emitted[dedupe] = struct{}{}
 
 		diags = append(diags, RouteDiagnostic{
 			Namespace: claim.claimant.provenance.Namespace,
