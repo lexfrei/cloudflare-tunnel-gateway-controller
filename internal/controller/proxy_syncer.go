@@ -86,6 +86,16 @@ type ProxySyncer struct {
 // pushTarget is one partition's push state: the cache that lets a resync
 // replay config to a new pod, the hash/endpoint pair keying the steady-state
 // skip, and the partition's own endpoints + auth token.
+//
+// The HTTPRoute and GRPCRoute reconcilers release RouteSyncer.syncMu before
+// their push phases, so two can update one partition's endpointURLs/authToken
+// concurrently (last-writer-wins; each critical section stays internally
+// consistent, so -race is clean). This is benign: both derive the SAME values
+// for a partition — its headless-Service DNS and its own auth Secret — so a
+// concurrent overwrite writes identical bytes. Any genuine staleness (an
+// endpoint set that changed between the two reconciles) self-heals on the next
+// config or endpoint event, which re-pushes; the partition KEY never changes,
+// so a stale write can never redirect a tenant's config to another plane.
 type pushTarget struct {
 	lastCfg             *proxy.Config
 	lastPushedHash      string

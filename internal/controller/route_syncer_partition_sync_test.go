@@ -359,6 +359,26 @@ func TestSyncAllRoutes_SameTunnelPartitionsMerge(t *testing.T) {
 	assert.Contains(t, hosts, "tenant.example.com")
 }
 
+// TestSyncAllRoutes_SameTunnelMergedWriteFailureSurfaces pins the documented
+// shared-tunnel migration path's failure mode: the shared and a dedicated
+// Gateway merge onto ONE tunnel, so when that single tunnel's write fails there
+// is no healthy sibling to partially succeed and the failure must SURFACE as a
+// sync error — not be silently swallowed, which would leave both routes
+// reporting healthy while neither reached the edge. (The per-parent attribution
+// when a FAILED tunnel coexists with a healthy one is covered by
+// TestSyncAllRoutes_DistinctTunnelWriteFailureIsolated.)
+func TestSyncAllRoutes_SameTunnelMergedWriteFailureSurfaces(t *testing.T) {
+	t.Parallel()
+
+	api := newRecordingTunnelAPI(t)
+	syncer := newPartitionSyncSyncer(t, api, tenantTunnelUUID)
+	api.failTunnel(tenantTunnelUUID) // the one tunnel both partitions merge into
+
+	_, _, err := syncer.SyncAllRoutes(context.Background())
+	require.Error(t, err,
+		"a merged single-tunnel write failure must surface as a sync error, not be swallowed")
+}
+
 // TestSyncAllRoutes_BrokenGatewayConfigFailsClosed pins the isolation
 // fail-mode: when an opted-in Gateway's GatewayConfig cannot resolve (here:
 // its token Secret is gone), its routes must NOT fall back into the shared
