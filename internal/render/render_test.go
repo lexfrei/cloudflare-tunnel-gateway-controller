@@ -305,6 +305,25 @@ func TestProxyDeployment_ReplicaModes(t *testing.T) {
 	assert.Nil(t, withHPA.Spec.Replicas, "the HPA owns the replica count when autoscaling is set")
 }
 
+// TestProxyResources_ExplicitBlockIsDeepCopied pins that an explicit resources
+// block is deep-copied into the rendered container: mutating the rendered
+// ResourceList must never write back through to the source GatewayConfig (a
+// shallow deref would alias the same inner map).
+func TestProxyResources_ExplicitBlockIsDeepCopied(t *testing.T) {
+	t.Parallel()
+
+	in := testInput("edge")
+	in.Config.Spec.Resources = &corev1.ResourceRequirements{
+		Limits: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("250m")},
+	}
+
+	rendered := render.ProxyDeployment(in).Spec.Template.Spec.Containers[0].Resources
+	rendered.Limits[corev1.ResourceCPU] = resource.MustParse("999m")
+
+	assert.Equal(t, "250m", in.Config.Spec.Resources.Limits.Cpu().String(),
+		"the rendered resources must not alias the source GatewayConfig's map")
+}
+
 // TestProxyDeployment_TokenHashAnnotation pins the rotation contract: the pod
 // template carries a hash of the connector token so a token rotation rolls
 // the pods.
