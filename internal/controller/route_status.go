@@ -436,10 +436,10 @@ func droppedConfigMessage(diagnostics []proxy.RouteDiagnostic, partial bool) str
 
 	detail := strings.Join(details, " ")
 	if !partial {
-		return detail
+		return truncateConditionMessage(detail)
 	}
 
-	return "Dropped Rule " + strings.Join(idxStrs, ", ") + ": " + detail
+	return truncateConditionMessage("Dropped Rule " + strings.Join(idxStrs, ", ") + ": " + detail)
 }
 
 // perParentSyncErr resolves the sync error for a single parentRef. A

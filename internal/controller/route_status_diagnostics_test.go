@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 
@@ -145,4 +146,29 @@ func TestDiagnostics_CallerOverrideWins(t *testing.T) {
 	assert.Equal(t, metav1.ConditionFalse, accepted.Status)
 	assert.Equal(t, string(gatewayv1.RouteReasonUnsupportedProtocol), accepted.Reason,
 		"the caller's more-specific override must win over the diagnostic-derived one")
+}
+
+// TestDroppedConfigMessage_TruncatesOverlongMessage pins the same
+// CRD-validation guard buildShadowedCondition has: a route with very many
+// dropped rules would otherwise join past metav1.Condition's 32768 Message cap
+// and fail the WHOLE status update (losing Accepted/ResolvedRefs with it).
+func TestDroppedConfigMessage_TruncatesOverlongMessage(t *testing.T) {
+	t.Parallel()
+
+	diagnostics := make([]proxy.RouteDiagnostic, 0, 400)
+	for i := range 400 {
+		diagnostics = append(diagnostics, proxy.RouteDiagnostic{
+			Namespace: "default", Name: "web", RuleIndex: i, Target: proxy.DiagnosticAccepted,
+			Reason:    string(gatewayv1.RouteReasonUnsupportedValue),
+			Message:   strings.Repeat("x", 100) + " rule " + strconv.Itoa(i) + " dropped",
+			WholeRule: true,
+		})
+	}
+
+	for _, partial := range []bool{true, false} {
+		msg := droppedConfigMessage(diagnostics, partial)
+		assert.LessOrEqualf(t, len(msg), conditionMessageMaxLength,
+			"partial=%v: the joined dropped-config message must fit metav1.Condition's MaxLength", partial)
+		assert.Truef(t, strings.HasSuffix(msg, "..."), "partial=%v: a truncated message must signal the cut", partial)
+	}
 }
