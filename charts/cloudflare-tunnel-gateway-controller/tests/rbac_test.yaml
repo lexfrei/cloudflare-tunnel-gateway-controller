@@ -329,13 +329,15 @@ tests:
             resources: ["horizontalpodautoscalers"]
             verbs: ["get", "list", "watch", "create", "update", "delete"]
       # The per-Gateway NetworkPolicy locking each tenant proxy's config-API
-      # port is controller-rendered, so the grant must be present.
+      # port is controller-rendered, so the grant must be present. No patch:
+      # written via CreateOrUpdate + Delete only (the proxy port is never
+      # patched, unlike the shared proxy Deployment).
       - contains:
           path: rules
           content:
             apiGroups: ["networking.k8s.io"]
             resources: ["networkpolicies"]
-            verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+            verbs: ["get", "list", "watch", "create", "update", "delete"]
       - contains:
           path: rules
           content:

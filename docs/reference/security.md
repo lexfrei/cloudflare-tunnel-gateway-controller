@@ -144,7 +144,7 @@ rules:
   # config-API port to the controller (+ monitoring) namespaces
   - apiGroups: ["networking.k8s.io"]
     resources: ["networkpolicies"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+    verbs: ["get", "list", "watch", "create", "update", "delete"]
 
   # GatewayConfig CRD - per-Gateway data-plane parameters referenced from
   # Gateway.spec.infrastructure.parametersRef

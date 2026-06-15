@@ -76,6 +76,9 @@ rules:
   # controller-owned via ownerReferences and deleted only when owned.
   - apiGroups: ["apps"]
     resources: ["deployments"]
+    # patch IS used here (unlike services/HPA/NetworkPolicy): the proxy Secret
+    # reconciler merge-patches the SHARED proxy Deployment's pod-template
+    # annotation to roll it on tunnel-token rotation.
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   # HorizontalPodAutoscalers: rendered per opted-in Gateway when its
   # GatewayConfig requests autoscaling (issue #479).
@@ -88,7 +91,8 @@ rules:
   # ownerReference.
   - apiGroups: ["networking.k8s.io"]
     resources: ["networkpolicies"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+    # No patch: written via CreateOrUpdate + Delete only (see deployments).
+    verbs: ["get", "list", "watch", "create", "update", "delete"]
   # Secrets: the controller only reads them (Cloudflare credentials, TLS
   # certificate refs, BackendTLSPolicy CA bundles). It does not create,
   # mutate, or delete Secrets, so write verbs are intentionally absent.
