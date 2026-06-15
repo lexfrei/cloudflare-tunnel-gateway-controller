@@ -351,7 +351,18 @@ func TestProxyDeployment_TokenHashAnnotation(t *testing.T) {
 func TestRenderedNames_NoSameKindCollisionAcrossGateways(t *testing.T) {
 	t.Parallel()
 
-	gatewayNames := []string{"edge", "edge-config", "edge-netpol", "edge-auth", "other", "edge-config-config"}
+	// truncateName has two output regimes — pass-through for already-valid
+	// labels and a `<body>-<8hex>` hash form for the rest. If those spaces
+	// overlap, a Gateway literally named like another's hashed output collides.
+	// longName forces the hash path; collider is that exact rendered output with
+	// the builder prefix stripped, so it would pass through unchanged and alias.
+	longName := strings.Repeat("g", 80)
+	collider := strings.TrimPrefix(render.DeploymentName(testInput(longName).Gateway), "cf-proxy-")
+
+	gatewayNames := []string{
+		"edge", "edge-config", "edge-netpol", "edge-auth", "other", "edge-config-config",
+		longName, collider,
+	}
 
 	builders := map[string]func(string) string{
 		"Deployment":    func(n string) string { return render.DeploymentName(testInput(n).Gateway) },

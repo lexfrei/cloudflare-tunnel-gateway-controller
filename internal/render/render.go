@@ -530,9 +530,13 @@ func truncateName(name string) string {
 	// Pass through only a name that is ALREADY a valid rendered name: no
 	// sanitization needed, within the length cap, and starting+ending on an
 	// alphanumeric (a leading/trailing dash is a valid char but an invalid
-	// DNS-1123 label). Anything else takes the hash path, which trims the
-	// edges. Real Gateway names (DNS-1123 subdomains) always pass through.
-	if sanitized == name && len(name) <= MaxDNSLabelLength && isAlphanumericEdged(name) {
+	// DNS-1123 label). A name already shaped like the hash path's
+	// `-<8hex>` tail must NOT pass through — a different long name could hash to
+	// exactly it, aliasing two Gateways onto one rendered name — so it is forced
+	// down the hash path, keeping the pass-through and hash output spaces
+	// disjoint. Anything else takes the hash path, which trims the edges. Real
+	// Gateway names (DNS-1123 subdomains) always pass through.
+	if sanitized == name && len(name) <= MaxDNSLabelLength && isAlphanumericEdged(name) && !hasHashSuffixShape(name) {
 		return name
 	}
 
@@ -550,6 +554,25 @@ func truncateName(name string) string {
 	}
 
 	return body + "-" + suffix
+}
+
+// hasHashSuffixShape reports whether name already ends in the "-<8 lowercase
+// hex>" tail the hash path produces. Such names must take the hash path rather
+// than pass through, so a pass-through result can never equal a hashed result
+// (the two output spaces stay disjoint, preventing cross-Gateway aliasing).
+func hasHashSuffixShape(name string) bool {
+	if len(name) < nameHashLength+1 || name[len(name)-nameHashLength-1] != '-' {
+		return false
+	}
+
+	for _, char := range name[len(name)-nameHashLength:] {
+		isHex := (char >= '0' && char <= '9') || (char >= 'a' && char <= 'f')
+		if !isHex {
+			return false
+		}
+	}
+
+	return true
 }
 
 // sanitizeDNSLabel lowercases and replaces every character that is not a
