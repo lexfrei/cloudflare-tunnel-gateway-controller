@@ -87,7 +87,8 @@ type Metrics struct {
 	// and are NOT counted.
 	responseBytes *prometheus.CounterVec
 	// requestBytes accumulates request body bytes actually read from the
-	// client.
+	// client. Post-hijack WebSocket frames flow through the raw connection and
+	// bypass the counting body, so — like responseBytes — they are NOT counted.
 	requestBytes *prometheus.CounterVec
 }
 
@@ -225,6 +226,12 @@ func (s *metricsRequestState) onUpgrade() {
 // gauges never leak.
 func (s *metricsRequestState) finish() {
 	if s.upgraded {
+		// Post-upgrade WebSocket frames bypass the counting body/writer, so only
+		// the pre-hijack handshake body is countable (usually zero, but a client
+		// MAY send a body before upgrading — those bytes WERE read and are real,
+		// so they are recorded; see TestMetricsUpgrade_RequestBodyBytesCounted).
+		// responseBytes has no pre-hijack equivalent (a 101 has no body), hence
+		// only requestBytes is added here.
 		s.metrics.wsActiveSessions.Dec()
 		s.metrics.requestBytes.WithLabelValues(s.hostname).Add(float64(s.bodyBytes.Load()))
 
