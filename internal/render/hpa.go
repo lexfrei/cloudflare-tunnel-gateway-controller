@@ -27,6 +27,10 @@ func Autoscaler(input *Input) *autoscalingv2.HorizontalPodAutoscaler {
 	minReplicas := min(auto.EffectiveMinReplicas(), auto.MaxReplicas)
 	target := resource.NewQuantity(int64(auto.TargetInflightPerPod), resource.DecimalSI)
 
+	// Spec.Behavior is deliberately left unset: unlike the Deployment (whose
+	// apiserver-defaulted fields are rendered explicitly to stop a reconcile
+	// hot-loop), the apiserver does NOT default HPA Behavior, so omitting it
+	// causes no drift — the convergence envtest's no-op re-apply confirms this.
 	return &autoscalingv2.HorizontalPodAutoscaler{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        DeploymentName(input.Gateway),
