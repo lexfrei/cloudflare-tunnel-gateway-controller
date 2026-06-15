@@ -375,8 +375,10 @@ func proxyResources(config *v1alpha1.GatewayConfig) corev1.ResourceRequirements 
 	if config.Spec.Resources != nil {
 		// An explicit value wins — INCLUDING a non-nil empty {}: `resources: {}`
 		// is a deliberate opt-out of the chart-parity defaults (no
-		// requests/limits), not a request to re-apply them.
-		return *config.Spec.Resources
+		// requests/limits), not a request to re-apply them. DeepCopy so the
+		// rendered object never aliases the inner ResourceList maps of the
+		// source GatewayConfig.
+		return *config.Spec.Resources.DeepCopy()
 	}
 
 	// Chart parity: the shared proxy's default requests/limits.
