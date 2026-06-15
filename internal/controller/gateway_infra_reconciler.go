@@ -334,10 +334,9 @@ func (r *GatewayInfraReconciler) applyRendered(
 	return nil
 }
 
-// applyDeployment renders and applies the proxy Deployment. Replica
-// managedAnnotationsKey records which annotation keys THIS controller
-// rendered onto an object, so a subsequent reconcile can drop ones the tenant
-// removed without clobbering annotations set by other actors.
+// managedAnnotationsKey records which annotation keys THIS controller rendered
+// onto an object, so a subsequent reconcile can drop ones the tenant removed
+// without clobbering annotations set by other actors.
 const managedAnnotationsKey = "cf.k8s.lex.la/managed-annotations"
 
 // mergeManagedAnnotations overlays the desired (controller-rendered)

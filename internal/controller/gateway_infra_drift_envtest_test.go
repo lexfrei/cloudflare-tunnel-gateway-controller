@@ -136,6 +136,69 @@ func TestGatewayInfraReconciler_ApplyConvergesAgainstAPIServer(t *testing.T) {
 			"the rolled pod template must carry the auth-token hash")
 	})
 
+	t.Run("infrastructure annotations converge via the managed-key marker", func(t *testing.T) {
+		namespace := driftNamespace(ctx, t)
+		gateway := driftGateway(namespace)
+		gateway.Spec.Infrastructure = &gatewayv1.GatewayInfrastructure{
+			Annotations: map[gatewayv1.AnnotationKey]gatewayv1.AnnotationValue{"example.com/note": "hello"},
+		}
+		input := &render.Input{
+			Gateway:     gateway,
+			TunnelToken: "token",
+			Defaults:    reconciler.RenderDefaults,
+			Config: &v1alpha1.GatewayConfig{
+				ObjectMeta: metav1.ObjectMeta{Name: "edge-config", Namespace: namespace},
+				Spec:       v1alpha1.GatewayConfigSpec{TunnelTokenSecretRef: v1alpha1.LocalSecretReference{Name: "edge-token"}},
+			},
+		}
+
+		op, err := reconciler.applyDeployment(ctx, gateway, input)
+		require.NoError(t, err)
+		require.Equal(t, controllerutil.OperationResultCreated, op, "first apply must create")
+
+		// envtest runs the apiserver but NOT kube-controller-manager, so the
+		// Deployment controller never stamps deployment.kubernetes.io/revision.
+		// Stamp it by hand to stand in for that foreign writer — this is the
+		// exact annotation a naive full-replace would clobber, triggering an
+		// endless write ping-pong with kube-controller-manager.
+		var dep appsv1.Deployment
+		key := client.ObjectKeyFromObject(render.ProxyDeployment(input))
+		require.NoError(t, reconciler.Get(ctx, key, &dep))
+		dep.Annotations["deployment.kubernetes.io/revision"] = "1"
+		require.NoError(t, reconciler.Update(ctx, &dep))
+
+		// The load-bearing path: mergeManagedAnnotations must preserve the
+		// foreign key while re-writing only its own managed keys, tracked via
+		// the managedAnnotationsKey marker round-tripped through the apiserver.
+		// Assert re-apply is a no-op (no marker ping-pong, foreign key kept).
+		for i := range 2 {
+			op, err := reconciler.applyDeployment(ctx, gateway, input)
+			require.NoError(t, err)
+			assert.Equalf(t, controllerutil.OperationResultNone, op,
+				"re-apply %d with infrastructure.annotations must converge (no marker ping-pong)", i+1)
+		}
+
+		require.NoError(t, reconciler.Get(ctx, key, &dep))
+		require.Equal(t, "hello", dep.Annotations["example.com/note"], "the tenant annotation must be applied")
+		require.Equal(t, "1", dep.Annotations["deployment.kubernetes.io/revision"],
+			"the foreign revision annotation must survive re-apply")
+
+		// Removing the tenant annotation must drop it (tracked via the marker)
+		// while the foreign revision annotation survives.
+		gateway.Spec.Infrastructure.Annotations = nil
+
+		op, err = reconciler.applyDeployment(ctx, gateway, input)
+		require.NoError(t, err)
+		require.Equal(t, controllerutil.OperationResultUpdated, op, "removing the annotation must update")
+
+		require.NoError(t, reconciler.Get(ctx, key, &dep))
+		assert.NotContains(t, dep.Annotations, "example.com/note", "the removed tenant annotation must be dropped")
+		assert.NotContains(t, dep.Annotations, "cf.k8s.lex.la/managed-annotations",
+			"the marker must be dropped once nothing is managed")
+		assert.Equal(t, "1", dep.Annotations["deployment.kubernetes.io/revision"],
+			"the foreign revision annotation must survive the managed-key prune")
+	})
+
 	t.Run("deployment (autoscaling mode, nil replicas)", func(t *testing.T) {
 		namespace := driftNamespace(ctx, t)
 		gateway := driftGateway(namespace)
