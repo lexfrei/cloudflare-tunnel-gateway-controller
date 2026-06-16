@@ -84,6 +84,33 @@ func TestPerGatewayDataPlaneEndToEnd(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.True(t, strings.HasPrefix(echo.Pod, "echo-v2-"), "expected echo-v2 backend, got %s", echo.Pod)
 
+	// Scale up: a newly-joined per-Gateway pod must receive the cached config
+	// via the EndpointSlice watch and become Ready. That path relies on
+	// Kubernetes mirroring the rendered Service's cf.k8s.lex.la/gateway label
+	// onto its EndpointSlices (kubernetes/kubernetes#94443) to trigger
+	// ResyncPartition — if the mirror were broken the second pod would sit
+	// configless and never report Ready. This is the live canary for that
+	// dependency (envtest cannot cover it: it runs no kube-controller-manager).
+	require.NoError(t, k8sClient.Get(ctx,
+		types.NamespacedName{Name: "pg-config", Namespace: cfg.TestNamespace}, gwConfig))
+	gwConfig.Spec.Replicas = new(int32(2))
+	require.NoError(t, k8sClient.Update(ctx, gwConfig))
+
+	scaleErr := wait.PollUntilContextTimeout(ctx, 3*time.Second, 5*time.Minute, true,
+		func(pollCtx context.Context) (bool, error) {
+			var deployment appsv1.Deployment
+
+			getErr := k8sClient.Get(pollCtx, deploymentKey, &deployment)
+			if getErr != nil {
+				return false, nil //nolint:nilerr // rendering is asynchronous; retry until timeout
+			}
+
+			return deployment.Status.ReadyReplicas >= 2, nil
+		},
+	)
+	require.NoError(t, scaleErr,
+		"a scaled-up per-Gateway pod never became Ready — the EndpointSlice label-mirror resync is likely broken")
+
 	// GC: deleting the Gateway must collect the rendered data plane.
 	require.NoError(t, k8sClient.Delete(ctx, gateway))
 	waitForObjectGone(ctx, t, k8sClient, deploymentKey, &appsv1.Deployment{})

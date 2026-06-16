@@ -4,7 +4,57 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	corev1 "k8s.io/api/core/v1"
+	discoveryv1 "k8s.io/api/discovery/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/event"
+
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/render"
 )
+
+// TestEndpointSliceMatchesProxy pins the watch predicate that drives
+// per-pod config replay (ResyncPartition). The per-Gateway path depends on
+// Kubernetes mirroring the Service's cf.k8s.lex.la/gateway label onto its
+// EndpointSlices (kubernetes/kubernetes#94443, stable since 1.20) — without the
+// mirror, a newly-joined or restarted per-Gateway proxy pod would never trigger
+// a resync and would sit configless at /readyz. (The live mirror is exercised
+// end to end by the e2e scale test; this pins the predicate logic.)
+func TestEndpointSliceMatchesProxy(t *testing.T) {
+	t.Parallel()
+
+	reconciler := &ProxyEndpointReconciler{
+		targets: []proxyServiceTarget{{namespace: "cf-system", name: "cftunnel-proxy"}},
+	}
+	pred := reconciler.endpointSliceMatchesProxy()
+
+	perGateway := &discoveryv1.EndpointSlice{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: "tenant-a",
+			Labels:    map[string]string{render.GatewayLabel: "edge"},
+		},
+	}
+	shared := &discoveryv1.EndpointSlice{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: "cf-system",
+			Labels:    map[string]string{discoveryv1.LabelServiceName: "cftunnel-proxy"},
+		},
+	}
+	unrelated := &discoveryv1.EndpointSlice{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: "other",
+			Labels:    map[string]string{discoveryv1.LabelServiceName: "something-else"},
+		},
+	}
+
+	assert.True(t, pred.Create(event.CreateEvent{Object: perGateway}),
+		"a per-Gateway EndpointSlice (mirrored Gateway label) must match")
+	assert.True(t, pred.Create(event.CreateEvent{Object: shared}),
+		"a shared-proxy EndpointSlice (matching service-name) must match")
+	assert.False(t, pred.Create(event.CreateEvent{Object: unrelated}),
+		"an unrelated EndpointSlice must not match")
+	assert.False(t, pred.Create(event.CreateEvent{Object: &corev1.Pod{}}),
+		"a non-EndpointSlice object must not match")
+}
 
 // TestParseProxyServiceTargets pins the URL-to-(svc,ns) shape recognition
 // the EndpointSlice watch predicate depends on. Each row is a small fact

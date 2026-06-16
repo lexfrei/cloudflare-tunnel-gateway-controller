@@ -189,8 +189,12 @@ func (r *ProxyEndpointReconciler) endpointSliceMatchesProxy() predicate.Predicat
 			return false
 		}
 
-		// Per-Gateway data planes: the rendered Service's labels (including
-		// the Gateway marker) are mirrored onto its EndpointSlices.
+		// Per-Gateway data planes: the EndpointSlice controller mirrors the
+		// rendered Service's labels (including the Gateway marker) onto its
+		// EndpointSlices (kubernetes/kubernetes#94443, stable since 1.20), so a
+		// newly-joined/restarted per-Gateway pod's slice carries the marker and
+		// triggers ResyncPartition. Pinned by the e2e scale test + the predicate
+		// unit test (TestEndpointSliceMatchesProxy).
 		if slice.Labels[render.GatewayLabel] != "" {
 			return true
 		}
