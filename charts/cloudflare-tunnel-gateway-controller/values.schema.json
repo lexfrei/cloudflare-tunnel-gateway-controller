@@ -1004,7 +1004,8 @@
               "additionalProperties": false,
               "description": "LabelSelector for namespaces additionally allowed to reach the per-Gateway config-API/metrics port. Empty = controller namespace only."
             }
-          }
+          },
+          "additionalProperties": false
         },
         "nodeSelector": {
           "type": "object",
