@@ -185,6 +185,13 @@ type SyncResult struct {
 	// shared tunnel (their configs must be unioned — see
 	// unionPartitionRoutes).
 	SharedTunnelID string
+
+	// TransientBrokenKeys are the partition keys of opted-in Gateways whose
+	// config resolve failed transiently (retryable). They have no partition
+	// this sync (fail closed), but their push cache must be RETAINED across
+	// RetainPartitions so a newly-joined pod can still be replayed the last
+	// config, and the reconcile requeues to re-resolve.
+	TransientBrokenKeys []string
 }
 
 // httpStatusEntries builds routeStatusEntry slice for HTTP routes,
@@ -368,7 +375,14 @@ func pushPartitionConfigs(
 	// data plane on one tunnel has to know every route of that tunnel.
 	partitions = unionPartitionRoutes(partitions, syncResult.SharedTunnelID)
 
-	keep := make(map[string]bool, len(partitions))
+	keep := make(map[string]bool, len(partitions)+len(syncResult.TransientBrokenKeys))
+
+	// A Gateway whose resolve failed transiently has no partition this sync, so
+	// it would be evicted below — retain its cached config instead, so a pod
+	// joining during the blip is still replayed the last good config.
+	for _, key := range syncResult.TransientBrokenKeys {
+		keep[key] = true
+	}
 
 	var diagnostics []proxy.RouteDiagnostic
 
@@ -647,6 +661,7 @@ func (s *RouteSyncer) SyncAllRoutes(ctx context.Context) (ctrl.Result, *SyncResu
 	syncResult := buildSyncResult(httpResult, grpcResult, outcome.httpFailedRefs, outcome.grpcFailedRefs)
 	syncResult.Partitions = partitions
 	syncResult.SharedTunnelID = resolvedConfig.TunnelID
+	syncResult.TransientBrokenKeys = infra.transientKeys()
 
 	// All groups failed: total sync outage — global error, every route goes
 	// Pending (matches the historic single-tunnel failure shape).
@@ -674,6 +689,13 @@ func (s *RouteSyncer) SyncAllRoutes(ctx context.Context) (ctrl.Result, *SyncResu
 
 	s.recordSyncSuccessMetrics(ctx, status, startTime, httpResult, grpcResult,
 		len(outcome.httpFailedRefs), len(outcome.grpcFailedRefs), outcome.totalRules)
+
+	// A transient infra-resolve failure left a Gateway's routes unprogrammed
+	// (fail closed) but is retryable — requeue so the next sync re-resolves and
+	// programs them, rather than waiting for an unrelated event.
+	if len(syncResult.TransientBrokenKeys) > 0 {
+		return ctrl.Result{RequeueAfter: apiErrorRequeueDelay, Priority: new(priorityRoute)}, syncResult, nil
+	}
 
 	return ctrl.Result{}, syncResult, nil
 }

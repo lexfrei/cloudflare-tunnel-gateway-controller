@@ -124,6 +124,62 @@ func TestResyncTarget_DoesNotResurrectEvictedPartition(t *testing.T) {
 	assert.False(t, exists, "a resync of an evicted partition must not re-create its push state")
 }
 
+// TestPushPartitionConfigs_RetainsTransientBrokenCache pins the A4 contract: a
+// Gateway whose resolve failed TRANSIENTLY has no partition this sync, but its
+// push cache must survive RetainPartitions (via TransientBrokenKeys) so a pod
+// joining during the blip is still replayed the last config — rather than being
+// evicted and left at /readyz 503 until an unrelated reconcile.
+func TestPushPartitionConfigs_RetainsTransientBrokenCache(t *testing.T) {
+	t.Parallel()
+
+	sharedServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(sharedServer.Close)
+
+	tenantServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(tenantServer.Close)
+
+	testClient := fake.NewClientBuilder().WithScheme(runtime.NewScheme()).Build()
+	proxySyncer := NewProxySyncer("cluster.local", "shared-token", "", testClient, slog.Default())
+
+	ctx := context.Background()
+
+	// A healthy sync seeded the tenant partition's cache before the blip.
+	tenantRoute := pushFallbackRoute("tenant-r", "tenant.example.com")
+	_, err := proxySyncer.SyncPartition(ctx, "default/tenant-gw", "tenant-token",
+		[]string{tenantServer.URL + "/config"}, []*gatewayv1.HTTPRoute{tenantRoute}, nil, nil, nil)
+	require.NoError(t, err)
+
+	// This sync: the tenant Gateway failed to resolve transiently, so it has NO
+	// partition — only the shared partition split — but it is flagged transient.
+	syncResult := &SyncResult{
+		Partitions:          []routePartition{{Key: sharedPartitionKey}},
+		TransientBrokenKeys: []string{"default/tenant-gw"},
+	}
+
+	params := syncUpdateParams{
+		routeSyncer: &RouteSyncer{
+			ClusterDomain: "cluster.local",
+			Metrics:       cfmetrics.NewNoopCollector(),
+		},
+		proxySyncer:    proxySyncer,
+		proxyEndpoints: []string{sharedServer.URL + "/config"},
+		pushProxy:      true,
+	}
+
+	pushPartitionConfigs(ctx, slog.Default(), params, syncResult)
+
+	proxySyncer.syncMu.Lock()
+	_, exists := proxySyncer.targets["default/tenant-gw"]
+	proxySyncer.syncMu.Unlock()
+
+	assert.True(t, exists,
+		"a transient-broken Gateway's push cache must be retained, not evicted")
+}
+
 func pushFallbackRoute(name, hostname string) *gatewayv1.HTTPRoute {
 	pathPrefix := gatewayv1.PathMatchPathPrefix
 	port := gatewayv1.PortNumber(80)

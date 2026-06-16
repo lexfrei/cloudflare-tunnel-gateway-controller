@@ -49,12 +49,35 @@ type infraGateway struct {
 type infraGateways struct {
 	resolved map[string]*infraGateway
 	broken   map[string]bool
+	// transient is the subset of broken whose resolve failure was retryable
+	// (an apiserver blip, not a deterministic config error). These fail closed
+	// like any broken Gateway, but their push cache must be RETAINED and the
+	// reconcile requeued so a newly-joined pod is not stranded configless until
+	// an unrelated event.
+	transient map[string]bool
 }
 
 // isBroken reports whether the Gateway key opted in but failed to resolve.
 // Nil-safe (a nil view has no infra Gateways at all).
 func (g *infraGateways) isBroken(key string) bool {
 	return g != nil && g.broken[key]
+}
+
+// transientKeys returns the sorted Gateway keys whose resolve failure was
+// transient (retryable). Nil-safe.
+func (g *infraGateways) transientKeys() []string {
+	if g == nil {
+		return nil
+	}
+
+	keys := make([]string, 0, len(g.transient))
+	for key := range g.transient {
+		keys = append(keys, key)
+	}
+
+	slices.Sort(keys)
+
+	return keys
 }
 
 // isResolved reports whether the key is a Gateway that opted in and resolved
@@ -88,8 +111,9 @@ func (s *RouteSyncer) resolveInfraGateways(ctx context.Context) (*infraGateways,
 
 	logger := logging.FromContext(ctx)
 	out := &infraGateways{
-		resolved: make(map[string]*infraGateway),
-		broken:   make(map[string]bool),
+		resolved:  make(map[string]*infraGateway),
+		broken:    make(map[string]bool),
+		transient: make(map[string]bool),
 	}
 
 	for i := range gateways.Items {
@@ -114,6 +138,14 @@ func (s *RouteSyncer) resolveInfraGateways(ctx context.Context) (*infraGateways,
 				"gateway", key, "error", resolveErr)
 
 			out.broken[key] = true
+
+			// A retryable (non-deterministic) failure is a blip, not a config
+			// error: mark it transient so the push cache is retained and the
+			// reconcile requeues. A deterministic ErrInvalidParameters (or a
+			// nil perGateway with no error) stays evict-and-wait-for-status.
+			if resolveErr != nil && !errors.Is(resolveErr, config.ErrInvalidParameters) {
+				out.transient[key] = true
+			}
 
 			continue
 		}

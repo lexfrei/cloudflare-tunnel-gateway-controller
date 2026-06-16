@@ -20,9 +20,12 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/api/v1alpha1"
@@ -182,7 +185,7 @@ func partitionSyncRoute(name, gatewayName, hostname string) *gatewayv1.HTTPRoute
 
 // newPartitionSyncSyncer builds the two-gateway world: shared-gw on the class
 // tunnel, infra-gw with a dedicated data plane on the token's tunnel.
-func newPartitionSyncSyncer(t *testing.T, api *recordingTunnelAPI, classTunnelID string) *RouteSyncer {
+func newPartitionSyncSyncer(t *testing.T, api *recordingTunnelAPI, classTunnelID string, interceptors ...interceptor.Funcs) *RouteSyncer {
 	t.Helper()
 
 	scheme := runtime.NewScheme()
@@ -260,6 +263,10 @@ func newPartitionSyncSyncer(t *testing.T, api *recordingTunnelAPI, classTunnelID
 	builder := fake.NewClientBuilder().WithScheme(scheme)
 	for _, obj := range objects {
 		builder = builder.WithRuntimeObjects(obj)
+	}
+
+	if len(interceptors) > 0 {
+		builder = builder.WithInterceptorFuncs(interceptors[0])
 	}
 
 	fakeClient := builder.Build()
@@ -357,6 +364,38 @@ func TestSyncAllRoutes_SameTunnelPartitionsMerge(t *testing.T) {
 	hosts := api.hostnamesFor(tenantTunnelUUID)
 	assert.Contains(t, hosts, "shared.example.com")
 	assert.Contains(t, hosts, "tenant.example.com")
+}
+
+// TestSyncAllRoutes_TransientInfraResolveRequeues pins the A4 contract: when an
+// opted-in Gateway's config resolve fails TRANSIENTLY (a retryable apiserver
+// error, not a deterministic ErrInvalidParameters), the Gateway is flagged
+// transient-broken and the sync requeues so the next pass re-resolves — rather
+// than failing closed and waiting for an unrelated event.
+func TestSyncAllRoutes_TransientInfraResolveRequeues(t *testing.T) {
+	t.Parallel()
+
+	api := newRecordingTunnelAPI(t)
+	syncer := newPartitionSyncSyncer(t, api, tenantTunnelUUID, interceptor.Funcs{
+		Get: func(ctx context.Context, cli client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+			// A non-NotFound error on the infra Gateway's token Secret read is
+			// retryable, so ResolveForGateway returns a transient (not
+			// ErrInvalidParameters) error.
+			if key.Name == "infra-token" {
+				return apierrors.NewInternalError(assert.AnError)
+			}
+
+			return cli.Get(ctx, key, obj, opts...)
+		},
+	})
+
+	result, syncResult, err := syncer.SyncAllRoutes(context.Background())
+	require.NoError(t, err, "a transient resolve failure must not become a global sync error")
+	require.NotNil(t, syncResult)
+
+	assert.Contains(t, syncResult.TransientBrokenKeys, "default/infra-gw",
+		"a retryable resolve failure must be classified transient")
+	assert.Positive(t, result.RequeueAfter,
+		"a transient infra-resolve failure must requeue to re-resolve")
 }
 
 // TestSyncAllRoutes_SameTunnelMergeIsCanonicalFormInsensitive pins that the
