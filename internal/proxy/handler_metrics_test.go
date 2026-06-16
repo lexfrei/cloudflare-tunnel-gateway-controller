@@ -432,3 +432,63 @@ func TestHandlerMetrics_WebSocketUpgrade_TunnelMode(t *testing.T) {
 	assert.Equal(t, uint64(1), gatherHistogramCount(t, reg, "cftunnel_proxy_request_duration_seconds", hostOnly),
 		"session end must NOT observe a second duration sample")
 }
+
+// TestHandlerMetrics_WebSocketUpgrade_BackendNon101 pins the metrics flow of
+// the upgrade fallback (handler_websocket.go): when the backend answers an
+// upgrade request with a non-101 status, no WebSocket session exists — the
+// backend's response is forwarded verbatim. The exchange must count under the
+// backend's real status_class (here 4xx), NOT 1xx; the session gauge must
+// never move; in-flight must return to zero; and a declined upgrade is a
+// legitimate HTTP response, so NO ws_handshake backend error is recorded.
+func TestHandlerMetrics_WebSocketUpgrade_BackendNon101(t *testing.T) {
+	t.Parallel()
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "no upgrade here", http.StatusNotFound)
+	}))
+	t.Cleanup(backend.Close)
+
+	reg := prometheus.NewRegistry()
+	metrics := proxy.NewMetrics(reg)
+	router := proxy.NewRouter()
+	handler := proxy.NewHandler(router, proxy.WithMetrics(metrics))
+	router.SetHandler(handler)
+
+	require.NoError(t, router.UpdateConfig(&proxy.Config{
+		Version: 1,
+		Rules: []proxy.RouteRule{
+			{
+				Hostnames: []string{"app.example.com"},
+				Matches:   []proxy.RouteMatch{{Path: &proxy.PathMatch{Type: proxy.PathMatchPathPrefix, Value: "/"}}},
+				Backends: []proxy.BackendRef{
+					{URL: backend.URL, Weight: 1, Protocol: proxy.BackendProtocolHTTP, WebSocket: true},
+				},
+			},
+		},
+	}))
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://app.example.com/ws", nil)
+	req.Header.Set("Connection", "Upgrade")
+	req.Header.Set("Upgrade", "websocket")
+	req.Header.Set("Sec-WebSocket-Version", "13")
+	req.Header.Set("Sec-WebSocket-Key", rfc6455SampleWSKey)
+
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+
+	assert.Equal(t, http.StatusNotFound, recorder.Code,
+		"a non-101 backend response is forwarded to the client unchanged")
+	assert.InDelta(t, 1.0, gatherValue(t, reg, "cftunnel_proxy_requests_total",
+		map[string]string{"hostname": "app.example.com", "status_class": "4xx"}), 0.001,
+		"a declined upgrade counts under the backend's real status class, not 1xx")
+	assert.InDelta(t, 0.0, gatherValue(t, reg, "cftunnel_proxy_requests_total",
+		map[string]string{"hostname": "app.example.com", "status_class": "1xx"}), 0.001,
+		"no upgrade fired, so nothing counts as 1xx")
+	assert.InDelta(t, 0.0, gatherValue(t, reg, "cftunnel_proxy_websocket_active_sessions", nil), 0.001,
+		"a declined upgrade must never enter the session gauge")
+	assert.InDelta(t, 0.0, gatherValue(t, reg, "cftunnel_proxy_requests_in_flight", nil), 0.001,
+		"in-flight must return to zero after the fallback response")
+	assert.InDelta(t, 0.0, gatherValue(t, reg, "cftunnel_proxy_backend_errors_total",
+		map[string]string{"hostname": "app.example.com", "reason": "ws_handshake"}), 0.001,
+		"a non-101 response is a legitimate exchange, not a handshake failure")
+}
