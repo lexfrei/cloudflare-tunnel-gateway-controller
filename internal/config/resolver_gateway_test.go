@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -12,6 +13,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
@@ -508,6 +510,10 @@ func TestHasInfrastructureParametersRef(t *testing.T) {
 // config problem, which is not what a genuine apiserver timeout is.
 var errTransientAPIServer = apierrors.NewTimeoutError("apiserver timeout", 1)
 
+// errRBACDenied is the static cause for the synthetic Forbidden Secret-read
+// error used to pin the operator-vs-tenant classification decision.
+var errRBACDenied = errors.New("rbac: denied")
+
 // TestResolveForGateway_TransientErrorsAreNotInvalidParameters pins the
 // sentinel's contract: only deterministic referent failures (NotFound,
 // missing key, garbled token) classify as ErrInvalidParameters. A transient
@@ -573,4 +579,105 @@ func TestResolveForGateway_TransientErrorsAreNotInvalidParameters(t *testing.T) 
 				"a transient infrastructure error must NOT classify as InvalidParameters")
 		})
 	}
+}
+
+// TestResolveForGateway_MalformedTokenDoesNotLeakSecret pins the leak-safety
+// of the parse-failure path: the connector token is secret material, and the
+// resolve error is surfaced on the tenant-readable Gateway status. Whether the
+// token fails as bad base64 or as bad JSON, the error must classify as
+// InvalidParameters AND never echo the token's own bytes — the resolver
+// formats ParseTunnelToken's static sentinels, not the offending input.
+func TestResolveForGateway_MalformedTokenDoesNotLeakSecret(t *testing.T) {
+	t.Parallel()
+
+	const leakMarker = "LEAKCANARY-d34db33f"
+
+	tests := []struct {
+		name  string
+		token []byte
+	}{
+		// "-" is outside the base64 alphabet → fails at DecodeString, with the
+		// marker living in the raw token string.
+		{name: "invalid base64", token: []byte(leakMarker + "-not-base64")},
+		// Valid base64 whose decoded bytes are not JSON → fails at Unmarshal,
+		// with the marker living in the decoded content.
+		{name: "valid base64, invalid JSON", token: []byte(base64.StdEncoding.EncodeToString([]byte("{not-json " + leakMarker)))},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			gwConfig := &v1alpha1.GatewayConfig{
+				ObjectMeta: metav1.ObjectMeta{Name: "edge-config", Namespace: testGwNamespace},
+				Spec: v1alpha1.GatewayConfigSpec{
+					TunnelTokenSecretRef: v1alpha1.LocalSecretReference{Name: "edge-tunnel-token"},
+				},
+			}
+			secret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: "edge-tunnel-token", Namespace: testGwNamespace},
+				Data:       map[string][]byte{"tunnel-token": tt.token},
+			}
+
+			objects := append(classFixtures(), gwConfig, secret)
+			resolver := newGatewayResolver(t, objects...)
+
+			_, err := resolver.ResolveForGateway(context.Background(),
+				gatewayWithInfra("cf.k8s.lex.la", "GatewayConfig", "edge-config"))
+			require.Error(t, err)
+			assert.ErrorIs(t, err, config.ErrInvalidParameters,
+				"a malformed token is a deterministic, user-fixable problem")
+			assert.NotContains(t, err.Error(), leakMarker,
+				"the connector token's bytes must never reach the tenant-readable status")
+		})
+	}
+}
+
+// TestResolveForGateway_ForbiddenTokenSecretIsRetryable pins a deliberate
+// classification decision: a non-NotFound, non-retryable-class Secret read
+// error (here a Forbidden from a hypothetical namespaced RBAC restriction) on
+// the token path is treated as RETRYABLE, NOT as InvalidParameters. An RBAC
+// denial is an operator/controller problem, not a tenant spec problem;
+// stamping the tenant's Gateway Accepted=False/InvalidParameters would
+// misattribute the fault and fail its routes closed over a condition the
+// tenant cannot fix. Retrying is the safer bias and self-heals once the
+// operator widens RBAC. (Unreachable under the shipped cluster-wide secrets
+// RBAC; this pins the intended behaviour should that ever narrow.)
+func TestResolveForGateway_ForbiddenTokenSecretIsRetryable(t *testing.T) {
+	t.Parallel()
+
+	gwConfig := &v1alpha1.GatewayConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "edge-config", Namespace: testGwNamespace},
+		Spec: v1alpha1.GatewayConfigSpec{
+			TunnelTokenSecretRef: v1alpha1.LocalSecretReference{Name: "edge-tunnel-token"},
+		},
+	}
+
+	objects := append(classFixtures(), gwConfig, tokenSecret(t))
+
+	builder := fake.NewClientBuilder().WithScheme(perGatewayScheme(t))
+	for _, obj := range objects {
+		builder = builder.WithRuntimeObjects(obj)
+	}
+
+	forbidden := apierrors.NewForbidden(
+		schema.GroupResource{Resource: "secrets"}, "edge-tunnel-token", errRBACDenied)
+
+	builder = builder.WithInterceptorFuncs(interceptor.Funcs{
+		Get: func(ctx context.Context, cli client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+			if key.Name == "edge-tunnel-token" {
+				return forbidden
+			}
+
+			return cli.Get(ctx, key, obj, opts...)
+		},
+	})
+
+	resolver := config.NewResolver(builder.Build(), "cf-system", cfmetrics.NewNoopCollector())
+
+	_, err := resolver.ResolveForGateway(context.Background(),
+		gatewayWithInfra("cf.k8s.lex.la", "GatewayConfig", "edge-config"))
+	require.Error(t, err)
+	assert.NotErrorIs(t, err, config.ErrInvalidParameters,
+		"an RBAC denial is an operator problem, not a tenant-fixable spec error — retry, don't stamp the Gateway")
 }
