@@ -936,8 +936,13 @@ func (s *RouteSyncer) syncTunnelGroups(
 // closed), so its parent must report Accepted=False rather than silently
 // claiming health — the black-hole the per-Gateway Gateway also surfaces as
 // InvalidParameters.
+// The route condition that carries this carries Reason=Pending (the spec's
+// RouteConditionReason enum has no InvalidParameters member — that is a
+// Gateway-level reason). So the message attributes InvalidParameters to the
+// GATEWAY rather than reading as if it were the route's own reason.
 var errBrokenDataPlane = errors.New(
-	"the Gateway's dedicated data plane is unavailable (InvalidParameters); the route is not programmed")
+	"the Gateway's dedicated data plane is unavailable; the route is not programmed " +
+		"(see the Gateway's Accepted condition, which reports InvalidParameters)")
 
 // injectPartitionSyncErrors records, on each route binding, the sync error
 // affecting each Gateway the route is accepted on, attributed per Gateway so

@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -322,6 +323,31 @@ func TestProxyResources_ExplicitBlockIsDeepCopied(t *testing.T) {
 
 	assert.Equal(t, "250m", in.Config.Spec.Resources.Limits.Cpu().String(),
 		"the rendered resources must not alias the source GatewayConfig's map")
+}
+
+// TestProxyDeployment_RollingUpdateStrategy pins the rollout strategy and the
+// apiserver-defaulted fields rendered explicitly. The 25%/25% surge keeps a
+// quorum of tunnel connectors registered through a rollout (a connector gap is
+// a tunnel-availability hazard); RevisionHistoryLimit and ProgressDeadline are
+// rendered to match what the apiserver stores, so the reconciler's full-spec
+// apply converges instead of hot-looping (the convergence envtest's pin).
+func TestProxyDeployment_RollingUpdateStrategy(t *testing.T) {
+	t.Parallel()
+
+	spec := render.ProxyDeployment(testInput("edge")).Spec
+
+	assert.Equal(t, appsv1.RollingUpdateDeploymentStrategyType, spec.Strategy.Type)
+	require.NotNil(t, spec.Strategy.RollingUpdate)
+	require.NotNil(t, spec.Strategy.RollingUpdate.MaxUnavailable)
+	assert.Equal(t, "25%", spec.Strategy.RollingUpdate.MaxUnavailable.String(),
+		"a connector gap during rollout is a tunnel-availability hazard")
+	require.NotNil(t, spec.Strategy.RollingUpdate.MaxSurge)
+	assert.Equal(t, "25%", spec.Strategy.RollingUpdate.MaxSurge.String())
+
+	require.NotNil(t, spec.RevisionHistoryLimit)
+	assert.Equal(t, int32(10), *spec.RevisionHistoryLimit)
+	require.NotNil(t, spec.ProgressDeadlineSeconds)
+	assert.Equal(t, int32(600), *spec.ProgressDeadlineSeconds)
 }
 
 // TestProxyDeployment_HardenedSecurityContext pins the per-Gateway proxy's

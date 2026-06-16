@@ -307,15 +307,18 @@ tests:
   - it: should grant write access for per-gateway data-plane resources
     template: clusterrole.yaml
     asserts:
+      # Deployments DO carry patch (unlike services/HPA): the proxy Secret
+      # reconciler merge-patches the shared proxy Deployment's pod-template
+      # annotation to roll it on tunnel-token rotation, so the verb is used.
       - contains:
           path: rules
           content:
             apiGroups: ["apps"]
             resources: ["deployments"]
             verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-      # No patch verb: the reconciler writes through CreateOrUpdate
-      # (get/create/update) and Delete only — an unused write verb is
-      # gratuitous attack surface.
+      # Services and HPAs (below) carry NO patch: the reconciler writes them
+      # through CreateOrUpdate (get/create/update) and Delete only — an unused
+      # write verb is gratuitous attack surface.
       - contains:
           path: rules
           content:

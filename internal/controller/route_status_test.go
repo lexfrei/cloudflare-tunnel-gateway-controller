@@ -155,3 +155,23 @@ func TestBuildAcceptedCondition_OnlySyncErrorTriggersPending(t *testing.T) {
 	assert.Equal(t, metav1.ConditionFalse, cond.Status)
 	assert.Equal(t, string(gatewayv1.RouteReasonNoMatchingParent), cond.Reason)
 }
+
+// TestBuildAcceptedCondition_BrokenDataPlaneAttributesReasonToGateway pins that
+// a route blocked by a broken per-Gateway data plane reports Reason=Pending
+// (InvalidParameters is a Gateway-level reason, absent from the route reason
+// enum) while its message attributes InvalidParameters to the GATEWAY — so the
+// route's reason and message do not contradict each other.
+func TestBuildAcceptedCondition_BrokenDataPlaneAttributesReasonToGateway(t *testing.T) {
+	t.Parallel()
+
+	cond := buildAcceptedCondition(1, metav1.Now(), routeBindingInfo{}, 0, errBrokenDataPlane, nil)
+
+	assert.Equal(t, metav1.ConditionFalse, cond.Status)
+	assert.Equal(t, string(gatewayv1.RouteReasonPending), cond.Reason,
+		"a broken data plane demotes the route to Pending; InvalidParameters is not a route reason")
+	assert.NotEqual(t, "InvalidParameters", cond.Reason,
+		"the route must not claim a Gateway-level reason as its own")
+	assert.Contains(t, cond.Message, "Gateway's Accepted condition",
+		"the message must point at the Gateway, not read as the route's own InvalidParameters reason")
+	assert.Contains(t, cond.Message, "InvalidParameters")
+}

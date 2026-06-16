@@ -227,9 +227,13 @@ func ProxyDeployment(input *Input) *appsv1.Deployment {
 
 	return &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:        DeploymentName(input.Gateway),
-			Namespace:   input.Gateway.Namespace,
-			Labels:      resourceLabels(input.Gateway),
+			Name:      DeploymentName(input.Gateway),
+			Namespace: input.Gateway.Namespace,
+			Labels:    resourceLabels(input.Gateway),
+			// A fresh resourceAnnotations call (not podAnnotations): the
+			// Deployment object's OWN annotations must NOT carry the pod
+			// template's rotation-hash entries, and resourceAnnotations returns
+			// an independent map so this cannot alias the mutated podAnnotations.
 			Annotations: resourceAnnotations(input.Gateway),
 		},
 		Spec: appsv1.DeploymentSpec{
