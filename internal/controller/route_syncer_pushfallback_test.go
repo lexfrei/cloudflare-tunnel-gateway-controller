@@ -17,6 +17,7 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/cfmetrics"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/config"
 )
 
 // TestPushPartitionConfigs_EarlyErrorResultDoesNotLeakToShared pins the
@@ -178,6 +179,87 @@ func TestPushPartitionConfigs_RetainsTransientBrokenCache(t *testing.T) {
 
 	assert.True(t, exists,
 		"a transient-broken Gateway's push cache must be retained, not evicted")
+}
+
+// TestPushPartitionConfigs_SameTunnelPartitionsEachGetUnion pins the C7
+// integration: when pushPartitionConfigs sees two partitions on the SAME
+// tunnel, it unions their routes before pushing, so each endpoint receives the
+// merged set (the edge load-balances a tunnel's connectors). Here the shared
+// endpoint must receive BOTH the shared and the per-Gateway route, with the
+// shared/default token. (The per-Gateway endpoint's own-token delivery is
+// pinned by TestProxySyncer_SyncPartition_IsolatesTargets; its push here
+// targets a cluster-DNS address that does not resolve in-test.)
+func TestPushPartitionConfigs_SameTunnelPartitionsEachGetUnion(t *testing.T) {
+	t.Parallel()
+
+	var (
+		mu          sync.Mutex
+		sharedHosts []string
+		sharedToken string
+	)
+
+	sharedServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, req *http.Request) {
+		if req.Method == http.MethodPut {
+			var cfg struct {
+				Rules []struct {
+					Hostnames []string `json:"hostnames"`
+				} `json:"rules"`
+			}
+			require.NoError(t, json.NewDecoder(req.Body).Decode(&cfg))
+
+			mu.Lock()
+			sharedToken = req.Header.Get("Authorization")
+
+			for _, rule := range cfg.Rules {
+				sharedHosts = append(sharedHosts, rule.Hostnames...)
+			}
+			mu.Unlock()
+		}
+
+		writer.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(sharedServer.Close)
+
+	testClient := fake.NewClientBuilder().WithScheme(runtime.NewScheme()).Build()
+	proxySyncer := NewProxySyncer("cluster.local", "shared-token", "", testClient, slog.Default())
+
+	const sharedTunnel = "550e8400-e29b-41d4-a716-446655440000"
+
+	syncResult := &SyncResult{
+		SharedTunnelID: sharedTunnel,
+		Partitions: []routePartition{
+			{
+				Key:        sharedPartitionKey,
+				HTTPRoutes: []gatewayv1.HTTPRoute{*pushFallbackRoute("shared-r", "shared.example.com")},
+			},
+			{
+				Key:        "default/tenant-gw",
+				Gateway:    &gatewayv1.Gateway{ObjectMeta: metav1.ObjectMeta{Name: "tenant-gw", Namespace: "default"}},
+				PerGateway: &config.PerGatewayConfig{ResolvedConfig: config.ResolvedConfig{TunnelID: sharedTunnel}, AuthToken: "tenant-token"},
+				HTTPRoutes: []gatewayv1.HTTPRoute{*pushFallbackRoute("tenant-r", "tenant.example.com")},
+			},
+		},
+	}
+
+	params := syncUpdateParams{
+		routeSyncer: &RouteSyncer{
+			ClusterDomain: "cluster.local",
+			Metrics:       cfmetrics.NewNoopCollector(),
+		},
+		proxySyncer:    proxySyncer,
+		proxyEndpoints: []string{sharedServer.URL + "/config"},
+		pushProxy:      true,
+	}
+
+	pushPartitionConfigs(context.Background(), slog.Default(), params, syncResult)
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	assert.Contains(t, sharedHosts, "shared.example.com")
+	assert.Contains(t, sharedHosts, "tenant.example.com",
+		"a same-tunnel per-Gateway partition's route must be unioned into the shared endpoint's push")
+	assert.Equal(t, "Bearer shared-token", sharedToken, "the shared endpoint authenticates with the default token")
 }
 
 func pushFallbackRoute(name, hostname string) *gatewayv1.HTTPRoute {
