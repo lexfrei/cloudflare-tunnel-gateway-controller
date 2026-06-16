@@ -123,12 +123,19 @@ expressions). Used to derive the controller's
 --hostname-ownership-namespace-selector flag from the SAME value that scopes
 the ValidatingAdmissionPolicyBinding, so the two enforcement layers cannot
 drift in scope. Empty selector renders "".
+
+matchLabels keys are emitted in explicit sortAlpha order so the rendered flag
+string is stable regardless of map iteration order — the value feeds a
+container arg compared across reconciles, and a reordered string would churn
+the Deployment. (Don't rely on text/template's implicit map-key sort here: a
+refactor to sprig `keys` would silently drop it.)
 */}}
 {{- define "cf-tunnel-gw-ctrl.labelSelectorString" -}}
 {{- $selector := . | default dict -}}
 {{- $terms := list -}}
-{{- range $key, $value := ($selector.matchLabels | default dict) -}}
-{{- $terms = append $terms (printf "%s=%s" $key $value) -}}
+{{- $matchLabels := $selector.matchLabels | default dict -}}
+{{- range $key := (keys $matchLabels | sortAlpha) -}}
+{{- $terms = append $terms (printf "%s=%s" $key (index $matchLabels $key)) -}}
 {{- end -}}
 {{- range ($selector.matchExpressions | default list) -}}
 {{- if eq .operator "In" -}}

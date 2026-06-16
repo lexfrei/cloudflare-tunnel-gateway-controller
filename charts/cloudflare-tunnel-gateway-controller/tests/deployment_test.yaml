@@ -731,6 +731,23 @@ tests:
           path: spec.template.spec.containers[0].args
           content: "--hostname-ownership-namespace-selector=tenancy=enforced,kubernetes.io/metadata.name notin (kube-system)"
 
+  # The selector string feeds a container arg compared across reconciles, so
+  # matchLabels keys must render in a stable (sorted) order regardless of how
+  # they were written in values — a reordered string would churn the Deployment.
+  - it: should sort matchLabels keys for a stable selector string
+    set:
+      hostnameOwnershipPolicy:
+        enabled: true
+        namespaceSelector:
+          matchLabels:
+            zebra: zval
+            alpha: aval
+            mango: mval
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--hostname-ownership-namespace-selector=alpha=aval,mango=mval,zebra=zval"
+
   - it: should omit the selector flag when the selector is empty
     set:
       hostnameOwnershipPolicy:
