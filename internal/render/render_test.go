@@ -324,6 +324,84 @@ func TestProxyResources_ExplicitBlockIsDeepCopied(t *testing.T) {
 		"the rendered resources must not alias the source GatewayConfig's map")
 }
 
+// TestProxyDeployment_HardenedSecurityContext pins the per-Gateway proxy's
+// security hardening. This data plane runs a TENANT-CHOSEN image (spec.image),
+// so the pod- and container-level restrictions are the blast-radius bound, not
+// a nicety. Without this test, silently weakening any field — dropping
+// runAsNonRoot, flipping readOnlyRootFilesystem, restoring a capability —
+// would pass every other render assertion.
+func TestProxyDeployment_HardenedSecurityContext(t *testing.T) {
+	t.Parallel()
+
+	deployment := render.ProxyDeployment(testInput("edge"))
+
+	podSC := deployment.Spec.Template.Spec.SecurityContext
+	require.NotNil(t, podSC, "pod SecurityContext must be set")
+	require.NotNil(t, podSC.RunAsNonRoot)
+	assert.True(t, *podSC.RunAsNonRoot, "pod must run as non-root")
+	require.NotNil(t, podSC.RunAsUser)
+	assert.Equal(t, int64(65534), *podSC.RunAsUser, "pod must run as the nobody UID")
+	require.NotNil(t, podSC.SeccompProfile)
+	assert.Equal(t, corev1.SeccompProfileTypeRuntimeDefault, podSC.SeccompProfile.Type,
+		"pod must use the RuntimeDefault seccomp profile")
+
+	require.Len(t, deployment.Spec.Template.Spec.Containers, 1)
+	containerSC := deployment.Spec.Template.Spec.Containers[0].SecurityContext
+	require.NotNil(t, containerSC, "container SecurityContext must be set")
+	require.NotNil(t, containerSC.AllowPrivilegeEscalation)
+	assert.False(t, *containerSC.AllowPrivilegeEscalation, "privilege escalation must be denied")
+	require.NotNil(t, containerSC.ReadOnlyRootFilesystem)
+	assert.True(t, *containerSC.ReadOnlyRootFilesystem, "the root filesystem must be read-only")
+	require.NotNil(t, containerSC.Capabilities)
+	assert.Equal(t, []corev1.Capability{"ALL"}, containerSC.Capabilities.Drop,
+		"all Linux capabilities must be dropped")
+	assert.Empty(t, containerSC.Capabilities.Add, "no capability may be added back")
+}
+
+// TestProxyDeployment_DefaultResources pins the chart-parity default
+// requests/limits applied when a GatewayConfig sets no resources. A regression
+// to an empty block (no requests) would let a tenant's proxy run unbounded on
+// a shared node — the requests are the scheduling floor that keeps one tenant
+// from starving another.
+func TestProxyDeployment_DefaultResources(t *testing.T) {
+	t.Parallel()
+
+	in := testInput("edge")
+	in.Config.Spec.Resources = nil
+
+	resources := render.ProxyDeployment(in).Spec.Template.Spec.Containers[0].Resources
+
+	assert.Equal(t, "500m", resources.Limits.Cpu().String())
+	assert.Equal(t, "512Mi", resources.Limits.Memory().String())
+	assert.Equal(t, "100m", resources.Requests.Cpu().String())
+	assert.Equal(t, "128Mi", resources.Requests.Memory().String())
+}
+
+// TestProxyDeployment_ProbesTargetConfigPort pins two probe invariants the
+// CoreShape test does not: every probe targets the config-API port (the only
+// port that serves /healthz and /readyz — a probe on the data port would
+// always fail), and SuccessThreshold is exactly 1. The apiserver requires
+// SuccessThreshold == 1 for liveness/startup probes and rejects 0; a rendered
+// 0 would make every reconcile's apply fail validation.
+func TestProxyDeployment_ProbesTargetConfigPort(t *testing.T) {
+	t.Parallel()
+
+	container := render.ProxyDeployment(testInput("edge")).Spec.Template.Spec.Containers[0]
+
+	for name, probe := range map[string]*corev1.Probe{
+		"startup":   container.StartupProbe,
+		"liveness":  container.LivenessProbe,
+		"readiness": container.ReadinessProbe,
+	} {
+		require.NotNil(t, probe, "%s probe must be set", name)
+		require.NotNil(t, probe.HTTPGet, "%s probe must be an HTTP GET", name)
+		assert.Equal(t, "config-api", probe.HTTPGet.Port.StrVal,
+			"%s probe must hit the config-API port", name)
+		assert.Equal(t, int32(1), probe.SuccessThreshold,
+			"%s probe SuccessThreshold must be exactly 1 (apiserver rejects 0)", name)
+	}
+}
+
 // TestProxyDeployment_TokenHashAnnotation pins the rotation contract: the pod
 // template carries a hash of the connector token so a token rotation rolls
 // the pods.

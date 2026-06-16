@@ -19,7 +19,7 @@ Step 6's real-cluster verification is maintainer-only — it requires a Cloudfla
 
 ## Project Overview
 
-Kubernetes controller implementing Gateway API for Cloudflare Tunnel. Watches Gateway and HTTPRoute resources, automatically configures Cloudflare Tunnel ingress rules via API. Supports hot reload without cloudflared restart. Ships a single L7 proxy data plane (embeds cloudflared transport in-process via the vendored fork's `OverrideProxy` hook).
+Kubernetes controller implementing Gateway API for Cloudflare Tunnel. Watches Gateway and HTTPRoute resources, automatically configures Cloudflare Tunnel ingress rules via API. Supports hot reload without cloudflared restart. Ships a shared in-process L7 proxy data plane by default (embeds cloudflared transport in-process via the vendored fork's `OverrideProxy` hook), plus optional per-Gateway dedicated data planes — a separate proxy Deployment and tunnel per opted-in Gateway — for hard isolation.
 
 ## Build and Development Commands
 
@@ -72,7 +72,7 @@ helm template test charts/cloudflare-tunnel-gateway-controller --values charts/c
 
 ### Controllers (controller-runtime based)
 
-- **GatewayReconciler** (`internal/controller/gateway_controller.go`): Watches Gateway resources whose GatewayClass has a matching `spec.controllerName`. Resolves GatewayClassConfig for tunnel credentials. Updates Gateway status with tunnel CNAME address. Status-only since v3 — the in-process L7 proxy embeds cloudflared transport, so the controller no longer deploys a separate cloudflared instance.
+- **GatewayReconciler** (`internal/controller/gateway_controller.go`): Watches Gateway resources whose GatewayClass has a matching `spec.controllerName`. Resolves GatewayClassConfig for tunnel credentials. Updates Gateway status with tunnel CNAME address. Status-only since v3 — the shared in-process L7 proxy embeds cloudflared transport, so the controller no longer deploys a separate cloudflared instance for the shared plane (per-Gateway dedicated data planes are rendered by GatewayInfraReconciler, below; GatewayReconciler remains the sole Gateway-status writer in both modes).
 
 - **HTTPRouteReconciler** (`internal/controller/httproute_controller.go`): Watches HTTPRoute resources referencing managed Gateways. Performs full sync of all relevant routes to Cloudflare Tunnel configuration on any change. Updates HTTPRoute status. Pushes config to L7 proxy replicas via ProxySyncer.
 
