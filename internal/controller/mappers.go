@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"slices"
 
+	"github.com/cockroachdb/errors"
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -20,28 +22,69 @@ import (
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/routebinding"
 )
 
+// gatewayClassState is the three-way result of resolving a Gateway's
+// GatewayClass against this controller. The distinction matters for teardown:
+// a CONFIRMED-foreign class means the Gateway was reassigned away and any plane
+// we own must be GC'd, whereas an UNKNOWN class (missing or unreadable) is not
+// proof of foreign ownership and must NOT trigger teardown.
+type gatewayClassState int
+
+const (
+	// gatewayClassManaged: the class exists and its controllerName is ours.
+	gatewayClassManaged gatewayClassState = iota
+	// gatewayClassForeign: the class exists with a DIFFERENT controllerName.
+	gatewayClassForeign
+	// gatewayClassUnknown: the class is NotFound (maybe mid-creation) or the
+	// read failed transiently. Never teardown on this.
+	gatewayClassUnknown
+)
+
+// classifyGatewayClass resolves a Gateway's GatewayClass and reports whether it
+// is managed by this controller, confirmed-foreign, or unknown. The returned
+// error is non-nil only for a transient read failure (so the caller can back
+// off); a NotFound class is reported as unknown with a nil error.
+func classifyGatewayClass(
+	ctx context.Context,
+	cli client.Client,
+	gateway *gatewayv1.Gateway,
+	controllerName string,
+) (gatewayClassState, error) {
+	var gatewayClass gatewayv1.GatewayClass
+
+	err := cli.Get(ctx, types.NamespacedName{Name: string(gateway.Spec.GatewayClassName)}, &gatewayClass)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			logging.FromContext(ctx).Debug("GatewayClass not found for gateway",
+				"gateway", gateway.Namespace+"/"+gateway.Name,
+				"gatewayClassName", string(gateway.Spec.GatewayClassName))
+
+			return gatewayClassUnknown, nil
+		}
+
+		return gatewayClassUnknown, errors.Wrap(err, "getting gateway class")
+	}
+
+	if string(gatewayClass.Spec.ControllerName) == controllerName {
+		return gatewayClassManaged, nil
+	}
+
+	return gatewayClassForeign, nil
+}
+
 // isGatewayManagedByController checks if a Gateway belongs to a GatewayClass
 // managed by the given controller. Per Gateway API spec, controllerName is the
-// binding mechanism between GatewayClass and controller, not the class name.
+// binding mechanism between GatewayClass and controller, not the class name. A
+// missing or unreadable class is treated as not-managed (the watch mappers only
+// need the affirmative case).
 func isGatewayManagedByController(
 	ctx context.Context,
 	cli client.Client,
 	gateway *gatewayv1.Gateway,
 	controllerName string,
 ) bool {
-	var gatewayClass gatewayv1.GatewayClass
+	state, err := classifyGatewayClass(ctx, cli, gateway, controllerName)
 
-	err := cli.Get(ctx, types.NamespacedName{Name: string(gateway.Spec.GatewayClassName)}, &gatewayClass)
-	if err != nil {
-		logging.FromContext(ctx).Debug("GatewayClass not found for gateway",
-			"gateway", gateway.Namespace+"/"+gateway.Name,
-			"gatewayClassName", string(gateway.Spec.GatewayClassName),
-			"error", err)
-
-		return false
-	}
-
-	return string(gatewayClass.Spec.ControllerName) == controllerName
+	return err == nil && state == gatewayClassManaged
 }
 
 // listGatewayClassesForController returns all GatewayClasses that reference

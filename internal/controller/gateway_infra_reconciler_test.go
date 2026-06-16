@@ -172,6 +172,101 @@ func TestGatewayInfraReconciler_RendersDataPlane(t *testing.T) {
 	assert.Equal(t, "edge", service.OwnerReferences[0].Name)
 }
 
+// TestGatewayInfraReconciler_TearsDownOnForeignClassReassignment pins the A3
+// contract: when an opted-in Gateway's GatewayClass is reassigned to ANOTHER
+// controller, the plane we own is torn down (ownerRef GC can't, since the
+// Gateway is alive).
+func TestGatewayInfraReconciler_TearsDownOnForeignClassReassignment(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	reconciler := newInfraReconciler(t, infraFixtures(t)...)
+	reconcileEdge(t, reconciler)
+
+	depKey := types.NamespacedName{Name: "cf-proxy-edge", Namespace: infraNamespace}
+
+	var deployment appsv1.Deployment
+	require.NoError(t, reconciler.Get(ctx, depKey, &deployment), "first reconcile must render the plane")
+
+	// Reassign the Gateway's class to another controller.
+	var class gatewayv1.GatewayClass
+	require.NoError(t, reconciler.Get(ctx, types.NamespacedName{Name: "cloudflare-tunnel"}, &class))
+	class.Spec.ControllerName = "other.example.com/controller"
+	require.NoError(t, reconciler.Update(ctx, &class))
+
+	reconcileEdge(t, reconciler)
+
+	err := reconciler.Get(ctx, depKey, &deployment)
+	assert.True(t, apierrors.IsNotFound(err), "a confirmed-foreign class reassignment must GC the owned data plane")
+}
+
+// TestGatewayInfraReconciler_MissingClassDoesNotTeardown pins that a NotFound
+// GatewayClass (perhaps mid-creation, or just deleted) is NOT treated as proof
+// of foreign ownership: the running plane is left alone rather than torn down.
+func TestGatewayInfraReconciler_MissingClassDoesNotTeardown(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	reconciler := newInfraReconciler(t, infraFixtures(t)...)
+	reconcileEdge(t, reconciler)
+
+	depKey := types.NamespacedName{Name: "cf-proxy-edge", Namespace: infraNamespace}
+
+	var class gatewayv1.GatewayClass
+	require.NoError(t, reconciler.Get(ctx, types.NamespacedName{Name: "cloudflare-tunnel"}, &class))
+	require.NoError(t, reconciler.Delete(ctx, &class))
+
+	reconcileEdge(t, reconciler)
+
+	var deployment appsv1.Deployment
+	require.NoError(t, reconciler.Get(ctx, depKey, &deployment),
+		"a missing GatewayClass must not tear down the running plane")
+}
+
+// TestGatewayInfraReconciler_TransientClassReadErrorRequeuesWithoutTeardown
+// pins that a transient (non-NotFound) GatewayClass read failure surfaces as an
+// error (controller-runtime backs off and requeues) and never tears down.
+func TestGatewayInfraReconciler_TransientClassReadErrorRequeuesWithoutTeardown(t *testing.T) {
+	t.Parallel()
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, gatewayv1.Install(scheme))
+	require.NoError(t, v1alpha1.AddToScheme(scheme))
+	require.NoError(t, corev1.AddToScheme(scheme))
+	require.NoError(t, appsv1.AddToScheme(scheme))
+	require.NoError(t, autoscalingv2.AddToScheme(scheme))
+	require.NoError(t, networkingv1.AddToScheme(scheme))
+
+	builder := fake.NewClientBuilder().WithScheme(scheme)
+	for _, obj := range infraFixtures(t) {
+		builder = builder.WithRuntimeObjects(obj)
+	}
+
+	fakeClient := builder.WithInterceptorFuncs(interceptor.Funcs{
+		Get: func(ctx context.Context, cli client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+			if _, ok := obj.(*gatewayv1.GatewayClass); ok {
+				return apierrors.NewInternalError(assert.AnError)
+			}
+
+			return cli.Get(ctx, key, obj, opts...)
+		},
+	}).Build()
+
+	reconciler := &GatewayInfraReconciler{
+		Client:              fakeClient,
+		Scheme:              scheme,
+		ControllerName:      "cf.k8s.lex.la/tunnel-controller",
+		ConfigResolver:      config.NewResolver(fakeClient, "cf-system", cfmetrics.NewNoopCollector()),
+		RenderDefaults:      render.Defaults{ProxyImage: "ghcr.io/example/proxy:v1.2.3"},
+		ControllerNamespace: "cf-system",
+	}
+
+	_, err := reconciler.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "edge", Namespace: infraNamespace},
+	})
+	require.Error(t, err, "a transient class read error must surface for backoff, not be silently dropped")
+}
+
 // TestGatewayInfraReconciler_RendersNetworkPolicy pins that the data plane
 // includes an ingress-only NetworkPolicy locking the config-API port to the
 // controller namespace, owned by the Gateway (GC'd on delete), and that it is

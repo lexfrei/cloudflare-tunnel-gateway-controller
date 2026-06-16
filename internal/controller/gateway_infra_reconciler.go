@@ -99,7 +99,19 @@ func (r *GatewayInfraReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{}, errors.Wrap(err, "failed to get gateway")
 	}
 
-	if !isGatewayManagedByController(ctx, r.Client, &gateway, r.ControllerName) {
+	switch state, err := classifyGatewayClass(ctx, r.Client, &gateway, r.ControllerName); {
+	case err != nil:
+		// Transient GatewayClass read failure — back off and retry; never tear
+		// down a running plane on an unreadable class.
+		return ctrl.Result{}, errors.Wrap(err, "classifying gateway class")
+	case state == gatewayClassForeign:
+		// Reassigned to ANOTHER controller's class. ownerRef GC won't fire (the
+		// Gateway is alive), so tear down the plane we own. cleanupRendered only
+		// deletes objects carrying this Gateway's controller ownerReference.
+		return ctrl.Result{}, r.cleanupRendered(ctx, &gateway)
+	case state == gatewayClassUnknown:
+		// GatewayClass missing (perhaps mid-creation) — not proof of foreign
+		// ownership, so leave any running plane alone rather than tear it down.
 		return ctrl.Result{}, nil
 	}
 
