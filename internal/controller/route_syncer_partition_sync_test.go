@@ -359,6 +359,32 @@ func TestSyncAllRoutes_SameTunnelPartitionsMerge(t *testing.T) {
 	assert.Contains(t, hosts, "tenant.example.com")
 }
 
+// TestSyncAllRoutes_SameTunnelMergeIsCanonicalFormInsensitive pins that the
+// same-tunnel merge keys on the CANONICAL tunnel UUID, not the raw string. The
+// shared plane carries the GatewayClassConfig's raw tunnelID while a per-Gateway
+// plane carries the UUID parsed from its connector token (always canonical
+// lowercase). If the class tunnelID is written in a different-but-equivalent
+// form (e.g. uppercase), the two must still group into ONE document — otherwise
+// an infra Gateway on the same physical tunnel would be mis-grouped as distinct
+// and the merge would silently break.
+func TestSyncAllRoutes_SameTunnelMergeIsCanonicalFormInsensitive(t *testing.T) {
+	t.Parallel()
+
+	api := newRecordingTunnelAPI(t)
+	syncer := newPartitionSyncSyncer(t, api, strings.ToUpper(tenantTunnelUUID))
+
+	_, result, err := syncer.SyncAllRoutes(context.Background())
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	assert.Equal(t, 1, api.tunnelsWritten(),
+		"a non-canonical class tunnelID must still merge with the canonical per-Gateway UUID")
+
+	hosts := api.hostnamesFor(tenantTunnelUUID)
+	assert.Contains(t, hosts, "shared.example.com")
+	assert.Contains(t, hosts, "tenant.example.com")
+}
+
 // TestSyncAllRoutes_SameTunnelMergedWriteFailureSurfaces pins the documented
 // shared-tunnel migration path's failure mode: the shared and a dedicated
 // Gateway merge onto ONE tunnel, so when that single tunnel's write fails there

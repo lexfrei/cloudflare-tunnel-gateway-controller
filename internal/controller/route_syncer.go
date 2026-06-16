@@ -13,6 +13,7 @@ import (
 	"github.com/cloudflare/cloudflare-go/v7"
 	"github.com/cloudflare/cloudflare-go/v7/zero_trust"
 	"github.com/cockroachdb/errors"
+	"github.com/google/uuid"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -548,6 +549,13 @@ func (s *RouteSyncer) SyncAllRoutes(ctx context.Context) (ctrl.Result, *SyncResu
 		return ctrl.Result{RequeueAfter: apiErrorRequeueDelay, Priority: new(priorityRoute)}, s.buildResultForError(ctx), err
 	}
 
+	// Canonicalize the class tunnel ID so same-tunnel grouping keys on the same
+	// string as a per-Gateway plane (which carries parsed.TunnelID.String()).
+	// The shared ID is the raw GatewayClassConfig.tunnelID; without this, an
+	// equivalent-but-differently-cased value would mis-group an infra Gateway on
+	// the same physical tunnel as distinct and break the merge.
+	resolvedConfig.TunnelID = canonicalTunnelID(resolvedConfig.TunnelID)
+
 	// Create Cloudflare client with resolved credentials
 	cfClient := s.cloudflareClient(resolvedConfig)
 
@@ -696,6 +704,20 @@ func buildSyncResult(
 type tunnelGroup struct {
 	resolved   *config.ResolvedConfig
 	partitions []*routePartition
+}
+
+// canonicalTunnelID normalizes a tunnel UUID to its canonical lowercase form so
+// grouping keys are independent of the source's string form. Per-Gateway planes
+// already carry uuid.UUID.String() output; this brings the raw class tunnelID to
+// the same form. A value that does not parse as a UUID is returned unchanged
+// (the CRD pattern should prevent that, but never silently drop an ID).
+func canonicalTunnelID(id string) string {
+	parsed, err := uuid.Parse(id)
+	if err != nil {
+		return id
+	}
+
+	return parsed.String()
 }
 
 // buildTunnelGroups groups partitions by resolved tunnel ID. The shared
