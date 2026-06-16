@@ -77,6 +77,24 @@ tests:
             protocol: TCP
             port: 8080
 
+  # The admitted port MUST track proxy.configAPIPort. The kubelet health
+  # probes (deployment-proxy) target the config-API port by name, so the port
+  # the policy gates and the port the probes hit are one knob — a custom value
+  # must flow to both or in-cluster probes/pushes hit a port the policy never
+  # admits. (deployment-proxy_test.yaml pins the probe side of the same knob.)
+  - it: should track a custom configAPIPort in the admitted port
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
+        configAPIPort: 9091
+    asserts:
+      - contains:
+          path: spec.ingress[0].ports
+          content:
+            protocol: TCP
+            port: 9091
+
   - it: should default ingress.from to the release (controller) namespace
     set:
       proxy:

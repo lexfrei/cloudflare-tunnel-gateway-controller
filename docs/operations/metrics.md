@@ -96,6 +96,9 @@ The in-process L7 proxy serves its own exposition at `/metrics` on the config AP
 
 On a multi-tenant shared plane the exposition reveals per-tenant hostname series to anything that can reach the pod, so the chart ships this NetworkPolicy on by default (`proxy.networkPolicy.enabled: true`) — it admits the config API port (and therefore `/metrics`) only from the controller's own namespace. To keep Prometheus scraping working, admit your monitoring namespace too: add it to `proxy.networkPolicy.ingress.from` for the shared proxy, or set `proxy.networkPolicy.monitoringNamespaceSelector` for the per-Gateway data planes the controller renders. Where the CNI does not enforce NetworkPolicy this is a no-op and scraping is unaffected.
 
+!!! warning "Strict CNIs and kubelet health probes"
+    The proxy's liveness/readiness/startup probes also target the config API port, and they originate from the **node's kubelet** (host network), not from a pod — so a `namespaceSelector` ingress rule does not match them. Most CNIs (Calico, Cilium) permit node→pod health-check traffic regardless of NetworkPolicy, so probes work out of the box. A CNI configured to enforce policy on host→pod traffic will block them and CrashLoop the proxy; on such clusters add an ingress rule admitting the kubelet/node source for the config API port, or run with `proxy.networkPolicy.enabled: false`.
+
 Series count scales with the number of CONFIGURED hostnames — a tenant can legitimately mint series by creating many hostnames under its allowed suffix, so budget Prometheus accordingly on hostname-heavy shared planes.
 
 The `hostname` label always carries the MATCHED route hostname pattern (exact host, `*.suffix` wildcard pattern, or empty for default-bucket and unmatched requests) — never the raw client Host — so series cardinality is bounded by the pushed config.

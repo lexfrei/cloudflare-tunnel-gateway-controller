@@ -278,6 +278,31 @@ tests:
           path: spec.template.spec.containers[0].readinessProbe.httpGet.path
           value: /readyz
 
+  # All probes MUST target the config-API port (by name), never the proxy port
+  # (8080, which takes no in-cluster ingress). The default-on config-API
+  # NetworkPolicy gates exactly this port; the probe and the gate are one knob.
+  # NOTE: kubelet probes originate from the node (host network), which a
+  # namespaceSelector ingress rule does not match — most CNIs permit node->pod
+  # health checks by default, but a strict CNI may need an explicit allow (see
+  # the L7 proxy / NetworkPolicy docs). Pinning the named port keeps the risk
+  # surface "kubelet from node" and prevents it silently becoming "all probes
+  # blocked because they moved to an un-gated port".
+  - it: should target the config-API port from every health probe
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].startupProbe.httpGet.port
+          value: config-api
+      - equal:
+          path: spec.template.spec.containers[0].livenessProbe.httpGet.port
+          value: config-api
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.httpGet.port
+          value: config-api
+
   - it: should NOT emit any PROXY_ACCESS_LOG_* env when access log is disabled (default)
     # Zero-cost-when-disabled invariant: the binary side gates on
     # PROXY_ACCESS_LOG_ENABLED being truthy, so the env var being
