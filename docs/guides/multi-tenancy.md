@@ -119,6 +119,9 @@ $ kubectl get httproute capture-attempt -o yaml
 
 A Warning Event with reason `RouteShadowed` mirrors the condition for `kubectl events` and event-driven alerting. The condition clears automatically when the collision is resolved.
 
+!!! warning "Shadow detection is exact-match only"
+    The condition fires when one route's `(hostname, match)` pair is **exactly** claimed by a higher-precedence route. It does NOT detect overlapping-but-non-identical hostnames: a route on `*.example.com` and a route on `*.app.example.com` both legally match `x.app.example.com`, but neither pair is identical, so no `RouteShadowed` condition is raised even though the request resolution is ambiguous between them. Wildcard overlap across tenants is therefore invisible to this signal — enforce hostname ownership (`hostnameOwnershipPolicy`) to keep a tenant's wildcards inside its own suffix instead of relying on collision detection to catch the overlap after the fact.
+
 ## The shared-plane boundary
 
 Everything above is admission- and control-plane-level isolation: all tenants still share one proxy process and one Cloudflare Tunnel. That means shared fate (a crash or overload affects everyone), a shared edge identity, and no per-tenant traffic accounting at the tunnel level.

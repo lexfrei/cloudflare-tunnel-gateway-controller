@@ -2,9 +2,8 @@
 
 # -- GatewayClassConfig configuration
 # This section drives the optional GatewayClassConfig CRD rendered by the chart.
-# Starting v3 the chart no longer manages a separate cloudflared deployment;
-# the in-process L7 proxy embeds cloudflared transport and is deployed by the
-# chart itself. The tunnel token is supplied directly to the proxy via
+# The in-process L7 proxy embeds cloudflared transport and is deployed by the
+# chart itself; the tunnel token is supplied directly to the proxy via
 # `proxy.tunnelTokenSecretRef` (see below).
 gatewayClassConfig:
   # -- Create GatewayClassConfig resource
@@ -332,11 +331,9 @@ hostnameOwnershipPolicy:
   admissionPolicy: true
 
 # -- L7 Proxy configuration (enhanced-cloudflared data plane).
-# Starting v3 the L7 proxy is the ONLY data plane; the chart always
-# renders the proxy Deployment + Service + (optional) NetworkPolicy
-# and ServiceMonitor. The pre-v3 `proxy.enabled` toggle has been
-# removed -- v2 chart users who ran with `proxy.enabled: false` must
-# either set proxy.tunnelTokenSecretRef on upgrade or stay on v2.x.
+# The L7 proxy is the only data plane; the chart always renders the proxy
+# Deployment + Service + (optional) NetworkPolicy and ServiceMonitor.
+# `proxy.tunnelTokenSecretRef` is required.
 proxy:
   # -- Number of proxy replicas
   replicas: 2

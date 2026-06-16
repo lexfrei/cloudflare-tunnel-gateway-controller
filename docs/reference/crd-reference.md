@@ -10,7 +10,7 @@ GatewayClassConfig provides tunnel configuration for the controller. It is refer
 
 ### Spec
 
-Starting v3 the spec carries only the contract the controller needs for Cloudflare API calls. Proxy-side configuration (tunnel token, replicas, liveness probes) lives in the Helm chart `proxy.*` values; see [Helm chart reference](helm-chart.md). The AmneziaWG sidecar that v2 attached to the controller-managed cloudflared deployment is **not** available in v3 — see [Upgrading v2 → v3](../upgrading/v2-to-v3.md).
+The spec carries only the contract the controller needs for Cloudflare API calls. Proxy-side configuration (tunnel token, replicas, liveness probes) lives in the Helm chart `proxy.*` values; see [Helm chart reference](helm-chart.md).
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
@@ -60,7 +60,7 @@ GatewayClassConfig has a `status.conditions` subresource. The reconciler emits:
 | `cloudflareCredentialsSecretRef` | object | No | API-token override for this Gateway's tunnel-document writes, from a Secret in the SAME namespace (key `api-token` by default); defaults to the GatewayClass → GatewayClassConfig credentials. |
 | `authTokenSecretRef` | object | No | Bearer token (same namespace, default key `auth-token`) protecting this data plane's config API. |
 | `replicas` | integer | No | Fixed proxy replica count (default 2, max 100). Mutually exclusive with `autoscaling` (CEL-enforced). |
-| `autoscaling` | object | No | `minReplicas` (default 2, max 100), `maxReplicas` (max 100), `targetInflightPerPod`, optional `metricName` — renders an HPA on the proxy's in-flight gauge. |
+| `autoscaling` | object | No | Renders an HPA on the proxy's in-flight gauge. Required sub-fields: `maxReplicas` (max 100) and `targetInflightPerPod`. Optional: `minReplicas` (default 2, max 100) and `metricName` (defaults to the in-flight gauge). |
 | `resources` | object | No | Proxy container resource requirements. |
 | `image` | string | No | Proxy image override; defaults to the controller's `--proxy-image`. |
 

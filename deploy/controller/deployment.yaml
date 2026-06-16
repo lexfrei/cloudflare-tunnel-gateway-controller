@@ -25,7 +25,10 @@ spec:
           type: RuntimeDefault
       containers:
         - name: controller
-          image: ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller:latest
+          # Pin to a released tag — replace vX.Y.Z with the version you deploy
+          # (see the chart appVersion / GitHub releases). Never run :latest in
+          # production: it makes the running version unknowable and breaks rollback.
+          image: ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller:vX.Y.Z
           args:
             - --controller-name=cf.k8s.lex.la/tunnel-controller
             # --proxy-endpoints points at the L7 proxy's headless Service.
@@ -36,7 +39,8 @@ spec:
             # Deployments (GatewayConfig data planes). Keep it in lockstep
             # with the proxy Deployment's image; without it, opted-in
             # Gateways are not rendered (a Warning Event explains why).
-            - --proxy-image=ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller-proxy:latest
+            # Pin to the same released tag as the controller image above.
+            - --proxy-image=ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller-proxy:vX.Y.Z
             - --metrics-addr=:8080
             - --health-addr=:8081
             # cluster-domain is auto-detected from /etc/resolv.conf; uncomment
