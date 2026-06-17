@@ -498,7 +498,10 @@ func buildAcceptedCondition(
 	} else if effectiveErr := perParentSyncErr(bindingInfo, refIdx, syncErr); effectiveErr != nil {
 		status = metav1.ConditionFalse
 		reason = string(gatewayv1.RouteReasonPending)
-		message = effectiveErr.Error()
+		// Bounded in practice (Cloudflare-API / sentinel strings), but route it
+		// through the same cap as the diagnostic/shadowed paths for consistency
+		// and to stay rune-safe under the metav1 Message limit regardless.
+		message = truncateConditionMessage(effectiveErr.Error())
 	} else if override != nil {
 		// The route binds fine but cannot be served as written (e.g. gRPC over an
 		// explicit quic tunnel). Lowest precedence: a binding rejection or sync

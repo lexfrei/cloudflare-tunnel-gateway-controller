@@ -33,6 +33,10 @@ spec:
         - protocol: TCP
           port: {{ .Values.proxy.configAPIPort }}
   {{- if .Values.proxy.networkPolicy.egressRestricted }}
+  {{- $cfRanges := .Values.networkPolicy.cloudflareIpRanges | default dict }}
+  {{- if and (not $cfRanges.ipv4) (not $cfRanges.ipv6) }}
+  {{- fail "proxy.networkPolicy.egressRestricted is true but networkPolicy.cloudflareIpRanges is empty: the edge-egress rule would render an empty 'to:', which NetworkPolicy reads as allow-all on 443/7844 (the opposite of restriction). Populate networkPolicy.cloudflareIpRanges (keep it current from https://www.cloudflare.com/ips/) or set proxy.networkPolicy.egressRestricted to false." }}
+  {{- end }}
   egress:
     # DNS
     - ports:

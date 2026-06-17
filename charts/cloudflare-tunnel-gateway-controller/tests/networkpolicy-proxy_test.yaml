@@ -166,3 +166,22 @@ tests:
           path: spec.egress[2].to
           content:
             namespaceSelector: {}
+
+  # Guard the empty-to foot-gun: egressRestricted with empty cloudflareIpRanges
+  # would render an edge rule with an empty `to:`, which NetworkPolicy reads as
+  # allow-all on 443/7844 — silently the OPPOSITE of restriction. Fail loudly
+  # instead.
+  - it: should fail when egressRestricted is set but cloudflareIpRanges is empty
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
+        networkPolicy:
+          egressRestricted: true
+      networkPolicy:
+        cloudflareIpRanges:
+          ipv4: []
+          ipv6: []
+    asserts:
+      - failedTemplate:
+          errorPattern: "egressRestricted is true but networkPolicy.cloudflareIpRanges is empty"
