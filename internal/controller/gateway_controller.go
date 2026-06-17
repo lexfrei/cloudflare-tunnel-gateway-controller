@@ -79,13 +79,11 @@ func clampedInt32Pointer(count int) *int32 {
 	return &val
 }
 
-// truncateMessage truncates a message to maxConditionMessageLength.
+// truncateMessage truncates a Gateway/GatewayClassConfig condition message to
+// maxConditionMessageLength, rune-safe (see truncateUTF8): a byte-boundary cut
+// through a multi-byte rune would yield invalid UTF-8 the apiserver rejects.
 func truncateMessage(msg string) string {
-	if len(msg) > maxConditionMessageLength {
-		return msg[:maxConditionMessageLength-3] + "..."
-	}
-
-	return msg
+	return truncateUTF8(msg, maxConditionMessageLength)
 }
 
 // GatewayReconciler reconciles Gateway resources for the cloudflare-tunnel GatewayClass.

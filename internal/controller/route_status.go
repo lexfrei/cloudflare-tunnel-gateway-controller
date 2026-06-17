@@ -396,22 +396,29 @@ const conditionMessageMaxLength = 32768
 // the cap so the marked result still fits.
 const conditionTruncationMarker = "..."
 
-// truncateConditionMessage caps a condition message at the metav1 limit,
-// marking the cut. The cut backs up to a rune boundary: shadow- and
-// diagnostic-basis strings carry multi-byte runes (3-byte em-dashes), and a
-// raw byte slice through one yields invalid UTF-8 that the apiserver rejects —
-// failing the WHOLE status update, the exact outcome this guard prevents.
+// truncateConditionMessage caps a condition message at the metav1 limit.
 func truncateConditionMessage(msg string) string {
-	if len(msg) > conditionMessageMaxLength {
-		cut := conditionMessageMaxLength - len(conditionTruncationMarker)
-		for cut > 0 && !utf8.RuneStart(msg[cut]) {
-			cut--
-		}
+	return truncateUTF8(msg, conditionMessageMaxLength)
+}
 
-		return msg[:cut] + conditionTruncationMarker
+// truncateUTF8 caps msg at maxLen bytes, marking the cut. The cut backs up to a
+// rune boundary: condition messages carry multi-byte runes (3-byte em-dashes in
+// shadow/diagnostic basis strings), and a raw byte slice through one yields
+// invalid UTF-8 that the apiserver rejects — failing the WHOLE status update,
+// the exact outcome this guard prevents. Shared by every condition-message
+// writer (route diagnostics AND Gateway/GatewayClassConfig status) so the
+// rune-safety cannot regress in one path while holding in another.
+func truncateUTF8(msg string, maxLen int) string {
+	if len(msg) <= maxLen {
+		return msg
 	}
 
-	return msg
+	cut := maxLen - len(conditionTruncationMarker)
+	for cut > 0 && !utf8.RuneStart(msg[cut]) {
+		cut--
+	}
+
+	return msg[:cut] + conditionTruncationMarker
 }
 
 // droppedConfigMessage builds the human-facing condition message for a set of
