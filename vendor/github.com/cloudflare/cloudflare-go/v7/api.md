@@ -37,6 +37,8 @@
 
 # [Organizations](organizations/api.md)
 
+# [Tenants](tenants/api.md)
+
 # [OriginCACertificates](origin_ca_certificates/api.md)
 
 # [IPs](ips/api.md)
@@ -195,6 +197,8 @@
 
 # [OriginPostQuantumEncryption](origin_post_quantum_encryption/api.md)
 
+# [OriginTLSComplianceModes](origin_tls_compliance_modes/api.md)
+
 # [GoogleTagGateway](google_tag_gateway/api.md)
 
 # [Zaraz](zaraz/api.md)
@@ -214,6 +218,8 @@
 # [CloudforceOne](cloudforce_one/api.md)
 
 # [AIGateway](ai_gateway/api.md)
+
+# [Flagship](flagship/api.md)
 
 # [IAM](iam/api.md)
 

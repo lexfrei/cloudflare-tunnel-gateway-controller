@@ -35,6 +35,7 @@ import (
 	"github.com/cloudflare/cloudflare-go/v7/cloudforce_one"
 	"github.com/cloudflare/cloudflare-go/v7/connectivity"
 	"github.com/cloudflare/cloudflare-go/v7/content_scanning"
+	"github.com/cloudflare/cloudflare-go/v7/csam_scanner"
 	"github.com/cloudflare/cloudflare-go/v7/custom_certificates"
 	"github.com/cloudflare/cloudflare-go/v7/custom_csrs"
 	"github.com/cloudflare/cloudflare-go/v7/custom_hostnames"
@@ -53,6 +54,7 @@ import (
 	"github.com/cloudflare/cloudflare-go/v7/email_sending"
 	"github.com/cloudflare/cloudflare-go/v7/filters"
 	"github.com/cloudflare/cloudflare-go/v7/firewall"
+	"github.com/cloudflare/cloudflare-go/v7/flagship"
 	"github.com/cloudflare/cloudflare-go/v7/fraud"
 	"github.com/cloudflare/cloudflare-go/v7/google_tag_gateway"
 	"github.com/cloudflare/cloudflare-go/v7/healthchecks"
@@ -81,6 +83,7 @@ import (
 	"github.com/cloudflare/cloudflare-go/v7/origin_ca_certificates"
 	"github.com/cloudflare/cloudflare-go/v7/origin_post_quantum_encryption"
 	"github.com/cloudflare/cloudflare-go/v7/origin_tls_client_auth"
+	"github.com/cloudflare/cloudflare-go/v7/origin_tls_compliance_modes"
 	"github.com/cloudflare/cloudflare-go/v7/page_rules"
 	"github.com/cloudflare/cloudflare-go/v7/page_shield"
 	"github.com/cloudflare/cloudflare-go/v7/pages"
@@ -107,6 +110,8 @@ import (
 	"github.com/cloudflare/cloudflare-go/v7/speed"
 	"github.com/cloudflare/cloudflare-go/v7/ssl"
 	"github.com/cloudflare/cloudflare-go/v7/stream"
+	"github.com/cloudflare/cloudflare-go/v7/tenant_custom_nameservers"
+	"github.com/cloudflare/cloudflare-go/v7/tenants"
 	"github.com/cloudflare/cloudflare-go/v7/token_validation"
 	"github.com/cloudflare/cloudflare-go/v7/turnstile"
 	"github.com/cloudflare/cloudflare-go/v7/url_normalization"
@@ -131,6 +136,7 @@ type Client struct {
 	Options                 []option.RequestOption
 	Accounts                *accounts.AccountService
 	Organizations           *organizations.OrganizationService
+	Tenants                 *tenants.TenantService
 	OriginCACertificates    *origin_ca_certificates.OriginCACertificateService
 	IPs                     *ips.IPService
 	Memberships             *memberships.MembershipService
@@ -147,6 +153,7 @@ type Client struct {
 	CustomCsrs              *custom_csrs.CustomCsrService
 	CustomHostnames         *custom_hostnames.CustomHostnameService
 	CustomNameservers       *custom_nameservers.CustomNameserverService
+	TenantCustomNameservers *tenant_custom_nameservers.TenantCustomNameserverService
 	DNSFirewall             *dns_firewall.DNSFirewallService
 	DNS                     *dns.DNSService
 	EmailSecurity           *email_security.EmailSecurityService
@@ -217,6 +224,7 @@ type Client struct {
 	BotManagement               *bot_management.BotManagementService
 	Fraud                       *fraud.FraudService
 	OriginPostQuantumEncryption *origin_post_quantum_encryption.OriginPostQuantumEncryptionService
+	OriginTLSComplianceModes    *origin_tls_compliance_modes.OriginTLSComplianceModeService
 	GoogleTagGateway            *google_tag_gateway.GoogleTagGatewayService
 	Zaraz                       *zaraz.ZarazService
 	Speed                       *speed.SpeedService
@@ -227,6 +235,7 @@ type Client struct {
 	Calls                       *calls.CallService
 	CloudforceOne               *cloudforce_one.CloudforceOneService
 	AIGateway                   *ai_gateway.AIGatewayService
+	Flagship                    *flagship.FlagshipService
 	IAM                         *iam.IAMService
 	CloudConnector              *cloud_connector.CloudConnectorService
 	BotnetFeed                  *botnet_feed.BotnetFeedService
@@ -237,6 +246,7 @@ type Client struct {
 	LeakedCredentialChecks      *leaked_credential_checks.LeakedCredentialCheckService
 	ContentScanning             *content_scanning.ContentScanningService
 	AISecurity                  *ai_security.AISecurityService
+	CsamScanner                 *csam_scanner.CsamScannerService
 	AbuseReports                *abuse_reports.AbuseReportService
 	AI                          *ai.AIService
 	AIAudit                     *ai_audit.AIAuditService
@@ -293,6 +303,7 @@ func NewClient(opts ...option.RequestOption) (r *Client) {
 
 	r.Accounts = accounts.NewAccountService(opts...)
 	r.Organizations = organizations.NewOrganizationService(opts...)
+	r.Tenants = tenants.NewTenantService(opts...)
 	r.OriginCACertificates = origin_ca_certificates.NewOriginCACertificateService(opts...)
 	r.IPs = ips.NewIPService(opts...)
 	r.Memberships = memberships.NewMembershipService(opts...)
@@ -309,6 +320,7 @@ func NewClient(opts ...option.RequestOption) (r *Client) {
 	r.CustomCsrs = custom_csrs.NewCustomCsrService(opts...)
 	r.CustomHostnames = custom_hostnames.NewCustomHostnameService(opts...)
 	r.CustomNameservers = custom_nameservers.NewCustomNameserverService(opts...)
+	r.TenantCustomNameservers = tenant_custom_nameservers.NewTenantCustomNameserverService(opts...)
 	r.DNSFirewall = dns_firewall.NewDNSFirewallService(opts...)
 	r.DNS = dns.NewDNSService(opts...)
 	r.EmailSecurity = email_security.NewEmailSecurityService(opts...)
@@ -371,6 +383,7 @@ func NewClient(opts ...option.RequestOption) (r *Client) {
 	r.BotManagement = bot_management.NewBotManagementService(opts...)
 	r.Fraud = fraud.NewFraudService(opts...)
 	r.OriginPostQuantumEncryption = origin_post_quantum_encryption.NewOriginPostQuantumEncryptionService(opts...)
+	r.OriginTLSComplianceModes = origin_tls_compliance_modes.NewOriginTLSComplianceModeService(opts...)
 	r.GoogleTagGateway = google_tag_gateway.NewGoogleTagGatewayService(opts...)
 	r.Zaraz = zaraz.NewZarazService(opts...)
 	r.Speed = speed.NewSpeedService(opts...)
@@ -381,6 +394,7 @@ func NewClient(opts ...option.RequestOption) (r *Client) {
 	r.Calls = calls.NewCallService(opts...)
 	r.CloudforceOne = cloudforce_one.NewCloudforceOneService(opts...)
 	r.AIGateway = ai_gateway.NewAIGatewayService(opts...)
+	r.Flagship = flagship.NewFlagshipService(opts...)
 	r.IAM = iam.NewIAMService(opts...)
 	r.CloudConnector = cloud_connector.NewCloudConnectorService(opts...)
 	r.BotnetFeed = botnet_feed.NewBotnetFeedService(opts...)
@@ -391,6 +405,7 @@ func NewClient(opts ...option.RequestOption) (r *Client) {
 	r.LeakedCredentialChecks = leaked_credential_checks.NewLeakedCredentialCheckService(opts...)
 	r.ContentScanning = content_scanning.NewContentScanningService(opts...)
 	r.AISecurity = ai_security.NewAISecurityService(opts...)
+	r.CsamScanner = csam_scanner.NewCsamScannerService(opts...)
 	r.AbuseReports = abuse_reports.NewAbuseReportService(opts...)
 	r.AI = ai.NewAIService(opts...)
 	r.AIAudit = ai_audit.NewAIAuditService(opts...)
