@@ -271,9 +271,10 @@ func (h *Handler) proxyErrorHandler(hostname string) func(http.ResponseWriter, *
 }
 
 // countingBody wraps a request body to count bytes actually read from the
-// client. EVERY error passes through unwrapped — stdlib transports and
-// handlers compare read errors by identity (io.EOF, ErrBodyReadAfterClose,
-// net sentinels), and instrumentation must stay invisible to them.
+// client. READ errors pass through unwrapped — stdlib transports and handlers
+// compare them by identity (io.EOF, ErrBodyReadAfterClose, net sentinels), and
+// instrumentation must stay invisible to them. Close errors are not
+// identity-compared, so Close MAY wrap for context.
 type countingBody struct {
 	inner   io.ReadCloser
 	counter *atomic.Int64

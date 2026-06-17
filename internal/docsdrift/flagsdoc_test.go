@@ -7,8 +7,9 @@ import (
 )
 
 // flagDefinition matches every CLI flag registered on the controller's root
-// command: rootCmd.Flags().String("name", ...), .Bool, .Float64, .StringSlice…
-var flagDefinition = regexp.MustCompile(`rootCmd\.Flags\(\)\.\w+\("([a-z0-9-]+)"`)
+// command, whether persistent or local: both rootCmd.Flags().String("name", ...)
+// and rootCmd.PersistentFlags().String("name", ...) across .Bool/.Float64/etc.
+var flagDefinition = regexp.MustCompile(`rootCmd\.(?:Persistent)?Flags\(\)\.\w+\("([a-z0-9-]+)"`)
 
 // TestControllerFlagsDocumented locks the controller flag surface to the
 // configuration reference: every flag registered in cmd/controller/cmd/root.go
