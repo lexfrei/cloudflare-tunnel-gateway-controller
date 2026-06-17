@@ -4,6 +4,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -171,4 +172,26 @@ func TestDroppedConfigMessage_TruncatesOverlongMessage(t *testing.T) {
 			"partial=%v: the joined dropped-config message must fit metav1.Condition's MaxLength", partial)
 		assert.Truef(t, strings.HasSuffix(msg, "..."), "partial=%v: a truncated message must signal the cut", partial)
 	}
+}
+
+// TestTruncateConditionMessage_NeverProducesInvalidUTF8 pins that truncation
+// cuts on a RUNE boundary. Shadow- and diagnostic-basis strings carry 3-byte
+// em-dashes; a byte-offset cut landing inside one yields invalid UTF-8, which
+// the apiserver rejects — failing the WHOLE status update (losing
+// Accepted/ResolvedRefs), the exact outcome this guard exists to prevent.
+func TestTruncateConditionMessage_NeverProducesInvalidUTF8(t *testing.T) {
+	t.Parallel()
+
+	// 11000 em-dashes = 33000 bytes, past the 32768 cap; the byte cut at
+	// conditionMessageMaxLength-3 (32765 = 3*10921+2) lands mid-rune.
+	msg := strings.Repeat("—", 11000)
+	require.Greater(t, len(msg), conditionMessageMaxLength, "the fixture must actually trigger truncation")
+
+	truncated := truncateConditionMessage(msg)
+
+	assert.True(t, utf8.ValidString(truncated),
+		"truncation must not split a multi-byte rune into invalid UTF-8")
+	assert.LessOrEqual(t, len(truncated), conditionMessageMaxLength,
+		"the truncated message must still fit metav1.Condition's MaxLength")
+	assert.True(t, strings.HasSuffix(truncated, "..."), "a truncated message must signal the cut")
 }

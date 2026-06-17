@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/cockroachdb/errors"
 	corev1 "k8s.io/api/core/v1"
@@ -391,11 +392,23 @@ func buildShadowedCondition(
 // update, losing Accepted/ResolvedRefs along with the diagnostic.
 const conditionMessageMaxLength = 32768
 
+// conditionTruncationMarker signals a cut message; its length is reserved from
+// the cap so the marked result still fits.
+const conditionTruncationMarker = "..."
+
 // truncateConditionMessage caps a condition message at the metav1 limit,
-// marking the cut.
+// marking the cut. The cut backs up to a rune boundary: shadow- and
+// diagnostic-basis strings carry multi-byte runes (3-byte em-dashes), and a
+// raw byte slice through one yields invalid UTF-8 that the apiserver rejects —
+// failing the WHOLE status update, the exact outcome this guard prevents.
 func truncateConditionMessage(msg string) string {
 	if len(msg) > conditionMessageMaxLength {
-		return msg[:conditionMessageMaxLength-3] + "..."
+		cut := conditionMessageMaxLength - len(conditionTruncationMarker)
+		for cut > 0 && !utf8.RuneStart(msg[cut]) {
+			cut--
+		}
+
+		return msg[:cut] + conditionTruncationMarker
 	}
 
 	return msg
