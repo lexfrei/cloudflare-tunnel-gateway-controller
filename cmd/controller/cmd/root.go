@@ -81,6 +81,7 @@ func init() {
 	rootCmd.Flags().String("hostname-ownership-label-key", "cf.k8s.lex.la/hostname-suffix", "Namespace label carrying the tenant's allowed hostname suffix.")
 	rootCmd.Flags().String("hostname-ownership-namespace-selector", "", "Label selector scoping which namespaces are policed (kubectl syntax). Empty polices every namespace (fail-closed).")
 	rootCmd.Flags().String("monitoring-namespace-selector", "", "Label selector (kubectl syntax) for namespaces additionally allowed to reach a per-Gateway proxy's config-API/metrics port in the rendered NetworkPolicy. Empty allows the controller namespace only.")
+	rootCmd.Flags().Bool("render-network-policy", true, "Render the per-Gateway config-API NetworkPolicy (wired from the chart's proxy.networkPolicy.enabled). Set false on strict CNIs where node-sourced kubelet probes are blocked by the policy's namespaceSelector ingress rule; a previously-rendered policy is then deleted.")
 
 	// Distributed tracing (OpenTelemetry). Off by default. When enabled, the
 	// controller instruments its outbound Cloudflare API and proxy config-push
@@ -193,6 +194,7 @@ func runController(_ *cobra.Command, _ []string) error {
 		HostnameOwnershipLabelKey:          viper.GetString("hostname-ownership-label-key"),
 		HostnameOwnershipNamespaceSelector: viper.GetString("hostname-ownership-namespace-selector"),
 		MonitoringNamespaceSelector:        viper.GetString("monitoring-namespace-selector"),
+		RenderNetworkPolicy:                viper.GetBool("render-network-policy"),
 	}
 
 	if err := controller.Run(ctx, &cfg); err != nil {

@@ -130,6 +130,7 @@ func newInfraReconciler(t *testing.T, objects ...runtime.Object) *GatewayInfraRe
 		ConfigResolver:      config.NewResolver(fakeClient, "cf-system", cfmetrics.NewNoopCollector()),
 		RenderDefaults:      render.Defaults{ProxyImage: "ghcr.io/example/proxy:v1.2.3"},
 		ControllerNamespace: "cf-system",
+		RenderNetworkPolicy: true,
 	}
 }
 
@@ -301,6 +302,36 @@ func TestGatewayInfraReconciler_RendersNetworkPolicy(t *testing.T) {
 	reconcileEdge(t, reconciler)
 
 	assert.Error(t, reconciler.Get(ctx, key, &netpol), "the NetworkPolicy must be deleted on opt-out")
+}
+
+// TestGatewayInfraReconciler_RenderNetworkPolicyDisabled pins the opt-out wired
+// from the chart's proxy.networkPolicy.enabled: false. The strict-CNI escape
+// hatch (kubelet probes, node-sourced, cannot match the namespaceSelector
+// ingress rule) must be real for per-Gateway planes — when disabled the
+// controller renders NO NetworkPolicy and deletes one it previously owned,
+// while the rest of the data plane (Deployment, Service) is unaffected.
+func TestGatewayInfraReconciler_RenderNetworkPolicyDisabled(t *testing.T) {
+	t.Parallel()
+
+	reconciler := newInfraReconciler(t, infraFixtures(t)...)
+	// Render WITH the policy first, so there is an owned one to clean up.
+	reconcileEdge(t, reconciler)
+
+	ctx := context.Background()
+	npKey := types.NamespacedName{Name: "cf-proxy-edge-netpol", Namespace: infraNamespace}
+	require.NoError(t, reconciler.Get(ctx, npKey, &networkingv1.NetworkPolicy{}),
+		"precondition: the policy rendered while enabled")
+
+	// Flip to disabled and reconcile.
+	reconciler.RenderNetworkPolicy = false
+	reconcileEdge(t, reconciler)
+
+	assert.Error(t, reconciler.Get(ctx, npKey, &networkingv1.NetworkPolicy{}),
+		"disabling RenderNetworkPolicy must delete the previously-owned policy")
+
+	require.NoError(t, reconciler.Get(ctx,
+		types.NamespacedName{Name: "cf-proxy-edge", Namespace: infraNamespace}, &appsv1.Deployment{}),
+		"disabling the NetworkPolicy must not affect the proxy Deployment")
 }
 
 // TestGatewayInfraReconciler_HealsDrift pins self-healing: a manual edit to

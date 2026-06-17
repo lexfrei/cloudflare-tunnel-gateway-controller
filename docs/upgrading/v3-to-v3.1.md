@@ -53,11 +53,11 @@ proxy:
         kubernetes.io/metadata.name: monitoring
 ```
 
-If you do not run a NetworkPolicy-enforcing CNI, the policy is a no-op and scraping is unaffected — but it is then also not providing the isolation, so treat it as defense in depth, not a guarantee. To keep the v3.0 behaviour (no data-plane NetworkPolicy at all), set `proxy.networkPolicy.enabled: false`.
+If you do not run a NetworkPolicy-enforcing CNI, the policy is a no-op and scraping is unaffected — but it is then also not providing the isolation, so treat it as defense in depth, not a guarantee. To keep the v3.0 behaviour (no data-plane NetworkPolicy at all), set `proxy.networkPolicy.enabled: false` — that one switch gates BOTH the chart's shared-proxy policy AND the per-Gateway policies the controller renders (it forwards the value as the controller's `--render-network-policy` flag, which deletes any policy it previously rendered).
 
 ## Verify after upgrade
 
-- **Kubelet probes.** The proxy's startup/liveness/readiness probes hit the config API port (8081). The rendered NetworkPolicy admits 8081 from the controller namespace only; kubelet probe traffic originates from the node, so it relies on the CNI allowing host→pod traffic (most do). If proxy pods go `NotReady` after upgrade on a strict CNI, that allowance is the thing to check.
+- **Kubelet probes.** The proxy's startup/liveness/readiness probes hit the config API port (8081). The rendered NetworkPolicy admits 8081 from the controller namespace only; kubelet probe traffic originates from the node, so it relies on the CNI allowing host→pod traffic (most do). If proxy pods go `NotReady` after upgrade on a strict CNI, either add an ingress rule admitting the node/kubelet source for 8081, or set `proxy.networkPolicy.enabled: false` to drop the policy entirely (covers both the shared and per-Gateway planes).
 - **Controller → proxy config push.** The controller pushes config to the proxy from its own namespace, which the default policy admits; verify routes still program after upgrade.
 
 ## No CRD or values migration

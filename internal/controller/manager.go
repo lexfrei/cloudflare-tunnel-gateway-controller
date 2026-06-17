@@ -121,6 +121,14 @@ type Config struct {
 	// NetworkPolicy, so Prometheus in the matching namespaces can scrape.
 	MonitoringNamespaceSelector string
 
+	// RenderNetworkPolicy gates whether the controller renders the per-Gateway
+	// config-API NetworkPolicy. Wired from the chart's proxy.networkPolicy.enabled
+	// (default true). Set false on strict CNIs where the node-sourced kubelet
+	// probes cannot match the policy's namespaceSelector ingress rule — the
+	// documented escape hatch then applies to per-Gateway planes, not only the
+	// shared proxy.
+	RenderNetworkPolicy bool
+
 	// ProxyImage is the container image for per-Gateway rendered proxy
 	// Deployments (GatewayConfig data planes). The chart wires it to the
 	// release's proxy image; GatewayConfig.spec.image overrides per Gateway.
@@ -266,6 +274,7 @@ func Run(ctx context.Context, cfg *Config) error {
 		},
 		ControllerNamespace:         defaultNamespace,
 		MonitoringNamespaceSelector: monitoringSelector,
+		RenderNetworkPolicy:         cfg.RenderNetworkPolicy,
 	}
 
 	if err := gatewayInfraReconciler.SetupWithManager(mgr); err != nil {

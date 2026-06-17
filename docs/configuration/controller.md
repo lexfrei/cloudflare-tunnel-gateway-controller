@@ -28,6 +28,7 @@ This document describes all configuration options for the controller binary. For
 | `--hostname-ownership-label-key` | `CF_HOSTNAME_OWNERSHIP_LABEL_KEY` | `cf.k8s.lex.la/hostname-suffix` | Namespace label carrying the tenant's allowed hostname suffix |
 | `--hostname-ownership-namespace-selector` | `CF_HOSTNAME_OWNERSHIP_NAMESPACE_SELECTOR` | | Label selector (kubectl syntax) scoping which namespaces are policed; empty polices every namespace (fail-closed) |
 | `--monitoring-namespace-selector` | `CF_MONITORING_NAMESPACE_SELECTOR` | | Label selector (kubectl syntax) for namespaces additionally allowed to reach a per-Gateway proxy's config-API/metrics port in the rendered NetworkPolicy; empty admits the controller namespace only — see [Per-Gateway Isolation](../guides/per-gateway-isolation.md) |
+| `--render-network-policy` | `CF_RENDER_NETWORK_POLICY` | `true` | Render the per-Gateway config-API NetworkPolicy. Wired from the chart's `proxy.networkPolicy.enabled`. Set `false` on strict CNIs where node-sourced kubelet probes are blocked by the policy's `namespaceSelector` ingress rule; a previously-rendered policy is then deleted |
 
 For full distributed-tracing setup, see [Distributed Tracing](../operations/tracing.md).
 

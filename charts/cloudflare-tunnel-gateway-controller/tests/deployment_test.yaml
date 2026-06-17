@@ -782,6 +782,26 @@ tests:
       - notMatchRegexRaw:
           pattern: monitoring-namespace-selector
 
+  # proxy.networkPolicy.enabled gates the per-Gateway NetworkPolicy the
+  # controller renders, not just the chart's shared-proxy policy — so it must
+  # flow to the controller as --render-network-policy. This is the real
+  # strict-CNI escape hatch for per-Gateway planes.
+  - it: should pass --render-network-policy=true by default
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--render-network-policy=true"
+
+  - it: should pass --render-network-policy=false when networkPolicy is disabled
+    set:
+      proxy:
+        networkPolicy:
+          enabled: false
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--render-network-policy=false"
+
   # The controller renders per-Gateway proxy Deployments and must know the
   # release's proxy image; the chart always passes it.
   - it: should always pass the proxy image to the controller

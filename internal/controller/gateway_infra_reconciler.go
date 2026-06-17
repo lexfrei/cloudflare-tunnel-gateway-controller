@@ -79,6 +79,14 @@ type GatewayInfraReconciler struct {
 	// port (which also serves /metrics) from matching namespaces. Nil =
 	// controller namespace only.
 	MonitoringNamespaceSelector *metav1.LabelSelector
+	// RenderNetworkPolicy gates the per-Gateway config-API NetworkPolicy. Wired
+	// from the chart's proxy.networkPolicy.enabled (default true). Set false on
+	// clusters where a strict CNI would block the node-sourced kubelet probes
+	// the namespaceSelector ingress rule cannot match — opting out makes the
+	// documented strict-CNI escape hatch real for per-Gateway planes too, not
+	// only the shared proxy. When false a previously-rendered (owned) policy is
+	// deleted.
+	RenderNetworkPolicy bool
 	// TriggerRouteSync runs a full route sync (cache + push to every
 	// partition). It is invoked once when a data plane is first CREATED so the
 	// new partition's config is cached and delivered — a per-Gateway proxy
@@ -496,6 +504,17 @@ func (r *GatewayInfraReconciler) applyNetworkPolicy(
 	ctx context.Context,
 	gateway *gatewayv1.Gateway,
 ) (controllerutil.OperationResult, error) {
+	// Opted out (chart proxy.networkPolicy.enabled: false): render nothing and
+	// delete any policy we previously rendered, mirroring the HPA opt-out. The
+	// name matches DeploymentName like every other rendered object.
+	if !r.RenderNetworkPolicy {
+		return controllerutil.OperationResultNone, r.deleteIfOwned(ctx, gateway, &networkingv1.NetworkPolicy{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: render.NetworkPolicyName(gateway), Namespace: gateway.Namespace,
+			},
+		})
+	}
+
 	desired := render.ProxyNetworkPolicy(render.NetworkPolicyInput{
 		Gateway:                     gateway,
 		ControllerNamespace:         r.ControllerNamespace,
