@@ -175,6 +175,23 @@ tests:
             apiGroups: [""]
             resources: ["secrets"]
             verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+      # Pin the two dangerous verbs INDEPENDENTLY: a narrow over-grant that adds
+      # only delete (or only update) would not match the exact 7-verb array
+      # above, so assert each is absent from the rendered Secrets rule on its own.
+      - template: clusterrole.yaml
+        notContains:
+          path: rules
+          content:
+            apiGroups: [""]
+            resources: ["secrets"]
+            verbs: ["get", "list", "watch", "create", "delete"]
+      - template: clusterrole.yaml
+        notContains:
+          path: rules
+          content:
+            apiGroups: [""]
+            resources: ["secrets"]
+            verbs: ["get", "list", "watch", "create", "update"]
 
   # ConfigMaps: BackendTLSPolicy can reference a ConfigMap holding the CA
   # bundle. Read-only.

@@ -59,7 +59,11 @@ spec:
           port: 443
         - protocol: UDP
           port: 7844
-    # Cluster services (backend routing)
+    # Cluster services (backend routing). The empty namespaceSelector is
+    # deliberately all-namespaces: an HTTPRoute may name a backend Service in
+    # any namespace (subject to ReferenceGrant), so the data plane must be able
+    # to reach every namespace's pod network. Egress is bounded by port, not
+    # destination, here.
     - to:
         - namespaceSelector: {}
       ports:
