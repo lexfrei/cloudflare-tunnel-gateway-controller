@@ -44,7 +44,7 @@ func NewDEXCommandService(opts ...option.RequestOption) (r *DEXCommandService) {
 	return
 }
 
-// Initiate commands for up to 10 devices per account
+// Initiate commands for up to 10 devices per account.
 func (r *DEXCommandService) New(ctx context.Context, params DEXCommandNewParams, opts ...option.RequestOption) (res *DEXCommandNewResponse, err error) {
 	var env DEXCommandNewResponseEnvelope
 	opts = slices.Concat(r.Options, opts)
@@ -123,7 +123,7 @@ type DEXCommandNewResponseCommand struct {
 	RegistrationID string `json:"registration_id"`
 	// Current status of the command
 	Status DEXCommandNewResponseCommandsStatus `json:"status"`
-	// Type of the command (e.g., "pcap" or "warp-diag")
+	// Type of the command (e.g., "pcap", "speed-test", or "warp-diag")
 	Type string                           `json:"type"`
 	JSON dexCommandNewResponseCommandJSON `json:"-"`
 }
@@ -227,6 +227,7 @@ func (r dexCommandListResponseCommandJSON) RawJSON() string {
 }
 
 type DEXCommandNewParams struct {
+	// Unique identifier linked to an account.
 	AccountID param.Field[string] `path:"account_id" api:"required"`
 	// List of device-level commands to execute
 	Commands param.Field[[]DEXCommandNewParamsCommand] `json:"commands" api:"required"`
@@ -237,13 +238,14 @@ func (r DEXCommandNewParams) MarshalJSON() (data []byte, err error) {
 }
 
 type DEXCommandNewParamsCommand struct {
-	// Type of command to execute on the device
-	CommandType param.Field[DEXCommandNewParamsCommandsCommandType] `json:"command_type" api:"required"`
 	// Unique identifier for the physical device
 	DeviceID param.Field[string] `json:"device_id" api:"required"`
+	// Type of command to execute on the device
+	Type param.Field[DEXCommandNewParamsCommandsType] `json:"type" api:"required"`
 	// Email tied to the device
-	UserEmail   param.Field[string]                                 `json:"user_email" api:"required"`
-	CommandArgs param.Field[DEXCommandNewParamsCommandsCommandArgs] `json:"command_args"`
+	UserEmail param.Field[string] `json:"user_email" api:"required"`
+	// Command arguments. Allowed fields depend on `type`.
+	Args param.Field[DEXCommandNewParamsCommandsArgsUnion] `json:"args"`
 	// Unique identifier for the device registration. Required for multi-user devices
 	// to target the correct user session.
 	RegistrationID param.Field[string] `json:"registration_id"`
@@ -254,53 +256,106 @@ func (r DEXCommandNewParamsCommand) MarshalJSON() (data []byte, err error) {
 }
 
 // Type of command to execute on the device
-type DEXCommandNewParamsCommandsCommandType string
+type DEXCommandNewParamsCommandsType string
 
 const (
-	DEXCommandNewParamsCommandsCommandTypePCAP     DEXCommandNewParamsCommandsCommandType = "pcap"
-	DEXCommandNewParamsCommandsCommandTypeWARPDiag DEXCommandNewParamsCommandsCommandType = "warp-diag"
+	DEXCommandNewParamsCommandsTypePCAP      DEXCommandNewParamsCommandsType = "pcap"
+	DEXCommandNewParamsCommandsTypeSpeedTest DEXCommandNewParamsCommandsType = "speed-test"
+	DEXCommandNewParamsCommandsTypeWARPDiag  DEXCommandNewParamsCommandsType = "warp-diag"
 )
 
-func (r DEXCommandNewParamsCommandsCommandType) IsKnown() bool {
+func (r DEXCommandNewParamsCommandsType) IsKnown() bool {
 	switch r {
-	case DEXCommandNewParamsCommandsCommandTypePCAP, DEXCommandNewParamsCommandsCommandTypeWARPDiag:
+	case DEXCommandNewParamsCommandsTypePCAP, DEXCommandNewParamsCommandsTypeSpeedTest, DEXCommandNewParamsCommandsTypeWARPDiag:
 		return true
 	}
 	return false
 }
 
-type DEXCommandNewParamsCommandsCommandArgs struct {
-	// List of interfaces to capture packets on
-	Interfaces param.Field[[]DEXCommandNewParamsCommandsCommandArgsInterface] `json:"interfaces"`
-	// Maximum file size (in MB) for the capture file. Specifies the maximum file size
-	// of the warp-diag zip artifact that can be uploaded. If the zip artifact exceeds
-	// the specified max file size, it will NOT be uploaded
+// Command arguments. Allowed fields depend on `type`.
+type DEXCommandNewParamsCommandsArgs struct {
+	Interfaces param.Field[interface{}] `json:"interfaces"`
+	// Maximum file size (in MB) for the capture file. If the capture artifact exceeds
+	// the specified max file size, it will NOT be uploaded.
 	MaxFileSizeMB param.Field[float64] `json:"max-file-size-mb"`
 	// Maximum number of bytes to save for each packet
 	PacketSizeBytes param.Field[float64] `json:"packet-size-bytes"`
-	// Test an IP address from all included or excluded ranges. Tests an IP address
-	// from all included or excluded ranges. Essentially the same as running 'route get
-	// <ip>” and collecting the results. This option may increase the time taken to
-	// collect the warp-diag
+	// Test an IP address from all included or excluded ranges. Essentially the same as
+	// running 'route get <ip>' and collecting the results. This option may increase
+	// the time taken to collect the warp-diag.
 	TestAllRoutes param.Field[bool] `json:"test-all-routes"`
 	// Limit on capture duration (in minutes)
 	TimeLimitMin param.Field[float64] `json:"time-limit-min"`
 }
 
-func (r DEXCommandNewParamsCommandsCommandArgs) MarshalJSON() (data []byte, err error) {
+func (r DEXCommandNewParamsCommandsArgs) MarshalJSON() (data []byte, err error) {
 	return apijson.MarshalRoot(r)
 }
 
-type DEXCommandNewParamsCommandsCommandArgsInterface string
+func (r DEXCommandNewParamsCommandsArgs) implementsDEXCommandNewParamsCommandsArgsUnion() {}
+
+// Command arguments. Allowed fields depend on `type`.
+//
+// Satisfied by [zero_trust.DEXCommandNewParamsCommandsArgsWARPDiagArgs],
+// [zero_trust.DEXCommandNewParamsCommandsArgsPCAPArgs],
+// [zero_trust.DEXCommandNewParamsCommandsArgsSpeedTestArgs],
+// [DEXCommandNewParamsCommandsArgs].
+type DEXCommandNewParamsCommandsArgsUnion interface {
+	implementsDEXCommandNewParamsCommandsArgsUnion()
+}
+
+type DEXCommandNewParamsCommandsArgsWARPDiagArgs struct {
+	// Test an IP address from all included or excluded ranges. Essentially the same as
+	// running 'route get <ip>' and collecting the results. This option may increase
+	// the time taken to collect the warp-diag.
+	TestAllRoutes param.Field[bool] `json:"test-all-routes"`
+}
+
+func (r DEXCommandNewParamsCommandsArgsWARPDiagArgs) MarshalJSON() (data []byte, err error) {
+	return apijson.MarshalRoot(r)
+}
+
+func (r DEXCommandNewParamsCommandsArgsWARPDiagArgs) implementsDEXCommandNewParamsCommandsArgsUnion() {
+}
+
+type DEXCommandNewParamsCommandsArgsPCAPArgs struct {
+	// Maximum file size (in MB) for the capture file. If the capture artifact exceeds
+	// the specified max file size, it will NOT be uploaded.
+	MaxFileSizeMB param.Field[float64] `json:"max-file-size-mb"`
+	// Maximum number of bytes to save for each packet
+	PacketSizeBytes param.Field[float64] `json:"packet-size-bytes"`
+	// Limit on capture duration (in minutes)
+	TimeLimitMin param.Field[float64] `json:"time-limit-min"`
+}
+
+func (r DEXCommandNewParamsCommandsArgsPCAPArgs) MarshalJSON() (data []byte, err error) {
+	return apijson.MarshalRoot(r)
+}
+
+func (r DEXCommandNewParamsCommandsArgsPCAPArgs) implementsDEXCommandNewParamsCommandsArgsUnion() {}
+
+type DEXCommandNewParamsCommandsArgsSpeedTestArgs struct {
+	// List of interfaces to run the speed test on
+	Interfaces param.Field[[]DEXCommandNewParamsCommandsArgsSpeedTestArgsInterface] `json:"interfaces"`
+}
+
+func (r DEXCommandNewParamsCommandsArgsSpeedTestArgs) MarshalJSON() (data []byte, err error) {
+	return apijson.MarshalRoot(r)
+}
+
+func (r DEXCommandNewParamsCommandsArgsSpeedTestArgs) implementsDEXCommandNewParamsCommandsArgsUnion() {
+}
+
+type DEXCommandNewParamsCommandsArgsSpeedTestArgsInterface string
 
 const (
-	DEXCommandNewParamsCommandsCommandArgsInterfaceDefault DEXCommandNewParamsCommandsCommandArgsInterface = "default"
-	DEXCommandNewParamsCommandsCommandArgsInterfaceTunnel  DEXCommandNewParamsCommandsCommandArgsInterface = "tunnel"
+	DEXCommandNewParamsCommandsArgsSpeedTestArgsInterfaceDefault DEXCommandNewParamsCommandsArgsSpeedTestArgsInterface = "default"
+	DEXCommandNewParamsCommandsArgsSpeedTestArgsInterfaceTunnel  DEXCommandNewParamsCommandsArgsSpeedTestArgsInterface = "tunnel"
 )
 
-func (r DEXCommandNewParamsCommandsCommandArgsInterface) IsKnown() bool {
+func (r DEXCommandNewParamsCommandsArgsSpeedTestArgsInterface) IsKnown() bool {
 	switch r {
-	case DEXCommandNewParamsCommandsCommandArgsInterfaceDefault, DEXCommandNewParamsCommandsCommandArgsInterfaceTunnel:
+	case DEXCommandNewParamsCommandsArgsSpeedTestArgsInterfaceDefault, DEXCommandNewParamsCommandsArgsSpeedTestArgsInterfaceTunnel:
 		return true
 	}
 	return false
@@ -482,22 +537,23 @@ func (r dexCommandNewResponseEnvelopeResultInfoJSON) RawJSON() string {
 }
 
 type DEXCommandListParams struct {
+	// Unique identifier linked to an account.
 	AccountID param.Field[string] `path:"account_id" api:"required"`
-	// Page number for pagination
+	// Page number of paginated results.
 	Page param.Field[float64] `query:"page" api:"required"`
-	// Number of results per page
+	// Number of results per page.
 	PerPage param.Field[float64] `query:"per_page" api:"required"`
-	// Optionally filter executed commands by command type
-	CommandType param.Field[string] `query:"command_type"`
-	// Unique identifier for a device
+	// Optionally filter executed commands by command type.
+	CommandType param.Field[DEXCommandListParamsCommandType] `query:"command_type"`
+	// Unique identifier for a device.
 	DeviceID param.Field[string] `query:"device_id"`
-	// Start time for the query in ISO (RFC3339 - ISO 8601) format
+	// Start time for the query in ISO (RFC3339 - ISO 8601) format.
 	From param.Field[time.Time] `query:"from" format:"date-time"`
-	// Optionally filter executed commands by status
+	// Optionally filter executed commands by status.
 	Status param.Field[DEXCommandListParamsStatus] `query:"status"`
-	// End time for the query in ISO (RFC3339 - ISO 8601) format
+	// End time for the query in ISO (RFC3339 - ISO 8601) format.
 	To param.Field[time.Time] `query:"to" format:"date-time"`
-	// Email tied to the device
+	// Email tied to the device.
 	UserEmail param.Field[string] `query:"user_email"`
 }
 
@@ -509,7 +565,24 @@ func (r DEXCommandListParams) URLQuery() (v url.Values) {
 	})
 }
 
-// Optionally filter executed commands by status
+// Optionally filter executed commands by command type.
+type DEXCommandListParamsCommandType string
+
+const (
+	DEXCommandListParamsCommandTypePCAP      DEXCommandListParamsCommandType = "pcap"
+	DEXCommandListParamsCommandTypeSpeedTest DEXCommandListParamsCommandType = "speed-test"
+	DEXCommandListParamsCommandTypeWARPDiag  DEXCommandListParamsCommandType = "warp-diag"
+)
+
+func (r DEXCommandListParamsCommandType) IsKnown() bool {
+	switch r {
+	case DEXCommandListParamsCommandTypePCAP, DEXCommandListParamsCommandTypeSpeedTest, DEXCommandListParamsCommandTypeWARPDiag:
+		return true
+	}
+	return false
+}
+
+// Optionally filter executed commands by status.
 type DEXCommandListParamsStatus string
 
 const (

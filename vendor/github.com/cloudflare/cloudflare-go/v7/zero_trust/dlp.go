@@ -13,15 +13,19 @@ import (
 // automatically. You should not instantiate this service directly, and instead use
 // the [NewDLPService] method instead.
 type DLPService struct {
-	Options     []option.RequestOption
-	Datasets    *DLPDatasetService
-	Patterns    *DLPPatternService
-	PayloadLogs *DLPPayloadLogService
-	Settings    *DLPSettingService
-	Email       *DLPEmailService
-	Profiles    *DLPProfileService
-	Limits      *DLPLimitService
-	Entries     *DLPEntryService
+	Options            []option.RequestOption
+	CustomPromptTopics *DLPCustomPromptTopicService
+	Datasets           *DLPDatasetService
+	Patterns           *DLPPatternService
+	PayloadLogs        *DLPPayloadLogService
+	Settings           *DLPSettingService
+	Email              *DLPEmailService
+	Profiles           *DLPProfileService
+	Limits             *DLPLimitService
+	Entries            *DLPEntryService
+	SensitivityGroups  *DLPSensitivityGroupService
+	DataTagCategories  *DLPDataTagCategoryService
+	DataClasses        *DLPDataClassService
 }
 
 // NewDLPService generates a new service that applies the given options to each
@@ -30,6 +34,7 @@ type DLPService struct {
 func NewDLPService(opts ...option.RequestOption) (r *DLPService) {
 	r = &DLPService{}
 	r.Options = opts
+	r.CustomPromptTopics = NewDLPCustomPromptTopicService(opts...)
 	r.Datasets = NewDLPDatasetService(opts...)
 	r.Patterns = NewDLPPatternService(opts...)
 	r.PayloadLogs = NewDLPPayloadLogService(opts...)
@@ -38,5 +43,8 @@ func NewDLPService(opts ...option.RequestOption) (r *DLPService) {
 	r.Profiles = NewDLPProfileService(opts...)
 	r.Limits = NewDLPLimitService(opts...)
 	r.Entries = NewDLPEntryService(opts...)
+	r.SensitivityGroups = NewDLPSensitivityGroupService(opts...)
+	r.DataTagCategories = NewDLPDataTagCategoryService(opts...)
+	r.DataClasses = NewDLPDataClassService(opts...)
 	return
 }

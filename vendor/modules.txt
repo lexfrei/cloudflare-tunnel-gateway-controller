@@ -12,7 +12,7 @@ github.com/cenkalti/backoff/v5
 # github.com/cespare/xxhash/v2 v2.3.0
 ## explicit; go 1.11
 github.com/cespare/xxhash/v2
-# github.com/cloudflare/cloudflare-go/v7 v7.5.0
+# github.com/cloudflare/cloudflare-go/v7 v7.6.0
 ## explicit; go 1.22
 github.com/cloudflare/cloudflare-go/v7
 github.com/cloudflare/cloudflare-go/v7/abuse_reports
@@ -41,6 +41,7 @@ github.com/cloudflare/cloudflare-go/v7/cloud_connector
 github.com/cloudflare/cloudflare-go/v7/cloudforce_one
 github.com/cloudflare/cloudflare-go/v7/connectivity
 github.com/cloudflare/cloudflare-go/v7/content_scanning
+github.com/cloudflare/cloudflare-go/v7/csam_scanner
 github.com/cloudflare/cloudflare-go/v7/custom_certificates
 github.com/cloudflare/cloudflare-go/v7/custom_csrs
 github.com/cloudflare/cloudflare-go/v7/custom_hostnames
@@ -59,6 +60,7 @@ github.com/cloudflare/cloudflare-go/v7/email_security
 github.com/cloudflare/cloudflare-go/v7/email_sending
 github.com/cloudflare/cloudflare-go/v7/filters
 github.com/cloudflare/cloudflare-go/v7/firewall
+github.com/cloudflare/cloudflare-go/v7/flagship
 github.com/cloudflare/cloudflare-go/v7/fraud
 github.com/cloudflare/cloudflare-go/v7/google_tag_gateway
 github.com/cloudflare/cloudflare-go/v7/healthchecks
@@ -93,6 +95,7 @@ github.com/cloudflare/cloudflare-go/v7/organizations
 github.com/cloudflare/cloudflare-go/v7/origin_ca_certificates
 github.com/cloudflare/cloudflare-go/v7/origin_post_quantum_encryption
 github.com/cloudflare/cloudflare-go/v7/origin_tls_client_auth
+github.com/cloudflare/cloudflare-go/v7/origin_tls_compliance_modes
 github.com/cloudflare/cloudflare-go/v7/packages/pagination
 github.com/cloudflare/cloudflare-go/v7/page_rules
 github.com/cloudflare/cloudflare-go/v7/page_shield
@@ -121,6 +124,8 @@ github.com/cloudflare/cloudflare-go/v7/spectrum
 github.com/cloudflare/cloudflare-go/v7/speed
 github.com/cloudflare/cloudflare-go/v7/ssl
 github.com/cloudflare/cloudflare-go/v7/stream
+github.com/cloudflare/cloudflare-go/v7/tenant_custom_nameservers
+github.com/cloudflare/cloudflare-go/v7/tenants
 github.com/cloudflare/cloudflare-go/v7/token_validation
 github.com/cloudflare/cloudflare-go/v7/turnstile
 github.com/cloudflare/cloudflare-go/v7/url_normalization

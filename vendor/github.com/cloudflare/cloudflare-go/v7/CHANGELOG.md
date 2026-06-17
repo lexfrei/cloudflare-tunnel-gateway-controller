@@ -1,5 +1,42 @@
 # Changelog
 
+## 7.6.0 (2026-06-16)
+
+Full Changelog: [v7.5.0...v7.6.0](https://github.com/cloudflare/cloudflare-go/compare/v7.5.0...v7.6.0)
+
+### Features
+
+* feat(ai_gateway): add custom_providers resource ([d7b56dc](https://github.com/cloudflare/cloudflare-go/commit/d7b56dc682ccb2a112e5c499bcdd7f8f5f16d1da))
+* feat(api): map ipsec_tunnels/psk, sites/app_policies and cf1_sites for magic-on-ramps ([8c090a8](https://github.com/cloudflare/cloudflare-go/commit/8c090a82ce354136733d9d01ce33e750dcc11315))
+* feat(ct_alerter): add CT alerting subscription endpoint mappings ([1fbd47d](https://github.com/cloudflare/cloudflare-go/commit/1fbd47d82e5f7ce28a00ae24189614fbf2d40bd0))
+* feat(tenants): add tenants resource SDK mapping [PT-2567] ([8e4faec](https://github.com/cloudflare/cloudflare-go/commit/8e4faeca3d1c8aed151d1f32d0d7095192205e63))
+
+
+### Chores
+
+* **api:** update composite API spec ([5053a77](https://github.com/cloudflare/cloudflare-go/commit/5053a772a0ae6460954320a042ff43a983539888))
+* **api:** update composite API spec ([6acef20](https://github.com/cloudflare/cloudflare-go/commit/6acef2064bcb82d5e20028b10f5f2e9ecd277172))
+* **api:** update composite API spec ([109d3e8](https://github.com/cloudflare/cloudflare-go/commit/109d3e82e9fa2a86c6ccff4cea499b1cc37f209b))
+* **api:** update composite API spec ([d1f1bea](https://github.com/cloudflare/cloudflare-go/commit/d1f1bea01dfc61ba7535a1ece7b0b7cb6caaeae6))
+* **api:** update composite API spec ([e2e533b](https://github.com/cloudflare/cloudflare-go/commit/e2e533b3d773180e4f22a8f0f5ef783454dfb105))
+* **api:** update composite API spec ([0ac6cd6](https://github.com/cloudflare/cloudflare-go/commit/0ac6cd641ce54837a46fc4fdffb7e0cb5327c10d))
+* **api:** update composite API spec ([cef1247](https://github.com/cloudflare/cloudflare-go/commit/cef1247e79574337e82328f4d17f5e5f889ca21a))
+* **api:** update composite API spec ([295c30e](https://github.com/cloudflare/cloudflare-go/commit/295c30ee385c30d4522842b425f5a172e7e120db))
+* **api:** update composite API spec ([c362e95](https://github.com/cloudflare/cloudflare-go/commit/c362e95004dfff2cfa39ad032827c59ae4fa79de))
+* **api:** update composite API spec ([4321a13](https://github.com/cloudflare/cloudflare-go/commit/4321a137245de5df032f2bd09a1b1e82cd450635))
+* **api:** update composite API spec ([fae4f51](https://github.com/cloudflare/cloudflare-go/commit/fae4f5121412e3f0b537c7e014425581594616bb))
+* **api:** update composite API spec ([47fa180](https://github.com/cloudflare/cloudflare-go/commit/47fa1808c80096ed6177f4966d200f9a6b876951))
+* **api:** update composite API spec ([835c44d](https://github.com/cloudflare/cloudflare-go/commit/835c44dc4d403df781e1faf8b9526a804f2f4e4d))
+
+
+### Documentation
+
+* add v7.6.0 migration guide ([f27940b](https://github.com/cloudflare/cloudflare-go/commit/f27940b228914e7b7d924b16ad440574f356e0cc))
+
+## 7.5.0 (2026-06-10)
+
+Full Changelog: [v7.5.0...v7.5.0](https://github.com/cloudflare/cloudflare-go/compare/v7.5.0...v7.5.0)
+
 ## 7.5.0 (2026-06-10)
 
 Full Changelog: [v7.4.0...v7.5.0](https://github.com/cloudflare/cloudflare-go/compare/v7.4.0...v7.5.0)
