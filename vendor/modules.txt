@@ -189,7 +189,7 @@ github.com/cloudflare/cloudflared/watcher
 github.com/cloudflare/cloudflared/websocket
 # github.com/cloudwego/base64x v0.1.6
 ## explicit; go 1.17
-# github.com/cockroachdb/errors v1.13.0
+# github.com/cockroachdb/errors v1.14.0
 ## explicit; go 1.25.0
 github.com/cockroachdb/errors
 github.com/cockroachdb/errors/assert
