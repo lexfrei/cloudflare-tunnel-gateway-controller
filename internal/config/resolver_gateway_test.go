@@ -383,6 +383,18 @@ func TestResolveForGateway_InvalidParameters(t *testing.T) {
 				Data:       map[string][]byte{"tunnel-token": []byte("not-a-token")},
 			}},
 		},
+		{
+			// An empty tunnel-token VALUE (key present, no bytes) is a
+			// deterministic spec problem — the partition must fail closed
+			// (InvalidParameters), not transient-retain as if the Secret were
+			// momentarily unreadable.
+			name:    "empty tunnel-token value",
+			gateway: gatewayWithInfra("cf.k8s.lex.la", "GatewayConfig", "edge-config"),
+			objects: []runtime.Object{validGwConfig(), &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: "edge-tunnel-token", Namespace: testGwNamespace},
+				Data:       map[string][]byte{"tunnel-token": []byte("")},
+			}},
+		},
 	}
 
 	for _, tt := range tests {

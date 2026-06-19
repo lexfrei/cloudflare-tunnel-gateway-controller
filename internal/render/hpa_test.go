@@ -93,3 +93,45 @@ func TestAutoscaler_DefaultMinClampedToMax(t *testing.T) {
 	assert.Equal(t, int32(1), *hpa.Spec.MinReplicas, "default min (2) must clamp to maxReplicas")
 	assert.Equal(t, int32(1), hpa.Spec.MaxReplicas)
 }
+
+// TestAutoscaler_ExplicitMinClampedToMax pins the same clamp for an EXPLICIT
+// minReplicas above maxReplicas (not just the defaulted min): the rendered HPA
+// must never carry min>max, which the apiserver rejects on every reconcile.
+// Like the default case, the CRD CEL rejects this at admission, so the clamp is
+// the CEL-disabled-cluster belt-and-suspenders.
+func TestAutoscaler_ExplicitMinClampedToMax(t *testing.T) {
+	t.Parallel()
+
+	five := int32(5)
+	input := testInput("edge")
+	input.Config.Spec.Autoscaling = &v1alpha1.ProxyAutoscaling{
+		MinReplicas:          &five,
+		MaxReplicas:          2,
+		TargetInflightPerPod: 50,
+	}
+
+	hpa := render.Autoscaler(input)
+	require.NotNil(t, hpa)
+	require.NotNil(t, hpa.Spec.MinReplicas)
+	assert.Equal(t, int32(2), *hpa.Spec.MinReplicas, "explicit min (5) must clamp to maxReplicas (2)")
+	assert.Equal(t, int32(2), hpa.Spec.MaxReplicas)
+}
+
+// TestAutoscaler_CarriesOwnedLabels pins that the rendered HPA carries the
+// per-Gateway resource labels (the GC/ownership marker the other rendered
+// objects assert) — a label regression would orphan the HPA from selector-based
+// tooling and the ownership story.
+func TestAutoscaler_CarriesOwnedLabels(t *testing.T) {
+	t.Parallel()
+
+	input := testInput("edge")
+	input.Config.Spec.Autoscaling = &v1alpha1.ProxyAutoscaling{
+		MaxReplicas:          5,
+		TargetInflightPerPod: 50,
+	}
+
+	hpa := render.Autoscaler(input)
+	require.NotNil(t, hpa)
+	assert.Equal(t, "edge", hpa.Labels["cf.k8s.lex.la/gateway"],
+		"the HPA must carry the per-Gateway ownership label")
+}

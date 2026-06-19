@@ -47,6 +47,18 @@ func TestGatewayConfig_CELValidation(t *testing.T) {
 			},
 		},
 		{
+			// Replicas has Minimum=1: zero connectors is not "scaled to zero",
+			// it is a Gateway with no data plane at all, which must be rejected
+			// at admission rather than rendered as a 0-replica Deployment.
+			name: "zero fixed replicas rejected",
+			spec: v1alpha1.GatewayConfigSpec{
+				TunnelTokenSecretRef: v1alpha1.LocalSecretReference{Name: "tunnel-token"},
+				Replicas:             new(int32(0)),
+			},
+			wantErr: true,
+			wantSub: "greater than or equal to 1",
+		},
+		{
 			name: "autoscaling accepted",
 			spec: v1alpha1.GatewayConfigSpec{
 				TunnelTokenSecretRef: v1alpha1.LocalSecretReference{Name: "tunnel-token"},

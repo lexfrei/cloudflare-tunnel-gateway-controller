@@ -304,6 +304,16 @@ func TestProxyDeployment_ReplicaModes(t *testing.T) {
 	autoscaled.Config.Spec.Autoscaling = &v1alpha1.ProxyAutoscaling{MaxReplicas: 5, TargetInflightPerPod: 50}
 	withHPA := render.ProxyDeployment(autoscaled)
 	assert.Nil(t, withHPA.Spec.Replicas, "the HPA owns the replica count when autoscaling is set")
+
+	// Both set: the CRD CEL forbids this, but on a CEL-disabled cluster the
+	// renderer must still let autoscaling win (Replicas nil) rather than pin a
+	// fixed count the HPA would immediately fight.
+	both := testInput("edge")
+	both.Config.Spec.Replicas = &three
+	both.Config.Spec.Autoscaling = &v1alpha1.ProxyAutoscaling{MaxReplicas: 5, TargetInflightPerPod: 50}
+	withBoth := render.ProxyDeployment(both)
+	assert.Nil(t, withBoth.Spec.Replicas,
+		"autoscaling must win over an explicit replica count when both are set")
 }
 
 // TestProxyResources_ExplicitBlockIsDeepCopied pins that an explicit resources
