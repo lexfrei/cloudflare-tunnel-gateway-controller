@@ -18,7 +18,7 @@ github.com/cenkalti/backoff/v5
 # github.com/cespare/xxhash/v2 v2.3.0
 ## explicit; go 1.11
 github.com/cespare/xxhash/v2
-# github.com/cloudflare/cloudflare-go/v7 v7.5.0
+# github.com/cloudflare/cloudflare-go/v7 v7.6.0
 ## explicit; go 1.22
 github.com/cloudflare/cloudflare-go/v7
 github.com/cloudflare/cloudflare-go/v7/abuse_reports
@@ -47,6 +47,7 @@ github.com/cloudflare/cloudflare-go/v7/cloud_connector
 github.com/cloudflare/cloudflare-go/v7/cloudforce_one
 github.com/cloudflare/cloudflare-go/v7/connectivity
 github.com/cloudflare/cloudflare-go/v7/content_scanning
+github.com/cloudflare/cloudflare-go/v7/csam_scanner
 github.com/cloudflare/cloudflare-go/v7/custom_certificates
 github.com/cloudflare/cloudflare-go/v7/custom_csrs
 github.com/cloudflare/cloudflare-go/v7/custom_hostnames
@@ -65,6 +66,7 @@ github.com/cloudflare/cloudflare-go/v7/email_security
 github.com/cloudflare/cloudflare-go/v7/email_sending
 github.com/cloudflare/cloudflare-go/v7/filters
 github.com/cloudflare/cloudflare-go/v7/firewall
+github.com/cloudflare/cloudflare-go/v7/flagship
 github.com/cloudflare/cloudflare-go/v7/fraud
 github.com/cloudflare/cloudflare-go/v7/google_tag_gateway
 github.com/cloudflare/cloudflare-go/v7/healthchecks
@@ -99,6 +101,7 @@ github.com/cloudflare/cloudflare-go/v7/organizations
 github.com/cloudflare/cloudflare-go/v7/origin_ca_certificates
 github.com/cloudflare/cloudflare-go/v7/origin_post_quantum_encryption
 github.com/cloudflare/cloudflare-go/v7/origin_tls_client_auth
+github.com/cloudflare/cloudflare-go/v7/origin_tls_compliance_modes
 github.com/cloudflare/cloudflare-go/v7/packages/pagination
 github.com/cloudflare/cloudflare-go/v7/page_rules
 github.com/cloudflare/cloudflare-go/v7/page_shield
@@ -127,6 +130,8 @@ github.com/cloudflare/cloudflare-go/v7/spectrum
 github.com/cloudflare/cloudflare-go/v7/speed
 github.com/cloudflare/cloudflare-go/v7/ssl
 github.com/cloudflare/cloudflare-go/v7/stream
+github.com/cloudflare/cloudflare-go/v7/tenant_custom_nameservers
+github.com/cloudflare/cloudflare-go/v7/tenants
 github.com/cloudflare/cloudflare-go/v7/token_validation
 github.com/cloudflare/cloudflare-go/v7/turnstile
 github.com/cloudflare/cloudflare-go/v7/url_normalization
@@ -142,7 +147,7 @@ github.com/cloudflare/cloudflare-go/v7/workflows
 github.com/cloudflare/cloudflare-go/v7/zaraz
 github.com/cloudflare/cloudflare-go/v7/zero_trust
 github.com/cloudflare/cloudflare-go/v7/zones
-# github.com/cloudflare/cloudflared v0.0.0-20260612062426-68620efbce4c => github.com/lexfrei/cloudflared v0.0.0-20260610013342-cf1b1c138221
+# github.com/cloudflare/cloudflared v0.0.0-20260618182039-02eb75b56d29 => github.com/lexfrei/cloudflared v0.0.0-20260610013342-cf1b1c138221
 ## explicit; go 1.26
 github.com/cloudflare/cloudflared/carrier
 github.com/cloudflare/cloudflared/cfapi
@@ -190,7 +195,7 @@ github.com/cloudflare/cloudflared/watcher
 github.com/cloudflare/cloudflared/websocket
 # github.com/cloudwego/base64x v0.1.6
 ## explicit; go 1.17
-# github.com/cockroachdb/errors v1.13.0
+# github.com/cockroachdb/errors v1.14.0
 ## explicit; go 1.25.0
 github.com/cockroachdb/errors
 github.com/cockroachdb/errors/assert
