@@ -195,3 +195,16 @@ func TestTruncateConditionMessage_NeverProducesInvalidUTF8(t *testing.T) {
 		"the truncated message must still fit metav1.Condition's MaxLength")
 	assert.True(t, strings.HasSuffix(truncated, "..."), "a truncated message must signal the cut")
 }
+
+// TestTruncateUTF8_TinyCapIsTotal pins the totality guard: a cap at or below
+// the marker length has no room for content and must not panic with a negative
+// slice index. Unreachable with the real caps (256/32768); this keeps the
+// helper total for any future caller.
+func TestTruncateUTF8_TinyCapIsTotal(t *testing.T) {
+	t.Parallel()
+
+	for _, maxLen := range []int{0, 1, 3} {
+		assert.NotPanics(t, func() { _ = truncateUTF8("a much longer message", maxLen) },
+			"truncateUTF8 must not panic for maxLen=%d", maxLen)
+	}
+}

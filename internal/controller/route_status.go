@@ -413,6 +413,13 @@ func truncateUTF8(msg string, maxLen int) string {
 		return msg
 	}
 
+	// Totality guard: a cap at or below the marker length has no room for any
+	// content, so just return the marker (also avoids a negative slice index).
+	// Unreachable with the real caps (256 / 32768); cheap insurance.
+	if maxLen <= len(conditionTruncationMarker) {
+		return conditionTruncationMarker
+	}
+
 	cut := maxLen - len(conditionTruncationMarker)
 	for cut > 0 && !utf8.RuneStart(msg[cut]) {
 		cut--

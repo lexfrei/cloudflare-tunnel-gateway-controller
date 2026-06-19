@@ -27,7 +27,8 @@ type LocalSecretReference struct {
 	Name string `json:"name"`
 
 	// Key in the Secret. Defaults depend on context: "tunnel-token" for
-	// tunnelTokenSecretRef, "auth-token" for authTokenSecretRef.
+	// tunnelTokenSecretRef, "auth-token" for authTokenSecretRef, "api-token"
+	// for cloudflareCredentialsSecretRef.
 	// +optional
 	Key string `json:"key,omitempty"`
 }

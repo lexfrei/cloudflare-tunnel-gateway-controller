@@ -97,10 +97,43 @@ func TestGatewayConfig_CELValidation(t *testing.T) {
 			wantSub: "maxReplicas must be >= minReplicas",
 		},
 		{
+			// The boundary: maxReplicas == minReplicas is the smallest valid
+			// HPA range and MUST be accepted, so a regression tightening the
+			// CEL `>=` to `>` is caught here, not only the reject cases above.
+			name: "maxReplicas equal to minReplicas accepted",
+			spec: v1alpha1.GatewayConfigSpec{
+				TunnelTokenSecretRef: v1alpha1.LocalSecretReference{Name: "tunnel-token"},
+				Autoscaling: &v1alpha1.ProxyAutoscaling{
+					MinReplicas:          &five,
+					MaxReplicas:          5,
+					TargetInflightPerPod: 50,
+				},
+			},
+		},
+		{
 			name:    "missing tunnel token ref rejected",
 			spec:    v1alpha1.GatewayConfigSpec{},
 			wantErr: true,
 			wantSub: "tunnelTokenSecretRef",
+		},
+		{
+			// Exercises the spec.image MinLength+Pattern markers: a value with
+			// leading junk / whitespace is rejected at admission, not at
+			// pod-pull time.
+			name: "malformed image rejected",
+			spec: v1alpha1.GatewayConfigSpec{
+				TunnelTokenSecretRef: v1alpha1.LocalSecretReference{Name: "tunnel-token"},
+				Image:                " not a valid image",
+			},
+			wantErr: true,
+			wantSub: "spec.image",
+		},
+		{
+			name: "valid image accepted",
+			spec: v1alpha1.GatewayConfigSpec{
+				TunnelTokenSecretRef: v1alpha1.LocalSecretReference{Name: "tunnel-token"},
+				Image:                "ghcr.io/lexfrei/proxy:v1.2.3",
+			},
 		},
 		// Replica counts are tenant-controlled input on a shared cluster: an
 		// unbounded value is a noisy-neighbour attack (schedule 100k proxy
