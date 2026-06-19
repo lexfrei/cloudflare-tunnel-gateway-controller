@@ -60,10 +60,12 @@ spec:
         - protocol: UDP
           port: 7844
     # Cluster services (backend routing). The empty namespaceSelector is
-    # deliberately all-namespaces: an HTTPRoute may name a backend Service in
-    # any namespace (subject to ReferenceGrant), so the data plane must be able
-    # to reach every namespace's pod network. Egress is bounded by port, not
-    # destination, here.
+    # deliberately all-namespaces and the port set is deliberately all-TCP: an
+    # HTTPRoute may name a backend Service in any namespace (subject to
+    # ReferenceGrant) on any port, so this rule intentionally permits TCP to
+    # every namespace's pod network. Egress restriction here bounds the proxy
+    # to TCP within the cluster (plus the DNS and Cloudflare-edge rules above),
+    # not to a specific destination or port.
     - to:
         - namespaceSelector: {}
       ports:

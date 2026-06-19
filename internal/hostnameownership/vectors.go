@@ -93,6 +93,14 @@ func deniedVectors() []Vector {
 			Hostnames: []string{"evilteam-a.example.com"},
 		},
 		{
+			// The classic suffix-as-a-label-of-a-foreign-zone confusion: the
+			// allowed suffix appears verbatim but as a prefix of an attacker's
+			// domain. The "."-boundary suffix match denies it in both layers.
+			Name:      "suffix as prefix of foreign zone denied",
+			Suffix:    vectorSuffix,
+			Hostnames: []string{"team-a.example.com.evil.net"},
+		},
+		{
 			Name:      "wildcard escaping the suffix denied",
 			Suffix:    vectorSuffix,
 			Hostnames: []string{"*.example.com"},

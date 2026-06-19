@@ -133,8 +133,9 @@ func (p *Policy) Evaluate(nsLabels map[string]string, hostnames []gatewayv1.Host
 // admission layer uses lowerAscii(). That divergence is a deny↔allow axis ONLY
 // if a non-ASCII rune can reach this function — and it cannot: the Gateway API
 // CRD Hostname pattern and the namespace label-value regex are both
-// ASCII-lowercase-only, so hostname and suffix are always ASCII here. If that
-// CRD pattern is ever relaxed to admit Unicode, this homograph axis reopens and
+// ASCII-only (the label value may be mixed-case ASCII, which is exactly why it
+// is lowercased here), so hostname and suffix are always ASCII. If that CRD
+// pattern is ever relaxed to admit Unicode, this homograph axis reopens and
 // both layers must switch to one shared normalization.
 func hostnameWithinSuffix(hostname, suffix string) bool {
 	candidate := strings.ToLower(hostname)
