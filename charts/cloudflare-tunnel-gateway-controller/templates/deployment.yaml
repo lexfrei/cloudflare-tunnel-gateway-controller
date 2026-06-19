@@ -55,6 +55,9 @@ spec:
             - "--log-level={{ .Values.controller.logLevel }}"
             - "--log-format={{ .Values.controller.logFormat }}"
             - "--proxy-endpoints=http://{{ include "cf-tunnel-gw-ctrl.proxyHeadlessName" . }}.{{ .Release.Namespace }}.svc.{{ .Values.controller.clusterDomain | default "cluster.local" }}:{{ .Values.proxy.configAPIPort }}/config"
+            # Image for per-Gateway rendered proxy Deployments (GatewayConfig
+            # data planes); always the release's proxy image.
+            - "--proxy-image={{ .Values.proxy.image.repository }}:{{ .Values.proxy.image.tag | default .Chart.AppVersion }}"
             {{- if .Values.proxy.authTokenSecretRef.name }}
             - "--proxy-auth-token=$(PROXY_AUTH_TOKEN)"
             {{- end }}
@@ -64,6 +67,27 @@ spec:
             {{- with .Values.proxy.tunnel.protocol }}
             - "--tunnel-protocol={{ . }}"
             {{- end }}
+            {{- if .Values.hostnameOwnershipPolicy.enabled }}
+            # Controller-side hostname-ownership layer; the admission policy
+            # (separate template) is the fail-fast layer of the same rule.
+            - "--hostname-ownership-enforce=true"
+            - "--hostname-ownership-label-key={{ .Values.hostnameOwnershipPolicy.labelKey }}"
+            {{- $ownershipSelector := include "cf-tunnel-gw-ctrl.labelSelectorString" .Values.hostnameOwnershipPolicy.namespaceSelector }}
+            {{- if $ownershipSelector }}
+            - "--hostname-ownership-namespace-selector={{ $ownershipSelector }}"
+            {{- end }}
+            {{- end }}
+            {{- $monitoringSelector := include "cf-tunnel-gw-ctrl.labelSelectorString" .Values.proxy.networkPolicy.monitoringNamespaceSelector }}
+            {{- if $monitoringSelector }}
+            # Namespaces allowed to scrape /metrics on the per-Gateway proxies'
+            # config-API port in the rendered NetworkPolicy.
+            - "--monitoring-namespace-selector={{ $monitoringSelector }}"
+            {{- end }}
+            # proxy.networkPolicy.enabled gates BOTH the chart's shared-proxy
+            # NetworkPolicy AND the per-Gateway policies the controller renders,
+            # so disabling it is the real escape hatch on strict CNIs that block
+            # node-sourced kubelet probes.
+            - "--render-network-policy={{ .Values.proxy.networkPolicy.enabled }}"
             {{- if .Values.leaderElection.enabled }}
             - "--leader-elect=true"
             - "--leader-election-name={{ .Values.leaderElection.leaseName }}"
@@ -80,14 +104,25 @@ spec:
             {{- end }}
             - "--tracing-sample-rate={{ .Values.controller.tracing.sampleRate }}"
             {{- end }}
-          {{- if .Values.proxy.authTokenSecretRef.name }}
           env:
+            # The controller derives its own namespace to scope per-Gateway
+            # NetworkPolicies (config-API ingress is admitted from THIS
+            # namespace). Inject it via the downward API rather than relying on
+            # the SA-token namespace file, which is absent when
+            # automountServiceAccountToken is false — without this the
+            # controller would silently fall back to "default" and every
+            # rendered NetworkPolicy would admit the wrong namespace.
+            - name: CONTROLLER_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            {{- if .Values.proxy.authTokenSecretRef.name }}
             - name: PROXY_AUTH_TOKEN
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.proxy.authTokenSecretRef.name }}
                   key: {{ .Values.proxy.authTokenSecretRef.key | default "auth-token" }}
-          {{- end }}
+            {{- end }}
           ports:
             - name: metrics
               containerPort: {{ .Values.service.metricsPort }}

@@ -33,6 +33,14 @@ func NewConfigPusher(client *http.Client, authToken string) *ConfigPusher {
 
 // Push sends the config to all endpoints concurrently and returns results.
 func (p *ConfigPusher) Push(ctx context.Context, cfg *Config, endpoints []string) []PushResult {
+	return p.PushWithToken(ctx, cfg, endpoints, p.authToken)
+}
+
+// PushWithToken pushes with an explicit Bearer token (empty = no auth
+// header), overriding the pusher's default. Per-Gateway data planes carry
+// their own tokens; using the shared default for them would hand the shared
+// plane's credential to tenant-controlled pods.
+func (p *ConfigPusher) PushWithToken(ctx context.Context, cfg *Config, endpoints []string, authToken string) []PushResult {
 	body, err := json.Marshal(cfg)
 	if err != nil {
 		results := make([]PushResult, len(endpoints))
@@ -52,7 +60,7 @@ func (p *ConfigPusher) Push(ctx context.Context, cfg *Config, endpoints []string
 
 	for idx, endpoint := range endpoints {
 		waitGroup.Go(func() {
-			results[idx] = p.pushToEndpoint(ctx, endpoint, body)
+			results[idx] = p.pushToEndpoint(ctx, endpoint, body, authToken)
 		})
 	}
 
@@ -61,8 +69,8 @@ func (p *ConfigPusher) Push(ctx context.Context, cfg *Config, endpoints []string
 	return results
 }
 
-func (p *ConfigPusher) pushToEndpoint(ctx context.Context, endpoint string, body []byte) PushResult {
-	result := p.doPush(ctx, endpoint, body)
+func (p *ConfigPusher) pushToEndpoint(ctx context.Context, endpoint string, body []byte, authToken string) PushResult {
+	result := p.doPush(ctx, endpoint, body, authToken)
 	if result.Err == nil {
 		return result
 	}
@@ -74,7 +82,7 @@ func (p *ConfigPusher) pushToEndpoint(ctx context.Context, endpoint string, body
 		return result
 	}
 
-	proxyVersion, fetchErr := p.fetchProxyVersion(ctx, endpoint)
+	proxyVersion, fetchErr := p.fetchProxyVersion(ctx, endpoint, authToken)
 	if fetchErr != nil {
 		return PushResult{Endpoint: endpoint, Err: fmt.Errorf("stale version recovery: %w", fetchErr)}
 	}
@@ -97,10 +105,10 @@ func (p *ConfigPusher) pushToEndpoint(ctx context.Context, endpoint string, body
 		return PushResult{Endpoint: endpoint, Err: fmt.Errorf("stale version recovery marshal: %w", marshalErr)}
 	}
 
-	return p.doPush(ctx, endpoint, retryBody)
+	return p.doPush(ctx, endpoint, retryBody, authToken)
 }
 
-func (p *ConfigPusher) doPush(ctx context.Context, endpoint string, body []byte) PushResult {
+func (p *ConfigPusher) doPush(ctx context.Context, endpoint string, body []byte, authToken string) PushResult {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPut, endpoint, bytes.NewReader(body))
 	if err != nil {
 		return PushResult{Endpoint: endpoint, Err: fmt.Errorf("create request: %w", err)}
@@ -108,8 +116,8 @@ func (p *ConfigPusher) doPush(ctx context.Context, endpoint string, body []byte)
 
 	req.Header.Set("Content-Type", "application/json")
 
-	if p.authToken != "" {
-		req.Header.Set("Authorization", "Bearer "+p.authToken)
+	if authToken != "" {
+		req.Header.Set("Authorization", "Bearer "+authToken)
 	}
 
 	resp, err := p.client.Do(req)
@@ -139,14 +147,14 @@ func (p *ConfigPusher) doPush(ctx context.Context, endpoint string, body []byte)
 }
 
 // fetchProxyVersion queries a proxy endpoint for its current config version.
-func (p *ConfigPusher) fetchProxyVersion(ctx context.Context, endpoint string) (int64, error) {
+func (p *ConfigPusher) fetchProxyVersion(ctx context.Context, endpoint, authToken string) (int64, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, http.NoBody)
 	if err != nil {
 		return 0, fmt.Errorf("create GET request: %w", err)
 	}
 
-	if p.authToken != "" {
-		req.Header.Set("Authorization", "Bearer "+p.authToken)
+	if authToken != "" {
+		req.Header.Set("Authorization", "Bearer "+authToken)
 	}
 
 	resp, err := p.client.Do(req)
@@ -154,6 +162,15 @@ func (p *ConfigPusher) fetchProxyVersion(ctx context.Context, endpoint string) (
 		return 0, fmt.Errorf("send GET request: %w", err)
 	}
 	defer resp.Body.Close()
+
+	// Check the status BEFORE decoding: a 401 (token mismatch in the
+	// multi-token world) or any non-200 returns a non-JSON body, and decoding
+	// it would mask the real cause as a confusing "invalid character" error.
+	if resp.StatusCode != http.StatusOK {
+		_, _ = io.Copy(io.Discard, resp.Body)
+
+		return 0, errors.Wrapf(errUnexpectedStatusCode, "fetching proxy version: %d", resp.StatusCode)
+	}
 
 	var status ConfigStatus
 

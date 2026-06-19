@@ -24,8 +24,12 @@ const (
 // up to `wait` for the first config to arrive on firstConfig: if that config
 // carries a GRPCRoute it returns "http2" (gRPC needs http2 because cloudflared
 // drops HTTP trailers over QUIC, losing grpc-status), otherwise it returns
-// "auto". A wait timeout or a cancelled ctx also resolves to "auto" so a
-// no-route or shutting-down proxy never blocks the dial forever. This makes the
+// "auto". A wait timeout, a cancelled ctx, or a closed drain channel also
+// resolve to "auto" so a no-route or shutting-down proxy never blocks the dial
+// forever. drain matters during shutdown specifically: SIGTERM closes the
+// drain channel while the context deliberately stays alive (two-stage
+// shutdown), and a pod terminated before its first config push must not burn
+// the startup wait out of its termination grace budget. This makes the
 // default auto transport honest for gRPC without penalising non-gRPC
 // deployments beyond the time to their first config push.
 func ResolveStartupProtocol(
@@ -33,6 +37,7 @@ func ResolveStartupProtocol(
 	configured string,
 	firstConfig <-chan *Config,
 	wait time.Duration,
+	drain <-chan struct{},
 	logger *slog.Logger,
 ) string {
 	if logger == nil {
@@ -63,6 +68,10 @@ func ResolveStartupProtocol(
 
 		return protocolAuto
 	case <-ctx.Done():
+		return protocolAuto
+	case <-drain:
+		logger.Info("tunnel transport: drain signalled during the startup window, dialing auto immediately")
+
 		return protocolAuto
 	}
 }

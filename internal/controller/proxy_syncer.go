@@ -64,20 +64,45 @@ type ProxySyncer struct {
 	tlsResolver          proxy.BackendTLSResolver
 	gatewayCertResolver  proxy.GatewayClientCertResolver
 	syncMu               sync.Mutex
-	lastCfg              *proxy.Config
 
-	// lastPushedHash / lastPushedEndpoints key the steady-state skip: when a
-	// rebuilt config hashes identically to the last successful push AND the
-	// resolved endpoint set is unchanged, the push is a no-op (every replica
-	// already holds this config). Guarded by syncMu. A push failure leaves
-	// them untouched so the next sync retries.
-	lastPushedHash      string
-	lastPushedEndpoints map[string]struct{}
+	// defaultAuthToken is the shared data plane's push token (the chart's
+	// proxy.authTokenSecretRef). Per-Gateway partitions carry their OWN
+	// tokens — the shared token is never attached to tenant pushes.
+	defaultAuthToken string
+
+	// targets holds the per-partition push state, keyed by partition key
+	// (sharedPartitionKey or the infra Gateway's "namespace/name"). Guarded
+	// by syncMu. Each partition's steady-state skip, cached config, endpoint
+	// URLs, and auth token are independent — that independence IS the
+	// data-plane isolation at the push layer.
+	targets map[string]*pushTarget
 
 	// ViewStore caches the per-Gateway ListenerSet merge view across reconciles
 	// (issue #332). Set by the manager after construction and shared with the
 	// other reconcilers. nil disables cross-reconcile reuse.
 	ViewStore *mergeViewStore
+}
+
+// pushTarget is one partition's push state: the cache that lets a resync
+// replay config to a new pod, the hash/endpoint pair keying the steady-state
+// skip, and the partition's own endpoints + auth token.
+//
+// The HTTPRoute and GRPCRoute reconcilers release RouteSyncer.syncMu before
+// their push phases, so two can update one partition's endpointURLs/authToken
+// concurrently (last-writer-wins; each critical section stays internally
+// consistent, so -race is clean). This is benign: both derive the SAME values
+// for a partition — its headless-Service DNS and its own auth Secret — so a
+// concurrent overwrite writes identical bytes. Any genuine staleness (an
+// endpoint set that changed between the two reconciles) self-heals on the next
+// config or endpoint event, which re-pushes; the partition KEY never changes,
+// so a stale write can never redirect a tenant's config to another plane.
+type pushTarget struct {
+	lastCfg             *proxy.Config
+	lastPushedHash      string
+	lastPushedToken     string
+	lastPushedEndpoints map[string]struct{}
+	endpointURLs        []string
+	authToken           string
 }
 
 // NewProxySyncer creates a ProxySyncer for pushing config to proxy replicas.
@@ -110,6 +135,8 @@ func NewProxySyncer(
 	return &ProxySyncer{
 		clusterDomain:        clusterDomain,
 		logger:               logger.With("component", "proxy-syncer"),
+		defaultAuthToken:     authToken,
+		targets:              make(map[string]*pushTarget),
 		pusher:               proxy.NewConfigPusher(proxyPushClient(settings.tracing), authToken),
 		k8sClient:            k8sClient,
 		backendValidator:     newBackendRefValidator(refGrantValidator, "HTTPRoute"),
@@ -659,6 +686,26 @@ func (s *ProxySyncer) SyncRoutes(
 	failedRefs []ingress.BackendRefError,
 	grpcFailedRefs []ingress.BackendRefError,
 ) ([]proxy.RouteDiagnostic, error) {
+	return s.SyncPartition(ctx, sharedPartitionKey, s.defaultAuthToken, endpoints, routes, grpcRoutes, failedRefs, grpcFailedRefs)
+}
+
+// SyncPartition is the per-data-plane push: it builds the proxy config from
+// EXACTLY the partition's routes and pushes it to the partition's endpoints,
+// authenticated with the partition's own token (empty = no auth header — the
+// shared token is never reused for tenant planes). Push state (steady-state
+// skip, replay cache) is independent per partition.
+//
+//nolint:funlen // sequential build → skip-check → push → cache pipeline
+func (s *ProxySyncer) SyncPartition(
+	ctx context.Context,
+	key string,
+	authToken string,
+	endpoints []string,
+	routes []*gatewayv1.HTTPRoute,
+	grpcRoutes []*gatewayv1.GRPCRoute,
+	failedRefs []ingress.BackendRefError,
+	grpcFailedRefs []ingress.BackendRefError,
+) ([]proxy.RouteDiagnostic, error) {
 	// Resolve headless service DNS names before acquiring the lock
 	// to avoid blocking concurrent reconciles during slow DNS lookups.
 	resolved := resolveEndpoints(ctx, endpoints)
@@ -666,12 +713,17 @@ func (s *ProxySyncer) SyncRoutes(
 	s.syncMu.Lock()
 	defer s.syncMu.Unlock()
 
+	target := s.targetLocked(key)
+	target.endpointURLs = endpoints
+	target.authToken = authToken
+
 	logger := logging.FromContext(ctx)
 	if logger == slog.Default() {
 		logger = s.logger
 	}
 
-	logger.Info("syncing proxy config", "httpRoutes", len(routes), "grpcRoutes", len(grpcRoutes))
+	logger.Info("syncing proxy config",
+		"partition", key, "httpRoutes", len(routes), "grpcRoutes", len(grpcRoutes))
 
 	cfg := s.buildProxyConfig(ctx, routes, grpcRoutes, failedRefs, grpcFailedRefs)
 
@@ -682,6 +734,7 @@ func (s *ProxySyncer) SyncRoutes(
 	diagnostics := cfg.Diagnostics
 
 	logger.Info("resolved endpoints",
+		"partition", key,
 		"original", len(endpoints),
 		"resolved", len(resolved),
 	)
@@ -692,8 +745,9 @@ func (s *ProxySyncer) SyncRoutes(
 	// triggered by status updates or endpoint heartbeats hit this path
 	// constantly in large fleets.
 	cfgHash := hashProxyConfig(cfg)
-	if shouldSkipPush(cfgHash, s.lastPushedHash, s.lastPushedEndpoints, resolved) {
+	if shouldSkipPush(cfgHash, target.lastPushedHash, authToken, target.lastPushedToken, target.lastPushedEndpoints, resolved) {
 		logger.Debug("proxy config unchanged; skipping push",
+			"partition", key,
 			"endpoints", len(resolved),
 			"rules", len(cfg.Rules),
 		)
@@ -701,40 +755,125 @@ func (s *ProxySyncer) SyncRoutes(
 		return diagnostics, nil
 	}
 
-	if err := s.pushToEndpoints(ctx, logger, cfg, resolved); err != nil {
+	if err := s.pushToEndpoints(ctx, logger, cfg, resolved, authToken); err != nil {
 		// A failed push may have PARTIALLY succeeded (the pusher fans out
 		// concurrently): some replicas may already hold the new config.
 		// Invalidate the skip key so the next sync re-pushes even when its
 		// desired config equals the last fully-successful one -- otherwise a
 		// rollback after a partial push would be skipped and the
 		// half-updated replica would stay stale until an unrelated change.
-		s.lastPushedHash = ""
-		s.lastPushedEndpoints = nil
+		target.lastPushedHash = ""
+		target.lastPushedEndpoints = nil
 
 		return diagnostics, err
 	}
 
-	// Cache the successfully-pushed config so ResyncEndpoints can replay
+	// Cache the successfully-pushed config so a partition resync can replay
 	// it to a newly-joined proxy pod that arrives between HTTPRoute
 	// reconciles. We cache AFTER the push so a failed push does not poison
 	// the cache with a config the replicas never actually received. The
 	// hash/endpoint-set pair keys the steady-state skip above.
-	s.lastCfg = cfg
-	s.lastPushedHash = cfgHash
-	s.lastPushedEndpoints = make(map[string]struct{}, len(resolved))
+	target.lastCfg = cfg
+	target.lastPushedHash = cfgHash
+	target.lastPushedToken = authToken
+	target.lastPushedEndpoints = make(map[string]struct{}, len(resolved))
 
 	for _, endpoint := range resolved {
-		s.lastPushedEndpoints[endpoint] = struct{}{}
+		target.lastPushedEndpoints[endpoint] = struct{}{}
 	}
 
 	return diagnostics, nil
 }
 
+// targetLocked returns (creating on demand) the partition's push state.
+// Caller must hold syncMu.
+func (s *ProxySyncer) targetLocked(key string) *pushTarget {
+	if s.targets == nil {
+		s.targets = make(map[string]*pushTarget)
+	}
+
+	target, ok := s.targets[key]
+	if !ok {
+		target = &pushTarget{}
+		s.targets[key] = target
+	}
+
+	return target
+}
+
+// RetainPartitions evicts push state for partitions not in keep (deleted
+// Gateways). The shared partition is always retained.
+//
+// Concurrency note: a slower concurrent reconcile carrying a stale keep set
+// can transiently evict a partition another reconcile just pushed (push and
+// retain are separate lock acquisitions). This self-heals on the next
+// reconcile or endpoint event and is never a cross-tenant leak — a missing
+// cache only forces a re-push, it never routes a tenant's config elsewhere.
+func (s *ProxySyncer) RetainPartitions(keep map[string]bool) {
+	s.syncMu.Lock()
+	defer s.syncMu.Unlock()
+
+	for key := range s.targets {
+		if key == sharedPartitionKey || keep[key] {
+			continue
+		}
+
+		delete(s.targets, key)
+	}
+}
+
+// ResyncPartition replays a partition's cached config to its stored endpoint
+// URLs (re-resolving DNS), using the partition's own auth token. Unknown or
+// not-yet-synced partitions are a no-op.
+func (s *ProxySyncer) ResyncPartition(ctx context.Context, key string) error {
+	s.syncMu.Lock()
+	target, ok := s.targets[key]
+
+	var (
+		endpoints []string
+		authToken string
+	)
+
+	if ok {
+		endpoints = target.endpointURLs
+		authToken = target.authToken
+	}
+	s.syncMu.Unlock()
+
+	if !ok {
+		return nil
+	}
+
+	return s.resyncTarget(ctx, key, endpoints, authToken)
+}
+
+// ResyncAllPartitions replays every cached partition config; used when an
+// endpoint event cannot be attributed to one partition.
+func (s *ProxySyncer) ResyncAllPartitions(ctx context.Context) error {
+	s.syncMu.Lock()
+	keys := make([]string, 0, len(s.targets))
+
+	for key := range s.targets {
+		keys = append(keys, key)
+	}
+	s.syncMu.Unlock()
+
+	var errs []error
+
+	for _, key := range keys {
+		if err := s.ResyncPartition(ctx, key); err != nil {
+			errs = append(errs, err)
+		}
+	}
+
+	return errors.Join(errs...)
+}
+
 // pushToEndpoints delivers cfg to every resolved endpoint, aggregating
 // per-endpoint failures into one error. Extracted from SyncRoutes to keep it
 // within the funlen budget.
-func (s *ProxySyncer) pushToEndpoints(ctx context.Context, logger *slog.Logger, cfg *proxy.Config, resolved []string) error {
-	results := s.pusher.Push(ctx, cfg, resolved)
+func (s *ProxySyncer) pushToEndpoints(ctx context.Context, logger *slog.Logger, cfg *proxy.Config, resolved []string, authToken string) error {
+	results := s.pusher.PushWithToken(ctx, cfg, resolved, authToken)
 
 	var pushErrors []error
 
@@ -764,13 +903,22 @@ func (s *ProxySyncer) pushToEndpoints(ctx context.Context, logger *slog.Logger, 
 }
 
 // shouldSkipPush reports whether the rebuilt config is already held by every
-// resolved endpoint: the content hash matches the last fully-successful push
-// and the replica set is unchanged. An empty hash never skips -- "" is both
-// the hash-failure sentinel and the zero value of the last-pushed key (and
-// the invalidation value after a partial push), so treating it as a match
-// would skip a push that must happen.
-func shouldSkipPush(cfgHash, lastPushedHash string, lastPushedEndpoints map[string]struct{}, resolved []string) bool {
-	return cfgHash != "" && cfgHash == lastPushedHash && endpointSetsEqual(lastPushedEndpoints, resolved)
+// resolved endpoint: the content hash matches the last fully-successful push,
+// the auth token is unchanged, and the replica set is unchanged. An empty hash
+// never skips -- "" is both the hash-failure sentinel and the zero value of the
+// last-pushed key (and the invalidation value after a partial push), so
+// treating it as a match would skip a push that must happen. The token is part
+// of the key so a token rotation on otherwise-unchanged routes/endpoints still
+// re-authenticates to every replica instead of waiting for the next genuine
+// config change.
+func shouldSkipPush(
+	cfgHash, lastPushedHash, authToken, lastPushedToken string,
+	lastPushedEndpoints map[string]struct{},
+	resolved []string,
+) bool {
+	return cfgHash != "" && cfgHash == lastPushedHash &&
+		authToken == lastPushedToken &&
+		endpointSetsEqual(lastPushedEndpoints, resolved)
 }
 
 // hashProxyConfig returns a content hash of the config with the Version
@@ -867,6 +1015,9 @@ func (s *ProxySyncer) buildProxyConfig(
 
 		grpcCfg := proxy.ConvertGRPCRoutes(ctx, grpcRoutes, s.clusterDomain, s.grpcBackendValidator, s.protocolResolver, s.tlsResolver, s.gatewayCertResolver)
 		cfg.Rules = append(cfg.Rules, grpcCfg.Rules...)
+		// Provenance MUST grow in lockstep with Rules (parallel slices) so the
+		// shadow detection below attributes every flattened rule correctly.
+		cfg.Provenance = append(cfg.Provenance, grpcCfg.Provenance...)
 		cfg.Diagnostics = append(cfg.Diagnostics, grpcCfg.Diagnostics...)
 
 		// Mark invalid gRPC backendRefs the same way as HTTP. Matching is by
@@ -901,6 +1052,13 @@ func (s *ProxySyncer) buildProxyConfig(
 	// to h2c HTTP rules on the wire, so the signal must be explicit.
 	cfg.HasGRPCRoute = len(grpcRoutes) > 0
 
+	// Cross-route shadow detection (#474) runs LAST, over the exact rule
+	// stream the router will serve — after effective-hostname inheritance and
+	// the gRPC merge — so a collision an operator can hit is a collision this
+	// flags. Status/observability only: the diagnostics ride the existing
+	// pipeline into a dedicated condition + Warning Event on the losing route.
+	cfg.Diagnostics = append(cfg.Diagnostics, proxy.DetectShadowedRules(cfg)...)
+
 	return cfg
 }
 
@@ -920,15 +1078,27 @@ func (s *ProxySyncer) buildProxyConfig(
 // Push errors are returned but not fatal: a transient endpoint flake
 // gets corrected on the next endpoint-change event.
 func (s *ProxySyncer) ResyncEndpoints(ctx context.Context, endpoints []string) error {
+	return s.resyncTarget(ctx, sharedPartitionKey, endpoints, s.defaultAuthToken)
+}
+
+// resyncTarget replays a partition's cached config to the given endpoints
+// with the given token, updating the partition's steady-state skip key on
+// success and invalidating it on partial failure.
+func (s *ProxySyncer) resyncTarget(ctx context.Context, key string, endpoints []string, authToken string) error {
 	// Resolve headless service DNS names before acquiring the lock so a
-	// slow DNS lookup does not block a concurrent SyncRoutes -- mirrors
-	// the same pattern in SyncRoutes for symmetric lock-hold time.
+	// slow DNS lookup does not block a concurrent sync -- mirrors the same
+	// pattern in SyncPartition for symmetric lock-hold time.
 	resolved := resolveEndpoints(ctx, endpoints)
 
 	s.syncMu.Lock()
 	defer s.syncMu.Unlock()
 
-	if s.lastCfg == nil {
+	// Plain lookup, NOT targetLocked: RetainPartitions can evict the key
+	// between the caller's read-unlock and this re-lock, and re-creating an
+	// empty target here would resurrect a garbage entry that lingers until
+	// the next retain pass.
+	target, ok := s.targets[key]
+	if !ok || target.lastCfg == nil {
 		return nil
 	}
 
@@ -938,11 +1108,12 @@ func (s *ProxySyncer) ResyncEndpoints(ctx context.Context, endpoints []string) e
 	}
 
 	logger.Info("resyncing cached proxy config to endpoints",
+		"partition", key,
 		"endpoints", len(resolved),
-		"version", s.lastCfg.Version,
+		"version", target.lastCfg.Version,
 	)
 
-	results := s.pusher.Push(ctx, s.lastCfg, resolved)
+	results := s.pusher.PushWithToken(ctx, target.lastCfg, resolved, authToken)
 
 	var pushErrors []error
 
@@ -958,24 +1129,25 @@ func (s *ProxySyncer) ResyncEndpoints(ctx context.Context, endpoints []string) e
 	}
 
 	if len(pushErrors) > 0 {
-		// Mirror SyncRoutes: a partial resync means some replicas may hold the
-		// cached config while others do not -- drop the skip key so the next
-		// SyncRoutes re-pushes unconditionally.
-		s.lastPushedHash = ""
-		s.lastPushedEndpoints = nil
+		// Mirror SyncPartition: a partial resync means some replicas may hold
+		// the cached config while others do not -- drop the skip key so the
+		// next sync re-pushes unconditionally.
+		target.lastPushedHash = ""
+		target.lastPushedEndpoints = nil
 
 		return fmt.Errorf("failed to resync config to %d/%d endpoints: %w",
 			len(pushErrors), len(resolved), errors.Join(pushErrors...))
 	}
 
-	// Every resolved endpoint now holds lastCfg: update the skip key so the
-	// next SyncRoutes does not re-push the identical config just because the
-	// replica set grew.
-	s.lastPushedHash = hashProxyConfig(s.lastCfg)
-	s.lastPushedEndpoints = make(map[string]struct{}, len(resolved))
+	// Every resolved endpoint now holds the cached config: update the skip
+	// key so the next sync does not re-push the identical config just
+	// because the replica set grew.
+	target.lastPushedHash = hashProxyConfig(target.lastCfg)
+	target.lastPushedToken = authToken
+	target.lastPushedEndpoints = make(map[string]struct{}, len(resolved))
 
 	for _, endpoint := range resolved {
-		s.lastPushedEndpoints[endpoint] = struct{}{}
+		target.lastPushedEndpoints[endpoint] = struct{}{}
 	}
 
 	return nil

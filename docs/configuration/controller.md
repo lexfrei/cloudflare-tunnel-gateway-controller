@@ -23,6 +23,12 @@ This document describes all configuration options for the controller binary. For
 | `--tracing-enabled` | `CF_TRACING_ENABLED` | `false` | Enable OpenTelemetry distributed tracing |
 | `--tracing-endpoint` | `CF_TRACING_ENDPOINT` | | OTLP/gRPC collector endpoint (defers to `OTEL_EXPORTER_OTLP_ENDPOINT` when empty) |
 | `--tracing-sample-rate` | `CF_TRACING_SAMPLE_RATE` | `1.0` | Head-sampling probability in `[0,1]` |
+| `--proxy-image` | `CF_PROXY_IMAGE` | | Container image for per-Gateway rendered proxy Deployments ([per-Gateway isolation](../guides/per-gateway-isolation.md)). When BOTH this flag and the `GatewayConfig.spec.image` override are empty, rendering is skipped and the Gateway surfaces a Warning Event instead of a data plane. The Helm chart always sets it; manual installs should pass it (or set `spec.image` per GatewayConfig) |
+| `--hostname-ownership-enforce` | `CF_HOSTNAME_OWNERSHIP_ENFORCE` | `false` | Controller-side hostname-ownership layer: routes whose hostnames fall outside their namespace's allowed-suffix label are rejected (`HostnameNotPermitted`) and never programmed. Independent of the chart's `ValidatingAdmissionPolicy` — see [Multi-Tenancy](../guides/multi-tenancy.md) |
+| `--hostname-ownership-label-key` | `CF_HOSTNAME_OWNERSHIP_LABEL_KEY` | `cf.k8s.lex.la/hostname-suffix` | Namespace label carrying the tenant's allowed hostname suffix |
+| `--hostname-ownership-namespace-selector` | `CF_HOSTNAME_OWNERSHIP_NAMESPACE_SELECTOR` | | Label selector (kubectl syntax) scoping which namespaces are policed; empty polices every namespace (fail-closed) |
+| `--monitoring-namespace-selector` | `CF_MONITORING_NAMESPACE_SELECTOR` | | Label selector (kubectl syntax) for namespaces additionally allowed to reach a per-Gateway proxy's config-API/metrics port in the rendered NetworkPolicy; empty admits the controller namespace only — see [Per-Gateway Isolation](../guides/per-gateway-isolation.md) |
+| `--render-network-policy` | `CF_RENDER_NETWORK_POLICY` | `true` | Render the per-Gateway config-API NetworkPolicy. Wired from the chart's `proxy.networkPolicy.enabled`. Set `false` on strict CNIs where node-sourced kubelet probes are blocked by the policy's `namespaceSelector` ingress rule; a previously-rendered policy is then deleted |
 
 For full distributed-tracing setup, see [Distributed Tracing](../operations/tracing.md).
 

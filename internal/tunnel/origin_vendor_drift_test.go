@@ -2,6 +2,7 @@ package tunnel_test
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 
@@ -54,4 +55,18 @@ func TestVendoredCloudflaredUpgradeConstantsPinned(t *testing.T) {
 			"the sibling behavioural pin "+
 			"`TestGatewayOriginProxy_ProxyHTTP_WebSocketReinjectsHeaders` "+
 			"(`internal/tunnel/origin_test.go`) before re-pinning this constant.")
+}
+
+// TestVendoredCloudflaredMaxGracePeriodPinned guards the connector drain cap.
+// resolveGracePeriod (`internal/tunnel/bootstrap.go`) clamps the configured
+// drain window to connection.MaxGracePeriod, and the chart values + docs claim
+// the cap is 3 minutes. A fork rebase that changed the vendored cap would move
+// the real clamp silently while the docs kept saying 3m. Pin the value so the
+// rebase must reconcile the docs.
+func TestVendoredCloudflaredMaxGracePeriodPinned(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, 3*time.Minute, connection.MaxGracePeriod,
+		"vendored cloudflared `MaxGracePeriod` changed — resolveGracePeriod clamps to it and "+
+			"the chart values + docs claim a 3m cap. Update the docs/values and re-pin this value.")
 }

@@ -12,8 +12,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
+	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/logging"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/render"
 )
 
 // ipv4SegmentCount is the number of dotted segments in an IPv4 address;
@@ -71,6 +73,39 @@ func (r *ProxyEndpointReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 	ctx = logging.WithLogger(ctx, logger)
 
+	var slice discoveryv1.EndpointSlice
+	if err := r.Client.Get(ctx, req.NamespacedName, &slice); err != nil {
+		// Deleted or unreadable: we cannot attribute the event to one data
+		// plane, so replay every cached partition — cheap and correct.
+		if resyncErr := r.ProxySyncer.ResyncAllPartitions(ctx); resyncErr != nil {
+			return ctrl.Result{}, errors.Wrap(resyncErr, "resync all proxy partitions")
+		}
+
+		return ctrl.Result{}, nil
+	}
+
+	// A per-Gateway data plane's EndpointSlice carries the Gateway label
+	// (mirrored from its rendered Service); resync just that partition.
+	if labelValue := slice.Labels[render.GatewayLabel]; labelValue != "" {
+		key, ok := r.partitionKeyForLabel(ctx, slice.Namespace, labelValue)
+		if !ok {
+			// The label value cannot be attributed to a live Gateway (it is
+			// a truncated form of a name that no longer exists, or foreign):
+			// replay every cached partition — cheap and correct.
+			if resyncErr := r.ProxySyncer.ResyncAllPartitions(ctx); resyncErr != nil {
+				return ctrl.Result{}, errors.Wrap(resyncErr, "resync all proxy partitions")
+			}
+
+			return ctrl.Result{}, nil
+		}
+
+		if err := r.ProxySyncer.ResyncPartition(ctx, key); err != nil {
+			return ctrl.Result{}, errors.Wrap(err, "resync per-gateway proxy partition")
+		}
+
+		return ctrl.Result{}, nil
+	}
+
 	if err := r.ProxySyncer.ResyncEndpoints(ctx, r.ProxyEndpoints); err != nil {
 		// Non-fatal: the next endpoint-change event (or the next
 		// HTTPRoute reconcile) gets another chance. Surface as an
@@ -79,6 +114,39 @@ func (r *ProxyEndpointReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 
 	return ctrl.Result{}, nil
+}
+
+// partitionKeyForLabel maps a GatewayLabel value back onto the partition key
+// (full "namespace/name") by scanning the namespace's Gateways through the
+// same truncation function that produced the value. No length shortcut: a
+// truncated value is NOT length-distinguishable from a literal name —
+// truncateName trims trailing dashes before appending the hash, so a long
+// name cut on a dash boundary yields a SUB-63 value, and treating that as a
+// literal name would resync a partition that does not exist (silently
+// starving the Gateway's data plane of endpoint-driven replays). The List is
+// cache-served and namespace-bounded.
+func (r *ProxyEndpointReconciler) partitionKeyForLabel(
+	ctx context.Context,
+	namespace, labelValue string,
+) (string, bool) {
+	var gateways gatewayv1.GatewayList
+	if err := r.Client.List(ctx, &gateways, client.InNamespace(namespace)); err != nil {
+		return "", false
+	}
+
+	for i := range gateways.Items {
+		// First match wins. The label value is a truncated name with an 8-hex
+		// hash suffix, so a collision needs two Gateway names that both truncate
+		// AND hash-collide in one namespace — astronomically unlikely. Even
+		// then the only consequence is a misdirected endpoint RESYNC (a re-push
+		// of already-correct config), never a cross-tenant leak, and it
+		// self-heals on the next genuine config change.
+		if render.GatewayLabelValue(gateways.Items[i].Name) == labelValue {
+			return namespace + "/" + gateways.Items[i].Name, true
+		}
+	}
+
+	return "", false
 }
 
 // SetupWithManager wires the reconciler into the manager with an
@@ -119,6 +187,16 @@ func (r *ProxyEndpointReconciler) endpointSliceMatchesProxy() predicate.Predicat
 		slice, ok := obj.(*discoveryv1.EndpointSlice)
 		if !ok {
 			return false
+		}
+
+		// Per-Gateway data planes: the EndpointSlice controller mirrors the
+		// rendered Service's labels (including the Gateway marker) onto its
+		// EndpointSlices (kubernetes/kubernetes#94443, stable since 1.20), so a
+		// newly-joined/restarted per-Gateway pod's slice carries the marker and
+		// triggers ResyncPartition. Pinned by the e2e scale test + the predicate
+		// unit test (TestEndpointSliceMatchesProxy).
+		if slice.Labels[render.GatewayLabel] != "" {
+			return true
 		}
 
 		serviceName := slice.Labels[discoveryv1.LabelServiceName]

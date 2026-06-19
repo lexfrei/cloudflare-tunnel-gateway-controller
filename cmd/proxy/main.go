@@ -9,8 +9,12 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/logging"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/proxy"
@@ -142,28 +146,17 @@ func tracingHandlerOption() proxy.HandlerOption {
 func runTunnelMode(logger *slog.Logger, token string) {
 	configAddr := envOrDefault("PROXY_CONFIG_ADDR", defaultConfigAddr)
 
-	router := proxy.NewRouter()
-	proxyHandler := proxy.NewHandler(router, handlerOptions(logger)...)
-	router.SetHandler(proxyHandler)
-
-	authToken := os.Getenv("PROXY_AUTH_TOKEN")
-	warnIfNoAuth(logger, authToken)
-
-	configServer := newServer(configAddr, proxy.NewConfigAPI(router, authToken))
+	router, proxyHandler, configAPI := buildDataPlane(logger)
+	configServer := newServer(configAddr, configAPI)
 
 	// Create in-process origin proxy — traffic flows directly from cloudflared
 	// to our handler without HTTP serialization or localhost TCP hop.
 	originProxy := tunnel.NewGatewayOriginProxy(proxyHandler, logger)
 
-	// Register signal handler before starting tunnel to prevent signal loss
-	// during startup. The goroutine waits for either a signal or context cancellation.
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGTERM, syscall.SIGINT)
-
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go handleSignals(ctx, logger, cancel, sigChan)
+	graceC := setupDrainSignals(ctx, logger, cancel)
 
 	go func() {
 		logger.Info("starting config API server", "addr", configAddr)
@@ -180,11 +173,14 @@ func runTunnelMode(logger *slog.Logger, token string) {
 	// the controller's first config push so the proxy can upgrade to http2 when
 	// a GRPCRoute is present — cloudflared drops HTTP trailers over QUIC, so gRPC
 	// needs http2. Explicit http2/quic dial immediately without waiting.
+	// graceC rides along so a SIGTERM during this window does not burn the
+	// startup wait out of the pod's termination grace budget.
 	effectiveProtocol := proxy.ResolveStartupProtocol(
 		ctx,
 		os.Getenv("PROXY_TUNNEL_PROTOCOL"),
 		router.FirstConfigLoaded(),
 		startupProtocolWait(logger),
+		graceC,
 		logger,
 	)
 
@@ -192,6 +188,17 @@ func runTunnelMode(logger *slog.Logger, token string) {
 	// arrives later on a non-http2 transport, where a live re-dial is unsafe and
 	// the operator must restart the proxy.
 	router.SetDialedProtocol(effectiveProtocol)
+
+	// A drain signalled before the dial means the pod is already terminating:
+	// dialing the edge only to immediately unregister would burn termination
+	// grace for nothing — skip straight to shutdown.
+	if drainSignalled(graceC) {
+		logger.Info("drain signalled before tunnel start; exiting without dialing the edge")
+		cancel()
+		gracefulShutdown(logger, configServer)
+
+		return
+	}
 
 	logger.Info("starting cloudflared tunnel with in-process proxy", "protocol", effectiveProtocol)
 
@@ -204,8 +211,15 @@ func runTunnelMode(logger *slog.Logger, token string) {
 		// pod reports Ready when it can actually receive traffic (before that
 		// the edge returns 530). Combined with config presence in /readyz.
 		OnConnected: router.SetTunnelConnected,
+		// Two-stage shutdown: SIGTERM closes graceC (drain), the context stays
+		// alive so the connector can unregister and in-flight requests finish.
+		GraceShutdownC: graceC,
+		GracePeriod:    parseEnvDuration(logger, "PROXY_GRACE_PERIOD"),
 	})
 
+	// The daemon has exited (drained, failed, or force-cancelled) — release the
+	// signal goroutine before shutting the config server down.
+	cancel()
 	gracefulShutdown(logger, configServer)
 
 	if err != nil && !errors.Is(err, context.Canceled) {
@@ -221,19 +235,14 @@ func runStandaloneMode(logger *slog.Logger) {
 	configAddr := envOrDefault("PROXY_CONFIG_ADDR", defaultConfigAddr)
 	proxyAddr := envOrDefault("PROXY_ADDR", defaultProxyAddr)
 
-	router := proxy.NewRouter()
-	proxyHandler := proxy.NewHandler(router, handlerOptions(logger)...)
-	router.SetHandler(proxyHandler)
+	router, proxyHandler, configAPI := buildDataPlane(logger)
 
 	// Standalone mode has no tunnel to wait for, so readiness gates on config
 	// alone — latch the tunnel-connected state up front. (Tunnel mode flips it
 	// from the cloudflared connected-signal instead.)
 	router.SetTunnelConnected()
 
-	authToken := os.Getenv("PROXY_AUTH_TOKEN")
-	warnIfNoAuth(logger, authToken)
-
-	configServer := newServer(configAddr, proxy.NewConfigAPI(router, authToken))
+	configServer := newServer(configAddr, configAPI)
 	proxyServer := newProxyServer(proxyAddr, proxyHandler)
 
 	errChan := make(chan error, 2)
@@ -283,15 +292,68 @@ func newProxyServer(addr string, handler http.Handler) *http.Server {
 	}
 }
 
-func handleSignals(ctx context.Context, logger *slog.Logger, cancel context.CancelFunc, sigChan <-chan os.Signal) {
+// drainSignalled reports whether the drain channel is already closed,
+// without blocking.
+func drainSignalled(graceC <-chan struct{}) bool {
+	select {
+	case <-graceC:
+		return true
+	default:
+		return false
+	}
+}
+
+// setupDrainSignals registers the two-stage SIGTERM/SIGINT handling for
+// tunnel mode (registered before the tunnel starts so no signal is lost
+// during startup) and returns the channel whose close starts cloudflared's
+// connector drain: the connector unregisters from the edge (stopping NEW
+// requests — the edge routes to tunnel connections, not the Kubernetes
+// Service) and in-flight requests get the grace period to finish. The run
+// context MUST stay alive during the drain; cancelling it aborts the
+// unregister RPC.
+func setupDrainSignals(ctx context.Context, logger *slog.Logger, cancel context.CancelFunc) <-chan struct{} {
+	// Buffered for two signals: the first starts the drain, the second forces
+	// immediate shutdown.
+	sigChan := make(chan os.Signal, 2)
+	signal.Notify(sigChan, syscall.SIGTERM, syscall.SIGINT)
+
+	graceC := make(chan struct{})
+
+	go handleDrainSignals(ctx, logger, sync.OnceFunc(func() { close(graceC) }), cancel, sigChan)
+
+	return graceC
+}
+
+// handleDrainSignals implements the two-stage shutdown for tunnel mode. The
+// first SIGTERM/SIGINT starts the graceful connector drain (drain is invoked;
+// the context deliberately stays alive so cloudflared can unregister from the
+// edge and in-flight requests can finish within the grace period). A second
+// signal escalates to an immediate shutdown by cancelling the context. The
+// goroutine exits when the context is cancelled by any path (tunnel exit,
+// forced shutdown).
+func handleDrainSignals(
+	ctx context.Context,
+	logger *slog.Logger,
+	drain func(),
+	cancel context.CancelFunc,
+	sigChan <-chan os.Signal,
+) {
 	select {
 	case sig := <-sigChan:
-		logger.Info("received signal, shutting down", "signal", sig)
+		logger.Info("received signal, draining tunnel connections", "signal", sig)
+
+		drain()
+	case <-ctx.Done():
+		// Context was cancelled by another path (e.g., tunnel exit).
+		return
+	}
+
+	select {
+	case sig := <-sigChan:
+		logger.Info("received second signal, forcing shutdown", "signal", sig)
 
 		cancel()
 	case <-ctx.Done():
-		// Context was cancelled by another path (e.g., tunnel exit).
-		// Nothing to do — just let the goroutine exit cleanly.
 	}
 }
 
@@ -350,6 +412,71 @@ func drainErrors(logger *slog.Logger, errChan <-chan error) {
 	}
 }
 
+// buildDataPlane assembles the shared data-plane pieces for both run modes:
+// the router, the request handler (env-driven options plus metrics when
+// enabled), and the config API (with the /metrics exposition handler when
+// enabled).
+func buildDataPlane(logger *slog.Logger) (*proxy.Router, *proxy.Handler, *proxy.ConfigAPI) {
+	router := proxy.NewRouter()
+
+	opts := handlerOptions(logger)
+
+	metricsOpt, metricsHandler := buildProxyMetrics()
+	if metricsOpt != nil {
+		opts = append(opts, metricsOpt)
+	}
+
+	proxyHandler := proxy.NewHandler(router, opts...)
+	router.SetHandler(proxyHandler)
+
+	authToken := os.Getenv("PROXY_AUTH_TOKEN")
+	warnIfNoAuth(logger, authToken)
+
+	var apiOpts []proxy.ConfigAPIOption
+	if metricsHandler != nil {
+		apiOpts = append(apiOpts, proxy.WithMetricsHandler(metricsHandler))
+	}
+
+	return router, proxyHandler, proxy.NewConfigAPI(router, authToken, apiOpts...)
+}
+
+// buildProxyMetrics constructs the data-plane Prometheus instrumentation when
+// PROXY_METRICS_ENABLED allows it (default on). The instruments register on a
+// DEDICATED registry — the embedded cloudflared MustRegisters its collectors
+// on the global default and panics on duplicates. The /metrics handler
+// gathers the dedicated registry MERGED with prometheus.DefaultGatherer so
+// the cloudflared connector metrics (cloudflared_tunnel_*) and the
+// client_golang go/process collectors ship from the same endpoint.
+// ContinueOnError keeps a transient gather inconsistency in one registry
+// from failing the scrape of the other's series.
+func buildProxyMetrics() (proxy.HandlerOption, http.Handler) {
+	if !metricsEnabled() {
+		return nil, nil
+	}
+
+	reg := prometheus.NewRegistry()
+	metrics := proxy.NewMetrics(reg)
+
+	exposition := promhttp.HandlerFor(
+		prometheus.Gatherers{reg, prometheus.DefaultGatherer},
+		promhttp.HandlerOpts{ErrorHandling: promhttp.ContinueOnError},
+	)
+
+	return proxy.WithMetrics(metrics), exposition
+}
+
+// metricsEnabled reports whether the /metrics endpoint and per-request
+// instrumentation are on. Default TRUE — the inverse of the isTruthyEnv
+// convention, deliberately: metrics are cheap and secret-free, operators
+// should get them without setting anything. Only an explicit "0" / "false"
+// (case-insensitive, trimmed) disables.
+func metricsEnabled() bool {
+	raw := strings.ToLower(strings.TrimSpace(os.Getenv("PROXY_METRICS_ENABLED")))
+
+	return raw != "0" && raw != "false"
+}
+
+// warnIfNoAuth logs the missing-auth warning shared by both run modes.
 func warnIfNoAuth(logger *slog.Logger, authToken string) {
 	if authToken == "" {
 		logger.Warn("config API running WITHOUT authentication -- set PROXY_AUTH_TOKEN for production use")

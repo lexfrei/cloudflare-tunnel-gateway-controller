@@ -11,8 +11,19 @@ import (
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/cfmetrics"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/config"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/render"
 )
 
+// TestGatewayReconciler_SetupWithManager registers BOTH Gateway-typed
+// reconcilers on one manager, exactly like production manager.go does. This
+// pins the controller-name uniqueness contract: controller-runtime derives
+// the controller name from the For type (and validates it in a
+// process-global registry), so GatewayReconciler owns the implicit "gateway"
+// name and GatewayInfraReconciler MUST carry an explicit Named() — without
+// it the second registration fails and the binary never starts. The two
+// registrations deliberately live in ONE test: the name registry is global
+// to the test binary, so a second test registering "gateway" would conflict
+// with this one.
 func TestGatewayReconciler_SetupWithManager(t *testing.T) {
 	mgr, err := ctrl.NewManager(envCfg, ctrl.Options{
 		Scheme: envScheme,
@@ -33,6 +44,17 @@ func TestGatewayReconciler_SetupWithManager(t *testing.T) {
 
 	err = r.SetupWithManager(mgr)
 	require.NoError(t, err)
+
+	infraReconciler := &GatewayInfraReconciler{
+		Client:              envK8sClient,
+		Scheme:              envScheme,
+		ControllerName:      "test-controller",
+		ConfigResolver:      configResolver,
+		RenderDefaults:      render.Defaults{ProxyImage: "example.com/proxy:test"},
+		RenderNetworkPolicy: true,
+	}
+	require.NoError(t, infraReconciler.SetupWithManager(mgr),
+		"both Gateway-typed reconcilers must register on one manager — production startup does exactly this")
 }
 
 func TestHTTPRouteReconciler_SetupWithManager(t *testing.T) {

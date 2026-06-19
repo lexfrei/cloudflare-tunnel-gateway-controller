@@ -19,7 +19,7 @@ Step 6's real-cluster verification is maintainer-only — it requires a Cloudfla
 
 ## Project Overview
 
-Kubernetes controller implementing Gateway API for Cloudflare Tunnel. Watches Gateway and HTTPRoute resources, automatically configures Cloudflare Tunnel ingress rules via API. Supports hot reload without cloudflared restart. Ships a single L7 proxy data plane (embeds cloudflared transport in-process via the vendored fork's `OverrideProxy` hook).
+Kubernetes controller implementing Gateway API for Cloudflare Tunnel. Watches Gateway and HTTPRoute resources, automatically configures Cloudflare Tunnel ingress rules via API. Supports hot reload without cloudflared restart. Ships a shared in-process L7 proxy data plane by default (embeds cloudflared transport in-process via the vendored fork's `OverrideProxy` hook), plus optional per-Gateway dedicated data planes — a separate proxy Deployment and tunnel per opted-in Gateway — for hard isolation.
 
 ## Build and Development Commands
 
@@ -72,17 +72,25 @@ helm template test charts/cloudflare-tunnel-gateway-controller --values charts/c
 
 ### Controllers (controller-runtime based)
 
-- **GatewayReconciler** (`internal/controller/gateway_controller.go`): Watches Gateway resources whose GatewayClass has a matching `spec.controllerName`. Resolves GatewayClassConfig for tunnel credentials. Updates Gateway status with tunnel CNAME address. Status-only since v3 — the in-process L7 proxy embeds cloudflared transport, so the controller no longer deploys a separate cloudflared instance.
+- **GatewayReconciler** (`internal/controller/gateway_controller.go`): Watches Gateway resources whose GatewayClass has a matching `spec.controllerName`. Resolves GatewayClassConfig for tunnel credentials. Updates Gateway status with tunnel CNAME address. Status-only since v3 — the shared in-process L7 proxy embeds cloudflared transport, so the controller no longer deploys a separate cloudflared instance for the shared plane (per-Gateway dedicated data planes are rendered by GatewayInfraReconciler, below; GatewayReconciler remains the sole Gateway-status writer in both modes).
 
 - **HTTPRouteReconciler** (`internal/controller/httproute_controller.go`): Watches HTTPRoute resources referencing managed Gateways. Performs full sync of all relevant routes to Cloudflare Tunnel configuration on any change. Updates HTTPRoute status. Pushes config to L7 proxy replicas via ProxySyncer.
 
 - **GRPCRouteReconciler** (`internal/controller/grpcroute_controller.go`): Watches GRPCRoute resources. Shares RouteSyncer with HTTPRouteReconciler for unified Cloudflare Tunnel sync, and pushes the merged HTTP+gRPC config to the L7 proxy via ProxySyncer — the in-process proxy serves gRPC at runtime (HTTP/2 POSTs to `/{service}/{method}`), so gRPC is not tunnel-only.
 
-- **ProxySyncer** (`internal/controller/proxy_syncer.go`): Converts HTTPRoutes into proxy config and pushes to proxy endpoints via HTTP API. Resolves headless service DNS for endpoint discovery. Validates cross-namespace backends via ReferenceGrant.
+- **ProxySyncer** (`internal/controller/proxy_syncer.go`): Converts HTTPRoutes into proxy config and pushes to proxy endpoints via HTTP API. Resolves headless service DNS for endpoint discovery. Validates cross-namespace backends via ReferenceGrant. Push state is per data-plane partition (`SyncPartition`), each with its own steady-state-skip cache, endpoints, and auth token.
 
-### Custom Resource Definition
+- **GatewayInfraReconciler** (`internal/controller/gateway_infra_reconciler.go`): Renders and reconciles per-Gateway data planes (#479) — a dedicated proxy Deployment, headless config Service, a config-API NetworkPolicy, and optional HPA for Gateways carrying `spec.infrastructure.parametersRef` → `GatewayConfig`. Resources are controller-owned (GC on Gateway delete, drift-healed, deleted on opt-out only when owned). Writes no Gateway status; GatewayReconciler stays the single status writer and gates `Programmed` on the rendered Deployment's readiness in per-Gateway mode.
 
-- **GatewayClassConfig** (`api/v1alpha1/`): Cluster-scoped CRD for configuring Cloudflare credentials and tunnel ID. Referenced by GatewayClass via `parametersRef`. Spec carries only `cloudflareCredentialsSecretRef`, optional `accountId`, and `tunnelID`. Proxy-side configuration (replicas, tunnel token, probes, access log, websocket timeouts) lives in Helm chart values, not in the CRD.
+- **Route partitioning** (`internal/controller/route_partition.go`): Accepted routes are split per data plane (shared + one partition per opted-in Gateway). The Cloudflare sync writes one ingress document per TUNNEL (same-tunnel partitions merge); the proxy push delivers each partition's config to its own endpoints, with same-tunnel partitions receiving the union (the edge load-balances a tunnel's requests across all its connectors). Partition membership is the isolation guarantee.
+
+- **Hostname ownership** (`internal/hostnameownership/`): Controller-side layer of the per-namespace hostname-ownership policy (#475). A namespace label binds it to one allowed hostname suffix; violating routes are rejected at binding (`HostnameNotPermitted`) and never programmed. The CEL ValidatingAdmissionPolicy in the chart is the fail-fast twin; both implement ONE semantic contract defined by the shared vector table in `vectors.go` — extend the vectors first when changing semantics.
+
+### Custom Resource Definitions
+
+- **GatewayClassConfig** (`api/v1alpha1/`): Cluster-scoped CRD for configuring Cloudflare credentials and tunnel ID. Referenced by GatewayClass via `parametersRef`. Spec carries only `cloudflareCredentialsSecretRef`, optional `accountId`, and `tunnelID`. Shared-proxy configuration (replicas, tunnel token, probes, access log, websocket timeouts) lives in Helm chart values, not in the CRD.
+
+- **GatewayConfig** (`api/v1alpha1/gatewayconfig_types.go`): Namespaced CRD for per-Gateway data planes, referenced from `Gateway.spec.infrastructure.parametersRef`. Carries the namespace-local connector-token Secret ref (tunnel identity is PARSED from the token — no separate tunnelID field), optional API-credential and push-auth overrides, replicas/autoscaling (CEL: mutually exclusive), resources, and image override.
 
 ### Supporting Packages
 
@@ -160,9 +168,11 @@ internal/
   dns/                   # Cluster domain auto-detection
   ingress/               # HTTPRoute → Cloudflare ingress rule conversion
   logging/               # Structured logging helpers (OpenTelemetry trace handler)
-  cfmetrics/             # Cloudflare metrics collection
-  proxy/                 # L7 reverse proxy (router, matcher, filter, config API, converter)
+  cfmetrics/             # Cloudflare metrics collection (controller side)
+  hostnameownership/     # Per-namespace hostname-suffix policy (controller layer + shared vectors)
+  proxy/                 # L7 reverse proxy (router, matcher, filter, config API, converter, data-plane metrics, shadow detection)
   referencegrant/        # ReferenceGrant validation for cross-namespace backends
+  render/                # Per-Gateway data-plane renderers (Deployment / Service / HPA / NetworkPolicy)
   routebinding/          # Route-to-Gateway binding validation
   tunnel/                # cloudflared tunnel bootstrap and GatewayOriginProxy adapter
 charts/                  # Helm chart with helm-unittest tests

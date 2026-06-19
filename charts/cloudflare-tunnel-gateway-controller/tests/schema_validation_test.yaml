@@ -167,6 +167,34 @@ tests:
       - failedTemplate:
           errorPattern: samplingRate
 
+  # proxy.networkPolicy is closed (additionalProperties: false): a mistyped key
+  # must fail validation, not silently no-op. The block gates tenant isolation,
+  # so a typo that quietly disables a restriction is a security foot-gun.
+  - it: should reject an unknown proxy.networkPolicy key
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token
+        networkPolicy:
+          enbaled: true
+    asserts:
+      - failedTemplate:
+          errorPattern: "additional properties 'enbaled' not allowed"
+
+  - it: should accept the documented proxy.networkPolicy keys
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token
+        networkPolicy:
+          enabled: true
+          egressRestricted: true
+          monitoringNamespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+    asserts:
+      - notFailedTemplate: {}
+
   - it: should reject negative samplingRate
     set:
       proxy:

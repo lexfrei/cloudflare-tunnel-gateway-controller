@@ -50,8 +50,15 @@ rules:
     resources: ["customresourcedefinitions"]
     verbs: ["get"]
   - apiGroups: [""]
-    resources: ["services", "namespaces"]
+    resources: ["namespaces"]
     verbs: ["get", "list", "watch"]
+  # Services: read everywhere (backend resolution) plus full write for the
+  # per-Gateway data planes — the controller renders a headless config
+  # Service per opted-in Gateway (issue #479). Rendered objects are
+  # controller-owned via ownerReferences and deleted only when owned.
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get", "list", "watch", "create", "update", "delete"]
   # EndpointSlice: the ProxyEndpointReconciler watches EndpointSlices owned
   # by the proxy headless Service so that a newly-joined proxy pod gets
   # the cached config pushed to it immediately, rather than waiting for
@@ -60,19 +67,41 @@ rules:
     resources: ["endpointslices"]
     verbs: ["get", "list", "watch"]
   # Deployments: the ProxySecretReconciler patches the proxy Deployment's
-  # pod-template annotation when the tunnel-token Secret rotates, so
-  # Kubernetes rolls the pods natively and cloudflared picks up the new
-  # credential. List + patch only; no create/delete -- the chart owns
-  # Deployment lifecycle. Issue #114.
+  # pod-template annotation when the tunnel-token Secret rotates (issue
+  # #114), and the per-Gateway data planes (issue #479) render a dedicated
+  # proxy Deployment per opted-in Gateway — full write, cluster-wide,
+  # because Gateways live in arbitrary namespaces. Rendered objects are
+  # controller-owned via ownerReferences and deleted only when owned.
   - apiGroups: ["apps"]
     resources: ["deployments"]
-    verbs: ["get", "list", "watch", "patch"]
+    # patch IS used here (unlike services/HPA/NetworkPolicy): the proxy Secret
+    # reconciler merge-patches the SHARED proxy Deployment's pod-template
+    # annotation to roll it on tunnel-token rotation.
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # HorizontalPodAutoscalers: rendered per opted-in Gateway when its
+  # GatewayConfig requests autoscaling (issue #479).
+  - apiGroups: ["autoscaling"]
+    resources: ["horizontalpodautoscalers"]
+    verbs: ["get", "list", "watch", "create", "update", "delete"]
+  # NetworkPolicies: rendered per opted-in Gateway to lock the proxy's
+  # config-API port to the controller (+ monitoring) namespaces — network-layer
+  # defense-in-depth on the tenant config API. Controller-owned, GC'd by
+  # ownerReference.
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    # No patch: written via CreateOrUpdate + Delete only (see deployments).
+    verbs: ["get", "list", "watch", "create", "update", "delete"]
   # Secrets: the controller only reads them (Cloudflare credentials, TLS
   # certificate refs, BackendTLSPolicy CA bundles). It does not create,
   # mutate, or delete Secrets, so write verbs are intentionally absent.
   - apiGroups: [""]
     resources: ["secrets"]
-    verbs: ["get", "list", "watch"]
+    # create is for the generated per-Gateway config-API auth Secret (#479):
+    # a tenant data plane without an explicit authTokenSecretRef gets a
+    # controller-generated bearer token rather than an unauthenticated config
+    # API. No update/delete — the token is never rotated, and ownerRef GC
+    # removes it with the Gateway.
+    verbs: ["get", "list", "watch", "create"]
   # ConfigMaps: BackendTLSPolicy can reference a ConfigMap holding the CA
   # bundle (internal/controller/backendtlspolicy_controller.go). Read-only.
   - apiGroups: [""]
@@ -96,6 +125,12 @@ rules:
   - apiGroups: ["cf.k8s.lex.la"]
     resources: ["gatewayclassconfigs/status"]
     verbs: ["get", "update", "patch"]
+  # GatewayConfig CRD: per-Gateway data-plane parameters referenced from
+  # Gateway.spec.infrastructure.parametersRef. Read-only: the controller
+  # consumes the spec and writes no GatewayConfig status.
+  - apiGroups: ["cf.k8s.lex.la"]
+    resources: ["gatewayconfigs"]
+    verbs: ["get", "list", "watch"]
   # ExternalBackend CRD: a backendRef may target an out-of-cluster HTTP(S)
   # endpoint declared by an ExternalBackend. The controller reads its spec to
   # resolve the backend URL. Read-only.

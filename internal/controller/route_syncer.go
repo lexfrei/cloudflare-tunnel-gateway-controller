@@ -6,23 +6,29 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/cloudflare/cloudflare-go/v7"
 	"github.com/cloudflare/cloudflare-go/v7/zero_trust"
 	"github.com/cockroachdb/errors"
+	"github.com/google/uuid"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/cfmetrics"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/config"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/hostnameownership"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/ingress"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/logging"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/proxy"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/referencegrant"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/render"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/routebinding"
 )
 
@@ -44,6 +50,15 @@ type RouteSyncer struct {
 	httpBuilder      *ingress.Builder
 	grpcBuilder      *ingress.GRPCBuilder
 	bindingValidator *routebinding.Validator
+
+	// HostnameOwnership, when non-nil, enables the controller-side layer of
+	// the per-namespace hostname-ownership policy (#475): a route whose
+	// hostnames fall outside its namespace's allowed suffix is rejected at
+	// binding time (Accepted=False/HostnameNotPermitted) and never programmed
+	// into the proxy config or the Cloudflare ingress document. Independent of
+	// the CEL ValidatingAdmissionPolicy by design — defence in depth: the data
+	// plane stays clean even when the admission layer is absent or bypassed.
+	HostnameOwnership *hostnameownership.Policy
 
 	// ViewStore caches the per-Gateway ListenerSet merge view across reconciles
 	// (issue #332). Set by the manager after construction and shared with the
@@ -114,6 +129,19 @@ type routeBindingInfo struct {
 	// GRPCRoute) conflict resolution: two routes of different types conflict
 	// only when they share a Gateway and their hostnames intersect.
 	acceptedGateways map[string]bool
+
+	// parentGateways maps ParentRef index to the managed Gateway key
+	// ("namespace/name") that parent binds to. It lets the status writer
+	// attribute a tunnel-group sync failure to exactly the parents on that
+	// tunnel — RouteParentStatus is per-parent, so a multi-parent route with
+	// one failed and one healthy tunnel must not flip the healthy parent.
+	parentGateways map[int]string
+
+	// syncErrByGateway maps a managed Gateway key to the sync error of the
+	// tunnel serving it, populated AFTER the tunnel-group sync. A parent whose
+	// Gateway is absent here synced fine. Nil on the early-error path, where
+	// the global syncErr applies to every parent instead.
+	syncErrByGateway map[string]error
 }
 
 // hasAcceptedParent reports whether the route bound to at least one managed
@@ -145,6 +173,25 @@ type SyncResult struct {
 	// Accepted=False so conformance tests can observe the rejection.
 	RejectedHTTPRoutes []gatewayv1.HTTPRoute
 	RejectedGRPCRoutes []gatewayv1.GRPCRoute
+
+	// Partitions is the per-data-plane route split (#479): the shared
+	// partition plus one per opted-in Gateway. The proxy push delivers each
+	// partition's config to its own endpoints. Empty on early-error paths,
+	// where the push falls back to treating everything as shared.
+	Partitions []routePartition
+
+	// SharedTunnelID is the class-resolved tunnel of the shared partition;
+	// the proxy push uses it to detect per-Gateway partitions sharing the
+	// shared tunnel (their configs must be unioned — see
+	// unionPartitionRoutes).
+	SharedTunnelID string
+
+	// TransientBrokenKeys are the partition keys of opted-in Gateways whose
+	// config resolve failed transiently (retryable). They have no partition
+	// this sync (fail closed), but their push cache must be RETAINED across
+	// RetainPartitions so a newly-joined pod can still be replayed the last
+	// config, and the reconcile requeues to re-resolve.
+	TransientBrokenKeys []string
 }
 
 // httpStatusEntries builds routeStatusEntry slice for HTTP routes,
@@ -256,18 +303,7 @@ func syncAndUpdateStatusCommon(ctx context.Context, params syncUpdateParams) (ct
 	var diagnostics []proxy.RouteDiagnostic
 
 	if params.pushProxy && params.proxySyncer != nil && len(params.proxyEndpoints) > 0 && syncResult != nil {
-		httpRoutes := httpRoutePtrs(syncResult.HTTPRoutes)
-		grpcRoutes := grpcRoutePtrs(syncResult.GRPCRoutes)
-
-		// Diagnostics are returned even when the push errors: they describe the
-		// route specs, not the push, and must reach the route status regardless.
-		diags, proxyErr := params.proxySyncer.SyncRoutes(ctx, params.proxyEndpoints, httpRoutes, grpcRoutes, syncResult.HTTPFailedRefs, syncResult.GRPCFailedRefs)
-		diagnostics = diags
-
-		if proxyErr != nil {
-			logger.Error("proxy sync failed (non-blocking)", "error", proxyErr)
-			params.routeSyncer.Metrics.RecordSyncError(ctx, "proxy_push")
-		}
+		diagnostics = pushPartitionConfigs(ctx, logger, params, syncResult)
 	}
 
 	// Warn when GRPCRoutes are present on an explicit quic tunnel — cloudflared
@@ -304,6 +340,85 @@ func syncAndUpdateStatusCommon(ctx context.Context, params syncUpdateParams) (ct
 	}
 
 	return result, nil
+}
+
+// pushPartitionConfigs delivers each partition's proxy config to its own
+// data plane: the shared partition to the chart-deployed proxy endpoints
+// (default auth token), each per-Gateway partition to its rendered config
+// Service with its OWN token. Push failures are logged non-blocking (the
+// route statuses already reflect the tunnel sync), and stale partition
+// caches are evicted.
+//
+// A result WITHOUT partitions (the early-error paths via
+// buildResultForError) pushes nothing and evicts nothing: that route set was
+// never partitioned, so pushing it to the shared endpoints would serve
+// tenant routes from the shared data plane — a cross-tenant leak — and
+// evicting the partition caches would drop tenant replay state over a
+// transient error. Every successful sync always carries at least the shared
+// partition (partitionRoutes), so skipping here never starves a healthy
+// plane.
+func pushPartitionConfigs(
+	ctx context.Context,
+	logger *slog.Logger,
+	params syncUpdateParams,
+	syncResult *SyncResult,
+) []proxy.RouteDiagnostic {
+	partitions := syncResult.Partitions
+	if len(partitions) == 0 {
+		logger.Info("skipping proxy push: sync produced no partition split (early error)")
+
+		return nil
+	}
+
+	// Same-tunnel partitions must push identical (unioned) configs: the edge
+	// load-balances a tunnel's requests across all its connectors, so every
+	// data plane on one tunnel has to know every route of that tunnel.
+	partitions = unionPartitionRoutes(partitions, syncResult.SharedTunnelID)
+
+	keep := make(map[string]bool, len(partitions)+len(syncResult.TransientBrokenKeys))
+
+	// A Gateway whose resolve failed transiently has no partition this sync, so
+	// it would be evicted below — retain its cached config instead, so a pod
+	// joining during the blip is still replayed the last good config.
+	for _, key := range syncResult.TransientBrokenKeys {
+		keep[key] = true
+	}
+
+	var diagnostics []proxy.RouteDiagnostic
+
+	for i := range partitions {
+		partition := &partitions[i]
+		keep[partition.Key] = true
+
+		var (
+			diags []proxy.RouteDiagnostic
+			err   error
+		)
+
+		if partition.PerGateway == nil {
+			diags, err = params.proxySyncer.SyncRoutes(ctx, params.proxyEndpoints,
+				httpRoutePtrs(partition.HTTPRoutes), grpcRoutePtrs(partition.GRPCRoutes),
+				syncResult.HTTPFailedRefs, syncResult.GRPCFailedRefs)
+		} else {
+			endpoints := []string{render.ConfigEndpointURL(partition.Gateway, params.routeSyncer.ClusterDomain)}
+			diags, err = params.proxySyncer.SyncPartition(ctx, partition.Key, partition.PerGateway.AuthToken,
+				endpoints, httpRoutePtrs(partition.HTTPRoutes), grpcRoutePtrs(partition.GRPCRoutes),
+				syncResult.HTTPFailedRefs, syncResult.GRPCFailedRefs)
+		}
+
+		// Diagnostics are valid even when the push errors: they describe the
+		// route specs, not the push, and must reach the route status.
+		diagnostics = append(diagnostics, diags...)
+
+		if err != nil {
+			logger.Error("proxy sync failed (non-blocking)", "partition", partition.Key, "error", err)
+			params.routeSyncer.Metrics.RecordSyncError(ctx, "proxy_push")
+		}
+	}
+
+	params.proxySyncer.RetainPartitions(keep)
+
+	return diagnostics
 }
 
 // resolveConfigForController resolves configuration from the GatewayClass
@@ -448,10 +563,18 @@ func (s *RouteSyncer) SyncAllRoutes(ctx context.Context) (ctrl.Result, *SyncResu
 		return ctrl.Result{RequeueAfter: apiErrorRequeueDelay, Priority: new(priorityRoute)}, s.buildResultForError(ctx), err
 	}
 
+	// Canonicalize the class tunnel ID so same-tunnel grouping keys on the same
+	// string as a per-Gateway plane (which carries parsed.TunnelID.String()).
+	// The shared ID is the raw GatewayClassConfig.tunnelID; without this, an
+	// equivalent-but-differently-cased value would mis-group an infra Gateway on
+	// the same physical tunnel as distinct and break the merge.
+	resolvedConfig.TunnelID = canonicalTunnelID(resolvedConfig.TunnelID)
+
 	// Create Cloudflare client with resolved credentials
 	cfClient := s.cloudflareClient(resolvedConfig)
 
-	// Resolve account ID (auto-detect if not in config)
+	// Resolve account ID (auto-detect if not in config) and stash it on the
+	// resolved config so the shared tunnel group below skips a second lookup.
 	accountID, err := s.ConfigResolver.ResolveAccountID(ctx, cfClient, resolvedConfig)
 	if err != nil {
 		logger.Error("failed to resolve account ID", "error", err)
@@ -459,25 +582,7 @@ func (s *RouteSyncer) SyncAllRoutes(ctx context.Context) (ctrl.Result, *SyncResu
 		return ctrl.Result{RequeueAfter: apiErrorRequeueDelay, Priority: new(priorityRoute)}, s.buildResultForError(ctx), err
 	}
 
-	// Get current tunnel configuration
-	getStart := time.Now()
-
-	currentConfig, err := cfClient.ZeroTrust.Tunnels.Cloudflared.Configurations.Get(
-		ctx,
-		resolvedConfig.TunnelID,
-		zero_trust.TunnelCloudflaredConfigurationGetParams{
-			AccountID: cloudflare.String(accountID),
-		},
-	)
-	if err != nil {
-		s.Metrics.RecordAPICall(ctx, "get", "tunnel_config", "error", time.Since(getStart))
-		s.Metrics.RecordAPIError(ctx, "get", cfmetrics.ClassifyCloudflareError(err))
-		logger.Error("failed to get current tunnel configuration", "error", err)
-
-		return ctrl.Result{RequeueAfter: apiErrorRequeueDelay, Priority: new(priorityRoute)}, s.buildResultForError(ctx), err
-	}
-
-	s.Metrics.RecordAPICall(ctx, "get", "tunnel_config", "success", time.Since(getStart))
+	resolvedConfig.AccountID = accountID
 
 	// One merge-view cache for the whole sync: every route's ListenerSet
 	// parentRefs that resolve to the same Gateway reuse a single merge instead
@@ -502,88 +607,97 @@ func (s *RouteSyncer) SyncAllRoutes(ctx context.Context) (ctrl.Result, *SyncResu
 	// reported as accepted.
 	resolveCrossTypeConflicts(httpResult, grpcResult)
 
+	// Partition by data plane (#479): the shared plane plus one partition per
+	// Gateway with a dedicated proxy + tunnel. Partition membership IS the
+	// isolation guarantee — each tunnel document below sees only its
+	// partition's routes.
+	infra, err := s.resolveInfraGateways(ctx)
+	if err != nil {
+		return ctrl.Result{RequeueAfter: apiErrorRequeueDelay, Priority: new(priorityRoute)}, s.buildResultForError(ctx), err
+	}
+
+	partitions := partitionRoutes(httpResult, grpcResult, infra)
+	groups := buildTunnelGroups(resolvedConfig, partitions)
+
+	// Two DISTINCT opted-in Gateways whose connector tokens parse to the SAME
+	// tunnel collapse their isolation: the edge load-balances the tunnel's
+	// requests across all connectors, so each tenant's proxy receives the
+	// union of both tenants' routes. Shared+infra on one tunnel is the
+	// documented migration path, but infra+infra is a silent cross-tenant
+	// exposure — warn loudly so the operator sees the misconfiguration.
+	for _, collision := range sharedInfraTunnelCollisions(groups) {
+		logger.Error("multiple dedicated Gateways share one tunnel; their routes are unioned across tenants — "+
+			"give each isolated Gateway its own Cloudflare Tunnel",
+			"tunnel", collision.tunnelID, "gateways", strings.Join(collision.gateways, ","))
+	}
+
+	// A dedicated Gateway sharing the class tunnel has its credential override
+	// silently dropped for the merged write (same tunnel ⇒ one credential).
+	// Benign, but surface it so the operator is not surprised the override
+	// has no effect.
+	for _, drop := range sharedTunnelCredentialDrops(groups) {
+		logger.Warn("per-Gateway Cloudflare credential override ignored: this Gateway shares the class tunnel, "+
+			"so the class credential writes the merged ingress document — move it to its own tunnel to use a distinct credential",
+			"tunnel", drop.tunnelID, "gateway", drop.gateway)
+	}
+
 	logger.Info("syncing routes to cloudflare",
 		"httpRoutes", len(httpResult.accepted),
 		"grpcRoutes", len(grpcResult.accepted),
+		"partitions", partitionDisplay(partitions),
+		"tunnels", len(groups),
 	)
 
-	// Build desired rules from both route types (accepted routes only)
-	httpBuildResult := s.httpBuilder.Build(ctx, httpResult.accepted)
-	grpcBuildResult := s.grpcBuilder.Build(ctx, grpcResult.accepted)
+	outcome := s.syncTunnelGroups(ctx, logger, groups)
 
-	// Merge rules (HTTP rules first, then GRPC, then sort)
-	desiredRules := mergeAndSortRules(httpBuildResult.Rules, grpcBuildResult.Rules)
+	// Attribute each failed tunnel group to exactly the parents on it: a
+	// route's parent binds to a Gateway, which maps to a partition (its own,
+	// for an infra Gateway; the shared partition otherwise). Per-parent
+	// status precision — a multi-parent route stays Accepted on the parents
+	// whose tunnel synced fine.
+	injectPartitionSyncErrors(httpResult.bindings, outcome.failedPartitions, infra)
+	injectPartitionSyncErrors(grpcResult.bindings, outcome.failedPartitions, infra)
 
-	// Compute diff between current and desired
-	toAdd, toRemove := ingress.DiffRules(currentConfig.Config.Ingress, desiredRules)
+	syncResult := buildSyncResult(httpResult, grpcResult, outcome.httpFailedRefs, outcome.grpcFailedRefs)
+	syncResult.Partitions = partitions
+	syncResult.SharedTunnelID = resolvedConfig.TunnelID
+	syncResult.TransientBrokenKeys = infra.transientKeys()
 
-	logger.Info("computed diff", "toAdd", len(toAdd), "toRemove", len(toRemove))
-
-	// Apply diff to get final rules
-	finalRules := ingress.ApplyDiff(currentConfig.Config.Ingress, toAdd, toRemove)
-
-	// Sort final rules — ApplyDiff returns rules in arbitrary order
-	// (kept-from-current first, then toAdd). Wildcard rules (no hostname)
-	// must come after specific hostname rules to avoid Cloudflare error 1056.
-	finalRules = sortIngressRules(finalRules)
-
-	// Ensure catch-all rule exists at the end
-	finalRules = ingress.EnsureCatchAll(finalRules)
-
-	// Check ingress rules limit before API call
-	if len(finalRules) > maxIngressRules {
-		limitErr := errors.Newf("ingress rules limit exceeded: %d rules (max %d)", len(finalRules), maxIngressRules)
-		logger.Error("ingress rules limit exceeded", "count", len(finalRules), "max", maxIngressRules)
-
-		// Record error metrics
+	// All groups failed: total sync outage — global error, every route goes
+	// Pending (matches the historic single-tunnel failure shape).
+	if len(outcome.groupErrs) == len(groups) && len(groups) > 0 {
 		s.Metrics.RecordSyncDuration(ctx, "error", time.Since(startTime))
-		s.Metrics.RecordSyncError(ctx, "limit_exceeded")
-
-		return ctrl.Result{}, buildSyncResult(httpResult, grpcResult, httpBuildResult, grpcBuildResult), limitErr
-	}
-
-	// The Cloudflare configurations endpoint is a whole-document update — there
-	// is no rule-level PATCH — so the only way to cut API write traffic is to
-	// skip the write when the desired document is identical to the deployed
-	// one. Steady-state reconciles (status updates, endpoint events) hit this
-	// path constantly; a real route change still writes the full document.
-	if ingress.RulesUnchanged(currentConfig.Config.Ingress, finalRules) {
-		logger.Debug("tunnel configuration unchanged; skipping update", "rules", len(finalRules))
-		s.recordSyncSuccessMetrics(ctx, "skipped", startTime, httpResult, grpcResult, httpBuildResult, grpcBuildResult, len(finalRules))
-
-		return ctrl.Result{}, buildSyncResult(httpResult, grpcResult, httpBuildResult, grpcBuildResult), nil
-	}
-
-	cfConfig := zero_trust.TunnelCloudflaredConfigurationUpdateParams{
-		AccountID: cloudflare.String(accountID),
-		Config: cloudflare.F(zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfig{
-			Ingress: cloudflare.F(finalRules),
-		}),
-	}
-
-	updateStart := time.Now()
-
-	_, err = cfClient.ZeroTrust.Tunnels.Cloudflared.Configurations.Update(ctx, resolvedConfig.TunnelID, cfConfig)
-	if err != nil {
-		s.Metrics.RecordAPICall(ctx, "update", "tunnel_config", "error", time.Since(updateStart))
-		s.Metrics.RecordAPIError(ctx, "update", cfmetrics.ClassifyCloudflareError(err))
-		logger.Error("failed to update tunnel configuration", "error", err)
-
-		// Record error metrics
-		s.Metrics.RecordSyncDuration(ctx, "error", time.Since(startTime))
-		s.Metrics.RecordSyncError(ctx, cfmetrics.ClassifyCloudflareError(err))
 
 		return ctrl.Result{RequeueAfter: apiErrorRequeueDelay, Priority: new(priorityRoute)},
-			buildSyncResult(httpResult, grpcResult, httpBuildResult, grpcBuildResult), err
+			syncResult, errors.Join(outcome.groupErrs...)
 	}
 
-	s.Metrics.RecordAPICall(ctx, "update", "tunnel_config", "success", time.Since(updateStart))
-	logger.Info("successfully updated tunnel configuration", "rules", len(finalRules))
+	// Partial failure: only the failed partitions' routes carry a sync error
+	// (via RouteSyncErrors) — one tenant's broken tunnel must not flip other
+	// tenants' route statuses. Requeue to retry the failed tunnels.
+	if len(outcome.groupErrs) > 0 {
+		s.recordSyncSuccessMetrics(ctx, "partial", startTime, httpResult, grpcResult,
+			len(outcome.httpFailedRefs), len(outcome.grpcFailedRefs), outcome.totalRules)
 
-	// Record success metrics
-	s.recordSyncSuccessMetrics(ctx, "success", startTime, httpResult, grpcResult, httpBuildResult, grpcBuildResult, len(finalRules))
+		return ctrl.Result{RequeueAfter: apiErrorRequeueDelay, Priority: new(priorityRoute)}, syncResult, nil
+	}
 
-	return ctrl.Result{}, buildSyncResult(httpResult, grpcResult, httpBuildResult, grpcBuildResult), nil
+	status := "skipped"
+	if outcome.anyWritten {
+		status = "success"
+	}
+
+	s.recordSyncSuccessMetrics(ctx, status, startTime, httpResult, grpcResult,
+		len(outcome.httpFailedRefs), len(outcome.grpcFailedRefs), outcome.totalRules)
+
+	// A transient infra-resolve failure left a Gateway's routes unprogrammed
+	// (fail closed) but is retryable — requeue so the next sync re-resolves and
+	// programs them, rather than waiting for an unrelated event.
+	if len(syncResult.TransientBrokenKeys) > 0 {
+		return ctrl.Result{RequeueAfter: apiErrorRequeueDelay, Priority: new(priorityRoute)}, syncResult, nil
+	}
+
+	return ctrl.Result{}, syncResult, nil
 }
 
 // buildSyncResult assembles the SyncResult shared by every SyncAllRoutes exit
@@ -591,18 +705,463 @@ func (s *RouteSyncer) SyncAllRoutes(ctx context.Context) (ctrl.Result, *SyncResu
 func buildSyncResult(
 	httpResult *httpRouteResult,
 	grpcResult *grpcRouteResult,
-	httpBuildResult, grpcBuildResult ingress.BuildResult,
+	httpFailedRefs, grpcFailedRefs []ingress.BackendRefError,
 ) *SyncResult {
 	return &SyncResult{
 		HTTPRoutes:         httpResult.accepted,
 		GRPCRoutes:         grpcResult.accepted,
 		HTTPRouteBindings:  httpResult.bindings,
 		GRPCRouteBindings:  grpcResult.bindings,
-		HTTPFailedRefs:     httpBuildResult.FailedRefs,
-		GRPCFailedRefs:     grpcBuildResult.FailedRefs,
+		HTTPFailedRefs:     httpFailedRefs,
+		GRPCFailedRefs:     grpcFailedRefs,
 		RejectedHTTPRoutes: httpResult.rejected,
 		RejectedGRPCRoutes: grpcResult.rejected,
 	}
+}
+
+// tunnelGroup is the unit of one Cloudflare ingress-document write: every
+// partition whose data plane resolves to the same tunnel. Same-tunnel
+// partitions MUST merge into one document — independent writes would be
+// last-writer-wins on a whole-document API.
+type tunnelGroup struct {
+	resolved   *config.ResolvedConfig
+	partitions []*routePartition
+}
+
+// canonicalTunnelID normalizes a tunnel UUID to its canonical lowercase form so
+// grouping keys are independent of the source's string form. Per-Gateway planes
+// already carry uuid.UUID.String() output; this brings the raw class tunnelID to
+// the same form. A value that does not parse as a UUID is returned unchanged
+// (the CRD pattern should prevent that, but never silently drop an ID).
+func canonicalTunnelID(id string) string {
+	parsed, err := uuid.Parse(id)
+	if err != nil {
+		return id
+	}
+
+	return parsed.String()
+}
+
+// buildTunnelGroups groups partitions by resolved tunnel ID. The shared
+// partition uses the class-resolved config; per-Gateway partitions use the
+// identity parsed from their connector tokens. Group order is deterministic:
+// the shared tunnel first, the rest sorted by tunnel ID.
+func buildTunnelGroups(shared *config.ResolvedConfig, partitions []routePartition) []tunnelGroup {
+	byTunnel := make(map[string]*tunnelGroup)
+	order := make([]string, 0, len(partitions))
+
+	for i := range partitions {
+		partition := &partitions[i]
+
+		resolved := shared
+		if partition.PerGateway != nil {
+			resolved = &partition.PerGateway.ResolvedConfig
+		}
+
+		// Same tunnel ⇒ one document ⇒ one credential: the FIRST partition's
+		// resolved config wins for the whole group. When an infra Gateway
+		// shares the class tunnel, a GatewayConfig credential override is
+		// silently ignored for that merged write — benign (same tunnel ⇒ same
+		// account), and shared-tunnel use is the migration path, not isolation.
+		group, ok := byTunnel[resolved.TunnelID]
+		if !ok {
+			group = &tunnelGroup{resolved: resolved}
+			byTunnel[resolved.TunnelID] = group
+			order = append(order, resolved.TunnelID)
+		}
+
+		group.partitions = append(group.partitions, partition)
+	}
+
+	// The shared partition is always first in partitions, so `order` already
+	// starts with the shared tunnel; sort the remainder for determinism.
+	if len(order) > 1 {
+		rest := order[1:]
+		slices.Sort(rest)
+	}
+
+	groups := make([]tunnelGroup, 0, len(order))
+	for _, tunnelID := range order {
+		groups = append(groups, *byTunnel[tunnelID])
+	}
+
+	return groups
+}
+
+// tunnelCollision names the opted-in Gateways that share one tunnel — an
+// isolation-defeating misconfiguration.
+type tunnelCollision struct {
+	tunnelID string
+	gateways []string
+}
+
+// sharedInfraTunnelCollisions reports tunnel groups holding two or more
+// DISTINCT dedicated (infra) Gateways. A shared+infra group is the documented
+// migration path and is NOT reported; only infra+infra — where two tenants
+// each believe they have an isolated plane — is a cross-tenant exposure.
+func sharedInfraTunnelCollisions(groups []tunnelGroup) []tunnelCollision {
+	var collisions []tunnelCollision
+
+	for i := range groups {
+		group := &groups[i]
+
+		var infraKeys []string
+
+		for _, partition := range group.partitions {
+			if partition.PerGateway != nil {
+				infraKeys = append(infraKeys, partition.Key)
+			}
+		}
+
+		if len(infraKeys) >= 2 {
+			slices.Sort(infraKeys)
+			collisions = append(collisions, tunnelCollision{
+				tunnelID: group.resolved.TunnelID,
+				gateways: infraKeys,
+			})
+		}
+	}
+
+	return collisions
+}
+
+// credentialOverrideDrop names a per-Gateway partition whose resolved
+// Cloudflare credential differs from the credential that actually writes its
+// tunnel's ingress document (the group owner's). Same tunnel ⇒ one document ⇒
+// one credential, so the override is silently ignored.
+type credentialOverrideDrop struct {
+	tunnelID string
+	gateway  string
+}
+
+// sharedTunnelCredentialDrops reports infra Gateways that share the CLASS
+// tunnel (the shared partition's group) but resolve a different credential
+// than the class — their GatewayConfig credential override is dropped for the
+// merged write. This is benign (the same tunnel belongs to one account, so the
+// account tag matches), but a silent operator surprise worth surfacing.
+// infra+infra groups are NOT reported here — sharedInfraTunnelCollisions
+// already flags those loudly as a cross-tenant exposure.
+func sharedTunnelCredentialDrops(groups []tunnelGroup) []credentialOverrideDrop {
+	var drops []credentialOverrideDrop
+
+	for i := range groups {
+		group := &groups[i]
+
+		hasShared := false
+
+		for _, partition := range group.partitions {
+			if partition.PerGateway == nil {
+				hasShared = true
+
+				break
+			}
+		}
+
+		if !hasShared {
+			continue
+		}
+
+		// The shared partition is always first, so group.resolved is the class
+		// credential that writes the merged document.
+		for _, partition := range group.partitions {
+			if partition.PerGateway == nil {
+				continue
+			}
+
+			resolved := &partition.PerGateway.ResolvedConfig
+			if resolved.APIToken != group.resolved.APIToken || resolved.AccountID != group.resolved.AccountID {
+				drops = append(drops, credentialOverrideDrop{
+					tunnelID: group.resolved.TunnelID,
+					gateway:  partition.Key,
+				})
+			}
+		}
+	}
+
+	return drops
+}
+
+// tunnelGroupsOutcome aggregates the per-group sync results.
+type tunnelGroupsOutcome struct {
+	httpFailedRefs []ingress.BackendRefError
+	grpcFailedRefs []ingress.BackendRefError
+	totalRules     int
+	anyWritten     bool
+	groupErrs      []error
+	// failedPartitions maps a partition key (sharedPartitionKey or an infra
+	// Gateway's "namespace/name") to the sync error of the tunnel serving it.
+	// The per-route, per-Gateway attribution is derived from this against the
+	// route bindings, so a multi-parent route reports the failure only on the
+	// parents whose tunnel actually failed.
+	failedPartitions map[string]error
+}
+
+// syncTunnelGroups runs the ingress-document sync for every tunnel group,
+// mapping each group's failure onto exactly its partitions' routes.
+func (s *RouteSyncer) syncTunnelGroups(
+	ctx context.Context,
+	logger *slog.Logger,
+	groups []tunnelGroup,
+) tunnelGroupsOutcome {
+	outcome := tunnelGroupsOutcome{failedPartitions: make(map[string]error)}
+
+	for i := range groups {
+		group := &groups[i]
+		result := s.syncTunnelGroup(ctx, logger, group)
+
+		outcome.httpFailedRefs = append(outcome.httpFailedRefs, result.httpFailedRefs...)
+		outcome.grpcFailedRefs = append(outcome.grpcFailedRefs, result.grpcFailedRefs...)
+		outcome.totalRules += result.ruleCount
+
+		if result.written {
+			outcome.anyWritten = true
+		}
+
+		if result.err == nil {
+			continue
+		}
+
+		outcome.groupErrs = append(outcome.groupErrs, result.err)
+
+		for _, partition := range group.partitions {
+			outcome.failedPartitions[partition.Key] = result.err
+		}
+	}
+
+	return outcome
+}
+
+// errBrokenDataPlane marks a route parent bound to an opted-in Gateway whose
+// dedicated data plane did not resolve. Such a route is served nowhere (fail
+// closed), so its parent must report Accepted=False rather than silently
+// claiming health — the black-hole the per-Gateway Gateway also surfaces as
+// InvalidParameters.
+// The route condition that carries this carries Reason=Pending (the spec's
+// RouteConditionReason enum has no InvalidParameters member — that is a
+// Gateway-level reason). So the message attributes InvalidParameters to the
+// GATEWAY rather than reading as if it were the route's own reason.
+var errBrokenDataPlane = errors.New(
+	"the Gateway's dedicated data plane is unavailable; the route is not programmed " +
+		"(see the Gateway's Accepted condition, which reports InvalidParameters)")
+
+// injectPartitionSyncErrors records, on each route binding, the sync error
+// affecting each Gateway the route is accepted on, attributed per Gateway so
+// the status writer flips only the affected parents. A parent is affected
+// when (a) its Gateway opted into a dedicated data plane that did NOT resolve
+// (broken → served nowhere), or (b) the tunnel serving its partition failed
+// to sync. A parent on a healthy tunnel carries no error.
+func injectPartitionSyncErrors(
+	bindings map[string]routeBindingInfo,
+	failedPartitions map[string]error,
+	infra *infraGateways,
+) {
+	for key := range bindings {
+		binding := bindings[key]
+
+		var errs map[string]error
+
+		for gatewayKey := range binding.acceptedGateways {
+			err := gatewaySyncError(gatewayKey, failedPartitions, infra)
+			if err == nil {
+				continue
+			}
+
+			if errs == nil {
+				errs = make(map[string]error)
+			}
+
+			errs[gatewayKey] = err
+		}
+
+		if errs != nil {
+			binding.syncErrByGateway = errs
+			bindings[key] = binding
+		}
+	}
+}
+
+// gatewaySyncError returns the error affecting a route accepted on gatewayKey:
+// the broken-data-plane sentinel for an opted-in Gateway that failed to
+// resolve, otherwise the sync error of the partition (own, or shared) serving
+// it, or nil when healthy.
+func gatewaySyncError(gatewayKey string, failedPartitions map[string]error, infra *infraGateways) error {
+	if infra.isBroken(gatewayKey) {
+		return errBrokenDataPlane
+	}
+
+	partitionKey := sharedPartitionKey
+	if infra.isResolved(gatewayKey) {
+		partitionKey = gatewayKey
+	}
+
+	return failedPartitions[partitionKey]
+}
+
+// tunnelGroupResult is one group's sync outcome.
+type tunnelGroupResult struct {
+	httpFailedRefs []ingress.BackendRefError
+	grpcFailedRefs []ingress.BackendRefError
+	ruleCount      int
+	written        bool
+	err            error
+}
+
+// groupRoutes unions the group's partition routes, deduplicated by
+// namespace/name — a multi-parent route can sit in two partitions of the
+// same tunnel and must contribute its rules once.
+func groupRoutes(group *tunnelGroup) ([]gatewayv1.HTTPRoute, []gatewayv1.GRPCRoute) {
+	seenHTTP := make(map[string]bool)
+	seenGRPC := make(map[string]bool)
+
+	var (
+		httpRoutes []gatewayv1.HTTPRoute
+		grpcRoutes []gatewayv1.GRPCRoute
+	)
+
+	for _, partition := range group.partitions {
+		for i := range partition.HTTPRoutes {
+			key := partition.HTTPRoutes[i].Namespace + "/" + partition.HTTPRoutes[i].Name
+			if seenHTTP[key] {
+				continue
+			}
+
+			seenHTTP[key] = true
+
+			httpRoutes = append(httpRoutes, partition.HTTPRoutes[i])
+		}
+
+		for i := range partition.GRPCRoutes {
+			key := partition.GRPCRoutes[i].Namespace + "/" + partition.GRPCRoutes[i].Name
+			if seenGRPC[key] {
+				continue
+			}
+
+			seenGRPC[key] = true
+
+			grpcRoutes = append(grpcRoutes, partition.GRPCRoutes[i])
+		}
+	}
+
+	return httpRoutes, grpcRoutes
+}
+
+// syncTunnelGroup builds the desired rules from EXACTLY the group's routes
+// and reconciles the group's tunnel ingress document: get → diff → sort →
+// catch-all → limit check → unchanged skip → whole-document update.
+//
+//nolint:funlen // sequential build → diff → write pipeline, mirrors the historic single-tunnel body
+func (s *RouteSyncer) syncTunnelGroup(
+	ctx context.Context,
+	logger *slog.Logger,
+	group *tunnelGroup,
+) tunnelGroupResult {
+	httpRoutes, grpcRoutes := groupRoutes(group)
+
+	httpBuild := s.httpBuilder.Build(ctx, httpRoutes)
+	grpcBuild := s.grpcBuilder.Build(ctx, grpcRoutes)
+
+	result := tunnelGroupResult{
+		httpFailedRefs: httpBuild.FailedRefs,
+		grpcFailedRefs: grpcBuild.FailedRefs,
+	}
+
+	desiredRules := mergeAndSortRules(httpBuild.Rules, grpcBuild.Rules)
+
+	cfClient := s.cloudflareClient(group.resolved)
+
+	accountID, err := s.ConfigResolver.ResolveAccountID(ctx, cfClient, group.resolved)
+	if err != nil {
+		result.err = errors.Wrapf(err, "resolving account for tunnel %s", group.resolved.TunnelID)
+
+		return result
+	}
+
+	// One GET per tunnel per sync (the PUT is skipped when unchanged, the GET
+	// is not). Cloudflare API rate limits scale with tunnel count; fine for
+	// tens of tenants, revisit with a per-tunnel config cache if a deployment
+	// ever runs hundreds of dedicated planes.
+	getStart := time.Now()
+
+	currentConfig, err := cfClient.ZeroTrust.Tunnels.Cloudflared.Configurations.Get(
+		ctx,
+		group.resolved.TunnelID,
+		zero_trust.TunnelCloudflaredConfigurationGetParams{
+			AccountID: cloudflare.String(accountID),
+		},
+	)
+	if err != nil {
+		s.Metrics.RecordAPICall(ctx, "get", "tunnel_config", "error", time.Since(getStart))
+		s.Metrics.RecordAPIError(ctx, "get", cfmetrics.ClassifyCloudflareError(err))
+		logger.Error("failed to get current tunnel configuration",
+			"tunnel", group.resolved.TunnelID, "error", err)
+
+		result.err = err
+
+		return result
+	}
+
+	s.Metrics.RecordAPICall(ctx, "get", "tunnel_config", "success", time.Since(getStart))
+
+	toAdd, toRemove := ingress.DiffRules(currentConfig.Config.Ingress, desiredRules)
+	logger.Info("computed diff",
+		"tunnel", group.resolved.TunnelID, "toAdd", len(toAdd), "toRemove", len(toRemove))
+
+	// ApplyDiff returns rules in arbitrary order (kept-from-current first,
+	// then toAdd); wildcard rules must sort after specific hostnames to avoid
+	// Cloudflare error 1056, and the catch-all must close the document.
+	finalRules := ingress.EnsureCatchAll(sortIngressRules(
+		ingress.ApplyDiff(currentConfig.Config.Ingress, toAdd, toRemove)))
+
+	result.ruleCount = len(finalRules)
+
+	if len(finalRules) > maxIngressRules {
+		logger.Error("ingress rules limit exceeded",
+			"tunnel", group.resolved.TunnelID, "count", len(finalRules), "max", maxIngressRules)
+		s.Metrics.RecordSyncError(ctx, "limit_exceeded")
+
+		result.err = errors.Newf("ingress rules limit exceeded for tunnel %s: %d rules (max %d)",
+			group.resolved.TunnelID, len(finalRules), maxIngressRules)
+
+		return result
+	}
+
+	// Whole-document API: skip the write when the desired document equals the
+	// deployed one — steady-state reconciles hit this constantly.
+	if ingress.RulesUnchanged(currentConfig.Config.Ingress, finalRules) {
+		logger.Debug("tunnel configuration unchanged; skipping update",
+			"tunnel", group.resolved.TunnelID, "rules", len(finalRules))
+
+		return result
+	}
+
+	updateStart := time.Now()
+
+	_, err = cfClient.ZeroTrust.Tunnels.Cloudflared.Configurations.Update(ctx, group.resolved.TunnelID,
+		zero_trust.TunnelCloudflaredConfigurationUpdateParams{
+			AccountID: cloudflare.String(accountID),
+			Config: cloudflare.F(zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfig{
+				Ingress: cloudflare.F(finalRules),
+			}),
+		})
+	if err != nil {
+		s.Metrics.RecordAPICall(ctx, "update", "tunnel_config", "error", time.Since(updateStart))
+		s.Metrics.RecordAPIError(ctx, "update", cfmetrics.ClassifyCloudflareError(err))
+		s.Metrics.RecordSyncError(ctx, cfmetrics.ClassifyCloudflareError(err))
+		logger.Error("failed to update tunnel configuration",
+			"tunnel", group.resolved.TunnelID, "error", err)
+
+		result.err = err
+
+		return result
+	}
+
+	s.Metrics.RecordAPICall(ctx, "update", "tunnel_config", "success", time.Since(updateStart))
+	logger.Info("successfully updated tunnel configuration",
+		"tunnel", group.resolved.TunnelID, "rules", len(finalRules))
+
+	result.written = true
+
+	return result
 }
 
 // recordSyncSuccessMetrics records the per-sync metric set shared by the
@@ -614,15 +1173,15 @@ func (s *RouteSyncer) recordSyncSuccessMetrics(
 	startTime time.Time,
 	httpResult *httpRouteResult,
 	grpcResult *grpcRouteResult,
-	httpBuildResult, grpcBuildResult ingress.BuildResult,
+	httpFailedRefs, grpcFailedRefs int,
 	ruleCount int,
 ) {
 	s.Metrics.RecordSyncDuration(ctx, status, time.Since(startTime))
 	s.Metrics.RecordSyncedRoutes(ctx, "http", len(httpResult.accepted))
 	s.Metrics.RecordSyncedRoutes(ctx, "grpc", len(grpcResult.accepted))
 	s.Metrics.RecordIngressRules(ctx, ruleCount)
-	s.Metrics.RecordFailedBackendRefs(ctx, "http", len(httpBuildResult.FailedRefs))
-	s.Metrics.RecordFailedBackendRefs(ctx, "grpc", len(grpcBuildResult.FailedRefs))
+	s.Metrics.RecordFailedBackendRefs(ctx, "http", httpFailedRefs)
+	s.Metrics.RecordFailedBackendRefs(ctx, "grpc", grpcFailedRefs)
 }
 
 // httpRouteResult holds accepted and rejected HTTPRoutes from binding validation.
@@ -731,46 +1290,135 @@ func (s *RouteSyncer) bindRouteParents(
 	bindingInfo := routeBindingInfo{
 		bindingResults:   make(map[int]routebinding.BindingResult),
 		acceptedGateways: make(map[string]bool),
+		parentGateways:   make(map[int]string),
 	}
 
 	hasAccepted := false
 	referencesUs := false
 
 	for refIdx, ref := range parentRefs {
-		routeInfo := &routebinding.RouteInfo{
-			Name:        routeName,
-			Namespace:   routeNamespace,
-			Hostnames:   hostnames,
-			Kind:        kind,
-			SectionName: ref.SectionName,
-			Port:        ref.Port,
-		}
+		referenced, accepted := s.bindOneParent(ctx, logger, routeNamespace, routeName, hostnames, kind, ref, refIdx, views, &bindingInfo)
+		referencesUs = referencesUs || referenced
+		hasAccepted = hasAccepted || accepted
+	}
 
-		binding, err := resolveRouteParentBinding(ctx, s.Client, s.bindingValidator, s.ControllerName, ref, routeNamespace, routeInfo, views)
-		if err != nil {
-			logger.Error("failed to resolve route parentRef",
-				"route", routeNamespace+"/"+routeName, "refIdx", refIdx, "error", err)
-
-			continue
-		}
-
-		if !binding.ManagedByThisController {
-			continue
-		}
-
-		referencesUs = true
-		bindingInfo.bindingResults[refIdx] = binding.Result
-
-		if binding.Result.Accepted {
-			hasAccepted = true
-
-			if binding.GatewayKey != "" {
-				bindingInfo.acceptedGateways[binding.GatewayKey] = true
-			}
+	// Hostname-ownership enforcement (#475, controller layer) runs AFTER the
+	// regular binding so its rejection replaces only otherwise-accepted
+	// bindings — a route that failed binding keeps its more specific reason.
+	if hasAccepted && s.HostnameOwnership != nil {
+		if denied := s.rejectIfHostnameNotOwned(ctx, logger, routeNamespace, routeName, hostnames, &bindingInfo); denied {
+			hasAccepted = false
 		}
 	}
 
 	return bindingInfo, hasAccepted, referencesUs
+}
+
+// bindOneParent resolves and records one parentRef into bindingInfo, returning
+// whether the ref references a Gateway we manage and whether it was accepted.
+// parentGateways[refIdx] is recorded for every managed ref (accepted or not)
+// so the status writer can attribute a per-tunnel sync failure to it.
+func (s *RouteSyncer) bindOneParent(
+	ctx context.Context,
+	logger *slog.Logger,
+	routeNamespace, routeName string,
+	hostnames []gatewayv1.Hostname,
+	kind gatewayv1.Kind,
+	ref gatewayv1.ParentReference,
+	refIdx int,
+	views *listenerViewCache,
+	bindingInfo *routeBindingInfo,
+) (bool, bool) {
+	routeInfo := &routebinding.RouteInfo{
+		Name:        routeName,
+		Namespace:   routeNamespace,
+		Hostnames:   hostnames,
+		Kind:        kind,
+		SectionName: ref.SectionName,
+		Port:        ref.Port,
+	}
+
+	binding, err := resolveRouteParentBinding(ctx, s.Client, s.bindingValidator, s.ControllerName, ref, routeNamespace, routeInfo, views)
+	if err != nil {
+		logger.Error("failed to resolve route parentRef",
+			"route", routeNamespace+"/"+routeName, "refIdx", refIdx, "error", err)
+
+		return false, false
+	}
+
+	if !binding.ManagedByThisController {
+		return false, false
+	}
+
+	bindingInfo.bindingResults[refIdx] = binding.Result
+
+	if binding.GatewayKey != "" {
+		bindingInfo.parentGateways[refIdx] = binding.GatewayKey
+	}
+
+	if binding.Result.Accepted && binding.GatewayKey != "" {
+		bindingInfo.acceptedGateways[binding.GatewayKey] = true
+	}
+
+	return true, binding.Result.Accepted
+}
+
+// rejectIfHostnameNotOwned evaluates the hostname-ownership policy for the
+// route and, on denial, downgrades every accepted parent binding to
+// Accepted=False/HostnameNotPermitted and clears the accepted-Gateway set so
+// the route is excluded from the data plane. Returns true when denied.
+//
+// A namespace read failure also denies (fail closed): an unreadable namespace
+// must not become an enforcement bypass.
+func (s *RouteSyncer) rejectIfHostnameNotOwned(
+	ctx context.Context,
+	logger *slog.Logger,
+	routeNamespace, routeName string,
+	hostnames []gatewayv1.Hostname,
+	bindingInfo *routeBindingInfo,
+) bool {
+	verdict := s.evaluateHostnameOwnership(ctx, routeNamespace, hostnames)
+	if verdict.Allowed {
+		return false
+	}
+
+	logger.Warn("route rejected by hostname-ownership policy",
+		"route", routeNamespace+"/"+routeName, "reason", verdict.Message)
+
+	for refIdx, result := range bindingInfo.bindingResults {
+		if !result.Accepted {
+			continue
+		}
+
+		bindingInfo.bindingResults[refIdx] = routebinding.BindingResult{
+			Accepted: false,
+			Reason:   hostnameownership.RouteReasonHostnameNotPermitted,
+			Message:  verdict.Message,
+		}
+	}
+
+	bindingInfo.acceptedGateways = make(map[string]bool)
+
+	return true
+}
+
+// evaluateHostnameOwnership reads the route's namespace labels and applies
+// the compiled policy. Fail closed on a namespace read error.
+func (s *RouteSyncer) evaluateHostnameOwnership(
+	ctx context.Context,
+	routeNamespace string,
+	hostnames []gatewayv1.Hostname,
+) hostnameownership.Verdict {
+	var namespace corev1.Namespace
+	if err := s.Get(ctx, types.NamespacedName{Name: routeNamespace}, &namespace); err != nil {
+		return hostnameownership.Verdict{
+			Allowed: false,
+			Message: fmt.Sprintf(
+				"hostname-ownership policy could not read namespace %q (%v); failing closed", routeNamespace, err),
+		}
+	}
+
+	return s.HostnameOwnership.Evaluate(namespace.Labels, hostnames)
 }
 
 // sortIngressRules sorts ingress rules: specific hostnames alphabetically first,

@@ -62,6 +62,7 @@ func ConvertGRPCRoutes(
 	gatewayCertResolver GatewayClientCertResolver,
 ) *Config {
 	return convertRoutesGeneric(ctx, routes, gatewayCertResolver, routeKindView[*gatewayv1.GRPCRoute]{
+		kind:       "GRPCRoute",
 		hostnames:  func(route *gatewayv1.GRPCRoute) []gatewayv1.Hostname { return route.Spec.Hostnames },
 		parentRefs: func(route *gatewayv1.GRPCRoute) []gatewayv1.ParentReference { return route.Spec.ParentRefs },
 		ruleCount:  func(route *gatewayv1.GRPCRoute) int { return len(route.Spec.Rules) },

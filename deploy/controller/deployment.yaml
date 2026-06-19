@@ -25,18 +25,36 @@ spec:
           type: RuntimeDefault
       containers:
         - name: controller
-          image: ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller:latest
+          # Pin to a released tag — replace vX.Y.Z with the version you deploy
+          # (see the chart appVersion / GitHub releases). Never run :latest in
+          # production: it makes the running version unknowable and breaks rollback.
+          image: ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller:vX.Y.Z
           args:
             - --controller-name=cf.k8s.lex.la/tunnel-controller
             # --proxy-endpoints points at the L7 proxy's headless Service.
             # Replace 'cloudflare-tunnel-system' with the namespace where the
             # proxy Deployment runs if different from the controller's.
             - --proxy-endpoints=http://cloudflare-tunnel-gateway-controller-proxy-headless.cloudflare-tunnel-system.svc.cluster.local:8081/config
+            # --proxy-image is the image for per-Gateway rendered proxy
+            # Deployments (GatewayConfig data planes). Keep it in lockstep
+            # with the proxy Deployment's image; without it, opted-in
+            # Gateways are not rendered (a Warning Event explains why).
+            # Pin to the same released tag as the controller image above.
+            - --proxy-image=ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller-proxy:vX.Y.Z
             - --metrics-addr=:8080
             - --health-addr=:8081
             # cluster-domain is auto-detected from /etc/resolv.conf; uncomment
             # to override (e.g., custom cluster domain).
             # - --cluster-domain=cluster.local
+          env:
+            # The controller scopes per-Gateway NetworkPolicies to its own
+            # namespace; inject it via the downward API so it does not depend on
+            # the SA-token namespace file (absent when automountServiceAccountToken
+            # is false), which would otherwise silently fall back to "default".
+            - name: CONTROLLER_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
           ports:
             - name: metrics
               containerPort: 8080

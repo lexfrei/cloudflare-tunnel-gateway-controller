@@ -134,8 +134,6 @@ func TestBuildAcceptedCondition_OnlySyncErrorTriggersPending(t *testing.T) {
 
 	// Binding rejection without sync error → Accepted=False, Reason from
 	// the binding result (NoMatchingParent / NoMatchingListenerHostname / etc.).
-	// Confirms the function takes the binding result into account only when
-	// the syncer succeeded, matching the precedence in route_status.go.
 	bindingInfo := routeBindingInfo{
 		bindingResults: map[int]routebinding.BindingResult{
 			0: {
@@ -149,9 +147,31 @@ func TestBuildAcceptedCondition_OnlySyncErrorTriggersPending(t *testing.T) {
 	assert.Equal(t, metav1.ConditionFalse, cond.Status)
 	assert.Equal(t, string(gatewayv1.RouteReasonNoMatchingParent), cond.Reason)
 
-	// syncErr wins over a rejected binding: when Cloudflare sync fails we
-	// surface the sync error first so operators see the actionable cause.
+	// A binding rejection wins over a sync error: a route that does not bind is
+	// never programmed regardless of tunnel health, so its specific reason is
+	// the actionable cause — a transient Pending would mask the permanent
+	// problem (the route's parentRef/hostname is wrong, not the tunnel).
 	cond = buildAcceptedCondition(1, now, bindingInfo, 0, errCloudflareSync, nil)
 	assert.Equal(t, metav1.ConditionFalse, cond.Status)
-	assert.Equal(t, string(gatewayv1.RouteReasonPending), cond.Reason)
+	assert.Equal(t, string(gatewayv1.RouteReasonNoMatchingParent), cond.Reason)
+}
+
+// TestBuildAcceptedCondition_BrokenDataPlaneAttributesReasonToGateway pins that
+// a route blocked by a broken per-Gateway data plane reports Reason=Pending
+// (InvalidParameters is a Gateway-level reason, absent from the route reason
+// enum) while its message attributes InvalidParameters to the GATEWAY — so the
+// route's reason and message do not contradict each other.
+func TestBuildAcceptedCondition_BrokenDataPlaneAttributesReasonToGateway(t *testing.T) {
+	t.Parallel()
+
+	cond := buildAcceptedCondition(1, metav1.Now(), routeBindingInfo{}, 0, errBrokenDataPlane, nil)
+
+	assert.Equal(t, metav1.ConditionFalse, cond.Status)
+	assert.Equal(t, string(gatewayv1.RouteReasonPending), cond.Reason,
+		"a broken data plane demotes the route to Pending; InvalidParameters is not a route reason")
+	assert.NotEqual(t, "InvalidParameters", cond.Reason,
+		"the route must not claim a Gateway-level reason as its own")
+	assert.Contains(t, cond.Message, "Gateway's Accepted condition",
+		"the message must point at the Gateway, not read as the route's own InvalidParameters reason")
+	assert.Contains(t, cond.Message, "InvalidParameters")
 }

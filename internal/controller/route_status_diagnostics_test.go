@@ -1,8 +1,10 @@
 package controller
 
 import (
+	"strconv"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -145,4 +147,64 @@ func TestDiagnostics_CallerOverrideWins(t *testing.T) {
 	assert.Equal(t, metav1.ConditionFalse, accepted.Status)
 	assert.Equal(t, string(gatewayv1.RouteReasonUnsupportedProtocol), accepted.Reason,
 		"the caller's more-specific override must win over the diagnostic-derived one")
+}
+
+// TestDroppedConfigMessage_TruncatesOverlongMessage pins the same
+// CRD-validation guard buildShadowedCondition has: a route with very many
+// dropped rules would otherwise join past metav1.Condition's 32768 Message cap
+// and fail the WHOLE status update (losing Accepted/ResolvedRefs with it).
+func TestDroppedConfigMessage_TruncatesOverlongMessage(t *testing.T) {
+	t.Parallel()
+
+	diagnostics := make([]proxy.RouteDiagnostic, 0, 400)
+	for i := range 400 {
+		diagnostics = append(diagnostics, proxy.RouteDiagnostic{
+			Namespace: "default", Name: "web", RuleIndex: i, Target: proxy.DiagnosticAccepted,
+			Reason:    string(gatewayv1.RouteReasonUnsupportedValue),
+			Message:   strings.Repeat("x", 100) + " rule " + strconv.Itoa(i) + " dropped",
+			WholeRule: true,
+		})
+	}
+
+	for _, partial := range []bool{true, false} {
+		msg := droppedConfigMessage(diagnostics, partial)
+		assert.LessOrEqualf(t, len(msg), conditionMessageMaxLength,
+			"partial=%v: the joined dropped-config message must fit metav1.Condition's MaxLength", partial)
+		assert.Truef(t, strings.HasSuffix(msg, "..."), "partial=%v: a truncated message must signal the cut", partial)
+	}
+}
+
+// TestTruncateConditionMessage_NeverProducesInvalidUTF8 pins that truncation
+// cuts on a RUNE boundary. Shadow- and diagnostic-basis strings carry 3-byte
+// em-dashes; a byte-offset cut landing inside one yields invalid UTF-8, which
+// the apiserver rejects — failing the WHOLE status update (losing
+// Accepted/ResolvedRefs), the exact outcome this guard exists to prevent.
+func TestTruncateConditionMessage_NeverProducesInvalidUTF8(t *testing.T) {
+	t.Parallel()
+
+	// 11000 em-dashes = 33000 bytes, past the 32768 cap; the byte cut at
+	// conditionMessageMaxLength-3 (32765 = 3*10921+2) lands mid-rune.
+	msg := strings.Repeat("—", 11000)
+	require.Greater(t, len(msg), conditionMessageMaxLength, "the fixture must actually trigger truncation")
+
+	truncated := truncateConditionMessage(msg)
+
+	assert.True(t, utf8.ValidString(truncated),
+		"truncation must not split a multi-byte rune into invalid UTF-8")
+	assert.LessOrEqual(t, len(truncated), conditionMessageMaxLength,
+		"the truncated message must still fit metav1.Condition's MaxLength")
+	assert.True(t, strings.HasSuffix(truncated, "..."), "a truncated message must signal the cut")
+}
+
+// TestTruncateUTF8_TinyCapIsTotal pins the totality guard: a cap at or below
+// the marker length has no room for content and must not panic with a negative
+// slice index. Unreachable with the real caps (256/32768); this keeps the
+// helper total for any future caller.
+func TestTruncateUTF8_TinyCapIsTotal(t *testing.T) {
+	t.Parallel()
+
+	for _, maxLen := range []int{0, 1, 3} {
+		assert.NotPanics(t, func() { _ = truncateUTF8("a much longer message", maxLen) },
+			"truncateUTF8 must not panic for maxLen=%d", maxLen)
+	}
 }

@@ -90,6 +90,67 @@ Built-in metrics from controller-runtime.
 | `process_resident_memory_bytes` | Gauge | Resident memory |
 | `process_open_fds` | Gauge | Open file descriptors |
 
+### Proxy (Data-Plane) Metrics
+
+The in-process L7 proxy serves its own exposition at `/metrics` on the config API port (8081, no auth — the endpoint carries no secrets; the Bearer token protects config writes). The chart's proxy ServiceMonitor scrapes it when `serviceMonitor.enabled` is set (and `proxy.metrics.enabled` is on — the template is gated on both); metrics are on by default and can be disabled with `proxy.metrics.enabled: false`. The same endpoint also surfaces the embedded cloudflared connector metrics (`cloudflared_tunnel_*`).
+
+On a multi-tenant shared plane the exposition reveals per-tenant hostname series to anything that can reach the pod, so the chart ships this NetworkPolicy on by default (`proxy.networkPolicy.enabled: true`) — it admits the config API port (and therefore `/metrics`) only from the controller's own namespace. To keep Prometheus scraping working, admit your monitoring namespace too: add it to `proxy.networkPolicy.ingress.from` for the shared proxy, or set `proxy.networkPolicy.monitoringNamespaceSelector` for the per-Gateway data planes the controller renders. Where the CNI does not enforce NetworkPolicy this is a no-op and scraping is unaffected.
+
+!!! warning "Strict CNIs and kubelet health probes"
+    The proxy's liveness/readiness/startup probes also target the config API port, and they originate from the **node's kubelet** (host network), not from a pod — so a `namespaceSelector` ingress rule does not match them. Most CNIs (Calico, Cilium) permit node→pod health-check traffic regardless of NetworkPolicy, so probes work out of the box. A CNI configured to enforce policy on host→pod traffic will block them and CrashLoop the proxy; on such clusters add an ingress rule admitting the kubelet/node source for the config API port, or run with `proxy.networkPolicy.enabled: false`.
+
+Series count scales with the number of CONFIGURED hostnames — a tenant can legitimately mint series by creating many hostnames under its allowed suffix, so budget Prometheus accordingly on hostname-heavy shared planes.
+
+The `hostname` label always carries the MATCHED route hostname pattern (exact host, `*.suffix` wildcard pattern, or empty for default-bucket and unmatched requests) — never the raw client Host — so series cardinality is bounded by the pushed config.
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `cftunnel_proxy_requests_in_flight` | Gauge | — | Requests currently being served (excluding hijacked WebSocket sessions). The saturation signal for horizontal scaling. |
+| `cftunnel_proxy_websocket_active_sessions` | Gauge | — | Live post-upgrade WebSocket sessions. |
+| `cftunnel_proxy_request_duration_seconds` | Histogram | `hostname` | Wall time from arrival to response completion; WebSocket upgrades observe time-to-upgrade, not session lifetime. |
+| `cftunnel_proxy_requests_total` | Counter | `hostname`, `status_class` | Completed exchanges by status class: `1xx`..`5xx`, `aborted` (no response written — e.g. client canceled first), `other` (handler wrote a status outside 100-599). A WebSocket upgrade counts as `1xx` at hijack time. |
+| `cftunnel_proxy_backend_errors_total` | Counter | `hostname`, `reason` | Backend dial/connect failures (`dial`, `timeout`, `tls`, `canceled`, `ws_dial`, `ws_handshake`, `other`). |
+| `cftunnel_proxy_response_bytes_total` | Counter | `hostname` | Response body bytes written (post-hijack WebSocket bytes excluded). |
+| `cftunnel_proxy_request_bytes_total` | Counter | `hostname` | Request body bytes read. |
+
+#### Scaling the proxy on concurrency
+
+The proxy is an I/O-bound L7 hop behind an outbound tunnel: CPU is a poor saturation proxy and there is no Service load balancer producing ingress signals. Scale on the in-flight gauge instead. Two ways to feed it to an HPA:
+
+**KEDA** (Prometheus scaler):
+
+```yaml
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: proxy-inflight
+spec:
+  scaleTargetRef:
+    name: <proxy-deployment>
+  triggers:
+    - type: prometheus
+      metadata:
+        serverAddress: http://prometheus.monitoring:9090
+        query: sum(cftunnel_proxy_requests_in_flight{job="<release>-proxy"})
+        threshold: "50"
+```
+
+**prometheus-adapter** (Pods metric for a native `autoscaling/v2` HPA):
+
+```yaml
+# prometheus-adapter values: expose the gauge through the custom-metrics API
+rules:
+  custom:
+    - seriesQuery: 'cftunnel_proxy_requests_in_flight{namespace!="",pod!=""}'
+      resources:
+        overrides:
+          namespace: {resource: "namespace"}
+          pod: {resource: "pod"}
+      metricsQuery: sum(<<.Series>>{<<.LabelMatchers>>}) by (<<.GroupBy>>)
+```
+
+Per-Gateway data planes render this HPA automatically when `GatewayConfig.spec.autoscaling` is set — see [Per-Gateway Isolation](../guides/per-gateway-isolation.md).
+
 ## Prometheus Configuration
 
 ### ServiceMonitor (Prometheus Operator)

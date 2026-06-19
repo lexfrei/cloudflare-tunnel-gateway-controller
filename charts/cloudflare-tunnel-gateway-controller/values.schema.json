@@ -65,13 +65,21 @@
         "logLevel": {
           "type": "string",
           "description": "Log level",
-          "enum": ["debug", "info", "warn", "error"],
+          "enum": [
+            "debug",
+            "info",
+            "warn",
+            "error"
+          ],
           "default": "info"
         },
         "logFormat": {
           "type": "string",
           "description": "Log format",
-          "enum": ["json", "text"],
+          "enum": [
+            "json",
+            "text"
+          ],
           "default": "json"
         },
         "tracing": {
@@ -128,7 +136,11 @@
         },
         "pullPolicy": {
           "type": "string",
-          "enum": ["Always", "IfNotPresent", "Never"],
+          "enum": [
+            "Always",
+            "IfNotPresent",
+            "Never"
+          ],
           "default": "IfNotPresent"
         },
         "tag": {
@@ -204,7 +216,10 @@
           "properties": {
             "type": {
               "type": "string",
-              "enum": ["RuntimeDefault", "Localhost"]
+              "enum": [
+                "RuntimeDefault",
+                "Localhost"
+              ]
             },
             "localhostProfile": {
               "type": "string"
@@ -274,7 +289,13 @@
     },
     "dnsPolicy": {
       "type": "string",
-      "enum": ["", "ClusterFirst", "Default", "ClusterFirstWithHostNet", "None"],
+      "enum": [
+        "",
+        "ClusterFirst",
+        "Default",
+        "ClusterFirstWithHostNet",
+        "None"
+      ],
       "description": "DNS policy for pod"
     },
     "dnsConfig": {
@@ -324,23 +345,46 @@
         },
         "minAvailable": {
           "oneOf": [
-            {"type": "integer", "minimum": 0},
-            {"type": "string", "pattern": "^[0-9]+%$"},
-            {"type": "null"}
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "string",
+              "pattern": "^[0-9]+%$"
+            },
+            {
+              "type": "null"
+            }
           ],
           "description": "Minimum number of available pods"
         },
         "maxUnavailable": {
           "oneOf": [
-            {"type": "integer", "minimum": 0},
-            {"type": "string", "pattern": "^[0-9]+%$"},
-            {"type": "null"}
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "string",
+              "pattern": "^[0-9]+%$"
+            },
+            {
+              "type": "null"
+            }
           ],
           "description": "Maximum number of unavailable pods"
         },
         "unhealthyPodEvictionPolicy": {
-          "type": ["string", "null"],
-          "enum": ["IfHealthyBudget", "AlwaysAllow", null],
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "IfHealthyBudget",
+            "AlwaysAllow",
+            null
+          ],
           "description": "Policy for evicting unhealthy pods (requires Kubernetes 1.26+)"
         }
       }
@@ -449,7 +493,11 @@
       "properties": {
         "type": {
           "type": "string",
-          "enum": ["ClusterIP", "NodePort", "LoadBalancer"],
+          "enum": [
+            "ClusterIP",
+            "NodePort",
+            "LoadBalancer"
+          ],
           "default": "ClusterIP"
         },
         "metricsPort": {
@@ -541,6 +589,74 @@
         }
       }
     },
+    "hostnameOwnershipPolicy": {
+      "type": "object",
+      "description": "Per-namespace hostname-ownership policy: admission layer (ValidatingAdmissionPolicy, K8s 1.30+) plus controller-side enforcement, both driven by one namespace label.",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Master switch: install the admission policy and enable controller-side enforcement.",
+          "default": false
+        },
+        "labelKey": {
+          "type": "string",
+          "description": "Namespace label carrying the tenant's allowed hostname suffix.",
+          "default": "cf.k8s.lex.la/hostname-suffix",
+          "pattern": "^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?[a-zA-Z0-9]([-a-zA-Z0-9_.]*[a-zA-Z0-9])?$",
+          "maxLength": 317
+        },
+        "namespaceSelector": {
+          "type": "object",
+          "description": "LabelSelector scoping which namespaces are policed (applied to both layers). Empty polices every namespace.",
+          "properties": {
+            "matchLabels": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            },
+            "matchExpressions": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "key",
+                  "operator"
+                ],
+                "properties": {
+                  "key": {
+                    "type": "string"
+                  },
+                  "operator": {
+                    "type": "string",
+                    "enum": [
+                      "In",
+                      "NotIn",
+                      "Exists",
+                      "DoesNotExist"
+                    ]
+                  },
+                  "values": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        "admissionPolicy": {
+          "type": "boolean",
+          "description": "Render the ValidatingAdmissionPolicy (requires Kubernetes 1.30+). False keeps only the controller-side layer.",
+          "default": true
+        }
+      }
+    },
     "ruleNameUniquenessPolicy": {
       "type": "object",
       "properties": {
@@ -571,7 +687,11 @@
             },
             "pullPolicy": {
               "type": "string",
-              "enum": ["Always", "IfNotPresent", "Never"],
+              "enum": [
+                "Always",
+                "IfNotPresent",
+                "Never"
+              ],
               "default": "IfNotPresent"
             },
             "tag": {
@@ -592,13 +712,36 @@
           "maximum": 65535,
           "default": 8080
         },
+        "metrics": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Expose request-level Prometheus metrics at /metrics on the config API port (also surfaces embedded cloudflared connector metrics).",
+              "default": true
+            }
+          }
+        },
+        "gracePeriodSeconds": {
+          "type": "integer",
+          "description": "Connector drain window in seconds: on SIGTERM the proxy unregisters its tunnel connectors and gives in-flight requests this long to finish. Pod terminationGracePeriodSeconds is derived as this value + 15s. Capped at 180 (3m) by cloudflared.",
+          "minimum": 1,
+          "maximum": 180,
+          "default": 30
+        },
         "tunnel": {
           "type": "object",
           "properties": {
             "protocol": {
               "type": "string",
               "description": "Edge transport: 'auto' (QUIC with HTTP/2 fallback), 'http2', or 'quic'. Empty string is allowed and is equivalent to 'auto' (the template omits the env var, and the proxy treats unset as auto). GRPCRoute needs http2; auto/unset is upgraded to http2 by the proxy when a GRPCRoute is present.",
-              "enum": ["", "auto", "http2", "quic"],
+              "enum": [
+                "",
+                "auto",
+                "http2",
+                "quic"
+              ],
               "default": "auto"
             }
           }
@@ -639,12 +782,12 @@
           "properties": {
             "dialTimeout": {
               "type": "string",
-              "pattern": "^(|[0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h)([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))*)$",
+              "pattern": "^(|[0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h)([0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h))*)$",
               "description": "Backend TCP/TLS dial timeout as a Go duration (e.g. \"10s\", \"1m\", \"1h30m\"). Empty preserves the 30s default."
             },
             "handshakeTimeout": {
               "type": "string",
-              "pattern": "^(|[0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h)([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))*)$",
+              "pattern": "^(|[0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h)([0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h))*)$",
               "description": "101-Switching-Protocols read deadline as a Go duration (e.g. \"45s\", \"2m30s\"). Empty preserves the 30s default."
             }
           }
@@ -713,31 +856,76 @@
             "startupProbe": {
               "type": "object",
               "properties": {
-                "enabled": { "type": "boolean", "default": true },
-                "initialDelaySeconds": { "type": "integer", "minimum": 0 },
-                "periodSeconds": { "type": "integer", "minimum": 1 },
-                "timeoutSeconds": { "type": "integer", "minimum": 1 },
-                "failureThreshold": { "type": "integer", "minimum": 1 }
+                "enabled": {
+                  "type": "boolean",
+                  "default": true
+                },
+                "initialDelaySeconds": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "periodSeconds": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "timeoutSeconds": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "failureThreshold": {
+                  "type": "integer",
+                  "minimum": 1
+                }
               }
             },
             "livenessProbe": {
               "type": "object",
               "properties": {
-                "enabled": { "type": "boolean", "default": true },
-                "initialDelaySeconds": { "type": "integer", "minimum": 0 },
-                "periodSeconds": { "type": "integer", "minimum": 1 },
-                "timeoutSeconds": { "type": "integer", "minimum": 1 },
-                "failureThreshold": { "type": "integer", "minimum": 1 }
+                "enabled": {
+                  "type": "boolean",
+                  "default": true
+                },
+                "initialDelaySeconds": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "periodSeconds": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "timeoutSeconds": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "failureThreshold": {
+                  "type": "integer",
+                  "minimum": 1
+                }
               }
             },
             "readinessProbe": {
               "type": "object",
               "properties": {
-                "enabled": { "type": "boolean", "default": true },
-                "initialDelaySeconds": { "type": "integer", "minimum": 0 },
-                "periodSeconds": { "type": "integer", "minimum": 1 },
-                "timeoutSeconds": { "type": "integer", "minimum": 1 },
-                "failureThreshold": { "type": "integer", "minimum": 1 }
+                "enabled": {
+                  "type": "boolean",
+                  "default": true
+                },
+                "initialDelaySeconds": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "periodSeconds": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "timeoutSeconds": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "failureThreshold": {
+                  "type": "integer",
+                  "minimum": 1
+                }
               }
             }
           }
@@ -747,36 +935,104 @@
           "properties": {
             "annotations": {
               "type": "object",
-              "additionalProperties": { "type": "string" }
+              "additionalProperties": {
+                "type": "string"
+              }
             }
           }
         },
         "networkPolicy": {
           "type": "object",
           "properties": {
-            "enabled": { "type": "boolean", "default": false },
+            "enabled": {
+              "type": "boolean",
+              "default": true
+            },
+            "egressRestricted": {
+              "type": "boolean",
+              "default": false
+            },
             "ingress": {
               "type": "object",
               "properties": {
-                "from": { "type": "array" }
+                "from": {
+                  "type": "array"
+                }
               }
+            },
+            "monitoringNamespaceSelector": {
+              "type": "object",
+              "properties": {
+                "matchLabels": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string"
+                  }
+                },
+                "matchExpressions": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": [
+                      "key",
+                      "operator"
+                    ],
+                    "properties": {
+                      "key": {
+                        "type": "string"
+                      },
+                      "operator": {
+                        "type": "string",
+                        "enum": [
+                          "In",
+                          "NotIn",
+                          "Exists",
+                          "DoesNotExist"
+                        ]
+                      },
+                      "values": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "additionalProperties": false,
+              "description": "LabelSelector for namespaces additionally allowed to reach the per-Gateway config-API/metrics port. Empty = controller namespace only."
             }
-          }
+          },
+          "additionalProperties": false
         },
         "nodeSelector": {
           "type": "object",
-          "additionalProperties": { "type": "string" }
+          "additionalProperties": {
+            "type": "string"
+          }
         },
-        "tolerations": { "type": "array" },
-        "affinity": { "type": "object" },
-        "topologySpreadConstraints": { "type": "array" },
+        "tolerations": {
+          "type": "array"
+        },
+        "affinity": {
+          "type": "object"
+        },
+        "topologySpreadConstraints": {
+          "type": "array"
+        },
         "podAnnotations": {
           "type": "object",
-          "additionalProperties": { "type": "string" }
+          "additionalProperties": {
+            "type": "string"
+          }
         },
         "podLabels": {
           "type": "object",
-          "additionalProperties": { "type": "string" }
+          "additionalProperties": {
+            "type": "string"
+          }
         }
       }
     }

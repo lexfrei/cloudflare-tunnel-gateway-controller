@@ -74,6 +74,15 @@ func init() {
 	rootCmd.Flags().String("proxy-deployment-label", "", "Label selector identifying the proxy Deployment(s) to roll on tunnel-token change, in `key=value` form. Defaults to `app.kubernetes.io/component=proxy` (matches the chart).")
 	rootCmd.Flags().String("tunnel-protocol", "auto", "The proxy's configured edge transport (auto|http2|quic); used to warn when GRPCRoutes are present on an explicit quic tunnel, which cannot carry gRPC trailers (auto/unset is upgraded to http2 by the proxy).")
 
+	rootCmd.Flags().String("proxy-image", "", "Container image for per-Gateway rendered proxy Deployments (GatewayConfig data planes). Empty disables rendering defaults; the chart always sets it to the release's proxy image.")
+
+	// Hostname-ownership enforcement (issue #475, controller-side layer).
+	rootCmd.Flags().Bool("hostname-ownership-enforce", false, "Enforce per-namespace hostname ownership in the controller: routes whose hostnames fall outside their namespace's allowed-suffix label are rejected and never programmed. Complements (and is independent of) the chart's ValidatingAdmissionPolicy.")
+	rootCmd.Flags().String("hostname-ownership-label-key", "cf.k8s.lex.la/hostname-suffix", "Namespace label carrying the tenant's allowed hostname suffix.")
+	rootCmd.Flags().String("hostname-ownership-namespace-selector", "", "Label selector scoping which namespaces are policed (kubectl syntax). Empty polices every namespace (fail-closed).")
+	rootCmd.Flags().String("monitoring-namespace-selector", "", "Label selector (kubectl syntax) for namespaces additionally allowed to reach a per-Gateway proxy's config-API/metrics port in the rendered NetworkPolicy. Empty allows the controller namespace only.")
+	rootCmd.Flags().Bool("render-network-policy", true, "Render the per-Gateway config-API NetworkPolicy (wired from the chart's proxy.networkPolicy.enabled). Set false on strict CNIs where node-sourced kubelet probes are blocked by the policy's namespaceSelector ingress rule; a previously-rendered policy is then deleted.")
+
 	// Distributed tracing (OpenTelemetry). Off by default. When enabled, the
 	// controller instruments its outbound Cloudflare API and proxy config-push
 	// clients and exports spans over OTLP/gRPC.
@@ -178,6 +187,14 @@ func runController(_ *cobra.Command, _ []string) error {
 		ProxyDeploymentLabel: viper.GetString("proxy-deployment-label"),
 		TunnelProtocol:       viper.GetString("tunnel-protocol"),
 		Tracing:              tracingEnabled,
+
+		ProxyImage: viper.GetString("proxy-image"),
+
+		HostnameOwnershipEnforce:           viper.GetBool("hostname-ownership-enforce"),
+		HostnameOwnershipLabelKey:          viper.GetString("hostname-ownership-label-key"),
+		HostnameOwnershipNamespaceSelector: viper.GetString("hostname-ownership-namespace-selector"),
+		MonitoringNamespaceSelector:        viper.GetString("monitoring-namespace-selector"),
+		RenderNetworkPolicy:                viper.GetBool("render-network-policy"),
 	}
 
 	if err := controller.Run(ctx, &cfg); err != nil {

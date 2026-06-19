@@ -279,6 +279,7 @@ func (r *GRPCRouteReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		findRoutesForExternalBackend: r.findRoutesForExternalBackend,
 		getAllRelevantRoutes:         r.getAllRelevantRoutes,
 		watchBackendTLS:              true,
+		watchNamespaceLabels:         r.RouteSyncer.HostnameOwnership != nil,
 	})
 }
 

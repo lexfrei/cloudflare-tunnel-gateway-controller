@@ -21,6 +21,8 @@ Expose in-cluster services through a Cloudflare Tunnel using standard Gateway AP
 - HTTPRoute CORS filter
 - Cross-namespace backend references gated by ReferenceGrant
 - Backend TLS (`BackendTLSPolicy`) and backend WebSocket via `appProtocol`
+- Multi-tenant isolation: per-namespace hostname-ownership enforcement (admission policy + controller), route-collision detection, and optional per-Gateway data planes (a dedicated proxy and tunnel per Gateway)
+- Request-level Prometheus metrics from the proxy data plane (per-hostname rates, latency, in-flight gauge for autoscaling)
 - Leader election for high-availability deployments
 - Multi-arch images (amd64, arm64), signed with cosign
 
@@ -138,7 +140,8 @@ Create standard [Gateway API](https://gateway-api.sigs.k8s.io/) HTTPRoute or GRP
 | `spec.listeners[].tls` | ✅ | CertificateRefs validated with ReferenceGrant support |
 | `spec.listeners[].allowedRoutes` | ✅ | Namespace (Same/All/Selector) and kind filtering |
 | `spec.addresses` | ❌ | Ignored; tunnel CNAME set in status |
-| `spec.infrastructure` | ❌ | Not implemented |
+| `spec.infrastructure.parametersRef` | ✅ | Opts the Gateway into a dedicated data plane (`GatewayConfig`, group `cf.k8s.lex.la`) — its own proxy and tunnel |
+| `spec.infrastructure.labels` / `.annotations` | ✅ | Propagated to the rendered per-Gateway resources and pod template |
 
 > **Note:** Cloudflare Tunnel terminates TLS at its edge. TLS certificate references on listeners are validated (including cross-namespace ReferenceGrant checks), but the actual TLS termination is handled by Cloudflare, not by the controller.
 
@@ -227,6 +230,8 @@ make lint        # run linter
 ## Security
 
 For security issues, please see [SECURITY.md](SECURITY.md).
+
+For multi-tenant deployments — isolation boundaries, hostname-ownership enforcement, and per-Gateway data planes — see the [Multi-Tenancy guide](https://cf.k8s.lex.la/latest/guides/multi-tenancy/).
 
 ## License
 

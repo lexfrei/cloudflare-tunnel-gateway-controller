@@ -156,7 +156,10 @@ tests:
   # write verbs that the v2 Helm SDK code path needed; if a future
   # refactor restores them without restoring the matching code, this
   # test fires.
-  - it: should grant only read access to Secrets
+  # Secrets: read for credentials, create for the generated per-Gateway
+  # config-API auth Secret (#479). NO update/delete — the token is never
+  # rotated and ownerRef GC removes it.
+  - it: should grant read and create on Secrets
     asserts:
       - template: clusterrole.yaml
         contains:
@@ -164,7 +167,7 @@ tests:
           content:
             apiGroups: [""]
             resources: ["secrets"]
-            verbs: ["get", "list", "watch"]
+            verbs: ["get", "list", "watch", "create"]
       - template: clusterrole.yaml
         notContains:
           path: rules
@@ -172,6 +175,23 @@ tests:
             apiGroups: [""]
             resources: ["secrets"]
             verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+      # Pin the two dangerous verbs INDEPENDENTLY: a narrow over-grant that adds
+      # only delete (or only update) would not match the exact 7-verb array
+      # above, so assert each is absent from the rendered Secrets rule on its own.
+      - template: clusterrole.yaml
+        notContains:
+          path: rules
+          content:
+            apiGroups: [""]
+            resources: ["secrets"]
+            verbs: ["get", "list", "watch", "create", "delete"]
+      - template: clusterrole.yaml
+        notContains:
+          path: rules
+          content:
+            apiGroups: [""]
+            resources: ["secrets"]
+            verbs: ["get", "list", "watch", "create", "update"]
 
   # ConfigMaps: BackendTLSPolicy can reference a ConfigMap holding the CA
   # bundle. Read-only.
@@ -185,19 +205,19 @@ tests:
             resources: ["configmaps"]
             verbs: ["get", "list", "watch"]
 
-  # v3 removed internal/helm/manager.go and every Helm-SDK call site.
-  # The chart must NOT grant the cluster-wide Pod/Deployment/ReplicaSet/
-  # ServiceAccount write verbs that path needed. These negative
-  # assertions lock the v3 RBAC boundary against accidental
-  # re-introduction.
-  - it: should NOT grant cluster-wide write on Deployments
+  # The controller manages per-Gateway proxy Deployments directly, so it DOES
+  # hold Deployment write (asserted positively elsewhere). It must NOT manage
+  # ReplicaSets or Pods — those belong to the Deployment controller and kubelet
+  # — nor the ServiceAccounts/ConfigMaps/Pods the removed Helm-SDK path needed.
+  # These negative assertions lock that boundary against accidental widening.
+  - it: should NOT grant write on ReplicaSets
     asserts:
       - template: clusterrole.yaml
         notContains:
           path: rules
           content:
             apiGroups: ["apps"]
-            resources: ["deployments", "replicasets"]
+            resources: ["replicasets"]
             verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 
   - it: should NOT grant cluster-wide write on ServiceAccounts/ConfigMaps/Pods
@@ -298,3 +318,59 @@ tests:
         equal:
           path: metadata.name
           value: my-custom-sa
+
+  # Per-Gateway data planes (#479): the controller renders Deployments,
+  # Services, and HPAs for opted-in Gateways and reads GatewayConfig objects.
+  - it: should grant write access for per-gateway data-plane resources
+    template: clusterrole.yaml
+    asserts:
+      # Deployments DO carry patch (unlike services/HPA): the proxy Secret
+      # reconciler merge-patches the shared proxy Deployment's pod-template
+      # annotation to roll it on tunnel-token rotation, so the verb is used.
+      - contains:
+          path: rules
+          content:
+            apiGroups: ["apps"]
+            resources: ["deployments"]
+            verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+      # Services and HPAs (below) carry NO patch: the reconciler writes them
+      # through CreateOrUpdate (get/create/update) and Delete only — an unused
+      # write verb is gratuitous attack surface.
+      - contains:
+          path: rules
+          content:
+            apiGroups: [""]
+            resources: ["services"]
+            verbs: ["get", "list", "watch", "create", "update", "delete"]
+      - contains:
+          path: rules
+          content:
+            apiGroups: ["autoscaling"]
+            resources: ["horizontalpodautoscalers"]
+            verbs: ["get", "list", "watch", "create", "update", "delete"]
+      # The per-Gateway NetworkPolicy locking each tenant proxy's config-API
+      # port is controller-rendered, so the grant must be present. No patch:
+      # written via CreateOrUpdate + Delete only (the proxy port is never
+      # patched, unlike the shared proxy Deployment).
+      - contains:
+          path: rules
+          content:
+            apiGroups: ["networking.k8s.io"]
+            resources: ["networkpolicies"]
+            verbs: ["get", "list", "watch", "create", "update", "delete"]
+      - contains:
+          path: rules
+          content:
+            apiGroups: ["cf.k8s.lex.la"]
+            resources: ["gatewayconfigs"]
+            verbs: ["get", "list", "watch"]
+      # Deliberately NO gatewayconfigs/status grant: the controller never
+      # writes GatewayConfig status (config problems surface on the
+      # referencing Gateway), and an unused write grant is attack surface.
+      - notContains:
+          path: rules
+          content:
+            apiGroups: ["cf.k8s.lex.la"]
+            resources: ["gatewayconfigs/status"]
+            verbs: ["get", "update", "patch"]
+

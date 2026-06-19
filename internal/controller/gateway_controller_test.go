@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/cockroachdb/errors"
 	"github.com/stretchr/testify/assert"
@@ -1461,6 +1462,26 @@ func TestTruncateMessage(t *testing.T) {
 			assert.LessOrEqual(t, len(result), maxConditionMessageLength)
 		})
 	}
+}
+
+// TestTruncateMessage_RuneSafe pins that the Gateway/GatewayClassConfig message
+// cap backs the cut up to a rune boundary. Its callers carry only ASCII today,
+// but it shares the truncation contract with the route-status path (which DOES
+// carry em-dashes), and a byte-boundary cut through a multi-byte rune yields
+// invalid UTF-8 that the apiserver rejects — failing the whole status update.
+func TestTruncateMessage_RuneSafe(t *testing.T) {
+	t.Parallel()
+
+	// 100 em-dashes = 300 bytes, past the 256 cap; the cut at maxLen-3 = 253
+	// (= 3*84+1) lands mid-rune.
+	msg := strings.Repeat("—", 100)
+	require.Greater(t, len(msg), maxConditionMessageLength, "the fixture must actually trigger truncation")
+
+	result := truncateMessage(msg)
+
+	assert.True(t, utf8.ValidString(result), "truncation must not split a multi-byte rune")
+	assert.LessOrEqual(t, len(result), maxConditionMessageLength)
+	assert.True(t, strings.HasSuffix(result, "..."), "a truncated message must signal the cut")
 }
 
 func TestGatewayReconciler_BuildResolvedRefsCondition(t *testing.T) {

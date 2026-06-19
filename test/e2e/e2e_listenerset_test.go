@@ -4,6 +4,7 @@ package e2e
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -11,9 +12,11 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
@@ -29,7 +32,8 @@ import (
 // The test temporarily patches the e2e Gateway to opt into allowedListeners
 // (which the shared setupGateway intentionally does not set so other tests
 // aren't affected by the multi-listener attach semantic) and restores it on
-// cleanup. This is the only e2e test that mutates the shared Gateway spec.
+// cleanup. The selector-delegation test below shares this patch helper, so
+// restoration must be conflict-safe — both tests mutate the shared Gateway.
 func TestListenerSetEndToEnd(t *testing.T) {
 	cfg := loadTestConfig(t)
 	httpClient := tunnelClient()
@@ -243,4 +247,145 @@ func buildHTTPRouteForListenerSet(name string, cfg testConfig, listenerSetName s
 			},
 		},
 	}
+}
+
+// TestListenerSetSelectorDelegation pins the GEP-1713 tenant self-service
+// delegation model end to end (#477): a Gateway with
+// allowedListeners.namespaces.from=Selector admits ListenerSets only from
+// namespaces matching the selector. A ListenerSet from a matching namespace
+// reaches Accepted=True; one from a non-matching namespace is rejected with
+// reason NotAllowed and never counts toward attachedListenerSets.
+func TestListenerSetSelectorDelegation(t *testing.T) {
+	cfg := loadTestConfig(t)
+	k8sClient := newK8sClient(t, cfg.KubeContext)
+	ctx := context.Background()
+
+	setupTestNamespace(t, k8sClient, cfg)
+	setupGateway(t, k8sClient, cfg)
+
+	restoreGateway := allowListenerSetSelector(t, k8sClient, cfg, "ls-delegation", "allowed")
+	t.Cleanup(restoreGateway)
+
+	allowedNS := createLabelledNamespace(ctx, t, k8sClient, "ls-tenant-allowed-", map[string]string{
+		"ls-delegation": "allowed",
+	})
+	deniedNS := createLabelledNamespace(ctx, t, k8sClient, "ls-tenant-denied-", nil)
+
+	allowedLS := buildListenerSet("ls-selector-allowed", cfg)
+	allowedLS.Namespace = allowedNS
+	createListenerSet(t, k8sClient, allowedLS)
+
+	t.Cleanup(func() { _ = k8sClient.Delete(context.Background(), allowedLS) })
+
+	deniedLS := buildListenerSet("ls-selector-denied", cfg)
+	deniedLS.Namespace = deniedNS
+	createListenerSet(t, k8sClient, deniedLS)
+
+	t.Cleanup(func() { _ = k8sClient.Delete(context.Background(), deniedLS) })
+
+	waitForListenerSetAccepted(t, k8sClient, allowedLS)
+	waitForListenerSetRejected(t, k8sClient, deniedLS)
+	waitForGatewayAttachedListenerSets(t, k8sClient, cfg, 1)
+}
+
+// allowListenerSetSelector patches the e2e Gateway's allowedListeners to a
+// namespace label Selector and returns a restore func.
+func allowListenerSetSelector(
+	t *testing.T,
+	k8sClient client.Client,
+	cfg testConfig,
+	labelKey, labelValue string,
+) func() {
+	t.Helper()
+
+	ctx := context.Background()
+	key := types.NamespacedName{Name: cfg.GatewayName, Namespace: cfg.Namespace}
+
+	gw := &gatewayv1.Gateway{}
+	require.NoError(t, k8sClient.Get(ctx, key, gw))
+
+	originalAllowed := gw.Spec.AllowedListeners
+
+	fromSelector := gatewayv1.NamespacesFromSelector
+	patched := gw.DeepCopy()
+	patched.Spec.AllowedListeners = &gatewayv1.AllowedListeners{
+		Namespaces: &gatewayv1.ListenerNamespaces{
+			From: &fromSelector,
+			Selector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{labelKey: labelValue},
+			},
+		},
+	}
+	require.NoError(t, k8sClient.Update(ctx, patched))
+
+	return func() {
+		// Restore with conflict retry: a swallowed conflict here leaves the
+		// shared Gateway opted into allowedListeners and poisons every later
+		// test run on a reused cluster.
+		restoreErr := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			fresh := &gatewayv1.Gateway{}
+
+			getErr := k8sClient.Get(context.Background(), key, fresh)
+			if getErr != nil {
+				return fmt.Errorf("get gateway for restore: %w", getErr)
+			}
+
+			fresh.Spec.AllowedListeners = originalAllowed
+
+			return k8sClient.Update(context.Background(), fresh)
+		})
+		if restoreErr != nil {
+			t.Errorf("failed to restore the shared Gateway's allowedListeners: %v", restoreErr)
+		}
+	}
+}
+
+// createLabelledNamespace creates a generated-name namespace with the given
+// labels and schedules its deletion.
+func createLabelledNamespace(
+	ctx context.Context,
+	t *testing.T,
+	k8sClient client.Client,
+	generateName string,
+	labels map[string]string,
+) string {
+	t.Helper()
+
+	namespace := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{
+		GenerateName: generateName,
+		Labels:       labels,
+	}}
+	require.NoError(t, k8sClient.Create(ctx, namespace))
+
+	//nolint:contextcheck // cleanup runs after the test context may be done
+	t.Cleanup(func() { _ = k8sClient.Delete(context.Background(), namespace) })
+
+	return namespace.Name
+}
+
+// waitForListenerSetRejected polls until the ListenerSet carries
+// Accepted=False with reason NotAllowed.
+func waitForListenerSetRejected(t *testing.T, k8sClient client.Client, ls *gatewayv1.ListenerSet) {
+	t.Helper()
+
+	err := wait.PollUntilContextTimeout(context.Background(), 2*time.Second, 90*time.Second, true,
+		func(pollCtx context.Context) (bool, error) {
+			current := &gatewayv1.ListenerSet{}
+			getErr := k8sClient.Get(pollCtx, types.NamespacedName{Name: ls.Name, Namespace: ls.Namespace}, current)
+			if getErr != nil {
+				return false, nil //nolint:nilerr // transient API errors are expected while polling; retry until timeout
+			}
+
+			for _, cond := range current.Status.Conditions {
+				if cond.Type == string(gatewayv1.ListenerSetConditionAccepted) &&
+					cond.Status == metav1.ConditionFalse &&
+					cond.Reason == string(gatewayv1.ListenerSetReasonNotAllowed) {
+					return true, nil
+				}
+			}
+
+			return false, nil
+		},
+	)
+	require.NoError(t, err, "ListenerSet was not rejected with NotAllowed in time")
 }

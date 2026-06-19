@@ -40,6 +40,15 @@ type countingResponseWriter struct {
 	bytesWritten      atomic.Int64
 	status            atomic.Int32
 	writeHeaderCalled atomic.Bool
+
+	// onHijack, when non-nil, runs once immediately after a SUCCESSFUL inner
+	// hijack (a failed hijack never fires it). The metrics middleware uses it
+	// to move the request's accounting from the in-flight gauge to the
+	// WebSocket session gauge at upgrade time. Contract: set before the
+	// writer is handed to the handler, called on the request goroutine
+	// (Hijack happens synchronously inside ServeHTTP's WS path), so a plain
+	// field is race-free.
+	onHijack func()
 }
 
 // newCountingResponseWriter wraps inner. Zero status / zero bytes are
@@ -114,6 +123,10 @@ func (c *countingResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	conn, rw, err := hijacker.Hijack()
 	if err != nil {
 		return nil, nil, fmt.Errorf("counting response writer hijack: %w", err)
+	}
+
+	if c.onHijack != nil {
+		c.onHijack()
 	}
 
 	return conn, rw, nil

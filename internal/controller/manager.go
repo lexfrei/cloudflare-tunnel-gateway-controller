@@ -9,6 +9,7 @@ import (
 	"github.com/cockroachdb/errors"
 	"github.com/go-logr/logr"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
@@ -22,6 +23,8 @@ import (
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/api/v1alpha1"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/cfmetrics"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/config"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/hostnameownership"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/render"
 )
 
 // installSchemes registers the Gateway API v1, v1beta1 (for ReferenceGrant)
@@ -95,6 +98,41 @@ type Config struct {
 	// where cloudflared drops the grpc-status trailer. auto/unset is upgraded to
 	// http2 by the proxy when a GRPCRoute is present, so it is not flagged.
 	TunnelProtocol string
+
+	// HostnameOwnershipEnforce enables the controller-side layer of the
+	// per-namespace hostname-ownership policy (#475): routes whose hostnames
+	// fall outside their namespace's allowed suffix are rejected at binding
+	// time and never programmed. Independent of (and in addition to) the CEL
+	// ValidatingAdmissionPolicy the chart can install — defence in depth.
+	HostnameOwnershipEnforce bool
+
+	// HostnameOwnershipLabelKey is the namespace label carrying the allowed
+	// hostname suffix. Must match the admission policy's labelKey.
+	HostnameOwnershipLabelKey string
+
+	// HostnameOwnershipNamespaceSelector scopes which namespaces are policed
+	// (kubectl label-selector syntax; empty = all namespaces, fail-closed
+	// everywhere). Must match the admission policy binding's namespaceSelector.
+	HostnameOwnershipNamespaceSelector string
+
+	// MonitoringNamespaceSelector (kubectl label-selector syntax; empty =
+	// controller namespace only) additionally admits the per-Gateway proxy's
+	// config-API port — which also serves /metrics — in the rendered
+	// NetworkPolicy, so Prometheus in the matching namespaces can scrape.
+	MonitoringNamespaceSelector string
+
+	// RenderNetworkPolicy gates whether the controller renders the per-Gateway
+	// config-API NetworkPolicy. Wired from the chart's proxy.networkPolicy.enabled
+	// (default true). Set false on strict CNIs where the node-sourced kubelet
+	// probes cannot match the policy's namespaceSelector ingress rule — the
+	// documented escape hatch then applies to per-Gateway planes, not only the
+	// shared proxy.
+	RenderNetworkPolicy bool
+
+	// ProxyImage is the container image for per-Gateway rendered proxy
+	// Deployments (GatewayConfig data planes). The chart wires it to the
+	// release's proxy image; GatewayConfig.spec.image overrides per Gateway.
+	ProxyImage string
 
 	// ProxyTokenSecret identifies the Secret holding the tunnel token used by
 	// the proxy. Format: "<namespace>/<name>". When set, the controller
@@ -209,11 +247,39 @@ func Run(ctx context.Context, cfg *Config) error {
 		Scheme:         mgr.GetScheme(),
 		ControllerName: cfg.ControllerName,
 		ConfigResolver: configResolver,
+		ProxyImage:     cfg.ProxyImage,
 		ViewStore:      viewStore,
 	}
 
 	if err := gatewayReconciler.SetupWithManager(mgr); err != nil {
 		return errors.Wrap(err, "failed to setup gateway controller")
+	}
+
+	// Per-Gateway data planes (#479): renders a dedicated proxy Deployment +
+	// config Service (+ optional HPA) for Gateways carrying
+	// infrastructure.parametersRef. Status stays with gatewayReconciler.
+	monitoringSelector, err := parseNamespaceSelector(cfg.MonitoringNamespaceSelector)
+	if err != nil {
+		return errors.Wrap(err, "invalid --monitoring-namespace-selector")
+	}
+
+	gatewayInfraReconciler := &GatewayInfraReconciler{
+		Client:         mgr.GetClient(),
+		Scheme:         mgr.GetScheme(),
+		ControllerName: cfg.ControllerName,
+		ConfigResolver: configResolver,
+		Recorder:       mgr.GetEventRecorder("gateway-infra-controller"),
+		RenderDefaults: render.Defaults{
+			ProxyImage:     cfg.ProxyImage,
+			TunnelProtocol: cfg.TunnelProtocol,
+		},
+		ControllerNamespace:         defaultNamespace,
+		MonitoringNamespaceSelector: monitoringSelector,
+		RenderNetworkPolicy:         cfg.RenderNetworkPolicy,
+	}
+
+	if err := gatewayInfraReconciler.SetupWithManager(mgr); err != nil {
+		return errors.Wrap(err, "failed to setup gateway infra controller")
 	}
 
 	// Create shared route syncer for unified HTTP and GRPC route synchronization
@@ -228,6 +294,22 @@ func Run(ctx context.Context, cfg *Config) error {
 	)
 	routeSyncer.ViewStore = viewStore
 
+	if cfg.HostnameOwnershipEnforce {
+		ownershipPolicy, ownershipErr := hostnameownership.New(
+			cfg.HostnameOwnershipLabelKey, cfg.HostnameOwnershipNamespaceSelector)
+		if ownershipErr != nil {
+			// Fail loud at startup: a malformed policy must not silently run
+			// with enforcement off.
+			return errors.Wrap(ownershipErr, "failed to compile hostname-ownership policy")
+		}
+
+		routeSyncer.HostnameOwnership = ownershipPolicy
+
+		logger.Info("hostname-ownership enforcement enabled",
+			"labelKey", cfg.HostnameOwnershipLabelKey,
+			"namespaceSelector", cfg.HostnameOwnershipNamespaceSelector)
+	}
+
 	// Create proxy syncer for L7 proxy config push (mandatory in v3)
 	proxySyncer := initProxySyncer(cfg, proxyEndpoints, mgr.GetClient(), baseLogger, logger)
 	proxySyncer.ViewStore = viewStore
@@ -241,6 +323,18 @@ func Run(ctx context.Context, cfg *Config) error {
 		ProxyEndpoints: proxyEndpoints,
 		Recorder:       mgr.GetEventRecorder("httproute-controller"),
 		ViewStore:      viewStore,
+	}
+
+	// A newly-rendered per-Gateway data plane needs an initial config push to
+	// pass /readyz (config version > 0), just as the shared plane gets one
+	// from the startup sync. Route reconciles are route-event-driven, so a
+	// data plane with no routes would never be synced — wire the infra
+	// reconciler to run a full route sync (cache + push to every partition)
+	// when it creates a data plane.
+	gatewayInfraReconciler.TriggerRouteSync = func(ctx context.Context) error {
+		_, err := httpRouteReconciler.syncAndUpdateStatus(ctx)
+
+		return err
 	}
 
 	if err := httpRouteReconciler.SetupWithManager(mgr); err != nil {
@@ -417,6 +511,23 @@ func sanitiseProxyEndpoints(endpoints []string) []string {
 	}
 
 	return out
+}
+
+// parseNamespaceSelector parses a kubectl label-selector string into a
+// structured *metav1.LabelSelector. An empty string yields nil — "no selector"
+// is a meaningful value (e.g. the monitoring allowance defaults to none).
+func parseNamespaceSelector(selectorStr string) (*metav1.LabelSelector, error) {
+	if strings.TrimSpace(selectorStr) == "" {
+		//nolint:nilnil // nil selector is the meaningful "none configured" result
+		return nil, nil
+	}
+
+	selector, err := metav1.ParseToLabelSelector(selectorStr)
+	if err != nil {
+		return nil, errors.Wrap(err, "parsing namespace selector")
+	}
+
+	return selector, nil
 }
 
 // getControllerNamespace returns the namespace where the controller is running.

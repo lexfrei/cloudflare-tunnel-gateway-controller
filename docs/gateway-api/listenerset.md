@@ -169,4 +169,6 @@ This is an external-dns behaviour, not a controller limitation — the controlle
 
 ## Tunnel-specific notes
 
-Cloudflare Tunnel is a single ingress point — `port`, `protocol`, and `tls` on Gateway listeners are accepted for spec compliance but the real TLS termination happens at Cloudflare's edge. The same constraint applies to ListenerSet listeners: their TLS material is validated (existence, type, PEM, ReferenceGrant) but not used for cipher negotiation. Multi-port and protocol-specific behaviour (TCP/UDP) is not supported.
+Cloudflare Tunnel is a single ingress point — `port`, `protocol`, and `tls` on Gateway listeners are accepted for spec compliance but the real TLS termination happens at Cloudflare's edge. The same constraint applies to ListenerSet listeners: per-ListenerSet TLS certificate refs are validated for status (`ResolvedRefs`, including ReferenceGrant for cross-namespace refs), never served — TLS terminates at the Cloudflare edge with Cloudflare's certificates, and parent listener secrets are never readable through a child ListenerSet. Multi-port and protocol-specific behaviour (TCP/UDP) is not supported.
+
+For the full tenant self-service pattern (Selector delegation, hostname-ownership enforcement, collision detection), see the [Multi-Tenancy guide](../guides/multi-tenancy.md).

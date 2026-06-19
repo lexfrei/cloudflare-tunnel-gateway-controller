@@ -50,6 +50,11 @@ type Config struct {
 	// payload is byte-identical to before, and the proxy never reads it. The
 	// controller turns each entry into a status condition or a Kubernetes Event.
 	Diagnostics []RouteDiagnostic `json:"-"`
+	// Provenance parallels Rules index-for-index with each rule's source-route
+	// identity, feeding the cross-route shadow detection (DetectShadowedRules).
+	// Controller-side only — json:"-" keeps the wire format and the push-skip
+	// hash unchanged. Appenders MUST grow Rules and Provenance together.
+	Provenance []RuleProvenance `json:"-"`
 }
 
 // RouteRule represents a single routing rule derived from a Gateway API HTTPRoute.

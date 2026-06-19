@@ -145,6 +145,9 @@ func validateCommonBackendRef(
 // versioning, diagnostics sink wiring — is shared and cannot drift between
 // route kinds.
 type routeKindView[R metav1.Object] struct {
+	// kind stamps each flattened rule's provenance ("HTTPRoute" / "GRPCRoute")
+	// for the cross-route shadow detection.
+	kind        string
 	hostnames   func(route R) []gatewayv1.Hostname
 	parentRefs  func(route R) []gatewayv1.ParentReference
 	ruleCount   func(route R) int
@@ -177,6 +180,13 @@ func convertRoutesGeneric[R metav1.Object](
 		for ruleIdx := range view.ruleCount(route) {
 			sink.at(ruleIdx)
 			cfg.Rules = append(cfg.Rules, view.convertRule(ctx, route, ruleIdx, hostnames, clientCert, sink))
+			cfg.Provenance = append(cfg.Provenance, RuleProvenance{
+				Kind:              view.kind,
+				Namespace:         route.GetNamespace(),
+				Name:              route.GetName(),
+				CreationTimestamp: metav1.Time{Time: route.GetCreationTimestamp().Time},
+				RuleIndex:         ruleIdx,
+			})
 		}
 	}
 

@@ -57,6 +57,68 @@ func TestConfigPusher_PushToSingleEndpoint(t *testing.T) {
 	assert.Equal(t, int64(1), receivedConfig.Version)
 }
 
+// TestConfigPusher_TokenIsolation pins THE isolation property of the push
+// path: PushWithToken sends exactly the token it is given (never the pusher's
+// shared default), and an empty token sends NO Authorization header. A
+// regression that fell back to the shared token would hand the shared plane's
+// credential to tenant-controlled pods.
+func TestConfigPusher_TokenIsolation(t *testing.T) {
+	t.Parallel()
+
+	var captured atomic.Value // string
+
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, req *http.Request) {
+		captured.Store(req.Header.Get("Authorization"))
+		writer.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	pusher := proxy.NewConfigPusher(http.DefaultClient, "shared-secret")
+	cfg := &proxy.Config{Version: 1}
+	endpoints := []string{server.URL + "/config"}
+
+	pusher.PushWithToken(t.Context(), cfg, endpoints, "tenant-token")
+	assert.Equal(t, "Bearer tenant-token", captured.Load(),
+		"a per-partition token must be sent verbatim, never the shared default")
+
+	pusher.PushWithToken(t.Context(), cfg, endpoints, "")
+	assert.Empty(t, captured.Load(),
+		"an empty token must send NO Authorization header — never fall back to the shared default")
+
+	pusher.Push(t.Context(), cfg, endpoints)
+	assert.Equal(t, "Bearer shared-secret", captured.Load(),
+		"the shared-plane Push must use the pusher's default token")
+}
+
+// TestConfigPusher_StaleVersionRecoveryRejectsNon200 pins the m2 fix: during
+// 409 stale-version recovery, a non-200 status (e.g. 401 token mismatch in the
+// multi-token world) must surface as an unexpected-status error, not a JSON
+// decode failure that masks the real cause.
+func TestConfigPusher_StaleVersionRecoveryRejectsNon200(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, req *http.Request) {
+		if req.Method == http.MethodGet {
+			writer.WriteHeader(http.StatusUnauthorized)
+			_, _ = writer.Write([]byte("unauthorized"))
+
+			return
+		}
+
+		writer.WriteHeader(http.StatusConflict)
+	}))
+	defer server.Close()
+
+	pusher := proxy.NewConfigPusher(http.DefaultClient, "")
+	results := pusher.PushWithToken(t.Context(), &proxy.Config{Version: 1},
+		[]string{server.URL + "/config"}, "wrong-token")
+
+	require.Len(t, results, 1)
+	require.Error(t, results[0].Err)
+	assert.NotContains(t, results[0].Err.Error(), "decode proxy status",
+		"a 401 during recovery must not be masked as a JSON decode error")
+}
+
 func TestConfigPusher_PushToMultipleEndpoints(t *testing.T) {
 	t.Parallel()
 

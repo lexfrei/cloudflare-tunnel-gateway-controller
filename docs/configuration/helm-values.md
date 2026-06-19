@@ -71,7 +71,7 @@ podDisruptionBudget:
 
 ```yaml
 serviceMonitor:
-  enabled: true       # Creates two ServiceMonitors: one for the controller (Prometheus /metrics on port 8080) and one for the proxy (config-API health on port 8081)
+  enabled: true       # opt-in (default false); when true creates two ServiceMonitors: one for the controller (Prometheus /metrics on port 8080) and one for the proxy (config-API /metrics on port 8081, requires proxy.metrics.enabled)
   interval: 30s
   labels:
     prometheus: kube-prometheus
@@ -149,8 +149,11 @@ The `proxy` section configures the in-process L7 reverse proxy. The proxy embeds
 | Value | Type | Default | Description |
 | --- | --- | --- | --- |
 | `proxy.service.annotations` | object | `{}` | Service annotations |
-| `proxy.networkPolicy.enabled` | bool | `false` | Enable NetworkPolicy for proxy pods |
-| `proxy.networkPolicy.ingress.from` | list | `[]` | Ingress source configuration |
+| `proxy.metrics.enabled` | bool | `true` | Expose request-level proxy metrics on the config-API port |
+| `proxy.networkPolicy.enabled` | bool | `true` | Render the proxy NetworkPolicy (ingress-only; locks the config-API port to the controller namespace) |
+| `proxy.networkPolicy.egressRestricted` | bool | `false` | Also restrict egress to DNS + the Cloudflare edge + cluster services |
+| `proxy.networkPolicy.ingress.from` | list | `[]` | Extra namespaces/pods allowed to reach the config-API port, added to the controller namespace |
+| `proxy.networkPolicy.monitoringNamespaceSelector` | object | `{}` | LabelSelector for namespaces additionally allowed to reach the per-Gateway proxies' config-API/metrics port |
 | `proxy.authTokenSecretRef.name` | string | `""` | Secret name for the controller→proxy config-API Bearer token |
 | `proxy.authTokenSecretRef.key` | string | `"auth-token"` | Key in the auth-token Secret |
 
@@ -187,6 +190,34 @@ proxy:
 ```
 
 For architecture details, see the [L7 Proxy Guide](../guides/l7-proxy.md).
+
+### Metrics
+
+```yaml
+proxy:
+  metrics:
+    enabled: true   # /metrics on the config API port; also exposes cloudflared connector metrics
+```
+
+### Graceful Drain
+
+```yaml
+proxy:
+  gracePeriodSeconds: 30   # connector drain window; pod terminationGracePeriodSeconds = this + 15
+```
+
+## Multi-Tenancy
+
+```yaml
+# Per-namespace hostname ownership, enforced twice (admission + controller).
+hostnameOwnershipPolicy:
+  enabled: false
+  labelKey: cf.k8s.lex.la/hostname-suffix
+  namespaceSelector: {}     # empty polices EVERY namespace — scope deliberately
+  admissionPolicy: true     # set false on clusters older than Kubernetes 1.30
+```
+
+See the [Multi-Tenancy guide](../guides/multi-tenancy.md) for the namespace-label convention and fail-closed semantics, and the [Per-Gateway Isolation guide](../guides/per-gateway-isolation.md) for dedicated data planes (configured via the `GatewayConfig` CRD, not Helm values).
 
 ## Upgrading
 

@@ -115,3 +115,41 @@ Validate PodDisruptionBudget configuration
 {{- end }}
 {{- end }}
 {{- end }}
+
+{{/*
+labelSelectorString renders a Kubernetes LabelSelector object in kubectl
+label-selector syntax (matchLabels + In/NotIn/Exists/DoesNotExist
+expressions). Used to derive the controller's
+--hostname-ownership-namespace-selector flag from the SAME value that scopes
+the ValidatingAdmissionPolicyBinding, so the two enforcement layers cannot
+drift in scope. Empty selector renders "".
+
+matchLabels keys are emitted in explicit sortAlpha order so the rendered flag
+string is stable regardless of map iteration order — the value feeds a
+container arg compared across reconciles, and a reordered string would churn
+the Deployment. (Don't rely on text/template's implicit map-key sort here: a
+refactor to sprig `keys` would silently drop it.)
+*/}}
+{{- define "cf-tunnel-gw-ctrl.labelSelectorString" -}}
+{{- $selector := . | default dict -}}
+{{- $terms := list -}}
+{{- $matchLabels := $selector.matchLabels | default dict -}}
+{{- range $key := (keys $matchLabels | sortAlpha) -}}
+{{- $terms = append $terms (printf "%s=%s" $key (index $matchLabels $key)) -}}
+{{- end -}}
+{{- range ($selector.matchExpressions | default list) -}}
+{{- if eq .operator "In" -}}
+{{- $terms = append $terms (printf "%s in (%s)" .key (join "," .values)) -}}
+{{- else if eq .operator "NotIn" -}}
+{{- $terms = append $terms (printf "%s notin (%s)" .key (join "," .values)) -}}
+{{- else if eq .operator "Exists" -}}
+{{- $terms = append $terms .key -}}
+{{- else if eq .operator "DoesNotExist" -}}
+{{- $terms = append $terms (printf "!%s" .key) -}}
+{{- else -}}
+{{- fail (printf "unsupported matchExpressions operator %q in hostnameOwnershipPolicy.namespaceSelector" .operator) -}}
+{{- end -}}
+{{- end -}}
+{{- join "," $terms -}}
+{{- end -}}
+

@@ -698,3 +698,147 @@ tests:
         contains:
           path: spec.template.spec.containers[0].args
           content: "--tracing-sample-rate=1"
+
+  # Master switch hostnameOwnershipPolicy.enabled wires BOTH layers: the VAP
+  # (separate template) and the controller-side enforcement flags here. One
+  # knob, two independent enforcement points.
+  - it: should not pass hostname-ownership flags by default
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: "--hostname-ownership-enforce=true"
+
+  - it: should pass hostname-ownership flags when the policy is enabled
+    set:
+      hostnameOwnershipPolicy:
+        enabled: true
+        labelKey: cf.k8s.lex.la/hostname-suffix
+        namespaceSelector:
+          matchLabels:
+            tenancy: enforced
+          matchExpressions:
+            - key: kubernetes.io/metadata.name
+              operator: NotIn
+              values: [kube-system]
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--hostname-ownership-enforce=true"
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--hostname-ownership-label-key=cf.k8s.lex.la/hostname-suffix"
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--hostname-ownership-namespace-selector=tenancy=enforced,kubernetes.io/metadata.name notin (kube-system)"
+
+  # The selector string feeds a container arg compared across reconciles, so
+  # matchLabels keys must render in a stable (sorted) order regardless of how
+  # they were written in values — a reordered string would churn the Deployment.
+  - it: should sort matchLabels keys for a stable selector string
+    set:
+      hostnameOwnershipPolicy:
+        enabled: true
+        namespaceSelector:
+          matchLabels:
+            zebra: zval
+            alpha: aval
+            mango: mval
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--hostname-ownership-namespace-selector=alpha=aval,mango=mval,zebra=zval"
+
+  - it: should omit the selector flag when the selector is empty
+    set:
+      hostnameOwnershipPolicy:
+        enabled: true
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--hostname-ownership-enforce=true"
+      # Raw-output regex, not an exact-element notContains: the latter would
+      # still pass if the flag rendered WITH a value.
+      - notMatchRegexRaw:
+          pattern: hostname-ownership-namespace-selector
+
+  # The controller passes the monitoring-namespace selector to the per-Gateway
+  # NetworkPolicy renderer; it is wired from proxy.networkPolicy.
+  - it: should pass the monitoring-namespace selector when set
+    set:
+      proxy:
+        networkPolicy:
+          monitoringNamespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--monitoring-namespace-selector=kubernetes.io/metadata.name=monitoring"
+
+  - it: should omit the monitoring-namespace selector flag when empty
+    asserts:
+      # Raw-output regex: an exact-element notContains would still pass if the
+      # flag rendered WITH a value.
+      - notMatchRegexRaw:
+          pattern: monitoring-namespace-selector
+
+  # proxy.networkPolicy.enabled gates the per-Gateway NetworkPolicy the
+  # controller renders, not just the chart's shared-proxy policy — so it must
+  # flow to the controller as --render-network-policy. This is the real
+  # strict-CNI escape hatch for per-Gateway planes.
+  - it: should pass --render-network-policy=true by default
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--render-network-policy=true"
+
+  - it: should pass --render-network-policy=false when networkPolicy is disabled
+    set:
+      proxy:
+        networkPolicy:
+          enabled: false
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--render-network-policy=false"
+
+  # The controller scopes per-Gateway NetworkPolicies to its own namespace, so
+  # it must learn that namespace reliably — via the downward API, not the
+  # SA-token file (absent under automountServiceAccountToken: false). Inject it
+  # unconditionally, regardless of the auth-token env that shares the block.
+  - it: should always inject CONTROLLER_NAMESPACE from the downward API
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: CONTROLLER_NAMESPACE
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.namespace
+
+  - it: should inject CONTROLLER_NAMESPACE even when no proxy auth token is set
+    set:
+      proxy:
+        authTokenSecretRef:
+          name: ""
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: CONTROLLER_NAMESPACE
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.namespace
+
+  # The controller renders per-Gateway proxy Deployments and must know the
+  # release's proxy image; the chart always passes it.
+  - it: should always pass the proxy image to the controller
+    set:
+      proxy:
+        image:
+          tag: v9.9.9
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--proxy-image=ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller-proxy:v9.9.9"
+

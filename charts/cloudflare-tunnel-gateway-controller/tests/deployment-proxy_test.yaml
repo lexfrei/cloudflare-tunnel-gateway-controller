@@ -39,6 +39,87 @@ tests:
           path: spec.replicas
           value: 3
 
+  # The pod's terminationGracePeriodSeconds must exceed the connector drain
+  # window (PROXY_GRACE_PERIOD) so kubelet's SIGKILL never lands while
+  # cloudflared is still draining in-flight requests. The chart derives both
+  # from one knob: gracePeriodSeconds → env, +15s headroom → pod field.
+  - it: should derive terminationGracePeriodSeconds and PROXY_GRACE_PERIOD from default gracePeriodSeconds
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
+    asserts:
+      - equal:
+          path: spec.template.spec.terminationGracePeriodSeconds
+          value: 45
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: PROXY_GRACE_PERIOD
+            value: "30s"
+
+  - it: should derive terminationGracePeriodSeconds and PROXY_GRACE_PERIOD from custom gracePeriodSeconds
+    set:
+      proxy:
+        gracePeriodSeconds: 60
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
+    asserts:
+      - equal:
+          path: spec.template.spec.terminationGracePeriodSeconds
+          value: 75
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: PROXY_GRACE_PERIOD
+            value: "60s"
+
+  # An explicit null override removes the key from values; the template must
+  # fall back to the default instead of computing a 0s drain + 15s TGPS.
+  - it: should fall back to the default grace when gracePeriodSeconds is null
+    set:
+      proxy:
+        gracePeriodSeconds: null
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
+    asserts:
+      - equal:
+          path: spec.template.spec.terminationGracePeriodSeconds
+          value: 45
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: PROXY_GRACE_PERIOD
+            value: "30s"
+
+  # Data-plane metrics are default-ON; the env var is rendered explicitly in
+  # both states so the deployed intent is visible in the pod spec.
+  - it: should enable proxy metrics by default
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: PROXY_METRICS_ENABLED
+            value: "true"
+
+  - it: should disable proxy metrics when proxy.metrics.enabled is false
+    set:
+      proxy:
+        metrics:
+          enabled: false
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: PROXY_METRICS_ENABLED
+            value: "false"
+
   - it: should use correct proxy image
     set:
       proxy:
@@ -196,6 +277,31 @@ tests:
       - equal:
           path: spec.template.spec.containers[0].readinessProbe.httpGet.path
           value: /readyz
+
+  # All probes MUST target the config-API port (by name), never the proxy port
+  # (8080, which takes no in-cluster ingress). The default-on config-API
+  # NetworkPolicy gates exactly this port; the probe and the gate are one knob.
+  # NOTE: kubelet probes originate from the node (host network), which a
+  # namespaceSelector ingress rule does not match — most CNIs permit node->pod
+  # health checks by default, but a strict CNI may need an explicit allow (see
+  # the L7 proxy / NetworkPolicy docs). Pinning the named port keeps the risk
+  # surface "kubelet from node" and prevents it silently becoming "all probes
+  # blocked because they moved to an un-gated port".
+  - it: should target the config-API port from every health probe
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].startupProbe.httpGet.port
+          value: config-api
+      - equal:
+          path: spec.template.spec.containers[0].livenessProbe.httpGet.port
+          value: config-api
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.httpGet.port
+          value: config-api
 
   - it: should NOT emit any PROXY_ACCESS_LOG_* env when access log is disabled (default)
     # Zero-cost-when-disabled invariant: the binary side gates on

@@ -184,6 +184,8 @@ nav:
       - L7 Proxy Setup: guides/l7-proxy.md
       - External-DNS Integration: guides/external-dns.md
       - Cross-Namespace Routing: guides/cross-namespace.md
+      - Multi-Tenancy: guides/multi-tenancy.md
+      - Per-Gateway Isolation: guides/per-gateway-isolation.md
       - Monitoring: guides/monitoring.md
   - Operations:
       - operations/index.md
@@ -207,3 +209,4 @@ nav:
   - Upgrading:
       - upgrading/index.md
       - v2 to v3: upgrading/v2-to-v3.md
+      - v3.0 to v3.1: upgrading/v3-to-v3.1.md

@@ -1,17 +1,21 @@
 suite: test networkpolicy-proxy
 templates:
   - networkpolicy-proxy.yaml
+release:
+  namespace: cf-system
 tests:
-  - it: should not create NetworkPolicy by default
+  - it: should create the NetworkPolicy by default (secure-by-default)
     set:
       proxy:
         tunnelTokenSecretRef:
           name: tunnel-token-secret
     asserts:
       - hasDocuments:
-          count: 0
+          count: 1
+      - isKind:
+          of: NetworkPolicy
 
-  - it: should not create NetworkPolicy when networkPolicy explicitly disabled
+  - it: should not create the NetworkPolicy when explicitly disabled
     set:
       proxy:
         tunnelTokenSecretRef:
@@ -22,238 +26,162 @@ tests:
       - hasDocuments:
           count: 0
 
-  - it: should create NetworkPolicy when networkPolicy enabled
+  - it: should have the -proxy name and selector labels
     set:
       proxy:
         tunnelTokenSecretRef:
           name: tunnel-token-secret
-        networkPolicy:
-          enabled: true
-    asserts:
-      - hasDocuments:
-          count: 1
-      - isKind:
-          of: NetworkPolicy
-
-  - it: should have correct name with -proxy suffix
-    set:
-      proxy:
-        tunnelTokenSecretRef:
-          name: tunnel-token-secret
-        networkPolicy:
-          enabled: true
     asserts:
       - equal:
           path: metadata.name
           value: RELEASE-NAME-cloudflare-tunnel-gateway-controller-proxy
-
-  - it: should have correct labels
-    set:
-      proxy:
-        tunnelTokenSecretRef:
-          name: tunnel-token-secret
-        networkPolicy:
-          enabled: true
-    asserts:
-      - equal:
-          path: metadata.labels["app.kubernetes.io/name"]
-          value: cloudflare-tunnel-gateway-controller-proxy
-      - equal:
-          path: metadata.labels["app.kubernetes.io/instance"]
-          value: RELEASE-NAME
-
-  - it: should select proxy pods with correct selector labels
-    set:
-      proxy:
-        tunnelTokenSecretRef:
-          name: tunnel-token-secret
-        networkPolicy:
-          enabled: true
-    asserts:
       - equal:
           path: spec.podSelector.matchLabels["app.kubernetes.io/name"]
           value: cloudflare-tunnel-gateway-controller-proxy
       - equal:
-          path: spec.podSelector.matchLabels["app.kubernetes.io/instance"]
-          value: RELEASE-NAME
-      - equal:
           path: spec.podSelector.matchLabels["app.kubernetes.io/component"]
           value: proxy
 
-  - it: should have both Ingress and Egress policy types
+  - it: should be ingress-only by default (no egress restriction)
     set:
       proxy:
         tunnelTokenSecretRef:
           name: tunnel-token-secret
-        networkPolicy:
-          enabled: true
     asserts:
       - contains:
           path: spec.policyTypes
           content: Ingress
-      - contains:
+      - notContains:
           path: spec.policyTypes
           content: Egress
+      - notExists:
+          path: spec.egress
 
-  - it: should allow ingress on configAPIPort
+  - it: should admit ONLY the config-API port, never the proxy port
     set:
       proxy:
         tunnelTokenSecretRef:
           name: tunnel-token-secret
-        configAPIPort: 8081
-        networkPolicy:
-          enabled: true
     asserts:
+      - lengthEqual:
+          path: spec.ingress[0].ports
+          count: 1
       - contains:
           path: spec.ingress[0].ports
           content:
             protocol: TCP
             port: 8081
-
-  - it: should allow ingress on proxyPort
-    set:
-      proxy:
-        tunnelTokenSecretRef:
-          name: tunnel-token-secret
-        proxyPort: 8080
-        networkPolicy:
-          enabled: true
-    asserts:
-      - contains:
+      - notContains:
           path: spec.ingress[0].ports
           content:
             protocol: TCP
             port: 8080
 
-  - it: should allow DNS egress UDP
+  # The admitted port MUST track proxy.configAPIPort. The kubelet health
+  # probes (deployment-proxy) target the config-API port by name, so the port
+  # the policy gates and the port the probes hit are one knob — a custom value
+  # must flow to both or in-cluster probes/pushes hit a port the policy never
+  # admits. (deployment-proxy_test.yaml pins the probe side of the same knob.)
+  - it: should track a custom configAPIPort in the admitted port
     set:
       proxy:
         tunnelTokenSecretRef:
           name: tunnel-token-secret
-        networkPolicy:
-          enabled: true
+        configAPIPort: 9091
     asserts:
       - contains:
-          path: spec.egress[0].ports
-          content:
-            protocol: UDP
-            port: 53
-
-  - it: should allow DNS egress TCP
-    set:
-      proxy:
-        tunnelTokenSecretRef:
-          name: tunnel-token-secret
-        networkPolicy:
-          enabled: true
-    asserts:
-      - contains:
-          path: spec.egress[0].ports
+          path: spec.ingress[0].ports
           content:
             protocol: TCP
-            port: 53
+            port: 9091
 
-  - it: should allow Cloudflare edge egress on port 443 TCP
+  - it: should default ingress.from to the release (controller) namespace
     set:
       proxy:
         tunnelTokenSecretRef:
           name: tunnel-token-secret
-        networkPolicy:
-          enabled: true
-    asserts:
-      - contains:
-          path: spec.egress[1].ports
-          content:
-            protocol: TCP
-            port: 443
-
-  - it: should allow Cloudflare edge egress on port 7844 UDP
-    set:
-      proxy:
-        tunnelTokenSecretRef:
-          name: tunnel-token-secret
-        networkPolicy:
-          enabled: true
-    asserts:
-      - contains:
-          path: spec.egress[1].ports
-          content:
-            protocol: UDP
-            port: 7844
-
-  - it: should allow Cloudflare edge egress to specific IP ranges
-    set:
-      proxy:
-        tunnelTokenSecretRef:
-          name: tunnel-token-secret
-        networkPolicy:
-          enabled: true
-    asserts:
-      - contains:
-          path: spec.egress[1].to
-          content:
-            ipBlock:
-              cidr: "173.245.48.0/20"
-      - contains:
-          path: spec.egress[1].to
-          content:
-            ipBlock:
-              cidr: "104.16.0.0/13"
-      - contains:
-          path: spec.egress[1].to
-          content:
-            ipBlock:
-              cidr: "172.64.0.0/13"
-      - contains:
-          path: spec.egress[1].to
-          content:
-            ipBlock:
-              cidr: "2606:4700::/32"
-
-  - it: should allow cluster services egress
-    set:
-      proxy:
-        tunnelTokenSecretRef:
-          name: tunnel-token-secret
-        networkPolicy:
-          enabled: true
-    asserts:
-      - contains:
-          path: spec.egress[2].to
-          content:
-            namespaceSelector: {}
-      - contains:
-          path: spec.egress[2].ports
-          content:
-            protocol: TCP
-
-  - it: should not have ingress from selector by default
-    set:
-      proxy:
-        tunnelTokenSecretRef:
-          name: tunnel-token-secret
-        networkPolicy:
-          enabled: true
-    asserts:
-      - notExists:
-          path: spec.ingress[0].from
-
-  - it: should allow ingress from specific namespace
-    set:
-      proxy:
-        tunnelTokenSecretRef:
-          name: tunnel-token-secret
-        networkPolicy:
-          enabled: true
-          ingress:
-            from:
-              - namespaceSelector:
-                  matchLabels:
-                    name: monitoring
     asserts:
       - contains:
           path: spec.ingress[0].from
           content:
             namespaceSelector:
               matchLabels:
-                name: monitoring
+                kubernetes.io/metadata.name: cf-system
+
+  - it: should ADD ingress.from to the controller namespace, never replace it
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
+        networkPolicy:
+          ingress:
+            from:
+              - namespaceSelector:
+                  matchLabels:
+                    kubernetes.io/metadata.name: monitoring
+    asserts:
+      # The extra peer is admitted...
+      - contains:
+          path: spec.ingress[0].from
+          content:
+            namespaceSelector:
+              matchLabels:
+                kubernetes.io/metadata.name: monitoring
+      # ...AND the controller namespace stays admitted, so a config push is
+      # never locked out by setting ingress.from (the docs promise "also").
+      - contains:
+          path: spec.ingress[0].from
+          content:
+            namespaceSelector:
+              matchLabels:
+                kubernetes.io/metadata.name: cf-system
+
+  - it: should restrict egress (DNS, Cloudflare edge, cluster services) when egressRestricted is set
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
+        networkPolicy:
+          egressRestricted: true
+    asserts:
+      - contains:
+          path: spec.policyTypes
+          content: Egress
+      - contains:
+          path: spec.egress[0].ports
+          content:
+            protocol: UDP
+            port: 53
+      - contains:
+          path: spec.egress[1].ports
+          content:
+            protocol: UDP
+            port: 7844
+      - contains:
+          path: spec.egress[1].to
+          content:
+            ipBlock:
+              cidr: "173.245.48.0/20"
+      - contains:
+          path: spec.egress[2].to
+          content:
+            namespaceSelector: {}
+
+  # Guard the empty-to foot-gun: egressRestricted with empty cloudflareIpRanges
+  # would render an edge rule with an empty `to:`, which NetworkPolicy reads as
+  # allow-all on 443/7844 — silently the OPPOSITE of restriction. Fail loudly
+  # instead.
+  - it: should fail when egressRestricted is set but cloudflareIpRanges is empty
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
+        networkPolicy:
+          egressRestricted: true
+      networkPolicy:
+        cloudflareIpRanges:
+          ipv4: []
+          ipv6: []
+    asserts:
+      - failedTemplate:
+          errorPattern: "egressRestricted is true but networkPolicy.cloudflareIpRanges is empty"

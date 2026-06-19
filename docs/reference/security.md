@@ -95,12 +95,23 @@ rules:
     resources: ["customresourcedefinitions"]
     verbs: ["get"]
 
-  # Core API - read only
+  # Core API
   - apiGroups: [""]
-    resources: ["services", "namespaces"]
+    resources: ["namespaces"]
     verbs: ["get", "list", "watch"]
+  # Services - read everywhere (backend resolution) plus full write for the
+  # per-Gateway data planes: the controller renders a headless config Service
+  # per opted-in Gateway. Rendered objects are controller-owned via
+  # ownerReferences and deleted only when owned.
   - apiGroups: [""]
-    resources: ["secrets", "configmaps"]
+    resources: ["services"]
+    verbs: ["get", "list", "watch", "create", "update", "delete"]
+  # Secrets - read for credentials; create for the generated per-Gateway config-API auth Secret (no update/delete: token never rotated, ownerRef GC removes it).
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "watch", "create"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
     verbs: ["get", "list", "watch"]
   # EndpointSlice - the proxy endpoint reconciler discovers proxy pods so a
   # newly-joined replica gets the cached config pushed immediately
@@ -117,11 +128,29 @@ rules:
     verbs: ["create", "patch"]
 
   # Deployments - the proxy Secret reconciler patches the proxy Deployment's
-  # pod-template annotation to roll pods when the tunnel-token Secret rotates;
-  # patch only, no create/delete (the chart owns Deployment lifecycle)
+  # pod-template annotation to roll pods when the tunnel-token Secret rotates,
+  # and the per-Gateway data planes render a dedicated proxy Deployment per
+  # opted-in Gateway (full write, cluster-wide, because Gateways live in
+  # arbitrary namespaces)
   - apiGroups: ["apps"]
     resources: ["deployments"]
-    verbs: ["get", "list", "watch", "patch"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # HorizontalPodAutoscalers - rendered per opted-in Gateway when its
+  # GatewayConfig requests autoscaling
+  - apiGroups: ["autoscaling"]
+    resources: ["horizontalpodautoscalers"]
+    verbs: ["get", "list", "watch", "create", "update", "delete"]
+  # NetworkPolicies - rendered per opted-in Gateway to lock the proxy's
+  # config-API port to the controller (+ monitoring) namespaces
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["get", "list", "watch", "create", "update", "delete"]
+
+  # GatewayConfig CRD - per-Gateway data-plane parameters referenced from
+  # Gateway.spec.infrastructure.parametersRef
+  - apiGroups: ["cf.k8s.lex.la"]
+    resources: ["gatewayconfigs"]
+    verbs: ["get", "list", "watch"]
 
   # GatewayClassConfig CRD
   - apiGroups: ["cf.k8s.lex.la"]
@@ -141,8 +170,17 @@ rules:
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 ```
 
-!!! note "v3 RBAC scope"
-    The v3 controller reads Secrets and ConfigMaps and writes only status subresources; it does not create or delete workloads. The one workload mutation it makes is patching the proxy Deployment's pod-template annotation when the tunnel-token Secret rotates (to trigger a native rolling restart) — it does not manage Deployment lifecycle. The v2 chart additionally granted cluster-wide write on Pods, ReplicaSets and ServiceAccounts for the Helm-SDK code path that managed cloudflared; those rules were removed when that code path was deleted.
+!!! note "RBAC scope"
+    The controller reads Secrets and ConfigMaps and writes status subresources. Its workload writes are scoped to the data planes it owns: patching the shared proxy Deployment's pod-template annotation when the tunnel-token Secret rotates (a native rolling restart), and rendering a dedicated proxy Deployment, headless config Service, and optional HorizontalPodAutoscaler for each Gateway opted into a per-Gateway data plane via `infrastructure.parametersRef`. Those rendered objects are controller-owned via ownerReferences, kept in sync against drift, and deleted only when actually owned — a name collision with a user resource can never turn into a deletion. Workload write access is cluster-wide because Gateways live in arbitrary namespaces.
+
+    Because the RBAC grant for these resources is broad (`delete` on Deployments, Services, and HorizontalPodAutoscalers cluster-wide), the **in-code ownership check is the security boundary, not the RBAC scope**. Every apply and create path — including the generated config-API auth Secret — refuses to adopt, update, or GC an object at a rendered name unless it already carries this Gateway's controller ownerReference. A pre-existing object with a foreign owner (or none) is left untouched and the reconcile surfaces a `RenderFailed` event instead of overwriting it.
+
+### Multi-Tenancy
+
+Tenant isolation is layered: admission-level scoping (per-tenant listeners, `allowedListeners`/`allowedRoutes`, the opt-in hostname-ownership `ValidatingAdmissionPolicy`), an independent controller-side enforcement of the same hostname-ownership rule (a route that bypasses admission is still never programmed), and optional hard data-plane isolation with a dedicated proxy and tunnel per Gateway. The boundaries and trade-offs are documented in the [Multi-Tenancy guide](../guides/multi-tenancy.md) and the [Per-Gateway Isolation guide](../guides/per-gateway-isolation.md).
+
+!!! warning "GatewayConfig is workload-creation-equivalent"
+    Because the controller renders Deployments for opted-in Gateways and `GatewayConfig.spec.image` selects the container image, **granting a user `create` on `GatewayConfig` (plus a Gateway with `infrastructure.parametersRef`) is privilege-equivalent to granting `create` on Deployments in that namespace**: the controller becomes the deputy that runs the chosen image under the namespace's default ServiceAccount (the rendered pod disables the SA-token mount, since the proxy needs no API access). Treat RBAC on `gatewayconfigs` accordingly. A rendered data plane's config API is authenticated by default — the controller generates a per-Gateway bearer-token Secret when `authTokenSecretRef` is unset — and network-restricted by default — the controller renders a NetworkPolicy per data plane admitting the config API port only from the controller's namespace, not the tenant's (set `proxy.networkPolicy.monitoringNamespaceSelector` to also admit your monitoring namespace for scraping). See the [Per-Gateway Isolation guide](../guides/per-gateway-isolation.md).
 
 ### Container Security
 
@@ -220,7 +258,7 @@ cosign verify ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller:latest \
 ### Helm Chart Verification
 
 ```bash
-helm verify cloudflare-tunnel-gateway-controller-1.0.0.tgz
+helm verify cloudflare-tunnel-gateway-controller-<version>.tgz
 ```
 
 ## Secrets in Logs

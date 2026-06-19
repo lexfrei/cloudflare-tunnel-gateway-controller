@@ -16,6 +16,12 @@ const (
 	// resolved or declares an app protocol this implementation does not support.
 	// The controller sets ResolvedRefs=False.
 	DiagnosticResolvedRefs DiagnosticTarget = "ResolvedRefs"
+	// DiagnosticShadowed means a rule's (hostname, match) pair is exactly
+	// claimed by a higher-precedence rule from another route, so it receives
+	// zero traffic. Status/observability only: the route stays Accepted (the
+	// Gateway API treats same-hostname routes as legal merging); the controller
+	// surfaces a dedicated condition plus a Warning Event on the losing route.
+	DiagnosticShadowed DiagnosticTarget = "Shadowed"
 	// DiagnosticEvent means the config was applied successfully but a redundant
 	// or conflicting hint was overridden (a benign override, e.g. an appProtocol
 	// cleartext hint superseded by a BackendTLSPolicy, or a ResponseHeaderModifier

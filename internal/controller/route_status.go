@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/cockroachdb/errors"
 	corev1 "k8s.io/api/core/v1"
@@ -275,6 +276,13 @@ func buildParentStatus(
 		conditions = append(conditions, *partiallyInvalid)
 	}
 
+	// Same gating for the shadowed condition: only an accepted route can be
+	// meaningfully "shadowed" — a rejected route is not programmed at all.
+	if shadowed := buildShadowedCondition(diagnostics, generation, now); shadowed != nil &&
+		accepted.Status == metav1.ConditionTrue {
+		conditions = append(conditions, *shadowed)
+	}
+
 	return gatewayv1.RouteParentStatus{
 		ParentRef: gatewayv1.ParentReference{
 			Group:       ref.Group,
@@ -340,6 +348,86 @@ func diagnosticConditions(
 	}
 }
 
+// buildShadowedCondition aggregates Shadowed-target diagnostics into one
+// Status=True condition (present only when at least one pair is shadowed —
+// absence IS the cleared state, since our parent-status entries are fully
+// rebuilt each sync). Duplicate messages are deduplicated; order is preserved.
+func buildShadowedCondition(
+	diagnostics []proxy.RouteDiagnostic,
+	generation int64,
+	now metav1.Time,
+) *metav1.Condition {
+	messages := make([]string, 0, len(diagnostics))
+	seen := make(map[string]struct{})
+
+	for _, diag := range diagnostics {
+		if diag.Target != proxy.DiagnosticShadowed {
+			continue
+		}
+
+		if _, ok := seen[diag.Message]; ok {
+			continue
+		}
+
+		seen[diag.Message] = struct{}{}
+		messages = append(messages, diag.Message)
+	}
+
+	if len(messages) == 0 {
+		return nil
+	}
+
+	return &metav1.Condition{
+		Type:               routeConditionShadowed,
+		Status:             metav1.ConditionTrue,
+		ObservedGeneration: generation,
+		LastTransitionTime: now,
+		Reason:             routeReasonShadowed,
+		Message:            truncateConditionMessage(strings.Join(messages, " | ")),
+	}
+}
+
+// conditionMessageMaxLength is metav1.Condition's Message MaxLength. A joined
+// multi-pair message past it fails CRD validation for the WHOLE status
+// update, losing Accepted/ResolvedRefs along with the diagnostic.
+const conditionMessageMaxLength = 32768
+
+// conditionTruncationMarker signals a cut message; its length is reserved from
+// the cap so the marked result still fits.
+const conditionTruncationMarker = "..."
+
+// truncateConditionMessage caps a condition message at the metav1 limit.
+func truncateConditionMessage(msg string) string {
+	return truncateUTF8(msg, conditionMessageMaxLength)
+}
+
+// truncateUTF8 caps msg at maxLen bytes, marking the cut. The cut backs up to a
+// rune boundary: condition messages carry multi-byte runes (3-byte em-dashes in
+// shadow/diagnostic basis strings), and a raw byte slice through one yields
+// invalid UTF-8 that the apiserver rejects — failing the WHOLE status update,
+// the exact outcome this guard prevents. Shared by every condition-message
+// writer (route diagnostics AND Gateway/GatewayClassConfig status) so the
+// rune-safety cannot regress in one path while holding in another.
+func truncateUTF8(msg string, maxLen int) string {
+	if len(msg) <= maxLen {
+		return msg
+	}
+
+	// Totality guard: a cap at or below the marker length has no room for any
+	// content, so just return the marker (also avoids a negative slice index).
+	// Unreachable with the real caps (256 / 32768); cheap insurance.
+	if maxLen <= len(conditionTruncationMarker) {
+		return conditionTruncationMarker
+	}
+
+	cut := maxLen - len(conditionTruncationMarker)
+	for cut > 0 && !utf8.RuneStart(msg[cut]) {
+		cut--
+	}
+
+	return msg[:cut] + conditionTruncationMarker
+}
+
 // droppedConfigMessage builds the human-facing condition message for a set of
 // Accepted-target diagnostics. When partial is true the message starts with the
 // "Dropped Rule" prefix the Gateway API spec mandates for the drop-rule
@@ -375,10 +463,29 @@ func droppedConfigMessage(diagnostics []proxy.RouteDiagnostic, partial bool) str
 
 	detail := strings.Join(details, " ")
 	if !partial {
-		return detail
+		return truncateConditionMessage(detail)
 	}
 
-	return "Dropped Rule " + strings.Join(idxStrs, ", ") + ": " + detail
+	return truncateConditionMessage("Dropped Rule " + strings.Join(idxStrs, ", ") + ": " + detail)
+}
+
+// perParentSyncErr resolves the sync error for a single parentRef. A
+// tunnel-group failure affects only the parents on that tunnel: the global
+// syncErr (early-error path, before partitioning) applies to every parent,
+// while a per-Gateway error overrides it for that parent only — so a healthy
+// parent of a multi-parent route stays Accepted when a sibling parent's tunnel
+// failed.
+func perParentSyncErr(bindingInfo routeBindingInfo, refIdx int, globalErr error) error {
+	gwKey, ok := bindingInfo.parentGateways[refIdx]
+	if !ok {
+		return globalErr
+	}
+
+	if perParent, present := bindingInfo.syncErrByGateway[gwKey]; present {
+		return perParent
+	}
+
+	return globalErr
 }
 
 func buildAcceptedCondition(
@@ -393,18 +500,26 @@ func buildAcceptedCondition(
 	reason := string(gatewayv1.RouteReasonAccepted)
 	message := routeAcceptedMessage
 
-	if syncErr != nil {
-		status = metav1.ConditionFalse
-		reason = string(gatewayv1.RouteReasonPending)
-		message = syncErr.Error()
-	} else if bindingResult, hasBinding := bindingInfo.bindingResults[refIdx]; hasBinding && !bindingResult.Accepted {
+	if bindingResult, hasBinding := bindingInfo.bindingResults[refIdx]; hasBinding && !bindingResult.Accepted {
+		// A binding rejection (e.g. HostnameNotPermitted) is authoritative and
+		// permanent: the route never binds to this parent, so it is never
+		// programmed regardless of tunnel health. Its specific, actionable
+		// reason outranks a transient sync error — even a total tunnel outage
+		// must not mask it with a generic Pending.
 		status = metav1.ConditionFalse
 		reason = string(bindingResult.Reason)
 		message = bindingResult.Message
+	} else if effectiveErr := perParentSyncErr(bindingInfo, refIdx, syncErr); effectiveErr != nil {
+		status = metav1.ConditionFalse
+		reason = string(gatewayv1.RouteReasonPending)
+		// Bounded in practice (Cloudflare-API / sentinel strings), but route it
+		// through the same cap as the diagnostic/shadowed paths for consistency
+		// and to stay rune-safe under the metav1 Message limit regardless.
+		message = truncateConditionMessage(effectiveErr.Error())
 	} else if override != nil {
 		// The route binds fine but cannot be served as written (e.g. gRPC over an
-		// explicit quic tunnel). Lowest precedence: a sync error or binding
-		// rejection above is the more specific problem.
+		// explicit quic tunnel). Lowest precedence: a binding rejection or sync
+		// error above is the more specific problem.
 		status = metav1.ConditionFalse
 		reason = override.reason
 		message = override.message
@@ -492,9 +607,27 @@ func firstResolvedRefsDiagnostic(diagnostics []proxy.RouteDiagnostic) (proxy.Rou
 // Event reason / action tokens for a benign config override. Kubernetes Events
 // require CamelCase machine-readable reason and action tokens distinct from the
 // human-readable note.
+// Dedicated condition type for a route whose (hostname, match) pairs are
+// shadowed by a higher-precedence route (#474). Domain-prefixed: the Gateway
+// API reserves the bare condition namespace, and the spec defines no
+// route-to-route hostname ownership — same-hostname routes merge legally, so
+// Accepted stays True and this condition is the observability surface.
+const (
+	routeConditionShadowed = "cf.k8s.lex.la/RouteShadowed"
+	// routeReasonShadowed aliases the proxy's diagnostic reason so the two
+	// declarations cannot drift — the shadow detector stamps it on the
+	// diagnostic, the status writer mirrors it onto the condition.
+	routeReasonShadowed = proxy.ReasonHostnameMatchShadowed
+)
+
 const (
 	eventReasonConfigOverridden = "ConfigOverridden"
 	eventActionConvert          = "Convert"
+	// eventReasonRouteShadowed marks the Warning Event mirror of the
+	// RouteShadowed condition, so collision visibility also lands in
+	// `kubectl events` and event-driven alerting.
+	eventReasonRouteShadowed = "RouteShadowed"
+	eventActionRouteSync     = "Sync"
 
 	// Event reason / action tokens for the GRPCRoute edge-toggle breadcrumb (see
 	// emitGRPCEdgeHint). The Cloudflare zone gRPC toggle is dashboard-only with no
@@ -517,20 +650,37 @@ func emitDiagnosticEvents(recorder events.EventRecorder, route runtime.Object, d
 		return
 	}
 
+	// A route living in several data-plane partitions converts once per
+	// partition, so identical diagnostics can repeat; emit each distinct
+	// (target, message) once per sync.
+	seen := make(map[string]struct{}, len(diagnostics))
+
 	for _, diag := range diagnostics {
-		if diag.Target != proxy.DiagnosticEvent {
+		dedupeKey := string(diag.Target) + "\x00" + diag.Message
+		if _, duplicate := seen[dedupeKey]; duplicate {
 			continue
 		}
 
-		eventType := diag.EventType
-		if eventType != corev1.EventTypeWarning {
-			eventType = corev1.EventTypeNormal
-		}
+		seen[dedupeKey] = struct{}{}
 
-		// Eventf treats the note as a format string. diag.Message is already
-		// fully formatted (and may contain a literal %), so pass it as a "%s"
-		// argument rather than as the format itself.
-		recorder.Eventf(route, nil, eventType, eventReasonConfigOverridden, eventActionConvert, "%s", diag.Message)
+		switch diag.Target {
+		case proxy.DiagnosticEvent:
+			eventType := diag.EventType
+			if eventType != corev1.EventTypeWarning {
+				eventType = corev1.EventTypeNormal
+			}
+
+			// Eventf treats the note as a format string. diag.Message is already
+			// fully formatted (and may contain a literal %), so pass it as a "%s"
+			// argument rather than as the format itself.
+			recorder.Eventf(route, nil, eventType, eventReasonConfigOverridden, eventActionConvert, "%s", diag.Message)
+		case proxy.DiagnosticShadowed:
+			// Mirror the RouteShadowed condition as a Warning Event so the
+			// collision also surfaces in `kubectl events` and event alerting.
+			recorder.Eventf(route, nil, corev1.EventTypeWarning, eventReasonRouteShadowed, eventActionRouteSync, "%s", diag.Message)
+		case proxy.DiagnosticAccepted, proxy.DiagnosticResolvedRefs:
+			// Condition-driving targets; no Event surface.
+		}
 	}
 }
 
@@ -551,6 +701,12 @@ func buildFailedRefsMessage(failedRefs []ingress.BackendRefError) string {
 }
 
 // routeStatusEntry represents a single route that needs status update.
+//
+// Partial-failure isolation (#479) is per parent, not per route: the binding's
+// syncErrByGateway carries the sync error of each parent's tunnel, so a
+// multi-parent route reports Pending only on the parents whose tunnel failed.
+// The global syncErr below covers the early-error path (sync failed before
+// partitioning), where every parent goes Pending.
 type routeStatusEntry struct {
 	name        string
 	namespace   string
@@ -570,7 +726,9 @@ func updateRoutesStatus(
 ) error {
 	var firstErr error
 
-	for _, entry := range entries {
+	for i := range entries {
+		entry := &entries[i]
+
 		if err := entry.update(ctx, entry.bindingInfo, entry.failedRefs, entry.diagnostics, syncErr); err != nil {
 			logger.Error("failed to update route status", "error", err, "route", entry.namespace+"/"+entry.name)
 

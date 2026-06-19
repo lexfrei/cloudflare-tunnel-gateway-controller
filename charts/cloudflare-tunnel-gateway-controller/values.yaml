@@ -2,9 +2,8 @@
 
 # -- GatewayClassConfig configuration
 # This section drives the optional GatewayClassConfig CRD rendered by the chart.
-# Starting v3 the chart no longer manages a separate cloudflared deployment;
-# the in-process L7 proxy embeds cloudflared transport and is deployed by the
-# chart itself. The tunnel token is supplied directly to the proxy via
+# The in-process L7 proxy embeds cloudflared transport and is deployed by the
+# chart itself; the tunnel token is supplied directly to the proxy via
 # `proxy.tunnelTokenSecretRef` (see below).
 gatewayClassConfig:
   # -- Create GatewayClassConfig resource
@@ -300,12 +299,41 @@ ruleNameUniquenessPolicy:
   # -- Install the rule-name uniqueness ValidatingAdmissionPolicy and its binding
   enabled: false
 
+# -- Per-namespace hostname-ownership policy (multi-tenant isolation). When
+# enabled, a namespace is bound to ONE allowed hostname suffix via the
+# labelKey namespace label, and routes claiming hostnames outside it are
+# blocked TWICE (defence in depth): fail-fast by a ValidatingAdmissionPolicy
+# (Kubernetes 1.30+) and authoritatively by the controller at binding time
+# (never programmed into the proxy or the Cloudflare ingress document).
+# Fail-closed inside the policed scope: unlabelled policed namespaces and
+# routes without explicit hostnames are rejected. Label values cannot contain
+# '*' or ',' — one lowercase suffix per namespace.
+hostnameOwnershipPolicy:
+  # -- Master switch: installs the admission policy AND enables the
+  # controller-side enforcement flags.
+  enabled: false
+  # -- Namespace label carrying the tenant's allowed hostname suffix
+  # (lowercase, e.g. "team-a.example.com").
+  labelKey: cf.k8s.lex.la/hostname-suffix
+  # -- LabelSelector scoping which namespaces are policed. Applied to BOTH
+  # layers (the admission binding's namespaceSelector and the controller
+  # flag, derived from this same value). Empty polices EVERY namespace —
+  # fail-closed everywhere; scope it to tenant namespaces, e.g.
+  # matchExpressions excluding kube-system and the controller namespace.
+  # NOTE: the admission layer matches ALL HTTPRoute/GRPCRoute writes in
+  # policed namespaces, including routes for OTHER Gateway implementations
+  # (admission cannot resolve parentRefs); the controller layer polices only
+  # routes binding to this controller's Gateways. On multi-implementation
+  # clusters scope the selector accordingly or set admissionPolicy: false.
+  namespaceSelector: {}
+  # -- Render the ValidatingAdmissionPolicy (requires Kubernetes 1.30+). Set
+  # false on older clusters to keep only the controller-side layer.
+  admissionPolicy: true
+
 # -- L7 Proxy configuration (enhanced-cloudflared data plane).
-# Starting v3 the L7 proxy is the ONLY data plane; the chart always
-# renders the proxy Deployment + Service + (optional) NetworkPolicy
-# and ServiceMonitor. The pre-v3 `proxy.enabled` toggle has been
-# removed -- v2 chart users who ran with `proxy.enabled: false` must
-# either set proxy.tunnelTokenSecretRef on upgrade or stay on v2.x.
+# The L7 proxy is the only data plane; the chart always renders the proxy
+# Deployment + Service + (optional) NetworkPolicy and ServiceMonitor.
+# `proxy.tunnelTokenSecretRef` is required.
 proxy:
   # -- Number of proxy replicas
   replicas: 2
@@ -321,6 +349,24 @@ proxy:
   configAPIPort: 8081
   # -- Proxy port (internal, traffic arrives through tunnel)
   proxyPort: 8080
+  # -- Connector drain window in seconds (the proxy's PROXY_GRACE_PERIOD). On
+  # SIGTERM the proxy unregisters its tunnel connectors from the Cloudflare edge
+  # (stopping new requests) and gives in-flight requests this long to finish
+  # before exiting. This MUST stay below the pod's terminationGracePeriodSeconds
+  # or kubelet SIGKILLs mid-drain; the chart guarantees that by deriving
+  # terminationGracePeriodSeconds as this value plus 15s of headroom — do not
+  # override the pod field independently. Capped at 180 (3m) by cloudflared.
+  gracePeriodSeconds: 30
+  # -- Data-plane Prometheus metrics, served at /metrics on the config API
+  # port (no auth — the endpoint carries no secrets and the port is
+  # cluster-internal). The endpoint also exposes the embedded cloudflared
+  # connector metrics (cloudflared_tunnel_*).
+  metrics:
+    # -- Expose request-level metrics (in-flight, duration, status classes,
+    # bytes, backend errors) on the config API port. Disabling this also
+    # suppresses the proxy ServiceMonitor (its template is gated on BOTH
+    # toggles) — a scrape against a metrics-less proxy would 404.
+    enabled: true
   # -- Tunnel transport settings.
   tunnel:
     # -- Edge transport protocol: "auto" (QUIC with HTTP/2 fallback), "http2",
@@ -458,14 +504,31 @@ proxy:
   service:
     # -- Service annotations
     annotations: {}
-  # -- NetworkPolicy configuration for proxy pods
+  # -- NetworkPolicy configuration for proxy pods. On by default: it locks the
+  # config-API port (which can hijack routing via PUT /config) to the
+  # controller namespace. No-op where the CNI does not enforce NetworkPolicy.
   networkPolicy:
-    # -- Enable NetworkPolicy for proxy pods
-    enabled: false
+    # -- Render the proxy NetworkPolicy (ingress-only; locks the config-API
+    # port to the controller namespace by default)
+    enabled: true
+    # -- Also restrict EGRESS to DNS + the Cloudflare edge + cluster services.
+    # Off by default: the static Cloudflare CIDR list can drift and break the
+    # tunnel. Enable only if you keep cloudflareIpRanges current.
+    egressRestricted: false
     # -- Ingress source configuration
     ingress:
-      # -- Allow ingress from specific namespaces/pods
+      # -- EXTRA namespaces/pods allowed to reach the config-API port, ADDED to
+      # the release (controller) namespace — which is always admitted so a
+      # config push is never locked out. Add your monitoring namespace here to
+      # let Prometheus scrape /metrics (locking the config-API port also
+      # restricts the /metrics it co-serves).
       from: []
+    # -- Label selector for namespaces additionally allowed to reach the
+    # config-API/metrics port in the PER-GATEWAY (tenant) NetworkPolicies the
+    # controller renders (passed to --monitoring-namespace-selector). Empty =
+    # controller namespace only. For the SHARED proxy's policy, use
+    # `ingress.from` above instead.
+    monitoringNamespaceSelector: {}
   # -- Node selector for pod scheduling
   nodeSelector: {}
   # -- Tolerations for pod scheduling
