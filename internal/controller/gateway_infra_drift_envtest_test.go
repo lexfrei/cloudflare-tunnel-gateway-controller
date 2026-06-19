@@ -31,6 +31,7 @@ func driftReconciler() *GatewayInfraReconciler {
 		ConfigResolver:      config.NewResolver(envK8sClient, "default", cfmetrics.NewNoopCollector()),
 		RenderDefaults:      render.Defaults{ProxyImage: "example.com/proxy:v1"},
 		ControllerNamespace: "cf-system",
+		RenderNetworkPolicy: true,
 	}
 }
 

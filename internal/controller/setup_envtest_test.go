@@ -46,11 +46,12 @@ func TestGatewayReconciler_SetupWithManager(t *testing.T) {
 	require.NoError(t, err)
 
 	infraReconciler := &GatewayInfraReconciler{
-		Client:         envK8sClient,
-		Scheme:         envScheme,
-		ControllerName: "test-controller",
-		ConfigResolver: configResolver,
-		RenderDefaults: render.Defaults{ProxyImage: "example.com/proxy:test"},
+		Client:              envK8sClient,
+		Scheme:              envScheme,
+		ControllerName:      "test-controller",
+		ConfigResolver:      configResolver,
+		RenderDefaults:      render.Defaults{ProxyImage: "example.com/proxy:test"},
+		RenderNetworkPolicy: true,
 	}
 	require.NoError(t, infraReconciler.SetupWithManager(mgr),
 		"both Gateway-typed reconcilers must register on one manager — production startup does exactly this")
