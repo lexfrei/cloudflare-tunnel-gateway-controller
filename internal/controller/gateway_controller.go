@@ -110,6 +110,14 @@ type GatewayReconciler struct {
 	// ConfigResolver resolves configuration from GatewayClassConfig.
 	ConfigResolver *config.Resolver
 
+	// ProxyImage is the controller-level default proxy image for per-Gateway
+	// data planes (the chart's --proxy-image). Mirrors GatewayInfraReconciler's
+	// RenderDefaults.ProxyImage so the status path can detect the same
+	// "no image configured" misconfig the infra reconciler refuses to render,
+	// and surface it as Accepted=False/InvalidParameters instead of leaving the
+	// Gateway stuck Programmed=Pending with the cause only in a Warning Event.
+	ProxyImage string
+
 	// ViewStore caches the per-Gateway ListenerSet merge view across reconciles.
 	// Shared with the route and ListenerSet reconcilers (issue #332). May be nil.
 	ViewStore *mergeViewStore
@@ -206,12 +214,29 @@ func (r *GatewayReconciler) resolveGatewayConfig(
 	ctx context.Context,
 	gateway *gatewayv1.Gateway,
 ) (*config.ResolvedConfig, bool, error) {
-	perGateway, err := r.ConfigResolver.ResolveForGateway(ctx, gateway)
+	// Status-only resolve: deliberately does NOT read the generated config-API
+	// auth Secret. That Secret is created by the infra reconciler, so reading
+	// it here would fail transiently in the bootstrap window and leave the
+	// Gateway statusless until it lands — yet the status path never consumes it.
+	perGateway, err := r.ConfigResolver.ResolveStatusConfigForGateway(ctx, gateway)
 	if err != nil {
 		return nil, false, errors.Wrap(err, "per-gateway configuration")
 	}
 
 	if perGateway != nil {
+		// Mirror the infra reconciler's render-skip guard: with neither a
+		// per-Gateway image override nor a controller-level default, the data
+		// plane can never be rendered. Classify it as a deterministic,
+		// user-fixable spec problem so the Gateway surfaces
+		// Accepted=False/InvalidParameters with the cause in its condition
+		// message — instead of sitting Programmed=Pending forever while the
+		// reason lives only in a transient Warning Event.
+		if perGateway.GatewayConfig.Spec.Image == "" && r.ProxyImage == "" {
+			return nil, true, errors.Wrap(config.ErrInvalidParameters,
+				"no proxy image configured for the per-Gateway data plane: "+
+					"set the controller's --proxy-image flag or GatewayConfig.spec.image")
+		}
+
 		return &perGateway.ResolvedConfig, true, nil
 	}
 

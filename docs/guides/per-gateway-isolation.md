@@ -104,7 +104,8 @@ Also note the RBAC equivalence: `create` on `GatewayConfig` (plus a Gateway refe
 
 ## Operational notes
 
-- **Events:** the controller emits `ProxyProvisioned` (Normal) on the Gateway when the data plane is rendered, and `RenderFailed` (Warning) when rendering cannot proceed (missing proxy image, apply failures) — `kubectl describe gateway` shows both.
+- **Events:** the controller emits `ProxyProvisioned` (Normal) on the Gateway when the data plane is rendered, and `RenderFailed` (Warning) when rendering cannot proceed (apply failures) — `kubectl describe gateway` shows both.
+- **No proxy image configured:** if neither `GatewayConfig.spec.image` nor the controller's `--proxy-image` default is set, the data plane cannot be rendered. The Gateway surfaces `Accepted=False` with reason `InvalidParameters` and a message naming the missing image (a persistent condition, not just a transient Event) — set one of the two and the Gateway recovers on the next reconcile.
 - **Drain:** on pod shutdown the proxy unregisters its connectors from the edge and gives in-flight requests a grace period before exiting; the rendered `terminationGracePeriodSeconds` covers the window.
 - **RBAC:** rendering requires cluster-wide write on Deployments/Services/HPAs (Gateways live in arbitrary namespaces); see the [security reference](../reference/security.md) for the exact rules and ownership guards.
 - **Failure containment:** a tunnel-sync failure for one Gateway's tunnel marks only THAT Gateway's routes Pending; other tenants' route statuses are untouched.

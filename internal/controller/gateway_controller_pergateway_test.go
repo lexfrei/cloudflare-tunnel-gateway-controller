@@ -92,6 +92,10 @@ func reconcilePGGateway(t *testing.T, fakeClient client.WithWatch) gatewayv1.Gat
 		Scheme:         fakeClient.Scheme(),
 		ControllerName: "test-controller",
 		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		// The chart always wires --proxy-image; mirror that so the status path
+		// does not classify these fixtures (no per-Gateway image override) as a
+		// missing-image misconfig.
+		ProxyImage: "ghcr.io/example/proxy:v1.2.3",
 	}
 
 	ctx := context.Background()
@@ -240,4 +244,43 @@ func TestGatewayReconciler_PerGateway_InvalidParametersSurfaceOnStatus(t *testin
 	require.NotNil(t, accepted)
 	assert.Equal(t, metav1.ConditionFalse, accepted.Status)
 	assert.Equal(t, string(gatewayv1.GatewayReasonInvalidParameters), accepted.Reason)
+}
+
+// TestGatewayReconciler_PerGateway_NoImageSurfacesInvalidParameters pins the
+// diagnostic surface for the most common per-Gateway misconfig: a GatewayConfig
+// with no spec.image on a controller with no --proxy-image default. The infra
+// reconciler refuses to render the data plane (the Deployment never appears),
+// so without this the Gateway would sit Programmed=Pending forever with the
+// cause only in a transient Warning Event. The status path must instead report
+// Accepted=False/InvalidParameters naming the missing image.
+func TestGatewayReconciler_PerGateway_NoImageSurfacesInvalidParameters(t *testing.T) {
+	t.Parallel()
+
+	// Fixtures carry no GatewayConfig.spec.image; construct the reconciler with
+	// an empty ProxyImage (no chart default) to reproduce the misconfig.
+	fakeClient := setupGatewayFakeClient(perGatewayStatusFixtures(t)...)
+
+	reconciler := &GatewayReconciler{
+		Client:         fakeClient,
+		Scheme:         fakeClient.Scheme(),
+		ControllerName: "test-controller",
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		ProxyImage:     "", // no chart default and no per-Gateway override
+	}
+
+	ctx := context.Background()
+	_, err := reconciler.Reconcile(ctx, ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "pg-gateway", Namespace: "default"},
+	})
+	require.NoError(t, err, "a missing image is a deterministic spec problem, not a retryable error")
+
+	var updated gatewayv1.Gateway
+	require.NoError(t, fakeClient.Get(ctx, types.NamespacedName{Name: "pg-gateway", Namespace: "default"}, &updated))
+
+	accepted := findCondition(updated.Status.Conditions, string(gatewayv1.GatewayConditionAccepted))
+	require.NotNil(t, accepted, "the Gateway must carry an Accepted condition, not sit statusless")
+	assert.Equal(t, metav1.ConditionFalse, accepted.Status)
+	assert.Equal(t, string(gatewayv1.GatewayReasonInvalidParameters), accepted.Reason)
+	assert.Contains(t, accepted.Message, "proxy image",
+		"the condition message must name the missing image, not just say Pending")
 }

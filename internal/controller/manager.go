@@ -247,6 +247,7 @@ func Run(ctx context.Context, cfg *Config) error {
 		Scheme:         mgr.GetScheme(),
 		ControllerName: cfg.ControllerName,
 		ConfigResolver: configResolver,
+		ProxyImage:     cfg.ProxyImage,
 		ViewStore:      viewStore,
 	}
 

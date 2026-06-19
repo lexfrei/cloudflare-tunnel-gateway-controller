@@ -285,6 +285,52 @@ func TestResolveForGateway_MissingGeneratedAuthSecretIsTransient(t *testing.T) {
 		"the bootstrap window is transient, not a user spec problem")
 }
 
+// TestResolveStatusConfigForGateway_SucceedsWithoutGeneratedAuthSecret pins the
+// status/render decoupling: in the SAME bootstrap window where ResolveForGateway
+// fails (the generated auth Secret does not exist yet), the status-only resolve
+// MUST succeed and return the ResolvedConfig — the Gateway status path never
+// consumes the auth token, so reading it would only leave the Gateway
+// statusless until the infra reconciler creates the Secret.
+func TestResolveStatusConfigForGateway_SucceedsWithoutGeneratedAuthSecret(t *testing.T) {
+	t.Parallel()
+
+	gwConfig := &v1alpha1.GatewayConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "edge-config", Namespace: testGwNamespace},
+		Spec: v1alpha1.GatewayConfigSpec{
+			TunnelTokenSecretRef: v1alpha1.LocalSecretReference{Name: "edge-tunnel-token"},
+		},
+	}
+
+	objects := append(classFixtures(), gwConfig, tokenSecret(t))
+	resolver := newGatewayResolver(t, objects...)
+	gateway := gatewayWithInfra("cf.k8s.lex.la", "GatewayConfig", "edge-config")
+
+	// Precondition: the full resolve fails on the missing auth Secret.
+	_, fullErr := resolver.ResolveForGateway(context.Background(), gateway)
+	require.Error(t, fullErr, "precondition: ResolveForGateway fails in the bootstrap window")
+
+	// The status-only resolve succeeds and carries the tunnel identity.
+	statusCfg, err := resolver.ResolveStatusConfigForGateway(context.Background(), gateway)
+	require.NoError(t, err, "the status path must not depend on the render-side auth Secret")
+	require.NotNil(t, statusCfg)
+	assert.Equal(t, testTunnelUUID, statusCfg.TunnelID, "the status resolve still parses the tunnel identity")
+	assert.Empty(t, statusCfg.AuthToken, "the status resolve must not read the auth token")
+}
+
+// TestResolveStatusConfigForGateway_SharedModeReturnsNil pins that a Gateway
+// with no infrastructure.parametersRef returns (nil, nil) — the shared-mode
+// signal, same contract as ResolveForGateway.
+func TestResolveStatusConfigForGateway_SharedModeReturnsNil(t *testing.T) {
+	t.Parallel()
+
+	resolver := newGatewayResolver(t, classFixtures()...)
+
+	cfg, err := resolver.ResolveStatusConfigForGateway(context.Background(),
+		&gatewayv1.Gateway{ObjectMeta: metav1.ObjectMeta{Name: "shared", Namespace: testGwNamespace}})
+	require.NoError(t, err)
+	assert.Nil(t, cfg, "a Gateway without parametersRef is shared mode")
+}
+
 // TestResolveForGateway_InvalidParameters pins the spec-mandated rejection
 // shape: an unsupported group/kind, a missing GatewayConfig, a missing or
 // malformed token Secret all classify as ErrInvalidParameters so the Gateway
