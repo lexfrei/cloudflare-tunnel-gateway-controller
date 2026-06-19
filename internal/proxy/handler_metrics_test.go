@@ -491,4 +491,9 @@ func TestHandlerMetrics_WebSocketUpgrade_BackendNon101(t *testing.T) {
 	assert.InDelta(t, 0.0, gatherValue(t, reg, "cftunnel_proxy_backend_errors_total",
 		map[string]string{"hostname": "app.example.com", "reason": "ws_handshake"}), 0.001,
 		"a non-101 response is a legitimate exchange, not a handshake failure")
+	// The fallback streams the backend's body through the counting writer (the
+	// one upgrade branch that does), so response bytes are accounted.
+	assert.Greater(t, gatherValue(t, reg, "cftunnel_proxy_response_bytes_total",
+		map[string]string{"hostname": "app.example.com"}), 0.0,
+		"the forwarded non-101 body must be counted in response_bytes_total")
 }

@@ -802,6 +802,34 @@ tests:
           path: spec.template.spec.containers[0].args
           content: "--render-network-policy=false"
 
+  # The controller scopes per-Gateway NetworkPolicies to its own namespace, so
+  # it must learn that namespace reliably — via the downward API, not the
+  # SA-token file (absent under automountServiceAccountToken: false). Inject it
+  # unconditionally, regardless of the auth-token env that shares the block.
+  - it: should always inject CONTROLLER_NAMESPACE from the downward API
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: CONTROLLER_NAMESPACE
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.namespace
+
+  - it: should inject CONTROLLER_NAMESPACE even when no proxy auth token is set
+    set:
+      proxy:
+        authTokenSecretRef:
+          name: ""
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: CONTROLLER_NAMESPACE
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.namespace
+
   # The controller renders per-Gateway proxy Deployments and must know the
   # release's proxy image; the chart always passes it.
   - it: should always pass the proxy image to the controller

@@ -586,10 +586,17 @@ func (r *GatewayInfraReconciler) applyAutoscaler(
 // name collision with user resources cannot turn into a deletion.
 //
 // The generated auth Secret is DELIBERATELY not deleted here: the controller's
-// RBAC grants create-but-not-delete on Secrets (least privilege), and the
-// Secret is ownerRef'd to the Gateway, so Gateway deletion GCs it. A stale
-// auth Secret on an opted-out-but-alive Gateway is harmless — if the Gateway
-// opts back in, ensureGeneratedAuthSecret reuses it.
+// RBAC grants create-but-not-delete on Secrets (least privilege), so it CANNOT
+// delete it even if it wanted to. The Secret is ownerRef'd to the Gateway, so
+// Gateway deletion GCs it. A stale auth Secret on an opted-out-but-alive
+// Gateway is harmless — if the Gateway opts back in, ensureGeneratedAuthSecret
+// reuses it. The one case this leaves behind a longer-lived orphan is a
+// CONFIRMED-foreign GatewayClass reassignment (cleanupRendered is also the
+// teardown path there): the Gateway now belongs to another controller and is
+// unlikely to opt back in, so its auth Secret lingers until the Gateway itself
+// is deleted (ownerRef GC). That is an accepted trade-off of the create-only
+// Secret RBAC — a 32-byte token, unreadable without the namespace's RBAC, and
+// never reachable by the foreign controller.
 func (r *GatewayInfraReconciler) cleanupRendered(ctx context.Context, gateway *gatewayv1.Gateway) error {
 	objects := []client.Object{
 		&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{

@@ -46,6 +46,15 @@ spec:
             # cluster-domain is auto-detected from /etc/resolv.conf; uncomment
             # to override (e.g., custom cluster domain).
             # - --cluster-domain=cluster.local
+          env:
+            # The controller scopes per-Gateway NetworkPolicies to its own
+            # namespace; inject it via the downward API so it does not depend on
+            # the SA-token namespace file (absent when automountServiceAccountToken
+            # is false), which would otherwise silently fall back to "default".
+            - name: CONTROLLER_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
           ports:
             - name: metrics
               containerPort: 8080
