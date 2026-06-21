@@ -22,6 +22,21 @@ const (
 	// Gateway API treats same-hostname routes as legal merging); the controller
 	// surfaces a dedicated condition plus a Warning Event on the losing route.
 	DiagnosticShadowed DiagnosticTarget = "Shadowed"
+	// DiagnosticProxyConfigPush means the controller could not push this route's
+	// generated config to its data plane (a SUSTAINED proxy push failure, not a
+	// one-off blip). The route stays Accepted — its spec is valid and the tunnel
+	// document was written — but the in-cluster proxy never received the config,
+	// so requests 502 until the push recovers. The controller surfaces a
+	// dedicated condition plus a Warning Event on the affected route.
+	DiagnosticProxyConfigPush DiagnosticTarget = "ProxyConfigPush"
+	// DiagnosticTunnelShared means this route's per-Gateway data plane shares one
+	// Cloudflare Tunnel with another tenant's Gateway in a different namespace
+	// (the connector tokens parse to the same tunnel). Sharing a tunnel is a
+	// supported configuration but it is NOT isolation — the edge load-balances
+	// the tunnel's requests across both planes. Status/observability only: the
+	// route stays Accepted; the controller surfaces a dedicated condition plus a
+	// Warning Event so the collapsed isolation is visible, not just logged.
+	DiagnosticTunnelShared DiagnosticTarget = "TunnelShared"
 	// DiagnosticEvent means the config was applied successfully but a redundant
 	// or conflicting hint was overridden (a benign override, e.g. an appProtocol
 	// cleartext hint superseded by a BackendTLSPolicy, or a ResponseHeaderModifier

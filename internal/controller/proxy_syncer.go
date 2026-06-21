@@ -103,6 +103,12 @@ type pushTarget struct {
 	lastPushedEndpoints map[string]struct{}
 	endpointURLs        []string
 	authToken           string
+	// consecutivePushFail counts pushes that failed in a row for this
+	// partition. It drives the route-status surfacing of a SUSTAINED push
+	// failure (#487): a one-off blip (a pod rolling, a brief partition) must
+	// not flip a route condition, so the failure is surfaced only past a
+	// threshold. A successful push or a steady-state skip resets it to 0.
+	consecutivePushFail int
 }
 
 // NewProxySyncer creates a ProxySyncer for pushing config to proxy replicas.
@@ -752,6 +758,10 @@ func (s *ProxySyncer) SyncPartition(
 			"rules", len(cfg.Rules),
 		)
 
+		// A skip means every endpoint already holds this config, so the
+		// partition is healthy — clear any prior failure streak (#487).
+		target.consecutivePushFail = 0
+
 		return diagnostics, nil
 	}
 
@@ -764,6 +774,7 @@ func (s *ProxySyncer) SyncPartition(
 		// half-updated replica would stay stale until an unrelated change.
 		target.lastPushedHash = ""
 		target.lastPushedEndpoints = nil
+		target.consecutivePushFail++
 
 		return diagnostics, err
 	}
@@ -777,12 +788,29 @@ func (s *ProxySyncer) SyncPartition(
 	target.lastPushedHash = cfgHash
 	target.lastPushedToken = authToken
 	target.lastPushedEndpoints = make(map[string]struct{}, len(resolved))
+	target.consecutivePushFail = 0
 
 	for _, endpoint := range resolved {
 		target.lastPushedEndpoints[endpoint] = struct{}{}
 	}
 
 	return diagnostics, nil
+}
+
+// pushFailureStreak returns the number of consecutive failed pushes for the
+// partition keyed by key (0 if the partition is unknown or last pushed/skipped
+// cleanly). It lets the route syncer surface a SUSTAINED push failure on route
+// status without flapping on a single transient blip (#487).
+func (s *ProxySyncer) pushFailureStreak(key string) int {
+	s.syncMu.Lock()
+	defer s.syncMu.Unlock()
+
+	target, ok := s.targets[key]
+	if !ok {
+		return 0
+	}
+
+	return target.consecutivePushFail
 }
 
 // targetLocked returns (creating on demand) the partition's push state.

@@ -18,7 +18,131 @@ import (
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/cfmetrics"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/config"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/proxy"
 )
+
+// hasProxyPushDiagnostic reports whether any diagnostic surfaces a sustained
+// proxy-push failure (#487).
+func hasProxyPushDiagnostic(diags []proxy.RouteDiagnostic) bool {
+	for _, diag := range diags {
+		if diag.Target == proxy.DiagnosticProxyConfigPush {
+			return true
+		}
+	}
+
+	return false
+}
+
+// TestPushPartitionConfigs_SustainedPushFailureSurfacesDiagnostic pins the
+// #487 no-flap contract: a push that fails is NOT surfaced on route status on
+// the first attempts (a transient blip must not flip a condition); only once it
+// has failed for a sustained run (the threshold) does a DiagnosticProxyConfigPush
+// appear, stamped on the partition's own route.
+func TestPushPartitionConfigs_SustainedPushFailureSurfacesDiagnostic(t *testing.T) {
+	t.Parallel()
+
+	failing := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusInternalServerError)
+	}))
+	t.Cleanup(failing.Close)
+
+	testClient := fake.NewClientBuilder().WithScheme(runtime.NewScheme()).Build()
+	proxySyncer := NewProxySyncer("cluster.local", "shared-token", "", testClient, slog.Default())
+	ctx := context.Background()
+
+	newResult := func() *SyncResult {
+		return &SyncResult{
+			Partitions: []routePartition{
+				{Key: sharedPartitionKey, HTTPRoutes: []gatewayv1.HTTPRoute{*pushFallbackRoute("web", "web.example.com")}},
+			},
+		}
+	}
+
+	params := syncUpdateParams{
+		routeSyncer:    &RouteSyncer{ClusterDomain: "cluster.local", Metrics: cfmetrics.NewNoopCollector()},
+		proxySyncer:    proxySyncer,
+		proxyEndpoints: []string{failing.URL + "/config"},
+		pushProxy:      true,
+	}
+
+	for attempt := 1; attempt < pushFailureSurfaceThreshold; attempt++ {
+		diags := pushPartitionConfigs(ctx, slog.Default(), params, newResult())
+		assert.False(t, hasProxyPushDiagnostic(diags),
+			"a push failure must not surface before the threshold (attempt %d)", attempt)
+	}
+
+	diags := pushPartitionConfigs(ctx, slog.Default(), params, newResult())
+	require.True(t, hasProxyPushDiagnostic(diags), "a sustained push failure must surface at the threshold")
+
+	var pushDiag proxy.RouteDiagnostic
+
+	for _, diag := range diags {
+		if diag.Target == proxy.DiagnosticProxyConfigPush {
+			pushDiag = diag
+		}
+	}
+
+	assert.Equal(t, "default", pushDiag.Namespace, "the diagnostic stamps the partition's own route")
+	assert.Equal(t, "web", pushDiag.Name)
+}
+
+// TestPushPartitionConfigs_PushFailureClearsOnRecovery pins that the surfaced
+// condition clears: once the push succeeds, the failure streak resets and no
+// DiagnosticProxyConfigPush is produced (the rebuilt status drops the condition).
+func TestPushPartitionConfigs_PushFailureClearsOnRecovery(t *testing.T) {
+	t.Parallel()
+
+	var healthy bool
+
+	var mu sync.Mutex
+
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		mu.Lock()
+		ok := healthy
+		mu.Unlock()
+
+		if ok {
+			writer.WriteHeader(http.StatusOK)
+
+			return
+		}
+
+		writer.WriteHeader(http.StatusInternalServerError)
+	}))
+	t.Cleanup(server.Close)
+
+	testClient := fake.NewClientBuilder().WithScheme(runtime.NewScheme()).Build()
+	proxySyncer := NewProxySyncer("cluster.local", "shared-token", "", testClient, slog.Default())
+	ctx := context.Background()
+
+	newResult := func() *SyncResult {
+		return &SyncResult{
+			Partitions: []routePartition{
+				{Key: sharedPartitionKey, HTTPRoutes: []gatewayv1.HTTPRoute{*pushFallbackRoute("web", "web.example.com")}},
+			},
+		}
+	}
+	params := syncUpdateParams{
+		routeSyncer:    &RouteSyncer{ClusterDomain: "cluster.local", Metrics: cfmetrics.NewNoopCollector()},
+		proxySyncer:    proxySyncer,
+		proxyEndpoints: []string{server.URL + "/config"},
+		pushProxy:      true,
+	}
+
+	for range pushFailureSurfaceThreshold {
+		pushPartitionConfigs(ctx, slog.Default(), params, newResult())
+	}
+
+	require.True(t, hasProxyPushDiagnostic(pushPartitionConfigs(ctx, slog.Default(), params, newResult())),
+		"sustained failure must be surfaced before recovery")
+
+	mu.Lock()
+	healthy = true
+	mu.Unlock()
+
+	diags := pushPartitionConfigs(ctx, slog.Default(), params, newResult())
+	assert.False(t, hasProxyPushDiagnostic(diags), "a recovered push must clear the failure diagnostic")
+}
 
 // TestPushPartitionConfigs_EarlyErrorResultDoesNotLeakToShared pins the
 // early-error isolation contract: when a sync fails before partitioning
