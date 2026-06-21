@@ -313,10 +313,14 @@ func shadowBasis(winner, loser *shadowClaimant) string {
 	}
 
 	if winner.provenance.CreationTimestamp.Equal(&loser.provenance.CreationTimestamp) {
-		winnerKey := winner.provenance.Namespace + "/" + winner.provenance.Name
-		loserKey := loser.provenance.Namespace + "/" + loser.provenance.Name
-
-		if winnerKey < loserKey {
+		// Compare namespace then name as SEPARATE fields, matching
+		// sortRoutesByPrecedence (which decides the real flatIdx). Concatenating
+		// "namespace/name" and comparing the joined strings diverges when a
+		// namespace contains '-' or a name contains '.' — both sort below the
+		// '/' separator, so the joined compare can disagree with the field-wise
+		// order the winner was actually chosen by.
+		wns, lns := winner.provenance.Namespace, loser.provenance.Namespace
+		if wns < lns || (wns == lns && winner.provenance.Name < loser.provenance.Name) {
 			return "alphabetical {namespace}/{name} precedence"
 		}
 	}
