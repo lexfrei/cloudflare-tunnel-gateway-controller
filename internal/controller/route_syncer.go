@@ -14,6 +14,7 @@ import (
 	"github.com/cloudflare/cloudflare-go/v7/zero_trust"
 	"github.com/cockroachdb/errors"
 	"github.com/google/uuid"
+	"golang.org/x/sync/errgroup"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -376,6 +377,12 @@ func syncAndUpdateStatusCommon(ctx context.Context, params syncUpdateParams) (ct
 // stays log-only and does not flip a route condition.
 const pushFailureSurfaceThreshold = 3
 
+// maxConcurrentPartitionPushes bounds how many partition pushes run at once
+// (#489). Each push already fans out per-endpoint internally, so this caps the
+// outer fan-out across partitions rather than opening one connection per tenant
+// on a large fleet.
+const maxConcurrentPartitionPushes = 16
+
 // partitionRouteDiagnostics stamps one RouteDiagnostic with the given target,
 // reason, and message onto every route (HTTP and gRPC) in the partition's OWN
 // route set. Used to surface a data-plane problem on exactly the routes a
@@ -495,34 +502,22 @@ func pushPartitionConfigs(
 		keep[key] = true
 	}
 
+	results := pushPartitionsConcurrently(ctx, params, syncResult, partitions)
+
 	var diagnostics []proxy.RouteDiagnostic
 
+	// Aggregate single-threaded in ORIGINAL partition order so diagnostics, the
+	// keep set, and metrics stay deterministic regardless of push completion order.
 	for i := range partitions {
 		partition := &partitions[i]
 		keep[partition.Key] = true
 
-		var (
-			diags []proxy.RouteDiagnostic
-			err   error
-		)
-
-		if partition.PerGateway == nil {
-			diags, err = params.proxySyncer.SyncRoutes(ctx, params.proxyEndpoints,
-				httpRoutePtrs(partition.HTTPRoutes), grpcRoutePtrs(partition.GRPCRoutes),
-				syncResult.HTTPFailedRefs, syncResult.GRPCFailedRefs)
-		} else {
-			endpoints := []string{render.ConfigEndpointURL(partition.Gateway, params.routeSyncer.ClusterDomain)}
-			diags, err = params.proxySyncer.SyncPartition(ctx, partition.Key, partition.PerGateway.AuthToken,
-				endpoints, httpRoutePtrs(partition.HTTPRoutes), grpcRoutePtrs(partition.GRPCRoutes),
-				syncResult.HTTPFailedRefs, syncResult.GRPCFailedRefs)
-		}
-
 		// Diagnostics are valid even when the push errors: they describe the
 		// route specs, not the push, and must reach the route status.
-		diagnostics = append(diagnostics, diags...)
+		diagnostics = append(diagnostics, results[i].diags...)
 
-		if err != nil {
-			logger.Error("proxy sync failed (non-blocking)", "partition", partition.Key, "error", err)
+		if results[i].err != nil {
+			logger.Error("proxy sync failed (non-blocking)", "partition", partition.Key, "error", results[i].err)
 			params.routeSyncer.Metrics.RecordSyncError(ctx, "proxy_push")
 
 			// Surface a SUSTAINED push failure on the partition's own routes
@@ -537,6 +532,57 @@ func pushPartitionConfigs(
 	params.proxySyncer.RetainPartitions(keep)
 
 	return diagnostics
+}
+
+// partitionPushResult is one partition's push outcome, written to a per-index
+// slot so concurrent pushes never share a slice.
+type partitionPushResult struct {
+	diags []proxy.RouteDiagnostic
+	err   error
+}
+
+// pushPartitionsConcurrently pushes every partition's config in parallel and
+// returns the per-partition results in input order. A slow connector on one
+// partition must not delay the others (#489): each SyncRoutes/SyncPartition
+// takes syncMu only to build/record (the network push runs lock-free), so
+// distinct partitions push in parallel. A push error is carried in the result,
+// never returned to the group, so one failure does not cancel the others.
+func pushPartitionsConcurrently(
+	ctx context.Context,
+	params syncUpdateParams,
+	syncResult *SyncResult,
+	partitions []routePartition,
+) []partitionPushResult {
+	results := make([]partitionPushResult, len(partitions))
+
+	var group errgroup.Group
+
+	group.SetLimit(maxConcurrentPartitionPushes)
+
+	for i := range partitions {
+		partition := &partitions[i]
+
+		group.Go(func() error {
+			if partition.PerGateway == nil {
+				results[i].diags, results[i].err = params.proxySyncer.SyncRoutes(ctx, params.proxyEndpoints,
+					httpRoutePtrs(partition.HTTPRoutes), grpcRoutePtrs(partition.GRPCRoutes),
+					syncResult.HTTPFailedRefs, syncResult.GRPCFailedRefs)
+
+				return nil
+			}
+
+			endpoints := []string{render.ConfigEndpointURL(partition.Gateway, params.routeSyncer.ClusterDomain)}
+			results[i].diags, results[i].err = params.proxySyncer.SyncPartition(ctx, partition.Key, partition.PerGateway.AuthToken,
+				endpoints, httpRoutePtrs(partition.HTTPRoutes), grpcRoutePtrs(partition.GRPCRoutes),
+				syncResult.HTTPFailedRefs, syncResult.GRPCFailedRefs)
+
+			return nil
+		})
+	}
+
+	_ = group.Wait()
+
+	return results
 }
 
 // resolveConfigForController resolves configuration from the GatewayClass

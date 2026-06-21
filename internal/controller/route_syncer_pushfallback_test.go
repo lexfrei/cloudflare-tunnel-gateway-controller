@@ -3,11 +3,13 @@ package controller
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -227,6 +229,55 @@ func TestPushPartitionConfigs_EarlyErrorResultDoesNotLeakToShared(t *testing.T) 
 	// The tenant partition cache must survive: ResyncPartition still replays.
 	require.NoError(t, proxySyncer.ResyncPartition(ctx, "default/tenant-gw"),
 		"a transient sync error must not evict tenant partition caches")
+}
+
+// TestSyncPartition_ConcurrentPushesDoNotSerializeOnLock pins the #489 lock-free
+// push: SyncPartition releases syncMu around the network push, so pushes to
+// distinct partitions run concurrently instead of serializing on the lock. With
+// the lock held across the push (the old behaviour), N pushes to a slow endpoint
+// would take ~N×delay; lock-free they finish in ~one delay. Run under -race to
+// pin that the split lock phases are data-race-free.
+func TestSyncPartition_ConcurrentPushesDoNotSerializeOnLock(t *testing.T) {
+	t.Parallel()
+
+	const (
+		partitionCount = 8
+		pushDelay      = 60 * time.Millisecond
+	)
+
+	slow := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		time.Sleep(pushDelay)
+		writer.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(slow.Close)
+
+	testClient := fake.NewClientBuilder().WithScheme(runtime.NewScheme()).Build()
+	proxySyncer := NewProxySyncer("cluster.local", "", "", testClient, slog.Default())
+	ctx := context.Background()
+
+	var wg sync.WaitGroup
+
+	start := time.Now()
+
+	for i := range partitionCount {
+		wg.Go(func() {
+			_, err := proxySyncer.SyncPartition(ctx, fmt.Sprintf("team-%d/gw", i), "",
+				[]string{slow.URL + "/config"},
+				[]*gatewayv1.HTTPRoute{pushFallbackRoute(fmt.Sprintf("r-%d", i), fmt.Sprintf("h%d.example.com", i))},
+				nil, nil, nil)
+			assert.NoError(t, err)
+		})
+	}
+
+	wg.Wait()
+
+	elapsed := time.Since(start)
+
+	// Serialized (lock held across the push) would be partitionCount×pushDelay
+	// (480ms). Concurrent finishes in ~one delay plus overhead; assert well
+	// under the serialized bound with wide margin so a loaded -race run is not flaky.
+	assert.Less(t, elapsed, (partitionCount/2)*pushDelay,
+		"partition pushes must run concurrently, not serialize on syncMu")
 }
 
 // TestResyncTarget_DoesNotResurrectEvictedPartition pins the TOCTOU edge
