@@ -1,6 +1,6 @@
 # Upgrading from v3.0 to v3.1
 
-v3.1 hardens multi-tenant isolation. There is no CRD migration and no required values change — existing `GatewayClassConfig` and chart values keep working. But four behaviours change in ways existing automation can observe, and one of them (the data-plane NetworkPolicy now on by default) can break an existing Prometheus scrape if your monitoring namespace is not admitted. Read the four notes below; only the metrics/NetworkPolicy one needs action, and only for some setups.
+v3.1 hardens multi-tenant isolation. There is no CRD migration and no required values change — existing `GatewayClassConfig` and chart values keep working. But four behaviours change in ways existing automation can observe, and one of them — the data-plane NetworkPolicy now on by default — can break two things on a NetworkPolicy-enforcing CNI: an existing Prometheus scrape from an unadmitted namespace, and, more seriously, proxy pod readiness if the CNI also enforces host→pod (kubelet) traffic. Read the four notes below, then the two "change that can break" sections; only the metrics/NetworkPolicy one needs action, and only on some setups.
 
 ## What changed
 
@@ -55,9 +55,21 @@ proxy:
 
 If you do not run a NetworkPolicy-enforcing CNI, the policy is a no-op and scraping is unaffected — but it is then also not providing the isolation, so treat it as defense in depth, not a guarantee. To keep the v3.0 behaviour (no data-plane NetworkPolicy at all), set `proxy.networkPolicy.enabled: false` — that one switch gates BOTH the chart's shared-proxy policy AND the per-Gateway policies the controller renders (it forwards the value as the controller's `--render-network-policy` flag, which deletes any policy it previously rendered).
 
+## The change that can break silently: proxy readiness on a strict CNI
+
+!!! warning "Proxy pods can go NotReady on a host-policy-enforcing CNI"
+    This is more likely to bite — and bite silently — than the Prometheus break above, because nothing is misconfigured on your side: the policy simply blocks the node.
+
+    The proxy's startup/liveness/readiness probes hit the config API port (8081). The default-on NetworkPolicy admits 8081 only from the controller namespace, but **kubelet probe traffic originates from the node, not a pod namespace**. Most CNIs allow host→pod traffic implicitly, so probes keep working. A CNI that also enforces host policies (Cilium with host policy enforcement, Calico with host endpoints) drops the probes, and **every proxy pod — shared and per-Gateway — goes `NotReady`, taking the data plane down**.
+
+    Two fixes:
+
+    - add an ingress rule admitting the node/kubelet source for port 8081, or
+    - set `proxy.networkPolicy.enabled: false` to drop the policy entirely (covers both the shared and per-Gateway planes).
+
 ## Verify after upgrade
 
-- **Kubelet probes.** The proxy's startup/liveness/readiness probes hit the config API port (8081). The rendered NetworkPolicy admits 8081 from the controller namespace only; kubelet probe traffic originates from the node, so it relies on the CNI allowing host→pod traffic (most do). If proxy pods go `NotReady` after upgrade on a strict CNI, either add an ingress rule admitting the node/kubelet source for 8081, or set `proxy.networkPolicy.enabled: false` to drop the policy entirely (covers both the shared and per-Gateway planes).
+- **Proxy readiness.** Confirm proxy pods (shared and per-Gateway) reach `Ready` after upgrade. If they stay `NotReady` on a strict CNI, see the warning above — kubelet probes are being dropped by the new NetworkPolicy.
 - **Controller → proxy config push.** The controller pushes config to the proxy from its own namespace, which the default policy admits; verify routes still program after upgrade.
 
 ## No CRD or values migration
