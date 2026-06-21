@@ -626,13 +626,28 @@ func buildListenerSetEntryStatuses(
 			attached = counts
 		}
 
+		conditions := listenerEntryConditions(
+			generation, now, merge, entry.Protocol, hasValidKind, hasInvalidKind, refCheck, hasRefCheck,
+		)
+
+		// Advisory (#476): a tenant-authored ListenerSet entry with the
+		// hostname-capture combination — allowedRoutes.namespaces.from: All and no
+		// hostname pin — is the highest-risk case (the entry author may be
+		// untrusted), so surface the same cf.k8s.lex.la/PermissiveHostname
+		// advisory the Gateway-listener path raises. Only on a serving entry: a
+		// conflicted entry already reports Accepted=False (conflictedEntryConditions),
+		// so the Accepted check alone also excludes conflicts.
+		accepted := meta.FindStatusCondition(conditions, string(gatewayv1.ListenerConditionAccepted))
+		if accepted != nil && accepted.Status == metav1.ConditionTrue &&
+			hostnameCaptureRisk(entry.Hostname, entry.AllowedRoutes) {
+			conditions = append(conditions, permissiveHostnameCondition(generation, now))
+		}
+
 		out = append(out, gatewayv1.ListenerEntryStatus{
 			Name:           entry.Name,
 			SupportedKinds: supportedKinds,
 			AttachedRoutes: attached,
-			Conditions: listenerEntryConditions(
-				generation, now, merge, entry.Protocol, hasValidKind, hasInvalidKind, refCheck, hasRefCheck,
-			),
+			Conditions:     conditions,
 		})
 	}
 

@@ -42,6 +42,18 @@ const (
 	listenerMsgNoSupportedRouteKinds = "None of the specified route kinds are supported"
 	listenerMsgInvalidRouteKinds     = "One or more specified route kinds are not supported"
 
+	// listenerConditionPermissiveHostname is an advisory condition set on a
+	// listener that combines allowedRoutes.namespaces.from: All with no hostname
+	// pin — the hostname-capture vector (any namespace can claim any hostname).
+	// Domain-prefixed and informational: the combination is legal Gateway API, so
+	// the listener stays Accepted; this only makes the risk visible in status
+	// rather than only in the multi-tenancy guidance.
+	listenerConditionPermissiveHostname     = "cf.k8s.lex.la/PermissiveHostname"
+	listenerReasonUnpinnedHostnameAllowsAll = "UnpinnedHostnameAllowsAllNamespaces"
+	listenerMsgPermissiveHostname           = "listener allows routes from all namespaces (allowedRoutes.namespaces.from: All) " +
+		"with no hostname pin, so any namespace can claim any hostname on it — pin the listener hostname or scope " +
+		"allowedRoutes to a namespace selector to bound the capture surface"
+
 	// configErrorRequeueDelay is the delay before retrying when config resolution fails.
 	configErrorRequeueDelay = 30 * time.Second
 
@@ -395,10 +407,23 @@ func (r *GatewayReconciler) updateStatus(
 			// A Gateway-owned listener that conflicts with a higher-precedence
 			// listener MUST carry Conflicted=True and is neither Accepted nor
 			// Programmed (gateway_types.go:168-170).
-			if conflicted := conflictedGatewayListenerConditions(
+			conflicted := conflictedGatewayListenerConditions(
 				gwView, listener.Name, freshGateway.Generation, now, &resolvedRefsCondition,
-			); conflicted != nil {
+			)
+			if conflicted != nil {
 				conditions = conflicted
+			}
+
+			// Advisory (does not gate Accepted/Programmed): flag the
+			// hostname-capture combination — allowedRoutes.namespaces.from: All
+			// with no hostname pin. Only on an Accepted (protocol-servable),
+			// non-conflicted listener: hostname capture is moot on a listener
+			// already rejected as unservable or conflicted, where the advisory
+			// would be misleading noise. Rebuilt every reconcile, so it clears
+			// when the listener is pinned or scoped (#476).
+			if conflicted == nil && acceptedCondition.Status == metav1.ConditionTrue &&
+				hostnameCaptureRisk(listener.Hostname, listener.AllowedRoutes) {
+				conditions = append(conditions, permissiveHostnameCondition(freshGateway.Generation, now))
 			}
 
 			listenerStatuses = append(listenerStatuses, gatewayv1.ListenerStatus{
@@ -1042,6 +1067,36 @@ func buildListenerAcceptedCondition(protocol gatewayv1.ProtocolType, generation 
 		"Use an HTTP or HTTPS listener."
 
 	return condition
+}
+
+// hostnameCaptureRisk reports whether a listener (Gateway-owned or ListenerSet
+// entry — both expose the same hostname + allowedRoutes fields) combines
+// allowedRoutes.namespaces.from: All with no hostname pin, the hostname-capture
+// vector. Only an EXPLICIT from: All triggers it (the unset default is Same, and
+// a hostname pin bounds even All-namespaces to that hostname).
+func hostnameCaptureRisk(hostname *gatewayv1.Hostname, allowed *gatewayv1.AllowedRoutes) bool {
+	if hostname != nil && *hostname != "" {
+		return false
+	}
+
+	if allowed == nil || allowed.Namespaces == nil || allowed.Namespaces.From == nil {
+		return false
+	}
+
+	return *allowed.Namespaces.From == gatewayv1.NamespacesFromAll
+}
+
+// permissiveHostnameCondition builds the advisory capture-risk condition for a
+// listener flagged by hostnameCaptureRisk.
+func permissiveHostnameCondition(generation int64, now metav1.Time) metav1.Condition {
+	return metav1.Condition{
+		Type:               listenerConditionPermissiveHostname,
+		Status:             metav1.ConditionTrue,
+		ObservedGeneration: generation,
+		LastTransitionTime: now,
+		Reason:             listenerReasonUnpinnedHostnameAllowsAll,
+		Message:            listenerMsgPermissiveHostname,
+	}
 }
 
 // validateTLSCertificateRefs validates TLS certificate references for a listener.
