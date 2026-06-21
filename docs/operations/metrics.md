@@ -24,6 +24,8 @@ These metrics track the core synchronization of routes to Cloudflare Tunnel.
 | `cftunnel_failed_backend_refs` | Gauge | `type` | Failed backend references by route type |
 | `cftunnel_sync_errors_total` | Counter | `error_type` | Sync errors by type |
 
+A sustained run of `error_type="proxy_push"` errors for one data plane also surfaces on the affected routes as a `cf.k8s.lex.la/ProxyConfigPushed=False` condition (plus a Warning Event), so a proxy that stops receiving config is visible on route status, not only on this counter. The condition clears on the first successful push.
+
 ### Cloudflare API Metrics
 
 Track Cloudflare API interactions for performance and reliability monitoring.
