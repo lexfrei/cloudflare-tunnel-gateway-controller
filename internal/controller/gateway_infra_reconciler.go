@@ -344,6 +344,12 @@ func (r *GatewayInfraReconciler) applyRendered(
 	// readiness-only reconcile returns None and does not re-sync, so this does
 	// not fire on every Deployment status flip. Best-effort: a failure here is
 	// retried by the next route reconcile; never fail the render over it.
+	//
+	// This is a FULL (not partition-scoped) sync run synchronously inside this
+	// Reconcile, so on a many-route cluster a per-Gateway spec change couples
+	// this reconcile's latency to the total route-sync cost. Acceptable while
+	// per-Gateway spec edits are rare; partition-scope the sync to this
+	// Gateway's data plane if that coupling becomes a latency concern at scale.
 	if deploymentOp != controllerutil.OperationResultNone && r.TriggerRouteSync != nil {
 		if err := r.TriggerRouteSync(ctx); err != nil {
 			log.FromContext(ctx).Info("route sync after data-plane render failed; will retry on next route reconcile",
@@ -414,7 +420,22 @@ func assertAdoptable(existing client.Object, gateway *gatewayv1.Gateway) error {
 		return nil // already ours
 	}
 
-	return errors.Wrapf(errRefusedAdoption, "%T %s/%s (rename it or the Gateway)",
+	// A controller owner that is a Gateway (this API group) of THIS name but a
+	// different UID is a stale render from a previous incarnation — the Gateway
+	// was deleted and re-created with the same name before GC removed the old
+	// objects. The remediation is to delete the orphan so a fresh one renders,
+	// NOT to rename it (it carries our generated name, not a name the operator
+	// picked). Match the API group too: a foreign CRD also kinded "Gateway" in
+	// another group is a genuinely foreign object, so it gets the rename hint.
+	if owner != nil && owner.APIVersion == gatewayv1.GroupVersion.String() &&
+		owner.Kind == "Gateway" && owner.Name == gateway.Name {
+		return errors.Wrapf(errRefusedAdoption,
+			"%T %s/%s is owned by a previous Gateway of the same name (UID %s); "+
+				"delete the orphaned object so this Gateway can render a fresh one",
+			existing, existing.GetNamespace(), existing.GetName(), owner.UID)
+	}
+
+	return errors.Wrapf(errRefusedAdoption, "%T %s/%s (rename the conflicting object or the Gateway)",
 		existing, existing.GetNamespace(), existing.GetName())
 }
 

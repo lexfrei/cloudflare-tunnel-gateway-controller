@@ -815,6 +815,96 @@ func TestGatewayInfraReconciler_RefusesToAdoptForeignObject(t *testing.T) {
 	assert.Empty(t, deployment.OwnerReferences, "the foreign object must not be adopted")
 }
 
+// TestGatewayInfraReconciler_RefusesStaleRenderFromRecreatedGateway pins the
+// same-name/new-UID re-creation path: a Gateway deleted and re-created with the
+// same name before GC removed its rendered objects must NOT adopt the stale
+// objects (owned by the old UID), and the failure must point the operator at
+// the right remediation — delete the orphan — distinct from the "rename it"
+// hint a genuinely foreign object gets.
+func TestGatewayInfraReconciler_RefusesStaleRenderFromRecreatedGateway(t *testing.T) {
+	t.Parallel()
+
+	stale := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "cf-proxy-edge", Namespace: infraNamespace,
+			OwnerReferences: []metav1.OwnerReference{{
+				APIVersion: gatewayv1.GroupVersion.String(),
+				Kind:       "Gateway",
+				Name:       "edge",
+				UID:        "gw-uid-stale",
+				Controller: new(true),
+			}},
+		},
+		Spec: appsv1.DeploymentSpec{
+			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "stale"}},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": "stale"}},
+				Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "c", Image: "old/proxy:v1"}}},
+			},
+		},
+	}
+
+	objects := append(infraFixtures(t), stale)
+	reconciler := newInfraReconciler(t, objects...)
+
+	_, err := reconciler.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "edge", Namespace: infraNamespace},
+	})
+	require.Error(t, err, "a stale same-name render owned by a previous UID must not be adopted")
+	assert.ErrorIs(t, err, errRefusedAdoption)
+	assert.Contains(t, err.Error(), "delete the orphaned",
+		"the remediation must tell the operator to delete the stale render, not rename it")
+
+	var deployment appsv1.Deployment
+	require.NoError(t, reconciler.Get(context.Background(),
+		types.NamespacedName{Name: "cf-proxy-edge", Namespace: infraNamespace}, &deployment))
+	assert.Equal(t, "stale", deployment.Spec.Selector.MatchLabels["app"], "the stale render must be left untouched")
+	require.Len(t, deployment.OwnerReferences, 1)
+	assert.Equal(t, types.UID("gw-uid-stale"), deployment.OwnerReferences[0].UID,
+		"the stale render must not be re-owned by the new Gateway")
+}
+
+// TestGatewayInfraReconciler_ForeignGatewayKindGetsRenameRemediation pins that
+// the stale-render remediation is scoped to THIS API group: an object owned by
+// a foreign CRD that is also kinded "Gateway" but in another group is a
+// genuinely foreign object, so it is refused with the "rename" hint, not the
+// "delete the orphan" one (which is only correct for our own stale renders).
+func TestGatewayInfraReconciler_ForeignGatewayKindGetsRenameRemediation(t *testing.T) {
+	t.Parallel()
+
+	foreign := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "cf-proxy-edge", Namespace: infraNamespace,
+			OwnerReferences: []metav1.OwnerReference{{
+				APIVersion: "other.example.com/v1",
+				Kind:       "Gateway",
+				Name:       "edge",
+				UID:        "foreign-uid",
+				Controller: new(true),
+			}},
+		},
+		Spec: appsv1.DeploymentSpec{
+			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "foreign"}},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": "foreign"}},
+				Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "c", Image: "other/app:v1"}}},
+			},
+		},
+	}
+
+	objects := append(infraFixtures(t), foreign)
+	reconciler := newInfraReconciler(t, objects...)
+
+	_, err := reconciler.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "edge", Namespace: infraNamespace},
+	})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, errRefusedAdoption)
+	assert.Contains(t, err.Error(), "rename the conflicting object",
+		"a foreign Gateway-kind in another API group is not our stale render")
+	assert.NotContains(t, err.Error(), "delete the orphaned")
+}
+
 // TestGatewayInfraReconciler_RefusesForeignAuthSecret pins that the
 // generated-auth-Secret bootstrap never adopts a pre-existing Secret it does
 // not own. Wiring the data plane's push auth to material the controller
