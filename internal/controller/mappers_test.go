@@ -289,6 +289,104 @@ func TestConfigMapper_MapSecretToRequests_WrongSecret(t *testing.T) {
 	assert.Nil(t, result)
 }
 
+// perGatewayCredentialFixtures builds a managed Gateway opted into a per-Gateway
+// data plane whose GatewayConfig overrides the Cloudflare API credentials with a
+// namespace-local Secret. tokenSecretNamespace lets a test place the credential
+// Secret in a different namespace to exercise the namespace-local guard.
+func perGatewayCredentialFixtures(credentialSecretName, credentialSecretNamespace string) []client.Object {
+	gatewayConfig := &v1alpha1.GatewayConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "edge-config", Namespace: "tenant-a"},
+		Spec: v1alpha1.GatewayConfigSpec{
+			TunnelTokenSecretRef:           v1alpha1.LocalSecretReference{Name: "edge-token"},
+			CloudflareCredentialsSecretRef: &v1alpha1.LocalSecretReference{Name: "edge-api"},
+		},
+	}
+
+	gateway := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "edge", Namespace: "tenant-a"},
+		Spec: gatewayv1.GatewaySpec{
+			GatewayClassName: "cloudflare-tunnel",
+			Infrastructure: &gatewayv1.GatewayInfrastructure{
+				ParametersRef: &gatewayv1.LocalParametersReference{
+					Group: config.ParametersRefGroup, Kind: config.GatewayParametersRefKind, Name: "edge-config",
+				},
+			},
+		},
+	}
+
+	gatewayClass := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "cloudflare-tunnel"},
+		Spec: gatewayv1.GatewayClassSpec{
+			ControllerName: "test-controller",
+			ParametersRef: &gatewayv1.ParametersReference{
+				Group: config.ParametersRefGroup, Kind: config.ParametersRefKind, Name: "class-config",
+			},
+		},
+	}
+
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: credentialSecretName, Namespace: credentialSecretNamespace},
+		Data:       map[string][]byte{"api-token": []byte("token")},
+	}
+
+	return []client.Object{secret, gatewayConfig, gateway, gatewayClass}
+}
+
+// TestConfigMapper_MapSecretToRequests_GatewayConfigCredentialSecret pins that
+// rotating a per-Gateway GatewayConfig.cloudflareCredentialsSecretRef Secret
+// enqueues — otherwise the new API token is only picked up on the next
+// unrelated route reconcile.
+func TestConfigMapper_MapSecretToRequests_GatewayConfigCredentialSecret(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+
+	objs := perGatewayCredentialFixtures("edge-api", "tenant-a")
+	fakeClient := setupMapperFakeClient(objs...)
+	mapper := &ConfigMapper{
+		Client:         fakeClient,
+		ControllerName: "test-controller",
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+	}
+
+	expected := []reconcile.Request{{NamespacedName: client.ObjectKey{Name: "edge", Namespace: "tenant-a"}}}
+	mapFunc := mapper.MapSecretToRequests(func(_ context.Context) []reconcile.Request {
+		return expected
+	})
+
+	credentialSecret := objs[0]
+	result := mapFunc(ctx, credentialSecret)
+
+	require.NotNil(t, result, "rotating the per-Gateway credential Secret must enqueue")
+	assert.Equal(t, expected, result)
+}
+
+// TestConfigMapper_MapSecretToRequests_GatewayConfigCredentialWrongNamespace
+// pins the namespace-local guard: the per-Gateway credential ref is resolved in
+// the GatewayConfig's OWN namespace, so a same-named Secret in another namespace
+// must NOT enqueue.
+func TestConfigMapper_MapSecretToRequests_GatewayConfigCredentialWrongNamespace(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+
+	objs := perGatewayCredentialFixtures("edge-api", "other-namespace")
+	fakeClient := setupMapperFakeClient(objs...)
+	mapper := &ConfigMapper{
+		Client:         fakeClient,
+		ControllerName: "test-controller",
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+	}
+
+	mapFunc := mapper.MapSecretToRequests(func(_ context.Context) []reconcile.Request {
+		return []reconcile.Request{{NamespacedName: client.ObjectKey{Name: "edge", Namespace: "tenant-a"}}}
+	})
+
+	result := mapFunc(ctx, objs[0])
+
+	assert.Nil(t, result, "a same-named credential Secret in another namespace must not enqueue")
+}
+
 func TestConfigMapper_MapSecretToRequests_WrongType(t *testing.T) {
 	t.Parallel()
 
