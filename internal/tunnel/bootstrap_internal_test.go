@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"log/slog"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus"
@@ -552,21 +553,26 @@ func TestBuildOrchestrator_EmptyProxyURL_NilOriginProxy(t *testing.T) {
 	assert.Contains(t, err.Error(), "build tunnel config")
 }
 
-// TestBuildOrchestrator_ExplicitProxyURL_NilOriginProxy verifies buildOrchestrator
-// passes cfg.ProxyURL through when OriginProxy is nil.
-// Uses an invalid URL scheme that fails at ingress validation, before prometheus.
+// TestBuildOrchestrator_ExplicitProxyURL_NilOriginProxy_InvalidScheme verifies
+// buildOrchestrator passes cfg.ProxyURL through to ingress parsing when
+// OriginProxy is nil: a non-empty but malformed URL fails inside
+// buildCatchAllIngress (before the prometheus-registering origin services), so
+// no fresh registerer is needed. Distinct from the empty-URL case — it pins the
+// explicit pass-through path, not just the absent-URL one.
 func TestBuildOrchestrator_ExplicitProxyURL_NilOriginProxy_InvalidScheme(t *testing.T) {
 	t.Parallel()
 
 	token := newTestToken()
 	cfg := &Config{
-		ProxyURL:    "",
+		ProxyURL:    "://bad",
 		OriginProxy: nil,
 	}
 
 	_, _, err := buildOrchestrator(t.Context(), cfg, token, slog.Default())
 
 	require.Error(t, err)
+	assert.Contains(t, err.Error(), "parse catch-all ingress",
+		"a malformed explicit ProxyURL must fail in ingress parsing, proving it was passed through")
 }
 
 // TestBuildTunnelConfig_EmptyProxyURL_ErrorMessage verifies the exact error
@@ -805,6 +811,28 @@ func TestBuildOrchestrator_SuccessPath_NilOriginProxy(t *testing.T) {
 		assert.NotNil(t, orchestrator)
 		assert.NotNil(t, tunnelCfg)
 		assert.Nil(t, orchestrator.OverrideProxy, "OverrideProxy should be nil when OriginProxy is not set")
+	})
+}
+
+// TestBuildOrchestrator_AppliesResolvedGracePeriod pins that buildOrchestrator
+// applies the configured (and clamped) grace period to the returned tunnel
+// config. The assignment used to live in StartTunnel AFTER buildOrchestrator,
+// where no test reached it — a regression dropping it would silently ignore
+// PROXY_GRACE_PERIOD. NOT parallel: replaces prometheus.DefaultRegisterer.
+func TestBuildOrchestrator_AppliesResolvedGracePeriod(t *testing.T) {
+	token := newTestToken()
+	cfg := &Config{
+		ProxyURL:    "http://localhost:8080",
+		GracePeriod: 5 * time.Second,
+	}
+
+	withFreshRegisterer(func() {
+		_, tunnelCfg, err := buildOrchestrator(t.Context(), cfg, token, slog.Default())
+
+		require.NoError(t, err)
+		require.NotNil(t, tunnelCfg)
+		assert.Equal(t, 5*time.Second, tunnelCfg.GracePeriod,
+			"the configured grace period must be applied to the returned tunnel config")
 	})
 }
 
