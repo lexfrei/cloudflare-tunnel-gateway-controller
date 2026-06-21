@@ -283,6 +283,20 @@ func buildParentStatus(
 		conditions = append(conditions, *shadowed)
 	}
 
+	// Same gating: a push failure or a shared tunnel is only meaningful for a
+	// route that was otherwise accepted — a rejected route is not programmed.
+	if pushed := buildDiagnosticCondition(diagnostics, proxy.DiagnosticProxyConfigPush,
+		routeConditionProxyConfigPushed, metav1.ConditionFalse, routeReasonProxyConfigPushFailed,
+		generation, now); pushed != nil && accepted.Status == metav1.ConditionTrue {
+		conditions = append(conditions, *pushed)
+	}
+
+	if shared := buildDiagnosticCondition(diagnostics, proxy.DiagnosticTunnelShared,
+		routeConditionTunnelShared, metav1.ConditionTrue, routeReasonTunnelShared,
+		generation, now); shared != nil && accepted.Status == metav1.ConditionTrue {
+		conditions = append(conditions, *shared)
+	}
+
 	return gatewayv1.RouteParentStatus{
 		ParentRef: gatewayv1.ParentReference{
 			Group:       ref.Group,
@@ -357,11 +371,30 @@ func buildShadowedCondition(
 	generation int64,
 	now metav1.Time,
 ) *metav1.Condition {
+	return buildDiagnosticCondition(diagnostics, proxy.DiagnosticShadowed,
+		routeConditionShadowed, metav1.ConditionTrue, routeReasonShadowed, generation, now)
+}
+
+// buildDiagnosticCondition aggregates the messages of all diagnostics with the
+// given target into one condition (deduped, order-preserved). It returns nil
+// when no diagnostic carries that target — absence IS the cleared state, since
+// parent-status entries are fully rebuilt each sync. Shared by every
+// informational route condition derived from a single diagnostic target
+// (Shadowed, ProxyConfigPushed, TunnelShared).
+func buildDiagnosticCondition(
+	diagnostics []proxy.RouteDiagnostic,
+	target proxy.DiagnosticTarget,
+	conditionType string,
+	status metav1.ConditionStatus,
+	reason string,
+	generation int64,
+	now metav1.Time,
+) *metav1.Condition {
 	messages := make([]string, 0, len(diagnostics))
 	seen := make(map[string]struct{})
 
 	for _, diag := range diagnostics {
-		if diag.Target != proxy.DiagnosticShadowed {
+		if diag.Target != target {
 			continue
 		}
 
@@ -378,11 +411,11 @@ func buildShadowedCondition(
 	}
 
 	return &metav1.Condition{
-		Type:               routeConditionShadowed,
-		Status:             metav1.ConditionTrue,
+		Type:               conditionType,
+		Status:             status,
 		ObservedGeneration: generation,
 		LastTransitionTime: now,
-		Reason:             routeReasonShadowed,
+		Reason:             reason,
 		Message:            truncateConditionMessage(strings.Join(messages, " | ")),
 	}
 }
@@ -620,6 +653,25 @@ const (
 	routeReasonShadowed = proxy.ReasonHostnameMatchShadowed
 )
 
+// Dedicated condition types for per-Gateway data-plane problems that leave the
+// route Accepted (valid spec, tunnel document written) but unserved or
+// un-isolated. Domain-prefixed for the same reason as RouteShadowed: the Gateway
+// API reserves the bare condition namespace and defines no condition for these.
+const (
+	// routeConditionProxyConfigPushed is set False when the controller could not
+	// push this route's config to its data plane for a SUSTAINED run of attempts
+	// (#487) — the proxy serves 502 until the push recovers. It clears on the
+	// first successful push (parent status is rebuilt each sync).
+	routeConditionProxyConfigPushed  = "cf.k8s.lex.la/ProxyConfigPushed"
+	routeReasonProxyConfigPushFailed = "ProxyConfigPushFailed"
+	// routeConditionTunnelShared is set True when this route's per-Gateway data
+	// plane shares one Cloudflare Tunnel with another namespace's Gateway (#488).
+	// Sharing is supported but is not isolation; this surfaces the collapsed
+	// boundary instead of leaving it only in a log line.
+	routeConditionTunnelShared = "cf.k8s.lex.la/TunnelShared"
+	routeReasonTunnelShared    = "TunnelSharedAcrossNamespaces"
+)
+
 const (
 	eventReasonConfigOverridden = "ConfigOverridden"
 	eventActionConvert          = "Convert"
@@ -628,6 +680,12 @@ const (
 	// `kubectl events` and event-driven alerting.
 	eventReasonRouteShadowed = "RouteShadowed"
 	eventActionRouteSync     = "Sync"
+	// eventReasonProxyConfigPushFailed / eventReasonTunnelShared mirror the
+	// ProxyConfigPushed / TunnelShared conditions as Warning Events so a
+	// sustained push failure (#487) and a cross-namespace tunnel share (#488)
+	// also surface in `kubectl events` and event-driven alerting.
+	eventReasonProxyConfigPushFailed = "ProxyConfigPushFailed"
+	eventReasonTunnelShared          = "TunnelShared"
 
 	// Event reason / action tokens for the GRPCRoute edge-toggle breadcrumb (see
 	// emitGRPCEdgeHint). The Cloudflare zone gRPC toggle is dashboard-only with no
@@ -678,6 +736,12 @@ func emitDiagnosticEvents(recorder events.EventRecorder, route runtime.Object, d
 			// Mirror the RouteShadowed condition as a Warning Event so the
 			// collision also surfaces in `kubectl events` and event alerting.
 			recorder.Eventf(route, nil, corev1.EventTypeWarning, eventReasonRouteShadowed, eventActionRouteSync, "%s", diag.Message)
+		case proxy.DiagnosticProxyConfigPush:
+			// Mirror the ProxyConfigPushed=False condition (#487).
+			recorder.Eventf(route, nil, corev1.EventTypeWarning, eventReasonProxyConfigPushFailed, eventActionRouteSync, "%s", diag.Message)
+		case proxy.DiagnosticTunnelShared:
+			// Mirror the TunnelShared=True condition (#488).
+			recorder.Eventf(route, nil, corev1.EventTypeWarning, eventReasonTunnelShared, eventActionRouteSync, "%s", diag.Message)
 		case proxy.DiagnosticAccepted, proxy.DiagnosticResolvedRefs:
 			// Condition-driving targets; no Event surface.
 		}

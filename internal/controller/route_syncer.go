@@ -14,6 +14,7 @@ import (
 	"github.com/cloudflare/cloudflare-go/v7/zero_trust"
 	"github.com/cockroachdb/errors"
 	"github.com/google/uuid"
+	"golang.org/x/sync/errgroup"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -192,6 +193,12 @@ type SyncResult struct {
 	// RetainPartitions so a newly-joined pod can still be replayed the last
 	// config, and the reconcile requeues to re-resolve.
 	TransientBrokenKeys []string
+
+	// CollisionDiagnostics are route diagnostics synthesized during sync that do
+	// not come from the converter or the proxy push — currently the
+	// cross-namespace tunnel-sharing collision (#488). The status path
+	// concatenates them with the push diagnostics so they reach route status.
+	CollisionDiagnostics []proxy.RouteDiagnostic
 }
 
 // httpStatusEntries builds routeStatusEntry slice for HTTP routes,
@@ -306,6 +313,13 @@ func syncAndUpdateStatusCommon(ctx context.Context, params syncUpdateParams) (ct
 		diagnostics = pushPartitionConfigs(ctx, logger, params, syncResult)
 	}
 
+	// Fold in collision diagnostics (cross-namespace tunnel sharing, #488):
+	// they are synthesized during sync, not by the converter or the push, so
+	// they must be concatenated here to reach route status.
+	if syncResult != nil {
+		diagnostics = append(diagnostics, syncResult.CollisionDiagnostics...)
+	}
+
 	// Warn when GRPCRoutes are present on an explicit quic tunnel — cloudflared
 	// drops the grpc-status trailer over QUIC, so gRPC calls fail. auto/unset is
 	// upgraded to http2 by the proxy, so it does not warn. Only the GRPCRoute
@@ -357,6 +371,110 @@ func syncAndUpdateStatusCommon(ctx context.Context, params syncUpdateParams) (ct
 // transient error. Every successful sync always carries at least the shared
 // partition (partitionRoutes), so skipping here never starves a healthy
 // plane.
+// pushFailureSurfaceThreshold is the number of CONSECUTIVE failed pushes a
+// partition must accumulate before the failure is surfaced on its routes'
+// status (#487). Below it, a one-off blip (a pod rolling, a brief partition)
+// stays log-only and does not flip a route condition.
+const pushFailureSurfaceThreshold = 3
+
+// maxConcurrentPartitionPushes bounds how many partition pushes run at once
+// (#489). Each push already fans out per-endpoint internally, so this caps the
+// outer fan-out across partitions rather than opening one connection per tenant
+// on a large fleet.
+const maxConcurrentPartitionPushes = 16
+
+// partitionRouteDiagnostics stamps one RouteDiagnostic with the given target,
+// reason, and message onto every route (HTTP and gRPC) in the partition's OWN
+// route set. Used to surface a data-plane problem on exactly the routes a
+// Gateway owns.
+func partitionRouteDiagnostics(
+	partition *routePartition,
+	target proxy.DiagnosticTarget,
+	reason, message string,
+) []proxy.RouteDiagnostic {
+	diags := make([]proxy.RouteDiagnostic, 0, len(partition.HTTPRoutes)+len(partition.GRPCRoutes))
+
+	for i := range partition.HTTPRoutes {
+		diags = append(diags, proxy.RouteDiagnostic{
+			Namespace: partition.HTTPRoutes[i].Namespace,
+			Name:      partition.HTTPRoutes[i].Name,
+			Target:    target,
+			Reason:    reason,
+			Message:   message,
+		})
+	}
+
+	for i := range partition.GRPCRoutes {
+		diags = append(diags, proxy.RouteDiagnostic{
+			Namespace: partition.GRPCRoutes[i].Namespace,
+			Name:      partition.GRPCRoutes[i].Name,
+			Target:    target,
+			Reason:    reason,
+			Message:   message,
+		})
+	}
+
+	return diags
+}
+
+// proxyPushFailureDiagnostics synthesizes a DiagnosticProxyConfigPush for each
+// route in the partition's OWN (pre-union) route set, so a sustained push
+// failure surfaces on exactly the routes that Gateway owns — not on a sibling
+// tenant whose config happens to ride the same unioned tunnel slice (#487).
+func proxyPushFailureDiagnostics(partition *routePartition) []proxy.RouteDiagnostic {
+	message := fmt.Sprintf(
+		"the controller could not push this route's config to its data plane (partition %q) after "+
+			"sustained retries; matching requests are served 502 until the push recovers — check the "+
+			"proxy pods' health and the config-API NetworkPolicy. This route remains Accepted.",
+		partition.Key)
+
+	return partitionRouteDiagnostics(partition, proxy.DiagnosticProxyConfigPush, routeReasonProxyConfigPushFailed, message)
+}
+
+// tunnelSharedDiagnostics synthesizes a DiagnosticTunnelShared for the routes of
+// every infra Gateway that shares one Cloudflare Tunnel with another namespace's
+// Gateway (#488). Sharing a tunnel is supported but collapses per-Gateway
+// isolation, so the visibility is on the routes, not just a log line.
+func tunnelSharedDiagnostics(collisions []tunnelCollision, partitions []routePartition) []proxy.RouteDiagnostic {
+	if len(collisions) == 0 {
+		return nil
+	}
+
+	byKey := make(map[string]*routePartition, len(partitions))
+	for i := range partitions {
+		byKey[partitions[i].Key] = &partitions[i]
+	}
+
+	var diags []proxy.RouteDiagnostic
+
+	for _, collision := range collisions {
+		for _, key := range collision.gateways {
+			partition, ok := byKey[key]
+			if !ok {
+				continue
+			}
+
+			others := make([]string, 0, len(collision.gateways)-1)
+
+			for _, other := range collision.gateways {
+				if other != key {
+					others = append(others, other)
+				}
+			}
+
+			message := fmt.Sprintf(
+				"this route's Gateway shares Cloudflare Tunnel %q with %s; the edge load-balances the tunnel's "+
+					"requests across all of them, so per-Gateway isolation is NOT guaranteed — give each isolated "+
+					"Gateway its own tunnel. This route remains Accepted.",
+				collision.tunnelID, strings.Join(others, ", "))
+
+			diags = append(diags, partitionRouteDiagnostics(partition, proxy.DiagnosticTunnelShared, routeReasonTunnelShared, message)...)
+		}
+	}
+
+	return diags
+}
+
 func pushPartitionConfigs(
 	ctx context.Context,
 	logger *slog.Logger,
@@ -384,41 +502,87 @@ func pushPartitionConfigs(
 		keep[key] = true
 	}
 
+	results := pushPartitionsConcurrently(ctx, params, syncResult, partitions)
+
 	var diagnostics []proxy.RouteDiagnostic
 
+	// Aggregate single-threaded in ORIGINAL partition order so diagnostics, the
+	// keep set, and metrics stay deterministic regardless of push completion order.
 	for i := range partitions {
 		partition := &partitions[i]
 		keep[partition.Key] = true
 
-		var (
-			diags []proxy.RouteDiagnostic
-			err   error
-		)
-
-		if partition.PerGateway == nil {
-			diags, err = params.proxySyncer.SyncRoutes(ctx, params.proxyEndpoints,
-				httpRoutePtrs(partition.HTTPRoutes), grpcRoutePtrs(partition.GRPCRoutes),
-				syncResult.HTTPFailedRefs, syncResult.GRPCFailedRefs)
-		} else {
-			endpoints := []string{render.ConfigEndpointURL(partition.Gateway, params.routeSyncer.ClusterDomain)}
-			diags, err = params.proxySyncer.SyncPartition(ctx, partition.Key, partition.PerGateway.AuthToken,
-				endpoints, httpRoutePtrs(partition.HTTPRoutes), grpcRoutePtrs(partition.GRPCRoutes),
-				syncResult.HTTPFailedRefs, syncResult.GRPCFailedRefs)
-		}
-
 		// Diagnostics are valid even when the push errors: they describe the
 		// route specs, not the push, and must reach the route status.
-		diagnostics = append(diagnostics, diags...)
+		diagnostics = append(diagnostics, results[i].diags...)
 
-		if err != nil {
-			logger.Error("proxy sync failed (non-blocking)", "partition", partition.Key, "error", err)
+		if results[i].err != nil {
+			logger.Error("proxy sync failed (non-blocking)", "partition", partition.Key, "error", results[i].err)
 			params.routeSyncer.Metrics.RecordSyncError(ctx, "proxy_push")
+
+			// Surface a SUSTAINED push failure on the partition's own routes
+			// once it crosses the no-flap threshold (#487). Attribute to the
+			// pre-union originals, not the unioned slice above.
+			if params.proxySyncer.pushFailureStreak(partition.Key) >= pushFailureSurfaceThreshold {
+				diagnostics = append(diagnostics, proxyPushFailureDiagnostics(&syncResult.Partitions[i])...)
+			}
 		}
 	}
 
 	params.proxySyncer.RetainPartitions(keep)
 
 	return diagnostics
+}
+
+// partitionPushResult is one partition's push outcome, written to a per-index
+// slot so concurrent pushes never share a slice.
+type partitionPushResult struct {
+	diags []proxy.RouteDiagnostic
+	err   error
+}
+
+// pushPartitionsConcurrently pushes every partition's config in parallel and
+// returns the per-partition results in input order. A slow connector on one
+// partition must not delay the others (#489): each SyncRoutes/SyncPartition
+// takes syncMu only to build/record (the network push runs lock-free), so
+// distinct partitions push in parallel. A push error is carried in the result,
+// never returned to the group, so one failure does not cancel the others.
+func pushPartitionsConcurrently(
+	ctx context.Context,
+	params syncUpdateParams,
+	syncResult *SyncResult,
+	partitions []routePartition,
+) []partitionPushResult {
+	results := make([]partitionPushResult, len(partitions))
+
+	var group errgroup.Group
+
+	group.SetLimit(maxConcurrentPartitionPushes)
+
+	for i := range partitions {
+		partition := &partitions[i]
+
+		group.Go(func() error {
+			if partition.PerGateway == nil {
+				results[i].diags, results[i].err = params.proxySyncer.SyncRoutes(ctx, params.proxyEndpoints,
+					httpRoutePtrs(partition.HTTPRoutes), grpcRoutePtrs(partition.GRPCRoutes),
+					syncResult.HTTPFailedRefs, syncResult.GRPCFailedRefs)
+
+				return nil
+			}
+
+			endpoints := []string{render.ConfigEndpointURL(partition.Gateway, params.routeSyncer.ClusterDomain)}
+			results[i].diags, results[i].err = params.proxySyncer.SyncPartition(ctx, partition.Key, partition.PerGateway.AuthToken,
+				endpoints, httpRoutePtrs(partition.HTTPRoutes), grpcRoutePtrs(partition.GRPCRoutes),
+				syncResult.HTTPFailedRefs, syncResult.GRPCFailedRefs)
+
+			return nil
+		})
+	}
+
+	_ = group.Wait()
+
+	return results
 }
 
 // resolveConfigForController resolves configuration from the GatewayClass
@@ -625,11 +789,14 @@ func (s *RouteSyncer) SyncAllRoutes(ctx context.Context) (ctrl.Result, *SyncResu
 	// union of both tenants' routes. Shared+infra on one tunnel is the
 	// documented migration path, but infra+infra is a silent cross-tenant
 	// exposure — warn loudly so the operator sees the misconfiguration.
-	for _, collision := range sharedInfraTunnelCollisions(groups) {
+	collisions := sharedInfraTunnelCollisions(groups)
+	for _, collision := range collisions {
 		logger.Error("multiple dedicated Gateways share one tunnel; their routes are unioned across tenants — "+
 			"give each isolated Gateway its own Cloudflare Tunnel",
 			"tunnel", collision.tunnelID, "gateways", strings.Join(collision.gateways, ","))
 	}
+
+	collisionDiagnostics := tunnelSharedDiagnostics(collisions, partitions)
 
 	// A dedicated Gateway sharing the class tunnel has its credential override
 	// silently dropped for the merged write (same tunnel ⇒ one credential).
@@ -662,6 +829,7 @@ func (s *RouteSyncer) SyncAllRoutes(ctx context.Context) (ctrl.Result, *SyncResu
 	syncResult.Partitions = partitions
 	syncResult.SharedTunnelID = resolvedConfig.TunnelID
 	syncResult.TransientBrokenKeys = infra.transientKeys()
+	syncResult.CollisionDiagnostics = collisionDiagnostics
 
 	// All groups failed: total sync outage — global error, every route goes
 	// Pending (matches the historic single-tunnel failure shape).

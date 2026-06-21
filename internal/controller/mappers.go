@@ -209,7 +209,64 @@ func (m *ConfigMapper) isSecretReferencedByConfig(ctx context.Context, secret *c
 		return true
 	}
 
+	if m.isSecretReferencedByGatewayConfig(ctx, secret) {
+		return true
+	}
+
 	return m.isSecretReferencedByManagedGateway(ctx, secret)
+}
+
+// isSecretReferencedByGatewayConfig matches Secrets that back the
+// GatewayConfig.cloudflareCredentialsSecretRef of any managed Gateway opted into
+// a per-Gateway data plane. The ref is namespace-local (resolved in the
+// GatewayConfig's own namespace), so a same-named Secret elsewhere does not
+// match. Without this, rotating a per-Gateway API token only propagates on the
+// next route reconcile rather than immediately.
+func (m *ConfigMapper) isSecretReferencedByGatewayConfig(ctx context.Context, secret *corev1.Secret) bool {
+	classNames, err := managedClassNames(ctx, m.Client, m.ControllerName)
+	if err != nil {
+		logging.FromContext(ctx).Warn("failed to list GatewayClasses in isSecretReferencedByGatewayConfig",
+			"error", err)
+
+		return false
+	}
+
+	if len(classNames) == 0 {
+		return false
+	}
+
+	var gateways gatewayv1.GatewayList
+	if listErr := m.Client.List(ctx, &gateways); listErr != nil {
+		logging.FromContext(ctx).Warn("failed to list Gateways in isSecretReferencedByGatewayConfig",
+			"error", listErr)
+
+		return false
+	}
+
+	for i := range gateways.Items {
+		gateway := &gateways.Items[i]
+		if !classNames[string(gateway.Spec.GatewayClassName)] || !config.HasInfrastructureParametersRef(gateway) {
+			continue
+		}
+
+		gwConfig, cfgErr := m.ConfigResolver.GetGatewayConfig(ctx, gateway)
+		if cfgErr != nil {
+			continue
+		}
+
+		ref := gwConfig.Spec.CloudflareCredentialsSecretRef
+		if ref == nil {
+			continue
+		}
+
+		// Namespace-local: the override Secret lives in the GatewayConfig's own
+		// namespace, so a same-named Secret in another namespace is not a match.
+		if gwConfig.Namespace == secret.Namespace && ref.Name == secret.Name {
+			return true
+		}
+	}
+
+	return false
 }
 
 // isSecretReferencedByCredentials matches Secrets that back the
