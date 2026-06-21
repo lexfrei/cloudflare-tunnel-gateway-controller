@@ -71,7 +71,15 @@ const (
 	// length cap; exported for consumers reasoning about truncated
 	// GatewayLabel values.
 	MaxDNSLabelLength = 63
-	nameHashLength    = 8
+	// nameHashLength is the hex width of the disambiguating hash suffix appended
+	// to overflowing/sanitized names (truncateName). 8 hex = 32 bits: by the
+	// birthday bound a 50% collision needs ~2^16 (~65k) distinct hashed names,
+	// and only names that overflow 63 chars or carry non-DNS characters are
+	// hashed at all — far above the realistic per-namespace Gateway cardinality.
+	// Do NOT widen this: the suffix is part of every rendered object's name, so
+	// changing it renames (and so recreates) every per-Gateway Deployment,
+	// Service, and NetworkPolicy in place.
+	nameHashLength = 8
 
 	tunnelTokenKey = "tunnel-token"
 	authTokenKey   = "auth-token"
