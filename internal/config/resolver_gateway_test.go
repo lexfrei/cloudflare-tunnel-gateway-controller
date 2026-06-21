@@ -5,8 +5,10 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
@@ -182,6 +184,50 @@ func TestResolveForGateway_HappyPath_ClassCredentialFallback(t *testing.T) {
 	assert.Equal(t, "edge-tunnel-token", resolved.TunnelTokenSecret.Name)
 	require.NotNil(t, resolved.GatewayConfig)
 	assert.Equal(t, "edge-config", resolved.GatewayConfig.Name)
+}
+
+// TestResolveForGateway_TunnelIDIsCanonicalLowercase pins that the resolved
+// PerGatewayConfig.TunnelID is always the canonical lowercase UUID form,
+// regardless of how the connector token spells it. Same-tunnel union
+// correctness (route_partition) keys on exact-string TunnelID equality, so a
+// future refactor that stored the raw token "t" value instead of
+// uuid.UUID.String() would silently break the merge — this fails it instead.
+func TestResolveForGateway_TunnelIDIsCanonicalLowercase(t *testing.T) {
+	t.Parallel()
+
+	payload, err := json.Marshal(map[string]any{
+		"a": testAccountTag,
+		"s": base64.StdEncoding.EncodeToString([]byte("tunnel-secret")),
+		"t": strings.ToUpper(testTunnelUUID), // a non-canonical (uppercase) tunnel ID
+	})
+	require.NoError(t, err)
+
+	gwConfig := &v1alpha1.GatewayConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "edge-config", Namespace: testGwNamespace},
+		Spec: v1alpha1.GatewayConfigSpec{
+			TunnelTokenSecretRef: v1alpha1.LocalSecretReference{Name: "edge-tunnel-token"},
+		},
+	}
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "edge-tunnel-token", Namespace: testGwNamespace},
+		Data:       map[string][]byte{"tunnel-token": []byte(base64.StdEncoding.EncodeToString(payload))},
+	}
+
+	objects := append(classFixtures(), gwConfig, secret, generatedAuthSecret())
+	resolver := newGatewayResolver(t, objects...)
+
+	resolved, err := resolver.ResolveForGateway(context.Background(),
+		gatewayWithInfra("cf.k8s.lex.la", "GatewayConfig", "edge-config"))
+	require.NoError(t, err)
+	require.NotNil(t, resolved)
+
+	assert.Equal(t, testTunnelUUID, resolved.TunnelID,
+		"an uppercase token tunnel ID must resolve to the canonical lowercase form")
+	assert.Equal(t, strings.ToLower(resolved.TunnelID), resolved.TunnelID, "TunnelID must be lowercase")
+
+	parsed, err := uuid.Parse(resolved.TunnelID)
+	require.NoError(t, err)
+	assert.Equal(t, parsed.String(), resolved.TunnelID, "TunnelID must be the canonical uuid string form")
 }
 
 // TestResolveForGateway_CredentialOverride pins that a GatewayConfig-level

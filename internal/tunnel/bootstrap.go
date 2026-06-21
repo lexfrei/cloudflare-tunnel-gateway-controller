@@ -160,7 +160,6 @@ func StartTunnel(ctx context.Context, cfg *Config) error {
 	connectedSignal := cfdsignal.New(make(chan struct{}))
 	reconnectCh := make(chan supervisor.ReconnectSignal, defaultHAConnections)
 	graceShutdownC := graceChannel(ctx, cfg.GraceShutdownC)
-	tunnelCfg.GracePeriod = resolveGracePeriod(cfg.GracePeriod)
 
 	go waitConnected(ctx, connectedSignal, logger, cfg.OnConnected)
 
@@ -274,6 +273,12 @@ func buildOrchestrator(
 
 		logger.Info("in-process origin proxy enabled")
 	}
+
+	// Apply the operator-configured drain window over buildProtocolAndClient's
+	// default here, where it is observable in the returned tunnelCfg — keeping
+	// it out of StartTunnel (which returns only an error) so a regression
+	// dropping it fails a test instead of silently ignoring PROXY_GRACE_PERIOD.
+	tunnelCfg.GracePeriod = resolveGracePeriod(cfg.GracePeriod)
 
 	return orchestrator, tunnelCfg, nil
 }

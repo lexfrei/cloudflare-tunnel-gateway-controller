@@ -164,6 +164,51 @@ func TestGatewayReconciler_PerGateway_ProgrammedTrueWhenReady(t *testing.T) {
 	assert.Equal(t, metav1.ConditionTrue, programmed.Status)
 }
 
+// TestGatewayReconciler_PerGateway_ProgrammedTransientDeploymentReadKeepsPending
+// pins the CURRENT behaviour of the transient Deployment-read branch: unlike
+// the other transient paths (which propagate the error for controller-runtime
+// backoff), a non-NotFound Get failure here is folded into
+// Programmed=False/Pending and returned, not propagated. The Deployment watch +
+// requeue self-heals, so this inconsistency is intentional and harmless; pin it
+// so a future refactor that changes the shape is a conscious decision rather
+// than a silent drift.
+func TestGatewayReconciler_PerGateway_ProgrammedTransientDeploymentReadKeepsPending(t *testing.T) {
+	t.Parallel()
+
+	scheme := runtime.NewScheme()
+	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
+	utilruntime.Must(gatewayv1.Install(scheme))
+	utilruntime.Must(v1alpha1.AddToScheme(scheme))
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Get: func(ctx context.Context, cl client.WithWatch, key client.ObjectKey,
+				obj client.Object, opts ...client.GetOption,
+			) error {
+				if _, ok := obj.(*appsv1.Deployment); ok {
+					return apierrors.NewInternalError(errSimulatedCacheMiss)
+				}
+
+				return cl.Get(ctx, key, obj, opts...)
+			},
+		}).
+		Build()
+
+	reconciler := &GatewayReconciler{Client: fakeClient, Scheme: scheme}
+
+	gateway := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "pg-gateway", Namespace: "default"},
+	}
+
+	condition := reconciler.perGatewayProgrammedCondition(context.Background(), gateway, metav1.Now())
+
+	assert.Equal(t, metav1.ConditionFalse, condition.Status,
+		"a transient Deployment-read failure folds into Programmed=False, not a propagated error")
+	assert.Equal(t, string(gatewayv1.GatewayReasonPending), condition.Reason)
+	assert.Contains(t, condition.Message, "Failed to read per-Gateway proxy deployment")
+}
+
 // TestGatewayReconciler_PerGateway_TransientResolveErrorKeepsStatus pins the
 // sentinel/transient split end to end: ResolveForGateway deliberately keeps a
 // transient API failure's identity (only deterministic spec problems classify

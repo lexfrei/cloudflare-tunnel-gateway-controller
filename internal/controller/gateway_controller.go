@@ -822,7 +822,14 @@ func (r *GatewayReconciler) gatewayConfigToGateways(ctx context.Context, obj cli
 			continue
 		}
 
-		if gateway.Spec.Infrastructure.ParametersRef.Name != obj.GetName() {
+		ref := gateway.Spec.Infrastructure.ParametersRef
+		// Match Group/Kind too, not just Name: a parametersRef to a foreign CRD
+		// that happens to share the GatewayConfig's name is not ours to resolve.
+		if string(ref.Group) != config.ParametersRefGroup || string(ref.Kind) != config.GatewayParametersRefKind {
+			continue
+		}
+
+		if ref.Name != obj.GetName() {
 			continue
 		}
 

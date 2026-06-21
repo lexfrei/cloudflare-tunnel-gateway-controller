@@ -35,13 +35,7 @@ func TestCELPolicyMatchesVectors(t *testing.T) {
 
 	suffixExpr, validations := extractCELExpressions(t)
 
-	env, err := cel.NewEnv(
-		cel.Variable("object", cel.DynType),
-		cel.Variable("namespaceObject", cel.DynType),
-		cel.Variable("variables", cel.DynType),
-		ext.Strings(),
-	)
-	require.NoError(t, err)
+	env := newCELTestEnv(t)
 
 	suffixPrg := compileCEL(t, env, suffixExpr)
 
@@ -130,6 +124,23 @@ func buildRouteObject(hostnames []string) map[string]any {
 	return map[string]any{"spec": spec}
 }
 
+// newCELTestEnv builds the CEL environment the rendered policy expressions are
+// compiled against: the same variables and string extensions the apiserver
+// exposes to a ValidatingAdmissionPolicy.
+func newCELTestEnv(t *testing.T) *cel.Env {
+	t.Helper()
+
+	env, err := cel.NewEnv(
+		cel.Variable("object", cel.DynType),
+		cel.Variable("namespaceObject", cel.DynType),
+		cel.Variable("variables", cel.DynType),
+		ext.Strings(),
+	)
+	require.NoError(t, err)
+
+	return env
+}
+
 // vapPolicyDoc is the subset of the rendered ValidatingAdmissionPolicy the test
 // reads.
 type vapPolicyDoc struct {
@@ -139,22 +150,22 @@ type vapPolicyDoc struct {
 			Expression string `yaml:"expression"`
 		} `yaml:"variables"`
 		Validations []struct {
-			Expression string `yaml:"expression"`
+			Expression        string `yaml:"expression"`
+			MessageExpression string `yaml:"messageExpression"`
 		} `yaml:"validations"`
 	} `yaml:"spec"`
 }
 
-// extractCELExpressions reads the chart template, renders away the single
-// Helm directive the expressions carry (the label key), drops the remaining
-// control directives, and returns the suffix-variable expression plus the
-// ordered validation expressions — the EXACT strings the chart ships.
-func extractCELExpressions(t *testing.T) (string, []string) {
+// loadPolicyDoc reads the chart template, renders away the single Helm
+// directive the expressions carry (the label key), drops the remaining control
+// directives, and unmarshals the first YAML document (the policy; the binding
+// follows after "---") into vapPolicyDoc.
+func loadPolicyDoc(t *testing.T) vapPolicyDoc {
 	t.Helper()
 
 	raw, err := os.ReadFile(vapTemplatePath)
 	require.NoError(t, err)
 
-	// The policy is the first YAML document; the binding follows after "---".
 	src := strings.SplitN(string(raw), "\n---", 2)[0]
 	src = strings.ReplaceAll(src, `{{ .Values.hostnameOwnershipPolicy.labelKey | quote }}`, `"`+celTestLabelKey+`"`)
 	src = strings.ReplaceAll(src, `{{ .Values.hostnameOwnershipPolicy.labelKey }}`, celTestLabelKey)
@@ -164,7 +175,7 @@ func extractCELExpressions(t *testing.T) (string, []string) {
 	// include) so the policy document parses as plain YAML.
 	var kept []string
 
-	for _, line := range strings.Split(src, "\n") {
+	for line := range strings.SplitSeq(src, "\n") {
 		if strings.Contains(line, "{{") {
 			continue
 		}
@@ -174,6 +185,55 @@ func extractCELExpressions(t *testing.T) (string, []string) {
 
 	var policy vapPolicyDoc
 	require.NoError(t, yaml.Unmarshal([]byte(strings.Join(kept, "\n")), &policy))
+
+	return policy
+}
+
+// TestCELMessageExpressionsCompile pins the denial-message expressions. The
+// verdict expressions are exercised by TestCELPolicyMatchesVectors, but a typo
+// in a messageExpression would surface only at live admission (it is the
+// human-facing reason string, not the allow/deny decision). Compile each
+// non-empty messageExpression in the same environment and assert it evaluates
+// to a string so a malformed one fails in CI instead.
+func TestCELMessageExpressionsCompile(t *testing.T) {
+	t.Parallel()
+
+	policy := loadPolicyDoc(t)
+	env := newCELTestEnv(t)
+
+	input := map[string]any{
+		"object":          buildRouteObject([]string{"app.example.com"}),
+		"namespaceObject": buildNamespaceObject("example.com"),
+		"variables":       map[string]any{"suffix": "example.com"},
+	}
+
+	compiled := 0
+
+	for _, validation := range policy.Spec.Validations {
+		if validation.MessageExpression == "" {
+			continue
+		}
+
+		prg := compileCEL(t, env, validation.MessageExpression)
+
+		out, _, err := prg.Eval(input)
+		require.NoError(t, err)
+
+		_, ok := out.Value().(string)
+		require.True(t, ok, "a messageExpression must evaluate to a string: %s", validation.MessageExpression)
+
+		compiled++
+	}
+
+	require.Positive(t, compiled, "the policy must ship at least one messageExpression to compile")
+}
+
+// extractCELExpressions returns the suffix-variable expression plus the ordered
+// validation expressions — the EXACT strings the chart ships.
+func extractCELExpressions(t *testing.T) (string, []string) {
+	t.Helper()
+
+	policy := loadPolicyDoc(t)
 
 	var suffix string
 

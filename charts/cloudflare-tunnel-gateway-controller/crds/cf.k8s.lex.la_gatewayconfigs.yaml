@@ -72,7 +72,8 @@ spec:
                   key:
                     description: |-
                       Key in the Secret. Defaults depend on context: "tunnel-token" for
-                      tunnelTokenSecretRef, "auth-token" for authTokenSecretRef.
+                      tunnelTokenSecretRef, "auth-token" for authTokenSecretRef, "api-token"
+                      for cloudflareCredentialsSecretRef.
                     type: string
                   name:
                     description: Name of the Secret.
@@ -138,7 +139,8 @@ spec:
                   key:
                     description: |-
                       Key in the Secret. Defaults depend on context: "tunnel-token" for
-                      tunnelTokenSecretRef, "auth-token" for authTokenSecretRef.
+                      tunnelTokenSecretRef, "auth-token" for authTokenSecretRef, "api-token"
+                      for cloudflareCredentialsSecretRef.
                     type: string
                   name:
                     description: Name of the Secret.
@@ -237,7 +239,8 @@ spec:
                   key:
                     description: |-
                       Key in the Secret. Defaults depend on context: "tunnel-token" for
-                      tunnelTokenSecretRef, "auth-token" for authTokenSecretRef.
+                      tunnelTokenSecretRef, "auth-token" for authTokenSecretRef, "api-token"
+                      for cloudflareCredentialsSecretRef.
                     type: string
                   name:
                     description: Name of the Secret.

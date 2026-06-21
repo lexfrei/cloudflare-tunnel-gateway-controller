@@ -44,8 +44,22 @@ func TestGatewayConfigToGateways(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "shared", Namespace: "team-a"},
 		Spec:       gatewayv1.GatewaySpec{GatewayClassName: "cloudflare-tunnel"},
 	}
+	// Matches the event by Name but points at a foreign Group/Kind — a different
+	// CRD that happens to share the name. It must NOT be enqueued: the mapper
+	// resolves only this controller's GatewayConfig parametersRef.
+	wrongGroupKind := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "foreign", Namespace: "team-a"},
+		Spec: gatewayv1.GatewaySpec{
+			GatewayClassName: "cloudflare-tunnel",
+			Infrastructure: &gatewayv1.GatewayInfrastructure{
+				ParametersRef: &gatewayv1.LocalParametersReference{
+					Group: "other.example.com", Kind: "SomeOtherConfig", Name: "edge-config",
+				},
+			},
+		},
+	}
 
-	fakeClient := setupGatewayFakeClient(referencing, otherName, shared)
+	fakeClient := setupGatewayFakeClient(referencing, otherName, shared, wrongGroupKind)
 	reconciler := &GatewayReconciler{Client: fakeClient, Scheme: fakeClient.Scheme()}
 
 	gwConfig := &v1alpha1.GatewayConfig{

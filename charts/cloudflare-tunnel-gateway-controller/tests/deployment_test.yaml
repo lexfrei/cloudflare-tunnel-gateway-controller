@@ -748,6 +748,29 @@ tests:
           path: spec.template.spec.containers[0].args
           content: "--hostname-ownership-namespace-selector=alpha=aval,mango=mval,zebra=zval"
 
+  # Pins the rendering of every remaining matchExpressions operator (In,
+  # Exists, DoesNotExist) — the controller parses this string back with
+  # labels.Parse, and the round-trip parity is asserted Go-side in
+  # internal/hostnameownership/selector_parity_test.go. matchExpressions render
+  # in list order, after the sorted matchLabels terms.
+  - it: should render In, Exists and DoesNotExist operators in list order
+    set:
+      hostnameOwnershipPolicy:
+        enabled: true
+        namespaceSelector:
+          matchExpressions:
+            - key: team
+              operator: In
+              values: [a, b]
+            - key: tenancy
+              operator: Exists
+            - key: system
+              operator: DoesNotExist
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--hostname-ownership-namespace-selector=team in (a,b),tenancy,!system"
+
   - it: should omit the selector flag when the selector is empty
     set:
       hostnameOwnershipPolicy:

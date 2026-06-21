@@ -114,6 +114,34 @@ func TestDetectShadowedRules_TimestampTieUsesNamespaceName(t *testing.T) {
 	assert.Contains(t, diags[0].Message, "alphabetical {namespace}/{name}")
 }
 
+// TestDetectShadowedRules_TimestampTieComparesNamespaceFieldWise pins that the
+// {namespace}/{name} reconstruction compares namespace and name as SEPARATE
+// fields, exactly like sortRoutesByPrecedence (which decides the real flatIdx).
+// A concatenated "namespace/name" compare diverges here: '-' (0x2D) sorts below
+// '/' (0x2F), so namespace "a" beats "a-b" field-wise (the prefix is shorter)
+// yet "a/app" > "a-b/app" as concatenated strings. The winner holds the lower
+// flatIdx by the field-wise rule, so the basis must read as the alphabetical
+// precedence, not fall through to "earlier position in the generated config".
+func TestDetectShadowedRules_TimestampTieComparesNamespaceFieldWise(t *testing.T) {
+	t.Parallel()
+
+	cfg := &proxy.Config{
+		Rules: []proxy.RouteRule{
+			{Hostnames: []string{"app.example.com"}, Matches: []proxy.RouteMatch{pathExactMatch("/v1")}},
+			{Hostnames: []string{"app.example.com"}, Matches: []proxy.RouteMatch{pathExactMatch("/v1")}},
+		},
+		Provenance: []proxy.RuleProvenance{
+			prov("HTTPRoute", "a", "app", shadowT0, 0),
+			prov("HTTPRoute", "a-b", "app", shadowT0, 0),
+		},
+	}
+
+	diags := proxy.DetectShadowedRules(cfg)
+	require.Len(t, diags, 1)
+	assert.Equal(t, "a-b", diags[0].Namespace, "the diagnostic lands on the field-wise loser")
+	assert.Contains(t, diags[0].Message, "alphabetical {namespace}/{name}")
+}
+
 // TestDetectShadowedRules_FlatIndexTieReportsConfigOrder pins that when the
 // winner is decided purely by flattened index — same kind, same timestamp, and
 // the winner sorts alphabetically AFTER the loser — the basis is reported as
