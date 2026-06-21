@@ -247,6 +247,10 @@ spec:
 | `ResolvedRefs` | `False` | `BackendNotFound` | Backend Service not found |
 | `ResolvedRefs` | `False` | `InvalidKind` | Backend ref group/kind is not a core Service |
 
+### Controller-specific advisory conditions
+
+Beyond the standard Gateway API conditions above, the controller surfaces domain-prefixed (`cf.k8s.lex.la/`) advisory conditions for situations the Gateway API defines no condition for — they are informational and do not flip `Accepted`/`Programmed`. On routes: `cf.k8s.lex.la/RouteShadowed`, `cf.k8s.lex.la/ProxyConfigPushed`, `cf.k8s.lex.la/TunnelShared`. On a Gateway listener or ListenerSet entry: `cf.k8s.lex.la/PermissiveHostname` (the `allowedRoutes.namespaces.from: All` + unpinned-hostname capture combination). Each is described in full on the [Limitations](../gateway-api/limitations.md) page.
+
 ## API Versions
 
 | Resource | API Group | Version | Status |

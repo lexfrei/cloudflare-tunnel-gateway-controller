@@ -54,11 +54,13 @@ spec:
               tenant: team-b
 ```
 
-The controller enforces listener-to-route hostname intersection, so a route in a `tenant: team-a` namespace cannot serve `app.team-b.example.com` through the `team-a` listener. Avoid the permissive combination — a single unpinned listener with `allowedRoutes.namespaces.from: All` — unless every namespace is equally trusted.
+The controller enforces listener-to-route hostname intersection, so a route in a `tenant: team-a` namespace cannot serve `app.team-b.example.com` through the `team-a` listener. Avoid the permissive combination — a single unpinned listener with `allowedRoutes.namespaces.from: All` — unless every namespace is equally trusted. The controller surfaces that exact combination on the listener as a `cf.k8s.lex.la/PermissiveHostname=True` advisory condition (reason `UnpinnedHostnameAllowsAllNamespaces`), so the capture surface is visible in `kubectl describe gateway`, not just flagged here. The listener stays `Accepted` (the combination is legal); pin its hostname or scope `allowedRoutes` and the condition clears.
 
 ## Tenant self-service with ListenerSet
 
 Instead of the platform team editing the Gateway for every tenant, delegate listener management via [ListenerSet](../gateway-api/listenerset.md): the Gateway opts in with `allowedListeners.namespaces.from: Selector`, and each tenant owns a `ListenerSet` (its hostnames, its own TLS certificate references) in its namespace. Conflicting listeners are rejected with `Conflicted=True` following GEP-1713 precedence (Gateway listeners first, then oldest `creationTimestamp`, then `{namespace}/{name}`).
+
+A tenant-authored ListenerSet entry is the highest-risk place for the hostname-capture combination, since the entry author may be untrusted. The controller raises the same `cf.k8s.lex.la/PermissiveHostname=True` advisory on a ListenerSet entry that combines `allowedRoutes.namespaces.from: All` with no hostname pin, exactly as it does for a Gateway-owned listener.
 
 Note the TLS boundary: per-ListenerSet TLS certificate references are validated for status (`ResolvedRefs`, including ReferenceGrant for cross-namespace refs) but never served — TLS terminates at the Cloudflare edge with Cloudflare's certificates. Parent listener secrets are never readable through a child ListenerSet.
 
