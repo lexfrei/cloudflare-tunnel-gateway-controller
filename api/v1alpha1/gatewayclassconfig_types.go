@@ -36,7 +36,7 @@ type GatewayClassConfigSpec struct {
 	// Cloudflare uses for account IDs. Validated server-side via a CRD-level CEL
 	// rule (Kubernetes >= 1.25) so an invalid value is rejected at admission time,
 	// before the controller has to reconcile it. Empty string passes through
-	// because the field is optional. Closes #110.
+	// because the field is optional.
 	// +optional
 	// +kubebuilder:validation:XValidation:rule="self == '' || self.matches('^[a-f0-9]{32}$')",message="accountID must be a 32-character lowercase hexadecimal string (Cloudflare account ID format)"
 	AccountID string `json:"accountId,omitempty"`

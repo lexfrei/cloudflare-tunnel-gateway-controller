@@ -60,7 +60,7 @@ spec:
                   Cloudflare uses for account IDs. Validated server-side via a CRD-level CEL
                   rule (Kubernetes >= 1.25) so an invalid value is rejected at admission time,
                   before the controller has to reconcile it. Empty string passes through
-                  because the field is optional. Closes #110.
+                  because the field is optional.
                 type: string
                 x-kubernetes-validations:
                 - message: accountID must be a 32-character lowercase hexadecimal
