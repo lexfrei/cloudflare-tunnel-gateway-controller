@@ -1700,3 +1700,135 @@ func TestHandler_XOriginalHostRestoredWithoutRewrite(t *testing.T) {
 	assert.Empty(t, obs.xOriginalHost,
 		"the X-Original-Host transport header must be stripped before the backend")
 }
+
+// TestHandler_ReRouteAfterURLRewrite pins the Knative DomainMapping -> ksvc
+// cluster-local two-hop optimization. net-gateway-api generates an HTTPRoute
+// whose rule-level URL rewrite filter changes the Host to <ksvc>.svc.cluster.local
+// and whose backend is the ksvc's ExternalName Service (pointing at this
+// proxy). A naive forward would round-trip back into the proxy and exceed
+// the 1s prober timeout. After the rewrite, the rewritten Host already
+// matches a DIFFERENT rule (the ksvc's cluster-local rule), so the handler
+// must re-match and use that backend directly.
+//
+// Without this guard, a future refactor that drops the re-match step would
+// silently turn every Knative DomainMapping probe into an infinite loop
+// through the proxy's own in-cluster service, and the KIngress would stay
+// Ready=Unknown forever (#511).
+func TestHandler_ReRouteAfterURLRewrite(t *testing.T) {
+	t.Parallel()
+
+	const rewritten = "final.default.svc.cluster.local"
+
+	// Two backends. If the re-match fires, the rewritten request lands on
+	// `final`; if it doesn't (regression), the request hits `redirected`
+	// (the ExternalName-shaped URL the first rule forwards to).
+	final := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("X-Matched", "final")
+		writer.WriteHeader(http.StatusOK)
+	}))
+	defer final.Close()
+
+	redirected := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("X-Matched", "redirected")
+		writer.WriteHeader(http.StatusOK)
+	}))
+	defer redirected.Close()
+
+	router := proxy.NewRouter()
+
+	hostname := rewritten
+	cfg := &proxy.Config{
+		Version: 1,
+		Rules: []proxy.RouteRule{
+			{
+				Hostnames: []string{"foobar3.example.com"},
+				Filters: []proxy.RouteFilter{{
+					Type: proxy.FilterURLRewrite,
+					URLRewrite: &proxy.URLRewriteConfig{
+						Hostname: &hostname,
+					},
+				}},
+				Backends: []proxy.BackendRef{{URL: redirected.URL, Weight: 1}},
+			},
+			{
+				Hostnames: []string{rewritten},
+				Backends:  []proxy.BackendRef{{URL: final.URL, Weight: 1}},
+			},
+		},
+	}
+	require.NoError(t, router.UpdateConfig(cfg))
+
+	handler := proxy.NewHandler(router)
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://foobar3.example.com/", nil)
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, req)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	assert.Equal(t, "final", recorder.Header().Get("X-Matched"),
+		"re-match after URLRewrite MUST collapse the two-hop into the rewritten rule's backend")
+}
+
+// TestHandler_ReRouteDepthCap locks the safety rail: a rewrite chain deeper
+// than reRouteMaxDepth must NOT re-match further. A regression that drops
+// the cap would let a misconfigured rule loop forever and hang the proxy.
+func TestHandler_ReRouteDepthCap(t *testing.T) {
+	t.Parallel()
+
+	const original = "a.example.com"
+	const rewritten1 = "b.example.com"
+	const rewritten2 = "c.example.com"
+
+	sink := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusOK)
+	}))
+	defer sink.Close()
+
+	router := proxy.NewRouter()
+
+	h1, h2 := rewritten1, rewritten2
+	cfg := &proxy.Config{
+		Version: 1,
+		Rules: []proxy.RouteRule{
+			{
+				Hostnames: []string{original},
+				Filters: []proxy.RouteFilter{{
+					Type:       proxy.FilterURLRewrite,
+					URLRewrite: &proxy.URLRewriteConfig{Hostname: &h1},
+				}},
+				Backends: []proxy.BackendRef{{URL: sink.URL, Weight: 1}},
+			},
+			{
+				Hostnames: []string{rewritten1},
+				Filters: []proxy.RouteFilter{{
+					Type:       proxy.FilterURLRewrite,
+					URLRewrite: &proxy.URLRewriteConfig{Hostname: &h2},
+				}},
+				Backends: []proxy.BackendRef{{URL: sink.URL, Weight: 1}},
+			},
+			{
+				Hostnames: []string{rewritten2},
+				Backends:  []proxy.BackendRef{{URL: sink.URL, Weight: 1}},
+			},
+		},
+	}
+	require.NoError(t, router.UpdateConfig(cfg))
+
+	handler := proxy.NewHandler(router)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://a.example.com/", nil)
+	recorder := httptest.NewRecorder()
+
+	// Must not deadlock. The depth cap guarantees the handler returns
+	// (it falls through to the first rule's backend on the second hop).
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		handler.ServeHTTP(recorder, req)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler did not return within 2s — re-route depth cap regressed")
+	}
+}
