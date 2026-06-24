@@ -94,6 +94,17 @@ spec:
     - name: http
       protocol: HTTP
       port: 8080
+      # REQUIRED for Knative: net-gateway-api creates the cluster-local
+      # HTTPRoutes (*.svc.cluster.local) in the APPLICATION namespace (e.g.
+      # `default`), not in the Gateway's namespace. The listener default is
+      # `allowedRoutes.namespaces.from: Same`, which rejects those routes with
+      # `Accepted=False | NotAllowedByListeners` — the proxy then has no route
+      # for the cluster-local host, the probe returns 404, and the KIngress
+      # stays Ready=Unknown. `from: All` (or a Selector matching your Knative
+      # app namespaces) lets the cluster-local routes attach.
+      allowedRoutes:
+        namespaces:
+          from: All
 ```
 
 !!! note
@@ -134,6 +145,11 @@ a new Revision rolls over cleanly.
 ## Verifying
 
 ```bash
+# The HTTPRoute net-gateway-api creates for the cluster-local host MUST be
+# Accepted=True on the Gateway listener, or the probe will get a 404:
+kubectl get httproute -A \
+  -o jsonpath='{range .items[*]}{.metadata.namespace}{"/"}{.metadata.name}{"  "}{.status.parents[0].conditions[?(@.type=="Accepted")].status}{"\n"}{end}'
+
 # Probe should now succeed (200) against the proxy pods on :8080
 kubectl -n knative-serving logs -l app=net-gateway-api -c controller \
   | grep Probing
