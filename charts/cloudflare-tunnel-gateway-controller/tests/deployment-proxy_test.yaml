@@ -505,3 +505,33 @@ tests:
       - notMatchRegex:
           path: spec.template.spec.containers[0].env[*].name
           pattern: "^PROXY_TRACING_ENDPOINT$"
+
+  # The opt-in in-cluster listener gates the proxy HTTP listener in tunnel mode
+  # (cmd/proxy PROXY_IN_CLUSTER_LISTENER). Default off keeps the tunnel-only
+  # data plane unchanged; enabling it must flip the env on so net-gateway-api's
+  # readiness probe can reach the data plane.
+  - it: should not set PROXY_IN_CLUSTER_LISTENER when disabled (default)
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          any: true
+          content:
+            name: PROXY_IN_CLUSTER_LISTENER
+
+  - it: should set PROXY_IN_CLUSTER_LISTENER=true when inClusterListener enabled
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
+        inClusterListener:
+          enabled: true
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: PROXY_IN_CLUSTER_LISTENER
+            value: "true"

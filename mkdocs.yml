@@ -187,6 +187,7 @@ nav:
       - Multi-Tenancy: guides/multi-tenancy.md
       - Per-Gateway Isolation: guides/per-gateway-isolation.md
       - Monitoring: guides/monitoring.md
+      - Knative Serving: guides/knative.md
   - Operations:
       - operations/index.md
       - Troubleshooting: operations/troubleshooting.md

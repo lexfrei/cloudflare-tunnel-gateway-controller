@@ -504,6 +504,39 @@ proxy:
   service:
     # -- Service annotations
     annotations: {}
+  # -- Opt-in in-cluster HTTP listener, for use behind Knative Serving via
+  # net-gateway-api. Knative's status prober validates a KIngress by dialing the
+  # gateway DATA PLANE directly over HTTP from inside the cluster; this
+  # controller's data plane is otherwise tunnel-only (reachable solely through
+  # the Cloudflare edge), so the probe can never succeed and revisions stay
+  # not-Ready forever. Enabling this starts an extra HTTP listener on the proxy
+  # port serving the SAME L7 handler cloudflared serves, renders a dedicated
+  # ClusterIP Service for it (which net-gateway-api dials), and admits the probe
+  # source namespace through the proxy NetworkPolicy. Off by default — the
+  # tunnel-only data plane is unchanged for non-Knative users.
+  inClusterListener:
+    # -- Start an in-cluster HTTP listener on the proxy port and render a Service
+    # for it, so Knative net-gateway-api's readiness probe can reach the data
+    # plane. Requires pointing net-gateway-api's config-gateway `service:` at the
+    # rendered Service (see the Knative guide in the docs).
+    enabled: false
+    # -- ClusterIP Service for the in-cluster listener.
+    service:
+      # -- Annotations for the in-cluster listener Service.
+      annotations: {}
+    # -- NetworkPolicy source configuration for the in-cluster listener port.
+    # The prober runs in the net-gateway-api controller's namespace, so the
+    # namespace where that controller is installed MUST be listed here; the
+    # release namespace is always admitted in addition, so a co-located install
+    # works without configuration. Standard Knative installs put both Serving
+    # and net-gateway-api in the `knative-serving` namespace, which is the
+    # default.
+    networkPolicy:
+      # -- Namespaces allowed to dial the in-cluster listener (probe source).
+      # Defaults to the conventional Knative install namespace; override to match
+      # your net-gateway-api controller's namespace if it differs.
+      namespaces:
+        - knative-serving
   # -- NetworkPolicy configuration for proxy pods. On by default: it locks the
   # config-API port (which can hijack routing via PUT /config) to the
   # controller namespace. No-op where the CNI does not enforce NetworkPolicy.

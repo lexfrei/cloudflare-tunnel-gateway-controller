@@ -46,6 +46,10 @@ spec:
               value: ":{{ .Values.proxy.configAPIPort }}"
             - name: PROXY_ADDR
               value: ":{{ .Values.proxy.proxyPort }}"
+            {{- if .Values.proxy.inClusterListener.enabled }}
+            - name: PROXY_IN_CLUSTER_LISTENER
+              value: "true"
+            {{- end }}
             - name: PROXY_GRACE_PERIOD
               value: "{{ int (.Values.proxy.gracePeriodSeconds | default 30) }}s"
             - name: PROXY_METRICS_ENABLED

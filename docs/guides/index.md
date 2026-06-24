@@ -54,6 +54,14 @@ This section contains step-by-step guides for common integration scenarios and a
 
     [:octicons-arrow-right-24: Per-Gateway Isolation](per-gateway-isolation.md)
 
+-   :material-function-variant:{ .lg .middle } **Knative Serving**
+
+    ---
+
+    Use this controller as the Gateway API implementation behind Knative Serving (net-gateway-api).
+
+    [:octicons-arrow-right-24: Knative Serving](knative.md)
+
 </div>
 
 ## Prerequisites
@@ -74,3 +82,4 @@ Before following these guides, ensure you have:
 | Production observability | [Monitoring](monitoring.md) |
 | Shared cluster with multiple teams | [Multi-Tenancy](multi-tenancy.md) |
 | Hard tenant isolation (own proxy + tunnel) | [Per-Gateway Isolation](per-gateway-isolation.md) |
+| Knative Serving via net-gateway-api | [Knative Serving](knative.md) |

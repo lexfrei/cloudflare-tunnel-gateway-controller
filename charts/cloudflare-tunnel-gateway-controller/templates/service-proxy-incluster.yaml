@@ -1,0 +1,27 @@
+{{- if .Values.proxy.inClusterListener.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "cf-tunnel-gw-ctrl.proxyInClusterName" . }}
+  labels:
+    {{- include "cf-tunnel-gw-ctrl.proxyLabels" . | nindent 4 }}
+  {{- with .Values.proxy.inClusterListener.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: ClusterIP
+  ports:
+    # The FIRST port is the proxy port AND it is named "http": net-gateway-api's
+    # status prober dials a Service's first port (falling back from a name match
+    # against http/http2/http-80). Pointing config-gateway `service:` at this
+    # Service therefore makes the probe reach the in-cluster L7 listener on the
+    # proxy port deterministically, regardless of how the config/health Service
+    # (which lists config-api first) is shaped.
+    - name: http
+      port: {{ .Values.proxy.proxyPort }}
+      targetPort: proxy
+      protocol: TCP
+  selector:
+    {{- include "cf-tunnel-gw-ctrl.proxySelectorLabels" . | nindent 4 }}
+{{- end }}
