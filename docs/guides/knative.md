@@ -37,9 +37,9 @@ probeable in-cluster without changing the default (tunnel-only) behaviour for
 non-Knative users. Enabling it does three things:
 
 1. **Starts an extra HTTP listener** on the proxy port (`8080`) serving the
-   *same* L7 handler `cloudflared` serves, so an in-cluster request is routed to
-   the real backend (the Knative queue-proxy / activator), which answers the
-   probe with `200` + `K-Network-Hash`.
+   *same* L7 handler `cloudflared` serves, so `net-gateway-api`'s prober can
+   reach the data plane in-cluster. On this listener the gateway answers the
+   readiness probe **authoritatively** (see below) rather than forwarding it.
 2. **Renders a dedicated `ClusterIP` Service** whose **first** port is the proxy
    port and is named `http` — `net-gateway-api` dials a Service's first port
    (falling back from a name match against `http`/`http2`/`http-80`), so this
@@ -47,6 +47,42 @@ non-Knative users. Enabling it does three things:
 3. **Admits the prober's namespace** through the proxy `NetworkPolicy` (the
    shipped policy otherwise allows only the config-API port from the controller
    namespace).
+
+### How the readiness probe is answered
+
+`net-gateway-api` validates a KIngress by asking the gateway "have you converged
+on config version `X`?". It encodes `X` into the `HTTPRoute` itself: every probe
+rule matches `K-Network-Hash: override` and carries a `RequestHeaderModifier`
+that sets `K-Network-Hash` to the concrete version; the prober expects the
+response to echo that value.
+
+The gateway answers this **authoritatively**. When a request arrives **on the
+in-cluster listener** carrying `K-Network-Probe: probe` **and** `K-Network-Hash:
+override`, and it matches a rule whose `RequestHeaderModifier` sets a concrete
+`K-Network-Hash`, the proxy replies `200` with that concrete hash and an empty
+body — **without forwarding**. This is exactly what the prober checks, and it is:
+
+- **Single-hop** — comfortably under `net-gateway-api`'s 1s probe timeout.
+- **Scale-to-zero safe** — it never dials a backend, so a Revision sitting at
+  zero replicas (served by the activator) is reported ready immediately.
+- **Loop-free** — for a `DomainMapping` the ksvc `Service` is an `ExternalName`
+  pointing back at this proxy. Forwarding the probe re-entered the proxy with
+  `K-Network-Hash` already rewritten away from `override`, so the inner
+  cluster-local probe rule no longer matched and the request was delivered to the
+  user app as ordinary traffic — which `404`s (or hangs at zero replicas). That
+  re-entry loop is why a `DomainMapping` whose `ref` was **updated** previously
+  got stuck at `LoadBalancerReady=Unknown`; answering at the gateway removes it.
+
+A `Ready` KIngress under this scheme means **the gateway has converged on the
+expected ingress config**; pod-level readiness is still handled by Knative's own
+activator / queue-proxy. This is a deliberate, documented Gateway API deviation
+(the proxy synthesizes a `200` for a request it would otherwise forward), scoped
+strictly to Knative endpoint-probe requests on the in-cluster listener.
+
+**Security scope:** the probe ack fires **only** on the in-cluster listener,
+never on the Cloudflare edge / tunnel path. An external client cannot forge the
+`K-Network-*` headers to extract the config hash or obtain a synthetic `200` —
+edge requests are always forwarded as ordinary traffic.
 
 ## Setup
 
@@ -171,5 +207,10 @@ kubectl get revisions
   scoped by the proxy `NetworkPolicy` to the release namespace plus the
   namespaces you list in `proxy.inClusterListener.networkPolicy.namespaces`.
   Keep that list to only the net-gateway-api controller's namespace.
+- **`DomainMapping` create, `ref` update, and scale-to-zero all converge.**
+  Because the gateway answers the readiness probe authoritatively (see *How the
+  readiness probe is answered*), flipping a `DomainMapping` to a different
+  Knative `Service` — or probing one whose Revision has scaled to zero — reaches
+  `Ready=True` instead of getting stuck at `LoadBalancerReady=Unknown`.
 - **Off by default.** Non-Knative deployments are unaffected: the tunnel-only
   data plane is unchanged unless `proxy.inClusterListener.enabled` is `true`.

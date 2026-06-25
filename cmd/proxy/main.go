@@ -314,7 +314,12 @@ func startInClusterListener(logger *slog.Logger, handler http.Handler, cancel co
 		return nil
 	}
 
-	server := newProxyServer(envOrDefault("PROXY_ADDR", defaultProxyAddr), handler)
+	// Tag requests served here as in-cluster so the L7 handler may answer
+	// config-convergence self-probes (e.g. Knative net-gateway-api) authoritatively.
+	// The tunnel/edge path (tunnel.NewGatewayOriginProxy) keeps the bare handler,
+	// so an external client can never forge a probe to extract the config value.
+	// See internal/proxy/self_probe.go.
+	server := newProxyServer(envOrDefault("PROXY_ADDR", defaultProxyAddr), proxy.InClusterProbeMiddleware(handler))
 
 	go func() {
 		logger.Info("starting in-cluster proxy listener", "addr", server.Addr)

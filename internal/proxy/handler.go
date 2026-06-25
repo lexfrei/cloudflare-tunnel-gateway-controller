@@ -343,6 +343,18 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	// Answer a config-convergence self-probe (e.g. Knative net-gateway-api)
+	// authoritatively. This MUST run before ApplyRequestFilters, which rewrites
+	// the probe's echo header from its sentinel to the concrete value, and is
+	// scoped to the in-cluster listener (never the tunnel/edge path) so the
+	// gateway cannot be probe-spoofed from outside. See self_probe.go — forwarding
+	// the probe instead would 404 (or hang at scale-to-zero) through the ksvc
+	// ExternalName re-entry loop.
+	//nolint:contextcheck // req.Context() is derived from the inbound request; contextcheck loses provenance through instrumentRequest's returned req (same false positive handled below for matchedPrefixKey)
+	if requestFromInClusterListener(req.Context()) && answerSelfProbe(writer, req, result.Rule) {
+		return
+	}
+
 	// Per-rule timeouts (Request / BackendRequest) are enforced
 	// downstream by the cached transport's ResponseHeaderTimeout
 	// (set in newTransport from ruleHeaderTimeout's collapse). No
