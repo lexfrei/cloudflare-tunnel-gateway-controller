@@ -1,6 +1,7 @@
 package docsdrift_test
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -40,6 +41,46 @@ func TestDocsPinnedGatewayAPIVersionMatchesVendored(t *testing.T) {
 			file:   filepath.Join("..", "..", "README.md"),
 			needle: "releases/download/" + consts.BundleVersion + "/standard-install.yaml",
 			why:    "the README quick start must fetch the same bundle version the controller is built against",
+		},
+		{
+			file:   filepath.Join("..", "..", "docs", "index.md"),
+			needle: "releases/download/" + consts.BundleVersion + "/standard-install.yaml",
+			why:    "the docs homepage install command must match the built-against bundle",
+		},
+		{
+			file:   filepath.Join("..", "..", "docs", "development", "setup.md"),
+			needle: "releases/download/" + consts.BundleVersion + "/standard-install.yaml",
+			why:    "the dev setup install command must match the built-against bundle",
+		},
+		{
+			file:   filepath.Join("..", "..", "docs", "operations", "manual-installation.md"),
+			needle: "releases/download/" + consts.BundleVersion + "/standard-install.yaml",
+			why:    "the manual install command must match the built-against bundle",
+		},
+		{
+			file:   filepath.Join("..", "..", "docs", "reference", "crd-reference.md"),
+			needle: "releases/download/" + consts.BundleVersion + "/standard-install.yaml",
+			why:    "the CRD reference install command must match the built-against bundle",
+		},
+		{
+			file:   filepath.Join("..", "..", "docs", "reference", "helm-chart.md"),
+			needle: "releases/download/" + consts.BundleVersion + "/standard-install.yaml",
+			why:    "the chart reference install command must match the built-against bundle",
+		},
+		{
+			file:   filepath.Join("..", "..", "charts", "cloudflare-tunnel-gateway-controller", "README.md.gotmpl"),
+			needle: "releases/download/" + consts.BundleVersion + "/standard-install.yaml",
+			why:    "the chart README template (helm-docs source) must match the built-against bundle",
+		},
+		{
+			file:   filepath.Join("..", "..", "hack", "conformance-setup.sh"),
+			needle: "GATEWAY_API_VERSION=\"" + consts.BundleVersion + "\"",
+			why:    "the vendored suite refuses to run against a CRD bundle that differs from consts.BundleVersion",
+		},
+		{
+			file:   filepath.Join("..", "..", "CLAUDE.md"),
+			needle: "sigs.k8s.io/gateway-api/conformance` " + consts.BundleVersion,
+			why:    "the contributor doc names the conformance suite version",
 		},
 	}
 
@@ -100,6 +141,16 @@ func TestDocsDoNotReclaimLiftedConformanceSkips(t *testing.T) {
 			needle: "gRPC dialer cannot reach",
 			why:    "the conformance gRPC tests dial the Cloudflare edge via the injectable TunnelGRPCClient",
 		},
+		{
+			file:   filepath.Join("..", "..", "test", "e2e", "e2e_backend_protocol_websocket_test.go"),
+			needle: "cannot run",
+			why:    "the conformance WebSocket test runs through the injectable dialer; the e2e is the production-pattern complement, not a substitute",
+		},
+		{
+			file:   filepath.Join("..", "..", "test", "e2e", "e2e_backend_protocol_websocket_test.go"),
+			needle: "no RoundTripper hook",
+			why:    "gateway-api v1.6.0 added the WebSocket dialer injection point",
+		},
 	}
 
 	for _, claim := range forbidden {
@@ -112,6 +163,41 @@ func TestDocsDoNotReclaimLiftedConformanceSkips(t *testing.T) {
 				"%s still contains %q — %s; the claim was retired by the gateway-api v1.6.0 bump",
 				claim.file, claim.needle, claim.why,
 			)
+		}
+	}
+}
+
+// TestNoRealInfrastructureHostnamesInFixtures keeps real tunnel hostnames out
+// of committed fixtures — .env.example is explicit that real hostnames live
+// only in the uncommitted .env. Reserved example domains (RFC 2606) are the
+// fixture vocabulary.
+func TestNoRealInfrastructureHostnamesInFixtures(t *testing.T) {
+	t.Parallel()
+
+	roots := []string{
+		filepath.Join("..", "..", "test"),
+		filepath.Join("..", "..", "internal"),
+		filepath.Join("..", "..", "docs"),
+	}
+
+	for _, root := range roots {
+		err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+			if walkErr != nil || entry.IsDir() {
+				return walkErr
+			}
+			body, readErr := os.ReadFile(path)
+			if readErr != nil {
+				return fmt.Errorf("reading %s: %w", path, readErr)
+			}
+			realHostnameSuffix := "lexfrei" + ".dev" // concatenated so this scanner does not match itself
+			if strings.Contains(string(body), realHostnameSuffix) {
+				t.Errorf("%s references a real infrastructure hostname (%s); use an RFC 2606 example domain in fixtures", path, realHostnameSuffix)
+			}
+
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("walking %s: %v", root, err)
 		}
 	}
 }
