@@ -49,7 +49,14 @@ func TestBuild_WarnMultipleBackendRefs(t *testing.T) {
 	assert.Contains(t, logs, `"ignored_backends":2`)
 }
 
-func TestBuild_WarnBackendRefWeights(t *testing.T) {
+// TestBuild_WeightedBackendRefsNoWeightWarning pins the fix for the
+// misleading "backendRef weight ignored, traffic splitting not supported"
+// log: weight is fully honored end-to-end by the in-process L7 proxy
+// (weighted-random selection across all backendRefs), so the Cloudflare-side
+// ingress builder — which only programs DNS/edge routing and never serves
+// traffic itself — must not claim weight is ignored or that traffic
+// splitting is unsupported.
+func TestBuild_WeightedBackendRefsNoWeightWarning(t *testing.T) {
 	t.Parallel()
 
 	logger, buf := logging.TestLogger(t)
@@ -80,12 +87,50 @@ func TestBuild_WarnBackendRefWeights(t *testing.T) {
 	_ = builder.Build(context.Background(), routes)
 
 	logs := buf.String()
-	assert.Contains(t, logs, "route configuration partially applied")
-	assert.Contains(t, logs, `"route":"production/weighted-route"`)
-	assert.Contains(t, logs, "backendRef weight ignored")
-	assert.Contains(t, logs, "traffic splitting not supported")
-	// Should log for both backends with weights
-	assert.Equal(t, 2, strings.Count(logs, `"weight":`))
+	assert.NotContains(t, logs, "backendRef weight ignored")
+	assert.NotContains(t, logs, "traffic splitting not supported")
+	// Multiple backendRefs still legitimately reduces to one Cloudflare-side
+	// ingress URL, which stays a genuine (and separately logged) fact about
+	// that document — untouched by this fix.
+	assert.Contains(t, logs, "multiple backendRefs specified")
+}
+
+// TestBuild_SingleWeightedBackendRefNoWarnings reproduces the exact report
+// in issue #510: a single backendRef with an explicit non-default weight
+// (e.g. weight: 100, as Knative's net-gateway-api sets on every generated
+// HTTPRoute) involves no traffic splitting at all — there is only one
+// backend. The route must produce zero "route configuration partially
+// applied" warnings.
+func TestBuild_SingleWeightedBackendRefNoWarnings(t *testing.T) {
+	t.Parallel()
+
+	logger, buf := logging.TestLogger(t)
+	builder := ingress.NewBuilder("cluster.local", nil, nil, nil, logger)
+	weight100 := int32(100)
+
+	routes := []gatewayv1.HTTPRoute{
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "single-weighted-route",
+				Namespace: "default",
+			},
+			Spec: gatewayv1.HTTPRouteSpec{
+				Hostnames: []gatewayv1.Hostname{"app.example.com"},
+				Rules: []gatewayv1.HTTPRouteRule{
+					{
+						BackendRefs: []gatewayv1.HTTPBackendRef{
+							newHTTPBackendRefWithWeight("service1", &weight100, int32Ptr(8080)),
+						},
+					},
+				},
+			},
+		},
+	}
+
+	_ = builder.Build(context.Background(), routes)
+
+	logs := buf.String()
+	assert.Empty(t, logs, "a single weighted backendRef involves no splitting and must not warn")
 }
 
 func TestBuild_WarnHeaderMatching(t *testing.T) {
@@ -367,13 +412,14 @@ func TestBuild_MultipleWarnings(t *testing.T) {
 	_ = builder.Build(context.Background(), routes)
 
 	logs := buf.String()
-	// Should have warnings for: multiple backends, weights, method, headers
+	// Should have warnings for: multiple backends, method, headers.
+	// Weight itself is fully honored by the L7 proxy and never warned about.
 	assert.Contains(t, logs, "multiple backendRefs specified")
-	assert.Contains(t, logs, "backendRef weight ignored")
+	assert.NotContains(t, logs, "backendRef weight ignored")
 	assert.Contains(t, logs, "method matching not supported")
 	assert.Contains(t, logs, "header matching not supported")
 	// All warnings should reference the same route
-	assert.GreaterOrEqual(t, strings.Count(logs, `"route":"default/complex-route"`), 4)
+	assert.GreaterOrEqual(t, strings.Count(logs, `"route":"default/complex-route"`), 3)
 }
 
 func TestBuild_NoWarningsForValidConfig(t *testing.T) {

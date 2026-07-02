@@ -109,7 +109,6 @@ func resolveRuleBackendRefs(
 	}
 
 	logMultipleBackends(resolver, namespace, routeName, len(refs))
-	logBackendWeights(resolver, namespace, routeName, refs)
 
 	selectedIdx := SelectHighestWeightIndex(refs)
 	if selectedIdx == -1 {
@@ -168,19 +167,5 @@ func logMultipleBackends(resolver *backendResolver, namespace, routeName string,
 			"total_backends", totalBackends,
 			"ignored_backends", totalBackends-1,
 		)
-	}
-}
-
-func logBackendWeights(resolver *backendResolver, namespace, routeName string, refs []gatewayv1.BackendRef) {
-	for i, backendRef := range refs {
-		if backendRef.Weight != nil && *backendRef.Weight != 1 {
-			resolver.logger.Info("route configuration partially applied",
-				"route", fmt.Sprintf("%s/%s", namespace, routeName),
-				"reason", "backendRef weight ignored, traffic splitting not supported",
-				"backend", string(backendRef.Name),
-				"backend_index", i,
-				"weight", *backendRef.Weight,
-			)
-		}
 	}
 }
