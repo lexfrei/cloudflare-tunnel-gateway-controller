@@ -187,6 +187,14 @@ func TestGatewayAPIConformance(t *testing.T) {
 		TimeoutConfig: timeouts,
 	}
 
+	// --- Custom WebSocket dialer ---
+	// The default dialer connects to the Gateway address directly (a tunnel
+	// CNAME, unroutable from a test runner). TunnelWebSocketDialer routes the
+	// handshake through the edge instead, mirroring TunnelRoundTripper and
+	// TunnelGRPCClient (upstream gateway-api v1.6.0 injectable dialer,
+	// kubernetes-sigs/gateway-api#4936 / #5003).
+	opts.WebSocketDialer = &TunnelWebSocketDialer{}
+
 	// --- Implementation metadata ---
 	opts.Implementation = confv1.Implementation{
 		Organization: "lexfrei",
@@ -282,17 +290,6 @@ func conformanceSkipTests() []string {
 		"GatewayFrontendInvalidDefaultClientCertificateValidation",
 		"GatewayInvalidFrontendClientCertificateValidation",
 		"GatewayWithAttachedRoutesWithPort8080",
-
-		// WebSocket: the upstream test calls
-		// golang.org/x/net/websocket.Dial against the Gateway address and
-		// has no RoundTripper hook for a custom dialer. The Gateway address
-		// is *.cfargotunnel.com whose AAAA records point at Cloudflare's
-		// ULA (fd10::/8) — unreachable from any external test runner. The
-		// proxy's WebSocket path is exercised by the
-		// HTTPRouteBackendProtocolWebSocket e2e against the real tunnel
-		// hostname; the feature flag stays declared in SupportedFeatures
-		// above so the conformance report reflects actual support.
-		"HTTPRouteBackendProtocolWebSocket",
 	}
 }
 
@@ -402,6 +399,10 @@ func TestStaleSkipsStayLifted(t *testing.T) {
 		// Lifted once gateway-api v1.6.0 routed the distribution sampler
 		// through the injectable suite.GRPCClient (upstream #4937/#5004).
 		"GRPCRouteWeight",
+		// Lifted once gateway-api v1.6.0 added an injectable suite.WebSocketDialer
+		// (upstream #4936/#5003); TunnelWebSocketDialer routes the handshake
+		// through the edge like TunnelRoundTripper and TunnelGRPCClient.
+		"HTTPRouteBackendProtocolWebSocket",
 	}
 
 	for _, name := range lifted {
