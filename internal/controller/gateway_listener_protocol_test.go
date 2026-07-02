@@ -94,6 +94,10 @@ func TestGatewayReconciler_UnsupportedListenerProtocol_AcceptedFalse(t *testing.
 		{"TCP", gatewayv1.TCPProtocolType},
 		{"TLS", gatewayv1.TLSProtocolType},
 		{"UDP", gatewayv1.UDPProtocolType},
+		// INVALID (an unrecognised protocol) is the shape the conformance suite
+		// uses; its default route kinds differ from TCP/TLS/UDP, so it exercises
+		// the SupportedKinds reset separately.
+		{"INVALID", gatewayv1.ProtocolType("INVALID")},
 	}
 
 	for _, tc := range cases {
@@ -111,6 +115,8 @@ func TestGatewayReconciler_UnsupportedListenerProtocol_AcceptedFalse(t *testing.
 				"a listener with an unservable protocol must be Accepted=False")
 			assert.Equal(t, string(gatewayv1.ListenerReasonUnsupportedProtocol), accepted.Reason)
 			assert.Contains(t, accepted.Message, string(tc.protocol), "message must name the unsupported protocol")
+			assert.Empty(t, statuses[0].SupportedKinds,
+				"a listener with an unservable protocol supports no route kinds")
 		})
 	}
 }

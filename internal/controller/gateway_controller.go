@@ -356,8 +356,16 @@ func (r *GatewayReconciler) updateStatus(
 			resolvedRefsCondition := r.buildResolvedRefsCondition(
 				freshGateway.Generation, now, hasValidKind, hasInvalidKind, tlsStatus, tlsReason, tlsMessage,
 			)
-			if !hasValidKind {
-				supportedKinds = []gatewayv1.RouteGroupKind{} // Empty slice (not nil) when no valid kinds
+			// Empty slice (not nil) when no valid kinds. A protocol this
+			// controller cannot serve supports no route kinds either: an
+			// unrecognised protocol (e.g. the conformance suite's INVALID)
+			// otherwise defaults to HTTPRoute/GRPCRoute in FilterSupportedKinds and
+			// would report a non-empty SupportedKinds alongside its
+			// Accepted=False/UnsupportedProtocol verdict — contradictory, and the
+			// spec requires an empty list. Same servability predicate as the
+			// Accepted condition, so the two cannot drift.
+			if !hasValidKind || !servableListenerProtocol(listener.Protocol) {
+				supportedKinds = []gatewayv1.RouteGroupKind{}
 			}
 
 			programmedCondition := metav1.Condition{
