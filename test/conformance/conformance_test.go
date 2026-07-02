@@ -238,6 +238,20 @@ func conformanceSkipTests() []string {
 		// HTTPRouteListenerHostnameMatching, which is run).
 		"HTTPRouteHostnameIntersection",
 
+		// HTTPRouteMultipleGateways (v1.6.0) attaches one HTTPRoute to two
+		// Gateways and asserts each Gateway's dedicated route is reachable ONLY
+		// through that Gateway's own address. Both test Gateways resolve to the
+		// SAME shared Cloudflare Tunnel (one GatewayClassConfig → one tunnel
+		// CNAME), so their dedicated routes — same hostname, same path `/`,
+		// different parent Gateway — collapse into the shared proxy's single
+		// routing table where one wins by precedence: a request to Gateway A's
+		// address reaches Gateway B's dedicated backend. Same single-tunnel
+		// listener-flattening gap as HTTPRouteHostnameIntersection above; hard
+		// per-Gateway isolation requires the opt-in dedicated data plane
+		// (separate tunnel per Gateway), which the shared-plane conformance run
+		// does not exercise.
+		"HTTPRouteMultipleGateways",
+
 		// Cloudflare terminates TLS at edge — we don't control certs.
 		"HTTPRouteHTTPSListener",
 		"HTTPRouteHTTPSListenerDetectMisdirectedRequests",
