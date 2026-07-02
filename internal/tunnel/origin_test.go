@@ -21,6 +21,7 @@ import (
 	"github.com/cloudflare/cloudflared/connection"
 	"github.com/cloudflare/cloudflared/tracing"
 
+	proxypkg "github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/proxy"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/tunnel"
 )
 
@@ -30,6 +31,11 @@ var _ connection.OriginProxy = (*tunnel.GatewayOriginProxy)(nil)
 // testResponseWriter wraps httptest.ResponseRecorder to implement connection.ResponseWriter.
 type testResponseWriter struct {
 	*httptest.ResponseRecorder
+
+	// trailers records values passed to AddTrailer — the ONLY path that puts
+	// trailers on the cloudflared HTTP/2 wire (httptest.ResponseRecorder's own
+	// Trailer map is not populated by that call).
+	trailers http.Header
 }
 
 func (t *testResponseWriter) WriteRespHeaders(status int, header http.Header) error {
@@ -40,7 +46,13 @@ func (t *testResponseWriter) WriteRespHeaders(status int, header http.Header) er
 	return nil
 }
 
-func (t *testResponseWriter) AddTrailer(_, _ string) {}
+func (t *testResponseWriter) AddTrailer(name, value string) {
+	if t.trailers == nil {
+		t.trailers = http.Header{}
+	}
+
+	t.trailers.Add(name, value)
+}
 
 func (t *testResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	return nil, nil, http.ErrNotSupported
@@ -128,6 +140,66 @@ func TestGatewayOriginProxy_ProxyHTTP_WritesResponse(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusCreated, rw.Code)
 	assert.Equal(t, "created", rw.Body.String())
+}
+
+// TestGatewayOriginProxy_ProxyHTTP_GRPCNoMatchEmitsUnimplemented pins the
+// gRPC half of the no-hostname-match clause (Gateway API v1.6.0, #4408) on the
+// PRODUCTION path — the cloudflared HTTP/2 writer via the trailer bridge, NOT
+// httptest. A gRPC request that matches no route must reach the client as
+// Unimplemented, which requires a trailers-only response carrying
+// grpc-status: 12. A bare HTTP 404 (what the handler emits for a non-gRPC
+// no-match) reaches a gRPC client as "stream closed without trailers"
+// (Internal) over the real tunnel — the exact failure the httptest-only test
+// masked.
+func TestGatewayOriginProxy_ProxyHTTP_GRPCNoMatchEmitsUnimplemented(t *testing.T) {
+	t.Parallel()
+
+	// Empty router → every request is a no-match.
+	handler := proxypkg.NewHandler(proxypkg.NewRouter())
+	originProxy := tunnel.NewGatewayOriginProxy(handler, nil)
+
+	req := httptest.NewRequestWithContext(
+		t.Context(), http.MethodPost, "http://example.com/pkg.Service/Method", nil,
+	)
+	req.Header.Set("Content-Type", "application/grpc")
+
+	zlog := zerolog.Nop()
+	tracedReq := tracing.NewTracedHTTPRequest(req, 0, &zlog)
+	rw := newTestResponseWriter()
+
+	err := originProxy.ProxyHTTP(rw, tracedReq, false)
+	require.NoError(t, err)
+
+	// gRPC always uses HTTP 200; the real status rides in the trailer.
+	assert.Equal(t, http.StatusOK, rw.Code)
+	assert.Equal(t, "application/grpc", rw.Header().Get("Content-Type"))
+	require.NotNil(t, rw.trailers, "a gRPC no-match must emit a grpc-status trailer")
+	assert.Equal(t, "12", rw.trailers.Get("Grpc-Status"),
+		"a gRPC request matching no route must surface as Unimplemented (12)")
+}
+
+// TestGatewayOriginProxy_ProxyHTTP_HTTPNoMatchStays404 confirms the non-gRPC
+// no-match path is unchanged: a plain HTTP request still gets a bare 404, not
+// the gRPC trailers-only shape.
+func TestGatewayOriginProxy_ProxyHTTP_HTTPNoMatchStays404(t *testing.T) {
+	t.Parallel()
+
+	handler := proxypkg.NewHandler(proxypkg.NewRouter())
+	originProxy := tunnel.NewGatewayOriginProxy(handler, nil)
+
+	req := httptest.NewRequestWithContext(
+		t.Context(), http.MethodGet, "http://example.com/nope", nil,
+	)
+
+	zlog := zerolog.Nop()
+	tracedReq := tracing.NewTracedHTTPRequest(req, 0, &zlog)
+	rw := newTestResponseWriter()
+
+	err := originProxy.ProxyHTTP(rw, tracedReq, false)
+	require.NoError(t, err)
+
+	assert.Equal(t, http.StatusNotFound, rw.Code)
+	assert.Nil(t, rw.trailers, "a plain HTTP no-match must not emit grpc trailers")
 }
 
 // TestGatewayOriginProxy_ProxyHTTP_WebSocketReinjectsHeaders pins the bridge

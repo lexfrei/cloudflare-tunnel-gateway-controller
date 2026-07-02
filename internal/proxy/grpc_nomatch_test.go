@@ -47,10 +47,16 @@ func (rawCodec) Name() string { return "raw" }
 // TestGRPCClientObservesUnimplementedOnNoMatch pins the gRPC half of the
 // Gateway API v1.6.0 listeners clause (kubernetes-sigs/gateway-api#4408):
 // traffic that matches no configured hostname must surface to a gRPC client
-// as Unimplemented. The proxy answers a bare HTTP 404 on the no-match path;
-// the gRPC HTTP-to-status mapping has clients synthesize UNIMPLEMENTED from
-// it, and this test observes that end to end with a real grpc-go client
-// over HTTP/2.
+// as Unimplemented. The proxy emits a trailers-only gRPC response (HTTP 200 +
+// grpc-status: 12) on the no-match path, observed here end to end with a real
+// grpc-go client over HTTP/2.
+//
+// This covers the STANDALONE HTTP/2 server path. The production tunnel path
+// (cloudflared's HTTP/2 writer, where a bare 404 is seen as "stream closed
+// without trailers" / Internal) is covered separately by
+// TestGatewayOriginProxy_ProxyHTTP_GRPCNoMatchEmitsUnimplemented in
+// internal/tunnel — the two writers have different trailer contracts, so both
+// must be exercised.
 func TestGRPCClientObservesUnimplementedOnNoMatch(t *testing.T) {
 	t.Parallel()
 
