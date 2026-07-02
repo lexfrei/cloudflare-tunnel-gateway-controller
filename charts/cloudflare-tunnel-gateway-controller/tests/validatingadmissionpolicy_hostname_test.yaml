@@ -33,7 +33,7 @@ tests:
         documentIndex: 1
 
   # apiVersions MUST be a wildcard: the gateway-api CRDs serve multiple
-  # versions (v1 AND v1beta1 for httproutes in v1.5.1), and a policy pinned
+  # versions (v1 AND v1beta1 for httproutes in v1.6.0), and a policy pinned
   # to an explicit list is bypassed by writing the object via any version it
   # does not name — a trivially-documented hole in a security control.
   - it: should match every served version of HTTPRoute and GRPCRoute

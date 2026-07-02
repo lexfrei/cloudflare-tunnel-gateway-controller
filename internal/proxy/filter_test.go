@@ -599,6 +599,43 @@ func TestRequestMirror_DeliversThroughProductionTransportFactory(t *testing.T) {
 	}
 }
 
+// TestRequestMirror_PreservesQuery pins that the mirror leg replays the
+// original query string, not just the path. The Gateway API conformance suite
+// identifies a mirrored request by a query param
+// (gateway-api-conformance-request-id); dropping the query makes the mirror
+// backend log a request the suite can never match, so the mirror tests fail
+// even though the copy was delivered.
+func TestRequestMirror_PreservesQuery(t *testing.T) {
+	t.Parallel()
+
+	received := make(chan *http.Request, 1)
+
+	backend := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, req *http.Request) {
+		received <- req
+	}))
+	defer backend.Close()
+
+	filter := proxy.NewRequestMirror(backend.URL, nil, nil, proxy.BackendProtocolHTTP, nil)
+
+	req := httptest.NewRequestWithContext(
+		context.Background(), http.MethodGet,
+		"http://example.com/mirror?gateway-api-conformance-request-id=abc123&color=blue", nil,
+	)
+
+	resp := filter.ProcessRequest(req) //nolint:bodyclose // mirror returns nil response
+	assert.Nil(t, resp)
+
+	select {
+	case got := <-received:
+		assert.Equal(t, "/mirror", got.URL.Path, "mirror must preserve the request path")
+		assert.Equal(t, "abc123", got.URL.Query().Get("gateway-api-conformance-request-id"),
+			"mirror must preserve the query the conformance suite matches on")
+		assert.Equal(t, "blue", got.URL.Query().Get("color"), "mirror must preserve all query params")
+	case <-time.After(2 * time.Second):
+		t.Fatal("mirror request never reached the backend")
+	}
+}
+
 func TestRequestMirror(t *testing.T) {
 	t.Parallel()
 

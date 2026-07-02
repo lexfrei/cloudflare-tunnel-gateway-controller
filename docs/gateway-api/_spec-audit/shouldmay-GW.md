@@ -1,6 +1,6 @@
 # Gateway type — SHOULD / SHOULD NOT and MAY tier audit
 
-Gateway API v1.5.1, Gateway (`gateway_types.go`) clauses. Verified against actual code: `internal/controller/gateway_controller.go`, `internal/controller/listenerset_view.go`, `internal/listenermerge/merge.go`, `internal/config/resolver.go`, `internal/proxy/router.go`, `internal/routebinding/`. Architecture: status-only Gateway reconciler (v3), single in-process L7 proxy embedded in cloudflared (`OverrideProxy`), all tunnel traffic bypasses cloudflared native ingress; edge terminates TLS; no static IPs, no multi-port, single ingress flattening listeners.
+Gateway API v1.6.0 (originally audited at v1.5.1; the v1.6.0 refresh's new GW-106 no-hostname-match MUST is a Core clause, out of scope for this SHOULD/MAY tier — see `rows-GW.md` GW-106), Gateway (`gateway_types.go`) clauses. Verified against actual code: `internal/controller/gateway_controller.go`, `internal/controller/listenerset_view.go`, `internal/listenermerge/merge.go`, `internal/config/resolver.go`, `internal/proxy/router.go`, `internal/routebinding/`. Architecture: status-only Gateway reconciler (v3), single in-process L7 proxy embedded in cloudflared (`OverrideProxy`), all tunnel traffic bypasses cloudflared native ingress; edge terminates TLS; no static IPs, no multi-port, single ingress flattening listeners.
 
 ## TASK A — SHOULD / SHOULD NOT
 

@@ -6,6 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
+	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/api/v1alpha1"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/render"
@@ -134,4 +135,22 @@ func TestAutoscaler_CarriesOwnedLabels(t *testing.T) {
 	require.NotNil(t, hpa)
 	assert.Equal(t, "edge", hpa.Labels["cf.k8s.lex.la/gateway"],
 		"the HPA must carry the per-Gateway ownership label")
+}
+
+// TestAutoscaler_WellKnownGatewayLabels pins the GEP-1762 well-known labels
+// (kubernetes-sigs/gateway-api#4705) on the rendered HPA's metadata, matching
+// every other rendered kind.
+func TestAutoscaler_WellKnownGatewayLabels(t *testing.T) {
+	t.Parallel()
+
+	input := testInput("edge")
+	input.Config.Spec.Autoscaling = &v1alpha1.ProxyAutoscaling{
+		MaxReplicas:          5,
+		TargetInflightPerPod: 50,
+	}
+
+	hpa := render.Autoscaler(input)
+	require.NotNil(t, hpa)
+	assert.Equal(t, "edge", hpa.Labels[string(gatewayv1.GatewayNameLabelKey)])
+	assert.Equal(t, "cloudflare-tunnel", hpa.Labels[string(gatewayv1.GatewayClassNameLabelKey)])
 }

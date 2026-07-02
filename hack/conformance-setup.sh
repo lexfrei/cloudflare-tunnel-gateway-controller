@@ -47,7 +47,7 @@ TEST_NAMESPACE="conformance-test"
 RELEASE_NAME="cftunnel"
 CONTROLLER_IMAGE="controller:dev"
 PROXY_IMAGE="proxy:dev"
-GATEWAY_API_VERSION="v1.5.1"
+GATEWAY_API_VERSION="v1.6.0"
 
 # --- Flags ---
 RUN_TESTS=false
@@ -280,7 +280,11 @@ helm upgrade --install "${RELEASE_NAME}" \
   --set controller.logLevel=debug \
   --set hostnameOwnershipPolicy.enabled=true \
   --set-json 'hostnameOwnershipPolicy.namespaceSelector={"matchLabels":{"cf-e2e-hostname-policy":"enforced"}}' \
-  --wait --timeout 120s
+  --wait --timeout 300s
+# 300s, not 120s: right after install the controller stamps the shared proxy
+# pod template with cf.k8s.lex.la/tunnel-token-revision, triggering a rolling
+# update — helm must outlast TWO pod generations, each registering 4 tunnel
+# HA connections (slow on a cold local VM).
 
 # hostnameOwnershipPolicy above is scoped to the e2e marker label: only the
 # hostname-policy e2e's own namespaces are policed (both layers), so the
@@ -293,13 +297,13 @@ info "Waiting for controller deployment..."
 kubectl --context "${KUBE_CONTEXT}" rollout status deployment \
   --namespace "${NAMESPACE}" \
   "${RELEASE_NAME}-cloudflare-tunnel-gateway-controller" \
-  --timeout=120s
+  --timeout=300s
 
 info "Waiting for proxy deployment..."
 kubectl --context "${KUBE_CONTEXT}" rollout status deployment \
   --namespace "${NAMESPACE}" \
   "${RELEASE_NAME}-cloudflare-tunnel-gateway-controller-proxy" \
-  --timeout=120s
+  --timeout=300s
 
 info "All deployments ready!"
 

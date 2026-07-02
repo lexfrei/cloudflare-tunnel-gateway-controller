@@ -347,15 +347,6 @@ CONFORMANCE_REPORT_OUTPUT=./conformance-report.yaml \
 
 Profiles: `GATEWAY-HTTP`, `GATEWAY-GRPC`.
 
-### Known conformance flakes
-
-A few conformance subtests are statistical by nature and occasionally need the suite's built-in retry budget to pass over the real Cloudflare Tunnel. These are sampling-variance non-regressions, not implementation failures — a retry of the named subtest passes. They are listed here so a failed *individual* attempt in the logs is not mistaken for a regression.
-
-- **`HTTPRouteRequestPercentageMirror`** — the subtest distributes traffic and asserts the observed mirror rate lands in an 85–115% band over a 500-request sample. Over the tunnel the sampled rate occasionally lands just outside (78% and 116% observed on individual attempts) before passing within the suite's retry budget. The tolerance, sample size, and retry count are hardcoded in the upstream suite (`vendor/sigs.k8s.io/gateway-api/conformance/tests/httproute-request-percentage-mirror.go`), so they cannot be widened locally without forking official conformance — the flake is documented rather than tuned. Reported upstream as [kubernetes-sigs/gateway-api#4933](https://github.com/kubernetes-sigs/gateway-api/issues/4933): the relative ±15% band is only ~1.7σ on the 20% subcase, so even a perfectly conforming implementation flakes ~8–9% per distribution-check by binomial sampling alone.
-- **`HTTPRouteRequestMirror`** — the `RequestMirror` filter dispatches a fire-and-forget mirror asynchronously, so the mirrored request occasionally arrives shortly after the test's poll window closes. The subtest passes on retry.
-
-The same sampling-variance reasoning is applied inline for weighted backend selection in the custom e2e suite (`test/e2e/e2e_test.go`), where a deliberately wide proportion bound avoids reintroducing the flake from the opposite tail.
-
 ## Live-Tunnel Coverage Matrix
 
 What actually gets exercised against a real Cloudflare Tunnel, and by which suite. "Conformance" is the official Gateway API suite (`test/conformance`, both profiles); "e2e" is the custom suite (`test/e2e`). Features marked unit-only are the deliberate residue — each carries a reason.
@@ -363,15 +354,15 @@ What actually gets exercised against a real Cloudflare Tunnel, and by which suit
 | Feature | Live coverage | Notes |
 | --- | --- | --- |
 | HTTPRoute core + extended matching (path/header/query/method, regex, ordering) | conformance + e2e | e2e re-checks through the real edge hostname (no `X-Original-Host` rewrite) |
-| Filters: header modifiers, redirects (301/302/303/307/308, port/scheme/path), rewrites, mirrors (multiple, percentage) | conformance + e2e | percentage-mirror flake is suite-side, documented upstream |
+| Filters: header modifiers, redirects (301/302/303/307/308, port/scheme/path), rewrites, mirrors (multiple, percentage) | conformance + e2e | |
 | CORS filter | conformance | `SupportHTTPRouteCORS` |
 | Timeouts (request / backendRequest) | conformance | explicit-`0s` disable semantics pinned by unit tests |
-| Weighted traffic splitting | conformance + e2e | |
+| Weighted traffic splitting | conformance + e2e | e2e asserts a deliberately wide proportion bound (`test/e2e/e2e_test.go`) — weighted selection is binomial sampling, so tight bounds flake by variance alone |
 | Service types: ClusterIP, headless, ExternalName | conformance (`HTTPRouteServiceTypes`) | headless targetPort resolution covered |
 | BackendTLSPolicy (CA ConfigMap, SNI hostname, DNS + URI SANs) — HTTP path | conformance | `SupportBackendTLSPolicy` + `SANValidation` |
-| BackendTLSPolicy — gRPC path | e2e (`TestGRPCRouteOverTLSBackend`) | official gRPC client cannot dial through the tunnel |
+| BackendTLSPolicy — gRPC path | e2e (`TestGRPCRouteOverTLSBackend`) | the upstream suite has no BackendTLSPolicy-over-GRPCRoute conformance test |
 | Gateway client certificate (backend mTLS) | conformance | multi-parent edge case unit-only (documented in limitations) |
-| GRPCRoute matching + header modifiers through the tunnel transport | e2e (`TestGRPCRouteEndToEnd`) | official suite's gRPC dialer cannot reach `*.cfargotunnel.com`; suite-side tests run where possible |
+| GRPCRoute matching + header modifiers through the tunnel transport | e2e (`TestGRPCRouteEndToEnd`) | conformance gRPC tests dial the Cloudflare edge via the injectable client; the e2e adds the production pattern — a real registered hostname with no `X-Original-Host` header |
 | WebSocket upgrade through the tunnel (+ response filters) | conformance + e2e | `ws` cleartext; `wss` (TLS WebSocket backend) is unit-only, see below |
 | `appProtocol` semantics: `kubernetes.io/h2c` | conformance | |
 | `appProtocol` TLS hint without BackendTLSPolicy (fail-closed 502) | e2e (`TestBackendAppProtocolTLSWithoutPolicyFailsClosed`) | spec SHOULD: never silently dial cleartext |

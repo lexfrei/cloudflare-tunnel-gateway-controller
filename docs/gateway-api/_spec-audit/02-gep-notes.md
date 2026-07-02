@@ -1,6 +1,6 @@
 # GEP / concept-level requirements (Phase 2)
 
-Cross-cutting normative requirements from `gateway-api.sigs.k8s.io` that are NOT expressed in field-level godoc (those are in `01-clause-inventory.md`). Sourced from GEP-713 (Policy Attachment) and the route-attachment / status-condition concept pages for v1.5. The HTTPRoute precedence narrative duplicates HR-05..08 and is not re-listed.
+Cross-cutting normative requirements from `gateway-api.sigs.k8s.io` that are NOT expressed in field-level godoc (those are in `01-clause-inventory.md`). Sourced from GEP-713 (Policy Attachment) and the route-attachment / status-condition concept pages, originally captured at v1.5 and refreshed for v1.6.0 (see `00-compliance-matrix.md`, "v1.5.1 → v1.6.0 refresh"). The HTTPRoute precedence narrative duplicates HR-05..08 and is not re-listed.
 
 ID prefix: GEP-NN.
 
@@ -29,6 +29,14 @@ Scope note: this controller implements no general policy-attachment CRDs. The on
 | GEP-13 | per-parentRef status | (semantics) | Route status is per-parentRef and independent: a Route can be Accepted by one parentRef and not another. (Frames SH-54/56/58.) |
 | GEP-14 | match combination | (restate) | Within a single match block, match types are ANDed; multiple match blocks in a rule are ORed. (Restates HR/GR match godoc.) |
 | GEP-15 | route merging | (restate) | More than one Route can bind to a Gateway; Routes merge on a Gateway as long as they do not conflict. (Frames HR-05/06 cross-route precedence.) |
+
+## Well-known labels for generated resources (GEP-1762, v1.6.0)
+
+| ID | Topic | Keyword | Requirement |
+| --- | --- | --- | --- |
+| GEP-16 | `gateway.networking.k8s.io/gateway-name` / `gateway-class-name` | should/must (lc, non-normative) | New in v1.6.0 (kubernetes-sigs/gateway-api#4705): `apis/v1/well_known_labels.go` defines well-known label keys an implementation MAY stamp on resources it generates on behalf of a Gateway/GatewayClass, so consumers can identify the owning object. The godoc keywords are lowercase and carry the RFC-8174 non-normative caveat, so this is informational rather than an audited MUST/SHOULD row. |
+
+Implemented: the per-Gateway rendered data plane stamps both well-known keys (`gateway.networking.k8s.io/gateway-name`, `gateway.networking.k8s.io/gateway-class-name`) on the metadata of every rendered resource via `resourceLabels` (`internal/render/render.go`), alongside its own `cf.k8s.lex.la/gateway` label; the immutable Deployment selector stays on the controller-specific key only.
 
 ## Support-level framing (for classifying SHOULD/MAY)
 

@@ -330,6 +330,17 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, req *http.Request) {
 
 	result := h.router.Route(req)
 	if result == nil {
+		// A gRPC client reads its status from the grpc-status trailer, not the
+		// HTTP status; a bare HTTP 404 reaches it as "stream closed without
+		// trailers" (Internal) over the real tunnel. The Gateway API spec
+		// (v1.6.0, #4408) requires an unmatched gRPC request to surface as
+		// Unimplemented, so emit a trailers-only gRPC response for it.
+		if isGRPCRequest(req) {
+			writeGRPCStatus(writer, grpcStatusUnimplemented, "no matching route")
+
+			return
+		}
+
 		http.Error(writer, "no matching route", http.StatusNotFound)
 
 		return
@@ -379,6 +390,32 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, req *http.Request) {
 	}
 
 	h.proxyToBackend(writer, req, result)
+}
+
+// grpcStatusUnimplemented is the gRPC status code (google.golang.org/grpc/codes
+// Unimplemented) for a method/route that does not exist. Kept as a plain string
+// so the data plane does not depend on the grpc-go codes package for one value.
+const grpcStatusUnimplemented = "12"
+
+// isGRPCRequest reports whether req is a gRPC call, identified by its
+// application/grpc content type (RFC-style prefix match covers the
+// application/grpc+proto and +json variants).
+func isGRPCRequest(req *http.Request) bool {
+	return strings.HasPrefix(req.Header.Get("Content-Type"), "application/grpc")
+}
+
+// writeGRPCStatus writes a trailers-only gRPC response: HTTP 200 with the status
+// carried in the grpc-status trailer, which is where a gRPC client reads it. A
+// bare HTTP error status reaches a gRPC client as "stream closed without
+// trailers" (Internal). Over the tunnel the trailer bridge in
+// internal/tunnel/origin.go replays the http.TrailerPrefix entries via
+// cloudflared's AddTrailer; in standalone mode the Go HTTP/2 server emits them
+// natively — one code path serves both.
+func writeGRPCStatus(writer http.ResponseWriter, status, message string) {
+	writer.Header().Set("Content-Type", "application/grpc")
+	writer.WriteHeader(http.StatusOK)
+	writer.Header().Set(http.TrailerPrefix+"Grpc-Status", status)
+	writer.Header().Set(http.TrailerPrefix+"Grpc-Message", message)
 }
 
 // startServerSpan extracts the inbound W3C trace context and starts a

@@ -369,7 +369,10 @@ func (f *requestMirror) ProcessRequest(req *http.Request) *http.Response {
 		return nil
 	}
 
-	mirrorURL, err := req.URL.Parse(f.backendURL + req.URL.Path)
+	// RequestURI() (path + query), not Path: the mirror is a faithful copy of
+	// the original request, and dropping the query would make it useless — the
+	// conformance suite identifies a mirrored request by a query param.
+	mirrorURL, err := req.URL.Parse(f.backendURL + req.URL.RequestURI())
 	if err != nil {
 		slog.Warn("mirror: failed to parse backend URL", "error", err)
 

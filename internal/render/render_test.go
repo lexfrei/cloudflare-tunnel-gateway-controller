@@ -170,6 +170,83 @@ func TestProxyDeployment_LongGatewayNameLabelTruncated(t *testing.T) {
 		"the Service must select the same pods")
 }
 
+// TestProxyDeployment_WellKnownGatewayLabels pins the GEP-1762 well-known
+// labels (gateway.networking.k8s.io/gateway-name,
+// .../gateway-class-name — kubernetes-sigs/gateway-api#4705): every rendered
+// resource's metadata (and the pod template, which is metadata too) must
+// carry both, but the immutable Deployment selector must NOT — adding a key
+// there would be a breaking, unrollback-able change to an existing Gateway's
+// data plane.
+func TestProxyDeployment_WellKnownGatewayLabels(t *testing.T) {
+	t.Parallel()
+
+	deployment := render.ProxyDeployment(testInput("edge"))
+
+	assert.Equal(t, "edge", deployment.Labels[string(gatewayv1.GatewayNameLabelKey)])
+	assert.Equal(t, "cloudflare-tunnel", deployment.Labels[string(gatewayv1.GatewayClassNameLabelKey)])
+	assert.Equal(t, "edge", deployment.Spec.Template.Labels[string(gatewayv1.GatewayNameLabelKey)])
+	assert.Equal(t, "cloudflare-tunnel", deployment.Spec.Template.Labels[string(gatewayv1.GatewayClassNameLabelKey)])
+
+	assert.NotContains(t, deployment.Spec.Selector.MatchLabels, string(gatewayv1.GatewayNameLabelKey),
+		"the selector is immutable — a well-known label must never be added to it")
+	assert.NotContains(t, deployment.Spec.Selector.MatchLabels, string(gatewayv1.GatewayClassNameLabelKey),
+		"the selector is immutable — a well-known label must never be added to it")
+}
+
+// TestProxyDeployment_WellKnownGatewayLabels_LongNamesTruncate pins that both
+// well-known label values go through the same 63-char truncation scheme as
+// the controller's own GatewayLabel — Gateway names AND GatewayClassNames are
+// DNS-1123 subdomains up to 253 chars, so the raw value would make the
+// apiserver reject the whole render on every reconcile.
+func TestProxyDeployment_WellKnownGatewayLabels_LongNamesTruncate(t *testing.T) {
+	t.Parallel()
+
+	longName := strings.Repeat("very-long-gateway-name-", 4)
+	longClass := strings.Repeat("very-long-gateway-class-", 4)
+
+	input := testInput(longName)
+	input.Gateway.Spec.GatewayClassName = gatewayv1.ObjectName(longClass)
+
+	deployment := render.ProxyDeployment(input)
+
+	nameValue := deployment.Labels[string(gatewayv1.GatewayNameLabelKey)]
+	classValue := deployment.Labels[string(gatewayv1.GatewayClassNameLabelKey)]
+
+	assert.LessOrEqual(t, len(nameValue), 63, "label values cap at 63 characters")
+	assert.LessOrEqual(t, len(classValue), 63, "label values cap at 63 characters")
+	assert.Equal(t, render.GatewayLabelValue(longName), nameValue)
+	assert.Equal(t, render.GatewayLabelValue(longClass), classValue)
+}
+
+// TestConfigService_WellKnownGatewayLabels and
+// TestProxyNetworkPolicy_WellKnownGatewayLabels pin the same GEP-1762 labels on
+// the remaining rendered kinds' metadata, without touching their (also
+// immutable-in-effect) selectors.
+func TestConfigService_WellKnownGatewayLabels(t *testing.T) {
+	t.Parallel()
+
+	service := render.ConfigService(testInput("edge"))
+
+	assert.Equal(t, "edge", service.Labels[string(gatewayv1.GatewayNameLabelKey)])
+	assert.Equal(t, "cloudflare-tunnel", service.Labels[string(gatewayv1.GatewayClassNameLabelKey)])
+	assert.NotContains(t, service.Spec.Selector, string(gatewayv1.GatewayNameLabelKey),
+		"the Service selector must not carry the well-known labels")
+}
+
+func TestProxyNetworkPolicy_WellKnownGatewayLabels(t *testing.T) {
+	t.Parallel()
+
+	netpol := render.ProxyNetworkPolicy(render.NetworkPolicyInput{
+		Gateway:             testInput("edge").Gateway,
+		ControllerNamespace: "cf-system",
+	})
+
+	assert.Equal(t, "edge", netpol.Labels[string(gatewayv1.GatewayNameLabelKey)])
+	assert.Equal(t, "cloudflare-tunnel", netpol.Labels[string(gatewayv1.GatewayClassNameLabelKey)])
+	assert.NotContains(t, netpol.Spec.PodSelector.MatchLabels, string(gatewayv1.GatewayNameLabelKey),
+		"the NetworkPolicy podSelector must not carry the well-known labels")
+}
+
 // TestRenderedNames_SanitizeDots pins valid rendered names for a Gateway whose
 // name contains dots: Gateway names are DNS-1123 subdomains (dots legal),
 // Service and label names are DNS-1123 labels (dots illegal). Unsanitized,

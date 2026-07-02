@@ -27,13 +27,13 @@ import (
 // TestHTTPRouteBackendProtocolWebSocket exercises WebSocket support end-to-end
 // through a real Cloudflare Tunnel.
 //
-// This is the substitute for the upstream conformance test
-// `HTTPRouteBackendProtocolWebSocket`, which we cannot run: the upstream test
-// dials the Gateway address directly with `golang.org/x/net/websocket.Dial`
-// (no RoundTripper hook to inject a custom dialer), and our Gateway address is
-// `<tunnel-id>.cfargotunnel.com` whose AAAA records point at Cloudflare's ULA
-// (fd10::/8), unreachable from any test runner outside Cloudflare's network.
-// Same structural blocker that keeps the gRPC conformance tests skipped.
+// This is the production-pattern complement to the upstream conformance test
+// `HTTPRouteBackendProtocolWebSocket`, which runs through the injectable
+// WebSocket dialer (TunnelWebSocketDialer rewrites the dial to the Cloudflare
+// edge and carries the intended host in X-Original-Host, because the Gateway
+// address `<tunnel-id>.cfargotunnel.com` resolves into Cloudflare's ULA and is
+// unreachable from any test runner). This e2e adds what conformance cannot:
+// a real registered hostname on the wire Host header, no header rewriting.
 //
 // The test path: client opens `wss://<tunnel hostname>/ws` against Cloudflare
 // edge. Cloudflare terminates TLS and forwards a plaintext HTTP/1.1 request

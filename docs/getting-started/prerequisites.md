@@ -15,14 +15,18 @@ You need a Kubernetes cluster with:
 The controller requires Gateway API Custom Resource Definitions (CRDs) to be installed in your cluster:
 
 ```bash
-kubectl apply --filename https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.5.1/standard-install.yaml
+kubectl apply --filename https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.6.0/standard-install.yaml
 ```
 
-!!! warning "v1.5.0 is the minimum supported version"
+As of Gateway API v1.6 the standard bundle also installs the `TCPRoute` and `UDPRoute` CRDs (GA); this controller does not implement them — Cloudflare Tunnel exposes HTTP(S) only — so they are inert.
 
-    The controller watches `ListenerSet` resources as part of its core reconcile loop. The `listenersets.gateway.networking.k8s.io` CRD entered the **Standard** channel in Gateway API v1.5.0. Installing the controller against an older Gateway API bundle (v1.4.x or earlier) leaves the manager unable to start because the watch target is missing. The controller is built and tested against v1.5.1, which is the recommended bundle.
+!!! warning "Two version thresholds: v1.5.0 to start, v1.6.x to be supported"
 
-    If you are on an older Gateway API bundle, apply the v1.5.1 standard bundle before installing this controller.
+    The controller watches `ListenerSet` resources as part of its core reconcile loop. The `listenersets.gateway.networking.k8s.io` CRD entered the **Standard** channel in Gateway API v1.5.0, so with any older bundle (v1.4.x or earlier) the manager cannot start at all because the watch target is missing.
+
+    Being able to start is not the same as being supported: the controller is built and tested against v1.6.0, and its GatewayClass `SupportedVersion` condition compares the installed bundle's `major.minor` against that version — any other minor, including v1.5.x, is reported as `SupportedVersion=False` with reason `UnsupportedVersion` while the controller keeps running.
+
+    If you are on an older Gateway API bundle, apply the v1.6.0 standard bundle before installing this controller.
 
 ## Cloudflare Account
 

@@ -1,6 +1,6 @@
 # SHOULD / MAY audit — ListenerSet (LS-), object_reference (OR-), exempt types (OTHER-)
 
-Gateway API v1.5.1 (Standard channel, vendored). Architecture: in-process L7 proxy; TLS terminated at Cloudflare edge (no in-cluster SNI layer); TLSRoute/TCPRoute/UDPRoute exempt. Conformance suite green this cycle including `features.SupportListenerSet`.
+Gateway API v1.6.0 (Standard channel, vendored; originally audited at v1.5.1). Architecture: in-process L7 proxy; TLS terminated at Cloudflare edge (no in-cluster SNI layer); TLSRoute/TCPRoute/UDPRoute exempt — TCPRoute/UDPRoute went GA into the Standard channel in v1.6.0 (kubernetes-sigs/gateway-api#4920, #4923) but remain unimplemented, same verdicts. Conformance suite green this cycle including `features.SupportListenerSet`.
 
 ## SHOULD / SHOULD NOT table
 

@@ -198,6 +198,15 @@ func resourceLabels(gateway *gatewayv1.Gateway) map[string]string {
 
 	labels["app.kubernetes.io/component"] = "proxy"
 	labels["app.kubernetes.io/managed-by"] = "cloudflare-tunnel-gateway-controller"
+	// GEP-1762 well-known labels (kubernetes-sigs/gateway-api#4705): metadata
+	// only, NEVER the immutable selector (selectorLabels, above, is untouched)
+	// — ecosystem tooling that understands the Gateway API convention can
+	// discover this per-Gateway data plane without a controller-specific
+	// label. Values go through the same truncation as GatewayLabel: Gateway
+	// names and GatewayClassNames are both DNS-1123 subdomains up to 253
+	// chars, past the 63-char label-value cap.
+	labels[gatewayv1.GatewayNameLabelKey] = GatewayLabelValue(gateway.Name)
+	labels[gatewayv1.GatewayClassNameLabelKey] = GatewayLabelValue(string(gateway.Spec.GatewayClassName))
 
 	return labels
 }

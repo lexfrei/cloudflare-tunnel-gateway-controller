@@ -35,14 +35,14 @@ func TestGatewayAPIConformance(t *testing.T) {
 	opts.Debug = true
 
 	// --- Conformance profiles ---
-	opts.ConformanceProfiles = sets.New(
+	opts.ConformanceProfiles = []suite.ConformanceProfileName{
 		suite.GatewayHTTPConformanceProfileName,
 		suite.GatewayGRPCConformanceProfileName,
-	)
+	}
 
 	// --- Supported features ---
 	// Features the v3 in-process L7 proxy implements.
-	opts.SupportedFeatures = sets.New[features.FeatureName](
+	opts.SupportedFeatures = []features.FeatureName{
 		// Core
 		features.SupportGateway,
 		features.SupportHTTPRoute,
@@ -112,7 +112,7 @@ func TestGatewayAPIConformance(t *testing.T) {
 		// any v1 cluster regardless of CRD channel.
 		features.SupportHTTPRouteDestinationPortMatching,
 
-		// ListenerSet is in the Gateway API Standard channel as of v1.5.1.
+		// ListenerSet is in the Gateway API Standard channel as of v1.5.0.
 		// The controller watches ListenerSet resources, honours
 		// spec.allowedListeners on the parent Gateway, applies the precedence
 		// + conflict view (Gateway > ListenerSet by creation time > namespace/
@@ -130,11 +130,11 @@ func TestGatewayAPIConformance(t *testing.T) {
 		features.SupportHTTPRoute303RedirectStatusCode,
 		features.SupportHTTPRoute307RedirectStatusCode,
 		features.SupportHTTPRoute308RedirectStatusCode,
-	)
+	}
 
 	// --- Exempt features ---
 	// Features that don't apply to tunnel architecture — skip silently.
-	opts.ExemptFeatures = sets.New[features.FeatureName](
+	opts.ExemptFeatures = []features.FeatureName{
 		// Gateway: tunnel has no static IPs, no multi-port, no infra propagation
 		features.SupportGatewayStaticAddresses,
 		features.SupportGatewayHTTPListenerIsolation,
@@ -150,7 +150,7 @@ func TestGatewayAPIConformance(t *testing.T) {
 		features.SupportTLSRouteModeMixed,
 		features.SupportUDPRoute,
 		features.SupportMesh,
-	)
+	}
 
 	// --- Skip tests ---
 	// Tests that fail due to Cloudflare Tunnel semantics, not missing features.
@@ -186,6 +186,14 @@ func TestGatewayAPIConformance(t *testing.T) {
 		Debug:         true,
 		TimeoutConfig: timeouts,
 	}
+
+	// --- Custom WebSocket dialer ---
+	// The default dialer connects to the Gateway address directly (a tunnel
+	// CNAME, unroutable from a test runner). TunnelWebSocketDialer routes the
+	// handshake through the edge instead, mirroring TunnelRoundTripper and
+	// TunnelGRPCClient (upstream gateway-api v1.6.0 injectable dialer,
+	// kubernetes-sigs/gateway-api#4936 / #5003).
+	opts.WebSocketDialer = &TunnelWebSocketDialer{}
 
 	// --- Implementation metadata ---
 	opts.Implementation = confv1.Implementation{
@@ -229,6 +237,20 @@ func conformanceSkipTests() []string {
 		// the positive multi-label cases all pass (see
 		// HTTPRouteListenerHostnameMatching, which is run).
 		"HTTPRouteHostnameIntersection",
+
+		// HTTPRouteMultipleGateways (v1.6.0) attaches one HTTPRoute to two
+		// Gateways and asserts each Gateway's dedicated route is reachable ONLY
+		// through that Gateway's own address. Both test Gateways resolve to the
+		// SAME shared Cloudflare Tunnel (one GatewayClassConfig → one tunnel
+		// CNAME), so their dedicated routes — same hostname, same path `/`,
+		// different parent Gateway — collapse into the shared proxy's single
+		// routing table where one wins by precedence: a request to Gateway A's
+		// address reaches Gateway B's dedicated backend. Same single-tunnel
+		// listener-flattening gap as HTTPRouteHostnameIntersection above; hard
+		// per-Gateway isolation requires the opt-in dedicated data plane
+		// (separate tunnel per Gateway), which the shared-plane conformance run
+		// does not exercise.
+		"HTTPRouteMultipleGateways",
 
 		// Cloudflare terminates TLS at edge — we don't control certs.
 		"HTTPRouteHTTPSListener",
@@ -282,26 +304,6 @@ func conformanceSkipTests() []string {
 		"GatewayFrontendInvalidDefaultClientCertificateValidation",
 		"GatewayInvalidFrontendClientCertificateValidation",
 		"GatewayWithAttachedRoutesWithPort8080",
-
-		// WebSocket: the upstream test calls
-		// golang.org/x/net/websocket.Dial against the Gateway address and
-		// has no RoundTripper hook for a custom dialer. The Gateway address
-		// is *.cfargotunnel.com whose AAAA records point at Cloudflare's
-		// ULA (fd10::/8) — unreachable from any external test runner. The
-		// proxy's WebSocket path is exercised by the
-		// HTTPRouteBackendProtocolWebSocket e2e against the real tunnel
-		// hostname; the feature flag stays declared in SupportedFeatures
-		// above so the conformance report reflects actual support.
-		"HTTPRouteBackendProtocolWebSocket",
-
-		// GRPCRouteWeight: the distribution sampler news its own
-		// grpc.DefaultClient (grpcroute-weight.go) instead of the injectable
-		// suite.GRPCClient, so it dials the unroutable *.cfargotunnel.com
-		// directly and cannot be redirected to the Cloudflare edge — the same
-		// structural class as the WebSocket skip above. Filed upstream as
-		// kubernetes-sigs/gateway-api#4926. The other GRPCRoute tests run via
-		// TunnelGRPCClient.
-		"GRPCRouteWeight",
 	}
 }
 
@@ -313,8 +315,7 @@ func conformanceSkipTests() []string {
 //     the Cloudflare edge instead of the unroutable Gateway address, and MUST
 //     NOT be skipped.
 //   - skippedWithReason: cannot run through the injected client and stay in
-//     conformanceSkipTests with a documented reason (GRPCRouteWeight bypasses
-//     opts.GRPCClient via its own DefaultClient — kubernetes-sigs/gateway-api#4926).
+//     conformanceSkipTests with a documented reason.
 //
 // Every SupportGRPCRoute test must appear in exactly one bucket, so a
 // gateway-api bump that adds a new gRPC test trips this guard and forces a
@@ -330,10 +331,13 @@ func TestGRPCConformanceTestsRunThroughTunnelClient(t *testing.T) {
 		"GRPCRouteHeaderMatching",
 		"GRPCRouteNamedRule",
 		"GRPCRouteListenerHostnameMatching",
-	)
-	skippedWithReason := sets.New(
+		// GRPCRouteWeight: as of gateway-api v1.6.0 (upstream #4937/#5004) the
+		// distribution sampler routes through the injectable suite.GRPCClient
+		// instead of constructing its own grpc.DefaultClient, so TunnelGRPCClient
+		// now covers it like the other north-south GRPCRoute tests.
 		"GRPCRouteWeight",
 	)
+	skippedWithReason := sets.New[string]()
 
 	grpcChecked := 0
 
@@ -406,6 +410,13 @@ func TestStaleSkipsStayLifted(t *testing.T) {
 		// Lifted once the proxy wildcard matcher accepted multi-label hosts (#371).
 		"GRPCRouteListenerHostnameMatching",
 		"HTTPRouteListenerHostnameMatching",
+		// Lifted once gateway-api v1.6.0 routed the distribution sampler
+		// through the injectable suite.GRPCClient (upstream #4937/#5004).
+		"GRPCRouteWeight",
+		// Lifted once gateway-api v1.6.0 added an injectable suite.WebSocketDialer
+		// (upstream #4936/#5003); TunnelWebSocketDialer routes the handshake
+		// through the edge like TunnelRoundTripper and TunnelGRPCClient.
+		"HTTPRouteBackendProtocolWebSocket",
 	}
 
 	for _, name := range lifted {

@@ -307,24 +307,7 @@ func (r *GatewayReconciler) updateStatus(
 
 		_, _, clientCertErr := loadGatewayClientCertPEM(ctx, r.Client, &freshGateway, r.checkSecretReferenceGrant)
 
-		accepted := metav1.Condition{
-			Type:               string(gatewayv1.GatewayConditionAccepted),
-			Status:             metav1.ConditionTrue,
-			ObservedGeneration: freshGateway.Generation,
-			LastTransitionTime: now,
-			Reason:             string(gatewayv1.GatewayReasonAccepted),
-			Message:            msgGatewayAccepted,
-		}
-
-		// A Gateway that contains conflicted listeners (its own listeners or
-		// merged ListenerSet entries that clash on hostname/protocol) MUST be
-		// marked ListenersNotValid per the spec, whether or not the listeners
-		// accept the Gateway (gateway_types.go:187).
-		if conflictMsg, conflicted := gatewayConflictedListenersMessage(ctx, views, &freshGateway); conflicted {
-			accepted.Status = metav1.ConditionFalse
-			accepted.Reason = string(gatewayv1.GatewayReasonListenersNotValid)
-			accepted.Message = conflictMsg
-		}
+		accepted := gatewayAcceptedCondition(ctx, views, &freshGateway, now)
 
 		programmed := metav1.Condition{
 			Type:               string(gatewayv1.GatewayConditionProgrammed),
@@ -373,8 +356,16 @@ func (r *GatewayReconciler) updateStatus(
 			resolvedRefsCondition := r.buildResolvedRefsCondition(
 				freshGateway.Generation, now, hasValidKind, hasInvalidKind, tlsStatus, tlsReason, tlsMessage,
 			)
-			if !hasValidKind {
-				supportedKinds = []gatewayv1.RouteGroupKind{} // Empty slice (not nil) when no valid kinds
+			// Empty slice (not nil) when no valid kinds. A protocol this
+			// controller cannot serve supports no route kinds either: an
+			// unrecognised protocol (e.g. the conformance suite's INVALID)
+			// otherwise defaults to HTTPRoute/GRPCRoute in FilterSupportedKinds and
+			// would report a non-empty SupportedKinds alongside its
+			// Accepted=False/UnsupportedProtocol verdict — contradictory, and the
+			// spec requires an empty list. Same servability predicate as the
+			// Accepted condition, so the two cannot drift.
+			if !hasValidKind || !servableListenerProtocol(listener.Protocol) {
+				supportedKinds = []gatewayv1.RouteGroupKind{}
 			}
 
 			programmedCondition := metav1.Condition{
@@ -1053,11 +1044,8 @@ func buildListenerAcceptedCondition(protocol gatewayv1.ProtocolType, generation 
 		Message:            listenerMsgAccepted,
 	}
 
-	switch protocol {
-	case gatewayv1.HTTPProtocolType, gatewayv1.HTTPSProtocolType:
+	if servableListenerProtocol(protocol) {
 		return condition
-	case gatewayv1.TCPProtocolType, gatewayv1.TLSProtocolType, gatewayv1.UDPProtocolType:
-		// No TCP/TLS/UDPRoute data plane — fall through to unsupported below.
 	}
 
 	condition.Status = metav1.ConditionFalse
@@ -1067,6 +1055,93 @@ func buildListenerAcceptedCondition(protocol gatewayv1.ProtocolType, generation 
 		"Use an HTTP or HTTPS listener."
 
 	return condition
+}
+
+// servableListenerProtocol reports whether this controller has a data plane for
+// the listener protocol. Only HTTP and HTTPS carry HTTPRoute / GRPCRoute through
+// the in-process proxy; TCP, TLS, UDP, and any unrecognised protocol have none
+// (Cloudflare Tunnel is HTTP-focused and terminates TLS at the edge). The single
+// source of truth for both the per-listener Accepted condition and the
+// Gateway-level ListenersNotValid aggregation below.
+func servableListenerProtocol(protocol gatewayv1.ProtocolType) bool {
+	switch protocol {
+	case gatewayv1.HTTPProtocolType, gatewayv1.HTTPSProtocolType:
+		return true
+	case gatewayv1.TCPProtocolType, gatewayv1.TLSProtocolType, gatewayv1.UDPProtocolType:
+		return false
+	default:
+		// Any unrecognised protocol (e.g. the conformance suite's INVALID) has
+		// no data plane here either.
+		return false
+	}
+}
+
+// gatewayUnsupportedProtocolListeners summarises, across a Gateway's own
+// listeners, how many carry a protocol this controller cannot serve. Per the
+// Gateway API spec (gateway_types.go), a Gateway holding any invalid listener is
+// marked ListenersNotValid, and one holding no valid listener at all is
+// Accepted=False. Returns (any unsupported, all unsupported).
+func gatewayUnsupportedProtocolListeners(listeners []gatewayv1.Listener) (bool, bool) {
+	if len(listeners) == 0 {
+		return false, false
+	}
+
+	unsupported := 0
+
+	for i := range listeners {
+		if !servableListenerProtocol(listeners[i].Protocol) {
+			unsupported++
+		}
+	}
+
+	return unsupported > 0, unsupported == len(listeners)
+}
+
+// gatewayAcceptedCondition builds the Gateway-level Accepted condition. The
+// default is Accepted=True/Accepted; it is downgraded to ListenersNotValid when
+// the Gateway holds conflicted listeners (Gateway-owned or merged ListenerSet
+// entries clashing on hostname/protocol) or listeners whose protocol this
+// controller cannot serve, and to Accepted=False when no listener is valid at
+// all (gateway_types.go).
+func gatewayAcceptedCondition(
+	ctx context.Context,
+	views *listenerViewCache,
+	gateway *gatewayv1.Gateway,
+	now metav1.Time,
+) metav1.Condition {
+	accepted := metav1.Condition{
+		Type:               string(gatewayv1.GatewayConditionAccepted),
+		Status:             metav1.ConditionTrue,
+		ObservedGeneration: gateway.Generation,
+		LastTransitionTime: now,
+		Reason:             string(gatewayv1.GatewayReasonAccepted),
+		Message:            msgGatewayAccepted,
+	}
+
+	if conflictMsg, conflicted := gatewayConflictedListenersMessage(ctx, views, gateway); conflicted {
+		accepted.Status = metav1.ConditionFalse
+		accepted.Reason = string(gatewayv1.GatewayReasonListenersNotValid)
+		accepted.Message = conflictMsg
+
+		return accepted
+	}
+
+	// Scoped to the Gateway's OWN listeners by design: an unsupported-protocol
+	// listener contributed by an attached ListenerSet carries its verdict on the
+	// ListenerSet's own status, not on the parent Gateway's Accepted condition
+	// (unlike hostname/protocol CONFLICTS, which are cross-object and use the
+	// merged view above).
+	if anyUnsupported, allUnsupported := gatewayUnsupportedProtocolListeners(gateway.Spec.Listeners); anyUnsupported {
+		accepted.Reason = string(gatewayv1.GatewayReasonListenersNotValid)
+		accepted.Message = "one or more listeners use a protocol this controller does not serve " +
+			"(only HTTP and HTTPS are supported)"
+
+		if allUnsupported {
+			accepted.Status = metav1.ConditionFalse
+		}
+	}
+
+	return accepted
 }
 
 // hostnameCaptureRisk reports whether a listener (Gateway-owned or ListenerSet

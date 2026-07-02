@@ -54,7 +54,7 @@ func (a HTTPRouteAdapter) ProjectRules(route *gatewayv1.HTTPRoute, resolver *bac
 		}
 
 		for _, match := range rule.Matches {
-			a.logUnsupportedFeatures(resolver, route.Namespace, route.Name, match)
+			a.logProxyOnlyMatches(resolver, route.Namespace, route.Name, match)
 
 			path, priority := a.extractPath(resolver, route.Namespace, route.Name, match.Path)
 			projected.matches = append(projected.matches, projectedMatch{path: path, priority: priority})
@@ -77,30 +77,30 @@ func httpBackendRefs(refs []gatewayv1.HTTPBackendRef) []gatewayv1.BackendRef {
 	return out
 }
 
-func (HTTPRouteAdapter) logUnsupportedFeatures(resolver *backendResolver, namespace, name string, match gatewayv1.HTTPRouteMatch) {
+func (HTTPRouteAdapter) logProxyOnlyMatches(resolver *backendResolver, namespace, name string, match gatewayv1.HTTPRouteMatch) {
 	routeKey := fmt.Sprintf("%s/%s", namespace, name)
 
 	if len(match.Headers) > 0 {
-		resolver.logger.Info("route configuration partially applied",
+		resolver.logger.Info("cloudflare tunnel ingress document reduced",
 			"route", routeKey,
-			"reason", "header matching not supported by Cloudflare Tunnel",
-			"ignored_headers", len(match.Headers),
+			"reason", "header matching is not expressible in tunnel ingress rules; the in-process proxy performs the match",
+			"header_matches", len(match.Headers),
 		)
 	}
 
 	if len(match.QueryParams) > 0 {
-		resolver.logger.Info("route configuration partially applied",
+		resolver.logger.Info("cloudflare tunnel ingress document reduced",
 			"route", routeKey,
-			"reason", "query parameter matching not supported by Cloudflare Tunnel",
-			"ignored_params", len(match.QueryParams),
+			"reason", "query parameter matching is not expressible in tunnel ingress rules; the in-process proxy performs the match",
+			"query_param_matches", len(match.QueryParams),
 		)
 	}
 
 	if match.Method != nil {
-		resolver.logger.Info("route configuration partially applied",
+		resolver.logger.Info("cloudflare tunnel ingress document reduced",
 			"route", routeKey,
-			"reason", "method matching not supported by Cloudflare Tunnel",
-			"ignored_method", string(*match.Method),
+			"reason", "method matching is not expressible in tunnel ingress rules; the in-process proxy performs the match",
+			"method", string(*match.Method),
 		)
 	}
 }
@@ -124,9 +124,9 @@ func (HTTPRouteAdapter) extractPath(resolver *backendResolver, namespace, routeN
 	case gatewayv1.PathMatchExact:
 		return path, 1
 	case gatewayv1.PathMatchRegularExpression:
-		resolver.logger.Info("route configuration partially applied",
+		resolver.logger.Info("cloudflare tunnel ingress document reduced",
 			"route", fmt.Sprintf("%s/%s", namespace, routeName),
-			"reason", "RegularExpression path type treated as PathPrefix",
+			"reason", "RegularExpression path written to the tunnel ingress document as a prefix; the in-process proxy applies the regex match",
 			"path", path,
 		)
 

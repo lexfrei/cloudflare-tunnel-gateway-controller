@@ -1,6 +1,6 @@
 # BackendTLSPolicy (BTLS-*) + Policy Attachment (POL-*) + GEP-* — SHOULD/MAY audit
 
-Gateway API v1.5.1 (Standard channel). Architecture: in-process L7 proxy owns backend connections, so backend TLS lives in the proxy transport. `GatewayClassConfig` is the controller's OWN CRD (not a Gateway API policy); POL-* PolicyAncestorStatus clauses are evaluated against BackendTLSPolicy status. Conformance green this cycle (BackendTLSPolicy sub-tests included; HTTPS-listener parent test is edge-TLS N/A).
+Gateway API v1.6.0 (Standard channel; originally audited at v1.5.1, no BackendTLSPolicy delta in the v1.6.0 tag diff). Architecture: in-process L7 proxy owns backend connections, so backend TLS lives in the proxy transport. `GatewayClassConfig` is the controller's OWN CRD (not a Gateway API policy); POL-* PolicyAncestorStatus clauses are evaluated against BackendTLSPolicy status. Conformance green this cycle (BackendTLSPolicy sub-tests included; HTTPS-listener parent test is edge-TLS N/A).
 
 Verified against: `internal/controller/backendtlspolicy_controller.go`, `internal/controller/proxy_syncer.go`, `internal/proxy/handler.go`, `docs/gateway-api/limitations.md`.
 

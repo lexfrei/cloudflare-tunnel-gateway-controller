@@ -546,7 +546,7 @@ Always assign a milestone when creating issues. Use the lowest-numbered open `vX
 
 ### Overview
 
-Official Gateway API conformance suite (`sigs.k8s.io/gateway-api/conformance` v1.5.0) runs against a kind cluster with a real Cloudflare Tunnel.
+Official Gateway API conformance suite (`sigs.k8s.io/gateway-api/conformance` v1.6.0) runs against a kind cluster with a real Cloudflare Tunnel.
 
 ### Cloudflare Edge Constraints
 
@@ -566,7 +566,7 @@ Official Gateway API conformance suite (`sigs.k8s.io/gateway-api/conformance` v1
 - Private Network (IP/CIDR routing): bypasses Host validation but requires WARP client on CI — impractical
 - Direct tunnel connection: not possible, cloudflared is outbound-only
 
-**gRPC tests**: Conformance suite's gRPC client (`grpc.NewClient`) dials directly to Gateway address (`*.cfargotunnel.com` AAAA → Cloudflare ULA fd10::/8, not routable). Custom gRPC dialer cannot be injected. These tests are skipped.
+**gRPC tests**: run through the injectable suite client — `TunnelGRPCClient` (`test/conformance/grpc_client.go`) dials the Cloudflare edge with `:authority` = edge hostname and carries the test's intended authority in `x-original-host` metadata (the gRPC twin of the HTTP pattern above). Requires `proxy.tunnel.protocol: http2`; the QUIC adapter drops the trailers that carry `grpc-status`.
 
 ### Setup and Execution
 

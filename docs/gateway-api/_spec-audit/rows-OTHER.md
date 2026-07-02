@@ -1,5 +1,7 @@
 # Exempt/secondary type clause assessment (OTHER-*)
 
+Channel note (v1.6.0): TCPRoute and UDPRoute went GA into the Standard channel (kubernetes-sigs/gateway-api#4920, #4923); their canonical Go types moved to `apis/v1`. The verdicts below are unaffected — the tunnel data plane is HTTP(S)-only, so both remain unsupported/exempt regardless of which channel ships their CRDs.
+
 | ID | Keyword | Class | Status | Evidence | Notes |
 | --- | --- | --- | --- | --- | --- |
 | OTHER-01 | MUST | N/A | NA | test/conformance/conformance_test.go:148 ExemptFeatures SupportTLSRoute; docs/gateway-api/limitations.md:243 | TLSRoute not supported; tunnel is HTTP(S)-only (TLS terminated at edge); no TLSRoute reconciler exists. |
