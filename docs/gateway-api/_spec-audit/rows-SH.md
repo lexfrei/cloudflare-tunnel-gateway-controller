@@ -1,6 +1,6 @@
 # SH (shared_types) clause audit
 
-Audited against vendored `sigs.k8s.io/gateway-api` v1.5.1. Class: CRD = enforced by kubebuilder/CEL markers; CTRL = controller logic; N/A = not applicable (reason in Notes). GEP-10..15 (route-attachment / per-parentRef status semantics) factored in for SH-08/09/14/15/44/45/54/56/58.
+Audited against vendored `sigs.k8s.io/gateway-api v1.6.0` (originally at v1.5.1, refreshed per `00-compliance-matrix.md` "v1.5.1 → v1.6.0 refresh"; no delta lands on a shared-type row here — the cross-type HTTPRoute/GRPCRoute hostname MUST→MAY relaxation, kubernetes-sigs/gateway-api#4598, is audited under GR-14/GR-15 in `rows-GR.md`, not SH). Class: CRD = enforced by kubebuilder/CEL markers; CTRL = controller logic; N/A = not applicable (reason in Notes). GEP-10..15 (route-attachment / per-parentRef status semantics) factored in for SH-08/09/14/15/44/45/54/56/58.
 
 | ID | Keyword | Class | Status | Evidence | Notes |
 | --- | --- | --- | --- | --- | --- |

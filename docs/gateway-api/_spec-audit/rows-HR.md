@@ -1,6 +1,6 @@
 # HTTPRoute clause audit (HR-*)
 
-Audited against vendored `sigs.k8s.io/gateway-api v1.5.1` and the in-process L7 proxy data plane (`internal/proxy`, `internal/ingress`, `internal/controller`). All L7 routing/matching/filtering/error semantics are implemented in the proxy + controller, NOT by Cloudflare Tunnel (which only serves DNS/edge routing — the vendored cloudflared fork's `OverrideProxy` hook funnels all traffic through `internal/tunnel/origin.go` → the proxy).
+Audited against vendored `sigs.k8s.io/gateway-api v1.6.0` (originally at v1.5.1; the v1.6.0 tag diff carries NO Standard-channel HTTPRoute schema changes — the CORS repeated-filter CEL of kubernetes-sigs/gateway-api#4639 was already in v1.5.1, and the retry validation of #4907 is experimental-only, so the Standard HTTPRoute CRD still has no `retry` field and the HR-26..HR-39 retry N/A verdicts stand) and the in-process L7 proxy data plane (`internal/proxy`, `internal/ingress`, `internal/controller`). All L7 routing/matching/filtering/error semantics are implemented in the proxy + controller, NOT by Cloudflare Tunnel (which only serves DNS/edge routing — the vendored cloudflared fork's `OverrideProxy` hook funnels all traffic through `internal/tunnel/origin.go` → the proxy).
 
 | ID | Keyword | Class | Status | Evidence | Notes |
 | --- | --- | --- | --- | --- | --- |

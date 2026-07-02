@@ -1,6 +1,8 @@
 # Spec clause inventory (Phase 1)
 
-Raw extraction of RFC-2119 keyword occurrences from the godoc of vendored `sigs.k8s.io/gateway-api v1.5.1` (`vendor/sigs.k8s.io/gateway-api/apis/`). This is the field-level normative source. Cross-cutting GEP/concept requirements (routing precedence narrative, policy attachment, status state machine) are collected separately in Phase 2.
+Raw extraction of RFC-2119 keyword occurrences from the godoc of vendored `sigs.k8s.io/gateway-api v1.6.0` (`vendor/sigs.k8s.io/gateway-api/apis/`). This is the field-level normative source. Cross-cutting GEP/concept requirements (routing precedence narrative, policy attachment, status state machine) are collected separately in Phase 2.
+
+Provenance: the extraction was performed at v1.5.1 and refreshed for the v1.5.1 → v1.6.0 tag diff (see `00-compliance-matrix.md`, "v1.5.1 → v1.6.0 refresh"). The delta review confirmed the normative text of pre-existing rows is unchanged at v1.6.0 except where a row carries an explicit v1.6.0 note; `file:line` references of unchanged rows were captured at v1.5.1 and may drift by a few lines in the v1.6.0 vendor tree — only new or changed rows are re-pinned at v1.6.0.
 
 Schema: `ID | Field/Type | file:line | Keyword | Requirement` (paths relative to `apis/v1/` unless prefixed with another API version).
 
@@ -108,6 +110,7 @@ ID prefixes: GW=Gateway, HR=HTTPRoute, GR=GRPCRoute, SH=shared, GC=GatewayClass,
 | GW-103 | ListenerConditionOverlappingTLSConfig | gateway_types.go:1681 | MUST | This condition MUST be set on all Listeners with overlapping TLS config. |
 | GW-104 | ListenerConditionOverlappingTLSConfig | gateway_types.go:1698 | SHOULD | If a controller supports checking for both possible reasons and finds that both are true, it SHOULD set the "OverlappingCertificates" Reason. |
 | GW-105 | ListenerConditionOverlappingTLSConfig | gateway_types.go:1700 | MUST NOT | This is a negative polarity condition and MUST NOT be set when it is False. |
+| GW-106 | GatewaySpec.Listeners | gateway_types.go:203-207 (v1.6.0) | MUST | If traffic to a Gateway does not match any Listener's hostname (or if the Listener does not specify a hostname and the request does not match any attached Route), the request MUST be rejected. The specific mechanism for rejection depends on the protocol: HTTP returns a 404 status code, while gRPC returns an Unimplemented status code. (Added in v1.6.0 by kubernetes-sigs/gateway-api#4408; appended out of line order to keep pre-existing IDs stable.) |
 
 ## HTTPRoute (httproute_types.go)
 
@@ -193,8 +196,8 @@ ID prefixes: GW=Gateway, HR=HTTPRoute, GR=GRPCRoute, SH=shared, GC=GatewayClass,
 | GR-11 | GRPCRouteSpec.Hostnames | grpcroute_types.go:119 | MUST NOT | If a Listener specified `*.example.com`, and the GRPCRoute specified `test.example.com` and `test.example.net`, `test.example.net` MUST NOT be considered for a match. |
 | GR-12 | GRPCRouteSpec.Hostnames | grpcroute_types.go:122 | MUST NOT | If both the Listener and GRPCRoute have specified hostnames, and none match with the criteria above, then the GRPCRoute MUST NOT be accepted by the implementation. |
 | GR-13 | GRPCRouteSpec.Hostnames | grpcroute_types.go:123 | MUST | The implementation MUST raise an 'Accepted' Condition with a status of `False` in the corresponding RouteParentStatus. |
-| GR-14 | GRPCRouteSpec.Hostnames | grpcroute_types.go:129 | MUST | If a Route (A) of type HTTPRoute or GRPCRoute is attached to a Listener that already has another Route (B) of the other type attached and the hostname intersection is non-empty, then the implementation MUST accept exactly one of these two routes (oldest by creation timestamp, then first alphabetically by namespace/name). |
-| GR-15 | GRPCRouteSpec.Hostnames | grpcroute_types.go:136 | MUST | The rejected Route MUST raise an 'Accepted' condition with a status of 'False' in the corresponding RouteParentStatus. |
+| GR-14 | GRPCRouteSpec.Hostnames | grpcroute_types.go:129 | MUST | If a Route (A) of type HTTPRoute or GRPCRoute is attached to a Listener that already has another Route (B) of the other type attached and the hostname intersection is non-empty, then the implementation MUST accept exactly one of these two routes (oldest by creation timestamp, then first alphabetically by namespace/name). v1.6.0 note: the site docs relaxed this to MAY (implementations "may enforce uniqueness" / "may reject Route A" — kubernetes-sigs/gateway-api#4598, `site-src/api-types/grpcroute.md` only), while the API godoc at the v1.6.0 tag still carries this MUST wording — an upstream doc inconsistency worth an upstream issue. Keyword kept as extracted from the vendored godoc. |
+| GR-15 | GRPCRouteSpec.Hostnames | grpcroute_types.go:136 | MUST | The rejected Route MUST raise an 'Accepted' condition with a status of 'False' in the corresponding RouteParentStatus. v1.6.0 note: same #4598 site-docs MAY relaxation as GR-14 (rejection itself is now optional per the site docs; the condition wording applies when an implementation does reject). |
 | GR-16 | GRPCRouteRule.Name | grpcroute_types.go:160 | MUST | Name is the name of the route rule. This name MUST be unique within a Route if it is set. |
 | GR-17 | GRPCRouteRule.Matches | grpcroute_types.go:183 | MUST | For a request to match against this rule, it MUST satisfy EITHER of the two conditions. |
 | GR-18 | GRPCRouteRule.Matches | grpcroute_types.go:192 | MUST | If no matches are specified, the implementation MUST match every gRPC request. |
@@ -325,6 +328,7 @@ ID prefixes: GW=Gateway, HR=HTTPRoute, GR=GRPCRoute, SH=shared, GC=GatewayClass,
 | RG-02 | ReferenceGrant | referencegrant_types.go:39 | MUST | Implementations that support ReferenceGrant MUST respond to the removal of a grant by revoking the access that the grant allowed. |
 | RG-03 | ReferenceGrantSpec.From | referencegrant_types.go:68 | MUST | Each entry in the From list MUST be considered to be an additional place that references can be valid from; entries MUST be combined using OR. |
 | RG-05 | ReferenceGrantSpec.To | referencegrant_types.go:81 | MUST | Each entry in the To list MUST be considered to be an additional place that references can be valid to; entries MUST be combined using OR. |
+| RG-06 | ReferenceGrant.Spec | v1/referencegrant_types.go:48 (v1.6.0) | required (marker) | `spec` is now a `+required` field on ReferenceGrant in both served versions (kubernetes-sigs/gateway-api#4845, Standard channel, breaking at admission). Schema marker, not RFC-2119 prose — CRD-enforced, no controller obligation. v1.6.0 also moved the canonical ReferenceGrant Go types to `apis/v1` with `v1beta1` (storage) and `v1alpha2` (deprecated) as aliases. |
 
 ## object_reference (object_reference_types.go)
 
@@ -437,3 +441,5 @@ ID prefixes: GW=Gateway, HR=HTTPRoute, GR=GRPCRoute, SH=shared, GC=GatewayClass,
 | OTHER-47 | ReferenceGrant (v1beta1) | v1beta1/referencegrant_types.go:44 | MUST NOT | Implementations that support ReferenceGrant MUST NOT permit cross-namespace references which have no grant. |
 
 Note: v1beta1 GatewayClass/HTTPRoute/ReferenceGrant and v1alpha2 TLS/TCP/UDPRoute + ReferenceGrant largely duplicate the v1 normative text (storage-version aliases). They are listed once here for completeness; the audit assesses the v1 canonical clause and treats the version aliases as satisfied-by-the-same-code.
+
+Channel note (v1.6.0): TCPRoute and UDPRoute went GA — canonical Go types now live in `apis/v1` (`v1/tcproute_types.go`, `v1/udproute_types.go`) and both ship in the Standard channel CRD bundle (kubernetes-sigs/gateway-api#4920, #4923). The v1alpha2 `file:line` refs above predate the move; the normative text is unchanged. The implementation status is unaffected: the tunnel data plane is HTTP(S)-only, so TCPRoute/UDPRoute remain unsupported/exempt (`rows-OTHER.md`) — but they are now present in the standard bundle a cluster installs, not experimental-only.

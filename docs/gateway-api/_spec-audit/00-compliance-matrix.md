@@ -1,16 +1,16 @@
-# Gateway API v1.5.1 spec compliance matrix
+# Gateway API v1.6.0 spec compliance matrix
 
-Clause-by-clause audit of the implementation against the normative (RFC-2119) surface of the vendored `sigs.k8s.io/gateway-api v1.5.1` Standard channel. This is the deliverable the closed audit issue asked for: every implemented resource's normative clauses classified honoured / justified-deviation / violated, with code evidence.
+Clause-by-clause audit of the implementation against the normative (RFC-2119) surface of the vendored `sigs.k8s.io/gateway-api v1.6.0` Standard channel. The full clause extraction and adversarial verification were performed at v1.5.1; the audit was then refreshed against the verified v1.5.1 → v1.6.0 tag diff (see "v1.5.1 → v1.6.0 refresh" below). This is the deliverable the closed audit issue asked for: every implemented resource's normative clauses classified honoured / justified-deviation / violated, with code evidence.
 
 ## Method
 
-1. Extracted every MUST / MUST NOT / SHOULD / SHOULD NOT / MAY clause from the vendored godoc — 376 rows in `01-clause-inventory.md`, by type.
+1. Extracted every MUST / MUST NOT / SHOULD / SHOULD NOT / MAY clause from the vendored godoc — 376 rows in `01-clause-inventory.md` at v1.5.1, by type (378 after the v1.6.0 refresh added GW-106 and RG-06).
 2. Added cross-cutting GEP/concept requirements not in field godoc (policy attachment GEP-713, route-attachment semantics) — `02-gep-notes.md`.
 3. Classified each clause CRD-enforced / controller-actionable / N/A-tunnel and assessed status MET / PARTIAL / GAP / NA against the real code — per-type detail in `rows-<TYPE>.md`.
 4. Ran the official conformance suite (Gateway HTTP + gRPC profiles) against a fresh kind cluster + real Cloudflare test tunnel as pass/fail ground truth.
 5. Adversarially re-verified every GAP — a skeptic tried to refute each (CRD enforcement, N/A, conditional-satisfied, documented-deviation) before it was allowed to stand. 22 of 25 first-pass GAPs did not survive.
 
-## Dashboard (first-pass classification, 376 clauses)
+## Dashboard (v1.5.1 first-pass classification, 376 clauses)
 
 | Status | Count |
 | --- | --- |
@@ -20,6 +20,23 @@ Clause-by-clause audit of the implementation against the normative (RFC-2119) su
 | N/A (tunnel architecture / exempt) | 96 |
 
 Conformance ground truth: 76 top-level subtests PASS, 54 SKIP (documented TLS/TCP/UDP/Mesh/WebSocket/GRPCRouteWeight/HTTPS-listener), **0 FAIL** (`go test ... ok 293s`). The suite is green; the audit's value is the normative surface the suite does not exercise.
+
+## v1.5.1 → v1.6.0 refresh
+
+The v1.6.0 baseline bump was audited against the verified upstream tag diff. Every delta below cites the upstream PR; pre-existing verdicts stand unless a row carries an explicit v1.6.0 note.
+
+| Delta | Upstream PR | Classification | Where it landed |
+| --- | --- | --- | --- |
+| `ReferenceGrant.spec` is REQUIRED in both served versions (breaking at admission) | kubernetes-sigs/gateway-api#4845 | CRD-enforced; no controller obligation. The validator (`internal/referencegrant/validator.go`) is fail-closed on an empty/missing spec anyway (nil `From`/`To` → no match → deny), so a legacy spec-less object persisted from before the upgrade cannot grant access. | Inventory RG-06; `rows-RG.md` RG-06. |
+| Gateway listeners description: traffic matching no listener hostname MUST be rejected — HTTP 404, gRPC Unimplemented | kubernetes-sigs/gateway-api#4408 | New controller-actionable clause. HTTP half MET (proxy returns 404 on no-match, tested); gRPC half PARTIAL — the proxy emits the same bare HTTP 404 with no gRPC framing (no HTTP/2 200 + `grpc-status: 12` trailers-only response); the gRPC-client-observed code is UNVERIFIED in this repo (no test). | Inventory GW-106; `rows-GW.md` GW-106. |
+| `infrastructure.annotations` maxProperties 8 → 16 | kubernetes-sigs/gateway-api#4707 | CRD limit relaxation, informational. GW-84 (annotation propagation, per-Gateway plane) is a size-independent map copy — unaffected. | No row change. |
+| `frontendValidation.caCertificateRefs` maxItems 8 → 16 | kubernetes-sigs/gateway-api#4088 | N/A — frontendValidation is not implemented (GW-63..GW-71 exempt, edge terminates TLS). | No row change. |
+| Shared hostnames between HTTPRoute and GRPCRoute: site docs relaxed MUST-reject to MAY-reject | kubernetes-sigs/gateway-api#4598 | The controller's cross-type rejection (`internal/controller/route_crosstype.go`) was MET under the v1.5.1 MUST and remains compliant under the v1.6.0 MAY (enforcing is one of the permitted options); serving both route types on an intersecting hostname without rejection is now also spec-permitted, so the enforcement is a product choice, not an obligation. Upstream inconsistency: the v1.6.0 API godoc (`grpcroute_types.go` Hostnames) still carries the old MUST wording — candidate upstream docs issue. | Inventory GR-14/GR-15 notes; `rows-GR.md` GR-14/GR-15 notes; `shouldmay-GRSH.md` MAY row. |
+| TCPRoute/UDPRoute went GA into the Standard channel | kubernetes-sigs/gateway-api#4920, #4923 | Channel inventory only — the tunnel data plane is HTTP(S)-only, so both remain unsupported/exempt; they now ship in the standard CRD bundle rather than experimental-only. | Inventory OTHER channel note; `rows-OTHER.md` header note. |
+| `SessionPersistence.IdleTimeout` removed from the Go API | kubernetes-sigs/gateway-api#4771 | Experimental feature; SessionPersistence is unimplemented here and no audit row referenced IdleTimeout (SH-77 covers SessionName only). | No row change. |
+| HTTPRoute Standard schema: NO changes | kubernetes-sigs/gateway-api#4639 (CORS repeated-filter CEL was already in v1.5.1), #4907 (retry validation is experimental-only; the Standard HTTPRoute CRD has no `retry` field in v1.6.0) | HR verdicts stand, including the HR-26..HR-39 retry N/A block. | `rows-HR.md` header note. |
+| GRPCRoute / GatewayClass: doc-only changes | (tag diff) | No normative delta; verdicts stand. | No row change. |
+| Well-known labels for generated resources (GEP-1762) | kubernetes-sigs/gateway-api#4705 | Informational — `apis/v1/well_known_labels.go` adds `gateway.networking.k8s.io/gateway-name` / `gateway-class-name` constants with lowercase must/should godoc (non-normative per the RFC-8174 caveat). The per-Gateway rendered plane stamps its own selector label (`cf.k8s.lex.la/gateway`, `internal/render/render.go`), not the well-known keys — candidate improvement, not a violation. | `02-gep-notes.md` GEP-16. |
 
 ## Adversarial verification: 25 first-pass GAPs → final verdicts
 
@@ -72,7 +89,7 @@ Catalogued implemented / intentionally-omitted; zero worthwhile candidates surfa
 
 ## Provenance
 
-- `01-clause-inventory.md` — verbatim clause extraction (376 rows).
+- `01-clause-inventory.md` — verbatim clause extraction (376 rows at v1.5.1, 378 after the v1.6.0 refresh).
 - `02-gep-notes.md` — GEP/concept cross-cutting requirements.
 - `rows-<TYPE>.md` — first-pass per-clause classification + evidence (GW, HR, GR, SH, GC, RG, BTLS, LS, OTHER). For the 25 first-pass GAPs, the verdicts in the verification table above supersede the per-row status.
 - shouldmay-<TYPE>.md — verified SHOULD-tier verdicts and MAY catalogue, per type.
