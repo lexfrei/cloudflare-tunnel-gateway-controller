@@ -4,7 +4,7 @@ go 1.26.4
 
 require (
 	github.com/cloudflare/cloudflare-go/v7 v7.6.0
-	github.com/cloudflare/cloudflared v0.0.0-20260701172712-c06b2d43e993
+	github.com/cloudflare/cloudflared v0.0.0-20260618133902-81a53555aa82
 	github.com/cockroachdb/errors v1.14.0
 	github.com/go-logr/logr v1.4.3
 	github.com/google/cel-go v0.28.1
@@ -169,6 +169,6 @@ require (
 	zombiezen.com/go/capnproto2 v2.18.0+incompatible // indirect
 )
 
-replace github.com/cloudflare/cloudflared => github.com/lexfrei/cloudflared v0.0.0-20260610013342-cf1b1c138221
+replace github.com/cloudflare/cloudflared => github.com/lexfrei/cloudflared v0.0.0-20260701231156-1674150f30b7
 
 replace github.com/quic-go/quic-go => github.com/chungthuang/quic-go v0.45.1
