@@ -169,6 +169,6 @@ require (
 	zombiezen.com/go/capnproto2 v2.18.0+incompatible // indirect
 )
 
-replace github.com/cloudflare/cloudflared => github.com/lexfrei/cloudflared v0.0.0-20260610013342-cf1b1c138221
+replace github.com/cloudflare/cloudflared => github.com/lexfrei/cloudflared v0.0.0-20260701231156-1674150f30b7
 
 replace github.com/quic-go/quic-go => github.com/chungthuang/quic-go v0.45.1
