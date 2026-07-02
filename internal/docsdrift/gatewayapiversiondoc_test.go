@@ -56,3 +56,62 @@ func TestDocsPinnedGatewayAPIVersionMatchesVendored(t *testing.T) {
 		}
 	}
 }
+
+// TestDocsDoNotReclaimLiftedConformanceSkips pins the docs pages that used
+// to describe conformance skips lifted by the v1.6.0 bump (GRPCRouteWeight
+// through the injectable gRPC client, HTTPRouteBackendProtocolWebSocket
+// through the injectable WebSocket dialer). If any of the retired claims
+// come back, the docs are describing the product incorrectly.
+func TestDocsDoNotReclaimLiftedConformanceSkips(t *testing.T) {
+	t.Parallel()
+
+	forbidden := []struct {
+		file   string
+		needle string
+		why    string
+	}{
+		{
+			file:   filepath.Join("..", "..", "docs", "gateway-api", "supported-resources.md"),
+			needle: "stays skipped",
+			why:    "GRPCRouteWeight runs through the injectable suite client as of gateway-api v1.6.0",
+		},
+		{
+			file:   filepath.Join("..", "..", "docs", "gateway-api", "supported-resources.md"),
+			needle: "bypasses the injectable",
+			why:    "the v1.6.0 weight sampler routes through suite.GRPCClient",
+		},
+		{
+			file:   filepath.Join("..", "..", "docs", "gateway-api", "limitations.md"),
+			needle: "exposes no injection point",
+			why:    "gateway-api v1.6.0 added an injectable WebSocket dialer; the conformance run supplies a tunnel-aware one",
+		},
+		{
+			file:   filepath.Join("..", "..", "docs", "gateway-api", "limitations.md"),
+			needle: "stays skipped",
+			why:    "HTTPRouteBackendProtocolWebSocket is no longer skipped",
+		},
+		{
+			file:   filepath.Join("..", "..", "docs", "development", "testing.md"),
+			needle: "cannot dial through the tunnel",
+			why:    "the conformance gRPC tests dial the Cloudflare edge via the injectable TunnelGRPCClient",
+		},
+		{
+			file:   filepath.Join("..", "..", "docs", "development", "testing.md"),
+			needle: "gRPC dialer cannot reach",
+			why:    "the conformance gRPC tests dial the Cloudflare edge via the injectable TunnelGRPCClient",
+		},
+	}
+
+	for _, claim := range forbidden {
+		body, err := os.ReadFile(claim.file)
+		if err != nil {
+			t.Fatalf("reading %s: %v", claim.file, err)
+		}
+		if strings.Contains(string(body), claim.needle) {
+			t.Errorf(
+				"%s still contains %q — %s; the claim was retired by the gateway-api v1.6.0 bump",
+				claim.file, claim.needle, claim.why,
+			)
+		}
+	}
+}
