@@ -36,7 +36,7 @@ Scope note: this controller implements no general policy-attachment CRDs. The on
 | --- | --- | --- | --- |
 | GEP-16 | `gateway.networking.k8s.io/gateway-name` / `gateway-class-name` | should/must (lc, non-normative) | New in v1.6.0 (kubernetes-sigs/gateway-api#4705): `apis/v1/well_known_labels.go` defines well-known label keys an implementation MAY stamp on resources it generates on behalf of a Gateway/GatewayClass, so consumers can identify the owning object. The godoc keywords are lowercase and carry the RFC-8174 non-normative caveat, so this is informational rather than an audited MUST/SHOULD row. |
 
-The per-Gateway rendered data plane (`internal/render/render.go`) stamps its own selector label `cf.k8s.lex.la/gateway`, not the well-known keys. Adopting the well-known label as an additional stamp is a candidate improvement, not a compliance gap.
+Implemented: the per-Gateway rendered data plane stamps both well-known keys (`gateway.networking.k8s.io/gateway-name`, `gateway.networking.k8s.io/gateway-class-name`) on the metadata of every rendered resource via `resourceLabels` (`internal/render/render.go`), alongside its own `cf.k8s.lex.la/gateway` label; the immutable Deployment selector stays on the controller-specific key only.
 
 ## Support-level framing (for classifying SHOULD/MAY)
 

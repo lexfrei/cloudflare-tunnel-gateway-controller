@@ -112,7 +112,7 @@ func TestGatewayAPIConformance(t *testing.T) {
 		// any v1 cluster regardless of CRD channel.
 		features.SupportHTTPRouteDestinationPortMatching,
 
-		// ListenerSet is in the Gateway API Standard channel as of v1.5.1.
+		// ListenerSet is in the Gateway API Standard channel as of v1.5.0.
 		// The controller watches ListenerSet resources, honours
 		// spec.allowedListeners on the parent Gateway, applies the precedence
 		// + conflict view (Gateway > ListenerSet by creation time > namespace/
