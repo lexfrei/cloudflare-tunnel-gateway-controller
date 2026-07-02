@@ -103,13 +103,3 @@ func TestBuildEdgeWebSocketConfigInvalidURL(t *testing.T) {
 	_, err := buildEdgeWebSocketConfig("not a url", "", "ws://gateway/x", "edge.example.com")
 	require.Error(t, err)
 }
-
-// TestTunnelWebSocketDialerImplementsInterface pins that
-// TunnelWebSocketDialer satisfies the suite's websocket.Dialer contract,
-// mirroring the compile-time assertion the vendored DefaultDialer carries.
-func TestTunnelWebSocketDialerImplementsInterface(t *testing.T) {
-	t.Parallel()
-
-	dialer := &TunnelWebSocketDialer{}
-	assert.NotNil(t, dialer)
-}

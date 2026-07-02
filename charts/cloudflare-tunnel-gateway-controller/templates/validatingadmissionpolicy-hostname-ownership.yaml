@@ -31,7 +31,7 @@ spec:
     resourceRules:
       - apiGroups: ["gateway.networking.k8s.io"]
         # Wildcard on purpose: the route CRDs serve multiple versions (v1 AND
-        # v1beta1 for httproutes in gateway-api v1.5.1). Pinning a version
+        # v1beta1 for httproutes in gateway-api v1.6.0). Pinning a version
         # list would let a write through any unlisted served version bypass
         # this policy entirely.
         apiVersions: ["*"]
