@@ -334,6 +334,6 @@ func TestGenericBuilder_UnsupportedFeatureWarningsNotGatedOnBackends(t *testing.
 
 	builder.Build(context.Background(), routes)
 
-	assert.Contains(t, logBuf.String(), "method matching not supported by Cloudflare Tunnel",
+	assert.Contains(t, logBuf.String(), "method matching is not expressible in tunnel ingress rules",
 		"the unsupported-feature warning must be emitted even when the rule has no resolvable backend")
 }

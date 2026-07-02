@@ -55,7 +55,7 @@ func (a GRPCRouteAdapter) ProjectRules(route *gatewayv1.GRPCRoute, resolver *bac
 		}
 
 		for _, match := range rule.Matches {
-			a.logUnsupportedHeaders(resolver, route.Namespace, route.Name, match.Headers)
+			a.logProxyOnlyHeaderMatches(resolver, route.Namespace, route.Name, match.Headers)
 
 			path, priority := a.extractGRPCPath(match.Method)
 			projected.matches = append(projected.matches, projectedMatch{path: path, priority: priority})
@@ -78,12 +78,12 @@ func grpcBackendRefs(refs []gatewayv1.GRPCBackendRef) []gatewayv1.BackendRef {
 	return out
 }
 
-func (GRPCRouteAdapter) logUnsupportedHeaders(resolver *backendResolver, namespace, name string, headers []gatewayv1.GRPCHeaderMatch) {
+func (GRPCRouteAdapter) logProxyOnlyHeaderMatches(resolver *backendResolver, namespace, name string, headers []gatewayv1.GRPCHeaderMatch) {
 	if len(headers) > 0 {
-		resolver.logger.Info("route configuration partially applied",
+		resolver.logger.Info("cloudflare tunnel ingress document reduced",
 			"route", fmt.Sprintf("%s/%s", namespace, name),
-			"reason", "header matching not supported by Cloudflare Tunnel",
-			"ignored_headers", len(headers),
+			"reason", "header matching is not expressible in tunnel ingress rules; the in-process proxy performs the match",
+			"header_matches", len(headers),
 		)
 	}
 }

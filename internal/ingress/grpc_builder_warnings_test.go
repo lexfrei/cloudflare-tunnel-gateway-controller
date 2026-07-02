@@ -47,11 +47,11 @@ func TestGRPCBuild_WarnMultipleBackendRefs(t *testing.T) {
 	_ = builder.Build(context.Background(), routes)
 
 	logs := buf.String()
-	assert.Contains(t, logs, "route configuration partially applied")
+	assert.Contains(t, logs, "cloudflare tunnel ingress document reduced")
 	assert.Contains(t, logs, `"route":"default/test-grpc-route"`)
-	assert.Contains(t, logs, "multiple backendRefs specified")
+	assert.Contains(t, logs, "uses only the highest-weight backend URL")
 	assert.Contains(t, logs, `"total_backends":3`)
-	assert.Contains(t, logs, `"ignored_backends":2`)
+	assert.Contains(t, logs, `"additional_backends":2`)
 }
 
 // TestGRPCBuild_WeightedBackendRefsNoWeightWarning is the GRPCRoute twin of
@@ -93,7 +93,7 @@ func TestGRPCBuild_WeightedBackendRefsNoWeightWarning(t *testing.T) {
 	assert.NotContains(t, logs, "traffic splitting not supported")
 	// The multiple-backends reduction to one Cloudflare-side ingress URL is a
 	// separate, still-genuine fact and keeps its own log line.
-	assert.Contains(t, logs, "multiple backendRefs specified")
+	assert.Contains(t, logs, "uses only the highest-weight backend URL")
 }
 
 // TestGRPCBuild_SingleWeightedBackendRefNoWarnings pins the no-splitting
@@ -188,10 +188,10 @@ func TestGRPCBuild_WarnHeaderMatching(t *testing.T) {
 	_ = builder.Build(context.Background(), routes)
 
 	logs := buf.String()
-	assert.Contains(t, logs, "route configuration partially applied")
+	assert.Contains(t, logs, "cloudflare tunnel ingress document reduced")
 	assert.Contains(t, logs, `"route":"default/header-grpc-route"`)
-	assert.Contains(t, logs, "header matching not supported")
-	assert.Contains(t, logs, `"ignored_headers":2`)
+	assert.Contains(t, logs, "header matching is not expressible")
+	assert.Contains(t, logs, `"header_matches":2`)
 }
 
 func TestGRPCBuild_WarnFilters(t *testing.T) {
@@ -244,10 +244,10 @@ func TestGRPCBuild_WarnFilters(t *testing.T) {
 	_ = builder.Build(context.Background(), routes)
 
 	logs := buf.String()
-	assert.Contains(t, logs, "route configuration partially applied")
+	assert.Contains(t, logs, "cloudflare tunnel ingress document reduced")
 	assert.Contains(t, logs, `"route":"default/filter-grpc-route"`)
-	assert.Contains(t, logs, "filters not supported")
-	assert.Contains(t, logs, `"ignored_filters":2`)
+	assert.Contains(t, logs, "filters are not expressible")
+	assert.Contains(t, logs, `"filters":2`)
 }
 
 func TestGRPCBuild_MultipleWarnings(t *testing.T) {
@@ -298,9 +298,9 @@ func TestGRPCBuild_MultipleWarnings(t *testing.T) {
 	logs := buf.String()
 	// Should have warnings for: multiple backends, headers.
 	// Weight itself is fully honored by the L7 proxy and never warned about.
-	assert.Contains(t, logs, "multiple backendRefs specified")
+	assert.Contains(t, logs, "uses only the highest-weight backend URL")
 	assert.NotContains(t, logs, "backendRef weight ignored")
-	assert.Contains(t, logs, "header matching not supported")
+	assert.Contains(t, logs, "header matching is not expressible")
 	// All warnings should reference the same route
 	assert.GreaterOrEqual(t, strings.Count(logs, `"route":"default/complex-grpc-route"`), 2)
 }
