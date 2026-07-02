@@ -319,7 +319,7 @@ func TestGRPCConformanceTestsRunThroughTunnelClient(t *testing.T) {
 		"GRPCRouteListenerHostnameMatching",
 		// GRPCRouteWeight: as of gateway-api v1.6.0 (upstream #4937/#5004) the
 		// distribution sampler routes through the injectable suite.GRPCClient
-		// instead of newsing its own grpc.DefaultClient, so TunnelGRPCClient
+		// instead of constructing its own grpc.DefaultClient, so TunnelGRPCClient
 		// now covers it like the other north-south GRPCRoute tests.
 		"GRPCRouteWeight",
 	)

@@ -1118,6 +1118,11 @@ func gatewayAcceptedCondition(
 		return accepted
 	}
 
+	// Scoped to the Gateway's OWN listeners by design: an unsupported-protocol
+	// listener contributed by an attached ListenerSet carries its verdict on the
+	// ListenerSet's own status, not on the parent Gateway's Accepted condition
+	// (unlike hostname/protocol CONFLICTS, which are cross-object and use the
+	// merged view above).
 	if anyUnsupported, allUnsupported := gatewayUnsupportedProtocolListeners(gateway.Spec.Listeners); anyUnsupported {
 		accepted.Reason = string(gatewayv1.GatewayReasonListenersNotValid)
 		accepted.Message = "one or more listeners use a protocol this controller does not serve " +
