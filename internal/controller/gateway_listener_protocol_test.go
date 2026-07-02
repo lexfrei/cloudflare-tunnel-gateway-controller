@@ -115,6 +115,83 @@ func TestGatewayReconciler_UnsupportedListenerProtocol_AcceptedFalse(t *testing.
 	}
 }
 
+// reconcileGatewayAccepted reconciles the fixture and returns the Gateway-level
+// Accepted condition written to the Gateway.
+func reconcileGatewayAccepted(t *testing.T, listeners []gatewayv1.Listener) *metav1.Condition {
+	t.Helper()
+
+	gateway, secret, gcc, gc := gatewayWithListenersFixture(listeners)
+	fakeClient := setupGatewayFakeClient(gateway, secret, gcc, gc)
+	reconciler := &GatewayReconciler{
+		Client:         fakeClient,
+		Scheme:         fakeClient.Scheme(),
+		ControllerName: "test-controller",
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+	}
+
+	_, err := reconciler.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "test-gateway", Namespace: "default"},
+	})
+	require.NoError(t, err)
+
+	var updated gatewayv1.Gateway
+	require.NoError(t, fakeClient.Get(context.Background(),
+		types.NamespacedName{Name: "test-gateway", Namespace: "default"}, &updated))
+
+	return findCondition(updated.Status.Conditions, string(gatewayv1.GatewayConditionAccepted))
+}
+
+// TestGatewayReconciler_UnsupportedProtocol_GatewayAcceptedReflectsListeners pins
+// the Gateway-level Accepted condition to the validity of its listeners, per the
+// Gateway API spec (a Gateway with any invalid listener is ListenersNotValid, and
+// a Gateway with no valid listener at all is Accepted=False). Exercises the
+// GatewayListenerUnsupportedProtocol conformance shape (protocol: INVALID).
+func TestGatewayReconciler_UnsupportedProtocol_GatewayAcceptedReflectsListeners(t *testing.T) {
+	t.Parallel()
+
+	const invalid = gatewayv1.ProtocolType("INVALID")
+
+	cases := []struct {
+		name       string
+		listeners  []gatewayv1.Listener
+		wantStatus metav1.ConditionStatus
+		wantReason gatewayv1.GatewayConditionReason
+	}{
+		{
+			name:       "all listeners unsupported",
+			listeners:  []gatewayv1.Listener{{Name: "invalid", Port: 1111, Protocol: invalid}},
+			wantStatus: metav1.ConditionFalse,
+			wantReason: gatewayv1.GatewayReasonListenersNotValid,
+		},
+		{
+			name: "mixed supported and unsupported",
+			listeners: []gatewayv1.Listener{
+				{Name: "http", Port: 80, Protocol: gatewayv1.HTTPProtocolType},
+				{Name: "invalid", Port: 1111, Protocol: invalid},
+			},
+			wantStatus: metav1.ConditionTrue,
+			wantReason: gatewayv1.GatewayReasonListenersNotValid,
+		},
+		{
+			name:       "all listeners supported",
+			listeners:  []gatewayv1.Listener{{Name: "http", Port: 80, Protocol: gatewayv1.HTTPProtocolType}},
+			wantStatus: metav1.ConditionTrue,
+			wantReason: gatewayv1.GatewayReasonAccepted,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			accepted := reconcileGatewayAccepted(t, tc.listeners)
+			require.NotNil(t, accepted)
+			assert.Equal(t, tc.wantStatus, accepted.Status)
+			assert.Equal(t, string(tc.wantReason), accepted.Reason)
+		})
+	}
+}
+
 // TestGatewayReconciler_HTTPListener_Accepted confirms the happy path: an HTTP
 // (and HTTPS) listener stays Accepted=True — those carry HTTPRoute / GRPCRoute
 // which the in-process proxy serves.
