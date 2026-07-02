@@ -35,14 +35,14 @@ func TestGatewayAPIConformance(t *testing.T) {
 	opts.Debug = true
 
 	// --- Conformance profiles ---
-	opts.ConformanceProfiles = sets.New(
+	opts.ConformanceProfiles = []suite.ConformanceProfileName{
 		suite.GatewayHTTPConformanceProfileName,
 		suite.GatewayGRPCConformanceProfileName,
-	)
+	}
 
 	// --- Supported features ---
 	// Features the v3 in-process L7 proxy implements.
-	opts.SupportedFeatures = sets.New[features.FeatureName](
+	opts.SupportedFeatures = []features.FeatureName{
 		// Core
 		features.SupportGateway,
 		features.SupportHTTPRoute,
@@ -130,11 +130,11 @@ func TestGatewayAPIConformance(t *testing.T) {
 		features.SupportHTTPRoute303RedirectStatusCode,
 		features.SupportHTTPRoute307RedirectStatusCode,
 		features.SupportHTTPRoute308RedirectStatusCode,
-	)
+	}
 
 	// --- Exempt features ---
 	// Features that don't apply to tunnel architecture — skip silently.
-	opts.ExemptFeatures = sets.New[features.FeatureName](
+	opts.ExemptFeatures = []features.FeatureName{
 		// Gateway: tunnel has no static IPs, no multi-port, no infra propagation
 		features.SupportGatewayStaticAddresses,
 		features.SupportGatewayHTTPListenerIsolation,
@@ -150,7 +150,7 @@ func TestGatewayAPIConformance(t *testing.T) {
 		features.SupportTLSRouteModeMixed,
 		features.SupportUDPRoute,
 		features.SupportMesh,
-	)
+	}
 
 	// --- Skip tests ---
 	// Tests that fail due to Cloudflare Tunnel semantics, not missing features.
@@ -293,15 +293,6 @@ func conformanceSkipTests() []string {
 		// hostname; the feature flag stays declared in SupportedFeatures
 		// above so the conformance report reflects actual support.
 		"HTTPRouteBackendProtocolWebSocket",
-
-		// GRPCRouteWeight: the distribution sampler news its own
-		// grpc.DefaultClient (grpcroute-weight.go) instead of the injectable
-		// suite.GRPCClient, so it dials the unroutable *.cfargotunnel.com
-		// directly and cannot be redirected to the Cloudflare edge — the same
-		// structural class as the WebSocket skip above. Filed upstream as
-		// kubernetes-sigs/gateway-api#4926. The other GRPCRoute tests run via
-		// TunnelGRPCClient.
-		"GRPCRouteWeight",
 	}
 }
 
@@ -313,8 +304,7 @@ func conformanceSkipTests() []string {
 //     the Cloudflare edge instead of the unroutable Gateway address, and MUST
 //     NOT be skipped.
 //   - skippedWithReason: cannot run through the injected client and stay in
-//     conformanceSkipTests with a documented reason (GRPCRouteWeight bypasses
-//     opts.GRPCClient via its own DefaultClient — kubernetes-sigs/gateway-api#4926).
+//     conformanceSkipTests with a documented reason.
 //
 // Every SupportGRPCRoute test must appear in exactly one bucket, so a
 // gateway-api bump that adds a new gRPC test trips this guard and forces a
@@ -330,10 +320,13 @@ func TestGRPCConformanceTestsRunThroughTunnelClient(t *testing.T) {
 		"GRPCRouteHeaderMatching",
 		"GRPCRouteNamedRule",
 		"GRPCRouteListenerHostnameMatching",
-	)
-	skippedWithReason := sets.New(
+		// GRPCRouteWeight: as of gateway-api v1.6.0 (upstream #4937/#5004) the
+		// distribution sampler routes through the injectable suite.GRPCClient
+		// instead of newsing its own grpc.DefaultClient, so TunnelGRPCClient
+		// now covers it like the other north-south GRPCRoute tests.
 		"GRPCRouteWeight",
 	)
+	skippedWithReason := sets.New[string]()
 
 	grpcChecked := 0
 
@@ -406,6 +399,9 @@ func TestStaleSkipsStayLifted(t *testing.T) {
 		// Lifted once the proxy wildcard matcher accepted multi-label hosts (#371).
 		"GRPCRouteListenerHostnameMatching",
 		"HTTPRouteListenerHostnameMatching",
+		// Lifted once gateway-api v1.6.0 routed the distribution sampler
+		// through the injectable suite.GRPCClient (upstream #4937/#5004).
+		"GRPCRouteWeight",
 	}
 
 	for _, name := range lifted {

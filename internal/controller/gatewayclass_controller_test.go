@@ -304,7 +304,7 @@ func TestGatewayClassReconciler_SupportedVersion_PatchVersionAccepted(t *testing
 	scheme := gatewayClassSchemeWithCRD(t)
 	reader := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(gatewayClassCRDObject("v1.5.0")).
+		WithObjects(gatewayClassCRDObject("v1.6.5")).
 		Build()
 
 	condition := runSupportedVersionCheck(t, reader)
@@ -316,19 +316,20 @@ func TestGatewayClassReconciler_SupportedVersion_PatchVersionAccepted(t *testing
 func TestGatewayClassReconciler_SupportedVersion_UnsupportedBundle(t *testing.T) {
 	t.Parallel()
 
-	// v1.4.0 predates the ListenerSet Standard-channel promotion (v1.5.0), so
-	// it is not supported and must surface UnsupportedVersion.
+	// v1.5.1 is a different minor than the controller's vendored v1.6.0, so
+	// it is not supported and must surface UnsupportedVersion — the
+	// SupportedVersion check matches on major.minor, not "is older".
 	scheme := gatewayClassSchemeWithCRD(t)
 	reader := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(gatewayClassCRDObject("v1.4.0")).
+		WithObjects(gatewayClassCRDObject("v1.5.1")).
 		Build()
 
 	condition := runSupportedVersionCheck(t, reader)
 
 	assert.Equal(t, metav1.ConditionFalse, condition.Status)
 	assert.Equal(t, string(gatewayv1.GatewayClassReasonUnsupportedVersion), condition.Reason)
-	assert.Contains(t, condition.Message, "v1.4.0")
+	assert.Contains(t, condition.Message, "v1.5.1")
 }
 
 func TestGatewayClassReconciler_SupportedVersion_NewerMinorRejected(t *testing.T) {
@@ -340,14 +341,14 @@ func TestGatewayClassReconciler_SupportedVersion_NewerMinorRejected(t *testing.T
 	scheme := gatewayClassSchemeWithCRD(t)
 	reader := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(gatewayClassCRDObject("v1.6.0")).
+		WithObjects(gatewayClassCRDObject("v1.7.0")).
 		Build()
 
 	condition := runSupportedVersionCheck(t, reader)
 
 	assert.Equal(t, metav1.ConditionFalse, condition.Status)
 	assert.Equal(t, string(gatewayv1.GatewayClassReasonUnsupportedVersion), condition.Reason)
-	assert.Contains(t, condition.Message, "v1.6.0")
+	assert.Contains(t, condition.Message, "v1.7.0")
 }
 
 func TestGatewayClassReconciler_SupportedVersion_MissingAnnotation(t *testing.T) {
