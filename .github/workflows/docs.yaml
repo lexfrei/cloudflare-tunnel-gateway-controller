@@ -35,6 +35,10 @@ jobs:
   deploy:
     name: Deploy Documentation
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      alias: ${{ steps.version.outputs.alias }}
+      cname: ${{ steps.version.outputs.cname }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
@@ -58,25 +62,42 @@ jobs:
 
       - name: Determine version and alias
         id: version
+        env:
+          # Route event inputs through env, never inline ${{ }} in the shell: a
+          # workflow_dispatch caller controls version/alias and inline expansion
+          # would let them inject shell. As env vars they are inert data.
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+          INPUT_ALIAS: ${{ github.event.inputs.alias }}
         run: |
+          set -euo pipefail
+
           # Check if running from a tag (works for both push and workflow_dispatch)
           if [[ "$GITHUB_REF_NAME" == v* ]]; then
             VERSION="${GITHUB_REF_NAME#v}"
             echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
             echo "alias=latest" >> "$GITHUB_OUTPUT"
-          elif [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ github.event.inputs.version }}" != "dev" ]]; then
-            echo "version=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
-            echo "alias=${{ github.event.inputs.alias }}" >> "$GITHUB_OUTPUT"
+          elif [[ "${EVENT_NAME}" == "workflow_dispatch" && "${INPUT_VERSION}" != "dev" ]]; then
+            echo "version=${INPUT_VERSION}" >> "$GITHUB_OUTPUT"
+            echo "alias=${INPUT_ALIAS}" >> "$GITHUB_OUTPUT"
           else
             echo "version=dev" >> "$GITHUB_OUTPUT"
             echo "alias=" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Deploy with mike
-        run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          ALIAS="${{ steps.version.outputs.alias }}"
+          # Emit the live-site hostname from source so the verify job follows the
+          # domain automatically if docs/CNAME ever changes. Assign first so a missing
+          # file trips set -e here instead of silently emitting an empty hostname.
+          cname="$(tr -d '[:space:]' < docs/CNAME)"
+          echo "cname=${cname}" >> "$GITHUB_OUTPUT"
 
+      - name: Deploy with mike
+        env:
+          # steps.version.outputs.* can carry a workflow_dispatch input; pass via
+          # env so the value stays data and cannot inject shell.
+          VERSION: ${{ steps.version.outputs.version }}
+          ALIAS: ${{ steps.version.outputs.alias }}
+        run: |
           if [[ -n "$ALIAS" ]]; then
             mike deploy --push --update-aliases "${VERSION}" "${ALIAS}"
             mike set-default --push latest
@@ -84,28 +105,113 @@ jobs:
             mike deploy --push "${VERSION}"
           fi
 
-      - name: Publish versionless 404 redirect to gh-pages root
+      - name: Publish 404 redirect and build marker to gh-pages
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
 
-          # mike deploy --push lays each version under its own gh-pages subdir
-          # but never writes a root 404.html. GitHub Pages serves <root>/404.html
-          # for any unmatched path, so copy our redirect there -- it sends
-          # versionless links and stale bookmarks to their /latest/ equivalent.
-          # Done in a throwaway worktree so the main checkout's branch is
-          # untouched; idempotent, so steady-state runs push nothing.
-          cp docs/404.html "${RUNNER_TEMP}/404.html"
+          # mike deploy --push lays each version under its own gh-pages subdir but
+          # never writes two things this workflow needs, so add them here in one
+          # throwaway worktree (the main checkout's branch stays untouched):
+          #
+          # 1. A root 404.html. GitHub Pages serves <root>/404.html for any unmatched
+          #    path, so our redirect sends versionless links and stale bookmarks to
+          #    their /latest/ equivalent.
+          # 2. A per-version build-sha.txt recording the commit this deploy was built
+          #    from. It is written only into the deployed version's dir; mike's default
+          #    symlink aliases (e.g. latest -> 3.2.0) expose it, so the verify job reads
+          #    it through both the version and its alias. This depends on mike's
+          #    alias-type=symlink default. A non-symlink alias-type breaks the alias
+          #    check and must update it: redirect makes <alias>/build-sha.txt a 404,
+          #    and copy snapshots the version dir before this marker is written.
+          #    The job polls this marker to confirm the NEW content actually reached the
+          #    live site -- catching a stuck Pages deployment that leaves gh-pages
+          #    correct but the site stale.
 
           git fetch origin gh-pages
           git worktree add "${RUNNER_TEMP}/ghp" origin/gh-pages
-          cp "${RUNNER_TEMP}/404.html" "${RUNNER_TEMP}/ghp/404.html"
-          git -C "${RUNNER_TEMP}/ghp" add 404.html
+
+          cp docs/404.html "${RUNNER_TEMP}/ghp/404.html"
+          printf '%s' "${GITHUB_SHA}" > "${RUNNER_TEMP}/ghp/${VERSION}/build-sha.txt"
+          git -C "${RUNNER_TEMP}/ghp" add 404.html "${VERSION}/build-sha.txt"
 
           if git -C "${RUNNER_TEMP}/ghp" diff --cached --quiet; then
-            echo "404.html already current at gh-pages root"
+            echo "gh-pages root already current"
           else
-            git -C "${RUNNER_TEMP}/ghp" commit -m "docs: publish versionless 404 redirect to site root"
+            git -C "${RUNNER_TEMP}/ghp" commit -m "docs: publish 404 redirect and build marker for ${VERSION}"
             git -C "${RUNNER_TEMP}/ghp" push origin HEAD:gh-pages
           fi
 
           git worktree remove --force "${RUNNER_TEMP}/ghp"
+
+  verify:
+    name: Verify publication
+    needs: deploy
+    runs-on: ubuntu-latest
+    permissions: {}
+    timeout-minutes: 15   # defense-in-depth; the poll loop self-bounds at 720s
+    steps:
+      - name: Poll the live site until it serves this deploy
+        env:
+          CNAME: ${{ needs.deploy.outputs.cname }}
+          VERSION: ${{ needs.deploy.outputs.version }}
+          ALIAS: ${{ needs.deploy.outputs.alias }}
+          EXPECTED_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          # 'mike deploy --push' only proves the gh-pages BRANCH was updated; the
+          # actual publish is a separate GitHub-managed 'pages build and deployment'
+          # that this workflow never waits on. When that deployment stalls (observed
+          # 2026-07-02: release 3.2.0 pushed to gh-pages fine, but the Pages deploy
+          # sat in deployment_queued for 10 min and timed out), the branch is correct
+          # yet the live site stays stale -- and every Documentation run still reports
+          # success. Poll the per-deploy build marker so a non-converging publish turns
+          # this job red instead of lying green.
+
+          # The Pages deployment's own ceiling is ~10 min; add margin because a deploy
+          # makes several gh-pages pushes (mike deploy, set-default on a release, the
+          # marker), each triggering a Pages deployment that queues in order.
+          budget_seconds=720
+          interval=15
+          deadline=$(( $(date +%s) + budget_seconds ))
+
+          # A path serves this exact deploy once its build-sha.txt equals the commit
+          # the workflow built from. Checking the alias too (e.g. latest) proves it was
+          # repointed to this version, not just that some old copy still answers.
+          #
+          # No cache-busting here on purpose: GitHub Pages fronts the site with Fastly,
+          # which ignores both a ?cb= query string (not part of its cache key) and a
+          # client Cache-Control: no-cache. Freshness instead comes from GitHub purging
+          # that Fastly cache when a Pages deployment completes. So while a deploy is
+          # stuck -- this job's whole reason to exist -- the edge keeps serving the old
+          # marker (or a 404 for a brand-new version dir) and we stay red; the moment it
+          # completes, the purge lets the next poll read the new SHA and we go green.
+          serves() {
+            local path="$1" got
+            # -fs (not -fsS): a 404 while a new version dir is still converging is
+            # expected, so keep curl quiet and let the loop log progress instead.
+            # Bound each probe so a hung connection can't outlast the poll budget --
+            # the deadline below is only meaningful if no single curl blocks forever.
+            got="$(curl -fs --connect-timeout 10 --max-time 30 \
+              "https://${CNAME}/${path}/build-sha.txt")" || return 1
+            got="$(printf '%s' "${got}" | tr -d '[:space:]')"
+            [[ "${got}" == "${EXPECTED_SHA}" ]]
+          }
+
+          converged() {
+            serves "${VERSION}" || return 1
+            [[ -z "${ALIAS}" ]] || serves "${ALIAS}"
+          }
+
+          until converged; do
+            if (( $(date +%s) >= deadline )); then
+              echo "::error::https://${CNAME}/${VERSION}/ did not serve build ${EXPECTED_SHA} within ${budget_seconds}s. mike updated gh-pages but the GitHub Pages deployment did not converge (stuck or timed out). Re-run the failed 'pages build and deployment' for gh-pages, then re-run this job."
+              exit 1
+            fi
+            echo "waiting for https://${CNAME} to serve build ${EXPECTED_SHA} for ${VERSION}${ALIAS:+ / ${ALIAS}} (retry in ${interval}s)..."
+            sleep "${interval}"
+          done
+
+          echo "Publication confirmed: https://${CNAME} serves build ${EXPECTED_SHA} for '${VERSION}'${ALIAS:+ (alias ${ALIAS})}."
