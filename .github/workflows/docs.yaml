@@ -62,29 +62,42 @@ jobs:
 
       - name: Determine version and alias
         id: version
+        env:
+          # Route event inputs through env, never inline ${{ }} in the shell: a
+          # workflow_dispatch caller controls version/alias and inline expansion
+          # would let them inject shell. As env vars they are inert data.
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+          INPUT_ALIAS: ${{ github.event.inputs.alias }}
         run: |
+          set -euo pipefail
+
           # Check if running from a tag (works for both push and workflow_dispatch)
           if [[ "$GITHUB_REF_NAME" == v* ]]; then
             VERSION="${GITHUB_REF_NAME#v}"
             echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
             echo "alias=latest" >> "$GITHUB_OUTPUT"
-          elif [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ github.event.inputs.version }}" != "dev" ]]; then
-            echo "version=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
-            echo "alias=${{ github.event.inputs.alias }}" >> "$GITHUB_OUTPUT"
+          elif [[ "${EVENT_NAME}" == "workflow_dispatch" && "${INPUT_VERSION}" != "dev" ]]; then
+            echo "version=${INPUT_VERSION}" >> "$GITHUB_OUTPUT"
+            echo "alias=${INPUT_ALIAS}" >> "$GITHUB_OUTPUT"
           else
             echo "version=dev" >> "$GITHUB_OUTPUT"
             echo "alias=" >> "$GITHUB_OUTPUT"
           fi
 
           # Emit the live-site hostname from source so the verify job follows the
-          # domain automatically if docs/CNAME ever changes.
-          echo "cname=$(tr -d '[:space:]' < docs/CNAME)" >> "$GITHUB_OUTPUT"
+          # domain automatically if docs/CNAME ever changes. Assign first so a missing
+          # file trips set -e here instead of silently emitting an empty hostname.
+          cname="$(tr -d '[:space:]' < docs/CNAME)"
+          echo "cname=${cname}" >> "$GITHUB_OUTPUT"
 
       - name: Deploy with mike
+        env:
+          # steps.version.outputs.* can carry a workflow_dispatch input; pass via
+          # env so the value stays data and cannot inject shell.
+          VERSION: ${{ steps.version.outputs.version }}
+          ALIAS: ${{ steps.version.outputs.alias }}
         run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          ALIAS="${{ steps.version.outputs.alias }}"
-
           if [[ -n "$ALIAS" ]]; then
             mike deploy --push --update-aliases "${VERSION}" "${ALIAS}"
             mike set-default --push latest
@@ -109,8 +122,9 @@ jobs:
           #    from. It is written only into the deployed version's dir; mike's default
           #    symlink aliases (e.g. latest -> 3.2.0) expose it, so the verify job reads
           #    it through both the version and its alias. This depends on mike's
-          #    alias-type=symlink default -- a switch to redirect aliases would make
-          #    <alias>/build-sha.txt a 404 and must update the verify job's alias check.
+          #    alias-type=symlink default. A non-symlink alias-type breaks the alias
+          #    check and must update it: redirect makes <alias>/build-sha.txt a 404,
+          #    and copy snapshots the version dir before this marker is written.
           #    The job polls this marker to confirm the NEW content actually reached the
           #    live site -- catching a stuck Pages deployment that leaves gh-pages
           #    correct but the site stale.
@@ -156,8 +170,9 @@ jobs:
           # success. Poll the per-deploy build marker so a non-converging publish turns
           # this job red instead of lying green.
 
-          # The Pages deployment's own ceiling is ~10 min; add margin because the mike
-          # push and the marker push each trigger a deployment and they queue in order.
+          # The Pages deployment's own ceiling is ~10 min; add margin because a deploy
+          # makes several gh-pages pushes (mike deploy, set-default on a release, the
+          # marker), each triggering a Pages deployment that queues in order.
           budget_seconds=720
           interval=15
           deadline=$(( $(date +%s) + budget_seconds ))
@@ -177,7 +192,10 @@ jobs:
             local path="$1" got
             # -fs (not -fsS): a 404 while a new version dir is still converging is
             # expected, so keep curl quiet and let the loop log progress instead.
-            got="$(curl -fs "https://${CNAME}/${path}/build-sha.txt")" || return 1
+            # Bound each probe so a hung connection can't outlast the poll budget --
+            # the deadline below is only meaningful if no single curl blocks forever.
+            got="$(curl -fs --connect-timeout 10 --max-time 30 \
+              "https://${CNAME}/${path}/build-sha.txt")" || return 1
             got="$(printf '%s' "${got}" | tr -d '[:space:]')"
             [[ "${got}" == "${EXPECTED_SHA}" ]]
           }
