@@ -56,7 +56,7 @@ jobs:
           # both version and content digest (Renovate's docker datasource
           # auto-bumps the tag without a separate sha256 line to drift).
           # renovate: datasource=docker depName=artifacthub/ah
-          AH_VERSION="v1.22.0"
+          AH_VERSION="v1.23.0"
           docker create --name ah-tmp "artifacthub/ah:${AH_VERSION}"
           sudo docker cp ah-tmp:/usr/local/bin/ah /usr/local/bin/ah
           docker rm ah-tmp
