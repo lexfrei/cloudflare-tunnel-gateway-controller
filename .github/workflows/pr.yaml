@@ -62,7 +62,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
-          go-version: '1.26.4'
+          go-version: '1.26.5'
           # cache: true caches BOTH the module cache (~/go/pkg/mod) and the
           # build cache (~/.cache/go-build) keyed off go.sum. Issue #257.
           cache: true
@@ -148,7 +148,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
-          go-version: '1.26.4'
+          go-version: '1.26.5'
           # cache: true caches BOTH the module cache (~/go/pkg/mod) and
           # the build cache (~/.cache/go-build) keyed off go.sum. The
           # GOPATH/bin entry below picks up the setup-envtest binary
