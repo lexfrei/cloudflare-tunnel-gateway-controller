@@ -88,7 +88,7 @@ type SubmissionListResponse struct {
 	RequestedDisposition SubmissionListResponseRequestedDisposition `json:"requested_disposition" api:"nullable"`
 	// Deprecated, use `requested_at` instead
 	//
-	// Deprecated: deprecated
+	// Deprecated: Use `requested_at` instead.
 	RequestedTs string `json:"requested_ts"`
 	Status      string `json:"status" api:"nullable"`
 	Subject     string `json:"subject" api:"nullable"`

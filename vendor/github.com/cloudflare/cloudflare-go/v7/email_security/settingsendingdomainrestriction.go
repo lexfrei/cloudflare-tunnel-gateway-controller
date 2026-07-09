@@ -171,7 +171,7 @@ type SettingSendingDomainRestrictionNewResponse struct {
 	Exclude []string `json:"exclude"`
 	// Deprecated, use `modified_at` instead. End of life: November 1, 2026.
 	//
-	// Deprecated: deprecated
+	// Deprecated: Use `modified_at` instead.
 	LastModified time.Time                                      `json:"last_modified" format:"date-time"`
 	ModifiedAt   time.Time                                      `json:"modified_at" format:"date-time"`
 	JSON         settingSendingDomainRestrictionNewResponseJSON `json:"-"`
@@ -213,7 +213,7 @@ type SettingSendingDomainRestrictionListResponse struct {
 	Exclude []string `json:"exclude"`
 	// Deprecated, use `modified_at` instead. End of life: November 1, 2026.
 	//
-	// Deprecated: deprecated
+	// Deprecated: Use `modified_at` instead.
 	LastModified time.Time                                       `json:"last_modified" format:"date-time"`
 	ModifiedAt   time.Time                                       `json:"modified_at" format:"date-time"`
 	JSON         settingSendingDomainRestrictionListResponseJSON `json:"-"`
@@ -277,7 +277,7 @@ type SettingSendingDomainRestrictionEditResponse struct {
 	Exclude []string `json:"exclude"`
 	// Deprecated, use `modified_at` instead. End of life: November 1, 2026.
 	//
-	// Deprecated: deprecated
+	// Deprecated: Use `modified_at` instead.
 	LastModified time.Time                                       `json:"last_modified" format:"date-time"`
 	ModifiedAt   time.Time                                       `json:"modified_at" format:"date-time"`
 	JSON         settingSendingDomainRestrictionEditResponseJSON `json:"-"`
@@ -319,7 +319,7 @@ type SettingSendingDomainRestrictionGetResponse struct {
 	Exclude []string `json:"exclude"`
 	// Deprecated, use `modified_at` instead. End of life: November 1, 2026.
 	//
-	// Deprecated: deprecated
+	// Deprecated: Use `modified_at` instead.
 	LastModified time.Time                                      `json:"last_modified" format:"date-time"`
 	ModifiedAt   time.Time                                      `json:"modified_at" format:"date-time"`
 	JSON         settingSendingDomainRestrictionGetResponseJSON `json:"-"`

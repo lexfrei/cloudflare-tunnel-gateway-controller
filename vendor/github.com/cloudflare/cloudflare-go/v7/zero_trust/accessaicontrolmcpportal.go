@@ -191,11 +191,13 @@ func (r accessAIControlMcpPortalNewResponseJSON) RawJSON() string {
 
 type AccessAIControlMcpPortalNewResponseServer struct {
 	// server id
-	ID              string                                                 `json:"id" api:"required"`
-	AuthType        AccessAIControlMcpPortalNewResponseServersAuthType     `json:"auth_type" api:"required"`
-	Hostname        string                                                 `json:"hostname" api:"required" format:"uri"`
-	Name            string                                                 `json:"name" api:"required"`
-	Prompts         []map[string]interface{}                               `json:"prompts" api:"required"`
+	ID       string                                             `json:"id" api:"required"`
+	AuthType AccessAIControlMcpPortalNewResponseServersAuthType `json:"auth_type" api:"required"`
+	Hostname string                                             `json:"hostname" api:"required" format:"uri"`
+	Name     string                                             `json:"name" api:"required"`
+	Prompts  []map[string]interface{}                           `json:"prompts" api:"required"`
+	// server id
+	ServerID        string                                                 `json:"server_id" api:"required"`
 	Tools           []map[string]interface{}                               `json:"tools" api:"required"`
 	CreatedAt       time.Time                                              `json:"created_at" format:"date-time"`
 	CreatedBy       string                                                 `json:"created_by"`
@@ -205,9 +207,9 @@ type AccessAIControlMcpPortalNewResponseServer struct {
 	ErrorDetails    AccessAIControlMcpPortalNewResponseServersErrorDetails `json:"error_details"`
 	// When true, the gateway worker uses the shared Cloudflare-owned OAuth callback
 	// endpoint as the redirect_uri for upstream on-behalf OAuth, instead of the
-	// customer portal hostname. New public server creates default to true; existing
-	// servers default to false from migration until explicitly updated. Effective
-	// behavior is gated by the gateway worker's per-env rollout mode KV key.
+	// customer portal hostname. Defaults to false (off); opt in per server by setting
+	// true. Effective behavior is gated by the gateway worker's per-env rollout mode
+	// KV key.
 	IsSharedOAuthCallbackEnabled bool      `json:"is_shared_oauth_callback_enabled"`
 	LastSuccessfulSync           time.Time `json:"last_successful_sync" format:"date-time"`
 	LastSynced                   time.Time `json:"last_synced" format:"date-time"`
@@ -230,6 +232,7 @@ type accessAIControlMcpPortalNewResponseServerJSON struct {
 	Hostname                     apijson.Field
 	Name                         apijson.Field
 	Prompts                      apijson.Field
+	ServerID                     apijson.Field
 	Tools                        apijson.Field
 	CreatedAt                    apijson.Field
 	CreatedBy                    apijson.Field
@@ -418,11 +421,13 @@ func (r accessAIControlMcpPortalUpdateResponseJSON) RawJSON() string {
 
 type AccessAIControlMcpPortalUpdateResponseServer struct {
 	// server id
-	ID              string                                                    `json:"id" api:"required"`
-	AuthType        AccessAIControlMcpPortalUpdateResponseServersAuthType     `json:"auth_type" api:"required"`
-	Hostname        string                                                    `json:"hostname" api:"required" format:"uri"`
-	Name            string                                                    `json:"name" api:"required"`
-	Prompts         []map[string]interface{}                                  `json:"prompts" api:"required"`
+	ID       string                                                `json:"id" api:"required"`
+	AuthType AccessAIControlMcpPortalUpdateResponseServersAuthType `json:"auth_type" api:"required"`
+	Hostname string                                                `json:"hostname" api:"required" format:"uri"`
+	Name     string                                                `json:"name" api:"required"`
+	Prompts  []map[string]interface{}                              `json:"prompts" api:"required"`
+	// server id
+	ServerID        string                                                    `json:"server_id" api:"required"`
 	Tools           []map[string]interface{}                                  `json:"tools" api:"required"`
 	CreatedAt       time.Time                                                 `json:"created_at" format:"date-time"`
 	CreatedBy       string                                                    `json:"created_by"`
@@ -432,9 +437,9 @@ type AccessAIControlMcpPortalUpdateResponseServer struct {
 	ErrorDetails    AccessAIControlMcpPortalUpdateResponseServersErrorDetails `json:"error_details"`
 	// When true, the gateway worker uses the shared Cloudflare-owned OAuth callback
 	// endpoint as the redirect_uri for upstream on-behalf OAuth, instead of the
-	// customer portal hostname. New public server creates default to true; existing
-	// servers default to false from migration until explicitly updated. Effective
-	// behavior is gated by the gateway worker's per-env rollout mode KV key.
+	// customer portal hostname. Defaults to false (off); opt in per server by setting
+	// true. Effective behavior is gated by the gateway worker's per-env rollout mode
+	// KV key.
 	IsSharedOAuthCallbackEnabled bool      `json:"is_shared_oauth_callback_enabled"`
 	LastSuccessfulSync           time.Time `json:"last_successful_sync" format:"date-time"`
 	LastSynced                   time.Time `json:"last_synced" format:"date-time"`
@@ -457,6 +462,7 @@ type accessAIControlMcpPortalUpdateResponseServerJSON struct {
 	Hostname                     apijson.Field
 	Name                         apijson.Field
 	Prompts                      apijson.Field
+	ServerID                     apijson.Field
 	Tools                        apijson.Field
 	CreatedAt                    apijson.Field
 	CreatedBy                    apijson.Field
@@ -647,11 +653,13 @@ func (r accessAIControlMcpPortalListResponseJSON) RawJSON() string {
 
 type AccessAIControlMcpPortalListResponseServer struct {
 	// server id
-	ID              string                                                  `json:"id" api:"required"`
-	AuthType        AccessAIControlMcpPortalListResponseServersAuthType     `json:"auth_type" api:"required"`
-	Hostname        string                                                  `json:"hostname" api:"required" format:"uri"`
-	Name            string                                                  `json:"name" api:"required"`
-	Prompts         []map[string]interface{}                                `json:"prompts" api:"required"`
+	ID       string                                              `json:"id" api:"required"`
+	AuthType AccessAIControlMcpPortalListResponseServersAuthType `json:"auth_type" api:"required"`
+	Hostname string                                              `json:"hostname" api:"required" format:"uri"`
+	Name     string                                              `json:"name" api:"required"`
+	Prompts  []map[string]interface{}                            `json:"prompts" api:"required"`
+	// server id
+	ServerID        string                                                  `json:"server_id" api:"required"`
 	Tools           []map[string]interface{}                                `json:"tools" api:"required"`
 	CreatedAt       time.Time                                               `json:"created_at" format:"date-time"`
 	CreatedBy       string                                                  `json:"created_by"`
@@ -661,9 +669,9 @@ type AccessAIControlMcpPortalListResponseServer struct {
 	ErrorDetails    AccessAIControlMcpPortalListResponseServersErrorDetails `json:"error_details"`
 	// When true, the gateway worker uses the shared Cloudflare-owned OAuth callback
 	// endpoint as the redirect_uri for upstream on-behalf OAuth, instead of the
-	// customer portal hostname. New public server creates default to true; existing
-	// servers default to false from migration until explicitly updated. Effective
-	// behavior is gated by the gateway worker's per-env rollout mode KV key.
+	// customer portal hostname. Defaults to false (off); opt in per server by setting
+	// true. Effective behavior is gated by the gateway worker's per-env rollout mode
+	// KV key.
 	IsSharedOAuthCallbackEnabled bool      `json:"is_shared_oauth_callback_enabled"`
 	LastSuccessfulSync           time.Time `json:"last_successful_sync" format:"date-time"`
 	LastSynced                   time.Time `json:"last_synced" format:"date-time"`
@@ -686,6 +694,7 @@ type accessAIControlMcpPortalListResponseServerJSON struct {
 	Hostname                     apijson.Field
 	Name                         apijson.Field
 	Prompts                      apijson.Field
+	ServerID                     apijson.Field
 	Tools                        apijson.Field
 	CreatedAt                    apijson.Field
 	CreatedBy                    apijson.Field
@@ -917,11 +926,13 @@ func (r accessAIControlMcpPortalReadResponseJSON) RawJSON() string {
 
 type AccessAIControlMcpPortalReadResponseServer struct {
 	// server id
-	ID              string                                                  `json:"id" api:"required"`
-	AuthType        AccessAIControlMcpPortalReadResponseServersAuthType     `json:"auth_type" api:"required"`
-	Hostname        string                                                  `json:"hostname" api:"required" format:"uri"`
-	Name            string                                                  `json:"name" api:"required"`
-	Prompts         []map[string]interface{}                                `json:"prompts" api:"required"`
+	ID       string                                              `json:"id" api:"required"`
+	AuthType AccessAIControlMcpPortalReadResponseServersAuthType `json:"auth_type" api:"required"`
+	Hostname string                                              `json:"hostname" api:"required" format:"uri"`
+	Name     string                                              `json:"name" api:"required"`
+	Prompts  []map[string]interface{}                            `json:"prompts" api:"required"`
+	// server id
+	ServerID        string                                                  `json:"server_id" api:"required"`
 	Tools           []map[string]interface{}                                `json:"tools" api:"required"`
 	CreatedAt       time.Time                                               `json:"created_at" format:"date-time"`
 	CreatedBy       string                                                  `json:"created_by"`
@@ -931,9 +942,9 @@ type AccessAIControlMcpPortalReadResponseServer struct {
 	ErrorDetails    AccessAIControlMcpPortalReadResponseServersErrorDetails `json:"error_details"`
 	// When true, the gateway worker uses the shared Cloudflare-owned OAuth callback
 	// endpoint as the redirect_uri for upstream on-behalf OAuth, instead of the
-	// customer portal hostname. New public server creates default to true; existing
-	// servers default to false from migration until explicitly updated. Effective
-	// behavior is gated by the gateway worker's per-env rollout mode KV key.
+	// customer portal hostname. Defaults to false (off); opt in per server by setting
+	// true. Effective behavior is gated by the gateway worker's per-env rollout mode
+	// KV key.
 	IsSharedOAuthCallbackEnabled bool      `json:"is_shared_oauth_callback_enabled"`
 	LastSuccessfulSync           time.Time `json:"last_successful_sync" format:"date-time"`
 	LastSynced                   time.Time `json:"last_synced" format:"date-time"`
@@ -956,6 +967,7 @@ type accessAIControlMcpPortalReadResponseServerJSON struct {
 	Hostname                     apijson.Field
 	Name                         apijson.Field
 	Prompts                      apijson.Field
+	ServerID                     apijson.Field
 	Tools                        apijson.Field
 	CreatedAt                    apijson.Field
 	CreatedBy                    apijson.Field

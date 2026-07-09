@@ -292,7 +292,7 @@ func (r organizationDOHUpdateResponseEnvelopeMessagesSourceJSON) RawJSON() strin
 	return r.raw
 }
 
-// Whether the API call was successful.
+// OrganizationDOHUpdateResponseEnvelopeSuccess indicates whether the API call was successful.
 type OrganizationDOHUpdateResponseEnvelopeSuccess bool
 
 const (
@@ -436,7 +436,7 @@ func (r organizationDOHGetResponseEnvelopeMessagesSourceJSON) RawJSON() string {
 	return r.raw
 }
 
-// Whether the API call was successful.
+// OrganizationDOHGetResponseEnvelopeSuccess indicates whether the API call was successful.
 type OrganizationDOHGetResponseEnvelopeSuccess bool
 
 const (

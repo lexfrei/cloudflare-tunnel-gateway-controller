@@ -161,7 +161,7 @@ type SettingAllowPolicyNewResponse struct {
 	CreatedAt time.Time `json:"created_at" api:"required" format:"date-time"`
 	// Deprecated, use `modified_at` instead. End of life: November 1, 2026.
 	//
-	// Deprecated: deprecated
+	// Deprecated: Use `modified_at` instead.
 	LastModified time.Time `json:"last_modified" api:"required" format:"date-time"`
 	Comments     string    `json:"comments" api:"nullable"`
 	// Messages from this sender will be exempted from Spam, Spoof and Bulk
@@ -173,18 +173,18 @@ type SettingAllowPolicyNewResponse struct {
 	// Deprecated as of July 1, 2025. Use `is_exempt_recipient` instead. End of life:
 	// July 1, 2026.
 	//
-	// Deprecated: deprecated
+	// Deprecated: Use `is_exempt_recipient` instead.
 	IsRecipient bool `json:"is_recipient"`
 	IsRegex     bool `json:"is_regex"`
 	// Deprecated as of July 1, 2025. Use `is_trusted_sender` instead. End of life:
 	// July 1, 2026.
 	//
-	// Deprecated: deprecated
+	// Deprecated: Use `is_trusted_sender` instead.
 	IsSender bool `json:"is_sender"`
 	// Deprecated as of July 1, 2025. Use `is_acceptable_sender` instead. End of life:
 	// July 1, 2026.
 	//
-	// Deprecated: deprecated
+	// Deprecated: Use `is_acceptable_sender` instead.
 	IsSpoof bool `json:"is_spoof"`
 	// Messages from this sender will bypass all detections and link following
 	IsTrustedSender bool      `json:"is_trusted_sender"`
@@ -255,7 +255,7 @@ type SettingAllowPolicyListResponse struct {
 	CreatedAt time.Time `json:"created_at" api:"required" format:"date-time"`
 	// Deprecated, use `modified_at` instead. End of life: November 1, 2026.
 	//
-	// Deprecated: deprecated
+	// Deprecated: Use `modified_at` instead.
 	LastModified time.Time `json:"last_modified" api:"required" format:"date-time"`
 	Comments     string    `json:"comments" api:"nullable"`
 	// Messages from this sender will be exempted from Spam, Spoof and Bulk
@@ -267,18 +267,18 @@ type SettingAllowPolicyListResponse struct {
 	// Deprecated as of July 1, 2025. Use `is_exempt_recipient` instead. End of life:
 	// July 1, 2026.
 	//
-	// Deprecated: deprecated
+	// Deprecated: Use `is_exempt_recipient` instead.
 	IsRecipient bool `json:"is_recipient"`
 	IsRegex     bool `json:"is_regex"`
 	// Deprecated as of July 1, 2025. Use `is_trusted_sender` instead. End of life:
 	// July 1, 2026.
 	//
-	// Deprecated: deprecated
+	// Deprecated: Use `is_trusted_sender` instead.
 	IsSender bool `json:"is_sender"`
 	// Deprecated as of July 1, 2025. Use `is_acceptable_sender` instead. End of life:
 	// July 1, 2026.
 	//
-	// Deprecated: deprecated
+	// Deprecated: Use `is_acceptable_sender` instead.
 	IsSpoof bool `json:"is_spoof"`
 	// Messages from this sender will bypass all detections and link following
 	IsTrustedSender bool      `json:"is_trusted_sender"`
@@ -371,7 +371,7 @@ type SettingAllowPolicyEditResponse struct {
 	CreatedAt time.Time `json:"created_at" api:"required" format:"date-time"`
 	// Deprecated, use `modified_at` instead. End of life: November 1, 2026.
 	//
-	// Deprecated: deprecated
+	// Deprecated: Use `modified_at` instead.
 	LastModified time.Time `json:"last_modified" api:"required" format:"date-time"`
 	Comments     string    `json:"comments" api:"nullable"`
 	// Messages from this sender will be exempted from Spam, Spoof and Bulk
@@ -383,18 +383,18 @@ type SettingAllowPolicyEditResponse struct {
 	// Deprecated as of July 1, 2025. Use `is_exempt_recipient` instead. End of life:
 	// July 1, 2026.
 	//
-	// Deprecated: deprecated
+	// Deprecated: Use `is_exempt_recipient` instead.
 	IsRecipient bool `json:"is_recipient"`
 	IsRegex     bool `json:"is_regex"`
 	// Deprecated as of July 1, 2025. Use `is_trusted_sender` instead. End of life:
 	// July 1, 2026.
 	//
-	// Deprecated: deprecated
+	// Deprecated: Use `is_trusted_sender` instead.
 	IsSender bool `json:"is_sender"`
 	// Deprecated as of July 1, 2025. Use `is_acceptable_sender` instead. End of life:
 	// July 1, 2026.
 	//
-	// Deprecated: deprecated
+	// Deprecated: Use `is_acceptable_sender` instead.
 	IsSpoof bool `json:"is_spoof"`
 	// Messages from this sender will bypass all detections and link following
 	IsTrustedSender bool      `json:"is_trusted_sender"`
@@ -465,7 +465,7 @@ type SettingAllowPolicyGetResponse struct {
 	CreatedAt time.Time `json:"created_at" api:"required" format:"date-time"`
 	// Deprecated, use `modified_at` instead. End of life: November 1, 2026.
 	//
-	// Deprecated: deprecated
+	// Deprecated: Use `modified_at` instead.
 	LastModified time.Time `json:"last_modified" api:"required" format:"date-time"`
 	Comments     string    `json:"comments" api:"nullable"`
 	// Messages from this sender will be exempted from Spam, Spoof and Bulk
@@ -477,18 +477,18 @@ type SettingAllowPolicyGetResponse struct {
 	// Deprecated as of July 1, 2025. Use `is_exempt_recipient` instead. End of life:
 	// July 1, 2026.
 	//
-	// Deprecated: deprecated
+	// Deprecated: Use `is_exempt_recipient` instead.
 	IsRecipient bool `json:"is_recipient"`
 	IsRegex     bool `json:"is_regex"`
 	// Deprecated as of July 1, 2025. Use `is_trusted_sender` instead. End of life:
 	// July 1, 2026.
 	//
-	// Deprecated: deprecated
+	// Deprecated: Use `is_trusted_sender` instead.
 	IsSender bool `json:"is_sender"`
 	// Deprecated as of July 1, 2025. Use `is_acceptable_sender` instead. End of life:
 	// July 1, 2026.
 	//
-	// Deprecated: deprecated
+	// Deprecated: Use `is_acceptable_sender` instead.
 	IsSpoof bool `json:"is_spoof"`
 	// Messages from this sender will bypass all detections and link following
 	IsTrustedSender bool      `json:"is_trusted_sender"`

@@ -163,7 +163,7 @@ type SettingBlockSenderNewResponse struct {
 	IsRegex   bool      `json:"is_regex"`
 	// Deprecated, use `modified_at` instead. End of life: November 1, 2026.
 	//
-	// Deprecated: deprecated
+	// Deprecated: Use `modified_at` instead.
 	LastModified time.Time `json:"last_modified" format:"date-time"`
 	ModifiedAt   time.Time `json:"modified_at" format:"date-time"`
 	Pattern      string    `json:"pattern"`
@@ -224,7 +224,7 @@ type SettingBlockSenderListResponse struct {
 	IsRegex   bool      `json:"is_regex"`
 	// Deprecated, use `modified_at` instead. End of life: November 1, 2026.
 	//
-	// Deprecated: deprecated
+	// Deprecated: Use `modified_at` instead.
 	LastModified time.Time `json:"last_modified" format:"date-time"`
 	ModifiedAt   time.Time `json:"modified_at" format:"date-time"`
 	Pattern      string    `json:"pattern"`
@@ -307,7 +307,7 @@ type SettingBlockSenderEditResponse struct {
 	IsRegex   bool      `json:"is_regex"`
 	// Deprecated, use `modified_at` instead. End of life: November 1, 2026.
 	//
-	// Deprecated: deprecated
+	// Deprecated: Use `modified_at` instead.
 	LastModified time.Time `json:"last_modified" format:"date-time"`
 	ModifiedAt   time.Time `json:"modified_at" format:"date-time"`
 	Pattern      string    `json:"pattern"`
@@ -368,7 +368,7 @@ type SettingBlockSenderGetResponse struct {
 	IsRegex   bool      `json:"is_regex"`
 	// Deprecated, use `modified_at` instead. End of life: November 1, 2026.
 	//
-	// Deprecated: deprecated
+	// Deprecated: Use `modified_at` instead.
 	LastModified time.Time `json:"last_modified" format:"date-time"`
 	ModifiedAt   time.Time `json:"modified_at" format:"date-time"`
 	Pattern      string    `json:"pattern"`

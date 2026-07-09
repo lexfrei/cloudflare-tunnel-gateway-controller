@@ -169,7 +169,7 @@ type SettingTrustedDomainNewResponse struct {
 	IsSimilarity bool `json:"is_similarity"`
 	// Deprecated, use `modified_at` instead. End of life: November 1, 2026.
 	//
-	// Deprecated: deprecated
+	// Deprecated: Use `modified_at` instead.
 	LastModified time.Time                           `json:"last_modified" format:"date-time"`
 	ModifiedAt   time.Time                           `json:"modified_at" format:"date-time"`
 	Pattern      string                              `json:"pattern"`
@@ -215,7 +215,7 @@ type SettingTrustedDomainListResponse struct {
 	IsSimilarity bool `json:"is_similarity"`
 	// Deprecated, use `modified_at` instead. End of life: November 1, 2026.
 	//
-	// Deprecated: deprecated
+	// Deprecated: Use `modified_at` instead.
 	LastModified time.Time                            `json:"last_modified" format:"date-time"`
 	ModifiedAt   time.Time                            `json:"modified_at" format:"date-time"`
 	Pattern      string                               `json:"pattern"`
@@ -283,7 +283,7 @@ type SettingTrustedDomainEditResponse struct {
 	IsSimilarity bool `json:"is_similarity"`
 	// Deprecated, use `modified_at` instead. End of life: November 1, 2026.
 	//
-	// Deprecated: deprecated
+	// Deprecated: Use `modified_at` instead.
 	LastModified time.Time                            `json:"last_modified" format:"date-time"`
 	ModifiedAt   time.Time                            `json:"modified_at" format:"date-time"`
 	Pattern      string                               `json:"pattern"`
@@ -329,7 +329,7 @@ type SettingTrustedDomainGetResponse struct {
 	IsSimilarity bool `json:"is_similarity"`
 	// Deprecated, use `modified_at` instead. End of life: November 1, 2026.
 	//
-	// Deprecated: deprecated
+	// Deprecated: Use `modified_at` instead.
 	LastModified time.Time                           `json:"last_modified" format:"date-time"`
 	ModifiedAt   time.Time                           `json:"modified_at" format:"date-time"`
 	Pattern      string                              `json:"pattern"`

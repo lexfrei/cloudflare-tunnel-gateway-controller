@@ -78,7 +78,7 @@ func (r *DeviceIPProfileService) Update(ctx context.Context, profileID string, p
 }
 
 // Lists WARP Device IP profiles.
-func (r *DeviceIPProfileService) List(ctx context.Context, params DeviceIPProfileListParams, opts ...option.RequestOption) (res *pagination.SinglePage[IPProfile], err error) {
+func (r *DeviceIPProfileService) List(ctx context.Context, params DeviceIPProfileListParams, opts ...option.RequestOption) (res *pagination.V4PagePaginationArray[IPProfile], err error) {
 	var raw *http.Response
 	opts = slices.Concat(r.Options, opts)
 	opts = append([]option.RequestOption{option.WithResponseInto(&raw)}, opts...)
@@ -100,8 +100,8 @@ func (r *DeviceIPProfileService) List(ctx context.Context, params DeviceIPProfil
 }
 
 // Lists WARP Device IP profiles.
-func (r *DeviceIPProfileService) ListAutoPaging(ctx context.Context, params DeviceIPProfileListParams, opts ...option.RequestOption) *pagination.SinglePageAutoPager[IPProfile] {
-	return pagination.NewSinglePageAutoPager(r.List(ctx, params, opts...))
+func (r *DeviceIPProfileService) ListAutoPaging(ctx context.Context, params DeviceIPProfileListParams, opts ...option.RequestOption) *pagination.V4PagePaginationArrayAutoPager[IPProfile] {
+	return pagination.NewV4PagePaginationArrayAutoPager(r.List(ctx, params, opts...))
 }
 
 // Delete a WARP Device IP profile.
@@ -269,7 +269,7 @@ func (r deviceIPProfileNewResponseEnvelopeJSON) RawJSON() string {
 	return r.raw
 }
 
-// A message which can be returned in either the 'errors' or 'messages' fields in a
+// DeviceIPProfileNewResponseEnvelopeErrors is a message which can be returned in either the 'errors' or 'messages' fields in a
 // v4 API response.
 type DeviceIPProfileNewResponseEnvelopeErrors struct {
 	Code    int64                                        `json:"code" api:"required"`
@@ -294,7 +294,7 @@ func (r deviceIPProfileNewResponseEnvelopeErrorsJSON) RawJSON() string {
 	return r.raw
 }
 
-// A message which can be returned in either the 'errors' or 'messages' fields in a
+// DeviceIPProfileNewResponseEnvelopeMessages is a message which can be returned in either the 'errors' or 'messages' fields in a
 // v4 API response.
 type DeviceIPProfileNewResponseEnvelopeMessages struct {
 	Code    int64                                          `json:"code" api:"required"`
@@ -371,7 +371,7 @@ func (r deviceIPProfileUpdateResponseEnvelopeJSON) RawJSON() string {
 	return r.raw
 }
 
-// A message which can be returned in either the 'errors' or 'messages' fields in a
+// DeviceIPProfileUpdateResponseEnvelopeErrors is a message which can be returned in either the 'errors' or 'messages' fields in a
 // v4 API response.
 type DeviceIPProfileUpdateResponseEnvelopeErrors struct {
 	Code    int64                                           `json:"code" api:"required"`
@@ -396,7 +396,7 @@ func (r deviceIPProfileUpdateResponseEnvelopeErrorsJSON) RawJSON() string {
 	return r.raw
 }
 
-// A message which can be returned in either the 'errors' or 'messages' fields in a
+// DeviceIPProfileUpdateResponseEnvelopeMessages is a message which can be returned in either the 'errors' or 'messages' fields in a
 // v4 API response.
 type DeviceIPProfileUpdateResponseEnvelopeMessages struct {
 	Code    int64                                             `json:"code" api:"required"`
@@ -423,6 +423,8 @@ func (r deviceIPProfileUpdateResponseEnvelopeMessagesJSON) RawJSON() string {
 
 type DeviceIPProfileListParams struct {
 	AccountID param.Field[string] `path:"account_id" api:"required"`
+	// The page number to return.
+	Page param.Field[int64] `query:"page"`
 	// The number of IP profiles to return per page.
 	PerPage param.Field[int64] `query:"per_page"`
 }
@@ -468,7 +470,7 @@ func (r deviceIPProfileDeleteResponseEnvelopeJSON) RawJSON() string {
 	return r.raw
 }
 
-// A message which can be returned in either the 'errors' or 'messages' fields in a
+// DeviceIPProfileDeleteResponseEnvelopeErrors is a message which can be returned in either the 'errors' or 'messages' fields in a
 // v4 API response.
 type DeviceIPProfileDeleteResponseEnvelopeErrors struct {
 	Code    int64                                           `json:"code" api:"required"`
@@ -493,7 +495,7 @@ func (r deviceIPProfileDeleteResponseEnvelopeErrorsJSON) RawJSON() string {
 	return r.raw
 }
 
-// A message which can be returned in either the 'errors' or 'messages' fields in a
+// DeviceIPProfileDeleteResponseEnvelopeMessages is a message which can be returned in either the 'errors' or 'messages' fields in a
 // v4 API response.
 type DeviceIPProfileDeleteResponseEnvelopeMessages struct {
 	Code    int64                                             `json:"code" api:"required"`
@@ -550,7 +552,7 @@ func (r deviceIPProfileGetResponseEnvelopeJSON) RawJSON() string {
 	return r.raw
 }
 
-// A message which can be returned in either the 'errors' or 'messages' fields in a
+// DeviceIPProfileGetResponseEnvelopeErrors is a message which can be returned in either the 'errors' or 'messages' fields in a
 // v4 API response.
 type DeviceIPProfileGetResponseEnvelopeErrors struct {
 	Code    int64                                        `json:"code" api:"required"`
@@ -575,7 +577,7 @@ func (r deviceIPProfileGetResponseEnvelopeErrorsJSON) RawJSON() string {
 	return r.raw
 }
 
-// A message which can be returned in either the 'errors' or 'messages' fields in a
+// DeviceIPProfileGetResponseEnvelopeMessages is a message which can be returned in either the 'errors' or 'messages' fields in a
 // v4 API response.
 type DeviceIPProfileGetResponseEnvelopeMessages struct {
 	Code    int64                                          `json:"code" api:"required"`

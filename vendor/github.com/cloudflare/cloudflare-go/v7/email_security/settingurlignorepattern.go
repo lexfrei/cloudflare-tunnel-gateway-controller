@@ -162,7 +162,7 @@ type SettingURLIgnorePatternNewResponse struct {
 	Comments string `json:"comments" api:"nullable"`
 	// Deprecated, use `modified_at` instead. End of life: November 1, 2026.
 	//
-	// Deprecated: deprecated
+	// Deprecated: Use `modified_at` instead.
 	LastModified time.Time                              `json:"last_modified" format:"date-time"`
 	ModifiedAt   time.Time                              `json:"modified_at" format:"date-time"`
 	JSON         settingURLIgnorePatternNewResponseJSON `json:"-"`
@@ -201,7 +201,7 @@ type SettingURLIgnorePatternListResponse struct {
 	Comments string `json:"comments" api:"nullable"`
 	// Deprecated, use `modified_at` instead. End of life: November 1, 2026.
 	//
-	// Deprecated: deprecated
+	// Deprecated: Use `modified_at` instead.
 	LastModified time.Time                               `json:"last_modified" format:"date-time"`
 	ModifiedAt   time.Time                               `json:"modified_at" format:"date-time"`
 	JSON         settingURLIgnorePatternListResponseJSON `json:"-"`
@@ -262,7 +262,7 @@ type SettingURLIgnorePatternEditResponse struct {
 	Comments string `json:"comments" api:"nullable"`
 	// Deprecated, use `modified_at` instead. End of life: November 1, 2026.
 	//
-	// Deprecated: deprecated
+	// Deprecated: Use `modified_at` instead.
 	LastModified time.Time                               `json:"last_modified" format:"date-time"`
 	ModifiedAt   time.Time                               `json:"modified_at" format:"date-time"`
 	JSON         settingURLIgnorePatternEditResponseJSON `json:"-"`
@@ -301,7 +301,7 @@ type SettingURLIgnorePatternGetResponse struct {
 	Comments string `json:"comments" api:"nullable"`
 	// Deprecated, use `modified_at` instead. End of life: November 1, 2026.
 	//
-	// Deprecated: deprecated
+	// Deprecated: Use `modified_at` instead.
 	LastModified time.Time                              `json:"last_modified" format:"date-time"`
 	ModifiedAt   time.Time                              `json:"modified_at" format:"date-time"`
 	JSON         settingURLIgnorePatternGetResponseJSON `json:"-"`

@@ -49,6 +49,7 @@ import (
 	"github.com/cloudflare/cloudflare-go/v7/dns"
 	"github.com/cloudflare/cloudflare-go/v7/dns_firewall"
 	"github.com/cloudflare/cloudflare-go/v7/durable_objects"
+	"github.com/cloudflare/cloudflare-go/v7/email_auth"
 	"github.com/cloudflare/cloudflare-go/v7/email_routing"
 	"github.com/cloudflare/cloudflare-go/v7/email_security"
 	"github.com/cloudflare/cloudflare-go/v7/email_sending"
@@ -76,6 +77,7 @@ import (
 	"github.com/cloudflare/cloudflare-go/v7/magic_transit"
 	"github.com/cloudflare/cloudflare-go/v7/managed_transforms"
 	"github.com/cloudflare/cloudflare-go/v7/memberships"
+	"github.com/cloudflare/cloudflare-go/v7/moq"
 	"github.com/cloudflare/cloudflare-go/v7/mtls_certificates"
 	"github.com/cloudflare/cloudflare-go/v7/network_interconnects"
 	"github.com/cloudflare/cloudflare-go/v7/option"
@@ -157,6 +159,7 @@ type Client struct {
 	DNSFirewall             *dns_firewall.DNSFirewallService
 	DNS                     *dns.DNSService
 	EmailSecurity           *email_security.EmailSecurityService
+	EmailAuth               *email_auth.EmailAuthService
 	EmailRouting            *email_routing.EmailRoutingService
 	EmailSending            *email_sending.EmailSendingService
 	// Deprecated: The Filters API is deprecated in favour of using the Ruleset Engine.
@@ -233,6 +236,7 @@ type Client struct {
 	Snippets                    *snippets.SnippetService
 	RealtimeKit                 *realtime_kit.RealtimeKitService
 	Calls                       *calls.CallService
+	MoQ                         *moq.MoQService
 	CloudforceOne               *cloudforce_one.CloudforceOneService
 	AIGateway                   *ai_gateway.AIGatewayService
 	Flagship                    *flagship.FlagshipService
@@ -324,6 +328,7 @@ func NewClient(opts ...option.RequestOption) (r *Client) {
 	r.DNSFirewall = dns_firewall.NewDNSFirewallService(opts...)
 	r.DNS = dns.NewDNSService(opts...)
 	r.EmailSecurity = email_security.NewEmailSecurityService(opts...)
+	r.EmailAuth = email_auth.NewEmailAuthService(opts...)
 	r.EmailRouting = email_routing.NewEmailRoutingService(opts...)
 	r.EmailSending = email_sending.NewEmailSendingService(opts...)
 	r.Filters = filters.NewFilterService(opts...)
@@ -392,6 +397,7 @@ func NewClient(opts ...option.RequestOption) (r *Client) {
 	r.Snippets = snippets.NewSnippetService(opts...)
 	r.RealtimeKit = realtime_kit.NewRealtimeKitService(opts...)
 	r.Calls = calls.NewCallService(opts...)
+	r.MoQ = moq.NewMoQService(opts...)
 	r.CloudforceOne = cloudforce_one.NewCloudforceOneService(opts...)
 	r.AIGateway = ai_gateway.NewAIGatewayService(opts...)
 	r.Flagship = flagship.NewFlagshipService(opts...)

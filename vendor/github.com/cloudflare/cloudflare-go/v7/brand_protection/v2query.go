@@ -105,18 +105,16 @@ func (r v2QueryGetResponseParametersJSON) RawJSON() string {
 }
 
 type V2QueryGetResponseParametersStringMatch struct {
-	MaxEditDistance float64                                     `json:"max_edit_distance" api:"required"`
-	Pattern         string                                      `json:"pattern" api:"required"`
-	JSON            v2QueryGetResponseParametersStringMatchJSON `json:"-"`
+	Pattern string                                      `json:"pattern" api:"required"`
+	JSON    v2QueryGetResponseParametersStringMatchJSON `json:"-"`
 }
 
 // v2QueryGetResponseParametersStringMatchJSON contains the JSON metadata for the
 // struct [V2QueryGetResponseParametersStringMatch]
 type v2QueryGetResponseParametersStringMatchJSON struct {
-	MaxEditDistance apijson.Field
-	Pattern         apijson.Field
-	raw             string
-	ExtraFields     map[string]apijson.Field
+	Pattern     apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
 }
 
 func (r *V2QueryGetResponseParametersStringMatch) UnmarshalJSON(data []byte) (err error) {
