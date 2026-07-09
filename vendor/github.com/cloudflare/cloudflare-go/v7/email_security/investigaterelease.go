@@ -73,7 +73,7 @@ type InvestigateReleaseBulkResponse struct {
 	Failed    []string `json:"failed" api:"nullable"`
 	// Deprecated, use `id` instead. End of life: November 1, 2026.
 	//
-	// Deprecated: deprecated
+	// Deprecated: Use `id` instead.
 	PostfixID   string                             `json:"postfix_id"`
 	Undelivered []string                           `json:"undelivered" api:"nullable"`
 	JSON        investigateReleaseBulkResponseJSON `json:"-"`

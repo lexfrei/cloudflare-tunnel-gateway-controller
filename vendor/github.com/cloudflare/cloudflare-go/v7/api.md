@@ -79,6 +79,8 @@
 
 # [EmailSecurity](email_security/api.md)
 
+# [EmailAuth](email_auth/api.md)
+
 # [EmailRouting](email_routing/api.md)
 
 # [EmailSending](email_sending/api.md)
@@ -214,6 +216,8 @@
 # [RealtimeKit](realtime_kit/api.md)
 
 # [Calls](calls/api.md)
+
+# [MoQ](moq/api.md)
 
 # [CloudforceOne](cloudforce_one/api.md)
 

@@ -50,7 +50,8 @@ func NewUserSchemaService(opts ...option.RequestOption) (r *UserSchemaService) {
 	return
 }
 
-// Upload a schema to a zone
+// Uploads a new OpenAPI schema for API Shield schema validation. The schema
+// defines expected request/response formats for API endpoints.
 //
 // Deprecated: Use
 // [Schema Validation API](https://developers.cloudflare.com/api/resources/schema_validation/)

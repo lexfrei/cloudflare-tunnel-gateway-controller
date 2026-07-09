@@ -98,6 +98,10 @@ type DispatchNamespaceScriptSettingEditResponse struct {
 	// docs:
 	// https://developers.cloudflare.com/workers/configuration/multipart-upload-metadata/#bindings.
 	Bindings []DispatchNamespaceScriptSettingEditResponseBinding `json:"bindings"`
+	// Global CacheW configuration for the Worker. When caching is on, the platform
+	// provisions a `cloudflare.app` zone for the Worker. A `type: worker` entry in the
+	// `exports` map can override this value for a single entrypoint.
+	CacheOptions DispatchNamespaceScriptSettingEditResponseCacheOptions `json:"cache_options"`
 	// Date indicating targeted support in the Workers runtime. Backwards incompatible
 	// fixes to the runtime following this date will not affect this Worker.
 	CompatibilityDate string `json:"compatibility_date"`
@@ -128,6 +132,7 @@ type DispatchNamespaceScriptSettingEditResponse struct {
 // the struct [DispatchNamespaceScriptSettingEditResponse]
 type dispatchNamespaceScriptSettingEditResponseJSON struct {
 	Bindings           apijson.Field
+	CacheOptions       apijson.Field
 	CompatibilityDate  apijson.Field
 	CompatibilityFlags apijson.Field
 	Limits             apijson.Field
@@ -2555,6 +2560,107 @@ func (r DispatchNamespaceScriptSettingEditResponseBindingsJurisdiction) IsKnown(
 	return false
 }
 
+// Global CacheW configuration for the Worker. When caching is on, the platform
+// provisions a `cloudflare.app` zone for the Worker. A `type: worker` entry in the
+// `exports` map can override this value for a single entrypoint.
+type DispatchNamespaceScriptSettingEditResponseCacheOptions struct {
+	// Whether caching is enabled for this Worker.
+	Enabled bool `json:"enabled" api:"required"`
+	// Whether cached responses are shared across Worker version uploads. This is
+	// independent of `enabled`. It can stay true while caching is off, so the
+	// preference survives turning caching off and back on.
+	CrossVersionCache bool                                                       `json:"cross_version_cache"`
+	JSON              dispatchNamespaceScriptSettingEditResponseCacheOptionsJSON `json:"-"`
+}
+
+// dispatchNamespaceScriptSettingEditResponseCacheOptionsJSON contains the JSON
+// metadata for the struct [DispatchNamespaceScriptSettingEditResponseCacheOptions]
+type dispatchNamespaceScriptSettingEditResponseCacheOptionsJSON struct {
+	Enabled           apijson.Field
+	CrossVersionCache apijson.Field
+	raw               string
+	ExtraFields       map[string]apijson.Field
+}
+
+func (r *DispatchNamespaceScriptSettingEditResponseCacheOptions) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r dispatchNamespaceScriptSettingEditResponseCacheOptionsJSON) RawJSON() string {
+	return r.raw
+}
+
+// A single entry in the `exports` map, keyed by export name (a `WorkerEntrypoint`
+// class name, a Durable Object class name, or `default` for the Worker's default
+// export). Worker entrypoint entries set `type: worker` and may carry `cache`
+// configuration for that entrypoint. Durable Object entries set
+// `type: durable-object` and carry additional provisioning fields.
+type DispatchNamespaceScriptSettingEditResponseExport struct {
+	// The kind of export.
+	Type DispatchNamespaceScriptSettingEditResponseExportsType `json:"type" api:"required"`
+	// Cache override for this entrypoint. It applies only to `type: worker` entries
+	// and overrides the Worker's global `cache_options.enabled` for that entrypoint.
+	Cache DispatchNamespaceScriptSettingEditResponseExportsCache `json:"cache"`
+	JSON  dispatchNamespaceScriptSettingEditResponseExportJSON   `json:"-"`
+}
+
+// dispatchNamespaceScriptSettingEditResponseExportJSON contains the JSON metadata
+// for the struct [DispatchNamespaceScriptSettingEditResponseExport]
+type dispatchNamespaceScriptSettingEditResponseExportJSON struct {
+	Type        apijson.Field
+	Cache       apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *DispatchNamespaceScriptSettingEditResponseExport) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r dispatchNamespaceScriptSettingEditResponseExportJSON) RawJSON() string {
+	return r.raw
+}
+
+// The kind of export.
+type DispatchNamespaceScriptSettingEditResponseExportsType string
+
+const (
+	DispatchNamespaceScriptSettingEditResponseExportsTypeWorker        DispatchNamespaceScriptSettingEditResponseExportsType = "worker"
+	DispatchNamespaceScriptSettingEditResponseExportsTypeDurableObject DispatchNamespaceScriptSettingEditResponseExportsType = "durable-object"
+)
+
+func (r DispatchNamespaceScriptSettingEditResponseExportsType) IsKnown() bool {
+	switch r {
+	case DispatchNamespaceScriptSettingEditResponseExportsTypeWorker, DispatchNamespaceScriptSettingEditResponseExportsTypeDurableObject:
+		return true
+	}
+	return false
+}
+
+// Cache override for this entrypoint. It applies only to `type: worker` entries
+// and overrides the Worker's global `cache_options.enabled` for that entrypoint.
+type DispatchNamespaceScriptSettingEditResponseExportsCache struct {
+	// Whether caching is enabled for this entrypoint.
+	Enabled bool                                                       `json:"enabled" api:"required"`
+	JSON    dispatchNamespaceScriptSettingEditResponseExportsCacheJSON `json:"-"`
+}
+
+// dispatchNamespaceScriptSettingEditResponseExportsCacheJSON contains the JSON
+// metadata for the struct [DispatchNamespaceScriptSettingEditResponseExportsCache]
+type dispatchNamespaceScriptSettingEditResponseExportsCacheJSON struct {
+	Enabled     apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *DispatchNamespaceScriptSettingEditResponseExportsCache) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r dispatchNamespaceScriptSettingEditResponseExportsCacheJSON) RawJSON() string {
+	return r.raw
+}
+
 // Limits to apply for this Worker.
 type DispatchNamespaceScriptSettingEditResponseLimits struct {
 	// The amount of CPU time this Worker can use in milliseconds.
@@ -3120,6 +3226,10 @@ type DispatchNamespaceScriptSettingGetResponse struct {
 	// docs:
 	// https://developers.cloudflare.com/workers/configuration/multipart-upload-metadata/#bindings.
 	Bindings []DispatchNamespaceScriptSettingGetResponseBinding `json:"bindings"`
+	// Global CacheW configuration for the Worker. When caching is on, the platform
+	// provisions a `cloudflare.app` zone for the Worker. A `type: worker` entry in the
+	// `exports` map can override this value for a single entrypoint.
+	CacheOptions DispatchNamespaceScriptSettingGetResponseCacheOptions `json:"cache_options"`
 	// Date indicating targeted support in the Workers runtime. Backwards incompatible
 	// fixes to the runtime following this date will not affect this Worker.
 	CompatibilityDate string `json:"compatibility_date"`
@@ -3150,6 +3260,7 @@ type DispatchNamespaceScriptSettingGetResponse struct {
 // struct [DispatchNamespaceScriptSettingGetResponse]
 type dispatchNamespaceScriptSettingGetResponseJSON struct {
 	Bindings           apijson.Field
+	CacheOptions       apijson.Field
 	CompatibilityDate  apijson.Field
 	CompatibilityFlags apijson.Field
 	Limits             apijson.Field
@@ -5577,6 +5688,107 @@ func (r DispatchNamespaceScriptSettingGetResponseBindingsJurisdiction) IsKnown()
 	return false
 }
 
+// Global CacheW configuration for the Worker. When caching is on, the platform
+// provisions a `cloudflare.app` zone for the Worker. A `type: worker` entry in the
+// `exports` map can override this value for a single entrypoint.
+type DispatchNamespaceScriptSettingGetResponseCacheOptions struct {
+	// Whether caching is enabled for this Worker.
+	Enabled bool `json:"enabled" api:"required"`
+	// Whether cached responses are shared across Worker version uploads. This is
+	// independent of `enabled`. It can stay true while caching is off, so the
+	// preference survives turning caching off and back on.
+	CrossVersionCache bool                                                      `json:"cross_version_cache"`
+	JSON              dispatchNamespaceScriptSettingGetResponseCacheOptionsJSON `json:"-"`
+}
+
+// dispatchNamespaceScriptSettingGetResponseCacheOptionsJSON contains the JSON
+// metadata for the struct [DispatchNamespaceScriptSettingGetResponseCacheOptions]
+type dispatchNamespaceScriptSettingGetResponseCacheOptionsJSON struct {
+	Enabled           apijson.Field
+	CrossVersionCache apijson.Field
+	raw               string
+	ExtraFields       map[string]apijson.Field
+}
+
+func (r *DispatchNamespaceScriptSettingGetResponseCacheOptions) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r dispatchNamespaceScriptSettingGetResponseCacheOptionsJSON) RawJSON() string {
+	return r.raw
+}
+
+// A single entry in the `exports` map, keyed by export name (a `WorkerEntrypoint`
+// class name, a Durable Object class name, or `default` for the Worker's default
+// export). Worker entrypoint entries set `type: worker` and may carry `cache`
+// configuration for that entrypoint. Durable Object entries set
+// `type: durable-object` and carry additional provisioning fields.
+type DispatchNamespaceScriptSettingGetResponseExport struct {
+	// The kind of export.
+	Type DispatchNamespaceScriptSettingGetResponseExportsType `json:"type" api:"required"`
+	// Cache override for this entrypoint. It applies only to `type: worker` entries
+	// and overrides the Worker's global `cache_options.enabled` for that entrypoint.
+	Cache DispatchNamespaceScriptSettingGetResponseExportsCache `json:"cache"`
+	JSON  dispatchNamespaceScriptSettingGetResponseExportJSON   `json:"-"`
+}
+
+// dispatchNamespaceScriptSettingGetResponseExportJSON contains the JSON metadata
+// for the struct [DispatchNamespaceScriptSettingGetResponseExport]
+type dispatchNamespaceScriptSettingGetResponseExportJSON struct {
+	Type        apijson.Field
+	Cache       apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *DispatchNamespaceScriptSettingGetResponseExport) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r dispatchNamespaceScriptSettingGetResponseExportJSON) RawJSON() string {
+	return r.raw
+}
+
+// The kind of export.
+type DispatchNamespaceScriptSettingGetResponseExportsType string
+
+const (
+	DispatchNamespaceScriptSettingGetResponseExportsTypeWorker        DispatchNamespaceScriptSettingGetResponseExportsType = "worker"
+	DispatchNamespaceScriptSettingGetResponseExportsTypeDurableObject DispatchNamespaceScriptSettingGetResponseExportsType = "durable-object"
+)
+
+func (r DispatchNamespaceScriptSettingGetResponseExportsType) IsKnown() bool {
+	switch r {
+	case DispatchNamespaceScriptSettingGetResponseExportsTypeWorker, DispatchNamespaceScriptSettingGetResponseExportsTypeDurableObject:
+		return true
+	}
+	return false
+}
+
+// Cache override for this entrypoint. It applies only to `type: worker` entries
+// and overrides the Worker's global `cache_options.enabled` for that entrypoint.
+type DispatchNamespaceScriptSettingGetResponseExportsCache struct {
+	// Whether caching is enabled for this entrypoint.
+	Enabled bool                                                      `json:"enabled" api:"required"`
+	JSON    dispatchNamespaceScriptSettingGetResponseExportsCacheJSON `json:"-"`
+}
+
+// dispatchNamespaceScriptSettingGetResponseExportsCacheJSON contains the JSON
+// metadata for the struct [DispatchNamespaceScriptSettingGetResponseExportsCache]
+type dispatchNamespaceScriptSettingGetResponseExportsCacheJSON struct {
+	Enabled     apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *DispatchNamespaceScriptSettingGetResponseExportsCache) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r dispatchNamespaceScriptSettingGetResponseExportsCacheJSON) RawJSON() string {
+	return r.raw
+}
+
 // Limits to apply for this Worker.
 type DispatchNamespaceScriptSettingGetResponseLimits struct {
 	// The amount of CPU time this Worker can use in milliseconds.
@@ -6163,6 +6375,10 @@ type DispatchNamespaceScriptSettingEditParamsSettings struct {
 	// docs:
 	// https://developers.cloudflare.com/workers/configuration/multipart-upload-metadata/#bindings.
 	Bindings param.Field[[]DispatchNamespaceScriptSettingEditParamsSettingsBindingUnion] `json:"bindings"`
+	// Global CacheW configuration for the Worker. When caching is on, the platform
+	// provisions a `cloudflare.app` zone for the Worker. A `type: worker` entry in the
+	// `exports` map can override this value for a single entrypoint.
+	CacheOptions param.Field[DispatchNamespaceScriptSettingEditParamsSettingsCacheOptions] `json:"cache_options"`
 	// Date indicating targeted support in the Workers runtime. Backwards incompatible
 	// fixes to the runtime following this date will not affect this Worker.
 	CompatibilityDate param.Field[string] `json:"compatibility_date"`
@@ -6170,6 +6386,9 @@ type DispatchNamespaceScriptSettingEditParamsSettings struct {
 	// enable upcoming features or opt in or out of specific changes not included in a
 	// `compatibility_date`.
 	CompatibilityFlags param.Field[[]string] `json:"compatibility_flags"`
+	// Declarative exports for the Worker. Worker entrypoint entries (`type: worker`)
+	// carry cache configuration for that entrypoint.
+	Exports param.Field[map[string]DispatchNamespaceScriptSettingEditParamsSettingsExports] `json:"exports"`
 	// Limits to apply for this Worker.
 	Limits param.Field[DispatchNamespaceScriptSettingEditParamsSettingsLimits] `json:"limits"`
 	// Whether Logpush is turned on for the Worker.
@@ -7682,6 +7901,66 @@ func (r DispatchNamespaceScriptSettingEditParamsSettingsBindingsJurisdiction) Is
 		return true
 	}
 	return false
+}
+
+// Global CacheW configuration for the Worker. When caching is on, the platform
+// provisions a `cloudflare.app` zone for the Worker. A `type: worker` entry in the
+// `exports` map can override this value for a single entrypoint.
+type DispatchNamespaceScriptSettingEditParamsSettingsCacheOptions struct {
+	// Whether caching is enabled for this Worker.
+	Enabled param.Field[bool] `json:"enabled" api:"required"`
+	// Whether cached responses are shared across Worker version uploads. This is
+	// independent of `enabled`. It can stay true while caching is off, so the
+	// preference survives turning caching off and back on.
+	CrossVersionCache param.Field[bool] `json:"cross_version_cache"`
+}
+
+func (r DispatchNamespaceScriptSettingEditParamsSettingsCacheOptions) MarshalJSON() (data []byte, err error) {
+	return apijson.MarshalRoot(r)
+}
+
+// A single entry in the `exports` map, keyed by export name (a `WorkerEntrypoint`
+// class name, a Durable Object class name, or `default` for the Worker's default
+// export). Worker entrypoint entries set `type: worker` and may carry `cache`
+// configuration for that entrypoint. Durable Object entries set
+// `type: durable-object` and carry additional provisioning fields.
+type DispatchNamespaceScriptSettingEditParamsSettingsExports struct {
+	// The kind of export.
+	Type param.Field[DispatchNamespaceScriptSettingEditParamsSettingsExportsType] `json:"type" api:"required"`
+	// Cache override for this entrypoint. It applies only to `type: worker` entries
+	// and overrides the Worker's global `cache_options.enabled` for that entrypoint.
+	Cache param.Field[DispatchNamespaceScriptSettingEditParamsSettingsExportsCache] `json:"cache"`
+}
+
+func (r DispatchNamespaceScriptSettingEditParamsSettingsExports) MarshalJSON() (data []byte, err error) {
+	return apijson.MarshalRoot(r)
+}
+
+// The kind of export.
+type DispatchNamespaceScriptSettingEditParamsSettingsExportsType string
+
+const (
+	DispatchNamespaceScriptSettingEditParamsSettingsExportsTypeWorker        DispatchNamespaceScriptSettingEditParamsSettingsExportsType = "worker"
+	DispatchNamespaceScriptSettingEditParamsSettingsExportsTypeDurableObject DispatchNamespaceScriptSettingEditParamsSettingsExportsType = "durable-object"
+)
+
+func (r DispatchNamespaceScriptSettingEditParamsSettingsExportsType) IsKnown() bool {
+	switch r {
+	case DispatchNamespaceScriptSettingEditParamsSettingsExportsTypeWorker, DispatchNamespaceScriptSettingEditParamsSettingsExportsTypeDurableObject:
+		return true
+	}
+	return false
+}
+
+// Cache override for this entrypoint. It applies only to `type: worker` entries
+// and overrides the Worker's global `cache_options.enabled` for that entrypoint.
+type DispatchNamespaceScriptSettingEditParamsSettingsExportsCache struct {
+	// Whether caching is enabled for this entrypoint.
+	Enabled param.Field[bool] `json:"enabled" api:"required"`
+}
+
+func (r DispatchNamespaceScriptSettingEditParamsSettingsExportsCache) MarshalJSON() (data []byte, err error) {
+	return apijson.MarshalRoot(r)
 }
 
 // Limits to apply for this Worker.

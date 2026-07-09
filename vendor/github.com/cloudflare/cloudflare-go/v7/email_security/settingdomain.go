@@ -153,7 +153,7 @@ type SettingDomainListResponse struct {
 	IPRestrictions       []string                                       `json:"ip_restrictions"`
 	// Deprecated, use `modified_at` instead. End of life: November 1, 2026.
 	//
-	// Deprecated: deprecated
+	// Deprecated: Use `modified_at` instead.
 	LastModified       time.Time                          `json:"last_modified" format:"date-time"`
 	LookbackHops       int64                              `json:"lookback_hops"`
 	ModifiedAt         time.Time                          `json:"modified_at" format:"date-time"`
@@ -432,7 +432,7 @@ type SettingDomainEditResponse struct {
 	IPRestrictions       []string                                       `json:"ip_restrictions"`
 	// Deprecated, use `modified_at` instead. End of life: November 1, 2026.
 	//
-	// Deprecated: deprecated
+	// Deprecated: Use `modified_at` instead.
 	LastModified       time.Time                          `json:"last_modified" format:"date-time"`
 	LookbackHops       int64                              `json:"lookback_hops"`
 	ModifiedAt         time.Time                          `json:"modified_at" format:"date-time"`
@@ -689,7 +689,7 @@ type SettingDomainGetResponse struct {
 	IPRestrictions       []string                                      `json:"ip_restrictions"`
 	// Deprecated, use `modified_at` instead. End of life: November 1, 2026.
 	//
-	// Deprecated: deprecated
+	// Deprecated: Use `modified_at` instead.
 	LastModified       time.Time                         `json:"last_modified" format:"date-time"`
 	LookbackHops       int64                             `json:"lookback_hops"`
 	ModifiedAt         time.Time                         `json:"modified_at" format:"date-time"`

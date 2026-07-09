@@ -18,7 +18,7 @@ github.com/cenkalti/backoff/v5
 # github.com/cespare/xxhash/v2 v2.3.0
 ## explicit; go 1.11
 github.com/cespare/xxhash/v2
-# github.com/cloudflare/cloudflare-go/v7 v7.6.0
+# github.com/cloudflare/cloudflare-go/v7 v7.7.0
 ## explicit; go 1.22
 github.com/cloudflare/cloudflare-go/v7
 github.com/cloudflare/cloudflare-go/v7/abuse_reports
@@ -61,6 +61,7 @@ github.com/cloudflare/cloudflare-go/v7/dls
 github.com/cloudflare/cloudflare-go/v7/dns
 github.com/cloudflare/cloudflare-go/v7/dns_firewall
 github.com/cloudflare/cloudflare-go/v7/durable_objects
+github.com/cloudflare/cloudflare-go/v7/email_auth
 github.com/cloudflare/cloudflare-go/v7/email_routing
 github.com/cloudflare/cloudflare-go/v7/email_security
 github.com/cloudflare/cloudflare-go/v7/email_sending
@@ -94,6 +95,7 @@ github.com/cloudflare/cloudflare-go/v7/magic_network_monitoring
 github.com/cloudflare/cloudflare-go/v7/magic_transit
 github.com/cloudflare/cloudflare-go/v7/managed_transforms
 github.com/cloudflare/cloudflare-go/v7/memberships
+github.com/cloudflare/cloudflare-go/v7/moq
 github.com/cloudflare/cloudflare-go/v7/mtls_certificates
 github.com/cloudflare/cloudflare-go/v7/network_interconnects
 github.com/cloudflare/cloudflare-go/v7/option

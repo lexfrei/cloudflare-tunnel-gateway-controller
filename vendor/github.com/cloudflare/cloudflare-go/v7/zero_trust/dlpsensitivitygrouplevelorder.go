@@ -76,7 +76,7 @@ func (r *DLPSensitivityGroupLevelOrderService) Get(ctx context.Context, sensitiv
 	return res, nil
 }
 
-// The ordered list of level IDs for a sensitivity group. Used to get and set the
+// DLPSensitivityGroupLevelOrderUpdateResponse is the ordered list of level IDs for a sensitivity group. Used to get and set the
 // ordering of levels independently of level attributes.
 type DLPSensitivityGroupLevelOrderUpdateResponse struct {
 	LevelIDs []string                                        `json:"level_ids" api:"required" format:"uuid"`
@@ -99,7 +99,7 @@ func (r dlpSensitivityGroupLevelOrderUpdateResponseJSON) RawJSON() string {
 	return r.raw
 }
 
-// The ordered list of level IDs for a sensitivity group. Used to get and set the
+// DLPSensitivityGroupLevelOrderGetResponse is the ordered list of level IDs for a sensitivity group. Used to get and set the
 // ordering of levels independently of level attributes.
 type DLPSensitivityGroupLevelOrderGetResponse struct {
 	LevelIDs []string                                     `json:"level_ids" api:"required" format:"uuid"`
@@ -261,7 +261,7 @@ func (r dlpSensitivityGroupLevelOrderUpdateResponseEnvelopeMessagesSourceJSON) R
 	return r.raw
 }
 
-// Whether the API call was successful.
+// DLPSensitivityGroupLevelOrderUpdateResponseEnvelopeSuccess indicates whether the API call was successful.
 type DLPSensitivityGroupLevelOrderUpdateResponseEnvelopeSuccess bool
 
 const (
@@ -409,7 +409,7 @@ func (r dlpSensitivityGroupLevelOrderGetResponseEnvelopeMessagesSourceJSON) RawJ
 	return r.raw
 }
 
-// Whether the API call was successful.
+// DLPSensitivityGroupLevelOrderGetResponseEnvelopeSuccess indicates whether the API call was successful.
 type DLPSensitivityGroupLevelOrderGetResponseEnvelopeSuccess bool
 
 const (

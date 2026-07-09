@@ -162,6 +162,10 @@ type Version struct {
 	// docs:
 	// https://developers.cloudflare.com/workers/configuration/multipart-upload-metadata/#bindings.
 	Bindings []VersionBinding `json:"bindings"`
+	// Global CacheW configuration for the Worker. When caching is on, the platform
+	// provisions a `cloudflare.app` zone for the Worker. A `type: worker` entry in the
+	// `exports` map can override this value for a single entrypoint.
+	CacheOptions VersionCacheOptions `json:"cache_options"`
 	// Date indicating targeted support in the Workers runtime. Backwards incompatible
 	// fixes to the runtime following this date will not affect this Worker.
 	CompatibilityDate string `json:"compatibility_date"`
@@ -194,6 +198,9 @@ type Version struct {
 	// `_headers` and `_redirects` files should be included as modules named `_headers`
 	// and `_redirects` with content type `text/plain`.
 	Modules []VersionModule `json:"modules"`
+	// The list of npm packages that were installed and used when this Worker version
+	// was built.
+	PackageDependencies []VersionPackageDependency `json:"package_dependencies"`
 	// Configuration for
 	// [Smart Placement](https://developers.cloudflare.com/workers/configuration/smart-placement).
 	// Specify mode='smart' for Smart Placement, or one of region/hostname/host.
@@ -212,27 +219,29 @@ type Version struct {
 
 // versionJSON contains the JSON metadata for the struct [Version]
 type versionJSON struct {
-	ID                 apijson.Field
-	CreatedOn          apijson.Field
-	Number             apijson.Field
-	URLs               apijson.Field
-	Annotations        apijson.Field
-	Assets             apijson.Field
-	Bindings           apijson.Field
-	CompatibilityDate  apijson.Field
-	CompatibilityFlags apijson.Field
-	Containers         apijson.Field
-	Limits             apijson.Field
-	MainModule         apijson.Field
-	MigrationTag       apijson.Field
-	Migrations         apijson.Field
-	Modules            apijson.Field
-	Placement          apijson.Field
-	Source             apijson.Field
-	StartupTimeMs      apijson.Field
-	UsageModel         apijson.Field
-	raw                string
-	ExtraFields        map[string]apijson.Field
+	ID                  apijson.Field
+	CreatedOn           apijson.Field
+	Number              apijson.Field
+	URLs                apijson.Field
+	Annotations         apijson.Field
+	Assets              apijson.Field
+	Bindings            apijson.Field
+	CacheOptions        apijson.Field
+	CompatibilityDate   apijson.Field
+	CompatibilityFlags  apijson.Field
+	Containers          apijson.Field
+	Limits              apijson.Field
+	MainModule          apijson.Field
+	MigrationTag        apijson.Field
+	Migrations          apijson.Field
+	Modules             apijson.Field
+	PackageDependencies apijson.Field
+	Placement           apijson.Field
+	Source              apijson.Field
+	StartupTimeMs       apijson.Field
+	UsageModel          apijson.Field
+	raw                 string
+	ExtraFields         map[string]apijson.Field
 }
 
 func (r *Version) UnmarshalJSON(data []byte) (err error) {
@@ -2738,6 +2747,36 @@ func (r VersionBindingsJurisdiction) IsKnown() bool {
 	return false
 }
 
+// Global CacheW configuration for the Worker. When caching is on, the platform
+// provisions a `cloudflare.app` zone for the Worker. A `type: worker` entry in the
+// `exports` map can override this value for a single entrypoint.
+type VersionCacheOptions struct {
+	// Whether caching is enabled for this Worker.
+	Enabled bool `json:"enabled" api:"required"`
+	// Whether cached responses are shared across Worker version uploads. This is
+	// independent of `enabled`. It can stay true while caching is off, so the
+	// preference survives turning caching off and back on.
+	CrossVersionCache bool                    `json:"cross_version_cache"`
+	JSON              versionCacheOptionsJSON `json:"-"`
+}
+
+// versionCacheOptionsJSON contains the JSON metadata for the struct
+// [VersionCacheOptions]
+type versionCacheOptionsJSON struct {
+	Enabled           apijson.Field
+	CrossVersionCache apijson.Field
+	raw               string
+	ExtraFields       map[string]apijson.Field
+}
+
+func (r *VersionCacheOptions) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r versionCacheOptionsJSON) RawJSON() string {
+	return r.raw
+}
+
 // Container configuration for a Worker.
 type VersionContainer struct {
 	// Select which Durable Object class should get this container attached.
@@ -2909,6 +2948,34 @@ func (r *VersionModule) UnmarshalJSON(data []byte) (err error) {
 }
 
 func (r versionModuleJSON) RawJSON() string {
+	return r.raw
+}
+
+type VersionPackageDependency struct {
+	// The exact version that was resolved and installed by the package manager.
+	InstalledVersion string `json:"installedVersion" api:"required"`
+	// The npm package name.
+	Name string `json:"name" api:"required"`
+	// The version constraint as written in package.json.
+	PackageJsonVersion string                       `json:"packageJsonVersion" api:"required"`
+	JSON               versionPackageDependencyJSON `json:"-"`
+}
+
+// versionPackageDependencyJSON contains the JSON metadata for the struct
+// [VersionPackageDependency]
+type versionPackageDependencyJSON struct {
+	InstalledVersion   apijson.Field
+	Name               apijson.Field
+	PackageJsonVersion apijson.Field
+	raw                string
+	ExtraFields        map[string]apijson.Field
+}
+
+func (r *VersionPackageDependency) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r versionPackageDependencyJSON) RawJSON() string {
 	return r.raw
 }
 
@@ -3204,6 +3271,10 @@ type VersionParam struct {
 	// docs:
 	// https://developers.cloudflare.com/workers/configuration/multipart-upload-metadata/#bindings.
 	Bindings param.Field[[]VersionBindingsUnionParam] `json:"bindings"`
+	// Global CacheW configuration for the Worker. When caching is on, the platform
+	// provisions a `cloudflare.app` zone for the Worker. A `type: worker` entry in the
+	// `exports` map can override this value for a single entrypoint.
+	CacheOptions param.Field[VersionCacheOptionsParam] `json:"cache_options"`
 	// Date indicating targeted support in the Workers runtime. Backwards incompatible
 	// fixes to the runtime following this date will not affect this Worker.
 	CompatibilityDate param.Field[string] `json:"compatibility_date"`
@@ -3233,6 +3304,9 @@ type VersionParam struct {
 	// `_headers` and `_redirects` files should be included as modules named `_headers`
 	// and `_redirects` with content type `text/plain`.
 	Modules param.Field[[]VersionModuleParam] `json:"modules"`
+	// The list of npm packages that were installed and used when this Worker version
+	// was built.
+	PackageDependencies param.Field[[]VersionPackageDependencyParam] `json:"package_dependencies"`
 	// Configuration for
 	// [Smart Placement](https://developers.cloudflare.com/workers/configuration/smart-placement).
 	// Specify mode='smart' for Smart Placement, or one of region/hostname/host.
@@ -4064,6 +4138,22 @@ func (r VersionBindingsWorkersBindingKindVPCNetworkParam) MarshalJSON() (data []
 
 func (r VersionBindingsWorkersBindingKindVPCNetworkParam) implementsVersionBindingsUnionParam() {}
 
+// Global CacheW configuration for the Worker. When caching is on, the platform
+// provisions a `cloudflare.app` zone for the Worker. A `type: worker` entry in the
+// `exports` map can override this value for a single entrypoint.
+type VersionCacheOptionsParam struct {
+	// Whether caching is enabled for this Worker.
+	Enabled param.Field[bool] `json:"enabled" api:"required"`
+	// Whether cached responses are shared across Worker version uploads. This is
+	// independent of `enabled`. It can stay true while caching is off, so the
+	// preference survives turning caching off and back on.
+	CrossVersionCache param.Field[bool] `json:"cross_version_cache"`
+}
+
+func (r VersionCacheOptionsParam) MarshalJSON() (data []byte, err error) {
+	return apijson.MarshalRoot(r)
+}
+
 // Container configuration for a Worker.
 type VersionContainerParam struct {
 	// Select which Durable Object class should get this container attached.
@@ -4145,6 +4235,19 @@ type VersionModuleParam struct {
 }
 
 func (r VersionModuleParam) MarshalJSON() (data []byte, err error) {
+	return apijson.MarshalRoot(r)
+}
+
+type VersionPackageDependencyParam struct {
+	// The exact version that was resolved and installed by the package manager.
+	InstalledVersion param.Field[string] `json:"installedVersion" api:"required"`
+	// The npm package name.
+	Name param.Field[string] `json:"name" api:"required"`
+	// The version constraint as written in package.json.
+	PackageJsonVersion param.Field[string] `json:"packageJsonVersion" api:"required"`
+}
+
+func (r VersionPackageDependencyParam) MarshalJSON() (data []byte, err error) {
 	return apijson.MarshalRoot(r)
 }
 
