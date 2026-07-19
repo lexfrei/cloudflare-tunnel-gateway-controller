@@ -38,7 +38,7 @@ See the [L7 Proxy Guide](guides/l7-proxy.md) for setup and examples.
 
 ```bash
 # 1. Install Gateway API CRDs
-kubectl apply --filename https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.6.0/standard-install.yaml
+kubectl apply --filename https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.6.1/standard-install.yaml
 
 # 2. Create the credentials and tunnel-token Secrets
 kubectl create namespace cloudflare-tunnel-system

@@ -78,7 +78,7 @@ The controller binary takes no credential environment variables. In v3, Cloudfla
 
 ```bash
 # Install Gateway API CRDs
-kubectl apply --filename https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.6.0/standard-install.yaml
+kubectl apply --filename https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.6.1/standard-install.yaml
 
 # Create namespace
 kubectl create namespace cloudflare-tunnel-system
