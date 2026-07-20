@@ -4,7 +4,7 @@ go 1.26.5
 
 require (
 	github.com/cloudflare/cloudflare-go/v7 v7.7.0
-	github.com/cloudflare/cloudflared v0.0.0-20260715110107-8679787525ed
+	github.com/cloudflare/cloudflared v0.0.0-20260720100035-2206516c3b69
 	github.com/cockroachdb/errors v1.14.0
 	github.com/go-logr/logr v1.4.3
 	github.com/google/cel-go v0.29.2
