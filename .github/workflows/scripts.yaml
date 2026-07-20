@@ -46,7 +46,7 @@ jobs:
     name: Reflow paragraphs test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
@@ -68,7 +68,7 @@ jobs:
     name: PR-labels mapping test (from PR checkout)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       # Why this job exists separately from pr-labels.yaml's own
       # test-mapping step: pr-labels.yaml runs on pull_request_target,
       # which checks out the BASE branch (master) for security -- so a
@@ -83,7 +83,7 @@ jobs:
     name: 404 redirect test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       # Pins the versionless-link redirect shipped inline in docs/404.html by
       # extracting and running the real script against stubbed window.location.
@@ -94,7 +94,7 @@ jobs:
     name: Doc-link guard test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       # Pins hack/check-doc-links.sh (the live gate runs in pr.yaml's lint job).
       - name: Run doc-link guard tests
