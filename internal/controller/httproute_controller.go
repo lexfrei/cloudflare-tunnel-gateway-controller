@@ -86,8 +86,14 @@ type HTTPRouteReconciler struct {
 	// (issue #332). Shared with the other reconcilers. May be nil.
 	ViewStore *mergeViewStore
 
-	// startupComplete indicates whether the startup sync has completed.
-	// This prevents race conditions between startup sync and reconcile loop.
+	// startupComplete indicates whether the initial startup sync has been
+	// ATTEMPTED (not necessarily succeeded -- failed attempts keep retrying
+	// in the background). Reconciles are parked until the first attempt so
+	// they cannot race ahead of the initial full sync; after that, startup
+	// retries and reconcile-driven syncs serialize their build/API phase on
+	// RouteSyncer.syncMu, while the proxy pushes stay deliberately lock-free
+	// and are fenced by config versions (the 409-recovery corner of that
+	// fence is tracked in #584).
 	startupComplete atomic.Bool
 }
 
@@ -102,8 +108,8 @@ func (r *HTTPRouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	})
 }
 
-func (r *HTTPRouteReconciler) syncAndUpdateStatus(ctx context.Context) (ctrl.Result, error) {
-	return syncAndUpdateStatusCommon(ctx, syncUpdateParams{
+func (r *HTTPRouteReconciler) syncParams() *syncUpdateParams {
+	return &syncUpdateParams{
 		routeSyncer:    r.RouteSyncer,
 		proxySyncer:    r.ProxySyncer,
 		proxyEndpoints: r.ProxyEndpoints,
@@ -111,7 +117,11 @@ func (r *HTTPRouteReconciler) syncAndUpdateStatus(ctx context.Context) (ctrl.Res
 		statusEntries: func(sr *SyncResult, diags []proxy.RouteDiagnostic) []routeStatusEntry {
 			return sr.httpStatusEntries(diags, r.updateRouteStatus)
 		},
-	})
+	}
+}
+
+func (r *HTTPRouteReconciler) syncAndUpdateStatus(ctx context.Context) (ctrl.Result, error) {
+	return syncAndUpdateStatusCommon(ctx, r.syncParams())
 }
 
 // grpcRoutePtrs converts a slice of GRPCRoute values to a slice of pointers.
@@ -217,24 +227,18 @@ func (r *HTTPRouteReconciler) findRoutesForListenerSet(
 	return findRoutesAttachedToListenerSet(ctx, r.Client, listenerSet, r.ControllerName, routes)
 }
 
-// Start implements manager.Runnable for startup sync.
+// Start implements manager.Runnable for startup sync. It blocks until the
+// initial sync succeeds (retrying failures) or the manager shuts down.
 func (r *HTTPRouteReconciler) Start(ctx context.Context) error {
-	// Mark startup as complete when this function returns,
-	// regardless of success or failure
-	defer r.startupComplete.Store(true)
-
 	logger := logging.Component(ctx, "httproute-startup-sync")
 	logger.Info("performing startup sync of tunnel configuration")
 
 	ctx = logging.WithLogger(ctx, logger)
 
-	_, err := r.syncAndUpdateStatus(ctx)
-	if err != nil {
-		logger.Error("startup sync failed", "error", err)
-		// Don't return error - allow controller to start even if initial sync fails
-	} else {
-		logger.Info("startup sync completed successfully")
-	}
+	runStartupSync(ctx, logger, startupSyncRetryInterval,
+		func() { r.startupComplete.Store(true) },
+		startupSyncAttempt(r.syncParams()),
+	)
 
 	return nil
 }
