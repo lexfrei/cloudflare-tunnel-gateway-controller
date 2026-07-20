@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
@@ -22,6 +23,12 @@ import (
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/config"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/proxy"
 )
+
+// firstOf discards pushPartitionConfigs' lost-race flag where a test only
+// inspects diagnostics.
+func firstOf(diags []proxy.RouteDiagnostic, _ bool) []proxy.RouteDiagnostic {
+	return diags
+}
 
 // hasProxyPushDiagnostic reports whether any diagnostic surfaces a sustained
 // proxy-push failure (#487).
@@ -33,6 +40,81 @@ func hasProxyPushDiagnostic(diags []proxy.RouteDiagnostic) bool {
 	}
 
 	return false
+}
+
+// TestPushPartitionConfigs_LostRaceReportsRequeueSignal pins the re-delivery
+// guarantee behind the stale-version race fix: a partition push abandoned as a
+// lost race must surface through the second return value, because on a quiet
+// cluster no further event would otherwise trigger the sync that re-delivers
+// the current desired config -- and the abandoned push can be the FRESHER one
+// (config versions follow build order, not route-snapshot order).
+func TestPushPartitionConfigs_LostRaceReportsRequeueSignal(t *testing.T) {
+	t.Parallel()
+
+	// A replica that always 409s the PUT and reports a low version on GET is
+	// classified as a lost race (its version is below the process counter,
+	// which is wall-clock seeded and therefore far higher).
+	replica := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, req *http.Request) {
+		if req.Method == http.MethodPut {
+			writer.WriteHeader(http.StatusConflict)
+
+			return
+		}
+
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"version": 1, "ready": true}`))
+	}))
+	t.Cleanup(replica.Close)
+
+	testClient := fake.NewClientBuilder().WithScheme(runtime.NewScheme()).Build()
+	params := syncUpdateParams{
+		routeSyncer:    &RouteSyncer{ClusterDomain: "cluster.local", Metrics: cfmetrics.NewNoopCollector()},
+		proxySyncer:    NewProxySyncer("cluster.local", "", "", testClient, slog.Default()),
+		proxyEndpoints: []string{replica.URL + "/config"},
+		pushProxy:      true,
+	}
+
+	syncResult := &SyncResult{Partitions: []routePartition{{Key: sharedPartitionKey}}}
+
+	_, lostRace := pushPartitionConfigs(context.Background(), slog.Default(), &params, syncResult)
+	assert.True(t, lostRace, "an abandoned lost-race push must request a requeue")
+
+	// A plain failure (500) is NOT a lost race: the existing failure handling
+	// (skip-key invalidation + reconcile-path requeue semantics) covers it.
+	failing := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusInternalServerError)
+	}))
+	t.Cleanup(failing.Close)
+
+	params.proxySyncer = NewProxySyncer("cluster.local", "", "", testClient, slog.Default())
+	params.proxyEndpoints = []string{failing.URL + "/config"}
+
+	_, lostRace = pushPartitionConfigs(context.Background(), slog.Default(), &params, syncResult)
+	assert.False(t, lostRace, "a plain push failure must not claim the lost-race requeue")
+}
+
+// TestWithLostRacePushRequeue pins the requeue mapping: a lost race forces a
+// short requeue interval (re-list + rebuild gets the highest version and
+// re-delivers), never lengthens an existing shorter one, and leaves the result
+// untouched when no race was lost.
+func TestWithLostRacePushRequeue(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, lostRacePushRequeueDelay,
+		withLostRacePushRequeue(ctrl.Result{}, true).RequeueAfter,
+		"a lost race on a result without requeue must set the short interval")
+
+	assert.Equal(t, lostRacePushRequeueDelay,
+		withLostRacePushRequeue(ctrl.Result{RequeueAfter: apiErrorRequeueDelay}, true).RequeueAfter,
+		"a lost race must shorten a longer pending requeue")
+
+	assert.Equal(t, time.Second,
+		withLostRacePushRequeue(ctrl.Result{RequeueAfter: time.Second}, true).RequeueAfter,
+		"a lost race must not lengthen an already-shorter requeue")
+
+	assert.Equal(t, ctrl.Result{},
+		withLostRacePushRequeue(ctrl.Result{}, false),
+		"no lost race leaves the result untouched")
 }
 
 // TestPushPartitionConfigs_SustainedPushFailureSurfacesDiagnostic pins the
@@ -68,12 +150,12 @@ func TestPushPartitionConfigs_SustainedPushFailureSurfacesDiagnostic(t *testing.
 	}
 
 	for attempt := 1; attempt < pushFailureSurfaceThreshold; attempt++ {
-		diags := pushPartitionConfigs(ctx, slog.Default(), &params, newResult())
+		diags, _ := pushPartitionConfigs(ctx, slog.Default(), &params, newResult())
 		assert.False(t, hasProxyPushDiagnostic(diags),
 			"a push failure must not surface before the threshold (attempt %d)", attempt)
 	}
 
-	diags := pushPartitionConfigs(ctx, slog.Default(), &params, newResult())
+	diags, _ := pushPartitionConfigs(ctx, slog.Default(), &params, newResult())
 	require.True(t, hasProxyPushDiagnostic(diags), "a sustained push failure must surface at the threshold")
 
 	var pushDiag proxy.RouteDiagnostic
@@ -135,14 +217,14 @@ func TestPushPartitionConfigs_PushFailureClearsOnRecovery(t *testing.T) {
 		pushPartitionConfigs(ctx, slog.Default(), &params, newResult())
 	}
 
-	require.True(t, hasProxyPushDiagnostic(pushPartitionConfigs(ctx, slog.Default(), &params, newResult())),
+	require.True(t, hasProxyPushDiagnostic(firstOf(pushPartitionConfigs(ctx, slog.Default(), &params, newResult()))),
 		"sustained failure must be surfaced before recovery")
 
 	mu.Lock()
 	healthy = true
 	mu.Unlock()
 
-	diags := pushPartitionConfigs(ctx, slog.Default(), &params, newResult())
+	diags, _ := pushPartitionConfigs(ctx, slog.Default(), &params, newResult())
 	assert.False(t, hasProxyPushDiagnostic(diags), "a recovered push must clear the failure diagnostic")
 }
 
@@ -217,7 +299,7 @@ func TestPushPartitionConfigs_EarlyErrorResultDoesNotLeakToShared(t *testing.T) 
 		pushProxy:      true,
 	}
 
-	diagnostics := pushPartitionConfigs(ctx, slog.Default(), &params, syncResult)
+	diagnostics, _ := pushPartitionConfigs(ctx, slog.Default(), &params, syncResult)
 	assert.Empty(t, diagnostics)
 
 	mu.Lock()
@@ -346,7 +428,7 @@ func TestPushPartitionConfigs_RetainsTransientBrokenCache(t *testing.T) {
 		pushProxy:      true,
 	}
 
-	pushPartitionConfigs(ctx, slog.Default(), &params, syncResult)
+	_, _ = pushPartitionConfigs(ctx, slog.Default(), &params, syncResult)
 
 	proxySyncer.syncMu.Lock()
 	_, exists := proxySyncer.targets["default/tenant-gw"]
@@ -426,7 +508,7 @@ func TestPushPartitionConfigs_SameTunnelPartitionsEachGetUnion(t *testing.T) {
 		pushProxy:      true,
 	}
 
-	pushPartitionConfigs(context.Background(), slog.Default(), &params, syncResult)
+	_, _ = pushPartitionConfigs(context.Background(), slog.Default(), &params, syncResult)
 
 	mu.Lock()
 	defer mu.Unlock()

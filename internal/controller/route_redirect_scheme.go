@@ -32,7 +32,7 @@ const (
 // redirect, which violates the spec for routes on an HTTP listener.
 //
 // Only listeners that actually ACCEPT the route contribute, reusing the same
-// binding validator as hostname inheritance. When no managed parent resolves,
+// binding validator as hostname-intersection narrowing. When no managed parent resolves,
 // the filter's Scheme is left nil and the proxy's own fallback applies.
 //
 // The function never mutates the input routes; a route is deep-copied only
@@ -179,11 +179,11 @@ func acceptedListenerScheme(
 	return ""
 }
 
-// acceptedProtocolsForParentRef mirrors acceptedHostnamesForParentRef but
+// acceptedProtocolsForParentRef mirrors effectiveHostnamesForParentRef but
 // collects the protocols of the listeners that accept the route, so the
-// redirect-scheme default can be inferred from the parent listener. It applies
-// the same group / kind / namespace resolution before delegating to the
-// Gateway or ListenerSet branch.
+// redirect-scheme default can be inferred from the parent listener. Both share
+// the parentRef → managed Gateway / ListenerSet resolution in
+// resolveParentRefListeners; only the per-listener value extracted differs.
 func acceptedProtocolsForParentRef(
 	ctx context.Context,
 	cli client.Client,
@@ -192,41 +192,8 @@ func acceptedProtocolsForParentRef(
 	ref gatewayv1.ParentReference,
 	views *listenerViewCache,
 ) []gatewayv1.ProtocolType {
-	if ref.Group != nil && string(*ref.Group) != "" && string(*ref.Group) != gatewayv1.GroupName {
-		return nil
-	}
-
-	kind := kindGateway
-	if ref.Kind != nil {
-		kind = string(*ref.Kind)
-	}
-
-	namespace := route.GetNamespace()
-	if ref.Namespace != nil {
-		namespace = string(*ref.Namespace)
-	}
-
-	routeInfo := &routebinding.RouteInfo{
-		Name:      route.GetName(),
-		Namespace: route.GetNamespace(),
-		// Real hostnames here — unlike the hostname-inheritance path, which
-		// passes nil because it runs only on routes with empty spec.hostnames.
-		// Redirect routes may carry hostnames, so they must reach the binding
-		// validator for accurate per-listener hostname filtering.
-		Hostnames:   route.GetHostnames(),
-		Kind:        route.GetRouteKind(),
-		SectionName: ref.SectionName,
-		Port:        ref.Port,
-	}
-
-	switch kind {
-	case kindGateway:
-		return gatewayAcceptedProtocols(ctx, cli, validator, namespace, string(ref.Name), routeInfo)
-	case kindListenerSet:
-		return listenerSetAcceptedProtocols(ctx, cli, validator, namespace, string(ref.Name), routeInfo, views)
-	}
-
-	return nil
+	return resolveParentRefListeners(ctx, cli, validator, route, ref, views,
+		gatewayAcceptedProtocols, listenerSetAcceptedProtocols)
 }
 
 func gatewayAcceptedProtocols(
@@ -274,7 +241,7 @@ func listenerSetAcceptedProtocols(
 
 	// Drop sections whose merged-view entry is conflicted — a conflicted
 	// listener is not programmed, so a route must not infer its scheme from
-	// that listener's protocol. Same step the hostname-inheritance path takes.
+	// that listener's protocol. Same step the hostname-narrowing path takes.
 	matched := nonConflictedSections(ctx, cli, &listenerSet, result.MatchedListeners, views)
 
 	protoByName := make(map[gatewayv1.SectionName]gatewayv1.ProtocolType, len(listenerSet.Spec.Listeners))
@@ -286,7 +253,7 @@ func listenerSetAcceptedProtocols(
 }
 
 // protocolsForSections maps each accepted listener section to its protocol,
-// mirroring hostnamesForSections on the hostname-inheritance path.
+// mirroring effectiveHostnamesForSections on the hostname-narrowing path.
 func protocolsForSections(
 	sections []gatewayv1.SectionName,
 	protoByName map[gatewayv1.SectionName]gatewayv1.ProtocolType,

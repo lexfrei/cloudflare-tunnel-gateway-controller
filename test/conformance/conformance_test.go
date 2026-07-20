@@ -225,19 +225,6 @@ func envOrDefault(key, fallback string) string {
 // below can assert coverage without provisioning a cluster.
 func conformanceSkipTests() []string {
 	return []string{
-		// HTTPRouteHostnameIntersection asserts that a request whose Host
-		// matches NO listener hostname is rejected (404), even when an attached
-		// route would otherwise serve it. The single tunnel ingress flattens
-		// every listener into one routing table, so a route bound to one
-		// listener still answers hosts that only the (absent) listener
-		// boundary should have excluded — the negative cases (non.matching.com,
-		// the wildcard.io apex, foo.specific.com) return 200 instead of 404.
-		// This is the same listener-isolation gap as the exempt
-		// GatewayHTTPListenerIsolation feature, not a hostname-matching bug:
-		// the positive multi-label cases all pass (see
-		// HTTPRouteListenerHostnameMatching, which is run).
-		"HTTPRouteHostnameIntersection",
-
 		// HTTPRouteMultipleGateways (v1.6.0) attaches one HTTPRoute to two
 		// Gateways and asserts each Gateway's dedicated route is reachable ONLY
 		// through that Gateway's own address. Both test Gateways resolve to the
@@ -245,9 +232,10 @@ func conformanceSkipTests() []string {
 		// CNAME), so their dedicated routes — same hostname, same path `/`,
 		// different parent Gateway — collapse into the shared proxy's single
 		// routing table where one wins by precedence: a request to Gateway A's
-		// address reaches Gateway B's dedicated backend. Same single-tunnel
-		// listener-flattening gap as HTTPRouteHostnameIntersection above; hard
-		// per-Gateway isolation requires the opt-in dedicated data plane
+		// address reaches Gateway B's dedicated backend. This is a per-Gateway
+		// ADDRESS isolation gap, not a hostname-matching one: both Gateways share
+		// one tunnel CNAME so requests carry no per-Gateway signal on the wire.
+		// Hard per-Gateway isolation requires the opt-in dedicated data plane
 		// (separate tunnel per Gateway), which the shared-plane conformance run
 		// does not exercise.
 		"HTTPRouteMultipleGateways",
@@ -410,6 +398,10 @@ func TestStaleSkipsStayLifted(t *testing.T) {
 		// Lifted once the proxy wildcard matcher accepted multi-label hosts (#371).
 		"GRPCRouteListenerHostnameMatching",
 		"HTTPRouteListenerHostnameMatching",
+		// Lifted once the converter narrowed each rule's hostnames to the
+		// route↔listener intersection (#587), so a Host matching no listener
+		// hostname now 404s instead of being served by an attached route.
+		"HTTPRouteHostnameIntersection",
 		// Lifted once gateway-api v1.6.0 routed the distribution sampler
 		// through the injectable suite.GRPCClient (upstream #4937/#5004).
 		"GRPCRouteWeight",
