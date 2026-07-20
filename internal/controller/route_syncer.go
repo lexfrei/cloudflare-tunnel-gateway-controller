@@ -325,7 +325,10 @@ func syncAndUpdateStatusCommon(ctx context.Context, params *syncUpdateParams) (c
 	var diagnostics []proxy.RouteDiagnostic
 
 	if params.pushProxy && params.proxySyncer != nil && len(params.proxyEndpoints) > 0 && syncResult != nil {
-		diagnostics = pushPartitionConfigs(ctx, logger, params, syncResult)
+		var lostRace bool
+
+		diagnostics, lostRace = pushPartitionConfigs(ctx, logger, params, syncResult)
+		result = withLostRacePushRequeue(result, lostRace)
 	}
 
 	// Fold in collision diagnostics (cross-namespace tunnel sharing, #488):
@@ -499,12 +502,12 @@ func pushPartitionConfigs(
 	logger *slog.Logger,
 	params *syncUpdateParams,
 	syncResult *SyncResult,
-) []proxy.RouteDiagnostic {
+) ([]proxy.RouteDiagnostic, bool) {
 	partitions := syncResult.Partitions
 	if len(partitions) == 0 {
 		logger.Info("skipping proxy push: sync produced no partition split (early error)")
 
-		return nil
+		return nil, false
 	}
 
 	// Same-tunnel partitions must push identical (unioned) configs: the edge
@@ -527,6 +530,8 @@ func pushPartitionConfigs(
 
 	var pushErrs []error
 
+	lostRace := false
+
 	// Aggregate single-threaded in ORIGINAL partition order so diagnostics, the
 	// keep set, and metrics stay deterministic regardless of push completion order.
 	for i := range partitions {
@@ -543,6 +548,10 @@ func pushPartitionConfigs(
 
 			pushErrs = append(pushErrs, errors.Wrapf(results[i].err, "pushing partition %s", partition.Key))
 
+			if errors.Is(results[i].err, proxy.ErrLostConfigPushRace) {
+				lostRace = true
+			}
+
 			// Surface a SUSTAINED push failure on the partition's own routes
 			// once it crosses the no-flap threshold (#487). Attribute to the
 			// pre-union originals, not the unioned slice above.
@@ -558,7 +567,32 @@ func pushPartitionConfigs(
 
 	params.proxySyncer.RetainPartitions(keep)
 
-	return diagnostics
+	return diagnostics, lostRace
+}
+
+// lostRacePushRequeueDelay is how soon a sync is re-run after a partition push
+// was abandoned as a lost stale-version race. The abandoned push can carry the
+// FRESHER route snapshot (config versions follow build order, not snapshot
+// order), and on a quiet cluster no further event would trigger the
+// re-delivering sync, so the requeue is the delivery guarantee. Short: the
+// skip key is already invalidated and the re-list + rebuild takes the highest
+// version, so the retry push cannot lose the same race again.
+const lostRacePushRequeueDelay = 2 * time.Second
+
+// withLostRacePushRequeue folds a lost-race push into the reconcile result:
+// it requests the short re-delivery requeue without ever lengthening an
+// already-shorter one, and leaves the result untouched when no race was lost.
+func withLostRacePushRequeue(result ctrl.Result, lostRace bool) ctrl.Result {
+	if !lostRace {
+		return result
+	}
+
+	if result.RequeueAfter == 0 || result.RequeueAfter > lostRacePushRequeueDelay {
+		result.RequeueAfter = lostRacePushRequeueDelay
+		result.Priority = new(priorityRoute)
+	}
+
+	return result
 }
 
 // partitionPushResult is one partition's push outcome, written to a per-index

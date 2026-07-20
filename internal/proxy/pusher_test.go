@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/cockroachdb/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -209,11 +210,24 @@ func TestConfigPusher_UnreachableEndpoint(t *testing.T) {
 	assert.Error(t, results[0].Err)
 }
 
+// TestConfigPusher_StaleVersionRecovery pins the controller-restart clock-skew
+// recovery. After a restart the version counter re-seeds from wall clock, so a
+// backward NTP adjustment can leave the fresh controller issuing versions BELOW
+// the ones a replica still holds from the previous instance. A replica version
+// strictly ABOVE the current counter is the signature of that skew (only a
+// prior instance could have issued it), so the pusher bumps the counter above
+// the replica and re-pushes. The counter is pinned below the replica's version
+// to make the skew deterministic; the test is therefore sequential (no
+// t.Parallel — it mutates the process-global counter).
 func TestConfigPusher_StaleVersionRecovery(t *testing.T) {
-	t.Parallel()
+	const counterBase = int64(1_000_000)
 
-	// Simulate a proxy that rejects version 1 as stale (it has version 1000),
-	// then accepts the retry with a higher version.
+	restore := proxy.SetConfigVersionCounterForTest(counterBase)
+	defer proxy.SetConfigVersionCounterForTest(restore)
+
+	// The replica sits above the counter → restart clock skew, not a lost race.
+	const proxyVersion = counterBase + 1_000
+
 	var pushCount atomic.Int32
 
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, req *http.Request) {
@@ -237,8 +251,8 @@ func TestConfigPusher_StaleVersionRecovery(t *testing.T) {
 				return
 			}
 
-			// Second attempt: version should be > 1000 now.
-			if cfg.Version <= 1000 {
+			// Second attempt: the retry must carry a version above the replica.
+			if cfg.Version <= proxyVersion {
 				http.Error(writer, "still stale", http.StatusConflict)
 
 				return
@@ -248,7 +262,7 @@ func TestConfigPusher_StaleVersionRecovery(t *testing.T) {
 
 		case http.MethodGet:
 			// Return proxy's current version for recovery.
-			status := proxy.ConfigStatus{Version: 1000, Ready: true}
+			status := proxy.ConfigStatus{Version: proxyVersion, Ready: true}
 
 			data, _ := json.Marshal(status)
 			writer.Header().Set("Content-Type", "application/json")
@@ -273,16 +287,68 @@ func TestConfigPusher_StaleVersionRecovery(t *testing.T) {
 	results := pusher.Push(t.Context(), cfg, []string{server.URL + "/config"})
 
 	require.Len(t, results, 1)
-	assert.NoError(t, results[0].Err, "stale version should be recovered automatically")
+	assert.NoError(t, results[0].Err, "restart clock skew should be recovered automatically")
 	assert.Equal(t, int32(2), pushCount.Load(), "should have pushed twice (initial + retry)")
 }
 
-func TestConfigPusher_ConcurrentStaleVersionRetry(t *testing.T) {
+// TestConfigPusher_LostRaceAbandonsPush pins the #584 decision: a 409 whose
+// replica version is at or below the current counter means a concurrent
+// same-process pusher already delivered a NEWER config. The recovery must NOT
+// re-push the older payload (that would force-overwrite the newer config); it
+// abandons the push and reports ErrLostConfigPushRace, sending no retry. The
+// process-global counter (seeded from wall clock, ~1.7e12) is far above the
+// replica's version here, so this is the lost-race branch without pinning.
+func TestConfigPusher_LostRaceAbandonsPush(t *testing.T) {
 	t.Parallel()
 
-	// Two endpoints both return 409 on first push, then accept retry.
-	// This verifies no data race on Config when multiple goroutines
-	// retry concurrently (run with -race to detect).
+	var putCount atomic.Int32
+
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, req *http.Request) {
+		switch req.Method {
+		case http.MethodPut:
+			putCount.Add(1)
+			// A concurrent sibling already advanced the replica; reject as stale.
+			http.Error(writer, "stale config version", http.StatusConflict)
+
+		case http.MethodGet:
+			status := proxy.ConfigStatus{Version: 5000, Ready: true}
+			data, _ := json.Marshal(status)
+			writer.Header().Set("Content-Type", "application/json")
+			writer.WriteHeader(http.StatusOK)
+			_, _ = writer.Write(data)
+		}
+	}))
+	defer server.Close()
+
+	pusher := proxy.NewConfigPusher(http.DefaultClient, "")
+
+	results := pusher.Push(t.Context(), &proxy.Config{Version: 1}, []string{server.URL + "/config"})
+
+	require.Len(t, results, 1)
+	assert.True(t, errors.Is(results[0].Err, proxy.ErrLostConfigPushRace),
+		"a 409 at or below the counter is a lost race, not a recoverable restart skew")
+	assert.Equal(t, int32(1), putCount.Load(),
+		"a lost race must not re-push the older payload; exactly one PUT (the initial one) is sent")
+}
+
+// TestConfigPusher_ConcurrentStaleVersionRetry exercises concurrent restart-skew
+// recoveries for their -race safety AND their convergence semantics. Two
+// endpoints both report a replica version above the pinned counter (genuine
+// clock skew). Concurrent recoveries share the process-global counter, so the
+// FIRST to bump it recovers immediately; a sibling that reads the counter after
+// that bump now sees the replica at or below it and abandons as a lost race —
+// that endpoint self-heals on the next sync (the syncer invalidates the skip
+// key on the push error). The test is sequential because it pins the counter.
+func TestConfigPusher_ConcurrentStaleVersionRetry(t *testing.T) {
+	const counterBase = int64(2_000_000)
+
+	restore := proxy.SetConfigVersionCounterForTest(counterBase)
+	defer proxy.SetConfigVersionCounterForTest(restore)
+
+	const proxyVersion = counterBase + 5_000
+
+	// Two endpoints both return 409 on first push, then accept any retry.
+	// Running with -race detects a data race on Config or the shared counter.
 	newStaleServer := func() *httptest.Server {
 		var count atomic.Int32
 
@@ -299,7 +365,7 @@ func TestConfigPusher_ConcurrentStaleVersionRetry(t *testing.T) {
 				writer.WriteHeader(http.StatusOK)
 
 			case http.MethodGet:
-				status := proxy.ConfigStatus{Version: 5000, Ready: true}
+				status := proxy.ConfigStatus{Version: proxyVersion, Ready: true}
 				data, _ := json.Marshal(status)
 				writer.Header().Set("Content-Type", "application/json")
 				_, _ = writer.Write(data)
@@ -332,7 +398,19 @@ func TestConfigPusher_ConcurrentStaleVersionRetry(t *testing.T) {
 
 	require.Len(t, results, 2)
 
+	recovered := 0
+
 	for _, result := range results {
-		assert.NoError(t, result.Err, "both endpoints should recover from stale version")
+		if result.Err == nil {
+			recovered++
+
+			continue
+		}
+
+		assert.True(t, errors.Is(result.Err, proxy.ErrLostConfigPushRace),
+			"a concurrent restart-skew retry either recovers or abandons as a lost race — never any other error")
 	}
+
+	assert.GreaterOrEqual(t, recovered, 1,
+		"the first recovery to bump the counter must succeed; any sibling that lost the counter race self-heals next sync")
 }
