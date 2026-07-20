@@ -1158,6 +1158,53 @@ func (s *ProxySyncer) ResyncEndpoints(ctx context.Context, endpoints []string) e
 	return s.resyncTarget(ctx, sharedPartitionKey, endpoints, s.defaultAuthToken)
 }
 
+// msgNoPushedConfigToResync is the WARN both replayableTarget branches share:
+// whatever the path into an empty replay cache, the endpoints stay
+// unconfigured (and unready) until a sync completes a successful push.
+const msgNoPushedConfigToResync = "no successfully pushed config to resync; endpoints stay unconfigured until a sync pushes one"
+
+// replayableTarget returns the partition's cached push target when it holds a
+// fully-pushed config, logging why the resync is a no-op otherwise. The
+// lookup is plain, NOT targetLocked: RetainPartitions can evict the key
+// between a caller's read-unlock and re-lock, and re-creating an empty target
+// here would resurrect a garbage entry that lingers until the next retain
+// pass. Caller must hold syncMu.
+func (s *ProxySyncer) replayableTarget(logger *slog.Logger, key string) (*pushTarget, bool) {
+	target, ok := s.targets[key]
+	if !ok {
+		if key == sharedPartitionKey {
+			// The shared partition is never evicted once created, so absent
+			// means no sync attempt has even reached preparePush yet (an
+			// attempted-but-failed push lands in the lastCfg branch below).
+			// Either way the endpoints stay unconfigured (and unready) until
+			// a sync completes a successful push -- this exact no-op hid a
+			// bootstrap deadlock for a month (#581).
+			logger.Warn(msgNoPushedConfigToResync,
+				"partition", key)
+		} else {
+			// A per-Gateway partition without a target is ambiguous: either
+			// its first push has not happened yet, or its Gateway was
+			// deleted/opted out and the partition was evicted.
+			logger.Info("no cached config for partition; not yet pushed or already evicted", "partition", key)
+		}
+
+		return nil, false
+	}
+
+	if target.lastCfg == nil {
+		// Not silently: only a fully-successful push populates the cache, so
+		// an empty cache here means the endpoints stay unconfigured (and
+		// unready) until a sync completes a successful push -- this exact
+		// no-op hid a bootstrap deadlock for a month (#581).
+		logger.Warn(msgNoPushedConfigToResync,
+			"partition", key)
+
+		return nil, false
+	}
+
+	return target, true
+}
+
 // resyncTarget replays a partition's cached config to the given endpoints
 // with the given token, updating the partition's steady-state skip key on
 // success and invalidating it on partial failure.
@@ -1170,18 +1217,14 @@ func (s *ProxySyncer) resyncTarget(ctx context.Context, key string, endpoints []
 	s.syncMu.Lock()
 	defer s.syncMu.Unlock()
 
-	// Plain lookup, NOT targetLocked: RetainPartitions can evict the key
-	// between the caller's read-unlock and this re-lock, and re-creating an
-	// empty target here would resurrect a garbage entry that lingers until
-	// the next retain pass.
-	target, ok := s.targets[key]
-	if !ok || target.lastCfg == nil {
-		return nil
-	}
-
 	logger := logging.FromContext(ctx)
 	if logger == slog.Default() {
 		logger = s.logger
+	}
+
+	target, ok := s.replayableTarget(logger, key)
+	if !ok {
+		return nil
 	}
 
 	logger.Info("resyncing cached proxy config to endpoints",

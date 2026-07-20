@@ -13,6 +13,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -164,6 +165,52 @@ func TestProxySyncer_NoRoutes_PushesEmptyConfig(t *testing.T) {
 	assert.True(t, receivedConfig.Version > 0, "version should be positive even with no routes")
 }
 
+// TestProxySyncer_ResyncEndpoints_FailedPushLeavesWarnNotReplay pins the
+// attempted-but-failed-push state (#581's most dangerous corner): a sync
+// whose push failed leaves the partition target WITHOUT a cached config, so
+// a later endpoint-event resync must not replay anything -- and must say so
+// at WARN, because the endpoints stay unconfigured until a push succeeds.
+func TestProxySyncer_ResyncEndpoints_FailedPushLeavesWarnNotReplay(t *testing.T) {
+	t.Parallel()
+
+	var putCount atomic.Int32
+
+	failing := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, req *http.Request) {
+		if req.Method == http.MethodPut {
+			putCount.Add(1)
+		}
+
+		writer.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer failing.Close()
+
+	testClient := fake.NewClientBuilder().WithScheme(runtime.NewScheme()).Build()
+
+	var logBuf strings.Builder
+
+	syncer := controller.NewProxySyncer(
+		"cluster.local",
+		"",
+		"",
+		testClient,
+		slog.New(slog.NewTextHandler(&logBuf, nil)),
+	)
+
+	_, err := syncer.SyncRoutes(context.Background(), []string{failing.URL + "/config"}, nil, nil, nil, nil)
+	require.Error(t, err, "the push against a 500 endpoint must fail")
+
+	putsAfterSync := putCount.Load()
+	require.Positive(t, putsAfterSync, "the sync must have attempted a push")
+
+	err = syncer.ResyncEndpoints(context.Background(), []string{failing.URL + "/config"})
+	require.NoError(t, err, "a resync with nothing to replay is a no-op, not an error")
+
+	assert.Equal(t, putsAfterSync, putCount.Load(), "no replay must happen after a failed push")
+	assert.Contains(t, logBuf.String(), "level=WARN", "the failed-push no-op must be logged at WARN")
+	assert.Contains(t, logBuf.String(), "no successfully pushed config to resync",
+		"the log must say why nothing was pushed")
+}
+
 // TestProxySyncer_ResyncEndpoints_NoLastConfig pins the bootstrap-safe
 // no-op: before any SyncRoutes has succeeded the cache is empty, and
 // ResyncEndpoints must not invent a config or hit the wire. A new pod
@@ -184,18 +231,26 @@ func TestProxySyncer_ResyncEndpoints_NoLastConfig(t *testing.T) {
 
 	testClient := fake.NewClientBuilder().WithScheme(runtime.NewScheme()).Build()
 
+	// The no-op must not be silent: an empty cache at resync time means the
+	// endpoints stay unconfigured (and unready) until a route sync succeeds,
+	// which is invisible in logs otherwise (#581).
+	var logBuf strings.Builder
+
 	syncer := controller.NewProxySyncer(
 		"cluster.local",
 		"",
 		"",
 		testClient,
-		slog.Default(),
+		slog.New(slog.NewTextHandler(&logBuf, nil)),
 	)
 
 	err := syncer.ResyncEndpoints(context.Background(), []string{configServer.URL + "/config"})
 	require.NoError(t, err, "ResyncEndpoints must be a no-op before the first SyncRoutes")
 
 	assert.Equal(t, int32(0), pushCount.Load(), "no push must happen when lastCfg is nil")
+	assert.Contains(t, logBuf.String(), "level=WARN", "the empty-cache no-op must be logged at WARN")
+	assert.Contains(t, logBuf.String(), "no successfully pushed config to resync",
+		"the log must say why nothing was pushed")
 }
 
 // TestProxySyncer_ResyncEndpoints_ReplaysLastConfig pins issue #293's
