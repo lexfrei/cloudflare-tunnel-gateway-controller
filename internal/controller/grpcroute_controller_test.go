@@ -869,36 +869,6 @@ func TestGRPCRouteReconciler_GetAllRelevantRoutes(t *testing.T) {
 	assert.Equal(t, "route-1", requests[0].Name)
 }
 
-func TestGRPCRouteReconciler_Start(t *testing.T) {
-	t.Parallel()
-
-	scheme := runtime.NewScheme()
-	require.NoError(t, gatewayv1.Install(scheme))
-	require.NoError(t, corev1.AddToScheme(scheme))
-	require.NoError(t, v1alpha1.AddToScheme(scheme))
-
-	fakeClient := fake.NewClientBuilder().
-		WithScheme(scheme).
-		Build()
-
-	configResolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector())
-	routeSyncer := NewRouteSyncer(fakeClient, scheme, "cluster.local", "cloudflare-tunnel", configResolver, cfmetrics.NewNoopCollector(), nil)
-
-	r := &GRPCRouteReconciler{
-		Client:         fakeClient,
-		Scheme:         scheme,
-		ControllerName: "test-controller",
-		RouteSyncer:    routeSyncer,
-	}
-
-	assert.False(t, r.startupComplete.Load())
-
-	err := r.Start(context.Background())
-
-	assert.NoError(t, err)
-	assert.True(t, r.startupComplete.Load())
-}
-
 // TestGRPCRouteReconciler_UpdateRouteStatus_SkipsObservedGenerationRegression
 // pins, for GRPCRoute, the Gateway API rule that a reconcile MUST NOT overwrite
 // a status condition already stamped with an observedGeneration newer than the

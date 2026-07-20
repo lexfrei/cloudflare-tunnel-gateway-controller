@@ -283,11 +283,26 @@ type syncUpdateParams struct {
 	// explicit quic warns.
 	tunnelProtocol string
 	statusEntries  func(*SyncResult, []proxy.RouteDiagnostic) []routeStatusEntry
+	// onSyncError, when set, observes the sync error even on the paths where
+	// the returned error is deliberately swallowed to carry a RequeueAfter
+	// interval (controller-runtime overrides the interval when an error is
+	// returned). The startup-sync retry loop needs the real outcome: treating
+	// a swallowed resolve failure as success left the data plane configless
+	// with nothing to retry (#581).
+	onSyncError func(error)
+	// onPushError, when set, observes proxy config push failures, which are
+	// otherwise non-blocking by design (route statuses already reflect the
+	// tunnel sync). The startup-sync retry loop needs them: the initial push
+	// is what makes route-less proxy replicas ready, and a failed push leaves
+	// no cached config for endpoint-event resyncs to replay, so ending the
+	// startup retry on a sync-succeeded/push-failed attempt would re-open the
+	// #581 deadlock through the push side.
+	onPushError func(error)
 }
 
 // syncAndUpdateStatusCommon performs a full route sync, pushes proxy config,
 // and updates route status. Used by both HTTPRoute and GRPCRoute reconcilers.
-func syncAndUpdateStatusCommon(ctx context.Context, params syncUpdateParams) (ctrl.Result, error) {
+func syncAndUpdateStatusCommon(ctx context.Context, params *syncUpdateParams) (ctrl.Result, error) {
 	logger := logging.FromContext(ctx)
 
 	result, syncResult, syncErr := params.routeSyncer.SyncAllRoutes(ctx)
@@ -334,6 +349,10 @@ func syncAndUpdateStatusCommon(ctx context.Context, params syncUpdateParams) (ct
 
 	if syncResult != nil {
 		statusUpdateErr = updateRoutesStatus(ctx, logger, params.statusEntries(syncResult, diagnostics), syncErr)
+	}
+
+	if syncErr != nil && params.onSyncError != nil {
+		params.onSyncError(syncErr)
 	}
 
 	if syncErr != nil {
@@ -478,7 +497,7 @@ func tunnelSharedDiagnostics(collisions []tunnelCollision, partitions []routePar
 func pushPartitionConfigs(
 	ctx context.Context,
 	logger *slog.Logger,
-	params syncUpdateParams,
+	params *syncUpdateParams,
 	syncResult *SyncResult,
 ) []proxy.RouteDiagnostic {
 	partitions := syncResult.Partitions
@@ -506,6 +525,8 @@ func pushPartitionConfigs(
 
 	var diagnostics []proxy.RouteDiagnostic
 
+	var pushErrs []error
+
 	// Aggregate single-threaded in ORIGINAL partition order so diagnostics, the
 	// keep set, and metrics stay deterministic regardless of push completion order.
 	for i := range partitions {
@@ -520,6 +541,8 @@ func pushPartitionConfigs(
 			logger.Error("proxy sync failed (non-blocking)", "partition", partition.Key, "error", results[i].err)
 			params.routeSyncer.Metrics.RecordSyncError(ctx, "proxy_push")
 
+			pushErrs = append(pushErrs, errors.Wrapf(results[i].err, "pushing partition %s", partition.Key))
+
 			// Surface a SUSTAINED push failure on the partition's own routes
 			// once it crosses the no-flap threshold (#487). Attribute to the
 			// pre-union originals, not the unioned slice above.
@@ -527,6 +550,10 @@ func pushPartitionConfigs(
 				diagnostics = append(diagnostics, proxyPushFailureDiagnostics(&syncResult.Partitions[i])...)
 			}
 		}
+	}
+
+	if len(pushErrs) > 0 && params.onPushError != nil {
+		params.onPushError(errors.Join(pushErrs...))
 	}
 
 	params.proxySyncer.RetainPartitions(keep)
@@ -549,7 +576,7 @@ type partitionPushResult struct {
 // never returned to the group, so one failure does not cancel the others.
 func pushPartitionsConcurrently(
 	ctx context.Context,
-	params syncUpdateParams,
+	params *syncUpdateParams,
 	syncResult *SyncResult,
 	partitions []routePartition,
 ) []partitionPushResult {

@@ -68,12 +68,12 @@ func TestPushPartitionConfigs_SustainedPushFailureSurfacesDiagnostic(t *testing.
 	}
 
 	for attempt := 1; attempt < pushFailureSurfaceThreshold; attempt++ {
-		diags := pushPartitionConfigs(ctx, slog.Default(), params, newResult())
+		diags := pushPartitionConfigs(ctx, slog.Default(), &params, newResult())
 		assert.False(t, hasProxyPushDiagnostic(diags),
 			"a push failure must not surface before the threshold (attempt %d)", attempt)
 	}
 
-	diags := pushPartitionConfigs(ctx, slog.Default(), params, newResult())
+	diags := pushPartitionConfigs(ctx, slog.Default(), &params, newResult())
 	require.True(t, hasProxyPushDiagnostic(diags), "a sustained push failure must surface at the threshold")
 
 	var pushDiag proxy.RouteDiagnostic
@@ -132,17 +132,17 @@ func TestPushPartitionConfigs_PushFailureClearsOnRecovery(t *testing.T) {
 	}
 
 	for range pushFailureSurfaceThreshold {
-		pushPartitionConfigs(ctx, slog.Default(), params, newResult())
+		pushPartitionConfigs(ctx, slog.Default(), &params, newResult())
 	}
 
-	require.True(t, hasProxyPushDiagnostic(pushPartitionConfigs(ctx, slog.Default(), params, newResult())),
+	require.True(t, hasProxyPushDiagnostic(pushPartitionConfigs(ctx, slog.Default(), &params, newResult())),
 		"sustained failure must be surfaced before recovery")
 
 	mu.Lock()
 	healthy = true
 	mu.Unlock()
 
-	diags := pushPartitionConfigs(ctx, slog.Default(), params, newResult())
+	diags := pushPartitionConfigs(ctx, slog.Default(), &params, newResult())
 	assert.False(t, hasProxyPushDiagnostic(diags), "a recovered push must clear the failure diagnostic")
 }
 
@@ -217,7 +217,7 @@ func TestPushPartitionConfigs_EarlyErrorResultDoesNotLeakToShared(t *testing.T) 
 		pushProxy:      true,
 	}
 
-	diagnostics := pushPartitionConfigs(ctx, slog.Default(), params, syncResult)
+	diagnostics := pushPartitionConfigs(ctx, slog.Default(), &params, syncResult)
 	assert.Empty(t, diagnostics)
 
 	mu.Lock()
@@ -346,7 +346,7 @@ func TestPushPartitionConfigs_RetainsTransientBrokenCache(t *testing.T) {
 		pushProxy:      true,
 	}
 
-	pushPartitionConfigs(ctx, slog.Default(), params, syncResult)
+	pushPartitionConfigs(ctx, slog.Default(), &params, syncResult)
 
 	proxySyncer.syncMu.Lock()
 	_, exists := proxySyncer.targets["default/tenant-gw"]
@@ -426,7 +426,7 @@ func TestPushPartitionConfigs_SameTunnelPartitionsEachGetUnion(t *testing.T) {
 		pushProxy:      true,
 	}
 
-	pushPartitionConfigs(context.Background(), slog.Default(), params, syncResult)
+	pushPartitionConfigs(context.Background(), slog.Default(), &params, syncResult)
 
 	mu.Lock()
 	defer mu.Unlock()

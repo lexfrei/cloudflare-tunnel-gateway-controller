@@ -168,7 +168,14 @@ type GRPCRouteReconciler struct {
 	// (issue #332). Shared with the other reconcilers. May be nil.
 	ViewStore *mergeViewStore
 
-	// startupComplete indicates whether the startup sync has completed.
+	// startupComplete indicates whether the initial startup sync has been
+	// ATTEMPTED (not necessarily succeeded -- failed attempts keep retrying
+	// in the background). Reconciles are parked until the first attempt so
+	// they cannot race ahead of the initial full sync; after that, startup
+	// retries and reconcile-driven syncs serialize their build/API phase on
+	// RouteSyncer.syncMu, while the proxy pushes stay deliberately lock-free
+	// and are fenced by config versions (the 409-recovery corner of that
+	// fence is tracked in #584).
 	startupComplete atomic.Bool
 }
 
@@ -183,8 +190,8 @@ func (r *GRPCRouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	})
 }
 
-func (r *GRPCRouteReconciler) syncAndUpdateStatus(ctx context.Context) (ctrl.Result, error) {
-	return syncAndUpdateStatusCommon(ctx, syncUpdateParams{
+func (r *GRPCRouteReconciler) syncParams() *syncUpdateParams {
+	return &syncUpdateParams{
 		routeSyncer:    r.RouteSyncer,
 		proxySyncer:    r.ProxySyncer,
 		proxyEndpoints: r.ProxyEndpoints,
@@ -197,7 +204,11 @@ func (r *GRPCRouteReconciler) syncAndUpdateStatus(ctx context.Context) (ctrl.Res
 		statusEntries: func(sr *SyncResult, diags []proxy.RouteDiagnostic) []routeStatusEntry {
 			return sr.grpcStatusEntries(diags, r.updateRouteStatus)
 		},
-	})
+	}
+}
+
+func (r *GRPCRouteReconciler) syncAndUpdateStatus(ctx context.Context) (ctrl.Result, error) {
+	return syncAndUpdateStatusCommon(ctx, r.syncParams())
 }
 
 func (r *GRPCRouteReconciler) isRouteForOurGateway(ctx context.Context, route *gatewayv1.GRPCRoute) bool {
@@ -309,21 +320,18 @@ func (r *GRPCRouteReconciler) findRoutesForListenerSet(
 	return findRoutesAttachedToListenerSet(ctx, r.Client, listenerSet, r.ControllerName, routes)
 }
 
-// Start implements manager.Runnable for startup sync.
+// Start implements manager.Runnable for startup sync. It blocks until the
+// initial sync succeeds (retrying failures) or the manager shuts down.
 func (r *GRPCRouteReconciler) Start(ctx context.Context) error {
-	defer r.startupComplete.Store(true)
-
 	logger := logging.Component(ctx, "grpcroute-startup-sync")
 	logger.Info("performing startup sync of grpcroute configuration")
 
 	ctx = logging.WithLogger(ctx, logger)
 
-	_, err := r.syncAndUpdateStatus(ctx)
-	if err != nil {
-		logger.Error("grpcroute startup sync failed", "error", err)
-	} else {
-		logger.Info("grpcroute startup sync completed successfully")
-	}
+	runStartupSync(ctx, logger, startupSyncRetryInterval,
+		func() { r.startupComplete.Store(true) },
+		startupSyncAttempt(r.syncParams()),
+	)
 
 	return nil
 }
