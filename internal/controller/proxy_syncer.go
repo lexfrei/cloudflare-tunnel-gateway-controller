@@ -1036,10 +1036,11 @@ func endpointSetsEqual(previous map[string]struct{}, resolved []string) bool {
 }
 
 // buildProxyConfig converts the HTTP and gRPC route sets into a single merged
-// proxy Config. HTTP routes inherit parent-listener hostnames and get invalid
-// backend refs marked unavailable (→ 500 for that backend's fraction); gRPC
-// routes are appended with backends forced to h2c and the same marking applied.
-// Extracted from SyncRoutes to keep that function under the funlen budget.
+// proxy Config. HTTP routes are narrowed to their route↔listener hostname
+// intersection and get invalid backend refs marked unavailable (→ 500 for that
+// backend's fraction); gRPC routes are appended with backends forced to h2c and
+// the same marking applied. Extracted from SyncRoutes to keep that function
+// under the funlen budget.
 func (s *ProxySyncer) buildProxyConfig(
 	ctx context.Context,
 	routes []*gatewayv1.HTTPRoute,
@@ -1052,10 +1053,11 @@ func (s *ProxySyncer) buildProxyConfig(
 	// single merge instead of rebuilding it per route per pass (issue #332).
 	views := newListenerViewCache(s.k8sClient, s.ViewStore)
 
-	// When a route binds to a Gateway listener or ListenerSet entry with a
-	// non-empty hostname and itself declares spec.hostnames empty, the proxy
-	// rule MUST serve only the parent listener's hostname. Augment in-memory
-	// before handing to the converter; the input routes are left untouched.
+	// Narrow each route's hostnames to the intersection of its own hostnames
+	// with those of the listeners it binds to (#587): a declared hostname no
+	// bound listener covers is dropped (→ 404), and a route with no hostnames
+	// inherits the listener's hostname instead of becoming a catch-all. Rewrite
+	// in-memory before handing to the converter; the input routes are untouched.
 	routes = withEffectiveHostnames(ctx, s.k8sClient, routes, views)
 
 	// A RequestRedirect filter that leaves scheme empty must default to the
@@ -1084,10 +1086,11 @@ func (s *ProxySyncer) buildProxyConfig(
 	// HTTP config's version (grpcCfg burns a version counter value that is
 	// discarded — only the pushed config's version is observed downstream).
 	if len(grpcRoutes) > 0 {
-		// gRPC routes inherit their parent listener's hostname when they declare
-		// none, exactly like HTTPRoutes — otherwise an empty-hostname gRPC rule
-		// becomes a catch-all answering every Host (including hostnames owned by
-		// other routes).
+		// gRPC routes are narrowed to their route↔listener hostname intersection
+		// exactly like HTTPRoutes: a declared hostname no bound listener covers
+		// is dropped, and a route with no hostnames inherits the listener's
+		// hostname instead of becoming a catch-all answering every Host
+		// (including hostnames owned by other routes).
 		grpcRoutes = withEffectiveHostnamesGRPC(ctx, s.k8sClient, grpcRoutes, views)
 
 		grpcCfg := proxy.ConvertGRPCRoutes(ctx, grpcRoutes, s.clusterDomain, s.grpcBackendValidator, s.protocolResolver, s.tlsResolver, s.gatewayCertResolver)
@@ -1130,7 +1133,7 @@ func (s *ProxySyncer) buildProxyConfig(
 	cfg.HasGRPCRoute = len(grpcRoutes) > 0
 
 	// Cross-route shadow detection (#474) runs LAST, over the exact rule
-	// stream the router will serve — after effective-hostname inheritance and
+	// stream the router will serve — after hostname-intersection narrowing and
 	// the gRPC merge — so a collision an operator can hit is a collision this
 	// flags. Status/observability only: the diagnostics ride the existing
 	// pipeline into a dedicated condition + Warning Event on the losing route.
