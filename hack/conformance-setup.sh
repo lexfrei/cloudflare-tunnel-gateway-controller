@@ -101,6 +101,11 @@ dump_diagnostics() {
     echo "--- describe pods (${NAMESPACE}) ---"
     "${kdump[@]}" describe pods --namespace "${NAMESPACE}" || true
 
+    # creationTimestamp answers whether the CR was applied late or the
+    # controller's cache was stale when a bootstrap race is suspected (#581).
+    echo "--- gatewayclassconfig ---"
+    "${kdump[@]}" get gatewayclassconfig --output yaml 2>/dev/null || true
+
     # Test namespaces too: per-Gateway data planes and echo backends live
     # there -- "e2e-test" is created by the e2e suite, and the official
     # conformance suite creates its own "gateway-conformance-*" namespaces.

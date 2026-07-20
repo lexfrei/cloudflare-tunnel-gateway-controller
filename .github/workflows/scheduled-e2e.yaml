@@ -73,6 +73,15 @@ jobs:
         if: steps.attempt1.outcome == 'failure'
         run: ./hack/conformance-setup.sh --test-e2e
 
+      # continue-on-error reports a failed attempt 1 as a green step, so a
+      # persistently failing first attempt can hide behind the retry for as
+      # long as attempt 2 keeps passing (it did for a month -- issue #581).
+      # Surface it as a workflow warning annotation on otherwise-green runs.
+      - name: Flag masked attempt-1 failure
+        if: steps.attempt1.outcome == 'failure' && steps.attempt2.outcome == 'success'
+        run: |
+          echo "::warning title=e2e attempt 1 failed::The first e2e attempt failed and the retry saved the run. Check the attempt 1 logs -- a persistent first-attempt failure is invisible in the step icons (continue-on-error reports it green)."
+
       # A red scheduled run nobody looks at is indistinguishable from no run
       # at all -- surface persistent failures as an issue.
       - name: Open or update failure issue
