@@ -1,0 +1,19 @@
+cff-version: 1.2.0
+message: "If you use Cloudflare Tunnel Gateway Controller, please cite it as below."
+type: software
+title: "Cloudflare Tunnel Gateway Controller"
+abstract: "Kubernetes controller implementing Gateway API for Cloudflare Tunnel."
+authors:
+  - family-names: "Sviridkin"
+    given-names: "Aleksei"
+    email: "f@lex.la"
+repository-code: "https://github.com/lexfrei/cloudflare-tunnel-gateway-controller"
+license: BSD-3-Clause
+version: "3.2.0"
+date-released: "2026-07-02"
+keywords:
+  - kubernetes
+  - gateway-api
+  - cloudflare-tunnel
+  - controller
+  - helm
