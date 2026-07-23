@@ -90,9 +90,15 @@ func TestGatewayAPIConformance(t *testing.T) {
 		// non-regression rather than tuned — see docs/development/testing.md
 		// "Known conformance flakes" and kubernetes-sigs/gateway-api#4933.
 		features.SupportHTTPRouteRequestPercentageMirror,
-		features.SupportBackendTLSPolicy,
-		features.SupportBackendTLSPolicySANValidation,
-		features.SupportGatewayBackendClientCertificate,
+		// BackendTLSPolicy (+ its SAN-validation and
+		// GatewayBackendClientCertificate siblings) is implemented but NOT
+		// claimed for conformance. Every one of its v1.6.1 tests is gated on
+		// SupportBackendTLSPolicy, whose parent "BackendTLSPolicy" test needs an
+		// in-cluster HTTPS listener for the Re-encrypt case that edge-terminated
+		// TLS cannot provide. Per gateway-api maintainer guidance, a feature
+		// whose top-level test cannot run is not claimed even when the sibling
+		// tests pass, so the whole family stays in unsupportedFeatures. The
+		// feature itself works end to end; see docs/gateway-api/limitations.md.
 		features.SupportHTTPRouteCORS,
 		features.SupportHTTPRouteNamedRouteRule,
 
@@ -270,18 +276,6 @@ func conformanceSkipTests() []string {
 		"MeshHTTPRouteSchemeRedirect",
 		"MeshHTTPRouteSimpleSameNamespace",
 		"MeshHTTPRouteWeight",
-
-		// BackendTLSPolicy: the main test exercises Re-encrypt against the
-		// "same-namespace-with-https-listener" Gateway; Cloudflare terminates
-		// TLS at the edge so HTTPS listeners are not supported (see the
-		// HTTPRouteHTTPSListener skip above) and the parent test would fail on
-		// its first sub-test. The subsequent HTTP sub-tests are covered by the
-		// HTTPRoute_ extended suite. ConflictResolution is newly enabled this
-		// revision — the controller now emits Conflicted on losing policies
-		// per GEP-713 — alongside the previously-enabled
-		// InvalidCACertificateRef / InvalidKind / ObservedGenerationBump /
-		// SANValidation sub-tests.
-		"BackendTLSPolicy",
 
 		// Gateway features not applicable to tunnel architecture.
 		"GatewayStaticAddresses",
