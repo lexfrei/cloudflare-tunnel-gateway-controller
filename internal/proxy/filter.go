@@ -66,6 +66,27 @@ type matchedPrefixKey struct{}
 // It is removed before the request is sent to the backend.
 const hostRewrittenHeader = "X-Proxy-Host-Rewritten"
 
+// reRouteDepthKey is the context key for the re-route depth counter.
+// Each time the handler re-matches a request after a URL rewrite filter
+// changes the Host, the counter is incremented. The counter is capped at
+// reRouteMaxDepth to prevent infinite loops in pathological configs.
+type reRouteDepthKey struct{}
+
+// reRouteDepth returns the current re-route depth from the request context.
+func reRouteDepth(ctx context.Context) int {
+	v, _ := ctx.Value(reRouteDepthKey{}).(int)
+
+	return v
+}
+
+// reRouteMaxDepth caps how many times a request may be re-matched after a
+// URL rewrite filter changes the Host header. 1 = exactly one re-match —
+// the standard Knative DomainMapping -> ksvc cluster-local two-hop pattern
+// collapses into a single proxy hop, which keeps the net-gateway-api
+// prober (probeTimeout = 1s) under budget. Deeper re-matches are a
+// configuration bug, not a runtime concern.
+const reRouteMaxDepth = 1
+
 // SetMatchedPrefix returns a shallow copy of req with the matched path prefix
 // stored in its context. The original request is NOT modified.
 // Used by URL rewrite filters for ReplacePrefixMatch.

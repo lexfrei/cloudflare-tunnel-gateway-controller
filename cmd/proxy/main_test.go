@@ -661,3 +661,54 @@ func TestTracingHandlerOption(t *testing.T) {
 		})
 	}
 }
+
+// TestInClusterListenerEnabled pins the truthy convention for the opt-in
+// in-cluster listener: only "1"/"true" (case-insensitive, trimmed) enable it;
+// unset and every other value keep the default tunnel-only data plane.
+func TestInClusterListenerEnabled(t *testing.T) {
+	// t.Parallel skipped: t.Setenv mutates process env, must run sequentially.
+	cases := []struct {
+		name string
+		envv string
+		set  bool
+		want bool
+	}{
+		{name: "unset disables", want: false},
+		{name: "empty disables", envv: "", set: true, want: false},
+		{name: "zero disables", envv: "0", set: true, want: false},
+		{name: "false disables", envv: "false", set: true, want: false},
+		{name: "no disables", envv: "no", set: true, want: false},
+		{name: "one enables", envv: "1", set: true, want: true},
+		{name: "true enables", envv: "true", set: true, want: true},
+		{name: "TRUE enables case-insensitive", envv: "TRUE", set: true, want: true},
+		{name: "spaced true enables", envv: " true ", set: true, want: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.set {
+				t.Setenv("PROXY_IN_CLUSTER_LISTENER", tc.envv)
+			} else {
+				t.Setenv("PROXY_IN_CLUSTER_LISTENER", "")
+			}
+			assert.Equal(t, tc.want, inClusterListenerEnabled())
+		})
+	}
+}
+
+// TestTunnelModeServers pins the shutdown-set composition: always the config
+// API server, plus the in-cluster listener only when it was created.
+func TestTunnelModeServers(t *testing.T) {
+	t.Parallel()
+
+	cfg := &http.Server{Addr: ":8081"}
+	prx := &http.Server{Addr: ":8080"}
+
+	got := tunnelModeServers(cfg, nil)
+	require.Len(t, got, 1)
+	assert.Same(t, cfg, got[0], "config server always present")
+
+	got = tunnelModeServers(cfg, prx)
+	require.Len(t, got, 2)
+	assert.Same(t, cfg, got[0])
+	assert.Same(t, prx, got[1], "in-cluster listener appended when non-nil")
+}

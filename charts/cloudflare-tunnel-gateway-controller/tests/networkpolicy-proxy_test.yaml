@@ -185,3 +185,49 @@ tests:
     asserts:
       - failedTemplate:
           errorPattern: "egressRestricted is true but networkPolicy.cloudflareIpRanges is empty"
+
+  # The in-cluster listener proxy-port ingress rule is the NetworkPolicy half of
+  # the Knative net-gateway-api integration (#511). Without it the status prober
+  # (in the net-gateway-api namespace) is blocked from the data plane and the
+  # KIngress stays Ready=Unknown. Default off; when on, the proxy port is
+  # admitted from the configured namespaces plus the release namespace.
+  - it: should not admit the proxy port when inClusterListener disabled (default)
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
+    asserts:
+      - lengthEqual:
+          path: spec.ingress
+          count: 1
+      - notContains:
+          path: spec.ingress[0].ports
+          content:
+            protocol: TCP
+            port: 8080
+
+  - it: should admit the proxy port from release and configured namespaces when enabled
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
+        proxyPort: 8080
+        inClusterListener:
+          enabled: true
+          networkPolicy:
+            namespaces:
+              - knative-serving
+    asserts:
+      - contains:
+          path: spec.ingress
+          content:
+            from:
+              - namespaceSelector:
+                  matchLabels:
+                    kubernetes.io/metadata.name: cf-system
+              - namespaceSelector:
+                  matchLabels:
+                    kubernetes.io/metadata.name: knative-serving
+            ports:
+              - protocol: TCP
+                port: 8080

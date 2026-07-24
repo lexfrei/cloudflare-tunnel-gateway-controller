@@ -80,6 +80,17 @@ helper, so the DNS name it resolves always matches the rendered Service.
 {{- end }}
 
 {{/*
+In-cluster listener Service name. This is the Service net-gateway-api's status
+prober dials when config-gateway `service:` points at it. Truncated before the
+suffix so the full DNS label stays within 63 chars and never collides with the
+config/health proxy Service. Documented in the chart README as the value to pass
+to config-gateway.
+*/}}
+{{- define "cf-tunnel-gw-ctrl.proxyInClusterName" -}}
+{{- printf "%s-proxy-incluster" (include "cf-tunnel-gw-ctrl.fullname" . | trunc 46 | trimSuffix "-") }}
+{{- end }}
+
+{{/*
 Proxy labels
 */}}
 {{- define "cf-tunnel-gw-ctrl.proxyLabels" -}}

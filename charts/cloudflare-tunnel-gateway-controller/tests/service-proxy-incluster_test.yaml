@@ -1,0 +1,77 @@
+suite: test proxy in-cluster listener service
+templates:
+  - service-proxy-incluster.yaml
+release:
+  name: release
+  namespace: cf-system
+tests:
+  # Off by default — the tunnel-only data plane must stay unchanged for
+  # non-Knative users, so the dedicated Service is not rendered.
+  - it: should not render when inClusterListener is disabled (default)
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: should render a ClusterIP Service when enabled
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
+        inClusterListener:
+          enabled: true
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: Service
+      - equal:
+          path: spec.type
+          value: ClusterIP
+
+  # net-gateway-api's prober dials a Service's FIRST port (falling back from a
+  # name match against http/http2/http-80), so the proxy port MUST be the first
+  # port AND named http. A future edit that reorders ports or renames them would
+  # silently break the Knative probe — pin it.
+  - it: should expose the proxy port first and named http
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
+        proxyPort: 8080
+        inClusterListener:
+          enabled: true
+    asserts:
+      - equal:
+          path: spec.ports[0].name
+          value: http
+      - equal:
+          path: spec.ports[0].port
+          value: 8080
+      - equal:
+          path: spec.ports[0].targetPort
+          value: proxy
+      - equal:
+          path: spec.ports[0].protocol
+          value: TCP
+      - lengthEqual:
+          path: spec.ports
+          count: 1
+
+  - it: should apply custom annotations
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
+        inClusterListener:
+          enabled: true
+          service:
+            annotations:
+              external-traffic: local
+    asserts:
+      - equal:
+          path: metadata.annotations.external-traffic
+          value: local

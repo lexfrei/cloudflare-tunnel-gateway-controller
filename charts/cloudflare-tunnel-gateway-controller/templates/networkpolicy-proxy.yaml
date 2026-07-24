@@ -32,6 +32,26 @@ spec:
       ports:
         - protocol: TCP
           port: {{ .Values.proxy.configAPIPort }}
+    {{- if .Values.proxy.inClusterListener.enabled }}
+    # Opt-in in-cluster proxy listener (the proxy port): admits the namespaces
+    # that run the net-gateway-api status prober (the probe source) plus the
+    # release namespace. Rendered only when proxy.inClusterListener.enabled AND
+    # proxy.networkPolicy.enabled — without the listener the proxy port takes NO
+    # in-cluster ingress (tunnel-only data plane), and with the NetworkPolicy
+    # disabled entirely there is no ingress restriction to extend.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Release.Namespace }}
+        {{- range .Values.proxy.inClusterListener.networkPolicy.namespaces }}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ . }}
+        {{- end }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.proxy.proxyPort }}
+    {{- end }}
   {{- if .Values.proxy.networkPolicy.egressRestricted }}
   {{- $cfRanges := .Values.networkPolicy.cloudflareIpRanges | default dict }}
   {{- if and (not $cfRanges.ipv4) (not $cfRanges.ipv6) }}

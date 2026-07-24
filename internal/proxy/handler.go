@@ -354,6 +354,18 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	// Answer a config-convergence self-probe (e.g. Knative net-gateway-api)
+	// authoritatively. This MUST run before ApplyRequestFilters, which rewrites
+	// the probe's echo header from its sentinel to the concrete value, and is
+	// scoped to the in-cluster listener (never the tunnel/edge path) so the
+	// gateway cannot be probe-spoofed from outside. See self_probe.go — forwarding
+	// the probe instead would 404 (or hang at scale-to-zero) through the ksvc
+	// ExternalName re-entry loop.
+	//nolint:contextcheck // req.Context() is derived from the inbound request; contextcheck loses provenance through instrumentRequest's returned req (same false positive handled below for matchedPrefixKey)
+	if requestFromInClusterListener(req.Context()) && answerSelfProbe(writer, req, result.Rule) {
+		return
+	}
+
 	// Per-rule timeouts (Request / BackendRequest) are enforced
 	// downstream by the cached transport's ResponseHeaderTimeout
 	// (set in newTransport from ruleHeaderTimeout's collapse). No
@@ -375,6 +387,18 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, req *http.Request) {
 		writeRedirectResponse(writer, redirectResp)
 
 		return
+	}
+
+	// Collapse the Knative DomainMapping -> ksvc cluster-local two-hop into
+	// a single hop. net-gateway-api generates an HTTPRoute whose backend is
+	// the ksvc's ExternalName Service (pointing at this proxy) and a rule-
+	// level URL rewrite that flips the Host to <ksvc>.svc.cluster.local, so
+	// a naive forward would round-trip back into the proxy and exceed the
+	// 1s probe timeout. After the rewrite, the rewritten Host already
+	// matches a different (cluster-local) rule, so re-match and use that
+	// backend directly. Depth-limited to reRouteMaxDepth to prevent loops.
+	if newResult := h.reRouteAfterRewrite(req, result); newResult != nil {
+		result = newResult
 	}
 
 	// Apply backend-specific filters (e.g., per-backend header modifiers).
@@ -1230,4 +1254,41 @@ func copyHeaderValues(dst, src http.Header) {
 			dst.Add(key, value)
 		}
 	}
+}
+
+// reRouteAfterRewrite re-matches the request against the routing table
+// after a rule-level URL rewrite filter has changed the Host header, and
+// returns the new RouteResult if it points at a different rule. The
+// caller replaces its `result` with the returned one. See the call site
+// for the Knative DomainMapping use case; the depth cap is
+// reRouteMaxDepth so a rewrite that points at the same rule (or a chain
+// of rewrites) cannot loop forever.
+func (h *Handler) reRouteAfterRewrite(req *http.Request, current *RouteResult) *RouteResult {
+	if !isHostRewritten(req) {
+		return nil
+	}
+
+	if reRouteDepth(req.Context()) >= reRouteMaxDepth {
+		return nil
+	}
+
+	newResult := h.router.Route(req)
+	if newResult == nil || newResult.Rule == current.Rule {
+		return nil
+	}
+
+	// Apply the new rule's filters at the next depth so a rewrite in the
+	// new rule would be caught by the same cap. A redirect response from
+	// the new filters means the original result is the safer choice.
+	ctx := context.WithValue(req.Context(), reRouteDepthKey{}, reRouteDepth(req.Context())+1)
+
+	newReq := req.WithContext(ctx)
+
+	if redirectResp := ApplyRequestFilters(newResult.Filters, newReq); redirectResp != nil {
+		defer redirectResp.Body.Close()
+
+		return nil
+	}
+
+	return newResult
 }

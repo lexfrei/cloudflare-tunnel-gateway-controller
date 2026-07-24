@@ -142,7 +142,14 @@ func tracingHandlerOption() proxy.HandlerOption {
 
 // runTunnelMode starts the proxy with cloudflared tunnel integration.
 // Traffic flows in-process: cloudflared → GatewayOriginProxy → proxy.Handler.
-// No localhost HTTP server is needed for proxying.
+// No localhost HTTP server is needed for proxying — UNLESS
+// PROXY_IN_CLUSTER_LISTENER is truthy, in which case the same L7 handler is also
+// served on PROXY_ADDR (default :8080) so the data plane becomes dialable from
+// inside the cluster. Knative net-gateway-api needs this: its status prober
+// validates a KIngress by dialing the gateway data plane directly (it cannot
+// reach the Cloudflare tunnel edge), so without the listener the KIngress stays
+// Ready=Unknown forever. Off by default to keep the tunnel-only data plane
+// unchanged for non-Knative users.
 func runTunnelMode(logger *slog.Logger, token string) {
 	configAddr := envOrDefault("PROXY_CONFIG_ADDR", defaultConfigAddr)
 
@@ -168,6 +175,11 @@ func runTunnelMode(logger *slog.Logger, token string) {
 		}
 	}()
 
+	// Optional in-cluster HTTP listener (off by default): started only when
+	// PROXY_IN_CLUSTER_LISTENER is truthy, so the tunnel-only data plane is
+	// untouched for non-Knative users.
+	proxyServer := startInClusterListener(logger, proxyHandler, cancel)
+
 	// Resolve the edge transport before dialing. PROXY_TUNNEL_PROTOCOL selects
 	// it (auto|http2|quic, default auto). For auto/unset this waits briefly for
 	// the controller's first config push so the proxy can upgrade to http2 when
@@ -189,13 +201,10 @@ func runTunnelMode(logger *slog.Logger, token string) {
 	// the operator must restart the proxy.
 	router.SetDialedProtocol(effectiveProtocol)
 
-	// A drain signalled before the dial means the pod is already terminating:
-	// dialing the edge only to immediately unregister would burn termination
-	// grace for nothing — skip straight to shutdown.
-	if drainSignalled(graceC) {
-		logger.Info("drain signalled before tunnel start; exiting without dialing the edge")
+	// A drain signalled during startup means the pod is terminating: dialing the
+	// edge only to immediately unregister would burn termination grace.
+	if drainSignalledBeforeDial(logger, graceC, tunnelModeServers(configServer, proxyServer)...) {
 		cancel()
-		gracefulShutdown(logger, configServer)
 
 		return
 	}
@@ -220,7 +229,7 @@ func runTunnelMode(logger *slog.Logger, token string) {
 	// The daemon has exited (drained, failed, or force-cancelled) — release the
 	// signal goroutine before shutting the config server down.
 	cancel()
-	gracefulShutdown(logger, configServer)
+	gracefulShutdown(logger, tunnelModeServers(configServer, proxyServer)...)
 
 	if err != nil && !errors.Is(err, context.Canceled) {
 		logger.Error("tunnel error", "error", err)
@@ -290,6 +299,74 @@ func newProxyServer(addr string, handler http.Handler) *http.Server {
 		ReadHeaderTimeout: readHeaderTimeout,
 		ReadTimeout:       readTimeout,
 	}
+}
+
+// startInClusterListener starts the optional in-cluster HTTP listener that
+// exposes the SAME L7 handler cloudflared serves on PROXY_ADDR, so the data
+// plane becomes dialable from inside the cluster. Knative net-gateway-api needs
+// this: its status prober validates a KIngress by dialing the gateway data plane
+// directly (it cannot reach the Cloudflare edge), so without the listener the
+// KIngress stays Ready=Unknown forever. Returns nil when disabled (the default),
+// in which case the tunnel-only data plane is untouched. A listener error cancels
+// the run, mirroring the config API server.
+func startInClusterListener(logger *slog.Logger, handler http.Handler, cancel context.CancelFunc) *http.Server {
+	if !inClusterListenerEnabled() {
+		return nil
+	}
+
+	// Tag requests served here as in-cluster so the L7 handler may answer
+	// config-convergence self-probes (e.g. Knative net-gateway-api) authoritatively.
+	// The tunnel/edge path (tunnel.NewGatewayOriginProxy) keeps the bare handler,
+	// so an external client can never forge a probe to extract the config value.
+	// See internal/proxy/self_probe.go.
+	server := newProxyServer(envOrDefault("PROXY_ADDR", defaultProxyAddr), proxy.InClusterProbeMiddleware(handler))
+
+	go func() {
+		logger.Info("starting in-cluster proxy listener", "addr", server.Addr)
+
+		err := server.ListenAndServe()
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			logger.Error("in-cluster proxy listener error", "error", err)
+			cancel()
+		}
+	}()
+
+	return server
+}
+
+// inClusterListenerEnabled reports whether PROXY_IN_CLUSTER_LISTENER asks for an
+// extra in-cluster HTTP listener on PROXY_ADDR in tunnel mode. Off by default:
+// the tunnel-only data plane stays unchanged for non-Knative users. Knative
+// net-gateway-api needs it on (its status prober dials the data plane directly
+// rather than the Cloudflare edge).
+func inClusterListenerEnabled() bool {
+	return isTruthyEnv("PROXY_IN_CLUSTER_LISTENER")
+}
+
+// tunnelModeServers returns the http.Servers runTunnelMode must shut down:
+// always the config API server, plus the optional in-cluster proxy listener
+// when PROXY_IN_CLUSTER_LISTENER enables it.
+func tunnelModeServers(configServer, proxyServer *http.Server) []*http.Server {
+	if proxyServer == nil {
+		return []*http.Server{configServer}
+	}
+
+	return []*http.Server{configServer, proxyServer}
+}
+
+// drainSignalledBeforeDial logs and shuts down the proxy servers when a drain was
+// signalled during the protocol-resolution window. Dialing the edge then would
+// only burn termination grace: the connector would register and immediately
+// unregister. Returns true when runTunnelMode should skip the dial and exit.
+func drainSignalledBeforeDial(logger *slog.Logger, graceC <-chan struct{}, servers ...*http.Server) bool {
+	if !drainSignalled(graceC) {
+		return false
+	}
+
+	logger.Info("drain signalled before tunnel start; exiting without dialing the edge")
+	gracefulShutdown(logger, servers...)
+
+	return true
 }
 
 // drainSignalled reports whether the drain channel is already closed,
