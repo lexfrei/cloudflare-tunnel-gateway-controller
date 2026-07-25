@@ -125,11 +125,13 @@ The proxy binary accepts the following environment variables:
 
 ### Config API Authentication
 
-The config API is always authenticated when deployed via the chart: leave `proxy.authTokenSecretRef.name` empty (the default) and the chart generates a random token into a Secret named `<release>-proxy-auth-token`, wires it into both the controller and the proxy, and reuses the same token on every `helm upgrade` (a token rotation would roll the proxy pods, so upgrading alone never does). Set `proxy.authTokenSecretRef.name` to point at your own Secret instead, for example to manage rotation externally.
+The config API is always authenticated when deployed via the chart: leave `proxy.authTokenSecretRef.name` empty (the default) and the controller itself generates a random token into a Secret named `<release>-proxy-auth-token` as one of its first startup actions, uses it directly for its own push auth, and the proxy reads the same Secret via a pod-level `secretKeyRef`. The token is created once and reused on every restart, never rotated -- so neither an upgrade nor a controller restart rolls the proxy on its own. Set `proxy.authTokenSecretRef.name` to point at your own Secret instead, for example to manage rotation externally.
+
+On a brand-new install, the proxy Deployment's pod template references the generated Secret before the controller has had a chance to create it -- the affected proxy pod(s) sit briefly in `CreateContainerConfigError` until the controller finishes starting, and kubelet's normal retry picks up the Secret once it exists. This is a one-time, self-resolving startup race, not a failure to act on.
 
 !!! note "Upgrading from a release with no auth token"
 
-    If you were pushing config to the proxy directly (bypassing the controller) with no `Authorization` header, that stops working after upgrading to a chart version with this default: read the generated token with `kubectl get secret <release>-proxy-auth-token -o jsonpath='{.data.auth-token}' | base64 -d` and send it as `Authorization: Bearer <token>`.
+    If you were pushing config to the proxy directly (bypassing the controller) with no `Authorization` header, that stops working after upgrading to a chart version with this default: read the generated token with `kubectl get secret <release>-proxy-auth-token -o jsonpath='{.data.auth-token}' | base64 -d` and send it as `Authorization: Bearer <token>`. During the rollout itself there is a brief window where the new, already-authenticated proxy pod rejects pushes from an old controller pod that has not yet rolled (401), and the reverse (an old, unauthenticated proxy pod accepting an authenticated push, since it never checks the header). Both resolve on their own once the rolling update finishes and both sides are on the new pod template -- no manual step is needed.
 
 ### Health Endpoints
 

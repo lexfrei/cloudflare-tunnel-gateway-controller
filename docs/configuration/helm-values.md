@@ -154,7 +154,7 @@ The `proxy` section configures the in-process L7 reverse proxy. The proxy embeds
 | `proxy.networkPolicy.egressRestricted` | bool | `false` | Also restrict egress to DNS + the Cloudflare edge + cluster services |
 | `proxy.networkPolicy.ingress.from` | list | `[]` | Extra namespaces/pods allowed to reach the config-API port, added to the controller namespace |
 | `proxy.networkPolicy.monitoringNamespaceSelector` | object | `{}` | LabelSelector for namespaces additionally allowed to reach the per-Gateway proxies' config-API/metrics port |
-| `proxy.authTokenSecretRef.name` | string | `""` | Secret name for the controller→proxy config-API Bearer token; leave empty to let the chart generate and manage the token automatically (the config API is always authenticated) |
+| `proxy.authTokenSecretRef.name` | string | `""` | Secret name for the controller→proxy config-API Bearer token; leave empty to let the controller generate and manage the token automatically at startup (the config API is always authenticated) |
 | `proxy.authTokenSecretRef.key` | string | `"auth-token"` | Key in the auth-token Secret |
 
 ### Scheduling
