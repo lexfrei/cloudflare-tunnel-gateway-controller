@@ -547,15 +547,17 @@ github.com/prometheus/common/model
 github.com/prometheus/procfs
 github.com/prometheus/procfs/internal/fs
 github.com/prometheus/procfs/internal/util
-# github.com/quic-go/quic-go v0.59.1 => github.com/chungthuang/quic-go v0.45.1-0.20250428085412-43229ad201fd
-## explicit; go 1.23
+# github.com/quic-go/quic-go v0.59.1 => github.com/chungthuang/quic-go v0.45.1
+## explicit; go 1.21
 github.com/quic-go/quic-go
 github.com/quic-go/quic-go/internal/ackhandler
 github.com/quic-go/quic-go/internal/congestion
 github.com/quic-go/quic-go/internal/flowcontrol
 github.com/quic-go/quic-go/internal/handshake
+github.com/quic-go/quic-go/internal/logutils
 github.com/quic-go/quic-go/internal/protocol
 github.com/quic-go/quic-go/internal/qerr
+github.com/quic-go/quic-go/internal/qtls
 github.com/quic-go/quic-go/internal/utils
 github.com/quic-go/quic-go/internal/utils/linkedlist
 github.com/quic-go/quic-go/internal/utils/ringbuffer
@@ -755,6 +757,7 @@ golang.org/x/crypto/nacl/secretbox
 golang.org/x/crypto/salsa20/salsa
 # golang.org/x/exp v0.0.0-20251219203646-944ab1f22d93
 ## explicit; go 1.24.0
+golang.org/x/exp/rand
 golang.org/x/exp/slices
 # golang.org/x/mod v0.37.0
 ## explicit; go 1.25.0
@@ -1572,4 +1575,4 @@ zombiezen.com/go/capnproto2/schemas
 zombiezen.com/go/capnproto2/server
 zombiezen.com/go/capnproto2/std/capnp/rpc
 # github.com/cloudflare/cloudflared => github.com/lexfrei/cloudflared v0.0.0-20260725170743-c76a719d15f8
-# github.com/quic-go/quic-go => github.com/chungthuang/quic-go v0.45.1-0.20250428085412-43229ad201fd
+# github.com/quic-go/quic-go => github.com/chungthuang/quic-go v0.45.1

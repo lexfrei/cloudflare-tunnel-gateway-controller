@@ -178,4 +178,4 @@ replace github.com/cloudflare/cloudflared => github.com/lexfrei/cloudflared v0.0
 // alone without cloudflared adopting a fix first; see #609 for what would unblock it.
 // FIXME(#610): the require entry above is decorative, this unconditional replace
 // (no version on its left side) wins regardless of what version that line names.
-replace github.com/quic-go/quic-go => github.com/chungthuang/quic-go v0.45.1-0.20250428085412-43229ad201fd
+replace github.com/quic-go/quic-go => github.com/chungthuang/quic-go v0.45.1

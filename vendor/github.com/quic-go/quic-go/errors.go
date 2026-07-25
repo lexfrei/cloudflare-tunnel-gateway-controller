@@ -50,8 +50,8 @@ type StreamError struct {
 }
 
 func (e *StreamError) Is(target error) bool {
-	t, ok := target.(*StreamError)
-	return ok && e.StreamID == t.StreamID && e.ErrorCode == t.ErrorCode && e.Remote == t.Remote
+	_, ok := target.(*StreamError)
+	return ok
 }
 
 func (e *StreamError) Error() string {
@@ -68,8 +68,8 @@ type DatagramTooLargeError struct {
 }
 
 func (e *DatagramTooLargeError) Is(target error) bool {
-	t, ok := target.(*DatagramTooLargeError)
-	return ok && e.MaxDatagramPayloadSize == t.MaxDatagramPayloadSize
+	_, ok := target.(*DatagramTooLargeError)
+	return ok
 }
 
 func (e *DatagramTooLargeError) Error() string { return "DATAGRAM frame too large" }
