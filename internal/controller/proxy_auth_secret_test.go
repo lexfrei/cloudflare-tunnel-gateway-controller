@@ -58,6 +58,38 @@ func TestParseProxyAuthSecretRef(t *testing.T) {
 	}
 }
 
+// TestResolveProxyAuthToken_NoOpWhenSecretRefEmpty pins backward
+// compatibility for every caller that does not set --proxy-auth-secret-ref
+// (raw manifests, older values files, anyone still on the bring-your-own
+// --proxy-auth-token path): no generation, no API calls, no error -- cfg
+// comes back with ProxyAuthToken untouched, exactly as Run behaved before
+// this flag existed. mgr is passed as nil and must never be dereferenced on
+// this path; a real manager needs a live rest.Config to construct, which a
+// unit test should not need just to prove a no-op branch stays a no-op.
+func TestResolveProxyAuthToken_NoOpWhenSecretRefEmpty(t *testing.T) {
+	t.Parallel()
+
+	cfg := &Config{ProxyAuthToken: "byo-token", ProxyAuthSecretRef: ""}
+
+	resolved, err := resolveProxyAuthToken(context.Background(), nil, cfg)
+	require.NoError(t, err)
+	assert.Equal(t, "byo-token", resolved.ProxyAuthToken)
+	assert.NotSame(t, cfg, resolved, "must return a copy, never alias or mutate the caller's Config")
+}
+
+// TestResolveProxyAuthToken_NoOpWhenSecretRefEmpty's empty-token sibling:
+// the common case where neither auth flag is set at all (raw manifests
+// before an operator opts into either path).
+func TestResolveProxyAuthToken_NoOpWhenBothEmpty(t *testing.T) {
+	t.Parallel()
+
+	cfg := &Config{}
+
+	resolved, err := resolveProxyAuthToken(context.Background(), nil, cfg)
+	require.NoError(t, err)
+	assert.Empty(t, resolved.ProxyAuthToken)
+}
+
 // TestEnsureProxyAuthSecret_GeneratesWhenMissing pins the secure-by-default
 // case: no Secret exists yet at the shared plane's generated name, so
 // ensureProxyAuthSecret creates one with a random token and returns it.
@@ -81,9 +113,17 @@ func TestEnsureProxyAuthSecret_GeneratesWhenMissing(t *testing.T) {
 }
 
 // TestEnsureProxyAuthSecret_ReusesExisting pins the upgrade-safety
-// requirement: an already-present Secret's token is returned verbatim and
-// NEVER regenerated, so upgrading a release never rotates the token or rolls
-// the proxy pods on its own.
+// requirement: an already-present Secret's token -- however it got there,
+// including a value nobody generated (an operator's own manual `kubectl
+// create`, or a foreign value from an unrelated process) -- is returned
+// verbatim and NEVER overwritten, so upgrading a release never rotates the
+// token or rolls the proxy pods on its own.
+//
+// The interceptor makes this a structural guarantee, not an inference from
+// "the assertion below still matches": ensureProxyAuthSecret is only ever
+// granted Get and Create RBAC (see clusterrole.yaml/deploy/rbac/role.yaml --
+// no update, no patch), and this test fails the moment the code path
+// exercises either, regardless of what it would have written.
 func TestEnsureProxyAuthSecret_ReusesExisting(t *testing.T) {
 	t.Parallel()
 
@@ -95,7 +135,19 @@ func TestEnsureProxyAuthSecret_ReusesExisting(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace},
 		Data:       map[string][]byte{generatedAuthTokenKey: []byte("already-here-token")},
 	}
-	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(existing).Build()
+
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(existing).WithInterceptorFuncs(interceptor.Funcs{
+		Update: func(context.Context, client.WithWatch, client.Object, ...client.UpdateOption) error {
+			t.Fatal("ensureProxyAuthSecret must never Update an existing auth Secret")
+
+			return nil
+		},
+		Patch: func(context.Context, client.WithWatch, client.Object, client.Patch, ...client.PatchOption) error {
+			t.Fatal("ensureProxyAuthSecret must never Patch an existing auth Secret")
+
+			return nil
+		},
+	}).Build()
 
 	token, err := ensureProxyAuthSecret(context.Background(), fakeClient, key)
 	require.NoError(t, err)
@@ -108,23 +160,43 @@ func TestEnsureProxyAuthSecret_ReusesExisting(t *testing.T) {
 }
 
 // TestEnsureProxyAuthSecret_ErrorsOnMissingKey fails closed: a Secret at the
-// expected name with no auth-token key (or an empty one) is a broken state,
-// not something to silently paper over with an empty token.
+// expected name with no auth-token key, or an empty one -- the realistic
+// case is a hand-created Secret with a typo'd key name -- is a broken state,
+// not something to silently paper over with an empty token (which would
+// make the config API accept an empty Bearer value as valid, reopening
+// exactly the hole this whole change closes).
 func TestEnsureProxyAuthSecret_ErrorsOnMissingKey(t *testing.T) {
 	t.Parallel()
 
-	scheme := runtime.NewScheme()
-	require.NoError(t, corev1.AddToScheme(scheme))
-
-	key := proxyAuthSecretKey()
-	broken := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace},
-		Data:       map[string][]byte{"wrong-key": []byte("irrelevant")},
+	tests := []struct {
+		name string
+		data map[string][]byte
+	}{
+		{name: "key absent", data: map[string][]byte{"wrong-key": []byte("irrelevant")}},
+		{name: "key present but empty", data: map[string][]byte{generatedAuthTokenKey: {}}},
+		{name: "no data at all", data: nil},
 	}
-	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(broken).Build()
 
-	_, err := ensureProxyAuthSecret(context.Background(), fakeClient, key)
-	require.Error(t, err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			scheme := runtime.NewScheme()
+			require.NoError(t, corev1.AddToScheme(scheme))
+
+			key := proxyAuthSecretKey()
+			broken := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace},
+				Data:       tt.data,
+			}
+			fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(broken).Build()
+
+			token, err := ensureProxyAuthSecret(context.Background(), fakeClient, key)
+			require.Error(t, err)
+			assert.ErrorIs(t, err, errProxyAuthSecretMissingKey)
+			assert.Empty(t, token, "a failed resolution must never hand back a usable-looking token")
+		})
+	}
 }
 
 // TestEnsureProxyAuthSecret_CreateRaceReusesWinner covers two controller
