@@ -91,7 +91,21 @@ type Config struct {
 
 	// ProxyAuthToken is the Bearer token for authenticating config push requests.
 	// When set, the controller includes "Authorization: Bearer <token>" in push requests.
+	// Bring-your-own-token path: the chart wires this only when
+	// proxy.authTokenSecretRef.name is set, already resolved via a pod-level
+	// secretKeyRef. Mutually exclusive with ProxyAuthSecretRef.
 	ProxyAuthToken string
+
+	// ProxyAuthSecretRef, when set, identifies the shared proxy's config-API
+	// auth-token Secret in "<namespace>/<name>" form. Run ensures it exists
+	// (generating a random token once if missing) as one of its first startup
+	// steps, resolved directly via the API rather than a pod-level
+	// secretKeyRef -- a secretKeyRef the controller itself is responsible for
+	// creating would deadlock its own pod, since kubelet cannot start the
+	// container that would create the missing Secret. The resolved token
+	// overrides ProxyAuthToken for the rest of Run. The chart sets this
+	// instead of ProxyAuthToken when proxy.authTokenSecretRef.name is empty.
+	ProxyAuthSecretRef string
 
 	// TunnelProtocol is the proxy's configured edge transport (auto|http2|quic).
 	// Used only to warn when GRPCRoutes are present on an explicit quic tunnel,
@@ -173,7 +187,7 @@ type Config struct {
 //  6. Wires the ProxySyncer that pushes HTTPRoute config to the proxy data plane
 //  7. Starts the manager and blocks until shutdown
 //
-//nolint:funlen,gocyclo,cyclop // controller setup requires multiple sequential reconciler wires
+//nolint:funlen,gocyclo,cyclop,maintidx // controller setup requires multiple sequential reconciler wires
 func Run(ctx context.Context, cfg *Config) error {
 	logger := log.FromContext(ctx).WithName("manager")
 	logger.Info("initializing controller manager")
@@ -217,6 +231,21 @@ func Run(ctx context.Context, cfg *Config) error {
 	if err := installSchemes(mgr); err != nil {
 		return err
 	}
+
+	// Resolve the shared-proxy config-API auth token as the very first
+	// Kubernetes-touching step, before any reconciler wiring: the chart
+	// applies the controller and proxy Deployments in the same helm
+	// operation, so the sooner this runs, the smaller the window where the
+	// proxy pods sit in CreateContainerConfigError waiting on a Secret only
+	// this call creates. A local override, not a mutation of the caller's
+	// *cfg -- see the proxyEndpoints comment below for why Run must not
+	// accumulate state onto the caller's Config.
+	resolvedCfg, err := resolveProxyAuthToken(ctx, mgr, cfg)
+	if err != nil {
+		return err
+	}
+
+	cfg = resolvedCfg
 
 	// Create metrics collector and register with controller-runtime
 	metricsCollector := cfmetrics.NewCollector(ctrlMetrics.Registry)

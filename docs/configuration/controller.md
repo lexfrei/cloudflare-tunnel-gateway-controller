@@ -16,7 +16,8 @@ This document describes all configuration options for the controller binary. For
 | `--leader-election-namespace` | `CF_LEADER_ELECTION_NAMESPACE` | | Namespace for leader election lease |
 | `--leader-election-name` | `CF_LEADER_ELECTION_NAME` | `cloudflare-tunnel-gateway-controller-leader` | Leader election lease name |
 | `--proxy-endpoints` | `CF_PROXY_ENDPOINTS` | | Proxy config API endpoints for L7 proxy sync (required in v3) |
-| `--proxy-auth-token` | `CF_PROXY_AUTH_TOKEN` | | Bearer token for proxy config push authentication |
+| `--proxy-auth-token` | `CF_PROXY_AUTH_TOKEN` | | Bearer token for proxy config push authentication; bring-your-own path, already resolved via a pod-level `secretKeyRef`. Mutually exclusive with `--proxy-auth-secret-ref` |
+| `--proxy-auth-secret-ref` | `CF_PROXY_AUTH_SECRET_REF` | | Shared-proxy config-API auth-token Secret to ensure exists, in `<namespace>/<name>` form. The controller generates a random token and creates the Secret if missing, then uses it directly for its own push auth (not via a pod-level `secretKeyRef`, which would deadlock the controller's own pod waiting on a Secret only it can create). Mutually exclusive with `--proxy-auth-token`; the chart sets this instead when `proxy.authTokenSecretRef.name` is empty |
 | `--proxy-token-secret` | `CF_PROXY_TOKEN_SECRET` | | Tunnel-token Secret to watch in `<namespace>/<name>` form; the controller rolls the proxy Deployment when the Secret data changes. Empty disables the watcher |
 | `--proxy-deployment-label` | `CF_PROXY_DEPLOYMENT_LABEL` | `app.kubernetes.io/component=proxy` | Label selector (`key=value`) identifying the proxy Deployment(s) to roll on tunnel-token change |
 | `--tunnel-protocol` | `CF_TUNNEL_PROTOCOL` | `auto` | Edge transport protocol (`auto`, `http2`, `quic`); used to warn when GRPCRoutes are present on an explicit `quic` tunnel |
