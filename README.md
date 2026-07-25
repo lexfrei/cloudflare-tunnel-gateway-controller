@@ -34,6 +34,8 @@ The controller runs an in-process L7 reverse proxy inside the cloudflared proces
 
 See [L7 Proxy Architecture](https://cf.k8s.lex.la/latest/development/architecture/) for full details.
 
+If the tunnel's initial connection to the Cloudflare edge fails (for example, cluster DNS not yet reachable right after a node reboot), the proxy retries with backoff and reports NotReady instead of restarting — see [Proxy Pod Stuck NotReady After a Restart](https://cf.k8s.lex.la/latest/operations/troubleshooting/#proxy-pod-stuck-notready-after-a-restart).
+
 ## Quick Start
 
 ```bash

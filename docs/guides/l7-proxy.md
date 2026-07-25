@@ -142,6 +142,8 @@ The generated Secret is created by the controller directly, not rendered by Helm
 | `/healthz` | Config API | Liveness check |
 | `/readyz` | Config API | Readiness: config loaded at least once AND, in tunnel mode, the tunnel has connected to the Cloudflare edge (standalone mode latches the tunnel condition at startup) |
 
+In tunnel mode, a bootstrap dial failure (cluster DNS unreachable, the edge briefly unreachable) retries with jittered exponential backoff (2s up to a 30s cap) instead of exiting — the pod stays `Running` and reports `/readyz` false throughout, rather than crash-looping. See [Proxy Pod Stuck NotReady After a Restart](../operations/troubleshooting.md#proxy-pod-stuck-notready-after-a-restart) for diagnosis.
+
 ## Example HTTPRoute
 
 ```yaml

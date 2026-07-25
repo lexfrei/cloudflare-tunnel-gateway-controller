@@ -129,6 +129,27 @@ kubectl rollout restart deployment/cloudflare-tunnel-gateway-controller \
 
 If `proxy.authTokenSecretRef.name` is set to a Secret you manage yourself, the controller never creates or repairs it; fix the key in that Secret instead.
 
+### Proxy Pod Stuck NotReady After a Restart
+
+**Symptoms**:
+
+- A proxy pod is `Running` but `0/1 Ready` for longer than expected after a restart or node reboot, with a low or zero `RESTARTS` count in `kubectl get pods` — this is the tell that distinguishes the new behavior from the old crash loop an operator might be expecting
+- Logs repeat `tunnel bootstrap dial failed, retrying`, one line per attempt
+
+**Cause**: this is expected, not a bug. The proxy retries the tunnel's bootstrap dial instead of exiting on a transient failure — cluster DNS not yet reachable while the CNI is still wiring pods up after a reboot, or the Cloudflare edge briefly unreachable. Each retry waits a random duration between 0 and an exponentially growing cap (2s up to 30s, jittered so that replicas which failed at the same instant do not all retry in lockstep), so the logged `backoff` value moves around rather than climbing in a straight line. `/readyz` stays false for the whole retry window; the pod does not crash-loop.
+
+**Diagnosis**: a proxy that is retrying, not wedged, keeps emitting a new `tunnel bootstrap dial failed, retrying` log line on every attempt — an `attempt` count that keeps climbing is the pod actively working the problem, not stuck. Follow the logs to watch it happen:
+
+```bash
+kubectl logs --namespace cloudflare-tunnel-system \
+  --selector app.kubernetes.io/component=proxy --follow
+```
+
+**Solution**: if the retry log line keeps repeating well past the time the underlying network issue should have cleared (DNS, egress to the Cloudflare edge), check the error text on each attempt:
+
+- A DNS/dial/edge-unreachable error clears on its own once connectivity is restored — no action needed.
+- The same error persisting for many minutes with no change usually means the tunnel token itself is invalid or was revoked in the Cloudflare Zero Trust Dashboard. A malformed token (fails to decode) makes the pod exit immediately instead of retrying; a well-formed but rejected token retries indefinitely, because the proxy cannot reliably distinguish "the edge rejected this token" from "the edge is temporarily unreachable" from the error alone. Regenerate the connector token and update `proxy.tunnelTokenSecretRef` if this is the case.
+
 ### ImagePullBackOff
 
 **Diagnosis**:
