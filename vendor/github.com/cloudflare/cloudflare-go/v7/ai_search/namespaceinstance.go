@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"reflect"
 	"slices"
 	"time"
 
@@ -17,7 +18,8 @@ import (
 	"github.com/cloudflare/cloudflare-go/v7/internal/requestconfig"
 	"github.com/cloudflare/cloudflare-go/v7/option"
 	"github.com/cloudflare/cloudflare-go/v7/packages/pagination"
-	"github.com/cloudflare/cloudflare-go/v7/r2"
+	"github.com/cloudflare/cloudflare-go/v7/shared"
+	"github.com/tidwall/gjson"
 )
 
 // NamespaceInstanceService contains methods and other services that help with
@@ -480,6 +482,7 @@ type NamespaceInstanceNewResponseEmbeddingModel string
 
 const (
 	NamespaceInstanceNewResponseEmbeddingModelCfQwenQwen3Embedding0_6b              NamespaceInstanceNewResponseEmbeddingModel = "@cf/qwen/qwen3-embedding-0.6b"
+	NamespaceInstanceNewResponseEmbeddingModelCfQwenQwen3VlEmbedding2b              NamespaceInstanceNewResponseEmbeddingModel = "@cf/qwen/qwen3-vl-embedding-2b"
 	NamespaceInstanceNewResponseEmbeddingModelCfBaaiBgeM3                           NamespaceInstanceNewResponseEmbeddingModel = "@cf/baai/bge-m3"
 	NamespaceInstanceNewResponseEmbeddingModelCfBaaiBgeLargeEnV1_5                  NamespaceInstanceNewResponseEmbeddingModel = "@cf/baai/bge-large-en-v1.5"
 	NamespaceInstanceNewResponseEmbeddingModelCfGoogleEmbeddinggemma300m            NamespaceInstanceNewResponseEmbeddingModel = "@cf/google/embeddinggemma-300m"
@@ -492,7 +495,7 @@ const (
 
 func (r NamespaceInstanceNewResponseEmbeddingModel) IsKnown() bool {
 	switch r {
-	case NamespaceInstanceNewResponseEmbeddingModelCfQwenQwen3Embedding0_6b, NamespaceInstanceNewResponseEmbeddingModelCfBaaiBgeM3, NamespaceInstanceNewResponseEmbeddingModelCfBaaiBgeLargeEnV1_5, NamespaceInstanceNewResponseEmbeddingModelCfGoogleEmbeddinggemma300m, NamespaceInstanceNewResponseEmbeddingModelGoogleAIStudioGeminiEmbedding001, NamespaceInstanceNewResponseEmbeddingModelGoogleAIStudioGeminiEmbedding2Preview, NamespaceInstanceNewResponseEmbeddingModelOpenAITextEmbedding3Small, NamespaceInstanceNewResponseEmbeddingModelOpenAITextEmbedding3Large, NamespaceInstanceNewResponseEmbeddingModelEmpty:
+	case NamespaceInstanceNewResponseEmbeddingModelCfQwenQwen3Embedding0_6b, NamespaceInstanceNewResponseEmbeddingModelCfQwenQwen3VlEmbedding2b, NamespaceInstanceNewResponseEmbeddingModelCfBaaiBgeM3, NamespaceInstanceNewResponseEmbeddingModelCfBaaiBgeLargeEnV1_5, NamespaceInstanceNewResponseEmbeddingModelCfGoogleEmbeddinggemma300m, NamespaceInstanceNewResponseEmbeddingModelGoogleAIStudioGeminiEmbedding001, NamespaceInstanceNewResponseEmbeddingModelGoogleAIStudioGeminiEmbedding2Preview, NamespaceInstanceNewResponseEmbeddingModelOpenAITextEmbedding3Small, NamespaceInstanceNewResponseEmbeddingModelOpenAITextEmbedding3Large, NamespaceInstanceNewResponseEmbeddingModelEmpty:
 		return true
 	}
 	return false
@@ -610,11 +613,16 @@ func (r namespaceInstanceNewResponseMetadataJSON) RawJSON() string {
 type NamespaceInstanceNewResponsePublicEndpointParams struct {
 	AuthorizedHosts         []string                                                                `json:"authorized_hosts"`
 	ChatCompletionsEndpoint NamespaceInstanceNewResponsePublicEndpointParamsChatCompletionsEndpoint `json:"chat_completions_endpoint"`
-	Enabled                 bool                                                                    `json:"enabled"`
-	Mcp                     NamespaceInstanceNewResponsePublicEndpointParamsMcp                     `json:"mcp"`
-	RateLimit               NamespaceInstanceNewResponsePublicEndpointParamsRateLimit               `json:"rate_limit"`
-	SearchEndpoint          NamespaceInstanceNewResponsePublicEndpointParamsSearchEndpoint          `json:"search_endpoint"`
-	JSON                    namespaceInstanceNewResponsePublicEndpointParamsJSON                    `json:"-"`
+	// Custom domain hostnames that alias this public endpoint. GET and create
+	// responses return the current set; on update (PUT) this field is only echoed back
+	// when supplied in the request body, otherwise it is null (omit it to leave
+	// domains unchanged).
+	CustomDomains  []string                                                       `json:"custom_domains" api:"nullable"`
+	Enabled        bool                                                           `json:"enabled"`
+	Mcp            NamespaceInstanceNewResponsePublicEndpointParamsMcp            `json:"mcp"`
+	RateLimit      NamespaceInstanceNewResponsePublicEndpointParamsRateLimit      `json:"rate_limit"`
+	SearchEndpoint NamespaceInstanceNewResponsePublicEndpointParamsSearchEndpoint `json:"search_endpoint"`
+	JSON           namespaceInstanceNewResponsePublicEndpointParamsJSON           `json:"-"`
 }
 
 // namespaceInstanceNewResponsePublicEndpointParamsJSON contains the JSON metadata
@@ -622,6 +630,7 @@ type NamespaceInstanceNewResponsePublicEndpointParams struct {
 type namespaceInstanceNewResponsePublicEndpointParamsJSON struct {
 	AuthorizedHosts         apijson.Field
 	ChatCompletionsEndpoint apijson.Field
+	CustomDomains           apijson.Field
 	Enabled                 apijson.Field
 	Mcp                     apijson.Field
 	RateLimit               apijson.Field
@@ -945,7 +954,6 @@ func (r namespaceInstanceNewResponseSourceParamsJSON) RawJSON() string {
 type NamespaceInstanceNewResponseSourceParamsWebCrawler struct {
 	ParseOptions NamespaceInstanceNewResponseSourceParamsWebCrawlerParseOptions `json:"parse_options"`
 	ParseType    NamespaceInstanceNewResponseSourceParamsWebCrawlerParseType    `json:"parse_type"`
-	StoreOptions NamespaceInstanceNewResponseSourceParamsWebCrawlerStoreOptions `json:"store_options"`
 	JSON         namespaceInstanceNewResponseSourceParamsWebCrawlerJSON         `json:"-"`
 }
 
@@ -954,7 +962,6 @@ type NamespaceInstanceNewResponseSourceParamsWebCrawler struct {
 type namespaceInstanceNewResponseSourceParamsWebCrawlerJSON struct {
 	ParseOptions apijson.Field
 	ParseType    apijson.Field
-	StoreOptions apijson.Field
 	raw          string
 	ExtraFields  map[string]apijson.Field
 }
@@ -1039,42 +1046,15 @@ type NamespaceInstanceNewResponseSourceParamsWebCrawlerParseType string
 
 const (
 	NamespaceInstanceNewResponseSourceParamsWebCrawlerParseTypeSitemap NamespaceInstanceNewResponseSourceParamsWebCrawlerParseType = "sitemap"
-	NamespaceInstanceNewResponseSourceParamsWebCrawlerParseTypeFeedRss NamespaceInstanceNewResponseSourceParamsWebCrawlerParseType = "feed-rss"
 	NamespaceInstanceNewResponseSourceParamsWebCrawlerParseTypeCrawl   NamespaceInstanceNewResponseSourceParamsWebCrawlerParseType = "crawl"
 )
 
 func (r NamespaceInstanceNewResponseSourceParamsWebCrawlerParseType) IsKnown() bool {
 	switch r {
-	case NamespaceInstanceNewResponseSourceParamsWebCrawlerParseTypeSitemap, NamespaceInstanceNewResponseSourceParamsWebCrawlerParseTypeFeedRss, NamespaceInstanceNewResponseSourceParamsWebCrawlerParseTypeCrawl:
+	case NamespaceInstanceNewResponseSourceParamsWebCrawlerParseTypeSitemap, NamespaceInstanceNewResponseSourceParamsWebCrawlerParseTypeCrawl:
 		return true
 	}
 	return false
-}
-
-type NamespaceInstanceNewResponseSourceParamsWebCrawlerStoreOptions struct {
-	StorageID      string                                                             `json:"storage_id" api:"required"`
-	R2Jurisdiction string                                                             `json:"r2_jurisdiction"`
-	StorageType    r2.Provider                                                        `json:"storage_type"`
-	JSON           namespaceInstanceNewResponseSourceParamsWebCrawlerStoreOptionsJSON `json:"-"`
-}
-
-// namespaceInstanceNewResponseSourceParamsWebCrawlerStoreOptionsJSON contains the
-// JSON metadata for the struct
-// [NamespaceInstanceNewResponseSourceParamsWebCrawlerStoreOptions]
-type namespaceInstanceNewResponseSourceParamsWebCrawlerStoreOptionsJSON struct {
-	StorageID      apijson.Field
-	R2Jurisdiction apijson.Field
-	StorageType    apijson.Field
-	raw            string
-	ExtraFields    map[string]apijson.Field
-}
-
-func (r *NamespaceInstanceNewResponseSourceParamsWebCrawlerStoreOptions) UnmarshalJSON(data []byte) (err error) {
-	return apijson.UnmarshalRoot(data, r)
-}
-
-func (r namespaceInstanceNewResponseSourceParamsWebCrawlerStoreOptionsJSON) RawJSON() string {
-	return r.raw
 }
 
 // Interval between automatic syncs, in seconds. Allowed values: 900 (15min), 1800
@@ -1353,6 +1333,7 @@ type NamespaceInstanceUpdateResponseEmbeddingModel string
 
 const (
 	NamespaceInstanceUpdateResponseEmbeddingModelCfQwenQwen3Embedding0_6b              NamespaceInstanceUpdateResponseEmbeddingModel = "@cf/qwen/qwen3-embedding-0.6b"
+	NamespaceInstanceUpdateResponseEmbeddingModelCfQwenQwen3VlEmbedding2b              NamespaceInstanceUpdateResponseEmbeddingModel = "@cf/qwen/qwen3-vl-embedding-2b"
 	NamespaceInstanceUpdateResponseEmbeddingModelCfBaaiBgeM3                           NamespaceInstanceUpdateResponseEmbeddingModel = "@cf/baai/bge-m3"
 	NamespaceInstanceUpdateResponseEmbeddingModelCfBaaiBgeLargeEnV1_5                  NamespaceInstanceUpdateResponseEmbeddingModel = "@cf/baai/bge-large-en-v1.5"
 	NamespaceInstanceUpdateResponseEmbeddingModelCfGoogleEmbeddinggemma300m            NamespaceInstanceUpdateResponseEmbeddingModel = "@cf/google/embeddinggemma-300m"
@@ -1365,7 +1346,7 @@ const (
 
 func (r NamespaceInstanceUpdateResponseEmbeddingModel) IsKnown() bool {
 	switch r {
-	case NamespaceInstanceUpdateResponseEmbeddingModelCfQwenQwen3Embedding0_6b, NamespaceInstanceUpdateResponseEmbeddingModelCfBaaiBgeM3, NamespaceInstanceUpdateResponseEmbeddingModelCfBaaiBgeLargeEnV1_5, NamespaceInstanceUpdateResponseEmbeddingModelCfGoogleEmbeddinggemma300m, NamespaceInstanceUpdateResponseEmbeddingModelGoogleAIStudioGeminiEmbedding001, NamespaceInstanceUpdateResponseEmbeddingModelGoogleAIStudioGeminiEmbedding2Preview, NamespaceInstanceUpdateResponseEmbeddingModelOpenAITextEmbedding3Small, NamespaceInstanceUpdateResponseEmbeddingModelOpenAITextEmbedding3Large, NamespaceInstanceUpdateResponseEmbeddingModelEmpty:
+	case NamespaceInstanceUpdateResponseEmbeddingModelCfQwenQwen3Embedding0_6b, NamespaceInstanceUpdateResponseEmbeddingModelCfQwenQwen3VlEmbedding2b, NamespaceInstanceUpdateResponseEmbeddingModelCfBaaiBgeM3, NamespaceInstanceUpdateResponseEmbeddingModelCfBaaiBgeLargeEnV1_5, NamespaceInstanceUpdateResponseEmbeddingModelCfGoogleEmbeddinggemma300m, NamespaceInstanceUpdateResponseEmbeddingModelGoogleAIStudioGeminiEmbedding001, NamespaceInstanceUpdateResponseEmbeddingModelGoogleAIStudioGeminiEmbedding2Preview, NamespaceInstanceUpdateResponseEmbeddingModelOpenAITextEmbedding3Small, NamespaceInstanceUpdateResponseEmbeddingModelOpenAITextEmbedding3Large, NamespaceInstanceUpdateResponseEmbeddingModelEmpty:
 		return true
 	}
 	return false
@@ -1483,11 +1464,16 @@ func (r namespaceInstanceUpdateResponseMetadataJSON) RawJSON() string {
 type NamespaceInstanceUpdateResponsePublicEndpointParams struct {
 	AuthorizedHosts         []string                                                                   `json:"authorized_hosts"`
 	ChatCompletionsEndpoint NamespaceInstanceUpdateResponsePublicEndpointParamsChatCompletionsEndpoint `json:"chat_completions_endpoint"`
-	Enabled                 bool                                                                       `json:"enabled"`
-	Mcp                     NamespaceInstanceUpdateResponsePublicEndpointParamsMcp                     `json:"mcp"`
-	RateLimit               NamespaceInstanceUpdateResponsePublicEndpointParamsRateLimit               `json:"rate_limit"`
-	SearchEndpoint          NamespaceInstanceUpdateResponsePublicEndpointParamsSearchEndpoint          `json:"search_endpoint"`
-	JSON                    namespaceInstanceUpdateResponsePublicEndpointParamsJSON                    `json:"-"`
+	// Custom domain hostnames that alias this public endpoint. GET and create
+	// responses return the current set; on update (PUT) this field is only echoed back
+	// when supplied in the request body, otherwise it is null (omit it to leave
+	// domains unchanged).
+	CustomDomains  []string                                                          `json:"custom_domains" api:"nullable"`
+	Enabled        bool                                                              `json:"enabled"`
+	Mcp            NamespaceInstanceUpdateResponsePublicEndpointParamsMcp            `json:"mcp"`
+	RateLimit      NamespaceInstanceUpdateResponsePublicEndpointParamsRateLimit      `json:"rate_limit"`
+	SearchEndpoint NamespaceInstanceUpdateResponsePublicEndpointParamsSearchEndpoint `json:"search_endpoint"`
+	JSON           namespaceInstanceUpdateResponsePublicEndpointParamsJSON           `json:"-"`
 }
 
 // namespaceInstanceUpdateResponsePublicEndpointParamsJSON contains the JSON
@@ -1495,6 +1481,7 @@ type NamespaceInstanceUpdateResponsePublicEndpointParams struct {
 type namespaceInstanceUpdateResponsePublicEndpointParamsJSON struct {
 	AuthorizedHosts         apijson.Field
 	ChatCompletionsEndpoint apijson.Field
+	CustomDomains           apijson.Field
 	Enabled                 apijson.Field
 	Mcp                     apijson.Field
 	RateLimit               apijson.Field
@@ -1818,7 +1805,6 @@ func (r namespaceInstanceUpdateResponseSourceParamsJSON) RawJSON() string {
 type NamespaceInstanceUpdateResponseSourceParamsWebCrawler struct {
 	ParseOptions NamespaceInstanceUpdateResponseSourceParamsWebCrawlerParseOptions `json:"parse_options"`
 	ParseType    NamespaceInstanceUpdateResponseSourceParamsWebCrawlerParseType    `json:"parse_type"`
-	StoreOptions NamespaceInstanceUpdateResponseSourceParamsWebCrawlerStoreOptions `json:"store_options"`
 	JSON         namespaceInstanceUpdateResponseSourceParamsWebCrawlerJSON         `json:"-"`
 }
 
@@ -1827,7 +1813,6 @@ type NamespaceInstanceUpdateResponseSourceParamsWebCrawler struct {
 type namespaceInstanceUpdateResponseSourceParamsWebCrawlerJSON struct {
 	ParseOptions apijson.Field
 	ParseType    apijson.Field
-	StoreOptions apijson.Field
 	raw          string
 	ExtraFields  map[string]apijson.Field
 }
@@ -1912,42 +1897,15 @@ type NamespaceInstanceUpdateResponseSourceParamsWebCrawlerParseType string
 
 const (
 	NamespaceInstanceUpdateResponseSourceParamsWebCrawlerParseTypeSitemap NamespaceInstanceUpdateResponseSourceParamsWebCrawlerParseType = "sitemap"
-	NamespaceInstanceUpdateResponseSourceParamsWebCrawlerParseTypeFeedRss NamespaceInstanceUpdateResponseSourceParamsWebCrawlerParseType = "feed-rss"
 	NamespaceInstanceUpdateResponseSourceParamsWebCrawlerParseTypeCrawl   NamespaceInstanceUpdateResponseSourceParamsWebCrawlerParseType = "crawl"
 )
 
 func (r NamespaceInstanceUpdateResponseSourceParamsWebCrawlerParseType) IsKnown() bool {
 	switch r {
-	case NamespaceInstanceUpdateResponseSourceParamsWebCrawlerParseTypeSitemap, NamespaceInstanceUpdateResponseSourceParamsWebCrawlerParseTypeFeedRss, NamespaceInstanceUpdateResponseSourceParamsWebCrawlerParseTypeCrawl:
+	case NamespaceInstanceUpdateResponseSourceParamsWebCrawlerParseTypeSitemap, NamespaceInstanceUpdateResponseSourceParamsWebCrawlerParseTypeCrawl:
 		return true
 	}
 	return false
-}
-
-type NamespaceInstanceUpdateResponseSourceParamsWebCrawlerStoreOptions struct {
-	StorageID      string                                                                `json:"storage_id" api:"required"`
-	R2Jurisdiction string                                                                `json:"r2_jurisdiction"`
-	StorageType    r2.Provider                                                           `json:"storage_type"`
-	JSON           namespaceInstanceUpdateResponseSourceParamsWebCrawlerStoreOptionsJSON `json:"-"`
-}
-
-// namespaceInstanceUpdateResponseSourceParamsWebCrawlerStoreOptionsJSON contains
-// the JSON metadata for the struct
-// [NamespaceInstanceUpdateResponseSourceParamsWebCrawlerStoreOptions]
-type namespaceInstanceUpdateResponseSourceParamsWebCrawlerStoreOptionsJSON struct {
-	StorageID      apijson.Field
-	R2Jurisdiction apijson.Field
-	StorageType    apijson.Field
-	raw            string
-	ExtraFields    map[string]apijson.Field
-}
-
-func (r *NamespaceInstanceUpdateResponseSourceParamsWebCrawlerStoreOptions) UnmarshalJSON(data []byte) (err error) {
-	return apijson.UnmarshalRoot(data, r)
-}
-
-func (r namespaceInstanceUpdateResponseSourceParamsWebCrawlerStoreOptionsJSON) RawJSON() string {
-	return r.raw
 }
 
 // Interval between automatic syncs, in seconds. Allowed values: 900 (15min), 1800
@@ -2226,6 +2184,7 @@ type NamespaceInstanceListResponseEmbeddingModel string
 
 const (
 	NamespaceInstanceListResponseEmbeddingModelCfQwenQwen3Embedding0_6b              NamespaceInstanceListResponseEmbeddingModel = "@cf/qwen/qwen3-embedding-0.6b"
+	NamespaceInstanceListResponseEmbeddingModelCfQwenQwen3VlEmbedding2b              NamespaceInstanceListResponseEmbeddingModel = "@cf/qwen/qwen3-vl-embedding-2b"
 	NamespaceInstanceListResponseEmbeddingModelCfBaaiBgeM3                           NamespaceInstanceListResponseEmbeddingModel = "@cf/baai/bge-m3"
 	NamespaceInstanceListResponseEmbeddingModelCfBaaiBgeLargeEnV1_5                  NamespaceInstanceListResponseEmbeddingModel = "@cf/baai/bge-large-en-v1.5"
 	NamespaceInstanceListResponseEmbeddingModelCfGoogleEmbeddinggemma300m            NamespaceInstanceListResponseEmbeddingModel = "@cf/google/embeddinggemma-300m"
@@ -2238,7 +2197,7 @@ const (
 
 func (r NamespaceInstanceListResponseEmbeddingModel) IsKnown() bool {
 	switch r {
-	case NamespaceInstanceListResponseEmbeddingModelCfQwenQwen3Embedding0_6b, NamespaceInstanceListResponseEmbeddingModelCfBaaiBgeM3, NamespaceInstanceListResponseEmbeddingModelCfBaaiBgeLargeEnV1_5, NamespaceInstanceListResponseEmbeddingModelCfGoogleEmbeddinggemma300m, NamespaceInstanceListResponseEmbeddingModelGoogleAIStudioGeminiEmbedding001, NamespaceInstanceListResponseEmbeddingModelGoogleAIStudioGeminiEmbedding2Preview, NamespaceInstanceListResponseEmbeddingModelOpenAITextEmbedding3Small, NamespaceInstanceListResponseEmbeddingModelOpenAITextEmbedding3Large, NamespaceInstanceListResponseEmbeddingModelEmpty:
+	case NamespaceInstanceListResponseEmbeddingModelCfQwenQwen3Embedding0_6b, NamespaceInstanceListResponseEmbeddingModelCfQwenQwen3VlEmbedding2b, NamespaceInstanceListResponseEmbeddingModelCfBaaiBgeM3, NamespaceInstanceListResponseEmbeddingModelCfBaaiBgeLargeEnV1_5, NamespaceInstanceListResponseEmbeddingModelCfGoogleEmbeddinggemma300m, NamespaceInstanceListResponseEmbeddingModelGoogleAIStudioGeminiEmbedding001, NamespaceInstanceListResponseEmbeddingModelGoogleAIStudioGeminiEmbedding2Preview, NamespaceInstanceListResponseEmbeddingModelOpenAITextEmbedding3Small, NamespaceInstanceListResponseEmbeddingModelOpenAITextEmbedding3Large, NamespaceInstanceListResponseEmbeddingModelEmpty:
 		return true
 	}
 	return false
@@ -2356,11 +2315,16 @@ func (r namespaceInstanceListResponseMetadataJSON) RawJSON() string {
 type NamespaceInstanceListResponsePublicEndpointParams struct {
 	AuthorizedHosts         []string                                                                 `json:"authorized_hosts"`
 	ChatCompletionsEndpoint NamespaceInstanceListResponsePublicEndpointParamsChatCompletionsEndpoint `json:"chat_completions_endpoint"`
-	Enabled                 bool                                                                     `json:"enabled"`
-	Mcp                     NamespaceInstanceListResponsePublicEndpointParamsMcp                     `json:"mcp"`
-	RateLimit               NamespaceInstanceListResponsePublicEndpointParamsRateLimit               `json:"rate_limit"`
-	SearchEndpoint          NamespaceInstanceListResponsePublicEndpointParamsSearchEndpoint          `json:"search_endpoint"`
-	JSON                    namespaceInstanceListResponsePublicEndpointParamsJSON                    `json:"-"`
+	// Custom domain hostnames that alias this public endpoint. GET and create
+	// responses return the current set; on update (PUT) this field is only echoed back
+	// when supplied in the request body, otherwise it is null (omit it to leave
+	// domains unchanged).
+	CustomDomains  []string                                                        `json:"custom_domains" api:"nullable"`
+	Enabled        bool                                                            `json:"enabled"`
+	Mcp            NamespaceInstanceListResponsePublicEndpointParamsMcp            `json:"mcp"`
+	RateLimit      NamespaceInstanceListResponsePublicEndpointParamsRateLimit      `json:"rate_limit"`
+	SearchEndpoint NamespaceInstanceListResponsePublicEndpointParamsSearchEndpoint `json:"search_endpoint"`
+	JSON           namespaceInstanceListResponsePublicEndpointParamsJSON           `json:"-"`
 }
 
 // namespaceInstanceListResponsePublicEndpointParamsJSON contains the JSON metadata
@@ -2368,6 +2332,7 @@ type NamespaceInstanceListResponsePublicEndpointParams struct {
 type namespaceInstanceListResponsePublicEndpointParamsJSON struct {
 	AuthorizedHosts         apijson.Field
 	ChatCompletionsEndpoint apijson.Field
+	CustomDomains           apijson.Field
 	Enabled                 apijson.Field
 	Mcp                     apijson.Field
 	RateLimit               apijson.Field
@@ -2691,7 +2656,6 @@ func (r namespaceInstanceListResponseSourceParamsJSON) RawJSON() string {
 type NamespaceInstanceListResponseSourceParamsWebCrawler struct {
 	ParseOptions NamespaceInstanceListResponseSourceParamsWebCrawlerParseOptions `json:"parse_options"`
 	ParseType    NamespaceInstanceListResponseSourceParamsWebCrawlerParseType    `json:"parse_type"`
-	StoreOptions NamespaceInstanceListResponseSourceParamsWebCrawlerStoreOptions `json:"store_options"`
 	JSON         namespaceInstanceListResponseSourceParamsWebCrawlerJSON         `json:"-"`
 }
 
@@ -2700,7 +2664,6 @@ type NamespaceInstanceListResponseSourceParamsWebCrawler struct {
 type namespaceInstanceListResponseSourceParamsWebCrawlerJSON struct {
 	ParseOptions apijson.Field
 	ParseType    apijson.Field
-	StoreOptions apijson.Field
 	raw          string
 	ExtraFields  map[string]apijson.Field
 }
@@ -2785,42 +2748,15 @@ type NamespaceInstanceListResponseSourceParamsWebCrawlerParseType string
 
 const (
 	NamespaceInstanceListResponseSourceParamsWebCrawlerParseTypeSitemap NamespaceInstanceListResponseSourceParamsWebCrawlerParseType = "sitemap"
-	NamespaceInstanceListResponseSourceParamsWebCrawlerParseTypeFeedRss NamespaceInstanceListResponseSourceParamsWebCrawlerParseType = "feed-rss"
 	NamespaceInstanceListResponseSourceParamsWebCrawlerParseTypeCrawl   NamespaceInstanceListResponseSourceParamsWebCrawlerParseType = "crawl"
 )
 
 func (r NamespaceInstanceListResponseSourceParamsWebCrawlerParseType) IsKnown() bool {
 	switch r {
-	case NamespaceInstanceListResponseSourceParamsWebCrawlerParseTypeSitemap, NamespaceInstanceListResponseSourceParamsWebCrawlerParseTypeFeedRss, NamespaceInstanceListResponseSourceParamsWebCrawlerParseTypeCrawl:
+	case NamespaceInstanceListResponseSourceParamsWebCrawlerParseTypeSitemap, NamespaceInstanceListResponseSourceParamsWebCrawlerParseTypeCrawl:
 		return true
 	}
 	return false
-}
-
-type NamespaceInstanceListResponseSourceParamsWebCrawlerStoreOptions struct {
-	StorageID      string                                                              `json:"storage_id" api:"required"`
-	R2Jurisdiction string                                                              `json:"r2_jurisdiction"`
-	StorageType    r2.Provider                                                         `json:"storage_type"`
-	JSON           namespaceInstanceListResponseSourceParamsWebCrawlerStoreOptionsJSON `json:"-"`
-}
-
-// namespaceInstanceListResponseSourceParamsWebCrawlerStoreOptionsJSON contains the
-// JSON metadata for the struct
-// [NamespaceInstanceListResponseSourceParamsWebCrawlerStoreOptions]
-type namespaceInstanceListResponseSourceParamsWebCrawlerStoreOptionsJSON struct {
-	StorageID      apijson.Field
-	R2Jurisdiction apijson.Field
-	StorageType    apijson.Field
-	raw            string
-	ExtraFields    map[string]apijson.Field
-}
-
-func (r *NamespaceInstanceListResponseSourceParamsWebCrawlerStoreOptions) UnmarshalJSON(data []byte) (err error) {
-	return apijson.UnmarshalRoot(data, r)
-}
-
-func (r namespaceInstanceListResponseSourceParamsWebCrawlerStoreOptionsJSON) RawJSON() string {
-	return r.raw
 }
 
 // Interval between automatic syncs, in seconds. Allowed values: 900 (15min), 1800
@@ -3099,6 +3035,7 @@ type NamespaceInstanceDeleteResponseEmbeddingModel string
 
 const (
 	NamespaceInstanceDeleteResponseEmbeddingModelCfQwenQwen3Embedding0_6b              NamespaceInstanceDeleteResponseEmbeddingModel = "@cf/qwen/qwen3-embedding-0.6b"
+	NamespaceInstanceDeleteResponseEmbeddingModelCfQwenQwen3VlEmbedding2b              NamespaceInstanceDeleteResponseEmbeddingModel = "@cf/qwen/qwen3-vl-embedding-2b"
 	NamespaceInstanceDeleteResponseEmbeddingModelCfBaaiBgeM3                           NamespaceInstanceDeleteResponseEmbeddingModel = "@cf/baai/bge-m3"
 	NamespaceInstanceDeleteResponseEmbeddingModelCfBaaiBgeLargeEnV1_5                  NamespaceInstanceDeleteResponseEmbeddingModel = "@cf/baai/bge-large-en-v1.5"
 	NamespaceInstanceDeleteResponseEmbeddingModelCfGoogleEmbeddinggemma300m            NamespaceInstanceDeleteResponseEmbeddingModel = "@cf/google/embeddinggemma-300m"
@@ -3111,7 +3048,7 @@ const (
 
 func (r NamespaceInstanceDeleteResponseEmbeddingModel) IsKnown() bool {
 	switch r {
-	case NamespaceInstanceDeleteResponseEmbeddingModelCfQwenQwen3Embedding0_6b, NamespaceInstanceDeleteResponseEmbeddingModelCfBaaiBgeM3, NamespaceInstanceDeleteResponseEmbeddingModelCfBaaiBgeLargeEnV1_5, NamespaceInstanceDeleteResponseEmbeddingModelCfGoogleEmbeddinggemma300m, NamespaceInstanceDeleteResponseEmbeddingModelGoogleAIStudioGeminiEmbedding001, NamespaceInstanceDeleteResponseEmbeddingModelGoogleAIStudioGeminiEmbedding2Preview, NamespaceInstanceDeleteResponseEmbeddingModelOpenAITextEmbedding3Small, NamespaceInstanceDeleteResponseEmbeddingModelOpenAITextEmbedding3Large, NamespaceInstanceDeleteResponseEmbeddingModelEmpty:
+	case NamespaceInstanceDeleteResponseEmbeddingModelCfQwenQwen3Embedding0_6b, NamespaceInstanceDeleteResponseEmbeddingModelCfQwenQwen3VlEmbedding2b, NamespaceInstanceDeleteResponseEmbeddingModelCfBaaiBgeM3, NamespaceInstanceDeleteResponseEmbeddingModelCfBaaiBgeLargeEnV1_5, NamespaceInstanceDeleteResponseEmbeddingModelCfGoogleEmbeddinggemma300m, NamespaceInstanceDeleteResponseEmbeddingModelGoogleAIStudioGeminiEmbedding001, NamespaceInstanceDeleteResponseEmbeddingModelGoogleAIStudioGeminiEmbedding2Preview, NamespaceInstanceDeleteResponseEmbeddingModelOpenAITextEmbedding3Small, NamespaceInstanceDeleteResponseEmbeddingModelOpenAITextEmbedding3Large, NamespaceInstanceDeleteResponseEmbeddingModelEmpty:
 		return true
 	}
 	return false
@@ -3229,11 +3166,16 @@ func (r namespaceInstanceDeleteResponseMetadataJSON) RawJSON() string {
 type NamespaceInstanceDeleteResponsePublicEndpointParams struct {
 	AuthorizedHosts         []string                                                                   `json:"authorized_hosts"`
 	ChatCompletionsEndpoint NamespaceInstanceDeleteResponsePublicEndpointParamsChatCompletionsEndpoint `json:"chat_completions_endpoint"`
-	Enabled                 bool                                                                       `json:"enabled"`
-	Mcp                     NamespaceInstanceDeleteResponsePublicEndpointParamsMcp                     `json:"mcp"`
-	RateLimit               NamespaceInstanceDeleteResponsePublicEndpointParamsRateLimit               `json:"rate_limit"`
-	SearchEndpoint          NamespaceInstanceDeleteResponsePublicEndpointParamsSearchEndpoint          `json:"search_endpoint"`
-	JSON                    namespaceInstanceDeleteResponsePublicEndpointParamsJSON                    `json:"-"`
+	// Custom domain hostnames that alias this public endpoint. GET and create
+	// responses return the current set; on update (PUT) this field is only echoed back
+	// when supplied in the request body, otherwise it is null (omit it to leave
+	// domains unchanged).
+	CustomDomains  []string                                                          `json:"custom_domains" api:"nullable"`
+	Enabled        bool                                                              `json:"enabled"`
+	Mcp            NamespaceInstanceDeleteResponsePublicEndpointParamsMcp            `json:"mcp"`
+	RateLimit      NamespaceInstanceDeleteResponsePublicEndpointParamsRateLimit      `json:"rate_limit"`
+	SearchEndpoint NamespaceInstanceDeleteResponsePublicEndpointParamsSearchEndpoint `json:"search_endpoint"`
+	JSON           namespaceInstanceDeleteResponsePublicEndpointParamsJSON           `json:"-"`
 }
 
 // namespaceInstanceDeleteResponsePublicEndpointParamsJSON contains the JSON
@@ -3241,6 +3183,7 @@ type NamespaceInstanceDeleteResponsePublicEndpointParams struct {
 type namespaceInstanceDeleteResponsePublicEndpointParamsJSON struct {
 	AuthorizedHosts         apijson.Field
 	ChatCompletionsEndpoint apijson.Field
+	CustomDomains           apijson.Field
 	Enabled                 apijson.Field
 	Mcp                     apijson.Field
 	RateLimit               apijson.Field
@@ -3564,7 +3507,6 @@ func (r namespaceInstanceDeleteResponseSourceParamsJSON) RawJSON() string {
 type NamespaceInstanceDeleteResponseSourceParamsWebCrawler struct {
 	ParseOptions NamespaceInstanceDeleteResponseSourceParamsWebCrawlerParseOptions `json:"parse_options"`
 	ParseType    NamespaceInstanceDeleteResponseSourceParamsWebCrawlerParseType    `json:"parse_type"`
-	StoreOptions NamespaceInstanceDeleteResponseSourceParamsWebCrawlerStoreOptions `json:"store_options"`
 	JSON         namespaceInstanceDeleteResponseSourceParamsWebCrawlerJSON         `json:"-"`
 }
 
@@ -3573,7 +3515,6 @@ type NamespaceInstanceDeleteResponseSourceParamsWebCrawler struct {
 type namespaceInstanceDeleteResponseSourceParamsWebCrawlerJSON struct {
 	ParseOptions apijson.Field
 	ParseType    apijson.Field
-	StoreOptions apijson.Field
 	raw          string
 	ExtraFields  map[string]apijson.Field
 }
@@ -3658,42 +3599,15 @@ type NamespaceInstanceDeleteResponseSourceParamsWebCrawlerParseType string
 
 const (
 	NamespaceInstanceDeleteResponseSourceParamsWebCrawlerParseTypeSitemap NamespaceInstanceDeleteResponseSourceParamsWebCrawlerParseType = "sitemap"
-	NamespaceInstanceDeleteResponseSourceParamsWebCrawlerParseTypeFeedRss NamespaceInstanceDeleteResponseSourceParamsWebCrawlerParseType = "feed-rss"
 	NamespaceInstanceDeleteResponseSourceParamsWebCrawlerParseTypeCrawl   NamespaceInstanceDeleteResponseSourceParamsWebCrawlerParseType = "crawl"
 )
 
 func (r NamespaceInstanceDeleteResponseSourceParamsWebCrawlerParseType) IsKnown() bool {
 	switch r {
-	case NamespaceInstanceDeleteResponseSourceParamsWebCrawlerParseTypeSitemap, NamespaceInstanceDeleteResponseSourceParamsWebCrawlerParseTypeFeedRss, NamespaceInstanceDeleteResponseSourceParamsWebCrawlerParseTypeCrawl:
+	case NamespaceInstanceDeleteResponseSourceParamsWebCrawlerParseTypeSitemap, NamespaceInstanceDeleteResponseSourceParamsWebCrawlerParseTypeCrawl:
 		return true
 	}
 	return false
-}
-
-type NamespaceInstanceDeleteResponseSourceParamsWebCrawlerStoreOptions struct {
-	StorageID      string                                                                `json:"storage_id" api:"required"`
-	R2Jurisdiction string                                                                `json:"r2_jurisdiction"`
-	StorageType    r2.Provider                                                           `json:"storage_type"`
-	JSON           namespaceInstanceDeleteResponseSourceParamsWebCrawlerStoreOptionsJSON `json:"-"`
-}
-
-// namespaceInstanceDeleteResponseSourceParamsWebCrawlerStoreOptionsJSON contains
-// the JSON metadata for the struct
-// [NamespaceInstanceDeleteResponseSourceParamsWebCrawlerStoreOptions]
-type namespaceInstanceDeleteResponseSourceParamsWebCrawlerStoreOptionsJSON struct {
-	StorageID      apijson.Field
-	R2Jurisdiction apijson.Field
-	StorageType    apijson.Field
-	raw            string
-	ExtraFields    map[string]apijson.Field
-}
-
-func (r *NamespaceInstanceDeleteResponseSourceParamsWebCrawlerStoreOptions) UnmarshalJSON(data []byte) (err error) {
-	return apijson.UnmarshalRoot(data, r)
-}
-
-func (r namespaceInstanceDeleteResponseSourceParamsWebCrawlerStoreOptionsJSON) RawJSON() string {
-	return r.raw
 }
 
 // Interval between automatic syncs, in seconds. Allowed values: 900 (15min), 1800
@@ -3788,10 +3702,10 @@ func (r namespaceInstanceChatCompletionsResponseChoiceJSON) RawJSON() string {
 }
 
 type NamespaceInstanceChatCompletionsResponseChoicesMessage struct {
-	Content     string                                                     `json:"content" api:"required,nullable"`
-	Role        NamespaceInstanceChatCompletionsResponseChoicesMessageRole `json:"role" api:"required"`
-	ExtraFields map[string]interface{}                                     `json:"-" api:"extrafields"`
-	JSON        namespaceInstanceChatCompletionsResponseChoicesMessageJSON `json:"-"`
+	Content     NamespaceInstanceChatCompletionsResponseChoicesMessageContentUnion `json:"content" api:"required,nullable"`
+	Role        NamespaceInstanceChatCompletionsResponseChoicesMessageRole         `json:"role" api:"required"`
+	ExtraFields map[string]interface{}                                             `json:"-" api:"extrafields"`
+	JSON        namespaceInstanceChatCompletionsResponseChoicesMessageJSON         `json:"-"`
 }
 
 // namespaceInstanceChatCompletionsResponseChoicesMessageJSON contains the JSON
@@ -3809,6 +3723,155 @@ func (r *NamespaceInstanceChatCompletionsResponseChoicesMessage) UnmarshalJSON(d
 
 func (r namespaceInstanceChatCompletionsResponseChoicesMessageJSON) RawJSON() string {
 	return r.raw
+}
+
+// Union satisfied by [shared.UnionString] or
+// [NamespaceInstanceChatCompletionsResponseChoicesMessageContentArray].
+type NamespaceInstanceChatCompletionsResponseChoicesMessageContentUnion interface {
+	ImplementsNamespaceInstanceChatCompletionsResponseChoicesMessageContentUnion()
+}
+
+func init() {
+	apijson.RegisterUnion(
+		reflect.TypeOf((*NamespaceInstanceChatCompletionsResponseChoicesMessageContentUnion)(nil)).Elem(),
+		"",
+		apijson.UnionVariant{
+			TypeFilter: gjson.String,
+			Type:       reflect.TypeOf(shared.UnionString("")),
+		},
+		apijson.UnionVariant{
+			TypeFilter: gjson.JSON,
+			Type:       reflect.TypeOf(NamespaceInstanceChatCompletionsResponseChoicesMessageContentArray{}),
+		},
+	)
+}
+
+type NamespaceInstanceChatCompletionsResponseChoicesMessageContentArray []NamespaceInstanceChatCompletionsResponseChoicesMessageContentArrayItem
+
+func (r NamespaceInstanceChatCompletionsResponseChoicesMessageContentArray) ImplementsNamespaceInstanceChatCompletionsResponseChoicesMessageContentUnion() {
+}
+
+type NamespaceInstanceChatCompletionsResponseChoicesMessageContentArrayItem struct {
+	Type NamespaceInstanceChatCompletionsResponseChoicesMessageContentArrayType `json:"type" api:"required"`
+	// This field can have the runtime type of
+	// [NamespaceInstanceChatCompletionsResponseChoicesMessageContentArrayObjectImageURL].
+	ImageURL interface{}                                                                `json:"image_url"`
+	Text     string                                                                     `json:"text"`
+	JSON     namespaceInstanceChatCompletionsResponseChoicesMessageContentArrayItemJSON `json:"-"`
+	union    NamespaceInstanceChatCompletionsResponseChoicesMessageContentArrayUnionItem
+}
+
+// namespaceInstanceChatCompletionsResponseChoicesMessageContentArrayItemJSON
+// contains the JSON metadata for the struct
+// [NamespaceInstanceChatCompletionsResponseChoicesMessageContentArrayItem]
+type namespaceInstanceChatCompletionsResponseChoicesMessageContentArrayItemJSON struct {
+	Type        apijson.Field
+	ImageURL    apijson.Field
+	Text        apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r namespaceInstanceChatCompletionsResponseChoicesMessageContentArrayItemJSON) RawJSON() string {
+	return r.raw
+}
+
+func (r *NamespaceInstanceChatCompletionsResponseChoicesMessageContentArrayItem) UnmarshalJSON(data []byte) (err error) {
+	*r = NamespaceInstanceChatCompletionsResponseChoicesMessageContentArrayItem{}
+	err = apijson.UnmarshalRoot(data, &r.union)
+	if err != nil {
+		return err
+	}
+	return apijson.Port(r.union, &r)
+}
+
+// AsUnion returns a
+// [NamespaceInstanceChatCompletionsResponseChoicesMessageContentArrayUnionItem]
+// interface which you can cast to the specific types for more type safety.
+//
+// Possible runtime types of the union are
+// [NamespaceInstanceChatCompletionsResponseChoicesMessageContentArrayObject],
+// [NamespaceInstanceChatCompletionsResponseChoicesMessageContentArrayObject].
+func (r NamespaceInstanceChatCompletionsResponseChoicesMessageContentArrayItem) AsUnion() NamespaceInstanceChatCompletionsResponseChoicesMessageContentArrayUnionItem {
+	return r.union
+}
+
+// Union satisfied by
+// [NamespaceInstanceChatCompletionsResponseChoicesMessageContentArrayObject] or
+// [NamespaceInstanceChatCompletionsResponseChoicesMessageContentArrayObject].
+type NamespaceInstanceChatCompletionsResponseChoicesMessageContentArrayUnionItem interface {
+	implementsNamespaceInstanceChatCompletionsResponseChoicesMessageContentArrayItem()
+}
+
+func init() {
+	apijson.RegisterUnion(
+		reflect.TypeOf((*NamespaceInstanceChatCompletionsResponseChoicesMessageContentArrayUnionItem)(nil)).Elem(),
+		"",
+		apijson.UnionVariant{
+			TypeFilter: gjson.JSON,
+			Type:       reflect.TypeOf(NamespaceInstanceChatCompletionsResponseChoicesMessageContentArrayObject{}),
+		},
+		apijson.UnionVariant{
+			TypeFilter: gjson.JSON,
+			Type:       reflect.TypeOf(NamespaceInstanceChatCompletionsResponseChoicesMessageContentArrayObject{}),
+		},
+	)
+}
+
+type NamespaceInstanceChatCompletionsResponseChoicesMessageContentArrayObject struct {
+	Text string                                                                       `json:"text" api:"required"`
+	Type NamespaceInstanceChatCompletionsResponseChoicesMessageContentArrayObjectType `json:"type" api:"required"`
+	JSON namespaceInstanceChatCompletionsResponseChoicesMessageContentArrayObjectJSON `json:"-"`
+}
+
+// namespaceInstanceChatCompletionsResponseChoicesMessageContentArrayObjectJSON
+// contains the JSON metadata for the struct
+// [NamespaceInstanceChatCompletionsResponseChoicesMessageContentArrayObject]
+type namespaceInstanceChatCompletionsResponseChoicesMessageContentArrayObjectJSON struct {
+	Text        apijson.Field
+	Type        apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *NamespaceInstanceChatCompletionsResponseChoicesMessageContentArrayObject) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r namespaceInstanceChatCompletionsResponseChoicesMessageContentArrayObjectJSON) RawJSON() string {
+	return r.raw
+}
+
+func (r NamespaceInstanceChatCompletionsResponseChoicesMessageContentArrayObject) implementsNamespaceInstanceChatCompletionsResponseChoicesMessageContentArrayItem() {
+}
+
+type NamespaceInstanceChatCompletionsResponseChoicesMessageContentArrayObjectType string
+
+const (
+	NamespaceInstanceChatCompletionsResponseChoicesMessageContentArrayObjectTypeText NamespaceInstanceChatCompletionsResponseChoicesMessageContentArrayObjectType = "text"
+)
+
+func (r NamespaceInstanceChatCompletionsResponseChoicesMessageContentArrayObjectType) IsKnown() bool {
+	switch r {
+	case NamespaceInstanceChatCompletionsResponseChoicesMessageContentArrayObjectTypeText:
+		return true
+	}
+	return false
+}
+
+type NamespaceInstanceChatCompletionsResponseChoicesMessageContentArrayType string
+
+const (
+	NamespaceInstanceChatCompletionsResponseChoicesMessageContentArrayTypeText     NamespaceInstanceChatCompletionsResponseChoicesMessageContentArrayType = "text"
+	NamespaceInstanceChatCompletionsResponseChoicesMessageContentArrayTypeImageURL NamespaceInstanceChatCompletionsResponseChoicesMessageContentArrayType = "image_url"
+)
+
+func (r NamespaceInstanceChatCompletionsResponseChoicesMessageContentArrayType) IsKnown() bool {
+	switch r {
+	case NamespaceInstanceChatCompletionsResponseChoicesMessageContentArrayTypeText, NamespaceInstanceChatCompletionsResponseChoicesMessageContentArrayTypeImageURL:
+		return true
+	}
+	return false
 }
 
 type NamespaceInstanceChatCompletionsResponseChoicesMessageRole string
@@ -4170,6 +4233,7 @@ type NamespaceInstanceReadResponseEmbeddingModel string
 
 const (
 	NamespaceInstanceReadResponseEmbeddingModelCfQwenQwen3Embedding0_6b              NamespaceInstanceReadResponseEmbeddingModel = "@cf/qwen/qwen3-embedding-0.6b"
+	NamespaceInstanceReadResponseEmbeddingModelCfQwenQwen3VlEmbedding2b              NamespaceInstanceReadResponseEmbeddingModel = "@cf/qwen/qwen3-vl-embedding-2b"
 	NamespaceInstanceReadResponseEmbeddingModelCfBaaiBgeM3                           NamespaceInstanceReadResponseEmbeddingModel = "@cf/baai/bge-m3"
 	NamespaceInstanceReadResponseEmbeddingModelCfBaaiBgeLargeEnV1_5                  NamespaceInstanceReadResponseEmbeddingModel = "@cf/baai/bge-large-en-v1.5"
 	NamespaceInstanceReadResponseEmbeddingModelCfGoogleEmbeddinggemma300m            NamespaceInstanceReadResponseEmbeddingModel = "@cf/google/embeddinggemma-300m"
@@ -4182,7 +4246,7 @@ const (
 
 func (r NamespaceInstanceReadResponseEmbeddingModel) IsKnown() bool {
 	switch r {
-	case NamespaceInstanceReadResponseEmbeddingModelCfQwenQwen3Embedding0_6b, NamespaceInstanceReadResponseEmbeddingModelCfBaaiBgeM3, NamespaceInstanceReadResponseEmbeddingModelCfBaaiBgeLargeEnV1_5, NamespaceInstanceReadResponseEmbeddingModelCfGoogleEmbeddinggemma300m, NamespaceInstanceReadResponseEmbeddingModelGoogleAIStudioGeminiEmbedding001, NamespaceInstanceReadResponseEmbeddingModelGoogleAIStudioGeminiEmbedding2Preview, NamespaceInstanceReadResponseEmbeddingModelOpenAITextEmbedding3Small, NamespaceInstanceReadResponseEmbeddingModelOpenAITextEmbedding3Large, NamespaceInstanceReadResponseEmbeddingModelEmpty:
+	case NamespaceInstanceReadResponseEmbeddingModelCfQwenQwen3Embedding0_6b, NamespaceInstanceReadResponseEmbeddingModelCfQwenQwen3VlEmbedding2b, NamespaceInstanceReadResponseEmbeddingModelCfBaaiBgeM3, NamespaceInstanceReadResponseEmbeddingModelCfBaaiBgeLargeEnV1_5, NamespaceInstanceReadResponseEmbeddingModelCfGoogleEmbeddinggemma300m, NamespaceInstanceReadResponseEmbeddingModelGoogleAIStudioGeminiEmbedding001, NamespaceInstanceReadResponseEmbeddingModelGoogleAIStudioGeminiEmbedding2Preview, NamespaceInstanceReadResponseEmbeddingModelOpenAITextEmbedding3Small, NamespaceInstanceReadResponseEmbeddingModelOpenAITextEmbedding3Large, NamespaceInstanceReadResponseEmbeddingModelEmpty:
 		return true
 	}
 	return false
@@ -4300,11 +4364,16 @@ func (r namespaceInstanceReadResponseMetadataJSON) RawJSON() string {
 type NamespaceInstanceReadResponsePublicEndpointParams struct {
 	AuthorizedHosts         []string                                                                 `json:"authorized_hosts"`
 	ChatCompletionsEndpoint NamespaceInstanceReadResponsePublicEndpointParamsChatCompletionsEndpoint `json:"chat_completions_endpoint"`
-	Enabled                 bool                                                                     `json:"enabled"`
-	Mcp                     NamespaceInstanceReadResponsePublicEndpointParamsMcp                     `json:"mcp"`
-	RateLimit               NamespaceInstanceReadResponsePublicEndpointParamsRateLimit               `json:"rate_limit"`
-	SearchEndpoint          NamespaceInstanceReadResponsePublicEndpointParamsSearchEndpoint          `json:"search_endpoint"`
-	JSON                    namespaceInstanceReadResponsePublicEndpointParamsJSON                    `json:"-"`
+	// Custom domain hostnames that alias this public endpoint. GET and create
+	// responses return the current set; on update (PUT) this field is only echoed back
+	// when supplied in the request body, otherwise it is null (omit it to leave
+	// domains unchanged).
+	CustomDomains  []string                                                        `json:"custom_domains" api:"nullable"`
+	Enabled        bool                                                            `json:"enabled"`
+	Mcp            NamespaceInstanceReadResponsePublicEndpointParamsMcp            `json:"mcp"`
+	RateLimit      NamespaceInstanceReadResponsePublicEndpointParamsRateLimit      `json:"rate_limit"`
+	SearchEndpoint NamespaceInstanceReadResponsePublicEndpointParamsSearchEndpoint `json:"search_endpoint"`
+	JSON           namespaceInstanceReadResponsePublicEndpointParamsJSON           `json:"-"`
 }
 
 // namespaceInstanceReadResponsePublicEndpointParamsJSON contains the JSON metadata
@@ -4312,6 +4381,7 @@ type NamespaceInstanceReadResponsePublicEndpointParams struct {
 type namespaceInstanceReadResponsePublicEndpointParamsJSON struct {
 	AuthorizedHosts         apijson.Field
 	ChatCompletionsEndpoint apijson.Field
+	CustomDomains           apijson.Field
 	Enabled                 apijson.Field
 	Mcp                     apijson.Field
 	RateLimit               apijson.Field
@@ -4635,7 +4705,6 @@ func (r namespaceInstanceReadResponseSourceParamsJSON) RawJSON() string {
 type NamespaceInstanceReadResponseSourceParamsWebCrawler struct {
 	ParseOptions NamespaceInstanceReadResponseSourceParamsWebCrawlerParseOptions `json:"parse_options"`
 	ParseType    NamespaceInstanceReadResponseSourceParamsWebCrawlerParseType    `json:"parse_type"`
-	StoreOptions NamespaceInstanceReadResponseSourceParamsWebCrawlerStoreOptions `json:"store_options"`
 	JSON         namespaceInstanceReadResponseSourceParamsWebCrawlerJSON         `json:"-"`
 }
 
@@ -4644,7 +4713,6 @@ type NamespaceInstanceReadResponseSourceParamsWebCrawler struct {
 type namespaceInstanceReadResponseSourceParamsWebCrawlerJSON struct {
 	ParseOptions apijson.Field
 	ParseType    apijson.Field
-	StoreOptions apijson.Field
 	raw          string
 	ExtraFields  map[string]apijson.Field
 }
@@ -4729,42 +4797,15 @@ type NamespaceInstanceReadResponseSourceParamsWebCrawlerParseType string
 
 const (
 	NamespaceInstanceReadResponseSourceParamsWebCrawlerParseTypeSitemap NamespaceInstanceReadResponseSourceParamsWebCrawlerParseType = "sitemap"
-	NamespaceInstanceReadResponseSourceParamsWebCrawlerParseTypeFeedRss NamespaceInstanceReadResponseSourceParamsWebCrawlerParseType = "feed-rss"
 	NamespaceInstanceReadResponseSourceParamsWebCrawlerParseTypeCrawl   NamespaceInstanceReadResponseSourceParamsWebCrawlerParseType = "crawl"
 )
 
 func (r NamespaceInstanceReadResponseSourceParamsWebCrawlerParseType) IsKnown() bool {
 	switch r {
-	case NamespaceInstanceReadResponseSourceParamsWebCrawlerParseTypeSitemap, NamespaceInstanceReadResponseSourceParamsWebCrawlerParseTypeFeedRss, NamespaceInstanceReadResponseSourceParamsWebCrawlerParseTypeCrawl:
+	case NamespaceInstanceReadResponseSourceParamsWebCrawlerParseTypeSitemap, NamespaceInstanceReadResponseSourceParamsWebCrawlerParseTypeCrawl:
 		return true
 	}
 	return false
-}
-
-type NamespaceInstanceReadResponseSourceParamsWebCrawlerStoreOptions struct {
-	StorageID      string                                                              `json:"storage_id" api:"required"`
-	R2Jurisdiction string                                                              `json:"r2_jurisdiction"`
-	StorageType    r2.Provider                                                         `json:"storage_type"`
-	JSON           namespaceInstanceReadResponseSourceParamsWebCrawlerStoreOptionsJSON `json:"-"`
-}
-
-// namespaceInstanceReadResponseSourceParamsWebCrawlerStoreOptionsJSON contains the
-// JSON metadata for the struct
-// [NamespaceInstanceReadResponseSourceParamsWebCrawlerStoreOptions]
-type namespaceInstanceReadResponseSourceParamsWebCrawlerStoreOptionsJSON struct {
-	StorageID      apijson.Field
-	R2Jurisdiction apijson.Field
-	StorageType    apijson.Field
-	raw            string
-	ExtraFields    map[string]apijson.Field
-}
-
-func (r *NamespaceInstanceReadResponseSourceParamsWebCrawlerStoreOptions) UnmarshalJSON(data []byte) (err error) {
-	return apijson.UnmarshalRoot(data, r)
-}
-
-func (r namespaceInstanceReadResponseSourceParamsWebCrawlerStoreOptionsJSON) RawJSON() string {
-	return r.raw
 }
 
 // Interval between automatic syncs, in seconds. Allowed values: 900 (15min), 1800
@@ -4806,15 +4847,17 @@ func (r NamespaceInstanceReadResponseType) IsKnown() bool {
 }
 
 type NamespaceInstanceSearchResponse struct {
-	Chunks      []NamespaceInstanceSearchResponseChunk `json:"chunks" api:"required"`
-	SearchQuery string                                 `json:"search_query" api:"required"`
-	JSON        namespaceInstanceSearchResponseJSON    `json:"-"`
+	Chunks      []NamespaceInstanceSearchResponseChunk   `json:"chunks" api:"required"`
+	QueryKind   NamespaceInstanceSearchResponseQueryKind `json:"query_kind" api:"required"`
+	SearchQuery string                                   `json:"search_query"`
+	JSON        namespaceInstanceSearchResponseJSON      `json:"-"`
 }
 
 // namespaceInstanceSearchResponseJSON contains the JSON metadata for the struct
 // [NamespaceInstanceSearchResponse]
 type namespaceInstanceSearchResponseJSON struct {
 	Chunks      apijson.Field
+	QueryKind   apijson.Field
 	SearchQuery apijson.Field
 	raw         string
 	ExtraFields map[string]apijson.Field
@@ -4925,6 +4968,22 @@ const (
 func (r NamespaceInstanceSearchResponseChunksScoringDetailsFusionMethod) IsKnown() bool {
 	switch r {
 	case NamespaceInstanceSearchResponseChunksScoringDetailsFusionMethodRrf, NamespaceInstanceSearchResponseChunksScoringDetailsFusionMethodMax:
+		return true
+	}
+	return false
+}
+
+type NamespaceInstanceSearchResponseQueryKind string
+
+const (
+	NamespaceInstanceSearchResponseQueryKindText       NamespaceInstanceSearchResponseQueryKind = "text"
+	NamespaceInstanceSearchResponseQueryKindImage      NamespaceInstanceSearchResponseQueryKind = "image"
+	NamespaceInstanceSearchResponseQueryKindMultimodal NamespaceInstanceSearchResponseQueryKind = "multimodal"
+)
+
+func (r NamespaceInstanceSearchResponseQueryKind) IsKnown() bool {
+	switch r {
+	case NamespaceInstanceSearchResponseQueryKindText, NamespaceInstanceSearchResponseQueryKindImage, NamespaceInstanceSearchResponseQueryKindMultimodal:
 		return true
 	}
 	return false
@@ -5212,6 +5271,7 @@ type NamespaceInstanceNewParamsEmbeddingModel string
 
 const (
 	NamespaceInstanceNewParamsEmbeddingModelCfQwenQwen3Embedding0_6b              NamespaceInstanceNewParamsEmbeddingModel = "@cf/qwen/qwen3-embedding-0.6b"
+	NamespaceInstanceNewParamsEmbeddingModelCfQwenQwen3VlEmbedding2b              NamespaceInstanceNewParamsEmbeddingModel = "@cf/qwen/qwen3-vl-embedding-2b"
 	NamespaceInstanceNewParamsEmbeddingModelCfBaaiBgeM3                           NamespaceInstanceNewParamsEmbeddingModel = "@cf/baai/bge-m3"
 	NamespaceInstanceNewParamsEmbeddingModelCfBaaiBgeLargeEnV1_5                  NamespaceInstanceNewParamsEmbeddingModel = "@cf/baai/bge-large-en-v1.5"
 	NamespaceInstanceNewParamsEmbeddingModelCfGoogleEmbeddinggemma300m            NamespaceInstanceNewParamsEmbeddingModel = "@cf/google/embeddinggemma-300m"
@@ -5224,7 +5284,7 @@ const (
 
 func (r NamespaceInstanceNewParamsEmbeddingModel) IsKnown() bool {
 	switch r {
-	case NamespaceInstanceNewParamsEmbeddingModelCfQwenQwen3Embedding0_6b, NamespaceInstanceNewParamsEmbeddingModelCfBaaiBgeM3, NamespaceInstanceNewParamsEmbeddingModelCfBaaiBgeLargeEnV1_5, NamespaceInstanceNewParamsEmbeddingModelCfGoogleEmbeddinggemma300m, NamespaceInstanceNewParamsEmbeddingModelGoogleAIStudioGeminiEmbedding001, NamespaceInstanceNewParamsEmbeddingModelGoogleAIStudioGeminiEmbedding2Preview, NamespaceInstanceNewParamsEmbeddingModelOpenAITextEmbedding3Small, NamespaceInstanceNewParamsEmbeddingModelOpenAITextEmbedding3Large, NamespaceInstanceNewParamsEmbeddingModelEmpty:
+	case NamespaceInstanceNewParamsEmbeddingModelCfQwenQwen3Embedding0_6b, NamespaceInstanceNewParamsEmbeddingModelCfQwenQwen3VlEmbedding2b, NamespaceInstanceNewParamsEmbeddingModelCfBaaiBgeM3, NamespaceInstanceNewParamsEmbeddingModelCfBaaiBgeLargeEnV1_5, NamespaceInstanceNewParamsEmbeddingModelCfGoogleEmbeddinggemma300m, NamespaceInstanceNewParamsEmbeddingModelGoogleAIStudioGeminiEmbedding001, NamespaceInstanceNewParamsEmbeddingModelGoogleAIStudioGeminiEmbedding2Preview, NamespaceInstanceNewParamsEmbeddingModelOpenAITextEmbedding3Small, NamespaceInstanceNewParamsEmbeddingModelOpenAITextEmbedding3Large, NamespaceInstanceNewParamsEmbeddingModelEmpty:
 		return true
 	}
 	return false
@@ -5301,10 +5361,15 @@ func (r NamespaceInstanceNewParamsMetadata) MarshalJSON() (data []byte, err erro
 type NamespaceInstanceNewParamsPublicEndpointParams struct {
 	AuthorizedHosts         param.Field[[]string]                                                              `json:"authorized_hosts"`
 	ChatCompletionsEndpoint param.Field[NamespaceInstanceNewParamsPublicEndpointParamsChatCompletionsEndpoint] `json:"chat_completions_endpoint"`
-	Enabled                 param.Field[bool]                                                                  `json:"enabled"`
-	Mcp                     param.Field[NamespaceInstanceNewParamsPublicEndpointParamsMcp]                     `json:"mcp"`
-	RateLimit               param.Field[NamespaceInstanceNewParamsPublicEndpointParamsRateLimit]               `json:"rate_limit"`
-	SearchEndpoint          param.Field[NamespaceInstanceNewParamsPublicEndpointParamsSearchEndpoint]          `json:"search_endpoint"`
+	// Custom domain hostnames that alias this public endpoint. GET and create
+	// responses return the current set; on update (PUT) this field is only echoed back
+	// when supplied in the request body, otherwise it is null (omit it to leave
+	// domains unchanged).
+	CustomDomains  param.Field[[]string]                                                     `json:"custom_domains"`
+	Enabled        param.Field[bool]                                                         `json:"enabled"`
+	Mcp            param.Field[NamespaceInstanceNewParamsPublicEndpointParamsMcp]            `json:"mcp"`
+	RateLimit      param.Field[NamespaceInstanceNewParamsPublicEndpointParamsRateLimit]      `json:"rate_limit"`
+	SearchEndpoint param.Field[NamespaceInstanceNewParamsPublicEndpointParamsSearchEndpoint] `json:"search_endpoint"`
 }
 
 func (r NamespaceInstanceNewParamsPublicEndpointParams) MarshalJSON() (data []byte, err error) {
@@ -5515,7 +5580,6 @@ func (r NamespaceInstanceNewParamsSourceParams) MarshalJSON() (data []byte, err 
 type NamespaceInstanceNewParamsSourceParamsWebCrawler struct {
 	ParseOptions param.Field[NamespaceInstanceNewParamsSourceParamsWebCrawlerParseOptions] `json:"parse_options"`
 	ParseType    param.Field[NamespaceInstanceNewParamsSourceParamsWebCrawlerParseType]    `json:"parse_type"`
-	StoreOptions param.Field[NamespaceInstanceNewParamsSourceParamsWebCrawlerStoreOptions] `json:"store_options"`
 }
 
 func (r NamespaceInstanceNewParamsSourceParamsWebCrawler) MarshalJSON() (data []byte, err error) {
@@ -5561,26 +5625,15 @@ type NamespaceInstanceNewParamsSourceParamsWebCrawlerParseType string
 
 const (
 	NamespaceInstanceNewParamsSourceParamsWebCrawlerParseTypeSitemap NamespaceInstanceNewParamsSourceParamsWebCrawlerParseType = "sitemap"
-	NamespaceInstanceNewParamsSourceParamsWebCrawlerParseTypeFeedRss NamespaceInstanceNewParamsSourceParamsWebCrawlerParseType = "feed-rss"
 	NamespaceInstanceNewParamsSourceParamsWebCrawlerParseTypeCrawl   NamespaceInstanceNewParamsSourceParamsWebCrawlerParseType = "crawl"
 )
 
 func (r NamespaceInstanceNewParamsSourceParamsWebCrawlerParseType) IsKnown() bool {
 	switch r {
-	case NamespaceInstanceNewParamsSourceParamsWebCrawlerParseTypeSitemap, NamespaceInstanceNewParamsSourceParamsWebCrawlerParseTypeFeedRss, NamespaceInstanceNewParamsSourceParamsWebCrawlerParseTypeCrawl:
+	case NamespaceInstanceNewParamsSourceParamsWebCrawlerParseTypeSitemap, NamespaceInstanceNewParamsSourceParamsWebCrawlerParseTypeCrawl:
 		return true
 	}
 	return false
-}
-
-type NamespaceInstanceNewParamsSourceParamsWebCrawlerStoreOptions struct {
-	StorageID      param.Field[string]      `json:"storage_id" api:"required"`
-	R2Jurisdiction param.Field[string]      `json:"r2_jurisdiction"`
-	StorageType    param.Field[r2.Provider] `json:"storage_type"`
-}
-
-func (r NamespaceInstanceNewParamsSourceParamsWebCrawlerStoreOptions) MarshalJSON() (data []byte, err error) {
-	return apijson.MarshalRoot(r)
 }
 
 // Interval between automatic syncs, in seconds. Allowed values: 900 (15min), 1800
@@ -5674,6 +5727,7 @@ type NamespaceInstanceUpdateParams struct {
 	RewriteModel         param.Field[NamespaceInstanceUpdateParamsRewriteModel]         `json:"rewrite_model"`
 	RewriteQuery         param.Field[bool]                                              `json:"rewrite_query"`
 	ScoreThreshold       param.Field[float64]                                           `json:"score_threshold"`
+	Source               param.Field[string]                                            `json:"source"`
 	SourceParams         param.Field[NamespaceInstanceUpdateParamsSourceParams]         `json:"source_params"`
 	Summarization        param.Field[bool]                                              `json:"summarization"`
 	SummarizationModel   param.Field[NamespaceInstanceUpdateParamsSummarizationModel]   `json:"summarization_model"`
@@ -5806,6 +5860,7 @@ type NamespaceInstanceUpdateParamsEmbeddingModel string
 
 const (
 	NamespaceInstanceUpdateParamsEmbeddingModelCfQwenQwen3Embedding0_6b              NamespaceInstanceUpdateParamsEmbeddingModel = "@cf/qwen/qwen3-embedding-0.6b"
+	NamespaceInstanceUpdateParamsEmbeddingModelCfQwenQwen3VlEmbedding2b              NamespaceInstanceUpdateParamsEmbeddingModel = "@cf/qwen/qwen3-vl-embedding-2b"
 	NamespaceInstanceUpdateParamsEmbeddingModelCfBaaiBgeM3                           NamespaceInstanceUpdateParamsEmbeddingModel = "@cf/baai/bge-m3"
 	NamespaceInstanceUpdateParamsEmbeddingModelCfBaaiBgeLargeEnV1_5                  NamespaceInstanceUpdateParamsEmbeddingModel = "@cf/baai/bge-large-en-v1.5"
 	NamespaceInstanceUpdateParamsEmbeddingModelCfGoogleEmbeddinggemma300m            NamespaceInstanceUpdateParamsEmbeddingModel = "@cf/google/embeddinggemma-300m"
@@ -5818,7 +5873,7 @@ const (
 
 func (r NamespaceInstanceUpdateParamsEmbeddingModel) IsKnown() bool {
 	switch r {
-	case NamespaceInstanceUpdateParamsEmbeddingModelCfQwenQwen3Embedding0_6b, NamespaceInstanceUpdateParamsEmbeddingModelCfBaaiBgeM3, NamespaceInstanceUpdateParamsEmbeddingModelCfBaaiBgeLargeEnV1_5, NamespaceInstanceUpdateParamsEmbeddingModelCfGoogleEmbeddinggemma300m, NamespaceInstanceUpdateParamsEmbeddingModelGoogleAIStudioGeminiEmbedding001, NamespaceInstanceUpdateParamsEmbeddingModelGoogleAIStudioGeminiEmbedding2Preview, NamespaceInstanceUpdateParamsEmbeddingModelOpenAITextEmbedding3Small, NamespaceInstanceUpdateParamsEmbeddingModelOpenAITextEmbedding3Large, NamespaceInstanceUpdateParamsEmbeddingModelEmpty:
+	case NamespaceInstanceUpdateParamsEmbeddingModelCfQwenQwen3Embedding0_6b, NamespaceInstanceUpdateParamsEmbeddingModelCfQwenQwen3VlEmbedding2b, NamespaceInstanceUpdateParamsEmbeddingModelCfBaaiBgeM3, NamespaceInstanceUpdateParamsEmbeddingModelCfBaaiBgeLargeEnV1_5, NamespaceInstanceUpdateParamsEmbeddingModelCfGoogleEmbeddinggemma300m, NamespaceInstanceUpdateParamsEmbeddingModelGoogleAIStudioGeminiEmbedding001, NamespaceInstanceUpdateParamsEmbeddingModelGoogleAIStudioGeminiEmbedding2Preview, NamespaceInstanceUpdateParamsEmbeddingModelOpenAITextEmbedding3Small, NamespaceInstanceUpdateParamsEmbeddingModelOpenAITextEmbedding3Large, NamespaceInstanceUpdateParamsEmbeddingModelEmpty:
 		return true
 	}
 	return false
@@ -5895,10 +5950,15 @@ func (r NamespaceInstanceUpdateParamsMetadata) MarshalJSON() (data []byte, err e
 type NamespaceInstanceUpdateParamsPublicEndpointParams struct {
 	AuthorizedHosts         param.Field[[]string]                                                                 `json:"authorized_hosts"`
 	ChatCompletionsEndpoint param.Field[NamespaceInstanceUpdateParamsPublicEndpointParamsChatCompletionsEndpoint] `json:"chat_completions_endpoint"`
-	Enabled                 param.Field[bool]                                                                     `json:"enabled"`
-	Mcp                     param.Field[NamespaceInstanceUpdateParamsPublicEndpointParamsMcp]                     `json:"mcp"`
-	RateLimit               param.Field[NamespaceInstanceUpdateParamsPublicEndpointParamsRateLimit]               `json:"rate_limit"`
-	SearchEndpoint          param.Field[NamespaceInstanceUpdateParamsPublicEndpointParamsSearchEndpoint]          `json:"search_endpoint"`
+	// Custom domain hostnames that alias this public endpoint. GET and create
+	// responses return the current set; on update (PUT) this field is only echoed back
+	// when supplied in the request body, otherwise it is null (omit it to leave
+	// domains unchanged).
+	CustomDomains  param.Field[[]string]                                                        `json:"custom_domains"`
+	Enabled        param.Field[bool]                                                            `json:"enabled"`
+	Mcp            param.Field[NamespaceInstanceUpdateParamsPublicEndpointParamsMcp]            `json:"mcp"`
+	RateLimit      param.Field[NamespaceInstanceUpdateParamsPublicEndpointParamsRateLimit]      `json:"rate_limit"`
+	SearchEndpoint param.Field[NamespaceInstanceUpdateParamsPublicEndpointParamsSearchEndpoint] `json:"search_endpoint"`
 }
 
 func (r NamespaceInstanceUpdateParamsPublicEndpointParams) MarshalJSON() (data []byte, err error) {
@@ -6109,7 +6169,6 @@ func (r NamespaceInstanceUpdateParamsSourceParams) MarshalJSON() (data []byte, e
 type NamespaceInstanceUpdateParamsSourceParamsWebCrawler struct {
 	ParseOptions param.Field[NamespaceInstanceUpdateParamsSourceParamsWebCrawlerParseOptions] `json:"parse_options"`
 	ParseType    param.Field[NamespaceInstanceUpdateParamsSourceParamsWebCrawlerParseType]    `json:"parse_type"`
-	StoreOptions param.Field[NamespaceInstanceUpdateParamsSourceParamsWebCrawlerStoreOptions] `json:"store_options"`
 }
 
 func (r NamespaceInstanceUpdateParamsSourceParamsWebCrawler) MarshalJSON() (data []byte, err error) {
@@ -6155,26 +6214,15 @@ type NamespaceInstanceUpdateParamsSourceParamsWebCrawlerParseType string
 
 const (
 	NamespaceInstanceUpdateParamsSourceParamsWebCrawlerParseTypeSitemap NamespaceInstanceUpdateParamsSourceParamsWebCrawlerParseType = "sitemap"
-	NamespaceInstanceUpdateParamsSourceParamsWebCrawlerParseTypeFeedRss NamespaceInstanceUpdateParamsSourceParamsWebCrawlerParseType = "feed-rss"
 	NamespaceInstanceUpdateParamsSourceParamsWebCrawlerParseTypeCrawl   NamespaceInstanceUpdateParamsSourceParamsWebCrawlerParseType = "crawl"
 )
 
 func (r NamespaceInstanceUpdateParamsSourceParamsWebCrawlerParseType) IsKnown() bool {
 	switch r {
-	case NamespaceInstanceUpdateParamsSourceParamsWebCrawlerParseTypeSitemap, NamespaceInstanceUpdateParamsSourceParamsWebCrawlerParseTypeFeedRss, NamespaceInstanceUpdateParamsSourceParamsWebCrawlerParseTypeCrawl:
+	case NamespaceInstanceUpdateParamsSourceParamsWebCrawlerParseTypeSitemap, NamespaceInstanceUpdateParamsSourceParamsWebCrawlerParseTypeCrawl:
 		return true
 	}
 	return false
-}
-
-type NamespaceInstanceUpdateParamsSourceParamsWebCrawlerStoreOptions struct {
-	StorageID      param.Field[string]      `json:"storage_id" api:"required"`
-	R2Jurisdiction param.Field[string]      `json:"r2_jurisdiction"`
-	StorageType    param.Field[r2.Provider] `json:"storage_type"`
-}
-
-func (r NamespaceInstanceUpdateParamsSourceParamsWebCrawlerStoreOptions) MarshalJSON() (data []byte, err error) {
-	return apijson.MarshalRoot(r)
 }
 
 type NamespaceInstanceUpdateParamsSummarizationModel string
@@ -6362,13 +6410,86 @@ func (r NamespaceInstanceChatCompletionsParams) MarshalJSON() (data []byte, err 
 }
 
 type NamespaceInstanceChatCompletionsParamsMessage struct {
-	Content     param.Field[string]                                             `json:"content" api:"required"`
-	Role        param.Field[NamespaceInstanceChatCompletionsParamsMessagesRole] `json:"role" api:"required"`
-	ExtraFields map[string]interface{}                                          `json:"-,extras"`
+	Content     param.Field[NamespaceInstanceChatCompletionsParamsMessagesContentUnion] `json:"content" api:"required"`
+	Role        param.Field[NamespaceInstanceChatCompletionsParamsMessagesRole]         `json:"role" api:"required"`
+	ExtraFields map[string]interface{}                                                  `json:"-,extras"`
 }
 
 func (r NamespaceInstanceChatCompletionsParamsMessage) MarshalJSON() (data []byte, err error) {
 	return apijson.MarshalRoot(r)
+}
+
+// Satisfied by [shared.UnionString],
+// [ai_search.NamespaceInstanceChatCompletionsParamsMessagesContentArray].
+type NamespaceInstanceChatCompletionsParamsMessagesContentUnion interface {
+	ImplementsNamespaceInstanceChatCompletionsParamsMessagesContentUnion()
+}
+
+type NamespaceInstanceChatCompletionsParamsMessagesContentArray []NamespaceInstanceChatCompletionsParamsMessagesContentArrayItemUnion
+
+func (r NamespaceInstanceChatCompletionsParamsMessagesContentArray) ImplementsNamespaceInstanceChatCompletionsParamsMessagesContentUnion() {
+}
+
+type NamespaceInstanceChatCompletionsParamsMessagesContentArrayItem struct {
+	Type     param.Field[NamespaceInstanceChatCompletionsParamsMessagesContentArrayType] `json:"type" api:"required"`
+	ImageURL param.Field[interface{}]                                                    `json:"image_url"`
+	Text     param.Field[string]                                                         `json:"text"`
+}
+
+func (r NamespaceInstanceChatCompletionsParamsMessagesContentArrayItem) MarshalJSON() (data []byte, err error) {
+	return apijson.MarshalRoot(r)
+}
+
+func (r NamespaceInstanceChatCompletionsParamsMessagesContentArrayItem) implementsNamespaceInstanceChatCompletionsParamsMessagesContentArrayItemUnion() {
+}
+
+// Satisfied by
+// [ai_search.NamespaceInstanceChatCompletionsParamsMessagesContentArrayObject],
+// [ai_search.NamespaceInstanceChatCompletionsParamsMessagesContentArrayObject],
+// [NamespaceInstanceChatCompletionsParamsMessagesContentArrayItem].
+type NamespaceInstanceChatCompletionsParamsMessagesContentArrayItemUnion interface {
+	implementsNamespaceInstanceChatCompletionsParamsMessagesContentArrayItemUnion()
+}
+
+type NamespaceInstanceChatCompletionsParamsMessagesContentArrayObject struct {
+	Text param.Field[string]                                                               `json:"text" api:"required"`
+	Type param.Field[NamespaceInstanceChatCompletionsParamsMessagesContentArrayObjectType] `json:"type" api:"required"`
+}
+
+func (r NamespaceInstanceChatCompletionsParamsMessagesContentArrayObject) MarshalJSON() (data []byte, err error) {
+	return apijson.MarshalRoot(r)
+}
+
+func (r NamespaceInstanceChatCompletionsParamsMessagesContentArrayObject) implementsNamespaceInstanceChatCompletionsParamsMessagesContentArrayItemUnion() {
+}
+
+type NamespaceInstanceChatCompletionsParamsMessagesContentArrayObjectType string
+
+const (
+	NamespaceInstanceChatCompletionsParamsMessagesContentArrayObjectTypeText NamespaceInstanceChatCompletionsParamsMessagesContentArrayObjectType = "text"
+)
+
+func (r NamespaceInstanceChatCompletionsParamsMessagesContentArrayObjectType) IsKnown() bool {
+	switch r {
+	case NamespaceInstanceChatCompletionsParamsMessagesContentArrayObjectTypeText:
+		return true
+	}
+	return false
+}
+
+type NamespaceInstanceChatCompletionsParamsMessagesContentArrayType string
+
+const (
+	NamespaceInstanceChatCompletionsParamsMessagesContentArrayTypeText     NamespaceInstanceChatCompletionsParamsMessagesContentArrayType = "text"
+	NamespaceInstanceChatCompletionsParamsMessagesContentArrayTypeImageURL NamespaceInstanceChatCompletionsParamsMessagesContentArrayType = "image_url"
+)
+
+func (r NamespaceInstanceChatCompletionsParamsMessagesContentArrayType) IsKnown() bool {
+	switch r {
+	case NamespaceInstanceChatCompletionsParamsMessagesContentArrayTypeText, NamespaceInstanceChatCompletionsParamsMessagesContentArrayTypeImageURL:
+		return true
+	}
+	return false
 }
 
 type NamespaceInstanceChatCompletionsParamsMessagesRole string
@@ -6689,7 +6810,12 @@ func (r namespaceInstanceReadResponseEnvelopeJSON) RawJSON() string {
 type NamespaceInstanceSearchParams struct {
 	AccountID       param.Field[string]                                       `path:"account_id" api:"required"`
 	AISearchOptions param.Field[NamespaceInstanceSearchParamsAISearchOptions] `json:"ai_search_options"`
-	Messages        param.Field[[]NamespaceInstanceSearchParamsMessage]       `json:"messages"`
+	// OpenAI-compatible message array. For multimodal queries, set the last user
+	// message's `content` to an array of typed parts:
+	// `[{type:'text', text:'…'}, {type:'image_url', image_url:{url:'…'}}]`. Image
+	// inputs require the RAG's embedding_model to declare 'image' in
+	// supported_modalities.
+	Messages param.Field[[]NamespaceInstanceSearchParamsMessage] `json:"messages"`
 	// A simple text query string. Alternative to 'messages' — provide either this or
 	// 'messages', not both.
 	Query param.Field[string] `json:"query"`
@@ -6927,13 +7053,86 @@ func (r NamespaceInstanceSearchParamsAISearchOptionsRetrievalRetrievalType) IsKn
 }
 
 type NamespaceInstanceSearchParamsMessage struct {
-	Content     param.Field[string]                                    `json:"content" api:"required"`
-	Role        param.Field[NamespaceInstanceSearchParamsMessagesRole] `json:"role" api:"required"`
-	ExtraFields map[string]interface{}                                 `json:"-,extras"`
+	Content     param.Field[NamespaceInstanceSearchParamsMessagesContentUnion] `json:"content" api:"required"`
+	Role        param.Field[NamespaceInstanceSearchParamsMessagesRole]         `json:"role" api:"required"`
+	ExtraFields map[string]interface{}                                         `json:"-,extras"`
 }
 
 func (r NamespaceInstanceSearchParamsMessage) MarshalJSON() (data []byte, err error) {
 	return apijson.MarshalRoot(r)
+}
+
+// Satisfied by [shared.UnionString],
+// [ai_search.NamespaceInstanceSearchParamsMessagesContentArray].
+type NamespaceInstanceSearchParamsMessagesContentUnion interface {
+	ImplementsNamespaceInstanceSearchParamsMessagesContentUnion()
+}
+
+type NamespaceInstanceSearchParamsMessagesContentArray []NamespaceInstanceSearchParamsMessagesContentArrayItemUnion
+
+func (r NamespaceInstanceSearchParamsMessagesContentArray) ImplementsNamespaceInstanceSearchParamsMessagesContentUnion() {
+}
+
+type NamespaceInstanceSearchParamsMessagesContentArrayItem struct {
+	Type     param.Field[NamespaceInstanceSearchParamsMessagesContentArrayType] `json:"type" api:"required"`
+	ImageURL param.Field[interface{}]                                           `json:"image_url"`
+	Text     param.Field[string]                                                `json:"text"`
+}
+
+func (r NamespaceInstanceSearchParamsMessagesContentArrayItem) MarshalJSON() (data []byte, err error) {
+	return apijson.MarshalRoot(r)
+}
+
+func (r NamespaceInstanceSearchParamsMessagesContentArrayItem) implementsNamespaceInstanceSearchParamsMessagesContentArrayItemUnion() {
+}
+
+// Satisfied by
+// [ai_search.NamespaceInstanceSearchParamsMessagesContentArrayObject],
+// [ai_search.NamespaceInstanceSearchParamsMessagesContentArrayObject],
+// [NamespaceInstanceSearchParamsMessagesContentArrayItem].
+type NamespaceInstanceSearchParamsMessagesContentArrayItemUnion interface {
+	implementsNamespaceInstanceSearchParamsMessagesContentArrayItemUnion()
+}
+
+type NamespaceInstanceSearchParamsMessagesContentArrayObject struct {
+	Text param.Field[string]                                                      `json:"text" api:"required"`
+	Type param.Field[NamespaceInstanceSearchParamsMessagesContentArrayObjectType] `json:"type" api:"required"`
+}
+
+func (r NamespaceInstanceSearchParamsMessagesContentArrayObject) MarshalJSON() (data []byte, err error) {
+	return apijson.MarshalRoot(r)
+}
+
+func (r NamespaceInstanceSearchParamsMessagesContentArrayObject) implementsNamespaceInstanceSearchParamsMessagesContentArrayItemUnion() {
+}
+
+type NamespaceInstanceSearchParamsMessagesContentArrayObjectType string
+
+const (
+	NamespaceInstanceSearchParamsMessagesContentArrayObjectTypeText NamespaceInstanceSearchParamsMessagesContentArrayObjectType = "text"
+)
+
+func (r NamespaceInstanceSearchParamsMessagesContentArrayObjectType) IsKnown() bool {
+	switch r {
+	case NamespaceInstanceSearchParamsMessagesContentArrayObjectTypeText:
+		return true
+	}
+	return false
+}
+
+type NamespaceInstanceSearchParamsMessagesContentArrayType string
+
+const (
+	NamespaceInstanceSearchParamsMessagesContentArrayTypeText     NamespaceInstanceSearchParamsMessagesContentArrayType = "text"
+	NamespaceInstanceSearchParamsMessagesContentArrayTypeImageURL NamespaceInstanceSearchParamsMessagesContentArrayType = "image_url"
+)
+
+func (r NamespaceInstanceSearchParamsMessagesContentArrayType) IsKnown() bool {
+	switch r {
+	case NamespaceInstanceSearchParamsMessagesContentArrayTypeText, NamespaceInstanceSearchParamsMessagesContentArrayTypeImageURL:
+		return true
+	}
+	return false
 }
 
 type NamespaceInstanceSearchParamsMessagesRole string

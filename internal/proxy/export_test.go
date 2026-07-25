@@ -158,3 +158,15 @@ func ExtractActiveTransportKeysForTest(cfg *Config) map[string]bool {
 func IsHTTPUpgradeRequestForTest(req *http.Request) bool {
 	return isHTTPUpgradeRequest(req)
 }
+
+// SetConfigVersionCounterForTest pins the package-level monotonic config
+// version counter to version and returns its previous value so the caller can
+// restore it. The pusher's 409-recovery compares a replica's reported version
+// against this counter to tell a controller restart (replica version strictly
+// ABOVE the counter → clock skew → force-bump and retry) from a lost race to a
+// concurrent same-process pusher (replica version at or below → abandon the
+// push). Tests that pin the counter to exercise the restart-skew branch MUST
+// run sequentially (no t.Parallel) because the counter is process-global.
+func SetConfigVersionCounterForTest(version int64) int64 {
+	return configVersionCounter.Swap(version)
+}

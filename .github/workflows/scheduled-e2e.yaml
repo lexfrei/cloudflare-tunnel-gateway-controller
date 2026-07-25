@@ -39,12 +39,12 @@ jobs:
       CF_TUNNEL_HOSTNAME: ${{ secrets.CF_TUNNEL_HOSTNAME }}
     steps:
       - name: Checkout
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Setup Go
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
-          go-version: '1.26.4'
+          go-version: '1.26.5'
           cache: true
 
       - name: Install kind
@@ -72,6 +72,15 @@ jobs:
         id: attempt2
         if: steps.attempt1.outcome == 'failure'
         run: ./hack/conformance-setup.sh --test-e2e
+
+      # continue-on-error reports a failed attempt 1 as a green step, so a
+      # persistently failing first attempt can hide behind the retry for as
+      # long as attempt 2 keeps passing (it did for a month -- issue #581).
+      # Surface it as a workflow warning annotation on otherwise-green runs.
+      - name: Flag masked attempt-1 failure
+        if: steps.attempt1.outcome == 'failure' && steps.attempt2.outcome == 'success'
+        run: |
+          echo "::warning title=e2e attempt 1 failed::The first e2e attempt failed and the retry saved the run. Check the attempt 1 logs -- a persistent first-attempt failure is invisible in the step icons (continue-on-error reports it green)."
 
       # A red scheduled run nobody looks at is indistinguishable from no run
       # at all -- surface persistent failures as an issue.

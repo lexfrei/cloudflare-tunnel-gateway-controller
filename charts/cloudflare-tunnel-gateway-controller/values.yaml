@@ -379,10 +379,23 @@ proxy:
     # route-less cluster a proxy can take up to ~30s to establish its tunnel on
     # each start; pin "http2" or "quic" to dial immediately.
     protocol: auto
-  # -- Reference to Secret containing auth token for proxy config API.
-  # When set, both controller and proxy use this token for authenticated config push.
+  # -- Reference to Secret containing the config API Bearer token. The config
+  # API is ALWAYS authenticated -- when name is empty (the default) the
+  # CONTROLLER (not chart templating) generates a random token into a Secret
+  # named "<fullname>-proxy-auth-token" (<fullname> is the Helm release
+  # fullname, typically "<release>-cloudflare-tunnel-gateway-controller", or
+  # just "<release>" when the release name already contains the chart name)
+  # as one of its first startup actions and reuses it on every subsequent
+  # start, so the token never rotates and upgrading never rolls the proxy on
+  # its own. Generating it via a live API call rather than at template time
+  # means this also works correctly under GitOps controllers that render
+  # client-side with no cluster access (e.g. ArgoCD's default
+  # `helm template`), where a template-time `lookup` cannot see prior state.
+  # Set name to bring your own Secret/token instead, e.g. for external
+  # rotation.
   authTokenSecretRef:
-    # -- Name of the Secret containing the auth token
+    # -- Name of the Secret containing the auth token. Leave empty to let the
+    # controller generate and manage the token automatically (recommended).
     name: ""
     # -- Key in the Secret containing the auth token
     key: "auth-token"

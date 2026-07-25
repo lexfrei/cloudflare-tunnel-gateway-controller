@@ -136,6 +136,8 @@ type BotListResponseBot struct {
 	// A summary for the bot (e.g., purpose).
 	Description string `json:"description" api:"required"`
 	// The kind of the bot.
+	//
+	// Deprecated: deprecated
 	Kind string `json:"kind" api:"required"`
 	// The name of the bot.
 	Name string `json:"name" api:"required"`
@@ -195,6 +197,8 @@ type BotGetResponseBot struct {
 	// A summary for the bot (e.g., purpose).
 	Description string `json:"description" api:"required"`
 	// The kind of the bot.
+	//
+	// Deprecated: deprecated
 	Kind string `json:"kind" api:"required"`
 	// The name of the bot.
 	Name string `json:"name" api:"required"`
@@ -1073,7 +1077,8 @@ type BotListParams struct {
 	BotVerificationStatus param.Field[BotListParamsBotVerificationStatus] `query:"botVerificationStatus"`
 	// Format in which results will be returned.
 	Format param.Field[BotListParamsFormat] `query:"format"`
-	// Filters results by bot kind.
+	// Filters results by bot kind. Deprecated: the Verified Bot / Signed Agent
+	// distinction is being removed.
 	Kind param.Field[BotListParamsKind] `query:"kind"`
 	// Limits the number of objects returned in the response.
 	Limit param.Field[int64] `query:"limit"`
@@ -1150,7 +1155,8 @@ func (r BotListParamsFormat) IsKnown() bool {
 	return false
 }
 
-// Filters results by bot kind.
+// Filters results by bot kind. Deprecated: the Verified Bot / Signed Agent
+// distinction is being removed.
 type BotListParamsKind string
 
 const (
@@ -1251,7 +1257,8 @@ type BotSummaryParams struct {
 	Bot param.Field[[]string] `query:"bot"`
 	// Filters results by bot category.
 	BotCategory param.Field[[]BotSummaryParamsBotCategory] `query:"botCategory"`
-	// Filters results by bot kind.
+	// Filters results by bot kind. Deprecated: the Verified Bot / Signed Agent
+	// distinction is being removed.
 	BotKind param.Field[[]BotSummaryParamsBotKind] `query:"botKind"`
 	// Filters results by bot operator.
 	BotOperator param.Field[[]string] `query:"botOperator"`
@@ -1422,7 +1429,8 @@ type BotTimeseriesParams struct {
 	Bot param.Field[[]string] `query:"bot"`
 	// Filters results by bot category.
 	BotCategory param.Field[[]BotTimeseriesParamsBotCategory] `query:"botCategory"`
-	// Filters results by bot kind.
+	// Filters results by bot kind. Deprecated: the Verified Bot / Signed Agent
+	// distinction is being removed.
 	BotKind param.Field[[]BotTimeseriesParamsBotKind] `query:"botKind"`
 	// Filters results by bot operator.
 	BotOperator param.Field[[]string] `query:"botOperator"`
@@ -1591,7 +1599,8 @@ type BotTimeseriesGroupsParams struct {
 	Bot param.Field[[]string] `query:"bot"`
 	// Filters results by bot category.
 	BotCategory param.Field[[]BotTimeseriesGroupsParamsBotCategory] `query:"botCategory"`
-	// Filters results by bot kind.
+	// Filters results by bot kind. Deprecated: the Verified Bot / Signed Agent
+	// distinction is being removed.
 	BotKind param.Field[[]BotTimeseriesGroupsParamsBotKind] `query:"botKind"`
 	// Filters results by bot operator.
 	BotOperator param.Field[[]string] `query:"botOperator"`

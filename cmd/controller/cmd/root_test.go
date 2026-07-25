@@ -240,6 +240,18 @@ func TestRootCmd_Flags(t *testing.T) {
 	flag = flags.Lookup("leader-election-name")
 	assert.NotNil(t, flag)
 	assert.Equal(t, "cloudflare-tunnel-gateway-controller-leader", flag.DefValue)
+
+	flag = flags.Lookup("proxy-auth-secret-ref")
+	assert.NotNil(t, flag)
+	assert.Empty(t, flag.DefValue)
+
+	flag = flags.Lookup("proxy-auth-secret-key")
+	assert.NotNil(t, flag)
+	assert.Equal(t, "auth-token", flag.DefValue)
+
+	flag = flags.Lookup("proxy-auth-secret-generate")
+	assert.NotNil(t, flag)
+	assert.Equal(t, "false", flag.DefValue)
 }
 
 func TestRootCmd_PersistentFlags(t *testing.T) {

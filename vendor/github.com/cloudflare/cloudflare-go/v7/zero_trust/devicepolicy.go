@@ -138,6 +138,11 @@ type SettingsPolicy struct {
 	ExcludeOfficeIPs bool             `json:"exclude_office_ips"`
 	FallbackDomains  []FallbackDomain `json:"fallback_domains"`
 	GatewayUniqueID  string           `json:"gateway_unique_id"`
+	// Global Acceleration settings for China. When configured, WARP clients connect to
+	// the Global Accelerator addresses instead of the default ones. Please contact
+	// your account representative to enable this feature on your account. See
+	// https://developers.cloudflare.com/china-network/concepts/global-acceleration/.
+	GlobalAcceleration SettingsPolicyGlobalAcceleration `json:"global_acceleration" api:"nullable"`
 	// List of routes included in the WARP client's tunnel.
 	Include []SplitTunnelInclude `json:"include"`
 	// The amount of time in minutes a user is allowed access to their LAN. A value of
@@ -194,6 +199,7 @@ type settingsPolicyJSON struct {
 	ExcludeOfficeIPs           apijson.Field
 	FallbackDomains            apijson.Field
 	GatewayUniqueID            apijson.Field
+	GlobalAcceleration         apijson.Field
 	Include                    apijson.Field
 	LANAllowMinutes            apijson.Field
 	LANAllowSubnetSize         apijson.Field
@@ -243,6 +249,43 @@ func (r *SettingsPolicyDNSSearchSuffix) UnmarshalJSON(data []byte) (err error) {
 }
 
 func (r settingsPolicyDNSSearchSuffixJSON) RawJSON() string {
+	return r.raw
+}
+
+// SettingsPolicyGlobalAcceleration global Acceleration settings for China. When configured, WARP clients connect to
+// the Global Accelerator addresses instead of the default ones. Please contact
+// your account representative to enable this feature on your account. See
+// https://developers.cloudflare.com/china-network/concepts/global-acceleration/.
+type SettingsPolicyGlobalAcceleration struct {
+	// IP:port entries for the API endpoints.
+	APIEndpoints []string `json:"api_endpoints" api:"required"`
+	// Global acceleration settings are used only when "enabled".
+	Enabled bool `json:"enabled" api:"required"`
+	// IP:port entries for the MASQUE tunnel endpoints. Either wireguard_endpoints or
+	// masque_endpoints must be provided.
+	MasqueEndpoints []string `json:"masque_endpoints" api:"required"`
+	// IP:port entries for the WireGuard tunnel endpoints. Either wireguard_endpoints
+	// or masque_endpoints must be provided.
+	WireguardEndpoints []string                             `json:"wireguard_endpoints" api:"required"`
+	JSON               settingsPolicyGlobalAccelerationJSON `json:"-"`
+}
+
+// settingsPolicyGlobalAccelerationJSON contains the JSON metadata for the struct
+// [SettingsPolicyGlobalAcceleration]
+type settingsPolicyGlobalAccelerationJSON struct {
+	APIEndpoints       apijson.Field
+	Enabled            apijson.Field
+	MasqueEndpoints    apijson.Field
+	WireguardEndpoints apijson.Field
+	raw                string
+	ExtraFields        map[string]apijson.Field
+}
+
+func (r *SettingsPolicyGlobalAcceleration) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r settingsPolicyGlobalAccelerationJSON) RawJSON() string {
 	return r.raw
 }
 
@@ -296,7 +339,7 @@ func (r settingsPolicyTargetTestJSON) RawJSON() string {
 	return r.raw
 }
 
-// Virtual network access settings for the device.
+// SettingsPolicyVirtualNetworks virtual network access settings for the device.
 type SettingsPolicyVirtualNetworks struct {
 	// List of virtual network IDs the device is allowed to access. When
 	// virtual_networks is set, at least one entry is required.
@@ -369,7 +412,7 @@ func (r SplitTunnelExclude) AsUnion() SplitTunnelExcludeUnion {
 	return r.union
 }
 
-// Union satisfied by [SplitTunnelExcludeTeamsDevicesExcludeSplitTunnelWithAddress]
+// SplitTunnelExcludeUnion is satisfied by [SplitTunnelExcludeTeamsDevicesExcludeSplitTunnelWithAddress]
 // or [SplitTunnelExcludeTeamsDevicesExcludeSplitTunnelWithHost].
 type SplitTunnelExcludeUnion interface {
 	implementsSplitTunnelExclude()
@@ -465,7 +508,7 @@ func (r SplitTunnelExcludeParam) MarshalJSON() (data []byte, err error) {
 
 func (r SplitTunnelExcludeParam) implementsSplitTunnelExcludeUnionParam() {}
 
-// Satisfied by
+// SplitTunnelExcludeUnionParam satisfied by
 // [zero_trust.SplitTunnelExcludeTeamsDevicesExcludeSplitTunnelWithAddressParam],
 // [zero_trust.SplitTunnelExcludeTeamsDevicesExcludeSplitTunnelWithHostParam],
 // [SplitTunnelExcludeParam].
@@ -549,7 +592,7 @@ func (r SplitTunnelInclude) AsUnion() SplitTunnelIncludeUnion {
 	return r.union
 }
 
-// Union satisfied by [SplitTunnelIncludeTeamsDevicesIncludeSplitTunnelWithAddress]
+// SplitTunnelIncludeUnion is satisfied by [SplitTunnelIncludeTeamsDevicesIncludeSplitTunnelWithAddress]
 // or [SplitTunnelIncludeTeamsDevicesIncludeSplitTunnelWithHost].
 type SplitTunnelIncludeUnion interface {
 	implementsSplitTunnelInclude()
@@ -645,7 +688,7 @@ func (r SplitTunnelIncludeParam) MarshalJSON() (data []byte, err error) {
 
 func (r SplitTunnelIncludeParam) implementsSplitTunnelIncludeUnionParam() {}
 
-// Satisfied by
+// SplitTunnelIncludeUnionParam satisfied by
 // [zero_trust.SplitTunnelIncludeTeamsDevicesIncludeSplitTunnelWithAddressParam],
 // [zero_trust.SplitTunnelIncludeTeamsDevicesIncludeSplitTunnelWithHostParam],
 // [SplitTunnelIncludeParam].

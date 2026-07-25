@@ -10,25 +10,42 @@ import (
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/routebinding"
 )
 
+// catchAllHostnameSentinel marks, in the per-listener hostname stream, a
+// hostname-less route accepted by a hostname-less listener: the route serves
+// every hostname through that listener, so no sibling listener's hostname may
+// narrow it. The empty string cannot collide with a real hostname -- listeners
+// with empty hostnames never contribute a literal value.
+const catchAllHostnameSentinel = gatewayv1.Hostname("")
+
 // withEffectiveHostnames returns copies of the given routes whose
-// Spec.Hostnames is augmented with the hostnames of each parentRef listener
-// the route actually binds to.
+// Spec.Hostnames is narrowed to the hostname scope of the listeners the route
+// actually binds to.
 //
-// Why: when an HTTPRoute attaches to a Gateway listener or ListenerSet entry
-// with a non-empty hostname, and the route itself declares no hostnames in
-// spec.hostnames, the route is expected (per Gateway API spec) to serve
-// traffic for the parent listener's hostname. The proxy router consults the
-// resulting Spec.Hostnames to decide which Host headers a rule answers; an
-// empty list there would make the rule a default-route catch-all, which is
-// wrong for ListenerSet-bound routes that should only serve the ListenerSet
-// listener's hostname.
+// Why: per Gateway API a route serves, through each bound listener, only the
+// INTERSECTION of its own hostnames with that listener's hostname (issue #587).
+// Two cases fold into one rule:
+//   - A route that declares hostnames must not answer a declared hostname that
+//     no bound listener's hostname covers — e.g. a route declaring
+//     `non.matching.com` bound to a `very.specific.com` listener answers only
+//     `very.specific.com`, and `non.matching.com` returns 404.
+//   - A route that declares NO hostnames inherits each bound listener's
+//     hostname, rather than becoming a default-route catch-all answering every
+//     Host (which would be wrong for a listener-scoped route).
 //
-// Critically, hostnames are inherited ONLY from listeners that actually
-// accept the route — the same per-listener namespace / kind / hostname /
-// sectionName checks the binding validator applies. A route bound to a
-// multi-listener ListenerSet where only some listeners permit the route's
-// namespace must NOT inherit the hostnames of the listeners that reject it,
-// otherwise it would answer on hostnames it has no business serving.
+// A route bound to several listeners serves the UNION of the per-listener
+// intersections. The proxy router consults the resulting Spec.Hostnames to
+// decide which Host headers a rule answers.
+//
+// Critically, only listeners that actually ACCEPT the route contribute — the
+// same per-listener namespace / kind / hostname / sectionName checks the
+// binding validator applies. A route bound to a multi-listener ListenerSet
+// where only some listeners permit the route's namespace must not answer on the
+// hostnames of the listeners that reject it.
+//
+// When the intersection is empty (an unresolvable parent, or a hostname-less
+// route bound only to hostname-less listeners), the route is left untouched:
+// the narrowing never broadens the served set beyond what the route already
+// declared, and never turns a hostname-less catch-all into anything else.
 //
 // The function never mutates the input routes; each output element is a
 // fresh shallow copy whose Spec.Hostnames slice has been replaced.
@@ -49,21 +66,24 @@ func withEffectiveHostnames(
 	out := make([]*gatewayv1.HTTPRoute, len(routes))
 
 	for i, route := range routes {
-		if len(route.Spec.Hostnames) > 0 {
+		effective, catchAll := collectEffectiveListenerHostnames(ctx, cli, validator, HTTPRouteWrapper{route}, views)
+		if catchAll && len(route.Spec.Hostnames) == 0 {
+			// Accepted by a hostname-less listener: the route stays a
+			// catch-all regardless of what pinned sibling listeners
+			// contributed.
 			out[i] = route
 
 			continue
 		}
 
-		parentHostnames := collectAcceptedListenerHostnames(ctx, cli, validator, HTTPRouteWrapper{route}, views)
-		if len(parentHostnames) == 0 {
+		if len(effective) == 0 {
 			out[i] = route
 
 			continue
 		}
 
 		clone := *route
-		clone.Spec.Hostnames = parentHostnames
+		clone.Spec.Hostnames = effective
 		out[i] = &clone
 	}
 
@@ -72,11 +92,12 @@ func withEffectiveHostnames(
 
 // withEffectiveHostnamesGRPC is the GRPCRoute counterpart of
 // withEffectiveHostnames. The Gateway API applies the same listener-hostname
-// inheritance to GRPCRoute as to HTTPRoute: a gRPC route with empty
-// spec.hostnames bound to a listener carrying a hostname must serve only that
-// hostname, not become a catch-all. The shared core
-// (collectAcceptedListenerHostnames) operates on the Route interface, so only
-// the slice type and the clone step differ from the HTTP path.
+// intersection to GRPCRoute as to HTTPRoute: a gRPC route serves only the
+// intersection of its hostnames with each bound listener's hostname, and a gRPC
+// route with empty spec.hostnames inherits the listener's hostname rather than
+// becoming a catch-all. The shared core (collectEffectiveListenerHostnames)
+// operates on the Route interface, so only the slice type and the clone step
+// differ from the HTTP path.
 //
 //nolint:dupl // mirrored on purpose against withEffectiveHostnames; the concrete HTTPRoute/GRPCRoute clone types prevent a clean generic.
 func withEffectiveHostnamesGRPC(
@@ -94,45 +115,54 @@ func withEffectiveHostnamesGRPC(
 	out := make([]*gatewayv1.GRPCRoute, len(routes))
 
 	for i, route := range routes {
-		if len(route.Spec.Hostnames) > 0 {
+		effective, catchAll := collectEffectiveListenerHostnames(ctx, cli, validator, GRPCRouteWrapper{route}, views)
+		if catchAll && len(route.Spec.Hostnames) == 0 {
+			// Accepted by a hostname-less listener: the route stays a
+			// catch-all regardless of what pinned sibling listeners
+			// contributed.
 			out[i] = route
 
 			continue
 		}
 
-		parentHostnames := collectAcceptedListenerHostnames(ctx, cli, validator, GRPCRouteWrapper{route}, views)
-		if len(parentHostnames) == 0 {
+		if len(effective) == 0 {
 			out[i] = route
 
 			continue
 		}
 
 		clone := *route
-		clone.Spec.Hostnames = parentHostnames
+		clone.Spec.Hostnames = effective
 		out[i] = &clone
 	}
 
 	return out
 }
 
-// collectAcceptedListenerHostnames walks the route's parentRefs and, for each
+// collectEffectiveListenerHostnames walks the route's parentRefs and, for each
 // one that resolves to a managed Gateway (directly or via a ListenerSet),
-// collects the hostnames of the listeners the route is ACCEPTED on per the
-// binding validator. Rejected listeners (wrong namespace, kind, hostname, or
-// — for ListenerSet — conflicted) contribute nothing.
-func collectAcceptedListenerHostnames(
+// collects the intersection of the route's hostnames with the hostnames of the
+// listeners the route is ACCEPTED on per the binding validator. The results are
+// unioned and de-duplicated across every parentRef. Rejected listeners (wrong
+// namespace, kind, hostname, or — for ListenerSet — conflicted) contribute
+// nothing.
+func collectEffectiveListenerHostnames(
 	ctx context.Context,
 	cli client.Client,
 	validator *routebinding.Validator,
 	route Route,
 	views *listenerViewCache,
-) []gatewayv1.Hostname {
+) ([]gatewayv1.Hostname, bool) {
 	seen := make(map[gatewayv1.Hostname]struct{})
 
 	var out []gatewayv1.Hostname
 
+	catchAll := false
+
 	add := func(hostname gatewayv1.Hostname) {
-		if hostname == "" {
+		if hostname == catchAllHostnameSentinel {
+			catchAll = true
+
 			return
 		}
 
@@ -145,15 +175,15 @@ func collectAcceptedListenerHostnames(
 	}
 
 	for _, ref := range route.GetParentRefs() {
-		for _, hostname := range acceptedHostnamesForParentRef(ctx, cli, validator, route, ref, views) {
+		for _, hostname := range effectiveHostnamesForParentRef(ctx, cli, validator, route, ref, views) {
 			add(hostname)
 		}
 	}
 
-	return out
+	return out, catchAll
 }
 
-func acceptedHostnamesForParentRef(
+func effectiveHostnamesForParentRef(
 	ctx context.Context,
 	cli client.Client,
 	validator *routebinding.Validator,
@@ -161,6 +191,52 @@ func acceptedHostnamesForParentRef(
 	ref gatewayv1.ParentReference,
 	views *listenerViewCache,
 ) []gatewayv1.Hostname {
+	return resolveParentRefListeners(ctx, cli, validator, route, ref, views,
+		gatewayEffectiveHostnames, listenerSetEffectiveHostnames)
+}
+
+// gatewayListenerBranch and listenerSetListenerBranch are the two per-parentRef
+// resolvers resolveParentRefListeners delegates to once a parentRef resolves to
+// a managed Gateway or ListenerSet respectively. Each extracts the per-listener
+// value the caller wants (hostname intersections, listener protocols, …) from
+// an accepted binding.
+type (
+	gatewayListenerBranch[T any] func(
+		ctx context.Context,
+		cli client.Client,
+		validator *routebinding.Validator,
+		namespace, name string,
+		routeInfo *routebinding.RouteInfo,
+	) []T
+
+	listenerSetListenerBranch[T any] func(
+		ctx context.Context,
+		cli client.Client,
+		validator *routebinding.Validator,
+		namespace, name string,
+		routeInfo *routebinding.RouteInfo,
+		views *listenerViewCache,
+	) []T
+)
+
+// resolveParentRefListeners is the shared parentRef → managed Gateway /
+// ListenerSet resolution used by both the hostname-intersection and
+// redirect-scheme passes. It applies the same group / kind / namespace
+// resolution and builds the RouteInfo (carrying the route's real hostnames so
+// the binding validator filters listeners accurately), then delegates to the
+// Gateway or ListenerSet branch. Only the per-listener value each pass extracts
+// differs, so the two passes share this preamble via the T parameter instead of
+// duplicating it.
+func resolveParentRefListeners[T any](
+	ctx context.Context,
+	cli client.Client,
+	validator *routebinding.Validator,
+	route Route,
+	ref gatewayv1.ParentReference,
+	views *listenerViewCache,
+	gatewayBranch gatewayListenerBranch[T],
+	listenerSetBranch listenerSetListenerBranch[T],
+) []T {
 	if ref.Group != nil && string(*ref.Group) != "" && string(*ref.Group) != gatewayv1.GroupName {
 		return nil
 	}
@@ -178,7 +254,7 @@ func acceptedHostnamesForParentRef(
 	routeInfo := &routebinding.RouteInfo{
 		Name:        route.GetName(),
 		Namespace:   route.GetNamespace(),
-		Hostnames:   nil, // empty by definition — that's why we're inheriting
+		Hostnames:   route.GetHostnames(),
 		Kind:        route.GetRouteKind(),
 		SectionName: ref.SectionName,
 		Port:        ref.Port,
@@ -186,15 +262,15 @@ func acceptedHostnamesForParentRef(
 
 	switch kind {
 	case kindGateway:
-		return gatewayAcceptedHostnames(ctx, cli, validator, namespace, string(ref.Name), routeInfo)
+		return gatewayBranch(ctx, cli, validator, namespace, string(ref.Name), routeInfo)
 	case kindListenerSet:
-		return listenerSetAcceptedHostnames(ctx, cli, validator, namespace, string(ref.Name), routeInfo, views)
+		return listenerSetBranch(ctx, cli, validator, namespace, string(ref.Name), routeInfo, views)
 	}
 
 	return nil
 }
 
-func gatewayAcceptedHostnames(
+func gatewayEffectiveHostnames(
 	ctx context.Context,
 	cli client.Client,
 	validator *routebinding.Validator,
@@ -216,10 +292,10 @@ func gatewayAcceptedHostnames(
 		hostByName[gateway.Spec.Listeners[i].Name] = gateway.Spec.Listeners[i].Hostname
 	}
 
-	return hostnamesForSections(result.MatchedListeners, hostByName)
+	return effectiveHostnamesForSections(result.MatchedListeners, hostByName, routeInfo.Hostnames)
 }
 
-func listenerSetAcceptedHostnames(
+func listenerSetEffectiveHostnames(
 	ctx context.Context,
 	cli client.Client,
 	validator *routebinding.Validator,
@@ -244,7 +320,7 @@ func listenerSetAcceptedHostnames(
 		hostByName[listenerSet.Spec.Listeners[i].Name] = listenerSet.Spec.Listeners[i].Hostname
 	}
 
-	return hostnamesForSections(matched, hostByName)
+	return effectiveHostnamesForSections(matched, hostByName, routeInfo.Hostnames)
 }
 
 // nonConflictedSections drops, from sections, any matched listener whose
@@ -292,16 +368,36 @@ func dropConflictedSections(
 	return kept
 }
 
-func hostnamesForSections(
+// effectiveHostnamesForSections maps each matched listener section to the
+// intersection of the route's hostnames with that listener's hostname (Gateway
+// API semantics via routebinding.EffectiveListenerHostnames). A hostname-less
+// route inherits each listener's hostname; a listener with no hostname
+// contributes the route's hostnames unchanged (it is a catch-all). Results are
+// concatenated in section order; the caller de-duplicates across sections.
+func effectiveHostnamesForSections(
 	sections []gatewayv1.SectionName,
 	hostByName map[gatewayv1.SectionName]*gatewayv1.Hostname,
+	routeHostnames []gatewayv1.Hostname,
 ) []gatewayv1.Hostname {
 	var out []gatewayv1.Hostname
 
 	for _, section := range sections {
-		if hostname, ok := hostByName[section]; ok && hostname != nil && *hostname != "" {
-			out = append(out, *hostname)
+		listenerHostname, ok := hostByName[section]
+		if !ok {
+			continue
 		}
+
+		// A hostname-less route accepted by a hostname-less listener serves
+		// EVERY hostname through it. Emit the catch-all sentinel so the
+		// collector knows the union covers all hosts -- otherwise a pinned
+		// sibling listener's hostname would silently narrow a catch-all route.
+		if len(routeHostnames) == 0 && (listenerHostname == nil || *listenerHostname == "") {
+			out = append(out, catchAllHostnameSentinel)
+
+			continue
+		}
+
+		out = append(out, routebinding.EffectiveListenerHostnames(listenerHostname, routeHostnames)...)
 	}
 
 	return out

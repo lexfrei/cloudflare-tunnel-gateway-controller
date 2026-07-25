@@ -541,7 +541,7 @@ func (r dlpDataTagCategoryNewResponseEnvelopeMessagesSourceJSON) RawJSON() strin
 	return r.raw
 }
 
-// Whether the API call was successful.
+// DLPDataTagCategoryNewResponseEnvelopeSuccess indicates whether the API call was successful.
 type DLPDataTagCategoryNewResponseEnvelopeSuccess bool
 
 const (
@@ -708,7 +708,7 @@ func (r dlpDataTagCategoryUpdateResponseEnvelopeMessagesSourceJSON) RawJSON() st
 	return r.raw
 }
 
-// Whether the API call was successful.
+// DLPDataTagCategoryUpdateResponseEnvelopeSuccess indicates whether the API call was successful.
 type DLPDataTagCategoryUpdateResponseEnvelopeSuccess bool
 
 const (
@@ -855,7 +855,7 @@ func (r dlpDataTagCategoryDeleteResponseEnvelopeMessagesSourceJSON) RawJSON() st
 	return r.raw
 }
 
-// Whether the API call was successful.
+// DLPDataTagCategoryDeleteResponseEnvelopeSuccess indicates whether the API call was successful.
 type DLPDataTagCategoryDeleteResponseEnvelopeSuccess bool
 
 const (
@@ -998,7 +998,7 @@ func (r dlpDataTagCategoryGetResponseEnvelopeMessagesSourceJSON) RawJSON() strin
 	return r.raw
 }
 
-// Whether the API call was successful.
+// DLPDataTagCategoryGetResponseEnvelopeSuccess indicates whether the API call was successful.
 type DLPDataTagCategoryGetResponseEnvelopeSuccess bool
 
 const (

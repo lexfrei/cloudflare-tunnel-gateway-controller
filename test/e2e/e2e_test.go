@@ -108,6 +108,58 @@ type echoHTTPResponse struct {
 	Header     http.Header
 }
 
+// transportAttempts is the total number of tries (first attempt plus retries)
+// for a request that produced no response at all. Single un-retried requests
+// through the live edge flake: a transient latency spike blowing the 15s
+// client timeout or a dropped connection fails a test that a poll loop would
+// have survived. Only transport-level errors are retried -- a received
+// response, whatever its status, IS the routing verdict the tests assert on.
+// All requests target idempotent echo backends, so re-sending is safe.
+const transportAttempts = 3
+
+// transportRetryDelay spaces retry attempts out so an instant failure (e.g.
+// connection reset) does not burn every attempt within milliseconds against
+// an edge that has not had time to recover.
+const transportRetryDelay = 500 * time.Millisecond
+
+// doWithTransportRetry sends req, retrying transport-level failures (no
+// response received) up to transportAttempts times with a short delay between
+// attempts. Requests are built with a nil body, so the same req is safe to
+// re-send. Context cancellation stops the retry loop immediately.
+func doWithTransportRetry(httpClient *http.Client, req *http.Request) (*http.Response, error) {
+	// A body is consumed by the first attempt, so a re-send would silently go
+	// out empty -- such a request gets exactly one try.
+	if req.Body != nil {
+		resp, err := httpClient.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("sending request with unretryable body: %w", err)
+		}
+
+		return resp, nil
+	}
+
+	var lastErr error
+
+	for attempt := range transportAttempts {
+		if attempt > 0 {
+			select {
+			case <-req.Context().Done():
+				return nil, lastErr
+			case <-time.After(transportRetryDelay):
+			}
+		}
+
+		resp, err := httpClient.Do(req)
+		if err == nil {
+			return resp, nil
+		}
+
+		lastErr = err
+	}
+
+	return nil, lastErr
+}
+
 // makeRequest sends a request through the Cloudflare tunnel and parses the
 // echo-basic JSON response.
 func makeRequest(
@@ -132,7 +184,7 @@ func makeRequest(
 		req.Header.Set(key, val)
 	}
 
-	resp, err := httpClient.Do(req)
+	resp, err := doWithTransportRetry(httpClient, req)
 	if err != nil {
 		return nil, nil, fmt.Errorf("sending %s request to %s: %w", method, reqURL, err)
 	}

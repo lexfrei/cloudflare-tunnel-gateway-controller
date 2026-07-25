@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
-	"time"
 
 	"github.com/cloudflare/cloudflare-go/v7/internal/apijson"
 	"github.com/cloudflare/cloudflare-go/v7/internal/param"
@@ -39,8 +38,8 @@ func NewAccessIdPFederationGrantService(opts ...option.RequestOption) (r *Access
 // available for federation to other accounts in the same Cloudflare organization.
 //
 // The account must belong to a Cloudflare organization. One-time pin and
-// Cloudflare-managed identity providers cannot be federated. An identity provider
-// may only have one active grant at a time.
+// Cloudflare-managed identity providers cannot be federated. An account can
+// federate at most five identity providers at a time.
 func (r *AccessIdPFederationGrantService) New(ctx context.Context, params AccessIdPFederationGrantNewParams, opts ...option.RequestOption) (res *IdPFederationGrant, err error) {
 	var env AccessIdPFederationGrantNewResponseEnvelope
 	opts = slices.Concat(r.Options, opts)
@@ -120,8 +119,6 @@ func (r *AccessIdPFederationGrantService) Get(ctx context.Context, grantID strin
 type IdPFederationGrant struct {
 	// UID of the IdP federation grant.
 	ID string `json:"id" api:"required"`
-	// When the grant was created.
-	CreatedAt time.Time `json:"created_at" api:"required" format:"date-time"`
 	// UID of the identity provider being federated.
 	IdPID string                 `json:"idp_id" api:"required" format:"uuid"`
 	JSON  IdPFederationGrantJSON `json:"-"`
@@ -131,7 +128,6 @@ type IdPFederationGrant struct {
 // [IdPFederationGrant]
 type IdPFederationGrantJSON struct {
 	ID          apijson.Field
-	CreatedAt   apijson.Field
 	IdPID       apijson.Field
 	raw         string
 	ExtraFields map[string]apijson.Field
@@ -306,7 +302,7 @@ func (r accessIdPFederationGrantNewResponseEnvelopeMessagesSourceJSON) RawJSON()
 	return r.raw
 }
 
-// Whether the API call was successful.
+// AccessIdPFederationGrantNewResponseEnvelopeSuccess indicates whether the API call was successful.
 type AccessIdPFederationGrantNewResponseEnvelopeSuccess bool
 
 const (
@@ -454,7 +450,7 @@ func (r accessIdPFederationGrantListResponseEnvelopeMessagesSourceJSON) RawJSON(
 	return r.raw
 }
 
-// Whether the API call was successful.
+// AccessIdPFederationGrantListResponseEnvelopeSuccess indicates whether the API call was successful.
 type AccessIdPFederationGrantListResponseEnvelopeSuccess bool
 
 const (
@@ -634,7 +630,7 @@ func (r accessIdPFederationGrantDeleteResponseEnvelopeMessagesSourceJSON) RawJSO
 	return r.raw
 }
 
-// Whether the API call was successful.
+// AccessIdPFederationGrantDeleteResponseEnvelopeSuccess indicates whether the API call was successful.
 type AccessIdPFederationGrantDeleteResponseEnvelopeSuccess bool
 
 const (
@@ -780,7 +776,7 @@ func (r accessIdPFederationGrantGetResponseEnvelopeMessagesSourceJSON) RawJSON()
 	return r.raw
 }
 
-// Whether the API call was successful.
+// AccessIdPFederationGrantGetResponseEnvelopeSuccess indicates whether the API call was successful.
 type AccessIdPFederationGrantGetResponseEnvelopeSuccess bool
 
 const (

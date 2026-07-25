@@ -58,8 +58,22 @@ spec:
             # Image for per-Gateway rendered proxy Deployments (GatewayConfig
             # data planes); always the release's proxy image.
             - "--proxy-image={{ .Values.proxy.image.repository }}:{{ .Values.proxy.image.tag | default .Chart.AppVersion }}"
-            {{- if .Values.proxy.authTokenSecretRef.name }}
-            - "--proxy-auth-token=$(PROXY_AUTH_TOKEN)"
+            # The config API is always authenticated, resolved by the
+            # controller directly via the API (a live call, not a
+            # template-time lookup, so it works the same under `helm
+            # install`/`upgrade` and under GitOps controllers that render
+            # client-side, e.g. ArgoCD's default helm template) -- NEVER a
+            # pod-level secretKeyRef on the controller's own pod, because a
+            # secretKeyRef the controller is itself responsible for creating
+            # would deadlock its own pod. This is the ONE mechanism for
+            # both the bring-your-own and generated cases: --proxy-auth-secret-generate
+            # is the only thing that differs between them, so a Secret name
+            # collision or a scenario where the BYO Secret happens not to
+            # exist yet fails the same way regardless of which case it is.
+            - "--proxy-auth-secret-ref={{ .Release.Namespace }}/{{ include "cf-tunnel-gw-ctrl.proxyAuthTokenSecretName" . }}"
+            - "--proxy-auth-secret-key={{ .Values.proxy.authTokenSecretRef.key | default "auth-token" }}"
+            {{- if not .Values.proxy.authTokenSecretRef.name }}
+            - "--proxy-auth-secret-generate=true"
             {{- end }}
             {{- if .Values.proxy.tunnelTokenSecretRef.name }}
             - "--proxy-token-secret={{ .Release.Namespace }}/{{ .Values.proxy.tunnelTokenSecretRef.name }}"
@@ -116,13 +130,6 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
-            {{- if .Values.proxy.authTokenSecretRef.name }}
-            - name: PROXY_AUTH_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.proxy.authTokenSecretRef.name }}
-                  key: {{ .Values.proxy.authTokenSecretRef.key | default "auth-token" }}
-            {{- end }}
           ports:
             - name: metrics
               containerPort: {{ .Values.service.metricsPort }}

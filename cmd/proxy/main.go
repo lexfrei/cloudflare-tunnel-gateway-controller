@@ -202,7 +202,13 @@ func runTunnelMode(logger *slog.Logger, token string) {
 
 	logger.Info("starting cloudflared tunnel with in-process proxy", "protocol", effectiveProtocol)
 
-	err := tunnel.StartTunnel(ctx, &tunnel.Config{
+	// StartTunnelWithRetry retries a bootstrap-window failure (cluster DNS not
+	// yet reachable, the edge briefly unreachable) with capped backoff instead
+	// of exiting outright -- readiness stays NotReady throughout via
+	// router.SetTunnelConnected, which only fires on an actual connection. A
+	// non-retryable failure (malformed token, unsupported protocol) still
+	// returns immediately below.
+	err := tunnel.StartTunnelWithRetry(ctx, &tunnel.Config{
 		Token:       token,
 		Logger:      logger,
 		OriginProxy: originProxy,
@@ -215,7 +221,7 @@ func runTunnelMode(logger *slog.Logger, token string) {
 		// alive so the connector can unregister and in-flight requests finish.
 		GraceShutdownC: graceC,
 		GracePeriod:    parseEnvDuration(logger, "PROXY_GRACE_PERIOD"),
-	})
+	}, graceC)
 
 	// The daemon has exited (drained, failed, or force-cancelled) — release the
 	// signal goroutine before shutting the config server down.
@@ -429,7 +435,12 @@ func buildDataPlane(logger *slog.Logger) (*proxy.Router, *proxy.Handler, *proxy.
 	proxyHandler := proxy.NewHandler(router, opts...)
 	router.SetHandler(proxyHandler)
 
-	authToken := os.Getenv("PROXY_AUTH_TOKEN")
+	authToken, err := resolveAuthToken()
+	if err != nil {
+		logger.Error("refusing to start with a broken config-API auth configuration", "error", err)
+		os.Exit(1)
+	}
+
 	warnIfNoAuth(logger, authToken)
 
 	var apiOpts []proxy.ConfigAPIOption
@@ -481,6 +492,36 @@ func warnIfNoAuth(logger *slog.Logger, authToken string) {
 	if authToken == "" {
 		logger.Warn("config API running WITHOUT authentication -- set PROXY_AUTH_TOKEN for production use")
 	}
+}
+
+// errProxyAuthTokenEmpty is the sentinel resolveAuthToken returns when
+// PROXY_AUTH_TOKEN is set but empty.
+var errProxyAuthTokenEmpty = errors.New("PROXY_AUTH_TOKEN is set but empty")
+
+// resolveAuthToken reads PROXY_AUTH_TOKEN, distinguishing the variable being
+// unset from being set to an empty string -- os.Getenv alone cannot tell
+// these apart, and the two now mean different things.
+//
+// Unset means no auth was configured at all: the historical default for raw
+// manifests and local development, where PROXY_AUTH_TOKEN is simply never
+// wired, and the proxy runs the config API without a Bearer check exactly as
+// it always did.
+//
+// The chart now wires this variable unconditionally (see
+// internal/controller/proxy_auth_secret.go), so its mere presence signals
+// that authentication was INTENDED for this deployment. An empty value under
+// that intent -- e.g. the auth Secret's key resolved to an empty string -- is
+// a broken configuration, not a choice to run open, and must fail the same
+// way the controller already fails closed on the identical broken Secret
+// (readAuthSecretKey in internal/controller/proxy_auth_secret.go) rather than
+// silently disabling the one check this whole feature exists to enforce.
+func resolveAuthToken() (string, error) {
+	token, isSet := os.LookupEnv("PROXY_AUTH_TOKEN")
+	if isSet && token == "" {
+		return "", errProxyAuthTokenEmpty
+	}
+
+	return token, nil
 }
 
 func envOrDefault(key, defaultValue string) string {

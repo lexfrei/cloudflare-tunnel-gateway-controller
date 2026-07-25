@@ -44,7 +44,7 @@ Kubernetes: `>=1.25.0-0`
 ### Install Gateway API CRDs
 
 ```bash
-kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.6.0/standard-install.yaml
+kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.6.1/standard-install.yaml
 ```
 
 ### Create Cloudflare Tunnel
@@ -298,9 +298,9 @@ spec:
 | proxy.accessLog.samplingRate | float | `1` | Fraction of non-5xx requests to log when enabled, in [0, 1]. 1.0 logs everything; 0.0 logs only 5xx (server-side failures are always recorded regardless of rate so the operator never loses error signal). The proxy clamps out-of-range values: a typo like `samplingRate: 50` degrades to "always log" rather than "silently log nothing". |
 | proxy.accessLog.stripQuery | bool | `false` | Zero the `query` field in every emitted line. For applications that ride tokens, signed-URL credentials, or PII in query parameters (?token=..., ?sid=..., ?email=...). The `path` field is unaffected -- operators still see WHICH endpoint was hit, just not WHICH parameters carried sensitive values. Defaults to false (verbatim query for triage signal); turn on when the application surface makes query-string privacy a real concern and route-level (headers vs query) / sink-level (log pipeline scrubbing) mitigations aren't viable. |
 | proxy.affinity | object | `{}` | Affinity rules for pod scheduling |
-| proxy.authTokenSecretRef | object | `{"key":"auth-token","name":""}` | Reference to Secret containing auth token for proxy config API. When set, both controller and proxy use this token for authenticated config push. |
+| proxy.authTokenSecretRef | object | `{"key":"auth-token","name":""}` | Reference to Secret containing the config API Bearer token. The config API is ALWAYS authenticated -- when name is empty (the default) the CONTROLLER (not chart templating) generates a random token into a Secret named "<fullname>-proxy-auth-token" (<fullname> is the Helm release fullname, typically "<release>-cloudflare-tunnel-gateway-controller", or just "<release>" when the release name already contains the chart name) as one of its first startup actions and reuses it on every subsequent start, so the token never rotates and upgrading never rolls the proxy on its own. Generating it via a live API call rather than at template time means this also works correctly under GitOps controllers that render client-side with no cluster access (e.g. ArgoCD's default `helm template`), where a template-time `lookup` cannot see prior state. Set name to bring your own Secret/token instead, e.g. for external rotation. |
 | proxy.authTokenSecretRef.key | string | `"auth-token"` | Key in the Secret containing the auth token |
-| proxy.authTokenSecretRef.name | string | `""` | Name of the Secret containing the auth token |
+| proxy.authTokenSecretRef.name | string | `""` | Name of the Secret containing the auth token. Leave empty to let the controller generate and manage the token automatically (recommended). |
 | proxy.configAPIPort | int | `8081` | Config API port (controller pushes config here) |
 | proxy.gracePeriodSeconds | int | `30` | Connector drain window in seconds (the proxy's PROXY_GRACE_PERIOD). On SIGTERM the proxy unregisters its tunnel connectors from the Cloudflare edge (stopping new requests) and gives in-flight requests this long to finish before exiting. This MUST stay below the pod's terminationGracePeriodSeconds or kubelet SIGKILLs mid-drain; the chart guarantees that by deriving terminationGracePeriodSeconds as this value plus 15s of headroom — do not override the pod field independently. Capped at 180 (3m) by cloudflared. |
 | proxy.healthProbes | object | `{"livenessProbe":{"enabled":true,"failureThreshold":3,"initialDelaySeconds":15,"periodSeconds":20,"timeoutSeconds":5},"readinessProbe":{"enabled":true,"failureThreshold":3,"initialDelaySeconds":5,"periodSeconds":10,"timeoutSeconds":3},"startupProbe":{"enabled":true,"failureThreshold":30,"initialDelaySeconds":0,"periodSeconds":5,"timeoutSeconds":3}}` | Health probes configuration |

@@ -1,5 +1,63 @@
 # Changelog
 
+## 7.7.0 (2026-07-08)
+
+Full Changelog: [v7.6.0...v7.7.0](https://github.com/cloudflare/cloudflare-go/compare/v7.6.0...v7.7.0)
+
+### Breaking Changes
+
+See the [v7.7.0 Migration Guide](./docs/migration-guides/v7.7.0-migration-guide.md) for before/after code examples and actions needed for each change.
+
+* **ssl:** `Recommendations.Get` method and `RecommendationGetResponse` / `RecommendationGetParams` types removed.
+* **ai_gateway, workflows, zero_trust/dlpemailaccountmapping:** merged-union parent fields with same-name-different-type collisions changed from a variant-struct type to `interface{}`. Affected fields:
+  * `ai_gateway.AIGateway{New,Update,List,Delete,Get}ResponseSpendLimitsRulesMetadata.Mode` (5 structs)
+  * `workflows.VersionGraphResponseGraphWorkflowPayload.Type`
+  * `zero_trust.DLPEmailAccountMapping{New,Get}ResponseAuthRequirements.Type` (2 structs)
+
+  These fields were unreadable in the previous type (marshaling panicked with `reflect: call of reflect.Value.SetString on struct Value`). The new `interface{}` type matches the codegen pattern used by sibling merged fields on the same structs (e.g. `Values`, `Fields`, `AllowedMicrosoftOrganizations`); callers should switch on the parent union via `AsUnion()` for a strongly-typed variant.
+
+* **zero_trust:** `Devices.DEXTests.{New,Update,List,Get}` response type renamed from `DeviceDEXTest{New,Update,List,Get}Response` to the shared `SchemaHTTP`; field structure unchanged. Nested types renamed accordingly (e.g. `DeviceDEXTestNewResponseData` → `SchemaData`, `DeviceDEXTestNewResponseTargetPolicy` → `SchemaHTTPTargetPolicy`). Callers using `:=` inference and field access continue to compile; callers referencing the removed type names must update to `SchemaHTTP`.
+* **zero_trust:** `Devices.IPProfiles.List` pagination changed from `pagination.SinglePage[IPProfile]` to `pagination.V4PagePaginationArray[IPProfile]`. `.Result` field access and `ListAutoPaging()` iteration continue to work; callers referencing the pagination type by name must update.
+
+### Features
+
+* **NEW SERVICE: `email_auth`** &mdash; DMARC reports edit/get and SPF inspect
+  * `client.EmailAuth.DMARCReports.Edit`
+  * `client.EmailAuth.DMARCReports.Get`
+  * `client.EmailAuth.SPF.Inspect.Get`
+* **NEW SERVICE: `moq`** &mdash; Media over QUIC relay management
+  * `client.MoQ.Relays.{New,Update,List,Delete,Get}`
+  * `client.MoQ.Relays.Tokens.Rotate`
+* **zero_trust:** publish CASB APIs (`client.ZeroTrust.Casb.*`)
+  * `Applications.{List,Get}` + `Applications.SetupFlows.List`
+  * `Integrations.{New,Update,List,Delete,Get,Pause,Resume}`
+* **logs:** add `LogExplorer` sub-resource
+  * `LogExplorer.Query.Sql`
+  * `LogExplorer.Datasets.{New,Update,List,Get}`
+  * `LogExplorer.Datasets.Available.List`
+* **browser_rendering:** add `AccessibilityTree.New` method
+* **email_routing:** add `EmailRouting.Unlock` and `EmailRouting.Addresses.Edit` methods
+* **email_routing:** add `AccountRules.List` method (`GET /accounts/{account_id}/email/routing/rules`) returning `AccountRule` with new `Zone` field; `Rules.List` gains optional `AccountID` param (mutually exclusive with `ZoneID`) so callers can list rules by account or zone
+* **email_security:** add bulk investigation APIs
+  * `Investigate.Bulk.{New,List,Delete,Get}`
+  * `Investigate.Bulk.Cancel.New`
+  * `Investigate.Bulk.Messages.List`
+* **accounts:** add `Logs.Audit.History` and `Logs.Audit.ProductCategories` methods
+* **organizations:** add `Logs.Audit.History` method
+
+### Bug Fixes
+
+* **ai_gateway, workflows, zero_trust/dlpemailaccountmapping:** fix panics on union-merged parent field decoding by switching same-name-different-type merged fields from a variant-struct type to `interface{}` ([3de4191](https://github.com/cloudflare/cloudflare-go/commit/3de4191de))
+* **browser_rendering:** `AccessibilityTreeNewParamsBodyObject` now uses `URL` (matching the generated test fixture) instead of `HTML` ([0f44441](https://github.com/cloudflare/cloudflare-go/commit/0f4444190))
+* **dns:** restore `Shadow*` query params on `RecordListParams` and `IncludeShadowMetadata` on `Record{New,Update,List,Batch,Edit,Get}Params` after a codegen regression dropped them ([f9b3f27](https://github.com/cloudflare/cloudflare-go/commit/f9b3f274a))
+
+### Chores
+
+* **api:** update composite API spec (20+ codegen sync commits)
+* **ci:** bump CI job timeouts to 30 minutes ([6cad6cb](https://github.com/cloudflare/cloudflare-go/commit/6cad6cb57))
+* **ci:** unblock test job by installing nodejs/npm for prism mock server ([3de4191](https://github.com/cloudflare/cloudflare-go/commit/3de4191de))
+* apply accumulated custom code (CI jobs, GitLab config) ([eb2bf2b](https://github.com/cloudflare/cloudflare-go/commit/eb2bf2b10))
+
 ## 7.6.0 (2026-06-16)
 
 Full Changelog: [v7.5.0...v7.6.0](https://github.com/cloudflare/cloudflare-go/compare/v7.5.0...v7.6.0)
@@ -32,10 +90,6 @@ Full Changelog: [v7.5.0...v7.6.0](https://github.com/cloudflare/cloudflare-go/co
 ### Documentation
 
 * add v7.6.0 migration guide ([f27940b](https://github.com/cloudflare/cloudflare-go/commit/f27940b228914e7b7d924b16ad440574f356e0cc))
-
-## 7.5.0 (2026-06-10)
-
-Full Changelog: [v7.5.0...v7.5.0](https://github.com/cloudflare/cloudflare-go/compare/v7.5.0...v7.5.0)
 
 ## 7.5.0 (2026-06-10)
 

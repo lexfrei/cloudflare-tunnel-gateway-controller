@@ -1036,10 +1036,11 @@ func endpointSetsEqual(previous map[string]struct{}, resolved []string) bool {
 }
 
 // buildProxyConfig converts the HTTP and gRPC route sets into a single merged
-// proxy Config. HTTP routes inherit parent-listener hostnames and get invalid
-// backend refs marked unavailable (→ 500 for that backend's fraction); gRPC
-// routes are appended with backends forced to h2c and the same marking applied.
-// Extracted from SyncRoutes to keep that function under the funlen budget.
+// proxy Config. HTTP routes are narrowed to their route↔listener hostname
+// intersection and get invalid backend refs marked unavailable (→ 500 for that
+// backend's fraction); gRPC routes are appended with backends forced to h2c and
+// the same marking applied. Extracted from SyncRoutes to keep that function
+// under the funlen budget.
 func (s *ProxySyncer) buildProxyConfig(
 	ctx context.Context,
 	routes []*gatewayv1.HTTPRoute,
@@ -1052,10 +1053,11 @@ func (s *ProxySyncer) buildProxyConfig(
 	// single merge instead of rebuilding it per route per pass (issue #332).
 	views := newListenerViewCache(s.k8sClient, s.ViewStore)
 
-	// When a route binds to a Gateway listener or ListenerSet entry with a
-	// non-empty hostname and itself declares spec.hostnames empty, the proxy
-	// rule MUST serve only the parent listener's hostname. Augment in-memory
-	// before handing to the converter; the input routes are left untouched.
+	// Narrow each route's hostnames to the intersection of its own hostnames
+	// with those of the listeners it binds to (#587): a declared hostname no
+	// bound listener covers is dropped (→ 404), and a route with no hostnames
+	// inherits the listener's hostname instead of becoming a catch-all. Rewrite
+	// in-memory before handing to the converter; the input routes are untouched.
 	routes = withEffectiveHostnames(ctx, s.k8sClient, routes, views)
 
 	// A RequestRedirect filter that leaves scheme empty must default to the
@@ -1084,10 +1086,11 @@ func (s *ProxySyncer) buildProxyConfig(
 	// HTTP config's version (grpcCfg burns a version counter value that is
 	// discarded — only the pushed config's version is observed downstream).
 	if len(grpcRoutes) > 0 {
-		// gRPC routes inherit their parent listener's hostname when they declare
-		// none, exactly like HTTPRoutes — otherwise an empty-hostname gRPC rule
-		// becomes a catch-all answering every Host (including hostnames owned by
-		// other routes).
+		// gRPC routes are narrowed to their route↔listener hostname intersection
+		// exactly like HTTPRoutes: a declared hostname no bound listener covers
+		// is dropped, and a route with no hostnames inherits the listener's
+		// hostname instead of becoming a catch-all answering every Host
+		// (including hostnames owned by other routes).
 		grpcRoutes = withEffectiveHostnamesGRPC(ctx, s.k8sClient, grpcRoutes, views)
 
 		grpcCfg := proxy.ConvertGRPCRoutes(ctx, grpcRoutes, s.clusterDomain, s.grpcBackendValidator, s.protocolResolver, s.tlsResolver, s.gatewayCertResolver)
@@ -1130,7 +1133,7 @@ func (s *ProxySyncer) buildProxyConfig(
 	cfg.HasGRPCRoute = len(grpcRoutes) > 0
 
 	// Cross-route shadow detection (#474) runs LAST, over the exact rule
-	// stream the router will serve — after effective-hostname inheritance and
+	// stream the router will serve — after hostname-intersection narrowing and
 	// the gRPC merge — so a collision an operator can hit is a collision this
 	// flags. Status/observability only: the diagnostics ride the existing
 	// pipeline into a dedicated condition + Warning Event on the losing route.
@@ -1158,6 +1161,53 @@ func (s *ProxySyncer) ResyncEndpoints(ctx context.Context, endpoints []string) e
 	return s.resyncTarget(ctx, sharedPartitionKey, endpoints, s.defaultAuthToken)
 }
 
+// msgNoPushedConfigToResync is the WARN both replayableTarget branches share:
+// whatever the path into an empty replay cache, the endpoints stay
+// unconfigured (and unready) until a sync completes a successful push.
+const msgNoPushedConfigToResync = "no successfully pushed config to resync; endpoints stay unconfigured until a sync pushes one"
+
+// replayableTarget returns the partition's cached push target when it holds a
+// fully-pushed config, logging why the resync is a no-op otherwise. The
+// lookup is plain, NOT targetLocked: RetainPartitions can evict the key
+// between a caller's read-unlock and re-lock, and re-creating an empty target
+// here would resurrect a garbage entry that lingers until the next retain
+// pass. Caller must hold syncMu.
+func (s *ProxySyncer) replayableTarget(logger *slog.Logger, key string) (*pushTarget, bool) {
+	target, ok := s.targets[key]
+	if !ok {
+		if key == sharedPartitionKey {
+			// The shared partition is never evicted once created, so absent
+			// means no sync attempt has even reached preparePush yet (an
+			// attempted-but-failed push lands in the lastCfg branch below).
+			// Either way the endpoints stay unconfigured (and unready) until
+			// a sync completes a successful push -- this exact no-op hid a
+			// bootstrap deadlock for a month (#581).
+			logger.Warn(msgNoPushedConfigToResync,
+				"partition", key)
+		} else {
+			// A per-Gateway partition without a target is ambiguous: either
+			// its first push has not happened yet, or its Gateway was
+			// deleted/opted out and the partition was evicted.
+			logger.Info("no cached config for partition; not yet pushed or already evicted", "partition", key)
+		}
+
+		return nil, false
+	}
+
+	if target.lastCfg == nil {
+		// Not silently: only a fully-successful push populates the cache, so
+		// an empty cache here means the endpoints stay unconfigured (and
+		// unready) until a sync completes a successful push -- this exact
+		// no-op hid a bootstrap deadlock for a month (#581).
+		logger.Warn(msgNoPushedConfigToResync,
+			"partition", key)
+
+		return nil, false
+	}
+
+	return target, true
+}
+
 // resyncTarget replays a partition's cached config to the given endpoints
 // with the given token, updating the partition's steady-state skip key on
 // success and invalidating it on partial failure.
@@ -1170,18 +1220,14 @@ func (s *ProxySyncer) resyncTarget(ctx context.Context, key string, endpoints []
 	s.syncMu.Lock()
 	defer s.syncMu.Unlock()
 
-	// Plain lookup, NOT targetLocked: RetainPartitions can evict the key
-	// between the caller's read-unlock and this re-lock, and re-creating an
-	// empty target here would resurrect a garbage entry that lingers until
-	// the next retain pass.
-	target, ok := s.targets[key]
-	if !ok || target.lastCfg == nil {
-		return nil
-	}
-
 	logger := logging.FromContext(ctx)
 	if logger == slog.Default() {
 		logger = s.logger
+	}
+
+	target, ok := s.replayableTarget(logger, key)
+	if !ok {
+		return nil
 	}
 
 	logger.Info("resyncing cached proxy config to endpoints",

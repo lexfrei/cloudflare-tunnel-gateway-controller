@@ -419,7 +419,7 @@ func (r dlpSensitivityGroupLevelNewResponseEnvelopeMessagesSourceJSON) RawJSON()
 	return r.raw
 }
 
-// Whether the API call was successful.
+// DLPSensitivityGroupLevelNewResponseEnvelopeSuccess indicates whether the API call was successful.
 type DLPSensitivityGroupLevelNewResponseEnvelopeSuccess bool
 
 const (
@@ -570,7 +570,7 @@ func (r dlpSensitivityGroupLevelUpdateResponseEnvelopeMessagesSourceJSON) RawJSO
 	return r.raw
 }
 
-// Whether the API call was successful.
+// DLPSensitivityGroupLevelUpdateResponseEnvelopeSuccess indicates whether the API call was successful.
 type DLPSensitivityGroupLevelUpdateResponseEnvelopeSuccess bool
 
 const (
@@ -719,7 +719,7 @@ func (r dlpSensitivityGroupLevelDeleteResponseEnvelopeMessagesSourceJSON) RawJSO
 	return r.raw
 }
 
-// Whether the API call was successful.
+// DLPSensitivityGroupLevelDeleteResponseEnvelopeSuccess indicates whether the API call was successful.
 type DLPSensitivityGroupLevelDeleteResponseEnvelopeSuccess bool
 
 const (
@@ -864,7 +864,7 @@ func (r dlpSensitivityGroupLevelGetResponseEnvelopeMessagesSourceJSON) RawJSON()
 	return r.raw
 }
 
-// Whether the API call was successful.
+// DLPSensitivityGroupLevelGetResponseEnvelopeSuccess indicates whether the API call was successful.
 type DLPSensitivityGroupLevelGetResponseEnvelopeSuccess bool
 
 const (

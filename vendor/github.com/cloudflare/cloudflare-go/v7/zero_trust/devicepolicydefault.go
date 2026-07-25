@@ -106,6 +106,11 @@ type DevicePolicyDefaultEditResponse struct {
 	ExcludeOfficeIPs bool             `json:"exclude_office_ips"`
 	FallbackDomains  []FallbackDomain `json:"fallback_domains"`
 	GatewayUniqueID  string           `json:"gateway_unique_id"`
+	// Global Acceleration settings for China. When configured, WARP clients connect to
+	// the Global Accelerator addresses instead of the default ones. Please contact
+	// your account representative to enable this feature on your account. See
+	// https://developers.cloudflare.com/china-network/concepts/global-acceleration/.
+	GlobalAcceleration DevicePolicyDefaultEditResponseGlobalAcceleration `json:"global_acceleration" api:"nullable"`
 	// List of routes included in the WARP client's tunnel.
 	Include  []SplitTunnelInclude `json:"include"`
 	PolicyID string               `json:"policy_id"`
@@ -143,6 +148,7 @@ type devicePolicyDefaultEditResponseJSON struct {
 	ExcludeOfficeIPs           apijson.Field
 	FallbackDomains            apijson.Field
 	GatewayUniqueID            apijson.Field
+	GlobalAcceleration         apijson.Field
 	Include                    apijson.Field
 	PolicyID                   apijson.Field
 	RegisterInterfaceIPWithDNS apijson.Field
@@ -189,6 +195,43 @@ func (r devicePolicyDefaultEditResponseDNSSearchSuffixJSON) RawJSON() string {
 	return r.raw
 }
 
+// DevicePolicyDefaultEditResponseGlobalAcceleration global Acceleration settings for China. When configured, WARP clients connect to
+// the Global Accelerator addresses instead of the default ones. Please contact
+// your account representative to enable this feature on your account. See
+// https://developers.cloudflare.com/china-network/concepts/global-acceleration/.
+type DevicePolicyDefaultEditResponseGlobalAcceleration struct {
+	// IP:port entries for the API endpoints.
+	APIEndpoints []string `json:"api_endpoints" api:"required"`
+	// Global acceleration settings are used only when "enabled".
+	Enabled bool `json:"enabled" api:"required"`
+	// IP:port entries for the MASQUE tunnel endpoints. Either wireguard_endpoints or
+	// masque_endpoints must be provided.
+	MasqueEndpoints []string `json:"masque_endpoints" api:"required"`
+	// IP:port entries for the WireGuard tunnel endpoints. Either wireguard_endpoints
+	// or masque_endpoints must be provided.
+	WireguardEndpoints []string                                              `json:"wireguard_endpoints" api:"required"`
+	JSON               devicePolicyDefaultEditResponseGlobalAccelerationJSON `json:"-"`
+}
+
+// devicePolicyDefaultEditResponseGlobalAccelerationJSON contains the JSON metadata
+// for the struct [DevicePolicyDefaultEditResponseGlobalAcceleration]
+type devicePolicyDefaultEditResponseGlobalAccelerationJSON struct {
+	APIEndpoints       apijson.Field
+	Enabled            apijson.Field
+	MasqueEndpoints    apijson.Field
+	WireguardEndpoints apijson.Field
+	raw                string
+	ExtraFields        map[string]apijson.Field
+}
+
+func (r *DevicePolicyDefaultEditResponseGlobalAcceleration) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r devicePolicyDefaultEditResponseGlobalAccelerationJSON) RawJSON() string {
+	return r.raw
+}
+
 type DevicePolicyDefaultEditResponseServiceModeV2 struct {
 	// The mode to run the WARP client under.
 	Mode string `json:"mode"`
@@ -214,7 +257,7 @@ func (r devicePolicyDefaultEditResponseServiceModeV2JSON) RawJSON() string {
 	return r.raw
 }
 
-// Virtual network access settings for the device.
+// DevicePolicyDefaultEditResponseVirtualNetworks virtual network access settings for the device.
 type DevicePolicyDefaultEditResponseVirtualNetworks struct {
 	// List of virtual network IDs the device is allowed to access. When
 	// virtual_networks is set, at least one entry is required.
@@ -270,6 +313,11 @@ type DevicePolicyDefaultGetResponse struct {
 	ExcludeOfficeIPs bool             `json:"exclude_office_ips"`
 	FallbackDomains  []FallbackDomain `json:"fallback_domains"`
 	GatewayUniqueID  string           `json:"gateway_unique_id"`
+	// Global Acceleration settings for China. When configured, WARP clients connect to
+	// the Global Accelerator addresses instead of the default ones. Please contact
+	// your account representative to enable this feature on your account. See
+	// https://developers.cloudflare.com/china-network/concepts/global-acceleration/.
+	GlobalAcceleration DevicePolicyDefaultGetResponseGlobalAcceleration `json:"global_acceleration" api:"nullable"`
 	// List of routes included in the WARP client's tunnel.
 	Include  []SplitTunnelInclude `json:"include"`
 	PolicyID string               `json:"policy_id"`
@@ -307,6 +355,7 @@ type devicePolicyDefaultGetResponseJSON struct {
 	ExcludeOfficeIPs           apijson.Field
 	FallbackDomains            apijson.Field
 	GatewayUniqueID            apijson.Field
+	GlobalAcceleration         apijson.Field
 	Include                    apijson.Field
 	PolicyID                   apijson.Field
 	RegisterInterfaceIPWithDNS apijson.Field
@@ -353,6 +402,43 @@ func (r devicePolicyDefaultGetResponseDNSSearchSuffixJSON) RawJSON() string {
 	return r.raw
 }
 
+// DevicePolicyDefaultGetResponseGlobalAcceleration global Acceleration settings for China. When configured, WARP clients connect to
+// the Global Accelerator addresses instead of the default ones. Please contact
+// your account representative to enable this feature on your account. See
+// https://developers.cloudflare.com/china-network/concepts/global-acceleration/.
+type DevicePolicyDefaultGetResponseGlobalAcceleration struct {
+	// IP:port entries for the API endpoints.
+	APIEndpoints []string `json:"api_endpoints" api:"required"`
+	// Global acceleration settings are used only when "enabled".
+	Enabled bool `json:"enabled" api:"required"`
+	// IP:port entries for the MASQUE tunnel endpoints. Either wireguard_endpoints or
+	// masque_endpoints must be provided.
+	MasqueEndpoints []string `json:"masque_endpoints" api:"required"`
+	// IP:port entries for the WireGuard tunnel endpoints. Either wireguard_endpoints
+	// or masque_endpoints must be provided.
+	WireguardEndpoints []string                                             `json:"wireguard_endpoints" api:"required"`
+	JSON               devicePolicyDefaultGetResponseGlobalAccelerationJSON `json:"-"`
+}
+
+// devicePolicyDefaultGetResponseGlobalAccelerationJSON contains the JSON metadata
+// for the struct [DevicePolicyDefaultGetResponseGlobalAcceleration]
+type devicePolicyDefaultGetResponseGlobalAccelerationJSON struct {
+	APIEndpoints       apijson.Field
+	Enabled            apijson.Field
+	MasqueEndpoints    apijson.Field
+	WireguardEndpoints apijson.Field
+	raw                string
+	ExtraFields        map[string]apijson.Field
+}
+
+func (r *DevicePolicyDefaultGetResponseGlobalAcceleration) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r devicePolicyDefaultGetResponseGlobalAccelerationJSON) RawJSON() string {
+	return r.raw
+}
+
 type DevicePolicyDefaultGetResponseServiceModeV2 struct {
 	// The mode to run the WARP client under.
 	Mode string `json:"mode"`
@@ -378,7 +464,7 @@ func (r devicePolicyDefaultGetResponseServiceModeV2JSON) RawJSON() string {
 	return r.raw
 }
 
-// Virtual network access settings for the device.
+// DevicePolicyDefaultGetResponseVirtualNetworks virtual network access settings for the device.
 type DevicePolicyDefaultGetResponseVirtualNetworks struct {
 	// List of virtual network IDs the device is allowed to access. When
 	// virtual_networks is set, at least one entry is required.
@@ -430,6 +516,11 @@ type DevicePolicyDefaultEditParams struct {
 	Exclude param.Field[[]SplitTunnelExcludeUnionParam] `json:"exclude"`
 	// Whether to add Microsoft IPs to Split Tunnel exclusions.
 	ExcludeOfficeIPs param.Field[bool] `json:"exclude_office_ips"`
+	// Global Acceleration settings for China. When configured, WARP clients connect to
+	// the Global Accelerator addresses instead of the default ones. Please contact
+	// your account representative to enable this feature on your account. See
+	// https://developers.cloudflare.com/china-network/concepts/global-acceleration/.
+	GlobalAcceleration param.Field[DevicePolicyDefaultEditParamsGlobalAcceleration] `json:"global_acceleration"`
 	// List of routes included in the WARP client's tunnel. Both 'exclude' and
 	// 'include' cannot be set in the same request.
 	Include param.Field[[]SplitTunnelIncludeUnionParam] `json:"include"`
@@ -473,6 +564,27 @@ func (r DevicePolicyDefaultEditParamsDNSSearchSuffix) MarshalJSON() (data []byte
 	return apijson.MarshalRoot(r)
 }
 
+// DevicePolicyDefaultEditParamsGlobalAcceleration global Acceleration settings for China. When configured, WARP clients connect to
+// the Global Accelerator addresses instead of the default ones. Please contact
+// your account representative to enable this feature on your account. See
+// https://developers.cloudflare.com/china-network/concepts/global-acceleration/.
+type DevicePolicyDefaultEditParamsGlobalAcceleration struct {
+	// IP:port entries for the API endpoints.
+	APIEndpoints param.Field[[]string] `json:"api_endpoints" api:"required"`
+	// Global acceleration settings are used only when "enabled".
+	Enabled param.Field[bool] `json:"enabled" api:"required"`
+	// IP:port entries for the MASQUE tunnel endpoints. Either wireguard_endpoints or
+	// masque_endpoints must be provided.
+	MasqueEndpoints param.Field[[]string] `json:"masque_endpoints" api:"required"`
+	// IP:port entries for the WireGuard tunnel endpoints. Either wireguard_endpoints
+	// or masque_endpoints must be provided.
+	WireguardEndpoints param.Field[[]string] `json:"wireguard_endpoints" api:"required"`
+}
+
+func (r DevicePolicyDefaultEditParamsGlobalAcceleration) MarshalJSON() (data []byte, err error) {
+	return apijson.MarshalRoot(r)
+}
+
 type DevicePolicyDefaultEditParamsServiceModeV2 struct {
 	// The mode to run the WARP client under.
 	Mode param.Field[string] `json:"mode"`
@@ -484,7 +596,7 @@ func (r DevicePolicyDefaultEditParamsServiceModeV2) MarshalJSON() (data []byte, 
 	return apijson.MarshalRoot(r)
 }
 
-// Virtual network access settings for the device.
+// DevicePolicyDefaultEditParamsVirtualNetworks virtual network access settings for the device.
 type DevicePolicyDefaultEditParamsVirtualNetworks struct {
 	// List of virtual network IDs the device is allowed to access. When
 	// virtual_networks is set, at least one entry is required.
@@ -525,7 +637,7 @@ func (r devicePolicyDefaultEditResponseEnvelopeJSON) RawJSON() string {
 	return r.raw
 }
 
-// Whether the API call was successful.
+// DevicePolicyDefaultEditResponseEnvelopeSuccess indicates whether the API call was successful.
 type DevicePolicyDefaultEditResponseEnvelopeSuccess bool
 
 const (
@@ -572,7 +684,7 @@ func (r devicePolicyDefaultGetResponseEnvelopeJSON) RawJSON() string {
 	return r.raw
 }
 
-// Whether the API call was successful.
+// DevicePolicyDefaultGetResponseEnvelopeSuccess indicates whether the API call was successful.
 type DevicePolicyDefaultGetResponseEnvelopeSuccess bool
 
 const (

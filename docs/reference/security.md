@@ -106,7 +106,7 @@ rules:
   - apiGroups: [""]
     resources: ["services"]
     verbs: ["get", "list", "watch", "create", "update", "delete"]
-  # Secrets - read for credentials; create for the generated per-Gateway config-API auth Secret (no update/delete: token never rotated, ownerRef GC removes it).
+  # Secrets - read for credentials; create for the generated config-API auth Secret, both the per-Gateway one and the shared plane's (no update/delete: token never rotated).
   - apiGroups: [""]
     resources: ["secrets"]
     verbs: ["get", "list", "watch", "create"]
@@ -173,7 +173,7 @@ rules:
 !!! note "RBAC scope"
     The controller reads Secrets and ConfigMaps and writes status subresources. Its workload writes are scoped to the data planes it owns: patching the shared proxy Deployment's pod-template annotation when the tunnel-token Secret rotates (a native rolling restart), and rendering a dedicated proxy Deployment, headless config Service, and optional HorizontalPodAutoscaler for each Gateway opted into a per-Gateway data plane via `infrastructure.parametersRef`. Those rendered objects are controller-owned via ownerReferences, kept in sync against drift, and deleted only when actually owned — a name collision with a user resource can never turn into a deletion. Workload write access is cluster-wide because Gateways live in arbitrary namespaces.
 
-    Because the RBAC grant for these resources is broad (`delete` on Deployments, Services, and HorizontalPodAutoscalers cluster-wide), the **in-code ownership check is the security boundary, not the RBAC scope**. Every apply and create path — including the generated config-API auth Secret — refuses to adopt, update, or GC an object at a rendered name unless it already carries this Gateway's controller ownerReference. A pre-existing object with a foreign owner (or none) is left untouched and the reconcile surfaces a `RenderFailed` event instead of overwriting it.
+    Because the RBAC grant for these resources is broad (`delete` on Deployments, Services, and HorizontalPodAutoscalers cluster-wide), the **in-code ownership check is the security boundary, not the RBAC scope**. Every apply and create path for a *per-Gateway* rendered object — including that plane's generated config-API auth Secret — refuses to adopt, update, or GC an object at a rendered name unless it already carries this Gateway's controller ownerReference. A pre-existing object with a foreign owner (or none) is left untouched and the reconcile surfaces a `RenderFailed` event instead of overwriting it. The *shared* plane's generated auth Secret (below) has no Gateway to check ownership against, so it has no equivalent adoption check: it reuses whatever Secret already exists at its deterministic name unconditionally, by design. This is safe specifically because that Secret always lives in the controller's own release namespace — anyone able to create a Secret there could already replace the controller's Deployment, so an ownership check on this one Secret would not defend anything the namespace boundary doesn't already defend. The per-Gateway check above exists because that Secret lives in an arbitrary tenant namespace instead, where no such trust is implied. See [Config API Authentication](#config-api-authentication).
 
 ### Multi-Tenancy
 
@@ -196,6 +196,10 @@ The controller container follows security best practices:
 | `seccompProfile.type` | `RuntimeDefault` | Use default seccomp profile |
 
 ### Network Security
+
+#### Config API Authentication
+
+The shared proxy's config API (where the controller pushes the routing table) is authenticated and network-restricted by default, matching the per-Gateway data planes described above. When `proxy.authTokenSecretRef.name` is left empty, the controller itself generates a random bearer token into a Secret (`<fullname>-proxy-auth-token`, where `<fullname>` is the Helm release fullname, typically `<release>-cloudflare-tunnel-gateway-controller`) on startup and uses it directly for its own push auth, and the proxy reads the same Secret via a pod-level `secretKeyRef`; the token is created once and reused on every restart, never rotated. Generating it via a live API call rather than at Helm template time means this is correct under GitOps controllers that render client-side with no cluster access (e.g. ArgoCD's default `helm template`), where a template-time `lookup` would silently mint a fresh value on every sync. `proxy.networkPolicy.enabled` (default `true`) additionally locks the config-API port to the controller's own namespace. Set `proxy.authTokenSecretRef.name` to bring your own Secret instead — the controller resolves it through the same direct-API mechanism, never a `secretKeyRef` on its own pod, and never creates or modifies it: a missing bring-your-own Secret fails the controller closed rather than silently generating one at the operator's chosen name. Set `proxy.networkPolicy.enabled: false` to drop the NetworkPolicy on a cluster where it would be inert or unwanted — see the [Helm values reference](../configuration/helm-values.md).
 
 #### Egress Requirements
 

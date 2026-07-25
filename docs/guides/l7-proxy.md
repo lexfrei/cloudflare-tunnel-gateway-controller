@@ -109,7 +109,7 @@ The proxy binary accepts the following environment variables:
 | `TUNNEL_TOKEN` | Required for tunnel mode; omit for standalone/dev mode | Cloudflare tunnel token (base64) |
 | `PROXY_CONFIG_ADDR` | `:8081` | Config API listen address |
 | `PROXY_ADDR` | `:8080` | Proxy listen address |
-| `PROXY_AUTH_TOKEN` | `""` (empty, no auth) | Bearer token for config push API authentication. If unset, the API is unauthenticated. |
+| `PROXY_AUTH_TOKEN` | unset (no auth) | Bearer token for config push API authentication. Unset (the variable never wired at all) means the API runs unauthenticated -- the binary's own default for standalone/manual use; the Helm chart always wires it (see below). Set but empty is treated as a broken configuration, not a choice to run open, and the proxy refuses to start; see [Config API Authentication](#config-api-authentication). |
 | `PROXY_METRICS_ENABLED` | `true` | Expose the data-plane Prometheus metrics at `/metrics` on the config API port. Set `false`/`0` to disable. |
 | `PROXY_GRACE_PERIOD` | `30s` | Connector drain window on shutdown (Go duration, capped at 3m): the proxy unregisters from the edge and gives in-flight requests this long before exiting. |
 | `PROXY_TUNNEL_PROTOCOL` | `auto` | Edge transport: `auto`, `http2`, or `quic`. gRPC needs `http2` (QUIC drops trailers); `auto` is upgraded to `http2` by the proxy. |
@@ -123,12 +123,26 @@ The proxy binary accepts the following environment variables:
 | `PROXY_TRACING_ENDPOINT` | `""` | OTLP exporter endpoint for traces (when tracing is enabled). |
 | `PROXY_TRACING_SAMPLE_RATE` | `1` | Trace sampling fraction in `[0, 1]` (when tracing is enabled). |
 
+### Config API Authentication
+
+The config API is always authenticated when deployed via the chart: leave `proxy.authTokenSecretRef.name` empty (the default) and the controller itself generates a random token into a Secret named `<fullname>-proxy-auth-token` (`<fullname>` is the Helm release fullname, typically `<release>-cloudflare-tunnel-gateway-controller`, or just `<release>` when the release name already contains the chart name) as one of its first startup actions, uses it directly for its own push auth, and the proxy reads the same Secret via a pod-level `secretKeyRef`. The token is created once and reused on every restart, never rotated -- so neither an upgrade nor a controller restart rolls the proxy on its own. Set `proxy.authTokenSecretRef.name` to point at your own Secret instead, for example to manage rotation externally -- the controller resolves it the same way (directly via the API, never a `secretKeyRef` on its own pod) and never creates or modifies it: a missing bring-your-own Secret is a configuration error, not something silently papered over.
+
+On a brand-new install, the proxy Deployment's pod template references the generated Secret before the controller has had a chance to create it -- the affected proxy pod(s) sit briefly in `CreateContainerConfigError` until the controller finishes starting, and kubelet's normal retry picks up the Secret once it exists. This is a one-time, self-resolving startup race, not a failure to act on.
+
+!!! note "Upgrading from a release with no auth token"
+
+    If you were pushing config to the proxy directly (bypassing the controller) with no `Authorization` header, that stops working after upgrading to a chart version with this default: find the exact Secret name your release rendered with `helm get manifest <release> | grep -m1 'proxy-auth-secret-ref'`, then read the token with `kubectl get secret <fullname>-proxy-auth-token -o jsonpath='{.data.auth-token}' | base64 -d` and send it as `Authorization: Bearer <token>`. During the rollout itself there is a brief window where the new, already-authenticated proxy pod rejects pushes from an old controller pod that has not yet rolled (401), and the reverse (an old, unauthenticated proxy pod accepting an authenticated push, since it never checks the header). Both resolve on their own once the rolling update finishes and both sides are on the new pod template -- no manual step is needed.
+
+The generated Secret is created by the controller directly, not rendered by Helm, so `helm uninstall` leaves it behind (see [Uninstalling](../getting-started/installation.md#uninstalling)). A Secret at this name with a missing or empty `auth-token` key fails the controller closed at startup instead of running with an unusable token. The proxy fails closed the same way on its own side: `PROXY_AUTH_TOKEN` being unset still means no auth was configured (unchanged, for raw manifests and local development), but being set to an empty value now refuses to start rather than silently serving the config API to anyone -- see [Config API Auth Secret Missing or Broken](../operations/troubleshooting.md#config-api-auth-secret-missing-or-broken) for the exact error and the recovery command.
+
 ### Health Endpoints
 
 | Endpoint | Port | Description |
 | --- | --- | --- |
 | `/healthz` | Config API | Liveness check |
 | `/readyz` | Config API | Readiness: config loaded at least once AND, in tunnel mode, the tunnel has connected to the Cloudflare edge (standalone mode latches the tunnel condition at startup) |
+
+In tunnel mode, a bootstrap dial failure (cluster DNS unreachable, the edge briefly unreachable) retries with jittered exponential backoff (2s up to a 30s cap) instead of exiting — the pod stays `Running` and reports `/readyz` false throughout, rather than crash-looping. See [Proxy Pod Stuck NotReady After a Restart](../operations/troubleshooting.md#proxy-pod-stuck-notready-after-a-restart) for diagnosis.
 
 ## Example HTTPRoute
 

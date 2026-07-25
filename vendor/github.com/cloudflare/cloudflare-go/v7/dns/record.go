@@ -123,7 +123,7 @@ func (r *RecordService) ListAutoPaging(ctx context.Context, params RecordListPar
 	return pagination.NewV4PagePaginationArrayAutoPager(r.List(ctx, params, opts...))
 }
 
-// Delete DNS Record
+// Permanently removes a DNS record from the zone.
 func (r *RecordService) Delete(ctx context.Context, dnsRecordID string, body RecordDeleteParams, opts ...option.RequestOption) (res *RecordDeleteResponse, err error) {
 	var env RecordDeleteResponseEnvelope
 	opts = slices.Concat(r.Options, opts)
@@ -228,7 +228,7 @@ func (r *RecordService) Export(ctx context.Context, query RecordExportParams, op
 	return res, err
 }
 
-// DNS Record Details
+// Retrieves details for a specific DNS record in the zone.
 func (r *RecordService) Get(ctx context.Context, dnsRecordID string, query RecordGetParams, opts ...option.RequestOption) (res *RecordResponse, err error) {
 	var env RecordGetResponseEnvelope
 	opts = slices.Concat(r.Options, opts)
@@ -6248,6 +6248,10 @@ type RecordNewParams struct {
 	// Identifier.
 	ZoneID param.Field[string]      `path:"zone_id" api:"required"`
 	Body   RecordNewParamsBodyUnion `json:"body" api:"required"`
+	// Whether to include shadow metadata in the `meta` field of each record in the
+	// response. See
+	// [Shadowed records](https://developers.cloudflare.com/dns/manage-dns-records/reference/shadowed-records).
+	IncludeShadowMetadata param.Field[bool] `query:"include_shadow_metadata"`
 }
 
 func (r RecordNewParams) MarshalJSON() (data []byte, err error) {
@@ -6540,6 +6544,10 @@ type RecordUpdateParams struct {
 	// Identifier.
 	ZoneID param.Field[string]         `path:"zone_id" api:"required"`
 	Body   RecordUpdateParamsBodyUnion `json:"body" api:"required"`
+	// Whether to include shadow metadata in the `meta` field of each record in the
+	// response. See
+	// [Shadowed records](https://developers.cloudflare.com/dns/manage-dns-records/reference/shadowed-records).
+	IncludeShadowMetadata param.Field[bool] `query:"include_shadow_metadata"`
 }
 
 func (r RecordUpdateParams) MarshalJSON() (data []byte, err error) {
@@ -6835,6 +6843,10 @@ type RecordListParams struct {
 	Content param.Field[RecordListParamsContent] `query:"content"`
 	// Direction to order DNS records in.
 	Direction param.Field[shared.SortDirection] `query:"direction"`
+	// Whether to include shadow metadata in the `meta` field of each record in the
+	// response. See
+	// [Shadowed records](https://developers.cloudflare.com/dns/manage-dns-records/reference/shadowed-records).
+	IncludeShadowMetadata param.Field[bool] `query:"include_shadow_metadata"`
 	// Whether to match all search requirements or at least one (any). If set to `all`,
 	// acts like a logical AND between filters. If set to `any`, acts like a logical OR
 	// instead. Note that the interaction between tag filters is controlled by the
@@ -6856,6 +6868,17 @@ type RecordListParams struct {
 	// parameter works independently of the `match` setting. For automated searches,
 	// please use the other available parameters.
 	Search param.Field[string]              `query:"search"`
+	// Filters to records at or below the given NS delegation name, excluding the NS
+	// records that form the delegation itself. The value must be a subdomain of the
+	// zone; the zone apex is not accepted. Requires `include_shadow_metadata=true`.
+	// See
+	// [Shadowed records](https://developers.cloudflare.com/dns/manage-dns-records/reference/shadowed-records).
+	ShadowedByName param.Field[string] `query:"shadowed_by_name"`
+	// Returns NS records that shadow the given name, searching at the name itself and
+	// each of its ancestor names within the zone, excluding the zone apex. The value
+	// must be a subdomain of the zone; the zone apex is not accepted. See
+	// [Shadowed records](https://developers.cloudflare.com/dns/manage-dns-records/reference/shadowed-records).
+	ShadowingName param.Field[string]              `query:"shadowing_name"`
 	Tag    param.Field[RecordListParamsTag] `query:"tag"`
 	// Whether to match all tag search requirements or at least one (any). If set to
 	// `all`, acts like a logical AND between tag filters. If set to `any`, acts like a
@@ -7091,6 +7114,10 @@ func (r recordDeleteResponseEnvelopeJSON) RawJSON() string {
 type RecordBatchParams struct {
 	// Identifier.
 	ZoneID  param.Field[string]                       `path:"zone_id" api:"required"`
+	// Whether to include shadow metadata in the `meta` field of each record in the
+	// response. See
+	// [Shadowed records](https://developers.cloudflare.com/dns/manage-dns-records/reference/shadowed-records).
+	IncludeShadowMetadata param.Field[bool]                         `query:"include_shadow_metadata"`
 	Deletes param.Field[[]RecordBatchParamsDelete]    `json:"deletes"`
 	Patches param.Field[[]BatchPatchUnionParam]       `json:"patches"`
 	Posts   param.Field[[]RecordBatchParamsPostUnion] `json:"posts"`
@@ -7396,6 +7423,10 @@ type RecordEditParams struct {
 	// Identifier.
 	ZoneID param.Field[string]       `path:"zone_id" api:"required"`
 	Body   RecordEditParamsBodyUnion `json:"body" api:"required"`
+	// Whether to include shadow metadata in the `meta` field of each record in the
+	// response. See
+	// [Shadowed records](https://developers.cloudflare.com/dns/manage-dns-records/reference/shadowed-records).
+	IncludeShadowMetadata param.Field[bool] `query:"include_shadow_metadata"`
 }
 
 func (r RecordEditParams) MarshalJSON() (data []byte, err error) {
@@ -7692,6 +7723,10 @@ type RecordExportParams struct {
 type RecordGetParams struct {
 	// Identifier.
 	ZoneID param.Field[string] `path:"zone_id" api:"required"`
+	// Whether to include shadow metadata in the `meta` field of each record in the
+	// response. See
+	// [Shadowed records](https://developers.cloudflare.com/dns/manage-dns-records/reference/shadowed-records).
+	IncludeShadowMetadata param.Field[bool] `query:"include_shadow_metadata"`
 }
 
 type RecordGetResponseEnvelope struct {

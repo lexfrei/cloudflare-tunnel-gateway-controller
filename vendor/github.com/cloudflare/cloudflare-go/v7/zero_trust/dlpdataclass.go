@@ -178,7 +178,7 @@ func (r dlpDataClassNewResponseJSON) RawJSON() string {
 	return r.raw
 }
 
-// A reference pairing a sensitivity group with a specific level within that group.
+// DLPDataClassNewResponseSensitivityLevel is a reference pairing a sensitivity group with a specific level within that group.
 type DLPDataClassNewResponseSensitivityLevel struct {
 	GroupID string                                      `json:"group_id" api:"required" format:"uuid"`
 	LevelID string                                      `json:"level_id" api:"required" format:"uuid"`
@@ -237,7 +237,7 @@ func (r dlpDataClassUpdateResponseJSON) RawJSON() string {
 	return r.raw
 }
 
-// A reference pairing a sensitivity group with a specific level within that group.
+// DLPDataClassUpdateResponseSensitivityLevel is a reference pairing a sensitivity group with a specific level within that group.
 type DLPDataClassUpdateResponseSensitivityLevel struct {
 	GroupID string                                         `json:"group_id" api:"required" format:"uuid"`
 	LevelID string                                         `json:"level_id" api:"required" format:"uuid"`
@@ -296,7 +296,7 @@ func (r dlpDataClassListResponseJSON) RawJSON() string {
 	return r.raw
 }
 
-// A reference pairing a sensitivity group with a specific level within that group.
+// DLPDataClassListResponseSensitivityLevel is a reference pairing a sensitivity group with a specific level within that group.
 type DLPDataClassListResponseSensitivityLevel struct {
 	GroupID string                                       `json:"group_id" api:"required" format:"uuid"`
 	LevelID string                                       `json:"level_id" api:"required" format:"uuid"`
@@ -357,7 +357,7 @@ func (r dlpDataClassGetResponseJSON) RawJSON() string {
 	return r.raw
 }
 
-// A reference pairing a sensitivity group with a specific level within that group.
+// DLPDataClassGetResponseSensitivityLevel is a reference pairing a sensitivity group with a specific level within that group.
 type DLPDataClassGetResponseSensitivityLevel struct {
 	GroupID string                                      `json:"group_id" api:"required" format:"uuid"`
 	LevelID string                                      `json:"level_id" api:"required" format:"uuid"`
@@ -394,7 +394,7 @@ func (r DLPDataClassNewParams) MarshalJSON() (data []byte, err error) {
 	return apijson.MarshalRoot(r)
 }
 
-// A reference pairing a sensitivity group with a specific level within that group.
+// DLPDataClassNewParamsSensitivityLevel is a reference pairing a sensitivity group with a specific level within that group.
 type DLPDataClassNewParamsSensitivityLevel struct {
 	GroupID param.Field[string] `json:"group_id" api:"required" format:"uuid"`
 	LevelID param.Field[string] `json:"level_id" api:"required" format:"uuid"`
@@ -528,7 +528,7 @@ func (r dlpDataClassNewResponseEnvelopeMessagesSourceJSON) RawJSON() string {
 	return r.raw
 }
 
-// Whether the API call was successful.
+// DLPDataClassNewResponseEnvelopeSuccess indicates whether the API call was successful.
 type DLPDataClassNewResponseEnvelopeSuccess bool
 
 const (
@@ -556,7 +556,7 @@ func (r DLPDataClassUpdateParams) MarshalJSON() (data []byte, err error) {
 	return apijson.MarshalRoot(r)
 }
 
-// A reference pairing a sensitivity group with a specific level within that group.
+// DLPDataClassUpdateParamsSensitivityLevel is a reference pairing a sensitivity group with a specific level within that group.
 type DLPDataClassUpdateParamsSensitivityLevel struct {
 	GroupID param.Field[string] `json:"group_id" api:"required" format:"uuid"`
 	LevelID param.Field[string] `json:"level_id" api:"required" format:"uuid"`
@@ -690,7 +690,7 @@ func (r dlpDataClassUpdateResponseEnvelopeMessagesSourceJSON) RawJSON() string {
 	return r.raw
 }
 
-// Whether the API call was successful.
+// DLPDataClassUpdateResponseEnvelopeSuccess indicates whether the API call was successful.
 type DLPDataClassUpdateResponseEnvelopeSuccess bool
 
 const (
@@ -837,7 +837,7 @@ func (r dlpDataClassDeleteResponseEnvelopeMessagesSourceJSON) RawJSON() string {
 	return r.raw
 }
 
-// Whether the API call was successful.
+// DLPDataClassDeleteResponseEnvelopeSuccess indicates whether the API call was successful.
 type DLPDataClassDeleteResponseEnvelopeSuccess bool
 
 const (
@@ -980,7 +980,7 @@ func (r dlpDataClassGetResponseEnvelopeMessagesSourceJSON) RawJSON() string {
 	return r.raw
 }
 
-// Whether the API call was successful.
+// DLPDataClassGetResponseEnvelopeSuccess indicates whether the API call was successful.
 type DLPDataClassGetResponseEnvelopeSuccess bool
 
 const (

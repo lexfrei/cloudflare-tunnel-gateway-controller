@@ -22,6 +22,17 @@ var (
 	errPathValueRequired = errors.New("path: value is required")
 	errUnknownFilterType = errors.New("unknown filter type")
 	errStaleVersion      = errors.New("stale config version")
+	// ErrLostConfigPushRace is returned by the pusher when a 409 stale-version
+	// conflict is attributable to a concurrent same-process pusher having
+	// already delivered a NEWER config, not to controller-restart clock skew.
+	// Re-pushing the older payload would force-overwrite the newer config, so
+	// the push is abandoned and this error is returned instead. It is a
+	// distinguishable outcome, but it flows through the syncer's normal
+	// push-failure path (recordPush): that invalidates the partition's
+	// steady-state skip key so the next sync re-delivers the current desired
+	// config, while leaving the cached lastCfg untouched (only a successful
+	// push updates it).
+	ErrLostConfigPushRace = errors.New("config push lost race to a concurrent pusher with a newer config")
 	// errTLSMirrorWithoutTransportFactory is returned by Router.UpdateConfig
 	// when a config carries a RequestMirror filter whose TLS is set but the
 	// Router was never given a TransportFactory via SetHandler. Mirror

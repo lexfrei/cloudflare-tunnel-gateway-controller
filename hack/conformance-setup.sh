@@ -47,7 +47,7 @@ TEST_NAMESPACE="conformance-test"
 RELEASE_NAME="cftunnel"
 CONTROLLER_IMAGE="controller:dev"
 PROXY_IMAGE="proxy:dev"
-GATEWAY_API_VERSION="v1.6.0"
+GATEWAY_API_VERSION="v1.6.1"
 
 # --- Flags ---
 RUN_TESTS=false
@@ -68,6 +68,69 @@ die()   { echo "ERROR: $*" >&2; exit 1; }
 
 check_tool() {
   command -v "$1" >/dev/null 2>&1 || die "$1 is not installed"
+}
+
+# Dump pod-level cluster state on any failure once the cluster exists. Setup
+# timeouts (helm --wait, rollout status) and test failures alike otherwise die
+# with no record of what the controller and proxy saw -- and in CI the next
+# attempt deletes the cluster, so the moment of failure is the only window to
+# capture it.
+dump_diagnostics() {
+  # Every call is bounded: the dump runs exactly when the cluster may be
+  # half-alive (apiserver accepts TCP but never answers), and an unbounded
+  # kubectl here would burn the remaining CI job timeout.
+  local kdump=(kubectl --context "${KUBE_CONTEXT}" --request-timeout=10s)
+
+  {
+    echo ""
+    echo "==> FAILURE DIAGNOSTICS (cluster '${CLUSTER_NAME}')"
+
+    if ! kubectl --context "${KUBE_CONTEXT}" --request-timeout=5s get nodes >/dev/null 2>&1; then
+      echo "==> Cluster unreachable; skipping diagnostics"
+      return 0
+    fi
+
+    echo "--- pods (all namespaces) ---"
+    "${kdump[@]}" get pods --all-namespaces --output wide || true
+
+    # All namespaces: test-phase failures surface in the test namespaces
+    # (echo backends, per-test routes), not just the controller's.
+    echo "--- events (all namespaces) ---"
+    "${kdump[@]}" get events --all-namespaces --sort-by=.lastTimestamp || true
+
+    echo "--- describe pods (${NAMESPACE}) ---"
+    "${kdump[@]}" describe pods --namespace "${NAMESPACE}" || true
+
+    # creationTimestamp answers whether the CR was applied late or the
+    # controller's cache was stale when a bootstrap race is suspected (#581).
+    echo "--- gatewayclassconfig ---"
+    "${kdump[@]}" get gatewayclassconfig --output yaml 2>/dev/null || true
+
+    # Test namespaces too: per-Gateway data planes and echo backends live
+    # there -- "e2e-test" is created by the e2e suite, and the official
+    # conformance suite creates its own "gateway-conformance-*" namespaces.
+    local dump_namespaces ns pod
+    dump_namespaces="$("${kdump[@]}" get namespaces --output name 2>/dev/null \
+      | sed 's|^namespace/||' \
+      | grep -E "^(${NAMESPACE}|${TEST_NAMESPACE}|e2e-test|gateway-conformance)" || true)"
+
+    for ns in ${dump_namespaces}; do
+      for pod in $("${kdump[@]}" get pods \
+          --namespace "${ns}" --output name 2>/dev/null); do
+        echo "--- logs ${ns}/${pod#pod/} (last 300 lines per container) ---"
+        "${kdump[@]}" logs "${pod}" --namespace "${ns}" \
+          --all-containers --tail=300 --prefix || true
+      done
+    done
+  } >&2
+}
+
+on_exit() {
+  local exit_code=$1
+  # 130 = operator interrupt (Ctrl-C), not a failure worth a dump.
+  if [[ "${exit_code}" -ne 0 && "${exit_code}" -ne 130 ]]; then
+    dump_diagnostics
+  fi
 }
 
 while [[ $# -gt 0 ]]; do
@@ -187,6 +250,9 @@ KINDEOF
 # Verify connectivity
 kubectl --context "${KUBE_CONTEXT}" cluster-info --request-timeout=5s >/dev/null 2>&1 \
   || die "Cannot connect to cluster '${KUBE_CONTEXT}'"
+
+# From here on the cluster exists -- capture its state if anything fails.
+trap 'on_exit $?' EXIT
 
 # --- Step 4: Install Gateway API CRDs (channel selectable via --channel) ---
 info "Installing Gateway API CRDs (${GATEWAY_API_VERSION}, ${CHANNEL})..."

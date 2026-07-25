@@ -116,12 +116,14 @@ helm uninstall cloudflare-tunnel-gateway-controller \
 
     Uninstalling the Helm release removes the controller and proxy pods. The tunnel configuration in Cloudflare will remain. To fully clean up, delete the tunnel from the Cloudflare dashboard.
 
+    If `proxy.authTokenSecretRef.name` is empty (the default), the controller also generated a config-API bearer token into a Secret named `<fullname>-proxy-auth-token` (see [Components](#components) below for what `<fullname>` resolves to). The controller created that Secret directly via the Kubernetes API rather than Helm rendering it, so `helm uninstall` does not remove it — see [Uninstalling](../getting-started/installation.md#uninstalling) for why that is deliberate and the command to remove it as part of a full cleanup.
+
 ## CRDs
 
 The chart installs two CRDs: `GatewayClassConfig` and `ExternalBackend`. Gateway API CRDs must be installed separately:
 
 ```bash
-kubectl apply --filename https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.6.0/standard-install.yaml
+kubectl apply --filename https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.6.1/standard-install.yaml
 ```
 
 ## Components

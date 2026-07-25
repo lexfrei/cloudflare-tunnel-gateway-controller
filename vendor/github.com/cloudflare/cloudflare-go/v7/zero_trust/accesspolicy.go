@@ -145,7 +145,7 @@ func (r *AccessPolicyService) Get(ctx context.Context, policyID string, query Ac
 	return res, nil
 }
 
-// A group of email addresses that can approve a temporary authentication request.
+// ApprovalGroup is a group of email addresses that can approve a temporary authentication request.
 type ApprovalGroup struct {
 	// The number of approvals needed to obtain access.
 	ApprovalsNeeded float64 `json:"approvals_needed" api:"required"`
@@ -173,7 +173,7 @@ func (r approvalGroupJSON) RawJSON() string {
 	return r.raw
 }
 
-// A group of email addresses that can approve a temporary authentication request.
+// ApprovalGroupParam is a group of email addresses that can approve a temporary authentication request.
 type ApprovalGroupParam struct {
 	// The number of approvals needed to obtain access.
 	ApprovalsNeeded param.Field[float64] `json:"approvals_needed" api:"required"`
@@ -267,7 +267,7 @@ func (r accessPolicyNewResponseJSON) RawJSON() string {
 	return r.raw
 }
 
-// The rules that define how users may connect to targets secured by your
+// AccessPolicyNewResponseConnectionRules defines the rules for how users may connect to targets secured by your
 // application.
 type AccessPolicyNewResponseConnectionRules struct {
 	// The RDP-specific rules that define clipboard behavior for RDP connections.
@@ -291,7 +291,7 @@ func (r accessPolicyNewResponseConnectionRulesJSON) RawJSON() string {
 	return r.raw
 }
 
-// The RDP-specific rules that define clipboard behavior for RDP connections.
+// AccessPolicyNewResponseConnectionRulesRDP contains the RDP-specific rules that define clipboard behavior for RDP connections.
 type AccessPolicyNewResponseConnectionRulesRDP struct {
 	// Clipboard formats allowed when copying from local machine to remote RDP session.
 	AllowedClipboardLocalToRemoteFormats []AccessPolicyNewResponseConnectionRulesRDPAllowedClipboardLocalToRemoteFormat `json:"allowed_clipboard_local_to_remote_formats"`
@@ -317,7 +317,7 @@ func (r accessPolicyNewResponseConnectionRulesRDPJSON) RawJSON() string {
 	return r.raw
 }
 
-// Clipboard format for RDP connections.
+// AccessPolicyNewResponseConnectionRulesRDPAllowedClipboardLocalToRemoteFormat is a clipboard format for RDP connections.
 type AccessPolicyNewResponseConnectionRulesRDPAllowedClipboardLocalToRemoteFormat string
 
 const (
@@ -332,7 +332,7 @@ func (r AccessPolicyNewResponseConnectionRulesRDPAllowedClipboardLocalToRemoteFo
 	return false
 }
 
-// Clipboard format for RDP connections.
+// AccessPolicyNewResponseConnectionRulesRDPAllowedClipboardRemoteToLocalFormat is a clipboard format for RDP connections.
 type AccessPolicyNewResponseConnectionRulesRDPAllowedClipboardRemoteToLocalFormat string
 
 const (
@@ -347,7 +347,7 @@ func (r AccessPolicyNewResponseConnectionRulesRDPAllowedClipboardRemoteToLocalFo
 	return false
 }
 
-// Configures multi-factor authentication (MFA) settings.
+// AccessPolicyNewResponseMfaConfig configures multi-factor authentication (MFA) settings.
 type AccessPolicyNewResponseMfaConfig struct {
 	// Lists the MFA methods that users can authenticate with.
 	AllowedAuthenticators []AccessPolicyNewResponseMfaConfigAllowedAuthenticator `json:"allowed_authenticators"`
@@ -488,7 +488,7 @@ func (r accessPolicyUpdateResponseJSON) RawJSON() string {
 	return r.raw
 }
 
-// The rules that define how users may connect to targets secured by your
+// AccessPolicyUpdateResponseConnectionRules defines the rules for how users may connect to targets secured by your
 // application.
 type AccessPolicyUpdateResponseConnectionRules struct {
 	// The RDP-specific rules that define clipboard behavior for RDP connections.
@@ -512,7 +512,7 @@ func (r accessPolicyUpdateResponseConnectionRulesJSON) RawJSON() string {
 	return r.raw
 }
 
-// The RDP-specific rules that define clipboard behavior for RDP connections.
+// AccessPolicyUpdateResponseConnectionRulesRDP contains the RDP-specific rules that define clipboard behavior for RDP connections.
 type AccessPolicyUpdateResponseConnectionRulesRDP struct {
 	// Clipboard formats allowed when copying from local machine to remote RDP session.
 	AllowedClipboardLocalToRemoteFormats []AccessPolicyUpdateResponseConnectionRulesRDPAllowedClipboardLocalToRemoteFormat `json:"allowed_clipboard_local_to_remote_formats"`
@@ -538,7 +538,7 @@ func (r accessPolicyUpdateResponseConnectionRulesRDPJSON) RawJSON() string {
 	return r.raw
 }
 
-// Clipboard format for RDP connections.
+// AccessPolicyUpdateResponseConnectionRulesRDPAllowedClipboardLocalToRemoteFormat is a clipboard format for RDP connections.
 type AccessPolicyUpdateResponseConnectionRulesRDPAllowedClipboardLocalToRemoteFormat string
 
 const (
@@ -553,7 +553,7 @@ func (r AccessPolicyUpdateResponseConnectionRulesRDPAllowedClipboardLocalToRemot
 	return false
 }
 
-// Clipboard format for RDP connections.
+// AccessPolicyUpdateResponseConnectionRulesRDPAllowedClipboardRemoteToLocalFormat is a clipboard format for RDP connections.
 type AccessPolicyUpdateResponseConnectionRulesRDPAllowedClipboardRemoteToLocalFormat string
 
 const (
@@ -568,7 +568,7 @@ func (r AccessPolicyUpdateResponseConnectionRulesRDPAllowedClipboardRemoteToLoca
 	return false
 }
 
-// Configures multi-factor authentication (MFA) settings.
+// AccessPolicyUpdateResponseMfaConfig configures multi-factor authentication (MFA) settings.
 type AccessPolicyUpdateResponseMfaConfig struct {
 	// Lists the MFA methods that users can authenticate with.
 	AllowedAuthenticators []AccessPolicyUpdateResponseMfaConfigAllowedAuthenticator `json:"allowed_authenticators"`
@@ -709,7 +709,7 @@ func (r accessPolicyListResponseJSON) RawJSON() string {
 	return r.raw
 }
 
-// The rules that define how users may connect to targets secured by your
+// AccessPolicyListResponseConnectionRules defines the rules for how users may connect to targets secured by your
 // application.
 type AccessPolicyListResponseConnectionRules struct {
 	// The RDP-specific rules that define clipboard behavior for RDP connections.
@@ -733,7 +733,7 @@ func (r accessPolicyListResponseConnectionRulesJSON) RawJSON() string {
 	return r.raw
 }
 
-// The RDP-specific rules that define clipboard behavior for RDP connections.
+// AccessPolicyListResponseConnectionRulesRDP contains the RDP-specific rules that define clipboard behavior for RDP connections.
 type AccessPolicyListResponseConnectionRulesRDP struct {
 	// Clipboard formats allowed when copying from local machine to remote RDP session.
 	AllowedClipboardLocalToRemoteFormats []AccessPolicyListResponseConnectionRulesRDPAllowedClipboardLocalToRemoteFormat `json:"allowed_clipboard_local_to_remote_formats"`
@@ -759,7 +759,7 @@ func (r accessPolicyListResponseConnectionRulesRDPJSON) RawJSON() string {
 	return r.raw
 }
 
-// Clipboard format for RDP connections.
+// AccessPolicyListResponseConnectionRulesRDPAllowedClipboardLocalToRemoteFormat is a clipboard format for RDP connections.
 type AccessPolicyListResponseConnectionRulesRDPAllowedClipboardLocalToRemoteFormat string
 
 const (
@@ -774,7 +774,7 @@ func (r AccessPolicyListResponseConnectionRulesRDPAllowedClipboardLocalToRemoteF
 	return false
 }
 
-// Clipboard format for RDP connections.
+// AccessPolicyListResponseConnectionRulesRDPAllowedClipboardRemoteToLocalFormat is a clipboard format for RDP connections.
 type AccessPolicyListResponseConnectionRulesRDPAllowedClipboardRemoteToLocalFormat string
 
 const (
@@ -789,7 +789,7 @@ func (r AccessPolicyListResponseConnectionRulesRDPAllowedClipboardRemoteToLocalF
 	return false
 }
 
-// Configures multi-factor authentication (MFA) settings.
+// AccessPolicyListResponseMfaConfig configures multi-factor authentication (MFA) settings.
 type AccessPolicyListResponseMfaConfig struct {
 	// Lists the MFA methods that users can authenticate with.
 	AllowedAuthenticators []AccessPolicyListResponseMfaConfigAllowedAuthenticator `json:"allowed_authenticators"`
@@ -952,7 +952,7 @@ func (r accessPolicyGetResponseJSON) RawJSON() string {
 	return r.raw
 }
 
-// The rules that define how users may connect to targets secured by your
+// AccessPolicyGetResponseConnectionRules defines the rules for how users may connect to targets secured by your
 // application.
 type AccessPolicyGetResponseConnectionRules struct {
 	// The RDP-specific rules that define clipboard behavior for RDP connections.
@@ -976,7 +976,7 @@ func (r accessPolicyGetResponseConnectionRulesJSON) RawJSON() string {
 	return r.raw
 }
 
-// The RDP-specific rules that define clipboard behavior for RDP connections.
+// AccessPolicyGetResponseConnectionRulesRDP contains the RDP-specific rules that define clipboard behavior for RDP connections.
 type AccessPolicyGetResponseConnectionRulesRDP struct {
 	// Clipboard formats allowed when copying from local machine to remote RDP session.
 	AllowedClipboardLocalToRemoteFormats []AccessPolicyGetResponseConnectionRulesRDPAllowedClipboardLocalToRemoteFormat `json:"allowed_clipboard_local_to_remote_formats"`
@@ -1002,7 +1002,7 @@ func (r accessPolicyGetResponseConnectionRulesRDPJSON) RawJSON() string {
 	return r.raw
 }
 
-// Clipboard format for RDP connections.
+// AccessPolicyGetResponseConnectionRulesRDPAllowedClipboardLocalToRemoteFormat is a clipboard format for RDP connections.
 type AccessPolicyGetResponseConnectionRulesRDPAllowedClipboardLocalToRemoteFormat string
 
 const (
@@ -1017,7 +1017,7 @@ func (r AccessPolicyGetResponseConnectionRulesRDPAllowedClipboardLocalToRemoteFo
 	return false
 }
 
-// Clipboard format for RDP connections.
+// AccessPolicyGetResponseConnectionRulesRDPAllowedClipboardRemoteToLocalFormat is a clipboard format for RDP connections.
 type AccessPolicyGetResponseConnectionRulesRDPAllowedClipboardRemoteToLocalFormat string
 
 const (
@@ -1032,7 +1032,7 @@ func (r AccessPolicyGetResponseConnectionRulesRDPAllowedClipboardRemoteToLocalFo
 	return false
 }
 
-// Configures multi-factor authentication (MFA) settings.
+// AccessPolicyGetResponseMfaConfig configures multi-factor authentication (MFA) settings.
 type AccessPolicyGetResponseMfaConfig struct {
 	// Lists the MFA methods that users can authenticate with.
 	AllowedAuthenticators []AccessPolicyGetResponseMfaConfigAllowedAuthenticator `json:"allowed_authenticators"`
@@ -1138,7 +1138,7 @@ func (r AccessPolicyNewParams) MarshalJSON() (data []byte, err error) {
 	return apijson.MarshalRoot(r)
 }
 
-// The rules that define how users may connect to targets secured by your
+// AccessPolicyNewParamsConnectionRules defines the rules for how users may connect to targets secured by your
 // application.
 type AccessPolicyNewParamsConnectionRules struct {
 	// The RDP-specific rules that define clipboard behavior for RDP connections.
@@ -1149,7 +1149,7 @@ func (r AccessPolicyNewParamsConnectionRules) MarshalJSON() (data []byte, err er
 	return apijson.MarshalRoot(r)
 }
 
-// The RDP-specific rules that define clipboard behavior for RDP connections.
+// AccessPolicyNewParamsConnectionRulesRDP contains the RDP-specific rules that define clipboard behavior for RDP connections.
 type AccessPolicyNewParamsConnectionRulesRDP struct {
 	// Clipboard formats allowed when copying from local machine to remote RDP session.
 	AllowedClipboardLocalToRemoteFormats param.Field[[]AccessPolicyNewParamsConnectionRulesRDPAllowedClipboardLocalToRemoteFormat] `json:"allowed_clipboard_local_to_remote_formats"`
@@ -1161,7 +1161,7 @@ func (r AccessPolicyNewParamsConnectionRulesRDP) MarshalJSON() (data []byte, err
 	return apijson.MarshalRoot(r)
 }
 
-// Clipboard format for RDP connections.
+// AccessPolicyNewParamsConnectionRulesRDPAllowedClipboardLocalToRemoteFormat is a clipboard format for RDP connections.
 type AccessPolicyNewParamsConnectionRulesRDPAllowedClipboardLocalToRemoteFormat string
 
 const (
@@ -1176,7 +1176,7 @@ func (r AccessPolicyNewParamsConnectionRulesRDPAllowedClipboardLocalToRemoteForm
 	return false
 }
 
-// Clipboard format for RDP connections.
+// AccessPolicyNewParamsConnectionRulesRDPAllowedClipboardRemoteToLocalFormat is a clipboard format for RDP connections.
 type AccessPolicyNewParamsConnectionRulesRDPAllowedClipboardRemoteToLocalFormat string
 
 const (
@@ -1191,7 +1191,7 @@ func (r AccessPolicyNewParamsConnectionRulesRDPAllowedClipboardRemoteToLocalForm
 	return false
 }
 
-// Configures multi-factor authentication (MFA) settings.
+// AccessPolicyNewParamsMfaConfig configures multi-factor authentication (MFA) settings.
 type AccessPolicyNewParamsMfaConfig struct {
 	// Lists the MFA methods that users can authenticate with.
 	AllowedAuthenticators param.Field[[]AccessPolicyNewParamsMfaConfigAllowedAuthenticator] `json:"allowed_authenticators"`
@@ -1347,7 +1347,7 @@ func (r accessPolicyNewResponseEnvelopeMessagesSourceJSON) RawJSON() string {
 	return r.raw
 }
 
-// Whether the API call was successful.
+// AccessPolicyNewResponseEnvelopeSuccess indicates whether the API call was successful.
 type AccessPolicyNewResponseEnvelopeSuccess bool
 
 const (
@@ -1407,7 +1407,7 @@ func (r AccessPolicyUpdateParams) MarshalJSON() (data []byte, err error) {
 	return apijson.MarshalRoot(r)
 }
 
-// The rules that define how users may connect to targets secured by your
+// AccessPolicyUpdateParamsConnectionRules defines the rules for how users may connect to targets secured by your
 // application.
 type AccessPolicyUpdateParamsConnectionRules struct {
 	// The RDP-specific rules that define clipboard behavior for RDP connections.
@@ -1418,7 +1418,7 @@ func (r AccessPolicyUpdateParamsConnectionRules) MarshalJSON() (data []byte, err
 	return apijson.MarshalRoot(r)
 }
 
-// The RDP-specific rules that define clipboard behavior for RDP connections.
+// AccessPolicyUpdateParamsConnectionRulesRDP contains the RDP-specific rules that define clipboard behavior for RDP connections.
 type AccessPolicyUpdateParamsConnectionRulesRDP struct {
 	// Clipboard formats allowed when copying from local machine to remote RDP session.
 	AllowedClipboardLocalToRemoteFormats param.Field[[]AccessPolicyUpdateParamsConnectionRulesRDPAllowedClipboardLocalToRemoteFormat] `json:"allowed_clipboard_local_to_remote_formats"`
@@ -1430,7 +1430,7 @@ func (r AccessPolicyUpdateParamsConnectionRulesRDP) MarshalJSON() (data []byte, 
 	return apijson.MarshalRoot(r)
 }
 
-// Clipboard format for RDP connections.
+// AccessPolicyUpdateParamsConnectionRulesRDPAllowedClipboardLocalToRemoteFormat is a clipboard format for RDP connections.
 type AccessPolicyUpdateParamsConnectionRulesRDPAllowedClipboardLocalToRemoteFormat string
 
 const (
@@ -1445,7 +1445,7 @@ func (r AccessPolicyUpdateParamsConnectionRulesRDPAllowedClipboardLocalToRemoteF
 	return false
 }
 
-// Clipboard format for RDP connections.
+// AccessPolicyUpdateParamsConnectionRulesRDPAllowedClipboardRemoteToLocalFormat is a clipboard format for RDP connections.
 type AccessPolicyUpdateParamsConnectionRulesRDPAllowedClipboardRemoteToLocalFormat string
 
 const (
@@ -1460,7 +1460,7 @@ func (r AccessPolicyUpdateParamsConnectionRulesRDPAllowedClipboardRemoteToLocalF
 	return false
 }
 
-// Configures multi-factor authentication (MFA) settings.
+// AccessPolicyUpdateParamsMfaConfig configures multi-factor authentication (MFA) settings.
 type AccessPolicyUpdateParamsMfaConfig struct {
 	// Lists the MFA methods that users can authenticate with.
 	AllowedAuthenticators param.Field[[]AccessPolicyUpdateParamsMfaConfigAllowedAuthenticator] `json:"allowed_authenticators"`
@@ -1616,7 +1616,7 @@ func (r accessPolicyUpdateResponseEnvelopeMessagesSourceJSON) RawJSON() string {
 	return r.raw
 }
 
-// Whether the API call was successful.
+// AccessPolicyUpdateResponseEnvelopeSuccess indicates whether the API call was successful.
 type AccessPolicyUpdateResponseEnvelopeSuccess bool
 
 const (
@@ -1777,7 +1777,7 @@ func (r accessPolicyDeleteResponseEnvelopeMessagesSourceJSON) RawJSON() string {
 	return r.raw
 }
 
-// Whether the API call was successful.
+// AccessPolicyDeleteResponseEnvelopeSuccess indicates whether the API call was successful.
 type AccessPolicyDeleteResponseEnvelopeSuccess bool
 
 const (
@@ -1921,7 +1921,7 @@ func (r accessPolicyGetResponseEnvelopeMessagesSourceJSON) RawJSON() string {
 	return r.raw
 }
 
-// Whether the API call was successful.
+// AccessPolicyGetResponseEnvelopeSuccess indicates whether the API call was successful.
 type AccessPolicyGetResponseEnvelopeSuccess bool
 
 const (

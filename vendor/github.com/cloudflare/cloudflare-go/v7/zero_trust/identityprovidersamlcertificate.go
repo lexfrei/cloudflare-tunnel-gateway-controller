@@ -68,7 +68,7 @@ func (r *IdentityProviderSAMLCertificateService) New(ctx context.Context, identi
 	return res, nil
 }
 
-// A SAML encryption certificate set containing current and optionally previous
+// IdentityProviderSAMLCertificateNewResponse is a SAML encryption certificate set containing current and optionally previous
 // certificates for encryption key rotation.
 type IdentityProviderSAMLCertificateNewResponse struct {
 	// Timestamp when the certificate set was created
@@ -105,7 +105,7 @@ func (r identityProviderSAMLCertificateNewResponseJSON) RawJSON() string {
 	return r.raw
 }
 
-// The currently active certificate used for encrypting SAML assertions
+// IdentityProviderSAMLCertificateNewResponseCurrentCertificate is the currently active certificate used for encrypting SAML assertions
 type IdentityProviderSAMLCertificateNewResponseCurrentCertificate struct {
 	// Indicates whether this is the currently active certificate
 	IsCurrent bool `json:"is_current" api:"required"`
@@ -275,7 +275,7 @@ func (r identityProviderSAMLCertificateNewResponseEnvelopeMessagesSourceJSON) Ra
 	return r.raw
 }
 
-// Whether the API call was successful.
+// IdentityProviderSAMLCertificateNewResponseEnvelopeSuccess indicates whether the API call was successful.
 type IdentityProviderSAMLCertificateNewResponseEnvelopeSuccess bool
 
 const (

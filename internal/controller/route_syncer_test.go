@@ -1456,7 +1456,7 @@ func TestSyncAndUpdateStatusCommon_PropagatesError(t *testing.T) {
 
 	// No GatewayClass exists, so SyncAllRoutes will return error with RequeueAfter > 0
 	// (apiErrorRequeueDelay). In that case, error is NOT propagated (swallowed for requeue).
-	result, err := syncAndUpdateStatusCommon(context.Background(), params)
+	result, err := syncAndUpdateStatusCommon(context.Background(), &params)
 
 	// The error should be nil because RequeueAfter is set —
 	// controller-runtime would override the requeue interval if error were returned.
@@ -1509,7 +1509,7 @@ func TestSyncAndUpdateStatusCommon_PropagatesErrorWhenNoRequeue(t *testing.T) {
 		},
 	}
 
-	result, err := syncAndUpdateStatusCommon(context.Background(), params)
+	result, err := syncAndUpdateStatusCommon(context.Background(), &params)
 
 	// Config resolution will fail (missing GatewayClassConfig),
 	// returning RequeueAfter=apiErrorRequeueDelay. Error should be swallowed.

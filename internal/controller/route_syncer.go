@@ -283,11 +283,26 @@ type syncUpdateParams struct {
 	// explicit quic warns.
 	tunnelProtocol string
 	statusEntries  func(*SyncResult, []proxy.RouteDiagnostic) []routeStatusEntry
+	// onSyncError, when set, observes the sync error even on the paths where
+	// the returned error is deliberately swallowed to carry a RequeueAfter
+	// interval (controller-runtime overrides the interval when an error is
+	// returned). The startup-sync retry loop needs the real outcome: treating
+	// a swallowed resolve failure as success left the data plane configless
+	// with nothing to retry (#581).
+	onSyncError func(error)
+	// onPushError, when set, observes proxy config push failures, which are
+	// otherwise non-blocking by design (route statuses already reflect the
+	// tunnel sync). The startup-sync retry loop needs them: the initial push
+	// is what makes route-less proxy replicas ready, and a failed push leaves
+	// no cached config for endpoint-event resyncs to replay, so ending the
+	// startup retry on a sync-succeeded/push-failed attempt would re-open the
+	// #581 deadlock through the push side.
+	onPushError func(error)
 }
 
 // syncAndUpdateStatusCommon performs a full route sync, pushes proxy config,
 // and updates route status. Used by both HTTPRoute and GRPCRoute reconcilers.
-func syncAndUpdateStatusCommon(ctx context.Context, params syncUpdateParams) (ctrl.Result, error) {
+func syncAndUpdateStatusCommon(ctx context.Context, params *syncUpdateParams) (ctrl.Result, error) {
 	logger := logging.FromContext(ctx)
 
 	result, syncResult, syncErr := params.routeSyncer.SyncAllRoutes(ctx)
@@ -310,7 +325,10 @@ func syncAndUpdateStatusCommon(ctx context.Context, params syncUpdateParams) (ct
 	var diagnostics []proxy.RouteDiagnostic
 
 	if params.pushProxy && params.proxySyncer != nil && len(params.proxyEndpoints) > 0 && syncResult != nil {
-		diagnostics = pushPartitionConfigs(ctx, logger, params, syncResult)
+		var lostRace bool
+
+		diagnostics, lostRace = pushPartitionConfigs(ctx, logger, params, syncResult)
+		result = withLostRacePushRequeue(result, lostRace)
 	}
 
 	// Fold in collision diagnostics (cross-namespace tunnel sharing, #488):
@@ -334,6 +352,10 @@ func syncAndUpdateStatusCommon(ctx context.Context, params syncUpdateParams) (ct
 
 	if syncResult != nil {
 		statusUpdateErr = updateRoutesStatus(ctx, logger, params.statusEntries(syncResult, diagnostics), syncErr)
+	}
+
+	if syncErr != nil && params.onSyncError != nil {
+		params.onSyncError(syncErr)
 	}
 
 	if syncErr != nil {
@@ -478,14 +500,14 @@ func tunnelSharedDiagnostics(collisions []tunnelCollision, partitions []routePar
 func pushPartitionConfigs(
 	ctx context.Context,
 	logger *slog.Logger,
-	params syncUpdateParams,
+	params *syncUpdateParams,
 	syncResult *SyncResult,
-) []proxy.RouteDiagnostic {
+) ([]proxy.RouteDiagnostic, bool) {
 	partitions := syncResult.Partitions
 	if len(partitions) == 0 {
 		logger.Info("skipping proxy push: sync produced no partition split (early error)")
 
-		return nil
+		return nil, false
 	}
 
 	// Same-tunnel partitions must push identical (unioned) configs: the edge
@@ -506,6 +528,10 @@ func pushPartitionConfigs(
 
 	var diagnostics []proxy.RouteDiagnostic
 
+	var pushErrs []error
+
+	lostRace := false
+
 	// Aggregate single-threaded in ORIGINAL partition order so diagnostics, the
 	// keep set, and metrics stay deterministic regardless of push completion order.
 	for i := range partitions {
@@ -520,6 +546,12 @@ func pushPartitionConfigs(
 			logger.Error("proxy sync failed (non-blocking)", "partition", partition.Key, "error", results[i].err)
 			params.routeSyncer.Metrics.RecordSyncError(ctx, "proxy_push")
 
+			pushErrs = append(pushErrs, errors.Wrapf(results[i].err, "pushing partition %s", partition.Key))
+
+			if errors.Is(results[i].err, proxy.ErrLostConfigPushRace) {
+				lostRace = true
+			}
+
 			// Surface a SUSTAINED push failure on the partition's own routes
 			// once it crosses the no-flap threshold (#487). Attribute to the
 			// pre-union originals, not the unioned slice above.
@@ -529,9 +561,38 @@ func pushPartitionConfigs(
 		}
 	}
 
+	if len(pushErrs) > 0 && params.onPushError != nil {
+		params.onPushError(errors.Join(pushErrs...))
+	}
+
 	params.proxySyncer.RetainPartitions(keep)
 
-	return diagnostics
+	return diagnostics, lostRace
+}
+
+// lostRacePushRequeueDelay is how soon a sync is re-run after a partition push
+// was abandoned as a lost stale-version race. The abandoned push can carry the
+// FRESHER route snapshot (config versions follow build order, not snapshot
+// order), and on a quiet cluster no further event would trigger the
+// re-delivering sync, so the requeue is the delivery guarantee. Short: the
+// skip key is already invalidated and the re-list + rebuild takes the highest
+// version, so the retry push cannot lose the same race again.
+const lostRacePushRequeueDelay = 2 * time.Second
+
+// withLostRacePushRequeue folds a lost-race push into the reconcile result:
+// it requests the short re-delivery requeue without ever lengthening an
+// already-shorter one, and leaves the result untouched when no race was lost.
+func withLostRacePushRequeue(result ctrl.Result, lostRace bool) ctrl.Result {
+	if !lostRace {
+		return result
+	}
+
+	if result.RequeueAfter == 0 || result.RequeueAfter > lostRacePushRequeueDelay {
+		result.RequeueAfter = lostRacePushRequeueDelay
+		result.Priority = new(priorityRoute)
+	}
+
+	return result
 }
 
 // partitionPushResult is one partition's push outcome, written to a per-index
@@ -549,7 +610,7 @@ type partitionPushResult struct {
 // never returned to the group, so one failure does not cancel the others.
 func pushPartitionsConcurrently(
 	ctx context.Context,
-	params syncUpdateParams,
+	params *syncUpdateParams,
 	syncResult *SyncResult,
 	partitions []routePartition,
 ) []partitionPushResult {

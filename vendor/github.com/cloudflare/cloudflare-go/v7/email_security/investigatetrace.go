@@ -111,7 +111,7 @@ type InvestigateTraceGetResponseInboundLine struct {
 	Message  string    `json:"message"`
 	// Deprecated, use `logged_at` instead. End of life: November 1, 2026.
 	//
-	// Deprecated: deprecated
+	// Deprecated: Use `logged_at` instead.
 	Ts   string                                     `json:"ts"`
 	JSON investigateTraceGetResponseInboundLineJSON `json:"-"`
 }
@@ -165,7 +165,7 @@ type InvestigateTraceGetResponseOutboundLine struct {
 	Message  string    `json:"message"`
 	// Deprecated, use `logged_at` instead. End of life: November 1, 2026.
 	//
-	// Deprecated: deprecated
+	// Deprecated: Use `logged_at` instead.
 	Ts   string                                      `json:"ts"`
 	JSON investigateTraceGetResponseOutboundLineJSON `json:"-"`
 }

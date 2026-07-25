@@ -166,12 +166,12 @@ type SettingImpersonationRegistryNewResponse struct {
 	DirectoryID     int64     `json:"directory_id" api:"nullable"`
 	DirectoryNodeID int64     `json:"directory_node_id" api:"nullable"`
 	Email           string    `json:"email"`
-	// Deprecated: deprecated
+	// Deprecated: This field is deprecated.
 	ExternalDirectoryNodeID string `json:"external_directory_node_id" api:"nullable"`
 	IsEmailRegex            bool   `json:"is_email_regex"`
 	// Deprecated, use `modified_at` instead. End of life: November 1, 2026.
 	//
-	// Deprecated: deprecated
+	// Deprecated: Use `modified_at` instead.
 	LastModified time.Time                                         `json:"last_modified" format:"date-time"`
 	ModifiedAt   time.Time                                         `json:"modified_at" format:"date-time"`
 	Name         string                                            `json:"name"`
@@ -232,12 +232,12 @@ type SettingImpersonationRegistryListResponse struct {
 	DirectoryID     int64     `json:"directory_id" api:"nullable"`
 	DirectoryNodeID int64     `json:"directory_node_id" api:"nullable"`
 	Email           string    `json:"email"`
-	// Deprecated: deprecated
+	// Deprecated: This field is deprecated.
 	ExternalDirectoryNodeID string `json:"external_directory_node_id" api:"nullable"`
 	IsEmailRegex            bool   `json:"is_email_regex"`
 	// Deprecated, use `modified_at` instead. End of life: November 1, 2026.
 	//
-	// Deprecated: deprecated
+	// Deprecated: Use `modified_at` instead.
 	LastModified time.Time                                          `json:"last_modified" format:"date-time"`
 	ModifiedAt   time.Time                                          `json:"modified_at" format:"date-time"`
 	Name         string                                             `json:"name"`
@@ -320,12 +320,12 @@ type SettingImpersonationRegistryEditResponse struct {
 	DirectoryID     int64     `json:"directory_id" api:"nullable"`
 	DirectoryNodeID int64     `json:"directory_node_id" api:"nullable"`
 	Email           string    `json:"email"`
-	// Deprecated: deprecated
+	// Deprecated: This field is deprecated.
 	ExternalDirectoryNodeID string `json:"external_directory_node_id" api:"nullable"`
 	IsEmailRegex            bool   `json:"is_email_regex"`
 	// Deprecated, use `modified_at` instead. End of life: November 1, 2026.
 	//
-	// Deprecated: deprecated
+	// Deprecated: Use `modified_at` instead.
 	LastModified time.Time                                          `json:"last_modified" format:"date-time"`
 	ModifiedAt   time.Time                                          `json:"modified_at" format:"date-time"`
 	Name         string                                             `json:"name"`
@@ -386,12 +386,12 @@ type SettingImpersonationRegistryGetResponse struct {
 	DirectoryID     int64     `json:"directory_id" api:"nullable"`
 	DirectoryNodeID int64     `json:"directory_node_id" api:"nullable"`
 	Email           string    `json:"email"`
-	// Deprecated: deprecated
+	// Deprecated: This field is deprecated.
 	ExternalDirectoryNodeID string `json:"external_directory_node_id" api:"nullable"`
 	IsEmailRegex            bool   `json:"is_email_regex"`
 	// Deprecated, use `modified_at` instead. End of life: November 1, 2026.
 	//
-	// Deprecated: deprecated
+	// Deprecated: Use `modified_at` instead.
 	LastModified time.Time                                         `json:"last_modified" format:"date-time"`
 	ModifiedAt   time.Time                                         `json:"modified_at" format:"date-time"`
 	Name         string                                            `json:"name"`

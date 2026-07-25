@@ -1043,39 +1043,6 @@ func TestHTTPRouteReconciler_GetAllRelevantRoutes(t *testing.T) {
 	assert.Equal(t, "route-1", requests[0].Name)
 }
 
-func TestHTTPRouteReconciler_Start(t *testing.T) {
-	t.Parallel()
-
-	scheme := runtime.NewScheme()
-	require.NoError(t, gatewayv1.Install(scheme))
-	require.NoError(t, corev1.AddToScheme(scheme))
-	require.NoError(t, v1alpha1.AddToScheme(scheme))
-
-	fakeClient := fake.NewClientBuilder().
-		WithScheme(scheme).
-		Build()
-
-	configResolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector())
-	routeSyncer := NewRouteSyncer(fakeClient, scheme, "cluster.local", "test-controller", configResolver, cfmetrics.NewNoopCollector(), nil)
-
-	r := &HTTPRouteReconciler{
-		Client:         fakeClient,
-		Scheme:         scheme,
-		ControllerName: "test-controller",
-		RouteSyncer:    routeSyncer,
-	}
-
-	// Verify startupComplete is false before Start
-	assert.False(t, r.startupComplete.Load())
-
-	// Start will try to sync and fail (no GatewayClass), but should still complete
-	err := r.Start(context.Background())
-
-	assert.NoError(t, err)
-	// Verify startupComplete is true after Start
-	assert.True(t, r.startupComplete.Load())
-}
-
 func TestHTTPRouteReconciler_Constants(t *testing.T) {
 	t.Parallel()
 

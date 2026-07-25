@@ -168,6 +168,10 @@ type DispatchNamespaceScriptUpdateResponse struct {
 	StartupTimeMs int64 `json:"startup_time_ms" api:"required"`
 	// The name used to identify the script.
 	ID string `json:"id"`
+	// Global CacheW configuration for the Worker. When caching is on, the platform
+	// provisions a `cloudflare.app` zone for the Worker. A `type: worker` entry in the
+	// `exports` map can override this value for a single entrypoint.
+	CacheOptions DispatchNamespaceScriptUpdateResponseCacheOptions `json:"cache_options"`
 	// Date indicating targeted support in the Workers runtime. Backwards incompatible
 	// fixes to the runtime following this date will not affect this Worker.
 	CompatibilityDate string `json:"compatibility_date"`
@@ -225,6 +229,7 @@ type DispatchNamespaceScriptUpdateResponse struct {
 type dispatchNamespaceScriptUpdateResponseJSON struct {
 	StartupTimeMs      apijson.Field
 	ID                 apijson.Field
+	CacheOptions       apijson.Field
 	CompatibilityDate  apijson.Field
 	CompatibilityFlags apijson.Field
 	CreatedOn          apijson.Field
@@ -255,6 +260,36 @@ func (r *DispatchNamespaceScriptUpdateResponse) UnmarshalJSON(data []byte) (err 
 }
 
 func (r dispatchNamespaceScriptUpdateResponseJSON) RawJSON() string {
+	return r.raw
+}
+
+// Global CacheW configuration for the Worker. When caching is on, the platform
+// provisions a `cloudflare.app` zone for the Worker. A `type: worker` entry in the
+// `exports` map can override this value for a single entrypoint.
+type DispatchNamespaceScriptUpdateResponseCacheOptions struct {
+	// Whether caching is enabled for this Worker.
+	Enabled bool `json:"enabled" api:"required"`
+	// Whether cached responses are shared across Worker version uploads. This is
+	// independent of `enabled`. It can stay true while caching is off, so the
+	// preference survives turning caching off and back on.
+	CrossVersionCache bool                                                  `json:"cross_version_cache"`
+	JSON              dispatchNamespaceScriptUpdateResponseCacheOptionsJSON `json:"-"`
+}
+
+// dispatchNamespaceScriptUpdateResponseCacheOptionsJSON contains the JSON metadata
+// for the struct [DispatchNamespaceScriptUpdateResponseCacheOptions]
+type dispatchNamespaceScriptUpdateResponseCacheOptionsJSON struct {
+	Enabled           apijson.Field
+	CrossVersionCache apijson.Field
+	raw               string
+	ExtraFields       map[string]apijson.Field
+}
+
+func (r *DispatchNamespaceScriptUpdateResponseCacheOptions) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r dispatchNamespaceScriptUpdateResponseCacheOptionsJSON) RawJSON() string {
 	return r.raw
 }
 
@@ -713,6 +748,10 @@ type DispatchNamespaceScriptUpdateParamsMetadata struct {
 	// Name of the uploaded file that contains the script (e.g. the file adding a
 	// listener to the `fetch` event). Indicates a `service worker syntax` Worker.
 	BodyPart param.Field[string] `json:"body_part"`
+	// Global CacheW configuration for the Worker. When caching is on, the platform
+	// provisions a `cloudflare.app` zone for the Worker. A `type: worker` entry in the
+	// `exports` map can override this value for a single entrypoint.
+	CacheOptions param.Field[DispatchNamespaceScriptUpdateParamsMetadataCacheOptions] `json:"cache_options"`
 	// Date indicating targeted support in the Workers runtime. Backwards incompatible
 	// fixes to the runtime following this date will not affect this Worker.
 	CompatibilityDate param.Field[string] `json:"compatibility_date"`
@@ -720,6 +759,9 @@ type DispatchNamespaceScriptUpdateParamsMetadata struct {
 	// enable upcoming features or opt in or out of specific changes not included in a
 	// `compatibility_date`.
 	CompatibilityFlags param.Field[[]string] `json:"compatibility_flags"`
+	// Declarative exports for the Worker. Worker entrypoint entries (`type: worker`)
+	// carry cache configuration for that entrypoint.
+	Exports param.Field[map[string]DispatchNamespaceScriptUpdateParamsMetadataExports] `json:"exports"`
 	// Retain assets which exist for a previously uploaded Worker version; used in lieu
 	// of providing a completion token. An explicit `assets` upload takes precedence
 	// over `keep_assets`.
@@ -737,6 +779,9 @@ type DispatchNamespaceScriptUpdateParamsMetadata struct {
 	Migrations param.Field[DispatchNamespaceScriptUpdateParamsMetadataMigrationsUnion] `json:"migrations"`
 	// Observability settings for the Worker.
 	Observability param.Field[DispatchNamespaceScriptUpdateParamsMetadataObservability] `json:"observability"`
+	// The list of npm packages that were installed and used when this Worker version
+	// was built.
+	PackageDependencies param.Field[[]DispatchNamespaceScriptUpdateParamsMetadataPackageDependency] `json:"package_dependencies"`
 	// Configuration for
 	// [Smart Placement](https://developers.cloudflare.com/workers/configuration/smart-placement).
 	// Specify mode='smart' for Smart Placement, or one of region/hostname/host.
@@ -2338,6 +2383,66 @@ func (r DispatchNamespaceScriptUpdateParamsMetadataBindingsJurisdiction) IsKnown
 	return false
 }
 
+// Global CacheW configuration for the Worker. When caching is on, the platform
+// provisions a `cloudflare.app` zone for the Worker. A `type: worker` entry in the
+// `exports` map can override this value for a single entrypoint.
+type DispatchNamespaceScriptUpdateParamsMetadataCacheOptions struct {
+	// Whether caching is enabled for this Worker.
+	Enabled param.Field[bool] `json:"enabled" api:"required"`
+	// Whether cached responses are shared across Worker version uploads. This is
+	// independent of `enabled`. It can stay true while caching is off, so the
+	// preference survives turning caching off and back on.
+	CrossVersionCache param.Field[bool] `json:"cross_version_cache"`
+}
+
+func (r DispatchNamespaceScriptUpdateParamsMetadataCacheOptions) MarshalJSON() (data []byte, err error) {
+	return apijson.MarshalRoot(r)
+}
+
+// A single entry in the `exports` map, keyed by export name (a `WorkerEntrypoint`
+// class name, a Durable Object class name, or `default` for the Worker's default
+// export). Worker entrypoint entries set `type: worker` and may carry `cache`
+// configuration for that entrypoint. Durable Object entries set
+// `type: durable-object` and carry additional provisioning fields.
+type DispatchNamespaceScriptUpdateParamsMetadataExports struct {
+	// The kind of export.
+	Type param.Field[DispatchNamespaceScriptUpdateParamsMetadataExportsType] `json:"type" api:"required"`
+	// Cache override for this entrypoint. It applies only to `type: worker` entries
+	// and overrides the Worker's global `cache_options.enabled` for that entrypoint.
+	Cache param.Field[DispatchNamespaceScriptUpdateParamsMetadataExportsCache] `json:"cache"`
+}
+
+func (r DispatchNamespaceScriptUpdateParamsMetadataExports) MarshalJSON() (data []byte, err error) {
+	return apijson.MarshalRoot(r)
+}
+
+// The kind of export.
+type DispatchNamespaceScriptUpdateParamsMetadataExportsType string
+
+const (
+	DispatchNamespaceScriptUpdateParamsMetadataExportsTypeWorker        DispatchNamespaceScriptUpdateParamsMetadataExportsType = "worker"
+	DispatchNamespaceScriptUpdateParamsMetadataExportsTypeDurableObject DispatchNamespaceScriptUpdateParamsMetadataExportsType = "durable-object"
+)
+
+func (r DispatchNamespaceScriptUpdateParamsMetadataExportsType) IsKnown() bool {
+	switch r {
+	case DispatchNamespaceScriptUpdateParamsMetadataExportsTypeWorker, DispatchNamespaceScriptUpdateParamsMetadataExportsTypeDurableObject:
+		return true
+	}
+	return false
+}
+
+// Cache override for this entrypoint. It applies only to `type: worker` entries
+// and overrides the Worker's global `cache_options.enabled` for that entrypoint.
+type DispatchNamespaceScriptUpdateParamsMetadataExportsCache struct {
+	// Whether caching is enabled for this entrypoint.
+	Enabled param.Field[bool] `json:"enabled" api:"required"`
+}
+
+func (r DispatchNamespaceScriptUpdateParamsMetadataExportsCache) MarshalJSON() (data []byte, err error) {
+	return apijson.MarshalRoot(r)
+}
+
 // Limits to apply for this Worker.
 type DispatchNamespaceScriptUpdateParamsMetadataLimits struct {
 	// The amount of CPU time this Worker can use in milliseconds.
@@ -2475,6 +2580,19 @@ func (r DispatchNamespaceScriptUpdateParamsMetadataObservabilityTracesPropagatio
 		return true
 	}
 	return false
+}
+
+type DispatchNamespaceScriptUpdateParamsMetadataPackageDependency struct {
+	// The exact version that was resolved and installed by the package manager.
+	InstalledVersion param.Field[string] `json:"installedVersion" api:"required"`
+	// The npm package name.
+	Name param.Field[string] `json:"name" api:"required"`
+	// The version constraint as written in package.json.
+	PackageJsonVersion param.Field[string] `json:"packageJsonVersion" api:"required"`
+}
+
+func (r DispatchNamespaceScriptUpdateParamsMetadataPackageDependency) MarshalJSON() (data []byte, err error) {
+	return apijson.MarshalRoot(r)
 }
 
 // Configuration for

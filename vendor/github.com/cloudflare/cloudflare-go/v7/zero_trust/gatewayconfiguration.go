@@ -57,9 +57,9 @@ func (r *GatewayConfigurationService) Update(ctx context.Context, params Gateway
 
 // Update (PATCH) a single subcollection of settings such as `antivirus`,
 // `tls_decrypt`, `activity_log`, `block_page`, `browser_isolation`, `fips`,
-// `body_scanning`, or `certificate` without updating the entire configuration
-// object. This endpoint returns an error if any settings collection lacks proper
-// configuration.
+// `body_scanning`, `certificate`, or `max_ttl_secs` without updating the entire
+// configuration object. This endpoint returns an error if any settings collection
+// lacks proper configuration.
 func (r *GatewayConfigurationService) Edit(ctx context.Context, params GatewayConfigurationEditParams, opts ...option.RequestOption) (res *GatewayConfigurationEditResponse, err error) {
 	var env GatewayConfigurationEditResponseEnvelope
 	opts = slices.Concat(r.Options, opts)
@@ -93,7 +93,7 @@ func (r *GatewayConfigurationService) Get(ctx context.Context, query GatewayConf
 	return res, nil
 }
 
-// Specify activity log settings.
+// ActivityLogSettings specify activity log settings.
 type ActivityLogSettings struct {
 	// Specify whether to log activity.
 	Enabled bool                    `json:"enabled" api:"nullable"`
@@ -116,7 +116,7 @@ func (r activityLogSettingsJSON) RawJSON() string {
 	return r.raw
 }
 
-// Specify activity log settings.
+// ActivityLogSettingsParam specify activity log settings.
 type ActivityLogSettingsParam struct {
 	// Specify whether to log activity.
 	Enabled param.Field[bool] `json:"enabled"`
@@ -126,7 +126,7 @@ func (r ActivityLogSettingsParam) MarshalJSON() (data []byte, err error) {
 	return apijson.MarshalRoot(r)
 }
 
-// Specify anti-virus settings.
+// AntiVirusSettings specify anti-virus settings.
 type AntiVirusSettings struct {
 	// Specify whether to enable anti-virus scanning on downloads.
 	EnabledDownloadPhase bool `json:"enabled_download_phase" api:"nullable"`
@@ -158,7 +158,7 @@ func (r antiVirusSettingsJSON) RawJSON() string {
 	return r.raw
 }
 
-// Specify anti-virus settings.
+// AntiVirusSettingsParam specify anti-virus settings.
 type AntiVirusSettingsParam struct {
 	// Specify whether to enable anti-virus scanning on downloads.
 	EnabledDownloadPhase param.Field[bool] `json:"enabled_download_phase"`
@@ -174,7 +174,7 @@ func (r AntiVirusSettingsParam) MarshalJSON() (data []byte, err error) {
 	return apijson.MarshalRoot(r)
 }
 
-// Specify block page layout settings.
+// BlockPageSettings specify block page layout settings.
 type BlockPageSettings struct {
 	// Specify the block page background color in `#rrggbb` format when the mode is
 	// customized_block_page.
@@ -246,7 +246,7 @@ func (r blockPageSettingsJSON) RawJSON() string {
 	return r.raw
 }
 
-// Specify whether to redirect users to a Cloudflare-hosted block page or a
+// BlockPageSettingsMode specify whether to redirect users to a Cloudflare-hosted block page or a
 // customer-provided URI.
 type BlockPageSettingsMode string
 
@@ -264,7 +264,7 @@ func (r BlockPageSettingsMode) IsKnown() bool {
 	return false
 }
 
-// Specify block page layout settings.
+// BlockPageSettingsParam specify block page layout settings.
 type BlockPageSettingsParam struct {
 	// Specify the block page background color in `#rrggbb` format when the mode is
 	// customized_block_page.
@@ -302,7 +302,7 @@ func (r BlockPageSettingsParam) MarshalJSON() (data []byte, err error) {
 	return apijson.MarshalRoot(r)
 }
 
-// Specify the DLP inspection mode.
+// BodyScanningSettings specify the DLP inspection mode.
 type BodyScanningSettings struct {
 	// Specify the inspection mode as either `deep` or `shallow`.
 	InspectionMode BodyScanningSettingsInspectionMode `json:"inspection_mode"`
@@ -325,7 +325,7 @@ func (r bodyScanningSettingsJSON) RawJSON() string {
 	return r.raw
 }
 
-// Specify the inspection mode as either `deep` or `shallow`.
+// BodyScanningSettingsInspectionMode specify the inspection mode as either `deep` or `shallow`.
 type BodyScanningSettingsInspectionMode string
 
 const (
@@ -341,7 +341,7 @@ func (r BodyScanningSettingsInspectionMode) IsKnown() bool {
 	return false
 }
 
-// Specify the DLP inspection mode.
+// BodyScanningSettingsParam specify the DLP inspection mode.
 type BodyScanningSettingsParam struct {
 	// Specify the inspection mode as either `deep` or `shallow`.
 	InspectionMode param.Field[BodyScanningSettingsInspectionMode] `json:"inspection_mode"`
@@ -351,7 +351,7 @@ func (r BodyScanningSettingsParam) MarshalJSON() (data []byte, err error) {
 	return apijson.MarshalRoot(r)
 }
 
-// Specify Clientless Browser Isolation settings.
+// BrowserIsolationSettings specify Clientless Browser Isolation settings.
 type BrowserIsolationSettings struct {
 	// Specify whether to enable non-identity onramp support for Browser Isolation.
 	NonIdentityEnabled bool `json:"non_identity_enabled"`
@@ -377,7 +377,7 @@ func (r browserIsolationSettingsJSON) RawJSON() string {
 	return r.raw
 }
 
-// Specify Clientless Browser Isolation settings.
+// BrowserIsolationSettingsParam specify Clientless Browser Isolation settings.
 type BrowserIsolationSettingsParam struct {
 	// Specify whether to enable non-identity onramp support for Browser Isolation.
 	NonIdentityEnabled param.Field[bool] `json:"non_identity_enabled"`
@@ -389,7 +389,7 @@ func (r BrowserIsolationSettingsParam) MarshalJSON() (data []byte, err error) {
 	return apijson.MarshalRoot(r)
 }
 
-// Specify custom certificate settings for BYO-PKI. This field is deprecated; use
+// CustomCertificateSettings specify custom certificate settings for BYO-PKI. This field is deprecated; use
 // `certificate` instead.
 //
 // Deprecated: deprecated
@@ -424,7 +424,7 @@ func (r customCertificateSettingsJSON) RawJSON() string {
 	return r.raw
 }
 
-// Specify custom certificate settings for BYO-PKI. This field is deprecated; use
+// CustomCertificateSettingsParam specify custom certificate settings for BYO-PKI. This field is deprecated; use
 // `certificate` instead.
 //
 // Deprecated: deprecated
@@ -440,7 +440,7 @@ func (r CustomCertificateSettingsParam) MarshalJSON() (data []byte, err error) {
 	return apijson.MarshalRoot(r)
 }
 
-// Configures user email settings for firewall policies. When you enable this, the
+// ExtendedEmailMatching configures user email settings for firewall policies. When you enable this, the
 // system standardizes email addresses in the identity portion of the rule to match
 // extended email variants in firewall policies. When you disable this setting, the
 // system matches email addresses exactly as you provide them. Enable this setting
@@ -478,7 +478,7 @@ func (r extendedEmailMatchingJSON) RawJSON() string {
 	return r.raw
 }
 
-// Configures user email settings for firewall policies. When you enable this, the
+// ExtendedEmailMatchingParam configures user email settings for firewall policies. When you enable this, the
 // system standardizes email addresses in the identity portion of the rule to match
 // extended email variants in firewall policies. When you disable this setting, the
 // system matches email addresses exactly as you provide them. Enable this setting
@@ -493,7 +493,7 @@ func (r ExtendedEmailMatchingParam) MarshalJSON() (data []byte, err error) {
 	return apijson.MarshalRoot(r)
 }
 
-// Specify FIPS settings.
+// FipsSettings specify FIPS settings.
 type FipsSettings struct {
 	// Enforce cipher suites and TLS versions compliant with FIPS 140-2.
 	TLS  bool             `json:"tls"`
@@ -515,7 +515,7 @@ func (r fipsSettingsJSON) RawJSON() string {
 	return r.raw
 }
 
-// Specify FIPS settings.
+// FipsSettingsParam specify FIPS settings.
 type FipsSettingsParam struct {
 	// Enforce cipher suites and TLS versions compliant with FIPS 140-2.
 	TLS param.Field[bool] `json:"tls"`
@@ -525,7 +525,7 @@ func (r FipsSettingsParam) MarshalJSON() (data []byte, err error) {
 	return apijson.MarshalRoot(r)
 }
 
-// Specify account settings.
+// GatewayConfigurationSettings specify account settings.
 type GatewayConfigurationSettings struct {
 	// Specify activity log settings.
 	ActivityLog ActivityLogSettings `json:"activity_log" api:"nullable"`
@@ -557,6 +557,11 @@ type GatewayConfigurationSettings struct {
 	HostSelector GatewayConfigurationSettingsHostSelector `json:"host_selector" api:"nullable"`
 	// Define the proxy inspection mode.
 	Inspection GatewayConfigurationSettingsInspection `json:"inspection" api:"nullable"`
+	// Account-level cap on DNS response TTLs, in seconds. Gateway rewrites DNS
+	// responses so returned record TTLs do not exceed this value. Null means no cap.
+	// Each DNS location can inherit, override, or disable it through the location
+	// `max_ttl` setting.
+	MaxTTLSecs int64 `json:"max_ttl_secs" api:"nullable"`
 	// Specify whether to detect protocols from the initial bytes of client traffic.
 	ProtocolDetection ProtocolDetection `json:"protocol_detection" api:"nullable"`
 	// Specify whether to enable the sandbox.
@@ -580,6 +585,7 @@ type gatewayConfigurationSettingsJSON struct {
 	Fips                  apijson.Field
 	HostSelector          apijson.Field
 	Inspection            apijson.Field
+	MaxTTLSecs            apijson.Field
 	ProtocolDetection     apijson.Field
 	Sandbox               apijson.Field
 	TLSDecrypt            apijson.Field
@@ -595,7 +601,7 @@ func (r gatewayConfigurationSettingsJSON) RawJSON() string {
 	return r.raw
 }
 
-// Specify certificate settings for Gateway TLS interception. If unset, the
+// GatewayConfigurationSettingsCertificate specify certificate settings for Gateway TLS interception. If unset, the
 // Cloudflare Root CA handles interception.
 type GatewayConfigurationSettingsCertificate struct {
 	// Specify the UUID of the certificate used for interception. Ensure the
@@ -621,7 +627,7 @@ func (r gatewayConfigurationSettingsCertificateJSON) RawJSON() string {
 	return r.raw
 }
 
-// Enable host selection in egress policies.
+// GatewayConfigurationSettingsHostSelector enable host selection in egress policies.
 type GatewayConfigurationSettingsHostSelector struct {
 	// Specify whether to enable filtering via hosts for egress policies.
 	Enabled bool                                         `json:"enabled" api:"nullable"`
@@ -644,7 +650,7 @@ func (r gatewayConfigurationSettingsHostSelectorJSON) RawJSON() string {
 	return r.raw
 }
 
-// Define the proxy inspection mode.
+// GatewayConfigurationSettingsInspection define the proxy inspection mode.
 type GatewayConfigurationSettingsInspection struct {
 	// Define the proxy inspection mode. 1. static: Gateway applies static inspection
 	// to HTTP on TCP(80). With TLS decryption on, Gateway inspects HTTPS traffic on
@@ -671,7 +677,7 @@ func (r gatewayConfigurationSettingsInspectionJSON) RawJSON() string {
 	return r.raw
 }
 
-// Define the proxy inspection mode. 1. static: Gateway applies static inspection
+// GatewayConfigurationSettingsInspectionMode define the proxy inspection mode. 1. static: Gateway applies static inspection
 // to HTTP on TCP(80). With TLS decryption on, Gateway inspects HTTPS traffic on
 // TCP(443) and UDP(443). 2. dynamic: Gateway applies protocol detection to inspect
 // HTTP and HTTPS traffic on any port. TLS decryption must remain on to inspect
@@ -691,7 +697,7 @@ func (r GatewayConfigurationSettingsInspectionMode) IsKnown() bool {
 	return false
 }
 
-// Specify whether to enable the sandbox.
+// GatewayConfigurationSettingsSandbox specify whether to enable the sandbox.
 type GatewayConfigurationSettingsSandbox struct {
 	// Specify whether to enable the sandbox.
 	Enabled bool `json:"enabled" api:"nullable"`
@@ -717,7 +723,7 @@ func (r gatewayConfigurationSettingsSandboxJSON) RawJSON() string {
 	return r.raw
 }
 
-// Specify the action to take when the system cannot scan the file.
+// GatewayConfigurationSettingsSandboxFallbackAction specify the action to take when the system cannot scan the file.
 type GatewayConfigurationSettingsSandboxFallbackAction string
 
 const (
@@ -733,7 +739,7 @@ func (r GatewayConfigurationSettingsSandboxFallbackAction) IsKnown() bool {
 	return false
 }
 
-// Specify account settings.
+// GatewayConfigurationSettingsParam specify account settings.
 type GatewayConfigurationSettingsParam struct {
 	// Specify activity log settings.
 	ActivityLog param.Field[ActivityLogSettingsParam] `json:"activity_log"`
@@ -765,6 +771,11 @@ type GatewayConfigurationSettingsParam struct {
 	HostSelector param.Field[GatewayConfigurationSettingsHostSelectorParam] `json:"host_selector"`
 	// Define the proxy inspection mode.
 	Inspection param.Field[GatewayConfigurationSettingsInspectionParam] `json:"inspection"`
+	// Account-level cap on DNS response TTLs, in seconds. Gateway rewrites DNS
+	// responses so returned record TTLs do not exceed this value. Null means no cap.
+	// Each DNS location can inherit, override, or disable it through the location
+	// `max_ttl` setting.
+	MaxTTLSecs param.Field[int64] `json:"max_ttl_secs"`
 	// Specify whether to detect protocols from the initial bytes of client traffic.
 	ProtocolDetection param.Field[ProtocolDetectionParam] `json:"protocol_detection"`
 	// Specify whether to enable the sandbox.
@@ -777,7 +788,7 @@ func (r GatewayConfigurationSettingsParam) MarshalJSON() (data []byte, err error
 	return apijson.MarshalRoot(r)
 }
 
-// Specify certificate settings for Gateway TLS interception. If unset, the
+// GatewayConfigurationSettingsCertificateParam specify certificate settings for Gateway TLS interception. If unset, the
 // Cloudflare Root CA handles interception.
 type GatewayConfigurationSettingsCertificateParam struct {
 	// Specify the UUID of the certificate used for interception. Ensure the
@@ -790,7 +801,7 @@ func (r GatewayConfigurationSettingsCertificateParam) MarshalJSON() (data []byte
 	return apijson.MarshalRoot(r)
 }
 
-// Enable host selection in egress policies.
+// GatewayConfigurationSettingsHostSelectorParam enable host selection in egress policies.
 type GatewayConfigurationSettingsHostSelectorParam struct {
 	// Specify whether to enable filtering via hosts for egress policies.
 	Enabled param.Field[bool] `json:"enabled"`
@@ -800,7 +811,7 @@ func (r GatewayConfigurationSettingsHostSelectorParam) MarshalJSON() (data []byt
 	return apijson.MarshalRoot(r)
 }
 
-// Define the proxy inspection mode.
+// GatewayConfigurationSettingsInspectionParam define the proxy inspection mode.
 type GatewayConfigurationSettingsInspectionParam struct {
 	// Define the proxy inspection mode. 1. static: Gateway applies static inspection
 	// to HTTP on TCP(80). With TLS decryption on, Gateway inspects HTTPS traffic on
@@ -814,7 +825,7 @@ func (r GatewayConfigurationSettingsInspectionParam) MarshalJSON() (data []byte,
 	return apijson.MarshalRoot(r)
 }
 
-// Specify whether to enable the sandbox.
+// GatewayConfigurationSettingsSandboxParam specify whether to enable the sandbox.
 type GatewayConfigurationSettingsSandboxParam struct {
 	// Specify whether to enable the sandbox.
 	Enabled param.Field[bool] `json:"enabled"`
@@ -826,7 +837,7 @@ func (r GatewayConfigurationSettingsSandboxParam) MarshalJSON() (data []byte, er
 	return apijson.MarshalRoot(r)
 }
 
-// Configure the message the user's device shows during an antivirus scan.
+// NotificationSettings configure the message the user's device shows during an antivirus scan.
 type NotificationSettings struct {
 	// Specify whether to enable notifications.
 	Enabled bool `json:"enabled"`
@@ -859,7 +870,7 @@ func (r notificationSettingsJSON) RawJSON() string {
 	return r.raw
 }
 
-// Configure the message the user's device shows during an antivirus scan.
+// NotificationSettingsParam configure the message the user's device shows during an antivirus scan.
 type NotificationSettingsParam struct {
 	// Specify whether to enable notifications.
 	Enabled param.Field[bool] `json:"enabled"`
@@ -876,7 +887,7 @@ func (r NotificationSettingsParam) MarshalJSON() (data []byte, err error) {
 	return apijson.MarshalRoot(r)
 }
 
-// Specify whether to detect protocols from the initial bytes of client traffic.
+// ProtocolDetection specify whether to detect protocols from the initial bytes of client traffic.
 type ProtocolDetection struct {
 	// Specify whether to detect protocols from the initial bytes of client traffic.
 	Enabled bool                  `json:"enabled" api:"nullable"`
@@ -899,7 +910,7 @@ func (r protocolDetectionJSON) RawJSON() string {
 	return r.raw
 }
 
-// Specify whether to detect protocols from the initial bytes of client traffic.
+// ProtocolDetectionParam specify whether to detect protocols from the initial bytes of client traffic.
 type ProtocolDetectionParam struct {
 	// Specify whether to detect protocols from the initial bytes of client traffic.
 	Enabled param.Field[bool] `json:"enabled"`
@@ -909,7 +920,7 @@ func (r ProtocolDetectionParam) MarshalJSON() (data []byte, err error) {
 	return apijson.MarshalRoot(r)
 }
 
-// Specify whether to inspect encrypted HTTP traffic.
+// TLSSettings specify whether to inspect encrypted HTTP traffic.
 type TLSSettings struct {
 	// Specify whether to inspect encrypted HTTP traffic.
 	Enabled bool            `json:"enabled"`
@@ -931,7 +942,7 @@ func (r tlsSettingsJSON) RawJSON() string {
 	return r.raw
 }
 
-// Specify whether to inspect encrypted HTTP traffic.
+// TLSSettingsParam specify whether to inspect encrypted HTTP traffic.
 type TLSSettingsParam struct {
 	// Specify whether to inspect encrypted HTTP traffic.
 	Enabled param.Field[bool] `json:"enabled"`
@@ -941,7 +952,7 @@ func (r TLSSettingsParam) MarshalJSON() (data []byte, err error) {
 	return apijson.MarshalRoot(r)
 }
 
-// Specify account settings.
+// GatewayConfigurationUpdateResponse specify account settings.
 type GatewayConfigurationUpdateResponse struct {
 	CreatedAt time.Time `json:"created_at" format:"date-time"`
 	// Specify account settings.
@@ -968,7 +979,7 @@ func (r gatewayConfigurationUpdateResponseJSON) RawJSON() string {
 	return r.raw
 }
 
-// Specify account settings.
+// GatewayConfigurationEditResponse specify account settings.
 type GatewayConfigurationEditResponse struct {
 	CreatedAt time.Time `json:"created_at" format:"date-time"`
 	// Specify account settings.
@@ -995,7 +1006,7 @@ func (r gatewayConfigurationEditResponseJSON) RawJSON() string {
 	return r.raw
 }
 
-// Specify account settings.
+// GatewayConfigurationGetResponse specify account settings.
 type GatewayConfigurationGetResponse struct {
 	CreatedAt time.Time `json:"created_at" format:"date-time"`
 	// Specify account settings.
@@ -1061,7 +1072,7 @@ func (r gatewayConfigurationUpdateResponseEnvelopeJSON) RawJSON() string {
 	return r.raw
 }
 
-// Indicate whether the API call was successful.
+// GatewayConfigurationUpdateResponseEnvelopeSuccess indicate whether the API call was successful.
 type GatewayConfigurationUpdateResponseEnvelopeSuccess bool
 
 const (
@@ -1115,7 +1126,7 @@ func (r gatewayConfigurationEditResponseEnvelopeJSON) RawJSON() string {
 	return r.raw
 }
 
-// Indicate whether the API call was successful.
+// GatewayConfigurationEditResponseEnvelopeSuccess indicate whether the API call was successful.
 type GatewayConfigurationEditResponseEnvelopeSuccess bool
 
 const (
@@ -1163,7 +1174,7 @@ func (r gatewayConfigurationGetResponseEnvelopeJSON) RawJSON() string {
 	return r.raw
 }
 
-// Indicate whether the API call was successful.
+// GatewayConfigurationGetResponseEnvelopeSuccess indicate whether the API call was successful.
 type GatewayConfigurationGetResponseEnvelopeSuccess bool
 
 const (

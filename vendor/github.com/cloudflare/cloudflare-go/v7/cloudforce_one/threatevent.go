@@ -615,6 +615,10 @@ type ThreatEventListParams struct {
 	// Number of results per page. Maximum 25,000.
 	PageSize param.Field[float64]                       `query:"pageSize"`
 	Search   param.Field[[]ThreatEventListParamsSearch] `query:"search"`
+	// Read backend. 'do' (default) reads Durable Object storage. 'r2catalog' reads R2
+	// Data Catalog (admin-only, experimental; supports a subset of search fields — no
+	// 'tags').
+	Source param.Field[ThreatEventListParamsSource] `query:"source"`
 }
 
 // URLQuery serializes [ThreatEventListParams]'s query parameters as `url.Values`.
@@ -721,6 +725,24 @@ func (r ThreatEventListParamsSearchValueArray) ImplementsThreatEventListParamsSe
 // Satisfied by [shared.UnionString], [shared.UnionFloat].
 type ThreatEventListParamsSearchValueArrayItemUnion interface {
 	ImplementsThreatEventListParamsSearchValueArrayItemUnion()
+}
+
+// Read backend. 'do' (default) reads Durable Object storage. 'r2catalog' reads R2
+// Data Catalog (admin-only, experimental; supports a subset of search fields — no
+// 'tags').
+type ThreatEventListParamsSource string
+
+const (
+	ThreatEventListParamsSourceDo        ThreatEventListParamsSource = "do"
+	ThreatEventListParamsSourceR2catalog ThreatEventListParamsSource = "r2catalog"
+)
+
+func (r ThreatEventListParamsSource) IsKnown() bool {
+	switch r {
+	case ThreatEventListParamsSourceDo, ThreatEventListParamsSourceR2catalog:
+		return true
+	}
+	return false
 }
 
 type ThreatEventBulkNewParams struct {

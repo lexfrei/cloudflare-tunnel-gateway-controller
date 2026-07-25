@@ -269,7 +269,7 @@ Beyond the standard Gateway API conditions above, the controller surfaces domain
 ### Gateway API CRDs
 
 ```bash
-kubectl apply --filename https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.6.0/standard-install.yaml
+kubectl apply --filename https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.6.1/standard-install.yaml
 ```
 
 ### Project CRDs (GatewayClassConfig and ExternalBackend)

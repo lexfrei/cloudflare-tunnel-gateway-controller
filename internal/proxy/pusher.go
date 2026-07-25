@@ -75,9 +75,8 @@ func (p *ConfigPusher) pushToEndpoint(ctx context.Context, endpoint string, body
 		return result
 	}
 
-	// On stale version (409 Conflict), fetch the proxy's current version,
-	// bump the config counter above it, and retry once. This recovers from
-	// clock skew after controller restart (e.g., NTP adjustment).
+	// On stale version (409 Conflict), fetch the proxy's current version and
+	// decide between the two causes of a 409, which need opposite handling.
 	if !errors.Is(result.Err, errStaleVersion) {
 		return result
 	}
@@ -85,6 +84,21 @@ func (p *ConfigPusher) pushToEndpoint(ctx context.Context, endpoint string, body
 	proxyVersion, fetchErr := p.fetchProxyVersion(ctx, endpoint, authToken)
 	if fetchErr != nil {
 		return PushResult{Endpoint: endpoint, Err: fmt.Errorf("stale version recovery: %w", fetchErr)}
+	}
+
+	// The config version counter is monotonic within a process, so every
+	// version THIS process has issued is <= its current value. If the replica's
+	// version is at or below the counter, a concurrent same-process pusher
+	// issued and delivered a newer config and won the race: re-pushing our older
+	// payload would force-overwrite it, so abandon this push. The lost-race
+	// error flows through the syncer's normal push-failure path, invalidating
+	// the partition's steady-state skip key so the next sync re-delivers the
+	// current desired config. Only a replica version strictly ABOVE the counter
+	// proves the version came from a previous controller instance whose clock
+	// ran ahead — the restart clock-skew case this recovery exists for, where
+	// bumping the counter above the replica and re-pushing is correct.
+	if proxyVersion <= configVersionCounter.Load() {
+		return PushResult{Endpoint: endpoint, Err: errors.Wrap(ErrLostConfigPushRace, endpoint)}
 	}
 
 	bumpVersionCounter(proxyVersion)

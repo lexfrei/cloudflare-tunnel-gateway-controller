@@ -180,6 +180,10 @@ type RuleCatchAllUpdateResponse struct {
 	Matchers []CatchAllMatcher `json:"matchers"`
 	// Routing rule name.
 	Name string `json:"name"`
+	// Who manages the rule. `api` covers dashboard, generic API, and Terraform;
+	// `wrangler` means the rule is managed by a Worker's wrangler.jsonc. Defaults to
+	// `api` when omitted on write.
+	Source RuleCatchAllUpdateResponseSource `json:"source"`
 	// Routing rule tag. (Deprecated, replaced by routing rule identifier)
 	//
 	// Deprecated: deprecated
@@ -195,6 +199,7 @@ type ruleCatchAllUpdateResponseJSON struct {
 	Enabled     apijson.Field
 	Matchers    apijson.Field
 	Name        apijson.Field
+	Source      apijson.Field
 	Tag         apijson.Field
 	raw         string
 	ExtraFields map[string]apijson.Field
@@ -224,6 +229,24 @@ func (r RuleCatchAllUpdateResponseEnabled) IsKnown() bool {
 	return false
 }
 
+// Who manages the rule. `api` covers dashboard, generic API, and Terraform;
+// `wrangler` means the rule is managed by a Worker's wrangler.jsonc. Defaults to
+// `api` when omitted on write.
+type RuleCatchAllUpdateResponseSource string
+
+const (
+	RuleCatchAllUpdateResponseSourceAPI      RuleCatchAllUpdateResponseSource = "api"
+	RuleCatchAllUpdateResponseSourceWrangler RuleCatchAllUpdateResponseSource = "wrangler"
+)
+
+func (r RuleCatchAllUpdateResponseSource) IsKnown() bool {
+	switch r {
+	case RuleCatchAllUpdateResponseSourceAPI, RuleCatchAllUpdateResponseSourceWrangler:
+		return true
+	}
+	return false
+}
+
 type RuleCatchAllGetResponse struct {
 	// Routing rule identifier.
 	ID string `json:"id"`
@@ -235,6 +258,10 @@ type RuleCatchAllGetResponse struct {
 	Matchers []CatchAllMatcher `json:"matchers"`
 	// Routing rule name.
 	Name string `json:"name"`
+	// Who manages the rule. `api` covers dashboard, generic API, and Terraform;
+	// `wrangler` means the rule is managed by a Worker's wrangler.jsonc. Defaults to
+	// `api` when omitted on write.
+	Source RuleCatchAllGetResponseSource `json:"source"`
 	// Routing rule tag. (Deprecated, replaced by routing rule identifier)
 	//
 	// Deprecated: deprecated
@@ -250,6 +277,7 @@ type ruleCatchAllGetResponseJSON struct {
 	Enabled     apijson.Field
 	Matchers    apijson.Field
 	Name        apijson.Field
+	Source      apijson.Field
 	Tag         apijson.Field
 	raw         string
 	ExtraFields map[string]apijson.Field
@@ -279,6 +307,24 @@ func (r RuleCatchAllGetResponseEnabled) IsKnown() bool {
 	return false
 }
 
+// Who manages the rule. `api` covers dashboard, generic API, and Terraform;
+// `wrangler` means the rule is managed by a Worker's wrangler.jsonc. Defaults to
+// `api` when omitted on write.
+type RuleCatchAllGetResponseSource string
+
+const (
+	RuleCatchAllGetResponseSourceAPI      RuleCatchAllGetResponseSource = "api"
+	RuleCatchAllGetResponseSourceWrangler RuleCatchAllGetResponseSource = "wrangler"
+)
+
+func (r RuleCatchAllGetResponseSource) IsKnown() bool {
+	switch r {
+	case RuleCatchAllGetResponseSourceAPI, RuleCatchAllGetResponseSourceWrangler:
+		return true
+	}
+	return false
+}
+
 type RuleCatchAllUpdateParams struct {
 	// Identifier.
 	ZoneID param.Field[string] `path:"zone_id" api:"required"`
@@ -290,6 +336,13 @@ type RuleCatchAllUpdateParams struct {
 	Enabled param.Field[RuleCatchAllUpdateParamsEnabled] `json:"enabled"`
 	// Routing rule name.
 	Name param.Field[string] `json:"name"`
+	// Public tag (script_tag) of the Worker that owns this rule. Required when
+	// `source` is `wrangler`.
+	OwnerWorkerTag param.Field[string] `json:"owner_worker_tag"`
+	// Who manages the rule. `api` covers dashboard, generic API, and Terraform;
+	// `wrangler` means the rule is managed by a Worker's wrangler.jsonc. Defaults to
+	// `api` when omitted on write.
+	Source param.Field[RuleCatchAllUpdateParamsSource] `json:"source"`
 }
 
 func (r RuleCatchAllUpdateParams) MarshalJSON() (data []byte, err error) {
@@ -307,6 +360,24 @@ const (
 func (r RuleCatchAllUpdateParamsEnabled) IsKnown() bool {
 	switch r {
 	case RuleCatchAllUpdateParamsEnabledTrue, RuleCatchAllUpdateParamsEnabledFalse:
+		return true
+	}
+	return false
+}
+
+// Who manages the rule. `api` covers dashboard, generic API, and Terraform;
+// `wrangler` means the rule is managed by a Worker's wrangler.jsonc. Defaults to
+// `api` when omitted on write.
+type RuleCatchAllUpdateParamsSource string
+
+const (
+	RuleCatchAllUpdateParamsSourceAPI      RuleCatchAllUpdateParamsSource = "api"
+	RuleCatchAllUpdateParamsSourceWrangler RuleCatchAllUpdateParamsSource = "wrangler"
+)
+
+func (r RuleCatchAllUpdateParamsSource) IsKnown() bool {
+	switch r {
+	case RuleCatchAllUpdateParamsSourceAPI, RuleCatchAllUpdateParamsSourceWrangler:
 		return true
 	}
 	return false

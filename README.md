@@ -34,11 +34,13 @@ The controller runs an in-process L7 reverse proxy inside the cloudflared proces
 
 See [L7 Proxy Architecture](https://cf.k8s.lex.la/latest/development/architecture/) for full details.
 
+If the tunnel's initial connection to the Cloudflare edge fails (for example, cluster DNS not yet reachable right after a node reboot), the proxy retries with backoff and reports NotReady instead of restarting — see [Proxy Pod Stuck NotReady After a Restart](https://cf.k8s.lex.la/latest/operations/troubleshooting/#proxy-pod-stuck-notready-after-a-restart).
+
 ## Quick Start
 
 ```bash
 # 1. Install Gateway API CRDs
-kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.6.0/standard-install.yaml
+kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.6.1/standard-install.yaml
 
 # 2. Create credentials Secrets
 kubectl create namespace cloudflare-tunnel-system
@@ -230,6 +232,8 @@ make lint        # run linter
 ## Security
 
 For security issues, please see [SECURITY.md](SECURITY.md).
+
+The proxy's config API (where the controller pushes routing changes) is authenticated and network-restricted by default — see the [Security reference](https://cf.k8s.lex.la/latest/reference/security/).
 
 For multi-tenant deployments — isolation boundaries, hostname-ownership enforcement, and per-Gateway data planes — see the [Multi-Tenancy guide](https://cf.k8s.lex.la/latest/guides/multi-tenancy/).
 

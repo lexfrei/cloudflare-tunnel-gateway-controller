@@ -71,7 +71,7 @@ type AnalyticsEventBytimeGetResponse struct {
 	Rows float64 `json:"rows" api:"required"`
 	// Total result for each selected metrics across all data.
 	Totals map[string]float64 `json:"totals" api:"required"`
-	// List of time interval buckets: [start, end]
+	// List of time interval buckets: [start, end].
 	TimeIntervals [][]time.Time                       `json:"time_intervals" format:"date-time"`
 	JSON          analyticsEventBytimeGetResponseJSON `json:"-"`
 }
@@ -173,6 +173,8 @@ type AnalyticsEventBytimeGetResponseQuery struct {
 	// | \<       | Less Than                | %3C         |
 	// | \>=      | Greater than or equal to | %3E%3D      |
 	// | \<=      | Less than or equal to    | %3C%3D      |
+	//
+	// Use the above to construct filters.
 	Filters string `json:"filters"`
 	// Limit number of returned metrics.
 	Limit float64 `json:"limit"`
@@ -271,6 +273,8 @@ type AnalyticsEventBytimeGetParams struct {
 	// | \<       | Less Than                | %3C         |
 	// | \>=      | Greater than or equal to | %3E%3D      |
 	// | \<=      | Less than or equal to    | %3C%3D      |
+	//
+	// Use the above to construct filters.
 	Filters param.Field[string] `query:"filters"`
 	// One or more metrics to compute. Options are:
 	//
