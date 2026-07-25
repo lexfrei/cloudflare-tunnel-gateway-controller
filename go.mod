@@ -58,7 +58,7 @@ require (
 	github.com/fxamacker/cbor/v2 v2.9.1 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.13 // indirect
 	github.com/getsentry/sentry-go v0.46.0 // indirect
-	github.com/go-chi/chi/v5 v5.3.0 // indirect
+	github.com/go-chi/chi/v5 v5.3.1 // indirect
 	github.com/go-chi/cors v1.2.1 // indirect
 	github.com/go-errors/errors v1.5.1 // indirect
 	github.com/go-jose/go-jose/v4 v4.1.4 // indirect
@@ -169,6 +169,13 @@ require (
 	zombiezen.com/go/capnproto2 v2.18.0+incompatible // indirect
 )
 
-replace github.com/cloudflare/cloudflared => github.com/lexfrei/cloudflared v0.0.0-20260701231156-1674150f30b7
+replace github.com/cloudflare/cloudflared => github.com/lexfrei/cloudflared v0.0.0-20260725170743-c76a719d15f8
 
-replace github.com/quic-go/quic-go => github.com/chungthuang/quic-go v0.45.1
+// FIXME(#609): this pin (matching cloudflared's own, equally vulnerable target)
+// still carries CVE-2025-59530 (GHSA-47m2-4cr7-mhcw). Upstream cloudflared tried
+// the fix (chungthuang/quic-go branch cloudflare-0.59.1, commit a9fddf436fc4) and
+// reverted it before releasing 2026.7.3, reason undocumented. Do not repoint this
+// alone without cloudflared adopting a fix first; see #609 for what would unblock it.
+// FIXME(#610): the require entry above is decorative, this unconditional replace
+// (no version on its left side) wins regardless of what version that line names.
+replace github.com/quic-go/quic-go => github.com/chungthuang/quic-go v0.45.1-0.20250428085412-43229ad201fd
