@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/tls"
 	"log/slog"
+	"runtime"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -15,6 +17,7 @@ import (
 	"github.com/cloudflare/cloudflared/connection"
 	"github.com/cloudflare/cloudflared/orchestration"
 	cfdsignal "github.com/cloudflare/cloudflared/signal"
+	"github.com/cloudflare/cloudflared/supervisor"
 )
 
 func TestBuildCatchAllIngress(t *testing.T) {
@@ -358,6 +361,60 @@ func TestWaitConnected_NoCallbackOnContextCancel(t *testing.T) {
 	waitConnected(ctx, sig, slog.Default(), func() { calls++ })
 
 	assert.Equal(t, 0, calls, "OnConnected must not fire when the context is cancelled before connecting")
+}
+
+// TestStartWaitConnected_SpawnsAGoroutine sanity-checks that
+// startWaitConnected actually starts waitConnected in the background (a
+// goroutine-count bump), rather than, say, silently running it inline or not
+// at all. The behavioral half of the fix -- that stop() actually ends the
+// wait -- is pinned separately in
+// TestStartWaitConnected_StopEndsWaitWithoutOuterCtxDone, since comparing
+// runtime.NumGoroutine() against a "went back down" threshold is too noisy
+// in a shared test binary (other tests' goroutines, GC workers, etc. can
+// keep the count elevated for reasons unrelated to this one).
+func TestStartWaitConnected_SpawnsAGoroutine(t *testing.T) {
+	before := runtime.NumGoroutine()
+
+	stop := startWaitConnected(t.Context(), cfdsignal.New(make(chan struct{})), slog.Default(), func() {})
+	defer stop()
+
+	assert.Eventually(t, func() bool {
+		return runtime.NumGoroutine() > before
+	}, time.Second, time.Millisecond, "waitConnected goroutine must have started")
+}
+
+// TestStartWaitConnected_StopEndsWaitWithoutOuterCtxDone pins the fix for a
+// goroutine leak: StartTunnelWithRetry calls StartTunnel with the SAME
+// long-lived context on every bootstrap attempt (it is only cancelled at
+// process shutdown, not between attempts), so a naive
+// "go waitConnected(ctx, ...)" spawned fresh on every failed attempt would
+// park forever on that never-done ctx -- one leaked goroutine per retry,
+// unbounded for a long outage, which is exactly the scenario this feature
+// exists to survive. startWaitConnected must scope the goroutine to a
+// context the caller can cancel independently of ctx, so a StartTunnel call
+// that never connects still cleans up on return.
+//
+// Proven behaviorally rather than via goroutine counting: a connect signal
+// arriving AFTER stop() -- as if cloudflared registered just after this
+// specific StartTunnel attempt had already given up and returned -- must not
+// invoke onConnected. If the goroutine were still parked on ctx (the leak),
+// it would still be listening and would fire the callback. No sleeps needed:
+// stop() blocks until the goroutine has actually returned (see its doc
+// comment), so the ordering here is deterministic, not timing-dependent.
+func TestStartWaitConnected_StopEndsWaitWithoutOuterCtxDone(t *testing.T) {
+	ctx := t.Context() // long-lived: this test never cancels it
+	sig := cfdsignal.New(make(chan struct{}))
+
+	var calls atomic.Int32
+
+	stop := startWaitConnected(ctx, sig, slog.Default(), func() { calls.Add(1) })
+	stop()
+
+	sig.Notify() // a late connect signal, as if cloudflared registered just
+	// after this StartTunnel attempt already gave up and returned
+
+	assert.Equal(t, int32(0), calls.Load(),
+		"a connect signal after stop() must not fire onConnected -- the wait must already be over")
 }
 
 func TestConstants(t *testing.T) {
@@ -953,4 +1010,203 @@ func TestResolveProtocolFlag(t *testing.T) {
 			assert.Equal(t, tt.want, got)
 		})
 	}
+}
+
+// TestBuildOrchestrator_CalledTwice_DoesNotPanic pins the fix for a
+// Prometheus double-registration panic. buildOrchestrator (via
+// buildTunnelConfig) registers cloudflared's DNS-resolver metrics on
+// prometheus.DefaultRegisterer unconditionally on every call -- it was
+// written assuming "construct once per process." StartTunnelWithRetry
+// breaks that assumption: a retryable failure re-enters buildOrchestrator
+// from scratch on the next attempt. Without ensureRetrySafeRegisterer, the
+// second call panics with "duplicate metrics collector registration
+// attempted" instead of the retry loop backing off -- exactly the
+// reproduction scenario in the issue this feature exists for, since
+// buildOrchestrator has no network dependency and succeeds identically on
+// every attempt regardless of what made the previous attempt retry.
+//
+// NOT parallel: temporarily replaces prometheus.DefaultRegisterer.
+func TestBuildOrchestrator_CalledTwice_DoesNotPanic(t *testing.T) {
+	token := newTestToken()
+	cfg := &Config{ProxyURL: "http://localhost:8080"}
+
+	withFreshRegisterer(func() {
+		ensureRetrySafeRegisterer()
+
+		_, _, err := buildOrchestrator(t.Context(), cfg, token, slog.Default())
+		require.NoError(t, err)
+
+		assert.NotPanics(t, func() {
+			_, _, err := buildOrchestrator(t.Context(), cfg, token, slog.Default())
+			require.NoError(t, err)
+		})
+	})
+}
+
+// TestNewSupervisor_CalledTwice_DoesNotPanic covers the second Prometheus
+// double-registration hazard on the bootstrap-retry path: vendored
+// supervisor.NewSupervisor (called from within StartTunnelDaemon, one call
+// per bootstrap attempt) unconditionally registers cloudflared's QUIC
+// datagram metrics on prometheus.DefaultRegisterer too, via v3.NewMetrics.
+// That call site is inside the vendored fork, not something this package's
+// own code calls directly, so it needs the same registerer-level fix as
+// buildOrchestrator's hazard above rather than a call-site change.
+//
+// EdgeAddrs is set to a literal IP (RFC 5737 TEST-NET-1) so NewSupervisor
+// takes the StaticEdge path instead of resolving a real Cloudflare edge
+// hostname: net.ResolveTCPAddr/ResolveUDPAddr short-circuit on an IP
+// literal without touching the network, keeping this test fast and
+// independent of the sandbox's network access -- construction is all that
+// is needed to reach the metrics registration, no actual dial.
+//
+// NOT parallel: temporarily replaces prometheus.DefaultRegisterer.
+func TestNewSupervisor_CalledTwice_DoesNotPanic(t *testing.T) {
+	token := newTestToken()
+	cfg := &Config{ProxyURL: "http://localhost:8080"}
+
+	withFreshRegisterer(func() {
+		ensureRetrySafeRegisterer()
+
+		orchestrator, tunnelCfg, err := buildOrchestrator(t.Context(), cfg, token, slog.Default())
+		require.NoError(t, err)
+
+		tunnelCfg.EdgeAddrs = []string{"192.0.2.1:7844"}
+
+		reconnectCh := make(chan supervisor.ReconnectSignal, 1)
+		graceShutdownC := make(chan struct{})
+
+		_, err = supervisor.NewSupervisor(tunnelCfg, orchestrator, reconnectCh, graceShutdownC)
+		require.NoError(t, err)
+
+		assert.NotPanics(t, func() {
+			_, err := supervisor.NewSupervisor(tunnelCfg, orchestrator, reconnectCh, graceShutdownC)
+			require.NoError(t, err)
+		})
+	})
+}
+
+// TestBuildOrchestrator_PerAttemptCtx_PreventsGoroutineAccumulation proves
+// the pattern StartTunnel now uses (see attemptCtx in StartTunnel) to avoid
+// a goroutine leak the bootstrap retry loop would otherwise cause.
+// buildOrchestrator's constructors -- features.NewFeatureSelector's hourly
+// refresh loop, orchestration.NewOrchestrator's proxy-close watcher -- spawn
+// goroutines scoped to whatever context they are given, with no way to stop
+// them other than cancelling that context. Confirmed independently by two
+// review passes: calling buildOrchestrator repeatedly on ONE shared,
+// never-cancelled context -- exactly what StartTunnel did before this fix,
+// since StartTunnelWithRetry reuses the same long-lived ctx across every
+// bootstrap attempt -- measurably grows the goroutine count call over call.
+// Calling it with a FRESH context per call, cancelled right after (what
+// StartTunnel's attemptCtx now does around every attempt), must not.
+//
+// This exercises buildOrchestrator directly rather than the full
+// StartTunnel/StartTunnelWithRetry path: StartTunnel's remaining work after
+// buildOrchestrator succeeds is supervisor.StartTunnelDaemon, which dials
+// the real Cloudflare edge with no test seam to avoid it -- confirmed by
+// direct probe (not committed) to take 20+ seconds per call, touch real
+// cloudflared connection-retry internals against the live edge, and even
+// trip the race detector inside that vendored retry logic. Unsuitable for a
+// unit test. buildOrchestrator is where the leak actually originates and
+// has no such dependency.
+//
+// Flakiness protections, since runtime.NumGoroutine() on ambient counts is a
+// classic source of them in a shared test binary:
+//   - NOT parallel (see below): nothing else touching goroutine counts runs
+//     concurrently with this test's measurement windows.
+//   - The "grows" half (sharedCtx) needs no wait at all: a "go f()" statement
+//     registers the goroutine with the runtime synchronously as part of
+//     executing it, before buildOrchestrator can return -- NumGoroutine()
+//     reflects it immediately, whether or not the goroutine has actually been
+//     scheduled to start running yet.
+//   - The "does not accumulate" half (per-call ctx) DOES need to wait: a
+//     cancelled goroutine needs a scheduler turn to observe ctx.Done() and
+//     actually return, shrinking the count. That side polls for the count to
+//     settle (require.Eventually, generous 5s budget) instead of sleeping a
+//     fixed duration -- a fixed sleep either wastes time when the runtime is
+//     fast or, under CI contention, isn't long enough and flakes.
+//   - The pass/fail bound is a delta from a measurement taken earlier in
+//     THIS SAME test (beforeScoped), not a hardcoded absolute -- immune to
+//     whatever ambient goroutine count the rest of the test binary happens
+//     to be sitting at when this test runs.
+//
+// NOT parallel: temporarily replaces prometheus.DefaultRegisterer, and
+// goroutine-count measurements would be polluted by concurrently-running
+// tests.
+func TestBuildOrchestrator_PerAttemptCtx_PreventsGoroutineAccumulation(t *testing.T) {
+	token := newTestToken()
+	cfg := &Config{ProxyURL: "http://localhost:8080"}
+
+	const calls = 5
+
+	withFreshRegisterer(func() {
+		// Calling buildOrchestrator more than once needs the same
+		// double-registration fix TestBuildOrchestrator_CalledTwice_DoesNotPanic
+		// pins -- otherwise the second call here panics before this test
+		// ever reaches what it is actually checking.
+		ensureRetrySafeRegisterer()
+
+		// Shared, never-cancelled context -- the pre-fix shape: StartTunnel
+		// used to hand buildOrchestrator its caller's own long-lived ctx.
+		sharedCtx := t.Context()
+
+		before := runtime.NumGoroutine()
+
+		for range calls {
+			_, _, err := buildOrchestrator(sharedCtx, cfg, token, slog.Default())
+			require.NoError(t, err)
+		}
+
+		afterShared := runtime.NumGoroutine()
+
+		assert.Greater(t, afterShared, before,
+			"sanity check: buildOrchestrator on a shared, never-cancelled context must actually grow the goroutine count -- otherwise this test proves nothing")
+
+		// Per-call context, cancelled right after each call -- the fix's
+		// shape: StartTunnel's attemptCtx.
+		beforeScoped := runtime.NumGoroutine()
+
+		for range calls {
+			ctx, cancel := context.WithCancel(t.Context())
+
+			_, _, err := buildOrchestrator(ctx, cfg, token, slog.Default())
+			require.NoError(t, err)
+
+			cancel()
+		}
+
+		require.Eventually(t, func() bool {
+			return runtime.NumGoroutine() <= beforeScoped+2
+		}, 5*time.Second, 10*time.Millisecond,
+			"a per-call context cancelled right after buildOrchestrator returns must not accumulate goroutines across repeated calls -- a growing count here is exactly the leak an unbounded bootstrap retry would trigger")
+	})
+}
+
+// TestBuildTunnelConfig_ObserverIsSharedAcrossCalls pins the mitigation for
+// the same "constructed once per process" hazard that also broke Prometheus
+// registration and the waitConnected goroutine: connection.NewObserver
+// spawns an unconditional background goroutine (dispatchEvents) with no
+// exposed way to stop it -- no ctx parameter, no Close() method -- so a
+// fresh Observer per bootstrap attempt leaks that goroutine (plus whatever
+// it closes over via registered EventSinks) once StartTunnelWithRetry can
+// call buildTunnelConfig many times in the same process. Unlike the other
+// two hazards this one cannot be closed by threading a per-attempt context
+// through -- the vendored constructor does not accept one -- so
+// buildTunnelConfig reuses ONE Observer for the process's lifetime instead
+// of building a fresh one per call.
+func TestBuildTunnelConfig_ObserverIsSharedAcrossCalls(t *testing.T) {
+	token := newTestToken()
+	zlog := newZerologLogger()
+
+	withFreshRegisterer(func() {
+		ensureRetrySafeRegisterer()
+
+		tunnelCfg1, _, err := buildTunnelConfig(t.Context(), token, "http://localhost:8080", connection.AutoSelectFlag, &zlog)
+		require.NoError(t, err)
+
+		tunnelCfg2, _, err := buildTunnelConfig(t.Context(), token, "http://localhost:8080", connection.AutoSelectFlag, &zlog)
+		require.NoError(t, err)
+
+		assert.Same(t, tunnelCfg1.Observer, tunnelCfg2.Observer,
+			"buildTunnelConfig must reuse one Observer across calls -- a fresh one per call leaks its unstoppable dispatchEvents goroutine on every bootstrap retry")
+	})
 }
