@@ -81,10 +81,14 @@ helper, so the DNS name it resolves always matches the rendered Service.
 
 {{/*
 Shared-proxy config-API auth Secret name: the operator's authTokenSecretRef.name
-when set (bring-your-own), otherwise the chart-generated Secret rendered by
-secret-proxy-authtoken.yaml. deployment.yaml (controller push) and
-deployment-proxy.yaml (proxy validation) both resolve the name through this
-one helper so they can never end up pointed at different Secrets.
+when set (bring-your-own), otherwise the chart's deterministic naming
+convention for the Secret the CONTROLLER generates and manages itself via a
+live API call (internal/controller/proxy_auth_secret.go), not a chart
+template -- a template-time `lookup` cannot see prior state under GitOps
+controllers that render client-side (e.g. ArgoCD's default `helm template`).
+deployment.yaml (via --proxy-auth-secret-ref) and deployment-proxy.yaml (via
+a pod-level secretKeyRef) both resolve the name through this one helper so
+they can never end up pointed at different Secrets.
 */}}
 {{- define "cf-tunnel-gw-ctrl.proxyAuthTokenSecretName" -}}
 {{- if .Values.proxy.authTokenSecretRef.name -}}

@@ -199,10 +199,13 @@ type Config struct {
 //  1. Fails fast when ProxyEndpoints is empty (v3 requires a configured L7 proxy data plane)
 //  2. Initializes controller-runtime manager with metrics and health endpoints
 //  3. Registers GatewayClassConfig CRD scheme
-//  4. Creates ConfigResolver for reading GatewayClassConfig
-//  5. Sets up Gateway/HTTPRoute/GRPCRoute/GatewayClassConfig reconcilers with watches
-//  6. Wires the ProxySyncer that pushes HTTPRoute config to the proxy data plane
-//  7. Starts the manager and blocks until shutdown
+//  4. Resolves the shared-proxy config-API auth token (resolveProxyAuthToken),
+//     before any reconciler wiring, so the window where proxy pods wait on a
+//     Secret only this step creates stays as short as possible
+//  5. Creates ConfigResolver for reading GatewayClassConfig
+//  6. Sets up Gateway/HTTPRoute/GRPCRoute/GatewayClassConfig reconcilers with watches
+//  7. Wires the ProxySyncer that pushes HTTPRoute config to the proxy data plane
+//  8. Starts the manager and blocks until shutdown
 //
 //nolint:funlen,gocyclo,cyclop,maintidx // controller setup requires multiple sequential reconciler wires
 func Run(ctx context.Context, cfg *Config) error {

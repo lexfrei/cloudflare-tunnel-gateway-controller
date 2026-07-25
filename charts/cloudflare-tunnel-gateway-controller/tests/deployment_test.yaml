@@ -839,7 +839,7 @@ tests:
               fieldRef:
                 fieldPath: metadata.namespace
 
-  - it: should inject CONTROLLER_NAMESPACE even when authTokenSecretRef.name is empty (chart generates the token)
+  - it: should inject CONTROLLER_NAMESPACE even when authTokenSecretRef.name is empty (controller generates the token)
     set:
       proxy:
         authTokenSecretRef:

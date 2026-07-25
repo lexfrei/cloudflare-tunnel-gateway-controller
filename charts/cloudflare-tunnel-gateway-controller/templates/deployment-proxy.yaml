@@ -55,8 +55,14 @@ spec:
               value: {{ . | quote }}
             {{- end }}
             # The config API is always authenticated: a bring-your-own
-            # authTokenSecretRef or, absent that, a chart-generated Secret
-            # (see templates/secret-proxy-authtoken.yaml).
+            # authTokenSecretRef or, absent that, a Secret the CONTROLLER
+            # generates and manages itself via a live API call (see
+            # internal/controller/proxy_auth_secret.go) -- not chart
+            # templating, so it's correct under GitOps controllers that
+            # render client-side (a template-time `lookup` cannot see prior
+            # state there). Either way this is the only pod-level
+            # secretKeyRef for this token; the controller's own pod never
+            # carries one.
             - name: PROXY_AUTH_TOKEN
               valueFrom:
                 secretKeyRef:
