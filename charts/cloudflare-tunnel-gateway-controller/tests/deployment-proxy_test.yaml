@@ -505,3 +505,41 @@ tests:
       - notMatchRegex:
           path: spec.template.spec.containers[0].env[*].name
           pattern: "^PROXY_TRACING_ENDPOINT$"
+
+  # Secure-by-default: the config API must always require a Bearer token, even
+  # when the operator names no authTokenSecretRef. The CONTROLLER generates
+  # the Secret itself via a live API call at the chart's deterministic name
+  # (internal/controller/proxy_auth_secret.go) and this template wires the
+  # proxy pod to read it.
+  - it: should always set PROXY_AUTH_TOKEN by default, pointing at the controller-generated Secret
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: PROXY_AUTH_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: RELEASE-NAME-cloudflare-tunnel-gateway-controller-proxy-auth-token
+                key: auth-token
+
+  - it: should use the bring-your-own authTokenSecretRef Secret/key instead of the generated one
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
+        authTokenSecretRef:
+          name: my-own-auth-secret
+          key: my-key
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: PROXY_AUTH_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: my-own-auth-secret
+                key: my-key

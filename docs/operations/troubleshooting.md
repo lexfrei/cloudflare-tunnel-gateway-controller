@@ -95,6 +95,59 @@ kubectl describe pod --namespace cloudflare-tunnel-system \
 | `secret not found` | Missing secret | Create required secret |
 | `read-only file system` | Security context issue | Check emptyDir volumes |
 
+### Config API Auth Secret Missing or Broken
+
+**Symptoms**:
+
+- Controller pod in `CrashLoopBackOff` immediately after startup, before it reconciles anything
+- Every Gateway managed by this controller loses reconciliation, not just one
+- If a proxy pod is also (re)starting against the same broken Secret, it crash-loops too instead of serving anything unauthenticated
+
+**Diagnosis**:
+
+```bash
+kubectl logs --namespace cloudflare-tunnel-system \
+  deployment/cloudflare-tunnel-gateway-controller
+```
+
+```text
+error: failed to run controller: resolving shared-proxy auth secret: cloudflare-tunnel-system/cloudflare-tunnel-gateway-controller-proxy-auth-token key "auth-token": shared-proxy auth secret exists but has no usable value at the expected key
+```
+
+A proxy pod hitting the same broken Secret on its own startup logs (JSON, via its structured logger) instead:
+
+```bash
+kubectl logs --namespace cloudflare-tunnel-system \
+  --selector app.kubernetes.io/component=proxy
+```
+
+```text
+{"time":"...","level":"ERROR","msg":"refusing to start with a broken config-API auth configuration","error":"PROXY_AUTH_TOKEN is set but empty"}
+```
+
+**Cause**: a Secret already exists at the name the controller expects for the shared proxy's config-API bearer token, but its `auth-token` key is missing or empty. Most often this is a hand-created Secret with a typo'd key name. The controller resolves this token once at startup, before wiring any reconciler, and fails closed rather than start with an unusable token: the config API must never be left unauthenticated. Unlike a broken per-Gateway auth Secret, which only stops that one Gateway's data plane, this stops the controller process entirely, because the resolution happens before any Gateway is reconciled.
+
+The controller cannot repair this itself. Its RBAC on Secrets grants `create` but not `update`.
+
+!!! danger "A proxy pod already running against a present-but-empty key may be unauthenticated"
+
+    The proxy itself now refuses to start when `PROXY_AUTH_TOKEN` is set but empty, the same fail-closed behavior as the controller -- a *new* proxy pod hitting this broken Secret crash-loops instead of serving anything. But Kubernetes never re-reads a `secretKeyRef` into a running container, so a proxy pod that already started against this Secret *before* the fix reached it (an older image, or before you noticed the problem) is still running with `PROXY_AUTH_TOKEN=""` baked into its environment, still accepting `PUT /config` from anyone with no `Authorization` header. Deleting the Secret and restarting only the controller does not touch that pod. Restart the proxy too.
+
+**Solution**: delete the broken Secret and restart both the controller and the proxy, so neither is left running with an empty or stale token.
+
+```bash
+kubectl delete secret cloudflare-tunnel-gateway-controller-proxy-auth-token \
+  --namespace cloudflare-tunnel-system
+
+kubectl rollout restart deployment/cloudflare-tunnel-gateway-controller \
+  --namespace cloudflare-tunnel-system
+
+kubectl rollout restart deployment/cloudflare-tunnel-gateway-controller-proxy \
+  --namespace cloudflare-tunnel-system
+```
+
+If `proxy.authTokenSecretRef.name` is set to a Secret you manage yourself, the controller never creates or repairs it; fix the key in that Secret instead, then restart the proxy the same way so it picks up the corrected value.
+
 ### Proxy Pod Stuck NotReady After a Restart
 
 **Symptoms**:
