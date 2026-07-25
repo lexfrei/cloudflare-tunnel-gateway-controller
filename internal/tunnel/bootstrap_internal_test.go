@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cockroachdb/errors"
 	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/assert"
@@ -324,6 +325,38 @@ func TestStartTunnel_EmptyToken_ErrorPath(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "tunnel token is empty")
+}
+
+// TestStartTunnel_InvalidToken_IsNonRetryable pins that a token-parse
+// failure classifies as non-retryable: retrying with the same malformed
+// token can never succeed, so StartTunnelWithRetry must return immediately
+// instead of backing off.
+func TestStartTunnel_InvalidToken_IsNonRetryable(t *testing.T) {
+	t.Parallel()
+
+	err := StartTunnel(t.Context(), &Config{
+		Token:    "not-valid-base64!!!",
+		ProxyURL: "http://localhost:8080",
+	})
+
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, errNonRetryableStart))
+}
+
+// TestStartTunnel_BuildOrchestratorError_IsNonRetryable pins that a
+// deterministic config-build failure (here: an unparseable catch-all
+// ingress URL) also classifies as non-retryable -- same reasoning as an
+// invalid token, it is not a network condition that clears on retry.
+func TestStartTunnel_BuildOrchestratorError_IsNonRetryable(t *testing.T) {
+	t.Parallel()
+
+	err := StartTunnel(t.Context(), &Config{
+		Token:    validTestTokenBase64(),
+		ProxyURL: "",
+	})
+
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, errNonRetryableStart))
 }
 
 // TestWaitConnected_FiresCallbackOnConnect pins that the connected-signal hook

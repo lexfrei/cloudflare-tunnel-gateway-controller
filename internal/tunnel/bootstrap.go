@@ -144,7 +144,9 @@ func ParseTunnelToken(tokenStr string) (*Token, error) {
 func StartTunnel(ctx context.Context, cfg *Config) error {
 	token, err := ParseTunnelToken(cfg.Token)
 	if err != nil {
-		return errors.Wrap(err, "parse tunnel token")
+		// Marked non-retryable: a malformed token fails identically on every
+		// retry, so StartTunnelWithRetry must not back off and wait on it.
+		return markNonRetryable(errors.Wrap(err, "parse tunnel token"))
 	}
 
 	logger := cfg.Logger
@@ -172,7 +174,13 @@ func StartTunnel(ctx context.Context, cfg *Config) error {
 
 	orchestrator, tunnelCfg, err := buildOrchestrator(attemptCtx, cfg, token, logger)
 	if err != nil {
-		return err
+		// Marked non-retryable: every failure reachable here (protocol/TLS
+		// selection, ingress parsing, orchestrator construction) is a
+		// deterministic config-build error, not a network condition -- the
+		// network-dependent lookups nested in this path (feature fetch,
+		// protocol-percentage fetch) degrade gracefully on their own DNS
+		// failure and never propagate an error through this return.
+		return markNonRetryable(err)
 	}
 
 	connectedSignal := cfdsignal.New(make(chan struct{}))
