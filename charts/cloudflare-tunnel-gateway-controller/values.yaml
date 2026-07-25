@@ -380,15 +380,19 @@ proxy:
     # each start; pin "http2" or "quic" to dial immediately.
     protocol: auto
   # -- Reference to Secret containing the config API Bearer token. The config
-  # API is ALWAYS authenticated -- when name is empty (the default) the chart
-  # generates a random token into a Secret named "<release>-proxy-auth-token"
-  # on first install and reuses it on every `helm upgrade` (looked up from the
-  # existing Secret, so the token never rotates and upgrading never rolls the
-  # proxy on its own). Set name to bring your own Secret/token instead, e.g.
+  # API is ALWAYS authenticated -- when name is empty (the default) the
+  # CONTROLLER (not chart templating) generates a random token into a Secret
+  # named "<release>-proxy-auth-token" as one of its first startup actions and
+  # reuses it on every subsequent start, so the token never rotates and
+  # upgrading never rolls the proxy on its own. Generating it via a live API
+  # call rather than at template time means this also works correctly under
+  # GitOps controllers that render client-side with no cluster access (e.g.
+  # ArgoCD's default `helm template`), where a template-time `lookup` cannot
+  # see prior state. Set name to bring your own Secret/token instead, e.g.
   # for external rotation.
   authTokenSecretRef:
     # -- Name of the Secret containing the auth token. Leave empty to let the
-    # chart generate and manage the token automatically (recommended).
+    # controller generate and manage the token automatically (recommended).
     name: ""
     # -- Key in the Secret containing the auth token
     key: "auth-token"

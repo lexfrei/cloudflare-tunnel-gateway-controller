@@ -58,10 +58,21 @@ spec:
             # Image for per-Gateway rendered proxy Deployments (GatewayConfig
             # data planes); always the release's proxy image.
             - "--proxy-image={{ .Values.proxy.image.repository }}:{{ .Values.proxy.image.tag | default .Chart.AppVersion }}"
-            # The config API is always authenticated (see
-            # templates/secret-proxy-authtoken.yaml): a bring-your-own
-            # authTokenSecretRef or, absent that, a chart-generated Secret.
+            # The config API is always authenticated. A bring-your-own
+            # authTokenSecretRef resolves via a pod-level secretKeyRef below
+            # (--proxy-auth-token). Otherwise the controller itself ensures
+            # the generated auth Secret exists (a live API call, not a
+            # template-time lookup, so it works the same under `helm
+            # install`/`upgrade` and under GitOps controllers that render
+            # client-side, e.g. ArgoCD's default helm template) and uses it
+            # directly for its own push auth -- --proxy-auth-secret-ref,
+            # NOT a secretKeyRef, because a secretKeyRef the controller is
+            # responsible for creating would deadlock its own pod.
+            {{- if .Values.proxy.authTokenSecretRef.name }}
             - "--proxy-auth-token=$(PROXY_AUTH_TOKEN)"
+            {{- else }}
+            - "--proxy-auth-secret-ref={{ .Release.Namespace }}/{{ include "cf-tunnel-gw-ctrl.proxyAuthTokenSecretName" . }}"
+            {{- end }}
             {{- if .Values.proxy.tunnelTokenSecretRef.name }}
             - "--proxy-token-secret={{ .Release.Namespace }}/{{ .Values.proxy.tunnelTokenSecretRef.name }}"
             {{- end }}
@@ -117,11 +128,13 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
+            {{- if .Values.proxy.authTokenSecretRef.name }}
             - name: PROXY_AUTH_TOKEN
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "cf-tunnel-gw-ctrl.proxyAuthTokenSecretName" . }}
+                  name: {{ .Values.proxy.authTokenSecretRef.name }}
                   key: {{ .Values.proxy.authTokenSecretRef.key | default "auth-token" }}
+            {{- end }}
           ports:
             - name: metrics
               containerPort: {{ .Values.service.metricsPort }}

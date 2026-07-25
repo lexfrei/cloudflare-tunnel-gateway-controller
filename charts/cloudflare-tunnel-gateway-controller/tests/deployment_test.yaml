@@ -853,11 +853,39 @@ tests:
               fieldRef:
                 fieldPath: metadata.namespace
 
-  # The config API must never be reachable unauthenticated: with no
-  # authTokenSecretRef the chart generates the token itself (see
-  # secret-proxy-authtoken.yaml), and the controller's push MUST always carry
-  # it — there is no values knob left that renders the flag away.
-  - it: should always set --proxy-auth-token and PROXY_AUTH_TOKEN by default, pointing at the chart-generated Secret
+  # The config API must never be reachable unauthenticated. With no
+  # authTokenSecretRef, the CONTROLLER (not the chart's templating) generates
+  # and owns the token -- see internal/controller/proxy_auth_secret.go -- so
+  # the chart only passes it a reference to ensure-and-use, never a
+  # pod-level secretKeyRef: wiring PROXY_AUTH_TOKEN via secretKeyRef here
+  # would deadlock the controller's own pod, since kubelet cannot start a
+  # container whose secretKeyRef points at a Secret that does not exist yet,
+  # and the only code that would create that Secret is the process kubelet
+  # is refusing to start.
+  - it: should always set --proxy-auth-secret-ref by default, pointing at the release namespace and the generated Secret name
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--proxy-auth-secret-ref=NAMESPACE/RELEASE-NAME-cloudflare-tunnel-gateway-controller-proxy-auth-token"
+
+  - it: should NOT set --proxy-auth-token or PROXY_AUTH_TOKEN by default (would deadlock the controller's own pod)
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          any: true
+          content: "--proxy-auth-token=$(PROXY_AUTH_TOKEN)"
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          any: true
+          content:
+            name: PROXY_AUTH_TOKEN
+
+  - it: should use the bring-your-own authTokenSecretRef Secret/key via a pod-level secretKeyRef, not --proxy-auth-secret-ref
+    set:
+      proxy:
+        authTokenSecretRef:
+          name: my-own-auth-secret
+          key: my-key
     asserts:
       - contains:
           path: spec.template.spec.containers[0].args
@@ -868,24 +896,12 @@ tests:
             name: PROXY_AUTH_TOKEN
             valueFrom:
               secretKeyRef:
-                name: RELEASE-NAME-cloudflare-tunnel-gateway-controller-proxy-auth-token
-                key: auth-token
-
-  - it: should use the bring-your-own authTokenSecretRef Secret/key instead of the generated one
-    set:
-      proxy:
-        authTokenSecretRef:
-          name: my-own-auth-secret
-          key: my-key
-    asserts:
-      - contains:
-          path: spec.template.spec.containers[0].env
-          content:
-            name: PROXY_AUTH_TOKEN
-            valueFrom:
-              secretKeyRef:
                 name: my-own-auth-secret
                 key: my-key
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          any: true
+          content: "--proxy-auth-secret-ref"
 
   # The controller renders per-Gateway proxy Deployments and must know the
   # release's proxy image; the chart always passes it.
