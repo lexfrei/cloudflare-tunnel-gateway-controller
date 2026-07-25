@@ -133,6 +133,8 @@ On a brand-new install, the proxy Deployment's pod template references the gener
 
     If you were pushing config to the proxy directly (bypassing the controller) with no `Authorization` header, that stops working after upgrading to a chart version with this default: read the generated token with `kubectl get secret <release>-proxy-auth-token -o jsonpath='{.data.auth-token}' | base64 -d` and send it as `Authorization: Bearer <token>`. During the rollout itself there is a brief window where the new, already-authenticated proxy pod rejects pushes from an old controller pod that has not yet rolled (401), and the reverse (an old, unauthenticated proxy pod accepting an authenticated push, since it never checks the header). Both resolve on their own once the rolling update finishes and both sides are on the new pod template -- no manual step is needed.
 
+The generated Secret is created by the controller directly, not rendered by Helm, so `helm uninstall` leaves it behind (see [Uninstalling](../getting-started/installation.md#uninstalling)). A Secret at this name with a missing or empty `auth-token` key fails the controller closed at startup instead of running with an unusable token; see [Config API Auth Secret Missing or Broken](../operations/troubleshooting.md#config-api-auth-secret-missing-or-broken) for the exact error and the recovery command.
+
 ### Health Endpoints
 
 | Endpoint | Port | Description |

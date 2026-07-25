@@ -95,6 +95,40 @@ kubectl describe pod --namespace cloudflare-tunnel-system \
 | `secret not found` | Missing secret | Create required secret |
 | `read-only file system` | Security context issue | Check emptyDir volumes |
 
+### Config API Auth Secret Missing or Broken
+
+**Symptoms**:
+
+- Controller pod in `CrashLoopBackOff` immediately after startup, before it reconciles anything
+- Every Gateway managed by this controller loses reconciliation, not just one
+
+**Diagnosis**:
+
+```bash
+kubectl logs --namespace cloudflare-tunnel-system \
+  deployment/cloudflare-tunnel-gateway-controller
+```
+
+```text
+error: failed to run controller: resolving shared-proxy auth secret: cloudflare-tunnel-system/cloudflare-tunnel-gateway-controller-proxy-auth-token key "auth-token": shared-proxy auth secret exists but has no usable value at the expected key
+```
+
+**Cause**: a Secret already exists at the name the controller expects for the shared proxy's config-API bearer token, but its `auth-token` key is missing or empty. Most often this is a hand-created Secret with a typo'd key name. The controller resolves this token once at startup, before wiring any reconciler, and fails closed rather than start with an unusable token: the config API must never be left unauthenticated. Unlike a broken per-Gateway auth Secret, which only stops that one Gateway's data plane, this stops the controller process entirely, because the resolution happens before any Gateway is reconciled.
+
+The controller cannot repair this itself. Its RBAC on Secrets grants `create` but not `update`.
+
+**Solution**: delete the broken Secret and let the controller recreate it on its next start.
+
+```bash
+kubectl delete secret cloudflare-tunnel-gateway-controller-proxy-auth-token \
+  --namespace cloudflare-tunnel-system
+
+kubectl rollout restart deployment/cloudflare-tunnel-gateway-controller \
+  --namespace cloudflare-tunnel-system
+```
+
+If `proxy.authTokenSecretRef.name` is set to a Secret you manage yourself, the controller never creates or repairs it; fix the key in that Secret instead.
+
 ### ImagePullBackOff
 
 **Diagnosis**:

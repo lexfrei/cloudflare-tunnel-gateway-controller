@@ -122,6 +122,12 @@ helm uninstall cloudflare-tunnel-gateway-controller \
 
     Uninstalling the Helm release will remove the controller and proxy pods. The tunnel configuration in Cloudflare will remain. To fully clean up, delete the tunnel from the Cloudflare dashboard.
 
+    If `proxy.authTokenSecretRef.name` is empty (the default), the controller also generated a config-API bearer token into a Secret named `<release>-proxy-auth-token`. Helm never rendered that Secret, the controller created it directly via the Kubernetes API, so `helm uninstall` does not remove it either. This is deliberate: reinstalling under the same release name picks the existing token back up instead of generating a new one, so the proxy never has to roll just because you reinstalled. To remove it as part of a full cleanup:
+
+    ```bash
+    kubectl delete secret <release>-proxy-auth-token --namespace cloudflare-tunnel-system
+    ```
+
 ## Alternative: External Secrets
 
 For production deployments, consider using [external-secrets](https://external-secrets.io/) to manage Cloudflare credentials:
