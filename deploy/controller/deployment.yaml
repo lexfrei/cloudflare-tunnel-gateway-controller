@@ -35,15 +35,20 @@ spec:
             # Replace 'cloudflare-tunnel-system' with the namespace where the
             # proxy Deployment runs if different from the controller's.
             - --proxy-endpoints=http://cloudflare-tunnel-gateway-controller-proxy-headless.cloudflare-tunnel-system.svc.cluster.local:8081/config
-            # --proxy-auth-secret-ref: the controller generates a random
-            # config-API bearer token into this Secret (creating it if
-            # missing) and uses it for its own config pushes, so the config
-            # API is never left unauthenticated. Point your own proxy
-            # Deployment's PROXY_AUTH_TOKEN env at the same Secret/key
-            # (auth-token) via a pod-level secretKeyRef so it validates
-            # against the same token — see the L7 Proxy guide. Requires the
-            # "secrets" create verb granted by deploy/rbac/role.yaml.
+            # --proxy-auth-secret-ref/--proxy-auth-secret-key/--proxy-auth-secret-generate:
+            # the controller resolves this Secret directly via the API (never
+            # a pod-level secretKeyRef on ITS OWN pod, which would deadlock it
+            # if the Secret it's responsible for creating doesn't exist yet)
+            # and, since --proxy-auth-secret-generate=true, creates it with a
+            # random token if missing, then uses it for its own config
+            # pushes, so the config API is never left unauthenticated. Point
+            # your own proxy Deployment's PROXY_AUTH_TOKEN env at the same
+            # Secret/key via a pod-level secretKeyRef so it validates against
+            # the same token — see the L7 Proxy guide. Requires the "secrets"
+            # create verb granted by deploy/rbac/role.yaml.
             - --proxy-auth-secret-ref=cloudflare-tunnel-system/cloudflare-tunnel-gateway-controller-proxy-auth-token
+            - --proxy-auth-secret-key=auth-token
+            - --proxy-auth-secret-generate=true
             # --proxy-image is the image for per-Gateway rendered proxy
             # Deployments (GatewayConfig data planes). Keep it in lockstep
             # with the proxy Deployment's image; without it, opted-in

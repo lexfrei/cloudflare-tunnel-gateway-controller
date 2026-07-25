@@ -853,22 +853,32 @@ tests:
               fieldRef:
                 fieldPath: metadata.namespace
 
-  # The config API must never be reachable unauthenticated. With no
-  # authTokenSecretRef, the CONTROLLER (not the chart's templating) generates
-  # and owns the token -- see internal/controller/proxy_auth_secret.go -- so
-  # the chart only passes it a reference to ensure-and-use, never a
-  # pod-level secretKeyRef: wiring PROXY_AUTH_TOKEN via secretKeyRef here
-  # would deadlock the controller's own pod, since kubelet cannot start a
-  # container whose secretKeyRef points at a Secret that does not exist yet,
-  # and the only code that would create that Secret is the process kubelet
-  # is refusing to start.
-  - it: should always set --proxy-auth-secret-ref by default, pointing at the release namespace and the generated Secret name
+  # The config API must never be reachable unauthenticated, and the
+  # controller's own pod must never carry a secretKeyRef for this token --
+  # regardless of whether it's bring-your-own or chart-generated. A
+  # secretKeyRef the controller itself is responsible for creating would
+  # deadlock its own pod (kubelet cannot start a container whose secretKeyRef
+  # points at a Secret that does not exist yet, and the only code that would
+  # create that Secret is the process kubelet is refusing to start); a
+  # secretKeyRef on an operator-named Secret carries no such risk today, but
+  # only because that Secret happens to already exist -- a property of the
+  # deployment, not of the code. --proxy-auth-secret-ref is therefore the
+  # ONE mechanism for both cases; --proxy-auth-secret-generate is the only
+  # thing that differs between them. See
+  # internal/controller/proxy_auth_secret.go.
+  - it: should always set --proxy-auth-secret-ref and --proxy-auth-secret-generate=true by default, pointing at the generated Secret name
     asserts:
       - contains:
           path: spec.template.spec.containers[0].args
           content: "--proxy-auth-secret-ref=NAMESPACE/RELEASE-NAME-cloudflare-tunnel-gateway-controller-proxy-auth-token"
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--proxy-auth-secret-key=auth-token"
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--proxy-auth-secret-generate=true"
 
-  - it: should NOT set --proxy-auth-token or PROXY_AUTH_TOKEN by default (would deadlock the controller's own pod)
+  - it: should never set --proxy-auth-token or a PROXY_AUTH_TOKEN secretKeyRef on the controller's own pod (would risk deadlocking it)
     asserts:
       - notContains:
           path: spec.template.spec.containers[0].args
@@ -880,7 +890,7 @@ tests:
           content:
             name: PROXY_AUTH_TOKEN
 
-  - it: should use the bring-your-own authTokenSecretRef Secret/key via a pod-level secretKeyRef, not --proxy-auth-secret-ref
+  - it: should use the bring-your-own authTokenSecretRef Secret/key via --proxy-auth-secret-ref, without --proxy-auth-secret-generate
     set:
       proxy:
         authTokenSecretRef:
@@ -889,19 +899,23 @@ tests:
     asserts:
       - contains:
           path: spec.template.spec.containers[0].args
-          content: "--proxy-auth-token=$(PROXY_AUTH_TOKEN)"
+          content: "--proxy-auth-secret-ref=NAMESPACE/my-own-auth-secret"
       - contains:
-          path: spec.template.spec.containers[0].env
-          content:
-            name: PROXY_AUTH_TOKEN
-            valueFrom:
-              secretKeyRef:
-                name: my-own-auth-secret
-                key: my-key
+          path: spec.template.spec.containers[0].args
+          content: "--proxy-auth-secret-key=my-key"
       - notContains:
           path: spec.template.spec.containers[0].args
           any: true
-          content: "--proxy-auth-secret-ref"
+          content: "--proxy-auth-secret-generate=true"
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          any: true
+          content: "--proxy-auth-token=$(PROXY_AUTH_TOKEN)"
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          any: true
+          content:
+            name: PROXY_AUTH_TOKEN
 
   # The controller renders per-Gateway proxy Deployments and must know the
   # release's proxy image; the chart always passes it.
