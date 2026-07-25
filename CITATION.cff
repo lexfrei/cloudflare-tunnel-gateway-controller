@@ -7,10 +7,10 @@ authors:
   - family-names: "Sviridkin"
     given-names: "Aleksei"
     email: "f@lex.la"
+    alias: "lexfrei"
 repository-code: "https://github.com/lexfrei/cloudflare-tunnel-gateway-controller"
+url: "https://cf.k8s.lex.la"
 license: BSD-3-Clause
-version: "3.2.0"
-date-released: "2026-07-02"
 keywords:
   - kubernetes
   - gateway-api
