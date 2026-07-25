@@ -91,16 +91,16 @@ rules:
     resources: ["networkpolicies"]
     # No patch: written via CreateOrUpdate + Delete only (see deployments).
     verbs: ["get", "list", "watch", "create", "update", "delete"]
-  # Secrets: the controller only reads them (Cloudflare credentials, TLS
-  # certificate refs, BackendTLSPolicy CA bundles). It does not create,
-  # mutate, or delete Secrets, so write verbs are intentionally absent.
+  # Secrets: mostly read-only (Cloudflare credentials, TLS certificate refs,
+  # BackendTLSPolicy CA bundles). create is for the generated config-API auth
+  # Secret, both planes: the per-Gateway one (#479, ownerRef GC'd with the
+  # Gateway) and the shared plane's (--proxy-auth-secret-ref, namespaced to
+  # the controller, never GC'd since there is no owning object). Either way a
+  # data plane without an explicit auth token Secret gets a
+  # controller-generated bearer token rather than an unauthenticated config
+  # API. No update/delete — the token is never rotated.
   - apiGroups: [""]
     resources: ["secrets"]
-    # create is for the generated per-Gateway config-API auth Secret (#479):
-    # a tenant data plane without an explicit authTokenSecretRef gets a
-    # controller-generated bearer token rather than an unauthenticated config
-    # API. No update/delete — the token is never rotated, and ownerRef GC
-    # removes it with the Gateway.
     verbs: ["get", "list", "watch", "create"]
   # ConfigMaps: BackendTLSPolicy can reference a ConfigMap holding the CA
   # bundle (internal/controller/backendtlspolicy_controller.go). Read-only.
