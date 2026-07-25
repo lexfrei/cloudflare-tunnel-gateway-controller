@@ -90,6 +90,24 @@ func TestResolveProxyAuthToken_NoOpWhenBothEmpty(t *testing.T) {
 	assert.Empty(t, resolved.ProxyAuthToken)
 }
 
+// TestResolveProxyAuthToken_RejectsMalformedSecretRef pins the entry point's
+// own error-propagation for an invalid --proxy-auth-secret-ref, not just the
+// underlying parseProxyAuthSecretRef helper (already covered directly by
+// TestParseProxyAuthSecretRef). resolveProxyAuthToken must return the parse
+// error rather than panic or swallow it, and it must never touch mgr to get
+// there: parsing happens before client.New(mgr.GetConfig(), ...), so mgr
+// stays nil here exactly like the no-op tests above.
+func TestResolveProxyAuthToken_RejectsMalformedSecretRef(t *testing.T) {
+	t.Parallel()
+
+	cfg := &Config{ProxyAuthSecretRef: "no-slash-here"}
+
+	resolved, err := resolveProxyAuthToken(context.Background(), nil, cfg)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, errInvalidProxyAuthSecretRef)
+	assert.Nil(t, resolved)
+}
+
 // TestEnsureProxyAuthSecret_GeneratesWhenMissing pins the secure-by-default
 // case: no Secret exists yet at the shared plane's generated name, so
 // ensureProxyAuthSecret(generate=true) creates one with a random token and

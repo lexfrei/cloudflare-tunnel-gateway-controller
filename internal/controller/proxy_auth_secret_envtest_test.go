@@ -119,3 +119,30 @@ func TestResolveProxyAuthToken_SecretRefWinsOverDirectToken(t *testing.T) {
 		_ = envK8sClient.Delete(context.Background(), &secret)
 	})
 }
+
+// TestResolveProxyAuthToken_BringYourOwnMissingFailsClosedAgainstRealManager
+// pins the entry point's own propagation of the fail-closed contract
+// documented in docs/operations/troubleshooting.md and docs/guides/l7-proxy.md:
+// a missing bring-your-own Secret must surface as an error out of
+// resolveProxyAuthToken itself, through the real client.New(mgr.GetConfig(),
+// ...) path Run() actually uses -- not just out of the lower-level
+// ensureProxyAuthSecret, which TestEnsureProxyAuthSecret_BringYourOwnMissingFailsClosed
+// already covers with a fake client.
+func TestResolveProxyAuthToken_BringYourOwnMissingFailsClosedAgainstRealManager(t *testing.T) {
+	mgr := newUnstartedTestManager(t)
+
+	key := types.NamespacedName{Namespace: "default", Name: "envtest-byo-missing-auth-token"}
+	cfg := &Config{
+		ProxyAuthSecretRef:      key.Namespace + "/" + key.Name,
+		ProxyAuthSecretGenerate: false,
+	}
+
+	resolved, err := resolveProxyAuthToken(context.Background(), mgr, cfg)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, errProxyAuthSecretNotFound)
+	assert.Nil(t, resolved)
+
+	var secret corev1.Secret
+	assert.Error(t, envK8sClient.Get(context.Background(), key, &secret),
+		"a failed bring-your-own resolution must never create the Secret it couldn't find")
+}
