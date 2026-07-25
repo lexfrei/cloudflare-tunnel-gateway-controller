@@ -171,7 +171,7 @@ Pushes routing config to the L7 proxy pods over HTTP:
 
 - **Endpoint discovery**: Resolves the proxy's headless Service DNS name to per-pod URLs (`--proxy-endpoints` is a required CLI flag — `internal/controller/manager.go` rejects an empty value at startup).
 - **Conversion**: Translates HTTPRoute specs into the proxy's wire-format config via `internal/proxy/converter.go`.
-- **Auth**: When `proxy.authTokenSecretRef.name` is set, attaches the Bearer token to every push so unauthenticated clients cannot reprogram the proxy.
+- **Auth**: Always attaches a Bearer token to every push, so unauthenticated clients cannot reprogram the proxy — the operator's own `proxy.authTokenSecretRef` Secret when named, otherwise a Secret the chart generates and manages (`secret-proxy-authtoken.yaml`).
 - **Last-config cache**: After every successful `SyncRoutes` push, ProxySyncer caches the built `*proxy.Config` under its mutex. `ResyncEndpoints(endpoints)` replays that cached config to a supplied endpoint list without rebuilding from HTTPRoutes — the bootstrap-race fix below depends on this.
 
 ### Config push triggers

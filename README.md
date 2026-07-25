@@ -231,6 +231,8 @@ make lint        # run linter
 
 For security issues, please see [SECURITY.md](SECURITY.md).
 
+The proxy's config API (where the controller pushes routing changes) is authenticated and network-restricted by default — see the [Security reference](https://cf.k8s.lex.la/latest/reference/security/).
+
 For multi-tenant deployments — isolation boundaries, hostname-ownership enforcement, and per-Gateway data planes — see the [Multi-Tenancy guide](https://cf.k8s.lex.la/latest/guides/multi-tenancy/).
 
 ## License

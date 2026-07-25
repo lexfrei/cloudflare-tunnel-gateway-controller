@@ -109,7 +109,7 @@ The proxy binary accepts the following environment variables:
 | `TUNNEL_TOKEN` | Required for tunnel mode; omit for standalone/dev mode | Cloudflare tunnel token (base64) |
 | `PROXY_CONFIG_ADDR` | `:8081` | Config API listen address |
 | `PROXY_ADDR` | `:8080` | Proxy listen address |
-| `PROXY_AUTH_TOKEN` | `""` (empty, no auth) | Bearer token for config push API authentication. If unset, the API is unauthenticated. |
+| `PROXY_AUTH_TOKEN` | `""` (empty, no auth) | Bearer token for config push API authentication. If unset, the API is unauthenticated -- this is the binary's own default for standalone/manual use; the Helm chart always sets it (see below). |
 | `PROXY_METRICS_ENABLED` | `true` | Expose the data-plane Prometheus metrics at `/metrics` on the config API port. Set `false`/`0` to disable. |
 | `PROXY_GRACE_PERIOD` | `30s` | Connector drain window on shutdown (Go duration, capped at 3m): the proxy unregisters from the edge and gives in-flight requests this long before exiting. |
 | `PROXY_TUNNEL_PROTOCOL` | `auto` | Edge transport: `auto`, `http2`, or `quic`. gRPC needs `http2` (QUIC drops trailers); `auto` is upgraded to `http2` by the proxy. |
@@ -122,6 +122,14 @@ The proxy binary accepts the following environment variables:
 | `PROXY_TRACING_ENABLED` | `false` | Enable OpenTelemetry tracing of proxied requests. |
 | `PROXY_TRACING_ENDPOINT` | `""` | OTLP exporter endpoint for traces (when tracing is enabled). |
 | `PROXY_TRACING_SAMPLE_RATE` | `1` | Trace sampling fraction in `[0, 1]` (when tracing is enabled). |
+
+### Config API Authentication
+
+The config API is always authenticated when deployed via the chart: leave `proxy.authTokenSecretRef.name` empty (the default) and the chart generates a random token into a Secret named `<release>-proxy-auth-token`, wires it into both the controller and the proxy, and reuses the same token on every `helm upgrade` (a token rotation would roll the proxy pods, so upgrading alone never does). Set `proxy.authTokenSecretRef.name` to point at your own Secret instead, for example to manage rotation externally.
+
+!!! note "Upgrading from a release with no auth token"
+
+    If you were pushing config to the proxy directly (bypassing the controller) with no `Authorization` header, that stops working after upgrading to a chart version with this default: read the generated token with `kubectl get secret <release>-proxy-auth-token -o jsonpath='{.data.auth-token}' | base64 -d` and send it as `Authorization: Bearer <token>`.
 
 ### Health Endpoints
 

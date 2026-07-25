@@ -197,6 +197,10 @@ The controller container follows security best practices:
 
 ### Network Security
 
+#### Config API Authentication
+
+The shared proxy's config API (where the controller pushes the routing table) is authenticated and network-restricted by default, matching the per-Gateway data planes described above. When `proxy.authTokenSecretRef.name` is left empty, the chart generates a random bearer token into a Secret (`<release>-proxy-auth-token`) and wires it into both the controller and the proxy; the token is preserved across `helm upgrade` rather than regenerated. `proxy.networkPolicy.enabled` (default `true`) additionally locks the config-API port to the controller's own namespace. Set `proxy.authTokenSecretRef.name` to bring your own Secret, or `proxy.networkPolicy.enabled: false` to drop the NetworkPolicy on a cluster where it would be inert or unwanted — see the [Helm values reference](../configuration/helm-values.md).
+
 #### Egress Requirements
 
 The controller only needs egress to:
