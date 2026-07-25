@@ -117,7 +117,11 @@ error: failed to run controller: resolving shared-proxy auth secret: cloudflare-
 
 The controller cannot repair this itself. Its RBAC on Secrets grants `create` but not `update`.
 
-**Solution**: delete the broken Secret and let the controller recreate it on its next start.
+!!! danger "A present-but-empty key can leave the proxy silently unauthenticated"
+
+    Kubernetes only refuses to start a container over a `secretKeyRef` when the key is *absent*. A key that exists with an empty value resolves fine, so if the proxy pod started against this Secret before you noticed the problem, it is running with `PROXY_AUTH_TOKEN=""` right now — and the proxy treats an empty token as "no auth configured", accepting `PUT /config` from anyone. The controller crash-looping hides this: it looks like nothing is working, but the proxy's config API can be wide open the whole time. Deleting the Secret and restarting only the controller does not fix this proxy pod — it already has the empty value baked into its process environment and won't reread the Secret on its own. Restart the proxy too.
+
+**Solution**: delete the broken Secret and restart both the controller and the proxy, so neither is left running with an empty or stale token.
 
 ```bash
 kubectl delete secret cloudflare-tunnel-gateway-controller-proxy-auth-token \
@@ -125,9 +129,12 @@ kubectl delete secret cloudflare-tunnel-gateway-controller-proxy-auth-token \
 
 kubectl rollout restart deployment/cloudflare-tunnel-gateway-controller \
   --namespace cloudflare-tunnel-system
+
+kubectl rollout restart deployment/cloudflare-tunnel-gateway-controller-proxy \
+  --namespace cloudflare-tunnel-system
 ```
 
-If `proxy.authTokenSecretRef.name` is set to a Secret you manage yourself, the controller never creates or repairs it; fix the key in that Secret instead.
+If `proxy.authTokenSecretRef.name` is set to a Secret you manage yourself, the controller never creates or repairs it; fix the key in that Secret instead, then restart the proxy the same way so it picks up the corrected value.
 
 ### Proxy Pod Stuck NotReady After a Restart
 
