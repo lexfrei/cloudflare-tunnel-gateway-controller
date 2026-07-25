@@ -72,6 +72,19 @@ func parseProxyAuthSecretRef(raw string) (types.NamespacedName, error) {
 // pre-existing Secret at this name -- however it got there -- is simply
 // reused as-is, never overwritten (the controller holds Secrets `create`,
 // never `update`/`patch`, and this function never attempts either).
+//
+// This absence is deliberate, not an oversight: the Secret this function
+// resolves for the shared plane always lives in the controller's OWN
+// (release) namespace. Anyone with the RBAC to create a Secret there could
+// already replace the controller's own Deployment -- the rest of the
+// deployment model already trusts that namespace completely -- so checking
+// where this particular Secret came from would not be defending anything
+// the namespace boundary doesn't already defend. GatewayInfraReconciler's
+// per-Gateway equivalent runs in an arbitrary TENANT namespace, where that
+// assumption does not hold: a tenant can create Secrets in their own
+// namespace without any ability to touch the controller's Deployment, so
+// assertAdoptable's ownerReference check is the thing actually keeping one
+// tenant's Gateway from adopting (and reading the token of) another's.
 func ensureProxyAuthSecret(
 	ctx context.Context, c client.Client, key types.NamespacedName, dataKey string, generate bool,
 ) (string, error) {

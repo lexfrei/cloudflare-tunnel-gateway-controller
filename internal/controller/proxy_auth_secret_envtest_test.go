@@ -91,3 +91,31 @@ func TestResolveProxyAuthToken_ReadsBringYourOwnAgainstRealManager(t *testing.T)
 	require.NoError(t, err)
 	assert.Equal(t, "byo-envtest-token", resolved.ProxyAuthToken)
 }
+
+// TestResolveProxyAuthToken_SecretRefWinsOverDirectToken pins the documented
+// precedence (Config.ProxyAuthSecretRef's doc comment, the --proxy-auth-token
+// CLI help text, and docs/configuration/controller.md all call this out):
+// when both the direct-value and secret-ref paths are set, the secret-ref
+// resolution wins and the direct value is discarded, never merged or
+// preferred as a fallback.
+func TestResolveProxyAuthToken_SecretRefWinsOverDirectToken(t *testing.T) {
+	mgr := newUnstartedTestManager(t)
+
+	key := types.NamespacedName{Namespace: "default", Name: "envtest-precedence-auth-token"}
+	cfg := &Config{
+		ProxyAuthToken:          "should-be-overridden",
+		ProxyAuthSecretRef:      key.Namespace + "/" + key.Name,
+		ProxyAuthSecretGenerate: true,
+	}
+
+	resolved, err := resolveProxyAuthToken(context.Background(), mgr, cfg)
+	require.NoError(t, err)
+	assert.NotEqual(t, "should-be-overridden", resolved.ProxyAuthToken)
+	assert.NotEmpty(t, resolved.ProxyAuthToken)
+
+	var secret corev1.Secret
+	require.NoError(t, envK8sClient.Get(context.Background(), key, &secret))
+	t.Cleanup(func() {
+		_ = envK8sClient.Delete(context.Background(), &secret)
+	})
+}
