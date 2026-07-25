@@ -58,9 +58,10 @@ spec:
             # Image for per-Gateway rendered proxy Deployments (GatewayConfig
             # data planes); always the release's proxy image.
             - "--proxy-image={{ .Values.proxy.image.repository }}:{{ .Values.proxy.image.tag | default .Chart.AppVersion }}"
-            {{- if .Values.proxy.authTokenSecretRef.name }}
+            # The config API is always authenticated (see
+            # templates/secret-proxy-authtoken.yaml): a bring-your-own
+            # authTokenSecretRef or, absent that, a chart-generated Secret.
             - "--proxy-auth-token=$(PROXY_AUTH_TOKEN)"
-            {{- end }}
             {{- if .Values.proxy.tunnelTokenSecretRef.name }}
             - "--proxy-token-secret={{ .Release.Namespace }}/{{ .Values.proxy.tunnelTokenSecretRef.name }}"
             {{- end }}
@@ -116,13 +117,11 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
-            {{- if .Values.proxy.authTokenSecretRef.name }}
             - name: PROXY_AUTH_TOKEN
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.proxy.authTokenSecretRef.name }}
+                  name: {{ include "cf-tunnel-gw-ctrl.proxyAuthTokenSecretName" . }}
                   key: {{ .Values.proxy.authTokenSecretRef.key | default "auth-token" }}
-            {{- end }}
           ports:
             - name: metrics
               containerPort: {{ .Values.service.metricsPort }}

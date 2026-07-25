@@ -839,7 +839,7 @@ tests:
               fieldRef:
                 fieldPath: metadata.namespace
 
-  - it: should inject CONTROLLER_NAMESPACE even when no proxy auth token is set
+  - it: should inject CONTROLLER_NAMESPACE even when authTokenSecretRef.name is empty (chart generates the token)
     set:
       proxy:
         authTokenSecretRef:
@@ -852,6 +852,40 @@ tests:
             valueFrom:
               fieldRef:
                 fieldPath: metadata.namespace
+
+  # The config API must never be reachable unauthenticated: with no
+  # authTokenSecretRef the chart generates the token itself (see
+  # secret-proxy-authtoken.yaml), and the controller's push MUST always carry
+  # it — there is no values knob left that renders the flag away.
+  - it: should always set --proxy-auth-token and PROXY_AUTH_TOKEN by default, pointing at the chart-generated Secret
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--proxy-auth-token=$(PROXY_AUTH_TOKEN)"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: PROXY_AUTH_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: RELEASE-NAME-cloudflare-tunnel-gateway-controller-proxy-auth-token
+                key: auth-token
+
+  - it: should use the bring-your-own authTokenSecretRef Secret/key instead of the generated one
+    set:
+      proxy:
+        authTokenSecretRef:
+          name: my-own-auth-secret
+          key: my-key
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: PROXY_AUTH_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: my-own-auth-secret
+                key: my-key
 
   # The controller renders per-Gateway proxy Deployments and must know the
   # release's proxy image; the chart always passes it.

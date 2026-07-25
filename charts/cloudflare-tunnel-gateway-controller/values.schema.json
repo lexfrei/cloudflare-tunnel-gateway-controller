@@ -763,11 +763,11 @@
         },
         "authTokenSecretRef": {
           "type": "object",
-          "description": "Optional Secret reference for the config API Bearer token (PROXY_AUTH_TOKEN); when name is empty the config API runs without authentication",
+          "description": "Secret reference for the config API Bearer token (PROXY_AUTH_TOKEN); the config API is always authenticated -- when name is empty the chart generates and manages the Secret automatically",
           "properties": {
             "name": {
               "type": "string",
-              "description": "Name of the Secret (leave empty to disable config API auth)"
+              "description": "Name of the Secret (leave empty to auto-generate a chart-managed Secret)"
             },
             "key": {
               "type": "string",

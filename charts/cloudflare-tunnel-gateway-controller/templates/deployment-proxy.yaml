@@ -54,13 +54,14 @@ spec:
             - name: PROXY_TUNNEL_PROTOCOL
               value: {{ . | quote }}
             {{- end }}
-            {{- if .Values.proxy.authTokenSecretRef.name }}
+            # The config API is always authenticated: a bring-your-own
+            # authTokenSecretRef or, absent that, a chart-generated Secret
+            # (see templates/secret-proxy-authtoken.yaml).
             - name: PROXY_AUTH_TOKEN
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.proxy.authTokenSecretRef.name }}
+                  name: {{ include "cf-tunnel-gw-ctrl.proxyAuthTokenSecretName" . }}
                   key: {{ .Values.proxy.authTokenSecretRef.key | default "auth-token" }}
-            {{- end }}
             {{- with .Values.proxy.websocket.dialTimeout }}
             - name: PROXY_WS_DIAL_TIMEOUT
               value: {{ . | quote }}

@@ -80,6 +80,21 @@ helper, so the DNS name it resolves always matches the rendered Service.
 {{- end }}
 
 {{/*
+Shared-proxy config-API auth Secret name: the operator's authTokenSecretRef.name
+when set (bring-your-own), otherwise the chart-generated Secret rendered by
+secret-proxy-authtoken.yaml. deployment.yaml (controller push) and
+deployment-proxy.yaml (proxy validation) both resolve the name through this
+one helper so they can never end up pointed at different Secrets.
+*/}}
+{{- define "cf-tunnel-gw-ctrl.proxyAuthTokenSecretName" -}}
+{{- if .Values.proxy.authTokenSecretRef.name -}}
+{{- .Values.proxy.authTokenSecretRef.name -}}
+{{- else -}}
+{{- printf "%s-auth-token" (include "cf-tunnel-gw-ctrl.proxyFullname" .) -}}
+{{- end -}}
+{{- end }}
+
+{{/*
 Proxy labels
 */}}
 {{- define "cf-tunnel-gw-ctrl.proxyLabels" -}}
