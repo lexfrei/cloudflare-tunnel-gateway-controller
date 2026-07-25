@@ -202,7 +202,13 @@ func runTunnelMode(logger *slog.Logger, token string) {
 
 	logger.Info("starting cloudflared tunnel with in-process proxy", "protocol", effectiveProtocol)
 
-	err := tunnel.StartTunnel(ctx, &tunnel.Config{
+	// StartTunnelWithRetry retries a bootstrap-window failure (cluster DNS not
+	// yet reachable, the edge briefly unreachable) with capped backoff instead
+	// of exiting outright -- readiness stays NotReady throughout via
+	// router.SetTunnelConnected, which only fires on an actual connection. A
+	// non-retryable failure (malformed token, unsupported protocol) still
+	// returns immediately below.
+	err := tunnel.StartTunnelWithRetry(ctx, &tunnel.Config{
 		Token:       token,
 		Logger:      logger,
 		OriginProxy: originProxy,
@@ -215,7 +221,7 @@ func runTunnelMode(logger *slog.Logger, token string) {
 		// alive so the connector can unregister and in-flight requests finish.
 		GraceShutdownC: graceC,
 		GracePeriod:    parseEnvDuration(logger, "PROXY_GRACE_PERIOD"),
-	})
+	}, graceC)
 
 	// The daemon has exited (drained, failed, or force-cancelled) — release the
 	// signal goroutine before shutting the config server down.
