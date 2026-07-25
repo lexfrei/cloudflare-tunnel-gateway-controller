@@ -69,8 +69,10 @@ func init() {
 
 	// L7 proxy data plane configuration (--proxy-endpoints is required in v3)
 	rootCmd.Flags().StringSlice("proxy-endpoints", nil, "Proxy config API endpoints (e.g., http://proxy-0:8081,http://proxy-1:8081). Required; the chart wires this to the proxy's headless Service.")
-	rootCmd.Flags().String("proxy-auth-token", "", "Bearer token for authenticating proxy config push requests (bring-your-own token, already resolved via a pod-level secretKeyRef). Mutually exclusive with --proxy-auth-secret-ref.")
-	rootCmd.Flags().String("proxy-auth-secret-ref", "", "Shared-proxy config-API auth-token Secret to ensure exists, in `<namespace>/<name>` form. The controller generates a random token and creates the Secret if missing, then uses it for its own push auth -- resolved directly via the API, not a pod-level secretKeyRef, so the controller's own pod is never blocked waiting on a Secret only it can create. Mutually exclusive with --proxy-auth-token; the chart sets this instead when proxy.authTokenSecretRef.name is empty.")
+	rootCmd.Flags().String("proxy-auth-token", "", "Bearer token for authenticating proxy config push requests, as a direct value. For callers outside the chart only (e.g. a hand-built Deployment injecting the value via its own env mechanism) -- the chart always sets --proxy-auth-secret-ref instead, for both the bring-your-own and generated cases. Overridden by --proxy-auth-secret-ref when both are set.")
+	rootCmd.Flags().String("proxy-auth-secret-ref", "", "Shared-proxy config-API auth-token Secret to resolve, in `<namespace>/<name>` form, and use for the controller's own push auth. Resolved directly via the API, not a pod-level secretKeyRef -- a secretKeyRef the controller is itself responsible for creating would deadlock its own pod, since kubelet cannot start the container that would create the missing Secret. The single mechanism the chart uses for both the bring-your-own and generated cases; combine with --proxy-auth-secret-generate to allow creating it when missing.")
+	rootCmd.Flags().String("proxy-auth-secret-key", "auth-token", "Data key to read within the --proxy-auth-secret-ref Secret.")
+	rootCmd.Flags().Bool("proxy-auth-secret-generate", false, "Allow creating the --proxy-auth-secret-ref Secret (with a random token) when it does not exist. false (the default) is the bring-your-own contract: the Secret must already exist, and a missing one is a configuration error rather than something silently papered over. The chart sets this true only when proxy.authTokenSecretRef.name is empty.")
 	rootCmd.Flags().String("proxy-token-secret", "", "Tunnel-token Secret to watch in `<namespace>/<name>` form; when set, the controller rolls the proxy Deployment whenever the Secret data changes (issue #114). Empty disables the watcher.")
 	rootCmd.Flags().String("proxy-deployment-label", "", "Label selector identifying the proxy Deployment(s) to roll on tunnel-token change, in `key=value` form. Defaults to `app.kubernetes.io/component=proxy` (matches the chart).")
 	rootCmd.Flags().String("tunnel-protocol", "auto", "The proxy's configured edge transport (auto|http2|quic); used to warn when GRPCRoutes are present on an explicit quic tunnel, which cannot carry gRPC trailers (auto/unset is upgraded to http2 by the proxy).")
@@ -182,13 +184,15 @@ func runController(_ *cobra.Command, _ []string) error {
 		LeaderElectNS:   viper.GetString("leader-election-namespace"),
 		LeaderElectName: viper.GetString("leader-election-name"),
 
-		ProxyEndpoints:       viper.GetStringSlice("proxy-endpoints"),
-		ProxyAuthToken:       viper.GetString("proxy-auth-token"),
-		ProxyAuthSecretRef:   viper.GetString("proxy-auth-secret-ref"),
-		ProxyTokenSecret:     viper.GetString("proxy-token-secret"),
-		ProxyDeploymentLabel: viper.GetString("proxy-deployment-label"),
-		TunnelProtocol:       viper.GetString("tunnel-protocol"),
-		Tracing:              tracingEnabled,
+		ProxyEndpoints:          viper.GetStringSlice("proxy-endpoints"),
+		ProxyAuthToken:          viper.GetString("proxy-auth-token"),
+		ProxyAuthSecretRef:      viper.GetString("proxy-auth-secret-ref"),
+		ProxyAuthSecretKey:      viper.GetString("proxy-auth-secret-key"),
+		ProxyAuthSecretGenerate: viper.GetBool("proxy-auth-secret-generate"),
+		ProxyTokenSecret:        viper.GetString("proxy-token-secret"),
+		ProxyDeploymentLabel:    viper.GetString("proxy-deployment-label"),
+		TunnelProtocol:          viper.GetString("tunnel-protocol"),
+		Tracing:                 tracingEnabled,
 
 		ProxyImage: viper.GetString("proxy-image"),
 

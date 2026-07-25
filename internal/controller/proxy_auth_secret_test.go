@@ -60,7 +60,7 @@ func TestParseProxyAuthSecretRef(t *testing.T) {
 
 // TestResolveProxyAuthToken_NoOpWhenSecretRefEmpty pins backward
 // compatibility for every caller that does not set --proxy-auth-secret-ref
-// (raw manifests, older values files, anyone still on the bring-your-own
+// (raw manifests, older values files, anyone still on the direct
 // --proxy-auth-token path): no generation, no API calls, no error -- cfg
 // comes back with ProxyAuthToken untouched, exactly as Run behaved before
 // this flag existed. mgr is passed as nil and must never be dereferenced on
@@ -92,7 +92,8 @@ func TestResolveProxyAuthToken_NoOpWhenBothEmpty(t *testing.T) {
 
 // TestEnsureProxyAuthSecret_GeneratesWhenMissing pins the secure-by-default
 // case: no Secret exists yet at the shared plane's generated name, so
-// ensureProxyAuthSecret creates one with a random token and returns it.
+// ensureProxyAuthSecret(generate=true) creates one with a random token and
+// returns it.
 func TestEnsureProxyAuthSecret_GeneratesWhenMissing(t *testing.T) {
 	t.Parallel()
 
@@ -102,7 +103,7 @@ func TestEnsureProxyAuthSecret_GeneratesWhenMissing(t *testing.T) {
 
 	key := proxyAuthSecretKey()
 
-	token, err := ensureProxyAuthSecret(context.Background(), fakeClient, key)
+	token, err := ensureProxyAuthSecret(context.Background(), fakeClient, key, generatedAuthTokenKey, true)
 	require.NoError(t, err)
 	assert.NotEmpty(t, token)
 	assert.Len(t, token, hex.EncodedLen(generatedAuthTokenBytes))
@@ -117,7 +118,9 @@ func TestEnsureProxyAuthSecret_GeneratesWhenMissing(t *testing.T) {
 // including a value nobody generated (an operator's own manual `kubectl
 // create`, or a foreign value from an unrelated process) -- is returned
 // verbatim and NEVER overwritten, so upgrading a release never rotates the
-// token or rolls the proxy pods on its own.
+// token or rolls the proxy pods on its own. generate=true here on purpose:
+// even when the caller WOULD be allowed to create, an existing Secret is
+// still never touched.
 //
 // The interceptor makes this a structural guarantee, not an inference from
 // "the assertion below still matches": ensureProxyAuthSecret is only ever
@@ -149,7 +152,7 @@ func TestEnsureProxyAuthSecret_ReusesExisting(t *testing.T) {
 		},
 	}).Build()
 
-	token, err := ensureProxyAuthSecret(context.Background(), fakeClient, key)
+	token, err := ensureProxyAuthSecret(context.Background(), fakeClient, key, generatedAuthTokenKey, true)
 	require.NoError(t, err)
 	assert.Equal(t, "already-here-token", token)
 
@@ -160,7 +163,7 @@ func TestEnsureProxyAuthSecret_ReusesExisting(t *testing.T) {
 }
 
 // TestEnsureProxyAuthSecret_ErrorsOnMissingKey fails closed: a Secret at the
-// expected name with no auth-token key, or an empty one -- the realistic
+// expected name with no value at dataKey, or an empty one -- the realistic
 // case is a hand-created Secret with a typo'd key name -- is a broken state,
 // not something to silently paper over with an empty token (which would
 // make the config API accept an empty Bearer value as valid, reopening
@@ -191,7 +194,7 @@ func TestEnsureProxyAuthSecret_ErrorsOnMissingKey(t *testing.T) {
 			}
 			fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(broken).Build()
 
-			token, err := ensureProxyAuthSecret(context.Background(), fakeClient, key)
+			token, err := ensureProxyAuthSecret(context.Background(), fakeClient, key, generatedAuthTokenKey, true)
 			require.Error(t, err)
 			assert.ErrorIs(t, err, errProxyAuthSecretMissingKey)
 			assert.Empty(t, token, "a failed resolution must never hand back a usable-looking token")
@@ -246,7 +249,62 @@ func TestEnsureProxyAuthSecret_CreateRaceReusesWinner(t *testing.T) {
 		},
 	}).Build()
 
-	token, err := ensureProxyAuthSecret(context.Background(), fakeClient, key)
+	token, err := ensureProxyAuthSecret(context.Background(), fakeClient, key, generatedAuthTokenKey, true)
 	require.NoError(t, err)
 	assert.Equal(t, "winner-token", token, "must reuse whichever token won the create race, not error or overwrite")
+}
+
+// TestEnsureProxyAuthSecret_BringYourOwnCustomKey pins the unified-mechanism
+// requirement: a bring-your-own Secret (generate=false) is read at whatever
+// data key the operator configured (proxy.authTokenSecretRef.key), not
+// hardcoded to the chart-generated convention. This is the case that a
+// single generate-always design would have broken: a BYO Secret using a
+// non-default key would fail to resolve even though it is perfectly valid.
+func TestEnsureProxyAuthSecret_BringYourOwnCustomKey(t *testing.T) {
+	t.Parallel()
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
+
+	key := types.NamespacedName{Name: "my-own-auth-secret", Namespace: "cf-system"}
+	byo := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace},
+		Data:       map[string][]byte{"my-custom-key": []byte("byo-token")},
+	}
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(byo).Build()
+
+	token, err := ensureProxyAuthSecret(context.Background(), fakeClient, key, "my-custom-key", false)
+	require.NoError(t, err)
+	assert.Equal(t, "byo-token", token)
+}
+
+// TestEnsureProxyAuthSecret_BringYourOwnMissingFailsClosed pins the other
+// half of the bring-your-own contract: generate=false NEVER creates a
+// Secret, even when it is missing. Silently minting one at an
+// operator-chosen name would misconfigure whatever they actually intended
+// to point the controller at -- trading the unauthenticated hole this
+// change closes for a quieter one (an authenticated config API whose token
+// nobody who reads the operator's own Secret actually knows). The
+// interceptor fails the test if Create is ever attempted, so this is a
+// structural guarantee, not an inference from the returned error.
+func TestEnsureProxyAuthSecret_BringYourOwnMissingFailsClosed(t *testing.T) {
+	t.Parallel()
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
+
+	key := types.NamespacedName{Name: "my-own-auth-secret", Namespace: "cf-system"}
+
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithInterceptorFuncs(interceptor.Funcs{
+		Create: func(context.Context, client.WithWatch, client.Object, ...client.CreateOption) error {
+			t.Fatal("ensureProxyAuthSecret(generate=false) must never Create a missing bring-your-own Secret")
+
+			return nil
+		},
+	}).Build()
+
+	token, err := ensureProxyAuthSecret(context.Background(), fakeClient, key, "auth-token", false)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, errProxyAuthSecretNotFound)
+	assert.Empty(t, token)
 }

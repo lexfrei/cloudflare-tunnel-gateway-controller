@@ -91,21 +91,38 @@ type Config struct {
 
 	// ProxyAuthToken is the Bearer token for authenticating config push requests.
 	// When set, the controller includes "Authorization: Bearer <token>" in push requests.
-	// Bring-your-own-token path: the chart wires this only when
-	// proxy.authTokenSecretRef.name is set, already resolved via a pod-level
-	// secretKeyRef. Mutually exclusive with ProxyAuthSecretRef.
+	// Direct-value path for callers outside the chart (e.g. a hand-built
+	// Deployment injecting the value via its own env mechanism); the chart
+	// itself never sets this -- it always sets ProxyAuthSecretRef instead, for
+	// both the bring-your-own and generated cases. Overridden by
+	// ProxyAuthSecretRef when both are set.
 	ProxyAuthToken string
 
 	// ProxyAuthSecretRef, when set, identifies the shared proxy's config-API
-	// auth-token Secret in "<namespace>/<name>" form. Run ensures it exists
-	// (generating a random token once if missing) as one of its first startup
-	// steps, resolved directly via the API rather than a pod-level
-	// secretKeyRef -- a secretKeyRef the controller itself is responsible for
-	// creating would deadlock its own pod, since kubelet cannot start the
-	// container that would create the missing Secret. The resolved token
-	// overrides ProxyAuthToken for the rest of Run. The chart sets this
-	// instead of ProxyAuthToken when proxy.authTokenSecretRef.name is empty.
+	// auth-token Secret in "<namespace>/<name>" form. Run resolves it as one
+	// of its first startup steps, directly via the API rather than a
+	// pod-level secretKeyRef on the controller's own pod -- a secretKeyRef
+	// the controller itself is responsible for creating would deadlock its
+	// own pod, since kubelet cannot start the container that would create
+	// the missing Secret. This is the SINGLE resolution mechanism the chart
+	// uses for both cases: ProxyAuthSecretGenerate distinguishes
+	// bring-your-own (false, must already exist) from chart-generated (true,
+	// created if missing) -- it is not two separate mechanisms with
+	// different failure modes. The resolved token overrides ProxyAuthToken
+	// for the rest of Run.
 	ProxyAuthSecretRef string
+
+	// ProxyAuthSecretKey is the data key to read within the Secret named by
+	// ProxyAuthSecretRef. Empty defaults to "auth-token".
+	ProxyAuthSecretKey string
+
+	// ProxyAuthSecretGenerate allows ensureProxyAuthSecret to create the
+	// Secret named by ProxyAuthSecretRef when it does not exist. false (the
+	// default) is the bring-your-own contract: the Secret must already
+	// exist, and a missing one is a configuration error, never silently
+	// papered over by minting a Secret at an operator-chosen name. The chart
+	// sets this true only when proxy.authTokenSecretRef.name is empty.
+	ProxyAuthSecretGenerate bool
 
 	// TunnelProtocol is the proxy's configured edge transport (auto|http2|quic).
 	// Used only to warn when GRPCRoutes are present on an explicit quic tunnel,
