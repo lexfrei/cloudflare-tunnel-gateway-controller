@@ -40,7 +40,8 @@ internal/
 │
 ├── tunnel/
 │   ├── origin.go      # GatewayOriginProxy (connection.OriginProxy)
-│   └── bootstrap.go   # Tunnel startup, token parsing, supervisor config
+│   ├── bootstrap.go   # Tunnel startup, token parsing, supervisor config
+│   └── retry.go       # StartTunnelWithRetry: bootstrap-dial backoff loop
 │
 └── cmd/proxy/
     └── main.go        # Binary entry point (tunnel mode / standalone mode)
@@ -139,13 +140,15 @@ Weighted random selection using cumulative weight sums:
 - `ProxyHTTP`: Delegates to `proxy.Handler.ServeHTTP`
 - `ProxyTCP`: Returns error (TCPRoute is future work)
 
-`StartTunnel` builds the full cloudflared supervisor config:
+`StartTunnel` (`internal/tunnel/bootstrap.go`) builds the full cloudflared supervisor config:
 
 - Parse tunnel token (base64 JSON)
 - Build edge TLS configs (Cloudflare root CAs + system pool)
 - Create protocol selector (auto: QUIC preferred)
 - **In-process mode** (default): Set `OverrideProxy` on supervisor config to route all requests directly to `proxy.Handler`, bypassing ingress rules entirely
 - Start `supervisor.StartTunnelDaemon`
+
+`cmd/proxy/main.go`'s `runTunnelMode` calls `StartTunnelWithRetry` (`internal/tunnel/retry.go`), not `StartTunnel` directly. It wraps `StartTunnel` in a full-jitter exponential-backoff loop scoped to the bootstrap window — before the tunnel has ever registered a connection with the edge — so a transient dial failure (cluster DNS not yet reachable, the edge briefly unreachable) retries instead of exiting the process. A deterministic, config-derived failure (a token that fails to parse, an unsupported protocol setting) is marked non-retryable and still returns immediately. Because the retry loop can call `StartTunnel` more than once per process, `StartTunnel` also derives a per-attempt child context (`attemptCtx`) for everything it spawns and reuses a process-lifetime `connection.Observer` (`sharedObserver`), so a repeated call cannot leak background goroutines or double-register cloudflared's Prometheus collectors — see the doc comments on `attemptCtx`, `startWaitConnected`, and `sharedObserver` in `bootstrap.go` for the full reasoning.
 
 When `TUNNEL_TOKEN` is unset the binary runs in **standalone mode** instead: `runStandaloneMode` (`cmd/proxy/main.go`) starts a plain HTTP server on `PROXY_ADDR` (default `:8080`) that serves `proxy.Handler` directly, plus the config API on `PROXY_CONFIG_ADDR`. `StartTunnel` is never called, so no cloudflared tunnel is started — this mode is for local development and testing.
 

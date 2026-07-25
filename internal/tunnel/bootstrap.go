@@ -144,7 +144,9 @@ func ParseTunnelToken(tokenStr string) (*Token, error) {
 func StartTunnel(ctx context.Context, cfg *Config) error {
 	token, err := ParseTunnelToken(cfg.Token)
 	if err != nil {
-		return errors.Wrap(err, "parse tunnel token")
+		// Marked non-retryable: a malformed token fails identically on every
+		// retry, so StartTunnelWithRetry must not back off and wait on it.
+		return markNonRetryable(errors.Wrap(err, "parse tunnel token"))
 	}
 
 	logger := cfg.Logger
@@ -152,16 +154,48 @@ func StartTunnel(ctx context.Context, cfg *Config) error {
 		logger = slog.Default()
 	}
 
-	orchestrator, tunnelCfg, err := buildOrchestrator(ctx, cfg, token, logger)
+	// attemptCtx scopes every background goroutine this call spawns --
+	// directly (startWaitConnected) and indirectly, inside buildOrchestrator
+	// and supervisor.StartTunnelDaemon (the feature-selector refresh loop,
+	// the orchestrator's proxy-close watcher, the DNS resolver refresh loop)
+	// -- to THIS SPECIFIC call, cancelled the moment StartTunnel returns.
+	// Passing ctx itself to those constructors, as a single call to
+	// StartTunnel always did before the retry loop existed, ties their
+	// goroutines to ctx's own lifetime instead: harmless for exactly one
+	// call per process, but a growing set of orphaned goroutines --
+	// pinning whatever they closed over -- for every attempt that fails
+	// before connecting, once StartTunnelWithRetry can call StartTunnel
+	// many times across a long outage. cancelAttempt only ever fires after
+	// this function's own remaining work is done (it is the last defer to
+	// run), so nothing downstream observes attemptCtx as "more cancelled"
+	// than ctx itself would have been at any point that mattered to it.
+	attemptCtx, cancelAttempt := context.WithCancel(ctx)
+	defer cancelAttempt()
+
+	orchestrator, tunnelCfg, err := buildOrchestrator(attemptCtx, cfg, token, logger)
 	if err != nil {
-		return err
+		// Marked non-retryable: every failure reachable here (protocol/TLS
+		// selection, ingress parsing, orchestrator construction) is a
+		// deterministic config-build error, not a network condition -- the
+		// network-dependent lookups nested in this path (feature fetch,
+		// protocol-percentage fetch) degrade gracefully on their own DNS
+		// failure and never propagate an error through this return.
+		return markNonRetryable(err)
 	}
 
 	connectedSignal := cfdsignal.New(make(chan struct{}))
 	reconnectCh := make(chan supervisor.ReconnectSignal, defaultHAConnections)
+	// graceChannel's fallback (deriving the drain trigger from ctx.Done()
+	// when cfg.GraceShutdownC is nil) intentionally keeps using the outer
+	// ctx, not attemptCtx: production always sets GraceShutdownC, so this
+	// branch never runs today, and the drain trigger is conceptually an
+	// operator-level signal (SIGTERM), not a per-attempt one.
 	graceShutdownC := graceChannel(ctx, cfg.GraceShutdownC)
 
-	go waitConnected(ctx, connectedSignal, logger, cfg.OnConnected)
+	// See startWaitConnected's own doc comment for why this must be scoped
+	// per-attempt rather than tied to ctx directly.
+	stopWaiting := startWaitConnected(attemptCtx, connectedSignal, logger, cfg.OnConnected)
+	defer stopWaiting()
 
 	logger.Info("starting tunnel daemon",
 		"tunnelID", token.TunnelID.String(),
@@ -170,7 +204,7 @@ func StartTunnel(ctx context.Context, cfg *Config) error {
 	)
 
 	err = supervisor.StartTunnelDaemon(
-		ctx,
+		attemptCtx,
 		tunnelCfg,
 		orchestrator,
 		connectedSignal,
@@ -179,6 +213,60 @@ func StartTunnel(ctx context.Context, cfg *Config) error {
 	)
 
 	return errors.Wrap(err, "tunnel daemon")
+}
+
+// startWaitConnected spawns waitConnected on a context scoped to the
+// returned stop function rather than directly on ctx, and returns that stop
+// function for the caller to invoke when done waiting. stop() blocks until
+// the spawned goroutine has actually returned.
+//
+// This matters because StartTunnelWithRetry calls StartTunnel repeatedly
+// with the SAME long-lived ctx across every bootstrap attempt -- it is only
+// cancelled at process shutdown, not between attempts. Spawning
+// "go waitConnected(ctx, ...)" directly, as a single call to StartTunnel
+// always did before the retry loop existed, would park the goroutine on
+// ctx.Done() until the process exits whenever that attempt fails before
+// connecting -- harmless for exactly one call per process lifetime, but a
+// goroutine leaked per failed retry once StartTunnel can be called many
+// times in the same process, unbounded for an outage long enough to matter.
+// stop() -- called via defer in StartTunnel -- cancels the child context
+// when that specific attempt returns, regardless of ctx's own lifetime.
+//
+// Blocking until the goroutine exits (rather than just cancelling and
+// returning immediately) also closes a narrower race: runBootstrapAttempt
+// (retry.go) reads its connected flag right after dial() returns, but
+// onConnected runs on this goroutine, asynchronously with respect to
+// StartTunnel's own return. Waiting for the goroutine here, in StartTunnel's
+// deferred call, means any onConnected call already in flight when
+// StartTunnel returns has definitely completed -- and therefore so has the
+// flag write -- before runBootstrapAttempt ever reads it. What this does
+// NOT close: the select inside waitConnected itself has no defined
+// preference between connected.Wait() and ctx.Done() when both are ready in
+// the same instant, so a connect that lands at the exact moment this
+// specific attempt is giving up remains a real, if vanishingly narrow, race
+// -- unreachable in practice because cloudflared's own shutdown sequence
+// (supervisor.Run() unwinding every HA connection's retry budget) takes
+// seconds to minutes, far longer than a goroutine needs to be scheduled.
+func startWaitConnected(
+	ctx context.Context,
+	connected *cfdsignal.Signal,
+	logger *slog.Logger,
+	onConnected func(),
+) func() {
+	waitCtx, cancel := context.WithCancel(ctx)
+
+	done := make(chan struct{})
+
+	go func() {
+		defer close(done)
+
+		waitConnected(waitCtx, connected, logger, onConnected)
+	}()
+
+	return func() {
+		cancel()
+		<-done
+	}
 }
 
 // waitConnected blocks until the tunnel registers its first connection with the
@@ -283,6 +371,54 @@ func buildOrchestrator(
 	return orchestrator, tunnelCfg, nil
 }
 
+// sharedObserver returns a process-lifetime connection.Observer, constructed
+// once on first use.
+//
+// connection.NewObserver spawns an unconditional background goroutine
+// (dispatchEvents) with no way to stop it -- no ctx parameter, no Close()
+// method exposed by the vendored library -- unlike buildOrchestrator's other
+// two per-attempt goroutine hazards (the feature-selector refresh loop, the
+// orchestrator's proxy-close watcher), which are closed by threading
+// StartTunnel's per-attempt context through instead (see attemptCtx in
+// StartTunnel). A fresh Observer per bootstrap attempt, as buildTunnelConfig
+// always constructed before the retry loop existed, would leak that
+// goroutine -- and everything it closes over via registered EventSinks --
+// once per failed attempt, unboundedly for an outage long enough to matter.
+//
+// Reusing one Observer for the process's lifetime bounds this to exactly
+// one goroutine, trading it for a smaller ongoing cost: Observer exposes no
+// way to unregister a sink, so supervisor.NewSupervisor's per-attempt
+// *tunnelstate.ConnTracker (registered as a sink on every call, via
+// NewConnAwareLogger) accumulates in the shared Observer's internal sinks
+// slice across every attempt instead of being freed, and dispatchEvents
+// walks the whole slice on every forwarded event -- so both memory and
+// per-event dispatch cost grow with attempt count. Per attempt that cost is
+// small and fixed (a stale ConnTracker only receives and discards forwarded
+// events -- it holds no dial or connection state of its own), but the TOTAL
+// is NOT bounded by this fix alone: for a bootstrap loop that retries
+// indefinitely (see errNonRetryableStart's doc comment on a well-formed but
+// edge-rejected token), sinks grows for as long as that condition persists,
+// unboundedly in principle. This is a real, disclosed trade-off, not a
+// closed one -- tracked in #606.
+//
+// The proper fix is a vendor patch giving Observer a Close()/UnregisterSink;
+// deliberately out of scope here, since it touches a separate repository
+// (the cloudflared fork). Sharing the OTHER per-attempt state Observer's
+// sinks carry -- reusing tunnelstate.ConnTracker itself instead of
+// registering a fresh one per attempt -- is not a safe alternative either:
+// ConnTracker.HasConnectedWith feeds the vendored supervisor's own
+// protocol-fallback decision (supervisor/tunnel.go's serveTunnel), so
+// sharing it would leak one attempt's connection history into another
+// attempt's control flow, trading a bounded memory cost for an unbounded
+// correctness one.
+//
+//nolint:gochecknoglobals // see doc comment above: one Observer must outlive any single StartTunnel call
+var sharedObserver = sync.OnceValue(func() *connection.Observer {
+	zlog := newZerologLogger()
+
+	return connection.NewObserver(&zlog, &zlog)
+})
+
 func buildTunnelConfig(
 	ctx context.Context,
 	token *Token,
@@ -311,7 +447,7 @@ func buildTunnelConfig(
 		DefaultDialer: ingress.NewDialer(warpRouting),
 	}, zlog)
 
-	observer := connection.NewObserver(zlog, zlog)
+	observer := sharedObserver()
 	dnsService := origins.NewDNSResolverService(originDialerService, zlog, origins.NewMetrics(prometheus.DefaultRegisterer))
 
 	tunnelCfg.EdgeTLSConfigs = edgeTLSConfigs
