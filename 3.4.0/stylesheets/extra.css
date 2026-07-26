@@ -1,0 +1,32 @@
+/* Custom color scheme matching Cloudflare brand */
+:root {
+  --md-primary-fg-color: #f6821f;
+  --md-primary-fg-color--light: #ff9a47;
+  --md-primary-fg-color--dark: #d46a0c;
+  --md-accent-fg-color: #f6821f;
+}
+
+/* Dark mode adjustments */
+[data-md-color-scheme="slate"] {
+  --md-primary-fg-color: #f6821f;
+  --md-accent-fg-color: #ff9a47;
+}
+
+/* Admonition custom styling for Cloudflare-specific notes */
+.md-typeset .admonition.cloudflare,
+.md-typeset details.cloudflare {
+  border-color: #f6821f;
+}
+
+.md-typeset .cloudflare > .admonition-title,
+.md-typeset .cloudflare > summary {
+  background-color: rgba(246, 130, 31, 0.1);
+  border-color: #f6821f;
+}
+
+.md-typeset .cloudflare > .admonition-title::before,
+.md-typeset .cloudflare > summary::before {
+  background-color: #f6821f;
+  -webkit-mask-image: var(--md-admonition-icon--tip);
+  mask-image: var(--md-admonition-icon--tip);
+}
