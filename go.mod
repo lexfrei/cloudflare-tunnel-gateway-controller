@@ -192,4 +192,4 @@ replace github.com/cloudflare/cloudflared => github.com/lexfrei/cloudflared v0.0
 // the require line above has no effect, and a bump of this replace target does
 // take effect and can silently undo a deliberate pin like the one this line
 // carries right now - read the PR by hand every time either one shows up.
-replace github.com/quic-go/quic-go => github.com/chungthuang/quic-go v0.45.1-0.20250428085412-43229ad201fd
+replace github.com/quic-go/quic-go => github.com/chungthuang/quic-go v0.45.1

@@ -44,13 +44,12 @@ func aeadAESGCMTLS13(key, nonceMask []byte) *xorNonceAEAD {
 	if err != nil {
 		panic(err)
 	}
-
-	aead, err := newAEAD(aes)
+	aead, err := cipher.NewGCM(aes)
 	if err != nil {
 		panic(err)
 	}
 
-	ret := &xorNonceAEAD{aead: aead, hasSeenNonceZero: false}
+	ret := &xorNonceAEAD{aead: aead}
 	copy(ret.nonceMask[:], nonceMask)
 	return ret
 }
@@ -72,9 +71,8 @@ func aeadChaCha20Poly1305(key, nonceMask []byte) *xorNonceAEAD {
 // xorNonceAEAD wraps an AEAD by XORing in a fixed pattern to the nonce
 // before each call.
 type xorNonceAEAD struct {
-	nonceMask        [aeadNonceLength]byte
-	aead             cipher.AEAD
-	hasSeenNonceZero bool // This value denotes if the aead field was used with a nonce = 0
+	nonceMask [aeadNonceLength]byte
+	aead      cipher.AEAD
 }
 
 func (f *xorNonceAEAD) NonceSize() int        { return 8 } // 64-bit sequence number
@@ -82,10 +80,6 @@ func (f *xorNonceAEAD) Overhead() int         { return f.aead.Overhead() }
 func (f *xorNonceAEAD) explicitNonceLen() int { return 0 }
 
 func (f *xorNonceAEAD) Seal(out, nonce, plaintext, additionalData []byte) []byte {
-	return f.seal(nonce, out, plaintext, additionalData)
-}
-
-func (f *xorNonceAEAD) doSeal(nonce, out, plaintext, additionalData []byte) []byte {
 	for i, b := range nonce {
 		f.nonceMask[4+i] ^= b
 	}

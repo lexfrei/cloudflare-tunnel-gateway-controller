@@ -1,14 +1,9 @@
 package quic
 
-import (
-	"net"
-
-	"github.com/quic-go/quic-go/internal/protocol"
-)
+import "github.com/quic-go/quic-go/internal/protocol"
 
 type sender interface {
 	Send(p *packetBuffer, gsoSize uint16, ecn protocol.ECN)
-	SendProbe(*packetBuffer, net.Addr)
 	Run() error
 	WouldBlock() bool
 	Available() <-chan struct{}
@@ -60,10 +55,6 @@ func (h *sendQueue) Send(p *packetBuffer, gsoSize uint16, ecn protocol.ECN) {
 	default:
 		panic("sendQueue.Send would have blocked")
 	}
-}
-
-func (h *sendQueue) SendProbe(p *packetBuffer, addr net.Addr) {
-	h.conn.WriteTo(p.Data, addr)
 }
 
 func (h *sendQueue) WouldBlock() bool {
