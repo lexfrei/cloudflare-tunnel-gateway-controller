@@ -4,7 +4,7 @@ go 1.26.5
 
 require (
 	github.com/cloudflare/cloudflare-go/v7 v7.7.0
-	github.com/cloudflare/cloudflared v0.0.0-20260722163246-3a2b45c2a511
+	github.com/cloudflare/cloudflared v0.0.0-20260722163246-3a2b45c2a511 // decorative, see replace + FIXME(#610) below
 	github.com/cockroachdb/errors v1.14.0
 	github.com/go-logr/logr v1.4.4
 	github.com/google/cel-go v0.29.2
@@ -114,7 +114,7 @@ require (
 	github.com/power-devops/perfstat v0.0.0-20240221224432-82ca36839d55 // indirect
 	github.com/prometheus/common v0.70.1 // indirect
 	github.com/prometheus/procfs v0.21.1 // indirect
-	github.com/quic-go/quic-go v0.59.1 // indirect
+	github.com/quic-go/quic-go v0.59.1 // indirect; decorative, see replace + FIXME(#609,#610) below
 	github.com/rogpeppe/go-internal v1.14.1 // indirect
 	github.com/russross/blackfriday/v2 v2.1.0 // indirect
 	github.com/sagikazarmark/locafero v0.12.0 // indirect
@@ -169,13 +169,27 @@ require (
 	zombiezen.com/go/capnproto2 v2.18.0+incompatible // indirect
 )
 
+// FIXME(#610): the require entry above is decorative, this unconditional replace
+// (no version on its left side) wins regardless of what version that line names.
+// The real upgrade path is a deliberate rebase (see CLAUDE.md "Cloudflared Fork"
+// -> Fork maintenance), never a bare version bump here. Renovate is disabled for
+// this replace target (github.com/lexfrei/cloudflared) in renovate.json so it
+// can't repoint this pin to an arbitrary newer commit on its own; the require
+// line above still gets Renovate PRs, and those are the intended signal that a
+// rebase is due, not something to merge as-is.
 replace github.com/cloudflare/cloudflared => github.com/lexfrei/cloudflared v0.0.0-20260725170743-c76a719d15f8
 
 // FIXME(#609): this pin (matching cloudflared's own, equally vulnerable target)
-// still carries CVE-2025-59530 (GHSA-47m2-4cr7-mhcw). Upstream cloudflared tried
-// the fix (chungthuang/quic-go branch cloudflare-0.59.1, commit a9fddf436fc4) and
-// reverted it before releasing 2026.7.3, reason undocumented. Do not repoint this
-// alone without cloudflared adopting a fix first; see #609 for what would unblock it.
+// still carries CVE-2025-59530 (GHSA-47m2-4cr7-mhcw). Upstream cloudflared has
+// tried moving to a fixed quic-go twice (chungthuang/quic-go branch
+// cloudflare-0.59.1) and reverted both attempts right before shipping - once
+// before 2026.6.1, once before 2026.7.0 - reason undocumented either time. Do
+// not repoint this alone without cloudflared adopting a fix first; see #609 for
+// what would unblock it.
 // FIXME(#610): the require entry above is decorative, this unconditional replace
 // (no version on its left side) wins regardless of what version that line names.
+// Renovate no longer automerges either direction (see renovate.json): a bump of
+// the require line above has no effect, and a bump of this replace target does
+// take effect and can silently undo a deliberate pin like the one this line
+// carries right now - read the PR by hand every time either one shows up.
 replace github.com/quic-go/quic-go => github.com/chungthuang/quic-go v0.45.1-0.20250428085412-43229ad201fd

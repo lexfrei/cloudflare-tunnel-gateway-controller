@@ -53,6 +53,45 @@
         "golang"
       ],
       "rangeStrategy": "bump"
+    },
+    {
+      "description": "cloudflare/cloudflared and quic-go/quic-go are require-only entries shadowed by an unconditional replace with no version on its left side (see go.mod) - a bump of either never reaches the vendored code, so mark it in the PR title itself, not just the body, because a title like 'update ... [security]' on a no-op is worse than no PR at all",
+      "matchManagers": [
+        "gomod"
+      ],
+      "matchPackageNames": [
+        "github.com/cloudflare/cloudflared",
+        "github.com/quic-go/quic-go"
+      ],
+      "automerge": false,
+      "commitMessageSuffix": " - no-op, shadowed by replace (FIXME #610)",
+      "prBodyNotes": [
+        ":warning: **This is a no-op.** The `require` line this PR bumps sits under an unconditional `replace` directive in `go.mod` (no version on its left side) that ignores it - see the `FIXME(#610)` comment there. Merging this changes only the version string in `go.mod`, nothing that actually builds. It is still worth merging as a record that the pin is stale, but it fixes nothing by itself."
+      ]
+    },
+    {
+      "description": "chungthuang/quic-go is the replace target that github.com/quic-go/quic-go's require line above is shadowed by - unlike the require bump, this one changes the vendored code, and can silently undo a deliberate pin (see issue #610's #612 near-miss). Mark it in the PR title as well as the body so it reads differently from the no-op require bump",
+      "matchManagers": [
+        "gomod"
+      ],
+      "matchPackageNames": [
+        "github.com/chungthuang/quic-go"
+      ],
+      "automerge": false,
+      "commitMessageSuffix": " - moves the actual pin, review by hand (FIXME #610)",
+      "prBodyNotes": [
+        ":warning: **This changes the vendored code.** This module is the target of the `replace github.com/quic-go/quic-go => ...` directive in `go.mod` - see the `FIXME(#609)`/`FIXME(#610)` comments there. Unlike a bump of the `require` line above that replace, this one takes effect, and can silently undo a deliberate pin chosen to match what cloudflared itself requires. Verify against those comments before merging."
+      ]
+    },
+    {
+      "description": "github.com/lexfrei/cloudflared is our cloudflared fork; its replace-target pin moves by hand through a deliberate rebase (CLAUDE.md 'Cloudflared Fork' section), never through Renovate",
+      "matchManagers": [
+        "gomod"
+      ],
+      "matchPackageNames": [
+        "github.com/lexfrei/cloudflared"
+      ],
+      "enabled": false
     }
   ],
   "customManagers": [
