@@ -1,6 +1,6 @@
 # GEP / concept-level requirements (Phase 2)
 
-Cross-cutting normative requirements from `gateway-api.sigs.k8s.io` that are NOT expressed in field-level godoc (those are in `01-clause-inventory.md`). Sourced from GEP-713 (Policy Attachment) and the route-attachment / status-condition concept pages, originally captured at v1.5 and refreshed for v1.6.0 (see `00-compliance-matrix.md`, "v1.5.1 → v1.6.0 refresh"). The HTTPRoute precedence narrative duplicates HR-05..08 and is not re-listed.
+Cross-cutting normative requirements from `gateway-api.sigs.k8s.io` that are NOT expressed in field-level godoc (those are in `01-clause-inventory.md`). Sourced from GEP-713 (Policy Attachment) and the route-attachment / status-condition concept pages, originally captured at v1.5 and refreshed for v1.6.0 (see `00-compliance-matrix.md`, "v1.5.1 → v1.6.1 refresh"). The HTTPRoute precedence narrative duplicates HR-05..08 and is not re-listed.
 
 ID prefix: GEP-NN.
 
