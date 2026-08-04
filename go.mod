@@ -177,7 +177,7 @@ require (
 // can't repoint this pin to an arbitrary newer commit on its own; the require
 // line above still gets Renovate PRs, and those are the intended signal that a
 // rebase is due, not something to merge as-is.
-replace github.com/cloudflare/cloudflared => github.com/lexfrei/cloudflared v0.0.0-20260725170743-c76a719d15f8
+replace github.com/cloudflare/cloudflared => github.com/lexfrei/cloudflared v0.0.0-20260804145309-f3b324e53f9a
 
 // FIXME(#609): this pin (matching cloudflared's own, equally vulnerable target)
 // still carries CVE-2025-59530 (GHSA-47m2-4cr7-mhcw). Upstream cloudflared has

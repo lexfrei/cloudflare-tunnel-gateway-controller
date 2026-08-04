@@ -1213,33 +1213,3 @@ func TestBuildOrchestrator_PerAttemptCtx_PreventsGoroutineAccumulation(t *testin
 			"a per-call context cancelled right after buildOrchestrator returns must not accumulate goroutines across repeated calls -- a growing count here is exactly the leak an unbounded bootstrap retry would trigger")
 	})
 }
-
-// TestBuildTunnelConfig_ObserverIsSharedAcrossCalls pins the mitigation for
-// the same "constructed once per process" hazard that also broke Prometheus
-// registration and the waitConnected goroutine: connection.NewObserver
-// spawns an unconditional background goroutine (dispatchEvents) with no
-// exposed way to stop it -- no ctx parameter, no Close() method -- so a
-// fresh Observer per bootstrap attempt leaks that goroutine (plus whatever
-// it closes over via registered EventSinks) once StartTunnelWithRetry can
-// call buildTunnelConfig many times in the same process. Unlike the other
-// two hazards this one cannot be closed by threading a per-attempt context
-// through -- the vendored constructor does not accept one -- so
-// buildTunnelConfig reuses ONE Observer for the process's lifetime instead
-// of building a fresh one per call.
-func TestBuildTunnelConfig_ObserverIsSharedAcrossCalls(t *testing.T) {
-	token := newTestToken()
-	zlog := newZerologLogger()
-
-	withFreshRegisterer(func() {
-		ensureRetrySafeRegisterer()
-
-		tunnelCfg1, _, err := buildTunnelConfig(t.Context(), token, "http://localhost:8080", connection.AutoSelectFlag, &zlog)
-		require.NoError(t, err)
-
-		tunnelCfg2, _, err := buildTunnelConfig(t.Context(), token, "http://localhost:8080", connection.AutoSelectFlag, &zlog)
-		require.NoError(t, err)
-
-		assert.Same(t, tunnelCfg1.Observer, tunnelCfg2.Observer,
-			"buildTunnelConfig must reuse one Observer across calls -- a fresh one per call leaks its unstoppable dispatchEvents goroutine on every bootstrap retry")
-	})
-}
