@@ -371,53 +371,37 @@ func buildOrchestrator(
 	return orchestrator, tunnelCfg, nil
 }
 
-// sharedObserver returns a process-lifetime connection.Observer, constructed
-// once on first use.
+// newAttemptObserver returns a connection.Observer scoped to ctx: when the
+// attempt's context ends, the observer's dispatch goroutine returns and every
+// sink registered against it is released -- notably the per-attempt
+// *tunnelstate.ConnTracker supervisor.NewSupervisor registers via
+// NewConnAwareLogger.
 //
-// connection.NewObserver spawns an unconditional background goroutine
-// (dispatchEvents) with no way to stop it -- no ctx parameter, no Close()
-// method exposed by the vendored library -- unlike buildOrchestrator's other
-// two per-attempt goroutine hazards (the feature-selector refresh loop, the
-// orchestrator's proxy-close watcher), which are closed by threading
-// StartTunnel's per-attempt context through instead (see attemptCtx in
-// StartTunnel). A fresh Observer per bootstrap attempt, as buildTunnelConfig
-// always constructed before the retry loop existed, would leak that
-// goroutine -- and everything it closes over via registered EventSinks --
-// once per failed attempt, unboundedly for an outage long enough to matter.
+// Scoping it to the attempt context puts the Observer alongside the other
+// per-attempt background goroutines this package owns (the feature-selector
+// refresh loop, the orchestrator's proxy-close watcher -- see attemptCtx in
+// StartTunnel), and needs no discipline from callers. It is only possible
+// because the fork gives Observer a Close(); without one, the observer had to
+// be shared for the whole process to keep the goroutine count bounded, which
+// left its sink list growing for as long as a retry loop ran, with every
+// dispatched event walking all of it.
 //
-// Reusing one Observer for the process's lifetime bounds this to exactly
-// one goroutine, trading it for a smaller ongoing cost: Observer exposes no
-// way to unregister a sink, so supervisor.NewSupervisor's per-attempt
-// *tunnelstate.ConnTracker (registered as a sink on every call, via
-// NewConnAwareLogger) accumulates in the shared Observer's internal sinks
-// slice across every attempt instead of being freed, and dispatchEvents
-// walks the whole slice on every forwarded event -- so both memory and
-// per-event dispatch cost grow with attempt count. Per attempt that cost is
-// small and fixed (a stale ConnTracker only receives and discards forwarded
-// events -- it holds no dial or connection state of its own), but the TOTAL
-// is NOT bounded by this fix alone: for a bootstrap loop that retries
-// indefinitely (see errNonRetryableStart's doc comment on a well-formed but
-// edge-rejected token), sinks grows for as long as that condition persists,
-// unboundedly in principle. This is a real, disclosed trade-off, not a
-// closed one -- tracked in #606.
-//
-// The proper fix is a vendor patch giving Observer a Close()/UnregisterSink;
-// deliberately out of scope here, since it touches a separate repository
-// (the cloudflared fork). Sharing the OTHER per-attempt state Observer's
-// sinks carry -- reusing tunnelstate.ConnTracker itself instead of
-// registering a fresh one per attempt -- is not a safe alternative either:
-// ConnTracker.HasConnectedWith feeds the vendored supervisor's own
-// protocol-fallback decision (supervisor/tunnel.go's serveTunnel), so
-// sharing it would leak one attempt's connection history into another
-// attempt's control flow, trading a bounded memory cost for an unbounded
-// correctness one.
-//
-//nolint:gochecknoglobals // see doc comment above: one Observer must outlive any single StartTunnel call
-var sharedObserver = sync.OnceValue(func() *connection.Observer {
-	zlog := newZerologLogger()
+// Sharing ONE tracker across attempts is the tempting alternative and is not
+// safe: ConnTracker.HasConnectedWith feeds the vendored supervisor's own
+// protocol-fallback decision (supervisor/tunnel.go's serveTunnel), so one
+// attempt's outcome would steer the next attempt's control flow, and a
+// connection torn down by context cancellation rather than a clean disconnect
+// stays marked live and skews every later attempt's connection count.
+func newAttemptObserver(ctx context.Context, zlog *zerolog.Logger) *connection.Observer {
+	observer := connection.NewObserver(zlog, zlog)
 
-	return connection.NewObserver(&zlog, &zlog)
-})
+	go func() {
+		<-ctx.Done()
+		observer.Close()
+	}()
+
+	return observer
+}
 
 func buildTunnelConfig(
 	ctx context.Context,
@@ -447,7 +431,7 @@ func buildTunnelConfig(
 		DefaultDialer: ingress.NewDialer(warpRouting),
 	}, zlog)
 
-	observer := sharedObserver()
+	observer := newAttemptObserver(ctx, zlog)
 	dnsService := origins.NewDNSResolverService(originDialerService, zlog, origins.NewMetrics(prometheus.DefaultRegisterer))
 
 	tunnelCfg.EdgeTLSConfigs = edgeTLSConfigs
