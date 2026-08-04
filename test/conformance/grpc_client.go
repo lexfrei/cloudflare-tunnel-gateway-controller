@@ -138,13 +138,13 @@ func (c *TunnelGRPCClient) SendRPC(
 	return resp, nil
 }
 
-// Close is a no-op. As of gateway-api v1.6.0 (upstream #4953) the suite never
-// closes a caller-injected Options.GRPCClient — the request helper only closes
-// the DefaultClient it constructs itself when no client was supplied (vendor
-// grpc.go). Even so, this single client is
-// shared across all of a test's parallel sub-cases and reused for the whole
-// suite run, so Close staying a no-op is deliberate: tearing the connection
-// down would break in-flight RPCs from sibling sub-cases with "the client
+// Close is a no-op. As of gateway-api v1.6.0 (upstream #4953) the suite
+// never closes a caller-injected Options.GRPCClient — the request helper
+// only closes the DefaultClient it constructs itself when no client was
+// supplied (vendor grpc.go). Even so, this single client is shared across
+// all of a test's parallel sub-cases and reused for the whole suite run,
+// so Close staying a no-op is deliberate: tearing the connection down
+// would break in-flight RPCs from sibling sub-cases with "the client
 // connection is closing". The shared grpc.ClientConn manages its own
 // transport reconnection and is reclaimed when the test process exits.
 func (c *TunnelGRPCClient) Close() {}
