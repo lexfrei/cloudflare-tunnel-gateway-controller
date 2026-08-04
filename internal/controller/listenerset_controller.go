@@ -186,18 +186,24 @@ func (r *ListenerSetReconciler) reconcileStatus(
 			meta.SetStatusCondition(&fresh.Status.Conditions, cond)
 		}
 
+		priorEntries := fresh.Status.Listeners
+
+		var entries []gatewayv1.ListenerEntryStatus
+
 		if acceptance.Accepted || acceptance.Reason == gatewayv1.ListenerSetReasonListenersNotValid {
 			// Either the ListenerSet is fully accepted, or it's been
 			// rejected only because individual entries failed (conflict or
 			// bad refs). Either way, the per-entry status is what users
 			// need — surface it from the merge view + refChecks.
-			fresh.Status.Listeners = buildListenerSetEntryStatuses(&fresh, acceptance, fresh.Generation, now)
+			entries = buildListenerSetEntryStatuses(&fresh, acceptance, fresh.Generation, now)
 		} else {
 			// Resource-level rejection (NotAllowed / Pending / Invalid) —
 			// stamp the same reason on every entry so kubectl describe
 			// shows a coherent story.
-			fresh.Status.Listeners = buildListenerSetRejectedEntryStatuses(&fresh, acceptance, fresh.Generation, now)
+			entries = buildListenerSetRejectedEntryStatuses(&fresh, acceptance, fresh.Generation, now)
 		}
+
+		fresh.Status.Listeners = preserveListenerEntryTransitions(priorEntries, entries)
 
 		if err := r.Status().Update(ctx, &fresh); err != nil {
 			return errors.Wrap(err, "failed to update listenerset status")
