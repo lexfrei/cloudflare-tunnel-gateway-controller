@@ -1,6 +1,6 @@
 # ReferenceGrant + ObjectReference clause audit (RG- / OR-)
 
-Audited against Gateway API v1.6.0 (vendored; originally at v1.5.1, refreshed per `00-compliance-matrix.md` "v1.5.1 → v1.6.0 refresh"). Source of truth: actual code under `internal/referencegrant/`, `internal/controller/`, `internal/ingress/`, `internal/proxy/`.
+Audited against Gateway API v1.6.1 (vendored; originally at v1.5.1, refreshed per `00-compliance-matrix.md` "v1.5.1 → v1.6.1 refresh"). Source of truth: actual code under `internal/referencegrant/`, `internal/controller/`, `internal/ingress/`, `internal/proxy/`.
 
 | ID | Keyword | Class | Status | Evidence | Notes |
 | --- | --- | --- | --- | --- | --- |

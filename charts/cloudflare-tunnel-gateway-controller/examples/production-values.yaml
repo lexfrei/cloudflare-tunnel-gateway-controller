@@ -36,7 +36,7 @@ gatewayClassConfig:
 
   # Cloudflare Tunnel ID (required)
   # Get from: Zero Trust Dashboard > Networks > Tunnels
-  tunnelID: "YOUR_TUNNEL_ID_HERE"
+  tunnelID: "550e8400-e29b-41d4-a716-446655440000"
 
   # Reference to Secret containing Cloudflare API credentials
   # See examples/external-secrets-operator.yaml for ESO integration

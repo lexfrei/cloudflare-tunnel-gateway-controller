@@ -54,6 +54,14 @@ This section contains step-by-step guides for common integration scenarios and a
 
     [:octicons-arrow-right-24: Per-Gateway Isolation](per-gateway-isolation.md)
 
+-   :material-rocket-launch:{ .lg .middle } **Knative Serving**
+
+    ---
+
+    Run Knative Serving via net-gateway-api without revisions getting stuck not-Ready.
+
+    [:octicons-arrow-right-24: Knative Serving](knative-serving.md)
+
 </div>
 
 ## Prerequisites
@@ -74,3 +82,4 @@ Before following these guides, ensure you have:
 | Production observability | [Monitoring](monitoring.md) |
 | Shared cluster with multiple teams | [Multi-Tenancy](multi-tenancy.md) |
 | Hard tenant isolation (own proxy + tunnel) | [Per-Gateway Isolation](per-gateway-isolation.md) |
+| Knative Serving revisions stuck not-Ready | [Knative Serving](knative-serving.md) |

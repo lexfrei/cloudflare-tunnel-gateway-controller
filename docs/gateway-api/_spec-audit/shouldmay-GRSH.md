@@ -1,4 +1,4 @@
-# GR + SH SHOULD/MAY tier audit (Gateway API v1.6.0, originally audited at v1.5.1)
+# GR + SH SHOULD/MAY tier audit (Gateway API v1.6.1, originally audited at v1.5.1)
 
 Adversarial verification of the SHOULD/SHOULD-NOT and MAY clauses for GRPCRoute (GR-) and shared types (SH-). Verified against `internal/proxy/{grpc_converter,converter,matcher,handler}.go`, `internal/controller/{grpcroute_controller,route_status}.go`, `internal/routebinding/`, `internal/ingress/`, cross-referenced with `test/conformance/conformance_test.go` and `docs/gateway-api/limitations.md`.
 

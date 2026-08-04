@@ -1,6 +1,6 @@
-# Gateway API v1.6.0 spec compliance matrix
+# Gateway API v1.6.1 spec compliance matrix
 
-Clause-by-clause audit of the implementation against the normative (RFC-2119) surface of the vendored `sigs.k8s.io/gateway-api v1.6.0` Standard channel. The full clause extraction and adversarial verification were performed at v1.5.1; the audit was then refreshed against the verified v1.5.1 → v1.6.0 tag diff (see "v1.5.1 → v1.6.0 refresh" below). This is the deliverable the closed audit issue asked for: every implemented resource's normative clauses classified honoured / justified-deviation / violated, with code evidence.
+Clause-by-clause audit of the implementation against the normative (RFC-2119) surface of the vendored `sigs.k8s.io/gateway-api v1.6.1` Standard channel. The full clause extraction and adversarial verification were performed at v1.5.1; the audit was then refreshed against the verified v1.5.1 → v1.6.0 tag diff (see "v1.5.1 → v1.6.1 refresh" below) — v1.6.1 followed as a conformance/test-infrastructure-only patch release with no API or CRD changes (upstream v1.6.1 release notes), so the v1.6.0 clause diff still covers the currently-vendored baseline. This is the deliverable the closed audit issue asked for: every implemented resource's normative clauses classified honoured / justified-deviation / violated, with code evidence.
 
 ## Method
 
@@ -10,20 +10,20 @@ Clause-by-clause audit of the implementation against the normative (RFC-2119) su
 4. Ran the official conformance suite (Gateway HTTP + gRPC profiles) against a fresh kind cluster + real Cloudflare test tunnel as pass/fail ground truth.
 5. Adversarially re-verified every GAP — a skeptic tried to refute each (CRD enforcement, N/A, conditional-satisfied, documented-deviation) before it was allowed to stand. 22 of 25 first-pass GAPs did not survive.
 
-## Dashboard (v1.5.1 first-pass classification, 376 clauses)
+## Dashboard (378 clauses: 376 from the v1.5.1 first-pass classification + 2 added by the v1.6.0 refresh — GW-106 MET, RG-06 NA)
 
 | Status | Count |
 | --- | --- |
-| MET | 221 |
+| MET | 222 |
 | PARTIAL | 34 |
 | GAP (first pass) | 25 |
-| N/A (tunnel architecture / exempt) | 96 |
+| N/A (tunnel architecture / exempt) | 97 |
 
-Conformance ground truth: 76 top-level subtests PASS, 54 SKIP (documented TLS/TCP/UDP/Mesh/WebSocket/GRPCRouteWeight/HTTPS-listener), **0 FAIL** (`go test ... ok 293s`). The suite is green; the audit's value is the normative surface the suite does not exercise.
+Conformance ground truth (v1.5.1 run): 76 top-level subtests PASS, 54 SKIP (documented TLS/TCP/UDP/Mesh/WebSocket/GRPCRouteWeight/HTTPS-listener), **0 FAIL** (`go test ... ok 293s`). GRPCRouteWeight and HTTPRouteBackendProtocolWebSocket were among the SKIPs at that run; both are de-skipped in the current suite configuration (`test/conformance/conformance_test.go`, pinned by `TestStaleSkipsStayLifted`) now that gateway-api v1.6.0 added the injectable `suite.GRPCClient` / `suite.WebSocketDialer` hooks those tests needed, so the current skip categories are TLS/TCP/UDP/Mesh/HTTPS-listener plus the BackendTLSPolicy-gated tests. Conformance ground truth (v1.6.1 run): 77 top-level subtests PASS, 76 SKIP, **0 FAIL** (`go test ... ok 487s`, kind + real Cloudflare Tunnel). Both runs were green; the audit's value is the normative surface the suite does not exercise.
 
-## v1.5.1 → v1.6.0 refresh
+## v1.5.1 → v1.6.1 refresh
 
-The v1.6.0 baseline bump was audited against the verified upstream tag diff. Every delta below cites the upstream PR; pre-existing verdicts stand unless a row carries an explicit v1.6.0 note.
+The v1.6.0 baseline bump was audited against the verified upstream tag diff; v1.6.1 followed as a conformance/test-infrastructure-only patch (upstream v1.6.1 release notes: TCPRoute/UDPRoute conformance timeout and flake fixes, no API or CRD changes), so the vendored baseline is now v1.6.1 but every verdict below still applies unchanged. Every delta below cites the upstream PR; pre-existing verdicts stand unless a row carries an explicit v1.6.0 note.
 
 | Delta | Upstream PR | Classification | Where it landed |
 | --- | --- | --- | --- |

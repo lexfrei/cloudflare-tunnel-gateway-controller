@@ -111,6 +111,10 @@ This is because Cloudflare Tunnel terminates TLS at Cloudflare's edge, not in th
 
 The controller does not read `spec.addresses` on a Gateway. The only reachable address for a Cloudflare Tunnel is the tunnel CNAME, which the controller assigns automatically and reports in `status.addresses`; a user cannot request a specific address. This is the same constraint as the Gateway API `GatewayStaticAddresses` feature, which this implementation does not claim. A value placed in `spec.addresses` is neither honoured nor flagged as invalid.
 
+### `status.addresses` is not dialable in-cluster
+
+`Gateway.status.addresses` reports the tunnel CNAME (`<tunnel-id>.cfargotunnel.com`), which resolves nowhere inside the cluster — the data plane is tunnel-only and exposes no in-cluster HTTP listener for routed traffic. Any tooling that expects to reach a Gateway's data plane by dialing its status address directly from inside the cluster (rather than through the Cloudflare edge) cannot do so. This breaks Knative Serving's `net-gateway-api` readiness prober specifically; see the [Knative Serving guide](../guides/knative-serving.md) for the mechanism and the supported split-horizon workaround.
+
 ## Backend Protocol (`Service.spec.ports[].appProtocol`)
 
 The L7 proxy reads the backend Service port's `appProtocol` to pick the upstream transport. The supported Kubernetes-defined values:

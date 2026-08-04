@@ -180,6 +180,7 @@ The L7 proxy handles routing for every tunnel request, so most Gateway API behav
 - `timeouts.request` / `timeouts.backendRequest` are enforced as header-only deadlines, so streaming responses (SSE, chunked, gRPC server-streaming) keep flowing past the deadline.
 - Unavailable backends in a weighted rule return a status (`500`/`503`) for their share rather than dialing a dead address, so the other backends keep serving.
 - `HTTPRouteRule.name` uniqueness is not enforced at admission; an opt-in `ValidatingAdmissionPolicy` (`ruleNameUniquenessPolicy` Helm value) enforces it on Kubernetes 1.30+.
+- Knative Serving via `net-gateway-api` needs a split-horizon setup — see the [Knative Serving guide](https://cf.k8s.lex.la/latest/guides/knative-serving/) — because its readiness prober dials the Gateway's tunnel address directly, which is not reachable in-cluster.
 
 The proxy can emit a structured per-request access log via `proxy.accessLog.enabled: true`. See [Access Logging](https://cf.k8s.lex.la/latest/operations/access-logging/).
 
