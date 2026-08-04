@@ -86,7 +86,7 @@ kind: GatewayClassConfig
 metadata:
   name: cloudflare-tunnel-config
 spec:
-  tunnelID: "YOUR_TUNNEL_UUID"
+  tunnelID: "550e8400-e29b-41d4-a716-446655440000"
   cloudflareCredentialsSecretRef:
     name: cloudflare-credentials
   # accountId: "1234567890abcdef"  # Optional, auto-detected
