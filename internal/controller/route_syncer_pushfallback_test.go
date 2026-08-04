@@ -46,8 +46,10 @@ func hasProxyPushDiagnostic(diags []proxy.RouteDiagnostic) bool {
 // guarantee behind the stale-version race fix: a partition push abandoned as a
 // lost race must surface through the second return value, because on a quiet
 // cluster no further event would otherwise trigger the sync that re-delivers
-// the current desired config -- and the abandoned push can be the FRESHER one
-// (config versions follow build order, not route-snapshot order).
+// the current desired config. With versions reserved at route-snapshot time an
+// abandoned push normally carries the older snapshot; the signal remains the
+// safety net for unversioned pushes and cross-process races, where version
+// order and snapshot order are not tied.
 func TestPushPartitionConfigs_LostRaceReportsRequeueSignal(t *testing.T) {
 	t.Parallel()
 
@@ -280,7 +282,7 @@ func TestPushPartitionConfigs_EarlyErrorResultDoesNotLeakToShared(t *testing.T) 
 	// the transient error.
 	tenantRoute := pushFallbackRoute("tenant-r", "tenant.example.com")
 
-	_, err := proxySyncer.SyncPartition(ctx, "default/tenant-gw", "tenant-token",
+	_, err := proxySyncer.SyncPartition(ctx, 0, "default/tenant-gw", "tenant-token",
 		[]string{tenantServer.URL + "/config"}, []*gatewayv1.HTTPRoute{tenantRoute}, nil, nil, nil)
 	require.NoError(t, err)
 
@@ -343,7 +345,7 @@ func TestSyncPartition_ConcurrentPushesDoNotSerializeOnLock(t *testing.T) {
 
 	for i := range partitionCount {
 		wg.Go(func() {
-			_, err := proxySyncer.SyncPartition(ctx, fmt.Sprintf("team-%d/gw", i), "",
+			_, err := proxySyncer.SyncPartition(ctx, 0, fmt.Sprintf("team-%d/gw", i), "",
 				[]string{slow.URL + "/config"},
 				[]*gatewayv1.HTTPRoute{pushFallbackRoute(fmt.Sprintf("r-%d", i), fmt.Sprintf("h%d.example.com", i))},
 				nil, nil, nil)
@@ -407,7 +409,7 @@ func TestPushPartitionConfigs_RetainsTransientBrokenCache(t *testing.T) {
 
 	// A healthy sync seeded the tenant partition's cache before the blip.
 	tenantRoute := pushFallbackRoute("tenant-r", "tenant.example.com")
-	_, err := proxySyncer.SyncPartition(ctx, "default/tenant-gw", "tenant-token",
+	_, err := proxySyncer.SyncPartition(ctx, 0, "default/tenant-gw", "tenant-token",
 		[]string{tenantServer.URL + "/config"}, []*gatewayv1.HTTPRoute{tenantRoute}, nil, nil, nil)
 	require.NoError(t, err)
 

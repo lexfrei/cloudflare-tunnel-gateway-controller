@@ -686,13 +686,15 @@ func newBackendRefValidator(validator *referencegrant.Validator, fromKind string
 // BackendNotFound findings must be applied here.
 func (s *ProxySyncer) SyncRoutes(
 	ctx context.Context,
+	configVersion int64,
 	endpoints []string,
 	routes []*gatewayv1.HTTPRoute,
 	grpcRoutes []*gatewayv1.GRPCRoute,
 	failedRefs []ingress.BackendRefError,
 	grpcFailedRefs []ingress.BackendRefError,
 ) ([]proxy.RouteDiagnostic, error) {
-	return s.SyncPartition(ctx, sharedPartitionKey, s.defaultAuthToken, endpoints, routes, grpcRoutes, failedRefs, grpcFailedRefs)
+	return s.SyncPartition(ctx, configVersion, sharedPartitionKey, s.defaultAuthToken,
+		endpoints, routes, grpcRoutes, failedRefs, grpcFailedRefs)
 }
 
 // SyncPartition is the per-data-plane push: it builds the proxy config from
@@ -700,8 +702,14 @@ func (s *ProxySyncer) SyncRoutes(
 // authenticated with the partition's own token (empty = no auth header — the
 // shared token is never reused for tenant planes). Push state (steady-state
 // skip, replay cache) is independent per partition.
+//
+// configVersion is the version reserved when the routes were LISTED, so that
+// two overlapping reconciles order their pushes by snapshot age rather than by
+// which one happened to finish building first. Zero means the caller reserved
+// none and the build-time counter value stands.
 func (s *ProxySyncer) SyncPartition(
 	ctx context.Context,
+	configVersion int64,
 	key string,
 	authToken string,
 	endpoints []string,
@@ -719,7 +727,7 @@ func (s *ProxySyncer) SyncPartition(
 		logger = s.logger
 	}
 
-	prep := s.preparePush(ctx, key, authToken, endpoints, resolved, routes, grpcRoutes, failedRefs, grpcFailedRefs)
+	prep := s.preparePush(ctx, configVersion, key, authToken, endpoints, resolved, routes, grpcRoutes, failedRefs, grpcFailedRefs)
 	if prep.skip {
 		logger.Debug("proxy config unchanged; skipping push",
 			"partition", key, "endpoints", len(resolved), "rules", len(prep.cfg.Rules))
@@ -752,6 +760,7 @@ type preparedPush struct {
 // itself runs lock-free.
 func (s *ProxySyncer) preparePush(
 	ctx context.Context,
+	configVersion int64,
 	key, authToken string,
 	endpoints, resolved []string,
 	routes []*gatewayv1.HTTPRoute,
@@ -774,6 +783,15 @@ func (s *ProxySyncer) preparePush(
 		"partition", key, "httpRoutes", len(routes), "grpcRoutes", len(grpcRoutes))
 
 	cfg := s.buildProxyConfig(ctx, routes, grpcRoutes, failedRefs, grpcFailedRefs)
+
+	// Replace the converter's build-time version with the one the caller
+	// reserved when it listed these routes, so a replica orders two overlapping
+	// reconciles by snapshot age. Without it the reconcile that built last wins
+	// at the replica even when it carries the older route set, and neither side
+	// sees a conflict to recover from.
+	if configVersion > 0 {
+		cfg.Version = configVersion
+	}
 
 	// Diagnostics are computed by the converter and are valid regardless of
 	// whether the push below succeeds — they describe the route specs, not the

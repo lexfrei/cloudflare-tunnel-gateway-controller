@@ -194,6 +194,14 @@ type SyncResult struct {
 	// config, and the reconcile requeues to re-resolve.
 	TransientBrokenKeys []string
 
+	// ConfigVersion is the proxy-config version reserved when this sync LISTED
+	// its routes, carried into every partition push so version order follows
+	// snapshot order. Two overlapping reconciles can otherwise build in the
+	// opposite order to the one they listed in, and the older snapshot's push
+	// would then win the replica's version comparison and serve stale routes.
+	// Zero on early-error paths, which push nothing.
+	ConfigVersion int64
+
 	// CollisionDiagnostics are route diagnostics synthesized during sync that do
 	// not come from the converter or the proxy push — currently the
 	// cross-namespace tunnel-sharing collision (#488). The status path
@@ -571,12 +579,15 @@ func pushPartitionConfigs(
 }
 
 // lostRacePushRequeueDelay is how soon a sync is re-run after a partition push
-// was abandoned as a lost stale-version race. The abandoned push can carry the
-// FRESHER route snapshot (config versions follow build order, not snapshot
-// order), and on a quiet cluster no further event would trigger the
-// re-delivering sync, so the requeue is the delivery guarantee. Short: the
-// skip key is already invalidated and the re-list + rebuild takes the highest
-// version, so the retry push cannot lose the same race again.
+// was abandoned as a lost stale-version race. In-process, config versions
+// follow route-snapshot order, so an abandoned push normally carries the OLDER
+// snapshot and the replica already holds the fresher config. The requeue stays
+// as re-delivery insurance for the cases version ordering cannot cover: pushes
+// minted without a reserved version, and cross-process races where the
+// clock-seeded counters of two controller processes are not comparable — on a
+// quiet cluster no further event would trigger the re-delivering sync. Short:
+// the skip key is already invalidated and the re-list + rebuild takes the
+// highest version, so the retry push cannot lose the same race again.
 const lostRacePushRequeueDelay = 2 * time.Second
 
 // withLostRacePushRequeue folds a lost-race push into the reconcile result:
@@ -625,7 +636,8 @@ func pushPartitionsConcurrently(
 
 		group.Go(func() error {
 			if partition.PerGateway == nil {
-				results[i].diags, results[i].err = params.proxySyncer.SyncRoutes(ctx, params.proxyEndpoints,
+				results[i].diags, results[i].err = params.proxySyncer.SyncRoutes(ctx, syncResult.ConfigVersion,
+					params.proxyEndpoints,
 					httpRoutePtrs(partition.HTTPRoutes), grpcRoutePtrs(partition.GRPCRoutes),
 					syncResult.HTTPFailedRefs, syncResult.GRPCFailedRefs)
 
@@ -633,7 +645,8 @@ func pushPartitionsConcurrently(
 			}
 
 			endpoints := []string{render.ConfigEndpointURL(partition.Gateway, params.routeSyncer.ClusterDomain)}
-			results[i].diags, results[i].err = params.proxySyncer.SyncPartition(ctx, partition.Key, partition.PerGateway.AuthToken,
+			results[i].diags, results[i].err = params.proxySyncer.SyncPartition(ctx, syncResult.ConfigVersion,
+				partition.Key, partition.PerGateway.AuthToken,
 				endpoints, httpRoutePtrs(partition.HTTPRoutes), grpcRoutePtrs(partition.GRPCRoutes),
 				syncResult.HTTPFailedRefs, syncResult.GRPCFailedRefs)
 
@@ -826,6 +839,14 @@ func (s *RouteSyncer) SyncAllRoutes(ctx context.Context) (ctrl.Result, *SyncResu
 		return ctrl.Result{}, nil, errors.Wrap(err, "failed to list grpcroutes")
 	}
 
+	// Reserve the proxy-config version for THIS route snapshot, while syncMu
+	// still serializes us against the other route reconciler. Reserving it here
+	// rather than letting the converter mint one per build is what keeps version
+	// order equal to snapshot order: the push phase runs lock-free, so a slower
+	// reconcile can otherwise build after a fresher one and push a higher
+	// version carrying older routes.
+	configVersion := proxy.NextConfigVersion()
+
 	// Resolve cross-route-type (HTTPRoute vs GRPCRoute) attachment conflicts
 	// before building any config or status: the loser is moved from accepted to
 	// rejected with Accepted=False/Conflicted so it is neither served nor
@@ -887,6 +908,7 @@ func (s *RouteSyncer) SyncAllRoutes(ctx context.Context) (ctrl.Result, *SyncResu
 	injectPartitionSyncErrors(grpcResult.bindings, outcome.failedPartitions, infra)
 
 	syncResult := buildSyncResult(httpResult, grpcResult, outcome.httpFailedRefs, outcome.grpcFailedRefs)
+	syncResult.ConfigVersion = configVersion
 	syncResult.Partitions = partitions
 	syncResult.SharedTunnelID = resolvedConfig.TunnelID
 	syncResult.TransientBrokenKeys = infra.transientKeys()
