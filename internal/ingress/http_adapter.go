@@ -49,8 +49,8 @@ func (a HTTPRouteAdapter) ProjectRules(route *gatewayv1.HTTPRoute, resolver *bac
 
 	for _, rule := range route.Spec.Rules {
 		projected := projectedRule{
-			ignoredFilters: len(rule.Filters),
-			backendRefs:    httpBackendRefs(rule.BackendRefs),
+			proxyServedFilters: len(rule.Filters),
+			backendRefs:        httpBackendRefs(rule.BackendRefs),
 		}
 
 		for _, match := range rule.Matches {
