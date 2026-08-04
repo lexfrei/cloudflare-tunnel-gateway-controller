@@ -30,6 +30,16 @@ func init() {
 	configVersionCounter.Store(time.Now().UnixMilli())
 }
 
+// NextConfigVersion reserves the next config version. Callers that decide a
+// config's identity BEFORE building it (the route syncer, which snapshots its
+// route list under its own lock and only builds later) use this so version
+// order follows snapshot order rather than build order. It shares the counter
+// with the converter and the stale-version recovery, so every version this
+// process issues stays comparable.
+func NextConfigVersion() int64 {
+	return configVersionCounter.Add(1)
+}
+
 const (
 	defaultServicePort = 80
 	httpsPort          = 443

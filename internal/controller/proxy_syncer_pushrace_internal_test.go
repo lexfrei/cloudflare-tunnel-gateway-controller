@@ -40,7 +40,7 @@ func TestRecordPush_LostRaceInvalidatesSkipKeyWithoutPoisoningCache(t *testing.T
 
 	// A healthy sync seeds the shared partition's replay cache and skip key.
 	route := pushFallbackRoute("web", "web.example.com")
-	_, err := proxySyncer.SyncPartition(ctx, sharedPartitionKey, "",
+	_, err := proxySyncer.SyncPartition(ctx, 0, sharedPartitionKey, "",
 		[]string{healthy.URL + "/config"}, []*gatewayv1.HTTPRoute{route}, nil, nil, nil)
 	require.NoError(t, err)
 
@@ -247,14 +247,14 @@ func TestSyncPartition_ConcurrentPush_OlderDoesNotOverwriteNewer(t *testing.T) {
 	go func() {
 		defer waitGroup.Done()
 
-		_, errA = proxySyncer.SyncPartition(ctx, sharedPartitionKey, "", endpoints,
+		_, errA = proxySyncer.SyncPartition(ctx, 0, sharedPartitionKey, "", endpoints,
 			[]*gatewayv1.HTTPRoute{pushFallbackRoute("route-a", "a.example.com")}, nil, nil, nil)
 	}()
 
 	go func() {
 		defer waitGroup.Done()
 
-		_, errB = proxySyncer.SyncPartition(ctx, sharedPartitionKey, "", endpoints,
+		_, errB = proxySyncer.SyncPartition(ctx, 0, sharedPartitionKey, "", endpoints,
 			[]*gatewayv1.HTTPRoute{pushFallbackRoute("route-b", "b.example.com")}, nil, nil, nil)
 	}()
 

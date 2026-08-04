@@ -20,9 +20,12 @@ type projectedMatch struct {
 // everything downstream — filter logging, backend resolution, entry
 // assembly — is shared and cannot diverge between route kinds.
 type projectedRule struct {
-	ignoredFilters int
-	backendRefs    []gatewayv1.BackendRef
-	matches        []projectedMatch
+	// proxyServedFilters counts the rule's filters. They are not dropped: the
+	// tunnel ingress document cannot express them, so the in-process proxy
+	// applies them instead.
+	proxyServedFilters int
+	backendRefs        []gatewayv1.BackendRef
+	matches            []projectedMatch
 }
 
 // extractProjectedEntries is the shared rule-walking skeleton behind every
@@ -33,11 +36,11 @@ type projectedRule struct {
 // BackendRefError, its log lines, and the failed-ref metric N× for an
 // N-hostname route.)
 //
-// Unsupported-feature warnings are emitted during projection for every rule,
-// including rules whose backends do not resolve — the features are ignored
-// regardless of backend resolvability, so gating the warnings on a resolved
-// backend (as the historical per-kind code did) hid them exactly when an
-// operator was debugging a broken rule.
+// Ingress-reduction warnings are emitted during projection for every rule,
+// including rules whose backends do not resolve — the tunnel document omits
+// those features regardless of backend resolvability, so gating the warnings
+// on a resolved backend (as the historical per-kind code did) hid them exactly
+// when an operator was debugging a broken rule.
 func extractProjectedEntries[R any](
 	ctx context.Context,
 	adapter RouteAdapter[R],
@@ -52,7 +55,7 @@ func extractProjectedEntries[R any](
 	hostnames := adapter.GetHostnames(route)
 
 	for _, rule := range adapter.ProjectRules(route, resolver) {
-		logProxyServedFilters(resolver, namespace, name, rule.ignoredFilters)
+		logProxyServedFilters(resolver, namespace, name, rule.proxyServedFilters)
 
 		service, ruleFailedRefs := resolveRuleBackendRefs(
 			ctx, resolver, namespace, name, adapter.GatewayKind(), rule.backendRefs,
