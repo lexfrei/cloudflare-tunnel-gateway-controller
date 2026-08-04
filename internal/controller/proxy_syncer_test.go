@@ -115,7 +115,7 @@ func TestProxySyncer_SyncRoutes(t *testing.T) {
 
 	endpoints := []string{configServer.URL + "/config"}
 
-	_, err := syncer.SyncRoutes(context.Background(), endpoints, routes, nil, nil, nil)
+	_, err := syncer.SyncRoutes(context.Background(), 0, endpoints, routes, nil, nil, nil)
 	require.NoError(t, err)
 
 	assert.Equal(t, int32(1), pushCount.Load())
@@ -157,7 +157,7 @@ func TestProxySyncer_NoRoutes_PushesEmptyConfig(t *testing.T) {
 
 	// Zero routes should still push a valid config with empty rules.
 	// The proxy will return 404 for all requests until routes are added.
-	_, err := syncer.SyncRoutes(context.Background(), []string{configServer.URL + "/config"}, nil, nil, nil, nil)
+	_, err := syncer.SyncRoutes(context.Background(), 0, []string{configServer.URL + "/config"}, nil, nil, nil, nil)
 	require.NoError(t, err)
 
 	assert.Equal(t, int32(1), pushCount.Load())
@@ -196,7 +196,7 @@ func TestProxySyncer_ResyncEndpoints_FailedPushLeavesWarnNotReplay(t *testing.T)
 		slog.New(slog.NewTextHandler(&logBuf, nil)),
 	)
 
-	_, err := syncer.SyncRoutes(context.Background(), []string{failing.URL + "/config"}, nil, nil, nil, nil)
+	_, err := syncer.SyncRoutes(context.Background(), 0, []string{failing.URL + "/config"}, nil, nil, nil, nil)
 	require.Error(t, err, "the push against a 500 endpoint must fail")
 
 	putsAfterSync := putCount.Load()
@@ -319,7 +319,7 @@ func TestProxySyncer_ResyncEndpoints_ReplaysLastConfig(t *testing.T) {
 
 	endpoint := configServer.URL + "/config"
 
-	_, syncErr := syncer.SyncRoutes(context.Background(), []string{endpoint}, routes, nil, nil, nil)
+	_, syncErr := syncer.SyncRoutes(context.Background(), 0, []string{endpoint}, routes, nil, nil, nil)
 
 	require.NoError(t, syncErr)
 	require.Equal(t, int32(1), pushCount.Load(), "first sync must push once")
@@ -381,15 +381,15 @@ func TestProxySyncer_SyncPartition_TokenRotationForcesPush(t *testing.T) {
 	endpoints := []string{configServer.URL + "/config"}
 	ctx := context.Background()
 
-	_, err := syncer.SyncPartition(ctx, "tenant-a/edge", "tok-a", endpoints, routes, nil, nil, nil)
+	_, err := syncer.SyncPartition(ctx, 0, "tenant-a/edge", "tok-a", endpoints, routes, nil, nil, nil)
 	require.NoError(t, err)
 	require.Equal(t, int32(1), pushCount.Load(), "first sync must push once")
 
-	_, err = syncer.SyncPartition(ctx, "tenant-a/edge", "tok-a", endpoints, routes, nil, nil, nil)
+	_, err = syncer.SyncPartition(ctx, 0, "tenant-a/edge", "tok-a", endpoints, routes, nil, nil, nil)
 	require.NoError(t, err)
 	require.Equal(t, int32(1), pushCount.Load(), "identical routes, endpoints, and token: steady-state skip")
 
-	_, err = syncer.SyncPartition(ctx, "tenant-a/edge", "tok-b", endpoints, routes, nil, nil, nil)
+	_, err = syncer.SyncPartition(ctx, 0, "tenant-a/edge", "tok-b", endpoints, routes, nil, nil, nil)
 	require.NoError(t, err)
 	require.Equal(t, int32(2), pushCount.Load(), "token rotated: must re-push to re-authenticate")
 }
@@ -453,7 +453,7 @@ func TestProxySyncer_SyncRoutes_H2CBackend(t *testing.T) {
 		},
 	}
 
-	_, err := syncer.SyncRoutes(context.Background(), []string{configServer.URL + "/config"}, routes, nil, nil, nil)
+	_, err := syncer.SyncRoutes(context.Background(), 0, []string{configServer.URL + "/config"}, routes, nil, nil, nil)
 	require.NoError(t, err)
 
 	require.Equal(t, int32(1), pushCount.Load())
@@ -526,7 +526,7 @@ func TestProxySyncer_SyncRoutes_GRPCRoute(t *testing.T) {
 		},
 	}
 
-	_, err := syncer.SyncRoutes(context.Background(), []string{configServer.URL + "/config"}, nil, grpcRoutes, nil, nil)
+	_, err := syncer.SyncRoutes(context.Background(), 0, []string{configServer.URL + "/config"}, nil, grpcRoutes, nil, nil)
 	require.NoError(t, err)
 
 	require.Equal(t, int32(1), pushCount.Load())
@@ -603,7 +603,7 @@ func TestProxySyncer_SyncRoutes_GRPCFailedRefMarked(t *testing.T) {
 		{RouteNamespace: "default", RouteName: "echo", BackendName: "missing-svc", BackendNS: "default", Port: 9000, Reason: "BackendNotFound"},
 	}
 
-	_, err := syncer.SyncRoutes(context.Background(), []string{configServer.URL + "/config"}, nil, grpcRoutes, nil, grpcFailedRefs)
+	_, err := syncer.SyncRoutes(context.Background(), 0, []string{configServer.URL + "/config"}, nil, grpcRoutes, nil, grpcFailedRefs)
 	require.NoError(t, err)
 
 	require.Len(t, receivedConfig.Rules, 1)
@@ -671,7 +671,7 @@ func TestProxySyncer_SyncRoutes_InvalidPortBackendMarked500(t *testing.T) {
 		{RouteNamespace: "default", RouteName: "bad-port", BackendName: "svc", BackendNS: "default", Port: 70000, Reason: "InvalidPort"},
 	}
 
-	_, err := syncer.SyncRoutes(context.Background(), []string{configServer.URL + "/config"}, httpRoutes, nil, httpFailedRefs, nil)
+	_, err := syncer.SyncRoutes(context.Background(), 0, []string{configServer.URL + "/config"}, httpRoutes, nil, httpFailedRefs, nil)
 	require.NoError(t, err)
 
 	require.Len(t, receivedConfig.Rules, 1)
@@ -750,7 +750,7 @@ func grpcCrossNamespaceBackendSurvives(t *testing.T, grantFromKind gatewayv1.Kin
 		},
 	}
 
-	_, err := syncer.SyncRoutes(context.Background(), []string{configServer.URL + "/config"}, nil, grpcRoutes, nil, nil)
+	_, err := syncer.SyncRoutes(context.Background(), 0, []string{configServer.URL + "/config"}, nil, grpcRoutes, nil, nil)
 	require.NoError(t, err)
 
 	require.Len(t, receivedConfig.Rules, 1)
@@ -857,7 +857,7 @@ func TestProxySyncer_SyncRoutes_BackendTLSPolicyMissingCA_FailsClosed(t *testing
 		},
 	}
 
-	_, syncErr := syncer.SyncRoutes(context.Background(), []string{configServer.URL + "/config"}, routes, nil, nil, nil)
+	_, syncErr := syncer.SyncRoutes(context.Background(), 0, []string{configServer.URL + "/config"}, routes, nil, nil, nil)
 
 	require.NoError(t, syncErr)
 
@@ -952,7 +952,7 @@ func TestProxySyncer_SyncRoutes_BackendTLSPolicy_URISubjectAltName_PushesURIList
 		},
 	}
 
-	_, syncErr := syncer.SyncRoutes(context.Background(), []string{configServer.URL + "/config"}, routes, nil, nil, nil)
+	_, syncErr := syncer.SyncRoutes(context.Background(), 0, []string{configServer.URL + "/config"}, routes, nil, nil, nil)
 
 	require.NoError(t, syncErr)
 
@@ -1057,7 +1057,7 @@ func syncHeadlessRouteConfig(t *testing.T, ready bool) proxy.Config {
 		},
 	}
 
-	_, err := syncer.SyncRoutes(context.Background(), []string{configServer.URL + "/config"}, routes, nil, nil, nil)
+	_, err := syncer.SyncRoutes(context.Background(), 0, []string{configServer.URL + "/config"}, routes, nil, nil, nil)
 	require.NoError(t, err)
 
 	return receivedConfig
@@ -1141,19 +1141,19 @@ func TestProxySyncer_SkipsPushWhenConfigUnchanged(t *testing.T) {
 
 	endpoints := []string{configServer.URL + "/config"}
 
-	_, err := syncer.SyncRoutes(context.Background(), endpoints, makeRoutes("/"), nil, nil, nil)
+	_, err := syncer.SyncRoutes(context.Background(), 0, endpoints, makeRoutes("/"), nil, nil, nil)
 	require.NoError(t, err)
 	require.Equal(t, int32(1), pushCount.Load(), "first sync must push")
 
-	_, err = syncer.SyncRoutes(context.Background(), endpoints, makeRoutes("/"), nil, nil, nil)
+	_, err = syncer.SyncRoutes(context.Background(), 0, endpoints, makeRoutes("/"), nil, nil, nil)
 	require.NoError(t, err)
 	assert.Equal(t, int32(1), pushCount.Load(), "identical config to identical endpoints must not push again")
 
-	_, err = syncer.SyncRoutes(context.Background(), endpoints, makeRoutes("/changed"), nil, nil, nil)
+	_, err = syncer.SyncRoutes(context.Background(), 0, endpoints, makeRoutes("/changed"), nil, nil, nil)
 	require.NoError(t, err)
 	assert.Equal(t, int32(2), pushCount.Load(), "a route change must push")
 
-	_, err = syncer.SyncRoutes(context.Background(), endpoints, makeRoutes("/changed"), nil, nil, nil)
+	_, err = syncer.SyncRoutes(context.Background(), 0, endpoints, makeRoutes("/changed"), nil, nil, nil)
 	require.NoError(t, err)
 	assert.Equal(t, int32(2), pushCount.Load(), "steady state after the change must be skipped again")
 }
@@ -1203,12 +1203,12 @@ func TestProxySyncer_EndpointSetChangePushesUnchangedConfig(t *testing.T) {
 		},
 	}}
 
-	_, err := syncer.SyncRoutes(context.Background(), []string{serverA.URL + "/config"}, routes, nil, nil, nil)
+	_, err := syncer.SyncRoutes(context.Background(), 0, []string{serverA.URL + "/config"}, routes, nil, nil, nil)
 	require.NoError(t, err)
 	require.Equal(t, int32(1), pushCountA.Load())
 
 	// Same config, but a second replica joins: both must receive the push.
-	_, err = syncer.SyncRoutes(context.Background(),
+	_, err = syncer.SyncRoutes(context.Background(), 0,
 		[]string{serverA.URL + "/config", serverB.URL + "/config"}, routes, nil, nil, nil)
 	require.NoError(t, err)
 	assert.Equal(t, int32(2), pushCountA.Load(), "existing replica gets the re-push when the set changes")
@@ -1275,7 +1275,7 @@ func TestProxySyncer_PartialPushFailureInvalidatesSkip(t *testing.T) {
 	endpoints := []string{serverA.URL + "/config", serverB.URL + "/config"}
 
 	// Config A reaches both replicas.
-	_, err := syncer.SyncRoutes(context.Background(), endpoints, makeRoutes("/a"), nil, nil, nil)
+	_, err := syncer.SyncRoutes(context.Background(), 0, endpoints, makeRoutes("/a"), nil, nil, nil)
 	require.NoError(t, err)
 	require.Equal(t, int32(1), pushCountA.Load())
 	require.Equal(t, int32(1), pushCountB.Load())
@@ -1283,7 +1283,7 @@ func TestProxySyncer_PartialPushFailureInvalidatesSkip(t *testing.T) {
 	// Config B partially succeeds: replica A takes it, replica B errors.
 	failB.Store(true)
 
-	_, err = syncer.SyncRoutes(context.Background(), endpoints, makeRoutes("/b"), nil, nil, nil)
+	_, err = syncer.SyncRoutes(context.Background(), 0, endpoints, makeRoutes("/b"), nil, nil, nil)
 	require.Error(t, err, "a partial push must surface as an error")
 	require.Equal(t, int32(2), pushCountA.Load(), "replica A accepted config B")
 
@@ -1291,7 +1291,7 @@ func TestProxySyncer_PartialPushFailureInvalidatesSkip(t *testing.T) {
 	// even though config A matches the last fully-successful push.
 	failB.Store(false)
 
-	_, err = syncer.SyncRoutes(context.Background(), endpoints, makeRoutes("/a"), nil, nil, nil)
+	_, err = syncer.SyncRoutes(context.Background(), 0, endpoints, makeRoutes("/a"), nil, nil, nil)
 	require.NoError(t, err)
 	assert.Equal(t, int32(3), pushCountA.Load(),
 		"the rollback after a partial push must be delivered, not skipped")
@@ -1347,7 +1347,7 @@ func TestProxySyncer_ResyncSuccessUpdatesSkipKey(t *testing.T) {
 	endpointA := serverA.URL + "/config"
 	endpointB := serverB.URL + "/config"
 
-	_, err := syncer.SyncRoutes(context.Background(), []string{endpointA}, routes, nil, nil, nil)
+	_, err := syncer.SyncRoutes(context.Background(), 0, []string{endpointA}, routes, nil, nil, nil)
 	require.NoError(t, err)
 	require.Equal(t, int32(1), pushCountA.Load())
 
@@ -1358,7 +1358,7 @@ func TestProxySyncer_ResyncSuccessUpdatesSkipKey(t *testing.T) {
 
 	// The next route reconcile sees the same config and the same (grown)
 	// endpoint set: everything is already delivered, so no push.
-	_, err = syncer.SyncRoutes(context.Background(), []string{endpointA, endpointB}, routes, nil, nil, nil)
+	_, err = syncer.SyncRoutes(context.Background(), 0, []string{endpointA, endpointB}, routes, nil, nil, nil)
 	require.NoError(t, err)
 	assert.Equal(t, int32(2), pushCountA.Load(), "no redundant re-push after a successful resync")
 	assert.Equal(t, int32(1), pushCountB.Load(), "no redundant re-push after a successful resync")
@@ -1424,7 +1424,7 @@ func TestProxySyncer_ResyncPartialFailureInvalidatesSkip(t *testing.T) {
 	endpointB := serverB.URL + "/config"
 	both := []string{endpointA, endpointB}
 
-	_, err := syncer.SyncRoutes(context.Background(), both, routes, nil, nil, nil)
+	_, err := syncer.SyncRoutes(context.Background(), 0, both, routes, nil, nil, nil)
 	require.NoError(t, err)
 	require.Equal(t, int32(1), pushCountA.Load())
 	require.Equal(t, int32(1), pushCountB.Load())
@@ -1438,7 +1438,7 @@ func TestProxySyncer_ResyncPartialFailureInvalidatesSkip(t *testing.T) {
 	// endpoint set both match the last fully-successful push.
 	failB.Store(false)
 
-	_, err = syncer.SyncRoutes(context.Background(), both, routes, nil, nil, nil)
+	_, err = syncer.SyncRoutes(context.Background(), 0, both, routes, nil, nil, nil)
 	require.NoError(t, err)
 	assert.Equal(t, int32(3), pushCountA.Load(), "skip key must be dropped after a partial resync failure")
 	assert.Equal(t, int32(2), pushCountB.Load(), "the errored replica must receive the config on the next sync")

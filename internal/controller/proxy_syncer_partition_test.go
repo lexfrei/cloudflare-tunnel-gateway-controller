@@ -127,11 +127,11 @@ func TestProxySyncer_SyncPartition_IsolatesTargets(t *testing.T) {
 	sharedRoutes := []*gatewayv1.HTTPRoute{partitionTestRoute("shared-r", "shared.example.com", "svc-a")}
 	tenantRoutes := []*gatewayv1.HTTPRoute{partitionTestRoute("tenant-r", "tenant.example.com", "svc-b")}
 
-	_, err := syncer.SyncRoutes(ctx,
+	_, err := syncer.SyncRoutes(ctx, 0,
 		[]string{sharedServer.server.URL + "/config"}, sharedRoutes, nil, nil, nil)
 	require.NoError(t, err)
 
-	_, err = syncer.SyncPartition(ctx, "default/tenant-gw", "tenant-token",
+	_, err = syncer.SyncPartition(ctx, 0, "default/tenant-gw", "tenant-token",
 		[]string{tenantServer.server.URL + "/config"}, tenantRoutes, nil, nil, nil)
 	require.NoError(t, err)
 
@@ -152,7 +152,7 @@ func TestProxySyncer_SyncPartition_IsolatesTargets(t *testing.T) {
 	// between.
 	tenantPushesBefore := tenantServer.pushCount()
 
-	_, err = syncer.SyncPartition(ctx, "default/tenant-gw", "tenant-token",
+	_, err = syncer.SyncPartition(ctx, 0, "default/tenant-gw", "tenant-token",
 		[]string{tenantServer.server.URL + "/config"}, tenantRoutes, nil, nil, nil)
 	require.NoError(t, err)
 	assert.Equal(t, tenantPushesBefore, tenantServer.pushCount(), "unchanged partition must skip the push")
@@ -160,7 +160,7 @@ func TestProxySyncer_SyncPartition_IsolatesTargets(t *testing.T) {
 	// A genuine change in the tenant partition pushes again.
 	changed := []*gatewayv1.HTTPRoute{partitionTestRoute("tenant-r", "tenant-v2.example.com", "svc-b")}
 
-	_, err = syncer.SyncPartition(ctx, "default/tenant-gw", "tenant-token",
+	_, err = syncer.SyncPartition(ctx, 0, "default/tenant-gw", "tenant-token",
 		[]string{tenantServer.server.URL + "/config"}, changed, nil, nil, nil)
 	require.NoError(t, err)
 	assert.Equal(t, tenantPushesBefore+1, tenantServer.pushCount())
@@ -180,7 +180,7 @@ func TestProxySyncer_ResyncPartition_ReplaysCachedConfig(t *testing.T) {
 	ctx := context.Background()
 	routes := []*gatewayv1.HTTPRoute{partitionTestRoute("tenant-r", "tenant.example.com", "svc-b")}
 
-	_, err := syncer.SyncPartition(ctx, "default/tenant-gw", "tenant-token",
+	_, err := syncer.SyncPartition(ctx, 0, "default/tenant-gw", "tenant-token",
 		[]string{tenantServer.server.URL + "/config"}, routes, nil, nil, nil)
 	require.NoError(t, err)
 
@@ -208,7 +208,7 @@ func TestProxySyncer_RetainPartitions_EvictsStaleCaches(t *testing.T) {
 	ctx := context.Background()
 	routes := []*gatewayv1.HTTPRoute{partitionTestRoute("tenant-r", "tenant.example.com", "svc-b")}
 
-	_, err := syncer.SyncPartition(ctx, "default/tenant-gw", "",
+	_, err := syncer.SyncPartition(ctx, 0, "default/tenant-gw", "",
 		[]string{tenantServer.server.URL + "/config"}, routes, nil, nil, nil)
 	require.NoError(t, err)
 

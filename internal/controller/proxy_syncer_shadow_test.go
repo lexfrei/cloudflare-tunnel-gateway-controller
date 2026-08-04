@@ -60,6 +60,7 @@ func TestProxySyncer_SyncRoutes_ShadowedRouteDiagnostic(t *testing.T) {
 
 	diagnostics, err := syncer.SyncRoutes(
 		context.Background(),
+		0,
 		[]string{configServer.URL + "/config"},
 		[]*gatewayv1.HTTPRoute{intruder, owner}, nil, nil, nil,
 	)

@@ -50,8 +50,8 @@ func (a GRPCRouteAdapter) ProjectRules(route *gatewayv1.GRPCRoute, resolver *bac
 
 	for _, rule := range route.Spec.Rules {
 		projected := projectedRule{
-			ignoredFilters: len(rule.Filters),
-			backendRefs:    grpcBackendRefs(rule.BackendRefs),
+			proxyServedFilters: len(rule.Filters),
+			backendRefs:        grpcBackendRefs(rule.BackendRefs),
 		}
 
 		for _, match := range rule.Matches {

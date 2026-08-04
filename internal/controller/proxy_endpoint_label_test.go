@@ -92,7 +92,7 @@ func testTruncatedLabelResolves(t *testing.T, gatewayName string) {
 
 	ctx := context.Background()
 
-	_, err := proxySyncer.SyncPartition(ctx, "tenant/"+gatewayName, "",
+	_, err := proxySyncer.SyncPartition(ctx, 0, "tenant/"+gatewayName, "",
 		[]string{tenantServer.URL + "/config"},
 		[]*gatewayv1.HTTPRoute{pushFallbackRoute("tenant-r", "tenant.example.com")}, nil, nil, nil)
 	require.NoError(t, err)

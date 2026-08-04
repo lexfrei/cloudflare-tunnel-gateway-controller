@@ -425,7 +425,7 @@ func (r *GatewayReconciler) updateStatus(
 			})
 		}
 
-		freshGateway.Status.Listeners = listenerStatuses
+		freshGateway.Status.Listeners = preserveGatewayListenerTransitions(freshGateway.Status.Listeners, listenerStatuses)
 
 		if err := r.Status().Update(ctx, &freshGateway); err != nil {
 			return errors.Wrap(err, "failed to update gateway status")
