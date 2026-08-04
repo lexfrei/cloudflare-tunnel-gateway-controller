@@ -1,4 +1,4 @@
-# cel.dev/expr v0.25.1
+# cel.dev/expr v0.25.2
 ## explicit; go 1.23.0
 cel.dev/expr
 # github.com/Masterminds/semver/v3 v3.5.0
@@ -18,7 +18,7 @@ github.com/cenkalti/backoff/v5
 # github.com/cespare/xxhash/v2 v2.3.0
 ## explicit; go 1.11
 github.com/cespare/xxhash/v2
-# github.com/cloudflare/cloudflare-go/v7 v7.7.0
+# github.com/cloudflare/cloudflare-go/v7 v7.8.0
 ## explicit; go 1.22
 github.com/cloudflare/cloudflare-go/v7
 github.com/cloudflare/cloudflare-go/v7/abuse_reports
@@ -116,6 +116,7 @@ github.com/cloudflare/cloudflare-go/v7/radar
 github.com/cloudflare/cloudflare-go/v7/rate_limits
 github.com/cloudflare/cloudflare-go/v7/realtime_kit
 github.com/cloudflare/cloudflare-go/v7/registrar
+github.com/cloudflare/cloudflare-go/v7/registrar_sandbox
 github.com/cloudflare/cloudflare-go/v7/request_tracers
 github.com/cloudflare/cloudflare-go/v7/resource_sharing
 github.com/cloudflare/cloudflare-go/v7/resource_tagging
@@ -388,9 +389,10 @@ github.com/gogo/protobuf/proto
 github.com/gogo/protobuf/protoc-gen-gogo/descriptor
 github.com/gogo/protobuf/sortkeys
 github.com/gogo/protobuf/types
-# github.com/google/cel-go v0.29.2
+# github.com/google/cel-go v0.30.0
 ## explicit; go 1.23.0
 github.com/google/cel-go/cel
+github.com/google/cel-go/cel/async
 github.com/google/cel-go/checker
 github.com/google/cel-go/checker/decls
 github.com/google/cel-go/common
@@ -865,7 +867,7 @@ google.golang.org/genproto/googleapis/api/httpbody
 ## explicit; go 1.25.0
 google.golang.org/genproto/googleapis/rpc/errdetails
 google.golang.org/genproto/googleapis/rpc/status
-# google.golang.org/grpc v1.82.1
+# google.golang.org/grpc v1.83.0
 ## explicit; go 1.25.0
 google.golang.org/grpc
 google.golang.org/grpc/attributes
