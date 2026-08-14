@@ -1,6 +1,6 @@
 module github.com/lexfrei/cloudflare-tunnel-gateway-controller
 
-go 1.26.5
+go 1.26.6
 
 require (
 	github.com/cloudflare/cloudflare-go/v7 v7.8.0
