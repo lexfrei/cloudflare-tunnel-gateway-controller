@@ -29,7 +29,7 @@ jobs:
         uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5
         with:
           # renovate: datasource=github-releases depName=helm/helm
-          version: 'v4.2.3'
+          version: 'v4.2.4'
 
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
@@ -408,7 +408,7 @@ jobs:
         uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5
         with:
           # renovate: datasource=github-releases depName=helm/helm
-          version: 'v4.2.3'
+          version: 'v4.2.4'
 
       - name: Install oras
         uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d # v2
