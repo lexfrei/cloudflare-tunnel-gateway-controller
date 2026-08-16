@@ -45,6 +45,7 @@ jobs:
   reflow:
     name: Reflow paragraphs test
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
@@ -67,6 +68,7 @@ jobs:
   pr-labels:
     name: PR-labels mapping test (from PR checkout)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       # Why this job exists separately from pr-labels.yaml's own
@@ -82,6 +84,7 @@ jobs:
   check-404-redirect:
     name: 404 redirect test
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
@@ -93,6 +96,7 @@ jobs:
   check-doc-links:
     name: Doc-link guard test
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 

@@ -35,6 +35,7 @@ jobs:
   deploy:
     name: Deploy Documentation
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     outputs:
       version: ${{ steps.version.outputs.version }}
       alias: ${{ steps.version.outputs.alias }}
