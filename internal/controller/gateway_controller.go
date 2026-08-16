@@ -48,7 +48,7 @@ const (
 	// Domain-prefixed and informational: the combination is legal Gateway API, so
 	// the listener stays Accepted; this only makes the risk visible in status
 	// rather than only in the multi-tenancy guidance.
-	listenerConditionPermissiveHostname     = "cf.k8s.lex.la/PermissiveHostname"
+	listenerConditionPermissiveHostname     = cfConditionDomainPrefix + "PermissiveHostname"
 	listenerReasonUnpinnedHostnameAllowsAll = "UnpinnedHostnameAllowsAllNamespaces"
 	listenerMsgPermissiveHostname           = "listener allows routes from all namespaces (allowedRoutes.namespaces.from: All) " +
 		"with no hostname pin, so any namespace can claim any hostname on it — pin the listener hostname or scope " +
@@ -480,9 +480,9 @@ func (r *GatewayReconciler) perGatewayProgrammedCondition(
 // generation newer than reconciledGen, in which case this reconcile MUST NOT
 // overwrite the status (Gateway API observedGeneration regression guard).
 //
-// Only this controller's own top-level conditions count: a foreign controller's
-// condition (e.g. special.io/...) carries an unrelated generation and MUST NOT
-// be touched. The per-listener status array, by contrast, is wholly owned here.
+// Only this controller's own conditions count, top-level and per-listener: a
+// foreign controller's condition (e.g. special.io/...) carries an unrelated
+// generation and MUST NOT be touched.
 func gatewayStatusStale(reconciledGen int64, gateway *gatewayv1.Gateway) bool {
 	if ownedConditionsStale(gateway.Status.Conditions, reconciledGen,
 		string(gatewayv1.GatewayConditionAccepted),
@@ -497,7 +497,7 @@ func gatewayStatusStale(reconciledGen int64, gateway *gatewayv1.Gateway) bool {
 		listenerConds = append(listenerConds, gateway.Status.Listeners[i].Conditions)
 	}
 
-	return statusGenerationStale(reconciledGen, listenerConds...)
+	return ownedListenerConditionsStale(reconciledGen, listenerConds...)
 }
 
 func (r *GatewayReconciler) setConfigErrorStatus(

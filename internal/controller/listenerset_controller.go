@@ -136,9 +136,8 @@ func (r *ListenerSetReconciler) isManagedGateway(
 // listenerSetStatusStale reports whether the freshly-fetched ListenerSet
 // already carries status conditions stamped with a generation newer than
 // reconciledGen, in which case this reconcile MUST NOT overwrite the status
-// (observedGeneration regression guard). Only our own top-level conditions
-// count — a foreign condition's generation is unrelated; the per-entry listener
-// status array is wholly owned here.
+// (observedGeneration regression guard). Only our own conditions count,
+// top-level and per-entry; a foreign condition's generation is unrelated.
 func listenerSetStatusStale(reconciledGen int64, listenerSet *gatewayv1.ListenerSet) bool {
 	if ownedConditionsStale(listenerSet.Status.Conditions, reconciledGen,
 		string(gatewayv1.ListenerSetConditionAccepted),
@@ -152,7 +151,7 @@ func listenerSetStatusStale(reconciledGen int64, listenerSet *gatewayv1.Listener
 		entryConds = append(entryConds, listenerSet.Status.Listeners[i].Conditions)
 	}
 
-	return statusGenerationStale(reconciledGen, entryConds...)
+	return ownedListenerConditionsStale(reconciledGen, entryConds...)
 }
 
 // reconcileStatus computes and writes the ListenerSet status (top-level
