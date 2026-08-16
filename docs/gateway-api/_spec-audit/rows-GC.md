@@ -21,6 +21,6 @@
 | GC-17 | MUST NOT | CTRL | MET | internal/controller/gatewayclass_controller.go:107,125 | meta.SetStatusCondition only adds/updates Accepted and SupportedVersion in place; never removes or reorders foreign conditions. |
 | GC-19 | MUST | CTRL | MET | internal/controller/gatewayclass_controller.go:107,125 | meta.SetStatusCondition merges by Type, never duplicates a condition of the same Type. |
 | GC-20 | MUST | CTRL | MET | internal/controller/gatewayclass_controller.go:110,151 | ObservedGeneration set to gatewayClass.Generation for both conditions. Test asserts ObservedGeneration==Generation. |
-| GC-21 | MUST NOT | CTRL | GAP | internal/controller/gatewayclass_controller.go:107-127 | No guard skipping the update when an existing condition's observedGeneration exceeds the known generation; meta.SetStatusCondition overwrites unconditionally. |
+| GC-21 | MUST NOT | CTRL | MET | internal/controller/gatewayclass_controller.go ownedConditionsStale before the status write | The GatewayClass status write is skipped when a stored owned condition already carries an observedGeneration greater than the reconciled generation. |
 | GC-22 | MUST | CTRL | GAP | internal/controller/gatewayclass_controller.go (absent) | status.supportedFeatures is never populated; sorted-order requirement is vacuously unmet because no features are published at all. |
 | GC-23 | SHOULD NOT | NA | NA | vendor gatewayclass_types_overrides.go:52 | supportedFeatureInternal is a vendored backward-compat type; controller code never references it. |

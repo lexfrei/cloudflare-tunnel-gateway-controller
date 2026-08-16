@@ -482,7 +482,7 @@ func TestListenerSetReconciler_SkipsWhenParentNotManaged(t *testing.T) {
 // TestListenerSetReconciler_SkipsObservedGenerationRegression pins the Gateway
 // API rule that a reconcile MUST NOT overwrite a status condition already
 // stamped with an observedGeneration newer than the one this reconcile
-// observed. It covers both the top-level conditions and the wholly-owned
+// observed. It covers both the top-level conditions and the controller-owned
 // per-listener entry conditions.
 func TestListenerSetReconciler_SkipsObservedGenerationRegression(t *testing.T) {
 	t.Parallel()

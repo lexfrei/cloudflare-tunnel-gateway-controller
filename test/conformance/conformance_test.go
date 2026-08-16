@@ -49,11 +49,10 @@ func TestGatewayAPIConformance(t *testing.T) {
 		features.SupportReferenceGrant,
 		// GRPCRoute is served by the in-process proxy: the converter maps
 		// gRPC service/method matches onto /{service}/{method} path rules and
-		// forces h2c upstream. The upstream GRPCRoute conformance tests stay
-		// in SkipTests below because their gRPC client dials
-		// *.cfargotunnel.com directly (Cloudflare ULA, not externally
-		// routable); in-house e2e against the real tunnel is the end-to-end
-		// signal. The flag reflects actual proxy support.
+		// forces h2c upstream. The matching conformance tests run through the
+		// injected TunnelGRPCClient (opts.GRPCClient below) because the
+		// default gRPC client dials the Gateway address directly, which is an
+		// unroutable tunnel CNAME.
 		features.SupportGRPCRoute,
 
 		// Extended Gateway: the reconciler writes Status.Addresses with the
@@ -81,14 +80,6 @@ func TestGatewayAPIConformance(t *testing.T) {
 		features.SupportHTTPRouteBackendProtocolH2C,
 		features.SupportHTTPRouteBackendProtocolWebSocket,
 		features.SupportHTTPRouteRequestMultipleMirrors,
-		// SupportHTTPRouteRequestPercentageMirror can flake on sampling variance
-		// over the real tunnel: the subtest asserts the observed mirror rate
-		// lands in an 85-115% band over a 500-request sample, and an individual
-		// attempt occasionally lands just outside (78%/116% observed) before
-		// passing within the suite's retry budget. The tolerance and sample size
-		// are hardcoded upstream, so this is documented as a known statistical
-		// non-regression rather than tuned — see docs/development/testing.md
-		// "Known conformance flakes" and kubernetes-sigs/gateway-api#4933.
 		features.SupportHTTPRouteRequestPercentageMirror,
 		// BackendTLSPolicy (+ its SAN-validation and
 		// GatewayBackendClientCertificate siblings) is implemented but NOT
@@ -103,11 +94,8 @@ func TestGatewayAPIConformance(t *testing.T) {
 		features.SupportHTTPRouteNamedRouteRule,
 
 		// Extended GRPCRoute (Standard channel feature gates; v1 CRD fields).
-		// The matching conformance tests are listed in SkipTests below because
-		// the upstream gRPC suite dials *.cfargotunnel.com directly and the
-		// Cloudflare ULA address space is not externally routable. The feature
-		// flag stays here so the conformance report reflects what the proxy
-		// itself supports.
+		// Runs through the injected TunnelGRPCClient, same as SupportGRPCRoute
+		// above.
 		features.SupportGRPCRouteNamedRouteRule,
 
 		// Extended HTTPRoute (Experimental channel feature gates; v1 CRD fields).
@@ -143,6 +131,10 @@ func TestGatewayAPIConformance(t *testing.T) {
 	opts.ExemptFeatures = []features.FeatureName{
 		// Gateway: tunnel has no static IPs, no multi-port, no infra propagation
 		features.SupportGatewayStaticAddresses,
+		// Listener isolation (most-specific-listener wins; a route bound to a
+		// less specific listener must not serve a hostname claimed by a more
+		// specific one) is not implemented — every listener's routes are
+		// currently merged into one shared routing table.
 		features.SupportGatewayHTTPListenerIsolation,
 		features.SupportGatewayInfrastructurePropagation,
 		features.SupportGatewayPort8080,
