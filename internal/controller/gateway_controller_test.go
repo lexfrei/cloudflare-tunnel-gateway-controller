@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/cockroachdb/errors"
@@ -1334,9 +1335,220 @@ func TestGatewayReconciler_SetConfigErrorStatus(t *testing.T) {
 	assert.Equal(t, metav1.ConditionFalse, updated.Status.Conditions[1].Status)
 	assert.Equal(t, string(gatewayv1.GatewayReasonInvalid), updated.Status.Conditions[1].Reason)
 
-	// Verify addresses and listeners are cleared
+	// Verify addresses are cleared; this Gateway has no spec listeners, so its
+	// listener status is empty rather than nil.
 	assert.Nil(t, updated.Status.Addresses)
-	assert.Nil(t, updated.Status.Listeners)
+	assert.Empty(t, updated.Status.Listeners)
+}
+
+// TestGatewayReconciler_ConfigError_ListenerStatusesReflectValidity pins that
+// a config-resolution failure still writes one ListenerStatus per spec
+// listener instead of clearing them, with Programmed overridden to reflect
+// the config error while Accepted/ResolvedRefs/SupportedKinds keep reporting
+// each listener's own validity.
+func TestGatewayReconciler_ConfigError_ListenerStatusesReflectValidity(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+
+	gateway := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       "test-gateway",
+			Namespace:  "default",
+			Generation: 1,
+		},
+		Spec: gatewayv1.GatewaySpec{
+			GatewayClassName: "cloudflare-tunnel",
+			Listeners: []gatewayv1.Listener{
+				{Name: "http", Port: 80, Protocol: gatewayv1.HTTPProtocolType},
+				{Name: "tcp", Port: 81, Protocol: gatewayv1.TCPProtocolType},
+			},
+		},
+	}
+
+	// GatewayClass referencing a missing config: resolution fails and the
+	// reconcile takes the config-error branch.
+	gatewayClass := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "cloudflare-tunnel"},
+		Spec: gatewayv1.GatewayClassSpec{
+			ControllerName: "test-controller",
+			ParametersRef: &gatewayv1.ParametersReference{
+				Group: config.ParametersRefGroup,
+				Kind:  config.ParametersRefKind,
+				Name:  "nonexistent-config",
+			},
+		},
+	}
+
+	fakeClient := setupGatewayFakeClient(gateway, gatewayClass)
+
+	reconciler := &GatewayReconciler{
+		Client:         fakeClient,
+		Scheme:         fakeClient.Scheme(),
+		ControllerName: "test-controller",
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+	}
+
+	_, err := reconciler.Reconcile(ctx, ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "test-gateway", Namespace: "default"},
+	})
+	require.NoError(t, err)
+
+	var updated gatewayv1.Gateway
+	require.NoError(t, fakeClient.Get(ctx, types.NamespacedName{Name: "test-gateway", Namespace: "default"}, &updated))
+	require.Len(t, updated.Status.Listeners, 2)
+
+	gatewayProgrammed := findCondition(updated.Status.Conditions, string(gatewayv1.GatewayConditionProgrammed))
+	require.NotNil(t, gatewayProgrammed)
+
+	httpStatus := findListenerStatus(updated.Status.Listeners, "http")
+	require.NotNil(t, httpStatus)
+	httpAccepted := findCondition(httpStatus.Conditions, string(gatewayv1.ListenerConditionAccepted))
+	require.NotNil(t, httpAccepted)
+	assert.Equal(t, metav1.ConditionTrue, httpAccepted.Status)
+	assert.NotEmpty(t, httpStatus.SupportedKinds)
+
+	httpProgrammed := findCondition(httpStatus.Conditions, string(gatewayv1.ListenerConditionProgrammed))
+	require.NotNil(t, httpProgrammed)
+	assert.Equal(t, metav1.ConditionFalse, httpProgrammed.Status)
+	assert.Equal(t, string(gatewayv1.ListenerReasonInvalid), httpProgrammed.Reason)
+	assert.Equal(t, gatewayProgrammed.Message, httpProgrammed.Message)
+
+	tcpStatus := findListenerStatus(updated.Status.Listeners, "tcp")
+	require.NotNil(t, tcpStatus)
+	tcpAccepted := findCondition(tcpStatus.Conditions, string(gatewayv1.ListenerConditionAccepted))
+	require.NotNil(t, tcpAccepted)
+	assert.Equal(t, metav1.ConditionFalse, tcpAccepted.Status)
+	assert.Equal(t, string(gatewayv1.ListenerReasonUnsupportedProtocol), tcpAccepted.Reason)
+	assert.Empty(t, tcpStatus.SupportedKinds)
+
+	// Already Programmed=False for its own reason: the config-error override
+	// must not replace the more specific unsupported-protocol verdict.
+	tcpProgrammed := findCondition(tcpStatus.Conditions, string(gatewayv1.ListenerConditionProgrammed))
+	require.NotNil(t, tcpProgrammed)
+	assert.Equal(t, metav1.ConditionFalse, tcpProgrammed.Status)
+	assert.Equal(t, string(gatewayv1.ListenerReasonInvalid), tcpProgrammed.Reason)
+	assert.Equal(t, tcpAccepted.Message, tcpProgrammed.Message)
+	assert.NotEqual(t, gatewayProgrammed.Message, tcpProgrammed.Message)
+}
+
+// TestGatewayReconciler_ConfigError_Recovery pins that once the referenced
+// GatewayClassConfig starts resolving, a following reconcile flips listener
+// Programmed back to True without disturbing a foreign condition seeded
+// before the config error.
+func TestGatewayReconciler_ConfigError_Recovery(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+
+	foreign := metav1.Condition{
+		Type:               "special.io/SomeField",
+		Status:             metav1.ConditionTrue,
+		ObservedGeneration: 1,
+		LastTransitionTime: metav1.NewTime(time.Now().Truncate(time.Second)),
+		Reason:             "SomeReason",
+		Message:            "set by a foreign controller",
+	}
+
+	gateway := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       "test-gateway",
+			Namespace:  "default",
+			Generation: 1,
+		},
+		Spec: gatewayv1.GatewaySpec{
+			GatewayClassName: "cloudflare-tunnel",
+			Listeners: []gatewayv1.Listener{
+				{Name: "http", Port: 80, Protocol: gatewayv1.HTTPProtocolType},
+			},
+		},
+		Status: gatewayv1.GatewayStatus{
+			Listeners: []gatewayv1.ListenerStatus{
+				{Name: "http", Conditions: []metav1.Condition{foreign}},
+			},
+		},
+	}
+
+	gatewayClass := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "cloudflare-tunnel"},
+		Spec: gatewayv1.GatewayClassSpec{
+			ControllerName: "test-controller",
+			ParametersRef: &gatewayv1.ParametersReference{
+				Group: config.ParametersRefGroup,
+				Kind:  config.ParametersRefKind,
+				Name:  "test-config",
+			},
+		},
+	}
+
+	fakeClient := setupGatewayFakeClient(gateway, gatewayClass)
+
+	reconciler := &GatewayReconciler{
+		Client:         fakeClient,
+		Scheme:         fakeClient.Scheme(),
+		ControllerName: "test-controller",
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+	}
+
+	_, err := reconciler.Reconcile(ctx, ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "test-gateway", Namespace: "default"},
+	})
+	require.NoError(t, err)
+
+	var afterError gatewayv1.Gateway
+	require.NoError(t, fakeClient.Get(ctx, types.NamespacedName{Name: "test-gateway", Namespace: "default"}, &afterError))
+	require.Len(t, afterError.Status.Listeners, 1)
+
+	programmedAfterError := findCondition(afterError.Status.Listeners[0].Conditions, string(gatewayv1.ListenerConditionProgrammed))
+	require.NotNil(t, programmedAfterError)
+	assert.Equal(t, metav1.ConditionFalse, programmedAfterError.Status)
+
+	// The referenced GatewayClassConfig and credentials Secret now exist:
+	// config resolution succeeds on the next reconcile.
+	classConfig := &v1alpha1.GatewayClassConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-config"},
+		Spec: v1alpha1.GatewayClassConfigSpec{
+			CloudflareCredentialsSecretRef: v1alpha1.SecretReference{
+				Name:      "cf-creds",
+				Namespace: "default",
+			},
+			TunnelID: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+		},
+	}
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "cf-creds", Namespace: "default"},
+		Data:       map[string][]byte{"api-token": []byte("test-token")},
+	}
+	require.NoError(t, fakeClient.Create(ctx, classConfig))
+	require.NoError(t, fakeClient.Create(ctx, secret))
+
+	_, err = reconciler.Reconcile(ctx, ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "test-gateway", Namespace: "default"},
+	})
+	require.NoError(t, err)
+
+	var recovered gatewayv1.Gateway
+	require.NoError(t, fakeClient.Get(ctx, types.NamespacedName{Name: "test-gateway", Namespace: "default"}, &recovered))
+	require.Len(t, recovered.Status.Listeners, 1)
+
+	programmedAfterRecovery := findCondition(recovered.Status.Listeners[0].Conditions, string(gatewayv1.ListenerConditionProgrammed))
+	require.NotNil(t, programmedAfterRecovery)
+	assert.Equal(t, metav1.ConditionTrue, programmedAfterRecovery.Status)
+
+	got := findCondition(recovered.Status.Listeners[0].Conditions, foreign.Type)
+	require.NotNil(t, got, "a foreign listener condition must survive both the config-error write and the recovery write")
+	assert.Equal(t, foreign, *got)
+}
+
+// findListenerStatus returns the ListenerStatus for name, or nil if absent.
+func findListenerStatus(statuses []gatewayv1.ListenerStatus, name gatewayv1.SectionName) *gatewayv1.ListenerStatus {
+	for i := range statuses {
+		if statuses[i].Name == name {
+			return &statuses[i]
+		}
+	}
+
+	return nil
 }
 
 func setupGatewayTestReconcilerWithManagedCloudflared() (*GatewayReconciler, client.WithWatch) {

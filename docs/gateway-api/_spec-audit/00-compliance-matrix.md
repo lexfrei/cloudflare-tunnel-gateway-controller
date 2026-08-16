@@ -16,8 +16,8 @@ Counts are the current `rows-*.md` verdicts (`cat rows-*.md | grep -E '^\| [A-Z]
 
 | Status | Count |
 | --- | --- |
-| MET | 234 |
-| PARTIAL | 33 |
+| MET | 235 |
+| PARTIAL | 32 |
 | GAP | 14 |
 | N/A (tunnel architecture / exempt) | 97 |
 
@@ -64,7 +64,7 @@ The v1.6.0 baseline bump was audited against the verified upstream tag diff; v1.
 
 ### Code bugs (file as kind/bug)
 
-1. **Route status reconcile clobbers other controllers' `RouteParentStatus` (SH-47, SH-57; MUST NOT).** `internal/controller/route_status.go:112` resets the whole `Parents` slice and writes via full `Status().Update`, so a Route co-managed by another controller loses that controller's parent-status entry every reconcile. Fix: preserve entries whose `ControllerName` differs, mirroring `backendtlspolicy_controller.go:717-762`. Highest severity (multi-controller correctness). The listener-status rebuild had the same shape and is fixed in `preserveConditionTransitions` on the reconcile path (GW-98 MET; GW-96 stays PARTIAL for the config-error branch, #641).
+1. **Route status reconcile clobbers other controllers' `RouteParentStatus` (SH-47, SH-57; MUST NOT).** `internal/controller/route_status.go:112` resets the whole `Parents` slice and writes via full `Status().Update`, so a Route co-managed by another controller loses that controller's parent-status entry every reconcile. Fix: preserve entries whose `ControllerName` differs, mirroring `backendtlspolicy_controller.go:717-762`. Highest severity (multi-controller correctness). The listener-status rebuild had the same shape and is fixed in `preserveConditionTransitions` on both the reconcile and config-error paths (GW-96/GW-98 MET).
 2. **Status writers lack an observedGeneration regression guard (SH-51, GC-21, GW-81, GW-100, POL-11; MUST NOT).** Fixed: every status writer now runs `statusGenerationStale` / `ownedConditionsStale` (`internal/controller/status_generation.go`) or, for per-listener conditions, `ownedListenerConditionsStale`, and skips the write when a stored own condition already carries a newer observedGeneration.
 3. **HTTPRoute/GRPCRoute rule-name uniqueness not enforced (HR-04, GR-16; MUST).** The uniqueness CEL is experimental-channel; the shipped Standard CRD omits it and the controller does not validate. Minor. Fix: controller-side validation or a documented limitation.
 

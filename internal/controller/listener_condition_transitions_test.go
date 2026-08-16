@@ -647,6 +647,119 @@ func TestGatewayListenerConditions_ForeignConditionSurvivesReconcile(t *testing.
 		"the reconcile must still write its own listener conditions next to the foreign one")
 }
 
+// TestGatewayListenerConditions_ForeignConditionSurvivesConfigError pins that
+// a config-resolution failure preserves a foreign per-listener condition
+// instead of dropping it via a nil listener-status write.
+func TestGatewayListenerConditions_ForeignConditionSurvivesConfigError(t *testing.T) {
+	t.Parallel()
+
+	seededAt := metav1.NewTime(time.Now().Add(-time.Hour).Truncate(time.Second))
+	foreign := metav1.Condition{
+		Type:               "special.io/SomeField",
+		Status:             metav1.ConditionTrue,
+		ObservedGeneration: 5,
+		LastTransitionTime: seededAt,
+		Reason:             "SomeReason",
+		Message:            "set by a foreign controller",
+	}
+
+	gateway := gatewayWithSeededListenerStatus([]metav1.Condition{foreign})
+
+	// GatewayClass referencing a missing config: resolution fails and the
+	// reconcile takes the config-error branch instead of listenerTransitionFixtures.
+	gatewayClass := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "cloudflare-tunnel"},
+		Spec: gatewayv1.GatewayClassSpec{
+			ControllerName: "test-controller",
+			ParametersRef: &gatewayv1.ParametersReference{
+				Group: config.ParametersRefGroup,
+				Kind:  config.ParametersRefKind,
+				Name:  "nonexistent-config",
+			},
+		},
+	}
+
+	fakeClient := setupGatewayFakeClient(gateway, gatewayClass)
+
+	reconciler := &GatewayReconciler{
+		Client:         fakeClient,
+		Scheme:         fakeClient.Scheme(),
+		ControllerName: "test-controller",
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+	}
+
+	ctx := context.Background()
+
+	_, err := reconciler.Reconcile(ctx, ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "gw", Namespace: "default"},
+	})
+	require.NoError(t, err)
+
+	var updated gatewayv1.Gateway
+
+	require.NoError(t, fakeClient.Get(ctx, types.NamespacedName{Name: "gw", Namespace: "default"}, &updated))
+	require.Len(t, updated.Status.Listeners, 1)
+
+	got := findCondition(updated.Status.Listeners[0].Conditions, foreign.Type)
+	require.NotNil(t, got, "a foreign listener condition must not be removed by a config-error write")
+	assert.Equal(t, foreign, *got)
+	require.NotNil(t, findCondition(updated.Status.Listeners[0].Conditions, string(gatewayv1.ListenerConditionAccepted)),
+		"the config-error write must still write its own listener conditions next to the foreign one")
+}
+
+// TestGatewayListenerConditions_PreserveLastTransitionTimeAcrossConfigError
+// pins that a listener condition whose Status does not change survives a
+// config-error write with its LastTransitionTime intact.
+func TestGatewayListenerConditions_PreserveLastTransitionTimeAcrossConfigError(t *testing.T) {
+	t.Parallel()
+
+	seededAt := metav1.NewTime(time.Now().Add(-time.Hour).Truncate(time.Second))
+
+	gateway := gatewayWithSeededListenerStatus([]metav1.Condition{
+		seededListenerCondition(string(gatewayv1.ListenerConditionAccepted),
+			metav1.ConditionTrue, string(gatewayv1.ListenerReasonAccepted), seededAt),
+	})
+
+	gatewayClass := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "cloudflare-tunnel"},
+		Spec: gatewayv1.GatewayClassSpec{
+			ControllerName: "test-controller",
+			ParametersRef: &gatewayv1.ParametersReference{
+				Group: config.ParametersRefGroup,
+				Kind:  config.ParametersRefKind,
+				Name:  "nonexistent-config",
+			},
+		},
+	}
+
+	fakeClient := setupGatewayFakeClient(gateway, gatewayClass)
+
+	reconciler := &GatewayReconciler{
+		Client:         fakeClient,
+		Scheme:         fakeClient.Scheme(),
+		ControllerName: "test-controller",
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+	}
+
+	ctx := context.Background()
+
+	_, err := reconciler.Reconcile(ctx, ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "gw", Namespace: "default"},
+	})
+	require.NoError(t, err)
+
+	var updated gatewayv1.Gateway
+
+	require.NoError(t, fakeClient.Get(ctx, types.NamespacedName{Name: "gw", Namespace: "default"}, &updated))
+	require.Len(t, updated.Status.Listeners, 1)
+
+	accepted := findCondition(updated.Status.Listeners[0].Conditions, string(gatewayv1.ListenerConditionAccepted))
+	require.NotNil(t, accepted)
+	assert.Equal(t, metav1.ConditionTrue, accepted.Status, "an HTTP listener stays Accepted regardless of the config error")
+	assert.True(t, accepted.LastTransitionTime.Equal(&seededAt),
+		"Accepted did not transition, so a config-error write must preserve its LastTransitionTime")
+}
+
 // TestListenerSetEntryConditions_ForeignConditionSurvivesReconcile is the
 // ListenerSet twin of TestGatewayListenerConditions_ForeignConditionSurvivesReconcile.
 func TestListenerSetEntryConditions_ForeignConditionSurvivesReconcile(t *testing.T) {

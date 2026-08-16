@@ -260,7 +260,6 @@ func (r *GatewayReconciler) resolveGatewayConfig(
 	return classConfig, false, nil
 }
 
-//nolint:funlen // status update logic with retry
 func (r *GatewayReconciler) updateStatus(
 	ctx context.Context,
 	gateway *gatewayv1.Gateway,
@@ -285,8 +284,6 @@ func (r *GatewayReconciler) updateStatus(
 
 		now := metav1.Now()
 
-		attachedRoutes := r.countAttachedRoutes(ctx, &freshGateway)
-
 		views := newListenerViewCache(r.Client, r.ViewStore)
 
 		attachedCount, mergeErr := summariseAttachedListenerSets(ctx, r.Client, &freshGateway, views)
@@ -305,126 +302,9 @@ func (r *GatewayReconciler) updateStatus(
 			},
 		}
 
-		_, _, clientCertErr := loadGatewayClientCertPEM(ctx, r.Client, &freshGateway, r.checkSecretReferenceGrant)
+		r.applyTopLevelGatewayConditions(ctx, &freshGateway, views, perGatewayMode, now)
 
-		accepted := gatewayAcceptedCondition(ctx, views, &freshGateway, now)
-
-		programmed := metav1.Condition{
-			Type:               string(gatewayv1.GatewayConditionProgrammed),
-			Status:             metav1.ConditionTrue,
-			ObservedGeneration: freshGateway.Generation,
-			LastTransitionTime: now,
-			Reason:             string(gatewayv1.GatewayReasonProgrammed),
-			Message:            "Gateway programmed in Cloudflare Tunnel",
-		}
-
-		// A dedicated data plane is only "programmed" once it can actually
-		// carry traffic: the rendered proxy Deployment needs at least one
-		// ready replica (= a registered tunnel connector). The shared plane
-		// keeps the historic semantics (chart-managed proxy, always present).
-		if perGatewayMode {
-			programmed = r.perGatewayProgrammedCondition(ctx, &freshGateway, now)
-		}
-
-		applyGatewayConditions(&freshGateway.Status.Conditions, []metav1.Condition{
-			accepted,
-			programmed,
-		}, buildClientCertResolvedRefsCondition(freshGateway.Generation, now, clientCertErr))
-
-		listenerStatuses := make([]gatewayv1.ListenerStatus, 0, len(freshGateway.Spec.Listeners))
-
-		// The merged view (cached) annotates each Gateway-owned listener that
-		// conflicts with a higher-precedence one, used below to emit the
-		// per-listener Conflicted condition.
-		gwView, _ := views.forGateway(ctx, &freshGateway)
-
-		for i := range freshGateway.Spec.Listeners {
-			listener := &freshGateway.Spec.Listeners[i]
-
-			// Validate route kinds - filter to only supported kinds
-			supportedKinds, hasValidKind, hasInvalidKind := routebinding.FilterSupportedKinds(
-				listener.AllowedRoutes,
-				listener.Protocol,
-			)
-
-			// Validate TLS certificate refs (if applicable)
-			tlsStatus, tlsReason, tlsMessage := r.validateTLSCertificateRefs(
-				ctx, &freshGateway, listener,
-			)
-
-			// Determine final ResolvedRefs condition
-			resolvedRefsCondition := r.buildResolvedRefsCondition(
-				freshGateway.Generation, now, hasValidKind, hasInvalidKind, tlsStatus, tlsReason, tlsMessage,
-			)
-			// Empty slice (not nil) when no valid kinds. A protocol this
-			// controller cannot serve supports no route kinds either: an
-			// unrecognised protocol (e.g. the conformance suite's INVALID)
-			// otherwise defaults to HTTPRoute/GRPCRoute in FilterSupportedKinds and
-			// would report a non-empty SupportedKinds alongside its
-			// Accepted=False/UnsupportedProtocol verdict — contradictory, and the
-			// spec requires an empty list. Same servability predicate as the
-			// Accepted condition, so the two cannot drift.
-			if !hasValidKind || !servableListenerProtocol(listener.Protocol) {
-				supportedKinds = []gatewayv1.RouteGroupKind{}
-			}
-
-			programmedCondition := metav1.Condition{
-				Type:               string(gatewayv1.ListenerConditionProgrammed),
-				Status:             metav1.ConditionTrue,
-				ObservedGeneration: freshGateway.Generation,
-				LastTransitionTime: now,
-				Reason:             string(gatewayv1.ListenerReasonProgrammed),
-				Message:            listenerMsgProgrammed,
-			}
-
-			if resolvedRefsCondition.Status == metav1.ConditionFalse {
-				programmedCondition.Status = metav1.ConditionFalse
-				programmedCondition.Reason = string(gatewayv1.ListenerReasonInvalid)
-				programmedCondition.Message = listenerMsgInvalidUnresolved
-			}
-
-			acceptedCondition := buildListenerAcceptedCondition(listener.Protocol, freshGateway.Generation, now)
-
-			// A listener this controller cannot serve at all (unsupported
-			// protocol) is not programmed either.
-			if acceptedCondition.Status == metav1.ConditionFalse {
-				programmedCondition.Status = metav1.ConditionFalse
-				programmedCondition.Reason = string(gatewayv1.ListenerReasonInvalid)
-				programmedCondition.Message = acceptedCondition.Message
-			}
-
-			conditions := []metav1.Condition{acceptedCondition, programmedCondition, resolvedRefsCondition}
-
-			// A Gateway-owned listener that conflicts with a higher-precedence
-			// listener MUST carry Conflicted=True and is neither Accepted nor
-			// Programmed (gateway_types.go:168-170).
-			conflicted := conflictedGatewayListenerConditions(
-				gwView, listener.Name, freshGateway.Generation, now, &resolvedRefsCondition,
-			)
-			if conflicted != nil {
-				conditions = conflicted
-			}
-
-			// Advisory (does not gate Accepted/Programmed): flag the
-			// hostname-capture combination — allowedRoutes.namespaces.from: All
-			// with no hostname pin. Only on an Accepted (protocol-servable),
-			// non-conflicted listener: hostname capture is moot on a listener
-			// already rejected as unservable or conflicted, where the advisory
-			// would be misleading noise. Rebuilt every reconcile, so it clears
-			// when the listener is pinned or scoped (#476).
-			if conflicted == nil && acceptedCondition.Status == metav1.ConditionTrue &&
-				hostnameCaptureRisk(listener.Hostname, listener.AllowedRoutes) {
-				conditions = append(conditions, permissiveHostnameCondition(freshGateway.Generation, now))
-			}
-
-			listenerStatuses = append(listenerStatuses, gatewayv1.ListenerStatus{
-				Name:           listener.Name,
-				SupportedKinds: supportedKinds,
-				AttachedRoutes: attachedRoutes[listener.Name],
-				Conditions:     conditions,
-			})
-		}
-
+		listenerStatuses := r.buildListenerStatuses(ctx, &freshGateway, views, now)
 		freshGateway.Status.Listeners = preserveGatewayListenerTransitions(freshGateway.Status.Listeners, listenerStatuses)
 
 		if err := r.Status().Update(ctx, &freshGateway); err != nil {
@@ -435,6 +315,178 @@ func (r *GatewayReconciler) updateStatus(
 	})
 
 	return errors.Wrap(err, "failed to update gateway status after retries")
+}
+
+// applyTopLevelGatewayConditions computes and writes the Gateway-level
+// Accepted, Programmed, and ResolvedRefs (client cert) conditions for the
+// happy path.
+func (r *GatewayReconciler) applyTopLevelGatewayConditions(
+	ctx context.Context,
+	gateway *gatewayv1.Gateway,
+	views *listenerViewCache,
+	perGatewayMode bool,
+	now metav1.Time,
+) {
+	_, _, clientCertErr := loadGatewayClientCertPEM(ctx, r.Client, gateway, r.checkSecretReferenceGrant)
+
+	accepted := gatewayAcceptedCondition(ctx, views, gateway, now)
+
+	programmed := metav1.Condition{
+		Type:               string(gatewayv1.GatewayConditionProgrammed),
+		Status:             metav1.ConditionTrue,
+		ObservedGeneration: gateway.Generation,
+		LastTransitionTime: now,
+		Reason:             string(gatewayv1.GatewayReasonProgrammed),
+		Message:            "Gateway programmed in Cloudflare Tunnel",
+	}
+
+	// A dedicated data plane is only "programmed" once it can actually carry
+	// traffic: the rendered proxy Deployment needs at least one ready replica
+	// (= a registered tunnel connector). The shared plane keeps the historic
+	// semantics (chart-managed proxy, always present).
+	if perGatewayMode {
+		programmed = r.perGatewayProgrammedCondition(ctx, gateway, now)
+	}
+
+	applyGatewayConditions(&gateway.Status.Conditions, []metav1.Condition{
+		accepted,
+		programmed,
+	}, buildClientCertResolvedRefsCondition(gateway.Generation, now, clientCertErr))
+}
+
+// buildListenerStatuses builds one ListenerStatus per spec listener:
+// SupportedKinds, AttachedRoutes, and the Accepted / Programmed / ResolvedRefs
+// / Conflicted condition set, plus the advisory PermissiveHostname condition.
+// Shared by the happy path and the config-error path — neither the listener's
+// own protocol/route-kind/TLS/conflict verdict nor its attached-route count
+// depends on whether the Gateway's tunnel configuration resolved.
+func (r *GatewayReconciler) buildListenerStatuses(
+	ctx context.Context,
+	gateway *gatewayv1.Gateway,
+	views *listenerViewCache,
+	now metav1.Time,
+) []gatewayv1.ListenerStatus {
+	attachedRoutes := r.countAttachedRoutes(ctx, gateway)
+
+	// The merged view (cached) annotates each Gateway-owned listener that
+	// conflicts with a higher-precedence one, used below to emit the
+	// per-listener Conflicted condition.
+	gwView, _ := views.forGateway(ctx, gateway)
+
+	listenerStatuses := make([]gatewayv1.ListenerStatus, 0, len(gateway.Spec.Listeners))
+
+	for i := range gateway.Spec.Listeners {
+		listener := &gateway.Spec.Listeners[i]
+		listenerStatuses = append(listenerStatuses,
+			r.buildOneListenerStatus(ctx, gateway, listener, gwView, attachedRoutes[listener.Name], now))
+	}
+
+	return listenerStatuses
+}
+
+// buildListenerProgrammedCondition derives a listener's Programmed condition:
+// True unless its ResolvedRefs or Accepted verdict is already False, in which
+// case Programmed carries the same Invalid reason (an unresolved reference or
+// an unservable protocol means nothing is programmed either).
+func buildListenerProgrammedCondition(
+	generation int64,
+	now metav1.Time,
+	resolvedRefsCondition, acceptedCondition *metav1.Condition,
+) metav1.Condition {
+	condition := metav1.Condition{
+		Type:               string(gatewayv1.ListenerConditionProgrammed),
+		Status:             metav1.ConditionTrue,
+		ObservedGeneration: generation,
+		LastTransitionTime: now,
+		Reason:             string(gatewayv1.ListenerReasonProgrammed),
+		Message:            listenerMsgProgrammed,
+	}
+
+	switch {
+	case acceptedCondition.Status == metav1.ConditionFalse:
+		condition.Status = metav1.ConditionFalse
+		condition.Reason = string(gatewayv1.ListenerReasonInvalid)
+		condition.Message = acceptedCondition.Message
+	case resolvedRefsCondition.Status == metav1.ConditionFalse:
+		condition.Status = metav1.ConditionFalse
+		condition.Reason = string(gatewayv1.ListenerReasonInvalid)
+		condition.Message = listenerMsgInvalidUnresolved
+	}
+
+	return condition
+}
+
+// buildOneListenerStatus builds the SupportedKinds/AttachedRoutes/Conditions
+// for a single spec listener: Accepted, Programmed, ResolvedRefs, the
+// Conflicted override, and the advisory PermissiveHostname condition.
+func (r *GatewayReconciler) buildOneListenerStatus(
+	ctx context.Context,
+	gateway *gatewayv1.Gateway,
+	listener *gatewayv1.Listener,
+	gwView *gatewayListenerView,
+	attachedRoutes int32,
+	now metav1.Time,
+) gatewayv1.ListenerStatus {
+	// Validate route kinds - filter to only supported kinds
+	supportedKinds, hasValidKind, hasInvalidKind := routebinding.FilterSupportedKinds(
+		listener.AllowedRoutes,
+		listener.Protocol,
+	)
+
+	// Validate TLS certificate refs (if applicable)
+	tlsStatus, tlsReason, tlsMessage := r.validateTLSCertificateRefs(
+		ctx, gateway, listener,
+	)
+
+	// Determine final ResolvedRefs condition
+	resolvedRefsCondition := r.buildResolvedRefsCondition(
+		gateway.Generation, now, hasValidKind, hasInvalidKind, tlsStatus, tlsReason, tlsMessage,
+	)
+	// Empty slice (not nil) when no valid kinds. A protocol this
+	// controller cannot serve supports no route kinds either: an
+	// unrecognised protocol (e.g. the conformance suite's INVALID)
+	// otherwise defaults to HTTPRoute/GRPCRoute in FilterSupportedKinds and
+	// would report a non-empty SupportedKinds alongside its
+	// Accepted=False/UnsupportedProtocol verdict — contradictory, and the
+	// spec requires an empty list. Same servability predicate as the
+	// Accepted condition, so the two cannot drift.
+	if !hasValidKind || !servableListenerProtocol(listener.Protocol) {
+		supportedKinds = []gatewayv1.RouteGroupKind{}
+	}
+
+	acceptedCondition := buildListenerAcceptedCondition(listener.Protocol, gateway.Generation, now)
+	programmedCondition := buildListenerProgrammedCondition(gateway.Generation, now, &resolvedRefsCondition, &acceptedCondition)
+
+	conditions := []metav1.Condition{acceptedCondition, programmedCondition, resolvedRefsCondition}
+
+	// A Gateway-owned listener that conflicts with a higher-precedence
+	// listener MUST carry Conflicted=True and is neither Accepted nor
+	// Programmed (gateway_types.go:168-170).
+	conflicted := conflictedGatewayListenerConditions(
+		gwView, listener.Name, gateway.Generation, now, &resolvedRefsCondition,
+	)
+	if conflicted != nil {
+		conditions = conflicted
+	}
+
+	// Advisory (does not gate Accepted/Programmed): flag the
+	// hostname-capture combination — allowedRoutes.namespaces.from: All
+	// with no hostname pin. Only on an Accepted (protocol-servable),
+	// non-conflicted listener: hostname capture is moot on a listener
+	// already rejected as unservable or conflicted, where the advisory
+	// would be misleading noise. Rebuilt every reconcile, so it clears
+	// when the listener is pinned or scoped (#476).
+	if conflicted == nil && acceptedCondition.Status == metav1.ConditionTrue &&
+		hostnameCaptureRisk(listener.Hostname, listener.AllowedRoutes) {
+		conditions = append(conditions, permissiveHostnameCondition(gateway.Generation, now))
+	}
+
+	return gatewayv1.ListenerStatus{
+		Name:           listener.Name,
+		SupportedKinds: supportedKinds,
+		AttachedRoutes: attachedRoutes,
+		Conditions:     conditions,
+	}
 }
 
 // perGatewayProgrammedCondition derives Programmed for a Gateway with a
@@ -547,8 +599,18 @@ func (r *GatewayReconciler) setConfigErrorStatus(
 			},
 		}, buildClientCertResolvedRefsCondition(freshGateway.Generation, now, clientCertErr))
 
-		// Clear listener statuses on config error
-		freshGateway.Status.Listeners = nil
+		// Per-listener status still reflects each listener's own validity
+		// (protocol, route kinds, TLS refs, conflicts) — none of that depends
+		// on whether the Gateway's tunnel configuration resolved. Only a
+		// Programmed=True verdict is overridden: nothing is programmed
+		// without a resolved tunnel, while a listener already unprogrammed
+		// for its own reason keeps that more specific verdict.
+		listenerStatuses := r.buildListenerStatuses(ctx, &freshGateway, newListenerViewCache(r.Client, r.ViewStore), now)
+		for i := range listenerStatuses {
+			overrideListenerProgrammedForConfigError(listenerStatuses[i].Conditions, freshGateway.Generation, now, errMsg)
+		}
+
+		freshGateway.Status.Listeners = preserveGatewayListenerTransitions(freshGateway.Status.Listeners, listenerStatuses)
 
 		if err := r.Status().Update(ctx, &freshGateway); err != nil {
 			return errors.Wrap(err, "failed to update gateway status")
@@ -558,6 +620,27 @@ func (r *GatewayReconciler) setConfigErrorStatus(
 	})
 
 	return errors.Wrap(err, "failed to update gateway status after retries")
+}
+
+// overrideListenerProgrammedForConfigError downgrades a listener's
+// Programmed=True condition with the config-error message carried on the
+// Gateway-level Programmed condition. A listener already Programmed=False
+// keeps its own reason and message; the config error is visible one level up.
+func overrideListenerProgrammedForConfigError(conditions []metav1.Condition, generation int64, now metav1.Time, message string) {
+	for i := range conditions {
+		if conditions[i].Type != string(gatewayv1.ListenerConditionProgrammed) ||
+			conditions[i].Status != metav1.ConditionTrue {
+			continue
+		}
+
+		conditions[i].Status = metav1.ConditionFalse
+		conditions[i].ObservedGeneration = generation
+		conditions[i].LastTransitionTime = now
+		conditions[i].Reason = string(gatewayv1.ListenerReasonInvalid)
+		conditions[i].Message = message
+
+		return
+	}
 }
 
 //nolint:gocognit,gocyclo,cyclop,dupl,funlen // complexity due to counting two route types
