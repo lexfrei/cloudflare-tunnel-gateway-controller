@@ -7,6 +7,7 @@ import (
 
 	"github.com/cockroachdb/errors"
 	corev1 "k8s.io/api/core/v1"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -73,8 +74,19 @@ func (r *GatewayClassConfigReconciler) Reconcile(ctx context.Context, req ctrl.R
 			return nil
 		}
 
-		// Validate secrets and collect conditions
-		conditions := r.validateConfig(ctx, &freshConfig)
+		// Validate secrets and collect conditions, merged over the stored
+		// conditions so an unchanged condition keeps its LastTransitionTime
+		// (metav1.Condition's contract: the timestamp marks the last STATUS
+		// transition, not the last reconcile). This CRD has no other status
+		// writer, so every stored condition belongs to this controller and a
+		// type no longer emitted is dropped rather than kept.
+		conditions := preserveOwnedConditionTransitions(
+			freshConfig.Status.Conditions, r.validateConfig(ctx, &freshConfig),
+		)
+		if apiequality.Semantic.DeepEqual(freshConfig.Status.Conditions, conditions) {
+			return nil
+		}
+
 		freshConfig.Status.Conditions = conditions
 
 		if err := r.Status().Update(ctx, &freshConfig); err != nil {

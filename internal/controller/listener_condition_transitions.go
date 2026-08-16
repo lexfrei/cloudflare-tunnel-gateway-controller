@@ -40,11 +40,31 @@ func isControllerOwnedListenerConditionType(condType string) bool {
 //
 // desired must not contain duplicate condition types.
 func preserveConditionTransitions(prior, desired []metav1.Condition) []metav1.Condition {
+	return mergeConditionTransitions(prior, desired, isControllerOwnedListenerConditionType)
+}
+
+// preserveOwnedConditionTransitions is preserveConditionTransitions' twin for
+// a scope where every condition belongs to this controller -- a route's own
+// RouteParentStatus entry (keyed by controllerName) or a GatewayClassConfig's
+// status, both sole-owner surfaces with no foreign condition to leave
+// untouched. A prior condition type absent from desired is dropped rather
+// than kept, since nothing else can be responsible for reviving it.
+//
+// desired must not contain duplicate condition types.
+func preserveOwnedConditionTransitions(prior, desired []metav1.Condition) []metav1.Condition {
+	return mergeConditionTransitions(prior, desired, func(string) bool { return true })
+}
+
+// mergeConditionTransitions seeds the merge with every prior condition isOwned
+// keeps -- an owned type absent from desired is dropped, everything else
+// (foreign types, when isOwned is selective) carries over untouched -- then
+// applies meta.SetStatusCondition for each desired condition, which preserves
+// LastTransitionTime whenever the matching prior entry's Status is unchanged.
+func mergeConditionTransitions(prior, desired []metav1.Condition, isOwned func(string) bool) []metav1.Condition {
 	merged := make([]metav1.Condition, 0, len(prior)+len(desired))
 
 	for i := range prior {
-		if isControllerOwnedListenerConditionType(prior[i].Type) &&
-			meta.FindStatusCondition(desired, prior[i].Type) == nil {
+		if isOwned(prior[i].Type) && meta.FindStatusCondition(desired, prior[i].Type) == nil {
 			continue
 		}
 
