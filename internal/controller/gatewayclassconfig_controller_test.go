@@ -185,6 +185,76 @@ func TestGatewayClassConfigReconciler_Reconcile_SkipsObservedGenerationRegressio
 	assert.Equal(t, "written by a newer reconcile", updated.Status.Conditions[0].Message)
 }
 
+// TestGatewayClassConfigReconciler_SecondReconcileWithNoChangeSkipsWrite pins
+// that a reconcile reaching the same verdict as the prior one leaves
+// resourceVersion and each condition's LastTransitionTime untouched -- the
+// fake client bumps resourceVersion on every Status().Update, so an unchanged
+// resourceVersion after a second reconcile proves the write itself was
+// skipped, not merely that it wrote the same values again.
+func TestGatewayClassConfigReconciler_SecondReconcileWithNoChangeSkipsWrite(t *testing.T) {
+	t.Parallel()
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, v1alpha1.AddToScheme(scheme))
+	require.NoError(t, corev1.AddToScheme(scheme))
+
+	credentialsSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "cf-credentials", Namespace: "default"},
+		Data:       map[string][]byte{"api-token": []byte("test-token")},
+	}
+
+	config := &v1alpha1.GatewayClassConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-config", Generation: 1},
+		Spec: v1alpha1.GatewayClassConfigSpec{
+			TunnelID: "test-tunnel-id",
+			CloudflareCredentialsSecretRef: v1alpha1.SecretReference{
+				Name:      "cf-credentials",
+				Namespace: "default",
+			},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(config, credentialsSecret).
+		WithStatusSubresource(config).
+		Build()
+
+	r := &GatewayClassConfigReconciler{Client: fakeClient, Scheme: scheme, DefaultNamespace: "default"}
+	req := ctrl.Request{NamespacedName: types.NamespacedName{Name: "test-config"}}
+	ctx := context.Background()
+
+	_, err := r.Reconcile(ctx, req)
+	require.NoError(t, err)
+
+	var first v1alpha1.GatewayClassConfig
+	require.NoError(t, fakeClient.Get(ctx, types.NamespacedName{Name: "test-config"}, &first))
+	require.Len(t, first.Status.Conditions, 2)
+
+	firstResourceVersion := first.ResourceVersion
+	firstLastTransitionTimes := make(map[string]metav1.Time, len(first.Status.Conditions))
+
+	for _, cond := range first.Status.Conditions {
+		firstLastTransitionTimes[cond.Type] = cond.LastTransitionTime
+	}
+
+	_, err = r.Reconcile(ctx, req)
+	require.NoError(t, err)
+
+	var second v1alpha1.GatewayClassConfig
+	require.NoError(t, fakeClient.Get(ctx, types.NamespacedName{Name: "test-config"}, &second))
+
+	assert.Equal(t, firstResourceVersion, second.ResourceVersion,
+		"a no-op reconcile must skip the Status().Update entirely")
+
+	for _, cond := range second.Status.Conditions {
+		seededAt, ok := firstLastTransitionTimes[cond.Type]
+		require.True(t, ok, "condition %s must still be present", cond.Type)
+		assert.True(t, cond.LastTransitionTime.Equal(&seededAt),
+			"condition %s did not transition, so LastTransitionTime must be preserved", cond.Type)
+	}
+}
+
 func TestGatewayClassConfigReconciler_Reconcile_MissingCredentialsSecret(t *testing.T) {
 	t.Parallel()
 

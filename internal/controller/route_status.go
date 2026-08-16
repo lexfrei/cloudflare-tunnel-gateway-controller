@@ -9,6 +9,7 @@ import (
 
 	"github.com/cockroachdb/errors"
 	corev1 "k8s.io/api/core/v1"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -122,28 +123,20 @@ func updateRouteParentStatuses(
 
 	now := metav1.Now()
 	routeStatus := accessor.routeStatus()
+	priorParents := routeStatus.Parents
 
 	// Gateway API requires updating only RouteParentStatus entries whose
 	// controllerName matches ours, and MUST NOT touch entries owned by other
 	// controllers co-managing this Route. Keep foreign entries verbatim and
 	// rebuild only our own below. Mirrors the BackendTLSPolicy ancestor-status
 	// writer (backendtlspolicy_controller.go updateStatus).
-	foreignEntries := make([]gatewayv1.RouteParentStatus, 0, len(routeStatus.Parents))
-
-	for _, parent := range routeStatus.Parents {
-		if string(parent.ControllerName) != params.controllerName {
-			foreignEntries = append(foreignEntries, parent)
-
-			continue
-		}
-
+	foreignEntries, priorOwn, stale := partitionPriorParents(priorParents, params.controllerName, params.reconciledGeneration)
+	if stale {
 		// A newer reconcile already advanced our entry past the generation we
 		// reconciled; skip the write and let that reconcile own the status
 		// (Gateway API MUST NOT overwrite a condition stamped with a newer
 		// observedGeneration).
-		if statusGenerationStale(params.reconciledGeneration, parent.Conditions) {
-			return nil
-		}
+		return nil
 	}
 
 	// ruleCount comes from the freshly-fetched spec so the diagnostic
@@ -157,6 +150,7 @@ func updateRouteParentStatuses(
 			ctx, params, accessor, ref, refIdx, classNames, now, bindingInfo, failedRefs, syncErr,
 		)
 		if parentStatus != nil {
+			parentStatus.Conditions = mergeOwnParentConditions(priorOwn, parentStatus)
 			ours = append(ours, *parentStatus)
 		}
 	}
@@ -170,6 +164,11 @@ func updateRouteParentStatuses(
 
 	combined := ours
 	combined = append(combined, foreignEntries...)
+
+	if apiequality.Semantic.DeepEqual(priorParents, combined) {
+		return nil
+	}
+
 	routeStatus.Parents = combined
 
 	if err := params.k8sClient.Status().Update(ctx, accessor.obj); err != nil {
@@ -177,6 +176,76 @@ func updateRouteParentStatuses(
 	}
 
 	return nil
+}
+
+// partitionPriorParents splits a route's currently-stored Parents into the
+// foreign entries (owned by other controllers, copied verbatim) and this
+// controller's own prior entries (kept below so the rebuilt entries can
+// preserve each condition's LastTransitionTime when its Status is unchanged).
+// It reports stale=true when a newer reconcile already advanced our own
+// status past reconciledGeneration; the caller must then skip the write
+// entirely rather than return a partial (nil, nil) partition.
+func partitionPriorParents(
+	priorParents []gatewayv1.RouteParentStatus,
+	controllerName string,
+	reconciledGeneration int64,
+) ([]gatewayv1.RouteParentStatus, []gatewayv1.RouteParentStatus, bool) {
+	foreign := make([]gatewayv1.RouteParentStatus, 0, len(priorParents))
+	own := make([]gatewayv1.RouteParentStatus, 0, len(priorParents))
+
+	for _, parent := range priorParents {
+		if string(parent.ControllerName) != controllerName {
+			foreign = append(foreign, parent)
+
+			continue
+		}
+
+		if statusGenerationStale(reconciledGeneration, parent.Conditions) {
+			return nil, nil, true
+		}
+
+		own = append(own, parent)
+	}
+
+	return foreign, own, false
+}
+
+// mergeOwnParentConditions merges a freshly built parent entry's conditions
+// over the prior entry for the SAME parentRef, if one exists, so an unchanged
+// condition keeps its LastTransitionTime instead of being restamped every
+// sync. A parentRef with no prior entry (new attachment) keeps its freshly
+// stamped conditions untouched.
+func mergeOwnParentConditions(priorOwn []gatewayv1.RouteParentStatus, desired *gatewayv1.RouteParentStatus) []metav1.Condition {
+	for i := range priorOwn {
+		if parentRefIdentityEqual(priorOwn[i].ParentRef, desired.ParentRef) {
+			return preserveOwnedConditionTransitions(priorOwn[i].Conditions, desired.Conditions)
+		}
+	}
+
+	return desired.Conditions
+}
+
+// parentRefIdentityEqual reports whether two parentRef entries, as normalized
+// by buildParentStatus, refer to the same parent. Namespace is never nil in a
+// built entry (buildParentStatus always resolves and sets it), but
+// Group/Kind/SectionName/Port default to nil when the route omitted them.
+func parentRefIdentityEqual(left, right gatewayv1.ParentReference) bool {
+	return ptrValueEqual(left.Group, right.Group) &&
+		ptrValueEqual(left.Kind, right.Kind) &&
+		ptrValueEqual(left.Namespace, right.Namespace) &&
+		left.Name == right.Name &&
+		ptrValueEqual(left.SectionName, right.SectionName) &&
+		ptrValueEqual(left.Port, right.Port)
+}
+
+// ptrValueEqual compares two pointers by pointed-to value, treating a nil on
+// either side as equal only when the other side is also nil.
+func ptrValueEqual[T comparable](left, right *T) bool {
+	if left == nil || right == nil {
+		return left == right
+	}
+
+	return *left == *right
 }
 
 // resolveParentRefStatus builds a RouteParentStatus for a single parentRef,

@@ -507,6 +507,97 @@ func TestPreserveConditionTransitions_ForeignConditions(t *testing.T) {
 	}
 }
 
+// TestPreserveOwnedConditionTransitions pins the route-parent-status twin of
+// preserveConditionTransitions: within a single RouteParentStatus entry every
+// condition belongs to this controller (the entry is keyed by controllerName),
+// so there is no foreign condition to leave untouched -- a prior type absent
+// from desired is dropped rather than kept.
+func TestPreserveOwnedConditionTransitions(t *testing.T) {
+	t.Parallel()
+
+	seededAt := metav1.NewTime(time.Now().Add(-time.Hour).Truncate(time.Second))
+
+	accepted := seededListenerCondition(string(gatewayv1.RouteConditionAccepted),
+		metav1.ConditionTrue, string(gatewayv1.RouteReasonAccepted), seededAt)
+	shadowed := seededListenerCondition(routeConditionShadowed,
+		metav1.ConditionTrue, routeReasonShadowed, seededAt)
+
+	tests := []struct {
+		name    string
+		prior   []metav1.Condition
+		desired []metav1.Condition
+		check   func(t *testing.T, merged []metav1.Condition)
+	}{
+		{
+			name:  "status unchanged keeps LastTransitionTime",
+			prior: []metav1.Condition{accepted},
+			desired: []metav1.Condition{
+				{
+					Type:               string(gatewayv1.RouteConditionAccepted),
+					Status:             metav1.ConditionTrue,
+					ObservedGeneration: 2,
+					LastTransitionTime: metav1.Now(),
+					Reason:             string(gatewayv1.RouteReasonAccepted),
+					Message:            "recomputed this sync",
+				},
+			},
+			check: func(t *testing.T, merged []metav1.Condition) {
+				t.Helper()
+
+				got := findCondition(merged, string(gatewayv1.RouteConditionAccepted))
+				require.NotNil(t, got)
+				assert.True(t, got.LastTransitionTime.Equal(&seededAt),
+					"status did not change, so LastTransitionTime must be preserved")
+				assert.Equal(t, int64(2), got.ObservedGeneration, "ObservedGeneration must still advance")
+				assert.Equal(t, "recomputed this sync", got.Message, "Message must still refresh")
+			},
+		},
+		{
+			name:  "status flip advances LastTransitionTime",
+			prior: []metav1.Condition{accepted},
+			desired: []metav1.Condition{
+				{
+					Type:               string(gatewayv1.RouteConditionAccepted),
+					Status:             metav1.ConditionFalse,
+					ObservedGeneration: 2,
+					LastTransitionTime: metav1.Now(),
+					Reason:             string(gatewayv1.RouteReasonPending),
+					Message:            "now pending",
+				},
+			},
+			check: func(t *testing.T, merged []metav1.Condition) {
+				t.Helper()
+
+				got := findCondition(merged, string(gatewayv1.RouteConditionAccepted))
+				require.NotNil(t, got)
+				assert.True(t, got.LastTransitionTime.After(seededAt.Time),
+					"a real status flip must advance LastTransitionTime")
+			},
+		},
+		{
+			name:    "own type no longer desired is dropped",
+			prior:   []metav1.Condition{accepted, shadowed},
+			desired: []metav1.Condition{accepted},
+			check: func(t *testing.T, merged []metav1.Condition) {
+				t.Helper()
+
+				require.Len(t, merged, 1, "no foreign entries exist in this scope, so nothing survives beyond desired")
+				assert.Nil(t, findCondition(merged, routeConditionShadowed),
+					"an own condition this sync no longer emits must be dropped")
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			merged := preserveOwnedConditionTransitions(tt.prior, tt.desired)
+			tt.check(t, merged)
+		})
+	}
+}
+
 // TestGatewayListenerConditions_ForeignConditionSurvivesReconcile is the
 // reconciler-level twin of TestPreserveConditionTransitions_ForeignConditions
 // for the Gateway listener status path.

@@ -16,8 +16,8 @@ Counts are the current `rows-*.md` verdicts (`cat rows-*.md | grep -E '^\| [A-Z]
 
 | Status | Count |
 | --- | --- |
-| MET | 233 |
-| PARTIAL | 34 |
+| MET | 234 |
+| PARTIAL | 33 |
 | GAP | 14 |
 | N/A (tunnel architecture / exempt) | 97 |
 
