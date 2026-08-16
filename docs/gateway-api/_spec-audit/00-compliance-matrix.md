@@ -16,9 +16,9 @@ Counts are the current `rows-*.md` verdicts (`cat rows-*.md | grep -E '^\| [A-Z]
 
 | Status | Count |
 | --- | --- |
-| MET | 235 |
-| PARTIAL | 32 |
-| GAP | 14 |
+| MET | 238 |
+| PARTIAL | 31 |
+| GAP | 12 |
 | N/A (tunnel architecture / exempt) | 97 |
 
 Conformance ground truth (v1.5.1 run): 76 top-level subtests PASS, 54 SKIP (documented TLS/TCP/UDP/Mesh/WebSocket/GRPCRouteWeight/HTTPS-listener), **0 FAIL** (`go test ... ok 293s`). GRPCRouteWeight and HTTPRouteBackendProtocolWebSocket were among the SKIPs at that run; both are de-skipped in the current suite configuration (`test/conformance/conformance_test.go`, pinned by `TestStaleSkipsStayLifted`) now that gateway-api v1.6.0 added the injectable `suite.GRPCClient` / `suite.WebSocketDialer` hooks those tests needed, so the current skip categories are TLS/TCP/UDP/Mesh/HTTPS-listener plus the BackendTLSPolicy-gated tests. Conformance ground truth (v1.6.1 run): 77 top-level subtests PASS, 76 SKIP, **0 FAIL** (`go test ... ok 487s`, kind + real Cloudflare Tunnel). Both runs were green; the audit's value is the normative surface the suite does not exercise.
@@ -64,7 +64,7 @@ The v1.6.0 baseline bump was audited against the verified upstream tag diff; v1.
 
 ### Code bugs (file as kind/bug)
 
-1. **Route status reconcile clobbers other controllers' `RouteParentStatus` (SH-47, SH-57; MUST NOT).** `internal/controller/route_status.go:112` resets the whole `Parents` slice and writes via full `Status().Update`, so a Route co-managed by another controller loses that controller's parent-status entry every reconcile. Fix: preserve entries whose `ControllerName` differs, mirroring `backendtlspolicy_controller.go:717-762`. Highest severity (multi-controller correctness). The listener-status rebuild had the same shape and is fixed in `preserveConditionTransitions` on both the reconcile and config-error paths (GW-96/GW-98 MET).
+1. **Route status reconcile clobbers other controllers' `RouteParentStatus` (SH-47, SH-57; MUST NOT).** Fixed: `route_status.go` partitions the stored parents by controllerName, carries foreign entries over verbatim, and reserves their slots before truncating its own. The listener-status rebuild had the same shape and is fixed in `preserveConditionTransitions` on both the reconcile and config-error paths (GW-96/GW-98 MET).
 2. **Status writers lack an observedGeneration regression guard (SH-51, GC-21, GW-81, GW-100, POL-11; MUST NOT).** Fixed: every status writer now runs `statusGenerationStale` / `ownedConditionsStale` (`internal/controller/status_generation.go`) or, for per-listener conditions, `ownedListenerConditionsStale`, and skips the write when a stored own condition already carries a newer observedGeneration.
 3. **HTTPRoute/GRPCRoute rule-name uniqueness not enforced (HR-04, GR-16; MUST).** The uniqueness CEL is experimental-channel; the shipped Standard CRD omits it and the controller does not validate. Minor. Fix: controller-side validation or a documented limitation.
 
