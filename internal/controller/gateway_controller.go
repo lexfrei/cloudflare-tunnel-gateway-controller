@@ -10,6 +10,7 @@ import (
 	"github.com/cockroachdb/errors"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -282,6 +283,7 @@ func (r *GatewayReconciler) updateStatus(
 			return nil
 		}
 
+		priorStatus := freshGateway.Status.DeepCopy()
 		now := metav1.Now()
 
 		views := newListenerViewCache(r.Client, r.ViewStore)
@@ -306,6 +308,10 @@ func (r *GatewayReconciler) updateStatus(
 
 		listenerStatuses := r.buildListenerStatuses(ctx, &freshGateway, views, now)
 		freshGateway.Status.Listeners = preserveGatewayListenerTransitions(freshGateway.Status.Listeners, listenerStatuses)
+
+		if apiequality.Semantic.DeepEqual(priorStatus, &freshGateway.Status) {
+			return nil
+		}
 
 		if err := r.Status().Update(ctx, &freshGateway); err != nil {
 			return errors.Wrap(err, "failed to update gateway status")
@@ -572,6 +578,7 @@ func (r *GatewayReconciler) setConfigErrorStatus(
 			return nil
 		}
 
+		priorStatus := freshGateway.Status.DeepCopy()
 		now := metav1.Now()
 		errMsg := truncateMessage("Failed to resolve Gateway configuration: " + configErr.Error())
 
@@ -580,24 +587,9 @@ func (r *GatewayReconciler) setConfigErrorStatus(
 
 		_, _, clientCertErr := loadGatewayClientCertPEM(ctx, r.Client, &freshGateway, r.checkSecretReferenceGrant)
 
-		applyGatewayConditions(&freshGateway.Status.Conditions, []metav1.Condition{
-			{
-				Type:               string(gatewayv1.GatewayConditionAccepted),
-				Status:             metav1.ConditionFalse,
-				ObservedGeneration: freshGateway.Generation,
-				LastTransitionTime: now,
-				Reason:             string(gatewayv1.GatewayReasonInvalidParameters),
-				Message:            errMsg,
-			},
-			{
-				Type:               string(gatewayv1.GatewayConditionProgrammed),
-				Status:             metav1.ConditionFalse,
-				ObservedGeneration: freshGateway.Generation,
-				LastTransitionTime: now,
-				Reason:             string(gatewayv1.GatewayReasonInvalid),
-				Message:            errMsg,
-			},
-		}, buildClientCertResolvedRefsCondition(freshGateway.Generation, now, clientCertErr))
+		applyGatewayConditions(&freshGateway.Status.Conditions,
+			configErrorGatewayConditions(freshGateway.Generation, now, errMsg),
+			buildClientCertResolvedRefsCondition(freshGateway.Generation, now, clientCertErr))
 
 		// Per-listener status still reflects each listener's own validity
 		// (protocol, route kinds, TLS refs, conflicts) — none of that depends
@@ -612,6 +604,10 @@ func (r *GatewayReconciler) setConfigErrorStatus(
 
 		freshGateway.Status.Listeners = preserveGatewayListenerTransitions(freshGateway.Status.Listeners, listenerStatuses)
 
+		if apiequality.Semantic.DeepEqual(priorStatus, &freshGateway.Status) {
+			return nil
+		}
+
 		if err := r.Status().Update(ctx, &freshGateway); err != nil {
 			return errors.Wrap(err, "failed to update gateway status")
 		}
@@ -620,6 +616,29 @@ func (r *GatewayReconciler) setConfigErrorStatus(
 	})
 
 	return errors.Wrap(err, "failed to update gateway status after retries")
+}
+
+// configErrorGatewayConditions is the Gateway-level verdict when the referenced
+// GatewayClassConfig cannot be resolved.
+func configErrorGatewayConditions(generation int64, now metav1.Time, message string) []metav1.Condition {
+	return []metav1.Condition{
+		{
+			Type:               string(gatewayv1.GatewayConditionAccepted),
+			Status:             metav1.ConditionFalse,
+			ObservedGeneration: generation,
+			LastTransitionTime: now,
+			Reason:             string(gatewayv1.GatewayReasonInvalidParameters),
+			Message:            message,
+		},
+		{
+			Type:               string(gatewayv1.GatewayConditionProgrammed),
+			Status:             metav1.ConditionFalse,
+			ObservedGeneration: generation,
+			LastTransitionTime: now,
+			Reason:             string(gatewayv1.GatewayReasonInvalid),
+			Message:            message,
+		},
+	}
 }
 
 // overrideListenerProgrammedForConfigError downgrades a listener's
