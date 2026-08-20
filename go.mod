@@ -7,7 +7,6 @@ require (
 	github.com/cloudflare/cloudflared v0.0.0-20260722163246-3a2b45c2a511 // decorative, see replace + FIXME(#610) below
 	github.com/cockroachdb/errors v1.14.0
 	github.com/go-logr/logr v1.4.4
-	github.com/google/cel-go v0.31.0
 	github.com/google/uuid v1.6.0
 	github.com/prometheus/client_golang v1.24.1
 	github.com/prometheus/client_model v0.6.2
@@ -168,6 +167,8 @@ require (
 	sigs.k8s.io/structured-merge-diff/v6 v6.4.0 // indirect
 	zombiezen.com/go/capnproto2 v2.18.0+incompatible // indirect
 )
+
+require cel.dev/cel-go v0.32.0
 
 // FIXME(#610): the require entry above is decorative, this unconditional replace
 // (no version on its left side) wins regardless of what version that line names.
