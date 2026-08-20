@@ -44,7 +44,7 @@ github.com/cenkalti/backoff/v5
 # github.com/cespare/xxhash/v2 v2.3.0
 ## explicit; go 1.11
 github.com/cespare/xxhash/v2
-# github.com/cloudflare/cloudflare-go/v7 v7.8.0
+# github.com/cloudflare/cloudflare-go/v7 v7.9.0
 ## explicit; go 1.22
 github.com/cloudflare/cloudflare-go/v7
 github.com/cloudflare/cloudflare-go/v7/abuse_reports
@@ -135,6 +135,7 @@ github.com/cloudflare/cloudflare-go/v7/page_rules
 github.com/cloudflare/cloudflare-go/v7/page_shield
 github.com/cloudflare/cloudflare-go/v7/pages
 github.com/cloudflare/cloudflare-go/v7/pipelines
+github.com/cloudflare/cloudflare-go/v7/precursor
 github.com/cloudflare/cloudflare-go/v7/queues
 github.com/cloudflare/cloudflare-go/v7/r2
 github.com/cloudflare/cloudflare-go/v7/r2_data_catalog
