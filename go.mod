@@ -1,8 +1,9 @@
 module github.com/lexfrei/cloudflare-tunnel-gateway-controller
 
-go 1.26.6
+go 1.27.0
 
 require (
+	cel.dev/cel-go v0.32.0
 	github.com/cloudflare/cloudflare-go/v7 v7.9.0
 	github.com/cloudflare/cloudflared v0.0.0-20260722163246-3a2b45c2a511 // decorative, see replace + FIXME(#610) below
 	github.com/cockroachdb/errors v1.14.0
@@ -167,8 +168,6 @@ require (
 	sigs.k8s.io/structured-merge-diff/v6 v6.4.0 // indirect
 	zombiezen.com/go/capnproto2 v2.18.0+incompatible // indirect
 )
-
-require cel.dev/cel-go v0.32.0
 
 // FIXME(#610): the require entry above is decorative, this unconditional replace
 // (no version on its left side) wins regardless of what version that line names.
