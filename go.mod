@@ -5,7 +5,7 @@ go 1.27.0
 require (
 	cel.dev/cel-go v0.32.0
 	github.com/cloudflare/cloudflare-go/v7 v7.9.0
-	github.com/cloudflare/cloudflared v0.0.0-20260722163246-3a2b45c2a511 // decorative, see replace + FIXME(#610) below
+	github.com/cloudflare/cloudflared v0.0.0-20260814112252-733bfb939963 // decorative, see replace + FIXME(#610) below
 	github.com/cockroachdb/errors v1.14.0
 	github.com/go-logr/logr v1.4.4
 	github.com/google/uuid v1.6.0
@@ -79,7 +79,6 @@ require (
 	github.com/go-openapi/swag/stringutils v0.28.0 // indirect
 	github.com/go-openapi/swag/typeutils v0.28.0 // indirect
 	github.com/go-openapi/swag/yamlutils v0.28.0 // indirect
-	github.com/go-task/slim-sprig/v3 v3.0.0 // indirect
 	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
 	github.com/gobwas/httphead v0.1.0 // indirect
 	github.com/gobwas/pool v0.2.1 // indirect
@@ -88,7 +87,6 @@ require (
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/google/gnostic-models v0.7.1 // indirect
 	github.com/google/gopacket v1.1.19 // indirect
-	github.com/google/pprof v0.0.0-20260115054156-294ebfa9ad83 // indirect
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.30.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
@@ -114,7 +112,7 @@ require (
 	github.com/power-devops/perfstat v0.0.0-20240221224432-82ca36839d55 // indirect
 	github.com/prometheus/common v0.70.1 // indirect
 	github.com/prometheus/procfs v0.21.1 // indirect
-	github.com/quic-go/quic-go v0.59.1 // indirect; decorative, see replace + FIXME(#609,#610) below
+	github.com/quic-go/quic-go v0.59.1 // indirect; decorative, see replace + FIXME(#610) below
 	github.com/rogpeppe/go-internal v1.14.1 // indirect
 	github.com/russross/blackfriday/v2 v2.1.0 // indirect
 	github.com/sagikazarmark/locafero v0.12.0 // indirect
@@ -138,7 +136,6 @@ require (
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.46.0 // indirect
 	go.opentelemetry.io/otel/metric v1.46.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.11.0 // indirect
-	go.uber.org/mock v0.5.1 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap v1.28.0 // indirect
 	go.yaml.in/yaml/v2 v2.4.4 // indirect
@@ -177,19 +174,14 @@ require (
 // can't repoint this pin to an arbitrary newer commit on its own; the require
 // line above still gets Renovate PRs, and those are the intended signal that a
 // rebase is due, not something to merge as-is.
-replace github.com/cloudflare/cloudflared => github.com/lexfrei/cloudflared v0.0.0-20260804145309-f3b324e53f9a
+replace github.com/cloudflare/cloudflared => github.com/lexfrei/cloudflared v0.0.0-20260830211924-112d0cda242b
 
-// FIXME(#609): this pin (matching cloudflared's own, equally vulnerable target)
-// still carries CVE-2025-59530 (GHSA-47m2-4cr7-mhcw). Upstream cloudflared has
-// tried moving to a fixed quic-go twice (chungthuang/quic-go branch
-// cloudflare-0.59.1) and reverted both attempts right before shipping - once
-// before 2026.6.1, once before 2026.7.0 - reason undocumented either time. Do
-// not repoint this alone without cloudflared adopting a fix first; see #609 for
-// what would unblock it.
+// This pin mirrors cloudflared's own replace line verbatim and only ever moves
+// together with the fork rebase above - never repoint it alone.
 // FIXME(#610): the require entry above is decorative, this unconditional replace
 // (no version on its left side) wins regardless of what version that line names.
 // Renovate no longer automerges either direction (see renovate.json): a bump of
 // the require line above has no effect, and a bump of this replace target does
 // take effect and can silently undo a deliberate pin like the one this line
 // carries right now - read the PR by hand every time either one shows up.
-replace github.com/quic-go/quic-go => github.com/chungthuang/quic-go v0.45.1-0.20250428085412-43229ad201fd
+replace github.com/quic-go/quic-go => github.com/chungthuang/quic-go v0.45.1-0.20260529212404-a9fddf436fc4
