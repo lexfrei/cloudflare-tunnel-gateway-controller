@@ -28,8 +28,7 @@ func ClassifyCloudflareError(err error) string {
 
 	// Check for typed errors from cloudflare-go SDK
 	// cloudflare.Error is an alias to apierror.Error in cloudflare-go v6
-	var apiErr *cloudflare.Error
-	if errors.As(err, &apiErr) {
+	if apiErr, ok := errors.AsType[*cloudflare.Error](err); ok {
 		return classifyByStatusCode(apiErr.StatusCode)
 	}
 

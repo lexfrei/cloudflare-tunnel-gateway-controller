@@ -4,7 +4,11 @@ linters:
   default: all
   disable:
     - depguard
+    # Requiring every struct field is wrong for this codebase either way:
+    # k8s API types (ObjectMeta, DeploymentSpec, ...) are built sparse by
+    # design. exhaustruct_v5 is the v2.13 successor enabled via default: all.
     - exhaustruct
+    - exhaustruct_v5
     - gochecknoinits
     - wsl
     - lll

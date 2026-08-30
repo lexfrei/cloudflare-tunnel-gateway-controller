@@ -696,7 +696,17 @@ func (h *Handler) proxyToBackend(writer http.ResponseWriter, req *http.Request, 
 // backend-error metrics.
 func (h *Handler) createReverseProxy(backendURL *url.URL, protocol BackendProtocol, backendTLS *BackendTLSConfig, filters []Filter, headerTimeout time.Duration, hostname string) *httputil.ReverseProxy {
 	return &httputil.ReverseProxy{
-		Director: func(req *http.Request) {
+		Rewrite: func(proxyReq *httputil.ProxyRequest) {
+			req := proxyReq.Out
+			restoreForwardingHeaders(proxyReq)
+
+			// Undo stdlib's pre-Rewrite query normalization (url.ParseQuery
+			// re-encode: drops semicolon-separated params, reorders the
+			// rest). Route matching — query matches included — already ran
+			// on the inbound request, so the outbound query is pure backend
+			// payload and belongs to it byte-for-byte.
+			req.URL.RawQuery = proxyReq.In.URL.RawQuery
+
 			req.URL.Scheme = backendURL.Scheme
 			req.URL.Host = backendURL.Host
 			applyBackendBasePath(req.URL, backendURL.Path, backendURL.RawQuery)
@@ -720,10 +730,6 @@ func (h *Handler) createReverseProxy(backendURL *url.URL, protocol BackendProtoc
 			}
 
 			req.Header.Del("X-Original-Host")
-
-			if _, ok := req.Header["User-Agent"]; !ok {
-				req.Header.Set("User-Agent", "")
-			}
 		},
 		Transport:    h.backendTransport(backendURL.Host, protocol, backendTLS, headerTimeout),
 		ErrorHandler: h.proxyErrorHandler(hostname),
@@ -735,10 +741,44 @@ func (h *Handler) createReverseProxy(backendURL *url.URL, protocol BackendProtoc
 	}
 }
 
+// restoreForwardingHeaders puts the inbound Forwarded / X-Forwarded-* headers
+// back on the outbound request and appends the immediate peer to
+// X-Forwarded-For. httputil.ReverseProxy strips all four from pr.Out before
+// calling Rewrite — anti-spoofing for proxies that mint their own values via
+// SetXForwarded. This proxy's upstream hop is the Cloudflare edge (or an
+// in-cluster hop), whose forwarding headers carry the real client IP and
+// scheme, so they must reach the backend intact. SetXForwarded is the wrong
+// tool here: it discards the inbound chain and invents X-Forwarded-Host/Proto
+// from the local request.
+func restoreForwardingHeaders(proxyReq *httputil.ProxyRequest) {
+	inHeader, outHeader := proxyReq.In.Header, proxyReq.Out.Header
+
+	for _, name := range []string{"Forwarded", "X-Forwarded-Host", "X-Forwarded-Proto"} {
+		if vals := inHeader.Values(name); len(vals) > 0 {
+			outHeader[name] = slices.Clone(vals)
+		}
+	}
+
+	xff := strings.Join(inHeader.Values("X-Forwarded-For"), ", ")
+
+	clientIP, _, err := net.SplitHostPort(proxyReq.In.RemoteAddr)
+	if err == nil {
+		if xff != "" {
+			xff += ", "
+		}
+
+		xff += clientIP
+	}
+
+	if xff != "" {
+		outHeader.Set("X-Forwarded-For", xff)
+	}
+}
+
 // applyBackendBasePath prepends a backend base path (e.g. an ExternalBackend's
 // spec.path) to target's path, joining with exactly one slash — the single-host
 // join httputil.NewSingleHostReverseProxy performs that the hand-written
-// Director (and the WebSocket upgrade builder) otherwise skip. It also merges
+// Rewrite func (and the WebSocket upgrade builder) otherwise skip. It also merges
 // the base path's query parameters (the "x=1" in a spec.path of "/v1?x=1") into
 // target's query via mergeBackendBaseQuery. A base of "" or "/" with no query —
 // the form every Service / ServiceImport backend URL takes — is a no-op, so only

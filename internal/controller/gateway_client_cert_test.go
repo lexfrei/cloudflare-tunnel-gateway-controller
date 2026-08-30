@@ -377,7 +377,7 @@ func TestGatewayClientCertSentinels_AreStable(t *testing.T) {
 
 // Compile-time use of the fake client.Client interface so the import isn't
 // pruned when sentinel tests grow.
-var _ client.Client = (client.Client)(nil)
+var _ client.Client = client.Client(nil)
 
 func TestBuildClientCertResolvedRefsCondition_NilErr_TrueResolvedRefs(t *testing.T) {
 	t.Parallel()

@@ -143,13 +143,11 @@ func (r *Resolver) resolveStatusConfig(
 	}
 
 	return &PerGatewayConfig{
-		ResolvedConfig: ResolvedConfig{
-			APIToken: apiToken,
-			// The tunnel lives in the token's account by construction.
-			AccountID:  parsed.AccountTag,
-			TunnelID:   parsed.TunnelID.String(),
-			ConfigName: "gatewayconfig:" + gwConfig.Namespace + "/" + gwConfig.Name,
-		},
+		APIToken: apiToken,
+		// The tunnel lives in the token's account by construction.
+		AccountID:         parsed.AccountTag,
+		TunnelID:          parsed.TunnelID.String(),
+		ConfigName:        "gatewayconfig:" + gwConfig.Namespace + "/" + gwConfig.Name,
 		TunnelToken:       token,
 		TunnelTokenSecret: tokenSecretName,
 		GatewayConfig:     gwConfig,

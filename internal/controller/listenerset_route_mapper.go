@@ -3,7 +3,6 @@ package controller
 import (
 	"context"
 
-	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
@@ -45,10 +44,8 @@ func findRoutesAttachedToListenerSet(
 		}
 
 		requests = append(requests, reconcile.Request{
-			NamespacedName: types.NamespacedName{
-				Name:      route.GetName(),
-				Namespace: route.GetNamespace(),
-			},
+			Name:      route.GetName(),
+			Namespace: route.GetNamespace(),
 		})
 	}
 

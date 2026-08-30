@@ -60,7 +60,7 @@ func handlerForBackendURL(t *testing.T, backendURL string) *proxy.Handler {
 
 // TestHandler_ExternalBackendBasePath_Joined proves the backend URL's base path
 // (an ExternalBackend's spec.path, resolved into the backend URL) is prepended
-// to the request path on the wire. Without the Director honoring backendURL.Path
+// to the request path on the wire. Without the rewrite honoring backendURL.Path
 // the backend would see "/users" instead of "/v1/users".
 func TestHandler_ExternalBackendBasePath_Joined(t *testing.T) {
 	t.Parallel()
@@ -82,7 +82,7 @@ func TestHandler_ExternalBackendBasePath_Joined(t *testing.T) {
 
 // TestHandler_ExternalBackendBasePath_OverTunnelWriter exercises the same
 // path-join through the cloudflared HTTP/2 response writer contract (per the
-// project's tunnel-transport testing rule), proving the Director rewrite holds
+// project's tunnel-transport testing rule), proving the backend-URL rewrite holds
 // on the production write path, not only with httptest's recorder.
 func TestHandler_ExternalBackendBasePath_OverTunnelWriter(t *testing.T) {
 	t.Parallel()
@@ -110,7 +110,7 @@ func TestHandler_ExternalBackendBasePath_OverTunnelWriter(t *testing.T) {
 // into the backend URL) merges that query into the dialed request. Request
 // parameters take precedence: a key present in the request keeps its request
 // value, and only base keys absent from the request are appended. Without the
-// Director honoring backendURL.RawQuery the base query is silently dropped.
+// rewrite honoring backendURL.RawQuery the base query is silently dropped.
 func TestHandler_ExternalBackendBaseQuery_Merged(t *testing.T) {
 	t.Parallel()
 
@@ -175,7 +175,7 @@ func TestHandler_ExternalBackendBaseQuery_Merged(t *testing.T) {
 
 // TestHandler_ExternalBackendBaseQuery_OverTunnelWriter exercises the query
 // merge through the cloudflared HTTP/2 response writer contract (per the
-// project's tunnel-transport testing rule), proving the Director merge holds on
+// project's tunnel-transport testing rule), proving the base-query merge holds on
 // the production write path, not only with httptest's recorder.
 func TestHandler_ExternalBackendBaseQuery_OverTunnelWriter(t *testing.T) {
 	t.Parallel()

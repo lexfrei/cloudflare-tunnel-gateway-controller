@@ -862,7 +862,7 @@ func (r *GatewayReconciler) listenerSetToGateways(
 	}
 
 	return []reconcile.Request{{
-		NamespacedName: types.NamespacedName{Name: parent.Name, Namespace: parent.Namespace},
+		Name: parent.Name, Namespace: parent.Namespace,
 	}}
 }
 
@@ -905,10 +905,8 @@ func (r *GatewayReconciler) getAllManagedGateways(ctx context.Context) []reconci
 		gw := &gatewayList.Items[i]
 		if classNames[string(gw.Spec.GatewayClassName)] {
 			requests = append(requests, reconcile.Request{
-				NamespacedName: types.NamespacedName{
-					Name:      gw.Name,
-					Namespace: gw.Namespace,
-				},
+				Name:      gw.Name,
+				Namespace: gw.Namespace,
 			})
 		}
 	}
@@ -951,9 +949,9 @@ func (r *GatewayReconciler) gatewayConfigToGateways(ctx context.Context, obj cli
 			continue
 		}
 
-		requests = append(requests, reconcile.Request{NamespacedName: types.NamespacedName{
+		requests = append(requests, reconcile.Request{
 			Name: gateway.Name, Namespace: gateway.Namespace,
-		}})
+		})
 	}
 
 	return requests
@@ -1015,10 +1013,8 @@ func (r *GatewayReconciler) referenceGrantToGateways(
 		// Check if this Gateway references Secrets in the ReferenceGrant's namespace
 		if r.gatewayReferencesSecretsInNamespace(gateway, grant.Namespace) {
 			requests = append(requests, reconcile.Request{
-				NamespacedName: types.NamespacedName{
-					Name:      gateway.Name,
-					Namespace: gateway.Namespace,
-				},
+				Name:      gateway.Name,
+				Namespace: gateway.Namespace,
 			})
 		}
 	}

@@ -938,7 +938,7 @@ func (r *BackendTLSPolicyReconciler) policiesForPeerChange(ctx context.Context, 
 		}
 
 		requests = append(requests, reconcile.Request{
-			NamespacedName: client.ObjectKey{Namespace: peer.Namespace, Name: peer.Name},
+			Namespace: peer.Namespace, Name: peer.Name,
 		})
 	}
 
@@ -969,7 +969,7 @@ func (r *BackendTLSPolicyReconciler) policiesForConfigMapChange(ctx context.Cont
 		}
 
 		requests = append(requests, reconcile.Request{
-			NamespacedName: client.ObjectKey{Namespace: policy.Namespace, Name: policy.Name},
+			Namespace: policy.Namespace, Name: policy.Name,
 		})
 	}
 
@@ -1045,7 +1045,7 @@ func (r *BackendTLSPolicyReconciler) policiesForRouteChange(ctx context.Context,
 		}
 
 		requests = append(requests, reconcile.Request{
-			NamespacedName: client.ObjectKey{Namespace: policy.Namespace, Name: policy.Name},
+			Namespace: policy.Namespace, Name: policy.Name,
 		})
 	}
 
@@ -1087,7 +1087,7 @@ func (r *BackendTLSPolicyReconciler) policiesForGRPCRouteChange(ctx context.Cont
 		}
 
 		requests = append(requests, reconcile.Request{
-			NamespacedName: client.ObjectKey{Namespace: policy.Namespace, Name: policy.Name},
+			Namespace: policy.Namespace, Name: policy.Name,
 		})
 	}
 

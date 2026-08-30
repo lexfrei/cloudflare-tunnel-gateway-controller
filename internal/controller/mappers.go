@@ -432,10 +432,8 @@ func FindRoutesForService(
 		}
 
 		requests = append(requests, reconcile.Request{
-			NamespacedName: client.ObjectKey{
-				Name:      route.GetName(),
-				Namespace: route.GetNamespace(),
-			},
+			Name:      route.GetName(),
+			Namespace: route.GetNamespace(),
 		})
 	}
 
@@ -464,10 +462,8 @@ func FindRoutesForExternalBackend(
 		}
 
 		requests = append(requests, reconcile.Request{
-			NamespacedName: client.ObjectKey{
-				Name:      route.GetName(),
-				Namespace: route.GetNamespace(),
-			},
+			Name:      route.GetName(),
+			Namespace: route.GetNamespace(),
 		})
 	}
 
@@ -501,10 +497,8 @@ func FindRoutesForEndpointSlice(
 		}
 
 		requests = append(requests, reconcile.Request{
-			NamespacedName: client.ObjectKey{
-				Name:      route.GetName(),
-				Namespace: route.GetNamespace(),
-			},
+			Name:      route.GetName(),
+			Namespace: route.GetNamespace(),
 		})
 	}
 
@@ -536,10 +530,8 @@ func FindRoutesForReferenceGrant(
 
 		if slices.Contains(crossNsBackends, targetNamespace) {
 			requests = append(requests, reconcile.Request{
-				NamespacedName: client.ObjectKey{
-					Name:      route.GetName(),
-					Namespace: route.GetNamespace(),
-				},
+				Name:      route.GetName(),
+				Namespace: route.GetNamespace(),
 			})
 		}
 	}
@@ -760,10 +752,8 @@ func FindRoutesForGateway(
 
 			if string(ref.Name) == gateway.Name && refNamespace == gateway.Namespace {
 				requests = append(requests, reconcile.Request{
-					NamespacedName: client.ObjectKey{
-						Name:      route.GetName(),
-						Namespace: route.GetNamespace(),
-					},
+					Name:      route.GetName(),
+					Namespace: route.GetNamespace(),
 				})
 
 				break
@@ -791,10 +781,8 @@ func FilterAcceptedRoutes(
 	for _, route := range routes {
 		if IsRouteAcceptedByGateway(ctx, cli, validator, controllerName, route, views) {
 			requests = append(requests, reconcile.Request{
-				NamespacedName: client.ObjectKey{
-					Name:      route.GetName(),
-					Namespace: route.GetNamespace(),
-				},
+				Name:      route.GetName(),
+				Namespace: route.GetNamespace(),
 			})
 		}
 	}

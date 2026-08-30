@@ -4,7 +4,7 @@ This guide covers setting up a development environment for the Cloudflare Tunnel
 
 ## Prerequisites
 
-- Go 1.26.4 or later
+- Go 1.27.0 or later
 - kubectl configured with cluster access
 - A Kubernetes cluster (kind, minikube, or remote)
 - Cloudflare account with a tunnel configured
