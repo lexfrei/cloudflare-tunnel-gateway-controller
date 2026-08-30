@@ -12,7 +12,7 @@ import (
 
 // TestBuildBackendUpgradeRequest_BasePath proves a WebSocket upgrade to a
 // backend whose URL carries a base path (an ExternalBackend's spec.path) joins
-// that base onto the request path, matching the non-WebSocket Director. A
+// that base onto the request path, matching the non-WebSocket rewrite. A
 // backend URL without a base path forwards the request path unchanged.
 func TestBuildBackendUpgradeRequest_BasePath(t *testing.T) {
 	t.Parallel()
@@ -62,7 +62,7 @@ func TestBuildBackendUpgradeRequest_BasePath(t *testing.T) {
 // TestBuildBackendUpgradeRequest_BaseQuery proves a WebSocket upgrade to a
 // backend whose URL carries a query (an ExternalBackend's spec.path of the form
 // "/v1?x=1") merges that query into the upgrade request, matching the
-// non-WebSocket Director. Request parameters take precedence over base ones.
+// non-WebSocket rewrite. Request parameters take precedence over base ones.
 func TestBuildBackendUpgradeRequest_BaseQuery(t *testing.T) {
 	t.Parallel()
 

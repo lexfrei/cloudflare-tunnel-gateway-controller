@@ -104,6 +104,203 @@ func TestNewHandler_WSTimeoutOptions(t *testing.T) {
 	}
 }
 
+// TestHandler_ForwardedHeadersReachBackend pins the forwarding-header
+// contract of the reverse-proxy leg: the Cloudflare edge stamps
+// X-Forwarded-For / X-Forwarded-Proto (and clients may send Forwarded or
+// X-Forwarded-Host) on the inbound request, and backends rely on them for
+// client IP and original scheme. The proxy must pass all of them through
+// and append the immediate peer to X-Forwarded-For.
+//
+// This guards the httputil.ReverseProxy Rewrite path: stdlib strips all
+// four headers from the outbound request before Rewrite runs, so losing
+// the explicit restoration silently blinds every backend to the real
+// client.
+func TestHandler_ForwardedHeadersReachBackend(t *testing.T) {
+	t.Parallel()
+
+	edgeHeaders := map[string]string{
+		"X-Forwarded-For":   "203.0.113.7",
+		"X-Forwarded-Proto": "https",
+		"X-Forwarded-Host":  "app.example.com",
+		"Forwarded":         "for=203.0.113.7;proto=https",
+	}
+
+	tests := []struct {
+		name       string
+		inbound    map[string]string
+		remoteAddr string
+		want       map[string]string
+	}{
+		{
+			// The tunnel-and-edge shape with an in-cluster hop: chain
+			// survives, peer appended.
+			name:       "edge headers plus parseable peer",
+			inbound:    edgeHeaders,
+			remoteAddr: "192.0.2.1:1234",
+			want: map[string]string{
+				"X-Forwarded-For":   "203.0.113.7, 192.0.2.1",
+				"X-Forwarded-Proto": "https",
+				"X-Forwarded-Host":  "app.example.com",
+				"Forwarded":         "for=203.0.113.7;proto=https",
+			},
+		},
+		{
+			// Standalone mode, direct client, no upstream hop: the peer
+			// becomes the whole chain.
+			name:       "no inbound headers",
+			inbound:    nil,
+			remoteAddr: "192.0.2.1:1234",
+			want: map[string]string{
+				"X-Forwarded-For":   "192.0.2.1",
+				"X-Forwarded-Proto": "",
+				"X-Forwarded-Host":  "",
+				"Forwarded":         "",
+			},
+		},
+		{
+			// A request without a parseable host:port RemoteAddr (possible on
+			// synthetic in-process requests): nothing is appended and the
+			// edge-stamped chain passes through verbatim.
+			name:       "unparseable remote addr",
+			inbound:    edgeHeaders,
+			remoteAddr: "",
+			want: map[string]string{
+				"X-Forwarded-For":   "203.0.113.7",
+				"X-Forwarded-Proto": "https",
+				"X-Forwarded-Host":  "app.example.com",
+				"Forwarded":         "for=203.0.113.7;proto=https",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var got http.Header
+
+			backend := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, req *http.Request) {
+				got = req.Header.Clone()
+				writer.WriteHeader(http.StatusOK)
+			}))
+			defer backend.Close()
+
+			router := proxy.NewRouter()
+			cfg := &proxy.Config{
+				Version: 1,
+				Rules: []proxy.RouteRule{{
+					Hostnames: []string{"app.example.com"},
+					Backends:  []proxy.BackendRef{{URL: backend.URL, Weight: 1}},
+				}},
+			}
+			require.NoError(t, router.UpdateConfig(cfg))
+
+			handler := proxy.NewHandler(router)
+
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://app.example.com/", nil)
+			for name, value := range tt.inbound {
+				req.Header.Set(name, value)
+			}
+
+			req.RemoteAddr = tt.remoteAddr
+			recorder := httptest.NewRecorder()
+
+			handler.ServeHTTP(recorder, req)
+
+			require.Equal(t, http.StatusOK, recorder.Code)
+
+			for name, value := range tt.want {
+				assert.Equal(t, value, got.Get(name), "header %s", name)
+			}
+		})
+	}
+}
+
+// TestHandler_QueryStringPassesThroughVerbatim pins raw-query passthrough:
+// the backend must receive the client's query byte-for-byte. Route matching
+// (query matches included) runs on the inbound request before the reverse
+// proxy is invoked, so the outbound query is pure backend payload — and
+// backends that parse semicolon-separated parameters (or any non-canonical
+// encoding) break if a hop re-encodes it.
+//
+// The pin guards the httputil.ReverseProxy Rewrite path: stdlib normalizes
+// Out.URL.RawQuery through url.ParseQuery before the callback runs, which
+// silently drops semicolon-separated parameters. The pin fails loudly if a
+// future stdlib bump widens that normalization.
+func TestHandler_QueryStringPassesThroughVerbatim(t *testing.T) {
+	t.Parallel()
+
+	const rawQuery = "a=1;b=2&c=3"
+
+	var gotQuery string
+
+	backend := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, req *http.Request) {
+		gotQuery = req.URL.RawQuery
+		writer.WriteHeader(http.StatusOK)
+	}))
+	defer backend.Close()
+
+	router := proxy.NewRouter()
+	cfg := &proxy.Config{
+		Version: 1,
+		Rules: []proxy.RouteRule{{
+			Hostnames: []string{"app.example.com"},
+			Backends:  []proxy.BackendRef{{URL: backend.URL, Weight: 1}},
+		}},
+	}
+	require.NoError(t, router.UpdateConfig(cfg))
+
+	handler := proxy.NewHandler(router)
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://app.example.com/path?"+rawQuery, nil)
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, req)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	assert.Equal(t, rawQuery, gotQuery,
+		"query string must reach the backend unmodified — re-encoding drops "+
+			"semicolon-separated parameters and reorders the rest")
+}
+
+// TestHandler_NoDefaultUserAgentInjected pins the third piece of the
+// forwarding contract: a client that sends no User-Agent must not have Go's
+// default ("Go-http-client/1.1") injected on the backend leg. The
+// suppression lives in stdlib after the Rewrite callback; this pin guards
+// against a stdlib relocation of that block.
+func TestHandler_NoDefaultUserAgentInjected(t *testing.T) {
+	t.Parallel()
+
+	var gotUserAgent string
+
+	backend := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, req *http.Request) {
+		gotUserAgent = req.Header.Get("User-Agent")
+		writer.WriteHeader(http.StatusOK)
+	}))
+	defer backend.Close()
+
+	router := proxy.NewRouter()
+	cfg := &proxy.Config{
+		Version: 1,
+		Rules: []proxy.RouteRule{{
+			Hostnames: []string{"app.example.com"},
+			Backends:  []proxy.BackendRef{{URL: backend.URL, Weight: 1}},
+		}},
+	}
+	require.NoError(t, router.UpdateConfig(cfg))
+
+	handler := proxy.NewHandler(router)
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://app.example.com/", nil)
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, req)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	assert.Empty(t, gotUserAgent,
+		"a request without User-Agent must reach the backend without one injected")
+}
+
 func TestHandler_NoMatchReturns404(t *testing.T) {
 	t.Parallel()
 
@@ -604,7 +801,7 @@ func TestHandler_PruneTransportsRemovesStaleHostFromSyncMap(t *testing.T) {
 	assert.False(t, loaded, "transport for backend A should be pruned after config update removed it")
 }
 
-func TestHandler_URLRewriteHostnamePreservedByDirector(t *testing.T) {
+func TestHandler_URLRewriteHostnamePreservedByProxy(t *testing.T) {
 	t.Parallel()
 
 	receivedHost := make(chan string, 1)
@@ -651,7 +848,7 @@ func TestHandler_URLRewriteHostnamePreservedByDirector(t *testing.T) {
 
 	host := <-receivedHost
 	assert.Equal(t, "rewritten.example.com", host,
-		"Director should preserve the rewritten hostname, not overwrite it with the backend host")
+		"the proxy rewrite should preserve the rewritten hostname, not overwrite it with the backend host")
 }
 
 func TestHandler_AllZeroWeightBackendsReturns500(t *testing.T) {

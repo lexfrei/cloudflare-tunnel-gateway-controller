@@ -2997,5 +2997,5 @@ func roundTripWSEcho(t *testing.T, proxySrv *httptest.Server, payload string) {
 	require.NoError(t, err, "reading the echoed frame back must succeed")
 	assert.Equal(t, payload, string(buf[:n]),
 		"echo round-trip through proxy must preserve payload verbatim — "+
-			"any difference proves the Director / transport corrupted the upgrade")
+			"any difference proves the rewrite / transport corrupted the upgrade")
 }

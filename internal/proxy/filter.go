@@ -62,7 +62,7 @@ const maxMirrorBodySize = 1 << 20 // 1 MiB
 type matchedPrefixKey struct{}
 
 // hostRewrittenHeader is an internal header set by URL rewrite filters
-// to signal the Director not to overwrite the Host header.
+// to signal the rewrite not to overwrite the Host header.
 // It is removed before the request is sent to the backend.
 const hostRewrittenHeader = "X-Proxy-Host-Rewritten"
 
@@ -276,7 +276,7 @@ func NewURLRewriter(config *URLRewriteConfig) Filter {
 func (f *urlRewriter) ProcessRequest(req *http.Request) *http.Response {
 	if f.config.Hostname != nil {
 		req.Host = *f.config.Hostname
-		// Mark host as rewritten so the Director does not overwrite it.
+		// Mark host as rewritten so the rewrite does not overwrite it.
 		req.Header.Set(hostRewrittenHeader, "true")
 	}
 

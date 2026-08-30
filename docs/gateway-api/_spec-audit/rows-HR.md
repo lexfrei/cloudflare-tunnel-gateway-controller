@@ -5,7 +5,7 @@ Audited against vendored `sigs.k8s.io/gateway-api v1.6.1` (originally at v1.5.1;
 | ID | Keyword | Class | Status | Evidence | Notes |
 | --- | --- | --- | --- | --- | --- |
 | HR-01 | MUST | CTRL | MET | internal/proxy/router.go:677 extractHost | extractHost strips the port suffix before host match; port in Host header never participates. |
-| HR-02 | MUST | CTRL | MET | internal/proxy/handler.go:614-630 Director | Director preserves req.Host (restores X-Original-Host); no header mutation unless a URLRewrite/HeaderModifier filter is configured. |
+| HR-02 | MUST | CTRL | MET | internal/proxy/handler.go createReverseProxy Rewrite | The Rewrite func preserves req.Host (restores X-Original-Host); no header mutation unless a URLRewrite/HeaderModifier filter is configured. |
 | HR-03 | MUST | CTRL | MET | internal/controller/route_status.go (hostname inheritance) + docs/gateway-api/limitations.md:97 | Listener/Route hostname intersection enforced by routebinding validator; non-intersecting route hostnames are not bound/served. |
 | HR-04 | MUST | CRD | GAP | vendor httproute_types.go:125 (XValidation is `<gateway:experimental>`) | Rule-name uniqueness CEL rule is experimental-channel only; the shipped Standard CRD does not enforce it and neither does the controller. |
 | HR-05 | MUST | CTRL | MET | internal/proxy/router.go:510 computePriority + :22-30 priority consts | Tiered precedence: path-type > path-length > method > headers > queries, each tier dominating lower tiers; ties continue to next criterion. |
