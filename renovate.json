@@ -80,7 +80,7 @@
       "automerge": false,
       "commitMessageSuffix": " - moves the actual pin, review by hand (FIXME #610)",
       "prBodyNotes": [
-        ":warning: **This changes the vendored code.** This module is the target of the `replace github.com/quic-go/quic-go => ...` directive in `go.mod` - see the `FIXME(#609)`/`FIXME(#610)` comments there. Unlike a bump of the `require` line above that replace, this one takes effect, and can silently undo a deliberate pin chosen to match what cloudflared itself requires. Verify against those comments before merging."
+        ":warning: **This changes the vendored code.** This module is the target of the `replace github.com/quic-go/quic-go => ...` directive in `go.mod` - see the `FIXME(#610)` comment there. Unlike a bump of the `require` line above that replace, this one takes effect, and can silently undo a deliberate pin chosen to match what cloudflared itself requires. Verify against that comment before merging."
       ]
     },
     {
