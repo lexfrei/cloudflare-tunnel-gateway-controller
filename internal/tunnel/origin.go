@@ -67,7 +67,7 @@ func (p *GatewayOriginProxy) ProxyHTTP(
 		req = tracedReq.Clone(tracedReq.Context())
 		req.Header.Set("Connection", "Upgrade")
 		req.Header.Set("Upgrade", "websocket")
-		req.Header.Set("Sec-Websocket-Version", "13")
+		req.Header.Set("Sec-WebSocket-Version", "13")
 		req.ContentLength = 0
 		req.Body = nil
 

@@ -7,7 +7,6 @@ import (
 	"github.com/cockroachdb/errors"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -103,8 +102,8 @@ func ensureProxyAuthSecret(
 	}
 
 	secret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace},
-		Data:       map[string][]byte{dataKey: []byte(token)},
+		Name: key.Name, Namespace: key.Namespace,
+		Data: map[string][]byte{dataKey: []byte(token)},
 	}
 
 	if err := c.Create(ctx, secret); err != nil {

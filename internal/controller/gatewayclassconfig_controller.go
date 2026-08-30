@@ -252,7 +252,7 @@ func (r *GatewayClassConfigReconciler) secretToConfigs(
 
 		if SecretMatchesConfig(secret, cfg) {
 			requests = append(requests, reconcile.Request{
-				NamespacedName: types.NamespacedName{Name: cfg.Name},
+				Name: cfg.Name,
 			})
 		}
 	}

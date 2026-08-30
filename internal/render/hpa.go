@@ -3,7 +3,6 @@ package render
 import (
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	"k8s.io/apimachinery/pkg/api/resource"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // Autoscaler renders the per-Gateway HorizontalPodAutoscaler when
@@ -32,12 +31,10 @@ func Autoscaler(input *Input) *autoscalingv2.HorizontalPodAutoscaler {
 	// hot-loop), the apiserver does NOT default HPA Behavior, so omitting it
 	// causes no drift — the convergence envtest's no-op re-apply confirms this.
 	return &autoscalingv2.HorizontalPodAutoscaler{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:        DeploymentName(input.Gateway),
-			Namespace:   input.Gateway.Namespace,
-			Labels:      resourceLabels(input.Gateway),
-			Annotations: resourceAnnotations(input.Gateway),
-		},
+		Name:        DeploymentName(input.Gateway),
+		Namespace:   input.Gateway.Namespace,
+		Labels:      resourceLabels(input.Gateway),
+		Annotations: resourceAnnotations(input.Gateway),
 		Spec: autoscalingv2.HorizontalPodAutoscalerSpec{
 			ScaleTargetRef: autoscalingv2.CrossVersionObjectReference{
 				APIVersion: "apps/v1",

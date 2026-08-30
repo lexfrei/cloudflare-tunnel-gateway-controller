@@ -1112,7 +1112,7 @@ func (r *ListenerSetReconciler) secretToListenerSets(
 		}
 
 		requests = append(requests, reconcile.Request{
-			NamespacedName: types.NamespacedName{Name: listenerSet.Name, Namespace: listenerSet.Namespace},
+			Name: listenerSet.Name, Namespace: listenerSet.Namespace,
 		})
 	}
 
@@ -1151,7 +1151,7 @@ func (r *ListenerSetReconciler) referenceGrantToListenerSets(
 		}
 
 		requests = append(requests, reconcile.Request{
-			NamespacedName: types.NamespacedName{Name: listenerSet.Name, Namespace: listenerSet.Namespace},
+			Name: listenerSet.Name, Namespace: listenerSet.Namespace,
 		})
 	}
 
@@ -1239,10 +1239,8 @@ func (r *ListenerSetReconciler) gatewayToListenerSets(
 		ls := &sets.Items[i]
 		if listenerSetTargetsGateway(ls, gateway) {
 			requests = append(requests, reconcile.Request{
-				NamespacedName: types.NamespacedName{
-					Name:      ls.Name,
-					Namespace: ls.Namespace,
-				},
+				Name:      ls.Name,
+				Namespace: ls.Namespace,
 			})
 		}
 	}

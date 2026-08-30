@@ -229,8 +229,8 @@ func (r *GatewayInfraReconciler) ensureGeneratedAuthSecret(
 	}
 
 	secret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: gateway.Namespace},
-		Data:       map[string][]byte{generatedAuthTokenKey: []byte(token)},
+		Name: name, Namespace: gateway.Namespace,
+		Data: map[string][]byte{generatedAuthTokenKey: []byte(token)},
 	}
 
 	if err := controllerutil.SetControllerReference(gateway, secret, r.Scheme); err != nil {
@@ -449,7 +449,7 @@ func (r *GatewayInfraReconciler) applyDeployment(
 	desired := render.ProxyDeployment(input)
 
 	existing := &appsv1.Deployment{
-		ObjectMeta: metav1.ObjectMeta{Name: desired.Name, Namespace: desired.Namespace},
+		Name: desired.Name, Namespace: desired.Namespace,
 	}
 
 	operation, err := controllerutil.CreateOrUpdate(ctx, r.Client, existing, func() error {
@@ -489,7 +489,7 @@ func (r *GatewayInfraReconciler) applyService(
 	desired := render.ConfigService(input)
 
 	existing := &corev1.Service{
-		ObjectMeta: metav1.ObjectMeta{Name: desired.Name, Namespace: desired.Namespace},
+		Name: desired.Name, Namespace: desired.Namespace,
 	}
 
 	operation, err := controllerutil.CreateOrUpdate(ctx, r.Client, existing, func() error {
@@ -530,9 +530,7 @@ func (r *GatewayInfraReconciler) applyNetworkPolicy(
 	// name matches DeploymentName like every other rendered object.
 	if !r.RenderNetworkPolicy {
 		return controllerutil.OperationResultNone, r.deleteIfOwned(ctx, gateway, &networkingv1.NetworkPolicy{
-			ObjectMeta: metav1.ObjectMeta{
-				Name: render.NetworkPolicyName(gateway), Namespace: gateway.Namespace,
-			},
+			Name: render.NetworkPolicyName(gateway), Namespace: gateway.Namespace,
 		})
 	}
 
@@ -543,7 +541,7 @@ func (r *GatewayInfraReconciler) applyNetworkPolicy(
 	})
 
 	existing := &networkingv1.NetworkPolicy{
-		ObjectMeta: metav1.ObjectMeta{Name: desired.Name, Namespace: desired.Namespace},
+		Name: desired.Name, Namespace: desired.Namespace,
 	}
 
 	operation, err := controllerutil.CreateOrUpdate(ctx, r.Client, existing, func() error {
@@ -574,14 +572,12 @@ func (r *GatewayInfraReconciler) applyAutoscaler(
 	desired := render.Autoscaler(input)
 	if desired == nil {
 		return controllerutil.OperationResultNone, r.deleteIfOwned(ctx, gateway, &autoscalingv2.HorizontalPodAutoscaler{
-			ObjectMeta: metav1.ObjectMeta{
-				Name: render.DeploymentName(gateway), Namespace: gateway.Namespace,
-			},
+			Name: render.DeploymentName(gateway), Namespace: gateway.Namespace,
 		})
 	}
 
 	existing := &autoscalingv2.HorizontalPodAutoscaler{
-		ObjectMeta: metav1.ObjectMeta{Name: desired.Name, Namespace: desired.Namespace},
+		Name: desired.Name, Namespace: desired.Namespace,
 	}
 
 	operation, err := controllerutil.CreateOrUpdate(ctx, r.Client, existing, func() error {
@@ -620,18 +616,18 @@ func (r *GatewayInfraReconciler) applyAutoscaler(
 // never reachable by the foreign controller.
 func (r *GatewayInfraReconciler) cleanupRendered(ctx context.Context, gateway *gatewayv1.Gateway) error {
 	objects := []client.Object{
-		&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{
+		&appsv1.Deployment{
 			Name: render.DeploymentName(gateway), Namespace: gateway.Namespace,
-		}},
-		&corev1.Service{ObjectMeta: metav1.ObjectMeta{
+		},
+		&corev1.Service{
 			Name: render.ConfigServiceName(gateway), Namespace: gateway.Namespace,
-		}},
-		&autoscalingv2.HorizontalPodAutoscaler{ObjectMeta: metav1.ObjectMeta{
+		},
+		&autoscalingv2.HorizontalPodAutoscaler{
 			Name: render.DeploymentName(gateway), Namespace: gateway.Namespace,
-		}},
-		&networkingv1.NetworkPolicy{ObjectMeta: metav1.ObjectMeta{
+		},
+		&networkingv1.NetworkPolicy{
 			Name: render.NetworkPolicyName(gateway), Namespace: gateway.Namespace,
-		}},
+		},
 	}
 
 	for _, obj := range objects {
@@ -735,9 +731,9 @@ func (r *GatewayInfraReconciler) namespaceInfraGateways(
 			continue
 		}
 
-		requests = append(requests, reconcile.Request{NamespacedName: types.NamespacedName{
+		requests = append(requests, reconcile.Request{
 			Name: gateway.Name, Namespace: gateway.Namespace,
-		}})
+		})
 	}
 
 	return requests

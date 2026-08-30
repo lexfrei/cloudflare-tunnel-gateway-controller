@@ -353,6 +353,6 @@ func gatewayClassForGateway(_ context.Context, obj client.Object) []reconcile.Re
 	}
 
 	return []reconcile.Request{
-		{NamespacedName: types.NamespacedName{Name: string(gateway.Spec.GatewayClassName)}},
+		{Name: string(gateway.Spec.GatewayClassName)},
 	}
 }

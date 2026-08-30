@@ -209,7 +209,7 @@ func TestGatewayOriginProxy_ProxyHTTP_HTTPNoMatchStays404(t *testing.T) {
 // headers from the request before invoking OriginProxy.ProxyHTTP — the
 // upgrade is signalled instead via the third (`isWebsocket bool`) parameter.
 // Native cloudflared re-injects `Connection: Upgrade`, `Upgrade: websocket`,
-// and `Sec-Websocket-Version: 13` before forwarding to origin (see
+// and `Sec-WebSocket-Version: 13` before forwarding to origin (see
 // vendor/github.com/cloudflare/cloudflared/proxy/proxy.go:proxyHTTPRequest).
 //
 // Our L7 handler routes the request through the custom
@@ -231,7 +231,7 @@ func TestGatewayOriginProxy_ProxyHTTP_WebSocketReinjectsHeaders(t *testing.T) {
 	handler := http.HandlerFunc(func(_ http.ResponseWriter, req *http.Request) {
 		gotConnection = req.Header.Get("Connection")
 		gotUpgrade = req.Header.Get("Upgrade")
-		gotWSVersion = req.Header.Get("Sec-Websocket-Version")
+		gotWSVersion = req.Header.Get("Sec-WebSocket-Version")
 	})
 
 	proxy := tunnel.NewGatewayOriginProxy(handler, nil)
@@ -258,7 +258,7 @@ func TestGatewayOriginProxy_ProxyHTTP_WebSocketReinjectsHeaders(t *testing.T) {
 		"isWebsocket=true MUST re-inject Upgrade: websocket so the backend "+
 			"completes the RFC 6455 handshake instead of returning 400")
 	assert.Equal(t, "13", gotWSVersion,
-		"Sec-Websocket-Version: 13 is the only WebSocket version this proxy "+
+		"Sec-WebSocket-Version: 13 is the only WebSocket version this proxy "+
 			"path supports; native cloudflared pins it the same way")
 }
 

@@ -243,16 +243,14 @@ func ProxyDeployment(input *Input) *appsv1.Deployment {
 	podAnnotations[authTokenHashAnnotation] = hashToken(input.AuthToken)
 
 	return &appsv1.Deployment{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      DeploymentName(input.Gateway),
-			Namespace: input.Gateway.Namespace,
-			Labels:    resourceLabels(input.Gateway),
-			// A fresh resourceAnnotations call (not podAnnotations): the
-			// Deployment object's OWN annotations must NOT carry the pod
-			// template's rotation-hash entries, and resourceAnnotations returns
-			// an independent map so this cannot alias the mutated podAnnotations.
-			Annotations: resourceAnnotations(input.Gateway),
-		},
+		Name:      DeploymentName(input.Gateway),
+		Namespace: input.Gateway.Namespace,
+		Labels:    resourceLabels(input.Gateway),
+		// A fresh resourceAnnotations call (not podAnnotations): the
+		// Deployment object's OWN annotations must NOT carry the pod
+		// template's rotation-hash entries, and resourceAnnotations returns
+		// an independent map so this cannot alias the mutated podAnnotations.
+		Annotations: resourceAnnotations(input.Gateway),
 		Spec: appsv1.DeploymentSpec{
 			Replicas: replicaCount(input.Config),
 			Selector: &metav1.LabelSelector{MatchLabels: selectorLabels(input.Gateway)},
@@ -358,10 +356,8 @@ func proxyEnv(input *Input) []corev1.EnvVar {
 			Name: "TUNNEL_TOKEN",
 			ValueFrom: &corev1.EnvVarSource{
 				SecretKeyRef: &corev1.SecretKeySelector{
-					LocalObjectReference: corev1.LocalObjectReference{
-						Name: input.Config.Spec.TunnelTokenSecretRef.Name,
-					},
-					Key: input.Config.Spec.TunnelTokenSecretRef.KeyOr(tunnelTokenKey),
+					Name: input.Config.Spec.TunnelTokenSecretRef.Name,
+					Key:  input.Config.Spec.TunnelTokenSecretRef.KeyOr(tunnelTokenKey),
 				},
 			},
 		},
@@ -379,8 +375,8 @@ func proxyEnv(input *Input) []corev1.EnvVar {
 		Name: "PROXY_AUTH_TOKEN",
 		ValueFrom: &corev1.EnvVarSource{
 			SecretKeyRef: &corev1.SecretKeySelector{
-				LocalObjectReference: corev1.LocalObjectReference{Name: authName},
-				Key:                  authKey,
+				Name: authName,
+				Key:  authKey,
 			},
 		},
 	})
@@ -451,12 +447,10 @@ var (
 
 func httpProbe(path string, spec probeSpec) *corev1.Probe {
 	return &corev1.Probe{
-		ProbeHandler: corev1.ProbeHandler{
-			HTTPGet: &corev1.HTTPGetAction{
-				Path:   path,
-				Port:   intstr.FromString(configPortName),
-				Scheme: corev1.URISchemeHTTP,
-			},
+		HTTPGet: &corev1.HTTPGetAction{
+			Path:   path,
+			Port:   intstr.FromString(configPortName),
+			Scheme: corev1.URISchemeHTTP,
 		},
 		InitialDelaySeconds: spec.initialDelay,
 		PeriodSeconds:       spec.period,
@@ -473,12 +467,10 @@ func httpProbe(path string, spec probeSpec) *corev1.Probe {
 // not-yet-ready pods — their readiness depends on that very config.
 func ConfigService(input *Input) *corev1.Service {
 	return &corev1.Service{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:        ConfigServiceName(input.Gateway),
-			Namespace:   input.Gateway.Namespace,
-			Labels:      resourceLabels(input.Gateway),
-			Annotations: resourceAnnotations(input.Gateway),
-		},
+		Name:        ConfigServiceName(input.Gateway),
+		Namespace:   input.Gateway.Namespace,
+		Labels:      resourceLabels(input.Gateway),
+		Annotations: resourceAnnotations(input.Gateway),
 		Spec: corev1.ServiceSpec{
 			Type:                     corev1.ServiceTypeClusterIP,
 			ClusterIP:                corev1.ClusterIPNone,
@@ -519,12 +511,10 @@ func ProxyNetworkPolicy(input NetworkPolicyInput) *networkingv1.NetworkPolicy {
 	}
 
 	return &networkingv1.NetworkPolicy{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:        NetworkPolicyName(input.Gateway),
-			Namespace:   input.Gateway.Namespace,
-			Labels:      resourceLabels(input.Gateway),
-			Annotations: resourceAnnotations(input.Gateway),
-		},
+		Name:        NetworkPolicyName(input.Gateway),
+		Namespace:   input.Gateway.Namespace,
+		Labels:      resourceLabels(input.Gateway),
+		Annotations: resourceAnnotations(input.Gateway),
 		Spec: networkingv1.NetworkPolicySpec{
 			PodSelector: metav1.LabelSelector{MatchLabels: selectorLabels(input.Gateway)},
 			PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeIngress},
