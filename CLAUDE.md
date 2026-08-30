@@ -367,7 +367,7 @@ Before writing any documentation:
 
 ## Build environment
 
-- **Go version**: tracked in `go.mod` (currently Go 1.26.x). Newer builtins like `new(expr)` are used freely — there is no fallback to `ptr.To` helpers.
+- **Go version**: tracked in `go.mod` (currently Go 1.27.x). Newer builtins like `new(expr)` are used freely — there is no fallback to `ptr.To` helpers.
 - **gopls quirk**: `gopls` versions older than the project's Go release sometimes flag `new(expr)` as `requires go1.26`. The real compiler accepts it; ignore that specific gopls noise.
 
 ## Design principles
