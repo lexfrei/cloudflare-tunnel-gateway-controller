@@ -180,4 +180,8 @@
          <loc>https://cf.k8s.lex.la/dev/upgrading/v3-to-v3.1/</loc>
          <lastmod>2026-08-31</lastmod>
     </url>
+    <url>
+         <loc>https://cf.k8s.lex.la/dev/upgrading/v3.4-to-v3.5/</loc>
+         <lastmod>2026-08-31</lastmod>
+    </url>
 </urlset>
