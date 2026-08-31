@@ -53,6 +53,19 @@ spec:
   accountId: "0123456789abcdef0123456789abcdef"
 ```
 
+### `spec.allowSharedTunnels` (optional)
+
+Permits a Gateway with a dedicated data plane to serve a Cloudflare Tunnel that another namespace's Gateway — or this GatewayClass itself — already serves. Defaults to `false`.
+
+A connector token proves nothing about the tunnel it names: it is base64-encoded JSON, and any tenant who can create a `GatewayConfig` can write another party's tunnel UUID into it. With this off, such a Gateway is refused (`Accepted=False`, reason `InvalidParameters`), none of its routes are programmed, and its data plane is not rendered at all — see the [Per-Gateway Isolation guide](../guides/per-gateway-isolation.md).
+
+Turn it on only where every party on a shared tunnel is trusted to see the others' routes: a single-tenant cluster, or a migration from the shared plane to dedicated ones. The field lives on the cluster-scoped GatewayClassConfig, not on the namespaced `GatewayConfig`, so a tenant cannot grant it to themselves.
+
+```yaml
+spec:
+  allowSharedTunnels: true
+```
+
 ### `spec.cloudflareCredentialsSecretRef` (required)
 
 Reference to a Kubernetes Secret containing the Cloudflare API token.

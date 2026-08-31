@@ -71,7 +71,7 @@ A Gateway without `infrastructure.parametersRef` keeps the shared data plane, un
 | `resources` | no | Proxy container resources; chart-parity defaults when unset. |
 | `image` | no | Proxy image override; defaults to the release's proxy image. |
 
-All Secret references are namespace-local by construction — a Gateway cannot point at another tenant's credentials.
+All Secret references are namespace-local by construction, so a Gateway cannot point at another tenant's credentials. That is narrower than it sounds: a tenant does not need another tenant's Secret to reach their tunnel, because the tunnel identity is parsed from the connector token and a token is just base64 JSON. Writing someone else's tunnel UUID into your own token is the same claim without touching their Secret, which is why the controller arbitrates tunnel ownership separately (see below).
 
 `Gateway.spec.infrastructure.labels` and `.annotations` propagate to the rendered resources and the pod template; changing them rolls the pods.
 
@@ -89,11 +89,41 @@ The rendered `autoscaling/v2` HPA scales the proxy Deployment on `cftunnel_proxy
 
 Do not pair a VerticalPodAutoscaler in apply mode with these Deployments: applying VPA recommendations restarts pods, which drops tunnel connectors. Recommendation mode is fine.
 
-## Sharing a tunnel (supported, but not isolation)
+## Sharing a tunnel
 
-If a per-Gateway token points at the SAME tunnel as the shared plane (or another Gateway), the controller merges their ingress documents into one write and pushes the UNION of that tunnel's routes to every data plane on it — Cloudflare load-balances a tunnel's requests across all its connectors, so every connector must know every route. This keeps a shared-tunnel setup working (useful for migrations), but the isolation properties only hold for distinct tunnels.
+A Cloudflare Tunnel belongs to the Gateway already serving it, and the GatewayClass tunnel belongs to the operator. A Gateway whose connector token names a tunnel that another namespace's Gateway — or the GatewayClass itself — already serves is refused: it reports `Accepted=False` with reason `InvalidParameters`, emits a `TunnelClaimRejected` Warning Event, none of its routes are programmed anywhere, and **its data plane is not rendered at all**. Its routes say so too, so the tenant can see the cause without asking the operator.
 
-When two DEDICATED Gateways in different namespaces point at the same tunnel — the case where each tenant believes it has an isolated plane — every affected route now carries a `cf.k8s.lex.la/TunnelShared=True` condition and a mirrored `TunnelShared` Warning Event naming the other Gateways, so the collapsed isolation is visible in route status rather than only in a controller log line. The route stays `Accepted` (sharing is supported, just not isolation). A dedicated Gateway sharing the CLASS tunnel — the documented migration path — is not flagged.
+The plane is removed rather than merely left unconfigured. That matters when both parties hold the SAME token — an operator handing one token to two Gateways — because both connectors then register and Cloudflare load-balances across them, so a configless survivor would answer a share of the incumbent's requests with 404s.
+
+A forged claim is a different story, and the difference is worth knowing: connector registration authenticates on the account tag and the tunnel secret inside the token, not on the tunnel UUID. A tenant who writes a neighbour's UUID into a token they minted themselves cannot connect to that tunnel at all, and never serves a byte of its traffic. What the claim did buy them, before this rule, was the controller pushing that tunnel's merged configuration — hostnames, backends, and any backend-mTLS client keys — straight to their own proxy pods over the config API, which needs no working connector. That disclosure is what the refusal closes.
+
+Possession, not age, decides who holds a contested tunnel: a Gateway already advertising that tunnel in its status addresses keeps it against any newcomer, however old the newcomer is. Otherwise a tenant whose Gateway happens to predate the victim's could retarget its own token and evict the legitimate holder. Age (then UID) decides only between claims with equal standing, such as two first-time claims.
+
+The refusal exists because a connector token proves nothing. It is base64-encoded JSON, and any tenant who can create a `GatewayConfig` can write any tunnel UUID into it. Tunnel UUIDs are not secret either: the controller publishes them in Gateway status as `<id>.cfargotunnel.com` so external-dns can consume them. Without arbitration, naming a neighbour's tunnel is enough to join their partition — and because Cloudflare load-balances a tunnel's requests across every connector, the controller then merges both parties' routes into one ingress document and pushes the union to both parties' proxies. The claimant receives the incumbent's hostnames, backend services, filter bodies, and any backend-mTLS client certificates their routes carry.
+
+Two Gateways in the SAME namespace may share a tunnel: that is a tenant sharing with itself, and no boundary is crossed.
+
+If every party on a tunnel is trusted to see the others' routes — a single-tenant cluster, or a migration from the shared plane to dedicated ones — an operator can set `allowSharedTunnels: true` on the cluster-scoped `GatewayClassConfig` (chart value `gatewayClassConfig.allowSharedTunnels`). That restores the merge behaviour for the whole class. The field is deliberately not on `GatewayConfig`: a tenant must not be able to grant it to themselves.
+
+When two DEDICATED Gateways end up on one tunnel, every affected route carries a `cf.k8s.lex.la/TunnelShared=True` condition and a mirrored `TunnelShared` Warning Event naming the other Gateways, so the collapsed isolation stays visible rather than silent. That covers both ways it can happen — the operator enabling `allowSharedTunnels`, and two Gateways in one namespace, which needs no opt-in. The condition's reason reads `TunnelSharedAcrossNamespaces` in the same-namespace case too, which is inaccurate; tracked in issue #680.
+
+A dedicated Gateway sharing the CLASS tunnel is not flagged: the collision detector counts dedicated partitions only, and the shared plane is not one. Watch the controller log for that case.
+
+### What this does not settle
+
+Ownership here is first-claim-wins, and the claim is still unproven. The controller reads the tunnel UUID out of the connector token and never asks Cloudflare whether the claimant can actually use that tunnel. So a tenant who can create a Secret, a `GatewayConfig` and a Gateway in their own namespace can name any UUID — including one they have no access to — and become its holder, with a token that will never connect.
+
+The practical consequence is a denial of service, not a disclosure: the rightful owner of that tunnel is then refused, permanently, and no amount of waiting fixes it. The rule protects a tunnel that is already being served; it cannot tell a legitimate first claim from a squatted one.
+
+That denial of service is not confined to this cluster. Arbitration can only contest a tunnel some Gateway represents, so a UUID naming any OTHER tunnel in the same Cloudflare account — another cluster's, another product's, a bare `cloudflared` — is uncontested, and a `GatewayConfig` without its own `cloudflareCredentialsSecretRef` writes with the credentials resolved from the GatewayClass. The controller then overwrites that tunnel's ingress document with the claiming tenant's routes, using the operator's API token, and the outage lands on a service that has nothing to do with this cluster. The account is the blast radius, not the cluster; scope the API token to the tunnels this controller should manage, and give tenants who need isolation their own account rather than their own tunnel.
+
+A claim that has not yet advertised anything is not defended while its configuration is unreadable. An established holder survives a token rotation because its address carries the claim, but a Gateway still bootstrapping — no address written yet — drops out of the arbitration entirely if its `GatewayConfig`, its token Secret, or the class credentials Secret it falls back to cannot be read at that moment, and a competing claim on the same tunnel is then accepted. The alternative, refusing to arbitrate at all on any unreadable claim, would let any tenant freeze the rule cluster-wide by deleting their own Secret.
+
+Removing a refused Gateway's data plane relies on the controller ownerReference it stamped on the proxy Deployment: the cleanup deliberately leaves alone any object whose reference has been stripped, so it never deletes something another controller now owns. A tenant with write access in their own namespace can therefore strip that reference and keep the pod, and so the connector, running. It gets no route config, so it serves nothing of its own — but on a SHARED token it stays a registered connector on the contested tunnel.
+
+Possession is read from `Gateway.status.addresses`, so anyone able to write `gateways/status` in their own namespace can forge it and evict a real holder immediately — possession beats age, so that is faster than the squat above. The Gateway API CRDs carry no RBAC aggregation labels, so the built-in `edit` and `admin` roles do not grant it; if you grant status write to tenants, this rule does not hold for them.
+
+Watch for it in the `TunnelClaimRejected` Warning Events: a Gateway you believe owns a tunnel reporting `Accepted=False` against a claimant you do not recognise is this case. The remedy is operator-side: delete the squatting Gateway, or remove its `spec.infrastructure.parametersRef`. The rightful owner's status recovers on its next reconcile, within about half a minute. Its ROUTES are programmed on the next full route sync, which any route change in the cluster triggers — so if nothing else is moving, expect a gap between the Gateway reporting `Accepted=True` and its traffic actually flowing. Deleting only the `GatewayConfig` does NOT release the claim — a Gateway that already advertises a tunnel keeps holding it even when its configuration no longer resolves, which is what stops a token rotation from surrendering a tunnel. Verifying claims against the Cloudflare API would close it properly; that is tracked in issue #679.
 
 ## Securing a tenant data plane
 

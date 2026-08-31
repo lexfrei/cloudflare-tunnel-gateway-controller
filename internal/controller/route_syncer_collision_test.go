@@ -56,7 +56,7 @@ func TestTunnelSharedDiagnostics_InfraCollisionSurfacesPerRoute(t *testing.T) {
 
 // TestTunnelSharedDiagnostics_SharedPlusInfraIsBenign pins the risky-vs-benign
 // distinction: a dedicated Gateway sharing the CLASS tunnel (shared+infra) is
-// the documented migration path, not a collision, so it surfaces nothing.
+// a collapse the operator opted into, not a collision, so it surfaces nothing.
 func TestTunnelSharedDiagnostics_SharedPlusInfraIsBenign(t *testing.T) {
 	t.Parallel()
 
@@ -73,6 +73,6 @@ func TestTunnelSharedDiagnostics_SharedPlusInfraIsBenign(t *testing.T) {
 	groups := buildTunnelGroups(&config.ResolvedConfig{TunnelID: collisionTunnel}, partitions)
 	collisions := sharedInfraTunnelCollisions(groups)
 
-	assert.Empty(t, collisions, "shared+infra on one tunnel is the migration path, not a collision")
+	assert.Empty(t, collisions, "shared+infra on one tunnel is an opted-in collapse, not a collision")
 	assert.Empty(t, tunnelSharedDiagnostics(collisions, partitions))
 }

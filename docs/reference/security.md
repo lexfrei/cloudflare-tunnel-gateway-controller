@@ -182,6 +182,9 @@ Tenant isolation is layered: admission-level scoping (per-tenant listeners, `all
 !!! warning "GatewayConfig is workload-creation-equivalent"
     Because the controller renders Deployments for opted-in Gateways and `GatewayConfig.spec.image` selects the container image, **granting a user `create` on `GatewayConfig` (plus a Gateway with `infrastructure.parametersRef`) is privilege-equivalent to granting `create` on Deployments in that namespace**: the controller becomes the deputy that runs the chosen image under the namespace's default ServiceAccount (the rendered pod disables the SA-token mount, since the proxy needs no API access). Treat RBAC on `gatewayconfigs` accordingly. A rendered data plane's config API is authenticated by default — the controller generates a per-Gateway bearer-token Secret when `authTokenSecretRef` is unset — and network-restricted by default — the controller renders a NetworkPolicy per data plane admitting the config API port only from the controller's namespace, not the tenant's (set `proxy.networkPolicy.monitoringNamespaceSelector` to also admit your monitoring namespace for scraping). See the [Per-Gateway Isolation guide](../guides/per-gateway-isolation.md).
 
+!!! warning "Writing `gateways/status` grants tunnel ownership"
+    A tunnel belongs to whichever Gateway already advertises it in `Gateway.status.addresses`, so **`update` on `gateways/status` lets its holder claim a tunnel another namespace is serving** and evict the real owner. The Gateway API CRDs carry no RBAC aggregation labels, so the built-in `edit` and `admin` roles do not grant this; if you grant status write to tenants, tunnel ownership no longer holds for them. See [Per-Gateway Isolation](../guides/per-gateway-isolation.md).
+
 ### Container Security
 
 The controller container follows security best practices:

@@ -5,6 +5,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/cockroachdb/errors"
@@ -15,6 +16,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/events"
 	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -30,6 +32,7 @@ import (
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/logging"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/render"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/routebinding"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/tunnelownership"
 )
 
 const (
@@ -123,6 +126,10 @@ type GatewayReconciler struct {
 	// ConfigResolver resolves configuration from GatewayClassConfig.
 	ConfigResolver *config.Resolver
 
+	// Recorder emits Warning Events for refusals the operator must not miss.
+	// Nil is a no-op (unit tests).
+	Recorder events.EventRecorder
+
 	// ProxyImage is the controller-level default proxy image for per-Gateway
 	// data planes (the chart's --proxy-image). Mirrors GatewayInfraReconciler's
 	// RenderDefaults.ProxyImage so the status path can detect the same
@@ -189,25 +196,11 @@ func (r *GatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 
 	resolvedConfig, perGatewayMode, err := r.resolveGatewayConfig(ctx, &gateway)
 	if err != nil {
-		logger.Error(err, "failed to resolve gateway configuration")
+		return r.handleResolveError(ctx, &gateway, err, "failed to resolve gateway configuration")
+	}
 
-		// The per-Gateway resolver classifies only deterministic spec problems
-		// as ErrInvalidParameters; anything else on an opted-in Gateway is a
-		// transient API failure that says nothing about the spec. Stamping
-		// InvalidParameters over it would misreport a healthy Gateway and
-		// clear its listener statuses on every cache hiccup — propagate for
-		// backoff instead and leave the last written status standing. The
-		// class chain (no parametersRef) keeps its historic
-		// stamp-on-any-error behavior.
-		if config.HasInfrastructureParametersRef(&gateway) && !errors.Is(err, config.ErrInvalidParameters) {
-			return ctrl.Result{}, err
-		}
-
-		if statusErr := r.setConfigErrorStatus(ctx, &gateway, err); statusErr != nil {
-			logger.Error(statusErr, "failed to update gateway status")
-		}
-
-		return ctrl.Result{RequeueAfter: configErrorRequeueDelay, Priority: new(priorityGateway)}, nil
+	if result, handled, err := r.arbitrateTunnelClaim(ctx, &gateway, perGatewayMode); handled {
+		return result, err
 	}
 
 	if err := r.updateStatus(ctx, &gateway, resolvedConfig, perGatewayMode); err != nil {
@@ -215,6 +208,254 @@ func (r *GatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	}
 
 	return ctrl.Result{}, nil
+}
+
+// arbitrateTunnelClaim settles what this Gateway's tunnel claim means for the
+// reconcile. handled reports that the outcome is decided here and the caller
+// must not go on to write an Accepted status: a Gateway refused by the
+// ownership rule is not programmed by the route syncer, so reporting it
+// Accepted would leave the operator with a healthy-looking Gateway whose routes
+// silently never work.
+func (r *GatewayReconciler) arbitrateTunnelClaim(
+	ctx context.Context,
+	gateway *gatewayv1.Gateway,
+	perGatewayMode bool,
+) (ctrl.Result, bool, error) {
+	rejection, err := r.tunnelRejection(ctx, gateway, perGatewayMode)
+
+	switch {
+	case err != nil:
+		// A deterministic problem with the GatewayClass is permanent, and
+		// retrying it forever would leave the Gateway with no condition at all
+		// — the operator would have only controller logs. Report it the way
+		// every other deterministic config error is reported. That writes no
+		// address (setConfigErrorStatus only preserves an existing one for a
+		// per-Gateway Gateway), so it surrenders no possession.
+		if errors.Is(err, config.ErrInvalidParameters) {
+			result, statusErr := r.handleResolveError(ctx, gateway, err,
+				"failed to read the GatewayClass tunnel policy for arbitration")
+
+			return result, true, statusErr
+		}
+
+		// Anything else is ambiguous — a missing GatewayClassConfig may be
+		// mid-apply. Falling through would write the Gateway's tunnel address,
+		// and an advertised address IS possession, so a claimant would be
+		// handed the holder's seat during a transient read failure and keep it
+		// afterwards. Nothing may advertise a tunnel whose ownership is
+		// unknown.
+		return ctrl.Result{}, true, err
+	case rejection != nil:
+		r.reportTunnelRejection(ctx, gateway, *rejection)
+
+		return ctrl.Result{RequeueAfter: configErrorRequeueDelay, Priority: new(priorityGateway)}, true, nil
+	}
+
+	return ctrl.Result{}, false, nil
+}
+
+// handleResolveError turns a failed configuration resolve into either a
+// retryable error or an InvalidParameters status, depending on whether the
+// failure says anything about the spec.
+func (r *GatewayReconciler) handleResolveError(
+	ctx context.Context,
+	gateway *gatewayv1.Gateway,
+	err error,
+	what string,
+) (ctrl.Result, error) {
+	logger := log.FromContext(ctx)
+	logger.Error(err, what)
+
+	// The per-Gateway resolver classifies only deterministic spec problems as
+	// ErrInvalidParameters; anything else on an opted-in Gateway is a transient
+	// API failure that says nothing about the spec. Stamping InvalidParameters
+	// over it would misreport a healthy Gateway and clear its listener statuses
+	// on every cache hiccup — propagate for backoff instead and leave the last
+	// written status standing. The class chain (no parametersRef) keeps its
+	// historic stamp-on-any-error behavior.
+	if config.HasInfrastructureParametersRef(gateway) && !errors.Is(err, config.ErrInvalidParameters) {
+		return ctrl.Result{}, err
+	}
+
+	if statusErr := r.setConfigErrorStatus(ctx, gateway, err); statusErr != nil {
+		logger.Error(statusErr, "failed to update gateway status")
+	}
+
+	return ctrl.Result{RequeueAfter: configErrorRequeueDelay, Priority: new(priorityGateway)}, nil
+}
+
+// errTunnelClaimRefused marks a Gateway refused by the tunnel-ownership rule,
+// letting the status writer say "refused" rather than "failed to resolve" —
+// the configuration resolved fine, the tunnel it named was not available.
+// Refusals are marked with config.ErrInvalidParameters as well, so existing
+// branches keyed on that keep matching.
+var errTunnelClaimRefused = errors.New("tunnel claim refused")
+
+// refusedConditionPrefix opens the Accepted=False message of a refused claim.
+// The dedup searches the stored condition for the rendered message, so prefix
+// and message together must stay inside maxConditionMessageLength — pinned by
+// TestTunnelRejectionMessageSurvivesConditionTruncation.
+const refusedConditionPrefix = "Refused: "
+
+// isTunnelRefusalReported reports whether this exact refusal already stands on
+// the Gateway's Accepted condition, so a repeating requeue does not re-log and
+// re-event a verdict nothing has changed about.
+func isTunnelRefusalReported(gateway *gatewayv1.Gateway, rejection tunnelownership.Rejection) bool {
+	for _, condition := range gateway.Status.Conditions {
+		if condition.Type != string(gatewayv1.GatewayConditionAccepted) {
+			continue
+		}
+
+		// Compare the whole rendered message, not just the tunnel ID: the same
+		// tunnel can be refused for different reasons with different remedies
+		// (a neighbour holds it, versus it being the class tunnel), and a
+		// verdict that changed is news the operator has not heard yet.
+		return condition.Status == metav1.ConditionFalse &&
+			strings.Contains(condition.Message, tunnelRejectionMessage(rejection))
+	}
+
+	return false
+}
+
+// eventReasonTunnelClaimRejected names the Warning Event raised when a
+// Gateway's connector token claims a tunnel it does not own.
+const eventReasonTunnelClaimRejected = "TunnelClaimRejected"
+
+// eventActionArbitrate labels the tunnel-ownership decision. Distinct from the
+// infra reconciler's render action: this layer decides, it does not render.
+const eventActionArbitrate = "ArbitrateTunnel"
+
+// reportTunnelRejection makes a refused claim impossible to miss: an Error log
+// for the operator's pipeline, a Warning Event on the Gateway, and
+// Accepted=False/InvalidParameters naming the contested tunnel. The Gateway is
+// not programmed either way — this is only how the operator finds out.
+func (r *GatewayReconciler) reportTunnelRejection(
+	ctx context.Context,
+	gateway *gatewayv1.Gateway,
+	rejection tunnelownership.Rejection,
+) {
+	logger := log.FromContext(ctx)
+
+	// The refusal requeues every configErrorRequeueDelay for as long as the
+	// claim stands, so logging and eventing on each pass would emit thousands
+	// of identical lines a day per refused Gateway, at a volume the refused
+	// tenant chooses. Report only when the verdict is new; the condition is
+	// what persists.
+	alreadyReported := isTunnelRefusalReported(gateway, rejection)
+
+	err := tunnelRefusalError(rejection)
+
+	if !alreadyReported {
+		logger.Error(err, "refusing a Gateway that claims a tunnel it does not own",
+			"gateway", gateway.Namespace+"/"+gateway.Name,
+			"tunnel", rejection.TunnelID,
+			"heldBy", rejection.HeldBy)
+
+		if r.Recorder != nil {
+			r.Recorder.Eventf(gateway, nil, corev1.EventTypeWarning,
+				eventReasonTunnelClaimRejected, eventActionArbitrate, "%s", err.Error())
+		}
+	}
+
+	if statusErr := r.setConfigErrorStatus(ctx, gateway, err); statusErr != nil {
+		logger.Error(statusErr, "failed to update gateway status")
+	}
+}
+
+// tunnelRefusalError builds the error a refused claim is reported through.
+//
+// Mark, not Wrap: the tenant reads this message, and wrapping would append the
+// internal chain after the actionable sentence, crowding out the part they can
+// act on. Marking leaves the message untouched.
+//
+// Marked with BOTH sentinels because Mark does not carry the reference's own
+// unwrap chain: marking only errTunnelClaimRefused would leave
+// errors.Is(err, config.ErrInvalidParameters) false, and a refusal routed
+// through handleResolveError would then take its transient branch and requeue
+// forever without ever writing a condition.
+//
+//nolint:wrapcheck // marking rather than wrapping is the point, per above
+func tunnelRefusalError(rejection tunnelownership.Rejection) error {
+	return errors.Mark(
+		errors.Mark(errors.New(tunnelRejectionMessage(rejection)), errTunnelClaimRefused),
+		config.ErrInvalidParameters,
+	)
+}
+
+// tunnelRejectionMessage renders a rejection for the Gateway's own status and
+// Event — surfaces the refused TENANT reads.
+//
+// It never names the Gateway holding the tunnel: that would tell the refused
+// tenant the namespace and name of a neighbour, which is the cross-namespace
+// disclosure this whole rule exists to prevent. The tenant gets what they can
+// act on (the tunnel their Gateway claims is not theirs); the operator gets
+// both sides from the controller log.
+//
+// It also never attributes the claim to the connector token. A claim has two
+// sources — the tunnel the token names, and the one already advertised in
+// status — and the second is what a Gateway migrating off the shared plane
+// carries while its token is still unreadable. Naming the token would then
+// accuse it of saying something it never said.
+func tunnelRejectionMessage(rejection tunnelownership.Rejection) string {
+	if rejection.IsClassTunnel {
+		return "this Gateway claims the GatewayClass tunnel " + rejection.TunnelID +
+			", which serves every Gateway without a dedicated data plane; " +
+			"give this Gateway its own Cloudflare Tunnel"
+	}
+
+	return "this Gateway claims tunnel " + rejection.TunnelID +
+		", which is already in use and not available to it; " +
+		"give this Gateway its own Cloudflare Tunnel"
+}
+
+// tunnelRejection reports whether this Gateway's claimed tunnel belongs to
+// someone else. It runs the same arbitration as the route syncer over the same
+// inputs, so status and programming cannot disagree about who won.
+//
+// Only opted-in Gateways can claim a tunnel; everything else serves the class
+// tunnel by definition and has nothing to arbitrate.
+func (r *GatewayReconciler) tunnelRejection(
+	ctx context.Context,
+	gateway *gatewayv1.Gateway,
+	perGatewayMode bool,
+) (*tunnelownership.Rejection, error) {
+	if !perGatewayMode {
+		return nil, nil //nolint:nilnil // no claim to arbitrate and no failure
+	}
+
+	// Reads the policy from THIS Gateway's class, while SyncAllRoutes reads it
+	// from the first managed class. Not a divergence today: resolveConfigForController
+	// hard-errors when managed classes carry different parametersRef, so either
+	// every managed class resolves the same GatewayClassConfig or route sync
+	// programs nothing at all. Whoever makes multi-class real has to reconcile
+	// these two readings first.
+	policy, err := r.ConfigResolver.ResolveTunnelPolicyForGatewayClass(ctx, string(gateway.Spec.GatewayClassName))
+	if err != nil {
+		return nil, errors.Wrap(err, "resolving tunnel policy for arbitration")
+	}
+
+	// Same escape hatch the route syncer reads. Both layers must consult it or
+	// an operator who enabled sharing would see Gateways stuck Accepted=False
+	// while their routes were programmed perfectly.
+	if policy.AllowSharedTunnels {
+		return nil, nil //nolint:nilnil // sharing permitted: nothing to arbitrate
+	}
+
+	classTunnel := canonicalTunnelID(policy.TunnelID)
+
+	claims, err := collectTunnelClaims(ctx, r.Client, r.ConfigResolver, r.ControllerName, classTunnel)
+	if err != nil {
+		return nil, errors.Wrap(err, "collecting tunnel claims")
+	}
+
+	rejections := tunnelownership.Arbitrate(classTunnel, claims)
+
+	rejection, ok := rejections[gateway.Namespace+"/"+gateway.Name]
+	if !ok {
+		return nil, nil //nolint:nilnil // not refused and no failure
+	}
+
+	return &rejection, nil
 }
 
 // resolveGatewayConfig resolves the Gateway's effective configuration: the
@@ -580,10 +821,27 @@ func (r *GatewayReconciler) setConfigErrorStatus(
 
 		priorStatus := freshGateway.Status.DeepCopy()
 		now := metav1.Now()
-		errMsg := truncateMessage("Failed to resolve Gateway configuration: " + configErr.Error())
 
-		// Clear addresses on config error (no valid tunnel to point to)
-		freshGateway.Status.Addresses = nil
+		prefix := "Failed to resolve Gateway configuration: "
+		if errors.Is(configErr, errTunnelClaimRefused) {
+			// The configuration resolved fine; the tunnel it named was refused.
+			prefix = refusedConditionPrefix
+		}
+
+		errMsg := truncateMessage(prefix + configErr.Error())
+
+		// Clear addresses on config error (no valid tunnel to point to).
+		//
+		// A Gateway with its own data plane is the exception: its address
+		// records the tunnel that plane is attached to, and a configuration
+		// read failing does not detach it. Clearing it would also surrender
+		// the Gateway's claim on that tunnel — tunnel ownership is decided by
+		// which Gateway advertises it — so a token rotation that briefly
+		// deletes the Secret would let another namespace take the tunnel over
+		// and lock the owner out for good.
+		if !config.HasInfrastructureParametersRef(&freshGateway) {
+			freshGateway.Status.Addresses = nil
+		}
 
 		_, _, clientCertErr := loadGatewayClientCertPEM(ctx, r.Client, &freshGateway, r.checkSecretReferenceGrant)
 

@@ -21,7 +21,7 @@ Expose in-cluster services through a Cloudflare Tunnel using standard Gateway AP
 - HTTPRoute CORS filter
 - Cross-namespace backend references gated by ReferenceGrant
 - Backend TLS (`BackendTLSPolicy`) and backend WebSocket via `appProtocol`
-- Multi-tenant isolation: per-namespace hostname-ownership enforcement (admission policy + controller), route-collision detection, and optional per-Gateway data planes (a dedicated proxy and tunnel per Gateway)
+- Multi-tenant isolation: per-namespace hostname-ownership enforcement (admission policy + controller), route-collision detection, and optional per-Gateway data planes (a dedicated proxy and tunnel per Gateway, where a Gateway claiming a tunnel another namespace already serves is refused)
 - Request-level Prometheus metrics from the proxy data plane (per-hostname rates, latency, in-flight gauge for autoscaling)
 - Leader election for high-availability deployments
 - Multi-arch images (amd64, arm64), signed with cosign
@@ -191,6 +191,8 @@ See the [Gateway API documentation](https://cf.k8s.lex.la/latest/gateway-api/) f
 The controller sets `status.addresses` on the Gateway with the tunnel CNAME (`TUNNEL_ID.cfargotunnel.com`). If you run [external-dns](https://github.com/kubernetes-sigs/external-dns) with the Gateway API source, it will automatically create DNS records for your HTTPRoute hostnames.
 
 All external-dns annotations (TTL, provider-specific settings, etc.) should be placed on HTTPRoute resources, not on the Gateway. See the [external-dns Gateway API documentation](https://kubernetes-sigs.github.io/external-dns/latest/docs/sources/gateway-api/) for details.
+
+A Gateway with its own data plane keeps that address while its configuration is broken, so external-dns does not withdraw the record on a configuration error. The address is what records which tunnel the plane holds, and clearing it would surrender that tunnel. Gateways on the shared plane clear it as before.
 
 ## FAQ
 

@@ -183,9 +183,24 @@ func partitionSyncRoute(name, gatewayName, hostname string) *gatewayv1.HTTPRoute
 	}
 }
 
-// newPartitionSyncSyncer builds the two-gateway world: shared-gw on the class
-// tunnel, infra-gw with a dedicated data plane on the token's tunnel.
+// newPartitionSyncSyncer builds the two-gateway world — shared-gw on the class
+// tunnel, infra-gw with a dedicated data plane on the token's tunnel — with a
+// class config that refuses shared tunnels, the shipped default.
 func newPartitionSyncSyncer(t *testing.T, api *recordingTunnelAPI, classTunnelID string, interceptors ...interceptor.Funcs) *RouteSyncer {
+	t.Helper()
+
+	return partitionSyncSyncer(t, api, classTunnelID, false, interceptors...)
+}
+
+// newSharingPartitionSyncSyncer is the same with sharing opted in, for the
+// tests that still need two partitions to merge onto one tunnel.
+func newSharingPartitionSyncSyncer(t *testing.T, api *recordingTunnelAPI, classTunnelID string, interceptors ...interceptor.Funcs) *RouteSyncer {
+	t.Helper()
+
+	return partitionSyncSyncer(t, api, classTunnelID, true, interceptors...)
+}
+
+func partitionSyncSyncer(t *testing.T, api *recordingTunnelAPI, classTunnelID string, allowShared bool, interceptors ...interceptor.Funcs) *RouteSyncer {
 	t.Helper()
 
 	scheme := runtime.NewScheme()
@@ -209,6 +224,7 @@ func newPartitionSyncSyncer(t *testing.T, api *recordingTunnelAPI, classTunnelID
 				CloudflareCredentialsSecretRef: v1alpha1.SecretReference{Name: "creds", Namespace: "default"},
 				AccountID:                      "test-account",
 				TunnelID:                       classTunnelID,
+				AllowSharedTunnels:             allowShared,
 			},
 		},
 		&corev1.Secret{
@@ -345,25 +361,55 @@ func TestSyncAllRoutes_DistinctTunnelWriteFailureIsolated(t *testing.T) {
 		"the healthy tunnel's route must stay unflagged when a sibling tunnel fails")
 }
 
-// TestSyncAllRoutes_SameTunnelPartitionsMerge pins the same-tunnel grouping:
-// when a dedicated Gateway's token points at the SAME tunnel as the class
-// config (e.g. e2e reusing the CI tunnel), both partitions merge into ONE
-// document write instead of last-writer-wins.
-func TestSyncAllRoutes_SameTunnelPartitionsMerge(t *testing.T) {
+// TestSyncAllRoutes_ClassTunnelClaimIsRejectedNotMerged pins the tunnel-
+// ownership rule at the sync layer. A dedicated Gateway whose token names the
+// CLASS tunnel used to merge into that tunnel's document, which handed the
+// dedicated plane every shared route (and their backend-mTLS keys, since the
+// union is pushed to the partition's own endpoints). The claim is now refused:
+// the class document carries only the shared routes, and the claimant
+// contributes nothing anywhere.
+func TestSyncAllRoutes_ClassTunnelClaimIsRejectedNotMerged(t *testing.T) {
 	t.Parallel()
 
 	api := newRecordingTunnelAPI(t)
 	syncer := newPartitionSyncSyncer(t, api, tenantTunnelUUID)
 
 	_, result, err := syncer.SyncAllRoutes(context.Background())
+	require.NoError(t, err, "a refused claim is a status outcome, not a sync error")
+	require.NotNil(t, result)
+
+	assert.Equal(t, 1, api.tunnelsWritten(), "only the class tunnel is written")
+
+	hosts := api.hostnamesFor(tenantTunnelUUID)
+	assert.Contains(t, hosts, "shared.example.com",
+		"the class tunnel keeps serving the routes that legitimately belong to it")
+	assert.NotContains(t, hosts, "tenant.example.com",
+		"the refused Gateway must not get its routes into the class tunnel's document")
+}
+
+// TestSyncAllRoutes_SharingOptInMergesBothPartitions pins the escape hatch that
+// keeps an existing shared-tunnel install working across the upgrade: with
+// AllowSharedTunnels the dedicated Gateway's claim on the class tunnel is
+// honoured instead of refused, and BOTH parties' hostnames reach the edge in the
+// one document that tunnel gets.
+func TestSyncAllRoutes_SharingOptInMergesBothPartitions(t *testing.T) {
+	t.Parallel()
+
+	api := newRecordingTunnelAPI(t)
+	syncer := newSharingPartitionSyncSyncer(t, api, tenantTunnelUUID)
+
+	_, result, err := syncer.SyncAllRoutes(context.Background())
 	require.NoError(t, err)
 	require.NotNil(t, result)
 
-	assert.Equal(t, 1, api.tunnelsWritten(), "same tunnel → one merged document")
+	assert.Equal(t, 1, api.tunnelsWritten(),
+		"both partitions name one tunnel, so exactly one document is written")
 
 	hosts := api.hostnamesFor(tenantTunnelUUID)
-	assert.Contains(t, hosts, "shared.example.com")
-	assert.Contains(t, hosts, "tenant.example.com")
+	assert.Contains(t, hosts, "shared.example.com",
+		"the class tunnel keeps serving its own routes")
+	assert.Contains(t, hosts, "tenant.example.com",
+		"the opted-in dedicated Gateway's routes must reach the tunnel it shares")
 }
 
 // TestSyncAllRoutes_TransientInfraResolveRequeues pins the A4 contract: when an
@@ -398,15 +444,14 @@ func TestSyncAllRoutes_TransientInfraResolveRequeues(t *testing.T) {
 		"a transient infra-resolve failure must requeue to re-resolve")
 }
 
-// TestSyncAllRoutes_SameTunnelMergeIsCanonicalFormInsensitive pins that the
-// same-tunnel merge keys on the CANONICAL tunnel UUID, not the raw string. The
-// shared plane carries the GatewayClassConfig's raw tunnelID while a per-Gateway
-// plane carries the UUID parsed from its connector token (always canonical
-// lowercase). If the class tunnelID is written in a different-but-equivalent
-// form (e.g. uppercase), the two must still group into ONE document — otherwise
-// an infra Gateway on the same physical tunnel would be mis-grouped as distinct
-// and the merge would silently break.
-func TestSyncAllRoutes_SameTunnelMergeIsCanonicalFormInsensitive(t *testing.T) {
+// TestSyncAllRoutes_ClassTunnelClaimRejectionIsCanonicalFormInsensitive pins that
+// the ownership check keys on the CANONICAL tunnel UUID, not the raw string.
+// The shared plane carries the GatewayClassConfig's raw tunnelID while a
+// per-Gateway plane carries the UUID parsed from its connector token (always
+// canonical lowercase). Spelling the class tunnelID in a different-but-equivalent
+// form must not make the two look like distinct tunnels: that would read as an
+// uncontested claim and let the dedicated plane onto the class tunnel after all.
+func TestSyncAllRoutes_ClassTunnelClaimRejectionIsCanonicalFormInsensitive(t *testing.T) {
 	t.Parallel()
 
 	api := newRecordingTunnelAPI(t)
@@ -417,26 +462,27 @@ func TestSyncAllRoutes_SameTunnelMergeIsCanonicalFormInsensitive(t *testing.T) {
 	require.NotNil(t, result)
 
 	assert.Equal(t, 1, api.tunnelsWritten(),
-		"a non-canonical class tunnelID must still merge with the canonical per-Gateway UUID")
+		"a non-canonical class tunnelID still names the same physical tunnel")
 
 	hosts := api.hostnamesFor(tenantTunnelUUID)
 	assert.Contains(t, hosts, "shared.example.com")
-	assert.Contains(t, hosts, "tenant.example.com")
+	assert.NotContains(t, hosts, "tenant.example.com",
+		"spelling the same UUID in another case must not evade the ownership check")
 }
 
-// TestSyncAllRoutes_SameTunnelMergedWriteFailureSurfaces pins the documented
-// shared-tunnel migration path's failure mode: the shared and a dedicated
-// Gateway merge onto ONE tunnel, so when that single tunnel's write fails there
-// is no healthy sibling to partially succeed and the failure must SURFACE as a
-// sync error — not be silently swallowed, which would leave both routes
-// reporting healthy while neither reached the edge. (The per-parent attribution
+// TestSyncAllRoutes_SameTunnelMergedWriteFailureSurfaces pins the failure mode
+// of the opted-in sharing path: with AllowSharedTunnels the shared and a
+// dedicated Gateway merge onto ONE tunnel, so when that single tunnel's write
+// fails there is no healthy sibling to partially succeed and the failure must
+// SURFACE as a sync error, not be silently swallowed, which would leave both
+// routes reporting healthy while neither reached the edge. (The per-parent attribution
 // when a FAILED tunnel coexists with a healthy one is covered by
 // TestSyncAllRoutes_DistinctTunnelWriteFailureIsolated.)
 func TestSyncAllRoutes_SameTunnelMergedWriteFailureSurfaces(t *testing.T) {
 	t.Parallel()
 
 	api := newRecordingTunnelAPI(t)
-	syncer := newPartitionSyncSyncer(t, api, tenantTunnelUUID)
+	syncer := newSharingPartitionSyncSyncer(t, api, tenantTunnelUUID)
 	api.failTunnel(tenantTunnelUUID) // the one tunnel both partitions merge into
 
 	_, _, err := syncer.SyncAllRoutes(context.Background())

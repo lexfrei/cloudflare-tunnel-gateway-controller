@@ -462,9 +462,10 @@ func proxyPushFailureDiagnostics(partition *routePartition) []proxy.RouteDiagnos
 }
 
 // tunnelSharedDiagnostics synthesizes a DiagnosticTunnelShared for the routes of
-// every infra Gateway that shares one Cloudflare Tunnel with another namespace's
-// Gateway (#488). Sharing a tunnel is supported but collapses per-Gateway
-// isolation, so the visibility is on the routes, not just a log line.
+// every infra Gateway that shares one Cloudflare Tunnel with another dedicated
+// Gateway (#488). Sharing collapses per-Gateway isolation, so the visibility is
+// on the routes, not just a log line. Reaching it across namespaces requires the
+// operator's allowSharedTunnels opt-in; the claim is otherwise refused.
 func tunnelSharedDiagnostics(collisions []tunnelCollision, partitions []routePartition) []proxy.RouteDiagnostic {
 	if len(collisions) == 0 {
 		return nil
@@ -862,15 +863,28 @@ func (s *RouteSyncer) SyncAllRoutes(ctx context.Context) (ctrl.Result, *SyncResu
 		return ctrl.Result{RequeueAfter: apiErrorRequeueDelay, Priority: new(priorityRoute)}, s.buildResultForError(ctx), err
 	}
 
+	// A connector token proves nothing about the tunnel it names, and tunnel
+	// IDs are published in Gateway status for external-dns. Drop any Gateway
+	// claiming a tunnel another namespace already serves BEFORE partitioning,
+	// so a fabricated claim can neither collect the incumbent's routes nor
+	// inject its own into the incumbent's document.
+	claims, claimErr := collectTunnelClaims(ctx, s.Client, s.ConfigResolver, s.ControllerName, resolvedConfig.TunnelID)
+	if claimErr != nil {
+		return ctrl.Result{RequeueAfter: apiErrorRequeueDelay, Priority: new(priorityRoute)}, s.buildResultForError(ctx), claimErr
+	}
+
+	applyTunnelOwnership(infra, resolvedConfig.TunnelID, resolvedConfig.AllowSharedTunnels, claims)
+
 	partitions := partitionRoutes(httpResult, grpcResult, infra)
 	groups := buildTunnelGroups(resolvedConfig, partitions)
 
 	// Two DISTINCT opted-in Gateways whose connector tokens parse to the SAME
 	// tunnel collapse their isolation: the edge load-balances the tunnel's
 	// requests across all connectors, so each tenant's proxy receives the
-	// union of both tenants' routes. Shared+infra on one tunnel is the
-	// documented migration path, but infra+infra is a silent cross-tenant
-	// exposure — warn loudly so the operator sees the misconfiguration.
+	// union of both tenants' routes. Shared+infra on one tunnel only happens
+	// where the operator set allowSharedTunnels, so it is a collapse they asked
+	// for; infra+infra is a silent cross-tenant exposure — warn loudly so the
+	// operator sees the misconfiguration.
 	collisions := sharedInfraTunnelCollisions(groups)
 	for _, collision := range collisions {
 		logger.Error("multiple dedicated Gateways share one tunnel; their routes are unioned across tenants — "+
@@ -1012,8 +1026,10 @@ func buildTunnelGroups(shared *config.ResolvedConfig, partitions []routePartitio
 		// Same tunnel ⇒ one document ⇒ one credential: the FIRST partition's
 		// resolved config wins for the whole group. When an infra Gateway
 		// shares the class tunnel, a GatewayConfig credential override is
-		// silently ignored for that merged write — benign (same tunnel ⇒ same
-		// account), and shared-tunnel use is the migration path, not isolation.
+		// silently ignored for that merged write — benign, since the same
+		// tunnel means the same account. A dedicated plane only reaches this
+		// grouping at all under allowSharedTunnels; the class tunnel is
+		// otherwise refused to it.
 		group, ok := byTunnel[resolved.TunnelID]
 		if !ok {
 			group = &tunnelGroup{resolved: resolved}
@@ -1047,9 +1063,11 @@ type tunnelCollision struct {
 }
 
 // sharedInfraTunnelCollisions reports tunnel groups holding two or more
-// DISTINCT dedicated (infra) Gateways. A shared+infra group is the documented
-// migration path and is NOT reported; only infra+infra — where two tenants
-// each believe they have an isolated plane — is a cross-tenant exposure.
+// DISTINCT dedicated (infra) Gateways. A shared+infra group is NOT reported: a
+// dedicated plane only lands on the class tunnel where the operator set
+// allowSharedTunnels, so the collapse is one they asked for. Only infra+infra —
+// where two tenants each believe they have an isolated plane — is a cross-tenant
+// exposure.
 func sharedInfraTunnelCollisions(groups []tunnelGroup) []tunnelCollision {
 	var collisions []tunnelCollision
 
@@ -1236,6 +1254,15 @@ func injectPartitionSyncErrors(
 // resolve, otherwise the sync error of the partition (own, or shared) serving
 // it, or nil when healthy.
 func gatewaySyncError(gatewayKey string, failedPartitions map[string]error, infra *infraGateways) error {
+	// A refused tunnel claim is checked before the generic broken case: both
+	// fail closed, but "your data plane is unavailable" would send the tenant
+	// hunting an outage instead of fixing the tunnel their Gateway named.
+	if rejection, ok := infra.tunnelRejection(gatewayKey); ok {
+		return errors.New("the Gateway claims tunnel " + rejection.TunnelID +
+			", which it does not own" + rejectionHolderSuffix(rejection) +
+			"; the route is not programmed (see the Gateway's Accepted condition)")
+	}
+
 	if infra.isBroken(gatewayKey) {
 		return errBrokenDataPlane
 	}

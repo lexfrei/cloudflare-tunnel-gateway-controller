@@ -17,6 +17,7 @@ The spec carries only the contract the controller needs for Cloudflare API calls
 | `tunnelID` | string | Yes | Cloudflare Tunnel UUID. Must match the pattern `^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$` |
 | `accountId` | string | No | Cloudflare Account ID. If unset, it is read from the `account-id` key in the credentials Secret; if that key is also absent, it is auto-detected from the Cloudflare API when the token has access to a single account. When set, it must be a 32-character lowercase hexadecimal string (validated by a CRD-level CEL rule) |
 | `cloudflareCredentialsSecretRef` | SecretReference | Yes | Reference to the Secret containing the Cloudflare API token |
+| `allowSharedTunnels` | bool | No | Permit a Gateway with a dedicated data plane to serve a Cloudflare Tunnel that another namespace's Gateway, or this GatewayClass itself, already serves. Defaults to `false`: a connector token proves nothing about the tunnel it names, so an unproven claim is refused with `Accepted=False`/`InvalidParameters` and its data plane is not rendered. Enable only where every party on a shared tunnel is trusted to see the others' routes |
 
 ### SecretReference
 

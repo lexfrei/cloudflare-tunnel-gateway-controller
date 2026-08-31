@@ -298,6 +298,7 @@ func Run(ctx context.Context, cfg *Config) error {
 		ConfigResolver: configResolver,
 		ProxyImage:     cfg.ProxyImage,
 		ViewStore:      viewStore,
+		Recorder:       mgr.GetEventRecorder("gateway-controller"),
 	}
 
 	if err := gatewayReconciler.SetupWithManager(mgr); err != nil {

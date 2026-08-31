@@ -12,7 +12,8 @@ import (
 // TestSharedInfraTunnelCollisions pins the cross-tenant-exposure detector: two
 // DISTINCT dedicated Gateways on one tunnel are flagged (their routes union
 // across tenants); a shared+infra group on one tunnel is the documented
-// migration path and is NOT flagged; distinct tunnels are never flagged.
+// permitted collapse, only reachable under allowSharedTunnels, and is NOT
+// flagged; distinct tunnels are never flagged.
 func TestSharedInfraTunnelCollisions(t *testing.T) {
 	t.Parallel()
 
@@ -34,7 +35,7 @@ func TestSharedInfraTunnelCollisions(t *testing.T) {
 		assert.Equal(t, []string{"ns/gw-a", "ns/gw-b"}, collisions[0].gateways)
 	})
 
-	t.Run("shared plus one infra Gateway is NOT flagged (migration path)", func(t *testing.T) {
+	t.Run("shared plus one infra Gateway is NOT flagged (operator opted in)", func(t *testing.T) {
 		t.Parallel()
 
 		groups := []tunnelGroup{{

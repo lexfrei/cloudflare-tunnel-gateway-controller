@@ -66,6 +66,26 @@ spec:
                 - message: accountID must be a 32-character lowercase hexadecimal
                     string (Cloudflare account ID format)
                   rule: self == '' || self.matches('^[a-f0-9]{32}$')
+              allowSharedTunnels:
+                description: |-
+                  AllowSharedTunnels permits a Gateway with a dedicated data plane to serve
+                  a Cloudflare Tunnel that another namespace's Gateway, or this
+                  GatewayClass itself, already serves.
+
+                  Off by default, because a connector token proves nothing about the tunnel
+                  it names: any tenant able to create a GatewayConfig can write another
+                  party's tunnel UUID into their own token, and tunnel UUIDs are published
+                  in Gateway status for external-dns. Sharing a tunnel merges both parties'
+                  routes into one ingress document and pushes the union to both parties'
+                  proxies, so an unproven claim is enough to collect a neighbour's routes.
+                  With this off, such a Gateway is refused with
+                  Accepted=False/InvalidParameters and none of its routes are programmed.
+
+                  Turn it on only where every party on a shared tunnel is trusted to see
+                  the others' routes — a single-tenant cluster, or a migration from the
+                  shared plane to dedicated ones. It lives here, on the cluster-scoped
+                  GatewayClassConfig, precisely so a tenant cannot grant it to themselves.
+                type: boolean
               cloudflareCredentialsSecretRef:
                 description: |-
                   CloudflareCredentialsSecretRef references a Secret containing Cloudflare API credentials.

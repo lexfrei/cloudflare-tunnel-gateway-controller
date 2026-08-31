@@ -6,10 +6,12 @@ import (
 	"strings"
 
 	"github.com/cockroachdb/errors"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/config"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/logging"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/tunnelownership"
 )
 
 // sharedPartitionKey identifies the chart-deployed shared data plane (one
@@ -49,6 +51,11 @@ type infraGateway struct {
 type infraGateways struct {
 	resolved map[string]*infraGateway
 	broken   map[string]bool
+	// rejected holds the Gateways refused by the tunnel-ownership rule,
+	// mapped to the reason the Gateway reconciler puts in status. Like
+	// broken they contribute no partition; unlike broken their config
+	// resolved fine — they just claimed a tunnel that is not theirs.
+	rejected map[string]tunnelownership.Rejection
 	// transient is the subset of broken whose resolve failure was retryable
 	// (an apiserver blip, not a deterministic config error). These fail closed
 	// like any broken Gateway, but their push cache must be RETAINED and the
@@ -61,6 +68,99 @@ type infraGateways struct {
 // Nil-safe (a nil view has no infra Gateways at all).
 func (g *infraGateways) isBroken(key string) bool {
 	return g != nil && g.broken[key]
+}
+
+// applyTunnelOwnership drops every Gateway whose token claims a tunnel it does
+// not own, recording why in rejected so the Gateway reconciler can say so in
+// status. A dropped Gateway leaves resolved entirely: it contributes no
+// partition, so it is neither sent another tenant's routes nor allowed to put
+// its own into another tenant's tunnel document.
+//
+// The claim set is built by collectTunnelClaims and shared with every other
+// layer that arbitrates: feeding the same function different inputs is how two
+// layers reach different verdicts, and this one deciding "no conflict" while
+// the status layer decides "refused" is the unsafe direction.
+func applyTunnelOwnership(
+	infra *infraGateways,
+	sharedTunnelID string,
+	allowSharedTunnels bool,
+	claims []tunnelownership.Claim,
+) {
+	// Not gated on resolved being non-empty: a Gateway whose token Secret is
+	// gone resolves to nothing yet still claims through its advertised
+	// address, and recording that refusal is what lets its routes say the
+	// tunnel was refused instead of the generic broken-data-plane sentence.
+	if infra == nil || len(claims) == 0 {
+		return
+	}
+
+	// The operator opted every party on a shared tunnel into seeing the
+	// others' routes. Nothing to arbitrate: the pre-existing merge behaviour
+	// is what they asked for.
+	if allowSharedTunnels {
+		return
+	}
+
+	rejections := tunnelownership.Arbitrate(sharedTunnelID, claims)
+	if len(rejections) == 0 {
+		return
+	}
+
+	if infra.rejected == nil {
+		infra.rejected = make(map[string]tunnelownership.Rejection, len(rejections))
+	}
+
+	if infra.broken == nil {
+		infra.broken = make(map[string]bool, len(rejections))
+	}
+
+	for key, rejection := range rejections {
+		infra.rejected[key] = rejection
+		delete(infra.resolved, key)
+
+		// Also mark it broken so every fail-closed path already keyed on that
+		// set applies unchanged — in particular partitionKeysFor, which would
+		// otherwise let the rejected Gateway's routes fall back to the SHARED
+		// partition and hand them to the plane this rule exists to protect.
+		// A rejection is a decision, not a blip: clear any transient mark so
+		// the push cache is not retained for a plane that will keep being
+		// refused, and so gatewaySyncError (which checks rejected first)
+		// cannot report a refused claim for what was really an apiserver
+		// hiccup.
+		infra.broken[key] = true
+		delete(infra.transient, key)
+	}
+}
+
+// tunnelRejection reports the refusal recorded for the Gateway key, if any.
+// Nil-safe.
+func (g *infraGateways) tunnelRejection(key string) (tunnelownership.Rejection, bool) {
+	if g == nil {
+		return tunnelownership.Rejection{}, false
+	}
+
+	rejection, ok := g.rejected[key]
+
+	return rejection, ok
+}
+
+// rejectionHolderSuffix qualifies a refusal for a TENANT-visible surface.
+//
+// It deliberately never names the holding Gateway. The refused tenant reads
+// their own Gateway and route status, so naming the holder would hand them the
+// namespace and name of a neighbour — the same cross-namespace disclosure this
+// rule exists to prevent, in miniature. The operator gets both sides in the
+// controller log, which tenants cannot read.
+//
+// The class tunnel is exempt: it is the operator's, its ID is already
+// published in every Gateway's status for external-dns, and saying so is what
+// makes the message actionable.
+func rejectionHolderSuffix(rejection tunnelownership.Rejection) string {
+	if rejection.IsClassTunnel {
+		return " (it is the GatewayClass tunnel)"
+	}
+
+	return " (it is already in use)"
 }
 
 // transientKeys returns the sorted Gateway keys whose resolve failure was
@@ -92,6 +192,41 @@ func (g *infraGateways) isResolved(key string) bool {
 	return ok
 }
 
+// managedInfraGateways lists every Gateway on a GatewayClass this controller
+// owns that has opted into a dedicated data plane.
+//
+// It exists so the partitioner and the claim collector cannot disagree on which
+// Gateways are in scope. A Gateway one of them sees and the other does not is
+// how the layers reach different verdicts about the same tunnel: arbitration
+// that never hears a claim cannot refuse it, and a partition built without it
+// serves its routes anyway.
+func managedInfraGateways(
+	ctx context.Context,
+	cli client.Client,
+	controllerName string,
+) ([]*gatewayv1.Gateway, error) {
+	classNames, err := managedClassNames(ctx, cli, controllerName)
+	if err != nil {
+		return nil, errors.Wrap(err, "listing managed gateway classes")
+	}
+
+	var gateways gatewayv1.GatewayList
+	if err := cli.List(ctx, &gateways); err != nil {
+		return nil, errors.Wrap(err, "listing gateways")
+	}
+
+	out := make([]*gatewayv1.Gateway, 0, len(gateways.Items))
+
+	for i := range gateways.Items {
+		gateway := &gateways.Items[i]
+		if classNames[string(gateway.Spec.GatewayClassName)] && config.HasInfrastructureParametersRef(gateway) {
+			out = append(out, gateway)
+		}
+	}
+
+	return out, nil
+}
+
 // resolveInfraGateways returns the per-sync view of every managed Gateway
 // opted into a dedicated data plane, keyed "namespace/name". A Gateway whose
 // parametersRef does not resolve lands in the broken set (not an error): its
@@ -99,14 +234,9 @@ func (g *infraGateways) isResolved(key string) bool {
 // fail closed — and the Gateway reconciler surfaces InvalidParameters on its
 // status.
 func (s *RouteSyncer) resolveInfraGateways(ctx context.Context) (*infraGateways, error) {
-	classNames, err := managedClassNames(ctx, s.Client, s.ControllerName)
+	gateways, err := managedInfraGateways(ctx, s.Client, s.ControllerName)
 	if err != nil {
-		return nil, errors.Wrap(err, "listing managed gateway classes")
-	}
-
-	var gateways gatewayv1.GatewayList
-	if err := s.List(ctx, &gateways); err != nil {
-		return nil, errors.Wrap(err, "listing gateways")
+		return nil, err
 	}
 
 	logger := logging.FromContext(ctx)
@@ -116,13 +246,7 @@ func (s *RouteSyncer) resolveInfraGateways(ctx context.Context) (*infraGateways,
 		transient: make(map[string]bool),
 	}
 
-	for i := range gateways.Items {
-		gateway := &gateways.Items[i]
-
-		if !classNames[string(gateway.Spec.GatewayClassName)] || !config.HasInfrastructureParametersRef(gateway) {
-			continue
-		}
-
+	for _, gateway := range gateways {
 		key := gateway.Namespace + "/" + gateway.Name
 
 		perGateway, resolveErr := s.ConfigResolver.ResolveForGateway(ctx, gateway)
@@ -151,7 +275,7 @@ func (s *RouteSyncer) resolveInfraGateways(ctx context.Context) (*infraGateways,
 		}
 
 		out.resolved[key] = &infraGateway{
-			gateway:    gateways.Items[i],
+			gateway:    *gateway,
 			perGateway: perGateway,
 		}
 	}

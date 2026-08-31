@@ -41,6 +41,11 @@
           "type": "string",
           "pattern": "^([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})?$",
           "description": "Cloudflare Tunnel ID (UUID format, required when gatewayClassConfig.create is true)"
+        },
+        "allowSharedTunnels": {
+          "type": "boolean",
+          "default": false,
+          "description": "Allow a Gateway with a dedicated data plane to claim a tunnel another namespace or the GatewayClass already serves"
         }
       }
     },

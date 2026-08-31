@@ -2,13 +2,17 @@ package controller
 
 import (
 	"testing"
+	"time"
 
+	"github.com/cockroachdb/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/config"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/tunnelownership"
 )
 
 func partRoute(name string) gatewayv1.HTTPRoute {
@@ -176,6 +180,110 @@ func TestPartitionRoutes_BrokenInfraGatewayFailsClosed(t *testing.T) {
 		"the multi-parent route keeps serving via its healthy shared parent only")
 }
 
+// TestApplyTunnelOwnership_RejectsCrossNamespaceClaim pins the config half of
+// the tunnel-ownership rule: a Gateway whose token names a tunnel another
+// namespace already serves gets no partition, so its plane is never sent the
+// incumbent's routes and its own routes never reach the incumbent's tunnel.
+//
+// The status half lives in the Gateway reconciler and runs the same arbitration
+// over the same claim set, which is what keeps the two from disagreeing about
+// who won.
+func TestApplyTunnelOwnership_RejectsCrossNamespaceClaim(t *testing.T) {
+	t.Parallel()
+
+	const contested = "22222222-2222-2222-2222-222222222222"
+
+	infra := &infraGateways{
+		resolved: map[string]*infraGateway{
+			"team-a/gw": {
+				gateway:    gatewayWithAge("team-a", "gw", 0),
+				perGateway: &config.PerGatewayConfig{ResolvedConfig: config.ResolvedConfig{TunnelID: contested}},
+			},
+			"team-b/gw": {
+				gateway:    gatewayWithAge("team-b", "gw", 1),
+				perGateway: &config.PerGatewayConfig{ResolvedConfig: config.ResolvedConfig{TunnelID: contested}},
+			},
+		},
+		broken: map[string]bool{},
+		// Pre-marked transient: the newcomer's config resolved, but a prior
+		// blip left the mark. The refusal must clear it.
+		transient: map[string]bool{"team-b/gw": true},
+	}
+
+	applyTunnelOwnership(infra, "11111111-1111-1111-1111-111111111111", false, claimsFrom(infra))
+
+	assert.Contains(t, infra.rejected, "team-b/gw",
+		"the newcomer must be rejected, not merged into the incumbent's tunnel")
+	assert.NotContains(t, infra.rejected, "team-a/gw",
+		"the incumbent keeps the tunnel it claimed first")
+	assert.NotContains(t, infra.resolved, "team-b/gw",
+		"a rejected Gateway must contribute no partition at all")
+	assert.NotContains(t, infra.transientKeys(), "team-b/gw",
+		"a refusal is a decision, not a blip: keeping the transient mark would retain "+
+			"the push cache for a plane that will keep being refused")
+
+	httpResult := &httpRouteResult{
+		accepted: []gatewayv1.HTTPRoute{partRoute("victim"), partRoute("attacker")},
+		bindings: map[string]routeBindingInfo{
+			"default/victim":   bindingOn("team-a/gw"),
+			"default/attacker": bindingOn("team-b/gw"),
+		},
+	}
+
+	partitions := partitionRoutes(httpResult, &grpcRouteResult{}, infra)
+
+	for _, partition := range partitions {
+		assert.NotContains(t, routeNames(partition.HTTPRoutes), "attacker",
+			"the rejected Gateway's route must be served nowhere (partition %q)", partition.Key)
+
+		if partition.Key == "team-a/gw" {
+			assert.ElementsMatch(t, []string{"victim"}, routeNames(partition.HTTPRoutes),
+				"the incumbent keeps serving its own routes and gains none of the newcomer's")
+		}
+	}
+}
+
+// TestApplyTunnelOwnership_ClassTunnelClaimIsRejected pins the shape that
+// matters most: the class tunnel serves every non-opted-in Gateway, so a
+// dedicated plane claiming it would receive the union of ALL shared routes.
+func TestApplyTunnelOwnership_ClassTunnelClaimIsRejected(t *testing.T) {
+	t.Parallel()
+
+	const classTunnel = "11111111-1111-1111-1111-111111111111"
+
+	infra := &infraGateways{
+		resolved: map[string]*infraGateway{
+			"team-a/gw": {
+				gateway:    gatewayWithAge("team-a", "gw", 0),
+				perGateway: &config.PerGatewayConfig{ResolvedConfig: config.ResolvedConfig{TunnelID: classTunnel}},
+			},
+		},
+		broken:    map[string]bool{},
+		transient: map[string]bool{},
+	}
+
+	applyTunnelOwnership(infra, classTunnel, false, claimsFrom(infra))
+
+	rejection, ok := infra.rejected["team-a/gw"]
+	assert.True(t, ok, "claiming the class tunnel must be rejected")
+	assert.True(t, rejection.IsClassTunnel,
+		"the rejection must identify the class-tunnel case so the status message can say so")
+	assert.NotContains(t, infra.resolved, "team-a/gw")
+}
+
+// gatewayWithAge builds a Gateway whose creation timestamp is ordered by
+// ageRank: lower is older, so rank 0 is the incumbent.
+func gatewayWithAge(namespace, name string, ageRank int) gatewayv1.Gateway {
+	return gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace:         namespace,
+			Name:              name,
+			UID:               types.UID(namespace + "/" + name),
+			CreationTimestamp: metav1.NewTime(time.Date(2026, time.January, 1, ageRank, 0, 0, 0, time.UTC)),
+		},
+	}
+}
+
 // TestPartitionRoutes_InfraOnlyRouteNeverLeaksToShared is the negative-space
 // pin of the isolation guarantee: a route accepted ONLY on a dedicated
 // Gateway must never appear in the shared partition (= the shared tunnel and
@@ -197,4 +305,175 @@ func TestPartitionRoutes_InfraOnlyRouteNeverLeaksToShared(t *testing.T) {
 			assert.Empty(t, partition.HTTPRoutes, "tenant route leaked into the shared data plane")
 		}
 	}
+}
+
+// TestGatewaySyncError_RejectedClaimIsNamedOnTheRoute pins the tenant-facing
+// half of a refused tunnel claim. Routes of a refused Gateway already fail
+// closed by inheriting the broken set, but the generic broken-data-plane
+// message sends the tenant looking for an outage that is not there. The route
+// must say the tunnel claim was refused, so the tenant can read their own
+// status and act instead of filing a ticket.
+func TestGatewaySyncError_RejectedClaimIsNamedOnTheRoute(t *testing.T) {
+	t.Parallel()
+
+	const contested = "22222222-2222-2222-2222-222222222222"
+
+	infra := &infraGateways{
+		resolved:  map[string]*infraGateway{},
+		broken:    map[string]bool{"team-b/gw": true},
+		transient: map[string]bool{},
+		rejected: map[string]tunnelownership.Rejection{
+			"team-b/gw": {TunnelID: contested, HeldBy: "team-a/gw"},
+		},
+	}
+
+	err := gatewaySyncError("team-b/gw", map[string]error{}, infra)
+
+	require.Error(t, err, "a refused Gateway's routes must still fail closed")
+	assert.Contains(t, err.Error(), contested,
+		"the route error must name the tunnel the Gateway's own token claimed")
+	assert.NotContains(t, err.Error(), "broken",
+		"the generic broken-data-plane wording would send the tenant hunting an outage")
+}
+
+// TestTenantVisibleRejectionHidesTheIncumbent pins the audience split for a
+// refused tunnel claim. The refused tenant reads their own Gateway and route
+// status, so naming the Gateway that holds the tunnel would hand them the
+// namespace and name of a neighbour they may know nothing about — the same
+// class of cross-namespace disclosure this rule exists to stop, just smaller.
+//
+// The tenant is told what they need to act on (the tunnel is not theirs); the
+// operator gets both sides, in the controller log only.
+//
+// The same messages must not blame the connector token either. A claim can come
+// from the tunnel already advertised in status instead — which is what a Gateway
+// migrating off the shared plane carries while its token Secret is still
+// unreadable — and naming the token there describes a read that never happened.
+func TestTenantVisibleRejectionHidesTheIncumbent(t *testing.T) {
+	t.Parallel()
+
+	const (
+		contested = "22222222-2222-2222-2222-222222222222"
+		incumbent = "victim-team/production-gw"
+	)
+
+	rejection := tunnelownership.Rejection{TunnelID: contested, HeldBy: incumbent}
+
+	infra := &infraGateways{
+		resolved:  map[string]*infraGateway{},
+		broken:    map[string]bool{"attacker/gw": true},
+		transient: map[string]bool{},
+		rejected:  map[string]tunnelownership.Rejection{"attacker/gw": rejection},
+	}
+
+	routeErr := gatewaySyncError("attacker/gw", map[string]error{}, infra)
+	require.Error(t, routeErr)
+
+	for _, surface := range []string{routeErr.Error(), tunnelRejectionMessage(rejection)} {
+		assert.NotContains(t, surface, incumbent,
+			"a tenant-visible message must not name the Gateway holding the tunnel")
+		assert.NotContains(t, surface, "victim-team",
+			"a tenant-visible message must not name another tenant's namespace")
+		assert.Contains(t, surface, contested,
+			"the tenant still needs to know which tunnel their own Gateway claimed")
+		assert.NotContains(t, surface, "connector token",
+			"a claim can come from the advertised address, so the message must not blame the token")
+	}
+}
+
+// TestTunnelRejectionMessageSurvivesConditionTruncation pins the length budget
+// the refusal dedup depends on.
+//
+// isTunnelRefusalReported asks whether the stored condition CONTAINS the
+// rendered message, and the stored form is truncateMessage("Refused: " + msg).
+// Let either message grow past the budget and the substring is never found
+// again: every requeue then re-emits the Error log and the Warning Event, at a
+// rate the refused tenant chooses. The failure is silent — the refusal still
+// works, it just becomes a log flood.
+func TestTunnelRejectionMessageSurvivesConditionTruncation(t *testing.T) {
+	t.Parallel()
+
+	const uuid = "22222222-2222-2222-2222-222222222222"
+
+	for _, rejection := range []tunnelownership.Rejection{
+		{TunnelID: uuid},
+		{TunnelID: uuid, IsClassTunnel: true},
+	} {
+		stored := refusedConditionPrefix + tunnelRejectionMessage(rejection)
+		assert.LessOrEqual(t, len(stored), maxConditionMessageLength,
+			"a rejection message that truncates breaks the dedup that keeps the Event from repeating")
+	}
+}
+
+// TestTunnelRefusalErrorCarriesBothSentinels pins that a refusal answers to
+// config.ErrInvalidParameters as well as to its own sentinel.
+//
+// errors.Mark does not carry the reference's unwrap chain, so the two marks are
+// independent. Without the second one, a refusal reaching handleResolveError
+// would look like a transient API failure on an opted-in Gateway and take the
+// requeue-without-status branch, leaving the tenant no condition to read.
+func TestTunnelRefusalErrorCarriesBothSentinels(t *testing.T) {
+	t.Parallel()
+
+	err := tunnelRefusalError(tunnelownership.Rejection{
+		TunnelID: "22222222-2222-2222-2222-222222222222",
+	})
+
+	// errors.Is here is cockroachdb's, matching the consumers. A mark is
+	// invisible to the standard library's Is, so assert.ErrorIs — which uses it
+	// — reports false for an error the production branches match.
+	assert.True(t, errors.Is(err, errTunnelClaimRefused),
+		"the status writer keys the \"Refused:\" prefix on this sentinel")
+	assert.True(t, errors.Is(err, config.ErrInvalidParameters),
+		"a refusal is a deterministic spec problem, and every branch keyed on that must match it")
+}
+
+// TestApplyTunnelOwnership_OperatorOptInRestoresSharing pins the escape hatch:
+// with AllowSharedTunnels set on the cluster-scoped GatewayClassConfig, the
+// pre-existing merge behaviour returns unchanged. The field lives there and
+// nowhere tenant-writable, so a tenant cannot grant it to themselves.
+func TestApplyTunnelOwnership_OperatorOptInRestoresSharing(t *testing.T) {
+	t.Parallel()
+
+	const contested = "22222222-2222-2222-2222-222222222222"
+
+	infra := &infraGateways{
+		resolved: map[string]*infraGateway{
+			"team-a/gw": {
+				gateway:    gatewayWithAge("team-a", "gw", 0),
+				perGateway: &config.PerGatewayConfig{ResolvedConfig: config.ResolvedConfig{TunnelID: contested}},
+			},
+			"team-b/gw": {
+				gateway:    gatewayWithAge("team-b", "gw", 1),
+				perGateway: &config.PerGatewayConfig{ResolvedConfig: config.ResolvedConfig{TunnelID: contested}},
+			},
+		},
+		broken:    map[string]bool{},
+		transient: map[string]bool{},
+	}
+
+	applyTunnelOwnership(infra, "11111111-1111-1111-1111-111111111111", true, claimsFrom(infra))
+
+	assert.Empty(t, infra.rejected, "the opt-in must refuse nothing")
+	assert.Len(t, infra.resolved, 2, "both Gateways keep their partitions and merge as before")
+}
+
+// claimsFrom derives the shared claim set from a test's infra fixture, so a
+// unit test exercises applyTunnelOwnership with the same shape production
+// builds via collectTunnelClaims.
+func claimsFrom(infra *infraGateways) []tunnelownership.Claim {
+	claims := make([]tunnelownership.Claim, 0, len(infra.resolved))
+
+	for key, entry := range infra.resolved {
+		claims = append(claims, tunnelownership.Claim{
+			Key:        key,
+			Namespace:  entry.gateway.Namespace,
+			TunnelID:   entry.perGateway.TunnelID,
+			CreatedAt:  entry.gateway.CreationTimestamp.Time,
+			UID:        string(entry.gateway.UID),
+			Advertised: advertisedTunnelID(&entry.gateway),
+		})
+	}
+
+	return claims
 }
