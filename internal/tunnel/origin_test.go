@@ -58,6 +58,34 @@ func (t *testResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	return nil, nil, http.ErrNotSupported
 }
 
+// strictStatusWriter counts status writes and refuses a second one.
+//
+// httptest.ResponseRecorder silently ignores a repeat WriteHeader, which hides
+// the production hazard: cloudflared's HTTP/2 writer serializes its header map
+// exactly once, so a second status is dropped on the wire and the client keeps
+// the first. A recorder-based test would pass either way.
+type strictStatusWriter struct {
+	*testResponseWriter
+
+	t            *testing.T
+	statusWrites int
+}
+
+func (s *strictStatusWriter) WriteHeader(status int) {
+	s.statusWrites++
+
+	require.LessOrEqual(s.t, s.statusWrites, 1,
+		"the cloudflared writer serializes headers once; a second status never reaches the client")
+
+	s.testResponseWriter.WriteHeader(status)
+}
+
+func newStrictStatusWriter(t *testing.T) *strictStatusWriter {
+	t.Helper()
+
+	return &strictStatusWriter{testResponseWriter: newTestResponseWriter(), t: t}
+}
+
 func newTestResponseWriter() *testResponseWriter {
 	return &testResponseWriter{ResponseRecorder: httptest.NewRecorder()}
 }
@@ -514,4 +542,354 @@ func TestGatewayOriginProxy_HandlerPreserved(t *testing.T) {
 	proxy.Handler().ServeHTTP(recorder, req)
 
 	assert.Equal(t, http.StatusTeapot, recorder.Code)
+}
+
+// TestGatewayOriginProxy_ProxyHTTP_ContainsHandlerPanic pins panic containment
+// at the tunnel entry point.
+//
+// Nothing recovers between cloudflared's per-stream goroutine and this method
+// on the QUIC chain, and `protocol: auto` dials QUIC first, so a panic in the
+// handler takes the whole proxy process down and every other tenant's traffic
+// with it. Containment turns one request's bug into one failed request.
+func TestGatewayOriginProxy_ProxyHTTP_ContainsHandlerPanic(t *testing.T) {
+	t.Parallel()
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		// Set before panicking: these headers describe a response that never
+		// happens, and a Content-Length among them would promise a body.
+		w.Header().Set("Content-Length", "42")
+		w.Header().Set("X-From-Handler", "yes")
+
+		panic("handler exploded")
+	})
+
+	proxy := tunnel.NewGatewayOriginProxy(handler, nil)
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://example.com/boom", nil)
+	zlog := zerolog.Nop()
+	tracedReq := tracing.NewTracedHTTPRequest(req, 0, &zlog)
+	writer := newTestResponseWriter()
+
+	require.NotPanics(t, func() {
+		_ = proxy.ProxyHTTP(writer, tracedReq, false)
+	}, "a panicking handler must not escape into cloudflared's stream goroutine")
+
+	assert.Equal(t, http.StatusInternalServerError, writer.Code,
+		"a contained panic must still answer the request")
+	assert.Empty(t, writer.Header().Get("Content-Length"),
+		"the 500 must not inherit a body length the panicking handler promised")
+	assert.Empty(t, writer.Header().Get("X-From-Handler"),
+		"headers staged for a response that never happened must not ship with the 500")
+}
+
+// TestGatewayOriginProxy_ProxyHTTP_ContainsWebSocketHandlerPanic pins the same
+// contract on the upgrade branch, which hands cloudflared's writer straight to
+// the handler and never goes through the trailer bridge.
+func TestGatewayOriginProxy_ProxyHTTP_ContainsWebSocketHandlerPanic(t *testing.T) {
+	t.Parallel()
+
+	handler := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		panic("upgrade handler exploded")
+	})
+
+	proxy := tunnel.NewGatewayOriginProxy(handler, nil)
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://example.com/ws", nil)
+	zlog := zerolog.Nop()
+	tracedReq := tracing.NewTracedHTTPRequest(req, 0, &zlog)
+	writer := newTestResponseWriter()
+
+	var err error
+
+	require.NotPanics(t, func() {
+		err = proxy.ProxyHTTP(writer, tracedReq, true)
+	}, "a panicking upgrade handler must not escape into cloudflared's stream goroutine")
+
+	require.Error(t, err,
+		"the upgrade branch cannot answer on its own, so the outcome is handed back to cloudflared")
+}
+
+// TestGatewayOriginProxy_ProxyHTTP_PanicAfterStatusResetsTheStream pins the
+// other half of the containment decision.
+//
+// Once the status is on the wire there is no way to turn the response into a
+// 500, so the only signal left is resetting the stream — cloudflared turns the
+// returned error into an aborted HTTP/2 handler or a QUIC RST_STREAM. Writing a
+// second status here would be worse than useless: the client already has the
+// first one, and the trailer bridge would drop the write silently.
+func TestGatewayOriginProxy_ProxyHTTP_PanicAfterStatusResetsTheStream(t *testing.T) {
+	t.Parallel()
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("partial"))
+
+		panic("handler exploded mid-response")
+	})
+
+	proxy := tunnel.NewGatewayOriginProxy(handler, nil)
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://example.com/late", nil)
+	zlog := zerolog.Nop()
+	tracedReq := tracing.NewTracedHTTPRequest(req, 0, &zlog)
+	writer := newStrictStatusWriter(t)
+
+	var err error
+
+	require.NotPanics(t, func() {
+		err = proxy.ProxyHTTP(writer, tracedReq, false)
+	})
+
+	require.Error(t, err, "a panic that cannot be answered must reset the stream")
+	assert.Equal(t, http.StatusOK, writer.Code,
+		"the status already sent to the client must not be rewritten")
+	assert.Equal(t, 1, writer.statusWrites,
+		"the panic path must not attempt a second status write")
+}
+
+// TestGatewayOriginProxy_ProxyHTTP_AbortHandlerIsNotLoggedAsAPanic pins that a
+// routine client abort stays quiet.
+//
+// httputil.ReverseProxy panics with http.ErrAbortHandler whenever the response
+// copy fails — a client that closed mid-download, a backend that reset. The
+// standard library treats that as ordinary and deliberately suppresses the
+// stack; net/http and x/net/http2 both special-case the sentinel. Logging it
+// would put a stack trace into a shared data plane's log for every aborted
+// download and bury the panics this containment exists to surface.
+//
+// The stream is still reset: the response has started, so there is nothing left
+// to answer with either way.
+func TestGatewayOriginProxy_ProxyHTTP_AbortHandlerIsNotLoggedAsAPanic(t *testing.T) {
+	t.Parallel()
+
+	var logged bytes.Buffer
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("partial"))
+
+		panic(http.ErrAbortHandler)
+	})
+
+	proxy := tunnel.NewGatewayOriginProxy(handler, slog.New(slog.NewTextHandler(&logged, nil)))
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://example.com/abort", nil)
+	zlog := zerolog.Nop()
+	tracedReq := tracing.NewTracedHTTPRequest(req, 0, &zlog)
+	writer := newTestResponseWriter()
+
+	var err error
+
+	require.NotPanics(t, func() {
+		err = proxy.ProxyHTTP(writer, tracedReq, false)
+	})
+
+	require.Error(t, err, "an aborted response still cannot be answered, so the stream resets")
+	assert.Empty(t, logged.String(),
+		"a client abort is routine and must not be logged as a panic")
+}
+
+// TestGatewayOriginProxy_ProxyHTTP_RealPanicIsLogged is the other half: the
+// abort exemption must not swallow the panics worth reading.
+func TestGatewayOriginProxy_ProxyHTTP_RealPanicIsLogged(t *testing.T) {
+	t.Parallel()
+
+	var logged bytes.Buffer
+
+	handler := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		panic("nil map write somewhere in a filter")
+	})
+
+	proxy := tunnel.NewGatewayOriginProxy(handler, slog.New(slog.NewTextHandler(&logged, nil)))
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://example.com/real", nil)
+	zlog := zerolog.Nop()
+	tracedReq := tracing.NewTracedHTTPRequest(req, 0, &zlog)
+
+	require.NotPanics(t, func() {
+		_ = proxy.ProxyHTTP(newTestResponseWriter(), tracedReq, false)
+	})
+
+	assert.Contains(t, logged.String(), "nil map write somewhere in a filter",
+		"a genuine panic must still reach the operator")
+}
+
+// TestGatewayOriginProxy_ProxyHTTP_RefusedHijackStillAnswers pins that a
+// hijack the writer refused does not cost the response.
+//
+// cloudflared's HTTP/2 writer rejects a hijack before the status is written,
+// and httputil.ReverseProxy hijacks before writing one, so the refusal is
+// reachable. The bridge must not read it as the handler having taken the
+// connection: nothing went out, so a panic afterwards can still be answered.
+func TestGatewayOriginProxy_ProxyHTTP_RefusedHijackStillAnswers(t *testing.T) {
+	t.Parallel()
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hijacker, ok := w.(http.Hijacker)
+		require.True(t, ok, "the bridge must expose Hijack for the upgrade path")
+
+		_, _, hijackErr := hijacker.Hijack()
+		require.Error(t, hijackErr, "the test writer refuses a hijack, like the HTTP/2 writer before a status")
+
+		panic("panicked after a refused hijack")
+	})
+
+	proxy := tunnel.NewGatewayOriginProxy(handler, nil)
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://example.com/refused", nil)
+	zlog := zerolog.Nop()
+	tracedReq := tracing.NewTracedHTTPRequest(req, 0, &zlog)
+	writer := newTestResponseWriter()
+
+	var err error
+
+	require.NotPanics(t, func() {
+		err = proxy.ProxyHTTP(writer, tracedReq, false)
+	})
+
+	require.NoError(t, err, "a refused hijack left the response writable, so the panic must be answered")
+	assert.Equal(t, http.StatusInternalServerError, writer.Code)
+}
+
+// hijackableWriter succeeds at Hijack, like cloudflared's QUIC adapter.
+//
+// The HTTP/2 writer refuses a hijack before the status is written; the QUIC one
+// has no such precondition and always succeeds. Every other writer here refuses,
+// so without this shape the success half of the hijack latch is unreachable in
+// tests while being the default transport in production.
+type hijackableWriter struct {
+	*strictStatusWriter
+}
+
+func (h *hijackableWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	conn, _ := net.Pipe()
+
+	return conn, bufio.NewReadWriter(bufio.NewReader(conn), bufio.NewWriter(conn)), nil
+}
+
+// TestGatewayOriginProxy_ProxyHTTP_HijackedResponseIsNotAnswered pins the other
+// half of the containment decision: a connection the handler has taken is not
+// ours to write to.
+//
+// ReverseProxy hijacks before writing any status, so on QUIC a panic can land
+// with the connection handed over and no status sent. Answering it there would
+// push response headers into a stream that has already switched protocols.
+func TestGatewayOriginProxy_ProxyHTTP_HijackedResponseIsNotAnswered(t *testing.T) {
+	t.Parallel()
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hijacker, ok := w.(http.Hijacker)
+		require.True(t, ok)
+
+		conn, _, hijackErr := hijacker.Hijack()
+		require.NoError(t, hijackErr, "this writer models the QUIC adapter, which always succeeds")
+
+		t.Cleanup(func() { _ = conn.Close() })
+
+		panic("panicked after taking the connection")
+	})
+
+	proxy := tunnel.NewGatewayOriginProxy(handler, nil)
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://example.com/hijacked", nil)
+	zlog := zerolog.Nop()
+	tracedReq := tracing.NewTracedHTTPRequest(req, 0, &zlog)
+	writer := &hijackableWriter{strictStatusWriter: newStrictStatusWriter(t)}
+
+	var err error
+
+	require.NotPanics(t, func() {
+		err = proxy.ProxyHTTP(writer, tracedReq, false)
+	})
+
+	require.Error(t, err, "a hijacked response cannot be answered, so the panic resets the stream")
+	assert.Zero(t, writer.statusWrites,
+		"nothing may be written to a connection the handler already took over")
+}
+
+// TestGatewayOriginProxy_ProxyHTTP_PanicHandlerSurvivesANilRequest pins that
+// the recover cannot become the crash.
+//
+// A nil Request is how the clone in the upgrade branch panics, which is one of
+// the cases the recover was armed early to catch. Reading req.Host to log it
+// would then panic inside the panic handler and take the process down for the
+// exact input the guard exists for.
+func TestGatewayOriginProxy_ProxyHTTP_PanicHandlerSurvivesANilRequest(t *testing.T) {
+	t.Parallel()
+
+	// Reads the request, so the nil reaches the recover on the plain branch the
+	// same way the clone raises it on the upgrade branch.
+	proxy := tunnel.NewGatewayOriginProxy(
+		http.HandlerFunc(func(_ http.ResponseWriter, req *http.Request) { _ = req.Host }), nil)
+
+	var upgradeErr error
+
+	require.NotPanics(t, func() {
+		upgradeErr = proxy.ProxyHTTP(newTestResponseWriter(), &tracing.TracedHTTPRequest{}, true)
+	}, "the recover must contain a panic whose request is nil, not add a second one")
+
+	require.Error(t, upgradeErr, "an upgrade has nothing left to answer with")
+
+	plain := newTestResponseWriter()
+
+	var plainErr error
+
+	require.NotPanics(t, func() {
+		plainErr = proxy.ProxyHTTP(plain, &tracing.TracedHTTPRequest{}, false)
+	}, "the recover must contain a panic whose request is nil, not add a second one")
+
+	require.NoError(t, plainErr, "nothing was written yet, so the plain branch answers instead")
+	assert.Equal(t, http.StatusInternalServerError, plain.Code)
+}
+
+// TestGatewayOriginProxy_ProxyHTTP_NilTracedRequestIsRefused pins the boundary
+// check. Both branches reach the request through that pointer, including from
+// inside their recovers, so a nil there would panic in the one place that must
+// not.
+func TestGatewayOriginProxy_ProxyHTTP_NilTracedRequestIsRefused(t *testing.T) {
+	t.Parallel()
+
+	proxy := tunnel.NewGatewayOriginProxy(
+		http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}), nil)
+
+	for _, isWebsocket := range []bool{true, false} {
+		var err error
+
+		require.NotPanics(t, func() {
+			err = proxy.ProxyHTTP(newTestResponseWriter(), nil, isWebsocket)
+		}, "websocket=%v", isWebsocket)
+
+		require.Error(t, err, "websocket=%v", isWebsocket)
+	}
+}
+
+// TestGatewayOriginProxy_ProxyHTTP_RefusedHijackStillFlushesTrailers pins a
+// side effect of latching the hijack flag on success only.
+//
+// flushTrailers skips its work when the flag is set. While a refused hijack
+// latched it too, a handler that went on to stage trailers would have had them
+// dropped, grpc-status included. No handler does that today — ReverseProxy
+// hands a refused hijack to its error handler and returns — so this closes the
+// window rather than recovering a loss anyone was taking.
+func TestGatewayOriginProxy_ProxyHTTP_RefusedHijackStillFlushesTrailers(t *testing.T) {
+	t.Parallel()
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _, hijackErr := w.(http.Hijacker).Hijack()
+		require.Error(t, hijackErr, "the test writer refuses a hijack")
+
+		w.Header().Set(http.TrailerPrefix+"grpc-status", "0")
+		w.WriteHeader(http.StatusOK)
+	})
+
+	proxy := tunnel.NewGatewayOriginProxy(handler, nil)
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "http://example.com/svc/method", nil)
+	zlog := zerolog.Nop()
+	writer := newTestResponseWriter()
+
+	require.NoError(t, proxy.ProxyHTTP(writer, tracing.NewTracedHTTPRequest(req, 0, &zlog), false))
+
+	assert.Equal(t, "0", writer.trailers.Get("Grpc-Status"),
+		"a refused hijack left the response ours, so its trailers must still reach the wire")
 }

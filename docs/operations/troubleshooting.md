@@ -131,7 +131,7 @@ The controller cannot repair this itself. Its RBAC on Secrets grants `create` bu
 
 !!! danger "A proxy pod already running against a present-but-empty key may be unauthenticated"
 
-    The proxy itself now refuses to start when `PROXY_AUTH_TOKEN` is set but empty, the same fail-closed behavior as the controller -- a *new* proxy pod hitting this broken Secret crash-loops instead of serving anything. But Kubernetes never re-reads a `secretKeyRef` into a running container, so a proxy pod that already started against this Secret *before* the fix reached it (an older image, or before you noticed the problem) is still running with `PROXY_AUTH_TOKEN=""` baked into its environment, still accepting `PUT /config` from anyone with no `Authorization` header. Deleting the Secret and restarting only the controller does not touch that pod. Restart the proxy too.
+    The proxy refuses to start when `PROXY_AUTH_TOKEN` is set but empty, the same fail-closed behavior as the controller -- a *new* proxy pod hitting this broken Secret crash-loops instead of serving anything. But Kubernetes never re-reads a `secretKeyRef` into a running container, so a proxy pod that already started against this Secret *before* the fix reached it (an older image, or before you noticed the problem) is still running with `PROXY_AUTH_TOKEN=""` baked into its environment, still accepting `PUT /config` from anyone with no `Authorization` header. Deleting the Secret and restarting only the controller does not touch that pod. Restart the proxy too.
 
 **Solution**: delete the broken Secret and restart both the controller and the proxy, so neither is left running with an empty or stale token.
 
@@ -147,6 +147,20 @@ kubectl rollout restart deployment/cloudflare-tunnel-gateway-controller-proxy \
 ```
 
 If `proxy.authTokenSecretRef.name` is set to a Secret you manage yourself, the controller never creates or repairs it; fix the key in that Secret instead, then restart the proxy the same way so it picks up the corrected value.
+
+### Proxy Refuses to Start Without a Config-API Token
+
+The proxy exits immediately in tunnel mode with:
+
+```text
+{"time":"...","level":"ERROR","msg":"refusing to start with a broken config-API auth configuration","error":"PROXY_AUTH_TOKEN is not set: the config API would accept an unauthenticated routing table. Set a token, or set PROXY_ALLOW_UNAUTHENTICATED_CONFIG_API=1 (or =true) to run without one"}
+```
+
+The config API listens on every interface and one successful `PUT /config` replaces the whole routing table, so tunnel mode will not start without a Bearer token. Chart installs never see this: the chart wires `PROXY_AUTH_TOKEN` unconditionally and the controller generates a token when you do not supply one. It reaches you on a hand-written proxy Deployment.
+
+Wire a token, or set `PROXY_ALLOW_UNAUTHENTICATED_CONFIG_API=1` if the config API is reachable only over a path you already control. The acknowledgement is read as `1` or `true`; any other spelling is treated as unset, and the message above is what you get.
+
+A `PROXY_AUTH_TOKEN` that is set but empty is a different problem — see [Config API Auth Secret Missing or Broken](#config-api-auth-secret-missing-or-broken). The acknowledgement does not cover it, in either mode.
 
 ### Proxy Pod Stuck NotReady After a Restart
 
@@ -330,6 +344,22 @@ kubectl auth can-i update gateways/status \
 ```
 
 **Solution**: Ensure ClusterRole has status subresource permissions
+
+## Runtime Errors
+
+### Panic Logged in the Proxy
+
+```text
+{"time":"...","level":"ERROR","msg":"panic in request handler; request failed, proxy kept running","panic":"...","host":"app.example.com","path":"/api","stack":"..."}
+```
+
+One request's handler panicked and the proxy contained it: that request got a 500, or its stream was reset when the response had already started, and every other connection kept running. The entry carries the host, the path and a stack trace.
+
+This is a bug worth reporting with the stack.
+
+A client that closes mid-download is a different thing and never produces this line: `httputil.ReverseProxy` raises `http.ErrAbortHandler` there, which the proxy treats as routine and does not log. What you do see for those is one line per aborted request from the embedded connector, `failed to serve incoming request` on HTTP/2 or `Request failed` on QUIC, with no stack. That is expected traffic noise on a busy plane, not a fault: the stream is reset deliberately, because a truncated body reported as complete would be worse.
+
+A panic inside a WebSocket session logs `websocket: panic while copying, closing the session`, and only that session ends. A panic during the upgrade itself — the backend dial, the handshake — happens before the copy starts and logs the ordinary line above.
 
 ## Performance Issues
 

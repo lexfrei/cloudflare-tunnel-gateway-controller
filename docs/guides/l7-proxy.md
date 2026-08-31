@@ -106,13 +106,14 @@ The proxy binary accepts the following environment variables:
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `TUNNEL_TOKEN` | Required for tunnel mode; omit for standalone/dev mode | Cloudflare tunnel token (base64) |
+| `TUNNEL_TOKEN` | Required for tunnel mode; omit for standalone/dev mode | Cloudflare tunnel token (base64). Omitting it selects standalone mode; setting it to an empty value is a broken configuration and refuses to start, rather than selecting standalone silently. |
 | `PROXY_CONFIG_ADDR` | `:8081` | Config API listen address |
 | `PROXY_ADDR` | `:8080` | Proxy listen address |
-| `PROXY_AUTH_TOKEN` | unset (no auth) | Bearer token for config push API authentication. Unset (the variable never wired at all) means the API runs unauthenticated -- the binary's own default for standalone/manual use; the Helm chart always wires it (see below). Set but empty is treated as a broken configuration, not a choice to run open, and the proxy refuses to start; see [Config API Authentication](#config-api-authentication). |
+| `PROXY_AUTH_TOKEN` | unset | Bearer token for config push API authentication. In tunnel mode an unset token refuses to start, because the config API listens on every interface and a successful push replaces the whole routing table; standalone mode keeps running unauthenticated. Set but empty is a broken configuration in either mode, not a choice to run open, and also refuses to start; see [Config API Authentication](#config-api-authentication). |
+| `PROXY_ALLOW_UNAUTHENTICATED_CONFIG_API` | `false` | Run tunnel mode with an unauthenticated config API anyway. Separate from `PROXY_AUTH_TOKEN` on purpose: an empty token is what a broken Secret produces, and a misconfiguration must not be able to spell the same thing as consent. |
 | `PROXY_METRICS_ENABLED` | `true` | Expose the data-plane Prometheus metrics at `/metrics` on the config API port. Set `false`/`0` to disable. |
 | `PROXY_GRACE_PERIOD` | `30s` | Connector drain window on shutdown (Go duration, capped at 3m): the proxy unregisters from the edge and gives in-flight requests this long before exiting. |
-| `PROXY_TUNNEL_PROTOCOL` | `auto` | Edge transport: `auto`, `http2`, or `quic`. gRPC needs `http2` (QUIC drops trailers); `auto` is upgraded to `http2` by the proxy. |
+| `PROXY_TUNNEL_PROTOCOL` | `auto` | Edge transport: `auto`, `http2`, or `quic`. `auto` dials QUIC with HTTP/2 fallback. gRPC needs `http2` because QUIC drops trailers; the proxy upgrades `auto` to `http2` only when the first pushed config carries a GRPCRoute. |
 | `PROXY_TUNNEL_PROTOCOL_WAIT` | `0` (no wait) | In `auto` mode, how long (Go duration) to wait for the first pushed config before serving, so the protocol is chosen from real routes. |
 | `PROXY_WS_DIAL_TIMEOUT` | `""` (proxy default 30s) | Go-duration cap on the backend dial during a WebSocket upgrade. |
 | `PROXY_WS_HANDSHAKE_TIMEOUT` | `""` (proxy default 30s) | Go-duration cap on waiting for the backend's `101 Switching Protocols`. |
@@ -136,11 +137,15 @@ The config API is always authenticated when deployed via the chart: leave `proxy
 
 On a brand-new install, the proxy Deployment's pod template references the generated Secret before the controller has had a chance to create it -- the affected proxy pod(s) sit briefly in `CreateContainerConfigError` until the controller finishes starting, and kubelet's normal retry picks up the Secret once it exists. This is a one-time, self-resolving startup race, not a failure to act on.
 
+Outside the chart, tunnel mode refuses to start when `PROXY_AUTH_TOKEN` is not set at all. The config API binds `:8081` on every interface and a successful `PUT /config` replaces the entire routing table, so an unauthenticated one is not a state a deployment should reach by leaving a variable out. Standalone mode is a development server and still starts without a token.
+
+If you deliberately run tunnel mode with no authentication — the config API reachable only over a loopback or an equally closed path — set `PROXY_ALLOW_UNAUTHENTICATED_CONFIG_API=1`. It is a second variable rather than an empty `PROXY_AUTH_TOKEN` because an empty token is what a broken Secret produces, and a misconfiguration must not be able to spell the same thing as consent. The proxy logs a warning at startup whenever it is running open.
+
 !!! note "Upgrading from a release with no auth token"
 
     If you were pushing config to the proxy directly (bypassing the controller) with no `Authorization` header, that stops working after upgrading to a chart version with this default: find the exact Secret name your release rendered with `helm get manifest <release> | grep -m1 'proxy-auth-secret-ref'`, then read the token with `kubectl get secret <fullname>-proxy-auth-token -o jsonpath='{.data.auth-token}' | base64 -d` and send it as `Authorization: Bearer <token>`. During the rollout itself there is a brief window where the new, already-authenticated proxy pod rejects pushes from an old controller pod that has not yet rolled (401), and the reverse (an old, unauthenticated proxy pod accepting an authenticated push, since it never checks the header). Both resolve on their own once the rolling update finishes and both sides are on the new pod template -- no manual step is needed.
 
-The generated Secret is created by the controller directly, not rendered by Helm, so `helm uninstall` leaves it behind (see [Uninstalling](../getting-started/installation.md#uninstalling)). A Secret at this name with a missing or empty `auth-token` key fails the controller closed at startup instead of running with an unusable token. The proxy fails closed the same way on its own side: `PROXY_AUTH_TOKEN` being unset still means no auth was configured (unchanged, for raw manifests and local development), but being set to an empty value now refuses to start rather than silently serving the config API to anyone -- see [Config API Auth Secret Missing or Broken](../operations/troubleshooting.md#config-api-auth-secret-missing-or-broken) for the exact error and the recovery command.
+The generated Secret is created by the controller directly, not rendered by Helm, so `helm uninstall` leaves it behind (see [Uninstalling](../getting-started/installation.md#uninstalling)). A Secret at this name with a missing or empty `auth-token` key fails the controller closed at startup instead of running with an unusable token. The proxy fails closed the same way on its own side: a `PROXY_AUTH_TOKEN` set to an empty value refuses to start in either mode rather than silently serving the config API to anyone, and an unset one refuses to start in tunnel mode as described above -- see [Config API Auth Secret Missing or Broken](../operations/troubleshooting.md#config-api-auth-secret-missing-or-broken) for the exact error and the recovery command.
 
 ### Health Endpoints
 

@@ -44,8 +44,10 @@ spec:
             # pushes, so the config API is never left unauthenticated. Point
             # your own proxy Deployment's PROXY_AUTH_TOKEN env at the same
             # Secret/key via a pod-level secretKeyRef so it validates against
-            # the same token — see the L7 Proxy guide. Requires the "secrets"
-            # create verb granted by deploy/rbac/role.yaml.
+            # the same token — see the L7 Proxy guide. That variable is
+            # REQUIRED in tunnel mode: the proxy refuses to start without it,
+            # or without PROXY_ALLOW_UNAUTHENTICATED_CONFIG_API=1. Requires the
+            # "secrets" create verb granted by deploy/rbac/role.yaml.
             - --proxy-auth-secret-ref=cloudflare-tunnel-system/cloudflare-tunnel-gateway-controller-proxy-auth-token
             - --proxy-auth-secret-key=auth-token
             - --proxy-auth-secret-generate=true

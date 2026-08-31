@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"runtime/debug"
 	"strings"
 
 	"github.com/cockroachdb/errors"
@@ -58,40 +59,26 @@ func (p *GatewayOriginProxy) ProxyHTTP(
 	tracedReq *tracing.TracedHTTPRequest,
 	isWebsocket bool,
 ) error {
-	req := tracedReq.Request
-
-	if isWebsocket {
-		// Clone before mutating: tracedReq.Request may be retained by
-		// cloudflared for tracing/logging, and a body-less header copy is
-		// what the handshake needs anyway.
-		req = tracedReq.Clone(tracedReq.Context())
-		req.Header.Set("Connection", "Upgrade")
-		req.Header.Set("Upgrade", "websocket")
-		req.Header.Set("Sec-WebSocket-Version", "13")
-		req.ContentLength = 0
-		req.Body = nil
-
-		// WebSocket hijacks the connection and carries no HTTP trailers; pass
-		// the raw cloudflared writer straight through so the delicate 101 +
-		// Hijack contract is untouched.
-		p.handler.ServeHTTP(writer, req)
-
-		return nil
+	// Both branches reach the request through this pointer, including from
+	// inside their recovers.
+	if tracedReq == nil {
+		return errNilTracedRequest
 	}
 
-	// Non-WebSocket requests may carry HTTP trailers (gRPC puts grpc-status
-	// there). httputil.ReverseProxy emits trailers via the stdlib
-	// http.TrailerPrefix mechanism on the writer's Header() map, but
-	// cloudflared's http2RespWriter serializes that map only once at
-	// WriteHeader and emits trailers solely via AddTrailer. Bridge the two so
-	// gRPC clients receive grpc-status instead of "server closed the stream
-	// without sending trailers".
-	bridge := newTrailerBridge(writer)
-	p.handler.ServeHTTP(bridge, req)
-	bridge.flushTrailers()
+	if isWebsocket {
+		return p.proxyUpgrade(writer, tracedReq)
+	}
 
-	return nil
+	return p.proxyRequest(writer, tracedReq)
 }
+
+// errNilTracedRequest is returned when the connector hands over no request at
+// all, which is a caller-contract violation rather than anything to serve.
+var errNilTracedRequest = errors.New("no request to proxy")
+
+// errHandlerPanic is returned when a handler panic left the response in a state
+// that cannot be answered, so the caller resets the stream instead.
+var errHandlerPanic = errors.New("panic in request handler")
 
 // trailerBridge wraps a connection.ResponseWriter and forwards HTTP trailers a
 // handler emits via the stdlib mechanism onto cloudflared's AddTrailer, which
@@ -164,11 +151,24 @@ func (b *trailerBridge) Flush() {
 	}
 }
 
+// Hijack latches only on success. The flag decides whether a later panic can
+// still answer with a 500, and cloudflared's HTTP/2 writer refuses a hijack
+// before the status is written — treating that refusal as ownership would
+// throw away a response that was still writable.
+//
+// The refusal is reachable, not hypothetical: ReverseProxy hijacks before
+// writing a status, which is exactly the precondition that writer rejects. What
+// keeps it harmless today is that ReverseProxy writes a status right after a
+// refusal, so no panic lands in the window. The latch is what makes that
+// ordering irrelevant.
 func (b *trailerBridge) Hijack() (net.Conn, *bufio.ReadWriter, error) {
-	b.hijacked = true
+	conn, buf, err := b.ResponseWriter.Hijack()
+	if err == nil {
+		b.hijacked = true
+	}
 
 	//nolint:wrapcheck // transparent pass-through to the cloudflared writer.
-	return b.ResponseWriter.Hijack()
+	return conn, buf, err
 }
 
 // flushTrailers replays accumulated trailers via the cloudflared writer's
@@ -212,4 +212,121 @@ func (p *GatewayOriginProxy) ProxyTCP(
 	_ *connection.TCPRequest,
 ) error {
 	return errTCPNotSupported
+}
+
+// proxyUpgrade runs the WebSocket branch.
+//
+// The raw cloudflared writer is passed straight through so the delicate
+// 101 + Hijack contract is untouched. Knowing what that writer has already sent
+// would mean wrapping it, which this branch declines to do, so it never decides
+// the outcome itself: it returns the error and cloudflared decides. Nothing
+// sent yet gets a 502 (WriteErrorResponse on HTTP/2, WriteConnectResponseData
+// on QUIC); once the status is out, the stream is reset instead.
+func (p *GatewayOriginProxy) proxyUpgrade(
+	writer connection.ResponseWriter,
+	tracedReq *tracing.TracedHTTPRequest,
+) (err error) {
+	// Armed before the clone: a panic in Clone or the header rewrite is as
+	// fatal to the process as one in the handler, and logging reads the
+	// original request, which is available either way. Neither is reachable
+	// from cloudflared's request construction today, so the placement keeps the
+	// window from opening later rather than closing one that is open.
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			p.logHandlerPanic(tracedReq.Request, recovered)
+
+			err = errHandlerPanic
+		}
+	}()
+
+	// Clone before mutating: tracedReq.Request may be retained by
+	// cloudflared for tracing/logging, and a body-less header copy is
+	// what the handshake needs anyway.
+	req := tracedReq.Clone(tracedReq.Context())
+	req.Header.Set("Connection", "Upgrade")
+	req.Header.Set("Upgrade", "websocket")
+	req.Header.Set("Sec-WebSocket-Version", "13")
+	req.ContentLength = 0
+	req.Body = nil
+
+	p.handler.ServeHTTP(writer, req)
+
+	return nil
+}
+
+// proxyRequest runs the ordinary HTTP branch.
+//
+// Requests here may carry HTTP trailers (gRPC puts grpc-status there).
+// httputil.ReverseProxy emits trailers via the stdlib http.TrailerPrefix
+// mechanism on the writer's Header() map, but cloudflared's http2RespWriter
+// serializes that map only once at WriteHeader and emits trailers solely via
+// AddTrailer. The bridge joins the two so gRPC clients receive grpc-status
+// instead of "server closed the stream without sending trailers".
+func (p *GatewayOriginProxy) proxyRequest(
+	writer connection.ResponseWriter,
+	tracedReq *tracing.TracedHTTPRequest,
+) (err error) {
+	bridge := newTrailerBridge(writer)
+
+	defer func() {
+		recovered := recover()
+		if recovered == nil {
+			return
+		}
+
+		p.logHandlerPanic(tracedReq.Request, recovered)
+
+		// A response that has not started yet can still be answered. Once the
+		// status is on the wire, or the handler has taken the connection, the
+		// only remaining signal is resetting the stream.
+		if bridge.wroteHeader || bridge.hijacked {
+			err = errHandlerPanic
+
+			return
+		}
+
+		// Drop whatever the handler accumulated before it panicked. Those
+		// headers describe the response it was going to send, not this one — a
+		// Content-Length among them would promise a body that never arrives.
+		clear(bridge.header)
+		bridge.WriteHeader(http.StatusInternalServerError)
+	}()
+
+	p.handler.ServeHTTP(bridge, tracedReq.Request)
+	bridge.flushTrailers()
+
+	return nil
+}
+
+// logHandlerPanic records a contained panic. Without a stack the entry is
+// almost useless, since the panic value alone rarely names the failing code.
+//
+// http.ErrAbortHandler is exempt. httputil.ReverseProxy raises it whenever the
+// response copy fails — a client that closed mid-download, a backend that reset
+// mid-body — and the standard library treats that as routine: net/http and
+// x/net/http2 both compare against the sentinel to suppress the stack. Logging
+// it here would write one stack trace per aborted download into a log every
+// tenant shares, and bury the panics this containment exists to surface.
+func (p *GatewayOriginProxy) logHandlerPanic(req *http.Request, recovered any) {
+	recoveredErr, isError := recovered.(error)
+	if isError && errors.Is(recoveredErr, http.ErrAbortHandler) {
+		return
+	}
+
+	// A nil request is how Clone panics, which is one of the cases this handler
+	// exists to catch. Dereferencing it here would panic inside the recover and
+	// take the process down anyway.
+	if req == nil || req.URL == nil {
+		p.logger.Error("panic in request handler; request failed, proxy kept running",
+			"panic", recovered,
+			"stack", string(debug.Stack()))
+
+		return
+	}
+
+	p.logger.Error("panic in request handler; request failed, proxy kept running",
+		"panic", recovered,
+		"host", req.Host,
+		"path", req.URL.Path,
+		"stack", string(debug.Stack()))
 }

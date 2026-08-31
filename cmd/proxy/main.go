@@ -59,19 +59,46 @@ func main() {
 
 	slog.SetDefault(logger)
 
+	// Hoisted above setupTracing so this refusal does not exit past a deferred
+	// exporter flush. The auth refusal inside buildDataPlane still does; neither
+	// has produced a span by then, so nothing is lost either way.
+	tunnelToken, err := resolveTunnelToken()
+	if err != nil {
+		logger.Error("refusing to start with a broken tunnel configuration", "error", err)
+		os.Exit(1)
+	}
+
 	// Install the global TracerProvider + propagator before building the
 	// handler so its tracer binds to the configured provider. No-op when
 	// PROXY_TRACING_ENABLED is unset.
 	shutdownTracing := setupTracing(logger)
 	defer shutdownTracing()
 
-	tunnelToken := os.Getenv("TUNNEL_TOKEN")
-
 	if tunnelToken != "" {
 		runTunnelMode(logger, tunnelToken)
 	} else {
 		runStandaloneMode(logger)
 	}
+}
+
+// errTunnelTokenEmpty is the sentinel resolveTunnelToken returns when
+// TUNNEL_TOKEN is set but empty.
+var errTunnelTokenEmpty = errors.New("TUNNEL_TOKEN is set but empty")
+
+// resolveTunnelToken reads TUNNEL_TOKEN and reports whether tunnel mode was
+// asked for. Unset selects standalone mode, which is how it is requested.
+//
+// Set but empty is refused. The run mode is chosen on the token being
+// non-empty, so an empty one does not merely fail — it selects standalone, the
+// mode that still starts without a config-API token. A tunnel deployment whose
+// token resolved to nothing would come up as an unauthenticated local proxy.
+func resolveTunnelToken() (string, error) {
+	token, isSet := os.LookupEnv("TUNNEL_TOKEN")
+	if isSet && token == "" {
+		return "", errTunnelTokenEmpty
+	}
+
+	return token, nil
 }
 
 // setupTracing reads the PROXY_TRACING_* env and installs a global OpenTelemetry
@@ -146,7 +173,7 @@ func tracingHandlerOption() proxy.HandlerOption {
 func runTunnelMode(logger *slog.Logger, token string) {
 	configAddr := envOrDefault("PROXY_CONFIG_ADDR", defaultConfigAddr)
 
-	router, proxyHandler, configAPI := buildDataPlane(logger)
+	router, proxyHandler, configAPI := buildDataPlane(logger, authRequired)
 	configServer := newServer(configAddr, configAPI)
 
 	// Create in-process origin proxy — traffic flows directly from cloudflared
@@ -241,7 +268,12 @@ func runStandaloneMode(logger *slog.Logger) {
 	configAddr := envOrDefault("PROXY_CONFIG_ADDR", defaultConfigAddr)
 	proxyAddr := envOrDefault("PROXY_ADDR", defaultProxyAddr)
 
-	router, proxyHandler, configAPI := buildDataPlane(logger)
+	// Standalone mode keeps the historical unauthenticated default; tunnel mode
+	// does not. Not because of the bind — standalone listens on every interface
+	// too, so a pod running it is reachable by anything that can route to the
+	// pod — but because of what the routing table is worth. In tunnel mode it
+	// decides where internet traffic goes; here nothing is serving it.
+	router, proxyHandler, configAPI := buildDataPlane(logger, authOptional)
 
 	// Standalone mode has no tunnel to wait for, so readiness gates on config
 	// alone — latch the tunnel-connected state up front. (Tunnel mode flips it
@@ -422,7 +454,7 @@ func drainErrors(logger *slog.Logger, errChan <-chan error) {
 // the router, the request handler (env-driven options plus metrics when
 // enabled), and the config API (with the /metrics exposition handler when
 // enabled).
-func buildDataPlane(logger *slog.Logger) (*proxy.Router, *proxy.Handler, *proxy.ConfigAPI) {
+func buildDataPlane(logger *slog.Logger, requireAuth configAPIAuth) (*proxy.Router, *proxy.Handler, *proxy.ConfigAPI) {
 	router := proxy.NewRouter()
 
 	opts := handlerOptions(logger)
@@ -435,7 +467,7 @@ func buildDataPlane(logger *slog.Logger) (*proxy.Router, *proxy.Handler, *proxy.
 	proxyHandler := proxy.NewHandler(router, opts...)
 	router.SetHandler(proxyHandler)
 
-	authToken, err := resolveAuthToken()
+	authToken, err := resolveAuthToken(requireAuth)
 	if err != nil {
 		logger.Error("refusing to start with a broken config-API auth configuration", "error", err)
 		os.Exit(1)
@@ -494,31 +526,57 @@ func warnIfNoAuth(logger *slog.Logger, authToken string) {
 	}
 }
 
+// configAPIAuth says whether the config API must be authenticated. Named
+// because its two call sites are the security switch and nothing downstream of
+// them can tell a swap from a correct call.
+type configAPIAuth bool
+
+const (
+	authRequired configAPIAuth = true
+	authOptional configAPIAuth = false
+)
+
 // errProxyAuthTokenEmpty is the sentinel resolveAuthToken returns when
 // PROXY_AUTH_TOKEN is set but empty.
 var errProxyAuthTokenEmpty = errors.New("PROXY_AUTH_TOKEN is set but empty")
 
+// errProxyAuthTokenMissing is the sentinel resolveAuthToken returns when tunnel
+// mode would run its config API with no Bearer check at all.
+// It names the way out and the accepted spellings because an operator meets
+// this as a crash loop, not as a doc page.
+var errProxyAuthTokenMissing = errors.New(
+	"PROXY_AUTH_TOKEN is not set: the config API would accept an unauthenticated routing table. " +
+		"Set a token, or set " + allowUnauthenticatedConfigAPIEnv + "=1 (or =true) to run without one")
+
+// allowUnauthenticatedConfigAPIEnv opts a tunnel-mode deployment back into an
+// unauthenticated config API. Deliberately a second variable rather than an
+// empty PROXY_AUTH_TOKEN: an empty token is what a broken Secret produces, and
+// a misconfiguration must not be able to spell the same thing as consent.
+const allowUnauthenticatedConfigAPIEnv = "PROXY_ALLOW_UNAUTHENTICATED_CONFIG_API"
+
 // resolveAuthToken reads PROXY_AUTH_TOKEN, distinguishing the variable being
 // unset from being set to an empty string -- os.Getenv alone cannot tell
-// these apart, and the two now mean different things.
+// these apart, and the two mean different things.
 //
-// Unset means no auth was configured at all: the historical default for raw
-// manifests and local development, where PROXY_AUTH_TOKEN is simply never
-// wired, and the proxy runs the config API without a Bearer check exactly as
-// it always did.
+// An empty value is a broken configuration rather than a choice to run open:
+// the chart wires this variable unconditionally (see
+// internal/controller/proxy_auth_secret.go), so its presence signals that
+// authentication was INTENDED, and an auth Secret whose key resolved to an
+// empty string must fail the same way the controller already fails closed on
+// that identical Secret (readAuthSecretKey).
 //
-// The chart now wires this variable unconditionally (see
-// internal/controller/proxy_auth_secret.go), so its mere presence signals
-// that authentication was INTENDED for this deployment. An empty value under
-// that intent -- e.g. the auth Secret's key resolved to an empty string -- is
-// a broken configuration, not a choice to run open, and must fail the same
-// way the controller already fails closed on the identical broken Secret
-// (readAuthSecretKey in internal/controller/proxy_auth_secret.go) rather than
-// silently disabling the one check this whole feature exists to enforce.
-func resolveAuthToken() (string, error) {
+// requireAuth carries the run mode. Tunnel mode refuses an unset token as well,
+// because there the config API listens on every interface and a successful PUT
+// replaces the whole routing table. Standalone keeps the historical
+// unauthenticated default.
+func resolveAuthToken(requireAuth configAPIAuth) (string, error) {
 	token, isSet := os.LookupEnv("PROXY_AUTH_TOKEN")
-	if isSet && token == "" {
+
+	switch {
+	case isSet && token == "":
 		return "", errProxyAuthTokenEmpty
+	case !isSet && bool(requireAuth) && !isTruthyEnv(allowUnauthenticatedConfigAPIEnv):
+		return "", errProxyAuthTokenMissing
 	}
 
 	return token, nil
