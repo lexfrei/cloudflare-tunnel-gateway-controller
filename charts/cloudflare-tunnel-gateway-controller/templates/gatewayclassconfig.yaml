@@ -18,4 +18,7 @@ spec:
   accountId: {{ .Values.gatewayClassConfig.accountId | quote }}
   {{- end }}
   tunnelID: {{ required "gatewayClassConfig.tunnelID is required" .Values.gatewayClassConfig.tunnelID | quote }}
+  {{- if .Values.gatewayClassConfig.allowSharedTunnels }}
+  allowSharedTunnels: true
+  {{- end }}
 {{- end }}

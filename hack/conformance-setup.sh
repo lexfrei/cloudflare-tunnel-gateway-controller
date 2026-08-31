@@ -329,6 +329,12 @@ fi
 
 # proxy.tunnel.protocol=http2 is mandatory in both modes: the chart defaults to
 # "auto" (QUIC-first) and kind/Colima blocks QUIC egress to the CF edge (530/1033).
+# gatewayClassConfig.allowSharedTunnels=true is needed because the per-Gateway
+# e2e clones the SHARED connector token into its test namespace (there is only
+# one test tunnel), which is exactly the claim the tunnel-ownership rule
+# refuses by default. The refusal path is covered by the unit tests in
+# internal/tunnelownership and internal/controller, which is where a decision
+# made from cluster state belongs; no suite here exercises it.
 # proxy.allowXOriginalHost=true is what makes the suite runnable at all: its
 # domains (example.com, rewrite.example, ...) are not on the Cloudflare account,
 # so the edge rejects them by Host and the intended Host rides X-Original-Host
@@ -349,6 +355,7 @@ helm upgrade --install "${RELEASE_NAME}" \
   --set proxy.tunnelTokenSecretRef.name=cloudflare-tunnel-token \
   --set proxy.tunnel.protocol=http2 \
   --set proxy.allowXOriginalHost=true \
+  --set gatewayClassConfig.allowSharedTunnels=true \
   --set controller.logLevel=debug \
   --set hostnameOwnershipPolicy.enabled=true \
   --set-json 'hostnameOwnershipPolicy.namespaceSelector={"matchLabels":{"cf-e2e-hostname-policy":"enforced"}}' \

@@ -1117,3 +1117,100 @@ func TestGatewayInfraReconciler_SpecImageWorksWithoutDefault(t *testing.T) {
 		types.NamespacedName{Name: "cf-proxy-edge", Namespace: infraNamespace}, &deployment))
 	assert.Equal(t, "example.com/tenant-proxy:v1", deployment.Spec.Template.Spec.Containers[0].Image)
 }
+
+// TestGatewayInfraReconciler_RefusedClaimRendersNothing pins that a Gateway
+// whose connector token claims a tunnel it does not own gets no data plane at
+// all.
+//
+// Refusing only the CONFIG would leave a running proxy pod whose cloudflared
+// still registers as a connector on the contested tunnel. Cloudflare
+// load-balances a tunnel's requests across every connector, so the refused
+// tenant would keep receiving a share of the incumbent's traffic — now with no
+// matching route, answering 404. That turns the refusal into an
+// attacker-controlled partial outage of the victim's tunnel, which is worse
+// than the merge it replaced. No pod, no connector.
+func TestGatewayInfraReconciler_RefusedClaimRendersNothing(t *testing.T) {
+	t.Parallel()
+
+	objects := infraFixtures(t)
+
+	// Point the dedicated plane's token at the CLASS tunnel.
+	for _, obj := range objects {
+		if secret, ok := obj.(*corev1.Secret); ok && secret.Name == "edge-token" {
+			secret.Data["tunnel-token"] = []byte(infraTunnelTokenFor(t, "99999999-9999-4999-8999-999999999999"))
+		}
+	}
+
+	reconciler := newInfraReconciler(t, objects...)
+	reconcileEdge(t, reconciler)
+
+	var deployment appsv1.Deployment
+	err := reconciler.Get(context.Background(),
+		types.NamespacedName{Name: "cf-proxy-edge", Namespace: infraNamespace}, &deployment)
+
+	require.Error(t, err, "a refused Gateway must get no proxy Deployment")
+	assert.True(t, apierrors.IsNotFound(err), "expected NotFound, got %v", err)
+}
+
+// TestGatewayInfraReconciler_UncomputableArbitrationKeepsThePlane pins the
+// availability half of the refusal path: arbitration that cannot be computed
+// must never tear a running plane down. An unreadable GatewayClassConfig says
+// nothing about who owns the tunnel, so the reconcile retries and leaves the
+// rendered resources alone.
+//
+// Without this, swapping the propagate for a cleanup would keep the suite
+// green while a transient apiserver read deleted a legitimate tenant's proxy.
+func TestGatewayInfraReconciler_UncomputableArbitrationKeepsThePlane(t *testing.T) {
+	t.Parallel()
+
+	objects := infraFixtures(t)
+	reconciler := newInfraReconciler(t, objects...)
+	reconcileEdge(t, reconciler)
+
+	ctx := context.Background()
+
+	var classConfig v1alpha1.GatewayClassConfig
+	require.NoError(t, reconciler.Get(ctx, types.NamespacedName{Name: "class-config"}, &classConfig))
+	require.NoError(t, reconciler.Delete(ctx, &classConfig))
+
+	_, err := reconciler.Reconcile(ctx, ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "edge", Namespace: infraNamespace},
+	})
+	require.Error(t, err, "an unresolvable class must retry, not decide")
+
+	var deployment appsv1.Deployment
+	assert.NoError(t, reconciler.Get(ctx,
+		types.NamespacedName{Name: "cf-proxy-edge", Namespace: infraNamespace}, &deployment),
+		"the running plane must survive an arbitration that could not be computed")
+}
+
+// TestGatewayInfraReconciler_BrokenClassStopsRetryingAndKeepsThePlane pins the
+// deterministic twin: a GatewayClass with no usable parametersRef is a
+// permanent misconfiguration, so retrying it forever buys nothing. The
+// reconcile stops, raises a Warning Event, and still leaves the plane running
+// — the Gateway reconciler carries the condition.
+func TestGatewayInfraReconciler_BrokenClassStopsRetryingAndKeepsThePlane(t *testing.T) {
+	t.Parallel()
+
+	objects := infraFixtures(t)
+	reconciler := newInfraReconciler(t, objects...)
+	reconcileEdge(t, reconciler)
+
+	ctx := context.Background()
+
+	var class gatewayv1.GatewayClass
+	require.NoError(t, reconciler.Get(ctx, types.NamespacedName{Name: "cloudflare-tunnel"}, &class))
+
+	class.Spec.ParametersRef = nil
+	require.NoError(t, reconciler.Update(ctx, &class))
+
+	_, err := reconciler.Reconcile(ctx, ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "edge", Namespace: infraNamespace},
+	})
+	require.NoError(t, err, "a permanent class problem must stop retrying")
+
+	var deployment appsv1.Deployment
+	assert.NoError(t, reconciler.Get(ctx,
+		types.NamespacedName{Name: "cf-proxy-edge", Namespace: infraNamespace}, &deployment),
+		"a broken class is not evidence about tunnel ownership: the plane stays")
+}

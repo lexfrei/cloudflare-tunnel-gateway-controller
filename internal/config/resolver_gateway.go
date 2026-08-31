@@ -154,6 +154,44 @@ func (r *Resolver) resolveStatusConfig(
 	}, nil
 }
 
+// ResolveTunnelIdentityForGateway returns just the tunnel this Gateway's
+// connector token names, stopping before any credential lookup.
+//
+// Tunnel arbitration runs on every reconcile of every opted-in Gateway and
+// needs nothing else. Going through the status resolver would additionally
+// resolve the Cloudflare API token, which for a GatewayConfig without its own
+// credential override falls back to the GatewayClass chain — so a class
+// credentials Secret being briefly unreadable would drop a still-bootstrapping
+// claimant out of the arbitration and let a competitor take its tunnel.
+//
+// Returns an empty string with no error when the Gateway is not opted in.
+func (r *Resolver) ResolveTunnelIdentityForGateway(
+	ctx context.Context,
+	gateway *gatewayv1.Gateway,
+) (string, error) {
+	if !HasInfrastructureParametersRef(gateway) {
+		return "", nil
+	}
+
+	gwConfig, err := r.getGatewayConfig(ctx, gateway)
+	if err != nil {
+		return "", err
+	}
+
+	token, tokenSecretName, err := r.readTunnelToken(ctx, gateway.Namespace, gwConfig)
+	if err != nil {
+		return "", err
+	}
+
+	parsed, err := tunnel.ParseTunnelToken(token)
+	if err != nil {
+		return "", errors.Wrapf(ErrInvalidParameters,
+			"tunnel token in secret %s/%s does not parse: %v", gateway.Namespace, tokenSecretName.Name, err)
+	}
+
+	return parsed.TunnelID.String(), nil
+}
+
 // GetGatewayConfig resolves and returns the GatewayConfig referenced by the
 // Gateway's infrastructure.parametersRef, applying the same group/kind
 // validation and ErrInvalidParameters classification as ResolveForGateway.

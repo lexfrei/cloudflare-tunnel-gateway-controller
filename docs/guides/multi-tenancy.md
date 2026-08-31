@@ -10,6 +10,7 @@ This guide describes how to run multiple tenants (teams, namespaces) behind one 
 | A route is silently shadowed by a higher-precedence route | `cf.k8s.lex.la/RouteShadowed` condition + Warning Event | Hostname ownership makes cross-tenant shadowing impossible |
 | Tenant listeners escape operator control | `allowedListeners` / `allowedRoutes` admission status | The same filters are enforced in the data path (merge view) |
 | Tenants share one process and one tunnel | Listener scoping (this page) | A dedicated proxy and tunnel per Gateway — see [Per-Gateway Isolation](per-gateway-isolation.md) |
+| A tenant claims another tenant's Cloudflare Tunnel | None: a connector token is unverified, so this is caught at reconcile, not admission | The Gateway is refused, its routes are programmed nowhere, and its data plane is not rendered — see [Per-Gateway Isolation](per-gateway-isolation.md) |
 
 Every protection ships as two independent layers by design: if one layer is bypassed (an older cluster without `ValidatingAdmissionPolicy`, a deleted policy, a write path admission does not gate), the other still holds.
 

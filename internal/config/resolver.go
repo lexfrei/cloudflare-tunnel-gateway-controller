@@ -36,6 +36,12 @@ type ResolvedConfig struct {
 	// Tunnel configuration
 	TunnelID string
 
+	// AllowSharedTunnels mirrors the GatewayClassConfig field: when true, a
+	// dedicated data plane may serve a tunnel another namespace (or this
+	// class) already serves. Off by default — see the CRD field's godoc for
+	// why an unproven tunnel claim is a cross-tenant problem.
+	AllowSharedTunnels bool
+
 	// Reference to the source config for watch purposes
 	ConfigName string
 }
@@ -111,6 +117,52 @@ func (r *Resolver) ResolveFromGatewayClass(
 	return r.resolveConfig(ctx, config)
 }
 
+// TunnelPolicy is the part of a GatewayClassConfig that decides tunnel
+// ownership: which tunnel the class itself serves, and whether the operator
+// permits several data planes to share one.
+type TunnelPolicy struct {
+	TunnelID           string
+	AllowSharedTunnels bool
+}
+
+// ResolveTunnelPolicyForGatewayClass reads ONLY the fields tunnel arbitration
+// needs, without resolving the Cloudflare credentials.
+//
+// Arbitration runs on every per-Gateway reconcile, and going through the full
+// resolver would make it inherit the credential Secret read: a missing or
+// mid-rotation class credentials Secret would then stall status writes,
+// rendering and drift healing for every dedicated data plane, none of which
+// depends on those credentials.
+func (r *Resolver) ResolveTunnelPolicyForGatewayClass(
+	ctx context.Context,
+	gatewayClassName string,
+) (*TunnelPolicy, error) {
+	gatewayClass := &gatewayv1.GatewayClass{}
+
+	err := r.client.Get(ctx, types.NamespacedName{Name: gatewayClassName}, gatewayClass)
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to get GatewayClass %s", gatewayClassName)
+	}
+
+	ref := gatewayClass.Spec.ParametersRef
+	if ref == nil || string(ref.Group) != ParametersRefGroup || string(ref.Kind) != ParametersRefKind {
+		return nil, errors.Wrapf(ErrInvalidParameters,
+			"GatewayClass %s has no usable parametersRef", gatewayClassName)
+	}
+
+	classConfig := &v1alpha1.GatewayClassConfig{}
+
+	err = r.client.Get(ctx, types.NamespacedName{Name: ref.Name}, classConfig)
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to get GatewayClassConfig %s", ref.Name)
+	}
+
+	return &TunnelPolicy{
+		TunnelID:           classConfig.Spec.TunnelID,
+		AllowSharedTunnels: classConfig.Spec.AllowSharedTunnels,
+	}, nil
+}
+
 // ResolveFromGatewayClassName resolves configuration by GatewayClass name.
 func (r *Resolver) ResolveFromGatewayClassName(
 	ctx context.Context,
@@ -134,8 +186,9 @@ func (r *Resolver) resolveConfig(ctx context.Context, config *v1alpha1.GatewayCl
 	}
 
 	resolved := &ResolvedConfig{
-		TunnelID:   config.Spec.TunnelID,
-		ConfigName: config.Name,
+		TunnelID:           config.Spec.TunnelID,
+		AllowSharedTunnels: config.Spec.AllowSharedTunnels,
+		ConfigName:         config.Name,
 	}
 
 	// Resolve Cloudflare credentials from Secret

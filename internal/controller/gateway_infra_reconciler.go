@@ -29,6 +29,7 @@ import (
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/api/v1alpha1"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/config"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/render"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/tunnelownership"
 )
 
 // Event reasons emitted by the infra reconciler.
@@ -131,6 +132,34 @@ func (r *GatewayInfraReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	if !config.HasInfrastructureParametersRef(&gateway) {
 		// Shared mode. Clean up anything a previous opt-in rendered — the
 		// Gateway is alive, so ownerRef GC alone cannot.
+		return ctrl.Result{}, r.cleanupRendered(ctx, &gateway)
+	}
+
+	// A refused plane is removed rather than merely left unconfigured.
+	//
+	// This matters for a SHARED token, where both parties hold the same
+	// credentials and both connectors really do register: the edge
+	// load-balances across them, so a configless survivor would answer a share
+	// of the incumbent's requests with 404s. A FORGED token cannot register at
+	// all — registration authenticates on the account tag and tunnel secret,
+	// not the UUID — so there the removal is hygiene rather than protection.
+	refused, err := r.tunnelClaimRefused(ctx, &gateway)
+	if err != nil {
+		// Never tear down a running plane because arbitration could not be
+		// computed: an unreadable class or a listing blip says nothing about
+		// who owns the tunnel. A deterministic class problem is permanent
+		// rather than transient, so stop retrying it here and let the Gateway
+		// reconciler carry the report — this one writes no status.
+		if errors.Is(err, config.ErrInvalidParameters) {
+			r.event(&gateway, corev1.EventTypeWarning, eventReasonRenderFailed, err.Error())
+
+			return ctrl.Result{}, nil
+		}
+
+		return ctrl.Result{}, err
+	}
+
+	if refused {
 		return ctrl.Result{}, r.cleanupRendered(ctx, &gateway)
 	}
 
@@ -737,4 +766,43 @@ func (r *GatewayInfraReconciler) namespaceInfraGateways(
 	}
 
 	return requests
+}
+
+// tunnelClaimRefused reports whether this Gateway claims a tunnel that belongs
+// to another namespace or to the GatewayClass.
+//
+// It runs the same arbitration over the same shared claim set as the route
+// partitioner and the Gateway reconciler, so all three agree on who won. An
+// error here means the verdict is unknown, and the caller must leave any
+// running plane alone rather than guess.
+func (r *GatewayInfraReconciler) tunnelClaimRefused(
+	ctx context.Context,
+	gateway *gatewayv1.Gateway,
+) (bool, error) {
+	// Reads the policy from THIS Gateway's class, while SyncAllRoutes reads it
+	// from the first managed class. Not a divergence today: resolveConfigForController
+	// hard-errors when managed classes carry different parametersRef, so either
+	// every managed class resolves the same GatewayClassConfig or route sync
+	// programs nothing at all. Whoever makes multi-class real has to reconcile
+	// these two readings first.
+	policy, err := r.ConfigResolver.ResolveTunnelPolicyForGatewayClass(ctx, string(gateway.Spec.GatewayClassName))
+	if err != nil {
+		return false, errors.Wrap(err, "resolving tunnel policy for arbitration")
+	}
+
+	if policy.AllowSharedTunnels {
+		return false, nil
+	}
+
+	classTunnel := canonicalTunnelID(policy.TunnelID)
+
+	claims, err := collectTunnelClaims(ctx, r.Client, r.ConfigResolver, r.ControllerName, classTunnel)
+	if err != nil {
+		return false, errors.Wrap(err, "collecting tunnel claims")
+	}
+
+	rejections := tunnelownership.Arbitrate(classTunnel, claims)
+	_, refused := rejections[gateway.Namespace+"/"+gateway.Name]
+
+	return refused, nil
 }

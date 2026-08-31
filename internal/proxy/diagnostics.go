@@ -30,12 +30,15 @@ const (
 	// dedicated condition plus a Warning Event on the affected route.
 	DiagnosticProxyConfigPush DiagnosticTarget = "ProxyConfigPush"
 	// DiagnosticTunnelShared means this route's per-Gateway data plane shares one
-	// Cloudflare Tunnel with another tenant's Gateway in a different namespace
-	// (the connector tokens parse to the same tunnel). Sharing a tunnel is a
-	// supported configuration but it is NOT isolation — the edge load-balances
-	// the tunnel's requests across both planes. Status/observability only: the
-	// route stays Accepted; the controller surfaces a dedicated condition plus a
-	// Warning Event so the collapsed isolation is visible, not just logged.
+	// Cloudflare Tunnel with another dedicated Gateway (the connector tokens
+	// parse to the same tunnel). Across namespaces that only survives where the
+	// operator set allowSharedTunnels on the GatewayClassConfig; otherwise the
+	// claim is refused and no route is programmed. Within one namespace it is
+	// permitted — a tenant sharing with itself. Sharing is not isolation either
+	// way: the edge load-balances the tunnel's requests across both planes.
+	// Status/observability only: the route stays Accepted; the controller
+	// surfaces a dedicated condition plus a Warning Event so the collapsed
+	// isolation is visible, not just logged.
 	DiagnosticTunnelShared DiagnosticTarget = "TunnelShared"
 	// DiagnosticEvent means the config was applied successfully but a redundant
 	// or conflicting hint was overridden (a benign override, e.g. an appProtocol

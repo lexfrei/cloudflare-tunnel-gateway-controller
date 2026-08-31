@@ -78,4 +78,5 @@ flowchart LR
 | `tunnelID` | GatewayClassConfig | Cloudflare Tunnel UUID |
 | `accountId` | GatewayClassConfig | Optional account ID override (auto-detected otherwise) |
 | `cloudflareCredentialsSecretRef` | GatewayClassConfig | API token Secret reference |
+| `allowSharedTunnels` | GatewayClassConfig | Permit dedicated data planes to share one tunnel across namespaces (default `false`; refused otherwise) |
 | `proxy.tunnelTokenSecretRef` | Helm values | Tunnel token Secret reference (consumed by the proxy pod) |

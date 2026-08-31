@@ -734,9 +734,11 @@ const (
 	routeConditionProxyConfigPushed  = "cf.k8s.lex.la/ProxyConfigPushed"
 	routeReasonProxyConfigPushFailed = "ProxyConfigPushFailed"
 	// routeConditionTunnelShared is set True when this route's per-Gateway data
-	// plane shares one Cloudflare Tunnel with another namespace's Gateway (#488).
-	// Sharing is supported but is not isolation; this surfaces the collapsed
-	// boundary instead of leaving it only in a log line.
+	// plane shares one Cloudflare Tunnel with another dedicated Gateway (#488).
+	// Across namespaces that requires the operator's allowSharedTunnels opt-in,
+	// since the claim is otherwise refused; within one namespace it is permitted.
+	// Neither is isolation, so this surfaces the collapsed boundary instead of
+	// leaving it only in a log line.
 	routeConditionTunnelShared = "cf.k8s.lex.la/TunnelShared"
 	routeReasonTunnelShared    = "TunnelSharedAcrossNamespaces"
 )

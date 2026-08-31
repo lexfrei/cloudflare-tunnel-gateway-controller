@@ -39,6 +39,61 @@ tests:
           path: spec.tunnelID
           value: "550e8400-e29b-41d4-a716-446655440000"
 
+  # allowSharedTunnels is a security default: a dedicated data plane claiming a
+  # tunnel it does not own is refused unless the operator opts in. Both halves
+  # of that contract are pinned — absent by default, present when asked for.
+  - it: should NOT set allowSharedTunnels by default
+    set:
+      gatewayClassConfig:
+        create: true
+        tunnelID: "550e8400-e29b-41d4-a716-446655440000"
+        cloudflareCredentialsSecretRef:
+          name: "cf-credentials"
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token
+    asserts:
+      - template: gatewayclassconfig.yaml
+        notExists:
+          path: spec.allowSharedTunnels
+
+  - it: should set allowSharedTunnels when the operator opts in
+    set:
+      gatewayClassConfig:
+        create: true
+        tunnelID: "550e8400-e29b-41d4-a716-446655440000"
+        allowSharedTunnels: true
+        cloudflareCredentialsSecretRef:
+          name: "cf-credentials"
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token
+    asserts:
+      - template: gatewayclassconfig.yaml
+        equal:
+          path: spec.allowSharedTunnels
+          value: true
+
+  # The template guard is a bare truthiness test, so ANY non-empty string turns
+  # the escape hatch on — including the string "false", which is what a quoted
+  # scalar in an ArgoCD valuesObject or an umbrella chart's pass-through
+  # produces. Rendering the opposite of the input would silently disable the
+  # fail-closed default, so the type is enforced by the schema.
+  - it: should reject a string allowSharedTunnels
+    set:
+      gatewayClassConfig:
+        create: true
+        tunnelID: "550e8400-e29b-41d4-a716-446655440000"
+        allowSharedTunnels: "false"
+        cloudflareCredentialsSecretRef:
+          name: "cf-credentials"
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token
+    asserts:
+      - failedTemplate:
+          errorPattern: allowSharedTunnels
+
   # tunnelID must be a valid UUID matching the CRD pattern:
   # ^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$
   - it: should accept lowercase UUID tunnelID

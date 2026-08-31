@@ -29,6 +29,14 @@ gatewayClassConfig:
   # Get from: Zero Trust Dashboard > Networks > Tunnels
   # Example: "550e8400-e29b-41d4-a716-446655440000"
   tunnelID: ""
+  # -- Permit a Gateway with a dedicated data plane to serve a Cloudflare
+  # Tunnel that another namespace's Gateway, or this GatewayClass itself,
+  # already serves. Off by default: a connector token proves nothing about the
+  # tunnel it names, so an unproven claim would otherwise collect a
+  # neighbour's routes. Such a Gateway is refused with
+  # Accepted=False/InvalidParameters instead. Turn this on only where every
+  # party on a shared tunnel is trusted to see the others' routes.
+  allowSharedTunnels: false
 
 # -- Controller configuration
 controller:
