@@ -91,6 +91,7 @@ The `proxy` section configures the in-process L7 reverse proxy. The proxy embeds
 | `proxy.image.tag` | string | `""` (appVersion) | Image tag override |
 | `proxy.configAPIPort` | int | `8081` | Port where the controller pushes configuration |
 | `proxy.proxyPort` | int | `8080` | Internal proxy port (tunnel traffic arrives here) |
+| `proxy.allowXOriginalHost` | bool | `false` | Trust the client-supplied `X-Original-Host` header as the routing key and backend `Host`. Test deployments only — leaving it on in production lets a client be served by another hostname's backend ([details](../guides/l7-proxy.md)) |
 
 ### Tunnel Token (required)
 

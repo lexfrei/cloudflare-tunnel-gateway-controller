@@ -539,6 +539,42 @@ func TestAccessLogStripQueryOption_Matrix(t *testing.T) {
 	}
 }
 
+// TestAllowXOriginalHostOption_Matrix pins the env plumbing for the
+// X-Original-Host trust gate. The header lets a client pick which configured
+// hostname serves its request, so the option must appear only on an explicit
+// truthy value: unset, empty, "false" and typos all leave the proxy stripping
+// the header.
+func TestAllowXOriginalHostOption_Matrix(t *testing.T) {
+	tests := []struct {
+		name       string
+		value      string
+		wantNonNil bool
+	}{
+		{name: "unset → nil", value: "", wantNonNil: false},
+		{name: "false → nil", value: "false", wantNonNil: false},
+		{name: "typo → nil", value: "yesplease", wantNonNil: false},
+		{name: "true → non-nil", value: "true", wantNonNil: true},
+		{name: "1 → non-nil", value: "1", wantNonNil: true},
+		{name: "TRUE → non-nil (case-insensitive)", value: "TRUE", wantNonNil: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// t.Parallel skipped: t.Setenv mutates process env.
+			t.Setenv("PROXY_ALLOW_X_ORIGINAL_HOST", tt.value)
+
+			opt := allowXOriginalHostOption()
+			if tt.wantNonNil {
+				assert.NotNil(t, opt,
+					"PROXY_ALLOW_X_ORIGINAL_HOST=%q must yield a non-nil HandlerOption", tt.value)
+			} else {
+				assert.Nil(t, opt,
+					"PROXY_ALLOW_X_ORIGINAL_HOST=%q must leave the header stripped", tt.value)
+			}
+		})
+	}
+}
+
 // TestTracingEnabled_Matrix pins PROXY_TRACING_ENABLED parsing: the same
 // truthy convention as the other proxy toggles (1 / true, case-insensitive,
 // trimmed; anything else disabled).

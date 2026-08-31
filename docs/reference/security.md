@@ -305,6 +305,7 @@ If you believe the controller has been compromised:
 - [ ] Read-only root filesystem enabled
 - [ ] NetworkPolicy restricting egress
 - [ ] ServiceAccount with minimal RBAC
+- [ ] `proxy.allowXOriginalHost` left off (the default) — it exists for the conformance suite, and trusting that header lets a client be served by a different hostname's backend
 - [ ] Container image verified with cosign
 - [ ] Prometheus monitoring enabled
 - [ ] Alerts configured for anomalous behavior

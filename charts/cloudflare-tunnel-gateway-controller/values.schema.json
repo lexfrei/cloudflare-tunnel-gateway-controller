@@ -815,6 +815,11 @@
             }
           }
         },
+        "allowXOriginalHost": {
+          "type": "boolean",
+          "description": "Trust the client-supplied X-Original-Host header as the routing key and backend Host. Test deployments only: the conformance suite uses it to carry domains the Cloudflare edge will not accept as a Host, and in production it lets a client be served by a different hostname's backend.",
+          "default": false
+        },
         "tracing": {
           "type": "object",
           "description": "Distributed tracing (OpenTelemetry) on the in-process proxy. Off by default. Spans export over OTLP/gRPC; W3C trace context is propagated to backends.",

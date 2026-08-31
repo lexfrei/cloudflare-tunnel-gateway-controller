@@ -86,6 +86,13 @@ type Handler struct {
 	// worth the bytes. Set via WithAccessLogStripQuery.
 	accessLogStripQuery bool
 
+	// allowXOriginalHost honours the client-supplied X-Original-Host header as
+	// the routing key and backend Host. Off by default: the header is a
+	// conformance-suite transport for unregistered test domains, and trusting
+	// it lets any client steer to another hostname's backend. Set via
+	// WithAllowXOriginalHost.
+	allowXOriginalHost bool
+
 	// metrics, when non-nil, records per-request data-plane instruments
 	// (in-flight gauge, duration histogram, status-class counters, bytes,
 	// backend errors). Nil = disabled = zero instrumentation cost on the hot
@@ -169,6 +176,22 @@ func WithAccessLog(logger *slog.Logger, samplingRate float64) HandlerOption {
 func WithAccessLogStripQuery(strip bool) HandlerOption {
 	return func(handler *Handler) {
 		handler.accessLogStripQuery = strip
+	}
+}
+
+// WithAllowXOriginalHost makes the handler honour the X-Original-Host header
+// as the routing key and the backend-facing Host, instead of stripping it.
+//
+// The header exists for the conformance and e2e suites, whose test domains are
+// not registered on the Cloudflare account: the edge rejects a Host it does not
+// host, so the intended Host travels out-of-band. The edge forwards arbitrary
+// X-* headers from any client, so honouring it means a client that reaches one
+// hostname can be routed to another hostname's backend on the same data plane,
+// with the victim hostname's edge policy never evaluated. It must stay off in
+// production; only the test deployments turn it on.
+func WithAllowXOriginalHost(allow bool) HandlerOption {
+	return func(handler *Handler) {
+		handler.allowXOriginalHost = allow
 	}
 }
 
@@ -324,6 +347,18 @@ func writeRuleUnavailable(writer http.ResponseWriter, rule *RouteRule) bool {
 }
 
 func (h *Handler) ServeHTTP(writer http.ResponseWriter, req *http.Request) {
+	// Stripped here rather than at each read so no downstream path — routing,
+	// the backend Host, the WebSocket upgrade clone — can reintroduce trust in
+	// a client-supplied header. See WithAllowXOriginalHost.
+	if !h.allowXOriginalHost {
+		req.Header.Del(originalHostHeader)
+	}
+
+	// The rewrite marker is proxy-owned: a URLRewrite filter sets it later in
+	// this same call to record that it chose the Host. Dropping any inbound
+	// copy first keeps a client from forging that decision.
+	req.Header.Del(hostRewrittenHeader)
+
 	writer, req, finishInstrumentation, metricsState := h.instrumentRequest(writer, req)
 
 	defer finishInstrumentation()
@@ -724,12 +759,12 @@ func (h *Handler) createReverseProxy(backendURL *url.URL, protocol BackendProtoc
 			// Skip restoration if a URL rewrite filter has explicitly set
 			// a new host — the filter's host takes precedence.
 			if !hostRewritten {
-				if origHost := req.Header.Get("X-Original-Host"); origHost != "" {
+				if origHost := req.Header.Get(originalHostHeader); origHost != "" {
 					req.Host = origHost
 				}
 			}
 
-			req.Header.Del("X-Original-Host")
+			req.Header.Del(originalHostHeader)
 		},
 		Transport:    h.backendTransport(backendURL.Host, protocol, backendTLS, headerTimeout),
 		ErrorHandler: h.proxyErrorHandler(hostname),

@@ -30,9 +30,11 @@ import (
 // This is the production-pattern complement to the upstream conformance test
 // `HTTPRouteBackendProtocolWebSocket`, which runs through the injectable
 // WebSocket dialer (TunnelWebSocketDialer rewrites the dial to the Cloudflare
-// edge and carries the intended host in X-Original-Host, because the Gateway
+// edge and carries the intended host in X-Original-Host, since the Gateway
 // address `<tunnel-id>.cfargotunnel.com` resolves into Cloudflare's ULA and is
-// unreachable from any test runner). This e2e adds what conformance cannot:
+// unreachable from any test runner; the proxy honours that header only because
+// the conformance deployment opts in via proxy.allowXOriginalHost).
+// This e2e adds what conformance cannot:
 // a real registered hostname on the wire Host header, no header rewriting.
 //
 // The test path: client opens `wss://<tunnel hostname>/ws` against Cloudflare

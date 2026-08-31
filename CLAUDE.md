@@ -558,7 +558,7 @@ Official Gateway API conformance suite (`sigs.k8s.io/gateway-api/conformance` v1
 - `TunnelRoundTripper` (test-only) always sets `Host: <edge-hostname>` so Cloudflare passes the request through
 - Original test Host is sent via `X-Original-Host` header
 - Proxy's `extractHost()` checks `X-Original-Host` first, falls back to `Host`
-- This is NOT a production pattern — only needed because conformance tests use unregistered domains
+- This is NOT a production pattern — only needed because conformance tests use unregistered domains, and the proxy enforces that: the header is stripped on entry unless the deployment sets `PROXY_ALLOW_X_ORIGINAL_HOST=1` (chart value `proxy.allowXOriginalHost`, which only `hack/conformance-setup.sh` turns on). Trusting it in production would let any client be served by a different hostname's backend, since the edge forwards arbitrary `X-*` headers. A suite run against a deployment without the flag fails every hostname-matching test — that is the flag working, not a regression
 
 **Other approaches investigated and rejected**:
 

@@ -26,8 +26,9 @@ import (
 // handshake's wire Host header must also be the edge hostname — Cloudflare
 // edge rejects any Host it does not recognise on the account — so the
 // test's intended host travels via X-Original-Host instead, exactly like
-// TunnelRoundTripper and TunnelGRPCClient. The in-cluster proxy's
-// extractHost already prefers this header over the wire Host/authority for
+// TunnelRoundTripper and TunnelGRPCClient, and like them it requires the
+// deployment to have opted in via proxy.allowXOriginalHost. The in-cluster
+// proxy's extractHost then prefers this header over the wire Host/authority for
 // both of those paths, and WebSocket upgrades route through the same
 // extractHost call before the connection is hijacked.
 type TunnelWebSocketDialer struct{}
