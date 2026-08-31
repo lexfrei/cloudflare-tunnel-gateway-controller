@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"runtime/debug"
 	"time"
 )
 
@@ -150,9 +151,12 @@ func (h *Handler) proxyWebSocketUpgrade(
 // pipeWebSocket completes the 101 handshake on the client side, then
 // copies bytes bidirectionally between the hijacked client conn and the
 // backend conn. Split from proxyWebSocketUpgrade to keep the per-function
-// statement count within the funlen budget; the deferred close of
-// `clientConn` only runs after both copy goroutines exit, ensuring the
-// hijacked conn is freed cleanly.
+// statement count within the funlen budget.
+//
+// The wait ends on the FIRST direction to finish, which is the intended
+// design: either end closing means the session is over. Whichever copy is
+// still blocked is then freed by a close it is reading through — clientConn
+// here, backendConn in the caller — so neither goroutine is left behind.
 func pipeWebSocket(
 	w http.ResponseWriter,
 	backendConn net.Conn,
@@ -187,17 +191,36 @@ func pipeWebSocket(
 	// session. Deferred clientConn/backendConn close cleans up both ends.
 	errCh := make(chan error, 2)
 
-	go func() {
-		_, copyErr := io.Copy(backendConn, clientConn)
-		errCh <- copyErr
-	}()
-
-	go func() {
-		_, copyErr := io.Copy(clientConn, backendReader)
-		errCh <- copyErr
-	}()
+	go copyWebSocketSide(backendConn, clientConn, errCh)
+	go copyWebSocketSide(clientConn, backendReader, errCh)
 
 	<-errCh
+}
+
+// errWebSocketCopyPanic ends a session whose copy goroutine panicked.
+var errWebSocketCopyPanic = errors.New("panic while copying websocket bytes")
+
+// copyWebSocketSide copies one direction of a hijacked WebSocket session and
+// reports how it ended.
+//
+// The recover is what keeps one connection's failure from being everyone's: a
+// panic in a goroutine cannot be recovered by whoever started it, so an
+// unguarded copy takes the process down and every other tenant's connection
+// with it. This holds on every transport, not only QUIC — x/net/http2's
+// per-stream recover covers the handler goroutine, never the ones it spawns.
+func copyWebSocketSide(dst io.Writer, src io.Reader, errCh chan<- error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			slog.Error("websocket: panic while copying, closing the session",
+				"panic", recovered,
+				"stack", string(debug.Stack()))
+
+			errCh <- errWebSocketCopyPanic
+		}
+	}()
+
+	_, copyErr := io.Copy(dst, src)
+	errCh <- copyErr
 }
 
 // buildBackendUpgradeRequest clones the inbound request and rewrites its

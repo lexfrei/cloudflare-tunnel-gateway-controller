@@ -167,6 +167,19 @@ Practical consequences:
 - `httputil.ReverseProxy.handleUpgradeResponse` calls `Hijack` BEFORE `WriteHeader`. Over HTTP/2 that fails; `ReverseProxy`'s default error handler then writes 502 and the client sees a 502 (or a Cloudflare edge-rewritten 403). This is the bug that motivated the custom `proxyWebSocketUpgrade` path in `handler_websocket.go`.
 - Writing a status, hijacking, and bidirectionally piping bytes is the correct shape for WebSocket and any future upgrade flow over the tunnel; do NOT route them through `httputil.ReverseProxy`.
 
+### Panic containment
+
+`GatewayOriginProxy.ProxyHTTP` recovers handler panics on both branches, because nothing else does: cloudflared dispatches each QUIC stream on a bare goroutine, and `protocol: auto` dials QUIC first, so an escaping panic took the whole data plane down rather than one request. `x/net/http2` recovers only the handler goroutine, never the ones it spawns, which is why the two WebSocket copy goroutines carry their own guard.
+
+What the recover does next depends on what already reached the client, and the answer differs from a stdlib server's:
+
+- Nothing written yet: the staged headers are cleared and a 500 goes out. Clearing matters because a `Content-Length` staged before the panic would promise a body that never arrives.
+- Status already written, or the handler took the connection: nothing can be answered, so the error returns and cloudflared resets the stream. Writing a second status here is worse than useless — the HTTP/2 writer serialises its header map once, so the client keeps the first.
+
+The upgrade branch is the exception and decides nothing. It hands cloudflared the raw writer, so it cannot tell what was sent without wrapping it, and it always returns the error instead. Cloudflared then applies the same rule from its own side: 502 while the status is unsent, reset once it is out.
+
+`http.ErrAbortHandler` is exempt from logging. `httputil.ReverseProxy` raises it on any failed response copy, which a client closing mid-download does routinely, and the standard library suppresses its stack for that reason.
+
 ### Required test fixture for tunnel-mode paths
 
 Any proxy code that reads, writes, or hijacks the response MUST be covered by a test that runs through `fakeCloudflaredRespWriter` (`internal/proxy/handler_tunnelfake_test.go`), in addition to any existing `httptest.NewServer`-based coverage. The fake enforces the HTTP/2 contract above and reproduces production failures deterministically:
