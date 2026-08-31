@@ -301,6 +301,271 @@ func TestHandler_NoDefaultUserAgentInjected(t *testing.T) {
 		"a request without User-Agent must reach the backend without one injected")
 }
 
+// TestHandler_XOriginalHostRequiresOptIn pins the trust boundary around
+// X-Original-Host. The header exists so the conformance suite can drive
+// unregistered test domains through the Cloudflare edge, which rejects a Host
+// it does not host. The edge forwards arbitrary X-* headers from any client,
+// so honoring it by default lets a client that reaches one hostname be routed
+// to a different hostname's backend on the same data plane, evaluating the
+// victim hostname's edge policy against the wrong name.
+//
+// Default: the header is ignored for routing and never reaches the backend.
+// Opt-in: the conformance behaviour is preserved exactly.
+func TestHandler_XOriginalHostRequiresOptIn(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		opts       []proxy.HandlerOption
+		wantServed string
+		wantHost   string
+	}{
+		{
+			name:       "ignored by default",
+			opts:       nil,
+			wantServed: "app",
+			wantHost:   "app.example.com",
+		},
+		{
+			name:       "honored when explicitly allowed",
+			opts:       []proxy.HandlerOption{proxy.WithAllowXOriginalHost(true)},
+			wantServed: "victim",
+			wantHost:   "victim.example.com",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var gotHost string
+
+			appBackend := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, req *http.Request) {
+				gotHost = req.Host
+				_, _ = writer.Write([]byte("app"))
+			}))
+			defer appBackend.Close()
+
+			victimBackend := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, req *http.Request) {
+				gotHost = req.Host
+				_, _ = writer.Write([]byte("victim"))
+			}))
+			defer victimBackend.Close()
+
+			router := proxy.NewRouter()
+			cfg := &proxy.Config{
+				Version: 1,
+				Rules: []proxy.RouteRule{
+					{
+						Hostnames: []string{"app.example.com"},
+						Backends:  []proxy.BackendRef{{URL: appBackend.URL, Weight: 1}},
+					},
+					{
+						Hostnames: []string{"victim.example.com"},
+						Backends:  []proxy.BackendRef{{URL: victimBackend.URL, Weight: 1}},
+					},
+				},
+			}
+			require.NoError(t, router.UpdateConfig(cfg))
+
+			handler := proxy.NewHandler(router, tt.opts...)
+
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://app.example.com/", nil)
+			req.Header.Set("X-Original-Host", "victim.example.com")
+			recorder := httptest.NewRecorder()
+
+			handler.ServeHTTP(recorder, req)
+
+			require.Equal(t, http.StatusOK, recorder.Code)
+			assert.Equal(t, tt.wantServed, recorder.Body.String(),
+				"X-Original-Host must only steer routing when explicitly allowed")
+			assert.Equal(t, tt.wantHost, gotHost,
+				"the Host the backend sees must follow the same rule as routing")
+		})
+	}
+}
+
+// TestHandler_WebSocketUpgradeStripsProxyOnlyHeaders pins that the WebSocket
+// upgrade leg strips the same two proxy-internal headers the plain HTTP leg
+// strips: the client-supplied X-Original-Host and the X-Proxy-Host-Rewritten
+// marker a URLRewrite filter sets for the handler's own benefit. Neither is
+// meaningful to a backend, and forwarding the marker tells the backend how this
+// proxy signals to itself.
+//
+// The upgrade request is built by cloning the inbound request
+// (buildBackendUpgradeRequest), which copies every header, so the deletions
+// the plain path performs have to be repeated there.
+func TestHandler_WebSocketUpgradeStripsProxyOnlyHeaders(t *testing.T) {
+	t.Parallel()
+
+	gotHeaders := make(chan http.Header, 1)
+
+	// Answering non-101 is enough: the upgrade request has already been built
+	// and sent by the time the backend replies, which is what this pins.
+	backend := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, req *http.Request) {
+		gotHeaders <- req.Header.Clone()
+		writer.WriteHeader(http.StatusBadRequest)
+	}))
+	defer backend.Close()
+
+	rewritten := rewrittenHost
+
+	router := proxy.NewRouter()
+	require.NoError(t, router.UpdateConfig(&proxy.Config{
+		Version: 1,
+		Rules: []proxy.RouteRule{{
+			Hostnames: []string{"ws.example.com"},
+			Filters: []proxy.RouteFilter{{
+				Type:       proxy.FilterURLRewrite,
+				URLRewrite: &proxy.URLRewriteConfig{Hostname: &rewritten},
+			}},
+			Backends: []proxy.BackendRef{
+				{URL: backend.URL, Weight: 1, Protocol: proxy.BackendProtocolHTTP, WebSocket: true},
+			},
+		}},
+	}))
+
+	// Trusting the header isolates this from the C1 gate: the leak must be
+	// closed in the upgrade builder itself, not only by the entry-point strip.
+	handler := proxy.NewHandler(router, proxy.WithAllowXOriginalHost(true))
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://ws.example.com/ws", nil)
+	req.Header.Set("Connection", "Upgrade")
+	req.Header.Set("Upgrade", "websocket")
+	req.Header.Set("Sec-WebSocket-Version", "13")
+	req.Header.Set("Sec-WebSocket-Key", rfc6455SampleWSKey)
+	req.Header.Set("X-Original-Host", "ws.example.com")
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, req)
+
+	select {
+	case headers := <-gotHeaders:
+		assert.Empty(t, headers.Get("X-Original-Host"),
+			"the backend must not receive the conformance host-carrier header")
+		assert.Empty(t, headers.Get("X-Proxy-Host-Rewritten"),
+			"the backend must not receive the proxy's internal rewrite marker")
+	case <-time.After(5 * time.Second):
+		t.Fatal("backend never received the upgrade request")
+	}
+}
+
+// TestHandler_ClientCannotForgeHostRewrittenMarker pins that the internal
+// X-Proxy-Host-Rewritten marker is proxy-owned. A URLRewrite filter sets it
+// mid-request to tell the handler it already chose a Host; a client that sends
+// its own copy must not be able to steer that decision.
+//
+// Observable through the opt-in X-Original-Host path, where the marker's whole
+// job is to suppress the restoration: with a forged marker honoured, a client
+// could stop the proxy from applying a header the deployment asked it to trust.
+func TestHandler_ClientCannotForgeHostRewrittenMarker(t *testing.T) {
+	t.Parallel()
+
+	var gotHost string
+
+	backend := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, req *http.Request) {
+		gotHost = req.Host
+		writer.WriteHeader(http.StatusOK)
+	}))
+	defer backend.Close()
+
+	router := proxy.NewRouter()
+	require.NoError(t, router.UpdateConfig(&proxy.Config{
+		Version: 1,
+		Rules: []proxy.RouteRule{{
+			Hostnames: []string{"intended.example.com"},
+			Backends:  []proxy.BackendRef{{URL: backend.URL, Weight: 1}},
+		}},
+	}))
+
+	handler := proxy.NewHandler(router, proxy.WithAllowXOriginalHost(true))
+
+	// The conformance shape: the request is addressed to the edge hostname and
+	// carries its intended host out-of-band, so suppressing the restoration is
+	// observable at the backend.
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://edge.example.com/", nil)
+	req.Header.Set("X-Original-Host", "intended.example.com")
+	req.Header.Set("X-Proxy-Host-Rewritten", "true")
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, req)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	assert.Equal(t, "intended.example.com", gotHost,
+		"a forged X-Proxy-Host-Rewritten must not suppress the proxy's own Host handling")
+}
+
+// TestHandler_MirrorLegStripsProxyOnlyHeaders pins the third and last leg that
+// reaches a backend: RequestMirror. Like the WebSocket upgrade it clones the
+// inbound request, so it inherits the proxy-internal X-Proxy-Host-Rewritten
+// marker whenever a URLRewrite filter ran before it on the same rule.
+//
+// The mirror destination is operator-configured rather than attacker-chosen,
+// so this is hygiene rather than exposure — but all three legs should agree on
+// which headers are the proxy's own.
+func TestHandler_MirrorLegStripsProxyOnlyHeaders(t *testing.T) {
+	t.Parallel()
+
+	mirrored := make(chan http.Header, 1)
+
+	mirrorBackend := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, req *http.Request) {
+		select {
+		case mirrored <- req.Header.Clone():
+		default:
+		}
+
+		writer.WriteHeader(http.StatusOK)
+	}))
+	defer mirrorBackend.Close()
+
+	primary := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusOK)
+	}))
+	defer primary.Close()
+
+	rewritten := rewrittenHost
+
+	router := proxy.NewRouter()
+	require.NoError(t, router.UpdateConfig(&proxy.Config{
+		Version: 1,
+		Rules: []proxy.RouteRule{{
+			Hostnames: []string{"app.example.com"},
+			Filters: []proxy.RouteFilter{
+				{
+					Type:       proxy.FilterURLRewrite,
+					URLRewrite: &proxy.URLRewriteConfig{Hostname: &rewritten},
+				},
+				{
+					Type:          proxy.FilterRequestMirror,
+					RequestMirror: &proxy.MirrorConfig{BackendURL: mirrorBackend.URL},
+				},
+			},
+			Backends: []proxy.BackendRef{{URL: primary.URL, Weight: 1}},
+		}},
+	}))
+
+	// Trust turned on so X-Original-Host survives the entry strip and reaches
+	// the mirror clone: with it off the assertion below would pass for the
+	// wrong reason.
+	handler := proxy.NewHandler(router, proxy.WithAllowXOriginalHost(true))
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://app.example.com/", nil)
+	req.Header.Set("X-Original-Host", "app.example.com")
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, req)
+
+	select {
+	case headers := <-mirrored:
+		assert.Empty(t, headers.Get("X-Proxy-Host-Rewritten"),
+			"the mirror backend must not receive the proxy's internal rewrite marker")
+		assert.Empty(t, headers.Get("X-Original-Host"),
+			"the mirror backend must not receive the host-carrier header either")
+	case <-time.After(5 * time.Second):
+		t.Fatal("mirror backend never received the request")
+	}
+}
+
 func TestHandler_NoMatchReturns404(t *testing.T) {
 	t.Parallel()
 
@@ -1518,7 +1783,9 @@ func TestHandler_URLRewriteHostBeatsXOriginalHost(t *testing.T) {
 	err := router.UpdateConfig(cfg)
 	require.NoError(t, err)
 
-	handler := proxy.NewHandler(router)
+	// Both hostnames are configured, so this test only has meaning when the
+	// header is trusted: that is the deployment shape it pins.
+	handler := proxy.NewHandler(router, proxy.WithAllowXOriginalHost(true))
 
 	// Simulate tunnel transport: X-Original-Host carries the real hostname
 	// that was replaced with the edge hostname for Cloudflare routing.
@@ -1881,7 +2148,9 @@ func TestHandler_XOriginalHostRestoredWithoutRewrite(t *testing.T) {
 
 	require.NoError(t, router.UpdateConfig(cfg))
 
-	handler := proxy.NewHandler(router)
+	// Both hostnames are configured, so this test only has meaning when the
+	// header is trusted: that is the deployment shape it pins.
+	handler := proxy.NewHandler(router, proxy.WithAllowXOriginalHost(true))
 
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://edge.cloudflare.com/test", nil)
 	req.Header.Set("X-Original-Host", "app.example.com")

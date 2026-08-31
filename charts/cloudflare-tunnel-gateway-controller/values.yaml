@@ -447,6 +447,15 @@ proxy:
     # concern and route-level (headers vs query) / sink-level (log
     # pipeline scrubbing) mitigations aren't viable.
     stripQuery: false
+  # -- Trust the client-supplied `X-Original-Host` header as the routing
+  # key and the Host sent to the backend. TEST DEPLOYMENTS ONLY. The
+  # header exists so the Gateway API conformance suite can drive domains
+  # that are not registered on the Cloudflare account, which the edge
+  # would otherwise reject by Host. The edge forwards arbitrary `X-*`
+  # headers from any client, so enabling this in production lets a client
+  # that reaches one hostname be served by a different hostname's backend,
+  # with the intended hostname's edge policy never evaluated.
+  allowXOriginalHost: false
   # -- Distributed tracing (OpenTelemetry) on the in-process proxy.
   # Off by default (zero cost on the hot path). When enabled, each
   # request gets a server span, backend calls get a linked client span,

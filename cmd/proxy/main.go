@@ -658,6 +658,23 @@ func accessLogStripQueryOption() proxy.HandlerOption {
 	return proxy.WithAccessLogStripQuery(true)
 }
 
+// allowXOriginalHostOption translates PROXY_ALLOW_X_ORIGINAL_HOST into
+// proxy.WithAllowXOriginalHost. Returns nil unless the value is explicitly
+// truthy, so every other input — unset, empty, "false", a typo — leaves the
+// proxy stripping the header.
+//
+// Only the conformance and e2e deployments set this: their test domains are
+// not registered on the Cloudflare account, so the intended Host has to travel
+// out-of-band. In production the header is client-controlled and would let a
+// request steer itself to a different hostname's backend.
+func allowXOriginalHostOption() proxy.HandlerOption {
+	if !isTruthyEnv("PROXY_ALLOW_X_ORIGINAL_HOST") {
+		return nil
+	}
+
+	return proxy.WithAllowXOriginalHost(true)
+}
+
 // truthyEnvOne and truthyEnvTrue are the two accepted shell-flag /
 // YAML-bool forms for env vars that toggle proxy features. Hoisted
 // to constants so goconst doesn't trip across the per-feature
@@ -733,6 +750,12 @@ func handlerOptions(logger *slog.Logger) []proxy.HandlerOption {
 
 	if tracingOpt := tracingHandlerOption(); tracingOpt != nil {
 		opts = append(opts, tracingOpt)
+	}
+
+	if allowOpt := allowXOriginalHostOption(); allowOpt != nil {
+		logger.Warn("X-Original-Host is trusted from clients -- test deployments only, never production")
+
+		opts = append(opts, allowOpt)
 	}
 
 	return opts

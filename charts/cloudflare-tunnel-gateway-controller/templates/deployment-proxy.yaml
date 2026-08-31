@@ -86,6 +86,10 @@ spec:
               value: "true"
             {{- end }}
             {{- end }}
+            {{- if .Values.proxy.allowXOriginalHost }}
+            - name: PROXY_ALLOW_X_ORIGINAL_HOST
+              value: "true"
+            {{- end }}
             {{- if .Values.proxy.tracing.enabled }}
             - name: PROXY_TRACING_ENABLED
               value: "true"

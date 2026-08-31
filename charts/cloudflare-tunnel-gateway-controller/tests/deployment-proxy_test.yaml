@@ -354,6 +354,35 @@ tests:
             name: PROXY_ACCESS_LOG_SAMPLING_RATE
             value: "1"
 
+  - it: should NOT emit PROXY_ALLOW_X_ORIGINAL_HOST by default
+    # X-Original-Host lets the sender pick which configured hostname serves
+    # the request. It exists for the conformance suite, whose test domains
+    # the Cloudflare edge will not accept as a Host, and must stay off in
+    # every ordinary install.
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          any: true
+          content:
+            name: PROXY_ALLOW_X_ORIGINAL_HOST
+
+  - it: should emit PROXY_ALLOW_X_ORIGINAL_HOST when explicitly enabled
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
+        allowXOriginalHost: true
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: PROXY_ALLOW_X_ORIGINAL_HOST
+            value: "true"
+
   - it: should NOT emit PROXY_ACCESS_LOG_STRIP_QUERY when stripQuery is false (default)
     set:
       proxy:

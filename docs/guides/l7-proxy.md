@@ -119,9 +119,16 @@ The proxy binary accepts the following environment variables:
 | `PROXY_ACCESS_LOG_ENABLED` | `false` | Enable per-request structured JSON access logging on stdout. |
 | `PROXY_ACCESS_LOG_SAMPLING_RATE` | `1` | Fraction of non-5xx requests to log when access logging is enabled, in `[0, 1]` (5xx are always logged). |
 | `PROXY_ACCESS_LOG_STRIP_QUERY` | `false` | Strip the request URL query string from access-log lines. |
+| `PROXY_ALLOW_X_ORIGINAL_HOST` | `false` | Trust the client-supplied `X-Original-Host` header as the routing key and backend `Host`. Test deployments only — see the warning below. |
 | `PROXY_TRACING_ENABLED` | `false` | Enable OpenTelemetry tracing of proxied requests. |
 | `PROXY_TRACING_ENDPOINT` | `""` | OTLP exporter endpoint for traces (when tracing is enabled). |
 | `PROXY_TRACING_SAMPLE_RATE` | `1` | Trace sampling fraction in `[0, 1]` (when tracing is enabled). |
+
+!!! danger "`PROXY_ALLOW_X_ORIGINAL_HOST` is for test deployments only"
+
+    The proxy strips `X-Original-Host` from every request unless this is set. It exists because the Gateway API conformance suite drives domains that are not registered on the Cloudflare account: the edge rejects them by `Host`, so the suite addresses the edge hostname and carries its intended host in that header instead.
+
+    The edge forwards arbitrary `X-*` headers from any client, so a proxy that trusts this header lets a client that reaches one hostname be served by a different hostname's backend — with the intended hostname's edge policy (Access, WAF, rate limits) evaluated against the wrong name, and the backend seeing a `Host` of the caller's choosing. Enable it only in a throwaway conformance or e2e deployment. The chart value is `proxy.allowXOriginalHost`, and the proxy logs a warning at startup whenever it is on.
 
 ### Config API Authentication
 

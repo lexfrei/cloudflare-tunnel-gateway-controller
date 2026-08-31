@@ -220,6 +220,12 @@ func buildBackendUpgradeRequest(req *http.Request, backendURL *url.URL) *http.Re
 	outReq.RequestURI = ""
 	outReq.Host = backendURL.Host
 
+	// req.Clone copies every header, so the two proxy-internal ones the plain
+	// path deletes have to be deleted here too: neither means anything to a
+	// backend, and the marker would advertise how this proxy signals to itself.
+	outReq.Header.Del(originalHostHeader)
+	outReq.Header.Del(hostRewrittenHeader)
+
 	return outReq
 }
 

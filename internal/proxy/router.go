@@ -683,10 +683,13 @@ func selectBackend(backends []BackendRef) int {
 // Prefers X-Original-Host header (set by TunnelRoundTripper when the real Host
 // must be replaced with the edge hostname to pass through Cloudflare edge).
 // Falls back to the standard Host header. Port suffix is stripped.
+// The header only ever reaches here in a deployment that opted in via
+// WithAllowXOriginalHost; Handler.ServeHTTP strips it otherwise, so the
+// preference below is inert in a default install.
 // NOTE: Go's http.Request.Host always wraps IPv6 addresses in brackets
 // (e.g., "[::1]:8080"), so bare IPv6 like "::1" should not appear in practice.
 func extractHost(req *http.Request) string {
-	host := req.Header.Get("X-Original-Host")
+	host := req.Header.Get(originalHostHeader)
 	if host == "" {
 		host = req.Host
 	}

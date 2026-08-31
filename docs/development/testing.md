@@ -327,6 +327,8 @@ The project integrates the official `sigs.k8s.io/gateway-api/conformance` suite 
 
 `CONFORMANCE_TUNNEL_HOSTNAME` is required — the suite fails fast without it. `hack/conformance-setup.sh` threads it automatically from `.env` or the exported environment (`CF_TUNNEL_HOSTNAME`); set it explicitly when running `go test` by hand.
 
+The deployment under test must also set `proxy.allowXOriginalHost=true` (`hack/conformance-setup.sh` does). The suite's domains are not registered on the Cloudflare account, so its round-tripper sends the intended Host in `X-Original-Host` while addressing the edge hostname; the proxy strips that header by default because a client can set it freely, and trusting it would let a request pick which configured hostname serves it. Against a deployment without the flag every hostname-matching test fails — that is the gate working.
+
 ```bash
 # Run conformance tests (requires deployed controller + tunnel)
 CONFORMANCE_TUNNEL_HOSTNAME=<your-tunnel-hostname> \

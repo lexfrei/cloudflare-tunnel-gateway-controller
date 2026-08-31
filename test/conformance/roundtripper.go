@@ -37,7 +37,10 @@ type TunnelRoundTripper struct {
 // originalHostHeader carries the test's intended host (the HTTP Host or the
 // gRPC :authority) to the in-cluster proxy when the wire host must be the
 // Cloudflare edge hostname instead. The proxy's extractHost reads it before the
-// real Host, so it is the only signal that lets a non-edge hostname match.
+// real Host, so it is the only signal that lets a non-edge hostname match --
+// but only in a deployment that opted in via proxy.allowXOriginalHost, which
+// hack/conformance-setup.sh sets and no production install should. Against a
+// deployment without it every hostname-matching test fails.
 // Shared by TunnelRoundTripper (HTTP) and TunnelGRPCClient (gRPC).
 const originalHostHeader = "X-Original-Host"
 

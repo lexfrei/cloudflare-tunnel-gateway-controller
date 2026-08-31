@@ -329,6 +329,11 @@ fi
 
 # proxy.tunnel.protocol=http2 is mandatory in both modes: the chart defaults to
 # "auto" (QUIC-first) and kind/Colima blocks QUIC egress to the CF edge (530/1033).
+# proxy.allowXOriginalHost=true is what makes the suite runnable at all: its
+# domains (example.com, rewrite.example, ...) are not on the Cloudflare account,
+# so the edge rejects them by Host and the intended Host rides X-Original-Host
+# instead. The proxy ignores that header unless this value is set, which is why
+# it belongs here and nowhere near a production values file.
 # The "${arr[@]+...}" idiom expands an empty array to nothing without tripping
 # `set -u` on bash < 4.4 (stock macOS ships 3.2).
 info "Deploying controller via helm..."
@@ -343,6 +348,7 @@ helm upgrade --install "${RELEASE_NAME}" \
   "${HELM_IMAGE_ARGS[@]+"${HELM_IMAGE_ARGS[@]}"}" \
   --set proxy.tunnelTokenSecretRef.name=cloudflare-tunnel-token \
   --set proxy.tunnel.protocol=http2 \
+  --set proxy.allowXOriginalHost=true \
   --set controller.logLevel=debug \
   --set hostnameOwnershipPolicy.enabled=true \
   --set-json 'hostnameOwnershipPolicy.namespaceSelector={"matchLabels":{"cf-e2e-hostname-policy":"enforced"}}' \

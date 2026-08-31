@@ -66,6 +66,11 @@ type matchedPrefixKey struct{}
 // It is removed before the request is sent to the backend.
 const hostRewrittenHeader = "X-Proxy-Host-Rewritten"
 
+// originalHostHeader carries the conformance suite's intended Host past the
+// Cloudflare edge, which rejects a Host not registered on the account. Trusted
+// only when the handler was built with WithAllowXOriginalHost.
+const originalHostHeader = "X-Original-Host"
+
 // SetMatchedPrefix returns a shallow copy of req with the matched path prefix
 // stored in its context. The original request is NOT modified.
 // Used by URL rewrite filters for ReplacePrefixMatch.
@@ -395,6 +400,12 @@ func (f *requestMirror) ProcessRequest(req *http.Request) *http.Response {
 	tmpl.URL = mirrorURL
 	tmpl.Host = mirrorURL.Host
 	tmpl.RequestURI = ""
+	// Clone copies the proxy's own headers -- the marker a preceding URLRewrite
+	// filter set, and the host carrier where the deployment trusts it. The
+	// mirror backend is a backend like any other and must see neither, matching
+	// the plain and upgrade legs.
+	tmpl.Header.Del(hostRewrittenHeader)
+	tmpl.Header.Del(originalHostHeader)
 
 	// After Clone, req and the template share the same body reader. Give the
 	// primary leg its own independent reader from the buffered data; each
