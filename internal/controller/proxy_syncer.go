@@ -51,8 +51,9 @@ const configMapKind = "ConfigMap"
 // newly-joined proxy pod without waiting for the next HTTPRoute
 // reconcile. Before the first SyncRoutes call, lastCfg is nil and
 // ResyncEndpoints is a no-op -- there is nothing to push yet.
-// Guarded by syncMu so the cache update is consistent with the push
-// it follows.
+// syncMu guards reads and writes of lastCfg, not the push between them:
+// pushes run lock-free, so a recorder must check that the document it
+// pushed is still the cached one before writing anything derived from it.
 type ProxySyncer struct {
 	clusterDomain        string
 	logger               *slog.Logger
@@ -64,6 +65,10 @@ type ProxySyncer struct {
 	tlsResolver          proxy.BackendTLSResolver
 	gatewayCertResolver  proxy.GatewayClientCertResolver
 	syncMu               sync.Mutex
+	// recordSeq is issued once per recorded outcome across every partition,
+	// under syncMu, and never reused, so a value observed by a replay cannot
+	// reappear on a partition recreated under the same key. Guarded by syncMu.
+	recordSeq uint64
 
 	// defaultAuthToken is the shared data plane's push token (the chart's
 	// proxy.authTokenSecretRef). Per-Gateway partitions carry their OWN
@@ -103,6 +108,15 @@ type pushTarget struct {
 	lastPushedEndpoints map[string]struct{}
 	endpointURLs        []string
 	authToken           string
+	// lastRecordSeq is the syncer's recordSeq as issued at this target's most
+	// recent record, success or failure. A replay snapshots it under the lock
+	// before its lock-free push and records only if it is unchanged. Neither
+	// the skip key's value nor a per-target counter can serve that purpose:
+	// every failure clears the key, so "already empty" and "cleared again in
+	// the window" are one value and two states; and a counter restarting at
+	// zero on a partition evicted and recreated under the same key can land on
+	// exactly the value the replay observed.
+	lastRecordSeq uint64
 	// consecutivePushFail counts pushes that failed in a row for this
 	// partition. It drives the route-status surfacing of a SUSTAINED push
 	// failure (#487): a one-off blip (a pod rolling, a brief partition) must
@@ -834,6 +848,9 @@ func (s *ProxySyncer) recordPush(
 		return // evicted during the lock-free push window; do not resurrect
 	}
 
+	s.recordSeq++
+	target.lastRecordSeq = s.recordSeq
+
 	if pushErr != nil {
 		// A failed push may have PARTIALLY succeeded (the pusher fans out
 		// concurrently): some replicas may already hold the new config.
@@ -1231,19 +1248,32 @@ func (s *ProxySyncer) replayableTarget(logger *slog.Logger, key string) (*pushTa
 // success and invalidating it on partial failure.
 func (s *ProxySyncer) resyncTarget(ctx context.Context, key string, endpoints []string, authToken string) error {
 	// Resolve headless service DNS names before acquiring the lock so a
-	// slow DNS lookup does not block a concurrent sync -- mirrors the same
-	// pattern in SyncPartition for symmetric lock-hold time.
+	// slow DNS lookup does not block a concurrent sync.
 	resolved := resolveEndpoints(ctx, endpoints)
-
-	s.syncMu.Lock()
-	defer s.syncMu.Unlock()
 
 	logger := logging.FromContext(ctx)
 	if logger == slog.Default() {
 		logger = s.logger
 	}
 
+	s.syncMu.Lock()
 	target, ok := s.replayableTarget(logger, key)
+
+	var (
+		cfg *proxy.Config
+		// Where the record sequence stood when the document was read. Any
+		// outcome recorded while this replay is in flight moves it, which is
+		// what recordResync checks before writing.
+		observedSeq uint64
+	)
+
+	if ok {
+		cfg = target.lastCfg
+		observedSeq = target.lastRecordSeq
+	}
+
+	s.syncMu.Unlock()
+
 	if !ok {
 		return nil
 	}
@@ -1251,10 +1281,18 @@ func (s *ProxySyncer) resyncTarget(ctx context.Context, key string, endpoints []
 	logger.Info("resyncing cached proxy config to endpoints",
 		"partition", key,
 		"endpoints", len(resolved),
-		"version", target.lastCfg.Version,
+		"version", cfg.Version,
 	)
 
-	results := s.pusher.PushWithToken(ctx, target.lastCfg, resolved, authToken)
+	// Push OUTSIDE the lock, as SyncPartition does: syncMu guards the in-memory
+	// push state, not the network call. Holding it across a replay to a wedged
+	// connector would stall every other partition's config update (#489).
+	//
+	// A lost-race error here is expected rather than a symptom: a sync can push
+	// a newer document that lands first, and the proxy then refuses this older
+	// one. The skip key is cleared below and the next replay carries the newer
+	// document.
+	results := s.pusher.PushWithToken(ctx, cfg, resolved, authToken)
 
 	var pushErrors []error
 
@@ -1269,29 +1307,69 @@ func (s *ProxySyncer) resyncTarget(ctx context.Context, key string, endpoints []
 		}
 	}
 
+	s.recordResync(key, cfg, observedSeq, authToken, resolved, len(pushErrors) > 0)
+
 	if len(pushErrors) > 0 {
+		return fmt.Errorf("failed to resync config to %d/%d endpoints: %w",
+			len(pushErrors), len(resolved), errors.Join(pushErrors...))
+	}
+
+	return nil
+}
+
+// recordResync applies a replay's outcome to the partition's steady-state skip
+// key, and sets it only while nothing else was recorded since the replay read
+// its document. It never writes lastCfg: the replay pushed the cached config,
+// so writing it back could only regress the cache to an older document.
+func (s *ProxySyncer) recordResync(
+	key string,
+	cfg *proxy.Config,
+	observedSeq uint64,
+	authToken string,
+	resolved []string,
+	failed bool,
+) {
+	s.syncMu.Lock()
+	defer s.syncMu.Unlock()
+
+	target, ok := s.targets[key]
+	if !ok {
+		return // evicted during the lock-free push window; do not resurrect
+	}
+
+	// Decided before this record bumps the sequence: a concurrent sync
+	// recorded an outcome while the replay was in flight, so its record
+	// describes the endpoints and this one must not overwrite it. A failed
+	// replay still clears the key below regardless: clearing when a newer sync
+	// just succeeded costs one redundant push, never a missed one.
+	stale := target.lastRecordSeq != observedSeq
+	s.recordSeq++
+	target.lastRecordSeq = s.recordSeq
+
+	if failed {
 		// Mirror SyncPartition: a partial resync means some replicas may hold
 		// the cached config while others do not -- drop the skip key so the
 		// next sync re-pushes unconditionally.
 		target.lastPushedHash = ""
 		target.lastPushedEndpoints = nil
 
-		return fmt.Errorf("failed to resync config to %d/%d endpoints: %w",
-			len(pushErrors), len(resolved), errors.Join(pushErrors...))
+		return
+	}
+
+	if stale {
+		return
 	}
 
 	// Every resolved endpoint now holds the cached config: update the skip
 	// key so the next sync does not re-push the identical config just
 	// because the replica set grew.
-	target.lastPushedHash = hashProxyConfig(target.lastCfg)
+	target.lastPushedHash = hashProxyConfig(cfg)
 	target.lastPushedToken = authToken
 	target.lastPushedEndpoints = make(map[string]struct{}, len(resolved))
 
 	for _, endpoint := range resolved {
 		target.lastPushedEndpoints[endpoint] = struct{}{}
 	}
-
-	return nil
 }
 
 // dnsLookupTimeout is the maximum time to wait for a single DNS resolution.
