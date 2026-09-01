@@ -97,6 +97,10 @@ spec:
 | `Exact` | Matches exact path only | |
 | `RegularExpression` | Matches path against regex pattern (RE2) | |
 
+The controller compiles every match before programming a route. A rule it cannot compile is dropped, and the route that carries it reports `PartiallyInvalid=True` naming the rule and the compile error, or `Accepted=False` with reason `UnsupportedValue` when no rule of that route compiles. Routes on the same data plane keep their configuration either way, which is the point: the pattern belongs to whoever wrote it.
+
+A dropped rule is not a rule failing closed. Requests it would have matched fall through to whatever matches next, which may be a lower-precedence rule on another route in another namespace. That differs from the unsupported-filter handling, which serves HTTP 500, and it has to: there is no way to fail closed on a match that cannot be evaluated.
+
 ## Multiple Hostnames
 
 Route multiple hostnames to the same service:
