@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -179,7 +180,13 @@ func convertRoutesGeneric[R metav1.Object](
 
 		for ruleIdx := range view.ruleCount(route) {
 			sink.at(ruleIdx)
-			cfg.Rules = append(cfg.Rules, view.convertRule(ctx, route, ruleIdx, hostnames, clientCert, sink))
+
+			rule := view.convertRule(ctx, route, ruleIdx, hostnames, clientCert, sink)
+			if !ruleMatchesCompile(&rule, sink) {
+				continue
+			}
+
+			cfg.Rules = append(cfg.Rules, rule)
 			cfg.Provenance = append(cfg.Provenance, RuleProvenance{
 				Kind:              view.kind,
 				Namespace:         route.GetNamespace(),
@@ -193,4 +200,65 @@ func convertRoutesGeneric[R metav1.Object](
 	cfg.Diagnostics = sink.items
 
 	return cfg
+}
+
+// ruleMatchesCompile reports whether every match on the rule compiles, and
+// records a diagnostic naming the first that does not.
+//
+// The check runs the data plane's own CompileMatch rather than a separate
+// validation of its own, so what the controller accepts and what the proxy can
+// serve cannot drift apart. Match patterns are tenant authored; a rule whose
+// match never compiles can serve nothing, so it is dropped here where its route
+// gets a status, instead of being pushed and skipped in a proxy log the tenant
+// cannot read.
+func ruleMatchesCompile(rule *RouteRule, sink *diagSink) bool {
+	for matchIdx := range rule.Matches {
+		_, err := CompileMatch(rule.Matches[matchIdx])
+		if err != nil {
+			sink.add(
+				DiagnosticAccepted,
+				string(gatewayv1.RouteReasonUnsupportedValue),
+				fmt.Sprintf(
+					"match[%d] pattern %q cannot be compiled, so the rule is dropped "+
+						"and its requests fall through to whatever matches next: %v. "+
+						"Patterns are RE2, which has no backreferences and no lookaround.",
+					matchIdx, failingRegexPattern(&rule.Matches[matchIdx]), err),
+				true,
+			)
+
+			return false
+		}
+	}
+
+	return true
+}
+
+// failingRegexPattern returns the pattern that CompileMatch stopped on, in the
+// order it compiles them: path, then headers, then query parameters. Quoting
+// the first regex-typed value instead would name a valid pattern when a later
+// one is the broken one. For a GRPCRoute the path is the composite
+// /service/method form the converter built, with the tenant's fragment inside.
+func failingRegexPattern(match *RouteMatch) string {
+	if match.Path != nil {
+		_, err := compilePathMatcher(match.Path)
+		if err != nil {
+			return match.Path.Value
+		}
+	}
+
+	for i := range match.Headers {
+		_, err := compileHeaderMatcher(match.Headers[i])
+		if err != nil {
+			return match.Headers[i].Value
+		}
+	}
+
+	for i := range match.QueryParams {
+		_, err := compileQueryMatcher(match.QueryParams[i])
+		if err != nil {
+			return match.QueryParams[i].Value
+		}
+	}
+
+	return ""
 }
