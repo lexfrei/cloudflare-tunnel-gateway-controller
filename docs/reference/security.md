@@ -180,7 +180,7 @@ rules:
 Tenant isolation is layered: admission-level scoping (per-tenant listeners, `allowedListeners`/`allowedRoutes`, the opt-in hostname-ownership `ValidatingAdmissionPolicy`), an independent controller-side enforcement of the same hostname-ownership rule (a route that bypasses admission is still never programmed), and optional hard data-plane isolation with a dedicated proxy and tunnel per Gateway. The boundaries and trade-offs are documented in the [Multi-Tenancy guide](../guides/multi-tenancy.md) and the [Per-Gateway Isolation guide](../guides/per-gateway-isolation.md).
 
 !!! warning "GatewayConfig is workload-creation-equivalent"
-    Because the controller renders Deployments for opted-in Gateways and `GatewayConfig.spec.image` selects the container image, **granting a user `create` on `GatewayConfig` (plus a Gateway with `infrastructure.parametersRef`) is privilege-equivalent to granting `create` on Deployments in that namespace**: the controller becomes the deputy that runs the chosen image under the namespace's default ServiceAccount (the rendered pod disables the SA-token mount, since the proxy needs no API access). Treat RBAC on `gatewayconfigs` accordingly. A rendered data plane's config API is authenticated by default — the controller generates a per-Gateway bearer-token Secret when `authTokenSecretRef` is unset — and network-restricted by default — the controller renders a NetworkPolicy per data plane admitting the config API port only from the controller's namespace, not the tenant's (set `proxy.networkPolicy.monitoringNamespaceSelector` to also admit your monitoring namespace for scraping). See the [Per-Gateway Isolation guide](../guides/per-gateway-isolation.md).
+    Because the controller renders Deployments for opted-in Gateways and `GatewayConfig.spec.image` selects the container image, **granting a user `create` on `GatewayConfig` (plus a Gateway with `infrastructure.parametersRef`) is privilege-equivalent to granting `create` on Deployments in that namespace**: the controller becomes the deputy that runs the chosen image under the namespace's default ServiceAccount (neither proxy mounts an SA token, since neither calls the Kubernetes API). Treat RBAC on `gatewayconfigs` accordingly. A rendered data plane's config API is authenticated by default — the controller generates a per-Gateway bearer-token Secret when `authTokenSecretRef` is unset — and network-restricted by default — the controller renders a NetworkPolicy per data plane admitting the config API port only from the controller pod, not from the tenant's namespace and not from every pod sharing the controller's (set `proxy.networkPolicy.monitoringNamespaceSelector` to also admit your monitoring namespace for scraping). See the [Per-Gateway Isolation guide](../guides/per-gateway-isolation.md).
 
 !!! warning "Writing `gateways/status` grants tunnel ownership"
     A tunnel belongs to whichever Gateway already advertises it in `Gateway.status.addresses`, so **`update` on `gateways/status` lets its holder claim a tunnel another namespace is serving** and evict the real owner. The Gateway API CRDs carry no RBAC aggregation labels, so the built-in `edit` and `admin` roles do not grant this; if you grant status write to tenants, tunnel ownership no longer holds for them. See [Per-Gateway Isolation](../guides/per-gateway-isolation.md).
@@ -202,7 +202,7 @@ The controller container follows security best practices:
 
 #### Config API Authentication
 
-The shared proxy's config API (where the controller pushes the routing table) is authenticated and network-restricted by default, matching the per-Gateway data planes described above. When `proxy.authTokenSecretRef.name` is left empty, the controller itself generates a random bearer token into a Secret (`<fullname>-proxy-auth-token`, where `<fullname>` is the Helm release fullname, typically `<release>-cloudflare-tunnel-gateway-controller`) on startup and uses it directly for its own push auth, and the proxy reads the same Secret via a pod-level `secretKeyRef`; the token is created once and reused on every restart, never rotated. Generating it via a live API call rather than at Helm template time means this is correct under GitOps controllers that render client-side with no cluster access (e.g. ArgoCD's default `helm template`), where a template-time `lookup` would silently mint a fresh value on every sync. `proxy.networkPolicy.enabled` (default `true`) additionally locks the config-API port to the controller's own namespace. Set `proxy.authTokenSecretRef.name` to bring your own Secret instead — the controller resolves it through the same direct-API mechanism, never a `secretKeyRef` on its own pod, and never creates or modifies it: a missing bring-your-own Secret fails the controller closed rather than silently generating one at the operator's chosen name. Set `proxy.networkPolicy.enabled: false` to drop the NetworkPolicy on a cluster where it would be inert or unwanted — see the [Helm values reference](../configuration/helm-values.md).
+The shared proxy's config API (where the controller pushes the routing table) is authenticated and network-restricted by default, matching the per-Gateway data planes described above. When `proxy.authTokenSecretRef.name` is left empty, the controller itself generates a random bearer token into a Secret (`<fullname>-proxy-auth-token`, where `<fullname>` is the Helm release fullname, typically `<release>-cloudflare-tunnel-gateway-controller`) on startup and uses it directly for its own push auth, and the proxy reads the same Secret via a pod-level `secretKeyRef`; the token is created once and reused on every restart, never rotated. Generating it via a live API call rather than at Helm template time means this is correct under GitOps controllers that render client-side with no cluster access (e.g. ArgoCD's default `helm template`), where a template-time `lookup` would silently mint a fresh value on every sync. `proxy.networkPolicy.enabled` (default `true`) additionally locks the config-API port to the controller pod: the ingress peer names it with a podSelector AND'd with the controller namespace, so a pod that merely shares that namespace is not admitted. Use `proxy.networkPolicy.ingress.from` to admit anything else, a monitoring stack scraping `/metrics` on the same port being the usual case. Set `proxy.authTokenSecretRef.name` to bring your own Secret instead — the controller resolves it through the same direct-API mechanism, never a `secretKeyRef` on its own pod, and never creates or modifies it: a missing bring-your-own Secret fails the controller closed rather than silently generating one at the operator's chosen name. Set `proxy.networkPolicy.enabled: false` to drop the NetworkPolicy on a cluster where it would be inert or unwanted — see the [Helm values reference](../configuration/helm-values.md).
 
 The binary enforces this on its own side too, which matters for a hand-written proxy Deployment where no chart is wiring anything. In tunnel mode it refuses to start unless `PROXY_AUTH_TOKEN` is set, because its config API listens on every interface and one successful push replaces the entire routing table. A present-but-empty value is refused in either mode, since that is what a broken Secret produces rather than a decision to run open. `PROXY_ALLOW_UNAUTHENTICATED_CONFIG_API=1` opts out deliberately; it is a separate variable so a misconfiguration cannot spell the same thing as consent. Standalone mode, selected by omitting `TUNNEL_TOKEN`, keeps the unauthenticated default and binds the same interfaces, so the network boundary there is the operator's to provide.
 
@@ -214,6 +214,15 @@ The controller only needs egress to:
 |-------------|------|---------|
 | `api.cloudflare.com` | 443 | Cloudflare API |
 | Kubernetes API | 443/6443 | Watch resources |
+| Cluster DNS | 53 | Resolve the proxies' headless Service |
+| Proxy config API | `proxy.configAPIPort` (8081) for the shared plane, always 8081 for per-Gateway planes | Push the routing table to the data planes |
+| OTLP collector | collector's port (4317 for OTLP/gRPC) | Export traces, only when `tracing.enabled` |
+
+Writing that as a policy runs into one thing worth knowing before you narrow anything. A rule with ports and no `to` permits those ports to every destination, and rules are OR'd, so one unrestricted rule makes every narrower rule beside it inert. The obvious fix — replacing it with a catch-all `ipBlock` — is not equivalent: Cilium does not match in-cluster identities through CIDR peers unless the agent runs with `--policy-cidr-match-mode`, which Cilium ships disabled and still marks beta, so a `0.0.0.0/0` peer denies a host-network API server on the self-managed clusters where that is exactly how the API server is reached. Narrow with a destination you have checked against your own CNI, and remember that most of them evaluate egress after DNAT, so a Service ClusterIP never matches.
+
+The chart's `networkPolicy.kubernetesApiIpBlocks` is where that narrowing goes; it ships empty, meaning unrestricted.
+
+The chart's policy carries no rule for the collector, so turning tracing on under it drops the exporter's traffic. Add the rule yourself.
 
 #### NetworkPolicy Example
 
@@ -238,19 +247,44 @@ spec:
       ports:
         - port: 8080
   egress:
-    # Kubernetes API and Cloudflare API
-    - to:
-        - ipBlock:
-            cidr: 0.0.0.0/0
-      ports:
+    # Kubernetes API. No `to` at all, which permits these ports everywhere —
+    # the same thing the chart renders by default, for the reasons above. Until
+    # you narrow it the Cloudflare rule below has no effect.
+    - ports:
         - port: 443
         - port: 6443
-    # DNS
-    - to: []
+    # Cloudflare API. Abbreviated — the full list is at
+    # https://www.cloudflare.com/ips/ and both families belong here. Narrowing
+    # the rule above without completing this one breaks Cloudflare API calls.
+    - to:
+        - ipBlock:
+            cidr: 173.245.48.0/20
       ports:
+        - port: 443
+    # The proxies' config API. Without this no data plane receives a routing
+    # table, and Gateway status stays clean while that is true. The first peer
+    # is the shared plane in this namespace; the second is per-Gateway planes,
+    # which live in their Gateway's namespace.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: cloudflare-tunnel-gateway-controller-proxy
+              app.kubernetes.io/component: proxy
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: cloudflare-tunnel-gateway-proxy
+      ports:
+        - port: 8081
+    # DNS
+    - ports:
         - port: 53
           protocol: UDP
+        - port: 53
+          protocol: TCP
 ```
+
+This is a starting point for operators applying manifests by hand, not a transcript of what the chart renders: the chart's version is generated from values and carries knobs this example flattens. Read `templates/networkpolicy.yaml` if you need the exact shape.
 
 ## Supply Chain Security
 

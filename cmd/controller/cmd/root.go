@@ -83,7 +83,8 @@ func init() {
 	rootCmd.Flags().Bool("hostname-ownership-enforce", false, "Enforce per-namespace hostname ownership in the controller: routes whose hostnames fall outside their namespace's allowed-suffix label are rejected and never programmed. Complements (and is independent of) the chart's ValidatingAdmissionPolicy.")
 	rootCmd.Flags().String("hostname-ownership-label-key", "cf.k8s.lex.la/hostname-suffix", "Namespace label carrying the tenant's allowed hostname suffix.")
 	rootCmd.Flags().String("hostname-ownership-namespace-selector", "", "Label selector scoping which namespaces are policed (kubectl syntax). Empty polices every namespace (fail-closed).")
-	rootCmd.Flags().String("monitoring-namespace-selector", "", "Label selector (kubectl syntax) for namespaces additionally allowed to reach a per-Gateway proxy's config-API/metrics port in the rendered NetworkPolicy. Empty allows the controller namespace only.")
+	rootCmd.Flags().String("monitoring-namespace-selector", "", "Label selector (kubectl syntax) for namespaces additionally allowed to reach a per-Gateway proxy's config-API/metrics port in the rendered NetworkPolicy. Empty allows the controller pod only.")
+	rootCmd.Flags().String("controller-pod-selector", "", "Label selector (kubectl syntax) identifying this controller's own pods, AND'd with the controller namespace in the rendered per-Gateway NetworkPolicy. Empty admits the whole controller namespace, which is every pod scheduled there.")
 	rootCmd.Flags().Bool("render-network-policy", true, "Render the per-Gateway config-API NetworkPolicy (wired from the chart's proxy.networkPolicy.enabled). Set false on strict CNIs where node-sourced kubelet probes are blocked by the policy's namespaceSelector ingress rule; a previously-rendered policy is then deleted.")
 
 	// Distributed tracing (OpenTelemetry). Off by default. When enabled, the
@@ -200,6 +201,7 @@ func runController(_ *cobra.Command, _ []string) error {
 		HostnameOwnershipLabelKey:          viper.GetString("hostname-ownership-label-key"),
 		HostnameOwnershipNamespaceSelector: viper.GetString("hostname-ownership-namespace-selector"),
 		MonitoringNamespaceSelector:        viper.GetString("monitoring-namespace-selector"),
+		ControllerPodSelector:              viper.GetString("controller-pod-selector"),
 		RenderNetworkPolicy:                viper.GetBool("render-network-policy"),
 	}
 

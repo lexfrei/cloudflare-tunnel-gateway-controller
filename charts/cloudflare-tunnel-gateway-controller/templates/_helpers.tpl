@@ -138,10 +138,11 @@ Validate PodDisruptionBudget configuration
 {{/*
 labelSelectorString renders a Kubernetes LabelSelector object in kubectl
 label-selector syntax (matchLabels + In/NotIn/Exists/DoesNotExist
-expressions). Used to derive the controller's
---hostname-ownership-namespace-selector flag from the SAME value that scopes
-the ValidatingAdmissionPolicyBinding, so the two enforcement layers cannot
-drift in scope. Empty selector renders "".
+expressions). Every controller flag carrying a selector goes through it, so a
+value and the flag derived from it cannot drift apart: the
+--hostname-ownership-namespace-selector flag shares its value with the
+ValidatingAdmissionPolicyBinding, and --controller-pod-selector is derived from
+the controller's own pod labels. Empty selector renders "".
 
 matchLabels keys are emitted in explicit sortAlpha order so the rendered flag
 string is stable regardless of map iteration order — the value feeds a
@@ -154,7 +155,7 @@ refactor to sprig `keys` would silently drop it.)
 {{- $terms := list -}}
 {{- $matchLabels := $selector.matchLabels | default dict -}}
 {{- range $key := (keys $matchLabels | sortAlpha) -}}
-{{- $terms = append $terms (printf "%s=%s" $key (index $matchLabels $key)) -}}
+{{- $terms = append $terms (printf "%s=%v" $key (index $matchLabels $key)) -}}
 {{- end -}}
 {{- range ($selector.matchExpressions | default list) -}}
 {{- if eq .operator "In" -}}
@@ -166,7 +167,7 @@ refactor to sprig `keys` would silently drop it.)
 {{- else if eq .operator "DoesNotExist" -}}
 {{- $terms = append $terms (printf "!%s" .key) -}}
 {{- else -}}
-{{- fail (printf "unsupported matchExpressions operator %q in hostnameOwnershipPolicy.namespaceSelector" .operator) -}}
+{{- fail (printf "unsupported matchExpressions operator %q in a label selector value (supported: In, NotIn, Exists, DoesNotExist)" .operator) -}}
 {{- end -}}
 {{- end -}}
 {{- join "," $terms -}}

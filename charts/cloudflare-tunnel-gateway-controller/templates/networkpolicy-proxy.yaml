@@ -16,16 +16,22 @@ spec:
     {{- end }}
   ingress:
     # Lock the config-API port (8081, also serves /metrics) to the controller
-    # (the config pusher). The release namespace — where the controller runs —
-    # is ALWAYS admitted so a config push can never be locked out; ingress.from
-    # is ADDITIVE on top of it, so add your monitoring namespace there for
-    # Prometheus scraping (locking 8081 also restricts /metrics). The proxy port
-    # (8080) takes NO in-cluster ingress — traffic arrives through the outbound
-    # tunnel.
+    # pod (the config pusher), which is ALWAYS admitted so a config push can
+    # never be locked out. Its namespace alone is not: a neighbour sharing it
+    # needs listing in ingress.from, which is ADDITIVE on top — that is where a
+    # monitoring namespace goes for Prometheus scraping, since locking 8081 also
+    # restricts the /metrics it co-serves. The proxy port (8080) takes NO
+    # in-cluster ingress — traffic arrives through the outbound tunnel.
     - from:
+        # namespaceSelector and podSelector in ONE peer are AND'd: the
+        # controller pod in the release namespace, not every pod that happens to
+        # run there. A separate list entry would be OR'd and admit both.
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: {{ .Release.Namespace }}
+          podSelector:
+            matchLabels:
+              {{- include "cf-tunnel-gw-ctrl.selectorLabels" . | nindent 14 }}
         {{- with .Values.proxy.networkPolicy.ingress.from }}
         {{- toYaml . | nindent 8 }}
         {{- end }}

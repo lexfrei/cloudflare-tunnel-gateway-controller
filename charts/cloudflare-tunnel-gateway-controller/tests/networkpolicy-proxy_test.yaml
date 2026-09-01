@@ -95,7 +95,7 @@ tests:
             protocol: TCP
             port: 9091
 
-  - it: should default ingress.from to the release (controller) namespace
+  - it: should default ingress.from to the controller pod in the release namespace
     set:
       proxy:
         tunnelTokenSecretRef:
@@ -107,6 +107,10 @@ tests:
             namespaceSelector:
               matchLabels:
                 kubernetes.io/metadata.name: cf-system
+            podSelector:
+              matchLabels:
+                app.kubernetes.io/name: cloudflare-tunnel-gateway-controller
+                app.kubernetes.io/instance: RELEASE-NAME
 
   - it: should ADD ingress.from to the controller namespace, never replace it
     set:
@@ -127,14 +131,18 @@ tests:
             namespaceSelector:
               matchLabels:
                 kubernetes.io/metadata.name: monitoring
-      # ...AND the controller namespace stays admitted, so a config push is
-      # never locked out by setting ingress.from (the docs promise "also").
+      # ...AND the controller stays admitted, so a config push is never locked
+      # out by setting ingress.from (the docs promise "also").
       - contains:
           path: spec.ingress[0].from
           content:
             namespaceSelector:
               matchLabels:
                 kubernetes.io/metadata.name: cf-system
+            podSelector:
+              matchLabels:
+                app.kubernetes.io/name: cloudflare-tunnel-gateway-controller
+                app.kubernetes.io/instance: RELEASE-NAME
 
   - it: should restrict egress (DNS, Cloudflare edge, cluster services) when egressRestricted is set
     set:
@@ -185,3 +193,18 @@ tests:
     asserts:
       - failedTemplate:
           errorPattern: "egressRestricted is true but networkPolicy.cloudflareIpRanges is empty"
+
+  # Admitting the whole namespace exposed every neighbour to the config-API
+  # port, and /metrics is served on that same port with no auth at all — so a
+  # neighbour needed no token to read every tenant's hostname series. A push
+  # needs the bearer token too, but the peer should name the pusher either way:
+  # a namespaceSelector and a podSelector in ONE peer are AND'd, unlike two
+  # separate list entries.
+  - it: should admit the controller pod, not its whole namespace
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token
+    asserts:
+      - exists:
+          path: spec.ingress[0].from[0].podSelector
