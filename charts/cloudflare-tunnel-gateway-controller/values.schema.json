@@ -560,6 +560,14 @@
             }
           }
         },
+        "kubernetesApiIpBlocks": {
+          "type": "array",
+          "description": "CIDRs the controller may reach on the Kubernetes API ports; empty is the default. See the value comment for what empty means and what to check before narrowing. Shape-only validation.",
+          "items": {
+            "type": "string",
+            "pattern": "^([0-9a-fA-F:.]+)/[0-9]{1,3}$"
+          }
+        },
         "cloudflareIpRanges": {
           "type": "object",
           "description": "Cloudflare IP ranges for egress NetworkPolicy",
@@ -1012,7 +1020,7 @@
                 }
               },
               "additionalProperties": false,
-              "description": "LabelSelector for namespaces additionally allowed to reach the per-Gateway config-API/metrics port. Empty = controller namespace only."
+              "description": "LabelSelector for namespaces additionally allowed to reach the per-Gateway config-API/metrics port. Empty = the controller pod only."
             }
           },
           "additionalProperties": false

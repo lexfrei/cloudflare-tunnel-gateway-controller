@@ -91,6 +91,12 @@ spec:
             - "--hostname-ownership-namespace-selector={{ $ownershipSelector }}"
             {{- end }}
             {{- end }}
+            # The controller's own labels. The rendered per-Gateway NetworkPolicy
+            # AND's this with the controller namespace, so the config-API peer
+            # names the pusher instead of every pod sharing that namespace. Only
+            # the chart knows these labels; without the flag the controller
+            # falls back to admitting the namespace.
+            - "--controller-pod-selector={{ include "cf-tunnel-gw-ctrl.labelSelectorString" (dict "matchLabels" (include "cf-tunnel-gw-ctrl.selectorLabels" . | fromYaml)) }}"
             {{- $monitoringSelector := include "cf-tunnel-gw-ctrl.labelSelectorString" .Values.proxy.networkPolicy.monitoringNamespaceSelector }}
             {{- if $monitoringSelector }}
             # Namespaces allowed to scrape /metrics on the per-Gateway proxies'

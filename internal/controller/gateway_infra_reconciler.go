@@ -77,9 +77,13 @@ type GatewayInfraReconciler struct {
 	// NetworkPolicy admits the config-API port from here.
 	ControllerNamespace string
 	// MonitoringNamespaceSelector, when set, additionally admits the config-API
-	// port (which also serves /metrics) from matching namespaces. Nil =
-	// controller namespace only.
+	// port (which also serves /metrics) from matching namespaces. Nil = the
+	// controller pod only.
 	MonitoringNamespaceSelector *metav1.LabelSelector
+	// ControllerPodSelector names this controller's own pods in the rendered
+	// policy, AND'd with the controller namespace. Nil admits that namespace
+	// whole, which is what a chart older than the flag produces.
+	ControllerPodSelector *metav1.LabelSelector
 	// RenderNetworkPolicy gates the per-Gateway config-API NetworkPolicy. Wired
 	// from the chart's proxy.networkPolicy.enabled (default true). Set false on
 	// clusters where a strict CNI would block the node-sourced kubelet probes
@@ -567,6 +571,7 @@ func (r *GatewayInfraReconciler) applyNetworkPolicy(
 		Gateway:                     gateway,
 		ControllerNamespace:         r.ControllerNamespace,
 		MonitoringNamespaceSelector: r.MonitoringNamespaceSelector,
+		ControllerPodSelector:       r.ControllerPodSelector,
 	})
 
 	existing := &networkingv1.NetworkPolicy{

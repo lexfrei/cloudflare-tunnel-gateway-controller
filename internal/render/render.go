@@ -106,8 +106,13 @@ type NetworkPolicyInput struct {
 	ControllerNamespace string
 	// MonitoringNamespaceSelector, when set, additionally admits the config-API
 	// port (which also serves /metrics) from matching namespaces so Prometheus
-	// can scrape. Nil = controller namespace only.
+	// can scrape. Nil = the controller pod only.
 	MonitoringNamespaceSelector *metav1.LabelSelector
+	// ControllerPodSelector narrows the controller peer from "that namespace"
+	// to "that pod". Nil admits the namespace, which is what a controller
+	// running ahead of its chart gets. The reverse skew does not reach here: a
+	// chart passing the flag to an older image fails on an unknown flag.
+	ControllerPodSelector *metav1.LabelSelector
 }
 
 // Input is everything a render pass needs.
@@ -489,8 +494,9 @@ func ConfigService(input *Input) *corev1.Service {
 }
 
 // ProxyNetworkPolicy renders an ingress-only NetworkPolicy locking the
-// per-Gateway proxy's config-API port (8081) to the controller namespace (the
-// config pusher) plus an optional monitoring selector (for /metrics scrape).
+// per-Gateway proxy's config-API port (8081) to the config pusher — the
+// controller pod where the chart supplies its selector, its namespace
+// otherwise — plus an optional monitoring selector (for /metrics scrape).
 // The proxy port (8080) takes NO in-cluster ingress — traffic arrives through
 // the outbound tunnel, not an inbound connection. Egress is left open (the
 // proxy must reach arbitrary backends and the Cloudflare edge). PolicyTypes is
@@ -499,11 +505,17 @@ func ProxyNetworkPolicy(input NetworkPolicyInput) *networkingv1.NetworkPolicy {
 	protocolTCP := corev1.ProtocolTCP
 	configPort := intstr.FromInt32(configAPIPort)
 
-	from := []networkingv1.NetworkPolicyPeer{
-		{NamespaceSelector: &metav1.LabelSelector{
+	// Both selectors in ONE peer are AND'd: the controller pod in the controller
+	// namespace. Split across two peers they would be OR'd, which would admit
+	// every pod in that namespace and every pod carrying those labels anywhere.
+	controllerPeer := networkingv1.NetworkPolicyPeer{
+		NamespaceSelector: &metav1.LabelSelector{
 			MatchLabels: map[string]string{namespaceNameLabel: input.ControllerNamespace},
-		}},
+		},
+		PodSelector: input.ControllerPodSelector.DeepCopy(),
 	}
+
+	from := []networkingv1.NetworkPolicyPeer{controllerPeer}
 	if input.MonitoringNamespaceSelector != nil {
 		from = append(from, networkingv1.NetworkPolicyPeer{
 			NamespaceSelector: input.MonitoringNamespaceSelector.DeepCopy(),

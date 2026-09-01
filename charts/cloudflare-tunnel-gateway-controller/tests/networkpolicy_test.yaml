@@ -173,16 +173,40 @@ tests:
             protocol: TCP
             port: 443
 
-  - it: should NOT allow 0.0.0.0/0 egress (security hardening)
+  # A NetworkPolicy egress rule with ports and no `to` permits those ports to
+  # ANY destination, and rules are OR'd -- so an unscoped TCP/443 rule makes the
+  # Cloudflare CIDR list below it decorative. The previous version of this test
+  # looked for a literal 0.0.0.0/0 in the Cloudflare rule, where explicit CIDRs
+  # are listed and it could never appear, so it passed by construction.
+  # The shipped default carries no `to`, which permits the API ports to every
+  # destination. Asserted rather than assumed: narrowing the default later must
+  # be a deliberate change rather than a silent one, and a catch-all ipBlock is
+  # not the same thing (see the value comment for why).
+  - it: should leave the Kubernetes API destination unrestricted by default
     set:
       networkPolicy:
         enabled: true
     asserts:
-      - notContains:
-          path: spec.egress[2].to
+      - notExists:
+          path: spec.egress[1].to
+
+  - it: should narrow the Kubernetes API destination when asked
+    set:
+      networkPolicy:
+        enabled: true
+        kubernetesApiIpBlocks:
+          - 10.96.0.1/32
+    asserts:
+      - contains:
+          path: spec.egress[1].to
           content:
             ipBlock:
-              cidr: "0.0.0.0/0"
+              cidr: 10.96.0.1/32
+      - notContains:
+          path: spec.egress[1].to
+          content:
+            ipBlock:
+              cidr: 0.0.0.0/0
 
   - it: should not have ingress from selector by default
     set:
@@ -251,3 +275,62 @@ tests:
             podSelector:
               matchLabels:
                 app: prometheus
+
+  # The proxy policy admits the controller on the config-API port and says so:
+  # a config push must never be locked out. The controller policy forbade the
+  # same connection, so enabling both left data planes unconfigured with Gateway
+  # status still clean — the push is non-blocking, and it is the route status
+  # that carries the complaint (#650).
+  - it: should allow egress to the proxy config API port
+    set:
+      networkPolicy:
+        enabled: true
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token
+    asserts:
+      - contains:
+          path: spec.egress[3].ports
+          content:
+            protocol: TCP
+            port: 8081
+      # Two rules, not two peers: the shared plane lives in this namespace and
+      # honours proxy.configAPIPort, per-Gateway planes live in their Gateway's
+      # and are hardcoded to 8081. A bare podSelector never leaves the policy's
+      # own namespace, so without the second rule a tenant's data plane never
+      # receives a routing table — the same silent failure, moved.
+      - exists:
+          path: spec.egress[3].to[0].podSelector
+      - equal:
+          path: spec.egress[4].to[0].namespaceSelector
+          value: {}
+      - equal:
+          path: spec.egress[4].to[0].podSelector.matchLabels["app.kubernetes.io/name"]
+          value: cloudflare-tunnel-gateway-proxy
+      - contains:
+          path: spec.egress[4].ports
+          content:
+            protocol: TCP
+            port: 8081
+
+  # proxy.configAPIPort moves the shared plane only. Rendering both rules from
+  # it would permit a port no tenant plane listens on.
+  - it: should keep the per-Gateway egress port at 8081 when configAPIPort moves
+    set:
+      networkPolicy:
+        enabled: true
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token
+        configAPIPort: 9091
+    asserts:
+      - contains:
+          path: spec.egress[3].ports
+          content:
+            protocol: TCP
+            port: 9091
+      - contains:
+          path: spec.egress[4].ports
+          content:
+            protocol: TCP
+            port: 8081

@@ -929,3 +929,51 @@ tests:
           path: spec.template.spec.containers[0].args
           content: "--proxy-image=ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller-proxy:v9.9.9"
 
+
+  # YAML 1.1 reads an unquoted no/off/y as a boolean, and sigs.k8s.io/yaml
+  # renders it back as "false" when the target field is a string, so the flag
+  # and the label the API server stores agree. Don't reach for `default ""` to
+  # tidy the nil case here: sprig counts false as empty, so it would turn this
+  # agreeing pair into instance= and match nothing.
+  - it: should agree with the stored label when the release name is a YAML boolean
+    release:
+      name: "no"
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --controller-pod-selector=app.kubernetes.io/instance=false,app.kubernetes.io/name=cloudflare-tunnel-gateway-controller
+
+  # selectorLabels are re-parsed through fromYaml to build this flag, and YAML
+  # parses an unquoted number as a number. Formatting it with %s would emit Go's
+  # error form, app.kubernetes.io/instance=%!s(float64=2024), which reaches
+  # metav1.ParseToLabelSelector and yields a peer matching nothing. A release
+  # name needs no quoting in values to reach that path.
+  - it: should not mangle a numeric release name in the pod selector
+    release:
+      name: "2024"
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --controller-pod-selector=app.kubernetes.io/instance=2024,app.kubernetes.io/name=cloudflare-tunnel-gateway-controller
+
+  # Without this flag the rendered per-Gateway policy admits the controller's
+  # whole namespace, exposing the tenant's config-API port — and the unauthenticated
+  # /metrics on it — to every pod scheduled there. The chart is the only thing
+  # that knows the controller's own labels.
+  - it: should tell the controller its own pod selector
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --controller-pod-selector=app.kubernetes.io/instance=RELEASE-NAME,app.kubernetes.io/name=cloudflare-tunnel-gateway-controller

@@ -30,8 +30,21 @@ spec:
           port: 53
         - protocol: TCP
           port: 53
-    # Kubernetes API
-    - ports:
+    # Kubernetes API. With no destinations listed this rule carries no `to`,
+    # which permits its ports everywhere and leaves the Cloudflare rule below
+    # inert — the chart's long-standing behaviour, kept because the alternative
+    # is worse: a catch-all ipBlock is not equivalent, and on some CNIs would
+    # deny this controller its own API server. Narrow it with
+    # kubernetesApiIpBlocks, whose comment carries the reasoning.
+    -
+      {{- with .Values.networkPolicy.kubernetesApiIpBlocks }}
+      to:
+        {{- range . }}
+        - ipBlock:
+            cidr: {{ . }}
+        {{- end }}
+      {{- end }}
+      ports:
         - protocol: TCP
           port: 443
         - protocol: TCP
@@ -49,4 +62,37 @@ spec:
       ports:
         - protocol: TCP
           port: 443
+    # The proxies' config API. The proxy policy admits this connection on its
+    # ingress side and states that a config push must never be locked out;
+    # forbidding it here made that promise one-sided. Gateway status stays clean
+    # while it is blocked — the push is non-blocking — so the signals are the
+    # per-push error log, the proxy_push sync-error metric, and the route-status
+    # diagnostic that names this policy after three consecutive failures.
+    # The shared plane, in this namespace: a bare podSelector never leaves the
+    # policy's own namespace. It honours proxy.configAPIPort.
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "cf-tunnel-gw-ctrl.proxySelectorLabels" . | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.proxy.configAPIPort }}
+    # Per-Gateway planes, rendered into whichever namespace their Gateway lives
+    # in — unknowable here, hence the empty namespaceSelector. Matching the
+    # rendered labels rather than opening the port cluster-wide; the controller
+    # only ever dials endpoints it discovered, so this bounds the blast radius
+    # rather than deciding it.
+    #
+    # Its own rule because the port differs: proxy.configAPIPort moves the
+    # SHARED plane only, while the renderer hardcodes 8081 for every tenant
+    # plane (internal/render/render.go). Rendering one rule from the value would
+    # permit a port nothing listens on as soon as the value is changed.
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: cloudflare-tunnel-gateway-proxy
+      ports:
+        - protocol: TCP
+          port: 8081
 {{- end }}

@@ -126,3 +126,53 @@ func TestGetControllerNamespace(t *testing.T) {
 		})
 	}
 }
+
+// TestParseLabelSelector pins the three outcomes of the selector strings the
+// controller takes as flags.
+//
+// The empty case is the load-bearing one. It is how a chart older than
+// --controller-pod-selector leaves the flag, and it produces a nil selector,
+// which widens the rendered per-Gateway config-API peer from the controller pod
+// back to its whole namespace. That widening is the thing this flag exists to
+// close, so it must stay a deliberate fallback rather than become an accident.
+func TestParseLabelSelector(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		in        string
+		wantNil   bool
+		wantErr   bool
+		wantLabel string
+	}{
+		{name: "empty falls back to no selector", in: "", wantNil: true},
+		{name: "whitespace is empty", in: "   ", wantNil: true},
+		{name: "garbage refuses to start", in: "!!bogus", wantErr: true},
+		{name: "valid", in: "app.kubernetes.io/name=ctrl", wantLabel: "ctrl"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := parseLabelSelector(tt.in)
+
+			if tt.wantErr {
+				require.Error(t, err)
+
+				return
+			}
+
+			require.NoError(t, err)
+
+			if tt.wantNil {
+				assert.Nil(t, got, "a nil selector is what leaves the peer namespace-scoped")
+
+				return
+			}
+
+			require.NotNil(t, got)
+			assert.Equal(t, tt.wantLabel, got.MatchLabels["app.kubernetes.io/name"])
+		})
+	}
+}

@@ -94,6 +94,22 @@ tests:
       - failedTemplate:
           errorPattern: allowSharedTunnels
 
+  # Shape-only, and deliberately so: the pattern rejects a value that is not a
+  # CIDR at all, but not one whose numbers are out of range. Pinning the reject
+  # path anyway, because the accept path alone would pass with no pattern.
+  - it: should reject a kubernetesApiIpBlocks entry that is not a CIDR
+    set:
+      networkPolicy:
+        enabled: true
+        kubernetesApiIpBlocks:
+          - not-a-cidr
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token
+    asserts:
+      - failedTemplate:
+          errorPattern: kubernetesApiIpBlocks
+
   # tunnelID must be a valid UUID matching the CRD pattern:
   # ^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$
   - it: should accept lowercase UUID tunnelID

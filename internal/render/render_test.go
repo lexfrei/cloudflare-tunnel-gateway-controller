@@ -67,7 +67,7 @@ func TestProxyNetworkPolicy_LocksConfigAPI(t *testing.T) {
 	require.Len(t, rule.Ports, 1, "only the config-API port is admitted, never the proxy port")
 	assert.Equal(t, int32(8081), rule.Ports[0].Port.IntVal)
 
-	require.Len(t, rule.From, 1, "controller namespace only when no monitoring selector")
+	require.Len(t, rule.From, 1, "controller pod only when no monitoring selector")
 	assert.Equal(t, "cf-system", rule.From[0].NamespaceSelector.MatchLabels["kubernetes.io/metadata.name"])
 }
 
@@ -86,6 +86,49 @@ func TestProxyNetworkPolicy_AdmitsMonitoring(t *testing.T) {
 
 	require.Len(t, netpol.Spec.Ingress[0].From, 2)
 	assert.Equal(t, "observability", netpol.Spec.Ingress[0].From[1].NamespaceSelector.MatchLabels["team"])
+}
+
+// TestProxyNetworkPolicy_AdmitsTheControllerPodNotItsNamespace pins that the
+// config-API peer names the pusher rather than its whole namespace.
+//
+// Admitting a namespace exposes the config-API port to every pod in it, and
+// /metrics rides that port unauthenticated — so a neighbour reads the tenant's
+// hostname series without holding anything. A push is bearer-authenticated on
+// top. The selectors must share ONE peer to be AND'd; as two peers they would
+// be OR'd, which admits every pod in that namespace and every pod carrying
+// those labels anywhere.
+func TestProxyNetworkPolicy_AdmitsTheControllerPodNotItsNamespace(t *testing.T) {
+	t.Parallel()
+
+	netpol := render.ProxyNetworkPolicy(render.NetworkPolicyInput{
+		Gateway:               testInput("edge").Gateway,
+		ControllerNamespace:   "cf-system",
+		ControllerPodSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "controller"}},
+	})
+
+	require.Len(t, netpol.Spec.Ingress[0].From, 1, "one peer, so the two selectors are AND'd")
+
+	peer := netpol.Spec.Ingress[0].From[0]
+	assert.Equal(t, "cf-system", peer.NamespaceSelector.MatchLabels["kubernetes.io/metadata.name"])
+	require.NotNil(t, peer.PodSelector)
+	assert.Equal(t, "controller", peer.PodSelector.MatchLabels["app"])
+}
+
+// TestProxyNetworkPolicy_NilPodSelectorAdmitsTheNamespace pins the skew path.
+// The chart supplies the selector, and chart and controller roll separately, so
+// a controller running ahead of its chart must keep admitting the namespace
+// rather than render a peer that matches no pod and lock config pushes out.
+func TestProxyNetworkPolicy_NilPodSelectorAdmitsTheNamespace(t *testing.T) {
+	t.Parallel()
+
+	netpol := render.ProxyNetworkPolicy(render.NetworkPolicyInput{
+		Gateway:             testInput("edge").Gateway,
+		ControllerNamespace: "cf-system",
+	})
+
+	require.Len(t, netpol.Spec.Ingress[0].From, 1)
+	assert.Nil(t, netpol.Spec.Ingress[0].From[0].PodSelector,
+		"an empty PodSelector would match every pod; nil is what leaves the peer namespace-scoped")
 }
 
 // TestProxyDeployment_CoreShape pins the load-bearing parts of the rendered

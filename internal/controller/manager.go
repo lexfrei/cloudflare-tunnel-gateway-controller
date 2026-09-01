@@ -147,10 +147,15 @@ type Config struct {
 	HostnameOwnershipNamespaceSelector string
 
 	// MonitoringNamespaceSelector (kubectl label-selector syntax; empty =
-	// controller namespace only) additionally admits the per-Gateway proxy's
+	// the controller pod only) additionally admits the per-Gateway proxy's
 	// config-API port — which also serves /metrics — in the rendered
 	// NetworkPolicy, so Prometheus in the matching namespaces can scrape.
 	MonitoringNamespaceSelector string
+	// ControllerPodSelector (kubectl label-selector syntax; empty = admit the
+	// whole controller namespace) identifies this controller's own pods, so the
+	// rendered per-Gateway NetworkPolicy can name the config pusher instead of
+	// every pod sharing its namespace.
+	ControllerPodSelector string
 
 	// RenderNetworkPolicy gates whether the controller renders the per-Gateway
 	// config-API NetworkPolicy. Wired from the chart's proxy.networkPolicy.enabled
@@ -308,7 +313,12 @@ func Run(ctx context.Context, cfg *Config) error {
 	// Per-Gateway data planes (#479): renders a dedicated proxy Deployment +
 	// config Service (+ optional HPA) for Gateways carrying
 	// infrastructure.parametersRef. Status stays with gatewayReconciler.
-	monitoringSelector, err := parseNamespaceSelector(cfg.MonitoringNamespaceSelector)
+	controllerPodSelector, err := parseLabelSelector(cfg.ControllerPodSelector)
+	if err != nil {
+		return errors.Wrap(err, "invalid --controller-pod-selector")
+	}
+
+	monitoringSelector, err := parseLabelSelector(cfg.MonitoringNamespaceSelector)
 	if err != nil {
 		return errors.Wrap(err, "invalid --monitoring-namespace-selector")
 	}
@@ -325,6 +335,7 @@ func Run(ctx context.Context, cfg *Config) error {
 		},
 		ControllerNamespace:         defaultNamespace,
 		MonitoringNamespaceSelector: monitoringSelector,
+		ControllerPodSelector:       controllerPodSelector,
 		RenderNetworkPolicy:         cfg.RenderNetworkPolicy,
 	}
 
@@ -563,10 +574,10 @@ func sanitiseProxyEndpoints(endpoints []string) []string {
 	return out
 }
 
-// parseNamespaceSelector parses a kubectl label-selector string into a
+// parseLabelSelector parses a kubectl label-selector string into a
 // structured *metav1.LabelSelector. An empty string yields nil — "no selector"
 // is a meaningful value (e.g. the monitoring allowance defaults to none).
-func parseNamespaceSelector(selectorStr string) (*metav1.LabelSelector, error) {
+func parseLabelSelector(selectorStr string) (*metav1.LabelSelector, error) {
 	if strings.TrimSpace(selectorStr) == "" {
 		//nolint:nilnil // nil selector is the meaningful "none configured" result
 		return nil, nil
@@ -574,7 +585,7 @@ func parseNamespaceSelector(selectorStr string) (*metav1.LabelSelector, error) {
 
 	selector, err := metav1.ParseToLabelSelector(selectorStr)
 	if err != nil {
-		return nil, errors.Wrap(err, "parsing namespace selector")
+		return nil, errors.Wrap(err, "parsing label selector")
 	}
 
 	return selector, nil

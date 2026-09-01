@@ -260,6 +260,30 @@ networkPolicy:
     #         matchLabels:
     #           app: prometheus
     from: []
+  # -- Destinations the controller may reach on the Kubernetes API ports.
+  # EMPTY (the default) renders the rule with no `to`, which permits those ports
+  # to every destination. That is what this chart has always done, and it means
+  # THE CLOUDFLARE RANGES BELOW ARE INERT while it stays empty: egress rules are
+  # OR'd, so an unrestricted rule carrying TCP/443 permits 443 anywhere no
+  # matter what the Cloudflare rule says.
+  #
+  # Narrowing it is the point of the field, but the chart cannot pick a default
+  # for you: an in-cluster ClusterIP, a node IP and a public managed endpoint
+  # are all normal places for an API server to live.
+  #
+  #   kubernetesApiIpBlocks:
+  #     - 10.0.0.0/8   # the node subnet serving the API endpoint
+  #
+  # Use the address the traffic actually reaches. Most policy-enforcing CNIs
+  # evaluate egress after DNAT, so a Service ClusterIP never matches and the
+  # packet arrives at a node IP instead.
+  #
+  # The default is empty rather than a catch-all CIDR because a catch-all is not
+  # equivalent to no restriction on every CNI: on some it denies the API server
+  # this controller has to reach, so it would break those clusters while
+  # pretending to restrict nothing. What a CIDR peer does and does not match is
+  # in the security reference under Egress Requirements.
+  kubernetesApiIpBlocks: []
   # -- Cloudflare IP ranges for egress NetworkPolicy
   # Source: https://www.cloudflare.com/ips/
   # Last updated: 2025-11-25
@@ -536,10 +560,10 @@ proxy:
     annotations: {}
   # -- NetworkPolicy configuration for proxy pods. On by default: it locks the
   # config-API port (which can hijack routing via PUT /config) to the
-  # controller namespace. No-op where the CNI does not enforce NetworkPolicy.
+  # controller pod. No-op where the CNI does not enforce NetworkPolicy.
   networkPolicy:
     # -- Render the proxy NetworkPolicy (ingress-only; locks the config-API
-    # port to the controller namespace by default)
+    # port to the controller pod by default)
     enabled: true
     # -- Also restrict EGRESS to DNS + the Cloudflare edge + cluster services.
     # Off by default: the static Cloudflare CIDR list can drift and break the
@@ -547,17 +571,18 @@ proxy:
     egressRestricted: false
     # -- Ingress source configuration
     ingress:
-      # -- EXTRA namespaces/pods allowed to reach the config-API port, ADDED to
-      # the release (controller) namespace — which is always admitted so a
-      # config push is never locked out. Add your monitoring namespace here to
-      # let Prometheus scrape /metrics (locking the config-API port also
-      # restricts the /metrics it co-serves).
+      # -- EXTRA namespaces/pods allowed to reach the config-API port, ADDED
+      # alongside the controller pod — which is always admitted so a config push
+      # is never locked out. Its peer names the pod, not the whole release
+      # namespace, so a neighbour sharing that namespace needs listing here too.
+      # Add your monitoring namespace to let Prometheus scrape /metrics (locking
+      # the config-API port also restricts the /metrics it co-serves).
       from: []
     # -- Label selector for namespaces additionally allowed to reach the
     # config-API/metrics port in the PER-GATEWAY (tenant) NetworkPolicies the
     # controller renders (passed to --monitoring-namespace-selector). Empty =
-    # controller namespace only. For the SHARED proxy's policy, use
-    # `ingress.from` above instead.
+    # the controller pod only. For the SHARED proxy's policy, use `ingress.from`
+    # above instead.
     monitoringNamespaceSelector: {}
   # -- Node selector for pod scheduling
   nodeSelector: {}

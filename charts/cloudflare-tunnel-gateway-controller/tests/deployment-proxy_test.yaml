@@ -572,3 +572,17 @@ tests:
               secretKeyRef:
                 name: my-own-auth-secret
                 key: my-key
+
+  # The proxy talks to Cloudflare and to backend Services; it never calls the
+  # Kubernetes API. The per-Gateway renderer already refuses the token
+  # (internal/render/render.go), so the shared plane was the odd one out,
+  # mounting a credential into a pod with no use for it.
+  - it: should not mount a service account token
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token
+    asserts:
+      - equal:
+          path: spec.template.spec.automountServiceAccountToken
+          value: false
