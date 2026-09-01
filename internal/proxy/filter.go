@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"path"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/cockroachdb/errors"
@@ -324,7 +325,28 @@ type requestMirror struct {
 	percent    *int32
 	client     *http.Client
 	logger     *slog.Logger
+
+	// live counts dispatches in flight; dropped counts what the cap refused.
+	// Both are zero-value usable, so a requestMirror built by any path is
+	// capped rather than silently uncapped or silently mirroring nothing.
+	live    atomic.Int64
+	dropped atomic.Uint64
 }
+
+// mirrorMaxLiveDispatches caps the dispatches one mirror filter keeps in
+// flight. Each holds its buffered body (up to maxMirrorBodySize) for as long as
+// it runs, which against a backend that never answers is mirrorMaxAttempts ×
+// mirrorTimeout plus backoff. Uncapped, the live count is the mirrored request
+// rate times that budget, so the memory held is set by traffic rather than by
+// anything an operator configured. MaxConnsPerHost does not help: dispatches
+// past the connection limit queue up still holding their bodies.
+//
+// The cap is per filter instance, so the budget scales with two things it does
+// not remove: the number of mirror filters in a config, and the config push
+// rate, since UpdateConfig builds fresh filters and a previous generation's
+// dispatches keep their bodies until their retry budget runs out. What it does
+// remove is the dependence on request rate.
+const mirrorMaxLiveDispatches = 64
 
 // NewRequestMirror creates a filter that mirrors requests to a backend URL.
 //
@@ -374,6 +396,16 @@ func (f *requestMirror) ProcessRequest(req *http.Request) *http.Response {
 		return nil
 	}
 
+	// Cheap bail before the body is buffered and the request cloned. The
+	// authoritative check is the Add below, which is what makes the cap exact;
+	// this one only keeps the overload path from allocating a copy of every
+	// request it is about to throw away.
+	if f.live.Load() >= mirrorMaxLiveDispatches {
+		f.noteMirrorDrop()
+
+		return nil
+	}
+
 	// RequestURI() (path + query), not Path: the mirror is a faithful copy of
 	// the original request, and dropping the query would make it useless — the
 	// conformance suite identifies a mirrored request by a query param.
@@ -420,7 +452,22 @@ func (f *requestMirror) ProcessRequest(req *http.Request) *http.Response {
 		client = mirrorClient
 	}
 
-	go f.dispatchWithRetry(client, tmpl, bodyBuf)
+	if f.live.Add(1) > mirrorMaxLiveDispatches {
+		f.live.Add(-1)
+
+		// Mirroring is best-effort by spec, so refusing the copy is the correct
+		// answer once the cap is reached. Queueing instead would reintroduce the
+		// growth the cap exists to stop.
+		f.noteMirrorDrop()
+
+		return nil
+	}
+
+	go func() {
+		defer f.live.Add(-1)
+
+		f.dispatchWithRetry(client, tmpl, bodyBuf)
+	}()
 
 	return nil
 }
@@ -493,6 +540,35 @@ func (f *requestMirror) shouldMirror() bool {
 	return rand.Int32N(100) < pct
 }
 
+// log returns the filter's logger, or the package default when it has none.
+// NewRequestMirror always sets one, but a requestMirror built by a literal does
+// not, and every log line this filter writes is on a path where a nil
+// dereference would be swallowed: the drop counter runs under overload, and the
+// terminal dispatch warning sits inside dispatchWithRetry's own recover.
+func (f *requestMirror) log() *slog.Logger {
+	if f.logger == nil {
+		return slog.Default()
+	}
+
+	return f.logger
+}
+
+// noteMirrorDrop records a refused dispatch. It logs at each power of ten so a
+// backend that is down produces a usable signal instead of one line per
+// dropped request, which at the rate that triggers the cap is its own problem.
+func (f *requestMirror) noteMirrorDrop() {
+	count := f.dropped.Add(1)
+
+	for boundary := uint64(1); boundary > 0 && boundary <= count; boundary *= 10 {
+		if boundary == count {
+			f.log().Warn("mirror: dropped request, dispatch limit reached",
+				"backend", f.backendURL, "limit", mirrorMaxLiveDispatches, "dropped", count)
+
+			return
+		}
+	}
+}
+
 // dispatchWithRetry delivers the mirrored request, retrying a transient
 // transport failure up to mirrorMaxAttempts times. Mirroring is fire-and-forget
 // and best-effort, but a 100% mirror is expected to be delivered (the
@@ -531,7 +607,7 @@ func (f *requestMirror) dispatchWithRetry(client *http.Client, tmpl *http.Reques
 	// All attempts failed — fire-and-forget, so this never affects the primary
 	// leg, but it must be visible: a mirror-delivery problem is otherwise
 	// undiagnosable from the proxy.
-	f.logger.Warn("mirror: request dispatch failed after retries",
+	f.log().Warn("mirror: request dispatch failed after retries",
 		"backend", f.backendURL, "attempts", mirrorMaxAttempts, "error", lastErr)
 }
 

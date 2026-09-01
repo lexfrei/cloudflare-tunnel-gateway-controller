@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // errSimulatedTransientFailure is the transport-level error flakyRoundTripper
@@ -247,5 +249,164 @@ func TestRequestMirror_DispatchSuccess_NoWarn(t *testing.T) {
 	case rec := <-records:
 		t.Fatalf("unexpected log on mirror happy path: level=%s msg=%q", rec.Level, rec.Message)
 	case <-time.After(500 * time.Millisecond):
+	}
+}
+
+// TestRequestMirror_DropLogCadence pins the sampling the docs promise: one
+// warning at each power of ten of dropped requests, silence in between. A
+// backend that is down at production rates would otherwise write a line per
+// dropped copy.
+func TestRequestMirror_DropLogCadence(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+
+	filter := &requestMirror{
+		backendURL: "http://mirror.example/",
+		logger:     slog.New(slog.NewTextHandler(&buf, nil)),
+	}
+
+	const drops = 1000
+
+	for range drops {
+		filter.noteMirrorDrop()
+	}
+
+	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+	require.Len(t, lines, 4, "expected a line at 1, 10, 100 and 1000 drops:\n%s", buf.String())
+
+	for i, want := range []string{"dropped=1 ", "dropped=10 ", "dropped=100 ", "dropped=1000"} {
+		assert.Contains(t, lines[i]+" ", want, "line %d", i)
+	}
+
+	assert.Equal(t, uint64(drops), filter.dropped.Load())
+}
+
+// TestRequestMirror_ZeroValueLiteralDropsWithoutPanic pins the claim on the
+// struct: a requestMirror built by a literal, with no logger wired, is capped
+// and survives its first drop.
+func TestRequestMirror_ZeroValueLiteralDropsWithoutPanic(t *testing.T) {
+	t.Parallel()
+
+	filter := &requestMirror{backendURL: "http://mirror.example/"}
+
+	require.NotPanics(t, filter.noteMirrorDrop)
+	assert.Equal(t, uint64(1), filter.dropped.Load())
+}
+
+// slotFillingReader fills the mirror filter's last free dispatch slot the first
+// time it is read, and records that it was read at all. Buffering the body is
+// the only step between the cheap bail and the authoritative Add, so filling
+// the cap mid-read drives ProcessRequest down the late drop path
+// deterministically; the read flag is what tells the two paths apart.
+type slotFillingReader struct {
+	reader io.Reader
+	filter *requestMirror
+	read   atomic.Bool
+}
+
+func (r *slotFillingReader) Read(p []byte) (int, error) {
+	if r.read.CompareAndSwap(false, true) {
+		r.filter.live.Add(1)
+	}
+
+	return r.reader.Read(p) //nolint:wrapcheck // test reader, returns the wrapped reader's error verbatim
+}
+
+// TestRequestMirror_DropPreservesPrimaryBody pins that refusing the copy never
+// costs the primary leg its body, on either drop path. The paths differ in
+// where they land: the cheap bail returns before the body is touched, while the
+// cap check runs after the body has been drained into the mirror buffer and the
+// primary handed a fresh reader over it.
+func TestRequestMirror_DropPreservesPrimaryBody(t *testing.T) {
+	t.Parallel()
+
+	const payload = "mirror me"
+
+	t.Run("bail before the body is buffered", func(t *testing.T) {
+		t.Parallel()
+
+		filter := &requestMirror{backendURL: "http://mirror.example/"}
+		filter.live.Store(mirrorMaxLiveDispatches)
+
+		body := &slotFillingReader{reader: strings.NewReader(payload), filter: filter}
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodPost,
+			"http://example.com/x", body)
+
+		require.Nil(t, filter.ProcessRequest(req)) //nolint:bodyclose // mirror returns nil response
+
+		assert.False(t, body.read.Load(), "a filter at its cap must not buffer a body it will throw away")
+
+		got, err := io.ReadAll(req.Body)
+		require.NoError(t, err)
+		assert.Equal(t, payload, string(got), "the primary leg must still see its whole body")
+		assert.Equal(t, uint64(1), filter.dropped.Load())
+	})
+
+	t.Run("cap reached while the body is buffered", func(t *testing.T) {
+		t.Parallel()
+
+		filter := &requestMirror{backendURL: "http://mirror.example/"}
+		filter.live.Store(mirrorMaxLiveDispatches - 1)
+
+		body := &slotFillingReader{reader: strings.NewReader(payload), filter: filter}
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodPost,
+			"http://example.com/x", body)
+
+		require.Nil(t, filter.ProcessRequest(req)) //nolint:bodyclose // mirror returns nil response
+
+		require.True(t, body.read.Load(), "the body must have been buffered before the cap refused the copy")
+
+		got, err := io.ReadAll(req.Body)
+		require.NoError(t, err)
+		assert.Equal(t, payload, string(got), "the primary leg must still see its whole body")
+		assert.Equal(t, uint64(1), filter.dropped.Load())
+		assert.Equal(t, int64(mirrorMaxLiveDispatches), filter.live.Load(),
+			"the refused copy must give its slot back, leaving only the reader's")
+	})
+}
+
+// TestRequestMirror_NilLoggerSurvivesExhaustedRetries pins the other half of
+// the zero-value promise on requestMirror: a filter built by a literal must
+// survive an exhausted retry budget. The terminal warning is the last statement
+// in dispatchWithRetry, and that function's own recover() would swallow a nil
+// dereference there, so the assertion is that the warning arrives — "it did not
+// panic" is indistinguishable from "it panicked and the recover ate it".
+//
+// Not parallel: it swaps the process-global default logger, which is where a
+// filter carrying no logger of its own writes.
+func TestRequestMirror_NilLoggerSurvivesExhaustedRetries(t *testing.T) {
+	records := make(chan slog.Record, 16)
+
+	previous := slog.Default()
+	slog.SetDefault(slog.New(&chanHandler{records: records}))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	// Port 1 refuses connections immediately, so every attempt fails fast.
+	const backend = "http://127.0.0.1:1"
+
+	mirror := &requestMirror{backendURL: backend, client: mirrorClient}
+
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "http://example.com/test", nil)
+
+	require.Nil(t, mirror.ProcessRequest(req)) //nolint:bodyclose // mirror returns nil response
+
+	deadline := time.After(5 * time.Second)
+
+	for {
+		select {
+		case rec := <-records:
+			if rec.Message == "mirror: panic in mirror request goroutine" {
+				t.Fatalf("dispatch panicked and its own recover swallowed it: %v", collectAttrs(rec))
+			}
+
+			if rec.Message == "mirror: request dispatch failed after retries" {
+				assert.Equal(t, backend, collectAttrs(rec)["backend"])
+
+				return
+			}
+		case <-deadline:
+			t.Fatal("the terminal dispatch warning never reached the default logger")
+		}
 	}
 }

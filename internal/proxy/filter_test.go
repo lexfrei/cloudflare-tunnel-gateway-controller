@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -963,3 +964,116 @@ func TestRequestRedirect_NoPortInLocationWhenPortUnset(t *testing.T) {
 	assert.Equal(t, "https://app.example.com/path", resp.Header.Get("Location"),
 		"unset Port must not surface any port in Location, including the request's own")
 }
+
+// TestRequestMirror_CapsLiveDispatches pins that a wedged mirror backend cannot
+// accumulate one live dispatch per mirrored request. The probe dials through an
+// injected RoundTripper rather than the shared mirror client so MaxConnsPerHost
+// does not mask the count: concurrent RoundTrip entries are exactly the live
+// dispatches, which is the thing that pins a buffered body each.
+func TestRequestMirror_CapsLiveDispatches(t *testing.T) {
+	t.Parallel()
+
+	const requests = 200
+
+	release := make(chan struct{})
+
+	var (
+		mu      sync.Mutex
+		arrived int
+	)
+
+	blocking := roundTripperFunc(func(_ *http.Request) (*http.Response, error) {
+		mu.Lock()
+		arrived++
+		mu.Unlock()
+
+		<-release
+
+		return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody}, nil
+	})
+
+	filter := proxy.NewRequestMirror("http://mirror.example/", nil, nil, proxy.BackendProtocolHTTP,
+		func(_ string, _ proxy.BackendProtocol, _ *proxy.BackendTLSConfig, _ time.Duration) http.RoundTripper {
+			return blocking
+		})
+
+	for range requests {
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "http://example.com/x", nil)
+		resp := filter.ProcessRequest(req) //nolint:bodyclose // mirror returns nil response
+		require.Nil(t, resp, "mirror filter MUST NOT short-circuit the primary leg")
+	}
+
+	// Wait for the cap's worth of arrivals rather than all of them: on correct
+	// code the rest are dropped and never arrive, so waiting for `requests`
+	// would spend the whole deadline on every passing run. Uncapped, the
+	// remaining dispatches follow into the same wedge, and the stability loop
+	// below is what counts them.
+	deadline := time.After(3 * time.Second)
+
+	for {
+		mu.Lock()
+		seen := arrived
+		mu.Unlock()
+
+		if seen >= proxy.MirrorMaxLiveDispatchesForTest {
+			break
+		}
+
+		select {
+		case <-deadline:
+			t.Fatalf("only %d mirror dispatches arrived; expected at least the cap", seen)
+		case <-time.After(time.Millisecond):
+		}
+	}
+
+	// Nothing completes while the backend is wedged, so arrivals only ever grow.
+	// Once the count holds still across consecutive ticks every dispatch that
+	// was going to be made has been made, and the total is exact rather than a
+	// snapshot mid-flight.
+	stable := 0
+	previous := -1
+
+	for stable < 5 {
+		mu.Lock()
+		seen := arrived
+		mu.Unlock()
+
+		if seen == previous {
+			stable++
+		} else {
+			stable = 0
+			previous = seen
+		}
+
+		time.Sleep(2 * time.Millisecond)
+	}
+
+	assert.Equal(t, proxy.MirrorMaxLiveDispatchesForTest, previous,
+		"a wedged mirror backend must hold exactly the cap, not one dispatch per mirrored request")
+
+	// Recovery is the other half of a cap. Once the wedged dispatches return
+	// the slots come back, and a fresh request must reach the backend again;
+	// without that release the cap would be "mirroring off after N hangs".
+	close(release)
+
+	// Wait on the filter's own counter, not on a backend-side one: the backend
+	// sees a dispatch leave while the goroutine holding the slot is still
+	// unwinding, so a drained backend does not yet mean a reopened cap.
+	assert.Eventually(t, func() bool {
+		return proxy.MirrorLiveDispatchesForTest(filter) == 0
+	}, 5*time.Second, 5*time.Millisecond, "the wedged dispatches must release their slots once drained")
+
+	after := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "http://example.com/after", nil)
+	require.Nil(t, filter.ProcessRequest(after)) //nolint:bodyclose // mirror returns nil response
+
+	assert.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+
+		return arrived == proxy.MirrorMaxLiveDispatchesForTest+1
+	}, 5*time.Second, 5*time.Millisecond, "a dispatch after the drain must reach the backend")
+}
+
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }

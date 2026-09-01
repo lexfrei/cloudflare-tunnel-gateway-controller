@@ -170,3 +170,20 @@ func IsHTTPUpgradeRequestForTest(req *http.Request) bool {
 func SetConfigVersionCounterForTest(version int64) int64 {
 	return configVersionCounter.Swap(version)
 }
+
+// MirrorMaxLiveDispatchesForTest exposes the mirror dispatch cap so a test
+// asserting on it moves with the constant instead of restating it.
+const MirrorMaxLiveDispatchesForTest = mirrorMaxLiveDispatches
+
+// MirrorLiveDispatchesForTest reports the dispatches a mirror filter counts in
+// flight. It is the counter the cap is enforced against, so a test waiting for
+// slots to reopen must read it rather than infer the state from the backend.
+// A filter of any other type reports -1, which no wait can mistake for drained.
+func MirrorLiveDispatchesForTest(f Filter) int64 {
+	mirror, ok := f.(*requestMirror)
+	if !ok {
+		return -1
+	}
+
+	return mirror.live.Load()
+}
