@@ -5,6 +5,7 @@
 [![Release](https://img.shields.io/github/v/release/lexfrei/cloudflare-tunnel-gateway-controller)](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/releases)
 [![CI](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/actions/workflows/pr.yaml/badge.svg)](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/actions/workflows/pr.yaml)
 [![Docs](https://img.shields.io/badge/docs-cf.k8s.lex.la-blue)](https://cf.k8s.lex.la)
+[![Gateway API Conformance](https://img.shields.io/badge/Gateway%20Conformance%20v1.6.1-Conformant-green)](https://gateway-api.sigs.k8s.io/docs/implementations/list/#lexfreis-cloudflare-tunnel-gateway-controller)
 
 Kubernetes controller implementing Gateway API for Cloudflare Tunnel.
 
