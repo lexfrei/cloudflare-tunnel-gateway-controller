@@ -119,5 +119,5 @@ jobs:
               issue_number: prNumber,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: `## Container images available\n\n**Controller (amd64 + arm64):**\n\`\`\`bash\npodman pull ${ctrlTag}\n\`\`\`\n\n**Proxy (amd64 + arm64):**\n\`\`\`bash\npodman pull ${proxyTag}\n\`\`\`\n\n## Helm chart available\n\n**Install chart:**\n\`\`\`bash\nhelm install test oci://ttl.sh/cloudflare-tunnel-gateway-controller --version ${chartVersion}\n\`\`\`\n\n> **Note:** Images and chart are rebuilt on every commit and expire after 24 hours (hosted on ttl.sh).`
+              body: `## Container images available\n\n**Controller (amd64 + arm64):**\n\`\`\`bash\npodman pull ${ctrlTag}\n\`\`\`\n\n**Proxy (amd64 + arm64):**\n\`\`\`bash\npodman pull ${proxyTag}\n\`\`\`\n\n## Helm chart available\n\n**Install chart:**\n\`\`\`bash\nhelm install test oci://ttl.sh/cloudflare-tunnel-gateway-controller --version ${chartVersion}\n\`\`\`\n\n> **Note:** Rebuilt on every commit. ttl.sh keeps them for about an hour; the CI run's artifacts hold the same build for a day.`
             })

@@ -430,7 +430,8 @@ jobs:
             echo "podman pull ${IMAGE_TAG}"
             echo '```'
             echo ""
-            echo "> **Note:** Image expires in 24 hours (ttl.sh)"
+            echo "> **Note:** ttl.sh keeps this image for about an hour. The CI run's"
+            echo "> artifacts hold the same build for a day."
           } >> "$GITHUB_STEP_SUMMARY"
 
   # Lint and test Helm chart
@@ -763,5 +764,6 @@ jobs:
             echo "helm install test oci://ttl.sh/cloudflare-tunnel-gateway-controller --version ${CHART_VERSION}"
             echo '```'
             echo ""
-            echo "> **Note:** Chart expires in 24 hours (ttl.sh)"
+            echo "> **Note:** ttl.sh keeps this chart for about an hour. The CI run's"
+            echo "> artifacts hold the same build for a day."
           } >> "$GITHUB_STEP_SUMMARY"
