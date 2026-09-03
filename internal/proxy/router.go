@@ -239,10 +239,7 @@ func (r *Router) UpdateConfig(cfg *Config) error {
 		return errTLSMirrorWithoutTransportFactory
 	}
 
-	table, err := compileRoutingTable(cfg, r.transportFactory)
-	if err != nil {
-		return errors.Wrap(err, "failed to compile routing table")
-	}
+	table := compileRoutingTable(cfg, r.transportFactory)
 
 	r.table.Store(table)
 
@@ -391,12 +388,38 @@ func collectMirrorTransportKeys(keys map[string]bool, filters []RouteFilter) {
 	}
 }
 
+// indexRuleByHostname files a compiled rule under each hostname it serves:
+// exact hostnames on the table, wildcards in wildcardMap keyed by the suffix
+// they match, and a rule with no hostnames among the defaults.
+func indexRuleByHostname(
+	table *routingTable,
+	wildcardMap map[string][]*compiledRule,
+	hostnames []string,
+	compiled *compiledRule,
+) {
+	if len(hostnames) == 0 {
+		table.defaultRules = append(table.defaultRules, compiled)
+
+		return
+	}
+
+	for _, hostname := range hostnames {
+		normalized := strings.ToLower(hostname)
+		if strings.HasPrefix(normalized, "*.") {
+			suffix := normalized[1:] // e.g., "*.example.com" → ".example.com"
+			wildcardMap[suffix] = append(wildcardMap[suffix], compiled)
+		} else {
+			table.exactHosts[normalized] = append(table.exactHosts[normalized], compiled)
+		}
+	}
+}
+
 // compileRoutingTable builds a routingTable from a Config. The
 // transportFactory is forwarded down to compileRule → CompileFilters →
 // compileFilter so the RequestMirror filter can borrow a per-cert
 // RoundTripper from the Handler's shared pool when a BackendTLSPolicy
 // targets the mirror destination.
-func compileRoutingTable(cfg *Config, factory TransportFactory) (*routingTable, error) {
+func compileRoutingTable(cfg *Config, factory TransportFactory) *routingTable {
 	table := &routingTable{
 		exactHosts: make(map[string][]*compiledRule),
 		version:    cfg.Version,
@@ -404,29 +427,36 @@ func compileRoutingTable(cfg *Config, factory TransportFactory) (*routingTable, 
 
 	wildcardMap := make(map[string][]*compiledRule)
 
+	skipped := 0
+
 	for ruleIdx := range cfg.Rules {
 		rule := &cfg.Rules[ruleIdx]
 
 		compiled, err := compileRule(rule, ruleIdx, factory)
 		if err != nil {
-			return nil, errors.Wrapf(err, "rule[%d]", ruleIdx)
-		}
+			// Skip the rule, keep the document. Match patterns are tenant
+			// authored and reach the proxy unchecked, so refusing the whole
+			// config over one of them would hold every other tenant on this
+			// data plane at its previous routing table until the offending
+			// route is withdrawn.
+			if skipped == 0 {
+				// One line per config, not per rule: a rule that does not
+				// compile does not start compiling on the next push, and the
+				// summary below carries the count.
+				slog.Error("skipping rule that failed to compile; its requests fall through to the next matching rule",
+					"rule", ruleIdx,
+					"hostnames", rule.Hostnames,
+					"version", cfg.Version,
+					"error", err,
+				)
+			}
 
-		if len(rule.Hostnames) == 0 {
-			table.defaultRules = append(table.defaultRules, compiled)
+			skipped++
 
 			continue
 		}
 
-		for _, hostname := range rule.Hostnames {
-			normalized := strings.ToLower(hostname)
-			if strings.HasPrefix(normalized, "*.") {
-				suffix := normalized[1:] // e.g., "*.example.com" → ".example.com"
-				wildcardMap[suffix] = append(wildcardMap[suffix], compiled)
-			} else {
-				table.exactHosts[normalized] = append(table.exactHosts[normalized], compiled)
-			}
-		}
+		indexRuleByHostname(table, wildcardMap, rule.Hostnames, compiled)
 	}
 
 	// Convert wildcard map to sorted slice (longest suffix first for precedence).
@@ -450,7 +480,15 @@ func compileRoutingTable(cfg *Config, factory TransportFactory) (*routingTable, 
 
 	sortRulesByPrecedence(table.defaultRules)
 
-	return table, nil
+	if skipped > 0 {
+		slog.Warn("routing table applied with rules missing",
+			"skipped", skipped,
+			"rules", len(cfg.Rules),
+			"version", cfg.Version,
+		)
+	}
+
+	return table
 }
 
 // compileRule compiles a single RouteRule into a compiledRule. factory is

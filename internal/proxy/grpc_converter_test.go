@@ -1260,3 +1260,45 @@ func TestConvertRoutes_InvalidBackendOutcomesEquivalentAcrossRouteKinds(t *testi
 			"backend %d: the placeholder URL must be identical on both kinds", i)
 	}
 }
+
+// TestConvertGRPCRoutes_UncompilableMethodRegex_DropsRule pins that a GRPCRoute
+// method pattern the data plane cannot compile is caught the same way an
+// HTTPRoute path pattern is, through the shared conversion shell. The
+// diagnostic quotes the composite pattern the converter built, so the tenant
+// sees their fragment inside the /service/method shape it is matched as.
+func TestConvertGRPCRoutes_UncompilableMethodRegex_DropsRule(t *testing.T) {
+	t.Parallel()
+
+	svc := "grpc.examples.echo.Echo"
+	method := "["
+	routes := []*gatewayv1.GRPCRoute{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "echo", Namespace: "default"},
+			Spec: gatewayv1.GRPCRouteSpec{
+				Hostnames: []gatewayv1.Hostname{"grpc.example.com"},
+				Rules: []gatewayv1.GRPCRouteRule{
+					{
+						Matches: []gatewayv1.GRPCRouteMatch{
+							{Method: &gatewayv1.GRPCMethodMatch{Type: grpcRegex(), Service: &svc, Method: &method}},
+						},
+						BackendRefs: []gatewayv1.GRPCBackendRef{grpcBackendRef("echo-svc", 9000, 1)},
+					},
+				},
+			},
+		},
+	}
+
+	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil, nil, nil, nil)
+
+	assert.Empty(t, cfg.Rules, "the rule carrying the uncompilable method pattern must not be pushed")
+	assert.Empty(t, cfg.Provenance)
+
+	require.Len(t, cfg.Diagnostics, 1)
+	diag := cfg.Diagnostics[0]
+	assert.Equal(t, "echo", diag.Name)
+	assert.Equal(t, 0, diag.RuleIndex)
+	assert.Equal(t, proxy.DiagnosticAccepted, diag.Target)
+	assert.Equal(t, string(gatewayv1.RouteReasonUnsupportedValue), diag.Reason)
+	assert.True(t, diag.WholeRule)
+	assert.Contains(t, diag.Message, "(?:[)", "the message quotes the composite pattern with the tenant's fragment in place")
+}

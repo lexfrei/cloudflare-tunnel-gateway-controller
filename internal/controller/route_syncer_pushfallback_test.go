@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -546,4 +547,343 @@ func pushFallbackRoute(name, hostname string) *gatewayv1.HTTPRoute {
 			},
 		},
 	}
+}
+
+// TestResyncTarget_DoesNotHoldLockAcrossPush pins for resyncTarget what
+// TestSyncPartition_ConcurrentPushesDoNotSerializeOnLock pins for SyncPartition:
+// syncMu guards the in-memory push state, not the network call, so a replay to a
+// wedged connector must not block every other partition's config update. The
+// probe is TryLock rather than a wall-clock bound because the question is binary
+// and a timing threshold would be flaky under -race.
+func TestResyncTarget_DoesNotHoldLockAcrossPush(t *testing.T) {
+	t.Parallel()
+
+	entered := make(chan struct{})
+	release := make(chan struct{})
+
+	fast := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(fast.Close)
+
+	var once sync.Once
+
+	wedged := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		once.Do(func() { close(entered) })
+		<-release
+		writer.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(wedged.Close)
+
+	testClient := fake.NewClientBuilder().WithScheme(runtime.NewScheme()).Build()
+	proxySyncer := NewProxySyncer("cluster.local", "", "", testClient, slog.Default())
+	ctx := context.Background()
+
+	const key = "team-a/gw"
+
+	_, err := proxySyncer.SyncPartition(ctx, 0, key, "",
+		[]string{fast.URL + "/config"},
+		[]*gatewayv1.HTTPRoute{pushFallbackRoute("r-a", "a.example.com")},
+		nil, nil, nil)
+	require.NoError(t, err)
+
+	done := make(chan struct{})
+
+	go func() {
+		defer close(done)
+
+		_ = proxySyncer.resyncTarget(ctx, key, []string{wedged.URL + "/config"}, "")
+	}()
+
+	<-entered
+
+	acquired := proxySyncer.syncMu.TryLock()
+	if acquired {
+		proxySyncer.syncMu.Unlock()
+	}
+
+	close(release)
+	<-done
+
+	assert.True(t, acquired, "syncMu must be free while a replay push is in flight")
+}
+
+// TestRecordResync_DoesNotOverwriteANewerSkipKey pins the ordering the lock
+// split made reachable. A replay reads its config under the lock and releases
+// it; a concurrent sync can then push a newer document and record it first. If
+// the replay writes its own hash on top, the skip key claims a document the
+// endpoints no longer hold, and the next sync that rebuilds it byte for byte is
+// skipped while the plane keeps serving the newer one.
+func TestRecordResync_DoesNotOverwriteANewerSkipKey(t *testing.T) {
+	t.Parallel()
+
+	fast := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(fast.Close)
+
+	testClient := fake.NewClientBuilder().WithScheme(runtime.NewScheme()).Build()
+	proxySyncer := NewProxySyncer("cluster.local", "", "", testClient, slog.Default())
+	ctx := context.Background()
+
+	const key = "team-a/gw"
+
+	endpoints := []string{fast.URL + "/config"}
+
+	_, err := proxySyncer.SyncPartition(ctx, 0, key, "", endpoints,
+		[]*gatewayv1.HTTPRoute{pushFallbackRoute("r-a", "a.example.com")},
+		nil, nil, nil)
+	require.NoError(t, err)
+
+	proxySyncer.syncMu.Lock()
+	replayed := proxySyncer.targets[key].lastCfg
+	observed := proxySyncer.targets[key].lastRecordSeq
+	proxySyncer.syncMu.Unlock()
+
+	require.NotNil(t, replayed)
+
+	// The document a concurrent sync pushed and recorded while the replay was
+	// still in flight.
+	newer := &proxy.Config{Version: replayed.Version + 1}
+	newerHash := hashProxyConfig(newer)
+
+	proxySyncer.recordPush(key, "", newerHash, newer, endpoints, nil)
+
+	// The replay lands second with the older document it read before unlocking.
+	proxySyncer.recordResync(key, replayed, observed, "", endpoints, false)
+
+	proxySyncer.syncMu.Lock()
+	gotHash := proxySyncer.targets[key].lastPushedHash
+	proxySyncer.syncMu.Unlock()
+
+	assert.Equal(t, newerHash, gotHash,
+		"a replay must not claim the endpoints hold the document it replayed when a newer one was recorded after it")
+}
+
+// TestRecordResync_DoesNotResurrectAPartitionEvictedDuringThePush covers the
+// window the lock split opened: RetainPartitions can evict a partition while a
+// replay's push is in flight, and recording the outcome afterwards must not
+// re-create the entry. A resurrected target would linger with no Gateway behind
+// it until the next retain pass.
+func TestRecordResync_DoesNotResurrectAPartitionEvictedDuringThePush(t *testing.T) {
+	t.Parallel()
+
+	entered := make(chan struct{})
+	release := make(chan struct{})
+
+	fast := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(fast.Close)
+
+	var once sync.Once
+
+	wedged := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		once.Do(func() { close(entered) })
+		<-release
+		writer.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(wedged.Close)
+
+	testClient := fake.NewClientBuilder().WithScheme(runtime.NewScheme()).Build()
+	proxySyncer := NewProxySyncer("cluster.local", "", "", testClient, slog.Default())
+	ctx := context.Background()
+
+	const key = "team-a/gw"
+
+	_, err := proxySyncer.SyncPartition(ctx, 0, key, "",
+		[]string{fast.URL + "/config"},
+		[]*gatewayv1.HTTPRoute{pushFallbackRoute("r-a", "a.example.com")},
+		nil, nil, nil)
+	require.NoError(t, err)
+
+	done := make(chan struct{})
+
+	go func() {
+		defer close(done)
+
+		_ = proxySyncer.resyncTarget(ctx, key, []string{wedged.URL + "/config"}, "")
+	}()
+
+	<-entered
+
+	// The Gateway went away while the replay was in flight.
+	proxySyncer.RetainPartitions(map[string]bool{})
+
+	close(release)
+	<-done
+
+	proxySyncer.syncMu.Lock()
+	_, exists := proxySyncer.targets[key]
+	proxySyncer.syncMu.Unlock()
+
+	assert.False(t, exists, "recording a replay must not re-create a partition evicted during its push")
+}
+
+var errPartialPush = errors.New("partial push failure")
+
+// TestRecordResync_DoesNotRestoreAKeyAConcurrentFailureCleared is the other half
+// of the ordering the lock split opened. recordPush's failure branch clears the
+// skip key but leaves lastCfg alone, so a replay that finishes afterwards still
+// sees its own document cached. Writing its key on top would restore exactly the
+// claim the failed push cleared, and a later sync that rebuilds that document
+// identically would be skipped while a replica still holds the newer one.
+func TestRecordResync_DoesNotRestoreAKeyAConcurrentFailureCleared(t *testing.T) {
+	t.Parallel()
+
+	fast := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(fast.Close)
+
+	testClient := fake.NewClientBuilder().WithScheme(runtime.NewScheme()).Build()
+	proxySyncer := NewProxySyncer("cluster.local", "", "", testClient, slog.Default())
+	ctx := context.Background()
+
+	const key = "team-a/gw"
+
+	endpoints := []string{fast.URL + "/config"}
+
+	_, err := proxySyncer.SyncPartition(ctx, 0, key, "", endpoints,
+		[]*gatewayv1.HTTPRoute{pushFallbackRoute("r-a", "a.example.com")},
+		nil, nil, nil)
+	require.NoError(t, err)
+
+	proxySyncer.syncMu.Lock()
+	replayed := proxySyncer.targets[key].lastCfg
+	observed := proxySyncer.targets[key].lastRecordSeq
+	proxySyncer.syncMu.Unlock()
+
+	require.NotNil(t, replayed)
+
+	// A concurrent sync pushed and failed at some replicas, clearing the key so
+	// the next sync re-pushes unconditionally. lastCfg is untouched by that.
+	proxySyncer.recordPush(key, "", "", replayed, endpoints, errPartialPush)
+
+	// The replay lands afterwards with the document it read before unlocking.
+	proxySyncer.recordResync(key, replayed, observed, "", endpoints, false)
+
+	proxySyncer.syncMu.Lock()
+	gotHash := proxySyncer.targets[key].lastPushedHash
+	proxySyncer.syncMu.Unlock()
+
+	assert.Empty(t, gotHash,
+		"a replay must not restore the skip key a concurrent failed push cleared")
+}
+
+// TestRecordResync_EmptyObservedKeyIsNotAToken pins the case a comparison on
+// the key's value cannot see. Every failed record clears the key, so a replay
+// that read an already-empty key and a concurrent partial failure that emptied
+// it again look identical by value. Some replicas hold the newer document, so
+// the replay must still not write its own key on top.
+func TestRecordResync_EmptyObservedKeyIsNotAToken(t *testing.T) {
+	t.Parallel()
+
+	fast := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(fast.Close)
+
+	testClient := fake.NewClientBuilder().WithScheme(runtime.NewScheme()).Build()
+	proxySyncer := NewProxySyncer("cluster.local", "", "", testClient, slog.Default())
+	ctx := context.Background()
+
+	const key = "team-a/gw"
+
+	endpoints := []string{fast.URL + "/config"}
+
+	_, err := proxySyncer.SyncPartition(ctx, 0, key, "", endpoints,
+		[]*gatewayv1.HTTPRoute{pushFallbackRoute("r-a", "a.example.com")},
+		nil, nil, nil)
+	require.NoError(t, err)
+
+	proxySyncer.syncMu.Lock()
+	replayed := proxySyncer.targets[key].lastCfg
+	proxySyncer.syncMu.Unlock()
+
+	require.NotNil(t, replayed)
+
+	// An earlier partial failure cleared the key before the replay took its
+	// snapshot, so the replay starts from an empty key.
+	proxySyncer.recordPush(key, "", "", replayed, endpoints, errPartialPush)
+
+	proxySyncer.syncMu.Lock()
+	observed := proxySyncer.targets[key].lastRecordSeq
+	clearedKey := proxySyncer.targets[key].lastPushedHash
+	proxySyncer.syncMu.Unlock()
+
+	require.Empty(t, clearedKey, "the replay starts from a cleared key")
+
+	// A concurrent newer sync partially fails during the push window. The key
+	// is cleared again, so by value nothing has changed since the snapshot.
+	newer := &proxy.Config{Version: replayed.Version + 1}
+	proxySyncer.recordPush(key, "", "", newer, endpoints, errPartialPush)
+
+	proxySyncer.recordResync(key, replayed, observed, "", endpoints, false)
+
+	proxySyncer.syncMu.Lock()
+	gotHash := proxySyncer.targets[key].lastPushedHash
+	proxySyncer.syncMu.Unlock()
+
+	assert.Empty(t, gotHash,
+		"an empty observed key is not a token: a record happened even though the value did not change")
+}
+
+// TestRecordResync_DoesNotOutliveAnEvictedAndRecreatedPartition pins the case a
+// per-partition counter cannot see. A replay snapshots the partition, the
+// partition is evicted while the push is in flight, and a fresh one is created
+// and pushed under the same key. A counter that restarts from zero on the new
+// partition can land on the very value the replay observed, so the replay
+// writes its old document's key over the new partition's.
+func TestRecordResync_DoesNotOutliveAnEvictedAndRecreatedPartition(t *testing.T) {
+	t.Parallel()
+
+	fast := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(fast.Close)
+
+	testClient := fake.NewClientBuilder().WithScheme(runtime.NewScheme()).Build()
+	proxySyncer := NewProxySyncer("cluster.local", "", "", testClient, slog.Default())
+	ctx := context.Background()
+
+	const key = "team-a/gw"
+
+	endpoints := []string{fast.URL + "/config"}
+
+	_, err := proxySyncer.SyncPartition(ctx, 0, key, "", endpoints,
+		[]*gatewayv1.HTTPRoute{pushFallbackRoute("r-a", "a.example.com")},
+		nil, nil, nil)
+	require.NoError(t, err)
+
+	proxySyncer.syncMu.Lock()
+	replayed := proxySyncer.targets[key].lastCfg
+	observed := proxySyncer.targets[key].lastRecordSeq
+	proxySyncer.syncMu.Unlock()
+
+	require.NotNil(t, replayed)
+
+	// The partition goes away and comes back under the same key with a
+	// different document while the replay's push is in flight.
+	proxySyncer.RetainPartitions(map[string]bool{})
+
+	_, err = proxySyncer.SyncPartition(ctx, 0, key, "", endpoints,
+		[]*gatewayv1.HTTPRoute{pushFallbackRoute("r-b", "b.example.com")},
+		nil, nil, nil)
+	require.NoError(t, err)
+
+	proxySyncer.syncMu.Lock()
+	recreatedHash := proxySyncer.targets[key].lastPushedHash
+	proxySyncer.syncMu.Unlock()
+
+	require.NotEmpty(t, recreatedHash)
+
+	proxySyncer.recordResync(key, replayed, observed, "", endpoints, false)
+
+	proxySyncer.syncMu.Lock()
+	gotHash := proxySyncer.targets[key].lastPushedHash
+	proxySyncer.syncMu.Unlock()
+
+	assert.Equal(t, recreatedHash, gotHash,
+		"a replay from before the partition was recreated must not claim the new partition's endpoints hold its old document")
 }

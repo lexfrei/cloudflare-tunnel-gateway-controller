@@ -125,6 +125,8 @@ matches:
       type: RegularExpression
 ```
 
+A pattern that does not compile is handled the same way as on an HTTPRoute: the controller drops the rule and reports it on the route, leaving other routes on the data plane untouched. See [HTTPRoute](httproute.md#path-match-types) for what the route status carries.
+
 ## Cross-Namespace Routing
 
 GRPCRoute also supports cross-namespace backend references with ReferenceGrant:

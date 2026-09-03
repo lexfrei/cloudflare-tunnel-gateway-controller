@@ -668,13 +668,17 @@ func TestRouter_ConfigVersion(t *testing.T) {
 	assert.Equal(t, int64(42), router.ConfigVersion())
 }
 
-func TestRouter_InvalidConfig(t *testing.T) {
+// TestRouter_AllRulesUncompilable_StillApplies covers the degenerate end of the skip contract: a
+// document whose every rule is uncompilable is still applied, and its version
+// still advances. Rejecting it would leave the controller re-pushing the same
+// document forever, since nothing about a retry makes the pattern compile.
+func TestRouter_AllRulesUncompilable_StillApplies(t *testing.T) {
 	t.Parallel()
 
 	router := proxy.NewRouter()
 
 	cfg := &proxy.Config{
-		Version: 1,
+		Version: 7,
 		Rules: []proxy.RouteRule{
 			{
 				Matches: []proxy.RouteMatch{
@@ -685,9 +689,17 @@ func TestRouter_InvalidConfig(t *testing.T) {
 		},
 	}
 
-	err := router.UpdateConfig(cfg)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "compile")
+	require.NoError(t, router.UpdateConfig(cfg))
+	assert.Equal(t, int64(7), router.ConfigVersion())
+
+	req := &http.Request{
+		Method: http.MethodGet,
+		Host:   "anything.example.com",
+		URL:    &url.URL{Path: "/"},
+		Header: http.Header{},
+	}
+
+	assert.Nil(t, router.Route(req), "a rule that did not compile must not route")
 }
 
 func TestRouter_NoMatchesMatchesAll(t *testing.T) {
@@ -1578,4 +1590,57 @@ func TestRouter_QueryParamCountDominatesRuleIndex(t *testing.T) {
 			assert.Equal(t, tt.expected, result.Rule.Backends[0].URL)
 		})
 	}
+}
+
+// TestRouter_UpdateConfig_SkipsUncompilableRule pins that one rule the proxy
+// cannot compile costs that rule and nothing else. Match patterns are tenant
+// authored and reach the proxy unchecked, so refusing the whole document for
+// one of them freezes config rollout for every other tenant sharing the data
+// plane.
+func TestRouter_UpdateConfig_SkipsUncompilableRule(t *testing.T) {
+	t.Parallel()
+
+	router := proxy.NewRouter()
+
+	badPattern := "["
+
+	cfg := &proxy.Config{
+		Version: 1,
+		Rules: []proxy.RouteRule{
+			{
+				Hostnames: []string{"broken.example.com"},
+				Matches: []proxy.RouteMatch{{
+					Path: &proxy.PathMatch{Type: proxy.PathMatchRegularExpression, Value: badPattern},
+				}},
+				Backends: []proxy.BackendRef{{URL: "http://backend:80", Weight: 1}},
+			},
+			{
+				Hostnames: []string{"healthy.example.com"},
+				Backends:  []proxy.BackendRef{{URL: "http://backend:80", Weight: 1}},
+			},
+		},
+	}
+
+	require.NoError(t, router.UpdateConfig(cfg),
+		"one uncompilable rule must not refuse the whole document")
+
+	healthy := &http.Request{
+		Method: http.MethodGet,
+		Host:   "healthy.example.com",
+		URL:    &url.URL{Path: "/"},
+		Header: http.Header{},
+	}
+
+	result := router.Route(healthy)
+	require.NotNil(t, result, "a rule sharing the document with an uncompilable one must still route")
+	assert.GreaterOrEqual(t, result.BackendIdx, 0)
+
+	broken := &http.Request{
+		Method: http.MethodGet,
+		Host:   "broken.example.com",
+		URL:    &url.URL{Path: "/"},
+		Header: http.Header{},
+	}
+
+	assert.Nil(t, router.Route(broken), "the uncompilable rule itself must not route")
 }
