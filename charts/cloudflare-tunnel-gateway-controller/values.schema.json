@@ -46,6 +46,12 @@
           "type": "boolean",
           "default": false,
           "description": "Allow a Gateway with a dedicated data plane to claim a tunnel another namespace or the GatewayClass already serves"
+        },
+        "maxDataPlanesPerNamespace": {
+          "type": ["integer", "null"],
+          "minimum": 1,
+          "default": null,
+          "description": "Cap on dedicated data planes per namespace (omit for no cap; 0 is rejected)"
         }
       }
     },
