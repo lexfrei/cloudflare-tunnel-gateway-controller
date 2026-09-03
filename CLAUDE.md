@@ -581,9 +581,9 @@ Official Gateway API conformance suite (`sigs.k8s.io/gateway-api/conformance` v1
 # Setup + run the custom e2e suite (smoke-level; lighter than --test)
 ./hack/conformance-setup.sh --test-e2e
 
-# Verify a PR's CI artifact: skip the local build, deploy the PR's published
-# ttl.sh chart+images (the chart already pins the ttl.sh image refs). Add --test
-# to also run the suite. ttl.sh artifacts expire 24h after the PR's CI ran.
+# Verify a PR's CI artifact: skip the local build, deploy the chart and images
+# PR #N's CI run published, resolved by digest from that run (needs gh + jq).
+# Add --test to also run the suite. The run's artifacts are kept for one day.
 ./hack/conformance-setup.sh --use-ci-images <PR-number>
 
 # Run all conformance tests on existing cluster (CONFORMANCE_TUNNEL_HOSTNAME is required)

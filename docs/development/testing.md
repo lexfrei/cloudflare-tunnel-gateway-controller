@@ -287,6 +287,20 @@ Conformance tests validate that the controller implements the Gateway API specif
 - Cloudflare Tunnel configured and working
 - GatewayClass `cloudflare-tunnel` created
 
+`hack/conformance-setup.sh` builds that cluster for you. It needs `docker`, `kind`, `helm`, `kubectl` and `go`; on macOS it also needs `colima`, which is where the docker daemon comes from there. Other hosts use their native daemon and are not asked for it.
+
+### Deploying a Pull Request's CI Build
+
+`hack/conformance-setup.sh --use-ci-images <PR>` deploys what that PR's CI already built instead of building locally. It additionally needs `gh` (authenticated for this repository) and `jq`.
+
+The chart comes from the CI run's own artifacts and the images are pulled by the digest that run recorded, so nothing on this path is addressed by a tag. That matters because CI also publishes to `ttl.sh`, an anonymous registry where the PR tag is writable by anyone, and the cluster this script builds holds real Cloudflare credentials.
+
+A digest binds content, not trust. On a fork PR the artifacts are produced by the fork's own copy of `pr.yaml`, so the recorded digest is exactly as trustworthy as the PR author. Read the fork's diff before any un-sandboxed run that holds real credentials, the same as before.
+
+The run is chosen by the PR's current head commit, and only a successful `pull_request` run for that exact commit is accepted — a run for an earlier head is refused rather than silently deployed. `hack/verify-ci-bundle.sh` then checks the downloaded artifacts before anything reaches the cluster: both image references must be digest-pinned, the recorded commit must match the head being verified, and the chart must carry that PR's version. Any mismatch aborts before the cluster is created.
+
+Two independent clocks limit how long a PR stays deployable this way. The chart and the recorded digests are GitHub Actions artifacts, kept for one day. The images live on `ttl.sh`, which derives a tag's lifetime from the tag itself and only when the whole tag is a bare duration; `pr-<N>-1d` is not, so those images get the service's default lifetime, which the repository does not control and which is shorter. Whichever expires first, the fix is the same: re-run the PR's CI.
+
 ### Running E2E Tests
 
 E2E tests run against a live kind cluster with Cloudflare Tunnel and L7 proxy deployed. `E2E_TUNNEL_HOSTNAME` is required — the suite fails fast without it. `hack/conformance-setup.sh` threads it automatically from `.env` or the exported environment (`CF_TUNNEL_HOSTNAME`); set it explicitly when running `go test` by hand.

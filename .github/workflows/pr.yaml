@@ -350,6 +350,10 @@ jobs:
           PR_NUMBER="${{ github.event.pull_request.number }}"
           IMAGE_NAME="${{ matrix.image }}"
           TAG="pr-${PR_NUMBER}-1d"
+          # pr-N-1d is a human alias that later runs overwrite. The run-scoped
+          # tag names this run, and nothing in this repo's CI writes it a
+          # second time, so the digest read back from it is this run's build.
+          RUN_TAG="pr-${PR_NUMBER}-run-${{ github.run_id }}"
 
           # Build image references array
           images=()
@@ -365,6 +369,7 @@ jobs:
           for attempt in 1 2 3; do
             if docker buildx imagetools create \
               --tag "${IMAGE_NAME}:${TAG}" \
+              --tag "${IMAGE_NAME}:${RUN_TAG}" \
               "${images[@]}"; then
               ok=1
               break
@@ -380,6 +385,30 @@ jobs:
         run: |
           PR_NUMBER="${{ github.event.pull_request.number }}"
           docker buildx imagetools inspect "${{ matrix.image }}:pr-${PR_NUMBER}-1d"
+
+      # The tag this job just wrote is mutable and anonymous -- anyone can
+      # overwrite it on ttl.sh. Publish the manifest-list digest so local
+      # verification can address the image by content instead.
+      - name: Export image reference
+        run: |
+          set -euo pipefail
+
+          PR_NUMBER="${{ github.event.pull_request.number }}"
+          mkdir -p /tmp/refs
+          digest="$(docker buildx imagetools inspect \
+            "${{ matrix.image }}:pr-${PR_NUMBER}-run-${{ github.run_id }}" \
+            --format '{{.Manifest.Digest}}')"
+          echo "${{ matrix.image }}@${digest}" \
+            > "/tmp/refs/${{ matrix.component }}.ref"
+          cat "/tmp/refs/${{ matrix.component }}.ref"
+
+      - name: Upload image reference
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: image-ref-${{ matrix.component }}
+          path: /tmp/refs/*
+          if-no-files-found: error
+          retention-days: 1
 
       - name: Generate build summary
         run: |
@@ -696,6 +725,27 @@ jobs:
           [[ "${ok}" -eq 1 ]]
 
           echo "Chart pushed to: oci://ttl.sh/cloudflare-tunnel-gateway-controller:${CHART_VERSION}"
+
+      # The commit rides along with the chart so a consumer can bind the
+      # artifact to the revision it was built from.
+      - name: Assemble chart bundle
+        run: |
+          set -euo pipefail
+
+          PR_NUMBER="${{ github.event.pull_request.number }}"
+          CHART_VERSION="0.0.0-pr.${PR_NUMBER}-1d"
+
+          mkdir -p /tmp/bundle
+          cp "cloudflare-tunnel-gateway-controller-${CHART_VERSION}.tgz" /tmp/bundle/
+          echo "${{ github.event.pull_request.head.sha }}" > /tmp/bundle/head-sha.txt
+
+      - name: Upload chart bundle artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: ci-chart-bundle
+          path: /tmp/bundle/*
+          if-no-files-found: error
+          retention-days: 1
 
       - name: Generate chart summary
         run: |
