@@ -9,10 +9,10 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Floor for the whole workflow; each job below widens it to exactly what its
+# own steps need. Nothing but the two cosign steps mints Sigstore tokens.
 permissions:
-  contents: write
-  packages: write
-  id-token: write
+  contents: read
 
 jobs:
   # Lint and test Helm chart (runs in parallel with build-and-push)
@@ -20,6 +20,8 @@ jobs:
     name: Lint Chart
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: read
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -48,25 +50,27 @@ jobs:
           # hard-errors with "plugin source does not support verification".
           # Disable it explicitly — the flag is needed for the source type,
           # not because the plugin is unsigned.
-          helm plugin install https://github.com/helm-unittest/helm-unittest.git --verify=false
+          # renovate: datasource=github-releases depName=helm-unittest/helm-unittest
+          HELM_UNITTEST_VERSION="v1.1.2"
+          helm plugin install https://github.com/helm-unittest/helm-unittest.git \
+            --version "${HELM_UNITTEST_VERSION}" --verify=false
 
           # JSON schema validator
-          pip install check-jsonschema
+          # renovate: datasource=pypi depName=check-jsonschema
+          CHECK_JSONSCHEMA_VERSION="0.38.0"
+          pip install "check-jsonschema==${CHECK_JSONSCHEMA_VERSION}"
 
-          # Artifact Hub CLI — extracted from upstream image so the tag binds
-          # both version and content digest (Renovate's docker datasource
-          # auto-bumps the tag without a separate sha256 line to drift).
+          # Artifact Hub CLI, extracted from the upstream image.
           # renovate: datasource=docker depName=artifacthub/ah
-          AH_VERSION="v1.23.0"
-          docker create --name ah-tmp "artifacthub/ah:${AH_VERSION}"
+          AH_IMAGE="artifacthub/ah:v1.23.0@sha256:e5d2a2cdef85aac4928e8176ffaad24746c5fe961d64ff6856f7222957095356"
+          docker create --name ah-tmp "${AH_IMAGE}"
           sudo docker cp ah-tmp:/usr/local/bin/ah /usr/local/bin/ah
           docker rm ah-tmp
           sudo chmod +x /usr/local/bin/ah
 
-          # helm-docs — same rationale as ah above.
           # renovate: datasource=docker depName=jnorwood/helm-docs
-          HELM_DOCS_VERSION="v1.14.2"
-          docker create --name helm-docs-tmp "jnorwood/helm-docs:${HELM_DOCS_VERSION}"
+          HELM_DOCS_IMAGE="jnorwood/helm-docs:v1.14.2@sha256:7e562b49ab6b1dbc50c3da8f2dd6ffa8a5c6bba327b1c6335cc15ce29267979c"
+          docker create --name helm-docs-tmp "${HELM_DOCS_IMAGE}"
           sudo docker cp helm-docs-tmp:/usr/bin/helm-docs /usr/local/bin/helm-docs
           docker rm helm-docs-tmp
           sudo chmod +x /usr/local/bin/helm-docs
@@ -164,6 +168,10 @@ jobs:
     name: Build and Push (${{ matrix.component }})
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
+    # ghcr push only; the images are signed one job later.
+    permissions:
+      contents: read
+      packages: write
     strategy:
       fail-fast: false
       matrix:
@@ -263,6 +271,10 @@ jobs:
     runs-on: ubuntu-latest
     needs: build-and-push
     timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
     outputs:
       version: ${{ steps.version.outputs.version }}
     strategy:
@@ -388,6 +400,10 @@ jobs:
     runs-on: ubuntu-latest
     needs: [build-and-push, lint-chart]
     timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
     outputs:
       version: ${{ steps.version.outputs.version }}
     env:
@@ -422,12 +438,9 @@ jobs:
 
       - name: Install yq
         run: |
-          # yq — extracted from upstream image so the tag binds both version
-          # and content digest (Renovate's docker datasource auto-bumps the
-          # tag without a separate sha256 line to drift).
           # renovate: datasource=docker depName=mikefarah/yq
-          YQ_VERSION="4.53.6"
-          docker create --name yq-tmp "mikefarah/yq:${YQ_VERSION}"
+          YQ_IMAGE="mikefarah/yq:4.53.6@sha256:cfc4eee658595834ef304eadb0c3ea721f3b7cb6404ad8b7cb909cc5b5145b23"
+          docker create --name yq-tmp "${YQ_IMAGE}"
           sudo docker cp yq-tmp:/usr/bin/yq /usr/local/bin/yq
           docker rm yq-tmp
           sudo chmod +x /usr/local/bin/yq
@@ -622,6 +635,9 @@ jobs:
     runs-on: ubuntu-latest
     needs: [merge-manifests, publish-chart]
     timeout-minutes: 15
+    # Creates the release and uploads the chart tarball to it.
+    permissions:
+      contents: write
     env:
       CHART_NAME: cloudflare-tunnel-gateway-controller
       CHART_OCI_REPO: ghcr.io/${{ github.repository_owner }}/charts/cloudflare-tunnel-gateway-controller

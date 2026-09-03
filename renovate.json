@@ -109,13 +109,25 @@
     },
     {
       "customType": "regex",
-      "description": "Update versioned binaries in GitHub Actions workflows",
+      "description": "Update digest-pinned tool images in GitHub Actions workflows. The tag is there for humans; the digest is what docker resolves, so both have to move together and a single matchString keeps them in step",
       "fileMatch": [
         "^\\.github/workflows/.*\\.ya?ml$",
         "^\\.github/actions/.*\\.ya?ml$"
       ],
       "matchStrings": [
-        "# renovate: datasource=(?<datasource>.*?) depName=(?<depName>.*?)\\n\\s+[A-Z_]+VERSION=\"(?<currentValue>.*?)\""
+        "# renovate: datasource=(?<datasource>.*?) depName=(?<depName>.*?)\\n\\s+[A-Z_]+_IMAGE=\"[^\"]+:(?<currentValue>[^\"@]+)@(?<currentDigest>sha256:[a-f0-9]{64})\""
+      ]
+    },
+    {
+      "customType": "regex",
+      "description": "Update versioned binaries in GitHub Actions workflows, both the SOMETHING_VERSION=\"...\" shell form and an action's version: input",
+      "fileMatch": [
+        "^\\.github/workflows/.*\\.ya?ml$",
+        "^\\.github/actions/.*\\.ya?ml$"
+      ],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>.*?) depName=(?<depName>.*?)\\n\\s+[A-Z_]+VERSION=\"(?<currentValue>.*?)\"",
+        "# renovate: datasource=(?<datasource>.*?) depName=(?<depName>.*?)\\n\\s+version: '(?<currentValue>[^']+)'"
       ]
     }
   ]
