@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/cloudflare/cloudflare-go/v7"
 	"github.com/cloudflare/cloudflare-go/v7/option"
@@ -203,12 +204,15 @@ func newSharingPartitionSyncSyncer(t *testing.T, api *recordingTunnelAPI, classT
 func partitionSyncSyncer(t *testing.T, api *recordingTunnelAPI, classTunnelID string, allowShared bool, interceptors ...interceptor.Funcs) *RouteSyncer {
 	t.Helper()
 
-	scheme := runtime.NewScheme()
-	require.NoError(t, gatewayv1.Install(scheme))
-	require.NoError(t, v1alpha1.AddToScheme(scheme))
-	require.NoError(t, corev1.AddToScheme(scheme))
+	return partitionSyncSyncerFor(t, api, partitionSyncObjects(t, classTunnelID, allowShared), interceptors...)
+}
 
-	objects := []runtime.Object{
+// partitionSyncObjects is the shared fixture set: a managed class, the shared
+// Gateway, one opted-in Gateway with its own tunnel, and a route on each.
+func partitionSyncObjects(t *testing.T, classTunnelID string, allowShared bool) []runtime.Object {
+	t.Helper()
+
+	return []runtime.Object{
 		&gatewayv1.GatewayClass{
 			ObjectMeta: metav1.ObjectMeta{Name: "cf-test"},
 			Spec: gatewayv1.GatewayClassSpec{
@@ -275,6 +279,16 @@ func partitionSyncSyncer(t *testing.T, api *recordingTunnelAPI, classTunnelID st
 		partitionSyncRoute("shared-route", "shared-gw", "shared.example.com"),
 		partitionSyncRoute("tenant-route", "infra-gw", "tenant.example.com"),
 	}
+}
+
+// partitionSyncSyncerFor builds a RouteSyncer over an explicit object set.
+func partitionSyncSyncerFor(t *testing.T, api *recordingTunnelAPI, objects []runtime.Object, interceptors ...interceptor.Funcs) *RouteSyncer {
+	t.Helper()
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, gatewayv1.Install(scheme))
+	require.NoError(t, v1alpha1.AddToScheme(scheme))
+	require.NoError(t, corev1.AddToScheme(scheme))
 
 	builder := fake.NewClientBuilder().WithScheme(scheme)
 	for _, obj := range objects {
@@ -527,4 +541,141 @@ func TestSyncAllRoutes_BrokenGatewayConfigFailsClosed(t *testing.T) {
 	require.NotNil(t, binding.syncErrByGateway)
 	assert.Error(t, binding.syncErrByGateway["default/infra-gw"],
 		"a route on a broken data plane must carry a per-parent sync error so it is not reported Accepted=True")
+}
+
+// cappedPartitionSyncObjects returns the shared fixture with the class cap set
+// and an OLDER opted-in Gateway added in the same namespace, so "infra-gw" is
+// the one the cap refuses.
+func cappedPartitionSyncObjects(t *testing.T, classTunnelID string, capacity int32) []runtime.Object {
+	t.Helper()
+
+	elder := metav1.NewTime(time.Date(2020, time.January, 1, 0, 0, 0, 0, time.UTC))
+
+	objects := partitionSyncObjects(t, classTunnelID, false)
+	for _, obj := range objects {
+		switch typed := obj.(type) {
+		case *v1alpha1.GatewayClassConfig:
+			typed.Spec.MaxDataPlanesPerNamespace = &capacity
+		case *gatewayv1.Gateway:
+			if typed.Name == "infra-gw" {
+				typed.CreationTimestamp = metav1.NewTime(elder.AddDate(1, 0, 0))
+			}
+		}
+	}
+
+	return append(objects,
+		&gatewayv1.Gateway{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "elder-gw", Namespace: "default", UID: "elder-gw", CreationTimestamp: elder,
+			},
+			Spec: gatewayv1.GatewaySpec{
+				GatewayClassName: "cf-test",
+				Listeners:        httpListener(),
+				Infrastructure: &gatewayv1.GatewayInfrastructure{
+					ParametersRef: &gatewayv1.LocalParametersReference{
+						Group: "cf.k8s.lex.la", Kind: "GatewayConfig", Name: "infra-config",
+					},
+				},
+			},
+		},
+		// The elder MUST resolve, so its partition survives and the refused
+		// Gateway's absence can only be the cap. Without this Secret it lands in
+		// the broken set for an unrelated reason and the test passes vacuously.
+		&corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: "cf-proxy-elder-gw-auth", Namespace: "default"},
+			Data:       map[string][]byte{"auth-token": []byte("generated-bearer")},
+		},
+	)
+}
+
+// TestSyncAllRoutes_SharedTunnelsDoNotWaiveTheQuota pins the same ordering at
+// the route-sync layer. applyTunnelOwnership returns early on the sharing
+// opt-out; applyDataPlaneQuota is correct only because it sits OUTSIDE that
+// call. Folding it in would leave a tenant's routes programmed on a plane the
+// infra reconciler refuses to render.
+func TestSyncAllRoutes_SharedTunnelsDoNotWaiveTheQuota(t *testing.T) {
+	t.Parallel()
+
+	const classTunnel = "99999999-9999-4999-8999-999999999999"
+
+	objects := cappedPartitionSyncObjects(t, classTunnel, 1)
+	for _, obj := range objects {
+		if classConfig, ok := obj.(*v1alpha1.GatewayClassConfig); ok {
+			classConfig.Spec.AllowSharedTunnels = true
+		}
+	}
+
+	api := newRecordingTunnelAPI(t)
+
+	_, result, err := partitionSyncSyncerFor(t, api, objects).SyncAllRoutes(context.Background())
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	keys := make([]string, 0, len(result.Partitions))
+	for i := range result.Partitions {
+		keys = append(keys, result.Partitions[i].Key)
+	}
+
+	assert.NotContains(t, keys, "default/infra-gw",
+		"sharing tunnels must not waive the data-plane cap")
+}
+
+// TestSyncAllRoutes_ZeroCapRefusesEveryDedicatedPartition pins the route-sync
+// half of the same rule. A cap of 0 reaches the sync only from a CRD predating
+// Minimum=1 or a hand-edited one, and reading it as unlimited would program
+// every dedicated plane the operator asked to have none of.
+func TestSyncAllRoutes_ZeroCapRefusesEveryDedicatedPartition(t *testing.T) {
+	t.Parallel()
+
+	const classTunnel = "99999999-9999-4999-8999-999999999999"
+
+	syncer := partitionSyncSyncerFor(t, newRecordingTunnelAPI(t), cappedPartitionSyncObjects(t, classTunnel, 0))
+
+	_, result, err := syncer.SyncAllRoutes(context.Background())
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	keys := make([]string, 0, len(result.Partitions))
+	for i := range result.Partitions {
+		keys = append(keys, result.Partitions[i].Key)
+	}
+
+	assert.NotContains(t, keys, "default/infra-gw")
+	assert.NotContains(t, keys, "default/elder-gw", "a zero cap leaves no dedicated plane standing")
+	assert.Contains(t, keys, sharedPartitionKey, "the shared plane is not a dedicated one; the cap does not touch it")
+}
+
+// TestSyncAllRoutes_OverQuotaGatewayGetsNoPartition pins that the cap reaches
+// the route sync, not only the Gateway status: a Gateway past its namespace's
+// limit contributes no partition, and its hostname is written to NO tunnel
+// document — in particular not to the shared one, which every other tenant
+// reads.
+func TestSyncAllRoutes_OverQuotaGatewayGetsNoPartition(t *testing.T) {
+	t.Parallel()
+
+	const classTunnel = "99999999-9999-4999-8999-999999999999"
+
+	api := newRecordingTunnelAPI(t)
+	syncer := partitionSyncSyncerFor(t, api, cappedPartitionSyncObjects(t, classTunnel, 1))
+
+	_, result, err := syncer.SyncAllRoutes(context.Background())
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	keys := make([]string, 0, len(result.Partitions))
+	for i := range result.Partitions {
+		keys = append(keys, result.Partitions[i].Key)
+	}
+
+	assert.NotContains(t, keys, "default/infra-gw", "the Gateway over the cap contributes no partition")
+	assert.Contains(t, keys, "default/elder-gw", "the Gateway within the cap keeps its own")
+	assert.Contains(t, keys, sharedPartitionKey)
+
+	sharedHosts := api.hostnamesFor(classTunnel)
+	assert.Contains(t, sharedHosts, "shared.example.com")
+	assert.NotContains(t, sharedHosts, "tenant.example.com",
+		"a refused Gateway's routes must fail closed, not fall back to the shared plane")
+
+	assert.NotContains(t, api.hostnamesFor(tenantTunnelUUID), "tenant.example.com",
+		"no document may be written for a data plane that is never rendered")
 }
