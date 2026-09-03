@@ -284,10 +284,18 @@ networkPolicy:
   # pretending to restrict nothing. What a CIDR peer does and does not match is
   # in the security reference under Egress Requirements.
   kubernetesApiIpBlocks: []
-  # -- Cloudflare IP ranges for egress NetworkPolicy
+  # -- Cloudflare IP ranges for egress NetworkPolicy. Shared with the proxy
+  # policy's edge-egress rule.
   # Source: https://www.cloudflare.com/ips/
   # Last updated: 2025-11-25
   # To update: curl https://www.cloudflare.com/ips-v4 && curl https://www.cloudflare.com/ips-v6
+  #
+  # Emptying both lists is refused by whichever policy is switched on, because
+  # the rule built from them would render an empty `to:`, which NetworkPolicy
+  # reads as allow-all on the ports it carries. To drop the restriction, turn
+  # that policy off instead — networkPolicy.enabled for the controller policy,
+  # proxy.networkPolicy.egressRestricted for the proxy one. Each knob clears
+  # only its own policy's guard, so a deployment running both needs both.
   cloudflareIpRanges:
     ipv4:
       - 173.245.48.0/20

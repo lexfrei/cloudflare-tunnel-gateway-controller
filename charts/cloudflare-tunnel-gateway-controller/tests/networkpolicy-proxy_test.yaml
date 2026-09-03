@@ -208,3 +208,58 @@ tests:
     asserts:
       - exists:
           path: spec.ingress[0].from[0].podSelector
+
+  # Same exit on this side: clearing egressRestricted with the lists still empty
+  # has to render the policy, not trip the guard it just turned off.
+  - it: should render the policy when egressRestricted is off and cloudflareIpRanges is empty
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
+        networkPolicy:
+          egressRestricted: false
+      networkPolicy:
+        cloudflareIpRanges:
+          ipv4: []
+          ipv6: []
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: NetworkPolicy
+
+  # Same shape as the controller suite's: an explicit null instead of two empty
+  # lists still has to reach the guard's message, not a rendering error.
+  - it: should fail when cloudflareIpRanges is null rather than two empty lists
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
+        networkPolicy:
+          egressRestricted: true
+      networkPolicy:
+        cloudflareIpRanges: null
+    asserts:
+      - failedTemplate:
+          errorPattern: "networkPolicy.cloudflareIpRanges is empty"
+
+  # One family is an allowlist, not an empty `to:`. Guarding on either list
+  # being empty instead of both would reject an IPv6-only cluster.
+  - it: should render the edge rule when only one address family is listed
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
+        networkPolicy:
+          egressRestricted: true
+      networkPolicy:
+        cloudflareIpRanges:
+          ipv4: []
+          ipv6:
+            - 2606:4700::/32
+    asserts:
+      - equal:
+          path: spec.egress[1].to
+          value:
+            - ipBlock:
+                cidr: 2606:4700::/32

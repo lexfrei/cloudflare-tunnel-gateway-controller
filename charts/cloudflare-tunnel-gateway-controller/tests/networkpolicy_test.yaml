@@ -334,3 +334,60 @@ tests:
           content:
             protocol: TCP
             port: 8081
+
+  # Same foot-gun the proxy policy already refuses: with both lists emptied the
+  # Cloudflare rule renders `to: null` on 443, which NetworkPolicy reads as
+  # allow-all — the opposite of the restriction the operator was reaching for.
+  - it: should fail when the policy is enabled but cloudflareIpRanges is empty
+    set:
+      networkPolicy:
+        enabled: true
+        cloudflareIpRanges:
+          ipv4: []
+          ipv6: []
+    asserts:
+      - failedTemplate:
+          errorPattern: "networkPolicy.cloudflareIpRanges is empty"
+
+  # An operator can write the value as an explicit null instead of two empty
+  # lists. The schema admits it, and it has to reach the guard's message rather
+  # than a rendering error.
+  - it: should fail when cloudflareIpRanges is null rather than two empty lists
+    set:
+      networkPolicy:
+        enabled: true
+        cloudflareIpRanges: null
+    asserts:
+      - failedTemplate:
+          errorPattern: "networkPolicy.cloudflareIpRanges is empty"
+
+  # The exit the fail message offers has to work: disabling the policy with the
+  # lists still empty renders nothing, rather than failing on a guard the
+  # operator has already escaped.
+  - it: should render nothing when the policy is disabled and cloudflareIpRanges is empty
+    set:
+      networkPolicy:
+        enabled: false
+        cloudflareIpRanges:
+          ipv4: []
+          ipv6: []
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  # One family is an allowlist, not an empty `to:`. Guarding on either list
+  # being empty instead of both would reject an IPv4-only cluster.
+  - it: should render the Cloudflare rule when only one address family is listed
+    set:
+      networkPolicy:
+        enabled: true
+        cloudflareIpRanges:
+          ipv4:
+            - 173.245.48.0/20
+          ipv6: []
+    asserts:
+      - equal:
+          path: spec.egress[2].to
+          value:
+            - ipBlock:
+                cidr: 173.245.48.0/20
