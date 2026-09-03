@@ -431,3 +431,31 @@ func TestGatewayClassConfigList_DeepCopyObject(t *testing.T) {
 		})
 	}
 }
+
+// TestGatewayClassConfig_DeepCopyIsolatesTheCap pins that a deep copy of a
+// GatewayClassConfig owns its own MaxDataPlanesPerNamespace pointer. The
+// generated GatewayClassConfigSpec used to be a flat struct copy, which aliases
+// any pointer field: controller-runtime hands every reconcile a deep copy out
+// of the cache, so an aliased pointer makes a caller's write to its own copy
+// mutate the shared cached object -- one namespace's read of the cap would then
+// change the cap every other namespace is enforced against.
+func TestGatewayClassConfig_DeepCopyIsolatesTheCap(t *testing.T) {
+	t.Parallel()
+
+	original := &GatewayClassConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-config"},
+		Spec: GatewayClassConfigSpec{
+			TunnelID:                  "550e8400-e29b-41d4-a716-446655440000",
+			MaxDataPlanesPerNamespace: new(int32(3)),
+		},
+	}
+
+	copied := original.DeepCopy()
+	require.NotNil(t, copied.Spec.MaxDataPlanesPerNamespace)
+
+	*copied.Spec.MaxDataPlanesPerNamespace = 99
+
+	require.NotNil(t, original.Spec.MaxDataPlanesPerNamespace)
+	assert.Equal(t, int32(3), *original.Spec.MaxDataPlanesPerNamespace,
+		"mutating the copy's cap must not reach the original")
+}

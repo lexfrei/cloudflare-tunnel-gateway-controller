@@ -65,6 +65,37 @@ type GatewayClassConfigSpec struct {
 	// GatewayClassConfig, precisely so a tenant cannot grant it to themselves.
 	// +optional
 	AllowSharedTunnels bool `json:"allowSharedTunnels,omitempty"`
+
+	// MaxDataPlanesPerNamespace limits how many Gateways in one namespace may
+	// each have a dedicated data plane.
+	//
+	// Every opted-in Gateway renders a proxy Deployment, a headless Service, a
+	// NetworkPolicy and an optional HPA into its own namespace, and registers a
+	// connector on its tunnel. A tenant able to create Gateways and
+	// GatewayConfigs can otherwise multiply that as far as they like. Past the
+	// cap the newest Gateways are refused with
+	// Accepted=False/DataPlaneQuotaExceeded and their planes are not rendered.
+	// Oldest first (creation timestamp, then UID), so a Gateway created now
+	// takes a free slot or is refused and never evicts one already serving. Two
+	// things do evict, tearing down a running plane on the next reconcile:
+	// lowering the cap below what a namespace already holds, and an OLDER
+	// Gateway opting in later, since the order is by creation timestamp rather
+	// than by when the plane was asked for.
+	//
+	// Counted per namespace over every Gateway carrying
+	// spec.infrastructure.parametersRef, including ones already refused for
+	// something else and ones whose configuration does not currently resolve.
+	// Counting only the ones that resolve would let a tenant make a token
+	// unreadable to slip another Gateway under the cap.
+	//
+	// Omitting the field means unlimited, which is what an upgrade that does not
+	// set it gets. 0 is rejected rather than accepted as a second spelling of
+	// unlimited: it is what an operator writes for "no dedicated planes here",
+	// and granting the opposite would fail open. It lives here, on the
+	// cluster-scoped GatewayClassConfig, so a tenant cannot raise it.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	MaxDataPlanesPerNamespace *int32 `json:"maxDataPlanesPerNamespace,omitempty"`
 }
 
 // GatewayClassConfigStatus defines the observed state of GatewayClassConfig.
