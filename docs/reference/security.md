@@ -6,8 +6,11 @@ This document covers the security policy and best practices for the Cloudflare T
 
 | Version | Supported |
 |---------|-----------|
-| 3.x.x | Yes |
-| 2.x.x | No |
+| Latest 3.x minor | Yes |
+| Earlier 3.x minors | No |
+| < 3.0 | No |
+
+Fixes land on the latest 3.x minor; older minors are not backported.
 
 ## Reporting Vulnerabilities
 

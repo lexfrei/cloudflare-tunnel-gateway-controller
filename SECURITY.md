@@ -2,9 +2,13 @@
 
 ## Supported Versions
 
-| Version | Supported          |
-|---------|--------------------|
-| 0.x.x   | :white_check_mark: |
+| Version            | Supported          |
+|--------------------|--------------------|
+| Latest 3.x minor   | :white_check_mark: |
+| Earlier 3.x minors | :x:                |
+| < 3.0              | :x:                |
+
+Fixes land on the latest 3.x minor; older minors are not backported.
 
 ## Reporting a Vulnerability
 
