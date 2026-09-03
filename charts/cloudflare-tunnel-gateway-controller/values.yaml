@@ -37,6 +37,15 @@ gatewayClassConfig:
   # Accepted=False/InvalidParameters instead. Turn this on only where every
   # party on a shared tunnel is trusted to see the others' routes.
   allowSharedTunnels: false
+  # -- (int) Cap on how many Gateways in one namespace may each have a dedicated
+  # data plane. Every opted-in Gateway renders a proxy Deployment, a Service, a
+  # NetworkPolicy and an optional HPA into its namespace, and registers a
+  # connector on its tunnel. Past the cap the newest Gateways are refused with
+  # Accepted=False/DataPlaneQuotaExceeded and no plane is rendered for them;
+  # the oldest keep theirs. Leave it unset for no cap; 0 is rejected, since it
+  # is what an operator writes for "no dedicated planes at all".
+  # @default -- unset (no cap)
+  maxDataPlanesPerNamespace:
 
 # -- Controller configuration
 controller:

@@ -21,4 +21,7 @@ spec:
   {{- if .Values.gatewayClassConfig.allowSharedTunnels }}
   allowSharedTunnels: true
   {{- end }}
+  {{- with .Values.gatewayClassConfig.maxDataPlanesPerNamespace }}
+  maxDataPlanesPerNamespace: {{ . }}
+  {{- end }}
 {{- end }}
