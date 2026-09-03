@@ -227,6 +227,8 @@ Writing that as a policy runs into one thing worth knowing before you narrow any
 
 The chart's `networkPolicy.kubernetesApiIpBlocks` is where that narrowing goes; it ships empty, meaning unrestricted.
 
+The Cloudflare rule beside it is narrowed by `networkPolicy.cloudflareIpRanges`, which ships populated. Emptying both its address families is refused rather than rendered: the rule would lose its `to:` and become the unrestricted shape above, which is the opposite of what emptying an allowlist looks like it does. The refusal is armed by `networkPolicy.enabled` for the controller policy and by `proxy.networkPolicy.egressRestricted` for the proxy one, neither of which is on by default; turn off whichever of those two you have enabled to drop the restriction.
+
 The chart's policy carries no rule for the collector, so turning tracing on under it drops the exporter's traffic. Add the rule yourself.
 
 #### NetworkPolicy Example
