@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -1213,4 +1214,183 @@ func TestGatewayInfraReconciler_BrokenClassStopsRetryingAndKeepsThePlane(t *test
 	assert.NoError(t, reconciler.Get(ctx,
 		types.NamespacedName{Name: "cf-proxy-edge", Namespace: infraNamespace}, &deployment),
 		"a broken class is not evidence about tunnel ownership: the plane stays")
+}
+
+// infraQuotaFixtures builds the standard opt-in set plus one OLDER sibling
+// Gateway in the same namespace, and stamps "edge" as the newer of the two, so
+// "edge" is the one a cap of 1 refuses. capacity nil leaves the class uncapped.
+func infraQuotaFixtures(t *testing.T, capacity *int32) []runtime.Object {
+	t.Helper()
+
+	elder := time.Date(2020, time.January, 1, 0, 0, 0, 0, time.UTC)
+
+	objects := infraFixtures(t)
+	for _, obj := range objects {
+		switch typed := obj.(type) {
+		case *v1alpha1.GatewayClassConfig:
+			typed.Spec.MaxDataPlanesPerNamespace = capacity
+		case *gatewayv1.Gateway:
+			// infraFixtures leaves the timestamp zero, which would make "edge"
+			// the OLDEST Gateway in the namespace and therefore the one that
+			// keeps its slot.
+			typed.CreationTimestamp = metav1.NewTime(elder.AddDate(1, 0, 0))
+		}
+	}
+
+	return append(objects,
+		&gatewayv1.Gateway{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:              "elder",
+				Namespace:         infraNamespace,
+				UID:               "gw-uid-elder",
+				CreationTimestamp: metav1.NewTime(elder),
+			},
+			Spec: gatewayv1.GatewaySpec{
+				GatewayClassName: "cloudflare-tunnel",
+				Infrastructure: &gatewayv1.GatewayInfrastructure{
+					ParametersRef: &gatewayv1.LocalParametersReference{
+						Group: "cf.k8s.lex.la", Kind: "GatewayConfig", Name: "elder-config",
+					},
+				},
+			},
+		},
+		&v1alpha1.GatewayConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "elder-config", Namespace: infraNamespace},
+			Spec: v1alpha1.GatewayConfigSpec{
+				TunnelTokenSecretRef: v1alpha1.LocalSecretReference{Name: "elder-token"},
+			},
+		},
+		&corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: "elder-token", Namespace: infraNamespace},
+			Data:       map[string][]byte{"tunnel-token": []byte(infraTunnelToken(t))},
+		},
+	)
+}
+
+// TestGatewayInfraReconciler_OverQuotaRendersNothing pins that a Gateway past
+// its namespace's data-plane cap gets no proxy Deployment. The cap exists to
+// bound what one namespace can make the cluster run, so a refusal that still
+// rendered the pods would enforce nothing.
+func TestGatewayInfraReconciler_OverQuotaRendersNothing(t *testing.T) {
+	t.Parallel()
+
+	// A cap of 0 reaches a cluster only from a CRD predating Minimum=1 or a
+	// hand-edited one. Rendering the plane there would run what the operator
+	// asked to have none of.
+	for _, testCase := range []struct {
+		name     string
+		capacity int32
+	}{
+		{name: "past a cap of one", capacity: 1},
+		{name: "under a zero cap the CRD should have rejected", capacity: 0},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			reconciler := newInfraReconciler(t, infraQuotaFixtures(t, &testCase.capacity)...)
+			reconcileEdge(t, reconciler)
+
+			var deployment appsv1.Deployment
+			err := reconciler.Get(context.Background(),
+				types.NamespacedName{Name: "cf-proxy-edge", Namespace: infraNamespace}, &deployment)
+
+			require.Error(t, err, "a Gateway over the cap must get no proxy Deployment")
+			assert.True(t, apierrors.IsNotFound(err), "expected NotFound, got %v", err)
+		})
+	}
+}
+
+// TestGatewayInfraReconciler_OverQuotaRemovesAnExistingPlane pins the other
+// half: a plane already running when the operator lowers the cap is torn down,
+// not merely left unconfigured. A surviving pod keeps a cloudflared connector
+// registered on its tunnel, which is exactly the resource consumption the cap
+// is meant to bound.
+func TestGatewayInfraReconciler_OverQuotaRemovesAnExistingPlane(t *testing.T) {
+	t.Parallel()
+
+	reconciler := newInfraReconciler(t, infraQuotaFixtures(t, nil)...)
+	reconcileEdge(t, reconciler)
+
+	ctx := context.Background()
+	deploymentKey := types.NamespacedName{Name: "cf-proxy-edge", Namespace: infraNamespace}
+
+	var deployment appsv1.Deployment
+	require.NoError(t, reconciler.Get(ctx, deploymentKey, &deployment),
+		"the plane must exist before the cap is lowered")
+
+	var classConfig v1alpha1.GatewayClassConfig
+	require.NoError(t, reconciler.Get(ctx, types.NamespacedName{Name: "class-config"}, &classConfig))
+
+	classConfig.Spec.MaxDataPlanesPerNamespace = new(int32(1))
+	require.NoError(t, reconciler.Update(ctx, &classConfig))
+
+	reconcileEdge(t, reconciler)
+
+	err := reconciler.Get(ctx, deploymentKey, &deployment)
+	require.Error(t, err, "lowering the cap must remove the newest plane")
+	assert.True(t, apierrors.IsNotFound(err), "expected NotFound, got %v", err)
+}
+
+// TestGatewayInfraReconciler_SharedTunnelsDoNotWaiveTheQuota pins that the
+// allowSharedTunnels escape hatch waives TUNNEL arbitration only. The two rules
+// answer different questions -- who may serve a tunnel, and how much a namespace
+// may run -- and an operator who opts into sharing has said nothing about
+// capacity. Ordering the checks so the sharing opt-out returns before the cap
+// would silently disable the cap for every cluster that set it.
+func TestGatewayInfraReconciler_SharedTunnelsDoNotWaiveTheQuota(t *testing.T) {
+	t.Parallel()
+
+	objects := infraQuotaFixtures(t, new(int32(1)))
+	for _, obj := range objects {
+		if classConfig, ok := obj.(*v1alpha1.GatewayClassConfig); ok {
+			classConfig.Spec.AllowSharedTunnels = true
+		}
+	}
+
+	reconciler := newInfraReconciler(t, objects...)
+	reconcileEdge(t, reconciler)
+
+	var deployment appsv1.Deployment
+	err := reconciler.Get(context.Background(),
+		types.NamespacedName{Name: "cf-proxy-edge", Namespace: infraNamespace}, &deployment)
+
+	require.Error(t, err, "sharing tunnels must not waive the data-plane cap")
+	assert.True(t, apierrors.IsNotFound(err), "expected NotFound, got %v", err)
+}
+
+// TestGatewayInfraReconciler_UnderQuotaStillRenders is the control: the same
+// fixtures with room to spare must still render, so the two tests above cannot
+// pass by refusing everything.
+func TestGatewayInfraReconciler_UnderQuotaStillRenders(t *testing.T) {
+	t.Parallel()
+
+	reconciler := newInfraReconciler(t, infraQuotaFixtures(t, new(int32(2)))...)
+	reconcileEdge(t, reconciler)
+
+	var deployment appsv1.Deployment
+	assert.NoError(t, reconciler.Get(context.Background(),
+		types.NamespacedName{Name: "cf-proxy-edge", Namespace: infraNamespace}, &deployment),
+		"a Gateway within the cap must keep its data plane")
+}
+
+// TestGatewayInfraReconciler_ClassConfigEnqueuesOptedInGateways pins that a
+// GatewayClassConfig edit alone reaches this controller. The cap lives there, so
+// lowering it must tear down the planes above the new limit; without this watch
+// the only thing that re-renders is the Gateway status write the Gateway
+// reconciler happens to make, which a predicate on either controller would cut.
+func TestGatewayInfraReconciler_ClassConfigEnqueuesOptedInGateways(t *testing.T) {
+	t.Parallel()
+
+	reconciler := newInfraReconciler(t, infraQuotaFixtures(t, new(int32(1)))...)
+
+	requests := reconciler.classConfigInfraGateways(context.Background(),
+		&v1alpha1.GatewayClassConfig{ObjectMeta: metav1.ObjectMeta{Name: "class-config"}})
+
+	names := make([]string, 0, len(requests))
+	for _, request := range requests {
+		names = append(names, request.Namespace+"/"+request.Name)
+	}
+
+	assert.ElementsMatch(t, []string{infraNamespace + "/edge", infraNamespace + "/elder"}, names,
+		"every opted-in Gateway must be re-reconciled when the class config changes")
 }

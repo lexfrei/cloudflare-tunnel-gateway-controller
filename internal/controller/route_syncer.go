@@ -863,17 +863,10 @@ func (s *RouteSyncer) SyncAllRoutes(ctx context.Context) (ctrl.Result, *SyncResu
 		return ctrl.Result{RequeueAfter: apiErrorRequeueDelay, Priority: new(priorityRoute)}, s.buildResultForError(ctx), err
 	}
 
-	// A connector token proves nothing about the tunnel it names, and tunnel
-	// IDs are published in Gateway status for external-dns. Drop any Gateway
-	// claiming a tunnel another namespace already serves BEFORE partitioning,
-	// so a fabricated claim can neither collect the incumbent's routes nor
-	// inject its own into the incumbent's document.
-	claims, claimErr := collectTunnelClaims(ctx, s.Client, s.ConfigResolver, s.ControllerName, resolvedConfig.TunnelID)
-	if claimErr != nil {
-		return ctrl.Result{RequeueAfter: apiErrorRequeueDelay, Priority: new(priorityRoute)}, s.buildResultForError(ctx), claimErr
+	if refusalErr := s.applyPlaneRefusals(ctx, infra, resolvedConfig); refusalErr != nil {
+		return ctrl.Result{RequeueAfter: apiErrorRequeueDelay, Priority: new(priorityRoute)},
+			s.buildResultForError(ctx), refusalErr
 	}
-
-	applyTunnelOwnership(infra, resolvedConfig.TunnelID, resolvedConfig.AllowSharedTunnels, claims)
 
 	partitions := partitionRoutes(httpResult, grpcResult, infra)
 	groups := buildTunnelGroups(resolvedConfig, partitions)
@@ -1249,6 +1242,51 @@ func injectPartitionSyncErrors(
 	}
 }
 
+// applyPlaneRefusals drops, BEFORE partitioning, every Gateway that may not
+// have the dedicated data plane it asked for: one claiming a tunnel another
+// namespace already serves, and one whose namespace is at the operator's cap.
+//
+// Both must run here rather than at partition time. A fabricated tunnel claim
+// would otherwise collect the incumbent's routes and inject its own into the
+// incumbent's document; a Gateway over the cap gets no plane rendered, so
+// building and pushing its config would program routes onto a data plane that
+// does not exist.
+func (s *RouteSyncer) applyPlaneRefusals(
+	ctx context.Context,
+	infra *infraGateways,
+	resolvedConfig *config.ResolvedConfig,
+) error {
+	claims, err := collectTunnelClaims(ctx, s.Client, s.ConfigResolver, s.ControllerName, resolvedConfig.TunnelID)
+	if err != nil {
+		return err
+	}
+
+	applyTunnelOwnership(infra, resolvedConfig.TunnelID, resolvedConfig.AllowSharedTunnels, claims)
+
+	// Most deployments set no cap, and the collection below lists every Gateway
+	// in the cluster on each full sync. Nothing to decide without a cap.
+	capacity := resolvedConfig.MaxDataPlanesPerNamespace
+	if capacity == nil {
+		return nil
+	}
+
+	// The cap comes from the FIRST managed class here, while the Gateway and
+	// infra reconcilers read it from each Gateway's own class. Not a divergence
+	// today: resolveConfigForController hard-errors when managed classes carry
+	// different parametersRef, so either every managed class resolves the same
+	// GatewayClassConfig or route sync programs nothing at all. Whoever makes
+	// multi-class real has to reconcile these two readings first, here and for
+	// allowSharedTunnels above.
+	quotaClaims, err := collectDataPlaneClaims(ctx, s.Client, s.ControllerName)
+	if err != nil {
+		return err
+	}
+
+	applyDataPlaneQuota(infra, capacity, quotaClaims)
+
+	return nil
+}
+
 // gatewaySyncError returns the error affecting a route accepted on gatewayKey:
 // the broken-data-plane sentinel for an opted-in Gateway that failed to
 // resolve, otherwise the sync error of the partition (own, or shared) serving
@@ -1260,6 +1298,14 @@ func gatewaySyncError(gatewayKey string, failedPartitions map[string]error, infr
 	if rejection, ok := infra.tunnelRejection(gatewayKey); ok {
 		return errors.New("the Gateway claims tunnel " + rejection.TunnelID +
 			", which it does not own" + rejectionHolderSuffix(rejection) +
+			"; the route is not programmed (see the Gateway's Accepted condition)")
+	}
+
+	// Checked before the generic broken case for the same reason as a refused
+	// claim: "your data plane is unavailable" would send the tenant hunting an
+	// outage instead of deleting a Gateway or asking the operator for headroom.
+	if capacity, ok := infra.quotaRefusal(gatewayKey); ok {
+		return errors.New("the Gateway's namespace " + dataPlaneQuotaLimit(capacity) +
 			"; the route is not programmed (see the Gateway's Accepted condition)")
 	}
 

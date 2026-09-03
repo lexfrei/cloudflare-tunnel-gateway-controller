@@ -42,6 +42,11 @@ type ResolvedConfig struct {
 	// why an unproven tunnel claim is a cross-tenant problem.
 	AllowSharedTunnels bool
 
+	// MaxDataPlanesPerNamespace mirrors the GatewayClassConfig field: the most
+	// dedicated data planes one namespace may hold. Nil is unlimited; anything
+	// below 1 is rejected at admission.
+	MaxDataPlanesPerNamespace *int32
+
 	// Reference to the source config for watch purposes
 	ConfigName string
 }
@@ -117,18 +122,23 @@ func (r *Resolver) ResolveFromGatewayClass(
 	return r.resolveConfig(ctx, config)
 }
 
-// TunnelPolicy is the part of a GatewayClassConfig that decides tunnel
-// ownership: which tunnel the class itself serves, and whether the operator
-// permits several data planes to share one.
+// TunnelPolicy is the part of a GatewayClassConfig the per-Gateway admission
+// rules read: which tunnel the class itself serves, whether the operator permits
+// several data planes to share one, and how many dedicated planes one namespace
+// may hold.
 type TunnelPolicy struct {
 	TunnelID           string
 	AllowSharedTunnels bool
+	// MaxDataPlanesPerNamespace caps how many dedicated data planes one
+	// namespace may hold. Nil is unlimited; anything below 1 is rejected at
+	// admission.
+	MaxDataPlanesPerNamespace *int32
 }
 
-// ResolveTunnelPolicyForGatewayClass reads ONLY the fields tunnel arbitration
-// needs, without resolving the Cloudflare credentials.
+// ResolveTunnelPolicyForGatewayClass reads ONLY the class fields those rules
+// need, without resolving the Cloudflare credentials.
 //
-// Arbitration runs on every per-Gateway reconcile, and going through the full
+// They run on every per-Gateway reconcile, and going through the full
 // resolver would make it inherit the credential Secret read: a missing or
 // mid-rotation class credentials Secret would then stall status writes,
 // rendering and drift healing for every dedicated data plane, none of which
@@ -158,8 +168,9 @@ func (r *Resolver) ResolveTunnelPolicyForGatewayClass(
 	}
 
 	return &TunnelPolicy{
-		TunnelID:           classConfig.Spec.TunnelID,
-		AllowSharedTunnels: classConfig.Spec.AllowSharedTunnels,
+		TunnelID:                  classConfig.Spec.TunnelID,
+		AllowSharedTunnels:        classConfig.Spec.AllowSharedTunnels,
+		MaxDataPlanesPerNamespace: classConfig.Spec.MaxDataPlanesPerNamespace,
 	}, nil
 }
 
@@ -186,9 +197,10 @@ func (r *Resolver) resolveConfig(ctx context.Context, config *v1alpha1.GatewayCl
 	}
 
 	resolved := &ResolvedConfig{
-		TunnelID:           config.Spec.TunnelID,
-		AllowSharedTunnels: config.Spec.AllowSharedTunnels,
-		ConfigName:         config.Name,
+		TunnelID:                  config.Spec.TunnelID,
+		AllowSharedTunnels:        config.Spec.AllowSharedTunnels,
+		MaxDataPlanesPerNamespace: config.Spec.MaxDataPlanesPerNamespace,
+		ConfigName:                config.Name,
 	}
 
 	// Resolve Cloudflare credentials from Secret

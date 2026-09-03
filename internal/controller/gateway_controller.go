@@ -199,7 +199,7 @@ func (r *GatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		return r.handleResolveError(ctx, &gateway, err, "failed to resolve gateway configuration")
 	}
 
-	if result, handled, err := r.arbitrateTunnelClaim(ctx, &gateway, perGatewayMode); handled {
+	if result, handled, err := r.refuseDedicatedPlane(ctx, &gateway, perGatewayMode); handled {
 		return result, err
 	}
 
@@ -210,21 +210,39 @@ func (r *GatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	return ctrl.Result{}, nil
 }
 
-// arbitrateTunnelClaim settles what this Gateway's tunnel claim means for the
-// reconcile. handled reports that the outcome is decided here and the caller
-// must not go on to write an Accepted status: a Gateway refused by the
-// ownership rule is not programmed by the route syncer, so reporting it
-// Accepted would leave the operator with a healthy-looking Gateway whose routes
-// silently never work.
-func (r *GatewayReconciler) arbitrateTunnelClaim(
+// refuseDedicatedPlane settles whether this Gateway may have a dedicated data
+// plane at all: whether its tunnel claim holds, and whether its namespace is
+// already at the operator's cap. handled reports that the outcome is decided
+// here and the caller must not go on to write an Accepted status — a refused
+// Gateway is not programmed by the route syncer and no plane is rendered for
+// it, so reporting it Accepted would leave the operator with a healthy-looking
+// Gateway whose routes silently never work.
+//
+// The tunnel claim is settled first. A Gateway that both claims a tunnel it
+// does not own and sits over the cap has a security problem and a capacity
+// problem; the first is the one whose remedy matters.
+func (r *GatewayReconciler) refuseDedicatedPlane(
 	ctx context.Context,
 	gateway *gatewayv1.Gateway,
 	perGatewayMode bool,
 ) (ctrl.Result, bool, error) {
-	rejection, err := r.tunnelRejection(ctx, gateway, perGatewayMode)
+	// Only a dedicated plane can claim a tunnel or consume a slot; everything
+	// else serves the class tunnel from the shared plane, which neither rule
+	// says anything about.
+	if !perGatewayMode {
+		return ctrl.Result{}, false, nil
+	}
 
-	switch {
-	case err != nil:
+	// Read from THIS Gateway's class, while SyncAllRoutes reads from the first
+	// managed class. Not a divergence today: resolveConfigForController
+	// hard-errors when managed classes carry different parametersRef, so either
+	// every managed class resolves the same GatewayClassConfig or route sync
+	// programs nothing at all. Whoever makes multi-class real has to reconcile
+	// these two readings first.
+	policy, resolveErr := r.ConfigResolver.ResolveTunnelPolicyForGatewayClass(ctx, string(gateway.Spec.GatewayClassName))
+	if resolveErr != nil {
+		err := errors.Wrap(resolveErr, "resolving the GatewayClass tunnel policy")
+
 		// A deterministic problem with the GatewayClass is permanent, and
 		// retrying it forever would leave the Gateway with no condition at all
 		// — the operator would have only controller logs. Report it the way
@@ -245,13 +263,90 @@ func (r *GatewayReconciler) arbitrateTunnelClaim(
 		// afterwards. Nothing may advertise a tunnel whose ownership is
 		// unknown.
 		return ctrl.Result{}, true, err
-	case rejection != nil:
+	}
+
+	rejection, err := r.tunnelRejection(ctx, gateway, policy)
+	if err != nil {
+		return ctrl.Result{}, true, err
+	}
+
+	if rejection != nil {
 		r.reportTunnelRejection(ctx, gateway, *rejection)
 
 		return ctrl.Result{RequeueAfter: configErrorRequeueDelay, Priority: new(priorityGateway)}, true, nil
 	}
 
-	return ctrl.Result{}, false, nil
+	return r.refuseOverQuota(ctx, gateway, policy.MaxDataPlanesPerNamespace)
+}
+
+// refuseOverQuota reports a Gateway whose namespace already holds as many
+// dedicated data planes as the operator allows. Same shape as the tunnel
+// refusal above, and the same reason for it: the infra reconciler renders no
+// plane for a Gateway over the cap, so the status must not claim otherwise.
+func (r *GatewayReconciler) refuseOverQuota(
+	ctx context.Context,
+	gateway *gatewayv1.Gateway,
+	capacity *int32,
+) (ctrl.Result, bool, error) {
+	if capacity == nil {
+		return ctrl.Result{}, false, nil
+	}
+
+	claims, err := collectDataPlaneClaims(ctx, r.Client, r.ControllerName)
+	if err != nil {
+		return ctrl.Result{}, true, errors.Wrap(err, "collecting data-plane claims")
+	}
+
+	if !overQuotaGateways(capacity, claims)[gateway.Namespace+"/"+gateway.Name] {
+		return ctrl.Result{}, false, nil
+	}
+
+	r.reportQuotaRefusal(ctx, gateway, *capacity)
+
+	return ctrl.Result{RequeueAfter: configErrorRequeueDelay, Priority: new(priorityGateway)}, true, nil
+}
+
+// reportQuotaRefusal makes a capacity refusal impossible to miss: an Error log
+// for the operator's pipeline, a Warning Event on the Gateway, and
+// Accepted=False/DataPlaneQuotaExceeded naming the cap.
+func (r *GatewayReconciler) reportQuotaRefusal(
+	ctx context.Context,
+	gateway *gatewayv1.Gateway,
+	capacity int32,
+) {
+	logger := log.FromContext(ctx)
+	err := dataPlaneQuotaError(capacity)
+
+	// The refusal requeues every configErrorRequeueDelay for as long as the
+	// Gateway stands, so reporting on each pass would let the refused tenant
+	// choose the log and event volume. Report only when the verdict is new;
+	// the condition is what persists.
+	if !isRefusalReported(gateway, dataPlaneQuotaMessage(capacity)) {
+		logger.Error(err, "refusing a Gateway whose namespace is at its dedicated data-plane cap",
+			"gateway", gateway.Namespace+"/"+gateway.Name,
+			"cap", capacity)
+
+		if r.Recorder != nil {
+			r.Recorder.Eventf(gateway, nil, corev1.EventTypeWarning,
+				reasonDataPlaneQuotaExceeded, eventActionEnforceQuota, "%s", err.Error())
+		}
+	}
+
+	if statusErr := r.setConfigErrorStatus(ctx, gateway, err); statusErr != nil {
+		logger.Error(statusErr, "failed to update gateway status")
+	}
+}
+
+// dataPlaneQuotaError builds the error a capacity refusal is reported through.
+// Marked rather than wrapped, and marked with both sentinels, for the reasons
+// tunnelRefusalError explains.
+//
+//nolint:wrapcheck // marking rather than wrapping is the point, per above
+func dataPlaneQuotaError(capacity int32) error {
+	return errors.Mark(
+		errors.Mark(errors.New(dataPlaneQuotaMessage(capacity)), errDataPlaneQuotaExceeded),
+		config.ErrInvalidParameters,
+	)
 }
 
 // handleResolveError turns a failed configuration resolve into either a
@@ -301,17 +396,23 @@ const refusedConditionPrefix = "Refused: "
 // the Gateway's Accepted condition, so a repeating requeue does not re-log and
 // re-event a verdict nothing has changed about.
 func isTunnelRefusalReported(gateway *gatewayv1.Gateway, rejection tunnelownership.Rejection) bool {
+	// Compare the whole rendered message, not just the tunnel ID: the same
+	// tunnel can be refused for different reasons with different remedies (a
+	// neighbour holds it, versus it being the class tunnel), and a verdict that
+	// changed is news the operator has not heard yet.
+	return isRefusalReported(gateway, tunnelRejectionMessage(rejection))
+}
+
+// isRefusalReported reports whether an Accepted=False carrying this exact
+// message already stands on the Gateway.
+func isRefusalReported(gateway *gatewayv1.Gateway, message string) bool {
 	for _, condition := range gateway.Status.Conditions {
 		if condition.Type != string(gatewayv1.GatewayConditionAccepted) {
 			continue
 		}
 
-		// Compare the whole rendered message, not just the tunnel ID: the same
-		// tunnel can be refused for different reasons with different remedies
-		// (a neighbour holds it, versus it being the class tunnel), and a
-		// verdict that changed is news the operator has not heard yet.
 		return condition.Status == metav1.ConditionFalse &&
-			strings.Contains(condition.Message, tunnelRejectionMessage(rejection))
+			strings.Contains(condition.Message, message)
 	}
 
 	return false
@@ -321,9 +422,29 @@ func isTunnelRefusalReported(gateway *gatewayv1.Gateway, rejection tunnelownersh
 // Gateway's connector token claims a tunnel it does not own.
 const eventReasonTunnelClaimRejected = "TunnelClaimRejected"
 
+// reasonDataPlaneQuotaExceeded names both the Accepted=False reason and the
+// Warning Event raised when a namespace is at its dedicated data-plane cap.
+//
+// It is an implementation-specific reason, which the Gateway API allows:
+// GatewayConditionAccepted documents its own reasons as the ones "a controller
+// should use", and states that controllers may raise the condition with other
+// reasons. No listed reason describes a Gateway refused for capacity rather
+// than for anything wrong with its spec.
+const reasonDataPlaneQuotaExceeded = "DataPlaneQuotaExceeded"
+
+// errDataPlaneQuotaExceeded marks a Gateway refused because its namespace is at
+// the operator's dedicated data-plane cap, so the status writer can say so with
+// its own reason rather than the generic InvalidParameters.
+var errDataPlaneQuotaExceeded = errors.New("dedicated data-plane cap reached")
+
 // eventActionArbitrate labels the tunnel-ownership decision. Distinct from the
 // infra reconciler's render action: this layer decides, it does not render.
 const eventActionArbitrate = "ArbitrateTunnel"
+
+// eventActionEnforceQuota labels the capacity decision. A separate action from
+// the tunnel one so an operator reading a DataPlaneQuotaExceeded Event is not
+// pointed at tunnel arbitration, which has nothing to do with it.
+const eventActionEnforceQuota = "EnforceDataPlaneQuota"
 
 // reportTunnelRejection makes a refused claim impossible to miss: an Error log
 // for the operator's pipeline, a Warning Event on the Gateway, and
@@ -411,29 +532,11 @@ func tunnelRejectionMessage(rejection tunnelownership.Rejection) string {
 // tunnelRejection reports whether this Gateway's claimed tunnel belongs to
 // someone else. It runs the same arbitration as the route syncer over the same
 // inputs, so status and programming cannot disagree about who won.
-//
-// Only opted-in Gateways can claim a tunnel; everything else serves the class
-// tunnel by definition and has nothing to arbitrate.
 func (r *GatewayReconciler) tunnelRejection(
 	ctx context.Context,
 	gateway *gatewayv1.Gateway,
-	perGatewayMode bool,
+	policy *config.TunnelPolicy,
 ) (*tunnelownership.Rejection, error) {
-	if !perGatewayMode {
-		return nil, nil //nolint:nilnil // no claim to arbitrate and no failure
-	}
-
-	// Reads the policy from THIS Gateway's class, while SyncAllRoutes reads it
-	// from the first managed class. Not a divergence today: resolveConfigForController
-	// hard-errors when managed classes carry different parametersRef, so either
-	// every managed class resolves the same GatewayClassConfig or route sync
-	// programs nothing at all. Whoever makes multi-class real has to reconcile
-	// these two readings first.
-	policy, err := r.ConfigResolver.ResolveTunnelPolicyForGatewayClass(ctx, string(gateway.Spec.GatewayClassName))
-	if err != nil {
-		return nil, errors.Wrap(err, "resolving tunnel policy for arbitration")
-	}
-
 	// Same escape hatch the route syncer reads. Both layers must consult it or
 	// an operator who enabled sharing would see Gateways stuck Accepted=False
 	// while their routes were programmed perfectly.
@@ -823,8 +926,8 @@ func (r *GatewayReconciler) setConfigErrorStatus(
 		now := metav1.Now()
 
 		prefix := "Failed to resolve Gateway configuration: "
-		if errors.Is(configErr, errTunnelClaimRefused) {
-			// The configuration resolved fine; the tunnel it named was refused.
+		if errors.Is(configErr, errTunnelClaimRefused) || errors.Is(configErr, errDataPlaneQuotaExceeded) {
+			// The configuration resolved fine; the plane it asked for was refused.
 			prefix = refusedConditionPrefix
 		}
 
@@ -845,8 +948,10 @@ func (r *GatewayReconciler) setConfigErrorStatus(
 
 		_, _, clientCertErr := loadGatewayClientCertPEM(ctx, r.Client, &freshGateway, r.checkSecretReferenceGrant)
 
+		acceptedReason, programmedReason := configErrorReasons(configErr)
+
 		applyGatewayConditions(&freshGateway.Status.Conditions,
-			configErrorGatewayConditions(freshGateway.Generation, now, errMsg),
+			configErrorGatewayConditions(freshGateway.Generation, now, errMsg, acceptedReason, programmedReason),
 			buildClientCertResolvedRefsCondition(freshGateway.Generation, now, clientCertErr))
 
 		// Per-listener status still reflects each listener's own validity
@@ -876,16 +981,42 @@ func (r *GatewayReconciler) setConfigErrorStatus(
 	return errors.Wrap(err, "failed to update gateway status after retries")
 }
 
-// configErrorGatewayConditions is the Gateway-level verdict when the referenced
-// GatewayClassConfig cannot be resolved.
-func configErrorGatewayConditions(generation int64, now metav1.Time, message string) []metav1.Condition {
+// configErrorReasons picks the Accepted and Programmed reasons for a config
+// error.
+//
+// A namespace at its data-plane cap has nothing wrong with its parameters, and
+// the Gateway is neither syntactically nor semantically invalid — so the two
+// default reasons would both send the operator looking for a spec mistake that
+// is not there. Programmed uses the spec's own NoResources ("the Gateway is not
+// scheduled because insufficient infrastructure resources are available"),
+// which is what a cap declares; Accepted has no listed reason for capacity and
+// takes the implementation-specific one.
+func configErrorReasons(configErr error) (string, string) {
+	if errors.Is(configErr, errDataPlaneQuotaExceeded) {
+		return reasonDataPlaneQuotaExceeded, string(gatewayv1.GatewayReasonNoResources)
+	}
+
+	return string(gatewayv1.GatewayReasonInvalidParameters), string(gatewayv1.GatewayReasonInvalid)
+}
+
+// configErrorGatewayConditions is the Gateway-level verdict when a Gateway
+// cannot be programmed for a deterministic reason: its configuration did not
+// resolve, it claimed a tunnel it does not own, or its namespace is at the
+// operator's data-plane cap. The reasons differ per case and are chosen by
+// configErrorReasons; the message is shared.
+func configErrorGatewayConditions(
+	generation int64,
+	now metav1.Time,
+	message string,
+	acceptedReason, programmedReason string,
+) []metav1.Condition {
 	return []metav1.Condition{
 		{
 			Type:               string(gatewayv1.GatewayConditionAccepted),
 			Status:             metav1.ConditionFalse,
 			ObservedGeneration: generation,
 			LastTransitionTime: now,
-			Reason:             string(gatewayv1.GatewayReasonInvalidParameters),
+			Reason:             acceptedReason,
 			Message:            message,
 		},
 		{
@@ -893,7 +1024,7 @@ func configErrorGatewayConditions(generation int64, now metav1.Time, message str
 			Status:             metav1.ConditionFalse,
 			ObservedGeneration: generation,
 			LastTransitionTime: now,
-			Reason:             string(gatewayv1.GatewayReasonInvalid),
+			Reason:             programmedReason,
 			Message:            message,
 		},
 	}

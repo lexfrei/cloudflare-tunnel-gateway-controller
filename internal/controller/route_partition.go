@@ -56,6 +56,10 @@ type infraGateways struct {
 	// broken they contribute no partition; unlike broken their config
 	// resolved fine — they just claimed a tunnel that is not theirs.
 	rejected map[string]tunnelownership.Rejection
+	// overQuota holds the Gateways refused because their namespace is at the
+	// operator's dedicated data-plane cap, mapped to that cap so the route
+	// status can quote it. Like rejected they contribute no partition.
+	overQuota map[string]int32
 	// transient is the subset of broken whose resolve failure was retryable
 	// (an apiserver blip, not a deterministic config error). These fail closed
 	// like any broken Gateway, but their push cache must be RETAINED and the
@@ -130,6 +134,67 @@ func applyTunnelOwnership(
 		infra.broken[key] = true
 		delete(infra.transient, key)
 	}
+}
+
+// applyDataPlaneQuota drops every Gateway whose namespace already holds as many
+// dedicated data planes as the operator allows, recording which so the routes
+// bound to it can say the cap was the reason.
+//
+// Like a refused tunnel claim, a dropped Gateway leaves resolved entirely and is
+// marked broken, so every fail-closed path keyed on that set applies unchanged —
+// in particular partitionKeysFor, which would otherwise let the refused
+// Gateway's routes fall back to the SHARED partition and hand a tenant's
+// hostnames to the plane serving everyone else.
+func applyDataPlaneQuota(infra *infraGateways, capacity *int32, claims []dataPlaneClaim) {
+	if infra == nil {
+		return
+	}
+
+	overQuota := overQuotaGateways(capacity, claims)
+	if len(overQuota) == 0 {
+		return
+	}
+
+	if infra.overQuota == nil {
+		infra.overQuota = make(map[string]int32, len(overQuota))
+	}
+
+	if infra.broken == nil {
+		infra.broken = make(map[string]bool, len(overQuota))
+	}
+
+	for key := range overQuota {
+		// A Gateway already failing for its own reason keeps that reason. Its
+		// Accepted condition reports the config error, never the cap, and a
+		// route pointing the tenant at that condition for a quota message would
+		// send them to free a slot that changes nothing. It still COUNTS
+		// towards the cap — the claim set is built from every opted-in Gateway
+		// — this only decides what its own routes say.
+		if _, resolved := infra.resolved[key]; !resolved {
+			continue
+		}
+
+		infra.overQuota[key] = *capacity
+		delete(infra.resolved, key)
+
+		infra.broken[key] = true
+
+		// A cap is a decision, not a blip: clear any transient mark so the push
+		// cache is not retained for a plane that will keep being refused.
+		delete(infra.transient, key)
+	}
+}
+
+// quotaRefusal reports the cap recorded against the Gateway key, if any.
+// Nil-safe.
+func (g *infraGateways) quotaRefusal(key string) (int32, bool) {
+	if g == nil {
+		return 0, false
+	}
+
+	capacity, ok := g.overQuota[key]
+
+	return capacity, ok
 }
 
 // tunnelRejection reports the refusal recorded for the Gateway key, if any.

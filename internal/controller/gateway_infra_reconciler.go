@@ -139,7 +139,8 @@ func (r *GatewayInfraReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{}, r.cleanupRendered(ctx, &gateway)
 	}
 
-	// A refused plane is removed rather than merely left unconfigured.
+	// A refused plane is removed rather than merely left unconfigured, whether
+	// the refusal is a contested tunnel or the namespace's cap.
 	//
 	// This matters for a SHARED token, where both parties hold the same
 	// credentials and both connectors really do register: the edge
@@ -147,7 +148,7 @@ func (r *GatewayInfraReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	// of the incumbent's requests with 404s. A FORGED token cannot register at
 	// all — registration authenticates on the account tag and tunnel secret,
 	// not the UUID — so there the removal is hygiene rather than protection.
-	refused, err := r.tunnelClaimRefused(ctx, &gateway)
+	refused, err := r.dedicatedPlaneRefused(ctx, &gateway)
 	if err != nil {
 		// Never tear down a running plane because arbitration could not be
 		// computed: an unreadable class or a listing blip says nothing about
@@ -724,6 +725,19 @@ func (r *GatewayInfraReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&corev1.Service{}).
 		Owns(&autoscalingv2.HorizontalPodAutoscaler{}).
 		Owns(&networkingv1.NetworkPolicy{}).
+		// The cap and the class tunnel both live on the GatewayClassConfig, and
+		// both decide whether a plane may exist. A change to either produces no
+		// Gateway event at all, so without this watch nothing re-renders until
+		// something unrelated writes a Gateway — an operator lowering the cap
+		// would leave the planes above it running indefinitely.
+		//
+		// Freeing a slot by DELETING a sibling needs no equivalent watch: the
+		// refused Gateway requeues itself every configErrorRequeueDelay, and the
+		// status write that follows enqueues this controller through For().
+		Watches(
+			&v1alpha1.GatewayClassConfig{},
+			handler.EnqueueRequestsFromMapFunc(r.classConfigInfraGateways),
+		).
 		Watches(
 			&v1alpha1.GatewayConfig{},
 			handler.EnqueueRequestsFromMapFunc(r.namespaceInfraGateways),
@@ -773,14 +787,39 @@ func (r *GatewayInfraReconciler) namespaceInfraGateways(
 	return requests
 }
 
-// tunnelClaimRefused reports whether this Gateway claims a tunnel that belongs
-// to another namespace or to the GatewayClass.
+// classConfigInfraGateways enqueues every opted-in Gateway when the
+// GatewayClassConfig changes. Unfiltered by class: this controller hard-errors
+// on managed classes carrying different parametersRef, so every managed class
+// resolves the same object.
+func (r *GatewayInfraReconciler) classConfigInfraGateways(
+	ctx context.Context,
+	_ client.Object,
+) []reconcile.Request {
+	gateways, err := managedInfraGateways(ctx, r.Client, r.ControllerName)
+	if err != nil {
+		log.FromContext(ctx).Error(err, "listing opted-in Gateways for a GatewayClassConfig change; re-render trigger dropped")
+
+		return nil
+	}
+
+	requests := make([]reconcile.Request, 0, len(gateways))
+	for _, gateway := range gateways {
+		requests = append(requests, reconcile.Request{Name: gateway.Name, Namespace: gateway.Namespace})
+	}
+
+	return requests
+}
+
+// dedicatedPlaneRefused reports whether this Gateway may not have a dedicated
+// data plane: because it claims a tunnel belonging to another namespace or to
+// the GatewayClass, or because its namespace already holds as many planes as
+// the operator allows.
 //
-// It runs the same arbitration over the same shared claim set as the route
-// partitioner and the Gateway reconciler, so all three agree on who won. An
-// error here means the verdict is unknown, and the caller must leave any
-// running plane alone rather than guess.
-func (r *GatewayInfraReconciler) tunnelClaimRefused(
+// Both run the same decision over the same shared claim set as the route
+// partitioner and the Gateway reconciler, so all three agree. An error here
+// means the verdict is unknown, and the caller must leave any running plane
+// alone rather than guess.
+func (r *GatewayInfraReconciler) dedicatedPlaneRefused(
 	ctx context.Context,
 	gateway *gatewayv1.Gateway,
 ) (bool, error) {
@@ -795,19 +834,49 @@ func (r *GatewayInfraReconciler) tunnelClaimRefused(
 		return false, errors.Wrap(err, "resolving tunnel policy for arbitration")
 	}
 
-	if policy.AllowSharedTunnels {
+	// Tunnel ownership is settled first, matching the order the Gateway
+	// reconciler reports refusals in. The outcome here is the same either way
+	// (both refusals tear the plane down and this layer writes no status), but
+	// two layers deciding the same two things in opposite orders invites a
+	// reader to look for a difference that is not there.
+	//
+	// The cap is checked after the sharing opt-out below, not inside it:
+	// allowSharedTunnels waives tunnel arbitration, never the capacity limit.
+	if !policy.AllowSharedTunnels {
+		classTunnel := canonicalTunnelID(policy.TunnelID)
+
+		claims, err := collectTunnelClaims(ctx, r.Client, r.ConfigResolver, r.ControllerName, classTunnel)
+		if err != nil {
+			return false, errors.Wrap(err, "collecting tunnel claims")
+		}
+
+		if _, refused := tunnelownership.Arbitrate(classTunnel, claims)[gateway.Namespace+"/"+gateway.Name]; refused {
+			return true, nil
+		}
+	}
+
+	return r.overDataPlaneQuota(ctx, gateway, policy.MaxDataPlanesPerNamespace)
+}
+
+// overDataPlaneQuota reports whether this Gateway's namespace already holds as
+// many dedicated data planes as the operator allows.
+//
+// Refusing here removes the plane rather than leaving it unconfigured: a
+// surviving pod keeps a cloudflared connector registered on its tunnel and
+// keeps consuming the cluster capacity the cap exists to bound.
+func (r *GatewayInfraReconciler) overDataPlaneQuota(
+	ctx context.Context,
+	gateway *gatewayv1.Gateway,
+	capacity *int32,
+) (bool, error) {
+	if capacity == nil {
 		return false, nil
 	}
 
-	classTunnel := canonicalTunnelID(policy.TunnelID)
-
-	claims, err := collectTunnelClaims(ctx, r.Client, r.ConfigResolver, r.ControllerName, classTunnel)
+	claims, err := collectDataPlaneClaims(ctx, r.Client, r.ControllerName)
 	if err != nil {
-		return false, errors.Wrap(err, "collecting tunnel claims")
+		return false, errors.Wrap(err, "collecting data-plane claims")
 	}
 
-	rejections := tunnelownership.Arbitrate(classTunnel, claims)
-	_, refused := rejections[gateway.Namespace+"/"+gateway.Name]
-
-	return refused, nil
+	return overQuotaGateways(capacity, claims)[gateway.Namespace+"/"+gateway.Name], nil
 }
