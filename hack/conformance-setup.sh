@@ -2,7 +2,7 @@
 # conformance-setup.sh — Reproducible setup for Gateway API conformance tests.
 #
 # This script:
-#   1. Ensures colima is running
+#   1. Ensures colima is running (macOS only)
 #   2. Deletes old v2-test-* kind clusters
 #   3. Creates a fresh kind cluster with random suffix
 #   4. Installs Gateway API CRDs (channel selectable via --channel)
@@ -28,10 +28,10 @@
 #   - .env file in repo root with: CF_API_TOKEN, CF_ACCOUNT_ID, CF_TUNNEL_ID,
 #     CF_TUNNEL_TOKEN, CF_TUNNEL_HOSTNAME (the edge hostname routing to the tunnel);
 #     alternatively (CI) the same variables already exported in the environment
-#   - colima (macOS only), docker, kind, helm, kubectl, go installed
+#   - docker, kind, helm, kubectl, go installed; colima additionally on macOS
 #
-# In GitHub Actions (GITHUB_ACTIONS=true) the colima requirement is skipped:
-# the runner's native docker daemon is used directly.
+# colima is the macOS docker backend; every other host uses its native docker
+# daemon directly and is not asked for it.
 
 set -euo pipefail
 
@@ -168,11 +168,12 @@ if [[ "${RUN_TESTS}" == "true" && "${RUN_E2E}" == "true" ]]; then
 fi
 
 # --- Pre-flight checks ---
-# colima is the macOS docker backend; GitHub Actions runners have a native
-# docker daemon, so the requirement (and the start step below) is skipped there.
+# colima is the macOS docker backend. Every other host -- Linux workstation,
+# GitHub Actions runner -- has a native docker daemon, so the requirement (and
+# the start step below) applies to macOS only.
 info "Checking prerequisites..."
 TOOLS=(docker kind helm kubectl go)
-if [[ "${GITHUB_ACTIONS:-}" != "true" ]]; then
+if [[ "$(uname -s)" == "Darwin" ]]; then
   TOOLS+=(colima)
 fi
 for tool in "${TOOLS[@]}"; do
@@ -223,8 +224,8 @@ if [[ -n "${CI_PR_NUMBER}" ]]; then
     || die "Chart ${CI_CHART_VERSION} not found on ttl.sh. ttl.sh artifacts expire after 24h (the '1d' tag) — re-run PR #${CI_PR_NUMBER}'s CI to republish."
 fi
 
-# --- Step 1: Ensure colima is running (macOS only; CI uses native docker) ---
-if [[ "${GITHUB_ACTIONS:-}" != "true" ]]; then
+# --- Step 1: Ensure colima is running (macOS only) ---
+if [[ "$(uname -s)" == "Darwin" ]]; then
   info "Checking colima..."
   if ! colima status >/dev/null 2>&1; then
     info "Starting colima..."
