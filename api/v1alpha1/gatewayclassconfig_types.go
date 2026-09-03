@@ -65,6 +65,32 @@ type GatewayClassConfigSpec struct {
 	// GatewayClassConfig, precisely so a tenant cannot grant it to themselves.
 	// +optional
 	AllowSharedTunnels bool `json:"allowSharedTunnels,omitempty"`
+
+	// MaxDataPlanesPerNamespace limits how many Gateways in one namespace may
+	// each have a dedicated data plane.
+	//
+	// Every opted-in Gateway renders a proxy Deployment, a headless Service, a
+	// NetworkPolicy and an optional HPA into its own namespace, and registers a
+	// connector on its tunnel. A tenant able to create Gateways and
+	// GatewayConfigs can otherwise multiply that as far as they like. Past the
+	// cap the newest Gateways are refused with
+	// Accepted=False/DataPlaneQuotaExceeded and their planes are not rendered.
+	// Oldest first (creation timestamp, then UID), so a tenant's own next
+	// Gateway never evicts the ones already serving.
+	//
+	// Counted per namespace over every Gateway carrying
+	// spec.infrastructure.parametersRef, whether or not its configuration
+	// currently resolves. Counting only the ones that resolve would let a
+	// tenant make a token unreadable to slip another Gateway under the cap.
+	//
+	// Omitting the field means unlimited, which is what an upgrade that does not
+	// set it gets. 0 is rejected rather than accepted as a second spelling of
+	// unlimited: it is what an operator writes for "no dedicated planes here",
+	// and granting the opposite would fail open. It lives here, on the
+	// cluster-scoped GatewayClassConfig, so a tenant cannot raise it.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	MaxDataPlanesPerNamespace *int32 `json:"maxDataPlanesPerNamespace,omitempty"`
 }
 
 // GatewayClassConfigStatus defines the observed state of GatewayClassConfig.
