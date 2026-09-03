@@ -18,6 +18,7 @@ The spec carries only the contract the controller needs for Cloudflare API calls
 | `accountId` | string | No | Cloudflare Account ID. If unset, it is read from the `account-id` key in the credentials Secret; if that key is also absent, it is auto-detected from the Cloudflare API when the token has access to a single account. When set, it must be a 32-character lowercase hexadecimal string (validated by a CRD-level CEL rule) |
 | `cloudflareCredentialsSecretRef` | SecretReference | Yes | Reference to the Secret containing the Cloudflare API token |
 | `allowSharedTunnels` | bool | No | Permit a Gateway with a dedicated data plane to serve a Cloudflare Tunnel that another namespace's Gateway, or this GatewayClass itself, already serves. Defaults to `false`: a connector token proves nothing about the tunnel it names, so an unproven claim is refused with `Accepted=False`/`InvalidParameters` and its data plane is not rendered. Enable only where every party on a shared tunnel is trusted to see the others' routes |
+| `maxDataPlanesPerNamespace` | int32 | No | Cap on how many Gateways in one namespace may each have a dedicated data plane. Unset means no cap; `0` is rejected, since it is what an operator writes for no dedicated planes at all. Past the cap the newest Gateways are refused with `Accepted=False`/`DataPlaneQuotaExceeded` and no plane is rendered for them, oldest first by creation timestamp; the ones already serving keep theirs. See the [Per-Gateway Isolation guide](../guides/per-gateway-isolation.md) |
 
 ### SecretReference
 
@@ -228,9 +229,11 @@ spec:
 |-----------|--------|--------|-------------|
 | `Accepted` | `True` | `Accepted` | Gateway accepted by controller |
 | `Accepted` | `False` | `ListenersNotValid` | Gateway has conflicted own listeners (one or more own listeners carry `Conflicted: True`); per-listener status reports the conflict |
-| `Accepted` | `False` | `InvalidParameters` | GatewayClassConfig referenced by the GatewayClass cannot be resolved |
+| `Accepted` | `False` | `InvalidParameters` | The Gateway's configuration cannot be resolved: the GatewayClassConfig referenced by the GatewayClass is unreadable, the per-Gateway `parametersRef` is invalid, no proxy image is configured, or the Gateway claims a Cloudflare Tunnel it does not own |
+| `Accepted` | `False` | `DataPlaneQuotaExceeded` | The Gateway's namespace already holds as many dedicated data planes as `maxDataPlanesPerNamespace` allows. Implementation-specific reason; the oldest Gateways by creation timestamp keep their planes |
 | `Programmed` | `True` | `Programmed` | Gateway configured in Cloudflare |
-| `Programmed` | `False` | `Invalid` | GatewayClassConfig referenced by the GatewayClass cannot be resolved |
+| `Programmed` | `False` | `Invalid` | The Gateway's configuration cannot be resolved, or it was refused the tunnel it claimed (see the `Accepted` reason above) |
+| `Programmed` | `False` | `NoResources` | The Gateway's namespace is at its dedicated data-plane cap, so no plane was scheduled for it |
 
 ### HTTPRoute/GRPCRoute Status
 

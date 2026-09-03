@@ -125,6 +125,42 @@ Possession is read from `Gateway.status.addresses`, so anyone able to write `gat
 
 Watch for it in the `TunnelClaimRejected` Warning Events: a Gateway you believe owns a tunnel reporting `Accepted=False` against a claimant you do not recognise is this case. The remedy is operator-side: delete the squatting Gateway, or remove its `spec.infrastructure.parametersRef`. The rightful owner's status recovers on its next reconcile, within about half a minute. Its ROUTES are programmed on the next full route sync, which any route change in the cluster triggers — so if nothing else is moving, expect a gap between the Gateway reporting `Accepted=True` and its traffic actually flowing. Deleting only the `GatewayConfig` does NOT release the claim — a Gateway that already advertises a tunnel keeps holding it even when its configuration no longer resolves, which is what stops a token rotation from surrendering a tunnel. Verifying claims against the Cloudflare API would close it properly; that is tracked in issue #679.
 
+## Capping data planes per namespace
+
+Every opted-in Gateway renders a proxy Deployment, a headless Service, a NetworkPolicy and an optional HPA into its namespace, and registers a connector on its tunnel. Nothing about the opt-in bounds how many a tenant may ask for: a namespace with `create` on Gateway and `GatewayConfig` can multiply that as far as its object quota allows.
+
+`maxDataPlanesPerNamespace` on the cluster-scoped `GatewayClassConfig` (chart value `gatewayClassConfig.maxDataPlanesPerNamespace`) caps it. Leave it unset for no cap, so nothing changes until an operator sets one. `0` is rejected by the apiserver rather than accepted as another spelling of unlimited: it is what an operator writes for "no dedicated planes at all", and a field that granted the opposite would fail open. Like `allowSharedTunnels`, the field is deliberately not on `GatewayConfig` — a tenant must not be able to raise their own cap. On a cluster upgraded from a release before the field existed, re-apply the `GatewayClassConfig` CRD first: Helm never upgrades CRDs, and the apiserver prunes a field the installed schema does not declare, so the cap would read back unset and enforce nothing. See [CRD upgrades](../upgrading/index.md#crd-upgrades).
+
+```yaml
+apiVersion: cf.k8s.lex.la/v1alpha1
+kind: GatewayClassConfig
+metadata:
+  name: cloudflare-tunnel-config
+spec:
+  tunnelID: "550e8400-e29b-41d4-a716-446655440000"
+  cloudflareCredentialsSecretRef:
+    name: cloudflare-credentials
+  maxDataPlanesPerNamespace: 3
+```
+
+Past the cap, a Gateway reports `Accepted=False` with reason `DataPlaneQuotaExceeded`, emits a `DataPlaneQuotaExceeded` Warning Event, gets no data plane rendered, and has none of its routes programmed — its routes say the cap was the reason, so the tenant can see the cause without asking the operator. `DataPlaneQuotaExceeded` is an implementation-specific reason; the Gateway API allows controllers to raise `Accepted` with reasons outside its own list, and none of the listed ones describes a Gateway refused for capacity rather than for something wrong with its spec.
+
+Which Gateways keep their planes is decided oldest-first by creation timestamp, breaking equal timestamps by UID the same way tunnel arbitration does. A tenant's new Gateway therefore never evicts one already serving, and the verdict does not move between reconciles. Lowering the cap below what a namespace already holds does evict: the newest planes above the new limit are torn down on the next reconcile, so lower it deliberately.
+
+Freeing a slot is not instant. The refused Gateway's status flips within about half a minute (the refusal requeues on that interval), and its data plane is rendered on the reconcile that follows. Its ROUTES are programmed on the next full route sync, which any route change in the cluster triggers, so if nothing else is moving expect a gap between the Gateway reporting `Accepted=True` and traffic actually flowing.
+
+A refused Gateway keeps the tunnel CNAME already published in its `status.addresses`, deliberately: an address is how this controller records possession of a tunnel, and clearing it on a refusal would surrender the tunnel to any other namespace claiming it. The practical consequence after a cap lowering is that external-dns keeps the DNS record and the hostname answers HTTP 530 (no connector) rather than NXDOMAIN. Delete the Gateway to retire the record.
+
+Only Gateways carrying `spec.infrastructure.parametersRef` count. The shared data plane serves any number of Gateways and is unaffected, which makes dropping the `parametersRef` the tenant-side remedy when a namespace has more Gateways than dedicated planes it can have.
+
+A Gateway refused for claiming a tunnel it does not own also holds its slot, even though it gets no plane. The two rules are deliberately independent, so neither verdict moves when the other changes; the wasted slot is the refused tenant's own.
+
+A Gateway being deleted holds its slot until it is gone. Nothing carries a finalizer today, so the window is milliseconds; the alternative under-counts planes whose pods are still running.
+
+A Gateway counts even when its configuration does not currently resolve — a missing `GatewayConfig`, an unreadable connector-token Secret. It is asking for a plane either way, and counting only the ones that resolve would let a tenant free a slot by making one of their tokens unreadable.
+
+The cap bounds what one namespace can consume; it does not bound the number of namespaces. A tenant who can create namespaces can still multiply data planes by spreading them, so pair the cap with a `ResourceQuota` or restricted namespace creation where that matters.
+
 ## Securing a tenant data plane
 
 A tenant data plane is locked down by default on two axes:
@@ -140,6 +176,7 @@ Also note the RBAC equivalence: `create` on `GatewayConfig` (plus a Gateway refe
 
 - **Events:** the controller emits `ProxyProvisioned` (Normal) on the Gateway when the data plane is rendered, and `RenderFailed` (Warning) when rendering cannot proceed (apply failures) — `kubectl describe gateway` shows both.
 - **No proxy image configured:** if neither `GatewayConfig.spec.image` nor the controller's `--proxy-image` default is set, the data plane cannot be rendered. The Gateway surfaces `Accepted=False` with reason `InvalidParameters` and a message naming the missing image (a persistent condition, not just a transient Event) — set one of the two and the Gateway recovers on the next reconcile.
+- **Namespace at its data-plane cap:** the Gateway surfaces `Accepted=False` with reason `DataPlaneQuotaExceeded` and a `DataPlaneQuotaExceeded` Warning Event, nothing is rendered for it, and its routes are programmed nowhere. Delete one of the namespace's other dedicated Gateways, drop this one's `spec.infrastructure.parametersRef` to serve it from the shared plane, or ask the operator to raise `maxDataPlanesPerNamespace`. See [Capping data planes per namespace](#capping-data-planes-per-namespace).
 - **Drain:** on pod shutdown the proxy unregisters its connectors from the edge and gives in-flight requests a grace period before exiting; the rendered `terminationGracePeriodSeconds` covers the window.
 - **RBAC:** rendering requires cluster-wide write on Deployments/Services/HPAs (Gateways live in arbitrary namespaces); see the [security reference](../reference/security.md) for the exact rules and ownership guards.
 - **Failure containment:** a tunnel-sync failure for one Gateway's tunnel marks only THAT Gateway's routes Pending; other tenants' route statuses are untouched.

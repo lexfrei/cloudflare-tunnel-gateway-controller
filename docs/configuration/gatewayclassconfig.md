@@ -66,6 +66,21 @@ spec:
   allowSharedTunnels: true
 ```
 
+### `spec.maxDataPlanesPerNamespace` (optional)
+
+Caps how many Gateways in one namespace may each have a dedicated data plane. Leave it unset for no cap. `0` is rejected rather than accepted as another spelling of unlimited: it is what an operator writes for "no dedicated planes at all", and a field that granted the opposite would fail open.
+
+Every Gateway that opts in through `spec.infrastructure.parametersRef` renders a proxy Deployment, a headless Service, a NetworkPolicy and an optional HPA into its own namespace, and registers a connector on its tunnel. Without a cap, a tenant who can create Gateways and `GatewayConfig` objects decides how much of the cluster to consume.
+
+Past the cap the newest Gateways are refused (`Accepted=False`, reason `DataPlaneQuotaExceeded`), no plane is rendered for them, and their routes are programmed nowhere. Ordering is by creation timestamp, so the Gateways already serving keep their planes and a tenant's newest Gateway never evicts one of their own.
+
+Like `allowSharedTunnels`, the field lives on the cluster-scoped GatewayClassConfig so a tenant cannot raise their own cap.
+
+```yaml
+spec:
+  maxDataPlanesPerNamespace: 5
+```
+
 ### `spec.cloudflareCredentialsSecretRef` (required)
 
 Reference to a Kubernetes Secret containing the Cloudflare API token.
