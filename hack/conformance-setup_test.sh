@@ -165,9 +165,9 @@ else
   flunk "conformance-setup.sh invokes the bundle verifier"
 fi
 
-# ttl.sh drops the images long before the run's artifacts expire, so the pull
-# is the likely failure and it must happen before the script deletes the
-# operator's existing clusters.
+# The pull is the step that depends on a registry outside this repository's
+# control, so it must happen before the script deletes the operator's existing
+# clusters.
 pull_line="$(grep --line-number --fixed-strings 'pull-ci-image.sh' "${setup}" | head -1 | cut -d: -f1)"
 delete_line="$(grep --line-number 'kind delete cluster' "${setup}" | head -1 | cut -d: -f1)"
 if [[ -n "${pull_line}" && -n "${delete_line}" && "${pull_line}" -lt "${delete_line}" ]]; then

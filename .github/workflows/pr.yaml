@@ -450,8 +450,9 @@ jobs:
             echo "podman pull ${IMAGE_TAG}"
             echo '```'
             echo ""
-            echo "> **Note:** ttl.sh keeps this image for about an hour. The CI run's"
-            echo "> artifacts hold the same build for a day."
+            echo "> **Note:** The \`-1d\` suffix sets no lifetime -- ttl.sh reads one"
+            echo "> only from a tag that is entirely a duration -- so this image expires"
+            echo "> on ttl.sh's own schedule. Re-run this workflow to republish it."
           } >> "$GITHUB_STEP_SUMMARY"
 
   # Lint and test Helm chart
@@ -784,6 +785,7 @@ jobs:
             echo "helm install test oci://ttl.sh/cloudflare-tunnel-gateway-controller --version ${CHART_VERSION}"
             echo '```'
             echo ""
-            echo "> **Note:** ttl.sh keeps this chart for about an hour. The CI run's"
-            echo "> artifacts hold the same build for a day."
+            echo "> **Note:** The \`-1d\` suffix sets no lifetime -- ttl.sh reads one"
+            echo "> only from a tag that is entirely a duration. This run also attaches"
+            echo "> the packaged chart as an artifact, kept for one day."
           } >> "$GITHUB_STEP_SUMMARY"

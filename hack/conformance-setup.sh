@@ -283,17 +283,17 @@ fi
 
 # --- Step 1b: Pull the CI images (needs the daemon from Step 1) ---
 # Deliberately ahead of Step 2, which deletes the operator's existing test
-# clusters. The GitHub artifacts verified above live for a day; the images
-# they point at live on ttl.sh for about an hour, so "artifacts present,
-# images gone" is the common failure for this flag and it must not cost a
-# cluster to discover.
+# clusters. The artifacts verified above record digests, not images, so they
+# outliving the images buys nothing: once ttl.sh drops the blobs those
+# references point at nothing. "Artifacts present, images gone" is the failure
+# this flag hits, and it must not cost a cluster to discover.
 if [[ -n "${CI_PR_NUMBER}" ]]; then
   info "Pulling PR #${CI_PR_NUMBER}'s images by digest..."
   ci_arch="$(go env GOARCH)"
   "${REPO_ROOT}/hack/pull-ci-image.sh" "${CI_CONTROLLER_REF}" "${CONTROLLER_IMAGE}" "${ci_arch}" \
-    || die "Cannot pull ${CI_CONTROLLER_REF}. ttl.sh keeps images for about an hour -- re-run PR #${CI_PR_NUMBER}'s CI to republish."
+    || die "Cannot pull ${CI_CONTROLLER_REF}. The image is gone from ttl.sh -- re-run PR #${CI_PR_NUMBER}'s CI to republish."
   "${REPO_ROOT}/hack/pull-ci-image.sh" "${CI_PROXY_REF}" "${PROXY_IMAGE}" "${ci_arch}" \
-    || die "Cannot pull ${CI_PROXY_REF}. ttl.sh keeps images for about an hour -- re-run PR #${CI_PR_NUMBER}'s CI to republish."
+    || die "Cannot pull ${CI_PROXY_REF}. The image is gone from ttl.sh -- re-run PR #${CI_PR_NUMBER}'s CI to republish."
 fi
 
 # --- Step 2: Delete old v2-test-* clusters ---
