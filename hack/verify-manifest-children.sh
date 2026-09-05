@@ -14,7 +14,16 @@
 # manifest plus an attestation manifest -- and `imagetools create` flattens
 # index sources, so the published index carries those children and never the
 # source digests. Each pushed digest is therefore resolved to its own index, and
-# it is that index's children that have to appear.
+# it is that index's children that are compared.
+#
+# The comparison is equality, not containment. Nothing here constrains the
+# `platform` field, and `pull-ci-image.sh` picks what to deploy by platform, so
+# an index that keeps all of this job's manifests, relabels the amd64 one and
+# puts a foreign manifest in the linux/amd64 slot would satisfy a subset test
+# and still hand over a substituted image. Requiring the published set to hold
+# nothing else is what closes that. `imagetools create` adds nothing of its own
+# to a flattened index -- a real run publishes exactly the union of its sources'
+# children -- so equality is what the merge job actually produces.
 #
 # Usage: verify-manifest-children.sh <image> <published-index-json> <digests-dir>
 
@@ -31,7 +40,7 @@ digests_dir="$3"
 [[ -f "${published}" ]] || die "manifest index ${published} does not exist"
 [[ -d "${digests_dir}" ]] || die "digests directory ${digests_dir} does not exist"
 
-checked=0
+expected=""
 for digest_file in "${digests_dir}"/*; do
   [[ -f "${digest_file}" ]] || continue
   source_digest="sha256:${digest_file##*/}"
@@ -41,19 +50,27 @@ for digest_file in "${digests_dir}"/*; do
 
   # With provenance off a build pushes a plain manifest instead of an index. It
   # has no children, and then the source digest is itself what must appear.
-  expected="$(jq --raw-output '.manifests[]?.digest' <<< "${raw}")"
-  [[ -n "${expected}" ]] || expected="${source_digest}"
-
-  while read -r want; do
-    jq --exit-status --arg want "${want}" \
-      'any(.manifests[]?; .digest == $want)' "${published}" > /dev/null \
-      || die "the published index does not list ${want}, pushed under ${source_digest}"
-    checked=$((checked + 1))
-  done <<< "${expected}"
+  children="$(jq --raw-output '.manifests[]?.digest' <<< "${raw}")"
+  [[ -n "${children}" ]] || children="${source_digest}"
+  expected+="${children}"$'\n'
 done
 
-# Without this an empty directory would satisfy the loop vacuously, and the
+# Without this an empty directory would leave both sets empty and equal, and the
 # check would wave through any index at all.
-[[ "${checked}" -gt 0 ]] || die "no pushed digests to check in ${digests_dir}"
+[[ -n "${expected//[[:space:]]/}" ]] \
+  || die "no pushed digests to check in ${digests_dir}"
 
-echo "published index lists all ${checked} manifests this job pushed"
+expected="$(grep --invert-match '^$' <<< "${expected}" | LC_ALL=C sort --unique)"
+found="$(jq --raw-output '.manifests[]?.digest' "${published}" | LC_ALL=C sort --unique)"
+
+missing="$(grep --fixed-strings --line-regexp --invert-match \
+  --file=<(printf '%s\n' "${found}") <<< "${expected}" || true)"
+[[ -z "${missing}" ]] \
+  || die "the published index does not list $(tr '\n' ' ' <<< "${missing}")-- pushed by this job"
+
+extra="$(grep --fixed-strings --line-regexp --invert-match \
+  --file=<(printf '%s\n' "${expected}") <<< "${found}" || true)"
+[[ -z "${extra}" ]] \
+  || die "the published index also lists $(tr '\n' ' ' <<< "${extra}")-- not pushed by this job"
+
+echo "published index matches the $(wc -l <<< "${expected}" | tr -d ' ') manifests this job pushed"

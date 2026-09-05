@@ -412,10 +412,11 @@ jobs:
 
           # Resolving that tag is the one step here that trusts the registry,
           # so re-read what it gave us by digest -- the index checked below is
-          # then exactly the one this reference names -- and require it to have
-          # been assembled out of the images this run pushed. An index
-          # substituted in the gap between the manifest push and this read
-          # cannot have been.
+          # then exactly the one this reference names -- and require its
+          # manifests to be exactly the ones this run pushed. Exactly, not
+          # merely including: what gets deployed is selected by platform later,
+          # so an index that keeps ours and adds one more would otherwise hand
+          # over the extra.
           docker buildx imagetools inspect "${ref}" --raw > /tmp/index.json
           hack/verify-manifest-children.sh "${IMAGE_NAME}" /tmp/index.json /tmp/digests
 

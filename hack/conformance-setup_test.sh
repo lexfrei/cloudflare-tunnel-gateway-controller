@@ -350,6 +350,17 @@ published_index "${tmp}/children-partial.json" "${amd64_child}" "${amd64_attest}
 check_children 1 "an index missing a pushed image's manifests is rejected" \
   "${tmp}/children-partial.json" "${tmp}/pushed"
 
+# Keeping every one of this job's manifests is not enough. `pull-ci-image.sh`
+# selects what to deploy by platform, and the verifier constrains no platform,
+# so an index that relabels this job's amd64 child and puts a foreign manifest
+# in the linux/amd64 slot would pass a subset check and still get a substituted
+# image deployed. The published set has to match exactly.
+published_index "${tmp}/children-extra.json" \
+  "${amd64_child}" "${amd64_attest}" "${arm64_child}" "${arm64_attest}" \
+  "$(printf 'e%.0s' {1..64})"
+check_children 1 "an index carrying a manifest this job did not push is rejected" \
+  "${tmp}/children-extra.json" "${tmp}/pushed"
+
 # Dropping just the attestation is still an index this job did not assemble.
 published_index "${tmp}/children-noattest.json" \
   "${amd64_child}" "${amd64_attest}" "${arm64_child}"
@@ -388,6 +399,24 @@ check_children 1 "an unreadable source is rejected even when its own digest is l
 mkdir -p "${tmp}/nodigests"
 check_children 1 "an empty digest set is rejected" \
   "${tmp}/children-ok.json" "${tmp}/nodigests"
+
+# ...including against an empty index, where the two sets would otherwise
+# compare equal and the comparison alone would wave it through.
+published_index "${tmp}/children-empty.json"
+check_children 1 "an empty digest set is rejected against an empty index" \
+  "${tmp}/children-empty.json" "${tmp}/nodigests"
+
+# The exit code alone does not pin that guard: with it removed the empty set
+# still fails, but as a pipefail from `grep` finding nothing. What the guard is
+# worth is the operator being told which of the two inputs was empty.
+empty_err="$(PATH="${children_stub_dir}:/usr/bin:/bin" FIXTURE_DIR="${srcidx}" \
+  bash "${children}" ttl.sh/cf-tunnel-gateway-ctrl \
+  "${tmp}/children-empty.json" "${tmp}/nodigests" 2>&1 || true)"
+if grep --quiet "no pushed digests to check" <<< "${empty_err}"; then
+  pass "an empty digest set is refused by name, not by a pipeline error"
+else
+  flunk "an empty digest set is refused by name (got: ${empty_err##*$'\n'})"
+fi
 
 check_children 1 "an unreadable published index is rejected" \
   "${tmp}/absent-index.json" "${tmp}/pushed"
