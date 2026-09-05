@@ -111,6 +111,7 @@ ID prefixes: GW=Gateway, HR=HTTPRoute, GR=GRPCRoute, SH=shared, GC=GatewayClass,
 | GW-104 | ListenerConditionOverlappingTLSConfig | gateway_types.go:1698 | SHOULD | If a controller supports checking for both possible reasons and finds that both are true, it SHOULD set the "OverlappingCertificates" Reason. |
 | GW-105 | ListenerConditionOverlappingTLSConfig | gateway_types.go:1700 | MUST NOT | This is a negative polarity condition and MUST NOT be set when it is False. |
 | GW-106 | GatewaySpec.Listeners | gateway_types.go:203-207 (v1.6.0) | MUST | If traffic to a Gateway does not match any Listener's hostname (or if the Listener does not specify a hostname and the request does not match any attached Route), the request MUST be rejected. The specific mechanism for rejection depends on the protocol: HTTP returns a 404 status code, while gRPC returns an Unimplemented status code. (Added in v1.6.0 by kubernetes-sigs/gateway-api#4408; appended out of line order to keep pre-existing IDs stable.) |
+| GW-107 | GatewayConditionAccepted | gateway_types.go:1247-1249 | may/should (lc) | Controllers may raise this condition with other reasons, but should prefer to use the reasons listed above to improve interoperability. (Listed False reasons include "InvalidParameters" — "the parametersRef field was invalid", gateway_types.go:1273-1276. Captured for the v3.5 tunnel-arbitration refusal, which reuses that reason for a referent that resolves but names a tunnel held elsewhere; appended out of line order to keep pre-existing IDs stable.) |
 
 ## HTTPRoute (httproute_types.go)
 
@@ -292,6 +293,7 @@ ID prefixes: GW=Gateway, HR=HTTPRoute, GR=GRPCRoute, SH=shared, GC=GatewayClass,
 | SH-38 | RouteConditionPartiallyInvalid | shared_types.go:455 | should (lc) | Reverting to the last known good state should only be done by implementations that have a means of restoring that state if/when they are restarted. |
 | SH-43 | RouteParentStatus.ControllerName | shared_types.go:490 | should (lc) | Controllers should ensure that entries to status populated with their ControllerName are cleaned up when they are no longer necessary. |
 | SH-77 | SessionPersistence.SessionName | shared_types.go:911 | should (lc) | Users should avoid reusing session names to prevent unintended consequences, such as rejection or unpredictable behavior. |
+| SH-78 | RouteConditionAccepted | shared_types.go:357-363 | may/should (lc) | Possible reasons for this condition to be Unknown are: "Pending". Controllers may raise this condition with other reasons, but should prefer to use the reasons listed above to improve interoperability. (Pending itself: "used with the Accepted when a controller has not yet reconciled the route", shared_types.go:389-391. Captured for the Status=False pairing this controller uses; appended out of line order to keep pre-existing IDs stable.) |
 
 ## GatewayClass (gatewayclass_types.go)
 

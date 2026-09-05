@@ -6,8 +6,11 @@ This document covers the security policy and best practices for the Cloudflare T
 
 | Version | Supported |
 |---------|-----------|
-| 3.x.x | Yes |
-| 2.x.x | No |
+| Latest 3.x minor | Yes |
+| Earlier 3.x minors | No |
+| < 3.0 | No |
+
+Fixes land on the latest 3.x minor; older minors are not backported.
 
 ## Reporting Vulnerabilities
 
@@ -205,6 +208,8 @@ The controller container follows security best practices:
 The shared proxy's config API (where the controller pushes the routing table) is authenticated and network-restricted by default, matching the per-Gateway data planes described above. When `proxy.authTokenSecretRef.name` is left empty, the controller itself generates a random bearer token into a Secret (`<fullname>-proxy-auth-token`, where `<fullname>` is the Helm release fullname, typically `<release>-cloudflare-tunnel-gateway-controller`) on startup and uses it directly for its own push auth, and the proxy reads the same Secret via a pod-level `secretKeyRef`; the token is created once and reused on every restart, never rotated. Generating it via a live API call rather than at Helm template time means this is correct under GitOps controllers that render client-side with no cluster access (e.g. ArgoCD's default `helm template`), where a template-time `lookup` would silently mint a fresh value on every sync. `proxy.networkPolicy.enabled` (default `true`) additionally locks the config-API port to the controller pod: the ingress peer names it with a podSelector AND'd with the controller namespace, so a pod that merely shares that namespace is not admitted. Use `proxy.networkPolicy.ingress.from` to admit anything else, a monitoring stack scraping `/metrics` on the same port being the usual case. Set `proxy.authTokenSecretRef.name` to bring your own Secret instead — the controller resolves it through the same direct-API mechanism, never a `secretKeyRef` on its own pod, and never creates or modifies it: a missing bring-your-own Secret fails the controller closed rather than silently generating one at the operator's chosen name. Set `proxy.networkPolicy.enabled: false` to drop the NetworkPolicy on a cluster where it would be inert or unwanted — see the [Helm values reference](../configuration/helm-values.md).
 
 The binary enforces this on its own side too, which matters for a hand-written proxy Deployment where no chart is wiring anything. In tunnel mode it refuses to start unless `PROXY_AUTH_TOKEN` is set, because its config API listens on every interface and one successful push replaces the entire routing table. A present-but-empty value is refused in either mode, since that is what a broken Secret produces rather than a decision to run open. `PROXY_ALLOW_UNAUTHENTICATED_CONFIG_API=1` opts out deliberately; it is a separate variable so a misconfiguration cannot spell the same thing as consent. Standalone mode, selected by omitting `TUNNEL_TOKEN`, keeps the unauthenticated default and binds the same interfaces, so the network boundary there is the operator's to provide.
+
+The token and the NetworkPolicy are both reach controls, and neither encrypts anything. The push is plain HTTP — the endpoint the chart wires for the shared plane and the ones the controller renders for per-Gateway planes are both `http://` URLs — and it carries the bearer token in an `Authorization` header, plus the private key of the backend client certificate for any route whose parent Gateway sets `spec.tls.backend.clientCertificateRef` and whose backend is covered by a `BackendTLSPolicy`. So the token answers who may replace the routing table and the NetworkPolicy answers who may reach the port at all; neither says anything about who can read the bytes in flight, and on a CNI without pod-to-pod encryption an on-path party inside the cluster reads the token and that key. Wire confidentiality is the cluster's to provide: an encrypting CNI mode (WireGuard or IPsec), or a mesh that wraps pod-to-pod traffic in mTLS. TLS on the config API itself is tracked in [#719](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/issues/719).
 
 #### Egress Requirements
 

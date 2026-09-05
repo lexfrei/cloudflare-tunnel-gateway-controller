@@ -4,21 +4,21 @@ Clause-by-clause audit of the implementation against the normative (RFC-2119) su
 
 ## Method
 
-1. Extracted every MUST / MUST NOT / SHOULD / SHOULD NOT / MAY clause from the vendored godoc — 376 rows in `01-clause-inventory.md` at v1.5.1, by type (378 after the v1.6.0 refresh added GW-106 and RG-06).
+1. Extracted every MUST / MUST NOT / SHOULD / SHOULD NOT / MAY clause from the vendored godoc into `01-clause-inventory.md`, by type. The counts here and in the dashboard are of the classified clause set in `rows-*.md`: 376 at v1.5.1, 378 after the v1.6.0 refresh added GW-106 and RG-06, 380 after GW-107 and SH-78 were added for the tunnel-ownership refusal. That set runs eight rows ahead of the inventory itself (372 today), which holds the field-godoc extraction alone — the cross-cutting GEP-01..GEP-08 rows come from step 2's `02-gep-notes.md`.
 2. Added cross-cutting GEP/concept requirements not in field godoc (policy attachment GEP-713, route-attachment semantics) — `02-gep-notes.md`.
 3. Classified each clause CRD-enforced / controller-actionable / N/A-tunnel and assessed status MET / PARTIAL / GAP / NA against the real code — per-type detail in `rows-<TYPE>.md`.
 4. Ran the official conformance suite (Gateway HTTP + gRPC profiles) against a fresh kind cluster + real Cloudflare test tunnel as pass/fail ground truth.
 5. Adversarially re-verified every GAP — a skeptic tried to refute each (CRD enforcement, N/A, conditional-satisfied, documented-deviation) before it was allowed to stand. 22 of 25 first-pass GAPs did not survive.
 
-## Dashboard (378 clauses: 376 from the v1.5.1 first-pass classification + 2 added by the v1.6.0 refresh — GW-106 MET, RG-06 NA)
+## Dashboard (380 clauses: 376 from the v1.5.1 first-pass classification, 2 added by the v1.6.0 refresh — GW-106 MET, RG-06 NA — and 2 covering the tunnel-ownership refusal — GW-107 MET, SH-78 GAP)
 
 Counts are the current `rows-*.md` verdicts (`cat rows-*.md | grep -E '^\| [A-Z]+-[0-9]+ \|' | awk -F'|' '{print $5}' | sort | uniq -c`); rows move as fixes land, so the table drifts from the first-pass split of 222 MET / 34 PARTIAL / 25 GAP / 97 N/A described under "Adversarial verification".
 
 | Status | Count |
 | --- | --- |
-| MET | 238 |
+| MET | 239 |
 | PARTIAL | 31 |
-| GAP | 12 |
+| GAP | 13 |
 | N/A (tunnel architecture / exempt) | 97 |
 
 Conformance ground truth (v1.5.1 run): 76 top-level subtests PASS, 54 SKIP (documented TLS/TCP/UDP/Mesh/WebSocket/GRPCRouteWeight/HTTPS-listener), **0 FAIL** (`go test ... ok 293s`). GRPCRouteWeight and HTTPRouteBackendProtocolWebSocket were among the SKIPs at that run; both are de-skipped in the current suite configuration (`test/conformance/conformance_test.go`, pinned by `TestStaleSkipsStayLifted`) now that gateway-api v1.6.0 added the injectable `suite.GRPCClient` / `suite.WebSocketDialer` hooks those tests needed, so the current skip categories are TLS/TCP/UDP/Mesh/HTTPS-listener plus the BackendTLSPolicy-gated tests. Conformance ground truth (v1.6.1 run): 77 top-level subtests PASS, 76 SKIP, **0 FAIL** (`go test ... ok 487s`, kind + real Cloudflare Tunnel). Both runs were green; the audit's value is the normative surface the suite does not exercise.
@@ -73,6 +73,7 @@ The v1.6.0 baseline bump was audited against the verified upstream tag diff; v1.
 - spec.addresses is not honoured/validated (tunnel address is not user-selectable; same basis as the exempt static-addresses feature) — recorded under Gateway Listener Configuration.
 - ExternalName Service support now cites CVE-2021-25740 in its existing trust-boundary rationale.
 - Case-variant duplicate header match names (`Foo` vs `foo`) bypass the case-sensitive CRD listMapKey and are ANDed rather than first-wins — negligible header-only edge (query-param names are exact-match, so unaffected); recorded under Route Conflict Resolution.
+- A route bound only to a Gateway that cannot serve it reports `Accepted=False` with `Reason=Pending`, where the spec lists `Pending` under `Accepted=Unknown` for a route not yet reconciled (SH-78). The polarity is deliberate for the permanent causes — a refused tunnel claim, or a dedicated data plane whose resolve failed deterministically — since the condition stands until the Gateway is fixed and `Unknown` would read as "not looked at yet". The retryable causes (a transient resolve failure, a failed tunnel sync) carry the same reason without that justification, which is what keeps the row a GAP.
 
 ## SHOULD / MAY tiers (verified)
 
