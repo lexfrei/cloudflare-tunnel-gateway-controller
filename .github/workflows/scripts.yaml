@@ -12,6 +12,12 @@ on:
       - docs/404.html
       - hack/check-doc-links.sh
       - hack/check-doc-links_test.sh
+      - hack/conformance-setup.sh
+      - hack/conformance-setup_test.sh
+      - hack/verify-ci-bundle.sh
+      - hack/pull-ci-image.sh
+      - hack/verify-manifest-children.sh
+      - .github/workflows/pr.yaml
       # labels.yml is included so the drift-pin tests
       # (TYPE_TO_KIND/SCOPE_TO_AREA/SIZE_BUCKETS ↔ labels.yml) re-run
       # when labels.yml changes. Cost: the reflow job also fires on
@@ -30,6 +36,12 @@ on:
       - docs/404.html
       - hack/check-doc-links.sh
       - hack/check-doc-links_test.sh
+      - hack/conformance-setup.sh
+      - hack/conformance-setup_test.sh
+      - hack/verify-ci-bundle.sh
+      - hack/pull-ci-image.sh
+      - hack/verify-manifest-children.sh
+      - .github/workflows/pr.yaml
       # labels.yml is included so the drift-pin tests
       # (TYPE_TO_KIND/SCOPE_TO_AREA/SIZE_BUCKETS ↔ labels.yml) re-run
       # when labels.yml changes. Cost: the reflow job also fires on
@@ -103,3 +115,16 @@ jobs:
       # Pins hack/check-doc-links.sh (the live gate runs in pr.yaml's lint job).
       - name: Run doc-link guard tests
         run: bash hack/check-doc-links_test.sh
+
+  conformance-setup:
+    name: Conformance-setup guard test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      # Pins the prerequisite block of hack/conformance-setup.sh. The suite
+      # stubs uname, so both the macOS and the Linux branch are exercised here
+      # on a Linux runner.
+      - name: Run conformance-setup guard tests
+        run: bash hack/conformance-setup_test.sh

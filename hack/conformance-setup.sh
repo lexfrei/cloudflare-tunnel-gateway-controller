@@ -2,14 +2,15 @@
 # conformance-setup.sh — Reproducible setup for Gateway API conformance tests.
 #
 # This script:
-#   1. Ensures colima is running
+#   1. Ensures colima is running (macOS only)
 #   2. Deletes old v2-test-* kind clusters
 #   3. Creates a fresh kind cluster with random suffix
 #   4. Installs Gateway API CRDs (channel selectable via --channel)
-#   5. Builds controller + proxy images          (skipped in --use-ci-images mode)
-#   6. Loads images into kind                     (skipped in --use-ci-images mode)
+#   5. Builds controller + proxy images   (--use-ci-images pulls them by
+#                                          digest in Step 1b instead)
+#   6. Loads images into kind
 #   7. Creates secrets from .env
-#   8. Deploys controller via helm               (local chart, or PR's ttl.sh chart)
+#   8. Deploys controller via helm        (local chart, or the PR run's chart)
 #   9. Waits for readiness
 #  10. Optionally runs conformance tests
 #
@@ -19,8 +20,9 @@
 #   ./hack/conformance-setup.sh --channel standard # install standard-channel CRDs
 #                                                  # (default: experimental)
 #   ./hack/conformance-setup.sh --skip-build     # skip image build (reuse existing)
-#   ./hack/conformance-setup.sh --use-ci-images N  # deploy PR #N's published ttl.sh
-#                                                  # chart+images (no local build)
+#   ./hack/conformance-setup.sh --use-ci-images N  # deploy the chart and images
+#                                                  # PR #N's CI run published
+#                                                  # (no local build)
 #   ./hack/conformance-setup.sh --test-e2e       # setup + run the custom e2e suite
 #                                                  # (smoke-level; lighter than --test)
 #
@@ -28,10 +30,11 @@
 #   - .env file in repo root with: CF_API_TOKEN, CF_ACCOUNT_ID, CF_TUNNEL_ID,
 #     CF_TUNNEL_TOKEN, CF_TUNNEL_HOSTNAME (the edge hostname routing to the tunnel);
 #     alternatively (CI) the same variables already exported in the environment
-#   - colima (macOS only), docker, kind, helm, kubectl, go installed
+#   - docker, kind, helm, kubectl, go installed; colima additionally on macOS;
+#     gh and jq additionally for --use-ci-images
 #
-# In GitHub Actions (GITHUB_ACTIONS=true) the colima requirement is skipped:
-# the runner's native docker daemon is used directly.
+# colima is the macOS docker backend; every other host uses its native docker
+# daemon directly and is not asked for it.
 
 set -euo pipefail
 
@@ -60,6 +63,10 @@ CI_PR_NUMBER=""
 # gatewayAPIChannel=standard (it reads the channel annotation off the installed
 # CRDs and rejects a mix of channels).
 CHANNEL="experimental"
+# Set once the kind cluster is up. Failures before that (credential check,
+# CI-bundle verification) have no pod state to dump, and a "Cluster
+# unreachable" banner on top of their own message reads like a second fault.
+CLUSTER_CREATED=false
 
 # --- Helpers ---
 info()  { echo "==> $*"; }
@@ -127,8 +134,9 @@ dump_diagnostics() {
 
 on_exit() {
   local exit_code=$1
+  [[ -n "${CI_BUNDLE_DIR:-}" ]] && rm -rf "${CI_BUNDLE_DIR}"
   # 130 = operator interrupt (Ctrl-C), not a failure worth a dump.
-  if [[ "${exit_code}" -ne 0 && "${exit_code}" -ne 130 ]]; then
+  if [[ "${exit_code}" -ne 0 && "${exit_code}" -ne 130 && "${CLUSTER_CREATED}" == "true" ]]; then
     dump_diagnostics
   fi
 }
@@ -168,12 +176,16 @@ if [[ "${RUN_TESTS}" == "true" && "${RUN_E2E}" == "true" ]]; then
 fi
 
 # --- Pre-flight checks ---
-# colima is the macOS docker backend; GitHub Actions runners have a native
-# docker daemon, so the requirement (and the start step below) is skipped there.
+# colima is the macOS docker backend. Every other host -- Linux workstation,
+# GitHub Actions runner -- has a native docker daemon, so the requirement (and
+# the start step below) applies to macOS only.
 info "Checking prerequisites..."
 TOOLS=(docker kind helm kubectl go)
-if [[ "${GITHUB_ACTIONS:-}" != "true" ]]; then
+if [[ "$(uname -s)" == "Darwin" ]]; then
   TOOLS+=(colima)
+fi
+if [[ -n "${CI_PR_NUMBER}" ]]; then
+  TOOLS+=(gh jq)
 fi
 for tool in "${TOOLS[@]}"; do
   check_tool "${tool}"
@@ -214,22 +226,74 @@ if [[ "${token_http_code}" != "200" ]]; then
   die "CF_API_TOKEN cannot read tunnel ${CF_TUNNEL_ID} (HTTP ${token_http_code:-no-response}). Refresh the token (Cloudflare dashboard -> account -> Cloudflare Tunnel -> Edit) before re-running."
 fi
 
-# --- CI-images mode: fail fast if the PR chart is gone before building a cluster ---
+# --- CI-images mode: fetch and verify the run's artifacts before building a cluster ---
+# The images and chart CI pushes to ttl.sh sit behind a mutable, anonymous tag:
+# anything that can write that tag gets to run inside a cluster holding the
+# Cloudflare credentials created below. So nothing here is addressed by tag.
+# The chart comes from the run's own artifacts, the images are pulled by the
+# digest that run recorded, and both are bound to the commit under review.
 if [[ -n "${CI_PR_NUMBER}" ]]; then
-  CI_CHART_VERSION="0.0.0-pr.${CI_PR_NUMBER}-1d"
-  info "Checking ttl.sh chart for PR #${CI_PR_NUMBER} (${CI_CHART_VERSION})..."
-  helm show chart "oci://ttl.sh/cloudflare-tunnel-gateway-controller" \
-    --version "${CI_CHART_VERSION}" >/dev/null 2>&1 \
-    || die "Chart ${CI_CHART_VERSION} not found on ttl.sh. ttl.sh artifacts expire after 24h (the '1d' tag) — re-run PR #${CI_PR_NUMBER}'s CI to republish."
+  info "Resolving PR #${CI_PR_NUMBER}'s CI run..."
+  CI_HEAD_SHA="$(gh pr view "${CI_PR_NUMBER}" --json headRefOid --jq '.headRefOid')" \
+    || die "Cannot read PR #${CI_PR_NUMBER} (is gh authenticated for this repo?)"
+
+  # Every condition is deliberate: a run for an older head builds a different
+  # diff than the one being reviewed, a failed run may have published half its
+  # artifacts, and only the pull_request event builds the PR's own code.
+  CI_RUN_ID="$(gh api "repos/{owner}/{repo}/actions/runs?head_sha=${CI_HEAD_SHA}&per_page=100" \
+    | jq --raw-output --arg sha "${CI_HEAD_SHA}" '
+        [ .workflow_runs[]
+          | select(.name == "PR Checks and Build")
+          | select(.event == "pull_request")
+          | select(.conclusion == "success")
+          | select(.head_sha == $sha)
+        ] | sort_by(.created_at) | last | .id // empty')" \
+    || die "Querying workflow runs for head ${CI_HEAD_SHA} failed (gh api actions/runs)"
+  [[ -n "${CI_RUN_ID}" ]] \
+    || die "No successful 'PR Checks and Build' run for PR #${CI_PR_NUMBER} at head ${CI_HEAD_SHA}. Re-run its CI; a run for an earlier head is not accepted."
+
+  CI_BUNDLE_DIR="$(mktemp -d)"
+  trap 'on_exit $?' EXIT
+  info "Downloading artifacts from run ${CI_RUN_ID} into ${CI_BUNDLE_DIR}..."
+  for ci_artifact in ci-chart-bundle image-ref-controller image-ref-proxy; do
+    gh run download "${CI_RUN_ID}" --name "${ci_artifact}" --dir "${CI_BUNDLE_DIR}" \
+      || die "Artifact ${ci_artifact} is missing or expired on run ${CI_RUN_ID}. CI artifacts are kept for one day — re-run PR #${CI_PR_NUMBER}'s CI."
+  done
+
+  ci_bundle="$("${REPO_ROOT}/hack/verify-ci-bundle.sh" \
+    "${CI_BUNDLE_DIR}" "${CI_PR_NUMBER}" "${CI_HEAD_SHA}")" \
+    || die "PR #${CI_PR_NUMBER}'s CI artifacts failed verification; nothing was deployed."
+
+  CI_CONTROLLER_REF="$(sed -n 's/^controller_ref=//p' <<< "${ci_bundle}")"
+  CI_PROXY_REF="$(sed -n 's/^proxy_ref=//p' <<< "${ci_bundle}")"
+  CI_CHART_TGZ="$(sed -n 's/^chart_tgz=//p' <<< "${ci_bundle}")"
+  info "Verified PR #${CI_PR_NUMBER} at ${CI_HEAD_SHA}:"
+  info "  ${CI_CONTROLLER_REF}"
+  info "  ${CI_PROXY_REF}"
 fi
 
-# --- Step 1: Ensure colima is running (macOS only; CI uses native docker) ---
-if [[ "${GITHUB_ACTIONS:-}" != "true" ]]; then
+# --- Step 1: Ensure colima is running (macOS only) ---
+if [[ "$(uname -s)" == "Darwin" ]]; then
   info "Checking colima..."
   if ! colima status >/dev/null 2>&1; then
     info "Starting colima..."
     colima start
   fi
+fi
+
+# --- Step 1b: Pull the CI images (needs the daemon from Step 1) ---
+# Deliberately ahead of Step 2, which deletes the operator's existing test
+# clusters. The artifacts verified above record digests, not images, so they
+# outliving the images buys nothing: once ttl.sh drops the blobs those
+# references point at nothing. "Artifacts present, images gone" is the failure
+# this flag hits, and it must not cost a cluster to discover.
+if [[ -n "${CI_PR_NUMBER}" ]]; then
+  info "Pulling PR #${CI_PR_NUMBER}'s images by digest..."
+  ci_arch="$(go env GOARCH)"
+  "${REPO_ROOT}/hack/pull-ci-image.sh" "${CI_CONTROLLER_REF}" "${CONTROLLER_IMAGE}" "${ci_arch}" \
+    || die "Cannot pull ${CI_CONTROLLER_REF}. The image is gone from ttl.sh -- re-run PR #${CI_PR_NUMBER}'s CI to republish."
+  "${REPO_ROOT}/hack/pull-ci-image.sh" "${CI_PROXY_REF}" "${PROXY_IMAGE}" "${ci_arch}" \
+    || die "Cannot pull ${CI_PROXY_REF}. The image is gone from ttl.sh -- re-run PR #${CI_PR_NUMBER}'s CI to republish."
 fi
 
 # --- Step 2: Delete old v2-test-* clusters ---
@@ -251,7 +315,9 @@ KINDEOF
 kubectl --context "${KUBE_CONTEXT}" cluster-info --request-timeout=5s >/dev/null 2>&1 \
   || die "Cannot connect to cluster '${KUBE_CONTEXT}'"
 
-# From here on the cluster exists -- capture its state if anything fails.
+# From here on a failure has pod state worth dumping. In --use-ci-images mode
+# the same trap is already armed; this flag is what turns the dump on.
+CLUSTER_CREATED=true
 trap 'on_exit $?' EXIT
 
 # --- Step 4: Install Gateway API CRDs (channel selectable via --channel) ---
@@ -260,9 +326,9 @@ kubectl --context "${KUBE_CONTEXT}" apply \
   --server-side --force-conflicts \
   --filename "https://github.com/kubernetes-sigs/gateway-api/releases/download/${GATEWAY_API_VERSION}/${CHANNEL}-install.yaml"
 
-# --- Step 5: Build images ---
+# --- Step 5: Build images (CI-images mode pulled them in Step 1b) ---
 if [[ -n "${CI_PR_NUMBER}" ]]; then
-  info "Using CI images from PR #${CI_PR_NUMBER} (ttl.sh) — skipping local build + kind load"
+  info "Using PR #${CI_PR_NUMBER}'s images, pulled in Step 1b"
 elif [[ "${SKIP_BUILD}" == "false" ]]; then
   info "Building controller image..."
   docker build --tag "${CONTROLLER_IMAGE}" --file Containerfile .
@@ -274,13 +340,11 @@ else
 fi
 
 # --- Step 6: Load images into kind ---
-# In --use-ci-images mode there are no local images; kind nodes pull from
-# ttl.sh at pod start (the PR chart ships pullPolicy=Always).
-if [[ -z "${CI_PR_NUMBER}" ]]; then
-  info "Loading images into kind cluster..."
-  kind load docker-image "${CONTROLLER_IMAGE}" --name "${CLUSTER_NAME}"
-  kind load docker-image "${PROXY_IMAGE}" --name "${CLUSTER_NAME}"
-fi
+# Both modes load from the local docker daemon, so the kind nodes never reach
+# out to a registry and cannot be served something else at pod start.
+info "Loading images into kind cluster..."
+kind load docker-image "${CONTROLLER_IMAGE}" --name "${CLUSTER_NAME}"
+kind load docker-image "${PROXY_IMAGE}" --name "${CLUSTER_NAME}"
 
 # --- Step 7: Create namespace and secrets ---
 info "Creating namespace '${NAMESPACE}'..."
@@ -307,12 +371,11 @@ kubectl --context "${KUBE_CONTEXT}" create secret generic cloudflare-tunnel-toke
   | kubectl --context "${KUBE_CONTEXT}" apply --filename -
 
 # --- Step 8: Deploy via helm ---
-# Default: install the local chart and point it at the locally-built images.
-# --use-ci-images: install the PR's published ttl.sh chart, which already
-# carries the ttl.sh image refs + pullPolicy=Always baked into its values.yaml,
-# so no --set image.* overrides are needed (or wanted) in that mode.
+# Default: install the local chart. --use-ci-images: install the chart tarball
+# the run published. Either way the image overrides below point at the images
+# already loaded into the nodes, so the CI chart's own ttl.sh refs and its
+# pullPolicy=Always never take effect.
 HELM_CHART_REF="${REPO_ROOT}/charts/cloudflare-tunnel-gateway-controller"
-HELM_VERSION_ARGS=()
 HELM_IMAGE_ARGS=(
   --set image.repository="${CONTROLLER_IMAGE%%:*}"
   --set image.tag="${CONTROLLER_IMAGE##*:}"
@@ -322,9 +385,7 @@ HELM_IMAGE_ARGS=(
   --set proxy.image.pullPolicy=Never
 )
 if [[ -n "${CI_PR_NUMBER}" ]]; then
-  HELM_CHART_REF="oci://ttl.sh/cloudflare-tunnel-gateway-controller"
-  HELM_VERSION_ARGS=(--version "${CI_CHART_VERSION}")
-  HELM_IMAGE_ARGS=()
+  HELM_CHART_REF="${CI_CHART_TGZ}"
 fi
 
 # proxy.tunnel.protocol=http2 is mandatory in both modes: the chart defaults to
@@ -340,18 +401,15 @@ fi
 # so the edge rejects them by Host and the intended Host rides X-Original-Host
 # instead. The proxy ignores that header unless this value is set, which is why
 # it belongs here and nowhere near a production values file.
-# The "${arr[@]+...}" idiom expands an empty array to nothing without tripping
-# `set -u` on bash < 4.4 (stock macOS ships 3.2).
 info "Deploying controller via helm..."
 helm upgrade --install "${RELEASE_NAME}" \
   "${HELM_CHART_REF}" \
-  "${HELM_VERSION_ARGS[@]+"${HELM_VERSION_ARGS[@]}"}" \
   --kube-context "${KUBE_CONTEXT}" \
   --namespace "${NAMESPACE}" \
   --set gatewayClassConfig.create=true \
   --set gatewayClassConfig.tunnelID="${CF_TUNNEL_ID}" \
   --set gatewayClassConfig.cloudflareCredentialsSecretRef.name=cloudflare-credentials \
-  "${HELM_IMAGE_ARGS[@]+"${HELM_IMAGE_ARGS[@]}"}" \
+  "${HELM_IMAGE_ARGS[@]}" \
   --set proxy.tunnelTokenSecretRef.name=cloudflare-tunnel-token \
   --set proxy.tunnel.protocol=http2 \
   --set proxy.allowXOriginalHost=true \

@@ -98,9 +98,9 @@ jobs:
 
   # Lint shell scripts and GitHub Actions workflows. actionlint validates the
   # workflow YAML and runs shellcheck on inline `run:` blocks; the standalone
-  # shellcheck pass covers hack/*.sh. Both tools are installed at a pinned,
-  # Renovate-tracked version into /usr/local/bin (ahead of the runner's
-  # /usr/bin) so actionlint picks up the pinned shellcheck for inline blocks.
+  # shellcheck pass covers hack/*.sh. shellcheck is installed at a pinned,
+  # Renovate-tracked version into /usr/local/bin, ahead of the runner's
+  # /usr/bin, so actionlint picks up the pinned one for inline blocks.
   lint-workflows:
     name: Lint Workflows
     runs-on: ubuntu-latest
@@ -108,6 +108,14 @@ jobs:
     steps:
       - name: Checkout PR code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      # actionlint is built from source below, so the toolchain that builds it
+      # is pinned here rather than left to whatever the runner image ships.
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version: '1.27.1'
+          cache: false
 
       - name: Install shellcheck and actionlint
         run: |
@@ -118,6 +126,12 @@ jobs:
           # renovate: datasource=github-releases depName=rhysd/actionlint
           ACTIONLINT_VERSION="v1.7.12"
 
+          # actionlint is Go, so the checksum database attests it. shellcheck
+          # is Haskell and its releases carry no checksum or signature file,
+          # so it stays a plain download (#723).
+          go install "github.com/rhysd/actionlint/cmd/actionlint@${ACTIONLINT_VERSION}"
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
           tmp="$(mktemp -d)"
 
           curl --retry 5 --retry-delay 1 -sSLo "${tmp}/shellcheck.tar.xz" \
@@ -125,13 +139,8 @@ jobs:
           tar -xJf "${tmp}/shellcheck.tar.xz" -C "${tmp}"
           sudo install "${tmp}/shellcheck-${SHELLCHECK_VERSION}/shellcheck" /usr/local/bin/shellcheck
 
-          curl --retry 5 --retry-delay 1 -sSLo "${tmp}/actionlint.tar.gz" \
-            "https://github.com/rhysd/actionlint/releases/download/${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION#v}_linux_amd64.tar.gz"
-          tar -xzf "${tmp}/actionlint.tar.gz" -C "${tmp}" actionlint
-          sudo install "${tmp}/actionlint" /usr/local/bin/actionlint
-
           shellcheck --version
-          actionlint --version
+          "$(go env GOPATH)/bin/actionlint" --version
 
       - name: Run shellcheck (hack scripts)
         run: shellcheck hack/*.sh
@@ -188,7 +197,9 @@ jobs:
 
       - name: Setup envtest
         run: |
-          go install sigs.k8s.io/controller-runtime/tools/setup-envtest@latest
+          # renovate: datasource=go depName=sigs.k8s.io/controller-runtime/tools/setup-envtest
+          SETUP_ENVTEST_VERSION="v0.24.1"
+          go install "sigs.k8s.io/controller-runtime/tools/setup-envtest@${SETUP_ENVTEST_VERSION}"
           setup-envtest use
 
       - name: Run tests
@@ -321,6 +332,13 @@ jobs:
           - component: proxy
             image: ttl.sh/cf-tunnel-gateway-proxy
     steps:
+      # Only for hack/verify-manifest-children.sh, which the reference export
+      # below runs; nothing else in this job reads the checkout.
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          sparse-checkout: hack
+
       - name: Download digests
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
@@ -339,6 +357,12 @@ jobs:
           PR_NUMBER="${{ github.event.pull_request.number }}"
           IMAGE_NAME="${{ matrix.image }}"
           TAG="pr-${PR_NUMBER}-1d"
+          # pr-N-1d is a human alias that later runs overwrite. The run-scoped
+          # tag is narrower -- nothing in this repo's CI writes it twice -- but
+          # ttl.sh is unauthenticated and the run id is public, so it is not a
+          # name only this job can write. What it resolves to is checked in
+          # `Export image reference` rather than trusted.
+          RUN_TAG="pr-${PR_NUMBER}-run-${{ github.run_id }}"
 
           # Build image references array
           images=()
@@ -354,6 +378,7 @@ jobs:
           for attempt in 1 2 3; do
             if docker buildx imagetools create \
               --tag "${IMAGE_NAME}:${TAG}" \
+              --tag "${IMAGE_NAME}:${RUN_TAG}" \
               "${images[@]}"; then
               ok=1
               break
@@ -369,6 +394,41 @@ jobs:
         run: |
           PR_NUMBER="${{ github.event.pull_request.number }}"
           docker buildx imagetools inspect "${{ matrix.image }}:pr-${PR_NUMBER}-1d"
+
+      # The tag this job just wrote is mutable and anonymous -- anyone can
+      # overwrite it on ttl.sh. Publish the manifest-list digest so local
+      # verification can address the image by content instead.
+      - name: Export image reference
+        run: |
+          set -euo pipefail
+
+          PR_NUMBER="${{ github.event.pull_request.number }}"
+          IMAGE_NAME="${{ matrix.image }}"
+          mkdir -p /tmp/refs
+          digest="$(docker buildx imagetools inspect \
+            "${IMAGE_NAME}:pr-${PR_NUMBER}-run-${{ github.run_id }}" \
+            --format '{{.Manifest.Digest}}')"
+          ref="${IMAGE_NAME}@${digest}"
+
+          # Resolving that tag is the one step here that trusts the registry,
+          # so re-read what it gave us by digest -- the index checked below is
+          # then exactly the one this reference names -- and require it to have
+          # been assembled out of the images this run pushed. An index
+          # substituted in the gap between the manifest push and this read
+          # cannot have been.
+          docker buildx imagetools inspect "${ref}" --raw > /tmp/index.json
+          hack/verify-manifest-children.sh "${IMAGE_NAME}" /tmp/index.json /tmp/digests
+
+          echo "${ref}" > "/tmp/refs/${{ matrix.component }}.ref"
+          cat "/tmp/refs/${{ matrix.component }}.ref"
+
+      - name: Upload image reference
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: image-ref-${{ matrix.component }}
+          path: /tmp/refs/*
+          if-no-files-found: error
+          retention-days: 1
 
       - name: Generate build summary
         run: |
@@ -390,7 +450,9 @@ jobs:
             echo "podman pull ${IMAGE_TAG}"
             echo '```'
             echo ""
-            echo "> **Note:** Image expires in 24 hours (ttl.sh)"
+            echo "> **Note:** The \`-1d\` suffix sets no lifetime -- ttl.sh reads one"
+            echo "> only from a tag that is entirely a duration -- so this image expires"
+            echo "> on ttl.sh's own schedule. Re-run this workflow to republish it."
           } >> "$GITHUB_STEP_SUMMARY"
 
   # Lint and test Helm chart
@@ -426,25 +488,27 @@ jobs:
           # hard-errors with "plugin source does not support verification".
           # Disable it explicitly — the flag is needed for the source type,
           # not because the plugin is unsigned.
-          helm plugin install https://github.com/helm-unittest/helm-unittest.git --verify=false
+          # renovate: datasource=github-releases depName=helm-unittest/helm-unittest
+          HELM_UNITTEST_VERSION="v1.1.2"
+          helm plugin install https://github.com/helm-unittest/helm-unittest.git \
+            --version "${HELM_UNITTEST_VERSION}" --verify=false
 
           # JSON schema validator
-          pip install check-jsonschema
+          # renovate: datasource=pypi depName=check-jsonschema
+          CHECK_JSONSCHEMA_VERSION="0.38.0"
+          pip install "check-jsonschema==${CHECK_JSONSCHEMA_VERSION}"
 
-          # Artifact Hub CLI — extracted from upstream image so the tag binds
-          # both version and content digest (Renovate's docker datasource
-          # auto-bumps the tag without a separate sha256 line to drift).
+          # Artifact Hub CLI, extracted from the upstream image.
           # renovate: datasource=docker depName=artifacthub/ah
-          AH_VERSION="v1.23.0"
-          docker create --name ah-tmp "artifacthub/ah:${AH_VERSION}"
+          AH_IMAGE="artifacthub/ah:v1.23.0@sha256:e5d2a2cdef85aac4928e8176ffaad24746c5fe961d64ff6856f7222957095356"
+          docker create --name ah-tmp "${AH_IMAGE}"
           sudo docker cp ah-tmp:/usr/local/bin/ah /usr/local/bin/ah
           docker rm ah-tmp
           sudo chmod +x /usr/local/bin/ah
 
-          # helm-docs — same rationale as ah above.
           # renovate: datasource=docker depName=jnorwood/helm-docs
-          HELM_DOCS_VERSION="v1.14.2"
-          docker create --name helm-docs-tmp "jnorwood/helm-docs:${HELM_DOCS_VERSION}"
+          HELM_DOCS_IMAGE="jnorwood/helm-docs:v1.14.2@sha256:7e562b49ab6b1dbc50c3da8f2dd6ffa8a5c6bba327b1c6335cc15ce29267979c"
+          docker create --name helm-docs-tmp "${HELM_DOCS_IMAGE}"
           sudo docker cp helm-docs-tmp:/usr/bin/helm-docs /usr/local/bin/helm-docs
           docker rm helm-docs-tmp
           sudo chmod +x /usr/local/bin/helm-docs
@@ -684,6 +748,27 @@ jobs:
 
           echo "Chart pushed to: oci://ttl.sh/cloudflare-tunnel-gateway-controller:${CHART_VERSION}"
 
+      # The commit rides along with the chart so a consumer can bind the
+      # artifact to the revision it was built from.
+      - name: Assemble chart bundle
+        run: |
+          set -euo pipefail
+
+          PR_NUMBER="${{ github.event.pull_request.number }}"
+          CHART_VERSION="0.0.0-pr.${PR_NUMBER}-1d"
+
+          mkdir -p /tmp/bundle
+          cp "cloudflare-tunnel-gateway-controller-${CHART_VERSION}.tgz" /tmp/bundle/
+          echo "${{ github.event.pull_request.head.sha }}" > /tmp/bundle/head-sha.txt
+
+      - name: Upload chart bundle artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: ci-chart-bundle
+          path: /tmp/bundle/*
+          if-no-files-found: error
+          retention-days: 1
+
       - name: Generate chart summary
         run: |
           PR_NUMBER="${{ github.event.pull_request.number }}"
@@ -700,5 +785,7 @@ jobs:
             echo "helm install test oci://ttl.sh/cloudflare-tunnel-gateway-controller --version ${CHART_VERSION}"
             echo '```'
             echo ""
-            echo "> **Note:** Chart expires in 24 hours (ttl.sh)"
+            echo "> **Note:** The \`-1d\` suffix sets no lifetime -- ttl.sh reads one"
+            echo "> only from a tag that is entirely a duration. This run also attaches"
+            echo "> the packaged chart as an artifact, kept for one day."
           } >> "$GITHUB_STEP_SUMMARY"
