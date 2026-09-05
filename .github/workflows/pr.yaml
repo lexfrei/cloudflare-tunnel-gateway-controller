@@ -332,6 +332,13 @@ jobs:
           - component: proxy
             image: ttl.sh/cf-tunnel-gateway-proxy
     steps:
+      # Only for hack/verify-manifest-children.sh, which the reference export
+      # below runs; nothing else in this job reads the checkout.
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          sparse-checkout: hack
+
       - name: Download digests
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
@@ -351,8 +358,10 @@ jobs:
           IMAGE_NAME="${{ matrix.image }}"
           TAG="pr-${PR_NUMBER}-1d"
           # pr-N-1d is a human alias that later runs overwrite. The run-scoped
-          # tag names this run, and nothing in this repo's CI writes it a
-          # second time, so the digest read back from it is this run's build.
+          # tag is narrower -- nothing in this repo's CI writes it twice -- but
+          # ttl.sh is unauthenticated and the run id is public, so it is not a
+          # name only this job can write. What it resolves to is checked in
+          # `Export image reference` rather than trusted.
           RUN_TAG="pr-${PR_NUMBER}-run-${{ github.run_id }}"
 
           # Build image references array
@@ -394,12 +403,22 @@ jobs:
           set -euo pipefail
 
           PR_NUMBER="${{ github.event.pull_request.number }}"
+          IMAGE_NAME="${{ matrix.image }}"
           mkdir -p /tmp/refs
           digest="$(docker buildx imagetools inspect \
-            "${{ matrix.image }}:pr-${PR_NUMBER}-run-${{ github.run_id }}" \
+            "${IMAGE_NAME}:pr-${PR_NUMBER}-run-${{ github.run_id }}" \
             --format '{{.Manifest.Digest}}')"
-          echo "${{ matrix.image }}@${digest}" \
-            > "/tmp/refs/${{ matrix.component }}.ref"
+          ref="${IMAGE_NAME}@${digest}"
+
+          # Resolving that tag is the one step here that trusts the registry,
+          # so re-read what it gave us by digest -- the index checked below is
+          # then exactly the one this reference names -- and require it to list
+          # every per-arch image this run pushed. An index substituted in the
+          # gap between the manifest push and this read cannot.
+          docker buildx imagetools inspect "${ref}" --raw > /tmp/index.json
+          hack/verify-manifest-children.sh /tmp/index.json /tmp/digests
+
+          echo "${ref}" > "/tmp/refs/${{ matrix.component }}.ref"
           cat "/tmp/refs/${{ matrix.component }}.ref"
 
       - name: Upload image reference

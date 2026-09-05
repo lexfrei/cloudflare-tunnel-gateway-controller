@@ -14,6 +14,7 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 setup="${script_dir}/conformance-setup.sh"
 verifier="${script_dir}/verify-ci-bundle.sh"
 puller="${script_dir}/pull-ci-image.sh"
+repo_root="$(cd "${script_dir}/.." && pwd)"
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
@@ -247,6 +248,79 @@ if run_pull "${tmp}/absent.json" amd64; then
   flunk "an unreadable index is rejected"
 else
   pass "an unreadable index is rejected"
+fi
+
+# --- verify-manifest-children.sh -------------------------------------------
+#
+# The merge job reads its manifest-list digest back from a run-scoped tag on
+# ttl.sh, which has no authentication and whose run id is public for as long as
+# the run is visible. These cases pin that the index that tag resolves to is
+# checked against the per-arch images the job actually pushed, so a substituted
+# index cannot be published as this run's reference.
+
+children="${script_dir}/verify-manifest-children.sh"
+
+amd64_pushed="$(printf '1%.0s' {1..64})"
+arm64_pushed="$(printf '2%.0s' {1..64})"
+
+# The merge job names each pushed image by an empty file in /tmp/digests.
+mkdir -p "${tmp}/pushed"
+touch "${tmp}/pushed/${amd64_pushed}" "${tmp}/pushed/${arm64_pushed}"
+
+# check_children <expected-exit> <label> <index> <digests-dir>
+check_children() {
+  local expected="$1" label="$2" index="$3" dir="$4" actual=0
+  bash "${children}" "${index}" "${dir}" >/dev/null 2>&1 || actual=$?
+  if [[ "${actual}" -eq "${expected}" ]]; then
+    pass "${label} (exit ${actual})"
+  else
+    flunk "${label}: expected exit ${expected}, got ${actual}"
+  fi
+}
+
+index_with_arches "${tmp}/children-ok.json" "${amd64_pushed}:amd64" "${arm64_pushed}:arm64"
+check_children 0 "an index assembled from this job's images is accepted" \
+  "${tmp}/children-ok.json" "${tmp}/pushed"
+
+# The exposure: between the push and the read-back anyone can repoint the tag,
+# and the digest read back would then be theirs -- well-formed, digest-pinned,
+# and not this build.
+index_with_arches "${tmp}/children-sub.json" \
+  "$(printf '9%.0s' {1..64}):amd64" "$(printf '8%.0s' {1..64}):arm64"
+check_children 1 "a substituted index is rejected" \
+  "${tmp}/children-sub.json" "${tmp}/pushed"
+
+index_with_arches "${tmp}/children-partial.json" \
+  "${amd64_pushed}:amd64" "$(printf '8%.0s' {1..64}):arm64"
+check_children 1 "an index missing one pushed manifest is rejected" \
+  "${tmp}/children-partial.json" "${tmp}/pushed"
+
+# buildx attaches provenance and SBOM manifests of its own, so the check is
+# containment rather than set equality.
+printf '{"manifests":[{"digest":"sha256:%s","platform":{"os":"linux","architecture":"amd64"}},{"digest":"sha256:%s","platform":{"os":"linux","architecture":"arm64"}},{"digest":"sha256:%s","platform":{"os":"unknown","architecture":"unknown"}}]}' \
+  "${amd64_pushed}" "${arm64_pushed}" "$(printf '7%.0s' {1..64})" \
+  > "${tmp}/children-attest.json"
+check_children 0 "attestation manifests do not trip the check" \
+  "${tmp}/children-attest.json" "${tmp}/pushed"
+
+# An empty directory would make the containment loop vacuously true, and every
+# index would pass.
+mkdir -p "${tmp}/nodigests"
+check_children 1 "an empty digest set is rejected" \
+  "${tmp}/children-ok.json" "${tmp}/nodigests"
+
+check_children 1 "an unreadable index is rejected" \
+  "${tmp}/absent-index.json" "${tmp}/pushed"
+
+# The check only protects anything if the workflow runs it. Matching the
+# invocation rather than the name: the job's checkout step names the script in
+# a comment, which would satisfy a bare filename grep on its own.
+if grep --quiet --extended-regexp \
+  '^[[:space:]]*hack/verify-manifest-children\.sh ' \
+  "${repo_root}/.github/workflows/pr.yaml"; then
+  pass "pr.yaml verifies the manifest list it publishes"
+else
+  flunk "pr.yaml verifies the manifest list it publishes"
 fi
 
 if [[ "${fail}" -ne 0 ]]; then
