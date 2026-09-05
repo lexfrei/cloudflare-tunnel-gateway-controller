@@ -412,11 +412,12 @@ jobs:
 
           # Resolving that tag is the one step here that trusts the registry,
           # so re-read what it gave us by digest -- the index checked below is
-          # then exactly the one this reference names -- and require it to list
-          # every per-arch image this run pushed. An index substituted in the
-          # gap between the manifest push and this read cannot.
+          # then exactly the one this reference names -- and require it to have
+          # been assembled out of the images this run pushed. An index
+          # substituted in the gap between the manifest push and this read
+          # cannot have been.
           docker buildx imagetools inspect "${ref}" --raw > /tmp/index.json
-          hack/verify-manifest-children.sh /tmp/index.json /tmp/digests
+          hack/verify-manifest-children.sh "${IMAGE_NAME}" /tmp/index.json /tmp/digests
 
           echo "${ref}" > "/tmp/refs/${{ matrix.component }}.ref"
           cat "/tmp/refs/${{ matrix.component }}.ref"

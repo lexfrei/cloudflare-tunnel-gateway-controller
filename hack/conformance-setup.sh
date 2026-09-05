@@ -6,7 +6,8 @@
 #   2. Deletes old v2-test-* kind clusters
 #   3. Creates a fresh kind cluster with random suffix
 #   4. Installs Gateway API CRDs (channel selectable via --channel)
-#   5. Builds controller + proxy images   (pulled by digest in --use-ci-images)
+#   5. Builds controller + proxy images   (--use-ci-images pulls them by
+#                                          digest in Step 1b instead)
 #   6. Loads images into kind
 #   7. Creates secrets from .env
 #   8. Deploys controller via helm        (local chart, or the PR run's chart)

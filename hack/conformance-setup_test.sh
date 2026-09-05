@@ -254,23 +254,78 @@ fi
 #
 # The merge job reads its manifest-list digest back from a run-scoped tag on
 # ttl.sh, which has no authentication and whose run id is public for as long as
-# the run is visible. These cases pin that the index that tag resolves to is
-# checked against the per-arch images the job actually pushed, so a substituted
-# index cannot be published as this run's reference.
+# the run is. These cases pin that the index that tag resolves to was assembled
+# out of the images the job actually pushed, so a substituted index cannot be
+# published as this run's reference.
+#
+# The fixtures follow the production shape: what /tmp/digests names is the
+# digest of a per-arch OCI index, and what the published index lists is that
+# index's children -- the platform manifest and its attestation -- because
+# `imagetools create` flattens index sources.
 
 children="${script_dir}/verify-manifest-children.sh"
 
 amd64_pushed="$(printf '1%.0s' {1..64})"
 arm64_pushed="$(printf '2%.0s' {1..64})"
+amd64_child="$(printf '3%.0s' {1..64})"
+amd64_attest="$(printf '4%.0s' {1..64})"
+arm64_child="$(printf '5%.0s' {1..64})"
+arm64_attest="$(printf '6%.0s' {1..64})"
+plain_pushed="$(printf '7%.0s' {1..64})"
 
-# The merge job names each pushed image by an empty file in /tmp/digests.
 mkdir -p "${tmp}/pushed"
 touch "${tmp}/pushed/${amd64_pushed}" "${tmp}/pushed/${arm64_pushed}"
 
-# check_children <expected-exit> <label> <index> <digests-dir>
+# The script reads each pushed digest back from the registry; the stub serves
+# one fixture per digest and fails on anything it was not given.
+children_stub_dir="${tmp}/childstubs"
+srcidx="${tmp}/srcidx"
+mkdir -p "${children_stub_dir}" "${srcidx}"
+cat > "${children_stub_dir}/docker" <<'STUB'
+#!/usr/bin/env bash
+for arg in "$@"; do
+  case "${arg}" in
+    *@sha256:*)
+      fixture="${FIXTURE_DIR}/${arg##*@sha256:}.json"
+      [[ -f "${fixture}" ]] || exit 1
+      cat "${fixture}"
+      exit 0
+      ;;
+  esac
+done
+exit 1
+STUB
+chmod +x "${children_stub_dir}/docker"
+
+# source_index <file> <platform-digest> <arch> <attestation-digest>
+source_index() {
+  printf '{"manifests":[{"digest":"sha256:%s","platform":{"os":"linux","architecture":"%s"}},{"digest":"sha256:%s","annotations":{"vnd.docker.reference.type":"attestation-manifest"},"platform":{"os":"unknown","architecture":"unknown"}}]}' \
+    "$2" "$3" "$4" > "$1"
+}
+
+# published_index <file> <digest>...
+published_index() {
+  local out="$1"; shift
+  {
+    printf '{"manifests":['
+    local sep="" digest
+    for digest in "$@"; do
+      printf '%s{"digest":"sha256:%s"}' "${sep}" "${digest}"
+      sep=","
+    done
+    printf ']}'
+  } > "${out}"
+}
+
+source_index "${srcidx}/${amd64_pushed}.json" "${amd64_child}" amd64 "${amd64_attest}"
+source_index "${srcidx}/${arm64_pushed}.json" "${arm64_child}" arm64 "${arm64_attest}"
+
+# check_children <expected-exit> <label> <published-index> <digests-dir>
 check_children() {
-  local expected="$1" label="$2" index="$3" dir="$4" actual=0
-  bash "${children}" "${index}" "${dir}" >/dev/null 2>&1 || actual=$?
+  local expected="$1" label="$2" published="$3" dir="$4" actual=0
+  PATH="${children_stub_dir}:/usr/bin:/bin" FIXTURE_DIR="${srcidx}" \
+    bash "${children}" ttl.sh/cf-tunnel-gateway-ctrl "${published}" "${dir}" \
+    >/dev/null 2>&1 || actual=$?
   if [[ "${actual}" -eq "${expected}" ]]; then
     pass "${label} (exit ${actual})"
   else
@@ -278,38 +333,63 @@ check_children() {
   fi
 }
 
-index_with_arches "${tmp}/children-ok.json" "${amd64_pushed}:amd64" "${arm64_pushed}:arm64"
+published_index "${tmp}/children-ok.json" \
+  "${amd64_child}" "${amd64_attest}" "${arm64_child}" "${arm64_attest}"
 check_children 0 "an index assembled from this job's images is accepted" \
   "${tmp}/children-ok.json" "${tmp}/pushed"
 
 # The exposure: between the push and the read-back anyone can repoint the tag,
 # and the digest read back would then be theirs -- well-formed, digest-pinned,
 # and not this build.
-index_with_arches "${tmp}/children-sub.json" \
-  "$(printf '9%.0s' {1..64}):amd64" "$(printf '8%.0s' {1..64}):arm64"
+published_index "${tmp}/children-sub.json" \
+  "$(printf '8%.0s' {1..64})" "$(printf '9%.0s' {1..64})"
 check_children 1 "a substituted index is rejected" \
   "${tmp}/children-sub.json" "${tmp}/pushed"
 
-index_with_arches "${tmp}/children-partial.json" \
-  "${amd64_pushed}:amd64" "$(printf '8%.0s' {1..64}):arm64"
-check_children 1 "an index missing one pushed manifest is rejected" \
+published_index "${tmp}/children-partial.json" "${amd64_child}" "${amd64_attest}"
+check_children 1 "an index missing a pushed image's manifests is rejected" \
   "${tmp}/children-partial.json" "${tmp}/pushed"
 
-# buildx attaches provenance and SBOM manifests of its own, so the check is
-# containment rather than set equality.
-printf '{"manifests":[{"digest":"sha256:%s","platform":{"os":"linux","architecture":"amd64"}},{"digest":"sha256:%s","platform":{"os":"linux","architecture":"arm64"}},{"digest":"sha256:%s","platform":{"os":"unknown","architecture":"unknown"}}]}' \
-  "${amd64_pushed}" "${arm64_pushed}" "$(printf '7%.0s' {1..64})" \
-  > "${tmp}/children-attest.json"
-check_children 0 "attestation manifests do not trip the check" \
-  "${tmp}/children-attest.json" "${tmp}/pushed"
+# Dropping just the attestation is still an index this job did not assemble.
+published_index "${tmp}/children-noattest.json" \
+  "${amd64_child}" "${amd64_attest}" "${arm64_child}"
+check_children 1 "an index missing an attestation manifest is rejected" \
+  "${tmp}/children-noattest.json" "${tmp}/pushed"
 
-# An empty directory would make the containment loop vacuously true, and every
-# index would pass.
+# A build with provenance off pushes a plain manifest rather than an index, and
+# then the pushed digest is itself what has to appear.
+mkdir -p "${tmp}/pushed-plain"
+touch "${tmp}/pushed-plain/${plain_pushed}"
+printf '{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","layers":[]}' \
+  > "${srcidx}/${plain_pushed}.json"
+published_index "${tmp}/children-plain.json" "${plain_pushed}"
+check_children 0 "a plain manifest is matched by its own digest" \
+  "${tmp}/children-plain.json" "${tmp}/pushed-plain"
+check_children 1 "a plain manifest absent from the index is rejected" \
+  "${tmp}/children-ok.json" "${tmp}/pushed-plain"
+
+# A pushed digest the registry will not serve must stop the job rather than be
+# skipped: a source that cannot be read is a source that cannot be vouched for.
+unreadable_pushed="$(printf 'b%.0s' {1..64})"
+mkdir -p "${tmp}/pushed-unreadable"
+touch "${tmp}/pushed-unreadable/${unreadable_pushed}"
+check_children 1 "a pushed digest that cannot be read is rejected" \
+  "${tmp}/children-ok.json" "${tmp}/pushed-unreadable"
+
+# ...and specifically because the read failed, not because the digest happened
+# to be absent. With the source digest itself listed, only the failed read is
+# left to reject it.
+published_index "${tmp}/children-unreadable.json" "${unreadable_pushed}"
+check_children 1 "an unreadable source is rejected even when its own digest is listed" \
+  "${tmp}/children-unreadable.json" "${tmp}/pushed-unreadable"
+
+# An empty directory would make the loop vacuously true, and every index would
+# pass.
 mkdir -p "${tmp}/nodigests"
 check_children 1 "an empty digest set is rejected" \
   "${tmp}/children-ok.json" "${tmp}/nodigests"
 
-check_children 1 "an unreadable index is rejected" \
+check_children 1 "an unreadable published index is rejected" \
   "${tmp}/absent-index.json" "${tmp}/pushed"
 
 # The check only protects anything if the workflow runs it. Matching the
@@ -322,6 +402,18 @@ if grep --quiet --extended-regexp \
 else
   flunk "pr.yaml verifies the manifest list it publishes"
 fi
+
+# ...and the suite only guards them if editing them triggers it. Both paths
+# blocks, since the pull_request one gates the PR and the push one gates master.
+for guarded in hack/verify-manifest-children.sh .github/workflows/pr.yaml; do
+  occurrences="$(grep --count --fixed-strings "      - ${guarded}" \
+    "${repo_root}/.github/workflows/scripts.yaml" || true)"
+  if [[ "${occurrences}" -eq 2 ]]; then
+    pass "scripts.yaml runs on changes to ${guarded}"
+  else
+    flunk "scripts.yaml runs on changes to ${guarded} (${occurrences} of 2 paths blocks)"
+  fi
+done
 
 if [[ "${fail}" -ne 0 ]]; then
   echo "conformance-setup tests FAILED"

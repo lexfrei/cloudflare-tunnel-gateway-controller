@@ -16,6 +16,8 @@ on:
       - hack/conformance-setup_test.sh
       - hack/verify-ci-bundle.sh
       - hack/pull-ci-image.sh
+      - hack/verify-manifest-children.sh
+      - .github/workflows/pr.yaml
       # labels.yml is included so the drift-pin tests
       # (TYPE_TO_KIND/SCOPE_TO_AREA/SIZE_BUCKETS ↔ labels.yml) re-run
       # when labels.yml changes. Cost: the reflow job also fires on
@@ -38,6 +40,8 @@ on:
       - hack/conformance-setup_test.sh
       - hack/verify-ci-bundle.sh
       - hack/pull-ci-image.sh
+      - hack/verify-manifest-children.sh
+      - .github/workflows/pr.yaml
       # labels.yml is included so the drift-pin tests
       # (TYPE_TO_KIND/SCOPE_TO_AREA/SIZE_BUCKETS ↔ labels.yml) re-run
       # when labels.yml changes. Cost: the reflow job also fires on
