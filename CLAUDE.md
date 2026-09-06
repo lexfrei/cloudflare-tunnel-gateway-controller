@@ -59,7 +59,7 @@ helm package charts/cloudflare-tunnel-gateway-controller
 helm unittest charts/cloudflare-tunnel-gateway-controller
 
 # Generate README from values.yaml (REQUIRED before commit)
-helm-docs charts/cloudflare-tunnel-gateway-controller
+helm-docs --chart-search-root charts/cloudflare-tunnel-gateway-controller
 
 # Lint chart
 helm lint charts/cloudflare-tunnel-gateway-controller
@@ -410,7 +410,7 @@ go test -race ./... && golangci-lint run --timeout=5m --build-tags e2e,conforman
 # Helm chart changes
 helm unittest charts/cloudflare-tunnel-gateway-controller && \
 helm lint charts/cloudflare-tunnel-gateway-controller && \
-helm-docs charts/cloudflare-tunnel-gateway-controller
+helm-docs --chart-search-root charts/cloudflare-tunnel-gateway-controller
 
 # Markdown changes
 markdownlint-cli2 '**/*.md'
@@ -431,7 +431,7 @@ Before creating a PR, verify all checklist items from `.github/pull_request_temp
    - Markdown linting passes (`markdownlint-cli2 '**/*.md'`)
    - Helm tests pass (`helm unittest charts/cloudflare-tunnel-gateway-controller`)
    - Helm lint passes (`helm lint charts/cloudflare-tunnel-gateway-controller`)
-   - Helm README is up to date (`helm-docs charts/cloudflare-tunnel-gateway-controller`)
+   - Helm README is up to date (`helm-docs --chart-search-root charts/cloudflare-tunnel-gateway-controller`)
    - Manual testing completed (if applicable)
 
 2. **Documentation**

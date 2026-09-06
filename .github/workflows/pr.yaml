@@ -585,13 +585,13 @@ jobs:
         run: |
           CHART_DIR="charts/cloudflare-tunnel-gateway-controller"
           echo "Validating README.md is up to date..."
-          helm-docs "$CHART_DIR"
+          helm-docs --chart-search-root "$CHART_DIR"
 
           if git diff --exit-code "$CHART_DIR/README.md" > /dev/null 2>&1; then
             echo "README.md is up to date"
           else
             echo "ERROR: README.md is out of date!"
-            echo "Please run: helm-docs $CHART_DIR"
+            echo "Please run: helm-docs --chart-search-root $CHART_DIR"
             echo ""
             echo "Diff:"
             git diff "$CHART_DIR/README.md"
