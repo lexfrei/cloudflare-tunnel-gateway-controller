@@ -84,7 +84,12 @@ func TestRenovateLeavesForeignVersionsAlone(t *testing.T) {
 	}
 
 	for dep, want := range expected {
-		for _, file := range filesInScope(t, root, scopes[dep]) {
+		inScope := filesInScope(t, root, scopes[dep])
+		if len(inScope) == 0 {
+			t.Fatalf("no file matches the %s custom manager's managerFilePatterns, so this test would pass without reading anything", dep)
+		}
+
+		for _, file := range inScope {
 			body, err := os.ReadFile(filepath.Join(root, file))
 			if err != nil {
 				t.Fatalf("reading %s: %v", file, err)
