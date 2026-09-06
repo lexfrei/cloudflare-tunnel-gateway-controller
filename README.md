@@ -22,7 +22,7 @@ Expose in-cluster services through a Cloudflare Tunnel using standard Gateway AP
 - HTTPRoute CORS filter
 - Cross-namespace backend references gated by ReferenceGrant
 - Backend TLS (`BackendTLSPolicy`) and backend WebSocket via `appProtocol`
-- Multi-tenant isolation: per-namespace hostname-ownership enforcement (admission policy + controller), route-collision detection, and optional per-Gateway data planes (a dedicated proxy and tunnel per Gateway, where a Gateway claiming a tunnel another namespace already serves is refused)
+- Multi-tenant isolation: per-namespace hostname-ownership enforcement (admission policy + controller), route-collision detection, and optional per-Gateway data planes (a dedicated proxy and tunnel per Gateway, where a Gateway claiming a tunnel another namespace already serves is refused, and an operator can cap how many dedicated data planes one namespace may run)
 - Request-level Prometheus metrics from the proxy data plane (per-hostname rates, latency, in-flight gauge for autoscaling)
 - Leader election for high-availability deployments
 - Multi-arch images (amd64, arm64), signed with cosign

@@ -94,6 +94,93 @@ tests:
       - failedTemplate:
           errorPattern: allowSharedTunnels
 
+  # The cap bounds how many dedicated data planes one namespace may hold.
+  # Absent means unlimited, so an upgrade that does not set it changes nothing;
+  # both halves are pinned.
+  - it: should NOT set maxDataPlanesPerNamespace by default
+    set:
+      gatewayClassConfig:
+        create: true
+        tunnelID: "550e8400-e29b-41d4-a716-446655440000"
+        cloudflareCredentialsSecretRef:
+          name: "cf-credentials"
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token
+    asserts:
+      - template: gatewayclassconfig.yaml
+        notExists:
+          path: spec.maxDataPlanesPerNamespace
+
+  - it: should set maxDataPlanesPerNamespace when the operator caps it
+    set:
+      gatewayClassConfig:
+        create: true
+        tunnelID: "550e8400-e29b-41d4-a716-446655440000"
+        maxDataPlanesPerNamespace: 5
+        cloudflareCredentialsSecretRef:
+          name: "cf-credentials"
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token
+    asserts:
+      - template: gatewayclassconfig.yaml
+        equal:
+          path: spec.maxDataPlanesPerNamespace
+          value: 5
+
+  # A quoted scalar -- what an ArgoCD valuesObject or an umbrella chart's
+  # pass-through produces -- would render a string into an integer CRD field and
+  # be rejected by the apiserver at install time instead of by helm here.
+  - it: should reject a string maxDataPlanesPerNamespace
+    set:
+      gatewayClassConfig:
+        create: true
+        tunnelID: "550e8400-e29b-41d4-a716-446655440000"
+        maxDataPlanesPerNamespace: "5"
+        cloudflareCredentialsSecretRef:
+          name: "cf-credentials"
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token
+    asserts:
+      - failedTemplate:
+          errorPattern: maxDataPlanesPerNamespace
+
+  - it: should reject a negative maxDataPlanesPerNamespace
+    set:
+      gatewayClassConfig:
+        create: true
+        tunnelID: "550e8400-e29b-41d4-a716-446655440000"
+        maxDataPlanesPerNamespace: -1
+        cloudflareCredentialsSecretRef:
+          name: "cf-credentials"
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token
+    asserts:
+      - failedTemplate:
+          errorPattern: maxDataPlanesPerNamespace
+
+  # 0 is what an operator writes for "no dedicated planes at all". The CRD
+  # rejects it so it cannot double as a spelling of unlimited; rejecting it here
+  # too turns an apiserver error mid-install into a helm error before anything
+  # is applied.
+  - it: should reject a zero maxDataPlanesPerNamespace
+    set:
+      gatewayClassConfig:
+        create: true
+        tunnelID: "550e8400-e29b-41d4-a716-446655440000"
+        maxDataPlanesPerNamespace: 0
+        cloudflareCredentialsSecretRef:
+          name: "cf-credentials"
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token
+    asserts:
+      - failedTemplate:
+          errorPattern: maxDataPlanesPerNamespace
+
   # Shape-only, and deliberately so: the pattern rejects a value that is not a
   # CIDR at all, but not one whose numbers are out of range. Pinning the reject
   # path anyway, because the accept path alone would pass with no pattern.

@@ -477,3 +477,126 @@ func claimsFrom(infra *infraGateways) []tunnelownership.Claim {
 
 	return claims
 }
+
+// TestApplyDataPlaneQuota pins the route-side half of the cap: a Gateway past
+// its namespace's limit loses its partition, so its routes are programmed
+// NOWHERE — in particular they do not fall back to the shared plane, which
+// would hand a refused tenant's hostnames to the data plane serving everyone
+// else.
+func TestApplyDataPlaneQuota(t *testing.T) {
+	t.Parallel()
+
+	newInfra := func() *infraGateways {
+		return &infraGateways{
+			resolved: map[string]*infraGateway{
+				"team-a/old": {
+					gateway:    gatewayWithAge("team-a", "old", 0),
+					perGateway: &config.PerGatewayConfig{},
+				},
+				"team-a/new": {
+					gateway:    gatewayWithAge("team-a", "new", 1),
+					perGateway: &config.PerGatewayConfig{},
+				},
+			},
+			broken:    map[string]bool{},
+			transient: map[string]bool{},
+		}
+	}
+
+	t.Run("the newest loses its partition and falls back nowhere", func(t *testing.T) {
+		t.Parallel()
+
+		infra := newInfra()
+		applyDataPlaneQuota(infra, new(int32(1)), quotaClaimsFrom(infra))
+
+		assert.NotContains(t, infra.resolved, "team-a/new", "a refused Gateway contributes no partition")
+		assert.Contains(t, infra.resolved, "team-a/old", "the oldest keeps its plane")
+
+		binding := routeBindingInfo{acceptedGateways: map[string]bool{"team-a/new": true}}
+		assert.Empty(t, partitionKeysFor(binding, infra),
+			"a route bound only to a refused Gateway must reach no partition, shared included")
+	})
+
+	t.Run("the route says the cap was hit, not that the plane is broken", func(t *testing.T) {
+		t.Parallel()
+
+		infra := newInfra()
+		applyDataPlaneQuota(infra, new(int32(1)), quotaClaimsFrom(infra))
+
+		routeErr := gatewaySyncError("team-a/new", map[string]error{}, infra)
+		require.Error(t, routeErr)
+		assert.Contains(t, routeErr.Error(), "dedicated data plane",
+			"the generic broken-data-plane sentence would send the tenant hunting an outage")
+		assert.NotContains(t, routeErr.Error(), "old",
+			"a tenant-visible message must not name the Gateway holding the slot")
+	})
+
+	t.Run("the refusal clears a stale transient mark", func(t *testing.T) {
+		t.Parallel()
+
+		infra := newInfra()
+		// Pre-marked transient: a prior blip left the mark, and the Gateway's
+		// config resolves fine now. Keeping the mark would put the key in
+		// SyncResult.TransientBrokenKeys, which retains the push cache and
+		// requeues the sync on apiErrorRequeueDelay -- turning a permanent
+		// capacity refusal into a retry loop for a plane that is never rendered.
+		infra.transient["team-a/new"] = true
+
+		applyDataPlaneQuota(infra, new(int32(1)), quotaClaimsFrom(infra))
+
+		assert.NotContains(t, infra.transientKeys(), "team-a/new",
+			"a cap is a decision, not a blip")
+	})
+
+	t.Run("a Gateway broken for its own reason keeps that reason", func(t *testing.T) {
+		t.Parallel()
+
+		// Over the cap AND unresolvable. Its Gateway condition says
+		// InvalidParameters, because the status path fails on the config long
+		// before it reaches the cap. Reporting "quota" on its routes would point
+		// the tenant at a condition that never mentions the cap, and freeing a
+		// slot would change nothing.
+		infra := newInfra()
+		delete(infra.resolved, "team-a/new")
+		infra.broken["team-a/new"] = true
+
+		applyDataPlaneQuota(infra, new(int32(1)), quotaClaimsFrom(infra, dataPlaneClaim{
+			Key:       "team-a/new",
+			Namespace: "team-a",
+			CreatedAt: gatewayWithAge("team-a", "new", 1).CreationTimestamp.Time,
+			UID:       "team-a/new",
+		}))
+
+		require.ErrorIs(t, gatewaySyncError("team-a/new", map[string]error{}, infra), errBrokenDataPlane)
+	})
+
+	t.Run("no cap refuses nothing", func(t *testing.T) {
+		t.Parallel()
+
+		infra := newInfra()
+		applyDataPlaneQuota(infra, nil, quotaClaimsFrom(infra))
+
+		assert.Len(t, infra.resolved, 2)
+		assert.Empty(t, infra.broken)
+	})
+}
+
+// quotaClaimsFrom derives claims the way production's collectDataPlaneClaims
+// does: over EVERY opted-in Gateway, resolved or not, because counting only the
+// resolved ones would let a tenant free a slot by breaking one of their own
+// tokens. Broken Gateways carry no object in infraGateways, so the caller passes
+// theirs.
+func quotaClaimsFrom(infra *infraGateways, broken ...dataPlaneClaim) []dataPlaneClaim {
+	claims := make([]dataPlaneClaim, 0, len(infra.resolved)+len(broken))
+
+	for key, entry := range infra.resolved {
+		claims = append(claims, dataPlaneClaim{
+			Key:       key,
+			Namespace: entry.gateway.Namespace,
+			CreatedAt: entry.gateway.CreationTimestamp.Time,
+			UID:       string(entry.gateway.UID),
+		})
+	}
+
+	return append(claims, broken...)
+}
