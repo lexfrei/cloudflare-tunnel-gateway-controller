@@ -27,7 +27,7 @@ index="$(docker buildx imagetools inspect "${ref}" --raw)" \
   || die "cannot read the image index for ${ref}"
 
 digest="$(jq --raw-output --arg arch "${arch}" '
-    .manifests[]
+    .manifests[]?
     | select(.platform.os == "linux" and .platform.architecture == $arch)
     | .digest' <<< "${index}")"
 [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]] \

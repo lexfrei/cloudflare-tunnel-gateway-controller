@@ -250,6 +250,19 @@ else
   pass "an unreadable index is rejected"
 fi
 
+# A plain manifest has no `.manifests`, and jq must not hard-error on iterating
+# null before the script gets to say what is actually wrong with the reference.
+printf '{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","layers":[]}' \
+  > "${tmp}/index-plain.json"
+plain_err="$(PATH="${pull_stub_dir}:/usr/bin:/bin" FIXTURE_INDEX="${tmp}/index-plain.json" \
+  DOCKER_LOG="${tmp}/docker.log" bash "${puller}" \
+  "ttl.sh/cf-tunnel-gateway-ctrl@sha256:$(printf 'e%.0s' {1..64})" controller:dev amd64 2>&1 || true)"
+if grep --quiet "carries no linux/amd64 manifest" <<< "${plain_err}"; then
+  pass "a plain manifest gets the script's own diagnosis, not a jq error"
+else
+  flunk "a plain manifest gets the script's own diagnosis (got: ${plain_err##*$'\n'})"
+fi
+
 # --- verify-manifest-children.sh -------------------------------------------
 #
 # The merge job reads its manifest-list digest back from a run-scoped tag on
@@ -443,6 +456,117 @@ for guarded in hack/verify-manifest-children.sh .github/workflows/pr.yaml; do
     flunk "scripts.yaml runs on changes to ${guarded} (${occurrences} of 2 paths blocks)"
   fi
 done
+
+# --- find-ci-run.sh ---------------------------------------------------------
+#
+# This is the trust root of --use-ci-images: whatever run it names has its
+# artifacts deployed into a cluster holding live Cloudflare credentials. Each
+# filter is pinned separately, because dropping any one of them silently widens
+# what is accepted rather than breaking anything visible.
+
+finder="${script_dir}/find-ci-run.sh"
+
+gh_stub_dir="${tmp}/ghstubs"
+mkdir -p "${gh_stub_dir}"
+cat > "${gh_stub_dir}/gh" <<'STUB'
+#!/usr/bin/env bash
+case "$1" in
+  pr)  [[ -n "${FIXTURE_HEAD:-}" ]] || exit 1; echo "${FIXTURE_HEAD}" ;;
+  api) cat "${FIXTURE_RUNS}" ;;
+  *)   exit 1 ;;
+esac
+STUB
+chmod +x "${gh_stub_dir}/gh"
+
+ci_head="$(printf 'a%.0s' {1..40})"
+ci_old_head="$(printf 'f%.0s' {1..40})"
+
+# runs_fixture <file> <entry>...  where entry is name|event|conclusion|sha|created|id
+runs_fixture() {
+  local out="$1"; shift
+  {
+    printf '{"workflow_runs":['
+    local sep="" e
+    for e in "$@"; do
+      IFS='|' read -r name event concl sha created id <<< "${e}"
+      printf '%s{"name":"%s","event":"%s","conclusion":"%s","head_sha":"%s","created_at":"%s","id":%s}' \
+        "${sep}" "${name}" "${event}" "${concl}" "${sha}" "${created}" "${id}"
+      sep=","
+    done
+    printf ']}'
+  } > "${out}"
+}
+
+# check_finder <expected-exit> <label> <runs-fixture> [expected-stdout-substring]
+check_finder() {
+  local expected="$1" label="$2" fixture="$3" want="${4:-}" actual=0 out
+  out="$(PATH="${gh_stub_dir}:/usr/bin:/bin" FIXTURE_HEAD="${ci_head}" FIXTURE_RUNS="${fixture}" \
+    bash "${finder}" 733 2>&1)" || actual=$?
+  if [[ "${actual}" -ne "${expected}" ]]; then
+    flunk "${label}: expected exit ${expected}, got ${actual}"
+  elif [[ -n "${want}" ]] && ! grep --quiet --fixed-strings "${want}" <<< "${out}"; then
+    flunk "${label}: output lacks '${want}' (got: ${out##*$'\n'})"
+  else
+    pass "${label} (exit ${actual})"
+  fi
+}
+
+good_run="PR Checks and Build|pull_request|success|${ci_head}|2026-09-05T10:00:00Z|111"
+
+runs_fixture "${tmp}/runs-ok.json" "${good_run}"
+check_finder 0 "a successful pull_request run at this head is accepted" \
+  "${tmp}/runs-ok.json" "run_id=111"
+
+# A failed run may have published only some of its artifacts.
+runs_fixture "${tmp}/runs-failed.json" \
+  "PR Checks and Build|pull_request|failure|${ci_head}|2026-09-05T10:00:00Z|111"
+check_finder 1 "a failed run is refused" "${tmp}/runs-failed.json" "No successful"
+
+# Only the pull_request event builds the PR's own code.
+runs_fixture "${tmp}/runs-dispatch.json" \
+  "PR Checks and Build|workflow_dispatch|success|${ci_head}|2026-09-05T10:00:00Z|111"
+check_finder 1 "a workflow_dispatch run is refused" "${tmp}/runs-dispatch.json" "No successful"
+
+runs_fixture "${tmp}/runs-push.json" \
+  "PR Checks and Build|push|success|${ci_head}|2026-09-05T10:00:00Z|111"
+check_finder 1 "a push run is refused" "${tmp}/runs-push.json" "No successful"
+
+# A run for an older head built a different diff than the one under review.
+runs_fixture "${tmp}/runs-oldhead.json" \
+  "PR Checks and Build|pull_request|success|${ci_old_head}|2026-09-05T10:00:00Z|111"
+check_finder 1 "a run for an earlier head is refused" "${tmp}/runs-oldhead.json" "No successful"
+
+# Another workflow's run carries none of the artifacts this flag needs.
+runs_fixture "${tmp}/runs-otherwf.json" \
+  "Scripts|pull_request|success|${ci_head}|2026-09-05T10:00:00Z|111"
+check_finder 1 "another workflow's run is refused" "${tmp}/runs-otherwf.json" "No successful"
+
+# Re-running CI must win over the run it replaced.
+runs_fixture "${tmp}/runs-two.json" \
+  "PR Checks and Build|pull_request|success|${ci_head}|2026-09-05T10:00:00Z|111" \
+  "PR Checks and Build|pull_request|success|${ci_head}|2026-09-05T12:00:00Z|222"
+check_finder 0 "the newest successful run wins" "${tmp}/runs-two.json" "run_id=222"
+
+runs_fixture "${tmp}/runs-none.json"
+check_finder 1 "an empty run list is refused" "${tmp}/runs-none.json" "No successful"
+
+# The head the artifacts are bound to is the one the caller must verify against.
+check_finder 0 "the resolved head is reported to the caller" \
+  "${tmp}/runs-ok.json" "head_sha=${ci_head}"
+
+if [[ "$(PATH="${gh_stub_dir}:/usr/bin:/bin" FIXTURE_HEAD="${ci_head}" \
+  FIXTURE_RUNS="${tmp}/runs-ok.json" bash "${finder}" not-a-number 2>&1 || true)" == *"must be numeric"* ]]; then
+  pass "a non-numeric PR number is refused"
+else
+  flunk "a non-numeric PR number is refused"
+fi
+
+# The finder only protects anything if the setup script uses it.
+if grep --quiet --extended-regexp '\$\{REPO_ROOT\}/hack/find-ci-run\.sh' "${setup}"; then
+  pass "conformance-setup.sh resolves the run through the finder"
+else
+  flunk "conformance-setup.sh resolves the run through the finder"
+fi
 
 if [[ "${fail}" -ne 0 ]]; then
   echo "conformance-setup tests FAILED"

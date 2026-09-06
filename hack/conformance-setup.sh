@@ -234,23 +234,10 @@ fi
 # digest that run recorded, and both are bound to the commit under review.
 if [[ -n "${CI_PR_NUMBER}" ]]; then
   info "Resolving PR #${CI_PR_NUMBER}'s CI run..."
-  CI_HEAD_SHA="$(gh pr view "${CI_PR_NUMBER}" --json headRefOid --jq '.headRefOid')" \
-    || die "Cannot read PR #${CI_PR_NUMBER} (is gh authenticated for this repo?)"
-
-  # Every condition is deliberate: a run for an older head builds a different
-  # diff than the one being reviewed, a failed run may have published half its
-  # artifacts, and only the pull_request event builds the PR's own code.
-  CI_RUN_ID="$(gh api "repos/{owner}/{repo}/actions/runs?head_sha=${CI_HEAD_SHA}&per_page=100" \
-    | jq --raw-output --arg sha "${CI_HEAD_SHA}" '
-        [ .workflow_runs[]
-          | select(.name == "PR Checks and Build")
-          | select(.event == "pull_request")
-          | select(.conclusion == "success")
-          | select(.head_sha == $sha)
-        ] | sort_by(.created_at) | last | .id // empty')" \
-    || die "Querying workflow runs for head ${CI_HEAD_SHA} failed (gh api actions/runs)"
-  [[ -n "${CI_RUN_ID}" ]] \
-    || die "No successful 'PR Checks and Build' run for PR #${CI_PR_NUMBER} at head ${CI_HEAD_SHA}. Re-run its CI; a run for an earlier head is not accepted."
+  ci_run="$("${REPO_ROOT}/hack/find-ci-run.sh" "${CI_PR_NUMBER}")" \
+    || die "Cannot resolve a CI run for PR #${CI_PR_NUMBER}; nothing was deployed."
+  CI_HEAD_SHA="$(sed -n 's/^head_sha=//p' <<< "${ci_run}")"
+  CI_RUN_ID="$(sed -n 's/^run_id=//p' <<< "${ci_run}")"
 
   CI_BUNDLE_DIR="$(mktemp -d)"
   trap 'on_exit $?' EXIT
