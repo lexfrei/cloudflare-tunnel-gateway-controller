@@ -17,22 +17,7 @@ import (
 func TestDocsPinnedConformanceSuiteVersionMatchesGoMod(t *testing.T) {
 	t.Parallel()
 
-	root := findRepoRoot(t)
-	version := goModVersion(t, root, "sigs.k8s.io/gateway-api/conformance")
-
-	claims := []struct {
-		file   string
-		needle string
-		why    string
-	}{
-		{
-			file:   filepath.Join(root, "CLAUDE.md"),
-			needle: "sigs.k8s.io/gateway-api/conformance` " + version,
-			why:    "the contributor doc names the conformance suite the kind run executes",
-		},
-	}
-
-	for _, claim := range claims {
+	for _, claim := range conformanceDocClaims(t) {
 		body, err := os.ReadFile(claim.file)
 		if err != nil {
 			t.Fatalf("reading %s: %v", claim.file, err)
@@ -44,6 +29,31 @@ func TestDocsPinnedConformanceSuiteVersionMatchesGoMod(t *testing.T) {
 			)
 		}
 	}
+}
+
+// conformanceDocClaims is shared with TestRenovateMatchesPinnedDocClaims,
+// which asserts that renovate.json rewrites every needle listed here.
+func conformanceDocClaims(t *testing.T) []docClaim {
+	t.Helper()
+
+	root := findRepoRoot(t)
+	version := goModVersion(t, root, "sigs.k8s.io/gateway-api/conformance")
+
+	return []docClaim{
+		{
+			file:   filepath.Join(root, "CLAUDE.md"),
+			needle: "sigs.k8s.io/gateway-api/conformance` " + version,
+			why:    "the contributor doc names the conformance suite the kind run executes",
+		},
+	}
+}
+
+// docClaim is one pinned version claim: a file, the exact text that must
+// appear in it, and why that text is load-bearing.
+type docClaim struct {
+	file   string
+	needle string
+	why    string
 }
 
 // goModVersion returns the version go.mod requires for the given module path.

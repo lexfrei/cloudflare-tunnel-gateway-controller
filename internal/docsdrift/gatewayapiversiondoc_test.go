@@ -17,11 +17,24 @@ import (
 func TestDocsPinnedGatewayAPIVersionMatchesVendored(t *testing.T) {
 	t.Parallel()
 
-	claims := []struct {
-		file   string
-		needle string
-		why    string
-	}{
+	for _, claim := range gatewayAPIDocClaims() {
+		body, err := os.ReadFile(claim.file)
+		if err != nil {
+			t.Fatalf("reading %s: %v", claim.file, err)
+		}
+		if !strings.Contains(string(body), claim.needle) {
+			t.Errorf(
+				"%s does not contain %q — %s; update the doc (or this test) when bumping sigs.k8s.io/gateway-api",
+				claim.file, claim.needle, claim.why,
+			)
+		}
+	}
+}
+
+// gatewayAPIDocClaims is shared with TestRenovateMatchesPinnedDocClaims, which
+// asserts that renovate.json rewrites every needle listed here.
+func gatewayAPIDocClaims() []docClaim {
+	return []docClaim{
 		{
 			file:   filepath.Join("..", "..", "docs", "gateway-api", "limitations.md"),
 			needle: "Standard channel (Gateway API " + consts.BundleVersion + ")",
@@ -29,8 +42,13 @@ func TestDocsPinnedGatewayAPIVersionMatchesVendored(t *testing.T) {
 		},
 		{
 			file:   filepath.Join("..", "..", "docs", "getting-started", "prerequisites.md"),
-			needle: "built and tested against " + consts.BundleVersion,
+			needle: "built and tested against the " + consts.BundleVersion + " standard bundle",
 			why:    "the prerequisites page names the tested bundle; SupportedVersion=False fires for any other minor",
+		},
+		{
+			file:   filepath.Join("..", "..", "docs", "getting-started", "prerequisites.md"),
+			needle: "apply the " + consts.BundleVersion + " standard bundle",
+			why:    "the prerequisites page tells an operator on an older bundle which one to install",
 		},
 		{
 			file:   filepath.Join("..", "..", "docs", "getting-started", "prerequisites.md"),
@@ -77,19 +95,6 @@ func TestDocsPinnedGatewayAPIVersionMatchesVendored(t *testing.T) {
 			needle: "GATEWAY_API_VERSION=\"" + consts.BundleVersion + "\"",
 			why:    "the vendored suite refuses to run against a CRD bundle that differs from consts.BundleVersion",
 		},
-	}
-
-	for _, claim := range claims {
-		body, err := os.ReadFile(claim.file)
-		if err != nil {
-			t.Fatalf("reading %s: %v", claim.file, err)
-		}
-		if !strings.Contains(string(body), claim.needle) {
-			t.Errorf(
-				"%s does not contain %q — %s; update the doc (or this test) when bumping sigs.k8s.io/gateway-api",
-				claim.file, claim.needle, claim.why,
-			)
-		}
 	}
 }
 
