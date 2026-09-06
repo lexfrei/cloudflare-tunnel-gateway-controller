@@ -17,8 +17,10 @@ import (
 func TestDocsPinnedGatewayAPIVersionMatchesVendored(t *testing.T) {
 	t.Parallel()
 
+	root := findRepoRoot(t)
+
 	for _, claim := range gatewayAPIDocClaims() {
-		body, err := os.ReadFile(claim.file)
+		body, err := os.ReadFile(filepath.Join(root, claim.file))
 		if err != nil {
 			t.Fatalf("reading %s: %v", claim.file, err)
 		}
@@ -36,62 +38,62 @@ func TestDocsPinnedGatewayAPIVersionMatchesVendored(t *testing.T) {
 func gatewayAPIDocClaims() []docClaim {
 	return []docClaim{
 		{
-			file:   filepath.Join("..", "..", "docs", "gateway-api", "limitations.md"),
+			file:   "docs/gateway-api/limitations.md",
 			needle: "Standard channel (Gateway API " + consts.BundleVersion + ")",
 			why:    "the SupportedVersion limitation section names the pinned bundle the controller is built against",
 		},
 		{
-			file:   filepath.Join("..", "..", "docs", "getting-started", "prerequisites.md"),
+			file:   "docs/getting-started/prerequisites.md",
 			needle: "built and tested against the " + consts.BundleVersion + " standard bundle",
 			why:    "the prerequisites page names the tested bundle; SupportedVersion=False fires for any other minor",
 		},
 		{
-			file:   filepath.Join("..", "..", "docs", "getting-started", "prerequisites.md"),
+			file:   "docs/getting-started/prerequisites.md",
 			needle: "apply the " + consts.BundleVersion + " standard bundle",
 			why:    "the prerequisites page tells an operator on an older bundle which one to install",
 		},
 		{
-			file:   filepath.Join("..", "..", "docs", "getting-started", "prerequisites.md"),
+			file:   "docs/getting-started/prerequisites.md",
 			needle: "releases/download/" + consts.BundleVersion + "/standard-install.yaml",
 			why:    "the install command must fetch the same bundle version the controller is built against",
 		},
 		{
-			file:   filepath.Join("..", "..", "README.md"),
+			file:   "README.md",
 			needle: "releases/download/" + consts.BundleVersion + "/standard-install.yaml",
 			why:    "the README quick start must fetch the same bundle version the controller is built against",
 		},
 		{
-			file:   filepath.Join("..", "..", "docs", "index.md"),
+			file:   "docs/index.md",
 			needle: "releases/download/" + consts.BundleVersion + "/standard-install.yaml",
 			why:    "the docs homepage install command must match the built-against bundle",
 		},
 		{
-			file:   filepath.Join("..", "..", "docs", "development", "setup.md"),
+			file:   "docs/development/setup.md",
 			needle: "releases/download/" + consts.BundleVersion + "/standard-install.yaml",
 			why:    "the dev setup install command must match the built-against bundle",
 		},
 		{
-			file:   filepath.Join("..", "..", "docs", "operations", "manual-installation.md"),
+			file:   "docs/operations/manual-installation.md",
 			needle: "releases/download/" + consts.BundleVersion + "/standard-install.yaml",
 			why:    "the manual install command must match the built-against bundle",
 		},
 		{
-			file:   filepath.Join("..", "..", "docs", "reference", "crd-reference.md"),
+			file:   "docs/reference/crd-reference.md",
 			needle: "releases/download/" + consts.BundleVersion + "/standard-install.yaml",
 			why:    "the CRD reference install command must match the built-against bundle",
 		},
 		{
-			file:   filepath.Join("..", "..", "docs", "reference", "helm-chart.md"),
+			file:   "docs/reference/helm-chart.md",
 			needle: "releases/download/" + consts.BundleVersion + "/standard-install.yaml",
 			why:    "the chart reference install command must match the built-against bundle",
 		},
 		{
-			file:   filepath.Join("..", "..", "charts", "cloudflare-tunnel-gateway-controller", "README.md.gotmpl"),
+			file:   "charts/cloudflare-tunnel-gateway-controller/README.md.gotmpl",
 			needle: "releases/download/" + consts.BundleVersion + "/standard-install.yaml",
 			why:    "the chart README template (helm-docs source) must match the built-against bundle",
 		},
 		{
-			file:   filepath.Join("..", "..", "hack", "conformance-setup.sh"),
+			file:   "hack/conformance-setup.sh",
 			needle: "GATEWAY_API_VERSION=\"" + consts.BundleVersion + "\"",
 			why:    "the vendored suite refuses to run against a CRD bundle that differs from consts.BundleVersion",
 		},
@@ -106,55 +108,57 @@ func gatewayAPIDocClaims() []docClaim {
 func TestDocsDoNotReclaimLiftedConformanceSkips(t *testing.T) {
 	t.Parallel()
 
+	root := findRepoRoot(t)
+
 	forbidden := []struct {
 		file   string
 		needle string
 		why    string
 	}{
 		{
-			file:   filepath.Join("..", "..", "docs", "gateway-api", "supported-resources.md"),
+			file:   "docs/gateway-api/supported-resources.md",
 			needle: "stays skipped",
 			why:    "GRPCRouteWeight runs through the injectable suite client as of gateway-api v1.6.0",
 		},
 		{
-			file:   filepath.Join("..", "..", "docs", "gateway-api", "supported-resources.md"),
+			file:   "docs/gateway-api/supported-resources.md",
 			needle: "bypasses the injectable",
 			why:    "the v1.6.0 weight sampler routes through suite.GRPCClient",
 		},
 		{
-			file:   filepath.Join("..", "..", "docs", "gateway-api", "limitations.md"),
+			file:   "docs/gateway-api/limitations.md",
 			needle: "exposes no injection point",
 			why:    "gateway-api v1.6.0 added an injectable WebSocket dialer; the conformance run supplies a tunnel-aware one",
 		},
 		{
-			file:   filepath.Join("..", "..", "docs", "gateway-api", "limitations.md"),
+			file:   "docs/gateway-api/limitations.md",
 			needle: "stays skipped",
 			why:    "HTTPRouteBackendProtocolWebSocket is no longer skipped",
 		},
 		{
-			file:   filepath.Join("..", "..", "docs", "development", "testing.md"),
+			file:   "docs/development/testing.md",
 			needle: "cannot dial through the tunnel",
 			why:    "the conformance gRPC tests dial the Cloudflare edge via the injectable TunnelGRPCClient",
 		},
 		{
-			file:   filepath.Join("..", "..", "docs", "development", "testing.md"),
+			file:   "docs/development/testing.md",
 			needle: "gRPC dialer cannot reach",
 			why:    "the conformance gRPC tests dial the Cloudflare edge via the injectable TunnelGRPCClient",
 		},
 		{
-			file:   filepath.Join("..", "..", "test", "e2e", "e2e_backend_protocol_websocket_test.go"),
+			file:   "test/e2e/e2e_backend_protocol_websocket_test.go",
 			needle: "cannot run",
 			why:    "the conformance WebSocket test runs through the injectable dialer; the e2e is the production-pattern complement, not a substitute",
 		},
 		{
-			file:   filepath.Join("..", "..", "test", "e2e", "e2e_backend_protocol_websocket_test.go"),
+			file:   "test/e2e/e2e_backend_protocol_websocket_test.go",
 			needle: "no RoundTripper hook",
 			why:    "gateway-api v1.6.0 added the WebSocket dialer injection point",
 		},
 	}
 
 	for _, claim := range forbidden {
-		body, err := os.ReadFile(claim.file)
+		body, err := os.ReadFile(filepath.Join(root, claim.file))
 		if err != nil {
 			t.Fatalf("reading %s: %v", claim.file, err)
 		}
@@ -174,10 +178,11 @@ func TestDocsDoNotReclaimLiftedConformanceSkips(t *testing.T) {
 func TestNoRealInfrastructureHostnamesInFixtures(t *testing.T) {
 	t.Parallel()
 
+	repoRoot := findRepoRoot(t)
 	roots := []string{
-		filepath.Join("..", "..", "test"),
-		filepath.Join("..", "..", "internal"),
-		filepath.Join("..", "..", "docs"),
+		filepath.Join(repoRoot, "test"),
+		filepath.Join(repoRoot, "internal"),
+		filepath.Join(repoRoot, "docs"),
 	}
 
 	for _, root := range roots {

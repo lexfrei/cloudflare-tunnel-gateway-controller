@@ -32,12 +32,9 @@ type renovateConfig struct {
 func TestRenovateMatchesPinnedDocClaims(t *testing.T) {
 	t.Parallel()
 
-	managers := loadRenovateManagers(t)
-
-	covered := map[string][]*regexp.Regexp{
-		"sigs.k8s.io/gateway-api":             managers["sigs.k8s.io/gateway-api"],
-		"sigs.k8s.io/gateway-api/conformance": managers["sigs.k8s.io/gateway-api/conformance"],
-	}
+	cfg := parseRenovate(t)
+	managers := loadRenovateManagers(t, cfg)
+	scopes := loadRenovateScopes(t, cfg)
 
 	claims := map[string][]docClaim{
 		"sigs.k8s.io/gateway-api":             gatewayAPIDocClaims(),
@@ -45,16 +42,21 @@ func TestRenovateMatchesPinnedDocClaims(t *testing.T) {
 	}
 
 	for dep, list := range claims {
-		patterns := covered[dep]
-		if len(patterns) == 0 {
+		if len(managers[dep]) == 0 {
 			t.Fatalf("renovate.json has no custom manager for %s", dep)
 		}
 
 		for _, claim := range list {
-			if !anyMatches(patterns, claim.needle) {
+			if !anyMatches(managers[dep], claim.needle) {
 				t.Errorf(
 					"no matchString in the %s custom manager matches %q (pinned in %s) — Renovate would leave that claim stale and the bump PR would be red",
 					dep, claim.needle, claim.file,
+				)
+			}
+			if !anyMatches(scopes[dep], claim.file) {
+				t.Errorf(
+					"%s is outside the %s custom manager's managerFilePatterns, so Renovate never reads it — the regex matching %q there rewrites nothing",
+					claim.file, dep, claim.needle,
 				)
 			}
 		}
@@ -72,8 +74,9 @@ func TestRenovateLeavesForeignVersionsAlone(t *testing.T) {
 	t.Parallel()
 
 	root := findRepoRoot(t)
-	managers := loadRenovateManagers(t)
-	scopes := loadRenovateScopes(t)
+	cfg := parseRenovate(t)
+	managers := loadRenovateManagers(t, cfg)
+	scopes := loadRenovateScopes(t, cfg)
 
 	expected := map[string]string{
 		"sigs.k8s.io/gateway-api":             consts.BundleVersion,
@@ -103,11 +106,11 @@ func TestRenovateLeavesForeignVersionsAlone(t *testing.T) {
 
 // loadRenovateManagers compiles each Gateway API custom manager's matchStrings,
 // keyed by the module it tracks.
-func loadRenovateManagers(t *testing.T) map[string][]*regexp.Regexp {
+func loadRenovateManagers(t *testing.T, cfg renovateConfig) map[string][]*regexp.Regexp {
 	t.Helper()
 
 	compiled := map[string][]*regexp.Regexp{}
-	for _, manager := range parseRenovate(t).CustomManagers {
+	for _, manager := range cfg.CustomManagers {
 		if !strings.HasPrefix(manager.DepNameTemplate, "sigs.k8s.io/gateway-api") {
 			continue
 		}
@@ -125,16 +128,16 @@ func loadRenovateManagers(t *testing.T) map[string][]*regexp.Regexp {
 
 // loadRenovateScopes compiles each Gateway API custom manager's
 // managerFilePatterns, which Renovate writes as /regex/.
-func loadRenovateScopes(t *testing.T) map[string][]*regexp.Regexp {
+func loadRenovateScopes(t *testing.T, cfg renovateConfig) map[string][]*regexp.Regexp {
 	t.Helper()
 
 	compiled := map[string][]*regexp.Regexp{}
-	for _, manager := range parseRenovate(t).CustomManagers {
+	for _, manager := range cfg.CustomManagers {
 		if !strings.HasPrefix(manager.DepNameTemplate, "sigs.k8s.io/gateway-api") {
 			continue
 		}
 		for _, pattern := range manager.ManagerFilePatterns {
-			expr, err := regexp.Compile(strings.Trim(pattern, "/"))
+			expr, err := regexp.Compile(strings.TrimSuffix(strings.TrimPrefix(pattern, "/"), "/"))
 			if err != nil {
 				t.Fatalf("compiling managerFilePattern %q for %s: %v", pattern, manager.DepNameTemplate, err)
 			}
