@@ -122,6 +122,12 @@ helm template test charts/cloudflare-tunnel-gateway-controller --values charts/c
 - `github.com/cloudflare/cloudflare-go/v7` - Cloudflare API client
 - `github.com/cockroachdb/errors` - Error wrapping
 
+### Gateway API bumps
+
+The two Gateway API modules move as one Renovate PR, grouped in `renovate.json`. Two custom managers rewrite the version everywhere a doc or script names it, so the PR arrives with the install commands, `hack/conformance-setup.sh`'s CRD pin, the chart README and the prose in `prerequisites.md` and `limitations.md` already consistent with the vendored module. `internal/docsdrift` asserts both halves of that: every pinned claim is matched by a pattern whose file Renovate actually reads, and no pattern captures a version it does not own — those files also carry historical version mentions that must not move. A grouped bump is automergeable, so it can land without anyone reading it; that is a deliberate maintainer decision, and a minor bump still stops on `internal/controller/gatewayclass_controller_test.go`'s CRD fixture.
+
+`docs/gateway-api/_spec-audit/` is deliberately outside both the guard and the matcher. Every version in those files is either a record of when an audit ran or a claim about what the recorded verdicts cover, and neither is derivable from the vendored tree — automating either would have a bot assert an audit nobody performed. They move by hand when someone reads an upstream release and adds a row to the matrix's refresh section, which means they can sit behind the vendored module in the meantime.
+
 ### Cloudflared Fork
 
 The project uses a fork of cloudflared: `github.com/lexfrei/cloudflared` (via `replace` directive in `go.mod`).
@@ -368,7 +374,7 @@ Before writing any documentation:
 ## Build environment
 
 - **Go version**: tracked in `go.mod` (currently Go 1.27.x). Newer builtins like `new(expr)` are used freely — there is no fallback to `ptr.To` helpers.
-- **gopls quirk**: `gopls` versions older than the project's Go release sometimes flag `new(expr)` as `requires go1.26`. The real compiler accepts it; ignore that specific gopls noise.
+- **gopls quirk**: a `gopls` older than the project's Go release reports valid code as broken, because the construct is newer than that gopls knows about — `new(expr)` (Go 1.26) flagged as `requires go1.26`, and promoted fields of an embedded struct set directly in a composite literal (Go 1.27, e.g. `appsv1.Deployment{Name: …}`) reported as `unknown field`. Both compile: switching the `go` directive to 1.26 is what makes the second one a real error. `go build ./...` is the arbiter; editor diagnostics that disagree with it are noise.
 
 ## Design principles
 
@@ -547,7 +553,7 @@ Always assign a milestone when creating issues. Use the lowest-numbered open `vX
 
 ### Overview
 
-Official Gateway API conformance suite (`sigs.k8s.io/gateway-api/conformance` v1.6.1) runs against a kind cluster with a real Cloudflare Tunnel.
+Official Gateway API conformance suite (`sigs.k8s.io/gateway-api/conformance` v1.6.2) runs against a kind cluster with a real Cloudflare Tunnel.
 
 ### Cloudflare Edge Constraints
 

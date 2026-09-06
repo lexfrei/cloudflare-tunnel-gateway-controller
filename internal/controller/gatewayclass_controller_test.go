@@ -316,7 +316,7 @@ func TestGatewayClassReconciler_SupportedVersion_PatchVersionAccepted(t *testing
 func TestGatewayClassReconciler_SupportedVersion_UnsupportedBundle(t *testing.T) {
 	t.Parallel()
 
-	// v1.5.1 is a different minor than the controller's vendored v1.6.0, so
+	// v1.5.1 is a different minor than the controller's vendored v1.6.2, so
 	// it is not supported and must surface UnsupportedVersion — the
 	// SupportedVersion check matches on major.minor, not "is older".
 	scheme := gatewayClassSchemeWithCRD(t)

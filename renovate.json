@@ -92,6 +92,14 @@
         "github.com/lexfrei/cloudflared"
       ],
       "enabled": false
+    },
+    {
+      "description": "Keep the two Gateway API modules and every doc site that names their versions in one PR. Split across PRs each branch is red on its own: a gomod bump alone leaves the pinned docs stale, and a docs bump alone claims a version the vendored module is not on",
+      "matchPackageNames": [
+        "sigs.k8s.io/gateway-api",
+        "sigs.k8s.io/gateway-api/conformance"
+      ],
+      "groupName": "gateway-api"
     }
   ],
   "customManagers": [
@@ -128,6 +136,44 @@
       "managerFilePatterns": [
         "/^\\.github/workflows/.*\\.ya?ml$/",
         "/^\\.github/actions/.*\\.ya?ml$/"
+      ]
+    },
+    {
+      "customType": "regex",
+      "description": "Update the Gateway API bundle version wherever a doc or script names it. internal/docsdrift/gatewayapiversiondoc_test.go asserts every one of these against consts.BundleVersion in the vendored module, so a gomod bump that leaves them behind fails CI - grouped with the gomod dep by the packageRules entry above so they move in one PR. The go datasource is deliberate: it is the same version stream the gomod manager resolves, whereas repo releases are a separate stream that can list a tag the module proxy does not serve",
+      "matchStrings": [
+        "releases/download/(?<currentValue>v[0-9]+\\.[0-9]+\\.[0-9]+)/standard-install\\.yaml",
+        "GATEWAY_API_VERSION=\"(?<currentValue>v[0-9]+\\.[0-9]+\\.[0-9]+)\"",
+        "Standard channel \\(Gateway API (?<currentValue>v[0-9]+\\.[0-9]+\\.[0-9]+)\\)",
+        "built against (?<currentValue>v[0-9]+\\.[0-9]+\\.[0-9]+)",
+        "apply the (?<currentValue>v[0-9]+\\.[0-9]+\\.[0-9]+) standard bundle"
+      ],
+      "depNameTemplate": "sigs.k8s.io/gateway-api",
+      "datasourceTemplate": "go",
+      "managerFilePatterns": [
+        "/^README\\.md$/",
+        "/^charts/cloudflare-tunnel-gateway-controller/README\\.md$/",
+        "/^charts/cloudflare-tunnel-gateway-controller/README\\.md\\.gotmpl$/",
+        "/^docs/development/setup\\.md$/",
+        "/^docs/gateway-api/limitations\\.md$/",
+        "/^docs/getting-started/prerequisites\\.md$/",
+        "/^docs/index\\.md$/",
+        "/^docs/operations/manual-installation\\.md$/",
+        "/^docs/reference/crd-reference\\.md$/",
+        "/^docs/reference/helm-chart\\.md$/",
+        "/^hack/conformance-setup\\.sh$/"
+      ]
+    },
+    {
+      "customType": "regex",
+      "description": "Update the conformance suite version CLAUDE.md names. sigs.k8s.io/gateway-api/conformance is a nested module with its own release stream, tagged conformance/vX.Y.Z rather than vX.Y.Z, and internal/docsdrift/conformanceversiondoc_test.go compares this claim to that module's require entry in go.mod - so it tracks the module, not the repo's releases",
+      "matchStrings": [
+        "sigs\\.k8s\\.io/gateway-api/conformance` (?<currentValue>v[0-9]+\\.[0-9]+\\.[0-9]+)"
+      ],
+      "depNameTemplate": "sigs.k8s.io/gateway-api/conformance",
+      "datasourceTemplate": "go",
+      "managerFilePatterns": [
+        "/^CLAUDE\\.md$/"
       ]
     }
   ]

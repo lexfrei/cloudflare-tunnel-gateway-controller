@@ -123,7 +123,7 @@ helm uninstall cloudflare-tunnel-gateway-controller \
 The chart installs two CRDs: `GatewayClassConfig` and `ExternalBackend`. Gateway API CRDs must be installed separately:
 
 ```bash
-kubectl apply --filename https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.6.1/standard-install.yaml
+kubectl apply --filename https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.6.2/standard-install.yaml
 ```
 
 ## Components

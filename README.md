@@ -41,7 +41,7 @@ If the tunnel's initial connection to the Cloudflare edge fails (for example, cl
 
 ```bash
 # 1. Install Gateway API CRDs
-kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.6.1/standard-install.yaml
+kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.6.2/standard-install.yaml
 
 # 2. Create credentials Secrets
 kubectl create namespace cloudflare-tunnel-system
