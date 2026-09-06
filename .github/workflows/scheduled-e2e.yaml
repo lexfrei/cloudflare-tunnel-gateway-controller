@@ -31,12 +31,6 @@ jobs:
     permissions:
       contents: read
       issues: write
-    env:
-      CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
-      CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
-      CF_TUNNEL_ID: ${{ secrets.CF_TUNNEL_ID }}
-      CF_TUNNEL_TOKEN: ${{ secrets.CF_TUNNEL_TOKEN }}
-      CF_TUNNEL_HOSTNAME: ${{ secrets.CF_TUNNEL_HOSTNAME }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -47,6 +41,10 @@ jobs:
           go-version: '1.27.1'
           cache: true
 
+      # Built from source rather than downloaded as a release asset: the Go
+      # checksum database then attests the module contents, which a curl of an
+      # unverified binary does not, and which a checksum literal in this file
+      # would only do until the next version bump silently outran it.
       - name: Install kind
         run: |
           set -euo pipefail
@@ -54,23 +52,47 @@ jobs:
           # renovate: datasource=github-releases depName=kubernetes-sigs/kind
           KIND_VERSION="v0.33.0"
 
-          curl --retry 5 --retry-delay 1 -sSLo /tmp/kind \
-            "https://github.com/kubernetes-sigs/kind/releases/download/${KIND_VERSION}/kind-linux-amd64"
-          sudo install /tmp/kind /usr/local/bin/kind
-          kind version
+          # A blip reaching proxy.golang.org would otherwise fail the run and
+          # file a failing-test issue; the e2e retry below covers the suite
+          # steps only.
+          for attempt in 1 2 3; do
+            if go install "sigs.k8s.io/kind@${KIND_VERSION}"; then
+              break
+            fi
+            [[ "${attempt}" -lt 3 ]] || exit 1
+            echo "go install failed (attempt ${attempt}); retrying in 5s..."
+            sleep 5
+          done
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          "$(go env GOPATH)/bin/kind" version
 
       # The setup script builds images, creates a kind cluster, deploys the
       # controller against the live test tunnel, and runs the e2e suite.
       # A failure here can be a transient (registry hiccup, edge blip), so the
       # first attempt is continue-on-error and a full second attempt decides.
+      # The Cloudflare credentials are scoped to these two steps: they are the
+      # only ones that need them, and the toolchain installs above have no
+      # business being able to read them.
       - name: Setup cluster and run e2e (attempt 1)
         id: attempt1
         continue-on-error: true
+        env:
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          CF_TUNNEL_ID: ${{ secrets.CF_TUNNEL_ID }}
+          CF_TUNNEL_TOKEN: ${{ secrets.CF_TUNNEL_TOKEN }}
+          CF_TUNNEL_HOSTNAME: ${{ secrets.CF_TUNNEL_HOSTNAME }}
         run: ./hack/conformance-setup.sh --test-e2e
 
       - name: Setup cluster and run e2e (attempt 2)
         id: attempt2
         if: steps.attempt1.outcome == 'failure'
+        env:
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          CF_TUNNEL_ID: ${{ secrets.CF_TUNNEL_ID }}
+          CF_TUNNEL_TOKEN: ${{ secrets.CF_TUNNEL_TOKEN }}
+          CF_TUNNEL_HOSTNAME: ${{ secrets.CF_TUNNEL_HOSTNAME }}
         run: ./hack/conformance-setup.sh --test-e2e
 
       # continue-on-error reports a failed attempt 1 as a green step, so a
