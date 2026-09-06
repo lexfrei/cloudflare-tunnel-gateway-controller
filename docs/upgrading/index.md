@@ -6,7 +6,7 @@ This section documents version-to-version upgrade paths and the breaking changes
 
 - [v2 → v3](v2-to-v3.md) — the v3 chart collapses to a single L7-proxy data plane, slims the GatewayClassConfig CRD spec, drops the AmneziaWG sidecar, and tightens RBAC.
 - [v3.0 → v3.1](v3-to-v3.1.md) — multi-tenant isolation hardening: data-plane metrics and config-API NetworkPolicy default on, a new `RouteShadowed` condition/Event, and a longer proxy drain window. No CRD or values migration.
-- [v3.4 → v3.5](v3.4-to-v3.5.md) — two isolation fixes that can break a working setup: a dedicated data plane sharing a tunnel across namespaces is now refused (and its proxy removed), and the `X-Original-Host` header is no longer trusted without an opt-in. The `GatewayClassConfig` CRD gains fields, so re-apply it (see [CRD upgrades](#crd-upgrades)); no values migration.
+- [v3.4 → v3.5](v3.4-to-v3.5.md) — changes that can break a working setup, some needing a values edit. `proxy.networkPolicy.enabled` defaults to `true`, so a scraper sharing the release namespace loses the proxy's `/metrics` after the upgrade even on an install that never set the key; and a values file with `networkPolicy.enabled: true` and `networkPolicy.cloudflareIpRanges` emptied now [stops the render](v3.4-to-v3.5.md#change-that-can-break-an-emptied-cloudflareipranges-stops-the-render). The `GatewayClassConfig` CRD also needs a one-time re-apply (see [CRD upgrades](#crd-upgrades)).
 
 ## Conventions
 
