@@ -547,7 +547,7 @@ Always assign a milestone when creating issues. Use the lowest-numbered open `vX
 
 ### Overview
 
-Official Gateway API conformance suite (`sigs.k8s.io/gateway-api/conformance` v1.6.1) runs against a kind cluster with a real Cloudflare Tunnel.
+Official Gateway API conformance suite (`sigs.k8s.io/gateway-api/conformance` v1.6.2) runs against a kind cluster with a real Cloudflare Tunnel.
 
 ### Cloudflare Edge Constraints
 

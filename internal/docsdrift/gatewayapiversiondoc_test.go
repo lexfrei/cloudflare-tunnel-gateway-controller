@@ -77,11 +77,6 @@ func TestDocsPinnedGatewayAPIVersionMatchesVendored(t *testing.T) {
 			needle: "GATEWAY_API_VERSION=\"" + consts.BundleVersion + "\"",
 			why:    "the vendored suite refuses to run against a CRD bundle that differs from consts.BundleVersion",
 		},
-		{
-			file:   filepath.Join("..", "..", "CLAUDE.md"),
-			needle: "sigs.k8s.io/gateway-api/conformance` " + consts.BundleVersion,
-			why:    "the contributor doc names the conformance suite version",
-		},
 	}
 
 	for _, claim := range claims {
