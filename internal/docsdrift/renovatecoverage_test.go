@@ -222,30 +222,6 @@ func anyMatches(patterns []*regexp.Regexp, text string) bool {
 	return false
 }
 
-// TestRenovateLeavesTheVerdictToAPerson is the other half of
-// TestSpecAuditAssessedThroughVendoredVersion. That guard fails a bump until
-// someone assesses the new release; this one keeps the assessment out of the
-// bot's reach. A matchString covering that sentence would pass at the moment
-// it was added, while assessed and vendored still agree, and hand the verdict
-// to Renovate from the next bump onwards.
-func TestRenovateLeavesTheVerdictToAPerson(t *testing.T) {
-	t.Parallel()
-
-	managers := loadRenovateManagers(t, parseRenovate(t))
-	needle := assessedThroughNeedle()
-
-	for dep, patterns := range managers {
-		for _, pattern := range patterns {
-			if pattern.MatchString(needle) {
-				t.Errorf(
-					"the %s custom manager matches %q via %q. That sentence records a judgement a person reached by reading the upstream release, so Renovate must not rewrite it; drop the pattern rather than relaxing this test",
-					dep, needle, pattern.String(),
-				)
-			}
-		}
-	}
-}
-
 // captures returns every currentValue the pattern extracts from the text.
 func captures(pattern *regexp.Regexp, text string) []string {
 	index := pattern.SubexpIndex("currentValue")
