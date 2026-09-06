@@ -368,7 +368,7 @@ Before writing any documentation:
 ## Build environment
 
 - **Go version**: tracked in `go.mod` (currently Go 1.27.x). Newer builtins like `new(expr)` are used freely — there is no fallback to `ptr.To` helpers.
-- **gopls quirk**: a `gopls` older than the project's Go release reports valid code as broken in two forms seen so far — `new(expr)` flagged as `requires go1.26`, and promoted fields of an embedded struct set directly in a composite literal reported as unknown fields. The real compiler accepts both. `go build ./...` is the arbiter; editor diagnostics that disagree with it are noise.
+- **gopls quirk**: a `gopls` older than the project's Go release reports valid code as broken, because the construct is newer than that gopls knows about — `new(expr)` (Go 1.26) flagged as `requires go1.26`, and promoted fields of an embedded struct set directly in a composite literal (Go 1.27, e.g. `appsv1.Deployment{Name: …}`) reported as `unknown field`. Both compile: switching the `go` directive to 1.26 is what makes the second one a real error. `go build ./...` is the arbiter; editor diagnostics that disagree with it are noise.
 
 ## Design principles
 

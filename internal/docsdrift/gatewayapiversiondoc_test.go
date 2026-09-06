@@ -228,12 +228,10 @@ func TestNoRealInfrastructureHostnamesInFixtures(t *testing.T) {
 func TestSpecAuditAssessedThroughVendoredVersion(t *testing.T) {
 	t.Parallel()
 
-	const file = "docs/gateway-api/_spec-audit/00-compliance-matrix.md"
-
-	needle := "The verdicts below were assessed through " + consts.BundleVersion + "."
-	body, err := os.ReadFile(filepath.Join(findRepoRoot(t), file))
+	needle := assessedThroughNeedle()
+	body, err := os.ReadFile(filepath.Join(findRepoRoot(t), specAuditMatrixFile))
 	if err != nil {
-		t.Fatalf("reading %s: %v", file, err)
+		t.Fatalf("reading %s: %v", specAuditMatrixFile, err)
 	}
 
 	if !strings.Contains(string(body), needle) {
@@ -241,7 +239,16 @@ func TestSpecAuditAssessedThroughVendoredVersion(t *testing.T) {
 			"%s does not say %q. The vendored Gateway API is now %s and nothing has recorded what its normative surface did to the verdicts below. "+
 				"Read the upstream tag diff, add a row to the refresh section saying what changed and which audit rows move, then update this sentence. "+
 				"Editing the sentence alone makes the matrix assert an audit that did not happen.",
-			file, needle, consts.BundleVersion,
+			specAuditMatrixFile, needle, consts.BundleVersion,
 		)
 	}
+}
+
+// specAuditMatrixFile is the compliance matrix, repo-relative.
+const specAuditMatrixFile = "docs/gateway-api/_spec-audit/00-compliance-matrix.md"
+
+// assessedThroughNeedle is the matrix sentence a person owns.
+// TestRenovateLeavesTheVerdictToAPerson asserts no matcher pattern reaches it.
+func assessedThroughNeedle() string {
+	return "The verdicts below were assessed through " + consts.BundleVersion + "."
 }
