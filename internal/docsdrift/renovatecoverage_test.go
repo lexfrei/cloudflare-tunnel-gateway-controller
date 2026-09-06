@@ -127,7 +127,8 @@ func loadRenovateManagers(t *testing.T, cfg renovateConfig) map[string][]*regexp
 }
 
 // loadRenovateScopes compiles each Gateway API custom manager's
-// managerFilePatterns, which Renovate writes as /regex/.
+// managerFilePatterns. It assumes the /regex/ form every current entry uses;
+// a glob entry would fail to compile here rather than scope silently.
 func loadRenovateScopes(t *testing.T, cfg renovateConfig) map[string][]*regexp.Regexp {
 	t.Helper()
 

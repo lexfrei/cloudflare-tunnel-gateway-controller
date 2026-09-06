@@ -146,10 +146,7 @@
         "GATEWAY_API_VERSION=\"(?<currentValue>v[0-9]+\\.[0-9]+\\.[0-9]+)\"",
         "Standard channel \\(Gateway API (?<currentValue>v[0-9]+\\.[0-9]+\\.[0-9]+)\\)",
         "built and tested against (?<currentValue>v[0-9]+\\.[0-9]+\\.[0-9]+)",
-        "apply the (?<currentValue>v[0-9]+\\.[0-9]+\\.[0-9]+) standard bundle",
-        "# Gateway API (?<currentValue>v[0-9]+\\.[0-9]+\\.[0-9]+) spec compliance matrix",
-        "sigs\\.k8s\\.io/gateway-api (?<currentValue>v[0-9]+\\.[0-9]+\\.[0-9]+)` Standard channel",
-        "vendored baseline is now (?<currentValue>v[0-9]+\\.[0-9]+\\.[0-9]+)"
+        "apply the (?<currentValue>v[0-9]+\\.[0-9]+\\.[0-9]+) standard bundle"
       ],
       "depNameTemplate": "sigs.k8s.io/gateway-api",
       "datasourceTemplate": "go",
@@ -158,7 +155,6 @@
         "/^charts/cloudflare-tunnel-gateway-controller/README\\.md$/",
         "/^charts/cloudflare-tunnel-gateway-controller/README\\.md\\.gotmpl$/",
         "/^docs/development/setup\\.md$/",
-        "/^docs/gateway-api/_spec-audit/00-compliance-matrix\\.md$/",
         "/^docs/gateway-api/limitations\\.md$/",
         "/^docs/getting-started/prerequisites\\.md$/",
         "/^docs/index\\.md$/",

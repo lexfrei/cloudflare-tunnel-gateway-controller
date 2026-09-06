@@ -1,6 +1,6 @@
 # Gateway API v1.6.2 spec compliance matrix
 
-Clause-by-clause audit of the implementation against the normative (RFC-2119) surface of the vendored `sigs.k8s.io/gateway-api v1.6.2` Standard channel. The full clause extraction and adversarial verification were performed at v1.5.1; the audit was then refreshed against the verified v1.5.1 → v1.6.0 tag diff (see "Baseline refreshes since v1.5.1" below) — v1.6.1 followed as a conformance/test-infrastructure-only patch release with no API or CRD changes (upstream v1.6.1 release notes) and v1.6.2 changed one godoc support level without touching the normative surface, so the v1.6.0 clause diff still covers the currently-vendored baseline. This is the deliverable the closed audit issue asked for: every implemented resource's normative clauses classified honoured / justified-deviation / violated, with code evidence.
+Clause-by-clause audit of the implementation against the normative (RFC-2119) surface of the vendored `sigs.k8s.io/gateway-api v1.6.2` Standard channel. The full clause extraction and adversarial verification were performed at v1.5.1; the audit was then refreshed against the verified v1.5.1 → v1.6.0 tag diff (see "Baseline refreshes since v1.5.1" below) — v1.6.1 followed as a conformance/test-infrastructure-only patch release with no API or CRD changes (upstream v1.6.1 release notes) and v1.6.2 changed one godoc support level without touching the normative surface, so the v1.6.0 clause diff still covers every release absorbed here. Like its `rows-*.md` siblings, this file records an audit performed at a stated version rather than tracking whatever is vendored today: the version above moves when someone reads the next tag diff and adds a row below, never as a side effect of a dependency bump. This is the deliverable the closed audit issue asked for: every implemented resource's normative clauses classified honoured / justified-deviation / violated, with code evidence.
 
 ## Method
 
@@ -25,7 +25,7 @@ Conformance ground truth (v1.5.1 run): 76 top-level subtests PASS, 54 SKIP (docu
 
 ## Baseline refreshes since v1.5.1
 
-The v1.6.0 baseline bump was audited against the verified upstream tag diff; v1.6.1 followed as a conformance/test-infrastructure-only patch (upstream v1.6.1 release notes: TCPRoute/UDPRoute conformance timeout and flake fixes, no API or CRD changes), and v1.6.2 followed with a single godoc support-level change (below), so the vendored baseline is now v1.6.2 but every verdict below still applies unchanged. Every delta below cites the upstream PR; pre-existing verdicts stand unless a row carries an explicit v1.6.0 note.
+The v1.6.0 baseline bump was audited against the verified upstream tag diff; v1.6.1 followed as a conformance/test-infrastructure-only patch (upstream v1.6.1 release notes: TCPRoute/UDPRoute conformance timeout and flake fixes, no API or CRD changes), and v1.6.2 followed with a single godoc support-level change (below). Every delta below cites the upstream PR; pre-existing verdicts stand unless a row carries an explicit v1.6.0 note.
 
 | Delta | Upstream PR | Classification | Where it landed |
 | --- | --- | --- | --- |

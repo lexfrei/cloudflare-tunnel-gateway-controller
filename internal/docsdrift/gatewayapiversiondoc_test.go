@@ -38,21 +38,6 @@ func TestDocsPinnedGatewayAPIVersionMatchesVendored(t *testing.T) {
 func gatewayAPIDocClaims() []docClaim {
 	return []docClaim{
 		{
-			file:   "docs/gateway-api/_spec-audit/00-compliance-matrix.md",
-			needle: "# Gateway API " + consts.BundleVersion + " spec compliance matrix",
-			why:    "the matrix title claims which baseline the audit currently covers; its rows-*.md siblings record when each was audited and stay put",
-		},
-		{
-			file:   "docs/gateway-api/_spec-audit/00-compliance-matrix.md",
-			needle: "sigs.k8s.io/gateway-api " + consts.BundleVersion + "` Standard channel",
-			why:    "the matrix names the vendored module the verdicts below are asserted against",
-		},
-		{
-			file:   "docs/gateway-api/_spec-audit/00-compliance-matrix.md",
-			needle: "vendored baseline is now " + consts.BundleVersion,
-			why:    "the refresh section states which baseline the unchanged verdicts currently apply to",
-		},
-		{
 			file:   "docs/gateway-api/limitations.md",
 			needle: "Standard channel (Gateway API " + consts.BundleVersion + ")",
 			why:    "the SupportedVersion limitation section names the pinned bundle the controller is built against",
