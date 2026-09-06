@@ -44,8 +44,8 @@ func gatewayAPIDocClaims() []docClaim {
 		},
 		{
 			file:   "docs/getting-started/prerequisites.md",
-			needle: "built and tested against " + consts.BundleVersion + ",",
-			why:    "the prerequisites page names the tested bundle; SupportedVersion=False fires for any other minor",
+			needle: "built against " + consts.BundleVersion + ",",
+			why:    "the prerequisites page names the bundle the controller is built against; SupportedVersion=False fires for any other minor",
 		},
 		{
 			file:   "docs/getting-started/prerequisites.md",
