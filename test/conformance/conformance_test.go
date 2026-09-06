@@ -83,7 +83,7 @@ func TestGatewayAPIConformance(t *testing.T) {
 		features.SupportHTTPRouteRequestPercentageMirror,
 		// BackendTLSPolicy (+ its SAN-validation and
 		// GatewayBackendClientCertificate siblings) is implemented but NOT
-		// claimed for conformance. Every one of its v1.6.1 tests is gated on
+		// claimed for conformance. Every one of its tests is gated on
 		// SupportBackendTLSPolicy, whose parent "BackendTLSPolicy" test needs an
 		// in-cluster HTTPS listener for the Re-encrypt case that edge-terminated
 		// TLS cannot provide. Per gateway-api maintainer guidance, a feature
