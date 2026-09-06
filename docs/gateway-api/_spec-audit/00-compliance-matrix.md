@@ -1,6 +1,6 @@
-# Gateway API v1.6.1 spec compliance matrix
+# Gateway API v1.6.2 spec compliance matrix
 
-Clause-by-clause audit of the implementation against the normative (RFC-2119) surface of the vendored `sigs.k8s.io/gateway-api v1.6.1` Standard channel. The full clause extraction and adversarial verification were performed at v1.5.1; the audit was then refreshed against the verified v1.5.1 → v1.6.0 tag diff (see "v1.5.1 → v1.6.1 refresh" below) — v1.6.1 followed as a conformance/test-infrastructure-only patch release with no API or CRD changes (upstream v1.6.1 release notes), so the v1.6.0 clause diff still covers the currently-vendored baseline. This is the deliverable the closed audit issue asked for: every implemented resource's normative clauses classified honoured / justified-deviation / violated, with code evidence.
+Clause-by-clause audit of the implementation against the normative (RFC-2119) surface of the vendored `sigs.k8s.io/gateway-api v1.6.2` Standard channel. The full clause extraction and adversarial verification were performed at v1.5.1; the audit was then refreshed against the verified v1.5.1 → v1.6.0 tag diff (see "v1.5.1 → v1.6.1 refresh" below) — v1.6.1 followed as a conformance/test-infrastructure-only patch release with no API or CRD changes (upstream v1.6.1 release notes) and v1.6.2 changed one godoc support level without touching the normative surface, so the v1.6.0 clause diff still covers the currently-vendored baseline. This is the deliverable the closed audit issue asked for: every implemented resource's normative clauses classified honoured / justified-deviation / violated, with code evidence.
 
 ## Method
 
@@ -25,7 +25,7 @@ Conformance ground truth (v1.5.1 run): 76 top-level subtests PASS, 54 SKIP (docu
 
 ## v1.5.1 → v1.6.1 refresh
 
-The v1.6.0 baseline bump was audited against the verified upstream tag diff; v1.6.1 followed as a conformance/test-infrastructure-only patch (upstream v1.6.1 release notes: TCPRoute/UDPRoute conformance timeout and flake fixes, no API or CRD changes), so the vendored baseline is now v1.6.1 but every verdict below still applies unchanged. Every delta below cites the upstream PR; pre-existing verdicts stand unless a row carries an explicit v1.6.0 note.
+The v1.6.0 baseline bump was audited against the verified upstream tag diff; v1.6.1 followed as a conformance/test-infrastructure-only patch (upstream v1.6.1 release notes: TCPRoute/UDPRoute conformance timeout and flake fixes, no API or CRD changes), and v1.6.2 followed with a single godoc support-level change (below), so the vendored baseline is now v1.6.2 but every verdict below still applies unchanged. Every delta below cites the upstream PR; pre-existing verdicts stand unless a row carries an explicit v1.6.0 note.
 
 | Delta | Upstream PR | Classification | Where it landed |
 | --- | --- | --- | --- |
@@ -38,6 +38,7 @@ The v1.6.0 baseline bump was audited against the verified upstream tag diff; v1.
 | `SessionPersistence.IdleTimeout` removed from the Go API | kubernetes-sigs/gateway-api#4771 | Experimental feature; SessionPersistence is unimplemented here and no audit row referenced IdleTimeout (SH-77 covers SessionName only). | No row change. |
 | HTTPRoute Standard schema: NO changes | kubernetes-sigs/gateway-api#4639 (CORS repeated-filter CEL was already in v1.5.1), #4907 (retry validation is experimental-only; the Standard HTTPRoute CRD has no `retry` field in v1.6.0) | HR verdicts stand, including the HR-26..HR-39 retry N/A block. | `rows-HR.md` header note. |
 | GRPCRoute / GatewayClass: doc-only changes | (tag diff) | No normative delta; verdicts stand. | No row change. |
+| `HTTPRequestRedirectFilter.statusCode` support retiered: 301 and 302 Core, the other enum values Extended | (v1.6.2 tag diff) | Support-level reclassification only. The added godoc carries no RFC-2119 keyword and the `Enum=301;302;303;307;308` validation is unchanged, so no clause enters or leaves the inventory. No row cites redirect `statusCode` — every `statusCode` row is `HTTPRouteRetryStatusCode` in the retry N/A block. | No row change. |
 | Well-known labels for generated resources (GEP-1762) | kubernetes-sigs/gateway-api#4705 | Informational — `apis/v1/well_known_labels.go` adds `gateway.networking.k8s.io/gateway-name` / `gateway-class-name` constants with lowercase must/should godoc (non-normative per the RFC-8174 caveat). Implemented: the per-Gateway rendered plane stamps both well-known keys on every rendered resource's metadata (`internal/render/render.go` `resourceLabels`) in addition to its own selector label (`cf.k8s.lex.la/gateway`); the Deployment selector itself stays controller-specific. | `02-gep-notes.md` GEP-16. |
 
 ## Adversarial verification: 25 first-pass GAPs → final verdicts
