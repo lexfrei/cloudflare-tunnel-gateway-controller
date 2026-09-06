@@ -1,6 +1,6 @@
 # Spec clause inventory (Phase 1)
 
-Raw extraction of RFC-2119 keyword occurrences from the godoc of vendored `sigs.k8s.io/gateway-api v1.6.1` (`vendor/sigs.k8s.io/gateway-api/apis/`). This is the field-level normative source. Cross-cutting GEP/concept requirements (routing precedence narrative, policy attachment, status state machine) are collected separately in Phase 2.
+Raw extraction of RFC-2119 keyword occurrences from the godoc of `sigs.k8s.io/gateway-api v1.6.1` (`vendor/sigs.k8s.io/gateway-api/apis/`). This is the field-level normative source. Cross-cutting GEP/concept requirements (routing precedence narrative, policy attachment, status state machine) are collected separately in Phase 2.
 
 Provenance: the extraction was performed at v1.5.1 and refreshed for the v1.5.1 → v1.6.0 tag diff (see `00-compliance-matrix.md`, "Baseline refreshes since v1.5.1"). The delta review confirmed the normative text of pre-existing rows is unchanged at v1.6.0 except where a row carries an explicit v1.6.0 note; `file:line` references of unchanged rows were captured at v1.5.1 and may drift by a few lines in the v1.6.0 vendor tree — only new or changed rows are re-pinned at v1.6.0.
 

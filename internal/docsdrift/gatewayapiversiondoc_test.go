@@ -38,6 +38,16 @@ func TestDocsPinnedGatewayAPIVersionMatchesVendored(t *testing.T) {
 func gatewayAPIDocClaims() []docClaim {
 	return []docClaim{
 		{
+			file:   "docs/gateway-api/_spec-audit/00-compliance-matrix.md",
+			needle: "# Gateway API " + consts.BundleVersion + " spec compliance matrix",
+			why:    "the matrix title names the module version it is the matrix for, which is a fact about the tree",
+		},
+		{
+			file:   "docs/gateway-api/_spec-audit/00-compliance-matrix.md",
+			needle: "sigs.k8s.io/gateway-api " + consts.BundleVersion + "` Standard channel",
+			why:    "the matrix names the module whose normative surface the clauses were extracted from",
+		},
+		{
 			file:   "docs/gateway-api/limitations.md",
 			needle: "Standard channel (Gateway API " + consts.BundleVersion + ")",
 			why:    "the SupportedVersion limitation section names the pinned bundle the controller is built against",
@@ -204,5 +214,34 @@ func TestNoRealInfrastructureHostnamesInFixtures(t *testing.T) {
 		if err != nil {
 			t.Fatalf("walking %s: %v", root, err)
 		}
+	}
+}
+
+// TestSpecAuditAssessedThroughVendoredVersion pins the one claim in the
+// compliance matrix that no bot may author. The others say which module
+// version the matrix is for, which is a fact Renovate can rewrite from the
+// vendored tree; this one says the verdicts were assessed against that
+// release's normative surface, which is a judgement someone reached by
+// reading the tag diff. It is deliberately absent from renovate.json, so a
+// Gateway API bump arrives red here and is not automergeable until the
+// assessment is done. That is the intended cost.
+func TestSpecAuditAssessedThroughVendoredVersion(t *testing.T) {
+	t.Parallel()
+
+	const file = "docs/gateway-api/_spec-audit/00-compliance-matrix.md"
+
+	needle := "The verdicts below were assessed through " + consts.BundleVersion + "."
+	body, err := os.ReadFile(filepath.Join(findRepoRoot(t), file))
+	if err != nil {
+		t.Fatalf("reading %s: %v", file, err)
+	}
+
+	if !strings.Contains(string(body), needle) {
+		t.Errorf(
+			"%s does not say %q. The vendored Gateway API is now %s and nothing has recorded what its normative surface did to the verdicts below. "+
+				"Read the upstream tag diff, add a row to the refresh section saying what changed and which audit rows move, then update this sentence. "+
+				"Editing the sentence alone makes the matrix assert an audit that did not happen.",
+			file, needle, consts.BundleVersion,
+		)
 	}
 }
