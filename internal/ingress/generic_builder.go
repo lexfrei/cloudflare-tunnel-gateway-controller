@@ -109,10 +109,14 @@ func (b *GenericBuilder[R]) Build(ctx context.Context, routes []R) BuildResult {
 
 	var failedRefs []BackendRefError
 
+	rulesByNamespace := make(map[string]int, len(routes))
+
 	for i := range routes {
+		namespace, _ := b.adapter.GetMeta(&routes[i])
 		routeEntries, routeFailedRefs := extractProjectedEntries(ctx, b.adapter, &routes[i], resolver)
 		entries = append(entries, routeEntries...)
 		failedRefs = append(failedRefs, routeFailedRefs...)
+		rulesByNamespace[namespace] += countIngressBearing(routeEntries)
 	}
 
 	sortRouteEntries(entries)
@@ -130,9 +134,26 @@ func (b *GenericBuilder[R]) Build(ctx context.Context, routes []R) BuildResult {
 	}
 
 	return BuildResult{
-		Rules:      rules,
-		FailedRefs: failedRefs,
+		Rules:            rules,
+		FailedRefs:       failedRefs,
+		RulesByNamespace: rulesByNamespace,
 	}
+}
+
+// countIngressBearing counts the entries that survive into the tunnel
+// document. Wildcard-hostname entries do not — entriesToIngressRules drops
+// them, since the proxy matches those itself — so counting them would
+// overstate a namespace's share of the rule budget.
+func countIngressBearing(entries []routeEntry) int {
+	count := 0
+
+	for _, entry := range entries {
+		if entry.hostname != "*" {
+			count++
+		}
+	}
+
+	return count
 }
 
 // entriesToIngressRules converts sorted route entries into Cloudflare ingress rules.

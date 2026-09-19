@@ -77,6 +77,16 @@ By default all Gateways of the class share one proxy process and one Cloudflare 
 
 A consequence of the shared tunnel: two Gateways of the same class share one edge address (the tunnel CNAME), so a route bound to one Gateway is reachable through the other's address for any hostname+path they both answer. Routing is by hostname and path, not by which Gateway the request nominally targeted — there is no per-Gateway signal on the wire. If you need a route reachable through only one Gateway's address, give that Gateway a dedicated data plane (its own tunnel) via `spec.infrastructure.parametersRef`. This is why the Gateway API conformance test `HTTPRouteMultipleGateways` is not run against the shared plane.
 
+## Cloudflare ingress-rule budget is per tunnel
+
+A Cloudflare Tunnel holds at most 1000 ingress rules, and the tunnel configuration endpoint is a whole-document update, so that budget is shared by every namespace whose routes land on the tunnel. The document carries one rule per (route rule x hostname x path match), so the ceiling is reached in hostname and path combinations rather than in routes: one route with 40 hostnames and 26 path matches contributes 1040 of them.
+
+When the document would exceed the cap, the controller refuses to write it rather than truncating it, and the refusal covers the whole document. The boundary that matters: **no new hostname on that tunnel can be programmed until it is back under the cap**, for every namespace on the tunnel and not only the one that grew, because the edge does not route a hostname absent from the tunnel's configuration. Hostnames already in the deployed document keep serving, and the in-cluster proxy keeps receiving configuration updates; what is frozen is the edge-side document. Every route on the tunnel reports `Accepted=False` with `Reason=Pending` while that lasts.
+
+The controller log names the per-namespace rule counts for the affected tunnel (the `rules_by_namespace` field), so an operator can see whose routes filled the budget. The route-status message deliberately does not: it is readable by each route's owner, and a per-namespace breakdown would disclose the namespaces and relative sizes of that tenant's neighbours.
+
+A dedicated data plane removes the shared fate — it runs on its own tunnel with its own budget. See [Per-Gateway Isolation](../guides/per-gateway-isolation.md).
+
 ## SSL Certificate Limitations
 
 Cloudflare's free [Universal SSL](https://developers.cloudflare.com/ssl/edge-certificates/universal-ssl/limitations/) certificates only cover root and first-level subdomains:

@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"maps"
 	"slices"
 	"strings"
 	"sync"
@@ -1440,12 +1441,21 @@ func (s *RouteSyncer) syncTunnelGroup(
 	result.ruleCount = len(finalRules)
 
 	if len(finalRules) > maxIngressRules {
-		logger.Error("ingress rules limit exceeded",
-			"tunnel", group.resolved.TunnelID, "count", len(finalRules), "max", maxIngressRules)
+		// The cap applies to the whole document, and the document is written
+		// as a whole, so one namespace crossing it freezes the configuration
+		// of every namespace on this tunnel. The operator log is where that
+		// gets attributed; the returned error reaches tenant-readable route
+		// status and must not name anyone.
+		logger.Error("ingress rule budget exhausted: the whole document is refused, "+
+			"so no route on this tunnel can be programmed until it is back under the cap",
+			"tunnel", group.resolved.TunnelID,
+			"count", len(finalRules),
+			"max", maxIngressRules,
+			"rules_by_namespace", ingressRuleAttribution(httpBuild.RulesByNamespace, grpcBuild.RulesByNamespace),
+		)
 		s.Metrics.RecordSyncError(ctx, "limit_exceeded")
 
-		result.err = errors.Newf("ingress rules limit exceeded for tunnel %s: %d rules (max %d)",
-			group.resolved.TunnelID, len(finalRules), maxIngressRules)
+		result.err = errRuleBudgetExhausted(group.resolved.TunnelID)
 
 		return result
 	}
@@ -1744,6 +1754,62 @@ func (s *RouteSyncer) evaluateHostnameOwnership(
 	}
 
 	return s.HostnameOwnership.Evaluate(namespace.Labels, hostnames)
+}
+
+// ruleAttributionLimit caps how many namespaces the attribution names, so a
+// cluster with hundreds of tenants cannot turn one log line into a page.
+const ruleAttributionLimit = 10
+
+// ingressRuleAttribution renders the per-namespace rule counts of one tunnel's
+// document, largest share first, for the OPERATOR log. Ties break on name so
+// the line is stable across reconciles and diffable between them.
+func ingressRuleAttribution(counts ...map[string]int) string {
+	merged := make(map[string]int)
+
+	for _, perBuilder := range counts {
+		for namespace, count := range perBuilder {
+			merged[namespace] += count
+		}
+	}
+
+	if len(merged) == 0 {
+		return ""
+	}
+
+	namespaces := slices.Sorted(maps.Keys(merged))
+	slices.SortStableFunc(namespaces, func(left, right string) int {
+		return cmp.Compare(merged[right], merged[left])
+	})
+
+	shown := min(len(namespaces), ruleAttributionLimit)
+
+	parts := make([]string, 0, shown)
+	for _, namespace := range namespaces[:shown] {
+		parts = append(parts, fmt.Sprintf("%s=%d", namespace, merged[namespace]))
+	}
+
+	rendered := strings.Join(parts, ",")
+	if len(namespaces) > shown {
+		rendered += fmt.Sprintf(",+%d more", len(namespaces)-shown)
+	}
+
+	return rendered
+}
+
+// errRuleBudgetExhausted is the TENANT-facing form of the same failure. It
+// becomes the Accepted=False message on every route on the tunnel, and a
+// route's status is readable by whoever owns that route, so it names no
+// namespace and carries no count from which one tenant could infer another's
+// share. What it does carry is the one thing the reader can act on.
+//
+//nolint:wrapcheck // errors.Newf creates the error, there is nothing to wrap
+func errRuleBudgetExhausted(tunnelID string) error {
+	return errors.Newf(
+		"tunnel %s has reached the Cloudflare limit on ingress rules, so its configuration is frozen: "+
+			"no new hostname on this tunnel can be programmed until it is back under the limit. "+
+			"Move this Gateway to a dedicated data plane on its own tunnel, or ask the operator to "+
+			"reduce the rules on this one",
+		tunnelID)
 }
 
 // sortIngressRules sorts ingress rules: specific hostnames alphabetically first,

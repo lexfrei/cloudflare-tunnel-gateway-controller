@@ -183,6 +183,7 @@ The L7 proxy handles routing for every tunnel request, so most Gateway API behav
 - A match pattern the proxy cannot compile drops its own rule, reported on the route that carries it; other rules and other routes keep serving.
 - `RequestMirror` copies are dropped once a filter is at its in-flight dispatch cap, so a mirror backend that stops answering cannot grow the proxy's memory with request rate.
 - `HTTPRouteRule.name` uniqueness is not enforced at admission; an opt-in `ValidatingAdmissionPolicy` (`ruleNameUniquenessPolicy` Helm value) enforces it on Kubernetes 1.30+.
+- A Cloudflare Tunnel holds at most 1000 ingress rules, counted per hostname and path match rather than per route and shared by every namespace on that tunnel; while the budget is exceeded, no new hostname on the tunnel can be programmed.
 - Knative Serving via `net-gateway-api` needs a split-horizon setup — see the [Knative Serving guide](https://cf.k8s.lex.la/latest/guides/knative-serving/) — because its readiness prober dials the Gateway's tunnel address directly, which is not reachable in-cluster.
 
 The proxy can emit a structured per-request access log via `proxy.accessLog.enabled: true`. See [Access Logging](https://cf.k8s.lex.la/latest/operations/access-logging/).
