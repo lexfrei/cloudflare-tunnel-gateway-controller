@@ -30,10 +30,20 @@ spec:
   matchConstraints:
     resourceRules:
       - apiGroups: ["gateway.networking.k8s.io"]
-        # Wildcard on purpose: the route CRDs serve multiple versions (v1 AND
-        # v1beta1 for httproutes in gateway-api v1.6.0). Pinning a version
-        # list would let a write through any unlisted served version bypass
-        # this policy entirely.
+        # Broader than matching needs: matchConstraints defaults to
+        # matchPolicy Equivalent, so naming a single served version would
+        # draw exactly the same writes. Kept as a wildcard anyway -- this is
+        # a fail-closed control, and narrowing what it matches is a change
+        # that deserves its own reasoning rather than a pass for consistency
+        # with the rule-name policy next door.
+        #
+        # What the wildcard does not change is the object the validations
+        # see. The route CRDs convert with strategy None, which rewrites
+        # apiVersion and leaves every other field alone, so CEL always
+        # evaluates what the client sent whichever form this rule takes.
+        # That is safe here because the second validation requires
+        # spec.hostnames to be present and non-empty, so a route version
+        # lacking the field is denied rather than admitted.
         apiVersions: ["*"]
         operations: ["CREATE", "UPDATE"]
         resources: ["httproutes", "grpcroutes"]

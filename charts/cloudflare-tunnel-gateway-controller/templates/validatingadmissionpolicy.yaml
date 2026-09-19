@@ -16,7 +16,16 @@ spec:
   matchConstraints:
     resourceRules:
       - apiGroups: ["gateway.networking.k8s.io"]
-        apiVersions: ["v1", "v1alpha2"]
+        # Naming v1 alone still covers a write made through any other served
+        # version, v1beta1 HTTPRoute included: matchConstraints defaults to
+        # matchPolicy Equivalent, so the apiserver relabels such a write into
+        # a listed version before the policy runs, and the route CRDs convert
+        # with strategy None, so that relabelling cannot fail.
+        #
+        # The conversion is a relabel, not a normalisation: strategy None
+        # rewrites apiVersion and leaves every other field alone, so the CEL
+        # below evaluates the object exactly as the client sent it.
+        apiVersions: ["v1"]
         operations: ["CREATE", "UPDATE"]
         resources: ["httproutes", "grpcroutes"]
   validations:
