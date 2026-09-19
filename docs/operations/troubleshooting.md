@@ -181,7 +181,7 @@ kubectl logs --namespace cloudflare-tunnel-system \
 **Solution**: if the retry log line keeps repeating well past the time the underlying network issue should have cleared (DNS, egress to the Cloudflare edge), check the error text on each attempt:
 
 - A DNS/dial/edge-unreachable error clears on its own once connectivity is restored — no action needed.
-- The same error persisting for many minutes with no change usually means the tunnel token itself is invalid or was revoked in the Cloudflare Zero Trust Dashboard. A malformed token (fails to decode) makes the pod exit immediately instead of retrying; a well-formed but rejected token retries indefinitely, because the proxy cannot reliably distinguish "the edge rejected this token" from "the edge is temporarily unreachable" from the error alone. Regenerate the connector token and update `proxy.tunnelTokenSecretRef` if this is the case.
+- The same error persisting for many minutes with no change usually means the tunnel token itself is invalid or was revoked in the Cloudflare Zero Trust Dashboard. A malformed token (fails to decode) makes the pod exit immediately instead of retrying; a well-formed but rejected token retries indefinitely, because the proxy does not treat an edge rejection as fatal: cloudflared reports some rejections as transient (edge propagation lag on a newly created tunnel), so retrying is the safer default. Regenerate the connector token and update `proxy.tunnelTokenSecretRef` if this is the case.
 
 ### ImagePullBackOff
 

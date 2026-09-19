@@ -703,9 +703,9 @@ func TestBuildProtocolAndClient_CancelledContext(t *testing.T) {
 	}
 }
 
-// TestBuildProtocolAndClient_LogAndTransportFields verifies Log and LogTransport
-// fields are populated on the returned tunnel config.
-func TestBuildProtocolAndClient_LogAndTransportFields(t *testing.T) {
+// TestBuildProtocolAndClient_LogField verifies the Log field is populated on
+// the returned tunnel config.
+func TestBuildProtocolAndClient_LogField(t *testing.T) {
 	t.Parallel()
 
 	token := newTestToken()
@@ -715,7 +715,6 @@ func TestBuildProtocolAndClient_LogAndTransportFields(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.NotNil(t, tunnelCfg.Log, "Log field should be set")
-	assert.NotNil(t, tunnelCfg.LogTransport, "LogTransport field should be set")
 }
 
 // TestBuildProtocolAndClient_MaxEdgeAddrRetries verifies the MaxEdgeAddrRetries
@@ -1150,14 +1149,13 @@ func TestNewSupervisor_CalledTwice_DoesNotPanic(t *testing.T) {
 
 		tunnelCfg.EdgeAddrs = []string{"192.0.2.1:7844"}
 
-		reconnectCh := make(chan supervisor.ReconnectSignal, 1)
 		graceShutdownC := make(chan struct{})
 
-		_, err = supervisor.NewSupervisor(tunnelCfg, orchestrator, reconnectCh, graceShutdownC)
+		_, err = supervisor.NewSupervisor(tunnelCfg, orchestrator, graceShutdownC)
 		require.NoError(t, err)
 
 		assert.NotPanics(t, func() {
-			_, err := supervisor.NewSupervisor(tunnelCfg, orchestrator, reconnectCh, graceShutdownC)
+			_, err := supervisor.NewSupervisor(tunnelCfg, orchestrator, graceShutdownC)
 			require.NoError(t, err)
 		})
 	})

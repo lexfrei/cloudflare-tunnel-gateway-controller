@@ -72,7 +72,7 @@ func TestObserverClose_ReleasesSinksAndStopsDispatch(t *testing.T) {
 	t.Parallel()
 
 	zlog := newZerologLogger()
-	observer := connection.NewObserver(&zlog, &zlog)
+	observer := connection.NewObserver(&zlog)
 
 	sink := newRecordingSink()
 	observer.RegisterSink(sink)

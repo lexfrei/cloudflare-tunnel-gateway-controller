@@ -20,7 +20,6 @@ import (
 	"github.com/cloudflare/cloudflared/client"
 	cfdconfig "github.com/cloudflare/cloudflared/config"
 	"github.com/cloudflare/cloudflared/connection"
-	"github.com/cloudflare/cloudflared/edgediscovery"
 	"github.com/cloudflare/cloudflared/features"
 	"github.com/cloudflare/cloudflared/ingress"
 	"github.com/cloudflare/cloudflared/ingress/origins"
@@ -177,14 +176,13 @@ func StartTunnel(ctx context.Context, cfg *Config) error {
 		// Marked non-retryable: every failure reachable here (protocol/TLS
 		// selection, ingress parsing, orchestrator construction) is a
 		// deterministic config-build error, not a network condition -- the
-		// network-dependent lookups nested in this path (feature fetch,
-		// protocol-percentage fetch) degrade gracefully on their own DNS
-		// failure and never propagate an error through this return.
+		// only network-dependent lookup left in this path, the feature fetch,
+		// logs and carries on with defaults on its own DNS failure and never
+		// propagates an error through this return.
 		return markNonRetryable(err)
 	}
 
 	connectedSignal := cfdsignal.New(make(chan struct{}))
-	reconnectCh := make(chan supervisor.ReconnectSignal, defaultHAConnections)
 	// graceChannel's fallback (deriving the drain trigger from ctx.Done()
 	// when cfg.GraceShutdownC is nil) intentionally keeps using the outer
 	// ctx, not attemptCtx: production always sets GraceShutdownC, so this
@@ -208,7 +206,6 @@ func StartTunnel(ctx context.Context, cfg *Config) error {
 		tunnelCfg,
 		orchestrator,
 		connectedSignal,
-		reconnectCh,
 		graceShutdownC,
 	)
 
@@ -393,7 +390,7 @@ func buildOrchestrator(
 // connection torn down by context cancellation rather than a clean disconnect
 // stays marked live and skews every later attempt's connection count.
 func newAttemptObserver(ctx context.Context, zlog *zerolog.Logger) *connection.Observer {
-	observer := connection.NewObserver(zlog, zlog)
+	observer := connection.NewObserver(zlog)
 
 	go func() {
 		<-ctx.Done()
@@ -485,14 +482,7 @@ func buildProtocolAndClient(
 		return nil, nil, err
 	}
 
-	protocolSelector, err := connection.NewProtocolSelector(
-		protocolFlag,
-		token.AccountTag,
-		true, // tunnelTokenProvided
-		edgediscovery.ProtocolPercentage,
-		connection.ResolveTTL,
-		zlog,
-	)
+	protocolSelector, err := connection.NewProtocolSelector(protocolFlag, zlog)
 	if err != nil {
 		return nil, nil, errors.Wrap(err, "create protocol selector")
 	}
@@ -514,7 +504,6 @@ func buildProtocolAndClient(
 		Region:                              token.Endpoint,
 		HAConnections:                       defaultHAConnections,
 		Log:                                 zlog,
-		LogTransport:                        zlog,
 		ReportedVersion:                     proxyVersion,
 		Retries:                             defaultRetries,
 		MaxEdgeAddrRetries:                  defaultMaxEdgeAddrRetries,
