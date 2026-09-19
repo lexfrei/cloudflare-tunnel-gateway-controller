@@ -88,7 +88,26 @@ func (v *Validator) grantAllowsReference(grant *gatewayv1beta1.ReferenceGrant, f
 	return false
 }
 
+// coreGroupAlias is the spelling the core API group sometimes carries in a
+// ReferenceGrant or a backendRef. The canonical spelling is the empty string,
+// which is what every comparison here is written against.
+const coreGroupAlias = "core"
+
+// normalizeGroup maps the core API group onto its canonical empty-string
+// spelling so a grant and a reference that disagree only on spelling still
+// match. Named groups are returned unchanged.
+func normalizeGroup(group string) string {
+	if group == coreGroupAlias {
+		return ""
+	}
+
+	return group
+}
+
 // matchesFrom checks if the ReferenceGrantFrom matches the source reference.
+// Group needs no normalization here: both sides are compared as written, and
+// the callers only ever ask about a route kind, which lives in the Gateway API
+// group rather than the core one.
 func (v *Validator) matchesFrom(grantFrom gatewayv1beta1.ReferenceGrantFrom, fromRef Reference) bool {
 	// Check group
 	if string(grantFrom.Group) != fromRef.Group {
@@ -110,13 +129,9 @@ func (v *Validator) matchesFrom(grantFrom gatewayv1beta1.ReferenceGrantFrom, fro
 
 // matchesTo checks if the ReferenceGrantTo matches the target reference.
 func (v *Validator) matchesTo(grantTo gatewayv1beta1.ReferenceGrantTo, toRef Reference) bool {
-	// Check group - normalize "core" to empty string for core API group
-	grantGroup := string(grantTo.Group)
-	if grantGroup == "core" {
-		grantGroup = ""
-	}
-
-	if grantGroup != toRef.Group {
+	// Both sides are normalized: either may spell the core API group "core",
+	// and the two spellings name the same group.
+	if normalizeGroup(string(grantTo.Group)) != normalizeGroup(toRef.Group) {
 		return false
 	}
 
