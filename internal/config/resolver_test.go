@@ -2,8 +2,14 @@ package config_test
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 
+	"github.com/cloudflare/cloudflare-go/v7"
+	"github.com/cloudflare/cloudflare-go/v7/option"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
@@ -588,6 +594,104 @@ func TestGetConfigForGatewayClass_ConfigNotFound(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to get GatewayClassConfig")
+}
+
+// fakeAccountsAPI serves the Cloudflare accounts endpoint, handing each API
+// token the account that token belongs to and counting how often it was asked.
+type fakeAccountsAPI struct {
+	server        *httptest.Server
+	accountByAuth map[string]string
+	calls         atomic.Int32
+}
+
+func newFakeAccountsAPI(t *testing.T, accountByToken map[string]string) *fakeAccountsAPI {
+	t.Helper()
+
+	api := &fakeAccountsAPI{accountByAuth: make(map[string]string, len(accountByToken))}
+	for token, account := range accountByToken {
+		api.accountByAuth["Bearer "+token] = account
+	}
+
+	api.server = httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, req *http.Request) {
+		api.calls.Add(1)
+
+		account, ok := api.accountByAuth[req.Header.Get("Authorization")]
+		if !ok {
+			writer.WriteHeader(http.StatusUnauthorized)
+
+			return
+		}
+
+		writer.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(writer).Encode(map[string]any{
+			"success": true,
+			"errors":  []any{},
+			"result":  []map[string]any{{"id": account, "name": account}},
+		})
+	}))
+
+	t.Cleanup(api.server.Close)
+
+	return api
+}
+
+func (a *fakeAccountsAPI) clientFor(token string) *cloudflare.Client {
+	return cloudflare.NewClient(option.WithAPIToken(token), option.WithBaseURL(a.server.URL))
+}
+
+// TestResolveAccountID_RotatedCredentialIsNotServedFromCache covers rotating a
+// GatewayClassConfig's credentials Secret to a token belonging to a DIFFERENT
+// Cloudflare account. The config name does not change across such a rotation,
+// so a cache keyed on the name alone keeps answering with the old account for
+// the life of the process, and every tunnel write is addressed to an account
+// the new token has no access to until someone restarts the controller.
+func TestResolveAccountID_RotatedCredentialIsNotServedFromCache(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	api := newFakeAccountsAPI(t, map[string]string{
+		"token-first":  "account-first",
+		"token-second": "account-second",
+	})
+
+	resolver := config.NewResolver(setupFakeClient(), "default", cfmetrics.NewNoopCollector())
+
+	first, err := resolver.ResolveAccountID(ctx, api.clientFor("token-first"), &config.ResolvedConfig{
+		ConfigName: "test-config",
+		APIToken:   "token-first",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "account-first", first)
+
+	second, err := resolver.ResolveAccountID(ctx, api.clientFor("token-second"), &config.ResolvedConfig{
+		ConfigName: "test-config",
+		APIToken:   "token-second",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "account-second", second, "a rotated token must re-detect, not replay the previous account")
+}
+
+// TestResolveAccountID_CachesPerUnchangedCredential pins the reason the cache
+// exists: repeated resolution on an unchanged credential must not re-ask the
+// Cloudflare API.
+func TestResolveAccountID_CachesPerUnchangedCredential(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	api := newFakeAccountsAPI(t, map[string]string{"token-first": "account-first"})
+
+	resolver := config.NewResolver(setupFakeClient(), "default", cfmetrics.NewNoopCollector())
+
+	for range 3 {
+		accountID, err := resolver.ResolveAccountID(ctx, api.clientFor("token-first"), &config.ResolvedConfig{
+			ConfigName: "test-config",
+			APIToken:   "token-first",
+		})
+		require.NoError(t, err)
+		assert.Equal(t, "account-first", accountID)
+	}
+
+	assert.Equal(t, int32(1), api.calls.Load(), "an unchanged credential is resolved once and then served from cache")
 }
 
 func setupFakeClient(objs ...client.Object) client.Client {
