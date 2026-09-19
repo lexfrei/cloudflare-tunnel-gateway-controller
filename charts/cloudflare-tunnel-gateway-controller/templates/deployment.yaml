@@ -43,7 +43,7 @@ spec:
         - name: {{ .Chart.Name }}
           securityContext:
             {{- toYaml .Values.securityContext | nindent 12 }}
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          image: {{ include "cf-tunnel-gw-ctrl.imageRef" (dict "image" .Values.image "appVersion" .Chart.AppVersion) | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           args:
             - "--controller-name={{ .Values.controller.controllerName }}"
@@ -57,7 +57,7 @@ spec:
             - "--proxy-endpoints=http://{{ include "cf-tunnel-gw-ctrl.proxyHeadlessName" . }}.{{ .Release.Namespace }}.svc.{{ .Values.controller.clusterDomain | default "cluster.local" }}:{{ .Values.proxy.configAPIPort }}/config"
             # Image for per-Gateway rendered proxy Deployments (GatewayConfig
             # data planes); always the release's proxy image.
-            - "--proxy-image={{ .Values.proxy.image.repository }}:{{ .Values.proxy.image.tag | default .Chart.AppVersion }}"
+            - "--proxy-image={{ include "cf-tunnel-gw-ctrl.imageRef" (dict "image" .Values.proxy.image "appVersion" .Chart.AppVersion) }}"
             # The config API is always authenticated, resolved by the
             # controller directly via the API (a live call, not a
             # template-time lookup, so it works the same under `helm

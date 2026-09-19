@@ -38,7 +38,7 @@ spec:
         - name: proxy
           securityContext:
             {{- toYaml .Values.proxy.securityContext | nindent 12 }}
-          image: "{{ .Values.proxy.image.repository }}:{{ .Values.proxy.image.tag | default .Chart.AppVersion }}"
+          image: {{ include "cf-tunnel-gw-ctrl.imageRef" (dict "image" .Values.proxy.image "appVersion" .Chart.AppVersion) | quote }}
           imagePullPolicy: {{ .Values.proxy.image.pullPolicy }}
           env:
             - name: TUNNEL_TOKEN

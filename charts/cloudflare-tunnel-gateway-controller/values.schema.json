@@ -157,6 +157,11 @@
         "tag": {
           "type": "string",
           "description": "Overrides appVersion"
+        },
+        "digest": {
+          "type": "string",
+          "pattern": "^([a-z0-9]+([.+_-][a-z0-9]+)*:[a-zA-Z0-9=_-]{32,})?$",
+          "description": "Image digest used instead of the tag when set. The pattern is the OCI digest grammar rather than sha256 specifically, so a registry using another algorithm is not rejected here."
         }
       }
     },
@@ -716,6 +721,11 @@
             "tag": {
               "type": "string",
               "description": "Overrides appVersion"
+            },
+            "digest": {
+              "type": "string",
+              "pattern": "^([a-z0-9]+([.+_-][a-z0-9]+)*:[a-zA-Z0-9=_-]{32,})?$",
+              "description": "Proxy image digest used instead of the tag when set. Also passed to --proxy-image as the default image for rendered per-Gateway data planes; see the Container Image Verification section of the security reference for what that default does not guarantee."
             }
           }
         },
