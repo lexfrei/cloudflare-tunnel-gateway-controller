@@ -306,13 +306,38 @@ This is a starting point for operators applying manifests by hand, not a transcr
 
 ### Container Image Verification
 
-Container images are signed with cosign (keyless):
+Container images are signed with cosign (keyless). A tag is a mutable pointer, so verifying a tag and later deploying that same tag are two separate resolutions and can land on different artifacts. Ask cosign which digest it actually verified, and deploy that one:
+
+The chart deploys **two** images from two repositories, and both are signed by the same release job, so verify both and keep the two digests apart:
 
 ```bash
-cosign verify ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller:latest \
-  --certificate-identity-regexp="https://github.com/lexfrei/cloudflare-tunnel-gateway-controller" \
-  --certificate-oidc-issuer="https://token.actions.githubusercontent.com"
+for repo in cloudflare-tunnel-gateway-controller cloudflare-tunnel-gateway-controller-proxy; do
+  printf '%s: ' "$repo"
+  cosign verify "ghcr.io/lexfrei/${repo}:<version>" \
+    --certificate-identity-regexp="https://github.com/lexfrei/cloudflare-tunnel-gateway-controller" \
+    --certificate-oidc-issuer="https://token.actions.githubusercontent.com" \
+    --output=json | jq -r '.[0].critical.image."docker-manifest-digest"'
+done
 ```
+
+Note that `<version>` carries no `v` prefix: the release tag `v1.2.3` publishes image tag `1.2.3`, and `cosign` reports `MANIFEST_UNKNOWN` if you paste the prefixed form.
+
+Feed each digest to its own slot. `image.digest` and `proxy.image.digest` take precedence over the tag, and the proxy digest is carried into the controller's `--proxy-image` flag, so it reaches the data planes the controller renders for per-Gateway isolation as well as the ones Helm renders:
+
+```yaml
+image:
+  digest: "sha256:..."     # cloudflare-tunnel-gateway-controller
+proxy:
+  image:
+    digest: "sha256:..."   # cloudflare-tunnel-gateway-controller-proxy
+```
+
+!!! warning "A per-Gateway data plane can override the pin"
+    `proxy.image.digest` reaches a rendered per-Gateway data plane as its **default**, not as a constraint. If that Gateway's `GatewayConfig` sets `spec.image`, the controller uses it and the pin does not apply to that plane. This follows from `GatewayConfig` being workload-creation-equivalent (see [Multi-Tenancy](#multi-tenancy)) — whoever may write one already chooses what runs there.
+
+    Making the pin hold cluster-wide means restricting **every write verb** on `gatewayconfigs`, not just `create`: `update` and `patch` set `spec.image` on an existing object just as well, and the controller's `GatewayConfig` watch carries no generation predicate, so the edit re-renders the Deployment immediately. Setting `spec.image` to the pinned digest in each `GatewayConfig` has the same dependency — it holds only for as long as nobody can update them afterwards.
+
+Pinning by digest also makes `pullPolicy` irrelevant to correctness: a digest reference always resolves to the same bytes, so a node cache can never serve a different image than the one you verified. The trade-off is that upgrades stop being automatic — you resolve and verify a new digest for each release.
 
 ### Helm Chart Verification
 

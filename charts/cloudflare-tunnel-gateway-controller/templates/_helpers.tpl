@@ -62,6 +62,28 @@ Create the name of the service account to use
 {{- end }}
 
 {{/*
+Image reference for a `{repository, tag, digest}` values block, called with a
+dict of `image` and `appVersion`. A digest pins the exact artifact cosign
+signed and is immune to a tag being repointed after the operator verified it,
+so it wins over the tag whenever it is set and the rendered reference then
+carries the digest alone. The combined `repository:tag@digest` form is valid
+and resolves by the digest, but it lets a tag and a digest that disagree sit
+side by side, and nothing here can check that pairing. Shared by the
+controller Deployment, the proxy Deployment and the controller's
+--proxy-image flag, so a pin reaches the data planes the controller
+renders as well as the ones Helm renders -- as their default only, since
+`GatewayConfig.spec.image` wins over the flag when a Gateway sets it
+(`internal/render/render.go`, proxyImage).
+*/}}
+{{- define "cf-tunnel-gw-ctrl.imageRef" -}}
+{{- if .image.digest -}}
+{{- printf "%s@%s" .image.repository .image.digest -}}
+{{- else -}}
+{{- printf "%s:%s" .image.repository (.image.tag | default .appVersion) -}}
+{{- end -}}
+{{- end }}
+
+{{/*
 Proxy fullname
 */}}
 {{- define "cf-tunnel-gw-ctrl.proxyFullname" -}}

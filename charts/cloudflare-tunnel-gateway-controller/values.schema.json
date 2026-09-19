@@ -157,6 +157,11 @@
         "tag": {
           "type": "string",
           "description": "Overrides appVersion"
+        },
+        "digest": {
+          "type": "string",
+          "pattern": "^([a-z0-9]+([.+_-][a-z0-9]+)*:[a-zA-Z0-9=_-]{32,})?$",
+          "description": "Pins the image by digest instead of a tag, overriding tag when both are set. The pattern is the OCI digest grammar rather than sha256 specifically, so a registry using another algorithm is not rejected here. Validated at all because a malformed reference otherwise surfaces only as an ImagePullBackOff on an already-rolling Deployment."
         }
       }
     },
@@ -716,6 +721,11 @@
             "tag": {
               "type": "string",
               "description": "Overrides appVersion"
+            },
+            "digest": {
+              "type": "string",
+              "pattern": "^([a-z0-9]+([.+_-][a-z0-9]+)*:[a-zA-Z0-9=_-]{32,})?$",
+              "description": "Pins the proxy image by digest instead of a tag, overriding tag when both are set. Carried into --proxy-image, so it is also the default for the per-Gateway data planes the controller renders — a GatewayConfig that sets spec.image overrides it."
             }
           }
         },

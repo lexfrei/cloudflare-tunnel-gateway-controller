@@ -89,6 +89,7 @@ The `proxy` section configures the in-process L7 reverse proxy. The proxy embeds
 | `proxy.image.repository` | string | `ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller-proxy` | Proxy container image repository |
 | `proxy.image.pullPolicy` | string | `IfNotPresent` | Image pull policy |
 | `proxy.image.tag` | string | `""` (appVersion) | Image tag override |
+| `proxy.image.digest` | string | `""` | Pin the proxy by digest instead of a tag; wins over `tag`. Becomes the default for the per-Gateway data planes too, unless their `GatewayConfig` sets `spec.image` ([Container Image Verification](../reference/security.md#container-image-verification)) |
 | `proxy.configAPIPort` | int | `8081` | Port where the controller pushes configuration |
 | `proxy.proxyPort` | int | `8080` | Internal proxy port (tunnel traffic arrives here) |
 | `proxy.allowXOriginalHost` | bool | `false` | Trust the client-supplied `X-Original-Host` header as the routing key and backend `Host`. Test deployments only — leaving it on in production lets a client be served by another hostname's backend ([details](../guides/l7-proxy.md)) |

@@ -95,6 +95,8 @@ image:
   pullPolicy: IfNotPresent
   # -- Image tag (defaults to appVersion)
   tag: ""
+  # -- Image digest (`sha256:...`) to pin instead of a tag. Set it to deploy the exact artifact you verified with cosign, since a tag can be repointed afterwards. Takes precedence over `tag` when both are set.
+  digest: ""
 
 # -- Image pull secrets for private registries
 imagePullSecrets: []
@@ -397,6 +399,8 @@ proxy:
     pullPolicy: IfNotPresent
     # -- Image tag (defaults to appVersion)
     tag: ""
+    # -- Image digest (`sha256:...`) to pin instead of a tag. Also carried into `--proxy-image`, so it becomes the default for the per-Gateway data planes the controller renders, not just the shared one — a Gateway whose `GatewayConfig` sets `spec.image` still overrides it. Takes precedence over `tag` when both are set.
+    digest: ""
   # -- Config API port (controller pushes config here)
   configAPIPort: 8081
   # -- Proxy port (internal, traffic arrives through tunnel)
