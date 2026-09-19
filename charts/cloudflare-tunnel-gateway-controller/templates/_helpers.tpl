@@ -62,6 +62,26 @@ Create the name of the service account to use
 {{- end }}
 
 {{/*
+Image reference for a `{repository, tag, digest}` values block, called with a
+dict of `image` and `appVersion`. A digest, when set, REPLACES the tag rather
+than joining it, so the rendered reference carries the digest alone -- the
+chart never emits the combined `repository:tag@digest` form, though that form
+remains valid input through `tag`. Shared by the controller Deployment, the
+proxy Deployment and the controller's --proxy-image flag.
+
+Why a digest is worth setting, and what it does and does not pin, lives in
+docs/reference/security.md under Container Image Verification -- one home, so
+the reasoning cannot drift between copies.
+*/}}
+{{- define "cf-tunnel-gw-ctrl.imageRef" -}}
+{{- if .image.digest -}}
+{{- printf "%s@%s" .image.repository .image.digest -}}
+{{- else -}}
+{{- printf "%s:%s" .image.repository (.image.tag | default .appVersion) -}}
+{{- end -}}
+{{- end }}
+
+{{/*
 Proxy fullname
 */}}
 {{- define "cf-tunnel-gw-ctrl.proxyFullname" -}}
