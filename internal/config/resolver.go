@@ -2,6 +2,7 @@ package config
 
 import (
 	"context"
+	"crypto/sha256"
 	"net/http"
 	"sync"
 	"time"
@@ -62,9 +63,22 @@ type Resolver struct {
 	// WithCloudflareTracing.
 	tracing bool
 
-	// accountIDCache caches resolved account IDs by config name to avoid
-	// repeated API calls. Key is config name, value is account ID.
+	// accountIDCache caches auto-detected account IDs to avoid repeated API
+	// calls. Key is config name, value is an accountIDCacheEntry.
 	accountIDCache sync.Map
+}
+
+// accountIDCacheEntry is one config's auto-detected account ID together with a
+// digest of the credential it was detected with.
+//
+// The digest is the invalidation: an account ID is a property of the API token,
+// not of the config that names it, and rotating the credentials Secret to a
+// token for a different Cloudflare account leaves the config name unchanged.
+// Comparing the digest keeps the entry bounded at one per config — keying the
+// map on the digest instead would leave an entry behind on every rotation.
+type accountIDCacheEntry struct {
+	tokenDigest [sha256.Size]byte
+	accountID   string
 }
 
 // ResolverOption configures a Resolver at construction time.
@@ -280,10 +294,13 @@ func (r *Resolver) ResolveAccountID(ctx context.Context, cfClient *cloudflare.Cl
 		return resolved.AccountID, nil
 	}
 
-	// Check cache first
+	// Serve from cache only while the credential that produced the entry is
+	// still the credential in hand.
+	tokenDigest := sha256.Sum256([]byte(resolved.APIToken))
+
 	if cached, ok := r.accountIDCache.Load(resolved.ConfigName); ok {
-		if accountID, valid := cached.(string); valid {
-			return accountID, nil
+		if entry, valid := cached.(accountIDCacheEntry); valid && entry.tokenDigest == tokenDigest {
+			return entry.accountID, nil
 		}
 	}
 
@@ -311,8 +328,11 @@ func (r *Resolver) ResolveAccountID(ctx context.Context, cfClient *cloudflare.Cl
 
 	accountID := accountList[0].ID
 
-	// Cache the resolved account ID
-	r.accountIDCache.Store(resolved.ConfigName, accountID)
+	// Cache the resolved account ID against the credential it came from
+	r.accountIDCache.Store(resolved.ConfigName, accountIDCacheEntry{
+		tokenDigest: tokenDigest,
+		accountID:   accountID,
+	})
 
 	return accountID, nil
 }

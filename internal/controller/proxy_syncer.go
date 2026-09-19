@@ -35,8 +35,12 @@ const proxyPushTimeout = 10 * time.Second
 // back to when Group/Kind are unset.
 const serviceKind = "Service"
 
-// coreGroup is the implicit Group for Kubernetes core resources (Service,
-// ConfigMap). Gateway API treats "" and "core" as aliases.
+// coreGroup is the non-canonical spelling this project tolerates for the
+// Kubernetes core group (Service, ConfigMap). Gateway API gives that group
+// exactly one spelling, the empty string; accepting "core" is a leniency
+// decided here, and limitations.md records where it is honoured and where it
+// is not. NOTE the name: this constant holds "core", while the referencegrant
+// tests use coreGroup for "".
 const coreGroup = "core"
 
 // configMapKind is the Kind value for ConfigMap references used by Gateway

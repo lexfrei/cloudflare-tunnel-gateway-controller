@@ -17,7 +17,8 @@ import (
 )
 
 const (
-	coreGroup = ""
+	coreGroup      = ""
+	coreGroupAlias = "core"
 )
 
 func TestValidator_IsReferenceAllowed_SameNamespace(t *testing.T) {
@@ -446,7 +447,12 @@ func TestValidator_IsReferenceAllowed_WrongKind(t *testing.T) {
 
 // TestValidator_IsReferenceAllowed_CoreGroupAlias tests that "core" is accepted
 // as an alias for empty string in ReferenceGrant To.Group field.
-// Per Gateway API documentation, both "" and "core" should work for core resources.
+//
+// The alias is this project's leniency, not the spec's: Gateway API gives the
+// core group exactly one spelling, the empty string (shared_types.go, Group).
+// Accepting "core" is a decision taken elsewhere in this tree already
+// (internal/ingress/builder.go's backendGroupCoreAlias, and the proxy
+// converter), and what this test pins is that the validator agrees with it.
 func TestValidator_IsReferenceAllowed_CoreGroupAlias(t *testing.T) {
 	t.Parallel()
 
@@ -521,4 +527,136 @@ func setupScheme(t *testing.T) *runtime.Scheme {
 func objectNamePtr(name string) *gatewayv1.ObjectName {
 	objName := gatewayv1.ObjectName(name)
 	return &objName
+}
+
+// TestValidator_IsReferenceAllowed_CoreGroupAliasOnEitherSide is the mirror of
+// TestValidator_IsReferenceAllowed_CoreGroupAlias, which pins the alias on the
+// grant side only. "" and "core" name the same API group, so a grant matches a
+// reference whenever the two agree on the group — whichever spelling each of
+// them happens to use.
+func TestValidator_IsReferenceAllowed_CoreGroupAliasOnEitherSide(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		grantGroup gatewayv1beta1.Group
+		refGroup   string
+	}{
+		{name: "canonical grant, alias reference", grantGroup: coreGroup, refGroup: coreGroupAlias},
+		{name: "alias grant, alias reference", grantGroup: coreGroupAlias, refGroup: coreGroupAlias},
+		{name: "canonical grant, canonical reference", grantGroup: coreGroup, refGroup: coreGroup},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			scheme := setupScheme(t)
+
+			grant := &gatewayv1beta1.ReferenceGrant{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "allow-core-services",
+					Namespace: "backend",
+				},
+				Spec: gatewayv1beta1.ReferenceGrantSpec{
+					From: []gatewayv1beta1.ReferenceGrantFrom{
+						{
+							Group:     gatewayv1.GroupName,
+							Kind:      "HTTPRoute",
+							Namespace: "default",
+						},
+					},
+					To: []gatewayv1beta1.ReferenceGrantTo{
+						{
+							Group: tt.grantGroup,
+							Kind:  "Service",
+						},
+					},
+				},
+			}
+
+			fakeClient := fake.NewClientBuilder().
+				WithScheme(scheme).
+				WithObjects(grant).
+				Build()
+
+			validator := referencegrant.NewValidator(fakeClient)
+
+			from := referencegrant.Reference{
+				Group:     gatewayv1.GroupName,
+				Kind:      "HTTPRoute",
+				Namespace: "default",
+				Name:      "test-route",
+			}
+
+			to := referencegrant.Reference{
+				Group:     tt.refGroup,
+				Kind:      "Service",
+				Namespace: "backend",
+				Name:      "backend-service",
+			}
+
+			allowed, err := validator.IsReferenceAllowed(context.Background(), from, to)
+
+			require.NoError(t, err)
+			assert.True(t, allowed, "grant and reference name the same group, so the reference is granted")
+		})
+	}
+}
+
+// TestValidator_IsReferenceAllowed_CoreAliasIsNotAWildcard guards the
+// normalisation against over-reach: "core" stands in for the core group only,
+// so it must not match a reference into a named API group.
+func TestValidator_IsReferenceAllowed_CoreAliasIsNotAWildcard(t *testing.T) {
+	t.Parallel()
+
+	scheme := setupScheme(t)
+
+	grant := &gatewayv1beta1.ReferenceGrant{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "allow-core-services",
+			Namespace: "backend",
+		},
+		Spec: gatewayv1beta1.ReferenceGrantSpec{
+			From: []gatewayv1beta1.ReferenceGrantFrom{
+				{
+					Group:     gatewayv1.GroupName,
+					Kind:      "HTTPRoute",
+					Namespace: "default",
+				},
+			},
+			To: []gatewayv1beta1.ReferenceGrantTo{
+				{
+					Group: coreGroupAlias,
+					Kind:  "ServiceImport",
+				},
+			},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(grant).
+		Build()
+
+	validator := referencegrant.NewValidator(fakeClient)
+
+	from := referencegrant.Reference{
+		Group:     gatewayv1.GroupName,
+		Kind:      "HTTPRoute",
+		Namespace: "default",
+		Name:      "test-route",
+	}
+
+	to := referencegrant.Reference{
+		Group:     "multicluster.x-k8s.io",
+		Kind:      "ServiceImport",
+		Namespace: "backend",
+		Name:      "backend-service",
+	}
+
+	allowed, err := validator.IsReferenceAllowed(context.Background(), from, to)
+
+	require.NoError(t, err)
+	assert.False(t, allowed, "a core-group grant must not cover a reference into a named API group")
 }
