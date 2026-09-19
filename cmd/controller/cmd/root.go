@@ -75,6 +75,9 @@ func init() {
 	rootCmd.Flags().Bool("proxy-auth-secret-generate", false, "Allow creating the --proxy-auth-secret-ref Secret (with a random token) when it does not exist. false (the default) is the bring-your-own contract: the Secret must already exist, and a missing one is a configuration error rather than something silently papered over. The chart sets this true only when proxy.authTokenSecretRef.name is empty.")
 	rootCmd.Flags().String("proxy-token-secret", "", "Tunnel-token Secret to watch in `<namespace>/<name>` form; when set, the controller rolls the proxy Deployment whenever the Secret data changes (issue #114). Empty disables the watcher.")
 	rootCmd.Flags().String("proxy-deployment-label", "", "Label selector identifying the proxy Deployment(s) to roll on tunnel-token change, in `key=value` form. Defaults to `app.kubernetes.io/component=proxy` (matches the chart).")
+	rootCmd.Flags().String("ws-idle-timeout", "",
+		"Idle bound on an established WebSocket session for per-Gateway data planes (Go duration). "+
+			"Empty leaves the proxy's own 1h default; the shared plane reads the same chart value directly.")
 	rootCmd.Flags().String("tunnel-protocol", "auto", "The proxy's configured edge transport (auto|http2|quic); used to warn when GRPCRoutes are present on an explicit quic tunnel, which cannot carry gRPC trailers (auto/unset is upgraded to http2 by the proxy).")
 
 	rootCmd.Flags().String("proxy-image", "", "Container image for per-Gateway rendered proxy Deployments (GatewayConfig data planes). Empty disables rendering defaults; the chart always sets it to the release's proxy image.")
@@ -193,6 +196,7 @@ func runController(_ *cobra.Command, _ []string) error {
 		ProxyTokenSecret:        viper.GetString("proxy-token-secret"),
 		ProxyDeploymentLabel:    viper.GetString("proxy-deployment-label"),
 		TunnelProtocol:          viper.GetString("tunnel-protocol"),
+		WSIdleTimeout:           viper.GetString("ws-idle-timeout"),
 		Tracing:                 tracingEnabled,
 
 		ProxyImage: viper.GetString("proxy-image"),

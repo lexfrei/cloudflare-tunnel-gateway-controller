@@ -54,7 +54,9 @@ func runPipeWebSocket(t *testing.T, w http.ResponseWriter, backendConn net.Conn,
 	go func() {
 		defer close(done)
 
-		pipeWebSocket(w, backendConn, backendReader, http.Header{})
+		// Zero idle: these cases are about the panic guard, and an
+		// armed deadline would give the wait a second way to end.
+		pipeWebSocket(w, backendConn, backendReader, http.Header{}, 0)
 	}()
 
 	select {

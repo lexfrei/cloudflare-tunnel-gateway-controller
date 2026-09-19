@@ -117,6 +117,7 @@ The proxy binary accepts the following environment variables:
 | `PROXY_TUNNEL_PROTOCOL_WAIT` | `0` (no wait) | In `auto` mode, how long (Go duration) to wait for the first pushed config before serving, so the protocol is chosen from real routes. |
 | `PROXY_WS_DIAL_TIMEOUT` | `""` (proxy default 30s) | Go-duration cap on the backend dial during a WebSocket upgrade. |
 | `PROXY_WS_HANDSHAKE_TIMEOUT` | `""` (proxy default 30s) | Go-duration cap on waiting for the backend's `101 Switching Protocols`. |
+| `PROXY_WS_IDLE_TIMEOUT` | `""` (proxy default 1h) | Go-duration bound on an established session with no bytes in either direction. Any WebSocket traffic resets the window; keepalives below the WebSocket layer do not, so an application that can sit silent for longer needs a larger value. The bound acts on the read from the backend, so it does not reclaim a session whose backend-to-client copy is wedged writing to a client that has stopped reading. |
 | `PROXY_ACCESS_LOG_ENABLED` | `false` | Enable per-request structured JSON access logging on stdout. |
 | `PROXY_ACCESS_LOG_SAMPLING_RATE` | `1` | Fraction of non-5xx requests to log when access logging is enabled, in `[0, 1]` (5xx are always logged). |
 | `PROXY_ACCESS_LOG_STRIP_QUERY` | `false` | Strip the request URL query string from access-log lines. |
@@ -124,6 +125,12 @@ The proxy binary accepts the following environment variables:
 | `PROXY_TRACING_ENABLED` | `false` | Enable OpenTelemetry tracing of proxied requests. |
 | `PROXY_TRACING_ENDPOINT` | `""` | OTLP exporter endpoint for traces (when tracing is enabled). |
 | `PROXY_TRACING_SAMPLE_RATE` | `1` | Trace sampling fraction in `[0, 1]` (when tracing is enabled). |
+
+!!! warning "Upgrading from a release with no idle bound"
+
+    An established WebSocket session used to end only when one of its two ends closed it. It now also ends after an hour with no bytes in either direction, so a socket that sat silent indefinitely and stayed usable is closed instead. Any traffic either way resets the window. Keepalives below the WebSocket layer, the edge's and the transport's, are not session bytes and do not hold it open, so the application that notices is the one relying on those rather than on its own pings.
+
+    Raise `proxy.websocket.idleTimeout` if that describes yours. The same value is passed to the controller, so Gateways with their own data plane are rendered with it too; leaving it empty keeps the hour on every plane. The other two WebSocket values reach the shared plane only. Both bound the pre-upgrade phase at 30s on every plane whether or not they are set, so what a per-Gateway plane is missing there is the knob, not the bound.
 
 !!! danger "`PROXY_ALLOW_X_ORIGINAL_HOST` is for test deployments only"
 
