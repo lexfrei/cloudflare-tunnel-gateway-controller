@@ -9,7 +9,6 @@ import (
 	"math/rand/v2"
 	"net/http"
 	"net/url"
-	"path"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -258,15 +257,35 @@ func stripPort(host string) string {
 	return host
 }
 
-// joinPathSegments concatenates a prefix and suffix into a clean path
-// without producing double slashes. When suffix is empty the prefix
-// is returned unchanged (no trailing slash added).
+// joinPathSegments splices a ReplacePrefixMatch replacement onto the
+// part of the request path that followed the matched prefix, per the
+// table on HTTPPathModifier.ReplacePrefixMatch. suffix is what remains
+// after the matched prefix, which a prefix carrying its own trailing
+// "/" already consumed; the single separator between the two halves is
+// normalised either way, so neither a trailing "/" on the replacement
+// nor a leading one on the suffix doubles it up.
+//
+// The result is a substitution and nothing more — dot segments the
+// client sent survive into it untouched. Resolving them here would
+// take a request the route selected by its prefix and move it outside
+// the replacement: "/public/../admin" under prefix "/public" and
+// replacement "/internal" resolves to "/admin", which is neither what
+// the spec's table describes nor what the same request gets on a route
+// with no rewrite filter, where the segments reach the backend as
+// sent.
 func joinPathSegments(prefix, suffix string) string {
 	if suffix == "" {
+		// The whole path was the matched prefix. An empty replacement
+		// leaves nothing to forward, and the spec's table maps that to
+		// the root rather than to an empty path.
+		if prefix == "" {
+			return "/"
+		}
+
 		return prefix
 	}
 
-	return path.Clean(prefix + "/" + suffix)
+	return strings.TrimSuffix(prefix, "/") + "/" + strings.TrimPrefix(suffix, "/")
 }
 
 // urlRewriter modifies the request URL path and/or host.
