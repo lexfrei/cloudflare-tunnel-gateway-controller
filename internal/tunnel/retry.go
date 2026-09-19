@@ -31,21 +31,21 @@ const (
 //
 // Deliberately NOT covered: a well-formed tunnel token that the Cloudflare
 // edge rejects (revoked, deleted tunnel, wrong secret) rather than a token
-// that fails to parse. That distinction is made inside the vendored
-// cloudflared supervisor -- connection.ServerRegisterTunnelError carries a
-// Permanent bool from the registration RPC -- but it never crosses back out
-// to this package: the error is unwrapped to its Cause and the Permanent
-// bit consumed as a plain retry/no-retry decision before StartTunnel ever
-// sees it (supervisor/tunnel.go's serveTunnel, in the vendored fork).
-// cloudflared itself treats an "Unauthorized" registration response as
-// possibly transient (edge propagation lag on a newly created tunnel) and
-// retries it internally for the same reason. Matching on that string from
-// here would be exactly the fragile, upgrade-breaking coupling the vendor
-// rebase discipline in CLAUDE.md warns against, so a rejected-but-parseable
-// token falls through to the retryable path: it retries indefinitely with
-// capped backoff, staying NotReady and logging the error on every attempt
-// instead of exiting. See docs/operations/troubleshooting.md for the
-// operator-facing diagnosis of that case.
+// that fails to parse. The vendored supervisor does carry that case out to
+// this package -- connection.ServerRegisterTunnelError, with its Permanent
+// bool from the registration RPC, survives as a typed error all the way
+// through supervisor/tunnel.go's serveTunnel and Supervisor.initialize, so
+// errors.As can read the bit from here. Reading it is not the hard part;
+// acting on it is. Treating Permanent as fatal exits the pod on a rejection
+// cloudflared itself retries on purpose -- it reads an "Unauthorized"
+// registration response as possibly transient, edge propagation lag on a
+// newly created tunnel -- and trading an indefinitely retrying pod for a
+// crash-looping one is a behaviour change that needs its own decision and
+// its own test. So a rejected-but-parseable token falls through to the
+// retryable path: it retries indefinitely with capped backoff, staying
+// NotReady and logging the error on every attempt instead of exiting. See
+// docs/operations/troubleshooting.md for the operator-facing diagnosis of
+// that case.
 var errNonRetryableStart = errors.New("non-retryable tunnel start error")
 
 // markNonRetryable tags err with errNonRetryableStart without altering its

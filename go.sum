@@ -188,8 +188,8 @@ github.com/kylelemons/godebug v1.1.0 h1:RPNrshWIDI6G2gRW9EHilWtl7Z6Sb1BR0xunSBf0
 github.com/kylelemons/godebug v1.1.0/go.mod h1:9/0rRGxNHcop5bhtWyNeEfOS8JIWk580+fNqagV/RAw=
 github.com/leodido/go-urn v1.2.0 h1:hpXL4XnriNwQ/ABnpepYM/1vCLWNDfUNts8dX3xTG6Y=
 github.com/leodido/go-urn v1.2.0/go.mod h1:+8+nEpDfqqsY+g338gtMEUOtuK+4dEMhiQEgxpxOKII=
-github.com/lexfrei/cloudflared v0.0.0-20260830211924-112d0cda242b h1:Pwpb55xw2tbkBwOHk13F1eA88JnCL6WEUW5TEWvOET0=
-github.com/lexfrei/cloudflared v0.0.0-20260830211924-112d0cda242b/go.mod h1:v97UyAHiewwyRGcpkuzO3d1Jbv4I8OBPuEjOAK5mZ08=
+github.com/lexfrei/cloudflared v0.0.0-20260919134854-6ca1d20ce170 h1:EaZZqTHmYIiLj/AuwcDK6fCDHHOXC2QZQHaAmIABmnc=
+github.com/lexfrei/cloudflared v0.0.0-20260919134854-6ca1d20ce170/go.mod h1:o49m6fKE5JPF2NEy4BURyC4Q/6tcL3K+9vCO/UJ/O9U=
 github.com/lufia/plan9stats v0.0.0-20211012122336-39d0f177ccd0 h1:6E+4a0GO5zZEnZ81pIr0yLvtUWk2if982qA3F3QD6H4=
 github.com/lufia/plan9stats v0.0.0-20211012122336-39d0f177ccd0/go.mod h1:zJYVVT2jmtg6P3p1VtQj7WsuWi/y4VnjVBn7F8KPB3I=
 github.com/mattn/go-colorable v0.1.14 h1:9A9LHSqF/7dyVVX6g0U9cwm9pG3kP9gSzcuIPHPsaIE=

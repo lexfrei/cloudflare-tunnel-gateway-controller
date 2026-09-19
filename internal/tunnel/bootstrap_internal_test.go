@@ -703,9 +703,9 @@ func TestBuildProtocolAndClient_CancelledContext(t *testing.T) {
 	}
 }
 
-// TestBuildProtocolAndClient_LogAndTransportFields verifies Log and LogTransport
-// fields are populated on the returned tunnel config.
-func TestBuildProtocolAndClient_LogAndTransportFields(t *testing.T) {
+// TestBuildProtocolAndClient_LogField verifies the Log field is populated on
+// the returned tunnel config.
+func TestBuildProtocolAndClient_LogField(t *testing.T) {
 	t.Parallel()
 
 	token := newTestToken()
@@ -715,7 +715,6 @@ func TestBuildProtocolAndClient_LogAndTransportFields(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.NotNil(t, tunnelCfg.Log, "Log field should be set")
-	assert.NotNil(t, tunnelCfg.LogTransport, "LogTransport field should be set")
 }
 
 // TestBuildProtocolAndClient_MaxEdgeAddrRetries verifies the MaxEdgeAddrRetries
@@ -1045,6 +1044,51 @@ func TestResolveProtocolFlag(t *testing.T) {
 	}
 }
 
+// TestBuildProtocolAndClient_PinsProtocol guards what Config.Protocol promises:
+// "auto" starts on QUIC with an HTTP/2 fallback, an explicit value is that
+// transport with no fallback. Current() is the assertion carrying the weight --
+// a change that mapped "http2" onto the "auto" branch would hand back a selector
+// starting on QUIC, and every gRPC route would break silently, because
+// cloudflared drops HTTP trailers over QUIC and grpc-status goes with them.
+func TestBuildProtocolAndClient_PinsProtocol(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		protocol     string
+		want         connection.Protocol
+		wantFallback bool
+	}{
+		{name: "http2 is pinned", protocol: connection.HTTP2.String(), want: connection.HTTP2},
+		{name: "quic is pinned", protocol: connection.QUIC.String(), want: connection.QUIC},
+		{
+			name:         "auto starts on quic with fallback",
+			protocol:     connection.AutoSelectFlag,
+			want:         connection.QUIC,
+			wantFallback: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			zlog := newZerologLogger()
+
+			selector, _, err := buildProtocolAndClient(t.Context(), newTestToken(), tt.protocol, &zlog)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, selector.Current())
+
+			fallback, ok := selector.Fallback()
+			assert.Equal(t, tt.wantFallback, ok)
+
+			if ok {
+				assert.Equal(t, connection.HTTP2, fallback)
+			}
+		})
+	}
+}
+
 // TestBuildOrchestrator_CalledTwice_DoesNotPanic pins the fix for a
 // Prometheus double-registration panic. buildOrchestrator (via
 // buildTunnelConfig) registers cloudflared's DNS-resolver metrics on
@@ -1105,14 +1149,13 @@ func TestNewSupervisor_CalledTwice_DoesNotPanic(t *testing.T) {
 
 		tunnelCfg.EdgeAddrs = []string{"192.0.2.1:7844"}
 
-		reconnectCh := make(chan supervisor.ReconnectSignal, 1)
 		graceShutdownC := make(chan struct{})
 
-		_, err = supervisor.NewSupervisor(tunnelCfg, orchestrator, reconnectCh, graceShutdownC)
+		_, err = supervisor.NewSupervisor(tunnelCfg, orchestrator, graceShutdownC)
 		require.NoError(t, err)
 
 		assert.NotPanics(t, func() {
-			_, err := supervisor.NewSupervisor(tunnelCfg, orchestrator, reconnectCh, graceShutdownC)
+			_, err := supervisor.NewSupervisor(tunnelCfg, orchestrator, graceShutdownC)
 			require.NoError(t, err)
 		})
 	})
