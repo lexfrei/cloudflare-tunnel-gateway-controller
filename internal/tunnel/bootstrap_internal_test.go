@@ -883,6 +883,69 @@ func TestBuildTunnelConfig_SuccessPath(t *testing.T) {
 	})
 }
 
+// TestBuildTunnelConfig_ProtocolSelectorCarriesRequestedProtocol closes the gap
+// between TestBuildProtocolAndClient_PinsProtocol, which asserts on the
+// selector the constructor RETURNS, and TestBuildTunnelConfig_SuccessPath,
+// which only asserts that the field the supervisor reads is non-nil. Between
+// the two sits an assignment, and a selector built correctly and then not
+// assigned -- or overwritten with a default one -- satisfies both tests while
+// the tunnel dials a transport nobody asked for. gRPC is what breaks when that
+// transport turns out to be QUIC: cloudflared drops HTTP trailers there, and
+// grpc-status is a trailer.
+//
+// Pointer identity would say it more directly, but the selector
+// buildProtocolAndClient returns is not reachable from outside the
+// buildTunnelConfig call that consumes it, so the tie is behavioural.
+//
+// Current() alone cannot carry that tie: NewProtocolSelector reports QUIC as
+// current for auto-select as well as for pinned QUIC, so those two rows are
+// indistinguishable by it. Fallback() is what separates them -- pinned returns
+// no fallback, auto returns HTTP/2 -- and that bit is precisely what a fork
+// rebase could flip, which is the failure this test exists to catch: a pinned
+// http2 that silently regains a QUIC fallback breaks gRPC while Current()
+// stays green.
+//
+// NOT parallel: temporarily replaces prometheus.DefaultRegisterer.
+func TestBuildTunnelConfig_ProtocolSelectorCarriesRequestedProtocol(t *testing.T) {
+	tests := []struct {
+		name         string
+		protocol     string
+		want         connection.Protocol
+		wantFallback bool
+	}{
+		{name: "http2 is pinned with no fallback", protocol: connection.HTTP2.String(), want: connection.HTTP2},
+		{name: "quic is pinned with no fallback", protocol: connection.QUIC.String(), want: connection.QUIC},
+		{
+			name:         "auto starts on quic and keeps its fallback",
+			protocol:     connection.AutoSelectFlag,
+			want:         connection.QUIC,
+			wantFallback: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			zlog := newZerologLogger()
+
+			withFreshRegisterer(func() {
+				tunnelCfg, _, err := buildTunnelConfig(t.Context(), newTestToken(), "http://localhost:8080", tt.protocol, &zlog)
+
+				require.NoError(t, err)
+				require.NotNil(t, tunnelCfg.ProtocolSelector)
+				assert.Equal(t, tt.want, tunnelCfg.ProtocolSelector.Current())
+
+				fallback, ok := tunnelCfg.ProtocolSelector.Fallback()
+				assert.Equal(t, tt.wantFallback, ok,
+					"a pinned protocol must reach the supervisor with no fallback to fall back to")
+
+				if ok {
+					assert.Equal(t, connection.HTTP2, fallback)
+				}
+			})
+		})
+	}
+}
+
 // TestBuildOrchestrator_SuccessPath_NilOriginProxy exercises the full success
 // path of buildOrchestrator with nil OriginProxy.
 //
