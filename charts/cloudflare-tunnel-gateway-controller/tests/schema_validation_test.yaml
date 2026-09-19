@@ -395,6 +395,36 @@ tests:
             name: PROXY_WS_DIAL_TIMEOUT
             value: "10s"
 
+  - it: should accept valid Go duration websocket.idleTimeout
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token
+        websocket:
+          idleTimeout: 6h
+    asserts:
+      - template: deployment-proxy.yaml
+        contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: PROXY_WS_IDLE_TIMEOUT
+            value: "6h"
+
+  - it: should accept empty websocket.idleTimeout (chart default)
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token
+        websocket:
+          idleTimeout: ""
+    asserts:
+      - template: deployment-proxy.yaml
+        notContains:
+          path: spec.template.spec.containers[0].env
+          any: true
+          content:
+            name: PROXY_WS_IDLE_TIMEOUT
+
   - it: should accept empty websocket.dialTimeout (chart default)
     set:
       proxy:

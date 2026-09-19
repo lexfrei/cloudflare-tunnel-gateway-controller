@@ -797,7 +797,7 @@
         },
         "websocket": {
           "type": "object",
-          "description": "WebSocket upgrade-path tunables. Both bound only the pre-upgrade phase (TCP/TLS dial, 101-Switching-Protocols read). Empty string leaves the proxy binary's 30s default. The pattern accepts Go-duration compound forms (1h30m, 1m30s, etc.) matching time.ParseDuration. Negative durations are intentionally rejected here even though time.ParseDuration accepts them -- the proxy's downstream `> 0` gate would drop a negative value silently, so flagging it at chart-time is the discoverability win.",
+          "description": "WebSocket tunables. dialTimeout and handshakeTimeout bound the pre-upgrade phase (TCP/TLS dial, 101-Switching-Protocols read) and default to 30s; idleTimeout bounds an established session that has gone silent and defaults to 1h. Empty string leaves the proxy binary's default. The pattern accepts Go-duration compound forms (1h30m, 1m30s, etc.) matching time.ParseDuration. Negative durations are intentionally rejected here even though time.ParseDuration accepts them -- the proxy's downstream `> 0` gate would drop a negative value silently, so flagging it at chart-time is the discoverability win.",
           "properties": {
             "dialTimeout": {
               "type": "string",
@@ -808,6 +808,11 @@
               "type": "string",
               "pattern": "^(|[0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h)([0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h))*)$",
               "description": "101-Switching-Protocols read deadline as a Go duration (e.g. \"45s\", \"2m30s\"). Empty preserves the 30s default."
+            },
+            "idleTimeout": {
+              "type": "string",
+              "pattern": "^(|[0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h)([0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h))*)$",
+              "description": "How long an established session may carry no bytes in either direction before the proxy closes it, as a Go duration (e.g. \"15m\", \"6h\"). Any traffic resets the window; keepalives below the WebSocket layer do not. Empty preserves the 1h default."
             }
           }
         },

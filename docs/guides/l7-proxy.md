@@ -117,6 +117,7 @@ The proxy binary accepts the following environment variables:
 | `PROXY_TUNNEL_PROTOCOL_WAIT` | `0` (no wait) | In `auto` mode, how long (Go duration) to wait for the first pushed config before serving, so the protocol is chosen from real routes. |
 | `PROXY_WS_DIAL_TIMEOUT` | `""` (proxy default 30s) | Go-duration cap on the backend dial during a WebSocket upgrade. |
 | `PROXY_WS_HANDSHAKE_TIMEOUT` | `""` (proxy default 30s) | Go-duration cap on waiting for the backend's `101 Switching Protocols`. |
+| `PROXY_WS_IDLE_TIMEOUT` | `""` (proxy default 1h) | Go-duration bound on an established session with no bytes in either direction. Any WebSocket traffic resets the window; keepalives below the WebSocket layer do not, so an application that can sit silent for longer needs a larger value. The bound acts on the read from the backend, so it does not reclaim a session whose backend-to-client copy is wedged writing to a client that has stopped reading. |
 | `PROXY_ACCESS_LOG_ENABLED` | `false` | Enable per-request structured JSON access logging on stdout. |
 | `PROXY_ACCESS_LOG_SAMPLING_RATE` | `1` | Fraction of non-5xx requests to log when access logging is enabled, in `[0, 1]` (5xx are always logged). |
 | `PROXY_ACCESS_LOG_STRIP_QUERY` | `false` | Strip the request URL query string from access-log lines. |

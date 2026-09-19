@@ -300,13 +300,18 @@ func TestWSHandlerOptions_OptionCount(t *testing.T) {
 		name          string
 		dialEnv       string
 		handshakeEnv  string
+		idleEnv       string
 		wantOptionLen int
 	}{
 		{name: "no envs => no opts", wantOptionLen: 0},
 		{name: "dial only", dialEnv: "1s", wantOptionLen: 1},
 		{name: "handshake only", handshakeEnv: "1s", wantOptionLen: 1},
+		{name: "idle only", idleEnv: "1s", wantOptionLen: 1},
 		{name: "both", dialEnv: "1s", handshakeEnv: "1s", wantOptionLen: 2},
+		{name: "all three", dialEnv: "1s", handshakeEnv: "1s", idleEnv: "2h", wantOptionLen: 3},
 		{name: "unparseable dial => no opts", dialEnv: "bogus", wantOptionLen: 0},
+		{name: "unparseable idle => no opts", idleEnv: "bogus", wantOptionLen: 0},
+		{name: "negative idle => no opts", idleEnv: "-5s", wantOptionLen: 0},
 		// Negative duration parses cleanly but trips the > 0 gate in
 		// wsHandlerOptions, so no option is emitted. Pins the guard so a
 		// future "ge 0" widening fails here loudly instead of leaking a
@@ -318,6 +323,7 @@ func TestWSHandlerOptions_OptionCount(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Setenv("PROXY_WS_DIAL_TIMEOUT", tt.dialEnv)
 			t.Setenv("PROXY_WS_HANDSHAKE_TIMEOUT", tt.handshakeEnv)
+			t.Setenv("PROXY_WS_IDLE_TIMEOUT", tt.idleEnv)
 
 			logger := slog.New(slog.NewTextHandler(&bytes.Buffer{}, &slog.HandlerOptions{Level: slog.LevelWarn}))
 

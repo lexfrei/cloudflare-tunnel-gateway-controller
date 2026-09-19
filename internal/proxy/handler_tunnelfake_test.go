@@ -173,8 +173,27 @@ func (f *fakeCloudflaredRespWriter) Hijack() (net.Conn, *bufio.ReadWriter, error
 	f.hijacked = true
 	brw := bufio.NewReadWriter(bufio.NewReader(f.serverSide), bufio.NewWriter(f.serverSide))
 
-	return f.serverSide, brw, nil
+	return tunnelHijackedConn{f.serverSide}, brw, nil
 }
+
+// tunnelHijackedConn is what cloudflared's writers actually hand to a
+// hijack: a localProxyConnection (vendor/github.com/cloudflare
+// /cloudflared/connection/connection.go) whose deadline setters and
+// Close are all no-ops, because there is no socket on that side to act
+// on -- the bytes ride an HTTP/2 or QUIC stream back to the edge, and
+// http2RespWriter.Close returns nil as well. Reads and writes delegate.
+//
+// Without this the fake hands out a raw net.Pipe end whose deadlines
+// and Close both work, and any teardown or timeout the proxy actuates
+// on the client conn passes here while doing nothing in production.
+type tunnelHijackedConn struct {
+	net.Conn
+}
+
+func (tunnelHijackedConn) SetDeadline(time.Time) error      { return nil }
+func (tunnelHijackedConn) SetReadDeadline(time.Time) error  { return nil }
+func (tunnelHijackedConn) SetWriteDeadline(time.Time) error { return nil }
+func (tunnelHijackedConn) Close() error                     { return nil }
 
 // Flush is a no-op — cloudflared's http2RespWriter flushes underlying
 // HTTP/2 frames, but for the fake there is nothing to flush.
@@ -859,4 +878,41 @@ func TestHandler_ExternalBackendSentinelScheme_TunnelMode_Returns500(t *testing.
 		"a stray ExternalBackend sentinel must return a clean 500 through the cloudflared HTTP/2 writer")
 	assert.False(t, fake.Hijacked(),
 		"the sentinel guard must return before any hijack")
+}
+
+// TestFakeCloudflaredRespWriter_HijackedConnIgnoresDeadlineAndClose is
+// the FAKE-CONTRACT guard for the conn handed out post-101. cloudflared
+// wraps the stream in a localProxyConnection whose SetReadDeadline and
+// Close do nothing, so anything the proxy tries to enforce through the
+// client conn is silently dropped over a real tunnel. Pinning it here
+// keeps tunnel-mode tests honest: a bound or a teardown that only works
+// because net.Pipe honours deadlines fails in this package instead of
+// in production.
+func TestFakeCloudflaredRespWriter_HijackedConnIgnoresDeadlineAndClose(t *testing.T) {
+	t.Parallel()
+
+	fake := newFakeCloudflaredRespWriter()
+	t.Cleanup(func() { _ = fake.serverSide.Close(); _ = fake.clientSide.Close() })
+
+	fake.WriteHeader(http.StatusSwitchingProtocols)
+
+	conn, _, err := fake.Hijack()
+	require.NoError(t, err)
+
+	require.NoError(t, conn.SetReadDeadline(time.Now().Add(-time.Hour)),
+		"the deadline setter must report success while doing nothing, as cloudflared's does")
+	require.NoError(t, conn.Close())
+
+	// The pipe is unbuffered, so the write has to be in flight while
+	// the read runs. A deadline an hour in the past would fail that
+	// read immediately if it had been honoured, and a working Close
+	// would have torn the pipe down before either side got here.
+	go func() { _, _ = fake.clientSide.Write([]byte("x")) }()
+
+	buf := make([]byte, 1)
+
+	read, readErr := conn.Read(buf)
+	require.NoError(t, readErr, "the read must not see the expired deadline the fake claimed to set")
+	require.Equal(t, 1, read)
+	assert.Equal(t, byte('x'), buf[0], "the pipe must still carry bytes after Close on the hijacked conn")
 }

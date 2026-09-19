@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"runtime/debug"
 	"time"
 )
@@ -30,6 +31,18 @@ const (
 	// bidirectional copy begins. Overridable via
 	// WithWSHandshakeReadTimeout.
 	defaultWSHandshakeReadTimeout = 30 * time.Second
+	// defaultWSIdleTimeout bounds an established session that has gone
+	// silent. Nothing in the proxy closes a hijacked pair once the 101
+	// has landed: both copies sit blocked on a read, so a client that
+	// disappears without a close frame leaves its backend conn, two
+	// goroutines and a tunnel stream held until something outside the
+	// proxy reaps them. An hour is long enough that a session anything
+	// is still using is not reached, and short enough that an abandoned
+	// one does not outlive the pod. Overridable via
+	// WithWSIdleTimeout — transport keepalives are not session bytes
+	// and do not hold the bound open, so an application whose sockets
+	// legitimately sit silent for longer needs a larger value.
+	defaultWSIdleTimeout = time.Hour
 )
 
 // errBackendCABundleInvalid is returned when a BackendTLSPolicy's CA
@@ -145,7 +158,7 @@ func (h *Handler) proxyWebSocketUpgrade(
 		return
 	}
 
-	pipeWebSocket(w, backendConn, backendReader, resp.Header)
+	pipeWebSocket(w, backendConn, backendReader, resp.Header, h.effectiveWSIdleTimeout())
 }
 
 // pipeWebSocket completes the 101 handshake on the client side, then
@@ -156,12 +169,19 @@ func (h *Handler) proxyWebSocketUpgrade(
 // The wait ends on the FIRST direction to finish, which is the intended
 // design: either end closing means the session is over. Whichever copy is
 // still blocked is then freed by a close it is reading through — clientConn
-// here, backendConn in the caller — so neither goroutine is left behind.
+// here, backendConn in the caller. Over a tunnel that clientConn close does
+// nothing (see wsIdleGuard); the copy blocked on it is released instead when
+// this handler returns and cloudflared finishes off the stream.
+//
+// idle is the third way for the wait to end: a session carrying no bytes at
+// all for that long, which from inside the two copies is indistinguishable
+// from a healthy one nobody happens to be talking on.
 func pipeWebSocket(
 	w http.ResponseWriter,
 	backendConn net.Conn,
 	backendReader *bufio.Reader,
 	responseHeader http.Header,
+	idle time.Duration,
 ) {
 	copyHeaderValues(w.Header(), responseHeader)
 	w.WriteHeader(http.StatusSwitchingProtocols)
@@ -191,10 +211,96 @@ func pipeWebSocket(
 	// session. Deferred clientConn/backendConn close cleans up both ends.
 	errCh := make(chan error, 2)
 
-	go copyWebSocketSide(backendConn, clientConn, errCh)
-	go copyWebSocketSide(clientConn, backendReader, errCh)
+	fromClient, fromBackend := armIdleBound(idle, backendConn, clientConn, backendReader)
 
-	<-errCh
+	go copyWebSocketSide(backendConn, fromClient, errCh)
+	go copyWebSocketSide(clientConn, fromBackend, errCh)
+
+	err = <-errCh
+	if errors.Is(err, os.ErrDeadlineExceeded) {
+		slog.Info("websocket: no bytes in either direction past the idle bound, closing the session",
+			"idle_timeout", idle)
+	}
+}
+
+// armIdleBound instruments both directions of a hijacked session so the
+// backend read deadline expires only once idle has passed with no bytes
+// moving either way. A non-positive idle leaves the sources untouched
+// and the session unbounded.
+func armIdleBound(
+	idle time.Duration,
+	backendConn net.Conn,
+	clientConn net.Conn,
+	backendReader io.Reader,
+) (io.Reader, io.Reader) {
+	if idle <= 0 {
+		return clientConn, backendReader
+	}
+
+	guard := &wsIdleGuard{backendConn: backendConn, idle: idle}
+	guard.extend()
+
+	return guard.wrap(clientConn), guard.wrap(backendReader)
+}
+
+// wsIdleGuard carries a hijacked session's idle bound. It arms a read
+// deadline on the BACKEND conn and pushes it forward on every read from
+// either direction, so the deadline fires only once the whole session
+// has been silent and traffic one way keeps the other way alive.
+//
+// The backend conn is the actuator because it is the only end that is
+// always a real socket. cloudflared hands the hijack a
+// localProxyConnection (vendor/github.com/cloudflare/cloudflared
+// /connection/connection.go) whose SetDeadline, SetReadDeadline and
+// Close are all no-ops, and http2RespWriter.Close returns nil, so a
+// bound placed on the client conn holds in an httptest test and does
+// nothing over a tunnel. Expiring the backend read ends the wait in
+// pipeWebSocket, which closes both ends on its way out.
+//
+// Wrapping both sources costs io.Copy its WriteTo fast path on the
+// backend direction, where the source is a *bufio.Reader, so each
+// session allocates a copy buffer there instead. Accepted: the wrapper
+// is what makes traffic one way hold the other way's window open, and
+// the bytes are already being copied through user space on every hop of
+// this path.
+//
+// A read deadline is only observed by a goroutine that reaches a read,
+// so the one session this does not reclaim is one whose
+// backend-to-client copy is wedged writing to a client that has stopped
+// reading: no read is attempted on the backend conn, and the expired
+// deadline sits unnoticed. Bounding that case means a write deadline,
+// which would also cut off a client that is merely slow.
+type wsIdleGuard struct {
+	backendConn net.Conn
+	idle        time.Duration
+	// src is the wrapped direction; nil on the instance that only
+	// carries the bound.
+	src io.Reader
+}
+
+// Read passes the wrapped direction through and counts any bytes it
+// carried as session activity.
+//
+// The read error goes back to io.Copy exactly as it arrived: io.Copy
+// tests it against io.EOF by identity, so wrapping here would turn a
+// clean end-of-stream into a copy failure.
+func (g *wsIdleGuard) Read(p []byte) (int, error) {
+	n, err := g.src.Read(p)
+	if n > 0 {
+		g.extend()
+	}
+
+	return n, err //nolint:wrapcheck // io.Copy compares this error against io.EOF by identity
+}
+
+func (g *wsIdleGuard) extend() {
+	_ = g.backendConn.SetReadDeadline(time.Now().Add(g.idle))
+}
+
+// wrap returns src instrumented so bytes read through it count as
+// session activity.
+func (g *wsIdleGuard) wrap(src io.Reader) io.Reader {
+	return &wsIdleGuard{backendConn: g.backendConn, idle: g.idle, src: src}
 }
 
 // errWebSocketCopyPanic ends a session whose copy goroutine panicked.
