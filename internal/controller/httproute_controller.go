@@ -26,8 +26,21 @@ const (
 	// startupPendingRequeueDelay is the delay before retrying when startup sync is not yet complete.
 	startupPendingRequeueDelay = 1 * time.Second
 
-	// maxIngressRules is the maximum number of ingress rules allowed per Cloudflare Tunnel.
-	// Cloudflare's limit is approximately 1000 rules per tunnel.
+	// maxIngressRules is the largest ingress document this controller will
+	// write for one tunnel. It is OUR cap, not a published Cloudflare one.
+	// Both pages opened 2026-09-19:
+	//
+	//   developers.cloudflare.com/cloudflare-one/account-limits/
+	//     1,000 cloudflared tunnels per account and 1,000 routes per account
+	//     (shared with Cloudflare Mesh). No per-tunnel ingress-rule row.
+	//   developers.cloudflare.com/cloudflare-one/networks/connectors/
+	//   cloudflare-tunnel/do-more-with-tunnels/local-management/
+	//   configuration-file/
+	//     documents the ingress: block and states no count cap on it.
+	//
+	// Refusing at a round number we chose beats discovering the real one
+	// through a rejected write, but nothing here establishes where the real
+	// one is, or whether it is scoped per tunnel at all.
 	maxIngressRules = 1000
 
 	// Route status messages.

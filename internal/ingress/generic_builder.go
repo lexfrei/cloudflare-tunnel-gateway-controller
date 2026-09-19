@@ -109,10 +109,14 @@ func (b *GenericBuilder[R]) Build(ctx context.Context, routes []R) BuildResult {
 
 	var failedRefs []BackendRefError
 
+	rulesByNamespace := make(map[string]int, len(routes))
+
 	for i := range routes {
+		namespace, _ := b.adapter.GetMeta(&routes[i])
 		routeEntries, routeFailedRefs := extractProjectedEntries(ctx, b.adapter, &routes[i], resolver)
 		entries = append(entries, routeEntries...)
 		failedRefs = append(failedRefs, routeFailedRefs...)
+		rulesByNamespace[namespace] += countIngressBearing(routeEntries)
 	}
 
 	sortRouteEntries(entries)
@@ -130,9 +134,36 @@ func (b *GenericBuilder[R]) Build(ctx context.Context, routes []R) BuildResult {
 	}
 
 	return BuildResult{
-		Rules:      rules,
-		FailedRefs: failedRefs,
+		Rules:            rules,
+		FailedRefs:       failedRefs,
+		RulesByNamespace: rulesByNamespace,
 	}
+}
+
+// entryReachesDocument reports whether a projected entry becomes a rule in the
+// tunnel document. Wildcard-hostname entries do not: the Cloudflare API rejects
+// an empty hostname and the in-process proxy matches those itself.
+//
+// entriesToIngressRules and countIngressBearing both ask this question, and
+// they must not answer it differently — a second reason to drop an entry,
+// added to the former alone, would make the latter overstate a namespace's
+// share of the rule budget with nothing to catch it.
+func entryReachesDocument(entry routeEntry) bool {
+	return entry.hostname != "*"
+}
+
+// countIngressBearing counts the entries of one route that survive into the
+// tunnel document, which is that route's contribution to the rule budget.
+func countIngressBearing(entries []routeEntry) int {
+	count := 0
+
+	for _, entry := range entries {
+		if entryReachesDocument(entry) {
+			count++
+		}
+	}
+
+	return count
 }
 
 // entriesToIngressRules converts sorted route entries into Cloudflare ingress rules.
@@ -146,7 +177,7 @@ func entriesToIngressRules(
 	rules := make([]zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress, 0, len(entries))
 
 	for _, entry := range entries {
-		if entry.hostname == "*" {
+		if !entryReachesDocument(entry) {
 			logger.Info("skipping wildcard route from tunnel config (handled by proxy)",
 				"service", entry.service,
 			)
