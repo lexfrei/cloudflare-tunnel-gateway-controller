@@ -395,6 +395,36 @@ tests:
             name: PROXY_WS_DIAL_TIMEOUT
             value: "10s"
 
+  - it: should accept valid Go duration websocket.idleTimeout
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token
+        websocket:
+          idleTimeout: 6h
+    asserts:
+      - template: deployment-proxy.yaml
+        contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: PROXY_WS_IDLE_TIMEOUT
+            value: "6h"
+
+  - it: should accept empty websocket.idleTimeout (chart default)
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token
+        websocket:
+          idleTimeout: ""
+    asserts:
+      - template: deployment-proxy.yaml
+        notContains:
+          path: spec.template.spec.containers[0].env
+          any: true
+          content:
+            name: PROXY_WS_IDLE_TIMEOUT
+
   - it: should accept empty websocket.dialTimeout (chart default)
     set:
       proxy:
@@ -449,6 +479,43 @@ tests:
           content:
             name: PROXY_WS_DIAL_TIMEOUT
             value: "2h45m30s"
+
+  - it: should reject negative websocket.idleTimeout
+    # Same silent-drop hazard the dialTimeout cases below pin: the proxy's
+    # > 0 gate would take a negative value as "unset" and apply the 1h
+    # default, so an operator who meant to widen the bound would get it
+    # narrowed with nothing said.
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token
+        websocket:
+          idleTimeout: "-5s"
+    asserts:
+      - failedTemplate:
+          errorPattern: idleTimeout
+
+  - it: should reject bare numeric websocket.idleTimeout (no unit suffix)
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token
+        websocket:
+          idleTimeout: "3600"
+    asserts:
+      - failedTemplate:
+          errorPattern: idleTimeout
+
+  - it: should reject malformed websocket.idleTimeout (not a Go duration)
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token
+        websocket:
+          idleTimeout: "2hours"
+    asserts:
+      - failedTemplate:
+          errorPattern: idleTimeout
 
   - it: should reject negative websocket.dialTimeout
     # time.ParseDuration accepts "-5s" but the proxy's downstream

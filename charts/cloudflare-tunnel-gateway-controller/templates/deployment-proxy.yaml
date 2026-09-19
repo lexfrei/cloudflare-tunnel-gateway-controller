@@ -80,6 +80,10 @@ spec:
             - name: PROXY_WS_HANDSHAKE_TIMEOUT
               value: {{ . | quote }}
             {{- end }}
+            {{- with .Values.proxy.websocket.idleTimeout }}
+            - name: PROXY_WS_IDLE_TIMEOUT
+              value: {{ . | quote }}
+            {{- end }}
             {{- if .Values.proxy.accessLog.enabled }}
             - name: PROXY_ACCESS_LOG_ENABLED
               value: "true"

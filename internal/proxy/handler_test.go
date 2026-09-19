@@ -31,19 +31,24 @@ const rewrittenHost = "rewritten.example.com"
 func TestNewHandler_WSTimeoutOptions(t *testing.T) {
 	t.Parallel()
 
-	const packageDefault = 30 * time.Second
+	const (
+		packageDefault     = 30 * time.Second
+		packageIdleDefault = time.Hour
+	)
 
 	tests := []struct {
 		name              string
 		opts              []proxy.HandlerOption
 		wantDial          time.Duration
 		wantHandshakeRead time.Duration
+		wantIdle          time.Duration
 	}{
 		{
 			name:              "no options yields package defaults",
 			opts:              nil,
 			wantDial:          packageDefault,
 			wantHandshakeRead: packageDefault,
+			wantIdle:          packageIdleDefault,
 		},
 		{
 			name: "positive dial override sticks",
@@ -52,6 +57,7 @@ func TestNewHandler_WSTimeoutOptions(t *testing.T) {
 			},
 			wantDial:          5 * time.Second,
 			wantHandshakeRead: packageDefault,
+			wantIdle:          packageIdleDefault,
 		},
 		{
 			name: "positive handshake override sticks",
@@ -60,33 +66,49 @@ func TestNewHandler_WSTimeoutOptions(t *testing.T) {
 			},
 			wantDial:          packageDefault,
 			wantHandshakeRead: 7 * time.Second,
+			wantIdle:          packageIdleDefault,
 		},
 		{
-			name: "both overrides set independently",
+			name: "positive idle override sticks",
+			opts: []proxy.HandlerOption{
+				proxy.WithWSIdleTimeout(9 * time.Minute),
+			},
+			wantDial:          packageDefault,
+			wantHandshakeRead: packageDefault,
+			wantIdle:          9 * time.Minute,
+		},
+		{
+			name: "all three overrides set independently",
 			opts: []proxy.HandlerOption{
 				proxy.WithWSDialTimeout(2 * time.Second),
 				proxy.WithWSHandshakeReadTimeout(3 * time.Second),
+				proxy.WithWSIdleTimeout(4 * time.Minute),
 			},
 			wantDial:          2 * time.Second,
 			wantHandshakeRead: 3 * time.Second,
+			wantIdle:          4 * time.Minute,
 		},
 		{
 			name: "zero is ignored, default preserved",
 			opts: []proxy.HandlerOption{
 				proxy.WithWSDialTimeout(0),
 				proxy.WithWSHandshakeReadTimeout(0),
+				proxy.WithWSIdleTimeout(0),
 			},
 			wantDial:          packageDefault,
 			wantHandshakeRead: packageDefault,
+			wantIdle:          packageIdleDefault,
 		},
 		{
 			name: "negative is ignored, default preserved",
 			opts: []proxy.HandlerOption{
 				proxy.WithWSDialTimeout(-1 * time.Second),
 				proxy.WithWSHandshakeReadTimeout(-5 * time.Second),
+				proxy.WithWSIdleTimeout(-1 * time.Hour),
 			},
 			wantDial:          packageDefault,
 			wantHandshakeRead: packageDefault,
+			wantIdle:          packageIdleDefault,
 		},
 	}
 
@@ -100,6 +122,8 @@ func TestNewHandler_WSTimeoutOptions(t *testing.T) {
 				"effective dial timeout must match expectation")
 			assert.Equal(t, tt.wantHandshakeRead, handler.EffectiveWSHandshakeReadTimeoutForTest(),
 				"effective handshake read timeout must match expectation")
+			assert.Equal(t, tt.wantIdle, handler.EffectiveWSIdleTimeoutForTest(),
+				"effective idle bound must match expectation; a zero reaching armIdleBound leaves the session unbounded")
 		})
 	}
 }

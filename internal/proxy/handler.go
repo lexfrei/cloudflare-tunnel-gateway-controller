@@ -57,6 +57,10 @@ type Handler struct {
 	// backend's 101 Switching Protocols response. Zero means "use
 	// defaultWSHandshakeReadTimeout". Set via WithWSHandshakeReadTimeout.
 	wsHandshakeReadTimeout time.Duration
+	// wsIdleTimeout bounds an established WebSocket session that has
+	// stopped carrying bytes in either direction. Zero means "use
+	// defaultWSIdleTimeout". Set via WithWSIdleTimeout.
+	wsIdleTimeout time.Duration
 
 	// accessLog, when non-nil, emits a structured per-request log line
 	// at the deferred tail of ServeHTTP. See maybeEmitAccessLog for the
@@ -134,6 +138,19 @@ func WithWSHandshakeReadTimeout(d time.Duration) HandlerOption {
 	return func(h *Handler) {
 		if d > 0 {
 			h.wsHandshakeReadTimeout = d
+		}
+	}
+}
+
+// WithWSIdleTimeout overrides the default 1h bound on an established
+// WebSocket session that carries no bytes in either direction. Zero or
+// negative values are ignored (the default stays in place); an operator
+// whose sockets sit legitimately silent for longer raises this rather
+// than disabling it, matching the other two WebSocket bounds.
+func WithWSIdleTimeout(d time.Duration) HandlerOption {
+	return func(h *Handler) {
+		if d > 0 {
+			h.wsIdleTimeout = d
 		}
 	}
 }
@@ -635,6 +652,16 @@ func (h *Handler) effectiveWSHandshakeReadTimeout() time.Duration {
 	}
 
 	return defaultWSHandshakeReadTimeout
+}
+
+// effectiveWSIdleTimeout returns the configured idle bound for an
+// established WebSocket session, or the package default when unset.
+func (h *Handler) effectiveWSIdleTimeout() time.Duration {
+	if h.wsIdleTimeout > 0 {
+		return h.wsIdleTimeout
+	}
+
+	return defaultWSIdleTimeout
 }
 
 // proxyToBackend selects the backend from the route result and proxies the request.

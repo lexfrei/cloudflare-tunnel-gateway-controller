@@ -144,6 +144,7 @@ The `proxy` section configures the in-process L7 reverse proxy. The proxy embeds
 | --- | --- | --- | --- |
 | `proxy.websocket.dialTimeout` | string | `""` (proxy default 30s) | Go-duration cap on the backend dial during the WebSocket upgrade |
 | `proxy.websocket.handshakeTimeout` | string | `""` (proxy default 30s) | Go-duration cap on waiting for the backend's `101 Switching Protocols` |
+| `proxy.websocket.idleTimeout` | string | `""` (proxy default 1h) | Go-duration bound on an established session that carries no bytes in either direction; any traffic resets it |
 
 ### Networking and Service
 

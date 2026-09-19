@@ -23,6 +23,7 @@ This document describes all configuration options for the controller binary. For
 | `--proxy-token-secret` | `CF_PROXY_TOKEN_SECRET` | | Tunnel-token Secret to watch in `<namespace>/<name>` form; the controller rolls the proxy Deployment when the Secret data changes. Empty disables the watcher |
 | `--proxy-deployment-label` | `CF_PROXY_DEPLOYMENT_LABEL` | `app.kubernetes.io/component=proxy` | Label selector (`key=value`) identifying the proxy Deployment(s) to roll on tunnel-token change |
 | `--tunnel-protocol` | `CF_TUNNEL_PROTOCOL` | `auto` | Edge transport protocol (`auto`, `http2`, `quic`); used to warn when GRPCRoutes are present on an explicit `quic` tunnel |
+| `--ws-idle-timeout` | `CF_WS_IDLE_TIMEOUT` | | Idle bound (Go duration) rendered onto per-Gateway data planes: an established WebSocket session carrying no bytes in either direction for this long is closed. Empty leaves the proxy's own 1h default. The chart passes `proxy.websocket.idleTimeout` here, so one value covers the shared plane and the per-Gateway ones |
 | `--tracing-enabled` | `CF_TRACING_ENABLED` | `false` | Enable OpenTelemetry distributed tracing |
 | `--tracing-endpoint` | `CF_TRACING_ENDPOINT` | | OTLP/gRPC collector endpoint (defers to `OTEL_EXPORTER_OTLP_ENDPOINT` when empty) |
 | `--tracing-sample-rate` | `CF_TRACING_SAMPLE_RATE` | `1.0` | Head-sampling probability in `[0,1]` |

@@ -656,6 +656,27 @@ tests:
           path: spec.template.spec.containers[0].args
           content: "--tunnel-protocol=auto"
 
+  # The shared proxy reads proxy.websocket.idleTimeout from its own env; the
+  # controller needs the same value to render it onto per-Gateway data planes,
+  # whose operators have no other way to raise the bound.
+  - it: should pass --ws-idle-timeout to the controller
+    set:
+      proxy:
+        websocket:
+          idleTimeout: 6h
+    asserts:
+      - template: deployment.yaml
+        contains:
+          path: spec.template.spec.containers[0].args
+          content: "--ws-idle-timeout=6h"
+
+  - it: should NOT pass --ws-idle-timeout when the value is empty
+    asserts:
+      - template: deployment.yaml
+        notMatchRegex:
+          path: spec.template.spec.containers[0].args[*]
+          pattern: "^--ws-idle-timeout"
+
   - it: should NOT set any --tracing-* arg when tracing disabled (default)
     asserts:
       - template: deployment.yaml

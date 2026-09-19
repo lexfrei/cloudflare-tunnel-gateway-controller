@@ -703,6 +703,7 @@ func TestProxyDeployment_OptionalKnobs(t *testing.T) {
 	}
 	input.Config.Spec.AuthTokenSecretRef = &v1alpha1.LocalSecretReference{Name: "edge-auth"}
 	input.Defaults.TunnelProtocol = "http2"
+	input.Defaults.WSIdleTimeout = "6h"
 
 	deployment := render.ProxyDeployment(input)
 	container := deployment.Spec.Template.Spec.Containers[0]
@@ -721,6 +722,26 @@ func TestProxyDeployment_OptionalKnobs(t *testing.T) {
 
 	require.Contains(t, envByName, "PROXY_TUNNEL_PROTOCOL")
 	assert.Equal(t, "http2", envByName["PROXY_TUNNEL_PROTOCOL"].Value)
+
+	require.Contains(t, envByName, "PROXY_WS_IDLE_TIMEOUT")
+	assert.Equal(t, "6h", envByName["PROXY_WS_IDLE_TIMEOUT"].Value,
+		"a Gateway with its own data plane must inherit the operator's idle bound; "+
+			"without it the plane carries the binary default with no way to raise it")
+}
+
+// TestProxyDeployment_NoWSIdleTimeoutEnvWhenUnset pins the other half: an
+// operator who has not set the bound gets no env var, so the plane runs on
+// the proxy's own default rather than on an empty string the binary would
+// then have to interpret.
+func TestProxyDeployment_NoWSIdleTimeoutEnvWhenUnset(t *testing.T) {
+	t.Parallel()
+
+	container := render.ProxyDeployment(testInput("edge")).Spec.Template.Spec.Containers[0]
+
+	for _, env := range container.Env {
+		assert.NotEqual(t, "PROXY_WS_IDLE_TIMEOUT", env.Name,
+			"an unset bound must render no env var at all")
+	}
 }
 
 // TestConfigService_Shape pins the headless config Service: pod IPs published

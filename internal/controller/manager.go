@@ -129,6 +129,10 @@ type Config struct {
 	// where cloudflared drops the grpc-status trailer. auto/unset is upgraded to
 	// http2 by the proxy when a GRPCRoute is present, so it is not flagged.
 	TunnelProtocol string
+	// WSIdleTimeout is the idle bound rendered onto per-Gateway data planes
+	// (--ws-idle-timeout). Empty leaves the proxy binary's own default, which
+	// is what the shared plane gets when the chart value is empty too.
+	WSIdleTimeout string
 
 	// HostnameOwnershipEnforce enables the controller-side layer of the
 	// per-namespace hostname-ownership policy (#475): routes whose hostnames
@@ -332,6 +336,7 @@ func Run(ctx context.Context, cfg *Config) error {
 		RenderDefaults: render.Defaults{
 			ProxyImage:     cfg.ProxyImage,
 			TunnelProtocol: cfg.TunnelProtocol,
+			WSIdleTimeout:  cfg.WSIdleTimeout,
 		},
 		ControllerNamespace:         defaultNamespace,
 		MonitoringNamespaceSelector: monitoringSelector,

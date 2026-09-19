@@ -93,6 +93,14 @@ type Defaults struct {
 	// TunnelProtocol is the proxy's edge transport (--tunnel-protocol).
 	// "auto"/"" is the binary default and is not rendered.
 	TunnelProtocol string
+	// WSIdleTimeout is the idle bound on an established WebSocket session
+	// (--ws-idle-timeout). Empty leaves the proxy binary's own default and is
+	// not rendered. The shared plane reads the same chart value from its own
+	// env; without this field it stopped there, and a per-Gateway plane ran
+	// the binary default with nothing able to change it — GatewayConfig
+	// carries no timeout field either, so the value was unreachable rather
+	// than merely operator-scoped.
+	WSIdleTimeout string
 }
 
 // NetworkPolicyInput carries the controller-level config the per-Gateway
@@ -388,6 +396,10 @@ func proxyEnv(input *Input) []corev1.EnvVar {
 
 	if protocol := input.Defaults.TunnelProtocol; protocol != "" && protocol != "auto" {
 		env = append(env, corev1.EnvVar{Name: "PROXY_TUNNEL_PROTOCOL", Value: protocol})
+	}
+
+	if idle := input.Defaults.WSIdleTimeout; idle != "" {
+		env = append(env, corev1.EnvVar{Name: "PROXY_WS_IDLE_TIMEOUT", Value: idle})
 	}
 
 	return env
