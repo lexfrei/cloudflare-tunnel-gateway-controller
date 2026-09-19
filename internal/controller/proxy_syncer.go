@@ -86,6 +86,13 @@ type ProxySyncer struct {
 	// (issue #332). Set by the manager after construction and shared with the
 	// other reconcilers. nil disables cross-reconcile reuse.
 	ViewStore *mergeViewStore
+
+	// controllerName scopes every parentRef this syncer resolves to Gateways
+	// whose GatewayClass names us. A route may also be attached to another
+	// implementation's Gateway, and that Gateway's listeners describe what IT
+	// serves. Empty accepts any Gateway (tests), as for the client-cert
+	// resolver below.
+	controllerName string
 }
 
 // pushTarget is one partition's push state: the cache that lets a resync
@@ -164,6 +171,7 @@ func NewProxySyncer(
 		protocolResolver:     newBackendProtocolResolver(k8sClient),
 		tlsResolver:          newBackendTLSResolver(k8sClient),
 		gatewayCertResolver:  newGatewayClientCertResolver(k8sClient, controllerName),
+		controllerName:       controllerName,
 	}
 }
 
@@ -1093,7 +1101,7 @@ func (s *ProxySyncer) buildProxyConfig(
 	// bound listener covers is dropped (→ 404), and a route with no hostnames
 	// inherits the listener's hostname instead of becoming a catch-all. Rewrite
 	// in-memory before handing to the converter; the input routes are untouched.
-	routes = withEffectiveHostnames(ctx, s.k8sClient, routes, views)
+	routes = withEffectiveHostnames(ctx, s.k8sClient, s.controllerName, routes, views)
 
 	// A RequestRedirect filter that leaves scheme empty must default to the
 	// scheme of the request, which behind the tunnel means the parent
@@ -1101,7 +1109,7 @@ func (s *ProxySyncer) buildProxyConfig(
 	// origin request carries no usable scheme). Resolve it here so the
 	// converter sees an explicit scheme instead of the proxy's hardcoded
 	// https fallback. Input routes are left untouched.
-	routes = withDefaultRedirectScheme(ctx, s.k8sClient, routes, views)
+	routes = withDefaultRedirectScheme(ctx, s.k8sClient, s.controllerName, routes, views)
 
 	// Convert to proxy config with cross-namespace validation, backend
 	// protocol resolution (e.g. h2c from Service appProtocol), and
@@ -1126,7 +1134,7 @@ func (s *ProxySyncer) buildProxyConfig(
 		// is dropped, and a route with no hostnames inherits the listener's
 		// hostname instead of becoming a catch-all answering every Host
 		// (including hostnames owned by other routes).
-		grpcRoutes = withEffectiveHostnamesGRPC(ctx, s.k8sClient, grpcRoutes, views)
+		grpcRoutes = withEffectiveHostnamesGRPC(ctx, s.k8sClient, s.controllerName, grpcRoutes, views)
 
 		grpcCfg := proxy.ConvertGRPCRoutes(ctx, grpcRoutes, s.clusterDomain, s.grpcBackendValidator, s.protocolResolver, s.tlsResolver, s.gatewayCertResolver)
 		cfg.Rules = append(cfg.Rules, grpcCfg.Rules...)
