@@ -37,6 +37,26 @@ Because the v3 data plane is a generic in-process L7 proxy that ultimately dials
 
 A cross-namespace `ServiceImport` or `ExternalBackend` `backendRef` requires a `ReferenceGrant` whose `to` entry names the matching `group`/`kind` (`multicluster.x-k8s.io`/`ServiceImport` or `cf.k8s.lex.la`/`ExternalBackend`) — a Service-only grant does not authorize them.
 
+## The `core` group spelling is tolerated in some references and not others
+
+Gateway API gives the Kubernetes core API group exactly one spelling: the empty string. Write `group: ""` in a `ReferenceGrant` and in the reference it authorises, and none of the following matters.
+
+This implementation also accepts the non-canonical `core` in several places. That predates the current code and stays for compatibility, but the spec does not sanction it and it is not applied everywhere, so a spelling carried from one working manifest to another can be refused with no obvious reason:
+
+| Reference | `group: core` |
+| --- | --- |
+| A `backendRef` to a `Service` | Accepted |
+| The `ReferenceGrant` `to` entry authorising that `Service` | Accepted |
+| `BackendTLSPolicy.spec.validation.caCertificateRefs` to a `ConfigMap` | Accepted |
+| `Gateway.spec.tls.backend.clientCertificateRef` to a `Secret` | **Rejected** |
+| The `ReferenceGrant` `to` entry authorising that `Secret` | **Rejected** |
+
+Both halves of the Secret case reject it, and they fail in different places, so either one alone is enough to break a working manifest. A `clientCertificateRef` spelled `core` is not recognised as a core `Secret` reference at all, so it never reaches the grant check and the Gateway reports `ResolvedRefs=False`. A grant spelled `core` — the shape you get by copying a working `Service` grant and changing `kind` — matches nothing, so a canonically spelled reference across namespaces is still refused, as `RefNotPermitted`.
+
+Both are fail-closed: the backend hop proceeds without a client certificate rather than with someone else's, and nothing is served that should not be. But if you arrived here because a certificate reference stopped working after you carried over a spelling that works for `backendRef`, one of those two is why.
+
+Use `group: ""` everywhere and this asymmetry cannot bite.
+
 ## Traffic Splitting and Load Balancing
 
 The in-process L7 proxy performs weighted traffic splitting across the `backendRefs` of a rule, for both HTTPRoute and GRPCRoute. Each backend's `weight` is honoured by a weighted-random selection at request time: traffic is distributed in proportion to the weights, and a backend with `weight: 0` receives no traffic (a rule whose backends all have weight 0 serves nothing). Weighted splitting works directly in the proxy and does not require an external load balancer.
