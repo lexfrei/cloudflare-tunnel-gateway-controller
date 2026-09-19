@@ -90,6 +90,12 @@ type ProxySyncer struct {
 	// (issue #332). Set by the manager after construction and shared with the
 	// other reconcilers. nil disables cross-reconcile reuse.
 	ViewStore *mergeViewStore
+
+	// controllerName keeps another implementation's Gateways out of what this
+	// syncer serves. A route may also be attached to such a Gateway, and its
+	// listeners describe what IT serves. Empty accepts any Gateway (tests), as
+	// for the client-cert resolver below.
+	controllerName string
 }
 
 // pushTarget is one partition's push state: the cache that lets a resync
@@ -131,12 +137,15 @@ type pushTarget struct {
 
 // NewProxySyncer creates a ProxySyncer for pushing config to proxy replicas.
 // The client is used to validate cross-namespace backend references via
-// ReferenceGrant. controllerName scopes the Gateway client-cert resolver to
-// Gateways whose GatewayClass.spec.controllerName matches ours — parentRefs
-// pointing at a Gateway managed by another controller MUST NOT contribute
-// their client cert to OUR proxy's mTLS handshake. controllerName may be
-// empty (tests); the resolver then accepts any Gateway regardless of its
-// GatewayClass.
+// ReferenceGrant.
+//
+// A Gateway managed by another controller MUST NOT contribute its client cert
+// to OUR proxy's mTLS handshake, its listener's hostname to what we serve, or
+// its listener's protocol to a scheme-less redirect. The client-cert resolver
+// also refuses a Gateway whose GatewayClass it cannot read; the hostname and
+// redirect passes drop a Gateway only when its class names another
+// controller. controllerName may be empty (tests), which accepts any Gateway
+// regardless of its GatewayClass.
 func NewProxySyncer(
 	clusterDomain string,
 	authToken string,
@@ -168,6 +177,7 @@ func NewProxySyncer(
 		protocolResolver:     newBackendProtocolResolver(k8sClient),
 		tlsResolver:          newBackendTLSResolver(k8sClient),
 		gatewayCertResolver:  newGatewayClientCertResolver(k8sClient, controllerName),
+		controllerName:       controllerName,
 	}
 }
 
@@ -1097,7 +1107,7 @@ func (s *ProxySyncer) buildProxyConfig(
 	// bound listener covers is dropped (→ 404), and a route with no hostnames
 	// inherits the listener's hostname instead of becoming a catch-all. Rewrite
 	// in-memory before handing to the converter; the input routes are untouched.
-	routes = withEffectiveHostnames(ctx, s.k8sClient, routes, views)
+	routes = withEffectiveHostnames(ctx, s.k8sClient, s.controllerName, routes, views)
 
 	// A RequestRedirect filter that leaves scheme empty must default to the
 	// scheme of the request, which behind the tunnel means the parent
@@ -1105,7 +1115,7 @@ func (s *ProxySyncer) buildProxyConfig(
 	// origin request carries no usable scheme). Resolve it here so the
 	// converter sees an explicit scheme instead of the proxy's hardcoded
 	// https fallback. Input routes are left untouched.
-	routes = withDefaultRedirectScheme(ctx, s.k8sClient, routes, views)
+	routes = withDefaultRedirectScheme(ctx, s.k8sClient, s.controllerName, routes, views)
 
 	// Convert to proxy config with cross-namespace validation, backend
 	// protocol resolution (e.g. h2c from Service appProtocol), and
@@ -1130,7 +1140,7 @@ func (s *ProxySyncer) buildProxyConfig(
 		// is dropped, and a route with no hostnames inherits the listener's
 		// hostname instead of becoming a catch-all answering every Host
 		// (including hostnames owned by other routes).
-		grpcRoutes = withEffectiveHostnamesGRPC(ctx, s.k8sClient, grpcRoutes, views)
+		grpcRoutes = withEffectiveHostnamesGRPC(ctx, s.k8sClient, s.controllerName, grpcRoutes, views)
 
 		grpcCfg := proxy.ConvertGRPCRoutes(ctx, grpcRoutes, s.clusterDomain, s.grpcBackendValidator, s.protocolResolver, s.tlsResolver, s.gatewayCertResolver)
 		cfg.Rules = append(cfg.Rules, grpcCfg.Rules...)

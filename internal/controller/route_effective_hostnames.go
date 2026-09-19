@@ -7,6 +7,7 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/listenermerge"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/logging"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/routebinding"
 )
 
@@ -47,6 +48,13 @@ const catchAllHostnameSentinel = gatewayv1.Hostname("")
 // the narrowing never broadens the served set beyond what the route already
 // declared, and never turns a hostname-less catch-all into anything else.
 //
+// controllerName scopes which parents may contribute at all: only Gateways
+// whose GatewayClass names this controller. A route may legitimately be
+// attached to another implementation's Gateway as well, and that Gateway's
+// listeners describe what IT serves, not what we do. Empty accepts any
+// Gateway, which is the convention the Gateway client-cert resolver already
+// uses for tests.
+//
 // The function never mutates the input routes; each output element is a
 // fresh shallow copy whose Spec.Hostnames slice has been replaced.
 //
@@ -54,6 +62,7 @@ const catchAllHostnameSentinel = gatewayv1.Hostname("")
 func withEffectiveHostnames(
 	ctx context.Context,
 	cli client.Client,
+	controllerName string,
 	routes []*gatewayv1.HTTPRoute,
 	views *listenerViewCache,
 ) []*gatewayv1.HTTPRoute {
@@ -66,7 +75,7 @@ func withEffectiveHostnames(
 	out := make([]*gatewayv1.HTTPRoute, len(routes))
 
 	for i, route := range routes {
-		effective, catchAll := collectEffectiveListenerHostnames(ctx, cli, validator, HTTPRouteWrapper{route}, views)
+		effective, catchAll := collectEffectiveListenerHostnames(ctx, cli, controllerName, validator, HTTPRouteWrapper{route}, views)
 		if catchAll && len(route.Spec.Hostnames) == 0 {
 			// Accepted by a hostname-less listener: the route stays a
 			// catch-all regardless of what pinned sibling listeners
@@ -103,6 +112,7 @@ func withEffectiveHostnames(
 func withEffectiveHostnamesGRPC(
 	ctx context.Context,
 	cli client.Client,
+	controllerName string,
 	routes []*gatewayv1.GRPCRoute,
 	views *listenerViewCache,
 ) []*gatewayv1.GRPCRoute {
@@ -115,7 +125,7 @@ func withEffectiveHostnamesGRPC(
 	out := make([]*gatewayv1.GRPCRoute, len(routes))
 
 	for i, route := range routes {
-		effective, catchAll := collectEffectiveListenerHostnames(ctx, cli, validator, GRPCRouteWrapper{route}, views)
+		effective, catchAll := collectEffectiveListenerHostnames(ctx, cli, controllerName, validator, GRPCRouteWrapper{route}, views)
 		if catchAll && len(route.Spec.Hostnames) == 0 {
 			// Accepted by a hostname-less listener: the route stays a
 			// catch-all regardless of what pinned sibling listeners
@@ -149,6 +159,7 @@ func withEffectiveHostnamesGRPC(
 func collectEffectiveListenerHostnames(
 	ctx context.Context,
 	cli client.Client,
+	controllerName string,
 	validator *routebinding.Validator,
 	route Route,
 	views *listenerViewCache,
@@ -175,7 +186,7 @@ func collectEffectiveListenerHostnames(
 	}
 
 	for _, ref := range route.GetParentRefs() {
-		for _, hostname := range effectiveHostnamesForParentRef(ctx, cli, validator, route, ref, views) {
+		for _, hostname := range effectiveHostnamesForParentRef(ctx, cli, controllerName, validator, route, ref, views) {
 			add(hostname)
 		}
 	}
@@ -186,12 +197,13 @@ func collectEffectiveListenerHostnames(
 func effectiveHostnamesForParentRef(
 	ctx context.Context,
 	cli client.Client,
+	controllerName string,
 	validator *routebinding.Validator,
 	route Route,
 	ref gatewayv1.ParentReference,
 	views *listenerViewCache,
 ) []gatewayv1.Hostname {
-	return resolveParentRefListeners(ctx, cli, validator, route, ref, views,
+	return resolveParentRefListeners(ctx, cli, controllerName, validator, route, ref, views,
 		gatewayEffectiveHostnames, listenerSetEffectiveHostnames)
 }
 
@@ -204,6 +216,7 @@ type (
 	gatewayListenerBranch[T any] func(
 		ctx context.Context,
 		cli client.Client,
+		controllerName string,
 		validator *routebinding.Validator,
 		namespace, name string,
 		routeInfo *routebinding.RouteInfo,
@@ -212,6 +225,7 @@ type (
 	listenerSetListenerBranch[T any] func(
 		ctx context.Context,
 		cli client.Client,
+		controllerName string,
 		validator *routebinding.Validator,
 		namespace, name string,
 		routeInfo *routebinding.RouteInfo,
@@ -227,9 +241,14 @@ type (
 // Gateway or ListenerSet branch. Only the per-listener value each pass extracts
 // differs, so the two passes share this preamble via the T parameter instead of
 // duplicating it.
+//
+// controllerName reaches the branches because the GatewayClass check needs the
+// resolved Gateway, which only they hold — a ListenerSet's class lives on its
+// parent Gateway, not on the ListenerSet.
 func resolveParentRefListeners[T any](
 	ctx context.Context,
 	cli client.Client,
+	controllerName string,
 	validator *routebinding.Validator,
 	route Route,
 	ref gatewayv1.ParentReference,
@@ -262,9 +281,9 @@ func resolveParentRefListeners[T any](
 
 	switch kind {
 	case kindGateway:
-		return gatewayBranch(ctx, cli, validator, namespace, string(ref.Name), routeInfo)
+		return gatewayBranch(ctx, cli, controllerName, validator, namespace, string(ref.Name), routeInfo)
 	case kindListenerSet:
-		return listenerSetBranch(ctx, cli, validator, namespace, string(ref.Name), routeInfo, views)
+		return listenerSetBranch(ctx, cli, controllerName, validator, namespace, string(ref.Name), routeInfo, views)
 	}
 
 	return nil
@@ -273,12 +292,17 @@ func resolveParentRefListeners[T any](
 func gatewayEffectiveHostnames(
 	ctx context.Context,
 	cli client.Client,
+	controllerName string,
 	validator *routebinding.Validator,
 	namespace, name string,
 	routeInfo *routebinding.RouteInfo,
 ) []gatewayv1.Hostname {
 	var gateway gatewayv1.Gateway
 	if err := cli.Get(ctx, client.ObjectKey{Name: name, Namespace: namespace}, &gateway); err != nil {
+		return nil
+	}
+
+	if gatewayOwnedElsewhere(ctx, cli, &gateway, controllerName) {
 		return nil
 	}
 
@@ -298,6 +322,7 @@ func gatewayEffectiveHostnames(
 func listenerSetEffectiveHostnames(
 	ctx context.Context,
 	cli client.Client,
+	controllerName string,
 	validator *routebinding.Validator,
 	namespace, name string,
 	routeInfo *routebinding.RouteInfo,
@@ -305,6 +330,10 @@ func listenerSetEffectiveHostnames(
 ) []gatewayv1.Hostname {
 	var listenerSet gatewayv1.ListenerSet
 	if err := cli.Get(ctx, client.ObjectKey{Name: name, Namespace: namespace}, &listenerSet); err != nil {
+		return nil
+	}
+
+	if listenerSetOwnedElsewhere(ctx, cli, &listenerSet, controllerName) {
 		return nil
 	}
 
@@ -323,13 +352,69 @@ func listenerSetEffectiveHostnames(
 	return effectiveHostnamesForSections(matched, hostByName, routeInfo.Hostnames)
 }
 
+// gatewayOwnedElsewhere reports whether the Gateway's GatewayClass names a
+// different controller. The hostname and redirect-scheme passes drop a parent
+// only on that answer. A missing or unreadable class is not evidence that the
+// Gateway is someone else's, and dropping our own Gateway on it would leave a
+// hostname-less route answering every Host. GatewayInfraReconciler reads the
+// same three states the same way. An empty controllerName never reports
+// foreign, matching gatewayManagedByController's test convention.
+func gatewayOwnedElsewhere(
+	ctx context.Context,
+	cli client.Client,
+	gateway *gatewayv1.Gateway,
+	controllerName string,
+) bool {
+	if controllerName == "" {
+		return false
+	}
+
+	state, err := classifyGatewayClass(ctx, cli, gateway, controllerName)
+	if err != nil {
+		logging.FromContext(ctx).Debug("GatewayClass unreadable, Gateway still treated as ours for hostnames and redirect scheme",
+			"error", err,
+			"gateway", gateway.Namespace+"/"+gateway.Name,
+			"gatewayClassName", string(gateway.Spec.GatewayClassName))
+	}
+
+	return state == gatewayClassForeign
+}
+
+// listenerSetOwnedElsewhere reports whether a ListenerSet belongs to another
+// controller. That is a property of its PARENT Gateway's GatewayClass, since a
+// ListenerSet names no class of its own. A parent that cannot be resolved
+// also counts, whether it is absent or its read failed, since
+// listenerSetParentGateway reports found=false for any Get error. The
+// route-binding pass drops such a parentRef too
+// (resolveListenerSetParentBinding), and a ListenerSet whose parent Gateway
+// does not exist is programmed by nobody.
+func listenerSetOwnedElsewhere(
+	ctx context.Context,
+	cli client.Client,
+	listenerSet *gatewayv1.ListenerSet,
+	controllerName string,
+) bool {
+	if controllerName == "" {
+		return false
+	}
+
+	parent, found := listenerSetParentGateway(ctx, cli, listenerSet)
+	if !found {
+		return true
+	}
+
+	return gatewayOwnedElsewhere(ctx, cli, parent, controllerName)
+}
+
 // nonConflictedSections drops, from sections, any matched listener whose
 // merged-view entry (across the parent Gateway and its sibling ListenerSets) is
 // conflicted and therefore not programmed. A route binds to neither the
 // hostname nor the protocol of a conflicted listener, so both the
 // hostname-inheritance and redirect-scheme passes route their accepted
-// sections through this. When the parent Gateway cannot be resolved the input
-// sections are returned unchanged (best-effort, matching the prior behaviour).
+// sections through this. An unresolvable parent Gateway returns the input
+// sections unchanged, which is best-effort and now rarely reached: the class
+// filter resolves the same parent earlier and contributes nothing when it
+// cannot.
 func nonConflictedSections(
 	ctx context.Context,
 	cli client.Client,

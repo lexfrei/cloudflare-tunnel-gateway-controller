@@ -90,6 +90,10 @@ A `ListenerSet` is successfully attached to a Gateway when:
 
 The Gateway's `status.attachedListenerSets` field is the count of ListenerSets meeting both criteria.
 
+### Hostnames and redirect schemes from a ListenerSet
+
+A route bound through a `ListenerSet` can inherit a hostname and a redirect scheme from its entries only while the parent Gateway exists, can be read, and is not managed by a different Gateway API implementation. A ListenerSet names no GatewayClass of its own, so its parent Gateway's class decides whose it is. If the parent Gateway is absent or cannot be read, or its class names another controller, the entries lend no hostname to a route bound through it and no protocol to a scheme-less redirect. A parent whose class is missing or cannot be read at that moment is not treated as another implementation's, so its ListenerSets keep lending both.
+
 ## Precedence and conflict resolution
 
 Per Gateway API spec the effective listener list is concatenated as follows:

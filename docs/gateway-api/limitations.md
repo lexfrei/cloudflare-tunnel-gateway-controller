@@ -97,6 +97,10 @@ By default all Gateways of the class share one proxy process and one Cloudflare 
 
 A consequence of the shared tunnel: two Gateways of the same class share one edge address (the tunnel CNAME), so a route bound to one Gateway is reachable through the other's address for any hostname+path they both answer. Routing is by hostname and path, not by which Gateway the request nominally targeted — there is no per-Gateway signal on the wire. If you need a route reachable through only one Gateway's address, give that Gateway a dedicated data plane (its own tunnel) via `spec.infrastructure.parametersRef`. This is why the Gateway API conformance test `HTTPRouteMultipleGateways` is not run against the shared plane.
 
+## Routes attached to another implementation's Gateway
+
+A route may carry parentRefs to this controller's Gateway and to one owned by another Gateway API implementation at the same time, which is the normal shape of a migration. A Gateway whose `GatewayClass.spec.controllerName` names a different controller contributes nothing to what this data plane serves: its listeners lend neither their hostname to the route's served set nor their protocol to a scheme-less `RequestRedirect`. The same applies to a `ListenerSet`, judged by its parent Gateway. A Gateway whose class is missing or cannot be read at that moment is not treated as foreign, so a route bound to this controller's own Gateway keeps inheriting its listener's hostname.
+
 ## SSL Certificate Limitations
 
 Cloudflare's free [Universal SSL](https://developers.cloudflare.com/ssl/edge-certificates/universal-ssl/limitations/) certificates only cover root and first-level subdomains:
