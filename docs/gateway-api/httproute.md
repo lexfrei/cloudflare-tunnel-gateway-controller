@@ -17,7 +17,7 @@ All matching and filter behavior is performed by the in-process L7 proxy that th
 | RequestHeaderModifier filter | ✅ | |
 | ResponseHeaderModifier filter | ✅ | |
 | RequestRedirect filter | ✅ | |
-| URLRewrite filter | ✅ | |
+| URLRewrite filter | ✅ | Replaces the matched prefix; the rest of the path reaches the backend as sent, dot segments and all |
 | RequestMirror filter | ✅ | |
 | Per-route timeouts | ✅ | |
 | Cross-namespace routing | ✅ | Via ReferenceGrant |
