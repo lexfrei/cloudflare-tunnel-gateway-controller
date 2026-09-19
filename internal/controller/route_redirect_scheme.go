@@ -32,8 +32,11 @@ const (
 // redirect, which violates the spec for routes on an HTTP listener.
 //
 // Only listeners that actually ACCEPT the route contribute, reusing the same
-// binding validator as hostname-intersection narrowing. When no managed parent resolves,
-// the filter's Scheme is left nil and the proxy's own fallback applies.
+// binding validator as hostname-intersection narrowing, and only on Gateways
+// this controller manages — another implementation's listener says nothing
+// about the scheme a request reaching US arrived on. When no managed parent
+// resolves, the filter's Scheme is left nil and the proxy's own fallback
+// applies.
 //
 // The function never mutates the input routes; a route is deep-copied only
 // when it has at least one scheme-less redirect filter AND a parent scheme was
@@ -41,6 +44,7 @@ const (
 func withDefaultRedirectScheme(
 	ctx context.Context,
 	cli client.Client,
+	controllerName string,
 	routes []*gatewayv1.HTTPRoute,
 	views *listenerViewCache,
 ) []*gatewayv1.HTTPRoute {
@@ -53,7 +57,7 @@ func withDefaultRedirectScheme(
 	out := make([]*gatewayv1.HTTPRoute, len(routes))
 
 	for i, route := range routes {
-		out[i] = defaultRedirectSchemeForRoute(ctx, cli, validator, route, views)
+		out[i] = defaultRedirectSchemeForRoute(ctx, cli, controllerName, validator, route, views)
 	}
 
 	return out
@@ -65,6 +69,7 @@ func withDefaultRedirectScheme(
 func defaultRedirectSchemeForRoute(
 	ctx context.Context,
 	cli client.Client,
+	controllerName string,
 	validator *routebinding.Validator,
 	route *gatewayv1.HTTPRoute,
 	views *listenerViewCache,
@@ -73,7 +78,7 @@ func defaultRedirectSchemeForRoute(
 		return route
 	}
 
-	scheme := acceptedListenerScheme(ctx, cli, validator, HTTPRouteWrapper{route}, views)
+	scheme := acceptedListenerScheme(ctx, cli, controllerName, validator, HTTPRouteWrapper{route}, views)
 	if scheme == "" {
 		return route
 	}
@@ -152,6 +157,7 @@ func isEmptySchemeRedirect(filter *gatewayv1.HTTPRouteFilter) bool {
 func acceptedListenerScheme(
 	ctx context.Context,
 	cli client.Client,
+	controllerName string,
 	validator *routebinding.Validator,
 	route Route,
 	views *listenerViewCache,
@@ -159,7 +165,7 @@ func acceptedListenerScheme(
 	sawHTTP := false
 
 	for _, ref := range route.GetParentRefs() {
-		for _, protocol := range acceptedProtocolsForParentRef(ctx, cli, validator, route, ref, views) {
+		for _, protocol := range acceptedProtocolsForParentRef(ctx, cli, controllerName, validator, route, ref, views) {
 			switch protocol {
 			case gatewayv1.HTTPSProtocolType:
 				return redirectSchemeHTTPS
@@ -187,24 +193,30 @@ func acceptedListenerScheme(
 func acceptedProtocolsForParentRef(
 	ctx context.Context,
 	cli client.Client,
+	controllerName string,
 	validator *routebinding.Validator,
 	route Route,
 	ref gatewayv1.ParentReference,
 	views *listenerViewCache,
 ) []gatewayv1.ProtocolType {
-	return resolveParentRefListeners(ctx, cli, validator, route, ref, views,
+	return resolveParentRefListeners(ctx, cli, controllerName, validator, route, ref, views,
 		gatewayAcceptedProtocols, listenerSetAcceptedProtocols)
 }
 
 func gatewayAcceptedProtocols(
 	ctx context.Context,
 	cli client.Client,
+	controllerName string,
 	validator *routebinding.Validator,
 	namespace, name string,
 	routeInfo *routebinding.RouteInfo,
 ) []gatewayv1.ProtocolType {
 	var gateway gatewayv1.Gateway
 	if err := cli.Get(ctx, client.ObjectKey{Name: name, Namespace: namespace}, &gateway); err != nil {
+		return nil
+	}
+
+	if !gatewayManagedByController(ctx, cli, &gateway, controllerName) {
 		return nil
 	}
 
@@ -224,6 +236,7 @@ func gatewayAcceptedProtocols(
 func listenerSetAcceptedProtocols(
 	ctx context.Context,
 	cli client.Client,
+	controllerName string,
 	validator *routebinding.Validator,
 	namespace, name string,
 	routeInfo *routebinding.RouteInfo,
@@ -231,6 +244,10 @@ func listenerSetAcceptedProtocols(
 ) []gatewayv1.ProtocolType {
 	var listenerSet gatewayv1.ListenerSet
 	if err := cli.Get(ctx, client.ObjectKey{Name: name, Namespace: namespace}, &listenerSet); err != nil {
+		return nil
+	}
+
+	if !listenerSetManagedByController(ctx, cli, &listenerSet, controllerName) {
 		return nil
 	}
 

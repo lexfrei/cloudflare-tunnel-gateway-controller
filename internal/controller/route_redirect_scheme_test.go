@@ -75,7 +75,7 @@ func TestWithDefaultRedirectScheme_HTTPListenerDefaultsToHTTP(t *testing.T) {
 	route := redirectRoute(nil)
 	cli := buildGatewayFakeClient(t, gw)
 
-	out := withDefaultRedirectScheme(context.Background(), cli, []*gatewayv1.HTTPRoute{route}, nil)
+	out := withDefaultRedirectScheme(context.Background(), cli, "", []*gatewayv1.HTTPRoute{route}, nil)
 	require.Len(t, out, 1)
 	got := redirectFilterScheme(out[0])
 	require.NotNil(t, got, "redirect scheme must be defaulted from the HTTP listener")
@@ -93,7 +93,7 @@ func TestWithDefaultRedirectScheme_HTTPSListenerDefaultsToHTTPS(t *testing.T) {
 	route := redirectRoute(nil)
 	cli := buildGatewayFakeClient(t, gw)
 
-	out := withDefaultRedirectScheme(context.Background(), cli, []*gatewayv1.HTTPRoute{route}, nil)
+	out := withDefaultRedirectScheme(context.Background(), cli, "", []*gatewayv1.HTTPRoute{route}, nil)
 	require.Len(t, out, 1)
 	got := redirectFilterScheme(out[0])
 	require.NotNil(t, got)
@@ -112,7 +112,7 @@ func TestWithDefaultRedirectScheme_TLSListenerLeavesSchemeNil(t *testing.T) {
 	route := redirectRoute(nil)
 	cli := buildGatewayFakeClient(t, gw)
 
-	out := withDefaultRedirectScheme(context.Background(), cli, []*gatewayv1.HTTPRoute{route}, nil)
+	out := withDefaultRedirectScheme(context.Background(), cli, "", []*gatewayv1.HTTPRoute{route}, nil)
 	require.Len(t, out, 1)
 	assert.Nil(t, redirectFilterScheme(out[0]), "a TLS listener does not accept an HTTPRoute → no inferred scheme")
 }
@@ -128,7 +128,7 @@ func TestWithDefaultRedirectScheme_TCPListenerLeavesSchemeNil(t *testing.T) {
 	route := redirectRoute(nil)
 	cli := buildGatewayFakeClient(t, gw)
 
-	out := withDefaultRedirectScheme(context.Background(), cli, []*gatewayv1.HTTPRoute{route}, nil)
+	out := withDefaultRedirectScheme(context.Background(), cli, "", []*gatewayv1.HTTPRoute{route}, nil)
 	require.Len(t, out, 1)
 	assert.Nil(t, redirectFilterScheme(out[0]), "a TCP listener implies no L7 redirect scheme")
 }
@@ -142,7 +142,7 @@ func TestWithDefaultRedirectScheme_ExplicitSchemePreserved(t *testing.T) {
 	route := redirectRoute(new("http"))
 	cli := buildGatewayFakeClient(t, gw)
 
-	out := withDefaultRedirectScheme(context.Background(), cli, []*gatewayv1.HTTPRoute{route}, nil)
+	out := withDefaultRedirectScheme(context.Background(), cli, "", []*gatewayv1.HTTPRoute{route}, nil)
 	require.Len(t, out, 1)
 	got := redirectFilterScheme(out[0])
 	require.NotNil(t, got)
@@ -163,7 +163,7 @@ func TestWithDefaultRedirectScheme_NoRedirectFilterPassthrough(t *testing.T) {
 	}
 	cli := buildGatewayFakeClient(t, gw)
 
-	out := withDefaultRedirectScheme(context.Background(), cli, []*gatewayv1.HTTPRoute{route}, nil)
+	out := withDefaultRedirectScheme(context.Background(), cli, "", []*gatewayv1.HTTPRoute{route}, nil)
 	require.Len(t, out, 1)
 	assert.Same(t, route, out[0], "routes without a redirect filter must pass through untouched")
 }
@@ -177,7 +177,7 @@ func TestWithDefaultRedirectScheme_NoParentLeavesSchemeNil(t *testing.T) {
 	route := redirectRoute(nil)
 	cli := buildGatewayFakeClient(t) // no Gateway seeded
 
-	out := withDefaultRedirectScheme(context.Background(), cli, []*gatewayv1.HTTPRoute{route}, nil)
+	out := withDefaultRedirectScheme(context.Background(), cli, "", []*gatewayv1.HTTPRoute{route}, nil)
 	require.Len(t, out, 1)
 	assert.Nil(t, redirectFilterScheme(out[0]), "no resolvable parent → no inferred scheme")
 }
@@ -220,7 +220,7 @@ func TestWithDefaultRedirectScheme_ListenerSetHTTPDefaultsToHTTP(t *testing.T) {
 
 	cli := buildGatewayFakeClient(t, ls)
 
-	out := withDefaultRedirectScheme(context.Background(), cli, []*gatewayv1.HTTPRoute{listenerSetRedirectRoute()}, nil)
+	out := withDefaultRedirectScheme(context.Background(), cli, "", []*gatewayv1.HTTPRoute{listenerSetRedirectRoute()}, nil)
 	require.Len(t, out, 1)
 	got := redirectFilterScheme(out[0])
 	require.NotNil(t, got, "scheme must be inferred from the accepted ListenerSet entry")
@@ -279,7 +279,7 @@ func TestWithDefaultRedirectScheme_ListenerSetConflictedEntryLeavesSchemeNil(t *
 
 	cli := buildGatewayFakeClient(t, gw, ls)
 
-	out := withDefaultRedirectScheme(context.Background(), cli, []*gatewayv1.HTTPRoute{listenerSetRedirectRoute()}, nil)
+	out := withDefaultRedirectScheme(context.Background(), cli, "", []*gatewayv1.HTTPRoute{listenerSetRedirectRoute()}, nil)
 	require.Len(t, out, 1)
 	assert.Nil(t, redirectFilterScheme(out[0]),
 		"a conflicted ListenerSet entry is not programmed → its protocol must not seed the scheme")
@@ -341,7 +341,7 @@ func TestWithDefaultRedirectScheme_BackendRefHTTPListenerDefaultsToHTTP(t *testi
 	route := backendRefRedirectRoute()
 	cli := buildGatewayFakeClient(t, gw)
 
-	out := withDefaultRedirectScheme(context.Background(), cli, []*gatewayv1.HTTPRoute{route}, nil)
+	out := withDefaultRedirectScheme(context.Background(), cli, "", []*gatewayv1.HTTPRoute{route}, nil)
 	require.Len(t, out, 1)
 	got := backendRefRedirectFilterScheme(out[0])
 	require.NotNil(t, got, "backendRef redirect scheme must be defaulted from the HTTP listener")
@@ -359,7 +359,7 @@ func TestWithDefaultRedirectScheme_BackendRefHTTPSListenerDefaultsToHTTPS(t *tes
 	route := backendRefRedirectRoute()
 	cli := buildGatewayFakeClient(t, gw)
 
-	out := withDefaultRedirectScheme(context.Background(), cli, []*gatewayv1.HTTPRoute{route}, nil)
+	out := withDefaultRedirectScheme(context.Background(), cli, "", []*gatewayv1.HTTPRoute{route}, nil)
 	require.Len(t, out, 1)
 	got := backendRefRedirectFilterScheme(out[0])
 	require.NotNil(t, got)
@@ -394,9 +394,106 @@ func TestWithDefaultRedirectScheme_HTTPSWinsTie(t *testing.T) {
 	route := redirectRoute(nil)
 	cli := buildGatewayFakeClient(t, gw)
 
-	out := withDefaultRedirectScheme(context.Background(), cli, []*gatewayv1.HTTPRoute{route}, nil)
+	out := withDefaultRedirectScheme(context.Background(), cli, "", []*gatewayv1.HTTPRoute{route}, nil)
 	require.Len(t, out, 1)
 	got := redirectFilterScheme(out[0])
 	require.NotNil(t, got)
 	assert.Equal(t, "https", *got, "https must win when the route is bound to both an HTTP and an HTTPS listener")
+}
+
+// gatewayUnderClassWithProtocol builds a Gateway in infra under the named
+// GatewayClass with one all-namespaces listener of the given protocol.
+func gatewayUnderClassWithProtocol(
+	name, className string,
+	protocol gatewayv1.ProtocolType,
+	port gatewayv1.PortNumber,
+) *gatewayv1.Gateway {
+	return &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "infra"},
+		Spec: gatewayv1.GatewaySpec{
+			GatewayClassName: gatewayv1.ObjectName(className),
+			Listeners: []gatewayv1.Listener{
+				{
+					Name: "l", Port: port, Protocol: protocol,
+					AllowedRoutes: &gatewayv1.AllowedRoutes{
+						Namespaces: &gatewayv1.RouteNamespaces{From: namespacesFromAllPtr()},
+					},
+				},
+			},
+		},
+	}
+}
+
+// TestWithDefaultRedirectScheme_ForeignHTTPSListenerDoesNotWin is the
+// redirect-scheme twin of TestWithEffectiveHostnames_IgnoresForeignGateway.
+// This pass shares the parentRef resolution with the hostname pass, so it
+// inherited the same gap: HTTPS wins ties, and an HTTPS listener on another
+// implementation's Gateway would flip a scheme-less redirect to https for a
+// route served over plain HTTP by the only listener of ours that accepted it.
+//
+// Both foreign shapes are in one route because either alone would decide the
+// tie: a foreign Gateway and a foreign ListenerSet, whose class is its parent
+// Gateway's. Dropping either check turns this red.
+func TestWithDefaultRedirectScheme_ForeignHTTPSListenerDoesNotWin(t *testing.T) {
+	t.Parallel()
+
+	lsKind := gatewayv1.Kind(kindListenerSet)
+	lsNS := gatewayv1.Namespace("infra")
+
+	foreignListenerSet := &gatewayv1.ListenerSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "ls", Namespace: "infra"},
+		Spec: gatewayv1.ListenerSetSpec{
+			ParentRef: gatewayv1.ParentGatewayReference{Name: "theirs"},
+			Listeners: []gatewayv1.ListenerEntry{
+				{
+					Name: "https", Port: 8443, Protocol: gatewayv1.HTTPSProtocolType,
+					AllowedRoutes: &gatewayv1.AllowedRoutes{
+						Namespaces: &gatewayv1.RouteNamespaces{From: namespacesFromAllPtr()},
+					},
+				},
+			},
+		},
+	}
+
+	route := redirectRoute(nil)
+	route.Spec.ParentRefs = append(parentRefsToGateways("ours", "theirs"),
+		gatewayv1.ParentReference{Kind: &lsKind, Name: "ls", Namespace: &lsNS})
+
+	cli := buildGatewayFakeClient(t,
+		gatewayClassFor("our-class", skipTestControllerName),
+		gatewayClassFor("their-class", foreignControllerName),
+		gatewayUnderClassWithProtocol("ours", "our-class", gatewayv1.HTTPProtocolType, 80),
+		gatewayUnderClassWithProtocol("theirs", "their-class", gatewayv1.HTTPSProtocolType, 443),
+		foreignListenerSet,
+	)
+
+	out := withDefaultRedirectScheme(context.Background(), cli, skipTestControllerName, []*gatewayv1.HTTPRoute{route}, nil)
+	require.Len(t, out, 1)
+
+	got := redirectFilterScheme(out[0])
+	require.NotNil(t, got, "the listener of ours still supplies a scheme")
+	assert.Equal(t, "http", *got, "a foreign HTTPS listener must not decide the scheme of a redirect we serve")
+}
+
+// TestWithDefaultRedirectScheme_OurHTTPSListenerStillWins is the inverse of the
+// foreign-listener case. That one proves a foreign HTTPS listener no longer
+// decides the scheme; this one proves ours still does, so the class filter did
+// not simply stop the pass from resolving anything.
+func TestWithDefaultRedirectScheme_OurHTTPSListenerStillWins(t *testing.T) {
+	t.Parallel()
+
+	route := redirectRoute(nil)
+	route.Spec.ParentRefs = parentRefsToGateways("ours")
+
+	cli := buildGatewayFakeClient(t,
+		gatewayClassFor("our-class", skipTestControllerName),
+		gatewayUnderClassWithProtocol("ours", "our-class", gatewayv1.HTTPSProtocolType, 443),
+	)
+
+	out := withDefaultRedirectScheme(context.Background(), cli, skipTestControllerName, []*gatewayv1.HTTPRoute{route}, nil)
+	require.Len(t, out, 1)
+
+	got := redirectFilterScheme(out[0])
+	require.NotNil(t, got, "our own HTTPS listener still supplies the scheme")
+	assert.Equal(t, "https", *got)
 }

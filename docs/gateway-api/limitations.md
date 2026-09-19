@@ -97,6 +97,16 @@ By default all Gateways of the class share one proxy process and one Cloudflare 
 
 A consequence of the shared tunnel: two Gateways of the same class share one edge address (the tunnel CNAME), so a route bound to one Gateway is reachable through the other's address for any hostname+path they both answer. Routing is by hostname and path, not by which Gateway the request nominally targeted — there is no per-Gateway signal on the wire. If you need a route reachable through only one Gateway's address, give that Gateway a dedicated data plane (its own tunnel) via `spec.infrastructure.parametersRef`. This is why the Gateway API conformance test `HTTPRouteMultipleGateways` is not run against the shared plane.
 
+## Routes attached to another implementation's Gateway
+
+A route may carry parentRefs to this controller's Gateway and to one owned by another Gateway API implementation at the same time, which is the normal shape of a migration. Only Gateways whose `GatewayClass.spec.controllerName` names this controller contribute to what this data plane serves: a foreign listener lends neither its hostname to the route's served set nor its protocol to a scheme-less `RequestRedirect`. The same applies to a `ListenerSet`, judged by its parent Gateway.
+
+One case is worth knowing because it fails quietly. If the GatewayClass cannot be read at that moment, the Gateway is treated as not ours, a route with no hostnames of its own is left as written, and in this data plane that means it answers every Host.
+
+It does not correct itself on a timer. If the class was deleted, the next sync stops before it pushes anything, because resolving the class is the first thing it does, so the proxy keeps serving the last configuration it received, that catch-all included, until a GatewayClass naming this controller is readable again. If the class is present and only that one read missed, the sync succeeds and nothing requeues; the route controllers do not watch GatewayClass, so the correction waits for an unrelated route or Secret event.
+
+The route-acceptance pass treats the same failure the other way, dropping the parent rather than programming the route, so the two disagree on identical input. Aligning them is tracked in [issue #820](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/issues/820).
+
 ## SSL Certificate Limitations
 
 Cloudflare's free [Universal SSL](https://developers.cloudflare.com/ssl/edge-certificates/universal-ssl/limitations/) certificates only cover root and first-level subdomains:

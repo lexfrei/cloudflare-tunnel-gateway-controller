@@ -90,6 +90,8 @@ A `ListenerSet` is successfully attached to a Gateway when:
 
 The Gateway's `status.attachedListenerSets` field is the count of ListenerSets meeting both criteria.
 
+Both criteria need the parent Gateway to exist and to belong to this controller. A `ListenerSet` whose `spec.parentRef` names a Gateway that is absent, or one managed by a different Gateway API implementation, contributes nothing here: its entries lend no hostname to a route bound through it and no protocol to a scheme-less redirect. A ListenerSet names no GatewayClass of its own, so its parent Gateway's class is what decides whose it is.
+
 ## Precedence and conflict resolution
 
 Per Gateway API spec the effective listener list is concatenated as follows:
