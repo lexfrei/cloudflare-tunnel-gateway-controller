@@ -496,7 +496,7 @@ jobs:
 
           # JSON schema validator
           # renovate: datasource=pypi depName=check-jsonschema
-          CHECK_JSONSCHEMA_VERSION="0.38.1"
+          CHECK_JSONSCHEMA_VERSION="0.38.2"
           pip install "check-jsonschema==${CHECK_JSONSCHEMA_VERSION}"
 
           # Artifact Hub CLI, extracted from the upstream image.
