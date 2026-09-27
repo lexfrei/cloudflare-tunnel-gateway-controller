@@ -170,7 +170,8 @@ spec:
           resources:
             {{- toYaml .Values.proxy.resources | nindent 12 }}
       {{- if (eq (include "cf-tunnel-gw-ctrl.configAPITLSEnabled" .) "true") }}
-      # The controller creates this Secret at startup; until then the pod
+      # The controller creates this Secret on its first issuance pass, run by
+      # the elected replica when leader election is on; until then the pod
       # waits in ContainerCreating rather than serving plaintext.
       volumes:
         - name: config-tls
