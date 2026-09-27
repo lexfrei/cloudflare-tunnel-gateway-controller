@@ -2,11 +2,15 @@ package controller
 
 import (
 	"context"
+	"crypto/tls"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -65,6 +69,48 @@ func TestRetainPartitions_DropsTLSPushersOfRemovedPlanes(t *testing.T) {
 
 	assert.NotContains(t, syncer.tlsPushers, "tenant-plane.invalid")
 	assert.Contains(t, syncer.tlsPushers, "shared-plane.invalid", "the shared plane is never evicted")
+}
+
+// TestRetainPartitions_ClosesEvictedConnectionsWithTracing pins that evicting
+// a plane's pusher closes its idle connections even when tracing wraps the
+// transport, a wrapper that does not pass CloseIdleConnections through.
+func TestRetainPartitions_ClosesEvictedConnectionsWithTracing(t *testing.T) {
+	t.Parallel()
+
+	authority := testAuthority(t)
+
+	certPEM, keyPEM, err := authority.Issue([]string{"127.0.0.1"}, time.Now())
+	require.NoError(t, err)
+
+	pair, err := tls.X509KeyPair(certPEM, keyPEM)
+	require.NoError(t, err)
+
+	var closed atomic.Bool
+
+	plane := httptest.NewUnstartedServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusOK)
+	}))
+	plane.TLS = &tls.Config{Certificates: []tls.Certificate{pair}, MinVersion: tls.VersionTLS13}
+	plane.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+		if state == http.StateClosed {
+			closed.Store(true)
+		}
+	}
+	plane.StartTLS()
+	t.Cleanup(plane.Close)
+
+	syncer := NewProxySyncer("cluster.local", "token", "", fake.NewClientBuilder().Build(),
+		slog.New(slog.DiscardHandler), WithConfigAPIAuthority(authority), WithSyncerTracing())
+
+	_, err = syncer.SyncPartition(context.Background(), 0, "tenant-a/edge", "token",
+		[]string{plane.URL + "/config"}, nil, nil, nil, nil)
+	require.NoError(t, err)
+	require.False(t, closed.Load(), "the push leaves a kept-alive connection behind")
+
+	syncer.RetainPartitions(map[string]bool{})
+
+	assert.Eventually(t, closed.Load, 5*time.Second, 20*time.Millisecond,
+		"the evicted plane's idle connection must be closed")
 }
 
 // TestGatewayInfraReconciler_ConfigTLSSlotNotYetCachedRequeuesQuietly pins the
