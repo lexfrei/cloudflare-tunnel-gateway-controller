@@ -18,9 +18,11 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/configtls"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/proxy"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/render"
 )
 
 // ErrPlaintextConfigEndpoint is returned for an http:// config endpoint while
@@ -453,4 +455,14 @@ func addSharedLeafIssuer(mgr ctrl.Manager, setup *configTLSSetup, logger *slog.L
 	}
 
 	return nil
+}
+
+// perGatewayConfigEndpoint is the push URL of a per-Gateway plane: https when
+// config API TLS is on, http otherwise.
+func (s *ProxySyncer) perGatewayConfigEndpoint(gateway *gatewayv1.Gateway, clusterDomain string, port int32) string {
+	if s.configAuthority != nil {
+		return render.ConfigTLSEndpointURL(gateway, clusterDomain, port)
+	}
+
+	return render.ConfigEndpointURL(gateway, clusterDomain, port)
 }

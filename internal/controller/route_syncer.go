@@ -30,7 +30,6 @@ import (
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/logging"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/proxy"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/referencegrant"
-	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/render"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/routebinding"
 )
 
@@ -688,13 +687,8 @@ func pushPartitionsConcurrently(
 				return nil
 			}
 
-			endpointURL := render.ConfigEndpointURL
-			if params.proxySyncer.configAuthority != nil {
-				endpointURL = render.ConfigTLSEndpointURL
-			}
-
-			endpoints := []string{endpointURL(partition.Gateway, params.routeSyncer.ClusterDomain,
-				params.routeSyncer.ProxyConfigAPIPort)}
+			endpoints := []string{params.proxySyncer.perGatewayConfigEndpoint(partition.Gateway,
+				params.routeSyncer.ClusterDomain, params.routeSyncer.ProxyConfigAPIPort)}
 			results[i].diags, results[i].err = params.proxySyncer.SyncPartition(ctx, syncResult.ConfigVersion,
 				partition.Key, partition.PerGateway.AuthToken,
 				endpoints, httpRoutePtrs(partition.HTTPRoutes), grpcRoutePtrs(partition.GRPCRoutes),
