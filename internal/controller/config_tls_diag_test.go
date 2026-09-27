@@ -70,3 +70,15 @@ func TestDescribeConfigTLSError(t *testing.T) {
 		})
 	}
 }
+
+// TestProxyPushFailureMessage_NamesTheTLSReason pins that the route status of
+// a plane whose handshake fails says why, not only that the push failed.
+func TestProxyPushFailureMessage_NamesTheTLSReason(t *testing.T) {
+	t.Parallel()
+
+	tlsFailure := fmt.Errorf("send request: %w",
+		&url.Error{Op: "Put", URL: "https://plane", Err: &tls.CertificateVerificationError{Err: x509.UnknownAuthorityError{}}})
+
+	assert.Contains(t, proxyPushFailureMessage("tenant-a/edge", tlsFailure), "not issued by this controller")
+	assert.NotContains(t, proxyPushFailureMessage("tenant-a/edge", errors.New("connection refused")), "certificate")
+}

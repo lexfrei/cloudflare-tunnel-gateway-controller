@@ -86,8 +86,8 @@ func TestGatewayInfraReconciler_ConfigTLSIssuesAndMountsALeaf(t *testing.T) {
 
 	assert.Positive(t, result.RequeueAfter, "a TLS plane must come back for its renewal check")
 
-	requireLeafValid(t, reconciler, authority, edgeLeafKey("0"), time.Now())
-	assert.Equal(t, "cf-proxy-edge-config-tls-0", mountedLeaf(t, reconciler))
+	requireLeafValid(t, reconciler.Client, authority, edgeLeafKey("0"), time.Now())
+	assert.Equal(t, "cf-proxy-edge-config-tls-0", mountedLeaf(t, reconciler.Client))
 
 	var secret corev1.Secret
 	require.NoError(t, reconciler.Get(context.Background(), edgeLeafKey("0"), &secret))
@@ -112,7 +112,7 @@ func TestGatewayInfraReconciler_ConfigTLSIsStableAcrossReconciles(t *testing.T) 
 	var after corev1.Secret
 	require.NoError(t, reconciler.Get(context.Background(), edgeLeafKey("0"), &after))
 	assert.Equal(t, before.ResourceVersion, after.ResourceVersion)
-	assert.Equal(t, "cf-proxy-edge-config-tls-0", mountedLeaf(t, reconciler))
+	assert.Equal(t, "cf-proxy-edge-config-tls-0", mountedLeaf(t, reconciler.Client))
 }
 
 // TestGatewayInfraReconciler_ConfigTLSReplacesATamperedLeaf pins the tenant
@@ -138,8 +138,8 @@ func TestGatewayInfraReconciler_ConfigTLSReplacesATamperedLeaf(t *testing.T) {
 
 	reconcileEdgeResult(t, reconciler)
 
-	assert.Equal(t, "cf-proxy-edge-config-tls-1", mountedLeaf(t, reconciler))
-	requireLeafValid(t, reconciler, authority, edgeLeafKey("1"), time.Now())
+	assert.Equal(t, "cf-proxy-edge-config-tls-1", mountedLeaf(t, reconciler.Client))
+	requireLeafValid(t, reconciler.Client, authority, edgeLeafKey("1"), time.Now())
 	assert.True(t, drainedEventContains(recorder, eventReasonConfigTLSReplaced),
 		"replacing a leaf that failed verification must be reported on the Gateway")
 }
@@ -164,7 +164,7 @@ func TestGatewayInfraReconciler_ConfigTLSNeverAdoptsAForeignSecret(t *testing.T)
 
 	reconcileEdgeResult(t, reconciler)
 
-	assert.Equal(t, "cf-proxy-edge-config-tls-1", mountedLeaf(t, reconciler))
+	assert.Equal(t, "cf-proxy-edge-config-tls-1", mountedLeaf(t, reconciler.Client))
 }
 
 // TestGatewayInfraReconciler_ConfigTLSRenewsInsideTheWindow pins rotation: a
@@ -181,8 +181,8 @@ func TestGatewayInfraReconciler_ConfigTLSRenewsInsideTheWindow(t *testing.T) {
 
 	reconcileEdgeResult(t, reconciler)
 
-	assert.Equal(t, "cf-proxy-edge-config-tls-1", mountedLeaf(t, reconciler))
-	requireLeafValid(t, reconciler, authority, edgeLeafKey("1"), later)
+	assert.Equal(t, "cf-proxy-edge-config-tls-1", mountedLeaf(t, reconciler.Client))
+	requireLeafValid(t, reconciler.Client, authority, edgeLeafKey("1"), later)
 }
 
 // TestGatewayInfraReconciler_ConfigTLSRecreatesADeletedLeafInPlace pins that
@@ -199,8 +199,8 @@ func TestGatewayInfraReconciler_ConfigTLSRecreatesADeletedLeafInPlace(t *testing
 
 	reconcileEdgeResult(t, reconciler)
 
-	assert.Equal(t, "cf-proxy-edge-config-tls-0", mountedLeaf(t, reconciler))
-	requireLeafValid(t, reconciler, authority, edgeLeafKey("0"), time.Now())
+	assert.Equal(t, "cf-proxy-edge-config-tls-0", mountedLeaf(t, reconciler.Client))
+	requireLeafValid(t, reconciler.Client, authority, edgeLeafKey("0"), time.Now())
 }
 
 // TestGatewayInfraReconciler_ConfigTLSConcurrentIssuersConverge pins that two
@@ -217,7 +217,7 @@ func TestGatewayInfraReconciler_ConfigTLSConcurrentIssuersConverge(t *testing.T)
 
 	for _, reconciler := range []*GatewayInfraReconciler{first, &second} {
 		wg.Go(func() {
-			_, _ = reconciler.ensureConfigTLSSecret(context.Background(), edgeGateway(t, first))
+			_, _ = reconciler.ensureConfigTLSSecret(context.Background(), edgeGateway(t, first.Client))
 		})
 	}
 
@@ -235,12 +235,12 @@ func TestGatewayInfraReconciler_ConfigTLSConcurrentIssuersConverge(t *testing.T)
 	}
 
 	assert.Equal(t, []string{"cf-proxy-edge-config-tls-0"}, leafSlots, "racing issuers must not open a second slot")
-	requireLeafValid(t, first, authority, edgeLeafKey("0"), time.Now())
+	requireLeafValid(t, first.Client, authority, edgeLeafKey("0"), time.Now())
 
 	for range 3 {
 		for _, reconciler := range []*GatewayInfraReconciler{first, &second} {
 			reconcileEdgeResult(t, reconciler)
-			assert.Equal(t, "cf-proxy-edge-config-tls-0", mountedLeaf(t, reconciler))
+			assert.Equal(t, "cf-proxy-edge-config-tls-0", mountedLeaf(t, reconciler.Client))
 		}
 	}
 }
@@ -255,7 +255,7 @@ func TestGatewayInfraReconciler_NoConfigTLSKeepsThePlaintextWire(t *testing.T) {
 	result := reconcileEdgeResult(t, reconciler)
 
 	assert.Zero(t, result.RequeueAfter)
-	assert.Empty(t, mountedLeaf(t, reconciler))
+	assert.Empty(t, mountedLeaf(t, reconciler.Client))
 
 	var slots corev1.SecretList
 	require.NoError(t, reconciler.List(context.Background(), &slots, client.InNamespace(infraNamespace)))

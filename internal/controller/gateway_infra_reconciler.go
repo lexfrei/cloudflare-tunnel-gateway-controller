@@ -7,6 +7,7 @@ import (
 	"maps"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/cockroachdb/errors"
 	appsv1 "k8s.io/api/apps/v1"
@@ -30,6 +31,7 @@ import (
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/api/v1alpha1"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/config"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/configtls"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/render"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/tunnelownership"
 )
@@ -101,6 +103,15 @@ type GatewayInfraReconciler struct {
 	// route-event-driven, so a data plane with no routes would otherwise never
 	// be synced. Nil is a no-op (unit tests without the route syncer wired).
 	TriggerRouteSync func(context.Context) error
+	// ConfigAuthority issues the planes' config API certificates. Nil renders
+	// the plaintext config API.
+	ConfigAuthority *configtls.Authority
+	// ClusterDomain completes the config Service name a plane's certificate
+	// carries; it must match the domain the route syncer pushes to.
+	ClusterDomain string
+	// now overrides the clock for certificate checks (tests). Nil is
+	// time.Now.
+	now func() time.Time
 }
 
 func (r *GatewayInfraReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -191,7 +202,19 @@ func (r *GatewayInfraReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return r.handleResolveError(ctx, &gateway, err)
 	}
 
-	return ctrl.Result{}, r.applyRendered(ctx, &gateway, perGateway)
+	configTLSSecret, err := r.ensureConfigTLSSecret(ctx, &gateway)
+	if err != nil {
+		r.event(&gateway, corev1.EventTypeWarning, eventReasonRenderFailed, err.Error())
+
+		return ctrl.Result{}, err
+	}
+
+	var result ctrl.Result
+	if configTLSSecret != "" {
+		result.RequeueAfter = configTLSRecheckInterval
+	}
+
+	return result, r.applyRendered(ctx, &gateway, perGateway, configTLSSecret)
 }
 
 // handleResolveError maps a resolution failure onto the right outcome: a
@@ -319,13 +342,15 @@ func (r *GatewayInfraReconciler) applyRendered(
 	ctx context.Context,
 	gateway *gatewayv1.Gateway,
 	perGateway *config.PerGatewayConfig,
+	configTLSSecret string,
 ) error {
 	input := render.Input{
-		Gateway:     gateway,
-		Config:      perGateway.GatewayConfig,
-		TunnelToken: perGateway.TunnelToken,
-		AuthToken:   perGateway.AuthToken,
-		Defaults:    r.RenderDefaults,
+		Gateway:             gateway,
+		Config:              perGateway.GatewayConfig,
+		TunnelToken:         perGateway.TunnelToken,
+		AuthToken:           perGateway.AuthToken,
+		Defaults:            r.RenderDefaults,
+		ConfigTLSSecretName: configTLSSecret,
 	}
 
 	// Misconfiguration guard: with no controller-level --proxy-image and no
