@@ -40,7 +40,7 @@ func infraTunnelToken(t *testing.T) string {
 
 // infraTunnelTokenFor builds a valid connector token for a specific tunnel ID,
 // so a test can simulate a token ROTATION to a different tunnel.
-func infraTunnelTokenFor(t *testing.T, tunnelID string) string {
+func infraTunnelTokenFor(t testing.TB, tunnelID string) string {
 	t.Helper()
 
 	payload, err := json.Marshal(map[string]any{
