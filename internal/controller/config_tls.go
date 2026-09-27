@@ -332,18 +332,24 @@ func (s *ProxySyncer) push(ctx context.Context, cfg *proxy.Config, resolved []pu
 	return results
 }
 
+// tlsPushTarget is one plane's pusher and the transport under it.
+type tlsPushTarget struct {
+	pusher    *proxy.ConfigPusher
+	transport *http.Transport
+}
+
 func (s *ProxySyncer) tlsPusher(serverName string) *proxy.ConfigPusher {
 	s.tlsPushersMu.Lock()
 	defer s.tlsPushersMu.Unlock()
 
-	pusher, ok := s.tlsPushers[serverName]
+	target, ok := s.tlsPushers[serverName]
 	if !ok {
-		pusher = proxy.NewConfigPusher(
-			proxyPushClientWithTLS(s.tracing, s.configAuthority.ClientConfig(serverName)), s.defaultAuthToken)
-		s.tlsPushers[serverName] = pusher
+		pushClient, transport := proxyPushClientWithTLS(s.tracing, s.configAuthority.ClientConfig(serverName))
+		target = tlsPushTarget{pusher: proxy.NewConfigPusher(pushClient, s.defaultAuthToken), transport: transport}
+		s.tlsPushers[serverName] = target
 	}
 
-	return pusher
+	return target.pusher
 }
 
 // configTLSSetup is the resolved config API TLS configuration.
@@ -484,9 +490,9 @@ func (s *ProxySyncer) retainTLSPushersLocked() {
 	s.tlsPushersMu.Lock()
 	defer s.tlsPushersMu.Unlock()
 
-	for serverName, pusher := range s.tlsPushers {
+	for serverName, target := range s.tlsPushers {
 		if !live[serverName] {
-			pusher.CloseIdleConnections()
+			target.transport.CloseIdleConnections()
 			delete(s.tlsPushers, serverName)
 		}
 	}

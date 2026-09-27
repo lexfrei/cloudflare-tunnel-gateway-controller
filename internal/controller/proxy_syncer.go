@@ -101,7 +101,7 @@ type ProxySyncer struct {
 	// connections are pooled apart from every other plane's. Guarded by
 	// tlsPushersMu.
 	tlsPushersMu sync.Mutex
-	tlsPushers   map[string]*proxy.ConfigPusher
+	tlsPushers   map[string]tlsPushTarget
 }
 
 // pushTarget is one partition's push state: the cache that lets a resync
@@ -186,7 +186,7 @@ func NewProxySyncer(
 		controllerName:       controllerName,
 		configAuthority:      settings.configAuthority,
 		tracing:              settings.tracing,
-		tlsPushers:           make(map[string]*proxy.ConfigPusher),
+		tlsPushers:           make(map[string]tlsPushTarget),
 	}
 }
 
@@ -218,12 +218,16 @@ func WithSyncerTracing() ProxySyncerOption {
 // ("transport connection broken: http: CloseIdleConnections called"). Cloning
 // DefaultTransport gives an isolated connection pool with the same defaults.
 func proxyPushClient(tracing bool) *http.Client {
-	return proxyPushClientWithTLS(tracing, nil)
+	pushClient, _ := proxyPushClientWithTLS(tracing, nil)
+
+	return pushClient
 }
 
 // proxyPushClientWithTLS is proxyPushClient with a TLS client config on the
-// transport; nil leaves the transport's default.
-func proxyPushClientWithTLS(tracing bool, tlsConfig *tls.Config) *http.Client {
+// transport; nil leaves the transport's default. The transport is returned
+// too: with tracing on, the client's wrapper does not pass
+// CloseIdleConnections through to it.
+func proxyPushClientWithTLS(tracing bool, tlsConfig *tls.Config) (*http.Client, *http.Transport) {
 	// Always an isolated transport. Clone DefaultTransport for its tuned
 	// defaults on the normal path; the bare *http.Transport fallback (an
 	// unreachable case — DefaultTransport is always *http.Transport in the
@@ -240,7 +244,7 @@ func proxyPushClientWithTLS(tracing bool, tlsConfig *tls.Config) *http.Client {
 	return &http.Client{
 		Timeout:   proxyPushTimeout,
 		Transport: tracingpkg.WrapTransport(transport, tracing),
-	}
+	}, transport
 }
 
 // newGatewayClientCertResolver returns a resolver that loads the Gateway's
