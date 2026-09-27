@@ -130,6 +130,12 @@ helm uninstall cloudflare-tunnel-gateway-controller \
     kubectl delete secret <fullname>-proxy-auth-token --namespace cloudflare-tunnel-system
     ```
 
+    With `proxy.configAPITLS.enabled` (the default) the controller also created two Secrets for config API TLS in the same way: `<fullname>-config-ca`, which holds the CA private key, and `<fullname>-proxy-config-tls`, the shared proxy's serving certificate. They stay after `helm uninstall` on purpose too: a reinstall under the same release name reuses the CA, so certificates it issued keep verifying. For a full cleanup delete both:
+
+    ```bash
+    kubectl delete secret <fullname>-config-ca <fullname>-proxy-config-tls --namespace cloudflare-tunnel-system
+    ```
+
 ## Alternative: External Secrets
 
 For production deployments, consider using [external-secrets](https://external-secrets.io/) to manage Cloudflare credentials:
