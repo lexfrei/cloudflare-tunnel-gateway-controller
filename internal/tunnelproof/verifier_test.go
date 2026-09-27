@@ -46,6 +46,7 @@ func newFakeTokenAPI(t *testing.T, realToken string) *fakeTokenAPI {
 
 	api.server = httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		api.calls.Add(1)
+		writer.Header().Set("Content-Type", "application/json")
 
 		want := "/accounts/" + testAccount + "/cfd_tunnel/" + testTunnel + "/token"
 		if request.Method != http.MethodGet || request.URL.Path != want {
