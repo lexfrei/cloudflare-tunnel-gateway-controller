@@ -39,7 +39,7 @@ func TestRenovateMatchesPinnedDocClaims(t *testing.T) {
 	scopes := loadRenovateScopes(t, cfg)
 
 	claims := map[string][]docClaim{
-		"sigs.k8s.io/gateway-api":             gatewayAPIDocClaims(),
+		"sigs.k8s.io/gateway-api":             gatewayAPIDocClaims(t),
 		"sigs.k8s.io/gateway-api/conformance": conformanceDocClaims(t),
 	}
 
@@ -253,9 +253,8 @@ func filesInScope(t *testing.T, root string, patterns []*regexp.Regexp) []string
 		if walkErr != nil {
 			return walkErr
 		}
-		name := entry.Name()
 		if entry.IsDir() {
-			if name == "vendor" || name == ".git" || name == "site" || name == ".claude" {
+			if skipWalkDir(entry.Name()) {
 				return fs.SkipDir
 			}
 
@@ -282,6 +281,12 @@ func filesInScope(t *testing.T, root string, patterns []*regexp.Regexp) []string
 	}
 
 	return matched
+}
+
+// skipWalkDir reports whether a tree walk should skip a directory holding
+// third-party code, build output or local checkouts rather than repo content.
+func skipWalkDir(name string) bool {
+	return name == "vendor" || name == ".git" || name == "site" || name == ".claude"
 }
 
 func anyMatches(patterns []*regexp.Regexp, text string) bool {
