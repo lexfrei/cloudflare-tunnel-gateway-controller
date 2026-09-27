@@ -11,12 +11,11 @@ type SecretReference struct {
 	// +kubebuilder:validation:MinLength=1
 	Name string `json:"name"`
 
-	// Namespace of the Secret. Defaults to the namespace of the referencing resource.
+	// Namespace of the Secret. Defaults to the namespace the controller runs in.
 	// +optional
 	Namespace string `json:"namespace,omitempty"`
 
-	// Key in the Secret. Defaults depend on context:
-	// - For cloudflareCredentialsSecretRef: "api-token"
+	// Key in the Secret. Defaults to "api-token".
 	// +optional
 	Key string `json:"key,omitempty"`
 }
@@ -24,7 +23,8 @@ type SecretReference struct {
 // GatewayClassConfigSpec defines the desired state of GatewayClassConfig.
 type GatewayClassConfigSpec struct {
 	// CloudflareCredentialsSecretRef references a Secret containing Cloudflare API credentials.
-	// The Secret must contain an "api-token" key with a valid Cloudflare API token.
+	// The Secret must hold a valid Cloudflare API token under the key named by
+	// Key, which defaults to "api-token".
 	// +kubebuilder:validation:Required
 	CloudflareCredentialsSecretRef SecretReference `json:"cloudflareCredentialsSecretRef"`
 

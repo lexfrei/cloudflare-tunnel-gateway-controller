@@ -36,6 +36,10 @@ go test -v -race -coverprofile=coverage.out ./...
 # Run single test
 go test -v -race ./internal/dns/... -run TestDetectClusterDomain
 
+# Regenerate deepcopy code, chart CRDs and docs/reference/api.md after editing api/v1alpha1
+# (generators pinned in hack/tools/go.mod; CI fails on a stale result via make verify-generated)
+make generate
+
 # Run linter (all errors must be fixed before committing)
 golangci-lint run --timeout=5m --build-tags e2e,conformance,envtest
 
@@ -403,6 +407,7 @@ Run checks relevant to the files you changed:
 | Changed Files | Required Checks |
 |---------------|-----------------|
 | `*.go` | `go test -race ./...` and `golangci-lint run --timeout=5m --build-tags e2e,conformance,envtest` |
+| `api/v1alpha1/**` | `make generate` (deepcopy, chart CRDs, `docs/reference/api.md`); CI runs `make verify-generated` |
 | `charts/**` | `helm unittest`, `helm lint`, `helm-docs` |
 | `**/*.md` | `markdownlint-cli2 '**/*.md'` |
 | `docs/**` | `mkdocs build --strict` |

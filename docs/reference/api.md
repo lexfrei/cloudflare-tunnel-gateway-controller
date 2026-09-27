@@ -125,7 +125,7 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `cloudflareCredentialsSecretRef` _[SecretReference](#secretreference)_ | CloudflareCredentialsSecretRef references a Secret containing Cloudflare API credentials.<br />The Secret must contain an "api-token" key with a valid Cloudflare API token. |  | Required <br /> |
+| `cloudflareCredentialsSecretRef` _[SecretReference](#secretreference)_ | CloudflareCredentialsSecretRef references a Secret containing Cloudflare API credentials.<br />The Secret must hold a valid Cloudflare API token under the key named by<br />Key, which defaults to "api-token". |  | Required <br /> |
 | `accountId` _string_ | AccountID is the Cloudflare account ID. Optional - if not specified, it will be<br />read from the credentials secret ("account-id" key) or auto-detected if the API token<br />has access to only one account.<br />When set, must be a 32-character lowercase hexadecimal string -- the format<br />Cloudflare uses for account IDs. Validated server-side via a CRD-level CEL<br />rule (Kubernetes >= 1.25) so an invalid value is rejected at admission time,<br />before the controller has to reconcile it. Empty string passes through<br />because the field is optional. |  | Optional <br /> |
 | `tunnelID` _string_ | TunnelID is the Cloudflare Tunnel UUID. |  | Pattern: `^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$` <br />Required <br /> |
 | `allowSharedTunnels` _boolean_ | AllowSharedTunnels permits a Gateway with a dedicated data plane to serve<br />a Cloudflare Tunnel that another namespace's Gateway, or this<br />GatewayClass itself, already serves.<br />Off by default, because holding a tunnel's connector token proves access<br />to the tunnel, not a right to the routes another namespace serves on it,<br />and one token can end up in two namespaces. Sharing a tunnel merges both<br />parties' routes into one ingress document and pushes the union to both<br />parties' proxies. With this off, such a Gateway is refused with<br />Accepted=False/InvalidParameters and none of its routes are programmed.<br />A claim Cloudflare does not confirm is refused either way.<br />Turn it on only where every party on a shared tunnel is trusted to see<br />the others' routes — a single-tenant cluster, or a migration from the<br />shared plane to dedicated ones. It lives here, on the cluster-scoped<br />GatewayClassConfig, precisely so a tenant cannot grant it to themselves. |  | Optional <br /> |
@@ -266,5 +266,5 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `name` _string_ | Name of the Secret. |  | MinLength: 1 <br />Required <br /> |
-| `namespace` _string_ | Namespace of the Secret. Defaults to the namespace of the referencing resource. |  | Optional <br /> |
-| `key` _string_ | Key in the Secret. Defaults depend on context:<br />- For cloudflareCredentialsSecretRef: "api-token" |  | Optional <br /> |
+| `namespace` _string_ | Namespace of the Secret. Defaults to the namespace the controller runs in. |  | Optional <br /> |
+| `key` _string_ | Key in the Secret. Defaults to "api-token". |  | Optional <br /> |

@@ -12,7 +12,7 @@ gatewayClassConfig:
   name: ""
 
   # -- Reference to Secret containing Cloudflare API credentials (REQUIRED)
-  # The Secret must contain an "api-token" key with a valid Cloudflare API token.
+  # The Secret must hold a valid Cloudflare API token under the key named by `key`, which defaults to "api-token".
   # Optionally, it can contain an "account-id" key; if not present, account ID is auto-detected.
   cloudflareCredentialsSecretRef:
     # -- Name of the Secret containing API credentials

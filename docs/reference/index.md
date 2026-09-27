@@ -18,9 +18,17 @@ This section contains reference documentation for the Cloudflare Tunnel Gateway 
 
     ---
 
-    GatewayClassConfig Custom Resource Definition API reference.
+    Examples, status conditions and the Gateway API resources the controller watches.
 
     [:octicons-arrow-right-24: CRD Reference](crd-reference.md)
+
+-   :material-file-code:{ .lg .middle } **API Reference**
+
+    ---
+
+    Every field of the project CRDs, generated from the Go types.
+
+    [:octicons-arrow-right-24: API Reference](api.md)
 
 -   :material-shield:{ .lg .middle } **Security**
 
