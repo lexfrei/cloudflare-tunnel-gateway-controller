@@ -294,11 +294,11 @@ tests:
           content:
             protocol: TCP
             port: 8081
-      # Two rules, not two peers: the shared plane lives in this namespace and
-      # honours proxy.configAPIPort, per-Gateway planes live in their Gateway's
-      # and are hardcoded to 8081. A bare podSelector never leaves the policy's
-      # own namespace, so without the second rule a tenant's data plane never
-      # receives a routing table — the same silent failure, moved.
+      # Two rules, not two peers: the shared plane lives in this namespace,
+      # per-Gateway planes live in their Gateway's. A bare podSelector never
+      # leaves the policy's own namespace, so without the second rule a tenant's
+      # data plane never receives a routing table — the same silent failure,
+      # moved.
       - exists:
           path: spec.egress[3].to[0].podSelector
       - equal:
@@ -313,9 +313,9 @@ tests:
             protocol: TCP
             port: 8081
 
-  # proxy.configAPIPort moves the shared plane only. Rendering both rules from
-  # it would permit a port no tenant plane listens on.
-  - it: should keep the per-Gateway egress port at 8081 when configAPIPort moves
+  # proxy.configAPIPort moves every plane: the controller renders per-Gateway
+  # planes on the port it is given with --proxy-config-api-port.
+  - it: should move both egress rules with configAPIPort
     set:
       networkPolicy:
         enabled: true
@@ -333,7 +333,7 @@ tests:
           path: spec.egress[4].ports
           content:
             protocol: TCP
-            port: 8081
+            port: 9091
 
   # Same foot-gun the proxy policy already refuses: with both lists emptied the
   # Cloudflare rule renders `to: null` on 443, which NetworkPolicy reads as

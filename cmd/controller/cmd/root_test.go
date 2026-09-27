@@ -252,6 +252,10 @@ func TestRootCmd_Flags(t *testing.T) {
 	flag = flags.Lookup("proxy-auth-secret-generate")
 	assert.NotNil(t, flag)
 	assert.Equal(t, "false", flag.DefValue)
+
+	flag = flags.Lookup("proxy-config-api-port")
+	require.NotNil(t, flag)
+	assert.Equal(t, "8081", flag.DefValue)
 }
 
 func TestRootCmd_PersistentFlags(t *testing.T) {
