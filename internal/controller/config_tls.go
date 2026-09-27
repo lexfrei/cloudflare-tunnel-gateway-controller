@@ -129,8 +129,8 @@ func ensureSharedLeaf(
 		return leafValid, errors.Wrap(err, "issuing config API leaf")
 	}
 
+	// The stored type is kept: the API server refuses to change it.
 	updated := existing.DeepCopy()
-	updated.Type = corev1.SecretTypeTLS
 	updated.Data = map[string][]byte{corev1.TLSCertKey: certPEM, corev1.TLSPrivateKeyKey: keyPEM}
 
 	if err := c.Update(ctx, updated); err != nil {
