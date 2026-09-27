@@ -849,3 +849,122 @@ tests:
           content:
             name: PROXY_WS_IDLE_TIMEOUT
             value: "0.5s"
+
+  # The kubelet parses image references with github.com/distribution/reference,
+  # which knows sha256, sha384 and sha512, each lowercase hex at its fixed
+  # length. Anything else fails the pull with InvalidImageName long after the
+  # install succeeded.
+
+  - it: should reject image.digest as sha256 with 40 hex characters
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token
+      image:
+        digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    asserts:
+      - failedTemplate:
+          errorPattern: digest
+
+  - it: should reject proxy.image.digest as sha256 with 40 hex characters
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token
+        image:
+          digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    asserts:
+      - failedTemplate:
+          errorPattern: digest
+
+  - it: should reject image.digest as sha256 with uppercase hex
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token
+      image:
+        digest: "sha256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+    asserts:
+      - failedTemplate:
+          errorPattern: digest
+
+  - it: should reject proxy.image.digest as sha256 with uppercase hex
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token
+        image:
+          digest: "sha256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+    asserts:
+      - failedTemplate:
+          errorPattern: digest
+
+  - it: should reject image.digest as sha512 with a sha256-length value
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token
+      image:
+        digest: "sha512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    asserts:
+      - failedTemplate:
+          errorPattern: digest
+
+  - it: should reject proxy.image.digest as sha512 with a sha256-length value
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token
+        image:
+          digest: "sha512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    asserts:
+      - failedTemplate:
+          errorPattern: digest
+
+  - it: should reject image.digest as an algorithm the parser does not know
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token
+      image:
+        digest: "blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    asserts:
+      - failedTemplate:
+          errorPattern: digest
+
+  - it: should reject proxy.image.digest as an algorithm the parser does not know
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token
+        image:
+          digest: "blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    asserts:
+      - failedTemplate:
+          errorPattern: digest
+
+  - it: should accept a sha384 image.digest
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token
+      image:
+        digest: "sha384:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    asserts:
+      - template: deployment.yaml
+        matchRegex:
+          path: spec.template.spec.containers[0].image
+          pattern: "@sha384:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa$"
+
+  - it: should accept a sha512 image.digest
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token
+      image:
+        digest: "sha512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    asserts:
+      - template: deployment.yaml
+        matchRegex:
+          path: spec.template.spec.containers[0].image
+          pattern: "@sha512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa$"
