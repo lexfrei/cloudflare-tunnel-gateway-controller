@@ -216,6 +216,9 @@ func TestGatewayInfraReconciler_ConfigTLSExpiredCAStopsTheWalk(t *testing.T) {
 	reconciler, authority := newTLSInfraReconciler(t)
 	reconcileEdgeResult(t, reconciler)
 
+	recorder := events.NewFakeRecorder(10)
+	reconciler.Recorder = recorder
+
 	expired := authority.NotAfter().Add(time.Hour)
 	reconciler.now = func() time.Time { return expired }
 
@@ -223,6 +226,8 @@ func TestGatewayInfraReconciler_ConfigTLSExpiredCAStopsTheWalk(t *testing.T) {
 		NamespacedName: types.NamespacedName{Name: "edge", Namespace: infraNamespace},
 	})
 	require.ErrorIs(t, err, configtls.ErrCAExpired)
+	assert.False(t, drainedEventContains(recorder, eventReasonConfigTLSReplaced),
+		"an expired CA is not the mounted certificate's fault and must not be reported as its replacement")
 
 	assert.Equal(t, "cf-proxy-edge-config-tls-0", mountedLeaf(t, reconciler.Client))
 
