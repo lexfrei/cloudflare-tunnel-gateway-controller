@@ -62,7 +62,7 @@ App Version: {{ .Chart.AppVersion }}
        kubectl get secret {{ .Values.gatewayClassConfig.cloudflareCredentialsSecretRef.name }} -n {{ .Release.Namespace }}
 {{- end }}
 
-{{- if and (gt (.Values.replicaCount | int) 1) (not .Values.podDisruptionBudget.enabled) }}
+{{- if and (gt (.Values.replicaCount | int) 1) (not (.Values.podDisruptionBudget | default dict).enabled) }}
 
   ⚡ High Availability: You are running {{ .Values.replicaCount }} replicas without PodDisruptionBudget.
      Enable PDB for better availability during cluster maintenance:
@@ -71,7 +71,7 @@ App Version: {{ .Chart.AppVersion }}
          minAvailable: 1
 {{- end }}
 
-{{- if and .Values.podDisruptionBudget.enabled (eq (.Values.replicaCount | int) 1) }}
+{{- if and (.Values.podDisruptionBudget | default dict).enabled (eq (.Values.replicaCount | int) 1) }}
 
   ⚠️  Warning: PodDisruptionBudget is enabled with replicaCount=1.
      This may block pod evictions during maintenance.

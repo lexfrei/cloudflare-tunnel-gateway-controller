@@ -153,22 +153,6 @@ app.kubernetes.io/component: proxy
 {{- end }}
 
 {{/*
-Validate PodDisruptionBudget configuration
-*/}}
-{{- define "cf-tunnel-gw-ctrl.validatePDB" -}}
-{{- if .Values.podDisruptionBudget.enabled }}
-{{- if and .Values.podDisruptionBudget.minAvailable .Values.podDisruptionBudget.maxUnavailable }}
-{{- fail "ERROR: Cannot set both podDisruptionBudget.minAvailable and podDisruptionBudget.maxUnavailable. Use only one." }}
-{{- end }}
-{{- if and (eq (.Values.replicaCount | int) 1) .Values.podDisruptionBudget.minAvailable }}
-{{- if or (eq (.Values.podDisruptionBudget.minAvailable | toString) "1") (eq (.Values.podDisruptionBudget.minAvailable | toString) "100%") }}
-{{- fail "ERROR: PodDisruptionBudget with minAvailable=1 (or 100%) and replicaCount=1 will block all pod evictions. Set minAvailable=0, use maxUnavailable=1, or increase replicaCount to 2+" }}
-{{- end }}
-{{- end }}
-{{- end }}
-{{- end }}
-
-{{/*
 labelSelectorString renders a Kubernetes LabelSelector object in kubectl
 label-selector syntax (matchLabels + In/NotIn/Exists/DoesNotExist
 expressions). Every controller flag carrying a selector goes through it, so a
