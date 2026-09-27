@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -62,8 +63,9 @@ func main() {
 	os.Exit(run(logger))
 }
 
-// run is main without the exit, so the deferred tracing shutdown runs before
-// the process ends on a startup refusal.
+// run is main without the exit: every path, a startup refusal or a run mode
+// ending, returns its exit code here so the deferred tracing shutdown runs
+// before the process ends.
 func run(logger *slog.Logger) int {
 	tunnelToken, err := resolveTunnelToken()
 	if err != nil {
@@ -86,12 +88,10 @@ func run(logger *slog.Logger) int {
 	}
 
 	if tunnelToken != "" {
-		runTunnelMode(logger, tunnelToken, plane)
-	} else {
-		runStandaloneMode(logger, plane)
+		return runTunnelMode(logger, tunnelToken, plane)
 	}
 
-	return 0
+	return runStandaloneMode(logger, plane)
 }
 
 // configAPIAuthFor decides whether the config API must be authenticated.
@@ -198,7 +198,7 @@ func tracingHandlerOption() proxy.HandlerOption {
 // runTunnelMode starts the proxy with cloudflared tunnel integration.
 // Traffic flows in-process: cloudflared → GatewayOriginProxy → proxy.Handler.
 // No localhost HTTP server is needed for proxying.
-func runTunnelMode(logger *slog.Logger, token string, plane *dataPlane) {
+func runTunnelMode(logger *slog.Logger, token string, plane *dataPlane) int {
 	configAddr := envOrDefault("PROXY_CONFIG_ADDR", defaultConfigAddr)
 
 	router := plane.router
@@ -213,15 +213,7 @@ func runTunnelMode(logger *slog.Logger, token string, plane *dataPlane) {
 
 	graceC := setupDrainSignals(ctx, logger, cancel)
 
-	go func() {
-		logger.Info("starting config API server", "addr", configAddr)
-
-		err := configServer.ListenAndServe()
-		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			logger.Error("config API server error", "error", err)
-			cancel()
-		}
-	}()
+	configFailed := serveConfigAPI(logger, configServer, cancel)
 
 	// Resolve the edge transport before dialing. PROXY_TUNNEL_PROTOCOL selects
 	// it (auto|http2|quic, default auto). For auto/unset this waits briefly for
@@ -252,7 +244,7 @@ func runTunnelMode(logger *slog.Logger, token string, plane *dataPlane) {
 		cancel()
 		gracefulShutdown(logger, configServer)
 
-		return
+		return 0
 	}
 
 	logger.Info("starting cloudflared tunnel with in-process proxy", "protocol", effectiveProtocol)
@@ -283,16 +275,49 @@ func runTunnelMode(logger *slog.Logger, token string, plane *dataPlane) {
 	cancel()
 	gracefulShutdown(logger, configServer)
 
+	return tunnelExitCode(logger, err, configFailed.Load())
+}
+
+// serveConfigAPI runs the config API in the background. When it fails it
+// cancels the tunnel, and the returned flag records why, so the exit code does
+// not mistake that cancel for a requested shutdown.
+func serveConfigAPI(logger *slog.Logger, server *http.Server, cancel context.CancelFunc) *atomic.Bool {
+	failed := &atomic.Bool{}
+
+	go func() {
+		logger.Info("starting config API server", "addr", server.Addr)
+
+		err := server.ListenAndServe()
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			logger.Error("config API server error", "error", err)
+			failed.Store(true)
+			cancel()
+		}
+	}()
+
+	return failed
+}
+
+// tunnelExitCode maps how the tunnel daemon ended to the process exit code.
+// A cancelled context is a requested shutdown, unless the config API failing
+// is what cancelled it.
+func tunnelExitCode(logger *slog.Logger, err error, configFailed bool) int {
+	if configFailed {
+		return 1
+	}
+
 	if err != nil && !errors.Is(err, context.Canceled) {
 		logger.Error("tunnel error", "error", err)
-		cancel()
-		os.Exit(1) //nolint:gocritic // cancel() called explicitly above
+
+		return 1
 	}
+
+	return 0
 }
 
 // runStandaloneMode starts the proxy as a standalone HTTP server.
 // Used for local development and testing without a tunnel.
-func runStandaloneMode(logger *slog.Logger, plane *dataPlane) {
+func runStandaloneMode(logger *slog.Logger, plane *dataPlane) int {
 	configAddr := envOrDefault("PROXY_CONFIG_ADDR", defaultConfigAddr)
 	proxyAddr := envOrDefault("PROXY_ADDR", defaultProxyAddr)
 
@@ -323,8 +348,10 @@ func runStandaloneMode(logger *slog.Logger, plane *dataPlane) {
 	drainErrors(logger, errChan)
 
 	if startupFailure {
-		os.Exit(1)
+		return 1
 	}
+
+	return 0
 }
 
 func newServer(addr string, handler http.Handler) *http.Server {

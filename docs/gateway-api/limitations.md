@@ -119,6 +119,10 @@ A Gateway with its own data plane is accepted only after the Cloudflare API conf
 
 This ties dedicated planes to the Cloudflare API's availability. While the API cannot be reached, a Gateway created in that window stays `Accepted=False` and is retried until the check can run. A Gateway already serving its tunnel is not affected: it keeps the tunnel for the length of the outage, unless another namespace's claim on the same tunnel is confirmed. The [Per-Gateway Isolation guide](../guides/per-gateway-isolation.md#proving-a-tunnel-claim) covers the cache and what the outage fallback trusts.
 
+## Informational (1xx) responses are not forwarded
+
+A backend's informational response, such as `103 Early Hints`, does not reach the client through the tunnel. The proxy drops it and sends only the final status and headers. Over QUIC the connector sends exactly one response head, so a forwarded 1xx would replace the real response; over HTTP/2 the connector records the response as started on the first status it is given. The final response is unaffected; the client only loses the hint.
+
 ## SSL Certificate Limitations
 
 Cloudflare's free [Universal SSL](https://developers.cloudflare.com/ssl/edge-certificates/universal-ssl/limitations/) certificates only cover root and first-level subdomains:

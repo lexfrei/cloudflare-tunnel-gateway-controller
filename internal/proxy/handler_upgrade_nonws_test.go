@@ -145,7 +145,12 @@ func TestHandler_NonWSBackend_UpgradeForwardedAsPlainHTTP(t *testing.T) {
 	require.NoError(t, err)
 	setWebSocketUpgradeHeaders(req)
 
-	resp, err := http.DefaultClient.Do(req)
+	// A client of its own: httptest.Server.Close in a parallel test closes
+	// idle connections on http.DefaultTransport.
+	client := &http.Client{Transport: &http.Transport{}}
+	t.Cleanup(client.CloseIdleConnections)
+
+	resp, err := client.Do(req)
 	require.NoError(t, err)
 
 	t.Cleanup(func() { _ = resp.Body.Close() })

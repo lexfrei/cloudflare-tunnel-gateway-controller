@@ -680,6 +680,72 @@ func TestGatewayOriginProxy_ProxyHTTP_PanicAfterFlushResetsTheStream(t *testing.
 		"the flush must go through the status write the panic path checks")
 }
 
+// TestGatewayOriginProxy_ProxyHTTP_InformationalStatusIsNotFinal pins that a
+// 1xx from the backend, which httputil.ReverseProxy relays through WriteHeader
+// before the final status, does not become the response. The bridge drops it
+// and the final status and headers go out as the only head; see
+// trailerBridge.WriteHeader for why neither cloudflared writer gets the 1xx.
+func TestGatewayOriginProxy_ProxyHTTP_InformationalStatusIsNotFinal(t *testing.T) {
+	t.Parallel()
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Link", "</style.css>; rel=preload")
+		w.WriteHeader(http.StatusEarlyHints)
+
+		w.Header().Set("X-Final", "yes")
+		w.WriteHeader(http.StatusNotFound)
+	})
+
+	proxy := tunnel.NewGatewayOriginProxy(handler, nil)
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://example.com/hints", nil)
+	zlog := zerolog.Nop()
+	writer := newStrictStatusWriter(t)
+
+	require.NoError(t, proxy.ProxyHTTP(writer, tracing.NewTracedHTTPRequest(req, 0, &zlog), false))
+
+	assert.Equal(t, http.StatusNotFound, writer.Code)
+	assert.Equal(t, 1, writer.statusWrites, "only the final status reaches cloudflared")
+	assert.Equal(t, "yes", writer.Header().Get("X-Final"))
+}
+
+// TestGatewayOriginProxy_ProxyHTTP_ReverseProxyEarlyHintsStayOutOfFinal runs a
+// backend's 103 through a real httputil.ReverseProxy: its hint headers must
+// not leak into the final response head the bridge sends.
+func TestGatewayOriginProxy_ProxyHTTP_ReverseProxyEarlyHintsStayOutOfFinal(t *testing.T) {
+	t.Parallel()
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Link", "</style.css>; rel=preload")
+		w.WriteHeader(http.StatusEarlyHints)
+
+		w.Header().Del("Link")
+		w.Header().Set("X-Final", "yes")
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	t.Cleanup(backend.Close)
+
+	target, err := url.Parse(backend.URL)
+	require.NoError(t, err)
+
+	rp := &httputil.ReverseProxy{
+		Rewrite:   func(r *httputil.ProxyRequest) { r.SetURL(target) },
+		Transport: &http.Transport{},
+	}
+
+	proxy := tunnel.NewGatewayOriginProxy(rp, nil)
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://example.com/hints", nil)
+	zlog := zerolog.Nop()
+	writer := newStrictStatusWriter(t)
+
+	require.NoError(t, proxy.ProxyHTTP(writer, tracing.NewTracedHTTPRequest(req, 0, &zlog), false))
+
+	assert.Equal(t, http.StatusNotFound, writer.Code)
+	assert.Equal(t, "yes", writer.Header().Get("X-Final"))
+	assert.Empty(t, writer.Header().Get("Link"), "a hint header must not reach the final head")
+}
+
 // TestGatewayOriginProxy_ProxyHTTP_AbortHandlerIsNotLoggedAsAPanic pins that a
 // routine client abort stays quiet.
 //

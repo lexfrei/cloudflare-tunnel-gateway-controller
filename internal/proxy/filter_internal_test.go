@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -33,8 +34,16 @@ type chanHandler struct {
 
 func (*chanHandler) Enabled(context.Context, slog.Level) bool { return true }
 
+// Handle never blocks: a full channel drops the record. slog.SetDefault
+// re-points the log package only when the new default is not the built-in
+// handler, so restoring the built-in default leaves log.Print writing here,
+// and a blocking send would wedge every later log.Print in the package once
+// the channel filled.
 func (h *chanHandler) Handle(_ context.Context, rec slog.Record) error {
-	h.records <- rec.Clone()
+	select {
+	case h.records <- rec.Clone():
+	default:
+	}
 
 	return nil
 }
@@ -379,8 +388,16 @@ func TestRequestMirror_NilLoggerSurvivesExhaustedRetries(t *testing.T) {
 	records := make(chan slog.Record, 16)
 
 	previous := slog.Default()
+	previousWriter, previousFlags := log.Writer(), log.Flags()
+
 	slog.SetDefault(slog.New(&chanHandler{records: records}))
-	t.Cleanup(func() { slog.SetDefault(previous) })
+	t.Cleanup(func() {
+		slog.SetDefault(previous)
+		// Restoring the built-in slog default does not re-point the log
+		// package, so put its output back by hand.
+		log.SetOutput(previousWriter)
+		log.SetFlags(previousFlags)
+	})
 
 	// Port 1 refuses connections immediately, so every attempt fails fast.
 	const backend = "http://127.0.0.1:1"
