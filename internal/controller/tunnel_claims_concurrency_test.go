@@ -20,12 +20,14 @@ import (
 // barrierClaimResolver answers a claim lookup only once `want` lookups are in
 // flight at the same time, standing in for a Cloudflare API that hangs until
 // its request timeout. A collector that looks claims up one after another
-// never gets past the first.
+// never gets past the first. A Gateway in the unclaimed namespace claims no
+// tunnel.
 type barrierClaimResolver struct {
-	want    int
-	mu      sync.Mutex
-	arrived int
-	all     chan struct{}
+	want      int
+	unclaimed string
+	mu        sync.Mutex
+	arrived   int
+	all       chan struct{}
 }
 
 func (r *barrierClaimResolver) ResolveTunnelClaimForGateway(
@@ -46,6 +48,10 @@ func (r *barrierClaimResolver) ResolveTunnelClaimForGateway(
 		return nil, errLookupAbandoned
 	}
 
+	if gateway.Namespace == r.unclaimed {
+		return &config.TunnelClaim{}, nil
+	}
+
 	return &config.TunnelClaim{
 		TunnelID: tunnelFor(gateway.Namespace),
 		Proof:    tunnelownership.ProofVerified,
@@ -61,7 +67,7 @@ func tunnelFor(namespace string) string {
 // TestCollectTunnelClaims_LooksClaimsUpConcurrently pins that one pass does not
 // pay each claim's lookup time in sequence: a Cloudflare API that hangs would
 // otherwise cost one request timeout per opted-in Gateway. The claims still
-// come back in listing order.
+// come back in listing order, without a gap where a Gateway claims nothing.
 func TestCollectTunnelClaims_LooksClaimsUpConcurrently(t *testing.T) {
 	t.Parallel()
 
@@ -75,7 +81,7 @@ func TestCollectTunnelClaims_LooksClaimsUpConcurrently(t *testing.T) {
 	}
 
 	fakeClient := setupGatewayFakeClient(objects...)
-	resolver := &barrierClaimResolver{want: len(namespaces), all: make(chan struct{})}
+	resolver := &barrierClaimResolver{want: len(namespaces), unclaimed: "team-2", all: make(chan struct{})}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
@@ -86,10 +92,11 @@ func TestCollectTunnelClaims_LooksClaimsUpConcurrently(t *testing.T) {
 	claims := collectTunnelClaims(ctx, gateways, resolver, claimsClassTunnel)
 	require.NoError(t, ctx.Err(), "every lookup must be in flight at once; a sequential pass stalls on the first")
 
-	require.Len(t, claims, len(namespaces))
+	claimants := []string{"team-1", "team-3", "team-4"}
+	require.Len(t, claims, len(claimants))
 
 	for i, claim := range claims {
-		assert.Equal(t, namespaces[i], claim.Namespace)
+		assert.Equal(t, claimants[i], claim.Namespace)
 		assert.Equal(t, tunnelFor(claim.Namespace), claim.TunnelID)
 		assert.Equal(t, tunnelownership.ProofVerified, claim.Proof)
 	}
