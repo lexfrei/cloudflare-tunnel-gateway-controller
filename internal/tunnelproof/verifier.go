@@ -28,7 +28,7 @@ import (
 
 const (
 	// verifiedTTL bounds how long a proof stands before it is asked again,
-	// which is how a rotated tunnel secret or a deleted tunnel is noticed —
+	// which is how a rotated tunnel secret is noticed —
 	// on the first check after it lapses, which RecheckInterval schedules.
 	verifiedTTL = time.Hour
 	// refutedTTL keeps a failing claim from costing an API call on every
@@ -97,39 +97,56 @@ func (v *Verifier) Verify(ctx context.Context, apiToken string, token *tunnel.To
 		return cached.proof
 	}
 
-	next := entry{proof: v.ask(ctx, apiToken, token)}
-
-	switch next.proof {
-	case tunnelownership.ProofVerified:
-		next.askAfter = v.now().Add(verifiedTTL)
-	case tunnelownership.ProofRefuted:
-		next.askAfter = v.now().Add(refutedTTL)
-	case tunnelownership.ProofUnknown:
-		// No answer: keep a confirmation, drop an expired refutation.
-		if found && cached.proof == tunnelownership.ProofVerified {
-			next.proof = tunnelownership.ProofVerified
-		}
-
-		next.askAfter = v.now().Add(outageRetry)
-	}
-
-	v.store(key, next)
-
-	return next.proof
+	return v.record(key, v.ask(ctx, apiToken, token))
 }
 
-// store records an entry and drops the entries nothing needs any more, which
-// is what bounds the cache: anything unconfirmed once it is due to be asked
-// again, and a confirmation once nobody has asked about it for a whole
-// lifetime past its lapse. A claim in use is asked about at least every
-// RecheckInterval, so its confirmation is renewed long before that; a tenant
-// cycling made-up secrets leaves only entries that expire.
-func (v *Verifier) store(key [sha256.Size]byte, next entry) {
+// record stores a lookup's result and returns the verdict that now stands.
+//
+// It reads the entry again under the lock: another layer may have looked up
+// the same claim while this one waited, and a lookup that got no answer must
+// not undo the verdict that one stored.
+func (v *Verifier) record(key [sha256.Size]byte, proof tunnelownership.Proof) tunnelownership.Proof {
 	now := v.now()
 
 	v.mu.Lock()
 	defer v.mu.Unlock()
 
+	current, found := v.cache[key]
+	next := entry{proof: proof}
+
+	switch proof {
+	case tunnelownership.ProofVerified:
+		next.askAfter = now.Add(verifiedTTL)
+	case tunnelownership.ProofRefuted:
+		next.askAfter = now.Add(refutedTTL)
+	case tunnelownership.ProofUnknown:
+		if found && now.Before(current.askAfter) {
+			return current.proof
+		}
+
+		// No answer: keep a confirmation, drop an expired refutation.
+		if found && current.proof == tunnelownership.ProofVerified {
+			next.proof = tunnelownership.ProofVerified
+		}
+
+		next.askAfter = now.Add(outageRetry)
+	}
+
+	v.evict(now)
+	v.cache[key] = next
+
+	return next.proof
+}
+
+// evict drops the entries nothing needs any more, which is what bounds the
+// cache: anything unconfirmed once it is due to be asked again, and a
+// confirmation once nobody has asked about it for a whole lifetime past its
+// lapse. A claim in use is asked about at least every
+// RecheckInterval, so its confirmation is renewed long before that; a tenant
+// cycling made-up secrets leaves only entries that expire.
+//
+// The caller holds v.mu.
+func (v *Verifier) evict(now time.Time) {
 	for existing, cached := range v.cache {
 		dropAt := cached.askAfter
 		if cached.proof == tunnelownership.ProofVerified {
@@ -140,8 +157,6 @@ func (v *Verifier) store(key [sha256.Size]byte, next entry) {
 			delete(v.cache, existing)
 		}
 	}
-
-	v.cache[key] = next
 }
 
 // ask queries Cloudflare for the tunnel's token and compares it with the

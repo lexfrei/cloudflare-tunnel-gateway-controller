@@ -66,6 +66,10 @@ type infraGateways struct {
 	// reconcile requeued so a newly-joined pod is not stranded configless until
 	// an unrelated event.
 	transient map[string]bool
+	// uncheckedClaims reports that a Gateway was refused only because
+	// Cloudflare could not check its claim. Nothing in the cluster changes
+	// when the API comes back, so the sync has to come back by itself.
+	uncheckedClaims bool
 }
 
 // isBroken reports whether the Gateway key opted in but failed to resolve.
@@ -130,16 +134,8 @@ func applyTunnelOwnership(
 		infra.broken[key] = true
 		delete(infra.transient, key)
 
-		// Except a claim Cloudflare could not check: that one IS a blip, and
-		// nothing in the cluster changes when the API comes back — the route
-		// watches ignore Gateway status. The transient mark is what requeues
-		// this sync; gatewaySyncError still reports the rejection.
 		if rejection.Unproven && rejection.Proof == tunnelownership.ProofUnknown {
-			if infra.transient == nil {
-				infra.transient = make(map[string]bool)
-			}
-
-			infra.transient[key] = true
+			infra.uncheckedClaims = true
 		}
 	}
 }
