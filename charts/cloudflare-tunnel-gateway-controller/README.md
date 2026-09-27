@@ -32,7 +32,7 @@ Kubernetes Gateway API controller for Cloudflare Tunnel
 
 ## Requirements
 
-Kubernetes: `>=1.25.0-0`
+Kubernetes: `>=1.31.0-0`
 
 ## Prerequisites
 
@@ -264,8 +264,8 @@ spec:
 | healthProbes.livenessProbe | object | `{"enabled":true,"failureThreshold":3,"initialDelaySeconds":15,"periodSeconds":20,"timeoutSeconds":5}` | Liveness probe configuration Restarts container if probe fails |
 | healthProbes.readinessProbe | object | `{"enabled":true,"failureThreshold":3,"initialDelaySeconds":5,"periodSeconds":10,"timeoutSeconds":3}` | Readiness probe configuration Removes pod from service endpoints if probe fails |
 | healthProbes.startupProbe | object | `{"enabled":true,"failureThreshold":12,"initialDelaySeconds":0,"periodSeconds":5,"timeoutSeconds":3}` | Startup probe configuration Gives controller time to initialize before liveness probe starts |
-| hostnameOwnershipPolicy | object | `{"admissionPolicy":true,"enabled":false,"labelKey":"cf.k8s.lex.la/hostname-suffix","namespaceSelector":{}}` | Per-namespace hostname-ownership policy (multi-tenant isolation). When enabled, a namespace is bound to ONE allowed hostname suffix via the labelKey namespace label, and routes claiming hostnames outside it are blocked TWICE (defence in depth): fail-fast by a ValidatingAdmissionPolicy (Kubernetes 1.30+) and authoritatively by the controller at binding time (never programmed into the proxy or the Cloudflare ingress document). Fail-closed inside the policed scope: unlabelled policed namespaces and routes without explicit hostnames are rejected. Label values cannot contain '*' or ',' — one lowercase suffix per namespace. |
-| hostnameOwnershipPolicy.admissionPolicy | bool | `true` | Render the ValidatingAdmissionPolicy (requires Kubernetes 1.30+). Set false on older clusters to keep only the controller-side layer. |
+| hostnameOwnershipPolicy | object | `{"admissionPolicy":true,"enabled":false,"labelKey":"cf.k8s.lex.la/hostname-suffix","namespaceSelector":{}}` | Per-namespace hostname-ownership policy (multi-tenant isolation). When enabled, a namespace is bound to ONE allowed hostname suffix via the labelKey namespace label, and routes claiming hostnames outside it are blocked TWICE (defence in depth): fail-fast by a ValidatingAdmissionPolicy and authoritatively by the controller at binding time (never programmed into the proxy or the Cloudflare ingress document). Fail-closed inside the policed scope: unlabelled policed namespaces and routes without explicit hostnames are rejected. Label values cannot contain '*' or ',' — one lowercase suffix per namespace. |
+| hostnameOwnershipPolicy.admissionPolicy | bool | `true` | Render the ValidatingAdmissionPolicy. Set false to keep only the controller-side layer, for example when other Gateway implementations' routes live in the policed namespaces. |
 | hostnameOwnershipPolicy.enabled | bool | `false` | Master switch: installs the admission policy AND enables the controller-side enforcement flags. |
 | hostnameOwnershipPolicy.labelKey | string | `"cf.k8s.lex.la/hostname-suffix"` | Namespace label carrying the tenant's allowed hostname suffix (lowercase, e.g. "team-a.example.com"). |
 | hostnameOwnershipPolicy.namespaceSelector | object | `{}` | LabelSelector scoping which namespaces are policed. Applied to BOTH layers (the admission binding's namespaceSelector and the controller flag, derived from this same value). Empty polices EVERY namespace — fail-closed everywhere; scope it to tenant namespaces, e.g. matchExpressions excluding kube-system and the controller namespace. NOTE: the admission layer matches ALL HTTPRoute/GRPCRoute writes in policed namespaces, including routes for OTHER Gateway implementations (admission cannot resolve parentRefs); the controller layer polices only routes binding to this controller's Gateways. On multi-implementation clusters scope the selector accordingly or set admissionPolicy: false. |
@@ -292,7 +292,7 @@ spec:
 | podDisruptionBudget.enabled | bool | `false` | Enable PodDisruptionBudget |
 | podDisruptionBudget.maxUnavailable | string | `nil` | Maximum number of unavailable pods during disruptions Must not be used together with minAvailable: to use it, set minAvailable to null, or the render fails |
 | podDisruptionBudget.minAvailable | int | `1` | Minimum number of available pods during disruptions Must not be used together with maxUnavailable |
-| podDisruptionBudget.unhealthyPodEvictionPolicy | string | `"IfHealthyBudget"` | Policy for evicting unhealthy pods (IfHealthyBudget, AlwaysAllow) Requires Kubernetes 1.26+ |
+| podDisruptionBudget.unhealthyPodEvictionPolicy | string | `"IfHealthyBudget"` | Policy for evicting unhealthy pods (IfHealthyBudget, AlwaysAllow) |
 | podLabels | object | `{}` | Additional labels to add to pods |
 | podSecurityContext | object | See values.yaml | Pod security context (secure defaults) |
 | priorityClassName | string | `""` | Priority class name for pod scheduling priority |
@@ -363,7 +363,7 @@ spec:
 | proxy.websocket.idleTimeout | string | `""` | How long an established session may carry no bytes in either direction before the proxy closes it (Go duration). Any traffic resets the window. Empty preserves the 1h default. Edge and transport keepalives are not session bytes and do not hold it open, so an application whose sockets legitimately sit silent for longer needs a larger value here; as with the other two, raise it rather than setting "0". It acts on the read from the backend, so a session wedged writing to a client that stopped reading is not reclaimed by it. |
 | replicaCount | int | `1` | Number of controller replicas |
 | resources | object | See values.yaml for recommended production defaults | Container resource requests and limits When resources is empty ({}), the chart will use recommended defaults. Specify explicit values to override defaults. |
-| ruleNameUniquenessPolicy | object | `{"enabled":false}` | Optional ValidatingAdmissionPolicy that rejects HTTPRoutes/GRPCRoutes whose rules carry duplicate `name` values, enforcing the Gateway API uniqueness MUST at admission (the Standard-channel CRDs omit the experimental CEL that does this). Disabled by default because it is cluster-scoped and a deliberate operator choice: the policy matches ALL HTTPRoutes/GRPCRoutes in the cluster (a Route carries no controllerName at admission, so it cannot be limited to this controller's routes) and can block updates to routes that already have duplicate rule names. Requires a cluster with admissionregistration.k8s.io/v1 ValidatingAdmissionPolicy (Kubernetes >= 1.30). |
+| ruleNameUniquenessPolicy | object | `{"enabled":false}` | Optional ValidatingAdmissionPolicy that rejects HTTPRoutes/GRPCRoutes whose rules carry duplicate `name` values, enforcing the Gateway API uniqueness MUST at admission (the Standard-channel CRDs omit the experimental CEL that does this). Disabled by default because it is cluster-scoped and a deliberate operator choice: the policy matches ALL HTTPRoutes/GRPCRoutes in the cluster (a Route carries no controllerName at admission, so it cannot be limited to this controller's routes) and can block updates to routes that already have duplicate rule names. |
 | ruleNameUniquenessPolicy.enabled | bool | `false` | Install the rule-name uniqueness ValidatingAdmissionPolicy and its binding |
 | securityContext | object | See values.yaml | Container security context (secure defaults) |
 | service | object | `{"annotations":{},"healthPort":8081,"metricsPort":8080,"type":"ClusterIP"}` | Service configuration |

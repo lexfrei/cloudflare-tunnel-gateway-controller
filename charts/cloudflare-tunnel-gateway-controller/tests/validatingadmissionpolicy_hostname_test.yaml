@@ -107,8 +107,7 @@ tests:
           path: spec.matchResources
         documentIndex: 1
 
-  # The admissionPolicy sub-toggle exists for pre-1.30 clusters where only the
-  # controller-side layer can run.
+  # The admissionPolicy sub-toggle keeps only the controller-side layer.
   - it: should not render when admissionPolicy sub-toggle is off
     set:
       hostnameOwnershipPolicy:

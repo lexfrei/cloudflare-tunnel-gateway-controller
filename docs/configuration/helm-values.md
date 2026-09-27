@@ -250,7 +250,7 @@ hostnameOwnershipPolicy:
   enabled: false
   labelKey: cf.k8s.lex.la/hostname-suffix
   namespaceSelector: {}     # empty polices EVERY namespace — scope deliberately
-  admissionPolicy: true     # set false on clusters older than Kubernetes 1.30
+  admissionPolicy: true     # false keeps only the controller-side layer
 ```
 
 See the [Multi-Tenancy guide](../guides/multi-tenancy.md) for the namespace-label convention and fail-closed semantics, and the [Per-Gateway Isolation guide](../guides/per-gateway-isolation.md) for dedicated data planes (configured via the `GatewayConfig` CRD, not Helm values).

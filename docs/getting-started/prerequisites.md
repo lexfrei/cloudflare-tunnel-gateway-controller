@@ -14,12 +14,11 @@ You need a Kubernetes cluster with:
 
 | Component | Supported |
 | --- | --- |
-| Kubernetes | 1.25+ for the chart; 1.31+ for the Gateway API bundle below |
+| Kubernetes | 1.31+ |
 | Gateway API CRDs | Standard channel (Gateway API v1.6.2) |
 
-- **Kubernetes 1.25** is the `kubeVersion` constraint in the chart's `Chart.yaml`, and Helm refuses to install on an older cluster. The CEL validation rules on the chart's own CRDs (`x-kubernetes-validations`) need 1.25 or later, the first release where the API server enforces them by default.
-- **Kubernetes 1.31** is the effective floor, because an older API server rejects parts of the Gateway API standard bundle the controller is built against. The bundle ships a ValidatingAdmissionPolicy under `admissionregistration.k8s.io/v1`, which the API server serves from 1.30. Its TLSRoute CRD has a validation rule that calls the CEL `isIP` function, and a newly created CRD's rules can use that function from 1.31: the library was added in 1.30, but a 1.30 API server compiles new rules against the 1.29 function set. Upstream Gateway API states the same 1.31 requirement for TLSRoute. The chart's `kubeVersion` does not check any of this.
-- The chart's own optional ValidatingAdmissionPolicies need 1.30 for the same API version. They are rendered by `ruleNameUniquenessPolicy.enabled` and by `hostnameOwnershipPolicy.enabled` while `hostnameOwnershipPolicy.admissionPolicy` keeps its default of `true`.
+- **Kubernetes 1.31** is the `kubeVersion` constraint in the chart's `Chart.yaml`, and Helm refuses to install on an older cluster. The floor comes from the Gateway API standard bundle the controller is built against, which an older API server rejects in part. The bundle ships a ValidatingAdmissionPolicy under `admissionregistration.k8s.io/v1`, which the API server serves from 1.30. Its TLSRoute CRD has a validation rule that calls the CEL `isIP` function, and a newly created CRD's rules can use that function from 1.31: the library was added in 1.30, but a 1.30 API server compiles new rules against the 1.29 function set. Upstream Gateway API states the same 1.31 requirement for TLSRoute.
+- The chart's own optional ValidatingAdmissionPolicies use the same `admissionregistration.k8s.io/v1` API, so the 1.31 floor covers them. They are rendered by `ruleNameUniquenessPolicy.enabled` and by `hostnameOwnershipPolicy.enabled` while `hostnameOwnershipPolicy.admissionPolicy` keeps its default of `true`.
 - Upstream Gateway API supports at least the five most recent Kubernetes minor versions at the time of each release. The bundle's own version thresholds for this controller are described [below](#gateway-api-crds).
 
 ## Gateway API CRDs

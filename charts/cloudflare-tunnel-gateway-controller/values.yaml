@@ -233,7 +233,6 @@ podDisruptionBudget:
   # to null, or the render fails
   maxUnavailable: null
   # -- Policy for evicting unhealthy pods (IfHealthyBudget, AlwaysAllow)
-  # Requires Kubernetes 1.26+
   unhealthyPodEvictionPolicy: "IfHealthyBudget"
 
 # -- Service configuration
@@ -352,8 +351,7 @@ gatewayClass:
 # operator choice: the policy matches ALL HTTPRoutes/GRPCRoutes in the cluster
 # (a Route carries no controllerName at admission, so it cannot be limited to
 # this controller's routes) and can block updates to routes that already have
-# duplicate rule names. Requires a cluster with admissionregistration.k8s.io/v1
-# ValidatingAdmissionPolicy (Kubernetes >= 1.30).
+# duplicate rule names.
 ruleNameUniquenessPolicy:
   # -- Install the rule-name uniqueness ValidatingAdmissionPolicy and its binding
   enabled: false
@@ -362,7 +360,7 @@ ruleNameUniquenessPolicy:
 # enabled, a namespace is bound to ONE allowed hostname suffix via the
 # labelKey namespace label, and routes claiming hostnames outside it are
 # blocked TWICE (defence in depth): fail-fast by a ValidatingAdmissionPolicy
-# (Kubernetes 1.30+) and authoritatively by the controller at binding time
+# and authoritatively by the controller at binding time
 # (never programmed into the proxy or the Cloudflare ingress document).
 # Fail-closed inside the policed scope: unlabelled policed namespaces and
 # routes without explicit hostnames are rejected. Label values cannot contain
@@ -385,8 +383,9 @@ hostnameOwnershipPolicy:
   # routes binding to this controller's Gateways. On multi-implementation
   # clusters scope the selector accordingly or set admissionPolicy: false.
   namespaceSelector: {}
-  # -- Render the ValidatingAdmissionPolicy (requires Kubernetes 1.30+). Set
-  # false on older clusters to keep only the controller-side layer.
+  # -- Render the ValidatingAdmissionPolicy. Set false to keep only the
+  # controller-side layer, for example when other Gateway implementations'
+  # routes live in the policed namespaces.
   admissionPolicy: true
 
 # -- L7 Proxy configuration (enhanced-cloudflared data plane).

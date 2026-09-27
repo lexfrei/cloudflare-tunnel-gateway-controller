@@ -86,7 +86,7 @@ See [Installation](#installation) for detailed setup instructions.
 
 | Component | Supported |
 | --- | --- |
-| Kubernetes | 1.25+ for the chart; 1.31+ for the Gateway API bundle below |
+| Kubernetes | 1.31+ |
 | Gateway API CRDs | Standard channel (Gateway API v1.6.2) |
 
 The [prerequisites page](https://cf.k8s.lex.la/latest/getting-started/prerequisites/#compatibility) explains where each bound comes from.
@@ -194,7 +194,7 @@ The L7 proxy handles routing for every tunnel request, so most Gateway API behav
 - A match pattern the proxy cannot compile drops its own rule, reported on the route that carries it; other rules and other routes keep serving.
 - `RequestMirror` copies are dropped once a filter is at its in-flight dispatch cap (`proxy.mirror.maxInFlight`, counted by `cftunnel_proxy_mirror_dropped_total`), so a mirror backend that stops answering cannot grow the proxy's memory with request rate.
 - Informational `1xx` responses such as `103 Early Hints` are not forwarded through the tunnel; the client gets only the final response.
-- `HTTPRouteRule.name` uniqueness is not enforced at admission; an opt-in `ValidatingAdmissionPolicy` (`ruleNameUniquenessPolicy` Helm value) enforces it on Kubernetes 1.30+.
+- `HTTPRouteRule.name` uniqueness is not enforced at admission; an opt-in `ValidatingAdmissionPolicy` (`ruleNameUniquenessPolicy` Helm value) enforces it.
 - The non-canonical `group: core` is accepted for `backendRef`s and `BackendTLSPolicy` CA refs, and rejected for a Gateway's `clientCertificateRef` and the `ReferenceGrant` authorising it. Write `group: ""`, the spelling the Gateway API defines, and the asymmetry cannot bite.
 - The controller refuses to write a tunnel document above 1000 ingress rules. Rules are counted per hostname and path match rather than per route, and every namespace on a tunnel shares one document, so while the budget is exceeded no new hostname on that tunnel can be programmed.
 - Knative Serving via `net-gateway-api` needs a split-horizon setup — see the [Knative Serving guide](https://cf.k8s.lex.la/latest/guides/knative-serving/) — because its readiness prober dials the Gateway's tunnel address directly, which is not reachable in-cluster.

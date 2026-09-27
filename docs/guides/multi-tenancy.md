@@ -13,7 +13,7 @@ This guide describes how to run multiple tenants (teams, namespaces) behind one 
 | A tenant claims another tenant's Cloudflare Tunnel | None: a connector token is unverified, so this is caught at reconcile, not admission | The Gateway is refused, its routes are programmed nowhere, and its data plane is not rendered — see [Per-Gateway Isolation](per-gateway-isolation.md) |
 | A tenant multiplies dedicated data planes | None: a Gateway is a valid object however many a namespace already has | Past `maxDataPlanesPerNamespace` the newest Gateways are refused and no plane is rendered for them — see [Per-Gateway Isolation](per-gateway-isolation.md) |
 
-Every protection ships as two independent layers by design: if one layer is bypassed (an older cluster without `ValidatingAdmissionPolicy`, a deleted policy, a write path admission does not gate), the other still holds.
+Every protection ships as two independent layers by design: if one layer is bypassed (`admissionPolicy: false`, a deleted policy, a write path admission does not gate), the other still holds.
 
 ## The hostname-capture problem
 
@@ -92,7 +92,7 @@ metadata:
 
 With this in place:
 
-1. **Admission layer** (Kubernetes 1.30+): a `ValidatingAdmissionPolicy` denies `HTTPRoute`/`GRPCRoute` writes whose hostnames fall outside the namespace suffix. On older clusters set `hostnameOwnershipPolicy.admissionPolicy: false` to skip this layer.
+1. **Admission layer**: a `ValidatingAdmissionPolicy` denies `HTTPRoute`/`GRPCRoute` writes whose hostnames fall outside the namespace suffix. Setting `hostnameOwnershipPolicy.admissionPolicy: false` skips this layer, for example on a cluster where other Gateway implementations' routes live in the policed namespaces.
 2. **Controller layer**: independent of admission, the controller rejects violating routes at binding time (`Accepted=False`, reason `HostnameNotPermitted`) and never programs them into the proxy config or the Cloudflare ingress document.
 
 Both layers are fail-closed within the policed scope:

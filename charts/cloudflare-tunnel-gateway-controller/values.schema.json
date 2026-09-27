@@ -401,7 +401,7 @@
             "AlwaysAllow",
             null
           ],
-          "description": "Policy for evicting unhealthy pods (requires Kubernetes 1.26+)"
+          "description": "Policy for evicting unhealthy pods"
         }
       }
     },
@@ -615,7 +615,7 @@
     },
     "hostnameOwnershipPolicy": {
       "type": "object",
-      "description": "Per-namespace hostname-ownership policy: admission layer (ValidatingAdmissionPolicy, K8s 1.30+) plus controller-side enforcement, both driven by one namespace label.",
+      "description": "Per-namespace hostname-ownership policy: admission layer (ValidatingAdmissionPolicy) plus controller-side enforcement, both driven by one namespace label.",
       "additionalProperties": false,
       "properties": {
         "enabled": {
@@ -676,7 +676,7 @@
         },
         "admissionPolicy": {
           "type": "boolean",
-          "description": "Render the ValidatingAdmissionPolicy (requires Kubernetes 1.30+). False keeps only the controller-side layer.",
+          "description": "Render the ValidatingAdmissionPolicy. False keeps only the controller-side layer, for example when other Gateway implementations' routes live in the policed namespaces.",
           "default": true
         }
       }

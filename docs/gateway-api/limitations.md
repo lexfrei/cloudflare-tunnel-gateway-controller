@@ -404,7 +404,7 @@ To enforce uniqueness at admission, enable the bundled opt-in `ValidatingAdmissi
 
 ### Why it is off by default
 
-The policy is cluster-scoped: it applies to every `HTTPRoute`/`GRPCRoute` in the cluster (a Route carries no `controllerName` at admission, so it cannot be limited to this controller's routes) and can block updates to routes that already have duplicate names. It also requires a cluster with `admissionregistration.k8s.io/v1` ValidatingAdmissionPolicy (Kubernetes 1.30+). Enable it deliberately when those trade-offs are acceptable.
+The policy is cluster-scoped: it applies to every `HTTPRoute`/`GRPCRoute` in the cluster (a Route carries no `controllerName` at admission, so it cannot be limited to this controller's routes) and can block updates to routes that already have duplicate names. Enable it deliberately when those trade-offs are acceptable.
 
 ## No Native Multi-Cluster Discovery
 
