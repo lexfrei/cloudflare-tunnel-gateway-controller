@@ -9,6 +9,9 @@ import (
 
 	"github.com/cockroachdb/errors"
 	"github.com/prometheus/client_golang/prometheus"
+
+	"github.com/cloudflare/cloudflared/connection"
+	"github.com/cloudflare/cloudflared/tunnelrpc/pogs"
 )
 
 const (
@@ -31,21 +34,15 @@ const (
 //
 // Deliberately NOT covered: a well-formed tunnel token that the Cloudflare
 // edge rejects (revoked, deleted tunnel, wrong secret) rather than a token
-// that fails to parse. The vendored supervisor does carry that case out to
-// this package -- connection.ServerRegisterTunnelError, with its Permanent
-// bool from the registration RPC, survives as a typed error all the way
-// through supervisor/tunnel.go's serveTunnel and Supervisor.initialize, so
-// errors.As can read the bit from here. Reading it is not the hard part;
-// acting on it is. Treating Permanent as fatal exits the pod on a rejection
-// cloudflared itself retries on purpose -- it reads an "Unauthorized"
-// registration response as possibly transient, edge propagation lag on a
-// newly created tunnel -- and trading an indefinitely retrying pod for a
-// crash-looping one is a behaviour change that needs its own decision and
-// its own test. So a rejected-but-parseable token falls through to the
-// retryable path: it retries indefinitely with capped backoff, staying
-// NotReady and logging the error on every attempt instead of exiting. See
-// docs/operations/troubleshooting.md for the operator-facing diagnosis of
-// that case.
+// that fails to parse. cloudflared marks that rejection Permanent
+// (connection.ServerRegisterTunnelError), but it reads an
+// "Unauthorized" registration response as possibly transient -- edge
+// propagation lag on a newly created tunnel -- and retries it on purpose.
+// Treating Permanent as fatal would turn that case into a crash loop, so it
+// stays on the retryable path: it retries indefinitely with capped backoff
+// and stays NotReady. Only the log line differs, see isPermanentRegistration.
+// Issue #819 records the decision; docs/operations/troubleshooting.md carries
+// the operator-facing diagnosis.
 var errNonRetryableStart = errors.New("non-retryable tunnel start error")
 
 // markNonRetryable tags err with errNonRetryableStart without altering its
@@ -236,12 +233,16 @@ func startTunnelWithRetry(
 
 		wait := jitter(delay)
 
+		msg := "tunnel bootstrap dial failed, retrying"
+		if isPermanentRegistration(err) {
+			msg = registrationRejectedMsg
+		}
+
 		// err.Error() (not err) -- cockroachdb/errors formats a raw error
 		// value under slog's default "%+v" attribute encoding with an
 		// attached stack trace, which would otherwise repeat on every
 		// attempt and drown the log in noise across a long outage.
-		logger.Error("tunnel bootstrap dial failed, retrying",
-			"attempt", attempt, "error", err.Error(), "backoff", wait)
+		logger.Error(msg, "attempt", attempt, "error", err.Error(), "backoff", wait)
 
 		select {
 		case <-drainC:
@@ -253,6 +254,34 @@ func startTunnelWithRetry(
 
 		delay = nextBootstrapRetryDelay(delay, maxDelay)
 	}
+}
+
+// registrationRejectedMsg replaces the generic retry line when the edge refused
+// the connector's registration (see isPermanentRegistration). The generic line reads
+// like a network problem; this one sends the operator to the token instead.
+const registrationRejectedMsg = "tunnel bootstrap: the edge rejected this connector's registration, retrying; " +
+	"check the tunnel token and that the tunnel still exists"
+
+// isPermanentRegistration reports whether err carries a registration the edge
+// answered with a refusal it did not ask to retry. The supervisor passes the
+// typed error through serveTunnel and Supervisor.initialize, so errors.As
+// reaches it here.
+//
+// Permanent alone is not enough: cloudflared sets it on every registration
+// error that is not a pogs.RetryableError, and that includes a
+// *pogs.RPCError, which RegisterConnection returns when the call itself
+// failed -- the RPC timed out or the control stream dropped -- rather than
+// when the edge answered. Blaming the token for those would send the operator
+// the wrong way during a network incident.
+func isPermanentRegistration(err error) bool {
+	var regErr connection.ServerRegisterTunnelError
+	if !errors.As(err, &regErr) || !regErr.Permanent {
+		return false
+	}
+
+	var rpcErr *pogs.RPCError
+
+	return !errors.As(regErr.Cause, &rpcErr)
 }
 
 // nextBootstrapRetryDelay doubles the backoff delay, capped at maxDelay.

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"log/slog"
 	"maps"
 	"net"
@@ -892,4 +893,128 @@ func TestGatewayOriginProxy_ProxyHTTP_RefusedHijackStillFlushesTrailers(t *testi
 
 	assert.Equal(t, "0", writer.trailers.Get("Grpc-Status"),
 		"a refused hijack left the response ours, so its trailers must still reach the wire")
+}
+
+var errSecretPanic = errors.New("token sk-live-do-not-leak")
+
+// TestGatewayOriginProxy_ProxyHTTP_ErrorsAreConstantSentinels pins that an
+// error returned from ProxyHTTP carries nothing request-specific.
+//
+// On QUIC, when no response has been sent yet, cloudflared copies the returned
+// error's text verbatim into the ConnectResponse it sends to the edge, so
+// anything a panic value or a wrapped error put into that string would leave
+// the process. Each case below drives one return path and panics with a
+// secret-looking value, both as a string and as an error, since an error value
+// is the one a wrap would be tempted to keep.
+func TestGatewayOriginProxy_ProxyHTTP_ErrorsAreConstantSentinels(t *testing.T) {
+	t.Parallel()
+
+	panicValues := map[string]any{
+		"string": errSecretPanic.Error(),
+		"error":  errSecretPanic,
+	}
+
+	panicAfterStatus := func(value any) http.HandlerFunc {
+		return func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusOK)
+
+			panic(value)
+		}
+	}
+
+	panicAfterHijack := func(value any) http.HandlerFunc {
+		return func(w http.ResponseWriter, _ *http.Request) {
+			conn, _, hijackErr := w.(http.Hijacker).Hijack()
+			if hijackErr == nil {
+				t.Cleanup(func() { _ = conn.Close() })
+			}
+
+			panic(value)
+		}
+	}
+
+	panicAtOnce := func(value any) http.HandlerFunc {
+		return func(http.ResponseWriter, *http.Request) { panic(value) }
+	}
+
+	tests := []struct {
+		name      string
+		handler   func(value any) http.HandlerFunc
+		writer    func(t *testing.T) connection.ResponseWriter
+		websocket bool
+		nilTraced bool
+	}{
+		{
+			name:      "nil traced request, plain",
+			handler:   panicAtOnce,
+			writer:    func(*testing.T) connection.ResponseWriter { return newTestResponseWriter() },
+			nilTraced: true,
+		},
+		{
+			name:      "nil traced request, upgrade",
+			handler:   panicAtOnce,
+			writer:    func(*testing.T) connection.ResponseWriter { return newTestResponseWriter() },
+			websocket: true,
+			nilTraced: true,
+		},
+		{
+			name:      "panic on the upgrade branch",
+			handler:   panicAtOnce,
+			writer:    func(*testing.T) connection.ResponseWriter { return newTestResponseWriter() },
+			websocket: true,
+		},
+		{
+			name:    "panic after the status was written",
+			handler: panicAfterStatus,
+			writer: func(t *testing.T) connection.ResponseWriter {
+				t.Helper()
+
+				return newStrictStatusWriter(t)
+			},
+		},
+		{
+			name:    "panic after the connection was hijacked",
+			handler: panicAfterHijack,
+			writer: func(t *testing.T) connection.ResponseWriter {
+				t.Helper()
+
+				return &hijackableWriter{strictStatusWriter: newStrictStatusWriter(t)}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		for kind, value := range panicValues {
+			t.Run(tt.name+"/"+kind, func(t *testing.T) {
+				t.Parallel()
+
+				proxy := tunnel.NewGatewayOriginProxy(tt.handler(value), slog.New(slog.DiscardHandler))
+
+				var tracedReq *tracing.TracedHTTPRequest
+
+				if !tt.nilTraced {
+					req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://example.com/x", nil)
+					zlog := zerolog.Nop()
+					tracedReq = tracing.NewTracedHTTPRequest(req, 0, &zlog)
+				}
+
+				var err error
+
+				require.NotPanics(t, func() {
+					err = proxy.ProxyHTTP(tt.writer(t), tracedReq, tt.websocket)
+				})
+				require.Error(t, err)
+
+				matched := false
+
+				for _, sentinel := range tunnel.ProxyHTTPSentinelsForTest() {
+					if errors.Is(err, sentinel) && err.Error() == sentinel.Error() {
+						matched = true
+					}
+				}
+
+				assert.True(t, matched, "ProxyHTTP returned %q, which is not a constant sentinel", err.Error())
+			})
+		}
+	}
 }

@@ -1,7 +1,10 @@
 package tunnel
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -10,6 +13,9 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/cloudflare/cloudflared/connection"
+	"github.com/cloudflare/cloudflared/tunnelrpc/pogs"
 )
 
 // testRetryDelays keeps the retry-loop tests fast: backoff waits use these
@@ -412,4 +418,103 @@ func TestStartTunnelWithRetry_InstallsRetrySafeRegisterer(t *testing.T) {
 		_, wrapped := prometheus.DefaultRegisterer.(retrySafeRegisterer)
 		assert.True(t, wrapped, "startTunnelWithRetry must install the retry-safe registerer")
 	})
+}
+
+const (
+	logBootstrapRetry        = "tunnel bootstrap dial failed, retrying"
+	logRegistrationRejected  = "the edge rejected this connector's registration, retrying"
+	registrationRejectedHint = "check the tunnel token and that the tunnel still exists"
+)
+
+// retryLogFor drives startTunnelWithRetry with dial failing twice with err and
+// then succeeding, and returns how many times it dialed and what it logged.
+func retryLogFor(t *testing.T, err error) (int32, string) {
+	t.Helper()
+
+	var (
+		calls  atomic.Int32
+		logged bytes.Buffer
+	)
+
+	dial := func(context.Context, *Config) error {
+		if calls.Add(1) < 3 {
+			return err
+		}
+
+		return nil
+	}
+
+	cfg := &Config{Logger: slog.New(slog.NewTextHandler(&logged, nil))}
+
+	withFreshRegisterer(func() {
+		require.NoError(t, startTunnelWithRetry(t.Context(), cfg, make(chan struct{}), dial,
+			testBaseDelay, testMaxDelay, identityJitter))
+	})
+
+	return calls.Load(), logged.String()
+}
+
+// TestStartTunnelWithRetry_PermanentRegistrationRejectionIsRetriedAndNamed pins
+// the handling of a registration the edge marks Permanent: cloudflared reads an
+// Unauthorized response on a freshly created tunnel as possibly transient, so
+// the loop keeps retrying, but each attempt is logged with a line that tells
+// the operator what to check instead of the generic dial-failure one.
+func TestStartTunnelWithRetry_PermanentRegistrationRejectionIsRetriedAndNamed(t *testing.T) {
+	rejected := errors.Wrap(connection.ServerRegisterTunnelError{
+		Cause:     errors.New("Unauthorized: failed to get tunnel"),
+		Permanent: true,
+	}, "initialize supervisor")
+
+	calls, logged := retryLogFor(t, rejected)
+
+	assert.Equal(t, int32(3), calls, "a Permanent rejection must still be retried")
+	assert.Equal(t, 2, strings.Count(logged, logRegistrationRejected),
+		"each rejected attempt must log the distinct line once")
+	assert.Contains(t, logged, registrationRejectedHint)
+	assert.Contains(t, logged, "Unauthorized: failed to get tunnel", "the line must carry the error")
+	assert.NotContains(t, logged, logBootstrapRetry,
+		"the distinct line replaces the generic one rather than doubling it")
+}
+
+// TestStartTunnelWithRetry_RetryableRegistrationErrorKeepsGenericLog is the
+// other half: a registration error the edge did not mark Permanent is an
+// ordinary retry and must not send the operator to check the token.
+func TestStartTunnelWithRetry_RetryableRegistrationErrorKeepsGenericLog(t *testing.T) {
+	transient := errors.Wrap(connection.ServerRegisterTunnelError{
+		Cause:     errors.New("edge is busy"),
+		Permanent: false,
+	}, "initialize supervisor")
+
+	calls, logged := retryLogFor(t, transient)
+
+	assert.Equal(t, int32(3), calls)
+	assert.Equal(t, 2, strings.Count(logged, logBootstrapRetry))
+	assert.NotContains(t, logged, logRegistrationRejected)
+}
+
+// rpcTransportError stands in for a registration RPC that failed in transport. It
+// unwraps to a *pogs.RPCError the way cloudflared's wrapRPCError result does;
+// it cannot be that value itself, since the zero RPCError's Error() panics.
+type rpcTransportError struct{}
+
+func (rpcTransportError) Error() string { return "rpc: control stream closed" }
+
+func (rpcTransportError) Unwrap() error { return &pogs.RPCError{} }
+
+// TestStartTunnelWithRetry_RegistrationRPCFailureKeepsGenericLog pins that a
+// registration the RPC layer failed to complete is not reported as the edge
+// refusing the token. cloudflared marks every registration error Permanent
+// unless the edge said to retry, including a timeout or a dropped control
+// stream, which are network problems the token has nothing to do with.
+func TestStartTunnelWithRetry_RegistrationRPCFailureKeepsGenericLog(t *testing.T) {
+	failed := errors.Wrap(connection.ServerRegisterTunnelError{
+		Cause:     rpcTransportError{},
+		Permanent: true,
+	}, "initialize supervisor")
+
+	calls, logged := retryLogFor(t, failed)
+
+	assert.Equal(t, int32(3), calls)
+	assert.Equal(t, 2, strings.Count(logged, logBootstrapRetry))
+	assert.NotContains(t, logged, logRegistrationRejected)
 }
