@@ -274,20 +274,50 @@ func TestVerify_RefutedIsCachedBriefly(t *testing.T) {
 	assert.Equal(t, tunnelownership.ProofUnknown, verifier.Verify(context.Background(), testAPIKey, forged))
 }
 
-func TestVerify_UnknownIsNotCached(t *testing.T) {
+// TestVerify_OutageIsAskedAgainAfterAShortPause pins the outage cadence: every
+// arbitrating reconcile collects every claim, so asking again on each one
+// would multiply calls to an API that is already failing, and a hanging API
+// would hold every reconcile for the request timeout per claim.
+func TestVerify_OutageIsAskedAgainAfterAShortPause(t *testing.T) {
 	t.Parallel()
 
 	genuine := encodeToken(t, testAccount, testTunnel, realSecret)
 	api := newFakeTokenAPI(t, genuine)
 	api.status.Store(http.StatusServiceUnavailable)
-	verifier := newVerifier(t, api, nil)
+	clk := &clock{now: time.Unix(1_000_000, 0)}
+	verifier := newVerifier(t, api, clk)
 
 	require.Equal(t, tunnelownership.ProofUnknown, verifier.Verify(context.Background(), testAPIKey, parse(t, genuine)))
+	require.Equal(t, tunnelownership.ProofUnknown, verifier.Verify(context.Background(), testAPIKey, parse(t, genuine)))
+	assert.EqualValues(t, 1, api.calls.Load(), "a failed lookup must not be repeated at once")
 
 	api.status.Store(http.StatusOK)
+	clk.now = clk.now.Add(time.Minute)
 
 	assert.Equal(t, tunnelownership.ProofVerified, verifier.Verify(context.Background(), testAPIKey, parse(t, genuine)),
-		"recovery must be seen on the next reconcile, not after a TTL")
+		"recovery must be seen within a minute, not after a verdict's TTL")
+	assert.EqualValues(t, 2, api.calls.Load())
+}
+
+// TestVerify_OutagePausesAnExpiredConfirmationToo pins the same cadence for a
+// claim verified before the outage: it stays verified, and is not re-asked on
+// every reconcile either.
+func TestVerify_OutagePausesAnExpiredConfirmationToo(t *testing.T) {
+	t.Parallel()
+
+	genuine := encodeToken(t, testAccount, testTunnel, realSecret)
+	api := newFakeTokenAPI(t, genuine)
+	clk := &clock{now: time.Unix(1_000_000, 0)}
+	verifier := newVerifier(t, api, clk)
+
+	require.Equal(t, tunnelownership.ProofVerified, verifier.Verify(context.Background(), testAPIKey, parse(t, genuine)))
+
+	api.status.Store(http.StatusServiceUnavailable)
+	clk.now = clk.now.Add(2 * time.Hour)
+
+	require.Equal(t, tunnelownership.ProofVerified, verifier.Verify(context.Background(), testAPIKey, parse(t, genuine)))
+	require.Equal(t, tunnelownership.ProofVerified, verifier.Verify(context.Background(), testAPIKey, parse(t, genuine)))
+	assert.EqualValues(t, 2, api.calls.Load(), "one re-check after expiry, then a pause")
 }
 
 // TestVerify_CacheKeyIsNotTheSecret pins that the cache never holds a secret:
