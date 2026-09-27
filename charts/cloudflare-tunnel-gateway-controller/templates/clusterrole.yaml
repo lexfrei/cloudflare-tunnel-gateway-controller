@@ -68,17 +68,18 @@ rules:
   - apiGroups: ["discovery.k8s.io"]
     resources: ["endpointslices"]
     verbs: ["get", "list", "watch"]
-  # Deployments: the ProxySecretReconciler patches the proxy Deployment's
-  # pod-template annotation when the tunnel-token Secret rotates (issue
-  # #114), and the per-Gateway data planes (issue #479) render a dedicated
+  # Deployments: the ProxySecretReconciler records the tunnel-token revision
+  # on the proxy Deployment's metadata and patches its pod-template
+  # annotation when that Secret rotates (issue #114), and the per-Gateway data planes (issue #479) render a dedicated
   # proxy Deployment per opted-in Gateway — full write, cluster-wide,
   # because Gateways live in arbitrary namespaces. Rendered objects are
   # controller-owned via ownerReferences and deleted only when owned.
   - apiGroups: ["apps"]
     resources: ["deployments"]
     # patch IS used here (unlike services/HPA/NetworkPolicy): the proxy Secret
-    # reconciler merge-patches the SHARED proxy Deployment's pod-template
-    # annotation to roll it on tunnel-token rotation.
+    # reconciler merge-patches the SHARED proxy Deployment's token-revision
+    # annotations: its own metadata to record the revision, and the pod
+    # template to roll it on tunnel-token rotation.
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   # HorizontalPodAutoscalers: rendered per opted-in Gateway when its
   # GatewayConfig requests autoscaling (issue #479).

@@ -414,10 +414,8 @@ helm upgrade --install "${RELEASE_NAME}" \
   --set hostnameOwnershipPolicy.enabled=true \
   --set-json 'hostnameOwnershipPolicy.namespaceSelector={"matchLabels":{"cf-e2e-hostname-policy":"enforced"}}' \
   --wait --timeout 300s
-# 300s, not 120s: right after install the controller stamps the shared proxy
-# pod template with cf.k8s.lex.la/tunnel-token-revision, triggering a rolling
-# update — helm must outlast TWO pod generations, each registering 4 tunnel
-# HA connections (slow on a cold local VM).
+# 300s is a ceiling, not a wait: helm must outlast the proxy registering its 4
+# tunnel HA connections, which is slow on a cold local VM.
 
 # hostnameOwnershipPolicy above is scoped to the e2e marker label: only the
 # hostname-policy e2e's own namespaces are policed (both layers), so the
