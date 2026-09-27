@@ -300,22 +300,21 @@ func (g *wsIdleGuard) extend() {
 // request. No hijack: the bytestream is a regular HTTP response body, not a
 // post-101 WebSocket frame stream, and it streams through unchanged.
 //
-// The body is copied under a stall bound, pushed forward by every read that
-// returns bytes: a backend that stops sending part-way would otherwise hold
-// the handler, the backend conn and the tunnel stream until it closes, while
-// a large body that keeps arriving is not cut off.
+// The body is copied under a stall bound that each read restarts: a backend
+// that stops sending part-way would otherwise hold the handler, the backend
+// conn and the tunnel stream until it closes, while a large body that keeps
+// arriving is not cut off.
 func forwardUpgradeRefusal(w http.ResponseWriter, resp *http.Response, backendConn net.Conn, bound time.Duration) {
 	copyHeaderValues(w.Header(), resp.Header)
 	w.WriteHeader(resp.StatusCode)
 
-	stall := &stallBound{src: resp.Body, conn: backendConn, bound: bound}
-	stall.extend()
-	_, _ = io.Copy(w, stall)
+	_, _ = io.Copy(w, &stallBound{src: resp.Body, conn: backendConn, bound: bound})
 }
 
-// stallBound reads src and pushes conn's read deadline bound into the future
-// after every read that returns bytes, so only a stall of that length ends
-// the copy.
+// stallBound sets conn's read deadline bound into the future before every
+// read, so only a single read waiting that long ends the copy. Setting it
+// before rather than after keeps the time io.Copy spends writing to a slow
+// client from counting against the backend.
 type stallBound struct {
 	src   io.Reader
 	conn  net.Conn
@@ -323,16 +322,9 @@ type stallBound struct {
 }
 
 func (s *stallBound) Read(p []byte) (int, error) {
-	n, err := s.src.Read(p)
-	if n > 0 {
-		s.extend()
-	}
-
-	return n, err //nolint:wrapcheck // io.Copy compares this error against io.EOF by identity
-}
-
-func (s *stallBound) extend() {
 	_ = s.conn.SetReadDeadline(time.Now().Add(s.bound))
+
+	return s.src.Read(p) //nolint:wrapcheck // io.Copy compares this error against io.EOF by identity
 }
 
 // errWebSocketCopyPanic ends a session whose copy goroutine panicked.
