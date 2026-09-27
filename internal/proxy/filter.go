@@ -9,6 +9,7 @@ import (
 	"math/rand/v2"
 	"net/http"
 	"net/url"
+	"runtime/debug"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -600,7 +601,9 @@ func (f *requestMirror) noteMirrorDrop() {
 func (f *requestMirror) dispatchWithRetry(client *http.Client, tmpl *http.Request, bodyBuf []byte) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
-			slog.Error("mirror: panic in mirror request goroutine", "panic", recovered)
+			f.log().Error("mirror: panic in mirror request goroutine",
+				"panic", recovered,
+				"stack", string(debug.Stack()))
 		}
 	}()
 
