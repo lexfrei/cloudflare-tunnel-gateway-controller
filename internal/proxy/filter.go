@@ -675,6 +675,13 @@ func CompileFilters(filters []RouteFilter, factory TransportFactory) ([]Filter, 
 }
 
 func compileFilter(filter RouteFilter, factory TransportFactory) (Filter, error) {
+	// CompileFilters is exported, so it cannot assume its caller ran
+	// Config.Validate; the constructors below dereference the payload.
+	err := filter.validate()
+	if err != nil {
+		return nil, err
+	}
+
 	switch filter.Type {
 	case FilterRequestHeaderModifier:
 		return NewRequestHeaderModifier(filter.RequestHeaderModifier), nil
