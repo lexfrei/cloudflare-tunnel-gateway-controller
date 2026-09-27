@@ -191,10 +191,11 @@ func (s *metricsRequestState) setHostname(hostname string) {
 // onUpgrade runs at successful hijack time (WebSocket upgrade): the HTTP
 // exchange is over, so the request leaves the in-flight gauge, enters the
 // session gauge, observes time-to-upgrade, and counts by the written status
-// (101 → "1xx"). A hijack with NO recorded status is also a successful
-// upgrade: stdlib httputil.ReverseProxy (the standalone-mode path) writes the
-// 101 bytes directly to the hijacked connection, bypassing the counting
-// writer. The post-upgrade session is accounted by finish.
+// (101 → "1xx"). A hijack with NO recorded status is also counted as a
+// successful upgrade. That branch is defensive: no current hijacker reaches
+// it, because proxyWebSocketUpgrade writes the 101 before hijacking and the
+// httputil.ReverseProxy path does not forward upgrades, so it never hijacks.
+// The post-upgrade session is accounted by finish.
 func (s *metricsRequestState) onUpgrade() {
 	if s.upgraded {
 		// A second hijack on the same request must not double-count: it would

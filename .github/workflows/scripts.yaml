@@ -19,6 +19,7 @@ on:
       - hack/verify-manifest-children.sh
       - hack/find-ci-run.sh
       - .github/workflows/pr.yaml
+      - .github/workflows/pr-privileged.yaml
       # labels.yml is included so the drift-pin tests
       # (TYPE_TO_KIND/SCOPE_TO_AREA/SIZE_BUCKETS ↔ labels.yml) re-run
       # when labels.yml changes. Cost: the reflow job also fires on
@@ -44,6 +45,7 @@ on:
       - hack/verify-manifest-children.sh
       - hack/find-ci-run.sh
       - .github/workflows/pr.yaml
+      - .github/workflows/pr-privileged.yaml
       # labels.yml is included so the drift-pin tests
       # (TYPE_TO_KIND/SCOPE_TO_AREA/SIZE_BUCKETS ↔ labels.yml) re-run
       # when labels.yml changes. Cost: the reflow job also fires on

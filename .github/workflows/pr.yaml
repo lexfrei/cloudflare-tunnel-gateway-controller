@@ -70,6 +70,21 @@ jobs:
           # build cache (~/.cache/go-build) keyed off go.sum. Issue #257.
           cache: true
 
+      # go.sum pins module zips, not the vendored copies, so no other check
+      # notices a hand-edit under vendor/ or a go.mod change that was never
+      # re-vendored. Re-vendor in place and let git report the difference;
+      # files .gitignore excludes are not committed and stay out of it.
+      - name: Verify vendor/ matches go.mod
+        run: |
+          set -euo pipefail
+          go mod vendor
+          changes="$(git status --porcelain -- vendor)"
+          if [[ -n "${changes}" ]]; then
+            echo "::error::vendor/ differs from what go mod vendor produces; re-vendor instead of editing it"
+            echo "${changes}"
+            exit 1
+          fi
+
       - name: golangci-lint
         # Pin to a specific golangci-lint version so the action's own
         # download + ~/.cache/golangci-lint key stays stable across runs;
@@ -98,9 +113,9 @@ jobs:
 
   # Lint shell scripts and GitHub Actions workflows. actionlint validates the
   # workflow YAML and runs shellcheck on inline `run:` blocks; the standalone
-  # shellcheck pass covers hack/*.sh. shellcheck is installed at a pinned,
-  # Renovate-tracked version into /usr/local/bin, ahead of the runner's
-  # /usr/bin, so actionlint picks up the pinned one for inline blocks.
+  # shellcheck pass covers hack/*.sh. shellcheck is installed from a
+  # digest-pinned, Renovate-tracked image into /usr/local/bin, ahead of the
+  # runner's /usr/bin, so actionlint picks up the pinned one for inline blocks.
   lint-workflows:
     name: Lint Workflows
     runs-on: ubuntu-latest
@@ -121,23 +136,20 @@ jobs:
         run: |
           set -euo pipefail
 
-          # renovate: datasource=github-releases depName=koalaman/shellcheck
-          SHELLCHECK_VERSION="v0.11.0"
           # renovate: datasource=github-releases depName=rhysd/actionlint
           ACTIONLINT_VERSION="v1.7.12"
 
-          # actionlint is Go, so the checksum database attests it. shellcheck
-          # is Haskell and its releases carry no checksum or signature file,
-          # so it stays a plain download (#723).
+          # actionlint is Go, so the checksum database attests it.
           go install "github.com/rhysd/actionlint/cmd/actionlint@${ACTIONLINT_VERSION}"
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
-          tmp="$(mktemp -d)"
-
-          curl --retry 5 --retry-delay 1 -sSLo "${tmp}/shellcheck.tar.xz" \
-            "https://github.com/koalaman/shellcheck/releases/download/${SHELLCHECK_VERSION}/shellcheck-${SHELLCHECK_VERSION}.linux.x86_64.tar.xz"
-          tar -xJf "${tmp}/shellcheck.tar.xz" -C "${tmp}"
-          sudo install "${tmp}/shellcheck-${SHELLCHECK_VERSION}/shellcheck" /usr/local/bin/shellcheck
+          # The shellcheck releases carry no checksum or signature file, so
+          # the binary comes out of the upstream image, pinned by digest.
+          # renovate: datasource=docker depName=koalaman/shellcheck
+          SHELLCHECK_IMAGE="koalaman/shellcheck:v0.11.0@sha256:61862eba1fcf09a484ebcc6feea46f1782532571a34ed51fedf90dd25f925a8d"
+          docker create --name shellcheck-tmp "${SHELLCHECK_IMAGE}"
+          sudo docker cp shellcheck-tmp:/bin/shellcheck /usr/local/bin/shellcheck
+          docker rm shellcheck-tmp
 
           shellcheck --version
           "$(go env GOPATH)/bin/actionlint" --version
@@ -168,6 +180,11 @@ jobs:
     name: Test
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      # The control plane the envtest suites run against. Without a version
+      # `setup-envtest use` takes the newest one its index offers, which moves
+      # on its own. Keep it on the minor of the k8s.io/* modules in go.mod.
+      ENVTEST_K8S_VERSION: '1.37.0'
     steps:
       - name: Checkout PR code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -183,31 +200,27 @@ jobs:
           cache: true
 
       # Cache the envtest control-plane binaries (kube-apiserver, etcd,
-      # kubectl) keyed off the setup-envtest tool name -- the version
-      # actually used is selected by `setup-envtest use` at runtime, so
-      # the path is stable across runs. Avoids the ~30 s redownload of
-      # the control-plane tarball on every CI run.
+      # kubectl). Avoids the ~30 s redownload of the control-plane tarball
+      # on every CI run.
       - name: Cache envtest binaries
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ~/.local/share/kubebuilder-envtest
-          key: envtest-${{ runner.os }}-${{ hashFiles('go.mod') }}
-          restore-keys: |
-            envtest-${{ runner.os }}-
+          key: envtest-${{ runner.os }}-${{ env.ENVTEST_K8S_VERSION }}
 
       - name: Setup envtest
         run: |
           # renovate: datasource=go depName=sigs.k8s.io/controller-runtime/tools/setup-envtest
           SETUP_ENVTEST_VERSION="v0.25.1"
           go install "sigs.k8s.io/controller-runtime/tools/setup-envtest@${SETUP_ENVTEST_VERSION}"
-          setup-envtest use
+          setup-envtest use "${ENVTEST_K8S_VERSION}"
 
       - name: Run tests
         run: |
           # Declare then export separately: `export VAR="$(cmd)"` would mask a
           # non-zero exit from setup-envtest behind export's always-0 status
           # (shellcheck SC2155).
-          KUBEBUILDER_ASSETS="$(setup-envtest use -p path)"
+          KUBEBUILDER_ASSETS="$(setup-envtest use -p path "${ENVTEST_K8S_VERSION}")"
           export KUBEBUILDER_ASSETS
           go test -v -race -tags=envtest -coverprofile=coverage.out -covermode=atomic ./...
 
@@ -324,7 +337,10 @@ jobs:
     runs-on: ubuntu-latest
     needs: build-and-push
     timeout-minutes: 20
+    # The two legs are independent, and whether both fail the same way is the
+    # first thing to know when one does.
     strategy:
+      fail-fast: false
       matrix:
         include:
           - component: controller
@@ -390,11 +406,6 @@ jobs:
           done
           [[ "${ok}" -eq 1 ]]
 
-      - name: Inspect image
-        run: |
-          PR_NUMBER="${{ github.event.pull_request.number }}"
-          docker buildx imagetools inspect "${{ matrix.image }}:pr-${PR_NUMBER}-1d"
-
       # The tag this job just wrote is mutable and anonymous -- anyone can
       # overwrite it on ttl.sh. Publish the manifest-list digest so local
       # verification can address the image by content instead.
@@ -421,7 +432,7 @@ jobs:
           hack/verify-manifest-children.sh "${IMAGE_NAME}" /tmp/index.json /tmp/digests
 
           echo "${ref}" > "/tmp/refs/${{ matrix.component }}.ref"
-          cat "/tmp/refs/${{ matrix.component }}.ref"
+          docker buildx imagetools inspect "${ref}"
 
       - name: Upload image reference
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -435,12 +446,14 @@ jobs:
         run: |
           PR_NUMBER="${{ github.event.pull_request.number }}"
           IMAGE_TAG="${{ matrix.image }}:pr-${PR_NUMBER}-1d"
+          IMAGE_REF="$(cat "/tmp/refs/${{ matrix.component }}.ref")"
 
           {
             echo "## Multi-arch Container Image (${{ matrix.component }})"
             echo ""
-            echo "### Image Tag"
-            echo "- \`${IMAGE_TAG}\`"
+            echo "### Image"
+            echo "- \`${IMAGE_REF}\`"
+            echo "- \`${IMAGE_TAG}\` (mutable: anyone can overwrite a ttl.sh tag)"
             echo ""
             echo "### Platforms"
             echo "- linux/amd64"
@@ -448,7 +461,7 @@ jobs:
             echo ""
             echo "### Pull Command"
             echo '```bash'
-            echo "podman pull ${IMAGE_TAG}"
+            echo "podman pull ${IMAGE_REF}"
             echo '```'
             echo ""
             echo "> **Note:** The \`-1d\` suffix sets no lifetime -- ttl.sh reads one"
@@ -506,13 +519,6 @@ jobs:
           sudo docker cp ah-tmp:/usr/local/bin/ah /usr/local/bin/ah
           docker rm ah-tmp
           sudo chmod +x /usr/local/bin/ah
-
-          # renovate: datasource=docker depName=jnorwood/helm-docs
-          HELM_DOCS_IMAGE="jnorwood/helm-docs:v1.14.2@sha256:7e562b49ab6b1dbc50c3da8f2dd6ffa8a5c6bba327b1c6335cc15ce29267979c"
-          docker create --name helm-docs-tmp "${HELM_DOCS_IMAGE}"
-          sudo docker cp helm-docs-tmp:/usr/bin/helm-docs /usr/local/bin/helm-docs
-          docker rm helm-docs-tmp
-          sudo chmod +x /usr/local/bin/helm-docs
 
       - name: Run Helm Lint
         run: |
@@ -582,21 +588,7 @@ jobs:
             --set proxy.tunnelTokenSecretRef.name=tunnel-token-secret
 
       - name: Validate helm-docs
-        run: |
-          CHART_DIR="charts/cloudflare-tunnel-gateway-controller"
-          echo "Validating README.md is up to date..."
-          helm-docs --chart-search-root "$CHART_DIR"
-
-          if git diff --exit-code "$CHART_DIR/README.md" > /dev/null 2>&1; then
-            echo "README.md is up to date"
-          else
-            echo "ERROR: README.md is out of date!"
-            echo "Please run: helm-docs --chart-search-root $CHART_DIR"
-            echo ""
-            echo "Diff:"
-            git diff "$CHART_DIR/README.md"
-            exit 1
-          fi
+        uses: ./.github/actions/validate-helm-docs
 
       - name: Run Markdownlint
         uses: DavidAnson/markdownlint-cli2-action@21c1be1b93ad9ed58fa840aacc3f279cde2a72ff # v24
@@ -619,6 +611,17 @@ jobs:
         with:
           # renovate: datasource=github-releases depName=helm/helm
           version: 'v4.3.0'
+
+      # Same pinned image release.yaml extracts yq from, rather than whatever
+      # the runner image ships.
+      - name: Install yq
+        run: |
+          # renovate: datasource=docker depName=mikefarah/yq
+          YQ_IMAGE="mikefarah/yq:4.53.6@sha256:cfc4eee658595834ef304eadb0c3ea721f3b7cb6404ad8b7cb909cc5b5145b23"
+          docker create --name yq-tmp "${YQ_IMAGE}"
+          sudo docker cp yq-tmp:/usr/bin/yq /usr/local/bin/yq
+          docker rm yq-tmp
+          sudo chmod +x /usr/local/bin/yq
 
       - name: Modify Chart.yaml and values.yaml
         run: |
@@ -644,6 +647,10 @@ jobs:
           yq --inplace ".image.tag = \"${IMAGE_TAG}\"" "${CHART_DIR}/values.yaml"
           yq --inplace ".proxy.image.repository = \"${PROXY_IMAGE_REPO}\"" "${CHART_DIR}/values.yaml"
           yq --inplace ".proxy.image.tag = \"${IMAGE_TAG}\"" "${CHART_DIR}/values.yaml"
+          # A digest replaces the tag in the rendered image reference, so one
+          # left set would point the PR chart at an image this PR did not build.
+          yq --inplace ".image.digest = \"\"" "${CHART_DIR}/values.yaml"
+          yq --inplace ".proxy.image.digest = \"\"" "${CHART_DIR}/values.yaml"
 
           # PR charts publish a moving tag (pr-NNN-1d): same name, different
           # digest on each push. The stable-release default (IfNotPresent)
@@ -675,6 +682,8 @@ jobs:
           proxy_repo=$(yq --exit-status '.proxy.image.repository' "${CHART_DIR}/values.yaml")
           proxy_tag=$(yq --exit-status '.proxy.image.tag' "${CHART_DIR}/values.yaml")
           proxy_pull=$(yq --exit-status '.proxy.image.pullPolicy' "${CHART_DIR}/values.yaml")
+          controller_digest=$(yq '.image.digest // ""' "${CHART_DIR}/values.yaml")
+          proxy_digest=$(yq '.proxy.image.digest // ""' "${CHART_DIR}/values.yaml")
 
           fail=0
           if [[ "${controller_repo}" != *-ctrl ]]; then
@@ -695,6 +704,14 @@ jobs:
           fi
           if [[ "${proxy_tag}" != "${EXPECTED_TAG}" ]]; then
             echo "ERROR: proxy.image.tag must equal ${EXPECTED_TAG}, got: ${proxy_tag}"
+            fail=1
+          fi
+          if [[ -n "${controller_digest}" ]]; then
+            echo "ERROR: image.digest must be empty for PR charts (it overrides the tag), got: ${controller_digest}"
+            fail=1
+          fi
+          if [[ -n "${proxy_digest}" ]]; then
+            echo "ERROR: proxy.image.digest must be empty for PR charts (it overrides the tag), got: ${proxy_digest}"
             fail=1
           fi
           if [[ "${controller_pull}" != "Always" ]]; then

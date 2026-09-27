@@ -23,13 +23,23 @@ ref="$1"
 local_tag="$2"
 arch="$3"
 
-index="$(docker buildx imagetools inspect "${ref}" --raw)" \
-  || die "cannot read the image index for ${ref}"
+# ttl.sh drops reads transiently, as it does writes (issue #423).
+index=""
+for attempt in 1 2 3; do
+  index="$(docker buildx imagetools inspect "${ref}" --raw)" && break
+  index=""
+  [[ "${attempt}" -lt 3 ]] && sleep "${PULL_CI_IMAGE_RETRY_DELAY:-5}"
+done
+[[ -n "${index}" ]] || die "cannot read the image index for ${ref} after 3 attempts"
 
-digest="$(jq --raw-output --arg arch "${arch}" '
+digests="$(jq --raw-output --arg arch "${arch}" '
     .manifests[]?
     | select(.platform.os == "linux" and .platform.architecture == $arch)
     | .digest' <<< "${index}")"
+# Refuse an ambiguous index outright rather than pick one of the two.
+[[ "$(grep --count . <<< "${digests}")" -le 1 ]] \
+  || die "${ref} carries more than one linux/${arch} manifest"
+digest="${digests}"
 [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]] \
   || die "${ref} carries no linux/${arch} manifest"
 

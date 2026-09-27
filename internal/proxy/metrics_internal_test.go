@@ -108,13 +108,12 @@ func TestStatusClass(t *testing.T) {
 	}
 }
 
-// TestMetricsOnUpgrade_HijackWithoutStatusCountsAsUpgrade pins the standalone
-// WebSocket accounting path: stdlib httputil.ReverseProxy writes the "101
-// Switching Protocols" bytes DIRECTLY to the hijacked connection, bypassing
-// the counting ResponseWriter — so at hijack time no status was recorded. A
-// successful hijack IS a successful upgrade and must count as "1xx", not
-// "aborted" (which would make every standalone WS session look like a failed
-// exchange on dashboards).
+// TestMetricsOnUpgrade_HijackWithoutStatusCountsAsUpgrade pins the defensive
+// branch of onUpgrade: a hijack with no recorded status. No current hijacker
+// reaches it — proxyWebSocketUpgrade writes the 101 first, and the
+// httputil.ReverseProxy path does not forward upgrades — but a hijacker that
+// wrote the 101 bytes straight to the connection would. A successful hijack
+// IS a successful upgrade and must count as "1xx", not "aborted".
 func TestMetricsOnUpgrade_HijackWithoutStatusCountsAsUpgrade(t *testing.T) {
 	t.Parallel()
 
@@ -125,7 +124,7 @@ func TestMetricsOnUpgrade_HijackWithoutStatusCountsAsUpgrade(t *testing.T) {
 	state := metrics.beginRequest(counted, &http.Request{})
 	state.setHostname("ws.example.com")
 
-	// Simulate the stdlib path: hijack fires with NO WriteHeader call.
+	// Hijack fires with NO WriteHeader call.
 	state.onUpgrade()
 	state.finish()
 

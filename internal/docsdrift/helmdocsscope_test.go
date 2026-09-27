@@ -39,6 +39,27 @@ func TestHelmDocsInvocationsAreScopedToTheChart(t *testing.T) {
 	}
 }
 
+// TestHelmDocsIgnoreFileExcludesWorktrees pins the repo-root
+// .helmdocsignore. helm-docs reads it from the working directory however it
+// was invoked, so it keeps sibling worktrees out of reach of the positional
+// form above, which lives on in shell histories that no guard here can scan.
+func TestHelmDocsIgnoreFileExcludesWorktrees(t *testing.T) {
+	t.Parallel()
+
+	body, err := os.ReadFile(filepath.Join(findRepoRoot(t), ".helmdocsignore"))
+	if err != nil {
+		t.Fatalf("read .helmdocsignore: %v", err)
+	}
+
+	for line := range strings.SplitSeq(string(body), "\n") {
+		if strings.TrimSpace(line) == ".claude/worktrees/" {
+			return
+		}
+	}
+
+	t.Errorf(".helmdocsignore does not list .claude/worktrees/, so a helm-docs run from the repo root regenerates the charts in every sibling worktree")
+}
+
 // checkHelmDocsScope fails for each helm-docs invocation in the file
 // whose FIRST argument is a chart path rather than --chart-search-root,
 // which is the copy-paste form the documented command had. Separating a

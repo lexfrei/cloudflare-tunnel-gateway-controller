@@ -323,11 +323,10 @@ func TestConvertHTTPRoutes_UnknownAppProtocol_LogsAndDefaults(t *testing.T) {
 }
 
 // TestConvertHTTPRoutes_AppProtocolWS_NoWarn confirms that `appProtocol:
-// kubernetes.io/ws` is accepted silently. The WebSocket upgrade is decided
-// per-request by Connection: Upgrade + Upgrade: websocket headers, not by
-// transport selection — httputil.ReverseProxy handles the 101 Switching
-// Protocols response natively, so the default plaintext HTTP/1.1 transport
-// is the right answer for a `ws` hint.
+// kubernetes.io/ws` is accepted silently. The hint enables upgrades for the
+// backend rather than selecting a transport: upgrade requests go through
+// proxyWebSocketUpgrade, and every other request keeps the default plaintext
+// HTTP/1.1 transport.
 func TestConvertHTTPRoutes_AppProtocolWS_NoWarn(t *testing.T) {
 	pathPrefix := gatewayv1.PathMatchPathPrefix
 	routes := []*gatewayv1.HTTPRoute{httpAppProtocolTestRoute(pathPrefix)}
