@@ -56,18 +56,17 @@ const (
 	// HTTP/2 cleartext to the backend.
 	appProtocolH2C = "kubernetes.io/h2c"
 	// appProtocolWS is the Kubernetes Service appProtocol value selecting
-	// WebSocket over cleartext to the backend. The WebSocket upgrade itself is
-	// decided per-request by the Connection: Upgrade + Upgrade: websocket
-	// headers — appProtocol is only a hint for sidecars / metrics. The proxy
-	// keeps the default plaintext HTTP/1.1 transport; httputil.ReverseProxy
-	// natively handles the 101 Switching Protocols response and hijacks the
-	// underlying net.Conn.
+	// WebSocket over cleartext to the backend. It enables upgrades for the
+	// backend (BackendRef.WebSocket); whether a given request upgrades is then
+	// decided by its Connection: Upgrade + Upgrade headers. Upgrade requests go
+	// through proxyWebSocketUpgrade, which writes the 101 before hijacking;
+	// other requests use the default plaintext HTTP/1.1 transport. Without
+	// this value an upgrade request is forwarded as plain HTTP.
 	appProtocolWS = "kubernetes.io/ws"
 	// appProtocolWSS is the Kubernetes Service appProtocol value selecting
 	// WebSocket over TLS to the backend. Same precondition as appProtocol:
 	// https — operators MUST attach a BackendTLSPolicy so the proxy has a CA
-	// to verify against. Without a policy the dial goes plaintext and the
-	// backend will refuse the upgrade.
+	// to verify against. Without a policy the backend fails closed (502).
 	appProtocolWSS = "kubernetes.io/wss"
 )
 
