@@ -218,7 +218,7 @@ tests:
             - 9.9.9.9
 
   # NetworkPolicy with empty from array
-  - it: should handle NetworkPolicy with explicitly empty ingress.from
+  - it: should deny in-cluster ingress when ingress.from is explicitly empty
     set:
       networkPolicy:
         enabled: true
@@ -226,8 +226,9 @@ tests:
           from: []
     asserts:
       - template: networkpolicy.yaml
-        notExists:
-          path: spec.ingress[0].from
+        equal:
+          path: spec.ingress
+          value: []
 
   # Service with many annotations
   - it: should handle service with multiple annotations
