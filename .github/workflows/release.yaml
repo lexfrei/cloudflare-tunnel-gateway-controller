@@ -594,10 +594,13 @@ jobs:
         env:
           COSIGN_EXPERIMENTAL: "1"
         run: |
+          set -euo pipefail
           VERSION="${{ steps.version.outputs.version }}"
 
           # Get chart digest for signing
           CHART_DIGEST=$(oras manifest fetch "${CHART_OCI_REPO}:${VERSION}" --descriptor | jq --raw-output '.digest')
+          [[ "${CHART_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]] \
+            || { echo "::error::cannot resolve the digest of ${CHART_OCI_REPO}:${VERSION}"; exit 1; }
 
           # Sign the chart by digest (immutable reference)
           echo "Signing ${CHART_OCI_REPO}@${CHART_DIGEST}"
@@ -660,7 +663,8 @@ jobs:
 
           # Get previous tag (find tag before current one)
           CURRENT_TAG="${GITHUB_REF_NAME}"
-          PREV_TAG=$(git tag --sort=-v:refname | grep -v "^${CURRENT_TAG}$" | head -1)
+          # grep finds nothing on a first release; that is not a failure.
+          PREV_TAG=$(git tag --sort=-v:refname | { grep -v "^${CURRENT_TAG}$" || true; } | head -1)
 
           # Get commits since previous tag
           if [ -n "$PREV_TAG" ]; then
