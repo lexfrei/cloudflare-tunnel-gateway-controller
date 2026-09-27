@@ -98,7 +98,11 @@ rules:
   # the controller, never GC'd since there is no owning object). Either way a
   # data plane without an explicit auth token Secret gets a
   # controller-generated bearer token rather than an unauthenticated config
-  # API. No update/delete — the token is never rotated.
+  # API. create also covers the config API TLS CA and every data plane's
+  # serving certificate when --proxy-config-ca-secret is set. No
+  # update/delete here: the token is never rotated, a per-Gateway certificate
+  # is renewed into a new Secret, and the shared plane's certificate, renewed
+  # in place, needs update on that one Secret through a namespaced Role.
   - apiGroups: [""]
     resources: ["secrets"]
     verbs: ["get", "list", "watch", "create"]

@@ -69,8 +69,9 @@ func parseProxyAuthSecretRef(raw string) (types.NamespacedName, error) {
 // There is no ownership/adoption concept here (unlike the per-Gateway path):
 // the shared plane has no owning Gateway object to assert against, and a
 // pre-existing Secret at this name -- however it got there -- is simply
-// reused as-is, never overwritten (the controller holds Secrets `create`,
-// never `update`/`patch`, and this function never attempts either).
+// reused as-is, never overwritten (the controller's only Secrets `update`
+// grant covers the shared config API certificate, and this function never
+// attempts an update or a patch).
 //
 // This absence is deliberate, not an oversight: the Secret this function
 // resolves for the shared plane always lives in the controller's OWN

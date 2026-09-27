@@ -109,7 +109,7 @@ rules:
   - apiGroups: [""]
     resources: ["services"]
     verbs: ["get", "list", "watch", "create", "update", "delete"]
-  # Secrets - read for credentials; create for the generated config-API auth Secret, both the per-Gateway one and the shared plane's (no update/delete: token never rotated).
+  # Secrets - read for credentials; create for the generated config-API auth Secret, both the per-Gateway one and the shared plane's, and for the config API TLS CA and serving certificates (no update/delete here: the token is never rotated, and the shared plane's certificate gets update from a namespaced Role on that one Secret).
   - apiGroups: [""]
     resources: ["secrets"]
     verbs: ["get", "list", "watch", "create"]
@@ -232,7 +232,7 @@ The config API of the shared plane and of every per-Gateway plane is served over
 - **What a tenant can do.** A tenant who can write Secrets in its own namespace can read and replace its own plane's certificate, and nothing more. A certificate it minted itself does not chain to the CA: the push to that plane is refused, the controller issues a fresh slot and reports `ConfigTLSCertificateReplaced` on the Gateway. The genuine certificate of its own plane names only that plane, so it cannot answer for anyone else's. GatewayConfig has no field that supplies a certificate or turns TLS off; only the chart value does.
 - **Failures are loud.** The controller refuses to start when the CA Secret is unusable, when only one of `--proxy-config-ca-secret` and `--proxy-config-tls-secret` is set, or when TLS is on and a `--proxy-endpoints` entry is `http://`. The proxy refuses to start when only one of `PROXY_CONFIG_TLS_CERT_FILE` and `PROXY_CONFIG_TLS_KEY_FILE` is set or the pair does not load, and the shared proxy waits in `ContainerCreating` until the controller has created its certificate. A sustained push failure caused by the handshake names the reason in the route's `ProxyConfigPushed=False` condition and its `ProxyConfigPushFailed` Event.
 - **Probes and metrics.** They share the config API port and so move to HTTPS with it. kubelet does not verify a probe's certificate, and the chart's proxy ServiceMonitor scrapes with `insecureSkipVerify`, because the only copy of the CA certificate sits in the Secret that also holds the CA key.
-- **Rotating the CA.** The CA is not rotated automatically. Delete `<fullname>-config-ca` and restart the controller: every certificate then fails verification and is reissued, the shared one in place and each per-Gateway plane by rolling onto a new slot. Pushes to a plane fail until it serves its new certificate.
+- **Rotating the CA.** The CA is not rotated automatically. Delete `<fullname>-config-ca` and restart every controller replica, for example with `kubectl rollout restart`, since each replica loads the CA once at startup and one left running would keep issuing and trusting the old CA after a failover: every certificate then fails verification and is reissued, the shared one in place and each per-Gateway plane by rolling onto a new slot. Pushes to a plane fail until it serves its new certificate.
 
 Outside the chart, the controller turns TLS on with `--proxy-config-ca-secret` and `--proxy-config-tls-secret` (both `<namespace>/<name>`), and the proxy serves TLS when `PROXY_CONFIG_TLS_CERT_FILE` and `PROXY_CONFIG_TLS_KEY_FILE` point at a mounted `kubernetes.io/tls` Secret. With none of them set, the controller creates no CA and both sides speak plain HTTP, which is also what standalone development runs use.
 

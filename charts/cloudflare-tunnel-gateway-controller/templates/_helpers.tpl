@@ -137,6 +137,14 @@ runtime. The CA stays in the release namespace; the shared proxy mounts the
 leaf. deployment.yaml, deployment-proxy.yaml and role-config-tls.yaml resolve
 the names through these helpers so they cannot disagree.
 */}}
+{{- define "cf-tunnel-gw-ctrl.configCASecretName" -}}
+{{- printf "%s-config-ca" (include "cf-tunnel-gw-ctrl.fullname" .) -}}
+{{- end }}
+
+{{- define "cf-tunnel-gw-ctrl.proxyConfigTLSSecretName" -}}
+{{- printf "%s-config-tls" (include "cf-tunnel-gw-ctrl.proxyFullname" .) -}}
+{{- end }}
+
 {{/*
 "true" when config API TLS is on. Read through dig so a values set without
 the key, as `helm upgrade --reuse-values` carries from an older release,
@@ -144,14 +152,6 @@ gets the default instead of a nil-pointer failure.
 */}}
 {{- define "cf-tunnel-gw-ctrl.configAPITLSEnabled" -}}
 {{- if dig "configAPITLS" "enabled" true (.Values.proxy | default dict) -}}true{{- end -}}
-{{- end }}
-
-{{- define "cf-tunnel-gw-ctrl.configCASecretName" -}}
-{{- printf "%s-config-ca" (include "cf-tunnel-gw-ctrl.fullname" .) -}}
-{{- end }}
-
-{{- define "cf-tunnel-gw-ctrl.proxyConfigTLSSecretName" -}}
-{{- printf "%s-config-tls" (include "cf-tunnel-gw-ctrl.proxyFullname" .) -}}
 {{- end }}
 
 {{/*
