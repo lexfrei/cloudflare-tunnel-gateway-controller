@@ -518,13 +518,6 @@ jobs:
           docker rm ah-tmp
           sudo chmod +x /usr/local/bin/ah
 
-          # renovate: datasource=docker depName=jnorwood/helm-docs
-          HELM_DOCS_IMAGE="jnorwood/helm-docs:v1.14.2@sha256:7e562b49ab6b1dbc50c3da8f2dd6ffa8a5c6bba327b1c6335cc15ce29267979c"
-          docker create --name helm-docs-tmp "${HELM_DOCS_IMAGE}"
-          sudo docker cp helm-docs-tmp:/usr/bin/helm-docs /usr/local/bin/helm-docs
-          docker rm helm-docs-tmp
-          sudo chmod +x /usr/local/bin/helm-docs
-
       - name: Run Helm Lint
         run: |
           echo "Running Helm lint..."
@@ -593,21 +586,7 @@ jobs:
             --set proxy.tunnelTokenSecretRef.name=tunnel-token-secret
 
       - name: Validate helm-docs
-        run: |
-          CHART_DIR="charts/cloudflare-tunnel-gateway-controller"
-          echo "Validating README.md is up to date..."
-          helm-docs --chart-search-root "$CHART_DIR"
-
-          if git diff --exit-code "$CHART_DIR/README.md" > /dev/null 2>&1; then
-            echo "README.md is up to date"
-          else
-            echo "ERROR: README.md is out of date!"
-            echo "Please run: helm-docs --chart-search-root $CHART_DIR"
-            echo ""
-            echo "Diff:"
-            git diff "$CHART_DIR/README.md"
-            exit 1
-          fi
+        uses: ./.github/actions/validate-helm-docs
 
       - name: Run Markdownlint
         uses: DavidAnson/markdownlint-cli2-action@21c1be1b93ad9ed58fa840aacc3f279cde2a72ff # v24
