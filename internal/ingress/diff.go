@@ -53,68 +53,47 @@ func IsCatchAll(r Rule) bool {
 	return r.Hostname == "" && r.Service == CatchAllService
 }
 
-// DiffRules computes the difference between current and desired rules.
-// Returns rules to add (in desired but not in current) and rules to remove (in current but not in desired).
-// Catch-all rules are excluded from comparison.
+// DiffRules computes the difference between current and desired rules as
+// multisets: each desired copy of a rule is matched against at most one
+// deployed copy. Returns the desired copies with no deployed counterpart
+// (toAdd) and the deployed copies with no desired counterpart (toRemove), so
+// applying both leaves the document holding every rule exactly as many times
+// as it is desired. Catch-all rules are excluded from comparison.
 func DiffRules(
 	current []zero_trust.TunnelCloudflaredConfigurationGetResponseConfigIngress,
 	desired []zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress,
 ) ([]zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress, []Rule) {
-	currentRules := make([]Rule, 0, len(current))
+	unmatched := make(map[Rule]int, len(current))
 
 	for idx := range current {
-		rule := RuleFromGet(&current[idx])
-		if !IsCatchAll(rule) {
-			currentRules = append(currentRules, rule)
+		if rule := RuleFromGet(&current[idx]); !IsCatchAll(rule) {
+			unmatched[rule]++
 		}
 	}
 
-	desiredRules := make([]Rule, 0, len(desired))
-	desiredMap := make(map[int]zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress)
+	var toAdd []zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress
 
 	for idx := range desired {
 		rule := RuleFromUpdate(&desired[idx])
-		if !IsCatchAll(rule) {
-			desiredRules = append(desiredRules, rule)
-			desiredMap[len(desiredRules)-1] = desired[idx]
+		if IsCatchAll(rule) {
+			continue
 		}
+
+		if unmatched[rule] > 0 {
+			unmatched[rule]--
+
+			continue
+		}
+
+		toAdd = append(toAdd, desired[idx])
 	}
 
-	// Find rules to add (in desired but not in current)
-	var toAdd []zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress
-
-	for idx, desiredRule := range desiredRules {
-		found := false
-
-		for _, currentRule := range currentRules {
-			if RulesEqual(desiredRule, currentRule) {
-				found = true
-
-				break
-			}
-		}
-
-		if !found {
-			toAdd = append(toAdd, desiredMap[idx])
-		}
-	}
-
-	// Find rules to remove (in current but not in desired)
 	var toRemove []Rule
 
-	for _, currentRule := range currentRules {
-		found := false
-
-		for _, desiredRule := range desiredRules {
-			if RulesEqual(currentRule, desiredRule) {
-				found = true
-
-				break
-			}
-		}
-
-		if !found {
-			toRemove = append(toRemove, currentRule)
+	for idx := range current {
+		if rule := RuleFromGet(&current[idx]); unmatched[rule] > 0 && !IsCatchAll(rule) {
+			unmatched[rule]--
+			toRemove = append(toRemove, rule)
 		}
 	}
 
@@ -122,7 +101,7 @@ func DiffRules(
 }
 
 // ApplyDiff applies the diff to current rules, returning the final rule set.
-// Removes orphaned rules, keeps existing rules, adds new rules.
+// Removes one deployed copy per toRemove entry, keeps the rest, adds toAdd.
 func ApplyDiff(
 	current []zero_trust.TunnelCloudflaredConfigurationGetResponseConfigIngress,
 	toAdd []zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress,
@@ -130,7 +109,13 @@ func ApplyDiff(
 ) []zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress {
 	result := make([]zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress, 0, len(current)+len(toAdd))
 
-	// Keep current rules that are not in toRemove (and not catch-all)
+	// Each toRemove entry drops one deployed copy, so a rule deployed more
+	// often than it is desired shrinks to its desired count.
+	pending := make(map[Rule]int, len(toRemove))
+	for _, rule := range toRemove {
+		pending[rule]++
+	}
+
 	for idx := range current {
 		rule := RuleFromGet(&current[idx])
 
@@ -139,19 +124,13 @@ func ApplyDiff(
 			continue
 		}
 
-		shouldRemove := false
+		if pending[rule] > 0 {
+			pending[rule]--
 
-		for _, removeRule := range toRemove {
-			if RulesEqual(rule, removeRule) {
-				shouldRemove = true
-
-				break
-			}
+			continue
 		}
 
-		if !shouldRemove {
-			result = append(result, convertGetToUpdate(&current[idx]))
-		}
+		result = append(result, convertGetToUpdate(&current[idx]))
 	}
 
 	// Add new rules

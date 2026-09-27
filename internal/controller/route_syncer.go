@@ -1769,14 +1769,13 @@ const ruleAttributionLimit = 10
 // document, largest share first, for the OPERATOR log. Ties break on name so
 // the line is stable across reconciles and diffable between them.
 //
-// The shares count the desired rules, before the diff against the deployed
-// document, so they normally sum to one less than the document's rule count:
-// the catch-all closing the document is the controller's own and belongs to
-// no namespace. Identical rules move the sum either way (#809). DiffRules
-// never adds a desired rule equal to one already deployed, so a repeated copy
-// is counted here but not written, and it never removes a deployed copy while
-// an equal rule is still desired, so extra deployed copies are written but
-// not counted.
+// The shares count the desired rules. DiffRules matches desired and deployed
+// copies one to one, so the document holds each desired rule exactly as many
+// times as it is desired, and the shares sum to one less than the document's
+// rule count: the catch-all closing the document is the controller's own and
+// belongs to no namespace. Two routes projecting an identical rule therefore
+// each hold a slot, and each copy is counted against the namespace of the
+// route that produced it.
 func ingressRuleAttribution(counts ...map[string]int) string {
 	merged := make(map[string]int)
 
