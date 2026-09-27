@@ -488,6 +488,15 @@ proxy:
     # backend, so a session wedged writing to a client that stopped
     # reading is not reclaimed by it.
     idleTimeout: ""
+  # -- RequestMirror tuning.
+  mirror:
+    # -- How many mirror dispatches each RequestMirror filter may keep
+    # in flight before it drops further copies (mirroring is best-effort,
+    # so a dropped copy never affects the primary request). Each
+    # in-flight dispatch holds its buffered body, up to 1 MiB. 0 keeps
+    # the built-in limit of 64. Drops are counted by
+    # cftunnel_proxy_mirror_dropped_total. Reaches the shared proxy only.
+    maxInFlight: 0
   # -- Structured per-request access logging on the in-process proxy.
   # Off by default (zero allocation on the hot path). When enabled,
   # emits one JSON line per request via the proxy's stdout slog
