@@ -31,6 +31,22 @@ import (
 	"time"
 )
 
+// Proof is what Cloudflare said about a claim: whether the connector token
+// carries the named tunnel's real secret.
+type Proof int
+
+const (
+	// ProofUnknown means nobody could ask: the API was unreachable, or the
+	// token or credential was unreadable. It is the zero value, so a claim
+	// nobody checked is treated as unproven.
+	ProofUnknown Proof = iota
+	// ProofVerified means Cloudflare returned the tunnel's token and its
+	// secret matches the claimant's.
+	ProofVerified
+	// ProofRefuted means Cloudflare answered and the claim did not hold.
+	ProofRefuted
+)
+
 // Claim is one Gateway's assertion that it serves a tunnel.
 type Claim struct {
 	// Key identifies the Gateway as "namespace/name".
@@ -53,6 +69,9 @@ type Claim struct {
 	// is. Without this, an attacker whose Gateway predates the victim's could
 	// retarget its token and evict the legitimate holder by age alone.
 	Advertised string
+
+	// Proof is Cloudflare's verdict on the claim.
+	Proof Proof
 }
 
 // Rejection explains why a claim was refused, in the terms the Gateway's
@@ -65,6 +84,8 @@ type Rejection struct {
 	HeldBy string
 	// IsClassTunnel reports that the claim collided with the class tunnel.
 	IsClassTunnel bool
+	// Unproven reports that Cloudflare did not confirm the claim.
+	Unproven bool
 }
 
 // Arbitrate returns the claims that must not be programmed, keyed by claim
@@ -74,7 +95,7 @@ type Rejection struct {
 // Claims from one namespace never reject each other: a tenant pointing two of
 // its own Gateways at one tunnel is sharing with itself, and no boundary is
 // crossed. The input order does not affect the outcome.
-func Arbitrate(sharedTunnelID string, claims []Claim) map[string]Rejection {
+func Arbitrate(sharedTunnelID string, _ bool, claims []Claim) map[string]Rejection {
 	rejected := make(map[string]Rejection)
 
 	byTunnel := make(map[string][]Claim)

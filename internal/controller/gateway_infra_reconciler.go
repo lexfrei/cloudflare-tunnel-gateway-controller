@@ -913,7 +913,7 @@ func (r *GatewayInfraReconciler) dedicatedPlaneRefused(
 			return false, errors.Wrap(err, "collecting tunnel claims")
 		}
 
-		if _, refused := tunnelownership.Arbitrate(classTunnel, claims)[gateway.Namespace+"/"+gateway.Name]; refused {
+		if _, refused := tunnelownership.Arbitrate(classTunnel, false, claims)[gateway.Namespace+"/"+gateway.Name]; refused {
 			return true, nil
 		}
 	}

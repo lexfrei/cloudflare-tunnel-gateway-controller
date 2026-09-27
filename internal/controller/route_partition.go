@@ -105,7 +105,7 @@ func applyTunnelOwnership(
 		return
 	}
 
-	rejections := tunnelownership.Arbitrate(sharedTunnelID, claims)
+	rejections := tunnelownership.Arbitrate(sharedTunnelID, false, claims)
 	if len(rejections) == 0 {
 		return
 	}

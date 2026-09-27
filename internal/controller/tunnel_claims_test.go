@@ -87,7 +87,7 @@ func TestCollectTunnelClaims_TokenBeatsAStaleAdvertisedAddress(t *testing.T) {
 	assert.Equal(t, claimsTunnel, byKey["team-b/gw"].TunnelID,
 		"the claim must be the tunnel the token names, which is also the tunnel the partition uses")
 
-	rejected := tunnelownership.Arbitrate(claimsClassTunnel, claims)
+	rejected := tunnelownership.Arbitrate(claimsClassTunnel, false, claims)
 	assert.Contains(t, rejected, "team-b/gw",
 		"a retargeted token must be arbitrated on its new tunnel, not on the address left over from its old one")
 	assert.NotContains(t, rejected, "team-a/gw",
@@ -156,7 +156,7 @@ func TestCollectTunnelClaims_AdvertisedSurvivesAnUnreadableToken(t *testing.T) {
 	require.True(t, ok, "a Gateway serving a tunnel must stay in the claim set while its Secret is unreadable")
 	assert.Equal(t, claimsTunnel, held.Advertised, "its possession comes from status, not from the Secret")
 
-	rejected := tunnelownership.Arbitrate(claimsClassTunnel, claims)
+	rejected := tunnelownership.Arbitrate(claimsClassTunnel, false, claims)
 	assert.Contains(t, rejected, "team-b/gw",
 		"the challenger must not take a tunnel its holder is still serving")
 	assert.NotContains(t, rejected, "team-a/gw",
@@ -200,7 +200,7 @@ func TestCollectTunnelClaims_SharedPlaneAddressIsNotPossession(t *testing.T) {
 	claims, err := collectTunnelClaims(context.Background(), fakeClient, resolver, "test-controller", claimsClassTunnel)
 	require.NoError(t, err)
 
-	rejected := tunnelownership.Arbitrate(claimsClassTunnel, claims)
+	rejected := tunnelownership.Arbitrate(claimsClassTunnel, false, claims)
 	assert.NotContains(t, rejected, "team-a/gw",
 		"a leftover shared-plane address must not be read as a claim on the class tunnel")
 }

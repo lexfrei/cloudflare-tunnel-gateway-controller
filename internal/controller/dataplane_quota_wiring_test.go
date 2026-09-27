@@ -107,7 +107,7 @@ func TestQuotaTieBreakingMatchesTunnelArbitration(t *testing.T) {
 				})
 			}
 
-			rejected := tunnelownership.Arbitrate("", ownershipClaims)
+			rejected := tunnelownership.Arbitrate("", false, ownershipClaims)
 			refused := overQuotaGateways(new(int32(1)), quotaClaims)
 
 			var heldTunnel, heldSlot string

@@ -555,7 +555,7 @@ func (r *GatewayReconciler) tunnelRejection(
 		return nil, errors.Wrap(err, "collecting tunnel claims")
 	}
 
-	rejections := tunnelownership.Arbitrate(classTunnel, claims)
+	rejections := tunnelownership.Arbitrate(classTunnel, false, claims)
 
 	rejection, ok := rejections[gateway.Namespace+"/"+gateway.Name]
 	if !ok {
