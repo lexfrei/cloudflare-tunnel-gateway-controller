@@ -95,8 +95,8 @@ func sharingVectors() []Vector {
 			Name:         "equal creation times fall back to UID",
 			SharedTunnel: vectorSharedTunnel,
 			Claims: []Claim{
-				{Key: vectorGatewayA, Namespace: vectorTeamA, TunnelID: vectorOwnedTunnel, CreatedAt: vectorEpoch, UID: "bbb"},
-				{Key: vectorGatewayB, Namespace: vectorTeamB, TunnelID: vectorOwnedTunnel, CreatedAt: vectorEpoch, UID: "aaa"},
+				{Key: vectorGatewayA, Namespace: vectorTeamA, TunnelID: vectorOwnedTunnel, CreatedAt: vectorEpoch, UID: "bbb", Proof: ProofVerified},
+				{Key: vectorGatewayB, Namespace: vectorTeamB, TunnelID: vectorOwnedTunnel, CreatedAt: vectorEpoch, UID: "aaa", Proof: ProofVerified},
 			},
 			WantRejected: []string{vectorGatewayA},
 		},

@@ -37,7 +37,7 @@ func newStartTestRouteSyncer(t *testing.T) (*RouteSyncer, *runtime.Scheme, clien
 
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
 
-	configResolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector())
+	configResolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims())
 	routeSyncer := NewRouteSyncer(
 		fakeClient, scheme, "cluster.local", "test-controller", configResolver, cfmetrics.NewNoopCollector(), nil)
 

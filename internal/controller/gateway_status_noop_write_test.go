@@ -50,7 +50,7 @@ func TestGatewayReconciler_SecondReconcileWithNoChangeSkipsStatusWrite(t *testin
 		Client:         fakeClient,
 		Scheme:         fakeClient.Scheme(),
 		ControllerName: "test-controller",
-		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims()),
 	}
 
 	first, second := reconcileGatewayTwice(t, reconciler, types.NamespacedName{Name: "gw", Namespace: "default"})
@@ -86,7 +86,7 @@ func TestGatewayReconciler_ConfigError_SecondReconcileWithNoChangeSkipsStatusWri
 		Client:         fakeClient,
 		Scheme:         fakeClient.Scheme(),
 		ControllerName: "test-controller",
-		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims()),
 	}
 
 	first, second := reconcileGatewayTwice(t, reconciler, types.NamespacedName{Name: "test-gateway", Namespace: "default"})

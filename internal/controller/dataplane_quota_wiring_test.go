@@ -101,6 +101,7 @@ func TestQuotaTieBreakingMatchesTunnelArbitration(t *testing.T) {
 				// ways. The ordering under test is the same either way.
 				ownershipClaims = append(ownershipClaims, tunnelownership.Claim{
 					Key: c.key, Namespace: c.key, TunnelID: tunnelID, CreatedAt: createdAt, UID: c.uid,
+					Proof: tunnelownership.ProofVerified,
 				})
 				quotaClaims = append(quotaClaims, dataPlaneClaim{
 					Key: c.key, Namespace: "tenant", CreatedAt: createdAt, UID: c.uid,

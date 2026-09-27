@@ -460,7 +460,8 @@ func TestApplyTunnelOwnership_OperatorOptInRestoresSharing(t *testing.T) {
 
 // claimsFrom derives the shared claim set from a test's infra fixture, so a
 // unit test exercises applyTunnelOwnership with the same shape production
-// builds via collectTunnelClaims.
+// builds via collectTunnelClaims. Every claim is verified, as Cloudflare would
+// confirm a genuine token.
 func claimsFrom(infra *infraGateways) []tunnelownership.Claim {
 	claims := make([]tunnelownership.Claim, 0, len(infra.resolved))
 
@@ -472,6 +473,7 @@ func claimsFrom(infra *infraGateways) []tunnelownership.Claim {
 			CreatedAt:  entry.gateway.CreationTimestamp.Time,
 			UID:        string(entry.gateway.UID),
 			Advertised: advertisedTunnelID(&entry.gateway),
+			Proof:      tunnelownership.ProofVerified,
 		})
 	}
 

@@ -111,8 +111,7 @@ func (c *clock) Now() time.Time { return c.now }
 func newVerifier(t *testing.T, api *fakeTokenAPI, clk *clock) *tunnelproof.Verifier {
 	t.Helper()
 
-	verifier, err := tunnelproof.NewVerifier(api.factory)
-	require.NoError(t, err)
+	verifier := tunnelproof.NewVerifier(api.factory)
 
 	if clk != nil {
 		verifier.SetClock(clk.Now)
@@ -126,11 +125,13 @@ var (
 	forgeSecret = []byte("a-secret-the-tenant-made-up-here") //nolint:gochecknoglobals // test fixture
 )
 
-func TestNewVerifier_RejectsNilFactory(t *testing.T) {
+func TestNewVerifier_NilFactoryProvesNothing(t *testing.T) {
 	t.Parallel()
 
-	_, err := tunnelproof.NewVerifier(nil)
-	require.Error(t, err, "a verifier without a client cannot prove anything, and must not exist")
+	real := encodeToken(t, testAccount, testTunnel, realSecret)
+
+	proof := tunnelproof.NewVerifier(nil).Verify(context.Background(), testAPIKey, parse(t, real))
+	assert.Equal(t, tunnelownership.ProofUnknown, proof, "a verifier that can ask nobody must fail closed")
 }
 
 func TestVerify_MatchingSecretIsVerified(t *testing.T) {

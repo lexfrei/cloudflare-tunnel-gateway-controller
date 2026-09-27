@@ -73,7 +73,7 @@ func TestCollectTunnelClaims_TokenBeatsAStaleAdvertisedAddress(t *testing.T) {
 		claimsGatewayConfig("team-b", "b-token"),
 	)
 
-	resolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector())
+	resolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims())
 
 	claims, err := collectTunnelClaims(context.Background(), fakeClient, resolver, "test-controller", claimsClassTunnel)
 	require.NoError(t, err)
@@ -139,7 +139,7 @@ func TestCollectTunnelClaims_AdvertisedSurvivesAnUnreadableToken(t *testing.T) {
 		claimsGatewayConfig("team-b", "b-token"),
 	)
 
-	resolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector())
+	resolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims())
 
 	claims, err := collectTunnelClaims(context.Background(), fakeClient, resolver, "test-controller", claimsClassTunnel)
 	require.NoError(t, err)
@@ -195,7 +195,7 @@ func TestCollectTunnelClaims_SharedPlaneAddressIsNotPossession(t *testing.T) {
 		claimsGatewayConfig("team-a", "a-token"),
 	)
 
-	resolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector())
+	resolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims())
 
 	claims, err := collectTunnelClaims(context.Background(), fakeClient, resolver, "test-controller", claimsClassTunnel)
 	require.NoError(t, err)

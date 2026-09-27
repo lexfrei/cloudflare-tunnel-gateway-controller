@@ -301,7 +301,7 @@ func partitionSyncSyncerFor(t *testing.T, api *recordingTunnelAPI, objects []run
 
 	fakeClient := builder.Build()
 
-	resolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector())
+	resolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims())
 	syncer := NewRouteSyncer(fakeClient, scheme, "cluster.local", skipTestControllerName, resolver, cfmetrics.NewNoopCollector(), nil)
 	syncer.cloudflareClientFactory = func(_ *config.ResolvedConfig) *cloudflare.Client {
 		return cloudflare.NewClient(

@@ -98,14 +98,10 @@ func applyTunnelOwnership(
 		return
 	}
 
-	// The operator opted every party on a shared tunnel into seeing the
-	// others' routes. Nothing to arbitrate: the pre-existing merge behaviour
-	// is what they asked for.
-	if allowSharedTunnels {
-		return
-	}
-
-	rejections := tunnelownership.Arbitrate(sharedTunnelID, false, claims)
+	// allowSharedTunnels opts every party on a shared tunnel into seeing the
+	// others' routes, so it waives the contest — but not the proof: a claim
+	// Cloudflare does not confirm is refused either way.
+	rejections := tunnelownership.Arbitrate(sharedTunnelID, allowSharedTunnels, claims)
 	if len(rejections) == 0 {
 		return
 	}

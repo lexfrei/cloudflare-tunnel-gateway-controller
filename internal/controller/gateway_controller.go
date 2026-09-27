@@ -541,13 +541,6 @@ func (r *GatewayReconciler) tunnelRejection(
 	gateway *gatewayv1.Gateway,
 	policy *config.TunnelPolicy,
 ) (*tunnelownership.Rejection, error) {
-	// Same escape hatch the route syncer reads. Both layers must consult it or
-	// an operator who enabled sharing would see Gateways stuck Accepted=False
-	// while their routes were programmed perfectly.
-	if policy.AllowSharedTunnels {
-		return nil, nil //nolint:nilnil // sharing permitted: nothing to arbitrate
-	}
-
 	classTunnel := canonicalTunnelID(policy.TunnelID)
 
 	claims, err := collectTunnelClaims(ctx, r.Client, r.ConfigResolver, r.ControllerName, classTunnel)
@@ -555,7 +548,10 @@ func (r *GatewayReconciler) tunnelRejection(
 		return nil, errors.Wrap(err, "collecting tunnel claims")
 	}
 
-	rejections := tunnelownership.Arbitrate(classTunnel, false, claims)
+	// Same sharing opt-in the route syncer passes. Both layers must honour it
+	// or an operator who enabled sharing would see Gateways stuck
+	// Accepted=False while their routes were programmed perfectly.
+	rejections := tunnelownership.Arbitrate(classTunnel, policy.AllowSharedTunnels, claims)
 
 	rejection, ok := rejections[gateway.Namespace+"/"+gateway.Name]
 	if !ok {

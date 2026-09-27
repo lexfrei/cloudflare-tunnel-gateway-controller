@@ -903,19 +903,18 @@ func (r *GatewayInfraReconciler) dedicatedPlaneRefused(
 	// two layers deciding the same two things in opposite orders invites a
 	// reader to look for a difference that is not there.
 	//
-	// The cap is checked after the sharing opt-out below, not inside it:
-	// allowSharedTunnels waives tunnel arbitration, never the capacity limit.
-	if !policy.AllowSharedTunnels {
-		classTunnel := canonicalTunnelID(policy.TunnelID)
+	// allowSharedTunnels waives the contest between namespaces, never the
+	// proof of a claim and never the capacity limit.
+	classTunnel := canonicalTunnelID(policy.TunnelID)
 
-		claims, err := collectTunnelClaims(ctx, r.Client, r.ConfigResolver, r.ControllerName, classTunnel)
-		if err != nil {
-			return false, errors.Wrap(err, "collecting tunnel claims")
-		}
+	claims, err := collectTunnelClaims(ctx, r.Client, r.ConfigResolver, r.ControllerName, classTunnel)
+	if err != nil {
+		return false, errors.Wrap(err, "collecting tunnel claims")
+	}
 
-		if _, refused := tunnelownership.Arbitrate(classTunnel, false, claims)[gateway.Namespace+"/"+gateway.Name]; refused {
-			return true, nil
-		}
+	rejections := tunnelownership.Arbitrate(classTunnel, policy.AllowSharedTunnels, claims)
+	if _, refused := rejections[gateway.Namespace+"/"+gateway.Name]; refused {
+		return true, nil
 	}
 
 	return r.overDataPlaneQuota(ctx, gateway, policy.MaxDataPlanesPerNamespace)

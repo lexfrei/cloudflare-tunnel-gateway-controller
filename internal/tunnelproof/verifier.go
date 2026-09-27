@@ -59,12 +59,9 @@ type entry struct {
 }
 
 // NewVerifier returns a Verifier that talks to Cloudflare through newClient.
-func NewVerifier(newClient ClientFactory) (*Verifier, error) {
-	if newClient == nil {
-		return nil, errors.New("tunnel claim verifier needs a Cloudflare client factory")
-	}
-
-	return &Verifier{newClient: newClient, now: time.Now, cache: make(map[[sha256.Size]byte]entry)}, nil
+// Without a factory it can ask nobody, so it proves nothing.
+func NewVerifier(newClient ClientFactory) *Verifier {
+	return &Verifier{newClient: newClient, now: time.Now, cache: make(map[[sha256.Size]byte]entry)}
 }
 
 // Verify reports whether the token carries the real secret of the tunnel it
@@ -121,7 +118,7 @@ func (v *Verifier) store(key [sha256.Size]byte, proof tunnelownership.Proof) {
 // ask queries Cloudflare for the tunnel's token and compares it with the
 // claimant's.
 func (v *Verifier) ask(ctx context.Context, apiToken string, token *tunnel.Token) tunnelownership.Proof {
-	if apiToken == "" {
+	if apiToken == "" || v.newClient == nil {
 		return tunnelownership.ProofUnknown
 	}
 

@@ -36,7 +36,7 @@ func TestHTTPRouteReconciler_Reconcile_NotFound(t *testing.T) {
 		WithScheme(scheme).
 		Build()
 
-	configResolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector())
+	configResolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims())
 	routeSyncer := NewRouteSyncer(fakeClient, scheme, "cluster.local", "test-controller", configResolver, cfmetrics.NewNoopCollector(), nil)
 
 	r := &HTTPRouteReconciler{
@@ -145,7 +145,7 @@ func TestHTTPRouteReconciler_Reconcile_WrongGatewayClass(t *testing.T) {
 		WithObjects(gateway, route).
 		Build()
 
-	configResolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector())
+	configResolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims())
 	routeSyncer := NewRouteSyncer(fakeClient, scheme, "cluster.local", "test-controller", configResolver, cfmetrics.NewNoopCollector(), nil)
 
 	r := &HTTPRouteReconciler{
@@ -1101,7 +1101,7 @@ func TestHTTPRouteReconciler_UpdateRouteStatus_Integration(t *testing.T) {
 		WithStatusSubresource(route).
 		Build()
 
-	configResolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector())
+	configResolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims())
 	routeSyncer := NewRouteSyncer(fakeClient, scheme, "cluster.local", "test-controller", configResolver, cfmetrics.NewNoopCollector(), nil)
 
 	r := &HTTPRouteReconciler{
@@ -1196,7 +1196,7 @@ func TestHTTPRouteReconciler_UpdateRouteStatus_NotAccepted(t *testing.T) {
 		WithStatusSubresource(route).
 		Build()
 
-	configResolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector())
+	configResolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims())
 	routeSyncer := NewRouteSyncer(fakeClient, scheme, "cluster.local", "test-controller", configResolver, cfmetrics.NewNoopCollector(), nil)
 
 	r := &HTTPRouteReconciler{
@@ -1311,7 +1311,7 @@ func TestHTTPRouteReconciler_MapperIntegration(t *testing.T) {
 		WithObjects(gatewayClass, gatewayClassConfig, gateway, route).
 		Build()
 
-	resolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector())
+	resolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims())
 	routeSyncer := NewRouteSyncer(fakeClient, scheme, "cluster.local", "test-controller", resolver, cfmetrics.NewNoopCollector(), nil)
 
 	r := &HTTPRouteReconciler{
@@ -1359,7 +1359,7 @@ func TestHTTPRouteReconciler_SyncAndUpdateStatus_NoConfig(t *testing.T) {
 		WithObjects(gatewayClass).
 		Build()
 
-	configResolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector())
+	configResolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims())
 	routeSyncer := NewRouteSyncer(fakeClient, scheme, "cluster.local", "test-controller", configResolver, cfmetrics.NewNoopCollector(), nil)
 
 	r := &HTTPRouteReconciler{
@@ -1444,7 +1444,7 @@ func TestHTTPRouteReconciler_UpdateRouteStatus_WithSyncError(t *testing.T) {
 		WithStatusSubresource(route).
 		Build()
 
-	configResolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector())
+	configResolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims())
 	routeSyncer := NewRouteSyncer(fakeClient, scheme, "cluster.local", "test-controller", configResolver, cfmetrics.NewNoopCollector(), nil)
 
 	r := &HTTPRouteReconciler{
@@ -1530,7 +1530,7 @@ func TestHTTPRouteReconciler_UpdateRouteStatus_WithFailedBackendRefs(t *testing.
 		WithStatusSubresource(route).
 		Build()
 
-	configResolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector())
+	configResolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims())
 	routeSyncer := NewRouteSyncer(fakeClient, scheme, "cluster.local", "test-controller", configResolver, cfmetrics.NewNoopCollector(), nil)
 
 	r := &HTTPRouteReconciler{
@@ -1642,7 +1642,7 @@ func TestHTTPRouteReconciler_UpdateRouteStatus_MultipleParents(t *testing.T) {
 		WithStatusSubresource(route).
 		Build()
 
-	configResolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector())
+	configResolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims())
 	routeSyncer := NewRouteSyncer(fakeClient, scheme, "cluster.local", "test-controller", configResolver, cfmetrics.NewNoopCollector(), nil)
 
 	r := &HTTPRouteReconciler{
@@ -1741,7 +1741,7 @@ func TestHTTPRouteReconciler_UpdateRouteStatus_PreservesForeignParentStatus(t *t
 	// stored before our reconcile reads it back.
 	require.NoError(t, fakeClient.Status().Update(context.Background(), route))
 
-	configResolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector())
+	configResolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims())
 	routeSyncer := NewRouteSyncer(fakeClient, scheme, "cluster.local", "test-controller", configResolver, cfmetrics.NewNoopCollector(), nil)
 
 	r := &HTTPRouteReconciler{
@@ -1858,7 +1858,7 @@ func TestHTTPRouteReconciler_UpdateRouteStatus_TruncatesOwnEntriesNotForeign(t *
 		Build()
 	require.NoError(t, fakeClient.Status().Update(context.Background(), route))
 
-	configResolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector())
+	configResolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims())
 	routeSyncer := NewRouteSyncer(fakeClient, scheme, "cluster.local", "test-controller", configResolver, cfmetrics.NewNoopCollector(), nil)
 
 	r := &HTTPRouteReconciler{
@@ -1957,7 +1957,7 @@ func TestHTTPRouteReconciler_UpdateRouteStatus_SkipsObservedGenerationRegression
 		Build()
 	require.NoError(t, fakeClient.Status().Update(context.Background(), route))
 
-	configResolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector())
+	configResolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims())
 	routeSyncer := NewRouteSyncer(fakeClient, scheme, "cluster.local", "test-controller", configResolver, cfmetrics.NewNoopCollector(), nil)
 
 	r := &HTTPRouteReconciler{
@@ -2021,7 +2021,7 @@ func TestHTTPRouteReconciler_UpdateRouteStatus_NonGatewayParentRef(t *testing.T)
 		WithStatusSubresource(route).
 		Build()
 
-	configResolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector())
+	configResolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims())
 	routeSyncer := NewRouteSyncer(fakeClient, scheme, "cluster.local", "test-controller", configResolver, cfmetrics.NewNoopCollector(), nil)
 
 	r := &HTTPRouteReconciler{
@@ -2259,7 +2259,7 @@ func TestHTTPRouteReconciler_UpdateRouteStatus_ParentRefWithExplicitNamespace(t 
 		WithStatusSubresource(route).
 		Build()
 
-	configResolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector())
+	configResolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims())
 	routeSyncer := NewRouteSyncer(fakeClient, scheme, "cluster.local", "test-controller", configResolver, cfmetrics.NewNoopCollector(), nil)
 
 	r := &HTTPRouteReconciler{
@@ -2359,7 +2359,7 @@ func TestHTTPRouteReconciler_SyncAndUpdateStatus_WithRoutesAndConfigFailure(t *t
 		WithStatusSubresource(httpRoute).
 		Build()
 
-	configResolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector())
+	configResolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims())
 	routeSyncer := NewRouteSyncer(fakeClient, scheme, "cluster.local", "test-controller", configResolver, cfmetrics.NewNoopCollector(), nil)
 
 	r := &HTTPRouteReconciler{
@@ -2477,7 +2477,7 @@ func TestHTTPRouteReconciler_SyncAndUpdateStatus_MultipleRoutes(t *testing.T) {
 		WithStatusSubresource(route1, route2).
 		Build()
 
-	configResolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector())
+	configResolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims())
 	routeSyncer := NewRouteSyncer(fakeClient, scheme, "cluster.local", "test-controller", configResolver, cfmetrics.NewNoopCollector(), nil)
 
 	r := &HTTPRouteReconciler{
@@ -2565,7 +2565,7 @@ func TestHTTPRouteReconciler_Reconcile_RouteNotForOurGateway(t *testing.T) {
 		WithObjects(otherGateway, route).
 		Build()
 
-	configResolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector())
+	configResolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims())
 	routeSyncer := NewRouteSyncer(fakeClient, scheme, "cluster.local", "test-controller", configResolver, cfmetrics.NewNoopCollector(), nil)
 
 	r := &HTTPRouteReconciler{

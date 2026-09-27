@@ -6,11 +6,13 @@ import (
 	"github.com/cockroachdb/errors"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/api/v1alpha1"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/render"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/tunnel"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/tunnelownership"
 )
 
 // GatewayParametersRefKind is the Gateway.spec.infrastructure.parametersRef
@@ -154,42 +156,65 @@ func (r *Resolver) resolveStatusConfig(
 	}, nil
 }
 
-// ResolveTunnelIdentityForGateway returns just the tunnel this Gateway's
-// connector token names, stopping before any credential lookup.
+// TunnelClaim is the tunnel a Gateway's connector token names, with
+// Cloudflare's verdict on whether the token really holds it.
+type TunnelClaim struct {
+	TunnelID string
+	Proof    tunnelownership.Proof
+}
+
+// ResolveTunnelClaimForGateway returns the tunnel this Gateway's connector
+// token names and whether Cloudflare confirms the token holds it.
 //
-// Tunnel arbitration runs on every reconcile of every opted-in Gateway and
-// needs nothing else. Going through the status resolver would additionally
-// resolve the Cloudflare API token, which for a GatewayConfig without its own
-// credential override falls back to the GatewayClass chain — so a class
-// credentials Secret being briefly unreadable would drop a still-bootstrapping
-// claimant out of the arbitration and let a competitor take its tunnel.
+// The check uses the credential that will write the tunnel's configuration —
+// the GatewayConfig's own, or the class chain's — so it proves exactly the
+// access the controller is about to exercise on the tenant's behalf.
 //
-// Returns an empty string with no error when the Gateway is not opted in.
-func (r *Resolver) ResolveTunnelIdentityForGateway(
+// Tunnel arbitration runs on every reconcile of every opted-in Gateway, so a
+// credential that cannot be read must not drop the claim: that would let a
+// competitor take the tunnel of a claimant still bootstrapping while a class
+// credentials Secret is briefly unreadable. The claim is returned unproven
+// instead, which keeps a holder that already advertises the tunnel and
+// refuses a new one.
+//
+// Returns nil with no error when the Gateway is not opted in.
+func (r *Resolver) ResolveTunnelClaimForGateway(
 	ctx context.Context,
 	gateway *gatewayv1.Gateway,
-) (string, error) {
+) (*TunnelClaim, error) {
 	if !HasInfrastructureParametersRef(gateway) {
-		return "", nil
+		return nil, nil //nolint:nilnil // nil,nil IS the shared-mode signal, like ResolveForGateway
 	}
 
 	gwConfig, err := r.getGatewayConfig(ctx, gateway)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	token, tokenSecretName, err := r.readTunnelToken(ctx, gateway.Namespace, gwConfig)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	parsed, err := tunnel.ParseTunnelToken(token)
 	if err != nil {
-		return "", errors.Wrapf(ErrInvalidParameters,
+		return nil, errors.Wrapf(ErrInvalidParameters,
 			"tunnel token in secret %s/%s does not parse: %v", gateway.Namespace, tokenSecretName.Name, err)
 	}
 
-	return parsed.TunnelID.String(), nil
+	claim := &TunnelClaim{TunnelID: parsed.TunnelID.String(), Proof: tunnelownership.ProofUnknown}
+
+	apiToken, err := r.resolveGatewayAPIToken(ctx, gateway, gwConfig)
+	if err != nil {
+		log.FromContext(ctx).V(1).Info("cannot verify a tunnel claim; its API credential is unreadable",
+			"gateway", gateway.Namespace+"/"+gateway.Name, "tunnel", claim.TunnelID, "error", err.Error())
+
+		return claim, nil
+	}
+
+	claim.Proof = r.claimVerifier.Verify(ctx, apiToken, parsed)
+
+	return claim, nil
 }
 
 // GetGatewayConfig resolves and returns the GatewayConfig referenced by the

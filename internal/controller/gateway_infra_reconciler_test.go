@@ -128,7 +128,7 @@ func newInfraReconciler(t *testing.T, objects ...runtime.Object) *GatewayInfraRe
 		Client:              fakeClient,
 		Scheme:              scheme,
 		ControllerName:      "cf.k8s.lex.la/tunnel-controller",
-		ConfigResolver:      config.NewResolver(fakeClient, "cf-system", cfmetrics.NewNoopCollector()),
+		ConfigResolver:      config.NewResolver(fakeClient, "cf-system", cfmetrics.NewNoopCollector(), verifiedClaims()),
 		RenderDefaults:      render.Defaults{ProxyImage: "ghcr.io/example/proxy:v1.2.3"},
 		ControllerNamespace: "cf-system",
 		RenderNetworkPolicy: true,
@@ -258,7 +258,7 @@ func TestGatewayInfraReconciler_TransientClassReadErrorRequeuesWithoutTeardown(t
 		Client:              fakeClient,
 		Scheme:              scheme,
 		ControllerName:      "cf.k8s.lex.la/tunnel-controller",
-		ConfigResolver:      config.NewResolver(fakeClient, "cf-system", cfmetrics.NewNoopCollector()),
+		ConfigResolver:      config.NewResolver(fakeClient, "cf-system", cfmetrics.NewNoopCollector(), verifiedClaims()),
 		RenderDefaults:      render.Defaults{ProxyImage: "ghcr.io/example/proxy:v1.2.3"},
 		ControllerNamespace: "cf-system",
 	}
@@ -487,7 +487,7 @@ func TestGatewayInfraReconciler_OptOutSucceedsWithoutSecretDelete(t *testing.T) 
 		Client:         fakeClient,
 		Scheme:         scheme,
 		ControllerName: "cf.k8s.lex.la/tunnel-controller",
-		ConfigResolver: config.NewResolver(fakeClient, "cf-system", cfmetrics.NewNoopCollector()),
+		ConfigResolver: config.NewResolver(fakeClient, "cf-system", cfmetrics.NewNoopCollector(), verifiedClaims()),
 		RenderDefaults: render.Defaults{ProxyImage: "ghcr.io/example/proxy:v1.2.3"},
 	}
 
@@ -992,7 +992,7 @@ func TestGatewayInfraReconciler_RefusesForeignAuthSecretOnCreateRace(t *testing.
 		Client:              fakeClient,
 		Scheme:              scheme,
 		ControllerName:      "cf.k8s.lex.la/tunnel-controller",
-		ConfigResolver:      config.NewResolver(fakeClient, "cf-system", cfmetrics.NewNoopCollector()),
+		ConfigResolver:      config.NewResolver(fakeClient, "cf-system", cfmetrics.NewNoopCollector(), verifiedClaims()),
 		RenderDefaults:      render.Defaults{ProxyImage: "ghcr.io/example/proxy:v1.2.3"},
 		ControllerNamespace: "cf-system",
 	}
@@ -1074,7 +1074,7 @@ func TestGatewayInfraReconciler_TokenlessOwnedAuthSecretFailsClosedWithoutUpdate
 		Client:         fakeClient,
 		Scheme:         scheme,
 		ControllerName: "cf.k8s.lex.la/tunnel-controller",
-		ConfigResolver: config.NewResolver(fakeClient, "cf-system", cfmetrics.NewNoopCollector()),
+		ConfigResolver: config.NewResolver(fakeClient, "cf-system", cfmetrics.NewNoopCollector(), verifiedClaims()),
 		RenderDefaults: render.Defaults{ProxyImage: "ghcr.io/example/proxy:v1.2.3"},
 	}
 

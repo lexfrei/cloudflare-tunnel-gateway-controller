@@ -86,16 +86,24 @@ type Rejection struct {
 	IsClassTunnel bool
 	// Unproven reports that Cloudflare did not confirm the claim.
 	Unproven bool
+	// Proof is the unproven claim's verdict: refuted, or not checkable yet.
+	Proof Proof
 }
 
 // Arbitrate returns the claims that must not be programmed, keyed by claim
-// key. A claim is rejected when it names the class tunnel, or when a Gateway
-// in a different namespace claimed the same tunnel earlier.
+// key. A claim is rejected when it names the class tunnel, when Cloudflare has
+// not confirmed it, or when a Gateway in a different namespace claimed the same
+// tunnel earlier.
+//
+// An unconfirmed claim is rejected before the contest and takes no part in it,
+// so a token that never proves out cannot deny a tunnel to one that does.
+// allowSharedTunnels waives the class-tunnel rule and the contest between
+// namespaces, never the proof.
 //
 // Claims from one namespace never reject each other: a tenant pointing two of
 // its own Gateways at one tunnel is sharing with itself, and no boundary is
 // crossed. The input order does not affect the outcome.
-func Arbitrate(sharedTunnelID string, _ bool, claims []Claim) map[string]Rejection {
+func Arbitrate(sharedTunnelID string, allowSharedTunnels bool, claims []Claim) map[string]Rejection {
 	rejected := make(map[string]Rejection)
 
 	byTunnel := make(map[string][]Claim)
@@ -105,13 +113,23 @@ func Arbitrate(sharedTunnelID string, _ bool, claims []Claim) map[string]Rejecti
 			continue
 		}
 
-		if claim.TunnelID == sharedTunnelID {
+		if claim.TunnelID == sharedTunnelID && !allowSharedTunnels {
 			rejected[claim.Key] = Rejection{TunnelID: claim.TunnelID, IsClassTunnel: true}
 
 			continue
 		}
 
+		if !hasStanding(claim) {
+			rejected[claim.Key] = Rejection{TunnelID: claim.TunnelID, Unproven: true, Proof: claim.Proof}
+
+			continue
+		}
+
 		byTunnel[claim.TunnelID] = append(byTunnel[claim.TunnelID], claim)
+	}
+
+	if allowSharedTunnels {
+		return rejected
 	}
 
 	for tunnelID, contenders := range byTunnel {
@@ -127,6 +145,26 @@ func Arbitrate(sharedTunnelID string, _ bool, claims []Claim) map[string]Rejecti
 	}
 
 	return rejected
+}
+
+// hasStanding reports whether a claim may hold its tunnel: Cloudflare confirmed
+// it, or nobody could ask and the Gateway already advertises that tunnel.
+//
+// The second arm keeps a holder through a Cloudflare outage, and through a
+// token rotation that leaves its Secret briefly unreadable. It rests on
+// Gateway status alone, so it is exactly as trustworthy as write access to
+// gateways/status.
+func hasStanding(claim Claim) bool {
+	switch claim.Proof {
+	case ProofVerified:
+		return true
+	case ProofUnknown:
+		return claim.Advertised == claim.TunnelID
+	case ProofRefuted:
+		return false
+	}
+
+	return false
 }
 
 // incumbent returns the claim that holds the tunnel.
