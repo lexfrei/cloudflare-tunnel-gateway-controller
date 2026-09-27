@@ -1,0 +1,41 @@
+name: Renovate Config
+
+on:
+  pull_request:
+    paths:
+      - renovate.json
+      - .github/workflows/renovate-config.yaml
+  push:
+    branches: [master]
+    paths:
+      - renovate.json
+      - .github/workflows/renovate-config.yaml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate renovate.json
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      # A syntax error or a renamed option otherwise shows up only in
+      # Renovate's own dashboard, after dependencies have quietly stopped
+      # updating. --strict also fails on options that need migrating.
+      - name: Run renovate-config-validator
+        run: |
+          set -euo pipefail
+          # renovate: datasource=docker depName=ghcr.io/renovatebot/renovate
+          RENOVATE_IMAGE="ghcr.io/renovatebot/renovate:44.115.10@sha256:e262ed52b23dd8c545c80faf5b1ad5c95a07b3f198888de8d7b8928f45c307c7"
+          docker run --rm \
+            --volume "${GITHUB_WORKSPACE}/renovate.json:/usr/src/app/renovate.json:ro" \
+            --workdir /usr/src/app \
+            --entrypoint renovate-config-validator \
+            "${RENOVATE_IMAGE}" --strict

@@ -45,6 +45,15 @@ else
   mapfile -t files < <(git ls-files ':!vendor/**' ':!hack/check-doc-links_test.sh')
 fi
 
+# An empty list would leave grep with no file operands, so it would read stdin
+# and report a clean scan of nothing -- which is what happens outside a git
+# worktree, where git ls-files fails inside the process substitution above
+# without tripping set -e.
+if [[ "${#files[@]}" -eq 0 ]]; then
+  echo "ERROR: no files to scan; run inside a git worktree or pass files explicitly" >&2
+  exit 2
+fi
+
 # grep exits 1 when nothing matches; that is success here, so swallow it.
 # -I skips binary files (images, etc.) now that the scan is not limited to *.md.
 matches="$(grep -oEHnI "${url_re}" -- "${files[@]}" || true)"

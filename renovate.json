@@ -94,6 +94,15 @@
       "enabled": false
     },
     {
+      "description": "Renovate ships several releases a day; the image pinned in renovate-config.yaml only runs the config validator, so batch its bumps weekly",
+      "matchPackageNames": [
+        "ghcr.io/renovatebot/renovate"
+      ],
+      "schedule": [
+        "before 6am on monday"
+      ]
+    },
+    {
       "description": "Keep the two Gateway API modules and every doc site that names their versions in one PR. Split across PRs each branch is red on its own: a gomod bump alone leaves the pinned docs stale, and a docs bump alone claims a version the vendored module is not on",
       "matchPackageNames": [
         "sigs.k8s.io/gateway-api",
