@@ -416,3 +416,14 @@ tests:
     asserts:
       - hasDocuments:
           count: 0
+
+  - it: should admit any source when ingress is null, as with an empty from
+    set:
+      networkPolicy:
+        enabled: true
+        ingress: null
+    asserts:
+      - hasDocuments:
+          count: 1
+      - notExists:
+          path: spec.ingress[0].from
