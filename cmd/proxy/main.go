@@ -34,13 +34,17 @@ var (
 )
 
 const (
-	defaultConfigAddr  = ":8081"
-	defaultProxyAddr   = ":8080"
-	readHeaderTimeout  = 10 * time.Second
-	readTimeout        = 5 * time.Minute
-	configReadTimeout  = 60 * time.Second
-	configWriteTimeout = 60 * time.Second
-	shutdownTimeout    = 30 * time.Second
+	defaultConfigAddr = ":8081"
+	// Standalone mode binds loopback unless PROXY_CONFIG_ADDR / PROXY_ADDR
+	// ask for more: its config API is unauthenticated, and the proxy forwards
+	// to whatever backend a pushed config names.
+	standaloneConfigAddr = "127.0.0.1:8081"
+	standaloneProxyAddr  = "127.0.0.1:8080"
+	readHeaderTimeout    = 10 * time.Second
+	readTimeout          = 5 * time.Minute
+	configReadTimeout    = 60 * time.Second
+	configWriteTimeout   = 60 * time.Second
+	shutdownTimeout      = 30 * time.Second
 	// defaultStartupProtocolWait bounds how long the proxy waits for the
 	// controller's first config push before dialing the edge, when the
 	// configured transport is auto/unset and the proxy must learn whether a
@@ -96,11 +100,11 @@ func run(logger *slog.Logger) int {
 
 // configAPIAuthFor decides whether the config API must be authenticated.
 // Tunnel mode requires it; standalone mode keeps the historical
-// unauthenticated default. Not because of the bind — standalone listens on
-// every interface too, so a pod running it is reachable by anything that can
-// route to the pod — but because of what the routing table is worth. In tunnel
-// mode it decides where internet traffic goes; in standalone mode nothing is
-// serving it.
+// unauthenticated default, because of what the routing table is worth: in
+// tunnel mode it decides where internet traffic goes, while standalone mode
+// has no edge in front of it. Standalone binds loopback by default instead;
+// an operator who widens the bind with PROXY_CONFIG_ADDR owns the network
+// boundary in front of it.
 func configAPIAuthFor(tunnelToken string) configAPIAuth {
 	if tunnelToken != "" {
 		return authRequired
@@ -356,7 +360,7 @@ func runStandaloneMode(logger *slog.Logger, plane *dataPlane) int {
 // standaloneAddrs returns the config-API and proxy listen addresses for
 // standalone mode.
 func standaloneAddrs() (string, string) {
-	return envOrDefault("PROXY_CONFIG_ADDR", defaultConfigAddr), envOrDefault("PROXY_ADDR", defaultProxyAddr)
+	return envOrDefault("PROXY_CONFIG_ADDR", standaloneConfigAddr), envOrDefault("PROXY_ADDR", standaloneProxyAddr)
 }
 
 func newServer(addr string, handler http.Handler) *http.Server {
