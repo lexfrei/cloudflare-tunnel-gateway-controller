@@ -18,7 +18,13 @@ Counts are the current `rows-*.md` verdicts (`cat rows-*.md | grep -E '^\| [A-Z]
 | --- | --- |
 | MET | 239 |
 | PARTIAL | 31 |
-| GAP | 13 |
+| GAP | 3 |
+| REFUTED | 1 |
+| DOWNGRADE-NA | 3 |
+| DOWNGRADE-MET | 2 |
+| DOWNGRADE-DEFENSIBLE | 1 |
+| DOWNGRADE-CONDITIONAL | 2 |
+| DOWNGRADE-DOCUMENTED | 1 |
 | N/A (tunnel architecture / exempt) | 97 |
 
 Conformance ground truth (v1.5.1 run): 76 top-level subtests PASS, 54 SKIP (documented TLS/TCP/UDP/Mesh/WebSocket/GRPCRouteWeight/HTTPS-listener), **0 FAIL** (`go test ... ok 293s`). GRPCRouteWeight and HTTPRouteBackendProtocolWebSocket were among the SKIPs at that run; both are de-skipped in the current suite configuration (`test/conformance/conformance_test.go`, pinned by `TestStaleSkipsStayLifted`) now that gateway-api v1.6.0 added the injectable `suite.GRPCClient` / `suite.WebSocketDialer` hooks those tests needed, so the current skip categories are TLS/TCP/UDP/Mesh/HTTPS-listener plus the BackendTLSPolicy-gated tests. Conformance ground truth (v1.6.1 run): 77 top-level subtests PASS, 76 SKIP, **0 FAIL** (`go test ... ok 487s`, kind + real Cloudflare Tunnel). Both runs were green; the audit's value is the normative surface the suite does not exercise.
@@ -59,7 +65,7 @@ The v1.6.0 baseline bump was audited against the verified upstream tag diff; v1.
 | SH-43 | GAP | DOWNGRADE-CONDITIONAL | The per-reconcile full rebuild re-adds only currently-valid own parentRefs, so stale own-entries are dropped naturally; the SHOULD is satisfied for the realistic case. |
 | HR-61 | GAP | DOWNGRADE-NA | Redirect `Scheme` enum is http;https; both have well-known ports, so the "scheme without well-known port" precondition is unreachable. |
 | GR-44, GR-45 | GAP | DOWNGRADE-NA | A GRPCRoute backend is gRPC-over-HTTP/2 by definition; forcing h2c is correct, and the one protocol-relevant signal (TLS via BackendTLSPolicy) is honoured. |
-| OR-03 | GAP | DOWNGRADE-DOCUMENTED | ExternalName Service support is a deliberate, documented deviation (limitations.md:10/32/66) with a stated trust-boundary rationale. Recommend adding an explicit CVE-2021-25740 citation. |
+| OR-03 | GAP | DOWNGRADE-DOCUMENTED | ExternalName Service support is a deliberate, documented deviation (limitations.md:10/38) with a stated trust-boundary rationale that already cites CVE-2021-25740. |
 
 ## Confirmed findings (post-verification)
 
@@ -95,5 +101,5 @@ Catalogued implemented / intentionally-omitted; zero worthwhile candidates surfa
 
 - `01-clause-inventory.md` — verbatim field-godoc clause extraction; the GEP rows are not in it (see Method step 1).
 - `02-gep-notes.md` — GEP/concept cross-cutting requirements.
-- `rows-<TYPE>.md` — first-pass per-clause classification + evidence (GW, HR, GR, SH, GC, RG, BTLS, LS, OTHER). For the 25 first-pass GAPs, the verdicts in the verification table above supersede the per-row status.
+- `rows-<TYPE>.md` — per-clause classification + evidence (GW, HR, GR, SH, GC, RG, BTLS, LS, OTHER), holding the current verified verdict: a clause the adversarial pass fixed in code carries MET, and a clause it refuted or downgraded without a code change carries that verdict (REFUTED, DOWNGRADE-NA, DOWNGRADE-MET, DOWNGRADE-DEFENSIBLE, DOWNGRADE-CONDITIONAL, DOWNGRADE-DOCUMENTED) rather than the superseded first-pass GAP; the DOWNGRADE-CRD group (HR-41, HR-42, HR-43, HR-44, GR-34, GR-35) is graded directly as PARTIAL or MET on its case-variant residual instead of carrying that label. See the verification table above for how each was decided.
 - shouldmay-<TYPE>.md — verified SHOULD-tier verdicts and MAY catalogue, per type.
