@@ -406,3 +406,13 @@ tests:
           value:
             - ipBlock:
                 cidr: 173.245.48.0/20
+
+  # A values overlay that nulls the whole block means "no policy". Helm drops
+  # the null key, so the template must read the missing map as disabled rather
+  # than dereference it.
+  - it: should render nothing when networkPolicy is null
+    set:
+      networkPolicy: null
+    asserts:
+      - hasDocuments:
+          count: 0
