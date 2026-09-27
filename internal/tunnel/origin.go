@@ -112,7 +112,17 @@ func newTrailerBridge(w connection.ResponseWriter) *trailerBridge {
 
 func (b *trailerBridge) Header() http.Header { return b.header }
 
+// WriteHeader drops an informational status other than 101. Forwarding one is
+// unsafe on both cloudflared writers: the QUIC adapter sends a single response
+// head, so a 1xx would replace the final one, and the HTTP/2 writer marks its
+// status written on the first call. Latching a 1xx as final here would also
+// drop the real status and headers that follow it. 101 is left to the upgrade
+// path's own contract.
 func (b *trailerBridge) WriteHeader(status int) {
+	if status >= http.StatusContinue && status < http.StatusOK && status != http.StatusSwitchingProtocols {
+		return
+	}
+
 	if b.wroteHeader {
 		return
 	}
