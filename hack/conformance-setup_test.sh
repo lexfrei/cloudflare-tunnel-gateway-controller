@@ -674,6 +674,27 @@ else
   flunk "a non-numeric PR number is refused"
 fi
 
+# pr-number.txt is produced by the fork's own pr.yaml, so every privileged
+# step that writes to a PR must first confirm the PR's head is the commit the
+# run built. The label step is gated indirectly, through first_build.
+match_steps="$(grep --count 'name: Check the PR is the one this run built' \
+  "${repo_root}/.github/workflows/pr-privileged.yaml" || true)"
+if [[ "${match_steps}" -eq 2 ]]; then
+  pass "both pr-privileged.yaml jobs check the PR head against the run"
+else
+  flunk "both pr-privileged.yaml jobs check the PR head against the run (${match_steps} of 2)"
+fi
+for gated in "Download SARIF artifact" "Upload SARIF to GitHub Security" "Check if first build" \
+  "Download image references" "Read and validate image references" "Comment on PR"; do
+  if grep --after-context=3 --fixed-strings -- "- name: ${gated}" \
+    "${repo_root}/.github/workflows/pr-privileged.yaml" \
+    | grep --quiet --fixed-strings "steps.match.outputs.current == 'true'"; then
+    pass "pr-privileged.yaml '${gated}' runs only for the PR this run built"
+  else
+    flunk "pr-privileged.yaml '${gated}' runs only for the PR this run built"
+  fi
+done
+
 # The finder and the privileged workflow select runs by the workflow's display
 # name, which has to stay equal to pr.yaml's own `name:`.
 pr_workflow_name="$(sed -n 's/^name: //p' "${repo_root}/.github/workflows/pr.yaml")"
