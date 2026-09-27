@@ -300,3 +300,43 @@ func TestHandler_PruneTransports_ClosesIdleH2CConnection(t *testing.T) {
 		t.Fatal("PruneTransports did not close the idle h2c connection")
 	}
 }
+
+// The header deadline starts once the request body has been sent, the same
+// rule ResponseHeaderTimeout applies on HTTP/1.1: an upload that outlasts the
+// deadline is not cut off, and the backend's prompt answer after it gets
+// through.
+func TestHandler_H2C_HeaderTimeoutStartsAfterUpload_TunnelMode(t *testing.T) {
+	t.Parallel()
+
+	for _, mode := range tunnelWriterModes {
+		t.Run(mode.name, func(t *testing.T) {
+			t.Parallel()
+
+			backend := newH2COnlyBackend(t, http.HandlerFunc(func(writer http.ResponseWriter, req *http.Request) {
+				body, _ := io.ReadAll(req.Body)
+				_, _ = writer.Write(body)
+			}))
+			handler := newH2CHandler(t, backend.URL, &proxy.RouteTimeouts{Request: 100 * time.Millisecond})
+			fake := mode.new()
+
+			pipeReader, pipeWriter := io.Pipe()
+
+			go func() {
+				for _, chunk := range []string{"a", "b", "c", "d"} {
+					time.Sleep(100 * time.Millisecond)
+
+					_, _ = pipeWriter.Write([]byte(chunk))
+				}
+
+				_ = pipeWriter.Close()
+			}()
+
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "http://app.example.com/upload", pipeReader)
+
+			handler.ServeHTTP(fake, req)
+
+			assert.Equal(t, http.StatusOK, fake.Status(), "a 504 means the upload time counted against the header deadline")
+			assert.Equal(t, "abcd", string(fake.Body()))
+		})
+	}
+}
