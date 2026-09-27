@@ -295,3 +295,18 @@ func TestHandler_ReplacePrefixMatch_RedirectAndRewriteAgree(t *testing.T) {
 		})
 	}
 }
+
+// TestConvertHTTPRoutes_PathPrefixValue pins the prefix the converter hands to
+// the matcher and to ReplacePrefixMatch: the trailing "/" is dropped, except
+// from the root prefix, which is nothing but that slash.
+func TestConvertHTTPRoutes_PathPrefixValue(t *testing.T) {
+	t.Parallel()
+
+	for configured, want := range map[string]string{"/abc/": "/abc", "/abc": "/abc", "/": "/"} {
+		cfg := proxy.ConvertHTTPRoutes(context.Background(),
+			[]*gatewayv1.HTTPRoute{prefixRoute(configured, "svc")}, "cluster.local", nil, nil, nil, nil)
+
+		require.Len(t, cfg.Rules, 1)
+		assert.Equal(t, want, cfg.Rules[0].Matches[0].Path.Value, configured)
+	}
+}
