@@ -318,8 +318,7 @@ func tunnelExitCode(logger *slog.Logger, err error, configFailed bool) int {
 // runStandaloneMode starts the proxy as a standalone HTTP server.
 // Used for local development and testing without a tunnel.
 func runStandaloneMode(logger *slog.Logger, plane *dataPlane) int {
-	configAddr := envOrDefault("PROXY_CONFIG_ADDR", defaultConfigAddr)
-	proxyAddr := envOrDefault("PROXY_ADDR", defaultProxyAddr)
+	configAddr, proxyAddr := standaloneAddrs()
 
 	// Standalone mode has no tunnel to wait for, so readiness gates on config
 	// alone — latch the tunnel-connected state up front. (Tunnel mode flips it
@@ -352,6 +351,12 @@ func runStandaloneMode(logger *slog.Logger, plane *dataPlane) int {
 	}
 
 	return 0
+}
+
+// standaloneAddrs returns the config-API and proxy listen addresses for
+// standalone mode.
+func standaloneAddrs() (string, string) {
+	return envOrDefault("PROXY_CONFIG_ADDR", defaultConfigAddr), envOrDefault("PROXY_ADDR", defaultProxyAddr)
 }
 
 func newServer(addr string, handler http.Handler) *http.Server {
