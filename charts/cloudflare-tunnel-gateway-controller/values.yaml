@@ -55,7 +55,8 @@ controller:
   gatewayClassName: "cloudflare-tunnel"
   # -- Value for GatewayClass spec.controllerName — this is how the controller discovers its GatewayClasses (must be unique per controller instance)
   controllerName: "cf.k8s.lex.la/tunnel-controller"
-  # -- Kubernetes cluster domain for service DNS resolution
+  # -- Kubernetes cluster domain for service DNS resolution, including the
+  # proxy config-push URLs
   # @default -- auto-detected from /etc/resolv.conf, fallback: cluster.local
   clusterDomain: ""
   # -- Log level (debug, info, warn, error)
@@ -219,7 +220,8 @@ dnsConfig: {}
 # -- Number of controller replicas
 replicaCount: 1
 
-# -- PodDisruptionBudget configuration for high availability
+# -- PodDisruptionBudget for the controller pods. The proxy has its own
+# under proxy.podDisruptionBudget.
 podDisruptionBudget:
   # -- Enable PodDisruptionBudget
   enabled: false
@@ -303,13 +305,15 @@ networkPolicy:
   # Last updated: 2025-11-25
   # To update: curl https://www.cloudflare.com/ips-v4 && curl https://www.cloudflare.com/ips-v6
   #
-  # Emptying both lists is refused whenever networkPolicy.enabled or
-  # proxy.networkPolicy.egressRestricted is on — those two arm the guard, and
-  # neither is on by default. The rule built from these lists would otherwise
+  # Emptying both lists is refused whenever networkPolicy.enabled is on, or
+  # proxy.networkPolicy.egressRestricted is on together with
+  # proxy.networkPolicy.enabled — those arm the guard, and neither guard is
+  # armed by default. The rule built from these lists would otherwise
   # render an empty `to:`, which NetworkPolicy reads as allow-all on the ports
-  # it carries. To drop the restriction, turn off whichever of those two is on.
-  # Each clears only its own policy's guard, so a deployment running both
-  # needs both.
+  # it carries. To drop the restriction, turn off networkPolicy.enabled for the
+  # controller policy and proxy.networkPolicy.egressRestricted for the proxy
+  # policy. Each clears only its own policy's guard, so a deployment running
+  # both needs both.
   cloudflareIpRanges:
     ipv4:
       - 173.245.48.0/20
@@ -638,6 +642,31 @@ proxy:
   affinity: {}
   # -- Topology spread constraints for pod distribution
   topologySpreadConstraints: []
+  # -- ServiceAccount for the proxy pods. The proxy never calls the Kubernetes
+  # API and its pods do not mount a token either way.
+  serviceAccount:
+    # -- Create a dedicated ServiceAccount for the proxy
+    create: false
+    # -- ServiceAccount to run the proxy on. With create, names the created
+    # account (defaults to the proxy fullname). Without create, names an
+    # existing account. Empty with create off keeps the namespace's default
+    # ServiceAccount.
+    name: ""
+    # -- Annotations to add to the created ServiceAccount
+    annotations: {}
+  # -- PodDisruptionBudget for the proxy pods. The top-level
+  # podDisruptionBudget covers only the controller.
+  podDisruptionBudget:
+    # -- Enable the proxy PodDisruptionBudget
+    enabled: false
+    # -- Minimum number of available proxy pods during disruptions.
+    # Must not be used together with maxUnavailable
+    minAvailable: 1
+    # -- Maximum number of unavailable proxy pods during disruptions.
+    # Must not be used together with minAvailable
+    maxUnavailable: null
+    # -- Policy for evicting unhealthy pods (IfHealthyBudget, AlwaysAllow)
+    unhealthyPodEvictionPolicy: "IfHealthyBudget"
   # -- Annotations to add to proxy pods
   podAnnotations: {}
   # -- Additional labels to add to proxy pods

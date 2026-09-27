@@ -1,4 +1,4 @@
-{{- if .Values.proxy.networkPolicy.enabled }}
+{{- if (.Values.proxy.networkPolicy | default dict).enabled }}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -32,14 +32,14 @@ spec:
           podSelector:
             matchLabels:
               {{- include "cf-tunnel-gw-ctrl.selectorLabels" . | nindent 14 }}
-        {{- with .Values.proxy.networkPolicy.ingress.from }}
+        {{- with (.Values.proxy.networkPolicy.ingress | default dict).from }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
       ports:
         - protocol: TCP
           port: {{ .Values.proxy.configAPIPort }}
   {{- if .Values.proxy.networkPolicy.egressRestricted }}
-  {{- $cfRanges := .Values.networkPolicy.cloudflareIpRanges | default dict }}
+  {{- $cfRanges := (.Values.networkPolicy | default dict).cloudflareIpRanges | default dict }}
   {{- if and (not $cfRanges.ipv4) (not $cfRanges.ipv6) }}
   {{- fail "proxy.networkPolicy.egressRestricted is true but networkPolicy.cloudflareIpRanges is empty: the edge-egress rule would render an empty 'to:', which NetworkPolicy reads as allow-all on 443/7844 (the opposite of restriction). Populate networkPolicy.cloudflareIpRanges (keep it current from https://www.cloudflare.com/ips/) or set proxy.networkPolicy.egressRestricted to false." }}
   {{- end }}

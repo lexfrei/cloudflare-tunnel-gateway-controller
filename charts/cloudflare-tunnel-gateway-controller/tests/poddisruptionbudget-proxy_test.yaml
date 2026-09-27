@@ -1,0 +1,115 @@
+suite: test proxy poddisruptionbudget
+templates:
+  - poddisruptionbudget-proxy.yaml
+tests:
+  - it: should not create a proxy PDB by default
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: should select the proxy pods, not the controller
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token
+        podDisruptionBudget:
+          enabled: true
+    asserts:
+      - isKind:
+          of: PodDisruptionBudget
+      - equal:
+          path: metadata.name
+          value: RELEASE-NAME-cloudflare-tunnel-gateway-controller-proxy
+      - equal:
+          path: spec.selector.matchLabels
+          value:
+            app.kubernetes.io/name: cloudflare-tunnel-gateway-controller-proxy
+            app.kubernetes.io/instance: RELEASE-NAME
+            app.kubernetes.io/component: proxy
+      - equal:
+          path: spec.minAvailable
+          value: 1
+      - notExists:
+          path: spec.maxUnavailable
+      - equal:
+          path: spec.unhealthyPodEvictionPolicy
+          value: IfHealthyBudget
+
+  - it: should render maxUnavailable instead of minAvailable when asked
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token
+        podDisruptionBudget:
+          enabled: true
+          minAvailable: null
+          maxUnavailable: 1
+    asserts:
+      - equal:
+          path: spec.maxUnavailable
+          value: 1
+      - notExists:
+          path: spec.minAvailable
+
+  - it: should render minAvailable 0 rather than dropping it
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token
+        podDisruptionBudget:
+          enabled: true
+          minAvailable: 0
+    asserts:
+      - equal:
+          path: spec.minAvailable
+          value: 0
+
+  # The API server rejects a budget carrying both fields. Setting
+  # maxUnavailable without nulling the minAvailable default is the easy way
+  # to get there, so name the fix at render time.
+  - it: should fail when both minAvailable and maxUnavailable are set
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token
+        podDisruptionBudget:
+          enabled: true
+          maxUnavailable: 1
+    asserts:
+      - failedTemplate:
+          errorPattern: "proxy.podDisruptionBudget.minAvailable and proxy.podDisruptionBudget.maxUnavailable"
+
+  # A new value with no history to keep: any bound that is set is rendered,
+  # zero included, so the budget says exactly what the values say.
+  - it: should fail when minAvailable is 0 and maxUnavailable is set
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token
+        podDisruptionBudget:
+          enabled: true
+          minAvailable: 0
+          maxUnavailable: 1
+    asserts:
+      - failedTemplate:
+          errorPattern: "proxy.podDisruptionBudget.minAvailable and proxy.podDisruptionBudget.maxUnavailable"
+
+  - it: should render maxUnavailable 0 when it is the only bound
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token
+        podDisruptionBudget:
+          enabled: true
+          minAvailable: null
+          maxUnavailable: 0
+    asserts:
+      - equal:
+          path: spec.maxUnavailable
+          value: 0
+      - notExists:
+          path: spec.minAvailable

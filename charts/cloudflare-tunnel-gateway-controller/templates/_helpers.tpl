@@ -89,6 +89,19 @@ Proxy fullname
 {{- end }}
 
 {{/*
+Proxy ServiceAccount name. Empty when the chart neither creates one nor is
+given one, so the pod falls back to the namespace's default ServiceAccount.
+*/}}
+{{- define "cf-tunnel-gw-ctrl.proxyServiceAccountName" -}}
+{{- $sa := .Values.proxy.serviceAccount | default dict }}
+{{- if $sa.create }}
+{{- $sa.name | default (include "cf-tunnel-gw-ctrl.proxyFullname" .) }}
+{{- else }}
+{{- $sa.name | default "" }}
+{{- end }}
+{{- end }}
+
+{{/*
 Proxy headless service name. The base is truncated BEFORE the suffixes are
 appended so the full name stays within the 63-character DNS label limit and
 the "-proxy-headless" suffix is never cut off (which would collide with the
@@ -137,22 +150,6 @@ Proxy selector labels
 app.kubernetes.io/name: {{ include "cf-tunnel-gw-ctrl.name" . }}-proxy
 app.kubernetes.io/instance: {{ .Release.Name }}
 app.kubernetes.io/component: proxy
-{{- end }}
-
-{{/*
-Validate PodDisruptionBudget configuration
-*/}}
-{{- define "cf-tunnel-gw-ctrl.validatePDB" -}}
-{{- if .Values.podDisruptionBudget.enabled }}
-{{- if and .Values.podDisruptionBudget.minAvailable .Values.podDisruptionBudget.maxUnavailable }}
-{{- fail "ERROR: Cannot set both podDisruptionBudget.minAvailable and podDisruptionBudget.maxUnavailable. Use only one." }}
-{{- end }}
-{{- if and (eq (.Values.replicaCount | int) 1) .Values.podDisruptionBudget.minAvailable }}
-{{- if or (eq (.Values.podDisruptionBudget.minAvailable | toString) "1") (eq (.Values.podDisruptionBudget.minAvailable | toString) "100%") }}
-{{- fail "ERROR: PodDisruptionBudget with minAvailable=1 (or 100%) and replicaCount=1 will block all pod evictions. Set minAvailable=0, use maxUnavailable=1, or increase replicaCount to 2+" }}
-{{- end }}
-{{- end }}
-{{- end }}
 {{- end }}
 
 {{/*

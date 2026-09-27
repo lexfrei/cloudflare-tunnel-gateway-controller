@@ -58,7 +58,12 @@ proxy:
   replicas: 2
   tunnelTokenSecretRef:
     name: cloudflare-tunnel-token
+  # Budget for the proxy pods, which carry the traffic.
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
 
+# Budget for the controller pods only.
 podDisruptionBudget:
   enabled: true
   minAvailable: 1

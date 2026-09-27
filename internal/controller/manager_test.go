@@ -96,6 +96,58 @@ func TestSanitiseProxyEndpoints(t *testing.T) {
 	}
 }
 
+// TestQualifyProxyEndpoints pins how the chart's domain-less endpoint gets the
+// cluster domain the binary resolved, so the shared plane's push URL and the
+// per-Gateway ones come from one resolution instead of a chart default.
+func TestQualifyProxyEndpoints(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		in     []string
+		domain string
+		want   []string
+	}{
+		{
+			name:   "domain-less service name gets the resolved domain",
+			in:     []string{"http://proxy-headless.cf-system.svc:8081/config"},
+			domain: "cozy.local",
+			want:   []string{"http://proxy-headless.cf-system.svc.cozy.local:8081/config"},
+		},
+		{
+			name:   "no port",
+			in:     []string{"http://proxy-headless.cf-system.svc/config"},
+			domain: "cozy.local",
+			want:   []string{"http://proxy-headless.cf-system.svc.cozy.local/config"},
+		},
+		{
+			name:   "already qualified is left alone",
+			in:     []string{"http://proxy-headless.cf-system.svc.cluster.local:8081/config"},
+			domain: "cozy.local",
+			want:   []string{"http://proxy-headless.cf-system.svc.cluster.local:8081/config"},
+		},
+		{
+			name:   "short names and IPs are left alone",
+			in:     []string{"http://proxy:8081/config", "http://10.0.0.1:8081/config"},
+			domain: "cozy.local",
+			want:   []string{"http://proxy:8081/config", "http://10.0.0.1:8081/config"},
+		},
+		{
+			name:   "empty domain leaves the endpoint as written",
+			in:     []string{"http://proxy-headless.cf-system.svc:8081/config"},
+			domain: "",
+			want:   []string{"http://proxy-headless.cf-system.svc:8081/config"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.want, qualifyProxyEndpoints(tt.in, tt.domain))
+		})
+	}
+}
+
 func TestGetControllerNamespace(t *testing.T) {
 	// Cannot use t.Parallel() because t.Setenv() requires sequential execution.
 	tests := []struct {

@@ -610,22 +610,26 @@ tests:
           path: spec.template.spec.containers[0].args
           content: "--gateway-class-name"
 
-  # Proxy endpoint tests
-  - it: should use default cluster.local in proxy endpoint when clusterDomain not set
+  # Proxy endpoint tests. The chart stops at ".svc" and the controller appends
+  # the cluster domain it resolved, so an auto-detected domain and the push URL
+  # cannot disagree.
+  - it: should leave the cluster domain out of the proxy endpoint when clusterDomain is not set
     set:
       proxy:
-        enabled: true
         configAPIPort: 8900
     asserts:
       - template: deployment.yaml
         contains:
           path: spec.template.spec.containers[0].args
+          content: "--proxy-endpoints=http://RELEASE-NAME-cloudflare-tunnel-gateway-controlle-proxy-headless.NAMESPACE.svc:8900/config"
+      - template: deployment.yaml
+        notContains:
+          path: spec.template.spec.containers[0].args
           content: "--proxy-endpoints=http://RELEASE-NAME-cloudflare-tunnel-gateway-controlle-proxy-headless.NAMESPACE.svc.cluster.local:8900/config"
 
-  - it: should use custom clusterDomain in proxy endpoint
+  - it: should hand a configured clusterDomain to the controller rather than the endpoint
     set:
       proxy:
-        enabled: true
         configAPIPort: 8900
       controller:
         clusterDomain: "custom.local"
@@ -633,17 +637,11 @@ tests:
       - template: deployment.yaml
         contains:
           path: spec.template.spec.containers[0].args
-          content: "--proxy-endpoints=http://RELEASE-NAME-cloudflare-tunnel-gateway-controlle-proxy-headless.NAMESPACE.svc.custom.local:8900/config"
-
-  - it: should not include proxy-endpoints when proxy disabled
-    set:
-      proxy:
-        enabled: false
-    asserts:
+          content: "--proxy-endpoints=http://RELEASE-NAME-cloudflare-tunnel-gateway-controlle-proxy-headless.NAMESPACE.svc:8900/config"
       - template: deployment.yaml
-        notContains:
+        contains:
           path: spec.template.spec.containers[0].args
-          content: "--proxy-endpoints="
+          content: "--cluster-domain=custom.local"
 
   # Leader election tests
   - it: should not enable leader election by default
@@ -1050,3 +1048,18 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].args
           content: --controller-pod-selector=app.kubernetes.io/instance=RELEASE-NAME,app.kubernetes.io/name=cloudflare-tunnel-gateway-controller
+
+  # A null proxy.networkPolicy block reads as disabled everywhere it is used,
+  # including the flag that tells the controller whether to render policies
+  # for per-Gateway planes.
+  - it: should pass render-network-policy=false when proxy.networkPolicy is null
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token
+        networkPolicy: null
+    asserts:
+      - template: deployment.yaml
+        contains:
+          path: spec.template.spec.containers[0].args
+          content: "--render-network-policy=false"

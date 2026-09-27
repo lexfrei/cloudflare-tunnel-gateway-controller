@@ -146,3 +146,39 @@ tests:
         equal:
           path: metadata.name
           value: RELEASE-NAME-cf-ctrl
+
+  # The controller budget treats a zero bound as unset (issue #843 tracks
+  # changing that), so a values file that
+  # zeroed the field it does not use keeps rendering the other one.
+  - it: should render only maxUnavailable when minAvailable is 0 and maxUnavailable is set
+    set:
+      podDisruptionBudget:
+        enabled: true
+        minAvailable: 0
+        maxUnavailable: 1
+    asserts:
+      - equal:
+          path: spec.maxUnavailable
+          value: 1
+      - notExists:
+          path: spec.minAvailable
+
+  - it: should render only minAvailable when maxUnavailable is 0 beside the default minAvailable
+    set:
+      podDisruptionBudget:
+        enabled: true
+        maxUnavailable: 0
+    asserts:
+      - equal:
+          path: spec.minAvailable
+          value: 1
+      - notExists:
+          path: spec.maxUnavailable
+
+  - it: should render nothing when podDisruptionBudget is null
+    set:
+      podDisruptionBudget: null
+    asserts:
+      - template: poddisruptionbudget.yaml
+        hasDocuments:
+          count: 0

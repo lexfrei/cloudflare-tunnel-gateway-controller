@@ -263,3 +263,40 @@ tests:
           value:
             - ipBlock:
                 cidr: 2606:4700::/32
+
+  # A null controller networkPolicy block leaves the proxy's edge-egress rule
+  # with no ranges to render; that must reach the guard's own message, not a
+  # nil dereference.
+  - it: should fail with the guard message when networkPolicy is null and egress is restricted
+    set:
+      networkPolicy: null
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
+        networkPolicy:
+          egressRestricted: true
+    asserts:
+      - failedTemplate:
+          errorPattern: "networkPolicy.cloudflareIpRanges is empty"
+
+  - it: should render nothing when proxy.networkPolicy is null
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
+        networkPolicy: null
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: should admit only the controller when proxy.networkPolicy.ingress is null
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
+        networkPolicy:
+          ingress: null
+    asserts:
+      - lengthEqual:
+          path: spec.ingress[0].from
+          count: 1

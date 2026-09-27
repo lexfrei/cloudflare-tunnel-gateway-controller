@@ -160,8 +160,8 @@
         },
         "digest": {
           "type": "string",
-          "pattern": "^([a-z0-9]+([.+_-][a-z0-9]+)*:[a-zA-Z0-9=_-]{32,})?$",
-          "description": "Image digest used instead of the tag when set. The pattern is the OCI digest grammar rather than sha256 specifically, so a registry using another algorithm is not rejected here."
+          "pattern": "^(sha256:[a-f0-9]{64}|sha384:[a-f0-9]{96}|sha512:[a-f0-9]{128})?$",
+          "description": "Image digest used instead of the tag when set. Accepts what the kubelet's image-reference parser accepts: sha256, sha384 or sha512 in lowercase hex at the algorithm's length."
         }
       }
     },
@@ -353,7 +353,7 @@
     },
     "podDisruptionBudget": {
       "type": "object",
-      "description": "PodDisruptionBudget configuration for high availability",
+      "description": "PodDisruptionBudget for the controller pods; the proxy has its own under proxy.podDisruptionBudget",
       "properties": {
         "enabled": {
           "type": "boolean",
@@ -581,7 +581,7 @@
         },
         "cloudflareIpRanges": {
           "type": "object",
-          "description": "Cloudflare IP ranges for egress NetworkPolicy",
+          "description": "Cloudflare IP ranges for the controller policy's Cloudflare-egress rule and the proxy policy's edge-egress rule. Emptying both lists fails the render while networkPolicy.enabled is on, or while proxy.networkPolicy.enabled and proxy.networkPolicy.egressRestricted are both on; see the value comment for why.",
           "properties": {
             "ipv4": {
               "type": "array",
@@ -724,7 +724,7 @@
             },
             "digest": {
               "type": "string",
-              "pattern": "^([a-z0-9]+([.+_-][a-z0-9]+)*:[a-zA-Z0-9=_-]{32,})?$",
+              "pattern": "^(sha256:[a-f0-9]{64}|sha384:[a-f0-9]{96}|sha512:[a-f0-9]{128})?$",
               "description": "Proxy image digest used instead of the tag when set. Also passed to --proxy-image as the default image for rendered per-Gateway data planes; see the Container Image Verification section of the security reference for what that default does not guarantee."
             }
           }
@@ -812,17 +812,26 @@
             "dialTimeout": {
               "type": "string",
               "pattern": "^(|[0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h)([0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h))*)$",
-              "description": "Backend TCP/TLS dial timeout as a Go duration (e.g. \"10s\", \"1m\", \"1h30m\"). Empty preserves the 30s default."
+              "not": {
+                "pattern": "^([0.]+(ns|us|\u00b5s|ms|s|m|h))+$"
+              },
+              "description": "Backend TCP/TLS dial timeout as a Go duration (e.g. \"10s\", \"1m\", \"1h30m\"). Empty preserves the 30s default. A duration written as zero, such as \"0s\", is rejected: the proxy would replace it with the default."
             },
             "handshakeTimeout": {
               "type": "string",
               "pattern": "^(|[0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h)([0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h))*)$",
-              "description": "101-Switching-Protocols read deadline as a Go duration (e.g. \"45s\", \"2m30s\"). When the backend refuses the upgrade, also the longest its refusal body may go without a byte. Empty preserves the 30s default."
+              "not": {
+                "pattern": "^([0.]+(ns|us|\u00b5s|ms|s|m|h))+$"
+              },
+              "description": "101-Switching-Protocols read deadline as a Go duration (e.g. \"45s\", \"2m30s\"). When the backend refuses the upgrade, also the longest its refusal body may go without a byte. Empty preserves the 30s default. A duration written as zero, such as \"0s\", is rejected: the proxy would replace it with the default."
             },
             "idleTimeout": {
               "type": "string",
               "pattern": "^(|[0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h)([0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h))*)$",
-              "description": "How long an established session may carry no bytes in either direction before the proxy closes it, as a Go duration (e.g. \"15m\", \"6h\"). Any traffic resets the window; keepalives below the WebSocket layer do not. Empty preserves the 1h default."
+              "not": {
+                "pattern": "^([0.]+(ns|us|\u00b5s|ms|s|m|h))+$"
+              },
+              "description": "How long an established session may carry no bytes in either direction before the proxy closes it, as a Go duration (e.g. \"15m\", \"6h\"). Any traffic resets the window; keepalives below the WebSocket layer do not. Empty preserves the 1h default. A duration written as zero, such as \"0s\", is rejected: the proxy would replace it with the default."
             }
           }
         },
@@ -1084,6 +1093,81 @@
           "additionalProperties": {
             "type": "string"
           }
+        },
+        "serviceAccount": {
+          "type": "object",
+          "description": "ServiceAccount for the proxy pods. Empty name with create off keeps the namespace's default ServiceAccount.",
+          "properties": {
+            "create": {
+              "type": "boolean",
+              "default": false
+            },
+            "name": {
+              "type": "string"
+            },
+            "annotations": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        "podDisruptionBudget": {
+          "type": "object",
+          "description": "PodDisruptionBudget for the proxy pods",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": false
+            },
+            "minAvailable": {
+              "oneOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                {
+                  "type": "string",
+                  "pattern": "^[0-9]+%$"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Minimum number of available proxy pods"
+            },
+            "maxUnavailable": {
+              "oneOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                {
+                  "type": "string",
+                  "pattern": "^[0-9]+%$"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Maximum number of unavailable proxy pods"
+            },
+            "unhealthyPodEvictionPolicy": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "enum": [
+                "IfHealthyBudget",
+                "AlwaysAllow",
+                null
+              ],
+              "description": "Policy for evicting unhealthy proxy pods"
+            }
+          },
+          "additionalProperties": false
         }
       }
     }

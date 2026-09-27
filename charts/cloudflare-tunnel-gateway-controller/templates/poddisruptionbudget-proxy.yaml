@@ -1,0 +1,27 @@
+{{- $pdb := .Values.proxy.podDisruptionBudget | default dict }}
+{{- if $pdb.enabled }}
+{{- $hasMin := not (kindIs "invalid" $pdb.minAvailable) }}
+{{- $hasMax := not (kindIs "invalid" $pdb.maxUnavailable) }}
+{{- if and $hasMin $hasMax }}
+{{- fail "Set only one of proxy.podDisruptionBudget.minAvailable and proxy.podDisruptionBudget.maxUnavailable: the API server rejects a budget carrying both. Set the other one to null." }}
+{{- end }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "cf-tunnel-gw-ctrl.proxyFullname" . }}
+  labels:
+    {{- include "cf-tunnel-gw-ctrl.proxyLabels" . | nindent 4 }}
+spec:
+  {{- if $hasMin }}
+  minAvailable: {{ $pdb.minAvailable }}
+  {{- end }}
+  {{- if $hasMax }}
+  maxUnavailable: {{ $pdb.maxUnavailable }}
+  {{- end }}
+  {{- with $pdb.unhealthyPodEvictionPolicy }}
+  unhealthyPodEvictionPolicy: {{ . }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "cf-tunnel-gw-ctrl.proxySelectorLabels" . | nindent 6 }}
+{{- end }}
