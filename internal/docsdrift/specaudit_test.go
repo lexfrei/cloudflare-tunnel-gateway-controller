@@ -72,7 +72,7 @@ func TestSpecAuditTestedVerdictsCarryNoUntestedProse(t *testing.T) {
 var auditRowID = regexp.MustCompile(`^\| ([A-Z]+-[0-9]+) \|`)
 
 // dashboardRow matches a status row of the matrix dashboard table.
-var dashboardRow = regexp.MustCompile(`^\| (MET|PARTIAL|GAP|N/A)\b[^|]* \| ([0-9]+) \|$`)
+var dashboardRow = regexp.MustCompile(`^\| (MET|PARTIAL|GAP|N/A|REFUTED|DOWNGRADE-NA|DOWNGRADE-MET|DOWNGRADE-DEFENSIBLE|DOWNGRADE-CONDITIONAL|DOWNGRADE-DOCUMENTED)\b[^|]* \| ([0-9]+) \|$`)
 
 // dashboardTotal matches the clause total in the dashboard heading.
 var dashboardTotal = regexp.MustCompile(`(?m)^## Dashboard \(([0-9]+) clauses`)
