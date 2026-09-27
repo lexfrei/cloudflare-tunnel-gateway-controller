@@ -610,22 +610,26 @@ tests:
           path: spec.template.spec.containers[0].args
           content: "--gateway-class-name"
 
-  # Proxy endpoint tests
-  - it: should use default cluster.local in proxy endpoint when clusterDomain not set
+  # Proxy endpoint tests. The chart stops at ".svc" and the controller appends
+  # the cluster domain it resolved, so an auto-detected domain and the push URL
+  # cannot disagree.
+  - it: should leave the cluster domain out of the proxy endpoint when clusterDomain is not set
     set:
       proxy:
-        enabled: true
         configAPIPort: 8900
     asserts:
       - template: deployment.yaml
         contains:
           path: spec.template.spec.containers[0].args
+          content: "--proxy-endpoints=http://RELEASE-NAME-cloudflare-tunnel-gateway-controlle-proxy-headless.NAMESPACE.svc:8900/config"
+      - template: deployment.yaml
+        notContains:
+          path: spec.template.spec.containers[0].args
           content: "--proxy-endpoints=http://RELEASE-NAME-cloudflare-tunnel-gateway-controlle-proxy-headless.NAMESPACE.svc.cluster.local:8900/config"
 
-  - it: should use custom clusterDomain in proxy endpoint
+  - it: should hand a configured clusterDomain to the controller rather than the endpoint
     set:
       proxy:
-        enabled: true
         configAPIPort: 8900
       controller:
         clusterDomain: "custom.local"
@@ -633,7 +637,11 @@ tests:
       - template: deployment.yaml
         contains:
           path: spec.template.spec.containers[0].args
-          content: "--proxy-endpoints=http://RELEASE-NAME-cloudflare-tunnel-gateway-controlle-proxy-headless.NAMESPACE.svc.custom.local:8900/config"
+          content: "--proxy-endpoints=http://RELEASE-NAME-cloudflare-tunnel-gateway-controlle-proxy-headless.NAMESPACE.svc:8900/config"
+      - template: deployment.yaml
+        contains:
+          path: spec.template.spec.containers[0].args
+          content: "--cluster-domain=custom.local"
 
   - it: should not include proxy-endpoints when proxy disabled
     set:
