@@ -161,6 +161,7 @@ When the proxy runs in in-process mode (production default), the `http.ResponseW
 | `Hijack` before `WriteHeader` | Succeeds — returns the raw TCP conn | **Fails** with `status not yet written before attempting to hijack connection` |
 | `WriteHeader(101)` on the wire | `HTTP/1.1 101 Switching Protocols` literal | Translated to status 200 (HTTP/2 has no 1xx); the Cloudflare edge unpacks the 200 back to 101 for HTTP/1.1 clients on the wire (verified empirically by the WebSocket round-trip — the edge translation itself lives in closed-source Cloudflare code) |
 | Headers wire format | RFC 7230 ASCII | Serialised into a single `cf-cloudflared-response-headers` blob the edge unpacks (`vendor/github.com/cloudflare/cloudflared/connection/header.go` `ResponseUserHeaders`) |
+| The conn `Hijack` returns | The raw TCP conn — deadlines and `Close` both act on the socket | A `localProxyConnection` (`connection/connection.go`) whose `SetDeadline`, `SetReadDeadline` and `SetWriteDeadline` are no-ops returning nil, wrapping a writer whose `Close` returns nil as well. There is no socket on that side: the bytes ride the HTTP/2 or QUIC stream back to the edge |
 
 Practical consequences:
 
@@ -188,6 +189,7 @@ Any proxy code that reads, writes, or hijacks the response MUST be covered by a 
 - `WriteHeader(101)` is recorded as 200.
 - `WriteHeader` after `Hijack` is a silent no-op (mirroring cloudflared's warn-and-return).
 - Second `Hijack` returns `http.ErrHijacked`.
+- The conn handed out post-101 ignores deadlines and `Close`, so anything the proxy tries to enforce through the client side is dropped. This is why the WebSocket idle bound in `handler_websocket.go` is actuated on the backend conn: it is the only end of the session that is always a real socket.
 
 Use the fake from the start of design — not as a last-mile add-on during local CI gates. If a test passes against `httptest.NewServer` and you have no fake-fixture coverage of the same code path, treat the green test as inconclusive for production behaviour.
 
@@ -201,5 +203,6 @@ Fix-up points to re-verify on every cloudflared rebase — at least one per cont
 - **101 → 200 translation** — `fakeCloudflaredRespWriter.WriteHeader` mirrors `cloudflared.connection.http2RespWriter.WriteRespHeaders`. Both must keep collapsing `http.StatusSwitchingProtocols` to `http.StatusOK`; if cloudflared changes the translation rule (e.g. adds a different sentinel for Extended CONNECT WebSocket), update the fake to match.
 - **WriteHeader after Hijack** — the silent-no-op branch in the fake's `WriteHeader` (cloudflared logs a warning and returns; the fake drops the warning). Re-verify the upstream still no-ops; if it starts panicking or writing a second status, mirror the new behaviour.
 - **Second `Hijack` returns `ErrHijacked`** — the fake's `hijacked` flag short-circuits with the stdlib `http.ErrHijacked` sentinel. Re-verify cloudflared still returns the same sentinel (and not a custom error) for the second-call case.
+- **Hijacked conn ignores deadlines and `Close`** — `tunnelHijackedConn` in the fake mirrors `localProxyConnection`. If upstream ever makes those methods act on the stream, the fake stops modelling production, and the reasoning behind actuating the idle bound on the backend conn should be revisited rather than left as a comment nobody rechecked.
 
 Treat the table as the authoritative contract and the list above as a mechanical checklist; if upstream adds a new contract row, the table, the fake, and this checklist all need a matching update.

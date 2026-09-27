@@ -654,9 +654,9 @@ func startupProtocolWait(logger *slog.Logger) time.Duration {
 	return defaultStartupProtocolWait
 }
 
-// wsHandlerOptions composes parseWSEnvDurations with the proxy.With*
-// option constructors. Zero durations (unset / unparseable env vars)
-// flow through as no-op options because the With* helpers drop them.
+// wsHandlerOptions turns the three PROXY_WS_* durations into
+// proxy.With* options. Zero durations (unset / unparseable env vars)
+// emit no option at all, so the proxy's own defaults stay in place.
 func wsHandlerOptions(logger *slog.Logger) []proxy.HandlerOption {
 	dialTimeout, handshakeTimeout := parseWSEnvDurations(logger)
 
@@ -668,6 +668,10 @@ func wsHandlerOptions(logger *slog.Logger) []proxy.HandlerOption {
 
 	if handshakeTimeout > 0 {
 		opts = append(opts, proxy.WithWSHandshakeReadTimeout(handshakeTimeout))
+	}
+
+	if idleTimeout := parseEnvDuration(logger, "PROXY_WS_IDLE_TIMEOUT"); idleTimeout > 0 {
+		opts = append(opts, proxy.WithWSIdleTimeout(idleTimeout))
 	}
 
 	return opts

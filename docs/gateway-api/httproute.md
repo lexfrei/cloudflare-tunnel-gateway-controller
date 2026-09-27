@@ -16,8 +16,8 @@ All matching and filter behavior is performed by the in-process L7 proxy that th
 | Weighted traffic splitting | ✅ | True traffic distribution across backends |
 | RequestHeaderModifier filter | ✅ | |
 | ResponseHeaderModifier filter | ✅ | |
-| RequestRedirect filter | ✅ | |
-| URLRewrite filter | ✅ | |
+| RequestRedirect filter | ✅ | A `ReplacePrefixMatch` path is built the same way as in URLRewrite |
+| URLRewrite filter | ✅ | Replaces the matched prefix and leaves the remaining segments unchanged, dot segments included |
 | RequestMirror filter | ✅ | |
 | Per-route timeouts | ✅ | |
 | Cross-namespace routing | ✅ | Via ReferenceGrant |

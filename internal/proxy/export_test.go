@@ -34,6 +34,14 @@ func (h *Handler) EffectiveWSHandshakeReadTimeoutForTest() time.Duration {
 	return h.effectiveWSHandshakeReadTimeout()
 }
 
+// EffectiveWSIdleTimeoutForTest exposes the Handler's resolved bound on
+// an established session, for the same reason again. Widening the
+// option's zero check would send armIdleBound down its unbounded
+// branch, which no other test can see.
+func (h *Handler) EffectiveWSIdleTimeoutForTest() time.Duration {
+	return h.effectiveWSIdleTimeout()
+}
+
 // TransportKey exposes the per-host+protocol+tls+headerTimeout pool key
 // for testing purposes. Existing tests that predate the per-rule timeout
 // dimension pass 0 to mean "no header deadline" and behave exactly as
