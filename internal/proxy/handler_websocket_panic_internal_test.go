@@ -8,6 +8,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -45,9 +48,12 @@ func newHijackToConn(conn net.Conn) *hijackToConn {
 	}
 }
 
-// runPipeWebSocket runs pipeWebSocket and reports whether it returned in time.
+// runPipeWebSocket runs pipeWebSocket and reports whether it returned in time,
+// and whether the contained panic was counted under its own site.
 func runPipeWebSocket(t *testing.T, w http.ResponseWriter, backendConn net.Conn, backendReader *bufio.Reader) bool {
 	t.Helper()
+
+	metrics := NewMetrics(prometheus.NewRegistry())
 
 	done := make(chan struct{})
 
@@ -56,11 +62,14 @@ func runPipeWebSocket(t *testing.T, w http.ResponseWriter, backendConn net.Conn,
 
 		// Zero idle: these cases are about the panic guard, and an
 		// armed deadline would give the wait a second way to end.
-		pipeWebSocket(w, backendConn, backendReader, http.Header{}, 0)
+		pipeWebSocket(w, backendConn, backendReader, http.Header{}, 0, metrics)
 	}()
 
 	select {
 	case <-done:
+		assert.InDelta(t, 1, testutil.ToFloat64(metrics.handlerPanics.WithLabelValues(panicSiteWebSocketCopy)), 0,
+			"the contained panic must be counted")
+
 		return true
 	case <-time.After(pipeWebSocketPanicTimeout):
 		return false

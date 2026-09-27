@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"runtime/debug"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -349,6 +350,19 @@ type requestMirror struct {
 	// capped rather than silently uncapped or silently mirroring nothing.
 	live    atomic.Int64
 	dropped atomic.Uint64
+
+	// limit overrides mirrorMaxLiveDispatches when positive. metrics counts
+	// drops and contained panics; nil disables that.
+	limit   int64
+	metrics *Metrics
+}
+
+// filterEnv is what the Router hands to the filters it compiles, beyond the
+// filter spec itself. Only RequestMirror reads it.
+type filterEnv struct {
+	factory     TransportFactory
+	mirrorLimit int64
+	metrics     *Metrics
 }
 
 // mirrorMaxLiveDispatches caps the dispatches one mirror filter keeps in
@@ -364,6 +378,9 @@ type requestMirror struct {
 // rate, since UpdateConfig builds fresh filters and a previous generation's
 // dispatches keep their bodies until their retry budget runs out. What it does
 // remove is the dependence on request rate.
+//
+// It is the default: WithMirrorMaxInFlight (PROXY_MIRROR_MAX_IN_FLIGHT)
+// replaces it for every mirror filter the Router compiles.
 const mirrorMaxLiveDispatches = 64
 
 // NewRequestMirror creates a filter that mirrors requests to a backend URL.
@@ -378,6 +395,10 @@ const mirrorMaxLiveDispatches = 64
 // BackendTLSPolicy attached to its destination instead of silently dialing
 // plaintext through the shared cleartext transport.
 func NewRequestMirror(backendURL string, percent *int32, tlsCfg *BackendTLSConfig, protocol BackendProtocol, factory TransportFactory) Filter {
+	return newRequestMirror(backendURL, percent, tlsCfg, protocol, factory)
+}
+
+func newRequestMirror(backendURL string, percent *int32, tlsCfg *BackendTLSConfig, protocol BackendProtocol, factory TransportFactory) *requestMirror {
 	client := mirrorClient
 	if factory != nil {
 		client = newMirrorClient(backendURL, tlsCfg, protocol, factory)
@@ -418,7 +439,7 @@ func (f *requestMirror) ProcessRequest(req *http.Request) *http.Response {
 	// authoritative check is the Add below, which is what makes the cap exact;
 	// this one only keeps the overload path from allocating a copy of every
 	// request it is about to throw away.
-	if f.live.Load() >= mirrorMaxLiveDispatches {
+	if f.live.Load() >= f.maxLive() {
 		f.noteMirrorDrop()
 
 		return nil
@@ -456,6 +477,12 @@ func (f *requestMirror) ProcessRequest(req *http.Request) *http.Response {
 	// the plain and upgrade legs.
 	tmpl.Header.Del(hostRewrittenHeader)
 	tmpl.Header.Del(originalHostHeader)
+	// The client's hop-by-hop headers describe its connection to this proxy,
+	// not the mirror leg's; the primary leg drops them too. Like the primary
+	// leg, put the forwarding headers back afterwards, so a client naming
+	// them in Connection cannot strip them.
+	removeHopByHopHeaders(tmpl.Header)
+	restoreMirrorForwardingHeaders(tmpl.Header, req.Header)
 
 	// After Clone, req and the template share the same body reader. Give the
 	// primary leg its own independent reader from the buffered data; each
@@ -470,7 +497,7 @@ func (f *requestMirror) ProcessRequest(req *http.Request) *http.Response {
 		client = mirrorClient
 	}
 
-	if f.live.Add(1) > mirrorMaxLiveDispatches {
+	if f.live.Add(1) > f.maxLive() {
 		f.live.Add(-1)
 
 		// Mirroring is best-effort by spec, so refusing the copy is the correct
@@ -488,6 +515,74 @@ func (f *requestMirror) ProcessRequest(req *http.Request) *http.Response {
 	}()
 
 	return nil
+}
+
+// Header names used in more than one place in this package.
+const (
+	headerConnection = "Connection"
+	headerUpgrade    = "Upgrade"
+	headerTE         = "TE"
+	headerForwarded  = "Forwarded"
+	headerXFF        = "X-Forwarded-For"
+	headerXFHost     = "X-Forwarded-Host"
+	headerXFProto    = "X-Forwarded-Proto"
+)
+
+// removeHopByHopHeaders deletes the headers the Connection header names and
+// the fixed RFC 7230 section 6.1 set, the same one httputil.ReverseProxy
+// drops, keeping "TE: trailers" as it does, since gRPC needs it end to end.
+func removeHopByHopHeaders(header http.Header) {
+	keepTrailers := headerHasToken(header, headerTE, "trailers")
+
+	for _, value := range header.Values(headerConnection) {
+		for name := range strings.SplitSeq(value, ",") {
+			if name = strings.TrimSpace(name); name != "" {
+				header.Del(name)
+			}
+		}
+	}
+
+	for _, name := range [...]string{
+		headerConnection,
+		"Proxy-Connection",
+		"Keep-Alive",
+		"Proxy-Authenticate",
+		"Proxy-Authorization",
+		headerTE,
+		"Trailer",
+		"Transfer-Encoding",
+		headerUpgrade,
+	} {
+		header.Del(name)
+	}
+
+	if keepTrailers {
+		header.Set(headerTE, "trailers")
+	}
+}
+
+// restoreMirrorForwardingHeaders copies the forwarding headers from the
+// inbound request into the mirror copy's header after its hop-by-hop pass.
+func restoreMirrorForwardingHeaders(dst, src http.Header) {
+	for _, name := range []string{headerForwarded, headerXFF, headerXFHost, headerXFProto} {
+		if values := src.Values(name); len(values) > 0 {
+			dst[http.CanonicalHeaderKey(name)] = slices.Clone(values)
+		}
+	}
+}
+
+// headerHasToken reports whether any comma-separated element of the named
+// header equals token, ignoring case.
+func headerHasToken(header http.Header, name, token string) bool {
+	for _, value := range header.Values(name) {
+		for element := range strings.SplitSeq(value, ",") {
+			if strings.EqualFold(strings.TrimSpace(element), token) {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 // bufferMirrorBody reads and buffers the request body for mirroring.
@@ -538,6 +633,16 @@ func bufferMirrorBody(req *http.Request) ([]byte, bool) {
 
 func (f *requestMirror) ProcessResponse(_ *http.Response) {}
 
+// maxLive returns the filter's dispatch limit: its own when set, otherwise
+// mirrorMaxLiveDispatches, which is what a filter built by a literal gets.
+func (f *requestMirror) maxLive() int64 {
+	if f.limit > 0 {
+		return f.limit
+	}
+
+	return mirrorMaxLiveDispatches
+}
+
 // shouldMirror returns true when the configured percent admits the current
 // request. nil percent means mirror every request. 0 means never. Otherwise
 // flip a fair coin biased by percent.
@@ -571,16 +676,19 @@ func (f *requestMirror) log() *slog.Logger {
 	return f.logger
 }
 
-// noteMirrorDrop records a refused dispatch. It logs at each power of ten so a
-// backend that is down produces a usable signal instead of one line per
-// dropped request, which at the rate that triggers the cap is its own problem.
+// noteMirrorDrop records a refused dispatch. The metric counts every drop. The
+// log samples at each power of ten so a backend that is down does not produce
+// one line per dropped request, which at the rate that triggers the cap is its
+// own problem; its count is per filter, so it restarts with every config push.
 func (f *requestMirror) noteMirrorDrop() {
+	f.metrics.mirrorDropped()
+
 	count := f.dropped.Add(1)
 
 	for boundary := uint64(1); boundary > 0 && boundary <= count; boundary *= 10 {
 		if boundary == count {
 			f.log().Warn("mirror: dropped request, dispatch limit reached",
-				"backend", f.backendURL, "limit", mirrorMaxLiveDispatches, "dropped", count)
+				"backend", f.backendURL, "limit", f.maxLive(), "dropped", count)
 
 			return
 		}
@@ -601,6 +709,7 @@ func (f *requestMirror) noteMirrorDrop() {
 func (f *requestMirror) dispatchWithRetry(client *http.Client, tmpl *http.Request, bodyBuf []byte) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
+			f.metrics.containedPanic(panicSiteMirror)
 			f.log().Error("mirror: panic in mirror request goroutine",
 				"panic", recovered,
 				"stack", string(debug.Stack()))
@@ -663,10 +772,14 @@ func dispatchMirrorOnce(client *http.Client, tmpl *http.Request, bodyBuf []byte)
 // mirror back to the global cleartext mirrorClient — fine for tests and
 // preserved for any call site that has not yet threaded the factory through.
 func CompileFilters(filters []RouteFilter, factory TransportFactory) ([]Filter, error) {
+	return compileFilters(filters, filterEnv{factory: factory})
+}
+
+func compileFilters(filters []RouteFilter, env filterEnv) ([]Filter, error) {
 	compiled := make([]Filter, 0, len(filters))
 
 	for idx, filter := range filters {
-		compiledFilter, err := compileFilter(filter, factory)
+		compiledFilter, err := compileFilter(filter, env)
 		if err != nil {
 			return nil, errors.Wrapf(err, "filter[%d]", idx)
 		}
@@ -677,7 +790,7 @@ func CompileFilters(filters []RouteFilter, factory TransportFactory) ([]Filter, 
 	return compiled, nil
 }
 
-func compileFilter(filter RouteFilter, factory TransportFactory) (Filter, error) {
+func compileFilter(filter RouteFilter, env filterEnv) (Filter, error) {
 	// CompileFilters is exported, so it cannot assume its caller ran
 	// Config.Validate; the constructors below dereference the payload.
 	err := filter.validate()
@@ -695,18 +808,22 @@ func compileFilter(filter RouteFilter, factory TransportFactory) (Filter, error)
 	case FilterURLRewrite:
 		return NewURLRewriter(filter.URLRewrite), nil
 	case FilterRequestMirror:
-		return NewRequestMirror(
-			filter.RequestMirror.BackendURL,
-			filter.RequestMirror.Percent,
-			filter.RequestMirror.TLS,
-			filter.RequestMirror.Protocol,
-			factory,
-		), nil
+		return compileMirror(filter.RequestMirror, env), nil
 	case FilterCORS:
 		return NewCORSFilter(filter.CORS), nil
 	default:
 		return nil, errors.Wrapf(errUnknownFilterType, "%q", filter.Type)
 	}
+}
+
+// compileMirror builds a RequestMirror filter carrying the Router's dispatch
+// limit and metrics.
+func compileMirror(cfg *MirrorConfig, env filterEnv) Filter {
+	mirror := newRequestMirror(cfg.BackendURL, cfg.Percent, cfg.TLS, cfg.Protocol, env.factory)
+	mirror.limit = env.mirrorLimit
+	mirror.metrics = env.metrics
+
+	return mirror
 }
 
 // ApplyRequestFilters runs all filters' ProcessRequest in order.

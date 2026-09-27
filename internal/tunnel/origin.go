@@ -25,6 +25,13 @@ type GatewayOriginProxy struct {
 	logger  *slog.Logger
 }
 
+// PanicRecorder is implemented by a handler that counts the panics
+// GatewayOriginProxy recovers from while it serves a request. The adapter
+// calls it for every contained panic except http.ErrAbortHandler.
+type PanicRecorder interface {
+	RecordContainedPanic()
+}
+
 // NewGatewayOriginProxy creates an OriginProxy that delegates to the given handler.
 func NewGatewayOriginProxy(handler http.Handler, logger *slog.Logger) *GatewayOriginProxy {
 	if logger == nil {
@@ -317,6 +324,10 @@ func (p *GatewayOriginProxy) logHandlerPanic(req *http.Request, recovered any) {
 	recoveredErr, isError := recovered.(error)
 	if isError && errors.Is(recoveredErr, http.ErrAbortHandler) {
 		return
+	}
+
+	if recorder, ok := p.handler.(PanicRecorder); ok {
+		recorder.RecordContainedPanic()
 	}
 
 	// A nil request is how Clone panics, which is one of the cases this handler

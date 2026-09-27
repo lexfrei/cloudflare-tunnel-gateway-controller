@@ -517,6 +517,62 @@ tests:
       - failedTemplate:
           errorPattern: idleTimeout
 
+  - it: should pass mirror.maxInFlight to the proxy
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token
+        mirror:
+          maxInFlight: 256
+    asserts:
+      - template: deployment-proxy.yaml
+        contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: PROXY_MIRROR_MAX_IN_FLIGHT
+            value: "256"
+
+  - it: should render a large mirror.maxInFlight as a plain integer
+    # A values-file number reaches the template as a float64, and quote
+    # alone renders 1000000 as "1e+06", which the proxy cannot parse.
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token
+        mirror:
+          maxInFlight: 1000000
+    asserts:
+      - template: deployment-proxy.yaml
+        contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: PROXY_MIRROR_MAX_IN_FLIGHT
+            value: "1000000"
+
+  - it: should leave the built-in mirror limit alone by default
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token
+    asserts:
+      - template: deployment-proxy.yaml
+        notContains:
+          path: spec.template.spec.containers[0].env
+          any: true
+          content:
+            name: PROXY_MIRROR_MAX_IN_FLIGHT
+
+  - it: should reject a negative mirror.maxInFlight
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token
+        mirror:
+          maxInFlight: -1
+    asserts:
+      - failedTemplate:
+          errorPattern: maxInFlight
+
   - it: should reject negative websocket.dialTimeout
     # time.ParseDuration accepts "-5s" but the proxy's downstream
     # > 0 gate drops negative values silently; schema rejection

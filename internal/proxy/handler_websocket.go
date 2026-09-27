@@ -155,7 +155,7 @@ func (h *Handler) proxyWebSocketUpgrade(
 
 	_ = backendConn.SetReadDeadline(time.Time{})
 
-	pipeWebSocket(w, backendConn, backendReader, resp.Header, h.effectiveWSIdleTimeout())
+	pipeWebSocket(w, backendConn, backendReader, resp.Header, h.effectiveWSIdleTimeout(), h.metrics)
 }
 
 // pipeWebSocket completes the 101 handshake on the client side, then
@@ -179,6 +179,7 @@ func pipeWebSocket(
 	backendReader *bufio.Reader,
 	responseHeader http.Header,
 	idle time.Duration,
+	metrics *Metrics,
 ) {
 	copyHeaderValues(w.Header(), responseHeader)
 	w.WriteHeader(http.StatusSwitchingProtocols)
@@ -210,8 +211,8 @@ func pipeWebSocket(
 
 	fromClient, fromBackend := armIdleBound(idle, backendConn, clientConn, backendReader)
 
-	go copyWebSocketSide(backendConn, fromClient, errCh)
-	go copyWebSocketSide(clientConn, fromBackend, errCh)
+	go copyWebSocketSide(backendConn, fromClient, errCh, metrics)
+	go copyWebSocketSide(clientConn, fromBackend, errCh, metrics)
 
 	err = <-errCh
 	if errors.Is(err, os.ErrDeadlineExceeded) {
@@ -345,9 +346,10 @@ var errWebSocketCopyPanic = errors.New("panic while copying websocket bytes")
 // unguarded copy takes the process down and every other tenant's connection
 // with it. This holds on every transport, not only QUIC — x/net/http2's
 // per-stream recover covers the handler goroutine, never the ones it spawns.
-func copyWebSocketSide(dst io.Writer, src io.Reader, errCh chan<- error) {
+func copyWebSocketSide(dst io.Writer, src io.Reader, errCh chan<- error, metrics *Metrics) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
+			metrics.containedPanic(panicSiteWebSocketCopy)
 			slog.Error("websocket: panic while copying, closing the session",
 				"panic", recovered,
 				"stack", string(debug.Stack()))

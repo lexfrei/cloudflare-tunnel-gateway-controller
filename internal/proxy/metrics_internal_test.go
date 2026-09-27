@@ -36,6 +36,8 @@ func TestNewMetrics_RegistersAllFamilies(t *testing.T) {
 	metrics.backendErrors.WithLabelValues("app.example.com", "dial").Inc()
 	metrics.responseBytes.WithLabelValues("app.example.com").Add(42)
 	metrics.requestBytes.WithLabelValues("app.example.com").Add(7)
+	metrics.handlerPanics.WithLabelValues(panicSiteRequest).Inc()
+	metrics.mirrorDrops.Inc()
 
 	families, err := reg.Gather()
 	require.NoError(t, err)
@@ -53,6 +55,8 @@ func TestNewMetrics_RegistersAllFamilies(t *testing.T) {
 		"cftunnel_proxy_backend_errors_total",
 		"cftunnel_proxy_response_bytes_total",
 		"cftunnel_proxy_request_bytes_total",
+		"cftunnel_proxy_handler_panics_total",
+		"cftunnel_proxy_mirror_dropped_total",
 	}
 	for _, name := range want {
 		assert.True(t, got[name], "missing metric family %s", name)

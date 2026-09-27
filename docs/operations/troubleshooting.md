@@ -362,6 +362,8 @@ A client that closes mid-download is a different thing and never produces this l
 
 A panic inside a WebSocket session logs `websocket: panic while copying, closing the session`, and only that session ends. A panic during the upgrade itself — the backend dial, the handshake — happens before the copy starts and logs the ordinary line above.
 
+Each panic that writes one of these lines is also counted in `cftunnel_proxy_handler_panics_total`, labelled by `site`, so an alert on its increase finds these without anyone reading the logs. See [Metrics](metrics.md).
+
 ## Performance Issues
 
 ### High Memory Usage
