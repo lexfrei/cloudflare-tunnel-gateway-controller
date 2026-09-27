@@ -82,3 +82,34 @@ tests:
     asserts:
       - failedTemplate:
           errorPattern: "proxy.podDisruptionBudget.minAvailable and proxy.podDisruptionBudget.maxUnavailable"
+
+  # A new value with no history to keep: any bound that is set is rendered,
+  # zero included, so the budget says exactly what the values say.
+  - it: should fail when minAvailable is 0 and maxUnavailable is set
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token
+        podDisruptionBudget:
+          enabled: true
+          minAvailable: 0
+          maxUnavailable: 1
+    asserts:
+      - failedTemplate:
+          errorPattern: "proxy.podDisruptionBudget.minAvailable and proxy.podDisruptionBudget.maxUnavailable"
+
+  - it: should render maxUnavailable 0 when it is the only bound
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token
+        podDisruptionBudget:
+          enabled: true
+          minAvailable: null
+          maxUnavailable: 0
+    asserts:
+      - equal:
+          path: spec.maxUnavailable
+          value: 0
+      - notExists:
+          path: spec.minAvailable

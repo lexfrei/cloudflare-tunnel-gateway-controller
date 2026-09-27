@@ -353,7 +353,7 @@
     },
     "podDisruptionBudget": {
       "type": "object",
-      "description": "PodDisruptionBudget configuration for high availability",
+      "description": "PodDisruptionBudget for the controller pods; the proxy has its own under proxy.podDisruptionBudget",
       "properties": {
         "enabled": {
           "type": "boolean",

@@ -201,7 +201,7 @@ A duration written as zero, such as `"0s"` or `"0h0m0s"`, fails schema validatio
 | `proxy.podLabels` | object | `{}` | Additional labels to add to proxy pods |
 | `proxy.podDisruptionBudget.enabled` | bool | `false` | Render a PodDisruptionBudget for the proxy pods. The top-level `podDisruptionBudget` covers only the controller |
 | `proxy.podDisruptionBudget.minAvailable` | int or percentage | `1` | Minimum available proxy pods; set to `null` when using `maxUnavailable` |
-| `proxy.podDisruptionBudget.maxUnavailable` | int or percentage | `null` | Maximum unavailable proxy pods; the render fails if both are set |
+| `proxy.podDisruptionBudget.maxUnavailable` | int or percentage | `null` | Maximum unavailable proxy pods; the render fails if both bounds are set, zero included |
 | `proxy.podDisruptionBudget.unhealthyPodEvictionPolicy` | string | `IfHealthyBudget` | `IfHealthyBudget` or `AlwaysAllow` |
 
 ### Example
