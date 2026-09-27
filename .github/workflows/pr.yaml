@@ -180,6 +180,11 @@ jobs:
     name: Test
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      # The control plane the envtest suites run against. Without a version
+      # `setup-envtest use` takes the newest one its index offers, which moves
+      # on its own. Keep it on the minor of the k8s.io/* modules in go.mod.
+      ENVTEST_K8S_VERSION: '1.37.0'
     steps:
       - name: Checkout PR code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -195,31 +200,27 @@ jobs:
           cache: true
 
       # Cache the envtest control-plane binaries (kube-apiserver, etcd,
-      # kubectl) keyed off the setup-envtest tool name -- the version
-      # actually used is selected by `setup-envtest use` at runtime, so
-      # the path is stable across runs. Avoids the ~30 s redownload of
-      # the control-plane tarball on every CI run.
+      # kubectl). Avoids the ~30 s redownload of the control-plane tarball
+      # on every CI run.
       - name: Cache envtest binaries
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ~/.local/share/kubebuilder-envtest
-          key: envtest-${{ runner.os }}-${{ hashFiles('go.mod') }}
-          restore-keys: |
-            envtest-${{ runner.os }}-
+          key: envtest-${{ runner.os }}-${{ env.ENVTEST_K8S_VERSION }}
 
       - name: Setup envtest
         run: |
           # renovate: datasource=go depName=sigs.k8s.io/controller-runtime/tools/setup-envtest
           SETUP_ENVTEST_VERSION="v0.25.1"
           go install "sigs.k8s.io/controller-runtime/tools/setup-envtest@${SETUP_ENVTEST_VERSION}"
-          setup-envtest use
+          setup-envtest use "${ENVTEST_K8S_VERSION}"
 
       - name: Run tests
         run: |
           # Declare then export separately: `export VAR="$(cmd)"` would mask a
           # non-zero exit from setup-envtest behind export's always-0 status
           # (shellcheck SC2155).
-          KUBEBUILDER_ASSETS="$(setup-envtest use -p path)"
+          KUBEBUILDER_ASSETS="$(setup-envtest use -p path "${ENVTEST_K8S_VERSION}")"
           export KUBEBUILDER_ASSETS
           go test -v -race -tags=envtest -coverprofile=coverage.out -covermode=atomic ./...
 
@@ -631,6 +632,17 @@ jobs:
         with:
           # renovate: datasource=github-releases depName=helm/helm
           version: 'v4.3.0'
+
+      # Same pinned image release.yaml extracts yq from, rather than whatever
+      # the runner image ships.
+      - name: Install yq
+        run: |
+          # renovate: datasource=docker depName=mikefarah/yq
+          YQ_IMAGE="mikefarah/yq:4.53.6@sha256:cfc4eee658595834ef304eadb0c3ea721f3b7cb6404ad8b7cb909cc5b5145b23"
+          docker create --name yq-tmp "${YQ_IMAGE}"
+          sudo docker cp yq-tmp:/usr/bin/yq /usr/local/bin/yq
+          docker rm yq-tmp
+          sudo chmod +x /usr/local/bin/yq
 
       - name: Modify Chart.yaml and values.yaml
         run: |
