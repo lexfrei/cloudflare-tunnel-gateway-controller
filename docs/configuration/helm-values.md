@@ -49,6 +49,19 @@ leaderElection:
   leaseName: cloudflare-tunnel-gateway-controller-leader
 ```
 
+### Controller NetworkPolicy
+
+These values shape the controller pod's own policy. The proxy's policy has its own keys under [Networking and Service](#networking-and-service).
+
+| Value | Type | Default | Description |
+| --- | --- | --- | --- |
+| `networkPolicy.enabled` | bool | `false` | Render a NetworkPolicy for the controller pods: ingress to the metrics and health ports, egress to DNS, the Kubernetes API ports, Cloudflare on 443 and the proxies' config-API port |
+| `networkPolicy.ingress.from` | list | `[]` | Sources admitted to the metrics and health ports; empty admits every source |
+| `networkPolicy.kubernetesApiIpBlocks` | list | `[]` | Destination CIDRs for the Kubernetes API egress rule (TCP 443 and 6443); empty permits those ports to every destination, which leaves the Cloudflare rule without effect on 443 |
+| `networkPolicy.cloudflareIpRanges` | object | Cloudflare's published ranges | `ipv4` and `ipv6` CIDR lists for the Cloudflare egress rule, shared with the proxy's edge-egress rule; emptying both stops the render while `networkPolicy.enabled` is on, or while `proxy.networkPolicy.egressRestricted` is on with the proxy policy rendered |
+
+See [Egress Requirements](../reference/security.md#egress-requirements) for what a CIDR peer does and does not match.
+
 ### High Availability
 
 ```yaml
