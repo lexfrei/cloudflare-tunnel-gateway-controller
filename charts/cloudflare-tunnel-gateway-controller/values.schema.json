@@ -160,8 +160,8 @@
         },
         "digest": {
           "type": "string",
-          "pattern": "^([a-z0-9]+([.+_-][a-z0-9]+)*:[a-zA-Z0-9=_-]{32,})?$",
-          "description": "Image digest used instead of the tag when set. The pattern is the OCI digest grammar rather than sha256 specifically, so a registry using another algorithm is not rejected here."
+          "pattern": "^(sha256:[a-f0-9]{64}|sha384:[a-f0-9]{96}|sha512:[a-f0-9]{128})?$",
+          "description": "Image digest used instead of the tag when set. Accepts what the kubelet's image-reference parser accepts: sha256, sha384 or sha512 in lowercase hex at the algorithm's length."
         }
       }
     },
@@ -724,7 +724,7 @@
             },
             "digest": {
               "type": "string",
-              "pattern": "^([a-z0-9]+([.+_-][a-z0-9]+)*:[a-zA-Z0-9=_-]{32,})?$",
+              "pattern": "^(sha256:[a-f0-9]{64}|sha384:[a-f0-9]{96}|sha512:[a-f0-9]{128})?$",
               "description": "Proxy image digest used instead of the tag when set. Also passed to --proxy-image as the default image for rendered per-Gateway data planes; see the Container Image Verification section of the security reference for what that default does not guarantee."
             }
           }
