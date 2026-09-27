@@ -406,11 +406,6 @@ jobs:
           done
           [[ "${ok}" -eq 1 ]]
 
-      - name: Inspect image
-        run: |
-          PR_NUMBER="${{ github.event.pull_request.number }}"
-          docker buildx imagetools inspect "${{ matrix.image }}:pr-${PR_NUMBER}-1d"
-
       # The tag this job just wrote is mutable and anonymous -- anyone can
       # overwrite it on ttl.sh. Publish the manifest-list digest so local
       # verification can address the image by content instead.
@@ -437,7 +432,7 @@ jobs:
           hack/verify-manifest-children.sh "${IMAGE_NAME}" /tmp/index.json /tmp/digests
 
           echo "${ref}" > "/tmp/refs/${{ matrix.component }}.ref"
-          cat "/tmp/refs/${{ matrix.component }}.ref"
+          docker buildx imagetools inspect "${ref}"
 
       - name: Upload image reference
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
