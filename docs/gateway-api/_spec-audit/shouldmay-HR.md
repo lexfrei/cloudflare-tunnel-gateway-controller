@@ -35,6 +35,6 @@ Audited at `sigs.k8s.io/gateway-api v1.6.1` (originally at v1.5.1; the v1.6.0 ta
 ## First-pass corrections vs rows-HR.md
 
 - HR-21 / HR-24: rows-HR labelled "PARTIAL". The actual mechanism is HONOURED (0s does disable, via collapse to unset) — verdict upgraded to HONOURED-TESTED once the explicit disable-signal tests landed (TestConvertTimeouts zero rows + TestRuleHeaderTimeout_ExplicitZeroDisables).
-- HR-61: rows-HR marked "GAP"; since documented in limitations.md the verdict is DEVIATED-DOCUMENTED, and it is materially mitigated: the CRD scheme enum is only http/https, both of which HAVE well-known ports, so the "no well-known port" branch is unreachable for any admitted value. The deviation is real but not reachable through the Standard API.
+- HR-61: rows-HR.md (the per-clause rows table) went first-pass GAP, now DOWNGRADE-NA; this SHOULD-tier table's own verdict is DEVIATED-DOCUMENTED, since documented in limitations.md and materially mitigated: the CRD scheme enum is only http/https, both of which HAVE well-known ports, so the "no well-known port" branch is unreachable for any admitted value. The deviation is real but not reachable through the Standard API.
 - Line numbers in rows-HR.md are stale: the timeout helper it cites as `handler.go:203-218 ruleHeaderTimeout` is accurate for the helper, but the timeout PARSING is converter.go:1539 convertTimeouts, and the h2c synthetic header timeout is in the separate internal/proxy/headertimeout.go (not handler.go).
 - HR-63: rows-HR cites filter.go:209-213 — correct.
