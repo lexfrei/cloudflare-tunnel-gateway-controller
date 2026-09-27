@@ -122,6 +122,47 @@ func TestCheck_RenewalDueInsideWindow(t *testing.T) {
 	require.Error(t, authority.Check(certPEM, keyPEM, []string{planeName}, expired))
 }
 
+func TestCheckValidAt_ReportsAnExpiredCA(t *testing.T) {
+	t.Parallel()
+
+	authority := newAuthority(t)
+
+	require.NoError(t, authority.CheckValidAt(now))
+	assert.Equal(t, now.Add(configtls.CAValidity), authority.NotAfter())
+	require.ErrorIs(t, authority.CheckValidAt(now.Add(configtls.CAValidity+time.Hour)), configtls.ErrCAExpired)
+}
+
+func TestIssue_RefusesAnExpiredCA(t *testing.T) {
+	t.Parallel()
+
+	authority := newAuthority(t)
+
+	_, _, err := authority.Issue([]string{planeName}, now.Add(configtls.CAValidity+time.Hour))
+	require.ErrorIs(t, err, configtls.ErrCAExpired)
+}
+
+// TestIssue_ClampsTheLeafToTheCA pins that no leaf outlives the CA that
+// signed it, and that a clamped leaf is not reported due for renewal, since
+// reissuing it from the same CA cannot extend it.
+func TestIssue_ClampsTheLeafToTheCA(t *testing.T) {
+	t.Parallel()
+
+	authority := newAuthority(t)
+	late := now.Add(configtls.CAValidity - 30*24*time.Hour)
+
+	certPEM, keyPEM, err := authority.Issue([]string{planeName}, late)
+	require.NoError(t, err)
+
+	block, _ := pem.Decode(certPEM)
+	require.NotNil(t, block)
+
+	cert, err := x509.ParseCertificate(block.Bytes)
+	require.NoError(t, err)
+
+	assert.Equal(t, authority.NotAfter(), cert.NotAfter)
+	require.NoError(t, authority.Check(certPEM, keyPEM, []string{planeName}, late))
+}
+
 func TestLoadAuthority_RejectsLeafAsCA(t *testing.T) {
 	t.Parallel()
 

@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/events"
@@ -204,6 +205,29 @@ func TestGatewayInfraReconciler_ConfigTLSRenewsInsideTheWindow(t *testing.T) {
 
 	assert.Equal(t, "cf-proxy-edge-config-tls-1", mountedLeaf(t, reconciler.Client))
 	requireLeafValid(t, reconciler.Client, authority, edgeLeafKey("1"), later)
+}
+
+// TestGatewayInfraReconciler_ConfigTLSExpiredCAStopsTheWalk pins that an
+// expired CA fails the reconcile instead of opening slot after slot, each of
+// which would fail verification the moment it was written.
+func TestGatewayInfraReconciler_ConfigTLSExpiredCAStopsTheWalk(t *testing.T) {
+	t.Parallel()
+
+	reconciler, authority := newTLSInfraReconciler(t)
+	reconcileEdgeResult(t, reconciler)
+
+	expired := authority.NotAfter().Add(time.Hour)
+	reconciler.now = func() time.Time { return expired }
+
+	_, err := reconciler.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "edge", Namespace: infraNamespace},
+	})
+	require.ErrorIs(t, err, configtls.ErrCAExpired)
+
+	assert.Equal(t, "cf-proxy-edge-config-tls-0", mountedLeaf(t, reconciler.Client))
+
+	var next corev1.Secret
+	assert.True(t, apierrors.IsNotFound(reconciler.Get(context.Background(), edgeLeafKey("1"), &next)))
 }
 
 // TestGatewayInfraReconciler_ConfigTLSRecreatesADeletedLeafInPlace pins that

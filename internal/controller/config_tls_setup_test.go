@@ -2,11 +2,14 @@ package controller
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/configtls"
 )
 
 const sharedTLSEndpoint = "https://release-proxy-headless.cf-system.svc.cluster.local:8081/config"
@@ -85,4 +88,33 @@ func TestSetupConfigTLS_MisconfigurationFailsLoud(t *testing.T) {
 			require.Error(t, err)
 		})
 	}
+}
+
+// TestSetupConfigTLS_ExpiredCAStopsStartup pins that an expired CA is refused
+// at startup, with the way out in the message, instead of running a
+// controller whose every push and every issued certificate fails.
+func TestSetupConfigTLS_ExpiredCAStopsStartup(t *testing.T) {
+	t.Parallel()
+
+	certPEM, keyPEM, err := configtls.NewAuthorityPEM(time.Now().Add(-configtls.CAValidity - time.Hour))
+	require.NoError(t, err)
+
+	c := fake.NewClientBuilder().WithObjects(tlsSecret(configCAKey(), certPEM, keyPEM)).Build()
+	cfg := &Config{
+		ProxyConfigCASecretRef:  "cf-system/release-config-ca",
+		ProxyConfigTLSSecretRef: "cf-system/release-proxy-config-tls",
+	}
+
+	_, err = setupConfigTLS(t.Context(), c, cfg, []string{sharedTLSEndpoint})
+	require.ErrorIs(t, err, configtls.ErrCAExpired)
+	assert.Contains(t, err.Error(), "restart every controller replica")
+}
+
+func TestCAExpiryWarning(t *testing.T) {
+	t.Parallel()
+
+	authority := testAuthority(t)
+
+	assert.Empty(t, caExpiryWarning(authority, time.Now()))
+	assert.Contains(t, caExpiryWarning(authority, authority.NotAfter().Add(-configtls.LeafValidity/2)), "expires")
 }
