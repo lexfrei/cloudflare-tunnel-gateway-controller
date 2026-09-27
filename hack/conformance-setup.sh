@@ -30,7 +30,7 @@
 #   - .env file in repo root with: CF_API_TOKEN, CF_ACCOUNT_ID, CF_TUNNEL_ID,
 #     CF_TUNNEL_TOKEN, CF_TUNNEL_HOSTNAME (the edge hostname routing to the tunnel);
 #     alternatively (CI) the same variables already exported in the environment
-#   - docker, kind, helm, kubectl, go installed; colima additionally on macOS;
+#   - docker, kind, helm, kubectl, go, xxd, curl installed; colima additionally on macOS;
 #     gh and jq additionally for --use-ci-images
 #
 # colima is the macOS docker backend; every other host uses its native docker
@@ -42,9 +42,8 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${REPO_ROOT}"
 
 # --- Configuration ---
-CLUSTER_SUFFIX="$(head -c 4 /dev/urandom | xxd -plain)"
-CLUSTER_NAME="v2-test-${CLUSTER_SUFFIX}"
-KUBE_CONTEXT="kind-${CLUSTER_NAME}"
+# CLUSTER_NAME and KUBE_CONTEXT are set after the prerequisite check, which
+# covers the xxd that names the cluster.
 NAMESPACE="cloudflare-tunnel-system"
 TEST_NAMESPACE="conformance-test"
 RELEASE_NAME="cftunnel"
@@ -180,7 +179,7 @@ fi
 # GitHub Actions runner -- has a native docker daemon, so the requirement (and
 # the start step below) applies to macOS only.
 info "Checking prerequisites..."
-TOOLS=(docker kind helm kubectl go)
+TOOLS=(docker kind helm kubectl go xxd curl)
 if [[ "$(uname -s)" == "Darwin" ]]; then
   TOOLS+=(colima)
 fi
@@ -196,6 +195,10 @@ if [[ -n "${CI_PR_NUMBER}" ]]; then
   docker buildx version >/dev/null 2>&1 \
     || die "docker buildx is not installed; --use-ci-images needs it to read the CI image indexes"
 fi
+
+CLUSTER_SUFFIX="$(head -c 4 /dev/urandom | xxd -plain)"
+CLUSTER_NAME="v2-test-${CLUSTER_SUFFIX}"
+KUBE_CONTEXT="kind-${CLUSTER_NAME}"
 
 # --- Load .env ---
 # CI exports the CF_* variables directly (repo secrets); a missing .env is

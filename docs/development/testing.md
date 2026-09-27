@@ -287,7 +287,7 @@ Conformance tests validate that the controller implements the Gateway API specif
 - Cloudflare Tunnel configured and working
 - GatewayClass `cloudflare-tunnel` created
 
-`hack/conformance-setup.sh` builds that cluster for you. It needs `docker`, `kind`, `helm`, `kubectl` and `go`; on macOS it also needs `colima`, which is where the docker daemon comes from there. Other hosts use their native daemon and are not asked for it.
+`hack/conformance-setup.sh` builds that cluster for you. It needs `docker`, `kind`, `helm`, `kubectl`, `go`, `xxd` and `curl`; on macOS it also needs `colima`, which is where the docker daemon comes from there. Other hosts use their native daemon and are not asked for it.
 
 ### Deploying a Pull Request's CI Build
 

@@ -4,7 +4,7 @@ Clause-by-clause audit of the implementation against the normative (RFC-2119) su
 
 ## Method
 
-1. Extracted every MUST / MUST NOT / SHOULD / SHOULD NOT / MAY clause from the vendored godoc into `01-clause-inventory.md`, by type. The counts here and in the dashboard are of the classified clause set in `rows-*.md`: 376 at v1.5.1, 378 after the v1.6.0 refresh added GW-106 and RG-06, 380 after GW-107 and SH-78 were added for the tunnel-ownership refusal. That set runs eight rows ahead of the inventory itself (372 today), which holds the field-godoc extraction alone — the cross-cutting GEP-01..GEP-08 rows come from step 2's `02-gep-notes.md`.
+1. Extracted every MUST / MUST NOT / SHOULD / SHOULD NOT / MAY clause from the vendored godoc into `01-clause-inventory.md`, by type. The counts here and in the dashboard are of the classified clause set in `rows-*.md`: 376 at v1.5.1, 378 after the v1.6.0 refresh added GW-106 and RG-06, 380 after GW-107 and SH-78 were added for the tunnel-ownership refusal. That set is the inventory plus the cross-cutting GEP-01..GEP-08 rows: the inventory holds the field-godoc extraction alone, and the GEP rows come from step 2's `02-gep-notes.md`.
 2. Added cross-cutting GEP/concept requirements not in field godoc (policy attachment GEP-713, route-attachment semantics) — `02-gep-notes.md`.
 3. Classified each clause CRD-enforced / controller-actionable / N/A-tunnel and assessed status MET / PARTIAL / GAP / NA against the real code — per-type detail in `rows-<TYPE>.md`.
 4. Ran the official conformance suite (Gateway HTTP + gRPC profiles) against a fresh kind cluster + real Cloudflare test tunnel as pass/fail ground truth.
@@ -12,7 +12,7 @@ Clause-by-clause audit of the implementation against the normative (RFC-2119) su
 
 ## Dashboard (380 clauses: 376 from the v1.5.1 first-pass classification, 2 added by the v1.6.0 refresh — GW-106 MET, RG-06 NA — and 2 covering the tunnel-ownership refusal — GW-107 MET, SH-78 GAP)
 
-Counts are the current `rows-*.md` verdicts (`cat rows-*.md | grep -E '^\| [A-Z]+-[0-9]+ \|' | awk -F'|' '{print $5}' | sort | uniq -c`); rows move as fixes land, so the table drifts from the first-pass split of 222 MET / 34 PARTIAL / 25 GAP / 97 N/A described under "Adversarial verification".
+Counts are the current `rows-*.md` verdicts (`cat rows-*.md | grep -E '^\| [A-Z]+-[0-9]+ \|' | awk -F'|' '{print $5}' | sort | uniq -c`); rows move as fixes land, so the table drifts from the first-pass split of 221 MET / 31 PARTIAL / 25 GAP / 99 N/A that this table carried when the matrix was first published. The 25 first-pass GAPs are traced under "Adversarial verification".
 
 | Status | Count |
 | --- | --- |
@@ -93,7 +93,7 @@ Catalogued implemented / intentionally-omitted; zero worthwhile candidates surfa
 
 ## Provenance
 
-- `01-clause-inventory.md` — verbatim clause extraction (376 rows at v1.5.1, 378 after the v1.6.0 refresh).
+- `01-clause-inventory.md` — verbatim field-godoc clause extraction; the GEP rows are not in it (see Method step 1).
 - `02-gep-notes.md` — GEP/concept cross-cutting requirements.
 - `rows-<TYPE>.md` — first-pass per-clause classification + evidence (GW, HR, GR, SH, GC, RG, BTLS, LS, OTHER). For the 25 first-pass GAPs, the verdicts in the verification table above supersede the per-row status.
 - shouldmay-<TYPE>.md — verified SHOULD-tier verdicts and MAY catalogue, per type.

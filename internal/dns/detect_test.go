@@ -3,6 +3,7 @@ package dns_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/dns"
@@ -85,13 +86,95 @@ search example.com corp.local
 			shouldFind: false,
 		},
 		{
-			name: "multiple search lines takes first match",
+			// resolv.conf(5): when search appears more than once, the
+			// resolver uses the last instance.
+			name: "multiple search lines takes the last",
 			content: `nameserver 10.96.0.10
 search first.svc.domain1.local svc.domain1.local
 search second.svc.domain2.local svc.domain2.local
 `,
-			expected:   "domain1.local",
+			expected:   "domain2.local",
 			shouldFind: true,
+		},
+		{
+			name: "last search line without svc domain overrides an earlier one",
+			content: `search default.svc.cluster.local svc.cluster.local
+search example.com
+`,
+			expected:   "",
+			shouldFind: false,
+		},
+		{
+			// domain and search are mutually exclusive; the last one wins.
+			name: "domain directive after search replaces the search list",
+			content: `search default.svc.cluster.local svc.cluster.local
+domain example.com
+`,
+			expected:   "",
+			shouldFind: false,
+		},
+		{
+			// A domain directive names one domain; tokens after it are ignored.
+			name:       "domain directive takes only its first token",
+			content:    "domain example.com svc.cluster.local\n",
+			expected:   "",
+			shouldFind: false,
+		},
+		{
+			name:       "domain keyword with no domain leaves the search list alone",
+			content:    "search default.svc.cluster.local svc.cluster.local\ndomain\n",
+			expected:   "cluster.local",
+			shouldFind: true,
+		},
+		{
+			name:       "CRLF line endings",
+			content:    "nameserver 10.96.0.10\r\nsearch default.svc.cluster.local svc.cluster.local cluster.local\r\n",
+			expected:   "cluster.local",
+			shouldFind: true,
+		},
+		{
+			name:       "tab after the search keyword",
+			content:    "search\tdefault.svc.cluster.local\tsvc.cluster.local\n",
+			expected:   "cluster.local",
+			shouldFind: true,
+		},
+		{
+			name:       "leading whitespace",
+			content:    "  search default.svc.cluster.local svc.cluster.local\n",
+			expected:   "cluster.local",
+			shouldFind: true,
+		},
+		{
+			name:       "trailing root dot is dropped",
+			content:    "search default.svc.cluster.local. svc.cluster.local. cluster.local.\n",
+			expected:   "cluster.local",
+			shouldFind: true,
+		},
+		{
+			name:       "search keyword with no domains",
+			content:    "search\n",
+			expected:   "",
+			shouldFind: false,
+		},
+		{
+			name:       "bare svc labels are skipped for a later cluster domain",
+			content:    "search svc. svc.. svc.cluster.local\n",
+			expected:   "cluster.local",
+			shouldFind: true,
+		},
+		{
+			name:       "commented-out search line is ignored",
+			content:    "# search default.svc.cluster.local svc.cluster.local\n",
+			expected:   "",
+			shouldFind: false,
+		},
+		{
+			// bufio.Scanner stops at a line longer than its buffer; a file
+			// that could not be read to the end is not trusted.
+			name:       "unreadable line after a search directive",
+			content:    "search svc.cluster.local\n" + strings.Repeat("x", 70*1024) + "\n",
+			expected:   "",
+			shouldFind: false,
 		},
 	}
 

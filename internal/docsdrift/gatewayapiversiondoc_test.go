@@ -2,8 +2,10 @@ package docsdrift_test
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -19,7 +21,7 @@ func TestDocsPinnedGatewayAPIVersionMatchesVendored(t *testing.T) {
 
 	root := findRepoRoot(t)
 
-	for _, claim := range gatewayAPIDocClaims() {
+	for _, claim := range gatewayAPIDocClaims(t) {
 		body, err := os.ReadFile(filepath.Join(root, claim.file))
 		if err != nil {
 			t.Fatalf("reading %s: %v", claim.file, err)
@@ -33,10 +35,66 @@ func TestDocsPinnedGatewayAPIVersionMatchesVendored(t *testing.T) {
 	}
 }
 
+// auditedGatewayAPIMinor is the Gateway API minor whose normative surface the
+// spec audit under docs/gateway-api/_spec-audit/ was last read against. It
+// moves by hand, never through Renovate.
+const auditedGatewayAPIMinor = "v1.6"
+
+// TestVendoredGatewayAPIMinorHasBeenAudited stops an unattended Gateway API
+// minor bump. Patch releases pass through; a new minor can add or change
+// normative clauses, so it waits for someone to read them.
+func TestVendoredGatewayAPIMinorHasBeenAudited(t *testing.T) {
+	t.Parallel()
+
+	parts := strings.SplitN(consts.BundleVersion, ".", 3)
+	if len(parts) < 2 {
+		t.Fatalf("consts.BundleVersion %q is not vMAJOR.MINOR.PATCH", consts.BundleVersion)
+	}
+	if vendored := parts[0] + "." + parts[1]; vendored != auditedGatewayAPIMinor {
+		t.Errorf(
+			"sigs.k8s.io/gateway-api is now on minor %s, but the spec audit was last read against %s. "+
+				"Read the new minor's normative changes against the audit in docs/gateway-api/_spec-audit/, "+
+				"record the result in the matrix's baseline refresh section, then set auditedGatewayAPIMinor to %s",
+			vendored, auditedGatewayAPIMinor, vendored,
+		)
+	}
+}
+
+// TestBundleVersionMatchesGoMod names the cause when upstream ships a
+// consts.BundleVersion that disagrees with its own module tag. Renovate
+// rewrites the doc claims from the module version while the claims are
+// checked against the constant, so without this every claim would be
+// reported stale instead.
+func TestBundleVersionMatchesGoMod(t *testing.T) {
+	t.Parallel()
+
+	module := goModVersion(t, findRepoRoot(t), "sigs.k8s.io/gateway-api")
+	if module != consts.BundleVersion {
+		t.Errorf(
+			"go.mod requires sigs.k8s.io/gateway-api %s but the vendored consts.BundleVersion is %s; the doc claims follow the constant, Renovate follows the module",
+			module, consts.BundleVersion,
+		)
+	}
+}
+
 // gatewayAPIDocClaims is shared with TestRenovateMatchesPinnedDocClaims, which
-// asserts that renovate.json rewrites every needle listed here.
-func gatewayAPIDocClaims() []docClaim {
-	return []docClaim{
+// asserts that renovate.json rewrites every needle listed here. Install URLs
+// come from a scan of the tree, so a new page carrying one is covered without
+// an entry here; the prose forms vary too much to scan for and stay listed.
+func gatewayAPIDocClaims(t *testing.T) []docClaim {
+	t.Helper()
+
+	urls := scanInstallURLs(t)
+	claims := make([]docClaim, 0, len(urls))
+	for _, found := range urls {
+		claims = append(claims, docClaim{
+			file:   found.file,
+			needle: found.url,
+			why:    "the install command must fetch the same bundle version the controller is built against",
+		})
+	}
+
+	return append(claims, []docClaim{
 		{
 			file:   "docs/gateway-api/limitations.md",
 			needle: "Standard channel (Gateway API " + consts.BundleVersion + ")",
@@ -53,46 +111,6 @@ func gatewayAPIDocClaims() []docClaim {
 			why:    "the prerequisites page tells an operator on an older bundle which one to install",
 		},
 		{
-			file:   "docs/getting-started/prerequisites.md",
-			needle: "releases/download/" + consts.BundleVersion + "/standard-install.yaml",
-			why:    "the install command must fetch the same bundle version the controller is built against",
-		},
-		{
-			file:   "README.md",
-			needle: "releases/download/" + consts.BundleVersion + "/standard-install.yaml",
-			why:    "the README quick start must fetch the same bundle version the controller is built against",
-		},
-		{
-			file:   "docs/index.md",
-			needle: "releases/download/" + consts.BundleVersion + "/standard-install.yaml",
-			why:    "the docs homepage install command must match the built-against bundle",
-		},
-		{
-			file:   "docs/development/setup.md",
-			needle: "releases/download/" + consts.BundleVersion + "/standard-install.yaml",
-			why:    "the dev setup install command must match the built-against bundle",
-		},
-		{
-			file:   "docs/operations/manual-installation.md",
-			needle: "releases/download/" + consts.BundleVersion + "/standard-install.yaml",
-			why:    "the manual install command must match the built-against bundle",
-		},
-		{
-			file:   "docs/reference/crd-reference.md",
-			needle: "releases/download/" + consts.BundleVersion + "/standard-install.yaml",
-			why:    "the CRD reference install command must match the built-against bundle",
-		},
-		{
-			file:   "docs/reference/helm-chart.md",
-			needle: "releases/download/" + consts.BundleVersion + "/standard-install.yaml",
-			why:    "the chart reference install command must match the built-against bundle",
-		},
-		{
-			file:   "charts/cloudflare-tunnel-gateway-controller/README.md.gotmpl",
-			needle: "releases/download/" + consts.BundleVersion + "/standard-install.yaml",
-			why:    "the chart README template (helm-docs source) must match the built-against bundle",
-		},
-		{
 			file:   "README.md",
 			needle: "Standard channel (Gateway API " + consts.BundleVersion + ")",
 			why:    "the README compatibility table names the bundle the controller is built against",
@@ -107,6 +125,100 @@ func gatewayAPIDocClaims() []docClaim {
 			needle: "GATEWAY_API_VERSION=\"" + consts.BundleVersion + "\"",
 			why:    "the vendored suite refuses to run against a CRD bundle that differs from consts.BundleVersion",
 		},
+	}...)
+}
+
+// installURLPattern matches a Gateway API release-asset install URL and
+// captures the release it names.
+var installURLPattern = regexp.MustCompile(`gateway-api/releases/download/([^/\s]+)/[a-z-]+-install\.yaml`)
+
+// installURLUnpinned lists the paths whose install URLs, if any, are
+// deliberately left out of the scan, each with the reason.
+var installURLUnpinned = map[string]string{
+	"docs/gateway-api/_spec-audit": "records an audit performed at a stated version; it moves by hand, not with a bump",
+}
+
+type installURL struct {
+	file    string
+	url     string
+	version string
+}
+
+// scanInstallURLs returns every Gateway API install URL in the tree outside
+// installURLUnpinned.
+func scanInstallURLs(t *testing.T) []installURL {
+	t.Helper()
+
+	root := findRepoRoot(t)
+
+	var found []installURL
+	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		rel, relErr := filepath.Rel(root, path)
+		if relErr != nil {
+			return fmt.Errorf("relativising %s: %w", path, relErr)
+		}
+		rel = filepath.ToSlash(rel)
+		if entry.IsDir() {
+			if skipWalkDir(entry.Name()) || installURLUnpinned[rel] != "" {
+				return fs.SkipDir
+			}
+
+			return nil
+		}
+
+		body, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return fmt.Errorf("reading %s: %w", path, readErr)
+		}
+		for _, match := range installURLPattern.FindAllStringSubmatch(string(body), -1) {
+			found = append(found, installURL{file: rel, url: match[0], version: match[1]})
+		}
+
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walking %s: %v", root, err)
+	}
+
+	return found
+}
+
+// TestGatewayAPIInstallURLsNameVendoredBundle holds every Gateway API install
+// URL in the tree to consts.BundleVersion, so a page added later is pinned
+// the moment it carries one.
+func TestGatewayAPIInstallURLsNameVendoredBundle(t *testing.T) {
+	t.Parallel()
+
+	found := scanInstallURLs(t)
+	if len(found) == 0 {
+		t.Fatal("the scan found no Gateway API install URL anywhere, so this test would pass without checking anything")
+	}
+
+	for _, url := range found {
+		if url.version != consts.BundleVersion {
+			t.Errorf(
+				"%s installs Gateway API %s via %q, but the controller is built against %s; update the page when bumping sigs.k8s.io/gateway-api",
+				url.file, url.version, url.url, consts.BundleVersion,
+			)
+		}
+	}
+}
+
+// TestInstallURLUnpinnedPathsExist keeps the scan exclusions honest: an
+// excluded path that was moved or deleted would silently stop meaning
+// anything.
+func TestInstallURLUnpinnedPathsExist(t *testing.T) {
+	t.Parallel()
+
+	root := findRepoRoot(t)
+	for path, why := range installURLUnpinned {
+		_, err := os.Stat(filepath.Join(root, path))
+		if err != nil {
+			t.Errorf("installURLUnpinned names %s (%s), which does not exist: %v", path, why, err)
+		}
 	}
 }
 
