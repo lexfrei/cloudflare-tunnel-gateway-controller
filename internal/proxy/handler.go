@@ -832,12 +832,23 @@ func (h *Handler) createReverseProxy(backendURL *url.URL, protocol BackendProtoc
 		Transport:    h.backendTransport(backendURL.Host, protocol, backendTLS, headerTimeout),
 		ErrorHandler: h.proxyErrorHandler(hostname),
 		ModifyResponse: func(resp *http.Response) error {
+			// Rewrite strips the upgrade, so a 101 here was never asked
+			// for. Failing it makes ReverseProxy close the switched
+			// connection, which its own upgrade-mismatch path leaves open,
+			// and still answer 502.
+			if resp.StatusCode == http.StatusSwitchingProtocols {
+				return errUnrequestedSwitch
+			}
+
 			ApplyResponseFilters(filters, resp)
 
 			return nil
 		},
 	}
 }
+
+// errUnrequestedSwitch fails a 101 from a backend on the plain leg.
+var errUnrequestedSwitch = errors.New("backend switched protocols without an upgrade request")
 
 // restoreForwardingHeaders puts the inbound Forwarded / X-Forwarded-* headers
 // from src on an outbound header dst and appends the immediate peer,
