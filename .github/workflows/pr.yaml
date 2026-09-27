@@ -113,9 +113,9 @@ jobs:
 
   # Lint shell scripts and GitHub Actions workflows. actionlint validates the
   # workflow YAML and runs shellcheck on inline `run:` blocks; the standalone
-  # shellcheck pass covers hack/*.sh. shellcheck is installed at a pinned,
-  # Renovate-tracked version into /usr/local/bin, ahead of the runner's
-  # /usr/bin, so actionlint picks up the pinned one for inline blocks.
+  # shellcheck pass covers hack/*.sh. shellcheck is installed from a
+  # digest-pinned, Renovate-tracked image into /usr/local/bin, ahead of the
+  # runner's /usr/bin, so actionlint picks up the pinned one for inline blocks.
   lint-workflows:
     name: Lint Workflows
     runs-on: ubuntu-latest
@@ -136,23 +136,20 @@ jobs:
         run: |
           set -euo pipefail
 
-          # renovate: datasource=github-releases depName=koalaman/shellcheck
-          SHELLCHECK_VERSION="v0.11.0"
           # renovate: datasource=github-releases depName=rhysd/actionlint
           ACTIONLINT_VERSION="v1.7.12"
 
-          # actionlint is Go, so the checksum database attests it. shellcheck
-          # is Haskell and its releases carry no checksum or signature file,
-          # so it stays a plain download (#723).
+          # actionlint is Go, so the checksum database attests it.
           go install "github.com/rhysd/actionlint/cmd/actionlint@${ACTIONLINT_VERSION}"
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
-          tmp="$(mktemp -d)"
-
-          curl --retry 5 --retry-delay 1 -sSLo "${tmp}/shellcheck.tar.xz" \
-            "https://github.com/koalaman/shellcheck/releases/download/${SHELLCHECK_VERSION}/shellcheck-${SHELLCHECK_VERSION}.linux.x86_64.tar.xz"
-          tar -xJf "${tmp}/shellcheck.tar.xz" -C "${tmp}"
-          sudo install "${tmp}/shellcheck-${SHELLCHECK_VERSION}/shellcheck" /usr/local/bin/shellcheck
+          # The shellcheck releases carry no checksum or signature file, so
+          # the binary comes out of the upstream image, pinned by digest.
+          # renovate: datasource=docker depName=koalaman/shellcheck
+          SHELLCHECK_IMAGE="koalaman/shellcheck:v0.11.0@sha256:61862eba1fcf09a484ebcc6feea46f1782532571a34ed51fedf90dd25f925a8d"
+          docker create --name shellcheck-tmp "${SHELLCHECK_IMAGE}"
+          sudo docker cp shellcheck-tmp:/bin/shellcheck /usr/local/bin/shellcheck
+          docker rm shellcheck-tmp
 
           shellcheck --version
           "$(go env GOPATH)/bin/actionlint" --version
