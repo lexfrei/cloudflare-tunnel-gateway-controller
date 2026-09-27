@@ -289,34 +289,30 @@ func newGatewayClientCertResolver(c client.Client, controllerName string) proxy.
 
 // gatewayManagedByController reports whether the Gateway's GatewayClass.spec.
 // controllerName matches ours. An empty controllerName disables the check —
-// used by tests that don't construct a full GatewayClass chain. When the
-// GatewayClass lookup itself fails (NotFound, transient error) we return
-// false: better to NOT present a cert that may belong to another controller
-// than to leak credentials on a doubtful match. The Gateway's status surface
-// will already reflect "no managed parent" via existing reconcile paths.
+// used by tests that don't construct a full GatewayClass chain. Only
+// gatewayClassManaged counts: an unknown class, missing or unreadable, returns
+// false, because presenting a cert that may belong to another controller is
+// worse than presenting none. The Gateway's status surface will already
+// reflect "no managed parent" via existing reconcile paths.
 func gatewayManagedByController(ctx context.Context, c client.Client, gateway *gatewayv1.Gateway, controllerName string) bool {
 	if controllerName == "" {
 		return true
 	}
 
-	var gatewayClass gatewayv1.GatewayClass
-	if err := c.Get(ctx, types.NamespacedName{Name: string(gateway.Spec.GatewayClassName)}, &gatewayClass); err != nil {
-		// NotFound is silent — a Gateway pointing at a missing GatewayClass
-		// is correctly rejected from the "ours" set. Other errors (transient
-		// API-server failure) get logged because they cause the same fail-
-		// closed outcome but for an operational, not configuration, reason.
-		if !apierrors.IsNotFound(err) {
-			slog.Warn("gateway client cert resolver: Get(GatewayClass) failed — Gateway treated as foreign-controlled, no cert presented",
-				"error", err,
-				"gateway", gateway.Name,
-				"gatewayClass", string(gateway.Spec.GatewayClassName),
-			)
-		}
-
-		return false
+	state, err := classifyGatewayClass(ctx, c, gateway, controllerName)
+	if err != nil {
+		// A missing class is silent, since classifyGatewayClass reports it as
+		// unknown with a nil error. A failed read is logged because it has the
+		// same fail-closed outcome for an operational, not configuration,
+		// reason.
+		slog.Warn("gateway client cert resolver: GatewayClass read failed — Gateway treated as not ours, no cert presented",
+			"error", err,
+			"gateway", gateway.Name,
+			"gatewayClass", string(gateway.Spec.GatewayClassName),
+		)
 	}
 
-	return string(gatewayClass.Spec.ControllerName) == controllerName
+	return state == gatewayClassManaged
 }
 
 // gatewayClientCertGrantChecker adapts the package-level grant lookup into a
