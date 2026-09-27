@@ -66,9 +66,9 @@ type undecidedParentCase struct {
 }
 
 // undecidedParentCases are the ways a parentRef can fail to say whether it
-// lends the route a hostname: the Gateway cannot be read, binding validation
-// against it errors, the ListenerSet cannot be read, or the ListenerSet's
-// parent Gateway cannot be read.
+// lends the route a hostname: the Gateway or the ListenerSet cannot be read,
+// binding validation against either errors, or the ListenerSet's parent
+// Gateway cannot be read.
 func undecidedParentCases() []undecidedParentCase {
 	ourHost := gatewayv1.Hostname("ours.example.com")
 	entryHost := gatewayv1.Hostname("ls.example.com")
@@ -124,6 +124,21 @@ func undecidedParentCases() []undecidedParentCase {
 				t.Helper()
 
 				return failingGetClient(t, &gatewayv1.ListenerSet{}, listenerSetObjects()...)
+			},
+			route: toListenerSet,
+		},
+		{
+			name: "listenerset binding validation errors",
+			cli: func(t *testing.T) client.Client {
+				t.Helper()
+
+				listenerSet := listenerSetUnder("ls", "ours", nil)
+				listenerSet.Spec.Listeners[0].AllowedRoutes = invalidSelectorGateway("unused", nil).Spec.Listeners[0].AllowedRoutes
+
+				return buildGatewayFakeClient(t,
+					gatewayClassFor("our-class", skipTestControllerName),
+					allowingListenerSets(gatewayUnderClass("ours", "our-class", nil)),
+					listenerSet)
 			},
 			route: toListenerSet,
 		},
@@ -202,4 +217,20 @@ func TestWithEffectiveHostnames_UndecidedParentBesideAnAcceptingOne(t *testing.T
 	out := withEffectiveHostnames(context.Background(), cli, skipTestControllerName, []*gatewayv1.HTTPRoute{route}, nil)
 	require.Len(t, out, 1)
 	assert.Equal(t, []gatewayv1.Hostname{ourHost}, out[0].Spec.Hostnames)
+}
+
+// TestWithEffectiveHostnames_StableWhenGatewayMissing is the Gateway twin of
+// TestWithEffectiveHostnames_StableWhenParentMissing: a Gateway that does not
+// exist is an answer, not a failure to get one, so the route is returned as
+// written rather than left out.
+func TestWithEffectiveHostnames_StableWhenGatewayMissing(t *testing.T) {
+	t.Parallel()
+
+	route := httpRouteTo()
+	route.Spec.ParentRefs = parentRefsToGateways("missing")
+
+	out := withEffectiveHostnames(context.Background(), buildGatewayFakeClient(t), skipTestControllerName,
+		[]*gatewayv1.HTTPRoute{route}, nil)
+	require.Len(t, out, 1)
+	assert.Empty(t, out[0].Spec.Hostnames, "a missing Gateway must not synthesise hostnames")
 }
