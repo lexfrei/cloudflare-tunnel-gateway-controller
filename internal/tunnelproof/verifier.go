@@ -38,7 +38,8 @@ const (
 	// outageRetry spaces out lookups that got no answer. Every arbitrating
 	// reconcile collects every claim, so asking again on each would multiply
 	// calls to an API that is already failing, and hold each reconcile for
-	// requestTimeout once per claim while it hangs.
+	// about requestTimeout per batch of claims the caller looks up at once
+	// while it hangs.
 	outageRetry = 30 * time.Second
 	// requestTimeout keeps an unresponsive API from holding a reconcile.
 	requestTimeout = 10 * time.Second

@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 
+	"golang.org/x/sync/errgroup"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
@@ -44,7 +45,10 @@ type statusTunnelResolver interface {
 //     unproven instead.
 //
 // Each claim costs a Cloudflare API call the first time its token is seen and
-// again when the cached verdict expires; see tunnelproof.
+// again when the cached verdict expires; see tunnelproof. The lookups run
+// concurrently, up to maxConcurrentClaimLookups at a time, so an API that hangs
+// until the request timeout costs one timeout per that many Gateways rather
+// than one per Gateway.
 //
 // sharedTunnelID must already be canonical, like the value handed to
 // tunnelownership.Arbitrate — advertised addresses are canonicalized on read,
@@ -68,29 +72,53 @@ func collectTunnelClaims(
 		return nil, err
 	}
 
-	claims := make([]tunnelownership.Claim, 0, len(gateways))
+	// Indexed by listing position so the result keeps listing order however
+	// the lookups finish; a Gateway that claims nothing leaves its slot empty.
+	slots := make([]tunnelownership.Claim, len(gateways))
 
-	for _, gateway := range gateways {
-		advertised := advertisedTunnelID(gateway)
+	var group errgroup.Group
 
-		claimed, proof := claimedTunnelID(ctx, resolver, gateway, advertised, sharedTunnelID)
-		if claimed == "" {
-			continue
-		}
+	group.SetLimit(maxConcurrentClaimLookups)
 
-		claims = append(claims, tunnelownership.Claim{
-			Key:        gateway.Namespace + "/" + gateway.Name,
-			Namespace:  gateway.Namespace,
-			TunnelID:   claimed,
-			CreatedAt:  gateway.CreationTimestamp.Time,
-			UID:        string(gateway.UID),
-			Advertised: advertised,
-			Proof:      proof,
+	for i, gateway := range gateways {
+		group.Go(func() error {
+			advertised := advertisedTunnelID(gateway)
+
+			claimed, proof := claimedTunnelID(ctx, resolver, gateway, advertised, sharedTunnelID)
+			if claimed == "" {
+				return nil
+			}
+
+			slots[i] = tunnelownership.Claim{
+				Key:        gateway.Namespace + "/" + gateway.Name,
+				Namespace:  gateway.Namespace,
+				TunnelID:   claimed,
+				CreatedAt:  gateway.CreationTimestamp.Time,
+				UID:        string(gateway.UID),
+				Advertised: advertised,
+				Proof:      proof,
+			}
+
+			return nil
 		})
+	}
+
+	_ = group.Wait()
+
+	claims := make([]tunnelownership.Claim, 0, len(slots))
+
+	for i := range slots {
+		if slots[i].Key != "" {
+			claims = append(claims, slots[i])
+		}
 	}
 
 	return claims, nil
 }
+
+// maxConcurrentClaimLookups bounds how many claims one collection checks with
+// Cloudflare at once.
+const maxConcurrentClaimLookups = 16
 
 // claimedTunnelID returns the tunnel this Gateway claims, empty when it claims
 // none, and Cloudflare's verdict on the claim. The token it names wins; the
