@@ -105,19 +105,101 @@ jobs:
               labels: ['Container Available']
             })
 
-      - name: Comment on PR (first time only)
-        if: steps.first_build.outputs.result == 'true'
+      - name: Download image references
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: image-ref-*
+          merge-multiple: true
+          path: image-refs
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      # The references come out of a pull_request run, which a fork's own copy
+      # of pr.yaml produces, and go into a comment this token writes. Accept
+      # only the exact shape merge-manifests exports.
+      - name: Read and validate image references
+        id: refs
+        run: |
+          set -euo pipefail
+          read_ref() {
+            local component="$1" image="$2" value
+            value="$(tr -d '[:space:]' < "image-refs/${component}.ref")"
+            if ! [[ "${value}" =~ ^"${image}"@sha256:[0-9a-f]{64}$ ]]; then
+              echo "ERROR: ${component}.ref is not a digest-pinned reference to ${image}"
+              exit 1
+            fi
+            echo "${component}=${value}" >> "$GITHUB_OUTPUT"
+          }
+          read_ref controller ttl.sh/cf-tunnel-gateway-ctrl
+          read_ref proxy ttl.sh/cf-tunnel-gateway-proxy
+
+      # One comment per PR, rewritten on every successful run: the digests
+      # change with each build, and a comment naming an older build's digest
+      # would send readers to the wrong image.
+      - name: Comment on PR
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        env:
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          CONTROLLER_REF: ${{ steps.refs.outputs.controller }}
+          PROXY_REF: ${{ steps.refs.outputs.proxy }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          RUN_URL: ${{ github.event.workflow_run.html_url }}
         with:
           script: |
-            const prNumber = ${{ steps.pr.outputs.number }};
-            const ctrlTag = `ttl.sh/cf-tunnel-gateway-ctrl:pr-${prNumber}-1d`;
-            const proxyTag = `ttl.sh/cf-tunnel-gateway-proxy:pr-${prNumber}-1d`;
+            const marker = '<!-- ci-images -->';
+            const prNumber = Number(process.env.PR_NUMBER);
             const chartVersion = `0.0.0-pr.${prNumber}-1d`;
+            const fence = '```';
 
-            github.rest.issues.createComment({
-              issue_number: prNumber,
+            const body = [
+              marker,
+              '## Container images available',
+              '',
+              `Built from ${process.env.HEAD_SHA} in [this run](${process.env.RUN_URL}). Pull by digest: the \`pr-${prNumber}-1d\` tags on ttl.sh are anonymous, and anyone can overwrite them.`,
+              '',
+              '**Controller (amd64 + arm64):**',
+              `${fence}bash`,
+              `podman pull ${process.env.CONTROLLER_REF}`,
+              fence,
+              '',
+              '**Proxy (amd64 + arm64):**',
+              `${fence}bash`,
+              `podman pull ${process.env.PROXY_REF}`,
+              fence,
+              '',
+              '## Helm chart available',
+              '',
+              `${fence}bash`,
+              `helm install test oci://ttl.sh/cloudflare-tunnel-gateway-controller --version ${chartVersion}`,
+              fence,
+              '',
+              `The chart is published under a mutable tag too, and its values point at the \`pr-${prNumber}-1d\` image tags. \`./hack/conformance-setup.sh --use-ci-images ${prNumber}\` deploys the chart artifact of this PR's latest successful run instead, verified against the PR head, and pulls that run's images by digest.`,
+              '',
+              `> **Note:** Rebuilt on every commit; this comment follows the latest successful build. The \`-1d\` in these tags sets no lifetime -- ttl.sh reads one only from a tag that is entirely a duration -- so the images expire on ttl.sh's own schedule. Re-run this PR's CI to republish.`,
+            ].join('\n');
+
+            const comments = await github.paginate(github.rest.issues.listComments, {
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: `## Container images available\n\n**Controller (amd64 + arm64):**\n\`\`\`bash\npodman pull ${ctrlTag}\n\`\`\`\n\n**Proxy (amd64 + arm64):**\n\`\`\`bash\npodman pull ${proxyTag}\n\`\`\`\n\n## Helm chart available\n\n**Install chart:**\n\`\`\`bash\nhelm install test oci://ttl.sh/cloudflare-tunnel-gateway-controller --version ${chartVersion}\n\`\`\`\n\n> **Note:** Rebuilt on every commit. The \`-1d\` in these tags sets no lifetime -- ttl.sh reads one only from a tag that is entirely a duration -- so they expire on ttl.sh's own schedule. Re-run this PR's CI to republish.`
-            })
+              issue_number: prNumber,
+              per_page: 100,
+            });
+            const existing = comments.find(
+              (c) => c.user?.login === 'github-actions[bot]' && c.body?.includes(marker),
+            );
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                body,
+              });
+            }

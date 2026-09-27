@@ -446,12 +446,14 @@ jobs:
         run: |
           PR_NUMBER="${{ github.event.pull_request.number }}"
           IMAGE_TAG="${{ matrix.image }}:pr-${PR_NUMBER}-1d"
+          IMAGE_REF="$(cat "/tmp/refs/${{ matrix.component }}.ref")"
 
           {
             echo "## Multi-arch Container Image (${{ matrix.component }})"
             echo ""
-            echo "### Image Tag"
-            echo "- \`${IMAGE_TAG}\`"
+            echo "### Image"
+            echo "- \`${IMAGE_REF}\`"
+            echo "- \`${IMAGE_TAG}\` (mutable: anyone can overwrite a ttl.sh tag)"
             echo ""
             echo "### Platforms"
             echo "- linux/amd64"
@@ -459,7 +461,7 @@ jobs:
             echo ""
             echo "### Pull Command"
             echo '```bash'
-            echo "podman pull ${IMAGE_TAG}"
+            echo "podman pull ${IMAGE_REF}"
             echo '```'
             echo ""
             echo "> **Note:** The \`-1d\` suffix sets no lifetime -- ttl.sh reads one"
