@@ -1081,7 +1081,7 @@ func TestWithEffectiveHostnames_ListenerSetUnderUnknownClassStillContributes(t *
 			t.Parallel()
 
 			objs := append([]client.Object{
-				gatewayUnderClass("ours", "our-class", nil),
+				allowingListenerSets(gatewayUnderClass("ours", "our-class", nil)),
 				listenerSetUnder("ls", "ours", &entryHost),
 			}, tt.classes...)
 			cli := tt.build(t, objs...)
@@ -1093,4 +1093,37 @@ func TestWithEffectiveHostnames_ListenerSetUnderUnknownClassStillContributes(t *
 				"a ListenerSet whose parent class is unknown rather than foreign still lends its entry hostname")
 		})
 	}
+}
+
+// TestWithEffectiveHostnames_ListenerSetKeptWhenAcceptanceFails pins the
+// other side of the allowedListeners check: an evaluation that fails, here on
+// a selector that does not parse, is not a refusal. The route's only parent is
+// the ListenerSet, so dropping it would leave the hostname-less route with
+// nothing to narrow it and it would answer every Host.
+func TestWithEffectiveHostnames_ListenerSetKeptWhenAcceptanceFails(t *testing.T) {
+	t.Parallel()
+
+	entryHost := gatewayv1.Hostname("ls.example.com")
+
+	gateway := gatewayUnderClass("ours", "our-class", nil)
+	gateway.Spec.AllowedListeners = &gatewayv1.AllowedListeners{
+		Namespaces: &gatewayv1.ListenerNamespaces{
+			From: new(gatewayv1.NamespacesFromSelector),
+			Selector: &metav1.LabelSelector{MatchExpressions: []metav1.LabelSelectorRequirement{
+				{Key: "team", Operator: "NotAnOperator"},
+			}},
+		},
+	}
+
+	cli := buildGatewayFakeClient(t,
+		gatewayClassFor("our-class", skipTestControllerName),
+		gateway,
+		listenerSetUnder("ls", "ours", &entryHost),
+	)
+
+	out := withEffectiveHostnames(context.Background(), cli, skipTestControllerName,
+		[]*gatewayv1.HTTPRoute{routeToListenerSet("ls")}, nil)
+	require.Len(t, out, 1)
+	assert.Equal(t, []gatewayv1.Hostname{entryHost}, out[0].Spec.Hostnames,
+		"a failed allowedListeners evaluation keeps the ListenerSet's entry hostname")
 }
