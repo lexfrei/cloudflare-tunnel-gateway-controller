@@ -16,6 +16,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
@@ -211,9 +212,12 @@ const (
 type sharedLeafIssuer struct {
 	client    client.Client
 	authority *configtls.Authority
+	caKey     types.NamespacedName
 	key       types.NamespacedName
 	names     []string
 	logger    *slog.Logger
+	// recorder reports an expiring CA on its Secret. Nil is a no-op.
+	recorder events.EventRecorder
 }
 
 // NeedLeaderElection keeps issuance on one replica.
@@ -223,6 +227,8 @@ func (i *sharedLeafIssuer) NeedLeaderElection() bool { return true }
 func (i *sharedLeafIssuer) Start(ctx context.Context) error {
 	for {
 		wait := sharedLeafCheckInterval
+
+		i.warnIfCAExpiring()
 
 		outcome, err := ensureSharedLeaf(ctx, i.client, i.authority, i.key, i.names, time.Now())
 
@@ -247,6 +253,29 @@ func (i *sharedLeafIssuer) Start(ctx context.Context) error {
 		}
 	}
 }
+
+// warnIfCAExpiring logs, and records a Warning Event on the CA Secret, while
+// the CA is within one leaf lifetime of its expiry.
+func (i *sharedLeafIssuer) warnIfCAExpiring() {
+	warning := caExpiryWarning(i.authority, time.Now())
+	if warning == "" {
+		return
+	}
+
+	i.logger.Warn(warning, "secret", i.caKey.String())
+
+	if i.recorder != nil {
+		caSecret := &corev1.Secret{Name: i.caKey.Name, Namespace: i.caKey.Namespace}
+		i.recorder.Eventf(caSecret, nil, corev1.EventTypeWarning, eventReasonConfigTLSCAExpiring,
+			eventActionConfigTLS, "%s", warning)
+	}
+}
+
+// Event vocabulary for the config API CA.
+const (
+	eventReasonConfigTLSCAExpiring = "ConfigTLSCAExpiring"
+	eventActionConfigTLS           = "IssueCertificate"
+)
 
 // describeConfigTLSError explains a push failure caused by the config API
 // handshake, or returns "" for any other failure.
@@ -355,6 +384,7 @@ func (s *ProxySyncer) tlsPusher(serverName string) *proxy.ConfigPusher {
 // configTLSSetup is the resolved config API TLS configuration.
 type configTLSSetup struct {
 	authority *configtls.Authority
+	caKey     types.NamespacedName
 	leafKey   types.NamespacedName
 	leafNames []string
 }
@@ -410,7 +440,25 @@ func setupConfigTLS(ctx context.Context, c client.Client, cfg *Config, endpoints
 		return nil, err
 	}
 
-	return &configTLSSetup{authority: authority, leafKey: leafKey, leafNames: leafNames}, nil
+	err = authority.CheckValidAt(time.Now())
+	if err != nil {
+		return nil, errors.Wrapf(err, "config API CA secret %s: to rotate it, delete the Secret and restart every "+
+			"controller replica (Config API TLS in the security reference)", caKey)
+	}
+
+	return &configTLSSetup{authority: authority, caKey: caKey, leafKey: leafKey, leafNames: leafNames}, nil
+}
+
+// caExpiryWarning returns a warning when the CA expires within one leaf
+// lifetime: every leaf issued from then on is cut short at the CA's expiry,
+// and after it no push verifies. Empty otherwise.
+func caExpiryWarning(authority *configtls.Authority, now time.Time) string {
+	if authority.NotAfter().Sub(now) >= configtls.LeafValidity {
+		return ""
+	}
+
+	return "config API CA expires " + authority.NotAfter().UTC().Format(time.RFC3339) +
+		"; after that no config push verifies. Rotate it: delete the CA Secret and restart every controller replica"
 }
 
 func parseConfigTLSSecretRef(raw string) (types.NamespacedName, error) {
@@ -439,6 +487,10 @@ func resolveConfigTLS(ctx context.Context, mgr ctrl.Manager, cfg *Config, endpoi
 		return nil, errors.Wrap(err, "config API TLS")
 	}
 
+	if warning := caExpiryWarning(setup.authority, time.Now()); warning != "" {
+		slog.Default().Warn(warning, "secret", setup.caKey.String())
+	}
+
 	return setup, nil
 }
 
@@ -452,9 +504,11 @@ func addSharedLeafIssuer(mgr ctrl.Manager, setup *configTLSSetup, logger *slog.L
 	issuer := &sharedLeafIssuer{
 		client:    mgr.GetClient(),
 		authority: setup.authority,
+		caKey:     setup.caKey,
 		key:       setup.leafKey,
 		names:     setup.leafNames,
 		logger:    logger.With("component", "config-tls-issuer"),
+		recorder:  mgr.GetEventRecorder("config-tls-issuer"),
 	}
 
 	if err := mgr.Add(issuer); err != nil {

@@ -46,6 +46,9 @@ const (
 var (
 	// ErrRenewalDue marks a leaf that is valid but inside the renewal window.
 	ErrRenewalDue = errors.New("config API certificate is due for renewal")
+	// ErrCAExpired marks a CA outside its validity period. Nothing it signs
+	// verifies, so it must be replaced, not used.
+	ErrCAExpired = errors.New("config API CA is expired or not yet valid")
 
 	errNoCertificate = errors.New("no PEM certificate found")
 	errNoPrivateKey  = errors.New("no PEM private key found")
@@ -115,16 +118,36 @@ func LoadAuthority(certPEM, keyPEM []byte) (*Authority, error) {
 	return &Authority{cert: cert, key: key}, nil
 }
 
+// NotAfter returns the end of the CA's validity.
+func (a *Authority) NotAfter() time.Time {
+	return a.cert.NotAfter
+}
+
+// CheckValidAt reports ErrCAExpired when now is outside the CA's validity.
+func (a *Authority) CheckValidAt(now time.Time) error {
+	if now.Before(a.cert.NotBefore) || now.After(a.cert.NotAfter) {
+		return errors.Wrapf(ErrCAExpired, "valid %s to %s",
+			a.cert.NotBefore.UTC().Format(time.RFC3339), a.cert.NotAfter.UTC().Format(time.RFC3339))
+	}
+
+	return nil
+}
+
 // CertificatePEM returns the CA certificate.
 func (a *Authority) CertificatePEM() []byte {
 	return pem.EncodeToMemory(&pem.Block{Type: pemTypeCertificate, Bytes: a.cert.Raw})
 }
 
-// Issue signs a serving certificate for names, valid from now. A name that
-// parses as an IP address becomes an IP SAN.
+// Issue signs a serving certificate for names, valid from now and never past
+// the CA's own expiry. A name that parses as an IP address becomes an IP SAN.
 func (a *Authority) Issue(names []string, now time.Time) ([]byte, []byte, error) {
 	if len(names) == 0 {
 		return nil, nil, errNoNames
+	}
+
+	err := a.CheckValidAt(now)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -141,7 +164,7 @@ func (a *Authority) Issue(names []string, now time.Time) ([]byte, []byte, error)
 		SerialNumber: serial,
 		Subject:      pkix.Name{CommonName: names[0]},
 		NotBefore:    now.Add(-clockSkew),
-		NotAfter:     now.Add(LeafValidity),
+		NotAfter:     minTime(now.Add(LeafValidity), a.cert.NotAfter),
 		KeyUsage:     x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 	}
@@ -189,7 +212,9 @@ func (a *Authority) Check(certPEM, keyPEM []byte, names []string, now time.Time)
 		}
 	}
 
-	if cert.NotAfter.Sub(now) < RenewBefore {
+	// A leaf already clamped to the CA's expiry cannot be extended by
+	// reissuing it, so it is not reported due.
+	if cert.NotAfter.Sub(now) < RenewBefore && cert.NotAfter.Before(a.cert.NotAfter) {
 		return errors.Wrapf(ErrRenewalDue, "expires %s", cert.NotAfter.UTC().Format(time.RFC3339))
 	}
 
@@ -291,6 +316,14 @@ func (l *CertificateLoader) reload() error {
 	l.certPEM, l.keyPEM, l.current = certPEM, keyPEM, &pair
 
 	return nil
+}
+
+func minTime(first, second time.Time) time.Time {
+	if first.Before(second) {
+		return first
+	}
+
+	return second
 }
 
 func newSerial() (*big.Int, error) {

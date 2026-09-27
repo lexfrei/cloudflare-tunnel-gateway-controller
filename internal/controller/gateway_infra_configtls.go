@@ -74,6 +74,13 @@ func (r *GatewayInfraReconciler) ensureConfigTLSSecret(ctx context.Context, gate
 	names := []string{render.ConfigServerName(gateway, r.ClusterDomain)}
 	now := r.clock()
 
+	// An expired CA makes every slot fail verification the moment it is
+	// written; walking on would open a new slot on each reconcile.
+	err = r.ConfigAuthority.CheckValidAt(now)
+	if err != nil {
+		return "", errors.Wrap(err, "issuing config API certificates")
+	}
+
 	for index := start; index < start+maxConfigTLSSlotAttempts; index++ {
 		key := types.NamespacedName{Name: render.ConfigTLSSecretName(gateway, index), Namespace: gateway.Namespace}
 
