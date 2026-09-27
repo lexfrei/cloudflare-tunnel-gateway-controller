@@ -70,6 +70,21 @@ jobs:
           # build cache (~/.cache/go-build) keyed off go.sum. Issue #257.
           cache: true
 
+      # go.sum pins module zips, not the vendored copies, so no other check
+      # notices a hand-edit under vendor/ or a go.mod change that was never
+      # re-vendored. Re-vendor in place and let git report the difference;
+      # files .gitignore excludes are not committed and stay out of it.
+      - name: Verify vendor/ matches go.mod
+        run: |
+          set -euo pipefail
+          go mod vendor
+          changes="$(git status --porcelain -- vendor)"
+          if [[ -n "${changes}" ]]; then
+            echo "::error::vendor/ differs from what go mod vendor produces; re-vendor instead of editing it"
+            echo "${changes}"
+            exit 1
+          fi
+
       - name: golangci-lint
         # Pin to a specific golangci-lint version so the action's own
         # download + ~/.cache/golangci-lint key stays stable across runs;
