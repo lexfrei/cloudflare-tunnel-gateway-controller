@@ -82,6 +82,15 @@ EOF
 
 See [Installation](#installation) for detailed setup instructions.
 
+## Compatibility
+
+| Component | Supported |
+| --- | --- |
+| Kubernetes | 1.25+ for the chart; 1.31+ for the Gateway API bundle below |
+| Gateway API CRDs | Standard channel (Gateway API v1.6.2) |
+
+The [prerequisites page](https://cf.k8s.lex.la/latest/getting-started/prerequisites/#compatibility) explains where each bound comes from.
+
 ## Prerequisites
 
 - Kubernetes cluster with Gateway API CRDs installed

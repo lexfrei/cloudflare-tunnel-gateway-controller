@@ -43,7 +43,7 @@ flowchart TB
 
 ## Prerequisites
 
-- Kubernetes 1.25+
+- Kubernetes 1.31+, the floor of the Gateway API bundle (see [Compatibility](../getting-started/prerequisites.md#compatibility))
 - Gateway API CRDs installed
 - Cloudflare Tunnel created with a valid token
 - Helm 3.x

@@ -36,7 +36,7 @@ Kubernetes: `>=1.25.0-0`
 
 ## Prerequisites
 
-- Kubernetes 1.25+
+- Kubernetes 1.31+, the floor of the Gateway API standard bundle the controller needs
 - Helm 3.0+
 - Gateway API CRDs installed
 - Cloudflare Tunnel created
