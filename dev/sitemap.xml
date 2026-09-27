@@ -157,6 +157,10 @@
          <lastmod>2026-09-27</lastmod>
     </url>
     <url>
+         <loc>https://cf.k8s.lex.la/dev/reference/api/</loc>
+         <lastmod>2026-09-27</lastmod>
+    </url>
+    <url>
          <loc>https://cf.k8s.lex.la/dev/reference/crd-reference/</loc>
          <lastmod>2026-09-27</lastmod>
     </url>
