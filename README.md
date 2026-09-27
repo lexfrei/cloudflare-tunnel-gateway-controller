@@ -192,7 +192,7 @@ The L7 proxy handles routing for every tunnel request, so most Gateway API behav
 - `timeouts.request` / `timeouts.backendRequest` are enforced as header-only deadlines, so streaming responses (SSE, chunked, gRPC server-streaming) keep flowing past the deadline.
 - Unavailable backends in a weighted rule return a status (`500`/`503`) for their share rather than dialing a dead address, so the other backends keep serving.
 - A match pattern the proxy cannot compile drops its own rule, reported on the route that carries it; other rules and other routes keep serving.
-- `RequestMirror` copies are dropped once a filter is at its in-flight dispatch cap, so a mirror backend that stops answering cannot grow the proxy's memory with request rate.
+- `RequestMirror` copies are dropped once a filter is at its in-flight dispatch cap (`proxy.mirror.maxInFlight`, counted by `cftunnel_proxy_mirror_dropped_total`), so a mirror backend that stops answering cannot grow the proxy's memory with request rate.
 - `HTTPRouteRule.name` uniqueness is not enforced at admission; an opt-in `ValidatingAdmissionPolicy` (`ruleNameUniquenessPolicy` Helm value) enforces it on Kubernetes 1.30+.
 - The non-canonical `group: core` is accepted for `backendRef`s and `BackendTLSPolicy` CA refs, and rejected for a Gateway's `clientCertificateRef` and the `ReferenceGrant` authorising it. Write `group: ""`, the spelling the Gateway API defines, and the asymmetry cannot bite.
 - The controller refuses to write a tunnel document above 1000 ingress rules. Rules are counted per hostname and path match rather than per route, and every namespace on a tunnel shares one document, so while the budget is exceeded no new hostname on that tunnel can be programmed.

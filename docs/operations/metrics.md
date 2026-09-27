@@ -114,6 +114,8 @@ The `hostname` label always carries the MATCHED route hostname pattern (exact ho
 | `cftunnel_proxy_backend_errors_total` | Counter | `hostname`, `reason` | Backend dial/connect failures (`dial`, `timeout`, `tls`, `canceled`, `ws_dial`, `ws_handshake`, `other`). |
 | `cftunnel_proxy_response_bytes_total` | Counter | `hostname` | Response body bytes written (post-hijack WebSocket bytes excluded). |
 | `cftunnel_proxy_request_bytes_total` | Counter | `hostname` | Request body bytes read. |
+| `cftunnel_proxy_handler_panics_total` | Counter | `site` | Panics the proxy recovered from instead of crashing: `request` (the request handler, tunnel mode), `websocket_copy` (a hijacked WebSocket session's copy goroutine), `mirror` (a RequestMirror dispatch). A contained panic leaves nothing else an operator would notice, so any increase is worth an alert. Client disconnects mid-response are routine and not counted. |
+| `cftunnel_proxy_mirror_dropped_total` | Counter | — | RequestMirror copies dropped because the filter already had its dispatch limit in flight (`proxy.mirror.maxInFlight`, default 64). The primary request is unaffected. |
 
 #### Scaling the proxy on concurrency
 

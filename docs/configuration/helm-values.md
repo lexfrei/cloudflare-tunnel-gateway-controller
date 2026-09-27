@@ -160,6 +160,12 @@ The `proxy` section configures the in-process L7 reverse proxy. The proxy embeds
 | `proxy.websocket.handshakeTimeout` | string | `""` (proxy default 30s) | Go-duration cap on waiting for the backend's `101 Switching Protocols`; when the backend refuses the upgrade instead, also the longest the refusal body may go without a byte |
 | `proxy.websocket.idleTimeout` | string | `""` (proxy default 1h) | Go-duration bound on an established session that carries no bytes in either direction; any traffic resets it |
 
+### Request Mirror
+
+| Value | Type | Default | Description |
+| --- | --- | --- | --- |
+| `proxy.mirror.maxInFlight` | int | `0` (proxy default 64) | Mirror dispatches each `RequestMirror` filter may keep in flight before it drops further copies. Each holds its buffered body, up to 1 MiB. Reaches the shared proxy only; per-Gateway data planes keep 64 |
+
 ### Networking and Service
 
 | Value | Type | Default | Description |
