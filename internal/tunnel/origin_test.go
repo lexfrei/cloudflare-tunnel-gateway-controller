@@ -648,6 +648,38 @@ func TestGatewayOriginProxy_ProxyHTTP_PanicAfterStatusResetsTheStream(t *testing
 		"the panic path must not attempt a second status write")
 }
 
+// TestGatewayOriginProxy_ProxyHTTP_PanicAfterFlushResetsTheStream pins that a
+// flush with no prior status counts as the status being sent. Both net/http
+// and x/net/http2 commit an implicit 200 on such a flush, so a panic after it
+// can no longer be answered with a 500.
+func TestGatewayOriginProxy_ProxyHTTP_PanicAfterFlushResetsTheStream(t *testing.T) {
+	t.Parallel()
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = http.NewResponseController(w).Flush()
+
+		panic("handler exploded after flushing")
+	})
+
+	proxy := tunnel.NewGatewayOriginProxy(handler, nil)
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://example.com/flushed", nil)
+	zlog := zerolog.Nop()
+	tracedReq := tracing.NewTracedHTTPRequest(req, 0, &zlog)
+	writer := newStrictStatusWriter(t)
+
+	var err error
+
+	require.NotPanics(t, func() {
+		err = proxy.ProxyHTTP(writer, tracedReq, false)
+	})
+
+	require.Error(t, err, "the flush committed a status, so the panic must reset the stream")
+	assert.Equal(t, http.StatusOK, writer.Code)
+	assert.Equal(t, 1, writer.statusWrites,
+		"the flush must go through the status write the panic path checks")
+}
+
 // TestGatewayOriginProxy_ProxyHTTP_AbortHandlerIsNotLoggedAsAPanic pins that a
 // routine client abort stays quiet.
 //
