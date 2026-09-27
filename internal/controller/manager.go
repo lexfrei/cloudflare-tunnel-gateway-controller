@@ -126,6 +126,18 @@ type Config struct {
 	// sets this true only when proxy.authTokenSecretRef.name is empty.
 	ProxyAuthSecretGenerate bool
 
+	// ProxyConfigCASecretRef, in "<namespace>/<name>" form, turns on config
+	// API TLS: the controller keeps its CA in this Secret, creating it once,
+	// issues every data plane's serving certificate from it, and pushes only
+	// to planes that present one. Empty keeps the plaintext push and creates
+	// nothing. Set together with ProxyConfigTLSSecretRef.
+	ProxyConfigCASecretRef string
+
+	// ProxyConfigTLSSecretRef, in "<namespace>/<name>" form, is the shared
+	// plane's serving certificate Secret, which the controller creates and
+	// renews in place and the shared proxy mounts.
+	ProxyConfigTLSSecretRef string
+
 	// TunnelProtocol is the proxy's configured edge transport (auto|http2|quic).
 	// Used only to warn when GRPCRoutes are present on an explicit quic tunnel,
 	// where cloudflared drops the grpc-status trailer. auto/unset is upgraded to
@@ -288,6 +300,11 @@ func Run(ctx context.Context, cfg *Config) error {
 
 	cfg = resolvedCfg
 
+	configTLS, err := resolveConfigTLS(ctx, mgr, cfg, proxyEndpoints)
+	if err != nil {
+		return err
+	}
+
 	// Create metrics collector and register with controller-runtime
 	metricsCollector := cfmetrics.NewCollector(ctrlMetrics.Registry)
 
@@ -356,6 +373,11 @@ func Run(ctx context.Context, cfg *Config) error {
 		MonitoringNamespaceSelector: monitoringSelector,
 		ControllerPodSelector:       controllerPodSelector,
 		RenderNetworkPolicy:         cfg.RenderNetworkPolicy,
+		ClusterDomain:               cfg.ClusterDomain,
+	}
+
+	if configTLS != nil {
+		gatewayInfraReconciler.ConfigAuthority = configTLS.authority
 	}
 
 	if err := gatewayInfraReconciler.SetupWithManager(mgr); err != nil {
@@ -392,8 +414,12 @@ func Run(ctx context.Context, cfg *Config) error {
 	}
 
 	// Create proxy syncer for L7 proxy config push (mandatory in v3)
-	proxySyncer := initProxySyncer(cfg, proxyEndpoints, mgr.GetClient(), baseLogger, logger)
+	proxySyncer := initProxySyncer(cfg, proxyEndpoints, configTLS, mgr.GetClient(), baseLogger, logger)
 	proxySyncer.ViewStore = viewStore
+
+	if err := addSharedLeafIssuer(mgr, configTLS, baseLogger); err != nil {
+		return err
+	}
 
 	httpRouteReconciler := &HTTPRouteReconciler{
 		Client:         mgr.GetClient(),
@@ -557,6 +583,7 @@ func setupProxyEndpointReconciler(mgr ctrl.Manager, proxySyncer *ProxySyncer, pr
 func initProxySyncer(
 	cfg *Config,
 	proxyEndpoints []string,
+	configTLS *configTLSSetup,
 	k8sClient client.Client,
 	baseLogger *slog.Logger,
 	logger logr.Logger,
@@ -566,6 +593,10 @@ func initProxySyncer(
 	var syncerOpts []ProxySyncerOption
 	if cfg.Tracing {
 		syncerOpts = append(syncerOpts, WithSyncerTracing())
+	}
+
+	if configTLS != nil {
+		syncerOpts = append(syncerOpts, WithConfigAPIAuthority(configTLS.authority))
 	}
 
 	return NewProxySyncer(

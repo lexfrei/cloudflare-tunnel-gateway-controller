@@ -7,6 +7,8 @@ import (
 	stderrors "errors"
 	"log/slog"
 	"net/url"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/cockroachdb/errors"
@@ -14,6 +16,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/configtls"
@@ -338,4 +341,116 @@ func (s *ProxySyncer) tlsPusher(serverName string) *proxy.ConfigPusher {
 	}
 
 	return pusher
+}
+
+// configTLSSetup is the resolved config API TLS configuration.
+type configTLSSetup struct {
+	authority *configtls.Authority
+	leafKey   types.NamespacedName
+	leafNames []string
+}
+
+var (
+	errConfigTLSRefsIncomplete = errors.New(
+		"--proxy-config-ca-secret and --proxy-config-tls-secret must be set together")
+	errInvalidConfigTLSSecretRef = errors.New("config API TLS secret reference must be in `<namespace>/<name>` form")
+)
+
+// setupConfigTLS resolves config API TLS at startup. With neither reference
+// set it returns nil and touches nothing: the plaintext push, and no CA. Any
+// partial or inconsistent configuration is an error, because the controller
+// would otherwise start and then fail every push.
+func setupConfigTLS(ctx context.Context, c client.Client, cfg *Config, endpoints []string) (*configTLSSetup, error) {
+	if cfg.ProxyConfigCASecretRef == "" && cfg.ProxyConfigTLSSecretRef == "" {
+		return nil, nil //nolint:nilnil // nil setup is the plaintext push
+	}
+
+	if cfg.ProxyConfigCASecretRef == "" || cfg.ProxyConfigTLSSecretRef == "" {
+		return nil, errConfigTLSRefsIncomplete
+	}
+
+	caKey, err := parseConfigTLSSecretRef(cfg.ProxyConfigCASecretRef)
+	if err != nil {
+		return nil, errors.Wrap(err, "--proxy-config-ca-secret")
+	}
+
+	leafKey, err := parseConfigTLSSecretRef(cfg.ProxyConfigTLSSecretRef)
+	if err != nil {
+		return nil, errors.Wrap(err, "--proxy-config-tls-secret")
+	}
+
+	leafNames := make([]string, 0, len(endpoints))
+
+	for _, endpoint := range endpoints {
+		if err := checkConfigEndpointScheme(endpoint); err != nil {
+			return nil, errors.Wrap(err, "--proxy-endpoints")
+		}
+
+		parsed, err := url.Parse(endpoint)
+		if err != nil {
+			return nil, errors.Wrapf(err, "parsing --proxy-endpoints entry %q", endpoint)
+		}
+
+		if !slices.Contains(leafNames, parsed.Hostname()) {
+			leafNames = append(leafNames, parsed.Hostname())
+		}
+	}
+
+	authority, err := ensureConfigCA(ctx, c, caKey)
+	if err != nil {
+		return nil, err
+	}
+
+	return &configTLSSetup{authority: authority, leafKey: leafKey, leafNames: leafNames}, nil
+}
+
+func parseConfigTLSSecretRef(raw string) (types.NamespacedName, error) {
+	namespace, name, found := strings.Cut(strings.TrimSpace(raw), "/")
+	if !found || namespace == "" || name == "" || strings.Contains(name, "/") {
+		return types.NamespacedName{}, errors.Wrapf(errInvalidConfigTLSSecretRef, "got %q", raw)
+	}
+
+	return types.NamespacedName{Namespace: namespace, Name: name}, nil
+}
+
+// resolveConfigTLS runs setupConfigTLS on a direct client, for the reason
+// resolveProxyAuthToken gives: the manager's cache is not started yet.
+func resolveConfigTLS(ctx context.Context, mgr ctrl.Manager, cfg *Config, endpoints []string) (*configTLSSetup, error) {
+	if cfg.ProxyConfigCASecretRef == "" && cfg.ProxyConfigTLSSecretRef == "" {
+		return nil, nil //nolint:nilnil // nil setup is the plaintext push
+	}
+
+	directClient, err := client.New(mgr.GetConfig(), client.Options{Scheme: mgr.GetScheme()})
+	if err != nil {
+		return nil, errors.Wrap(err, "creating direct client for config API TLS")
+	}
+
+	setup, err := setupConfigTLS(ctx, directClient, cfg, endpoints)
+	if err != nil {
+		return nil, errors.Wrap(err, "config API TLS")
+	}
+
+	return setup, nil
+}
+
+// addSharedLeafIssuer registers the leader-only shared leaf issuer when
+// config API TLS is on.
+func addSharedLeafIssuer(mgr ctrl.Manager, setup *configTLSSetup, logger *slog.Logger) error {
+	if setup == nil {
+		return nil
+	}
+
+	issuer := &sharedLeafIssuer{
+		client:    mgr.GetClient(),
+		authority: setup.authority,
+		key:       setup.leafKey,
+		names:     setup.leafNames,
+		logger:    logger.With("component", "config-tls-issuer"),
+	}
+
+	if err := mgr.Add(issuer); err != nil {
+		return errors.Wrap(err, "adding the config API certificate issuer")
+	}
+
+	return nil
 }
