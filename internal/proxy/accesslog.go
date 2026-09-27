@@ -61,7 +61,16 @@ func newCountingResponseWriter(inner http.ResponseWriter) *countingResponseWrite
 // Mirrors stdlib's first-wins contract: subsequent calls are no-ops
 // (stdlib logs a warning but still passes them through; we silently
 // ignore because the wrapper exists to record what the client saw).
+// An informational status other than 101 is passed on without being
+// recorded, as stdlib does, so the final status that follows it still
+// counts; 101 ends the HTTP exchange and is the status to record.
 func (c *countingResponseWriter) WriteHeader(status int) {
+	if status >= http.StatusContinue && status < http.StatusOK && status != http.StatusSwitchingProtocols {
+		c.ResponseWriter.WriteHeader(status)
+
+		return
+	}
+
 	if c.writeHeaderCalled.CompareAndSwap(false, true) {
 		c.status.Store(int32(status)) //nolint:gosec // HTTP status fits in int32 with room to spare
 		c.ResponseWriter.WriteHeader(status)
