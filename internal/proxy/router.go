@@ -72,6 +72,10 @@ type Router struct {
 	updateMu         sync.Mutex
 	pruner           transportPruner
 	transportFactory TransportFactory
+	// mirrorLimit and metrics are copied from the Handler by SetHandler and
+	// handed to every mirror filter UpdateConfig compiles.
+	mirrorLimit int64
+	metrics     *Metrics
 	// firstConfigCh delivers the first config applied via UpdateConfig exactly
 	// once (guarded by firstConfigOnce). Buffered (size 1) so the send never
 	// blocks even when nothing is waiting yet. The proxy's startup protocol
@@ -131,10 +135,13 @@ func (r *Router) FirstConfigLoaded() <-chan *Config {
 // filters so the mirror leg dials TLS the same way the main leg does. Two
 // concerns flow through one wiring point because both lifecycle-bind to the
 // Handler: the pool is owned by the Handler, the factory is the Handler's
-// closure over getTransport.
+// closure over getTransport. It must be called before the first UpdateConfig:
+// it writes fields UpdateConfig reads under updateMu without taking the lock.
 func (r *Router) SetHandler(h *Handler) {
 	r.pruner = h
 	r.transportFactory = h.TransportFactory()
+	r.mirrorLimit = h.mirrorMaxInFlight
+	r.metrics = h.metrics
 }
 
 // ConfigVersion returns the version of the currently loaded configuration.
@@ -243,7 +250,11 @@ func (r *Router) UpdateConfig(cfg *Config) error {
 		return errTLSMirrorWithoutTransportFactory
 	}
 
-	table := compileRoutingTable(cfg, r.transportFactory)
+	table := compileRoutingTable(cfg, filterEnv{
+		factory:     r.transportFactory,
+		mirrorLimit: r.mirrorLimit,
+		metrics:     r.metrics,
+	})
 
 	r.table.Store(table)
 
@@ -418,12 +429,12 @@ func indexRuleByHostname(
 	}
 }
 
-// compileRoutingTable builds a routingTable from a Config. The
-// transportFactory is forwarded down to compileRule → CompileFilters →
-// compileFilter so the RequestMirror filter can borrow a per-cert
-// RoundTripper from the Handler's shared pool when a BackendTLSPolicy
-// targets the mirror destination.
-func compileRoutingTable(cfg *Config, factory TransportFactory) *routingTable {
+// compileRoutingTable builds a routingTable from a Config. env is forwarded
+// down to compileRule → compileFilters → compileFilter for the RequestMirror
+// filter: its transport factory lets the mirror borrow a per-cert
+// RoundTripper from the Handler's shared pool when a BackendTLSPolicy targets
+// the mirror destination.
+func compileRoutingTable(cfg *Config, env filterEnv) *routingTable {
 	table := &routingTable{
 		exactHosts: make(map[string][]*compiledRule),
 		version:    cfg.Version,
@@ -436,7 +447,7 @@ func compileRoutingTable(cfg *Config, factory TransportFactory) *routingTable {
 	for ruleIdx := range cfg.Rules {
 		rule := &cfg.Rules[ruleIdx]
 
-		compiled, err := compileRule(rule, ruleIdx, factory)
+		compiled, err := compileRule(rule, ruleIdx, env)
 		if err != nil {
 			// Skip the rule, keep the document. Match patterns are tenant
 			// authored and reach the proxy unchecked, so refusing the whole
@@ -535,10 +546,9 @@ func (r *compileReport) summarize(rules int) {
 	}
 }
 
-// compileRule compiles a single RouteRule into a compiledRule. factory is
-// forwarded to CompileFilters so the mirror filter can borrow the Handler's
-// per-cert RoundTripper.
-func compileRule(rule *RouteRule, ruleIndex int, factory TransportFactory) (*compiledRule, error) {
+// compileRule compiles a single RouteRule into a compiledRule. env is
+// forwarded to compileFilters for the mirror filter.
+func compileRule(rule *RouteRule, ruleIndex int, env filterEnv) (*compiledRule, error) {
 	var matches []*CompiledMatch
 
 	for matchIdx, match := range rule.Matches {
@@ -552,7 +562,7 @@ func compileRule(rule *RouteRule, ruleIndex int, factory TransportFactory) (*com
 
 	var closedErr error
 
-	filters, err := CompileFilters(rule.Filters, factory)
+	filters, err := compileFilters(rule.Filters, env)
 	if err != nil {
 		closedErr = err
 		rule = failClosed(rule, noBackend)
@@ -567,7 +577,7 @@ func compileRule(rule *RouteRule, ruleIndex int, factory TransportFactory) (*com
 			continue
 		}
 
-		compiledFilters, bfErr := CompileFilters(backend.Filters, factory)
+		compiledFilters, bfErr := compileFilters(backend.Filters, env)
 		if bfErr != nil {
 			if closedErr == nil {
 				closedErr = errors.Wrapf(bfErr, "backend[%d]", backendIdx)

@@ -103,6 +103,11 @@ type Handler struct {
 	// path. Set via WithMetrics.
 	metrics *Metrics
 
+	// mirrorMaxInFlight overrides the per-filter mirror dispatch limit; zero
+	// keeps mirrorMaxLiveDispatches. The Router hands it to every mirror
+	// filter it compiles. Set via WithMirrorMaxInFlight.
+	mirrorMaxInFlight int64
+
 	// tracingEnabled gates server-span creation in ServeHTTP. When false
 	// (the default), ServeHTTP skips trace-context extraction, span start,
 	// and the request-context rebuild entirely, so the disabled path stays
@@ -218,6 +223,17 @@ func WithAllowXOriginalHost(allow bool) HandlerOption {
 func WithMetrics(metrics *Metrics) HandlerOption {
 	return func(handler *Handler) {
 		handler.metrics = metrics
+	}
+}
+
+// WithMirrorMaxInFlight sets how many dispatches each RequestMirror filter may
+// keep in flight before it drops further copies. Zero or a negative value
+// keeps the built-in limit.
+func WithMirrorMaxInFlight(limit int) HandlerOption {
+	return func(handler *Handler) {
+		if limit > 0 {
+			handler.mirrorMaxInFlight = int64(limit)
+		}
 	}
 }
 
@@ -343,6 +359,12 @@ func NewHandler(router *Router, opts ...HandlerOption) *Handler {
 	}
 
 	return handler
+}
+
+// RecordContainedPanic counts a panic the tunnel adapter recovered from while
+// this handler served a request. It implements tunnel.PanicRecorder.
+func (h *Handler) RecordContainedPanic() {
+	h.metrics.containedPanic(panicSiteRequest)
 }
 
 // writeRuleUnavailable handles the rule-level fail-closed path: when the

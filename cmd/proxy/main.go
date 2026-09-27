@@ -471,6 +471,14 @@ func drainErrors(logger *slog.Logger, errChan <-chan error) {
 	}
 }
 
+// The tunnel adapter finds the panic counter by asserting this interface on
+// the handler it wraps, so a rename on either side must fail the build rather
+// than silently stop the count. It does not cover wrapping: the adapter looks
+// for the method only on the handler it is given, so middleware placed between
+// it and the *proxy.Handler would hide the method and leave the request-site
+// count at zero.
+var _ tunnel.PanicRecorder = (*proxy.Handler)(nil)
+
 type dataPlane struct {
 	router    *proxy.Router
 	handler   *proxy.Handler
@@ -750,6 +758,29 @@ func accessLogStripQueryOption() proxy.HandlerOption {
 	return proxy.WithAccessLogStripQuery(true)
 }
 
+// mirrorMaxInFlightEnv overrides the per-filter mirror dispatch limit.
+const mirrorMaxInFlightEnv = "PROXY_MIRROR_MAX_IN_FLIGHT"
+
+// mirrorMaxInFlight reads PROXY_MIRROR_MAX_IN_FLIGHT. Zero means "keep the
+// built-in limit", which is also what a malformed or non-positive value gets,
+// with a warning: a typo must never uncap mirroring or turn it off.
+func mirrorMaxInFlight(logger *slog.Logger) int {
+	raw := strings.TrimSpace(os.Getenv(mirrorMaxInFlightEnv))
+	if raw == "" {
+		return 0
+	}
+
+	limit, err := strconv.Atoi(raw)
+	if err != nil || limit <= 0 {
+		logger.Warn("ignoring invalid mirror dispatch limit; keeping the built-in one",
+			"env", mirrorMaxInFlightEnv, "value", raw)
+
+		return 0
+	}
+
+	return limit
+}
+
 // allowXOriginalHostOption translates PROXY_ALLOW_X_ORIGINAL_HOST into
 // proxy.WithAllowXOriginalHost. Returns nil unless the value is explicitly
 // truthy, so every other input — unset, empty, "false", a typo — leaves the
@@ -842,6 +873,10 @@ func handlerOptions(logger *slog.Logger) []proxy.HandlerOption {
 
 	if tracingOpt := tracingHandlerOption(); tracingOpt != nil {
 		opts = append(opts, tracingOpt)
+	}
+
+	if limit := mirrorMaxInFlight(logger); limit > 0 {
+		opts = append(opts, proxy.WithMirrorMaxInFlight(limit))
 	}
 
 	if allowOpt := allowXOriginalHostOption(); allowOpt != nil {

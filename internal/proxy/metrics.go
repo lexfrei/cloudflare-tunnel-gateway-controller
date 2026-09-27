@@ -39,6 +39,14 @@ const statusClassAborted = "aborted"
 // data-plane instrument.
 const metricLabelHostname = "hostname"
 
+// Contained-panic site label values, a closed set: where the recover that
+// caught the panic runs.
+const (
+	panicSiteRequest       = "request"
+	panicSiteWebSocketCopy = "websocket_copy"
+	panicSiteMirror        = "mirror"
+)
+
 // durationBucketCeiling is the extra top histogram bucket (seconds) appended
 // to the Prometheus defaults, matching the proxy's header-timeout scale.
 const durationBucketCeiling = 30
@@ -90,6 +98,13 @@ type Metrics struct {
 	// client. Post-hijack WebSocket frames flow through the raw connection and
 	// bypass the counting body, so — like responseBytes — they are NOT counted.
 	requestBytes *prometheus.CounterVec
+	// handlerPanics counts panics the proxy recovered from instead of
+	// crashing, by the site of the recover. A contained panic leaves nothing
+	// else an operator would notice.
+	handlerPanics *prometheus.CounterVec
+	// mirrorDrops counts mirror copies refused because the filter already had
+	// its limit of dispatches in flight.
+	mirrorDrops prometheus.Counter
 }
 
 // requestDurationBuckets extends the Prometheus defaults (5ms..10s) with a
@@ -131,6 +146,14 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Name: "cftunnel_proxy_request_bytes_total",
 			Help: "Request body bytes read from clients.",
 		}, []string{metricLabelHostname}),
+		handlerPanics: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "cftunnel_proxy_handler_panics_total",
+			Help: "Panics the proxy recovered from instead of crashing, by site (request, websocket_copy, mirror).",
+		}, []string{"site"}),
+		mirrorDrops: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "cftunnel_proxy_mirror_dropped_total",
+			Help: "Mirror copies dropped because the filter's dispatch limit was reached.",
+		}),
 	}
 
 	reg.MustRegister(
@@ -141,9 +164,36 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		metrics.backendErrors,
 		metrics.responseBytes,
 		metrics.requestBytes,
+		metrics.handlerPanics,
+		metrics.mirrorDrops,
 	)
 
+	// Create every site's series at 0. A series born at 1 on the first panic
+	// reads as no increase, so that panic would never trip an alert.
+	for _, site := range []string{panicSiteRequest, panicSiteWebSocketCopy, panicSiteMirror} {
+		metrics.handlerPanics.WithLabelValues(site)
+	}
+
 	return metrics
+}
+
+// containedPanic counts a recovered panic. Nil-safe, like the rest of the
+// metrics hooks, so callers need no metrics-enabled check.
+func (m *Metrics) containedPanic(site string) {
+	if m == nil {
+		return
+	}
+
+	m.handlerPanics.WithLabelValues(site).Inc()
+}
+
+// mirrorDropped counts a mirror copy refused at the dispatch limit. Nil-safe.
+func (m *Metrics) mirrorDropped() {
+	if m == nil {
+		return
+	}
+
+	m.mirrorDrops.Inc()
 }
 
 // metricsRequestState carries per-request bookkeeping between ServeHTTP's
