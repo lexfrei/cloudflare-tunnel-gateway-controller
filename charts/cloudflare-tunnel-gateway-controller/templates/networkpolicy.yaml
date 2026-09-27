@@ -100,4 +100,9 @@ spec:
       ports:
         - protocol: TCP
           port: {{ .Values.proxy.configAPIPort }}
+    # The OTLP collector in controller.tracing.endpoint; the helper explains
+    # which endpoints it can scope and which ones get no rule.
+    {{- with include "cf-tunnel-gw-ctrl.tracingCollectorEgress" . }}
+    {{- . | nindent 4 }}
+    {{- end }}
 {{- end }}

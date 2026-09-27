@@ -74,6 +74,9 @@ controller:
     # gRPC; prefix with http:// or https:// to choose plaintext vs TLS.
     # Empty defers to the standard OTEL_EXPORTER_OTLP_ENDPOINT /
     # OTEL_EXPORTER_OTLP_TRACES_ENDPOINT environment variables.
+    # Under networkPolicy.enabled, an endpoint naming an in-cluster Service
+    # with an explicit port gets an egress rule for that Service's namespace
+    # on that port; any other endpoint gets none.
     endpoint: ""
     # -- Head-sampling probability in [0, 1], applied at the trace root
     # via ParentBased(TraceIDRatioBased). 1.0 samples every trace.

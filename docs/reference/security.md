@@ -262,7 +262,7 @@ The controller only needs egress to:
 | Kubernetes API | 443/6443 | Watch resources |
 | Cluster DNS | 53 | Resolve the proxies' headless Service |
 | Proxy config API | `proxy.configAPIPort` (8081) | Push the routing table to the data planes |
-| OTLP collector | collector's port (4317 for OTLP/gRPC) | Export traces, only when `tracing.enabled` |
+| OTLP collector | collector's port (4317 for OTLP/gRPC) | Export traces, only when `controller.tracing.enabled` |
 
 Writing that as a policy runs into one thing worth knowing before you narrow anything. A rule with ports and no `to` permits those ports to every destination, and rules are OR'd, so one unrestricted rule makes every narrower rule beside it inert. The obvious fix — replacing it with a catch-all `ipBlock` — is not equivalent: Cilium does not match in-cluster identities through CIDR peers unless the agent runs with `--policy-cidr-match-mode`, which Cilium ships disabled and still marks beta, so a `0.0.0.0/0` peer denies a host-network API server on the self-managed clusters where that is exactly how the API server is reached. Narrow with a destination you have checked against your own CNI, and remember that most of them evaluate egress after DNAT, so a Service ClusterIP never matches.
 
@@ -270,7 +270,7 @@ The chart's `networkPolicy.kubernetesApiIpBlocks` is where that narrowing goes; 
 
 The Cloudflare rule beside it is narrowed by `networkPolicy.cloudflareIpRanges`, which ships populated. Emptying both its address families is refused rather than rendered: the rule would lose its `to:` and become the unrestricted shape above, which is the opposite of what emptying an allowlist looks like it does. The refusal is armed by `networkPolicy.enabled` for the controller policy and by `proxy.networkPolicy.egressRestricted` for the proxy one, neither of which is on by default; turn off whichever of those two you have enabled to drop the restriction.
 
-The chart's policy carries no rule for the collector, so turning tracing on under it drops the exporter's traffic. Add the rule yourself.
+With `controller.tracing.enabled` on and a `controller.tracing.endpoint` that names an in-cluster Service with an explicit port (`<service>`, `<service>.<namespace>`, or `<service>.<namespace>.svc` with or without the cluster domain), the chart's policy admits that Service's namespace on the endpoint's port. A NetworkPolicy matches the port the collector pod listens on, so a collector Service whose `port` and `targetPort` differ stays blocked. Any other endpoint gets no rule. A loopback endpoint needs none, and neither does an empty one: the chart sets no OTLP environment variable, so the exporter falls back to `localhost:4317`. A collector outside the cluster, an IP address, or an endpoint without a port is reached through the Kubernetes API rule while it listens on 443 and that rule is not narrowed; otherwise add a NetworkPolicy of your own that admits it, since policies selecting the same pod are additive.
 
 #### NetworkPolicy Example
 
