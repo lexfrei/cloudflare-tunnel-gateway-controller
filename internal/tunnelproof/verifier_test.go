@@ -500,3 +500,62 @@ func TestVerify_CacheDropsWhatNoLongerNeedsKeeping(t *testing.T) {
 	require.Equal(t, tunnelownership.ProofVerified, verifier.Verify(context.Background(), testAPIKey, parse(t, genuine)))
 	assert.Len(t, verifier.CacheKeys(), 1, "a confirmation unused for a lifetime past its lapse must go")
 }
+
+// TestVerify_ALateNoAnswerDoesNotOverrideAFreshRefutation pins the ordering of
+// concurrent lookups. Two layers can ask about one expired confirmation at the
+// same time; if the one that got no answer finishes last, it must not restore
+// the old confirmation over the refutation the other one just stored.
+func TestVerify_ALateNoAnswerDoesNotOverrideAFreshRefutation(t *testing.T) {
+	t.Parallel()
+
+	genuine := encodeToken(t, testAccount, testTunnel, realSecret)
+
+	var calls atomic.Int32
+
+	arrived := make(chan struct{})
+	release := make(chan struct{})
+
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+
+		switch calls.Add(1) {
+		case 1:
+			body, _ := json.Marshal(map[string]any{"success": true, "errors": []any{}, "messages": []any{}, "result": genuine})
+			_, _ = writer.Write(body)
+		case 2:
+			close(arrived)
+			<-release
+			writer.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = writer.Write([]byte(`{"success":false,"errors":[{"code":1000,"message":"down"}],"messages":[],"result":null}`))
+		default:
+			writer.WriteHeader(http.StatusNotFound)
+			_, _ = writer.Write([]byte(`{"success":false,"errors":[{"code":1003,"message":"not found"}],"messages":[],"result":null}`))
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	verifier := tunnelproof.NewVerifier(func(apiToken string) *cloudflare.Client {
+		return cloudflare.NewClient(option.WithAPIToken(apiToken), option.WithBaseURL(server.URL), option.WithMaxRetries(0))
+	})
+	clk := &clock{now: time.Unix(1_000_000, 0)}
+	verifier.SetClock(clk.Now)
+
+	require.Equal(t, tunnelownership.ProofVerified, verifier.Verify(context.Background(), testAPIKey, parse(t, genuine)))
+
+	clk.now = clk.now.Add(2 * time.Hour)
+
+	late := make(chan tunnelownership.Proof)
+
+	go func() {
+		late <- verifier.Verify(context.Background(), testAPIKey, parse(t, genuine))
+	}()
+
+	<-arrived
+	require.Equal(t, tunnelownership.ProofRefuted, verifier.Verify(context.Background(), testAPIKey, parse(t, genuine)))
+
+	close(release)
+	assert.Equal(t, tunnelownership.ProofRefuted, <-late, "the late lookup must report the newer refutation")
+	assert.Equal(t, tunnelownership.ProofRefuted, verifier.Verify(context.Background(), testAPIKey, parse(t, genuine)),
+		"the refutation must stay stored")
+	assert.EqualValues(t, 3, calls.Load())
+}

@@ -317,6 +317,8 @@ func TestSyncAllRoutes_UncheckableClaimIsRetriedAndRecovers(t *testing.T) {
 	result, _, err := syncer.SyncAllRoutes(context.Background())
 	require.NoError(t, err)
 	assert.Positive(t, result.RequeueAfter, "an unchecked claim must bring the sync back on its own")
+	assert.Greater(t, result.RequeueAfter, apiErrorRequeueDelay,
+		"a tenant can keep its claim unchecked indefinitely, so it must not buy a full sync at the apiserver-error pace")
 	assert.Empty(t, api.hostnamesFor(tenantTunnelUUID))
 
 	verifier.proof.Store(int32(tunnelownership.ProofVerified))
