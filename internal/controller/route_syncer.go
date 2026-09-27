@@ -77,6 +77,22 @@ type RouteSyncer struct {
 	// from the resolved credentials. nil uses the ConfigResolver's default;
 	// tests inject a factory pointing at an httptest server.
 	cloudflareClientFactory func(resolved *config.ResolvedConfig) *cloudflare.Client
+
+	// claimedTunnels is every tunnel the previous sync grouped for per-Gateway
+	// partitions alone, keyed by tunnel ID, with the config that writes it. A
+	// tunnel that drops out of the next sync's groups is emptied with that
+	// remembered config, because its own Gateway, GatewayConfig and credential
+	// may be gone by then. Guarded by syncMu.
+	//
+	// ponytail: in memory only, so a tunnel abandoned while the controller is
+	// down keeps its last document; persisting the set would close that.
+	claimedTunnels map[string]claimedTunnel
+}
+
+// claimedTunnel is one entry of RouteSyncer.claimedTunnels.
+type claimedTunnel struct {
+	resolved      config.ResolvedConfig
+	partitionKeys []string
 }
 
 // cloudflareClient builds the API client via the injected factory when set,
@@ -906,6 +922,7 @@ func (s *RouteSyncer) SyncAllRoutes(ctx context.Context) (ctrl.Result, *SyncResu
 	)
 
 	outcome := s.syncTunnelGroups(ctx, logger, groups)
+	s.emptyAbandonedTunnels(ctx, logger, groups, infra, &outcome)
 
 	// Attribute each failed tunnel group to exactly the parents on it: a
 	// route's parent binds to a Gateway, which maps to a partition (its own,
@@ -951,12 +968,20 @@ func (s *RouteSyncer) SyncAllRoutes(ctx context.Context) (ctrl.Result, *SyncResu
 
 	// A transient infra-resolve failure left a Gateway's routes unprogrammed
 	// (fail closed) but is retryable — requeue so the next sync re-resolves and
-	// programs them, rather than waiting for an unrelated event.
-	if len(syncResult.TransientBrokenKeys) > 0 {
+	// programs them, rather than waiting for an unrelated event. A failed
+	// emptying write needs the same, or a quiet cluster keeps the stale document.
+	if leftForRetry(syncResult, &outcome) {
 		return ctrl.Result{RequeueAfter: apiErrorRequeueDelay, Priority: new(priorityRoute)}, syncResult, nil
 	}
 
 	return ctrl.Result{}, syncResult, nil
+}
+
+// leftForRetry reports work a sync left that no watched event brings back: a
+// Gateway whose config failed to resolve transiently, or an abandoned tunnel
+// whose emptying write failed.
+func leftForRetry(syncResult *SyncResult, outcome *tunnelGroupsOutcome) bool {
+	return len(syncResult.TransientBrokenKeys) > 0 || outcome.emptyingPending
 }
 
 // buildSyncResult assembles the SyncResult shared by every SyncAllRoutes exit
@@ -1047,6 +1072,87 @@ func buildTunnelGroups(shared *config.ResolvedConfig, partitions []routePartitio
 	}
 
 	return groups
+}
+
+// emptyAbandonedTunnels records the tunnels this sync grouped and empties the
+// ingress document of every tunnel the previous sync grouped and this one did
+// not. Only the tunnels that still have a partition are written above, so
+// without this a tunnel losing its last partition (opt-out, refusal, Gateway
+// deletion, token moved to another tunnel) keeps its last rules at the edge.
+//
+// A tunnel that carried the shared partition is never recorded, so never
+// emptied: the class tunnel belongs to the operator, and a changed class
+// tunnelID must leave the old document serving until the shared proxy moves.
+//
+// A tunnel whose previous partitions include a Gateway that currently fails to
+// resolve, and was not refused, is kept as it is: that Gateway's plane keeps
+// running on its last-good config, so its document must too. A failed emptying
+// write is kept for the next sync and recorded as pending on outcome so the
+// caller requeues, unless Cloudflare refuses it outright (auth or a 4xx such as
+// a deleted tunnel), which no retry changes. A successful emptying write counts
+// as a write on outcome.
+func (s *RouteSyncer) emptyAbandonedTunnels(
+	ctx context.Context,
+	logger *slog.Logger,
+	groups []tunnelGroup,
+	infra *infraGateways,
+	outcome *tunnelGroupsOutcome,
+) {
+	previous := s.claimedTunnels
+	s.claimedTunnels = make(map[string]claimedTunnel, len(groups))
+	grouped := make(map[string]bool, len(groups))
+
+	for i := range groups {
+		grouped[groups[i].resolved.TunnelID] = true
+
+		keys := make([]string, 0, len(groups[i].partitions))
+		for _, partition := range groups[i].partitions {
+			keys = append(keys, partition.Key)
+		}
+
+		if slices.Contains(keys, sharedPartitionKey) {
+			continue
+		}
+
+		s.claimedTunnels[groups[i].resolved.TunnelID] = claimedTunnel{resolved: *groups[i].resolved, partitionKeys: keys}
+	}
+
+	for tunnelID, tunnel := range previous {
+		// Checked against every group, the shared one included: a class
+		// tunnelID moved onto this tunnel had its document written above.
+		if grouped[tunnelID] {
+			continue
+		}
+
+		if slices.ContainsFunc(tunnel.partitionKeys, infra.keepsLastPlane) {
+			s.claimedTunnels[tunnelID] = tunnel
+
+			continue
+		}
+
+		result := s.syncTunnelGroup(ctx, logger, &tunnelGroup{resolved: &tunnel.resolved})
+		if result.err == nil {
+			if result.written {
+				outcome.anyWritten = true
+
+				logger.Info("emptied the ingress document of a tunnel no Gateway claims any more", "tunnel", tunnelID)
+			}
+
+			continue
+		}
+
+		switch cfmetrics.ClassifyCloudflareError(result.err) {
+		case cfmetrics.ErrorTypeAuth, cfmetrics.ErrorTypeClientError:
+			logger.Error("could not empty the ingress document of a tunnel no Gateway claims any more; giving up",
+				"tunnel", tunnelID, "error", result.err)
+		default:
+			logger.Error("could not empty the ingress document of a tunnel no Gateway claims any more; retrying on the next sync",
+				"tunnel", tunnelID, "error", result.err)
+
+			s.claimedTunnels[tunnelID] = tunnel
+			outcome.emptyingPending = true
+		}
+	}
 }
 
 // tunnelCollision names the opted-in Gateways that share one tunnel — an
@@ -1151,6 +1257,9 @@ type tunnelGroupsOutcome struct {
 	totalRules     int
 	anyWritten     bool
 	groupErrs      []error
+	// emptyingPending reports an abandoned tunnel whose emptying write failed
+	// and is kept for a retry.
+	emptyingPending bool
 	// failedPartitions maps a partition key (sharedPartitionKey or an infra
 	// Gateway's "namespace/name") to the sync error of the tunnel serving it.
 	// The per-route, per-Gateway attribution is derived from this against the

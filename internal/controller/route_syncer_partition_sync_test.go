@@ -6,6 +6,7 @@ package controller
 // merged into one document write (no last-writer-wins).
 
 import (
+	"cmp"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -43,9 +44,10 @@ type recordingTunnelAPI struct {
 	server *httptest.Server
 
 	mu           sync.Mutex
-	puts         map[string][]string           // tunnelID -> hostnames in the written document
-	docs         map[string][]map[string]any   // tunnelID -> ingress rules last written
-	failTunnelID string                        // PUTs to this tunnel ID return 500
+	puts         map[string][]string         // tunnelID -> hostnames in the written document
+	docs         map[string][]map[string]any // tunnelID -> ingress rules last written
+	failTunnelID string                      // PUTs to this tunnel ID fail
+	failStatus   int                         // the failing PUT's status; 0 means 500
 }
 
 // failTunnel makes every PUT to tunnelID return a 5xx, simulating one tunnel's
@@ -88,11 +90,15 @@ func newRecordingTunnelAPI(t *testing.T) *recordingTunnelAPI {
 
 			_ = json.NewEncoder(writer).Encode(map[string]any{
 				"success": true, "errors": []any{},
-				"result":  map[string]any{"config": map[string]any{"ingress": rules}},
+				"result": map[string]any{"config": map[string]any{"ingress": rules}},
 			})
 		case http.MethodPut:
 			if api.shouldFail(tunnelID) {
-				writer.WriteHeader(http.StatusInternalServerError)
+				api.mu.Lock()
+				status := cmp.Or(api.failStatus, http.StatusInternalServerError)
+				api.mu.Unlock()
+
+				writer.WriteHeader(status)
 				_ = json.NewEncoder(writer).Encode(map[string]any{
 					"success": false,
 					"errors":  []any{map[string]any{"code": 1000, "message": "simulated tunnel write failure"}},
