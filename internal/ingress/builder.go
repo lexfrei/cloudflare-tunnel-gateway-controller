@@ -26,8 +26,7 @@ const (
 	DefaultHTTPSPort = 443
 
 	// Backend reference constants.
-	backendGroupCore          = ""     // Core resources (Service, Pod, etc.) use empty group
-	backendGroupCoreAlias     = "core" // Accept "core" as backwards-compatible alias
+	backendGroupCore          = "" // Core resources (Service, Pod, etc.) use empty group
 	backendKindService        = "Service"
 	backendGroupServiceImport = "multicluster.x-k8s.io"
 	backendKindServiceImport  = "ServiceImport"

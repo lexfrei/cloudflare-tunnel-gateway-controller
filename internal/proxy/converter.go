@@ -13,6 +13,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
+
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/coregroup"
 )
 
 // configVersionCounter provides monotonically increasing config versions.
@@ -629,7 +631,7 @@ const (
 // EndpointSlice lookups, the zero-endpoint 503 probe, or BackendTLSPolicy
 // targeting on it must NOT begin matching ServiceImport/ExternalBackend.
 func IsServiceBackendRef(ref gatewayv1.BackendObjectReference) bool {
-	if ref.Group != nil && *ref.Group != "" && *ref.Group != "core" {
+	if ref.Group != nil && !coregroup.Is(string(*ref.Group)) {
 		return false
 	}
 

@@ -1568,6 +1568,21 @@ func TestFindRoutesForGateway(t *testing.T) {
 			expectedCount: 0,
 		},
 		{
+			name: "parentRef kind and group are matched with their spec defaults",
+			obj: &gatewayv1.Gateway{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-gw", Namespace: "default"},
+				Spec:       gatewayv1.GatewaySpec{GatewayClassName: "cloudflare-tunnel"},
+			},
+			controllerName: "test-controller",
+			routes: []Route{
+				findRoutesKindRoute("listenerset-same-name", kindListenerSet, gatewayv1.GroupName),
+				findRoutesKindRoute("foreign-group", kindGateway, "example.com"),
+				findRoutesKindRoute("explicit-gateway", kindGateway, gatewayv1.GroupName),
+			},
+			expectedCount:  1,
+			expectedRoutes: []string{"default/explicit-gateway"},
+		},
+		{
 			name: "returns empty for empty routes slice",
 			obj: &gatewayv1.Gateway{
 				ObjectMeta: metav1.ObjectMeta{Name: "test-gw"},
@@ -2205,4 +2220,21 @@ func TestGRPCRouteWrapper_ReferencesService(t *testing.T) {
 		})
 		assert.False(t, w.ReferencesService("default", "svc-x"))
 	})
+}
+
+// findRoutesKindRoute builds an HTTPRoute in "default" whose single parentRef
+// names "test-gw" with an explicit kind and group.
+func findRoutesKindRoute(name, kind, group string) Route {
+	return HTTPRouteWrapper{&gatewayv1.HTTPRoute{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"},
+		Spec: gatewayv1.HTTPRouteSpec{
+			CommonRouteSpec: gatewayv1.CommonRouteSpec{
+				ParentRefs: []gatewayv1.ParentReference{{
+					Name:  "test-gw",
+					Kind:  new(gatewayv1.Kind(kind)),
+					Group: new(gatewayv1.Group(group)),
+				}},
+			},
+		},
+	}}
 }

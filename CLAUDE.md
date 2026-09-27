@@ -172,6 +172,7 @@ cmd/proxy/               # L7 proxy binary entrypoint (standalone + tunnel modes
 internal/
   config/                # GatewayClassConfig resolver and credential handling
   controller/            # Kubernetes controllers (Gateway, HTTPRoute, GRPCRoute, ProxySyncer)
+  coregroup/             # Core API group predicate for backendRefs, their ReferenceGrants and BackendTLSPolicy CA refs
   dns/                   # Cluster domain auto-detection
   ingress/               # HTTPRoute → Cloudflare ingress rule conversion
   logging/               # Structured logging helpers (OpenTelemetry trace handler)
