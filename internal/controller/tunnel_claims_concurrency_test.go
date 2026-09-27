@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -62,6 +63,63 @@ var errLookupAbandoned = errors.New("claim lookup abandoned before every lookup 
 
 func tunnelFor(namespace string) string {
 	return fmt.Sprintf("00000000-0000-0000-0000-%012s", namespace[len(namespace)-1:])
+}
+
+// peakClaimResolver holds each lookup for a moment and records the most
+// lookups ever in flight at once.
+type peakClaimResolver struct {
+	inFlight atomic.Int32
+	peak     atomic.Int32
+}
+
+func (r *peakClaimResolver) ResolveTunnelClaimForGateway(
+	_ context.Context,
+	gateway *gatewayv1.Gateway,
+) (*config.TunnelClaim, error) {
+	current := r.inFlight.Add(1)
+	defer r.inFlight.Add(-1)
+
+	for {
+		seen := r.peak.Load()
+		if current <= seen || r.peak.CompareAndSwap(seen, current) {
+			break
+		}
+	}
+
+	time.Sleep(20 * time.Millisecond)
+
+	return &config.TunnelClaim{TunnelID: tunnelFor(gateway.Namespace), Proof: tunnelownership.ProofVerified}, nil
+}
+
+// TestCollectTunnelClaims_BoundsConcurrentLookups pins the bound on lookups in
+// flight: a cluster with many dedicated planes must not open one Cloudflare
+// request per Gateway at once.
+func TestCollectTunnelClaims_BoundsConcurrentLookups(t *testing.T) {
+	t.Parallel()
+
+	const gatewayCount = 3 * maxConcurrentClaimLookups
+
+	objects := make([]client.Object, 0, gatewayCount+1)
+	objects = append(objects, claimsGatewayClass())
+
+	for i := range gatewayCount {
+		objects = append(objects, claimsGateway(fmt.Sprintf("team-%d", i), "gw", 0, "token"))
+	}
+
+	fakeClient := setupGatewayFakeClient(objects...)
+	resolver := &peakClaimResolver{}
+	ctx := context.Background()
+
+	gateways, err := managedInfraGateways(ctx, fakeClient, "test-controller")
+	require.NoError(t, err)
+	require.Len(t, gateways, gatewayCount)
+
+	claims := collectTunnelClaims(ctx, gateways, resolver, claimsClassTunnel)
+	require.Len(t, claims, gatewayCount)
+
+	assert.LessOrEqual(t, resolver.peak.Load(), int32(maxConcurrentClaimLookups),
+		"no more than the bound may be in flight at once")
+	assert.Greater(t, resolver.peak.Load(), int32(1), "lookups must still overlap")
 }
 
 // TestCollectTunnelClaims_LooksClaimsUpConcurrently pins that one pass does not
