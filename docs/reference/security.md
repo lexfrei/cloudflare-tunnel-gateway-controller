@@ -220,6 +220,21 @@ The binary enforces this on its own side too, which matters for a hand-written p
 
 The token and the NetworkPolicy are both reach controls, and neither encrypts anything. The push is plain HTTP — the endpoint the chart wires for the shared plane and the ones the controller renders for per-Gateway planes are both `http://` URLs — and it carries the bearer token in an `Authorization` header, plus the private key of the backend client certificate for any route whose parent Gateway sets `spec.tls.backend.clientCertificateRef` and whose backend is covered by a `BackendTLSPolicy`. So the token answers who may replace the routing table and the NetworkPolicy answers who may reach the port at all; neither says anything about who can read the bytes in flight, and on a CNI without pod-to-pod encryption an on-path party inside the cluster reads the token and that key. Wire confidentiality is the cluster's to provide: an encrypting CNI mode (WireGuard or IPsec), or a mesh that wraps pod-to-pod traffic in mTLS. TLS on the config API itself is tracked in [#719](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/issues/719).
 
+#### Forwarded Headers Reaching Backends
+
+The proxy passes the forwarding headers it receives on to the backend instead of generating its own. A route's `RequestHeaderModifier` filter runs first and can set or remove any of them; a request mirror's copy sees only the filters listed before the mirror. What the filters leave is then handled as follows:
+
+- `Forwarded`, `X-Forwarded-Host` and `X-Forwarded-Proto` reach the backend as the proxy received them.
+- `X-Forwarded-For` reaches the backend with the address of the connection the request arrived on appended, when that address is known. That happens after the filter, so a removed `X-Forwarded-For` comes back holding only that address. A WebSocket upgrade to a WebSocket-enabled backend and a request mirror's copy carry the header without the appended address.
+- `X-Original-Host` and the proxy's internal `X-Proxy-Host-Rewritten` marker are removed before any request reaches a backend.
+- Other end-to-end request headers pass through.
+
+The Cloudflare edge forwards arbitrary `X-*` headers from any client, and apart from the removals above the proxy does not rewrite them, so a backend should not trust them as a statement from the edge:
+
+- For the client IP, read `CF-Connecting-IP`, which the edge sets to the address of the client that connected to it. The leftmost `X-Forwarded-For` entry is whatever the client chose to send.
+- Do not build absolute URLs, such as password-reset links, redirects or canonical tags, from `X-Forwarded-Host`. A client can set it to any host. Use a canonical host from the backend's own configuration.
+- `X-Forwarded-Proto` is set by the edge to the protocol the client used to reach it, which is usually what a backend wants to know. See Cloudflare's [HTTP request headers](https://developers.cloudflare.com/fundamentals/reference/http-headers/) reference for what the edge sets.
+
 #### Egress Requirements
 
 The controller only needs egress to:
@@ -341,9 +356,18 @@ Pinning by digest also makes `pullPolicy` irrelevant to correctness: a digest re
 
 ### Helm Chart Verification
 
+The chart is published as an OCI artifact, and the release job signs that artifact with cosign (keyless) as it does the images. No `.prov` provenance file is published, so `helm verify` has nothing to check. Verify the OCI artifact instead, and for the same reason as with the images, install the digest cosign verified rather than the version tag, which would be resolved a second time:
+
 ```bash
-helm verify cloudflare-tunnel-gateway-controller-<version>.tgz
+digest=$(cosign verify "ghcr.io/lexfrei/charts/cloudflare-tunnel-gateway-controller:<version>" \
+  --certificate-identity-regexp="https://github.com/lexfrei/cloudflare-tunnel-gateway-controller" \
+  --certificate-oidc-issuer="https://token.actions.githubusercontent.com" \
+  --output=json | jq -r '.[0].critical.image."docker-manifest-digest"')
+helm install <release> "oci://ghcr.io/lexfrei/charts/cloudflare-tunnel-gateway-controller@${digest:?cosign verification failed}" \
+  --namespace <namespace> --values <values-file>
 ```
+
+The chart version, like the image tag, is the release version without its leading `v`. If your Helm does not accept a chart reference by digest, `helm pull oci://ghcr.io/lexfrei/charts/cloudflare-tunnel-gateway-controller --version <version>` prints the `Digest:` it pulled; compare it with the one cosign verified, then install the pulled archive.
 
 ## Secrets in Logs
 

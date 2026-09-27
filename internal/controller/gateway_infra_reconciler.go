@@ -739,6 +739,7 @@ func (r *GatewayInfraReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Watches(
 			&v1alpha1.GatewayClassConfig{},
 			handler.EnqueueRequestsFromMapFunc(r.classConfigInfraGateways),
+			builder.WithPredicates(classConfigWatchPredicates()...),
 		).
 		Watches(
 			&v1alpha1.GatewayConfig{},
@@ -761,7 +762,7 @@ func (r *GatewayInfraReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		// on, and rotation must roll the rendered pods. The cost is bounded
 		// by the mapper, not a predicate — every Secret write runs one
 		// cache-served namespace List and enqueues nothing unless the
-		// namespace holds an opted-in Gateway.
+		// namespace holds an opted-in Gateway of this controller's classes.
 		Watches(
 			&corev1.Secret{},
 			handler.EnqueueRequestsFromMapFunc(r.namespaceInfraGateways),
@@ -777,16 +778,18 @@ func (r *GatewayInfraReconciler) namespaceInfraGateways(
 	ctx context.Context,
 	obj client.Object,
 ) []reconcile.Request {
-	return optedInGatewaysInNamespace(ctx, r.Client, obj.GetNamespace())
+	return optedInGatewaysInNamespace(ctx, r.Client, r.ControllerName, obj.GetNamespace())
 }
 
-// optedInGatewaysInNamespace lists the Gateways in one namespace that ask for a
-// dedicated data plane. Shared by both Gateway-typed controllers: they enqueue
-// the same set for the same reasons, and a second copy would be free to drift
-// into disagreeing about who a namespace-scoped event affects.
+// optedInGatewaysInNamespace lists the Gateways of this controller's classes in
+// one namespace that ask for a dedicated data plane. Shared by both
+// Gateway-typed controllers: they enqueue the same set for the same reasons,
+// and a second copy would be free to drift into disagreeing about who a
+// namespace-scoped event affects.
 func optedInGatewaysInNamespace(
 	ctx context.Context,
 	cli client.Client,
+	controllerName string,
 	namespace string,
 ) []reconcile.Request {
 	var gateways gatewayv1.GatewayList
@@ -799,9 +802,30 @@ func optedInGatewaysInNamespace(
 
 	requests := make([]reconcile.Request, 0)
 
+	// The class list is read only once the namespace has a candidate, so an
+	// event in a namespace without opted-in Gateways costs one List.
+	var classNames map[string]bool
+
 	for i := range gateways.Items {
 		gateway := &gateways.Items[i]
 		if !config.HasInfrastructureParametersRef(gateway) {
+			continue
+		}
+
+		if classNames == nil {
+			var err error
+
+			classNames, err = managedClassNames(ctx, cli, controllerName)
+			if err != nil {
+				log.FromContext(ctx).Error(err,
+					"listing GatewayClasses to map a watched object; re-render trigger dropped",
+					"namespace", namespace)
+
+				return nil
+			}
+		}
+
+		if !classNames[string(gateway.Spec.GatewayClassName)] {
 			continue
 		}
 
@@ -813,14 +837,30 @@ func optedInGatewaysInNamespace(
 	return requests
 }
 
-// classConfigInfraGateways enqueues every opted-in Gateway when the
-// GatewayClassConfig changes. Unfiltered by class: this controller hard-errors
-// on managed classes carrying different parametersRef, so every managed class
-// resolves the same object.
+// classConfigWatchPredicates gates both Gateway-typed controllers'
+// GatewayClassConfig watches. Everything they read from it lives in spec, so a
+// status write has nothing to change.
+func classConfigWatchPredicates() []predicate.Predicate {
+	return []predicate.Predicate{predicate.GenerationChangedPredicate{}}
+}
+
+// classConfigInfraGateways enqueues every opted-in Gateway when a
+// GatewayClassConfig referenced by one of this controller's classes changes,
+// the same gate GatewayReconciler applies to this watch.
 func (r *GatewayInfraReconciler) classConfigInfraGateways(
 	ctx context.Context,
-	_ client.Object,
+	obj client.Object,
 ) []reconcile.Request {
+	classConfig, ok := obj.(*v1alpha1.GatewayClassConfig)
+	if !ok {
+		return nil
+	}
+
+	mapper := &ConfigMapper{Client: r.Client, ControllerName: r.ControllerName}
+	if !mapper.isConfigForOurClass(ctx, classConfig) {
+		return nil
+	}
+
 	gateways, err := managedInfraGateways(ctx, r.Client, r.ControllerName)
 	if err != nil {
 		log.FromContext(ctx).Error(err, "listing opted-in Gateways for a GatewayClassConfig change; re-render trigger dropped")

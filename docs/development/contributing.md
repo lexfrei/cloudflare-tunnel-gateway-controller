@@ -36,6 +36,19 @@ go build ./...
 golangci-lint run --timeout=5m --build-tags e2e,conformance,envtest
 ```
 
+## Local CI Checks
+
+Before pushing, run the checks for the files you changed. CI runs these checks among others, including the envtest-tagged tests, which need `KUBEBUILDER_ASSETS`.
+
+| Changed files | Required checks | Make target |
+| --- | --- | --- |
+| `*.go` | `go test -race ./...` and `golangci-lint run --timeout=5m --build-tags e2e,conformance,envtest` | `make ci-go` |
+| `charts/**` | `helm unittest`, `helm lint` and `helm-docs --chart-search-root charts/cloudflare-tunnel-gateway-controller`, committing the regenerated chart README | `make ci-helm` |
+| `**/*.md` | `markdownlint-cli2 '**/*.md'` and `./hack/check-doc-links.sh` | `make lint-md` runs markdownlint only |
+| `docs/**` | `mkdocs build --strict` | `make ci-docs` |
+
+`--build-tags` makes the linter compile the e2e, conformance and envtest test files, which the linter otherwise skips. `mkdocs` needs `pip install --requirement requirements-docs.txt`.
+
 ## Commit Message Format
 
 We use [Conventional Commits](https://www.conventionalcommits.org/):

@@ -2,15 +2,18 @@ package controller
 
 import (
 	"context"
+	"maps"
 	"sync/atomic"
 
 	"github.com/cockroachdb/errors"
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	ctrlbuilder "sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
@@ -73,7 +76,8 @@ func reconcileRoute[T client.Object](
 }
 
 // routeControllerSetupParams holds parameters for setting up a route controller
-// with standard watches (Gateway, GatewayClassConfig, Secret, ReferenceGrant).
+// with standard watches (Gateway, GatewayClass, GatewayClassConfig, Secret,
+// ReferenceGrant).
 type routeControllerSetupParams struct {
 	routeObject              client.Object
 	reconciler               reconcile.Reconciler
@@ -130,58 +134,25 @@ func namespaceScopedRequests(getAll RequestsFunc) handler.MapFunc {
 	}
 }
 
+// routeWatch is one secondary watch of a route controller: the watched type,
+// the handler that maps its events to route requests, and the predicates an
+// event must pass first. Kept as data so tests can drive events through
+// exactly what setupRouteController registers.
+type routeWatch struct {
+	object     client.Object
+	handler    handler.EventHandler
+	predicates []predicate.Predicate
+}
+
 // setupRouteController sets up the controller-runtime builder with standard
 // watches shared between HTTPRoute and GRPCRoute controllers.
 func setupRouteController(mgr ctrl.Manager, params *routeControllerSetupParams) error {
-	mapper := &ConfigMapper{
-		Client:         params.k8sClient,
-		ControllerName: params.controllerName,
-		ConfigResolver: params.configResolver,
-	}
-
-	// The generation predicate is applied PER WATCH (replicating the former
-	// global WithEventFilter verbatim), not globally: the Namespace watch
-	// below must see label-only updates, which a global generation filter
-	// would eat — namespace label edits do not bump generation.
-	generationChanged := ctrlbuilder.WithPredicates(predicate.GenerationChangedPredicate{})
-
 	builder := ctrl.NewControllerManagedBy(mgr).
-		For(params.routeObject, generationChanged).
-		Watches(
-			&gatewayv1.Gateway{},
-			handler.EnqueueRequestsFromMapFunc(params.findRoutesForGateway),
-			generationChanged,
-		).
-		Watches(
-			&gatewayv1.ListenerSet{},
-			handler.EnqueueRequestsFromMapFunc(params.findRoutesForListenerSet),
-			generationChanged,
-		).
-		Watches(
-			&v1alpha1.GatewayClassConfig{},
-			handler.EnqueueRequestsFromMapFunc(mapper.MapConfigToRequests(params.getAllRelevantRoutes)),
-			generationChanged,
-		).
-		Watches(
-			&corev1.Secret{},
-			handler.EnqueueRequestsFromMapFunc(mapper.MapSecretToRequests(params.getAllRelevantRoutes)),
-			generationChanged,
-		).
-		Watches(
-			&gatewayv1beta1.ReferenceGrant{},
-			handler.EnqueueRequestsFromMapFunc(params.findRoutesForRefGrant),
-			generationChanged,
-		)
+		For(params.routeObject, ctrlbuilder.WithPredicates(predicate.GenerationChangedPredicate{}))
 
-	if params.watchNamespaceLabels {
-		builder = builder.Watches(
-			&corev1.Namespace{},
-			handler.EnqueueRequestsFromMapFunc(namespaceScopedRequests(params.getAllRelevantRoutes)),
-			ctrlbuilder.WithPredicates(predicate.LabelChangedPredicate{}),
-		)
+	for _, watch := range routeWatches(params) {
+		builder = builder.Watches(watch.object, watch.handler, ctrlbuilder.WithPredicates(watch.predicates...))
 	}
-
-	builder = addProxyOnlyWatches(builder, params)
 
 	err := builder.Complete(params.reconciler)
 	if err != nil {
@@ -195,48 +166,178 @@ func setupRouteController(mgr ctrl.Manager, params *routeControllerSetupParams) 
 	return nil
 }
 
-// addProxyOnlyWatches adds the watches the proxy-driving route controllers
+// routeWatches returns every secondary watch of a route controller.
+func routeWatches(params *routeControllerSetupParams) []routeWatch {
+	mapper := &ConfigMapper{
+		Client:         params.k8sClient,
+		ControllerName: params.controllerName,
+		ConfigResolver: params.configResolver,
+	}
+
+	// The generation predicate is applied PER WATCH, and only to kinds whose
+	// spec edits bump metadata.generation. Secret, Service, ConfigMap and
+	// Namespace never carry one, so the gate would drop every update to them;
+	// their watches run unfiltered or on a predicate of their own.
+	generationChanged := []predicate.Predicate{predicate.GenerationChangedPredicate{}}
+
+	watches := []routeWatch{
+		{
+			object:     &gatewayv1.Gateway{},
+			handler:    handler.EnqueueRequestsFromMapFunc(params.findRoutesForGateway),
+			predicates: generationChanged,
+		},
+		{
+			// A Gateway whose tunnel claim stops being refused, or whose data
+			// plane goes away, changes only its conditions. Its routes must
+			// re-sync to follow, and the full relevant set is enqueued rather
+			// than the Gateway's direct routes: a Gateway whose routes all
+			// attach through a ListenerSet has none.
+			object: &gatewayv1.Gateway{},
+			handler: handler.EnqueueRequestsFromMapFunc(
+				managedGatewayRoutes(params.k8sClient, params.controllerName, params.getAllRelevantRoutes)),
+			predicates: []predicate.Predicate{gatewayVerdictChanged()},
+		},
+		{
+			// Acceptance keys on the class's controllerName, so a class of
+			// ours appearing, going away or changing parametersRef moves
+			// routes in or out without any route or Gateway event.
+			object:     &gatewayv1.GatewayClass{},
+			handler:    handler.EnqueueRequestsFromMapFunc(ownClassRoutes(params.controllerName, params.getAllRelevantRoutes)),
+			predicates: generationChanged,
+		},
+		{
+			object:     &gatewayv1.ListenerSet{},
+			handler:    handler.EnqueueRequestsFromMapFunc(params.findRoutesForListenerSet),
+			predicates: generationChanged,
+		},
+		{
+			object:     &v1alpha1.GatewayClassConfig{},
+			handler:    handler.EnqueueRequestsFromMapFunc(mapper.MapConfigToRequests(params.getAllRelevantRoutes)),
+			predicates: generationChanged,
+		},
+		{
+			object:  &corev1.Secret{},
+			handler: handler.EnqueueRequestsFromMapFunc(mapper.MapSecretToRequests(params.getAllRelevantRoutes)),
+		},
+		{
+			object:     &gatewayv1beta1.ReferenceGrant{},
+			handler:    handler.EnqueueRequestsFromMapFunc(params.findRoutesForRefGrant),
+			predicates: generationChanged,
+		},
+	}
+
+	if params.watchNamespaceLabels {
+		watches = append(watches, routeWatch{
+			object:     &corev1.Namespace{},
+			handler:    handler.EnqueueRequestsFromMapFunc(namespaceScopedRequests(params.getAllRelevantRoutes)),
+			predicates: []predicate.Predicate{predicate.LabelChangedPredicate{}},
+		})
+	}
+
+	return append(watches, proxyOnlyWatches(params)...)
+}
+
+// gatewayVerdictChanged passes only a Gateway update whose top-level
+// conditions changed type, status or reason. Message, timestamps and listener
+// status are ignored: the Gateway reconciler rewrites the listeners'
+// attachedRoutes count whenever routes change, and passing that would turn
+// each rewrite into another full route sync. Create, delete and generic
+// events are left to the generation-gated Gateway watch.
+func gatewayVerdictChanged() predicate.Predicate {
+	return predicate.Funcs{
+		CreateFunc:  func(event.CreateEvent) bool { return false },
+		DeleteFunc:  func(event.DeleteEvent) bool { return false },
+		GenericFunc: func(event.GenericEvent) bool { return false },
+		UpdateFunc: func(updateEvent event.UpdateEvent) bool {
+			oldGateway, oldOK := updateEvent.ObjectOld.(*gatewayv1.Gateway)
+			newGateway, newOK := updateEvent.ObjectNew.(*gatewayv1.Gateway)
+
+			if !oldOK || !newOK {
+				return false
+			}
+
+			return !maps.Equal(conditionVerdicts(oldGateway.Status.Conditions),
+				conditionVerdicts(newGateway.Status.Conditions))
+		},
+	}
+}
+
+// conditionVerdicts keys each condition's status and reason by its type.
+func conditionVerdicts(conditions []metav1.Condition) map[string]string {
+	verdicts := make(map[string]string, len(conditions))
+	for _, condition := range conditions {
+		verdicts[condition.Type] = string(condition.Status) + "/" + condition.Reason
+	}
+
+	return verdicts
+}
+
+// managedGatewayRoutes enqueues the relevant routes when a Gateway of one of
+// this controller's classes changes; any one of them runs the full sync.
+func managedGatewayRoutes(cli client.Client, controllerName string, getAll RequestsFunc) handler.MapFunc {
+	return func(ctx context.Context, obj client.Object) []reconcile.Request {
+		gateway, ok := obj.(*gatewayv1.Gateway)
+		if !ok || !isGatewayManagedByController(ctx, cli, gateway, controllerName) {
+			return nil
+		}
+
+		return getAll(ctx)
+	}
+}
+
+// ownClassRoutes enqueues the relevant routes when a GatewayClass carrying
+// this controller's name changes; any one of them runs the full sync. A
+// deleted class is matched on its last state, but its own routes are no
+// longer relevant by then: the sync runs only if another managed class still
+// has an accepted route, and nothing is enqueued otherwise.
+func ownClassRoutes(controllerName string, getAll RequestsFunc) handler.MapFunc {
+	return func(ctx context.Context, obj client.Object) []reconcile.Request {
+		class, ok := obj.(*gatewayv1.GatewayClass)
+		if !ok || string(class.Spec.ControllerName) != controllerName {
+			return nil
+		}
+
+		return getAll(ctx)
+	}
+}
+
+// proxyOnlyWatches returns the watches the proxy-driving route controllers
 // need. Both HTTPRoute and GRPCRoute watch Service so a route stuck at 500
 // because its backend did not exist yet recovers when the Service appears
 // (gated on findRoutesForService). Both also watch BackendTLSPolicy and the
 // CA ConfigMap (gated on watchBackendTLS) now that gRPC backends honor a
-// matching policy by upgrading to TLS + ALPN-negotiated HTTP/2. Extracted
-// from setupRouteController to keep its function length within the linter
-// budget.
-func addProxyOnlyWatches(
-	builder *ctrl.Builder,
-	params *routeControllerSetupParams,
-) *ctrl.Builder {
-	// Same per-watch replication of the former global generation filter as in
-	// setupRouteController — these watches keep their historic event surface.
-	generationChanged := ctrlbuilder.WithPredicates(predicate.GenerationChangedPredicate{})
+// matching policy by upgrading to TLS + ALPN-negotiated HTTP/2.
+func proxyOnlyWatches(params *routeControllerSetupParams) []routeWatch {
+	// Generation-gated only where generation moves, as in routeWatches.
+	generationChanged := []predicate.Predicate{predicate.GenerationChangedPredicate{}}
+
+	var watches []routeWatch
 
 	if params.findRoutesForService != nil {
-		builder = builder.Watches(
-			&corev1.Service{},
-			handler.EnqueueRequestsFromMapFunc(params.findRoutesForService),
-			generationChanged,
-		)
+		watches = append(watches, routeWatch{
+			object:  &corev1.Service{},
+			handler: handler.EnqueueRequestsFromMapFunc(params.findRoutesForService),
+		})
 	}
 
 	if params.findRoutesForEndpointSlice != nil {
-		builder = builder.Watches(
-			&discoveryv1.EndpointSlice{},
-			handler.EnqueueRequestsFromMapFunc(params.findRoutesForEndpointSlice),
-			generationChanged,
-		)
+		watches = append(watches, routeWatch{
+			object:     &discoveryv1.EndpointSlice{},
+			handler:    handler.EnqueueRequestsFromMapFunc(params.findRoutesForEndpointSlice),
+			predicates: generationChanged,
+		})
 	}
 
 	if params.findRoutesForExternalBackend != nil {
-		builder = builder.Watches(
-			&v1alpha1.ExternalBackend{},
-			handler.EnqueueRequestsFromMapFunc(params.findRoutesForExternalBackend),
-			generationChanged,
-		)
+		watches = append(watches, routeWatch{
+			object:     &v1alpha1.ExternalBackend{},
+			handler:    handler.EnqueueRequestsFromMapFunc(params.findRoutesForExternalBackend),
+			predicates: generationChanged,
+		})
 	}
 
 	if !params.watchBackendTLS {
-		return builder
+		return watches
 	}
 
 	enqueueAllRoutes := handler.EnqueueRequestsFromMapFunc(
@@ -259,7 +360,8 @@ func addProxyOnlyWatches(
 		},
 	)
 
-	return builder.
-		Watches(&gatewayv1.BackendTLSPolicy{}, enqueueAllRoutes, generationChanged).
-		Watches(&corev1.ConfigMap{}, enqueueRoutesForCAConfigMap, generationChanged)
+	return append(watches,
+		routeWatch{object: &gatewayv1.BackendTLSPolicy{}, handler: enqueueAllRoutes, predicates: generationChanged},
+		routeWatch{object: &corev1.ConfigMap{}, handler: enqueueRoutesForCAConfigMap},
+	)
 }

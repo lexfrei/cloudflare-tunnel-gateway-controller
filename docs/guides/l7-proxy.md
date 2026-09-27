@@ -43,7 +43,7 @@ flowchart TB
 
 ## Prerequisites
 
-- Kubernetes 1.25+
+- Kubernetes 1.31+, the floor of the Gateway API bundle (see [Compatibility](../getting-started/prerequisites.md#compatibility))
 - Gateway API CRDs installed
 - Cloudflare Tunnel created with a valid token
 - Helm 3.x
@@ -109,12 +109,12 @@ The proxy binary accepts the following environment variables:
 | `TUNNEL_TOKEN` | Required for tunnel mode; omit for standalone/dev mode | Cloudflare tunnel token (base64). Omitting it selects standalone mode; setting it to an empty value is a broken configuration and refuses to start, rather than selecting standalone silently. |
 | `PROXY_CONFIG_ADDR` | `:8081` | Config API listen address |
 | `PROXY_ADDR` | `:8080` | Proxy listen address |
-| `PROXY_AUTH_TOKEN` | unset | Bearer token for config push API authentication. In tunnel mode an unset token refuses to start, because the config API listens on every interface and a successful push replaces the whole routing table; standalone mode keeps running unauthenticated. Set but empty is a broken configuration in either mode, not a choice to run open, and also refuses to start; see [Config API Authentication](#config-api-authentication). |
+| `PROXY_AUTH_TOKEN` | unset | Bearer token for config push API authentication. In tunnel mode an unset token refuses to start, because the config API listens on every interface and a successful push replaces the whole routing table; standalone mode keeps running unauthenticated. Set but empty is a broken configuration in either mode, not a choice to run open, and also refuses to start; see [Config API Auth Wiring](#config-api-auth-wiring). |
 | `PROXY_ALLOW_UNAUTHENTICATED_CONFIG_API` | `false` | Run tunnel mode with an unauthenticated config API anyway. Separate from `PROXY_AUTH_TOKEN` on purpose: an empty token is what a broken Secret produces, and a misconfiguration must not be able to spell the same thing as consent. |
 | `PROXY_METRICS_ENABLED` | `true` | Expose the data-plane Prometheus metrics at `/metrics` on the config API port. Set `false`/`0` to disable. |
 | `PROXY_GRACE_PERIOD` | `30s` | Connector drain window on shutdown (Go duration, capped at 3m): the proxy unregisters from the edge and gives in-flight requests this long before exiting. |
 | `PROXY_TUNNEL_PROTOCOL` | `auto` | Edge transport: `auto`, `http2`, or `quic`. `auto` dials QUIC with HTTP/2 fallback. gRPC needs `http2` because QUIC drops trailers; the proxy upgrades `auto` to `http2` only when the first pushed config carries a GRPCRoute. |
-| `PROXY_TUNNEL_PROTOCOL_WAIT` | `0` (no wait) | In `auto` mode, how long (Go duration) to wait for the first pushed config before serving, so the protocol is chosen from real routes. |
+| `PROXY_TUNNEL_PROTOCOL_WAIT` | `30s` | In `auto` mode, how long (Go duration) to wait for the first pushed config before dialing the edge, so the protocol is chosen from real routes. The wait ends when that config arrives. An unset, zero, negative or unparseable value means `30s`. With `http2` or `quic` the proxy dials without waiting. |
 | `PROXY_WS_DIAL_TIMEOUT` | `""` (proxy default 30s) | Go-duration cap on the backend dial during a WebSocket upgrade. |
 | `PROXY_WS_HANDSHAKE_TIMEOUT` | `""` (proxy default 30s) | Go-duration cap on waiting for the backend's `101 Switching Protocols`. When the backend refuses the upgrade instead, it is also the longest the refusal body may go without a byte. |
 | `PROXY_WS_IDLE_TIMEOUT` | `""` (proxy default 1h) | Go-duration bound on an established session with no bytes in either direction. Any WebSocket traffic resets the window; keepalives below the WebSocket layer do not, so an application that can sit silent for longer needs a larger value. The bound acts on the read from the backend, so it does not reclaim a session whose backend-to-client copy is wedged writing to a client that has stopped reading. |
@@ -138,7 +138,7 @@ The proxy binary accepts the following environment variables:
 
     The edge forwards arbitrary `X-*` headers from any client, so a proxy that trusts this header lets a client that reaches one hostname be served by a different hostname's backend — with the intended hostname's edge policy (Access, WAF, rate limits) evaluated against the wrong name, and the backend seeing a `Host` of the caller's choosing. Enable it only in a throwaway conformance or e2e deployment. The chart value is `proxy.allowXOriginalHost`, and the proxy logs a warning at startup whenever it is on.
 
-### Config API Authentication
+### Config API Auth Wiring
 
 The config API is always authenticated when deployed via the chart: leave `proxy.authTokenSecretRef.name` empty (the default) and the controller itself generates a random token into a Secret named `<fullname>-proxy-auth-token` (`<fullname>` is the Helm release fullname, typically `<release>-cloudflare-tunnel-gateway-controller`, or just `<release>` when the release name already contains the chart name) as one of its first startup actions, uses it directly for its own push auth, and the proxy reads the same Secret via a pod-level `secretKeyRef`. The token is created once and reused on every restart, never rotated -- so neither an upgrade nor a controller restart rolls the proxy on its own. Set `proxy.authTokenSecretRef.name` to point at your own Secret instead, for example to manage rotation externally -- the controller resolves it the same way (directly via the API, never a `secretKeyRef` on its own pod) and never creates or modifies it: a missing bring-your-own Secret is a configuration error, not something silently papered over.
 

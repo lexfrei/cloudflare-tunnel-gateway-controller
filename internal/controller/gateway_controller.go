@@ -1199,6 +1199,7 @@ func (r *GatewayReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Watches(
 			&v1alpha1.GatewayClassConfig{},
 			handler.EnqueueRequestsFromMapFunc(mapper.MapConfigToRequests(r.getAllManagedGateways)),
+			builder.WithPredicates(classConfigWatchPredicates()...),
 		).
 		// Watch sibling Gateways: the data-plane cap makes one Gateway's opt-in
 		// change another's verdict, and the displaced Gateway is not the object
@@ -1343,7 +1344,7 @@ func (r *GatewayReconciler) namespaceDataPlaneSiblings(
 	ctx context.Context,
 	obj client.Object,
 ) []reconcile.Request {
-	return optedInGatewaysInNamespace(ctx, r.Client, obj.GetNamespace())
+	return optedInGatewaysInNamespace(ctx, r.Client, r.ControllerName, obj.GetNamespace())
 }
 
 // gatewayConfigToGateways maps a GatewayConfig event to the managed Gateways
