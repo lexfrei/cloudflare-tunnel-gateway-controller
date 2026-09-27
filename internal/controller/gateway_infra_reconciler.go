@@ -739,7 +739,7 @@ func (r *GatewayInfraReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Watches(
 			&v1alpha1.GatewayClassConfig{},
 			handler.EnqueueRequestsFromMapFunc(r.classConfigInfraGateways),
-			builder.WithPredicates(infraClassConfigPredicates...),
+			builder.WithPredicates(infraClassConfigPredicates()...),
 		).
 		Watches(
 			&v1alpha1.GatewayConfig{},
@@ -814,17 +814,29 @@ func optedInGatewaysInNamespace(
 	return requests
 }
 
-// infraClassConfigPredicates gates the GatewayClassConfig watch.
-var infraClassConfigPredicates []predicate.Predicate
+// infraClassConfigPredicates gates the GatewayClassConfig watch. The cap and
+// the class tunnel live in spec, so a status write has nothing to re-render.
+func infraClassConfigPredicates() []predicate.Predicate {
+	return []predicate.Predicate{predicate.GenerationChangedPredicate{}}
+}
 
-// classConfigInfraGateways enqueues every opted-in Gateway when the
-// GatewayClassConfig changes. Unfiltered by class: this controller hard-errors
-// on managed classes carrying different parametersRef, so every managed class
-// resolves the same object.
+// classConfigInfraGateways enqueues every opted-in Gateway when a
+// GatewayClassConfig referenced by one of this controller's classes changes,
+// the same gate GatewayReconciler applies to this watch.
 func (r *GatewayInfraReconciler) classConfigInfraGateways(
 	ctx context.Context,
-	_ client.Object,
+	obj client.Object,
 ) []reconcile.Request {
+	classConfig, ok := obj.(*v1alpha1.GatewayClassConfig)
+	if !ok {
+		return nil
+	}
+
+	mapper := &ConfigMapper{Client: r.Client, ControllerName: r.ControllerName}
+	if !mapper.isConfigForOurClass(ctx, classConfig) {
+		return nil
+	}
+
 	gateways, err := managedInfraGateways(ctx, r.Client, r.ControllerName)
 	if err != nil {
 		log.FromContext(ctx).Error(err, "listing opted-in Gateways for a GatewayClassConfig change; re-render trigger dropped")
