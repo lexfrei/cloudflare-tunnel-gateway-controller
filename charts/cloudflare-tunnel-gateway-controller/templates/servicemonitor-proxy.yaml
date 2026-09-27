@@ -16,6 +16,14 @@ spec:
   endpoints:
     - port: config-api
       path: /metrics
+      {{- if .Values.proxy.configAPITLS.enabled }}
+      # /metrics shares the config API listener. The scrape skips
+      # verification: the CA lives only in the controller's Secret, and the
+      # metrics carry no secrets.
+      scheme: https
+      tlsConfig:
+        insecureSkipVerify: true
+      {{- end }}
       {{- if .Values.serviceMonitor.interval }}
       interval: {{ .Values.serviceMonitor.interval }}
       {{- end }}

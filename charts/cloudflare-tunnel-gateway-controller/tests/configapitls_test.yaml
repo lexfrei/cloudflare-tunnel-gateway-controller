@@ -22,7 +22,7 @@ tests:
           content: "--proxy-config-tls-secret=NAMESPACE/RELEASE-NAME-cloudflare-tunnel-gateway-controller-proxy-config-tls"
       - contains:
           path: spec.template.spec.containers[0].args
-          content: "--proxy-endpoints=https://RELEASE-NAME-cloudflare-tunnel-gateway-controller-proxy-headless.NAMESPACE.svc:8081/config"
+          content: "--proxy-endpoints=https://RELEASE-NAME-cloudflare-tunnel-gateway-controlle-proxy-headless.NAMESPACE.svc:8081/config"
 
   - it: should mount the shared leaf and probe over HTTPS by default
     template: deployment-proxy.yaml
@@ -116,7 +116,7 @@ tests:
     asserts:
       - contains:
           path: spec.template.spec.containers[0].args
-          content: "--proxy-endpoints=http://RELEASE-NAME-cloudflare-tunnel-gateway-controller-proxy-headless.NAMESPACE.svc:8081/config"
+          content: "--proxy-endpoints=http://RELEASE-NAME-cloudflare-tunnel-gateway-controlle-proxy-headless.NAMESPACE.svc:8081/config"
       - notContains:
           path: spec.template.spec.containers[0].args
           content: "--proxy-config-ca-secret=NAMESPACE/RELEASE-NAME-cloudflare-tunnel-gateway-controller-config-ca"

@@ -412,6 +412,14 @@ proxy:
     digest: ""
   # -- Config API port (controller pushes config here), for the shared plane and every per-Gateway plane
   configAPIPort: 8081
+  # -- TLS on the config API, for the shared plane and every per-Gateway plane.
+  configAPITLS:
+    # -- Serve the config API over TLS with certificates the controller issues
+    # from its own CA, generated at runtime into "<fullname>-config-ca" in the
+    # release namespace, and push only to planes presenting one. The config
+    # API port also serves the probes and /metrics, which move to HTTPS with
+    # it. Set false to keep the plaintext config API.
+    enabled: true
   # -- Proxy port (internal, traffic arrives through tunnel)
   proxyPort: 8080
   # -- Connector drain window in seconds (the proxy's PROXY_GRACE_PERIOD). On

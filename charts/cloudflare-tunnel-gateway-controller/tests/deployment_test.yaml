@@ -621,11 +621,11 @@ tests:
       - template: deployment.yaml
         contains:
           path: spec.template.spec.containers[0].args
-          content: "--proxy-endpoints=http://RELEASE-NAME-cloudflare-tunnel-gateway-controlle-proxy-headless.NAMESPACE.svc:8900/config"
+          content: "--proxy-endpoints=https://RELEASE-NAME-cloudflare-tunnel-gateway-controlle-proxy-headless.NAMESPACE.svc:8900/config"
       - template: deployment.yaml
         notContains:
           path: spec.template.spec.containers[0].args
-          content: "--proxy-endpoints=http://RELEASE-NAME-cloudflare-tunnel-gateway-controlle-proxy-headless.NAMESPACE.svc.cluster.local:8900/config"
+          content: "--proxy-endpoints=https://RELEASE-NAME-cloudflare-tunnel-gateway-controlle-proxy-headless.NAMESPACE.svc.cluster.local:8900/config"
 
   - it: should hand a configured clusterDomain to the controller rather than the endpoint
     set:
@@ -637,7 +637,7 @@ tests:
       - template: deployment.yaml
         contains:
           path: spec.template.spec.containers[0].args
-          content: "--proxy-endpoints=http://RELEASE-NAME-cloudflare-tunnel-gateway-controlle-proxy-headless.NAMESPACE.svc:8900/config"
+          content: "--proxy-endpoints=https://RELEASE-NAME-cloudflare-tunnel-gateway-controlle-proxy-headless.NAMESPACE.svc:8900/config"
       - template: deployment.yaml
         contains:
           path: spec.template.spec.containers[0].args

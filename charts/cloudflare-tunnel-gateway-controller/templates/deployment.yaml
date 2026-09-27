@@ -57,7 +57,15 @@ spec:
             # Ends at ".svc": the controller appends the cluster domain it
             # resolved (--cluster-domain, else auto-detected), the same one it
             # uses for per-Gateway planes.
-            - "--proxy-endpoints=http://{{ include "cf-tunnel-gw-ctrl.proxyHeadlessName" . }}.{{ .Release.Namespace }}.svc:{{ .Values.proxy.configAPIPort }}/config"
+            - "--proxy-endpoints={{ ternary "https" "http" .Values.proxy.configAPITLS.enabled }}://{{ include "cf-tunnel-gw-ctrl.proxyHeadlessName" . }}.{{ .Release.Namespace }}.svc:{{ .Values.proxy.configAPIPort }}/config"
+            {{- if .Values.proxy.configAPITLS.enabled }}
+            # Config API TLS: the controller keeps its CA and the shared
+            # proxy's leaf in these Secrets, created at runtime (no
+            # template-time certificates), and pushes only to planes that
+            # present a leaf from that CA.
+            - "--proxy-config-ca-secret={{ .Release.Namespace }}/{{ include "cf-tunnel-gw-ctrl.configCASecretName" . }}"
+            - "--proxy-config-tls-secret={{ .Release.Namespace }}/{{ include "cf-tunnel-gw-ctrl.proxyConfigTLSSecretName" . }}"
+            {{- end }}
             # Image for per-Gateway rendered proxy Deployments (GatewayConfig
             # data planes); always the release's proxy image.
             - "--proxy-image={{ include "cf-tunnel-gw-ctrl.imageRef" (dict "image" .Values.proxy.image "appVersion" .Chart.AppVersion) }}"
