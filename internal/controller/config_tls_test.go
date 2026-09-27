@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"log/slog"
 	"sync"
 	"testing"
 	"time"
@@ -13,6 +14,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/events"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
@@ -224,6 +226,47 @@ func TestEnsureSharedLeaf_LostRenewalRaceAcceptsTheWinner(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, leafValid, outcome)
 	assert.Equal(t, winnerCert, readLeaf(t, c).Data[corev1.TLSCertKey])
+}
+
+// TestSharedLeafIssuer_PassSchedulesAndWarns pins what one issuance pass
+// decides: the routine hourly check after a success, the short retry after a
+// failure, and a Warning Event on the CA Secret while the CA is near expiry.
+func TestSharedLeafIssuer_PassSchedulesAndWarns(t *testing.T) {
+	t.Parallel()
+
+	authority := testAuthority(t)
+	recorder := events.NewFakeRecorder(10)
+
+	issuer := &sharedLeafIssuer{
+		client:    fake.NewClientBuilder().Build(),
+		authority: authority,
+		caKey:     configCAKey(),
+		key:       sharedLeafKey(),
+		names:     []string{sharedLeafName},
+		logger:    slog.New(slog.DiscardHandler),
+		recorder:  recorder,
+	}
+
+	assert.Equal(t, sharedLeafCheckInterval, issuer.pass(t.Context(), time.Now()))
+	assert.Empty(t, recorder.Events, "a CA far from expiry is not reported")
+
+	nearExpiry := authority.NotAfter().Add(-configtls.LeafValidity / 2)
+	issuer.pass(t.Context(), nearExpiry)
+
+	select {
+	case event := <-recorder.Events:
+		assert.Contains(t, event, eventReasonConfigTLSCAExpiring)
+	default:
+		t.Fatal("a CA within one leaf lifetime of expiry must be reported")
+	}
+
+	issuer.client = fake.NewClientBuilder().WithInterceptorFuncs(interceptor.Funcs{
+		Get: func(context.Context, client.WithWatch, client.ObjectKey, client.Object, ...client.GetOption) error {
+			return apierrors.NewServiceUnavailable("apiserver unavailable")
+		},
+	}).Build()
+
+	assert.Equal(t, sharedLeafRetryInterval, issuer.pass(t.Context(), time.Now()))
 }
 
 // TestEnsureSharedLeaf_ConcurrentIssuersConverge pins that two issuers racing

@@ -235,6 +235,20 @@ func TestGatewayInfraReconciler_ConfigTLSExpiredCAStopsTheWalk(t *testing.T) {
 	assert.True(t, apierrors.IsNotFound(reconciler.Get(context.Background(), edgeLeafKey("1"), &next)))
 }
 
+// TestGatewayInfraReconciler_ConfigTLSNoLeafWithoutAProxyImage pins that a
+// plane the controller will not render gets no certificate either.
+func TestGatewayInfraReconciler_ConfigTLSNoLeafWithoutAProxyImage(t *testing.T) {
+	t.Parallel()
+
+	reconciler, _ := newTLSInfraReconciler(t)
+	reconciler.RenderDefaults.ProxyImage = ""
+
+	reconcileEdgeResult(t, reconciler)
+
+	var slot corev1.Secret
+	assert.True(t, apierrors.IsNotFound(reconciler.Get(context.Background(), edgeLeafKey("0"), &slot)))
+}
+
 // TestGatewayInfraReconciler_ConfigTLSRecreatesADeletedLeafInPlace pins that
 // a deleted leaf comes back at the mounted slot, so the plane is not rolled.
 func TestGatewayInfraReconciler_ConfigTLSRecreatesADeletedLeafInPlace(t *testing.T) {

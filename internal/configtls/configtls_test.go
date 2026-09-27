@@ -5,8 +5,10 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -288,6 +290,60 @@ func TestCertificateLoader_KeepsServingOnBrokenRotation(t *testing.T) {
 	require.NoError(t, os.WriteFile(certFile, []byte("half-written"), 0o600))
 
 	assert.Equal(t, first, servedSerial(t, loader))
+}
+
+// countingHandler counts the records at or above Warn.
+type countingHandler struct {
+	warnings *atomic.Int32
+}
+
+func (h countingHandler) Enabled(context.Context, slog.Level) bool { return true }
+
+func (h countingHandler) Handle(_ context.Context, record slog.Record) error {
+	if record.Level >= slog.LevelWarn {
+		h.warnings.Add(1)
+	}
+
+	return nil
+}
+
+func (h countingHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
+
+func (h countingHandler) WithGroup(string) slog.Handler { return h }
+
+// TestCertificateLoader_WarnsOncePerBrokenState pins that a broken update is
+// logged when it appears, not on every handshake: probes alone handshake
+// several times a minute.
+func TestCertificateLoader_WarnsOncePerBrokenState(t *testing.T) {
+	t.Parallel()
+
+	authority := newAuthority(t)
+	dir := t.TempDir()
+
+	certPEM, keyPEM, err := authority.Issue([]string{planeName}, now)
+	require.NoError(t, err)
+
+	certFile, keyFile := writePair(t, dir, certPEM, keyPEM)
+
+	var warnings atomic.Int32
+
+	loader, err := configtls.NewCertificateLoader(certFile, keyFile, slog.New(countingHandler{warnings: &warnings}))
+	require.NoError(t, err)
+
+	require.NoError(t, os.WriteFile(certFile, []byte("half-written"), 0o600))
+
+	for range 5 {
+		servedSerial(t, loader)
+	}
+
+	assert.Equal(t, int32(1), warnings.Load())
+
+	writePair(t, dir, certPEM, keyPEM)
+	servedSerial(t, loader)
+	require.NoError(t, os.WriteFile(certFile, []byte("broken again"), 0o600))
+	servedSerial(t, loader)
+
+	assert.Equal(t, int32(2), warnings.Load(), "a new breakage after a recovery is logged again")
 }
 
 func TestNewCertificateLoader_RefusesUnreadablePair(t *testing.T) {
