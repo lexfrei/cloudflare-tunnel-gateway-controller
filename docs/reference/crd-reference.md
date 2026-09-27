@@ -2,6 +2,8 @@
 
 This document provides the API reference for Custom Resource Definitions (CRDs) used by the Cloudflare Tunnel Gateway Controller. The controller ships three project-owned CRDs — `GatewayClassConfig`, `ExternalBackend`, and `GatewayConfig` (per-Gateway data planes) — and watches the standard Gateway API resources.
 
+The field-by-field reference for the three project CRDs, with types and OpenAPI validation, is the [API Reference](api.md), generated from the Go types the CRDs are built from. It does not render CEL rules, such as the `accountId` format or the `replicas`/`autoscaling` exclusion; those live in the CRD schemas under `charts/cloudflare-tunnel-gateway-controller/crds/` as `x-kubernetes-validations`. This page covers what that one does not: examples, status conditions, and the Gateway API resources.
+
 ## GatewayClassConfig
 
 **API Version**: `cf.k8s.lex.la/v1alpha1` **Kind**: `GatewayClassConfig` **Scope**: Cluster
@@ -10,23 +12,7 @@ GatewayClassConfig provides tunnel configuration for the controller. It is refer
 
 ### Spec
 
-The spec carries only the contract the controller needs for Cloudflare API calls. Proxy-side configuration (tunnel token, replicas, liveness probes) lives in the Helm chart `proxy.*` values; see [Helm chart reference](helm-chart.md).
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `tunnelID` | string | Yes | Cloudflare Tunnel UUID. Must match the pattern `^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$` |
-| `accountId` | string | No | Cloudflare Account ID. If unset, it is read from the `account-id` key in the credentials Secret; if that key is also absent, it is auto-detected from the Cloudflare API when the token has access to a single account. When set, it must be a 32-character lowercase hexadecimal string (validated by a CRD-level CEL rule) |
-| `cloudflareCredentialsSecretRef` | SecretReference | Yes | Reference to the Secret containing the Cloudflare API token |
-| `allowSharedTunnels` | bool | No | Permit a Gateway with a dedicated data plane to serve a Cloudflare Tunnel that another namespace's Gateway, or this GatewayClass itself, already serves. Defaults to `false`: sharing merges both parties' routes, so such a claim is refused with `Accepted=False`/`InvalidParameters` and its data plane is not rendered. A claim Cloudflare does not confirm is refused whatever this says. Enable only where every party on a shared tunnel is trusted to see the others' routes |
-| `maxDataPlanesPerNamespace` | int32 | No | Cap on how many Gateways in one namespace may each have a dedicated data plane. Unset means no cap; `0` is rejected, since it is what an operator writes for no dedicated planes at all. Past the cap the newest Gateways are refused with `Accepted=False`/`DataPlaneQuotaExceeded` and no plane is rendered for them, oldest first by creation timestamp. Lowering the cap, or an older Gateway opting in later, does evict. See the [Per-Gateway Isolation guide](../guides/per-gateway-isolation.md) |
-
-### SecretReference
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `name` | string | - | Secret name (required) |
-| `namespace` | string | controller namespace | Namespace of the Secret. Defaults to the controller's own namespace; set it to place the Secret in a different namespace |
-| `key` | string | `api-token` | Key within the Secret |
+The spec carries only the contract the controller needs for Cloudflare API calls: `tunnelID`, `cloudflareCredentialsSecretRef`, and the optional `accountId`, `allowSharedTunnels` and `maxDataPlanesPerNamespace`. Every field is described in [GatewayClassConfigSpec](api.md#gatewayclassconfigspec). Proxy-side configuration (tunnel token, replicas, liveness probes) lives in the Helm chart `proxy.*` values; see [Helm chart reference](helm-chart.md). For the data-plane cap, see also the [Per-Gateway Isolation guide](../guides/per-gateway-isolation.md).
 
 ### Example
 
@@ -56,15 +42,7 @@ GatewayClassConfig has a `status.conditions` subresource. The reconciler emits:
 
 ### GatewayConfig Spec
 
-| Field | Type | Required | Description |
-| --- | --- | --- | --- |
-| `tunnelTokenSecretRef` | object | Yes | Connector-token Secret in the same namespace (`name`, optional `key`, default `tunnel-token`). The tunnel ID and account are parsed from the token. |
-| `cloudflareCredentialsSecretRef` | object | No | API-token override for this Gateway's tunnel-document writes, from a Secret in the SAME namespace (key `api-token` by default); defaults to the GatewayClass → GatewayClassConfig credentials. |
-| `authTokenSecretRef` | object | No | Bearer token (same namespace, default key `auth-token`) protecting this data plane's config API. |
-| `replicas` | integer | No | Fixed proxy replica count (default 2, max 100). Mutually exclusive with `autoscaling` (CEL-enforced). |
-| `autoscaling` | object | No | Renders an HPA on the proxy's in-flight gauge. Required sub-fields: `maxReplicas` (max 100) and `targetInflightPerPod`. Optional: `minReplicas` (default 2, max 100) and `metricName` (defaults to the in-flight gauge). |
-| `resources` | object | No | Proxy container resource requirements. |
-| `image` | string | No | Proxy image override; defaults to the controller's `--proxy-image`. |
+The only required field is `tunnelTokenSecretRef`, a connector-token Secret in the same namespace; the tunnel ID and account are parsed from the token. `replicas` and `autoscaling` are mutually exclusive. Every field is described in [GatewayConfigSpec](api.md#gatewayconfigspec).
 
 Replica counts (`replicas`, `minReplicas`, `maxReplicas`) are capped at 100: they are tenant-controlled input on a shared cluster, and an unbounded value is a noisy-neighbour attack. The cap bounds one Gateway, not a tenant — use a per-namespace ResourceQuota for the aggregate.
 
@@ -94,12 +72,7 @@ ExternalBackend defines an out-of-cluster HTTP(S) endpoint that an HTTPRoute or 
 
 ### ExternalBackend Spec
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `scheme` | string | Yes | Protocol used to dial the backend: `http` or `https` |
-| `host` | string | Yes | Backend hostname or IP address (no scheme, port, or path). IPv6 literals must be bracketed, e.g. `[2001:db8::1]` |
-| `port` | integer | Yes | Backend TCP port (1-65535) |
-| `path` | string | No | Optional base path prepended to the request path; must begin with `/`. May include a query string whose parameters merge into every dialed request (the request's own parameters win on a key conflict) |
+`scheme`, `host` and `port` are required; `path` is an optional base path. Every field is described in [ExternalBackendSpec](api.md#externalbackendspec).
 
 ### ExternalBackend Example
 
@@ -276,7 +249,7 @@ Beyond the standard Gateway API conditions above, the controller surfaces domain
 kubectl apply --filename https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.6.2/standard-install.yaml
 ```
 
-### Project CRDs (GatewayClassConfig and ExternalBackend)
+### Project CRDs
 
 Installed automatically by the Helm chart. For manual installation:
 

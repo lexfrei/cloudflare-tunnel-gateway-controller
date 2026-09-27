@@ -53,13 +53,10 @@ func gatewayClassConfigSpecProperties(t *testing.T) map[string]any {
 }
 
 // TestGatewayClassConfigCRDDeclaresEverySpecField pins the shipped CRD YAML
-// against the Go type it mirrors. The file is controller-gen output, but no
-// build target and no CI job regenerates it, so a field or a validation marker
-// added to the type reaches a cluster only once someone runs the generator by
-// hand:
-//
-//	go run sigs.k8s.io/controller-tools/cmd/controller-gen@v0.21.0 crd \
-//		paths=./api/... output:crd:dir=charts/cloudflare-tunnel-gateway-controller/crds
+// against the Go type it mirrors. The file is controller-gen output that
+// `make generate` rewrites and `make verify-generated` checks in CI; this test
+// repeats the field-presence part of that check in `go test`, which runs
+// without the generators.
 //
 // The failure this prevents is silent in the worst direction: the apiserver
 // PRUNES an undeclared field rather than rejecting it, so a security control
@@ -91,7 +88,7 @@ func TestGatewayClassConfigCRDDeclaresEverySpecField(t *testing.T) {
 //
 // The reason is checked in its own TABLE ROW, not merely somewhere in the file.
 // An operator who reads DataPlaneQuotaExceeded off a Gateway looks it up in the
-// status-conditions table; a mention in the spec-field row above satisfies a
+// status-conditions table; a mention in the spec section above satisfies a
 // whole-file search while leaving that table incomplete.
 func TestCRDReferenceDocumentsTheDataPlaneCap(t *testing.T) {
 	t.Parallel()
