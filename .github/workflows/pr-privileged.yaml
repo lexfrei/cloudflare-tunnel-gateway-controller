@@ -35,8 +35,28 @@ jobs:
           fi
           echo "number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
 
+      # pr-number.txt comes out of the pull_request run, which a fork's own
+      # copy of pr.yaml produces, so it can name any PR. Act on that PR only
+      # when it is the one this run built: same head commit, same head repo.
+      - name: Check the PR is the one this run built
+        id: match
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          RUN_HEAD: ${{ github.event.workflow_run.head_sha }} ${{ github.event.workflow_run.head_repository.full_name }}
+        run: |
+          set -euo pipefail
+          pr_head="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" --jq '"\(.head.sha) \(.head.repo.full_name)"')"
+          if [[ "${pr_head}" == "${RUN_HEAD}" ]]; then
+            echo "current=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::PR #${PR_NUMBER} is at '${pr_head}', this run built '${RUN_HEAD}'; skipping"
+            echo "current=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Download SARIF artifact
         id: download-sarif
+        if: steps.match.outputs.current == 'true'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: trivy-sarif
@@ -45,7 +65,7 @@ jobs:
         continue-on-error: true
 
       - name: Upload SARIF to GitHub Security
-        if: steps.download-sarif.outcome == 'success'
+        if: steps.match.outputs.current == 'true' && steps.download-sarif.outcome == 'success'
         uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4
         with:
           sarif_file: trivy-fs-results.sarif
@@ -78,8 +98,28 @@ jobs:
           fi
           echo "number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
 
+      # pr-number.txt comes out of the pull_request run, which a fork's own
+      # copy of pr.yaml produces, so it can name any PR. Act on that PR only
+      # when it is the one this run built: same head commit, same head repo.
+      - name: Check the PR is the one this run built
+        id: match
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          RUN_HEAD: ${{ github.event.workflow_run.head_sha }} ${{ github.event.workflow_run.head_repository.full_name }}
+        run: |
+          set -euo pipefail
+          pr_head="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" --jq '"\(.head.sha) \(.head.repo.full_name)"')"
+          if [[ "${pr_head}" == "${RUN_HEAD}" ]]; then
+            echo "current=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::PR #${PR_NUMBER} is at '${pr_head}', this run built '${RUN_HEAD}'; skipping"
+            echo "current=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Check if first build
         id: first_build
+        if: steps.match.outputs.current == 'true'
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         with:
           result-encoding: string
@@ -106,6 +146,7 @@ jobs:
             })
 
       - name: Download image references
+        if: steps.match.outputs.current == 'true'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           pattern: image-ref-*
@@ -119,6 +160,7 @@ jobs:
       # only the exact shape merge-manifests exports.
       - name: Read and validate image references
         id: refs
+        if: steps.match.outputs.current == 'true'
         run: |
           set -euo pipefail
           read_ref() {
@@ -137,6 +179,7 @@ jobs:
       # change with each build, and a comment naming an older build's digest
       # would send readers to the wrong image.
       - name: Comment on PR
+        if: steps.match.outputs.current == 'true'
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         env:
           PR_NUMBER: ${{ steps.pr.outputs.number }}
