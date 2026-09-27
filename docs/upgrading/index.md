@@ -5,7 +5,7 @@ This section documents version-to-version upgrade paths and the breaking changes
 ## Available guides
 
 - [v2 → v3](v2-to-v3.md) — the v3 chart collapses to a single L7-proxy data plane, slims the GatewayClassConfig CRD spec, drops the AmneziaWG sidecar, and tightens RBAC.
-- [v3.0 or v3.1 → v3.2](v3-to-v3.1.md) — multi-tenant isolation hardening: data-plane metrics and config-API NetworkPolicy default on, a new `RouteShadowed` condition/Event, and a longer proxy drain window. The new `GatewayConfig` CRD must be applied by hand. No values change is needed except in the two setups the guide names: a CNI that enforces host-to-pod traffic, where the default-on policy takes proxy readiness down, and an install that already enabled the proxy NetworkPolicy and relied on its egress restriction.
+- [v3.0 or v3.1 → v3.2](v3-to-v3.1.md) — multi-tenant isolation hardening: data-plane metrics and config-API NetworkPolicy default on, a new `RouteShadowed` condition/Event, and a longer proxy drain window. The new `GatewayConfig` CRD must be applied by hand, the Gateway API CRDs move to a v1.6 bundle, and manual (non-Helm) installs need new ClusterRole rules. No values change is needed except in the two setups the guide names: a CNI that enforces host-to-pod traffic, where the default-on policy takes proxy readiness down, and an install that already enabled the proxy NetworkPolicy and relied on its egress restriction.
 - [v3.4 → v3.5](v3.4-to-v3.5.md) — changes that can break a working setup, some needing a values edit. The NetworkPolicies guarding the proxies' config-API port now [admit the controller pod rather than its whole namespace](v3.4-to-v3.5.md#change-that-can-break-the-config-api-admits-the-controller-pod-not-its-namespace), and because `proxy.networkPolicy.enabled` defaults to `true` this reaches an install that never set the key: on a NetworkPolicy-enforcing CNI, a scraper sharing the release namespace loses the proxies' `/metrics` until it is admitted through `proxy.networkPolicy.ingress.from` for the shared proxy, or `proxy.networkPolicy.monitoringNamespaceSelector` for per-Gateway data planes; and a values file with `networkPolicy.enabled: true` and `networkPolicy.cloudflareIpRanges` emptied now [stops the render](v3.4-to-v3.5.md#change-that-can-break-an-emptied-cloudflareipranges-stops-the-render). The `GatewayClassConfig` CRD also needs a one-time re-apply (see [CRD upgrades](#crd-upgrades)).
 
 ## Conventions
@@ -16,7 +16,7 @@ This section documents version-to-version upgrade paths and the breaking changes
 
 ## CRD upgrades
 
-Helm installs the files under the chart's `crds/` directory only on the FIRST `helm install`; `helm upgrade` deliberately never touches them. Apply the CRDs once after upgrading to a chart version that adds a CRD (for example `GatewayConfig` for per-Gateway data planes) **or that adds a field to an existing one**.
+Helm installs the files under the chart's `crds/` directory only on the FIRST `helm install`; `helm upgrade` deliberately never touches them. Apply the CRDs once before upgrading to a chart version that adds a CRD (for example `GatewayConfig` for per-Gateway data planes, which the v3.2 controller watches from startup) **or that adds a field to an existing one**.
 
 A field the installed CRD does not declare is pruned by the apiserver on write, with no error and no Event: it disappears on the way in and reads back unset, so a setting you made is not in force and nothing says so.
 
