@@ -34,6 +34,11 @@ const (
 	// reconcile, while letting a fix (a corrected token or credential) land
 	// within minutes.
 	refutedTTL = 5 * time.Minute
+	// outageRetry spaces out lookups that got no answer. Every arbitrating
+	// reconcile collects every claim, so asking again on each would multiply
+	// calls to an API that is already failing, and hold each reconcile for
+	// requestTimeout once per claim while it hangs.
+	outageRetry = 30 * time.Second
 	// requestTimeout keeps an unresponsive API from holding a reconcile.
 	requestTimeout = 10 * time.Second
 )
@@ -54,8 +59,10 @@ type Verifier struct {
 }
 
 type entry struct {
+	// proof is the last definite verdict, or ProofUnknown when there was none.
 	proof tunnelownership.Proof
-	at    time.Time
+	// askAfter is when Cloudflare is next asked about this claim.
+	askAfter time.Time
 }
 
 // NewVerifier returns a Verifier that talks to Cloudflare through newClient.
@@ -71,6 +78,7 @@ func NewVerifier(newClient ClientFactory) *Verifier {
 // Only a definite answer changes a verdict. An outage returns
 // ProofUnknown for a claim never verified, and keeps ProofVerified for one
 // that was, however long ago: a Cloudflare outage must not evict a holder.
+// Either way the lookup is repeated only after outageRetry.
 func (v *Verifier) Verify(ctx context.Context, apiToken string, token *tunnel.Token) tunnelownership.Proof {
 	key := cacheKey(token)
 
@@ -78,41 +86,48 @@ func (v *Verifier) Verify(ctx context.Context, apiToken string, token *tunnel.To
 	cached, found := v.cache[key]
 	v.mu.Unlock()
 
-	if found && v.now().Sub(cached.at) < ttl(cached.proof) {
+	if found && v.now().Before(cached.askAfter) {
 		return cached.proof
 	}
 
-	proof := v.ask(ctx, apiToken, token)
+	next := entry{proof: v.ask(ctx, apiToken, token)}
 
-	if proof == tunnelownership.ProofUnknown {
+	switch next.proof {
+	case tunnelownership.ProofVerified:
+		next.askAfter = v.now().Add(verifiedTTL)
+	case tunnelownership.ProofRefuted:
+		next.askAfter = v.now().Add(refutedTTL)
+	case tunnelownership.ProofUnknown:
+		// No answer: keep a confirmation, drop an expired refutation.
 		if found && cached.proof == tunnelownership.ProofVerified {
-			return tunnelownership.ProofVerified
+			next.proof = tunnelownership.ProofVerified
 		}
 
-		return tunnelownership.ProofUnknown
+		next.askAfter = v.now().Add(outageRetry)
 	}
 
-	v.store(key, proof)
+	v.store(key, next)
 
-	return proof
+	return next.proof
 }
 
-// store records a definite verdict and drops expired refutations, which is
-// what bounds the cache: a tenant cycling made-up secrets leaves only entries
-// that expire, while verified entries need the real secret to create.
-func (v *Verifier) store(key [sha256.Size]byte, proof tunnelownership.Proof) {
+// store records an entry and drops every other entry that is due to be asked
+// again and holds no confirmation. That is what bounds the cache: a tenant
+// cycling made-up secrets leaves only entries that expire, while a
+// confirmation needs the tunnel's real secret to create.
+func (v *Verifier) store(key [sha256.Size]byte, next entry) {
 	now := v.now()
 
 	v.mu.Lock()
 	defer v.mu.Unlock()
 
 	for existing, cached := range v.cache {
-		if cached.proof == tunnelownership.ProofRefuted && now.Sub(cached.at) >= refutedTTL {
+		if cached.proof != tunnelownership.ProofVerified && !now.Before(cached.askAfter) {
 			delete(v.cache, existing)
 		}
 	}
 
-	v.cache[key] = entry{proof: proof, at: now}
+	v.cache[key] = next
 }
 
 // ask queries Cloudflare for the tunnel's token and compares it with the
@@ -171,14 +186,6 @@ func isDefiniteRefusal(err error) bool {
 
 	return status >= http.StatusBadRequest && status < http.StatusInternalServerError &&
 		status != http.StatusRequestTimeout && status != http.StatusTooManyRequests
-}
-
-func ttl(proof tunnelownership.Proof) time.Duration {
-	if proof == tunnelownership.ProofVerified {
-		return verifiedTTL
-	}
-
-	return refutedTTL
 }
 
 // cacheKey digests the claim's identity and secret. The secret goes into the

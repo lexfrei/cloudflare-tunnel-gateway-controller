@@ -101,7 +101,7 @@ Verdicts are kept in the controller's memory under a digest of the token, never 
 
 When the Cloudflare API cannot be reached, nothing is refuted and nothing new is confirmed:
 
-- A new claim is refused, with a message saying the check will be retried, and it is retried on every requeue until the API answers. A Gateway created during an outage stays `Accepted=False` until then.
+- A new claim is refused, with a message saying the check will be retried. Cloudflare is asked again at most every half minute per claim, so an outage does not multiply the calls to an API that is already failing. A Gateway created during an outage stays `Accepted=False` until the API answers.
 - A claim confirmed earlier keeps that confirmation for as long as the outage lasts. Only an answer from Cloudflare can take it away.
 - A Gateway already advertising its tunnel in `status.addresses` keeps the tunnel unverified, even when a controller restart has emptied the cache. Its address is taken as the claim until the API answers. That rests on Gateway status alone, so it inherits the status-write gap described under [What this does not settle](#what-this-does-not-settle).
 
