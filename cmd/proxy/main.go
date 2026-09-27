@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -212,15 +213,7 @@ func runTunnelMode(logger *slog.Logger, token string, plane *dataPlane) int {
 
 	graceC := setupDrainSignals(ctx, logger, cancel)
 
-	go func() {
-		logger.Info("starting config API server", "addr", configAddr)
-
-		err := configServer.ListenAndServe()
-		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			logger.Error("config API server error", "error", err)
-			cancel()
-		}
-	}()
+	configFailed := serveConfigAPI(logger, configServer, cancel)
 
 	// Resolve the edge transport before dialing. PROXY_TUNNEL_PROTOCOL selects
 	// it (auto|http2|quic, default auto). For auto/unset this waits briefly for
@@ -282,12 +275,37 @@ func runTunnelMode(logger *slog.Logger, token string, plane *dataPlane) int {
 	cancel()
 	gracefulShutdown(logger, configServer)
 
-	return tunnelExitCode(logger, err)
+	return tunnelExitCode(logger, err, configFailed.Load())
+}
+
+// serveConfigAPI runs the config API in the background. When it fails it
+// cancels the tunnel, and the returned flag records why, so the exit code does
+// not mistake that cancel for a requested shutdown.
+func serveConfigAPI(logger *slog.Logger, server *http.Server, cancel context.CancelFunc) *atomic.Bool {
+	failed := &atomic.Bool{}
+
+	go func() {
+		logger.Info("starting config API server", "addr", server.Addr)
+
+		err := server.ListenAndServe()
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			logger.Error("config API server error", "error", err)
+			failed.Store(true)
+			cancel()
+		}
+	}()
+
+	return failed
 }
 
 // tunnelExitCode maps how the tunnel daemon ended to the process exit code.
-// A cancelled context is a requested shutdown, not a failure.
-func tunnelExitCode(logger *slog.Logger, err error) int {
+// A cancelled context is a requested shutdown, unless the config API failing
+// is what cancelled it.
+func tunnelExitCode(logger *slog.Logger, err error, configFailed bool) int {
+	if configFailed {
+		return 1
+	}
+
 	if err != nil && !errors.Is(err, context.Canceled) {
 		logger.Error("tunnel error", "error", err)
 
