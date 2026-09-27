@@ -189,7 +189,8 @@ type SyncResult struct {
 	SharedTunnelID string
 
 	// TransientBrokenKeys are the partition keys of opted-in Gateways whose
-	// config resolve failed transiently (retryable). They have no partition
+	// config resolve failed transiently (retryable), or whose tunnel claim
+	// Cloudflare could not check. They have no partition
 	// this sync (fail closed), but their push cache must be RETAINED across
 	// RetainPartitions so a newly-joined pod can still be replayed the last
 	// config, and the reconcile requeues to re-resolve.

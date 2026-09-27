@@ -538,7 +538,8 @@ func tunnelRejectionMessage(rejection tunnelownership.Rejection) string {
 	if rejection.Unproven {
 		if rejection.Proof == tunnelownership.ProofUnknown {
 			return "this Gateway's claim on tunnel " + rejection.TunnelID +
-				" could not be checked with Cloudflare; the check is retried automatically"
+				" could not be checked with Cloudflare, which is unreachable or rejects the API credential;" +
+				" the check is retried automatically"
 		}
 
 		return "Cloudflare did not confirm that this Gateway's connector token holds tunnel " +
@@ -561,8 +562,9 @@ func tunnelRejectionMessage(rejection tunnelownership.Rejection) string {
 // arbitration as the route syncer over the same claim set, so status and
 // programming reach the same verdict from the same inputs. Cloudflare's
 // confirmation is one of those inputs and it lapses on a clock, so the two can
-// differ until each has run since it changed; the Reconcile requeue for
-// dedicated Gateways bounds that window.
+// differ until each has run since it changed. The Reconcile requeue for
+// dedicated Gateways bounds that window for status and the data plane only;
+// routes follow on the next route sync, which an unchecked claim requeues.
 func (r *GatewayReconciler) tunnelRejection(
 	ctx context.Context,
 	gateway *gatewayv1.Gateway,

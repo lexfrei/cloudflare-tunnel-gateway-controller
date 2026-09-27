@@ -129,6 +129,18 @@ func applyTunnelOwnership(
 		// hiccup.
 		infra.broken[key] = true
 		delete(infra.transient, key)
+
+		// Except a claim Cloudflare could not check: that one IS a blip, and
+		// nothing in the cluster changes when the API comes back — the route
+		// watches ignore Gateway status. The transient mark is what requeues
+		// this sync; gatewaySyncError still reports the rejection.
+		if rejection.Unproven && rejection.Proof == tunnelownership.ProofUnknown {
+			if infra.transient == nil {
+				infra.transient = make(map[string]bool)
+			}
+
+			infra.transient[key] = true
+		}
 	}
 }
 
@@ -231,7 +243,8 @@ func unprovenClaimRouteMessage(rejection tunnelownership.Rejection) string {
 
 	if rejection.Proof == tunnelownership.ProofUnknown {
 		return "the Gateway's claim on tunnel " + rejection.TunnelID +
-			" could not be checked with Cloudflare and is retried" + tail
+			" could not be checked with Cloudflare (unreachable, or the API credential was rejected) and is retried" +
+			tail
 	}
 
 	return "Cloudflare did not confirm the Gateway's claim on tunnel " + rejection.TunnelID + tail
