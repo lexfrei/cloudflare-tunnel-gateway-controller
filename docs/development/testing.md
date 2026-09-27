@@ -291,7 +291,7 @@ Conformance tests validate that the controller implements the Gateway API specif
 
 ### Deploying a Pull Request's CI Build
 
-`hack/conformance-setup.sh --use-ci-images <PR>` deploys what that PR's CI already built instead of building locally. It additionally needs `gh` (authenticated for this repository) and `jq`.
+`hack/conformance-setup.sh --use-ci-images <PR>` deploys what that PR's CI already built instead of building locally. It additionally needs `gh` (authenticated for this repository), `jq`, and the `docker buildx` plugin, which reads the CI image indexes.
 
 The chart comes from the CI run's own artifacts and the images are pulled by the digest that run recorded, so nothing on this path is addressed by a tag. That matters because CI also publishes to `ttl.sh`, an anonymous registry where the PR tag is writable by anyone, and the cluster this script builds holds real Cloudflare credentials.
 
