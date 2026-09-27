@@ -49,6 +49,11 @@ type RouteSyncer struct {
 	Metrics        cfmetrics.Collector
 	Logger         *slog.Logger
 
+	// ProxyConfigAPIPort is the config-API port per-Gateway data planes are
+	// rendered with, so their push URL names the port they listen on. Zero
+	// means the proxy's default.
+	ProxyConfigAPIPort int32
+
 	httpBuilder      *ingress.Builder
 	grpcBuilder      *ingress.GRPCBuilder
 	bindingValidator *routebinding.Validator
@@ -662,7 +667,8 @@ func pushPartitionsConcurrently(
 				return nil
 			}
 
-			endpoints := []string{render.ConfigEndpointURL(partition.Gateway, params.routeSyncer.ClusterDomain)}
+			endpoints := []string{render.ConfigEndpointURL(partition.Gateway, params.routeSyncer.ClusterDomain,
+				params.routeSyncer.ProxyConfigAPIPort)}
 			results[i].diags, results[i].err = params.proxySyncer.SyncPartition(ctx, syncResult.ConfigVersion,
 				partition.Key, partition.PerGateway.AuthToken,
 				endpoints, httpRoutePtrs(partition.HTTPRoutes), grpcRoutePtrs(partition.GRPCRoutes),

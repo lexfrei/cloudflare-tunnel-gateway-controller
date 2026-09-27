@@ -245,7 +245,7 @@ The controller only needs egress to:
 | `api.cloudflare.com` | 443 | Cloudflare API |
 | Kubernetes API | 443/6443 | Watch resources |
 | Cluster DNS | 53 | Resolve the proxies' headless Service |
-| Proxy config API | `proxy.configAPIPort` (8081) for the shared plane, always 8081 for per-Gateway planes | Push the routing table to the data planes |
+| Proxy config API | `proxy.configAPIPort` (8081) | Push the routing table to the data planes |
 | OTLP collector | collector's port (4317 for OTLP/gRPC) | Export traces, only when `tracing.enabled` |
 
 Writing that as a policy runs into one thing worth knowing before you narrow anything. A rule with ports and no `to` permits those ports to every destination, and rules are OR'd, so one unrestricted rule makes every narrower rule beside it inert. The obvious fix — replacing it with a catch-all `ipBlock` — is not equivalent: Cilium does not match in-cluster identities through CIDR peers unless the agent runs with `--policy-cidr-match-mode`, which Cilium ships disabled and still marks beta, so a `0.0.0.0/0` peer denies a host-network API server on the self-managed clusters where that is exactly how the API server is reached. Narrow with a destination you have checked against your own CNI, and remember that most of them evaluate egress after DNAT, so a Service ClusterIP never matches.

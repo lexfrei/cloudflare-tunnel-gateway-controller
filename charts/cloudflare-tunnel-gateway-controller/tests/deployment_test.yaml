@@ -758,12 +758,14 @@ tests:
           path: spec.template.spec.containers[0].args
           content: "--proxy-config-api-port=9091"
 
-  - it: should pass the default --proxy-config-api-port
+  # The default is not passed, so a controller image older than the flag
+  # still starts.
+  - it: should NOT pass --proxy-config-api-port at the default
     asserts:
       - template: deployment.yaml
-        contains:
-          path: spec.template.spec.containers[0].args
-          content: "--proxy-config-api-port=8081"
+        notMatchRegex:
+          path: spec.template.spec.containers[0].args[*]
+          pattern: "^--proxy-config-api-port"
 
   - it: should NOT set any --tracing-* arg when tracing disabled (default)
     asserts:

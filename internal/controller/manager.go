@@ -139,6 +139,10 @@ type Config struct {
 	// per-Gateway data planes (--mirror-max-in-flight). Zero leaves the proxy
 	// binary's own default.
 	MirrorMaxInFlight int
+	// ProxyConfigAPIPort is the config-API port per-Gateway data planes are
+	// rendered with and pushed to (--proxy-config-api-port). Zero leaves the
+	// proxy binary's own 8081.
+	ProxyConfigAPIPort int32
 
 	// HostnameOwnershipEnforce enables the controller-side layer of the
 	// per-namespace hostname-ownership policy (#475): routes whose hostnames
@@ -346,6 +350,7 @@ func Run(ctx context.Context, cfg *Config) error {
 			TunnelProtocol:    cfg.TunnelProtocol,
 			WSIdleTimeout:     cfg.WSIdleTimeout,
 			MirrorMaxInFlight: cfg.MirrorMaxInFlight,
+			ConfigAPIPort:     cfg.ProxyConfigAPIPort,
 		},
 		ControllerNamespace:         defaultNamespace,
 		MonitoringNamespaceSelector: monitoringSelector,
@@ -368,6 +373,7 @@ func Run(ctx context.Context, cfg *Config) error {
 		baseLogger,
 	)
 	routeSyncer.ViewStore = viewStore
+	routeSyncer.ProxyConfigAPIPort = cfg.ProxyConfigAPIPort
 
 	if cfg.HostnameOwnershipEnforce {
 		ownershipPolicy, ownershipErr := hostnameownership.New(
