@@ -170,6 +170,7 @@ func TestServeConfigAPI_ServesTLSWhenConfigured(t *testing.T) {
 	}
 
 	assert.False(t, failed.Load())
+	assert.NoError(t, ctx.Err(), "a serving TLS listener must not cancel the tunnel")
 }
 
 // TestServeConfigAPI_TLSServerConfigIsTLS13 pins the protocol floor.

@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -17,6 +19,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/configtls"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/logging"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/proxy"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/tracing"
@@ -87,6 +90,13 @@ func run(logger *slog.Logger) int {
 	plane, err := buildDataPlane(logger, configAPIAuthFor(tunnelToken))
 	if err != nil {
 		logger.Error("refusing to start with a broken config-API auth configuration", "error", err)
+
+		return 1
+	}
+
+	plane.configTLS, err = configAPITLSFromEnv(logger)
+	if err != nil {
+		logger.Error("refusing to start with a broken config-API TLS configuration", "error", err)
 
 		return 1
 	}
@@ -207,6 +217,7 @@ func runTunnelMode(logger *slog.Logger, token string, plane *dataPlane) int {
 
 	router := plane.router
 	configServer := newServer(configAddr, plane.configAPI)
+	configServer.TLSConfig = plane.configTLS
 
 	// Create in-process origin proxy — traffic flows directly from cloudflared
 	// to our handler without HTTP serialization or localhost TCP hop.
@@ -289,9 +300,9 @@ func serveConfigAPI(logger *slog.Logger, server *http.Server, cancel context.Can
 	failed := &atomic.Bool{}
 
 	go func() {
-		logger.Info("starting config API server", "addr", server.Addr)
+		logger.Info("starting config API server", "addr", server.Addr, "tls", server.TLSConfig != nil)
 
-		err := server.ListenAndServe()
+		err := listenAndServe(server)
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.Error("config API server error", "error", err)
 			failed.Store(true)
@@ -330,14 +341,15 @@ func runStandaloneMode(logger *slog.Logger, plane *dataPlane) int {
 	plane.router.SetTunnelConnected()
 
 	configServer := newServer(configAddr, plane.configAPI)
+	configServer.TLSConfig = plane.configTLS
 	proxyServer := newProxyServer(proxyAddr, plane.handler)
 
 	errChan := make(chan error, 2)
 
 	go func() {
-		logger.Info("starting config API server", "addr", configAddr)
+		logger.Info("starting config API server", "addr", configAddr, "tls", configServer.TLSConfig != nil)
 
-		errChan <- configServer.ListenAndServe()
+		errChan <- listenAndServe(configServer)
 	}()
 
 	go func() {
@@ -361,6 +373,51 @@ func runStandaloneMode(logger *slog.Logger, plane *dataPlane) int {
 // standalone mode.
 func standaloneAddrs() (string, string) {
 	return envOrDefault("PROXY_CONFIG_ADDR", standaloneConfigAddr), envOrDefault("PROXY_ADDR", standaloneProxyAddr)
+}
+
+// listenAndServe serves TLS when the server carries a TLS config, which
+// supplies the certificate itself, and plaintext otherwise.
+func listenAndServe(server *http.Server) error {
+	if server.TLSConfig != nil {
+		return server.ListenAndServeTLS("", "") //nolint:wrapcheck // returned as-is so callers can match http.ErrServerClosed
+	}
+
+	return server.ListenAndServe() //nolint:wrapcheck // returned as-is so callers can match http.ErrServerClosed
+}
+
+// Config-API TLS keypair files. The chart and the per-Gateway renderer mount
+// the controller-issued Secret and point these at it.
+const (
+	configTLSCertFileEnv = "PROXY_CONFIG_TLS_CERT_FILE"
+	configTLSKeyFileEnv  = "PROXY_CONFIG_TLS_KEY_FILE"
+)
+
+// errConfigTLSHalfPair is returned when only one of the two files is set: a
+// broken mount, which must not quietly fall back to plaintext.
+var errConfigTLSHalfPair = errors.New(
+	configTLSCertFileEnv + " and " + configTLSKeyFileEnv + " must be set together")
+
+// configAPITLSFromEnv returns the config API's TLS config, or nil when neither
+// file is set (standalone runs and the operator opt-out). The keypair is
+// re-read on each handshake, so a renewed Secret takes effect without a
+// restart.
+func configAPITLSFromEnv(logger *slog.Logger) (*tls.Config, error) {
+	certFile := strings.TrimSpace(os.Getenv(configTLSCertFileEnv))
+	keyFile := strings.TrimSpace(os.Getenv(configTLSKeyFileEnv))
+
+	switch {
+	case certFile == "" && keyFile == "":
+		return nil, nil //nolint:nilnil // nil config is the plaintext listener
+	case certFile == "" || keyFile == "":
+		return nil, errConfigTLSHalfPair
+	}
+
+	loader, err := configtls.NewCertificateLoader(certFile, keyFile, logger)
+	if err != nil {
+		return nil, fmt.Errorf("loading config API keypair: %w", err)
+	}
+
+	return loader.ServerConfig(), nil
 }
 
 func newServer(addr string, handler http.Handler) *http.Server {
@@ -519,6 +576,8 @@ type dataPlane struct {
 	router    *proxy.Router
 	handler   *proxy.Handler
 	configAPI *proxy.ConfigAPI
+	// configTLS is nil when the config API serves plaintext.
+	configTLS *tls.Config
 }
 
 // buildDataPlane assembles the shared data-plane pieces for both run modes:
