@@ -37,7 +37,7 @@ func TestConfigPusher_PushToSingleEndpoint(t *testing.T) {
 	}))
 	defer server.Close()
 
-	pusher := proxy.NewConfigPusher(http.DefaultClient, "")
+	pusher := proxy.NewConfigPusher(newPushTestClient(t), "")
 
 	cfg := &proxy.Config{
 		Version: 1,
@@ -74,7 +74,7 @@ func TestConfigPusher_TokenIsolation(t *testing.T) {
 	}))
 	defer server.Close()
 
-	pusher := proxy.NewConfigPusher(http.DefaultClient, "shared-secret")
+	pusher := proxy.NewConfigPusher(newPushTestClient(t), "shared-secret")
 	cfg := &proxy.Config{Version: 1}
 	endpoints := []string{server.URL + "/config"}
 
@@ -110,7 +110,7 @@ func TestConfigPusher_StaleVersionRecoveryRejectsNon200(t *testing.T) {
 	}))
 	defer server.Close()
 
-	pusher := proxy.NewConfigPusher(http.DefaultClient, "")
+	pusher := proxy.NewConfigPusher(newPushTestClient(t), "")
 	results := pusher.PushWithToken(t.Context(), &proxy.Config{Version: 1},
 		[]string{server.URL + "/config"}, "wrong-token")
 
@@ -136,7 +136,7 @@ func TestConfigPusher_PushToMultipleEndpoints(t *testing.T) {
 	server2 := httptest.NewServer(handler)
 	defer server2.Close()
 
-	pusher := proxy.NewConfigPusher(http.DefaultClient, "")
+	pusher := proxy.NewConfigPusher(newPushTestClient(t), "")
 
 	cfg := &proxy.Config{Version: 1}
 
@@ -168,7 +168,7 @@ func TestConfigPusher_PartialFailure(t *testing.T) {
 	}))
 	defer badServer.Close()
 
-	pusher := proxy.NewConfigPusher(http.DefaultClient, "")
+	pusher := proxy.NewConfigPusher(newPushTestClient(t), "")
 
 	cfg := &proxy.Config{Version: 1}
 
@@ -198,7 +198,7 @@ func TestConfigPusher_PartialFailure(t *testing.T) {
 func TestConfigPusher_UnreachableEndpoint(t *testing.T) {
 	t.Parallel()
 
-	pusher := proxy.NewConfigPusher(http.DefaultClient, "")
+	pusher := proxy.NewConfigPusher(newPushTestClient(t), "")
 
 	cfg := &proxy.Config{Version: 1}
 
@@ -272,7 +272,7 @@ func TestConfigPusher_StaleVersionRecovery(t *testing.T) {
 	}))
 	defer server.Close()
 
-	pusher := proxy.NewConfigPusher(http.DefaultClient, "")
+	pusher := proxy.NewConfigPusher(newPushTestClient(t), "")
 
 	cfg := &proxy.Config{
 		Version: 1,
@@ -320,7 +320,7 @@ func TestConfigPusher_LostRaceAbandonsPush(t *testing.T) {
 	}))
 	defer server.Close()
 
-	pusher := proxy.NewConfigPusher(http.DefaultClient, "")
+	pusher := proxy.NewConfigPusher(newPushTestClient(t), "")
 
 	results := pusher.Push(t.Context(), &proxy.Config{Version: 1}, []string{server.URL + "/config"})
 
@@ -379,7 +379,7 @@ func TestConfigPusher_ConcurrentStaleVersionRetry(t *testing.T) {
 	server2 := newStaleServer()
 	defer server2.Close()
 
-	pusher := proxy.NewConfigPusher(http.DefaultClient, "")
+	pusher := proxy.NewConfigPusher(newPushTestClient(t), "")
 
 	cfg := &proxy.Config{
 		Version: 1,
@@ -413,4 +413,17 @@ func TestConfigPusher_ConcurrentStaleVersionRetry(t *testing.T) {
 
 	assert.GreaterOrEqual(t, recovered, 1,
 		"the first recovery to bump the counter must succeed; any sibling that lost the counter race self-heals next sync")
+}
+
+// newPushTestClient gives a pusher test its own transport. httptest.Server's
+// Close closes idle connections on http.DefaultTransport, so a pusher sharing
+// http.DefaultClient can have a pooled connection closed under it by any
+// parallel test that shuts a server down.
+func newPushTestClient(t *testing.T) *http.Client {
+	t.Helper()
+
+	transport := &http.Transport{}
+	t.Cleanup(transport.CloseIdleConnections)
+
+	return &http.Client{Transport: transport}
 }
