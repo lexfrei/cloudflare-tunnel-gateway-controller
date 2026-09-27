@@ -408,7 +408,7 @@ For multi-cluster scenarios:
 
 ### GatewayClass changes propagate to existing Gateways
 
-The Gateway API spec (`gatewayclass_types.go:43`) recommends snapshotting GatewayClass configuration when a Gateway is created and NOT propagating later GatewayClass changes; an implementation that does propagate MUST document it. This controller propagates: it watches GatewayClass and re-reconciles every managed Gateway whenever the GatewayClass spec changes — notably `parametersRef`, which points at the `GatewayClassConfig` holding the Cloudflare credentials and tunnel ID. Credential and tunnel-config updates therefore take effect on already-running Gateways without recreating them.
+The Gateway API spec (`gatewayclass_types.go:43`) recommends snapshotting GatewayClass configuration when a Gateway is created and NOT propagating later GatewayClass changes; an implementation that does propagate MUST document it. This controller propagates: it watches GatewayClass and, whenever the spec of one of its classes changes, re-reconciles every managed Gateway and re-syncs the routes they accept — notably `parametersRef`, which points at the `GatewayClassConfig` holding the Cloudflare credentials and tunnel ID. Credential and tunnel-config updates therefore take effect on already-running Gateways without recreating them.
 
 ### `SupportedVersion` condition is verified against the installed CRD bundle
 
