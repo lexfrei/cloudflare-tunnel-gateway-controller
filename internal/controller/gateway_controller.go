@@ -272,23 +272,25 @@ func (r *GatewayReconciler) refuseDedicatedPlane(
 		return ctrl.Result{}, true, err
 	}
 
-	rejection, err := r.tunnelRejection(ctx, gateway, policy)
+	// One listing feeds both rules, so they judge the same Gateways.
+	gateways, err := managedInfraGateways(ctx, r.Client, r.ControllerName)
 	if err != nil {
-		// No ErrInvalidParameters branch here, unlike the resolve above: what
-		// is left in tunnelRejection is claim collection, which fails only on
-		// API reads. Give it a deterministic config error one day and the
-		// Gateway would requeue forever with no condition written, so route it
-		// through handleResolveError at that point.
-		return ctrl.Result{}, true, err
+		// No ErrInvalidParameters branch here, unlike the resolve above: the
+		// listing fails only on API reads. Give it a deterministic config error
+		// one day and the Gateway would requeue forever with no condition
+		// written, so route it through handleResolveError at that point.
+		return ctrl.Result{}, true, errors.Wrap(err, "listing managed Gateways")
 	}
 
-	if rejection != nil {
+	if rejection := r.tunnelRejection(ctx, gateway, policy, gateways); rejection != nil {
 		r.reportTunnelRejection(ctx, gateway, *rejection)
 
 		return ctrl.Result{RequeueAfter: configErrorRequeueDelay, Priority: new(priorityGateway)}, true, nil
 	}
 
-	return r.refuseOverQuota(ctx, gateway, policy.MaxDataPlanesPerNamespace)
+	result, handled := r.refuseOverQuota(ctx, gateway, policy.MaxDataPlanesPerNamespace, gateways)
+
+	return result, handled, nil
 }
 
 // refuseOverQuota reports a Gateway whose namespace already holds as many
@@ -299,23 +301,15 @@ func (r *GatewayReconciler) refuseOverQuota(
 	ctx context.Context,
 	gateway *gatewayv1.Gateway,
 	capacity *int32,
-) (ctrl.Result, bool, error) {
-	if capacity == nil {
-		return ctrl.Result{}, false, nil
-	}
-
-	claims, err := collectDataPlaneClaims(ctx, r.Client, r.ControllerName)
-	if err != nil {
-		return ctrl.Result{}, true, errors.Wrap(err, "collecting data-plane claims")
-	}
-
-	if !overQuotaGateways(capacity, claims)[gateway.Namespace+"/"+gateway.Name] {
-		return ctrl.Result{}, false, nil
+	gateways []*gatewayv1.Gateway,
+) (ctrl.Result, bool) {
+	if !overQuotaGateways(capacity, collectDataPlaneClaims(gateways))[gateway.Namespace+"/"+gateway.Name] {
+		return ctrl.Result{}, false
 	}
 
 	r.reportQuotaRefusal(ctx, gateway, *capacity)
 
-	return ctrl.Result{RequeueAfter: configErrorRequeueDelay, Priority: new(priorityGateway)}, true, nil
+	return ctrl.Result{RequeueAfter: configErrorRequeueDelay, Priority: new(priorityGateway)}, true
 }
 
 // reportQuotaRefusal makes a capacity refusal impossible to miss: an Error log
@@ -564,18 +558,16 @@ func tunnelRejectionMessage(rejection tunnelownership.Rejection) string {
 // confirmation is one of those inputs and it lapses on a clock, so the two can
 // differ until each has run since it changed. The Reconcile requeue for
 // dedicated Gateways bounds that window; the Accepted change it writes is what
-// brings the data plane and the route sync along.
+// brings the data plane and the route sync along. nil means not refused.
 func (r *GatewayReconciler) tunnelRejection(
 	ctx context.Context,
 	gateway *gatewayv1.Gateway,
 	policy *config.TunnelPolicy,
-) (*tunnelownership.Rejection, error) {
+	gateways []*gatewayv1.Gateway,
+) *tunnelownership.Rejection {
 	classTunnel := canonicalTunnelID(policy.TunnelID)
 
-	claims, err := collectTunnelClaims(ctx, r.Client, r.ConfigResolver, r.ControllerName, classTunnel)
-	if err != nil {
-		return nil, errors.Wrap(err, "collecting tunnel claims")
-	}
+	claims := collectTunnelClaims(ctx, gateways, r.ConfigResolver, classTunnel)
 
 	// Same sharing opt-in the route syncer passes. Both layers must honour it
 	// or an operator who enabled sharing would see Gateways stuck
@@ -584,10 +576,10 @@ func (r *GatewayReconciler) tunnelRejection(
 
 	rejection, ok := rejections[gateway.Namespace+"/"+gateway.Name]
 	if !ok {
-		return nil, nil //nolint:nilnil // not refused and no failure
+		return nil
 	}
 
-	return &rejection, nil
+	return &rejection
 }
 
 // resolveGatewayConfig resolves the Gateway's effective configuration: the

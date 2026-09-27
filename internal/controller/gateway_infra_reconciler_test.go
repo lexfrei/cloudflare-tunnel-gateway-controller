@@ -40,15 +40,15 @@ func infraTunnelToken(t *testing.T) string {
 
 // infraTunnelTokenFor builds a valid connector token for a specific tunnel ID,
 // so a test can simulate a token ROTATION to a different tunnel.
-func infraTunnelTokenFor(t *testing.T, tunnelID string) string {
-	t.Helper()
+func infraTunnelTokenFor(tb testing.TB, tunnelID string) string {
+	tb.Helper()
 
 	payload, err := json.Marshal(map[string]any{
 		"a": "abcdef0123456789abcdef0123456789",
 		"s": base64.StdEncoding.EncodeToString([]byte("secret")),
 		"t": tunnelID,
 	})
-	require.NoError(t, err)
+	require.NoError(tb, err)
 
 	return base64.StdEncoding.EncodeToString(payload)
 }

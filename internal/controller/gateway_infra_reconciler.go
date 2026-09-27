@@ -910,17 +910,20 @@ func (r *GatewayInfraReconciler) dedicatedPlaneRefused(
 	// proof of a claim and never the capacity limit.
 	classTunnel := canonicalTunnelID(policy.TunnelID)
 
-	claims, err := collectTunnelClaims(ctx, r.Client, r.ConfigResolver, r.ControllerName, classTunnel)
+	// One listing feeds both rules, so they judge the same Gateways.
+	gateways, err := managedInfraGateways(ctx, r.Client, r.ControllerName)
 	if err != nil {
-		return false, errors.Wrap(err, "collecting tunnel claims")
+		return false, errors.Wrap(err, "listing managed Gateways")
 	}
+
+	claims := collectTunnelClaims(ctx, gateways, r.ConfigResolver, classTunnel)
 
 	rejections := tunnelownership.Arbitrate(classTunnel, policy.AllowSharedTunnels, claims)
 	if _, refused := rejections[gateway.Namespace+"/"+gateway.Name]; refused {
 		return true, nil
 	}
 
-	return r.overDataPlaneQuota(ctx, gateway, policy.MaxDataPlanesPerNamespace)
+	return overDataPlaneQuota(gateway, policy.MaxDataPlanesPerNamespace, gateways), nil
 }
 
 // overDataPlaneQuota reports whether this Gateway's namespace already holds as
@@ -929,19 +932,6 @@ func (r *GatewayInfraReconciler) dedicatedPlaneRefused(
 // Refusing here removes the plane rather than leaving it unconfigured: a
 // surviving pod keeps a cloudflared connector registered on its tunnel and
 // keeps consuming the cluster capacity the cap exists to bound.
-func (r *GatewayInfraReconciler) overDataPlaneQuota(
-	ctx context.Context,
-	gateway *gatewayv1.Gateway,
-	capacity *int32,
-) (bool, error) {
-	if capacity == nil {
-		return false, nil
-	}
-
-	claims, err := collectDataPlaneClaims(ctx, r.Client, r.ControllerName)
-	if err != nil {
-		return false, errors.Wrap(err, "collecting data-plane claims")
-	}
-
-	return overQuotaGateways(capacity, claims)[gateway.Namespace+"/"+gateway.Name], nil
+func overDataPlaneQuota(gateway *gatewayv1.Gateway, capacity *int32, gateways []*gatewayv1.Gateway) bool {
+	return overQuotaGateways(capacity, collectDataPlaneClaims(gateways))[gateway.Namespace+"/"+gateway.Name]
 }

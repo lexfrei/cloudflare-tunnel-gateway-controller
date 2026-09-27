@@ -2,12 +2,11 @@ package controller
 
 import (
 	"cmp"
-	"context"
 	"slices"
 	"strconv"
 	"time"
 
-	"sigs.k8s.io/controller-runtime/pkg/client"
+	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
 // dataPlaneClaim is one opted-in Gateway's ask for a dedicated data plane.
@@ -87,16 +86,9 @@ func overQuotaGateways(capacity *int32, claims []dataPlaneClaim) map[string]bool
 // the same reason tunnel arbitration shares its claim set: fed different inputs,
 // one decision function returns different answers, and a layer that admits a
 // Gateway the others refuse leaves it reporting Accepted with nothing serving.
-func collectDataPlaneClaims(
-	ctx context.Context,
-	cli client.Client,
-	controllerName string,
-) ([]dataPlaneClaim, error) {
-	gateways, err := managedInfraGateways(ctx, cli, controllerName)
-	if err != nil {
-		return nil, err
-	}
-
+//
+// gateways is the same managedInfraGateways listing collectTunnelClaims is fed.
+func collectDataPlaneClaims(gateways []*gatewayv1.Gateway) []dataPlaneClaim {
 	claims := make([]dataPlaneClaim, 0, len(gateways))
 	for _, gateway := range gateways {
 		claims = append(claims, dataPlaneClaim{
@@ -107,7 +99,7 @@ func collectDataPlaneClaims(
 		})
 	}
 
-	return claims, nil
+	return claims
 }
 
 // dataPlaneQuotaMessage renders the refusal for the Gateway's status and Event

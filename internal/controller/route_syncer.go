@@ -886,10 +886,7 @@ func (s *RouteSyncer) SyncAllRoutes(ctx context.Context) (ctrl.Result, *SyncResu
 		return ctrl.Result{RequeueAfter: apiErrorRequeueDelay, Priority: new(priorityRoute)}, s.buildResultForError(ctx), err
 	}
 
-	if refusalErr := s.applyPlaneRefusals(ctx, infra, resolvedConfig); refusalErr != nil {
-		return ctrl.Result{RequeueAfter: apiErrorRequeueDelay, Priority: new(priorityRoute)},
-			s.buildResultForError(ctx), refusalErr
-	}
+	s.applyPlaneRefusals(ctx, infra, resolvedConfig)
 
 	partitions := partitionRoutes(httpResult, grpcResult, infra)
 	groups := buildTunnelGroups(resolvedConfig, partitions)
@@ -1371,21 +1368,10 @@ func (s *RouteSyncer) applyPlaneRefusals(
 	ctx context.Context,
 	infra *infraGateways,
 	resolvedConfig *config.ResolvedConfig,
-) error {
-	claims, err := collectTunnelClaims(ctx, s.Client, s.ConfigResolver, s.ControllerName, resolvedConfig.TunnelID)
-	if err != nil {
-		return err
-	}
+) {
+	claims := collectTunnelClaims(ctx, infra.listed, s.ConfigResolver, resolvedConfig.TunnelID)
 
 	applyTunnelOwnership(infra, resolvedConfig.TunnelID, resolvedConfig.AllowSharedTunnels, claims)
-
-	// Nothing to decide without a cap. What the early return saves is the
-	// SECOND cluster-wide Gateway list, not the first: collectTunnelClaims
-	// above walks them on every full sync regardless.
-	capacity := resolvedConfig.MaxDataPlanesPerNamespace
-	if capacity == nil {
-		return nil
-	}
 
 	// The cap comes from the FIRST managed class here, while the Gateway and
 	// infra reconcilers read it from each Gateway's own class. Not a divergence
@@ -1394,14 +1380,7 @@ func (s *RouteSyncer) applyPlaneRefusals(
 	// GatewayClassConfig or route sync programs nothing at all. Whoever makes
 	// multi-class real has to reconcile these two readings first, here and for
 	// allowSharedTunnels above.
-	quotaClaims, err := collectDataPlaneClaims(ctx, s.Client, s.ControllerName)
-	if err != nil {
-		return err
-	}
-
-	applyDataPlaneQuota(infra, capacity, quotaClaims)
-
-	return nil
+	applyDataPlaneQuota(infra, resolvedConfig.MaxDataPlanesPerNamespace, collectDataPlaneClaims(infra.listed))
 }
 
 // gatewaySyncError returns the error affecting a route accepted on gatewayKey:
