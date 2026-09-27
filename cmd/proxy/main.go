@@ -62,8 +62,9 @@ func main() {
 	os.Exit(run(logger))
 }
 
-// run is main without the exit, so the deferred tracing shutdown runs before
-// the process ends on a startup refusal.
+// run is main without the exit: every path, a startup refusal or a run mode
+// ending, returns its exit code here so the deferred tracing shutdown runs
+// before the process ends.
 func run(logger *slog.Logger) int {
 	tunnelToken, err := resolveTunnelToken()
 	if err != nil {
@@ -86,12 +87,10 @@ func run(logger *slog.Logger) int {
 	}
 
 	if tunnelToken != "" {
-		runTunnelMode(logger, tunnelToken, plane)
-	} else {
-		runStandaloneMode(logger, plane)
+		return runTunnelMode(logger, tunnelToken, plane)
 	}
 
-	return 0
+	return runStandaloneMode(logger, plane)
 }
 
 // configAPIAuthFor decides whether the config API must be authenticated.
@@ -198,7 +197,7 @@ func tracingHandlerOption() proxy.HandlerOption {
 // runTunnelMode starts the proxy with cloudflared tunnel integration.
 // Traffic flows in-process: cloudflared → GatewayOriginProxy → proxy.Handler.
 // No localhost HTTP server is needed for proxying.
-func runTunnelMode(logger *slog.Logger, token string, plane *dataPlane) {
+func runTunnelMode(logger *slog.Logger, token string, plane *dataPlane) int {
 	configAddr := envOrDefault("PROXY_CONFIG_ADDR", defaultConfigAddr)
 
 	router := plane.router
@@ -252,7 +251,7 @@ func runTunnelMode(logger *slog.Logger, token string, plane *dataPlane) {
 		cancel()
 		gracefulShutdown(logger, configServer)
 
-		return
+		return 0
 	}
 
 	logger.Info("starting cloudflared tunnel with in-process proxy", "protocol", effectiveProtocol)
@@ -283,16 +282,24 @@ func runTunnelMode(logger *slog.Logger, token string, plane *dataPlane) {
 	cancel()
 	gracefulShutdown(logger, configServer)
 
+	return tunnelExitCode(logger, err)
+}
+
+// tunnelExitCode maps how the tunnel daemon ended to the process exit code.
+// A cancelled context is a requested shutdown, not a failure.
+func tunnelExitCode(logger *slog.Logger, err error) int {
 	if err != nil && !errors.Is(err, context.Canceled) {
 		logger.Error("tunnel error", "error", err)
-		cancel()
-		os.Exit(1) //nolint:gocritic // cancel() called explicitly above
+
+		return 1
 	}
+
+	return 0
 }
 
 // runStandaloneMode starts the proxy as a standalone HTTP server.
 // Used for local development and testing without a tunnel.
-func runStandaloneMode(logger *slog.Logger, plane *dataPlane) {
+func runStandaloneMode(logger *slog.Logger, plane *dataPlane) int {
 	configAddr := envOrDefault("PROXY_CONFIG_ADDR", defaultConfigAddr)
 	proxyAddr := envOrDefault("PROXY_ADDR", defaultProxyAddr)
 
@@ -323,8 +330,10 @@ func runStandaloneMode(logger *slog.Logger, plane *dataPlane) {
 	drainErrors(logger, errChan)
 
 	if startupFailure {
-		os.Exit(1)
+		return 1
 	}
+
+	return 0
 }
 
 func newServer(addr string, handler http.Handler) *http.Server {
