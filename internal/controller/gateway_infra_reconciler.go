@@ -575,6 +575,7 @@ func (r *GatewayInfraReconciler) applyNetworkPolicy(
 		ControllerNamespace:         r.ControllerNamespace,
 		MonitoringNamespaceSelector: r.MonitoringNamespaceSelector,
 		ControllerPodSelector:       r.ControllerPodSelector,
+		ConfigAPIPort:               r.RenderDefaults.ConfigAPIPort,
 	})
 
 	existing := &networkingv1.NetworkPolicy{

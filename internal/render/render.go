@@ -47,8 +47,8 @@ const authTokenHashAnnotation = "cf.k8s.lex.la/auth-token-hash"
 const nobodyUID int64 = 65534
 
 const (
-	configAPIPort = 8081
-	proxyPort     = 8080
+	defaultConfigAPIPort = 8081
+	proxyPort            = 8080
 	// terminationGracePeriodSeconds = connector drain window (proxy default
 	// 30s) + 15s headroom so kubelet never SIGKILLs mid-drain.
 	terminationGracePeriodSeconds int64 = 45
@@ -104,6 +104,20 @@ type Defaults struct {
 	// (--mirror-max-in-flight). Zero or less leaves the proxy binary's own
 	// default and is not rendered.
 	MirrorMaxInFlight int
+	// ConfigAPIPort is the port the proxy serves its config API, probes and
+	// metrics on (--proxy-config-api-port). Zero or less means the proxy
+	// binary's own 8081, which is rendered as no listen-address env.
+	ConfigAPIPort int32
+}
+
+// configAPIPort resolves a configured config-API port, zero or less meaning
+// the proxy binary's default.
+func configAPIPort(port int32) int32 {
+	if port <= 0 {
+		return defaultConfigAPIPort
+	}
+
+	return port
 }
 
 // NetworkPolicyInput carries the controller-level config the per-Gateway
@@ -119,6 +133,9 @@ type NetworkPolicyInput struct {
 	// port (which also serves /metrics) from matching namespaces so Prometheus
 	// can scrape. Nil = the controller pod only.
 	MonitoringNamespaceSelector *metav1.LabelSelector
+	// ConfigAPIPort is the config-API port the policy opens, as in
+	// Defaults.ConfigAPIPort.
+	ConfigAPIPort int32
 	// ControllerPodSelector narrows the controller peer from "that namespace"
 	// to "that pod". Nil admits the namespace, which is what a controller
 	// running ahead of its chart gets. The reverse skew does not reach here: a
@@ -165,9 +182,10 @@ func NetworkPolicyName(gateway *gatewayv1.Gateway) string {
 
 // ConfigEndpointURL returns the config-push endpoint for the Gateway's
 // rendered data plane, in the same form the chart wires for the shared proxy.
-func ConfigEndpointURL(gateway *gatewayv1.Gateway, clusterDomain string) string {
+// port is the configured config-API port, as in Defaults.ConfigAPIPort.
+func ConfigEndpointURL(gateway *gatewayv1.Gateway, clusterDomain string, port int32) string {
 	return fmt.Sprintf("http://%s.%s.svc.%s:%d/config",
-		ConfigServiceName(gateway), gateway.Namespace, clusterDomain, configAPIPort)
+		ConfigServiceName(gateway), gateway.Namespace, clusterDomain, configAPIPort(port))
 }
 
 // GeneratedAuthSecretName returns the name of the controller-generated
@@ -345,7 +363,7 @@ func proxyContainer(input *Input) corev1.Container {
 		SecurityContext:          containerSecurityContext(),
 		Env:                      proxyEnv(input),
 		Ports: []corev1.ContainerPort{
-			{Name: configPortName, ContainerPort: configAPIPort, Protocol: corev1.ProtocolTCP},
+			{Name: configPortName, ContainerPort: configAPIPort(input.Defaults.ConfigAPIPort), Protocol: corev1.ProtocolTCP},
 			{Name: proxyPortName, ContainerPort: proxyPort, Protocol: corev1.ProtocolTCP},
 		},
 		StartupProbe:   httpProbe("/healthz", startupProbeSpec),
@@ -364,8 +382,9 @@ func proxyImage(input *Input) string {
 }
 
 // proxyEnv wires the connector token (and optional knobs) exactly like the
-// chart does for the shared proxy. Binary defaults (ports, grace period,
-// metrics-on) are deliberately not rendered.
+// chart does for the shared proxy. Binary defaults (the proxy port, an
+// unchanged config-API port, grace period, metrics-on) are deliberately not
+// rendered.
 func proxyEnv(input *Input) []corev1.EnvVar {
 	env := []corev1.EnvVar{
 		{
@@ -407,6 +426,10 @@ func proxyEnv(input *Input) []corev1.EnvVar {
 
 	if limit := input.Defaults.MirrorMaxInFlight; limit > 0 {
 		env = append(env, corev1.EnvVar{Name: "PROXY_MIRROR_MAX_IN_FLIGHT", Value: strconv.Itoa(limit)})
+	}
+
+	if port := configAPIPort(input.Defaults.ConfigAPIPort); port != defaultConfigAPIPort {
+		env = append(env, corev1.EnvVar{Name: "PROXY_CONFIG_ADDR", Value: ":" + strconv.Itoa(int(port))})
 	}
 
 	return env
@@ -503,7 +526,7 @@ func ConfigService(input *Input) *corev1.Service {
 			Ports: []corev1.ServicePort{
 				{
 					Name:       configPortName,
-					Port:       configAPIPort,
+					Port:       configAPIPort(input.Defaults.ConfigAPIPort),
 					TargetPort: intstr.FromString(configPortName),
 					Protocol:   corev1.ProtocolTCP,
 				},
@@ -513,7 +536,7 @@ func ConfigService(input *Input) *corev1.Service {
 }
 
 // ProxyNetworkPolicy renders an ingress-only NetworkPolicy locking the
-// per-Gateway proxy's config-API port (8081) to the config pusher — the
+// per-Gateway proxy's config-API port to the config pusher — the
 // controller pod where the chart supplies its selector, its namespace
 // otherwise — plus an optional monitoring selector (for /metrics scrape).
 // The proxy port (8080) takes NO in-cluster ingress — traffic arrives through
@@ -522,7 +545,7 @@ func ConfigService(input *Input) *corev1.Service {
 // set explicitly so the apiserver never infers it and drifts the apply.
 func ProxyNetworkPolicy(input NetworkPolicyInput) *networkingv1.NetworkPolicy {
 	protocolTCP := corev1.ProtocolTCP
-	configPort := intstr.FromInt32(configAPIPort)
+	configPort := intstr.FromInt32(configAPIPort(input.ConfigAPIPort))
 
 	// Both selectors in ONE peer are AND'd: the controller pod in the controller
 	// namespace. Split across two peers they would be OR'd, which would admit

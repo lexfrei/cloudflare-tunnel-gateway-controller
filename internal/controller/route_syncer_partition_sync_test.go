@@ -6,6 +6,7 @@ package controller
 // merged into one document write (no last-writer-wins).
 
 import (
+	"cmp"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -36,14 +37,17 @@ import (
 
 const tenantTunnelUUID = "550e8400-e29b-41d4-a716-446655440000"
 
-// recordingTunnelAPI serves GET (catch-all-only current config) for every
-// tunnel and records each PUT's tunnel ID and the hostnames it carried.
+// recordingTunnelAPI records each PUT's tunnel ID and the hostnames it carried,
+// and serves GET from the last document PUT to that tunnel (catch-all only
+// before the first write), so consecutive syncs see what the previous one left.
 type recordingTunnelAPI struct {
 	server *httptest.Server
 
 	mu           sync.Mutex
-	puts         map[string][]string // tunnelID -> hostnames in the written document
-	failTunnelID string              // PUTs to this tunnel ID return 500
+	puts         map[string][]string         // tunnelID -> hostnames in the written document
+	docs         map[string][]map[string]any // tunnelID -> ingress rules last written
+	failTunnelID string                      // PUTs to this tunnel ID fail
+	failStatus   int                         // the failing PUT's status; 0 means 500
 }
 
 // failTunnel makes every PUT to tunnelID return a 5xx, simulating one tunnel's
@@ -65,26 +69,36 @@ func (a *recordingTunnelAPI) shouldFail(tunnelID string) bool {
 func newRecordingTunnelAPI(t *testing.T) *recordingTunnelAPI {
 	t.Helper()
 
-	api := &recordingTunnelAPI{puts: make(map[string][]string)}
+	api := &recordingTunnelAPI{puts: make(map[string][]string), docs: make(map[string][]map[string]any)}
 
 	api.server = httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, req *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
 
+		// Path: /accounts/<acct>/cfd_tunnel/<tunnelID>/configurations
+		segments := strings.Split(strings.Trim(req.URL.Path, "/"), "/")
+		tunnelID := segments[len(segments)-2]
+
 		switch req.Method {
 		case http.MethodGet:
+			api.mu.Lock()
+			rules, ok := api.docs[tunnelID]
+			api.mu.Unlock()
+
+			if !ok {
+				rules = []map[string]any{{"service": "http_status:404"}}
+			}
+
 			_ = json.NewEncoder(writer).Encode(map[string]any{
 				"success": true, "errors": []any{},
-				"result": map[string]any{"config": map[string]any{"ingress": []map[string]any{
-					{"service": "http_status:404"},
-				}}},
+				"result": map[string]any{"config": map[string]any{"ingress": rules}},
 			})
 		case http.MethodPut:
-			// Path: /accounts/<acct>/cfd_tunnel/<tunnelID>/configurations
-			segments := strings.Split(strings.Trim(req.URL.Path, "/"), "/")
-			tunnelID := segments[len(segments)-2]
-
 			if api.shouldFail(tunnelID) {
-				writer.WriteHeader(http.StatusInternalServerError)
+				api.mu.Lock()
+				status := cmp.Or(api.failStatus, http.StatusInternalServerError)
+				api.mu.Unlock()
+
+				writer.WriteHeader(status)
 				_ = json.NewEncoder(writer).Encode(map[string]any{
 					"success": false,
 					"errors":  []any{map[string]any{"code": 1000, "message": "simulated tunnel write failure"}},
@@ -95,9 +109,7 @@ func newRecordingTunnelAPI(t *testing.T) *recordingTunnelAPI {
 
 			var body struct {
 				Config struct {
-					Ingress []struct {
-						Hostname string `json:"hostname"`
-					} `json:"ingress"`
+					Ingress []map[string]any `json:"ingress"`
 				} `json:"config"`
 			}
 			_ = json.NewDecoder(req.Body).Decode(&body)
@@ -105,13 +117,14 @@ func newRecordingTunnelAPI(t *testing.T) *recordingTunnelAPI {
 			hostnames := make([]string, 0, len(body.Config.Ingress))
 
 			for _, rule := range body.Config.Ingress {
-				if rule.Hostname != "" {
-					hostnames = append(hostnames, rule.Hostname)
+				if hostname, _ := rule["hostname"].(string); hostname != "" {
+					hostnames = append(hostnames, hostname)
 				}
 			}
 
 			api.mu.Lock()
 			api.puts[tunnelID] = hostnames
+			api.docs[tunnelID] = body.Config.Ingress
 			api.mu.Unlock()
 
 			_ = json.NewEncoder(writer).Encode(map[string]any{

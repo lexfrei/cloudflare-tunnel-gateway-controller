@@ -305,6 +305,32 @@ func TestGatewayInfraReconciler_RendersNetworkPolicy(t *testing.T) {
 	assert.Error(t, reconciler.Get(ctx, key, &netpol), "the NetworkPolicy must be deleted on opt-out")
 }
 
+// TestGatewayInfraReconciler_ConfigAPIPortReachesTheNetworkPolicy pins that a
+// moved config-API port reaches the rendered NetworkPolicy along with the
+// Deployment and Service: a policy left on 8081 would drop every push.
+func TestGatewayInfraReconciler_ConfigAPIPortReachesTheNetworkPolicy(t *testing.T) {
+	t.Parallel()
+
+	reconciler := newInfraReconciler(t, infraFixtures(t)...)
+	reconciler.RenderDefaults.ConfigAPIPort = 9091
+	reconcileEdge(t, reconciler)
+
+	ctx := context.Background()
+
+	var netpol networkingv1.NetworkPolicy
+	require.NoError(t, reconciler.Get(ctx,
+		types.NamespacedName{Name: "cf-proxy-edge-netpol", Namespace: infraNamespace}, &netpol))
+	require.Len(t, netpol.Spec.Ingress, 1)
+	require.Len(t, netpol.Spec.Ingress[0].Ports, 1)
+	assert.Equal(t, int32(9091), netpol.Spec.Ingress[0].Ports[0].Port.IntVal)
+
+	var service corev1.Service
+	require.NoError(t, reconciler.Get(ctx,
+		types.NamespacedName{Name: "cf-proxy-edge-config", Namespace: infraNamespace}, &service))
+	require.Len(t, service.Spec.Ports, 1)
+	assert.Equal(t, int32(9091), service.Spec.Ports[0].Port)
+}
+
 // TestGatewayInfraReconciler_RenderNetworkPolicyDisabled pins the opt-out wired
 // from the chart's proxy.networkPolicy.enabled: false. The strict-CNI escape
 // hatch (kubelet probes, node-sourced, cannot match the namespaceSelector

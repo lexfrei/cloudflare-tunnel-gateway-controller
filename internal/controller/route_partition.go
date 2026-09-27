@@ -74,6 +74,16 @@ func (g *infraGateways) isBroken(key string) bool {
 	return g != nil && g.broken[key]
 }
 
+// keepsLastPlane reports whether the Gateway key opted in and failed to
+// resolve for a reason other than a refusal. The infra reconciler leaves such a
+// Gateway's last-good plane running, where a refused one has its plane removed.
+func (g *infraGateways) keepsLastPlane(key string) bool {
+	_, rejected := g.tunnelRejection(key)
+	_, overQuota := g.quotaRefusal(key)
+
+	return g.isBroken(key) && !rejected && !overQuota
+}
+
 // applyTunnelOwnership drops every Gateway whose token claims a tunnel it does
 // not own, recording why in rejected so the Gateway reconciler can say so in
 // status. A dropped Gateway leaves resolved entirely: it contributes no

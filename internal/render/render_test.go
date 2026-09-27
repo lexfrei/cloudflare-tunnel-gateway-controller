@@ -794,6 +794,6 @@ func TestConfigEndpointURL(t *testing.T) {
 
 	input := testInput("edge")
 
-	url := render.ConfigEndpointURL(input.Gateway, "cluster.local")
+	url := render.ConfigEndpointURL(input.Gateway, "cluster.local", 0)
 	assert.Equal(t, "http://cf-proxy-edge-config.tenant-a.svc.cluster.local:8081/config", url)
 }

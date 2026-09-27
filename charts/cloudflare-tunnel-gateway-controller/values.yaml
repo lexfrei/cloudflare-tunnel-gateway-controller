@@ -405,7 +405,7 @@ proxy:
     tag: ""
     # -- Image digest (`sha256:...`). When set it replaces `tag` in the rendered reference, and is passed to `--proxy-image` as the default image for per-Gateway data planes. See the Container Image Verification section of the security reference for what that default does and does not guarantee.
     digest: ""
-  # -- Config API port (controller pushes config here)
+  # -- Config API port (controller pushes config here), for the shared plane and every per-Gateway plane
   configAPIPort: 8081
   # -- Proxy port (internal, traffic arrives through tunnel)
   proxyPort: 8080

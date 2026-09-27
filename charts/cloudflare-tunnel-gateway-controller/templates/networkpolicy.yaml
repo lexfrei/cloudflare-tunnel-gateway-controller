@@ -74,7 +74,7 @@ spec:
     # per-push error log, the proxy_push sync-error metric, and the route-status
     # diagnostic that names this policy after three consecutive failures.
     # The shared plane, in this namespace: a bare podSelector never leaves the
-    # policy's own namespace. It honours proxy.configAPIPort.
+    # policy's own namespace.
     - to:
         - podSelector:
             matchLabels:
@@ -87,11 +87,6 @@ spec:
     # rendered labels rather than opening the port cluster-wide; the controller
     # only ever dials endpoints it discovered, so this bounds the blast radius
     # rather than deciding it.
-    #
-    # Its own rule because the port differs: proxy.configAPIPort moves the
-    # SHARED plane only, while the renderer hardcodes 8081 for every tenant
-    # plane (internal/render/render.go). Rendering one rule from the value would
-    # permit a port nothing listens on as soon as the value is changed.
     - to:
         - namespaceSelector: {}
           podSelector:
@@ -99,5 +94,5 @@ spec:
               app.kubernetes.io/name: cloudflare-tunnel-gateway-proxy
       ports:
         - protocol: TCP
-          port: 8081
+          port: {{ .Values.proxy.configAPIPort }}
 {{- end }}
