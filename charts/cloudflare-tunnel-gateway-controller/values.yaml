@@ -219,7 +219,8 @@ dnsConfig: {}
 # -- Number of controller replicas
 replicaCount: 1
 
-# -- PodDisruptionBudget configuration for high availability
+# -- PodDisruptionBudget for the controller pods. The proxy has its own
+# under proxy.podDisruptionBudget.
 podDisruptionBudget:
   # -- Enable PodDisruptionBudget
   enabled: false
@@ -640,6 +641,31 @@ proxy:
   affinity: {}
   # -- Topology spread constraints for pod distribution
   topologySpreadConstraints: []
+  # -- ServiceAccount for the proxy pods. The proxy never calls the Kubernetes
+  # API and its pods do not mount a token either way.
+  serviceAccount:
+    # -- Create a dedicated ServiceAccount for the proxy
+    create: false
+    # -- ServiceAccount to run the proxy on. With create, names the created
+    # account (defaults to the proxy fullname). Without create, names an
+    # existing account. Empty with create off keeps the namespace's default
+    # ServiceAccount.
+    name: ""
+    # -- Annotations to add to the created ServiceAccount
+    annotations: {}
+  # -- PodDisruptionBudget for the proxy pods. The top-level
+  # podDisruptionBudget covers only the controller.
+  podDisruptionBudget:
+    # -- Enable the proxy PodDisruptionBudget
+    enabled: false
+    # -- Minimum number of available proxy pods during disruptions.
+    # Must not be used together with maxUnavailable
+    minAvailable: 1
+    # -- Maximum number of unavailable proxy pods during disruptions.
+    # Must not be used together with minAvailable
+    maxUnavailable: null
+    # -- Policy for evicting unhealthy pods (IfHealthyBudget, AlwaysAllow)
+    unhealthyPodEvictionPolicy: "IfHealthyBudget"
   # -- Annotations to add to proxy pods
   podAnnotations: {}
   # -- Additional labels to add to proxy pods

@@ -89,6 +89,19 @@ Proxy fullname
 {{- end }}
 
 {{/*
+Proxy ServiceAccount name. Empty when the chart neither creates one nor is
+given one, so the pod falls back to the namespace's default ServiceAccount.
+*/}}
+{{- define "cf-tunnel-gw-ctrl.proxyServiceAccountName" -}}
+{{- $sa := .Values.proxy.serviceAccount | default dict }}
+{{- if $sa.create }}
+{{- $sa.name | default (include "cf-tunnel-gw-ctrl.proxyFullname" .) }}
+{{- else }}
+{{- $sa.name | default "" }}
+{{- end }}
+{{- end }}
+
+{{/*
 Proxy headless service name. The base is truncated BEFORE the suffixes are
 appended so the full name stays within the 63-character DNS label limit and
 the "-proxy-headless" suffix is never cut off (which would collide with the

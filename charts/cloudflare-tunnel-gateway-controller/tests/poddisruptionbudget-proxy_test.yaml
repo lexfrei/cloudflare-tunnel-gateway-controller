@@ -54,3 +54,31 @@ tests:
           value: 1
       - notExists:
           path: spec.minAvailable
+
+  - it: should render minAvailable 0 rather than dropping it
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token
+        podDisruptionBudget:
+          enabled: true
+          minAvailable: 0
+    asserts:
+      - equal:
+          path: spec.minAvailable
+          value: 0
+
+  # The API server rejects a budget carrying both fields. Setting
+  # maxUnavailable without nulling the minAvailable default is the easy way
+  # to get there, so name the fix at render time.
+  - it: should fail when both minAvailable and maxUnavailable are set
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token
+        podDisruptionBudget:
+          enabled: true
+          maxUnavailable: 1
+    asserts:
+      - failedTemplate:
+          errorPattern: "proxy.podDisruptionBudget.minAvailable and proxy.podDisruptionBudget.maxUnavailable"

@@ -29,6 +29,9 @@ spec:
       # API, so the token would only be a credential sitting in a pod that has
       # no use for it. The per-Gateway renderer refuses it for the same reason.
       automountServiceAccountToken: false
+      {{- with include "cf-tunnel-gw-ctrl.proxyServiceAccountName" . }}
+      serviceAccountName: {{ . }}
+      {{- end }}
       # Drain window + 15s headroom: kubelet must not SIGKILL while cloudflared
       # is still unregistering connectors / draining in-flight requests.
       terminationGracePeriodSeconds: {{ add (int (.Values.proxy.gracePeriodSeconds | default 30)) 15 }}
