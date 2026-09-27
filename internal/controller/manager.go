@@ -135,6 +135,10 @@ type Config struct {
 	// (--ws-idle-timeout). Empty leaves the proxy binary's own default, which
 	// is what the shared plane gets when the chart value is empty too.
 	WSIdleTimeout string
+	// MirrorMaxInFlight is the per-filter mirror dispatch limit rendered onto
+	// per-Gateway data planes (--mirror-max-in-flight). Zero leaves the proxy
+	// binary's own default.
+	MirrorMaxInFlight int
 
 	// HostnameOwnershipEnforce enables the controller-side layer of the
 	// per-namespace hostname-ownership policy (#475): routes whose hostnames
@@ -338,9 +342,10 @@ func Run(ctx context.Context, cfg *Config) error {
 		ConfigResolver: configResolver,
 		Recorder:       mgr.GetEventRecorder("gateway-infra-controller"),
 		RenderDefaults: render.Defaults{
-			ProxyImage:     cfg.ProxyImage,
-			TunnelProtocol: cfg.TunnelProtocol,
-			WSIdleTimeout:  cfg.WSIdleTimeout,
+			ProxyImage:        cfg.ProxyImage,
+			TunnelProtocol:    cfg.TunnelProtocol,
+			WSIdleTimeout:     cfg.WSIdleTimeout,
+			MirrorMaxInFlight: cfg.MirrorMaxInFlight,
 		},
 		ControllerNamespace:         defaultNamespace,
 		MonitoringNamespaceSelector: monitoringSelector,

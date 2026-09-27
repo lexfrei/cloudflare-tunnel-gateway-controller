@@ -499,7 +499,8 @@ proxy:
     # so a dropped copy never affects the primary request). Each
     # in-flight dispatch holds its buffered body, up to 1 MiB. 0 keeps
     # the built-in limit of 64. Drops are counted by
-    # cftunnel_proxy_mirror_dropped_total. Reaches the shared proxy only.
+    # cftunnel_proxy_mirror_dropped_total. The same value is passed to
+    # the controller, so per-Gateway data planes are rendered with it too.
     maxInFlight: 0
   # -- Structured per-request access logging on the in-process proxy.
   # Off by default (zero allocation on the hot path). When enabled,
