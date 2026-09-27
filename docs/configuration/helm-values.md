@@ -74,7 +74,12 @@ proxy:
   replicas: 2
   tunnelTokenSecretRef:
     name: cloudflare-tunnel-token
+  # Budget for the proxy pods, which carry the traffic.
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
 
+# Budget for the controller pods only.
 podDisruptionBudget:
   enabled: true
   minAvailable: 1
@@ -132,6 +137,9 @@ The `proxy` section configures the in-process L7 reverse proxy. The proxy embeds
 | `proxy.podSecurityContext.seccompProfile.type` | string | `RuntimeDefault` | Seccomp profile type |
 | `proxy.securityContext.allowPrivilegeEscalation` | bool | `false` | Disallow privilege escalation |
 | `proxy.securityContext.readOnlyRootFilesystem` | bool | `true` | Read-only root filesystem |
+| `proxy.serviceAccount.create` | bool | `false` | Create a dedicated ServiceAccount for the proxy pods |
+| `proxy.serviceAccount.name` | string | `""` | ServiceAccount to run the proxy on: the created account's name (defaults to the proxy fullname) or, without `create`, an existing one. Empty with `create` off keeps the namespace's default ServiceAccount |
+| `proxy.serviceAccount.annotations` | object | `{}` | Annotations on the created ServiceAccount |
 
 ### Health Probes
 
@@ -159,6 +167,8 @@ The `proxy` section configures the in-process L7 reverse proxy. The proxy embeds
 | `proxy.websocket.dialTimeout` | string | `""` (proxy default 30s) | Go-duration cap on the backend dial during the WebSocket upgrade |
 | `proxy.websocket.handshakeTimeout` | string | `""` (proxy default 30s) | Go-duration cap on waiting for the backend's `101 Switching Protocols`; when the backend refuses the upgrade instead, also the longest the refusal body may go without a byte |
 | `proxy.websocket.idleTimeout` | string | `""` (proxy default 1h) | Go-duration bound on an established session that carries no bytes in either direction; any traffic resets it |
+
+A duration written as zero, such as `"0s"` or `"0h0m0s"`, fails schema validation for all three: the proxy only honours a positive value and would otherwise fall back to its default without saying so.
 
 ### Request Mirror
 
@@ -189,6 +199,10 @@ The `proxy` section configures the in-process L7 reverse proxy. The proxy embeds
 | `proxy.topologySpreadConstraints` | list | `[]` | Topology spread constraints for pod distribution |
 | `proxy.podAnnotations` | object | `{}` | Annotations to add to proxy pods |
 | `proxy.podLabels` | object | `{}` | Additional labels to add to proxy pods |
+| `proxy.podDisruptionBudget.enabled` | bool | `false` | Render a PodDisruptionBudget for the proxy pods. The top-level `podDisruptionBudget` covers only the controller |
+| `proxy.podDisruptionBudget.minAvailable` | int or percentage | `1` | Minimum available proxy pods; set to `null` when using `maxUnavailable` |
+| `proxy.podDisruptionBudget.maxUnavailable` | int or percentage | `null` | Maximum unavailable proxy pods; the render fails if both are set |
+| `proxy.podDisruptionBudget.unhealthyPodEvictionPolicy` | string | `IfHealthyBudget` | `IfHealthyBudget` or `AlwaysAllow` |
 
 ### Example
 
