@@ -45,7 +45,7 @@ func TestTunnelSharedDiagnostics_InfraCollisionSurfacesPerRoute(t *testing.T) {
 
 	for _, diag := range diags {
 		assert.Equal(t, proxy.DiagnosticTunnelShared, diag.Target)
-		assert.Equal(t, routeReasonTunnelShared, diag.Reason)
+		assert.Equal(t, reasonSharedAcrossNamespaces, diag.Reason)
 		assert.Contains(t, diag.Message, collisionTunnel)
 		names[diag.Name] = true
 	}
@@ -75,4 +75,60 @@ func TestTunnelSharedDiagnostics_SharedPlusInfraIsBenign(t *testing.T) {
 
 	assert.Empty(t, collisions, "shared+infra on one tunnel is an opted-in collapse, not a collision")
 	assert.Empty(t, tunnelSharedDiagnostics(collisions, partitions))
+}
+
+// TestTunnelSharedDiagnostics_ReasonNamesTheNamespaceScope pins the reason to
+// the namespaces actually involved. Two dedicated Gateways in one namespace
+// still union their routes across both planes, so they are still reported,
+// but not as a cross-namespace share. A Gateway is reported across namespaces
+// as soon as any Gateway it shares with lives elsewhere.
+func TestTunnelSharedDiagnostics_ReasonNamesTheNamespaceScope(t *testing.T) {
+	t.Parallel()
+
+	infra := func(key, route string) routePartition {
+		return routePartition{
+			Key:        key,
+			PerGateway: &config.PerGatewayConfig{ResolvedConfig: config.ResolvedConfig{TunnelID: collisionTunnel}},
+			HTTPRoutes: []gatewayv1.HTTPRoute{*pushFallbackRoute(route, route+".example.com")},
+		}
+	}
+
+	reasons := func(t *testing.T, partitions []routePartition) map[string]string {
+		t.Helper()
+
+		groups := buildTunnelGroups(&config.ResolvedConfig{TunnelID: "shared-class-tunnel"}, partitions)
+		diags := tunnelSharedDiagnostics(sharedInfraTunnelCollisions(groups), partitions)
+
+		byRoute := map[string]string{}
+		for _, diag := range diags {
+			byRoute[diag.Name] = diag.Reason
+		}
+
+		return byRoute
+	}
+
+	t.Run("same namespace", func(t *testing.T) {
+		t.Parallel()
+
+		got := reasons(t, []routePartition{infra("team-a/gw-1", "r1"), infra("team-a/gw-2", "r2")})
+
+		assert.Equal(t, map[string]string{
+			"r1": reasonSharedWithinNamespace,
+			"r2": reasonSharedWithinNamespace,
+		}, got)
+	})
+
+	t.Run("one namespace plus another", func(t *testing.T) {
+		t.Parallel()
+
+		got := reasons(t, []routePartition{
+			infra("team-a/gw-1", "r1"), infra("team-a/gw-2", "r2"), infra("team-b/gw", "r3"),
+		})
+
+		assert.Equal(t, map[string]string{
+			"r1": reasonSharedAcrossNamespaces,
+			"r2": reasonSharedAcrossNamespaces,
+			"r3": reasonSharedAcrossNamespaces,
+		}, got)
+	})
 }

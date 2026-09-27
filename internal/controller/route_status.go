@@ -361,7 +361,7 @@ func buildParentStatus(
 	}
 
 	if shared := buildDiagnosticCondition(diagnostics, proxy.DiagnosticTunnelShared,
-		routeConditionTunnelShared, metav1.ConditionTrue, routeReasonTunnelShared,
+		routeConditionTunnelShared, metav1.ConditionTrue, tunnelSharedReason(diagnostics),
 		generation, now); shared != nil && accepted.Status == metav1.ConditionTrue {
 		conditions = append(conditions, *shared)
 	}
@@ -442,6 +442,19 @@ func buildShadowedCondition(
 ) *metav1.Condition {
 	return buildDiagnosticCondition(diagnostics, proxy.DiagnosticShadowed,
 		routeConditionShadowed, metav1.ConditionTrue, routeReasonShadowed, generation, now)
+}
+
+// tunnelSharedReason picks the TunnelShared condition reason: across
+// namespaces when any of the route's shares crosses one, since that is the
+// share that crosses a tenant boundary, within one namespace otherwise.
+func tunnelSharedReason(diagnostics []proxy.RouteDiagnostic) string {
+	for _, diag := range diagnostics {
+		if diag.Target == proxy.DiagnosticTunnelShared && diag.Reason == routeReasonTunnelSharedAcrossNamespaces {
+			return routeReasonTunnelSharedAcrossNamespaces
+		}
+	}
+
+	return routeReasonTunnelSharedWithinNamespace
 }
 
 // buildDiagnosticCondition aggregates the messages of all diagnostics with the
@@ -738,9 +751,10 @@ const (
 	// Across namespaces that requires the operator's allowSharedTunnels opt-in,
 	// since the claim is otherwise refused; within one namespace it is permitted.
 	// Neither is isolation, so this surfaces the collapsed boundary instead of
-	// leaving it only in a log line.
-	routeConditionTunnelShared = "cf.k8s.lex.la/TunnelShared"
-	routeReasonTunnelShared    = "TunnelSharedAcrossNamespaces"
+	// leaving it only in a log line. The reason says which of the two it is.
+	routeConditionTunnelShared              = "cf.k8s.lex.la/TunnelShared"
+	routeReasonTunnelSharedAcrossNamespaces = "TunnelSharedAcrossNamespaces"
+	routeReasonTunnelSharedWithinNamespace  = "TunnelSharedWithinNamespace"
 )
 
 const (
@@ -753,7 +767,7 @@ const (
 	eventActionRouteSync     = "Sync"
 	// eventReasonProxyConfigPushFailed / eventReasonTunnelShared mirror the
 	// ProxyConfigPushed / TunnelShared conditions as Warning Events so a
-	// sustained push failure (#487) and a cross-namespace tunnel share (#488)
+	// sustained push failure (#487) and a tunnel share (#488)
 	// also surface in `kubectl events` and event-driven alerting.
 	eventReasonProxyConfigPushFailed = "ProxyConfigPushFailed"
 	eventReasonTunnelShared          = "TunnelShared"

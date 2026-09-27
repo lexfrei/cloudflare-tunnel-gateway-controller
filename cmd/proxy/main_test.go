@@ -121,7 +121,30 @@ func TestConstants(t *testing.T) {
 	t.Parallel()
 
 	assert.Equal(t, ":8081", defaultConfigAddr)
-	assert.Equal(t, ":8080", defaultProxyAddr)
+}
+
+// TestStandaloneAddrs_LoopbackByDefault pins standalone mode to loopback
+// unless an address is asked for. Its config API runs unauthenticated and its
+// proxy forwards to whatever backend a pushed config names, so a wider bind has
+// to be requested explicitly.
+func TestStandaloneAddrs_LoopbackByDefault(t *testing.T) {
+	t.Setenv("PROXY_CONFIG_ADDR", "")
+	t.Setenv("PROXY_ADDR", "")
+
+	configAddr, proxyAddr := standaloneAddrs()
+
+	assert.Equal(t, "127.0.0.1:8081", configAddr)
+	assert.Equal(t, "127.0.0.1:8080", proxyAddr)
+}
+
+func TestStandaloneAddrs_ExplicitAddressWins(t *testing.T) {
+	t.Setenv("PROXY_CONFIG_ADDR", ":9081")
+	t.Setenv("PROXY_ADDR", ":9080")
+
+	configAddr, proxyAddr := standaloneAddrs()
+
+	assert.Equal(t, ":9081", configAddr)
+	assert.Equal(t, ":9080", proxyAddr)
 }
 
 // TestParseWSEnvDurations_Matrix pins the env-var-to-duration

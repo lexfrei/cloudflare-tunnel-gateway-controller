@@ -12,18 +12,23 @@ spec:
   policyTypes:
     - Ingress
     - Egress
+  # Metrics and health ports, from the sources in ingress.from only. A rule
+  # with no `from` would admit every source, so with none listed there is no
+  # rule and in-cluster ingress is denied. Kubelet probes come from the node,
+  # which most CNIs admit regardless of policy; a CNI that enforces policy on
+  # node-to-pod traffic needs the node source listed in ingress.from.
+  {{- with (.Values.networkPolicy.ingress | default dict).from }}
   ingress:
-    # Allow metrics and health checks
-    {{- $ingressFrom := (.Values.networkPolicy.ingress | default dict).from }}
-    - {{- if $ingressFrom }}
-      from:
-        {{- toYaml $ingressFrom | nindent 8 }}
-      {{- end }}
+    - from:
+        {{- toYaml . | nindent 8 }}
       ports:
         - protocol: TCP
-          port: {{ .Values.service.metricsPort }}
+          port: {{ $.Values.service.metricsPort }}
         - protocol: TCP
-          port: {{ .Values.service.healthPort }}
+          port: {{ $.Values.service.healthPort }}
+  {{- else }}
+  ingress: []
+  {{- end }}
   {{- $cfRanges := .Values.networkPolicy.cloudflareIpRanges | default dict }}
   {{- if and (not $cfRanges.ipv4) (not $cfRanges.ipv6) }}
   {{- fail "networkPolicy.enabled is true but networkPolicy.cloudflareIpRanges is empty: the Cloudflare-egress rule would render an empty 'to:', which NetworkPolicy reads as allow-all on 443, the opposite of restriction. Populate the ranges from https://www.cloudflare.com/ips/, or set networkPolicy.enabled to false, which drops the whole policy -- both its ingress restrictions and all of its egress rules. More at https://cf.k8s.lex.la/latest/reference/security/#egress-requirements" }}
