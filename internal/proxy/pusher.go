@@ -31,6 +31,11 @@ func NewConfigPusher(client *http.Client, authToken string) *ConfigPusher {
 	return &ConfigPusher{client: client, authToken: authToken}
 }
 
+// CloseIdleConnections closes the pusher's idle connections.
+func (p *ConfigPusher) CloseIdleConnections() {
+	p.client.CloseIdleConnections()
+}
+
 // Push sends the config to all endpoints concurrently and returns results.
 func (p *ConfigPusher) Push(ctx context.Context, cfg *Config, endpoints []string) []PushResult {
 	return p.PushWithToken(ctx, cfg, endpoints, p.authToken)

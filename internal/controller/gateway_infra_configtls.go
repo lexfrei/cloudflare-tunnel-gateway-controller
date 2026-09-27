@@ -33,6 +33,15 @@ const (
 
 var errNoUsableConfigTLSSlot = errors.New("no usable config API certificate slot")
 
+// errConfigTLSSlotPending is returned when a slot already exists but the
+// cache has not seen it yet. Skipping it would move the plane to the next
+// slot for nothing, so the reconcile comes back instead.
+var errConfigTLSSlotPending = errors.New("config API certificate slot exists but is not visible yet")
+
+// configTLSPendingRequeue is how soon a reconcile that hit
+// errConfigTLSSlotPending comes back.
+const configTLSPendingRequeue = 2 * time.Second
+
 func (r *GatewayInfraReconciler) clock() time.Time {
 	if r.now != nil {
 		return r.now()
@@ -114,6 +123,9 @@ func (r *GatewayInfraReconciler) configTLSSlotUsable(
 
 		// Lost the create race: judge whatever landed.
 		err = r.Get(ctx, key, &existing)
+		if apierrors.IsNotFound(err) {
+			return false, errors.Wrapf(errConfigTLSSlotPending, "%s", key)
+		}
 	}
 
 	if err != nil {

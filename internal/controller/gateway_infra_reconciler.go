@@ -214,6 +214,10 @@ func (r *GatewayInfraReconciler) renderWithConfigTLS(
 	perGateway *config.PerGatewayConfig,
 ) (ctrl.Result, error) {
 	configTLSSecret, err := r.ensureConfigTLSSecret(ctx, gateway)
+	if errors.Is(err, errConfigTLSSlotPending) {
+		return ctrl.Result{RequeueAfter: configTLSPendingRequeue}, nil
+	}
+
 	if err != nil {
 		r.event(gateway, corev1.EventTypeWarning, eventReasonRenderFailed, err.Error())
 

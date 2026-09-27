@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	stderrors "errors"
 	"log/slog"
+	"net/http"
 	"net/url"
 	"slices"
 	"strings"
@@ -266,7 +267,7 @@ func describeConfigTLSError(err error) string {
 		return "the data plane presented a config API certificate that names a different data plane"
 	case stderrors.As(err, &invalid):
 		return "the data plane presented a config API certificate that is not valid (" + invalid.Error() + ")"
-	case stderrors.As(err, &recordHeader):
+	case stderrors.Is(err, http.ErrSchemeMismatch), stderrors.As(err, &recordHeader):
 		return "the data plane's config API does not speak TLS (a proxy still running without config API TLS)"
 	}
 
@@ -465,4 +466,28 @@ func (s *ProxySyncer) perGatewayConfigEndpoint(gateway *gatewayv1.Gateway, clust
 	}
 
 	return render.ConfigEndpointURL(gateway, clusterDomain, port)
+}
+
+// retainTLSPushersLocked drops the pushers, and their connection pools, of
+// server names no remaining partition pushes to. Caller holds syncMu.
+func (s *ProxySyncer) retainTLSPushersLocked() {
+	live := make(map[string]bool)
+
+	for _, target := range s.targets {
+		for _, endpoint := range target.endpointURLs {
+			if parsed, err := url.Parse(endpoint); err == nil {
+				live[parsed.Hostname()] = true
+			}
+		}
+	}
+
+	s.tlsPushersMu.Lock()
+	defer s.tlsPushersMu.Unlock()
+
+	for serverName, pusher := range s.tlsPushers {
+		if !live[serverName] {
+			pusher.CloseIdleConnections()
+			delete(s.tlsPushers, serverName)
+		}
+	}
 }

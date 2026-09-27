@@ -963,6 +963,8 @@ func (s *ProxySyncer) RetainPartitions(keep map[string]bool) {
 
 		delete(s.targets, key)
 	}
+
+	s.retainTLSPushersLocked()
 }
 
 // ResyncPartition replays a partition's cached config to its stored endpoint
