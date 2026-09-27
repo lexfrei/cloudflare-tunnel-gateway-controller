@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/net/http/httpguts"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/proxy"
 )
@@ -27,7 +28,9 @@ type upgradeWillingBackend struct {
 	connection []string
 }
 
-func newUpgradeWillingBackend(t *testing.T) *upgradeWillingBackend {
+// newUpgradingBackend returns an upgradeWillingBackend; with always set it
+// answers 101 to every request, asked or not.
+func newUpgradingBackend(t *testing.T, always bool) *upgradeWillingBackend {
 	t.Helper()
 
 	backend := &upgradeWillingBackend{}
@@ -37,7 +40,7 @@ func newUpgradeWillingBackend(t *testing.T) *upgradeWillingBackend {
 		backend.connection = append(backend.connection, req.Header.Get("Connection"))
 		backend.mu.Unlock()
 
-		if req.Header.Get("Upgrade") == "" {
+		if !always && req.Header.Get("Upgrade") == "" {
 			_, _ = io.WriteString(writer, plainUpgradeBackendBody)
 
 			return
@@ -95,13 +98,33 @@ func setWebSocketUpgradeHeaders(req *http.Request) {
 	req.Header.Set("Sec-WebSocket-Key", rfc6455SampleWSKey)
 }
 
+// serveBounded runs the handler against the fake writer. A hijacked stream
+// would keep ServeHTTP copying until the pipe closes, so the pipe is
+// closed after five seconds and the test fails on its assertions instead
+// of hanging.
+func serveBounded(handler http.Handler, fake *fakeCloudflaredRespWriter, req *http.Request) {
+	done := make(chan struct{})
+
+	go func() {
+		defer close(done)
+		handler.ServeHTTP(fake, req)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		_ = fake.HijackedClient().Close()
+		<-done
+	}
+}
+
 func assertBackendSawNoUpgrade(t *testing.T, backend *upgradeWillingBackend) {
 	t.Helper()
 
 	upgrades, connection := backend.seen()
 	require.Len(t, upgrades, 1, "the backend must receive exactly one request")
 	assert.Empty(t, upgrades[0], "the Upgrade header must not reach a backend without WebSocket enabled")
-	assert.NotContains(t, connection[0], "pgrade",
+	assert.False(t, httpguts.HeaderValuesContainsToken(connection[:1], "upgrade"),
 		"the upgrade token of Connection must not reach a backend without WebSocket enabled")
 }
 
@@ -113,7 +136,7 @@ func assertBackendSawNoUpgrade(t *testing.T, backend *upgradeWillingBackend) {
 func TestHandler_NonWSBackend_UpgradeForwardedAsPlainHTTP(t *testing.T) {
 	t.Parallel()
 
-	backend := newUpgradeWillingBackend(t)
+	backend := newUpgradingBackend(t, false)
 
 	proxySrv := httptest.NewServer(newNonWSUpgradeHandler(t, backend.URL))
 	t.Cleanup(proxySrv.Close)
@@ -159,7 +182,7 @@ func TestHandler_NonWSBackend_UpgradeForwardedAsPlainHTTP_TunnelMode(t *testing.
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			backend := newUpgradeWillingBackend(t)
+			backend := newUpgradingBackend(t, false)
 			handler := newNonWSUpgradeHandler(t, backend.URL)
 
 			fake := tc.writer()
@@ -168,21 +191,7 @@ func TestHandler_NonWSBackend_UpgradeForwardedAsPlainHTTP_TunnelMode(t *testing.
 			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://app.example.com/ws", nil)
 			setWebSocketUpgradeHeaders(req)
 
-			// A hijacked stream would keep ServeHTTP copying until the
-			// pipe closes, so run it aside and close the pipe on timeout.
-			done := make(chan struct{})
-
-			go func() {
-				defer close(done)
-				handler.ServeHTTP(fake, req)
-			}()
-
-			select {
-			case <-done:
-			case <-time.After(5 * time.Second):
-				_ = fake.HijackedClient().Close()
-				<-done
-			}
+			serveBounded(handler, fake, req)
 
 			assert.False(t, fake.Hijacked(), "a backend without WebSocket enabled must never get a hijacked stream")
 			assert.Equal(t, http.StatusOK, fake.Status())
@@ -190,4 +199,28 @@ func TestHandler_NonWSBackend_UpgradeForwardedAsPlainHTTP_TunnelMode(t *testing.
 			assertBackendSawNoUpgrade(t, backend)
 		})
 	}
+}
+
+// TestHandler_NonWSBackend_UnrequestedSwitch_TunnelMode covers a backend
+// that answers 101 to the plain request it receives. ReverseProxy rejects
+// a protocol switch the outbound request did not ask for, so even the
+// QUIC writer, which would hand out a stream without a status, is never
+// hijacked and the client gets a 502.
+func TestHandler_NonWSBackend_UnrequestedSwitch_TunnelMode(t *testing.T) {
+	t.Parallel()
+
+	backend := newUpgradingBackend(t, true)
+	handler := newNonWSUpgradeHandler(t, backend.URL)
+
+	fake := newFakeCloudflaredQUICRespWriter()
+	t.Cleanup(func() { _ = fake.serverSide.Close(); _ = fake.clientSide.Close() })
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://app.example.com/ws", nil)
+	setWebSocketUpgradeHeaders(req)
+
+	serveBounded(handler, fake, req)
+
+	assert.False(t, fake.Hijacked(), "a backend without WebSocket enabled must never get a hijacked stream")
+	assert.Equal(t, http.StatusBadGateway, fake.Status())
+	assertBackendSawNoUpgrade(t, backend)
 }
