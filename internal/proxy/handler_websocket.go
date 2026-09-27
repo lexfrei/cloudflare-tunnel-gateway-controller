@@ -361,10 +361,15 @@ func copyWebSocketSide(dst io.Writer, src io.Reader, errCh chan<- error) {
 }
 
 // buildBackendUpgradeRequest clones the inbound request and rewrites its
-// URL + Host to point at the backend. The clone preserves headers
-// (Connection, Upgrade, Sec-WebSocket-*) that the backend needs to
-// complete the RFC 6455 handshake. RequestURI is cleared because outgoing
-// http.Request.Write rejects it.
+// URL to point at the backend. The clone preserves headers (Connection,
+// Upgrade, Sec-WebSocket-*) that the backend needs to complete the RFC 6455
+// handshake. RequestURI is cleared because outgoing http.Request.Write
+// rejects it.
+//
+// Host follows createReverseProxy's Rewrite so a backend sees the same Host
+// whether or not the request upgrades: the inbound Host, or the one a
+// URLRewrite filter set, with a trusted X-Original-Host restored when no
+// filter chose one.
 func buildBackendUpgradeRequest(req *http.Request, backendURL *url.URL) *http.Request {
 	outReq := req.Clone(req.Context())
 	outReq.URL = &url.URL{
@@ -378,7 +383,12 @@ func buildBackendUpgradeRequest(req *http.Request, backendURL *url.URL) *http.Re
 	// rewrite; a no-op for Service/ServiceImport URLs.
 	applyBackendBasePath(outReq.URL, backendURL.Path, backendURL.RawQuery)
 	outReq.RequestURI = ""
-	outReq.Host = backendURL.Host
+
+	if !isHostRewritten(req) {
+		if origHost := req.Header.Get(originalHostHeader); origHost != "" {
+			outReq.Host = origHost
+		}
+	}
 
 	// req.Clone copies every header, so the two proxy-internal ones the plain
 	// path deletes have to be deleted here too: neither means anything to a
