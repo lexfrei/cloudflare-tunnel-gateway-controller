@@ -702,3 +702,150 @@ tests:
     asserts:
       - failedTemplate:
           errorPattern: digest
+
+  # A zero duration passes time.ParseDuration, and the proxy's > 0 gate then
+  # swaps in the built-in default without a word, so "0s" meant as "no bound"
+  # would silently become the default. Refuse it at chart time.
+  - it: should reject zero websocket.dialTimeout (0s)
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token
+        websocket:
+          dialTimeout: "0s"
+    asserts:
+      - failedTemplate:
+          errorPattern: dialTimeout
+
+  - it: should reject zero websocket.dialTimeout (0h0m0s)
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token
+        websocket:
+          dialTimeout: "0h0m0s"
+    asserts:
+      - failedTemplate:
+          errorPattern: dialTimeout
+
+  - it: should reject zero websocket.dialTimeout (0.000ms)
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token
+        websocket:
+          dialTimeout: "0.000ms"
+    asserts:
+      - failedTemplate:
+          errorPattern: dialTimeout
+
+  - it: should accept a sub-second websocket.dialTimeout written with a leading zero
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token
+        websocket:
+          dialTimeout: "0.5s"
+    asserts:
+      - template: deployment-proxy.yaml
+        contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: PROXY_WS_DIAL_TIMEOUT
+            value: "0.5s"
+
+  - it: should reject zero websocket.handshakeTimeout (0s)
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token
+        websocket:
+          handshakeTimeout: "0s"
+    asserts:
+      - failedTemplate:
+          errorPattern: handshakeTimeout
+
+  - it: should reject zero websocket.handshakeTimeout (0h0m0s)
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token
+        websocket:
+          handshakeTimeout: "0h0m0s"
+    asserts:
+      - failedTemplate:
+          errorPattern: handshakeTimeout
+
+  - it: should reject zero websocket.handshakeTimeout (0.000ms)
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token
+        websocket:
+          handshakeTimeout: "0.000ms"
+    asserts:
+      - failedTemplate:
+          errorPattern: handshakeTimeout
+
+  - it: should accept a sub-second websocket.handshakeTimeout written with a leading zero
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token
+        websocket:
+          handshakeTimeout: "0.5s"
+    asserts:
+      - template: deployment-proxy.yaml
+        contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: PROXY_WS_HANDSHAKE_TIMEOUT
+            value: "0.5s"
+
+  - it: should reject zero websocket.idleTimeout (0s)
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token
+        websocket:
+          idleTimeout: "0s"
+    asserts:
+      - failedTemplate:
+          errorPattern: idleTimeout
+
+  - it: should reject zero websocket.idleTimeout (0h0m0s)
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token
+        websocket:
+          idleTimeout: "0h0m0s"
+    asserts:
+      - failedTemplate:
+          errorPattern: idleTimeout
+
+  - it: should reject zero websocket.idleTimeout (0.000ms)
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token
+        websocket:
+          idleTimeout: "0.000ms"
+    asserts:
+      - failedTemplate:
+          errorPattern: idleTimeout
+
+  - it: should accept a sub-second websocket.idleTimeout written with a leading zero
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token
+        websocket:
+          idleTimeout: "0.5s"
+    asserts:
+      - template: deployment-proxy.yaml
+        contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: PROXY_WS_IDLE_TIMEOUT
+            value: "0.5s"
