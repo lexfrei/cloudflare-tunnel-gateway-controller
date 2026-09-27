@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"log/slog"
+	"net"
 	"os"
 	"testing"
 
@@ -38,6 +39,25 @@ func TestRun_TunnelModeRefusesAnUnauthenticatedConfigAPI(t *testing.T) {
 
 	assert.Equal(t, 1, run(slog.New(slog.NewTextHandler(&logs, nil))))
 	assert.Contains(t, logs.String(), "refusing to start with a broken config-API auth configuration")
+}
+
+// TestRun_StandaloneStartupFailureReturnsOne pins that a run mode's runtime
+// failure comes back to run as an exit code, so the deferred tracing shutdown
+// in run still happens. A proxy listener that cannot bind is the failure.
+func TestRun_StandaloneStartupFailureReturnsOne(t *testing.T) {
+	occupied, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+
+	t.Cleanup(func() { _ = occupied.Close() })
+
+	t.Setenv("TUNNEL_TOKEN", "")
+	t.Setenv("PROXY_AUTH_TOKEN", "")
+	require.NoError(t, os.Unsetenv("TUNNEL_TOKEN"))
+	require.NoError(t, os.Unsetenv("PROXY_AUTH_TOKEN"))
+	t.Setenv("PROXY_CONFIG_ADDR", "127.0.0.1:0")
+	t.Setenv("PROXY_ADDR", occupied.Addr().String())
+
+	assert.Equal(t, 1, run(slog.New(slog.DiscardHandler)))
 }
 
 // TestBuildDataPlane_ReturnsTheAuthRefusal pins that a broken config-API auth
