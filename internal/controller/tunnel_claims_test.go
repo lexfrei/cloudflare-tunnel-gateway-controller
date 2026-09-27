@@ -10,6 +10,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/api/v1alpha1"
@@ -75,8 +76,7 @@ func TestCollectTunnelClaims_TokenBeatsAStaleAdvertisedAddress(t *testing.T) {
 
 	resolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims())
 
-	claims, err := collectTunnelClaims(context.Background(), fakeClient, resolver, "test-controller", claimsClassTunnel)
-	require.NoError(t, err)
+	claims := claimsFromCluster(t, fakeClient, resolver)
 
 	byKey := map[string]tunnelownership.Claim{}
 	for _, claim := range claims {
@@ -145,8 +145,7 @@ func TestCollectTunnelClaims_AdvertisedSurvivesAnUnreadableToken(t *testing.T) {
 
 	resolver := withVerdict(fakeClient, "default", tunnelownership.ProofRefuted)
 
-	claims, err := collectTunnelClaims(context.Background(), fakeClient, resolver, "test-controller", claimsClassTunnel)
-	require.NoError(t, err)
+	claims := claimsFromCluster(t, fakeClient, resolver)
 
 	byKey := map[string]tunnelownership.Claim{}
 	for _, claim := range claims {
@@ -201,12 +200,24 @@ func TestCollectTunnelClaims_SharedPlaneAddressIsNotPossession(t *testing.T) {
 
 	resolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims())
 
-	claims, err := collectTunnelClaims(context.Background(), fakeClient, resolver, "test-controller", claimsClassTunnel)
-	require.NoError(t, err)
+	claims := claimsFromCluster(t, fakeClient, resolver)
 
 	rejected := tunnelownership.Arbitrate(claimsClassTunnel, false, claims)
 	assert.NotContains(t, rejected, "team-a/gw",
 		"a leftover shared-plane address must not be read as a claim on the class tunnel")
+}
+
+// claimsFromCluster lists the managed opted-in Gateways and collects their
+// claims against the class tunnel, as every arbitrating layer does.
+func claimsFromCluster(tb testing.TB, cli client.Client, resolver statusTunnelResolver) []tunnelownership.Claim {
+	tb.Helper()
+
+	ctx := context.Background()
+
+	gateways, err := managedInfraGateways(ctx, cli, "test-controller")
+	require.NoError(tb, err)
+
+	return collectTunnelClaims(ctx, gateways, resolver, claimsClassTunnel)
 }
 
 func claimsGateway(namespace, name string, ageHours int, tokenSecret string) *gatewayv1.Gateway {

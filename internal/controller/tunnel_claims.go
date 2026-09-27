@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"golang.org/x/sync/errgroup"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
@@ -54,24 +53,23 @@ type statusTunnelResolver interface {
 // tunnelownership.Arbitrate — advertised addresses are canonicalized on read,
 // so a raw class tunnelID would miss the comparison below on case alone.
 //
+// gateways is managedInfraGateways' listing. The caller lists once and hands
+// the same slice to collectDataPlaneClaims, so the two rules judge one view of
+// the cluster.
+//
 // What the sharing costs: every arbitrating reconcile rebuilds the whole set —
-// two cache-served lists plus a GatewayConfig and a Secret read per opted-in
-// Gateway. The reads are cheap; the deepcopies are not free at scale, and
-// GatewayReconciler's Secret watch fans a single Secret write out to every
-// managed Gateway, which makes that path quadratic in the number of dedicated
-// planes. Unmeasurable at a handful, worth measuring at hundreds.
+// that listing plus a GatewayConfig and a Secret read per opted-in Gateway.
+// BenchmarkCollectTunnelClaims puts a rebuild at tens of microseconds per
+// opted-in Gateway, linear in their number. A write to a Secret that managed
+// configuration references enqueues every managed Gateway on the Gateway
+// reconciler, and each opted-in one rebuilds the set, so that one write costs
+// time quadratic in the number of dedicated planes.
 func collectTunnelClaims(
 	ctx context.Context,
-	cli client.Client,
+	gateways []*gatewayv1.Gateway,
 	resolver statusTunnelResolver,
-	controllerName string,
 	sharedTunnelID string,
-) ([]tunnelownership.Claim, error) {
-	gateways, err := managedInfraGateways(ctx, cli, controllerName)
-	if err != nil {
-		return nil, err
-	}
-
+) []tunnelownership.Claim {
 	// Indexed by listing position so the result keeps listing order however
 	// the lookups finish; a Gateway that claims nothing leaves its slot empty.
 	slots := make([]tunnelownership.Claim, len(gateways))
@@ -113,7 +111,7 @@ func collectTunnelClaims(
 		}
 	}
 
-	return claims, nil
+	return claims
 }
 
 // maxConcurrentClaimLookups bounds how many claims one collection checks with

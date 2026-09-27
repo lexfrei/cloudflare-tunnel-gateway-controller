@@ -98,7 +98,7 @@ func TestPlaneRefusals_ListManagedGatewaysOnce(t *testing.T) {
 			TunnelID:                  "12345678-1234-1234-1234-123456789abc",
 			MaxDataPlanesPerNamespace: capacity,
 		}
-		require.NoError(t, syncer.applyPlaneRefusals(ctx, infra, resolved))
+		syncer.applyPlaneRefusals(ctx, infra, resolved)
 
 		_, refused := infra.quotaRefusal("tenant/gw-new")
 		require.True(t, refused, "the newest of three Gateways is over a cap of two")

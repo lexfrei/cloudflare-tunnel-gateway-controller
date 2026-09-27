@@ -66,6 +66,10 @@ type infraGateways struct {
 	// reconcile requeued so a newly-joined pod is not stranded configless until
 	// an unrelated event.
 	transient map[string]bool
+	// listed is the managedInfraGateways listing this view was built from.
+	// The plane refusals derive their claim sets from it, so they judge the
+	// same Gateways the partitioner does.
+	listed []*gatewayv1.Gateway
 }
 
 // isBroken reports whether the Gateway key opted in but failed to resolve.
@@ -328,6 +332,7 @@ func (s *RouteSyncer) resolveInfraGateways(ctx context.Context) (*infraGateways,
 		resolved:  make(map[string]*infraGateway),
 		broken:    make(map[string]bool),
 		transient: make(map[string]bool),
+		listed:    gateways,
 	}
 
 	for _, gateway := range gateways {

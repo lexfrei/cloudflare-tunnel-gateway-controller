@@ -80,8 +80,10 @@ func TestCollectTunnelClaims_LooksClaimsUpConcurrently(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
-	claims, err := collectTunnelClaims(ctx, fakeClient, resolver, "test-controller", claimsClassTunnel)
+	gateways, err := managedInfraGateways(ctx, fakeClient, "test-controller")
 	require.NoError(t, err)
+
+	claims := collectTunnelClaims(ctx, gateways, resolver, claimsClassTunnel)
 	require.NoError(t, ctx.Err(), "every lookup must be in flight at once; a sequential pass stalls on the first")
 
 	require.Len(t, claims, len(namespaces))

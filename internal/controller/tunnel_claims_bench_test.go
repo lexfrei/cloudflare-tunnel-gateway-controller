@@ -1,7 +1,6 @@
 package controller
 
 import (
-	"context"
 	"fmt"
 	"strconv"
 	"testing"
@@ -28,14 +27,12 @@ func BenchmarkCollectTunnelClaims(b *testing.B) {
 		b.Run(strconv.Itoa(planes), func(b *testing.B) {
 			fakeClient := claimsBenchClient(b, planes)
 			resolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims())
-			ctx := context.Background()
 
 			b.ReportAllocs()
 
 			for b.Loop() {
-				claims, err := collectTunnelClaims(ctx, fakeClient, resolver, "test-controller", claimsClassTunnel)
-				if err != nil || len(claims) != planes {
-					b.Fatalf("collected %d claims, err %v", len(claims), err)
+				if claims := claimsFromCluster(b, fakeClient, resolver); len(claims) != planes {
+					b.Fatalf("collected %d claims", len(claims))
 				}
 			}
 		})

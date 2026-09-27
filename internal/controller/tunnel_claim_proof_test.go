@@ -380,8 +380,7 @@ func TestCollectTunnelClaims_BrokenOwnCredentialDoesNotKeepATunnel(t *testing.T)
 
 	resolver := withVerdict(fakeClient, "default", tunnelownership.ProofVerified)
 
-	claims, err := collectTunnelClaims(context.Background(), fakeClient, resolver, "test-controller", claimsClassTunnel)
-	require.NoError(t, err)
+	claims := claimsFromCluster(t, fakeClient, resolver)
 
 	rejected := tunnelownership.Arbitrate(claimsClassTunnel, false, claims)
 	assert.Contains(t, rejected, "team-a/gw", "an unchecked claim must not hold a tunnel against a confirmed one")
