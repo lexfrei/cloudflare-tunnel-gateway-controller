@@ -240,8 +240,6 @@ func buildRedirectPath(req *http.Request, config *RedirectConfig) string {
 
 			return joinPathSegments(config.Path.Value, suffix)
 		}
-
-		return config.Path.Value
 	}
 
 	return req.URL.Path

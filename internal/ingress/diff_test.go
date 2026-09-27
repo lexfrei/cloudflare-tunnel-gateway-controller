@@ -358,3 +358,81 @@ func TestRulesUnchanged(t *testing.T) {
 	shorter := identical[:2]
 	assert.False(t, ingress.RulesUnchanged(current, shorter), "length difference must compare unequal")
 }
+
+// TestDiffRules_Multiplicity pins that the tunnel document converges on the
+// desired multiplicity of every rule, not merely on its presence. Two routes
+// that project the same (hostname, path, service) produce two desired copies,
+// and a copy that is no longer desired must leave the document even while an
+// equal rule is still wanted.
+func TestDiffRules_Multiplicity(t *testing.T) {
+	t.Parallel()
+
+	ruleA := ingress.Rule{Hostname: "a.example.com", Path: "/", Service: "http://a:80"}
+	ruleB := ingress.Rule{Hostname: "b.example.com", Service: "http://b:80"}
+
+	tests := []struct {
+		name       string
+		current    []ingress.Rule
+		desired    []ingress.Rule
+		wantRemove []ingress.Rule
+		wantFinal  map[ingress.Rule]int
+	}{
+		{
+			name:      "cold tunnel receives every desired copy",
+			desired:   []ingress.Rule{ruleA, ruleA},
+			wantFinal: map[ingress.Rule]int{ruleA: 2},
+		},
+		{
+			name:       "an extra deployed copy is removed while the rule is still desired",
+			current:    []ingress.Rule{ruleA, ruleA, ruleB},
+			desired:    []ingress.Rule{ruleA, ruleB},
+			wantRemove: []ingress.Rule{ruleA},
+			wantFinal:  map[ingress.Rule]int{ruleA: 1, ruleB: 1},
+		},
+		{
+			name:      "a second desired copy is added next to a deployed one",
+			current:   []ingress.Rule{ruleA},
+			desired:   []ingress.Rule{ruleA, ruleA},
+			wantFinal: map[ingress.Rule]int{ruleA: 2},
+		},
+		{
+			name:       "every deployed copy leaves once the rule is no longer desired",
+			current:    []ingress.Rule{ruleA, ruleA, ruleB},
+			desired:    []ingress.Rule{ruleB},
+			wantRemove: []ingress.Rule{ruleA, ruleA},
+			wantFinal:  map[ingress.Rule]int{ruleB: 1},
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			current := make([]zero_trust.TunnelCloudflaredConfigurationGetResponseConfigIngress, 0, len(testCase.current))
+			for _, rule := range testCase.current {
+				current = append(current, zero_trust.TunnelCloudflaredConfigurationGetResponseConfigIngress{
+					Hostname: rule.Hostname, Path: rule.Path, Service: rule.Service,
+				})
+			}
+
+			desired := make([]zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress, 0, len(testCase.desired))
+			for _, rule := range testCase.desired {
+				desired = append(desired, zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress{
+					Hostname: cloudflare.F(rule.Hostname), Path: cloudflare.F(rule.Path), Service: cloudflare.F(rule.Service),
+				})
+			}
+
+			toAdd, toRemove := ingress.DiffRules(current, desired)
+			assert.ElementsMatch(t, testCase.wantRemove, toRemove)
+
+			final := ingress.ApplyDiff(current, toAdd, toRemove)
+
+			got := make(map[ingress.Rule]int, len(final))
+			for idx := range final {
+				got[ingress.RuleFromUpdate(&final[idx])]++
+			}
+
+			assert.Equal(t, testCase.wantFinal, got)
+		})
+	}
+}

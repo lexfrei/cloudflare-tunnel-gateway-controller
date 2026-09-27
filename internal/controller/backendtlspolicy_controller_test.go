@@ -1195,6 +1195,16 @@ func TestPolicyReferencesConfigMap_MatchesByName(t *testing.T) {
 	assert.False(t, policyReferencesConfigMap(policy, "other-cm"))
 }
 
+func TestPolicyReferencesConfigMap_GroupSpellings(t *testing.T) {
+	t.Parallel()
+
+	for group, want := range map[gatewayv1.Group]bool{"": true, "core": true, "example.com": false} {
+		policy := backendTLSPolicyFor("ns", "p", "svc", "ca-cm", time.Time{})
+		policy.Spec.Validation.CACertificateRefs[0].Group = group
+		assert.Equal(t, want, policyReferencesConfigMap(policy, "ca-cm"), "group %q", group)
+	}
+}
+
 func TestPolicyReferencesConfigMap_IgnoresNonConfigMapKind(t *testing.T) {
 	t.Parallel()
 

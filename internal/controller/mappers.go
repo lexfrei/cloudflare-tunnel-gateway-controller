@@ -745,12 +745,7 @@ func FindRoutesForGateway(
 
 	for _, route := range routes {
 		for _, ref := range route.GetParentRefs() {
-			refNamespace := route.GetNamespace()
-			if ref.Namespace != nil {
-				refNamespace = string(*ref.Namespace)
-			}
-
-			if string(ref.Name) == gateway.Name && refNamespace == gateway.Namespace {
+			if parentRefIsGateway(ref) && parentReferenceToKey(ref, route.GetNamespace()) == client.ObjectKeyFromObject(gateway) {
 				requests = append(requests, reconcile.Request{
 					Name:      route.GetName(),
 					Namespace: route.GetNamespace(),

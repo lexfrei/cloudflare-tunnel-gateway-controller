@@ -6,6 +6,8 @@ import (
 	"github.com/cockroachdb/errors"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	gatewayv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
+
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/coregroup"
 )
 
 // Reference represents a reference from one resource to another.
@@ -88,16 +90,11 @@ func (v *Validator) grantAllowsReference(grant *gatewayv1beta1.ReferenceGrant, f
 	return false
 }
 
-// coreGroupAlias is the spelling the core API group sometimes carries in a
-// ReferenceGrant or a backendRef. The canonical spelling is the empty string,
-// which is what every comparison here is written against.
-const coreGroupAlias = "core"
-
 // normalizeGroup maps the core API group onto its canonical empty-string
-// spelling so a grant and a reference that disagree only on spelling still
-// match.
+// spelling, which is what every comparison here is written against, so a grant
+// and a reference that disagree only on spelling still match.
 func normalizeGroup(group string) string {
-	if group == coreGroupAlias {
+	if coregroup.Is(group) {
 		return ""
 	}
 

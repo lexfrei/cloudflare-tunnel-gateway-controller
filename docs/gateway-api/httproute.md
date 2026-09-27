@@ -93,7 +93,7 @@ spec:
 
 | Type | Description | Notes |
 | --- | --- | --- |
-| `PathPrefix` | Matches paths starting with value | |
+| `PathPrefix` | Matches paths starting with value, element by element | A trailing `/` on the value is ignored: `/abc` and `/abc/` both match `/abc`, `/abc/` and `/abc/def`, and neither matches `/abcd`. Being the same prefix, `/abc` and `/abc/` tie on path length, so the remaining precedence rules decide between them |
 | `Exact` | Matches exact path only | |
 | `RegularExpression` | Matches path against regex pattern (RE2) | |
 

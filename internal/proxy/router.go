@@ -736,14 +736,16 @@ func matchRules(rules []*compiledRule, req *http.Request) *RouteResult {
 	return nil
 }
 
-// getMatchedPathPrefix returns the path prefix from the match that actually fired.
-// Falls back to the first prefix match if matchIdx is out of range.
+// getMatchedPathPrefix returns the path prefix from the match that actually
+// fired, or "" when that match is not a PathPrefix. A rule without matches and
+// a match without a path carry the spec's default, a PathPrefix of "/".
 func getMatchedPathPrefix(rule *RouteRule, matchIdx int) string {
-	if matchIdx >= 0 && matchIdx < len(rule.Matches) {
-		match := rule.Matches[matchIdx]
-		if match.Path != nil && match.Path.Type == PathMatchPathPrefix {
-			return match.Path.Value
-		}
+	if matchIdx < 0 || matchIdx >= len(rule.Matches) || rule.Matches[matchIdx].Path == nil {
+		return "/"
+	}
+
+	if path := rule.Matches[matchIdx].Path; path.Type == PathMatchPathPrefix {
+		return path.Value
 	}
 
 	return ""

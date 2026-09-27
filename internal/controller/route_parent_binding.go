@@ -289,16 +289,19 @@ func listenerSetParentGateway(
 	return &gateway, true
 }
 
+// gatewayIsManaged is route acceptance's reading of classifyGatewayClass: only
+// a class of ours is managed, and a class that cannot be read is an error, so
+// the caller skips the parentRef without claiming it.
 func gatewayIsManaged(
 	ctx context.Context,
 	cli client.Client,
 	controllerName string,
 	gateway *gatewayv1.Gateway,
 ) (bool, error) {
-	classNames, err := managedClassNames(ctx, cli, controllerName)
+	state, err := classifyGatewayClass(ctx, cli, gateway, controllerName)
 	if err != nil {
-		return false, errors.Wrap(err, "failed to list managed gateway classes")
+		return false, err
 	}
 
-	return classNames[string(gateway.Spec.GatewayClassName)], nil
+	return state == gatewayClassManaged, nil
 }

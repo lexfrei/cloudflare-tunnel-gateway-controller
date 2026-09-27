@@ -122,3 +122,14 @@ func TestNewGatewayClientCertResolver_OurController_LoadsCert(t *testing.T) {
 	assert.Equal(t, certPEM, result.CertPEM)
 	assert.Equal(t, keyPEM, result.KeyPEM)
 }
+
+func TestGatewayManagedByController_UnreadableGatewayClass_Denied(t *testing.T) {
+	t.Parallel()
+
+	cli := unreadableGatewayClassClient(t, gatewayClassFor("our-class", skipTestControllerName))
+	gateway := gatewayUnderClass("gw", "our-class", nil)
+
+	// A class that cannot be read is not evidence the Gateway is ours, and the
+	// client certificate stays unpresented until it can be.
+	assert.False(t, gatewayManagedByController(context.Background(), cli, gateway, skipTestControllerName))
+}
