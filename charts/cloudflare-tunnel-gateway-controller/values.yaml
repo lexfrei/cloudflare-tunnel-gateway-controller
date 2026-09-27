@@ -95,6 +95,8 @@ image:
   pullPolicy: IfNotPresent
   # -- Image tag (defaults to appVersion)
   tag: ""
+  # -- Image digest (`sha256:...`). When set it replaces `tag` in the rendered reference. See the Container Image Verification section of the security reference for when to set it.
+  digest: ""
 
 # -- Image pull secrets for private registries
 imagePullSecrets: []
@@ -397,6 +399,8 @@ proxy:
     pullPolicy: IfNotPresent
     # -- Image tag (defaults to appVersion)
     tag: ""
+    # -- Image digest (`sha256:...`). When set it replaces `tag` in the rendered reference, and is passed to `--proxy-image` as the default image for per-Gateway data planes. See the Container Image Verification section of the security reference for what that default does and does not guarantee.
+    digest: ""
   # -- Config API port (controller pushes config here)
   configAPIPort: 8081
   # -- Proxy port (internal, traffic arrives through tunnel)

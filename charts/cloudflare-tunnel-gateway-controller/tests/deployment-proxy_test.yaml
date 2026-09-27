@@ -130,6 +130,19 @@ tests:
           path: spec.template.spec.containers[0].image
           pattern: "^ghcr\\.io/lexfrei/cloudflare-tunnel-gateway-controller-proxy:"
 
+  - it: should pin the proxy by digest when one is set
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token-secret
+        image:
+          tag: "v1.0.0"
+          digest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].image
+          value: "ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller-proxy@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+
   - it: should default to IfNotPresent pull policy
     # Stable-release default. The PR-chart build flips this to Always via a
     # workflow-side yq override so iteration picks up new pr-NNN-1d digests.

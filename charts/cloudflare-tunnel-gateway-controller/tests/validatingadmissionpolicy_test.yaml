@@ -45,6 +45,22 @@ tests:
           path: spec.validations[0].expression
           pattern: exists_one
 
+  # One version is all the rule needs: matchConstraints defaults to
+  # matchPolicy Equivalent, which relabels a write made through any other
+  # served version into this one before the policy runs. Leaving matchPolicy
+  # unset is what makes that true, so pin it alongside the version list.
+  - it: should name v1 alone and leave matchPolicy at its Equivalent default
+    set:
+      ruleNameUniquenessPolicy:
+        enabled: true
+    documentIndex: 0
+    asserts:
+      - equal:
+          path: spec.matchConstraints.resourceRules[0].apiVersions
+          value: ["v1"]
+      - isNull:
+          path: spec.matchConstraints.matchPolicy
+
   - it: should render a binding with Deny action referencing the policy
     set:
       ruleNameUniquenessPolicy:

@@ -133,14 +133,7 @@ spec:
 
 #### Container Image Verification
 
-Container images are signed with cosign (keyless):
-
-```bash
-# Verify image signature
-cosign verify ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller:latest \
-  --certificate-identity-regexp="https://github.com/lexfrei/cloudflare-tunnel-gateway-controller" \
-  --certificate-oidc-issuer="https://token.actions.githubusercontent.com"
-```
+Container images are signed with cosign (keyless). The chart deploys two images and both are signed, and a tag verified today can point somewhere else tomorrow — so the procedure that matters is verifying both and deploying the digests cosign reported, rather than the tags. It is written out, with the values that pin them, under [Container Image Verification](https://cf.k8s.lex.la/latest/reference/security/#container-image-verification).
 
 #### Helm Chart Verification
 

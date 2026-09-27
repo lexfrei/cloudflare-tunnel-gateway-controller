@@ -33,6 +33,58 @@ tests:
           path: spec.template.spec.containers[0].image
           pattern: ^ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller:.+$
 
+  # A tag is mutable: the digest behind a released tag can be replaced after
+  # the operator verified it. image.digest is the only way to deploy exactly
+  # the artifact cosign attested, so it wins over the tag.
+  - it: should pin the controller by digest when one is set
+    set:
+      image:
+        digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    asserts:
+      - template: deployment.yaml
+        equal:
+          path: spec.template.spec.containers[0].image
+          value: "ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+  # Before image.digest existed, a digest was reachable only by putting the
+  # whole combined reference in `tag`, which has no pattern and is simply
+  # concatenated. Anyone who did that is still deploying, so pin the shape:
+  # adding validation to `tag`, or parsing it in the helper, would strand them.
+  - it: should leave a combined tag@digest reference intact
+    set:
+      image:
+        tag: "3.5.0@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    asserts:
+      - template: deployment.yaml
+        equal:
+          path: spec.template.spec.containers[0].image
+          value: "ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller:3.5.0@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+  - it: should ignore the tag when a digest is set
+    set:
+      image:
+        tag: "v1.0.0"
+        digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    asserts:
+      - template: deployment.yaml
+        equal:
+          path: spec.template.spec.containers[0].image
+          value: "ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+  # The per-Gateway data planes are rendered by the controller, not by Helm,
+  # so a pin that stops at the chart's own Deployments leaves them on a
+  # mutable tag. The flag carries the pin across that boundary.
+  - it: should pass the proxy digest through to --proxy-image
+    set:
+      proxy:
+        image:
+          digest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    asserts:
+      - template: deployment.yaml
+        contains:
+          path: spec.template.spec.containers[0].args
+          content: "--proxy-image=ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller-proxy@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+
   - it: should set correct security context
     asserts:
       - template: deployment.yaml

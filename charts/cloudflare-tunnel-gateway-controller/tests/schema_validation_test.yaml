@@ -555,3 +555,27 @@ tests:
     asserts:
       - failedTemplate:
           errorPattern: protocol
+
+  # A digest that does not parse is otherwise invisible until the rolled
+  # Deployment sits in ImagePullBackOff, so it has to fail at install time.
+  - it: should reject a malformed image digest
+    set:
+      image:
+        digest: "sha256:not-a-digest"
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token
+    asserts:
+      - failedTemplate:
+          errorPattern: digest
+
+  - it: should reject a digest missing its algorithm prefix
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token
+        image:
+          digest: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    asserts:
+      - failedTemplate:
+          errorPattern: digest

@@ -178,12 +178,21 @@ rules:
 
     Because the RBAC grant for these resources is broad (`delete` on Deployments, Services, and HorizontalPodAutoscalers cluster-wide), the **in-code ownership check is the security boundary, not the RBAC scope**. Every apply and create path for a *per-Gateway* rendered object — including that plane's generated config-API auth Secret — refuses to adopt, update, or GC an object at a rendered name unless it already carries this Gateway's controller ownerReference. A pre-existing object with a foreign owner (or none) is left untouched and the reconcile surfaces a `RenderFailed` event instead of overwriting it. The *shared* plane's generated auth Secret (below) has no Gateway to check ownership against, so it has no equivalent adoption check: it reuses whatever Secret already exists at its deterministic name unconditionally, by design. This is safe specifically because that Secret always lives in the controller's own release namespace — anyone able to create a Secret there could already replace the controller's Deployment, so an ownership check on this one Secret would not defend anything the namespace boundary doesn't already defend. The per-Gateway check above exists because that Secret lives in an arbitrary tenant namespace instead, where no such trust is implied. See [Config API Authentication](#config-api-authentication).
 
+!!! warning "Cluster-wide Secret access is an accepted risk"
+    The controller holds `get`, `list`, `watch` and `create` on Secrets in **every namespace**. The three read verbs cannot be narrowed without giving up features the API itself defines, because three separate mechanisms put the Secrets in arbitrary namespaces: `GatewayClassConfig` is cluster-scoped and its `cloudflareCredentialsSecretRef.namespace` names whichever namespace it likes; Gateway and ListenerSet TLS `certificateRefs` resolve in the Gateway's namespace — wherever the tenant created it — and reach further still through a `ReferenceGrant`; and a per-Gateway data plane's connector-token Secret has to sit in the tenant namespace beside the proxy Deployment that mounts it, because a Pod cannot mount a Secret from another namespace. A label selector would only move the problem, since the controller cannot rely on a given label being present on a TLS Secret it did not create — cert-manager can set one through `Certificate.spec.secretTemplate`, but nothing makes an operator do so, and a Secret that misses the label is simply invisible to the controller.
+
+    `create` is a weaker case and is granted unconditionally anyway. It exists so a data plane with no `authTokenSecretRef` gets a generated config-API bearer token instead of an unauthenticated config API, which means a deployment that supplies its own auth Secret everywhere never exercises it. The grant is not conditioned on that today: the shared plane's need is known when the chart renders, but a per-Gateway plane's is a property of a `GatewayConfig` that may not exist yet, so there is no single template-time answer. `resourceNames` would not help either — RBAC does not apply it to `create`.
+
+    Note that `list` and `watch` are not a milder grant than `get`: a List response carries the Secret contents, and the controller's informer cache holds every Secret in the cluster in memory. `create` is not read-only either — a Secret of type `kubernetes.io/service-account-token` carrying the `kubernetes.io/service-account.name` annotation is still populated with a working token by the control plane, so `create` together with the `get` above mints credentials for any ServiceAccount in any namespace.
+
+    Concretely: anyone who can run code in the controller pod can read every Secret in the cluster and can escalate to any ServiceAccount in it. **The controller is a cluster-admin-equivalent workload** — restrict who can write to its release namespace, keep its ServiceAccount unshared, and verify the image signature before deploying (see [Container Image Verification](#container-image-verification)).
+
 ### Multi-Tenancy
 
 Tenant isolation is layered: admission-level scoping (per-tenant listeners, `allowedListeners`/`allowedRoutes`, the opt-in hostname-ownership `ValidatingAdmissionPolicy`), an independent controller-side enforcement of the same hostname-ownership rule (a route that bypasses admission is still never programmed), and optional hard data-plane isolation with a dedicated proxy and tunnel per Gateway. An operator can cap how many dedicated data planes one namespace may hold with `maxDataPlanesPerNamespace` on the GatewayClassConfig; past the cap the newest Gateways are refused and no plane is rendered for them. The boundaries and trade-offs are documented in the [Multi-Tenancy guide](../guides/multi-tenancy.md) and the [Per-Gateway Isolation guide](../guides/per-gateway-isolation.md).
 
 !!! warning "GatewayConfig is workload-creation-equivalent"
-    Because the controller renders Deployments for opted-in Gateways and `GatewayConfig.spec.image` selects the container image, **granting a user `create` on `GatewayConfig` (plus a Gateway with `infrastructure.parametersRef`) is privilege-equivalent to granting `create` on Deployments in that namespace**: the controller becomes the deputy that runs the chosen image under the namespace's default ServiceAccount (neither proxy mounts an SA token, since neither calls the Kubernetes API). Treat RBAC on `gatewayconfigs` accordingly. A rendered data plane's config API is authenticated by default — the controller generates a per-Gateway bearer-token Secret when `authTokenSecretRef` is unset — and network-restricted by default — the controller renders a NetworkPolicy per data plane admitting the config API port only from the controller pod, not from the tenant's namespace and not from every pod sharing the controller's (set `proxy.networkPolicy.monitoringNamespaceSelector` to also admit your monitoring namespace for scraping). See the [Per-Gateway Isolation guide](../guides/per-gateway-isolation.md).
+    Because the controller renders Deployments for opted-in Gateways and `GatewayConfig.spec.image` selects the container image, **granting a user any write verb on `GatewayConfig` (plus a Gateway with `infrastructure.parametersRef`) is privilege-equivalent to granting `create` on Deployments in that namespace**: the controller becomes the deputy that runs the chosen image under the namespace's default ServiceAccount (neither proxy mounts an SA token, since neither calls the Kubernetes API). `update` and `patch` count as much as `create` here — `spec.image` on an existing object selects the image just as well, and the controller's `GatewayConfig` watch carries no generation predicate, so the edit re-renders at once. Treat RBAC on `gatewayconfigs` accordingly. A rendered data plane's config API is authenticated by default — the controller generates a per-Gateway bearer-token Secret when `authTokenSecretRef` is unset — and network-restricted by default — the controller renders a NetworkPolicy per data plane admitting the config API port only from the controller pod, not from the tenant's namespace and not from every pod sharing the controller's (set `proxy.networkPolicy.monitoringNamespaceSelector` to also admit your monitoring namespace for scraping). See the [Per-Gateway Isolation guide](../guides/per-gateway-isolation.md).
 
 !!! warning "Writing `gateways/status` grants tunnel ownership"
     A tunnel belongs to whichever Gateway already advertises it in `Gateway.status.addresses`, so **`update` on `gateways/status` lets its holder claim a tunnel another namespace is serving** and evict the real owner. The Gateway API CRDs carry no RBAC aggregation labels, so the built-in `edit` and `admin` roles do not grant this; if you grant status write to tenants, tunnel ownership no longer holds for them. See [Per-Gateway Isolation](../guides/per-gateway-isolation.md).
@@ -297,13 +306,38 @@ This is a starting point for operators applying manifests by hand, not a transcr
 
 ### Container Image Verification
 
-Container images are signed with cosign (keyless):
+Container images are signed with cosign (keyless). A tag is a mutable pointer, so verifying a tag and later deploying that same tag are two separate resolutions and can land on different artifacts. Ask cosign which digest it actually verified, and deploy that one.
+
+The chart deploys **two** images from two repositories, and both are signed by the same release job, so verify both and keep the two digests apart:
 
 ```bash
-cosign verify ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller:latest \
-  --certificate-identity-regexp="https://github.com/lexfrei/cloudflare-tunnel-gateway-controller" \
-  --certificate-oidc-issuer="https://token.actions.githubusercontent.com"
+for repo in cloudflare-tunnel-gateway-controller cloudflare-tunnel-gateway-controller-proxy; do
+  digest=$(cosign verify "ghcr.io/lexfrei/${repo}:<version>" \
+    --certificate-identity-regexp="https://github.com/lexfrei/cloudflare-tunnel-gateway-controller" \
+    --certificate-oidc-issuer="https://token.actions.githubusercontent.com" \
+    --output=json | jq -r '.[0].critical.image."docker-manifest-digest"')
+  printf '%s: %s\n' "$repo" "${digest:-VERIFICATION FAILED}"
+done
 ```
+
+Note that `<version>` carries no `v` prefix: the release tag `v1.2.3` publishes image tag `1.2.3`, and `cosign` reports `MANIFEST_UNKNOWN` if you paste the prefixed form.
+
+Feed each digest to its own slot. `image.digest` and `proxy.image.digest` take precedence over the tag, and the proxy digest is carried into the controller's `--proxy-image` flag, so it reaches the data planes the controller renders for per-Gateway isolation as well as the ones Helm renders:
+
+```yaml
+image:
+  digest: "sha256:..."     # cloudflare-tunnel-gateway-controller
+proxy:
+  image:
+    digest: "sha256:..."   # cloudflare-tunnel-gateway-controller-proxy
+```
+
+!!! warning "A per-Gateway data plane can override the pin"
+    `proxy.image.digest` reaches a rendered per-Gateway data plane as its **default**, not as a constraint. If that Gateway's `GatewayConfig` sets `spec.image`, the controller uses it and the pin does not apply to that plane. This follows from `GatewayConfig` being workload-creation-equivalent (see [Multi-Tenancy](#multi-tenancy)) — whoever may write one already chooses what runs there.
+
+    Making the pin hold cluster-wide means restricting **every write verb** on `gatewayconfigs`, not just `create`: `update` and `patch` set `spec.image` on an existing object just as well, and the controller's `GatewayConfig` watch carries no generation predicate, so the edit re-renders the Deployment immediately. Setting `spec.image` to the pinned digest in each `GatewayConfig` has the same dependency — it holds only for as long as nobody can update them afterwards.
+
+Pinning by digest also makes `pullPolicy` irrelevant to correctness: a digest reference always resolves to the same bytes, so a node cache can never serve a different image than the one you verified. The trade-off is that upgrades stop being automatic — you resolve and verify a new digest for each release.
 
 ### Helm Chart Verification
 
