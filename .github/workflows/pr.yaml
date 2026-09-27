@@ -69,6 +69,11 @@ jobs:
           # cache: true caches BOTH the module cache (~/go/pkg/mod) and the
           # build cache (~/.cache/go-build) keyed off go.sum. Issue #257.
           cache: true
+          # hack/tools is a separate module that make verify-generated builds,
+          # so its go.sum belongs in the key too.
+          cache-dependency-path: |
+            go.sum
+            hack/tools/go.sum
 
       # go.sum pins module zips, not the vendored copies, so no other check
       # notices a hand-edit under vendor/ or a go.mod change that was never
@@ -84,6 +89,13 @@ jobs:
             echo "${changes}"
             exit 1
           fi
+
+      # The deepcopy code, the chart CRDs and docs/reference/api.md are all
+      # generated from api/v1alpha1. Regenerate them and fail on a difference,
+      # so a changed field or validation marker cannot merge without the
+      # artifact that enforces or documents it.
+      - name: Verify generated code, CRDs and API reference
+        run: make verify-generated
 
       - name: golangci-lint
         # Pin to a specific golangci-lint version so the action's own
