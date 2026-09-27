@@ -155,8 +155,8 @@ func Arbitrate(sharedTunnelID string, allowSharedTunnels bool, claims []Claim) m
 //
 // The second arm keeps a holder through a Cloudflare outage, and through a
 // token rotation that leaves its Secret briefly unreadable. It rests on
-// Gateway status alone, so it is exactly as trustworthy as write access to
-// gateways/status.
+// Gateway status alone, and the tenant can make its own claim unchecked at
+// will, so incumbent never lets it outrank a confirmed claim.
 func hasStanding(claim *Claim) bool {
 	switch claim.Proof {
 	case ProofVerified:
@@ -172,12 +172,23 @@ func hasStanding(claim *Claim) bool {
 
 // incumbent returns the claim that holds the tunnel.
 //
-// Possession decides first: a Gateway already advertising this tunnel is
-// serving it, and a retargeted token must not take it away. Age (then UID, for
-// the equal timestamps Kubernetes second-granularity makes ordinary) decides
-// only among claims with equal standing — first-time claims, or the several
-// holders a previously-permitted sharing arrangement can leave behind.
+// A confirmed claim beats an unchecked one: a tenant can make its own claim
+// unchecked by breaking its credential or deleting its token, and a refused
+// Gateway keeps its address, so letting possession carry an unchecked claim
+// would hand a refuted squatter its tunnel back. Among what remains,
+// possession decides: a Gateway already advertising this tunnel is serving it,
+// and a retargeted token must not take it away. Age (then UID, for the equal
+// timestamps Kubernetes second-granularity makes ordinary) decides only among
+// claims with equal standing — first-time claims, or the several holders a
+// previously-permitted sharing arrangement can leave behind.
 func incumbent(tunnelID string, claims []Claim) Claim {
+	confirmed := slices.DeleteFunc(slices.Clone(claims), func(claim Claim) bool {
+		return claim.Proof != ProofVerified
+	})
+	if len(confirmed) > 0 {
+		claims = confirmed
+	}
+
 	holders := make([]Claim, 0, len(claims))
 
 	for _, claim := range claims {

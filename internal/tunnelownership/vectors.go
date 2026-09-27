@@ -193,7 +193,7 @@ func proofVectors() []Vector {
 			Name:         "a refuted claim is rejected even while advertising the tunnel",
 			SharedTunnel: vectorSharedTunnel,
 			Claims: []Claim{
-				unprovenContender(vectorGatewayA, vectorTeamA, vectorOwnedTunnel, 0, ProofRefuted),
+				unprovenContender(vectorGatewayA, vectorTeamA, vectorOwnedTunnel, 1, ProofRefuted),
 			},
 			WantRejected: []string{vectorGatewayA},
 		},
@@ -254,10 +254,10 @@ func outageVectors() []Vector {
 			Name:         "a confirmed holder beats an older holder Cloudflare could not check",
 			SharedTunnel: vectorSharedTunnel,
 			Claims: []Claim{
-				unprovenContender(vectorGatewayA, vectorTeamA, vectorOwnedTunnel, 0, ProofUnknown),
-				contender(vectorGatewayB, vectorTeamB, vectorOwnedTunnel, 1),
+				contender(vectorGatewayA, vectorTeamA, vectorOwnedTunnel, 1),
+				unprovenContender(vectorGatewayB, vectorTeamB, vectorOwnedTunnel, 0, ProofUnknown),
 			},
-			WantRejected: []string{vectorGatewayA},
+			WantRejected: []string{vectorGatewayB},
 		},
 		{
 			// Advertising a different tunnel is retargeting, not possession.

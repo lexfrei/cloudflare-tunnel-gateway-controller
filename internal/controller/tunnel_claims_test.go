@@ -104,6 +104,10 @@ func TestCollectTunnelClaims_TokenBeatsAStaleAdvertisedAddress(t *testing.T) {
 // ordinary delete-then-create token rotation is enough to open that window.
 // The challenger would then be accepted, rendered, and start advertising the
 // tunnel itself, so the incumbent could never take it back.
+//
+// The challenger here is one Cloudflare does not confirm. One that Cloudflare
+// does confirm holds the tunnel's real token, and outranks an unchecked holder
+// by design; the ownership vectors pin that.
 func TestCollectTunnelClaims_AdvertisedSurvivesAnUnreadableToken(t *testing.T) {
 	t.Parallel()
 
@@ -139,7 +143,7 @@ func TestCollectTunnelClaims_AdvertisedSurvivesAnUnreadableToken(t *testing.T) {
 		claimsGatewayConfig("team-b", "b-token"),
 	)
 
-	resolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims())
+	resolver := withVerdict(fakeClient, "default", tunnelownership.ProofRefuted)
 
 	claims, err := collectTunnelClaims(context.Background(), fakeClient, resolver, "test-controller", claimsClassTunnel)
 	require.NoError(t, err)
