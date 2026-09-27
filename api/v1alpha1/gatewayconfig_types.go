@@ -152,7 +152,7 @@ type GatewayConfigSpec struct {
 	// Image overrides the proxy container image for this Gateway. Defaults to
 	// the controller's --proxy-image flag (set by the Helm chart to the
 	// release's proxy image). The pattern is a permissive image-reference sanity
-	// check (registry[:port]/repo[:tag][@digest]) — it rejects empty, leading
+	// check (`registry[:port]/repo[:tag][@digest]`) — it rejects empty, leading
 	// junk, and whitespace at admission rather than letting a garbage value fail
 	// only at pod-pull time, far from the Gateway's status.
 	// +optional
