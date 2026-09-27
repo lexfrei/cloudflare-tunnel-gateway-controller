@@ -60,8 +60,8 @@ func TestSchemaGaps_ShippedCRDsDescribeEveryField(t *testing.T) {
 	entries, err := os.ReadDir(shippedCRDDir)
 	require.NoError(t, err)
 
-	checked := make(map[string]bool, len(servedCRDs))
-	for _, served := range servedCRDs {
+	checked := make(map[string]bool, len(servedCRDs()))
+	for _, served := range servedCRDs() {
 		plural, group, _ := strings.Cut(served.name, ".")
 		checked[group+"_"+plural+".yaml"] = true
 
@@ -80,7 +80,7 @@ func TestSchemaGaps_ShippedCRDsDescribeEveryField(t *testing.T) {
 func TestSchemaGaps_PrunedFieldReported(t *testing.T) {
 	t.Parallel()
 
-	for _, served := range servedCRDs {
+	for _, served := range servedCRDs() {
 		if served.name != gatewayClassConfigCRDName {
 			continue
 		}
@@ -140,12 +140,14 @@ func crdClient(t *testing.T, objs ...client.Object) client.Client {
 func TestLogInstalledSchemaGaps_NamesEachMissingField(t *testing.T) {
 	t.Parallel()
 
-	objs := make([]client.Object, 0, len(servedCRDs))
+	objs := make([]client.Object, 0, len(servedCRDs()))
 
-	for _, served := range servedCRDs {
+	for _, served := range servedCRDs() {
 		crd := shippedCRD(t, served.name)
 		if served.name == gatewayClassConfigCRDName {
-			delete(versionSchema(t, crd, served.version).Properties["spec"].Properties, "maxDataPlanesPerNamespace")
+			spec := versionSchema(t, crd, served.version).Properties["spec"]
+			delete(spec.Properties, "maxDataPlanesPerNamespace")
+			delete(spec.Properties, "allowSharedTunnels")
 		}
 
 		objs = append(objs, crd)
@@ -154,10 +156,17 @@ func TestLogInstalledSchemaGaps_NamesEachMissingField(t *testing.T) {
 	output, logger := capturingLogger()
 	logInstalledSchemaGaps(context.Background(), crdClient(t, objs...), logger)
 
-	logged := output()
-	assert.Contains(t, logged, "spec.maxDataPlanesPerNamespace")
-	assert.Contains(t, logged, gatewayClassConfigCRDName)
-	assert.Equal(t, 1, strings.Count(logged, "\n")+1, "only the pruned field is reported:\n%s", logged)
+	lines := strings.Split(output(), "\n")
+	require.Len(t, lines, 2, "exactly the pruned fields are reported")
+
+	for _, line := range lines {
+		assert.Contains(t, line, gatewayClassConfigCRDName)
+		assert.Contains(t, line, `"error"=`, "reported at error level")
+	}
+
+	logged := strings.Join(lines, "\n")
+	assert.Contains(t, logged, `"spec.maxDataPlanesPerNamespace"`)
+	assert.Contains(t, logged, `"spec.allowSharedTunnels"`)
 }
 
 // TestLogInstalledSchemaGaps_ReportsUnreadableCRD pins that a CRD the check
@@ -168,8 +177,51 @@ func TestLogInstalledSchemaGaps_ReportsUnreadableCRD(t *testing.T) {
 	output, logger := capturingLogger()
 	logInstalledSchemaGaps(context.Background(), crdClient(t), logger)
 
-	logged := output()
-	for _, served := range servedCRDs {
-		assert.Contains(t, logged, served.name)
+	lines := strings.Split(output(), "\n")
+	require.Len(t, lines, len(servedCRDs()))
+
+	for i, served := range servedCRDs() {
+		assert.Contains(t, lines[i], served.name)
+		assert.Contains(t, lines[i], `"error"=`, "reported at error level")
 	}
+}
+
+type schemaGapsInline struct {
+	Inlined string `json:"inlined"`
+}
+
+type schemaGapsItem struct {
+	Kept    string `json:"kept"`
+	Dropped string `json:"dropped"`
+}
+
+type schemaGapsObject struct {
+	schemaGapsInline `json:",inline"`
+
+	Untagged string
+	Ignored  string           `json:"-"`
+	Items    []schemaGapsItem `json:"items,omitempty"`
+	hidden   string
+}
+
+// TestSchemaGaps_FollowsJSONFieldNames pins the walk to the field names
+// encoding/json uses: inline embeds are flattened, an untagged field keeps its
+// Go name, "-" and unexported fields are skipped, and a slice is checked
+// through its items schema.
+func TestSchemaGaps_FollowsJSONFieldNames(t *testing.T) {
+	t.Parallel()
+
+	_ = schemaGapsObject{hidden: ""}
+
+	object := func(properties map[string]apiextensionsv1.JSONSchemaProps) *apiextensionsv1.JSONSchemaProps {
+		return &apiextensionsv1.JSONSchemaProps{Type: "object", Properties: properties}
+	}
+
+	schema := object(map[string]apiextensionsv1.JSONSchemaProps{
+		"items": {Type: "array", Items: &apiextensionsv1.JSONSchemaPropsOrArray{
+			Schema: object(map[string]apiextensionsv1.JSONSchemaProps{"kept": {Type: "string"}}),
+		}},
+	})
+
+	assert.ElementsMatch(t, []string{"inlined", "Untagged", "items[].dropped"}, schemaGaps(schemaGapsObject{}, schema))
 }

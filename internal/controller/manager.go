@@ -285,6 +285,8 @@ func Run(ctx context.Context, cfg *Config) error {
 		return err
 	}
 
+	logInstalledSchemaGaps(ctx, mgr.GetAPIReader(), logger)
+
 	// Resolve the shared-proxy config-API auth token as the very first
 	// Kubernetes-touching step, before any reconciler wiring: the chart
 	// applies the controller and proxy Deployments in the same helm
