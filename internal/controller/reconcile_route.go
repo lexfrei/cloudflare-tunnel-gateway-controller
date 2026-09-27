@@ -170,10 +170,10 @@ func routeWatches(params *routeControllerSetupParams) []routeWatch {
 		ConfigResolver: params.configResolver,
 	}
 
-	// The generation predicate is applied PER WATCH (replicating the former
-	// global WithEventFilter verbatim), not globally: the Namespace watch
-	// below must see label-only updates, which a global generation filter
-	// would eat — namespace label edits do not bump generation.
+	// The generation predicate is applied PER WATCH, and only to kinds whose
+	// spec edits bump metadata.generation. Secret, Service, ConfigMap and
+	// Namespace never carry one, so the gate would drop every update to them;
+	// their watches run unfiltered or on a predicate of their own.
 	generationChanged := []predicate.Predicate{predicate.GenerationChangedPredicate{}}
 
 	watches := []routeWatch{
@@ -193,9 +193,8 @@ func routeWatches(params *routeControllerSetupParams) []routeWatch {
 			predicates: generationChanged,
 		},
 		{
-			object:     &corev1.Secret{},
-			handler:    handler.EnqueueRequestsFromMapFunc(mapper.MapSecretToRequests(params.getAllRelevantRoutes)),
-			predicates: generationChanged,
+			object:  &corev1.Secret{},
+			handler: handler.EnqueueRequestsFromMapFunc(mapper.MapSecretToRequests(params.getAllRelevantRoutes)),
 		},
 		{
 			object:     &gatewayv1beta1.ReferenceGrant{},
@@ -222,17 +221,15 @@ func routeWatches(params *routeControllerSetupParams) []routeWatch {
 // CA ConfigMap (gated on watchBackendTLS) now that gRPC backends honor a
 // matching policy by upgrading to TLS + ALPN-negotiated HTTP/2.
 func proxyOnlyWatches(params *routeControllerSetupParams) []routeWatch {
-	// Same per-watch replication of the former global generation filter as in
-	// routeWatches — these watches keep their historic event surface.
+	// Generation-gated only where generation moves, as in routeWatches.
 	generationChanged := []predicate.Predicate{predicate.GenerationChangedPredicate{}}
 
 	var watches []routeWatch
 
 	if params.findRoutesForService != nil {
 		watches = append(watches, routeWatch{
-			object:     &corev1.Service{},
-			handler:    handler.EnqueueRequestsFromMapFunc(params.findRoutesForService),
-			predicates: generationChanged,
+			object:  &corev1.Service{},
+			handler: handler.EnqueueRequestsFromMapFunc(params.findRoutesForService),
 		})
 	}
 
@@ -278,6 +275,6 @@ func proxyOnlyWatches(params *routeControllerSetupParams) []routeWatch {
 
 	return append(watches,
 		routeWatch{object: &gatewayv1.BackendTLSPolicy{}, handler: enqueueAllRoutes, predicates: generationChanged},
-		routeWatch{object: &corev1.ConfigMap{}, handler: enqueueRoutesForCAConfigMap, predicates: generationChanged},
+		routeWatch{object: &corev1.ConfigMap{}, handler: enqueueRoutesForCAConfigMap},
 	)
 }
