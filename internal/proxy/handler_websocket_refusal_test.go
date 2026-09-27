@@ -119,6 +119,59 @@ func TestHandler_WebSocketRefusal_TunnelMode_SteadyBodyIsNotCut(t *testing.T) {
 	assert.Equal(t, body, string(fake.Body()), "a body that keeps arriving must not be cut off")
 }
 
+// slowClientWriter is the tunnel fake with a client that takes longer than the
+// stall bound to accept each write.
+type slowClientWriter struct {
+	*fakeCloudflaredRespWriter
+
+	delay time.Duration
+}
+
+func (s *slowClientWriter) Write(payload []byte) (int, error) {
+	time.Sleep(s.delay)
+
+	return s.fakeCloudflaredRespWriter.Write(payload)
+}
+
+// TestHandler_WebSocketRefusal_TunnelMode_SlowClientDoesNotCutBody pins that
+// the stall bound measures the backend, not the client: time spent writing a
+// chunk to a slow client must not count against the wait for the next one.
+func TestHandler_WebSocketRefusal_TunnelMode_SlowClientDoesNotCutBody(t *testing.T) {
+	t.Parallel()
+
+	const body = "denied"
+
+	router := proxy.NewRouter()
+	require.NoError(t, router.UpdateConfig(&proxy.Config{
+		Version: 1,
+		Rules: []proxy.RouteRule{{
+			Matches: []proxy.RouteMatch{{Path: &proxy.PathMatch{Type: proxy.PathMatchPathPrefix, Value: "/"}}},
+			Backends: []proxy.BackendRef{{
+				URL: newTricklingRefusalBackend(t, body, 20*time.Millisecond), Weight: 1,
+				Protocol: proxy.BackendProtocolHTTP, WebSocket: true,
+			}},
+		}},
+	}))
+
+	fake := &slowClientWriter{fakeCloudflaredRespWriter: newFakeCloudflaredRespWriter(), delay: 300 * time.Millisecond}
+
+	t.Cleanup(func() {
+		_ = fake.serverSide.Close()
+		_ = fake.clientSide.Close()
+	})
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://app.example.com/ws", nil)
+	req.Header.Set("Connection", "Upgrade")
+	req.Header.Set("Upgrade", "websocket")
+	req.Header.Set("Sec-WebSocket-Version", "13")
+	req.Header.Set("Sec-WebSocket-Key", rfc6455SampleWSKey)
+
+	// Each write takes 300ms, past the 200ms bound; the backend never stalls.
+	proxy.NewHandler(router, proxy.WithWSHandshakeReadTimeout(200*time.Millisecond)).ServeHTTP(fake, req)
+
+	assert.Equal(t, body, string(fake.Body()), "a slow client must not cut off a backend that keeps sending")
+}
+
 // TestHandler_WebSocketRefusal_TunnelMode_BodyCopyIsBounded pins that a backend
 // refusing the upgrade and then stalling part-way into the refusal body cannot
 // hold the handler, the backend connection and the tunnel stream open
