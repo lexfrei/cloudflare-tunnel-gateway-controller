@@ -14,6 +14,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 )
 
 // TestNewProxySecretReconciler_ParseShapes pins the input-validation
@@ -161,8 +162,9 @@ func TestHashSecretData_DistinguishesContent(t *testing.T) {
 
 // TestProxySecretReconciler_PatchesDeploymentOnSecretChange pins the
 // end-to-end behaviour: a Secret event reaches Reconcile, the matching
-// proxy Deployment's pod template annotation is set to the Secret's
-// data hash, and Kubernetes' native rolling-restart kicks in.
+// proxy Deployment's pod template annotation moves from the old
+// revision to the Secret's data hash, and Kubernetes' native
+// rolling-restart kicks in.
 //
 // The fake client doesn't run the Deployment controller, so we
 // observe the annotation directly. Issue #114.
@@ -194,6 +196,9 @@ func TestProxySecretReconciler_PatchesDeploymentOnSecretChange(t *testing.T) {
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
 					Labels: map[string]string{"app.kubernetes.io/component": "proxy"},
+					Annotations: map[string]string{
+						tokenRevisionAnnotation: hashSecretData(map[string][]byte{"tunnel-token": []byte("previous-jwt")}),
+					},
 				},
 			},
 		},
@@ -334,4 +339,162 @@ func TestProxySecretReconciler_SecretDeletedIsNoop(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, ctrl.Result{}, res, "Secret-not-found path must be a clean no-op")
+}
+
+// reconcileTokenSecret runs one reconcile of the token Secret against the
+// given Deployment and returns the Deployment as stored afterwards.
+func reconcileTokenSecret(t *testing.T, data map[string][]byte, dep *appsv1.Deployment) *appsv1.Deployment {
+	t.Helper()
+
+	const (
+		ns      = "cloudflare-tunnel-system"
+		secretN = "cloudflare-tunnel-token"
+	)
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
+	require.NoError(t, appsv1.AddToScheme(scheme))
+
+	dep.Namespace = ns
+	dep.Labels = map[string]string{"app.kubernetes.io/component": "proxy"}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(
+			&corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: secretN, Namespace: ns},
+				Data:       data,
+			},
+			dep,
+		).
+		Build()
+
+	r := &ProxySecretReconciler{
+		Client:               fakeClient,
+		TokenSecretNamespace: ns,
+		TokenSecretName:      secretN,
+		DeploymentLabelKey:   "app.kubernetes.io/component",
+		DeploymentLabelValue: "proxy",
+	}
+
+	_, err := r.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Namespace: ns, Name: secretN},
+	})
+	require.NoError(t, err)
+
+	var got appsv1.Deployment
+	require.NoError(t, fakeClient.Get(context.Background(),
+		types.NamespacedName{Namespace: ns, Name: dep.Name}, &got))
+
+	return &got
+}
+
+// TestProxySecretReconciler_FirstSightDoesNotRoll pins that a proxy
+// Deployment the reconciler has never stamped is recorded, not rolled:
+// its pods started with the Secret as it is now, so stamping the pod
+// template would only restart them into the same token. The observed
+// revision goes on the Deployment's own metadata instead.
+func TestProxySecretReconciler_FirstSightDoesNotRoll(t *testing.T) {
+	t.Parallel()
+
+	data := map[string][]byte{"tunnel-token": []byte("install-time-jwt")}
+
+	got := reconcileTokenSecret(t, data, &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: "fresh-proxy"},
+	})
+
+	assert.NotContains(t, got.Spec.Template.Annotations, tokenRevisionAnnotation,
+		"a first sighting must leave the pod template alone, or every fresh install rolls the proxy once")
+	assert.Equal(t, hashSecretData(data), got.Annotations[tokenRevisionAnnotation],
+		"the observed revision must be recorded on the Deployment metadata")
+}
+
+// TestProxySecretReconciler_RollsWhenRecordedRevisionIsStale pins the
+// other half of the first-sight contract: once a revision is recorded on
+// the Deployment metadata, a Secret whose hash differs from it rolls the
+// pods even though the pod template was never stamped.
+func TestProxySecretReconciler_RollsWhenRecordedRevisionIsStale(t *testing.T) {
+	t.Parallel()
+
+	data := map[string][]byte{"tunnel-token": []byte("rotated-jwt")}
+
+	got := reconcileTokenSecret(t, data, &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "recorded-proxy",
+			Annotations: map[string]string{
+				tokenRevisionAnnotation: hashSecretData(map[string][]byte{"tunnel-token": []byte("install-time-jwt")}),
+			},
+		},
+	})
+
+	assert.Equal(t, hashSecretData(data), got.Spec.Template.Annotations[tokenRevisionAnnotation],
+		"a rotation after the recorded revision must stamp the pod template")
+	assert.Equal(t, hashSecretData(data), got.Annotations[tokenRevisionAnnotation],
+		"the recorded revision must follow the rotation")
+}
+
+// TestProxySecretReconciler_RecordedRevisionUnchangedIsNoop pins that a
+// Secret event carrying the already-recorded revision neither rolls the
+// pods nor rewrites the Deployment.
+func TestProxySecretReconciler_RecordedRevisionUnchangedIsNoop(t *testing.T) {
+	t.Parallel()
+
+	data := map[string][]byte{"tunnel-token": []byte("install-time-jwt")}
+
+	got := reconcileTokenSecret(t, data, &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        "recorded-proxy",
+			Annotations: map[string]string{tokenRevisionAnnotation: hashSecretData(data)},
+		},
+	})
+
+	assert.NotContains(t, got.Spec.Template.Annotations, tokenRevisionAnnotation,
+		"an unchanged recorded revision must not stamp the pod template")
+}
+
+// TestProxySecretReconciler_UnrecordedDeploymentPredicate pins which
+// Deployment events reach the reconciler: the creation or update of a
+// Deployment carrying the proxy label in the token Secret's namespace with no
+// revision recorded on it, which is how a new Deployment and one replaced
+// without its annotations both look. A recorded one is left out, so status
+// churn does not re-run the reconcile on every rollout step.
+func TestProxySecretReconciler_UnrecordedDeploymentPredicate(t *testing.T) {
+	t.Parallel()
+
+	r := &ProxySecretReconciler{
+		TokenSecretNamespace: "cloudflare-tunnel-system",
+		TokenSecretName:      "cloudflare-tunnel-token",
+		DeploymentLabelKey:   "app.kubernetes.io/component",
+		DeploymentLabelValue: "proxy",
+	}
+	pred := r.matchesUnrecordedProxyDeployment()
+
+	deployment := func(namespace, component string) *appsv1.Deployment {
+		return &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{
+			Name:      "proxy",
+			Namespace: namespace,
+			Labels:    map[string]string{"app.kubernetes.io/component": component},
+		}}
+	}
+	recordedOnMetadata := deployment("cloudflare-tunnel-system", "proxy")
+	recordedOnMetadata.Annotations = map[string]string{tokenRevisionAnnotation: "abc"}
+	recordedOnTemplate := deployment("cloudflare-tunnel-system", "proxy")
+	recordedOnTemplate.Spec.Template.Annotations = map[string]string{tokenRevisionAnnotation: "abc"}
+
+	update := func(obj *appsv1.Deployment) event.UpdateEvent {
+		return event.UpdateEvent{ObjectOld: recordedOnMetadata, ObjectNew: obj}
+	}
+
+	assert.True(t, pred.Create(event.CreateEvent{Object: deployment("cloudflare-tunnel-system", "proxy")}),
+		"a new proxy Deployment in the Secret's namespace must be reconciled")
+	assert.True(t, pred.Update(update(deployment("cloudflare-tunnel-system", "proxy"))),
+		"a proxy Deployment that lost its recorded revision must be reconciled")
+	assert.False(t, pred.Create(event.CreateEvent{Object: deployment("other", "proxy")}),
+		"a proxy Deployment in another namespace is not selected by the reconciler")
+	assert.False(t, pred.Create(event.CreateEvent{Object: deployment("cloudflare-tunnel-system", "controller")}),
+		"a Deployment without the proxy label is not selected by the reconciler")
+	assert.False(t, pred.Update(update(recordedOnMetadata)),
+		"an update to a Deployment with a recorded revision must not trigger a reconcile")
+	assert.False(t, pred.Update(update(recordedOnTemplate)),
+		"a revision stamped on the pod template counts as recorded")
 }
