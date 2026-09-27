@@ -1,4 +1,4 @@
-{{- if .Values.proxy.configAPITLS.enabled }}
+{{- if (eq (include "cf-tunnel-gw-ctrl.configAPITLSEnabled" .) "true") }}
 # The controller renews the shared proxy's config API certificate in place,
 # since the proxy Deployment names that Secret statically. update is granted
 # on that one Secret, in this namespace, and nowhere else: resourceNames
