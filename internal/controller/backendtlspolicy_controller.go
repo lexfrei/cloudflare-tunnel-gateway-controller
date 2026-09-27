@@ -21,6 +21,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/coregroup"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/proxy"
 )
 
@@ -545,7 +546,7 @@ func (r *BackendTLSPolicyReconciler) validateCARefs(
 
 	for _, ref := range refs {
 		group := string(ref.Group)
-		if group != "" && group != coreGroup {
+		if !coregroup.Is(group) {
 			return fmt.Errorf("%w: %q", errBackendTLSUnsupportedGroup, group)
 		}
 
@@ -1001,7 +1002,7 @@ func isConfigMapReferencedByBackendTLSPolicy(ctx context.Context, c client.Clien
 func policyReferencesConfigMap(policy *gatewayv1.BackendTLSPolicy, configMapName string) bool {
 	for _, ref := range policy.Spec.Validation.CACertificateRefs {
 		group := string(ref.Group)
-		if group != "" && group != coreGroup {
+		if !coregroup.Is(group) {
 			continue
 		}
 

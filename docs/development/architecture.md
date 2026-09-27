@@ -53,6 +53,7 @@ internal/
 │   ├── httproute_controller.go      # HTTPRoute reconciler
 │   ├── grpcroute_controller.go      # GRPCRoute reconciler
 │   └── proxy_syncer.go             # Config push to proxy replicas
+├── coregroup/           # Core API group predicate for backendRefs, their ReferenceGrants and BackendTLSPolicy CA refs
 ├── dns/
 │   └── detect.go        # Cluster domain auto-detection
 ├── ingress/

@@ -333,7 +333,7 @@ func listenerSetEffectiveHostnames(
 		return nil
 	}
 
-	if listenerSetOwnedElsewhere(ctx, cli, &listenerSet, controllerName) {
+	if listenerSetExcluded(ctx, cli, controllerName, validator, &listenerSet) {
 		return nil
 	}
 
@@ -404,6 +404,37 @@ func listenerSetOwnedElsewhere(
 	}
 
 	return gatewayOwnedElsewhere(ctx, cli, parent, controllerName)
+}
+
+// listenerSetExcluded reports whether a ListenerSet must contribute nothing to
+// the hostname and redirect-scheme passes: it belongs to another controller,
+// or its parent Gateway's spec.allowedListeners refuses it. Route acceptance
+// rejects a parentRef to a refused ListenerSet (resolveListenerSetParentBinding),
+// so its entries are not served here either.
+//
+// An absent parent gets past listenerSetOwnedElsewhere only with an empty
+// controllerName, and is kept. A failed acceptance evaluation keeps the
+// ListenerSet too: dropping it could leave a hostname-less route with nothing
+// to narrow it to, and such a route answers every Host.
+func listenerSetExcluded(
+	ctx context.Context,
+	cli client.Client,
+	controllerName string,
+	validator *routebinding.Validator,
+	listenerSet *gatewayv1.ListenerSet,
+) bool {
+	if listenerSetOwnedElsewhere(ctx, cli, listenerSet, controllerName) {
+		return true
+	}
+
+	parent, found := listenerSetParentGateway(ctx, cli, listenerSet)
+	if !found {
+		return false
+	}
+
+	acceptance, err := validator.EvaluateListenerSetAcceptance(ctx, parent, listenerSet)
+
+	return err == nil && !acceptance.Accepted
 }
 
 // nonConflictedSections drops, from sections, any matched listener whose

@@ -14,6 +14,7 @@ import (
 	mcsv1alpha1 "sigs.k8s.io/mcs-api/pkg/apis/v1alpha1"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/api/v1alpha1"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/coregroup"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/referencegrant"
 )
 
@@ -59,7 +60,7 @@ func validateBackendGroupKind(
 	}
 
 	switch {
-	case (group == backendGroupCore || group == backendGroupCoreAlias) && kind == backendKindService:
+	case coregroup.Is(group) && kind == backendKindService:
 		return backendTargetService, nil
 	case group == backendGroupServiceImport && kind == backendKindServiceImport:
 		return backendTargetServiceImport, nil

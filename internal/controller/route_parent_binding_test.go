@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/routebinding"
@@ -329,4 +330,71 @@ func TestParentRefSelectsManagedGateway_ForeignGroupRejected(t *testing.T) {
 func namespacesFromAllPtr() *gatewayv1.FromNamespaces {
 	v := gatewayv1.NamespacesFromAll
 	return &v
+}
+
+// TestGatewayIsManaged_ClassStates pins how route acceptance reads each state
+// of a Gateway's GatewayClass: a class of ours is managed, a foreign or absent
+// class is not, and a class that cannot be read is an error rather than an
+// answer, so the parentRef is not claimed on a read that never happened.
+func TestGatewayIsManaged_ClassStates(t *testing.T) {
+	t.Parallel()
+
+	gateway := gatewayUnderClass("gw", "our-class", nil)
+
+	tests := []struct {
+		name        string
+		cli         func(t *testing.T) client.Client
+		wantManaged bool
+		wantErr     bool
+	}{
+		{
+			name: "class of ours",
+			cli: func(t *testing.T) client.Client {
+				t.Helper()
+
+				return buildGatewayFakeClient(t, gatewayClassFor("our-class", skipTestControllerName))
+			},
+			wantManaged: true,
+		},
+		{
+			name: "foreign class",
+			cli: func(t *testing.T) client.Client {
+				t.Helper()
+
+				return buildGatewayFakeClient(t, gatewayClassFor("our-class", foreignControllerName))
+			},
+		},
+		{
+			name: "absent class",
+			cli: func(t *testing.T) client.Client {
+				t.Helper()
+
+				return buildGatewayFakeClient(t)
+			},
+		},
+		{
+			name: "unreadable class",
+			cli: func(t *testing.T) client.Client {
+				t.Helper()
+
+				return unreadableGatewayClassClient(t, gatewayClassFor("our-class", skipTestControllerName))
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			managed, err := gatewayIsManaged(context.Background(), tt.cli(t), skipTestControllerName, gateway)
+			if tt.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+
+			assert.Equal(t, tt.wantManaged, managed)
+		})
+	}
 }

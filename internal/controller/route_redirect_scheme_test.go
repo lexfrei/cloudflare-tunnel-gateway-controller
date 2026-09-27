@@ -526,3 +526,32 @@ func TestWithDefaultRedirectScheme_UnknownClassHTTPSListenerStillWins(t *testing
 		})
 	}
 }
+
+// TestWithDefaultRedirectScheme_ListenerSetNotAllowedByParentDoesNotWin is the
+// redirect twin of
+// TestWithEffectiveHostnames_ListenerSetNotAllowedByParentContributesNothing:
+// an HTTPS entry on a ListenerSet the parent Gateway does not permit must not
+// win the tie against the HTTP listener that actually accepted the route.
+func TestWithDefaultRedirectScheme_ListenerSetNotAllowedByParentDoesNotWin(t *testing.T) {
+	t.Parallel()
+
+	listenerSet := listenerSetUnder("ls", "ours", nil)
+	listenerSet.Spec.Listeners[0].Protocol = gatewayv1.HTTPSProtocolType
+	listenerSet.Spec.Listeners[0].Port = 8443
+
+	route := redirectRoute(nil)
+	route.Spec.ParentRefs = append(parentRefsToGateways("ours"), listenerSetRedirectRoute().Spec.ParentRefs...)
+
+	cli := buildGatewayFakeClient(t,
+		gatewayClassFor("our-class", skipTestControllerName),
+		gatewayUnderClassWithProtocol("ours", "our-class", gatewayv1.HTTPProtocolType, 80),
+		listenerSet,
+	)
+
+	out := withDefaultRedirectScheme(context.Background(), cli, skipTestControllerName, []*gatewayv1.HTTPRoute{route}, nil)
+	require.Len(t, out, 1)
+
+	got := redirectFilterScheme(out[0])
+	require.NotNil(t, got, "the listener that accepted the route still supplies a scheme")
+	assert.Equal(t, "http", *got, "a ListenerSet its parent Gateway does not allow must not decide the scheme")
+}
