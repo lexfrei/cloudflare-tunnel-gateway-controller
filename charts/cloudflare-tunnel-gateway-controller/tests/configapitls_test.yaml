@@ -106,6 +106,18 @@ tests:
           path: spec.endpoints[0].tlsConfig.insecureSkipVerify
           value: true
 
+  # `helm upgrade --reuse-values` from a release older than the value carries
+  # no configAPITLS key at all; the chart must render its default, not fail.
+  - it: should render the default when the values carry no configAPITLS key
+    template: deployment-proxy.yaml
+    set:
+      proxy:
+        configAPITLS: null
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.httpGet.scheme
+          value: HTTPS
+
   # Opt-out is the v3 wire: nothing TLS renders anywhere.
   - it: should keep the controller on the plaintext push when disabled
     template: deployment.yaml
