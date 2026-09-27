@@ -188,6 +188,44 @@ func TestEnsureSharedLeaf_ReplacesAForeignLeaf(t *testing.T) {
 		[]string{sharedLeafName}, time.Now()))
 }
 
+// TestEnsureSharedLeaf_LostRenewalRaceAcceptsTheWinner pins the update half of
+// convergence: when another issuer renews the leaf between our read and our
+// write, the conflict is settled by reading the winner's leaf, not reported.
+func TestEnsureSharedLeaf_LostRenewalRaceAcceptsTheWinner(t *testing.T) {
+	t.Parallel()
+
+	authority := testAuthority(t)
+	issuedAt := time.Now()
+
+	dueCert, dueKey, err := authority.Issue([]string{sharedLeafName}, issuedAt)
+	require.NoError(t, err)
+
+	later := issuedAt.Add(configtls.LeafValidity - configtls.RenewBefore + time.Hour)
+
+	winnerCert, winnerKey, err := authority.Issue([]string{sharedLeafName}, later)
+	require.NoError(t, err)
+
+	c := fake.NewClientBuilder().WithObjects(&corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: sharedLeafKey().Name, Namespace: sharedLeafKey().Namespace},
+		Type:       corev1.SecretTypeTLS,
+		Data:       map[string][]byte{corev1.TLSCertKey: dueCert, corev1.TLSPrivateKeyKey: dueKey},
+	}).WithInterceptorFuncs(interceptor.Funcs{
+		Update: func(ctx context.Context, inner client.WithWatch, obj client.Object, opts ...client.UpdateOption) error {
+			var current corev1.Secret
+			require.NoError(t, inner.Get(ctx, client.ObjectKeyFromObject(obj), &current))
+			current.Data = map[string][]byte{corev1.TLSCertKey: winnerCert, corev1.TLSPrivateKeyKey: winnerKey}
+			require.NoError(t, inner.Update(ctx, &current))
+
+			return apierrors.NewConflict(schema.GroupResource{Resource: "secrets"}, obj.GetName(), nil)
+		},
+	}).Build()
+
+	outcome, err := ensureSharedLeaf(t.Context(), c, authority, sharedLeafKey(), []string{sharedLeafName}, later)
+	require.NoError(t, err)
+	assert.Equal(t, leafValid, outcome)
+	assert.Equal(t, winnerCert, readLeaf(t, c).Data[corev1.TLSCertKey])
+}
+
 // TestEnsureSharedLeaf_ConcurrentIssuersConverge pins that two issuers racing
 // on the same Secret end with one valid leaf and that a further pass by
 // either changes nothing, so the proxy is not handed a different pair by

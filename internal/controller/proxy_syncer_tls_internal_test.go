@@ -12,7 +12,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/configtls"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/proxy"
@@ -69,6 +71,24 @@ func TestPush_VerifiesTheConfiguredHostNotThePodIP(t *testing.T) {
 	require.Len(t, results, 1)
 	require.Error(t, results[0].Err, "a leaf naming only the pod IP must not answer for the plane")
 	assert.Equal(t, int32(0), byIPPuts.Load())
+}
+
+// TestPerGatewayConfigEndpoint_FollowsTLS pins the URL a per-Gateway plane is
+// pushed to: https exactly when the syncer holds a CA, since an http URL
+// under TLS is refused and one under plaintext would fail the handshake.
+func TestPerGatewayConfigEndpoint_FollowsTLS(t *testing.T) {
+	t.Parallel()
+
+	gateway := &gatewayv1.Gateway{ObjectMeta: metav1.ObjectMeta{Name: "edge", Namespace: "tenant-a"}}
+
+	plain := NewProxySyncer("cluster.local", "token", "", fake.NewClientBuilder().Build(), slog.New(slog.DiscardHandler))
+	assert.Equal(t, "http://cf-proxy-edge-config.tenant-a.svc.cluster.local:8081/config",
+		plain.perGatewayConfigEndpoint(gateway, "cluster.local", 0))
+
+	withTLS := NewProxySyncer("cluster.local", "token", "", fake.NewClientBuilder().Build(), slog.New(slog.DiscardHandler),
+		WithConfigAPIAuthority(testAuthority(t)))
+	assert.Equal(t, "https://cf-proxy-edge-config.tenant-a.svc.cluster.local:8081/config",
+		withTLS.perGatewayConfigEndpoint(gateway, "cluster.local", 0))
 }
 
 // TestResolveEndpoints_CarriesTheConfiguredHost pins that resolution records
