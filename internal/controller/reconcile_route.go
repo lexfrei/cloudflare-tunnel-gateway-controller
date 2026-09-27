@@ -2,15 +2,18 @@ package controller
 
 import (
 	"context"
+	"maps"
 	"sync/atomic"
 
 	"github.com/cockroachdb/errors"
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	ctrlbuilder "sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
@@ -73,7 +76,8 @@ func reconcileRoute[T client.Object](
 }
 
 // routeControllerSetupParams holds parameters for setting up a route controller
-// with standard watches (Gateway, GatewayClassConfig, Secret, ReferenceGrant).
+// with standard watches (Gateway, GatewayClass, GatewayClassConfig, Secret,
+// ReferenceGrant).
 type routeControllerSetupParams struct {
 	routeObject              client.Object
 	reconciler               reconcile.Reconciler
@@ -183,6 +187,25 @@ func routeWatches(params *routeControllerSetupParams) []routeWatch {
 			predicates: generationChanged,
 		},
 		{
+			// A Gateway whose tunnel claim stops being refused, or whose data
+			// plane goes away, changes only its conditions. Its routes must
+			// re-sync to follow, and the full relevant set is enqueued rather
+			// than the Gateway's direct routes: a Gateway whose routes all
+			// attach through a ListenerSet has none.
+			object: &gatewayv1.Gateway{},
+			handler: handler.EnqueueRequestsFromMapFunc(
+				managedGatewayRoutes(params.k8sClient, params.controllerName, params.getAllRelevantRoutes)),
+			predicates: []predicate.Predicate{gatewayVerdictChanged()},
+		},
+		{
+			// Acceptance keys on the class's controllerName, so a class of
+			// ours appearing, going away or changing parametersRef moves
+			// routes in or out without any route or Gateway event.
+			object:     &gatewayv1.GatewayClass{},
+			handler:    handler.EnqueueRequestsFromMapFunc(ownClassRoutes(params.controllerName, params.getAllRelevantRoutes)),
+			predicates: generationChanged,
+		},
+		{
 			object:     &gatewayv1.ListenerSet{},
 			handler:    handler.EnqueueRequestsFromMapFunc(params.findRoutesForListenerSet),
 			predicates: generationChanged,
@@ -212,6 +235,70 @@ func routeWatches(params *routeControllerSetupParams) []routeWatch {
 	}
 
 	return append(watches, proxyOnlyWatches(params)...)
+}
+
+// gatewayVerdictChanged passes only a Gateway update whose top-level
+// conditions changed type, status or reason. Message, timestamps and listener
+// status are ignored: the Gateway reconciler rewrites the listeners'
+// attachedRoutes count whenever routes change, and passing that would turn
+// each rewrite into another full route sync. Create, delete and generic
+// events are left to the generation-gated Gateway watch.
+func gatewayVerdictChanged() predicate.Predicate {
+	return predicate.Funcs{
+		CreateFunc:  func(event.CreateEvent) bool { return false },
+		DeleteFunc:  func(event.DeleteEvent) bool { return false },
+		GenericFunc: func(event.GenericEvent) bool { return false },
+		UpdateFunc: func(updateEvent event.UpdateEvent) bool {
+			oldGateway, oldOK := updateEvent.ObjectOld.(*gatewayv1.Gateway)
+			newGateway, newOK := updateEvent.ObjectNew.(*gatewayv1.Gateway)
+
+			if !oldOK || !newOK {
+				return false
+			}
+
+			return !maps.Equal(conditionVerdicts(oldGateway.Status.Conditions),
+				conditionVerdicts(newGateway.Status.Conditions))
+		},
+	}
+}
+
+// conditionVerdicts keys each condition's status and reason by its type.
+func conditionVerdicts(conditions []metav1.Condition) map[string]string {
+	verdicts := make(map[string]string, len(conditions))
+	for _, condition := range conditions {
+		verdicts[condition.Type] = string(condition.Status) + "/" + condition.Reason
+	}
+
+	return verdicts
+}
+
+// managedGatewayRoutes enqueues the relevant routes when a Gateway of one of
+// this controller's classes changes; any one of them runs the full sync.
+func managedGatewayRoutes(cli client.Client, controllerName string, getAll RequestsFunc) handler.MapFunc {
+	return func(ctx context.Context, obj client.Object) []reconcile.Request {
+		gateway, ok := obj.(*gatewayv1.Gateway)
+		if !ok || !isGatewayManagedByController(ctx, cli, gateway, controllerName) {
+			return nil
+		}
+
+		return getAll(ctx)
+	}
+}
+
+// ownClassRoutes enqueues the relevant routes when a GatewayClass carrying
+// this controller's name changes; any one of them runs the full sync. A
+// deleted class is matched on its last state, but its own routes are no
+// longer relevant by then: the sync runs only if another managed class still
+// has an accepted route, and nothing is enqueued otherwise.
+func ownClassRoutes(controllerName string, getAll RequestsFunc) handler.MapFunc {
+	return func(ctx context.Context, obj client.Object) []reconcile.Request {
+		class, ok := obj.(*gatewayv1.GatewayClass)
+		if !ok || string(class.Spec.ControllerName) != controllerName {
+			return nil
+		}
+
+		return getAll(ctx)
+	}
 }
 
 // proxyOnlyWatches returns the watches the proxy-driving route controllers

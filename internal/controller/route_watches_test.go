@@ -323,6 +323,10 @@ func TestRouteWatches_GatewayConditionFlipReachesQueue(t *testing.T) {
 	assert.Equal(t, []reconcile.Request{watchTestRoute}, updateReachesQueue(t, accepted, refused),
 		"a Gateway losing its data plane must run the full route sync")
 
+	assert.Equal(t, []reconcile.Request{watchTestRoute},
+		updateReachesQueue(t, accepted, gateway(ours, 4, metav1.ConditionFalse, "Accepted", 1)),
+		"a status flip under an unchanged reason is still a verdict change")
+
 	assert.Equal(t, []reconcile.Request{watchDirectRoute},
 		updateReachesQueue(t, accepted, gateway(ours, 5, metav1.ConditionTrue, "Accepted", 1)),
 		"a spec edit enqueues the Gateway's own routes, as before")
