@@ -8,7 +8,7 @@ Clause-by-clause audit of the implementation against the normative (RFC-2119) su
 2. Added cross-cutting GEP/concept requirements not in field godoc (policy attachment GEP-713, route-attachment semantics) — `02-gep-notes.md`.
 3. Classified each clause CRD-enforced / controller-actionable / N/A-tunnel and assessed status MET / PARTIAL / GAP / NA against the real code — per-type detail in `rows-<TYPE>.md`.
 4. Ran the official conformance suite (Gateway HTTP + gRPC profiles) against a fresh kind cluster + real Cloudflare test tunnel as pass/fail ground truth.
-5. Adversarially re-verified every GAP — a skeptic tried to refute each (CRD enforcement, N/A, conditional-satisfied, documented-deviation) before it was allowed to stand. 22 of 25 first-pass GAPs did not survive.
+5. Adversarially re-verified every GAP — a skeptic tried to refute each (CRD enforcement, N/A, conditional-satisfied, documented-deviation) before it was allowed to stand. 18 of 25 first-pass GAPs did not survive.
 
 ## Dashboard (380 clauses: 376 from the v1.5.1 first-pass classification, 2 added by the v1.6.0 refresh — GW-106 MET, RG-06 NA — and 2 covering the tunnel-ownership refusal — GW-107 MET, SH-78 GAP)
 
