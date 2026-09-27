@@ -1335,6 +1335,14 @@ func (s *ProxySyncer) resyncTarget(ctx context.Context, key string, endpoints []
 // key, and sets it only while nothing else was recorded since the replay read
 // its document. It never writes lastCfg: the replay pushed the cached config,
 // so writing it back could only regress the cache to an older document.
+//
+// It leaves consecutivePushFail alone on purpose: the streak surfaces on route
+// status, so it counts only pushes of the document the routes produced. A
+// successful replay delivered the cached document, possibly older than the one
+// a failing sync is trying to deliver, so clearing the streak would hide that
+// failure. A failed replay is usually one pod joining, not the routes' config
+// failing to land; it clears the skip key below, so the partition's next sync
+// pushes instead of skipping, and that push's outcome feeds the streak.
 func (s *ProxySyncer) recordResync(
 	key string,
 	cfg *proxy.Config,
