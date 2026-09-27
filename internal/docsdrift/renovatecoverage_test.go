@@ -171,6 +171,12 @@ func loadRenovateManagers(t *testing.T, cfg renovateConfig) map[string][]*regexp
 			if err != nil {
 				t.Fatalf("compiling matchString %q for %s: %v", pattern, manager.DepNameTemplate, err)
 			}
+			if expr.SubexpIndex("currentValue") < 0 {
+				t.Fatalf(
+					"matchString %q for %s has no currentValue group, so Renovate extracts nothing from it and rewrites nothing",
+					pattern, manager.DepNameTemplate,
+				)
+			}
 			compiled[manager.DepNameTemplate] = append(compiled[manager.DepNameTemplate], expr)
 		}
 	}
@@ -289,14 +295,13 @@ func anyMatches(patterns []*regexp.Regexp, text string) bool {
 }
 
 // captures returns every currentValue the pattern extracts from the text.
+// loadRenovateManagers guarantees the group exists.
 func captures(pattern *regexp.Regexp, text string) []string {
 	index := pattern.SubexpIndex("currentValue")
-	if index < 0 {
-		return nil
-	}
+	matches := pattern.FindAllStringSubmatch(text, -1)
 
-	var found []string
-	for _, match := range pattern.FindAllStringSubmatch(text, -1) {
+	found := make([]string, 0, len(matches))
+	for _, match := range matches {
 		found = append(found, match[index])
 	}
 
