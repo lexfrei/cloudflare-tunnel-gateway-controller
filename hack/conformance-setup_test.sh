@@ -41,9 +41,12 @@ for stub in docker kind helm kubectl go; do
   chmod +x "${stubs}/${stub}"
 done
 
-# run_prereq <uname-s-output> -> stdout+stderr of the script, exit code ignored
+# run_prereq <uname-s-output> [script-arg...] -> stdout+stderr of the script,
+# exit code ignored. Stubs in ${extra_stubs}, when set, shadow the no-op ones.
+extra_stubs=""
 run_prereq() {
   local kernel="$1"
+  shift
   cat > "${stubs}/uname" <<STUB
 #!/usr/bin/env bash
 if [[ "\$1" == "-s" ]]; then echo ${kernel}; fi
@@ -53,10 +56,10 @@ STUB
   # GITHUB_ACTIONS and the CF_* variables are cleared explicitly: the suite
   # itself runs in Actions, where inheriting them would skip the very branch
   # under test and satisfy the credential check from the ambient environment.
-  PATH="${stubs}:/usr/bin:/bin" \
+  PATH="${extra_stubs:+${extra_stubs}:}${stubs}:/usr/bin:/bin" \
   GITHUB_ACTIONS='' CF_API_TOKEN='' CF_ACCOUNT_ID='' CF_TUNNEL_ID='' \
   CF_TUNNEL_TOKEN='' CF_TUNNEL_HOSTNAME='' \
-    bash "${sandbox}/hack/conformance-setup.sh" 2>&1 || true
+    bash "${sandbox}/hack/conformance-setup.sh" "$@" 2>&1 || true
 }
 
 linux_out="$(run_prereq Linux)"
@@ -80,6 +83,33 @@ else
   flunk "macOS host still requires colima"
 fi
 
+# --use-ci-images reads image indexes with `docker buildx`, a plugin the tool
+# check cannot see by name. Missing, it surfaced much later as an unreadable
+# index plus advice to re-run CI.
+for stub in gh jq; do
+  printf '#!/usr/bin/env bash\nexit 0\n' > "${stubs}/${stub}"
+  chmod +x "${stubs}/${stub}"
+done
+mkdir -p "${tmp}/nobuildx"
+cat > "${tmp}/nobuildx/docker" <<'STUB'
+#!/usr/bin/env bash
+[[ "$1" == "buildx" ]] && exit 1
+exit 0
+STUB
+chmod +x "${tmp}/nobuildx/docker"
+
+nobuildx_out="$(extra_stubs="${tmp}/nobuildx" run_prereq Linux --use-ci-images 733)"
+if grep --quiet "docker buildx is not installed" <<< "${nobuildx_out}"; then
+  pass "--use-ci-images requires docker buildx"
+else
+  flunk "--use-ci-images requires docker buildx (got: ${nobuildx_out##*$'\n'})"
+fi
+if grep --quiet ".env file not found" <<< "$(run_prereq Linux --use-ci-images 733)"; then
+  pass "--use-ci-images with docker buildx reaches the credential check"
+else
+  flunk "--use-ci-images with docker buildx reaches the credential check"
+fi
+
 # --- verify-ci-bundle.sh ---------------------------------------------------
 
 ctrl_ref="ttl.sh/cf-tunnel-gateway-ctrl@sha256:$(printf 'a%.0s' {1..64})"
@@ -96,11 +126,13 @@ make_bundle() {
   : > "${dir}/cloudflare-tunnel-gateway-controller-0.0.0-pr.${pr}-1d.tgz"
 }
 
-# check_bundle <expected-exit> <label> <dir>
+# check_bundle <expected-exit> <label> <dir> [expected-output-substring]
 check_bundle() {
-  local expected="$1" label="$2" dir="$3" actual=0
-  bash "${verifier}" "${dir}" 720 "${head_sha}" >/dev/null 2>&1 || actual=$?
-  if [[ "${actual}" -eq "${expected}" ]]; then
+  local expected="$1" label="$2" dir="$3" want="${4:-}" actual=0 out
+  out="$(bash "${verifier}" "${dir}" 720 "${head_sha}" 2>&1)" || actual=$?
+  if [[ -n "${want}" ]] && ! grep --quiet --fixed-strings "${want}" <<< "${out}"; then
+    flunk "${label}: output lacks '${want}' (got: ${out##*$'\n'})"
+  elif [[ "${actual}" -eq "${expected}" ]]; then
     pass "${label} (exit ${actual})"
   else
     flunk "${label}: expected exit ${expected}, got ${actual}"
@@ -157,6 +189,39 @@ check_bundle 1 "a bundle from another PR is rejected" "${tmp}/otherpr"
 
 check_bundle 1 "a missing bundle directory is rejected" "${tmp}/absent"
 
+make_bundle "${tmp}/nohead" 720
+rm -f "${tmp}/nohead/head-sha.txt"
+check_bundle 1 "a missing head-sha.txt is rejected" "${tmp}/nohead" \
+  "head-sha.txt missing from the CI bundle"
+
+make_bundle "${tmp}/nochart" 720
+rm -f "${tmp}/nochart/"*.tgz
+check_bundle 1 "a missing chart tarball is rejected" "${tmp}/nochart" \
+  "chart cloudflare-tunnel-gateway-controller-0.0.0-pr.720-1d.tgz missing"
+
+# The verifier and the PR comment name the two image repositories and the
+# workflow builds them; nothing else keeps them in step, and a rename on one
+# side would stop --use-ci-images or the comment with a rejection that looks
+# like a bad artifact.
+mapfile -t bundle_images < <(sed -n 's/.*read_ref [^ ]* \([^)]*\)).*/\1/p' "${verifier}")
+if [[ "${#bundle_images[@]}" -ne 2 ]]; then
+  flunk "verify-ci-bundle.sh names two image repositories (found ${#bundle_images[@]})"
+fi
+for image in "${bundle_images[@]}"; do
+  if grep --quiet --extended-regexp "^[[:space:]]+image: ${image//./\\.}$" \
+    "${repo_root}/.github/workflows/pr.yaml"; then
+    pass "pr.yaml builds ${image}, which verify-ci-bundle.sh expects"
+  else
+    flunk "pr.yaml builds ${image}, which verify-ci-bundle.sh expects"
+  fi
+  if grep --quiet --extended-regexp "^[[:space:]]+read_ref [a-z]+ ${image//./\\.}$" \
+    "${repo_root}/.github/workflows/pr-privileged.yaml"; then
+    pass "pr-privileged.yaml accepts ${image}"
+  else
+    flunk "pr-privileged.yaml accepts ${image}"
+  fi
+done
+
 # --- wiring ----------------------------------------------------------------
 # The verifier only protects anything if the setup script actually runs it.
 if grep --quiet "verify-ci-bundle.sh" "${setup}"; then
@@ -188,6 +253,11 @@ mkdir -p "${pull_stub_dir}"
 cat > "${pull_stub_dir}/docker" <<'STUB'
 #!/usr/bin/env bash
 if [[ "$1" == "buildx" ]]; then
+  # FAIL_ONCE names a marker file: the first read fails and creates it.
+  if [[ -n "${FAIL_ONCE:-}" && ! -f "${FAIL_ONCE}" ]]; then
+    : > "${FAIL_ONCE}"
+    exit 1
+  fi
   [[ -f "${FIXTURE_INDEX}" ]] || exit 1
   cat "${FIXTURE_INDEX}"
   exit 0
@@ -215,8 +285,17 @@ run_pull() {
   local fixture="$1" arch="$2"
   : > "${tmp}/docker.log"
   PATH="${pull_stub_dir}:/usr/bin:/bin" FIXTURE_INDEX="${fixture}" DOCKER_LOG="${tmp}/docker.log" \
+    PULL_CI_IMAGE_RETRY_DELAY=0 \
     bash "${puller}" "ttl.sh/cf-tunnel-gateway-ctrl@sha256:$(printf 'e%.0s' {1..64})" controller:dev "${arch}" \
     >/dev/null 2>&1
+}
+
+# pull_err <fixture> <arch> -> stdout+stderr of the puller, exit code ignored
+pull_err() {
+  PATH="${pull_stub_dir}:/usr/bin:/bin" FIXTURE_INDEX="$1" DOCKER_LOG="${tmp}/docker.log" \
+    PULL_CI_IMAGE_RETRY_DELAY=0 \
+    bash "${puller}" "ttl.sh/cf-tunnel-gateway-ctrl@sha256:$(printf 'e%.0s' {1..64})" controller:dev "$2" \
+    2>&1 || true
 }
 
 amd64_digest="$(printf 'a%.0s' {1..64})"
@@ -248,6 +327,39 @@ if run_pull "${tmp}/absent.json" amd64; then
   flunk "an unreadable index is rejected"
 else
   pass "an unreadable index is rejected"
+fi
+
+# One failed read cannot tell an expired image from a dropped connection, so
+# the message says what is known rather than asserting the image is gone.
+unreadable_err="$(pull_err "${tmp}/absent.json" amd64)"
+if grep --quiet "cannot read the image index" <<< "${unreadable_err}"; then
+  pass "an unreadable index is reported as unreadable"
+else
+  flunk "an unreadable index is reported as unreadable (got: ${unreadable_err##*$'\n'})"
+fi
+if grep --quiet --fixed-strings 'The image is gone from ttl.sh' "${setup}"; then
+  flunk "conformance-setup.sh does not claim an unpullable image is gone"
+else
+  pass "conformance-setup.sh does not claim an unpullable image is gone"
+fi
+
+# ttl.sh drops reads transiently, as it does writes; one failure is retried.
+rm -f "${tmp}/fail-once"
+if FAIL_ONCE="${tmp}/fail-once" run_pull "${tmp}/index.json" amd64; then
+  pass "a transient index read failure is retried"
+else
+  flunk "a transient index read failure is retried"
+fi
+
+# Two manifests for the host platform must be refused as such. Without its own
+# guard the refusal comes from the digest regex failing on two lines, which a
+# later take-the-first refactor would silently turn into a substitution.
+index_with_arches "${tmp}/index-dup.json" "${amd64_digest}:amd64" "${arm64_digest}:amd64"
+dup_err="$(pull_err "${tmp}/index-dup.json" amd64)"
+if grep --quiet "more than one linux/amd64 manifest" <<< "${dup_err}"; then
+  pass "an index with two host-platform manifests is refused with its own diagnosis"
+else
+  flunk "an index with two host-platform manifests is refused with its own diagnosis (got: ${dup_err##*$'\n'})"
 fi
 
 # A plain manifest has no `.manifests`, and jq must not hard-error on iterating
@@ -447,7 +559,8 @@ fi
 
 # ...and the suite only guards them if editing them triggers it. Both paths
 # blocks, since the pull_request one gates the PR and the push one gates master.
-for guarded in hack/verify-manifest-children.sh .github/workflows/pr.yaml; do
+for guarded in hack/verify-manifest-children.sh .github/workflows/pr.yaml \
+  .github/workflows/pr-privileged.yaml; do
   occurrences="$(grep --count --fixed-strings "      - ${guarded}" \
     "${repo_root}/.github/workflows/scripts.yaml" || true)"
   if [[ "${occurrences}" -eq 2 ]]; then
@@ -559,6 +672,21 @@ if [[ "$(PATH="${gh_stub_dir}:/usr/bin:/bin" FIXTURE_HEAD="${ci_head}" \
   pass "a non-numeric PR number is refused"
 else
   flunk "a non-numeric PR number is refused"
+fi
+
+# The finder and the privileged workflow select runs by the workflow's display
+# name, which has to stay equal to pr.yaml's own `name:`.
+pr_workflow_name="$(sed -n 's/^name: //p' "${repo_root}/.github/workflows/pr.yaml")"
+if grep --quiet --fixed-strings "select(.name == \"${pr_workflow_name}\")" "${finder}"; then
+  pass "find-ci-run.sh selects runs of '${pr_workflow_name}'"
+else
+  flunk "find-ci-run.sh selects runs of '${pr_workflow_name}'"
+fi
+if grep --quiet --fixed-strings "workflows: [\"${pr_workflow_name}\"]" \
+  "${repo_root}/.github/workflows/pr-privileged.yaml"; then
+  pass "pr-privileged.yaml triggers on '${pr_workflow_name}'"
+else
+  flunk "pr-privileged.yaml triggers on '${pr_workflow_name}'"
 fi
 
 # The finder only protects anything if the setup script uses it.
