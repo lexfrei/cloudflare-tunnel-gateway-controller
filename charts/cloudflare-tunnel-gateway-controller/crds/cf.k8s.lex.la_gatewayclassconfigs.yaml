@@ -88,12 +88,11 @@ spec:
               cloudflareCredentialsSecretRef:
                 description: |-
                   CloudflareCredentialsSecretRef references a Secret containing Cloudflare API credentials.
-                  The Secret must contain an "api-token" key with a valid Cloudflare API token.
+                  The Secret must hold a valid Cloudflare API token under the key named by
+                  Key, which defaults to "api-token".
                 properties:
                   key:
-                    description: |-
-                      Key in the Secret. Defaults depend on context:
-                      - For cloudflareCredentialsSecretRef: "api-token"
+                    description: Key in the Secret. Defaults to "api-token".
                     type: string
                   name:
                     description: Name of the Secret.
@@ -101,7 +100,7 @@ spec:
                     type: string
                   namespace:
                     description: Namespace of the Secret. Defaults to the namespace
-                      of the referencing resource.
+                      the controller runs in.
                     type: string
                 required:
                 - name

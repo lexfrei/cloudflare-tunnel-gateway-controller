@@ -25,6 +25,20 @@
       "automerge": true
     },
     {
+      "description": "hack/tools/go.mod pins the code generators through tool directives, and go mod tidy records their modules as indirect requires, which Renovate leaves alone unless it matches them to a tool directive. controller-gen's directive names a package inside sigs.k8s.io/controller-tools rather than the module, so both generators are enabled explicitly instead of relying on how that directive is matched. A bump that changes generated output fails make verify-generated in CI until someone runs make generate on the branch.",
+      "matchFileNames": [
+        "hack/tools/go.mod"
+      ],
+      "matchDepTypes": [
+        "indirect"
+      ],
+      "matchPackageNames": [
+        "sigs.k8s.io/controller-tools",
+        "github.com/elastic/crd-ref-docs"
+      ],
+      "enabled": true
+    },
+    {
       "description": "Automerge all GitHub Actions updates including major",
       "matchManagers": [
         "github-actions"

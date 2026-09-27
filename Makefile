@@ -7,9 +7,12 @@ GITSHA      := $(shell git rev-parse HEAD 2>/dev/null || echo "unknown")
 LDFLAGS     := -X main.Version=$(VERSION) -X main.Gitsha=$(GITSHA)
 BIN_DIR     := bin
 CHART_PATH  := charts/cloudflare-tunnel-gateway-controller
+API_REF     := docs/reference/api.md
+GENERATED   := api/v1alpha1/zz_generated.deepcopy.go $(CHART_PATH)/crds $(API_REF)
 
 .PHONY: all build build-proxy test test-race test-coverage lint lint-fix lint-md helm-lint helm-test helm-docs \
-        helm-template docs-serve docs-build container ci-go ci-helm ci-docs check-deps help
+        helm-template docs-serve docs-build container ci-go ci-helm ci-docs check-deps help \
+        generate verify-generated
 
 ##@ Build
 
@@ -18,6 +21,27 @@ build: ## Build the controller binary
 
 build-proxy: ## Build the proxy binary
 	go build -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/proxy ./cmd/proxy
+
+##@ Code generation
+
+# The generators are pinned in hack/tools/go.mod, a separate module so their
+# dependencies stay out of the controller's go.mod and vendor/.
+generate: ## Regenerate deepcopy code, CRDs and the API reference from api/v1alpha1
+	go build -C hack/tools -o $(CURDIR)/$(BIN_DIR)/controller-gen sigs.k8s.io/controller-tools/cmd/controller-gen
+	go build -C hack/tools -o $(CURDIR)/$(BIN_DIR)/crd-ref-docs github.com/elastic/crd-ref-docs
+	$(BIN_DIR)/controller-gen object paths=./api/... crd paths=./api/... output:crd:dir=$(CHART_PATH)/crds
+	$(BIN_DIR)/crd-ref-docs --log-level ERROR --source-path ./api --renderer markdown \
+		--config hack/crd-ref-docs/config.yaml --templates-dir hack/crd-ref-docs/templates \
+		--output-path $(API_REF)
+
+verify-generated: generate ## Fail if the generated files differ from what is committed
+	@changes="$$(git status --porcelain -- $(GENERATED))"; \
+	if [ -n "$$changes" ]; then \
+		echo "Generated files are out of date; run 'make generate' and commit the result:"; \
+		echo "$$changes"; \
+		git --no-pager diff -- $(GENERATED); \
+		exit 1; \
+	fi
 
 ##@ Testing
 

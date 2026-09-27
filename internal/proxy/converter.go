@@ -445,6 +445,14 @@ func convertPathMatch(pathMatch *gatewayv1.HTTPPathMatch) *PathMatch {
 		result.Value = *pathMatch.Value
 	}
 
+	// PathMatchPathPrefix: "When specified, a trailing `/` is ignored", so
+	// /abc/ matches /abc like /abc does. Trimming here, not in the shared
+	// matcher, keeps the gRPC service-only /{service}/ prefix intact, and
+	// hands ReplacePrefixMatch the same prefix the matcher compared.
+	if result.Type == PathMatchPathPrefix && len(result.Value) > 1 {
+		result.Value = strings.TrimSuffix(result.Value, "/")
+	}
+
 	return result
 }
 

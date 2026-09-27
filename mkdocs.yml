@@ -206,6 +206,7 @@ nav:
       - reference/index.md
       - Helm Chart: reference/helm-chart.md
       - CRD Reference: reference/crd-reference.md
+      - API Reference: reference/api.md
       - Security: reference/security.md
   - Upgrading:
       - upgrading/index.md

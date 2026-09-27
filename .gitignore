@@ -51,6 +51,10 @@ __pycache__/
 bin/
 testbin/
 
+# The generator module is never vendored; this keeps a dependency bump from
+# committing a vendor tree there whatever the bot's vendoring logic does.
+hack/tools/vendor/
+
 # Personal notes
 TODO.md
 

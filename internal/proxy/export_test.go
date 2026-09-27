@@ -79,16 +79,9 @@ func ShouldMirrorForTest(percent *int32) bool {
 }
 
 // NewH2CDialerForTest exposes newH2CDialer so tests can assert the dialer's
-// Timeout/KeepAlive fields without reaching inside the http2.Transport closure.
+// Timeout/KeepAlive fields without reaching inside the transport's DialContext.
 func NewH2CDialerForTest() *net.Dialer {
 	return newH2CDialer()
-}
-
-// NewHeaderTimeoutRoundTripperForTest exposes newHeaderTimeoutRoundTripper so
-// the wrapper's streaming-response contract can be pinned directly without
-// driving the full http2 backend stack.
-func NewHeaderTimeoutRoundTripperForTest(inner http.RoundTripper, timeout time.Duration) http.RoundTripper {
-	return newHeaderTimeoutRoundTripper(inner, timeout)
 }
 
 // CountingResponseWriterForTest is the exported alias of the concrete
