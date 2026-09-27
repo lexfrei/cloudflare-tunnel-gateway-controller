@@ -23,10 +23,6 @@ const (
 	// apiErrorRequeueDelay is the delay before retrying when Cloudflare API calls fail.
 	apiErrorRequeueDelay = 15 * time.Second
 
-	// uncheckedClaimRequeueDelay paces the route sync while a Gateway's
-	// tunnel claim cannot be checked with Cloudflare.
-	uncheckedClaimRequeueDelay = 2 * time.Minute
-
 	// startupPendingRequeueDelay is the delay before retrying when startup sync is not yet complete.
 	startupPendingRequeueDelay = 1 * time.Second
 

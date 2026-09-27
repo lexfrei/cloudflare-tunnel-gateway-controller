@@ -195,11 +195,6 @@ type SyncResult struct {
 	// config, and the reconcile requeues to re-resolve.
 	TransientBrokenKeys []string
 
-	// UncheckedClaims reports that some Gateway was refused only because
-	// Cloudflare could not check its tunnel claim; the reconcile requeues so
-	// its routes are programmed once the check succeeds.
-	UncheckedClaims bool
-
 	// ConfigVersion is the proxy-config version reserved when this sync LISTED
 	// its routes, carried into every partition push so version order follows
 	// snapshot order. Two overlapping reconciles can otherwise build in the
@@ -925,7 +920,6 @@ func (s *RouteSyncer) SyncAllRoutes(ctx context.Context) (ctrl.Result, *SyncResu
 	syncResult.Partitions = partitions
 	syncResult.SharedTunnelID = resolvedConfig.TunnelID
 	syncResult.TransientBrokenKeys = infra.transientKeys()
-	syncResult.UncheckedClaims = infra != nil && infra.uncheckedClaims
 	syncResult.CollisionDiagnostics = collisionDiagnostics
 
 	// All groups failed: total sync outage — global error, every route goes
@@ -955,26 +949,14 @@ func (s *RouteSyncer) SyncAllRoutes(ctx context.Context) (ctrl.Result, *SyncResu
 	s.recordSyncSuccessMetrics(ctx, status, startTime, httpResult, grpcResult,
 		len(outcome.httpFailedRefs), len(outcome.grpcFailedRefs), outcome.totalRules)
 
-	return retryUnprogrammed(syncResult), syncResult, nil
-}
-
-// retryUnprogrammed says when a sync that wrote everything it could must run
-// again by itself, because some Gateway's routes were left unprogrammed for a
-// reason no cluster event will announce the end of.
-func retryUnprogrammed(syncResult *SyncResult) ctrl.Result {
-	switch {
-	case len(syncResult.TransientBrokenKeys) > 0:
-		// A transient infra-resolve failure: retryable, so the next sync
-		// re-resolves and programs the routes.
-		return ctrl.Result{RequeueAfter: apiErrorRequeueDelay, Priority: new(priorityRoute)}
-	case syncResult.UncheckedClaims:
-		// A claim Cloudflare could not check: slower than an apiserver blip,
-		// because a tenant can keep its own claim unchecked for as long as it
-		// likes, and each requeue is a full sync.
-		return ctrl.Result{RequeueAfter: uncheckedClaimRequeueDelay, Priority: new(priorityRoute)}
-	default:
-		return ctrl.Result{}
+	// A transient infra-resolve failure left a Gateway's routes unprogrammed
+	// (fail closed) but is retryable — requeue so the next sync re-resolves and
+	// programs them, rather than waiting for an unrelated event.
+	if len(syncResult.TransientBrokenKeys) > 0 {
+		return ctrl.Result{RequeueAfter: apiErrorRequeueDelay, Priority: new(priorityRoute)}, syncResult, nil
 	}
+
+	return ctrl.Result{}, syncResult, nil
 }
 
 // buildSyncResult assembles the SyncResult shared by every SyncAllRoutes exit

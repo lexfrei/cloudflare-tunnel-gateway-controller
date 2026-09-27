@@ -66,10 +66,6 @@ type infraGateways struct {
 	// reconcile requeued so a newly-joined pod is not stranded configless until
 	// an unrelated event.
 	transient map[string]bool
-	// uncheckedClaims reports that a Gateway was refused only because
-	// Cloudflare could not check its claim. Nothing in the cluster changes
-	// when the API comes back, so the sync has to come back by itself.
-	uncheckedClaims bool
 }
 
 // isBroken reports whether the Gateway key opted in but failed to resolve.
@@ -133,10 +129,6 @@ func applyTunnelOwnership(
 		// hiccup.
 		infra.broken[key] = true
 		delete(infra.transient, key)
-
-		if rejection.Unproven && rejection.Proof == tunnelownership.ProofUnknown {
-			infra.uncheckedClaims = true
-		}
 	}
 }
 
@@ -239,8 +231,7 @@ func unprovenClaimRouteMessage(rejection tunnelownership.Rejection) string {
 
 	if rejection.Proof == tunnelownership.ProofUnknown {
 		return "the Gateway's claim on tunnel " + rejection.TunnelID +
-			" could not be checked with Cloudflare (unreachable, or the API credential was rejected) and is retried" +
-			tail
+			" could not be checked with Cloudflare and is retried" + tail
 	}
 
 	return "Cloudflare did not confirm the Gateway's claim on tunnel " + rejection.TunnelID + tail

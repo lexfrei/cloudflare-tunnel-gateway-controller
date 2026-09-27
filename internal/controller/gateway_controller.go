@@ -563,8 +563,8 @@ func tunnelRejectionMessage(rejection tunnelownership.Rejection) string {
 // programming reach the same verdict from the same inputs. Cloudflare's
 // confirmation is one of those inputs and it lapses on a clock, so the two can
 // differ until each has run since it changed. The Reconcile requeue for
-// dedicated Gateways bounds that window for status and the data plane only;
-// routes follow on the next route sync, which an unchecked claim requeues.
+// dedicated Gateways bounds that window; the Accepted change it writes is what
+// brings the data plane and the route sync along.
 func (r *GatewayReconciler) tunnelRejection(
 	ctx context.Context,
 	gateway *gatewayv1.Gateway,

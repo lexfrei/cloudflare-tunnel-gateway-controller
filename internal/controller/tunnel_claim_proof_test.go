@@ -296,12 +296,11 @@ func (v *switchableClaimVerifier) Verify(context.Context, string, *tunnel.Token)
 	return tunnelownership.Proof(v.proof.Load())
 }
 
-// TestSyncAllRoutes_UncheckableClaimIsRetriedAndRecovers pins the route half of
-// the outage policy. A claim Cloudflare could not check is refused, and nothing
-// in the cluster changes when the API comes back: the route watches ignore
-// Gateway status writes. So the sync itself has to come back, and when it does
-// the routes must be programmed.
-func TestSyncAllRoutes_UncheckableClaimIsRetriedAndRecovers(t *testing.T) {
+// TestSyncAllRoutes_UncheckableClaimRecovers pins the route half of the outage
+// policy: a claim Cloudflare could not check keeps its routes out, and the
+// first sync after the check succeeds programs them. That sync comes from the
+// Gateway's Accepted flip, which the route controllers watch.
+func TestSyncAllRoutes_UncheckableClaimRecovers(t *testing.T) {
 	t.Parallel()
 
 	const classTunnel = "99999999-9999-4999-8999-999999999999"
@@ -316,9 +315,8 @@ func TestSyncAllRoutes_UncheckableClaimIsRetriedAndRecovers(t *testing.T) {
 
 	result, _, err := syncer.SyncAllRoutes(context.Background())
 	require.NoError(t, err)
-	assert.Positive(t, result.RequeueAfter, "an unchecked claim must bring the sync back on its own")
-	assert.Greater(t, result.RequeueAfter, apiErrorRequeueDelay,
-		"a tenant can keep its claim unchecked indefinitely, so it must not buy a full sync at the apiserver-error pace")
+	assert.Zero(t, result.RequeueAfter,
+		"a tenant can keep its claim unchecked indefinitely, so it must not buy a periodic full sync")
 	assert.Empty(t, api.hostnamesFor(tenantTunnelUUID))
 
 	verifier.proof.Store(int32(tunnelownership.ProofVerified))
