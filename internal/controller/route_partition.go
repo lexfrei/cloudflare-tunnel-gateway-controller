@@ -98,14 +98,10 @@ func applyTunnelOwnership(
 		return
 	}
 
-	// The operator opted every party on a shared tunnel into seeing the
-	// others' routes. Nothing to arbitrate: the pre-existing merge behaviour
-	// is what they asked for.
-	if allowSharedTunnels {
-		return
-	}
-
-	rejections := tunnelownership.Arbitrate(sharedTunnelID, claims)
+	// allowSharedTunnels opts every party on a shared tunnel into seeing the
+	// others' routes, so it waives the contest — but not the proof: a claim
+	// Cloudflare does not confirm is refused either way.
+	rejections := tunnelownership.Arbitrate(sharedTunnelID, allowSharedTunnels, claims)
 	if len(rejections) == 0 {
 		return
 	}
@@ -226,6 +222,19 @@ func rejectionHolderSuffix(rejection tunnelownership.Rejection) string {
 	}
 
 	return " (it is already in use)"
+}
+
+// unprovenClaimRouteMessage is the route-status twin of tunnelRejectionMessage
+// for a claim Cloudflare did not confirm.
+func unprovenClaimRouteMessage(rejection tunnelownership.Rejection) string {
+	const tail = "; the route is not programmed (see the Gateway's Accepted condition)"
+
+	if rejection.Proof == tunnelownership.ProofUnknown {
+		return "the Gateway's claim on tunnel " + rejection.TunnelID +
+			" could not be checked with Cloudflare and is retried" + tail
+	}
+
+	return "Cloudflare did not confirm the Gateway's claim on tunnel " + rejection.TunnelID + tail
 }
 
 // transientKeys returns the sorted Gateway keys whose resolve failure was

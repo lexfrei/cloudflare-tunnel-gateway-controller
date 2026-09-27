@@ -33,7 +33,7 @@ func TestGatewayReconciler_SetupWithManager(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	configResolver := config.NewResolver(envK8sClient, "default", cfmetrics.NewNoopCollector())
+	configResolver := config.NewResolver(envK8sClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims())
 
 	r := &GatewayReconciler{
 		Client:         envK8sClient,
@@ -66,7 +66,7 @@ func TestHTTPRouteReconciler_SetupWithManager(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	configResolver := config.NewResolver(envK8sClient, "default", cfmetrics.NewNoopCollector())
+	configResolver := config.NewResolver(envK8sClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims())
 
 	routeSyncer := NewRouteSyncer(
 		envK8sClient,
@@ -98,7 +98,7 @@ func TestGRPCRouteReconciler_SetupWithManager(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	configResolver := config.NewResolver(envK8sClient, "default", cfmetrics.NewNoopCollector())
+	configResolver := config.NewResolver(envK8sClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims())
 
 	routeSyncer := NewRouteSyncer(
 		envK8sClient,

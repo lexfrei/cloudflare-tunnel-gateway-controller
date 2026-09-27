@@ -35,6 +35,7 @@ import (
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/render"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/routebinding"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/tunnelownership"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/tunnelproof"
 )
 
 const (
@@ -207,6 +208,13 @@ func (r *GatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 
 	if err := r.updateStatus(ctx, &gateway, resolvedConfig, perGatewayMode); err != nil {
 		return ctrl.Result{}, errors.Wrap(err, "failed to update gateway status")
+	}
+
+	// A dedicated Gateway holds its tunnel on a Cloudflare confirmation that
+	// lapses with no event in the cluster, so come back to re-check it. The
+	// status this writes is what brings the infra reconciler along.
+	if perGatewayMode {
+		return ctrl.Result{RequeueAfter: tunnelproof.RecheckInterval}, nil
 	}
 
 	return ctrl.Result{}, nil
@@ -423,7 +431,8 @@ func isRefusalReported(gateway *gatewayv1.Gateway, message string) bool {
 }
 
 // eventReasonTunnelClaimRejected names the Warning Event raised when a
-// Gateway's connector token claims a tunnel it does not own.
+// Gateway claims a tunnel it does not own, or one Cloudflare does not confirm
+// its connector token holds.
 const eventReasonTunnelClaimRejected = "TunnelClaimRejected"
 
 // reasonDataPlaneQuotaExceeded names both the Accepted=False reason and the
@@ -474,7 +483,8 @@ func (r *GatewayReconciler) reportTunnelRejection(
 		logger.Error(err, "refusing a Gateway that claims a tunnel it does not own",
 			"gateway", gateway.Namespace+"/"+gateway.Name,
 			"tunnel", rejection.TunnelID,
-			"heldBy", rejection.HeldBy)
+			"heldBy", rejection.HeldBy,
+			"unproven", rejection.Unproven)
 
 		if r.Recorder != nil {
 			r.Recorder.Eventf(gateway, nil, corev1.EventTypeWarning,
@@ -522,6 +532,20 @@ func tunnelRefusalError(rejection tunnelownership.Rejection) error {
 // carries while its token is still unreadable. Naming the token would then
 // accuse it of saying something it never said.
 func tunnelRejectionMessage(rejection tunnelownership.Rejection) string {
+	// An unproven claim names only the tunnel, and says nothing about why
+	// Cloudflare refused it: telling a missing tunnel from a mismatched secret
+	// would tell the tenant which tunnel UUIDs exist in the account.
+	if rejection.Unproven {
+		if rejection.Proof == tunnelownership.ProofUnknown {
+			return "this Gateway's claim on tunnel " + rejection.TunnelID +
+				" could not be checked with Cloudflare, which is unreachable or rejects the API credential;" +
+				" the check is retried automatically"
+		}
+
+		return "Cloudflare did not confirm that this Gateway's connector token holds tunnel " +
+			rejection.TunnelID + "; use the tunnel's current token, and an API credential that can edit the tunnel"
+	}
+
 	if rejection.IsClassTunnel {
 		return "this Gateway claims the GatewayClass tunnel " + rejection.TunnelID +
 			", which serves every Gateway without a dedicated data plane; " +
@@ -534,20 +558,18 @@ func tunnelRejectionMessage(rejection tunnelownership.Rejection) string {
 }
 
 // tunnelRejection reports whether this Gateway's claimed tunnel belongs to
-// someone else. It runs the same arbitration as the route syncer over the same
-// inputs, so status and programming cannot disagree about who won.
+// someone else, or is not confirmed by Cloudflare. It runs the same
+// arbitration as the route syncer over the same claim set, so status and
+// programming reach the same verdict from the same inputs. Cloudflare's
+// confirmation is one of those inputs and it lapses on a clock, so the two can
+// differ until each has run since it changed. The Reconcile requeue for
+// dedicated Gateways bounds that window; the Accepted change it writes is what
+// brings the data plane and the route sync along.
 func (r *GatewayReconciler) tunnelRejection(
 	ctx context.Context,
 	gateway *gatewayv1.Gateway,
 	policy *config.TunnelPolicy,
 ) (*tunnelownership.Rejection, error) {
-	// Same escape hatch the route syncer reads. Both layers must consult it or
-	// an operator who enabled sharing would see Gateways stuck Accepted=False
-	// while their routes were programmed perfectly.
-	if policy.AllowSharedTunnels {
-		return nil, nil //nolint:nilnil // sharing permitted: nothing to arbitrate
-	}
-
 	classTunnel := canonicalTunnelID(policy.TunnelID)
 
 	claims, err := collectTunnelClaims(ctx, r.Client, r.ConfigResolver, r.ControllerName, classTunnel)
@@ -555,7 +577,10 @@ func (r *GatewayReconciler) tunnelRejection(
 		return nil, errors.Wrap(err, "collecting tunnel claims")
 	}
 
-	rejections := tunnelownership.Arbitrate(classTunnel, claims)
+	// Same sharing opt-in the route syncer passes. Both layers must honour it
+	// or an operator who enabled sharing would see Gateways stuck
+	// Accepted=False while their routes were programmed perfectly.
+	rejections := tunnelownership.Arbitrate(classTunnel, policy.AllowSharedTunnels, claims)
 
 	rejection, ok := rejections[gateway.Namespace+"/"+gateway.Name]
 	if !ok {

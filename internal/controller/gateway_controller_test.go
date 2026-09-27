@@ -64,7 +64,7 @@ func TestGatewayReconciler_WrongGatewayClass(t *testing.T) {
 		Client:         fakeClient,
 		Scheme:         fakeClient.Scheme(),
 		ControllerName: "test-controller",
-		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims()),
 	}
 
 	result, err := reconciler.Reconcile(ctx, ctrl.Request{
@@ -138,7 +138,7 @@ func TestGatewayReconciler_StripsLegacyFinalizerOnDelete(t *testing.T) {
 		Client:         fakeClient,
 		Scheme:         fakeClient.Scheme(),
 		ControllerName: "test-controller",
-		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims()),
 	}
 
 	_, err := reconciler.Reconcile(ctx, ctrl.Request{
@@ -207,7 +207,7 @@ func TestGatewayReconciler_StripsLegacyFinalizerOnDelete_NoConfig(t *testing.T) 
 		Client:         fakeClient,
 		Scheme:         fakeClient.Scheme(),
 		ControllerName: "test-controller",
-		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims()),
 	}
 
 	_, err := reconciler.Reconcile(ctx, ctrl.Request{
@@ -267,7 +267,7 @@ func TestGatewayReconciler_StripsLegacyFinalizerOnDelete_NoGatewayClass(t *testi
 		Client:         fakeClient,
 		Scheme:         fakeClient.Scheme(),
 		ControllerName: "test-controller",
-		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims()),
 	}
 
 	_, err := reconciler.Reconcile(ctx, ctrl.Request{
@@ -333,7 +333,7 @@ func TestGatewayReconciler_ForeignGateway_NoOp(t *testing.T) {
 		Client:         fakeClient,
 		Scheme:         fakeClient.Scheme(),
 		ControllerName: "test-controller",
-		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims()),
 	}
 
 	_, err := reconciler.Reconcile(ctx, ctrl.Request{
@@ -410,7 +410,7 @@ func TestGatewayReconciler_DoesNotStripLegacyFinalizerFromLiveGateway(t *testing
 		Client:         fakeClient,
 		Scheme:         fakeClient.Scheme(),
 		ControllerName: "test-controller",
-		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims()),
 	}
 
 	_, err := reconciler.Reconcile(ctx, ctrl.Request{
@@ -491,7 +491,7 @@ func TestGatewayReconciler_DeleteWithoutLegacyFinalizer_NoOp(t *testing.T) {
 		Client:         fakeClient,
 		Scheme:         fakeClient.Scheme(),
 		ControllerName: "test-controller",
-		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims()),
 	}
 
 	_, err := reconciler.Reconcile(ctx, ctrl.Request{
@@ -523,7 +523,7 @@ func TestGatewayReconciler_NotFound(t *testing.T) {
 		Client:         fakeClient,
 		Scheme:         fakeClient.Scheme(),
 		ControllerName: "test-controller",
-		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims()),
 	}
 
 	result, err := reconciler.Reconcile(ctx, ctrl.Request{
@@ -579,7 +579,7 @@ func TestGatewayReconciler_ConfigResolutionError(t *testing.T) {
 		Client:         fakeClient,
 		Scheme:         fakeClient.Scheme(),
 		ControllerName: "test-controller",
-		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims()),
 	}
 
 	result, err := reconciler.Reconcile(ctx, ctrl.Request{
@@ -658,7 +658,7 @@ func TestGatewayReconciler_UpdateStatus(t *testing.T) {
 		Client:         fakeClient,
 		Scheme:         fakeClient.Scheme(),
 		ControllerName: "test-controller",
-		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims()),
 	}
 
 	result, err := reconciler.Reconcile(ctx, ctrl.Request{
@@ -744,7 +744,7 @@ func TestGatewayReconciler_PreservesForeignStatusConditions(t *testing.T) {
 		Client:         fakeClient,
 		Scheme:         fakeClient.Scheme(),
 		ControllerName: "test-controller",
-		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims()),
 	}
 
 	_, err := reconciler.Reconcile(ctx, ctrl.Request{
@@ -832,7 +832,7 @@ func TestGatewayReconciler_UpdateStatus_SkipsObservedGenerationRegression(t *tes
 		Client:         fakeClient,
 		Scheme:         fakeClient.Scheme(),
 		ControllerName: "test-controller",
-		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims()),
 	}
 
 	_, err := reconciler.Reconcile(ctx, ctrl.Request{
@@ -901,7 +901,7 @@ func TestGatewayReconciler_ConflictedListenersSetListenersNotValid(t *testing.T)
 		Client:         fakeClient,
 		Scheme:         fakeClient.Scheme(),
 		ControllerName: "test-controller",
-		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims()),
 	}
 
 	_, err := reconciler.Reconcile(ctx, ctrl.Request{
@@ -1386,7 +1386,7 @@ func TestGatewayReconciler_ConfigError_ListenerStatusesReflectValidity(t *testin
 		Client:         fakeClient,
 		Scheme:         fakeClient.Scheme(),
 		ControllerName: "test-controller",
-		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims()),
 	}
 
 	_, err := reconciler.Reconcile(ctx, ctrl.Request{
@@ -1487,7 +1487,7 @@ func TestGatewayReconciler_ConfigError_Recovery(t *testing.T) {
 		Client:         fakeClient,
 		Scheme:         fakeClient.Scheme(),
 		ControllerName: "test-controller",
-		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims()),
 	}
 
 	_, err := reconciler.Reconcile(ctx, ctrl.Request{
@@ -1566,7 +1566,7 @@ func setupGatewayTestReconcilerWithManagedCloudflared() (*GatewayReconciler, cli
 		Client:         fakeClient,
 		Scheme:         scheme,
 		ControllerName: "test-controller",
-		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims()),
 	}, fakeClient
 }
 
@@ -1589,7 +1589,7 @@ func TestGatewayReconciler_MapperIntegration(t *testing.T) {
 		Client:         fakeClient,
 		Scheme:         fakeClient.Scheme(),
 		ControllerName: "test-controller",
-		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims()),
 	}
 
 	mapper := &ConfigMapper{
@@ -2597,7 +2597,7 @@ func TestGatewayReconciler_Reconcile_ConfigError_SetsStatus(t *testing.T) {
 		Client:         fakeClient,
 		Scheme:         fakeClient.Scheme(),
 		ControllerName: "test-controller",
-		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims()),
 	}
 
 	result, err := reconciler.Reconcile(ctx, ctrl.Request{
@@ -3338,7 +3338,7 @@ func TestGatewayReconciler_UpdateStatus_WithUnsupportedRouteKind(t *testing.T) {
 		Client:         fakeClient,
 		Scheme:         fakeClient.Scheme(),
 		ControllerName: "test-controller",
-		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims()),
 	}
 
 	result, err := reconciler.Reconcile(ctx, ctrl.Request{
@@ -3690,7 +3690,7 @@ func TestGatewayReconciler_Reconcile_ConfigError(t *testing.T) {
 		Client:         fakeClient,
 		Scheme:         fakeClient.Scheme(),
 		ControllerName: "test-controller",
-		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims()),
 	}
 
 	result, err := reconciler.Reconcile(ctx, ctrl.Request{
@@ -4052,7 +4052,7 @@ func TestGatewayReconciler_UpdateStatus_UnresolvedRefs_ProgrammedFalse(t *testin
 		Client:         fakeClient,
 		Scheme:         fakeClient.Scheme(),
 		ControllerName: "test-controller",
-		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims()),
 	}
 
 	result, err := reconciler.Reconcile(ctx, ctrl.Request{

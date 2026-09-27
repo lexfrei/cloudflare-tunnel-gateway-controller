@@ -64,7 +64,7 @@ func reconcileGatewayListeners(t *testing.T, listeners []gatewayv1.Listener) []g
 		Client:         fakeClient,
 		Scheme:         fakeClient.Scheme(),
 		ControllerName: "test-controller",
-		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims()),
 	}
 
 	_, err := reconciler.Reconcile(context.Background(), ctrl.Request{
@@ -132,7 +132,7 @@ func reconcileGatewayAccepted(t *testing.T, listeners []gatewayv1.Listener) *met
 		Client:         fakeClient,
 		Scheme:         fakeClient.Scheme(),
 		ControllerName: "test-controller",
-		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims()),
 	}
 
 	_, err := reconciler.Reconcile(context.Background(), ctrl.Request{

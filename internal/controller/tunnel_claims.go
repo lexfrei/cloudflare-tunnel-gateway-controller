@@ -8,14 +8,15 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/config"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/tunnelownership"
 )
 
 // statusTunnelResolver reads the tunnel a Gateway's connector token names and
-// nothing else, so a Gateway is never dropped from the arbitration because
-// some unrelated Secret was briefly unreadable.
+// Cloudflare's verdict on it, and nothing else, so a Gateway is never dropped
+// from the arbitration because some unrelated Secret was briefly unreadable.
 type statusTunnelResolver interface {
-	ResolveTunnelIdentityForGateway(ctx context.Context, gateway *gatewayv1.Gateway) (string, error)
+	ResolveTunnelClaimForGateway(ctx context.Context, gateway *gatewayv1.Gateway) (*config.TunnelClaim, error)
 }
 
 // collectTunnelClaims returns every opted-in Gateway's claimed tunnel.
@@ -32,13 +33,18 @@ type statusTunnelResolver interface {
 //   - The class filter. A Gateway on a foreign GatewayClass is not ours to
 //     arbitrate; including it in one layer and not another lets that layer
 //     refuse a Gateway the others happily serve.
-//   - The resolver. Arbitration needs only the tunnel the token names, so it
-//     stops there. The fuller resolvers additionally read the generated auth
-//     Secret (ResolveForGateway) or the Cloudflare API token, which falls back
-//     to the class chain (ResolveStatusConfigForGateway) — either would drop a
-//     claimant out of the set during an unrelated Secret's bootstrap or
-//     rotation window, and the newcomer claiming its tunnel would then be
-//     accepted, which is precisely the breach this rule exists to prevent.
+//   - The resolver. Arbitration needs the tunnel the token names and
+//     Cloudflare's verdict on it. The fuller resolvers additionally read the
+//     generated auth Secret (ResolveForGateway), and fail outright when the
+//     Cloudflare API token cannot be read (ResolveStatusConfigForGateway) —
+//     either would drop a claimant out of the set during an unrelated
+//     Secret's bootstrap or rotation window, and the newcomer claiming its
+//     tunnel would then be accepted, which is precisely the breach this rule
+//     exists to prevent. ResolveTunnelClaimForGateway returns such a claim
+//     unproven instead.
+//
+// Each claim costs a Cloudflare API call the first time its token is seen and
+// again when the cached verdict expires; see tunnelproof.
 //
 // sharedTunnelID must already be canonical, like the value handed to
 // tunnelownership.Arbitrate — advertised addresses are canonicalized on read,
@@ -67,7 +73,7 @@ func collectTunnelClaims(
 	for _, gateway := range gateways {
 		advertised := advertisedTunnelID(gateway)
 
-		claimed := claimedTunnelID(ctx, resolver, gateway, advertised, sharedTunnelID)
+		claimed, proof := claimedTunnelID(ctx, resolver, gateway, advertised, sharedTunnelID)
 		if claimed == "" {
 			continue
 		}
@@ -79,6 +85,7 @@ func collectTunnelClaims(
 			CreatedAt:  gateway.CreationTimestamp.Time,
 			UID:        string(gateway.UID),
 			Advertised: advertised,
+			Proof:      proof,
 		})
 	}
 
@@ -86,8 +93,9 @@ func collectTunnelClaims(
 }
 
 // claimedTunnelID returns the tunnel this Gateway claims, empty when it claims
-// none. The token it names wins; the tunnel it already advertises is the
-// fallback.
+// none, and Cloudflare's verdict on the claim. The token it names wins; the
+// tunnel it already advertises is the fallback, and is unproven because there
+// is no token to check.
 //
 // That fallback is what keeps possession across a token rotation: a Gateway
 // still SERVING a tunnel keeps holding it while its connector-token Secret is
@@ -101,7 +109,7 @@ func claimedTunnelID(
 	gateway *gatewayv1.Gateway,
 	advertised string,
 	sharedTunnelID string,
-) string {
+) (string, tunnelownership.Proof) {
 	claimed := advertised
 
 	// An address naming the CLASS tunnel is not possession of it. The class
@@ -114,11 +122,11 @@ func claimedTunnelID(
 		claimed = ""
 	}
 
-	tunnelID, resolveErr := resolver.ResolveTunnelIdentityForGateway(ctx, gateway)
+	claim, resolveErr := resolver.ResolveTunnelClaimForGateway(ctx, gateway)
 
 	switch {
-	case resolveErr == nil && tunnelID != "":
-		claimed = canonicalTunnelID(tunnelID)
+	case resolveErr == nil && claim != nil && claim.TunnelID != "":
+		return canonicalTunnelID(claim.TunnelID), claim.Proof
 	case resolveErr != nil && claimed != "":
 		// The claim now rests on the address alone, which is the one case where
 		// a refusal cites a tunnel the Gateway's own configuration never named.
@@ -131,7 +139,7 @@ func claimedTunnelID(
 			"error", resolveErr.Error())
 	}
 
-	return claimed
+	return claimed, tunnelownership.ProofUnknown
 }
 
 // advertisedTunnelID returns the tunnel this Gateway currently publishes in its

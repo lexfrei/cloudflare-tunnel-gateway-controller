@@ -878,11 +878,13 @@ func (r *GatewayInfraReconciler) classConfigInfraGateways(
 
 // dedicatedPlaneRefused reports whether this Gateway may not have a dedicated
 // data plane: because it claims a tunnel belonging to another namespace or to
-// the GatewayClass, or because its namespace already holds as many planes as
-// the operator allows.
+// the GatewayClass, because Cloudflare does not confirm its claim, or because
+// its namespace already holds as many planes as the operator allows.
 //
 // Both run the same decision over the same shared claim set as the route
-// partitioner and the Gateway reconciler, so all three agree. An error here
+// partitioner and the Gateway reconciler, so all three agree on the same
+// inputs; a lapsed Cloudflare confirmation reaches this layer through the
+// Gateway status the Gateway reconciler writes on its requeue. An error here
 // means the verdict is unknown, and the caller must leave any running plane
 // alone rather than guess.
 func (r *GatewayInfraReconciler) dedicatedPlaneRefused(
@@ -903,19 +905,18 @@ func (r *GatewayInfraReconciler) dedicatedPlaneRefused(
 	// two layers deciding the same two things in opposite orders invites a
 	// reader to look for a difference that is not there.
 	//
-	// The cap is checked after the sharing opt-out below, not inside it:
-	// allowSharedTunnels waives tunnel arbitration, never the capacity limit.
-	if !policy.AllowSharedTunnels {
-		classTunnel := canonicalTunnelID(policy.TunnelID)
+	// allowSharedTunnels waives the contest between namespaces, never the
+	// proof of a claim and never the capacity limit.
+	classTunnel := canonicalTunnelID(policy.TunnelID)
 
-		claims, err := collectTunnelClaims(ctx, r.Client, r.ConfigResolver, r.ControllerName, classTunnel)
-		if err != nil {
-			return false, errors.Wrap(err, "collecting tunnel claims")
-		}
+	claims, err := collectTunnelClaims(ctx, r.Client, r.ConfigResolver, r.ControllerName, classTunnel)
+	if err != nil {
+		return false, errors.Wrap(err, "collecting tunnel claims")
+	}
 
-		if _, refused := tunnelownership.Arbitrate(classTunnel, claims)[gateway.Namespace+"/"+gateway.Name]; refused {
-			return true, nil
-		}
+	rejections := tunnelownership.Arbitrate(classTunnel, policy.AllowSharedTunnels, claims)
+	if _, refused := rejections[gateway.Namespace+"/"+gateway.Name]; refused {
+		return true, nil
 	}
 
 	return r.overDataPlaneQuota(ctx, gateway, policy.MaxDataPlanesPerNamespace)

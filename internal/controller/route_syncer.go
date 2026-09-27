@@ -1298,6 +1298,10 @@ func gatewaySyncError(gatewayKey string, failedPartitions map[string]error, infr
 	// fail closed, but "your data plane is unavailable" would send the tenant
 	// hunting an outage instead of fixing the tunnel their Gateway named.
 	if rejection, ok := infra.tunnelRejection(gatewayKey); ok {
+		if rejection.Unproven {
+			return errors.New(unprovenClaimRouteMessage(rejection))
+		}
+
 		return errors.New("the Gateway claims tunnel " + rejection.TunnelID +
 			", which it does not own" + rejectionHolderSuffix(rejection) +
 			"; the route is not programmed (see the Gateway's Accepted condition)")
