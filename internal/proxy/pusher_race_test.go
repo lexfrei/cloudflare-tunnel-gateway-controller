@@ -190,7 +190,7 @@ func TestConfigPusher_LosingRaceDoesNotOverwriteNewerConfig(t *testing.T) {
 	t.Parallel()
 
 	proxyServer := newReorderProxy(t)
-	pusher := proxy.NewConfigPusher(http.DefaultClient, "")
+	pusher := proxy.NewConfigPusher(newPushTestClient(t), "")
 
 	oldCfg := raceTestConfig(100, "old.example.com")
 	newCfg := raceTestConfig(200, "new.example.com")
