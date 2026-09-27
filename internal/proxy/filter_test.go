@@ -764,6 +764,24 @@ func TestCompileFilters(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "unknown filter type")
 	})
+
+	t.Run("known type without its payload returns error", func(t *testing.T) {
+		t.Parallel()
+
+		for _, filterType := range []proxy.RouteFilterType{
+			proxy.FilterRequestHeaderModifier,
+			proxy.FilterResponseHeaderModifier,
+			proxy.FilterRequestRedirect,
+			proxy.FilterURLRewrite,
+			proxy.FilterRequestMirror,
+			proxy.FilterCORS,
+		} {
+			assert.NotPanics(t, func() {
+				_, err := proxy.CompileFilters([]proxy.RouteFilter{{Type: filterType}}, nil)
+				assert.Error(t, err, filterType)
+			}, filterType)
+		}
+	})
 }
 
 func TestApplyRequestFilters_ShortCircuit(t *testing.T) {
