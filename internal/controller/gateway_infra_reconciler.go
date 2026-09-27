@@ -762,7 +762,7 @@ func (r *GatewayInfraReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		// on, and rotation must roll the rendered pods. The cost is bounded
 		// by the mapper, not a predicate — every Secret write runs one
 		// cache-served namespace List and enqueues nothing unless the
-		// namespace holds an opted-in Gateway.
+		// namespace holds an opted-in Gateway of this controller's classes.
 		Watches(
 			&corev1.Secret{},
 			handler.EnqueueRequestsFromMapFunc(r.namespaceInfraGateways),
@@ -778,16 +778,18 @@ func (r *GatewayInfraReconciler) namespaceInfraGateways(
 	ctx context.Context,
 	obj client.Object,
 ) []reconcile.Request {
-	return optedInGatewaysInNamespace(ctx, r.Client, obj.GetNamespace())
+	return optedInGatewaysInNamespace(ctx, r.Client, r.ControllerName, obj.GetNamespace())
 }
 
-// optedInGatewaysInNamespace lists the Gateways in one namespace that ask for a
-// dedicated data plane. Shared by both Gateway-typed controllers: they enqueue
-// the same set for the same reasons, and a second copy would be free to drift
-// into disagreeing about who a namespace-scoped event affects.
+// optedInGatewaysInNamespace lists the Gateways of this controller's classes in
+// one namespace that ask for a dedicated data plane. Shared by both
+// Gateway-typed controllers: they enqueue the same set for the same reasons,
+// and a second copy would be free to drift into disagreeing about who a
+// namespace-scoped event affects.
 func optedInGatewaysInNamespace(
 	ctx context.Context,
 	cli client.Client,
+	controllerName string,
 	namespace string,
 ) []reconcile.Request {
 	var gateways gatewayv1.GatewayList
@@ -800,9 +802,30 @@ func optedInGatewaysInNamespace(
 
 	requests := make([]reconcile.Request, 0)
 
+	// The class list is read only once the namespace has a candidate, so an
+	// event in a namespace without opted-in Gateways costs one List.
+	var classNames map[string]bool
+
 	for i := range gateways.Items {
 		gateway := &gateways.Items[i]
 		if !config.HasInfrastructureParametersRef(gateway) {
+			continue
+		}
+
+		if classNames == nil {
+			var err error
+
+			classNames, err = managedClassNames(ctx, cli, controllerName)
+			if err != nil {
+				log.FromContext(ctx).Error(err,
+					"listing GatewayClasses to map a watched object; re-render trigger dropped",
+					"namespace", namespace)
+
+				return nil
+			}
+		}
+
+		if !classNames[string(gateway.Spec.GatewayClassName)] {
 			continue
 		}
 
