@@ -43,6 +43,10 @@ const (
 	requestTimeout = 10 * time.Second
 )
 
+// RecheckInterval is how often a caller holding a confirmed claim should come
+// back to it.
+const RecheckInterval time.Duration = 0
+
 // ClientFactory builds a Cloudflare API client for one API token.
 type ClientFactory func(apiToken string) *cloudflare.Client
 

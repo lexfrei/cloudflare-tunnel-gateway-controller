@@ -165,16 +165,68 @@ func TestVerify_UnknownTunnelIsRefuted(t *testing.T) {
 	assert.Equal(t, tunnelownership.ProofRefuted, proof)
 }
 
-func TestVerify_CredentialWithoutAccessIsRefuted(t *testing.T) {
+// TestVerify_RejectedCredentialDecidesNothing pins that a 401 or 403 says
+// something about the credential, not the claim. A revoked or mis-scoped API
+// token cannot be told apart from one for the wrong account by status code, and
+// refuting on it would tear down every dedicated plane using that credential.
+func TestVerify_RejectedCredentialDecidesNothing(t *testing.T) {
+	t.Parallel()
+
+	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			t.Parallel()
+
+			genuine := encodeToken(t, testAccount, testTunnel, realSecret)
+			api := newFakeTokenAPI(t, genuine)
+			api.status.Store(int32(status))
+
+			proof := newVerifier(t, api, nil).Verify(context.Background(), testAPIKey, parse(t, genuine))
+			assert.Equal(t, tunnelownership.ProofUnknown, proof)
+		})
+	}
+}
+
+// TestVerify_ConfirmationSurvivesARevokedCredential pins the consequence that
+// matters: a confirmed claim stays confirmed when its credential stops working.
+func TestVerify_ConfirmationSurvivesARevokedCredential(t *testing.T) {
 	t.Parallel()
 
 	genuine := encodeToken(t, testAccount, testTunnel, realSecret)
 	api := newFakeTokenAPI(t, genuine)
-	api.status.Store(http.StatusForbidden)
+	clk := &clock{now: time.Unix(1_000_000, 0)}
+	verifier := newVerifier(t, api, clk)
 
-	proof := newVerifier(t, api, nil).Verify(context.Background(), testAPIKey, parse(t, genuine))
-	assert.Equal(t, tunnelownership.ProofRefuted, proof,
-		"a credential that cannot read the tunnel's token cannot write its configuration either")
+	require.Equal(t, tunnelownership.ProofVerified, verifier.Verify(context.Background(), testAPIKey, parse(t, genuine)))
+
+	api.status.Store(http.StatusUnauthorized)
+	clk.now = clk.now.Add(2 * time.Hour)
+
+	assert.Equal(t, tunnelownership.ProofVerified, verifier.Verify(context.Background(), testAPIKey, parse(t, genuine)))
+}
+
+// TestVerify_VerdictsAreKeptPerCredential pins that a verdict obtained with
+// one credential is not reused for another: the check proves the access of the
+// credential that will write.
+func TestVerify_VerdictsAreKeptPerCredential(t *testing.T) {
+	t.Parallel()
+
+	genuine := encodeToken(t, testAccount, testTunnel, realSecret)
+	api := newFakeTokenAPI(t, genuine)
+	verifier := newVerifier(t, api, nil)
+
+	require.Equal(t, tunnelownership.ProofVerified, verifier.Verify(context.Background(), "credential-a", parse(t, genuine)))
+	require.Equal(t, tunnelownership.ProofVerified, verifier.Verify(context.Background(), "credential-b", parse(t, genuine)))
+	assert.EqualValues(t, 2, api.calls.Load())
+}
+
+// TestRecheckInterval_ComesBackBeforeAConfirmationIsTwiceStale pins the
+// cadence callers requeue on: shorter than a confirmation's lifetime, so a
+// rotated secret is found within at most one lifetime plus this interval.
+func TestRecheckInterval_ComesBackBeforeAConfirmationIsTwiceStale(t *testing.T) {
+	t.Parallel()
+
+	assert.Positive(t, tunnelproof.RecheckInterval)
+	assert.LessOrEqual(t, tunnelproof.RecheckInterval, time.Hour)
 }
 
 func TestVerify_APIDownWithNewClaimIsUnknown(t *testing.T) {

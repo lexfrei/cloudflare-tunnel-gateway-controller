@@ -20,6 +20,7 @@ import (
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/cfmetrics"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/config"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/tunnelownership"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/tunnelproof"
 )
 
 // The per-Gateway fixtures' connector tokens all name this tunnel.
@@ -252,4 +253,32 @@ func TestUnprovenRejectionMessageFitsTheCondition(t *testing.T) {
 		stored := refusedConditionPrefix + tunnelRejectionMessage(rejection)
 		assert.LessOrEqual(t, len(stored), maxConditionMessageLength)
 	}
+}
+
+// TestGatewayReconciler_AcceptedDedicatedGatewayComesBackToRecheck pins that a
+// dedicated Gateway is reconciled again on its own. A confirmation expires with
+// no event in the cluster, so without a requeue a rotated tunnel secret would
+// go unnoticed by this layer until something unrelated touched the Gateway,
+// while the route syncer already refused it.
+func TestGatewayReconciler_AcceptedDedicatedGatewayComesBackToRecheck(t *testing.T) {
+	t.Parallel()
+
+	fakeClient := setupGatewayFakeClient(perGatewayStatusFixtures(t)...)
+
+	reconciler := &GatewayReconciler{
+		Client:         fakeClient,
+		Scheme:         fakeClient.Scheme(),
+		ControllerName: "test-controller",
+		ConfigResolver: withVerdict(fakeClient, "default", tunnelownership.ProofVerified),
+		ProxyImage:     "ghcr.io/example/proxy:v1",
+		ViewStore:      newMergeViewStore(),
+	}
+
+	result, err := reconciler.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "pg-gateway", Namespace: "default"},
+	})
+	require.NoError(t, err)
+
+	assert.Positive(t, result.RequeueAfter, "an accepted dedicated Gateway must come back to re-check its claim")
+	assert.LessOrEqual(t, result.RequeueAfter, tunnelproof.RecheckInterval)
 }
