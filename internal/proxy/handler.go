@@ -762,6 +762,19 @@ func (h *Handler) createReverseProxy(backendURL *url.URL, protocol BackendProtoc
 			req := proxyReq.Out
 			restoreForwardingHeaders(proxyReq)
 
+			// Upgrades are served only by proxyWebSocketUpgrade, for
+			// backends with WebSocket enabled; everything reaching
+			// ReverseProxy is forwarded as plain HTTP. ReverseProxy has
+			// already dropped the client's hop-by-hop headers and re-added
+			// exactly "Connection: Upgrade" plus Upgrade, so deleting both
+			// leaves no other Connection token behind. Without this the
+			// backend could answer 101 and ReverseProxy would hijack before
+			// writing a status: the HTTP/2 tunnel writer refuses that with a
+			// 502, and the QUIC one allows it, so the raw 101 lands on the
+			// stream before any response metadata reaches the edge.
+			req.Header.Del("Upgrade")
+			req.Header.Del("Connection")
+
 			// Undo stdlib's pre-Rewrite query normalization (url.ParseQuery
 			// re-encode: drops semicolon-separated params, reorders the
 			// rest). Route matching — query matches included — already ran

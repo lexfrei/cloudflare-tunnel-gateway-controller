@@ -87,6 +87,12 @@ type fakeCloudflaredRespWriter struct {
 	statusWritten bool
 	hijacked      bool
 
+	// unconditionalHijack switches Hijack to the QUIC contract
+	// (httpResponseAdapter in vendor/github.com/cloudflare/cloudflared
+	// /connection/quic_connection.go), which hands out a connection
+	// whether or not a status was written.
+	unconditionalHijack bool
+
 	// serverSide is returned from Hijack so the handler's post-101
 	// bidirectional copy reads / writes against the pipe. clientSide is
 	// the matching end exposed via HijackedClient() so a test driver can
@@ -154,15 +160,26 @@ func (f *fakeCloudflaredRespWriter) WriteHeader(status int) {
 	f.statusWritten = true
 }
 
-// Hijack enforces the cloudflared precondition: status must be written
-// first. Returns the server side of an internal net.Pipe so the handler
-// can do its bidirectional copy. The matching client side is exposed
-// via HijackedClient().
+// newFakeCloudflaredQUICRespWriter returns the fake with the QUIC Hijack
+// contract: no status-written precondition. Only Hijack differs; the
+// other methods keep the HTTP/2 behaviour and have not been checked
+// against the QUIC writer.
+func newFakeCloudflaredQUICRespWriter() *fakeCloudflaredRespWriter {
+	fake := newFakeCloudflaredRespWriter()
+	fake.unconditionalHijack = true
+
+	return fake
+}
+
+// Hijack enforces the cloudflared HTTP/2 precondition: status must be
+// written first, unless the fake models QUIC. Returns the server side of
+// an internal net.Pipe so the handler can do its bidirectional copy. The
+// matching client side is exposed via HijackedClient().
 func (f *fakeCloudflaredRespWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	if !f.statusWritten {
+	if !f.statusWritten && !f.unconditionalHijack {
 		return nil, nil, errFakeStatusNotWritten
 	}
 
