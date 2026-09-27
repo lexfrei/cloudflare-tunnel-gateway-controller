@@ -34,8 +34,7 @@ func tunnelSharedDiagWithReason(reason, message string) proxy.RouteDiagnostic {
 // TestBuildParentStatus_TunnelSharedConditionPresent pins #488: a route whose
 // per-Gateway data plane shares a tunnel across namespaces carries a dedicated
 // TunnelShared=True condition while Accepted REMAINS True — the sharing was
-// permitted (opted into, or within one namespace),
-// it is just not isolation.
+// permitted (opted into), it is just not isolation.
 func TestBuildParentStatus_TunnelSharedConditionPresent(t *testing.T) {
 	t.Parallel()
 

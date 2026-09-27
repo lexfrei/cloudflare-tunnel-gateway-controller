@@ -487,7 +487,9 @@ func proxyPushFailureDiagnostics(partition *routePartition) []proxy.RouteDiagnos
 // every infra Gateway that shares one Cloudflare Tunnel with another dedicated
 // Gateway (#488). Sharing collapses per-Gateway isolation, so the visibility is
 // on the routes, not just a log line. Reaching it across namespaces requires the
-// operator's allowSharedTunnels opt-in; the claim is otherwise refused.
+// operator's allowSharedTunnels opt-in; the claim is otherwise refused. The
+// reason is across namespaces when any Gateway sharing the tunnel lives in a
+// namespace other than this one's, within one namespace otherwise.
 func tunnelSharedDiagnostics(collisions []tunnelCollision, partitions []routePartition) []proxy.RouteDiagnostic {
 	if len(collisions) == 0 {
 		return nil
@@ -508,10 +510,18 @@ func tunnelSharedDiagnostics(collisions []tunnelCollision, partitions []routePar
 			}
 
 			others := make([]string, 0, len(collision.gateways)-1)
+			reason := routeReasonTunnelSharedWithinNamespace
+			namespace, _, _ := strings.Cut(key, "/")
 
 			for _, other := range collision.gateways {
-				if other != key {
-					others = append(others, other)
+				if other == key {
+					continue
+				}
+
+				others = append(others, other)
+
+				if otherNamespace, _, _ := strings.Cut(other, "/"); otherNamespace != namespace {
+					reason = routeReasonTunnelSharedAcrossNamespaces
 				}
 			}
 
@@ -521,7 +531,7 @@ func tunnelSharedDiagnostics(collisions []tunnelCollision, partitions []routePar
 					"Gateway its own tunnel. This route remains Accepted.",
 				collision.tunnelID, strings.Join(others, ", "))
 
-			diags = append(diags, partitionRouteDiagnostics(partition, proxy.DiagnosticTunnelShared, routeReasonTunnelShared, message)...)
+			diags = append(diags, partitionRouteDiagnostics(partition, proxy.DiagnosticTunnelShared, reason, message)...)
 		}
 	}
 
