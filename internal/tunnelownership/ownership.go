@@ -10,8 +10,10 @@
 // both parties' routes into one document and pushes the union to both parties'
 // proxies.
 //
-// The rule: a tunnel belongs to the Gateway already serving it, and the class
-// tunnel belongs to the operator. Age breaks ties only between claims of equal
+// A claim is therefore checked against Cloudflare before it counts (see
+// tunnelproof), and one that is not confirmed holds nothing and contests
+// nothing. Among the rest, the rule: a tunnel belongs to the Gateway already
+// serving it, and the class tunnel belongs to the operator. Age breaks ties only between claims of equal
 // standing, because deciding by age alone would let a tenant whose Gateway
 // predates the victim's retarget its token and evict the rightful holder.
 // Claims from other namespaces are rejected outright rather than merged, so a
@@ -53,7 +55,7 @@ type Claim struct {
 	Key       string
 	Namespace string
 	// TunnelID is parsed from the Gateway's connector token, and is therefore
-	// an assertion rather than a fact.
+	// an assertion rather than a fact until Proof says otherwise.
 	TunnelID string
 	// CreatedAt is the Gateway's creation timestamp: the tie-breaker that
 	// makes the incumbent win.
@@ -119,7 +121,7 @@ func Arbitrate(sharedTunnelID string, allowSharedTunnels bool, claims []Claim) m
 			continue
 		}
 
-		if !hasStanding(claim) {
+		if !hasStanding(&claim) {
 			rejected[claim.Key] = Rejection{TunnelID: claim.TunnelID, Unproven: true, Proof: claim.Proof}
 
 			continue
@@ -154,7 +156,7 @@ func Arbitrate(sharedTunnelID string, allowSharedTunnels bool, claims []Claim) m
 // token rotation that leaves its Secret briefly unreadable. It rests on
 // Gateway status alone, so it is exactly as trustworthy as write access to
 // gateways/status.
-func hasStanding(claim Claim) bool {
+func hasStanding(claim *Claim) bool {
 	switch claim.Proof {
 	case ProofVerified:
 		return true

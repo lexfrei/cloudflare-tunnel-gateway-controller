@@ -127,7 +127,7 @@ func (v *Verifier) ask(ctx context.Context, apiToken string, token *tunnel.Token
 	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
 	defer cancel()
 
-	real, err := v.newClient(apiToken).ZeroTrust.Tunnels.Cloudflared.Token.Get(ctx, token.TunnelID.String(),
+	issued, err := v.newClient(apiToken).ZeroTrust.Tunnels.Cloudflared.Token.Get(ctx, token.TunnelID.String(),
 		zero_trust.TunnelCloudflaredTokenGetParams{AccountID: cloudflare.F(token.AccountTag)})
 	if err != nil {
 		if isDefiniteRefusal(err) {
@@ -141,7 +141,7 @@ func (v *Verifier) ask(ctx context.Context, apiToken string, token *tunnel.Token
 		return tunnelownership.ProofUnknown
 	}
 
-	parsed, err := tunnel.ParseTunnelToken(*real)
+	parsed, err := tunnel.ParseTunnelToken(*issued)
 	if err != nil {
 		logger.Info("could not verify a tunnel claim; Cloudflare returned an unparsable token")
 

@@ -44,7 +44,7 @@ type Vector struct {
 	// AllowSharedTunnels is the operator's opt-in to sharing: it waives the
 	// contest between namespaces, never the proof.
 	AllowSharedTunnels bool
-	Claims       []Claim
+	Claims             []Claim
 	// WantRejected lists the claim keys that must not be programmed.
 	WantRejected []string
 }
@@ -53,7 +53,9 @@ type Vector struct {
 // the matching half below; ownership_test.go re-runs the whole table, so a new
 // case is enforced against the decision function without further wiring.
 func Vectors() []Vector {
-	return slices.Concat(sharingVectors(), incumbencyVectors(), proofVectors(), sharingOptInVectors())
+	return slices.Concat(
+		sharingVectors(), incumbencyVectors(), proofVectors(), outageVectors(), sharingOptInVectors(),
+	)
 }
 
 // sharingVectors covers who may serve a tunnel at all: distinct tunnels, the
@@ -173,7 +175,7 @@ func proofVectors() []Vector {
 			Name:         "an unverified first-time claim is rejected",
 			SharedTunnel: vectorSharedTunnel,
 			Claims: []Claim{
-				withProof(claim(vectorGatewayA, vectorTeamA, vectorOwnedTunnel, 0), ProofUnknown),
+				unprovenClaim(vectorGatewayA, vectorTeamA, vectorOwnedTunnel, 0, ProofUnknown),
 			},
 			WantRejected: []string{vectorGatewayA},
 		},
@@ -181,7 +183,7 @@ func proofVectors() []Vector {
 			Name:         "a refuted claim is rejected",
 			SharedTunnel: vectorSharedTunnel,
 			Claims: []Claim{
-				withProof(claim(vectorGatewayA, vectorTeamA, vectorOwnedTunnel, 0), ProofRefuted),
+				unprovenClaim(vectorGatewayA, vectorTeamA, vectorOwnedTunnel, 0, ProofRefuted),
 			},
 			WantRejected: []string{vectorGatewayA},
 		},
@@ -191,7 +193,7 @@ func proofVectors() []Vector {
 			Name:         "a refuted claim is rejected even while advertising the tunnel",
 			SharedTunnel: vectorSharedTunnel,
 			Claims: []Claim{
-				withProof(contender(vectorGatewayA, vectorTeamA, vectorOwnedTunnel, 0), ProofRefuted),
+				unprovenContender(vectorGatewayA, vectorTeamA, vectorOwnedTunnel, 0, ProofRefuted),
 			},
 			WantRejected: []string{vectorGatewayA},
 		},
@@ -201,7 +203,7 @@ func proofVectors() []Vector {
 			Name:         "an older refuted claim does not block a verified one",
 			SharedTunnel: vectorSharedTunnel,
 			Claims: []Claim{
-				withProof(claim(vectorGatewayA, vectorTeamA, vectorOwnedTunnel, 0), ProofRefuted),
+				unprovenClaim(vectorGatewayA, vectorTeamA, vectorOwnedTunnel, 0, ProofRefuted),
 				claim(vectorGatewayB, vectorTeamB, vectorOwnedTunnel, 1),
 			},
 			WantRejected: []string{vectorGatewayA},
@@ -210,11 +212,18 @@ func proofVectors() []Vector {
 			Name:         "an older unverified claim does not block a verified one",
 			SharedTunnel: vectorSharedTunnel,
 			Claims: []Claim{
-				withProof(claim(vectorGatewayA, vectorTeamA, vectorOwnedTunnel, 0), ProofUnknown),
+				unprovenClaim(vectorGatewayA, vectorTeamA, vectorOwnedTunnel, 0, ProofUnknown),
 				claim(vectorGatewayB, vectorTeamB, vectorOwnedTunnel, 1),
 			},
 			WantRejected: []string{vectorGatewayA},
 		},
+	}
+}
+
+// outageVectors covers claims nobody could check: possession of the tunnel
+// they name is the only thing that keeps them.
+func outageVectors() []Vector {
+	return []Vector{
 		{
 			// An outage must not evict a holder, so a claim already advertising
 			// its tunnel keeps it unchecked. That rests on Gateway status, and
@@ -222,7 +231,7 @@ func proofVectors() []Vector {
 			Name:         "an unverifiable claim advertising its tunnel keeps it",
 			SharedTunnel: vectorSharedTunnel,
 			Claims: []Claim{
-				withProof(contender(vectorGatewayA, vectorTeamA, vectorOwnedTunnel, 0), ProofUnknown),
+				unprovenContender(vectorGatewayA, vectorTeamA, vectorOwnedTunnel, 0, ProofUnknown),
 				claim(vectorGatewayB, vectorTeamB, vectorOwnedTunnel, 1),
 			},
 			WantRejected: []string{vectorGatewayB},
@@ -232,7 +241,7 @@ func proofVectors() []Vector {
 			Name:         "an unverifiable claim advertising another tunnel is rejected",
 			SharedTunnel: vectorSharedTunnel,
 			Claims: []Claim{
-				withProof(contender(vectorGatewayA, vectorTeamA, vectorOtherTunnel, 0), ProofUnknown),
+				unprovenContender(vectorGatewayA, vectorTeamA, vectorOtherTunnel, 0, ProofUnknown),
 			},
 			WantRejected: []string{vectorGatewayA},
 		},
@@ -266,19 +275,30 @@ func sharingOptInVectors() []Vector {
 			AllowSharedTunnels: true,
 			Claims: []Claim{
 				claim(vectorGatewayA, vectorTeamA, vectorOwnedTunnel, 0),
-				withProof(claim(vectorGatewayB, vectorTeamB, vectorOwnedTunnel, 1), ProofRefuted),
-				withProof(claim(vectorGatewayC, vectorTeamC, vectorOtherTunnel, 2), ProofUnknown),
+				unprovenClaim(vectorGatewayB, vectorTeamB, vectorOwnedTunnel, 1, ProofRefuted),
+				unprovenClaim(vectorGatewayC, vectorTeamC, vectorOtherTunnel, 2, ProofUnknown),
 			},
 			WantRejected: []string{vectorGatewayB, vectorGatewayC},
 		},
 	}
 }
 
-// withProof replaces a vector claim's proof; claim sets it to verified.
-func withProof(in Claim, proof Proof) Claim {
-	in.Proof = proof
+// unprovenClaim builds a claim like claim, with the given proof in place of
+// verified.
+func unprovenClaim(key, namespace, tunnelID string, ageRank int, proof Proof) Claim {
+	out := claim(key, namespace, tunnelID, ageRank)
+	out.Proof = proof
 
-	return in
+	return out
+}
+
+// unprovenContender builds a claim like contender, with the given proof in
+// place of verified.
+func unprovenContender(key, namespace, advertised string, ageRank int, proof Proof) Claim {
+	out := contender(key, namespace, advertised, ageRank)
+	out.Proof = proof
+
+	return out
 }
 
 // contender builds a claim on the contested tunnel that also states which

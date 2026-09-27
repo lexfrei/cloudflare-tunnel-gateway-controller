@@ -29,7 +29,7 @@ const (
 )
 
 // fakeTokenAPI serves GET accounts/{a}/cfd_tunnel/{t}/token the way Cloudflare
-// does: the tunnel's real connector token as the result string.
+// does: the tunnel's genuine connector token as the result string.
 type fakeTokenAPI struct {
 	server *httptest.Server
 	status atomic.Int32
@@ -121,26 +121,26 @@ func newVerifier(t *testing.T, api *fakeTokenAPI, clk *clock) *tunnelproof.Verif
 }
 
 var (
-	realSecret  = []byte("the-real-tunnel-secret-32-bytes!") //nolint:gochecknoglobals // test fixture
-	forgeSecret = []byte("a-secret-the-tenant-made-up-here") //nolint:gochecknoglobals // test fixture
+	realSecret  = []byte("the-genuine-tunnel-secret-32-bytes!")
+	forgeSecret = []byte("a-secret-the-tenant-made-up-here")
 )
 
 func TestNewVerifier_NilFactoryProvesNothing(t *testing.T) {
 	t.Parallel()
 
-	real := encodeToken(t, testAccount, testTunnel, realSecret)
+	genuine := encodeToken(t, testAccount, testTunnel, realSecret)
 
-	proof := tunnelproof.NewVerifier(nil).Verify(context.Background(), testAPIKey, parse(t, real))
+	proof := tunnelproof.NewVerifier(nil).Verify(context.Background(), testAPIKey, parse(t, genuine))
 	assert.Equal(t, tunnelownership.ProofUnknown, proof, "a verifier that can ask nobody must fail closed")
 }
 
 func TestVerify_MatchingSecretIsVerified(t *testing.T) {
 	t.Parallel()
 
-	real := encodeToken(t, testAccount, testTunnel, realSecret)
-	api := newFakeTokenAPI(t, real)
+	genuine := encodeToken(t, testAccount, testTunnel, realSecret)
+	api := newFakeTokenAPI(t, genuine)
 
-	proof := newVerifier(t, api, nil).Verify(context.Background(), testAPIKey, parse(t, real))
+	proof := newVerifier(t, api, nil).Verify(context.Background(), testAPIKey, parse(t, genuine))
 	assert.Equal(t, tunnelownership.ProofVerified, proof)
 }
 
@@ -168,11 +168,11 @@ func TestVerify_UnknownTunnelIsRefuted(t *testing.T) {
 func TestVerify_CredentialWithoutAccessIsRefuted(t *testing.T) {
 	t.Parallel()
 
-	real := encodeToken(t, testAccount, testTunnel, realSecret)
-	api := newFakeTokenAPI(t, real)
+	genuine := encodeToken(t, testAccount, testTunnel, realSecret)
+	api := newFakeTokenAPI(t, genuine)
 	api.status.Store(http.StatusForbidden)
 
-	proof := newVerifier(t, api, nil).Verify(context.Background(), testAPIKey, parse(t, real))
+	proof := newVerifier(t, api, nil).Verify(context.Background(), testAPIKey, parse(t, genuine))
 	assert.Equal(t, tunnelownership.ProofRefuted, proof,
 		"a credential that cannot read the tunnel's token cannot write its configuration either")
 }
@@ -184,11 +184,11 @@ func TestVerify_APIDownWithNewClaimIsUnknown(t *testing.T) {
 		t.Run(http.StatusText(status), func(t *testing.T) {
 			t.Parallel()
 
-			real := encodeToken(t, testAccount, testTunnel, realSecret)
-			api := newFakeTokenAPI(t, real)
+			genuine := encodeToken(t, testAccount, testTunnel, realSecret)
+			api := newFakeTokenAPI(t, genuine)
 			api.status.Store(int32(status))
 
-			proof := newVerifier(t, api, nil).Verify(context.Background(), testAPIKey, parse(t, real))
+			proof := newVerifier(t, api, nil).Verify(context.Background(), testAPIKey, parse(t, genuine))
 			assert.Equal(t, tunnelownership.ProofUnknown, proof,
 				"an outage is not an answer, so it must neither prove nor refute")
 		})
@@ -198,21 +198,21 @@ func TestVerify_APIDownWithNewClaimIsUnknown(t *testing.T) {
 func TestVerify_UnreachableAPIIsUnknown(t *testing.T) {
 	t.Parallel()
 
-	real := encodeToken(t, testAccount, testTunnel, realSecret)
-	api := newFakeTokenAPI(t, real)
+	genuine := encodeToken(t, testAccount, testTunnel, realSecret)
+	api := newFakeTokenAPI(t, genuine)
 	api.server.Close()
 
-	proof := newVerifier(t, api, nil).Verify(context.Background(), testAPIKey, parse(t, real))
+	proof := newVerifier(t, api, nil).Verify(context.Background(), testAPIKey, parse(t, genuine))
 	assert.Equal(t, tunnelownership.ProofUnknown, proof)
 }
 
 func TestVerify_EmptyCredentialIsUnknownWithoutACall(t *testing.T) {
 	t.Parallel()
 
-	real := encodeToken(t, testAccount, testTunnel, realSecret)
-	api := newFakeTokenAPI(t, real)
+	genuine := encodeToken(t, testAccount, testTunnel, realSecret)
+	api := newFakeTokenAPI(t, genuine)
 
-	proof := newVerifier(t, api, nil).Verify(context.Background(), "", parse(t, real))
+	proof := newVerifier(t, api, nil).Verify(context.Background(), "", parse(t, genuine))
 	assert.Equal(t, tunnelownership.ProofUnknown, proof)
 	assert.Zero(t, api.calls.Load())
 }
@@ -220,37 +220,37 @@ func TestVerify_EmptyCredentialIsUnknownWithoutACall(t *testing.T) {
 func TestVerify_VerifiedIsCachedThenRechecked(t *testing.T) {
 	t.Parallel()
 
-	real := encodeToken(t, testAccount, testTunnel, realSecret)
-	api := newFakeTokenAPI(t, real)
+	genuine := encodeToken(t, testAccount, testTunnel, realSecret)
+	api := newFakeTokenAPI(t, genuine)
 	clk := &clock{now: time.Unix(1_000_000, 0)}
 	verifier := newVerifier(t, api, clk)
 
-	require.Equal(t, tunnelownership.ProofVerified, verifier.Verify(context.Background(), testAPIKey, parse(t, real)))
-	require.Equal(t, tunnelownership.ProofVerified, verifier.Verify(context.Background(), testAPIKey, parse(t, real)))
+	require.Equal(t, tunnelownership.ProofVerified, verifier.Verify(context.Background(), testAPIKey, parse(t, genuine)))
+	require.Equal(t, tunnelownership.ProofVerified, verifier.Verify(context.Background(), testAPIKey, parse(t, genuine)))
 	assert.EqualValues(t, 1, api.calls.Load(), "a fresh verdict must be served from the cache")
 
 	// The tunnel's secret is rotated: after the TTL, the old token is refuted.
 	api.token.Store(encodeToken(t, testAccount, testTunnel, forgeSecret))
 	clk.now = clk.now.Add(2 * time.Hour)
 
-	assert.Equal(t, tunnelownership.ProofRefuted, verifier.Verify(context.Background(), testAPIKey, parse(t, real)))
+	assert.Equal(t, tunnelownership.ProofRefuted, verifier.Verify(context.Background(), testAPIKey, parse(t, genuine)))
 	assert.EqualValues(t, 2, api.calls.Load())
 }
 
 func TestVerify_APIDownKeepsAnExpiredVerifiedClaim(t *testing.T) {
 	t.Parallel()
 
-	real := encodeToken(t, testAccount, testTunnel, realSecret)
-	api := newFakeTokenAPI(t, real)
+	genuine := encodeToken(t, testAccount, testTunnel, realSecret)
+	api := newFakeTokenAPI(t, genuine)
 	clk := &clock{now: time.Unix(1_000_000, 0)}
 	verifier := newVerifier(t, api, clk)
 
-	require.Equal(t, tunnelownership.ProofVerified, verifier.Verify(context.Background(), testAPIKey, parse(t, real)))
+	require.Equal(t, tunnelownership.ProofVerified, verifier.Verify(context.Background(), testAPIKey, parse(t, genuine)))
 
 	api.status.Store(http.StatusServiceUnavailable)
 	clk.now = clk.now.Add(48 * time.Hour)
 
-	assert.Equal(t, tunnelownership.ProofVerified, verifier.Verify(context.Background(), testAPIKey, parse(t, real)),
+	assert.Equal(t, tunnelownership.ProofVerified, verifier.Verify(context.Background(), testAPIKey, parse(t, genuine)),
 		"only a definite answer demotes a verified claim; an outage must not evict it")
 }
 
@@ -277,16 +277,16 @@ func TestVerify_RefutedIsCachedBriefly(t *testing.T) {
 func TestVerify_UnknownIsNotCached(t *testing.T) {
 	t.Parallel()
 
-	real := encodeToken(t, testAccount, testTunnel, realSecret)
-	api := newFakeTokenAPI(t, real)
+	genuine := encodeToken(t, testAccount, testTunnel, realSecret)
+	api := newFakeTokenAPI(t, genuine)
 	api.status.Store(http.StatusServiceUnavailable)
 	verifier := newVerifier(t, api, nil)
 
-	require.Equal(t, tunnelownership.ProofUnknown, verifier.Verify(context.Background(), testAPIKey, parse(t, real)))
+	require.Equal(t, tunnelownership.ProofUnknown, verifier.Verify(context.Background(), testAPIKey, parse(t, genuine)))
 
 	api.status.Store(http.StatusOK)
 
-	assert.Equal(t, tunnelownership.ProofVerified, verifier.Verify(context.Background(), testAPIKey, parse(t, real)),
+	assert.Equal(t, tunnelownership.ProofVerified, verifier.Verify(context.Background(), testAPIKey, parse(t, genuine)),
 		"recovery must be seen on the next reconcile, not after a TTL")
 }
 
@@ -295,11 +295,11 @@ func TestVerify_UnknownIsNotCached(t *testing.T) {
 func TestVerify_CacheKeyIsNotTheSecret(t *testing.T) {
 	t.Parallel()
 
-	real := encodeToken(t, testAccount, testTunnel, realSecret)
-	api := newFakeTokenAPI(t, real)
+	genuine := encodeToken(t, testAccount, testTunnel, realSecret)
+	api := newFakeTokenAPI(t, genuine)
 	verifier := newVerifier(t, api, nil)
 
-	require.Equal(t, tunnelownership.ProofVerified, verifier.Verify(context.Background(), testAPIKey, parse(t, real)))
+	require.Equal(t, tunnelownership.ProofVerified, verifier.Verify(context.Background(), testAPIKey, parse(t, genuine)))
 
 	for _, key := range verifier.CacheKeys() {
 		assert.NotContains(t, key, string(realSecret))
@@ -313,11 +313,11 @@ func TestVerify_CacheKeyIsNotTheSecret(t *testing.T) {
 func TestVerify_KeyCoversTheIdentity(t *testing.T) {
 	t.Parallel()
 
-	real := encodeToken(t, testAccount, testTunnel, realSecret)
-	api := newFakeTokenAPI(t, real)
+	genuine := encodeToken(t, testAccount, testTunnel, realSecret)
+	api := newFakeTokenAPI(t, genuine)
 	verifier := newVerifier(t, api, nil)
 
-	require.Equal(t, tunnelownership.ProofVerified, verifier.Verify(context.Background(), testAPIKey, parse(t, real)))
+	require.Equal(t, tunnelownership.ProofVerified, verifier.Verify(context.Background(), testAPIKey, parse(t, genuine)))
 
 	other := encodeToken(t, testAccount, uuid.MustParse("33333333-3333-3333-3333-333333333333").String(), realSecret)
 	assert.Equal(t, tunnelownership.ProofRefuted, verifier.Verify(context.Background(), testAPIKey, parse(t, other)))
