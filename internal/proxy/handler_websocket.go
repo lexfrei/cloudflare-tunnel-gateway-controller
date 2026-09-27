@@ -26,10 +26,11 @@ const (
 	// WithWSDialTimeout; zero (or no option) means "use this default".
 	defaultWSDialTimeout = 30 * time.Second
 	// defaultWSHandshakeReadTimeout bounds how long the handler waits for
-	// the backend's 101 Switching Protocols response. Separate from the
-	// bound the established session then runs under: this deadline is
-	// cleared before the bidirectional copy begins and defaultWSIdleTimeout
-	// takes over on the same conn. Overridable via
+	// the backend's 101 Switching Protocols response, and how long a
+	// non-101 response body may stall while it is copied to the client.
+	// Separate from the bound the established session then runs under:
+	// this deadline is cleared before the bidirectional copy begins and
+	// defaultWSIdleTimeout takes over on the same conn. Overridable via
 	// WithWSHandshakeReadTimeout.
 	defaultWSHandshakeReadTimeout = 30 * time.Second
 	// defaultWSIdleTimeout bounds an established session that has gone
@@ -116,8 +117,8 @@ func (h *Handler) proxyWebSocketUpgrade(
 	}
 
 	// Bound the wait for the 101 response separately from the established
-	// session — cleared below, before the bidirectional copy, which arms
-	// its own idle bound on this same conn.
+	// session — cleared below on the 101 branch only, before the
+	// bidirectional copy, which arms its own idle bound on this same conn.
 	_ = backendConn.SetReadDeadline(time.Now().Add(h.effectiveWSHandshakeReadTimeout()))
 
 	backendReader := bufio.NewReader(backendConn)
@@ -133,8 +134,6 @@ func (h *Handler) proxyWebSocketUpgrade(
 
 	defer func() { _ = resp.Body.Close() }()
 
-	_ = backendConn.SetReadDeadline(time.Time{})
-
 	// Apply rule-level + backend-level ResponseFilters (e.g.,
 	// ResponseHeaderModifier) to the backend's response BEFORE copying
 	// its headers to the client. The non-upgrade path runs the same
@@ -147,17 +146,14 @@ func (h *Handler) proxyWebSocketUpgrade(
 	ApplyResponseFilters(filters, resp)
 
 	if resp.StatusCode != http.StatusSwitchingProtocols {
-		// Backend refused the upgrade — forward the response to the
-		// client. Headers are already filter-modified by the
-		// ApplyResponseFilters call above; the body streams through
-		// unchanged. No hijack: the bytestream is a regular HTTP
-		// response body, not a post-101 WebSocket frame stream.
-		copyHeaderValues(w.Header(), resp.Header)
-		w.WriteHeader(resp.StatusCode)
-		_, _ = io.Copy(w, resp.Body)
+		// Backend refused the upgrade. Headers are already
+		// filter-modified by the ApplyResponseFilters call above.
+		forwardUpgradeRefusal(w, resp, backendConn, h.effectiveWSHandshakeReadTimeout())
 
 		return
 	}
+
+	_ = backendConn.SetReadDeadline(time.Time{})
 
 	pipeWebSocket(w, backendConn, backendReader, resp.Header, h.effectiveWSIdleTimeout())
 }
@@ -297,6 +293,45 @@ func (g *wsIdleGuard) Read(p []byte) (int, error) {
 
 func (g *wsIdleGuard) extend() {
 	_ = g.backendConn.SetReadDeadline(time.Now().Add(g.idle))
+}
+
+// forwardUpgradeRefusal forwards a backend's non-101 answer to an upgrade
+// request. No hijack: the bytestream is a regular HTTP response body, not a
+// post-101 WebSocket frame stream, and it streams through unchanged.
+//
+// The body is copied under a stall bound, pushed forward by every read that
+// returns bytes: a backend that stops sending part-way would otherwise hold
+// the handler, the backend conn and the tunnel stream until it closes, while
+// a large body that keeps arriving is not cut off.
+func forwardUpgradeRefusal(w http.ResponseWriter, resp *http.Response, backendConn net.Conn, bound time.Duration) {
+	copyHeaderValues(w.Header(), resp.Header)
+	w.WriteHeader(resp.StatusCode)
+
+	stall := &stallBound{src: resp.Body, conn: backendConn, bound: bound}
+	stall.extend()
+	_, _ = io.Copy(w, stall)
+}
+
+// stallBound reads src and pushes conn's read deadline bound into the future
+// after every read that returns bytes, so only a stall of that length ends
+// the copy.
+type stallBound struct {
+	src   io.Reader
+	conn  net.Conn
+	bound time.Duration
+}
+
+func (s *stallBound) Read(p []byte) (int, error) {
+	n, err := s.src.Read(p)
+	if n > 0 {
+		s.extend()
+	}
+
+	return n, err //nolint:wrapcheck // io.Copy compares this error against io.EOF by identity
+}
+
+func (s *stallBound) extend() {
+	_ = s.conn.SetReadDeadline(time.Now().Add(s.bound))
 }
 
 // errWebSocketCopyPanic ends a session whose copy goroutine panicked.
