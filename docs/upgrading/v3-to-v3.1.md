@@ -1,6 +1,16 @@
-# Upgrading from v3.0 to v3.1
+# Upgrading from v3.0 or v3.1 to v3.2
 
-v3.1 hardens multi-tenant isolation. There is no CRD migration and no required values change — existing `GatewayClassConfig` and chart values keep working. But four behaviours change in ways existing automation can observe, and one of them — the data-plane NetworkPolicy now on by default — can break two things on a NetworkPolicy-enforcing CNI: an existing Prometheus scrape from an unadmitted namespace, and, more seriously, proxy pod readiness if the CNI also enforces host→pod (kubelet) traffic. Read the four notes below, then the two "change that can break" sections; only the metrics/NetworkPolicy one needs action, and only on some setups.
+v3.2 hardens multi-tenant isolation. It adds one CRD, `GatewayConfig`, which you apply by hand before upgrading. No values change is required, and existing `GatewayClassConfig` objects and chart values keep working. Four behaviours change in ways existing automation can observe. The one that can break a working setup is the data-plane NetworkPolicy, now on by default: on a CNI that also enforces host→pod (kubelet) traffic it takes proxy pod readiness down. The same policy limits the new proxy `/metrics` endpoint to the controller namespace, and an install that already enabled it gets a policy with a different shape. Read the four notes below, then the sections after them.
+
+## Do this first: apply the GatewayConfig CRD
+
+v3.2 adds the namespaced `GatewayConfig` CRD for per-Gateway data planes, and the controller now always runs a reconciler that watches it. Helm installs the chart's `crds/` files only on the first `helm install` and never touches them on upgrade, so an upgraded cluster does not have it. Apply it once before upgrading:
+
+```bash
+kubectl apply --filename https://raw.githubusercontent.com/lexfrei/cloudflare-tunnel-gateway-controller/master/charts/cloudflare-tunnel-gateway-controller/crds/cf.k8s.lex.la_gatewayconfigs.yaml
+```
+
+The `GatewayClassConfig` CRD gains no fields in v3.2 and needs nothing. See [CRD upgrades](index.md#crd-upgrades) for the general rule.
 
 ## What changed
 
@@ -22,16 +32,16 @@ The proxy pod's `terminationGracePeriodSeconds` is now derived as `proxy.gracePe
 
 Two coupled changes:
 
-- `proxy.metrics.enabled` now defaults to `true`. The proxy's `/metrics` endpoint (config API port 8081) now exposes request-level series (`cftunnel_proxy_*`: in-flight, duration, status classes, bytes, backend errors) in addition to the embedded cloudflared connector metrics it already served. This is additive — new series appear, nothing is removed. The proxy ServiceMonitor stays opt-in (`serviceMonitor.enabled: false` by default).
+- The new `proxy.metrics.enabled` key defaults to `true`, and with it the proxy serves `/metrics` on the config API port (8081): request-level series (`cftunnel_proxy_*`: in-flight, duration, status classes, bytes, backend errors) and the embedded cloudflared connector metrics. Before v3.2 the proxy served no `/metrics` endpoint at all. The proxy ServiceMonitor stays opt-in (`serviceMonitor.enabled: false` by default).
 - `proxy.networkPolicy.enabled` now defaults to `true`. The chart renders an ingress-only NetworkPolicy that admits the config API port (which also carries `/metrics`) only from the controller's own namespace. The proxy data port (8080) takes no in-cluster ingress — tunnel traffic arrives outbound. The controller also renders an equivalent NetworkPolicy for each per-Gateway data plane.
 
-The second change is the one that can break an existing setup — see below.
+The second change is the one that can break an existing setup: see [proxy readiness](#the-change-that-can-break-silently-proxy-readiness-on-a-strict-cni) below.
 
-## The change that can break: Prometheus scraping
+## Scraping the new metrics from another namespace
 
-If you already scrape the proxy `/metrics` (you set `serviceMonitor.enabled: true` on v3.0, or wired a manual scrape) from a namespace other than the controller's, the new default-on NetworkPolicy will block that scrape after upgrade, because the policy admits port 8081 only from the controller namespace.
+If you scrape the proxy `/metrics` (`serviceMonitor.enabled: true`, or a manual scrape) from a namespace other than the controller's, the default-on NetworkPolicy blocks that scrape, because the policy admits port 8081 only from the controller namespace. A proxy ServiceMonitor enabled before v3.2 already targeted that port, but found no `/metrics` there until this release.
 
-Re-admit your monitoring namespace:
+Admit your monitoring namespace:
 
 ```yaml
 proxy:
@@ -53,12 +63,12 @@ proxy:
         kubernetes.io/metadata.name: monitoring
 ```
 
-If you do not run a NetworkPolicy-enforcing CNI, the policy is a no-op and scraping is unaffected — but it is then also not providing the isolation, so treat it as defense in depth, not a guarantee. To keep the v3.0 behaviour (no data-plane NetworkPolicy at all), set `proxy.networkPolicy.enabled: false` — that one switch gates BOTH the chart's shared-proxy policy AND the per-Gateway policies the controller renders (it forwards the value as the controller's `--render-network-policy` flag, which deletes any policy it previously rendered).
+If you do not run a NetworkPolicy-enforcing CNI, the policy is a no-op and scraping is unaffected — but it is then also not providing the isolation, so treat it as defense in depth, not a guarantee. To keep the pre-v3.2 behaviour (no data-plane NetworkPolicy at all), set `proxy.networkPolicy.enabled: false` — that one switch gates BOTH the chart's shared-proxy policy AND the per-Gateway policies the controller renders (it forwards the value as the controller's `--render-network-policy` flag, which deletes any policy it previously rendered).
 
 ## The change that can break silently: proxy readiness on a strict CNI
 
 !!! warning "Proxy pods can go NotReady on a host-policy-enforcing CNI"
-    This is more likely to bite — and bite silently — than the Prometheus break above, because nothing is misconfigured on your side: the policy simply blocks the node.
+    This bites silently, because nothing is misconfigured on your side: the policy simply blocks the node.
 
     The proxy's startup/liveness/readiness probes hit the config API port (8081). The default-on NetworkPolicy admits 8081 only from the controller namespace, but **kubelet probe traffic originates from the node, not a pod namespace**. Most CNIs allow host→pod traffic implicitly, so probes keep working. A CNI that also enforces host policies (Cilium with host policy enforcement, Calico with host endpoints) drops the probes, and **every proxy pod — shared and per-Gateway — goes `NotReady`, taking the data plane down**.
 
@@ -72,6 +82,14 @@ If you do not run a NetworkPolicy-enforcing CNI, the policy is a no-op and scrap
 - **Proxy readiness.** Confirm proxy pods (shared and per-Gateway) reach `Ready` after upgrade. If they stay `NotReady` on a strict CNI, see the warning above — kubelet probes are being dropped by the new NetworkPolicy.
 - **Controller → proxy config push.** The controller pushes config to the proxy from its own namespace, which the default policy admits; verify routes still program after upgrade.
 
-## No CRD or values migration
+## No values migration
 
-No `GatewayClassConfig` change is required and no values are removed — the defaults flip (`proxy.metrics.enabled`, `proxy.networkPolicy.enabled`) but every key keeps its v3.0 meaning. Pin `proxy.metrics.enabled: false` and/or `proxy.networkPolicy.enabled: false` to retain the exact v3.0 data-plane shape.
+No `GatewayClassConfig` change is required and no values are removed. `proxy.networkPolicy.enabled` flips its default to `true`, and the new `proxy.metrics.enabled` key defaults to `true`. Pin `proxy.metrics.enabled: false` and/or `proxy.networkPolicy.enabled: false` to keep the pre-v3.2 metrics and NetworkPolicy behaviour.
+
+## If you already set `proxy.networkPolicy.enabled: true`
+
+The same keys render a different proxy policy in v3.2:
+
+- The policy is ingress-only. Egress restriction moved behind the new `proxy.networkPolicy.egressRestricted` key, which defaults to `false`, so an install that relied on the old egress lock loses it silently. Set `proxy.networkPolicy.egressRestricted: true` to keep it.
+- `proxy.networkPolicy.ingress.from` used to be the whole list of admitted sources, and an empty list admitted every source. It is now added on top of the release namespace, which is always admitted.
+- The proxy data port (8080) is no longer admitted from inside the cluster. Only the config API port (8081) is.
