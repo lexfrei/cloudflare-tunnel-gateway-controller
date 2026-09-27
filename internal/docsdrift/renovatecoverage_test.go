@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -16,6 +17,7 @@ import (
 // renovateConfig is the subset of renovate.json this test reads.
 type renovateConfig struct {
 	CustomManagers []struct {
+		Description         string   `json:"description"`
 		DepNameTemplate     string   `json:"depNameTemplate"`
 		MatchStrings        []string `json:"matchStrings"`
 		ManagerFilePatterns []string `json:"managerFilePatterns"`
@@ -109,6 +111,51 @@ func TestRenovateLeavesForeignVersionsAlone(t *testing.T) {
 	}
 }
 
+// TestRenovateCustomManagersStillMatch fails when a custom manager's
+// matchString matches nothing in the files its managerFilePatterns select.
+// Renovate reports nothing in that case: the dependency it was written for
+// simply stops being updated.
+func TestRenovateCustomManagersStillMatch(t *testing.T) {
+	t.Parallel()
+
+	root := findRepoRoot(t)
+	cfg := parseRenovate(t)
+	if len(cfg.CustomManagers) == 0 {
+		t.Fatal("renovate.json has no custom managers, so this test would pass without reading anything")
+	}
+
+	for _, manager := range cfg.CustomManagers {
+		inScope := filesInScope(t, root, compileFilePatterns(t, manager.Description, manager.ManagerFilePatterns))
+		if len(inScope) == 0 {
+			t.Errorf("custom manager %q: no file matches its managerFilePatterns", manager.Description)
+
+			continue
+		}
+
+		bodies := make([]string, 0, len(inScope))
+		for _, file := range inScope {
+			body, err := os.ReadFile(filepath.Join(root, file))
+			if err != nil {
+				t.Fatalf("reading %s: %v", file, err)
+			}
+			bodies = append(bodies, string(body))
+		}
+
+		for _, pattern := range manager.MatchStrings {
+			expr, err := regexp.Compile(pattern)
+			if err != nil {
+				t.Fatalf("custom manager %q: compiling matchString %q: %v", manager.Description, pattern, err)
+			}
+			if !slices.ContainsFunc(bodies, expr.MatchString) {
+				t.Errorf(
+					"custom manager %q: matchString %q matches nothing in %v, so the dependency it tracks is never updated",
+					manager.Description, pattern, inScope,
+				)
+			}
+		}
+	}
+}
+
 // loadRenovateManagers compiles each Gateway API custom manager's matchStrings,
 // keyed by the module it tracks.
 func loadRenovateManagers(t *testing.T, cfg renovateConfig) map[string][]*regexp.Regexp {
@@ -141,19 +188,33 @@ func loadRenovateScopes(t *testing.T, cfg renovateConfig) map[string][]*regexp.R
 		if !strings.HasPrefix(manager.DepNameTemplate, "sigs.k8s.io/gateway-api") {
 			continue
 		}
-		for _, pattern := range manager.ManagerFilePatterns {
-			if !strings.HasPrefix(pattern, "/") {
-				t.Fatalf(
-					"managerFilePattern %q for %s is not the /regex/ form this test assumes; a glob compiled as a regex matches more than it scopes, so the scope assertion would pass against something looser than reality",
-					pattern, manager.DepNameTemplate,
-				)
-			}
-			expr, err := regexp.Compile(strings.TrimSuffix(strings.TrimPrefix(pattern, "/"), "/"))
-			if err != nil {
-				t.Fatalf("compiling managerFilePattern %q for %s: %v", pattern, manager.DepNameTemplate, err)
-			}
-			compiled[manager.DepNameTemplate] = append(compiled[manager.DepNameTemplate], expr)
+		compiled[manager.DepNameTemplate] = append(
+			compiled[manager.DepNameTemplate],
+			compileFilePatterns(t, manager.DepNameTemplate, manager.ManagerFilePatterns)...,
+		)
+	}
+
+	return compiled
+}
+
+// compileFilePatterns compiles managerFilePatterns, rejecting anything that is
+// not the /regex/ form.
+func compileFilePatterns(t *testing.T, owner string, patterns []string) []*regexp.Regexp {
+	t.Helper()
+
+	compiled := make([]*regexp.Regexp, 0, len(patterns))
+	for _, pattern := range patterns {
+		if !strings.HasPrefix(pattern, "/") {
+			t.Fatalf(
+				"managerFilePattern %q for %s is not the /regex/ form this test assumes; a glob compiled as a regex matches more than it scopes, so the scope assertion would pass against something looser than reality",
+				pattern, owner,
+			)
 		}
+		expr, err := regexp.Compile(strings.TrimSuffix(strings.TrimPrefix(pattern, "/"), "/"))
+		if err != nil {
+			t.Fatalf("compiling managerFilePattern %q for %s: %v", pattern, owner, err)
+		}
+		compiled = append(compiled, expr)
 	}
 
 	return compiled

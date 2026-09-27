@@ -190,6 +190,12 @@ fi
 for tool in "${TOOLS[@]}"; do
   check_tool "${tool}"
 done
+# The CI images are resolved out of their indexes with `docker buildx`, a
+# plugin that check_tool cannot find on PATH.
+if [[ -n "${CI_PR_NUMBER}" ]]; then
+  docker buildx version >/dev/null 2>&1 \
+    || die "docker buildx is not installed; --use-ci-images needs it to read the CI image indexes"
+fi
 
 # --- Load .env ---
 # CI exports the CF_* variables directly (repo secrets); a missing .env is
@@ -278,9 +284,9 @@ if [[ -n "${CI_PR_NUMBER}" ]]; then
   info "Pulling PR #${CI_PR_NUMBER}'s images by digest..."
   ci_arch="$(go env GOARCH)"
   "${REPO_ROOT}/hack/pull-ci-image.sh" "${CI_CONTROLLER_REF}" "${CONTROLLER_IMAGE}" "${ci_arch}" \
-    || die "Cannot pull ${CI_CONTROLLER_REF}. The image is gone from ttl.sh -- re-run PR #${CI_PR_NUMBER}'s CI to republish."
+    || die "Cannot pull ${CI_CONTROLLER_REF}. Either ttl.sh is unreachable or the image has expired there -- in the latter case re-run PR #${CI_PR_NUMBER}'s CI to republish."
   "${REPO_ROOT}/hack/pull-ci-image.sh" "${CI_PROXY_REF}" "${PROXY_IMAGE}" "${ci_arch}" \
-    || die "Cannot pull ${CI_PROXY_REF}. The image is gone from ttl.sh -- re-run PR #${CI_PR_NUMBER}'s CI to republish."
+    || die "Cannot pull ${CI_PROXY_REF}. Either ttl.sh is unreachable or the image has expired there -- in the latter case re-run PR #${CI_PR_NUMBER}'s CI to republish."
 fi
 
 # --- Step 2: Delete old v2-test-* clusters ---

@@ -83,6 +83,21 @@ check_repo 0 "default scope passes a /latest/ link in NOTES.txt" \
   "charts/x/templates/NOTES.txt" \
   "  Troubleshooting: https://cf.k8s.lex.la/latest/operations/troubleshooting/"
 
+# Outside a git worktree `git ls-files` lists nothing. The guard must refuse
+# rather than hand grep an empty file list, which makes grep read stdin and
+# report a clean scan of nothing.
+nogit="$(mktemp -d)"
+actual=0
+( cd "${nogit}" && GIT_CEILING_DIRECTORIES="${nogit}" bash "${guard}" ) \
+  </dev/null >/dev/null 2>&1 || actual=$?
+rm -rf "${nogit}"
+if [[ "${actual}" -ne 0 ]]; then
+  echo "ok   - default scope outside a git worktree fails (exit ${actual})"
+else
+  echo "FAIL - default scope outside a git worktree: expected non-zero exit, got 0"
+  fail=1
+fi
+
 if [[ "${fail}" -ne 0 ]]; then
   echo "doc-link guard tests FAILED"
   exit 1

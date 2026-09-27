@@ -68,13 +68,6 @@ jobs:
           docker rm ah-tmp
           sudo chmod +x /usr/local/bin/ah
 
-          # renovate: datasource=docker depName=jnorwood/helm-docs
-          HELM_DOCS_IMAGE="jnorwood/helm-docs:v1.14.2@sha256:7e562b49ab6b1dbc50c3da8f2dd6ffa8a5c6bba327b1c6335cc15ce29267979c"
-          docker create --name helm-docs-tmp "${HELM_DOCS_IMAGE}"
-          sudo docker cp helm-docs-tmp:/usr/bin/helm-docs /usr/local/bin/helm-docs
-          docker rm helm-docs-tmp
-          sudo chmod +x /usr/local/bin/helm-docs
-
       - name: Run Helm Lint
         run: |
           echo "Running Helm lint..."
@@ -143,21 +136,7 @@ jobs:
             --set proxy.tunnelTokenSecretRef.name=tunnel-token-secret
 
       - name: Validate helm-docs
-        run: |
-          CHART_DIR="charts/cloudflare-tunnel-gateway-controller"
-          echo "Validating README.md is up to date..."
-          helm-docs --chart-search-root "$CHART_DIR"
-
-          if git diff --exit-code "$CHART_DIR/README.md" > /dev/null 2>&1; then
-            echo "README.md is up to date"
-          else
-            echo "ERROR: README.md is out of date!"
-            echo "Please run: helm-docs --chart-search-root $CHART_DIR"
-            echo ""
-            echo "Diff:"
-            git diff "$CHART_DIR/README.md"
-            exit 1
-          fi
+        uses: ./.github/actions/validate-helm-docs
 
       - name: Run Markdownlint
         uses: DavidAnson/markdownlint-cli2-action@21c1be1b93ad9ed58fa840aacc3f279cde2a72ff # v24
@@ -349,28 +328,48 @@ jobs:
           # Create multi-arch manifest
           docker buildx imagetools create "${tag_args[@]}" "${images[@]}"
 
+      # Resolve the manifest list once and address it by digest from here on:
+      # every later step works on the same bytes, and signing that digest
+      # covers every tag, which is checked to point at it.
+      - name: Resolve manifest digest
+        id: digest
+        run: |
+          set -euo pipefail
+          IMAGE_TAG="${{ fromJSON(steps.meta.outputs.json).tags[0] }}"
+          digest="$(docker buildx imagetools inspect "${IMAGE_TAG}" --format '{{.Manifest.Digest}}')"
+          [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]] \
+            || { echo "::error::cannot resolve a manifest digest for ${IMAGE_TAG}"; exit 1; }
+          mapfile -t tags < <(echo "$DOCKER_METADATA_OUTPUT_TAGS" | tr '\n' ' ' | xargs -n1)
+          for tag in "${tags[@]}"; do
+            tag_digest="$(docker buildx imagetools inspect "${tag}" --format '{{.Manifest.Digest}}')"
+            if [[ "${tag_digest}" != "${digest}" ]]; then
+              echo "::error::${tag} resolves to ${tag_digest}, expected ${digest}"
+              exit 1
+            fi
+          done
+          echo "ref=ghcr.io/${{ github.repository }}${{ matrix.image_suffix }}@${digest}" >> "$GITHUB_OUTPUT"
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
+
       - name: Inspect image
         run: |
-          docker buildx imagetools inspect ${{ fromJSON(steps.meta.outputs.json).tags[0] }}
+          docker buildx imagetools inspect "${{ steps.digest.outputs.ref }}"
 
       - name: Install cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
 
-      - name: Sign container images
+      - name: Sign container image
         env:
           COSIGN_EXPERIMENTAL: "1"
+          IMAGE_REF: ${{ steps.digest.outputs.ref }}
         run: |
-          # Sign all tags created by metadata-action
-          mapfile -t tags < <(echo "$DOCKER_METADATA_OUTPUT_TAGS" | tr '\n' ' ' | xargs -n1)
-          for tag in "${tags[@]}"; do
-            echo "Signing ${tag}"
-            cosign sign --yes "${tag}"
-          done
+          echo "Signing ${IMAGE_REF}"
+          cosign sign --yes "${IMAGE_REF}"
 
       - name: Generate container summary
+        env:
+          IMAGE_REF: ${{ steps.digest.outputs.ref }}
+          MANIFEST_DIGEST: ${{ steps.digest.outputs.digest }}
         run: |
-          IMAGE_TAG="${{ fromJSON(steps.meta.outputs.json).tags[0] }}"
-          MANIFEST_DIGEST=$(docker buildx imagetools inspect "${IMAGE_TAG}" --format '{{.Manifest.Digest}}')
 
           {
             echo "## Container Image (${{ matrix.component }})"
@@ -381,7 +380,7 @@ jobs:
             echo "\`\`\`"
             echo ""
             echo "### Platforms"
-            docker buildx imagetools inspect "${IMAGE_TAG}" --format '{{range .Manifest.Manifests}}- {{.Platform.OS}}/{{.Platform.Architecture}}{{if .Platform.Variant}}/{{.Platform.Variant}}{{end}}{{"\n"}}{{end}}'
+            docker buildx imagetools inspect "${IMAGE_REF}" --format '{{range .Manifest.Manifests}}- {{.Platform.OS}}/{{.Platform.Architecture}}{{if .Platform.Variant}}/{{.Platform.Variant}}{{end}}{{"\n"}}{{end}}'
             echo ""
             echo "### Manifest Digest"
             echo "\`${MANIFEST_DIGEST}\`"
@@ -391,7 +390,7 @@ jobs:
             echo ""
             echo "**Verify signature:**"
             echo "\`\`\`bash"
-            echo "cosign verify ${IMAGE_TAG} --certificate-identity-regexp=https://github.com/${{ github.repository }} --certificate-oidc-issuer=https://token.actions.githubusercontent.com"
+            echo "cosign verify ${IMAGE_REF} --certificate-identity-regexp=https://github.com/${{ github.repository }} --certificate-oidc-issuer=https://token.actions.githubusercontent.com"
             echo "\`\`\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -406,6 +405,7 @@ jobs:
       id-token: write
     outputs:
       version: ${{ steps.version.outputs.version }}
+      chart-digest: ${{ steps.sign-chart.outputs.digest }}
     env:
       # Chart name must match name in Chart.yaml for OCI compatibility
       CHART_NAME: cloudflare-tunnel-gateway-controller
@@ -590,19 +590,24 @@ jobs:
           echo "Artifact Hub metadata pushed to: ${CHART_OCI_REPO}:artifacthub.io"
 
       - name: Sign Helm chart with cosign
+        id: sign-chart
         env:
           COSIGN_EXPERIMENTAL: "1"
         run: |
+          set -euo pipefail
           VERSION="${{ steps.version.outputs.version }}"
 
           # Get chart digest for signing
           CHART_DIGEST=$(oras manifest fetch "${CHART_OCI_REPO}:${VERSION}" --descriptor | jq --raw-output '.digest')
+          [[ "${CHART_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]] \
+            || { echo "::error::cannot resolve the digest of ${CHART_OCI_REPO}:${VERSION}"; exit 1; }
 
           # Sign the chart by digest (immutable reference)
           echo "Signing ${CHART_OCI_REPO}@${CHART_DIGEST}"
           cosign sign --yes "${CHART_OCI_REPO}@${CHART_DIGEST}"
 
           echo "Chart signed: ${CHART_OCI_REPO}@${CHART_DIGEST}"
+          echo "digest=${CHART_DIGEST}" >> "$GITHUB_OUTPUT"
 
       - name: Generate chart summary
         run: |
@@ -648,12 +653,18 @@ jobs:
           fetch-depth: 0
 
       - name: Generate release notes
+        env:
+          CHART_DIGEST: ${{ needs.publish-chart.outputs.chart-digest }}
         run: |
+          set -euo pipefail
           VERSION="${GITHUB_REF_NAME#v}"
+          [[ "${CHART_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]] \
+            || { echo "::error::publish-chart reported no chart digest"; exit 1; }
 
           # Get previous tag (find tag before current one)
           CURRENT_TAG="${GITHUB_REF_NAME}"
-          PREV_TAG=$(git tag --sort=-v:refname | grep -v "^${CURRENT_TAG}$" | head -1)
+          # grep finds nothing on a first release; that is not a failure.
+          PREV_TAG=$(git tag --sort=-v:refname | { grep -v "^${CURRENT_TAG}$" || true; } | head -1)
 
           # Get commits since previous tag
           if [ -n "$PREV_TAG" ]; then
@@ -710,7 +721,7 @@ jobs:
             echo ""
             echo "\`\`\`bash"
             echo "cosign verify \\"
-            echo "  ${CHART_OCI_REPO}:${VERSION} \\"
+            echo "  ${CHART_OCI_REPO}@${CHART_DIGEST} \\"
             echo "  --certificate-identity-regexp=https://github.com/${{ github.repository }} \\"
             echo "  --certificate-oidc-issuer=https://token.actions.githubusercontent.com"
             echo "\`\`\`"

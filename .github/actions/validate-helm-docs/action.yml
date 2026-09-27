@@ -1,0 +1,36 @@
+name: Validate helm-docs
+description: >-
+  Regenerate the chart README with the pinned helm-docs and fail if it differs
+  from the committed file. Shared by pr.yaml and release.yaml so a change to
+  how the README is regenerated is made once.
+runs:
+  using: composite
+  steps:
+    - name: Install helm-docs
+      shell: bash
+      run: |
+        set -euo pipefail
+        # renovate: datasource=docker depName=jnorwood/helm-docs
+        HELM_DOCS_IMAGE="jnorwood/helm-docs:v1.14.2@sha256:7e562b49ab6b1dbc50c3da8f2dd6ffa8a5c6bba327b1c6335cc15ce29267979c"
+        docker create --name helm-docs-tmp "${HELM_DOCS_IMAGE}"
+        sudo docker cp helm-docs-tmp:/usr/bin/helm-docs /usr/local/bin/helm-docs
+        docker rm helm-docs-tmp
+        sudo chmod +x /usr/local/bin/helm-docs
+
+    - name: Regenerate and compare the chart README
+      shell: bash
+      run: |
+        CHART_DIR="charts/cloudflare-tunnel-gateway-controller"
+        echo "Validating README.md is up to date..."
+        helm-docs --chart-search-root "$CHART_DIR"
+
+        if git diff --exit-code "$CHART_DIR/README.md" > /dev/null 2>&1; then
+          echo "README.md is up to date"
+        else
+          echo "ERROR: README.md is out of date!"
+          echo "Please run: helm-docs --chart-search-root $CHART_DIR"
+          echo ""
+          echo "Diff:"
+          git diff "$CHART_DIR/README.md"
+          exit 1
+        fi
