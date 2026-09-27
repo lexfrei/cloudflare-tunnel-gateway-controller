@@ -159,7 +159,7 @@ func TestController(t *testing.T) {
 | `github.com/stretchr/testify/assert` | Soft assertions (test continues) |
 | `github.com/stretchr/testify/require` | Hard assertions (test stops) |
 | `sigs.k8s.io/controller-runtime/pkg/client/fake` | Fake Kubernetes client |
-| `sigs.k8s.io/controller-runtime/pkg/envtest` | Integration tests |
+| `sigs.k8s.io/controller-runtime/pkg/envtest` | Integration tests against a real kube-apiserver that serves the chart CRDs and the Gateway API Standard-channel CRDs of the `sigs.k8s.io/gateway-api` version in `go.mod`. `vendor/` does not carry those CRD manifests, so the suite runs `go mod download` for that module and needs network access or a module cache that already holds it |
 
 ### Assert vs Require
 

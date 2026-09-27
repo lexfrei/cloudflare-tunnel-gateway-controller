@@ -15,17 +15,30 @@
   ],
   "packageRules": [
     {
-      "description": "Automerge minor and patch updates",
+      "description": "The shared preset automerges every update type. Here only patch, pin and digest updates keep that; minor and major updates wait for review unless a later rule turns automerge back on for them",
       "matchUpdateTypes": [
         "minor",
-        "patch",
-        "pin",
-        "digest"
+        "major"
+      ],
+      "automerge": false
+    },
+    {
+      "description": "Automerge minor updates of these module families: the Kubernetes libraries (k8s.io and controller-runtime, which the shared preset bumps together in one kubernetes group, and a group automerges only when every update in it does), the two Gateway API modules, where TestVendoredGatewayAPIMinorHasBeenAudited still fails a minor the spec audit has not been read against, and the hack/tools code generators, where make verify-generated fails a bump that changes generated output",
+      "matchUpdateTypes": [
+        "minor"
+      ],
+      "matchPackageNames": [
+        "k8s.io/**",
+        "sigs.k8s.io/controller-runtime",
+        "sigs.k8s.io/gateway-api",
+        "sigs.k8s.io/gateway-api/conformance",
+        "sigs.k8s.io/controller-tools",
+        "github.com/elastic/crd-ref-docs"
       ],
       "automerge": true
     },
     {
-      "description": "hack/tools/go.mod pins the code generators through tool directives, and go mod tidy records their modules as indirect requires, which Renovate leaves alone unless it matches them to a tool directive. controller-gen's directive names a package inside sigs.k8s.io/controller-tools rather than the module, so both generators are enabled explicitly instead of relying on how that directive is matched. A bump that changes generated output fails make verify-generated in CI until someone runs make generate on the branch.",
+      "description": "hack/tools/go.mod pins the code generators and helm-docs through tool directives, and go mod tidy records their modules as indirect requires, which Renovate leaves alone unless it matches them to a tool directive. The controller-gen and helm-docs directives name a package inside the module rather than the module itself, so every tool is enabled explicitly instead of relying on how a directive is matched. A generator bump that changes generated output fails make verify-generated in CI until someone runs make generate on the branch; a helm-docs bump fails the chart README check until someone runs make helm-docs.",
       "matchFileNames": [
         "hack/tools/go.mod"
       ],
@@ -34,7 +47,8 @@
       ],
       "matchPackageNames": [
         "sigs.k8s.io/controller-tools",
-        "github.com/elastic/crd-ref-docs"
+        "github.com/elastic/crd-ref-docs",
+        "github.com/norwoodj/helm-docs"
       ],
       "enabled": true
     },

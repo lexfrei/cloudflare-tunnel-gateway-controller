@@ -47,8 +47,8 @@ func driftNamespace(ctx context.Context, t *testing.T) string {
 
 // driftGateway returns an in-memory Gateway with a UID set (so
 // SetControllerReference can stamp a valid ownerRef). It is NOT created in the
-// apiserver — the Gateway CRD is not loaded in this envtest, and the rendered
-// resources only need the Gateway for naming and ownership, not for existence.
+// apiserver: the rendered resources only need the Gateway for naming and
+// ownership, not for existence.
 func driftGateway(namespace string) *gatewayv1.Gateway {
 	return &gatewayv1.Gateway{
 		ObjectMeta: metav1.ObjectMeta{Name: "edge", Namespace: namespace, UID: "drift-gateway-uid"},
