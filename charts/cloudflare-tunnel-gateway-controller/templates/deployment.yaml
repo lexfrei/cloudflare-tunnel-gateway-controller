@@ -89,6 +89,9 @@ spec:
             # controller so per-Gateway planes are rendered with it too.
             - "--ws-idle-timeout={{ . }}"
             {{- end }}
+            {{- with .Values.proxy.mirror.maxInFlight }}
+            - "--mirror-max-in-flight={{ . | int64 }}"
+            {{- end }}
             {{- if .Values.hostnameOwnershipPolicy.enabled }}
             # Controller-side hostname-ownership layer; the admission policy
             # (separate template) is the fail-fast layer of the same rule.

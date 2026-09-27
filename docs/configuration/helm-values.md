@@ -174,7 +174,7 @@ A duration written as zero, such as `"0s"` or `"0h0m0s"`, fails schema validatio
 
 | Value | Type | Default | Description |
 | --- | --- | --- | --- |
-| `proxy.mirror.maxInFlight` | int | `0` (proxy default 64) | Mirror dispatches each `RequestMirror` filter may keep in flight before it drops further copies. Each holds its buffered body, up to 1 MiB. Reaches the shared proxy only; per-Gateway data planes keep 64 |
+| `proxy.mirror.maxInFlight` | int | `0` (proxy default 64) | Mirror dispatches each `RequestMirror` filter may keep in flight before it drops further copies. Each holds its buffered body, up to 1 MiB. Also passed to the controller as `--mirror-max-in-flight`, so per-Gateway data planes get the same limit |
 
 ### Networking and Service
 
