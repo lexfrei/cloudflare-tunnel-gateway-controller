@@ -27,6 +27,8 @@ func TestConfigAPIAuthFor(t *testing.T) {
 // buildDataPlane refuses before anything listens or dials.
 func TestRun_TunnelModeRefusesAnUnauthenticatedConfigAPI(t *testing.T) {
 	t.Setenv("TUNNEL_TOKEN", "not-a-real-token")
+	t.Setenv("PROXY_TRACING_ENABLED", "")
+	t.Setenv("PROXY_TRACING_ENDPOINT", "")
 	t.Setenv("PROXY_AUTH_TOKEN", "")
 	t.Setenv(allowUnauthenticatedConfigAPIEnv, "")
 	require.NoError(t, os.Unsetenv("PROXY_AUTH_TOKEN"))

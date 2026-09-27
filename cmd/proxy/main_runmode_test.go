@@ -13,8 +13,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// runModeHelperEnv makes the test re-enter itself as a child process. The two
-// run modes cannot be called in-process: one exits, the other serves forever.
+// runModeHelperEnv makes the test re-enter itself as a child process. Standalone
+// mode cannot be run in-process: once started it serves until a signal.
 const runModeHelperEnv = "TEST_PROXY_RUN_MODE_HELPER"
 
 // runModeChildTimeout bounds the child so a mode that neither exits nor logs
@@ -40,39 +40,10 @@ func childEnv(t *testing.T, extra ...string) []string {
 	return append(append(out, runModeHelperEnv+"=1"), extra...)
 }
 
-// TestRunModeWiring_TunnelModeRefusesAnUnauthenticatedConfigAPI pins the call
-// site that decides whether the internet-facing mode may run open.
-//
-// Every other test in this package reaches resolveAuthToken directly, so
-// swapping authRequired and authOptional between the two run modes would ship
-// exactly the hole this change closes with the whole suite green. Reaching the
-// call sites means running the binary, hence the child process; buildDataPlane
-// runs before anything touches the network, so the refusal is offline and
-// deterministic even though the token is garbage.
-func TestRunModeWiring_TunnelModeRefusesAnUnauthenticatedConfigAPI(t *testing.T) {
-	if os.Getenv(runModeHelperEnv) == "1" {
-		main()
-
-		return
-	}
-
-	ctx, cancel := context.WithTimeout(t.Context(), runModeChildTimeout)
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx, os.Args[0],
-		"-test.run=TestRunModeWiring_TunnelModeRefusesAnUnauthenticatedConfigAPI")
-	cmd.Env = childEnv(t, "TUNNEL_TOKEN=not-a-real-token")
-
-	out, err := cmd.CombinedOutput()
-
-	require.Error(t, err, "tunnel mode must exit non-zero without a config-API token, got output:\n%s", out)
-	assert.Contains(t, string(out), "refusing to start with a broken config-API auth configuration",
-		"the refusal must name itself, since an operator meets it as a crash loop")
-}
-
-// TestRunModeWiring_StandaloneModeStartsWithoutAuth pins the other half. If
-// standalone were wired to authRequired instead, a development run with no
-// token would refuse to start rather than warn.
+// TestRunModeWiring_StandaloneModeStartsWithoutAuth pins the standalone half of
+// the auth call site in run. If it passed authRequired instead, a development
+// run with no token would refuse to start rather than warn. The tunnel half is
+// pinned in-process by TestRun_TunnelModeRefusesAnUnauthenticatedConfigAPI.
 func TestRunModeWiring_StandaloneModeStartsWithoutAuth(t *testing.T) {
 	if os.Getenv(runModeHelperEnv) == "1" {
 		main()
