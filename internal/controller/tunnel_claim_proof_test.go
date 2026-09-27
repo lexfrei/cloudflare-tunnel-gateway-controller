@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -337,4 +338,52 @@ func TestUncheckableClaimMessageNamesBothCauses(t *testing.T) {
 
 	assert.Contains(t, message, "unreachable")
 	assert.Contains(t, message, "credential")
+}
+
+// TestCollectTunnelClaims_BrokenOwnCredentialDoesNotKeepATunnel pins the squat
+// a tenant could otherwise stage after being refuted: point its GatewayConfig
+// at a credential that cannot be read, so its claim comes back unchecked, and
+// lean on the address it still advertises. An unchecked claim must not outrank
+// a confirmed one, however old it is and whatever it advertises.
+func TestCollectTunnelClaims_BrokenOwnCredentialDoesNotKeepATunnel(t *testing.T) {
+	t.Parallel()
+
+	squatter := claimsGateway("team-a", "gw", 0, "a-token")
+	squatter.Status.Addresses = []gatewayv1.GatewayStatusAddress{{Value: claimsTunnel + cfArgotunnelSuffix}}
+
+	owner := claimsGateway("team-b", "gw", 5, "b-token")
+	owner.Status.Addresses = []gatewayv1.GatewayStatusAddress{{Value: claimsTunnel + cfArgotunnelSuffix}}
+
+	squatterConfig := claimsGatewayConfig("team-a", "a-token")
+	squatterConfig.Spec.CloudflareCredentialsSecretRef = &v1alpha1.LocalSecretReference{Name: "missing"}
+
+	fakeClient := setupGatewayFakeClient(
+		squatter,
+		owner,
+		claimsGatewayClass(),
+		claimsClassConfig(),
+		&corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: "creds", Namespace: "default"},
+			Data:       map[string][]byte{"api-token": []byte("test-token")},
+		},
+		&corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: "a-token", Namespace: "team-a"},
+			Data:       map[string][]byte{"tunnel-token": []byte(infraTunnelTokenFor(t, claimsTunnel))},
+		},
+		&corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: "b-token", Namespace: "team-b"},
+			Data:       map[string][]byte{"tunnel-token": []byte(infraTunnelTokenFor(t, claimsTunnel))},
+		},
+		squatterConfig,
+		claimsGatewayConfig("team-b", "b-token"),
+	)
+
+	resolver := withVerdict(fakeClient, "default", tunnelownership.ProofVerified)
+
+	claims, err := collectTunnelClaims(context.Background(), fakeClient, resolver, "test-controller", claimsClassTunnel)
+	require.NoError(t, err)
+
+	rejected := tunnelownership.Arbitrate(claimsClassTunnel, false, claims)
+	assert.Contains(t, rejected, "team-a/gw", "an unchecked claim must not hold a tunnel against a confirmed one")
+	assert.NotContains(t, rejected, "team-b/gw", "the confirmed owner must keep its tunnel")
 }

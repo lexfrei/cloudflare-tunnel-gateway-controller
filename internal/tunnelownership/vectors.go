@@ -226,15 +226,38 @@ func outageVectors() []Vector {
 	return []Vector{
 		{
 			// An outage must not evict a holder, so a claim already advertising
-			// its tunnel keeps it unchecked. That rests on Gateway status, and
-			// so inherits whatever trust status write carries.
-			Name:         "an unverifiable claim advertising its tunnel keeps it",
+			// its tunnel keeps it unchecked while nobody else's claim is
+			// confirmed either. That rests on Gateway status, and so inherits
+			// whatever trust status write carries.
+			Name:         "an unverifiable holder keeps its tunnel against an unverifiable newcomer",
+			SharedTunnel: vectorSharedTunnel,
+			Claims: []Claim{
+				unprovenContender(vectorGatewayA, vectorTeamA, vectorOwnedTunnel, 0, ProofUnknown),
+				unprovenClaim(vectorGatewayB, vectorTeamB, vectorOwnedTunnel, 1, ProofUnknown),
+			},
+			WantRejected: []string{vectorGatewayB},
+		},
+		{
+			// An unchecked claim is one the tenant can produce at will, by
+			// breaking its own credential or deleting its own token. Letting
+			// possession carry it past a confirmed claim would let a squatter,
+			// once refuted, do exactly that and keep the tunnel.
+			Name:         "a confirmed claim beats an older holder Cloudflare could not check",
 			SharedTunnel: vectorSharedTunnel,
 			Claims: []Claim{
 				unprovenContender(vectorGatewayA, vectorTeamA, vectorOwnedTunnel, 0, ProofUnknown),
 				claim(vectorGatewayB, vectorTeamB, vectorOwnedTunnel, 1),
 			},
-			WantRejected: []string{vectorGatewayB},
+			WantRejected: []string{vectorGatewayA},
+		},
+		{
+			Name:         "a confirmed holder beats an older holder Cloudflare could not check",
+			SharedTunnel: vectorSharedTunnel,
+			Claims: []Claim{
+				unprovenContender(vectorGatewayA, vectorTeamA, vectorOwnedTunnel, 0, ProofUnknown),
+				contender(vectorGatewayB, vectorTeamB, vectorOwnedTunnel, 1),
+			},
+			WantRejected: []string{vectorGatewayA},
 		},
 		{
 			// Advertising a different tunnel is retargeting, not possession.
