@@ -56,7 +56,7 @@ func TestConfigMapper_MapConfigToRequests_ValidConfig(t *testing.T) {
 	mapper := &ConfigMapper{
 		Client:         fakeClient,
 		ControllerName: "test-controller",
-		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims()),
 	}
 
 	expectedRequests := []reconcile.Request{
@@ -105,7 +105,7 @@ func TestConfigMapper_MapConfigToRequests_WrongConfig(t *testing.T) {
 	mapper := &ConfigMapper{
 		Client:         fakeClient,
 		ControllerName: "test-controller",
-		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims()),
 	}
 
 	mapFunc := mapper.MapConfigToRequests(func(_ context.Context) []reconcile.Request {
@@ -159,7 +159,7 @@ func TestConfigMapper_MapConfigToRequests_GatewayClassNotFound(t *testing.T) {
 	mapper := &ConfigMapper{
 		Client:         fakeClient,
 		ControllerName: "non-existent-controller",
-		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims()),
 	}
 
 	mapFunc := mapper.MapConfigToRequests(func(_ context.Context) []reconcile.Request {
@@ -217,7 +217,7 @@ func TestConfigMapper_MapSecretToRequests_ValidSecret(t *testing.T) {
 	mapper := &ConfigMapper{
 		Client:         fakeClient,
 		ControllerName: "test-controller",
-		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims()),
 	}
 
 	expectedRequests := []reconcile.Request{
@@ -277,7 +277,7 @@ func TestConfigMapper_MapSecretToRequests_WrongSecret(t *testing.T) {
 	mapper := &ConfigMapper{
 		Client:         fakeClient,
 		ControllerName: "test-controller",
-		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims()),
 	}
 
 	mapFunc := mapper.MapSecretToRequests(func(_ context.Context) []reconcile.Request {
@@ -346,7 +346,7 @@ func TestConfigMapper_MapSecretToRequests_GatewayConfigCredentialSecret(t *testi
 	mapper := &ConfigMapper{
 		Client:         fakeClient,
 		ControllerName: "test-controller",
-		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims()),
 	}
 
 	expected := []reconcile.Request{{NamespacedName: client.ObjectKey{Name: "edge", Namespace: "tenant-a"}}}
@@ -375,7 +375,7 @@ func TestConfigMapper_MapSecretToRequests_GatewayConfigCredentialWrongNamespace(
 	mapper := &ConfigMapper{
 		Client:         fakeClient,
 		ControllerName: "test-controller",
-		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims()),
 	}
 
 	mapFunc := mapper.MapSecretToRequests(func(_ context.Context) []reconcile.Request {
@@ -429,7 +429,7 @@ func TestConfigMapper_MapSecretToRequests_GatewayClassNotFound(t *testing.T) {
 	mapper := &ConfigMapper{
 		Client:         fakeClient,
 		ControllerName: "non-existent-controller",
-		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims()),
 	}
 
 	mapFunc := mapper.MapSecretToRequests(func(_ context.Context) []reconcile.Request {
@@ -554,7 +554,7 @@ func TestConfigMapper_IsConfigForOurClass_NoParametersRef(t *testing.T) {
 	mapper := &ConfigMapper{
 		Client:         fakeClient,
 		ControllerName: "test-controller",
-		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims()),
 	}
 
 	result := mapper.isConfigForOurClass(ctx, gatewayClassConfig)
@@ -614,7 +614,7 @@ func TestConfigMapper_MapSecretToRequests_GatewayClientCertSecret_SameNs(t *test
 	mapper := &ConfigMapper{
 		Client:         fakeClient,
 		ControllerName: controllerName,
-		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims()),
 	}
 
 	expectedRequests := []reconcile.Request{
@@ -702,7 +702,7 @@ func TestConfigMapper_MapSecretToRequests_GatewayClientCertSecret_CrossNsWithGra
 	mapper := &ConfigMapper{
 		Client:         fakeClient,
 		ControllerName: controllerName,
-		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims()),
 	}
 
 	expectedRequests := []reconcile.Request{
@@ -775,7 +775,7 @@ func TestConfigMapper_MapSecretToRequests_GatewayClientCertSecret_CrossNsWithout
 	mapper := &ConfigMapper{
 		Client:         fakeClient,
 		ControllerName: controllerName,
-		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims()),
 	}
 
 	mapFunc := mapper.MapSecretToRequests(func(_ context.Context) []reconcile.Request {
@@ -869,7 +869,7 @@ func TestConfigMapper_MapSecretToRequests_GatewayClientCertSecret_CrossNsTransie
 	mapper := &ConfigMapper{
 		Client:         fakeClient,
 		ControllerName: controllerName,
-		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims()),
 	}
 
 	expectedRequests := []reconcile.Request{
@@ -1877,7 +1877,7 @@ func TestConfigMapper_IsSecretReferencedByConfig_GetConfigError(t *testing.T) {
 	mapper := &ConfigMapper{
 		Client:         fakeClient,
 		ControllerName: "test-controller",
-		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims()),
 	}
 
 	result := mapper.isSecretReferencedByConfig(ctx, secret)

@@ -115,7 +115,7 @@ func TestGatewayListenerConditions_PreserveLastTransitionTimeWhenUnchanged(t *te
 		Client:         fakeClient,
 		Scheme:         fakeClient.Scheme(),
 		ControllerName: "test-controller",
-		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims()),
 	}
 
 	ctx := context.Background()
@@ -163,7 +163,7 @@ func TestGatewayListenerConditions_UpdateLastTransitionTimeOnTransition(t *testi
 		Client:         fakeClient,
 		Scheme:         fakeClient.Scheme(),
 		ControllerName: "test-controller",
-		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims()),
 	}
 
 	ctx := context.Background()
@@ -341,7 +341,7 @@ func TestGatewayListenerConditions_DropConditionNoLongerEmitted(t *testing.T) {
 		Client:         fakeClient,
 		Scheme:         fakeClient.Scheme(),
 		ControllerName: "test-controller",
-		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims()),
 	}
 
 	ctx := context.Background()
@@ -625,7 +625,7 @@ func TestGatewayListenerConditions_ForeignConditionSurvivesReconcile(t *testing.
 		Client:         fakeClient,
 		Scheme:         fakeClient.Scheme(),
 		ControllerName: "test-controller",
-		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims()),
 	}
 
 	ctx := context.Background()
@@ -685,7 +685,7 @@ func TestGatewayListenerConditions_ForeignConditionSurvivesConfigError(t *testin
 		Client:         fakeClient,
 		Scheme:         fakeClient.Scheme(),
 		ControllerName: "test-controller",
-		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims()),
 	}
 
 	ctx := context.Background()
@@ -738,7 +738,7 @@ func TestGatewayListenerConditions_PreserveLastTransitionTimeAcrossConfigError(t
 		Client:         fakeClient,
 		Scheme:         fakeClient.Scheme(),
 		ControllerName: "test-controller",
-		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims()),
 	}
 
 	ctx := context.Background()

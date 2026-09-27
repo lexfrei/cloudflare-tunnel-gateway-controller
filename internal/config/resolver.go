@@ -19,6 +19,9 @@ import (
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/api/v1alpha1"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/cfmetrics"
 	tracingpkg "github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/tracing"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/tunnel"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/tunnelownership"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/tunnelproof"
 )
 
 const (
@@ -66,6 +69,17 @@ type Resolver struct {
 	// accountIDCache caches auto-detected account IDs to avoid repeated API
 	// calls. Key is config name, value is an accountIDCacheEntry.
 	accountIDCache sync.Map
+
+	// claimVerifier checks per-Gateway tunnel claims against Cloudflare. It
+	// is never nil: NewResolver installs the Cloudflare verifier unless an
+	// option supplied another.
+	claimVerifier ClaimVerifier
+}
+
+// ClaimVerifier decides whether a connector token really holds the tunnel it
+// names, asking Cloudflare with apiToken.
+type ClaimVerifier interface {
+	Verify(ctx context.Context, apiToken string, token *tunnel.Token) tunnelownership.Proof
 }
 
 // accountIDCacheEntry is one config's auto-detected account ID together with a
@@ -93,6 +107,16 @@ func WithCloudflareTracing() ResolverOption {
 	}
 }
 
+// WithClaimVerifier replaces the Cloudflare tunnel-claim verifier. A nil
+// verifier keeps the Cloudflare one, so no option can switch the check off.
+func WithClaimVerifier(verifier ClaimVerifier) ResolverOption {
+	return func(r *Resolver) {
+		if verifier != nil {
+			r.claimVerifier = verifier
+		}
+	}
+}
+
 // NewResolver creates a new config Resolver.
 func NewResolver(c client.Client, defaultNamespace string, metricsCollector cfmetrics.Collector, opts ...ResolverOption) *Resolver {
 	resolver := &Resolver{
@@ -103,6 +127,12 @@ func NewResolver(c client.Client, defaultNamespace string, metricsCollector cfme
 
 	for _, opt := range opts {
 		opt(resolver)
+	}
+
+	if resolver.claimVerifier == nil {
+		resolver.claimVerifier = tunnelproof.NewVerifier(func(apiToken string) *cloudflare.Client {
+			return cloudflare.NewClient(cloudflareRequestOptions(apiToken, resolver.tracing)...)
+		})
 	}
 
 	return resolver

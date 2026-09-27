@@ -73,7 +73,7 @@ func TestCollectTunnelClaims_TokenBeatsAStaleAdvertisedAddress(t *testing.T) {
 		claimsGatewayConfig("team-b", "b-token"),
 	)
 
-	resolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector())
+	resolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims())
 
 	claims, err := collectTunnelClaims(context.Background(), fakeClient, resolver, "test-controller", claimsClassTunnel)
 	require.NoError(t, err)
@@ -87,7 +87,7 @@ func TestCollectTunnelClaims_TokenBeatsAStaleAdvertisedAddress(t *testing.T) {
 	assert.Equal(t, claimsTunnel, byKey["team-b/gw"].TunnelID,
 		"the claim must be the tunnel the token names, which is also the tunnel the partition uses")
 
-	rejected := tunnelownership.Arbitrate(claimsClassTunnel, claims)
+	rejected := tunnelownership.Arbitrate(claimsClassTunnel, false, claims)
 	assert.Contains(t, rejected, "team-b/gw",
 		"a retargeted token must be arbitrated on its new tunnel, not on the address left over from its old one")
 	assert.NotContains(t, rejected, "team-a/gw",
@@ -104,6 +104,10 @@ func TestCollectTunnelClaims_TokenBeatsAStaleAdvertisedAddress(t *testing.T) {
 // ordinary delete-then-create token rotation is enough to open that window.
 // The challenger would then be accepted, rendered, and start advertising the
 // tunnel itself, so the incumbent could never take it back.
+//
+// The challenger here is one Cloudflare does not confirm. One that Cloudflare
+// does confirm holds the tunnel's real token, and outranks an unchecked holder
+// by design; the ownership vectors pin that.
 func TestCollectTunnelClaims_AdvertisedSurvivesAnUnreadableToken(t *testing.T) {
 	t.Parallel()
 
@@ -139,7 +143,7 @@ func TestCollectTunnelClaims_AdvertisedSurvivesAnUnreadableToken(t *testing.T) {
 		claimsGatewayConfig("team-b", "b-token"),
 	)
 
-	resolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector())
+	resolver := withVerdict(fakeClient, "default", tunnelownership.ProofRefuted)
 
 	claims, err := collectTunnelClaims(context.Background(), fakeClient, resolver, "test-controller", claimsClassTunnel)
 	require.NoError(t, err)
@@ -156,7 +160,7 @@ func TestCollectTunnelClaims_AdvertisedSurvivesAnUnreadableToken(t *testing.T) {
 	require.True(t, ok, "a Gateway serving a tunnel must stay in the claim set while its Secret is unreadable")
 	assert.Equal(t, claimsTunnel, held.Advertised, "its possession comes from status, not from the Secret")
 
-	rejected := tunnelownership.Arbitrate(claimsClassTunnel, claims)
+	rejected := tunnelownership.Arbitrate(claimsClassTunnel, false, claims)
 	assert.Contains(t, rejected, "team-b/gw",
 		"the challenger must not take a tunnel its holder is still serving")
 	assert.NotContains(t, rejected, "team-a/gw",
@@ -195,12 +199,12 @@ func TestCollectTunnelClaims_SharedPlaneAddressIsNotPossession(t *testing.T) {
 		claimsGatewayConfig("team-a", "a-token"),
 	)
 
-	resolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector())
+	resolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims())
 
 	claims, err := collectTunnelClaims(context.Background(), fakeClient, resolver, "test-controller", claimsClassTunnel)
 	require.NoError(t, err)
 
-	rejected := tunnelownership.Arbitrate(claimsClassTunnel, claims)
+	rejected := tunnelownership.Arbitrate(claimsClassTunnel, false, claims)
 	assert.NotContains(t, rejected, "team-a/gw",
 		"a leftover shared-plane address must not be read as a claim on the class tunnel")
 }

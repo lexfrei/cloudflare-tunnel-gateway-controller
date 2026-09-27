@@ -71,6 +71,8 @@ Create an API token at [Cloudflare Account API Tokens](https://dash.cloudflare.c
 |-------|------------|--------|
 | Account | Cloudflare Tunnel | Edit |
 
+The same permission covers checking a dedicated Gateway's tunnel claim, which reads that tunnel's connector token from the Cloudflare API — see [Proving a tunnel claim](../guides/per-gateway-isolation.md#proving-a-tunnel-claim).
+
 !!! note "Account ID"
 
     Account ID is auto-detected from the API token when not explicitly provided (works if the token has access to a single account).

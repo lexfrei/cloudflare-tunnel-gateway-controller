@@ -94,7 +94,7 @@ func reconcilePGGateway(t *testing.T, fakeClient client.WithWatch) gatewayv1.Gat
 		Client:         fakeClient,
 		Scheme:         fakeClient.Scheme(),
 		ControllerName: "test-controller",
-		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims()),
 		// The chart always wires --proxy-image; mirror that so the status path
 		// does not classify these fixtures (no per-Gateway image override) as a
 		// missing-image misconfig.
@@ -248,7 +248,7 @@ func TestGatewayReconciler_PerGateway_TransientResolveErrorKeepsStatus(t *testin
 		Client:         fakeClient,
 		Scheme:         fakeClient.Scheme(),
 		ControllerName: "test-controller",
-		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims()),
 	}
 
 	ctx := context.Background()
@@ -312,7 +312,7 @@ func TestGatewayReconciler_PerGateway_NoImageSurfacesInvalidParameters(t *testin
 		Client:         fakeClient,
 		Scheme:         fakeClient.Scheme(),
 		ControllerName: "test-controller",
-		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims()),
 		ProxyImage:     "", // no chart default and no per-Gateway override
 	}
 
@@ -491,7 +491,7 @@ func TestGatewayReconciler_PerGateway_UncomputableArbitrationDoesNotAdvertise(t 
 		Client:         fakeClient,
 		Scheme:         fakeClient.Scheme(),
 		ControllerName: "test-controller",
-		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims()),
 		ProxyImage:     "ghcr.io/example/proxy:v1",
 	}
 
@@ -536,7 +536,7 @@ func TestGatewayReconciler_PerGateway_RefusalEventFiresOncePerVerdict(t *testing
 		Client:         fakeClient,
 		Scheme:         fakeClient.Scheme(),
 		ControllerName: "test-controller",
-		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims()),
 		ProxyImage:     "ghcr.io/example/proxy:v1",
 		Recorder:       recorder,
 		ViewStore:      newMergeViewStore(),

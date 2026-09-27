@@ -260,7 +260,7 @@ func TestRouteSyncer_GetRelevantHTTPRoutes(t *testing.T) {
 				scheme,
 				"cluster.local",
 				"cloudflare-tunnel",
-				config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+				config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims()),
 				cfmetrics.NewNoopCollector(),
 				nil,
 			)
@@ -384,7 +384,7 @@ func TestRouteSyncer_GetRelevantGRPCRoutes(t *testing.T) {
 				scheme,
 				"cluster.local",
 				"cloudflare-tunnel",
-				config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+				config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims()),
 				cfmetrics.NewNoopCollector(),
 				nil,
 			)
@@ -852,7 +852,7 @@ func TestRouteSyncer_GetRelevantGRPCRoutes_WithExplicitNamespace(t *testing.T) {
 				scheme,
 				"cluster.local",
 				"cloudflare-tunnel",
-				config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+				config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims()),
 				cfmetrics.NewNoopCollector(),
 				nil,
 			)
@@ -939,7 +939,7 @@ func TestRouteSyncer_BuildResultForError(t *testing.T) {
 		scheme,
 		"cluster.local",
 		"cloudflare-tunnel",
-		config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims()),
 		cfmetrics.NewNoopCollector(),
 		nil,
 	)
@@ -1026,7 +1026,7 @@ func TestRouteSyncer_SyncAllRoutes_ConfigResolveFailure(t *testing.T) {
 		scheme,
 		"cluster.local",
 		"cloudflare-tunnel",
-		config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims()),
 		cfmetrics.NewNoopCollector(),
 		nil,
 	)
@@ -1098,7 +1098,7 @@ func TestRouteSyncer_SyncAllRoutes_AccountIDResolveFailure(t *testing.T) {
 		scheme,
 		"cluster.local",
 		"cloudflare-tunnel",
-		config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims()),
 		cfmetrics.NewNoopCollector(),
 		nil,
 	)
@@ -1194,7 +1194,7 @@ func TestRouteSyncer_SyncAllRoutes_TunnelConfigGetFailure(t *testing.T) {
 		scheme,
 		"cluster.local",
 		"cloudflare-tunnel",
-		config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims()),
 		cfmetrics.NewNoopCollector(),
 		nil,
 	)
@@ -1216,7 +1216,7 @@ func TestNewRouteSyncer(t *testing.T) {
 	require.NoError(t, gatewayv1.Install(scheme))
 
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
-	resolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector())
+	resolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims())
 
 	syncer := NewRouteSyncer(fakeClient, scheme, "cluster.local", "cloudflare-tunnel", resolver, cfmetrics.NewNoopCollector(), nil)
 
@@ -1272,7 +1272,7 @@ func TestResolveConfigForController_MultipleClasses_DeterministicOrder(t *testin
 
 	syncer := NewRouteSyncer(
 		fakeClient, scheme, "cluster.local", "test-controller",
-		config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims()),
 		cfmetrics.NewNoopCollector(), nil,
 	)
 
@@ -1324,7 +1324,7 @@ func TestResolveConfigForController_MultipleClasses_ConflictingParametersRef(t *
 
 	syncer := NewRouteSyncer(
 		fakeClient, scheme, "cluster.local", "test-controller",
-		config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims()),
 		cfmetrics.NewNoopCollector(), nil,
 	)
 
@@ -1419,7 +1419,7 @@ func TestResolveConfigForController_NoClasses(t *testing.T) {
 
 	syncer := NewRouteSyncer(
 		fakeClient, scheme, "cluster.local", "test-controller",
-		config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims()),
 		cfmetrics.NewNoopCollector(), nil,
 	)
 
@@ -1443,7 +1443,7 @@ func TestSyncAndUpdateStatusCommon_PropagatesError(t *testing.T) {
 
 	syncer := NewRouteSyncer(
 		fakeClient, scheme, "cluster.local", "test-controller",
-		config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims()),
 		cfmetrics.NewNoopCollector(), nil,
 	)
 
@@ -1498,7 +1498,7 @@ func TestSyncAndUpdateStatusCommon_PropagatesErrorWhenNoRequeue(t *testing.T) {
 
 	syncer := NewRouteSyncer(
 		fakeClient, scheme, "cluster.local", "test-controller",
-		config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims()),
 		cfmetrics.NewNoopCollector(), nil,
 	)
 

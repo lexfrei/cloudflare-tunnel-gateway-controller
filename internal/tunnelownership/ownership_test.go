@@ -18,7 +18,7 @@ func TestArbitrate_Vectors(t *testing.T) {
 		t.Run(vector.Name, func(t *testing.T) {
 			t.Parallel()
 
-			rejected := tunnelownership.Arbitrate(vector.SharedTunnel, vector.Claims)
+			rejected := tunnelownership.Arbitrate(vector.SharedTunnel, vector.AllowSharedTunnels, vector.Claims)
 
 			keys := make([]string, 0, len(rejected))
 			for key := range rejected {
@@ -40,12 +40,12 @@ func TestArbitrate_RejectionNamesTheIncumbent(t *testing.T) {
 	const tunnelID = "22222222-2222-2222-2222-222222222222"
 
 	claims := []tunnelownership.Claim{
-		{Key: "team-a/gw", Namespace: "team-a", TunnelID: tunnelID, UID: "a"},
-		{Key: "team-b/gw", Namespace: "team-b", TunnelID: tunnelID, UID: "b"},
+		{Key: "team-a/gw", Namespace: "team-a", TunnelID: tunnelID, UID: "a", Proof: tunnelownership.ProofVerified},
+		{Key: "team-b/gw", Namespace: "team-b", TunnelID: tunnelID, UID: "b", Proof: tunnelownership.ProofVerified},
 	}
 	claims[1].CreatedAt = claims[0].CreatedAt.Add(1)
 
-	rejected := tunnelownership.Arbitrate("shared", claims)
+	rejected := tunnelownership.Arbitrate("shared", false, claims)
 
 	reason, ok := rejected["team-b/gw"]
 	assert.True(t, ok, "the newcomer must be rejected")
@@ -63,12 +63,32 @@ func TestArbitrate_SharedTunnelRejectionIsAttributedToTheClass(t *testing.T) {
 
 	const shared = "11111111-1111-1111-1111-111111111111"
 
-	rejected := tunnelownership.Arbitrate(shared, []tunnelownership.Claim{
-		{Key: "team-a/gw", Namespace: "team-a", TunnelID: shared, UID: "a"},
+	rejected := tunnelownership.Arbitrate(shared, false, []tunnelownership.Claim{
+		{Key: "team-a/gw", Namespace: "team-a", TunnelID: shared, UID: "a", Proof: tunnelownership.ProofVerified},
 	})
 
 	reason, ok := rejected["team-a/gw"]
 	assert.True(t, ok, "a Gateway claiming the class tunnel must be rejected")
 	assert.Empty(t, reason.HeldBy, "no Gateway holds the class tunnel")
 	assert.True(t, reason.IsClassTunnel, "the rejection must identify the class tunnel case")
+}
+
+// TestArbitrate_UnprovenRejectionNamesNoHolder pins that a claim refused for
+// lack of proof says so, and names nobody: it lost to Cloudflare's answer, not
+// to a neighbour, so there is no holder to report.
+func TestArbitrate_UnprovenRejectionNamesNoHolder(t *testing.T) {
+	t.Parallel()
+
+	const tunnelID = "22222222-2222-2222-2222-222222222222"
+
+	rejected := tunnelownership.Arbitrate("shared", false, []tunnelownership.Claim{
+		{Key: "team-a/gw", Namespace: "team-a", TunnelID: tunnelID, UID: "a", Proof: tunnelownership.ProofVerified},
+		{Key: "team-b/gw", Namespace: "team-b", TunnelID: tunnelID, UID: "b", Proof: tunnelownership.ProofRefuted},
+	})
+
+	reason, ok := rejected["team-b/gw"]
+	assert.True(t, ok, "a refuted claim must be rejected")
+	assert.True(t, reason.Unproven, "the rejection must identify the missing proof")
+	assert.Empty(t, reason.HeldBy, "an unproven claim lost to no Gateway")
+	assert.Equal(t, tunnelID, reason.TunnelID)
 }

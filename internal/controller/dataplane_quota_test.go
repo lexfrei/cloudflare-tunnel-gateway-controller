@@ -126,7 +126,7 @@ func reconcileQuotaGateway(
 		Client:         fakeClient,
 		Scheme:         fakeClient.Scheme(),
 		ControllerName: "test-controller",
-		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims()),
 		ProxyImage:     "ghcr.io/example/proxy:v1.2.3",
 		Recorder:       recorder,
 		ViewStore:      newMergeViewStore(),
@@ -359,7 +359,7 @@ func TestGatewayReconciler_SiblingOptInEnqueuesTheDisplaced(t *testing.T) {
 		Client:         fakeClient,
 		Scheme:         fakeClient.Scheme(),
 		ControllerName: "test-controller",
-		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims()),
 	}
 
 	requests := reconciler.namespaceDataPlaneSiblings(context.Background(),

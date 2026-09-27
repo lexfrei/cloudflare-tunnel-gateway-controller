@@ -101,6 +101,15 @@ type Token struct {
 	Endpoint     string    `json:"e,omitempty"`
 }
 
+// IsAccountTag reports whether tag has the form of a Cloudflare account ID:
+// 32 hexadecimal characters.
+func IsAccountTag(tag string) bool {
+	return len(tag) == accountTagLength && strings.Trim(tag, "0123456789abcdefABCDEF") == ""
+}
+
+// accountTagLength is the length of a Cloudflare account ID.
+const accountTagLength = 32
+
 // ParseTunnelToken decodes a base64-encoded tunnel token.
 func ParseTunnelToken(tokenStr string) (*Token, error) {
 	if tokenStr == "" {

@@ -85,7 +85,7 @@ func newOwnershipSyncer(t *testing.T, objects ...runtime.Object) *RouteSyncer {
 		scheme,
 		"cluster.local",
 		"cloudflare-tunnel",
-		config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims()),
 		cfmetrics.NewNoopCollector(),
 		nil,
 	)
@@ -206,7 +206,7 @@ func TestRouteSyncer_HostnameOwnership_FailClosedOnNamespaceReadError(t *testing
 		Build()
 
 	syncer := NewRouteSyncer(fakeClient, scheme, "cluster.local", "cloudflare-tunnel",
-		config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+		config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims()),
 		cfmetrics.NewNoopCollector(), nil)
 
 	policy, err := hostnameownership.New(ownershipLabelKey, "")
