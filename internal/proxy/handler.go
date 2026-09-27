@@ -345,10 +345,10 @@ func NewHandler(router *Router, opts ...HandlerOption) *Handler {
 	return handler
 }
 
-// ServeHTTP implements http.Handler.
 // writeRuleUnavailable handles the rule-level fail-closed path: when the
 // controller marked a matched rule unservable as written (e.g. it carries an
-// unsupported filter type whose effect cannot be honoured), the Gateway API
+// unsupported filter type whose effect cannot be honoured), or the router did
+// because one of its filters failed to compile here, the Gateway API
 // spec requires matched requests to receive an HTTP error rather than be served
 // without the dropped config. Returns true when it wrote the error, so the
 // caller short-circuits before backend selection, the WebSocket upgrade, and
@@ -363,6 +363,7 @@ func writeRuleUnavailable(writer http.ResponseWriter, rule *RouteRule) bool {
 	return true
 }
 
+// ServeHTTP implements http.Handler.
 func (h *Handler) ServeHTTP(writer http.ResponseWriter, req *http.Request) {
 	// Stripped here rather than at each read so no downstream path — routing,
 	// the backend Host, the WebSocket upgrade clone — can reintroduce trust in

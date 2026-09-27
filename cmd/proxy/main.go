@@ -59,13 +59,17 @@ func main() {
 
 	slog.SetDefault(logger)
 
-	// Hoisted above setupTracing so this refusal does not exit past a deferred
-	// exporter flush. The auth refusal inside buildDataPlane still does; neither
-	// has produced a span by then, so nothing is lost either way.
+	os.Exit(run(logger))
+}
+
+// run is main without the exit, so the deferred tracing shutdown runs before
+// the process ends on a startup refusal.
+func run(logger *slog.Logger) int {
 	tunnelToken, err := resolveTunnelToken()
 	if err != nil {
 		logger.Error("refusing to start with a broken tunnel configuration", "error", err)
-		os.Exit(1)
+
+		return 1
 	}
 
 	// Install the global TracerProvider + propagator before building the
@@ -74,11 +78,35 @@ func main() {
 	shutdownTracing := setupTracing(logger)
 	defer shutdownTracing()
 
-	if tunnelToken != "" {
-		runTunnelMode(logger, tunnelToken)
-	} else {
-		runStandaloneMode(logger)
+	plane, err := buildDataPlane(logger, configAPIAuthFor(tunnelToken))
+	if err != nil {
+		logger.Error("refusing to start with a broken config-API auth configuration", "error", err)
+
+		return 1
 	}
+
+	if tunnelToken != "" {
+		runTunnelMode(logger, tunnelToken, plane)
+	} else {
+		runStandaloneMode(logger, plane)
+	}
+
+	return 0
+}
+
+// configAPIAuthFor decides whether the config API must be authenticated.
+// Tunnel mode requires it; standalone mode keeps the historical
+// unauthenticated default. Not because of the bind — standalone listens on
+// every interface too, so a pod running it is reachable by anything that can
+// route to the pod — but because of what the routing table is worth. In tunnel
+// mode it decides where internet traffic goes; in standalone mode nothing is
+// serving it.
+func configAPIAuthFor(tunnelToken string) configAPIAuth {
+	if tunnelToken != "" {
+		return authRequired
+	}
+
+	return authOptional
 }
 
 // errTunnelTokenEmpty is the sentinel resolveTunnelToken returns when
@@ -170,15 +198,15 @@ func tracingHandlerOption() proxy.HandlerOption {
 // runTunnelMode starts the proxy with cloudflared tunnel integration.
 // Traffic flows in-process: cloudflared → GatewayOriginProxy → proxy.Handler.
 // No localhost HTTP server is needed for proxying.
-func runTunnelMode(logger *slog.Logger, token string) {
+func runTunnelMode(logger *slog.Logger, token string, plane *dataPlane) {
 	configAddr := envOrDefault("PROXY_CONFIG_ADDR", defaultConfigAddr)
 
-	router, proxyHandler, configAPI := buildDataPlane(logger, authRequired)
-	configServer := newServer(configAddr, configAPI)
+	router := plane.router
+	configServer := newServer(configAddr, plane.configAPI)
 
 	// Create in-process origin proxy — traffic flows directly from cloudflared
 	// to our handler without HTTP serialization or localhost TCP hop.
-	originProxy := tunnel.NewGatewayOriginProxy(proxyHandler, logger)
+	originProxy := tunnel.NewGatewayOriginProxy(plane.handler, logger)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -264,24 +292,17 @@ func runTunnelMode(logger *slog.Logger, token string) {
 
 // runStandaloneMode starts the proxy as a standalone HTTP server.
 // Used for local development and testing without a tunnel.
-func runStandaloneMode(logger *slog.Logger) {
+func runStandaloneMode(logger *slog.Logger, plane *dataPlane) {
 	configAddr := envOrDefault("PROXY_CONFIG_ADDR", defaultConfigAddr)
 	proxyAddr := envOrDefault("PROXY_ADDR", defaultProxyAddr)
-
-	// Standalone mode keeps the historical unauthenticated default; tunnel mode
-	// does not. Not because of the bind — standalone listens on every interface
-	// too, so a pod running it is reachable by anything that can route to the
-	// pod — but because of what the routing table is worth. In tunnel mode it
-	// decides where internet traffic goes; here nothing is serving it.
-	router, proxyHandler, configAPI := buildDataPlane(logger, authOptional)
 
 	// Standalone mode has no tunnel to wait for, so readiness gates on config
 	// alone — latch the tunnel-connected state up front. (Tunnel mode flips it
 	// from the cloudflared connected-signal instead.)
-	router.SetTunnelConnected()
+	plane.router.SetTunnelConnected()
 
-	configServer := newServer(configAddr, configAPI)
-	proxyServer := newProxyServer(proxyAddr, proxyHandler)
+	configServer := newServer(configAddr, plane.configAPI)
+	proxyServer := newProxyServer(proxyAddr, plane.handler)
 
 	errChan := make(chan error, 2)
 
@@ -450,11 +471,17 @@ func drainErrors(logger *slog.Logger, errChan <-chan error) {
 	}
 }
 
+type dataPlane struct {
+	router    *proxy.Router
+	handler   *proxy.Handler
+	configAPI *proxy.ConfigAPI
+}
+
 // buildDataPlane assembles the shared data-plane pieces for both run modes:
 // the router, the request handler (env-driven options plus metrics when
 // enabled), and the config API (with the /metrics exposition handler when
-// enabled).
-func buildDataPlane(logger *slog.Logger, requireAuth configAPIAuth) (*proxy.Router, *proxy.Handler, *proxy.ConfigAPI) {
+// enabled). A broken config-API auth configuration is returned, not acted on.
+func buildDataPlane(logger *slog.Logger, requireAuth configAPIAuth) (*dataPlane, error) {
 	router := proxy.NewRouter()
 
 	opts := handlerOptions(logger)
@@ -469,8 +496,7 @@ func buildDataPlane(logger *slog.Logger, requireAuth configAPIAuth) (*proxy.Rout
 
 	authToken, err := resolveAuthToken(requireAuth)
 	if err != nil {
-		logger.Error("refusing to start with a broken config-API auth configuration", "error", err)
-		os.Exit(1)
+		return nil, err
 	}
 
 	warnIfNoAuth(logger, authToken)
@@ -480,7 +506,11 @@ func buildDataPlane(logger *slog.Logger, requireAuth configAPIAuth) (*proxy.Rout
 		apiOpts = append(apiOpts, proxy.WithMetricsHandler(metricsHandler))
 	}
 
-	return router, proxyHandler, proxy.NewConfigAPI(router, authToken, apiOpts...)
+	return &dataPlane{
+		router:    router,
+		handler:   proxyHandler,
+		configAPI: proxy.NewConfigAPI(router, authToken, apiOpts...),
+	}, nil
 }
 
 // buildProxyMetrics constructs the data-plane Prometheus instrumentation when

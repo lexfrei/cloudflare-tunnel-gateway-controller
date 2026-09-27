@@ -293,7 +293,8 @@ func TestProxyConfig_Validate(t *testing.T) {
 			wantErr: "name is required",
 		},
 		{
-			name: "unknown filter type",
+			// Left to the router, which fails only the rule carrying it.
+			name: "unknown filter type is accepted",
 			config: proxy.Config{
 				Version: 1,
 				Rules: []proxy.RouteRule{
@@ -303,7 +304,6 @@ func TestProxyConfig_Validate(t *testing.T) {
 					},
 				},
 			},
-			wantErr: "unknown filter type",
 		},
 		{
 			name: "RequestHeaderModifier without config",

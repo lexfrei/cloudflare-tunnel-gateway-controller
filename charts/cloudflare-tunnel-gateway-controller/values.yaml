@@ -463,7 +463,8 @@ proxy:
     key: "tunnel-token"
   # -- WebSocket knobs, one per phase. dialTimeout caps the TCP/TLS
   # connect to the backend and handshakeTimeout the wait for its 101
-  # Switching Protocols response, both defaulting to 30s; idleTimeout
+  # Switching Protocols response (and any stall in a refusal body when
+  # the backend declines the upgrade), both defaulting to 30s; idleTimeout
   # then bounds the established session, closing it after an hour with
   # no bytes in either direction. Empty (the default) leaves each at
   # the proxy binary's built-in value.
@@ -472,7 +473,9 @@ proxy:
     # Empty preserves the 30s default. Use a deliberately large value
     # to effectively disable the bound rather than setting "0".
     dialTimeout: ""
-    # -- 101-Switching-Protocols read deadline (Go duration).
+    # -- 101-Switching-Protocols read deadline (Go duration). When the
+    # backend refuses the upgrade, also the longest its refusal body
+    # may go without a byte.
     # Empty preserves the 30s default.
     handshakeTimeout: ""
     # -- How long an established session may carry no bytes in either

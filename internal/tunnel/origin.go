@@ -144,8 +144,14 @@ func (b *trailerBridge) Write(payload []byte) (int, error) {
 // Flush re-exposes the underlying writer's flush capability. The
 // connection.ResponseWriter interface does not include http.Flusher, so
 // embedding alone would hide cloudflared's Flush from httputil.ReverseProxy
-// (which keys streaming on it).
+// (which keys streaming on it). A flush before any status commits an implicit
+// 200, as net/http and x/net/http2 both do, so wroteHeader stays accurate for
+// the panic path that reads it.
 func (b *trailerBridge) Flush() {
+	if !b.wroteHeader {
+		b.WriteHeader(http.StatusOK)
+	}
+
 	if flusher, ok := b.ResponseWriter.(http.Flusher); ok {
 		flusher.Flush()
 	}
