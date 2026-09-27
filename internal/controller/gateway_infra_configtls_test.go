@@ -167,6 +167,27 @@ func TestGatewayInfraReconciler_ConfigTLSNeverAdoptsAForeignSecret(t *testing.T)
 	assert.Equal(t, "cf-proxy-edge-config-tls-1", mountedLeaf(t, reconciler.Client))
 }
 
+// TestGatewayInfraReconciler_ConfigTLSNeverStepsBackToALowerSlot pins that a
+// slot freed below the mounted one is not taken back: doing so would roll a
+// healthy plane for nothing, and a tenant could keep it rolling by creating
+// and deleting Secrets.
+func TestGatewayInfraReconciler_ConfigTLSNeverStepsBackToALowerSlot(t *testing.T) {
+	t.Parallel()
+
+	reconciler, _ := newTLSInfraReconciler(t)
+
+	squatter := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: edgeLeafKey("0").Name, Namespace: infraNamespace}}
+	require.NoError(t, reconciler.Create(context.Background(), squatter))
+
+	reconcileEdgeResult(t, reconciler)
+	require.Equal(t, "cf-proxy-edge-config-tls-1", mountedLeaf(t, reconciler.Client))
+
+	require.NoError(t, reconciler.Delete(context.Background(), squatter))
+
+	reconcileEdgeResult(t, reconciler)
+	assert.Equal(t, "cf-proxy-edge-config-tls-1", mountedLeaf(t, reconciler.Client))
+}
+
 // TestGatewayInfraReconciler_ConfigTLSRenewsInsideTheWindow pins rotation: a
 // leaf inside the renewal window is replaced by a new slot, which rolls the
 // plane onto it.
