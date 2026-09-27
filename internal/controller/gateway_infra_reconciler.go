@@ -739,6 +739,7 @@ func (r *GatewayInfraReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Watches(
 			&v1alpha1.GatewayClassConfig{},
 			handler.EnqueueRequestsFromMapFunc(r.classConfigInfraGateways),
+			builder.WithPredicates(infraClassConfigPredicates...),
 		).
 		Watches(
 			&v1alpha1.GatewayConfig{},
@@ -812,6 +813,9 @@ func optedInGatewaysInNamespace(
 
 	return requests
 }
+
+// infraClassConfigPredicates gates the GatewayClassConfig watch.
+var infraClassConfigPredicates []predicate.Predicate
 
 // classConfigInfraGateways enqueues every opted-in Gateway when the
 // GatewayClassConfig changes. Unfiltered by class: this controller hard-errors
