@@ -133,6 +133,19 @@ func (f *flakyRoundTripper) RoundTrip(req *http.Request) (*http.Response, error)
 	return resp, nil
 }
 
+// newMirrorTestTransport gives a mirror test its own transport.
+// httptest.Server's Close closes idle connections on http.DefaultTransport, so
+// a test sharing it can have a pooled connection closed under it by any
+// parallel test that shuts a server down.
+func newMirrorTestTransport(t *testing.T) *http.Transport {
+	t.Helper()
+
+	transport := &http.Transport{}
+	t.Cleanup(transport.CloseIdleConnections)
+
+	return transport
+}
+
 // TestRequestMirror_TransientDispatchFailure_Retries pins the #361 fix: a 100%
 // mirror whose first dispatch attempt fails with a transient transport error
 // must still be delivered. The conformance suite sends a single request and
@@ -157,7 +170,7 @@ func TestRequestMirror_TransientDispatchFailure_Retries(t *testing.T) {
 		backendURL: backend.URL,
 		client: &http.Client{
 			Timeout:   mirrorTimeout,
-			Transport: &flakyRoundTripper{failFirst: 1, inner: http.DefaultTransport},
+			Transport: &flakyRoundTripper{failFirst: 1, inner: newMirrorTestTransport(t)},
 		},
 		logger: logger,
 	}
@@ -195,7 +208,7 @@ func TestRequestMirror_TransientDispatchFailure_RetriesWithBody(t *testing.T) {
 		backendURL: backend.URL,
 		client: &http.Client{
 			Timeout:   mirrorTimeout,
-			Transport: &flakyRoundTripper{failFirst: 1, inner: http.DefaultTransport},
+			Transport: &flakyRoundTripper{failFirst: 1, inner: newMirrorTestTransport(t)},
 		},
 		logger: slog.New(&chanHandler{records: make(chan slog.Record, 8)}),
 	}

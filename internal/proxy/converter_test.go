@@ -3764,3 +3764,27 @@ func TestConvertHTTPRoutes_GatewayClientCert_NotAttachedWithoutBackendTLSPolicy(
 	require.Len(t, cfg.Rules[0].Backends, 1)
 	assert.Nil(t, cfg.Rules[0].Backends[0].TLS, "no BackendTLSPolicy → no TLS config at all, including no client cert")
 }
+
+func TestIsServiceBackendRef_GroupSpellings(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		group *gatewayv1.Group
+		want  bool
+	}{
+		{name: "unset", want: true},
+		{name: "canonical empty string", group: new(gatewayv1.Group("")), want: true},
+		{name: "tolerated core alias", group: new(gatewayv1.Group("core")), want: true},
+		{name: "another group", group: new(gatewayv1.Group("multicluster.x-k8s.io")), want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			ref := gatewayv1.BackendObjectReference{Group: tt.group, Name: "svc"}
+			assert.Equal(t, tt.want, proxy.IsServiceBackendRef(ref))
+		})
+	}
+}

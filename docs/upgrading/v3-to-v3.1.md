@@ -1,6 +1,6 @@
 # Upgrading from v3.0 or v3.1 to v3.2
 
-v3.2 hardens multi-tenant isolation. It adds one CRD, `GatewayConfig`, which you apply by hand before upgrading. Existing `GatewayClassConfig` objects and chart values keep working, and most installs need no values change. Two setups do, and the sections below name the edit: a CNI that enforces host→pod traffic, and an install that already set `proxy.networkPolicy.enabled: true` and relied on its egress restriction. Four behaviours change in ways existing automation can observe. The one that can break a working setup is the data-plane NetworkPolicy, now on by default: on a CNI that also enforces host→pod (kubelet) traffic it takes proxy pod readiness down. The same policy limits the new proxy `/metrics` endpoint to the controller namespace, and an install that already enabled it gets a policy with a different shape. Read the four notes below, then the sections after them.
+v3.2 hardens multi-tenant isolation. It adds one CRD, `GatewayConfig`, which you apply by hand before upgrading. It is built against Gateway API v1.6 rather than v1.5, and an install that manages RBAC by hand needs new ClusterRole rules; the two sections after the CRD step cover both. Existing `GatewayClassConfig` objects and chart values keep working, and most installs need no values change. Two setups do, and the sections below name the edit: a CNI that enforces host→pod traffic, and an install that already set `proxy.networkPolicy.enabled: true` and relied on its egress restriction. Four behaviours change in ways existing automation can observe. The one that can break a working setup is the data-plane NetworkPolicy, now on by default: on a CNI that also enforces host→pod (kubelet) traffic it takes proxy pod readiness down. The same policy limits the new proxy `/metrics` endpoint to the controller namespace, and an install that already enabled it gets a policy with a different shape. Read the four notes below, then the sections after them.
 
 ## Do this first: apply the GatewayConfig CRD
 
@@ -11,6 +11,28 @@ kubectl apply --filename https://raw.githubusercontent.com/lexfrei/cloudflare-tu
 ```
 
 The `GatewayClassConfig` CRD gains no fields in v3.2 and needs nothing. See [CRD upgrades](index.md#crd-upgrades) for the general rule.
+
+## Move to a Gateway API v1.6 bundle
+
+v3.0 and v3.1 are built against Gateway API v1.5, v3.2 against v1.6. The GatewayClass `SupportedVersion` condition compares the `major.minor` of the installed Gateway API CRD bundle with that version. A v3.2 controller on a v1.5.x bundle keeps running, but reports `SupportedVersion=False` with reason `UnsupportedVersion`. Apply the `standard-install.yaml` asset of a v1.6.x Gateway API release, for example [v1.6.0](https://github.com/kubernetes-sigs/gateway-api/releases/tag/v1.6.0), or its `experimental-install.yaml` if you run the experimental channel: applying the standard bundle over experimental CRDs removes the experimental fields from their schema, and the apiserver then prunes those fields. Do it before you switch the controller image, or restart the controller afterwards. The controller does not watch the Gateway API CRDs, so it recomputes `SupportedVersion` only when it next reconciles the GatewayClass. A v3.0 or v3.1 controller runs the same comparison against v1.5, so it reports `UnsupportedVersion` on a v1.6 bundle.
+
+## Manual (non-Helm) installs: update the ClusterRole first
+
+A Helm upgrade brings the new rules with the chart. If you keep RBAC by hand, apply the rules from the v3.2.0 [`deploy/rbac/role.yaml`](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/blob/v3.2.0/deploy/rbac/role.yaml) before you switch the controller image.
+
+Coming from v3.0, the rule v3.1 changed applies too: the controller manages the `gateway-exists` finalizer on GatewayClass, which needs `update` and `patch` on `gatewayclasses`. Without them, every reconcile of a GatewayClass that a Gateway uses fails with `Forbidden` when it tries to add the finalizer, and that class's status conditions stop being updated.
+
+v3.2 adds these rules:
+
+- `gatewayconfigs` (`cf.k8s.lex.la`): `get`, `list`, `watch`.
+- `networkpolicies` (`networking.k8s.io`) and `horizontalpodautoscalers` (`autoscaling`): `get`, `list`, `watch`, `create`, `update`, `delete`.
+- `services`: `create`, `update`, `delete`, on top of the read verbs it already had.
+- `deployments` (`apps`): `create`, `update`, `delete`, on top of `get`, `list`, `watch` and `patch`.
+- `secrets`: `create`.
+
+The controller watches `GatewayConfig`, `NetworkPolicy` and `HorizontalPodAutoscaler` objects from startup, whether or not any Gateway opts into a per-Gateway data plane, so the read rules apply to every install. The write verbs are for the objects the controller renders for per-Gateway data planes.
+
+The v3.2 `deploy/controller/deployment.yaml` also gains two settings. The `--proxy-image` flag names the image for per-Gateway proxy Deployments; without it, a Gateway whose `GatewayConfig` sets no `spec.image` is not rendered: it reports `Accepted=False` with reason `InvalidParameters`, and a Warning Event names the missing flag. The `CONTROLLER_NAMESPACE` env var passes the pod's namespace through the downward API; without it the controller reads the namespace from the service account volume, and falls back to `default` when that volume is not mounted.
 
 ## What changed
 

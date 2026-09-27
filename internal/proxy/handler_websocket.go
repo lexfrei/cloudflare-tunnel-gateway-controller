@@ -355,8 +355,9 @@ func copyWebSocketSide(dst io.Writer, src io.Reader, errCh chan<- error, metrics
 }
 
 // buildBackendUpgradeRequest clones the inbound request and rewrites its
-// URL to point at the backend. The clone preserves headers (Connection,
-// Upgrade, Sec-WebSocket-*) that the backend needs to complete the RFC 6455
+// URL to point at the backend. The client's hop-by-hop headers are dropped
+// as on the plain leg, then Connection and Upgrade are set back, since the
+// backend needs them with Sec-WebSocket-* to complete the RFC 6455
 // handshake. RequestURI is cleared because outgoing http.Request.Write
 // rejects it.
 //
@@ -389,6 +390,11 @@ func buildBackendUpgradeRequest(req *http.Request, backendURL *url.URL) *http.Re
 	// backend, and the marker would advertise how this proxy signals to itself.
 	outReq.Header.Del(originalHostHeader)
 	outReq.Header.Del(hostRewrittenHeader)
+
+	removeHopByHopHeaders(outReq.Header)
+	outReq.Header.Set(headerConnection, headerUpgrade)
+	outReq.Header.Set(headerUpgrade, req.Header.Get(headerUpgrade))
+	restoreForwardingHeaders(outReq.Header, req.Header, req.RemoteAddr)
 
 	return outReq
 }

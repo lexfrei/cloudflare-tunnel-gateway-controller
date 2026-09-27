@@ -247,7 +247,7 @@ func listenerSetAcceptedProtocols(
 		return nil
 	}
 
-	if listenerSetOwnedElsewhere(ctx, cli, &listenerSet, controllerName) {
+	if listenerSetExcluded(ctx, cli, controllerName, validator, &listenerSet) {
 		return nil
 	}
 

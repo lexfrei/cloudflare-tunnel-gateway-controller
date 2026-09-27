@@ -225,7 +225,8 @@ The token and the NetworkPolicy are both reach controls, and neither encrypts an
 The proxy passes the forwarding headers it receives on to the backend instead of generating its own. A route's `RequestHeaderModifier` filter runs first and can set or remove any of them; a request mirror's copy sees only the filters listed before the mirror. What the filters leave is then handled as follows:
 
 - `Forwarded`, `X-Forwarded-Host` and `X-Forwarded-Proto` reach the backend as the proxy received them.
-- `X-Forwarded-For` reaches the backend with the address of the connection the request arrived on appended, when that address is known. That happens after the filter, so a removed `X-Forwarded-For` comes back holding only that address. A WebSocket upgrade to a WebSocket-enabled backend and a request mirror's copy carry the header without the appended address.
+- `X-Forwarded-For` reaches the backend with the address of the connection the request arrived on appended, when that address is known. That happens after the filter, so a removed `X-Forwarded-For` comes back holding only that address. A WebSocket upgrade and a request mirror's copy get the same treatment.
+- The client's hop-by-hop headers, the RFC 7230 set (`Proxy-Authorization` among them) plus any header `Connection` names, are removed, apart from the forwarding headers above. `TE: trailers` is kept, and a WebSocket upgrade to a WebSocket-enabled backend carries `Connection: Upgrade` and `Upgrade` for the handshake.
 - `X-Original-Host` and the proxy's internal `X-Proxy-Host-Rewritten` marker are removed before any request reaches a backend.
 - Other end-to-end request headers pass through.
 

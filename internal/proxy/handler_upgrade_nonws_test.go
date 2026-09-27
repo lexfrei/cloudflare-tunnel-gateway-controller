@@ -26,6 +26,10 @@ type upgradeWillingBackend struct {
 	mu         sync.Mutex
 	upgrades   []string
 	connection []string
+
+	// released receives once for every switched connection the proxy has
+	// closed, which ends the backend's read on it.
+	released chan struct{}
 }
 
 // newUpgradingBackend returns an upgradeWillingBackend; with always set it
@@ -33,7 +37,7 @@ type upgradeWillingBackend struct {
 func newUpgradingBackend(t *testing.T, always bool) *upgradeWillingBackend {
 	t.Helper()
 
-	backend := &upgradeWillingBackend{}
+	backend := &upgradeWillingBackend{released: make(chan struct{}, 8)}
 	backend.Server = httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, req *http.Request) {
 		backend.mu.Lock()
 		backend.upgrades = append(backend.upgrades, req.Header.Get("Upgrade"))
@@ -57,6 +61,7 @@ func newUpgradingBackend(t *testing.T, always bool) *upgradeWillingBackend {
 			"Upgrade: websocket\r\nConnection: Upgrade\r\n\r\n")
 		_ = buf.Flush()
 		_, _ = io.Copy(io.Discard, conn)
+		backend.released <- struct{}{}
 	}))
 
 	t.Cleanup(backend.Close)
@@ -207,25 +212,46 @@ func TestHandler_NonWSBackend_UpgradeForwardedAsPlainHTTP_TunnelMode(t *testing.
 }
 
 // TestHandler_NonWSBackend_UnrequestedSwitch_TunnelMode covers a backend
-// that answers 101 to the plain request it receives. ReverseProxy rejects
-// a protocol switch the outbound request did not ask for, so even the
+// that answers 101 to the plain request it receives, under both
+// cloudflared response-writer contracts. The switch is refused, so even the
 // QUIC writer, which would hand out a stream without a status, is never
-// hijacked and the client gets a 502.
+// hijacked and the client gets a 502. The switched backend connection is
+// closed rather than left open until the backend gives up on it.
 func TestHandler_NonWSBackend_UnrequestedSwitch_TunnelMode(t *testing.T) {
 	t.Parallel()
 
-	backend := newUpgradingBackend(t, true)
-	handler := newNonWSUpgradeHandler(t, backend.URL)
+	cases := []struct {
+		name   string
+		writer func() *fakeCloudflaredRespWriter
+	}{
+		{name: "http2", writer: newFakeCloudflaredRespWriter},
+		{name: "quic", writer: newFakeCloudflaredQUICRespWriter},
+	}
 
-	fake := newFakeCloudflaredQUICRespWriter()
-	t.Cleanup(func() { _ = fake.serverSide.Close(); _ = fake.clientSide.Close() })
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 
-	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://app.example.com/ws", nil)
-	setWebSocketUpgradeHeaders(req)
+			backend := newUpgradingBackend(t, true)
+			handler := newNonWSUpgradeHandler(t, backend.URL)
 
-	serveBounded(handler, fake, req)
+			fake := tc.writer()
+			t.Cleanup(func() { _ = fake.serverSide.Close(); _ = fake.clientSide.Close() })
 
-	assert.False(t, fake.Hijacked(), "a backend without WebSocket enabled must never get a hijacked stream")
-	assert.Equal(t, http.StatusBadGateway, fake.Status())
-	assertBackendSawNoUpgrade(t, backend)
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://app.example.com/ws", nil)
+			setWebSocketUpgradeHeaders(req)
+
+			serveBounded(handler, fake, req)
+
+			assert.False(t, fake.Hijacked(), "a backend without WebSocket enabled must never get a hijacked stream")
+			assert.Equal(t, http.StatusBadGateway, fake.Status())
+			assertBackendSawNoUpgrade(t, backend)
+
+			select {
+			case <-backend.released:
+			case <-time.After(5 * time.Second):
+				t.Fatal("the proxy left the switched backend connection open")
+			}
+		})
+	}
 }

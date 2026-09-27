@@ -26,7 +26,6 @@ import (
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/net/http/httpguts"
-	"golang.org/x/net/http2"
 )
 
 // Handler is the main HTTP handler for the L7 proxy.
@@ -562,7 +561,6 @@ func (h *Handler) PruneTransports(activeKeys map[string]bool) {
 
 		h.transports.Delete(key)
 
-		// Both *http.Transport and *http2.Transport expose CloseIdleConnections.
 		if closer, castOK := value.(interface{ CloseIdleConnections() }); castOK {
 			closer.CloseIdleConnections()
 		}
@@ -783,7 +781,7 @@ func (h *Handler) createReverseProxy(backendURL *url.URL, protocol BackendProtoc
 	return &httputil.ReverseProxy{
 		Rewrite: func(proxyReq *httputil.ProxyRequest) {
 			req := proxyReq.Out
-			restoreForwardingHeaders(proxyReq)
+			restoreForwardingHeaders(req.Header, proxyReq.In.Header, proxyReq.In.RemoteAddr)
 
 			// Upgrades are served only by proxyWebSocketUpgrade, for
 			// backends with WebSocket enabled; everything reaching
@@ -832,6 +830,14 @@ func (h *Handler) createReverseProxy(backendURL *url.URL, protocol BackendProtoc
 		Transport:    h.backendTransport(backendURL.Host, protocol, backendTLS, headerTimeout),
 		ErrorHandler: h.proxyErrorHandler(hostname),
 		ModifyResponse: func(resp *http.Response) error {
+			// Rewrite strips the upgrade, so a 101 here was never asked
+			// for. Failing it makes ReverseProxy close the switched
+			// connection, which its own upgrade-mismatch path leaves open,
+			// and still answer 502.
+			if resp.StatusCode == http.StatusSwitchingProtocols {
+				return errUnrequestedSwitch
+			}
+
 			ApplyResponseFilters(filters, resp)
 
 			return nil
@@ -839,27 +845,30 @@ func (h *Handler) createReverseProxy(backendURL *url.URL, protocol BackendProtoc
 	}
 }
 
+// errUnrequestedSwitch fails a 101 from a backend on the plain leg.
+var errUnrequestedSwitch = errors.New("backend switched protocols without an upgrade request")
+
 // restoreForwardingHeaders puts the inbound Forwarded / X-Forwarded-* headers
-// back on the outbound request and appends the immediate peer to
-// X-Forwarded-For. httputil.ReverseProxy strips all four from pr.Out before
+// from src on an outbound header dst and appends the immediate peer,
+// remoteAddr, to X-Forwarded-For. Every leg to a backend calls it after its
+// hop-by-hop pass, so a client naming these headers in Connection cannot strip
+// them. httputil.ReverseProxy strips all four from pr.Out before
 // calling Rewrite — anti-spoofing for proxies that mint their own values via
 // SetXForwarded. This proxy's upstream hop is the Cloudflare edge (or an
 // in-cluster hop), whose forwarding headers carry the real client IP and
 // scheme, so they must reach the backend intact. SetXForwarded is the wrong
 // tool here: it discards the inbound chain and invents X-Forwarded-Host/Proto
 // from the local request.
-func restoreForwardingHeaders(proxyReq *httputil.ProxyRequest) {
-	inHeader, outHeader := proxyReq.In.Header, proxyReq.Out.Header
-
+func restoreForwardingHeaders(dst, src http.Header, remoteAddr string) {
 	for _, name := range []string{headerForwarded, headerXFHost, headerXFProto} {
-		if vals := inHeader.Values(name); len(vals) > 0 {
-			outHeader[name] = slices.Clone(vals)
+		if vals := src.Values(name); len(vals) > 0 {
+			dst[name] = slices.Clone(vals)
 		}
 	}
 
-	xff := strings.Join(inHeader.Values(headerXFF), ", ")
+	xff := strings.Join(src.Values(headerXFF), ", ")
 
-	clientIP, _, err := net.SplitHostPort(proxyReq.In.RemoteAddr)
+	clientIP, _, err := net.SplitHostPort(remoteAddr)
 	if err == nil {
 		if xff != "" {
 			xff += ", "
@@ -869,7 +878,7 @@ func restoreForwardingHeaders(proxyReq *httputil.ProxyRequest) {
 	}
 
 	if xff != "" {
-		outHeader.Set(headerXFF, xff)
+		dst.Set(headerXFF, xff)
 	}
 }
 
@@ -952,7 +961,7 @@ func joinBackendBasePath(base, reqPath string) string {
 // request, giving the backend a parent that points at the proxy's client span.
 //
 // The wrap is applied here at the use site, NOT stored in the pool: the pool
-// caches the underlying *http.Transport / *http2.Transport, which is what
+// caches the underlying *http.Transport, which is what
 // PruneTransports needs to reach for CloseIdleConnections. otelhttp.Transport
 // does not expose CloseIdleConnections, so caching the wrapper would leak idle
 // connections on eviction.
@@ -990,10 +999,10 @@ func (h *Handler) getTransport(host string, protocol BackendProtocol, backendTLS
 	return transport
 }
 
-// h2cReadIdleTimeout sends an HTTP/2 PING on the multiplexed connection after
+// h2cSendPingTimeout sends an HTTP/2 PING on the multiplexed connection after
 // this much idle time so a dead TCP connection (NodePort flap, kube-proxy
 // churn, NAT timeout) gets evicted instead of blocking new requests.
-const h2cReadIdleTimeout = 30 * time.Second
+const h2cSendPingTimeout = 30 * time.Second
 
 // h2cPingTimeout bounds how long the transport waits for a PING ACK before
 // declaring the connection dead and closing it.
@@ -1025,35 +1034,16 @@ func newH2CDialer() *net.Dialer {
 // h2c uses an HTTP/2 plaintext transport; default is a clone of the stdlib
 // transport.
 //
-// headerTimeout (zero = unbounded) flows into the resulting *http.Transport
-// as ResponseHeaderTimeout for the cleartext and TLS paths. The h2c
-// path uses x/net/http2.Transport which does not expose an equivalent
-// knob; we wrap that transport with headerTimeoutRoundTripper so the
-// same "bound time-to-first-response-byte but stream the body freely"
-// contract holds. The pre-stream conn dial is still bounded by the
-// h2c dialer's Timeout, so a fully dead backend still fails fast.
+// headerTimeout (zero = unbounded) becomes the resulting *http.Transport's
+// ResponseHeaderTimeout on every path; net/http applies it to HTTP/2
+// streams as well as HTTP/1.1.
 func newTransport(protocol BackendProtocol, backendTLS *BackendTLSConfig, headerTimeout time.Duration) http.RoundTripper {
 	if backendTLS != nil {
 		return newTLSTransport(backendTLS, headerTimeout)
 	}
 
 	if protocol == BackendProtocolH2C {
-		dialer := newH2CDialer()
-
-		h2cTransport := &http2.Transport{
-			AllowHTTP: true,
-			DialTLSContext: func(ctx context.Context, network, addr string, _ *tls.Config) (net.Conn, error) {
-				return dialer.DialContext(ctx, network, addr)
-			},
-			ReadIdleTimeout: h2cReadIdleTimeout,
-			PingTimeout:     h2cPingTimeout,
-		}
-
-		// x/net/http2.Transport has no ResponseHeaderTimeout-equivalent
-		// knob, so we wrap it. Streaming bodies (SSE / chunked / gRPC
-		// server-streaming) are preserved past headerTimeout by the
-		// wrapper's body-Close-driven cancellation contract.
-		return newHeaderTimeoutRoundTripper(h2cTransport, headerTimeout)
+		return newH2CTransport(headerTimeout)
 	}
 
 	if defaultTransport, ok := http.DefaultTransport.(*http.Transport); ok {
@@ -1064,6 +1054,26 @@ func newTransport(protocol BackendProtocol, backendTLS *BackendTLSConfig, header
 	}
 
 	return http.DefaultTransport
+}
+
+// newH2CTransport speaks HTTP/2 with prior knowledge over cleartext TCP.
+// Leaving HTTP1 out of Protocols is what makes http:// URLs use h2c. Proxy
+// stays nil: an HTTP forward proxy from the environment cannot carry a
+// prior-knowledge h2c connection.
+func newH2CTransport(headerTimeout time.Duration) *http.Transport {
+	var protocols http.Protocols
+
+	protocols.SetUnencryptedHTTP2(true)
+
+	return &http.Transport{
+		DialContext: newH2CDialer().DialContext,
+		Protocols:   &protocols,
+		HTTP2: &http.HTTP2Config{
+			SendPingTimeout: h2cSendPingTimeout,
+			PingTimeout:     h2cPingTimeout,
+		},
+		ResponseHeaderTimeout: headerTimeout,
+	}
 }
 
 // Sentinel errors for backend TLS verification so wrappers can be matched with errors.Is.
@@ -1285,11 +1295,7 @@ func errorHandler(writer http.ResponseWriter, _ *http.Request, err error) {
 	// satisfies the Timeout() bool method but is NOT a wrapped
 	// context.DeadlineExceeded -- check the interface explicitly so a
 	// header-timeout fires 504 just like a request-context deadline.
-	// This branch is live ONLY for the H/1.1 and TLS paths; the h2c
-	// path goes through headerTimeoutRoundTripper which translates its
-	// timer-fired failure to context.DeadlineExceeded and is caught by
-	// the earlier branch above. Do NOT delete this branch as
-	// "redundant" -- removing it silently breaks the H/1.1 path.
+	// Every backend path, HTTP/1.1 and HTTP/2 alike, lands here.
 	var timeoutErr interface{ Timeout() bool }
 	if errors.As(err, &timeoutErr) && timeoutErr.Timeout() {
 		http.Error(writer, "gateway timeout", http.StatusGatewayTimeout)
