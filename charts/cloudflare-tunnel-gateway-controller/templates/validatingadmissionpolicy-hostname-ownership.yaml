@@ -12,8 +12,7 @@
 # still never programmed into the data plane. Defence in depth — the two
 # layers share one semantic contract (internal/hostnameownership vectors).
 #
-# Requires Kubernetes 1.30+ (ValidatingAdmissionPolicy GA). On older clusters
-# set hostnameOwnershipPolicy.admissionPolicy=false to keep only the
+# Set hostnameOwnershipPolicy.admissionPolicy=false to keep only the
 # controller-side layer.
 #
 # Policy and binding deliberately ship in ONE template, policy first: a

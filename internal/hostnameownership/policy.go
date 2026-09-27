@@ -9,7 +9,8 @@
 //  2. THIS package, evaluated by the controller during route binding: a
 //     violating route is never programmed into the proxy config or the
 //     Cloudflare ingress document, even when the admission layer is absent
-//     (pre-1.30 cluster, policy deleted, object written behind the apiserver).
+//     (admissionPolicy turned off, policy deleted, object written behind the
+//     apiserver).
 //
 // The two layers MUST agree bit-for-bit ON THE SUFFIX DECISION — given the same
 // namespace label and hostname, both reach the same allow/deny verdict. The

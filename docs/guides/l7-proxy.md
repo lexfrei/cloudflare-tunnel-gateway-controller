@@ -107,8 +107,8 @@ The proxy binary accepts the following environment variables:
 | Variable | Default | Description |
 | --- | --- | --- |
 | `TUNNEL_TOKEN` | Required for tunnel mode; omit for standalone/dev mode | Cloudflare tunnel token (base64). Omitting it selects standalone mode; setting it to an empty value is a broken configuration and refuses to start, rather than selecting standalone silently. |
-| `PROXY_CONFIG_ADDR` | `:8081` | Config API listen address |
-| `PROXY_ADDR` | `:8080` | Proxy listen address |
+| `PROXY_CONFIG_ADDR` | `:8081` in tunnel mode, `127.0.0.1:8081` in standalone mode | Config API listen address |
+| `PROXY_ADDR` | `127.0.0.1:8080` | Proxy listen address, standalone mode only (tunnel mode serves traffic in-process) |
 | `PROXY_AUTH_TOKEN` | unset | Bearer token for config push API authentication. In tunnel mode an unset token refuses to start, because the config API listens on every interface and a successful push replaces the whole routing table; standalone mode keeps running unauthenticated. Set but empty is a broken configuration in either mode, not a choice to run open, and also refuses to start; see [Config API Auth Wiring](#config-api-auth-wiring). |
 | `PROXY_ALLOW_UNAUTHENTICATED_CONFIG_API` | `false` | Run tunnel mode with an unauthenticated config API anyway. Separate from `PROXY_AUTH_TOKEN` on purpose: an empty token is what a broken Secret produces, and a misconfiguration must not be able to spell the same thing as consent. |
 | `PROXY_METRICS_ENABLED` | `true` | Expose the data-plane Prometheus metrics at `/metrics` on the config API port. Set `false`/`0` to disable. |
@@ -145,7 +145,7 @@ The config API is always authenticated when deployed via the chart: leave `proxy
 
 On a brand-new install, the proxy Deployment's pod template references the generated Secret before the controller has had a chance to create it -- the affected proxy pod(s) sit briefly in `CreateContainerConfigError` until the controller finishes starting, and kubelet's normal retry picks up the Secret once it exists. This is a one-time, self-resolving startup race, not a failure to act on.
 
-Outside the chart, tunnel mode refuses to start when `PROXY_AUTH_TOKEN` is not set at all. The config API binds `:8081` on every interface and a successful `PUT /config` replaces the entire routing table, so an unauthenticated one is not a state a deployment should reach by leaving a variable out. Standalone mode is a development server and still starts without a token.
+Outside the chart, tunnel mode refuses to start when `PROXY_AUTH_TOKEN` is not set at all. The config API binds `:8081` on every interface and a successful `PUT /config` replaces the entire routing table, so an unauthenticated one is not a state a deployment should reach by leaving a variable out. Standalone mode is a development server and still starts without a token. It binds loopback by default, so its unauthenticated config API and its proxy are not reachable from other hosts or pods unless `PROXY_CONFIG_ADDR` or `PROXY_ADDR` asks for a wider address; if you set one, the network boundary in front of it is yours to provide.
 
 If you deliberately run tunnel mode with no authentication — the config API reachable only over a loopback or an equally closed path — set `PROXY_ALLOW_UNAUTHENTICATED_CONFIG_API=1`. It is a second variable rather than an empty `PROXY_AUTH_TOKEN` because an empty token is what a broken Secret produces, and a misconfiguration must not be able to spell the same thing as consent. The proxy logs a warning at startup whenever it is running open.
 

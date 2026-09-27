@@ -1,4 +1,10 @@
-{{- if (.Values.podDisruptionBudget | default dict).enabled }}
+{{- $pdb := .Values.podDisruptionBudget | default dict }}
+{{- if $pdb.enabled }}
+{{- $hasMin := not (kindIs "invalid" $pdb.minAvailable) }}
+{{- $hasMax := not (kindIs "invalid" $pdb.maxUnavailable) }}
+{{- if and $hasMin $hasMax }}
+{{- fail "Set only one of podDisruptionBudget.minAvailable and podDisruptionBudget.maxUnavailable: the API server rejects a budget carrying both. Set the other one to null." }}
+{{- end }}
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
@@ -6,14 +12,14 @@ metadata:
   labels:
     {{- include "cf-tunnel-gw-ctrl.labels" . | nindent 4 }}
 spec:
-  {{- if .Values.podDisruptionBudget.minAvailable }}
-  minAvailable: {{ .Values.podDisruptionBudget.minAvailable }}
+  {{- if $hasMin }}
+  minAvailable: {{ $pdb.minAvailable }}
   {{- end }}
-  {{- if .Values.podDisruptionBudget.maxUnavailable }}
-  maxUnavailable: {{ .Values.podDisruptionBudget.maxUnavailable }}
+  {{- if $hasMax }}
+  maxUnavailable: {{ $pdb.maxUnavailable }}
   {{- end }}
-  {{- if .Values.podDisruptionBudget.unhealthyPodEvictionPolicy }}
-  unhealthyPodEvictionPolicy: {{ .Values.podDisruptionBudget.unhealthyPodEvictionPolicy }}
+  {{- with $pdb.unhealthyPodEvictionPolicy }}
+  unhealthyPodEvictionPolicy: {{ . }}
   {{- end }}
   selector:
     matchLabels:

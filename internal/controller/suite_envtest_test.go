@@ -3,7 +3,10 @@
 package controller
 
 import (
+	"context"
+	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -16,6 +19,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
+	gatewayv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/api/v1alpha1"
 )
@@ -32,8 +36,11 @@ func TestMain(m *testing.M) {
 	crdPath := filepath.Join("..", "..", "charts", "cloudflare-tunnel-gateway-controller", "crds")
 
 	testEnv = &envtest.Environment{
-		CRDDirectoryPaths:     []string{crdPath},
-		ErrorIfCRDPathMissing: false,
+		CRDDirectoryPaths: []string{
+			crdPath,
+			filepath.Join(gatewayAPIModuleDir(), "config", "crd", "standard"),
+		},
+		ErrorIfCRDPathMissing: true,
 	}
 
 	var err error
@@ -47,6 +54,10 @@ func TestMain(m *testing.M) {
 	envScheme = runtime.NewScheme()
 
 	if err := gatewayv1.Install(envScheme); err != nil {
+		panic(err)
+	}
+
+	if err := gatewayv1beta1.Install(envScheme); err != nil {
 		panic(err)
 	}
 
@@ -82,4 +93,34 @@ func TestMain(m *testing.M) {
 	}
 
 	os.Exit(code)
+}
+
+// gatewayAPIModuleDir returns the module cache directory of the
+// sigs.k8s.io/gateway-api version go.mod requires. vendor/ holds only its Go
+// packages, not the CRD manifests, so the module is downloaded; go mod
+// download checks it against go.sum, and a bump of the module moves the CRDs
+// with it.
+func gatewayAPIModuleDir() string {
+	cmd := exec.CommandContext(context.Background(), "go", "mod", "download", "-json", "sigs.k8s.io/gateway-api")
+	cmd.Stderr = os.Stderr
+
+	out, err := cmd.Output()
+	if err != nil {
+		panic(err)
+	}
+
+	var mod struct {
+		Dir string `json:"dir"` // encoding/json matches the "Dir" key case-insensitively
+	}
+
+	err = json.Unmarshal(out, &mod)
+	if err != nil {
+		panic(err)
+	}
+
+	if mod.Dir == "" {
+		panic("go mod download reported no directory for sigs.k8s.io/gateway-api")
+	}
+
+	return mod.Dir
 }

@@ -60,6 +60,11 @@ tests:
     set:
       networkPolicy:
         enabled: true
+        ingress:
+          from:
+            - namespaceSelector:
+                matchLabels:
+                  name: monitoring
       service:
         metricsPort: 8080
     asserts:
@@ -73,6 +78,11 @@ tests:
     set:
       networkPolicy:
         enabled: true
+        ingress:
+          from:
+            - namespaceSelector:
+                matchLabels:
+                  name: monitoring
       service:
         healthPort: 8081
     asserts:
@@ -86,6 +96,11 @@ tests:
     set:
       networkPolicy:
         enabled: true
+        ingress:
+          from:
+            - namespaceSelector:
+                matchLabels:
+                  name: monitoring
       service:
         metricsPort: 9090
         healthPort: 9091
@@ -208,13 +223,17 @@ tests:
             ipBlock:
               cidr: 0.0.0.0/0
 
-  - it: should not have ingress from selector by default
+  # A rule with ports and no `from` admits those ports from every source, so
+  # an empty from renders no rule at all: in-cluster ingress is denied until
+  # ingress.from names a source.
+  - it: should admit no in-cluster source by default
     set:
       networkPolicy:
         enabled: true
     asserts:
-      - notExists:
-          path: spec.ingress[0].from
+      - equal:
+          path: spec.ingress
+          value: []
 
   - it: should allow ingress from specific namespace
     set:
@@ -417,7 +436,7 @@ tests:
       - hasDocuments:
           count: 0
 
-  - it: should admit any source when ingress is null, as with an empty from
+  - it: should admit no in-cluster source when ingress is null, as with an empty from
     set:
       networkPolicy:
         enabled: true
@@ -425,5 +444,6 @@ tests:
     asserts:
       - hasDocuments:
           count: 1
-      - notExists:
-          path: spec.ingress[0].from
+      - equal:
+          path: spec.ingress
+          value: []

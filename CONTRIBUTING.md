@@ -46,7 +46,7 @@ Before pushing, run the checks for the files you changed. CI runs these checks a
 | Changed files | Required checks | Make target |
 | --- | --- | --- |
 | `*.go` | `go test -race ./...` and `golangci-lint run --timeout=5m --build-tags e2e,conformance,envtest` | `make ci-go` |
-| `charts/**` | `helm unittest`, `helm lint` and `helm-docs --chart-search-root charts/cloudflare-tunnel-gateway-controller`, committing the regenerated chart README | `make ci-helm` |
+| `charts/**` | `helm unittest`, `helm lint` and `make helm-docs`, which builds the helm-docs pinned in `hack/tools/go.mod`, committing the regenerated chart README | `make ci-helm` |
 | `**/*.md` | `markdownlint-cli2 '**/*.md'` and `./hack/check-doc-links.sh` | `make lint-md` runs markdownlint only |
 | `docs/**` | `mkdocs build --strict` | `make ci-docs` |
 

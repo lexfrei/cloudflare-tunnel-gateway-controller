@@ -63,7 +63,8 @@ helm package charts/cloudflare-tunnel-gateway-controller
 helm unittest charts/cloudflare-tunnel-gateway-controller
 
 # Generate README from values.yaml (REQUIRED before commit)
-helm-docs --chart-search-root charts/cloudflare-tunnel-gateway-controller
+# (helm-docs pinned in hack/tools/go.mod, the same build CI compares against)
+make helm-docs
 
 # Lint chart
 helm lint charts/cloudflare-tunnel-gateway-controller
@@ -125,6 +126,10 @@ helm template test charts/cloudflare-tunnel-gateway-controller --values charts/c
 - `sigs.k8s.io/gateway-api` - Gateway API types
 - `github.com/cloudflare/cloudflare-go/v7` - Cloudflare API client
 - `github.com/cockroachdb/errors` - Error wrapping
+
+### Renovate automerge
+
+Renovate automerges patch, pin and digest updates. A minor update automerges only for `k8s.io/*`, `sigs.k8s.io/controller-runtime`, the two Gateway API modules and the `hack/tools` code generators (`controller-tools`, `crd-ref-docs`); every other minor update and every major update waits for review. GitHub Actions updates are the exception: a separate rule automerges them at every level, major included. The per-package `automerge: false` entries described under Cloudflared Fork hold regardless of update type.
 
 ### Gateway API bumps
 
@@ -409,7 +414,7 @@ Run checks relevant to the files you changed:
 |---------------|-----------------|
 | `*.go` | `go test -race ./...` and `golangci-lint run --timeout=5m --build-tags e2e,conformance,envtest` |
 | `api/v1alpha1/**` | `make generate` (deepcopy, chart CRDs, `docs/reference/api.md`); CI runs `make verify-generated` |
-| `charts/**` | `helm unittest`, `helm lint`, `helm-docs` |
+| `charts/**` | `helm unittest`, `helm lint`, `make helm-docs` |
 | `**/*.md` | `markdownlint-cli2 '**/*.md'` |
 | `docs/**` | `mkdocs build --strict` |
 
@@ -422,7 +427,7 @@ go test -race ./... && golangci-lint run --timeout=5m --build-tags e2e,conforman
 # Helm chart changes
 helm unittest charts/cloudflare-tunnel-gateway-controller && \
 helm lint charts/cloudflare-tunnel-gateway-controller && \
-helm-docs --chart-search-root charts/cloudflare-tunnel-gateway-controller
+make helm-docs
 
 # Markdown changes
 markdownlint-cli2 '**/*.md'
@@ -443,7 +448,7 @@ Before creating a PR, verify all checklist items from `.github/pull_request_temp
    - Markdown linting passes (`markdownlint-cli2 '**/*.md'`)
    - Helm tests pass (`helm unittest charts/cloudflare-tunnel-gateway-controller`)
    - Helm lint passes (`helm lint charts/cloudflare-tunnel-gateway-controller`)
-   - Helm README is up to date (`helm-docs --chart-search-root charts/cloudflare-tunnel-gateway-controller`)
+   - Helm README is up to date (`make helm-docs`)
    - Manual testing completed (if applicable)
 
 2. **Documentation**

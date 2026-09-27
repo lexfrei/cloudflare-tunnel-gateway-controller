@@ -26,6 +26,8 @@ serviceMonitor:
     release: prometheus  # Match your Prometheus selector
 ```
 
+With `networkPolicy.enabled: true`, also list your Prometheus in `networkPolicy.ingress.from`. The controller's policy admits no in-cluster source to the metrics port until you do, so the scrape fails. The proxy's `/metrics` sits behind `proxy.networkPolicy`, which is on by default, so list Prometheus in `proxy.networkPolicy.ingress.from` as well.
+
 ## Manual ServiceMonitor
 
 ```yaml
