@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -70,6 +71,20 @@ func gatewayClassCRDObject(bundleVersion string) *apiextensionsv1.CustomResource
 	}
 
 	return crd
+}
+
+// bundleVersionOffset returns a bundle version relative to the vendored
+// consts.BundleVersion: minorDelta minors away, at the given patch. Deriving
+// the fixtures keeps the SupportedVersion tests about the major.minor rule
+// rather than about whichever bundle happens to be vendored.
+func bundleVersionOffset(t *testing.T, minorDelta, patch int) string {
+	t.Helper()
+
+	major, minor, ok := parseMajorMinor(consts.BundleVersion)
+	require.True(t, ok, "vendored consts.BundleVersion %q is not major.minor.patch", consts.BundleVersion)
+	require.GreaterOrEqual(t, minor+minorDelta, 0, "no minor %d away from %s", minorDelta, consts.BundleVersion)
+
+	return fmt.Sprintf("v%d.%d.%d", major, minor+minorDelta, patch)
 }
 
 // findGatewayClassCondition returns the condition of the given type, or nil.
@@ -301,10 +316,13 @@ func TestGatewayClassReconciler_SupportedVersion_PatchVersionAccepted(t *testing
 
 	// A different patch release of the same major.minor is compatible: the
 	// SupportedVersion check must match on major.minor, not the full version.
+	otherPatch := bundleVersionOffset(t, 0, 99)
+	require.NotEqual(t, consts.BundleVersion, otherPatch)
+
 	scheme := gatewayClassSchemeWithCRD(t)
 	reader := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(gatewayClassCRDObject("v1.6.5")).
+		WithObjects(gatewayClassCRDObject(otherPatch)).
 		Build()
 
 	condition := runSupportedVersionCheck(t, reader)
@@ -316,20 +334,22 @@ func TestGatewayClassReconciler_SupportedVersion_PatchVersionAccepted(t *testing
 func TestGatewayClassReconciler_SupportedVersion_UnsupportedBundle(t *testing.T) {
 	t.Parallel()
 
-	// v1.5.1 is a different minor than the controller's vendored v1.6.2, so
-	// it is not supported and must surface UnsupportedVersion — the
-	// SupportedVersion check matches on major.minor, not "is older".
+	// An older minor than the vendored bundle is not supported and must
+	// surface UnsupportedVersion — the SupportedVersion check matches on
+	// major.minor, not "is older".
+	olderMinor := bundleVersionOffset(t, -1, 1)
+
 	scheme := gatewayClassSchemeWithCRD(t)
 	reader := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(gatewayClassCRDObject("v1.5.1")).
+		WithObjects(gatewayClassCRDObject(olderMinor)).
 		Build()
 
 	condition := runSupportedVersionCheck(t, reader)
 
 	assert.Equal(t, metav1.ConditionFalse, condition.Status)
 	assert.Equal(t, string(gatewayv1.GatewayClassReasonUnsupportedVersion), condition.Reason)
-	assert.Contains(t, condition.Message, "v1.5.1")
+	assert.Contains(t, condition.Message, olderMinor)
 }
 
 func TestGatewayClassReconciler_SupportedVersion_NewerMinorRejected(t *testing.T) {
@@ -338,17 +358,19 @@ func TestGatewayClassReconciler_SupportedVersion_NewerMinorRejected(t *testing.T
 	// A newer minor than the controller was built against is also unsupported:
 	// the controller can only attest to the major.minor it ships with, so it
 	// must not claim support for fields it has never seen.
+	newerMinor := bundleVersionOffset(t, 1, 0)
+
 	scheme := gatewayClassSchemeWithCRD(t)
 	reader := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(gatewayClassCRDObject("v1.7.0")).
+		WithObjects(gatewayClassCRDObject(newerMinor)).
 		Build()
 
 	condition := runSupportedVersionCheck(t, reader)
 
 	assert.Equal(t, metav1.ConditionFalse, condition.Status)
 	assert.Equal(t, string(gatewayv1.GatewayClassReasonUnsupportedVersion), condition.Reason)
-	assert.Contains(t, condition.Message, "v1.7.0")
+	assert.Contains(t, condition.Message, newerMinor)
 }
 
 func TestGatewayClassReconciler_SupportedVersion_MissingAnnotation(t *testing.T) {

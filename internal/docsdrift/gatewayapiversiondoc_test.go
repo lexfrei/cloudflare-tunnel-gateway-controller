@@ -33,6 +33,48 @@ func TestDocsPinnedGatewayAPIVersionMatchesVendored(t *testing.T) {
 	}
 }
 
+// auditedGatewayAPIMinor is the Gateway API minor whose normative surface the
+// spec audit under docs/gateway-api/_spec-audit/ was last read against. It
+// moves by hand, never through Renovate.
+const auditedGatewayAPIMinor = "v1.6"
+
+// TestVendoredGatewayAPIMinorHasBeenAudited stops an unattended Gateway API
+// minor bump. Patch releases pass through; a new minor can add or change
+// normative clauses, so it waits for someone to read them.
+func TestVendoredGatewayAPIMinorHasBeenAudited(t *testing.T) {
+	t.Parallel()
+
+	parts := strings.SplitN(consts.BundleVersion, ".", 3)
+	if len(parts) < 2 {
+		t.Fatalf("consts.BundleVersion %q is not vMAJOR.MINOR.PATCH", consts.BundleVersion)
+	}
+	if vendored := parts[0] + "." + parts[1]; vendored != auditedGatewayAPIMinor {
+		t.Errorf(
+			"sigs.k8s.io/gateway-api is now on minor %s, but the spec audit was last read against %s. "+
+				"Read the new minor's normative changes against the audit in docs/gateway-api/_spec-audit/, "+
+				"record the result in the matrix's baseline refresh section, then set auditedGatewayAPIMinor to %s",
+			vendored, auditedGatewayAPIMinor, vendored,
+		)
+	}
+}
+
+// TestBundleVersionMatchesGoMod names the cause when upstream ships a
+// consts.BundleVersion that disagrees with its own module tag. Renovate
+// rewrites the doc claims from the module version while the claims are
+// checked against the constant, so without this every claim would be
+// reported stale instead.
+func TestBundleVersionMatchesGoMod(t *testing.T) {
+	t.Parallel()
+
+	module := goModVersion(t, findRepoRoot(t), "sigs.k8s.io/gateway-api")
+	if module != consts.BundleVersion {
+		t.Errorf(
+			"go.mod requires sigs.k8s.io/gateway-api %s but the vendored consts.BundleVersion is %s; the doc claims follow the constant, Renovate follows the module",
+			module, consts.BundleVersion,
+		)
+	}
+}
+
 // gatewayAPIDocClaims is shared with TestRenovateMatchesPinnedDocClaims, which
 // asserts that renovate.json rewrites every needle listed here.
 func gatewayAPIDocClaims() []docClaim {
