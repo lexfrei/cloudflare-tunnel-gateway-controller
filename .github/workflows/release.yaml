@@ -350,6 +350,9 @@ jobs:
         run: |
           IMAGE_TAG="${{ fromJSON(steps.meta.outputs.json).tags[0] }}"
           MANIFEST_DIGEST=$(docker buildx imagetools inspect "${IMAGE_TAG}" --format '{{.Manifest.Digest}}')
+          # Verify what gets deployed: a tag is resolved again at deploy time
+          # and can point elsewhere by then.
+          IMAGE_REF="ghcr.io/${{ github.repository }}${{ matrix.image_suffix }}@${MANIFEST_DIGEST}"
 
           {
             echo "## Container Image (${{ matrix.component }})"
@@ -370,7 +373,7 @@ jobs:
             echo ""
             echo "**Verify signature:**"
             echo "\`\`\`bash"
-            echo "cosign verify ${IMAGE_TAG} --certificate-identity-regexp=https://github.com/${{ github.repository }} --certificate-oidc-issuer=https://token.actions.githubusercontent.com"
+            echo "cosign verify ${IMAGE_REF} --certificate-identity-regexp=https://github.com/${{ github.repository }} --certificate-oidc-issuer=https://token.actions.githubusercontent.com"
             echo "\`\`\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -385,6 +388,7 @@ jobs:
       id-token: write
     outputs:
       version: ${{ steps.version.outputs.version }}
+      chart-digest: ${{ steps.sign-chart.outputs.digest }}
     env:
       # Chart name must match name in Chart.yaml for OCI compatibility
       CHART_NAME: cloudflare-tunnel-gateway-controller
@@ -569,6 +573,7 @@ jobs:
           echo "Artifact Hub metadata pushed to: ${CHART_OCI_REPO}:artifacthub.io"
 
       - name: Sign Helm chart with cosign
+        id: sign-chart
         env:
           COSIGN_EXPERIMENTAL: "1"
         run: |
@@ -582,6 +587,7 @@ jobs:
           cosign sign --yes "${CHART_OCI_REPO}@${CHART_DIGEST}"
 
           echo "Chart signed: ${CHART_OCI_REPO}@${CHART_DIGEST}"
+          echo "digest=${CHART_DIGEST}" >> "$GITHUB_OUTPUT"
 
       - name: Generate chart summary
         run: |
@@ -627,8 +633,13 @@ jobs:
           fetch-depth: 0
 
       - name: Generate release notes
+        env:
+          CHART_DIGEST: ${{ needs.publish-chart.outputs.chart-digest }}
         run: |
+          set -euo pipefail
           VERSION="${GITHUB_REF_NAME#v}"
+          [[ "${CHART_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]] \
+            || { echo "::error::publish-chart reported no chart digest"; exit 1; }
 
           # Get previous tag (find tag before current one)
           CURRENT_TAG="${GITHUB_REF_NAME}"
@@ -689,7 +700,7 @@ jobs:
             echo ""
             echo "\`\`\`bash"
             echo "cosign verify \\"
-            echo "  ${CHART_OCI_REPO}:${VERSION} \\"
+            echo "  ${CHART_OCI_REPO}@${CHART_DIGEST} \\"
             echo "  --certificate-identity-regexp=https://github.com/${{ github.repository }} \\"
             echo "  --certificate-oidc-issuer=https://token.actions.githubusercontent.com"
             echo "\`\`\`"
