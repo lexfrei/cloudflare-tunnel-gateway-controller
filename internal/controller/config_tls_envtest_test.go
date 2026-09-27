@@ -110,6 +110,31 @@ func TestEnsureSharedLeaf_ConvergesAgainstAPIServer(t *testing.T) {
 	require.NoError(t, authority.Check(renewed.Data[corev1.TLSCertKey], renewed.Data[corev1.TLSPrivateKeyKey], names, due))
 }
 
+// TestEnsureSharedLeaf_ReplacesAnOpaqueSecretAgainstAPIServer pins that a
+// broken shared leaf is replaced whatever type its Secret was created with:
+// the API server refuses to change a Secret's type, so renewal must keep it.
+func TestEnsureSharedLeaf_ReplacesAnOpaqueSecretAgainstAPIServer(t *testing.T) {
+	ctx := context.Background()
+	namespace := driftNamespace(ctx, t)
+	authority := testAuthority(t)
+	key := types.NamespacedName{Name: "release-proxy-config-tls", Namespace: namespace}
+	names := []string{"release-proxy-headless." + namespace + ".svc.cluster.local"}
+
+	require.NoError(t, envK8sClient.Create(ctx, &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: namespace},
+		Type:       corev1.SecretTypeOpaque,
+		Data:       map[string][]byte{corev1.TLSCertKey: []byte("garbage")},
+	}))
+
+	outcome, err := ensureSharedLeaf(ctx, envK8sClient, authority, key, names, time.Now())
+	require.NoError(t, err)
+	assert.Equal(t, leafReplacedInvalid, outcome)
+
+	var replaced corev1.Secret
+	require.NoError(t, envK8sClient.Get(ctx, key, &replaced))
+	require.NoError(t, authority.Check(replaced.Data[corev1.TLSCertKey], replaced.Data[corev1.TLSPrivateKeyKey], names, time.Now()))
+}
+
 // TestEnsureConfigTLSSecret_ConvergesAgainstAPIServer pins per-Gateway
 // issuance against a real API server: racing issuers settle on slot 0, and a
 // leaf the tenant overwrote is abandoned for the next slot.
