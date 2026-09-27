@@ -40,6 +40,8 @@ kubectl create secret generic cloudflare-tunnel-token \
 
 ### 4. Deploy the Controller
 
+`deploy/controller/deployment.yaml` names a controller image and, in the `--proxy-image` flag, a proxy image. Set both tags to the release you are installing before applying. An image tag is the release version without its leading `v`: release `v3.5.0` publishes tag `3.5.0`, and a `v`-prefixed tag fails with `ImagePullBackOff`.
+
 ```bash
 kubectl apply --filename deploy/rbac/
 kubectl apply --filename deploy/controller/
@@ -135,7 +137,7 @@ When upgrading manually, apply manifests in order:
 
 1. Update CRDs (if changed)
 2. Update RBAC resources
-3. Update controller deployment
+3. Update controller deployment, after setting both image tags in `deploy/controller/deployment.yaml` to the new release
 
 ```bash
 kubectl apply --filename deploy/rbac/
