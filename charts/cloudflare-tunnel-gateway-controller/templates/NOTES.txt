@@ -78,7 +78,7 @@ App Version: {{ .Chart.AppVersion }}
      Consider increasing replicaCount to 2+ for HA.
 {{- end }}
 
-{{- if not .Values.networkPolicy.enabled }}
+{{- if not (.Values.networkPolicy | default dict).enabled }}
 
   🔒 Network Security: NetworkPolicy is disabled.
      For production, enable NetworkPolicy to restrict traffic:
