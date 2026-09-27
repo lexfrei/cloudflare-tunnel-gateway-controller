@@ -8,6 +8,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
@@ -119,7 +120,7 @@ func (r *GatewayInfraReconciler) configTLSSlotUsable(
 		return false, errors.Wrapf(err, "reading config API certificate %s", key)
 	}
 
-	if assertAdoptable(&existing, gateway) != nil {
+	if !metav1.IsControlledBy(&existing, gateway) {
 		return false, nil
 	}
 

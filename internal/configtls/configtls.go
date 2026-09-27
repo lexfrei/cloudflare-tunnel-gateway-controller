@@ -167,7 +167,8 @@ func (a *Authority) Issue(names []string, now time.Time) ([]byte, []byte, error)
 // the renewal window (ErrRenewalDue). Any other error means the leaf is
 // unusable and must be replaced.
 func (a *Authority) Check(certPEM, keyPEM []byte, names []string, now time.Time) error {
-	if _, err := tls.X509KeyPair(certPEM, keyPEM); err != nil {
+	_, err := tls.X509KeyPair(certPEM, keyPEM)
+	if err != nil {
 		return errors.Wrap(err, "certificate and key do not form a pair")
 	}
 
@@ -233,7 +234,8 @@ func NewCertificateLoader(certFile, keyFile string, logger *slog.Logger) (*Certi
 
 	loader := &CertificateLoader{certFile: certFile, keyFile: keyFile, logger: logger}
 
-	if err := loader.reload(); err != nil {
+	err := loader.reload()
+	if err != nil {
 		return nil, err
 	}
 
@@ -244,7 +246,8 @@ func NewCertificateLoader(certFile, keyFile string, logger *slog.Logger) (*Certi
 // on every handshake and switches to a changed pair only once it parses, so a
 // half-written update keeps the previous certificate in service.
 func (l *CertificateLoader) GetCertificate(*tls.ClientHelloInfo) (*tls.Certificate, error) {
-	if err := l.reload(); err != nil {
+	err := l.reload()
+	if err != nil {
 		l.logger.Warn("config API certificate update not applied; serving the previous one", "error", err)
 	}
 

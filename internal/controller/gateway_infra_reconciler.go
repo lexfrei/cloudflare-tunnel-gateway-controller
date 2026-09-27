@@ -202,9 +202,20 @@ func (r *GatewayInfraReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return r.handleResolveError(ctx, &gateway, err)
 	}
 
-	configTLSSecret, err := r.ensureConfigTLSSecret(ctx, &gateway)
+	return r.renderWithConfigTLS(ctx, &gateway, perGateway)
+}
+
+// renderWithConfigTLS secures the plane's config API certificate, when config
+// API TLS is on, and applies the render. A TLS plane is requeued so its
+// renewal is checked even when nothing else touches it.
+func (r *GatewayInfraReconciler) renderWithConfigTLS(
+	ctx context.Context,
+	gateway *gatewayv1.Gateway,
+	perGateway *config.PerGatewayConfig,
+) (ctrl.Result, error) {
+	configTLSSecret, err := r.ensureConfigTLSSecret(ctx, gateway)
 	if err != nil {
-		r.event(&gateway, corev1.EventTypeWarning, eventReasonRenderFailed, err.Error())
+		r.event(gateway, corev1.EventTypeWarning, eventReasonRenderFailed, err.Error())
 
 		return ctrl.Result{}, err
 	}
@@ -214,7 +225,7 @@ func (r *GatewayInfraReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		result.RequeueAfter = configTLSRecheckInterval
 	}
 
-	return result, r.applyRendered(ctx, &gateway, perGateway, configTLSSecret)
+	return result, r.applyRendered(ctx, gateway, perGateway, configTLSSecret)
 }
 
 // handleResolveError maps a resolution failure onto the right outcome: a
@@ -336,6 +347,26 @@ func (r *GatewayInfraReconciler) event(gateway *gatewayv1.Gateway, eventType, re
 	r.Recorder.Eventf(gateway, nil, eventType, reason, eventActionRender, "%s", message)
 }
 
+// noProxyImage is the misconfiguration guard for a render with no
+// controller-level --proxy-image and no per-Gateway image override: the
+// Deployment would carry an empty image the apiserver rejects on every
+// reconcile. It renders nothing and surfaces the problem instead (manual
+// installs without the flag).
+func (r *GatewayInfraReconciler) noProxyImage(
+	ctx context.Context, gateway *gatewayv1.Gateway, perGateway *config.PerGatewayConfig,
+) bool {
+	if perGateway.GatewayConfig.Spec.Image != "" || r.RenderDefaults.ProxyImage != "" {
+		return false
+	}
+
+	message := "per-gateway data plane not rendered: no proxy image configured — " +
+		"set the controller's --proxy-image flag or GatewayConfig.spec.image"
+	log.FromContext(ctx).Info(message)
+	r.event(gateway, corev1.EventTypeWarning, eventReasonRenderFailed, message)
+
+	return true
+}
+
 // applyRendered creates or updates the per-Gateway resources to match the
 // rendered desired state.
 func (r *GatewayInfraReconciler) applyRendered(
@@ -353,16 +384,7 @@ func (r *GatewayInfraReconciler) applyRendered(
 		ConfigTLSSecretName: configTLSSecret,
 	}
 
-	// Misconfiguration guard: with no controller-level --proxy-image and no
-	// per-Gateway image override, the rendered Deployment would carry an
-	// empty image the apiserver rejects on every reconcile. Render nothing
-	// and surface the problem instead (manual installs without the flag).
-	if perGateway.GatewayConfig.Spec.Image == "" && r.RenderDefaults.ProxyImage == "" {
-		message := "per-gateway data plane not rendered: no proxy image configured — " +
-			"set the controller's --proxy-image flag or GatewayConfig.spec.image"
-		log.FromContext(ctx).Info(message)
-		r.event(gateway, corev1.EventTypeWarning, eventReasonRenderFailed, message)
-
+	if r.noProxyImage(ctx, gateway, perGateway) {
 		return nil
 	}
 

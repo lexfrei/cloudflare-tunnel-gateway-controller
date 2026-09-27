@@ -69,7 +69,7 @@ func TestEnsureConfigCA_LostCreateRaceReusesTheWinner(t *testing.T) {
 	require.NoError(t, err)
 
 	c := fake.NewClientBuilder().WithInterceptorFuncs(interceptor.Funcs{
-		Create: func(ctx context.Context, inner client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+		Create: func(ctx context.Context, inner client.WithWatch, obj client.Object, _ ...client.CreateOption) error {
 			winner := &corev1.Secret{
 				ObjectMeta: metav1.ObjectMeta{Name: obj.GetName(), Namespace: obj.GetNamespace()},
 				Type:       corev1.SecretTypeTLS,
@@ -210,7 +210,7 @@ func TestEnsureSharedLeaf_LostRenewalRaceAcceptsTheWinner(t *testing.T) {
 		Type:       corev1.SecretTypeTLS,
 		Data:       map[string][]byte{corev1.TLSCertKey: dueCert, corev1.TLSPrivateKeyKey: dueKey},
 	}).WithInterceptorFuncs(interceptor.Funcs{
-		Update: func(ctx context.Context, inner client.WithWatch, obj client.Object, opts ...client.UpdateOption) error {
+		Update: func(ctx context.Context, inner client.WithWatch, obj client.Object, _ ...client.UpdateOption) error {
 			var current corev1.Secret
 			require.NoError(t, inner.Get(ctx, client.ObjectKeyFromObject(obj), &current))
 			current.Data = map[string][]byte{corev1.TLSCertKey: winnerCert, corev1.TLSPrivateKeyKey: winnerKey}

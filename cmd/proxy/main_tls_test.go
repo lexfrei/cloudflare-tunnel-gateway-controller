@@ -103,6 +103,15 @@ func TestRun_RefusesABrokenTLSConfiguration(t *testing.T) {
 	assert.Contains(t, logs.String(), "refusing to start with a broken config-API TLS configuration")
 }
 
+func healthzRequest(t *testing.T, target string) *http.Request {
+	t.Helper()
+
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, target, http.NoBody)
+	require.NoError(t, err)
+
+	return req
+}
+
 func freeAddr(t *testing.T) string {
 	t.Helper()
 
@@ -151,7 +160,7 @@ func TestServeConfigAPI_ServesTLSWhenConfigured(t *testing.T) {
 	}
 
 	require.Eventually(t, func() bool {
-		resp, getErr := tlsClient.Get("https://" + addr + "/healthz")
+		resp, getErr := tlsClient.Do(healthzRequest(t, "https://"+addr+"/healthz"))
 		if getErr != nil {
 			return false
 		}
@@ -163,7 +172,7 @@ func TestServeConfigAPI_ServesTLSWhenConfigured(t *testing.T) {
 
 	plainClient := &http.Client{Timeout: 5 * time.Second}
 
-	resp, err := plainClient.Get("http://" + addr + "/healthz")
+	resp, err := plainClient.Do(healthzRequest(t, "http://"+addr+"/healthz"))
 	if err == nil {
 		_ = resp.Body.Close()
 		assert.NotEqual(t, http.StatusNoContent, resp.StatusCode, "plaintext must not reach the handler")

@@ -9,6 +9,8 @@ import (
 	"encoding/hex"
 	"fmt"
 	"maps"
+	"net"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -211,7 +213,13 @@ func ConfigServerName(gateway *gatewayv1.Gateway, clusterDomain string) string {
 // ConfigTLSEndpointURL is ConfigEndpointURL for a plane serving config API
 // TLS.
 func ConfigTLSEndpointURL(gateway *gatewayv1.Gateway, clusterDomain string, port int32) string {
-	return fmt.Sprintf("https://%s:%d/config", ConfigServerName(gateway, clusterDomain), configAPIPort(port))
+	endpoint := url.URL{
+		Scheme: "https",
+		Host:   net.JoinHostPort(ConfigServerName(gateway, clusterDomain), strconv.Itoa(int(configAPIPort(port)))),
+		Path:   "/config",
+	}
+
+	return endpoint.String()
 }
 
 // ConfigTLSSecretName returns the name of a Gateway's config API leaf in slot
@@ -226,7 +234,9 @@ const MaxConfigTLSSlot = 4096
 
 // ConfigTLSSecretIndex reports which leaf slot a rendered Deployment mounts.
 func ConfigTLSSecretIndex(gateway *gatewayv1.Gateway, deployment *appsv1.Deployment) (int, bool) {
-	for _, volume := range deployment.Spec.Template.Spec.Volumes {
+	volumes := deployment.Spec.Template.Spec.Volumes
+	for i := range volumes {
+		volume := &volumes[i]
 		if volume.Name != configTLSVolumeName || volume.Secret == nil {
 			continue
 		}
@@ -445,10 +455,10 @@ func configTLSVolumes(input *Input) []corev1.Volume {
 
 	return []corev1.Volume{{
 		Name: configTLSVolumeName,
-		VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{
+		Secret: &corev1.SecretVolumeSource{
 			SecretName:  input.ConfigTLSSecretName,
 			DefaultMode: new(secretVolumeDefaultMode),
-		}},
+		},
 	}}
 }
 

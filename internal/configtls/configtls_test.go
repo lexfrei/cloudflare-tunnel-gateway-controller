@@ -1,6 +1,7 @@
 package configtls_test
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
@@ -17,7 +18,6 @@ import (
 
 const planeName = "cf-proxy-gw-config.tenant-a.svc.cluster.local"
 
-//nolint:gochecknoglobals // fixed clock shared by every case
 var now = time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC)
 
 func newAuthority(t *testing.T) *configtls.Authority {
@@ -298,16 +298,17 @@ func TestTLS_EndToEndHandshake(t *testing.T) {
 				return
 			}
 
-			_ = conn.(*tls.Conn).Handshake()
+			_ = conn.(*tls.Conn).HandshakeContext(context.Background())
 			_ = conn.Close()
 		}
 	}()
 
-	good, err := tls.Dial("tcp", listener.Addr().String(), authority.ClientConfig(planeName))
+	good, err := (&tls.Dialer{Config: authority.ClientConfig(planeName)}).
+		DialContext(t.Context(), "tcp", listener.Addr().String())
 	require.NoError(t, err)
 	require.NoError(t, good.Close())
 
-	_, err = tls.Dial("tcp", listener.Addr().String(),
-		authority.ClientConfig("cf-proxy-other-config.tenant-b.svc.cluster.local"))
+	_, err = (&tls.Dialer{Config: authority.ClientConfig("cf-proxy-other-config.tenant-b.svc.cluster.local")}).
+		DialContext(t.Context(), "tcp", listener.Addr().String())
 	require.Error(t, err)
 }
