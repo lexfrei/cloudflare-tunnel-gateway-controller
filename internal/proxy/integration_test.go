@@ -27,7 +27,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"golang.org/x/net/http2"
 	"golang.org/x/net/websocket"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/proxy"
@@ -136,7 +135,7 @@ func TestHandler_BackendProtocolH2C(t *testing.T) {
 
 // newSlowHeadersH2CBackend serves h2c and delays WriteHeader by the
 // given duration. Used to drive the header-timeout path for h2c
-// backends so the wrapper's deadline-on-headers-only contract can be
+// backends so the deadline-on-headers-only contract can be
 // asserted without a real stalled service.
 func newSlowHeadersH2CBackend(t *testing.T, headerDelay time.Duration) *httptest.Server {
 	t.Helper()
@@ -198,10 +197,9 @@ func newStreamingH2CBackend(t *testing.T, frameCount int, interFrame time.Durati
 
 // TestHandler_HeaderTimeoutFiresOnSlowH2CBackend pins the
 // per-rule-header-timeout contract for the h2c path. The HTTP/1.1 and
-// TLS paths get this for free via http.Transport.ResponseHeaderTimeout;
-// the h2c path uses x/net/http2.Transport which has no equivalent
-// knob, so we wrap that transport with headerTimeoutRoundTripper.
-// Without the wrapper a backend that accepts the TCP connection then
+// TLS paths get this from http.Transport.ResponseHeaderTimeout, and so
+// does h2c, whose transport is also a *http.Transport. Without it a
+// backend that accepts the TCP connection then
 // stalls before sending headers held the proxy request indefinitely
 // (issue #270).
 func TestHandler_HeaderTimeoutFiresOnSlowH2CBackend(t *testing.T) {
@@ -254,7 +252,7 @@ func TestHandler_HeaderTimeoutFiresOnSlowH2CBackend(t *testing.T) {
 // sibling of TestHandler_StreamingResponseSurvivesRequestTimeout. It
 // pins that timeouts.request bounds time-to-first-response-byte but
 // NOT the duration of a streaming body, even when the backend speaks
-// h2c. The wrapper's body-Close-driven cancellation contract is what
+// h2c. ResponseHeaderTimeout stops counting once headers arrive, which
 // keeps the stream alive past the header deadline.
 func TestHandler_StreamingResponseSurvivesRequestTimeout_H2C(t *testing.T) {
 	t.Parallel()
@@ -299,26 +297,13 @@ func TestHandler_StreamingResponseSurvivesRequestTimeout_H2C(t *testing.T) {
 	body := rec.Body.String()
 	for idx := range frameCount {
 		assert.Contains(t, body, "data: event-"+strconv.Itoa(idx),
-			"frame %d must survive the per-rule timeout; truncated body indicates the header-timeout wrapper "+
-				"is still cancelling the streaming body read", idx)
+			"frame %d must survive the per-rule timeout; a truncated body means the header timeout "+
+				"is cancelling the streaming body read", idx)
 	}
 
 	assert.Greater(t, elapsed, 1500*time.Millisecond,
 		"test must take longer than 1.5s -- otherwise the streaming backend didn't actually run to completion "+
 			"and the assertion is not exercising the streaming contract")
-}
-
-func TestNewTransport_H2C_HasLivenessDefaults(t *testing.T) {
-	t.Parallel()
-
-	rt := proxy.NewTransportForTest(proxy.BackendProtocolH2C, nil)
-
-	tr, ok := rt.(*http2.Transport)
-	require.True(t, ok, "h2c transport must be *http2.Transport, got %T", rt)
-	assert.NotZero(t, tr.ReadIdleTimeout,
-		"h2c transport must set ReadIdleTimeout so dead TCP connections get evicted from the multiplexed pool")
-	assert.NotZero(t, tr.PingTimeout,
-		"h2c transport must set PingTimeout to bound how long a stuck PING blocks request progress")
 }
 
 func TestNewH2CDialer_HasTimeouts(t *testing.T) {
