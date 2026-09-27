@@ -121,10 +121,10 @@ domain example.com
 			shouldFind: false,
 		},
 		{
-			name:       "domain keyword with no domain",
-			content:    "domain\n",
-			expected:   "",
-			shouldFind: false,
+			name:       "domain keyword with no domain leaves the search list alone",
+			content:    "search default.svc.cluster.local svc.cluster.local\ndomain\n",
+			expected:   "cluster.local",
+			shouldFind: true,
 		},
 		{
 			name:       "CRLF line endings",
@@ -157,10 +157,10 @@ domain example.com
 			shouldFind: false,
 		},
 		{
-			name:       "bare svc label carries no cluster domain",
-			content:    "search svc. svc\n",
-			expected:   "",
-			shouldFind: false,
+			name:       "bare svc labels are skipped for a later cluster domain",
+			content:    "search svc. svc.. svc.cluster.local\n",
+			expected:   "cluster.local",
+			shouldFind: true,
 		},
 		{
 			name:       "commented-out search line is ignored",

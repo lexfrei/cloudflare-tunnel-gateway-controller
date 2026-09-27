@@ -19,8 +19,8 @@ const (
 // DetectClusterDomain attempts to detect the Kubernetes cluster domain
 // from /etc/resolv.conf search domains.
 //
-// It looks for a search domain matching the pattern "*.svc.<domain>"
-// and extracts the cluster domain suffix.
+// It looks for a search domain of the form "svc.<domain>" and extracts the
+// cluster domain suffix.
 //
 // Returns the detected domain and true if successful,
 // or empty string and false if detection failed.
@@ -41,33 +41,33 @@ func DetectClusterDomainFromFile(path string) (string, bool) {
 	return parseResolvConf(file)
 }
 
-// parseResolvConf parses resolv.conf content and extracts the cluster domain.
+// parseResolvConf parses resolv.conf content and extracts the cluster domain
+// from the search list, following the directive rules of Go's resolver: the
+// last search or domain directive wins, a domain directive contributes only
+// its first domain, and a domain directive with none is ignored. Unlike that
+// resolver, a file that cannot be read to the end detects nothing.
 func parseResolvConf(r io.Reader) (string, bool) {
+	var domains []string
+
 	scanner := bufio.NewScanner(r)
-
 	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-
-		// Skip comments and empty lines
-		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, ";") {
-			continue
-		}
-
-		// Look for search directive
-		if strings.HasPrefix(line, "search ") {
-			domains := strings.Fields(line)[1:] // Skip "search" keyword
-			if domain := extractClusterDomain(domains); domain != "" {
-				return domain, true
-			}
+		fields := strings.Fields(scanner.Text())
+		switch {
+		case len(fields) == 0:
+		case fields[0] == "search":
+			domains = fields[1:]
+		case fields[0] == "domain" && len(fields) > 1:
+			domains = fields[1:2]
 		}
 	}
 
-	// Check for scanner errors (e.g., read errors)
 	if scanner.Err() != nil {
 		return "", false
 	}
 
-	return "", false
+	domain := extractClusterDomain(domains)
+
+	return domain, domain != ""
 }
 
 // extractClusterDomain finds cluster domain from search domains.
@@ -81,7 +81,8 @@ func parseResolvConf(r io.Reader) (string, bool) {
 func extractClusterDomain(domains []string) string {
 	for _, domain := range domains {
 		// Look for "svc.<cluster-domain>" pattern
-		if clusterDomain, found := strings.CutPrefix(domain, "svc."); found && clusterDomain != "" {
+		clusterDomain, found := strings.CutPrefix(strings.TrimSuffix(domain, "."), "svc.")
+		if found && clusterDomain != "" {
 			return clusterDomain
 		}
 	}
