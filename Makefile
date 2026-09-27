@@ -9,6 +9,7 @@ BIN_DIR     := bin
 CHART_PATH  := charts/cloudflare-tunnel-gateway-controller
 API_REF     := docs/reference/api.md
 GENERATED   := api/v1alpha1/zz_generated.deepcopy.go $(CHART_PATH)/crds $(API_REF)
+HELM_DOCS_VERSION = $(shell go list -C hack/tools -m -f '{{.Version}}' github.com/norwoodj/helm-docs)
 
 .PHONY: all build build-proxy test test-race test-coverage lint lint-fix lint-md helm-lint helm-test helm-docs \
         helm-template docs-serve docs-build container ci-go ci-helm ci-docs check-deps help \
@@ -73,8 +74,12 @@ helm-lint: ## Lint the Helm chart
 helm-test: ## Run Helm unit tests
 	helm unittest $(CHART_PATH)
 
-helm-docs: ## Regenerate chart README from values.yaml
-	helm-docs --chart-search-root $(CHART_PATH)
+# helm-docs writes its version into the README footer, and only a build that
+# sets main.version gets one, so the pin from hack/tools/go.mod goes in here.
+helm-docs: ## Regenerate chart README from values.yaml with the pinned helm-docs
+	go build -C hack/tools -ldflags "-X main.version=$(HELM_DOCS_VERSION:v%=%)" \
+		-o $(CURDIR)/$(BIN_DIR)/helm-docs github.com/norwoodj/helm-docs/cmd/helm-docs
+	$(BIN_DIR)/helm-docs --chart-search-root $(CHART_PATH)
 
 helm-template: ## Template the chart locally for debugging
 	helm template test $(CHART_PATH) \
@@ -99,10 +104,10 @@ container: ## Build both container images (controller and proxy)
 ci-go: ## Run all Go CI gates (test + lint)
 	go test -race ./... && golangci-lint run --timeout=5m --build-tags e2e,conformance,envtest
 
-ci-helm: ## Run all Helm CI gates (test + lint + docs)
+ci-helm: helm-docs ## Run all Helm CI gates (test + lint + docs)
+	git diff --exit-code $(CHART_PATH)/README.md && \
 	helm unittest $(CHART_PATH) && \
-	helm lint $(CHART_PATH) && \
-	helm-docs --chart-search-root $(CHART_PATH) && git diff --exit-code $(CHART_PATH)/README.md
+	helm lint $(CHART_PATH)
 
 ci-docs: ## Run docs CI gate
 	mkdocs build --strict
@@ -117,7 +122,6 @@ check-deps: ## Check all required tools are installed
 	@which podman > /dev/null 2>&1 && echo "OK: podman" || echo "MISSING: podman        https://podman.io/getting-started/installation"
 	@which markdownlint-cli2 > /dev/null 2>&1 && echo "OK: markdownlint-cli2" || echo "MISSING: markdownlint-cli2  npm install -g markdownlint-cli2"
 	@helm plugin list 2>/dev/null | grep -q unittest && echo "OK: helm-unittest" || echo "MISSING: helm-unittest  helm plugin install https://github.com/helm-unittest/helm-unittest.git --verify=false"
-	@which helm-docs > /dev/null 2>&1 && echo "OK: helm-docs" || echo "MISSING: helm-docs     https://github.com/norwoodj/helm-docs#installation"
 
 help: ## Print this help message
 	@awk 'BEGIN {FS = ":.*##"; printf "\nUsage:\n  make \033[36m<target>\033[0m\n"} \

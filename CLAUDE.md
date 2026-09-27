@@ -63,7 +63,8 @@ helm package charts/cloudflare-tunnel-gateway-controller
 helm unittest charts/cloudflare-tunnel-gateway-controller
 
 # Generate README from values.yaml (REQUIRED before commit)
-helm-docs --chart-search-root charts/cloudflare-tunnel-gateway-controller
+# (helm-docs pinned in hack/tools/go.mod, the same build CI compares against)
+make helm-docs
 
 # Lint chart
 helm lint charts/cloudflare-tunnel-gateway-controller
@@ -409,7 +410,7 @@ Run checks relevant to the files you changed:
 |---------------|-----------------|
 | `*.go` | `go test -race ./...` and `golangci-lint run --timeout=5m --build-tags e2e,conformance,envtest` |
 | `api/v1alpha1/**` | `make generate` (deepcopy, chart CRDs, `docs/reference/api.md`); CI runs `make verify-generated` |
-| `charts/**` | `helm unittest`, `helm lint`, `helm-docs` |
+| `charts/**` | `helm unittest`, `helm lint`, `make helm-docs` |
 | `**/*.md` | `markdownlint-cli2 '**/*.md'` |
 | `docs/**` | `mkdocs build --strict` |
 
@@ -422,7 +423,7 @@ go test -race ./... && golangci-lint run --timeout=5m --build-tags e2e,conforman
 # Helm chart changes
 helm unittest charts/cloudflare-tunnel-gateway-controller && \
 helm lint charts/cloudflare-tunnel-gateway-controller && \
-helm-docs --chart-search-root charts/cloudflare-tunnel-gateway-controller
+make helm-docs
 
 # Markdown changes
 markdownlint-cli2 '**/*.md'
@@ -443,7 +444,7 @@ Before creating a PR, verify all checklist items from `.github/pull_request_temp
    - Markdown linting passes (`markdownlint-cli2 '**/*.md'`)
    - Helm tests pass (`helm unittest charts/cloudflare-tunnel-gateway-controller`)
    - Helm lint passes (`helm lint charts/cloudflare-tunnel-gateway-controller`)
-   - Helm README is up to date (`helm-docs --chart-search-root charts/cloudflare-tunnel-gateway-controller`)
+   - Helm README is up to date (`make helm-docs`)
    - Manual testing completed (if applicable)
 
 2. **Documentation**

@@ -25,7 +25,7 @@
       "automerge": true
     },
     {
-      "description": "hack/tools/go.mod pins the code generators through tool directives, and go mod tidy records their modules as indirect requires, which Renovate leaves alone unless it matches them to a tool directive. controller-gen's directive names a package inside sigs.k8s.io/controller-tools rather than the module, so both generators are enabled explicitly instead of relying on how that directive is matched. A bump that changes generated output fails make verify-generated in CI until someone runs make generate on the branch.",
+      "description": "hack/tools/go.mod pins the code generators and helm-docs through tool directives, and go mod tidy records their modules as indirect requires, which Renovate leaves alone unless it matches them to a tool directive. The controller-gen and helm-docs directives name a package inside the module rather than the module itself, so every tool is enabled explicitly instead of relying on how a directive is matched. A generator bump that changes generated output fails make verify-generated in CI until someone runs make generate on the branch; a helm-docs bump fails the chart README check until someone runs make helm-docs.",
       "matchFileNames": [
         "hack/tools/go.mod"
       ],
@@ -34,7 +34,8 @@
       ],
       "matchPackageNames": [
         "sigs.k8s.io/controller-tools",
-        "github.com/elastic/crd-ref-docs"
+        "github.com/elastic/crd-ref-docs",
+        "github.com/norwoodj/helm-docs"
       ],
       "enabled": true
     },
