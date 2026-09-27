@@ -198,3 +198,100 @@ func TestHandler_ReplacePrefixMatchRedirect_SpecTable(t *testing.T) {
 		})
 	}
 }
+
+// prefixReplaceRule is a rule on app.example.com with the given matches and a
+// single ReplacePrefixMatch filter of "/new", as a redirect or a rewrite.
+func prefixReplaceRule(matches []proxy.RouteMatch, redirect bool, backendURL string) proxy.RouteRule {
+	rule := proxy.RouteRule{
+		Hostnames: []string{"app.example.com"},
+		Matches:   matches,
+		Backends:  []proxy.BackendRef{{URL: backendURL, Weight: 1}},
+	}
+
+	if redirect {
+		rule.Filters = []proxy.RouteFilter{{
+			Type: proxy.FilterRequestRedirect,
+			RequestRedirect: &proxy.RedirectConfig{
+				Path: &proxy.RedirectPath{Type: proxy.RedirectPathPrefixReplace, Value: "/new"},
+			},
+		}}
+	} else {
+		rule.Filters = []proxy.RouteFilter{{
+			Type: proxy.FilterURLRewrite,
+			URLRewrite: &proxy.URLRewriteConfig{
+				Path: &proxy.URLRewritePath{Type: proxy.URLRewritePrefixMatch, ReplacePrefixMatch: new("/new")},
+			},
+		}}
+	}
+
+	return rule
+}
+
+// servedPath returns the path a request for /foo/bar ends up at: the redirect
+// Location path, or the path the backend received.
+func servedPath(t *testing.T, rule proxy.RouteRule) string {
+	t.Helper()
+
+	router := proxy.NewRouter()
+	require.NoError(t, router.UpdateConfig(&proxy.Config{Version: 1, Rules: []proxy.RouteRule{rule}}))
+
+	recorder := httptest.NewRecorder()
+	proxy.NewHandler(router).ServeHTTP(recorder, httptest.NewRequestWithContext(
+		t.Context(), http.MethodGet, "http://app.example.com/foo/bar", nil))
+
+	if location := recorder.Header().Get("Location"); location != "" {
+		parsed, err := url.Parse(location)
+		require.NoError(t, err)
+
+		return parsed.Path
+	}
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+
+	return recorder.Header().Get("X-Received-Path")
+}
+
+// TestHandler_ReplacePrefixMatch_RedirectAndRewriteAgree runs the redirect
+// and the rewrite over the same matches. A rule without matches, and a match
+// without a path, carry the spec's default match, a PathPrefix of "/"
+// (HTTPRouteRule.Matches and HTTPRouteMatch.Path defaults), so the prefix
+// "/" is replaced. A match that is not a PathPrefix has no prefix to replace
+// ("ReplacePrefixMatch is only compatible with a PathPrefix HTTPRouteMatch"),
+// so both filters leave the path as it is.
+func TestHandler_ReplacePrefixMatch_RedirectAndRewriteAgree(t *testing.T) {
+	t.Parallel()
+
+	backend := newBackend(t, "prefix")
+
+	tests := []struct {
+		name    string
+		matches []proxy.RouteMatch
+		want    string
+	}{
+		{name: "no matches", matches: nil, want: "/new/foo/bar"},
+		{
+			name:    "match without a path",
+			matches: []proxy.RouteMatch{{Method: http.MethodGet}},
+			want:    "/new/foo/bar",
+		},
+		{
+			name:    "exact match",
+			matches: []proxy.RouteMatch{{Path: &proxy.PathMatch{Type: proxy.PathMatchExact, Value: "/foo/bar"}}},
+			want:    "/foo/bar",
+		},
+		{
+			name:    "regular expression match",
+			matches: []proxy.RouteMatch{{Path: &proxy.PathMatch{Type: proxy.PathMatchRegularExpression, Value: "^/foo/.*"}}},
+			want:    "/foo/bar",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			assert.Equal(t, tt.want, servedPath(t, prefixReplaceRule(tt.matches, true, backend.URL)), "redirect")
+			assert.Equal(t, tt.want, servedPath(t, prefixReplaceRule(tt.matches, false, backend.URL)), "rewrite")
+		})
+	}
+}
