@@ -341,9 +341,18 @@ Pinning by digest also makes `pullPolicy` irrelevant to correctness: a digest re
 
 ### Helm Chart Verification
 
+The chart is published as an OCI artifact, and the release job signs that artifact with cosign (keyless) as it does the images. No `.prov` provenance file is published, so `helm verify` has nothing to check. Verify the OCI artifact instead, and for the same reason as with the images, install the digest cosign verified rather than the version tag, which would be resolved a second time:
+
 ```bash
-helm verify cloudflare-tunnel-gateway-controller-<version>.tgz
+digest=$(cosign verify "ghcr.io/lexfrei/charts/cloudflare-tunnel-gateway-controller:<version>" \
+  --certificate-identity-regexp="https://github.com/lexfrei/cloudflare-tunnel-gateway-controller" \
+  --certificate-oidc-issuer="https://token.actions.githubusercontent.com" \
+  --output=json | jq -r '.[0].critical.image."docker-manifest-digest"')
+helm install <release> "oci://ghcr.io/lexfrei/charts/cloudflare-tunnel-gateway-controller@${digest:?cosign verification failed}" \
+  --namespace <namespace> --values <values-file>
 ```
+
+The chart version, like the image tag, is the release version without its leading `v`. If your Helm does not accept a chart reference by digest, `helm pull oci://ghcr.io/lexfrei/charts/cloudflare-tunnel-gateway-controller --version <version>` prints the `Digest:` it pulled; compare it with the one cosign verified, then install the pulled archive.
 
 ## Secrets in Logs
 
