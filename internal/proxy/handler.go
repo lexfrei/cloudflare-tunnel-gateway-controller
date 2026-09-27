@@ -851,13 +851,13 @@ func (h *Handler) createReverseProxy(backendURL *url.URL, protocol BackendProtoc
 func restoreForwardingHeaders(proxyReq *httputil.ProxyRequest) {
 	inHeader, outHeader := proxyReq.In.Header, proxyReq.Out.Header
 
-	for _, name := range []string{"Forwarded", "X-Forwarded-Host", "X-Forwarded-Proto"} {
+	for _, name := range []string{headerForwarded, headerXFHost, headerXFProto} {
 		if vals := inHeader.Values(name); len(vals) > 0 {
 			outHeader[name] = slices.Clone(vals)
 		}
 	}
 
-	xff := strings.Join(inHeader.Values("X-Forwarded-For"), ", ")
+	xff := strings.Join(inHeader.Values(headerXFF), ", ")
 
 	clientIP, _, err := net.SplitHostPort(proxyReq.In.RemoteAddr)
 	if err == nil {
@@ -869,7 +869,7 @@ func restoreForwardingHeaders(proxyReq *httputil.ProxyRequest) {
 	}
 
 	if xff != "" {
-		outHeader.Set("X-Forwarded-For", xff)
+		outHeader.Set(headerXFF, xff)
 	}
 }
 

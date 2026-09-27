@@ -300,8 +300,8 @@ func convertHTTPRouteRule(
 //nolint:gochecknoglobals // RFC 6455 §4.2.2 reference set; package-level so the converter doesn't rebuild it per route
 var wsHandshakeRequiredHeaders = map[string]struct{}{
 	"Sec-Websocket-Accept": {}, // http.CanonicalMIMEHeaderKey form
-	"Upgrade":              {},
-	"Connection":           {},
+	headerUpgrade:          {},
+	headerConnection:       {},
 }
 
 // warnIfWSResponseFilterStripsHandshake fires a converter-time WARN when

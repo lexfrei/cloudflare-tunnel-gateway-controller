@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"runtime/debug"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -476,6 +477,12 @@ func (f *requestMirror) ProcessRequest(req *http.Request) *http.Response {
 	// the plain and upgrade legs.
 	tmpl.Header.Del(hostRewrittenHeader)
 	tmpl.Header.Del(originalHostHeader)
+	// The client's hop-by-hop headers describe its connection to this proxy,
+	// not the mirror leg's; the primary leg drops them too. Like the primary
+	// leg, put the forwarding headers back afterwards, so a client naming
+	// them in Connection cannot strip them.
+	removeHopByHopHeaders(tmpl.Header)
+	restoreMirrorForwardingHeaders(tmpl.Header, req.Header)
 
 	// After Clone, req and the template share the same body reader. Give the
 	// primary leg its own independent reader from the buffered data; each
@@ -508,6 +515,74 @@ func (f *requestMirror) ProcessRequest(req *http.Request) *http.Response {
 	}()
 
 	return nil
+}
+
+// Header names used in more than one place in this package.
+const (
+	headerConnection = "Connection"
+	headerUpgrade    = "Upgrade"
+	headerTE         = "TE"
+	headerForwarded  = "Forwarded"
+	headerXFF        = "X-Forwarded-For"
+	headerXFHost     = "X-Forwarded-Host"
+	headerXFProto    = "X-Forwarded-Proto"
+)
+
+// removeHopByHopHeaders deletes the headers the Connection header names and
+// the fixed RFC 7230 section 6.1 set, the same one httputil.ReverseProxy
+// drops, keeping "TE: trailers" as it does, since gRPC needs it end to end.
+func removeHopByHopHeaders(header http.Header) {
+	keepTrailers := headerHasToken(header, headerTE, "trailers")
+
+	for _, value := range header.Values(headerConnection) {
+		for name := range strings.SplitSeq(value, ",") {
+			if name = strings.TrimSpace(name); name != "" {
+				header.Del(name)
+			}
+		}
+	}
+
+	for _, name := range [...]string{
+		headerConnection,
+		"Proxy-Connection",
+		"Keep-Alive",
+		"Proxy-Authenticate",
+		"Proxy-Authorization",
+		headerTE,
+		"Trailer",
+		"Transfer-Encoding",
+		headerUpgrade,
+	} {
+		header.Del(name)
+	}
+
+	if keepTrailers {
+		header.Set(headerTE, "trailers")
+	}
+}
+
+// restoreMirrorForwardingHeaders copies the forwarding headers from the
+// inbound request into the mirror copy's header after its hop-by-hop pass.
+func restoreMirrorForwardingHeaders(dst, src http.Header) {
+	for _, name := range []string{headerForwarded, headerXFF, headerXFHost, headerXFProto} {
+		if values := src.Values(name); len(values) > 0 {
+			dst[http.CanonicalHeaderKey(name)] = slices.Clone(values)
+		}
+	}
+}
+
+// headerHasToken reports whether any comma-separated element of the named
+// header equals token, ignoring case.
+func headerHasToken(header http.Header, name, token string) bool {
+	for _, value := range header.Values(name) {
+		for element := range strings.SplitSeq(value, ",") {
+			if strings.EqualFold(strings.TrimSpace(element), token) {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 // bufferMirrorBody reads and buffers the request body for mirroring.
