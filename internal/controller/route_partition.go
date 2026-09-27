@@ -231,7 +231,7 @@ func unprovenClaimRouteMessage(rejection tunnelownership.Rejection) string {
 
 	if rejection.Proof == tunnelownership.ProofUnknown {
 		return "the Gateway's claim on tunnel " + rejection.TunnelID +
-			" could not be checked with Cloudflare yet and is retried" + tail
+			" could not be checked with Cloudflare and is retried" + tail
 	}
 
 	return "Cloudflare did not confirm the Gateway's claim on tunnel " + rejection.TunnelID + tail

@@ -35,6 +35,7 @@ import (
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/render"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/routebinding"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/tunnelownership"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/tunnelproof"
 )
 
 const (
@@ -207,6 +208,13 @@ func (r *GatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 
 	if err := r.updateStatus(ctx, &gateway, resolvedConfig, perGatewayMode); err != nil {
 		return ctrl.Result{}, errors.Wrap(err, "failed to update gateway status")
+	}
+
+	// A dedicated Gateway holds its tunnel on a Cloudflare confirmation that
+	// lapses with no event in the cluster, so come back to re-check it. The
+	// status this writes is what brings the infra reconciler along.
+	if perGatewayMode {
+		return ctrl.Result{RequeueAfter: tunnelproof.RecheckInterval}, nil
 	}
 
 	return ctrl.Result{}, nil
@@ -530,7 +538,7 @@ func tunnelRejectionMessage(rejection tunnelownership.Rejection) string {
 	if rejection.Unproven {
 		if rejection.Proof == tunnelownership.ProofUnknown {
 			return "this Gateway's claim on tunnel " + rejection.TunnelID +
-				" could not be checked with Cloudflare yet; the check is retried automatically"
+				" could not be checked with Cloudflare; the check is retried automatically"
 		}
 
 		return "Cloudflare did not confirm that this Gateway's connector token holds tunnel " +
@@ -549,8 +557,12 @@ func tunnelRejectionMessage(rejection tunnelownership.Rejection) string {
 }
 
 // tunnelRejection reports whether this Gateway's claimed tunnel belongs to
-// someone else, or is not confirmed by Cloudflare. It runs the same arbitration as the route syncer over the same
-// inputs, so status and programming cannot disagree about who won.
+// someone else, or is not confirmed by Cloudflare. It runs the same
+// arbitration as the route syncer over the same claim set, so status and
+// programming reach the same verdict from the same inputs. Cloudflare's
+// confirmation is one of those inputs and it lapses on a clock, so the two can
+// differ until each has run since it changed; the Reconcile requeue for
+// dedicated Gateways bounds that window.
 func (r *GatewayReconciler) tunnelRejection(
 	ctx context.Context,
 	gateway *gatewayv1.Gateway,

@@ -28,7 +28,8 @@ import (
 
 const (
 	// verifiedTTL bounds how long a proof stands before it is asked again,
-	// which is how a rotated tunnel secret or a deleted tunnel is noticed.
+	// which is how a rotated tunnel secret or a deleted tunnel is noticed —
+	// on the first check after it lapses, which RecheckInterval schedules.
 	verifiedTTL = time.Hour
 	// refutedTTL keeps a failing claim from costing an API call on every
 	// reconcile, while letting a fix (a corrected token or credential) land
@@ -44,8 +45,10 @@ const (
 )
 
 // RecheckInterval is how often a caller holding a confirmed claim should come
-// back to it.
-const RecheckInterval time.Duration = 0
+// back to it. A confirmation lapses without any event in the cluster, so
+// nothing else would bring the caller back; half the confirmation's lifetime
+// finds a rotated secret within one and a half lifetimes.
+const RecheckInterval = verifiedTTL / 2
 
 // ClientFactory builds a Cloudflare API client for one API token.
 type ClientFactory func(apiToken string) *cloudflare.Client
@@ -84,7 +87,7 @@ func NewVerifier(newClient ClientFactory) *Verifier {
 // that was, however long ago: a Cloudflare outage must not evict a holder.
 // Either way the lookup is repeated only after outageRetry.
 func (v *Verifier) Verify(ctx context.Context, apiToken string, token *tunnel.Token) tunnelownership.Proof {
-	key := cacheKey(token)
+	key := cacheKey(apiToken, token)
 
 	v.mu.Lock()
 	cached, found := v.cache[key]
@@ -178,27 +181,40 @@ func (v *Verifier) ask(ctx context.Context, apiToken string, token *tunnel.Token
 }
 
 // isDefiniteRefusal reports whether Cloudflare answered the lookup with a
-// client error — no such tunnel in that account, or a credential without
-// access to it. Throttling and timeouts are not answers.
+// client error about the claim, such as no such tunnel in that account.
+//
+// Throttling and timeouts are not answers, and neither is a 401 or 403: those
+// describe the credential, and a revoked or mis-scoped API token cannot be told
+// apart from one for another account by status code. Refuting on them would
+// tear down every dedicated plane that uses the credential. A claim the
+// credential cannot reach stays unproven instead — a new one is still refused,
+// and the tunnel writes fail on their own.
 func isDefiniteRefusal(err error) bool {
 	apiErr, ok := errors.AsType[*cloudflare.Error](err)
 	if !ok {
 		return false
 	}
 
-	status := apiErr.StatusCode
-
-	return status >= http.StatusBadRequest && status < http.StatusInternalServerError &&
-		status != http.StatusRequestTimeout && status != http.StatusTooManyRequests
+	switch status := apiErr.StatusCode; status {
+	case http.StatusUnauthorized, http.StatusForbidden, http.StatusRequestTimeout, http.StatusTooManyRequests:
+		return false
+	default:
+		return status >= http.StatusBadRequest && status < http.StatusInternalServerError
+	}
 }
 
-// cacheKey digests the claim's identity and secret. The secret goes into the
-// digest so a rotated token is a new claim, and never into the map itself.
-func cacheKey(token *tunnel.Token) [sha256.Size]byte {
+// cacheKey digests the claim's identity and secret and the credential that
+// checked it. The secret goes into the digest so a rotated token is a new
+// claim, and never into the map itself; the credential goes in so a verdict
+// proves the access of the credential that will write, not of another one.
+func cacheKey(apiToken string, token *tunnel.Token) [sha256.Size]byte {
+	credential := sha256.Sum256([]byte(apiToken))
+
 	hash := sha256.New()
 	hash.Write([]byte(token.AccountTag))
 	hash.Write([]byte{0})
 	hash.Write(token.TunnelID[:])
+	hash.Write(credential[:])
 	hash.Write(token.TunnelSecret)
 
 	var key [sha256.Size]byte

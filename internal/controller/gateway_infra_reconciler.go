@@ -882,7 +882,9 @@ func (r *GatewayInfraReconciler) classConfigInfraGateways(
 // its namespace already holds as many planes as the operator allows.
 //
 // Both run the same decision over the same shared claim set as the route
-// partitioner and the Gateway reconciler, so all three agree. An error here
+// partitioner and the Gateway reconciler, so all three agree on the same
+// inputs; a lapsed Cloudflare confirmation reaches this layer through the
+// Gateway status the Gateway reconciler writes on its requeue. An error here
 // means the verdict is unknown, and the caller must leave any running plane
 // alone rather than guess.
 func (r *GatewayInfraReconciler) dedicatedPlaneRefused(

@@ -2,8 +2,8 @@
 // when more than one claims it.
 //
 // A per-Gateway data plane takes its tunnel identity from a connector token in
-// the Gateway's own namespace, and that token proves nothing: it is a base64
-// JSON blob whose tunnel UUID any tenant can write. Tunnel UUIDs are not
+// the Gateway's own namespace, and the token alone proves nothing: it is a
+// base64 JSON blob whose tunnel UUID any tenant can write. Tunnel UUIDs are not
 // secret either — the controller publishes them in Gateway status as
 // <id>.cfargotunnel.com so external-dns can consume them. Without arbitration,
 // naming someone else's tunnel is enough to join their partition, which merges
@@ -13,9 +13,10 @@
 // A claim is therefore checked against Cloudflare before it counts (see
 // tunnelproof), and one that is not confirmed holds nothing and contests
 // nothing. Among the rest, the rule: a tunnel belongs to the Gateway already
-// serving it, and the class tunnel belongs to the operator. Age breaks ties only between claims of equal
-// standing, because deciding by age alone would let a tenant whose Gateway
-// predates the victim's retarget its token and evict the rightful holder.
+// serving it, and the class tunnel belongs to the operator. Age breaks ties
+// only between claims of equal standing, because deciding by age alone would
+// let a tenant whose Gateway predates the victim's retarget its token and
+// evict the rightful holder.
 // Claims from other namespaces are rejected outright rather than merged, so a
 // rejected Gateway's routes are never programmed and its plane never receives
 // a neighbour's config.
