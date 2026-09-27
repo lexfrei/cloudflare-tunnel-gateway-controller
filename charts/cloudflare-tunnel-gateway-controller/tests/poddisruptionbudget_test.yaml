@@ -147,33 +147,52 @@ tests:
           path: metadata.name
           value: RELEASE-NAME-cf-ctrl
 
-  # The controller budget treats a zero bound as unset (issue #843 tracks
-  # changing that), so a values file that
-  # zeroed the field it does not use keeps rendering the other one.
-  - it: should render only maxUnavailable when minAvailable is 0 and maxUnavailable is set
+  - it: should render minAvailable 0 rather than dropping it
+    set:
+      podDisruptionBudget:
+        enabled: true
+        minAvailable: 0
+    asserts:
+      - equal:
+          path: spec.minAvailable
+          value: 0
+      - notExists:
+          path: spec.maxUnavailable
+
+  # The API server rejects a budget carrying both fields. Setting
+  # maxUnavailable without nulling the minAvailable default is the easy way
+  # to get there, so name the fix at render time.
+  - it: should fail when both minAvailable and maxUnavailable are set
+    set:
+      podDisruptionBudget:
+        enabled: true
+        maxUnavailable: 1
+    asserts:
+      - failedTemplate:
+          errorPattern: "Set only one of podDisruptionBudget.minAvailable and podDisruptionBudget.maxUnavailable"
+
+  - it: should fail when minAvailable is 0 and maxUnavailable is set
     set:
       podDisruptionBudget:
         enabled: true
         minAvailable: 0
         maxUnavailable: 1
     asserts:
-      - equal:
-          path: spec.maxUnavailable
-          value: 1
-      - notExists:
-          path: spec.minAvailable
+      - failedTemplate:
+          errorPattern: "Set only one of podDisruptionBudget.minAvailable and podDisruptionBudget.maxUnavailable"
 
-  - it: should render only minAvailable when maxUnavailable is 0 beside the default minAvailable
+  - it: should render maxUnavailable 0 when it is the only bound
     set:
       podDisruptionBudget:
         enabled: true
+        minAvailable: null
         maxUnavailable: 0
     asserts:
       - equal:
-          path: spec.minAvailable
-          value: 1
-      - notExists:
           path: spec.maxUnavailable
+          value: 0
+      - notExists:
+          path: spec.minAvailable
 
   - it: should render nothing when podDisruptionBudget is null
     set:
