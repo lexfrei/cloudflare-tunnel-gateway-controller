@@ -21,6 +21,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/coregroup"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/ingress"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/logging"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/proxy"
@@ -34,14 +35,6 @@ const proxyPushTimeout = 10 * time.Second
 // serviceKind is the default Kind a Gateway API BackendObjectReference falls
 // back to when Group/Kind are unset.
 const serviceKind = "Service"
-
-// coreGroup is the non-canonical spelling this project tolerates for the
-// Kubernetes core group (Service, ConfigMap). Gateway API gives that group
-// exactly one spelling, the empty string; accepting "core" is a leniency
-// decided here, and limitations.md records where it is honoured and where it
-// is not. NOTE the name: this constant holds "core", while the referencegrant
-// tests use coreGroup for "".
-const coreGroup = "core"
 
 // configMapKind is the Kind value for ConfigMap references used by Gateway
 // API BackendTLSPolicy CACertificateRefs.
@@ -583,7 +576,7 @@ func resolveCABundlePEM(ctx context.Context, c client.Client, policy *gatewayv1.
 
 	for _, ref := range policy.Spec.Validation.CACertificateRefs {
 		group := string(ref.Group)
-		if group != "" && group != coreGroup {
+		if !coregroup.Is(group) {
 			return "", false
 		}
 
