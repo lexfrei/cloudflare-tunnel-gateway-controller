@@ -32,6 +32,38 @@ func gatewayListCounter(base client.WithWatch) (client.WithWatch, *atomic.Int32)
 	return counting, &lists
 }
 
+// TestPlaneRefusals_ListingFailureIsAnError pins that a Gateway listing that
+// fails leaves the verdict unknown and is reported as an error, rather than
+// read as an empty cluster in which every claim is uncontested.
+func TestPlaneRefusals_ListingFailureIsAnError(t *testing.T) {
+	t.Parallel()
+
+	failing := interceptor.NewClient(quotaFixtures(t, new(int32(2))), interceptor.Funcs{
+		List: func(ctx context.Context, cl client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+			if _, ok := list.(*gatewayv1.GatewayList); ok {
+				return errSimulatedCacheMiss
+			}
+
+			return cl.List(ctx, list, opts...)
+		},
+	})
+	resolver := config.NewResolver(failing, "default", cfmetrics.NewNoopCollector(), verifiedClaims())
+
+	var gateway gatewayv1.Gateway
+	require.NoError(t, failing.Get(context.Background(), client.ObjectKey{Namespace: "tenant", Name: "gw-new"}, &gateway))
+
+	status := &GatewayReconciler{
+		Client: failing, Scheme: failing.Scheme(), ControllerName: "test-controller", ConfigResolver: resolver,
+	}
+	_, handled, err := status.refuseDedicatedPlane(context.Background(), &gateway, true)
+	require.ErrorIs(t, err, errSimulatedCacheMiss)
+	assert.True(t, handled, "the caller must not go on to write Accepted with the verdict unknown")
+
+	infra := &GatewayInfraReconciler{Client: failing, ControllerName: "test-controller", ConfigResolver: resolver}
+	_, err = infra.dedicatedPlaneRefused(context.Background(), &gateway)
+	require.ErrorIs(t, err, errSimulatedCacheMiss)
+}
+
 // TestPlaneRefusals_ListManagedGatewaysOnce pins that deciding a Gateway's
 // tunnel claim and its data-plane quota reads the managed Gateways once, not
 // once per rule: both claim sets are derived from the same listing.
