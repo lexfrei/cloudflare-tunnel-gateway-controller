@@ -581,7 +581,7 @@
         },
         "cloudflareIpRanges": {
           "type": "object",
-          "description": "Cloudflare IP ranges for egress NetworkPolicy",
+          "description": "Cloudflare IP ranges for the controller policy's Cloudflare-egress rule and the proxy policy's edge-egress rule. Emptying both lists fails the render while networkPolicy.enabled is on, or while proxy.networkPolicy.enabled and proxy.networkPolicy.egressRestricted are both on; see the value comment for why.",
           "properties": {
             "ipv4": {
               "type": "array",

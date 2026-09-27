@@ -303,13 +303,15 @@ networkPolicy:
   # Last updated: 2025-11-25
   # To update: curl https://www.cloudflare.com/ips-v4 && curl https://www.cloudflare.com/ips-v6
   #
-  # Emptying both lists is refused whenever networkPolicy.enabled or
-  # proxy.networkPolicy.egressRestricted is on — those two arm the guard, and
-  # neither is on by default. The rule built from these lists would otherwise
+  # Emptying both lists is refused whenever networkPolicy.enabled is on, or
+  # proxy.networkPolicy.egressRestricted is on together with
+  # proxy.networkPolicy.enabled — those arm the guard, and neither guard is
+  # armed by default. The rule built from these lists would otherwise
   # render an empty `to:`, which NetworkPolicy reads as allow-all on the ports
-  # it carries. To drop the restriction, turn off whichever of those two is on.
-  # Each clears only its own policy's guard, so a deployment running both
-  # needs both.
+  # it carries. To drop the restriction, turn off networkPolicy.enabled for the
+  # controller policy and proxy.networkPolicy.egressRestricted for the proxy
+  # policy. Each clears only its own policy's guard, so a deployment running
+  # both needs both.
   cloudflareIpRanges:
     ipv4:
       - 173.245.48.0/20
