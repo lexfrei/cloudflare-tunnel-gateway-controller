@@ -2,11 +2,10 @@ package controller_test
 
 import (
 	"context"
+	"crypto/tls"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -46,12 +45,7 @@ func newTLSConfigServer(t *testing.T, issuer *configtls.Authority, servedName st
 	certPEM, keyPEM, err := issuer.Issue([]string{servedName}, time.Now())
 	require.NoError(t, err)
 
-	dir := t.TempDir()
-	certFile, keyFile := filepath.Join(dir, "tls.crt"), filepath.Join(dir, "tls.key")
-	require.NoError(t, os.WriteFile(certFile, certPEM, 0o600))
-	require.NoError(t, os.WriteFile(keyFile, keyPEM, 0o600))
-
-	loader, err := configtls.NewCertificateLoader(certFile, keyFile, slog.New(slog.DiscardHandler))
+	pair, err := tls.X509KeyPair(certPEM, keyPEM)
 	require.NoError(t, err)
 
 	recorder := &tlsConfigServer{}
@@ -62,7 +56,10 @@ func newTLSConfigServer(t *testing.T, issuer *configtls.Authority, servedName st
 
 		writer.WriteHeader(http.StatusOK)
 	}))
-	recorder.server.TLS = loader.ServerConfig()
+	// A static certificate, not the loader: httptest adds its own default
+	// certificate to an empty list, and with no SNI (an IP host) that one
+	// would be served instead.
+	recorder.server.TLS = &tls.Config{Certificates: []tls.Certificate{pair}, MinVersion: tls.VersionTLS13}
 	recorder.server.StartTLS()
 	t.Cleanup(recorder.server.Close)
 

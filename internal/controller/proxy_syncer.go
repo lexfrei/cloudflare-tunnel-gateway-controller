@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -22,6 +23,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/configtls"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/coregroup"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/ingress"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/logging"
@@ -90,6 +92,16 @@ type ProxySyncer struct {
 	// listeners describe what IT serves. Empty accepts any Gateway (tests), as
 	// for the client-cert resolver below.
 	controllerName string
+
+	// configAuthority, when set, switches every push to TLS pinned to this
+	// CA; nil keeps the plaintext push.
+	configAuthority *configtls.Authority
+	tracing         bool
+	// tlsPushers caches one pusher per server name, so each plane's
+	// connections are pooled apart from every other plane's. Guarded by
+	// tlsPushersMu.
+	tlsPushersMu sync.Mutex
+	tlsPushers   map[string]*proxy.ConfigPusher
 }
 
 // pushTarget is one partition's push state: the cache that lets a resync
@@ -172,12 +184,16 @@ func NewProxySyncer(
 		tlsResolver:          newBackendTLSResolver(k8sClient),
 		gatewayCertResolver:  newGatewayClientCertResolver(k8sClient, controllerName),
 		controllerName:       controllerName,
+		configAuthority:      settings.configAuthority,
+		tracing:              settings.tracing,
+		tlsPushers:           make(map[string]*proxy.ConfigPusher),
 	}
 }
 
 // proxySyncerSettings holds the options parsed at NewProxySyncer time.
 type proxySyncerSettings struct {
-	tracing bool
+	tracing         bool
+	configAuthority *configtls.Authority
 }
 
 // ProxySyncerOption configures a ProxySyncer at construction.
@@ -202,6 +218,12 @@ func WithSyncerTracing() ProxySyncerOption {
 // ("transport connection broken: http: CloseIdleConnections called"). Cloning
 // DefaultTransport gives an isolated connection pool with the same defaults.
 func proxyPushClient(tracing bool) *http.Client {
+	return proxyPushClientWithTLS(tracing, nil)
+}
+
+// proxyPushClientWithTLS is proxyPushClient with a TLS client config on the
+// transport; nil leaves the transport's default.
+func proxyPushClientWithTLS(tracing bool, tlsConfig *tls.Config) *http.Client {
 	// Always an isolated transport. Clone DefaultTransport for its tuned
 	// defaults on the normal path; the bare *http.Transport fallback (an
 	// unreachable case — DefaultTransport is always *http.Transport in the
@@ -209,6 +231,10 @@ func proxyPushClient(tracing bool) *http.Client {
 	transport := &http.Transport{}
 	if defaultTransport, ok := http.DefaultTransport.(*http.Transport); ok {
 		transport = defaultTransport.Clone()
+	}
+
+	if tlsConfig != nil {
+		transport.TLSClientConfig = tlsConfig
 	}
 
 	return &http.Client{
@@ -738,7 +764,8 @@ func (s *ProxySyncer) SyncPartition(
 ) ([]proxy.RouteDiagnostic, error) {
 	// Resolve headless service DNS names before acquiring the lock
 	// to avoid blocking concurrent reconciles during slow DNS lookups.
-	resolved := resolveEndpoints(ctx, endpoints)
+	resolvedEndpoints := resolveEndpoints(ctx, endpoints)
+	resolved := endpointURLs(resolvedEndpoints)
 
 	logger := logging.FromContext(ctx)
 	if logger == slog.Default() {
@@ -757,7 +784,7 @@ func (s *ProxySyncer) SyncPartition(
 	// concurrently, and syncMu only guards the in-memory push state (skip cache,
 	// failure streak), not the network call. Holding it across the HTTP push
 	// would serialize every partition's push on one slow connector (#489).
-	pushErr := s.pushToEndpoints(ctx, logger, prep.cfg, resolved, authToken)
+	pushErr := s.pushToEndpoints(ctx, logger, prep.cfg, resolvedEndpoints, authToken)
 
 	s.recordPush(key, authToken, prep.cfgHash, prep.cfg, resolved, pushErr)
 
@@ -998,8 +1025,10 @@ func (s *ProxySyncer) ResyncAllPartitions(ctx context.Context) error {
 // pushToEndpoints delivers cfg to every resolved endpoint, aggregating
 // per-endpoint failures into one error. Extracted from SyncRoutes to keep it
 // within the funlen budget.
-func (s *ProxySyncer) pushToEndpoints(ctx context.Context, logger *slog.Logger, cfg *proxy.Config, resolved []string, authToken string) error {
-	results := s.pusher.PushWithToken(ctx, cfg, resolved, authToken)
+func (s *ProxySyncer) pushToEndpoints(
+	ctx context.Context, logger *slog.Logger, cfg *proxy.Config, resolved []pushEndpoint, authToken string,
+) error {
+	results := s.push(ctx, cfg, resolved, authToken)
 
 	var pushErrors []error
 
@@ -1263,7 +1292,8 @@ func (s *ProxySyncer) replayableTarget(logger *slog.Logger, key string) (*pushTa
 func (s *ProxySyncer) resyncTarget(ctx context.Context, key string, endpoints []string, authToken string) error {
 	// Resolve headless service DNS names before acquiring the lock so a
 	// slow DNS lookup does not block a concurrent sync.
-	resolved := resolveEndpoints(ctx, endpoints)
+	resolvedEndpoints := resolveEndpoints(ctx, endpoints)
+	resolved := endpointURLs(resolvedEndpoints)
 
 	logger := logging.FromContext(ctx)
 	if logger == slog.Default() {
@@ -1306,7 +1336,7 @@ func (s *ProxySyncer) resyncTarget(ctx context.Context, key string, endpoints []
 	// a newer document that lands first, and the proxy then refuses this older
 	// one. The skip key is cleared below and the next replay carries the newer
 	// document.
-	results := s.pusher.PushWithToken(ctx, cfg, resolved, authToken)
+	results := s.push(ctx, cfg, resolvedEndpoints, authToken)
 
 	var pushErrors []error
 
@@ -1397,18 +1427,35 @@ func (s *ProxySyncer) recordResync(
 // dnsLookupTimeout is the maximum time to wait for a single DNS resolution.
 const dnsLookupTimeout = 5 * time.Second
 
+// pushEndpoint is one resolved push destination. serverName is the host of
+// the configured endpoint it was resolved from: the name the plane's config
+// API certificate must carry once the URL itself holds a pod IP.
+type pushEndpoint struct {
+	url        string
+	serverName string
+}
+
+func endpointURLs(endpoints []pushEndpoint) []string {
+	urls := make([]string, len(endpoints))
+	for i, endpoint := range endpoints {
+		urls[i] = endpoint.url
+	}
+
+	return urls
+}
+
 // resolveEndpoints expands headless service DNS names to individual pod IPs.
 // For each endpoint URL, it resolves the hostname via DNS. If the hostname
 // resolves to multiple IPs (headless service), it creates a separate endpoint
 // URL for each IP, preserving the original scheme, port, and path.
 // If resolution fails or returns no results, the original endpoint is kept.
-func resolveEndpoints(ctx context.Context, endpoints []string) []string {
-	var resolved []string
+func resolveEndpoints(ctx context.Context, endpoints []string) []pushEndpoint {
+	var resolved []pushEndpoint
 
 	for _, endpoint := range endpoints {
 		parsed, err := url.Parse(endpoint)
 		if err != nil {
-			resolved = append(resolved, endpoint)
+			resolved = append(resolved, pushEndpoint{url: endpoint})
 
 			continue
 		}
@@ -1423,7 +1470,7 @@ func resolveEndpoints(ctx context.Context, endpoints []string) []string {
 		cancel()
 
 		if lookupErr != nil || len(addrs) == 0 {
-			resolved = append(resolved, endpoint)
+			resolved = append(resolved, pushEndpoint{url: endpoint, serverName: hostname})
 
 			continue
 		}
@@ -1440,7 +1487,7 @@ func resolveEndpoints(ctx context.Context, endpoints []string) []string {
 				epURL.Host = addr
 			}
 
-			resolved = append(resolved, epURL.String())
+			resolved = append(resolved, pushEndpoint{url: epURL.String(), serverName: hostname})
 		}
 	}
 

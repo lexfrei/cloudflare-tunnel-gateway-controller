@@ -1,0 +1,341 @@
+package controller
+
+import (
+	"context"
+	"crypto/tls"
+	"crypto/x509"
+	stderrors "errors"
+	"log/slog"
+	"net/url"
+	"time"
+
+	"github.com/cockroachdb/errors"
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/configtls"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/proxy"
+)
+
+// ErrPlaintextConfigEndpoint is returned for an http:// config endpoint while
+// config API TLS is on. The push is refused rather than sent in the clear.
+var ErrPlaintextConfigEndpoint = errors.New("plaintext config API endpoint refused: config API TLS is enabled")
+
+// ensureConfigCA returns the config API CA stored at key, generating it once
+// when the Secret does not exist. Create-only, like the shared auth token: a
+// replica that loses the create race adopts the stored CA. A Secret that
+// exists but holds no usable CA is an error, never overwritten, because a new
+// CA would invalidate every leaf already issued.
+func ensureConfigCA(ctx context.Context, c client.Client, key types.NamespacedName) (*configtls.Authority, error) {
+	var existing corev1.Secret
+
+	err := c.Get(ctx, key, &existing)
+	if err == nil {
+		return loadConfigCA(&existing, key)
+	}
+
+	if !apierrors.IsNotFound(err) {
+		return nil, errors.Wrapf(err, "reading config API CA secret %s", key)
+	}
+
+	certPEM, keyPEM, err := configtls.NewAuthorityPEM(time.Now())
+	if err != nil {
+		return nil, errors.Wrap(err, "generating config API CA")
+	}
+
+	secret := tlsSecret(key, certPEM, keyPEM)
+
+	if err := c.Create(ctx, secret); err != nil {
+		if !apierrors.IsAlreadyExists(err) {
+			return nil, errors.Wrapf(err, "creating config API CA secret %s", key)
+		}
+
+		if err := c.Get(ctx, key, &existing); err != nil {
+			return nil, errors.Wrapf(err, "re-reading config API CA secret after create race %s", key)
+		}
+
+		return loadConfigCA(&existing, key)
+	}
+
+	return loadConfigCA(secret, key)
+}
+
+func loadConfigCA(secret *corev1.Secret, key types.NamespacedName) (*configtls.Authority, error) {
+	authority, err := configtls.LoadAuthority(secret.Data[corev1.TLSCertKey], secret.Data[corev1.TLSPrivateKeyKey])
+	if err != nil {
+		return nil, errors.Wrapf(err, "config API CA secret %s does not hold a usable CA", key)
+	}
+
+	return authority, nil
+}
+
+func tlsSecret(key types.NamespacedName, certPEM, keyPEM []byte) *corev1.Secret {
+	return &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace},
+		Type:       corev1.SecretTypeTLS,
+		Data:       map[string][]byte{corev1.TLSCertKey: certPEM, corev1.TLSPrivateKeyKey: keyPEM},
+	}
+}
+
+// leafOutcome says what an issuance pass did to a leaf Secret.
+type leafOutcome int
+
+const (
+	leafValid leafOutcome = iota
+	leafIssued
+	leafRenewed
+	// leafReplacedInvalid means the stored leaf did not verify against the CA
+	// (tampered, foreign, broken, or for other names) and was replaced.
+	leafReplacedInvalid
+)
+
+// ensureSharedLeaf keeps the shared plane's serving certificate at key valid
+// for names. It creates the Secret, or updates it in place when the leaf is
+// due for renewal or no longer verifies; the proxy follows the mounted files,
+// so an update needs no rollout. Every write is conditional (create, or
+// update at the read resourceVersion), and a lost race re-reads and accepts
+// the winner's leaf when it verifies, so concurrent issuers settle on one
+// leaf instead of each overwriting the other.
+func ensureSharedLeaf(
+	ctx context.Context, c client.Client, authority *configtls.Authority,
+	key types.NamespacedName, names []string, now time.Time,
+) (leafOutcome, error) {
+	var existing corev1.Secret
+
+	err := c.Get(ctx, key, &existing)
+	if apierrors.IsNotFound(err) {
+		return createSharedLeaf(ctx, c, authority, key, names, now)
+	}
+
+	if err != nil {
+		return leafValid, errors.Wrapf(err, "reading config API leaf secret %s", key)
+	}
+
+	outcome := leafOutcomeFor(authority, &existing, names, now)
+	if outcome == leafValid {
+		return leafValid, nil
+	}
+
+	certPEM, keyPEM, err := authority.Issue(names, now)
+	if err != nil {
+		return leafValid, errors.Wrap(err, "issuing config API leaf")
+	}
+
+	updated := existing.DeepCopy()
+	updated.Type = corev1.SecretTypeTLS
+	updated.Data = map[string][]byte{corev1.TLSCertKey: certPEM, corev1.TLSPrivateKeyKey: keyPEM}
+
+	if err := c.Update(ctx, updated); err != nil {
+		if apierrors.IsConflict(err) {
+			return settleAfterLostRace(ctx, c, authority, key, names, now)
+		}
+
+		return leafValid, errors.Wrapf(err, "updating config API leaf secret %s", key)
+	}
+
+	return outcome, nil
+}
+
+func createSharedLeaf(
+	ctx context.Context, c client.Client, authority *configtls.Authority,
+	key types.NamespacedName, names []string, now time.Time,
+) (leafOutcome, error) {
+	certPEM, keyPEM, err := authority.Issue(names, now)
+	if err != nil {
+		return leafValid, errors.Wrap(err, "issuing config API leaf")
+	}
+
+	if err := c.Create(ctx, tlsSecret(key, certPEM, keyPEM)); err != nil {
+		if apierrors.IsAlreadyExists(err) {
+			return settleAfterLostRace(ctx, c, authority, key, names, now)
+		}
+
+		return leafValid, errors.Wrapf(err, "creating config API leaf secret %s", key)
+	}
+
+	return leafIssued, nil
+}
+
+// errLeafRaceUnsettled is returned when the write that beat ours left a leaf
+// that still does not verify; the next pass retries.
+var errLeafRaceUnsettled = errors.New("config API leaf changed concurrently and still does not verify")
+
+func settleAfterLostRace(
+	ctx context.Context, c client.Client, authority *configtls.Authority,
+	key types.NamespacedName, names []string, now time.Time,
+) (leafOutcome, error) {
+	var winner corev1.Secret
+	if err := c.Get(ctx, key, &winner); err != nil {
+		return leafValid, errors.Wrapf(err, "re-reading config API leaf secret %s", key)
+	}
+
+	if leafOutcomeFor(authority, &winner, names, now) != leafValid {
+		return leafValid, errors.Wrapf(errLeafRaceUnsettled, "%s", key)
+	}
+
+	return leafValid, nil
+}
+
+func leafOutcomeFor(authority *configtls.Authority, secret *corev1.Secret, names []string, now time.Time) leafOutcome {
+	err := authority.Check(secret.Data[corev1.TLSCertKey], secret.Data[corev1.TLSPrivateKeyKey], names, now)
+
+	switch {
+	case err == nil:
+		return leafValid
+	case errors.Is(err, configtls.ErrRenewalDue):
+		return leafRenewed
+	default:
+		return leafReplacedInvalid
+	}
+}
+
+// Shared-leaf maintenance cadence: a routine check well inside the renewal
+// window, and a short retry after a failed pass.
+const (
+	sharedLeafCheckInterval = time.Hour
+	sharedLeafRetryInterval = 30 * time.Second
+)
+
+// sharedLeafIssuer keeps the shared plane's leaf current. It runs on the
+// elected leader only; the proxy pods wait on the Secret mount until the
+// first pass creates it.
+type sharedLeafIssuer struct {
+	client    client.Client
+	authority *configtls.Authority
+	key       types.NamespacedName
+	names     []string
+	logger    *slog.Logger
+}
+
+// NeedLeaderElection keeps issuance on one replica.
+func (i *sharedLeafIssuer) NeedLeaderElection() bool { return true }
+
+// Start runs issuance passes until ctx ends.
+func (i *sharedLeafIssuer) Start(ctx context.Context) error {
+	for {
+		wait := sharedLeafCheckInterval
+
+		outcome, err := ensureSharedLeaf(ctx, i.client, i.authority, i.key, i.names, time.Now())
+
+		switch {
+		case err != nil:
+			i.logger.Error("config API leaf for the shared data plane could not be issued; "+
+				"the proxy cannot start or renew its config API certificate until this succeeds",
+				"secret", i.key.String(), "error", err)
+
+			wait = sharedLeafRetryInterval
+		case outcome == leafReplacedInvalid:
+			i.logger.Warn("replaced a shared data plane config API certificate that did not verify against the controller CA",
+				"secret", i.key.String())
+		case outcome != leafValid:
+			i.logger.Info("issued the shared data plane config API certificate", "secret", i.key.String())
+		}
+
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-time.After(wait):
+		}
+	}
+}
+
+// describeConfigTLSError explains a push failure caused by the config API
+// handshake, or returns "" for any other failure.
+func describeConfigTLSError(err error) string {
+	var (
+		unknownAuthority x509.UnknownAuthorityError
+		hostname         x509.HostnameError
+		invalid          x509.CertificateInvalidError
+		recordHeader     tls.RecordHeaderError
+	)
+
+	switch {
+	case stderrors.Is(err, ErrPlaintextConfigEndpoint):
+		return "the config endpoint is a plaintext http:// URL while config API TLS is enabled"
+	case stderrors.As(err, &unknownAuthority):
+		return "the data plane presented a config API certificate not issued by this controller's CA"
+	case stderrors.As(err, &hostname):
+		return "the data plane presented a config API certificate that names a different data plane"
+	case stderrors.As(err, &invalid):
+		return "the data plane presented a config API certificate that is not valid (" + invalid.Error() + ")"
+	case stderrors.As(err, &recordHeader):
+		return "the data plane's config API does not speak TLS (a proxy still running without config API TLS)"
+	}
+
+	return ""
+}
+
+// checkConfigEndpointScheme refuses an endpoint that would carry the config
+// in the clear while TLS is on.
+func checkConfigEndpointScheme(endpoint string) error {
+	parsed, err := url.Parse(endpoint)
+	if err != nil {
+		return errors.Wrapf(err, "parsing config endpoint %q", endpoint)
+	}
+
+	if parsed.Scheme != "https" {
+		return errors.Wrapf(ErrPlaintextConfigEndpoint, "%s", endpoint)
+	}
+
+	return nil
+}
+
+// WithConfigAPIAuthority switches the config push to TLS pinned to authority:
+// only a plane serving a leaf from this CA that names the endpoint's host
+// receives the config.
+func WithConfigAPIAuthority(authority *configtls.Authority) ProxySyncerOption {
+	return func(s *proxySyncerSettings) {
+		s.configAuthority = authority
+	}
+}
+
+// push delivers cfg to every resolved endpoint. Under TLS each endpoint is
+// verified against its own configured host, and an http:// endpoint is
+// refused without a connection.
+func (s *ProxySyncer) push(ctx context.Context, cfg *proxy.Config, resolved []pushEndpoint, authToken string) []proxy.PushResult {
+	if s.configAuthority == nil {
+		return s.pusher.PushWithToken(ctx, cfg, endpointURLs(resolved), authToken)
+	}
+
+	results := make([]proxy.PushResult, 0, len(resolved))
+	byServerName := make(map[string][]string)
+
+	var serverNames []string
+
+	for _, endpoint := range resolved {
+		if err := checkConfigEndpointScheme(endpoint.url); err != nil {
+			results = append(results, proxy.PushResult{Endpoint: endpoint.url, Err: err})
+
+			continue
+		}
+
+		if _, seen := byServerName[endpoint.serverName]; !seen {
+			serverNames = append(serverNames, endpoint.serverName)
+		}
+
+		byServerName[endpoint.serverName] = append(byServerName[endpoint.serverName], endpoint.url)
+	}
+
+	for _, serverName := range serverNames {
+		results = append(results, s.tlsPusher(serverName).PushWithToken(ctx, cfg, byServerName[serverName], authToken)...)
+	}
+
+	return results
+}
+
+func (s *ProxySyncer) tlsPusher(serverName string) *proxy.ConfigPusher {
+	s.tlsPushersMu.Lock()
+	defer s.tlsPushersMu.Unlock()
+
+	pusher, ok := s.tlsPushers[serverName]
+	if !ok {
+		pusher = proxy.NewConfigPusher(
+			proxyPushClientWithTLS(s.tracing, s.configAuthority.ClientConfig(serverName)), s.defaultAuthToken)
+		s.tlsPushers[serverName] = pusher
+	}
+
+	return pusher
+}
