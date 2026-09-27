@@ -31,11 +31,11 @@ gatewayClassConfig:
   tunnelID: ""
   # -- Permit a Gateway with a dedicated data plane to serve a Cloudflare
   # Tunnel that another namespace's Gateway, or this GatewayClass itself,
-  # already serves. Off by default: a connector token proves nothing about the
-  # tunnel it names, so an unproven claim would otherwise collect a
-  # neighbour's routes. Such a Gateway is refused with
-  # Accepted=False/InvalidParameters instead. Turn this on only where every
-  # party on a shared tunnel is trusted to see the others' routes.
+  # already serves. Off by default: sharing merges both parties' routes, and
+  # one tunnel's token can end up in two namespaces. Such a Gateway is refused
+  # with Accepted=False/InvalidParameters instead. A claim Cloudflare does not
+  # confirm is refused either way. Turn this on only where every party on a
+  # shared tunnel is trusted to see the others' routes.
   allowSharedTunnels: false
   # -- (int) Cap on how many Gateways in one namespace may each have a dedicated
   # data plane. Every opted-in Gateway renders a proxy Deployment, a Service, a

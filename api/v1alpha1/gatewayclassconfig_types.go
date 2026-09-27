@@ -50,14 +50,13 @@ type GatewayClassConfigSpec struct {
 	// a Cloudflare Tunnel that another namespace's Gateway, or this
 	// GatewayClass itself, already serves.
 	//
-	// Off by default, because a connector token proves nothing about the tunnel
-	// it names: any tenant able to create a GatewayConfig can write another
-	// party's tunnel UUID into their own token, and tunnel UUIDs are published
-	// in Gateway status for external-dns. Sharing a tunnel merges both parties'
-	// routes into one ingress document and pushes the union to both parties'
-	// proxies, so an unproven claim is enough to collect a neighbour's routes.
-	// With this off, such a Gateway is refused with
+	// Off by default, because holding a tunnel's connector token proves access
+	// to the tunnel, not a right to the routes another namespace serves on it,
+	// and one token can end up in two namespaces. Sharing a tunnel merges both
+	// parties' routes into one ingress document and pushes the union to both
+	// parties' proxies. With this off, such a Gateway is refused with
 	// Accepted=False/InvalidParameters and none of its routes are programmed.
+	// A claim Cloudflare does not confirm is refused either way.
 	//
 	// Turn it on only where every party on a shared tunnel is trusted to see
 	// the others' routes — a single-tenant cluster, or a migration from the
