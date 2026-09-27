@@ -5,7 +5,7 @@
 [![Release](https://img.shields.io/github/v/release/lexfrei/cloudflare-tunnel-gateway-controller)](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/releases)
 [![CI](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/actions/workflows/pr.yaml/badge.svg)](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/actions/workflows/pr.yaml)
 [![Docs](https://img.shields.io/badge/docs-cf.k8s.lex.la-blue)](https://cf.k8s.lex.la)
-[![Gateway API Conformance](https://img.shields.io/badge/Gateway%20Conformance%20v1.6.1-Conformant-green)](https://gateway-api.sigs.k8s.io/docs/implementations/list/#lexfreis-cloudflare-tunnel-gateway-controller)
+[![Gateway API Conformance](https://img.shields.io/badge/Gateway%20Conformance%20v1.6.1%20report-Conformant-green)](https://github.com/kubernetes-sigs/gateway-api/tree/main/conformance/reports/v1.6/lexfrei-cloudflare-tunnel-gateway-controller)
 
 Kubernetes controller implementing Gateway API for Cloudflare Tunnel.
 
@@ -90,6 +90,8 @@ See [Installation](#installation) for detailed setup instructions.
 | Gateway API CRDs | Standard channel (Gateway API v1.6.2) |
 
 The [prerequisites page](https://cf.k8s.lex.la/latest/getting-started/prerequisites/#compatibility) explains where each bound comes from.
+
+The conformance badge names the [report accepted upstream](https://github.com/kubernetes-sigs/gateway-api/tree/main/conformance/reports/v1.6/lexfrei-cloudflare-tunnel-gateway-controller): release v3.3.1, run with conformance suite v1.6.1. It moves when a newer report is accepted, not when the Gateway API version above changes.
 
 ## Prerequisites
 
