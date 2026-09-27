@@ -783,7 +783,7 @@ func (h *Handler) createReverseProxy(backendURL *url.URL, protocol BackendProtoc
 	return &httputil.ReverseProxy{
 		Rewrite: func(proxyReq *httputil.ProxyRequest) {
 			req := proxyReq.Out
-			restoreForwardingHeaders(proxyReq)
+			restoreForwardingHeaders(req.Header, proxyReq.In.Header, proxyReq.In.RemoteAddr)
 
 			// Upgrades are served only by proxyWebSocketUpgrade, for
 			// backends with WebSocket enabled; everything reaching
@@ -832,6 +832,14 @@ func (h *Handler) createReverseProxy(backendURL *url.URL, protocol BackendProtoc
 		Transport:    h.backendTransport(backendURL.Host, protocol, backendTLS, headerTimeout),
 		ErrorHandler: h.proxyErrorHandler(hostname),
 		ModifyResponse: func(resp *http.Response) error {
+			// Rewrite strips the upgrade, so a 101 here was never asked
+			// for. Failing it makes ReverseProxy close the switched
+			// connection, which its own upgrade-mismatch path leaves open,
+			// and still answer 502.
+			if resp.StatusCode == http.StatusSwitchingProtocols {
+				return errUnrequestedSwitch
+			}
+
 			ApplyResponseFilters(filters, resp)
 
 			return nil
@@ -839,27 +847,30 @@ func (h *Handler) createReverseProxy(backendURL *url.URL, protocol BackendProtoc
 	}
 }
 
+// errUnrequestedSwitch fails a 101 from a backend on the plain leg.
+var errUnrequestedSwitch = errors.New("backend switched protocols without an upgrade request")
+
 // restoreForwardingHeaders puts the inbound Forwarded / X-Forwarded-* headers
-// back on the outbound request and appends the immediate peer to
-// X-Forwarded-For. httputil.ReverseProxy strips all four from pr.Out before
+// from src on an outbound header dst and appends the immediate peer,
+// remoteAddr, to X-Forwarded-For. Every leg to a backend calls it after its
+// hop-by-hop pass, so a client naming these headers in Connection cannot strip
+// them. httputil.ReverseProxy strips all four from pr.Out before
 // calling Rewrite — anti-spoofing for proxies that mint their own values via
 // SetXForwarded. This proxy's upstream hop is the Cloudflare edge (or an
 // in-cluster hop), whose forwarding headers carry the real client IP and
 // scheme, so they must reach the backend intact. SetXForwarded is the wrong
 // tool here: it discards the inbound chain and invents X-Forwarded-Host/Proto
 // from the local request.
-func restoreForwardingHeaders(proxyReq *httputil.ProxyRequest) {
-	inHeader, outHeader := proxyReq.In.Header, proxyReq.Out.Header
-
+func restoreForwardingHeaders(dst, src http.Header, remoteAddr string) {
 	for _, name := range []string{headerForwarded, headerXFHost, headerXFProto} {
-		if vals := inHeader.Values(name); len(vals) > 0 {
-			outHeader[name] = slices.Clone(vals)
+		if vals := src.Values(name); len(vals) > 0 {
+			dst[name] = slices.Clone(vals)
 		}
 	}
 
-	xff := strings.Join(inHeader.Values(headerXFF), ", ")
+	xff := strings.Join(src.Values(headerXFF), ", ")
 
-	clientIP, _, err := net.SplitHostPort(proxyReq.In.RemoteAddr)
+	clientIP, _, err := net.SplitHostPort(remoteAddr)
 	if err == nil {
 		if xff != "" {
 			xff += ", "
@@ -869,7 +880,7 @@ func restoreForwardingHeaders(proxyReq *httputil.ProxyRequest) {
 	}
 
 	if xff != "" {
-		outHeader.Set(headerXFF, xff)
+		dst.Set(headerXFF, xff)
 	}
 }
 

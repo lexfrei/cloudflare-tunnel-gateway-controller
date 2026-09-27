@@ -704,6 +704,7 @@ func TestProxyDeployment_OptionalKnobs(t *testing.T) {
 	input.Config.Spec.AuthTokenSecretRef = &v1alpha1.LocalSecretReference{Name: "edge-auth"}
 	input.Defaults.TunnelProtocol = "http2"
 	input.Defaults.WSIdleTimeout = "6h"
+	input.Defaults.MirrorMaxInFlight = 256
 
 	deployment := render.ProxyDeployment(input)
 	container := deployment.Spec.Template.Spec.Containers[0]
@@ -727,6 +728,10 @@ func TestProxyDeployment_OptionalKnobs(t *testing.T) {
 	assert.Equal(t, "6h", envByName["PROXY_WS_IDLE_TIMEOUT"].Value,
 		"a Gateway with its own data plane must inherit the operator's idle bound; "+
 			"without it the plane carries the binary default with no way to raise it")
+
+	require.Contains(t, envByName, "PROXY_MIRROR_MAX_IN_FLIGHT")
+	assert.Equal(t, "256", envByName["PROXY_MIRROR_MAX_IN_FLIGHT"].Value,
+		"a Gateway with its own data plane must inherit the operator's mirror limit")
 }
 
 // TestProxyDeployment_NoWSIdleTimeoutEnvWhenUnset pins the other half: an
@@ -741,6 +746,8 @@ func TestProxyDeployment_NoWSIdleTimeoutEnvWhenUnset(t *testing.T) {
 	for _, env := range container.Env {
 		assert.NotEqual(t, "PROXY_WS_IDLE_TIMEOUT", env.Name,
 			"an unset bound must render no env var at all")
+		assert.NotEqual(t, "PROXY_MIRROR_MAX_IN_FLIGHT", env.Name,
+			"an unset mirror limit must render no env var at all")
 	}
 }
 

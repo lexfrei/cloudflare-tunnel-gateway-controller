@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"net/url"
 	"runtime/debug"
-	"slices"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -479,10 +478,10 @@ func (f *requestMirror) ProcessRequest(req *http.Request) *http.Response {
 	tmpl.Header.Del(originalHostHeader)
 	// The client's hop-by-hop headers describe its connection to this proxy,
 	// not the mirror leg's; the primary leg drops them too. Like the primary
-	// leg, put the forwarding headers back afterwards, so a client naming
-	// them in Connection cannot strip them.
+	// leg, set the forwarding headers afterwards, so a client naming them in
+	// Connection cannot strip them.
 	removeHopByHopHeaders(tmpl.Header)
-	restoreMirrorForwardingHeaders(tmpl.Header, req.Header)
+	restoreForwardingHeaders(tmpl.Header, req.Header, req.RemoteAddr)
 
 	// After Clone, req and the template share the same body reader. Give the
 	// primary leg its own independent reader from the buffered data; each
@@ -558,16 +557,6 @@ func removeHopByHopHeaders(header http.Header) {
 
 	if keepTrailers {
 		header.Set(headerTE, "trailers")
-	}
-}
-
-// restoreMirrorForwardingHeaders copies the forwarding headers from the
-// inbound request into the mirror copy's header after its hop-by-hop pass.
-func restoreMirrorForwardingHeaders(dst, src http.Header) {
-	for _, name := range []string{headerForwarded, headerXFF, headerXFHost, headerXFProto} {
-		if values := src.Values(name); len(values) > 0 {
-			dst[http.CanonicalHeaderKey(name)] = slices.Clone(values)
-		}
 	}
 }
 

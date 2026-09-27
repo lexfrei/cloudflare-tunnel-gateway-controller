@@ -78,6 +78,9 @@ func init() {
 	rootCmd.Flags().String("ws-idle-timeout", "",
 		"Idle bound on an established WebSocket session for per-Gateway data planes (Go duration). "+
 			"Empty leaves the proxy's own 1h default; the shared plane reads the same chart value directly.")
+	rootCmd.Flags().Int("mirror-max-in-flight", 0,
+		"Mirror dispatches each RequestMirror filter may keep in flight on per-Gateway data planes. "+
+			"0 or less leaves the proxy's own default of 64; the shared plane reads the same chart value directly.")
 	rootCmd.Flags().String("tunnel-protocol", "auto", "The proxy's configured edge transport (auto|http2|quic); used to warn when GRPCRoutes are present on an explicit quic tunnel, which cannot carry gRPC trailers (auto/unset is upgraded to http2 by the proxy).")
 
 	rootCmd.Flags().String("proxy-image", "", "Container image for per-Gateway rendered proxy Deployments (GatewayConfig data planes). Empty disables rendering defaults; the chart always sets it to the release's proxy image.")
@@ -196,6 +199,7 @@ func runController(_ *cobra.Command, _ []string) error {
 		ProxyTokenSecret:        viper.GetString("proxy-token-secret"),
 		ProxyDeploymentLabel:    viper.GetString("proxy-deployment-label"),
 		TunnelProtocol:          viper.GetString("tunnel-protocol"),
+		MirrorMaxInFlight:       viper.GetInt("mirror-max-in-flight"),
 		WSIdleTimeout:           viper.GetString("ws-idle-timeout"),
 		Tracing:                 tracingEnabled,
 

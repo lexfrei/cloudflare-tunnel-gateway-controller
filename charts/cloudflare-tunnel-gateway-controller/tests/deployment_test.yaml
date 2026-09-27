@@ -727,6 +727,26 @@ tests:
           path: spec.template.spec.containers[0].args[*]
           pattern: "^--ws-idle-timeout"
 
+  # Same shape as --ws-idle-timeout: the controller renders the value onto
+  # per-Gateway data planes.
+  - it: should pass --mirror-max-in-flight to the controller
+    set:
+      proxy:
+        mirror:
+          maxInFlight: 1000000
+    asserts:
+      - template: deployment.yaml
+        contains:
+          path: spec.template.spec.containers[0].args
+          content: "--mirror-max-in-flight=1000000"
+
+  - it: should NOT pass --mirror-max-in-flight when the value is 0
+    asserts:
+      - template: deployment.yaml
+        notMatchRegex:
+          path: spec.template.spec.containers[0].args[*]
+          pattern: "^--mirror-max-in-flight"
+
   - it: should NOT set any --tracing-* arg when tracing disabled (default)
     asserts:
       - template: deployment.yaml

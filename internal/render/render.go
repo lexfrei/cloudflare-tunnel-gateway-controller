@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"maps"
+	"strconv"
 	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -99,6 +100,10 @@ type Defaults struct {
 	// env; GatewayConfig has no timeout field, so this is the only route by
 	// which the value reaches a per-Gateway plane.
 	WSIdleTimeout string
+	// MirrorMaxInFlight is the per-filter mirror dispatch limit
+	// (--mirror-max-in-flight). Zero or less leaves the proxy binary's own
+	// default and is not rendered.
+	MirrorMaxInFlight int
 }
 
 // NetworkPolicyInput carries the controller-level config the per-Gateway
@@ -398,6 +403,10 @@ func proxyEnv(input *Input) []corev1.EnvVar {
 
 	if idle := input.Defaults.WSIdleTimeout; idle != "" {
 		env = append(env, corev1.EnvVar{Name: "PROXY_WS_IDLE_TIMEOUT", Value: idle})
+	}
+
+	if limit := input.Defaults.MirrorMaxInFlight; limit > 0 {
+		env = append(env, corev1.EnvVar{Name: "PROXY_MIRROR_MAX_IN_FLIGHT", Value: strconv.Itoa(limit)})
 	}
 
 	return env
