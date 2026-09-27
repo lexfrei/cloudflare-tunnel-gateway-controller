@@ -739,7 +739,7 @@ func (r *GatewayInfraReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Watches(
 			&v1alpha1.GatewayClassConfig{},
 			handler.EnqueueRequestsFromMapFunc(r.classConfigInfraGateways),
-			builder.WithPredicates(infraClassConfigPredicates()...),
+			builder.WithPredicates(classConfigWatchPredicates()...),
 		).
 		Watches(
 			&v1alpha1.GatewayConfig{},
@@ -814,9 +814,10 @@ func optedInGatewaysInNamespace(
 	return requests
 }
 
-// infraClassConfigPredicates gates the GatewayClassConfig watch. The cap and
-// the class tunnel live in spec, so a status write has nothing to re-render.
-func infraClassConfigPredicates() []predicate.Predicate {
+// classConfigWatchPredicates gates both Gateway-typed controllers'
+// GatewayClassConfig watches. Everything they read from it lives in spec, so a
+// status write has nothing to change.
+func classConfigWatchPredicates() []predicate.Predicate {
 	return []predicate.Predicate{predicate.GenerationChangedPredicate{}}
 }
 

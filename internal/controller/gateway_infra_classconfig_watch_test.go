@@ -64,7 +64,7 @@ func TestGatewayInfraReconciler_ClassConfigWatchUpdate(t *testing.T) {
 
 			passed := true
 
-			for _, pred := range infraClassConfigPredicates() {
+			for _, pred := range classConfigWatchPredicates() {
 				passed = passed && pred.Update(updateEvent)
 			}
 
