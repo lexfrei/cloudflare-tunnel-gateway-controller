@@ -878,8 +878,8 @@ func (r *GatewayInfraReconciler) classConfigInfraGateways(
 
 // dedicatedPlaneRefused reports whether this Gateway may not have a dedicated
 // data plane: because it claims a tunnel belonging to another namespace or to
-// the GatewayClass, or because its namespace already holds as many planes as
-// the operator allows.
+// the GatewayClass, because Cloudflare does not confirm its claim, or because
+// its namespace already holds as many planes as the operator allows.
 //
 // Both run the same decision over the same shared claim set as the route
 // partitioner and the Gateway reconciler, so all three agree. An error here

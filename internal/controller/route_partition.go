@@ -224,6 +224,19 @@ func rejectionHolderSuffix(rejection tunnelownership.Rejection) string {
 	return " (it is already in use)"
 }
 
+// unprovenClaimRouteMessage is the route-status twin of tunnelRejectionMessage
+// for a claim Cloudflare did not confirm.
+func unprovenClaimRouteMessage(rejection tunnelownership.Rejection) string {
+	const tail = "; the route is not programmed (see the Gateway's Accepted condition)"
+
+	if rejection.Proof == tunnelownership.ProofUnknown {
+		return "the Gateway's claim on tunnel " + rejection.TunnelID +
+			" could not be checked with Cloudflare yet and is retried" + tail
+	}
+
+	return "Cloudflare did not confirm the Gateway's claim on tunnel " + rejection.TunnelID + tail
+}
+
 // transientKeys returns the sorted Gateway keys whose resolve failure was
 // transient (retryable). Nil-safe.
 func (g *infraGateways) transientKeys() []string {

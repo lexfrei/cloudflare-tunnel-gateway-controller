@@ -423,7 +423,8 @@ func isRefusalReported(gateway *gatewayv1.Gateway, message string) bool {
 }
 
 // eventReasonTunnelClaimRejected names the Warning Event raised when a
-// Gateway's connector token claims a tunnel it does not own.
+// Gateway claims a tunnel it does not own, or one Cloudflare does not confirm
+// its connector token holds.
 const eventReasonTunnelClaimRejected = "TunnelClaimRejected"
 
 // reasonDataPlaneQuotaExceeded names both the Accepted=False reason and the
@@ -474,7 +475,8 @@ func (r *GatewayReconciler) reportTunnelRejection(
 		logger.Error(err, "refusing a Gateway that claims a tunnel it does not own",
 			"gateway", gateway.Namespace+"/"+gateway.Name,
 			"tunnel", rejection.TunnelID,
-			"heldBy", rejection.HeldBy)
+			"heldBy", rejection.HeldBy,
+			"unproven", rejection.Unproven)
 
 		if r.Recorder != nil {
 			r.Recorder.Eventf(gateway, nil, corev1.EventTypeWarning,
@@ -522,6 +524,19 @@ func tunnelRefusalError(rejection tunnelownership.Rejection) error {
 // carries while its token is still unreadable. Naming the token would then
 // accuse it of saying something it never said.
 func tunnelRejectionMessage(rejection tunnelownership.Rejection) string {
+	// An unproven claim names only the tunnel, and says nothing about why
+	// Cloudflare refused it: telling a missing tunnel from a mismatched secret
+	// would tell the tenant which tunnel UUIDs exist in the account.
+	if rejection.Unproven {
+		if rejection.Proof == tunnelownership.ProofUnknown {
+			return "this Gateway's claim on tunnel " + rejection.TunnelID +
+				" could not be checked with Cloudflare yet; the check is retried automatically"
+		}
+
+		return "Cloudflare did not confirm that this Gateway's connector token holds tunnel " +
+			rejection.TunnelID + "; use the tunnel's current token, and an API credential that can edit the tunnel"
+	}
+
 	if rejection.IsClassTunnel {
 		return "this Gateway claims the GatewayClass tunnel " + rejection.TunnelID +
 			", which serves every Gateway without a dedicated data plane; " +
@@ -534,7 +549,7 @@ func tunnelRejectionMessage(rejection tunnelownership.Rejection) string {
 }
 
 // tunnelRejection reports whether this Gateway's claimed tunnel belongs to
-// someone else. It runs the same arbitration as the route syncer over the same
+// someone else, or is not confirmed by Cloudflare. It runs the same arbitration as the route syncer over the same
 // inputs, so status and programming cannot disagree about who won.
 func (r *GatewayReconciler) tunnelRejection(
 	ctx context.Context,
