@@ -118,10 +118,12 @@ func (v *Verifier) Verify(ctx context.Context, apiToken string, token *tunnel.To
 	return next.proof
 }
 
-// store records an entry and drops every other entry that is due to be asked
-// again and holds no confirmation. That is what bounds the cache: a tenant
-// cycling made-up secrets leaves only entries that expire, while a
-// confirmation needs the tunnel's real secret to create.
+// store records an entry and drops the entries nothing needs any more, which
+// is what bounds the cache: anything unconfirmed once it is due to be asked
+// again, and a confirmation once nobody has asked about it for a whole
+// lifetime past its lapse. A claim in use is asked about at least every
+// RecheckInterval, so its confirmation is renewed long before that; a tenant
+// cycling made-up secrets leaves only entries that expire.
 func (v *Verifier) store(key [sha256.Size]byte, next entry) {
 	now := v.now()
 
@@ -129,7 +131,12 @@ func (v *Verifier) store(key [sha256.Size]byte, next entry) {
 	defer v.mu.Unlock()
 
 	for existing, cached := range v.cache {
-		if cached.proof != tunnelownership.ProofVerified && !now.Before(cached.askAfter) {
+		dropAt := cached.askAfter
+		if cached.proof == tunnelownership.ProofVerified {
+			dropAt = dropAt.Add(verifiedTTL)
+		}
+
+		if !now.Before(dropAt) {
 			delete(v.cache, existing)
 		}
 	}
@@ -145,6 +152,13 @@ func (v *Verifier) ask(ctx context.Context, apiToken string, token *tunnel.Token
 	}
 
 	logger := log.FromContext(ctx).WithValues("tunnel", token.TunnelID.String())
+
+	// The tag goes into the request, so only an account ID may reach it.
+	if !tunnel.IsAccountTag(token.AccountTag) {
+		logger.Info("a tunnel claim's connector token carries an account tag that is not a Cloudflare account ID")
+
+		return tunnelownership.ProofRefuted
+	}
 
 	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
 	defer cancel()

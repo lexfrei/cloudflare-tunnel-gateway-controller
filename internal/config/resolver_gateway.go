@@ -96,6 +96,27 @@ func (r *Resolver) ResolveForGateway(
 	return base, nil
 }
 
+// parseGatewayTunnelToken parses a per-Gateway connector token and checks that
+// its account tag is a Cloudflare account ID. The tag is copied into Cloudflare
+// API requests — the claim check and the tunnel-document write — and the
+// tenant writes it, so anything else is refused before either request is made.
+// Neither error quotes the token: it reaches the tenant-readable status.
+func parseGatewayTunnelToken(token string, secretName types.NamespacedName) (*tunnel.Token, error) {
+	parsed, err := tunnel.ParseTunnelToken(token)
+	if err != nil {
+		return nil, errors.Wrapf(ErrInvalidParameters,
+			"tunnel token in secret %s/%s does not parse: %v", secretName.Namespace, secretName.Name, err)
+	}
+
+	if !tunnel.IsAccountTag(parsed.AccountTag) {
+		return nil, errors.Wrapf(ErrInvalidParameters,
+			"tunnel token in secret %s/%s has an account tag that is not a Cloudflare account ID",
+			secretName.Namespace, secretName.Name)
+	}
+
+	return parsed, nil
+}
+
 // ResolveStatusConfigForGateway resolves everything the Gateway STATUS path
 // needs — the ResolvedConfig (tunnel identity + API token), the source
 // GatewayConfig, and the connector token — but NOT the config-API auth token.
@@ -133,10 +154,9 @@ func (r *Resolver) resolveStatusConfig(
 		return nil, err
 	}
 
-	parsed, err := tunnel.ParseTunnelToken(token)
+	parsed, err := parseGatewayTunnelToken(token, tokenSecretName)
 	if err != nil {
-		return nil, errors.Wrapf(ErrInvalidParameters,
-			"tunnel token in secret %s/%s does not parse: %v", gateway.Namespace, tokenSecretName.Name, err)
+		return nil, err
 	}
 
 	apiToken, err := r.resolveGatewayAPIToken(ctx, gateway, gwConfig)
@@ -196,10 +216,9 @@ func (r *Resolver) ResolveTunnelClaimForGateway(
 		return nil, err
 	}
 
-	parsed, err := tunnel.ParseTunnelToken(token)
+	parsed, err := parseGatewayTunnelToken(token, tokenSecretName)
 	if err != nil {
-		return nil, errors.Wrapf(ErrInvalidParameters,
-			"tunnel token in secret %s/%s does not parse: %v", gateway.Namespace, tokenSecretName.Name, err)
+		return nil, err
 	}
 
 	claim := &TunnelClaim{TunnelID: parsed.TunnelID.String(), Proof: tunnelownership.ProofUnknown}
