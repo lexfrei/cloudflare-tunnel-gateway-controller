@@ -337,7 +337,10 @@ jobs:
     runs-on: ubuntu-latest
     needs: build-and-push
     timeout-minutes: 20
+    # The two legs are independent, and whether both fail the same way is the
+    # first thing to know when one does.
     strategy:
+      fail-fast: false
       matrix:
         include:
           - component: controller
