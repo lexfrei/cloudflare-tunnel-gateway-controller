@@ -229,7 +229,8 @@ podDisruptionBudget:
   # Must not be used together with maxUnavailable
   minAvailable: 1
   # -- Maximum number of unavailable pods during disruptions
-  # Must not be used together with minAvailable
+  # Must not be used together with minAvailable: to use it, set minAvailable
+  # to null, or the render fails
   maxUnavailable: null
   # -- Policy for evicting unhealthy pods (IfHealthyBudget, AlwaysAllow)
   # Requires Kubernetes 1.26+

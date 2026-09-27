@@ -290,7 +290,7 @@ spec:
 | podAnnotations | object | `{}` | Annotations to add to pods |
 | podDisruptionBudget | object | `{"enabled":false,"maxUnavailable":null,"minAvailable":1,"unhealthyPodEvictionPolicy":"IfHealthyBudget"}` | PodDisruptionBudget for the controller pods. The proxy has its own under proxy.podDisruptionBudget. |
 | podDisruptionBudget.enabled | bool | `false` | Enable PodDisruptionBudget |
-| podDisruptionBudget.maxUnavailable | string | `nil` | Maximum number of unavailable pods during disruptions Must not be used together with minAvailable |
+| podDisruptionBudget.maxUnavailable | string | `nil` | Maximum number of unavailable pods during disruptions Must not be used together with minAvailable: to use it, set minAvailable to null, or the render fails |
 | podDisruptionBudget.minAvailable | int | `1` | Minimum number of available pods during disruptions Must not be used together with maxUnavailable |
 | podDisruptionBudget.unhealthyPodEvictionPolicy | string | `"IfHealthyBudget"` | Policy for evicting unhealthy pods (IfHealthyBudget, AlwaysAllow) Requires Kubernetes 1.26+ |
 | podLabels | object | `{}` | Additional labels to add to pods |
