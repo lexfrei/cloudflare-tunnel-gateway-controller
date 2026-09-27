@@ -567,7 +567,7 @@
           "properties": {
             "from": {
               "type": "array",
-              "description": "Allow ingress from specific namespaces/pods"
+              "description": "Sources admitted to the controller's metrics and health ports; empty admits no in-cluster source"
             }
           }
         },

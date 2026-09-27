@@ -265,7 +265,12 @@ networkPolicy:
   enabled: false
   # -- Ingress source configuration
   ingress:
-    # -- Allow ingress from specific namespaces/pods
+    # -- Sources admitted to the controller's metrics and health ports.
+    # EMPTY (the default) admits no in-cluster source, so Prometheus cannot
+    # scrape the controller until it is listed here. Kubelet probes come from
+    # the node, which most CNIs admit regardless of policy; on a CNI that
+    # enforces policy on node-to-pod traffic, list the node source here too
+    # (for example an ipBlock for the node CIDR) or the probes fail.
     # Example for monitoring namespace:
     #   from:
     #     - namespaceSelector:
