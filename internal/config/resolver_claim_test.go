@@ -2,6 +2,8 @@ package config_test
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"sync"
 	"testing"
 
@@ -149,4 +151,50 @@ func TestResolveTunnelClaimForGateway_UnreadableTokenIsAnError(t *testing.T) {
 		gatewayWithInfra("cf.k8s.lex.la", "GatewayConfig", "edge-config"))
 	require.Error(t, err)
 	assert.Empty(t, verifier.apiTokens)
+}
+
+// TestResolveTunnelClaimForGateway_AccountTagMustBeAnAccountID pins that a
+// connector token whose account tag is not a Cloudflare account ID is refused
+// before it is used anywhere. The tag is copied into Cloudflare API requests —
+// the claim check and the tunnel-document write — so it must be exactly the
+// identifier those requests expect, and the tenant writes it.
+func TestResolveTunnelClaimForGateway_AccountTagMustBeAnAccountID(t *testing.T) {
+	t.Parallel()
+
+	for _, tag := range []string{
+		"abc123",
+		"abcdef0123456789abcdef0123456789/x",
+		"abcdef0123456789abcdef012345678?",
+		"abcdef0123456789abcdef0123456789abcdef",
+		"ghijkl0123456789abcdef0123456789",
+	} {
+		t.Run(tag, func(t *testing.T) {
+			t.Parallel()
+
+			payload, err := json.Marshal(map[string]any{
+				"a": tag,
+				"s": base64.StdEncoding.EncodeToString([]byte("tunnel-secret")),
+				"t": testTunnelUUID,
+			})
+			require.NoError(t, err)
+
+			secret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: "edge-tunnel-token", Namespace: testGwNamespace},
+				Data:       map[string][]byte{"tunnel-token": []byte(base64.StdEncoding.EncodeToString(payload))},
+			}
+
+			verifier := &recordingVerifier{proof: tunnelownership.ProofVerified}
+			objects := append(classFixtures(), claimGatewayConfig(nil), secret, generatedAuthSecret())
+			resolver := newClaimResolver(t, verifier, objects...)
+			gateway := gatewayWithInfra("cf.k8s.lex.la", "GatewayConfig", "edge-config")
+
+			_, err = resolver.ResolveTunnelClaimForGateway(context.Background(), gateway)
+			require.ErrorIs(t, err, config.ErrInvalidParameters)
+			assert.Empty(t, verifier.apiTokens, "a malformed tag must never reach the Cloudflare API")
+
+			_, err = resolver.ResolveForGateway(context.Background(), gateway)
+			require.ErrorIs(t, err, config.ErrInvalidParameters,
+				"the tunnel-document write reads the same tag, so it must refuse it too")
+		})
+	}
 }

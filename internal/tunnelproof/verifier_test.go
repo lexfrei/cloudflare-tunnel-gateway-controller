@@ -404,3 +404,99 @@ func TestVerify_KeyCoversTheIdentity(t *testing.T) {
 	other := encodeToken(t, testAccount, uuid.MustParse("33333333-3333-3333-3333-333333333333").String(), realSecret)
 	assert.Equal(t, tunnelownership.ProofRefuted, verifier.Verify(context.Background(), testAPIKey, parse(t, other)))
 }
+
+// TestVerify_IdentityMustMatchNotJustTheSecret pins the account and tunnel half
+// of the comparison: Cloudflare answering with a token for a different account
+// or tunnel is a refutation even when the secret bytes happen to match.
+func TestVerify_IdentityMustMatchNotJustTheSecret(t *testing.T) {
+	t.Parallel()
+
+	for name, issued := range map[string][2]string{
+		"other account": {"fedcba9876543210fedcba9876543210", testTunnel},
+		"other tunnel":  {testAccount, "33333333-3333-3333-3333-333333333333"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			claimant := encodeToken(t, testAccount, testTunnel, realSecret)
+			api := newFakeTokenAPI(t, claimant)
+			api.token.Store(encodeToken(t, issued[0], issued[1], realSecret))
+
+			proof := newVerifier(t, api, nil).Verify(context.Background(), testAPIKey, parse(t, claimant))
+			assert.Equal(t, tunnelownership.ProofRefuted, proof)
+		})
+	}
+}
+
+func TestVerify_StatusCodesThatDecideAndThatDoNot(t *testing.T) {
+	t.Parallel()
+
+	for status, want := range map[int]tunnelownership.Proof{
+		http.StatusBadRequest:     tunnelownership.ProofRefuted,
+		http.StatusRequestTimeout: tunnelownership.ProofUnknown,
+	} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			t.Parallel()
+
+			genuine := encodeToken(t, testAccount, testTunnel, realSecret)
+			api := newFakeTokenAPI(t, genuine)
+			api.status.Store(int32(status))
+
+			assert.Equal(t, want, newVerifier(t, api, nil).Verify(context.Background(), testAPIKey, parse(t, genuine)))
+		})
+	}
+}
+
+func TestVerify_UnparsableIssuedTokenDecidesNothing(t *testing.T) {
+	t.Parallel()
+
+	genuine := encodeToken(t, testAccount, testTunnel, realSecret)
+	api := newFakeTokenAPI(t, genuine)
+	api.token.Store("not a connector token")
+
+	assert.Equal(t, tunnelownership.ProofUnknown,
+		newVerifier(t, api, nil).Verify(context.Background(), testAPIKey, parse(t, genuine)))
+}
+
+// TestVerify_MalformedAccountTagNeverReachesTheAPI pins the verifier's own
+// guard: the tag is copied into the request, so a tag that is not an account
+// ID is refuted without asking.
+func TestVerify_MalformedAccountTagNeverReachesTheAPI(t *testing.T) {
+	t.Parallel()
+
+	api := newFakeTokenAPI(t, encodeToken(t, testAccount, testTunnel, realSecret))
+	token := &tunnel.Token{
+		AccountTag:   testAccount + "/x?",
+		TunnelID:     uuid.MustParse(testTunnel),
+		TunnelSecret: realSecret,
+	}
+
+	assert.Equal(t, tunnelownership.ProofRefuted, newVerifier(t, api, nil).Verify(context.Background(), testAPIKey, token))
+	assert.Zero(t, api.calls.Load())
+}
+
+// TestVerify_CacheDropsWhatNoLongerNeedsKeeping pins what bounds the cache: an
+// expired refutation goes, and so does a confirmation nobody has asked about
+// for a whole confirmation lifetime after it lapsed, while a confirmation in
+// use stays.
+func TestVerify_CacheDropsWhatNoLongerNeedsKeeping(t *testing.T) {
+	t.Parallel()
+
+	genuine := encodeToken(t, testAccount, testTunnel, realSecret)
+	forged := encodeToken(t, testAccount, testTunnel, forgeSecret)
+	api := newFakeTokenAPI(t, genuine)
+	clk := &clock{now: time.Unix(1_000_000, 0)}
+	verifier := newVerifier(t, api, clk)
+
+	require.Equal(t, tunnelownership.ProofRefuted, verifier.Verify(context.Background(), testAPIKey, parse(t, forged)))
+	require.Equal(t, tunnelownership.ProofVerified, verifier.Verify(context.Background(), "idle-credential", parse(t, genuine)))
+	require.Len(t, verifier.CacheKeys(), 2)
+
+	clk.now = clk.now.Add(10 * time.Minute)
+	require.Equal(t, tunnelownership.ProofVerified, verifier.Verify(context.Background(), testAPIKey, parse(t, genuine)))
+	assert.Len(t, verifier.CacheKeys(), 2, "the expired refutation must go; both confirmations stay")
+
+	clk.now = clk.now.Add(3 * time.Hour)
+	require.Equal(t, tunnelownership.ProofVerified, verifier.Verify(context.Background(), testAPIKey, parse(t, genuine)))
+	assert.Len(t, verifier.CacheKeys(), 1, "a confirmation unused for a lifetime past its lapse must go")
+}
