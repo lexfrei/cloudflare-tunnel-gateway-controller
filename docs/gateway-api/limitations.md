@@ -115,7 +115,7 @@ A dedicated data plane removes the shared fate: it writes its own tunnel documen
 
 A Gateway with its own data plane is accepted only after the Cloudflare API confirms that its connector token holds the tunnel it names: the controller fetches that tunnel's token with the API credential that will write the tunnel's configuration, and compares the secrets. A token with an edited tunnel UUID, or one for a tunnel whose secret has since been rotated, is refused with `Accepted=False` / `InvalidParameters`, and no data plane is rendered. An API credential that Cloudflare rejects counts as an outage, not a refusal.
 
-This ties dedicated planes to the Cloudflare API's availability. While the API cannot be reached, a Gateway created in that window stays `Accepted=False` and is retried until the check can run. A Gateway already serving its tunnel is not affected: it keeps the tunnel for the length of the outage. The [Per-Gateway Isolation guide](../guides/per-gateway-isolation.md#proving-a-tunnel-claim) covers the cache and what the outage fallback trusts.
+This ties dedicated planes to the Cloudflare API's availability. While the API cannot be reached, a Gateway created in that window stays `Accepted=False` and is retried until the check can run. A Gateway already serving its tunnel is not affected: it keeps the tunnel for the length of the outage, unless another namespace's claim on the same tunnel is confirmed. The [Per-Gateway Isolation guide](../guides/per-gateway-isolation.md#proving-a-tunnel-claim) covers the cache and what the outage fallback trusts.
 
 ## SSL Certificate Limitations
 
