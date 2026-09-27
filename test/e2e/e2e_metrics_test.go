@@ -59,8 +59,11 @@ func TestProxyMetricsEndpoint(t *testing.T) {
 	// snapshot, or the test flakes on whichever replica answered last.
 	err := wait.PollUntilContextTimeout(ctx, 2*time.Second, 60*time.Second, true,
 		func(pollCtx context.Context) (bool, error) {
+			// The chart serves the config API port, /metrics included, over
+			// TLS by default. The API server's service proxy does not verify
+			// the backend certificate, which the controller's CA would need.
 			raw, getErr := clientset.CoreV1().Services(cfg.Namespace).
-				ProxyGet("http", serviceName, "config-api", "/metrics", nil).
+				ProxyGet("https", serviceName, "config-api", "/metrics", nil).
 				DoRaw(pollCtx)
 			if getErr != nil {
 				return false, nil //nolint:nilerr // transient proxy/API errors while polling
