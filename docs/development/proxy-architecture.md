@@ -158,7 +158,7 @@ When the proxy runs in in-process mode (production default), the `http.ResponseW
 
 | Behaviour | `httptest.NewServer` (HTTP/1.1) | `cloudflared.connection.http2RespWriter` |
 | --- | --- | --- |
-| `Hijack` before `WriteHeader` | Succeeds — returns the raw TCP conn | **Fails** with `status not yet written before attempting to hijack connection` |
+| `Hijack` before `WriteHeader` | Succeeds — returns the raw TCP conn | **Fails** with `status not yet written before attempting to hijack connection`. The QUIC writer, `httpResponseAdapter` (`connection/quic_connection.go`), has no such precondition and hands out the stream either way |
 | `WriteHeader(101)` on the wire | `HTTP/1.1 101 Switching Protocols` literal | Translated to status 200 (HTTP/2 has no 1xx); the Cloudflare edge unpacks the 200 back to 101 for HTTP/1.1 clients on the wire (verified empirically by the WebSocket round-trip — the edge translation itself lives in closed-source Cloudflare code) |
 | Headers wire format | RFC 7230 ASCII | Serialised into a single `cf-cloudflared-response-headers` blob the edge unpacks (`vendor/github.com/cloudflare/cloudflared/connection/header.go` `ResponseUserHeaders`) |
 | The conn `Hijack` returns | The raw TCP conn — deadlines and `Close` both act on the socket | A `localProxyConnection` (`connection/connection.go`) whose `SetDeadline`, `SetReadDeadline` and `SetWriteDeadline` are no-ops returning nil, wrapping a writer whose `Close` returns nil as well. There is no socket on that side: the bytes ride the HTTP/2 or QUIC stream back to the edge |
@@ -167,6 +167,7 @@ Practical consequences:
 
 - `httputil.ReverseProxy.handleUpgradeResponse` calls `Hijack` BEFORE `WriteHeader`. Over HTTP/2 that fails; `ReverseProxy`'s default error handler then writes 502 and the client sees a 502 (or a Cloudflare edge-rewritten 403). This is the bug that motivated the custom `proxyWebSocketUpgrade` path in `handler_websocket.go`.
 - Writing a status, hijacking, and bidirectionally piping bytes is the correct shape for WebSocket and any future upgrade flow over the tunnel; do NOT route them through `httputil.ReverseProxy`.
+- A request to a backend without WebSocket enabled goes through `httputil.ReverseProxy` even when it asks for an upgrade, and that path does not forward the upgrade: its `Rewrite` drops `Upgrade` and `Connection: Upgrade`, so the backend receives a plain HTTP request. Forwarding them would let a backend answer 101 and leave the outcome to the transport: HTTP/2 refuses the hijack and the client gets a 502, while QUIC allows it and the raw 101 is written to the stream before any response metadata reaches the edge. If a backend answers 101 to the plain request anyway, the client gets a 502 on both transports, because `ReverseProxy` rejects a protocol switch the outbound request did not ask for before it hijacks anything.
 
 ### Panic containment
 
@@ -189,6 +190,7 @@ Any proxy code that reads, writes, or hijacks the response MUST be covered by a 
 - `WriteHeader(101)` is recorded as 200.
 - `WriteHeader` after `Hijack` is a silent no-op (mirroring cloudflared's warn-and-return).
 - Second `Hijack` returns `http.ErrHijacked`.
+- `newFakeCloudflaredQUICRespWriter` returns the same fake with the QUIC `Hijack`, which skips the status precondition. Use it for any path where hijacking without a status would be a defect, since the HTTP/2 fake turns that defect into a 502 instead of exposing it.
 - The conn handed out post-101 ignores deadlines and `Close`, so anything the proxy tries to enforce through the client side is dropped. This is why the WebSocket idle bound in `handler_websocket.go` is actuated on the backend conn: it is the only end of the session that is always a real socket.
 
 Use the fake from the start of design — not as a last-mile add-on during local CI gates. If a test passes against `httptest.NewServer` and you have no fake-fixture coverage of the same code path, treat the green test as inconclusive for production behaviour.
@@ -199,7 +201,7 @@ When bumping the `lexfrei/cloudflared` fork (see CLAUDE.md `Cloudflared Fork`), 
 
 Fix-up points to re-verify on every cloudflared rebase — at least one per contract row in the table above, in the same order:
 
-- **Hijack precondition** — `fakeCloudflaredRespWriter.Hijack` and the `errFakeStatusNotWritten` constant in `internal/proxy/handler_tunnelfake_test.go`. The fake's error message is pinned to the snapshot of cloudflared at fake-authoring time; if upstream renames the message, update both the constant and any assertion that string-matches against it.
+- **Hijack precondition** — `fakeCloudflaredRespWriter.Hijack`, its `unconditionalHijack` QUIC mode (re-check `httpResponseAdapter.Hijack` in `connection/quic_connection.go`), and the `errFakeStatusNotWritten` constant in `internal/proxy/handler_tunnelfake_test.go`. The fake's error message is pinned to the snapshot of cloudflared at fake-authoring time; if upstream renames the message, update both the constant and any assertion that string-matches against it.
 - **101 → 200 translation** — `fakeCloudflaredRespWriter.WriteHeader` mirrors `cloudflared.connection.http2RespWriter.WriteRespHeaders`. Both must keep collapsing `http.StatusSwitchingProtocols` to `http.StatusOK`; if cloudflared changes the translation rule (e.g. adds a different sentinel for Extended CONNECT WebSocket), update the fake to match.
 - **WriteHeader after Hijack** — the silent-no-op branch in the fake's `WriteHeader` (cloudflared logs a warning and returns; the fake drops the warning). Re-verify the upstream still no-ops; if it starts panicking or writing a second status, mirror the new behaviour.
 - **Second `Hijack` returns `ErrHijacked`** — the fake's `hijacked` flag short-circuits with the stdlib `http.ErrHijacked` sentinel. Re-verify cloudflared still returns the same sentinel (and not a custom error) for the second-call case.
