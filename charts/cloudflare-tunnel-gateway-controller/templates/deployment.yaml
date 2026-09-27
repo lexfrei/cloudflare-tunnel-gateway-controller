@@ -54,7 +54,10 @@ spec:
             - "--health-addr=:{{ .Values.service.healthPort }}"
             - "--log-level={{ .Values.controller.logLevel }}"
             - "--log-format={{ .Values.controller.logFormat }}"
-            - "--proxy-endpoints=http://{{ include "cf-tunnel-gw-ctrl.proxyHeadlessName" . }}.{{ .Release.Namespace }}.svc.{{ .Values.controller.clusterDomain | default "cluster.local" }}:{{ .Values.proxy.configAPIPort }}/config"
+            # Ends at ".svc": the controller appends the cluster domain it
+            # resolved (--cluster-domain, else auto-detected), the same one it
+            # uses for per-Gateway planes.
+            - "--proxy-endpoints=http://{{ include "cf-tunnel-gw-ctrl.proxyHeadlessName" . }}.{{ .Release.Namespace }}.svc:{{ .Values.proxy.configAPIPort }}/config"
             # Image for per-Gateway rendered proxy Deployments (GatewayConfig
             # data planes); always the release's proxy image.
             - "--proxy-image={{ include "cf-tunnel-gw-ctrl.imageRef" (dict "image" .Values.proxy.image "appVersion" .Chart.AppVersion) }}"

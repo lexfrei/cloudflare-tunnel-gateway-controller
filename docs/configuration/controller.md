@@ -7,7 +7,7 @@ This document describes all configuration options for the controller binary. For
 | Flag | Environment Variable | Default | Description |
 |------|---------------------|---------|-------------|
 | `--controller-name` | `CF_CONTROLLER_NAME` | `cf.k8s.lex.la/tunnel-controller` | Controller name matching GatewayClass spec.controllerName |
-| `--cluster-domain` | `CF_CLUSTER_DOMAIN` | (auto-detect) | Kubernetes cluster domain |
+| `--cluster-domain` | `CF_CLUSTER_DOMAIN` | (auto-detect) | Kubernetes cluster domain. Also appended to any `--proxy-endpoints` host ending in `.svc` |
 | `--metrics-addr` | `CF_METRICS_ADDR` | `:8080` | Metrics endpoint address |
 | `--health-addr` | `CF_HEALTH_ADDR` | `:8081` | Health probe endpoint address |
 | `--log-level` | `CF_LOG_LEVEL` | `info` | Log level (debug, info, warn, error) |
@@ -15,7 +15,7 @@ This document describes all configuration options for the controller binary. For
 | `--leader-elect` | `CF_LEADER_ELECT` | `false` | Enable leader election for HA |
 | `--leader-election-namespace` | `CF_LEADER_ELECTION_NAMESPACE` | | Namespace for leader election lease |
 | `--leader-election-name` | `CF_LEADER_ELECTION_NAME` | `cloudflare-tunnel-gateway-controller-leader` | Leader election lease name |
-| `--proxy-endpoints` | `CF_PROXY_ENDPOINTS` | | Proxy config API endpoints for L7 proxy sync (required in v3) |
+| `--proxy-endpoints` | `CF_PROXY_ENDPOINTS` | | Proxy config API endpoints for L7 proxy sync (required in v3). A host ending in `.svc` gets the resolved cluster domain appended, which is how the chart passes the proxy's headless Service |
 | `--proxy-auth-token` | `CF_PROXY_AUTH_TOKEN` | | Bearer token for proxy config push authentication, as a direct value. For callers outside the chart only -- the chart always sets `--proxy-auth-secret-ref` instead, for both the bring-your-own and generated cases. Overridden by `--proxy-auth-secret-ref` when both are set |
 | `--proxy-auth-secret-ref` | `CF_PROXY_AUTH_SECRET_REF` | | Shared-proxy config-API auth-token Secret to resolve, in `<namespace>/<name>` form, and use for the controller's own push auth. Resolved directly via the API, not a pod-level `secretKeyRef` (which the controller creating its own dependency would deadlock on). The single mechanism the chart uses for both the bring-your-own and generated cases; combine with `--proxy-auth-secret-generate` |
 | `--proxy-auth-secret-key` | `CF_PROXY_AUTH_SECRET_KEY` | `auth-token` | Data key to read within the `--proxy-auth-secret-ref` Secret |

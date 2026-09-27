@@ -55,7 +55,8 @@ controller:
   gatewayClassName: "cloudflare-tunnel"
   # -- Value for GatewayClass spec.controllerName — this is how the controller discovers its GatewayClasses (must be unique per controller instance)
   controllerName: "cf.k8s.lex.la/tunnel-controller"
-  # -- Kubernetes cluster domain for service DNS resolution
+  # -- Kubernetes cluster domain for service DNS resolution, including the
+  # proxy config-push URLs
   # @default -- auto-detected from /etc/resolv.conf, fallback: cluster.local
   clusterDomain: ""
   # -- Log level (debug, info, warn, error)

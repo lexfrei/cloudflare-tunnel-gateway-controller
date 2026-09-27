@@ -3,6 +3,8 @@ package controller
 import (
 	"context"
 	"log/slog"
+	"net"
+	"net/url"
 	"os"
 	"strings"
 
@@ -229,6 +231,8 @@ func Run(ctx context.Context, cfg *Config) error {
 	if len(proxyEndpoints) == 0 {
 		return errors.New("--proxy-endpoints is required: v3 controller cannot run without a configured L7 proxy data plane")
 	}
+
+	proxyEndpoints = qualifyProxyEndpoints(proxyEndpoints, cfg.ClusterDomain)
 
 	mgrOptions := ctrl.Options{
 		Metrics: server.Options{
@@ -574,6 +578,34 @@ func sanitiseProxyEndpoints(endpoints []string) []string {
 		if trimmed := strings.TrimSpace(ep); trimmed != "" {
 			out = append(out, trimmed)
 		}
+	}
+
+	return out
+}
+
+// qualifyProxyEndpoints appends the resolved cluster domain to any endpoint
+// whose host ends in ".svc", which is how the chart passes the shared plane's
+// headless Service. The per-Gateway endpoints are built from the same domain
+// (render.ConfigEndpointURL), so both come from one resolution. Hosts that
+// are already qualified, short names and IPs are returned unchanged.
+func qualifyProxyEndpoints(endpoints []string, clusterDomain string) []string {
+	out := make([]string, 0, len(endpoints))
+
+	for _, endpoint := range endpoints {
+		parsed, err := url.Parse(endpoint)
+		if clusterDomain == "" || err != nil || !strings.HasSuffix(parsed.Hostname(), ".svc") {
+			out = append(out, endpoint)
+
+			continue
+		}
+
+		host := parsed.Hostname() + "." + clusterDomain
+		if port := parsed.Port(); port != "" {
+			host = net.JoinHostPort(host, port)
+		}
+
+		parsed.Host = host
+		out = append(out, parsed.String())
 	}
 
 	return out
