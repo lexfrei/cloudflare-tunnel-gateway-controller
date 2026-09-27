@@ -11,12 +11,22 @@ import (
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/proxy"
 )
 
+// The reason strings are public: operators alert on them.
+const (
+	reasonSharedAcrossNamespaces = "TunnelSharedAcrossNamespaces"
+	reasonSharedWithinNamespace  = "TunnelSharedWithinNamespace"
+)
+
 func tunnelSharedDiag(message string) proxy.RouteDiagnostic {
+	return tunnelSharedDiagWithReason(reasonSharedAcrossNamespaces, message)
+}
+
+func tunnelSharedDiagWithReason(reason, message string) proxy.RouteDiagnostic {
 	return proxy.RouteDiagnostic{
 		Namespace: "team-a",
 		Name:      "a-route",
 		Target:    proxy.DiagnosticTunnelShared,
-		Reason:    routeReasonTunnelShared,
+		Reason:    reason,
 		Message:   message,
 	}
 }
@@ -41,7 +51,40 @@ func TestBuildParentStatus_TunnelSharedConditionPresent(t *testing.T) {
 	shared := findCondition(status.Conditions, routeConditionTunnelShared)
 	require.NotNil(t, shared, "the dedicated TunnelShared condition must be present")
 	assert.Equal(t, metav1.ConditionTrue, shared.Status)
-	assert.Equal(t, routeReasonTunnelShared, shared.Reason)
+	assert.Equal(t, reasonSharedAcrossNamespaces, shared.Reason)
+}
+
+// TestBuildParentStatus_TunnelSharedReasonFollowsDiagnostics pins the
+// condition reason to what the diagnostics found: sharing only within one
+// namespace says so, and any cross-namespace share on the route wins, since
+// that is the case that crosses a tenant boundary.
+func TestBuildParentStatus_TunnelSharedReasonFollowsDiagnostics(t *testing.T) {
+	t.Parallel()
+
+	t.Run("within one namespace", func(t *testing.T) {
+		t.Parallel()
+
+		status := buildParentStatusForDiag([]proxy.RouteDiagnostic{
+			tunnelSharedDiagWithReason(reasonSharedWithinNamespace, "shares with team-a/gw-2"),
+		}, 1)
+
+		shared := findCondition(status.Conditions, routeConditionTunnelShared)
+		require.NotNil(t, shared)
+		assert.Equal(t, reasonSharedWithinNamespace, shared.Reason)
+	})
+
+	t.Run("across namespaces wins over within", func(t *testing.T) {
+		t.Parallel()
+
+		status := buildParentStatusForDiag([]proxy.RouteDiagnostic{
+			tunnelSharedDiagWithReason(reasonSharedWithinNamespace, "shares with team-a/gw-2"),
+			tunnelSharedDiagWithReason(reasonSharedAcrossNamespaces, "shares with team-b/gw"),
+		}, 1)
+
+		shared := findCondition(status.Conditions, routeConditionTunnelShared)
+		require.NotNil(t, shared)
+		assert.Equal(t, reasonSharedAcrossNamespaces, shared.Reason)
+	})
 }
 
 // TestBuildParentStatus_TunnelSharedAbsentWhenNoDiagnostics pins the clearing
