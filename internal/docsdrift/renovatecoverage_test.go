@@ -39,7 +39,7 @@ func TestRenovateMatchesPinnedDocClaims(t *testing.T) {
 	scopes := loadRenovateScopes(t, cfg)
 
 	claims := map[string][]docClaim{
-		"sigs.k8s.io/gateway-api":             gatewayAPIDocClaims(),
+		"sigs.k8s.io/gateway-api":             gatewayAPIDocClaims(t),
 		"sigs.k8s.io/gateway-api/conformance": conformanceDocClaims(t),
 	}
 
@@ -171,6 +171,12 @@ func loadRenovateManagers(t *testing.T, cfg renovateConfig) map[string][]*regexp
 			if err != nil {
 				t.Fatalf("compiling matchString %q for %s: %v", pattern, manager.DepNameTemplate, err)
 			}
+			if expr.SubexpIndex("currentValue") < 0 {
+				t.Fatalf(
+					"matchString %q for %s has no currentValue group, so Renovate extracts nothing from it and rewrites nothing",
+					pattern, manager.DepNameTemplate,
+				)
+			}
 			compiled[manager.DepNameTemplate] = append(compiled[manager.DepNameTemplate], expr)
 		}
 	}
@@ -247,9 +253,8 @@ func filesInScope(t *testing.T, root string, patterns []*regexp.Regexp) []string
 		if walkErr != nil {
 			return walkErr
 		}
-		name := entry.Name()
 		if entry.IsDir() {
-			if name == "vendor" || name == ".git" || name == "site" || name == ".claude" {
+			if skipWalkDir(entry.Name()) {
 				return fs.SkipDir
 			}
 
@@ -278,6 +283,12 @@ func filesInScope(t *testing.T, root string, patterns []*regexp.Regexp) []string
 	return matched
 }
 
+// skipWalkDir reports whether a tree walk should skip a directory holding
+// third-party code, build output or local checkouts rather than repo content.
+func skipWalkDir(name string) bool {
+	return name == "vendor" || name == ".git" || name == "site" || name == ".claude"
+}
+
 func anyMatches(patterns []*regexp.Regexp, text string) bool {
 	for _, pattern := range patterns {
 		if pattern.MatchString(text) {
@@ -289,14 +300,13 @@ func anyMatches(patterns []*regexp.Regexp, text string) bool {
 }
 
 // captures returns every currentValue the pattern extracts from the text.
+// loadRenovateManagers guarantees the group exists.
 func captures(pattern *regexp.Regexp, text string) []string {
 	index := pattern.SubexpIndex("currentValue")
-	if index < 0 {
-		return nil
-	}
+	matches := pattern.FindAllStringSubmatch(text, -1)
 
-	var found []string
-	for _, match := range pattern.FindAllStringSubmatch(text, -1) {
+	found := make([]string, 0, len(matches))
+	for _, match := range matches {
 		found = append(found, match[index])
 	}
 

@@ -42,8 +42,10 @@ for stub in docker kind helm kubectl go; do
 done
 
 # run_prereq <uname-s-output> [script-arg...] -> stdout+stderr of the script,
-# exit code ignored. Stubs in ${extra_stubs}, when set, shadow the no-op ones.
+# exit code ignored. Stubs in ${extra_stubs}, when set, shadow the no-op ones;
+# ${system_path} replaces the system directories on PATH.
 extra_stubs=""
+system_path="/usr/bin:/bin"
 run_prereq() {
   local kernel="$1"
   shift
@@ -56,7 +58,7 @@ STUB
   # GITHUB_ACTIONS and the CF_* variables are cleared explicitly: the suite
   # itself runs in Actions, where inheriting them would skip the very branch
   # under test and satisfy the credential check from the ambient environment.
-  PATH="${extra_stubs:+${extra_stubs}:}${stubs}:/usr/bin:/bin" \
+  PATH="${extra_stubs:+${extra_stubs}:}${stubs}:${system_path}" \
   GITHUB_ACTIONS='' CF_API_TOKEN='' CF_ACCOUNT_ID='' CF_TUNNEL_ID='' \
   CF_TUNNEL_TOKEN='' CF_TUNNEL_HOSTNAME='' \
     bash "${sandbox}/hack/conformance-setup.sh" "$@" 2>&1 || true
@@ -109,6 +111,27 @@ if grep --quiet ".env file not found" <<< "$(run_prereq Linux --use-ci-images 73
 else
   flunk "--use-ci-images with docker buildx reaches the credential check"
 fi
+
+# A tool the script calls before its own check would die with a raw shell
+# error instead of the check's message. The PATH here mirrors the system
+# directories minus the one tool, since /bin and /usr/bin both carry it on a
+# merged-/usr host.
+for missing in xxd curl; do
+  mirror="${tmp}/no-${missing}"
+  mkdir -p "${mirror}"
+  for dir in /usr/bin /bin; do
+    for bin in "${dir}"/*; do
+      name="${bin##*/}"
+      [[ "${name}" == "${missing}" || -e "${mirror}/${name}" ]] || ln -s "${bin}" "${mirror}/${name}"
+    done
+  done
+  out="$(system_path="${mirror}" run_prereq Linux)"
+  if grep --quiet "${missing} is not installed" <<< "${out}"; then
+    pass "a host without ${missing} gets the prerequisite message"
+  else
+    flunk "a host without ${missing} gets the prerequisite message (got: ${out})"
+  fi
+done
 
 # --- verify-ci-bundle.sh ---------------------------------------------------
 
