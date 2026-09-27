@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/cockroachdb/errors"
+	"golang.org/x/sync/errgroup"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
@@ -963,7 +964,9 @@ func (s *ProxySyncer) ResyncPartition(ctx context.Context, key string) error {
 }
 
 // ResyncAllPartitions replays every cached partition config; used when an
-// endpoint event cannot be attributed to one partition.
+// endpoint event cannot be attributed to one partition. Partitions replay
+// concurrently, bounded like the sync path's fan-out, so one slow connector
+// delays only its own partition.
 func (s *ProxySyncer) ResyncAllPartitions(ctx context.Context) error {
 	s.syncMu.Lock()
 	keys := make([]string, 0, len(s.targets))
@@ -973,13 +976,21 @@ func (s *ProxySyncer) ResyncAllPartitions(ctx context.Context) error {
 	}
 	s.syncMu.Unlock()
 
-	var errs []error
+	errs := make([]error, len(keys))
 
-	for _, key := range keys {
-		if err := s.ResyncPartition(ctx, key); err != nil {
-			errs = append(errs, err)
-		}
+	var group errgroup.Group
+
+	group.SetLimit(maxConcurrentPartitionPushes)
+
+	for i, key := range keys {
+		group.Go(func() error {
+			errs[i] = s.ResyncPartition(ctx, key)
+
+			return nil
+		})
 	}
+
+	_ = group.Wait()
 
 	return errors.Join(errs...)
 }
