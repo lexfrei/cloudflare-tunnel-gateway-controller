@@ -33,10 +33,10 @@ test-coverage: ## Run all tests with coverage report (coverage.out)
 ##@ Linting
 
 lint: ## Run golangci-lint
-	golangci-lint run --timeout=5m
+	golangci-lint run --timeout=5m --build-tags e2e,conformance,envtest
 
 lint-fix: ## Run golangci-lint with auto-fix
-	golangci-lint run --timeout=5m --fix
+	golangci-lint run --timeout=5m --build-tags e2e,conformance,envtest --fix
 
 lint-md: ## Lint all Markdown files
 	markdownlint-cli2 '**/*.md'
@@ -73,7 +73,7 @@ container: ## Build both container images (controller and proxy)
 ##@ CI
 
 ci-go: ## Run all Go CI gates (test + lint)
-	go test -race ./... && golangci-lint run --timeout=5m
+	go test -race ./... && golangci-lint run --timeout=5m --build-tags e2e,conformance,envtest
 
 ci-helm: ## Run all Helm CI gates (test + lint + docs)
 	helm unittest $(CHART_PATH) && \

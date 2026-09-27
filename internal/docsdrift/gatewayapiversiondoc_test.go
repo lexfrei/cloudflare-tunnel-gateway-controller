@@ -93,6 +93,16 @@ func gatewayAPIDocClaims() []docClaim {
 			why:    "the chart README template (helm-docs source) must match the built-against bundle",
 		},
 		{
+			file:   "README.md",
+			needle: "Standard channel (Gateway API " + consts.BundleVersion + ")",
+			why:    "the README compatibility table names the bundle the controller is built against",
+		},
+		{
+			file:   "docs/getting-started/prerequisites.md",
+			needle: "Standard channel (Gateway API " + consts.BundleVersion + ")",
+			why:    "the prerequisites compatibility table names the bundle the controller is built against",
+		},
+		{
 			file:   "hack/conformance-setup.sh",
 			needle: "GATEWAY_API_VERSION=\"" + consts.BundleVersion + "\"",
 			why:    "the vendored suite refuses to run against a CRD bundle that differs from consts.BundleVersion",

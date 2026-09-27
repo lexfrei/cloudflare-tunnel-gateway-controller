@@ -36,7 +36,7 @@ Kubernetes: `>=1.25.0-0`
 
 ## Prerequisites
 
-- Kubernetes 1.25+
+- Kubernetes 1.31+, the floor of the Gateway API standard bundle the controller needs
 - Helm 3.0+
 - Gateway API CRDs installed
 - Cloudflare Tunnel created
@@ -346,9 +346,9 @@ spec:
 | proxy.tunnelTokenSecretRef | object | `{"key":"tunnel-token","name":""}` | Reference to Secret containing tunnel token (REQUIRED) |
 | proxy.tunnelTokenSecretRef.key | string | `"tunnel-token"` | Key in the Secret containing the tunnel token |
 | proxy.tunnelTokenSecretRef.name | string | `""` | Name of the Secret containing tunnel token |
-| proxy.websocket | object | `{"dialTimeout":"","handshakeTimeout":"","idleTimeout":""}` | WebSocket knobs, one per phase. dialTimeout caps the TCP/TLS connect to the backend and handshakeTimeout the wait for its 101 Switching Protocols response, both defaulting to 30s; idleTimeout then bounds the established session, closing it after an hour with no bytes in either direction. Empty (the default) leaves each at the proxy binary's built-in value. |
+| proxy.websocket | object | `{"dialTimeout":"","handshakeTimeout":"","idleTimeout":""}` | WebSocket knobs, one per phase. dialTimeout caps the TCP/TLS connect to the backend and handshakeTimeout the wait for its 101 Switching Protocols response (and any stall in a refusal body when the backend declines the upgrade), both defaulting to 30s; idleTimeout then bounds the established session, closing it after an hour with no bytes in either direction. Empty (the default) leaves each at the proxy binary's built-in value. |
 | proxy.websocket.dialTimeout | string | `""` | Backend TCP/TLS dial timeout (Go duration, e.g. "10s", "1m"). Empty preserves the 30s default. Use a deliberately large value to effectively disable the bound rather than setting "0". |
-| proxy.websocket.handshakeTimeout | string | `""` | 101-Switching-Protocols read deadline (Go duration). Empty preserves the 30s default. |
+| proxy.websocket.handshakeTimeout | string | `""` | 101-Switching-Protocols read deadline (Go duration). When the backend refuses the upgrade, also the longest its refusal body may go without a byte. Empty preserves the 30s default. |
 | proxy.websocket.idleTimeout | string | `""` | How long an established session may carry no bytes in either direction before the proxy closes it (Go duration). Any traffic resets the window. Empty preserves the 1h default. Edge and transport keepalives are not session bytes and do not hold it open, so an application whose sockets legitimately sit silent for longer needs a larger value here; as with the other two, raise it rather than setting "0". It acts on the read from the backend, so a session wedged writing to a client that stopped reading is not reclaimed by it. |
 | replicaCount | int | `1` | Number of controller replicas |
 | resources | object | See values.yaml for recommended production defaults | Container resource requests and limits When resources is empty ({}), the chart will use recommended defaults. Specify explicit values to override defaults. |

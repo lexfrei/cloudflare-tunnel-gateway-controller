@@ -81,8 +81,9 @@ type RouteRule struct {
 	// The controller sets it when a rule cannot be served as written — for
 	// example a rule carrying an unsupported filter type — so that matched
 	// requests fail closed with an HTTP error instead of being served silently
-	// without the dropped config, as the Gateway API spec requires. This is the
-	// rule-level analogue of BackendRef.UnavailableStatus.
+	// without the dropped config, as the Gateway API spec requires. The proxy
+	// router sets 500 on its own compiled copy when a rule-level filter fails
+	// to compile. This is the rule-level analogue of BackendRef.UnavailableStatus.
 	UnavailableStatus int `json:"unavailableStatus,omitempty"`
 }
 
@@ -346,7 +347,8 @@ type BackendRef struct {
 	// Gateway API spec. The controller sets 500 for an invalid backendRef (a
 	// nonexistent Service) and 503 for a Service that exists but has no ready
 	// endpoints, applied to the proportion of requests that would otherwise have
-	// been routed to this backend.
+	// been routed to this backend. The proxy router sets 500 on its own compiled
+	// copy when one of the backend's filters fails to compile.
 	UnavailableStatus int `json:"unavailableStatus,omitempty"`
 }
 
@@ -546,7 +548,11 @@ func (f *RouteFilter) validate() error {
 	case FilterCORS:
 		return validateCORSFilter(f.CORS)
 	default:
-		return errors.Wrapf(errUnknownFilterType, "%q", f.Type)
+		// Not refused here: an unknown type means a controller newer than
+		// this proxy, and refusing the document would hold every rule at the
+		// previous config. compileFilter refuses it, and the router fails
+		// closed on just the rule or backend carrying it.
+		return nil
 	}
 }
 

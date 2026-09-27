@@ -5,6 +5,7 @@ import (
 	"math/rand/v2"
 	"net/http"
 	"net/url"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -37,6 +38,9 @@ type compiledRule struct {
 	backendFilters [][]Filter // per-backend compiled filters (indexed by backend position)
 	priority       int
 	ruleIndex      int // original rule index for tiebreaking (earlier rules win)
+	// closedErr is the first filter compile error that made failClosed answer
+	// HTTP 500 for all or part of the rule; nil when every filter compiled.
+	closedErr error
 }
 
 // routingTable holds the compiled routing state for lock-free reads.
@@ -427,7 +431,7 @@ func compileRoutingTable(cfg *Config, factory TransportFactory) *routingTable {
 
 	wildcardMap := make(map[string][]*compiledRule)
 
-	skipped := 0
+	report := compileReport{version: cfg.Version}
 
 	for ruleIdx := range cfg.Rules {
 		rule := &cfg.Rules[ruleIdx]
@@ -439,21 +443,13 @@ func compileRoutingTable(cfg *Config, factory TransportFactory) *routingTable {
 			// config over one of them would hold every other tenant on this
 			// data plane at its previous routing table until the offending
 			// route is withdrawn.
-			if skipped == 0 {
-				// One line per config, not per rule: a rule that does not
-				// compile does not start compiling on the next push, and the
-				// summary below carries the count.
-				slog.Error("skipping rule that failed to compile; its requests fall through to the next matching rule",
-					"rule", ruleIdx,
-					"hostnames", rule.Hostnames,
-					"version", cfg.Version,
-					"error", err,
-				)
-			}
-
-			skipped++
+			report.skip(ruleIdx, rule, err)
 
 			continue
+		}
+
+		if compiled.closedErr != nil {
+			report.failClosed(ruleIdx, rule, compiled.closedErr)
 		}
 
 		indexRuleByHostname(table, wildcardMap, rule.Hostnames, compiled)
@@ -480,15 +476,63 @@ func compileRoutingTable(cfg *Config, factory TransportFactory) *routingTable {
 
 	sortRulesByPrecedence(table.defaultRules)
 
-	if skipped > 0 {
-		slog.Warn("routing table applied with rules missing",
-			"skipped", skipped,
-			"rules", len(cfg.Rules),
-			"version", cfg.Version,
+	report.summarize(len(cfg.Rules))
+
+	return table
+}
+
+// compileReport logs what compileRoutingTable could not compile as written:
+// one line per config for each kind, not per rule, because a rule that does
+// not compile does not start compiling on the next push. The summary carries
+// the counts.
+type compileReport struct {
+	version int64
+	skipped int
+	closed  int
+}
+
+func (r *compileReport) skip(ruleIdx int, rule *RouteRule, err error) {
+	if r.skipped == 0 {
+		slog.Error("skipping rule that failed to compile; its requests fall through to the next matching rule",
+			"rule", ruleIdx,
+			"hostnames", rule.Hostnames,
+			"version", r.version,
+			"error", err,
 		)
 	}
 
-	return table
+	r.skipped++
+}
+
+func (r *compileReport) failClosed(ruleIdx int, rule *RouteRule, err error) {
+	if r.closed == 0 {
+		slog.Error("serving HTTP 500 where a filter failed to compile; the proxy image may be older than the controller",
+			"rule", ruleIdx,
+			"hostnames", rule.Hostnames,
+			"version", r.version,
+			"error", err,
+		)
+	}
+
+	r.closed++
+}
+
+func (r *compileReport) summarize(rules int) {
+	if r.skipped > 0 {
+		slog.Warn("routing table applied with rules missing",
+			"skipped", r.skipped,
+			"rules", rules,
+			"version", r.version,
+		)
+	}
+
+	if r.closed > 0 {
+		slog.Warn("routing table applied with rules answering HTTP 500 where a filter failed to compile",
+			"failedClosed", r.closed,
+			"rules", rules,
+			"version", r.version,
+		)
+	}
 }
 
 // compileRule compiles a single RouteRule into a compiledRule. factory is
@@ -506,9 +550,12 @@ func compileRule(rule *RouteRule, ruleIndex int, factory TransportFactory) (*com
 		matches = append(matches, compiled)
 	}
 
+	var closedErr error
+
 	filters, err := CompileFilters(rule.Filters, factory)
 	if err != nil {
-		return nil, errors.Wrap(err, "compile filters")
+		closedErr = err
+		rule = failClosed(rule, noBackend)
 	}
 
 	var backendFilters [][]Filter
@@ -520,12 +567,16 @@ func compileRule(rule *RouteRule, ruleIndex int, factory TransportFactory) (*com
 			continue
 		}
 
-		bf, bfErr := CompileFilters(backend.Filters, factory)
+		compiledFilters, bfErr := CompileFilters(backend.Filters, factory)
 		if bfErr != nil {
-			return nil, errors.Wrapf(bfErr, "backend[%d] filters", backendIdx)
+			if closedErr == nil {
+				closedErr = errors.Wrapf(bfErr, "backend[%d]", backendIdx)
+			}
+
+			rule = failClosed(rule, backendIdx)
 		}
 
-		backendFilters = append(backendFilters, bf)
+		backendFilters = append(backendFilters, compiledFilters)
 	}
 
 	return &compiledRule{
@@ -535,7 +586,33 @@ func compileRule(rule *RouteRule, ruleIndex int, factory TransportFactory) (*com
 		backendFilters: backendFilters,
 		priority:       computePriority(rule),
 		ruleIndex:      ruleIndex,
+		closedErr:      closedErr,
 	}, nil
+}
+
+// noBackend is failClosed's backendIdx for a rule-level filter.
+const noBackend = -1
+
+// failClosed returns a copy of rule that answers HTTP 500 instead of serving
+// without a filter this proxy could not compile: the whole rule for a
+// rule-level filter, or only the backend carrying it (its share of the weighted
+// pool) for a backend-level one. The Gateway API forbids skipping a filter an
+// implementation cannot honour, so the rule is neither dropped, which would let
+// its requests fall through to a less specific rule, nor served as if the filter
+// were absent. The copy keeps cfg itself as pushed.
+func failClosed(rule *RouteRule, backendIdx int) *RouteRule {
+	closed := *rule
+
+	if backendIdx == noBackend {
+		closed.UnavailableStatus = http.StatusInternalServerError
+
+		return &closed
+	}
+
+	closed.Backends = slices.Clone(rule.Backends)
+	closed.Backends[backendIdx].UnavailableStatus = http.StatusInternalServerError
+
+	return &closed
 }
 
 // computePriority calculates a precedence score for Gateway API ordering.

@@ -9,6 +9,7 @@ import (
 	"math/rand/v2"
 	"net/http"
 	"net/url"
+	"runtime/debug"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -600,7 +601,9 @@ func (f *requestMirror) noteMirrorDrop() {
 func (f *requestMirror) dispatchWithRetry(client *http.Client, tmpl *http.Request, bodyBuf []byte) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
-			slog.Error("mirror: panic in mirror request goroutine", "panic", recovered)
+			f.log().Error("mirror: panic in mirror request goroutine",
+				"panic", recovered,
+				"stack", string(debug.Stack()))
 		}
 	}()
 
@@ -675,6 +678,13 @@ func CompileFilters(filters []RouteFilter, factory TransportFactory) ([]Filter, 
 }
 
 func compileFilter(filter RouteFilter, factory TransportFactory) (Filter, error) {
+	// CompileFilters is exported, so it cannot assume its caller ran
+	// Config.Validate; the constructors below dereference the payload.
+	err := filter.validate()
+	if err != nil {
+		return nil, err
+	}
+
 	switch filter.Type {
 	case FilterRequestHeaderModifier:
 		return NewRequestHeaderModifier(filter.RequestHeaderModifier), nil
