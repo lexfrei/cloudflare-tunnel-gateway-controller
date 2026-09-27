@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -19,6 +20,7 @@ import (
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/api/v1alpha1"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/cfmetrics"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/config"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/tunnel"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/tunnelownership"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/tunnelproof"
 )
@@ -281,4 +283,58 @@ func TestGatewayReconciler_AcceptedDedicatedGatewayComesBackToRecheck(t *testing
 
 	assert.Positive(t, result.RequeueAfter, "an accepted dedicated Gateway must come back to re-check its claim")
 	assert.LessOrEqual(t, result.RequeueAfter, tunnelproof.RecheckInterval)
+}
+
+// switchableClaimVerifier answers every claim with whatever verdict it was
+// last set to, so a test can end an outage.
+type switchableClaimVerifier struct {
+	proof atomic.Int32
+}
+
+func (v *switchableClaimVerifier) Verify(context.Context, string, *tunnel.Token) tunnelownership.Proof {
+	return tunnelownership.Proof(v.proof.Load())
+}
+
+// TestSyncAllRoutes_UncheckableClaimIsRetriedAndRecovers pins the route half of
+// the outage policy. A claim Cloudflare could not check is refused, and nothing
+// in the cluster changes when the API comes back: the route watches ignore
+// Gateway status writes. So the sync itself has to come back, and when it does
+// the routes must be programmed.
+func TestSyncAllRoutes_UncheckableClaimIsRetriedAndRecovers(t *testing.T) {
+	t.Parallel()
+
+	const classTunnel = "99999999-9999-4999-8999-999999999999"
+
+	verifier := &switchableClaimVerifier{}
+	verifier.proof.Store(int32(tunnelownership.ProofUnknown))
+
+	api := newRecordingTunnelAPI(t)
+	syncer := newPartitionSyncSyncer(t, api, classTunnel)
+	syncer.ConfigResolver = config.NewResolver(syncer.Client, "default", cfmetrics.NewNoopCollector(),
+		config.WithClaimVerifier(verifier))
+
+	result, _, err := syncer.SyncAllRoutes(context.Background())
+	require.NoError(t, err)
+	assert.Positive(t, result.RequeueAfter, "an unchecked claim must bring the sync back on its own")
+	assert.Empty(t, api.hostnamesFor(tenantTunnelUUID))
+
+	verifier.proof.Store(int32(tunnelownership.ProofVerified))
+
+	_, _, err = syncer.SyncAllRoutes(context.Background())
+	require.NoError(t, err)
+	assert.Contains(t, api.hostnamesFor(tenantTunnelUUID), "tenant.example.com",
+		"once Cloudflare answers, the routes must be programmed")
+}
+
+// TestUncheckableClaimMessageNamesBothCauses pins that the tenant is not sent
+// hunting an outage when the credential is what Cloudflare rejects.
+func TestUncheckableClaimMessageNamesBothCauses(t *testing.T) {
+	t.Parallel()
+
+	message := tunnelRejectionMessage(tunnelownership.Rejection{
+		TunnelID: "22222222-2222-2222-2222-222222222222", Unproven: true, Proof: tunnelownership.ProofUnknown,
+	})
+
+	assert.Contains(t, message, "unreachable")
+	assert.Contains(t, message, "credential")
 }
