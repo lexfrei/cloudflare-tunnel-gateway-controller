@@ -1,6 +1,6 @@
 # Upgrading from v3.0 or v3.1 to v3.2
 
-v3.2 hardens multi-tenant isolation. It adds one CRD, `GatewayConfig`, which you apply by hand before upgrading. No values change is required, and existing `GatewayClassConfig` objects and chart values keep working. Four behaviours change in ways existing automation can observe. The one that can break a working setup is the data-plane NetworkPolicy, now on by default: on a CNI that also enforces host→pod (kubelet) traffic it takes proxy pod readiness down. The same policy limits the new proxy `/metrics` endpoint to the controller namespace, and an install that already enabled it gets a policy with a different shape. Read the four notes below, then the sections after them.
+v3.2 hardens multi-tenant isolation. It adds one CRD, `GatewayConfig`, which you apply by hand before upgrading. Existing `GatewayClassConfig` objects and chart values keep working, and most installs need no values change. Two setups do, and the sections below name the edit: a CNI that enforces host→pod traffic, and an install that already set `proxy.networkPolicy.enabled: true` and relied on its egress restriction. Four behaviours change in ways existing automation can observe. The one that can break a working setup is the data-plane NetworkPolicy, now on by default: on a CNI that also enforces host→pod (kubelet) traffic it takes proxy pod readiness down. The same policy limits the new proxy `/metrics` endpoint to the controller namespace, and an install that already enabled it gets a policy with a different shape. Read the four notes below, then the sections after them.
 
 ## Do this first: apply the GatewayConfig CRD
 
@@ -82,7 +82,7 @@ If you do not run a NetworkPolicy-enforcing CNI, the policy is a no-op and scrap
 - **Proxy readiness.** Confirm proxy pods (shared and per-Gateway) reach `Ready` after upgrade. If they stay `NotReady` on a strict CNI, see the warning above — kubelet probes are being dropped by the new NetworkPolicy.
 - **Controller → proxy config push.** The controller pushes config to the proxy from its own namespace, which the default policy admits; verify routes still program after upgrade.
 
-## No values migration
+## No values removed
 
 No `GatewayClassConfig` change is required and no values are removed. `proxy.networkPolicy.enabled` flips its default to `true`, and the new `proxy.metrics.enabled` key defaults to `true`. Pin `proxy.metrics.enabled: false` and/or `proxy.networkPolicy.enabled: false` to keep the pre-v3.2 metrics and NetworkPolicy behaviour.
 
