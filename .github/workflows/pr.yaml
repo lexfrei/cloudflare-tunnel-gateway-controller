@@ -645,6 +645,10 @@ jobs:
           yq --inplace ".image.tag = \"${IMAGE_TAG}\"" "${CHART_DIR}/values.yaml"
           yq --inplace ".proxy.image.repository = \"${PROXY_IMAGE_REPO}\"" "${CHART_DIR}/values.yaml"
           yq --inplace ".proxy.image.tag = \"${IMAGE_TAG}\"" "${CHART_DIR}/values.yaml"
+          # A digest replaces the tag in the rendered image reference, so one
+          # left set would point the PR chart at an image this PR did not build.
+          yq --inplace ".image.digest = \"\"" "${CHART_DIR}/values.yaml"
+          yq --inplace ".proxy.image.digest = \"\"" "${CHART_DIR}/values.yaml"
 
           # PR charts publish a moving tag (pr-NNN-1d): same name, different
           # digest on each push. The stable-release default (IfNotPresent)
@@ -676,6 +680,8 @@ jobs:
           proxy_repo=$(yq --exit-status '.proxy.image.repository' "${CHART_DIR}/values.yaml")
           proxy_tag=$(yq --exit-status '.proxy.image.tag' "${CHART_DIR}/values.yaml")
           proxy_pull=$(yq --exit-status '.proxy.image.pullPolicy' "${CHART_DIR}/values.yaml")
+          controller_digest=$(yq '.image.digest // ""' "${CHART_DIR}/values.yaml")
+          proxy_digest=$(yq '.proxy.image.digest // ""' "${CHART_DIR}/values.yaml")
 
           fail=0
           if [[ "${controller_repo}" != *-ctrl ]]; then
@@ -696,6 +702,14 @@ jobs:
           fi
           if [[ "${proxy_tag}" != "${EXPECTED_TAG}" ]]; then
             echo "ERROR: proxy.image.tag must equal ${EXPECTED_TAG}, got: ${proxy_tag}"
+            fail=1
+          fi
+          if [[ -n "${controller_digest}" ]]; then
+            echo "ERROR: image.digest must be empty for PR charts (it overrides the tag), got: ${controller_digest}"
+            fail=1
+          fi
+          if [[ -n "${proxy_digest}" ]]; then
+            echo "ERROR: proxy.image.digest must be empty for PR charts (it overrides the tag), got: ${proxy_digest}"
             fail=1
           fi
           if [[ "${controller_pull}" != "Always" ]]; then
