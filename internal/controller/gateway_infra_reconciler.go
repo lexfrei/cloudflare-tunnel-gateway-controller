@@ -213,6 +213,11 @@ func (r *GatewayInfraReconciler) renderWithConfigTLS(
 	gateway *gatewayv1.Gateway,
 	perGateway *config.PerGatewayConfig,
 ) (ctrl.Result, error) {
+	// A plane that will not render gets no certificate either.
+	if r.noProxyImage(ctx, gateway, perGateway) {
+		return ctrl.Result{}, nil
+	}
+
 	configTLSSecret, err := r.ensureConfigTLSSecret(ctx, gateway)
 	if errors.Is(err, errConfigTLSSlotPending) {
 		return ctrl.Result{RequeueAfter: configTLSPendingRequeue}, nil
@@ -386,10 +391,6 @@ func (r *GatewayInfraReconciler) applyRendered(
 		AuthToken:           perGateway.AuthToken,
 		Defaults:            r.RenderDefaults,
 		ConfigTLSSecretName: configTLSSecret,
-	}
-
-	if r.noProxyImage(ctx, gateway, perGateway) {
-		return nil
 	}
 
 	deploymentOp, err := r.applyDeployment(ctx, gateway, &input)

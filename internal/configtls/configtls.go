@@ -248,6 +248,9 @@ type CertificateLoader struct {
 	certPEM []byte
 	keyPEM  []byte
 	current *tls.Certificate
+	// lastWarning is the reload error last logged, so a broken update is
+	// logged once rather than on every handshake. Guarded by mu.
+	lastWarning string
 }
 
 // NewCertificateLoader loads the pair once, failing when it is unreadable.
@@ -272,12 +275,17 @@ func NewCertificateLoader(certFile, keyFile string, logger *slog.Logger) (*Certi
 // half-written update keeps the previous certificate in service.
 func (l *CertificateLoader) GetCertificate(*tls.ClientHelloInfo) (*tls.Certificate, error) {
 	err := l.reload()
-	if err != nil {
-		l.logger.Warn("config API certificate update not applied; serving the previous one", "error", err)
-	}
 
 	l.mu.Lock()
 	defer l.mu.Unlock()
+
+	switch {
+	case err == nil:
+		l.lastWarning = ""
+	case err.Error() != l.lastWarning:
+		l.lastWarning = err.Error()
+		l.logger.Warn("config API certificate update not applied; serving the previous one", "error", err)
+	}
 
 	return l.current, nil
 }

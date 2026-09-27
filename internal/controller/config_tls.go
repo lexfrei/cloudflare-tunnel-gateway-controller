@@ -226,25 +226,7 @@ func (i *sharedLeafIssuer) NeedLeaderElection() bool { return true }
 // Start runs issuance passes until ctx ends.
 func (i *sharedLeafIssuer) Start(ctx context.Context) error {
 	for {
-		wait := sharedLeafCheckInterval
-
-		i.warnIfCAExpiring()
-
-		outcome, err := ensureSharedLeaf(ctx, i.client, i.authority, i.key, i.names, time.Now())
-
-		switch {
-		case err != nil:
-			i.logger.Error("config API leaf for the shared data plane could not be issued; "+
-				"the proxy cannot start or renew its config API certificate until this succeeds",
-				"secret", i.key.String(), "error", err)
-
-			wait = sharedLeafRetryInterval
-		case outcome == leafReplacedInvalid:
-			i.logger.Warn("replaced a shared data plane config API certificate that did not verify against the controller CA",
-				"secret", i.key.String())
-		case outcome != leafValid:
-			i.logger.Info("issued the shared data plane config API certificate", "secret", i.key.String())
-		}
+		wait := i.pass(ctx, time.Now())
 
 		select {
 		case <-ctx.Done():
@@ -254,10 +236,33 @@ func (i *sharedLeafIssuer) Start(ctx context.Context) error {
 	}
 }
 
+// pass runs one issuance pass and returns how long to wait before the next.
+func (i *sharedLeafIssuer) pass(ctx context.Context, now time.Time) time.Duration {
+	i.warnIfCAExpiring(now)
+
+	outcome, err := ensureSharedLeaf(ctx, i.client, i.authority, i.key, i.names, now)
+
+	switch {
+	case err != nil:
+		i.logger.Error("config API leaf for the shared data plane could not be issued; "+
+			"the proxy cannot start or renew its config API certificate until this succeeds",
+			"secret", i.key.String(), "error", err)
+
+		return sharedLeafRetryInterval
+	case outcome == leafReplacedInvalid:
+		i.logger.Warn("replaced a shared data plane config API certificate that did not verify against the controller CA",
+			"secret", i.key.String())
+	case outcome != leafValid:
+		i.logger.Info("issued the shared data plane config API certificate", "secret", i.key.String())
+	}
+
+	return sharedLeafCheckInterval
+}
+
 // warnIfCAExpiring logs, and records a Warning Event on the CA Secret, while
 // the CA is within one leaf lifetime of its expiry.
-func (i *sharedLeafIssuer) warnIfCAExpiring() {
-	warning := caExpiryWarning(i.authority, time.Now())
+func (i *sharedLeafIssuer) warnIfCAExpiring(now time.Time) {
+	warning := caExpiryWarning(i.authority, now)
 	if warning == "" {
 		return
 	}
