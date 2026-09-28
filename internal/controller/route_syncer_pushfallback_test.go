@@ -887,3 +887,29 @@ func TestRecordResync_DoesNotOutliveAnEvictedAndRecreatedPartition(t *testing.T)
 	assert.Equal(t, recreatedHash, gotHash,
 		"a replay from before the partition was recreated must not claim the new partition's endpoints hold its old document")
 }
+
+// TestWithParentNotEvaluatedRequeue pins that a route left out because its
+// parents could not be evaluated schedules a retry: nothing else re-runs the
+// sync on a quiet cluster, and the route stays unserved until one does. An
+// earlier or equal pending requeue is kept, and other diagnostics request
+// nothing.
+func TestWithParentNotEvaluatedRequeue(t *testing.T) {
+	t.Parallel()
+
+	notEvaluated := []proxy.RouteDiagnostic{{Target: proxy.DiagnosticProxyConfigPush, Reason: routeReasonParentNotEvaluated}}
+	pushFailed := []proxy.RouteDiagnostic{{Target: proxy.DiagnosticProxyConfigPush, Reason: routeReasonProxyConfigPushFailed}}
+
+	assert.Equal(t, apiErrorRequeueDelay,
+		withParentNotEvaluatedRequeue(ctrl.Result{}, notEvaluated).RequeueAfter)
+
+	assert.Equal(t, apiErrorRequeueDelay,
+		withParentNotEvaluatedRequeue(ctrl.Result{RequeueAfter: time.Hour}, notEvaluated).RequeueAfter,
+		"a longer pending requeue is shortened")
+
+	assert.Equal(t, time.Second,
+		withParentNotEvaluatedRequeue(ctrl.Result{RequeueAfter: time.Second}, notEvaluated).RequeueAfter,
+		"a shorter pending requeue is kept")
+
+	assert.Equal(t, ctrl.Result{}, withParentNotEvaluatedRequeue(ctrl.Result{}, pushFailed))
+	assert.Equal(t, ctrl.Result{}, withParentNotEvaluatedRequeue(ctrl.Result{}, nil))
+}

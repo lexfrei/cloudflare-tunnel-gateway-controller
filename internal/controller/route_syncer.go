@@ -649,6 +649,12 @@ func withLostRacePushRequeue(result ctrl.Result, lostRace bool) ctrl.Result {
 	return result
 }
 
+// withParentNotEvaluatedRequeue requests a retry when a route was left out of
+// the proxy config because its parents could not be evaluated.
+func withParentNotEvaluatedRequeue(result ctrl.Result, _ []proxy.RouteDiagnostic) ctrl.Result {
+	return result
+}
+
 // partitionPushResult is one partition's push outcome, written to a per-index
 // slot so concurrent pushes never share a slice.
 type partitionPushResult struct {

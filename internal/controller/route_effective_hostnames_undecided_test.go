@@ -12,6 +12,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
+
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/proxy"
 )
 
 // failingGetClient serves every object normally except reads of the same type
@@ -167,9 +169,10 @@ func TestWithEffectiveHostnames_UndecidedParentLeavesRouteOut(t *testing.T) {
 			t.Parallel()
 
 			for _, hostnames := range [][]gatewayv1.Hostname{nil, {"app.example.com"}} {
-				out := withEffectiveHostnames(context.Background(), tt.cli(t), skipTestControllerName,
+				out, diags := withEffectiveHostnames(context.Background(), tt.cli(t), skipTestControllerName,
 					[]*gatewayv1.HTTPRoute{tt.route(hostnames...)}, nil)
 				assert.Empty(t, out, "a route whose only parent cannot be evaluated must not be served (hostnames %v)", hostnames)
+				assertParentNotEvaluated(t, diags)
 			}
 		})
 	}
@@ -192,8 +195,22 @@ func TestWithEffectiveHostnamesGRPC_UndecidedParentLeavesRouteOut(t *testing.T) 
 		},
 	}
 
-	out := withEffectiveHostnamesGRPC(context.Background(), cli, skipTestControllerName, []*gatewayv1.GRPCRoute{route}, nil)
+	out, diags := withEffectiveHostnamesGRPC(context.Background(), cli, skipTestControllerName, []*gatewayv1.GRPCRoute{route}, nil)
 	assert.Empty(t, out, "a gRPC route whose only parent cannot be evaluated must not be served")
+	assertParentNotEvaluated(t, diags)
+}
+
+// assertParentNotEvaluated checks that the one route left out is reported on
+// its own status, so the drop is visible beyond the controller log.
+func assertParentNotEvaluated(t *testing.T, diags []proxy.RouteDiagnostic) {
+	t.Helper()
+
+	require.Len(t, diags, 1, "the route left out must be reported once")
+	assert.Equal(t, "team", diags[0].Namespace)
+	assert.Equal(t, "r", diags[0].Name)
+	assert.Equal(t, proxy.DiagnosticProxyConfigPush, diags[0].Target)
+	assert.Equal(t, routeReasonParentNotEvaluated, diags[0].Reason)
+	assert.NotEmpty(t, diags[0].Message)
 }
 
 // TestWithEffectiveHostnames_UndecidedParentBesideAnAcceptingOne pins that one
@@ -214,9 +231,10 @@ func TestWithEffectiveHostnames_UndecidedParentBesideAnAcceptingOne(t *testing.T
 	route := httpRouteTo()
 	route.Spec.ParentRefs = parentRefsToGateways("ours", "broken")
 
-	out := withEffectiveHostnames(context.Background(), cli, skipTestControllerName, []*gatewayv1.HTTPRoute{route}, nil)
+	out, diags := withEffectiveHostnames(context.Background(), cli, skipTestControllerName, []*gatewayv1.HTTPRoute{route}, nil)
 	require.Len(t, out, 1)
 	assert.Equal(t, []gatewayv1.Hostname{ourHost}, out[0].Spec.Hostnames)
+	assert.Empty(t, diags, "a route that is still served is not reported as left out")
 }
 
 // TestWithEffectiveHostnames_StableWhenGatewayMissing is the Gateway twin of
@@ -229,7 +247,7 @@ func TestWithEffectiveHostnames_StableWhenGatewayMissing(t *testing.T) {
 	route := httpRouteTo()
 	route.Spec.ParentRefs = parentRefsToGateways("missing")
 
-	out := withEffectiveHostnames(context.Background(), buildGatewayFakeClient(t), skipTestControllerName,
+	out, _ := withEffectiveHostnames(context.Background(), buildGatewayFakeClient(t), skipTestControllerName,
 		[]*gatewayv1.HTTPRoute{route}, nil)
 	require.Len(t, out, 1)
 	assert.Empty(t, out[0].Spec.Hostnames, "a missing Gateway must not synthesise hostnames")

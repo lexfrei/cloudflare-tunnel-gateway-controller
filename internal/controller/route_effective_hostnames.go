@@ -10,6 +10,7 @@ import (
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/listenermerge"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/logging"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/proxy"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/routebinding"
 )
 
@@ -70,9 +71,9 @@ func withEffectiveHostnames(
 	controllerName string,
 	routes []*gatewayv1.HTTPRoute,
 	views *listenerViewCache,
-) []*gatewayv1.HTTPRoute {
+) ([]*gatewayv1.HTTPRoute, []proxy.RouteDiagnostic) {
 	if len(routes) == 0 {
-		return routes
+		return routes, nil
 	}
 
 	views = views.orNew(cli)
@@ -107,7 +108,7 @@ func withEffectiveHostnames(
 		out = append(out, &clone)
 	}
 
-	return out
+	return out, nil
 }
 
 // withEffectiveHostnamesGRPC is the GRPCRoute counterpart of
@@ -126,9 +127,9 @@ func withEffectiveHostnamesGRPC(
 	controllerName string,
 	routes []*gatewayv1.GRPCRoute,
 	views *listenerViewCache,
-) []*gatewayv1.GRPCRoute {
+) ([]*gatewayv1.GRPCRoute, []proxy.RouteDiagnostic) {
 	if len(routes) == 0 {
-		return routes
+		return routes, nil
 	}
 
 	views = views.orNew(cli)
@@ -163,7 +164,7 @@ func withEffectiveHostnamesGRPC(
 		out = append(out, &clone)
 	}
 
-	return out
+	return out, nil
 }
 
 // collectEffectiveListenerHostnames walks the route's parentRefs and, for each

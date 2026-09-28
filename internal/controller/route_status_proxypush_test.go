@@ -83,3 +83,25 @@ func TestBuildParentStatus_ProxyConfigPushedOmittedWhenRejected(t *testing.T) {
 
 	assert.Nil(t, findCondition(status.Conditions, routeConditionProxyConfigPushed))
 }
+
+// TestBuildParentStatus_ParentNotEvaluatedReason pins that a route left out of
+// its data plane's config because its parents could not be evaluated carries
+// the same ProxyConfigPushed=False condition, with a reason that says why
+// rather than claiming a push failed.
+func TestBuildParentStatus_ParentNotEvaluatedReason(t *testing.T) {
+	t.Parallel()
+
+	diag := proxyPushDiag("this route was left out of its data plane's config")
+	diag.Reason = routeReasonParentNotEvaluated
+
+	status := buildParentStatusForDiag([]proxy.RouteDiagnostic{diag}, 1)
+
+	accepted := findCondition(status.Conditions, string(gatewayv1.RouteConditionAccepted))
+	require.NotNil(t, accepted)
+	assert.Equal(t, metav1.ConditionTrue, accepted.Status)
+
+	pushed := findCondition(status.Conditions, routeConditionProxyConfigPushed)
+	require.NotNil(t, pushed)
+	assert.Equal(t, metav1.ConditionFalse, pushed.Status)
+	assert.Equal(t, routeReasonParentNotEvaluated, pushed.Reason)
+}

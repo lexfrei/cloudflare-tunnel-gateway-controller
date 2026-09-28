@@ -746,6 +746,10 @@ const (
 	// first successful push (parent status is rebuilt each sync).
 	routeConditionProxyConfigPushed  = "cf.k8s.lex.la/ProxyConfigPushed"
 	routeReasonProxyConfigPushFailed = "ProxyConfigPushFailed"
+	// routeReasonParentNotEvaluated sets the same condition False when the
+	// route was left out of its data plane's config because none of its
+	// parents could be evaluated.
+	routeReasonParentNotEvaluated = "ParentNotEvaluated"
 	// routeConditionTunnelShared is set True when this route's per-Gateway data
 	// plane shares one Cloudflare Tunnel with another dedicated Gateway (#488).
 	// Across namespaces that requires the operator's allowSharedTunnels opt-in,
