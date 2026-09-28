@@ -137,7 +137,7 @@ func NewRouteSyncer(
 		Logger:           componentLogger,
 		httpBuilder:      ingress.NewBuilder(clusterDomain, refGrantValidator, c, metricsCollector, componentLogger),
 		grpcBuilder:      ingress.NewGRPCBuilder(clusterDomain, refGrantValidator, c, metricsCollector, componentLogger),
-		bindingValidator: routebinding.NewValidator(c),
+		bindingValidator: routebinding.NewReportingValidator(c),
 	}
 }
 

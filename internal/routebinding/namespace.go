@@ -2,6 +2,7 @@ package routebinding
 
 import (
 	"context"
+	"log/slog"
 
 	"github.com/cockroachdb/errors"
 	corev1 "k8s.io/api/core/v1"
@@ -14,11 +15,22 @@ import (
 // Validator performs route binding validation against Gateway listeners.
 type Validator struct {
 	client client.Client
+	// unevaluatedLevel is the level listeners that cannot be evaluated are
+	// logged at. Several passes of one sync evaluate the same listeners, so
+	// only the binding pass warns.
+	unevaluatedLevel slog.Level
 }
 
-// NewValidator creates a new Validator with the given client.
+// NewValidator creates a new Validator with the given client. It logs
+// listeners it cannot evaluate at debug level.
 func NewValidator(cli client.Client) *Validator {
-	return &Validator{client: cli}
+	return &Validator{client: cli, unevaluatedLevel: slog.LevelDebug}
+}
+
+// NewReportingValidator is NewValidator for the binding pass: it logs
+// listeners it cannot evaluate as warnings.
+func NewReportingValidator(cli client.Client) *Validator {
+	return &Validator{client: cli, unevaluatedLevel: slog.LevelWarn}
 }
 
 // IsNamespaceAllowed checks if a route from routeNamespace is allowed to attach

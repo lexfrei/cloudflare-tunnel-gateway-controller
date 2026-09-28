@@ -122,7 +122,7 @@ func (v *Validator) ValidateBindingForListenerSet(
 		route.Port,
 	)
 
-	logUnevaluatedListeners(ctx, route, detail)
+	v.logUnevaluatedListeners(ctx, route, detail)
 
 	return makeBindingResult(matched, rejectionReason, invalid), nil
 }

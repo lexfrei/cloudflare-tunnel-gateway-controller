@@ -55,7 +55,7 @@ func (v *Validator) ValidateBinding(
 		route.Port,
 	)
 
-	logUnevaluatedListeners(ctx, route, detail)
+	v.logUnevaluatedListeners(ctx, route, detail)
 
 	return makeBindingResult(matched, rejectionReason, invalid), nil
 }
@@ -63,12 +63,12 @@ func (v *Validator) ValidateBinding(
 // logUnevaluatedListeners logs the errors of listeners that could not be
 // evaluated. They quote the Gateway's spec, which the route's authors may not
 // be allowed to read, so they go to the controller log and not to route status.
-func logUnevaluatedListeners(ctx context.Context, route *RouteInfo, detail string) {
+func (v *Validator) logUnevaluatedListeners(ctx context.Context, route *RouteInfo, detail string) {
 	if detail == "" {
 		return
 	}
 
-	logging.FromContext(ctx).Warn("listeners could not be evaluated for a route",
+	logging.FromContext(ctx).Log(ctx, v.unevaluatedLevel, "listeners could not be evaluated for a route",
 		"route", route.Namespace+"/"+route.Name, "detail", detail)
 }
 
