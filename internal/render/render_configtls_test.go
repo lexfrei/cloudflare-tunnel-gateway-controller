@@ -1,6 +1,8 @@
 package render_test
 
 import (
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -103,6 +105,40 @@ func TestConfigTLSSecretIndex_ReadsTheMountedSlot(t *testing.T) {
 
 	_, ok = render.ConfigTLSSecretIndex(input.Gateway, &appsv1.Deployment{})
 	assert.False(t, ok)
+}
+
+// TestConfigTLSSecretSlot_ReadsTheIndexFromTheName pins that a slot name maps
+// back to its index for short and truncated Gateway names alike, and that a
+// name belonging to another Gateway or to no slot at all maps to nothing.
+func TestConfigTLSSecretSlot_ReadsTheIndexFromTheName(t *testing.T) {
+	t.Parallel()
+
+	short := testInput("edge").Gateway
+	long := testInput(strings.Repeat("g", 80)).Gateway
+
+	for _, gateway := range []*gatewayv1.Gateway{short, long} {
+		for _, index := range []int{0, 7, 10, render.MaxConfigTLSSlot - 1} {
+			got, ok := render.ConfigTLSSecretSlot(gateway, render.ConfigTLSSecretName(gateway, index))
+			require.True(t, ok, "slot %d of %q must be recognised", index, gateway.Name)
+			assert.Equal(t, index, got)
+		}
+	}
+
+	other := testInput("edge-config-tls-1").Gateway
+
+	for _, name := range []string{
+		render.ConfigTLSSecretName(long, 3),
+		render.ConfigTLSSecretName(other, 0),
+		render.ConfigTLSSecretName(short, 3) + "x",
+		"cf-proxy-edge-config-tls-03",
+		"cf-proxy-edge-config-tls-+3",
+		"cf-proxy-edge-config-tls-",
+		"cf-proxy-edge-config-tls-" + strconv.Itoa(render.MaxConfigTLSSlot),
+		render.GeneratedAuthSecretName(short),
+	} {
+		_, ok := render.ConfigTLSSecretSlot(short, name)
+		assert.False(t, ok, "%q is not a slot of %q", name, short.Name)
+	}
 }
 
 // TestConfigTLSSecretName_StaysDistinctForLongNames pins that slots of a

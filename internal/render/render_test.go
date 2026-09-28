@@ -595,7 +595,7 @@ func TestRenderedNames_NoSameKindCollisionAcrossGateways(t *testing.T) {
 
 	gatewayNames := []string{
 		"edge", "edge-config", "edge-netpol", "edge-auth", "other", "edge-config-config",
-		longName, collider,
+		"edge-config-tls-0", longName, collider,
 	}
 
 	builders := map[string]func(string) string{
@@ -615,6 +615,27 @@ func TestRenderedNames_NoSameKindCollisionAcrossGateways(t *testing.T) {
 			}
 
 			seen[rendered] = gatewayName
+		}
+	}
+
+	// The auth Secret and the config API certificate slots are all Secrets,
+	// so they must stay distinct from each other as well as across Gateways.
+	secrets := make(map[string]string)
+
+	for _, gatewayName := range gatewayNames {
+		gateway := testInput(gatewayName).Gateway
+		names := []string{render.GeneratedAuthSecretName(gateway)}
+
+		for index := range 12 {
+			names = append(names, render.ConfigTLSSecretName(gateway, index))
+		}
+
+		for _, rendered := range names {
+			if prev, dup := secrets[rendered]; dup {
+				t.Fatalf("Secret name collision: %q renders %q, already rendered for %q", gatewayName, rendered, prev)
+			}
+
+			secrets[rendered] = gatewayName
 		}
 	}
 }
