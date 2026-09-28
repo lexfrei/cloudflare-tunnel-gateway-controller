@@ -144,7 +144,7 @@ spec:
 | Type | Status | Reason | Description |
 | --- | --- | --- | --- |
 | `Accepted` | `True` | `Accepted` | Entry accepted |
-| `Accepted` | `False` | `HostnameConflict` | Same `(port, hostname)` claimed by a higher-precedence listener |
+| `Accepted` | `False` | `HostnameConflict` | Same `(port, hostname)` claimed by a Gateway listener or by an entry of an earlier ListenerSet |
 | `Accepted` | `False` | `ProtocolConflict` | Different protocol claimed for the same port |
 | `Accepted` | `False` | `UnsupportedValue` | `allowedRoutes.namespaces.from` is `Selector` and the selector does not parse, so the entry admits no route. The message says the selector is invalid without quoting it; `Programmed` is `False` with reason `Invalid` |
 | `Programmed` | `True` | `Programmed` | Entry programmed; routes can bind |
