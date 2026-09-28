@@ -25,6 +25,7 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 	"sigs.k8s.io/gateway-api/pkg/consts"
 
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/api/v1alpha1"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/config"
 )
 
@@ -162,17 +163,19 @@ func (r *GatewayClassReconciler) updateStatus(
 			return nil
 		}
 
-		bundleErr := r.setAcceptedConditions(ctx, &freshClass)
+		condErr := r.setAcceptedConditions(ctx, &freshClass)
 
 		if err := r.Status().Update(ctx, &freshClass); err != nil {
 			return errors.Wrap(err, "failed to update GatewayClass status")
 		}
 
-		// Accepted is persisted above regardless. A transient CRD read error
+		// Whatever setAcceptedConditions set is persisted above. It errors
+		// only on a transient read. A failed GatewayClassConfig read leaves
+		// both conditions as they stood; a failed CRD read sets Accepted but
 		// leaves SupportedVersion unset rather than recording a misleading
-		// UnsupportedVersion; propagating it requeues the reconcile so the
-		// bundle check self-heals once the apiserver / RBAC settles.
-		return bundleErr
+		// UnsupportedVersion. Propagating the error requeues the reconcile
+		// until the read succeeds.
+		return condErr
 	})
 }
 
@@ -188,10 +191,17 @@ func (r *GatewayClassReconciler) setAcceptedConditions(ctx context.Context, gate
 		Message:            "GatewayClass is accepted by cloudflare-tunnel controller",
 	}
 
-	if err := config.ValidateParametersRefScope(gatewayClass.Spec.ParametersRef); err != nil {
+	problem, err := r.parametersRefProblem(ctx, gatewayClass.Spec.ParametersRef)
+	if err != nil {
+		// Transient read error: leave Accepted as it stands rather than blame
+		// the spec, and requeue.
+		return err
+	}
+
+	if problem != "" {
 		accepted.Status = metav1.ConditionFalse
 		accepted.Reason = string(gatewayv1.GatewayClassReasonInvalidParameters)
-		accepted.Message = err.Error()
+		accepted.Message = problem
 	}
 
 	meta.SetStatusCondition(&gatewayClass.Status.Conditions, accepted)
@@ -208,6 +218,38 @@ func (r *GatewayClassReconciler) setAcceptedConditions(ctx context.Context, gate
 	meta.SetStatusCondition(&gatewayClass.Status.Conditions, condition)
 
 	return nil
+}
+
+// parametersRefProblem says why a GatewayClass parametersRef cannot be served,
+// or returns "" when it can. The checks run in order, so a ref of the wrong
+// kind is reported for its kind before anything about its namespace. A
+// non-nil error is a failed read of the referenced config, which says nothing
+// about the spec.
+func (r *GatewayClassReconciler) parametersRefProblem(
+	ctx context.Context,
+	ref *gatewayv1.ParametersReference,
+) (string, error) {
+	switch {
+	case ref == nil:
+		return "spec.parametersRef is required: it must name a " + config.ParametersRefKind, nil
+	case string(ref.Group) != config.ParametersRefGroup || string(ref.Kind) != config.ParametersRefKind:
+		return fmt.Sprintf("spec.parametersRef must name a %s/%s, not %s/%s",
+			config.ParametersRefGroup, config.ParametersRefKind, ref.Group, ref.Kind), nil
+	case ref.Namespace != nil:
+		return fmt.Sprintf("spec.parametersRef.namespace must be unset: %s is cluster-scoped",
+			config.ParametersRefKind), nil
+	}
+
+	err := r.Get(ctx, types.NamespacedName{Name: ref.Name}, &v1alpha1.GatewayClassConfig{})
+	if apierrors.IsNotFound(err) {
+		return fmt.Sprintf("%s %q referenced by spec.parametersRef not found", config.ParametersRefKind, ref.Name), nil
+	}
+
+	if err != nil {
+		return "", errors.Wrapf(err, "failed to get %s %s", config.ParametersRefKind, ref.Name)
+	}
+
+	return "", nil
 }
 
 // bundleVersionCondition reads the installed Gateway API CRD bundle version and
@@ -350,11 +392,36 @@ func (r *GatewayClassReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Watches(&gatewayv1.Gateway{},
 			handler.EnqueueRequestsFromMapFunc(gatewayClassForGateway),
 			builder.WithPredicates(predicate.GenerationChangedPredicate{})).
+		// Only a config's existence feeds Accepted, so create and delete are
+		// what matter; the predicate drops status-only updates.
+		Watches(&v1alpha1.GatewayClassConfig{},
+			handler.EnqueueRequestsFromMapFunc(r.gatewayClassesForConfig),
+			builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Complete(r)
 }
 
-func (r *GatewayClassReconciler) gatewayClassesForConfig(_ context.Context, _ client.Object) []reconcile.Request {
-	return nil
+// gatewayClassesForConfig maps a GatewayClassConfig event to the managed
+// GatewayClasses that reference it, so a class waiting on a config that did
+// not exist is accepted once it is created, and refused once it is deleted.
+func (r *GatewayClassReconciler) gatewayClassesForConfig(ctx context.Context, obj client.Object) []reconcile.Request {
+	classes, err := listGatewayClassesForController(ctx, r.Client, r.ControllerName)
+	if err != nil {
+		log.FromContext(ctx).Error(err, "failed to list GatewayClasses for a GatewayClassConfig event")
+
+		return nil
+	}
+
+	var requests []reconcile.Request
+
+	for i := range classes {
+		ref := classes[i].Spec.ParametersRef
+		if ref != nil && string(ref.Group) == config.ParametersRefGroup &&
+			string(ref.Kind) == config.ParametersRefKind && ref.Name == obj.GetName() {
+			requests = append(requests, reconcile.Request{Name: classes[i].Name})
+		}
+	}
+
+	return requests
 }
 
 // gatewayClassForGateway maps a Gateway event to a reconcile request for the
