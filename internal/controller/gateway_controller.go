@@ -199,6 +199,8 @@ func (r *GatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		return ctrl.Result{}, nil
 	}
 
+	r.warnInvalidAllowedListeners(&gateway)
+
 	resolvedConfig, perGatewayMode, err := r.resolveGatewayConfig(ctx, &gateway)
 	if err != nil {
 		return r.handleResolveError(ctx, &gateway, err, "failed to resolve gateway configuration")
@@ -230,6 +232,29 @@ func (r *GatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	}
 
 	return ctrl.Result{}, nil
+}
+
+// eventReasonInvalidAllowedListeners names the Warning Event raised on a
+// Gateway whose allowedListeners.namespaces.selector does not parse.
+const eventReasonInvalidAllowedListeners = "InvalidAllowedListeners"
+
+// eventActionEvaluateAllowedListeners labels that Event's check.
+const eventActionEvaluateAllowedListeners = "EvaluateAllowedListeners"
+
+// warnInvalidAllowedListeners tells the Gateway's owner that its
+// allowedListeners selector does not parse, which refuses every ListenerSet.
+// The Gateway API has no condition for it and the Gateway's own listeners
+// still serve, so it is an Event rather than a condition; each ListenerSet's
+// own status carries the refusal. The message does not quote the selector.
+// Repeats collapse through normal Event aggregation.
+func (r *GatewayReconciler) warnInvalidAllowedListeners(gateway *gatewayv1.Gateway) {
+	if r.Recorder == nil || !routebinding.ListenerNamespaceSelectorInvalid(gateway.Spec.AllowedListeners) {
+		return
+	}
+
+	r.Recorder.Eventf(gateway, nil, corev1.EventTypeWarning,
+		eventReasonInvalidAllowedListeners, eventActionEvaluateAllowedListeners,
+		"allowedListeners.namespaces.selector is invalid; every ListenerSet is refused")
 }
 
 // refuseDedicatedPlane settles whether this Gateway may have a dedicated data
