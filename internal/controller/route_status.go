@@ -958,3 +958,9 @@ func newGRPCRouteAccessor() routeAccessor {
 		ruleCount:   func() int { return len(route.Spec.Rules) },
 	}
 }
+
+// kindHTTPRouteDiag and kindGRPCRouteDiag are the RouteDiagnostic.Kind values.
+const (
+	kindHTTPRouteDiag = "HTTPRoute"
+	kindGRPCRouteDiag = "GRPCRoute"
+)

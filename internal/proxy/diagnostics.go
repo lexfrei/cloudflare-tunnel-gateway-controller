@@ -68,6 +68,10 @@ const (
 // Message must be explicit and actionable: it names the problem AND the fix in
 // plain words the operator can act on without reading the controller source.
 type RouteDiagnostic struct {
+	// Kind is the route kind, "HTTPRoute" or "GRPCRoute". An HTTPRoute and a
+	// GRPCRoute may share a namespace and name, so the status writer matches a
+	// diagnostic on all three.
+	Kind      string
 	Namespace string
 	Name      string
 	RuleIndex int
