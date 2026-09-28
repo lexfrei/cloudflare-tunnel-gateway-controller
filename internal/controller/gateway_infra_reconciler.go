@@ -938,14 +938,14 @@ func (r *GatewayInfraReconciler) classConfigInfraGateways(
 // partitioner and the Gateway reconciler, so all three agree on the same
 // inputs; a lapsed Cloudflare confirmation reaches this layer through the
 // Gateway status the Gateway reconciler writes on its requeue. An error here
-// means the verdict is unknown, and the caller must leave any running plane
-// alone rather than guess.
+// means the plane may be neither rendered nor removed: the verdict is unknown,
+// or the managed classes disagree. The caller leaves any running plane alone.
 func (r *GatewayInfraReconciler) dedicatedPlaneRefused(
 	ctx context.Context,
 	gateway *gatewayv1.Gateway,
 ) (bool, error) {
 	// Reads the policy from THIS Gateway's class, while SyncAllRoutes reads it
-	// from the first managed class. Why that is not a divergence today is in
+	// from the first managed class. Why that is not a divergence is in
 	// applyPlaneRefusals.
 	policy, err := r.ConfigResolver.ResolveTunnelPolicyForGatewayClass(ctx, string(gateway.Spec.GatewayClassName))
 	if err != nil {
@@ -975,7 +975,19 @@ func (r *GatewayInfraReconciler) dedicatedPlaneRefused(
 		return true, nil
 	}
 
-	return overDataPlaneQuota(gateway, policy.MaxDataPlanesPerNamespace, gateways), nil
+	if overDataPlaneQuota(gateway, policy.MaxDataPlanesPerNamespace, gateways) {
+		return true, nil
+	}
+
+	// Checked after the refusals, which remove a plane whatever the classes
+	// say. A plane rendered now would never receive a config while route sync
+	// programs nothing; the error is marked ErrInvalidParameters, so the caller
+	// renders nothing, keeps a running plane and stops retrying.
+	if err := managedClassConfigConflict(ctx, r.Client, r.ControllerName); err != nil {
+		return false, err
+	}
+
+	return false, nil
 }
 
 // overDataPlaneQuota reports whether this Gateway's namespace already holds as

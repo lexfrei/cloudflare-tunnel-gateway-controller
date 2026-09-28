@@ -749,10 +749,9 @@ func pushPartitionsConcurrently(
 // managed by this controller. Returns an error if no matching GatewayClass is found.
 //
 // When multiple GatewayClasses reference the same controllerName, the class
-// with the lexicographically smallest name is used (deterministic ordering).
-// A warning is logged because all GatewayClasses under one controller share
-// the same tunnel credentials — multiple classes with different parametersRef
-// may lead to unexpected behavior.
+// with the lexicographically smallest name among those in use is used
+// (deterministic ordering). That is only sound while they all reference one
+// GatewayClassConfig, which classConfigConflict enforces.
 func (s *RouteSyncer) resolveConfigForController(ctx context.Context) (*config.ResolvedConfig, error) {
 	classes, err := listGatewayClassesForController(ctx, s.Client, s.ControllerName)
 	if err != nil {
@@ -761,6 +760,11 @@ func (s *RouteSyncer) resolveConfigForController(ctx context.Context) (*config.R
 
 	if len(classes) == 0 {
 		return nil, errors.New("no GatewayClass found for controller " + s.ControllerName)
+	}
+
+	classes, err = classesInUse(ctx, s.Client, classes)
+	if err != nil {
+		return nil, err
 	}
 
 	// Sort by name for deterministic selection.
@@ -780,16 +784,8 @@ func (s *RouteSyncer) resolveConfigForController(ctx context.Context) (*config.R
 			"selected", classes[0].Name,
 		)
 
-		// Different parametersRef means different tunnel credentials — using one
-		// class's credentials for another class's routes would silently send
-		// traffic to the wrong tunnel. Return an error to prevent data integrity issues.
-		if hasConflictingParametersRef(classes) {
-			return nil, errors.Wrap(
-				errors.New("conflicting parametersRef across GatewayClasses"),
-				fmt.Sprintf("classes %v for controller %s — "+
-					"one controller instance supports only one tunnel configuration",
-					names, s.ControllerName),
-			)
+		if err := classConfigConflict(classes, s.ControllerName); err != nil {
+			return nil, err
 		}
 	}
 
@@ -799,6 +795,96 @@ func (s *RouteSyncer) resolveConfigForController(ctx context.Context) (*config.R
 	}
 
 	return resolved, nil
+}
+
+// managedClassConfigConflict reports, as an error marked
+// config.ErrInvalidParameters, that the GatewayClasses this controller manages
+// and some Gateway uses reference more than one parametersRef.
+//
+// Route sync writes every class's routes to the first class's tunnel, so it
+// programs nothing while the classes disagree. The Gateway and infra
+// reconcilers read the policy from each Gateway's own class instead, and ask
+// this first so that neither accepts a Gateway, or renders a plane for it, that
+// route sync will never program.
+func managedClassConfigConflict(ctx context.Context, cli client.Client, controllerName string) error {
+	classes, err := listGatewayClassesForController(ctx, cli, controllerName)
+	if err != nil {
+		return err
+	}
+
+	classes, err = classesInUse(ctx, cli, classes)
+	if err != nil {
+		return err
+	}
+
+	return classConfigConflict(classes, controllerName)
+}
+
+// classesInUse narrows classes to those at least one Gateway names, being
+// deleted or not, and returns them all when none is named.
+//
+// A class no Gateway names has no routes and no plane, so its parametersRef
+// changes nothing that is served, and counting it would let an unused class
+// stop every Gateway on the classes that are. A Gateway naming it brings it
+// back into the check on the next reconcile.
+//
+// With no class in use there is nothing to narrow to, and returning them all
+// keeps a conflict standing: route sync would otherwise program the first
+// class's tunnel, which may be one no Gateway ever used.
+func classesInUse(
+	ctx context.Context,
+	cli client.Client,
+	classes []gatewayv1.GatewayClass,
+) ([]gatewayv1.GatewayClass, error) {
+	if len(classes) < 2 {
+		return classes, nil
+	}
+
+	var gateways gatewayv1.GatewayList
+	if err := cli.List(ctx, &gateways); err != nil {
+		return nil, errors.Wrap(err, "listing Gateways to find the GatewayClasses in use")
+	}
+
+	named := make(map[string]bool, len(classes))
+	for i := range gateways.Items {
+		named[string(gateways.Items[i].Spec.GatewayClassName)] = true
+	}
+
+	inUse := slices.DeleteFunc(slices.Clone(classes), func(class gatewayv1.GatewayClass) bool {
+		return !named[class.Name]
+	})
+	if len(inUse) == 0 {
+		return classes, nil
+	}
+
+	return inUse, nil
+}
+
+// errClassConfigConflict marks the error classConfigConflict returns, so the
+// status writer can keep a shared-plane Gateway's address through it.
+var errClassConfigConflict = errors.New("conflicting GatewayClass configuration")
+
+// classConfigConflict is managedClassConfigConflict over an already-listed set.
+//
+// Different parametersRef means different tunnel credentials: using one class's
+// credentials for another class's routes would send traffic to the wrong
+// tunnel.
+func classConfigConflict(classes []gatewayv1.GatewayClass, controllerName string) error {
+	if len(classes) < 2 || !hasConflictingParametersRef(classes) {
+		return nil
+	}
+
+	names := make([]string, len(classes))
+	for i := range classes {
+		names[i] = classes[i].Name
+	}
+
+	slices.Sort(names)
+
+	return errors.Wrapf(errors.Mark(config.ErrInvalidParameters, errClassConfigConflict),
+		"conflicting parametersRef across GatewayClasses %v for controller %s: "+
+			"one controller instance supports only one GatewayClassConfig",
+		names, controllerName)
 }
 
 // hasConflictingParametersRef returns true if the given GatewayClasses
@@ -1436,11 +1522,12 @@ func (s *RouteSyncer) applyPlaneRefusals(
 	applyTunnelOwnership(infra, resolvedConfig.TunnelID, resolvedConfig.AllowSharedTunnels, claims)
 
 	// The cap comes from the FIRST managed class here, while the Gateway and
-	// infra reconcilers read it from each Gateway's own class. Not a divergence
-	// today: resolveConfigForController hard-errors when managed classes carry
-	// different parametersRef, so either every managed class resolves the same
-	// GatewayClassConfig or route sync programs nothing at all. Whoever makes
-	// multi-class real has to reconcile these two readings first, here and for
+	// infra reconcilers read it from each Gateway's own class. Not a divergence:
+	// every layer refuses through classConfigConflict over the managed classes
+	// in use when they carry different parametersRef, so whenever any of them
+	// admits a Gateway, every managed class in use resolves the same
+	// GatewayClassConfig. Serving several GatewayClassConfigs from one
+	// controller means reconciling these two readings first, here and for
 	// allowSharedTunnels above.
 	applyDataPlaneQuota(infra, resolvedConfig.MaxDataPlanesPerNamespace, collectDataPlaneClaims(infra.listed))
 }
