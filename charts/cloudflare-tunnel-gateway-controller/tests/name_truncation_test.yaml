@@ -37,4 +37,4 @@ tests:
       - template: deployment.yaml
         contains:
           path: spec.template.spec.containers[0].args
-          content: "--proxy-endpoints=http://extremely-long-release-name-for-truncation-check-proxy-headless.NAMESPACE.svc:8081/config"
+          content: "--proxy-endpoints=https://extremely-long-release-name-for-truncation-check-proxy-headless.NAMESPACE.svc:8081/config"

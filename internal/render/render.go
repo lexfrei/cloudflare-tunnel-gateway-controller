@@ -9,6 +9,8 @@ import (
 	"encoding/hex"
 	"fmt"
 	"maps"
+	"net"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -86,6 +88,16 @@ const (
 	authTokenKey   = "auth-token"
 )
 
+const (
+	// configTLSNameSuffix is followed by the slot index.
+	configTLSNameSuffix = "-config-tls-"
+	configTLSVolumeName = "config-tls"
+	configTLSMountPath  = "/etc/cf-proxy/config-tls"
+	// secretVolumeDefaultMode is the apiserver default, rendered explicitly so
+	// the full-spec apply converges.
+	secretVolumeDefaultMode int32 = 0o644
+)
+
 // Defaults carries the controller-level rendering defaults (Helm-wired).
 type Defaults struct {
 	// ProxyImage is the image for rendered proxy containers (the controller's
@@ -155,6 +167,9 @@ type Input struct {
 	// PROXY_AUTH_TOKEN env value.
 	AuthToken string
 	Defaults  Defaults
+	// ConfigTLSSecretName is the controller-issued config API leaf to mount.
+	// Empty renders the plaintext config API.
+	ConfigTLSSecretName string
 }
 
 // The name builders share a prefix and differ by suffix, so an adversarial
@@ -186,6 +201,53 @@ func NetworkPolicyName(gateway *gatewayv1.Gateway) string {
 func ConfigEndpointURL(gateway *gatewayv1.Gateway, clusterDomain string, port int32) string {
 	return fmt.Sprintf("http://%s.%s.svc.%s:%d/config",
 		ConfigServiceName(gateway), gateway.Namespace, clusterDomain, configAPIPort(port))
+}
+
+// ConfigServerName returns the config Service's DNS name: the name the
+// plane's config API certificate carries and the push verifies.
+func ConfigServerName(gateway *gatewayv1.Gateway, clusterDomain string) string {
+	return fmt.Sprintf("%s.%s.svc.%s", ConfigServiceName(gateway), gateway.Namespace, clusterDomain)
+}
+
+// ConfigTLSEndpointURL is ConfigEndpointURL for a plane serving config API
+// TLS.
+func ConfigTLSEndpointURL(gateway *gatewayv1.Gateway, clusterDomain string, port int32) string {
+	endpoint := url.URL{
+		Scheme: "https",
+		Host:   net.JoinHostPort(ConfigServerName(gateway, clusterDomain), strconv.Itoa(int(configAPIPort(port)))),
+		Path:   "/config",
+	}
+
+	return endpoint.String()
+}
+
+// ConfigTLSSecretName returns the name of a Gateway's config API leaf in slot
+// index. A leaf is never rewritten: renewal or a leaf that fails
+// verification moves the plane to the next slot.
+func ConfigTLSSecretName(gateway *gatewayv1.Gateway, index int) string {
+	return truncateName(namePrefix + gateway.Name + configTLSNameSuffix + strconv.Itoa(index))
+}
+
+// MaxConfigTLSSlot bounds the slots ConfigTLSSecretIndex recognises.
+const MaxConfigTLSSlot = 4096
+
+// ConfigTLSSecretIndex reports which leaf slot a rendered Deployment mounts.
+func ConfigTLSSecretIndex(gateway *gatewayv1.Gateway, deployment *appsv1.Deployment) (int, bool) {
+	volumes := deployment.Spec.Template.Spec.Volumes
+	for i := range volumes {
+		volume := &volumes[i]
+		if volume.Name != configTLSVolumeName || volume.Secret == nil {
+			continue
+		}
+
+		for index := range MaxConfigTLSSlot {
+			if ConfigTLSSecretName(gateway, index) == volume.Secret.SecretName {
+				return index, true
+			}
+		}
+	}
+
+	return 0, false
 }
 
 // GeneratedAuthSecretName returns the name of the controller-generated
@@ -315,6 +377,7 @@ func ProxyDeployment(input *Input) *appsv1.Deployment {
 					AutomountServiceAccountToken: new(false),
 					SecurityContext:              podSecurityContext(),
 					Containers:                   []corev1.Container{proxyContainer(input)},
+					Volumes:                      configTLSVolumes(input),
 					// apiserver-defaulted pod fields, rendered explicitly (see
 					// the Strategy comment above).
 					RestartPolicy:            corev1.RestartPolicyAlways,
@@ -362,15 +425,48 @@ func proxyContainer(input *Input) corev1.Container {
 		TerminationMessagePolicy: corev1.TerminationMessageReadFile,
 		SecurityContext:          containerSecurityContext(),
 		Env:                      proxyEnv(input),
+		VolumeMounts:             configTLSVolumeMounts(input),
 		Ports: []corev1.ContainerPort{
 			{Name: configPortName, ContainerPort: configAPIPort(input.Defaults.ConfigAPIPort), Protocol: corev1.ProtocolTCP},
 			{Name: proxyPortName, ContainerPort: proxyPort, Protocol: corev1.ProtocolTCP},
 		},
-		StartupProbe:   httpProbe("/healthz", startupProbeSpec),
-		LivenessProbe:  httpProbe("/healthz", livenessProbeSpec),
-		ReadinessProbe: httpProbe("/readyz", readinessProbeSpec),
+		StartupProbe:   httpProbe("/healthz", startupProbeSpec, probeScheme(input)),
+		LivenessProbe:  httpProbe("/healthz", livenessProbeSpec, probeScheme(input)),
+		ReadinessProbe: httpProbe("/readyz", readinessProbeSpec, probeScheme(input)),
 		Resources:      proxyResources(input.Config),
 	}
+}
+
+// probeScheme follows the config API listener, which also serves the probes.
+// kubelet does not verify the certificate of an HTTPS probe.
+func probeScheme(input *Input) corev1.URIScheme {
+	if input.ConfigTLSSecretName != "" {
+		return corev1.URISchemeHTTPS
+	}
+
+	return corev1.URISchemeHTTP
+}
+
+func configTLSVolumes(input *Input) []corev1.Volume {
+	if input.ConfigTLSSecretName == "" {
+		return nil
+	}
+
+	return []corev1.Volume{{
+		Name: configTLSVolumeName,
+		Secret: &corev1.SecretVolumeSource{
+			SecretName:  input.ConfigTLSSecretName,
+			DefaultMode: new(secretVolumeDefaultMode),
+		},
+	}}
+}
+
+func configTLSVolumeMounts(input *Input) []corev1.VolumeMount {
+	if input.ConfigTLSSecretName == "" {
+		return nil
+	}
+
+	return []corev1.VolumeMount{{Name: configTLSVolumeName, MountPath: configTLSMountPath, ReadOnly: true}}
 }
 
 func proxyImage(input *Input) string {
@@ -430,6 +526,12 @@ func proxyEnv(input *Input) []corev1.EnvVar {
 
 	if port := configAPIPort(input.Defaults.ConfigAPIPort); port != defaultConfigAPIPort {
 		env = append(env, corev1.EnvVar{Name: "PROXY_CONFIG_ADDR", Value: ":" + strconv.Itoa(int(port))})
+	}
+
+	if input.ConfigTLSSecretName != "" {
+		env = append(env,
+			corev1.EnvVar{Name: "PROXY_CONFIG_TLS_CERT_FILE", Value: configTLSMountPath + "/" + corev1.TLSCertKey},
+			corev1.EnvVar{Name: "PROXY_CONFIG_TLS_KEY_FILE", Value: configTLSMountPath + "/" + corev1.TLSPrivateKeyKey})
 	}
 
 	return env
@@ -492,12 +594,12 @@ var (
 	readinessProbeSpec = probeSpec{initialDelay: 5, period: 10, timeout: 3, failureThreshold: 3}
 )
 
-func httpProbe(path string, spec probeSpec) *corev1.Probe {
+func httpProbe(path string, spec probeSpec, scheme corev1.URIScheme) *corev1.Probe {
 	return &corev1.Probe{
 		HTTPGet: &corev1.HTTPGetAction{
 			Path:   path,
 			Port:   intstr.FromString(configPortName),
-			Scheme: corev1.URISchemeHTTP,
+			Scheme: scheme,
 		},
 		InitialDelaySeconds: spec.initialDelay,
 		PeriodSeconds:       spec.period,

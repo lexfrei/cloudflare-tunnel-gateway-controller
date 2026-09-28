@@ -735,6 +735,17 @@
           "maximum": 65535,
           "default": 8081
         },
+        "configAPITLS": {
+          "type": "object",
+          "description": "TLS on the config API with controller-issued certificates.",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": true
+            }
+          }
+        },
         "proxyPort": {
           "type": "integer",
           "minimum": 1,

@@ -76,6 +76,8 @@ func init() {
 	rootCmd.Flags().String("proxy-auth-secret-ref", "", "Shared-proxy config-API auth-token Secret to resolve, in `<namespace>/<name>` form, and use for the controller's own push auth. Resolved directly via the API, not a pod-level secretKeyRef -- a secretKeyRef the controller is itself responsible for creating would deadlock its own pod, since kubelet cannot start the container that would create the missing Secret. The single mechanism the chart uses for both the bring-your-own and generated cases; combine with --proxy-auth-secret-generate to allow creating it when missing.")
 	rootCmd.Flags().String("proxy-auth-secret-key", "auth-token", "Data key to read within the --proxy-auth-secret-ref Secret.")
 	rootCmd.Flags().Bool("proxy-auth-secret-generate", false, "Allow creating the --proxy-auth-secret-ref Secret (with a random token) when it does not exist. false (the default) is the bring-your-own contract: the Secret must already exist, and a missing one is a configuration error rather than something silently papered over. The chart sets this true only when proxy.authTokenSecretRef.name is empty.")
+	rootCmd.Flags().String("proxy-config-ca-secret", "", "Config API CA Secret in `<namespace>/<name>` form. Setting it turns on config API TLS: the controller creates the CA once, issues every data plane's serving certificate from it, and pushes only to planes presenting one (https:// endpoints only). Empty keeps the plaintext push and creates nothing. Set together with --proxy-config-tls-secret.")
+	rootCmd.Flags().String("proxy-config-tls-secret", "", "Shared data plane's config API serving certificate Secret in `<namespace>/<name>` form, created and renewed in place by the controller and mounted by the shared proxy. Set together with --proxy-config-ca-secret.")
 	rootCmd.Flags().String("proxy-token-secret", "", "Tunnel-token Secret to watch in `<namespace>/<name>` form; when set, the controller rolls the proxy Deployment whenever the Secret data changes (issue #114). Empty disables the watcher.")
 	rootCmd.Flags().String("proxy-deployment-label", "", "Label selector identifying the proxy Deployment(s) to roll on tunnel-token change, in `key=value` form. Defaults to `app.kubernetes.io/component=proxy` (matches the chart).")
 	rootCmd.Flags().String("ws-idle-timeout", "",
@@ -201,6 +203,8 @@ func runController(_ *cobra.Command, _ []string) error {
 		ProxyAuthSecretRef:      viper.GetString("proxy-auth-secret-ref"),
 		ProxyAuthSecretKey:      viper.GetString("proxy-auth-secret-key"),
 		ProxyAuthSecretGenerate: viper.GetBool("proxy-auth-secret-generate"),
+		ProxyConfigCASecretRef:  viper.GetString("proxy-config-ca-secret"),
+		ProxyConfigTLSSecretRef: viper.GetString("proxy-config-tls-secret"),
 		ProxyTokenSecret:        viper.GetString("proxy-token-secret"),
 		ProxyDeploymentLabel:    viper.GetString("proxy-deployment-label"),
 		TunnelProtocol:          viper.GetString("tunnel-protocol"),

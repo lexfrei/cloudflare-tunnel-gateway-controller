@@ -1,0 +1,187 @@
+suite: test config API TLS
+templates:
+  - deployment.yaml
+  - deployment-proxy.yaml
+  - role-config-tls.yaml
+  - servicemonitor-proxy.yaml
+set:
+  proxy:
+    tunnelTokenSecretRef:
+      name: tunnel-token-secret
+tests:
+  # Default: the controller runs the CA, pushes over https, and the shared
+  # proxy serves the leaf the controller keeps in the release namespace.
+  - it: should point the controller at the CA, the shared leaf and an https endpoint by default
+    template: deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--proxy-config-ca-secret=NAMESPACE/RELEASE-NAME-cloudflare-tunnel-gateway-controller-config-ca"
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--proxy-config-tls-secret=NAMESPACE/RELEASE-NAME-cloudflare-tunnel-gateway-controller-proxy-config-tls"
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--proxy-endpoints=https://RELEASE-NAME-cloudflare-tunnel-gateway-controlle-proxy-headless.NAMESPACE.svc:8081/config"
+
+  - it: should mount the shared leaf and probe over HTTPS by default
+    template: deployment-proxy.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: config-tls
+            secret:
+              secretName: RELEASE-NAME-cloudflare-tunnel-gateway-controller-proxy-config-tls
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: config-tls
+            mountPath: /etc/cf-proxy/config-tls
+            readOnly: true
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: PROXY_CONFIG_TLS_CERT_FILE
+            value: /etc/cf-proxy/config-tls/tls.crt
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: PROXY_CONFIG_TLS_KEY_FILE
+            value: /etc/cf-proxy/config-tls/tls.key
+      - equal:
+          path: spec.template.spec.containers[0].startupProbe.httpGet.scheme
+          value: HTTPS
+      - equal:
+          path: spec.template.spec.containers[0].livenessProbe.httpGet.scheme
+          value: HTTPS
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.httpGet.scheme
+          value: HTTPS
+
+  # The only write the controller gains: update on the one shared leaf, in
+  # the release namespace. resourceNames is honoured for update.
+  - it: should grant update on the shared leaf only, in the release namespace
+    template: role-config-tls.yaml
+    asserts:
+      - hasDocuments:
+          count: 2
+      - documentIndex: 0
+        isKind:
+          of: Role
+      - documentIndex: 0
+        equal:
+          path: metadata.namespace
+          value: NAMESPACE
+      - documentIndex: 0
+        equal:
+          path: rules
+          value:
+            - apiGroups: [""]
+              resources: ["secrets"]
+              resourceNames: ["RELEASE-NAME-cloudflare-tunnel-gateway-controller-proxy-config-tls"]
+              verbs: ["update"]
+      - documentIndex: 1
+        isKind:
+          of: RoleBinding
+      - documentIndex: 1
+        equal:
+          path: roleRef.name
+          value: RELEASE-NAME-cloudflare-tunnel-gateway-controller-config-tls
+      - documentIndex: 1
+        equal:
+          path: subjects[0].name
+          value: RELEASE-NAME-cloudflare-tunnel-gateway-controller
+
+  - it: should scrape the proxy over https by default
+    template: servicemonitor-proxy.yaml
+    set:
+      serviceMonitor:
+        enabled: true
+    asserts:
+      - equal:
+          path: spec.endpoints[0].scheme
+          value: https
+      - equal:
+          path: spec.endpoints[0].tlsConfig.insecureSkipVerify
+          value: true
+
+  # `helm upgrade --reuse-values` from a release older than the value carries
+  # no configAPITLS key at all; the chart must render its default, not fail.
+  - it: should render the default when the values carry no configAPITLS key
+    template: deployment-proxy.yaml
+    set:
+      proxy:
+        configAPITLS: null
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.httpGet.scheme
+          value: HTTPS
+
+  # Opt-out is the v3 wire: nothing TLS renders anywhere.
+  - it: should keep the controller on the plaintext push when disabled
+    template: deployment.yaml
+    set:
+      proxy:
+        configAPITLS:
+          enabled: false
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--proxy-endpoints=http://RELEASE-NAME-cloudflare-tunnel-gateway-controlle-proxy-headless.NAMESPACE.svc:8081/config"
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: "--proxy-config-ca-secret=NAMESPACE/RELEASE-NAME-cloudflare-tunnel-gateway-controller-config-ca"
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: "--proxy-config-tls-secret=NAMESPACE/RELEASE-NAME-cloudflare-tunnel-gateway-controller-proxy-config-tls"
+
+  - it: should render no TLS wiring on the proxy when disabled
+    template: deployment-proxy.yaml
+    set:
+      proxy:
+        configAPITLS:
+          enabled: false
+    asserts:
+      - notExists:
+          path: spec.template.spec.volumes
+      - notExists:
+          path: spec.template.spec.containers[0].volumeMounts
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: PROXY_CONFIG_TLS_CERT_FILE
+            value: /etc/cf-proxy/config-tls/tls.crt
+      - equal:
+          path: spec.template.spec.containers[0].startupProbe.httpGet.scheme
+          value: HTTP
+      - equal:
+          path: spec.template.spec.containers[0].livenessProbe.httpGet.scheme
+          value: HTTP
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.httpGet.scheme
+          value: HTTP
+
+  - it: should render no Role when disabled
+    template: role-config-tls.yaml
+    set:
+      proxy:
+        configAPITLS:
+          enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: should scrape the proxy over http when disabled
+    template: servicemonitor-proxy.yaml
+    set:
+      serviceMonitor:
+        enabled: true
+      proxy:
+        configAPITLS:
+          enabled: false
+    asserts:
+      - notExists:
+          path: spec.endpoints[0].scheme
+      - notExists:
+          path: spec.endpoints[0].tlsConfig

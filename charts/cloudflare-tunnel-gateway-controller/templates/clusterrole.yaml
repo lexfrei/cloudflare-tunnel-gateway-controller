@@ -100,8 +100,11 @@ rules:
   # namespaced to the release, never GC'd since there is no owning object --
   # see internal/controller/proxy_auth_secret.go). Either way a data plane
   # without an explicit authTokenSecretRef gets a controller-generated bearer
-  # token rather than an unauthenticated config API. No update/delete — the
-  # token is never rotated.
+  # token rather than an unauthenticated config API. create also covers the
+  # config API TLS CA and every data plane's serving certificate. No
+  # update/delete here: the token is never rotated, a per-Gateway certificate
+  # is renewed into a new Secret, and the one Secret renewed in place, the
+  # shared plane's certificate, gets update from role-config-tls.yaml.
   - apiGroups: [""]
     resources: ["secrets"]
     verbs: ["get", "list", "watch", "create"]

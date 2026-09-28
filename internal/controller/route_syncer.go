@@ -30,7 +30,6 @@ import (
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/logging"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/proxy"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/referencegrant"
-	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/render"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/routebinding"
 )
 
@@ -473,14 +472,25 @@ func partitionRouteDiagnostics(
 // route in the partition's OWN (pre-union) route set, so a sustained push
 // failure surfaces on exactly the routes that Gateway owns — not on a sibling
 // tenant whose config happens to ride the same unioned tunnel slice (#487).
-func proxyPushFailureDiagnostics(partition *routePartition) []proxy.RouteDiagnostic {
+func proxyPushFailureDiagnostics(partition *routePartition, pushErr error) []proxy.RouteDiagnostic {
+	return partitionRouteDiagnostics(partition, proxy.DiagnosticProxyConfigPush, routeReasonProxyConfigPushFailed,
+		proxyPushFailureMessage(partition.Key, pushErr))
+}
+
+// proxyPushFailureMessage names the config API handshake failure when that is
+// what stopped the push, since no pod health check points at it.
+func proxyPushFailureMessage(partitionKey string, pushErr error) string {
 	message := fmt.Sprintf(
 		"the controller could not push this route's config to its data plane (partition %q) after "+
 			"sustained retries; matching requests are served 502 until the push recovers — check the "+
 			"proxy pods' health and the config-API NetworkPolicy. This route remains Accepted.",
-		partition.Key)
+		partitionKey)
 
-	return partitionRouteDiagnostics(partition, proxy.DiagnosticProxyConfigPush, routeReasonProxyConfigPushFailed, message)
+	if reason := describeConfigTLSError(pushErr); reason != "" {
+		message += " Config API TLS: " + reason + "."
+	}
+
+	return message
 }
 
 // tunnelSharedDiagnostics synthesizes a DiagnosticTunnelShared for the routes of
@@ -597,7 +607,7 @@ func pushPartitionConfigs(
 			// once it crosses the no-flap threshold (#487). Attribute to the
 			// pre-union originals, not the unioned slice above.
 			if params.proxySyncer.pushFailureStreak(partition.Key) >= pushFailureSurfaceThreshold {
-				diagnostics = append(diagnostics, proxyPushFailureDiagnostics(&syncResult.Partitions[i])...)
+				diagnostics = append(diagnostics, proxyPushFailureDiagnostics(&syncResult.Partitions[i], results[i].err)...)
 			}
 		}
 	}
@@ -677,8 +687,8 @@ func pushPartitionsConcurrently(
 				return nil
 			}
 
-			endpoints := []string{render.ConfigEndpointURL(partition.Gateway, params.routeSyncer.ClusterDomain,
-				params.routeSyncer.ProxyConfigAPIPort)}
+			endpoints := []string{params.proxySyncer.perGatewayConfigEndpoint(partition.Gateway,
+				params.routeSyncer.ClusterDomain, params.routeSyncer.ProxyConfigAPIPort)}
 			results[i].diags, results[i].err = params.proxySyncer.SyncPartition(ctx, syncResult.ConfigVersion,
 				partition.Key, partition.PerGateway.AuthToken,
 				endpoints, httpRoutePtrs(partition.HTTPRoutes), grpcRoutePtrs(partition.GRPCRoutes),

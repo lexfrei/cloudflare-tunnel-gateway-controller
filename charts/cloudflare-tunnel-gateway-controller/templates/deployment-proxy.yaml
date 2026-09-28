@@ -105,6 +105,12 @@ spec:
             - name: PROXY_ALLOW_X_ORIGINAL_HOST
               value: "true"
             {{- end }}
+            {{- if (eq (include "cf-tunnel-gw-ctrl.configAPITLSEnabled" .) "true") }}
+            - name: PROXY_CONFIG_TLS_CERT_FILE
+              value: /etc/cf-proxy/config-tls/tls.crt
+            - name: PROXY_CONFIG_TLS_KEY_FILE
+              value: /etc/cf-proxy/config-tls/tls.key
+            {{- end }}
             {{- if .Values.proxy.tracing.enabled }}
             - name: PROXY_TRACING_ENABLED
               value: "true"
@@ -115,6 +121,12 @@ spec:
             - name: PROXY_TRACING_SAMPLE_RATE
               value: {{ .Values.proxy.tracing.sampleRate | quote }}
             {{- end }}
+          {{- if (eq (include "cf-tunnel-gw-ctrl.configAPITLSEnabled" .) "true") }}
+          volumeMounts:
+            - name: config-tls
+              mountPath: /etc/cf-proxy/config-tls
+              readOnly: true
+          {{- end }}
           ports:
             - name: config-api
               containerPort: {{ .Values.proxy.configAPIPort }}
@@ -127,6 +139,7 @@ spec:
             httpGet:
               path: /healthz
               port: config-api
+              scheme: {{ ternary "HTTPS" "HTTP" (eq (include "cf-tunnel-gw-ctrl.configAPITLSEnabled" .) "true") }}
             initialDelaySeconds: {{ .Values.proxy.healthProbes.startupProbe.initialDelaySeconds }}
             periodSeconds: {{ .Values.proxy.healthProbes.startupProbe.periodSeconds }}
             timeoutSeconds: {{ .Values.proxy.healthProbes.startupProbe.timeoutSeconds }}
@@ -137,6 +150,7 @@ spec:
             httpGet:
               path: /healthz
               port: config-api
+              scheme: {{ ternary "HTTPS" "HTTP" (eq (include "cf-tunnel-gw-ctrl.configAPITLSEnabled" .) "true") }}
             initialDelaySeconds: {{ .Values.proxy.healthProbes.livenessProbe.initialDelaySeconds }}
             periodSeconds: {{ .Values.proxy.healthProbes.livenessProbe.periodSeconds }}
             timeoutSeconds: {{ .Values.proxy.healthProbes.livenessProbe.timeoutSeconds }}
@@ -147,6 +161,7 @@ spec:
             httpGet:
               path: /readyz
               port: config-api
+              scheme: {{ ternary "HTTPS" "HTTP" (eq (include "cf-tunnel-gw-ctrl.configAPITLSEnabled" .) "true") }}
             initialDelaySeconds: {{ .Values.proxy.healthProbes.readinessProbe.initialDelaySeconds }}
             periodSeconds: {{ .Values.proxy.healthProbes.readinessProbe.periodSeconds }}
             timeoutSeconds: {{ .Values.proxy.healthProbes.readinessProbe.timeoutSeconds }}
@@ -154,6 +169,15 @@ spec:
           {{- end }}
           resources:
             {{- toYaml .Values.proxy.resources | nindent 12 }}
+      {{- if (eq (include "cf-tunnel-gw-ctrl.configAPITLSEnabled" .) "true") }}
+      # The controller creates this Secret on its first issuance pass, run by
+      # the elected replica when leader election is on; until then the pod
+      # waits in ContainerCreating rather than serving plaintext.
+      volumes:
+        - name: config-tls
+          secret:
+            secretName: {{ include "cf-tunnel-gw-ctrl.proxyConfigTLSSecretName" . }}
+      {{- end }}
       {{- with .Values.proxy.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
