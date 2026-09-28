@@ -838,6 +838,7 @@ func (r *GatewayReconciler) buildOneListenerStatus(
 	}
 
 	acceptedCondition := buildListenerAcceptedCondition(listener.Protocol, gateway.Generation, now)
+	refuseInvalidNamespaceSelector(&acceptedCondition, listener.AllowedRoutes)
 	programmedCondition := buildListenerProgrammedCondition(gateway.Generation, now, &resolvedRefsCondition, &acceptedCondition)
 
 	conditions := []metav1.Condition{acceptedCondition, programmedCondition, resolvedRefsCondition}
@@ -1701,6 +1702,27 @@ func buildListenerAcceptedCondition(protocol gatewayv1.ProtocolType, generation 
 	return condition
 }
 
+// listenerMsgInvalidNamespaceSelector says a listener's namespace selector is
+// invalid without quoting it: the selector is the Gateway owner's to read, and
+// the controller log names the parse error.
+const listenerMsgInvalidNamespaceSelector = "allowedRoutes.namespaces.selector is invalid, so the listener admits no route; " +
+	"the controller log names the parse error"
+
+// refuseInvalidNamespaceSelector marks an otherwise accepted listener not
+// Accepted when its allowedRoutes namespace selector does not parse. The
+// listener is not semantically valid and admits no route. The Gateway API
+// lists no reason for an invalid field value, so it uses UnsupportedValue, the
+// closest of the listed ones; Programmed follows with Invalid.
+func refuseInvalidNamespaceSelector(accepted *metav1.Condition, allowedRoutes *gatewayv1.AllowedRoutes) {
+	if accepted.Status != metav1.ConditionTrue || !routebinding.NamespaceSelectorInvalid(allowedRoutes) {
+		return
+	}
+
+	accepted.Status = metav1.ConditionFalse
+	accepted.Reason = string(gatewayv1.ListenerReasonUnsupportedValue)
+	accepted.Message = listenerMsgInvalidNamespaceSelector
+}
+
 // servableListenerProtocol reports whether this controller has a data plane for
 // the listener protocol. Only HTTP and HTTPS carry HTTPRoute / GRPCRoute through
 // the in-process proxy; TCP, TLS, UDP, and any unrecognised protocol have none
@@ -1720,25 +1742,43 @@ func servableListenerProtocol(protocol gatewayv1.ProtocolType) bool {
 	}
 }
 
-// gatewayUnsupportedProtocolListeners summarises, across a Gateway's own
-// listeners, how many carry a protocol this controller cannot serve. Per the
-// Gateway API spec (gateway_types.go), a Gateway holding any invalid listener is
-// marked ListenersNotValid, and one holding no valid listener at all is
-// Accepted=False. Returns (any unsupported, all unsupported).
-func gatewayUnsupportedProtocolListeners(listeners []gatewayv1.Listener) (bool, bool) {
+// gatewayInvalidListeners summarises, across a Gateway's own listeners, how
+// many are invalid: a protocol this controller cannot serve, or an
+// allowedRoutes namespace selector that does not parse. Per the Gateway API
+// spec (gateway_types.go), a Gateway holding any invalid listener is marked
+// ListenersNotValid, and one holding no valid listener at all is
+// Accepted=False. Returns (any invalid, all invalid, the message naming the
+// causes present).
+func gatewayInvalidListeners(listeners []gatewayv1.Listener) (bool, bool, string) {
 	if len(listeners) == 0 {
-		return false, false
+		return false, false, ""
 	}
 
-	unsupported := 0
+	invalid, unsupported, badSelector := 0, 0, 0
 
 	for i := range listeners {
-		if !servableListenerProtocol(listeners[i].Protocol) {
+		switch {
+		case !servableListenerProtocol(listeners[i].Protocol):
 			unsupported++
+			invalid++
+		case routebinding.NamespaceSelectorInvalid(listeners[i].AllowedRoutes):
+			badSelector++
+			invalid++
 		}
 	}
 
-	return unsupported > 0, unsupported == len(listeners)
+	var causes []string
+
+	if unsupported > 0 {
+		causes = append(causes, "one or more listeners use a protocol this controller does not serve "+
+			"(only HTTP and HTTPS are supported)")
+	}
+
+	if badSelector > 0 {
+		causes = append(causes, "one or more listeners have an invalid allowedRoutes.namespaces.selector")
+	}
+
+	return invalid > 0, invalid == len(listeners), strings.Join(causes, "; ")
 }
 
 // gatewayAcceptedCondition builds the Gateway-level Accepted condition. The
@@ -1775,12 +1815,11 @@ func gatewayAcceptedCondition(
 	// ListenerSet's own status, not on the parent Gateway's Accepted condition
 	// (unlike hostname/protocol CONFLICTS, which are cross-object and use the
 	// merged view above).
-	if anyUnsupported, allUnsupported := gatewayUnsupportedProtocolListeners(gateway.Spec.Listeners); anyUnsupported {
+	if anyInvalid, allInvalid, message := gatewayInvalidListeners(gateway.Spec.Listeners); anyInvalid {
 		accepted.Reason = string(gatewayv1.GatewayReasonListenersNotValid)
-		accepted.Message = "one or more listeners use a protocol this controller does not serve " +
-			"(only HTTP and HTTPS are supported)"
+		accepted.Message = message
 
-		if allUnsupported {
+		if allInvalid {
 			accepted.Status = metav1.ConditionFalse
 		}
 	}
