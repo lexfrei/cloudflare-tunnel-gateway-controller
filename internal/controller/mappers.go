@@ -750,8 +750,14 @@ func FindRoutesForGateway(
 	}
 
 	// A Gateway that is not ours still enqueues the routes carrying our
-	// status, so the route reconcile can release those entries.
+	// status, directly or through its ListenerSets, so the route reconcile
+	// can release those entries.
 	managed := isGatewayManagedByController(ctx, cli, gateway, controllerName)
+
+	var listenerSets []*gatewayv1.ListenerSet
+	if !managed {
+		listenerSets = listenerSetsOfGateway(ctx, cli, gateway)
+	}
 
 	var requests []reconcile.Request
 
@@ -760,19 +766,44 @@ func FindRoutesForGateway(
 			continue
 		}
 
-		for _, ref := range route.GetParentRefs() {
-			if parentRefIsGateway(ref) && parentReferenceToKey(ref, route.GetNamespace()) == client.ObjectKeyFromObject(gateway) {
-				requests = append(requests, reconcile.Request{
-					Name:      route.GetName(),
-					Namespace: route.GetNamespace(),
-				})
-
-				break
-			}
+		if routeTargetsGateway(route, gateway) || slices.ContainsFunc(listenerSets, func(listenerSet *gatewayv1.ListenerSet) bool {
+			return routeTargetsListenerSet(route, listenerSet)
+		}) {
+			requests = append(requests, reconcile.Request{
+				Name:      route.GetName(),
+				Namespace: route.GetNamespace(),
+			})
 		}
 	}
 
 	return requests
+}
+
+// routeTargetsGateway reports whether any of the route's parentRefs names the
+// Gateway itself.
+func routeTargetsGateway(route Route, gateway *gatewayv1.Gateway) bool {
+	return slices.ContainsFunc(route.GetParentRefs(), func(ref gatewayv1.ParentReference) bool {
+		return parentRefIsGateway(ref) && parentReferenceToKey(ref, route.GetNamespace()) == client.ObjectKeyFromObject(gateway)
+	})
+}
+
+// listenerSetsOfGateway returns the ListenerSets whose parentRef names the
+// Gateway, or nil when they cannot be listed.
+func listenerSetsOfGateway(ctx context.Context, cli client.Client, gateway *gatewayv1.Gateway) []*gatewayv1.ListenerSet {
+	var list gatewayv1.ListenerSetList
+	if err := cli.List(ctx, &list); err != nil {
+		return nil
+	}
+
+	var out []*gatewayv1.ListenerSet
+
+	for i := range list.Items {
+		if listenerSetTargetsGateway(&list.Items[i], gateway) {
+			out = append(out, &list.Items[i])
+		}
+	}
+
+	return out
 }
 
 // FilterAcceptedRoutes returns reconcile requests for routes accepted by a Gateway
