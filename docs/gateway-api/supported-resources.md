@@ -53,6 +53,7 @@ All HTTPRoute matching and filter behavior is performed by the in-process L7 pro
 | Field | Supported | Notes |
 | --- | --- | --- |
 | `spec.parentRefs` | Yes | References to Gateway |
+| `spec.parentRefs[].group` | Yes | Omit it or set `gateway.networking.k8s.io`. Any other value, including an explicit `""` (the core group), names some other resource: the route does not bind to this controller's Gateway or ListenerSet, is not counted in `attachedRoutes` and gets no new status entry. An entry this controller wrote earlier for that ref is dropped on the next status write when another parentRef of the route names a Gateway or ListenerSet this controller manages, and otherwise stays in `status.parents` until the ref is fixed |
 | `spec.parentRefs[].name` | Yes | Gateway name |
 | `spec.parentRefs[].namespace` | Yes | Gateway namespace |
 | `spec.parentRefs[].sectionName` | Yes | Listener name (optional) |
