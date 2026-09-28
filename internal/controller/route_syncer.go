@@ -404,7 +404,7 @@ func syncAndUpdateStatusCommon(ctx context.Context, params *syncUpdateParams) (c
 		return ctrl.Result{}, statusUpdateErr
 	}
 
-	return result, nil
+	return withParentNotEvaluatedRequeue(result, diagnostics), nil
 }
 
 // pushPartitionConfigs delivers each partition's proxy config to its own
@@ -650,8 +650,22 @@ func withLostRacePushRequeue(result ctrl.Result, lostRace bool) ctrl.Result {
 }
 
 // withParentNotEvaluatedRequeue requests a retry when a route was left out of
-// the proxy config because its parents could not be evaluated.
-func withParentNotEvaluatedRequeue(result ctrl.Result, _ []proxy.RouteDiagnostic) ctrl.Result {
+// the proxy config because its parents could not be evaluated. The sync that
+// left it out succeeded, so without a requeue the route would stay unserved
+// until an unrelated event re-ran it. An earlier pending requeue is kept.
+func withParentNotEvaluatedRequeue(result ctrl.Result, diagnostics []proxy.RouteDiagnostic) ctrl.Result {
+	if result.RequeueAfter > 0 && result.RequeueAfter <= apiErrorRequeueDelay {
+		return result
+	}
+
+	for _, diag := range diagnostics {
+		if diag.Target == proxy.DiagnosticProxyConfigPush && diag.Reason == routeReasonParentNotEvaluated {
+			result.RequeueAfter = apiErrorRequeueDelay
+
+			return result
+		}
+	}
+
 	return result
 }
 

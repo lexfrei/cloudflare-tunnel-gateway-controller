@@ -2,6 +2,9 @@ package controller
 
 import (
 	"context"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -251,4 +254,45 @@ func TestWithEffectiveHostnames_StableWhenGatewayMissing(t *testing.T) {
 		[]*gatewayv1.HTTPRoute{route}, nil)
 	require.Len(t, out, 1)
 	assert.Empty(t, out[0].Spec.Hostnames, "a missing Gateway must not synthesise hostnames")
+}
+
+// TestSyncPartition_ReportsRouteLeftOutOverItsParent pins that the diagnostic
+// for a route left out reaches the sync's result for both route kinds, which
+// is what carries it to the route's status.
+func TestSyncPartition_ReportsRouteLeftOutOverItsParent(t *testing.T) {
+	t.Parallel()
+
+	replica := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(replica.Close)
+
+	ourHost := gatewayv1.Hostname("ours.example.com")
+	cli := failingGetClient(t, &gatewayv1.Gateway{}, gatewayUnderClass("ours", "our-class", &ourHost))
+	syncer := NewProxySyncer("cluster.local", "", "", cli, slog.Default())
+
+	httpRoute := httpRouteTo()
+	httpRoute.Spec.ParentRefs = parentRefsToGateways("ours")
+	httpRoute.Name = "http-r"
+
+	grpcRoute := &gatewayv1.GRPCRoute{
+		ObjectMeta: metav1.ObjectMeta{Name: "grpc-r", Namespace: "team"},
+		Spec: gatewayv1.GRPCRouteSpec{
+			CommonRouteSpec: gatewayv1.CommonRouteSpec{ParentRefs: parentRefsToGateways("ours")},
+		},
+	}
+
+	diags, err := syncer.SyncPartition(context.Background(), 0, sharedPartitionKey, "",
+		[]string{replica.URL + "/config"}, []*gatewayv1.HTTPRoute{httpRoute}, []*gatewayv1.GRPCRoute{grpcRoute}, nil, nil)
+	require.NoError(t, err)
+
+	var leftOut []string
+
+	for _, diag := range diags {
+		if diag.Reason == routeReasonParentNotEvaluated {
+			leftOut = append(leftOut, diag.Name)
+		}
+	}
+
+	assert.ElementsMatch(t, []string{"http-r", "grpc-r"}, leftOut)
 }

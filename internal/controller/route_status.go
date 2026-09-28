@@ -355,7 +355,7 @@ func buildParentStatus(
 	// Same gating: a push failure or a shared tunnel is only meaningful for a
 	// route that was otherwise accepted — a rejected route is not programmed.
 	if pushed := buildDiagnosticCondition(diagnostics, proxy.DiagnosticProxyConfigPush,
-		routeConditionProxyConfigPushed, metav1.ConditionFalse, routeReasonProxyConfigPushFailed,
+		routeConditionProxyConfigPushed, metav1.ConditionFalse, proxyConfigPushedReason(diagnostics),
 		generation, now); pushed != nil && accepted.Status == metav1.ConditionTrue {
 		conditions = append(conditions, *pushed)
 	}
@@ -447,6 +447,18 @@ func buildShadowedCondition(
 // tunnelSharedReason picks the TunnelShared condition reason: across
 // namespaces when any of the route's shares crosses one, since that is the
 // share that crosses a tenant boundary, within one namespace otherwise.
+// proxyConfigPushedReason names why ProxyConfigPushed is False: a failed push,
+// unless every diagnostic behind it is a route left out over its parents.
+func proxyConfigPushedReason(diagnostics []proxy.RouteDiagnostic) string {
+	for _, diag := range diagnostics {
+		if diag.Target == proxy.DiagnosticProxyConfigPush && diag.Reason != routeReasonParentNotEvaluated {
+			return routeReasonProxyConfigPushFailed
+		}
+	}
+
+	return routeReasonParentNotEvaluated
+}
+
 func tunnelSharedReason(diagnostics []proxy.RouteDiagnostic) string {
 	for _, diag := range diagnostics {
 		if diag.Target == proxy.DiagnosticTunnelShared && diag.Reason == routeReasonTunnelSharedAcrossNamespaces {
@@ -742,8 +754,9 @@ const (
 const (
 	// routeConditionProxyConfigPushed is set False when the controller could not
 	// push this route's config to its data plane for a SUSTAINED run of attempts
-	// (#487) — the proxy serves 502 until the push recovers. It clears on the
-	// first successful push (parent status is rebuilt each sync).
+	// (#487) — the proxy serves 502 until the push recovers — or left the route
+	// out of that config because its parents could not be evaluated. It clears
+	// on the first sync without either (parent status is rebuilt each sync).
 	routeConditionProxyConfigPushed  = "cf.k8s.lex.la/ProxyConfigPushed"
 	routeReasonProxyConfigPushFailed = "ProxyConfigPushFailed"
 	// routeReasonParentNotEvaluated sets the same condition False when the
@@ -769,12 +782,11 @@ const (
 	// `kubectl events` and event-driven alerting.
 	eventReasonRouteShadowed = "RouteShadowed"
 	eventActionRouteSync     = "Sync"
-	// eventReasonProxyConfigPushFailed / eventReasonTunnelShared mirror the
-	// ProxyConfigPushed / TunnelShared conditions as Warning Events so a
-	// sustained push failure (#487) and a tunnel share (#488)
-	// also surface in `kubectl events` and event-driven alerting.
-	eventReasonProxyConfigPushFailed = "ProxyConfigPushFailed"
-	eventReasonTunnelShared          = "TunnelShared"
+	// eventReasonTunnelShared mirrors the TunnelShared condition as a Warning
+	// Event so a tunnel share (#488) also surfaces in `kubectl events` and
+	// event-driven alerting. The ProxyConfigPushed mirror takes its reason from
+	// the condition (proxyConfigPushedReason).
+	eventReasonTunnelShared = "TunnelShared"
 
 	// Event reason / action tokens for the GRPCRoute edge-toggle breadcrumb (see
 	// emitGRPCEdgeHint). The Cloudflare zone gRPC toggle is dashboard-only with no
@@ -827,7 +839,8 @@ func emitDiagnosticEvents(recorder events.EventRecorder, route runtime.Object, d
 			recorder.Eventf(route, nil, corev1.EventTypeWarning, eventReasonRouteShadowed, eventActionRouteSync, "%s", diag.Message)
 		case proxy.DiagnosticProxyConfigPush:
 			// Mirror the ProxyConfigPushed=False condition (#487).
-			recorder.Eventf(route, nil, corev1.EventTypeWarning, eventReasonProxyConfigPushFailed, eventActionRouteSync, "%s", diag.Message)
+			recorder.Eventf(route, nil, corev1.EventTypeWarning, proxyConfigPushedReason([]proxy.RouteDiagnostic{diag}),
+				eventActionRouteSync, "%s", diag.Message)
 		case proxy.DiagnosticTunnelShared:
 			// Mirror the TunnelShared=True condition (#488).
 			recorder.Eventf(route, nil, corev1.EventTypeWarning, eventReasonTunnelShared, eventActionRouteSync, "%s", diag.Message)

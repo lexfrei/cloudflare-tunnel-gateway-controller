@@ -189,3 +189,24 @@ func TestGRPCRouteReconciler_updateRouteStatus_EmitsEvent(t *testing.T) {
 	require.Len(t, diagEvents, 1, "the GRPCRoute reconciler must emit the Event-target diagnostic")
 	assert.Contains(t, diagEvents[0], "h2c suppressed")
 }
+
+// TestEmitDiagnosticEvents_ProxyConfigPushReasonFollowsDiagnostic pins that the
+// Warning Event mirroring ProxyConfigPushed=False carries the same reason as
+// the condition: a route left out over its parents is not reported as a failed
+// push.
+func TestEmitDiagnosticEvents_ProxyConfigPushReasonFollowsDiagnostic(t *testing.T) {
+	t.Parallel()
+
+	route := &gatewayv1.HTTPRoute{ObjectMeta: metav1.ObjectMeta{Name: "web", Namespace: "default"}}
+
+	for _, reason := range []string{routeReasonProxyConfigPushFailed, routeReasonParentNotEvaluated} {
+		rec := events.NewFakeRecorder(10)
+		emitDiagnosticEvents(rec, route, []proxy.RouteDiagnostic{
+			{Target: proxy.DiagnosticProxyConfigPush, Reason: reason, Message: "not served"},
+		})
+
+		got := drainEvents(rec)
+		require.Len(t, got, 1)
+		assert.True(t, strings.HasPrefix(got[0], corev1.EventTypeWarning+" "+reason+" "), "event %q", got[0])
+	}
+}

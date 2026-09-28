@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/cockroachdb/errors"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -52,7 +53,8 @@ const catchAllHostnameSentinel = gatewayv1.Hostname("")
 // already declared, and never turns a hostname-less catch-all into anything
 // else. A parent that exists but cannot be evaluated (a failed read, a binding
 // validation error) is different: nothing shows what the route may serve, so
-// when no other parent contributes the route is left out of the result.
+// when no other parent contributes the route is left out of the result and a
+// diagnostic reports it on the route's status.
 //
 // controllerName scopes which parents may contribute at all: only Gateways
 // whose GatewayClass names this controller. A route may legitimately be
@@ -80,6 +82,8 @@ func withEffectiveHostnames(
 	validator := routebinding.NewValidator(cli)
 	out := make([]*gatewayv1.HTTPRoute, 0, len(routes))
 
+	var leftOut []proxy.RouteDiagnostic
+
 	for _, route := range routes {
 		effective, catchAll, undecided := collectEffectiveListenerHostnames(ctx, cli, controllerName, validator, HTTPRouteWrapper{route}, views)
 		if catchAll && len(route.Spec.Hostnames) == 0 {
@@ -93,7 +97,7 @@ func withEffectiveHostnames(
 
 		if len(effective) == 0 {
 			if undecided != nil {
-				logUndecidedRoute(ctx, route, undecided)
+				leftOut = append(leftOut, leaveOutUndecidedRoute(ctx, route, undecided))
 
 				continue
 			}
@@ -108,7 +112,7 @@ func withEffectiveHostnames(
 		out = append(out, &clone)
 	}
 
-	return out, nil
+	return out, leftOut
 }
 
 // withEffectiveHostnamesGRPC is the GRPCRoute counterpart of
@@ -136,6 +140,8 @@ func withEffectiveHostnamesGRPC(
 	validator := routebinding.NewValidator(cli)
 	out := make([]*gatewayv1.GRPCRoute, 0, len(routes))
 
+	var leftOut []proxy.RouteDiagnostic
+
 	for _, route := range routes {
 		effective, catchAll, undecided := collectEffectiveListenerHostnames(ctx, cli, controllerName, validator, GRPCRouteWrapper{route}, views)
 		if catchAll && len(route.Spec.Hostnames) == 0 {
@@ -149,7 +155,7 @@ func withEffectiveHostnamesGRPC(
 
 		if len(effective) == 0 {
 			if undecided != nil {
-				logUndecidedRoute(ctx, route, undecided)
+				leftOut = append(leftOut, leaveOutUndecidedRoute(ctx, route, undecided))
 
 				continue
 			}
@@ -164,7 +170,7 @@ func withEffectiveHostnamesGRPC(
 		out = append(out, &clone)
 	}
 
-	return out, nil
+	return out, leftOut
 }
 
 // collectEffectiveListenerHostnames walks the route's parentRefs and, for each
@@ -220,12 +226,22 @@ func collectEffectiveListenerHostnames(
 	return out, catchAll, undecided
 }
 
-// logUndecidedRoute records a route left out of the proxy config because none
-// of its parents could be evaluated.
-func logUndecidedRoute(ctx context.Context, route client.Object, err error) {
+// leaveOutUndecidedRoute logs a route left out of the proxy config because
+// none of its parents could be evaluated, and returns the diagnostic that
+// reports it on the route's status.
+func leaveOutUndecidedRoute(ctx context.Context, route client.Object, err error) proxy.RouteDiagnostic {
 	logging.FromContext(ctx).Error("route left out of the proxy config: its parent could not be evaluated",
 		"route", route.GetNamespace()+"/"+route.GetName(),
 		"error", err)
+
+	return proxy.RouteDiagnostic{
+		Namespace: route.GetNamespace(),
+		Name:      route.GetName(),
+		Target:    proxy.DiagnosticProxyConfigPush,
+		Reason:    routeReasonParentNotEvaluated,
+		Message: fmt.Sprintf("this route was left out of its data plane's config because the controller could not "+
+			"evaluate its parent (%v), so it serves no requests; the sync is retried. This route remains Accepted.", err),
+	}
 }
 
 func effectiveHostnamesForParentRef(
