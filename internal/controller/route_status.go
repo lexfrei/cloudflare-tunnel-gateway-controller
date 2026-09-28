@@ -146,10 +146,14 @@ func updateRouteParentStatuses(
 	ours := make([]gatewayv1.RouteParentStatus, 0, len(accessor.parentRefs()))
 
 	for refIdx, ref := range accessor.parentRefs() {
-		parentStatus := resolveParentRefStatus(
+		parentStatus, keepPrior := resolveParentRefStatus(
 			ctx, params, accessor, ref, refIdx, classNames, now, bindingInfo, failedRefs, syncErr,
 		)
-		if parentStatus != nil {
+
+		switch {
+		case keepPrior:
+			ours = append(ours, priorEntryFor(priorOwn, ref, accessor.obj.GetNamespace())...)
+		case parentStatus != nil:
 			parentStatus.Conditions = mergeOwnParentConditions(priorOwn, parentStatus)
 			ours = append(ours, *parentStatus)
 		}
@@ -248,9 +252,38 @@ func ptrValueEqual[T comparable](left, right *T) bool {
 	return *left == *right
 }
 
+// priorEntryFor returns this controller's existing entry for ref, if there is
+// one, so a pass that cannot read the ref's Gateway leaves it as it was.
+func priorEntryFor(priorOwn []gatewayv1.RouteParentStatus, ref gatewayv1.ParentReference, routeNamespace string) []gatewayv1.RouteParentStatus {
+	namespace := gatewayv1.Namespace(routeNamespace)
+	if ref.Namespace != nil {
+		namespace = *ref.Namespace
+	}
+
+	normalized := gatewayv1.ParentReference{
+		Group:       ref.Group,
+		Kind:        ref.Kind,
+		Namespace:   &namespace,
+		Name:        ref.Name,
+		Port:        ref.Port,
+		SectionName: ref.SectionName,
+	}
+
+	for i := range priorOwn {
+		if parentRefIdentityEqual(priorOwn[i].ParentRef, normalized) {
+			return priorOwn[i : i+1]
+		}
+	}
+
+	return nil
+}
+
 // resolveParentRefStatus builds a RouteParentStatus for a single parentRef,
 // or returns nil if the ref doesn't belong to a managed Gateway (directly or
-// via a ListenerSet attached to one).
+// via a ListenerSet attached to one). keepPrior reports that the ref's Gateway
+// could not be read: the status writer then keeps whatever entry the ref
+// already has, since external-dns reads it and a read failure says nothing
+// about the parent.
 func resolveParentRefStatus(
 	ctx context.Context,
 	params *routeStatusUpdateParams,
@@ -262,9 +295,14 @@ func resolveParentRefStatus(
 	bindingInfo routeBindingInfo,
 	failedRefs []ingress.BackendRefError,
 	syncErr error,
-) *gatewayv1.RouteParentStatus {
-	if !parentRefSelectsManagedGateway(ctx, params.k8sClient, ref, accessor.obj.GetNamespace(), classNames) {
-		return nil
+) (*gatewayv1.RouteParentStatus, bool) {
+	managed, err := parentRefSelectsManagedGateway(ctx, params.k8sClient, ref, accessor.obj.GetNamespace(), classNames)
+	if err != nil {
+		return nil, true
+	}
+
+	if !managed {
+		return nil, false
 	}
 
 	namespace := accessor.obj.GetNamespace()
@@ -281,7 +319,7 @@ func resolveParentRefStatus(
 		params.diagnostics, params.ruleCount,
 	)
 
-	return &parentStatus
+	return &parentStatus, false
 }
 
 // parentRefSelectsManagedGateway returns true when a route parentRef
@@ -289,20 +327,21 @@ func resolveParentRefStatus(
 // (Kind=Gateway) or via a ListenerSet whose parent Gateway is managed. A ref
 // with an unrecognised Group (anything other than the Gateway API group or
 // empty/default) returns false so a foreign-group ListenerSet name collision
-// cannot poison the route's status.parents entries.
+// cannot poison the route's status.parents entries. A Gateway or ListenerSet
+// that could not be read returns the error.
 func parentRefSelectsManagedGateway(
 	ctx context.Context,
 	cli client.Client,
 	ref gatewayv1.ParentReference,
 	routeNamespace string,
 	classNames map[string]bool,
-) bool {
-	gateway, found := resolveParentGatewayFromRef(ctx, cli, ref, routeNamespace)
-	if !found {
-		return false
+) (bool, error) {
+	gateway, found, err := lookupParentGatewayFromRef(ctx, cli, ref, routeNamespace)
+	if err != nil || !found {
+		return false, err
 	}
 
-	return classNames[string(gateway.Spec.GatewayClassName)]
+	return classNames[string(gateway.Spec.GatewayClassName)], nil
 }
 
 // buildParentStatus constructs a RouteParentStatus entry for a single parent ref.

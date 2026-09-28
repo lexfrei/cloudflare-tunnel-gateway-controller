@@ -13,7 +13,15 @@ import (
 type ListenerSetAcceptance struct {
 	Accepted bool
 	Reason   gatewayv1.ListenerSetConditionReason
+	// Message explains a refusal the generic not-allowed message would not.
+	// Empty otherwise.
+	Message string
 }
+
+// invalidAllowedListenersMessage tells a ListenerSet owner why it is refused
+// without quoting the Gateway's selector, which the owner may not be allowed
+// to read.
+const invalidAllowedListenersMessage = "The parent Gateway's allowedListeners selector is invalid"
 
 // EvaluateListenerSetAcceptance applies the parent Gateway's
 // spec.allowedListeners.namespaces filter to decide if the given ListenerSet
@@ -48,7 +56,10 @@ func (v *Validator) EvaluateListenerSetAcceptance(
 				"listenerSet", listenerSet.Namespace+"/"+listenerSet.Name,
 				"error", err)
 
-			return rejectedListenerSet(), nil
+			refused := rejectedListenerSet()
+			refused.Message = invalidAllowedListenersMessage
+
+			return refused, nil
 		}
 
 		if ok {

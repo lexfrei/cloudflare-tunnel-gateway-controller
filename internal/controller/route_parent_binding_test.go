@@ -321,10 +321,9 @@ func TestParentRefSelectsManagedGateway_ForeignGroupRejected(t *testing.T) {
 	ns := gatewayv1.Namespace("infra")
 	ref := gatewayv1.ParentReference{Group: &foreignGroup, Kind: &kind, Name: "ls", Namespace: &ns}
 
-	assert.False(t,
-		parentRefSelectsManagedGateway(context.Background(), cli, ref, "team-a", classNames),
-		"foreign-group ListenerSet ref must not register as a managed parent",
-	)
+	managed, err := parentRefSelectsManagedGateway(context.Background(), cli, ref, "team-a", classNames)
+	require.NoError(t, err)
+	assert.False(t, managed, "foreign-group ListenerSet ref must not register as a managed parent")
 }
 
 func namespacesFromAllPtr() *gatewayv1.FromNamespaces {

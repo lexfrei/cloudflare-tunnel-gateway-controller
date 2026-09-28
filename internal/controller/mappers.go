@@ -822,8 +822,23 @@ func resolveParentGatewayFromRef(
 	ref gatewayv1.ParentReference,
 	routeNamespace string,
 ) (*gatewayv1.Gateway, bool) {
+	gateway, found, err := lookupParentGatewayFromRef(ctx, cli, ref, routeNamespace)
+
+	return gateway, found && err == nil
+}
+
+// lookupParentGatewayFromRef is resolveParentGatewayFromRef that tells an
+// absent parent from one that could not be read: found is false with no error
+// for a foreign Group or Kind or a referent that does not exist, and the error
+// is returned for any other failed read.
+func lookupParentGatewayFromRef(
+	ctx context.Context,
+	cli client.Client,
+	ref gatewayv1.ParentReference,
+	routeNamespace string,
+) (*gatewayv1.Gateway, bool, error) {
 	if ref.Group != nil && string(*ref.Group) != "" && string(*ref.Group) != gatewayv1.GroupName {
-		return nil, false
+		return nil, false, nil
 	}
 
 	kind := kindGateway
@@ -840,20 +855,25 @@ func resolveParentGatewayFromRef(
 	case kindGateway:
 		var gateway gatewayv1.Gateway
 		if err := cli.Get(ctx, client.ObjectKey{Name: string(ref.Name), Namespace: namespace}, &gateway); err != nil {
-			return nil, false
+			return nil, false, errors.Wrap(client.IgnoreNotFound(err), "reading parent Gateway")
 		}
 
-		return &gateway, true
+		return &gateway, true, nil
 	case kindListenerSet:
 		var listenerSet gatewayv1.ListenerSet
 		if err := cli.Get(ctx, client.ObjectKey{Name: string(ref.Name), Namespace: namespace}, &listenerSet); err != nil {
-			return nil, false
+			return nil, false, errors.Wrap(client.IgnoreNotFound(err), "reading parent ListenerSet")
 		}
 
-		return listenerSetParentGateway(ctx, cli, &listenerSet)
+		gateway, err := getListenerSetParentGateway(ctx, cli, &listenerSet)
+		if err != nil {
+			return nil, false, errors.Wrap(client.IgnoreNotFound(err), "resolving the ListenerSet parent")
+		}
+
+		return gateway, true, nil
 	}
 
-	return nil, false
+	return nil, false, nil
 }
 
 // IsRouteAcceptedByGateway checks if a route has at least one accepted binding

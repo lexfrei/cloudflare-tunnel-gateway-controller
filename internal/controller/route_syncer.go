@@ -1984,7 +1984,8 @@ func (s *RouteSyncer) bindRouteParents(
 // parent, and the status writer reports the ref Pending rather than falling
 // back to Accepted=True for a parent the route is not bound to. The status
 // writer only writes entries for refs that select a managed Gateway, so a ref
-// that turns out to be foreign gets no entry.
+// that turns out to be foreign gets no entry, and one whose Gateway it cannot
+// read either keeps its existing entry.
 func (s *RouteSyncer) bindOneParent(
 	ctx context.Context,
 	logger *slog.Logger,

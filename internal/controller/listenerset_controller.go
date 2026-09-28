@@ -240,15 +240,17 @@ func (r *ListenerSetReconciler) computeAcceptance(
 	gateway *gatewayv1.Gateway,
 	listenerSet *gatewayv1.ListenerSet,
 ) listenerSetAcceptanceResult {
-	validator := routebinding.NewValidator(r.Client)
+	// This reconcile is where a ListenerSet owner looks, so it warns about a
+	// parent Gateway selector it cannot evaluate.
+	validator := routebinding.NewReportingValidator(r.Client)
 
 	allowed, err := validator.EvaluateListenerSetAcceptance(ctx, gateway, listenerSet)
 	if err != nil || !allowed.Accepted {
 		reason := gatewayv1.ListenerSetReasonNotAllowed
 
 		message := listenerSetMsgNotAllowed
-		if err != nil {
-			message = "Failed to evaluate parent Gateway allowedListeners: " + err.Error()
+		if allowed.Message != "" {
+			message = allowed.Message
 		}
 
 		return listenerSetAcceptanceResult{
