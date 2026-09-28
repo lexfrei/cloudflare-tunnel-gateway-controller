@@ -888,8 +888,8 @@ func classConfigConflict(classes []gatewayv1.GatewayClass, controllerName string
 }
 
 // hasConflictingParametersRef returns true if the given GatewayClasses
-// reference different parametersRef (Group, Kind, or Name), indicating
-// a misconfiguration.
+// reference different parametersRef (Group, Kind, Name, or Namespace),
+// indicating a misconfiguration.
 func hasConflictingParametersRef(classes []gatewayv1.GatewayClass) bool {
 	first := classes[0].Spec.ParametersRef
 
@@ -904,9 +904,9 @@ func hasConflictingParametersRef(classes []gatewayv1.GatewayClass) bool {
 }
 
 // parametersRefEqual compares two ParametersReference pointers for equality.
-// Namespace is deliberately ignored: GatewayClassConfig is cluster-scoped, so
-// it does not change which object a ref names, and the resolver refuses a ref
-// that sets it (config.ValidateParametersRefScope).
+// Namespace counts even though GatewayClassConfig is cluster-scoped: the
+// resolver refuses a ref that sets one (config.ValidateParametersRefScope), so
+// a namespaced ref and a plain one do not resolve to the same config.
 func parametersRefEqual(left, right *gatewayv1.ParametersReference) bool {
 	if left == nil && right == nil {
 		return true
@@ -916,7 +916,16 @@ func parametersRefEqual(left, right *gatewayv1.ParametersReference) bool {
 		return false
 	}
 
-	return left.Group == right.Group && left.Kind == right.Kind && left.Name == right.Name
+	return left.Group == right.Group && left.Kind == right.Kind && left.Name == right.Name &&
+		namespacePtrEqual(left.Namespace, right.Namespace)
+}
+
+func namespacePtrEqual(left, right *gatewayv1.Namespace) bool {
+	if left == nil || right == nil {
+		return left == right
+	}
+
+	return *left == *right
 }
 
 // buildResultForError creates a SyncResult containing all relevant routes.
