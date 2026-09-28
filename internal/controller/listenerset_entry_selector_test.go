@@ -144,3 +144,58 @@ func TestListenerSetEntriesAccepted_SkipsInvalidSelector(t *testing.T) {
 
 	assert.False(t, listenerSetEntriesAccepted(context.Background(), cli, ls, nil))
 }
+
+// TestListenerSetAggregate_UnsupportedProtocolEntry pins that an entry with a
+// protocol this controller does not serve drives the ListenerSet aggregate the
+// way the vendored ListenerSetReasonListenersNotValid defines: Accepted=True
+// with ListenersNotValid while another entry serves, Accepted=False when none
+// does, and the parent Gateway does not count a ListenerSet with no usable entry.
+func TestListenerSetAggregate_UnsupportedProtocolEntry(t *testing.T) {
+	t.Parallel()
+
+	tcpEntry := func(name gatewayv1.SectionName, port gatewayv1.PortNumber) gatewayv1.ListenerEntry {
+		return gatewayv1.ListenerEntry{Name: name, Port: port, Protocol: gatewayv1.TCPProtocolType}
+	}
+
+	tests := []struct {
+		name     string
+		entries  []gatewayv1.ListenerEntry
+		accepted metav1.ConditionStatus
+	}{
+		{
+			name: "a sibling serves",
+			entries: []gatewayv1.ListenerEntry{
+				tcpEntry("tcp", 9000),
+				{Name: "healthy", Port: 8081, Protocol: gatewayv1.HTTPProtocolType},
+			},
+			accepted: metav1.ConditionTrue,
+		},
+		{
+			name:     "no entry serves",
+			entries:  []gatewayv1.ListenerEntry{tcpEntry("tcp", 9000)},
+			accepted: metav1.ConditionFalse,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			ls := reconcileSelectorListenerSet(t, tt.entries)
+
+			lsAccepted := findCondition(ls.Status.Conditions, string(gatewayv1.ListenerSetConditionAccepted))
+			require.NotNil(t, lsAccepted)
+			assert.Equal(t, tt.accepted, lsAccepted.Status)
+			assert.Equal(t, string(gatewayv1.ListenerSetReasonListenersNotValid), lsAccepted.Reason)
+			assert.Contains(t, lsAccepted.Message, "protocol")
+
+			spec := &gatewayv1.ListenerSet{
+				ObjectMeta: metav1.ObjectMeta{Name: "ls", Namespace: "infra"},
+				Spec:       gatewayv1.ListenerSetSpec{Listeners: tt.entries},
+			}
+			assert.Equal(t, tt.accepted == metav1.ConditionTrue,
+				listenerSetEntriesAccepted(context.Background(), buildGatewayFakeClient(t, spec), spec, nil),
+				"the Gateway's attachedListenerSets follows the ListenerSet's own verdict")
+		})
+	}
+}
