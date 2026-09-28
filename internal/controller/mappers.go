@@ -801,6 +801,9 @@ func routeTargetsGateway(route Route, gateway *gatewayv1.Gateway) bool {
 func listenerSetsOfGateway(ctx context.Context, cli client.Client, gateway *gatewayv1.Gateway) []*gatewayv1.ListenerSet {
 	var list gatewayv1.ListenerSetList
 	if err := cli.List(ctx, &list); err != nil {
+		logging.FromContext(ctx).Warn("failed to list ListenerSets; routes attached through them are not enqueued",
+			"gateway", gateway.Namespace+"/"+gateway.Name, "error", err)
+
 		return nil
 	}
 
