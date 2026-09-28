@@ -905,14 +905,14 @@ func classConfigConflict(classes []gatewayv1.GatewayClass, controllerName string
 
 	slices.Sort(names)
 
-	// Marked rather than wrapped: wrapping ErrInvalidParameters would append
-	// its text, which names a Gateway's infrastructure ref, to a conflict
-	// between GatewayClasses.
-	//nolint:wrapcheck // marking rather than wrapping is the point, per above
-	return errors.Mark(errors.Mark(errors.Newf(
+	// Classified rather than wrapped: wrapping ErrInvalidParameters would
+	// append its text, which names a Gateway's infrastructure ref, to a
+	// conflict between GatewayClasses.
+	//nolint:wrapcheck // MarkInvalidParameters classifies; wrapping would add the text this avoids
+	return config.MarkInvalidParameters(errors.Mark(errors.Newf(
 		"conflicting parametersRef across GatewayClasses %v for controller %s: "+
 			"one controller instance supports only one GatewayClassConfig",
-		names, controllerName), errClassConfigConflict), config.ErrInvalidParameters)
+		names, controllerName), errClassConfigConflict))
 }
 
 // hasConflictingParametersRef returns true if the given GatewayClasses

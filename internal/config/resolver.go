@@ -317,18 +317,16 @@ func invalidIfNotFound(err error) error {
 }
 
 // classError is how every GatewayClass entry point returns an error: a
-// configuration problem is named after the class it belongs to and marked
+// configuration problem is named after the class it belongs to and classified
 // ErrInvalidParameters, so a Gateway's status points at the class's
 // spec.parametersRef chain rather than at the Gateway. Anything else is
 // returned as it is.
-//
-//nolint:wrapcheck // marking rather than wrapping keeps ErrInvalidParameters' text out of the message
 func classError(gatewayClassName string, err error) error {
 	if err == nil || !errors.Is(err, errClassParameters) {
 		return err
 	}
 
-	return errors.Mark(errors.Wrapf(err, "GatewayClass %q", gatewayClassName), ErrInvalidParameters)
+	return MarkInvalidParameters(errors.Wrapf(err, "GatewayClass %q", gatewayClassName))
 }
 
 //nolint:funcorder // private helper

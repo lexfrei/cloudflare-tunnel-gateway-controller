@@ -39,6 +39,28 @@ const (
 // identity so callers retry with backoff instead of blaming the user's spec.
 var ErrInvalidParameters = errors.New("invalid Gateway spec.infrastructure.parametersRef")
 
+// MarkInvalidParameters classifies err as ErrInvalidParameters without adding
+// the sentinel's text, which names a Gateway's infrastructure ref, to its
+// message. Both the standard library's errors.Is and cockroachdb's see the
+// sentinel, where cockroachdb's errors.Mark is visible to cockroachdb only.
+func MarkInvalidParameters(err error) error {
+	return &invalidParametersError{cause: err}
+}
+
+// invalidParametersError is err classified as ErrInvalidParameters.
+type invalidParametersError struct {
+	cause error
+}
+
+func (e *invalidParametersError) Error() string {
+	return e.cause.Error()
+}
+
+// Unwrap exposes both the cause and the sentinel.
+func (e *invalidParametersError) Unwrap() []error {
+	return []error{e.cause, ErrInvalidParameters}
+}
+
 // PerGatewayConfig is the resolution result for a Gateway opted into a
 // dedicated data plane via infrastructure.parametersRef.
 type PerGatewayConfig struct {
