@@ -61,8 +61,7 @@ func TestGatewayWatchIsRegisteredOnBothControllers(t *testing.T) {
 // already advertising a tunnel keeps it against an older claimant — while the
 // cap has no possession term at all, so an older Gateway opting in later does
 // displace a newer holder. The two therefore agree on ties and deliberately
-// diverge everywhere possession applies; whether the cap SHOULD gain a
-// possession term is #758.
+// diverge everywhere possession applies; overQuotaGateways says why.
 func TestQuotaTieBreakingMatchesTunnelArbitration(t *testing.T) {
 	t.Parallel()
 

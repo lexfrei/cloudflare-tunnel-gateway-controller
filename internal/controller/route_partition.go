@@ -288,6 +288,12 @@ func (g *infraGateways) isResolved(key string) bool {
 // how the layers reach different verdicts about the same tunnel: arbitration
 // that never hears a claim cannot refuse it, and a partition built without it
 // serves its routes anyway.
+//
+// A Gateway being deleted stays listed until it is gone. Its plane is removed
+// by owner GC, which under the default background propagation starts only once
+// the object is gone, so dropping it at DeletionTimestamp would release its
+// tunnel and its slot while a finalizer keeps its connector serving, and
+// partitionKeysFor would send its routes to the shared partition.
 func managedInfraGateways(
 	ctx context.Context,
 	cli client.Client,

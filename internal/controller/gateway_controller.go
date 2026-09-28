@@ -18,10 +18,12 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/events"
 	"k8s.io/client-go/util/retry"
+	"k8s.io/client-go/util/workqueue"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
@@ -206,6 +208,16 @@ func (r *GatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		return result, err
 	}
 
+	// Route sync programs nothing while the managed classes disagree, for
+	// shared and dedicated planes alike, so no Gateway may report Accepted.
+	// Checked after the refusals, as the infra reconciler does: a refusal
+	// removes the plane there, and only a status written here announces a
+	// lapsed Cloudflare confirmation to it. The refusal's requeue, and this
+	// one, both come back within tunnelproof.RecheckInterval.
+	if err := managedClassConfigConflict(ctx, r.Client, r.ControllerName); err != nil {
+		return r.handleResolveError(ctx, &gateway, err, "managed GatewayClasses disagree")
+	}
+
 	if err := r.updateStatus(ctx, &gateway, resolvedConfig, perGatewayMode); err != nil {
 		return ctrl.Result{}, errors.Wrap(err, "failed to update gateway status")
 	}
@@ -244,8 +256,8 @@ func (r *GatewayReconciler) refuseDedicatedPlane(
 	}
 
 	// Read from THIS Gateway's class, while SyncAllRoutes reads from the first
-	// managed class. Why that is not a divergence today, and what a second
-	// managed class would have to reconcile, is in applyPlaneRefusals.
+	// managed class. Why that is not a divergence, and what serving a second
+	// GatewayClassConfig would have to reconcile, is in applyPlaneRefusals.
 	policy, resolveErr := r.ConfigResolver.ResolveTunnelPolicyForGatewayClass(ctx, string(gateway.Spec.GatewayClassName))
 	if resolveErr != nil {
 		err := errors.Wrap(resolveErr, "resolving the GatewayClass tunnel policy")
@@ -963,7 +975,12 @@ func (r *GatewayReconciler) setConfigErrorStatus(
 		// which Gateway advertises it — so a token rotation that briefly
 		// deletes the Secret would let another namespace take the tunnel over
 		// and lock the owner out for good.
-		if !config.HasInfrastructureParametersRef(&freshGateway) {
+		//
+		// A class conflict is the other exception: the class tunnel keeps
+		// serving its last configuration, and external-dns publishes records
+		// from this address, so clearing it would delete DNS for every
+		// hostname on the shared plane.
+		if !config.HasInfrastructureParametersRef(&freshGateway) && !errors.Is(configErr, errClassConfigConflict) {
 			freshGateway.Status.Addresses = nil
 		}
 
@@ -1227,6 +1244,14 @@ func (r *GatewayReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			handler.EnqueueRequestsFromMapFunc(r.namespaceDataPlaneSiblings),
 			builder.WithPredicates(predicate.GenerationChangedPredicate{}),
 		).
+		// Enqueue every managed Gateway when a Gateway event flips the
+		// class-conflict verdict. Generation-gated for the same reason as the
+		// watch above.
+		Watches(
+			&gatewayv1.Gateway{},
+			r.classConflictHandler(),
+			builder.WithPredicates(predicate.GenerationChangedPredicate{}),
+		).
 		// Watch GatewayConfig (per-Gateway data planes) so an edit that does
 		// not change the rendered Deployment still refreshes the Gateway's
 		// status (the single status writer lives here, not in the infra
@@ -1362,6 +1387,77 @@ func (r *GatewayReconciler) namespaceDataPlaneSiblings(
 	obj client.Object,
 ) []reconcile.Request {
 	return optedInGatewaysInNamespace(ctx, r.Client, r.ControllerName, obj.GetNamespace())
+}
+
+// classConflictHandler enqueues every managed Gateway when a Gateway event can
+// flip whether the managed classes in use conflict.
+//
+// The conflict check counts only classes some Gateway uses, so a Gateway landing
+// on or leaving an otherwise unused class flips every Gateway on every other
+// class, none of which was written. Only a create, a delete or a move between
+// classes changes which classes are in use; an edit that keeps the class cannot
+// flip anything.
+func (r *GatewayReconciler) classConflictHandler() handler.Funcs {
+	enqueueOnChange := func(
+		ctx context.Context,
+		before, after string,
+		queue workqueue.TypedRateLimitingInterface[reconcile.Request],
+	) {
+		for _, request := range r.classConflictRequests(ctx, before, after) {
+			queue.Add(request)
+		}
+	}
+
+	return handler.Funcs{
+		CreateFunc: func(ctx context.Context, e event.CreateEvent, queue workqueue.TypedRateLimitingInterface[reconcile.Request]) {
+			enqueueOnChange(ctx, "", gatewayClassOf(e.Object), queue)
+		},
+		UpdateFunc: func(ctx context.Context, e event.UpdateEvent, queue workqueue.TypedRateLimitingInterface[reconcile.Request]) {
+			enqueueOnChange(ctx, gatewayClassOf(e.ObjectOld), gatewayClassOf(e.ObjectNew), queue)
+		},
+		DeleteFunc: func(ctx context.Context, e event.DeleteEvent, queue workqueue.TypedRateLimitingInterface[reconcile.Request]) {
+			enqueueOnChange(ctx, gatewayClassOf(e.Object), "", queue)
+		},
+	}
+}
+
+// gatewayClassOf returns the GatewayClass a Gateway names, empty for anything
+// else.
+func gatewayClassOf(obj client.Object) string {
+	if gateway, ok := obj.(*gatewayv1.Gateway); ok {
+		return string(gateway.Spec.GatewayClassName)
+	}
+
+	return ""
+}
+
+// classConflictRequests returns every managed Gateway when a Gateway moving
+// from class before to class after, empty meaning none, happens while the
+// managed classes, in use or not, disagree, and nothing otherwise.
+//
+// It deliberately does not narrow to the classes in use, nor work out whether
+// this one event flips the verdict over them. The informer writes its cache
+// before it delivers events, so two Gateways that put a class in use together
+// are both cached when either handler runs, and each would see the other
+// already holding the class; a delete likewise arrives after its Gateway left
+// the cache.
+func (r *GatewayReconciler) classConflictRequests(ctx context.Context, before, after string) []reconcile.Request {
+	if before == after {
+		return nil
+	}
+
+	classes, err := listGatewayClassesForController(ctx, r.Client, r.ControllerName)
+	if err != nil {
+		logging.FromContext(ctx).Warn("failed to list GatewayClasses for the class-conflict watch", "error", err)
+
+		return nil
+	}
+
+	if classConfigConflict(classes, r.ControllerName) == nil {
+		return nil
+	}
+
+	return r.getAllManagedGateways(ctx)
 }
 
 // gatewayConfigToGateways maps a GatewayConfig event to the managed Gateways

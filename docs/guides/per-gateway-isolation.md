@@ -123,6 +123,8 @@ The refusal exists for a token that is genuine but held in more than one namespa
 
 Two Gateways in the SAME namespace may share a tunnel: that is a tenant sharing with itself, and no boundary is crossed.
 
+A Gateway being deleted keeps its tunnel until the object is gone. Its data plane is owned by the Gateway and removed by garbage collection rather than by this controller, so while a finalizer holds the Gateway, its connector can still be registered on the tunnel. Releasing the tunnel earlier would let another namespace's claim be accepted while that connector still serves.
+
 If every party on a tunnel is trusted to see the others' routes — a single-tenant cluster, or a migration from the shared plane to dedicated ones — an operator can set `allowSharedTunnels: true` on the cluster-scoped `GatewayClassConfig` (chart value `gatewayClassConfig.allowSharedTunnels`). That restores the merge behaviour for the whole class. The field is deliberately not on `GatewayConfig`: a tenant must not be able to grant it to themselves.
 
 When two DEDICATED Gateways end up on one tunnel, every affected route carries a `cf.k8s.lex.la/TunnelShared=True` condition and a mirrored `TunnelShared` Warning Event naming the other Gateways, so the collapsed isolation stays visible rather than silent. That covers both ways it can happen — the operator enabling `allowSharedTunnels`, and two Gateways in one namespace, which needs no opt-in. The condition's reason tells them apart: `TunnelSharedAcrossNamespaces` when any Gateway on the tunnel lives in another namespace, `TunnelSharedWithinNamespace` when they all share the route's Gateway's namespace.
