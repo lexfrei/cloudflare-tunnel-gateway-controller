@@ -231,7 +231,7 @@ True weighted traffic splitting across multiple backends is performed by the in-
 | Type | Status | Reason | Description |
 | --- | --- | --- | --- |
 | `Accepted` | `True` | `Accepted` | Route accepted and synced |
-| `Accepted` | `False` | `NoMatchingParent` | No listener matches the parentRef's `sectionName` or `port`, or every listener it matches is conflicted |
+| `Accepted` | `False` | `NoMatchingParent` | No listener or ListenerSet entry matches the parentRef's `sectionName` or `port`; every listener or entry it matches is conflicted; or the parent Gateway's `allowedListeners` refuses the parent ListenerSet, including when that selector does not parse |
 | `Accepted` | `False` | `NoMatchingListenerHostname` | Route hostnames don't intersect with the selected listeners, pinned or not |
 | `Accepted` | `False` | `NotAllowedByListeners` | Route namespace or kind not allowed by the selected listeners, pinned or not. A listener whose `allowedRoutes.namespaces.selector` does not parse is treated as not allowing the route and the other listeners are still evaluated; when none of them admits the route, the rejection message, whatever its reason, names that listener, and the parse error goes to the controller log |
 | `Accepted` | `False` | `Conflicted` | Route lost a cross-route-type conflict (HTTPRoute vs GRPCRoute on a shared Gateway with intersecting hostnames); the oldest Route by `creationTimestamp` is accepted |

@@ -72,8 +72,8 @@ func invalidSelectorEntry(name gatewayv1.SectionName, port gatewayv1.PortNumber)
 	}
 }
 
-// TestListenerSetEntryStatus_InvalidAllowedRoutesSelector pins the #901 fix
-// for ListenerSet entries, which are listeners too: an entry whose
+// TestListenerSetEntryStatus_InvalidAllowedRoutesSelector pins that a
+// ListenerSet entry, which is a listener too, whose
 // allowedRoutes.namespaces.selector does not parse is not Accepted and not
 // Programmed, and says the selector is invalid without quoting it. A sibling
 // entry still serves, so the ListenerSet stays Accepted with ListenersNotValid.
