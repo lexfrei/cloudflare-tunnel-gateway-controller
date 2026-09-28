@@ -1330,6 +1330,8 @@ func TestResolveConfigForController_MultipleClasses_ConflictingParametersRef(t *
 
 	// Must return an error because different parametersRef means different
 	// tunnel credentials — silently using one would send traffic to wrong tunnel.
+	// No Gateway uses either class here, which also pins that the conflict
+	// stands when there is nothing in use to narrow to.
 	_, err := syncer.resolveConfigForController(context.Background())
 
 	require.Error(t, err)
