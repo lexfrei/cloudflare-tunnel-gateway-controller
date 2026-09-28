@@ -159,6 +159,12 @@ type routeBindingInfo struct {
 	// one failed and one healthy tunnel must not flip the healthy parent.
 	parentGateways map[int]string
 
+	// parentPartitions maps ParentRef index to the key of the data-plane
+	// partition serving that parent, populated once the partitions are known.
+	// The status writer keeps only that partition's diagnostics on the
+	// parent's entry. A parent with no entry here is served from no partition.
+	parentPartitions map[int]string
+
 	// syncErrByGateway maps a managed Gateway key to the sync error of the
 	// tunnel serving it, populated AFTER the tunnel-group sync. A parent whose
 	// Gateway is absent here synced fine. Nil on the early-error path, where
@@ -470,6 +476,7 @@ func partitionRouteDiagnostics(
 			Target:    target,
 			Reason:    reason,
 			Message:   message,
+			Partition: partition.Key,
 		})
 	}
 
@@ -481,6 +488,7 @@ func partitionRouteDiagnostics(
 			Target:    target,
 			Reason:    reason,
 			Message:   message,
+			Partition: partition.Key,
 		})
 	}
 
@@ -610,7 +618,7 @@ func pushPartitionConfigs(
 
 		// Diagnostics are valid even when the push errors: they describe the
 		// route specs, not the push, and must reach the route status.
-		diagnostics = append(diagnostics, results[i].diags...)
+		diagnostics = append(diagnostics, withPartition(results[i].diags, partition.Key)...)
 
 		if results[i].err != nil {
 			logger.Error("proxy sync failed (non-blocking)", "partition", partition.Key, "error", results[i].err)
@@ -743,6 +751,16 @@ func pushPartitionsConcurrently(
 	_ = group.Wait()
 
 	return results
+}
+
+// withPartition names the partition each diagnostic was built for, so the
+// status writer puts it only under the parents that partition serves.
+func withPartition(diags []proxy.RouteDiagnostic, partitionKey string) []proxy.RouteDiagnostic {
+	for i := range diags {
+		diags[i].Partition = partitionKey
+	}
+
+	return diags
 }
 
 // resolveConfigForController resolves configuration from the GatewayClass
@@ -1094,6 +1112,8 @@ func (s *RouteSyncer) SyncAllRoutes(ctx context.Context) (ctrl.Result, *SyncResu
 	// whose tunnel synced fine.
 	injectPartitionSyncErrors(httpResult.bindings, outcome.failedPartitions, infra)
 	injectPartitionSyncErrors(grpcResult.bindings, outcome.failedPartitions, infra)
+	assignParentPartitions(httpResult.bindings, infra)
+	assignParentPartitions(grpcResult.bindings, infra)
 
 	syncResult := buildSyncResult(httpResult, grpcResult, outcome.httpFailedRefs, outcome.grpcFailedRefs)
 	syncResult.ConfigVersion = configVersion
@@ -1574,12 +1594,39 @@ func gatewaySyncError(gatewayKey string, failedPartitions map[string]error, infr
 		return errBrokenDataPlane
 	}
 
-	partitionKey := sharedPartitionKey
+	return failedPartitions[partitionKeyForGateway(gatewayKey, infra)]
+}
+
+// partitionKeyForGateway names the partition a Gateway that is not broken is
+// served from: its own for a resolved dedicated Gateway, the shared one
+// otherwise.
+func partitionKeyForGateway(gatewayKey string, infra *infraGateways) string {
 	if infra.isResolved(gatewayKey) {
-		partitionKey = gatewayKey
+		return gatewayKey
 	}
 
-	return failedPartitions[partitionKey]
+	return sharedPartitionKey
+}
+
+// assignParentPartitions records, on each route binding, the partition every
+// managed parent is served from, so the status writer can keep each partition's
+// diagnostics on its own parents. A parent on a broken dedicated Gateway is
+// served from no partition and gets no entry.
+func assignParentPartitions(bindings map[string]routeBindingInfo, infra *infraGateways) {
+	for key := range bindings {
+		binding := bindings[key]
+		binding.parentPartitions = make(map[int]string, len(binding.parentGateways))
+
+		for refIdx, gatewayKey := range binding.parentGateways {
+			if infra.isBroken(gatewayKey) {
+				continue
+			}
+
+			binding.parentPartitions[refIdx] = partitionKeyForGateway(gatewayKey, infra)
+		}
+
+		bindings[key] = binding
+	}
 }
 
 // tunnelGroupResult is one group's sync outcome.

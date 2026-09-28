@@ -187,3 +187,19 @@ func TestPushPartitionConfigs_StampsConverterDiagnostics(t *testing.T) {
 		assert.Equal(t, sharedPartitionKey, diag.Partition)
 	}
 }
+
+// TestSyncAllRoutes_RecordsParentPartitions pins that a full sync records the
+// partition serving each route's parent, which the status writer scopes
+// diagnostics by.
+func TestSyncAllRoutes_RecordsParentPartitions(t *testing.T) {
+	t.Parallel()
+
+	syncer := newPartitionSyncSyncer(t, newRecordingTunnelAPI(t), "99999999-9999-4999-8999-999999999999")
+
+	_, result, err := syncer.SyncAllRoutes(context.Background())
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	assert.Equal(t, map[int]string{0: sharedPartitionKey}, result.HTTPRouteBindings["default/shared-route"].parentPartitions)
+	assert.Equal(t, map[int]string{0: "default/infra-gw"}, result.HTTPRouteBindings["default/tenant-route"].parentPartitions)
+}

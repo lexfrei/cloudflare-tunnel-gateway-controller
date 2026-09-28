@@ -320,7 +320,7 @@ func buildParentStatus(
 	diagnostics []proxy.RouteDiagnostic,
 	ruleCount int,
 ) gatewayv1.RouteParentStatus {
-	parentNS := gatewayv1.Namespace(namespace)
+	diagnostics = diagnosticsForParent(diagnostics, bindingInfo, refIdx)
 
 	// Derive the Accepted override and the optional PartiallyInvalid condition
 	// from the converter diagnostics. A caller-supplied override (e.g. the
@@ -370,7 +370,7 @@ func buildParentStatus(
 		ParentRef: gatewayv1.ParentReference{
 			Group:       ref.Group,
 			Kind:        ref.Kind,
-			Namespace:   &parentNS,
+			Namespace:   new(gatewayv1.Namespace(namespace)),
 			Name:        ref.Name,
 			Port:        ref.Port,
 			SectionName: ref.SectionName,
@@ -378,6 +378,41 @@ func buildParentStatus(
 		ControllerName: gatewayv1.GatewayController(controllerName),
 		Conditions:     conditions,
 	}
+}
+
+// diagnosticsForParent keeps the diagnostics that apply to one parent entry.
+// A diagnostic about a data plane (a push failure, a parent not evaluated, a
+// shared tunnel, a shadowed rule) holds only for the parents that plane serves,
+// so it is kept only when its partition serves this parent. A diagnostic about
+// the route's own spec holds for every parent and is always kept.
+func diagnosticsForParent(
+	diagnostics []proxy.RouteDiagnostic,
+	bindingInfo routeBindingInfo,
+	refIdx int,
+) []proxy.RouteDiagnostic {
+	partition := bindingInfo.parentPartitions[refIdx]
+	kept := make([]proxy.RouteDiagnostic, 0, len(diagnostics))
+
+	for i := range diagnostics {
+		if !dataPlaneDiagnostic(diagnostics[i].Target) || diagnostics[i].Partition == partition {
+			kept = append(kept, diagnostics[i])
+		}
+	}
+
+	return kept
+}
+
+// dataPlaneDiagnostic reports whether a diagnostic target describes one data
+// plane rather than the route's spec.
+func dataPlaneDiagnostic(target proxy.DiagnosticTarget) bool {
+	switch target {
+	case proxy.DiagnosticProxyConfigPush, proxy.DiagnosticTunnelShared, proxy.DiagnosticShadowed:
+		return true
+	case proxy.DiagnosticAccepted, proxy.DiagnosticResolvedRefs, proxy.DiagnosticEvent:
+		return false
+	}
+
+	return false
 }
 
 // diagnosticConditions derives, from the converter's per-route Accepted-target

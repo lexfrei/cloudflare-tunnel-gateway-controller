@@ -83,7 +83,10 @@ func TestConfigTLSPushFailure_ReachesRouteStatusAgainstAPIServer(t *testing.T) {
 	require.True(t, hasProxyPushDiagnostic(diags), "a sustained handshake failure must surface on the route")
 
 	reconciler := &HTTPRouteReconciler{Client: envK8sClient, Scheme: envScheme, ControllerName: controllerName}
-	require.NoError(t, reconciler.updateRouteStatus(ctx, route, routeBindingInfo{}, nil, diags, nil))
+	// The sync records the partition serving the parent; the status writer
+	// keeps only that partition's data-plane diagnostics on it.
+	binding := routeBindingInfo{parentPartitions: map[int]string{0: sharedPartitionKey}}
+	require.NoError(t, reconciler.updateRouteStatus(ctx, route, binding, nil, diags, nil))
 
 	var stored gatewayv1.HTTPRoute
 	require.NoError(t, envK8sClient.Get(ctx, types.NamespacedName{Name: "web", Namespace: namespace}, &stored))
