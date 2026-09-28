@@ -393,3 +393,78 @@ func TestReportUndecidedParent_OneEventPerRoute(t *testing.T) {
 
 	assert.Len(t, drainEvents(rec), 1, "one Warning Event per route per sync")
 }
+
+// TestWithEffectiveHostnames_UndecidedParentBesideAFullyAcceptingOne covers a
+// route whose declared hostnames another parent already accepts in full. The
+// undecided parent can add nothing it declares, so the route is served as
+// written and is not reported: reporting it would carry a false condition and
+// requeue the sync for as long as the parent stays undecided.
+func TestWithEffectiveHostnames_UndecidedParentBesideAFullyAcceptingOne(t *testing.T) {
+	t.Parallel()
+
+	declared := gatewayv1.Hostname("a.example.com")
+
+	cli := buildGatewayFakeClient(t,
+		gatewayClassFor("our-class", skipTestControllerName),
+		gatewayUnderClass("ours", "our-class", nil),
+		invalidSelectorGateway("broken", nil),
+	)
+
+	route := httpRouteTo(declared)
+	route.Spec.ParentRefs = parentRefsToGateways("ours", "broken")
+
+	out, diags := withEffectiveHostnames(context.Background(), cli, skipTestControllerName, []*gatewayv1.HTTPRoute{route}, nil)
+	require.Len(t, out, 1)
+	assert.Equal(t, []gatewayv1.Hostname{declared}, out[0].Spec.Hostnames)
+	assert.Empty(t, diags, "a route served with every hostname it declares is not reported")
+}
+
+// TestWithEffectiveHostnamesGRPC_UndecidedParentBesideAFullyAcceptingOne is
+// the GRPCRoute twin.
+func TestWithEffectiveHostnamesGRPC_UndecidedParentBesideAFullyAcceptingOne(t *testing.T) {
+	t.Parallel()
+
+	declared := gatewayv1.Hostname("a.example.com")
+
+	cli := buildGatewayFakeClient(t,
+		gatewayClassFor("our-class", skipTestControllerName),
+		gatewayUnderClass("ours", "our-class", nil),
+		invalidSelectorGateway("broken", nil),
+	)
+
+	route := &gatewayv1.GRPCRoute{
+		ObjectMeta: metav1.ObjectMeta{Name: "r", Namespace: "team"},
+		Spec: gatewayv1.GRPCRouteSpec{
+			CommonRouteSpec: gatewayv1.CommonRouteSpec{ParentRefs: parentRefsToGateways("ours", "broken")},
+			Hostnames:       []gatewayv1.Hostname{declared},
+		},
+	}
+
+	out, diags := withEffectiveHostnamesGRPC(context.Background(), cli, skipTestControllerName, []*gatewayv1.GRPCRoute{route}, nil)
+	require.Len(t, out, 1)
+	assert.Equal(t, []gatewayv1.Hostname{declared}, out[0].Spec.Hostnames)
+	assert.Empty(t, diags, "a route served with every hostname it declares is not reported")
+}
+
+// TestWithEffectiveHostnames_UndecidedParentBesideAPartlyAcceptingOne covers
+// a route with declared hostnames that the evaluated parent covers only in
+// part: the rest may belong to the undecided parent, so the route is reported.
+func TestWithEffectiveHostnames_UndecidedParentBesideAPartlyAcceptingOne(t *testing.T) {
+	t.Parallel()
+
+	covered := gatewayv1.Hostname("a.example.com")
+
+	cli := buildGatewayFakeClient(t,
+		gatewayClassFor("our-class", skipTestControllerName),
+		gatewayUnderClass("ours", "our-class", &covered),
+		invalidSelectorGateway("broken", nil),
+	)
+
+	route := httpRouteTo(covered, "b.example.com")
+	route.Spec.ParentRefs = parentRefsToGateways("ours", "broken")
+
+	out, diags := withEffectiveHostnames(context.Background(), cli, skipTestControllerName, []*gatewayv1.HTTPRoute{route}, nil)
+	require.Len(t, out, 1)
+	assert.Equal(t, []gatewayv1.Hostname{covered}, out[0].Spec.Hostnames)
+	assertPartiallyServed(t, diags, kindHTTPRouteDiag)
+}

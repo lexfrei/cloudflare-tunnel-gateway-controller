@@ -20,6 +20,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/logging"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/proxy"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/render"
 )
@@ -380,4 +381,38 @@ func TestProxyEndpointReconcile_SupersededPerGatewayReplayRequeues(t *testing.T)
 		require.NoError(t, err, "label %q", label)
 		assert.Equal(t, lostRacePushRequeueDelay, result.RequeueAfter, "label %q", label)
 	}
+}
+
+// panicOnErrorHandler is a slog handler that panics on an Error record, so a
+// test can make a sync panic between its push and its record without touching
+// the push fan-out, whose goroutines take the process down instead.
+type panicOnErrorHandler struct{ slog.Handler }
+
+func (h panicOnErrorHandler) Handle(ctx context.Context, record slog.Record) error {
+	if record.Level >= slog.LevelError {
+		panic("logged an error")
+	}
+
+	return h.Handler.Handle(ctx, record) //nolint:wrapcheck // passes the wrapped handler's result through
+}
+
+// TestSyncPartition_PanicAfterThePushReleasesItsInFlightCount pins that a
+// sync that panics after its push does not leave the partition counted in
+// flight forever, which would mark every later lost-race replay superseded.
+// controller-runtime recovers a reconciler panic, so the process lives on.
+func TestSyncPartition_PanicAfterThePushReleasesItsInFlightCount(t *testing.T) {
+	t.Parallel()
+
+	replica := newRaceReplica(t)
+	replica.failing.Store(true)
+
+	syncer := newReplaySyncer()
+	ctx := logging.WithLogger(context.Background(), slog.New(panicOnErrorHandler{slog.Default().Handler()}))
+
+	assert.Panics(t, func() {
+		_, _ = syncer.SyncPartition(ctx, 0, replayRaceKey, "", []string{replica.endpoint()},
+			[]*gatewayv1.HTTPRoute{pushFallbackRoute("r-a", "a.example.com")}, nil, nil, nil)
+	})
+
+	assert.Zero(t, syncer.syncsInFlightFor(replayRaceKey))
 }
