@@ -225,3 +225,56 @@ func TestGatewayEvents_InvalidAllowedListenersSelector(t *testing.T) {
 		})
 	}
 }
+
+// TestGatewayListenerStatus_AllListenersInvalid pins the Gateway verdict when
+// no listener is valid: Accepted=False with ListenersNotValid, for a bad
+// selector on every listener and for a bad selector next to an unsupported
+// protocol, whose message names both causes.
+func TestGatewayListenerStatus_AllListenersInvalid(t *testing.T) {
+	t.Parallel()
+
+	fromSelector := gatewayv1.NamespacesFromSelector
+	badSelector := &gatewayv1.AllowedRoutes{
+		Namespaces: &gatewayv1.RouteNamespaces{From: &fromSelector, Selector: bogusNamespaceSelector()},
+	}
+
+	for _, tt := range []struct {
+		name      string
+		listeners []gatewayv1.Listener
+		causes    []string
+	}{
+		{
+			name: "every listener has a bad selector",
+			listeners: []gatewayv1.Listener{
+				{Name: "a", Port: 80, Protocol: gatewayv1.HTTPProtocolType, AllowedRoutes: badSelector},
+				{Name: "b", Port: 8080, Protocol: gatewayv1.HTTPProtocolType, AllowedRoutes: badSelector},
+			},
+			causes: []string{"allowedRoutes.namespaces.selector"},
+		},
+		{
+			name: "a bad selector beside an unsupported protocol",
+			listeners: []gatewayv1.Listener{
+				{Name: "a", Port: 80, Protocol: gatewayv1.HTTPProtocolType, AllowedRoutes: badSelector},
+				{Name: "b", Port: 9000, Protocol: gatewayv1.TCPProtocolType},
+			},
+			causes: []string{"allowedRoutes.namespaces.selector", "protocol"},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			updated := reconcileSelectorGateway(t, tt.listeners)
+
+			accepted := findCondition(updated.Status.Conditions, string(gatewayv1.GatewayConditionAccepted))
+			require.NotNil(t, accepted)
+			assert.Equal(t, metav1.ConditionFalse, accepted.Status, "no listener is valid")
+			assert.Equal(t, string(gatewayv1.GatewayReasonListenersNotValid), accepted.Reason)
+
+			for _, cause := range tt.causes {
+				assert.Contains(t, accepted.Message, cause)
+			}
+
+			assert.NotContains(t, accepted.Message, "BogusOperator")
+		})
+	}
+}

@@ -63,3 +63,45 @@ func TestSyncAllRoutes_ForeignGroupParentBindsNothing(t *testing.T) {
 		skipTestControllerName, HTTPRouteWrapper{httpRoute}, nil)
 	assert.False(t, accepted, "the route mappers must not treat the route as accepted either")
 }
+
+// TestGatewayAttachedRoutes_ForeignGroupParentNotCounted pins that a listener's
+// attachedRoutes counts only routes that bind: a parentRef of another API
+// group names another resource, so a route carrying only that ref is not
+// attached to the Gateway API Gateway of the same name.
+func TestGatewayAttachedRoutes_ForeignGroupParentNotCounted(t *testing.T) {
+	t.Parallel()
+
+	foreignGroup := gatewayv1.Group("example.com")
+	gatewayKind := gatewayv1.Kind(kindGateway)
+
+	fromAll := gatewayv1.NamespacesFromAll
+	gateway := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "default"},
+		Spec: gatewayv1.GatewaySpec{
+			GatewayClassName: "cloudflare-tunnel",
+			Listeners: []gatewayv1.Listener{{
+				Name: "http", Port: 80, Protocol: gatewayv1.HTTPProtocolType,
+				AllowedRoutes: &gatewayv1.AllowedRoutes{Namespaces: &gatewayv1.RouteNamespaces{From: &fromAll}},
+			}},
+		},
+	}
+
+	routeTo := func(name string, ref gatewayv1.ParentReference) *gatewayv1.HTTPRoute {
+		return &gatewayv1.HTTPRoute{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"},
+			Spec: gatewayv1.HTTPRouteSpec{
+				CommonRouteSpec: gatewayv1.CommonRouteSpec{ParentRefs: []gatewayv1.ParentReference{ref}},
+			},
+		}
+	}
+
+	cli := setupGatewayFakeClient(gateway,
+		routeTo("bound", gatewayv1.ParentReference{Name: "gw"}),
+		routeTo("foreign", gatewayv1.ParentReference{Group: &foreignGroup, Kind: &gatewayKind, Name: "gw"}),
+	)
+
+	reconciler := &GatewayReconciler{Client: cli, Scheme: cli.Scheme(), ControllerName: "test-controller"}
+
+	assert.Equal(t, map[gatewayv1.SectionName]int32{"http": 1}, reconciler.countAttachedRoutes(context.Background(), gateway),
+		"only the route that binds is attached")
+}
