@@ -65,3 +65,26 @@ func TestMerge_GatewayOwnConflict_NoWinner(t *testing.T) {
 		})
 	}
 }
+
+// TestMerge_GatewayOwnProtocolConflict_AllRefused pins that no Gateway-owned
+// listener wins a protocol conflict: every one of them on a port that mixes
+// protocols is refused, including one whose protocol matches the first.
+func TestMerge_GatewayOwnProtocolConflict_AllRefused(t *testing.T) {
+	t.Parallel()
+
+	gw := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "infra"},
+		Spec: gatewayv1.GatewaySpec{Listeners: []gatewayv1.Listener{
+			{Name: "a", Port: 8080, Protocol: gatewayv1.HTTPProtocolType, Hostname: hostnamePtr("a.example.com")},
+			{Name: "b", Port: 8080, Protocol: gatewayv1.HTTPSProtocolType, Hostname: hostnamePtr("b.example.com")},
+			{Name: "d", Port: 8080, Protocol: gatewayv1.HTTPProtocolType, Hostname: hostnamePtr("d.example.com")},
+		}},
+	}
+
+	res := listenermerge.Merge(gw, nil)
+	require.Len(t, res.Listeners, 3)
+
+	for _, listener := range res.Listeners {
+		assert.Equal(t, gatewayv1.ListenerReasonProtocolConflict, listener.ConflictReason, "listener %s", listener.Name)
+	}
+}
