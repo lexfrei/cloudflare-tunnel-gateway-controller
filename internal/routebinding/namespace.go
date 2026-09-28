@@ -15,9 +15,9 @@ import (
 // Validator performs route binding validation against Gateway listeners.
 type Validator struct {
 	client client.Client
-	// unevaluatedLevel is the level listeners that cannot be evaluated are
-	// logged at. Several passes of one sync evaluate the same listeners, so
-	// only the binding pass warns.
+	// unevaluatedLevel is the level listeners whose allowedRoutes cannot be
+	// evaluated are logged at. Several passes of one sync evaluate the same
+	// listeners, so only the route binding pass warns.
 	unevaluatedLevel slog.Level
 }
 
@@ -27,8 +27,8 @@ func NewValidator(cli client.Client) *Validator {
 	return &Validator{client: cli, unevaluatedLevel: slog.LevelDebug}
 }
 
-// NewReportingValidator is NewValidator for the binding pass: it logs
-// listeners it cannot evaluate as warnings.
+// NewReportingValidator is NewValidator for the route binding pass: it logs
+// listeners whose allowedRoutes it cannot evaluate as warnings.
 func NewReportingValidator(cli client.Client) *Validator {
 	return &Validator{client: cli, unevaluatedLevel: slog.LevelWarn}
 }

@@ -16,6 +16,9 @@ type ListenerSetAcceptance struct {
 	// Message explains a refusal the generic not-allowed message would not.
 	// Empty otherwise.
 	Message string
+	// Err is the error behind a refusal the Gateway's spec caused, for the
+	// caller's log only: it quotes that spec. Nil otherwise.
+	Err error
 }
 
 // invalidAllowedListenersMessage tells a ListenerSet owner why it is refused
@@ -49,15 +52,18 @@ func (v *Validator) EvaluateListenerSetAcceptance(
 		ok, err := v.listenerSetNamespaceMatchesSelector(ctx, gateway.Spec.AllowedListeners, listenerSet.Namespace)
 		if err != nil {
 			// The error quotes the Gateway's spec, which the ListenerSet's and
-			// the routes' authors may not be allowed to read, so it is logged
-			// and the ListenerSet is refused like any other that is not allowed.
-			logging.FromContext(ctx).Log(ctx, v.unevaluatedLevel, "Gateway allowedListeners selector could not be evaluated",
+			// the routes' authors may not be allowed to read, so the ListenerSet
+			// is refused like any other that is not allowed and the error only
+			// goes to logs. Every route on the ListenerSet reaches this once per
+			// sync, so it logs at debug; the ListenerSet reconcile warns.
+			logging.FromContext(ctx).Debug("Gateway allowedListeners selector could not be evaluated",
 				"gateway", gateway.Namespace+"/"+gateway.Name,
 				"listenerSet", listenerSet.Namespace+"/"+listenerSet.Name,
 				"error", err)
 
 			refused := rejectedListenerSet()
 			refused.Message = invalidAllowedListenersMessage
+			refused.Err = err
 
 			return refused, nil
 		}

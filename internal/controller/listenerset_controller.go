@@ -20,6 +20,7 @@ import (
 	gatewayv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/listenermerge"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/logging"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/routebinding"
 )
 
@@ -240,11 +241,18 @@ func (r *ListenerSetReconciler) computeAcceptance(
 	gateway *gatewayv1.Gateway,
 	listenerSet *gatewayv1.ListenerSet,
 ) listenerSetAcceptanceResult {
-	// This reconcile is where a ListenerSet owner looks, so it warns about a
-	// parent Gateway selector it cannot evaluate.
-	validator := routebinding.NewReportingValidator(r.Client)
+	validator := routebinding.NewValidator(r.Client)
 
 	allowed, err := validator.EvaluateListenerSetAcceptance(ctx, gateway, listenerSet)
+	if allowed.Err != nil {
+		// This reconcile runs once per ListenerSet, where the route passes run
+		// once per route, so the warning an operator needs is logged here.
+		logging.FromContext(ctx).Warn("parent Gateway allowedListeners selector could not be evaluated",
+			"gateway", gateway.Namespace+"/"+gateway.Name,
+			"listenerSet", listenerSet.Namespace+"/"+listenerSet.Name,
+			"error", allowed.Err)
+	}
+
 	if err != nil || !allowed.Accepted {
 		reason := gatewayv1.ListenerSetReasonNotAllowed
 
