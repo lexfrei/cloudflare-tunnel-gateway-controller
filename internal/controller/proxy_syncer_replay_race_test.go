@@ -21,6 +21,7 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/proxy"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/render"
 )
 
 // raceReplica is a proxy config API stand-in. It accepts PUTs until conflict
@@ -338,5 +339,45 @@ func TestProxyEndpointReconcile_SupersededReplayRequeues(t *testing.T) {
 		})
 		require.NoError(t, err, "slice exists: %v", sliceExists)
 		assert.Equal(t, lostRacePushRequeueDelay, result.RequeueAfter, "slice exists: %v", sliceExists)
+	}
+}
+
+// TestProxyEndpointReconcile_SupersededPerGatewayReplayRequeues covers the two
+// per-Gateway paths: an EndpointSlice labelled for a live Gateway replays that
+// partition, and one labelled for a Gateway that no longer exists replays
+// every partition. Both turn a superseded replay into a short requeue.
+func TestProxyEndpointReconcile_SupersededPerGatewayReplayRequeues(t *testing.T) {
+	t.Parallel()
+
+	for _, label := range []string{render.GatewayLabelValue("gw"), "ghost"} {
+		replica := newRaceReplica(t)
+
+		scheme := runtime.NewScheme()
+		require.NoError(t, discoveryv1.AddToScheme(scheme))
+		require.NoError(t, gatewayv1.Install(scheme))
+
+		testClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
+			&gatewayv1.Gateway{ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "team-a"}},
+			&discoveryv1.EndpointSlice{ObjectMeta: metav1.ObjectMeta{
+				Name: "es", Namespace: "team-a", Labels: map[string]string{render.GatewayLabel: label},
+			}},
+		).Build()
+		syncer := NewProxySyncer("cluster.local", "", "", testClient, slog.Default())
+		replayed := seedPartition(t, syncer, replica.endpoint())
+
+		newer := &proxy.Config{Version: replayed.Version + 1}
+
+		replica.conflict.Store(true)
+		replica.setOnPut(func() {
+			syncer.recordPush(nil, replayRaceKey, "", hashProxyConfig(newer), newer, []string{replica.endpoint()}, nil)
+		})
+
+		reconciler := &ProxyEndpointReconciler{Client: testClient, ProxySyncer: syncer}
+
+		result, err := reconciler.Reconcile(context.Background(), ctrl.Request{
+			NamespacedName: types.NamespacedName{Name: "es", Namespace: "team-a"},
+		})
+		require.NoError(t, err, "label %q", label)
+		assert.Equal(t, lostRacePushRequeueDelay, result.RequeueAfter, "label %q", label)
 	}
 }
