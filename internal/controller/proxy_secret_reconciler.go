@@ -17,7 +17,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/event"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/logging"
 )
@@ -26,6 +28,8 @@ import (
 // template every time the tunnel-token Secret changes. Its value is the
 // hex SHA-256 of the Secret's data map; toggling it forces the Deployment
 // controller to roll the pods because the pod template hash changes.
+// The same key on the Deployment's own metadata records the revision the
+// running pods were started with, so first sight needs no roll.
 //
 // The annotation is namespaced to this project so it cannot collide with
 // any Stakater Reloader / kustomize / external-restart tool the operator
@@ -111,12 +115,10 @@ func NewProxySecretReconciler(c client.Client, proxyTokenSecret, proxyDeployment
 }
 
 // Reconcile fires on any change to the watched tunnel-token Secret. It
-// hashes the Secret's data map and patches every matching proxy
-// Deployment's pod template annotation with that hash. A no-op patch
-// (same hash) is filtered out by the kube-apiserver before the
-// Deployment controller observes it, so there is no spurious rollout
-// on benign Secret events (e.g. resourceVersion-only churn from a
-// metadata controller).
+// hashes the Secret's data map and hands that hash to patchRevision for
+// every matching proxy Deployment. An unchanged hash writes nothing, so
+// there is no spurious rollout on benign Secret events (e.g.
+// resourceVersion-only churn from a metadata controller).
 func (r *ProxySecretReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := logging.Component(ctx, "proxy-secret-reconciler")
 	ctx = logging.WithLogger(ctx, logger)
@@ -162,28 +164,40 @@ func (r *ProxySecretReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	return ctrl.Result{}, nil
 }
 
-// patchRevision sets the token-revision annotation on the Deployment's
-// pod template. If the existing value already matches the new revision
-// the call is skipped -- a server-side apply with an identical patch
-// body still bumps the Deployment's generation in some Kubernetes
-// versions, which would spuriously roll the pods.
+// patchRevision records revision on the Deployment metadata and, when
+// the pods were started with a different one, on the pod template too,
+// which rolls them. The last known revision is the pod template's, else
+// the metadata's. With neither set the Deployment has never been seen:
+// its pods started with the Secret as it is now, so only the metadata is
+// written. If the known revision already matches the call is skipped --
+// a server-side apply with an identical patch body still bumps the
+// Deployment's generation in some Kubernetes versions, which would
+// spuriously roll the pods.
 func (r *ProxySecretReconciler) patchRevision(ctx context.Context, dep *appsv1.Deployment, revision string) error {
-	current := ""
-	if dep.Spec.Template.Annotations != nil {
-		current = dep.Spec.Template.Annotations[tokenRevisionAnnotation]
+	known := dep.Spec.Template.Annotations[tokenRevisionAnnotation]
+	if known == "" {
+		known = dep.Annotations[tokenRevisionAnnotation]
 	}
 
-	if current == revision {
+	if known == revision {
 		return nil
 	}
 
 	patch := client.MergeFrom(dep.DeepCopy())
 
-	if dep.Spec.Template.Annotations == nil {
-		dep.Spec.Template.Annotations = map[string]string{}
+	if dep.Annotations == nil {
+		dep.Annotations = map[string]string{}
 	}
 
-	dep.Spec.Template.Annotations[tokenRevisionAnnotation] = revision
+	dep.Annotations[tokenRevisionAnnotation] = revision
+
+	if known != "" {
+		if dep.Spec.Template.Annotations == nil {
+			dep.Spec.Template.Annotations = map[string]string{}
+		}
+
+		dep.Spec.Template.Annotations[tokenRevisionAnnotation] = revision
+	}
 
 	if err := r.Client.Patch(ctx, dep, patch); err != nil {
 		return errors.Wrap(err, "merge-patch Deployment annotation")
@@ -195,11 +209,19 @@ func (r *ProxySecretReconciler) patchRevision(ctx context.Context, dep *appsv1.D
 // SetupWithManager registers the watcher with the manager. The
 // predicate filters EVERY non-target Secret event out before it
 // enqueues a Reconcile request -- the controller is per-Secret, so
-// any other Secret churn in the cluster is irrelevant.
+// any other Secret churn in the cluster is irrelevant. A proxy
+// Deployment with no revision recorded on it, whether new or replaced
+// without its annotations, enqueues the same Secret, so its revision is
+// recorded before the next rotation.
 func (r *ProxySecretReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	toTokenSecret := handler.EnqueueRequestsFromMapFunc(func(context.Context, client.Object) []reconcile.Request {
+		return []reconcile.Request{{NamespacedName: r.TokenSecretKey()}}
+	})
+
 	if err := ctrl.NewControllerManagedBy(mgr).
 		Named("proxy-secret-reconciler").
 		For(&corev1.Secret{}, builder.WithPredicates(r.matchesTokenSecret())).
+		Watches(&appsv1.Deployment{}, toTokenSecret, builder.WithPredicates(r.matchesUnrecordedProxyDeployment())).
 		Complete(r); err != nil {
 		return errors.Wrap(err, "setup proxy secret reconciler")
 	}
@@ -217,6 +239,25 @@ func (r *ProxySecretReconciler) matchesTokenSecret() predicate.Predicate {
 		UpdateFunc:  func(e event.UpdateEvent) bool { return matches(e.ObjectNew) },
 		DeleteFunc:  func(e event.DeleteEvent) bool { return matches(e.Object) },
 		GenericFunc: func(e event.GenericEvent) bool { return matches(e.Object) },
+	}
+}
+
+func (r *ProxySecretReconciler) matchesUnrecordedProxyDeployment() predicate.Predicate {
+	matches := func(obj client.Object) bool {
+		dep, ok := obj.(*appsv1.Deployment)
+		if !ok || dep.Namespace != r.TokenSecretNamespace || dep.Labels[r.DeploymentLabelKey] != r.DeploymentLabelValue {
+			return false
+		}
+
+		return dep.Annotations[tokenRevisionAnnotation] == "" &&
+			dep.Spec.Template.Annotations[tokenRevisionAnnotation] == ""
+	}
+
+	return predicate.Funcs{
+		CreateFunc:  func(e event.CreateEvent) bool { return matches(e.Object) },
+		UpdateFunc:  func(e event.UpdateEvent) bool { return matches(e.ObjectNew) },
+		DeleteFunc:  func(event.DeleteEvent) bool { return false },
+		GenericFunc: func(event.GenericEvent) bool { return false },
 	}
 }
 

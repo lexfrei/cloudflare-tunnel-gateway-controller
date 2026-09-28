@@ -447,3 +447,198 @@ tests:
       - equal:
           path: spec.ingress
           value: []
+
+  # The controller dials the OTLP collector named in controller.tracing.endpoint.
+  # Its host names a Service, so the rule is scoped to that Service's namespace
+  # and the endpoint's port rather than opened by port alone.
+  - it: should allow egress to the tracing collector's namespace and port
+    set:
+      networkPolicy:
+        enabled: true
+      controller:
+        tracing:
+          enabled: true
+          endpoint: otel-collector.observability:4317
+    asserts:
+      - contains:
+          path: spec.egress
+          content:
+            to:
+              - namespaceSelector:
+                  matchLabels:
+                    kubernetes.io/metadata.name: observability
+            ports:
+              - protocol: TCP
+                port: 4317
+
+  - it: should read the collector namespace from a scheme-prefixed cluster FQDN
+    set:
+      networkPolicy:
+        enabled: true
+      controller:
+        tracing:
+          enabled: true
+          endpoint: https://otel.obs.svc.cluster.local:4318
+    asserts:
+      - contains:
+          path: spec.egress
+          content:
+            to:
+              - namespaceSelector:
+                  matchLabels:
+                    kubernetes.io/metadata.name: obs
+            ports:
+              - protocol: TCP
+                port: 4318
+
+  # A single-label host resolves through the pod's own search domain, which is
+  # the release namespace.
+  - it: should scope a bare Service name to the release namespace
+    release:
+      namespace: tunnel-system
+    set:
+      networkPolicy:
+        enabled: true
+      controller:
+        tracing:
+          enabled: true
+          endpoint: otel-collector:4317
+    asserts:
+      - contains:
+          path: spec.egress
+          content:
+            to:
+              - namespaceSelector:
+                  matchLabels:
+                    kubernetes.io/metadata.name: tunnel-system
+            ports:
+              - protocol: TCP
+                port: 4317
+
+  - it: should add no collector rule while tracing is disabled
+    set:
+      networkPolicy:
+        enabled: true
+      controller:
+        tracing:
+          enabled: false
+          endpoint: otel-collector.observability:4317
+    asserts:
+      - lengthEqual:
+          path: spec.egress
+          count: 5
+
+  # Loopback traffic never meets a NetworkPolicy, and an empty endpoint defers to
+  # the OTLP defaults, which point at loopback.
+  - it: should add no collector rule for a loopback endpoint
+    set:
+      networkPolicy:
+        enabled: true
+      controller:
+        tracing:
+          enabled: true
+          endpoint: localhost:4317
+    asserts:
+      - lengthEqual:
+          path: spec.egress
+          count: 5
+
+  - it: should add no collector rule for an IPv6 loopback endpoint
+    set:
+      networkPolicy:
+        enabled: true
+      controller:
+        tracing:
+          enabled: true
+          endpoint: "[::1]:4317"
+    asserts:
+      - lengthEqual:
+          path: spec.egress
+          count: 5
+
+  # A collector outside the cluster cannot be scoped by namespace. It still
+  # renders: on :443 it exports through the API rule, and otherwise through a
+  # NetworkPolicy the operator adds, which is additive with this one.
+  - it: should render without a collector rule for an outside collector on 443
+    set:
+      networkPolicy:
+        enabled: true
+      controller:
+        tracing:
+          enabled: true
+          endpoint: https://otel.example.com:443
+    asserts:
+      - hasDocuments:
+          count: 1
+      - lengthEqual:
+          path: spec.egress
+          count: 5
+
+  - it: should render without a collector rule for an IP address endpoint
+    set:
+      networkPolicy:
+        enabled: true
+      controller:
+        tracing:
+          enabled: true
+          endpoint: 10.0.0.1:4317
+    asserts:
+      - lengthEqual:
+          path: spec.egress
+          count: 5
+
+  - it: should render without a collector rule when the endpoint has no port
+    set:
+      networkPolicy:
+        enabled: true
+      controller:
+        tracing:
+          enabled: true
+          endpoint: otel-collector.observability
+    asserts:
+      - lengthEqual:
+          path: spec.egress
+          count: 5
+
+  - it: should add no collector rule for an empty endpoint
+    set:
+      networkPolicy:
+        enabled: true
+      controller:
+        tracing:
+          enabled: true
+          endpoint: ""
+    asserts:
+      - lengthEqual:
+          path: spec.egress
+          count: 5
+
+  # A port no Service can carry would make the apiserver reject the policy,
+  # and the release with it.
+  - it: should render without a collector rule for an out-of-range port
+    set:
+      networkPolicy:
+        enabled: true
+      controller:
+        tracing:
+          enabled: true
+          endpoint: otel-collector.observability:99999
+    asserts:
+      - lengthEqual:
+          path: spec.egress
+          count: 5
+
+  # A namespace name that YAML reads as a number must stay a string, or the
+  # apiserver rejects the policy and the release with it.
+  - it: should render a numeric-looking collector namespace as a string
+    set:
+      networkPolicy:
+        enabled: true
+      controller:
+        tracing:
+          enabled: true
+          endpoint: otel.123:4317
+    asserts:
+      - equal:
+          path: spec.egress[5].to[0].namespaceSelector.matchLabels["kubernetes.io/metadata.name"]
+          value: "123"

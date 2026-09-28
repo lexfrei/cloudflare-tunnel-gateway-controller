@@ -73,6 +73,12 @@ The endpoint value selects the transport:
 
 Export is over OTLP/gRPC.
 
+## Network policies
+
+With `networkPolicy.enabled` on, the controller's policy gets an egress rule for `controller.tracing.endpoint` when the endpoint names an in-cluster Service with an explicit port, with or without an `http://` or `https://` prefix. The rule admits that Service's namespace on the endpoint's port. A collector outside the cluster gets no rule and needs one of your own unless it listens on 443 and the Kubernetes API rule is left unrestricted. The details, including a caveat about Service port mapping, are in the [security reference](../reference/security.md#egress-requirements).
+
+With `proxy.networkPolicy.egressRestricted` on, the proxy's policy already admits TCP to every in-cluster pod, so an in-cluster collector needs no extra rule. A collector outside the cluster is not admitted there.
+
 ## Sampling
 
 `sampleRate` is a probability in `[0, 1]` applied at the **trace root** via `ParentBased(TraceIDRatioBased)`:

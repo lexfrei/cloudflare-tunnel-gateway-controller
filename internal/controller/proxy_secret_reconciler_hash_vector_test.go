@@ -8,14 +8,9 @@ import "testing"
 // silent algorithm change here is caught even if a future caller
 // mirrors the same (now-wrong) behaviour on both sides of a comparison.
 //
-// These vectors are the lockstep contract for issue #537: the chart
-// cannot reproduce this hash at `helm template` time (no Secret
-// content is available without Helm's `lookup`, which returns empty
-// outside a live install and is unavailable for the
-// External-Secrets-Operator flow before the Secret exists). Keep this
-// vector current if hashSecretData ever changes so a future chart-side
-// implementation, wired through helm-unittest's lookup mocking, has a
-// fixed target to pin against.
+// The revision is persisted in Deployment annotations, so a change to
+// hashSecretData reads every recorded revision as stale and rolls the
+// proxy once on upgrade. Change these vectors only on purpose.
 func TestHashSecretData_Vectors(t *testing.T) {
 	t.Parallel()
 

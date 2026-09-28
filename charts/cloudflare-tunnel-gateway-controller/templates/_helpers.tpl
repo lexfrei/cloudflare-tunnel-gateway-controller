@@ -213,3 +213,44 @@ refactor to sprig `keys` would silently drop it.)
 {{- join "," $terms -}}
 {{- end -}}
 
+
+{{/*
+Controller egress rule for the OTLP collector in controller.tracing.endpoint,
+rendered only while tracing is on and the endpoint names an in-cluster Service
+with an explicit port: a single label is a Service in the release namespace,
+and <service>.<namespace> (optionally followed by .svc and the cluster domain)
+is one in <namespace>, as the pod's DNS search path resolves those names. The
+rule admits that namespace on the endpoint's port. NetworkPolicy matches the
+port the collector pod listens on, so a Service that maps the port elsewhere
+needs the same number on both sides. Any other endpoint (loopback, an outside
+host, an IP address, no port or one out of range) gets no rule; an outside collector is reached
+through the API rule when it listens on 443, or through a NetworkPolicy of the
+operator's own.
+*/}}
+{{- define "cf-tunnel-gw-ctrl.tracingCollectorEgress" -}}
+{{- $tracing := (.Values.controller | default dict).tracing | default dict -}}
+{{- $endpoint := printf "%v" ($tracing.endpoint | default "") -}}
+{{- $hostPort := $endpoint | trimPrefix "http://" | trimPrefix "https://" | splitList "/" | first -}}
+{{- if and $tracing.enabled (regexMatch "^[^:\\[\\]]+:[0-9]+$" $hostPort) -}}
+{{- $host := index (splitList ":" $hostPort) 0 | trimSuffix "." -}}
+{{- $labels := splitList "." $host -}}
+{{- $namespace := "" -}}
+{{- if eq (len $labels) 1 -}}
+{{- if ne $host "localhost" -}}
+{{- $namespace = $.Release.Namespace -}}
+{{- end -}}
+{{- else if or (eq (len $labels) 2) (eq (index $labels 2) "svc") -}}
+{{- $namespace = index $labels 1 -}}
+{{- end -}}
+{{- $port := index (splitList ":" $hostPort) 1 | atoi -}}
+{{- if and $namespace (ge $port 1) (le $port 65535) -}}
+- to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: {{ $namespace | quote }}
+  ports:
+    - protocol: TCP
+      port: {{ $port }}
+{{- end -}}
+{{- end -}}
+{{- end -}}
