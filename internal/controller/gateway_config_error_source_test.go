@@ -7,9 +7,12 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/api/v1alpha1"
@@ -123,4 +126,45 @@ func acceptedConditionOf(t *testing.T, cli client.Client, name string) *metav1.C
 	require.NotNil(t, accepted)
 
 	return accepted
+}
+
+// TestResolveConfigForController_ReadFailureNamesTheClass pins that an
+// unclassified failure resolving the class configuration still says which
+// GatewayClass was being resolved. A classified one names it on its own.
+func TestResolveConfigForController_ReadFailureNamesTheClass(t *testing.T) {
+	t.Parallel()
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, gatewayv1.Install(scheme))
+	require.NoError(t, v1alpha1.AddToScheme(scheme))
+
+	gatewayClass := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "a-class"},
+		Spec: gatewayv1.GatewayClassSpec{
+			ControllerName: "test-controller",
+			ParametersRef: &gatewayv1.ParametersReference{
+				Group: config.ParametersRefGroup, Kind: config.ParametersRefKind, Name: "cfg",
+			},
+		},
+	}
+
+	cli := fake.NewClientBuilder().WithScheme(scheme).WithObjects(gatewayClass).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+				if _, ok := obj.(*v1alpha1.GatewayClassConfig); ok {
+					return errTransientRead
+				}
+
+				return c.Get(ctx, key, obj, opts...)
+			},
+		}).Build()
+
+	syncer := NewRouteSyncer(cli, scheme, "cluster.local", "test-controller",
+		config.NewResolver(cli, "default", cfmetrics.NewNoopCollector(), verifiedClaims()),
+		cfmetrics.NewNoopCollector(), nil)
+
+	_, err := syncer.resolveConfigForController(context.Background())
+	require.ErrorIs(t, err, errTransientRead)
+	assert.NotErrorIs(t, err, config.ErrInvalidParameters)
+	assert.Contains(t, err.Error(), "a-class")
 }
