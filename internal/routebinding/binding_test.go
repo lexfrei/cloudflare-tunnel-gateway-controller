@@ -691,3 +691,41 @@ func TestValidateBinding_InvalidSelectorStaysWithItsListener(t *testing.T) {
 	assert.Contains(t, logs.String(), "BogusOperator",
 		"the broken listener is still logged when a sibling admits the route")
 }
+
+// TestValidateBinding_UnevaluatedListenerLogLevel pins that only the binding
+// pass warns about a listener it cannot evaluate. The other passes evaluate the
+// same listener in the same sync and log it at debug, so one bad selector
+// warns once per sync.
+func TestValidateBinding_UnevaluatedListenerLogLevel(t *testing.T) {
+	t.Parallel()
+
+	gateway := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "infra"},
+		Spec: gatewayv1.GatewaySpec{
+			Listeners: []gatewayv1.Listener{selectorListener("broken", bogusSelector())},
+		},
+	}
+
+	route := &RouteInfo{Namespace: "apps", Kind: KindHTTPRoute}
+
+	for _, tt := range []struct {
+		name      string
+		validator func(client.Client) *Validator
+		level     string
+	}{
+		{name: "other passes", validator: NewValidator, level: `"level":"DEBUG"`},
+		{name: "binding pass", validator: NewReportingValidator, level: `"level":"WARN"`},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			logger, logs := logging.TestLogger(t)
+			ctx := logging.WithLogger(context.Background(), logger)
+
+			_, err := tt.validator(setupFakeClient()).ValidateBinding(ctx, gateway, route)
+			require.NoError(t, err)
+
+			assert.Contains(t, logs.String(), tt.level)
+		})
+	}
+}
