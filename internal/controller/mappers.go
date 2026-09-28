@@ -754,9 +754,23 @@ func FindRoutesForGateway(
 	// can release those entries.
 	managed := isGatewayManagedByController(ctx, cli, gateway, controllerName)
 
+	// Listed on first use: most foreign Gateways have no route carrying our
+	// status at all.
 	var listenerSets []*gatewayv1.ListenerSet
-	if !managed {
-		listenerSets = listenerSetsOfGateway(ctx, cli, gateway)
+
+	listed := false
+	onListenerSet := func(route Route) bool {
+		if managed {
+			return false
+		}
+
+		if !listed {
+			listenerSets, listed = listenerSetsOfGateway(ctx, cli, gateway), true
+		}
+
+		return slices.ContainsFunc(listenerSets, func(listenerSet *gatewayv1.ListenerSet) bool {
+			return routeTargetsListenerSet(route, listenerSet)
+		})
 	}
 
 	var requests []reconcile.Request
@@ -766,9 +780,7 @@ func FindRoutesForGateway(
 			continue
 		}
 
-		if routeTargetsGateway(route, gateway) || slices.ContainsFunc(listenerSets, func(listenerSet *gatewayv1.ListenerSet) bool {
-			return routeTargetsListenerSet(route, listenerSet)
-		}) {
+		if routeTargetsGateway(route, gateway) || onListenerSet(route) {
 			requests = append(requests, reconcile.Request{
 				Name:      route.GetName(),
 				Namespace: route.GetNamespace(),
