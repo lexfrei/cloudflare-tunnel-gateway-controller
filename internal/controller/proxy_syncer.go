@@ -139,13 +139,16 @@ type pushTarget struct {
 	// not flip a route condition, so the failure is surfaced only past a
 	// threshold. A successful push or a steady-state skip resets it to 0.
 	consecutivePushFail int
-	// syncsInFlight counts syncs of this partition between preparePush and
-	// recordPush.
+	// syncsInFlight counts syncs of this partition whose push is on the wire:
+	// raised in preparePush, lowered in recordPush on the same target. A replay
+	// that lost the push race reads it to tell whether a newer document may
+	// still be recorded.
 	syncsInFlight int
 }
 
 // errReplaySuperseded marks a replay that lost the push race to a newer
-// document which is already cached or still being pushed.
+// document which is already cached or still being pushed, so the next replay
+// carries the newer one.
 var errReplaySuperseded = errors.New("replay superseded by a newer config push")
 
 // NewProxySyncer creates a ProxySyncer for pushing config to proxy replicas.
@@ -797,7 +800,7 @@ func (s *ProxySyncer) SyncPartition(
 	// would serialize every partition's push on one slow connector (#489).
 	pushErr := s.pushToEndpoints(ctx, logger, prep.cfg, resolvedEndpoints, authToken)
 
-	s.recordPush(nil, key, authToken, prep.cfgHash, prep.cfg, resolved, pushErr)
+	s.recordPush(prep.target, key, authToken, prep.cfgHash, prep.cfg, resolved, pushErr)
 
 	return prep.diagnostics, pushErr
 }
@@ -805,6 +808,10 @@ func (s *ProxySyncer) SyncPartition(
 // preparedPush carries the result of the locked build phase across the lock-free
 // push to the locked record phase.
 type preparedPush struct {
+	// target is the partition state this sync counted itself in flight on.
+	// recordPush lowers the count there even if the partition was evicted and
+	// recreated under the same key in the meantime.
+	target      *pushTarget
 	cfg         *proxy.Config
 	cfgHash     string
 	diagnostics []proxy.RouteDiagnostic
@@ -869,7 +876,9 @@ func (s *ProxySyncer) preparePush(
 		return preparedPush{cfg: cfg, cfgHash: cfgHash, diagnostics: diagnostics, skip: true}
 	}
 
-	return preparedPush{cfg: cfg, cfgHash: cfgHash, diagnostics: diagnostics, skip: false}
+	target.syncsInFlight++
+
+	return preparedPush{target: target, cfg: cfg, cfgHash: cfgHash, diagnostics: diagnostics, skip: false}
 }
 
 // recordPush updates the partition's in-memory push state after a lock-free
@@ -877,7 +886,7 @@ func (s *ProxySyncer) preparePush(
 // evicted the partition during the push window, and resurrecting a dropped entry
 // would leave garbage in the map until the next retain pass.
 func (s *ProxySyncer) recordPush(
-	_ *pushTarget,
+	inFlight *pushTarget,
 	key, authToken, cfgHash string,
 	cfg *proxy.Config,
 	resolved []string,
@@ -885,6 +894,10 @@ func (s *ProxySyncer) recordPush(
 ) {
 	s.syncMu.Lock()
 	defer s.syncMu.Unlock()
+
+	if inFlight != nil {
+		inFlight.syncsInFlight--
+	}
 
 	target, ok := s.targets[key]
 	if !ok {
@@ -1350,10 +1363,27 @@ func (s *ProxySyncer) resyncTarget(ctx context.Context, key string, endpoints []
 	//
 	// A lost-race error here is expected rather than a symptom: a sync can push
 	// a newer document that lands first, and the proxy then refuses this older
-	// one. The skip key is cleared below and the next replay carries the newer
-	// document.
-	results := s.push(ctx, cfg, resolvedEndpoints, authToken)
+	// one. replaySuperseded tells whether the next replay carries the newer
+	// document; the skip key is cleared below either way.
+	pushErrors := resyncFailures(logger, s.push(ctx, cfg, resolvedEndpoints, authToken))
 
+	s.recordResync(key, cfg, observedSeq, authToken, resolved, len(pushErrors) > 0)
+
+	if len(pushErrors) == 0 {
+		return nil
+	}
+
+	if s.replaySuperseded(key, cfg, pushErrors) {
+		return errors.Wrapf(errReplaySuperseded, "partition %s: %d/%d endpoints hold or are receiving a newer config",
+			key, len(pushErrors), len(resolved))
+	}
+
+	return fmt.Errorf("failed to resync config to %d/%d endpoints: %w",
+		len(pushErrors), len(resolved), errors.Join(pushErrors...))
+}
+
+// resyncFailures logs and returns the per-endpoint errors of a replay push.
+func resyncFailures(logger *slog.Logger, results []proxy.PushResult) []error {
 	var pushErrors []error
 
 	for _, result := range results {
@@ -1367,14 +1397,31 @@ func (s *ProxySyncer) resyncTarget(ctx context.Context, key string, endpoints []
 		}
 	}
 
-	s.recordResync(key, cfg, observedSeq, authToken, resolved, len(pushErrors) > 0)
+	return pushErrors
+}
 
-	if len(pushErrors) > 0 {
-		return fmt.Errorf("failed to resync config to %d/%d endpoints: %w",
-			len(pushErrors), len(resolved), errors.Join(pushErrors...))
+// replaySuperseded reports whether every endpoint a replay failed on lost the
+// push race while a newer document is cached for the partition or a sync's
+// push is still on the wire. Either way the next replay carries the newer
+// document: a cached one directly, an in-flight one once its sync records it.
+// When neither holds, the cache is behind a sync that failed and every replay
+// would lose the same race, so the caller keeps the error and its backoff.
+func (s *ProxySyncer) replaySuperseded(key string, replayed *proxy.Config, pushErrors []error) bool {
+	for _, err := range pushErrors {
+		if !errors.Is(err, proxy.ErrLostConfigPushRace) {
+			return false
+		}
 	}
 
-	return nil
+	s.syncMu.Lock()
+	defer s.syncMu.Unlock()
+
+	target, ok := s.targets[key]
+	if !ok {
+		return false
+	}
+
+	return target.syncsInFlight > 0 || (target.lastCfg != nil && target.lastCfg.Version > replayed.Version)
 }
 
 // recordResync applies a replay's outcome to the partition's steady-state skip
