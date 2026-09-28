@@ -8,7 +8,11 @@
 gatewayClassConfig:
   # -- Create GatewayClassConfig resource
   create: false
-  # -- Name of the GatewayClassConfig (defaults to release fullname)
+  # -- Name of the GatewayClassConfig the GatewayClass references. With
+  # `create: true` it names the created object and defaults to the release
+  # fullname. With `create: false`, set it to point the GatewayClass at an
+  # existing GatewayClassConfig; left empty, the GatewayClass renders without a
+  # parametersRef and reports Accepted=False.
   name: ""
 
   # -- Reference to Secret containing Cloudflare API credentials (REQUIRED)

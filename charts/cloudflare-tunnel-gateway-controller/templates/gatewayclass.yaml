@@ -7,7 +7,8 @@ metadata:
     {{- include "cf-tunnel-gw-ctrl.labels" . | nindent 4 }}
 spec:
   controllerName: {{ .Values.controller.controllerName }}
-  {{- if .Values.gatewayClassConfig.create }}
+  {{- /* An explicit name without create points at a config managed outside the chart. */}}
+  {{- if or .Values.gatewayClassConfig.create .Values.gatewayClassConfig.name }}
   parametersRef:
     group: cf.k8s.lex.la
     kind: GatewayClassConfig

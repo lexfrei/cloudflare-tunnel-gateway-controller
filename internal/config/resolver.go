@@ -156,14 +156,33 @@ func (r *Resolver) ResolveFromGatewayClass(
 		return nil, errors.Newf("unsupported parametersRef kind: %s (expected %s)", ref.Kind, ParametersRefKind)
 	}
 
+	err := ValidateParametersRefScope(ref)
+	if err != nil {
+		return nil, err
+	}
+
 	config := &v1alpha1.GatewayClassConfig{}
 
-	err := r.client.Get(ctx, types.NamespacedName{Name: ref.Name}, config)
+	err = r.client.Get(ctx, types.NamespacedName{Name: ref.Name}, config)
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to get GatewayClassConfig %s", ref.Name)
 	}
 
 	return r.resolveConfig(ctx, config)
+}
+
+// ValidateParametersRefScope refuses a namespace on a GatewayClass
+// parametersRef. GatewayClassConfig is cluster-scoped, and Gateway API
+// requires the namespace to be unset for a cluster-scoped referent. The
+// returned error wraps ErrInvalidParameters.
+func ValidateParametersRefScope(ref *gatewayv1.ParametersReference) error {
+	if ref == nil || ref.Namespace == nil {
+		return nil
+	}
+
+	return errors.Wrapf(ErrInvalidParameters,
+		"parametersRef namespace %q must be unset: %s is cluster-scoped",
+		*ref.Namespace, ParametersRefKind)
 }
 
 // TunnelPolicy is the part of a GatewayClassConfig the per-Gateway admission
@@ -202,6 +221,11 @@ func (r *Resolver) ResolveTunnelPolicyForGatewayClass(
 	if ref == nil || string(ref.Group) != ParametersRefGroup || string(ref.Kind) != ParametersRefKind {
 		return nil, errors.Wrapf(ErrInvalidParameters,
 			"GatewayClass %s has no usable parametersRef", gatewayClassName)
+	}
+
+	err = ValidateParametersRefScope(ref)
+	if err != nil {
+		return nil, errors.Wrapf(err, "GatewayClass %s", gatewayClassName)
 	}
 
 	classConfig := &v1alpha1.GatewayClassConfig{}
@@ -381,9 +405,14 @@ func (r *Resolver) GetConfigForGatewayClass(
 		return nil, errors.Newf("unsupported parametersRef: %s/%s", ref.Group, ref.Kind)
 	}
 
+	err := ValidateParametersRefScope(ref)
+	if err != nil {
+		return nil, err
+	}
+
 	config := &v1alpha1.GatewayClassConfig{}
 
-	err := r.client.Get(ctx, types.NamespacedName{Name: ref.Name}, config)
+	err = r.client.Get(ctx, types.NamespacedName{Name: ref.Name}, config)
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to get GatewayClassConfig %s", ref.Name)
 	}

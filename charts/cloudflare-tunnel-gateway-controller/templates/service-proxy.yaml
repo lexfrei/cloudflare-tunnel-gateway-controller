@@ -4,6 +4,8 @@ metadata:
   name: {{ include "cf-tunnel-gw-ctrl.proxyFullname" . }}
   labels:
     {{- include "cf-tunnel-gw-ctrl.proxyLabels" . | nindent 4 }}
+    # The proxy ServiceMonitor selects on this; the headless Service must not carry it.
+    cf.k8s.lex.la/metrics: "true"
   {{- with .Values.proxy.service.annotations }}
   annotations:
     {{- toYaml . | nindent 4 }}

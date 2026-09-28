@@ -1,0 +1,43 @@
+suite: test servicemonitor-proxy selects only the ClusterIP proxy Service
+templates:
+  - servicemonitor-proxy.yaml
+  - service-proxy.yaml
+  - service-proxy-headless.yaml
+set:
+  proxy:
+    tunnelTokenSecretRef:
+      name: tunnel-token-secret
+  serviceMonitor:
+    enabled: true
+tests:
+  # Both proxy Services carry the proxy selector labels and a config-api
+  # port. Matching both would scrape every pod twice, and the headless one
+  # also publishes not-ready pods.
+  - it: should select by a label only the ClusterIP proxy Service carries
+    template: servicemonitor-proxy.yaml
+    asserts:
+      - equal:
+          path: spec.selector
+          value:
+            matchLabels:
+              app.kubernetes.io/name: cloudflare-tunnel-gateway-controller-proxy
+              app.kubernetes.io/instance: RELEASE-NAME
+              app.kubernetes.io/component: proxy
+              cf.k8s.lex.la/metrics: "true"
+
+  - it: should carry every ServiceMonitor selector label on the ClusterIP proxy Service
+    template: service-proxy.yaml
+    asserts:
+      - isSubset:
+          path: metadata.labels
+          content:
+            app.kubernetes.io/name: cloudflare-tunnel-gateway-controller-proxy
+            app.kubernetes.io/instance: RELEASE-NAME
+            app.kubernetes.io/component: proxy
+            cf.k8s.lex.la/metrics: "true"
+
+  - it: should keep the headless proxy Service out of the ServiceMonitor selector
+    template: service-proxy-headless.yaml
+    asserts:
+      - notExists:
+          path: metadata.labels["cf.k8s.lex.la/metrics"]
