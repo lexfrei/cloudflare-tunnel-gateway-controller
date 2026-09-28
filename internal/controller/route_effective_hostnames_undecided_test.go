@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/tools/events"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
@@ -317,4 +319,30 @@ func TestSyncPartition_ReportsRouteLeftOutOverItsParent(t *testing.T) {
 	}
 
 	assert.ElementsMatch(t, []string{"http-r", "grpc-r"}, leftOut)
+}
+
+var (
+	errFirstPartitionRead  = errors.New("reading Gateway: first partition")
+	errSecondPartitionRead = errors.New("reading ListenerSet: second partition")
+)
+
+// TestLeaveOutUndecidedRoute_OneEventPerRoute pins that a route left out in
+// several partitions in one sync is reported once. Each partition evaluates the
+// parents on its own and can fail on a different read, so a message carrying
+// the error would defeat the per-sync deduplication of the Warning Event and
+// the condition message.
+func TestLeaveOutUndecidedRoute_OneEventPerRoute(t *testing.T) {
+	t.Parallel()
+
+	route := httpRouteTo()
+
+	diags := []proxy.RouteDiagnostic{
+		leaveOutUndecidedRoute(context.Background(), route, errFirstPartitionRead),
+		leaveOutUndecidedRoute(context.Background(), route, errSecondPartitionRead),
+	}
+
+	rec := events.NewFakeRecorder(10)
+	emitDiagnosticEvents(rec, route, diags)
+
+	assert.Len(t, drainEvents(rec), 1, "one Warning Event per route per sync")
 }
