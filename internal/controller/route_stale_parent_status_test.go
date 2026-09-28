@@ -190,3 +190,41 @@ func TestFindRoutesForGateway_EnqueuesRouteWithOwnStatusOnForeignGateway(t *test
 	require.Len(t, requests, 1)
 	assert.Equal(t, "with-status", requests[0].Name)
 }
+
+// TestReleaseOwnParentStatus_KeepsEntriesOfAManagedRoute pins the re-check the
+// release does on the fresh route: a route that names a managed Gateway again
+// by the time it is read keeps its entries.
+func TestReleaseOwnParentStatus_KeepsEntriesOfAManagedRoute(t *testing.T) {
+	t.Parallel()
+
+	route := &gatewayv1.HTTPRoute{
+		ObjectMeta: metav1.ObjectMeta{Name: "r", Namespace: "default"},
+		Spec: gatewayv1.HTTPRouteSpec{CommonRouteSpec: gatewayv1.CommonRouteSpec{
+			ParentRefs: []gatewayv1.ParentReference{{Name: "own-gw"}},
+		}},
+		Status: gatewayv1.HTTPRouteStatus{RouteStatus: staleParentStatus()},
+	}
+	ownClass := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "own-class"},
+		Spec:       gatewayv1.GatewayClassSpec{ControllerName: staleStatusController},
+	}
+	ownGateway := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "own-gw", Namespace: "default"},
+		Spec:       gatewayv1.GatewaySpec{GatewayClassName: "own-class"},
+	}
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, gatewayv1.Install(scheme))
+
+	cli := fake.NewClientBuilder().WithScheme(scheme).
+		WithObjects(ownClass, ownGateway, route).
+		WithStatusSubresource(&gatewayv1.HTTPRoute{}).
+		Build()
+
+	key := types.NamespacedName{Name: "r", Namespace: "default"}
+	require.NoError(t, releaseOwnParentStatus(context.Background(), cli, staleStatusController, key, newHTTPRouteAccessor))
+
+	var updated gatewayv1.HTTPRoute
+	require.NoError(t, cli.Get(context.Background(), key, &updated))
+	assert.Len(t, ownParentEntries(updated.Status.Parents), 1)
+}
