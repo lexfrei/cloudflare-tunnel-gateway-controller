@@ -230,6 +230,48 @@ func runTunnelMode(logger *slog.Logger, token string, plane *dataPlane) int {
 
 	configFailed := serveConfigAPI(logger, configServer, cancel)
 
+	// StartTunnelWithRetry retries a bootstrap-window failure (cluster DNS not
+	// yet reachable, the edge briefly unreachable) with capped backoff instead
+	// of exiting outright -- readiness stays NotReady throughout via
+	// router.SetTunnelConnected, which only fires on an actual connection. A
+	// non-retryable failure (malformed token, unsupported protocol) still
+	// returns immediately below.
+	err := dialTunnel(ctx, logger, router, graceC, startupProtocolWait(logger), &tunnel.Config{
+		Token:       token,
+		Logger:      logger,
+		OriginProxy: originProxy,
+		// Flip readiness only once the tunnel registers with the edge, so the
+		// pod reports Ready when it can actually receive traffic (before that
+		// the edge returns 530). Combined with config presence in /readyz.
+		OnConnected: router.SetTunnelConnected,
+		// Two-stage shutdown: SIGTERM closes graceC (drain), the context stays
+		// alive so the connector can unregister and in-flight requests finish.
+		GraceShutdownC: graceC,
+		GracePeriod:    parseEnvDuration(logger, "PROXY_GRACE_PERIOD"),
+	}, tunnel.StartTunnelWithRetry)
+
+	// The daemon has exited (drained, failed, or force-cancelled) — release the
+	// signal goroutine before shutting the config server down.
+	cancel()
+	gracefulShutdown(logger, configServer)
+
+	return tunnelExitCode(logger, err, configFailed.Load())
+}
+
+// tunnelStarter dials the edge and serves until the tunnel ends. Production
+// passes tunnel.StartTunnelWithRetry.
+type tunnelStarter func(ctx context.Context, cfg *tunnel.Config, drainC <-chan struct{}) error
+
+// dialTunnel resolves the edge transport and starts the tunnel with cfg.
+func dialTunnel(
+	ctx context.Context,
+	logger *slog.Logger,
+	router *proxy.Router,
+	graceC <-chan struct{},
+	wait time.Duration,
+	cfg *tunnel.Config,
+	start tunnelStarter,
+) error {
 	// Resolve the edge transport before dialing. PROXY_TUNNEL_PROTOCOL selects
 	// it (auto|http2|quic, default auto). For auto/unset this waits briefly for
 	// the controller's first config push so the proxy can upgrade to http2 when
@@ -241,7 +283,7 @@ func runTunnelMode(logger *slog.Logger, token string, plane *dataPlane) int {
 		ctx,
 		os.Getenv("PROXY_TUNNEL_PROTOCOL"),
 		router.FirstConfigLoaded(),
-		startupProtocolWait(logger),
+		wait,
 		graceC,
 		logger,
 	)
@@ -256,41 +298,15 @@ func runTunnelMode(logger *slog.Logger, token string, plane *dataPlane) int {
 	// grace for nothing — skip straight to shutdown.
 	if drainSignalled(graceC) {
 		logger.Info("drain signalled before tunnel start; exiting without dialing the edge")
-		cancel()
-		gracefulShutdown(logger, configServer)
 
-		return 0
+		return nil
 	}
 
 	logger.Info("starting cloudflared tunnel with in-process proxy", "protocol", effectiveProtocol)
 
-	// StartTunnelWithRetry retries a bootstrap-window failure (cluster DNS not
-	// yet reachable, the edge briefly unreachable) with capped backoff instead
-	// of exiting outright -- readiness stays NotReady throughout via
-	// router.SetTunnelConnected, which only fires on an actual connection. A
-	// non-retryable failure (malformed token, unsupported protocol) still
-	// returns immediately below.
-	err := tunnel.StartTunnelWithRetry(ctx, &tunnel.Config{
-		Token:       token,
-		Logger:      logger,
-		OriginProxy: originProxy,
-		Protocol:    effectiveProtocol,
-		// Flip readiness only once the tunnel registers with the edge, so the
-		// pod reports Ready when it can actually receive traffic (before that
-		// the edge returns 530). Combined with config presence in /readyz.
-		OnConnected: router.SetTunnelConnected,
-		// Two-stage shutdown: SIGTERM closes graceC (drain), the context stays
-		// alive so the connector can unregister and in-flight requests finish.
-		GraceShutdownC: graceC,
-		GracePeriod:    parseEnvDuration(logger, "PROXY_GRACE_PERIOD"),
-	}, graceC)
+	cfg.Protocol = effectiveProtocol
 
-	// The daemon has exited (drained, failed, or force-cancelled) — release the
-	// signal goroutine before shutting the config server down.
-	cancel()
-	gracefulShutdown(logger, configServer)
-
-	return tunnelExitCode(logger, err, configFailed.Load())
+	return start(ctx, cfg, graceC)
 }
 
 // serveConfigAPI runs the config API in the background. When it fails it
