@@ -9,6 +9,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/hostnameownership"
@@ -70,7 +71,7 @@ func TestGatewayAttachedRoutes_FollowsRouteAcceptedStatus(t *testing.T) {
 
 	reconciler := &GatewayReconciler{Client: cli, Scheme: cli.Scheme(), ControllerName: "test-controller"}
 
-	assert.Equal(t, map[gatewayv1.SectionName]int32{"http": 1}, reconciler.countAttachedRoutes(context.Background(), gateway, nil))
+	assert.Equal(t, map[gatewayv1.SectionName]int32{"http": 1}, reconciler.countAttachedRoutes(context.Background(), gateway))
 }
 
 // TestListenerSetAttachedRoutes_FollowsRouteAcceptedStatus pins the same rule
@@ -123,4 +124,29 @@ func TestListenerSetAttachedRoutes_FollowsRouteAcceptedStatus(t *testing.T) {
 	updated := getListenerSet(t, cli, "ls", "infra")
 	require.Len(t, updated.Status.Listeners, 1)
 	assert.Equal(t, int32(1), updated.Status.Listeners[0].AttachedRoutes)
+}
+
+// stampAccepted gives each route controllerName's status entry for every one
+// of its parentRefs with the given Accepted verdict, as the route status writer
+// would after a sync.
+func stampAccepted(controllerName string, accepted metav1.ConditionStatus, routes ...client.Object) {
+	reason := string(gatewayv1.RouteReasonAccepted)
+	if accepted != metav1.ConditionTrue {
+		reason = string(gatewayv1.RouteReasonNoMatchingParent)
+	}
+
+	for _, obj := range routes {
+		switch route := obj.(type) {
+		case *gatewayv1.HTTPRoute:
+			for _, ref := range route.Spec.ParentRefs {
+				route.Status.Parents = append(route.Status.Parents,
+					parentStatusFor(ref, route.Namespace, controllerName, accepted, reason))
+			}
+		case *gatewayv1.GRPCRoute:
+			for _, ref := range route.Spec.ParentRefs {
+				route.Status.Parents = append(route.Status.Parents,
+					parentStatusFor(ref, route.Namespace, controllerName, accepted, reason))
+			}
+		}
+	}
 }

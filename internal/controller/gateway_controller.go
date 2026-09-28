@@ -775,7 +775,7 @@ func (r *GatewayReconciler) buildListenerStatuses(
 	views *listenerViewCache,
 	now metav1.Time,
 ) []gatewayv1.ListenerStatus {
-	attachedRoutes := r.countAttachedRoutes(ctx, gateway, views)
+	attachedRoutes := r.countAttachedRoutes(ctx, gateway)
 
 	// The merged view (cached) annotates each conflicted Gateway-owned
 	// listener, used below to emit the per-listener Conflicted condition.
@@ -1134,7 +1134,6 @@ func overrideListenerProgrammedForConfigError(
 func (r *GatewayReconciler) countAttachedRoutes(
 	ctx context.Context,
 	gateway *gatewayv1.Gateway,
-	views *listenerViewCache,
 ) map[gatewayv1.SectionName]int32 {
 	logger := logging.FromContext(ctx)
 	result := make(map[gatewayv1.SectionName]int32)
@@ -1144,7 +1143,6 @@ func (r *GatewayReconciler) countAttachedRoutes(
 	}
 
 	validator := routebinding.NewValidator(r.Client)
-	views = views.orNew(r.Client)
 
 	var httpRouteList gatewayv1.HTTPRouteList
 	if err := r.List(ctx, &httpRouteList); err != nil {
@@ -1152,7 +1150,7 @@ func (r *GatewayReconciler) countAttachedRoutes(
 	} else {
 		for i := range httpRouteList.Items {
 			route := &httpRouteList.Items[i]
-			r.countRouteOnGateway(ctx, validator, views, gateway, HTTPRouteWrapper{route}, result)
+			r.countRouteOnGateway(ctx, validator, gateway, HTTPRouteWrapper{route}, result)
 		}
 	}
 
@@ -1162,7 +1160,7 @@ func (r *GatewayReconciler) countAttachedRoutes(
 	} else {
 		for i := range grpcRouteList.Items {
 			route := &grpcRouteList.Items[i]
-			r.countRouteOnGateway(ctx, validator, views, gateway, GRPCRouteWrapper{route}, result)
+			r.countRouteOnGateway(ctx, validator, gateway, GRPCRouteWrapper{route}, result)
 		}
 	}
 
@@ -1171,15 +1169,14 @@ func (r *GatewayReconciler) countAttachedRoutes(
 
 // countRouteOnGateway adds one route to the Gateway's per-listener
 // attachedRoutes. Per the vendored AttachedRoutes doc, attachment follows
-// allowedRoutes and parentRefs whatever the listener's own status, but only a
-// route Accepted for the Gateway counts: a parentRef whose every match is a
-// conflicted listener is rejected by binding, so it adds nothing, while one
-// that survives the conflict filter adds every listener it matched. A route
-// counts at most once per listener however many of its parentRefs match it.
+// allowedRoutes and parentRefs whatever the listener's own status, and only a
+// route Accepted for the Gateway counts. The Accepted verdict is read from the
+// route's own status, so every rejection counts: binding, conflicted
+// listeners, hostname ownership and cross-type conflicts. A route counts at
+// most once per listener however many of its parentRefs match it.
 func (r *GatewayReconciler) countRouteOnGateway(
 	ctx context.Context,
 	validator *routebinding.Validator,
-	views *listenerViewCache,
 	gateway *gatewayv1.Gateway,
 	route Route,
 	result map[gatewayv1.SectionName]int32,
@@ -1187,7 +1184,8 @@ func (r *GatewayReconciler) countRouteOnGateway(
 	counted := make(map[gatewayv1.SectionName]bool)
 
 	for _, ref := range route.GetParentRefs() {
-		if !r.refMatchesGateway(ref, gateway, route.GetNamespace()) {
+		if !r.refMatchesGateway(ref, gateway, route.GetNamespace()) ||
+			!parentRefAcceptedInStatus(route.GetParentStatuses(), ref, route.GetNamespace(), r.ControllerName) {
 			continue
 		}
 
@@ -1200,10 +1198,6 @@ func (r *GatewayReconciler) countRouteOnGateway(
 			Port:        ref.Port,
 		})
 		if bindErr != nil || !bindingResult.Accepted {
-			continue
-		}
-
-		if !filterMatchedGatewayListenersByConflict(ctx, r.Client, gateway, bindingResult, views).Accepted {
 			continue
 		}
 

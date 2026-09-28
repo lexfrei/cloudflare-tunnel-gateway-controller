@@ -314,11 +314,16 @@ func TestIncrementListenerSetAttachedRoutes_DeduplicatesDuplicateParentRefs(t *t
 
 	counts := map[gatewayv1.SectionName]int32{"entry": 0}
 
-	incrementListenerSetAttachedRoutes(
-		context.Background(), validator,
-		func(result routebinding.BindingResult) routebinding.BindingResult { return result }, ls,
-		"team-a", "r", nil, routebinding.KindHTTPRoute, dupRefs, counts,
-	)
+	route := &gatewayv1.HTTPRoute{
+		ObjectMeta: metav1.ObjectMeta{Name: "r", Namespace: "team-a"},
+		Spec:       gatewayv1.HTTPRouteSpec{CommonRouteSpec: gatewayv1.CommonRouteSpec{ParentRefs: dupRefs}},
+		Status: gatewayv1.HTTPRouteStatus{RouteStatus: gatewayv1.RouteStatus{Parents: []gatewayv1.RouteParentStatus{
+			parentStatusFor(dupRefs[0], "team-a", testListenerSetController, metav1.ConditionTrue, string(gatewayv1.RouteReasonAccepted)),
+		}}},
+	}
+
+	incrementListenerSetAttachedRoutes(context.Background(), validator, testListenerSetController, ls,
+		HTTPRouteWrapper{route}, counts)
 
 	assert.Equal(t, int32(1), counts["entry"], "duplicate parentRefs to the same ListenerSet must count the route once")
 }

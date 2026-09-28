@@ -10,6 +10,7 @@ import (
 	"github.com/cockroachdb/errors"
 	corev1 "k8s.io/api/core/v1"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -1121,4 +1122,20 @@ func namesManagedGateway(
 	}
 
 	return false, nil
+}
+
+// parentRefAcceptedInStatus reports whether the route's status holds an
+// Accepted=True entry written by controllerName for ref.
+func parentRefAcceptedInStatus(
+	parents []gatewayv1.RouteParentStatus,
+	ref gatewayv1.ParentReference,
+	routeNamespace, controllerName string,
+) bool {
+	want := statusParentRef(ref, routeNamespace)
+
+	return slices.ContainsFunc(parents, func(parent gatewayv1.RouteParentStatus) bool {
+		return string(parent.ControllerName) == controllerName &&
+			parentRefIdentityEqual(parent.ParentRef, want) &&
+			meta.IsStatusConditionTrue(parent.Conditions, string(gatewayv1.RouteConditionAccepted))
+	})
 }

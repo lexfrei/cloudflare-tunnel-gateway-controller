@@ -285,9 +285,7 @@ func (r *ListenerSetReconciler) computeAcceptance(
 	// allowed to attach (including this one — it has just passed the
 	// allowedListeners check above). Shared with the Gateway and route
 	// reconcilers through the cross-reconcile store (issue #332).
-	views := newListenerViewCache(r.Client, r.ViewStore)
-
-	view, err := views.forGateway(ctx, gateway)
+	view, err := newListenerViewCache(r.Client, r.ViewStore).forGateway(ctx, gateway)
 	if err != nil {
 		return listenerSetAcceptanceResult{
 			Accepted: false,
@@ -309,9 +307,7 @@ func (r *ListenerSetReconciler) computeAcceptance(
 
 	accepted, summaryReason, summaryMessage := summariseListenerSet(merged, listenerSet, refChecks)
 
-	attached, attachErr := r.countAttachedRoutesPerEntry(ctx, listenerSet, func(result routebinding.BindingResult) routebinding.BindingResult {
-		return filterMatchedListenersByConflict(ctx, r.Client, listenerSet, gateway, result, views)
-	})
+	attached, attachErr := r.countAttachedRoutesPerEntry(ctx, listenerSet)
 	if attachErr != nil {
 		return listenerSetAcceptanceResult{
 			Accepted: false,
@@ -340,14 +336,11 @@ func (r *ListenerSetReconciler) computeAcceptance(
 // state: "the AttachedRoutes field count MUST be set for Listeners, even if the
 // Accepted condition of an individual Listener is set to False", and "Routes
 // with any other value for the Accepted condition MUST NOT be included". A
-// listener's own status never removes a route it matched from the count, but
-// a route whose every match is conflicted is rejected by binding
-// (filterMatchedListenersByConflict in route_parent_binding.go), so it is not
-// Accepted and is not counted anywhere.
+// listener's own status never removes a route it matched from the count; the
+// route's Accepted verdict for this ListenerSet is read from its own status.
 func (r *ListenerSetReconciler) countAttachedRoutesPerEntry(
 	ctx context.Context,
 	listenerSet *gatewayv1.ListenerSet,
-	conflictFilter bindingFilter,
 ) (map[gatewayv1.SectionName]int32, error) {
 	out := make(map[gatewayv1.SectionName]int32, len(listenerSet.Spec.Listeners))
 	for i := range listenerSet.Spec.Listeners {
@@ -356,22 +349,20 @@ func (r *ListenerSetReconciler) countAttachedRoutesPerEntry(
 
 	validator := routebinding.NewValidator(r.Client)
 
-	if err := r.countAttachedHTTPRoutes(ctx, listenerSet, conflictFilter, validator, out); err != nil {
+	if err := r.countAttachedHTTPRoutes(ctx, listenerSet, validator, out); err != nil {
 		return nil, err
 	}
 
-	if err := r.countAttachedGRPCRoutes(ctx, listenerSet, conflictFilter, validator, out); err != nil {
+	if err := r.countAttachedGRPCRoutes(ctx, listenerSet, validator, out); err != nil {
 		return nil, err
 	}
 
 	return out, nil
 }
 
-//nolint:dupl // mirrored on purpose against countAttachedGRPCRoutes — different list type prevents a generic
 func (r *ListenerSetReconciler) countAttachedHTTPRoutes(
 	ctx context.Context,
 	listenerSet *gatewayv1.ListenerSet,
-	conflictFilter bindingFilter,
 	validator *routebinding.Validator,
 	counts map[gatewayv1.SectionName]int32,
 ) error {
@@ -382,21 +373,15 @@ func (r *ListenerSetReconciler) countAttachedHTTPRoutes(
 
 	for i := range routes.Items {
 		route := &routes.Items[i]
-		incrementListenerSetAttachedRoutes(
-			ctx, validator, conflictFilter, listenerSet,
-			route.Namespace, route.Name, route.Spec.Hostnames,
-			routebinding.KindHTTPRoute, route.Spec.ParentRefs, counts,
-		)
+		incrementListenerSetAttachedRoutes(ctx, validator, r.ControllerName, listenerSet, HTTPRouteWrapper{route}, counts)
 	}
 
 	return nil
 }
 
-//nolint:dupl // mirrored on purpose against countAttachedHTTPRoutes — different list type prevents a generic
 func (r *ListenerSetReconciler) countAttachedGRPCRoutes(
 	ctx context.Context,
 	listenerSet *gatewayv1.ListenerSet,
-	conflictFilter bindingFilter,
 	validator *routebinding.Validator,
 	counts map[gatewayv1.SectionName]int32,
 ) error {
@@ -407,59 +392,46 @@ func (r *ListenerSetReconciler) countAttachedGRPCRoutes(
 
 	for i := range routes.Items {
 		route := &routes.Items[i]
-		incrementListenerSetAttachedRoutes(
-			ctx, validator, conflictFilter, listenerSet,
-			route.Namespace, route.Name, route.Spec.Hostnames,
-			routebinding.KindGRPCRoute, route.Spec.ParentRefs, counts,
-		)
+		incrementListenerSetAttachedRoutes(ctx, validator, r.ControllerName, listenerSet, GRPCRouteWrapper{route}, counts)
 	}
 
 	return nil
 }
 
-// bindingFilter narrows a route's binding result the way route binding does,
-// so the attachedRoutes count sees the same Accepted verdict.
-type bindingFilter func(routebinding.BindingResult) routebinding.BindingResult
-
 func incrementListenerSetAttachedRoutes(
 	ctx context.Context,
 	validator *routebinding.Validator,
-	conflictFilter bindingFilter,
+	controllerName string,
 	listenerSet *gatewayv1.ListenerSet,
-	routeNamespace, routeName string,
-	hostnames []gatewayv1.Hostname,
-	kind gatewayv1.Kind,
-	parentRefs []gatewayv1.ParentReference,
+	route Route,
 	counts map[gatewayv1.SectionName]int32,
 ) {
+	routeNamespace := route.GetNamespace()
+
 	// A single route counts at most once per listener entry, even if it
 	// lists the same ListenerSet in multiple parentRefs (degenerate but
 	// legal). Track which sections this route already counted.
 	countedThisRoute := make(map[gatewayv1.SectionName]struct{})
 
-	for _, ref := range parentRefs {
-		if !parentRefSelectsListenerSet(ref, routeNamespace, listenerSet) {
+	for _, ref := range route.GetParentRefs() {
+		if !parentRefSelectsListenerSet(ref, routeNamespace, listenerSet) ||
+			!parentRefAcceptedInStatus(route.GetParentStatuses(), ref, routeNamespace, controllerName) {
 			continue
 		}
 
 		routeInfo := &routebinding.RouteInfo{
-			Name:        routeName,
+			Name:        route.GetName(),
 			Namespace:   routeNamespace,
-			Hostnames:   hostnames,
-			Kind:        kind,
+			Hostnames:   route.GetHostnames(),
+			Kind:        route.GetRouteKind(),
 			SectionName: ref.SectionName,
 			Port:        ref.Port,
 		}
 
-		// Gated by the route's binding verdict, the Gateway API "Routes with
-		// the Accepted condition set to True" rule, which includes the
-		// conflict filter binding applies.
+		// The Accepted gate above reads the route's own status; binding here
+		// only names the entries the ref attaches to.
 		result, err := validator.ValidateBindingForListenerSet(ctx, listenerSet, routeInfo)
 		if err != nil || !result.Accepted {
-			continue
-		}
-
-		if !conflictFilter(result).Accepted {
 			continue
 		}
 

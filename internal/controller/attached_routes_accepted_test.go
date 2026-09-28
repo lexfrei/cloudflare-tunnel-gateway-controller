@@ -38,15 +38,19 @@ func TestGatewayAttachedRoutes_CountsOnlyAcceptedRoutes(t *testing.T) {
 	}
 	ok := gatewayv1.SectionName("ok")
 
-	cli := setupGatewayFakeClient(gateway,
-		attachedRoute("only-a", []gatewayv1.Hostname{"a.example.com"}, gatewayv1.ParentReference{Name: "gw"}),
-		attachedRoute("any", nil, gatewayv1.ParentReference{Name: "gw"}),
-		attachedRoute("twice", []gatewayv1.Hostname{"b.example.com"},
-			gatewayv1.ParentReference{Name: "gw", SectionName: &ok}, gatewayv1.ParentReference{Name: "gw"}),
-	)
+	onlyA := attachedRoute("only-a", []gatewayv1.Hostname{"a.example.com"}, gatewayv1.ParentReference{Name: "gw"})
+	anyHost := attachedRoute("any", nil, gatewayv1.ParentReference{Name: "gw"})
+	twice := attachedRoute("twice", []gatewayv1.Hostname{"b.example.com"},
+		gatewayv1.ParentReference{Name: "gw", SectionName: &ok}, gatewayv1.ParentReference{Name: "gw"})
+
+	// Binding rejects only-a, whose every match conflicts; the others bind.
+	stampAccepted("test-controller", metav1.ConditionFalse, onlyA)
+	stampAccepted("test-controller", metav1.ConditionTrue, anyHost, twice)
+
+	cli := setupGatewayFakeClient(gateway, onlyA, anyHost, twice)
 
 	reconciler := &GatewayReconciler{Client: cli, Scheme: cli.Scheme(), ControllerName: "test-controller"}
 
 	assert.Equal(t, map[gatewayv1.SectionName]int32{"c1": 1, "c2": 1, "ok": 2},
-		reconciler.countAttachedRoutes(context.Background(), gateway, nil))
+		reconciler.countAttachedRoutes(context.Background(), gateway))
 }

@@ -266,6 +266,8 @@ func TestListenerSetReconciler_RouteRejectedByConflictNotCounted(t *testing.T) {
 		},
 	}
 
+	stampAccepted(testListenerSetController, metav1.ConditionFalse, route)
+
 	r, cli := newListenerSetReconcilerWithObjects(t, newListenerSetScheme(t), gc, gw, ls, route)
 
 	_, err := r.Reconcile(context.Background(), ctrl.Request{
@@ -344,6 +346,8 @@ func TestListenerSetReconciler_UnresolvedTLSRefStillCountsAttachedRoutes(t *test
 
 	scheme := newListenerSetScheme(t)
 	require.NoError(t, corev1.AddToScheme(scheme))
+	stampAccepted(testListenerSetController, metav1.ConditionTrue, route)
+
 	r, cli := newListenerSetReconcilerWithObjects(t, scheme, gc, gw, ls, route)
 
 	_, err := r.Reconcile(context.Background(), ctrl.Request{
@@ -746,6 +750,8 @@ func TestListenerSetAttachedRoutes_AcceptedRouteCountsOnConflictedEntry(t *testi
 			ParentRefs: []gatewayv1.ParentReference{{Kind: &lsKind, Name: gatewayv1.ObjectName(ls.Name)}},
 		}},
 	}
+
+	stampAccepted(testListenerSetController, metav1.ConditionTrue, route)
 
 	r, cli := newListenerSetReconcilerWithObjects(t, newListenerSetScheme(t), gc, gw, ls, route)
 
