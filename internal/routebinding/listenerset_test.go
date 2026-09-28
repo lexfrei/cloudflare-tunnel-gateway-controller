@@ -442,3 +442,36 @@ func TestEvaluateListenerSetAcceptance_InvalidSelectorLogsAtDebug(t *testing.T) 
 	assert.Contains(t, logs.String(), `"level":"DEBUG"`)
 	assert.NotContains(t, logs.String(), `"level":"WARN"`)
 }
+
+// TestValidateBindingForListenerSet_InvalidSelectorNamesTheEntry pins that the
+// rejection names a ListenerSet entry as one, not as a Gateway listener, so
+// the reader looks in the right object.
+func TestValidateBindingForListenerSet_InvalidSelectorNamesTheEntry(t *testing.T) {
+	t.Parallel()
+
+	fromSelector := gatewayv1.NamespacesFromSelector
+
+	listenerSet := &gatewayv1.ListenerSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "ls", Namespace: "infra"},
+		Spec: gatewayv1.ListenerSetSpec{
+			Listeners: []gatewayv1.ListenerEntry{
+				{
+					Name:     "broken",
+					Port:     80,
+					Protocol: gatewayv1.HTTPProtocolType,
+					AllowedRoutes: &gatewayv1.AllowedRoutes{
+						Namespaces: &gatewayv1.RouteNamespaces{From: &fromSelector, Selector: bogusSelector()},
+					},
+				},
+			},
+		},
+	}
+
+	route := &RouteInfo{Namespace: "apps", Kind: KindHTTPRoute}
+
+	result, err := NewValidator(setupFakeClient()).ValidateBindingForListenerSet(context.Background(), listenerSet, route)
+	require.NoError(t, err)
+
+	assert.False(t, result.Accepted)
+	assert.Contains(t, result.Message, `ListenerSet entry "broken" has an invalid allowedRoutes selector`)
+}

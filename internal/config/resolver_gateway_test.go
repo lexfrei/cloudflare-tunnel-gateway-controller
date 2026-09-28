@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	cerrors "github.com/cockroachdb/errors"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -483,7 +482,7 @@ func TestResolveForGateway_ClassFallbackMissingSecretIsInvalidParameters(t *test
 
 	_, err := resolver.ResolveForGateway(context.Background(), gatewayWithInfra("cf.k8s.lex.la", "GatewayConfig", "edge-config"))
 	require.Error(t, err)
-	assert.True(t, cerrors.Is(err, config.ErrInvalidParameters),
+	assert.ErrorIs(t, err, config.ErrInvalidParameters,
 		"a missing class credentials Secret is a deterministic user-fixable problem -> InvalidParameters")
 	assert.Contains(t, err.Error(), "GatewayClass", "the problem is in the class chain")
 	assert.NotContains(t, err.Error(), "infrastructure", "the Gateway's own infrastructure ref is not at fault")
@@ -517,7 +516,7 @@ func TestResolveForGateway_ClassFallbackEmptyTokenIsInvalidParameters(t *testing
 
 	_, err := resolver.ResolveForGateway(context.Background(), gatewayWithInfra("cf.k8s.lex.la", "GatewayConfig", "edge-config"))
 	require.Error(t, err)
-	assert.True(t, cerrors.Is(err, config.ErrInvalidParameters),
+	assert.ErrorIs(t, err, config.ErrInvalidParameters,
 		"an empty class api-token key is a deterministic user-fixable problem -> InvalidParameters")
 }
 

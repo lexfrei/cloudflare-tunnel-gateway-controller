@@ -115,7 +115,7 @@ func TestResolveFromGatewayClass_MissingParametersRef(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "spec.parametersRef is required")
-	assert.True(t, errors.Is(err, config.ErrInvalidParameters), "%v", err)
+	assert.ErrorIs(t, err, config.ErrInvalidParameters)
 }
 
 func TestResolveFromGatewayClass_WrongGroup(t *testing.T) {
@@ -144,7 +144,7 @@ func TestResolveFromGatewayClass_WrongGroup(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not wrong.group/GatewayClassConfig")
-	assert.True(t, errors.Is(err, config.ErrInvalidParameters), "%v", err)
+	assert.ErrorIs(t, err, config.ErrInvalidParameters)
 }
 
 func TestResolveFromGatewayClass_WrongKind(t *testing.T) {
@@ -173,7 +173,7 @@ func TestResolveFromGatewayClass_WrongKind(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not cf.k8s.lex.la/WrongKind")
-	assert.True(t, errors.Is(err, config.ErrInvalidParameters), "%v", err)
+	assert.ErrorIs(t, err, config.ErrInvalidParameters)
 }
 
 func TestResolveFromGatewayClass_ConfigNotFound(t *testing.T) {
@@ -190,7 +190,7 @@ func TestResolveFromGatewayClass_ConfigNotFound(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to get GatewayClassConfig")
-	assert.True(t, errors.Is(err, config.ErrInvalidParameters), "%v", err)
+	assert.ErrorIs(t, err, config.ErrInvalidParameters)
 }
 
 func TestResolveFromGatewayClass_SecretNotFound(t *testing.T) {
@@ -220,7 +220,7 @@ func TestResolveFromGatewayClass_SecretNotFound(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to get Cloudflare credentials secret")
-	assert.True(t, errors.Is(err, config.ErrInvalidParameters), "%v", err)
+	assert.ErrorIs(t, err, config.ErrInvalidParameters)
 }
 
 func TestResolveFromGatewayClass_MissingAPIToken(t *testing.T) {
@@ -260,7 +260,7 @@ func TestResolveFromGatewayClass_MissingAPIToken(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "does not contain key api-token")
-	assert.True(t, errors.Is(err, config.ErrInvalidParameters), "%v", err)
+	assert.ErrorIs(t, err, config.ErrInvalidParameters)
 }
 
 func TestResolveFromGatewayClassName_Valid(t *testing.T) {
@@ -315,7 +315,7 @@ func TestResolveFromGatewayClassName_NotFound(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to get GatewayClass")
-	assert.True(t, errors.Is(err, config.ErrInvalidParameters), "%v", err)
+	assert.ErrorIs(t, err, config.ErrInvalidParameters)
 }
 
 // TestResolveFromGatewayClass_EmptyTunnelIDIsInvalidParameters pins that a
@@ -335,7 +335,7 @@ func TestResolveFromGatewayClass_EmptyTunnelIDIsInvalidParameters(t *testing.T) 
 	resolver := config.NewResolver(setupFakeClient(gatewayClassConfig, gatewayClass), "default", cfmetrics.NewNoopCollector())
 
 	_, err := resolver.ResolveFromGatewayClass(context.Background(), gatewayClass)
-	require.True(t, errors.Is(err, config.ErrInvalidParameters), "%v", err)
+	require.ErrorIs(t, err, config.ErrInvalidParameters)
 }
 
 // TestResolveFromGatewayClass_EmptyAPITokenIsInvalidParameters pins that a
@@ -360,7 +360,7 @@ func TestResolveFromGatewayClass_EmptyAPITokenIsInvalidParameters(t *testing.T) 
 	resolver := config.NewResolver(setupFakeClient(secret, gatewayClassConfig, gatewayClass), "default", cfmetrics.NewNoopCollector())
 
 	_, err := resolver.ResolveFromGatewayClass(context.Background(), gatewayClass)
-	require.True(t, errors.Is(err, config.ErrInvalidParameters), "%v", err)
+	require.ErrorIs(t, err, config.ErrInvalidParameters)
 }
 
 // TestResolveFromGatewayClass_ReadFailureIsNotInvalidParameters pins the other
@@ -387,7 +387,7 @@ func TestResolveFromGatewayClass_ReadFailureIsNotInvalidParameters(t *testing.T)
 
 	_, err := resolver.ResolveFromGatewayClass(context.Background(), gatewayClass)
 	require.ErrorIs(t, err, errReadFailed)
-	assert.False(t, errors.Is(err, config.ErrInvalidParameters), "a read failure is not a configuration problem")
+	assert.NotErrorIs(t, err, config.ErrInvalidParameters, "a read failure is not a configuration problem")
 }
 
 func TestResolveConfig_DefaultNamespace(t *testing.T) {

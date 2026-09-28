@@ -302,3 +302,39 @@ func TestUpdateRouteStatusGeneric_MissingParentDropsEntry(t *testing.T) {
 		})
 	}
 }
+
+// TestPriorEntryFor_FindsTheEntryBuildParentStatusWrites pins that the key the
+// status writer uses to keep an entry is the one buildParentStatus writes, for
+// every shape of parentRef. A drift between the two would silently drop a
+// kept entry.
+func TestPriorEntryFor_FindsTheEntryBuildParentStatusWrites(t *testing.T) {
+	t.Parallel()
+
+	gatewayGroup := gatewayv1.Group(gatewayv1.GroupName)
+	listenerSetKind := gatewayv1.Kind(kindListenerSet)
+	otherNamespace := gatewayv1.Namespace("infra")
+	section := gatewayv1.SectionName("https")
+	port := gatewayv1.PortNumber(443)
+
+	for name, ref := range map[string]gatewayv1.ParentReference{
+		"bare":             {Name: "gw"},
+		"namespaced":       {Name: "gw", Namespace: &otherNamespace},
+		"section and port": {Name: "gw", SectionName: &section, Port: &port},
+		"listenerset":      {Name: "ls", Group: &gatewayGroup, Kind: &listenerSetKind, Namespace: &otherNamespace},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			namespace := "ns"
+			if ref.Namespace != nil {
+				namespace = string(*ref.Namespace)
+			}
+
+			built := buildParentStatus(ref, namespace, "test", 1, metav1.Now(), routeBindingInfo{}, 0, nil, nil, nil, nil, 0)
+
+			kept := priorEntryFor([]gatewayv1.RouteParentStatus{built}, ref, "ns")
+			require.Len(t, kept, 1)
+			assert.Equal(t, built.ParentRef, kept[0].ParentRef)
+		})
+	}
+}

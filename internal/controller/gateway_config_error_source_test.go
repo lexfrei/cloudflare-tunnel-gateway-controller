@@ -108,6 +108,7 @@ func TestClassConfigConflict_DoesNotBlameTheGateway(t *testing.T) {
 	err := classConfigConflict([]gatewayv1.GatewayClass{classFor("a", "one"), classFor("b", "two")}, "test-controller")
 	require.Error(t, err)
 	assert.NotContains(t, err.Error(), "infrastructure")
+	assert.ErrorIs(t, err, config.ErrInvalidParameters, "the conflict is visible to the standard library as well")
 }
 
 // acceptedConditionOf reads a Gateway in the default namespace and returns its

@@ -2,9 +2,9 @@ package config_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
-	"github.com/cockroachdb/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -135,8 +135,8 @@ func TestGatewayClassEntryPoints_ReadFailureIsNotClassified(t *testing.T) {
 			err := resolve(context.Background(), config.NewResolver(cli, "default", cfmetrics.NewNoopCollector()), gatewayClass)
 			require.Error(t, err)
 
-			assert.True(t, errors.Is(err, errReadFailed), "%v", err)
-			assert.False(t, errors.Is(err, config.ErrInvalidParameters), "a read failure is not a configuration problem")
+			assert.ErrorIs(t, err, errReadFailed)
+			assert.NotErrorIs(t, err, config.ErrInvalidParameters, "a read failure is not a configuration problem")
 		})
 	}
 }
