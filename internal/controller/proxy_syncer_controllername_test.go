@@ -158,7 +158,7 @@ func TestProxySyncer_ControllerNameReachesEveryPass(t *testing.T) {
 	syncer := NewProxySyncer("cluster.local", "token", skipTestControllerName, wiringClient(t), nil)
 
 	cfg := syncer.buildProxyConfig(context.Background(),
-		[]*gatewayv1.HTTPRoute{wiringRoute()}, []*gatewayv1.GRPCRoute{wiringGRPCRoute()}, nil, nil)
+		[]*gatewayv1.HTTPRoute{wiringRoute()}, []*gatewayv1.GRPCRoute{wiringGRPCRoute()}, nil, nil, clientCertParents{})
 
 	require.NotNil(t, cfg)
 	require.Len(t, cfg.Rules, 2, "one HTTP rule and one gRPC rule")
@@ -181,7 +181,7 @@ func TestProxySyncer_EmptyControllerNameAcceptsAnyGateway(t *testing.T) {
 	syncer := NewProxySyncer("cluster.local", "token", "", wiringClient(t), nil)
 
 	cfg := syncer.buildProxyConfig(context.Background(),
-		[]*gatewayv1.HTTPRoute{wiringRoute()}, []*gatewayv1.GRPCRoute{wiringGRPCRoute()}, nil, nil)
+		[]*gatewayv1.HTTPRoute{wiringRoute()}, []*gatewayv1.GRPCRoute{wiringGRPCRoute()}, nil, nil, clientCertParents{})
 
 	require.NotNil(t, cfg)
 	require.Len(t, cfg.Rules, 2)

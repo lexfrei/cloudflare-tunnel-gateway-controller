@@ -49,7 +49,7 @@ const configMapKind = "ConfigMap"
 // lastCfg caches the most recent successfully-built config so the
 // endpoint-watcher (see ProxyEndpointReconciler) can re-push to a
 // newly-joined proxy pod without waiting for the next HTTPRoute
-// reconcile. Before the first SyncRoutes call, lastCfg is nil and
+// reconcile. Before the first syncPartition call, lastCfg is nil and
 // ResyncEndpoints is a no-op -- there is nothing to push yet.
 // syncMu guards reads and writes of lastCfg, not the push between them:
 // pushes run lock-free, so a recorder must check that the document it
@@ -63,7 +63,7 @@ type ProxySyncer struct {
 	grpcBackendValidator proxy.BackendRefValidator
 	protocolResolver     proxy.BackendProtocolResolver
 	tlsResolver          proxy.BackendTLSResolver
-	gatewayCertResolver  proxy.GatewayClientCertResolver
+	gatewayCertLoader    gatewayClientCertLoader
 	syncMu               sync.Mutex
 	// recordSeq is issued once per recorded outcome across every partition,
 	// under syncMu, and never reused, so a value observed by a replay cannot
@@ -192,7 +192,7 @@ func NewProxySyncer(
 		grpcBackendValidator: newBackendRefValidator(refGrantValidator, "GRPCRoute"),
 		protocolResolver:     newBackendProtocolResolver(k8sClient),
 		tlsResolver:          newBackendTLSResolver(k8sClient),
-		gatewayCertResolver:  newGatewayClientCertResolver(k8sClient, controllerName),
+		gatewayCertLoader:    newGatewayClientCertLoader(k8sClient, controllerName),
 		controllerName:       controllerName,
 		configAuthority:      settings.configAuthority,
 		tracing:              settings.tracing,
@@ -257,9 +257,27 @@ func proxyPushClientWithTLS(tracing bool, tlsConfig *tls.Config) (*http.Client, 
 	}, transport
 }
 
-// newGatewayClientCertResolver returns a resolver that loads the Gateway's
+// gatewayClientCertLoader loads one Gateway's backend client certificate.
+// Which Gateways a route may take a certificate from is decided per partition,
+// by clientCertResolver.
+type gatewayClientCertLoader func(ctx context.Context, gatewayNN types.NamespacedName) *proxy.ClientCertConfig
+
+// clientCertResolver narrows the lookup to the Gateways that parents lists
+// for each route; a route or Gateway missing from parents yields no
+// certificate.
+func (s *ProxySyncer) clientCertResolver(parents map[string]map[string]bool) proxy.GatewayClientCertResolver {
+	return func(ctx context.Context, route, gateway types.NamespacedName) *proxy.ClientCertConfig {
+		if !parents[route.String()][gateway.String()] {
+			return nil
+		}
+
+		return s.gatewayCertLoader(ctx, gateway)
+	}
+}
+
+// newGatewayClientCertLoader returns a loader that reads the Gateway's
 // spec.tls.backend.clientCertificateRef Secret into the PEM-encoded keypair
-// the proxy presents during backend mTLS handshakes. The resolver is scoped
+// the proxy presents during backend mTLS handshakes. The loader is scoped
 // to Gateways managed by this controller — a parentRef pointing at another
 // vendor's Gateway must NOT cause OUR proxy to present THEIR client cert
 // (cross-controller credential leak guard). When controllerName is empty
@@ -271,7 +289,7 @@ func proxyPushClientWithTLS(tracing bool, tlsConfig *tls.Config) (*http.Client, 
 // or the keypair fails to parse. The first three reasons leave the Gateway's
 // ResolvedRefs condition alone; the remaining ones drive it through the
 // parallel emit path in the GatewayReconciler.
-func newGatewayClientCertResolver(c client.Client, controllerName string) proxy.GatewayClientCertResolver {
+func newGatewayClientCertLoader(c client.Client, controllerName string) gatewayClientCertLoader {
 	return func(ctx context.Context, gatewayNN types.NamespacedName) *proxy.ClientCertConfig {
 		var gateway gatewayv1.Gateway
 		if err := c.Get(ctx, gatewayNN, &gateway); err != nil {
@@ -733,39 +751,28 @@ func newBackendRefValidator(validator *referencegrant.Validator, fromKind string
 	}
 }
 
-// SyncRoutes converts pre-collected HTTPRoutes and GRPCRoutes to proxy config
-// and pushes to all endpoints. Routes should come from the RouteSyncer's
-// SyncResult to avoid redundant API calls. failedRefs / grpcFailedRefs contain
-// the HTTP / gRPC backend refs that failed validation in the ingress builder.
-// Both route families get their backends cleared for rules with failed refs so
-// the proxy returns HTTP 500 (no backend) instead of dialing a nonexistent
-// Service and surfacing a 502 — the converter alone does not detect a missing
-// Service (it only drops kind/port/ReferenceGrant failures), so the builder's
-// BackendNotFound findings must be applied here.
-func (s *ProxySyncer) SyncRoutes(
-	ctx context.Context,
-	configVersion int64,
-	endpoints []string,
-	routes []*gatewayv1.HTTPRoute,
-	grpcRoutes []*gatewayv1.GRPCRoute,
-	failedRefs []ingress.BackendRefError,
-	grpcFailedRefs []ingress.BackendRefError,
-) ([]proxy.RouteDiagnostic, error) {
-	return s.SyncPartition(ctx, configVersion, sharedPartitionKey, s.defaultAuthToken,
-		endpoints, routes, grpcRoutes, failedRefs, grpcFailedRefs)
-}
-
-// SyncPartition is the per-data-plane push: it builds the proxy config from
+// syncPartition is the per-data-plane push: it builds the proxy config from
 // EXACTLY the partition's routes and pushes it to the partition's endpoints,
 // authenticated with the partition's own token (empty = no auth header — the
 // shared token is never reused for tenant planes). Push state (steady-state
-// skip, replay cache) is independent per partition.
+// skip, replay cache) is independent per partition. certParents names, per
+// route, the Gateways its backends may take a client certificate from in this
+// partition.
+//
+// Routes should come from the RouteSyncer's SyncResult to avoid redundant API
+// calls. failedRefs / grpcFailedRefs contain the HTTP / gRPC backend refs that
+// failed validation in the ingress builder. Both route families get their
+// backends cleared for rules with failed refs so the proxy returns HTTP 500
+// (no backend) instead of dialing a nonexistent Service and surfacing a 502 —
+// the converter alone does not detect a missing Service (it only drops
+// kind/port/ReferenceGrant failures), so the builder's BackendNotFound findings
+// must be applied here.
 //
 // configVersion is the version reserved when the routes were LISTED, so that
 // two overlapping reconciles order their pushes by snapshot age rather than by
 // which one happened to finish building first. Zero means the caller reserved
 // none and the build-time counter value stands.
-func (s *ProxySyncer) SyncPartition(
+func (s *ProxySyncer) syncPartition(
 	ctx context.Context,
 	configVersion int64,
 	key string,
@@ -775,6 +782,7 @@ func (s *ProxySyncer) SyncPartition(
 	grpcRoutes []*gatewayv1.GRPCRoute,
 	failedRefs []ingress.BackendRefError,
 	grpcFailedRefs []ingress.BackendRefError,
+	certParents clientCertParents,
 ) ([]proxy.RouteDiagnostic, error) {
 	// Resolve headless service DNS names before acquiring the lock
 	// to avoid blocking concurrent reconciles during slow DNS lookups.
@@ -786,7 +794,8 @@ func (s *ProxySyncer) SyncPartition(
 		logger = s.logger
 	}
 
-	prep := s.preparePush(ctx, configVersion, key, authToken, endpoints, resolved, routes, grpcRoutes, failedRefs, grpcFailedRefs)
+	prep := s.preparePush(ctx, configVersion, key, authToken, endpoints, resolved, routes, grpcRoutes,
+		failedRefs, grpcFailedRefs, certParents)
 	if prep.skip {
 		logger.Debug("proxy config unchanged; skipping push",
 			"partition", key, "endpoints", len(resolved), "rules", len(prep.cfg.Rules))
@@ -852,6 +861,7 @@ func (s *ProxySyncer) preparePush(
 	routes []*gatewayv1.HTTPRoute,
 	grpcRoutes []*gatewayv1.GRPCRoute,
 	failedRefs, grpcFailedRefs []ingress.BackendRefError,
+	certParents clientCertParents,
 ) preparedPush {
 	s.syncMu.Lock()
 	defer s.syncMu.Unlock()
@@ -868,7 +878,7 @@ func (s *ProxySyncer) preparePush(
 	logger.Info("syncing proxy config",
 		"partition", key, "httpRoutes", len(routes), "grpcRoutes", len(grpcRoutes))
 
-	cfg := s.buildProxyConfig(ctx, routes, grpcRoutes, failedRefs, grpcFailedRefs)
+	cfg := s.buildProxyConfig(ctx, routes, grpcRoutes, failedRefs, grpcFailedRefs, certParents)
 
 	// Replace the converter's build-time version with the one the caller
 	// reserved when it listed these routes, so a replica orders two overlapping
@@ -1095,7 +1105,7 @@ func (s *ProxySyncer) ResyncAllPartitions(ctx context.Context) error {
 
 // pushToEndpoints delivers cfg to every resolved endpoint, aggregating
 // per-endpoint failures into one error, and reports whether at least one
-// endpoint accepted it. Extracted from SyncRoutes to keep it within the funlen
+// endpoint accepted it. Extracted from syncPartition to keep it within the funlen
 // budget.
 func (s *ProxySyncer) pushToEndpoints(
 	ctx context.Context, logger *slog.Logger, cfg *proxy.Config, resolved []pushEndpoint, authToken string,
@@ -1191,7 +1201,7 @@ func endpointSetsEqual(previous map[string]struct{}, resolved []string) bool {
 // proxy Config. HTTP routes are narrowed to their route↔listener hostname
 // intersection and get invalid backend refs marked unavailable (→ 500 for that
 // backend's fraction); gRPC routes are appended with backends forced to h2c and
-// the same marking applied. Extracted from SyncRoutes to keep that function
+// the same marking applied. Extracted from preparePush to keep that function
 // under the funlen budget.
 func (s *ProxySyncer) buildProxyConfig(
 	ctx context.Context,
@@ -1199,6 +1209,7 @@ func (s *ProxySyncer) buildProxyConfig(
 	grpcRoutes []*gatewayv1.GRPCRoute,
 	failedRefs []ingress.BackendRefError,
 	grpcFailedRefs []ingress.BackendRefError,
+	certParents clientCertParents,
 ) *proxy.Config {
 	// One merge-view cache for this whole proxy-config build: the hostname and
 	// redirect-scheme passes both resolve the same Gateways, so they share a
@@ -1223,7 +1234,8 @@ func (s *ProxySyncer) buildProxyConfig(
 	// Convert to proxy config with cross-namespace validation, backend
 	// protocol resolution (e.g. h2c from Service appProtocol), and
 	// BackendTLSPolicy lookup for the proxy → backend TLS hop.
-	cfg := proxy.ConvertHTTPRoutes(ctx, routes, s.clusterDomain, s.backendValidator, s.protocolResolver, s.tlsResolver, s.gatewayCertResolver)
+	cfg := proxy.ConvertHTTPRoutes(ctx, routes, s.clusterDomain, s.backendValidator, s.protocolResolver, s.tlsResolver,
+		s.clientCertResolver(certParents.http))
 	cfg.Diagnostics = append(cfg.Diagnostics, undecided...)
 
 	// Mark each invalid backendRef (a nonexistent Service) so the proxy returns
@@ -1246,7 +1258,8 @@ func (s *ProxySyncer) buildProxyConfig(
 		// (including hostnames owned by other routes).
 		grpcRoutes, undecided = withEffectiveHostnamesGRPC(ctx, s.k8sClient, s.controllerName, grpcRoutes, views)
 
-		grpcCfg := proxy.ConvertGRPCRoutes(ctx, grpcRoutes, s.clusterDomain, s.grpcBackendValidator, s.protocolResolver, s.tlsResolver, s.gatewayCertResolver)
+		grpcCfg := proxy.ConvertGRPCRoutes(ctx, grpcRoutes, s.clusterDomain, s.grpcBackendValidator, s.protocolResolver, s.tlsResolver,
+			s.clientCertResolver(certParents.grpc))
 		cfg.Rules = append(cfg.Rules, grpcCfg.Rules...)
 		// Provenance MUST grow in lockstep with Rules (parallel slices) so the
 		// shadow detection below attributes every flattened rule correctly.
@@ -1304,7 +1317,7 @@ func (s *ProxySyncer) buildProxyConfig(
 // the workaround "kubectl rollout restart deployment <controller>" was
 // papering over.
 //
-// Before the first SyncRoutes call (or after a controller restart that
+// Before the first syncPartition call (or after a controller restart that
 // has not yet built any config) lastCfg is nil and this is a no-op --
 // nothing meaningful to push yet, and the next HTTPRoute reconcile will
 // reach the new endpoint along with the others.
@@ -1405,7 +1418,7 @@ func (s *ProxySyncer) resyncTarget(ctx context.Context, key string, endpoints []
 		"version", cfg.Version,
 	)
 
-	// Push OUTSIDE the lock, as SyncPartition does: syncMu guards the in-memory
+	// Push OUTSIDE the lock, as syncPartition does: syncMu guards the in-memory
 	// push state, not the network call. Holding it across a replay to a wedged
 	// connector would stall every other partition's config update (#489).
 	//
@@ -1510,7 +1523,7 @@ func (s *ProxySyncer) recordResync(
 	target.lastRecordSeq = s.recordSeq
 
 	if failed {
-		// Mirror SyncPartition: a partial resync means some replicas may hold
+		// Mirror syncPartition: a partial resync means some replicas may hold
 		// the cached config while others do not -- drop the skip key so the
 		// next sync re-pushes unconditionally.
 		target.lastPushedHash = ""

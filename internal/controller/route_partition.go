@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"maps"
 	"slices"
 	"strings"
 
@@ -33,6 +34,54 @@ type routePartition struct {
 
 	HTTPRoutes []gatewayv1.HTTPRoute
 	GRPCRoutes []gatewayv1.GRPCRoute
+
+	// CertParents names, per route, the Gateways that may supply its backend
+	// client certificate in this partition.
+	CertParents clientCertParents
+}
+
+// clientCertParents maps a route key ("namespace/name") to the Gateway keys a
+// partition may take the route's backend client certificate from: Gateways
+// the route is accepted on whose data plane serves the partition. The two
+// route kinds are kept apart because an HTTPRoute and a GRPCRoute may share a
+// name.
+type clientCertParents struct {
+	http map[string]map[string]bool
+	grpc map[string]map[string]bool
+}
+
+// addGatewayKeys allocates any nil map it needs, so callers pass a zero value.
+func addGatewayKeys(parents map[string]map[string]bool, routeKey string, gatewayKeys ...string) map[string]map[string]bool {
+	if parents == nil {
+		parents = make(map[string]map[string]bool)
+	}
+
+	if parents[routeKey] == nil {
+		parents[routeKey] = make(map[string]bool, len(gatewayKeys))
+	}
+
+	for _, gatewayKey := range gatewayKeys {
+		parents[routeKey][gatewayKey] = true
+	}
+
+	return parents
+}
+
+// merge returns the union of both parent sets. Neither input is modified.
+func (p clientCertParents) merge(other clientCertParents) clientCertParents {
+	out := clientCertParents{}
+
+	for _, source := range []clientCertParents{p, other} {
+		for routeKey, gateways := range source.http {
+			out.http = addGatewayKeys(out.http, routeKey, slices.Collect(maps.Keys(gateways))...)
+		}
+
+		for routeKey, gateways := range source.grpc {
+			out.grpc = addGatewayKeys(out.grpc, routeKey, slices.Collect(maps.Keys(gateways))...)
+		}
+	}
+
+	return out
 }
 
 // infraGateway pairs an opted-in Gateway with its resolved per-Gateway
@@ -133,7 +182,7 @@ func applyTunnelOwnership(
 		delete(infra.resolved, key)
 
 		// Also mark it broken so every fail-closed path already keyed on that
-		// set applies unchanged — in particular partitionKeysFor, which would
+		// set applies unchanged — in particular partitionGatewaysFor, which would
 		// otherwise let the rejected Gateway's routes fall back to the SHARED
 		// partition and hand them to the plane this rule exists to protect.
 		// A rejection is a decision, not a blip: clear any transient mark so
@@ -152,7 +201,7 @@ func applyTunnelOwnership(
 //
 // Like a refused tunnel claim, a dropped Gateway leaves resolved entirely and is
 // marked broken, so every fail-closed path keyed on that set applies unchanged —
-// in particular partitionKeysFor, which would otherwise let the refused
+// in particular partitionGatewaysFor, which would otherwise let the refused
 // Gateway's routes fall back to the SHARED partition and hand a tenant's
 // hostnames to the plane serving everyone else.
 func applyDataPlaneQuota(infra *infraGateways, capacity *int32, claims []dataPlaneClaim) {
@@ -293,7 +342,7 @@ func (g *infraGateways) isResolved(key string) bool {
 // by owner GC, which under the default background propagation starts only once
 // the object is gone, so dropping it at DeletionTimestamp would release its
 // tunnel and its slot while a finalizer keeps its connector serving, and
-// partitionKeysFor would send its routes to the shared partition.
+// partitionGatewaysFor would send its routes to the shared partition.
 func managedInfraGateways(
 	ctx context.Context,
 	cli client.Client,
@@ -406,19 +455,23 @@ func partitionRoutes(
 
 	for i := range httpResult.accepted {
 		route := &httpResult.accepted[i]
-		binding := httpResult.bindings[route.Namespace+"/"+route.Name]
+		routeKey := route.Namespace + "/" + route.Name
 
-		for _, key := range partitionKeysFor(binding, infra) {
-			byKey[key].HTTPRoutes = append(byKey[key].HTTPRoutes, httpResult.accepted[i])
+		for key, gateways := range partitionGatewaysFor(httpResult.bindings[routeKey], infra) {
+			partition := byKey[key]
+			partition.HTTPRoutes = append(partition.HTTPRoutes, httpResult.accepted[i])
+			partition.CertParents.http = addGatewayKeys(partition.CertParents.http, routeKey, gateways...)
 		}
 	}
 
 	for i := range grpcResult.accepted {
 		route := &grpcResult.accepted[i]
-		binding := grpcResult.bindings[route.Namespace+"/"+route.Name]
+		routeKey := route.Namespace + "/" + route.Name
 
-		for _, key := range partitionKeysFor(binding, infra) {
-			byKey[key].GRPCRoutes = append(byKey[key].GRPCRoutes, grpcResult.accepted[i])
+		for key, gateways := range partitionGatewaysFor(grpcResult.bindings[routeKey], infra) {
+			partition := byKey[key]
+			partition.GRPCRoutes = append(partition.GRPCRoutes, grpcResult.accepted[i])
+			partition.CertParents.grpc = addGatewayKeys(partition.CertParents.grpc, routeKey, gateways...)
 		}
 	}
 
@@ -442,36 +495,63 @@ func partitionRoutes(
 	return partitions
 }
 
-// partitionKeysFor maps a route's accepted Gateways onto partition keys:
+// partitionGatewaysFor maps a route's accepted Gateways onto partition keys:
 // every RESOLVED infra Gateway contributes its own key; a BROKEN infra
 // Gateway contributes nothing at all (fail closed — falling back to shared
 // would leak the tenant's hostnames into another data plane); any accepted
-// non-infra Gateway contributes the shared key (once).
-func partitionKeysFor(binding routeBindingInfo, infra *infraGateways) []string {
-	keys := make([]string, 0, len(binding.acceptedGateways))
-	sharedSeen := false
+// non-infra Gateway contributes the shared key (once). Each key maps to the
+// Gateways that contributed it, which are the ones that partition serves.
+func partitionGatewaysFor(binding routeBindingInfo, infra *infraGateways) map[string][]string {
+	byPartition := make(map[string][]string, len(binding.acceptedGateways))
 
 	for gatewayKey := range binding.acceptedGateways {
-		if infra.isResolved(gatewayKey) {
-			keys = append(keys, gatewayKey)
-
-			continue
-		}
-
-		if infra.isBroken(gatewayKey) {
+		switch {
+		case infra.isResolved(gatewayKey):
+			byPartition[gatewayKey] = append(byPartition[gatewayKey], gatewayKey)
+		case infra.isBroken(gatewayKey):
 			// Opted in but unresolvable: serve nowhere.
-			continue
-		}
-
-		if !sharedSeen {
-			keys = append(keys, sharedPartitionKey)
-			sharedSeen = true
+		default:
+			byPartition[sharedPartitionKey] = append(byPartition[sharedPartitionKey], gatewayKey)
 		}
 	}
 
-	slices.Sort(keys)
+	return byPartition
+}
 
-	return keys
+// routeUnion accumulates the routes, deduplicated by namespace/name, and the
+// certificate parents of every partition on one tunnel.
+type routeUnion struct {
+	http     []gatewayv1.HTTPRoute
+	grpc     []gatewayv1.GRPCRoute
+	seenHTTP map[string]bool
+	seenGRPC map[string]bool
+	parents  clientCertParents
+}
+
+func (union *routeUnion) add(partition *routePartition) {
+	for routeIdx := range partition.HTTPRoutes {
+		key := partition.HTTPRoutes[routeIdx].Namespace + "/" + partition.HTTPRoutes[routeIdx].Name
+		if union.seenHTTP[key] {
+			continue
+		}
+
+		union.seenHTTP[key] = true
+
+		union.http = append(union.http, partition.HTTPRoutes[routeIdx])
+	}
+
+	for routeIdx := range partition.GRPCRoutes {
+		key := partition.GRPCRoutes[routeIdx].Namespace + "/" + partition.GRPCRoutes[routeIdx].Name
+		if union.seenGRPC[key] {
+			continue
+		}
+
+		union.seenGRPC[key] = true
+
+		union.grpc = append(union.grpc, partition.GRPCRoutes[routeIdx])
+	}
+
+	union.parents = union.parents.merge(partition.CertParents)
 }
 
 // unionPartitionRoutes rewrites each partition's route set to the UNION of
@@ -491,13 +571,6 @@ func unionPartitionRoutes(partitions []routePartition, sharedTunnelID string) []
 		return sharedTunnelID
 	}
 
-	type routeUnion struct {
-		http     []gatewayv1.HTTPRoute
-		grpc     []gatewayv1.GRPCRoute
-		seenHTTP map[string]bool
-		seenGRPC map[string]bool
-	}
-
 	unions := make(map[string]*routeUnion)
 
 	for i := range partitions {
@@ -510,27 +583,7 @@ func unionPartitionRoutes(partitions []routePartition, sharedTunnelID string) []
 			unions[tunnelID] = union
 		}
 
-		for routeIdx := range partition.HTTPRoutes {
-			key := partition.HTTPRoutes[routeIdx].Namespace + "/" + partition.HTTPRoutes[routeIdx].Name
-			if union.seenHTTP[key] {
-				continue
-			}
-
-			union.seenHTTP[key] = true
-
-			union.http = append(union.http, partition.HTTPRoutes[routeIdx])
-		}
-
-		for routeIdx := range partition.GRPCRoutes {
-			key := partition.GRPCRoutes[routeIdx].Namespace + "/" + partition.GRPCRoutes[routeIdx].Name
-			if union.seenGRPC[key] {
-				continue
-			}
-
-			union.seenGRPC[key] = true
-
-			union.grpc = append(union.grpc, partition.GRPCRoutes[routeIdx])
-		}
+		union.add(partition)
 	}
 
 	out := make([]routePartition, len(partitions))
@@ -544,6 +597,7 @@ func unionPartitionRoutes(partitions []routePartition, sharedTunnelID string) []
 		union := unions[tunnelOf(&partitions[i])]
 		out[i].HTTPRoutes = union.http
 		out[i].GRPCRoutes = union.grpc
+		out[i].CertParents = union.parents
 	}
 
 	return out

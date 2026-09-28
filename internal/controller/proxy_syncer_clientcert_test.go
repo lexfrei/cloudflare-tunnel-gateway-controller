@@ -81,7 +81,7 @@ func TestGatewayManagedByController_MissingGatewayClass_Denied(t *testing.T) {
 	assert.False(t, gatewayManagedByController(context.Background(), cli, gateway, "example.com/tunnel"))
 }
 
-func TestNewGatewayClientCertResolver_ForeignController_ReturnsNil(t *testing.T) {
+func TestNewGatewayClientCertLoader_ForeignController_ReturnsNil(t *testing.T) {
 	t.Parallel()
 
 	const ourController = "example.com/tunnel"
@@ -95,13 +95,13 @@ func TestNewGatewayClientCertResolver_ForeignController_ReturnsNil(t *testing.T)
 	scheme := newClientCertScheme(t)
 	cli := fake.NewClientBuilder().WithScheme(scheme).WithObjects(secret, gc, gateway).Build()
 
-	resolver := newGatewayClientCertResolver(cli, ourController)
+	resolver := newGatewayClientCertLoader(cli, ourController)
 	result := resolver(context.Background(), types.NamespacedName{Namespace: "ns", Name: "gw"})
 
 	require.Nil(t, result, "resolver must refuse to load a cert from a Gateway managed by another controller")
 }
 
-func TestNewGatewayClientCertResolver_OurController_LoadsCert(t *testing.T) {
+func TestNewGatewayClientCertLoader_OurController_LoadsCert(t *testing.T) {
 	t.Parallel()
 
 	const ourController = "example.com/tunnel"
@@ -115,7 +115,7 @@ func TestNewGatewayClientCertResolver_OurController_LoadsCert(t *testing.T) {
 	scheme := newClientCertScheme(t)
 	cli := fake.NewClientBuilder().WithScheme(scheme).WithObjects(secret, gc, gateway).Build()
 
-	resolver := newGatewayClientCertResolver(cli, ourController)
+	resolver := newGatewayClientCertLoader(cli, ourController)
 	result := resolver(context.Background(), types.NamespacedName{Namespace: "ns", Name: "gw"})
 
 	require.NotNil(t, result, "Gateway managed by our controller must yield the cert")
