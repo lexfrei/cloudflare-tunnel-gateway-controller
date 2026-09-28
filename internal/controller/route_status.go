@@ -668,11 +668,12 @@ func buildAcceptedCondition(
 	message := routeAcceptedMessage
 
 	if bindingResult, hasBinding := bindingInfo.bindingResults[refIdx]; hasBinding && !bindingResult.Accepted {
-		// A binding rejection (e.g. HostnameNotPermitted) is authoritative and
-		// permanent: the route never binds to this parent, so it is never
-		// programmed regardless of tunnel health. Its specific, actionable
-		// reason outranks a transient sync error — even a total tunnel outage
-		// must not mask it with a generic Pending.
+		// A binding result that is not accepted outranks a sync error. A
+		// rejection (e.g. HostnameNotPermitted) means the route never binds to
+		// this parent, so it is never programmed regardless of tunnel health,
+		// and its specific reason must not be masked by a generic Pending. A
+		// parent that could not be evaluated is already Pending, and the sync
+		// that recorded it is retried.
 		status = metav1.ConditionFalse
 		reason = string(bindingResult.Reason)
 		message = bindingResult.Message

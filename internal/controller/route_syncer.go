@@ -165,6 +165,11 @@ type routeBindingInfo struct {
 	// parent's entry. A parent with no entry here is served from no partition.
 	parentPartitions map[int]string
 
+	// unevaluated is true when a parentRef could not be evaluated and was
+	// recorded as Pending. Nothing in the cluster changes when the read
+	// recovers, so the sync that recorded it has to be retried.
+	unevaluated bool
+
 	// syncErrByGateway maps a managed Gateway key to the sync error of the
 	// tunnel serving it, populated AFTER the tunnel-group sync. A parent whose
 	// Gateway is absent here synced fine. Nil on the early-error path, where
@@ -1161,10 +1166,23 @@ func (s *RouteSyncer) SyncAllRoutes(ctx context.Context) (ctrl.Result, *SyncResu
 }
 
 // leftForRetry reports work a sync left that no watched event brings back: a
-// Gateway whose config failed to resolve transiently, or an abandoned tunnel
-// whose emptying write failed.
+// Gateway whose config failed to resolve transiently, an abandoned tunnel
+// whose emptying write failed, or a route parent that could not be evaluated.
 func leftForRetry(syncResult *SyncResult, outcome *tunnelGroupsOutcome) bool {
-	return len(syncResult.TransientBrokenKeys) > 0 || outcome.emptyingPending
+	return len(syncResult.TransientBrokenKeys) > 0 || outcome.emptyingPending ||
+		anyUnevaluated(syncResult.HTTPRouteBindings) || anyUnevaluated(syncResult.GRPCRouteBindings)
+}
+
+// anyUnevaluated reports whether any route has a parent recorded as Pending
+// because it could not be evaluated.
+func anyUnevaluated(bindings map[string]routeBindingInfo) bool {
+	for key := range bindings {
+		if bindings[key].unevaluated {
+			return true
+		}
+	}
+
+	return false
 }
 
 // buildSyncResult assembles the SyncResult shared by every SyncAllRoutes exit
@@ -1999,6 +2017,7 @@ func (s *RouteSyncer) bindOneParent(
 			Reason:   gatewayv1.RouteReasonPending,
 			Message:  "The controller could not evaluate this parent; the controller log names the error",
 		}
+		bindingInfo.unevaluated = true
 
 		return true, false
 	}
