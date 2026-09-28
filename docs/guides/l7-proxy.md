@@ -60,7 +60,7 @@ kubectl create secret generic tunnel-token \
 
 ### 2. Configure the proxy in Helm values
 
-The L7 proxy is always rendered by the v3 chart. Point it at the tunnel-token Secret and pick a replica count:
+The chart always renders the L7 proxy. Point it at the tunnel-token Secret and pick a replica count:
 
 ```yaml
 proxy:

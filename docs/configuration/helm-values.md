@@ -6,7 +6,7 @@ This document provides an overview of the Helm chart configuration. For the comp
 
 ### Essential Values
 
-The v3 chart deploys both the controller and the in-process L7 proxy. The minimum viable values file looks like this:
+The chart deploys both the controller and the in-process L7 proxy. The minimum viable values file looks like this:
 
 ```yaml
 gatewayClassConfig:
@@ -97,7 +97,7 @@ serviceMonitor:
 
 ## L7 Proxy Configuration
 
-The `proxy` section configures the in-process L7 reverse proxy. The proxy embeds cloudflared transport and is the only data plane in v3 — the chart always renders the proxy Deployment, Service, and headless Service. `proxy.tunnelTokenSecretRef.name` is **required**: the chart's `required` check fails install otherwise.
+The `proxy` section configures the in-process L7 reverse proxy. The proxy embeds cloudflared transport and is the only data plane — the chart always renders the proxy Deployment, Service, and headless Service. `proxy.tunnelTokenSecretRef.name` is **required**: the chart's `required` check fails install otherwise.
 
 ### Core Settings
 

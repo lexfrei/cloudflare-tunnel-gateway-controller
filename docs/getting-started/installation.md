@@ -66,7 +66,7 @@ helm install cloudflare-tunnel-gateway-controller \
   --values values.yaml
 ```
 
-The chart always deploys the in-process L7 proxy alongside the controller (this is the only data plane in v3). For the full list of proxy knobs, see the [Helm values reference](../configuration/helm-values.md) and the [L7 Proxy Guide](../guides/l7-proxy.md).
+The chart always deploys the in-process L7 proxy alongside the controller (this is the only data plane). For the full list of proxy knobs, see the [Helm values reference](../configuration/helm-values.md) and the [L7 Proxy Guide](../guides/l7-proxy.md).
 
 ## Verify Installation
 

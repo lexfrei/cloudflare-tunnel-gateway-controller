@@ -170,7 +170,7 @@ spec:
 
 ## Advanced Routing
 
-The in-process L7 proxy is the only data plane in v3, so full Gateway API matching and filter support is always available. Below are short examples of the most common patterns.
+The in-process L7 proxy is the only data plane, so full Gateway API matching and filter support is always available. Below are short examples of the most common patterns.
 
 ### Header-Based Routing
 
