@@ -904,6 +904,9 @@ func hasConflictingParametersRef(classes []gatewayv1.GatewayClass) bool {
 }
 
 // parametersRefEqual compares two ParametersReference pointers for equality.
+// Namespace is deliberately ignored: GatewayClassConfig is cluster-scoped, so
+// it does not change which object a ref names, and the resolver refuses a ref
+// that sets it (config.ValidateParametersRefScope).
 func parametersRefEqual(left, right *gatewayv1.ParametersReference) bool {
 	if left == nil && right == nil {
 		return true

@@ -24,6 +24,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 	"sigs.k8s.io/gateway-api/pkg/consts"
+
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/config"
 )
 
 // gatewayClassCRDName is the Gateway API CRD probed for the bundle-version
@@ -177,14 +179,22 @@ func (r *GatewayClassReconciler) updateStatus(
 func (r *GatewayClassReconciler) setAcceptedConditions(ctx context.Context, gatewayClass *gatewayv1.GatewayClass) error {
 	now := metav1.Now()
 
-	meta.SetStatusCondition(&gatewayClass.Status.Conditions, metav1.Condition{
+	accepted := metav1.Condition{
 		Type:               string(gatewayv1.GatewayClassConditionStatusAccepted),
 		Status:             metav1.ConditionTrue,
 		ObservedGeneration: gatewayClass.Generation,
 		LastTransitionTime: now,
 		Reason:             string(gatewayv1.GatewayClassReasonAccepted),
 		Message:            "GatewayClass is accepted by cloudflare-tunnel controller",
-	})
+	}
+
+	if err := config.ValidateParametersRefScope(gatewayClass.Spec.ParametersRef); err != nil {
+		accepted.Status = metav1.ConditionFalse
+		accepted.Reason = string(gatewayv1.GatewayClassReasonInvalidParameters)
+		accepted.Message = err.Error()
+	}
+
+	meta.SetStatusCondition(&gatewayClass.Status.Conditions, accepted)
 
 	condition, err := r.bundleVersionCondition(ctx, gatewayClass.Generation, now)
 	if err != nil {
