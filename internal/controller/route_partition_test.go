@@ -419,13 +419,16 @@ func TestTunnelRefusalErrorCarriesBothSentinels(t *testing.T) {
 		TunnelID: "22222222-2222-2222-2222-222222222222",
 	})
 
-	// errors.Is here is cockroachdb's, matching the consumers. A mark is
-	// invisible to the standard library's Is, so assert.ErrorIs — which uses it
-	// — reports false for an error the production branches match.
+	// errors.Is here is cockroachdb's, matching the consumers; assert.ErrorIs
+	// is the standard library's, which must agree.
 	assert.True(t, errors.Is(err, errTunnelClaimRefused),
 		"the status writer keys the \"Refused:\" prefix on this sentinel")
 	assert.True(t, errors.Is(err, config.ErrInvalidParameters),
 		"a refusal is a deterministic spec problem, and every branch keyed on that must match it")
+	assert.ErrorIs(t, err, config.ErrInvalidParameters, "the standard library must see the classification too")
+	assert.Equal(t, tunnelRejectionMessage(tunnelownership.Rejection{
+		TunnelID: "22222222-2222-2222-2222-222222222222",
+	}), err.Error(), "the tenant reads the message as written")
 }
 
 // TestApplyTunnelOwnership_OperatorOptInRestoresSharing pins the escape hatch:

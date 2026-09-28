@@ -231,7 +231,7 @@ True weighted traffic splitting across multiple backends is performed by the in-
 | `Accepted` | `True` | `Accepted` | Route accepted and synced |
 | `Accepted` | `False` | `NoMatchingParent` | No matching listener found |
 | `Accepted` | `False` | `NoMatchingListenerHostname` | Route hostnames don't intersect with listener |
-| `Accepted` | `False` | `NotAllowedByListeners` | Route namespace or kind not allowed by listener |
+| `Accepted` | `False` | `NotAllowedByListeners` | Route namespace or kind not allowed by listener. A listener whose `allowedRoutes.namespaces.selector` does not parse is treated as not allowing the route and the other listeners are still evaluated; when none of them admits the route, the rejection message, whatever its reason, names that listener, and the parse error goes to the controller log |
 | `Accepted` | `False` | `Conflicted` | Route lost a cross-route-type conflict (HTTPRoute vs GRPCRoute on a shared Gateway with intersecting hostnames); the oldest Route by `creationTimestamp` is accepted |
 | `ResolvedRefs` | `True` | `ResolvedRefs` | Backend references resolved |
 | `ResolvedRefs` | `False` | `RefNotPermitted` | Cross-namespace reference denied |

@@ -4,6 +4,8 @@ import (
 	"context"
 
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
+
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/logging"
 )
 
 // ListenerSetAcceptance describes whether a Gateway accepts a particular
@@ -11,12 +13,25 @@ import (
 type ListenerSetAcceptance struct {
 	Accepted bool
 	Reason   gatewayv1.ListenerSetConditionReason
+	// Message explains a refusal the generic not-allowed message would not.
+	// Empty otherwise.
+	Message string
+	// Err is the error behind a refusal the Gateway's spec caused, for the
+	// caller's log only: it quotes that spec. Nil otherwise.
+	Err error
 }
+
+// invalidAllowedListenersMessage tells a ListenerSet owner why it is refused
+// without quoting the Gateway's selector, which the owner may not be allowed
+// to read.
+const invalidAllowedListenersMessage = "The parent Gateway's allowedListeners selector is invalid"
 
 // EvaluateListenerSetAcceptance applies the parent Gateway's
 // spec.allowedListeners.namespaces filter to decide if the given ListenerSet
 // is allowed to attach. The default (unset) is From=None, i.e. attachment is
-// rejected unless the Gateway opts in.
+// rejected unless the Gateway opts in. A selector that does not parse admits
+// no ListenerSet. The error is nil today and kept for the namespace read
+// failures #895 covers.
 func (v *Validator) EvaluateListenerSetAcceptance(
 	ctx context.Context,
 	gateway *gatewayv1.Gateway,
@@ -36,7 +51,21 @@ func (v *Validator) EvaluateListenerSetAcceptance(
 	case gatewayv1.NamespacesFromSelector:
 		ok, err := v.listenerSetNamespaceMatchesSelector(ctx, gateway.Spec.AllowedListeners, listenerSet.Namespace)
 		if err != nil {
-			return ListenerSetAcceptance{}, err
+			// The error quotes the Gateway's spec, which the ListenerSet's and
+			// the routes' authors may not be allowed to read, so the ListenerSet
+			// is refused like any other that is not allowed and the error only
+			// goes to logs. Every route on the ListenerSet reaches this once per
+			// sync, so it logs at debug; the ListenerSet reconcile warns.
+			logging.FromContext(ctx).Debug("Gateway allowedListeners selector could not be evaluated",
+				"gateway", gateway.Namespace+"/"+gateway.Name,
+				"listenerSet", listenerSet.Namespace+"/"+listenerSet.Name,
+				"error", err)
+
+			refused := rejectedListenerSet()
+			refused.Message = invalidAllowedListenersMessage
+			refused.Err = err
+
+			return refused, nil
 		}
 
 		if ok {
@@ -105,7 +134,8 @@ func (v *Validator) ValidateBindingForListenerSet(
 ) (BindingResult, error) {
 	entries := listenerSet.Spec.Listeners
 
-	matched, rejectionReason, err := findMatchingEntries(
+	matched, rejectionReason, invalid, detail := findMatchingEntries(
+		"ListenerSet entry",
 		len(entries),
 		func(i int) (gatewayv1.SectionName, gatewayv1.PortNumber) {
 			return entries[i].Name, entries[i].Port
@@ -121,9 +151,8 @@ func (v *Validator) ValidateBindingForListenerSet(
 		route.SectionName,
 		route.Port,
 	)
-	if err != nil {
-		return BindingResult{}, err
-	}
 
-	return makeBindingResult(matched, rejectionReason), nil
+	v.logUnevaluatedListeners(ctx, route, detail)
+
+	return makeBindingResult(matched, rejectionReason, invalid), nil
 }

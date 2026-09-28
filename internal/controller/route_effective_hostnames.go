@@ -51,10 +51,10 @@ const catchAllHostnameSentinel = gatewayv1.Hostname("")
 // hostname-less route bound only to hostname-less listeners), the route is left
 // untouched: the narrowing never broadens the served set beyond what the route
 // already declared, and never turns a hostname-less catch-all into anything
-// else. A parent that exists but cannot be evaluated (a failed read, a binding
-// validation error) is different: nothing shows what the route may serve, so
-// when no other parent contributes the route is left out of the result, and
-// when another parent does, the route is narrowed to what that parent lends.
+// else. A parent that exists but cannot be evaluated (a failed read) is
+// different: nothing shows what the route may serve, so when no other parent
+// contributes the route is left out of the result, and when another parent
+// does, the route is narrowed to what that parent lends.
 // A diagnostic reports the undecided parent on the route's status in both
 // cases, unless the narrowed route still serves every hostname it declares.
 //
@@ -497,9 +497,9 @@ func gatewayOwnedElsewhere(
 // Whose a ListenerSet is follows from its PARENT Gateway's GatewayClass, since
 // a ListenerSet names no class of its own. An absent parent is programmed by
 // nobody, so it excludes the ListenerSet unless controllerName is empty. A
-// parent whose read failed, or whose allowedListeners cannot be evaluated,
-// returns the error: neither answers whether the ListenerSet is served. Route
-// acceptance refuses the parentRef on the same allowedListeners error.
+// parent whose read failed returns the error, since it does not answer whether
+// the ListenerSet is served. An allowedListeners selector that does not parse
+// refuses the ListenerSet, here and in route acceptance alike.
 func listenerSetExcluded(
 	ctx context.Context,
 	cli client.Client,

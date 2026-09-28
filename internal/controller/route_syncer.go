@@ -137,7 +137,7 @@ func NewRouteSyncer(
 		Logger:           componentLogger,
 		httpBuilder:      ingress.NewBuilder(clusterDomain, refGrantValidator, c, metricsCollector, componentLogger),
 		grpcBuilder:      ingress.NewGRPCBuilder(clusterDomain, refGrantValidator, c, metricsCollector, componentLogger),
-		bindingValidator: routebinding.NewValidator(c),
+		bindingValidator: routebinding.NewReportingValidator(c),
 	}
 }
 
@@ -158,6 +158,17 @@ type routeBindingInfo struct {
 	// tunnel — RouteParentStatus is per-parent, so a multi-parent route with
 	// one failed and one healthy tunnel must not flip the healthy parent.
 	parentGateways map[int]string
+
+	// parentPartitions maps ParentRef index to the key of the data-plane
+	// partition serving that parent, populated once the partitions are known.
+	// The status writer keeps only that partition's diagnostics on the
+	// parent's entry. A parent with no entry here is served from no partition.
+	parentPartitions map[int]string
+
+	// unevaluated is true when a parentRef could not be evaluated and was
+	// recorded as Pending. Nothing in the cluster changes when the read
+	// recovers, so the sync that recorded it has to be retried.
+	unevaluated bool
 
 	// syncErrByGateway maps a managed Gateway key to the sync error of the
 	// tunnel serving it, populated AFTER the tunnel-group sync. A parent whose
@@ -470,6 +481,7 @@ func partitionRouteDiagnostics(
 			Target:    target,
 			Reason:    reason,
 			Message:   message,
+			Partition: partition.Key,
 		})
 	}
 
@@ -481,6 +493,7 @@ func partitionRouteDiagnostics(
 			Target:    target,
 			Reason:    reason,
 			Message:   message,
+			Partition: partition.Key,
 		})
 	}
 
@@ -610,7 +623,7 @@ func pushPartitionConfigs(
 
 		// Diagnostics are valid even when the push errors: they describe the
 		// route specs, not the push, and must reach the route status.
-		diagnostics = append(diagnostics, results[i].diags...)
+		diagnostics = append(diagnostics, withPartition(results[i].diags, partition.Key)...)
 
 		if results[i].err != nil {
 			logger.Error("proxy sync failed (non-blocking)", "partition", partition.Key, "error", results[i].err)
@@ -745,6 +758,16 @@ func pushPartitionsConcurrently(
 	return results
 }
 
+// withPartition names the partition each diagnostic was built for, so the
+// status writer puts it only under the parents that partition serves.
+func withPartition(diags []proxy.RouteDiagnostic, partitionKey string) []proxy.RouteDiagnostic {
+	for i := range diags {
+		diags[i].Partition = partitionKey
+	}
+
+	return diags
+}
+
 // resolveConfigForController resolves configuration from the GatewayClass
 // managed by this controller. Returns an error if no matching GatewayClass is found.
 //
@@ -791,7 +814,8 @@ func (s *RouteSyncer) resolveConfigForController(ctx context.Context) (*config.R
 
 	resolved, err := s.ConfigResolver.ResolveFromGatewayClass(ctx, &classes[0])
 	if err != nil {
-		return nil, errors.Wrap(err, "resolving config for GatewayClass "+classes[0].Name)
+		// The resolver names the GatewayClass on every error.
+		return nil, errors.Wrap(err, "resolving GatewayClass config")
 	}
 
 	return resolved, nil
@@ -881,10 +905,14 @@ func classConfigConflict(classes []gatewayv1.GatewayClass, controllerName string
 
 	slices.Sort(names)
 
-	return errors.Wrapf(errors.Mark(config.ErrInvalidParameters, errClassConfigConflict),
+	// Classified rather than wrapped: wrapping ErrInvalidParameters would
+	// append its text, which names a Gateway's infrastructure ref, to a
+	// conflict between GatewayClasses.
+	//nolint:wrapcheck // MarkInvalidParameters classifies; wrapping would add the text this avoids
+	return config.MarkInvalidParameters(errors.Mark(errors.Newf(
 		"conflicting parametersRef across GatewayClasses %v for controller %s: "+
 			"one controller instance supports only one GatewayClassConfig",
-		names, controllerName)
+		names, controllerName), errClassConfigConflict))
 }
 
 // hasConflictingParametersRef returns true if the given GatewayClasses
@@ -905,7 +933,7 @@ func hasConflictingParametersRef(classes []gatewayv1.GatewayClass) bool {
 
 // parametersRefEqual compares two ParametersReference pointers for equality.
 // Namespace counts even though GatewayClassConfig is cluster-scoped: the
-// resolver refuses a ref that sets one (config.ValidateParametersRefScope), so
+// resolver refuses a ref that sets one (config.ParametersRefProblem), so
 // a namespaced ref and a plain one do not resolve to the same config.
 func parametersRefEqual(left, right *gatewayv1.ParametersReference) bool {
 	if left == nil && right == nil {
@@ -1094,6 +1122,8 @@ func (s *RouteSyncer) SyncAllRoutes(ctx context.Context) (ctrl.Result, *SyncResu
 	// whose tunnel synced fine.
 	injectPartitionSyncErrors(httpResult.bindings, outcome.failedPartitions, infra)
 	injectPartitionSyncErrors(grpcResult.bindings, outcome.failedPartitions, infra)
+	assignParentPartitions(httpResult.bindings, infra)
+	assignParentPartitions(grpcResult.bindings, infra)
 
 	syncResult := buildSyncResult(httpResult, grpcResult, outcome.httpFailedRefs, outcome.grpcFailedRefs)
 	syncResult.ConfigVersion = configVersion
@@ -1141,10 +1171,23 @@ func (s *RouteSyncer) SyncAllRoutes(ctx context.Context) (ctrl.Result, *SyncResu
 }
 
 // leftForRetry reports work a sync left that no watched event brings back: a
-// Gateway whose config failed to resolve transiently, or an abandoned tunnel
-// whose emptying write failed.
+// Gateway whose config failed to resolve transiently, an abandoned tunnel
+// whose emptying write failed, or a route parent that could not be evaluated.
 func leftForRetry(syncResult *SyncResult, outcome *tunnelGroupsOutcome) bool {
-	return len(syncResult.TransientBrokenKeys) > 0 || outcome.emptyingPending
+	return len(syncResult.TransientBrokenKeys) > 0 || outcome.emptyingPending ||
+		anyUnevaluated(syncResult.HTTPRouteBindings) || anyUnevaluated(syncResult.GRPCRouteBindings)
+}
+
+// anyUnevaluated reports whether any route has a parent recorded as Pending
+// because it could not be evaluated.
+func anyUnevaluated(bindings map[string]routeBindingInfo) bool {
+	for key := range bindings {
+		if bindings[key].unevaluated {
+			return true
+		}
+	}
+
+	return false
 }
 
 // buildSyncResult assembles the SyncResult shared by every SyncAllRoutes exit
@@ -1574,12 +1617,39 @@ func gatewaySyncError(gatewayKey string, failedPartitions map[string]error, infr
 		return errBrokenDataPlane
 	}
 
-	partitionKey := sharedPartitionKey
+	return failedPartitions[partitionKeyForGateway(gatewayKey, infra)]
+}
+
+// partitionKeyForGateway names the partition a Gateway that is not broken is
+// served from: its own for a resolved dedicated Gateway, the shared one
+// otherwise.
+func partitionKeyForGateway(gatewayKey string, infra *infraGateways) string {
 	if infra.isResolved(gatewayKey) {
-		partitionKey = gatewayKey
+		return gatewayKey
 	}
 
-	return failedPartitions[partitionKey]
+	return sharedPartitionKey
+}
+
+// assignParentPartitions records, on each route binding, the partition every
+// managed parent is served from, so the status writer can keep each partition's
+// diagnostics on its own parents. A parent on a broken dedicated Gateway is
+// served from no partition and gets no entry.
+func assignParentPartitions(bindings map[string]routeBindingInfo, infra *infraGateways) {
+	for key := range bindings {
+		binding := bindings[key]
+		binding.parentPartitions = make(map[int]string, len(binding.parentGateways))
+
+		for refIdx, gatewayKey := range binding.parentGateways {
+			if infra.isBroken(gatewayKey) {
+				continue
+			}
+
+			binding.parentPartitions[refIdx] = partitionKeyForGateway(gatewayKey, infra)
+		}
+
+		bindings[key] = binding
+	}
 }
 
 // tunnelGroupResult is one group's sync outcome.
@@ -1913,6 +1983,17 @@ func (s *RouteSyncer) bindRouteParents(
 // whether the ref references a Gateway we manage and whether it was accepted.
 // parentGateways[refIdx] is recorded for every managed ref (accepted or not)
 // so the status writer can attribute a per-tunnel sync failure to it.
+//
+// A ref that could not be evaluated is recorded as not accepted and counted as
+// referencing us, so the route's status is written even when that is its only
+// parent, and the status writer reports the ref Pending rather than falling
+// back to Accepted=True for a parent the route is not bound to. The status
+// writer only writes entries for refs that select a managed Gateway, so a ref
+// that turns out to be foreign gets no entry, and one whose Gateway it cannot
+// read either keeps its existing entry. The two differ on purpose: here the
+// route is really not programmed on this parent in this sync, so Pending is
+// what happened, while a status pass that only fails its own read learns
+// nothing new about the parent.
 func (s *RouteSyncer) bindOneParent(
 	ctx context.Context,
 	logger *slog.Logger,
@@ -1938,7 +2019,16 @@ func (s *RouteSyncer) bindOneParent(
 		logger.Error("failed to resolve route parentRef",
 			"route", routeNamespace+"/"+routeName, "refIdx", refIdx, "error", err)
 
-		return false, false
+		// The error stays in the log: it can quote the parent Gateway's spec,
+		// which the route's authors may not be allowed to read.
+		bindingInfo.bindingResults[refIdx] = routebinding.BindingResult{
+			Accepted: false,
+			Reason:   gatewayv1.RouteReasonPending,
+			Message:  "The controller could not evaluate this parent; the controller log names the error",
+		}
+		bindingInfo.unevaluated = true
+
+		return true, false
 	}
 
 	if !binding.ManagedByThisController {

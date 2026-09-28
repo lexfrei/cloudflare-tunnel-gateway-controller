@@ -89,6 +89,11 @@ type RouteDiagnostic struct {
 	// EventType is "Normal" or "Warning"; only meaningful when Target is
 	// DiagnosticEvent. The controller passes it to EventRecorder.Event.
 	EventType string
+	// Partition is the key of the data-plane partition the diagnostic was
+	// produced for. The controller sets it and, for a diagnostic about that data
+	// plane rather than the route's spec, writes the diagnostic only onto the
+	// route parents served from that partition.
+	Partition string
 }
 
 // diagSink accumulates RouteDiagnostics during a single conversion pass. It is

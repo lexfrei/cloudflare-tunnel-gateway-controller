@@ -14,6 +14,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
+
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/logging"
 )
 
 const (
@@ -643,4 +645,65 @@ func getListenerSet(t *testing.T, cli client.Client, name, namespace string) *ga
 	require.NoError(t, cli.Get(context.Background(), types.NamespacedName{Name: name, Namespace: namespace}, &ls))
 
 	return &ls
+}
+
+// TestListenerSetReconciler_InvalidAllowedListenersSelector pins what a
+// ListenerSet reports when its parent Gateway's allowedListeners selector does
+// not parse: NotAllowed with a message that says so, so the ListenerSet owner
+// has a hint even with no routes attached, but without the selector itself,
+// which the owner may not be allowed to read. The parse error is logged as a
+// warning.
+func TestListenerSetReconciler_InvalidAllowedListenersSelector(t *testing.T) {
+	t.Parallel()
+
+	fromSelector := gatewayv1.NamespacesFromSelector
+
+	gc := managedGatewayClass()
+	gw := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "infra"},
+		Spec: gatewayv1.GatewaySpec{
+			GatewayClassName: gatewayv1.ObjectName(gc.Name),
+			Listeners: []gatewayv1.Listener{
+				{Name: "gw-l1", Port: 80, Protocol: gatewayv1.HTTPProtocolType},
+			},
+			AllowedListeners: &gatewayv1.AllowedListeners{
+				Namespaces: &gatewayv1.ListenerNamespaces{
+					From: &fromSelector,
+					Selector: &metav1.LabelSelector{
+						MatchExpressions: []metav1.LabelSelectorRequirement{
+							{Key: "team", Operator: "BogusOperator", Values: []string{"x"}},
+						},
+					},
+				},
+			},
+		},
+	}
+	ls := &gatewayv1.ListenerSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "ls", Namespace: "infra", Generation: 1},
+		Spec: gatewayv1.ListenerSetSpec{
+			ParentRef: gatewayv1.ParentGatewayReference{Name: gatewayv1.ObjectName(gw.Name)},
+			Listeners: []gatewayv1.ListenerEntry{
+				{Name: "ls-l1", Port: 8080, Protocol: gatewayv1.HTTPProtocolType},
+			},
+		},
+	}
+
+	r, cli := newListenerSetReconciler(t, gc, gw, ls)
+
+	logger, logs := logging.TestLogger(t)
+
+	_, err := r.Reconcile(logging.WithLogger(context.Background(), logger), ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: ls.Name, Namespace: ls.Namespace},
+	})
+	require.NoError(t, err)
+
+	accepted := findCondition(getListenerSet(t, cli, ls.Name, ls.Namespace).Status.Conditions,
+		string(gatewayv1.ListenerSetConditionAccepted))
+	require.NotNil(t, accepted)
+	assert.Equal(t, string(gatewayv1.ListenerSetReasonNotAllowed), accepted.Reason)
+	assert.Contains(t, accepted.Message, "allowedListeners selector is invalid")
+	assert.NotContains(t, accepted.Message, "BogusOperator", "the Gateway's selector must not reach ListenerSet status")
+
+	assert.Contains(t, logs.String(), `"level":"WARN"`)
+	assert.Contains(t, logs.String(), "BogusOperator", "the parse error is kept for the controller log")
 }

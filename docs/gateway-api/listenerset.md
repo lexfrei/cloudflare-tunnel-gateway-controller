@@ -133,7 +133,7 @@ spec:
 | Type | Status | Reason | Description |
 | --- | --- | --- | --- |
 | `Accepted` | `True` | `Accepted` | Permitted by Gateway and at least one entry is valid |
-| `Accepted` | `False` | `NotAllowed` | Gateway's `spec.allowedListeners` rejects this ListenerSet |
+| `Accepted` | `False` | `NotAllowed` | Gateway's `spec.allowedListeners` rejects this ListenerSet. A `selector` that does not parse rejects every ListenerSet; the message says so without quoting the selector, and the controller log names the parse error |
 | `Accepted` | `False` | `ListenersNotValid` | All entries are conflict-marked or have unresolved refs |
 | `Programmed` | `True` | `Programmed` | Attached and programmed against the parent Gateway |
 | `Programmed` | `False` | `ListenersNotValid` / `NotAllowed` / `Pending` | Mirrors the `Accepted` reason when not programmed |

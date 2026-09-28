@@ -10,6 +10,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
+
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/logging"
 )
 
 func TestEvaluateListenerSetAcceptance(t *testing.T) {
@@ -338,4 +340,138 @@ func TestValidateBindingForListenerSet(t *testing.T) {
 			assert.Equal(t, tt.expectedMatched, result.MatchedListeners)
 		})
 	}
+}
+
+// TestValidateBindingForListenerSet_InvalidSelectorStaysWithItsEntry is the
+// ListenerSet counterpart of TestValidateBinding_InvalidSelectorStaysWithItsListener.
+func TestValidateBindingForListenerSet_InvalidSelectorStaysWithItsEntry(t *testing.T) {
+	t.Parallel()
+
+	fromSelector := gatewayv1.NamespacesFromSelector
+	fromAll := gatewayv1.NamespacesFromAll
+
+	listenerSet := &gatewayv1.ListenerSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "ls", Namespace: "infra"},
+		Spec: gatewayv1.ListenerSetSpec{
+			Listeners: []gatewayv1.ListenerEntry{
+				{
+					Name:     "broken",
+					Port:     80,
+					Protocol: gatewayv1.HTTPProtocolType,
+					AllowedRoutes: &gatewayv1.AllowedRoutes{
+						Namespaces: &gatewayv1.RouteNamespaces{From: &fromSelector, Selector: bogusSelector()},
+					},
+				},
+				{
+					Name:     "good",
+					Port:     80,
+					Protocol: gatewayv1.HTTPProtocolType,
+					AllowedRoutes: &gatewayv1.AllowedRoutes{
+						Namespaces: &gatewayv1.RouteNamespaces{From: &fromAll},
+					},
+				},
+			},
+		},
+	}
+
+	route := &RouteInfo{Namespace: "apps", Kind: KindHTTPRoute}
+
+	result, err := NewValidator(setupFakeClient()).ValidateBindingForListenerSet(context.Background(), listenerSet, route)
+	require.NoError(t, err)
+
+	assert.True(t, result.Accepted)
+	assert.Equal(t, []gatewayv1.SectionName{"good"}, result.MatchedListeners)
+}
+
+// TestEvaluateListenerSetAcceptance_InvalidSelectorRefuses pins that a parent
+// Gateway's allowedListeners selector that does not parse admits no
+// ListenerSet. The parse error is decided, so it is a refusal and not an error
+// to retry, and it goes to the log only because it quotes the Gateway's spec.
+func TestEvaluateListenerSetAcceptance_InvalidSelectorRefuses(t *testing.T) {
+	t.Parallel()
+
+	fromSelector := gatewayv1.NamespacesFromSelector
+
+	gateway := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "infra"},
+		Spec: gatewayv1.GatewaySpec{
+			AllowedListeners: &gatewayv1.AllowedListeners{
+				Namespaces: &gatewayv1.ListenerNamespaces{From: &fromSelector, Selector: bogusSelector()},
+			},
+		},
+	}
+	listenerSet := &gatewayv1.ListenerSet{ObjectMeta: metav1.ObjectMeta{Name: "ls", Namespace: "team-a"}}
+
+	logger, logs := logging.TestLogger(t)
+	ctx := logging.WithLogger(context.Background(), logger)
+
+	result, err := NewValidator(setupFakeClient()).EvaluateListenerSetAcceptance(ctx, gateway, listenerSet)
+	require.NoError(t, err)
+
+	assert.False(t, result.Accepted)
+	assert.Equal(t, gatewayv1.ListenerSetReasonNotAllowed, result.Reason)
+	assert.Contains(t, logs.String(), "BogusOperator", "the parse error is kept for the controller log")
+}
+
+// TestEvaluateListenerSetAcceptance_InvalidSelectorLogsAtDebug pins that the
+// route binding pass does not warn about a parent Gateway's unparseable
+// allowedListeners selector: it would warn once per attached route per sync.
+// The ListenerSet reconcile warns instead, once per ListenerSet.
+func TestEvaluateListenerSetAcceptance_InvalidSelectorLogsAtDebug(t *testing.T) {
+	t.Parallel()
+
+	fromSelector := gatewayv1.NamespacesFromSelector
+
+	gateway := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "infra"},
+		Spec: gatewayv1.GatewaySpec{
+			AllowedListeners: &gatewayv1.AllowedListeners{
+				Namespaces: &gatewayv1.ListenerNamespaces{From: &fromSelector, Selector: bogusSelector()},
+			},
+		},
+	}
+	listenerSet := &gatewayv1.ListenerSet{ObjectMeta: metav1.ObjectMeta{Name: "ls", Namespace: "team-a"}}
+
+	logger, logs := logging.TestLogger(t)
+	ctx := logging.WithLogger(context.Background(), logger)
+
+	result, err := NewReportingValidator(setupFakeClient()).EvaluateListenerSetAcceptance(ctx, gateway, listenerSet)
+	require.NoError(t, err)
+	require.Error(t, result.Err, "the parse error is handed to the caller for its own log")
+
+	assert.Contains(t, logs.String(), `"level":"DEBUG"`)
+	assert.NotContains(t, logs.String(), `"level":"WARN"`)
+}
+
+// TestValidateBindingForListenerSet_InvalidSelectorNamesTheEntry pins that the
+// rejection names a ListenerSet entry as one, not as a Gateway listener, so
+// the reader looks in the right object.
+func TestValidateBindingForListenerSet_InvalidSelectorNamesTheEntry(t *testing.T) {
+	t.Parallel()
+
+	fromSelector := gatewayv1.NamespacesFromSelector
+
+	listenerSet := &gatewayv1.ListenerSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "ls", Namespace: "infra"},
+		Spec: gatewayv1.ListenerSetSpec{
+			Listeners: []gatewayv1.ListenerEntry{
+				{
+					Name:     "broken",
+					Port:     80,
+					Protocol: gatewayv1.HTTPProtocolType,
+					AllowedRoutes: &gatewayv1.AllowedRoutes{
+						Namespaces: &gatewayv1.RouteNamespaces{From: &fromSelector, Selector: bogusSelector()},
+					},
+				},
+			},
+		},
+	}
+
+	route := &RouteInfo{Namespace: "apps", Kind: KindHTTPRoute}
+
+	result, err := NewValidator(setupFakeClient()).ValidateBindingForListenerSet(context.Background(), listenerSet, route)
+	require.NoError(t, err)
+
+	assert.False(t, result.Accepted)
+	assert.Contains(t, result.Message, `ListenerSet entry "broken" has an invalid allowedRoutes selector`)
 }

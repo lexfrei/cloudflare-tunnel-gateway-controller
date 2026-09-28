@@ -10,6 +10,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
+
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/logging"
 )
 
 func TestValidateBinding(t *testing.T) {
@@ -600,49 +602,130 @@ func TestValidateBinding_WithNamespaceSelector(t *testing.T) {
 	assert.Equal(t, []gatewayv1.SectionName{"http"}, result.MatchedListeners)
 }
 
-// TestValidateBinding_SelectorErrorPropagates pins the AllowedRoutes
-// namespace-filtering error path: an unparseable label selector must surface
-// as an error from ValidateBinding (so the caller requeues) instead of being
-// swallowed as a silent not-allowed verdict that would mislabel the route
-// NotAllowedByListeners.
-func TestValidateBinding_SelectorErrorPropagates(t *testing.T) {
+// bogusSelector is a label selector LabelSelectorAsSelector refuses to parse.
+func bogusSelector() *metav1.LabelSelector {
+	return &metav1.LabelSelector{
+		MatchExpressions: []metav1.LabelSelectorRequirement{
+			{Key: "team", Operator: "BogusOperator", Values: []string{"x"}},
+		},
+	}
+}
+
+// selectorListener builds an HTTP listener admitting routes by namespace
+// selector.
+func selectorListener(name gatewayv1.SectionName, selector *metav1.LabelSelector) gatewayv1.Listener {
+	fromSelector := gatewayv1.NamespacesFromSelector
+
+	return gatewayv1.Listener{
+		Name:     name,
+		Port:     80,
+		Protocol: gatewayv1.HTTPProtocolType,
+		AllowedRoutes: &gatewayv1.AllowedRoutes{
+			Namespaces: &gatewayv1.RouteNamespaces{From: &fromSelector, Selector: selector},
+		},
+	}
+}
+
+// TestValidateBinding_InvalidSelectorRejectsWithMessage pins where an
+// unparseable allowedRoutes selector ends up: a listener with one admits no
+// route, and the rejection message names that listener so the route's status
+// shows why. The selector itself stays out of the message: the route may live
+// in a namespace whose authors cannot read the Gateway, so the parse error goes
+// to the controller log instead.
+func TestValidateBinding_InvalidSelectorRejectsWithMessage(t *testing.T) {
 	t.Parallel()
 
-	fromSelector := gatewayv1.NamespacesFromSelector
-	hostname := gatewayv1.Hostname("app.example.com")
+	gateway := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "infra"},
+		Spec: gatewayv1.GatewaySpec{
+			Listeners: []gatewayv1.Listener{selectorListener("broken", bogusSelector())},
+		},
+	}
+
+	route := &RouteInfo{Namespace: "apps", Kind: KindHTTPRoute}
+
+	logger, logs := logging.TestLogger(t)
+	ctx := logging.WithLogger(context.Background(), logger)
+
+	result, err := NewValidator(setupFakeClient()).ValidateBinding(ctx, gateway, route)
+	require.NoError(t, err)
+
+	assert.False(t, result.Accepted)
+	assert.Equal(t, gatewayv1.RouteReasonNotAllowedByListeners, result.Reason)
+	assert.Contains(t, result.Message, `listener "broken" has an invalid allowedRoutes selector`)
+	assert.NotContains(t, result.Message, "BogusOperator", "the Gateway's selector must not reach route status")
+	assert.Contains(t, logs.String(), "BogusOperator", "the parse error is kept for the controller log")
+}
+
+// TestValidateBinding_InvalidSelectorStaysWithItsListener pins that one
+// listener's unparseable selector does not fail the whole Gateway: a route with
+// no sectionName still binds to the sibling listener that admits it.
+func TestValidateBinding_InvalidSelectorStaysWithItsListener(t *testing.T) {
+	t.Parallel()
 
 	gateway := &gatewayv1.Gateway{
 		ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "infra"},
 		Spec: gatewayv1.GatewaySpec{
 			Listeners: []gatewayv1.Listener{
-				{
-					Name:     "https",
-					Port:     443,
-					Protocol: gatewayv1.HTTPSProtocolType,
-					Hostname: &hostname,
-					AllowedRoutes: &gatewayv1.AllowedRoutes{
-						Namespaces: &gatewayv1.RouteNamespaces{
-							From: &fromSelector,
-							Selector: &metav1.LabelSelector{
-								MatchExpressions: []metav1.LabelSelectorRequirement{
-									{Key: "team", Operator: "BogusOperator", Values: []string{"x"}},
-								},
-							},
-						},
-					},
-				},
+				selectorListener("broken", bogusSelector()),
+				selectorListener("good", &metav1.LabelSelector{MatchLabels: map[string]string{"team": "a"}}),
 			},
 		},
 	}
 
-	route := &RouteInfo{
-		Namespace: "apps",
-		Hostnames: []gatewayv1.Hostname{hostname},
+	namespace := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{
+		Name:   "apps",
+		Labels: map[string]string{"team": "a"},
+	}}
+
+	route := &RouteInfo{Namespace: "apps", Kind: KindHTTPRoute}
+
+	logger, logs := logging.TestLogger(t)
+	ctx := logging.WithLogger(context.Background(), logger)
+
+	result, err := NewValidator(setupFakeClient(namespace)).ValidateBinding(ctx, gateway, route)
+	require.NoError(t, err)
+
+	assert.True(t, result.Accepted)
+	assert.Equal(t, []gatewayv1.SectionName{"good"}, result.MatchedListeners)
+	assert.Contains(t, logs.String(), "BogusOperator",
+		"the broken listener is still logged when a sibling admits the route")
+}
+
+// TestValidateBinding_UnevaluatedListenerLogLevel pins that only the binding
+// pass warns about a listener it cannot evaluate. The other passes evaluate the
+// same listener in the same sync and log it at debug, so one bad selector
+// warns once per sync.
+func TestValidateBinding_UnevaluatedListenerLogLevel(t *testing.T) {
+	t.Parallel()
+
+	gateway := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "infra"},
+		Spec: gatewayv1.GatewaySpec{
+			Listeners: []gatewayv1.Listener{selectorListener("broken", bogusSelector())},
+		},
 	}
 
-	validator := NewValidator(setupFakeClient())
+	route := &RouteInfo{Namespace: "apps", Kind: KindHTTPRoute}
 
-	_, err := validator.ValidateBinding(context.Background(), gateway, route)
-	require.Error(t, err, "an invalid AllowedRoutes selector must propagate as an error, not a silent rejection")
-	assert.Contains(t, err.Error(), "invalid label selector")
+	for _, tt := range []struct {
+		name      string
+		validator func(client.Client) *Validator
+		level     string
+	}{
+		{name: "other passes", validator: NewValidator, level: `"level":"DEBUG"`},
+		{name: "binding pass", validator: NewReportingValidator, level: `"level":"WARN"`},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			logger, logs := logging.TestLogger(t)
+			ctx := logging.WithLogger(context.Background(), logger)
+
+			_, err := tt.validator(setupFakeClient()).ValidateBinding(ctx, gateway, route)
+			require.NoError(t, err)
+
+			assert.Contains(t, logs.String(), tt.level)
+		})
+	}
 }

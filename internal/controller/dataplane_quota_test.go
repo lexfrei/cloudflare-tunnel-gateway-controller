@@ -542,13 +542,14 @@ func TestDataPlaneQuotaErrorCarriesBothSentinels(t *testing.T) {
 
 	err := dataPlaneQuotaError(2)
 
-	// errors.Is here is cockroachdb's, matching the consumers. A mark is
-	// invisible to the standard library's Is, so assert.ErrorIs reports false
-	// for an error the production branches match.
+	// errors.Is here is cockroachdb's, matching the consumers; assert.ErrorIs
+	// is the standard library's, which must agree.
 	assert.True(t, errors.Is(err, errDataPlaneQuotaExceeded),
 		"the status writer keys the refusal reason on this sentinel")
 	assert.True(t, errors.Is(err, config.ErrInvalidParameters),
 		"every branch keyed on a deterministic spec problem must match it")
+	assert.ErrorIs(t, err, config.ErrInvalidParameters, "the standard library must see the classification too")
+	assert.Equal(t, dataPlaneQuotaMessage(2), err.Error(), "the tenant reads the message as written")
 }
 
 // TestDataPlaneQuotaMessageSurvivesConditionTruncation pins the length budget

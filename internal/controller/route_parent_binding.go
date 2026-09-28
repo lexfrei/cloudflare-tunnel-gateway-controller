@@ -85,9 +85,10 @@ func resolveGatewayParentBinding(
 
 	var gateway gatewayv1.Gateway
 	if err := cli.Get(ctx, client.ObjectKey{Name: string(ref.Name), Namespace: namespace}, &gateway); err != nil {
-		// Missing referent is normal during route creation — surface as "not
-		// matched" and let the caller carry on.
-		return parentRefBinding{}, nil //nolint:nilerr // missing ref is not an error
+		// A missing referent is normal during route creation and counts as
+		// absent. Any other read failure is returned, so the caller records the
+		// parent as not evaluated instead of leaving it out.
+		return parentRefBinding{}, errors.Wrap(client.IgnoreNotFound(err), "reading parent Gateway")
 	}
 
 	managed, err := gatewayIsManaged(ctx, cli, controllerName, &gateway)
@@ -172,12 +173,12 @@ func resolveListenerSetParentBinding(
 
 	var listenerSet gatewayv1.ListenerSet
 	if err := cli.Get(ctx, client.ObjectKey{Name: string(ref.Name), Namespace: namespace}, &listenerSet); err != nil {
-		return parentRefBinding{}, nil //nolint:nilerr // missing ref is not an error
+		return parentRefBinding{}, errors.Wrap(client.IgnoreNotFound(err), "reading parent ListenerSet")
 	}
 
-	parent, found := listenerSetParentGateway(ctx, cli, &listenerSet)
-	if !found {
-		return parentRefBinding{}, nil
+	parent, err := getListenerSetParentGateway(ctx, cli, &listenerSet)
+	if err != nil {
+		return parentRefBinding{}, errors.Wrap(client.IgnoreNotFound(err), "resolving the ListenerSet parent")
 	}
 
 	managed, err := gatewayIsManaged(ctx, cli, controllerName, parent)
@@ -303,8 +304,8 @@ func getListenerSetParentGateway(
 }
 
 // gatewayIsManaged is route acceptance's reading of classifyGatewayClass: only
-// a class of ours is managed, and a class that cannot be read is an error, so
-// the caller skips the parentRef without claiming it.
+// a class of ours is managed, and a class that cannot be read is an error,
+// which the binding pass records as Pending on that parentRef.
 func gatewayIsManaged(
 	ctx context.Context,
 	cli client.Client,

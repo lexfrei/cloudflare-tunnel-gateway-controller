@@ -484,6 +484,8 @@ func TestResolveForGateway_ClassFallbackMissingSecretIsInvalidParameters(t *test
 	require.Error(t, err)
 	assert.ErrorIs(t, err, config.ErrInvalidParameters,
 		"a missing class credentials Secret is a deterministic user-fixable problem -> InvalidParameters")
+	assert.Contains(t, err.Error(), "GatewayClass", "the problem is in the class chain")
+	assert.NotContains(t, err.Error(), "infrastructure", "the Gateway's own infrastructure ref is not at fault")
 }
 
 // TestResolveForGateway_ClassFallbackEmptyTokenIsInvalidParameters pins that a

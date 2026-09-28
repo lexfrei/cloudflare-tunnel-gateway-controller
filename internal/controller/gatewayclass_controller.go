@@ -221,23 +221,16 @@ func (r *GatewayClassReconciler) setAcceptedConditions(ctx context.Context, gate
 }
 
 // parametersRefProblem says why a GatewayClass parametersRef cannot be served,
-// or returns "" when it can. The checks run in order, so a ref of the wrong
-// kind is reported for its kind before anything about its namespace. A
+// or returns "" when it can. The shape checks are the resolver's, so the
+// GatewayClass status and every Gateway on the class agree on what is wrong. A
 // non-nil error is a failed read of the referenced config, which says nothing
 // about the spec.
 func (r *GatewayClassReconciler) parametersRefProblem(
 	ctx context.Context,
 	ref *gatewayv1.ParametersReference,
 ) (string, error) {
-	switch {
-	case ref == nil:
-		return "spec.parametersRef is required: it must name a " + config.ParametersRefKind, nil
-	case string(ref.Group) != config.ParametersRefGroup || string(ref.Kind) != config.ParametersRefKind:
-		return fmt.Sprintf("spec.parametersRef must name a %s/%s, not %s/%s",
-			config.ParametersRefGroup, config.ParametersRefKind, ref.Group, ref.Kind), nil
-	case ref.Namespace != nil:
-		return fmt.Sprintf("spec.parametersRef.namespace must be unset: %s is cluster-scoped",
-			config.ParametersRefKind), nil
+	if problem := config.ParametersRefProblem(ref); problem != "" {
+		return problem, nil
 	}
 
 	err := r.Get(ctx, types.NamespacedName{Name: ref.Name}, &v1alpha1.GatewayClassConfig{})

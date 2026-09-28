@@ -10,6 +10,7 @@ import (
 
 	"github.com/cloudflare/cloudflare-go/v7"
 	"github.com/cloudflare/cloudflare-go/v7/option"
+	"github.com/cockroachdb/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
@@ -19,12 +20,15 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/api/v1alpha1"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/cfmetrics"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/config"
 )
+
+var errReadFailed = errors.New("etcdserver: request timed out")
 
 func TestNewResolver(t *testing.T) {
 	t.Parallel()
@@ -110,7 +114,8 @@ func TestResolveFromGatewayClass_MissingParametersRef(t *testing.T) {
 	_, err := resolver.ResolveFromGatewayClass(ctx, gatewayClass)
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "has no parametersRef")
+	assert.Contains(t, err.Error(), "spec.parametersRef is required")
+	assert.ErrorIs(t, err, config.ErrInvalidParameters)
 }
 
 func TestResolveFromGatewayClass_WrongGroup(t *testing.T) {
@@ -138,7 +143,8 @@ func TestResolveFromGatewayClass_WrongGroup(t *testing.T) {
 	_, err := resolver.ResolveFromGatewayClass(ctx, gatewayClass)
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "unsupported parametersRef group")
+	assert.Contains(t, err.Error(), "not wrong.group/GatewayClassConfig")
+	assert.ErrorIs(t, err, config.ErrInvalidParameters)
 }
 
 func TestResolveFromGatewayClass_WrongKind(t *testing.T) {
@@ -166,7 +172,8 @@ func TestResolveFromGatewayClass_WrongKind(t *testing.T) {
 	_, err := resolver.ResolveFromGatewayClass(ctx, gatewayClass)
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "unsupported parametersRef kind")
+	assert.Contains(t, err.Error(), "not cf.k8s.lex.la/WrongKind")
+	assert.ErrorIs(t, err, config.ErrInvalidParameters)
 }
 
 func TestResolveFromGatewayClass_ConfigNotFound(t *testing.T) {
@@ -183,6 +190,7 @@ func TestResolveFromGatewayClass_ConfigNotFound(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to get GatewayClassConfig")
+	assert.ErrorIs(t, err, config.ErrInvalidParameters)
 }
 
 func TestResolveFromGatewayClass_SecretNotFound(t *testing.T) {
@@ -212,6 +220,7 @@ func TestResolveFromGatewayClass_SecretNotFound(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to get Cloudflare credentials secret")
+	assert.ErrorIs(t, err, config.ErrInvalidParameters)
 }
 
 func TestResolveFromGatewayClass_MissingAPIToken(t *testing.T) {
@@ -251,6 +260,7 @@ func TestResolveFromGatewayClass_MissingAPIToken(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "does not contain key api-token")
+	assert.ErrorIs(t, err, config.ErrInvalidParameters)
 }
 
 func TestResolveFromGatewayClassName_Valid(t *testing.T) {
@@ -305,6 +315,81 @@ func TestResolveFromGatewayClassName_NotFound(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to get GatewayClass")
+	assert.Contains(t, err.Error(), `GatewayClass "non-existent"`)
+	assert.NotContains(t, err.Error(), "GatewayClass non-existent", "the class is named once by the resolver")
+	assert.ErrorIs(t, err, config.ErrInvalidParameters)
+}
+
+// TestResolveFromGatewayClass_EmptyTunnelIDIsInvalidParameters pins that a
+// GatewayClassConfig without a tunnelID is classified as a configuration
+// problem.
+func TestResolveFromGatewayClass_EmptyTunnelIDIsInvalidParameters(t *testing.T) {
+	t.Parallel()
+
+	gatewayClassConfig := &v1alpha1.GatewayClassConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-config"},
+		Spec: v1alpha1.GatewayClassConfigSpec{
+			CloudflareCredentialsSecretRef: v1alpha1.SecretReference{Name: "cf-credentials", Namespace: "default"},
+		},
+	}
+	gatewayClass := newGatewayClass("test-class", "test-config")
+
+	resolver := config.NewResolver(setupFakeClient(gatewayClassConfig, gatewayClass), "default", cfmetrics.NewNoopCollector())
+
+	_, err := resolver.ResolveFromGatewayClass(context.Background(), gatewayClass)
+	require.ErrorIs(t, err, config.ErrInvalidParameters)
+}
+
+// TestResolveFromGatewayClass_EmptyAPITokenIsInvalidParameters pins that a
+// credentials Secret whose token key is present but empty is classified as a
+// configuration problem.
+func TestResolveFromGatewayClass_EmptyAPITokenIsInvalidParameters(t *testing.T) {
+	t.Parallel()
+
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "cf-credentials", Namespace: "default"},
+		Data:       map[string][]byte{"api-token": {}},
+	}
+	gatewayClassConfig := &v1alpha1.GatewayClassConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-config"},
+		Spec: v1alpha1.GatewayClassConfigSpec{
+			CloudflareCredentialsSecretRef: v1alpha1.SecretReference{Name: "cf-credentials", Namespace: "default"},
+			TunnelID:                       "12345678-1234-1234-1234-123456789abc",
+		},
+	}
+	gatewayClass := newGatewayClass("test-class", "test-config")
+
+	resolver := config.NewResolver(setupFakeClient(secret, gatewayClassConfig, gatewayClass), "default", cfmetrics.NewNoopCollector())
+
+	_, err := resolver.ResolveFromGatewayClass(context.Background(), gatewayClass)
+	require.ErrorIs(t, err, config.ErrInvalidParameters)
+}
+
+// TestResolveFromGatewayClass_ReadFailureIsNotInvalidParameters pins the other
+// side: a read that fails for any reason but NotFound says nothing about the
+// configuration, so the error is not classified as one.
+func TestResolveFromGatewayClass_ReadFailureIsNotInvalidParameters(t *testing.T) {
+	t.Parallel()
+
+	gatewayClass := newGatewayClass("test-class", "test-config")
+
+	scheme := runtime.NewScheme()
+	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
+	utilruntime.Must(gatewayv1.Install(scheme))
+	utilruntime.Must(v1alpha1.AddToScheme(scheme))
+
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(gatewayClass).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Get: func(_ context.Context, _ client.WithWatch, _ client.ObjectKey, _ client.Object, _ ...client.GetOption) error {
+				return errReadFailed
+			},
+		}).Build()
+
+	resolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector())
+
+	_, err := resolver.ResolveFromGatewayClass(context.Background(), gatewayClass)
+	require.ErrorIs(t, err, errReadFailed)
+	assert.NotErrorIs(t, err, config.ErrInvalidParameters, "a read failure is not a configuration problem")
 }
 
 func TestResolveConfig_DefaultNamespace(t *testing.T) {
@@ -549,7 +634,7 @@ func TestGetConfigForGatewayClass_MissingParametersRef(t *testing.T) {
 	_, err := resolver.GetConfigForGatewayClass(ctx, gatewayClass)
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "has no parametersRef")
+	assert.Contains(t, err.Error(), "spec.parametersRef is required")
 }
 
 func TestGetConfigForGatewayClass_WrongGroupKind(t *testing.T) {
@@ -577,7 +662,7 @@ func TestGetConfigForGatewayClass_WrongGroupKind(t *testing.T) {
 	_, err := resolver.GetConfigForGatewayClass(ctx, gatewayClass)
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "unsupported parametersRef")
+	assert.Contains(t, err.Error(), "spec.parametersRef must name a")
 }
 
 func TestGetConfigForGatewayClass_ConfigNotFound(t *testing.T) {
