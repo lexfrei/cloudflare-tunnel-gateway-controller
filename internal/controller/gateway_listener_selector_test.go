@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -9,6 +10,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
@@ -32,9 +34,19 @@ func bogusNamespaceSelector() *metav1.LabelSelector {
 func reconcileSelectorGateway(t *testing.T, listeners []gatewayv1.Listener) gatewayv1.Gateway {
 	t.Helper()
 
+	return reconcileSelectorGatewayWith(t, gatewayv1.GatewaySpec{Listeners: listeners}, nil)
+}
+
+// reconcileSelectorGatewayWith reconciles a class-chain Gateway with the given
+// spec, recording Events on recorder when it is not nil, and returns it as
+// stored.
+func reconcileSelectorGatewayWith(t *testing.T, spec gatewayv1.GatewaySpec, recorder events.EventRecorder) gatewayv1.Gateway {
+	t.Helper()
+
+	spec.GatewayClassName = "cloudflare-tunnel"
 	gateway := &gatewayv1.Gateway{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-gateway", Namespace: "default", Generation: 1},
-		Spec:       gatewayv1.GatewaySpec{GatewayClassName: "cloudflare-tunnel", Listeners: listeners},
+		Spec:       spec,
 	}
 
 	fakeClient := setupGatewayFakeClient(gateway,
@@ -65,6 +77,7 @@ func reconcileSelectorGateway(t *testing.T, listeners []gatewayv1.Listener) gate
 		Scheme:         fakeClient.Scheme(),
 		ControllerName: "test-controller",
 		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims()),
+		Recorder:       recorder,
 	}
 
 	_, err := reconciler.Reconcile(context.Background(), ctrl.Request{
@@ -160,4 +173,55 @@ func TestGatewayListenerStatus_UnusedSelectorIsIgnored(t *testing.T) {
 	accepted := findCondition(listenerStatusNamed(t, &updated, "same").Conditions, string(gatewayv1.ListenerConditionAccepted))
 	require.NotNil(t, accepted)
 	assert.Equal(t, metav1.ConditionTrue, accepted.Status)
+}
+
+// TestGatewayEvents_InvalidAllowedListenersSelector pins the signal for a
+// Gateway whose allowedListeners.namespaces.selector does not parse. No
+// Gateway API condition describes it, and the Gateway's own listeners still
+// serve, so it is a Warning Event on the Gateway rather than a condition. Every
+// ListenerSet is refused and says so on its own status. The Event says the
+// selector is invalid without quoting it.
+func TestGatewayEvents_InvalidAllowedListenersSelector(t *testing.T) {
+	t.Parallel()
+
+	fromSelector := gatewayv1.NamespacesFromSelector
+	listeners := []gatewayv1.Listener{{Name: "http", Port: 80, Protocol: gatewayv1.HTTPProtocolType}}
+
+	for _, tt := range []struct {
+		name     string
+		selector *metav1.LabelSelector
+		want     int
+	}{
+		{name: "selector does not parse", selector: bogusNamespaceSelector(), want: 1},
+		{name: "selector parses", selector: &metav1.LabelSelector{MatchLabels: map[string]string{"team": "a"}}, want: 0},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			recorder := events.NewFakeRecorder(10)
+
+			reconcileSelectorGatewayWith(t, gatewayv1.GatewaySpec{
+				Listeners: listeners,
+				AllowedListeners: &gatewayv1.AllowedListeners{
+					Namespaces: &gatewayv1.ListenerNamespaces{From: &fromSelector, Selector: tt.selector},
+				},
+			}, recorder)
+
+			var warnings []string
+
+			for _, event := range drainEvents(recorder) {
+				if strings.Contains(event, "InvalidAllowedListeners") {
+					warnings = append(warnings, event)
+				}
+			}
+
+			require.Len(t, warnings, tt.want)
+
+			for _, event := range warnings {
+				assert.Contains(t, event, "Warning")
+				assert.Contains(t, event, "allowedListeners.namespaces.selector is invalid; every ListenerSet is refused")
+				assert.NotContains(t, event, "BogusOperator", "the Event says the selector is invalid, not what it is")
+			}
+		})
+	}
 }
