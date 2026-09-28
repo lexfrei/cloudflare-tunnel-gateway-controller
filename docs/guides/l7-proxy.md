@@ -204,9 +204,9 @@ spec:
 
 ## Monitoring
 
-The proxy does not expose a Prometheus `/metrics` endpoint — its config API serves only `GET /config`, `PUT /config`, `GET /healthz`, and `GET /readyz`. Prometheus metrics are emitted by the controller, which exposes `/metrics` on its dedicated metrics port (via controller-runtime).
+The controller exposes `/metrics` on its dedicated metrics port. The proxy serves its own `/metrics` on the config API port while `proxy.metrics.enabled` is on, which is the default; see [Metrics](../operations/metrics.md#proxy-data-plane-metrics) for the series.
 
-Setting `serviceMonitor.enabled: true` renders two ServiceMonitors: one targeting the controller's `metrics` port (the real Prometheus endpoint) and one targeting the proxy's `config-api` port (health and config API only — there is nothing to scrape there yet):
+Setting `serviceMonitor.enabled: true` renders a ServiceMonitor for the controller's `metrics` port and, while `proxy.metrics.enabled` is on, a second one for the proxy's `config-api` port:
 
 ```yaml
 serviceMonitor:
