@@ -114,9 +114,9 @@ func makeBindingResult(
 // entry matches.
 //
 // An entry whose evaluation fails (an unparseable namespace selector) admits
-// nothing. Its name is returned in invalid and its error in detail. It does not
-// stop the loop: the error belongs to that entry, and a sibling entry may still
-// admit the route.
+// nothing. Its error is returned in detail, and, when no entry matched, its name
+// in invalid. It does not stop the loop: the error belongs to that entry, and a
+// sibling entry may still admit the route.
 func findMatchingEntries(
 	count int,
 	nameAndPort func(int) (gatewayv1.SectionName, gatewayv1.PortNumber),
@@ -161,9 +161,9 @@ func findMatchingEntries(
 		}
 	}
 
-	if len(matched) == 0 {
-		detail := strings.Join(entryErrors, "; ")
+	detail := strings.Join(entryErrors, "; ")
 
+	if len(matched) == 0 {
 		if routeSectionName != nil || routePort != nil {
 			return nil, gatewayv1.RouteReasonNoMatchingParent, invalid, detail
 		}
@@ -175,7 +175,7 @@ func findMatchingEntries(
 		return nil, lastRejectionReason, invalid, detail
 	}
 
-	return matched, "", nil, ""
+	return matched, "", nil, detail
 }
 
 // listenerAcceptsRoute checks if a single listener accepts the route.
