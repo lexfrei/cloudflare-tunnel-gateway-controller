@@ -400,6 +400,7 @@ type Route interface {
 	GetNamespace() string
 	GetHostnames() []gatewayv1.Hostname
 	GetParentRefs() []gatewayv1.ParentReference
+	GetParentStatuses() []gatewayv1.RouteParentStatus
 	GetRouteKind() gatewayv1.Kind
 	// GetCrossNamespaceBackendNamespaces returns namespaces referenced by backends
 	// that differ from the route's own namespace.
@@ -704,6 +705,11 @@ func (w HTTPRouteWrapper) GetParentRefs() []gatewayv1.ParentReference {
 	return w.Spec.ParentRefs
 }
 
+// GetParentStatuses returns the parent entries of the HTTPRoute status.
+func (w HTTPRouteWrapper) GetParentStatuses() []gatewayv1.RouteParentStatus {
+	return w.Status.Parents
+}
+
 // GetRouteKind returns the route kind for HTTPRoute.
 func (w HTTPRouteWrapper) GetRouteKind() gatewayv1.Kind {
 	return routebinding.KindHTTPRoute
@@ -717,6 +723,11 @@ func (w GRPCRouteWrapper) GetHostnames() []gatewayv1.Hostname {
 // GetParentRefs returns the parent references from the GRPCRoute spec.
 func (w GRPCRouteWrapper) GetParentRefs() []gatewayv1.ParentReference {
 	return w.Spec.ParentRefs
+}
+
+// GetParentStatuses returns the parent entries of the GRPCRoute status.
+func (w GRPCRouteWrapper) GetParentStatuses() []gatewayv1.RouteParentStatus {
+	return w.Status.Parents
 }
 
 // GetRouteKind returns the route kind for GRPCRoute.
@@ -738,13 +749,17 @@ func FindRoutesForGateway(
 		return nil
 	}
 
-	if !isGatewayManagedByController(ctx, cli, gateway, controllerName) {
-		return nil
-	}
+	// A Gateway that is not ours still enqueues the routes carrying our
+	// status, so the route reconcile can release those entries.
+	managed := isGatewayManagedByController(ctx, cli, gateway, controllerName)
 
 	var requests []reconcile.Request
 
 	for _, route := range routes {
+		if !managed && !holdsOwnParentStatus(route.GetParentStatuses(), controllerName) {
+			continue
+		}
+
 		for _, ref := range route.GetParentRefs() {
 			if parentRefIsGateway(ref) && parentReferenceToKey(ref, route.GetNamespace()) == client.ObjectKeyFromObject(gateway) {
 				requests = append(requests, reconcile.Request{

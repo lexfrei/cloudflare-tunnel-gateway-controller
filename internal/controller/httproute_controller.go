@@ -117,6 +117,7 @@ func (r *HTTPRouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		controllerName:  r.ControllerName,
 		componentName:   "httproute",
 		wrapRoute:       func(route *gatewayv1.HTTPRoute) Route { return HTTPRouteWrapper{route} },
+		newAccessor:     newHTTPRouteAccessor,
 		syncAndUpdate:   r.syncAndUpdateStatus,
 	})
 }

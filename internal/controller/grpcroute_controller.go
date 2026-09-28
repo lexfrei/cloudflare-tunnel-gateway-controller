@@ -186,6 +186,7 @@ func (r *GRPCRouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		controllerName:  r.ControllerName,
 		componentName:   "grpcroute",
 		wrapRoute:       func(route *gatewayv1.GRPCRoute) Route { return GRPCRouteWrapper{route} },
+		newAccessor:     newGRPCRouteAccessor,
 		syncAndUpdate:   r.syncAndUpdateStatus,
 	})
 }
