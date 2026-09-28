@@ -276,7 +276,6 @@ func (i *sharedLeafIssuer) warnIfCAExpiring(now time.Time) {
 	}
 }
 
-// Event vocabulary for the config API CA.
 const (
 	eventReasonConfigTLSCAExpiring = "ConfigTLSCAExpiring"
 	eventActionConfigTLS           = "IssueCertificate"

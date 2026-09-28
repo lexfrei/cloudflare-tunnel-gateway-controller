@@ -88,7 +88,6 @@ const (
 	authTokenKey   = "auth-token"
 )
 
-// Config API TLS wiring for a rendered plane.
 const (
 	// configTLSNameSuffix is followed by the slot index.
 	configTLSNameSuffix = "-config-tls-"
