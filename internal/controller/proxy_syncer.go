@@ -810,9 +810,9 @@ func (s *ProxySyncer) SyncPartition(
 		}
 	}()
 
-	pushErr := s.pushToEndpoints(ctx, logger, prep.cfg, resolvedEndpoints, authToken)
+	delivered, pushErr := s.pushToEndpoints(ctx, logger, prep.cfg, resolvedEndpoints, authToken)
 
-	s.recordPush(prep.target, key, authToken, prep.cfgHash, prep.cfg, resolved, pushErr)
+	s.recordPush(prep.target, key, authToken, prep.cfgHash, prep.cfg, resolved, pushErr, delivered)
 
 	recorded = true
 
@@ -905,15 +905,17 @@ func (s *ProxySyncer) preparePush(
 }
 
 // recordPush updates the partition's in-memory push state after a lock-free
-// push. It does NOT create the target on demand: RetainPartitions may have
-// evicted the partition during the push window, and resurrecting a dropped entry
-// would leave garbage in the map until the next retain pass.
+// push. delivered reports whether at least one endpoint accepted cfg. It does
+// NOT create the target on demand: RetainPartitions may have evicted the
+// partition during the push window, and resurrecting a dropped entry would
+// leave garbage in the map until the next retain pass.
 func (s *ProxySyncer) recordPush(
 	inFlight *pushTarget,
 	key, authToken, cfgHash string,
 	cfg *proxy.Config,
 	resolved []string,
 	pushErr error,
+	delivered bool,
 ) {
 	s.syncMu.Lock()
 	defer s.syncMu.Unlock()
@@ -941,15 +943,25 @@ func (s *ProxySyncer) recordPush(
 		target.lastPushedEndpoints = nil
 		target.consecutivePushFail++
 
+		// A config some replica accepted is the partition's current document,
+		// so it becomes the replay source even though the push failed
+		// elsewhere: while one replica keeps refusing (an old pod mid-rollout),
+		// every sync fails, and a pod that joins in that window would
+		// otherwise get nothing until a later sync. A config no replica
+		// accepted is not cached.
+		if delivered {
+			target.cacheIfNewer(cfg)
+		}
+
 		return
 	}
 
 	// Cache the successfully-pushed config so a partition resync can replay it
 	// to a newly-joined proxy pod that arrives between reconciles. We cache
 	// AFTER the push so a failed push does not poison the cache with a config
-	// the replicas never received. The hash/endpoint-set pair keys the
-	// steady-state skip above.
-	target.lastCfg = cfg
+	// no replica received. The hash/endpoint-set pair keys the steady-state
+	// skip above.
+	target.cacheIfNewer(cfg)
 	target.lastPushedHash = cfgHash
 	target.lastPushedToken = authToken
 	target.lastPushedEndpoints = make(map[string]struct{}, len(resolved))
@@ -957,6 +969,15 @@ func (s *ProxySyncer) recordPush(
 
 	for _, endpoint := range resolved {
 		target.lastPushedEndpoints[endpoint] = struct{}{}
+	}
+}
+
+// cacheIfNewer makes cfg the replay source unless the cache already holds a
+// newer config: two syncs can record out of order, and the one recorded last
+// may carry the older snapshot. Caller must hold syncMu.
+func (t *pushTarget) cacheIfNewer(cfg *proxy.Config) {
+	if t.lastCfg == nil || cfg.Version > t.lastCfg.Version {
+		t.lastCfg = cfg
 	}
 }
 
@@ -1073,11 +1094,12 @@ func (s *ProxySyncer) ResyncAllPartitions(ctx context.Context) error {
 }
 
 // pushToEndpoints delivers cfg to every resolved endpoint, aggregating
-// per-endpoint failures into one error. Extracted from SyncRoutes to keep it
-// within the funlen budget.
+// per-endpoint failures into one error, and reports whether at least one
+// endpoint accepted it. Extracted from SyncRoutes to keep it within the funlen
+// budget.
 func (s *ProxySyncer) pushToEndpoints(
 	ctx context.Context, logger *slog.Logger, cfg *proxy.Config, resolved []pushEndpoint, authToken string,
-) error {
+) (bool, error) {
 	results := s.push(ctx, cfg, resolved, authToken)
 
 	var pushErrors []error
@@ -1093,8 +1115,10 @@ func (s *ProxySyncer) pushToEndpoints(
 		}
 	}
 
+	delivered := len(pushErrors) < len(results)
+
 	if len(pushErrors) > 0 {
-		return fmt.Errorf("failed to push config to %d/%d endpoints: %w",
+		return delivered, fmt.Errorf("failed to push config to %d/%d endpoints: %w",
 			len(pushErrors), len(resolved), errors.Join(pushErrors...))
 	}
 
@@ -1104,7 +1128,7 @@ func (s *ProxySyncer) pushToEndpoints(
 		"version", cfg.Version,
 	)
 
-	return nil
+	return delivered, nil
 }
 
 // shouldSkipPush reports whether the rebuilt config is already held by every
@@ -1272,7 +1296,7 @@ func (s *ProxySyncer) buildProxyConfig(
 	return cfg
 }
 
-// ResyncEndpoints replays the most recent successfully-pushed config to the
+// ResyncEndpoints replays the most recent config a replica accepted to the
 // supplied endpoints without rebuilding from HTTPRoutes. The endpoint
 // watcher uses this to bring a newly-joined proxy pod up to date when the
 // HTTPRoute set has not changed; without it the new pod stays at
@@ -1293,25 +1317,26 @@ func (s *ProxySyncer) ResyncEndpoints(ctx context.Context, endpoints []string) e
 
 // msgNoPushedConfigToResync is the WARN both replayableTarget branches share:
 // whatever the path into an empty replay cache, the endpoints stay
-// unconfigured (and unready) until a sync completes a successful push.
+// unconfigured (and unready) until a sync delivers a config that at least one
+// replica accepts.
 const msgNoPushedConfigToResync = "no successfully pushed config to resync; endpoints stay unconfigured until a sync pushes one"
 
 // replayableTarget returns the partition's cached push target when it holds a
-// fully-pushed config, logging why the resync is a no-op otherwise. The
-// lookup is plain, NOT targetLocked: RetainPartitions can evict the key
-// between a caller's read-unlock and re-lock, and re-creating an empty target
-// here would resurrect a garbage entry that lingers until the next retain
-// pass. Caller must hold syncMu.
+// config at least one replica accepted, logging why the resync is a no-op
+// otherwise. The lookup is plain, NOT targetLocked: RetainPartitions can evict
+// the key between a caller's read-unlock and re-lock, and re-creating an empty
+// target here would resurrect a garbage entry that lingers until the next
+// retain pass. Caller must hold syncMu.
 func (s *ProxySyncer) replayableTarget(logger *slog.Logger, key string) (*pushTarget, bool) {
 	target, ok := s.targets[key]
 	if !ok {
 		if key == sharedPartitionKey {
 			// The shared partition is never evicted once created, so absent
-			// means no sync attempt has even reached preparePush yet (an
-			// attempted-but-failed push lands in the lastCfg branch below).
-			// Either way the endpoints stay unconfigured (and unready) until
-			// a sync completes a successful push -- this exact no-op hid a
-			// bootstrap deadlock for a month (#581).
+			// means no sync attempt has even reached preparePush yet (a push
+			// no replica accepted lands in the lastCfg branch below). Either
+			// way the endpoints stay unconfigured (and unready) until a sync
+			// delivers a config at least one replica accepts -- this exact
+			// no-op hid a bootstrap deadlock for a month (#581).
 			logger.Warn(msgNoPushedConfigToResync,
 				"partition", key)
 		} else {
@@ -1325,9 +1350,9 @@ func (s *ProxySyncer) replayableTarget(logger *slog.Logger, key string) (*pushTa
 	}
 
 	if target.lastCfg == nil {
-		// Not silently: only a fully-successful push populates the cache, so
-		// an empty cache here means the endpoints stay unconfigured (and
-		// unready) until a sync completes a successful push -- this exact
+		// Not silently: only a push that at least one replica accepted
+		// populates the cache, so an empty cache here means the endpoints stay
+		// unconfigured (and unready) until a sync delivers one -- this exact
 		// no-op hid a bootstrap deadlock for a month (#581).
 		logger.Warn(msgNoPushedConfigToResync,
 			"partition", key)

@@ -139,7 +139,7 @@ func (r retrySafeRegisterer) MustRegister(collectors ...prometheus.Collector) {
 // immediately -- retrying a deterministic misconfiguration never succeeds.
 //
 // A close of drainC breaks the loop promptly, even mid-backoff-wait,
-// mirroring how proxy.ResolveStartupProtocol already handles a drain during
+// mirroring how proxy.AwaitFirstConfig already handles a drain during
 // its own startup wait -- so a SIGTERM during a long backoff sleep does not
 // burn the pod's termination grace period.
 func StartTunnelWithRetry(ctx context.Context, cfg *Config, drainC <-chan struct{}) error {

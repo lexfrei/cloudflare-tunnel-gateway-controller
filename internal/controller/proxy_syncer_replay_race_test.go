@@ -183,7 +183,7 @@ func TestResyncTarget_LostRaceToACachedNewerConfigIsSuperseded(t *testing.T) {
 
 	replica.conflict.Store(true)
 	replica.setOnPut(func() {
-		syncer.recordPush(nil, replayRaceKey, "", hashProxyConfig(newer), newer, []string{replica.endpoint()}, nil)
+		syncer.recordPush(nil, replayRaceKey, "", hashProxyConfig(newer), newer, []string{replica.endpoint()}, nil, true)
 	})
 
 	err := syncer.ResyncPartition(context.Background(), replayRaceKey)
@@ -248,7 +248,7 @@ func TestResyncTarget_LostRaceBesideAPlainFailureIsAnError(t *testing.T) {
 	broken.failing.Store(true)
 	racing.setOnPut(func() {
 		syncer.recordPush(nil, replayRaceKey, "", hashProxyConfig(newer), newer,
-			[]string{racing.endpoint(), broken.endpoint()}, nil)
+			[]string{racing.endpoint(), broken.endpoint()}, nil, true)
 	})
 
 	err := syncer.ResyncPartition(context.Background(), replayRaceKey)
@@ -330,7 +330,7 @@ func TestProxyEndpointReconcile_SupersededReplayRequeues(t *testing.T) {
 
 		replica.conflict.Store(true)
 		replica.setOnPut(func() {
-			syncer.recordPush(nil, sharedPartitionKey, "", hashProxyConfig(newer), newer, []string{replica.endpoint()}, nil)
+			syncer.recordPush(nil, sharedPartitionKey, "", hashProxyConfig(newer), newer, []string{replica.endpoint()}, nil, true)
 		})
 
 		reconciler := &ProxyEndpointReconciler{Client: testClient, ProxySyncer: syncer, ProxyEndpoints: []string{replica.endpoint()}}
@@ -370,7 +370,7 @@ func TestProxyEndpointReconcile_SupersededPerGatewayReplayRequeues(t *testing.T)
 
 		replica.conflict.Store(true)
 		replica.setOnPut(func() {
-			syncer.recordPush(nil, replayRaceKey, "", hashProxyConfig(newer), newer, []string{replica.endpoint()}, nil)
+			syncer.recordPush(nil, replayRaceKey, "", hashProxyConfig(newer), newer, []string{replica.endpoint()}, nil, true)
 		})
 
 		reconciler := &ProxyEndpointReconciler{Client: testClient, ProxySyncer: syncer}

@@ -42,7 +42,7 @@ func TestPushToAPlaintextPlane_NamesTheReason(t *testing.T) {
 		slog.New(slog.DiscardHandler), WithConfigAPIAuthority(testAuthority(t)))
 
 	endpoint := "https://" + strings.TrimPrefix(plain.URL, "http://") + "/config"
-	err := syncer.pushToEndpoints(context.Background(), slog.New(slog.DiscardHandler), &proxy.Config{Version: 1},
+	_, err := syncer.pushToEndpoints(context.Background(), slog.New(slog.DiscardHandler), &proxy.Config{Version: 1},
 		resolveEndpoints(context.Background(), []string{endpoint}), "token")
 	require.Error(t, err)
 
