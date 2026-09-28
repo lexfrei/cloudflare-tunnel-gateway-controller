@@ -228,3 +228,56 @@ func TestReleaseOwnParentStatus_KeepsEntriesOfAManagedRoute(t *testing.T) {
 	require.NoError(t, cli.Get(context.Background(), key, &updated))
 	assert.Len(t, ownParentEntries(updated.Status.Parents), 1)
 }
+
+// listenerSetStaleRoutes returns two routes attached through ListenerSet ls in
+// namespace default, one carrying this controller's status and one without.
+func listenerSetStaleRoutes() []Route {
+	lsKind := gatewayv1.Kind(kindListenerSet)
+	refs := []gatewayv1.ParentReference{{Kind: &lsKind, Name: "ls"}}
+
+	return []Route{
+		HTTPRouteWrapper{&gatewayv1.HTTPRoute{
+			ObjectMeta: metav1.ObjectMeta{Name: "with-status", Namespace: "default"},
+			Spec:       gatewayv1.HTTPRouteSpec{CommonRouteSpec: gatewayv1.CommonRouteSpec{ParentRefs: refs}},
+			Status:     gatewayv1.HTTPRouteStatus{RouteStatus: staleParentStatus()},
+		}},
+		HTTPRouteWrapper{&gatewayv1.HTTPRoute{
+			ObjectMeta: metav1.ObjectMeta{Name: "without", Namespace: "default"},
+			Spec:       gatewayv1.HTTPRouteSpec{CommonRouteSpec: gatewayv1.CommonRouteSpec{ParentRefs: refs}},
+		}},
+	}
+}
+
+// TestStaleStatusRoutesThroughListenerSetAreEnqueued pins both ListenerSet
+// paths to a route whose Gateway stopped being ours: a ListenerSet repointed
+// at another controller's Gateway, and a Gateway that is no longer ours
+// holding a ListenerSet. Each enqueues the routes attached through the
+// ListenerSet that carry this controller's status, and only those.
+func TestStaleStatusRoutesThroughListenerSetAreEnqueued(t *testing.T) {
+	t.Parallel()
+
+	ls := &gatewayv1.ListenerSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "ls", Namespace: "default"},
+		Spec:       gatewayv1.ListenerSetSpec{ParentRef: gatewayv1.ParentGatewayReference{Name: "other-gw"}},
+	}
+	cli := staleStatusClient(t, interceptor.Funcs{}, ls)
+
+	t.Run("ListenerSet event", func(t *testing.T) {
+		t.Parallel()
+
+		requests := findRoutesAttachedToListenerSet(context.Background(), cli, ls, staleStatusController, listenerSetStaleRoutes())
+		require.Len(t, requests, 1)
+		assert.Equal(t, "with-status", requests[0].Name)
+	})
+
+	t.Run("Gateway event", func(t *testing.T) {
+		t.Parallel()
+
+		var gateway gatewayv1.Gateway
+		require.NoError(t, cli.Get(context.Background(), types.NamespacedName{Name: "other-gw", Namespace: "default"}, &gateway))
+
+		requests := FindRoutesForGateway(context.Background(), cli, &gateway, staleStatusController, listenerSetStaleRoutes())
+		require.Len(t, requests, 1)
+		assert.Equal(t, "with-status", requests[0].Name)
+	})
+}
