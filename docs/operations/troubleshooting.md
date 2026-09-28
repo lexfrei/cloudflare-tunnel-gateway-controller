@@ -184,6 +184,24 @@ kubectl logs --namespace cloudflare-tunnel-system \
 - `the edge rejected this connector's registration` means the edge answered the registration with a refusal, which is what a revoked token, a deleted tunnel or a wrong secret produces. A registration that timed out or lost its connection logs the generic line instead. The pod keeps retrying rather than exiting, because cloudflared treats an Unauthorized rejection as possibly transient: a tunnel created moments ago can be refused until it propagates across the edge, and that case clears on its own. If the line keeps repeating, check that the tunnel still exists in the Cloudflare Zero Trust Dashboard, then regenerate the connector token and update `proxy.tunnelTokenSecretRef`.
 - A malformed token (fails to decode) makes the pod exit immediately instead of retrying.
 
+### Proxy Pod Restarting Without a Config
+
+**Symptoms**:
+
+- A proxy pod is `0/1 Ready` and its `RESTARTS` count keeps climbing, one restart per two-minute wait plus kubelet's back-off between restarts
+- Its logs show `waiting for the first config before dialing the edge`, then `tunnel error` with `not registering with the edge: waited 2m0s: no config received from the controller`
+
+**Cause**: in tunnel mode the proxy registers with the Cloudflare edge only after the controller has pushed it a config, because the edge sends traffic to every registered connector and one without a routing table would answer every request with a 404. When no push arrives within two minutes the proxy exits rather than wait forever, and kubelet restarts it. Something is stopping the controller's push: the controller is not running or has not been elected leader, or its pushes to this pod fail. A pod can also be missed when cluster DNS has not yet caught up with the proxy EndpointSlice at the moment the controller replays to new pods: the replay goes to the addresses DNS returned, and the pod then keeps restarting until the next sync reaches it.
+
+**Diagnosis**: check the controller's logs for `failed to push config to endpoint` and `failed to resync config to endpoint` lines naming this pod's IP; the error text says whether the push was refused (auth token, config-API TLS) or never connected (for example, a NetworkPolicy blocks it).
+
+```bash
+kubectl logs --namespace cloudflare-tunnel-system \
+  deployment/cloudflare-tunnel-gateway-controller | grep --extended-regexp 'failed to (push|resync) config'
+```
+
+**Solution**: fix what the controller's push error names. Once a push lands, the waiting pod dials the edge and turns Ready without a restart.
+
 ### ImagePullBackOff
 
 **Diagnosis**:
