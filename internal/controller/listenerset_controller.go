@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"slices"
 	"strings"
 
 	"github.com/cockroachdb/errors"
@@ -33,6 +34,8 @@ const (
 	listenerSetMsgListenersBad = "No listener in this ListenerSet is usable: each one conflicts, " +
 		"has unresolved references, uses a protocol this controller does not serve " +
 		"or has an invalid allowedRoutes.namespaces.selector"
+	listenerSetMsgConflicted          = "One or more listeners in this ListenerSet conflict with another listener"
+	listenerSetMsgUnresolvedRefs      = "One or more listeners in this ListenerSet have unresolved references"
 	listenerSetMsgUnsupportedProtocol = "One or more listeners in this ListenerSet use a protocol " +
 		"this controller does not serve (only HTTP and HTTPS are supported)"
 	listenerSetMsgInvalidSelector = "One or more listeners in this ListenerSet have an invalid " +
@@ -519,55 +522,33 @@ func (r *ListenerSetReconciler) collectListenerEntryRefChecks(
 // ListenerSetReasonListenersNotValid:
 //
 //   - No usable entry → Accepted=False / Reason=ListenersNotValid.
-//   - A usable entry beside one with an unservable protocol or an invalid
-//     selector → Accepted=True / Reason=ListenersNotValid.
+//   - A usable entry beside an unusable one → Accepted=True /
+//     Reason=ListenersNotValid, naming each cause present.
 //   - Otherwise → Accepted=True / Reason=Accepted.
 func summariseListenerSet(
 	merged *listenermerge.MergeResult,
 	listenerSet *gatewayv1.ListenerSet,
 	refChecks map[gatewayv1.SectionName]listenerEntryRefsCheck,
 ) (bool, gatewayv1.ListenerSetConditionReason, string) {
-	usable, unsupportedProtocol, invalidSelector := false, false, false
+	usable := false
+
+	var causes []string
 
 	for i := range listenerSet.Spec.Listeners {
-		entry := &listenerSet.Spec.Listeners[i]
-		mergedEntry := findMergedEntry(merged, listenerSet, entry.Name)
-
-		if mergedEntry != nil && mergedEntry.ConflictReason != "" {
-			continue
-		}
-
-		if check, ok := refChecks[entry.Name]; ok && check.Status == metav1.ConditionFalse {
-			continue
-		}
-
-		if !servableListenerProtocol(entry.Protocol) {
-			unsupportedProtocol = true
+		problem := listenerSetEntryProblem(merged, listenerSet, &listenerSet.Spec.Listeners[i], refChecks)
+		if problem == "" {
+			usable = true
 
 			continue
 		}
 
-		if routebinding.NamespaceSelectorInvalid(entry.AllowedRoutes) {
-			invalidSelector = true
-
-			continue
+		if !slices.Contains(causes, problem) {
+			causes = append(causes, problem)
 		}
-
-		usable = true
 	}
 
 	if !usable {
 		return false, gatewayv1.ListenerSetReasonListenersNotValid, listenerSetMsgListenersBad
-	}
-
-	var causes []string
-
-	if unsupportedProtocol {
-		causes = append(causes, listenerSetMsgUnsupportedProtocol)
-	}
-
-	if invalidSelector {
-		causes = append(causes, listenerSetMsgInvalidSelector)
 	}
 
 	if len(causes) > 0 {
@@ -575,6 +556,33 @@ func summariseListenerSet(
 	}
 
 	return true, gatewayv1.ListenerSetReasonAccepted, "ListenerSet attached to parent Gateway"
+}
+
+// listenerSetEntryProblem returns the aggregate message for why an entry is
+// not usable, or "" when it is.
+func listenerSetEntryProblem(
+	merged *listenermerge.MergeResult,
+	listenerSet *gatewayv1.ListenerSet,
+	entry *gatewayv1.ListenerEntry,
+	refChecks map[gatewayv1.SectionName]listenerEntryRefsCheck,
+) string {
+	if mergedEntry := findMergedEntry(merged, listenerSet, entry.Name); mergedEntry != nil && mergedEntry.ConflictReason != "" {
+		return listenerSetMsgConflicted
+	}
+
+	if check, ok := refChecks[entry.Name]; ok && check.Status == metav1.ConditionFalse {
+		return listenerSetMsgUnresolvedRefs
+	}
+
+	if !servableListenerProtocol(entry.Protocol) {
+		return listenerSetMsgUnsupportedProtocol
+	}
+
+	if routebinding.NamespaceSelectorInvalid(entry.AllowedRoutes) {
+		return listenerSetMsgInvalidSelector
+	}
+
+	return ""
 }
 
 // listenerSetTargetsGateway returns true when the ListenerSet's spec.parentRef

@@ -104,7 +104,7 @@ Per Gateway API spec the effective listener list is concatenated as follows:
 
 When two listeners share the same `(port, hostname)` tuple, the higher-precedence one wins; the lower-precedence one is marked `Conflicted: true` with reason `HostnameConflict` and `Accepted: false`. When two listeners share a port but disagree on `protocol`, the same precedence applies with reason `ProtocolConflict`. Gateway listeners always win conflicts against ListenerSets. Two of the Gateway's own listeners have no precedence between them, so both are marked `Conflicted: true` and neither serves.
 
-A ListenerSet with at least one conflict-free, fully-resolved (`ResolvedRefs: True`) listener still surfaces `Accepted: true` overall; only the individual conflicting or unresolved entries are rejected. A ListenerSet whose every listener conflicts, has unresolved refs, uses an unservable protocol or has an invalid `allowedRoutes.namespaces.selector` gets `Accepted: false / ListenersNotValid`.
+A ListenerSet with at least one conflict-free, fully-resolved (`ResolvedRefs: True`) listener still surfaces `Accepted: true` overall, with reason `ListenersNotValid` when another entry is unusable; only the individual conflicting or unresolved entries are rejected. A ListenerSet whose every listener conflicts, has unresolved refs, uses an unservable protocol or has an invalid `allowedRoutes.namespaces.selector` gets `Accepted: false / ListenersNotValid`.
 
 ## ReferenceGrant scoping
 
@@ -133,7 +133,7 @@ spec:
 | Type | Status | Reason | Description |
 | --- | --- | --- | --- |
 | `Accepted` | `True` | `Accepted` | Permitted by Gateway and at least one entry is valid |
-| `Accepted` | `True` | `ListenersNotValid` | At least one entry is valid, and another uses a protocol this controller does not serve or has an `allowedRoutes.namespaces.selector` that does not parse |
+| `Accepted` | `True` | `ListenersNotValid` | At least one entry is valid, and another is conflict-marked, has unresolved refs, uses a protocol this controller does not serve or has an `allowedRoutes.namespaces.selector` that does not parse |
 | `Accepted` | `False` | `NotAllowed` | Gateway's `spec.allowedListeners` rejects this ListenerSet. A `selector` that does not parse rejects every ListenerSet; the message says so without quoting the selector, the controller log names the parse error, and the parent Gateway gets an `InvalidAllowedListeners` Warning Event |
 | `Accepted` | `False` | `ListenersNotValid` | No entry is usable: each one is conflict-marked, has unresolved refs, uses a protocol this controller does not serve or has an `allowedRoutes.namespaces.selector` that does not parse |
 | `Programmed` | `True` | `Programmed` | Attached and programmed against the parent Gateway |
