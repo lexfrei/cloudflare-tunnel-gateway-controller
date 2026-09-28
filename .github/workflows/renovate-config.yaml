@@ -33,7 +33,7 @@ jobs:
         run: |
           set -euo pipefail
           # renovate: datasource=docker depName=ghcr.io/renovatebot/renovate
-          RENOVATE_IMAGE="ghcr.io/renovatebot/renovate:44.115.10@sha256:e262ed52b23dd8c545c80faf5b1ad5c95a07b3f198888de8d7b8928f45c307c7"
+          RENOVATE_IMAGE="ghcr.io/renovatebot/renovate:44.115.13@sha256:0c04185c9e7ea5284da22ea0b2a2c88dcd3687badd8feb6c71691659b380df9b"
           docker run --rm \
             --volume "${GITHUB_WORKSPACE}/renovate.json:/usr/src/app/renovate.json:ro" \
             --workdir /usr/src/app \
