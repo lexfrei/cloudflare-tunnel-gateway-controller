@@ -106,7 +106,7 @@ spec:
             {{- if .Values.proxy.allowXOriginalHost }}
             - "--proxy-allow-x-original-host=true"
             {{- end }}
-            {{- if .Values.hostnameOwnershipPolicy.enabled }}
+            {{- if (.Values.hostnameOwnershipPolicy | default dict).enabled }}
             # Controller-side hostname-ownership layer; the admission policy
             # (separate template) is the fail-fast layer of the same rule.
             - "--hostname-ownership-enforce=true"

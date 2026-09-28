@@ -1,4 +1,4 @@
-{{- if .Values.ruleNameUniquenessPolicy.enabled }}
+{{- if (.Values.ruleNameUniquenessPolicy | default dict).enabled }}
 # Enforces the Gateway API rule that HTTPRouteRule.name / GRPCRouteRule.name
 # MUST be unique within a Route. Upstream ships this check only in the
 # experimental-channel CRD CEL; the Standard channel omits it. This native
