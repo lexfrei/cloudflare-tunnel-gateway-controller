@@ -130,9 +130,9 @@ rules:
     resources: ["events"]
     verbs: ["create", "patch"]
 
-  # Deployments - the proxy Secret reconciler patches the proxy Deployment's
-  # pod-template annotation to roll pods when the tunnel-token Secret rotates,
-  # and the per-Gateway data planes render a dedicated proxy Deployment per
+  # Deployments - the proxy Secret reconciler records the tunnel-token
+  # revision on the proxy Deployment's metadata and patches its pod-template
+  # annotation to roll pods when that Secret rotates, and the per-Gateway data planes render a dedicated proxy Deployment per
   # opted-in Gateway (full write, cluster-wide, because Gateways live in
   # arbitrary namespaces)
   - apiGroups: ["apps"]
@@ -174,7 +174,7 @@ rules:
 ```
 
 !!! note "RBAC scope"
-    The controller reads Secrets and ConfigMaps and writes status subresources. Its workload writes are scoped to the data planes it owns: patching the shared proxy Deployment's pod-template annotation when the tunnel-token Secret rotates (a native rolling restart), and rendering a dedicated proxy Deployment, headless config Service, and optional HorizontalPodAutoscaler for each Gateway opted into a per-Gateway data plane via `infrastructure.parametersRef`. Those rendered objects are controller-owned via ownerReferences, kept in sync against drift, and deleted only when actually owned — a name collision with a user resource can never turn into a deletion. Workload write access is cluster-wide because Gateways live in arbitrary namespaces.
+    The controller reads Secrets and ConfigMaps and writes status subresources. Its workload writes are scoped to the data planes it owns. On the shared proxy Deployment it records the tunnel-token revision in an annotation, and patches its pod-template annotation when that Secret rotates (a native rolling restart). For each Gateway opted into a per-Gateway data plane via `infrastructure.parametersRef` it renders a dedicated proxy Deployment, headless config Service, and optional HorizontalPodAutoscaler. Those rendered objects are controller-owned via ownerReferences, kept in sync against drift, and deleted only when actually owned — a name collision with a user resource can never turn into a deletion. Workload write access is cluster-wide because Gateways live in arbitrary namespaces.
 
     Because the RBAC grant for these resources is broad (`delete` on Deployments, Services, and HorizontalPodAutoscalers cluster-wide), the **in-code ownership check is the security boundary, not the RBAC scope**. Every apply and create path for a *per-Gateway* rendered object — including that plane's generated config-API auth Secret — refuses to adopt, update, or GC an object at a rendered name unless it already carries this Gateway's controller ownerReference. A pre-existing object with a foreign owner (or none) is left untouched and the reconcile surfaces a `RenderFailed` event instead of overwriting it. The *shared* plane's generated auth Secret (below) has no Gateway to check ownership against, so it has no equivalent adoption check: it reuses whatever Secret already exists at its deterministic name unconditionally, by design. This is safe specifically because that Secret always lives in the controller's own release namespace — anyone able to create a Secret there could already replace the controller's Deployment, so an ownership check on this one Secret would not defend anything the namespace boundary doesn't already defend. The per-Gateway check above exists because that Secret lives in an arbitrary tenant namespace instead, where no such trust is implied. A per-Gateway config API certificate slot holding a Secret the Gateway does not own is skipped for the next slot rather than adopted. See [Config API Authentication](#config-api-authentication) and [Config API TLS](#config-api-tls).
 
@@ -262,7 +262,7 @@ The controller only needs egress to:
 | Kubernetes API | 443/6443 | Watch resources |
 | Cluster DNS | 53 | Resolve the proxies' headless Service |
 | Proxy config API | `proxy.configAPIPort` (8081) | Push the routing table to the data planes |
-| OTLP collector | collector's port (4317 for OTLP/gRPC) | Export traces, only when `tracing.enabled` |
+| OTLP collector | collector's port (4317 for OTLP/gRPC) | Export traces, only when `controller.tracing.enabled` |
 
 Writing that as a policy runs into one thing worth knowing before you narrow anything. A rule with ports and no `to` permits those ports to every destination, and rules are OR'd, so one unrestricted rule makes every narrower rule beside it inert. The obvious fix — replacing it with a catch-all `ipBlock` — is not equivalent: Cilium does not match in-cluster identities through CIDR peers unless the agent runs with `--policy-cidr-match-mode`, which Cilium ships disabled and still marks beta, so a `0.0.0.0/0` peer denies a host-network API server on the self-managed clusters where that is exactly how the API server is reached. Narrow with a destination you have checked against your own CNI, and remember that most of them evaluate egress after DNAT, so a Service ClusterIP never matches.
 
@@ -270,7 +270,7 @@ The chart's `networkPolicy.kubernetesApiIpBlocks` is where that narrowing goes; 
 
 The Cloudflare rule beside it is narrowed by `networkPolicy.cloudflareIpRanges`, which ships populated. Emptying both its address families is refused rather than rendered: the rule would lose its `to:` and become the unrestricted shape above, which is the opposite of what emptying an allowlist looks like it does. The refusal is armed by `networkPolicy.enabled` for the controller policy and by `proxy.networkPolicy.egressRestricted` for the proxy one, neither of which is on by default; turn off whichever of those two you have enabled to drop the restriction.
 
-The chart's policy carries no rule for the collector, so turning tracing on under it drops the exporter's traffic. Add the rule yourself.
+With `controller.tracing.enabled` on and a `controller.tracing.endpoint` that names an in-cluster Service with an explicit port (`<service>`, `<service>.<namespace>`, or `<service>.<namespace>.svc` with or without the cluster domain), the chart's policy admits that Service's namespace on the endpoint's port. A NetworkPolicy matches the port the collector pod listens on, so a collector Service whose `port` and `targetPort` differ stays blocked. Any other endpoint gets no rule. A loopback endpoint needs none, and neither does an empty one: the chart sets no OTLP environment variable, so the exporter falls back to `localhost:4317`. A collector outside the cluster, an IP address, or an endpoint without a port is reached through the Kubernetes API rule while it listens on 443 and that rule is not narrowed; otherwise add a NetworkPolicy of your own that admits it, since policies selecting the same pod are additive.
 
 #### NetworkPolicy Example
 
