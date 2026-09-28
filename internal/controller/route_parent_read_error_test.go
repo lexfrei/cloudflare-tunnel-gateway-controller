@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -170,4 +171,90 @@ func unreadableParentSyncer(
 	return NewRouteSyncer(fakeClient, scheme, "cluster.local", "cloudflare-tunnel",
 		config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector(), verifiedClaims()),
 		cfmetrics.NewNoopCollector(), nil)
+}
+
+// TestSyncAllRoutes_UnevaluatedParentRequeues pins that a sync which recorded a
+// parent as Pending because it could not be evaluated is retried, so the parent
+// is re-evaluated once the read recovers. Here the parent's GatewayClass cannot
+// be read. The retry must not depend on whether a sibling parent exists or
+// already covers the route's hostnames: nothing else brings the sync back on a
+// quiet cluster.
+func TestSyncAllRoutes_UnevaluatedParentRequeues(t *testing.T) {
+	t.Parallel()
+
+	const classTunnel = "99999999-9999-4999-8999-999999999999"
+
+	tests := []struct {
+		name       string
+		parentRefs []gatewayv1.ParentReference
+		pendingRef int
+	}{
+		{
+			name:       "a sibling parent covers the declared hostname",
+			parentRefs: []gatewayv1.ParentReference{{Name: "shared-gw"}, {Name: "unreadable-class-gw"}},
+			pendingRef: 1,
+		},
+		{
+			name:       "the unevaluated parent is the only one",
+			parentRefs: []gatewayv1.ParentReference{{Name: "unreadable-class-gw"}},
+			pendingRef: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			route := partitionSyncRoute("probe", "shared-gw", "probe.example.com")
+			route.Spec.ParentRefs = tt.parentRefs
+
+			objects := append(partitionSyncObjects(t, classTunnel, false),
+				&gatewayv1.GatewayClass{
+					ObjectMeta: metav1.ObjectMeta{Name: "unreadable-class"},
+					Spec: gatewayv1.GatewayClassSpec{
+						ControllerName: skipTestControllerName,
+						ParametersRef: &gatewayv1.ParametersReference{
+							Group: config.ParametersRefGroup, Kind: config.ParametersRefKind, Name: "cfg",
+						},
+					},
+				},
+				&gatewayv1.Gateway{
+					ObjectMeta: metav1.ObjectMeta{Name: "unreadable-class-gw", Namespace: "default"},
+					Spec:       gatewayv1.GatewaySpec{GatewayClassName: "unreadable-class", Listeners: httpListener()},
+				},
+				route,
+			)
+
+			var recovered atomic.Bool
+
+			syncer := partitionSyncSyncerFor(t, newRecordingTunnelAPI(t), objects, interceptor.Funcs{
+				Get: func(ctx context.Context, cli client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+					if _, ok := obj.(*gatewayv1.GatewayClass); ok && key.Name == "unreadable-class" && !recovered.Load() {
+						return errSimulatedCacheMiss
+					}
+
+					return cli.Get(ctx, key, obj, opts...)
+				},
+			})
+
+			result, syncResult, err := syncer.SyncAllRoutes(context.Background())
+			require.NoError(t, err)
+			require.NotNil(t, syncResult)
+
+			bindingResult, recorded := syncResult.HTTPRouteBindings["default/probe"].bindingResults[tt.pendingRef]
+			require.True(t, recorded)
+			assert.Equal(t, gatewayv1.RouteReasonPending, bindingResult.Reason)
+
+			assert.Equal(t, apiErrorRequeueDelay, result.RequeueAfter, "a Pending parent must be retried")
+
+			recovered.Store(true)
+
+			result, syncResult, err = syncer.SyncAllRoutes(context.Background())
+			require.NoError(t, err)
+
+			assert.True(t, syncResult.HTTPRouteBindings["default/probe"].bindingResults[tt.pendingRef].Accepted,
+				"the retried sync binds the parent once its read recovers")
+			assert.Zero(t, result.RequeueAfter)
+		})
+	}
 }
