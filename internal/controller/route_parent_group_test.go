@@ -2,16 +2,23 @@ package controller
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/routebinding"
 )
+
+// foreignParentGroups are parentRef groups that name something other than a
+// Gateway API resource. An explicit "" is the core group (ParentReference.Group
+// defaults to gateway.networking.k8s.io only when omitted), so it is foreign too.
+var foreignParentGroups = []gatewayv1.Group{"example.com", ""}
 
 // TestSyncAllRoutes_ForeignGroupParentBindsNothing pins that a parentRef
 // naming a Gateway of another API group does not select the Gateway API
@@ -22,7 +29,17 @@ import (
 func TestSyncAllRoutes_ForeignGroupParentBindsNothing(t *testing.T) {
 	t.Parallel()
 
-	foreignGroup := gatewayv1.Group("example.com")
+	for _, group := range foreignParentGroups {
+		t.Run(fmt.Sprintf("group %q", group), func(t *testing.T) {
+			t.Parallel()
+			assertForeignGroupParentBindsNothing(t, group)
+		})
+	}
+}
+
+func assertForeignGroupParentBindsNothing(t *testing.T, foreignGroup gatewayv1.Group) {
+	t.Helper()
+
 	gatewayKind := gatewayv1.Kind(kindGateway)
 	foreignRef := gatewayv1.ParentReference{Group: &foreignGroup, Kind: &gatewayKind, Name: "shared-gw"}
 
@@ -37,8 +54,10 @@ func TestSyncAllRoutes_ForeignGroupParentBindsNothing(t *testing.T) {
 		},
 	}
 
+	boundRoute := partitionSyncRoute("bound-http", "shared-gw", "bound-http.example.com")
+
 	objects := append(partitionSyncObjects(t, "99999999-9999-4999-8999-999999999999", false),
-		runtime.Object(httpRoute), runtime.Object(grpcRoute))
+		runtime.Object(httpRoute), runtime.Object(grpcRoute), runtime.Object(boundRoute))
 
 	syncer := partitionSyncSyncerFor(t, newRecordingTunnelAPI(t), objects)
 
@@ -58,6 +77,7 @@ func TestSyncAllRoutes_ForeignGroupParentBindsNothing(t *testing.T) {
 
 	assert.Empty(t, result.HTTPRouteBindings["default/foreign-http"].bindingResults, "a foreign-group ref binds nothing")
 	assert.Empty(t, result.GRPCRouteBindings["default/foreign-grpc"].bindingResults, "a foreign-group ref binds nothing")
+	assert.NotEmpty(t, result.HTTPRouteBindings["default/bound-http"].bindingResults, "an omitted group still binds")
 
 	accepted := IsRouteAcceptedByGateway(context.Background(), syncer.Client, routebinding.NewValidator(syncer.Client),
 		skipTestControllerName, HTTPRouteWrapper{httpRoute}, nil)
@@ -71,7 +91,17 @@ func TestSyncAllRoutes_ForeignGroupParentBindsNothing(t *testing.T) {
 func TestGatewayAttachedRoutes_ForeignGroupParentNotCounted(t *testing.T) {
 	t.Parallel()
 
-	foreignGroup := gatewayv1.Group("example.com")
+	for _, group := range foreignParentGroups {
+		t.Run(fmt.Sprintf("group %q", group), func(t *testing.T) {
+			t.Parallel()
+			assertForeignGroupParentNotCounted(t, group)
+		})
+	}
+}
+
+func assertForeignGroupParentNotCounted(t *testing.T, foreignGroup gatewayv1.Group) {
+	t.Helper()
+
 	gatewayKind := gatewayv1.Kind(kindGateway)
 
 	fromAll := gatewayv1.NamespacesFromAll
@@ -112,15 +142,34 @@ func TestGatewayAttachedRoutes_ForeignGroupParentNotCounted(t *testing.T) {
 func TestRouteToGateways_ForeignGroupParentEnqueuesNothing(t *testing.T) {
 	t.Parallel()
 
-	foreignGroup := gatewayv1.Group("example.com")
 	gatewayKind := gatewayv1.Kind(kindGateway)
+	tests := []struct {
+		name    string
+		group   *gatewayv1.Group
+		enqueue bool
+	}{
+		{name: "foreign group", group: new(gatewayv1.Group("example.com"))},
+		{name: "explicit empty group", group: new(gatewayv1.Group(""))},
+		{name: "omitted group", enqueue: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			requests := routeToGatewaysFor(t, gatewayv1.ParentReference{Group: tt.group, Kind: &gatewayKind, Name: "gw"})
+			assert.Equal(t, tt.enqueue, len(requests) > 0)
+		})
+	}
+}
+
+func routeToGatewaysFor(t *testing.T, ref gatewayv1.ParentReference) []reconcile.Request {
+	t.Helper()
 
 	route := &gatewayv1.HTTPRoute{
-		ObjectMeta: metav1.ObjectMeta{Name: "foreign", Namespace: "default"},
+		ObjectMeta: metav1.ObjectMeta{Name: "route", Namespace: "default"},
 		Spec: gatewayv1.HTTPRouteSpec{
-			CommonRouteSpec: gatewayv1.CommonRouteSpec{ParentRefs: []gatewayv1.ParentReference{
-				{Group: &foreignGroup, Kind: &gatewayKind, Name: "gw"},
-			}},
+			CommonRouteSpec: gatewayv1.CommonRouteSpec{ParentRefs: []gatewayv1.ParentReference{ref}},
 		},
 	}
 
@@ -138,5 +187,5 @@ func TestRouteToGateways_ForeignGroupParentEnqueuesNothing(t *testing.T) {
 
 	reconciler := &GatewayReconciler{Client: cli, ControllerName: "test-controller"}
 
-	assert.Empty(t, reconciler.routeToGateways(context.Background(), route))
+	return reconciler.routeToGateways(context.Background(), route)
 }

@@ -321,3 +321,49 @@ func TestIncrementListenerSetAttachedRoutes_DeduplicatesDuplicateParentRefs(t *t
 
 	assert.Equal(t, int32(1), counts["entry"], "duplicate parentRefs to the same ListenerSet must count the route once")
 }
+
+// TestListenerSetParentRefGroup pins every ListenerSet-side parentRef reader
+// to the binding rule: an omitted group or gateway.networking.k8s.io names a
+// ListenerSet, while an explicit "" (the core group) or any other group names
+// some other resource.
+func TestListenerSetParentRefGroup(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		group *gatewayv1.Group
+		ours  bool
+	}{
+		{name: "omitted group", ours: true},
+		{name: "gateway api group", group: new(gatewayv1.Group(gatewayv1.GroupName)), ours: true},
+		{name: "explicit empty group", group: new(gatewayv1.Group(""))},
+		{name: "foreign group", group: new(gatewayv1.Group("other.example.com"))},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			kind := gatewayv1.Kind(kindListenerSet)
+			ns := gatewayv1.Namespace("infra")
+			ref := gatewayv1.ParentReference{Group: tt.group, Kind: &kind, Name: "ls", Namespace: &ns}
+			ls := &gatewayv1.ListenerSet{ObjectMeta: metav1.ObjectMeta{Name: "ls", Namespace: "infra"}}
+			route := &gatewayv1.HTTPRoute{
+				ObjectMeta: metav1.ObjectMeta{Name: "r", Namespace: "team-a"},
+				Spec: gatewayv1.HTTPRouteSpec{
+					CommonRouteSpec: gatewayv1.CommonRouteSpec{ParentRefs: []gatewayv1.ParentReference{ref}},
+				},
+			}
+
+			scheme := runtime.NewScheme()
+			require.NoError(t, gatewayv1.Install(scheme))
+
+			reconciler := &ListenerSetReconciler{Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(ls).Build()}
+
+			assert.Equal(t, tt.ours, parentRefSelectsListenerSet(ref, "team-a", ls), "attachedRoutes counting")
+			assert.Equal(t, tt.ours, routeTargetsListenerSet(HTTPRouteWrapper{route}, ls), "ListenerSet to route mapper")
+			assert.Equal(t, tt.ours, len(reconciler.routeToListenerSets(context.Background(), route)) > 0,
+				"route to ListenerSet mapper")
+		})
+	}
+}
