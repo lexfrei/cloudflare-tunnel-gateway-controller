@@ -624,7 +624,8 @@ func TestRenderedNames_NoSameKindCollisionAcrossGateways(t *testing.T) {
 
 	for _, gatewayName := range gatewayNames {
 		gateway := testInput(gatewayName).Gateway
-		names := []string{render.GeneratedAuthSecretName(gateway)}
+		names := make([]string, 0, 13)
+		names = append(names, render.GeneratedAuthSecretName(gateway))
 
 		for index := range 12 {
 			names = append(names, render.ConfigTLSSecretName(gateway, index))

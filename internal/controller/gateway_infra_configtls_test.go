@@ -371,12 +371,16 @@ func TestGatewayInfraReconciler_ConfigTLSWithoutADeploymentStartsAtTheHighestOwn
 	requireLeafValid(t, reconciler.Client, authority, edgeLeafKey(next), time.Now())
 }
 
-// TestGatewayInfraReconciler_ConfigTLSIgnoresTheSlotOfANonOwnedDeployment pins
-// that only a Deployment the Gateway controls sets where the walk starts.
-func TestGatewayInfraReconciler_ConfigTLSIgnoresTheSlotOfANonOwnedDeployment(t *testing.T) {
+// TestGatewayInfraReconciler_ConfigTLSIgnoresSlotsItDoesNotOwn pins that only
+// a Deployment or Secret the Gateway controls sets where the walk starts.
+func TestGatewayInfraReconciler_ConfigTLSIgnoresSlotsItDoesNotOwn(t *testing.T) {
 	t.Parallel()
 
 	reconciler, _ := newTLSInfraReconciler(t)
+
+	require.NoError(t, reconciler.Create(context.Background(), &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: edgeLeafKey("9").Name, Namespace: infraNamespace},
+	}))
 
 	require.NoError(t, reconciler.Create(context.Background(), &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{Name: "cf-proxy-edge", Namespace: infraNamespace},

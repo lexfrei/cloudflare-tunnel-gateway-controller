@@ -118,7 +118,10 @@ func TestConfigTLSSecretSlot_ReadsTheIndexFromTheName(t *testing.T) {
 
 	for _, gateway := range []*gatewayv1.Gateway{short, long} {
 		for _, index := range []int{0, 7, 10, render.MaxConfigTLSSlot - 1} {
-			got, ok := render.ConfigTLSSecretSlot(gateway, render.ConfigTLSSecretName(gateway, index))
+			name := render.ConfigTLSSecretName(gateway, index)
+			assert.LessOrEqual(t, len(name), render.MaxDNSLabelLength)
+
+			got, ok := render.ConfigTLSSecretSlot(gateway, name)
 			require.True(t, ok, "slot %d of %q must be recognised", index, gateway.Name)
 			assert.Equal(t, index, got)
 		}
