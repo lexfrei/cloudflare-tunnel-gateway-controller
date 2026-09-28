@@ -356,14 +356,13 @@ func (r *GatewayReconciler) reportQuotaRefusal(
 }
 
 // dataPlaneQuotaError builds the error a capacity refusal is reported through.
-// Marked rather than wrapped, and marked with both sentinels, for the reasons
+// Marked and classified rather than wrapped, for the reasons
 // tunnelRefusalError explains.
 //
-//nolint:wrapcheck // marking rather than wrapping is the point, per above
+//nolint:wrapcheck // classifying rather than wrapping is the point, per above
 func dataPlaneQuotaError(capacity int32) error {
-	return errors.Mark(
+	return config.MarkInvalidParameters(
 		errors.Mark(errors.New(dataPlaneQuotaMessage(capacity)), errDataPlaneQuotaExceeded),
-		config.ErrInvalidParameters,
 	)
 }
 
@@ -509,17 +508,18 @@ func (r *GatewayReconciler) reportTunnelRejection(
 // internal chain after the actionable sentence, crowding out the part they can
 // act on. Marking leaves the message untouched.
 //
-// Marked with BOTH sentinels because Mark does not carry the reference's own
+// Classified as config.ErrInvalidParameters as well as marked with
+// errTunnelClaimRefused, because Mark does not carry the reference's own
 // unwrap chain: marking only errTunnelClaimRefused would leave
 // errors.Is(err, config.ErrInvalidParameters) false, and a refusal routed
 // through handleResolveError would then take its transient branch and requeue
-// forever without ever writing a condition.
+// forever without ever writing a condition. MarkInvalidParameters keeps the
+// message as it is and is visible to the standard library's errors.Is too.
 //
-//nolint:wrapcheck // marking rather than wrapping is the point, per above
+//nolint:wrapcheck // classifying rather than wrapping is the point, per above
 func tunnelRefusalError(rejection tunnelownership.Rejection) error {
-	return errors.Mark(
+	return config.MarkInvalidParameters(
 		errors.Mark(errors.New(tunnelRejectionMessage(rejection)), errTunnelClaimRefused),
-		config.ErrInvalidParameters,
 	)
 }
 
