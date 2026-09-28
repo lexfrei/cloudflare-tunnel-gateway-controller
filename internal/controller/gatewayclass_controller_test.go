@@ -18,6 +18,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 	"sigs.k8s.io/gateway-api/pkg/consts"
+
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/config"
 )
 
 // errTransientRead is a non-NotFound read error used to exercise the transient
@@ -265,6 +267,54 @@ func TestGatewayClassReconciler_SetAcceptedConditions(t *testing.T) {
 	require.NotNil(t, supportedVersion)
 	assert.Equal(t, metav1.ConditionTrue, supportedVersion.Status)
 	assert.Equal(t, int64(5), supportedVersion.ObservedGeneration)
+}
+
+// GatewayClassConfig is cluster-scoped, and Gateway API requires the
+// parametersRef namespace to be unset for a cluster-scoped referent.
+func TestGatewayClassReconciler_SetAcceptedConditions_ParametersRefNamespaceRejected(t *testing.T) {
+	t.Parallel()
+
+	scheme := gatewayClassSchemeWithCRD(t)
+	reader := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(gatewayClassCRDObject(consts.BundleVersion)).
+		Build()
+
+	r := &GatewayClassReconciler{
+		ControllerName:      "test-controller",
+		BundleVersionReader: reader,
+	}
+
+	gatewayClass := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       "test-class",
+			Generation: 5,
+		},
+		Spec: gatewayv1.GatewayClassSpec{
+			ControllerName: "test-controller",
+			ParametersRef: &gatewayv1.ParametersReference{
+				Group:     gatewayv1.Group(config.ParametersRefGroup),
+				Kind:      gatewayv1.Kind(config.ParametersRefKind),
+				Name:      "test-config",
+				Namespace: new(gatewayv1.Namespace("default")),
+			},
+		},
+	}
+
+	require.NoError(t, r.setAcceptedConditions(context.Background(), gatewayClass))
+
+	accepted := findGatewayClassCondition(
+		gatewayClass.Status.Conditions, string(gatewayv1.GatewayClassConditionStatusAccepted))
+	require.NotNil(t, accepted)
+	assert.Equal(t, metav1.ConditionFalse, accepted.Status)
+	assert.Equal(t, string(gatewayv1.GatewayClassReasonInvalidParameters), accepted.Reason)
+	assert.Equal(t, int64(5), accepted.ObservedGeneration)
+	assert.Contains(t, accepted.Message, "namespace")
+
+	supportedVersion := findGatewayClassCondition(
+		gatewayClass.Status.Conditions, string(gatewayv1.GatewayClassConditionStatusSupportedVersion))
+	require.NotNil(t, supportedVersion)
+	assert.Equal(t, metav1.ConditionTrue, supportedVersion.Status)
 }
 
 // runSupportedVersionCheck builds a reconciler whose BundleVersionReader serves
