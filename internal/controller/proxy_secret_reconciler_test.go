@@ -564,4 +564,8 @@ func TestProxySecretReconciler_PredicateSkipsGatewayOwnedDeployment(t *testing.T
 
 	assert.False(t, r.matchesUnrecordedProxyDeployment().Create(event.CreateEvent{Object: dep}),
 		"a Gateway-owned Deployment must not enqueue the shared token Secret")
+
+	dep.OwnerReferences[0].APIVersion = "example.com/v1"
+	assert.True(t, r.matchesUnrecordedProxyDeployment().Create(event.CreateEvent{Object: dep}),
+		"a Deployment owned by a Gateway kind of another API group is not a per-Gateway plane")
 }
