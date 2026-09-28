@@ -307,7 +307,7 @@ func (r *ListenerSetReconciler) computeAcceptance(
 
 	accepted, summaryReason, summaryMessage := summariseListenerSet(merged, listenerSet, refChecks)
 
-	attached, attachErr := r.countAttachedRoutesPerEntry(ctx, listenerSet)
+	attached, attachErr := r.countAttachedRoutesPerEntry(ctx, listenerSet, view)
 	if attachErr != nil {
 		return listenerSetAcceptanceResult{
 			Accepted: false,
@@ -334,18 +334,16 @@ func (r *ListenerSetReconciler) computeAcceptance(
 // Per the Gateway API spec (ListenerEntryStatus.AttachedRoutes), attachment
 // depends SOLELY on AllowedRoutes + ParentRefs plus the route's own Accepted
 // state: "the AttachedRoutes field count MUST be set for Listeners, even if the
-// Accepted condition of an individual Listener is set to False". Only the route's
-// binding-Accepted verdict gates the count; a listener's own status — whether
-// Conflicted, or Programmed=False because a TLS cert ref did not resolve — never
-// changes it. The count is observational (blast radius) and intentionally
-// decoupled from programming: a route on a Conflicted entry is counted here even
-// though the data plane drops it (see filterMatchedListenersByConflict in
-// route_parent_binding.go and dropConflictedSections in
-// route_effective_hostnames.go). Do not re-add a listener-status gate to "fix"
-// that apparent mismatch — the divergence is spec-mandated.
+// Accepted condition of an individual Listener is set to False", and "Routes
+// with any other value for the Accepted condition MUST NOT be included". A
+// listener's own status never removes a route it matched from the count, but
+// a route whose every match is conflicted is rejected by binding
+// (filterMatchedListenersByConflict in route_parent_binding.go), so it is not
+// Accepted and is not counted anywhere.
 func (r *ListenerSetReconciler) countAttachedRoutesPerEntry(
 	ctx context.Context,
 	listenerSet *gatewayv1.ListenerSet,
+	view *gatewayListenerView,
 ) (map[gatewayv1.SectionName]int32, error) {
 	out := make(map[gatewayv1.SectionName]int32, len(listenerSet.Spec.Listeners))
 	for i := range listenerSet.Spec.Listeners {
@@ -354,11 +352,11 @@ func (r *ListenerSetReconciler) countAttachedRoutesPerEntry(
 
 	validator := routebinding.NewValidator(r.Client)
 
-	if err := r.countAttachedHTTPRoutes(ctx, listenerSet, validator, out); err != nil {
+	if err := r.countAttachedHTTPRoutes(ctx, listenerSet, view, validator, out); err != nil {
 		return nil, err
 	}
 
-	if err := r.countAttachedGRPCRoutes(ctx, listenerSet, validator, out); err != nil {
+	if err := r.countAttachedGRPCRoutes(ctx, listenerSet, view, validator, out); err != nil {
 		return nil, err
 	}
 
@@ -369,6 +367,7 @@ func (r *ListenerSetReconciler) countAttachedRoutesPerEntry(
 func (r *ListenerSetReconciler) countAttachedHTTPRoutes(
 	ctx context.Context,
 	listenerSet *gatewayv1.ListenerSet,
+	view *gatewayListenerView,
 	validator *routebinding.Validator,
 	counts map[gatewayv1.SectionName]int32,
 ) error {
@@ -380,7 +379,7 @@ func (r *ListenerSetReconciler) countAttachedHTTPRoutes(
 	for i := range routes.Items {
 		route := &routes.Items[i]
 		incrementListenerSetAttachedRoutes(
-			ctx, validator, listenerSet,
+			ctx, validator, view, listenerSet,
 			route.Namespace, route.Name, route.Spec.Hostnames,
 			routebinding.KindHTTPRoute, route.Spec.ParentRefs, counts,
 		)
@@ -393,6 +392,7 @@ func (r *ListenerSetReconciler) countAttachedHTTPRoutes(
 func (r *ListenerSetReconciler) countAttachedGRPCRoutes(
 	ctx context.Context,
 	listenerSet *gatewayv1.ListenerSet,
+	view *gatewayListenerView,
 	validator *routebinding.Validator,
 	counts map[gatewayv1.SectionName]int32,
 ) error {
@@ -404,7 +404,7 @@ func (r *ListenerSetReconciler) countAttachedGRPCRoutes(
 	for i := range routes.Items {
 		route := &routes.Items[i]
 		incrementListenerSetAttachedRoutes(
-			ctx, validator, listenerSet,
+			ctx, validator, view, listenerSet,
 			route.Namespace, route.Name, route.Spec.Hostnames,
 			routebinding.KindGRPCRoute, route.Spec.ParentRefs, counts,
 		)
@@ -416,6 +416,7 @@ func (r *ListenerSetReconciler) countAttachedGRPCRoutes(
 func incrementListenerSetAttachedRoutes(
 	ctx context.Context,
 	validator *routebinding.Validator,
+	view *gatewayListenerView,
 	listenerSet *gatewayv1.ListenerSet,
 	routeNamespace, routeName string,
 	hostnames []gatewayv1.Hostname,
@@ -442,13 +443,17 @@ func incrementListenerSetAttachedRoutes(
 			Port:        ref.Port,
 		}
 
-		// Count is gated only by the route's binding-Accepted verdict — the
-		// Gateway API "Routes with the Accepted condition set to True" rule. A
-		// listener's own status (Conflicted, or Programmed=False from an
-		// unresolved TLS cert ref) is never consulted; the spec requires the
-		// count to be set even when the listener is not Accepted.
+		// Gated by the route's binding verdict, the Gateway API "Routes with
+		// the Accepted condition set to True" rule, which includes the
+		// conflict filter binding applies.
 		result, err := validator.ValidateBindingForListenerSet(ctx, listenerSet, routeInfo)
 		if err != nil || !result.Accepted {
+			continue
+		}
+
+		if !slices.ContainsFunc(result.MatchedListeners, func(section gatewayv1.SectionName) bool {
+			return view.conflictReason(listenerSet, section) == ""
+		}) {
 			continue
 		}
 

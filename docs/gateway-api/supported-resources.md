@@ -226,6 +226,8 @@ True weighted traffic splitting across multiple backends is performed by the in-
 | `ResolvedRefs` | `False` | `RefNotPermitted` | Cross-namespace TLS ref denied by ReferenceGrant |
 | `ResolvedRefs` | `False` | `InvalidRouteKinds` | Invalid route kind in allowedRoutes |
 
+A listener's `attachedRoutes` counts each Route attached to it that is `Accepted` for the Gateway, once per listener, conflicted listeners included. A Route whose only matching listeners are conflicted is rejected, so it counts nowhere.
+
 ### HTTPRoute/GRPCRoute Conditions
 
 | Type | Status | Reason | Description |

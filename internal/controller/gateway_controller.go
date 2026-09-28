@@ -5,6 +5,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"math"
+	"slices"
 	"strings"
 	"time"
 
@@ -1131,7 +1132,6 @@ func overrideListenerProgrammedForConfigError(
 	}
 }
 
-//nolint:gocognit,gocyclo,cyclop,dupl,funlen // complexity due to counting two route types
 func (r *GatewayReconciler) countAttachedRoutes(
 	ctx context.Context,
 	gateway *gatewayv1.Gateway,
@@ -1145,81 +1145,80 @@ func (r *GatewayReconciler) countAttachedRoutes(
 
 	validator := routebinding.NewValidator(r.Client)
 
-	// Count HTTPRoutes with binding validation
-	var httpRouteList gatewayv1.HTTPRouteList
+	// A view that cannot be built counts as conflict-free, as it does for
+	// binding.
+	view, _ := newListenerViewCache(r.Client, r.ViewStore).forGateway(ctx, gateway)
 
-	err := r.List(ctx, &httpRouteList)
-	if err != nil {
+	var httpRouteList gatewayv1.HTTPRouteList
+	if err := r.List(ctx, &httpRouteList); err != nil {
 		logger.Error("failed to list HTTPRoutes for attached routes count", "error", err)
 	} else {
 		for i := range httpRouteList.Items {
 			route := &httpRouteList.Items[i]
-
-			for _, ref := range route.Spec.ParentRefs {
-				if !r.refMatchesGateway(ref, gateway, route.Namespace) {
-					continue
-				}
-
-				routeInfo := &routebinding.RouteInfo{
-					Name:        route.Name,
-					Namespace:   route.Namespace,
-					Hostnames:   route.Spec.Hostnames,
-					Kind:        routebinding.KindHTTPRoute,
-					SectionName: ref.SectionName,
-					Port:        ref.Port,
-				}
-
-				bindingResult, bindErr := validator.ValidateBinding(ctx, gateway, routeInfo)
-				if bindErr != nil || !bindingResult.Accepted {
-					continue
-				}
-
-				// Count this route for each matched listener
-				for _, listenerName := range bindingResult.MatchedListeners {
-					result[listenerName]++
-				}
-			}
+			r.countRouteOnGateway(ctx, validator, view, gateway, HTTPRouteWrapper{route}, result)
 		}
 	}
 
-	// Count GRPCRoutes with binding validation
 	var grpcRouteList gatewayv1.GRPCRouteList
-
-	err = r.List(ctx, &grpcRouteList)
-	if err != nil {
+	if err := r.List(ctx, &grpcRouteList); err != nil {
 		logger.Error("failed to list GRPCRoutes for attached routes count", "error", err)
 	} else {
 		for i := range grpcRouteList.Items {
 			route := &grpcRouteList.Items[i]
-
-			for _, ref := range route.Spec.ParentRefs {
-				if !r.refMatchesGateway(ref, gateway, route.Namespace) {
-					continue
-				}
-
-				routeInfo := &routebinding.RouteInfo{
-					Name:        route.Name,
-					Namespace:   route.Namespace,
-					Hostnames:   route.Spec.Hostnames,
-					Kind:        routebinding.KindGRPCRoute,
-					SectionName: ref.SectionName,
-					Port:        ref.Port,
-				}
-
-				bindingResult, bindErr := validator.ValidateBinding(ctx, gateway, routeInfo)
-				if bindErr != nil || !bindingResult.Accepted {
-					continue
-				}
-
-				// Count this route for each matched listener
-				for _, listenerName := range bindingResult.MatchedListeners {
-					result[listenerName]++
-				}
-			}
+			r.countRouteOnGateway(ctx, validator, view, gateway, GRPCRouteWrapper{route}, result)
 		}
 	}
 
 	return result
+}
+
+// countRouteOnGateway adds one route to the Gateway's per-listener
+// attachedRoutes. Per the vendored AttachedRoutes doc, attachment follows
+// allowedRoutes and parentRefs whatever the listener's own status, but only a
+// route Accepted for the Gateway counts: a parentRef whose every match is a
+// conflicted listener is rejected by binding, so it adds nothing, while one
+// that survives the conflict filter adds every listener it matched. A route
+// counts at most once per listener however many of its parentRefs match it.
+func (r *GatewayReconciler) countRouteOnGateway(
+	ctx context.Context,
+	validator *routebinding.Validator,
+	view *gatewayListenerView,
+	gateway *gatewayv1.Gateway,
+	route Route,
+	result map[gatewayv1.SectionName]int32,
+) {
+	counted := make(map[gatewayv1.SectionName]bool)
+
+	for _, ref := range route.GetParentRefs() {
+		if !r.refMatchesGateway(ref, gateway, route.GetNamespace()) {
+			continue
+		}
+
+		bindingResult, bindErr := validator.ValidateBinding(ctx, gateway, &routebinding.RouteInfo{
+			Name:        route.GetName(),
+			Namespace:   route.GetNamespace(),
+			Hostnames:   route.GetHostnames(),
+			Kind:        route.GetRouteKind(),
+			SectionName: ref.SectionName,
+			Port:        ref.Port,
+		})
+		if bindErr != nil || !bindingResult.Accepted {
+			continue
+		}
+
+		if !slices.ContainsFunc(bindingResult.MatchedListeners, func(name gatewayv1.SectionName) bool {
+			return gatewayListenerConflictReason(view, name) == ""
+		}) {
+			continue
+		}
+
+		for _, listenerName := range bindingResult.MatchedListeners {
+			if !counted[listenerName] {
+				counted[listenerName] = true
+				result[listenerName]++
+			}
+		}
+	}
 }
 
 // refMatchesGateway reports whether a route parentRef names this Gateway
