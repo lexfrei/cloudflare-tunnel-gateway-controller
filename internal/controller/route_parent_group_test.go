@@ -105,3 +105,38 @@ func TestGatewayAttachedRoutes_ForeignGroupParentNotCounted(t *testing.T) {
 	assert.Equal(t, map[gatewayv1.SectionName]int32{"http": 1}, reconciler.countAttachedRoutes(context.Background(), gateway),
 		"only the route that binds is attached")
 }
+
+// TestRouteToGateways_ForeignGroupParentEnqueuesNothing pins the route mapper
+// to the same group rule as binding: a parentRef of another API group names
+// another resource, so it enqueues no Gateway.
+func TestRouteToGateways_ForeignGroupParentEnqueuesNothing(t *testing.T) {
+	t.Parallel()
+
+	foreignGroup := gatewayv1.Group("example.com")
+	gatewayKind := gatewayv1.Kind(kindGateway)
+
+	route := &gatewayv1.HTTPRoute{
+		ObjectMeta: metav1.ObjectMeta{Name: "foreign", Namespace: "default"},
+		Spec: gatewayv1.HTTPRouteSpec{
+			CommonRouteSpec: gatewayv1.CommonRouteSpec{ParentRefs: []gatewayv1.ParentReference{
+				{Group: &foreignGroup, Kind: &gatewayKind, Name: "gw"},
+			}},
+		},
+	}
+
+	cli := setupGatewayFakeClient(
+		&gatewayv1.GatewayClass{
+			ObjectMeta: metav1.ObjectMeta{Name: "cloudflare-tunnel"},
+			Spec:       gatewayv1.GatewayClassSpec{ControllerName: "test-controller"},
+		},
+		&gatewayv1.Gateway{
+			ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "default"},
+			Spec:       gatewayv1.GatewaySpec{GatewayClassName: "cloudflare-tunnel", Listeners: httpListener()},
+		},
+		route,
+	)
+
+	reconciler := &GatewayReconciler{Client: cli, ControllerName: "test-controller"}
+
+	assert.Empty(t, reconciler.routeToGateways(context.Background(), route))
+}

@@ -185,15 +185,18 @@ func TestGatewayEvents_InvalidAllowedListenersSelector(t *testing.T) {
 	t.Parallel()
 
 	fromSelector := gatewayv1.NamespacesFromSelector
+	fromAll := gatewayv1.NamespacesFromAll
 	listeners := []gatewayv1.Listener{{Name: "http", Port: 80, Protocol: gatewayv1.HTTPProtocolType}}
 
 	for _, tt := range []struct {
 		name     string
+		from     gatewayv1.FromNamespaces
 		selector *metav1.LabelSelector
 		want     int
 	}{
-		{name: "selector does not parse", selector: bogusNamespaceSelector(), want: 1},
-		{name: "selector parses", selector: &metav1.LabelSelector{MatchLabels: map[string]string{"team": "a"}}, want: 0},
+		{name: "selector does not parse", from: fromSelector, selector: bogusNamespaceSelector(), want: 1},
+		{name: "selector parses", from: fromSelector, selector: &metav1.LabelSelector{MatchLabels: map[string]string{"team": "a"}}, want: 0},
+		{name: "unparseable selector beside From All is not read", from: fromAll, selector: bogusNamespaceSelector(), want: 0},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
@@ -203,7 +206,7 @@ func TestGatewayEvents_InvalidAllowedListenersSelector(t *testing.T) {
 			reconcileSelectorGatewayWith(t, gatewayv1.GatewaySpec{
 				Listeners: listeners,
 				AllowedListeners: &gatewayv1.AllowedListeners{
-					Namespaces: &gatewayv1.ListenerNamespaces{From: &fromSelector, Selector: tt.selector},
+					Namespaces: &gatewayv1.ListenerNamespaces{From: &tt.from, Selector: tt.selector},
 				},
 			}, recorder)
 
