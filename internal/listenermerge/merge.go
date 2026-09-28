@@ -187,9 +187,28 @@ func sortListenerSets(in []*gatewayv1.ListenerSet) []*gatewayv1.ListenerSet {
 // the same (port, hostname) tuple (HostnameConflict) or used a different
 // protocol on the same port (ProtocolConflict).
 func annotateConflicts(merged []MergedListener) {
-	// First claimant (index into merged) of each port's protocol — used to
-	// detect ProtocolConflict.
-	protoOwner := make(map[gatewayv1.PortNumber]int)
+	// Protocols claimed on each port, each with its first claimant (index into
+	// merged). The Gateway's own listeners all claim theirs up front: they
+	// precede every ListenerSet entry, and no conflict among them has a winner,
+	// so an entry is checked against every protocol the Gateway uses there.
+	protoClaims := make(map[gatewayv1.PortNumber]map[gatewayv1.ProtocolType]int)
+	claimProtocol := func(i int) {
+		port := merged[i].Port
+		if protoClaims[port] == nil {
+			protoClaims[port] = make(map[gatewayv1.ProtocolType]int)
+		}
+
+		if _, ok := protoClaims[port][merged[i].Protocol]; !ok {
+			protoClaims[port][merged[i].Protocol] = i
+		}
+	}
+
+	for i := range merged {
+		if merged[i].ParentKind == ParentKindGateway {
+			claimProtocol(i)
+		}
+	}
+
 	// First claimant of each (port, hostname) — used to detect HostnameConflict.
 	hostnameOwner := make(map[hostnameKey]int)
 
@@ -197,7 +216,7 @@ func annotateConflicts(merged []MergedListener) {
 		entry := &merged[i]
 
 		// Protocol-conflict has precedence over hostname-conflict per spec.
-		if owner, ok := protoOwner[entry.Port]; ok && merged[owner].Protocol != entry.Protocol {
+		if owner, ok := otherProtocolClaim(protoClaims[entry.Port], entry.Protocol); ok {
 			markConflict(merged, owner, i, gatewayv1.ListenerReasonProtocolConflict, "protocol")
 
 			continue
@@ -211,42 +230,22 @@ func annotateConflicts(merged []MergedListener) {
 			continue
 		}
 
-		// Claim the port's protocol and the (port,hostname) slot.
-		if _, ok := protoOwner[entry.Port]; !ok {
-			protoOwner[entry.Port] = i
-		}
-
+		claimProtocol(i)
 		hostnameOwner[key] = i
 	}
-
-	markGatewayProtocolConflicts(merged)
 }
 
-// markGatewayProtocolConflicts refuses every Gateway-owned listener on a port
-// where the Gateway's own listeners mix protocols. The walk above compares a
-// listener only with the port's first claimant, so a later listener matching
-// that claimant's protocol would otherwise be left as the winner.
-func markGatewayProtocolConflicts(merged []MergedListener) {
-	protocols := make(map[gatewayv1.PortNumber]map[gatewayv1.ProtocolType]bool)
-
-	for i := range merged {
-		if merged[i].ParentKind != ParentKindGateway {
-			continue
-		}
-
-		if protocols[merged[i].Port] == nil {
-			protocols[merged[i].Port] = make(map[gatewayv1.ProtocolType]bool)
-		}
-
-		protocols[merged[i].Port][merged[i].Protocol] = true
-	}
-
-	for i := range merged {
-		if merged[i].ParentKind == ParentKindGateway && len(protocols[merged[i].Port]) > 1 {
-			merged[i].ConflictReason = gatewayv1.ListenerReasonProtocolConflict
-			merged[i].ConflictMessage = "Listener conflicts on protocol with another listener of this Gateway on the same port"
+// otherProtocolClaim returns a claimant of a protocol on the port other than
+// protocol, if any. Which one does not matter: every Gateway-owned listener on
+// a mixed port reaches this check itself, and an entry is refused either way.
+func otherProtocolClaim(claims map[gatewayv1.ProtocolType]int, protocol gatewayv1.ProtocolType) (int, bool) {
+	for claimed, index := range claims {
+		if claimed != protocol {
+			return index, true
 		}
 	}
+
+	return 0, false
 }
 
 // markConflict annotates merged[loser], which clashes with the earlier
