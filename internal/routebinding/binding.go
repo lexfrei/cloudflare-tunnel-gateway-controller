@@ -166,9 +166,6 @@ func findMatchingEntries(
 	detail := strings.Join(entryErrors, "; ")
 
 	if len(matched) == 0 {
-		// No entry passed the sectionName and port filters: the parentRef
-		// names no listener. Otherwise an entry refused the route, and its
-		// reason says why, pinned or not.
 		if lastRejectionReason == "" {
 			return nil, gatewayv1.RouteReasonNoMatchingParent, invalid, detail
 		}

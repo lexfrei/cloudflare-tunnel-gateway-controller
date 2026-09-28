@@ -216,7 +216,7 @@ True weighted traffic splitting across multiple backends is performed by the in-
 | --- | --- | --- | --- |
 | `Accepted` | `True` | `Accepted` | Listener accepted |
 | `Accepted` | `False` | `HostnameConflict` / `ProtocolConflict` | Listener conflicts with a higher-precedence listener on the same port |
-| `Accepted` | `False` | `UnsupportedValue` | `allowedRoutes.namespaces.from` is `Selector` and the selector does not parse, so the listener admits no route. The message says the selector is invalid without quoting it; the controller log names the parse error |
+| `Accepted` | `False` | `UnsupportedValue` | `allowedRoutes.namespaces.from` is `Selector` and the selector does not parse, so the listener admits no route. The message says the selector is invalid without quoting it |
 | `Programmed` | `True` | `Programmed` | Listener programmed |
 | `Programmed` | `False` | `Invalid` | Listener has unresolved references, or is not `Accepted` |
 | `Programmed` | `False` | `HostnameConflict` / `ProtocolConflict` | Listener conflicts with a higher-precedence listener |

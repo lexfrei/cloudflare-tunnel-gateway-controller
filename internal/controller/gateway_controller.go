@@ -1222,11 +1222,18 @@ func (r *GatewayReconciler) countAttachedRoutes(
 	return result
 }
 
+// refMatchesGateway reports whether a route parentRef names this Gateway
+// itself: the Gateway API group, kind Gateway, and its name and namespace. A
+// ListenerSet ref is counted on the ListenerSet's own entries, not here.
 func (r *GatewayReconciler) refMatchesGateway(
 	ref gatewayv1.ParentReference,
 	gateway *gatewayv1.Gateway,
 	routeNamespace string,
 ) bool {
+	if !parentRefInGatewayAPIGroup(ref) || (ref.Kind != nil && *ref.Kind != kindGateway) {
+		return false
+	}
+
 	if string(ref.Name) != gateway.Name {
 		return false
 	}
@@ -1728,10 +1735,8 @@ func buildListenerAcceptedCondition(protocol gatewayv1.ProtocolType, generation 
 }
 
 // listenerMsgInvalidNamespaceSelector says a listener's namespace selector is
-// invalid without quoting it: the selector is the Gateway owner's to read, and
-// the controller log names the parse error.
-const listenerMsgInvalidNamespaceSelector = "allowedRoutes.namespaces.selector is invalid, so the listener admits no route; " +
-	"the controller log names the parse error"
+// invalid without quoting it.
+const listenerMsgInvalidNamespaceSelector = "allowedRoutes.namespaces.selector is invalid, so the listener admits no route"
 
 // refuseInvalidNamespaceSelector marks an otherwise accepted listener not
 // Accepted when its allowedRoutes namespace selector does not parse. The
