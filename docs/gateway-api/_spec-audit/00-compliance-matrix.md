@@ -16,16 +16,15 @@ Counts are the current `rows-*.md` verdicts (`cat rows-*.md | grep -E '^\| [A-Z]
 
 | Status | Count |
 | --- | --- |
-| MET | 239 |
+| MET | 243 |
 | PARTIAL | 31 |
-| GAP | 3 |
+| GAP | 2 |
 | REFUTED | 1 |
 | DOWNGRADE-NA | 3 |
 | DOWNGRADE-MET | 2 |
-| DOWNGRADE-DEFENSIBLE | 1 |
 | DOWNGRADE-CONDITIONAL | 2 |
 | DOWNGRADE-DOCUMENTED | 1 |
-| N/A (tunnel architecture / exempt) | 97 |
+| N/A (tunnel architecture / exempt) | 95 |
 
 Conformance ground truth (v1.5.1 run): 76 top-level subtests PASS, 54 SKIP (documented TLS/TCP/UDP/Mesh/WebSocket/GRPCRouteWeight/HTTPS-listener), **0 FAIL** (`go test ... ok 293s`). GRPCRouteWeight and HTTPRouteBackendProtocolWebSocket were among the SKIPs at that run; both are de-skipped in the current suite configuration (`test/conformance/conformance_test.go`, pinned by `TestStaleSkipsStayLifted`) now that gateway-api v1.6.0 added the injectable `suite.GRPCClient` / `suite.WebSocketDialer` hooks those tests needed, so the current skip categories are TLS/TCP/UDP/Mesh/HTTPS-listener plus the BackendTLSPolicy-gated tests. Conformance ground truth (v1.6.1 run): 77 top-level subtests PASS, 76 SKIP, **0 FAIL** (`go test ... ok 487s`, kind + real Cloudflare Tunnel). Both runs were green; the audit's value is the normative surface the suite does not exercise.
 
@@ -55,11 +54,11 @@ The v1.6.0 baseline bump was audited against the verified upstream tag diff; v1.
 | SH-47, SH-57 | GAP | **CONFIRMED (MUST NOT)** | route_status.go:112 `Parents = nil` + full `Status().Update` (not SSA) wipes other controllers' RouteParentStatus every reconcile; backendtlspolicy_controller.go:717 preserves foreign entries — route status does not. |
 | SH-51, GC-21 | GAP (also GW-81, GW-100, POL-11 same class) | **CONFIRMED (MUST NOT), low** | No observedGeneration regression guard; status writers stamp `ObservedGeneration: generation` unconditionally. Get+RetryOnConflict guards resourceVersion only, not a stale-generation overwrite. Narrow race. |
 | HR-04 (and GR-16) | GAP | **CONFIRMED (MUST), minor** | Rule-name uniqueness CEL is experimental-channel only (httproute_types.go:125); shipped Standard CRD strips it; no controller-side uniqueness check. |
-| GC-05 | GAP | CONFIRMED but **SHOULD** | Bad parametersRef is surfaced on Gateway status, not as GatewayClass Accepted=False/InvalidParameters. Defensible design deviation; feeds the SHOULD audit. |
+| GC-05 | GAP | RESOLVED (was: CONFIRMED but **SHOULD**) | The GatewayClass reconciler now reports an unusable parametersRef (missing, unsupported group or kind, namespaced, or naming a GatewayClassConfig that does not exist) as Accepted=False/InvalidParameters, and re-evaluates the class when its config is created or deleted. |
 | GC-02 | GAP | RESOLVED (was: CONFIRMED but **SHOULD**) | `gateway-exists-finalizer` is now managed by the GatewayClass reconciler (added while any Gateway uses the class, removed when none do). |
 | GW-31, GW-87 | GAP | DOWNGRADE-NA | spec.addresses is never user-selectable for a tunnel; same territory as the exempt SupportGatewayStaticAddresses. Doc note only. |
 | GW-75, GW-86 | GAP | DOWNGRADE-MET | Precondition is "if empty value NOT supported"; the controller supports empty (claims SupportGatewayAddressEmpty, always auto-assigns the tunnel CNAME), so the obligation is vacuously satisfied. |
-| GC-09 | GAP | DOWNGRADE-DEFENSIBLE | Controller reconciles only classes naming its controllerName and supports all of them, so Accepted=True is correct; no "will not support" scenario arises. |
+| GC-09 | GAP | RESOLVED (was: DOWNGRADE-DEFENSIBLE) | Accepted is set False when the class cannot be served because its parametersRef is unusable (see GC-05). |
 | GC-22 | GAP | DOWNGRADE-CONDITIONAL | Publishing `status.supportedFeatures` is optional; the "MUST be sorted" clause governs order only if published. Not published → vacuously satisfied. |
 | SH-36 | GAP | REFUTED | The "Dropped Rule" PartiallyInvalid approach is implemented and tested (route_status.go:334, route_status_diagnostics_test.go:76); the spec requires only one of two approaches. |
 | SH-43 | GAP | DOWNGRADE-CONDITIONAL | The per-reconcile full rebuild re-adds only currently-valid own parentRefs, so stale own-entries are dropped naturally; the SHOULD is satisfied for the realistic case. |
@@ -90,7 +89,7 @@ The SHOULD and MAY tiers were re-verified in a second pass after the MUST audit 
 
 - HONOURED-TESTED (~22) and N/A for the tunnel architecture (~23) account for the bulk.
 - HONOURED-TESTED since the audit (was HONOURED-UNTESTED, 7): HR-21, HR-24, HR-63, BTLS-06, SH-31, SH-32, LS-05 — each now pinned by a regression test (explicit-zero timeouts, redirect Location port, BackendTLS HTTP/gRPC equivalence, reason-vocabulary AST guard, ListenerSet status leak guard).
-- DEVIATED-DOCUMENTED (5): GW-74, BTLS-04, GC-05, SH-43, OR-03 — permitted deviations with a written rationale in limitations.md.
+- DEVIATED-DOCUMENTED (4): GW-74, BTLS-04, SH-43, OR-03 — permitted deviations with a written rationale in limitations.md. GC-05, a fifth at the audit, is HONOURED-TESTED since the GatewayClass reconciler began reporting an unusable parametersRef as Accepted=False/InvalidParameters; GC-10 moved from N/A to HONOURED-TESTED with it.
 - DEVIATED-SILENT (originally 3 distinct gaps across 4 clause IDs) — all resolved since the audit: GC-02 and its v1beta1 alias OTHER-45 are HONOURED (the reconciler now manages the gateway-exists-finalizer); GEP-08 (discoverability condition on the policy ancestor status, not the affected Gateway/Service) and HR-61 (no redirect-port fallback to the listener port — unreachable through the Standard CRD scheme enum http/https) are DEVIATED-DOCUMENTED with rationales in limitations.md. Also resolved earlier: GR-44 / GR-45 (gRPC silently dialing cleartext when a Service declared a TLS appProtocol without a BackendTLSPolicy) now fails the backend closed, matching the HTTP path — #438.
 
 ### MAY (34 clauses)
