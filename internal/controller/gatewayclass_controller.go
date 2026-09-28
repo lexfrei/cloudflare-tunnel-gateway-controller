@@ -353,6 +353,10 @@ func (r *GatewayClassReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
+func (r *GatewayClassReconciler) gatewayClassesForConfig(_ context.Context, _ client.Object) []reconcile.Request {
+	return nil
+}
+
 // gatewayClassForGateway maps a Gateway event to a reconcile request for the
 // GatewayClass it references. The Reconcile controllerName check filters out
 // foreign classes, so no filtering is needed here.

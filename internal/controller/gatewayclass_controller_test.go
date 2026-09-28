@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -16,9 +17,12 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 	"sigs.k8s.io/gateway-api/pkg/consts"
 
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/api/v1alpha1"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/config"
 )
 
@@ -100,6 +104,29 @@ func findGatewayClassCondition(conditions []metav1.Condition, condType string) *
 	return nil
 }
 
+// gatewayClassSchemeWithConfig extends gatewayClassSchemeWithCRD with the
+// GatewayClassConfig type a parametersRef resolves to.
+func gatewayClassSchemeWithConfig(t *testing.T) *runtime.Scheme {
+	t.Helper()
+
+	scheme := gatewayClassSchemeWithCRD(t)
+	require.NoError(t, v1alpha1.AddToScheme(scheme))
+
+	return scheme
+}
+
+func classConfigRef(name string) *gatewayv1.ParametersReference {
+	return &gatewayv1.ParametersReference{
+		Group: gatewayv1.Group(config.ParametersRefGroup),
+		Kind:  gatewayv1.Kind(config.ParametersRefKind),
+		Name:  name,
+	}
+}
+
+func classConfigObject(name string) *v1alpha1.GatewayClassConfig {
+	return &v1alpha1.GatewayClassConfig{ObjectMeta: metav1.ObjectMeta{Name: name}}
+}
+
 func TestGatewayClassReconciler_Reconcile_NotFound(t *testing.T) {
 	t.Parallel()
 
@@ -170,7 +197,7 @@ func TestGatewayClassReconciler_Reconcile_WrongControllerName(t *testing.T) {
 func TestGatewayClassReconciler_Reconcile_MatchingController(t *testing.T) {
 	t.Parallel()
 
-	scheme := gatewayClassSchemeWithCRD(t)
+	scheme := gatewayClassSchemeWithConfig(t)
 
 	gatewayClass := &gatewayv1.GatewayClass{
 		ObjectMeta: metav1.ObjectMeta{
@@ -179,12 +206,13 @@ func TestGatewayClassReconciler_Reconcile_MatchingController(t *testing.T) {
 		},
 		Spec: gatewayv1.GatewayClassSpec{
 			ControllerName: "cloudflare-tunnel-controller",
+			ParametersRef:  classConfigRef("test-config"),
 		},
 	}
 
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(gatewayClass, gatewayClassCRDObject(consts.BundleVersion)).
+		WithObjects(gatewayClass, classConfigObject("test-config"), gatewayClassCRDObject(consts.BundleVersion)).
 		WithStatusSubresource(gatewayClass).
 		Build()
 
@@ -233,13 +261,14 @@ func TestGatewayClassReconciler_Reconcile_MatchingController(t *testing.T) {
 func TestGatewayClassReconciler_SetAcceptedConditions(t *testing.T) {
 	t.Parallel()
 
-	scheme := gatewayClassSchemeWithCRD(t)
+	scheme := gatewayClassSchemeWithConfig(t)
 	reader := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(gatewayClassCRDObject(consts.BundleVersion)).
+		WithObjects(classConfigObject("test-config"), gatewayClassCRDObject(consts.BundleVersion)).
 		Build()
 
 	r := &GatewayClassReconciler{
+		Client:              reader,
 		ControllerName:      "test-controller",
 		BundleVersionReader: reader,
 	}
@@ -248,6 +277,10 @@ func TestGatewayClassReconciler_SetAcceptedConditions(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{
 			Name:       "test-class",
 			Generation: 5,
+		},
+		Spec: gatewayv1.GatewayClassSpec{
+			ControllerName: "test-controller",
+			ParametersRef:  classConfigRef("test-config"),
 		},
 	}
 
@@ -315,6 +348,255 @@ func TestGatewayClassReconciler_SetAcceptedConditions_ParametersRefNamespaceReje
 		gatewayClass.Status.Conditions, string(gatewayv1.GatewayClassConditionStatusSupportedVersion))
 	require.NotNil(t, supportedVersion)
 	assert.Equal(t, metav1.ConditionTrue, supportedVersion.Status)
+}
+
+// The Gateway API asks for Accepted=False with reason InvalidParameters when a
+// GatewayClass parametersRef names a referent that cannot be found, an
+// unsupported group or kind, or is otherwise unusable. This controller cannot
+// serve a class without one, so a missing ref is refused the same way.
+func TestGatewayClassReconciler_SetAcceptedConditions_InvalidParametersRef(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		ref         *gatewayv1.ParametersReference
+		contains    string
+		notContains string
+	}{
+		{name: "no parametersRef", ref: nil, contains: "parametersRef is required"},
+		{
+			name: "unsupported group",
+			ref: &gatewayv1.ParametersReference{
+				Group: "example.com", Kind: gatewayv1.Kind(config.ParametersRefKind), Name: "test-config",
+			},
+			contains: "example.com",
+		},
+		{
+			name: "unsupported kind",
+			ref: &gatewayv1.ParametersReference{
+				Group: gatewayv1.Group(config.ParametersRefGroup), Kind: "ConfigMap", Name: "test-config",
+			},
+			contains: "ConfigMap",
+		},
+		{
+			// A namespaced ref to another kind is wrong because of its kind; the
+			// cluster-scope rule is about GatewayClassConfig and must not be
+			// the reason given.
+			name: "namespaced ref of an unsupported kind reports the kind",
+			ref: &gatewayv1.ParametersReference{
+				Group: "", Kind: "ConfigMap", Name: "test-config", Namespace: new(gatewayv1.Namespace("default")),
+			},
+			contains:    "ConfigMap",
+			notContains: "cluster-scoped",
+		},
+		{name: "referenced config does not exist", ref: classConfigRef("missing-config"), contains: "missing-config"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			scheme := gatewayClassSchemeWithConfig(t)
+			reader := fake.NewClientBuilder().
+				WithScheme(scheme).
+				WithObjects(classConfigObject("test-config"), gatewayClassCRDObject(consts.BundleVersion)).
+				Build()
+
+			r := &GatewayClassReconciler{
+				Client:              reader,
+				ControllerName:      "test-controller",
+				BundleVersionReader: reader,
+			}
+
+			gatewayClass := &gatewayv1.GatewayClass{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-class", Generation: 2},
+				Spec:       gatewayv1.GatewayClassSpec{ControllerName: "test-controller", ParametersRef: tt.ref},
+			}
+
+			require.NoError(t, r.setAcceptedConditions(context.Background(), gatewayClass))
+
+			accepted := findGatewayClassCondition(
+				gatewayClass.Status.Conditions, string(gatewayv1.GatewayClassConditionStatusAccepted))
+			require.NotNil(t, accepted)
+			assert.Equal(t, metav1.ConditionFalse, accepted.Status)
+			assert.Equal(t, string(gatewayv1.GatewayClassReasonInvalidParameters), accepted.Reason)
+			assert.Equal(t, int64(2), accepted.ObservedGeneration)
+			assert.Contains(t, accepted.Message, tt.contains)
+			// The message names the GatewayClass field, not the Gateway's
+			// infrastructure.parametersRef.
+			assert.NotContains(t, accepted.Message, "infrastructure")
+
+			if tt.notContains != "" {
+				assert.NotContains(t, accepted.Message, tt.notContains)
+			}
+		})
+	}
+}
+
+// A failed read of the referenced config says nothing about the spec: the
+// class must not be marked InvalidParameters for it, and the error must
+// requeue the reconcile.
+func TestGatewayClassReconciler_SetAcceptedConditions_ConfigReadErrorRequeues(t *testing.T) {
+	t.Parallel()
+
+	scheme := gatewayClassSchemeWithConfig(t)
+	reader := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(classConfigObject("test-config"), gatewayClassCRDObject(consts.BundleVersion)).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+				if _, ok := obj.(*v1alpha1.GatewayClassConfig); ok {
+					return errTransientRead
+				}
+
+				return c.Get(ctx, key, obj, opts...)
+			},
+		}).
+		Build()
+
+	r := &GatewayClassReconciler{
+		Client:              reader,
+		ControllerName:      "test-controller",
+		BundleVersionReader: reader,
+	}
+
+	gatewayClass := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-class", Generation: 2},
+		Spec:       gatewayv1.GatewayClassSpec{ControllerName: "test-controller", ParametersRef: classConfigRef("test-config")},
+	}
+
+	err := r.setAcceptedConditions(context.Background(), gatewayClass)
+
+	require.ErrorIs(t, err, errTransientRead)
+
+	accepted := findGatewayClassCondition(
+		gatewayClass.Status.Conditions, string(gatewayv1.GatewayClassConditionStatusAccepted))
+	if accepted != nil {
+		assert.NotEqual(t, string(gatewayv1.GatewayClassReasonInvalidParameters), accepted.Reason)
+	}
+}
+
+// Through Reconcile, a failed config read requeues and leaves the stored
+// Accepted condition as it was.
+func TestGatewayClassReconciler_Reconcile_ConfigReadErrorKeepsAccepted(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	scheme := gatewayClassSchemeWithConfig(t)
+
+	class := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "served", Generation: 1},
+		Spec:       gatewayv1.GatewayClassSpec{ControllerName: "test-controller", ParametersRef: classConfigRef("test-config")},
+	}
+
+	var failConfigReads atomic.Bool
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(class, classConfigObject("test-config"), gatewayClassCRDObject(consts.BundleVersion)).
+		WithStatusSubresource(class).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+				if _, ok := obj.(*v1alpha1.GatewayClassConfig); ok && failConfigReads.Load() {
+					return errTransientRead
+				}
+
+				return c.Get(ctx, key, obj, opts...)
+			},
+		}).
+		Build()
+
+	r := &GatewayClassReconciler{
+		Client:              fakeClient,
+		Scheme:              scheme,
+		ControllerName:      "test-controller",
+		BundleVersionReader: fakeClient,
+	}
+
+	req := ctrl.Request{NamespacedName: types.NamespacedName{Name: "served"}}
+
+	_, err := r.Reconcile(ctx, req)
+	require.NoError(t, err)
+
+	failConfigReads.Store(true)
+
+	_, err = r.Reconcile(ctx, req)
+	require.ErrorIs(t, err, errTransientRead)
+
+	var got gatewayv1.GatewayClass
+	require.NoError(t, fakeClient.Get(ctx, types.NamespacedName{Name: "served"}, &got))
+
+	accepted := findGatewayClassCondition(got.Status.Conditions, string(gatewayv1.GatewayClassConditionStatusAccepted))
+	require.NotNil(t, accepted)
+	assert.Equal(t, metav1.ConditionTrue, accepted.Status)
+	assert.Equal(t, string(gatewayv1.GatewayClassReasonAccepted), accepted.Reason)
+}
+
+// A class whose GatewayClassConfig does not exist yet is refused, and creating
+// the config must re-evaluate it: the config watch enqueues the class, and the
+// next reconcile accepts it.
+func TestGatewayClassReconciler_ConfigCreatedLater_AcceptsClass(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	scheme := gatewayClassSchemeWithConfig(t)
+
+	waiting := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "waiting", Generation: 1},
+		Spec:       gatewayv1.GatewayClassSpec{ControllerName: "test-controller", ParametersRef: classConfigRef("late-config")},
+	}
+	otherConfig := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "other-config", Generation: 1},
+		Spec:       gatewayv1.GatewayClassSpec{ControllerName: "test-controller", ParametersRef: classConfigRef("unrelated")},
+	}
+	foreign := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "foreign", Generation: 1},
+		Spec:       gatewayv1.GatewayClassSpec{ControllerName: "someone-else", ParametersRef: classConfigRef("late-config")},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(waiting, otherConfig, foreign, gatewayClassCRDObject(consts.BundleVersion)).
+		WithStatusSubresource(waiting).
+		Build()
+
+	r := &GatewayClassReconciler{
+		Client:              fakeClient,
+		Scheme:              scheme,
+		ControllerName:      "test-controller",
+		BundleVersionReader: fakeClient,
+	}
+
+	acceptedCondition := func() *metav1.Condition {
+		var class gatewayv1.GatewayClass
+		require.NoError(t, fakeClient.Get(ctx, types.NamespacedName{Name: "waiting"}, &class))
+
+		return findGatewayClassCondition(class.Status.Conditions, string(gatewayv1.GatewayClassConditionStatusAccepted))
+	}
+
+	req := ctrl.Request{NamespacedName: types.NamespacedName{Name: "waiting"}}
+
+	_, err := r.Reconcile(ctx, req)
+	require.NoError(t, err)
+
+	accepted := acceptedCondition()
+	require.NotNil(t, accepted)
+	assert.Equal(t, metav1.ConditionFalse, accepted.Status)
+	assert.Equal(t, string(gatewayv1.GatewayClassReasonInvalidParameters), accepted.Reason)
+
+	lateConfig := classConfigObject("late-config")
+	require.NoError(t, fakeClient.Create(ctx, lateConfig))
+
+	assert.Equal(t, []reconcile.Request{req}, r.gatewayClassesForConfig(ctx, lateConfig),
+		"creating the config must enqueue exactly the managed classes that reference it")
+
+	_, err = r.Reconcile(ctx, req)
+	require.NoError(t, err)
+
+	accepted = acceptedCondition()
+	require.NotNil(t, accepted)
+	assert.Equal(t, metav1.ConditionTrue, accepted.Status)
+	assert.Equal(t, string(gatewayv1.GatewayClassReasonAccepted), accepted.Reason)
 }
 
 // runSupportedVersionCheck builds a reconciler whose BundleVersionReader serves
@@ -487,16 +769,16 @@ func TestGatewayClassReconciler_SupportedVersion_NoReader(t *testing.T) {
 func TestGatewayClassReconciler_SupportedVersion_TransientReadError_Requeues(t *testing.T) {
 	t.Parallel()
 
-	scheme := gatewayClassSchemeWithCRD(t)
+	scheme := gatewayClassSchemeWithConfig(t)
 
 	gatewayClass := &gatewayv1.GatewayClass{
 		ObjectMeta: metav1.ObjectMeta{Name: "cloudflare-tunnel", Generation: 1},
-		Spec:       gatewayv1.GatewayClassSpec{ControllerName: "test-controller"},
+		Spec:       gatewayv1.GatewayClassSpec{ControllerName: "test-controller", ParametersRef: classConfigRef("test-config")},
 	}
 
 	mainClient := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(gatewayClass).
+		WithObjects(gatewayClass, classConfigObject("test-config")).
 		WithStatusSubresource(gatewayClass).
 		Build()
 
