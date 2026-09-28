@@ -187,6 +187,7 @@ internal/
   logging/               # Structured logging helpers (OpenTelemetry trace handler)
   cfmetrics/             # Cloudflare metrics collection (controller side)
   hostnameownership/     # Per-namespace hostname-suffix policy (controller layer + shared vectors)
+  parentref/             # Gateway API group predicate for route parentRefs (controller and proxy)
   proxy/                 # L7 reverse proxy (router, matcher, filter, config API, converter, data-plane metrics, shadow detection)
   referencegrant/        # ReferenceGrant validation for cross-namespace backends
   render/                # Per-Gateway data-plane renderers (Deployment / Service / HPA / NetworkPolicy)

@@ -65,6 +65,20 @@ func (v *Validator) IsNamespaceAllowed(
 	return gatewayNamespace == routeNamespace, nil
 }
 
+// NamespaceSelectorInvalid reports whether allowedRoutes admits routes by a
+// namespace label selector that does not parse. Such a listener admits no
+// route. A selector is read only when From is Selector, so one set beside any
+// other From does not count.
+func NamespaceSelectorInvalid(allowedRoutes *gatewayv1.AllowedRoutes) bool {
+	if getNamespaceFrom(allowedRoutes) != gatewayv1.NamespacesFromSelector || allowedRoutes.Namespaces.Selector == nil {
+		return false
+	}
+
+	_, err := metav1.LabelSelectorAsSelector(allowedRoutes.Namespaces.Selector)
+
+	return err != nil
+}
+
 // getNamespaceFrom extracts the From field from allowedRoutes, defaulting to Same.
 func getNamespaceFrom(allowedRoutes *gatewayv1.AllowedRoutes) gatewayv1.FromNamespaces {
 	if allowedRoutes == nil {

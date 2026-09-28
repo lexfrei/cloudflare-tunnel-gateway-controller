@@ -6,6 +6,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
+
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/parentref"
 )
 
 // findRoutesAttachedToListenerSet returns reconcile requests for every route
@@ -56,7 +58,7 @@ func findRoutesAttachedToListenerSet(
 // parentRefs names the given ListenerSet (group, kind, name, namespace).
 func routeTargetsListenerSet(route Route, listenerSet *gatewayv1.ListenerSet) bool {
 	for _, ref := range route.GetParentRefs() {
-		if ref.Group != nil && string(*ref.Group) != "" && string(*ref.Group) != gatewayv1.GroupName {
+		if !parentref.InGatewayAPIGroup(ref) {
 			continue
 		}
 

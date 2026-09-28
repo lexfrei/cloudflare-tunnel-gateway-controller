@@ -202,20 +202,23 @@ spec:
 |-----------|--------|--------|-------------|
 | `Accepted` | `True` | `Accepted` | Gateway accepted by controller |
 | `Accepted` | `False` | `ListenersNotValid` | Gateway has conflicted own listeners (one or more own listeners carry `Conflicted: True`); per-listener status reports the conflict |
+| `Accepted` | `True` or `False` | `ListenersNotValid` | One or more own listeners are invalid: a protocol other than HTTP or HTTPS, or an `allowedRoutes.namespaces.selector` that does not parse. `False` only when no listener is valid; per-listener status names the problem without quoting the selector |
 | `Accepted` | `False` | `InvalidParameters` | The Gateway's configuration cannot be resolved: the GatewayClass `parametersRef` chain is invalid or names a GatewayClassConfig or Secret that does not exist, the per-Gateway `parametersRef` is invalid, no proxy image is configured, or the Gateway claims a Cloudflare Tunnel it does not own. For a Gateway without its own data plane, a read that fails for any other reason is retried and leaves the status and address unchanged. A dedicated Gateway still reports some of those read failures as `InvalidParameters` ([#896](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/issues/896)) |
 | `Accepted` | `False` | `DataPlaneQuotaExceeded` | The Gateway's namespace already holds as many dedicated data planes as `maxDataPlanesPerNamespace` allows. Implementation-specific reason; the oldest Gateways by creation timestamp keep their planes |
 | `Programmed` | `True` | `Programmed` | Gateway configured in Cloudflare |
 | `Programmed` | `False` | `Invalid` | The Gateway's configuration cannot be resolved, or it was refused the tunnel it claimed (see the `Accepted` reason above) |
 | `Programmed` | `False` | `NoResources` | The Gateway's namespace is at its dedicated data-plane cap, so no plane was scheduled for it |
 
+A Gateway whose `allowedListeners.namespaces.selector` does not parse refuses every ListenerSet. No Gateway condition reports it, because the Gateway's own listeners keep serving and the Gateway API defines no condition for it. The Gateway gets a Warning Event with reason `InvalidAllowedListeners` instead, and each ListenerSet reports `Accepted: False` with reason `NotAllowed`. Neither quotes the selector.
+
 ### HTTPRoute/GRPCRoute Status
 
 | Condition | Status | Reason | Description |
 |-----------|--------|--------|-------------|
 | `Accepted` | `True` | `Accepted` | Route accepted and synced |
-| `Accepted` | `False` | `NoMatchingParent` | No listener matched the parentRef's `sectionName` or `port`; also fires when hostname is the failure reason and the parentRef pinned a `sectionName` or `port` |
-| `Accepted` | `False` | `NoMatchingListenerHostname` | Route hostnames do not intersect with any listener hostname (no `sectionName`/`port` pin on the parentRef) |
-| `Accepted` | `False` | `NotAllowedByListeners` | Route namespace or kind not allowed by listener. A listener whose `allowedRoutes.namespaces.selector` does not parse is treated as not allowing the route and the other listeners are still evaluated; when none of them admits the route, the rejection message, whatever its reason, names that listener, and the parse error goes to the controller log |
+| `Accepted` | `False` | `NoMatchingParent` | No listener or ListenerSet entry matches the parentRef's `sectionName` or `port`; every listener or entry it matches is conflicted; or the parent Gateway's `allowedListeners` refuses the parent ListenerSet, including when that selector does not parse |
+| `Accepted` | `False` | `NoMatchingListenerHostname` | Route hostnames do not intersect with the hostname of any listener the parentRef selects, whether or not it pins a `sectionName` or `port` |
+| `Accepted` | `False` | `NotAllowedByListeners` | Route namespace or kind not allowed by the listeners the parentRef selects, including one it pins by `sectionName` or `port`. A listener whose `allowedRoutes.namespaces.selector` does not parse is treated as not allowing the route and the other listeners are still evaluated; when none of them admits the route, the rejection message, whatever its reason, names that listener, and the parse error goes to the controller log |
 | `Accepted` | `False` | `Pending` | Sync to the Cloudflare Tunnel API failed; reconcile will retry. Also set on a parent the controller could not evaluate, when the controller can read that Gateway for status; the controller log names the error, and the sync is retried until the parent can be evaluated. Proxy-push failures are best-effort: they are logged and counted via the `cftunnel_sync_errors_total{error_type="proxy_push"}` counter but do **not** flip `Accepted` to False / Reason=`Pending` |
 | `Accepted` | `False` | `UnsupportedProtocol` | GRPCRoute only: gRPC cannot be served over an explicit `proxy.tunnel.protocol: quic` tunnel (cloudflared drops HTTP trailers over QUIC, losing `grpc-status`). Switch to `http2`, or `auto`/unset which the proxy upgrades to `http2` for gRPC |
 | `Accepted` | `False` | `Conflicted` | An HTTPRoute and a GRPCRoute conflict on the same Gateway with intersecting hostnames; the oldest Route by `creationTimestamp` (ties broken by `{namespace}/{name}`) is accepted and the other is rejected |

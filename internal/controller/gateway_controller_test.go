@@ -1089,6 +1089,35 @@ func TestGatewayReconciler_RefMatchesGateway(t *testing.T) {
 			routeNamespace: "default",
 			expected:       false,
 		},
+		{
+			name: "explicit Gateway API group and Gateway kind",
+			ref: gatewayv1.ParentReference{
+				Group: new(gatewayv1.Group(gatewayv1.GroupName)),
+				Kind:  new(gatewayv1.Kind(kindGateway)),
+				Name:  "test-gateway",
+			},
+			routeNamespace: "default",
+			expected:       true,
+		},
+		{
+			name: "another API group with the same kind and name",
+			ref: gatewayv1.ParentReference{
+				Group: new(gatewayv1.Group("example.com")),
+				Kind:  new(gatewayv1.Kind(kindGateway)),
+				Name:  "test-gateway",
+			},
+			routeNamespace: "default",
+			expected:       false,
+		},
+		{
+			name: "a ListenerSet named like the Gateway",
+			ref: gatewayv1.ParentReference{
+				Kind: new(gatewayv1.Kind(kindListenerSet)),
+				Name: "test-gateway",
+			},
+			routeNamespace: "default",
+			expected:       false,
+		},
 	}
 
 	for _, tt := range tests {

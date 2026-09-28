@@ -308,8 +308,8 @@ func resolveParentRefStatus(
 // parentRefSelectsManagedGateway returns true when a route parentRef
 // ultimately targets a Gateway managed by this controller — either directly
 // (Kind=Gateway) or via a ListenerSet whose parent Gateway is managed. A ref
-// with an unrecognised Group (anything other than the Gateway API group or
-// empty/default) returns false so a foreign-group ListenerSet name collision
+// whose Group is set to anything other than the Gateway API group, "" (the
+// core group) included, returns false so a foreign-group name collision
 // cannot poison the route's status.parents entries. A Gateway or ListenerSet
 // that could not be read returns the error.
 func parentRefSelectsManagedGateway(

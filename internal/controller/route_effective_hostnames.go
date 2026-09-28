@@ -11,6 +11,7 @@ import (
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/listenermerge"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/logging"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/parentref"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/proxy"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/routebinding"
 )
@@ -364,7 +365,7 @@ func resolveParentRefListeners[T any](
 	gatewayBranch gatewayListenerBranch[T],
 	listenerSetBranch listenerSetListenerBranch[T],
 ) ([]T, error) {
-	if ref.Group != nil && string(*ref.Group) != "" && string(*ref.Group) != gatewayv1.GroupName {
+	if !parentref.InGatewayAPIGroup(ref) {
 		return nil, nil
 	}
 

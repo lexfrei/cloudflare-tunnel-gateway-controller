@@ -15,6 +15,7 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/coregroup"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/parentref"
 )
 
 // configVersionCounter provides monotonically increasing config versions.
@@ -176,8 +177,7 @@ func ConvertHTTPRoutes(
 // kindGateway identifies the parentRef Kind we recognise when walking
 // parents looking for a client certificate. Shared by the HTTPRoute and
 // GRPCRoute helpers in this file and grpc_converter.go. The Group is
-// matched via gatewayv1.GroupName from the upstream package — no
-// proxy-side magic string.
+// matched by parentref.InGatewayAPIGroup, the rule binding uses.
 const kindGateway = "Gateway"
 
 // resolveFirstParentClientCertFromRefs is the route-type-agnostic core of the
@@ -195,7 +195,7 @@ func resolveFirstParentClientCertFromRefs(
 	}
 
 	for _, ref := range parentRefs {
-		if ref.Group != nil && *ref.Group != "" && *ref.Group != gatewayv1.GroupName {
+		if !parentref.InGatewayAPIGroup(ref) {
 			continue
 		}
 

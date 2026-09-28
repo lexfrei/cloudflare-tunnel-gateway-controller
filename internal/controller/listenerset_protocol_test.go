@@ -28,7 +28,7 @@ func TestAcceptedEntryConditions_UnsupportedProtocol(t *testing.T) {
 	for _, proto := range []gatewayv1.ProtocolType{
 		gatewayv1.TCPProtocolType, gatewayv1.TLSProtocolType, gatewayv1.UDPProtocolType,
 	} {
-		conds := acceptedEntryConditions(1, metav1.Now(), proto, resolvedRefsTrue())
+		conds := acceptedEntryConditions(1, metav1.Now(), proto, nil, resolvedRefsTrue())
 
 		accepted := findCondition(conds, string(gatewayv1.ListenerConditionAccepted))
 		require.NotNil(t, accepted)
@@ -47,7 +47,7 @@ func TestAcceptedEntryConditions_UnsupportedProtocol(t *testing.T) {
 func TestAcceptedEntryConditions_HTTPStaysAccepted(t *testing.T) {
 	t.Parallel()
 
-	conds := acceptedEntryConditions(1, metav1.Now(), gatewayv1.HTTPProtocolType, resolvedRefsTrue())
+	conds := acceptedEntryConditions(1, metav1.Now(), gatewayv1.HTTPProtocolType, nil, resolvedRefsTrue())
 
 	accepted := findCondition(conds, string(gatewayv1.ListenerConditionAccepted))
 	require.NotNil(t, accepted)

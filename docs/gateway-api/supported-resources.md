@@ -53,6 +53,7 @@ All HTTPRoute matching and filter behavior is performed by the in-process L7 pro
 | Field | Supported | Notes |
 | --- | --- | --- |
 | `spec.parentRefs` | Yes | References to Gateway |
+| `spec.parentRefs[].group` | Yes | Omit it or set `gateway.networking.k8s.io`. Any other value, including an explicit `""` (the core group), names some other resource: the route does not bind to this controller's Gateway or ListenerSet, is not counted in `attachedRoutes` and gets no new status entry. An entry this controller wrote earlier for that ref is dropped on the next status write when another parentRef of the route names a Gateway or ListenerSet this controller manages, and otherwise stays in `status.parents` until the ref is fixed |
 | `spec.parentRefs[].name` | Yes | Gateway name |
 | `spec.parentRefs[].namespace` | Yes | Gateway namespace |
 | `spec.parentRefs[].sectionName` | Yes | Listener name (optional) |
@@ -207,6 +208,7 @@ True weighted traffic splitting across multiple backends is performed by the in-
 | --- | --- | --- | --- |
 | `Accepted` | `True` | `Accepted` | Gateway accepted by controller |
 | `Accepted` | `False` | `ListenersNotValid` | One or more of the Gateway's own listeners conflict (carry `Conflicted=True`) |
+| `Accepted` | `True` or `False` | `ListenersNotValid` | One or more own listeners are invalid (unsupported protocol, or an `allowedRoutes.namespaces.selector` that does not parse); `False` only when no listener is valid |
 | `Programmed` | `True` | `Programmed` | Gateway configured in Cloudflare |
 
 ### Gateway Listener Conditions
@@ -215,8 +217,9 @@ True weighted traffic splitting across multiple backends is performed by the in-
 | --- | --- | --- | --- |
 | `Accepted` | `True` | `Accepted` | Listener accepted |
 | `Accepted` | `False` | `HostnameConflict` / `ProtocolConflict` | Listener conflicts with a higher-precedence listener on the same port |
+| `Accepted` | `False` | `UnsupportedValue` | `allowedRoutes.namespaces.from` is `Selector` and the selector does not parse, so the listener admits no route. The message says the selector is invalid without quoting it |
 | `Programmed` | `True` | `Programmed` | Listener programmed |
-| `Programmed` | `False` | `Invalid` | Listener has unresolved references |
+| `Programmed` | `False` | `Invalid` | Listener has unresolved references, or is not `Accepted` |
 | `Programmed` | `False` | `HostnameConflict` / `ProtocolConflict` | Listener conflicts with a higher-precedence listener |
 | `Conflicted` | `True` | `HostnameConflict` / `ProtocolConflict` | Listener clashes with another listener on hostname (same port + hostname) or protocol (different protocol on the same port) |
 | `ResolvedRefs` | `True` | `ResolvedRefs` | References resolved |
@@ -229,9 +232,9 @@ True weighted traffic splitting across multiple backends is performed by the in-
 | Type | Status | Reason | Description |
 | --- | --- | --- | --- |
 | `Accepted` | `True` | `Accepted` | Route accepted and synced |
-| `Accepted` | `False` | `NoMatchingParent` | No matching listener found |
-| `Accepted` | `False` | `NoMatchingListenerHostname` | Route hostnames don't intersect with listener |
-| `Accepted` | `False` | `NotAllowedByListeners` | Route namespace or kind not allowed by listener. A listener whose `allowedRoutes.namespaces.selector` does not parse is treated as not allowing the route and the other listeners are still evaluated; when none of them admits the route, the rejection message, whatever its reason, names that listener, and the parse error goes to the controller log |
+| `Accepted` | `False` | `NoMatchingParent` | No listener or ListenerSet entry matches the parentRef's `sectionName` or `port`; every listener or entry it matches is conflicted; or the parent Gateway's `allowedListeners` refuses the parent ListenerSet, including when that selector does not parse |
+| `Accepted` | `False` | `NoMatchingListenerHostname` | Route hostnames don't intersect with the selected listeners, pinned or not |
+| `Accepted` | `False` | `NotAllowedByListeners` | Route namespace or kind not allowed by the selected listeners, pinned or not. A listener whose `allowedRoutes.namespaces.selector` does not parse is treated as not allowing the route and the other listeners are still evaluated; when none of them admits the route, the rejection message, whatever its reason, names that listener, and the parse error goes to the controller log |
 | `Accepted` | `False` | `Conflicted` | Route lost a cross-route-type conflict (HTTPRoute vs GRPCRoute on a shared Gateway with intersecting hostnames); the oldest Route by `creationTimestamp` is accepted |
 | `ResolvedRefs` | `True` | `ResolvedRefs` | Backend references resolved |
 | `ResolvedRefs` | `False` | `RefNotPermitted` | Cross-namespace reference denied |

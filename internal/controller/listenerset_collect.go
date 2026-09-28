@@ -87,8 +87,8 @@ func acceptedFromCandidates(
 
 // summariseAttachedListenerSets re-applies the same per-ListenerSet
 // acceptance contract the ListenerSetReconciler uses — at least one entry
-// must be conflict-free AND have ResolvedRefs=True — and returns the count
-// of ListenerSets that pass.
+// must be usable, as listenerSetEntriesAccepted defines it — and returns the
+// count of ListenerSets that pass.
 //
 // Used by GatewayReconciler so status.attachedListenerSets matches the
 // per-resource Accepted condition: a ListenerSet with all-broken TLS refs
@@ -116,9 +116,10 @@ func summariseAttachedListenerSets(
 }
 
 // listenerSetEntriesAccepted returns true when at least one entry of the
-// ListenerSet is conflict-free in the merged view AND has its TLS cert refs
-// resolved (or no TLS material at all). Mirrors summariseListenerSet in
-// listenerset_controller.go.
+// ListenerSet is conflict-free in the merged view, uses a protocol this
+// controller serves, has a namespace selector that parses, AND has its TLS
+// cert refs resolved (or no TLS material at all). Mirrors summariseListenerSet
+// in listenerset_controller.go.
 func listenerSetEntriesAccepted(
 	ctx context.Context,
 	cli client.Client,
@@ -130,6 +131,10 @@ func listenerSetEntriesAccepted(
 		mergedEntry := findMergedEntry(merged, listenerSet, entry.Name)
 
 		if mergedEntry != nil && mergedEntry.ConflictReason != "" {
+			continue
+		}
+
+		if !servableListenerProtocol(entry.Protocol) || routebinding.NamespaceSelectorInvalid(entry.AllowedRoutes) {
 			continue
 		}
 

@@ -7,6 +7,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/parentref"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/routebinding"
 )
 
@@ -41,8 +42,9 @@ type parentRefBinding struct {
 // validation against it. The caller passes a route descriptor that already
 // captures the route's hostnames, kind, and sectionName/port filters.
 //
-// Skipping unsupported ref kinds returns ManagedByThisController=false so
-// the caller's iteration can simply `continue`.
+// Skipping unsupported ref kinds, and refs to another API group, returns
+// ManagedByThisController=false so the caller's iteration can simply
+// `continue`.
 func resolveRouteParentBinding(
 	ctx context.Context,
 	cli client.Client,
@@ -53,6 +55,10 @@ func resolveRouteParentBinding(
 	routeInfo *routebinding.RouteInfo,
 	views *listenerViewCache,
 ) (parentRefBinding, error) {
+	if !parentref.InGatewayAPIGroup(ref) {
+		return parentRefBinding{}, nil
+	}
+
 	kind := kindGateway
 	if ref.Kind != nil {
 		kind = string(*ref.Kind)
