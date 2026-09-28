@@ -10,6 +10,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
+
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/logging"
 )
 
 func TestValidateBinding(t *testing.T) {
@@ -626,8 +628,10 @@ func selectorListener(name gatewayv1.SectionName, selector *metav1.LabelSelector
 
 // TestValidateBinding_InvalidSelectorRejectsWithMessage pins where an
 // unparseable allowedRoutes selector ends up: a listener with one admits no
-// route, and the parse error is carried in the rejection message so it reaches
-// the route's status instead of only the controller log.
+// route, and the rejection message names that listener so the route's status
+// shows why. The selector itself stays out of the message: the route may live
+// in a namespace whose authors cannot read the Gateway, so the parse error goes
+// to the controller log instead.
 func TestValidateBinding_InvalidSelectorRejectsWithMessage(t *testing.T) {
 	t.Parallel()
 
@@ -640,13 +644,17 @@ func TestValidateBinding_InvalidSelectorRejectsWithMessage(t *testing.T) {
 
 	route := &RouteInfo{Namespace: "apps", Kind: KindHTTPRoute}
 
-	result, err := NewValidator(setupFakeClient()).ValidateBinding(context.Background(), gateway, route)
+	logger, logs := logging.TestLogger(t)
+	ctx := logging.WithLogger(context.Background(), logger)
+
+	result, err := NewValidator(setupFakeClient()).ValidateBinding(ctx, gateway, route)
 	require.NoError(t, err)
 
 	assert.False(t, result.Accepted)
 	assert.Equal(t, gatewayv1.RouteReasonNotAllowedByListeners, result.Reason)
-	assert.Contains(t, result.Message, "invalid label selector")
-	assert.Contains(t, result.Message, `"broken"`)
+	assert.Contains(t, result.Message, `listener "broken" has an invalid allowedRoutes selector`)
+	assert.NotContains(t, result.Message, "BogusOperator", "the Gateway's selector must not reach route status")
+	assert.Contains(t, logs.String(), "BogusOperator", "the parse error is kept for the controller log")
 }
 
 // TestValidateBinding_InvalidSelectorStaysWithItsListener pins that one

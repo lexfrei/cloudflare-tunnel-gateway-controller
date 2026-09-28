@@ -40,7 +40,8 @@ func TestRouteStatus_ErroredParentIsNotAccepted(t *testing.T) {
 	assert.Equal(t, metav1.ConditionFalse, accepted.Status,
 		"a parent whose binding could not be evaluated must not be reported Accepted=True")
 	assert.Equal(t, string(gatewayv1.RouteReasonPending), accepted.Reason)
-	assert.Contains(t, accepted.Message, "invalid label selector", "the message carries the evaluation error")
+	assert.NotContains(t, accepted.Message, "BogusOperator",
+		"the parent Gateway's selector must not reach the status of a route in another namespace")
 
 	healthyAccepted := buildAcceptedCondition(1, metav1.Now(), binding, 0, nil, nil)
 	assert.Equal(t, metav1.ConditionTrue, healthyAccepted.Status)
