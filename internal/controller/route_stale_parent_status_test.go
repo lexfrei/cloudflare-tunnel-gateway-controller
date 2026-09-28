@@ -299,3 +299,38 @@ func TestFindRoutesAttachedToListenerSet_DeletedParentEnqueuesOwnStatus(t *testi
 	require.Len(t, requests, 1)
 	assert.Equal(t, "with-status", requests[0].Name)
 }
+
+// TestFindRoutesForGateway_ManagedGatewayEnqueuesListenerSetRoutes pins that a
+// spec change on a managed Gateway, such as tightening allowedListeners,
+// enqueues the routes attached only through its ListenerSets: whether those
+// routes are still admitted depends on the Gateway, not only on the routes.
+func TestFindRoutesForGateway_ManagedGatewayEnqueuesListenerSetRoutes(t *testing.T) {
+	t.Parallel()
+
+	fromSame := gatewayv1.NamespacesFromSame
+	gc := managedGatewayClass()
+	gw := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "default"},
+		Spec: gatewayv1.GatewaySpec{
+			GatewayClassName: gatewayv1.ObjectName(gc.Name),
+			AllowedListeners: &gatewayv1.AllowedListeners{Namespaces: &gatewayv1.ListenerNamespaces{From: &fromSame}},
+		},
+	}
+	ls := &gatewayv1.ListenerSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "ls", Namespace: "default"},
+		Spec:       gatewayv1.ListenerSetSpec{ParentRef: gatewayv1.ParentGatewayReference{Name: "gw"}},
+	}
+	cli := buildGatewayFakeClient(t, gc, gw, ls)
+
+	lsKind := gatewayv1.Kind(kindListenerSet)
+	route := HTTPRouteWrapper{&gatewayv1.HTTPRoute{
+		ObjectMeta: metav1.ObjectMeta{Name: "via-ls", Namespace: "default"},
+		Spec: gatewayv1.HTTPRouteSpec{CommonRouteSpec: gatewayv1.CommonRouteSpec{
+			ParentRefs: []gatewayv1.ParentReference{{Kind: &lsKind, Name: "ls"}},
+		}},
+	}}
+
+	requests := FindRoutesForGateway(context.Background(), cli, gw, testListenerSetController, []Route{route})
+	require.Len(t, requests, 1)
+	assert.Equal(t, "via-ls", requests[0].Name)
+}
