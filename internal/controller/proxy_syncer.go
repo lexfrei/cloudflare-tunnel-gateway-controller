@@ -948,10 +948,9 @@ func (s *ProxySyncer) recordPush(
 		// elsewhere: while one replica keeps refusing (an old pod mid-rollout),
 		// every sync fails, and a pod that joins in that window would
 		// otherwise get nothing until a later sync. A config no replica
-		// accepted is not cached, and neither is one older than the cache: a
-		// sync that recorded last may carry the older snapshot.
-		if delivered && (target.lastCfg == nil || cfg.Version > target.lastCfg.Version) {
-			target.lastCfg = cfg
+		// accepted is not cached.
+		if delivered {
+			target.cacheIfNewer(cfg)
 		}
 
 		return
@@ -962,7 +961,7 @@ func (s *ProxySyncer) recordPush(
 	// AFTER the push so a failed push does not poison the cache with a config
 	// no replica received. The hash/endpoint-set pair keys the steady-state
 	// skip above.
-	target.lastCfg = cfg
+	target.cacheIfNewer(cfg)
 	target.lastPushedHash = cfgHash
 	target.lastPushedToken = authToken
 	target.lastPushedEndpoints = make(map[string]struct{}, len(resolved))
@@ -970,6 +969,15 @@ func (s *ProxySyncer) recordPush(
 
 	for _, endpoint := range resolved {
 		target.lastPushedEndpoints[endpoint] = struct{}{}
+	}
+}
+
+// cacheIfNewer makes cfg the replay source unless the cache already holds a
+// newer config: two syncs can record out of order, and the one recorded last
+// may carry the older snapshot. Caller must hold syncMu.
+func (t *pushTarget) cacheIfNewer(cfg *proxy.Config) {
+	if t.lastCfg == nil || cfg.Version > t.lastCfg.Version {
+		t.lastCfg = cfg
 	}
 }
 
@@ -1314,11 +1322,11 @@ func (s *ProxySyncer) ResyncEndpoints(ctx context.Context, endpoints []string) e
 const msgNoPushedConfigToResync = "no successfully pushed config to resync; endpoints stay unconfigured until a sync pushes one"
 
 // replayableTarget returns the partition's cached push target when it holds a
-// config at least one replica accepted, logging why the resync is a no-op otherwise. The
-// lookup is plain, NOT targetLocked: RetainPartitions can evict the key
-// between a caller's read-unlock and re-lock, and re-creating an empty target
-// here would resurrect a garbage entry that lingers until the next retain
-// pass. Caller must hold syncMu.
+// config at least one replica accepted, logging why the resync is a no-op
+// otherwise. The lookup is plain, NOT targetLocked: RetainPartitions can evict
+// the key between a caller's read-unlock and re-lock, and re-creating an empty
+// target here would resurrect a garbage entry that lingers until the next
+// retain pass. Caller must hold syncMu.
 func (s *ProxySyncer) replayableTarget(logger *slog.Logger, key string) (*pushTarget, bool) {
 	target, ok := s.targets[key]
 	if !ok {
