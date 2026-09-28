@@ -359,7 +359,7 @@ func syncAndUpdateStatusCommon(ctx context.Context, params *syncUpdateParams) (c
 	// edge-routing view. Both route reconcilers set pushProxy=true; each push
 	// rebuilds the full merged config from the SyncResult.
 	// Converter diagnostics (unsupported/dropped config surfaced on route status)
-	// are produced by buildProxyConfig and returned by SyncRoutes, so they are
+	// are produced by buildProxyConfig and returned by syncPartition, so they are
 	// only collected on the proxy-push path below. In v3 the proxy is the sole
 	// data plane and there are always proxy endpoints, so this is always taken;
 	// if a deployment ever ran with zero proxy endpoints the status surfacing
@@ -713,7 +713,7 @@ type partitionPushResult struct {
 
 // pushPartitionsConcurrently pushes every partition's config in parallel and
 // returns the per-partition results in input order. A slow connector on one
-// partition must not delay the others (#489): each SyncRoutes/SyncPartition
+// partition must not delay the others (#489): each syncPartition
 // takes syncMu only to build/record (the network push runs lock-free), so
 // distinct partitions push in parallel. A push error is carried in the result,
 // never returned to the group, so one failure does not cancel the others.
@@ -733,21 +733,17 @@ func pushPartitionsConcurrently(
 		partition := &partitions[i]
 
 		group.Go(func() error {
-			if partition.PerGateway == nil {
-				results[i].diags, results[i].err = params.proxySyncer.SyncRoutes(ctx, syncResult.ConfigVersion,
-					params.proxyEndpoints,
-					httpRoutePtrs(partition.HTTPRoutes), grpcRoutePtrs(partition.GRPCRoutes),
-					syncResult.HTTPFailedRefs, syncResult.GRPCFailedRefs)
+			key, authToken, endpoints := sharedPartitionKey, params.proxySyncer.defaultAuthToken, params.proxyEndpoints
 
-				return nil
+			if partition.PerGateway != nil {
+				key, authToken = partition.Key, partition.PerGateway.AuthToken
+				endpoints = []string{params.proxySyncer.perGatewayConfigEndpoint(partition.Gateway,
+					params.routeSyncer.ClusterDomain, params.routeSyncer.ProxyConfigAPIPort)}
 			}
 
-			endpoints := []string{params.proxySyncer.perGatewayConfigEndpoint(partition.Gateway,
-				params.routeSyncer.ClusterDomain, params.routeSyncer.ProxyConfigAPIPort)}
-			results[i].diags, results[i].err = params.proxySyncer.SyncPartition(ctx, syncResult.ConfigVersion,
-				partition.Key, partition.PerGateway.AuthToken,
-				endpoints, httpRoutePtrs(partition.HTTPRoutes), grpcRoutePtrs(partition.GRPCRoutes),
-				syncResult.HTTPFailedRefs, syncResult.GRPCFailedRefs)
+			results[i].diags, results[i].err = params.proxySyncer.syncPartition(ctx, syncResult.ConfigVersion,
+				key, authToken, endpoints, httpRoutePtrs(partition.HTTPRoutes), grpcRoutePtrs(partition.GRPCRoutes),
+				syncResult.HTTPFailedRefs, syncResult.GRPCFailedRefs, partition.CertParents)
 
 			return nil
 		})

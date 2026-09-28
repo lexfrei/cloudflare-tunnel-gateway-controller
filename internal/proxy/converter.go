@@ -97,11 +97,14 @@ type ClientCertConfig struct {
 	KeyPEM  []byte
 }
 
-// GatewayClientCertResolver returns the resolved client certificate for the
-// Gateway identified by gatewayNN, or nil when that Gateway does not
-// configure backend mTLS. The converter calls it once per route (first parent
-// wins) and stamps the result onto every backend's BackendTLSConfig.
-type GatewayClientCertResolver func(ctx context.Context, gatewayNN types.NamespacedName) *ClientCertConfig
+// GatewayClientCertResolver returns the client certificate the route's
+// backends present on behalf of one of its parent Gateways, or nil when that
+// Gateway supplies none for this route. The route is an argument because the
+// answer depends on it: the controller answers only for a Gateway that
+// accepted the route and whose data plane the config is built for. The
+// converter asks for each parent in spec order, takes the first certificate,
+// and stamps it onto every backend's BackendTLSConfig.
+type GatewayClientCertResolver func(ctx context.Context, route, gateway types.NamespacedName) *ClientCertConfig
 
 // sortRoutesByPrecedence returns a copy of routes ordered by the Gateway API
 // cross-Route match precedence tiebreak (httproute_types.go:192-197 /
@@ -187,7 +190,7 @@ const kindGateway = "Gateway"
 func resolveFirstParentClientCertFromRefs(
 	ctx context.Context,
 	parentRefs []gatewayv1.ParentReference,
-	routeNamespace string,
+	route types.NamespacedName,
 	resolver GatewayClientCertResolver,
 ) *ClientCertConfig {
 	if resolver == nil {
@@ -203,12 +206,12 @@ func resolveFirstParentClientCertFromRefs(
 			continue
 		}
 
-		ns := routeNamespace
+		ns := route.Namespace
 		if ref.Namespace != nil {
 			ns = string(*ref.Namespace)
 		}
 
-		if cert := resolver(ctx, types.NamespacedName{Namespace: ns, Name: string(ref.Name)}); cert != nil {
+		if cert := resolver(ctx, route, types.NamespacedName{Namespace: ns, Name: string(ref.Name)}); cert != nil {
 			return cert
 		}
 	}

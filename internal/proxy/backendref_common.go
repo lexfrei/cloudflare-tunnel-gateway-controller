@@ -6,6 +6,7 @@ import (
 	"log/slog"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
@@ -158,9 +159,9 @@ type routeKindView[R metav1.Object] struct {
 // convertRoutesGeneric is the shared conversion shell behind ConvertHTTPRoutes
 // and ConvertGRPCRoutes: routes are flattened in spec precedence order (oldest
 // creationTimestamp, then namespace/name) so the router's stable ruleIndex
-// tiebreak resolves cross-Route ties exactly as the spec mandates, each
-// route's first managed parent contributes the backend mTLS client cert, and
-// every rule's diagnostics land in one sink.
+// tiebreak resolves cross-Route ties exactly as the spec mandates, the first
+// parent the resolver answers for contributes each route's backend mTLS
+// client cert, and every rule's diagnostics land in one sink.
 func convertRoutesGeneric[R metav1.Object](
 	ctx context.Context,
 	routes []R,
@@ -176,7 +177,8 @@ func convertRoutesGeneric[R metav1.Object](
 	for _, route := range sortRoutesByPrecedence(routes) {
 		sink.route(view.kind, route.GetNamespace(), route.GetName())
 		hostnames := convertHostnames(view.hostnames(route))
-		clientCert := resolveFirstParentClientCertFromRefs(ctx, view.parentRefs(route), route.GetNamespace(), gatewayCertResolver)
+		routeNN := types.NamespacedName{Namespace: route.GetNamespace(), Name: route.GetName()}
+		clientCert := resolveFirstParentClientCertFromRefs(ctx, view.parentRefs(route), routeNN, gatewayCertResolver)
 
 		for ruleIdx := range view.ruleCount(route) {
 			sink.at(ruleIdx)

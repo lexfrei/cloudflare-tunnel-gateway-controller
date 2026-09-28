@@ -518,7 +518,7 @@ func TestApplyDataPlaneQuota(t *testing.T) {
 		assert.Contains(t, infra.resolved, "team-a/old", "the oldest keeps its plane")
 
 		binding := routeBindingInfo{acceptedGateways: map[string]bool{"team-a/new": true}}
-		assert.Empty(t, partitionKeysFor(binding, infra),
+		assert.Empty(t, partitionGatewaysFor(binding, infra),
 			"a route bound only to a refused Gateway must reach no partition, shared included")
 	})
 

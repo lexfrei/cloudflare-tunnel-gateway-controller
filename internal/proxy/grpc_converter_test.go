@@ -219,7 +219,7 @@ func TestConvertGRPCRoutes_GatewayClientCertStampedOnGRPCBackend(t *testing.T) {
 	clientCertPEM := []byte("-----BEGIN CERTIFICATE-----\nCLIENT-CERT\n-----END CERTIFICATE-----\n")
 	clientKeyPEM := []byte("-----BEGIN PRIVATE KEY-----\nCLIENT-KEY\n-----END PRIVATE KEY-----\n")
 
-	certResolver := func(_ context.Context, gw types.NamespacedName) *proxy.ClientCertConfig {
+	certResolver := func(_ context.Context, _, gw types.NamespacedName) *proxy.ClientCertConfig {
 		if gw.Namespace == "default" && gw.Name == "gw" {
 			return &proxy.ClientCertConfig{CertPEM: clientCertPEM, KeyPEM: clientKeyPEM}
 		}
@@ -277,7 +277,7 @@ func TestConvertGRPCRoutes_ClientCertOnlyWithoutPolicyStaysCleartext(t *testing.
 
 	// certResolver still returns a cert; this would be a misconfig under
 	// the spec, but the converter must not silently send it over plaintext.
-	certResolver := func(_ context.Context, _ types.NamespacedName) *proxy.ClientCertConfig {
+	certResolver := func(_ context.Context, _, _ types.NamespacedName) *proxy.ClientCertConfig {
 		return &proxy.ClientCertConfig{
 			CertPEM: []byte("-----BEGIN CERTIFICATE-----\nCLIENT-CERT\n-----END CERTIFICATE-----\n"),
 			KeyPEM:  []byte("-----BEGIN PRIVATE KEY-----\nCLIENT-KEY\n-----END PRIVATE KEY-----\n"),
@@ -613,7 +613,7 @@ func TestConvertGRPCRoutes_ExternalBackendSkipsBackendTLSResolver(t *testing.T) 
 		}
 	}
 
-	certResolver := func(_ context.Context, gw types.NamespacedName) *proxy.ClientCertConfig {
+	certResolver := func(_ context.Context, _, gw types.NamespacedName) *proxy.ClientCertConfig {
 		if gw.Namespace == "default" && gw.Name == "gw" {
 			return &proxy.ClientCertConfig{
 				CertPEM: []byte("-----BEGIN CERTIFICATE-----\nCLIENT-CERT\n-----END CERTIFICATE-----\n"),

@@ -809,7 +809,7 @@ func TestConvertHTTPRoutes_Mirror_TargetHasBackendTLSPolicy_StampsGatewayClientC
 
 	clientCertPEM := []byte("-----BEGIN CERTIFICATE-----\nCLIENT-CERT\n-----END CERTIFICATE-----\n")
 	clientKeyPEM := []byte("-----BEGIN PRIVATE KEY-----\nCLIENT-KEY\n-----END PRIVATE KEY-----\n")
-	certResolver := func(_ context.Context, gw ktypes.NamespacedName) *proxy.ClientCertConfig {
+	certResolver := func(_ context.Context, _, gw ktypes.NamespacedName) *proxy.ClientCertConfig {
 		if gw.Namespace == "default" && gw.Name == "gw" {
 			return &proxy.ClientCertConfig{CertPEM: clientCertPEM, KeyPEM: clientKeyPEM}
 		}
@@ -3515,7 +3515,7 @@ func TestConvertHTTPRoutes_GatewayClientCert_AttachedWhenBackendTLSPolicyPresent
 	tlsResolver := func(_ context.Context, _, _ string, _ int32) *proxy.BackendTLSConfig {
 		return &proxy.BackendTLSConfig{CABundlePEM: "CA", ServerName: "svc.default"}
 	}
-	gatewayCertResolver := func(_ context.Context, _ ktypes.NamespacedName) *proxy.ClientCertConfig {
+	gatewayCertResolver := func(_ context.Context, _, _ ktypes.NamespacedName) *proxy.ClientCertConfig {
 		return clientCert
 	}
 
@@ -3575,7 +3575,7 @@ func TestConvertHTTPRoutes_GatewayClientCert_AliasingResolverDoesNotCrossContami
 		},
 	}
 
-	gatewayCertResolver := func(_ context.Context, nn ktypes.NamespacedName) *proxy.ClientCertConfig {
+	gatewayCertResolver := func(_ context.Context, _, nn ktypes.NamespacedName) *proxy.ClientCertConfig {
 		if nn.Name == "gw-a" {
 			return certA
 		}
@@ -3630,7 +3630,7 @@ func TestConvertHTTPRoutes_GatewayClientCert_FirstParentWins(t *testing.T) {
 			},
 		}
 
-		resolver := func(_ context.Context, nn ktypes.NamespacedName) *proxy.ClientCertConfig {
+		resolver := func(_ context.Context, _, nn ktypes.NamespacedName) *proxy.ClientCertConfig {
 			if nn.Name == "gw-first" {
 				return certA
 			}
@@ -3666,7 +3666,7 @@ func TestConvertHTTPRoutes_GatewayClientCert_FirstParentWins(t *testing.T) {
 			},
 		}
 
-		resolver := func(_ context.Context, nn ktypes.NamespacedName) *proxy.ClientCertConfig {
+		resolver := func(_ context.Context, _, nn ktypes.NamespacedName) *proxy.ClientCertConfig {
 			if nn.Name == "gw-with-cert" {
 				return certB
 			}
@@ -3704,7 +3704,7 @@ func TestConvertHTTPRoutes_GatewayClientCert_FirstParentWins(t *testing.T) {
 			},
 		}
 
-		resolver := func(_ context.Context, nn ktypes.NamespacedName) *proxy.ClientCertConfig {
+		resolver := func(_ context.Context, _, nn ktypes.NamespacedName) *proxy.ClientCertConfig {
 			require.NotEqual(t, "mesh-svc", nn.Name, "resolver must not be called for non-Gateway parents")
 			if nn.Name == "gw-real" {
 				return certA
@@ -3754,7 +3754,7 @@ func TestConvertHTTPRoutes_GatewayClientCert_NotAttachedWithoutBackendTLSPolicy(
 	// BackendTLSPolicy targets this Service. Per Gateway API spec the client
 	// cert MUST NOT be attached because the connection is plaintext —
 	// presenting a cert there would be nonsensical.
-	gatewayCertResolver := func(_ context.Context, _ ktypes.NamespacedName) *proxy.ClientCertConfig {
+	gatewayCertResolver := func(_ context.Context, _, _ ktypes.NamespacedName) *proxy.ClientCertConfig {
 		return clientCert
 	}
 
