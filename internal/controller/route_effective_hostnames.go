@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"slices"
 
 	"github.com/cockroachdb/errors"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -54,8 +55,8 @@ const catchAllHostnameSentinel = gatewayv1.Hostname("")
 // validation error) is different: nothing shows what the route may serve, so
 // when no other parent contributes the route is left out of the result, and
 // when another parent does, the route is narrowed to what that parent lends.
-// In both of these cases a diagnostic reports the undecided parent on the
-// route's status.
+// A diagnostic reports the undecided parent on the route's status in both
+// cases, unless the narrowed route still serves every hostname it declares.
 //
 // controllerName scopes which parents may contribute at all: only Gateways
 // whose GatewayClass names this controller. A route may legitimately be
@@ -109,7 +110,9 @@ func withEffectiveHostnames(
 		}
 
 		if undecided != nil {
-			undecidedDiags = append(undecidedDiags, reportUndecidedParent(ctx, kindHTTPRouteDiag, route, undecided, false))
+			if diag, narrowed := reportNarrowedRoute(ctx, kindHTTPRouteDiag, route, route.Spec.Hostnames, effective, undecided); narrowed {
+				undecidedDiags = append(undecidedDiags, diag)
+			}
 		}
 
 		clone := *route
@@ -171,7 +174,9 @@ func withEffectiveHostnamesGRPC(
 		}
 
 		if undecided != nil {
-			undecidedDiags = append(undecidedDiags, reportUndecidedParent(ctx, kindGRPCRouteDiag, route, undecided, false))
+			if diag, narrowed := reportNarrowedRoute(ctx, kindGRPCRouteDiag, route, route.Spec.Hostnames, effective, undecided); narrowed {
+				undecidedDiags = append(undecidedDiags, diag)
+			}
 		}
 
 		clone := *route
@@ -233,6 +238,32 @@ func collectEffectiveListenerHostnames(
 	}
 
 	return out, catchAll, undecided
+}
+
+// reportNarrowedRoute reports a route that another parent lends hostnames to
+// while one parent could not be evaluated, when the undecided parent may be
+// withholding hostnames: always for a hostname-less route, which inherits what
+// its parents lend, and otherwise when a declared hostname is not served. A
+// route already serving every hostname it declares gains nothing from that
+// parent, so it is only logged, with no diagnostic and no requeue.
+func reportNarrowedRoute(
+	ctx context.Context,
+	kind string,
+	route client.Object,
+	declared, effective []gatewayv1.Hostname,
+	err error,
+) (proxy.RouteDiagnostic, bool) {
+	if len(declared) > 0 && !slices.ContainsFunc(declared, func(hostname gatewayv1.Hostname) bool {
+		return !slices.Contains(effective, hostname)
+	}) {
+		logging.FromContext(ctx).Info("a parent could not be evaluated; the route already serves every hostname it declares",
+			"route", route.GetNamespace()+"/"+route.GetName(),
+			"error", err)
+
+		return proxy.RouteDiagnostic{}, false
+	}
+
+	return reportUndecidedParent(ctx, kind, route, err, false), true
 }
 
 // reportUndecidedParent logs a route with a parent that could not be

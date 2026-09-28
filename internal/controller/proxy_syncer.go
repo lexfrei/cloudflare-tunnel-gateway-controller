@@ -798,11 +798,34 @@ func (s *ProxySyncer) SyncPartition(
 	// concurrently, and syncMu only guards the in-memory push state (skip cache,
 	// failure streak), not the network call. Holding it across the HTTP push
 	// would serialize every partition's push on one slow connector (#489).
+	//
+	// A panic before the outcome is recorded, which controller-runtime
+	// recovers, must still release the in-flight count, or every later
+	// lost-race replay of this partition would count as superseded.
+	recorded := false
+
+	defer func() {
+		if !recorded {
+			s.releaseSyncInFlight(prep.target)
+		}
+	}()
+
 	pushErr := s.pushToEndpoints(ctx, logger, prep.cfg, resolvedEndpoints, authToken)
 
 	s.recordPush(prep.target, key, authToken, prep.cfgHash, prep.cfg, resolved, pushErr)
 
+	recorded = true
+
 	return prep.diagnostics, pushErr
+}
+
+// releaseSyncInFlight lowers the in-flight count of a sync whose outcome was
+// never recorded.
+func (s *ProxySyncer) releaseSyncInFlight(target *pushTarget) {
+	s.syncMu.Lock()
+	defer s.syncMu.Unlock()
+
+	target.syncsInFlight--
 }
 
 // preparedPush carries the result of the locked build phase across the lock-free
