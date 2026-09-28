@@ -48,14 +48,12 @@ const (
 	configReadTimeout    = 60 * time.Second
 	configWriteTimeout   = 60 * time.Second
 	shutdownTimeout      = 30 * time.Second
-	// defaultStartupProtocolWait bounds how long the proxy waits for the
-	// controller's first config push before dialing the edge, when the
-	// configured transport is auto/unset and the proxy must learn whether a
-	// GRPCRoute is present (gRPC needs http2). Overridable via
-	// PROXY_TUNNEL_PROTOCOL_WAIT. The wait only delays auto deployments, and
-	// only until the first push (or this cap) — explicit http2/quic dial
-	// immediately.
-	defaultStartupProtocolWait = 30 * time.Second
+	// firstConfigTimeout bounds how long a tunnel-mode proxy waits for the
+	// controller's first config push before it gives up and exits non-zero,
+	// never having dialed the edge. The controller pushes to a new pod as soon
+	// as it appears in the proxy EndpointSlice, so the wait normally ends
+	// within seconds; the cap is only reached when no controller is pushing.
+	firstConfigTimeout = 2 * time.Minute
 )
 
 func main() {
@@ -236,7 +234,7 @@ func runTunnelMode(logger *slog.Logger, token string, plane *dataPlane) int {
 	// router.SetTunnelConnected, which only fires on an actual connection. A
 	// non-retryable failure (malformed token, unsupported protocol) still
 	// returns immediately below.
-	err := dialTunnel(ctx, logger, router, graceC, startupProtocolWait(logger), &tunnel.Config{
+	err := dialTunnel(ctx, logger, router, graceC, firstConfigTimeout, &tunnel.Config{
 		Token:       token,
 		Logger:      logger,
 		OriginProxy: originProxy,
@@ -262,7 +260,11 @@ func runTunnelMode(logger *slog.Logger, token string, plane *dataPlane) int {
 // passes tunnel.StartTunnelWithRetry.
 type tunnelStarter func(ctx context.Context, cfg *tunnel.Config, drainC <-chan struct{}) error
 
-// dialTunnel resolves the edge transport and starts the tunnel with cfg.
+// dialTunnel waits for the first config, resolves the edge transport from it,
+// and starts the tunnel with cfg. Nothing registers with the edge before that
+// config arrives: the edge sends traffic to every registered connector, and one
+// with no routing table answers each request with a 404. The config API is
+// already serving while this waits, which is how the config gets here.
 func dialTunnel(
 	ctx context.Context,
 	logger *slog.Logger,
@@ -272,21 +274,25 @@ func dialTunnel(
 	cfg *tunnel.Config,
 	start tunnelStarter,
 ) error {
-	// Resolve the edge transport before dialing. PROXY_TUNNEL_PROTOCOL selects
-	// it (auto|http2|quic, default auto). For auto/unset this waits briefly for
-	// the controller's first config push so the proxy can upgrade to http2 when
-	// a GRPCRoute is present — cloudflared drops HTTP trailers over QUIC, so gRPC
-	// needs http2. Explicit http2/quic dial immediately without waiting.
-	// graceC rides along so a SIGTERM during this window does not burn the
-	// startup wait out of the pod's termination grace budget.
-	effectiveProtocol := proxy.ResolveStartupProtocol(
-		ctx,
-		os.Getenv("PROXY_TUNNEL_PROTOCOL"),
-		router.FirstConfigLoaded(),
-		wait,
-		graceC,
-		logger,
-	)
+	// graceC rides along so a SIGTERM during the wait does not burn it out of
+	// the pod's termination grace budget.
+	logger.Info("waiting for the first config before dialing the edge", "timeout", wait.String())
+
+	first, err := proxy.AwaitFirstConfig(ctx, router.FirstConfigLoaded(), wait, graceC)
+	if errors.Is(err, proxy.ErrDrainBeforeFirstConfig) {
+		logger.Info("drain signalled before the first config; exiting without dialing the edge")
+
+		return nil
+	}
+
+	if err != nil {
+		return fmt.Errorf("not registering with the edge: %w", err)
+	}
+
+	// PROXY_TUNNEL_PROTOCOL selects the transport (auto|http2|quic, default
+	// auto). auto becomes http2 when the first config carries a GRPCRoute:
+	// cloudflared drops HTTP trailers over QUIC, so gRPC needs http2.
+	effectiveProtocol := proxy.StartupProtocol(os.Getenv("PROXY_TUNNEL_PROTOCOL"), first, logger)
 
 	// Record the dialed transport so the router can warn (once) if a GRPCRoute
 	// arrives later on a non-http2 transport, where a live re-dial is unsafe and
@@ -787,20 +793,6 @@ func parseEnvDuration(logger *slog.Logger, name string) time.Duration {
 	}
 
 	return parsed
-}
-
-// startupProtocolWait reads PROXY_TUNNEL_PROTOCOL_WAIT and returns how long the
-// proxy should wait for the first config push before dialing the edge on an
-// auto/unset transport. Unset, empty, malformed, zero, or negative values fall
-// back to defaultStartupProtocolWait: a non-positive wait would defeat the
-// gRPC-aware upgrade (the proxy would time out immediately and dial auto even
-// when a GRPCRoute is about to arrive), so only a positive override is honoured.
-func startupProtocolWait(logger *slog.Logger) time.Duration {
-	if d := parseEnvDuration(logger, "PROXY_TUNNEL_PROTOCOL_WAIT"); d > 0 {
-		return d
-	}
-
-	return defaultStartupProtocolWait
 }
 
 // wsHandlerOptions turns the three PROXY_WS_* durations into

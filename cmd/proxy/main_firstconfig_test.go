@@ -151,7 +151,7 @@ func TestDialTunnel_NoFirstConfigFailsWithoutDialing(t *testing.T) {
 		t.Fatal("the wait for the first config is not bounded")
 	}
 
-	require.Error(t, outcome.err)
+	require.ErrorIs(t, outcome.err, proxy.ErrNoFirstConfig)
 	assert.False(t, router.TunnelConnected())
 }
 
