@@ -202,7 +202,7 @@ spec:
 |-----------|--------|--------|-------------|
 | `Accepted` | `True` | `Accepted` | Gateway accepted by controller |
 | `Accepted` | `False` | `ListenersNotValid` | Gateway has conflicted own listeners (one or more own listeners carry `Conflicted: True`); per-listener status reports the conflict |
-| `Accepted` | `False` | `InvalidParameters` | The Gateway's configuration cannot be resolved: the GatewayClassConfig referenced by the GatewayClass is unreadable, the per-Gateway `parametersRef` is invalid, no proxy image is configured, or the Gateway claims a Cloudflare Tunnel it does not own |
+| `Accepted` | `False` | `InvalidParameters` | The Gateway's configuration cannot be resolved: the GatewayClass `parametersRef` chain is invalid or names a GatewayClassConfig or Secret that does not exist, the per-Gateway `parametersRef` is invalid, no proxy image is configured, or the Gateway claims a Cloudflare Tunnel it does not own. A read that fails for any other reason is retried and leaves the Gateway's status and address unchanged |
 | `Accepted` | `False` | `DataPlaneQuotaExceeded` | The Gateway's namespace already holds as many dedicated data planes as `maxDataPlanesPerNamespace` allows. Implementation-specific reason; the oldest Gateways by creation timestamp keep their planes |
 | `Programmed` | `True` | `Programmed` | Gateway configured in Cloudflare |
 | `Programmed` | `False` | `Invalid` | The Gateway's configuration cannot be resolved, or it was refused the tunnel it claimed (see the `Accepted` reason above) |
