@@ -1,0 +1,303 @@
+package controller
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/go-logr/logr"
+	"github.com/go-logr/logr/funcr"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/yaml"
+)
+
+const shippedCRDDir = "../../charts/cloudflare-tunnel-gateway-controller/crds"
+
+// shippedCRD loads the chart's copy of the named CRD.
+func shippedCRD(t *testing.T, name string) *apiextensionsv1.CustomResourceDefinition {
+	t.Helper()
+
+	plural, group, _ := strings.Cut(name, ".")
+	raw, err := os.ReadFile(filepath.Join(shippedCRDDir, group+"_"+plural+".yaml"))
+	require.NoError(t, err)
+
+	var crd apiextensionsv1.CustomResourceDefinition
+	require.NoError(t, yaml.Unmarshal(raw, &crd))
+	require.Equal(t, name, crd.Name)
+
+	return &crd
+}
+
+func versionSchema(t *testing.T, crd *apiextensionsv1.CustomResourceDefinition, version string) *apiextensionsv1.JSONSchemaProps {
+	t.Helper()
+
+	for i := range crd.Spec.Versions {
+		if crd.Spec.Versions[i].Name == version {
+			return crd.Spec.Versions[i].Schema.OpenAPIV3Schema
+		}
+	}
+
+	t.Fatalf("CRD %s has no version %s", crd.Name, version)
+
+	return nil
+}
+
+// TestSchemaGaps_ShippedCRDsDescribeEveryField pins the walk against the CRDs
+// the chart ships: on a fresh install it must report nothing, or every
+// controller start would log a false alarm. It also pins that the list of
+// checked CRDs covers every CRD the chart ships.
+func TestSchemaGaps_ShippedCRDsDescribeEveryField(t *testing.T) {
+	t.Parallel()
+
+	entries, err := os.ReadDir(shippedCRDDir)
+	require.NoError(t, err)
+
+	checked := make(map[string]bool, len(servedCRDs()))
+	for _, served := range servedCRDs() {
+		plural, group, _ := strings.Cut(served.name, ".")
+		checked[group+"_"+plural+".yaml"] = true
+
+		schema := versionSchema(t, shippedCRD(t, served.name), served.version)
+		assert.Empty(t, schemaGaps(served.object, schema), "shipped %s", served.name)
+	}
+
+	for _, entry := range entries {
+		assert.True(t, checked[entry.Name()], "chart ships %s but the startup check does not verify it", entry.Name())
+	}
+}
+
+// TestSchemaGaps_PrunedFieldReported covers the upgrade that keeps an older
+// CRD: a field the binary reads is absent from the stored schema, so the
+// apiserver drops it on write.
+func TestSchemaGaps_PrunedFieldReported(t *testing.T) {
+	t.Parallel()
+
+	for _, served := range servedCRDs() {
+		if served.name != gatewayClassConfigCRDName {
+			continue
+		}
+
+		schema := versionSchema(t, shippedCRD(t, served.name), served.version)
+		spec := schema.Properties["spec"]
+		delete(spec.Properties, "maxDataPlanesPerNamespace")
+
+		secretRef := spec.Properties["cloudflareCredentialsSecretRef"]
+		delete(secretRef.Properties, "key")
+		spec.Properties["cloudflareCredentialsSecretRef"] = secretRef
+		schema.Properties["spec"] = spec
+
+		assert.ElementsMatch(t,
+			[]string{"spec.maxDataPlanesPerNamespace", "spec.cloudflareCredentialsSecretRef.key"},
+			schemaGaps(served.object, schema))
+
+		return
+	}
+
+	t.Fatalf("%s is not in servedCRDs", gatewayClassConfigCRDName)
+}
+
+// capturingLogger records every rendered log line.
+func capturingLogger() (func() string, logr.Logger) {
+	var (
+		mu    sync.Mutex
+		lines []string
+	)
+
+	logger := funcr.New(func(prefix, args string) {
+		mu.Lock()
+		defer mu.Unlock()
+
+		lines = append(lines, prefix+" "+args)
+	}, funcr.Options{})
+
+	return func() string {
+		mu.Lock()
+		defer mu.Unlock()
+
+		return strings.Join(lines, "\n")
+	}, logger
+}
+
+func crdClient(t *testing.T, objs ...client.Object) client.Client {
+	t.Helper()
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, apiextensionsv1.AddToScheme(scheme))
+
+	return fake.NewClientBuilder().WithScheme(scheme).WithObjects(objs...).Build()
+}
+
+// TestLogInstalledSchemaGaps_NamesEachMissingField drives the startup check
+// against an apiserver holding an older GatewayClassConfig CRD.
+func TestLogInstalledSchemaGaps_NamesEachMissingField(t *testing.T) {
+	t.Parallel()
+
+	objs := make([]client.Object, 0, len(servedCRDs()))
+
+	for _, served := range servedCRDs() {
+		crd := shippedCRD(t, served.name)
+		if served.name == gatewayClassConfigCRDName {
+			spec := versionSchema(t, crd, served.version).Properties["spec"]
+			delete(spec.Properties, "maxDataPlanesPerNamespace")
+			delete(spec.Properties, "allowSharedTunnels")
+		}
+
+		objs = append(objs, crd)
+	}
+
+	output, logger := capturingLogger()
+	logInstalledSchemaGaps(context.Background(), crdClient(t, objs...), logger)
+
+	lines := strings.Split(output(), "\n")
+	require.Len(t, lines, 2, "exactly the pruned fields are reported")
+
+	for _, line := range lines {
+		assert.Contains(t, line, gatewayClassConfigCRDName)
+		assert.Contains(t, line, `"error"=`, "reported at error level")
+	}
+
+	logged := strings.Join(lines, "\n")
+	assert.Contains(t, logged, `"spec.maxDataPlanesPerNamespace"`)
+	assert.Contains(t, logged, `"spec.allowSharedTunnels"`)
+}
+
+// TestLogInstalledSchemaGaps_ReportsUnreadableCRD pins that a CRD the check
+// cannot read is reported rather than passed over as verified.
+func TestLogInstalledSchemaGaps_ReportsUnreadableCRD(t *testing.T) {
+	t.Parallel()
+
+	output, logger := capturingLogger()
+	logInstalledSchemaGaps(context.Background(), crdClient(t), logger)
+
+	lines := strings.Split(output(), "\n")
+	require.Len(t, lines, len(servedCRDs()))
+
+	for i, served := range servedCRDs() {
+		assert.Contains(t, lines[i], served.name)
+		assert.Contains(t, lines[i], `"error"=`, "reported at error level")
+	}
+}
+
+type schemaGapsInline struct {
+	Inlined string `json:"inlined"`
+}
+
+type schemaGapsItem struct {
+	Kept    string `json:"kept"`
+	Dropped string `json:"dropped"`
+}
+
+type schemaGapsObject struct {
+	schemaGapsInline `json:",inline"`
+
+	Untagged string
+	Ignored  string           `json:"-"`
+	Items    []schemaGapsItem `json:"items,omitempty"`
+	hidden   string
+}
+
+// TestSchemaGaps_FollowsJSONFieldNames pins the walk to the field names
+// encoding/json uses: inline embeds are flattened, an untagged field keeps its
+// Go name, "-" and unexported fields are skipped, and a slice is checked
+// through its items schema.
+func TestSchemaGaps_FollowsJSONFieldNames(t *testing.T) {
+	t.Parallel()
+
+	_ = schemaGapsObject{hidden: ""}
+
+	object := func(properties map[string]apiextensionsv1.JSONSchemaProps) *apiextensionsv1.JSONSchemaProps {
+		return &apiextensionsv1.JSONSchemaProps{Type: "object", Properties: properties}
+	}
+
+	schema := object(map[string]apiextensionsv1.JSONSchemaProps{
+		"items": {Type: "array", Items: &apiextensionsv1.JSONSchemaPropsOrArray{
+			Schema: object(map[string]apiextensionsv1.JSONSchemaProps{"kept": {Type: "string"}}),
+		}},
+	})
+
+	assert.ElementsMatch(t, []string{"inlined", "Untagged", "items[].dropped"}, schemaGaps(schemaGapsObject{}, schema))
+}
+
+// TestLogInstalledSchemaGaps_ReportsMissingVersion covers a CRD installed
+// without the version this controller reads: nothing can be compared, and that
+// must be reported rather than passed over as verified.
+func TestLogInstalledSchemaGaps_ReportsMissingVersion(t *testing.T) {
+	t.Parallel()
+
+	objs := make([]client.Object, 0, len(servedCRDs()))
+
+	for _, served := range servedCRDs() {
+		crd := shippedCRD(t, served.name)
+		if served.name == gatewayClassConfigCRDName {
+			for i := range crd.Spec.Versions {
+				crd.Spec.Versions[i].Name = "v1alpha0"
+			}
+		}
+
+		objs = append(objs, crd)
+	}
+
+	output, logger := capturingLogger()
+	logInstalledSchemaGaps(context.Background(), crdClient(t, objs...), logger)
+
+	lines := strings.Split(output(), "\n")
+	require.Len(t, lines, 1)
+	assert.Contains(t, lines[0], gatewayClassConfigCRDName)
+	assert.Contains(t, lines[0], `"version"="v1alpha1"`)
+	assert.Contains(t, lines[0], `"error"=`, "reported at error level")
+}
+
+// deadlineRecordingReader records whether each Get carried a deadline and
+// answers as if the CRD were absent.
+type deadlineRecordingReader struct {
+	client.Reader
+
+	mu        sync.Mutex
+	deadlines []time.Time
+}
+
+func (r *deadlineRecordingReader) Get(ctx context.Context, key client.ObjectKey, _ client.Object, _ ...client.GetOption) error {
+	deadline, ok := ctx.Deadline()
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if ok {
+		r.deadlines = append(r.deadlines, deadline)
+	}
+
+	return apierrors.NewNotFound(apiextensionsv1.Resource("customresourcedefinitions"), key.Name)
+}
+
+// TestLogInstalledSchemaGaps_BoundsItsReads pins that the startup CRD reads
+// carry a deadline even when the caller's context has none, so a slow
+// apiserver cannot hold up controller startup indefinitely.
+func TestLogInstalledSchemaGaps_BoundsItsReads(t *testing.T) {
+	t.Parallel()
+
+	reader := &deadlineRecordingReader{}
+
+	_, logger := capturingLogger()
+	logInstalledSchemaGaps(context.Background(), reader, logger)
+
+	end := time.Now()
+
+	reader.mu.Lock()
+	defer reader.mu.Unlock()
+
+	require.Len(t, reader.deadlines, len(servedCRDs()), "every read carries a deadline")
+
+	for _, deadline := range reader.deadlines {
+		assert.False(t, deadline.After(end.Add(crdSchemaCheckTimeout)), "the deadline is at most the check timeout away")
+	}
+}

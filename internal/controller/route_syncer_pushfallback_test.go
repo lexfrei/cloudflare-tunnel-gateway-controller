@@ -887,3 +887,75 @@ func TestRecordResync_DoesNotOutliveAnEvictedAndRecreatedPartition(t *testing.T)
 	assert.Equal(t, recreatedHash, gotHash,
 		"a replay from before the partition was recreated must not claim the new partition's endpoints hold its old document")
 }
+
+// TestWithParentNotEvaluatedRequeue pins that a route left out because a
+// parent could not be evaluated schedules a retry: nothing else re-runs the
+// sync on a quiet cluster, and the route stays unserved until one does. An
+// earlier or equal pending requeue is kept, and other diagnostics request
+// nothing.
+func TestWithParentNotEvaluatedRequeue(t *testing.T) {
+	t.Parallel()
+
+	notEvaluated := []proxy.RouteDiagnostic{{Target: proxy.DiagnosticProxyConfigPush, Reason: routeReasonParentNotEvaluated}}
+	pushFailed := []proxy.RouteDiagnostic{{Target: proxy.DiagnosticProxyConfigPush, Reason: routeReasonProxyConfigPushFailed}}
+
+	assert.Equal(t, apiErrorRequeueDelay,
+		withParentNotEvaluatedRequeue(ctrl.Result{}, notEvaluated).RequeueAfter)
+
+	assert.Equal(t, apiErrorRequeueDelay,
+		withParentNotEvaluatedRequeue(ctrl.Result{RequeueAfter: time.Hour}, notEvaluated).RequeueAfter,
+		"a longer pending requeue is shortened")
+
+	assert.Equal(t, time.Second,
+		withParentNotEvaluatedRequeue(ctrl.Result{RequeueAfter: time.Second}, notEvaluated).RequeueAfter,
+		"a shorter pending requeue is kept")
+
+	assert.Equal(t, ctrl.Result{}, withParentNotEvaluatedRequeue(ctrl.Result{}, pushFailed))
+	assert.Equal(t, ctrl.Result{}, withParentNotEvaluatedRequeue(ctrl.Result{}, nil))
+}
+
+var (
+	errSyncFailed         = errors.New("sync failed")
+	errStatusUpdateFailed = errors.New("status update failed")
+)
+
+// TestSyncOutcome pins how a sync's push outcome reaches the reconcile result,
+// including the two requeues nothing else would schedule on a quiet cluster: a
+// lost push race and a route left out because a parent could not be evaluated.
+func TestSyncOutcome(t *testing.T) {
+	t.Parallel()
+
+	notEvaluated := []proxy.RouteDiagnostic{{Target: proxy.DiagnosticProxyConfigPush, Reason: routeReasonParentNotEvaluated}}
+
+	tests := []struct {
+		name        string
+		lostRace    bool
+		diagnostics []proxy.RouteDiagnostic
+		syncErr     error
+		statusErr   error
+		wantRequeue time.Duration
+		wantErr     error
+	}{
+		{name: "clean sync"},
+		{name: "lost race", lostRace: true, wantRequeue: lostRacePushRequeueDelay},
+		{name: "route left out", diagnostics: notEvaluated, wantRequeue: apiErrorRequeueDelay},
+		{name: "lost race and route left out", lostRace: true, diagnostics: notEvaluated, wantRequeue: lostRacePushRequeueDelay},
+		{name: "sync error", syncErr: errSyncFailed, wantErr: errSyncFailed},
+		{name: "sync error with lost race", syncErr: errSyncFailed, lostRace: true, wantRequeue: lostRacePushRequeueDelay},
+		{name: "status update error", diagnostics: notEvaluated, statusErr: errStatusUpdateFailed, wantErr: errStatusUpdateFailed},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			result, err := syncOutcome(ctrl.Result{}, tt.lostRace, tt.diagnostics, tt.syncErr, tt.statusErr)
+			assert.Equal(t, tt.wantRequeue, result.RequeueAfter)
+			assert.ErrorIs(t, err, tt.wantErr)
+
+			if tt.wantErr == nil {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}

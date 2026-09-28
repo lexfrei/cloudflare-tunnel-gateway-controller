@@ -4,6 +4,8 @@ import (
 	"context"
 	"slices"
 
+	"github.com/cockroachdb/errors"
+
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
@@ -199,8 +201,13 @@ func acceptedProtocolsForParentRef(
 	ref gatewayv1.ParentReference,
 	views *listenerViewCache,
 ) []gatewayv1.ProtocolType {
-	return resolveParentRefListeners(ctx, cli, controllerName, validator, route, ref, views,
+	// A parent that cannot be evaluated lends no protocol. The hostname pass
+	// runs first and has already left out any route that no other parent
+	// lends a hostname to.
+	protocols, _ := resolveParentRefListeners(ctx, cli, controllerName, validator, route, ref, views,
 		gatewayAcceptedProtocols, listenerSetAcceptedProtocols)
+
+	return protocols
 }
 
 func gatewayAcceptedProtocols(
@@ -210,19 +217,19 @@ func gatewayAcceptedProtocols(
 	validator *routebinding.Validator,
 	namespace, name string,
 	routeInfo *routebinding.RouteInfo,
-) []gatewayv1.ProtocolType {
+) ([]gatewayv1.ProtocolType, error) {
 	var gateway gatewayv1.Gateway
 	if err := cli.Get(ctx, client.ObjectKey{Name: name, Namespace: namespace}, &gateway); err != nil {
-		return nil
+		return nil, errors.Wrap(client.IgnoreNotFound(err), "reading Gateway")
 	}
 
 	if gatewayOwnedElsewhere(ctx, cli, &gateway, controllerName) {
-		return nil
+		return nil, nil
 	}
 
 	result, err := validator.ValidateBinding(ctx, &gateway, routeInfo)
 	if err != nil || !result.Accepted {
-		return nil
+		return nil, errors.Wrap(err, "validating binding against Gateway")
 	}
 
 	protoByName := make(map[gatewayv1.SectionName]gatewayv1.ProtocolType, len(gateway.Spec.Listeners))
@@ -230,7 +237,7 @@ func gatewayAcceptedProtocols(
 		protoByName[gateway.Spec.Listeners[i].Name] = gateway.Spec.Listeners[i].Protocol
 	}
 
-	return protocolsForSections(result.MatchedListeners, protoByName)
+	return protocolsForSections(result.MatchedListeners, protoByName), nil
 }
 
 func listenerSetAcceptedProtocols(
@@ -241,19 +248,19 @@ func listenerSetAcceptedProtocols(
 	namespace, name string,
 	routeInfo *routebinding.RouteInfo,
 	views *listenerViewCache,
-) []gatewayv1.ProtocolType {
+) ([]gatewayv1.ProtocolType, error) {
 	var listenerSet gatewayv1.ListenerSet
 	if err := cli.Get(ctx, client.ObjectKey{Name: name, Namespace: namespace}, &listenerSet); err != nil {
-		return nil
+		return nil, errors.Wrap(client.IgnoreNotFound(err), "reading ListenerSet")
 	}
 
-	if listenerSetExcluded(ctx, cli, controllerName, validator, &listenerSet) {
-		return nil
+	if excluded, err := listenerSetExcluded(ctx, cli, controllerName, validator, &listenerSet); err != nil || excluded {
+		return nil, err
 	}
 
 	result, err := validator.ValidateBindingForListenerSet(ctx, &listenerSet, routeInfo)
 	if err != nil || !result.Accepted {
-		return nil
+		return nil, errors.Wrap(err, "validating binding against ListenerSet")
 	}
 
 	// Drop sections whose merged-view entry is conflicted — a conflicted
@@ -266,7 +273,7 @@ func listenerSetAcceptedProtocols(
 		protoByName[listenerSet.Spec.Listeners[i].Name] = listenerSet.Spec.Listeners[i].Protocol
 	}
 
-	return protocolsForSections(matched, protoByName)
+	return protocolsForSections(matched, protoByName), nil
 }
 
 // protocolsForSections maps each accepted listener section to its protocol,

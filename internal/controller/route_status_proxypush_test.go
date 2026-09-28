@@ -83,3 +83,47 @@ func TestBuildParentStatus_ProxyConfigPushedOmittedWhenRejected(t *testing.T) {
 
 	assert.Nil(t, findCondition(status.Conditions, routeConditionProxyConfigPushed))
 }
+
+// TestBuildParentStatus_ParentNotEvaluatedReason pins that a route left out of
+// its data plane's config because a parent could not be evaluated carries
+// the same ProxyConfigPushed=False condition, with a reason that says why
+// rather than claiming a push failed.
+func TestBuildParentStatus_ParentNotEvaluatedReason(t *testing.T) {
+	t.Parallel()
+
+	diag := proxyPushDiag("this route was left out of its data plane's config")
+	diag.Reason = routeReasonParentNotEvaluated
+
+	status := buildParentStatusForDiag([]proxy.RouteDiagnostic{diag}, 1)
+
+	accepted := findCondition(status.Conditions, string(gatewayv1.RouteConditionAccepted))
+	require.NotNil(t, accepted)
+	assert.Equal(t, metav1.ConditionTrue, accepted.Status)
+
+	pushed := findCondition(status.Conditions, routeConditionProxyConfigPushed)
+	require.NotNil(t, pushed)
+	assert.Equal(t, metav1.ConditionFalse, pushed.Status)
+	assert.Equal(t, routeReasonParentNotEvaluated, pushed.Reason)
+}
+
+// TestBuildParentStatus_PushFailureReasonWinsOverParentNotEvaluated covers a
+// route that is left out in one partition while another partition's push
+// keeps failing: the condition must still say a push failed, since that is the
+// problem the route being left out does not explain.
+func TestBuildParentStatus_PushFailureReasonWinsOverParentNotEvaluated(t *testing.T) {
+	t.Parallel()
+
+	notEvaluated := proxyPushDiag("this route was left out of its data plane's config")
+	notEvaluated.Reason = routeReasonParentNotEvaluated
+
+	for _, diags := range [][]proxy.RouteDiagnostic{
+		{notEvaluated, proxyPushDiag("could not push config")},
+		{proxyPushDiag("could not push config"), notEvaluated},
+	} {
+		status := buildParentStatusForDiag(diags, 1)
+
+		pushed := findCondition(status.Conditions, routeConditionProxyConfigPushed)
+		require.NotNil(t, pushed)
+		assert.Equal(t, routeReasonProxyConfigPushFailed, pushed.Reason)
+	}
+}

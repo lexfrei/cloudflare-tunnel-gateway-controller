@@ -18,7 +18,7 @@ This section documents version-to-version upgrade paths and the breaking changes
 
 Helm installs the files under the chart's `crds/` directory only on the FIRST `helm install`; `helm upgrade` deliberately never touches them. Apply the CRDs once before upgrading to a chart version that adds a CRD (for example `GatewayConfig` for per-Gateway data planes, which the v3.2 controller watches from startup) **or that adds a field to an existing one**.
 
-A field the installed CRD does not declare is pruned by the apiserver on write, with no error and no Event: it disappears on the way in and reads back unset, so a setting you made is not in force and nothing says so.
+A field the installed CRD does not declare is pruned by the apiserver on write, with no error and no Event: it disappears on the way in and reads back unset, so a setting you made is not in force. When the controller starts, it logs an error for each field that the installed `GatewayClassConfig`, `GatewayConfig` or `ExternalBackend` CRD does not declare.
 
 ```bash
 kubectl apply \
