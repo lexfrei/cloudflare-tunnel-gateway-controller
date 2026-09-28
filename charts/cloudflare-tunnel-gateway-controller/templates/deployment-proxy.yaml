@@ -87,7 +87,7 @@ spec:
             - name: PROXY_WS_IDLE_TIMEOUT
               value: {{ . | quote }}
             {{- end }}
-            {{- with .Values.proxy.mirror.maxInFlight }}
+            {{- with ((.Values.proxy.mirror | default dict).maxInFlight) }}
             - name: PROXY_MIRROR_MAX_IN_FLIGHT
               value: {{ . | int64 | quote }}
             {{- end }}

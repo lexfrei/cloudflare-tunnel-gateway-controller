@@ -100,7 +100,7 @@ spec:
             {{- if ne (int .Values.proxy.configAPIPort) 8081 }}
             - "--proxy-config-api-port={{ .Values.proxy.configAPIPort }}"
             {{- end }}
-            {{- with .Values.proxy.mirror.maxInFlight }}
+            {{- with ((.Values.proxy.mirror | default dict).maxInFlight) }}
             - "--mirror-max-in-flight={{ . | int64 }}"
             {{- end }}
             {{- if .Values.proxy.allowXOriginalHost }}
