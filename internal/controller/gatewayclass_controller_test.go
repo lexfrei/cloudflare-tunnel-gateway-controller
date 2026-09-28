@@ -599,6 +599,63 @@ func TestGatewayClassReconciler_ConfigCreatedLater_AcceptsClass(t *testing.T) {
 	assert.Equal(t, string(gatewayv1.GatewayClassReasonAccepted), accepted.Reason)
 }
 
+// Deleting the GatewayClassConfig must re-evaluate the classes that reference
+// it: the config watch enqueues them, and the next reconcile refuses them.
+func TestGatewayClassReconciler_ConfigDeleted_RefusesClass(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	scheme := gatewayClassSchemeWithConfig(t)
+
+	class := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "served", Generation: 1},
+		Spec:       gatewayv1.GatewayClassSpec{ControllerName: "test-controller", ParametersRef: classConfigRef("test-config")},
+	}
+	cfg := classConfigObject("test-config")
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(class, cfg, gatewayClassCRDObject(consts.BundleVersion)).
+		WithStatusSubresource(class).
+		Build()
+
+	r := &GatewayClassReconciler{
+		Client:              fakeClient,
+		Scheme:              scheme,
+		ControllerName:      "test-controller",
+		BundleVersionReader: fakeClient,
+	}
+
+	acceptedCondition := func() *metav1.Condition {
+		var got gatewayv1.GatewayClass
+		require.NoError(t, fakeClient.Get(ctx, types.NamespacedName{Name: "served"}, &got))
+
+		return findGatewayClassCondition(got.Status.Conditions, string(gatewayv1.GatewayClassConditionStatusAccepted))
+	}
+
+	req := ctrl.Request{NamespacedName: types.NamespacedName{Name: "served"}}
+
+	_, err := r.Reconcile(ctx, req)
+	require.NoError(t, err)
+
+	accepted := acceptedCondition()
+	require.NotNil(t, accepted)
+	assert.Equal(t, metav1.ConditionTrue, accepted.Status)
+
+	require.NoError(t, fakeClient.Delete(ctx, cfg))
+
+	assert.Equal(t, []reconcile.Request{req}, r.gatewayClassesForConfig(ctx, cfg),
+		"deleting the config must enqueue the managed classes that reference it")
+
+	_, err = r.Reconcile(ctx, req)
+	require.NoError(t, err)
+
+	accepted = acceptedCondition()
+	require.NotNil(t, accepted)
+	assert.Equal(t, metav1.ConditionFalse, accepted.Status)
+	assert.Equal(t, string(gatewayv1.GatewayClassReasonInvalidParameters), accepted.Reason)
+}
+
 // runSupportedVersionCheck builds a reconciler whose BundleVersionReader serves
 // the given CRD objects and returns the resulting SupportedVersion condition.
 func runSupportedVersionCheck(

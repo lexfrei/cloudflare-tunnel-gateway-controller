@@ -131,3 +131,30 @@ tests:
       - template: gatewayclass.yaml
         notExists:
           path: spec.parametersRef
+
+  # An explicit name points the class at a GatewayClassConfig managed outside
+  # the chart. Only a name the user set counts: the fullname default applies
+  # to the config the chart creates, not to one it does not.
+  - it: should reference an existing gatewayClassConfig by explicit name when not creating one
+    set:
+      gatewayClassConfig:
+        create: false
+        name: "out-of-band-config"
+    asserts:
+      - template: gatewayclass.yaml
+        equal:
+          path: spec.parametersRef
+          value:
+            group: cf.k8s.lex.la
+            kind: GatewayClassConfig
+            name: out-of-band-config
+
+  - it: should not reference the fullname default when not creating a gatewayClassConfig
+    set:
+      gatewayClassConfig:
+        create: false
+        name: ""
+    asserts:
+      - template: gatewayclass.yaml
+        notExists:
+          path: spec.parametersRef

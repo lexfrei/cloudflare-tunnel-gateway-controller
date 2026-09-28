@@ -1387,6 +1387,24 @@ func TestHasConflictingParametersRef(t *testing.T) {
 			expected: true,
 		},
 		{
+			// A namespaced ref is refused while the plain one resolves, so the
+			// two classes do not serve the same config.
+			name: "same ref, one with namespace",
+			classes: []gatewayv1.GatewayClass{
+				{Spec: gatewayv1.GatewayClassSpec{ParametersRef: &gatewayv1.ParametersReference{Name: "cfg", Namespace: new(gatewayv1.Namespace("default"))}}},
+				{Spec: gatewayv1.GatewayClassSpec{ParametersRef: &gatewayv1.ParametersReference{Name: "cfg"}}},
+			},
+			expected: true,
+		},
+		{
+			name: "same name but different namespace",
+			classes: []gatewayv1.GatewayClass{
+				{Spec: gatewayv1.GatewayClassSpec{ParametersRef: &gatewayv1.ParametersReference{Name: "cfg", Namespace: new(gatewayv1.Namespace("ns-a"))}}},
+				{Spec: gatewayv1.GatewayClassSpec{ParametersRef: &gatewayv1.ParametersReference{Name: "cfg", Namespace: new(gatewayv1.Namespace("ns-b"))}}},
+			},
+			expected: true,
+		},
+		{
 			name: "both nil parametersRef",
 			classes: []gatewayv1.GatewayClass{
 				{Spec: gatewayv1.GatewayClassSpec{}},
