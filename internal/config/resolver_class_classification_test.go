@@ -137,6 +137,48 @@ func TestGatewayClassEntryPoints_ReadFailureIsNotClassified(t *testing.T) {
 
 			assert.ErrorIs(t, err, errReadFailed)
 			assert.NotErrorIs(t, err, config.ErrInvalidParameters, "a read failure is not a configuration problem")
+			assert.Contains(t, err.Error(), `GatewayClass "test-class"`, "the message still says which class failed")
+		})
+	}
+}
+
+// TestGatewayClassEntryPoints_GatewayClassReadFailureNamesTheClass pins the
+// same for a failed read of the GatewayClass itself, on the entry points that
+// take a class name.
+func TestGatewayClassEntryPoints_GatewayClassReadFailureNamesTheClass(t *testing.T) {
+	t.Parallel()
+
+	for entryName, resolve := range classEntryPoints() {
+		if entryName == "ResolveFromGatewayClass" || entryName == "GetConfigForGatewayClass" {
+			continue
+		}
+
+		t.Run(entryName, func(t *testing.T) {
+			t.Parallel()
+
+			gatewayClass := newGatewayClass("test-class", "test-config")
+
+			scheme := runtime.NewScheme()
+			utilruntime.Must(clientgoscheme.AddToScheme(scheme))
+			utilruntime.Must(gatewayv1.Install(scheme))
+			utilruntime.Must(v1alpha1.AddToScheme(scheme))
+
+			cli := fake.NewClientBuilder().WithScheme(scheme).
+				WithObjects(append(resolvableClassObjects(), gatewayClass)...).
+				WithInterceptorFuncs(interceptor.Funcs{
+					Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+						if _, ok := obj.(*gatewayv1.GatewayClass); ok {
+							return errReadFailed
+						}
+
+						return c.Get(ctx, key, obj, opts...)
+					},
+				}).Build()
+
+			err := resolve(context.Background(), config.NewResolver(cli, "default", cfmetrics.NewNoopCollector()), gatewayClass)
+			require.ErrorIs(t, err, errReadFailed)
+			assert.NotErrorIs(t, err, config.ErrInvalidParameters, "a read failure is not a configuration problem")
+			assert.Contains(t, err.Error(), `GatewayClass "test-class"`, "the message still says which class failed")
 		})
 	}
 }
