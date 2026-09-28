@@ -211,6 +211,69 @@ func TestProxySyncer_ResyncEndpoints_FailedPushLeavesWarnNotReplay(t *testing.T)
 		"the log must say why nothing was pushed")
 }
 
+// TestProxySyncer_ResyncEndpoints_ReplaysPartiallyPushedConfig covers a
+// rollout where one replica keeps refusing every push (an old pod that cannot
+// speak the controller's config-API transport, say) while the others accept
+// it. Every full sync then fails, but the config it built reached a replica,
+// so a pod that joins afterwards must be sent that config by the endpoint
+// resync instead of waiting for the next full sync with none at all.
+func TestProxySyncer_ResyncEndpoints_ReplaysPartiallyPushedConfig(t *testing.T) {
+	t.Parallel()
+
+	var accepted proxy.Config
+
+	accepting := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, req *http.Request) {
+		if req.Method == http.MethodPut {
+			if decodeErr := json.NewDecoder(req.Body).Decode(&accepted); decodeErr != nil {
+				writer.WriteHeader(http.StatusBadRequest)
+
+				return
+			}
+		}
+
+		writer.WriteHeader(http.StatusOK)
+	}))
+	defer accepting.Close()
+
+	refusing := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer refusing.Close()
+
+	var (
+		joinedPuts atomic.Int32
+		joined     proxy.Config
+	)
+
+	joining := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, req *http.Request) {
+		if req.Method == http.MethodPut {
+			joinedPuts.Add(1)
+
+			if decodeErr := json.NewDecoder(req.Body).Decode(&joined); decodeErr != nil {
+				writer.WriteHeader(http.StatusBadRequest)
+
+				return
+			}
+		}
+
+		writer.WriteHeader(http.StatusOK)
+	}))
+	defer joining.Close()
+
+	testClient := fake.NewClientBuilder().WithScheme(runtime.NewScheme()).Build()
+	syncer := controller.NewProxySyncer("cluster.local", "", "", testClient, slog.Default())
+
+	_, err := syncer.SyncRoutes(context.Background(), 0,
+		[]string{accepting.URL + "/config", refusing.URL + "/config"}, nil, nil, nil, nil)
+	require.Error(t, err, "the refusing replica fails the sync")
+	require.Positive(t, accepted.Version, "the accepting replica holds the built config")
+
+	require.NoError(t, syncer.ResyncEndpoints(context.Background(), []string{joining.URL + "/config"}))
+
+	assert.Equal(t, int32(1), joinedPuts.Load(), "the joining replica must be sent the partially-pushed config")
+	assert.Equal(t, accepted.Version, joined.Version, "and it must be the config the sync built, not a rebuild")
+}
+
 // TestProxySyncer_ResyncEndpoints_NoLastConfig pins the bootstrap-safe
 // no-op: before any SyncRoutes has succeeded the cache is empty, and
 // ResyncEndpoints must not invent a config or hit the wire. A new pod
