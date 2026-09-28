@@ -135,6 +135,7 @@ func (v *Validator) ValidateBindingForListenerSet(
 	entries := listenerSet.Spec.Listeners
 
 	matched, rejectionReason, invalid, detail := findMatchingEntries(
+		"ListenerSet entry",
 		len(entries),
 		func(i int) (gatewayv1.SectionName, gatewayv1.PortNumber) {
 			return entries[i].Name, entries[i].Port

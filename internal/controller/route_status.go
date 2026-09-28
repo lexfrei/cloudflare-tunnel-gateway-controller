@@ -255,19 +255,7 @@ func ptrValueEqual[T comparable](left, right *T) bool {
 // priorEntryFor returns this controller's existing entry for ref, if there is
 // one, so a pass that cannot read the ref's Gateway leaves it as it was.
 func priorEntryFor(priorOwn []gatewayv1.RouteParentStatus, ref gatewayv1.ParentReference, routeNamespace string) []gatewayv1.RouteParentStatus {
-	namespace := gatewayv1.Namespace(routeNamespace)
-	if ref.Namespace != nil {
-		namespace = *ref.Namespace
-	}
-
-	normalized := gatewayv1.ParentReference{
-		Group:       ref.Group,
-		Kind:        ref.Kind,
-		Namespace:   &namespace,
-		Name:        ref.Name,
-		Port:        ref.Port,
-		SectionName: ref.SectionName,
-	}
+	normalized := statusParentRef(ref, routeNamespace)
 
 	for i := range priorOwn {
 		if parentRefIdentityEqual(priorOwn[i].ParentRef, normalized) {
@@ -305,13 +293,8 @@ func resolveParentRefStatus(
 		return nil, false
 	}
 
-	namespace := accessor.obj.GetNamespace()
-	if ref.Namespace != nil {
-		namespace = string(*ref.Namespace)
-	}
-
 	parentStatus := buildParentStatus(
-		ref, namespace, params.controllerName,
+		ref, accessor.obj.GetNamespace(), params.controllerName,
 		accessor.generation(), now,
 		bindingInfo, refIdx,
 		failedRefs, syncErr,
@@ -344,10 +327,30 @@ func parentRefSelectsManagedGateway(
 	return classNames[string(gateway.Spec.GatewayClassName)], nil
 }
 
-// buildParentStatus constructs a RouteParentStatus entry for a single parent ref.
+// statusParentRef is the parentRef as a status entry records it: the route's
+// own namespace filled in when the ref leaves it unset. The status writer
+// matches prior entries by this form, so both build it here.
+func statusParentRef(ref gatewayv1.ParentReference, routeNamespace string) gatewayv1.ParentReference {
+	namespace := gatewayv1.Namespace(routeNamespace)
+	if ref.Namespace != nil {
+		namespace = *ref.Namespace
+	}
+
+	return gatewayv1.ParentReference{
+		Group:       ref.Group,
+		Kind:        ref.Kind,
+		Namespace:   &namespace,
+		Name:        ref.Name,
+		Port:        ref.Port,
+		SectionName: ref.SectionName,
+	}
+}
+
+// buildParentStatus constructs a RouteParentStatus entry for a single parent
+// ref. routeNamespace fills in the ref's namespace when it leaves it unset.
 func buildParentStatus(
 	ref gatewayv1.ParentReference,
-	namespace string,
+	routeNamespace string,
 	controllerName string,
 	generation int64,
 	now metav1.Time,
@@ -406,14 +409,7 @@ func buildParentStatus(
 	}
 
 	return gatewayv1.RouteParentStatus{
-		ParentRef: gatewayv1.ParentReference{
-			Group:       ref.Group,
-			Kind:        ref.Kind,
-			Namespace:   new(gatewayv1.Namespace(namespace)),
-			Name:        ref.Name,
-			Port:        ref.Port,
-			SectionName: ref.SectionName,
-		},
+		ParentRef:      statusParentRef(ref, routeNamespace),
 		ControllerName: gatewayv1.GatewayController(controllerName),
 		Conditions:     conditions,
 	}

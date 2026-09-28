@@ -44,6 +44,7 @@ func (v *Validator) ValidateBinding(
 	listeners := gateway.Spec.Listeners
 
 	matched, rejectionReason, invalid, detail := findMatchingEntries(
+		"listener",
 		len(listeners),
 		func(i int) (gatewayv1.SectionName, gatewayv1.PortNumber) {
 			return listeners[i].Name, listeners[i].Port
@@ -87,7 +88,7 @@ func makeBindingResult(
 		message.WriteString(getReasonMessage(rejectionReason))
 
 		for _, name := range invalid {
-			fmt.Fprintf(&message, "; listener %q has an invalid allowedRoutes selector", name)
+			fmt.Fprintf(&message, "; %s has an invalid allowedRoutes selector", name)
 		}
 
 		return BindingResult{
@@ -118,6 +119,7 @@ func makeBindingResult(
 // in invalid. It does not stop the loop: the error belongs to that entry, and a
 // sibling entry may still admit the route.
 func findMatchingEntries(
+	entryKind string,
 	count int,
 	nameAndPort func(int) (gatewayv1.SectionName, gatewayv1.PortNumber),
 	accept func(int) (gatewayv1.RouteConditionReason, error),
@@ -150,8 +152,8 @@ func findMatchingEntries(
 		if err != nil {
 			reason = gatewayv1.RouteReasonNotAllowedByListeners
 
-			invalid = append(invalid, string(name))
-			entryErrors = append(entryErrors, fmt.Sprintf("listener %q: %v", name, err))
+			invalid = append(invalid, fmt.Sprintf("%s %q", entryKind, name))
+			entryErrors = append(entryErrors, fmt.Sprintf("%s %q: %v", entryKind, name, err))
 		}
 
 		if reason == gatewayv1.RouteReasonAccepted {
