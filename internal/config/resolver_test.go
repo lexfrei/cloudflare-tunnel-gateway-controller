@@ -315,6 +315,8 @@ func TestResolveFromGatewayClassName_NotFound(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to get GatewayClass")
+	assert.Contains(t, err.Error(), `GatewayClass "non-existent"`)
+	assert.NotContains(t, err.Error(), "GatewayClass non-existent", "the class is named once by the resolver")
 	assert.ErrorIs(t, err, config.ErrInvalidParameters)
 }
 
