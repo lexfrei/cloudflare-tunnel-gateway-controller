@@ -48,6 +48,7 @@ func TestConvertHTTPRoutes_H2CSuppressedByTLS_NormalEvent(t *testing.T) {
 	diag, ok := findEventDiag(cfg.Diagnostics)
 	require.True(t, ok, "h2c suppressed by a BackendTLSPolicy must record an Event diagnostic")
 	assert.Equal(t, "web", diag.Name)
+	assert.Equal(t, "HTTPRoute", diag.Kind)
 	assert.Equal(t, proxy.EventTypeNormal, diag.EventType, "a TLS-wins override is a Normal event")
 	assert.Contains(t, diag.Message, "h2c", "message must name the suppressed hint")
 }

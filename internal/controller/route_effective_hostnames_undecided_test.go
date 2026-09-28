@@ -337,8 +337,8 @@ func TestLeaveOutUndecidedRoute_OneEventPerRoute(t *testing.T) {
 	route := httpRouteTo()
 
 	diags := []proxy.RouteDiagnostic{
-		leaveOutUndecidedRoute(context.Background(), route, errFirstPartitionRead),
-		leaveOutUndecidedRoute(context.Background(), route, errSecondPartitionRead),
+		leaveOutUndecidedRoute(context.Background(), kindHTTPRouteDiag, route, errFirstPartitionRead),
+		leaveOutUndecidedRoute(context.Background(), kindHTTPRouteDiag, route, errSecondPartitionRead),
 	}
 
 	rec := events.NewFakeRecorder(10)

@@ -96,7 +96,7 @@ func withEffectiveHostnames(
 
 		if len(effective) == 0 {
 			if undecided != nil {
-				leftOut = append(leftOut, leaveOutUndecidedRoute(ctx, route, undecided))
+				leftOut = append(leftOut, leaveOutUndecidedRoute(ctx, kindHTTPRouteDiag, route, undecided))
 
 				continue
 			}
@@ -154,7 +154,7 @@ func withEffectiveHostnamesGRPC(
 
 		if len(effective) == 0 {
 			if undecided != nil {
-				leftOut = append(leftOut, leaveOutUndecidedRoute(ctx, route, undecided))
+				leftOut = append(leftOut, leaveOutUndecidedRoute(ctx, kindGRPCRouteDiag, route, undecided))
 
 				continue
 			}
@@ -231,12 +231,13 @@ func collectEffectiveListenerHostnames(
 // leaves the error to the log: a route in several partitions is evaluated once
 // per partition, and one message per route keeps the Warning Event and the
 // condition deduplicated.
-func leaveOutUndecidedRoute(ctx context.Context, route client.Object, err error) proxy.RouteDiagnostic {
+func leaveOutUndecidedRoute(ctx context.Context, kind string, route client.Object, err error) proxy.RouteDiagnostic {
 	logging.FromContext(ctx).Error("route left out of the proxy config: its parent could not be evaluated",
 		"route", route.GetNamespace()+"/"+route.GetName(),
 		"error", err)
 
 	return proxy.RouteDiagnostic{
+		Kind:      kind,
 		Namespace: route.GetNamespace(),
 		Name:      route.GetName(),
 		Target:    proxy.DiagnosticProxyConfigPush,

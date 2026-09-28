@@ -98,6 +98,7 @@ type RouteDiagnostic struct {
 // It is nil-safe: every method is a no-op on a nil receiver, so converter
 // helpers can be reached from call paths that do not collect diagnostics.
 type diagSink struct {
+	kind      string
 	namespace string
 	name      string
 	rule      int
@@ -105,11 +106,12 @@ type diagSink struct {
 }
 
 // route sets the identity stamped onto subsequently-added diagnostics.
-func (s *diagSink) route(namespace, name string) {
+func (s *diagSink) route(kind, namespace, name string) {
 	if s == nil {
 		return
 	}
 
+	s.kind = kind
 	s.namespace = namespace
 	s.name = name
 }
@@ -132,6 +134,7 @@ func (s *diagSink) add(target DiagnosticTarget, reason, message string, wholeRul
 	}
 
 	s.items = append(s.items, RouteDiagnostic{
+		Kind:      s.kind,
 		Namespace: s.namespace,
 		Name:      s.name,
 		RuleIndex: s.rule,
@@ -150,6 +153,7 @@ func (s *diagSink) event(eventType, message string) {
 	}
 
 	s.items = append(s.items, RouteDiagnostic{
+		Kind:      s.kind,
 		Namespace: s.namespace,
 		Name:      s.name,
 		RuleIndex: s.rule,
