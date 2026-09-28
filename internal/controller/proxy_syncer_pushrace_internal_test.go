@@ -58,7 +58,7 @@ func TestRecordPush_LostRaceInvalidatesSkipKeyWithoutPoisoningCache(t *testing.T
 	lostErr := errors.Wrap(proxy.ErrLostConfigPushRace, healthy.URL+"/config")
 	neverApplied := &proxy.Config{Version: goodCfg.Version + 1000}
 	proxySyncer.recordPush(nil, sharedPartitionKey, "", "hash-never-applied", neverApplied,
-		[]string{healthy.URL + "/config"}, lostErr)
+		[]string{healthy.URL + "/config"}, lostErr, false)
 
 	proxySyncer.syncMu.Lock()
 	after := proxySyncer.targets[sharedPartitionKey]
@@ -70,6 +70,60 @@ func TestRecordPush_LostRaceInvalidatesSkipKeyWithoutPoisoningCache(t *testing.T
 		"a lost race must not poison the replay cache with the config the replica never accepted")
 	assert.Equal(t, 1, after.consecutivePushFail,
 		"a lost race counts as a push failure (self-heals: a later successful sync resets it)")
+}
+
+// TestRecordPush_PartialDeliveryCachesOnlyANewerConfig pins the replay cache
+// after a push that some replicas accepted and others refused: the delivered
+// config becomes the replay source, the skip key stays invalidated and the
+// failure still counts, and a delivered config older than the cached one never
+// replaces it.
+func TestRecordPush_PartialDeliveryCachesOnlyANewerConfig(t *testing.T) {
+	t.Parallel()
+
+	healthy := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(healthy.Close)
+
+	testClient := fake.NewClientBuilder().WithScheme(runtime.NewScheme()).Build()
+	proxySyncer := NewProxySyncer("cluster.local", "", "", testClient, slog.Default())
+	endpoints := []string{healthy.URL + "/config"}
+
+	_, err := proxySyncer.SyncPartition(context.Background(), 0, sharedPartitionKey, "", endpoints,
+		[]*gatewayv1.HTTPRoute{pushFallbackRoute("web", "web.example.com")}, nil, nil, nil)
+	require.NoError(t, err)
+
+	cached := func() *pushTarget {
+		proxySyncer.syncMu.Lock()
+		defer proxySyncer.syncMu.Unlock()
+
+		copied := *proxySyncer.targets[sharedPartitionKey]
+
+		return &copied
+	}
+
+	seeded := cached().lastCfg
+	require.NotNil(t, seeded)
+
+	partialErr := errors.New("one replica refused the push")
+
+	newer := &proxy.Config{Version: seeded.Version + 1}
+	proxySyncer.recordPush(nil, sharedPartitionKey, "", "hash-newer", newer, endpoints, partialErr, true)
+
+	after := cached()
+	assert.Same(t, newer, after.lastCfg, "a config some replica accepted is the replay source")
+	assert.Empty(t, after.lastPushedHash, "a partial push still invalidates the skip key")
+	assert.Equal(t, 1, after.consecutivePushFail, "a partial push still counts as a push failure")
+
+	older := &proxy.Config{Version: seeded.Version}
+	proxySyncer.recordPush(nil, sharedPartitionKey, "", "hash-older", older, endpoints, partialErr, true)
+
+	assert.Same(t, newer, cached().lastCfg, "an older delivered config never replaces a newer cached one")
+
+	newest := &proxy.Config{Version: newer.Version + 1}
+	proxySyncer.recordPush(nil, sharedPartitionKey, "", "hash-newest", newest, endpoints, partialErr, false)
+
+	assert.Same(t, newer, cached().lastCfg, "a config no replica accepted is never cached")
 }
 
 // raceBarrierProxy mimics the real proxy config API (api.go + Router.UpdateConfig:
