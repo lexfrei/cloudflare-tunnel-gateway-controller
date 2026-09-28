@@ -51,8 +51,9 @@ const catchAllHostnameSentinel = gatewayv1.Hostname("")
 // hostname-less route bound only to hostname-less listeners), the route is left
 // untouched: the narrowing never broadens the served set beyond what the route
 // already declared, and never turns a hostname-less catch-all into anything
-// else. A parent that exists but cannot be evaluated (a failed read, a binding
-// validation error) is different: nothing shows what the route may serve, so
+// else. A parent that exists but cannot be evaluated (a failed read, an
+// allowedListeners check that errors) is different: nothing shows what the
+// route may serve, so
 // when no other parent contributes the route is left out of the result, and
 // when another parent does, the route is narrowed to what that parent lends.
 // A diagnostic reports the undecided parent on the route's status in both

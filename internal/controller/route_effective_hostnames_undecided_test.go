@@ -49,22 +49,25 @@ func failingGetClient(t *testing.T, failOn client.Object, objs ...client.Object)
 		}).Build()
 }
 
-// invalidSelectorGateway is a Gateway of ours whose only listener admits
-// routes by a label selector that does not parse, so binding validation
-// against a route whose hostnames intersect the listener's returns an error
-// instead of a verdict.
-func invalidSelectorGateway(name string, hostname *gatewayv1.Hostname) *gatewayv1.Gateway {
-	gateway := gatewayUnderClass(name, "our-class", hostname)
-	gateway.Spec.Listeners[0].AllowedRoutes = &gatewayv1.AllowedRoutes{
-		Namespaces: &gatewayv1.RouteNamespaces{
-			From: new(gatewayv1.NamespacesFromSelector),
-			Selector: &metav1.LabelSelector{MatchExpressions: []metav1.LabelSelectorRequirement{
-				{Key: "team", Operator: "NotAnOperator"},
-			}},
-		},
-	}
+// unreadableGatewayClient serves every object normally except the Gateway
+// named broken, whose reads fail with a transient error, so that parent cannot
+// be evaluated while its siblings can.
+func unreadableGatewayClient(t *testing.T, objs ...client.Object) client.Client {
+	t.Helper()
 
-	return gateway
+	scheme := runtime.NewScheme()
+	require.NoError(t, gatewayv1.Install(scheme))
+
+	return fake.NewClientBuilder().WithScheme(scheme).WithObjects(objs...).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Get: func(ctx context.Context, cli client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+				if _, ok := obj.(*gatewayv1.Gateway); ok && key.Name == "broken" {
+					return errSimulatedCacheMiss
+				}
+
+				return cli.Get(ctx, key, obj, opts...)
+			},
+		}).Build()
 }
 
 type undecidedParentCase struct {
@@ -75,8 +78,10 @@ type undecidedParentCase struct {
 
 // undecidedParentCases are the ways a parentRef can fail to say whether it
 // lends the route a hostname: the Gateway or the ListenerSet cannot be read,
-// binding validation against either errors, the ListenerSet's parent Gateway
-// cannot be read, or that Gateway's allowedListeners cannot be evaluated.
+// the ListenerSet's parent Gateway cannot be read, or that Gateway's
+// allowedListeners cannot be evaluated. An unparseable allowedRoutes selector
+// is not one of them: the listener carrying it admits nothing, which is a
+// decided answer.
 func undecidedParentCases() []undecidedParentCase {
 	ourHost := gatewayv1.Hostname("ours.example.com")
 	entryHost := gatewayv1.Hostname("ls.example.com")
@@ -116,37 +121,11 @@ func undecidedParentCases() []undecidedParentCase {
 			route: toGateway,
 		},
 		{
-			name: "binding validation errors",
-			cli: func(t *testing.T) client.Client {
-				t.Helper()
-
-				return buildGatewayFakeClient(t,
-					gatewayClassFor("our-class", skipTestControllerName),
-					invalidSelectorGateway("ours", nil))
-			},
-			route: toGateway,
-		},
-		{
 			name: "listenerset read fails",
 			cli: func(t *testing.T) client.Client {
 				t.Helper()
 
 				return failingGetClient(t, &gatewayv1.ListenerSet{}, listenerSetObjects()...)
-			},
-			route: toListenerSet,
-		},
-		{
-			name: "listenerset binding validation errors",
-			cli: func(t *testing.T) client.Client {
-				t.Helper()
-
-				listenerSet := listenerSetUnder("ls", "ours", nil)
-				listenerSet.Spec.Listeners[0].AllowedRoutes = invalidSelectorGateway("unused", nil).Spec.Listeners[0].AllowedRoutes
-
-				return buildGatewayFakeClient(t,
-					gatewayClassFor("our-class", skipTestControllerName),
-					allowingListenerSets(gatewayUnderClass("ours", "our-class", nil)),
-					listenerSet)
 			},
 			route: toListenerSet,
 		},
@@ -252,10 +231,10 @@ func TestWithEffectiveHostnames_UndecidedParentBesideAnAcceptingOne(t *testing.T
 	ourHost := gatewayv1.Hostname("ours.example.com")
 	otherHost := gatewayv1.Hostname("other.example.com")
 
-	cli := buildGatewayFakeClient(t,
+	cli := unreadableGatewayClient(t,
 		gatewayClassFor("our-class", skipTestControllerName),
 		gatewayUnderClass("ours", "our-class", &ourHost),
-		invalidSelectorGateway("broken", &otherHost),
+		gatewayUnderClass("broken", "our-class", &otherHost),
 	)
 
 	route := httpRouteTo()
@@ -275,10 +254,10 @@ func TestWithEffectiveHostnamesGRPC_UndecidedParentBesideAnAcceptingOne(t *testi
 	ourHost := gatewayv1.Hostname("ours.example.com")
 	otherHost := gatewayv1.Hostname("other.example.com")
 
-	cli := buildGatewayFakeClient(t,
+	cli := unreadableGatewayClient(t,
 		gatewayClassFor("our-class", skipTestControllerName),
 		gatewayUnderClass("ours", "our-class", &ourHost),
-		invalidSelectorGateway("broken", &otherHost),
+		gatewayUnderClass("broken", "our-class", &otherHost),
 	)
 
 	route := &gatewayv1.GRPCRoute{
@@ -404,10 +383,10 @@ func TestWithEffectiveHostnames_UndecidedParentBesideAFullyAcceptingOne(t *testi
 
 	declared := gatewayv1.Hostname("a.example.com")
 
-	cli := buildGatewayFakeClient(t,
+	cli := unreadableGatewayClient(t,
 		gatewayClassFor("our-class", skipTestControllerName),
 		gatewayUnderClass("ours", "our-class", nil),
-		invalidSelectorGateway("broken", nil),
+		gatewayUnderClass("broken", "our-class", nil),
 	)
 
 	route := httpRouteTo(declared)
@@ -426,10 +405,10 @@ func TestWithEffectiveHostnamesGRPC_UndecidedParentBesideAFullyAcceptingOne(t *t
 
 	declared := gatewayv1.Hostname("a.example.com")
 
-	cli := buildGatewayFakeClient(t,
+	cli := unreadableGatewayClient(t,
 		gatewayClassFor("our-class", skipTestControllerName),
 		gatewayUnderClass("ours", "our-class", nil),
-		invalidSelectorGateway("broken", nil),
+		gatewayUnderClass("broken", "our-class", nil),
 	)
 
 	route := &gatewayv1.GRPCRoute{
@@ -454,10 +433,10 @@ func TestWithEffectiveHostnames_UndecidedParentBesideAPartlyAcceptingOne(t *test
 
 	covered := gatewayv1.Hostname("a.example.com")
 
-	cli := buildGatewayFakeClient(t,
+	cli := unreadableGatewayClient(t,
 		gatewayClassFor("our-class", skipTestControllerName),
 		gatewayUnderClass("ours", "our-class", &covered),
-		invalidSelectorGateway("broken", nil),
+		gatewayUnderClass("broken", "our-class", nil),
 	)
 
 	route := httpRouteTo(covered, "b.example.com")

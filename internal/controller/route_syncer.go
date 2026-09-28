@@ -1913,6 +1913,13 @@ func (s *RouteSyncer) bindRouteParents(
 // whether the ref references a Gateway we manage and whether it was accepted.
 // parentGateways[refIdx] is recorded for every managed ref (accepted or not)
 // so the status writer can attribute a per-tunnel sync failure to it.
+//
+// A ref that could not be evaluated is recorded as not accepted and counted as
+// referencing us, so the route's status is written even when that is its only
+// parent, and the status writer reports the ref Pending rather than falling
+// back to Accepted=True for a parent the route is not bound to. The status
+// writer only writes entries for refs that select a managed Gateway, so a ref
+// that turns out to be foreign gets no entry.
 func (s *RouteSyncer) bindOneParent(
 	ctx context.Context,
 	logger *slog.Logger,
@@ -1938,7 +1945,13 @@ func (s *RouteSyncer) bindOneParent(
 		logger.Error("failed to resolve route parentRef",
 			"route", routeNamespace+"/"+routeName, "refIdx", refIdx, "error", err)
 
-		return false, false
+		bindingInfo.bindingResults[refIdx] = routebinding.BindingResult{
+			Accepted: false,
+			Reason:   gatewayv1.RouteReasonPending,
+			Message:  truncateConditionMessage("The controller could not evaluate this parent: " + err.Error()),
+		}
+
+		return true, false
 	}
 
 	if !binding.ManagedByThisController {

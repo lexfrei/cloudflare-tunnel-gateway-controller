@@ -2,6 +2,8 @@ package routebinding
 
 import (
 	"context"
+	"fmt"
+	"strings"
 
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
@@ -38,7 +40,7 @@ func (v *Validator) ValidateBinding(
 ) (BindingResult, error) {
 	listeners := gateway.Spec.Listeners
 
-	matched, rejectionReason, err := findMatchingEntries(
+	matched, rejectionReason, detail := findMatchingEntries(
 		len(listeners),
 		func(i int) (gatewayv1.SectionName, gatewayv1.PortNumber) {
 			return listeners[i].Name, listeners[i].Port
@@ -49,25 +51,28 @@ func (v *Validator) ValidateBinding(
 		route.SectionName,
 		route.Port,
 	)
-	if err != nil {
-		return BindingResult{}, err
-	}
 
-	return makeBindingResult(matched, rejectionReason), nil
+	return makeBindingResult(matched, rejectionReason, detail), nil
 }
 
-// makeBindingResult turns the (matched, rejectionReason) tuple returned by
-// findMatchingEntries into a public BindingResult, applying the standard
+// makeBindingResult turns the (matched, rejectionReason, detail) tuple returned
+// by findMatchingEntries into a public BindingResult, applying the standard
 // Accepted=True/Reason=Accepted treatment when at least one entry matched.
 func makeBindingResult(
 	matched []gatewayv1.SectionName,
 	rejectionReason gatewayv1.RouteConditionReason,
+	detail string,
 ) BindingResult {
 	if len(matched) == 0 {
+		message := getReasonMessage(rejectionReason)
+		if detail != "" {
+			message += ": " + detail
+		}
+
 		return BindingResult{
 			Accepted:         false,
 			Reason:           rejectionReason,
-			Message:          getReasonMessage(rejectionReason),
+			Message:          message,
 			MatchedListeners: nil,
 		}
 	}
@@ -83,23 +88,29 @@ func makeBindingResult(
 // findMatchingEntries is the shared section/port match + accept iteration used
 // by both Gateway listener binding and ListenerSet entry binding. The accept
 // callback returns the per-entry route condition reason; entries with reason
-// == Accepted are collected into the matched-section list. The first
+// == Accepted are collected into the matched-section list. The last
 // observed non-accepted reason becomes the fallback rejection reason when no
 // entry matches.
+//
+// An entry whose evaluation fails (an unparseable namespace selector) admits
+// nothing, and its error is returned as detail for the rejection message. It
+// does not stop the loop: the error belongs to that entry, and a sibling entry
+// may still admit the route.
 func findMatchingEntries(
 	count int,
 	nameAndPort func(int) (gatewayv1.SectionName, gatewayv1.PortNumber),
 	accept func(int) (gatewayv1.RouteConditionReason, error),
 	routeSectionName *gatewayv1.SectionName,
 	routePort *gatewayv1.PortNumber,
-) ([]gatewayv1.SectionName, gatewayv1.RouteConditionReason, error) {
+) ([]gatewayv1.SectionName, gatewayv1.RouteConditionReason, string) {
 	if count == 0 {
-		return nil, gatewayv1.RouteReasonNoMatchingParent, nil
+		return nil, gatewayv1.RouteReasonNoMatchingParent, ""
 	}
 
 	var (
 		matched             []gatewayv1.SectionName
 		lastRejectionReason gatewayv1.RouteConditionReason
+		entryErrors         []string
 	)
 
 	for i := range count {
@@ -115,7 +126,9 @@ func findMatchingEntries(
 
 		reason, err := accept(i)
 		if err != nil {
-			return nil, "", err
+			reason = gatewayv1.RouteReasonNotAllowedByListeners
+
+			entryErrors = append(entryErrors, fmt.Sprintf("listener %q: %v", name, err))
 		}
 
 		if reason == gatewayv1.RouteReasonAccepted {
@@ -126,18 +139,20 @@ func findMatchingEntries(
 	}
 
 	if len(matched) == 0 {
+		detail := strings.Join(entryErrors, "; ")
+
 		if routeSectionName != nil || routePort != nil {
-			return nil, gatewayv1.RouteReasonNoMatchingParent, nil
+			return nil, gatewayv1.RouteReasonNoMatchingParent, detail
 		}
 
 		if lastRejectionReason == "" {
-			return nil, gatewayv1.RouteReasonNoMatchingParent, nil
+			return nil, gatewayv1.RouteReasonNoMatchingParent, detail
 		}
 
-		return nil, lastRejectionReason, nil
+		return nil, lastRejectionReason, detail
 	}
 
-	return matched, "", nil
+	return matched, "", ""
 }
 
 // listenerAcceptsRoute checks if a single listener accepts the route.

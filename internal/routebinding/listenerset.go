@@ -105,7 +105,7 @@ func (v *Validator) ValidateBindingForListenerSet(
 ) (BindingResult, error) {
 	entries := listenerSet.Spec.Listeners
 
-	matched, rejectionReason, err := findMatchingEntries(
+	matched, rejectionReason, detail := findMatchingEntries(
 		len(entries),
 		func(i int) (gatewayv1.SectionName, gatewayv1.PortNumber) {
 			return entries[i].Name, entries[i].Port
@@ -121,9 +121,6 @@ func (v *Validator) ValidateBindingForListenerSet(
 		route.SectionName,
 		route.Port,
 	)
-	if err != nil {
-		return BindingResult{}, err
-	}
 
-	return makeBindingResult(matched, rejectionReason), nil
+	return makeBindingResult(matched, rejectionReason, detail), nil
 }
