@@ -814,7 +814,7 @@ func (s *RouteSyncer) resolveConfigForController(ctx context.Context) (*config.R
 
 	resolved, err := s.ConfigResolver.ResolveFromGatewayClass(ctx, &classes[0])
 	if err != nil {
-		// A configuration error already names its GatewayClass.
+		// The resolver names the GatewayClass on every error.
 		return nil, errors.Wrap(err, "resolving GatewayClass config")
 	}
 
