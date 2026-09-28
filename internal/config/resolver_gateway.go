@@ -61,6 +61,13 @@ func (e *invalidParametersError) Unwrap() []error {
 	return []error{e.cause, ErrInvalidParameters}
 }
 
+// Cause exposes the cause to cockroachdb's single-cause traversal, which
+// UnwrapAll, mark equality and the detail and redaction helpers use and which
+// stops at a wrapper that has only the multi-error Unwrap.
+func (e *invalidParametersError) Cause() error {
+	return e.cause
+}
+
 // PerGatewayConfig is the resolution result for a Gateway opted into a
 // dedicated data plane via infrastructure.parametersRef.
 type PerGatewayConfig struct {
