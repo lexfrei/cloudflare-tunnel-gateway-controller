@@ -379,12 +379,13 @@ func (r *GatewayReconciler) handleResolveError(
 	logger := log.FromContext(ctx)
 	logger.Error(err, what)
 
-	// Both resolvers classify only deterministic spec problems as
-	// ErrInvalidParameters; anything else is a read failure that says nothing
-	// about the spec. Stamping InvalidParameters over it would misreport a
-	// healthy Gateway and, on the shared plane, clear the address external-dns
-	// publishes, dropping DNS for every hostname on it. Propagate for backoff
-	// instead and leave the last written status standing.
+	// An error not marked ErrInvalidParameters is treated as a read failure
+	// that says nothing about the spec. Stamping InvalidParameters over it
+	// would misreport a healthy Gateway and, on the shared plane, clear the
+	// address external-dns publishes, dropping DNS for every hostname on it.
+	// Propagate for backoff instead and leave the last written status standing.
+	// The per-Gateway resolver still marks some class-chain read failures as
+	// ErrInvalidParameters; issue #896 tracks that.
 	if !errors.Is(err, config.ErrInvalidParameters) {
 		return ctrl.Result{}, err
 	}
