@@ -794,8 +794,9 @@ func (r *GatewayReconciler) buildListenerStatuses(
 
 // buildListenerProgrammedCondition derives a listener's Programmed condition:
 // True unless its ResolvedRefs or Accepted verdict is already False, in which
-// case Programmed carries the same Invalid reason (an unresolved reference or
-// an unservable protocol means nothing is programmed either).
+// case Programmed carries the same Invalid reason (an unresolved reference, an
+// unservable protocol or an invalid allowedRoutes selector means nothing is
+// programmed either).
 func buildListenerProgrammedCondition(
 	generation int64,
 	now metav1.Time,
@@ -1631,7 +1632,7 @@ func (r *GatewayReconciler) routeToGateways(
 	var requests []reconcile.Request
 
 	for _, ref := range parentRefs {
-		if ref.Kind != nil && *ref.Kind != kindGateway {
+		if !parentRefInGatewayAPIGroup(ref) || (ref.Kind != nil && *ref.Kind != kindGateway) {
 			continue
 		}
 
@@ -1814,8 +1815,9 @@ func gatewayInvalidListeners(listeners []gatewayv1.Listener) (bool, bool, string
 // gatewayAcceptedCondition builds the Gateway-level Accepted condition. The
 // default is Accepted=True/Accepted; it is downgraded to ListenersNotValid when
 // the Gateway holds conflicted listeners (Gateway-owned or merged ListenerSet
-// entries clashing on hostname/protocol) or listeners whose protocol this
-// controller cannot serve, and to Accepted=False when no listener is valid at
+// entries clashing on hostname/protocol), listeners whose protocol this
+// controller cannot serve, or listeners whose allowedRoutes namespace
+// selector does not parse, and to Accepted=False when no listener is valid at
 // all (gateway_types.go).
 func gatewayAcceptedCondition(
 	ctx context.Context,
