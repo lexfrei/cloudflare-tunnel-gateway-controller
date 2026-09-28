@@ -89,8 +89,8 @@ const (
 )
 
 const (
-	// configTLSNameSuffix is followed by the slot index.
-	configTLSNameSuffix = "-config-tls-"
+	// configTLSNameSuffix is followed by "-<slot index>".
+	configTLSNameSuffix = "-config-tls"
 	configTLSVolumeName = "config-tls"
 	configTLSMountPath  = "/etc/cf-proxy/config-tls"
 	// secretVolumeDefaultMode is the apiserver default, rendered explicitly so
@@ -120,6 +120,10 @@ type Defaults struct {
 	// metrics on (--proxy-config-api-port). Zero or less means the proxy
 	// binary's own 8081, which is rendered as no listen-address env.
 	ConfigAPIPort int32
+	// AllowXOriginalHost makes the plane trust the client-supplied
+	// X-Original-Host header (--proxy-allow-x-original-host). It is an operator
+	// decision for test deployments; GatewayConfig has no such field.
+	AllowXOriginalHost bool
 }
 
 // configAPIPort resolves a configured config-API port, zero or less meaning
@@ -224,12 +228,39 @@ func ConfigTLSEndpointURL(gateway *gatewayv1.Gateway, clusterDomain string, port
 // ConfigTLSSecretName returns the name of a Gateway's config API leaf in slot
 // index. A leaf is never rewritten: renewal or a leaf that fails
 // verification moves the plane to the next slot.
+//
+// The index is appended after truncation, so it survives in the name even for
+// a Gateway whose name is hashed, and ConfigTLSSecretSlot can read it back.
 func ConfigTLSSecretName(gateway *gatewayv1.Gateway, index int) string {
-	return truncateName(namePrefix + gateway.Name + configTLSNameSuffix + strconv.Itoa(index))
+	return configTLSSecretBase(gateway) + "-" + strconv.Itoa(index)
 }
 
-// MaxConfigTLSSlot bounds the slots ConfigTLSSecretIndex recognises.
+// MaxConfigTLSSlot bounds the slots ConfigTLSSecretSlot recognises.
 const MaxConfigTLSSlot = 4096
+
+// configTLSSlotWidth is the room kept for "-<index>", index below
+// MaxConfigTLSSlot.
+const configTLSSlotWidth = len("-4095")
+
+func configTLSSecretBase(gateway *gatewayv1.Gateway) string {
+	return truncateNameTo(namePrefix+gateway.Name+configTLSNameSuffix, MaxDNSLabelLength-configTLSSlotWidth)
+}
+
+// ConfigTLSSecretSlot reports which of the Gateway's leaf slots a Secret name
+// is, if any.
+func ConfigTLSSecretSlot(gateway *gatewayv1.Gateway, name string) (int, bool) {
+	base, digits, found := strings.CutLast(name, "-")
+	if !found {
+		return 0, false
+	}
+
+	index, err := strconv.Atoi(digits)
+	if err != nil || index >= MaxConfigTLSSlot || strconv.Itoa(index) != digits {
+		return 0, false
+	}
+
+	return index, base == configTLSSecretBase(gateway)
+}
 
 // ConfigTLSSecretIndex reports which leaf slot a rendered Deployment mounts.
 func ConfigTLSSecretIndex(gateway *gatewayv1.Gateway, deployment *appsv1.Deployment) (int, bool) {
@@ -240,10 +271,8 @@ func ConfigTLSSecretIndex(gateway *gatewayv1.Gateway, deployment *appsv1.Deploym
 			continue
 		}
 
-		for index := range MaxConfigTLSSlot {
-			if ConfigTLSSecretName(gateway, index) == volume.Secret.SecretName {
-				return index, true
-			}
+		if index, ok := ConfigTLSSecretSlot(gateway, volume.Secret.SecretName); ok {
+			return index, true
 		}
 	}
 
@@ -524,6 +553,10 @@ func proxyEnv(input *Input) []corev1.EnvVar {
 		env = append(env, corev1.EnvVar{Name: "PROXY_MIRROR_MAX_IN_FLIGHT", Value: strconv.Itoa(limit)})
 	}
 
+	if input.Defaults.AllowXOriginalHost {
+		env = append(env, corev1.EnvVar{Name: "PROXY_ALLOW_X_ORIGINAL_HOST", Value: "true"})
+	}
+
 	if port := configAPIPort(input.Defaults.ConfigAPIPort); port != defaultConfigAPIPort {
 		env = append(env, corev1.EnvVar{Name: "PROXY_CONFIG_ADDR", Value: ":" + strconv.Itoa(int(port))})
 	}
@@ -692,6 +725,12 @@ func ProxyNetworkPolicy(input NetworkPolicyInput) *networkingv1.NetworkPolicy {
 // hash of the ORIGINAL name replaces the tail so distinct inputs (e.g.
 // "my.edge" vs "my-edge") never collide on the same rendered name.
 func truncateName(name string) string {
+	return truncateNameTo(name, MaxDNSLabelLength)
+}
+
+// truncateNameTo is truncateName with a tighter length cap, for a name that
+// gets a suffix of its own appended afterwards.
+func truncateNameTo(name string, maxLength int) string {
 	sanitized := sanitizeDNSLabel(name)
 
 	// Pass through only a name that is ALREADY a valid rendered name: no
@@ -703,13 +742,13 @@ func truncateName(name string) string {
 	// down the hash path, keeping the pass-through and hash output spaces
 	// disjoint. Anything else takes the hash path, which trims the edges. Real
 	// Gateway names (DNS-1123 subdomains) always pass through.
-	if sanitized == name && len(name) <= MaxDNSLabelLength && isAlphanumericEdged(name) && !hasHashSuffixShape(name) {
+	if sanitized == name && len(name) <= maxLength && isAlphanumericEdged(name) && !hasHashSuffixShape(name) {
 		return name
 	}
 
 	sum := sha256.Sum256([]byte(name))
 	suffix := hex.EncodeToString(sum[:])[:nameHashLength]
-	keep := min(len(sanitized), MaxDNSLabelLength-nameHashLength-1)
+	keep := min(len(sanitized), maxLength-nameHashLength-1)
 
 	// Trim dashes from BOTH ends: a leading dash (e.g. ".edge" → "-edge")
 	// would make the result an invalid DNS-1123 label. The hash suffix is

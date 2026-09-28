@@ -155,6 +155,10 @@ type Config struct {
 	// rendered with and pushed to (--proxy-config-api-port). Zero leaves the
 	// proxy binary's own 8081.
 	ProxyConfigAPIPort int32
+	// ProxyAllowXOriginalHost renders per-Gateway data planes that trust the
+	// X-Original-Host header (--proxy-allow-x-original-host), as the chart's
+	// proxy.allowXOriginalHost does for the shared plane.
+	ProxyAllowXOriginalHost bool
 
 	// HostnameOwnershipEnforce enables the controller-side layer of the
 	// per-namespace hostname-ownership policy (#475): routes whose hostnames
@@ -365,11 +369,12 @@ func Run(ctx context.Context, cfg *Config) error {
 		ConfigResolver: configResolver,
 		Recorder:       mgr.GetEventRecorder("gateway-infra-controller"),
 		RenderDefaults: render.Defaults{
-			ProxyImage:        cfg.ProxyImage,
-			TunnelProtocol:    cfg.TunnelProtocol,
-			WSIdleTimeout:     cfg.WSIdleTimeout,
-			MirrorMaxInFlight: cfg.MirrorMaxInFlight,
-			ConfigAPIPort:     cfg.ProxyConfigAPIPort,
+			ProxyImage:         cfg.ProxyImage,
+			TunnelProtocol:     cfg.TunnelProtocol,
+			WSIdleTimeout:      cfg.WSIdleTimeout,
+			MirrorMaxInFlight:  cfg.MirrorMaxInFlight,
+			ConfigAPIPort:      cfg.ProxyConfigAPIPort,
+			AllowXOriginalHost: cfg.ProxyAllowXOriginalHost,
 		},
 		ControllerNamespace:         defaultNamespace,
 		MonitoringNamespaceSelector: monitoringSelector,

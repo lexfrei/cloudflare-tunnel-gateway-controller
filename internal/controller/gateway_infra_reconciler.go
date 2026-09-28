@@ -516,7 +516,7 @@ func assertAdoptable(existing client.Object, gateway *gatewayv1.Gateway) error {
 	// picked). Match the API group too: a foreign CRD also kinded "Gateway" in
 	// another group is a genuinely foreign object, so it gets the rename hint.
 	if owner != nil && owner.APIVersion == gatewayv1.GroupVersion.String() &&
-		owner.Kind == "Gateway" && owner.Name == gateway.Name {
+		owner.Kind == kindGateway && owner.Name == gateway.Name {
 		return errors.Wrapf(errRefusedAdoption,
 			"%T %s/%s is owned by a previous Gateway of the same name (UID %s); "+
 				"delete the orphaned object so this Gateway can render a fresh one",

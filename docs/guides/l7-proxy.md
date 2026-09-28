@@ -138,7 +138,7 @@ The proxy binary accepts the following environment variables:
 
     The proxy strips `X-Original-Host` from every request unless this is set. It exists because the Gateway API conformance suite drives domains that are not registered on the Cloudflare account: the edge rejects them by `Host`, so the suite addresses the edge hostname and carries its intended host in that header instead.
 
-    The edge forwards arbitrary `X-*` headers from any client, so a proxy that trusts this header lets a client that reaches one hostname be served by a different hostname's backend — with the intended hostname's edge policy (Access, WAF, rate limits) evaluated against the wrong name, and the backend seeing a `Host` of the caller's choosing. Enable it only in a throwaway conformance or e2e deployment. The chart value is `proxy.allowXOriginalHost`, and the proxy logs a warning at startup whenever it is on.
+    The edge forwards arbitrary `X-*` headers from any client, so a proxy that trusts this header lets a client that reaches one hostname be served by a different hostname's backend — with the intended hostname's edge policy (Access, WAF, rate limits) evaluated against the wrong name, and the backend seeing a `Host` of the caller's choosing. Enable it only in a throwaway conformance or e2e deployment. The chart value is `proxy.allowXOriginalHost`; it covers the shared plane and every per-Gateway data plane the controller renders, and a GatewayConfig cannot turn it on. The proxy logs a warning at startup whenever it is on.
 
 ### Config API Auth Wiring
 

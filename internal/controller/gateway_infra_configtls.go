@@ -10,6 +10,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
@@ -56,7 +57,8 @@ func (r *GatewayInfraReconciler) clock() time.Time {
 //
 // The controller holds create but never update on Secrets outside its own
 // namespace, so a leaf is never rewritten. The walk starts at the slot the
-// rendered Deployment mounts and never goes below it: that slot is kept while
+// rendered Deployment mounts, or at the highest slot the Gateway owns when no
+// owned Deployment mounts one, and never goes below it: that slot is kept while
 // it verifies, recreated in place when deleted, and otherwise the next slot
 // is tried. A slot holding a Secret this Gateway does not own is skipped,
 // never adopted. Concurrent issuers walk the same sequence and create-only
@@ -97,21 +99,43 @@ func (r *GatewayInfraReconciler) ensureConfigTLSSecret(ctx context.Context, gate
 	return "", errors.Wrapf(errNoUsableConfigTLSSlot, "tried %d slots from %d", maxConfigTLSSlotAttempts, start)
 }
 
+// mountedConfigTLSSlot returns the slot the Gateway's own Deployment mounts
+// or, when there is none, the highest slot the Gateway owns. Starting at 0
+// instead would walk only past old slots and could run out of attempts before
+// reaching a usable one, leaving the Deployment unrendered for good.
 func (r *GatewayInfraReconciler) mountedConfigTLSSlot(ctx context.Context, gateway *gatewayv1.Gateway) (int, error) {
 	var deployment appsv1.Deployment
 
 	err := r.Get(ctx, types.NamespacedName{Name: render.DeploymentName(gateway), Namespace: gateway.Namespace}, &deployment)
-	if apierrors.IsNotFound(err) {
-		return 0, nil
-	}
-
-	if err != nil {
+	if err != nil && !apierrors.IsNotFound(err) {
 		return 0, errors.Wrap(err, "reading rendered deployment for its config API certificate slot")
 	}
 
-	index, _ := render.ConfigTLSSecretIndex(gateway, &deployment)
+	if err == nil && metav1.IsControlledBy(&deployment, gateway) {
+		if index, ok := render.ConfigTLSSecretIndex(gateway, &deployment); ok {
+			return index, nil
+		}
+	}
 
-	return index, nil
+	var secrets corev1.SecretList
+	if err := r.List(ctx, &secrets, client.InNamespace(gateway.Namespace)); err != nil {
+		return 0, errors.Wrap(err, "listing config API certificate slots")
+	}
+
+	highest := 0
+
+	for i := range secrets.Items {
+		secret := &secrets.Items[i]
+		if !metav1.IsControlledBy(secret, gateway) {
+			continue
+		}
+
+		if index, ok := render.ConfigTLSSecretSlot(gateway, secret.Name); ok {
+			highest = max(highest, index)
+		}
+	}
+
+	return highest, nil
 }
 
 // configTLSSlotUsable reports whether the slot at key holds, or now holds

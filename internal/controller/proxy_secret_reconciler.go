@@ -12,6 +12,8 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
@@ -20,6 +22,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/logging"
 )
@@ -148,17 +151,25 @@ func (r *ProxySecretReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		return ctrl.Result{}, errors.Wrap(err, "list proxy Deployments")
 	}
 
+	patched := 0
+
 	for idx := range deployments.Items {
 		dep := &deployments.Items[idx]
+		if controlledByGateway(dep) {
+			continue
+		}
+
 		if err := r.patchRevision(ctx, dep, revision); err != nil {
 			return ctrl.Result{}, errors.Wrapf(err, "patch Deployment %s/%s", dep.Namespace, dep.Name)
 		}
+
+		patched++
 	}
 
 	logger.Info("proxy tunnel-token Secret reconciled",
 		"secret", req.String(),
 		"revision", revision,
-		"deployments_patched", len(deployments.Items),
+		"deployments_patched", patched,
 	)
 
 	return ctrl.Result{}, nil
@@ -245,7 +256,8 @@ func (r *ProxySecretReconciler) matchesTokenSecret() predicate.Predicate {
 func (r *ProxySecretReconciler) matchesUnrecordedProxyDeployment() predicate.Predicate {
 	matches := func(obj client.Object) bool {
 		dep, ok := obj.(*appsv1.Deployment)
-		if !ok || dep.Namespace != r.TokenSecretNamespace || dep.Labels[r.DeploymentLabelKey] != r.DeploymentLabelValue {
+		if !ok || dep.Namespace != r.TokenSecretNamespace || dep.Labels[r.DeploymentLabelKey] != r.DeploymentLabelValue ||
+			controlledByGateway(dep) {
 			return false
 		}
 
@@ -259,6 +271,21 @@ func (r *ProxySecretReconciler) matchesUnrecordedProxyDeployment() predicate.Pre
 		DeleteFunc:  func(event.DeleteEvent) bool { return false },
 		GenericFunc: func(event.GenericEvent) bool { return false },
 	}
+}
+
+// controlledByGateway reports whether a Deployment is a per-Gateway data
+// plane. Those carry the proxy label too, but they read the token Secret
+// their GatewayConfig names and the Gateway infra reconciler rolls them on its
+// change, so the shared token must not.
+func controlledByGateway(obj metav1.Object) bool {
+	owner := metav1.GetControllerOf(obj)
+	if owner == nil || owner.Kind != kindGateway {
+		return false
+	}
+
+	gv, err := schema.ParseGroupVersion(owner.APIVersion)
+
+	return err == nil && gv.Group == gatewayv1.GroupName
 }
 
 // TokenSecretKey returns the NamespacedName of the watched Secret;

@@ -747,6 +747,25 @@ tests:
           path: spec.template.spec.containers[0].args[*]
           pattern: "^--mirror-max-in-flight"
 
+  # The controller renders per-Gateway planes with the same X-Original-Host
+  # trust the shared plane gets from this value.
+  - it: should pass --proxy-allow-x-original-host when enabled
+    set:
+      proxy:
+        allowXOriginalHost: true
+    asserts:
+      - template: deployment.yaml
+        contains:
+          path: spec.template.spec.containers[0].args
+          content: "--proxy-allow-x-original-host=true"
+
+  - it: should NOT pass --proxy-allow-x-original-host by default
+    asserts:
+      - template: deployment.yaml
+        notMatchRegex:
+          path: spec.template.spec.containers[0].args[*]
+          pattern: "^--proxy-allow-x-original-host"
+
   # The controller renders per-Gateway planes on this port and dials them there.
   - it: should pass --proxy-config-api-port to the controller
     set:

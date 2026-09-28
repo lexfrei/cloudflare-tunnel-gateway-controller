@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -17,6 +18,8 @@ import (
 	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/configtls"
@@ -327,6 +330,137 @@ func TestGatewayInfraReconciler_NoConfigTLSKeepsThePlaintextWire(t *testing.T) {
 	for _, secret := range slots.Items {
 		assert.NotContains(t, secret.Name, "config-tls")
 	}
+}
+
+// TestGatewayInfraReconciler_ConfigTLSWithoutADeploymentStartsAtTheHighestOwnedSlot
+// pins that a plane whose Deployment is gone resumes the walk at the newest
+// slot the Gateway owns. Starting at slot 0 would walk only past old slots,
+// and once enough of them are unusable the Deployment would never come back.
+func TestGatewayInfraReconciler_ConfigTLSWithoutADeploymentStartsAtTheHighestOwnedSlot(t *testing.T) {
+	t.Parallel()
+
+	reconciler, authority := newTLSInfraReconciler(t)
+	reconciler.Recorder = events.NewFakeRecorder(100)
+	reconcileEdgeResult(t, reconciler)
+	spoilOwnedSlots(t, reconciler)
+
+	require.NoError(t, reconciler.Delete(context.Background(), &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: "cf-proxy-edge", Namespace: infraNamespace},
+	}))
+
+	reconcileEdgeResult(t, reconciler)
+
+	next := strconv.Itoa(maxConfigTLSSlotAttempts + 1)
+	assert.Equal(t, edgeLeafKey(next).Name, mountedLeaf(t, reconciler.Client))
+	requireLeafValid(t, reconciler.Client, authority, edgeLeafKey(next), time.Now())
+}
+
+// spoilOwnedSlots leaves slot 0 and every slot up to the attempt bound owned
+// by the edge Gateway but holding a leaf that fails verification.
+func spoilOwnedSlots(t *testing.T, reconciler *GatewayInfraReconciler) {
+	t.Helper()
+
+	gateway := edgeGateway(t, reconciler.Client)
+	garbage := map[string][]byte{corev1.TLSCertKey: []byte("not a cert"), corev1.TLSPrivateKeyKey: []byte("not a key")}
+
+	var leaf corev1.Secret
+	require.NoError(t, reconciler.Get(context.Background(), edgeLeafKey("0"), &leaf))
+	leaf.Data = garbage
+	require.NoError(t, reconciler.Update(context.Background(), &leaf))
+
+	for index := 1; index <= maxConfigTLSSlotAttempts; index++ {
+		secret := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: edgeLeafKey(strconv.Itoa(index)).Name, Namespace: infraNamespace},
+			Type:       corev1.SecretTypeTLS,
+			Data:       garbage,
+		}
+		require.NoError(t, controllerutil.SetControllerReference(gateway, secret, reconciler.Scheme))
+		require.NoError(t, reconciler.Create(context.Background(), secret))
+	}
+}
+
+// TestGatewayInfraReconciler_ConfigTLSReenabledStartsAtTheHighestOwnedSlot
+// pins the same fallback for a plane whose Deployment exists but mounts no
+// certificate, which is what turning config API TLS off and on again leaves.
+func TestGatewayInfraReconciler_ConfigTLSReenabledStartsAtTheHighestOwnedSlot(t *testing.T) {
+	t.Parallel()
+
+	reconciler, authority := newTLSInfraReconciler(t)
+	reconciler.Recorder = events.NewFakeRecorder(100)
+	reconcileEdgeResult(t, reconciler)
+
+	reconciler.ConfigAuthority = nil
+	reconcileEdgeResult(t, reconciler)
+	require.Empty(t, mountedLeaf(t, reconciler.Client), "with TLS off the plane mounts no certificate")
+
+	spoilOwnedSlots(t, reconciler)
+
+	reconciler.ConfigAuthority = authority
+	reconcileEdgeResult(t, reconciler)
+
+	next := strconv.Itoa(maxConfigTLSSlotAttempts + 1)
+	assert.Equal(t, edgeLeafKey(next).Name, mountedLeaf(t, reconciler.Client))
+	requireLeafValid(t, reconciler.Client, authority, edgeLeafKey(next), time.Now())
+}
+
+// TestGatewayInfraReconciler_ConfigTLSSlotListErrorFailsTheReconcile pins
+// that a failed Secret list is reported, not read as "no owned slots", which
+// would restart the walk at slot 0.
+func TestGatewayInfraReconciler_ConfigTLSSlotListErrorFailsTheReconcile(t *testing.T) {
+	t.Parallel()
+
+	reconciler, _ := newTLSInfraReconciler(t)
+	reconciler.Client = interceptor.NewClient(reconciler.Client.(client.WithWatch), interceptor.Funcs{
+		List: func(ctx context.Context, inner client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+			if _, ok := list.(*corev1.SecretList); ok {
+				return errTransientRead
+			}
+
+			return inner.List(ctx, list, opts...)
+		},
+	})
+
+	_, err := reconciler.ensureConfigTLSSecret(context.Background(), edgeGateway(t, reconciler.Client))
+	require.ErrorIs(t, err, errTransientRead)
+
+	var slot corev1.Secret
+	assert.True(t, apierrors.IsNotFound(reconciler.Get(context.Background(), edgeLeafKey("0"), &slot)),
+		"no slot may be issued when the owned slots could not be read")
+}
+
+// TestGatewayInfraReconciler_ConfigTLSIgnoresSlotsItDoesNotOwn pins that only
+// a Deployment or Secret the Gateway controls sets where the walk starts.
+func TestGatewayInfraReconciler_ConfigTLSIgnoresSlotsItDoesNotOwn(t *testing.T) {
+	t.Parallel()
+
+	reconciler, _ := newTLSInfraReconciler(t)
+
+	require.NoError(t, reconciler.Create(context.Background(), &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: edgeLeafKey("9").Name, Namespace: infraNamespace},
+	}))
+
+	require.NoError(t, reconciler.Create(context.Background(), &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: "cf-proxy-edge", Namespace: infraNamespace},
+		Spec: appsv1.DeploymentSpec{
+			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "foreign"}},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": "foreign"}},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{{Name: "foreign", Image: "example.com/foreign:v1"}},
+					Volumes: []corev1.Volume{{
+						Name: "config-tls",
+						VolumeSource: corev1.VolumeSource{
+							Secret: &corev1.SecretVolumeSource{SecretName: edgeLeafKey("5").Name},
+						},
+					}},
+				},
+			},
+		},
+	}))
+
+	name, err := reconciler.ensureConfigTLSSecret(context.Background(), edgeGateway(t, reconciler.Client))
+	require.NoError(t, err)
+	assert.Equal(t, edgeLeafKey("0").Name, name)
 }
 
 func edgeGateway(t *testing.T, c client.Client) *gatewayv1.Gateway {
