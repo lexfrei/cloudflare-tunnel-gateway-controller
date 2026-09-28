@@ -189,7 +189,7 @@ func TestResyncTarget_LostRaceToACachedNewerConfigIsSuperseded(t *testing.T) {
 	assert.ErrorIs(t, err, errReplaySuperseded)
 }
 
-// TestResyncTarget_LostRaceToASyncInFlightIsSuperseded is window 3: the sync
+// TestResyncTarget_LostRaceToASyncInFlightIsSuperseded covers a sync that
 // delivered its newer document but has not recorded it yet.
 func TestResyncTarget_LostRaceToASyncInFlightIsSuperseded(t *testing.T) {
 	t.Parallel()
@@ -210,8 +210,8 @@ func TestResyncTarget_LostRaceToASyncInFlightIsSuperseded(t *testing.T) {
 	assert.ErrorIs(t, err, errReplaySuperseded)
 }
 
-// TestResyncTarget_LostRaceWithNothingNewerIsAnError is window 1: the replay
-// cache is behind a sync that failed, nothing newer is cached or on its way,
+// TestResyncTarget_LostRaceWithNothingNewerIsAnError covers a replay cache
+// that is behind a sync that failed, nothing newer is cached or on its way,
 // and every replay would lose the same race. That stays an error, so the
 // reconciler backs off instead of looping on a short requeue.
 func TestResyncTarget_LostRaceWithNothingNewerIsAnError(t *testing.T) {

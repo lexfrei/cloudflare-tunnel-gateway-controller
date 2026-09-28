@@ -52,8 +52,10 @@ const catchAllHostnameSentinel = gatewayv1.Hostname("")
 // already declared, and never turns a hostname-less catch-all into anything
 // else. A parent that exists but cannot be evaluated (a failed read, a binding
 // validation error) is different: nothing shows what the route may serve, so
-// when no other parent contributes the route is left out of the result. Either
-// way a diagnostic reports the undecided parent on the route's status.
+// when no other parent contributes the route is left out of the result, and
+// when another parent does, the route is narrowed to what that parent lends.
+// In both of these cases a diagnostic reports the undecided parent on the
+// route's status.
 //
 // controllerName scopes which parents may contribute at all: only Gateways
 // whose GatewayClass names this controller. A route may legitimately be
@@ -238,8 +240,9 @@ func collectEffectiveListenerHostnames(
 // leftOut is true when no other parent lent the route a hostname, so it was
 // left out of the proxy config, and false when it still serves the hostnames
 // its other parents lend. The message leaves the error to the log: a route in
-// several partitions is evaluated once per partition, and one message per
-// route keeps the Warning Event and the condition deduplicated.
+// several partitions is evaluated once per partition, and a message that
+// depends only on leftOut keeps the Warning Event and the condition to one
+// entry per case.
 func reportUndecidedParent(ctx context.Context, kind string, route client.Object, err error, leftOut bool) proxy.RouteDiagnostic {
 	logMessage := "route narrowed to the hostnames its other parents lend: a parent could not be evaluated"
 	message := "the controller could not evaluate a parent of this route, so it serves only the hostnames its " +
