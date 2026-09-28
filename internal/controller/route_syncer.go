@@ -665,9 +665,10 @@ func withLostRacePushRequeue(result ctrl.Result, lostRace bool) ctrl.Result {
 }
 
 // withParentNotEvaluatedRequeue requests a retry when a route was left out of
-// the proxy config because its parents could not be evaluated. The sync that
-// left it out succeeded, so without a requeue the route would stay unserved
-// until an unrelated event re-ran it. A pending requeue due sooner is kept.
+// the proxy config because a parent could not be evaluated and no other
+// parent lent it a hostname. The sync that left it out succeeded, so without
+// a requeue the route would stay unserved until an unrelated event re-ran it.
+// A pending requeue due sooner is kept.
 func withParentNotEvaluatedRequeue(result ctrl.Result, diagnostics []proxy.RouteDiagnostic) ctrl.Result {
 	if result.RequeueAfter > 0 && result.RequeueAfter <= apiErrorRequeueDelay {
 		return result

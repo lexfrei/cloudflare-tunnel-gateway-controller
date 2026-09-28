@@ -2,7 +2,6 @@ package controller
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/cockroachdb/errors"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -226,9 +225,12 @@ func collectEffectiveListenerHostnames(
 	return out, catchAll, undecided
 }
 
-// leaveOutUndecidedRoute logs a route left out of the proxy config because
-// none of its parents could be evaluated, and returns the diagnostic that
-// reports it on the route's status.
+// leaveOutUndecidedRoute logs a route left out of the proxy config because a
+// parent could not be evaluated and no other parent lent it a hostname, and
+// returns the diagnostic that reports it on the route's status. The message
+// leaves the error to the log: a route in several partitions is evaluated once
+// per partition, and one message per route keeps the Warning Event and the
+// condition deduplicated.
 func leaveOutUndecidedRoute(ctx context.Context, route client.Object, err error) proxy.RouteDiagnostic {
 	logging.FromContext(ctx).Error("route left out of the proxy config: its parent could not be evaluated",
 		"route", route.GetNamespace()+"/"+route.GetName(),
@@ -239,8 +241,9 @@ func leaveOutUndecidedRoute(ctx context.Context, route client.Object, err error)
 		Name:      route.GetName(),
 		Target:    proxy.DiagnosticProxyConfigPush,
 		Reason:    routeReasonParentNotEvaluated,
-		Message: fmt.Sprintf("this route was left out of its data plane's config because the controller could not "+
-			"evaluate its parent (%v), so it serves no requests; the sync is retried. This route remains Accepted.", err),
+		Message: "this route was left out of its data plane's config because the controller could not evaluate " +
+			"a parent and no other parent lends it a hostname, so it serves no requests; the controller log names " +
+			"the error and the sync is retried. This route remains Accepted.",
 	}
 }
 

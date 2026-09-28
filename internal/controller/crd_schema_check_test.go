@@ -7,12 +7,14 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/go-logr/logr"
 	"github.com/go-logr/logr/funcr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -253,4 +255,49 @@ func TestLogInstalledSchemaGaps_ReportsMissingVersion(t *testing.T) {
 	assert.Contains(t, lines[0], gatewayClassConfigCRDName)
 	assert.Contains(t, lines[0], `"version"="v1alpha1"`)
 	assert.Contains(t, lines[0], `"error"=`, "reported at error level")
+}
+
+// deadlineRecordingReader records whether each Get carried a deadline and
+// answers as if the CRD were absent.
+type deadlineRecordingReader struct {
+	client.Reader
+
+	mu        sync.Mutex
+	deadlines []time.Time
+}
+
+func (r *deadlineRecordingReader) Get(ctx context.Context, key client.ObjectKey, _ client.Object, _ ...client.GetOption) error {
+	deadline, ok := ctx.Deadline()
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if ok {
+		r.deadlines = append(r.deadlines, deadline)
+	}
+
+	return apierrors.NewNotFound(apiextensionsv1.Resource("customresourcedefinitions"), key.Name)
+}
+
+// TestLogInstalledSchemaGaps_BoundsItsReads pins that the startup CRD reads
+// carry a deadline even when the caller's context has none, so a slow
+// apiserver cannot hold up controller startup indefinitely.
+func TestLogInstalledSchemaGaps_BoundsItsReads(t *testing.T) {
+	t.Parallel()
+
+	reader := &deadlineRecordingReader{}
+
+	_, logger := capturingLogger()
+	logInstalledSchemaGaps(context.Background(), reader, logger)
+
+	end := time.Now()
+
+	reader.mu.Lock()
+	defer reader.mu.Unlock()
+
+	require.Len(t, reader.deadlines, len(servedCRDs()), "every read carries a deadline")
+
+	for _, deadline := range reader.deadlines {
+		assert.False(t, deadline.After(end.Add(crdSchemaCheckTimeout)), "the deadline is at most the check timeout away")
+	}
 }

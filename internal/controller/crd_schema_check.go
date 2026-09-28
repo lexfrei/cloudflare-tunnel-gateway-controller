@@ -4,6 +4,7 @@ import (
 	"context"
 	"reflect"
 	"strings"
+	"time"
 
 	"github.com/go-logr/logr"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -14,6 +15,10 @@ import (
 )
 
 const gatewayClassConfigCRDName = "gatewayclassconfigs.cf.k8s.lex.la"
+
+// crdSchemaCheckTimeout bounds the startup CRD reads, which go straight to the
+// apiserver and must not hold up startup when it is slow to answer.
+const crdSchemaCheckTimeout = 10 * time.Second
 
 // servedCRD is a CRD this controller reads, the version it reads, and the Go
 // type that version must describe.
@@ -39,6 +44,9 @@ func servedCRDs() []servedCRD {
 // an error line at startup. A CRD that cannot be read is reported too, rather
 // than passed over as verified.
 func logInstalledSchemaGaps(ctx context.Context, reader client.Reader, logger logr.Logger) {
+	ctx, cancel := context.WithTimeout(ctx, crdSchemaCheckTimeout)
+	defer cancel()
+
 	for _, served := range servedCRDs() {
 		var crd apiextensionsv1.CustomResourceDefinition
 		if err := reader.Get(ctx, types.NamespacedName{Name: served.name}, &crd); err != nil {
