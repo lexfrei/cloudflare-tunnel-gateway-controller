@@ -22,12 +22,13 @@ const (
 	// Gateway API treats same-hostname routes as legal merging); the controller
 	// surfaces a dedicated condition plus a Warning Event on the losing route.
 	DiagnosticShadowed DiagnosticTarget = "Shadowed"
-	// DiagnosticProxyConfigPush means this route's config is not in force on its
-	// data plane. Either the controller could not push the generated config (a
-	// SUSTAINED proxy push failure, not a one-off blip), so requests 502 until
-	// the push recovers, or it left the route out of that config because a
-	// parent could not be evaluated and no other parent lent it a hostname, so
-	// the route answers no requests. The route stays Accepted in both cases.
+	// DiagnosticProxyConfigPush means this route's config is not fully in force
+	// on its data plane. Either the controller could not push the generated
+	// config (a SUSTAINED proxy push failure, not a one-off blip), so requests
+	// 502 until the push recovers, or a parent of the route could not be
+	// evaluated, so the route serves only the hostnames its other parents lend,
+	// or none when no other parent lends one. The route stays Accepted in both
+	// cases.
 	// The controller surfaces a dedicated condition plus a Warning Event on the
 	// affected route, with the reason carried by the diagnostic.
 	DiagnosticProxyConfigPush DiagnosticTarget = "ProxyConfigPush"

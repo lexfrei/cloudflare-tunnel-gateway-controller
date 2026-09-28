@@ -54,9 +54,9 @@ func TestPartitionRouteDiagnostics_CarryRouteKind(t *testing.T) {
 	assert.ElementsMatch(t, []string{kindHTTPRouteDiag, kindGRPCRouteDiag}, []string{diags[0].Kind, diags[1].Kind})
 }
 
-// TestLeaveOutUndecidedRoute_CarriesRouteKind pins the kind on the diagnostic
+// TestReportUndecidedParent_CarriesRouteKind pins the kind on the diagnostic
 // for a route left out because a parent could not be evaluated.
-func TestLeaveOutUndecidedRoute_CarriesRouteKind(t *testing.T) {
+func TestReportUndecidedParent_CarriesRouteKind(t *testing.T) {
 	t.Parallel()
 
 	ourHost := gatewayv1.Hostname("ours.example.com")

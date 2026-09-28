@@ -238,7 +238,7 @@ func assertParentNotEvaluated(t *testing.T, diags []proxy.RouteDiagnostic) {
 	assert.Equal(t, "r", diags[0].Name)
 	assert.Equal(t, proxy.DiagnosticProxyConfigPush, diags[0].Target)
 	assert.Equal(t, routeReasonParentNotEvaluated, diags[0].Reason)
-	assert.NotEmpty(t, diags[0].Message)
+	assert.Contains(t, diags[0].Message, "serves no requests", "the message says the route is not served at all")
 }
 
 // TestWithEffectiveHostnames_UndecidedParentBesideAnAcceptingOne pins that one
@@ -373,19 +373,19 @@ var (
 	errSecondPartitionRead = errors.New("reading ListenerSet: second partition")
 )
 
-// TestLeaveOutUndecidedRoute_OneEventPerRoute pins that a route left out in
+// TestReportUndecidedParent_OneEventPerRoute pins that a route left out in
 // several partitions in one sync is reported once. Each partition evaluates the
 // parents on its own and can fail on a different read, so a message carrying
 // the error would defeat the per-sync deduplication of the Warning Event and
 // the condition message.
-func TestLeaveOutUndecidedRoute_OneEventPerRoute(t *testing.T) {
+func TestReportUndecidedParent_OneEventPerRoute(t *testing.T) {
 	t.Parallel()
 
 	route := httpRouteTo()
 
 	diags := []proxy.RouteDiagnostic{
-		leaveOutUndecidedRoute(context.Background(), kindHTTPRouteDiag, route, errFirstPartitionRead),
-		leaveOutUndecidedRoute(context.Background(), kindHTTPRouteDiag, route, errSecondPartitionRead),
+		reportUndecidedParent(context.Background(), kindHTTPRouteDiag, route, errFirstPartitionRead, true),
+		reportUndecidedParent(context.Background(), kindHTTPRouteDiag, route, errSecondPartitionRead, true),
 	}
 
 	rec := events.NewFakeRecorder(10)

@@ -393,9 +393,9 @@ func syncAndUpdateStatusCommon(ctx context.Context, params *syncUpdateParams) (c
 }
 
 // syncOutcome folds a sync's push outcome into what the reconcile returns: a
-// lost push race and a route left out because a parent could not be evaluated
-// each request a requeue, a sync error propagates unless a requeue interval is
-// already set, and a status update error propagates last.
+// lost push race and a route parent that could not be evaluated each request
+// a requeue, a sync error propagates unless a requeue interval is already set,
+// and a status update error propagates last.
 func syncOutcome(
 	result ctrl.Result,
 	lostRace bool,
@@ -668,11 +668,11 @@ func withLostRacePushRequeue(result ctrl.Result, lostRace bool) ctrl.Result {
 	return result
 }
 
-// withParentNotEvaluatedRequeue requests a retry when a route was left out of
-// the proxy config because a parent could not be evaluated and no other
-// parent lent it a hostname. The sync that left it out succeeded, so without
-// a requeue the route would stay unserved until an unrelated event re-ran it.
-// A pending requeue due sooner is kept.
+// withParentNotEvaluatedRequeue requests a retry when a parent of a route
+// could not be evaluated, so the route serves only the hostnames its other
+// parents lend, or none. The sync that narrowed it succeeded, so without a
+// requeue the missing hostnames would stay unserved until an unrelated event
+// re-ran it. A pending requeue due sooner is kept.
 func withParentNotEvaluatedRequeue(result ctrl.Result, diagnostics []proxy.RouteDiagnostic) ctrl.Result {
 	if result.RequeueAfter > 0 && result.RequeueAfter <= apiErrorRequeueDelay {
 		return result

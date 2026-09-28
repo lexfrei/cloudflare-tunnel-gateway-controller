@@ -52,8 +52,8 @@ const catchAllHostnameSentinel = gatewayv1.Hostname("")
 // already declared, and never turns a hostname-less catch-all into anything
 // else. A parent that exists but cannot be evaluated (a failed read, a binding
 // validation error) is different: nothing shows what the route may serve, so
-// when no other parent contributes the route is left out of the result and a
-// diagnostic reports it on the route's status.
+// when no other parent contributes the route is left out of the result. Either
+// way a diagnostic reports the undecided parent on the route's status.
 //
 // controllerName scopes which parents may contribute at all: only Gateways
 // whose GatewayClass names this controller. A route may legitimately be
@@ -81,7 +81,7 @@ func withEffectiveHostnames(
 	validator := routebinding.NewValidator(cli)
 	out := make([]*gatewayv1.HTTPRoute, 0, len(routes))
 
-	var leftOut []proxy.RouteDiagnostic
+	var undecidedDiags []proxy.RouteDiagnostic
 
 	for _, route := range routes {
 		effective, catchAll, undecided := collectEffectiveListenerHostnames(ctx, cli, controllerName, validator, HTTPRouteWrapper{route}, views)
@@ -96,7 +96,7 @@ func withEffectiveHostnames(
 
 		if len(effective) == 0 {
 			if undecided != nil {
-				leftOut = append(leftOut, leaveOutUndecidedRoute(ctx, kindHTTPRouteDiag, route, undecided))
+				undecidedDiags = append(undecidedDiags, reportUndecidedParent(ctx, kindHTTPRouteDiag, route, undecided, true))
 
 				continue
 			}
@@ -106,12 +106,16 @@ func withEffectiveHostnames(
 			continue
 		}
 
+		if undecided != nil {
+			undecidedDiags = append(undecidedDiags, reportUndecidedParent(ctx, kindHTTPRouteDiag, route, undecided, false))
+		}
+
 		clone := *route
 		clone.Spec.Hostnames = effective
 		out = append(out, &clone)
 	}
 
-	return out, leftOut
+	return out, undecidedDiags
 }
 
 // withEffectiveHostnamesGRPC is the GRPCRoute counterpart of
@@ -139,7 +143,7 @@ func withEffectiveHostnamesGRPC(
 	validator := routebinding.NewValidator(cli)
 	out := make([]*gatewayv1.GRPCRoute, 0, len(routes))
 
-	var leftOut []proxy.RouteDiagnostic
+	var undecidedDiags []proxy.RouteDiagnostic
 
 	for _, route := range routes {
 		effective, catchAll, undecided := collectEffectiveListenerHostnames(ctx, cli, controllerName, validator, GRPCRouteWrapper{route}, views)
@@ -154,7 +158,7 @@ func withEffectiveHostnamesGRPC(
 
 		if len(effective) == 0 {
 			if undecided != nil {
-				leftOut = append(leftOut, leaveOutUndecidedRoute(ctx, kindGRPCRouteDiag, route, undecided))
+				undecidedDiags = append(undecidedDiags, reportUndecidedParent(ctx, kindGRPCRouteDiag, route, undecided, true))
 
 				continue
 			}
@@ -164,12 +168,16 @@ func withEffectiveHostnamesGRPC(
 			continue
 		}
 
+		if undecided != nil {
+			undecidedDiags = append(undecidedDiags, reportUndecidedParent(ctx, kindGRPCRouteDiag, route, undecided, false))
+		}
+
 		clone := *route
 		clone.Spec.Hostnames = effective
 		out = append(out, &clone)
 	}
 
-	return out, leftOut
+	return out, undecidedDiags
 }
 
 // collectEffectiveListenerHostnames walks the route's parentRefs and, for each
@@ -225,14 +233,27 @@ func collectEffectiveListenerHostnames(
 	return out, catchAll, undecided
 }
 
-// leaveOutUndecidedRoute logs a route left out of the proxy config because a
-// parent could not be evaluated and no other parent lent it a hostname, and
-// returns the diagnostic that reports it on the route's status. The message
-// leaves the error to the log: a route in several partitions is evaluated once
-// per partition, and one message per route keeps the Warning Event and the
-// condition deduplicated.
-func leaveOutUndecidedRoute(ctx context.Context, kind string, route client.Object, err error) proxy.RouteDiagnostic {
-	logging.FromContext(ctx).Error("route left out of the proxy config: its parent could not be evaluated",
+// reportUndecidedParent logs a route with a parent that could not be
+// evaluated and returns the diagnostic that reports it on the route's status.
+// leftOut is true when no other parent lent the route a hostname, so it was
+// left out of the proxy config, and false when it still serves the hostnames
+// its other parents lend. The message leaves the error to the log: a route in
+// several partitions is evaluated once per partition, and one message per
+// route keeps the Warning Event and the condition deduplicated.
+func reportUndecidedParent(ctx context.Context, kind string, route client.Object, err error, leftOut bool) proxy.RouteDiagnostic {
+	logMessage := "route narrowed to the hostnames its other parents lend: a parent could not be evaluated"
+	message := "the controller could not evaluate a parent of this route, so it serves only the hostnames its " +
+		"other parents lend and requests for the rest are not routed; the controller log names the error and the " +
+		"sync is retried. This route remains Accepted."
+
+	if leftOut {
+		logMessage = "route left out of the proxy config: its parent could not be evaluated"
+		message = "this route was left out of its data plane's config because the controller could not evaluate " +
+			"a parent and no other parent lends it a hostname, so it serves no requests; the controller log names " +
+			"the error and the sync is retried. This route remains Accepted."
+	}
+
+	logging.FromContext(ctx).Error(logMessage,
 		"route", route.GetNamespace()+"/"+route.GetName(),
 		"error", err)
 
@@ -242,9 +263,7 @@ func leaveOutUndecidedRoute(ctx context.Context, kind string, route client.Objec
 		Name:      route.GetName(),
 		Target:    proxy.DiagnosticProxyConfigPush,
 		Reason:    routeReasonParentNotEvaluated,
-		Message: "this route was left out of its data plane's config because the controller could not evaluate " +
-			"a parent and no other parent lends it a hostname, so it serves no requests; the controller log names " +
-			"the error and the sync is retried. This route remains Accepted.",
+		Message:   message,
 	}
 }
 

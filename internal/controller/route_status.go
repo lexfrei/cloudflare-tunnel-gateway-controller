@@ -459,8 +459,7 @@ func tunnelSharedReason(diagnostics []proxy.RouteDiagnostic) string {
 }
 
 // proxyConfigPushedReason names why ProxyConfigPushed is False: a failed push,
-// unless every diagnostic behind it is a route left out because a parent
-// could not be evaluated.
+// unless every diagnostic behind it is a parent that could not be evaluated.
 func proxyConfigPushedReason(diagnostics []proxy.RouteDiagnostic) string {
 	for i := range diagnostics {
 		if diag := &diagnostics[i]; diag.Target == proxy.DiagnosticProxyConfigPush && diag.Reason != routeReasonParentNotEvaluated {
@@ -762,15 +761,16 @@ const (
 const (
 	// routeConditionProxyConfigPushed is set False when the controller could not
 	// push this route's config to its data plane for a SUSTAINED run of attempts
-	// (#487) — the proxy serves 502 until the push recovers — or left the route
-	// out of that config because a parent could not be evaluated and no other
-	// parent lent it a hostname. It clears on the first sync without either
-	// (parent status is rebuilt each sync).
+	// (#487) — the proxy serves 502 until the push recovers — or when a parent
+	// of the route could not be evaluated, so the route serves only what its
+	// other parents lend. It clears on the first sync without either (parent
+	// status is rebuilt each sync).
 	routeConditionProxyConfigPushed  = "cf.k8s.lex.la/ProxyConfigPushed"
 	routeReasonProxyConfigPushFailed = "ProxyConfigPushFailed"
-	// routeReasonParentNotEvaluated sets the same condition False when the
-	// route was left out of its data plane's config because a parent could not
-	// be evaluated and no other parent lent it a hostname.
+	// routeReasonParentNotEvaluated sets the same condition False when a parent
+	// of the route could not be evaluated. The route serves only the hostnames
+	// its other parents lend, and is left out of its data plane's config when
+	// none lends one.
 	routeReasonParentNotEvaluated = "ParentNotEvaluated"
 	// routeConditionTunnelShared is set True when this route's per-Gateway data
 	// plane shares one Cloudflare Tunnel with another dedicated Gateway (#488).
