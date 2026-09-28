@@ -126,6 +126,47 @@ func TestRecordPush_PartialDeliveryCachesOnlyANewerConfig(t *testing.T) {
 	assert.Same(t, newer, cached().lastCfg, "a config no replica accepted is never cached")
 }
 
+// TestRecordPush_FullDeliveryOfAnOlderConfigKeepsTheNewerCache covers two
+// syncs recorded out of order: a newer config reached some replicas and was
+// cached, then an older snapshot reached every endpoint of its own push and
+// recorded last. The replay cache must keep the newer config, or a replay
+// would hand the older one to every pod that joins.
+func TestRecordPush_FullDeliveryOfAnOlderConfigKeepsTheNewerCache(t *testing.T) {
+	t.Parallel()
+
+	healthy := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(healthy.Close)
+
+	testClient := fake.NewClientBuilder().WithScheme(runtime.NewScheme()).Build()
+	proxySyncer := NewProxySyncer("cluster.local", "", "", testClient, slog.Default())
+	endpoints := []string{healthy.URL + "/config"}
+
+	_, err := proxySyncer.SyncPartition(context.Background(), 0, sharedPartitionKey, "", endpoints,
+		[]*gatewayv1.HTTPRoute{pushFallbackRoute("web", "web.example.com")}, nil, nil, nil)
+	require.NoError(t, err)
+
+	proxySyncer.syncMu.Lock()
+	seeded := proxySyncer.targets[sharedPartitionKey].lastCfg
+	proxySyncer.syncMu.Unlock()
+
+	require.NotNil(t, seeded)
+
+	newer := &proxy.Config{Version: seeded.Version + 2}
+	proxySyncer.recordPush(nil, sharedPartitionKey, "", "hash-newer", newer, endpoints,
+		errors.New("one replica refused the push"), true)
+
+	older := &proxy.Config{Version: seeded.Version + 1}
+	proxySyncer.recordPush(nil, sharedPartitionKey, "", "hash-older", older, endpoints, nil, true)
+
+	proxySyncer.syncMu.Lock()
+	cached := proxySyncer.targets[sharedPartitionKey].lastCfg
+	proxySyncer.syncMu.Unlock()
+
+	assert.Same(t, newer, cached, "a fully delivered older config never replaces a newer cached one")
+}
+
 // raceBarrierProxy mimics the real proxy config API (api.go + Router.UpdateConfig:
 // 409 when a PUT version is below the current version, current version on GET),
 // with a two-PUT barrier so the two concurrent syncs are applied newer-first,
