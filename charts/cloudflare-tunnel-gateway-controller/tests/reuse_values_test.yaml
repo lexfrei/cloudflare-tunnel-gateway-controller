@@ -1,0 +1,48 @@
+suite: test rendering with values from an older chart
+# `helm upgrade --reuse-values` renders the new templates against the previous
+# release's values, so a key added after that release is absent rather than
+# defaulted. Each null below is a key values.yaml gained after v3.5.0.
+templates:
+  - deployment.yaml
+  - deployment-proxy.yaml
+  - poddisruptionbudget-proxy.yaml
+  - role-config-tls.yaml
+  - serviceaccount-proxy.yaml
+  - servicemonitor-proxy.yaml
+set:
+  image:
+    digest: null
+  serviceMonitor:
+    enabled: true
+  proxy:
+    tunnelTokenSecretRef:
+      name: tunnel-token-secret
+    image:
+      digest: null
+    configAPITLS: null
+    mirror: null
+    serviceAccount: null
+    podDisruptionBudget: null
+    websocket:
+      idleTimeout: null
+tests:
+  - it: should render every template without the keys added since v3.5.0
+    asserts:
+      - notFailedTemplate: {}
+
+  - it: should leave the mirror cap unset on the controller
+    template: deployment.yaml
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: "--mirror-max-in-flight"
+          any: true
+
+  - it: should leave the mirror cap unset on the shared proxy
+    template: deployment-proxy.yaml
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: PROXY_MIRROR_MAX_IN_FLIGHT
+          any: true
