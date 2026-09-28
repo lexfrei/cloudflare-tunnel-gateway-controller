@@ -28,11 +28,12 @@ const (
 )
 
 // ErrInvalidParameters classifies a Gateway whose
-// infrastructure.parametersRef cannot be honoured for a DETERMINISTIC,
-// user-fixable reason: unsupported group/kind, NotFound referents, a missing
-// Secret key, or a connector token that does not parse. The Gateway
-// reconciler maps it onto Accepted=False with reason InvalidParameters, the
-// condition shape the Gateway API recommends for this failure class.
+// infrastructure.parametersRef, or whose GatewayClass parametersRef chain,
+// cannot be honoured for a DETERMINISTIC, user-fixable reason: unsupported
+// group/kind, NotFound referents, a missing Secret key, an empty tunnelID, or
+// a connector token that does not parse. The Gateway reconciler maps it onto
+// Accepted=False with reason InvalidParameters, the condition shape the
+// Gateway API recommends for this failure class.
 // Transient infrastructure failures (apiserver timeouts, throttling) are
 // deliberately NOT wrapped with this sentinel — they must keep their own
 // identity so callers retry with backoff instead of blaming the user's spec.

@@ -379,14 +379,13 @@ func (r *GatewayReconciler) handleResolveError(
 	logger := log.FromContext(ctx)
 	logger.Error(err, what)
 
-	// The per-Gateway resolver classifies only deterministic spec problems as
-	// ErrInvalidParameters; anything else on an opted-in Gateway is a transient
-	// API failure that says nothing about the spec. Stamping InvalidParameters
-	// over it would misreport a healthy Gateway and clear its listener statuses
-	// on every cache hiccup — propagate for backoff instead and leave the last
-	// written status standing. The class chain (no parametersRef) keeps its
-	// historic stamp-on-any-error behavior.
-	if config.HasInfrastructureParametersRef(gateway) && !errors.Is(err, config.ErrInvalidParameters) {
+	// Both resolvers classify only deterministic spec problems as
+	// ErrInvalidParameters; anything else is a read failure that says nothing
+	// about the spec. Stamping InvalidParameters over it would misreport a
+	// healthy Gateway and, on the shared plane, clear the address external-dns
+	// publishes, dropping DNS for every hostname on it. Propagate for backoff
+	// instead and leave the last written status standing.
+	if !errors.Is(err, config.ErrInvalidParameters) {
 		return ctrl.Result{}, err
 	}
 

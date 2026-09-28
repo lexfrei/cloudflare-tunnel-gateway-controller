@@ -12,6 +12,7 @@ import (
 	"github.com/cloudflare/cloudflare-go/v7/option"
 	"github.com/cockroachdb/errors"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
@@ -138,22 +139,21 @@ func NewResolver(c client.Client, defaultNamespace string, metricsCollector cfme
 	return resolver
 }
 
-//nolint:wrapcheck // errors.Newf creates new errors
 func (r *Resolver) ResolveFromGatewayClass(
 	ctx context.Context,
 	gatewayClass *gatewayv1.GatewayClass,
 ) (*ResolvedConfig, error) {
 	if gatewayClass.Spec.ParametersRef == nil {
-		return nil, errors.New("GatewayClass has no parametersRef")
+		return nil, invalidParameters(errors.New("GatewayClass has no parametersRef"))
 	}
 
 	ref := gatewayClass.Spec.ParametersRef
 	if string(ref.Group) != ParametersRefGroup {
-		return nil, errors.Newf("unsupported parametersRef group: %s (expected %s)", ref.Group, ParametersRefGroup)
+		return nil, invalidParameters(errors.Newf("unsupported parametersRef group: %s (expected %s)", ref.Group, ParametersRefGroup))
 	}
 
 	if string(ref.Kind) != ParametersRefKind {
-		return nil, errors.Newf("unsupported parametersRef kind: %s (expected %s)", ref.Kind, ParametersRefKind)
+		return nil, invalidParameters(errors.Newf("unsupported parametersRef kind: %s (expected %s)", ref.Kind, ParametersRefKind))
 	}
 
 	err := ValidateParametersRefScope(ref)
@@ -165,7 +165,7 @@ func (r *Resolver) ResolveFromGatewayClass(
 
 	err = r.client.Get(ctx, types.NamespacedName{Name: ref.Name}, config)
 	if err != nil {
-		return nil, errors.Wrapf(err, "failed to get GatewayClassConfig %s", ref.Name)
+		return nil, invalidIfNotFound(errors.Wrapf(err, "failed to get GatewayClassConfig %s", ref.Name))
 	}
 
 	return r.resolveConfig(ctx, config)
@@ -251,17 +251,36 @@ func (r *Resolver) ResolveFromGatewayClassName(
 
 	err := r.client.Get(ctx, types.NamespacedName{Name: gatewayClassName}, gatewayClass)
 	if err != nil {
-		return nil, errors.Wrapf(err, "failed to get GatewayClass %s", gatewayClassName)
+		return nil, invalidIfNotFound(errors.Wrapf(err, "failed to get GatewayClass %s", gatewayClassName))
 	}
 
 	return r.ResolveFromGatewayClass(ctx, gatewayClass)
 }
 
-//nolint:funcorder,wrapcheck // private helper, errors.Newf creates new errors
+// invalidParameters marks err as a configuration problem, ErrInvalidParameters,
+// without changing its message, which the Gateway's condition carries.
+//
+//nolint:wrapcheck // marking rather than wrapping keeps that message as it is
+func invalidParameters(err error) error {
+	return errors.Mark(err, ErrInvalidParameters)
+}
+
+// invalidIfNotFound marks a failed read as a configuration problem when the
+// object does not exist. Any other read failure says nothing about the
+// configuration and keeps its own identity, so the caller retries it.
+func invalidIfNotFound(err error) error {
+	if apierrors.IsNotFound(err) {
+		return invalidParameters(err)
+	}
+
+	return err
+}
+
+//nolint:funcorder // private helper
 func (r *Resolver) resolveConfig(ctx context.Context, config *v1alpha1.GatewayClassConfig) (*ResolvedConfig, error) {
 	// Validate required TunnelID
 	if config.Spec.TunnelID == "" {
-		return nil, errors.New("tunnelID is required in GatewayClassConfig")
+		return nil, invalidParameters(errors.New("tunnelID is required in GatewayClassConfig"))
 	}
 
 	resolved := &ResolvedConfig{
@@ -276,20 +295,20 @@ func (r *Resolver) resolveConfig(ctx context.Context, config *v1alpha1.GatewayCl
 
 	credentialsSecret, err := r.getSecret(ctx, credentialsRef.Name, credentialsRef.Namespace)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to get Cloudflare credentials secret")
+		return nil, invalidIfNotFound(errors.Wrap(err, "failed to get Cloudflare credentials secret"))
 	}
 
 	apiTokenKey := credentialsRef.GetAPITokenKey()
 
 	apiToken, ok := credentialsSecret.Data[apiTokenKey]
 	if !ok {
-		return nil, errors.Newf("secret %s/%s does not contain key %s",
-			credentialsSecret.Namespace, credentialsSecret.Name, apiTokenKey)
+		return nil, invalidParameters(errors.Newf("secret %s/%s does not contain key %s",
+			credentialsSecret.Namespace, credentialsSecret.Name, apiTokenKey))
 	}
 
 	if len(apiToken) == 0 {
-		return nil, errors.Newf("secret %s/%s key %s is empty",
-			credentialsSecret.Namespace, credentialsSecret.Name, apiTokenKey)
+		return nil, invalidParameters(errors.Newf("secret %s/%s key %s is empty",
+			credentialsSecret.Namespace, credentialsSecret.Name, apiTokenKey))
 	}
 
 	resolved.APIToken = string(apiToken)
