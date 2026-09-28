@@ -814,7 +814,8 @@ func (s *RouteSyncer) resolveConfigForController(ctx context.Context) (*config.R
 
 	resolved, err := s.ConfigResolver.ResolveFromGatewayClass(ctx, &classes[0])
 	if err != nil {
-		return nil, errors.Wrap(err, "resolving config for GatewayClass "+classes[0].Name)
+		// A configuration error already names its GatewayClass.
+		return nil, errors.Wrap(err, "resolving GatewayClass config")
 	}
 
 	return resolved, nil
@@ -904,10 +905,14 @@ func classConfigConflict(classes []gatewayv1.GatewayClass, controllerName string
 
 	slices.Sort(names)
 
-	return errors.Wrapf(errors.Mark(config.ErrInvalidParameters, errClassConfigConflict),
+	// Marked rather than wrapped: wrapping ErrInvalidParameters would append
+	// its text, which names a Gateway's infrastructure ref, to a conflict
+	// between GatewayClasses.
+	//nolint:wrapcheck // marking rather than wrapping is the point, per above
+	return errors.Mark(errors.Mark(errors.Newf(
 		"conflicting parametersRef across GatewayClasses %v for controller %s: "+
 			"one controller instance supports only one GatewayClassConfig",
-		names, controllerName)
+		names, controllerName), errClassConfigConflict), config.ErrInvalidParameters)
 }
 
 // hasConflictingParametersRef returns true if the given GatewayClasses
@@ -928,7 +933,7 @@ func hasConflictingParametersRef(classes []gatewayv1.GatewayClass) bool {
 
 // parametersRefEqual compares two ParametersReference pointers for equality.
 // Namespace counts even though GatewayClassConfig is cluster-scoped: the
-// resolver refuses a ref that sets one (config.ValidateParametersRefScope), so
+// resolver refuses a ref that sets one (config.ParametersRefProblem), so
 // a namespaced ref and a plain one do not resolve to the same config.
 func parametersRefEqual(left, right *gatewayv1.ParametersReference) bool {
 	if left == nil && right == nil {

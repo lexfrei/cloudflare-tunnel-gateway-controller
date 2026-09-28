@@ -37,7 +37,7 @@ const (
 // Transient infrastructure failures (apiserver timeouts, throttling) are
 // deliberately NOT wrapped with this sentinel — they must keep their own
 // identity so callers retry with backoff instead of blaming the user's spec.
-var ErrInvalidParameters = errors.New("invalid infrastructure parametersRef")
+var ErrInvalidParameters = errors.New("invalid Gateway spec.infrastructure.parametersRef")
 
 // PerGatewayConfig is the resolution result for a Gateway opted into a
 // dedicated data plane via infrastructure.parametersRef.
@@ -327,17 +327,19 @@ func (r *Resolver) resolveGatewayAPIToken(
 
 	classResolved, err := r.ResolveFromGatewayClassName(ctx, string(gateway.Spec.GatewayClassName))
 	if err != nil {
-		// Only genuinely-retryable apiserver failures (timeout, throttling,
-		// 5xx) keep backing off without stamping the Gateway. EVERY other
-		// class-chain failure is a deterministic, user-fixable config problem
-		// (missing/invalid parametersRef, absent GatewayClassConfig or its
-		// Secret, empty tunnelID, empty api-token key) — the per-Gateway plane
-		// can never write its tunnel document, so classify it as
-		// ErrInvalidParameters and surface Accepted=False instead of backing
-		// off forever with no status. ResolveFromGatewayClassName only reads
-		// Kubernetes objects (no Cloudflare-API account auto-detection happens
-		// on this token-only path), so the retryable arm is purely about
-		// transient apiserver reads and self-heals on the next reconcile.
+		// Already classified and named after its GatewayClass: keep that, so
+		// the message does not blame the Gateway's infrastructure ref.
+		if errors.Is(err, ErrInvalidParameters) {
+			return "", errors.Wrap(err, "resolving class credentials for per-Gateway data plane")
+		}
+
+		// What reaches here is an unclassified read failure. Retryable
+		// apiserver failures (timeout, throttling, 5xx) keep backing off
+		// without stamping the Gateway; any other, such as Forbidden, is still
+		// stamped ErrInvalidParameters, although it says nothing about the
+		// spec. Issue #896 tracks that. ResolveFromGatewayClassName only reads
+		// Kubernetes objects on this token-only path, so the retryable arm is
+		// purely about transient apiserver reads.
 		if isRetryableAPIError(err) {
 			return "", errors.Wrap(err, "resolving class credentials for per-Gateway data plane")
 		}

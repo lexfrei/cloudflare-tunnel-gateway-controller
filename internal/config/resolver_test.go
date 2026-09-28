@@ -114,7 +114,7 @@ func TestResolveFromGatewayClass_MissingParametersRef(t *testing.T) {
 	_, err := resolver.ResolveFromGatewayClass(ctx, gatewayClass)
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "has no parametersRef")
+	assert.Contains(t, err.Error(), "spec.parametersRef is required")
 	assert.True(t, errors.Is(err, config.ErrInvalidParameters), "%v", err)
 }
 
@@ -143,7 +143,7 @@ func TestResolveFromGatewayClass_WrongGroup(t *testing.T) {
 	_, err := resolver.ResolveFromGatewayClass(ctx, gatewayClass)
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "unsupported parametersRef group")
+	assert.Contains(t, err.Error(), "not wrong.group/GatewayClassConfig")
 	assert.True(t, errors.Is(err, config.ErrInvalidParameters), "%v", err)
 }
 
@@ -172,7 +172,7 @@ func TestResolveFromGatewayClass_WrongKind(t *testing.T) {
 	_, err := resolver.ResolveFromGatewayClass(ctx, gatewayClass)
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "unsupported parametersRef kind")
+	assert.Contains(t, err.Error(), "not cf.k8s.lex.la/WrongKind")
 	assert.True(t, errors.Is(err, config.ErrInvalidParameters), "%v", err)
 }
 
@@ -632,7 +632,7 @@ func TestGetConfigForGatewayClass_MissingParametersRef(t *testing.T) {
 	_, err := resolver.GetConfigForGatewayClass(ctx, gatewayClass)
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "has no parametersRef")
+	assert.Contains(t, err.Error(), "spec.parametersRef is required")
 }
 
 func TestGetConfigForGatewayClass_WrongGroupKind(t *testing.T) {
@@ -660,7 +660,7 @@ func TestGetConfigForGatewayClass_WrongGroupKind(t *testing.T) {
 	_, err := resolver.GetConfigForGatewayClass(ctx, gatewayClass)
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "unsupported parametersRef")
+	assert.Contains(t, err.Error(), "spec.parametersRef must name a")
 }
 
 func TestGetConfigForGatewayClass_ConfigNotFound(t *testing.T) {
