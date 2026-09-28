@@ -133,7 +133,7 @@ func listenerSetEntriesAccepted(
 			continue
 		}
 
-		if routebinding.NamespaceSelectorInvalid(entry.AllowedRoutes) {
+		if !servableListenerProtocol(entry.Protocol) || routebinding.NamespaceSelectorInvalid(entry.AllowedRoutes) {
 			continue
 		}
 

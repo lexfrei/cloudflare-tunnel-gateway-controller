@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"strings"
 
 	"github.com/cockroachdb/errors"
 	corev1 "k8s.io/api/core/v1"
@@ -29,7 +30,10 @@ const (
 	listenerSetMsgProgrammed   = "ListenerSet programmed against parent Gateway"
 	listenerSetMsgNotAllowed   = "Parent Gateway does not allow ListenerSet attachment"
 	listenerSetMsgListenersBad = "No listener in this ListenerSet is usable: each one conflicts, " +
-		"has unresolved references or has an invalid allowedRoutes.namespaces.selector"
+		"has unresolved references, uses a protocol this controller does not serve " +
+		"or has an invalid allowedRoutes.namespaces.selector"
+	listenerSetMsgUnsupportedProtocol = "One or more listeners in this ListenerSet use a protocol " +
+		"this controller does not serve (only HTTP and HTTPS are supported)"
 	listenerSetMsgInvalidSelector = "One or more listeners in this ListenerSet have an invalid " +
 		"allowedRoutes.namespaces.selector"
 )
@@ -507,19 +511,20 @@ func (r *ListenerSetReconciler) collectListenerEntryRefChecks(
 // summariseListenerSet rolls the merged-view per-listener status plus the
 // per-entry TLS verdicts into the ListenerSet's top-level Accepted /
 // Programmed conditions. An entry is usable when it is conflict-free, its
-// references resolve and its allowedRoutes namespace selector parses. The
-// contract, per the vendored ListenerSetReasonListenersNotValid:
+// references resolve, its protocol is one this controller serves and its
+// allowedRoutes namespace selector parses. The contract, per the vendored
+// ListenerSetReasonListenersNotValid:
 //
 //   - No usable entry → Accepted=False / Reason=ListenersNotValid.
-//   - A usable entry beside one with an invalid selector →
-//     Accepted=True / Reason=ListenersNotValid.
+//   - A usable entry beside one with an unservable protocol or an invalid
+//     selector → Accepted=True / Reason=ListenersNotValid.
 //   - Otherwise → Accepted=True / Reason=Accepted.
 func summariseListenerSet(
 	merged *listenermerge.MergeResult,
 	listenerSet *gatewayv1.ListenerSet,
 	refChecks map[gatewayv1.SectionName]listenerEntryRefsCheck,
 ) (bool, gatewayv1.ListenerSetConditionReason, string) {
-	usable, invalidSelector := false, false
+	usable, unsupportedProtocol, invalidSelector := false, false, false
 
 	for i := range listenerSet.Spec.Listeners {
 		entry := &listenerSet.Spec.Listeners[i]
@@ -533,6 +538,12 @@ func summariseListenerSet(
 			continue
 		}
 
+		if !servableListenerProtocol(entry.Protocol) {
+			unsupportedProtocol = true
+
+			continue
+		}
+
 		if routebinding.NamespaceSelectorInvalid(entry.AllowedRoutes) {
 			invalidSelector = true
 
@@ -542,11 +553,22 @@ func summariseListenerSet(
 		usable = true
 	}
 
-	switch {
-	case !usable:
+	if !usable {
 		return false, gatewayv1.ListenerSetReasonListenersNotValid, listenerSetMsgListenersBad
-	case invalidSelector:
-		return true, gatewayv1.ListenerSetReasonListenersNotValid, listenerSetMsgInvalidSelector
+	}
+
+	var causes []string
+
+	if unsupportedProtocol {
+		causes = append(causes, listenerSetMsgUnsupportedProtocol)
+	}
+
+	if invalidSelector {
+		causes = append(causes, listenerSetMsgInvalidSelector)
+	}
+
+	if len(causes) > 0 {
+		return true, gatewayv1.ListenerSetReasonListenersNotValid, strings.Join(causes, "; ")
 	}
 
 	return true, gatewayv1.ListenerSetReasonAccepted, "ListenerSet attached to parent Gateway"
