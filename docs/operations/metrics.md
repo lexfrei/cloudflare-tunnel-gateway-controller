@@ -194,7 +194,28 @@ scrape_configs:
       - source_labels: [__meta_kubernetes_endpoint_port_name]
         action: keep
         regex: metrics
+  - job_name: cloudflare-tunnel-gateway-controller-proxy
+    # The proxy's /metrics shares the config API port, which serves HTTPS
+    # while proxy.configAPITLS.enabled is on (the default). The CA sits only
+    # in the controller's Secret, so the scrape skips verification.
+    scheme: https
+    tls_config:
+      insecure_skip_verify: true
+    kubernetes_sd_configs:
+      - role: endpoints
+        namespaces:
+          names:
+            - cloudflare-tunnel-system
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_service_name]
+        action: keep
+        regex: cloudflare-tunnel-gateway-controller-proxy
+      - source_labels: [__meta_kubernetes_endpoint_port_name]
+        action: keep
+        regex: config-api
 ```
+
+With `proxy.configAPITLS.enabled: false` drop `scheme` and `tls_config` from the proxy job. The proxy NetworkPolicy, on by default, admits the config API port only from the controller, so list Prometheus in `proxy.networkPolicy.ingress.from` as well.
 
 ## PromQL Queries
 
