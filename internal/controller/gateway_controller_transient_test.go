@@ -45,6 +45,14 @@ func TestGatewayReconciler_TransientResolveErrorKeepsSharedPlaneStatus(t *testin
 			},
 		},
 		{
+			name: "credentials Secret read fails",
+			failOn: func(obj any, list bool) bool {
+				_, ok := obj.(*corev1.Secret)
+
+				return !list && ok
+			},
+		},
+		{
 			name: "GatewayClassConfig read fails",
 			failOn: func(obj any, list bool) bool {
 				_, ok := obj.(*v1alpha1.GatewayClassConfig)

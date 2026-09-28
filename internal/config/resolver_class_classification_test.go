@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -109,7 +110,37 @@ func TestGatewayClassEntryPoints_ClassifyConfigurationErrors(t *testing.T) {
 func TestGatewayClassEntryPoints_ReadFailureIsNotClassified(t *testing.T) {
 	t.Parallel()
 
+	failGatewayClassConfig := func(obj client.Object) bool {
+		_, ok := obj.(*v1alpha1.GatewayClassConfig)
+
+		return ok
+	}
+	failSecret := func(obj client.Object) bool {
+		_, ok := obj.(*corev1.Secret)
+
+		return ok
+	}
+
+	type readFailure struct {
+		entryName string
+		resolve   classEntryPoint
+		failOn    func(client.Object) bool
+	}
+
+	var cases []readFailure
+
 	for entryName, resolve := range classEntryPoints() {
+		cases = append(cases, readFailure{entryName + "/GatewayClassConfig", resolve, failGatewayClassConfig})
+
+		// Only the full resolve reads the credentials Secret.
+		if entryName == "ResolveFromGatewayClass" || entryName == "ResolveFromGatewayClassName" {
+			cases = append(cases, readFailure{entryName + "/credentials Secret", resolve, failSecret})
+		}
+	}
+
+	for _, tc := range cases {
+		entryName, resolve := tc.entryName, tc.resolve
+
 		t.Run(entryName, func(t *testing.T) {
 			t.Parallel()
 
@@ -124,7 +155,7 @@ func TestGatewayClassEntryPoints_ReadFailureIsNotClassified(t *testing.T) {
 				WithObjects(append(resolvableClassObjects(), gatewayClass)...).
 				WithInterceptorFuncs(interceptor.Funcs{
 					Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
-						if _, ok := obj.(*v1alpha1.GatewayClassConfig); ok {
+						if tc.failOn(obj) {
 							return errReadFailed
 						}
 
