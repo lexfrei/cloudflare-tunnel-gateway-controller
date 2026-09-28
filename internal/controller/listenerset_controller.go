@@ -22,6 +22,7 @@ import (
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/listenermerge"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/logging"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/parentref"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/routebinding"
 )
 
@@ -467,7 +468,7 @@ func parentRefSelectsListenerSet(
 	routeNamespace string,
 	listenerSet *gatewayv1.ListenerSet,
 ) bool {
-	if !parentRefInGatewayAPIGroup(ref) {
+	if !parentref.InGatewayAPIGroup(ref) {
 		return false
 	}
 
@@ -1119,7 +1120,7 @@ func (r *ListenerSetReconciler) collectListenerSetsForParentRefs(
 	requests := make([]reconcile.Request, 0)
 
 	for _, ref := range parentRefs {
-		if !parentRefInGatewayAPIGroup(ref) {
+		if !parentref.InGatewayAPIGroup(ref) {
 			continue
 		}
 

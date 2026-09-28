@@ -7,6 +7,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/parentref"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/routebinding"
 )
 
@@ -54,7 +55,7 @@ func resolveRouteParentBinding(
 	routeInfo *routebinding.RouteInfo,
 	views *listenerViewCache,
 ) (parentRefBinding, error) {
-	if !parentRefInGatewayAPIGroup(ref) {
+	if !parentref.InGatewayAPIGroup(ref) {
 		return parentRefBinding{}, nil
 	}
 
@@ -71,16 +72,6 @@ func resolveRouteParentBinding(
 	}
 
 	return parentRefBinding{}, nil
-}
-
-// parentRefInGatewayAPIGroup reports whether a route parentRef names a
-// Gateway API resource. ParentReference.Group is the referent's group, with
-// the Gateway API group inferred only when unset: an explicit "" is the core
-// group, so it and any other group name some other resource even when kind
-// and name match ours. Every parentRef reader applies it, so binding, status
-// and the mappers agree on which refs are ours.
-func parentRefInGatewayAPIGroup(ref gatewayv1.ParentReference) bool {
-	return ref.Group == nil || *ref.Group == gatewayv1.GroupName
 }
 
 func resolveGatewayParentBinding(

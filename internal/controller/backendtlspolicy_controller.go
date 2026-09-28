@@ -22,6 +22,7 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/coregroup"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/parentref"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/proxy"
 )
 
@@ -175,13 +176,13 @@ func parentReferenceToKey(parentRef gatewayv1.ParentReference, routeNamespace st
 }
 
 // parentRefIsGateway reports whether the parentRef targets a Gateway
-// (Group "" / gateway.networking.k8s.io, Kind "" / "Gateway"). Filters
+// (see parentref.InGatewayAPIGroup, Kind "" / "Gateway"). Filters
 // non-Gateway parents (ListenerSet, future kinds) out of the BackendTLS
 // Policy Ancestor walk so the subsequent Gateway Get does not waste a
 // round-trip on a guaranteed 404 — which would have silently dropped
 // the entry, masking the leak but leaving noisy reconciles.
 func parentRefIsGateway(parentRef gatewayv1.ParentReference) bool {
-	if parentRef.Group != nil && *parentRef.Group != "" && *parentRef.Group != gatewayv1.GroupName {
+	if !parentref.InGatewayAPIGroup(parentRef) {
 		return false
 	}
 

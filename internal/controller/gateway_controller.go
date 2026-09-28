@@ -34,6 +34,7 @@ import (
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/api/v1alpha1"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/config"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/logging"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/parentref"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/render"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/routebinding"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/tunnelownership"
@@ -1231,7 +1232,7 @@ func (r *GatewayReconciler) refMatchesGateway(
 	gateway *gatewayv1.Gateway,
 	routeNamespace string,
 ) bool {
-	if !parentRefInGatewayAPIGroup(ref) || (ref.Kind != nil && *ref.Kind != kindGateway) {
+	if !parentref.InGatewayAPIGroup(ref) || (ref.Kind != nil && *ref.Kind != kindGateway) {
 		return false
 	}
 
@@ -1632,7 +1633,7 @@ func (r *GatewayReconciler) routeToGateways(
 	var requests []reconcile.Request
 
 	for _, ref := range parentRefs {
-		if !parentRefInGatewayAPIGroup(ref) || (ref.Kind != nil && *ref.Kind != kindGateway) {
+		if !parentref.InGatewayAPIGroup(ref) || (ref.Kind != nil && *ref.Kind != kindGateway) {
 			continue
 		}
 

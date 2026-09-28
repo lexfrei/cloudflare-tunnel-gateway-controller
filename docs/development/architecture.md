@@ -58,6 +58,7 @@ internal/
 │   └── detect.go        # Cluster domain auto-detection
 ├── ingress/
 │   └── builder.go       # HTTPRoute → Cloudflare rules conversion
+├── parentref/           # Gateway API group predicate for route parentRefs
 ├── referencegrant/      # ReferenceGrant validation for cross-namespace backends
 ├── routebinding/        # Route-to-Gateway binding validation
 ├── proxy/               # L7 reverse proxy (see Proxy Architecture doc)

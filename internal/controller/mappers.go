@@ -18,6 +18,7 @@ import (
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/api/v1alpha1"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/config"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/logging"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/parentref"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/proxy"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/routebinding"
 )
@@ -837,7 +838,7 @@ func lookupParentGatewayFromRef(
 	ref gatewayv1.ParentReference,
 	routeNamespace string,
 ) (*gatewayv1.Gateway, bool, error) {
-	if !parentRefInGatewayAPIGroup(ref) {
+	if !parentref.InGatewayAPIGroup(ref) {
 		return nil, false, nil
 	}
 
