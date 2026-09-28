@@ -18,14 +18,13 @@ import (
 )
 
 // TestRouteStatus_ErroredParentIsNotAccepted pins the status of a parent whose
-// binding could not be evaluated. The route has two parents: a Gateway that
-// admits it, and a ListenerSet whose parent Gateway carries an unparseable
-// allowedListeners selector. The route stays accepted through the first
-// parent, while the second parent must not be reported Accepted=True.
+// ListenerSet cannot be read, next to a Gateway that admits the route. The
+// route stays accepted through the first parent, while the second is Pending
+// and not reported Accepted=True.
 func TestRouteStatus_ErroredParentIsNotAccepted(t *testing.T) {
 	t.Parallel()
 
-	syncer := erroredParentSyncer(t, []gatewayv1.ParentReference{
+	syncer := unreadableParentSyncer(t, failListenerSetReads, []gatewayv1.ParentReference{
 		{Name: "healthy"},
 		{Name: "extra", Kind: new(gatewayv1.Kind(kindListenerSet))},
 	})
@@ -40,20 +39,19 @@ func TestRouteStatus_ErroredParentIsNotAccepted(t *testing.T) {
 	assert.Equal(t, metav1.ConditionFalse, accepted.Status,
 		"a parent whose binding could not be evaluated must not be reported Accepted=True")
 	assert.Equal(t, string(gatewayv1.RouteReasonPending), accepted.Reason)
-	assert.NotContains(t, accepted.Message, "BogusOperator",
-		"the parent Gateway's selector must not reach the status of a route in another namespace")
+	assert.True(t, binding.unevaluated)
 
 	healthyAccepted := buildAcceptedCondition(1, metav1.Now(), binding, 0, nil, nil)
 	assert.Equal(t, metav1.ConditionTrue, healthyAccepted.Status)
 }
 
 // TestRouteStatus_SoleErroredParentStillGetsStatus pins the route whose only
-// parent cannot be evaluated: it is listed among the rejected routes, so its
-// status is written, and that parent carries the Pending result.
+// parent cannot be read: it is listed among the rejected routes, so its status
+// is written, and that parent carries the Pending result.
 func TestRouteStatus_SoleErroredParentStillGetsStatus(t *testing.T) {
 	t.Parallel()
 
-	syncer := erroredParentSyncer(t, []gatewayv1.ParentReference{
+	syncer := unreadableParentSyncer(t, failListenerSetReads, []gatewayv1.ParentReference{
 		{Name: "extra", Kind: new(gatewayv1.Kind(kindListenerSet))},
 	})
 
@@ -67,6 +65,34 @@ func TestRouteStatus_SoleErroredParentStillGetsStatus(t *testing.T) {
 	require.True(t, recorded)
 	assert.False(t, bindingResult.Accepted)
 	assert.Equal(t, gatewayv1.RouteReasonPending, bindingResult.Reason)
+}
+
+// TestRouteStatus_UnparseableAllowedListenersRefuses pins a ListenerSet parent
+// whose Gateway carries an unparseable allowedListeners selector. The parse
+// error is decided, so the parent is refused like any ListenerSet the Gateway
+// does not allow: not Pending, not marked for a retry, and without the
+// Gateway's selector in the route's status.
+func TestRouteStatus_UnparseableAllowedListenersRefuses(t *testing.T) {
+	t.Parallel()
+
+	syncer := erroredParentSyncer(t, []gatewayv1.ParentReference{
+		{Name: "healthy"},
+		{Name: "extra", Kind: new(gatewayv1.Kind(kindListenerSet))},
+	})
+
+	result, err := syncer.getRelevantHTTPRoutes(context.Background(), nil)
+	require.NoError(t, err)
+	require.Len(t, result.accepted, 1, "the healthy parent still admits the route")
+
+	binding := result.bindings["default/r"]
+
+	bindingResult, recorded := binding.bindingResults[1]
+	require.True(t, recorded)
+	assert.False(t, bindingResult.Accepted)
+	assert.Equal(t, gatewayv1.RouteReasonNoMatchingParent, bindingResult.Reason)
+	assert.NotContains(t, bindingResult.Message, "BogusOperator",
+		"the parent Gateway's selector must not reach the status of a route in another namespace")
+	assert.False(t, binding.unevaluated, "a parse error does not recover on retry")
 }
 
 // erroredParentSyncer serves a Gateway that admits every route, a ListenerSet

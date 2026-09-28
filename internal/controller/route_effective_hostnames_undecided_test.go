@@ -78,10 +78,9 @@ type undecidedParentCase struct {
 
 // undecidedParentCases are the ways a parentRef can fail to say whether it
 // lends the route a hostname: the Gateway or the ListenerSet cannot be read,
-// the ListenerSet's parent Gateway cannot be read, or that Gateway's
-// allowedListeners cannot be evaluated. An unparseable allowedRoutes selector
-// is not one of them: the listener carrying it admits nothing, which is a
-// decided answer.
+// or the ListenerSet's parent Gateway cannot be read. An unparseable
+// allowedRoutes or allowedListeners selector is not one of them: it admits
+// nothing, which is a decided answer.
 func undecidedParentCases() []undecidedParentCase {
 	ourHost := gatewayv1.Hostname("ours.example.com")
 	entryHost := gatewayv1.Hostname("ls.example.com")
@@ -126,28 +125,6 @@ func undecidedParentCases() []undecidedParentCase {
 				t.Helper()
 
 				return failingGetClient(t, &gatewayv1.ListenerSet{}, listenerSetObjects()...)
-			},
-			route: toListenerSet,
-		},
-		{
-			name: "listenerset acceptance evaluation errors",
-			cli: func(t *testing.T) client.Client {
-				t.Helper()
-
-				gateway := gatewayUnderClass("ours", "our-class", nil)
-				gateway.Spec.AllowedListeners = &gatewayv1.AllowedListeners{
-					Namespaces: &gatewayv1.ListenerNamespaces{
-						From: new(gatewayv1.NamespacesFromSelector),
-						Selector: &metav1.LabelSelector{MatchExpressions: []metav1.LabelSelectorRequirement{
-							{Key: "team", Operator: "NotAnOperator"},
-						}},
-					},
-				}
-
-				return buildGatewayFakeClient(t,
-					gatewayClassFor("our-class", skipTestControllerName),
-					gateway,
-					listenerSetUnder("ls", "ours", &entryHost))
 			},
 			route: toListenerSet,
 		},
@@ -446,4 +423,40 @@ func TestWithEffectiveHostnames_UndecidedParentBesideAPartlyAcceptingOne(t *test
 	require.Len(t, out, 1)
 	assert.Equal(t, []gatewayv1.Hostname{covered}, out[0].Spec.Hostnames)
 	assertPartiallyServed(t, diags, kindHTTPRouteDiag)
+}
+
+// TestWithEffectiveHostnames_UnparseableAllowedListenersIsDecided pins that a
+// ListenerSet parent under a Gateway with an unparseable allowedListeners
+// selector lends no hostname and is not reported as undecided, so it asks for
+// no retry that could never change the answer.
+func TestWithEffectiveHostnames_UnparseableAllowedListenersIsDecided(t *testing.T) {
+	t.Parallel()
+
+	ourHost := gatewayv1.Hostname("ours.example.com")
+	entryHost := gatewayv1.Hostname("ls.example.com")
+
+	broken := gatewayUnderClass("broken", "our-class", nil)
+	broken.Spec.AllowedListeners = &gatewayv1.AllowedListeners{
+		Namespaces: &gatewayv1.ListenerNamespaces{
+			From: new(gatewayv1.NamespacesFromSelector),
+			Selector: &metav1.LabelSelector{MatchExpressions: []metav1.LabelSelectorRequirement{
+				{Key: "team", Operator: "NotAnOperator"},
+			}},
+		},
+	}
+
+	cli := buildGatewayFakeClient(t,
+		gatewayClassFor("our-class", skipTestControllerName),
+		gatewayUnderClass("ours", "our-class", &ourHost),
+		broken,
+		listenerSetUnder("ls", "broken", &entryHost),
+	)
+
+	route := httpRouteTo()
+	route.Spec.ParentRefs = append(parentRefsToGateways("ours"), routeToListenerSet("ls").Spec.ParentRefs...)
+
+	out, diags := withEffectiveHostnames(context.Background(), cli, skipTestControllerName, []*gatewayv1.HTTPRoute{route}, nil)
+	require.Len(t, out, 1)
+	assert.Equal(t, []gatewayv1.Hostname{ourHost}, out[0].Spec.Hostnames)
+	assert.Empty(t, diags, "a parse error is not an undecided parent")
 }

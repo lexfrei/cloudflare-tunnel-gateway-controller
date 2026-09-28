@@ -188,6 +188,7 @@ func TestSyncAllRoutes_UnevaluatedParentRequeues(t *testing.T) {
 		name       string
 		parentRefs []gatewayv1.ParentReference
 		pendingRef int
+		grpc       bool
 	}{
 		{
 			name:       "a sibling parent covers the declared hostname",
@@ -199,14 +200,31 @@ func TestSyncAllRoutes_UnevaluatedParentRequeues(t *testing.T) {
 			parentRefs: []gatewayv1.ParentReference{{Name: "unreadable-class-gw"}},
 			pendingRef: 0,
 		},
+		{
+			name:       "a GRPCRoute whose only parent is unevaluated",
+			parentRefs: []gatewayv1.ParentReference{{Name: "unreadable-class-gw"}},
+			pendingRef: 0,
+			grpc:       true,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			route := partitionSyncRoute("probe", "shared-gw", "probe.example.com")
-			route.Spec.ParentRefs = tt.parentRefs
+			var route client.Object = &gatewayv1.GRPCRoute{
+				ObjectMeta: metav1.ObjectMeta{Name: "probe", Namespace: "default"},
+				Spec: gatewayv1.GRPCRouteSpec{
+					CommonRouteSpec: gatewayv1.CommonRouteSpec{ParentRefs: tt.parentRefs},
+					Hostnames:       []gatewayv1.Hostname{"probe.example.com"},
+				},
+			}
+
+			if !tt.grpc {
+				httpRoute := partitionSyncRoute("probe", "shared-gw", "probe.example.com")
+				httpRoute.Spec.ParentRefs = tt.parentRefs
+				route = httpRoute
+			}
 
 			objects := append(partitionSyncObjects(t, classTunnel, false),
 				&gatewayv1.GatewayClass{
@@ -241,7 +259,12 @@ func TestSyncAllRoutes_UnevaluatedParentRequeues(t *testing.T) {
 			require.NoError(t, err)
 			require.NotNil(t, syncResult)
 
-			bindingResult, recorded := syncResult.HTTPRouteBindings["default/probe"].bindingResults[tt.pendingRef]
+			bindings := syncResult.HTTPRouteBindings
+			if tt.grpc {
+				bindings = syncResult.GRPCRouteBindings
+			}
+
+			bindingResult, recorded := bindings["default/probe"].bindingResults[tt.pendingRef]
 			require.True(t, recorded)
 			assert.Equal(t, gatewayv1.RouteReasonPending, bindingResult.Reason)
 
@@ -252,9 +275,74 @@ func TestSyncAllRoutes_UnevaluatedParentRequeues(t *testing.T) {
 			result, syncResult, err = syncer.SyncAllRoutes(context.Background())
 			require.NoError(t, err)
 
-			assert.True(t, syncResult.HTTPRouteBindings["default/probe"].bindingResults[tt.pendingRef].Accepted,
+			bindings = syncResult.HTTPRouteBindings
+			if tt.grpc {
+				bindings = syncResult.GRPCRouteBindings
+			}
+
+			assert.True(t, bindings["default/probe"].bindingResults[tt.pendingRef].Accepted,
 				"the retried sync binds the parent once its read recovers")
 			assert.Zero(t, result.RequeueAfter)
 		})
 	}
+}
+
+// failListenerSetReads fails every ListenerSet read.
+func failListenerSetReads(obj client.Object, _ client.ObjectKey) bool {
+	_, ok := obj.(*gatewayv1.ListenerSet)
+
+	return ok
+}
+
+// TestSyncAllRoutes_UnparseableAllowedListenersIsNotRetried pins that a route
+// whose only parent is a ListenerSet under a Gateway with an unparseable
+// allowedListeners selector is refused and not retried: no retry can change a
+// parse error.
+func TestSyncAllRoutes_UnparseableAllowedListenersIsNotRetried(t *testing.T) {
+	t.Parallel()
+
+	fromSelector := gatewayv1.NamespacesFromSelector
+	listenerSetKind := gatewayv1.Kind(kindListenerSet)
+
+	route := partitionSyncRoute("probe", "shared-gw", "probe.example.com")
+	route.Spec.ParentRefs = []gatewayv1.ParentReference{{Name: "extra", Kind: &listenerSetKind}}
+
+	objects := append(partitionSyncObjects(t, "99999999-9999-4999-8999-999999999999", false),
+		&gatewayv1.Gateway{
+			ObjectMeta: metav1.ObjectMeta{Name: "bogus-gw", Namespace: "default"},
+			Spec: gatewayv1.GatewaySpec{
+				GatewayClassName: "cf-test",
+				Listeners:        httpListener(),
+				AllowedListeners: &gatewayv1.AllowedListeners{
+					Namespaces: &gatewayv1.ListenerNamespaces{
+						From: &fromSelector,
+						Selector: &metav1.LabelSelector{
+							MatchExpressions: []metav1.LabelSelectorRequirement{
+								{Key: "team", Operator: "BogusOperator", Values: []string{"x"}},
+							},
+						},
+					},
+				},
+			},
+		},
+		&gatewayv1.ListenerSet{
+			ObjectMeta: metav1.ObjectMeta{Name: "extra", Namespace: "default"},
+			Spec: gatewayv1.ListenerSetSpec{
+				ParentRef: gatewayv1.ParentGatewayReference{Name: "bogus-gw"},
+				Listeners: []gatewayv1.ListenerEntry{
+					{Name: "extra", Port: 8080, Protocol: gatewayv1.HTTPProtocolType},
+				},
+			},
+		},
+		route,
+	)
+
+	result, syncResult, err := partitionSyncSyncerFor(t, newRecordingTunnelAPI(t), objects).SyncAllRoutes(context.Background())
+	require.NoError(t, err)
+	require.NotNil(t, syncResult)
+
+	bindingResult, recorded := syncResult.HTTPRouteBindings["default/probe"].bindingResults[0]
+	require.True(t, recorded)
+	assert.Equal(t, gatewayv1.RouteReasonNoMatchingParent, bindingResult.Reason)
+	assert.Zero(t, result.RequeueAfter, "a parse error does not recover on retry")
 }

@@ -10,6 +10,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
+
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/logging"
 )
 
 func TestEvaluateListenerSetAcceptance(t *testing.T) {
@@ -379,4 +381,34 @@ func TestValidateBindingForListenerSet_InvalidSelectorStaysWithItsEntry(t *testi
 
 	assert.True(t, result.Accepted)
 	assert.Equal(t, []gatewayv1.SectionName{"good"}, result.MatchedListeners)
+}
+
+// TestEvaluateListenerSetAcceptance_InvalidSelectorRefuses pins that a parent
+// Gateway's allowedListeners selector that does not parse admits no
+// ListenerSet. The parse error is decided, so it is a refusal and not an error
+// to retry, and it goes to the log only because it quotes the Gateway's spec.
+func TestEvaluateListenerSetAcceptance_InvalidSelectorRefuses(t *testing.T) {
+	t.Parallel()
+
+	fromSelector := gatewayv1.NamespacesFromSelector
+
+	gateway := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "infra"},
+		Spec: gatewayv1.GatewaySpec{
+			AllowedListeners: &gatewayv1.AllowedListeners{
+				Namespaces: &gatewayv1.ListenerNamespaces{From: &fromSelector, Selector: bogusSelector()},
+			},
+		},
+	}
+	listenerSet := &gatewayv1.ListenerSet{ObjectMeta: metav1.ObjectMeta{Name: "ls", Namespace: "team-a"}}
+
+	logger, logs := logging.TestLogger(t)
+	ctx := logging.WithLogger(context.Background(), logger)
+
+	result, err := NewValidator(setupFakeClient()).EvaluateListenerSetAcceptance(ctx, gateway, listenerSet)
+	require.NoError(t, err)
+
+	assert.False(t, result.Accepted)
+	assert.Equal(t, gatewayv1.ListenerSetReasonNotAllowed, result.Reason)
+	assert.Contains(t, logs.String(), "BogusOperator", "the parse error is kept for the controller log")
 }
