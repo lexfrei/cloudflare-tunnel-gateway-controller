@@ -461,7 +461,7 @@ func parentRefSelectsListenerSet(
 	routeNamespace string,
 	listenerSet *gatewayv1.ListenerSet,
 ) bool {
-	if ref.Group != nil && string(*ref.Group) != "" && string(*ref.Group) != gatewayv1.GroupName {
+	if !parentRefInGatewayAPIGroup(ref) {
 		return false
 	}
 
@@ -1093,7 +1093,7 @@ func (r *ListenerSetReconciler) collectListenerSetsForParentRefs(
 	requests := make([]reconcile.Request, 0)
 
 	for _, ref := range parentRefs {
-		if ref.Group != nil && string(*ref.Group) != "" && string(*ref.Group) != gatewayv1.GroupName {
+		if !parentRefInGatewayAPIGroup(ref) {
 			continue
 		}
 

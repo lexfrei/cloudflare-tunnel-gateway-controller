@@ -75,11 +75,12 @@ func resolveRouteParentBinding(
 
 // parentRefInGatewayAPIGroup reports whether a route parentRef names a
 // Gateway API resource. ParentReference.Group is the referent's group, with
-// the Gateway API group inferred when unset, so a ref of any other group names
-// some other resource even when its kind and name match ours. Binding and the
-// status writer both apply it, so they agree on which refs are ours.
+// the Gateway API group inferred only when unset: an explicit "" is the core
+// group, so it and any other group name some other resource even when kind
+// and name match ours. Every parentRef reader applies it, so binding, status
+// and the mappers agree on which refs are ours.
 func parentRefInGatewayAPIGroup(ref gatewayv1.ParentReference) bool {
-	return ref.Group == nil || *ref.Group == "" || *ref.Group == gatewayv1.GroupName
+	return ref.Group == nil || *ref.Group == gatewayv1.GroupName
 }
 
 func resolveGatewayParentBinding(

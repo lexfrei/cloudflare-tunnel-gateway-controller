@@ -56,7 +56,7 @@ func findRoutesAttachedToListenerSet(
 // parentRefs names the given ListenerSet (group, kind, name, namespace).
 func routeTargetsListenerSet(route Route, listenerSet *gatewayv1.ListenerSet) bool {
 	for _, ref := range route.GetParentRefs() {
-		if ref.Group != nil && string(*ref.Group) != "" && string(*ref.Group) != gatewayv1.GroupName {
+		if !parentRefInGatewayAPIGroup(ref) {
 			continue
 		}
 
