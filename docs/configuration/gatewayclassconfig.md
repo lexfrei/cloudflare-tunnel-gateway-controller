@@ -136,6 +136,8 @@ spec:
     name: cloudflare-tunnel-config
 ```
 
+One controller serves one GatewayClassConfig. Several GatewayClasses may name the same `controllerName`, but every one of them that a Gateway uses must carry the same `parametersRef`; a class without one conflicts with any class that has one. A class no Gateway uses is ignored while some Gateway uses another; with no Gateway on any class, route sync stays stopped until the classes agree, and the class tunnel keeps its last document until then. While the classes in use disagree, the controller programs no routes, every Gateway on those classes reports `Accepted: False` with reason `InvalidParameters` and a message naming the classes, and no new per-Gateway data plane is rendered. Data planes already running keep the configuration they last received, unless the tunnel rule or the per-namespace cap refuses them, which still removes them; such a Gateway's status reports that refusal rather than the conflict. Their Deployments are frozen too: a `GatewayConfig` edit, an image change or a token rotation reaches a running plane only once the classes agree. Gateways keep the tunnel address in their status, so DNS records published from it stay in place. Delete a GatewayClass you do not use rather than leave it pointing elsewhere. GatewayClass is cluster-scoped, so only the operator can create one, but a Gateway from any namespace that names it puts it back in use and stops route sync for every Gateway.
+
 ## Complete Example
 
 ```yaml
