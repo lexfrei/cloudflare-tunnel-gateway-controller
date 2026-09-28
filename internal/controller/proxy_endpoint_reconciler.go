@@ -295,3 +295,12 @@ func isProbablyIP(host string) bool {
 
 	return true
 }
+
+// replayResult maps a replay's error onto the reconcile result.
+func replayResult(err error, action string) (ctrl.Result, error) {
+	if err == nil {
+		return ctrl.Result{}, nil
+	}
+
+	return ctrl.Result{}, errors.Wrap(err, action)
+}

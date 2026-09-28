@@ -139,7 +139,14 @@ type pushTarget struct {
 	// not flip a route condition, so the failure is surfaced only past a
 	// threshold. A successful push or a steady-state skip resets it to 0.
 	consecutivePushFail int
+	// syncsInFlight counts syncs of this partition between preparePush and
+	// recordPush.
+	syncsInFlight int
 }
+
+// errReplaySuperseded marks a replay that lost the push race to a newer
+// document which is already cached or still being pushed.
+var errReplaySuperseded = errors.New("replay superseded by a newer config push")
 
 // NewProxySyncer creates a ProxySyncer for pushing config to proxy replicas.
 // The client is used to validate cross-namespace backend references via
@@ -790,7 +797,7 @@ func (s *ProxySyncer) SyncPartition(
 	// would serialize every partition's push on one slow connector (#489).
 	pushErr := s.pushToEndpoints(ctx, logger, prep.cfg, resolvedEndpoints, authToken)
 
-	s.recordPush(key, authToken, prep.cfgHash, prep.cfg, resolved, pushErr)
+	s.recordPush(nil, key, authToken, prep.cfgHash, prep.cfg, resolved, pushErr)
 
 	return prep.diagnostics, pushErr
 }
@@ -870,6 +877,7 @@ func (s *ProxySyncer) preparePush(
 // evicted the partition during the push window, and resurrecting a dropped entry
 // would leave garbage in the map until the next retain pass.
 func (s *ProxySyncer) recordPush(
+	_ *pushTarget,
 	key, authToken, cfgHash string,
 	cfg *proxy.Config,
 	resolved []string,

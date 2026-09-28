@@ -57,7 +57,7 @@ func TestRecordPush_LostRaceInvalidatesSkipKeyWithoutPoisoningCache(t *testing.T
 	// receives that error alongside a DIFFERENT config the replica never accepted.
 	lostErr := errors.Wrap(proxy.ErrLostConfigPushRace, healthy.URL+"/config")
 	neverApplied := &proxy.Config{Version: goodCfg.Version + 1000}
-	proxySyncer.recordPush(sharedPartitionKey, "", "hash-never-applied", neverApplied,
+	proxySyncer.recordPush(nil, sharedPartitionKey, "", "hash-never-applied", neverApplied,
 		[]string{healthy.URL + "/config"}, lostErr)
 
 	proxySyncer.syncMu.Lock()
