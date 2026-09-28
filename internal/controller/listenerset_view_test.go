@@ -28,7 +28,7 @@ import (
 // (gateway_types.go:187); a ListenerSet whose entry loses precedence stays the
 // ListenerSet's concern. Required by the upstream ListenerSet*Conflict conformance
 // tests, which assert the parent Gateway is Accepted=True.
-func TestGatewayConflictedListenersMessage_IgnoresListenerSetConflicts(t *testing.T) {
+func TestGatewayConflictedListeners_IgnoresListenerSetConflicts(t *testing.T) {
 	t.Parallel()
 
 	gc := managedGatewayClass()
@@ -63,10 +63,8 @@ func TestGatewayConflictedListenersMessage_IgnoresListenerSetConflicts(t *testin
 	cli := buildGatewayFakeClient(t, gc, gw, ls)
 	views := newListenerViewCache(cli, nil)
 
-	msg, conflicted := gatewayConflictedListenersMessage(context.Background(), views, gw)
-	assert.False(t, conflicted,
+	assert.Empty(t, gatewayConflictedListeners(context.Background(), views, gw),
 		"a ListenerSet-entry conflict must not flip the parent Gateway to ListenersNotValid")
-	assert.Empty(t, msg)
 }
 
 // listSpyClient counts List(ListenerSetList) calls so tests can assert how

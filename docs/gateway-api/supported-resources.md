@@ -207,8 +207,7 @@ True weighted traffic splitting across multiple backends is performed by the in-
 | Type | Status | Reason | Description |
 | --- | --- | --- | --- |
 | `Accepted` | `True` | `Accepted` | Gateway accepted by controller |
-| `Accepted` | `False` | `ListenersNotValid` | One or more of the Gateway's own listeners conflict (carry `Conflicted=True`) |
-| `Accepted` | `True` or `False` | `ListenersNotValid` | One or more own listeners are invalid (unsupported protocol, or an `allowedRoutes.namespaces.selector` that does not parse); `False` only when no listener is valid |
+| `Accepted` | `True` or `False` | `ListenersNotValid` | One or more own listeners are invalid (they conflict and carry `Conflicted=True`, use an unsupported protocol, or have an `allowedRoutes.namespaces.selector` that does not parse); `False` only when no listener is valid |
 | `Programmed` | `True` | `Programmed` | Gateway configured in Cloudflare |
 
 ### Gateway Listener Conditions
@@ -216,11 +215,11 @@ True weighted traffic splitting across multiple backends is performed by the in-
 | Type | Status | Reason | Description |
 | --- | --- | --- | --- |
 | `Accepted` | `True` | `Accepted` | Listener accepted |
-| `Accepted` | `False` | `HostnameConflict` / `ProtocolConflict` | Listener conflicts with a higher-precedence listener on the same port |
+| `Accepted` | `False` | `HostnameConflict` / `ProtocolConflict` | Listener conflicts with another listener of the Gateway on the same port. Every listener of a conflicting set is refused; none wins |
 | `Accepted` | `False` | `UnsupportedValue` | `allowedRoutes.namespaces.from` is `Selector` and the selector does not parse, so the listener admits no route. The message says the selector is invalid without quoting it |
 | `Programmed` | `True` | `Programmed` | Listener programmed |
 | `Programmed` | `False` | `Invalid` | Listener has unresolved references, or is not `Accepted` |
-| `Programmed` | `False` | `HostnameConflict` / `ProtocolConflict` | Listener conflicts with a higher-precedence listener |
+| `Programmed` | `False` | `HostnameConflict` / `ProtocolConflict` | Listener conflicts with another listener of the Gateway |
 | `Conflicted` | `True` | `HostnameConflict` / `ProtocolConflict` | Listener clashes with another listener on hostname (same port + hostname) or protocol (different protocol on the same port) |
 | `ResolvedRefs` | `True` | `ResolvedRefs` | References resolved |
 | `ResolvedRefs` | `False` | `InvalidCertificateRef` | TLS certificate reference invalid |

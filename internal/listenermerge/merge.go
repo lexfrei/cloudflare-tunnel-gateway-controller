@@ -23,8 +23,10 @@
 //   - Protocol conflict: two listeners share the same port but disagree on
 //     protocol.
 //
-// In all cases the higher-precedence listener wins; the lower-precedence one
-// is annotated with ConflictReason.
+// A ListenerSet entry that conflicts loses to the higher-precedence listener
+// and is annotated with ConflictReason. Two of the Gateway's own listeners have
+// no precedence between them: the spec says an implementation MUST NOT pick
+// one conflicting Listener as the winner, so both are annotated.
 package listenermerge
 
 import (
@@ -181,42 +183,60 @@ func sortListenerSets(in []*gatewayv1.ListenerSet) []*gatewayv1.ListenerSet {
 }
 
 // annotateConflicts walks the merged view in precedence order and marks each
-// listener with a conflict reason if a higher-precedence listener has already
-// claimed the same (port, hostname) tuple (HostnameConflict) or used a
-// different protocol on the same port (ProtocolConflict).
+// listener with a conflict reason if an earlier listener has already claimed
+// the same (port, hostname) tuple (HostnameConflict) or used a different
+// protocol on the same port (ProtocolConflict).
 func annotateConflicts(merged []MergedListener) {
-	// First-seen protocol per port — used to detect ProtocolConflict.
-	protoSeen := make(map[gatewayv1.PortNumber]gatewayv1.ProtocolType)
-	// First-seen (port, hostname) — used to detect HostnameConflict.
-	hostnameSeen := make(map[hostnameKey]struct{})
+	// First claimant (index into merged) of each port's protocol — used to
+	// detect ProtocolConflict.
+	protoOwner := make(map[gatewayv1.PortNumber]int)
+	// First claimant of each (port, hostname) — used to detect HostnameConflict.
+	hostnameOwner := make(map[hostnameKey]int)
 
 	for i := range merged {
 		entry := &merged[i]
 
 		// Protocol-conflict has precedence over hostname-conflict per spec.
-		if existing, ok := protoSeen[entry.Port]; ok && existing != entry.Protocol {
-			entry.ConflictReason = gatewayv1.ListenerReasonProtocolConflict
-			entry.ConflictMessage = "Listener conflicts on protocol with a higher-precedence listener on the same port"
+		if owner, ok := protoOwner[entry.Port]; ok && merged[owner].Protocol != entry.Protocol {
+			markConflict(merged, owner, i, gatewayv1.ListenerReasonProtocolConflict, "protocol")
 
 			continue
 		}
 
 		key := hostnameKey{port: entry.Port, hostname: hostnameValue(entry.Hostname)}
 
-		if _, taken := hostnameSeen[key]; taken {
-			entry.ConflictReason = gatewayv1.ListenerReasonHostnameConflict
-			entry.ConflictMessage = "Listener conflicts on hostname with a higher-precedence listener on the same port"
+		if owner, taken := hostnameOwner[key]; taken {
+			markConflict(merged, owner, i, gatewayv1.ListenerReasonHostnameConflict, "hostname")
 
 			continue
 		}
 
-		// Accepted — claim the port's protocol and the (port,hostname) slot.
-		if _, ok := protoSeen[entry.Port]; !ok {
-			protoSeen[entry.Port] = entry.Protocol
+		// Claim the port's protocol and the (port,hostname) slot.
+		if _, ok := protoOwner[entry.Port]; !ok {
+			protoOwner[entry.Port] = i
 		}
 
-		hostnameSeen[key] = struct{}{}
+		hostnameOwner[key] = i
 	}
+}
+
+// markConflict annotates merged[loser], which clashes with the earlier
+// claimant merged[owner]. When both are the Gateway's own listeners the owner
+// is annotated too, because neither may win.
+func markConflict(merged []MergedListener, owner, loser int, reason gatewayv1.ListenerConditionReason, field string) {
+	if merged[owner].ParentKind == ParentKindGateway && merged[loser].ParentKind == ParentKindGateway {
+		message := "Listener conflicts on " + field + " with another listener of this Gateway on the same port"
+
+		merged[loser].ConflictReason, merged[loser].ConflictMessage = reason, message
+		if merged[owner].ConflictReason == "" {
+			merged[owner].ConflictReason, merged[owner].ConflictMessage = reason, message
+		}
+
+		return
+	}
+
+	merged[loser].ConflictReason = reason
+	merged[loser].ConflictMessage = "Listener conflicts on " + field + " with a higher-precedence listener on the same port"
 }
 
 type hostnameKey struct {

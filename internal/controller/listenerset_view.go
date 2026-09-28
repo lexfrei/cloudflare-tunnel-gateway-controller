@@ -48,21 +48,24 @@ func (v *gatewayListenerView) conflictReason(
 	return entry.ConflictReason
 }
 
-// gatewayConflictedListenersMessage reports whether the Gateway's merged listener
-// view contains any entry annotated with a conflict reason (its own listeners or
-// merged ListenerSet entries clashing on hostname/protocol) and, when it does,
-// returns a message naming the conflicted listeners. It drives the Gateway-level
-// ListenersNotValid condition (gateway_types.go:187), whose message SHOULD
-// indicate which listeners are conflicted (gateway_types.go:188). A view that
-// cannot be built is treated as conflict-free — a transient build error must not
-// flip a Gateway to ListenersNotValid; the next reconcile retries.
-func gatewayConflictedListenersMessage(ctx context.Context, views *listenerViewCache, gateway *gatewayv1.Gateway) (string, bool) {
+// gatewayConflictedListeners returns the Gateway's own listeners that the
+// merged view annotates with a conflict reason, or nil when there are none. It
+// feeds the Gateway-level ListenersNotValid condition (gateway_types.go:187),
+// whose message SHOULD indicate which listeners are conflicted
+// (gateway_types.go:188). A view that cannot be built is treated as
+// conflict-free — a transient build error must not flip a Gateway to
+// ListenersNotValid; the next reconcile retries.
+func gatewayConflictedListeners(
+	ctx context.Context,
+	views *listenerViewCache,
+	gateway *gatewayv1.Gateway,
+) map[gatewayv1.SectionName]bool {
 	view, err := views.forGateway(ctx, gateway)
 	if err != nil || view == nil || view.merged == nil {
-		return "", false
+		return nil
 	}
 
-	var names []string
+	var names map[gatewayv1.SectionName]bool
 
 	for i := range view.merged.Listeners {
 		entry := &view.merged.Listeners[i]
@@ -71,20 +74,20 @@ func gatewayConflictedListenersMessage(ctx context.Context, views *listenerViewC
 		// on the ListenerSet's own status and must not flip the parent Gateway
 		// (gateway_types.go:187 — the Gateway's listeners, not attached ones).
 		if entry.ParentKind == listenermerge.ParentKindGateway && entry.ConflictReason != "" {
-			names = append(names, string(entry.Name))
+			if names == nil {
+				names = make(map[gatewayv1.SectionName]bool)
+			}
+
+			names[entry.Name] = true
 		}
 	}
 
-	if len(names) == 0 {
-		return "", false
-	}
-
-	return "Gateway has conflicted listeners: " + strings.Join(names, ", "), true
+	return names
 }
 
 // conflictedGatewayListenerConditions returns the Accepted=False / Programmed=False
 // / Conflicted=True trio (plus the supplied ResolvedRefs) for a Gateway-owned
-// listener that conflicts with a higher-precedence listener, or nil when the
+// listener that conflicts with another listener, or nil when the
 // listener is conflict-free. Per the spec a conflicted listener MUST carry
 // Conflicted=True (gateway_types.go:168-170).
 func conflictedGatewayListenerConditions(

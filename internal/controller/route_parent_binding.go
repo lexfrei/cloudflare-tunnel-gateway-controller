@@ -12,8 +12,8 @@ import (
 )
 
 // msgConflictedListeners is the binding rejection message used when every
-// listener a route matched is conflicted with a higher-precedence listener.
-const msgConflictedListeners = "Matched listener entries are conflicted with higher-precedence listeners"
+// listener a route matched is conflicted.
+const msgConflictedListeners = "Matched listener entries are conflicted with other listeners"
 
 // parentRefBinding is the per-ref binding outcome surfaced to the route
 // reconcilers. It is identical between Gateway and ListenerSet parents from

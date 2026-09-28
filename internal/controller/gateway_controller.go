@@ -777,9 +777,8 @@ func (r *GatewayReconciler) buildListenerStatuses(
 ) []gatewayv1.ListenerStatus {
 	attachedRoutes := r.countAttachedRoutes(ctx, gateway)
 
-	// The merged view (cached) annotates each Gateway-owned listener that
-	// conflicts with a higher-precedence one, used below to emit the
-	// per-listener Conflicted condition.
+	// The merged view (cached) annotates each conflicted Gateway-owned
+	// listener, used below to emit the per-listener Conflicted condition.
 	gwView, _ := views.forGateway(ctx, gateway)
 
 	listenerStatuses := make([]gatewayv1.ListenerStatus, 0, len(gateway.Spec.Listeners))
@@ -870,9 +869,8 @@ func (r *GatewayReconciler) buildOneListenerStatus(
 
 	conditions := []metav1.Condition{acceptedCondition, programmedCondition, resolvedRefsCondition}
 
-	// A Gateway-owned listener that conflicts with a higher-precedence
-	// listener MUST carry Conflicted=True and is neither Accepted nor
-	// Programmed (gateway_types.go:168-170).
+	// A conflicted Gateway-owned listener MUST carry Conflicted=True and is
+	// neither Accepted nor Programmed (gateway_types.go:168-170).
 	conflicted := conflictedGatewayListenerConditions(
 		gwView, listener.Name, gateway.Generation, now, &resolvedRefsCondition,
 	)
@@ -1775,21 +1773,29 @@ func servableListenerProtocol(protocol gatewayv1.ProtocolType) bool {
 }
 
 // gatewayInvalidListeners summarises, across a Gateway's own listeners, how
-// many are invalid: a protocol this controller cannot serve, or an
-// allowedRoutes namespace selector that does not parse. Per the Gateway API
-// spec (gateway_types.go), a Gateway holding any invalid listener is marked
-// ListenersNotValid, and one holding no valid listener at all is
-// Accepted=False. Returns (any invalid, all invalid, the message naming the
-// causes present).
-func gatewayInvalidListeners(listeners []gatewayv1.Listener) (bool, bool, string) {
+// many are invalid: conflicted (named in conflicted), a protocol this
+// controller cannot serve, or an allowedRoutes namespace selector that does
+// not parse. Per the Gateway API spec (gateway_types.go), a Gateway holding
+// any invalid listener is marked ListenersNotValid, and one holding no valid
+// listener at all is Accepted=False. Returns (any invalid, all invalid, the
+// message naming the causes present).
+func gatewayInvalidListeners(
+	listeners []gatewayv1.Listener,
+	conflicted map[gatewayv1.SectionName]bool,
+) (bool, bool, string) {
 	if len(listeners) == 0 {
 		return false, false, ""
 	}
 
 	invalid, unsupported, badSelector := 0, 0, 0
 
+	var conflictedNames []string
+
 	for i := range listeners {
 		switch {
+		case conflicted[listeners[i].Name]:
+			conflictedNames = append(conflictedNames, string(listeners[i].Name))
+			invalid++
 		case !servableListenerProtocol(listeners[i].Protocol):
 			unsupported++
 			invalid++
@@ -1800,6 +1806,10 @@ func gatewayInvalidListeners(listeners []gatewayv1.Listener) (bool, bool, string
 	}
 
 	var causes []string
+
+	if len(conflictedNames) > 0 {
+		causes = append(causes, "Gateway has conflicted listeners: "+strings.Join(conflictedNames, ", "))
+	}
 
 	if unsupported > 0 {
 		causes = append(causes, "one or more listeners use a protocol this controller does not serve "+
@@ -1815,8 +1825,7 @@ func gatewayInvalidListeners(listeners []gatewayv1.Listener) (bool, bool, string
 
 // gatewayAcceptedCondition builds the Gateway-level Accepted condition. The
 // default is Accepted=True/Accepted; it is downgraded to ListenersNotValid when
-// the Gateway holds conflicted listeners (Gateway-owned or merged ListenerSet
-// entries clashing on hostname/protocol), listeners whose protocol this
+// the Gateway holds conflicted own listeners, listeners whose protocol this
 // controller cannot serve, or listeners whose allowedRoutes namespace
 // selector does not parse, and to Accepted=False when no listener is valid at
 // all (gateway_types.go).
@@ -1835,20 +1844,11 @@ func gatewayAcceptedCondition(
 		Message:            msgGatewayAccepted,
 	}
 
-	if conflictMsg, conflicted := gatewayConflictedListenersMessage(ctx, views, gateway); conflicted {
-		accepted.Status = metav1.ConditionFalse
-		accepted.Reason = string(gatewayv1.GatewayReasonListenersNotValid)
-		accepted.Message = conflictMsg
-
-		return accepted
-	}
-
-	// Scoped to the Gateway's OWN listeners by design: an unsupported-protocol
-	// listener contributed by an attached ListenerSet carries its verdict on the
-	// ListenerSet's own status, not on the parent Gateway's Accepted condition
-	// (unlike hostname/protocol CONFLICTS, which are cross-object and use the
-	// merged view above).
-	if anyInvalid, allInvalid, message := gatewayInvalidListeners(gateway.Spec.Listeners); anyInvalid {
+	// Scoped to the Gateway's OWN listeners by design: an invalid listener
+	// contributed by an attached ListenerSet carries its verdict on the
+	// ListenerSet's own status, not on the parent Gateway's Accepted condition.
+	conflicted := gatewayConflictedListeners(ctx, views, gateway)
+	if anyInvalid, allInvalid, message := gatewayInvalidListeners(gateway.Spec.Listeners, conflicted); anyInvalid {
 		accepted.Reason = string(gatewayv1.GatewayReasonListenersNotValid)
 		accepted.Message = message
 
