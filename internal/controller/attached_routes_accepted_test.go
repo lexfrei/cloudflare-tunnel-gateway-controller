@@ -48,5 +48,5 @@ func TestGatewayAttachedRoutes_CountsOnlyAcceptedRoutes(t *testing.T) {
 	reconciler := &GatewayReconciler{Client: cli, Scheme: cli.Scheme(), ControllerName: "test-controller"}
 
 	assert.Equal(t, map[gatewayv1.SectionName]int32{"c1": 1, "c2": 1, "ok": 2},
-		reconciler.countAttachedRoutes(context.Background(), gateway))
+		reconciler.countAttachedRoutes(context.Background(), gateway, nil))
 }

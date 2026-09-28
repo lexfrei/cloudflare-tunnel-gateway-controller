@@ -285,7 +285,9 @@ func (r *ListenerSetReconciler) computeAcceptance(
 	// allowed to attach (including this one — it has just passed the
 	// allowedListeners check above). Shared with the Gateway and route
 	// reconcilers through the cross-reconcile store (issue #332).
-	view, err := newListenerViewCache(r.Client, r.ViewStore).forGateway(ctx, gateway)
+	views := newListenerViewCache(r.Client, r.ViewStore)
+
+	view, err := views.forGateway(ctx, gateway)
 	if err != nil {
 		return listenerSetAcceptanceResult{
 			Accepted: false,
@@ -307,7 +309,9 @@ func (r *ListenerSetReconciler) computeAcceptance(
 
 	accepted, summaryReason, summaryMessage := summariseListenerSet(merged, listenerSet, refChecks)
 
-	attached, attachErr := r.countAttachedRoutesPerEntry(ctx, listenerSet, view)
+	attached, attachErr := r.countAttachedRoutesPerEntry(ctx, listenerSet, func(result routebinding.BindingResult) routebinding.BindingResult {
+		return filterMatchedListenersByConflict(ctx, r.Client, listenerSet, gateway, result, views)
+	})
 	if attachErr != nil {
 		return listenerSetAcceptanceResult{
 			Accepted: false,
@@ -343,7 +347,7 @@ func (r *ListenerSetReconciler) computeAcceptance(
 func (r *ListenerSetReconciler) countAttachedRoutesPerEntry(
 	ctx context.Context,
 	listenerSet *gatewayv1.ListenerSet,
-	view *gatewayListenerView,
+	conflictFilter bindingFilter,
 ) (map[gatewayv1.SectionName]int32, error) {
 	out := make(map[gatewayv1.SectionName]int32, len(listenerSet.Spec.Listeners))
 	for i := range listenerSet.Spec.Listeners {
@@ -352,11 +356,11 @@ func (r *ListenerSetReconciler) countAttachedRoutesPerEntry(
 
 	validator := routebinding.NewValidator(r.Client)
 
-	if err := r.countAttachedHTTPRoutes(ctx, listenerSet, view, validator, out); err != nil {
+	if err := r.countAttachedHTTPRoutes(ctx, listenerSet, conflictFilter, validator, out); err != nil {
 		return nil, err
 	}
 
-	if err := r.countAttachedGRPCRoutes(ctx, listenerSet, view, validator, out); err != nil {
+	if err := r.countAttachedGRPCRoutes(ctx, listenerSet, conflictFilter, validator, out); err != nil {
 		return nil, err
 	}
 
@@ -367,7 +371,7 @@ func (r *ListenerSetReconciler) countAttachedRoutesPerEntry(
 func (r *ListenerSetReconciler) countAttachedHTTPRoutes(
 	ctx context.Context,
 	listenerSet *gatewayv1.ListenerSet,
-	view *gatewayListenerView,
+	conflictFilter bindingFilter,
 	validator *routebinding.Validator,
 	counts map[gatewayv1.SectionName]int32,
 ) error {
@@ -379,7 +383,7 @@ func (r *ListenerSetReconciler) countAttachedHTTPRoutes(
 	for i := range routes.Items {
 		route := &routes.Items[i]
 		incrementListenerSetAttachedRoutes(
-			ctx, validator, view, listenerSet,
+			ctx, validator, conflictFilter, listenerSet,
 			route.Namespace, route.Name, route.Spec.Hostnames,
 			routebinding.KindHTTPRoute, route.Spec.ParentRefs, counts,
 		)
@@ -392,7 +396,7 @@ func (r *ListenerSetReconciler) countAttachedHTTPRoutes(
 func (r *ListenerSetReconciler) countAttachedGRPCRoutes(
 	ctx context.Context,
 	listenerSet *gatewayv1.ListenerSet,
-	view *gatewayListenerView,
+	conflictFilter bindingFilter,
 	validator *routebinding.Validator,
 	counts map[gatewayv1.SectionName]int32,
 ) error {
@@ -404,7 +408,7 @@ func (r *ListenerSetReconciler) countAttachedGRPCRoutes(
 	for i := range routes.Items {
 		route := &routes.Items[i]
 		incrementListenerSetAttachedRoutes(
-			ctx, validator, view, listenerSet,
+			ctx, validator, conflictFilter, listenerSet,
 			route.Namespace, route.Name, route.Spec.Hostnames,
 			routebinding.KindGRPCRoute, route.Spec.ParentRefs, counts,
 		)
@@ -413,10 +417,14 @@ func (r *ListenerSetReconciler) countAttachedGRPCRoutes(
 	return nil
 }
 
+// bindingFilter narrows a route's binding result the way route binding does,
+// so the attachedRoutes count sees the same Accepted verdict.
+type bindingFilter func(routebinding.BindingResult) routebinding.BindingResult
+
 func incrementListenerSetAttachedRoutes(
 	ctx context.Context,
 	validator *routebinding.Validator,
-	view *gatewayListenerView,
+	conflictFilter bindingFilter,
 	listenerSet *gatewayv1.ListenerSet,
 	routeNamespace, routeName string,
 	hostnames []gatewayv1.Hostname,
@@ -451,9 +459,7 @@ func incrementListenerSetAttachedRoutes(
 			continue
 		}
 
-		if !slices.ContainsFunc(result.MatchedListeners, func(section gatewayv1.SectionName) bool {
-			return view.conflictReason(listenerSet, section) == ""
-		}) {
+		if !conflictFilter(result).Accepted {
 			continue
 		}
 

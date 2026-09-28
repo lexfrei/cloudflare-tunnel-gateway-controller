@@ -5,7 +5,6 @@ import (
 	"encoding/pem"
 	"fmt"
 	"math"
-	"slices"
 	"strings"
 	"time"
 
@@ -776,7 +775,7 @@ func (r *GatewayReconciler) buildListenerStatuses(
 	views *listenerViewCache,
 	now metav1.Time,
 ) []gatewayv1.ListenerStatus {
-	attachedRoutes := r.countAttachedRoutes(ctx, gateway)
+	attachedRoutes := r.countAttachedRoutes(ctx, gateway, views)
 
 	// The merged view (cached) annotates each conflicted Gateway-owned
 	// listener, used below to emit the per-listener Conflicted condition.
@@ -1135,6 +1134,7 @@ func overrideListenerProgrammedForConfigError(
 func (r *GatewayReconciler) countAttachedRoutes(
 	ctx context.Context,
 	gateway *gatewayv1.Gateway,
+	views *listenerViewCache,
 ) map[gatewayv1.SectionName]int32 {
 	logger := logging.FromContext(ctx)
 	result := make(map[gatewayv1.SectionName]int32)
@@ -1144,10 +1144,7 @@ func (r *GatewayReconciler) countAttachedRoutes(
 	}
 
 	validator := routebinding.NewValidator(r.Client)
-
-	// A view that cannot be built counts as conflict-free, as it does for
-	// binding.
-	view, _ := newListenerViewCache(r.Client, r.ViewStore).forGateway(ctx, gateway)
+	views = views.orNew(r.Client)
 
 	var httpRouteList gatewayv1.HTTPRouteList
 	if err := r.List(ctx, &httpRouteList); err != nil {
@@ -1155,7 +1152,7 @@ func (r *GatewayReconciler) countAttachedRoutes(
 	} else {
 		for i := range httpRouteList.Items {
 			route := &httpRouteList.Items[i]
-			r.countRouteOnGateway(ctx, validator, view, gateway, HTTPRouteWrapper{route}, result)
+			r.countRouteOnGateway(ctx, validator, views, gateway, HTTPRouteWrapper{route}, result)
 		}
 	}
 
@@ -1165,7 +1162,7 @@ func (r *GatewayReconciler) countAttachedRoutes(
 	} else {
 		for i := range grpcRouteList.Items {
 			route := &grpcRouteList.Items[i]
-			r.countRouteOnGateway(ctx, validator, view, gateway, GRPCRouteWrapper{route}, result)
+			r.countRouteOnGateway(ctx, validator, views, gateway, GRPCRouteWrapper{route}, result)
 		}
 	}
 
@@ -1182,7 +1179,7 @@ func (r *GatewayReconciler) countAttachedRoutes(
 func (r *GatewayReconciler) countRouteOnGateway(
 	ctx context.Context,
 	validator *routebinding.Validator,
-	view *gatewayListenerView,
+	views *listenerViewCache,
 	gateway *gatewayv1.Gateway,
 	route Route,
 	result map[gatewayv1.SectionName]int32,
@@ -1206,9 +1203,7 @@ func (r *GatewayReconciler) countRouteOnGateway(
 			continue
 		}
 
-		if !slices.ContainsFunc(bindingResult.MatchedListeners, func(name gatewayv1.SectionName) bool {
-			return gatewayListenerConflictReason(view, name) == ""
-		}) {
+		if !filterMatchedGatewayListenersByConflict(ctx, r.Client, gateway, bindingResult, views).Accepted {
 			continue
 		}
 
