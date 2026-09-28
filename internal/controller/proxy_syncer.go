@@ -102,6 +102,9 @@ type ProxySyncer struct {
 	// tlsPushersMu.
 	tlsPushersMu sync.Mutex
 	tlsPushers   map[string]tlsPushTarget
+	// lookupHost resolves an endpoint's host to the pod addresses a push
+	// fans out to.
+	lookupHost hostLookup
 }
 
 // pushTarget is one partition's push state: the cache that lets a resync
@@ -197,6 +200,7 @@ func NewProxySyncer(
 		configAuthority:      settings.configAuthority,
 		tracing:              settings.tracing,
 		tlsPushers:           make(map[string]tlsPushTarget),
+		lookupHost:           net.DefaultResolver.LookupHost,
 	}
 }
 
@@ -786,7 +790,7 @@ func (s *ProxySyncer) syncPartition(
 ) ([]proxy.RouteDiagnostic, error) {
 	// Resolve headless service DNS names before acquiring the lock
 	// to avoid blocking concurrent reconciles during slow DNS lookups.
-	resolvedEndpoints := resolveEndpoints(ctx, endpoints)
+	resolvedEndpoints := resolveEndpoints(ctx, s.lookupHost, endpoints)
 	resolved := endpointURLs(resolvedEndpoints)
 
 	logger := logging.FromContext(ctx)
@@ -1382,7 +1386,7 @@ func (s *ProxySyncer) replayableTarget(logger *slog.Logger, key string) (*pushTa
 func (s *ProxySyncer) resyncTarget(ctx context.Context, key string, endpoints []string, authToken string) error {
 	// Resolve headless service DNS names before acquiring the lock so a
 	// slow DNS lookup does not block a concurrent sync.
-	resolvedEndpoints := resolveEndpoints(ctx, endpoints)
+	resolvedEndpoints := resolveEndpoints(ctx, s.lookupHost, endpoints)
 	resolved := endpointURLs(resolvedEndpoints)
 
 	logger := logging.FromContext(ctx)
@@ -1551,6 +1555,9 @@ func (s *ProxySyncer) recordResync(
 // dnsLookupTimeout is the maximum time to wait for a single DNS resolution.
 const dnsLookupTimeout = 5 * time.Second
 
+// hostLookup has the shape of net.Resolver.LookupHost.
+type hostLookup func(ctx context.Context, host string) ([]string, error)
+
 // pushEndpoint is one resolved push destination. serverName is the host of
 // the configured endpoint it was resolved from: the name the plane's config
 // API certificate must carry once the URL itself holds a pod IP.
@@ -1573,7 +1580,7 @@ func endpointURLs(endpoints []pushEndpoint) []string {
 // resolves to multiple IPs (headless service), it creates a separate endpoint
 // URL for each IP, preserving the original scheme, port, and path.
 // If resolution fails or returns no results, the original endpoint is kept.
-func resolveEndpoints(ctx context.Context, endpoints []string) []pushEndpoint {
+func resolveEndpoints(ctx context.Context, lookupHost hostLookup, endpoints []string) []pushEndpoint {
 	var resolved []pushEndpoint
 
 	for _, endpoint := range endpoints {
@@ -1589,7 +1596,7 @@ func resolveEndpoints(ctx context.Context, endpoints []string) []pushEndpoint {
 
 		lookupCtx, cancel := context.WithTimeout(ctx, dnsLookupTimeout)
 
-		addrs, lookupErr := net.DefaultResolver.LookupHost(lookupCtx, hostname)
+		addrs, lookupErr := lookupHost(lookupCtx, hostname)
 
 		cancel()
 

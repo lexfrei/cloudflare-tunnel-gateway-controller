@@ -43,7 +43,7 @@ func TestPushToAPlaintextPlane_NamesTheReason(t *testing.T) {
 
 	endpoint := "https://" + strings.TrimPrefix(plain.URL, "http://") + "/config"
 	_, err := syncer.pushToEndpoints(context.Background(), slog.New(slog.DiscardHandler), &proxy.Config{Version: 1},
-		resolveEndpoints(context.Background(), []string{endpoint}), "token")
+		resolveEndpoints(context.Background(), net.DefaultResolver.LookupHost, []string{endpoint}), "token")
 	require.Error(t, err)
 
 	assert.Contains(t, proxyPushFailureMessage("tenant-a/edge", err), "does not speak TLS")

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -96,7 +97,7 @@ func TestPerGatewayConfigEndpoint_FollowsTLS(t *testing.T) {
 func TestResolveEndpoints_CarriesTheConfiguredHost(t *testing.T) {
 	t.Parallel()
 
-	resolved := resolveEndpoints(context.Background(), []string{
+	resolved := resolveEndpoints(context.Background(), net.DefaultResolver.LookupHost, []string{
 		"https://127.0.0.1:8081/config",
 		"https://unresolvable.invalid:8081/config",
 	})
