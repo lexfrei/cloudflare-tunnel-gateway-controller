@@ -1990,7 +1990,10 @@ func (s *RouteSyncer) bindRouteParents(
 // back to Accepted=True for a parent the route is not bound to. The status
 // writer only writes entries for refs that select a managed Gateway, so a ref
 // that turns out to be foreign gets no entry, and one whose Gateway it cannot
-// read either keeps its existing entry.
+// read either keeps its existing entry. The two differ on purpose: here the
+// route is really not programmed on this parent in this sync, so Pending is
+// what happened, while a status pass that only fails its own read learns
+// nothing new about the parent.
 func (s *RouteSyncer) bindOneParent(
 	ctx context.Context,
 	logger *slog.Logger,
