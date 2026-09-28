@@ -553,7 +553,9 @@ proxy:
   # would otherwise reject by Host. The edge forwards arbitrary `X-*`
   # headers from any client, so enabling this in production lets a client
   # that reaches one hostname be served by a different hostname's backend,
-  # with the intended hostname's edge policy never evaluated.
+  # with the intended hostname's edge policy never evaluated. Applies to the
+  # shared plane and to every per-Gateway data plane the controller renders;
+  # GatewayConfig cannot turn it on.
   allowXOriginalHost: false
   # -- Distributed tracing (OpenTelemetry) on the in-process proxy.
   # Off by default (zero cost on the hot path). When enabled, each

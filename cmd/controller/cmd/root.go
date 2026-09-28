@@ -86,6 +86,9 @@ func init() {
 	rootCmd.Flags().Int("mirror-max-in-flight", 0,
 		"Mirror dispatches each RequestMirror filter may keep in flight on per-Gateway data planes. "+
 			"0 or less leaves the proxy's own default of 64; the shared plane reads the same chart value directly.")
+	rootCmd.Flags().Bool("proxy-allow-x-original-host", false,
+		"Render per-Gateway data planes that trust the client-supplied X-Original-Host header. Test deployments only; "+
+			"the shared plane reads the same chart value directly.")
 	rootCmd.Flags().Int32("proxy-config-api-port", defaultProxyConfigAPIPort,
 		"Config-API port per-Gateway data planes are rendered with and pushed to; the shared plane reads the same chart value directly.")
 	rootCmd.Flags().String("tunnel-protocol", "auto", "The proxy's configured edge transport (auto|http2|quic); used to warn when GRPCRoutes are present on an explicit quic tunnel, which cannot carry gRPC trailers (auto/unset is upgraded to http2 by the proxy).")
@@ -211,6 +214,7 @@ func runController(_ *cobra.Command, _ []string) error {
 		MirrorMaxInFlight:       viper.GetInt("mirror-max-in-flight"),
 		WSIdleTimeout:           viper.GetString("ws-idle-timeout"),
 		ProxyConfigAPIPort:      viper.GetInt32("proxy-config-api-port"),
+		ProxyAllowXOriginalHost: viper.GetBool("proxy-allow-x-original-host"),
 		Tracing:                 tracingEnabled,
 
 		ProxyImage: viper.GetString("proxy-image"),

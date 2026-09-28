@@ -120,6 +120,10 @@ type Defaults struct {
 	// metrics on (--proxy-config-api-port). Zero or less means the proxy
 	// binary's own 8081, which is rendered as no listen-address env.
 	ConfigAPIPort int32
+	// AllowXOriginalHost makes the plane trust the client-supplied
+	// X-Original-Host header (--proxy-allow-x-original-host). It is an operator
+	// decision for test deployments; GatewayConfig has no such field.
+	AllowXOriginalHost bool
 }
 
 // configAPIPort resolves a configured config-API port, zero or less meaning
@@ -522,6 +526,10 @@ func proxyEnv(input *Input) []corev1.EnvVar {
 
 	if limit := input.Defaults.MirrorMaxInFlight; limit > 0 {
 		env = append(env, corev1.EnvVar{Name: "PROXY_MIRROR_MAX_IN_FLIGHT", Value: strconv.Itoa(limit)})
+	}
+
+	if input.Defaults.AllowXOriginalHost {
+		env = append(env, corev1.EnvVar{Name: "PROXY_ALLOW_X_ORIGINAL_HOST", Value: "true"})
 	}
 
 	if port := configAPIPort(input.Defaults.ConfigAPIPort); port != defaultConfigAPIPort {
