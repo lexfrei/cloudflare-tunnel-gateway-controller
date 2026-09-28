@@ -102,16 +102,9 @@ func resolveGatewayParentBinding(
 		return parentRefBinding{}, err
 	}
 
-	bindResult, bindErr := validator.ValidateBinding(ctx, &gateway, routeInfo)
+	bindResult, bindErr := bindGatewayListeners(ctx, cli, validator, &gateway, routeInfo, views)
 	if bindErr != nil {
-		return parentRefBinding{}, errors.Wrap(bindErr, "failed to validate route binding against gateway")
-	}
-
-	// A route attached to a conflicted Gateway-owned listener MUST NOT be
-	// accepted — the spec says conflicted listeners are not processed
-	// (gateway_types.go:181-184). Mirror the ListenerSet conflict filter.
-	if bindResult.Accepted {
-		bindResult = filterMatchedGatewayListenersByConflict(ctx, cli, &gateway, bindResult, views)
+		return parentRefBinding{}, bindErr
 	}
 
 	return parentRefBinding{
@@ -119,6 +112,32 @@ func resolveGatewayParentBinding(
 		Result:                  bindResult,
 		GatewayKey:              gateway.Namespace + "/" + gateway.Name,
 	}, nil
+}
+
+// bindGatewayListeners validates a route's binding to a Gateway and drops the
+// conflicted listeners it matched. A route attached to a conflicted
+// Gateway-owned listener MUST NOT be accepted — the spec says conflicted
+// listeners are not processed (gateway_types.go:181-184) — so binding and every
+// pass that derives data-plane config from the matched listeners go through
+// here.
+func bindGatewayListeners(
+	ctx context.Context,
+	cli client.Client,
+	validator *routebinding.Validator,
+	gateway *gatewayv1.Gateway,
+	routeInfo *routebinding.RouteInfo,
+	views *listenerViewCache,
+) (routebinding.BindingResult, error) {
+	result, err := validator.ValidateBinding(ctx, gateway, routeInfo)
+	if err != nil {
+		return routebinding.BindingResult{}, errors.Wrap(err, "failed to validate route binding against gateway")
+	}
+
+	if result.Accepted {
+		result = filterMatchedGatewayListenersByConflict(ctx, cli, gateway, result, views)
+	}
+
+	return result, nil
 }
 
 // filterMatchedGatewayListenersByConflict drops any matched Gateway-owned

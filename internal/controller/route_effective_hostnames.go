@@ -329,6 +329,7 @@ type (
 		validator *routebinding.Validator,
 		namespace, name string,
 		routeInfo *routebinding.RouteInfo,
+		views *listenerViewCache,
 	) ([]T, error)
 
 	listenerSetListenerBranch[T any] func(
@@ -390,7 +391,7 @@ func resolveParentRefListeners[T any](
 
 	switch kind {
 	case kindGateway:
-		return gatewayBranch(ctx, cli, controllerName, validator, namespace, string(ref.Name), routeInfo)
+		return gatewayBranch(ctx, cli, controllerName, validator, namespace, string(ref.Name), routeInfo, views)
 	case kindListenerSet:
 		return listenerSetBranch(ctx, cli, controllerName, validator, namespace, string(ref.Name), routeInfo, views)
 	}
@@ -405,6 +406,7 @@ func gatewayEffectiveHostnames(
 	validator *routebinding.Validator,
 	namespace, name string,
 	routeInfo *routebinding.RouteInfo,
+	views *listenerViewCache,
 ) ([]gatewayv1.Hostname, error) {
 	var gateway gatewayv1.Gateway
 	if err := cli.Get(ctx, client.ObjectKey{Name: name, Namespace: namespace}, &gateway); err != nil {
@@ -415,9 +417,9 @@ func gatewayEffectiveHostnames(
 		return nil, nil
 	}
 
-	result, err := validator.ValidateBinding(ctx, &gateway, routeInfo)
+	result, err := bindGatewayListeners(ctx, cli, validator, &gateway, routeInfo, views)
 	if err != nil || !result.Accepted {
-		return nil, errors.Wrap(err, "validating binding against Gateway")
+		return nil, err
 	}
 
 	hostByName := make(map[gatewayv1.SectionName]*gatewayv1.Hostname, len(gateway.Spec.Listeners))
