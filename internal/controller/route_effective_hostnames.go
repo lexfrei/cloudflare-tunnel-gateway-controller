@@ -364,7 +364,7 @@ func resolveParentRefListeners[T any](
 	gatewayBranch gatewayListenerBranch[T],
 	listenerSetBranch listenerSetListenerBranch[T],
 ) ([]T, error) {
-	if ref.Group != nil && string(*ref.Group) != "" && string(*ref.Group) != gatewayv1.GroupName {
+	if !parentRefInGatewayAPIGroup(ref) {
 		return nil, nil
 	}
 

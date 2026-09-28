@@ -41,8 +41,9 @@ type parentRefBinding struct {
 // validation against it. The caller passes a route descriptor that already
 // captures the route's hostnames, kind, and sectionName/port filters.
 //
-// Skipping unsupported ref kinds returns ManagedByThisController=false so
-// the caller's iteration can simply `continue`.
+// Skipping unsupported ref kinds, and refs to another API group, returns
+// ManagedByThisController=false so the caller's iteration can simply
+// `continue`.
 func resolveRouteParentBinding(
 	ctx context.Context,
 	cli client.Client,
@@ -53,6 +54,10 @@ func resolveRouteParentBinding(
 	routeInfo *routebinding.RouteInfo,
 	views *listenerViewCache,
 ) (parentRefBinding, error) {
+	if !parentRefInGatewayAPIGroup(ref) {
+		return parentRefBinding{}, nil
+	}
+
 	kind := kindGateway
 	if ref.Kind != nil {
 		kind = string(*ref.Kind)
@@ -66,6 +71,15 @@ func resolveRouteParentBinding(
 	}
 
 	return parentRefBinding{}, nil
+}
+
+// parentRefInGatewayAPIGroup reports whether a route parentRef names a
+// Gateway API resource. ParentReference.Group is the referent's group, with
+// the Gateway API group inferred when unset, so a ref of any other group names
+// some other resource even when its kind and name match ours. Binding and the
+// status writer both apply it, so they agree on which refs are ours.
+func parentRefInGatewayAPIGroup(ref gatewayv1.ParentReference) bool {
+	return ref.Group == nil || *ref.Group == "" || *ref.Group == gatewayv1.GroupName
 }
 
 func resolveGatewayParentBinding(
