@@ -13,6 +13,8 @@ spec:
   selector:
     matchLabels:
       {{- include "cf-tunnel-gw-ctrl.proxySelectorLabels" . | nindent 6 }}
+      # Excludes the headless Service, which would scrape every pod a second time.
+      cf.k8s.lex.la/metrics: "true"
   endpoints:
     - port: config-api
       path: /metrics
