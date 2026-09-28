@@ -351,13 +351,13 @@ func syncAndUpdateStatusCommon(ctx context.Context, params *syncUpdateParams) (c
 	// data plane and there are always proxy endpoints, so this is always taken;
 	// if a deployment ever ran with zero proxy endpoints the status surfacing
 	// would go dark along with the data plane itself.
-	var diagnostics []proxy.RouteDiagnostic
+	var (
+		diagnostics []proxy.RouteDiagnostic
+		lostRace    bool
+	)
 
 	if params.pushProxy && params.proxySyncer != nil && len(params.proxyEndpoints) > 0 && syncResult != nil {
-		var lostRace bool
-
 		diagnostics, lostRace = pushPartitionConfigs(ctx, logger, params, syncResult)
-		result = withLostRacePushRequeue(result, lostRace)
 	}
 
 	// Fold in collision diagnostics (cross-namespace tunnel sharing, #488):
@@ -386,6 +386,21 @@ func syncAndUpdateStatusCommon(ctx context.Context, params *syncUpdateParams) (c
 	if syncErr != nil && params.onSyncError != nil {
 		params.onSyncError(syncErr)
 	}
+
+	return syncOutcome(result, lostRace, diagnostics, syncErr, statusUpdateErr)
+}
+
+// syncOutcome folds a sync's push outcome into what the reconcile returns: a
+// lost push race and a route left out over its parents each request a
+// requeue, a sync error propagates unless a requeue interval is already set,
+// and a status update error propagates last.
+func syncOutcome(
+	result ctrl.Result,
+	lostRace bool,
+	diagnostics []proxy.RouteDiagnostic,
+	syncErr, statusUpdateErr error,
+) (ctrl.Result, error) {
+	result = withLostRacePushRequeue(result, lostRace)
 
 	if syncErr != nil {
 		if result.RequeueAfter > 0 {

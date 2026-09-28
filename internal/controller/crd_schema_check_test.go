@@ -225,3 +225,32 @@ func TestSchemaGaps_FollowsJSONFieldNames(t *testing.T) {
 
 	assert.ElementsMatch(t, []string{"inlined", "Untagged", "items[].dropped"}, schemaGaps(schemaGapsObject{}, schema))
 }
+
+// TestLogInstalledSchemaGaps_ReportsMissingVersion covers a CRD installed
+// without the version this controller reads: nothing can be compared, and that
+// must be reported rather than passed over as verified.
+func TestLogInstalledSchemaGaps_ReportsMissingVersion(t *testing.T) {
+	t.Parallel()
+
+	objs := make([]client.Object, 0, len(servedCRDs()))
+
+	for _, served := range servedCRDs() {
+		crd := shippedCRD(t, served.name)
+		if served.name == gatewayClassConfigCRDName {
+			for i := range crd.Spec.Versions {
+				crd.Spec.Versions[i].Name = "v1alpha0"
+			}
+		}
+
+		objs = append(objs, crd)
+	}
+
+	output, logger := capturingLogger()
+	logInstalledSchemaGaps(context.Background(), crdClient(t, objs...), logger)
+
+	lines := strings.Split(output(), "\n")
+	require.Len(t, lines, 1)
+	assert.Contains(t, lines[0], gatewayClassConfigCRDName)
+	assert.Contains(t, lines[0], `"version"="v1alpha1"`)
+	assert.Contains(t, lines[0], `"error"=`, "reported at error level")
+}
