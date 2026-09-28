@@ -412,3 +412,33 @@ func TestEvaluateListenerSetAcceptance_InvalidSelectorRefuses(t *testing.T) {
 	assert.Equal(t, gatewayv1.ListenerSetReasonNotAllowed, result.Reason)
 	assert.Contains(t, logs.String(), "BogusOperator", "the parse error is kept for the controller log")
 }
+
+// TestEvaluateListenerSetAcceptance_InvalidSelectorLogsAtDebug pins that the
+// route binding pass does not warn about a parent Gateway's unparseable
+// allowedListeners selector: it would warn once per attached route per sync.
+// The ListenerSet reconcile warns instead, once per ListenerSet.
+func TestEvaluateListenerSetAcceptance_InvalidSelectorLogsAtDebug(t *testing.T) {
+	t.Parallel()
+
+	fromSelector := gatewayv1.NamespacesFromSelector
+
+	gateway := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "infra"},
+		Spec: gatewayv1.GatewaySpec{
+			AllowedListeners: &gatewayv1.AllowedListeners{
+				Namespaces: &gatewayv1.ListenerNamespaces{From: &fromSelector, Selector: bogusSelector()},
+			},
+		},
+	}
+	listenerSet := &gatewayv1.ListenerSet{ObjectMeta: metav1.ObjectMeta{Name: "ls", Namespace: "team-a"}}
+
+	logger, logs := logging.TestLogger(t)
+	ctx := logging.WithLogger(context.Background(), logger)
+
+	result, err := NewReportingValidator(setupFakeClient()).EvaluateListenerSetAcceptance(ctx, gateway, listenerSet)
+	require.NoError(t, err)
+	require.Error(t, result.Err, "the parse error is handed to the caller for its own log")
+
+	assert.Contains(t, logs.String(), `"level":"DEBUG"`)
+	assert.NotContains(t, logs.String(), `"level":"WARN"`)
+}
