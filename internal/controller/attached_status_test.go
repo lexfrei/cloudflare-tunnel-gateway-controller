@@ -150,3 +150,34 @@ func stampAccepted(controllerName string, accepted metav1.ConditionStatus, route
 		}
 	}
 }
+
+// TestGatewayAttachedRoutes_AcceptedStatusIsPerParentRef pins that the
+// Accepted gate reads the status entry of the same parentRef: a route whose
+// ref pinned to one listener is refused while its ref pinned to another is
+// accepted counts only on the accepted one.
+func TestGatewayAttachedRoutes_AcceptedStatusIsPerParentRef(t *testing.T) {
+	t.Parallel()
+
+	fromAll := &gatewayv1.AllowedRoutes{Namespaces: &gatewayv1.RouteNamespaces{From: namespacesFromAllPtr()}}
+	gateway := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "default"},
+		Spec: gatewayv1.GatewaySpec{GatewayClassName: "cloudflare-tunnel", Listeners: []gatewayv1.Listener{
+			{Name: "one", Port: 80, Protocol: gatewayv1.HTTPProtocolType, AllowedRoutes: fromAll},
+			{Name: "two", Port: 8080, Protocol: gatewayv1.HTTPProtocolType, AllowedRoutes: fromAll},
+		}},
+	}
+	one, two := gatewayv1.SectionName("one"), gatewayv1.SectionName("two")
+	refOne := gatewayv1.ParentReference{Name: "gw", SectionName: &one}
+	refTwo := gatewayv1.ParentReference{Name: "gw", SectionName: &two}
+
+	route := attachedRoute("r", nil, refOne, refTwo)
+	route.Status.Parents = []gatewayv1.RouteParentStatus{
+		parentStatusFor(refOne, "default", "test-controller", metav1.ConditionFalse, string(gatewayv1.RouteReasonNotAllowedByListeners)),
+		parentStatusFor(refTwo, "default", "test-controller", metav1.ConditionTrue, string(gatewayv1.RouteReasonAccepted)),
+	}
+
+	cli := setupGatewayFakeClient(gateway, route)
+	reconciler := &GatewayReconciler{Client: cli, Scheme: cli.Scheme(), ControllerName: "test-controller"}
+
+	assert.Equal(t, map[gatewayv1.SectionName]int32{"one": 0, "two": 1}, reconciler.countAttachedRoutes(context.Background(), gateway))
+}
