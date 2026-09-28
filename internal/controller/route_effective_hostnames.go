@@ -444,8 +444,8 @@ func gatewayOwnedElsewhere(
 // a ListenerSet names no class of its own. An absent parent is programmed by
 // nobody, so it excludes the ListenerSet unless controllerName is empty. A
 // parent whose read failed, or whose allowedListeners cannot be evaluated,
-// returns the error: neither answers whether the ListenerSet is served, and
-// route acceptance refuses the parentRef on the same evaluation error.
+// returns the error: neither answers whether the ListenerSet is served. Route
+// acceptance refuses the parentRef on the same allowedListeners error.
 func listenerSetExcluded(
 	ctx context.Context,
 	cli client.Client,
