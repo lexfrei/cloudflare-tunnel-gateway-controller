@@ -749,21 +749,18 @@ func FindRoutesForGateway(
 		return nil
 	}
 
-	// A Gateway that is not ours still enqueues the routes carrying our
-	// status, directly or through its ListenerSets, so the route reconcile
-	// can release those entries.
+	// Routes attached through the Gateway's ListenerSets are enqueued too: a
+	// Gateway spec change such as allowedListeners decides whether they are
+	// still admitted. A Gateway that is not ours enqueues only the routes
+	// carrying our status, so the route reconcile can release those entries.
 	managed := isGatewayManagedByController(ctx, cli, gateway, controllerName)
 
-	// Listed on first use: most foreign Gateways have no route carrying our
+	// Listed on first use: a foreign Gateway usually has no route carrying our
 	// status at all.
 	var listenerSets []*gatewayv1.ListenerSet
 
 	listed := false
 	onListenerSet := func(route Route) bool {
-		if managed {
-			return false
-		}
-
 		if !listed {
 			listenerSets, listed = listenerSetsOfGateway(ctx, cli, gateway), true
 		}
