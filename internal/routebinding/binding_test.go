@@ -600,49 +600,81 @@ func TestValidateBinding_WithNamespaceSelector(t *testing.T) {
 	assert.Equal(t, []gatewayv1.SectionName{"http"}, result.MatchedListeners)
 }
 
-// TestValidateBinding_SelectorErrorPropagates pins the AllowedRoutes
-// namespace-filtering error path: an unparseable label selector must surface
-// as an error from ValidateBinding (so the caller requeues) instead of being
-// swallowed as a silent not-allowed verdict that would mislabel the route
-// NotAllowedByListeners.
-func TestValidateBinding_SelectorErrorPropagates(t *testing.T) {
+// bogusSelector is a label selector LabelSelectorAsSelector refuses to parse.
+func bogusSelector() *metav1.LabelSelector {
+	return &metav1.LabelSelector{
+		MatchExpressions: []metav1.LabelSelectorRequirement{
+			{Key: "team", Operator: "BogusOperator", Values: []string{"x"}},
+		},
+	}
+}
+
+// selectorListener builds an HTTP listener admitting routes by namespace
+// selector.
+func selectorListener(name gatewayv1.SectionName, selector *metav1.LabelSelector) gatewayv1.Listener {
+	fromSelector := gatewayv1.NamespacesFromSelector
+
+	return gatewayv1.Listener{
+		Name:     name,
+		Port:     80,
+		Protocol: gatewayv1.HTTPProtocolType,
+		AllowedRoutes: &gatewayv1.AllowedRoutes{
+			Namespaces: &gatewayv1.RouteNamespaces{From: &fromSelector, Selector: selector},
+		},
+	}
+}
+
+// TestValidateBinding_InvalidSelectorRejectsWithMessage pins where an
+// unparseable allowedRoutes selector ends up: a listener with one admits no
+// route, and the parse error is carried in the rejection message so it reaches
+// the route's status instead of only the controller log.
+func TestValidateBinding_InvalidSelectorRejectsWithMessage(t *testing.T) {
 	t.Parallel()
 
-	fromSelector := gatewayv1.NamespacesFromSelector
-	hostname := gatewayv1.Hostname("app.example.com")
+	gateway := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "infra"},
+		Spec: gatewayv1.GatewaySpec{
+			Listeners: []gatewayv1.Listener{selectorListener("broken", bogusSelector())},
+		},
+	}
+
+	route := &RouteInfo{Namespace: "apps", Kind: KindHTTPRoute}
+
+	result, err := NewValidator(setupFakeClient()).ValidateBinding(context.Background(), gateway, route)
+	require.NoError(t, err)
+
+	assert.False(t, result.Accepted)
+	assert.Equal(t, gatewayv1.RouteReasonNotAllowedByListeners, result.Reason)
+	assert.Contains(t, result.Message, "invalid label selector")
+	assert.Contains(t, result.Message, `"broken"`)
+}
+
+// TestValidateBinding_InvalidSelectorStaysWithItsListener pins that one
+// listener's unparseable selector does not fail the whole Gateway: a route with
+// no sectionName still binds to the sibling listener that admits it.
+func TestValidateBinding_InvalidSelectorStaysWithItsListener(t *testing.T) {
+	t.Parallel()
 
 	gateway := &gatewayv1.Gateway{
 		ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "infra"},
 		Spec: gatewayv1.GatewaySpec{
 			Listeners: []gatewayv1.Listener{
-				{
-					Name:     "https",
-					Port:     443,
-					Protocol: gatewayv1.HTTPSProtocolType,
-					Hostname: &hostname,
-					AllowedRoutes: &gatewayv1.AllowedRoutes{
-						Namespaces: &gatewayv1.RouteNamespaces{
-							From: &fromSelector,
-							Selector: &metav1.LabelSelector{
-								MatchExpressions: []metav1.LabelSelectorRequirement{
-									{Key: "team", Operator: "BogusOperator", Values: []string{"x"}},
-								},
-							},
-						},
-					},
-				},
+				selectorListener("broken", bogusSelector()),
+				selectorListener("good", &metav1.LabelSelector{MatchLabels: map[string]string{"team": "a"}}),
 			},
 		},
 	}
 
-	route := &RouteInfo{
-		Namespace: "apps",
-		Hostnames: []gatewayv1.Hostname{hostname},
-	}
+	namespace := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{
+		Name:   "apps",
+		Labels: map[string]string{"team": "a"},
+	}}
 
-	validator := NewValidator(setupFakeClient())
+	route := &RouteInfo{Namespace: "apps", Kind: KindHTTPRoute}
 
-	_, err := validator.ValidateBinding(context.Background(), gateway, route)
-	require.Error(t, err, "an invalid AllowedRoutes selector must propagate as an error, not a silent rejection")
-	assert.Contains(t, err.Error(), "invalid label selector")
+	result, err := NewValidator(setupFakeClient(namespace)).ValidateBinding(context.Background(), gateway, route)
+	require.NoError(t, err)
+
+	assert.True(t, result.Accepted)
+	assert.Equal(t, []gatewayv1.SectionName{"good"}, result.MatchedListeners)
 }

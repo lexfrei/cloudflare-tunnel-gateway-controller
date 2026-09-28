@@ -339,3 +339,44 @@ func TestValidateBindingForListenerSet(t *testing.T) {
 		})
 	}
 }
+
+// TestValidateBindingForListenerSet_InvalidSelectorStaysWithItsEntry is the
+// ListenerSet counterpart of TestValidateBinding_InvalidSelectorStaysWithItsListener.
+func TestValidateBindingForListenerSet_InvalidSelectorStaysWithItsEntry(t *testing.T) {
+	t.Parallel()
+
+	fromSelector := gatewayv1.NamespacesFromSelector
+	fromAll := gatewayv1.NamespacesFromAll
+
+	listenerSet := &gatewayv1.ListenerSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "ls", Namespace: "infra"},
+		Spec: gatewayv1.ListenerSetSpec{
+			Listeners: []gatewayv1.ListenerEntry{
+				{
+					Name:     "broken",
+					Port:     80,
+					Protocol: gatewayv1.HTTPProtocolType,
+					AllowedRoutes: &gatewayv1.AllowedRoutes{
+						Namespaces: &gatewayv1.RouteNamespaces{From: &fromSelector, Selector: bogusSelector()},
+					},
+				},
+				{
+					Name:     "good",
+					Port:     80,
+					Protocol: gatewayv1.HTTPProtocolType,
+					AllowedRoutes: &gatewayv1.AllowedRoutes{
+						Namespaces: &gatewayv1.RouteNamespaces{From: &fromAll},
+					},
+				},
+			},
+		},
+	}
+
+	route := &RouteInfo{Namespace: "apps", Kind: KindHTTPRoute}
+
+	result, err := NewValidator(setupFakeClient()).ValidateBindingForListenerSet(context.Background(), listenerSet, route)
+	require.NoError(t, err)
+
+	assert.True(t, result.Accepted)
+	assert.Equal(t, []gatewayv1.SectionName{"good"}, result.MatchedListeners)
+}
