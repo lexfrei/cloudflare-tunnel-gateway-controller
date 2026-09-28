@@ -740,14 +740,6 @@ func buildListenerSetRejectedEntryStatuses(
 ) []gatewayv1.ListenerEntryStatus {
 	out := make([]gatewayv1.ListenerEntryStatus, 0, len(listenerSet.Spec.Listeners))
 
-	// Reason "NotAllowed" stamps the resource-level rejection on the entry
-	// level only when there is no per-entry merge view (i.e. the resource was
-	// disallowed). The per-entry reason for ListenersNotValid is more
-	// specific and built from the merge view.
-	if result.Reason == gatewayv1.ListenerSetReasonListenersNotValid && result.MergeResult != nil {
-		return buildListenerSetEntryStatuses(listenerSet, result, generation, now)
-	}
-
 	rejectionReason := listenerEntryReasonForListenerSetRejection(result.Reason)
 
 	for i := range listenerSet.Spec.Listeners {
