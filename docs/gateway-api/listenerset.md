@@ -133,8 +133,9 @@ spec:
 | Type | Status | Reason | Description |
 | --- | --- | --- | --- |
 | `Accepted` | `True` | `Accepted` | Permitted by Gateway and at least one entry is valid |
+| `Accepted` | `True` | `ListenersNotValid` | At least one entry is valid, and another has an `allowedRoutes.namespaces.selector` that does not parse |
 | `Accepted` | `False` | `NotAllowed` | Gateway's `spec.allowedListeners` rejects this ListenerSet. A `selector` that does not parse rejects every ListenerSet; the message says so without quoting the selector, the controller log names the parse error, and the parent Gateway gets an `InvalidAllowedListeners` Warning Event |
-| `Accepted` | `False` | `ListenersNotValid` | All entries are conflict-marked or have unresolved refs |
+| `Accepted` | `False` | `ListenersNotValid` | No entry is usable: each one is conflict-marked, has unresolved refs or has an `allowedRoutes.namespaces.selector` that does not parse |
 | `Programmed` | `True` | `Programmed` | Attached and programmed against the parent Gateway |
 | `Programmed` | `False` | `ListenersNotValid` / `NotAllowed` / `Pending` | Mirrors the `Accepted` reason when not programmed |
 
@@ -145,6 +146,7 @@ spec:
 | `Accepted` | `True` | `Accepted` | Entry accepted |
 | `Accepted` | `False` | `HostnameConflict` | Same `(port, hostname)` claimed by a higher-precedence listener |
 | `Accepted` | `False` | `ProtocolConflict` | Different protocol claimed for the same port |
+| `Accepted` | `False` | `UnsupportedValue` | `allowedRoutes.namespaces.from` is `Selector` and the selector does not parse, so the entry admits no route. The message says the selector is invalid without quoting it; `Programmed` is `False` with reason `Invalid` |
 | `Programmed` | `True` | `Programmed` | Entry programmed; routes can bind |
 | `Conflicted` | `True` | `HostnameConflict` / `ProtocolConflict` | Conflict surfaced |
 | `Conflicted` | `False` | `NoConflicts` | Entry has no conflicts |

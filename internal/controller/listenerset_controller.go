@@ -28,7 +28,10 @@ const (
 	listenerSetMsgAccepted     = "ListenerSet accepted by cloudflare-tunnel controller"
 	listenerSetMsgProgrammed   = "ListenerSet programmed against parent Gateway"
 	listenerSetMsgNotAllowed   = "Parent Gateway does not allow ListenerSet attachment"
-	listenerSetMsgListenersBad = "No listener in this ListenerSet is conflict-free"
+	listenerSetMsgListenersBad = "No listener in this ListenerSet is usable: each one conflicts, " +
+		"has unresolved references or has an invalid allowedRoutes.namespaces.selector"
+	listenerSetMsgInvalidSelector = "One or more listeners in this ListenerSet have an invalid " +
+		"allowedRoutes.namespaces.selector"
 )
 
 // ListenerSetReconciler reconciles ListenerSet resources that target Gateways
@@ -503,16 +506,21 @@ func (r *ListenerSetReconciler) collectListenerEntryRefChecks(
 
 // summariseListenerSet rolls the merged-view per-listener status plus the
 // per-entry TLS verdicts into the ListenerSet's top-level Accepted /
-// Programmed conditions. The contract:
+// Programmed conditions. An entry is usable when it is conflict-free, its
+// references resolve and its allowedRoutes namespace selector parses. The
+// contract, per the vendored ListenerSetReasonListenersNotValid:
 //
-//   - At least one entry must be conflict-free AND ResolvedRefs-True →
-//     Accepted=True / Reason=Accepted.
-//   - Otherwise → Accepted=False / Reason=ListenersNotValid.
+//   - No usable entry → Accepted=False / Reason=ListenersNotValid.
+//   - A usable entry beside one with an invalid selector →
+//     Accepted=True / Reason=ListenersNotValid.
+//   - Otherwise → Accepted=True / Reason=Accepted.
 func summariseListenerSet(
 	merged *listenermerge.MergeResult,
 	listenerSet *gatewayv1.ListenerSet,
 	refChecks map[gatewayv1.SectionName]listenerEntryRefsCheck,
 ) (bool, gatewayv1.ListenerSetConditionReason, string) {
+	usable, invalidSelector := false, false
+
 	for i := range listenerSet.Spec.Listeners {
 		entry := &listenerSet.Spec.Listeners[i]
 		mergedEntry := findMergedEntry(merged, listenerSet, entry.Name)
@@ -525,10 +533,23 @@ func summariseListenerSet(
 			continue
 		}
 
-		return true, gatewayv1.ListenerSetReasonAccepted, "ListenerSet attached to parent Gateway"
+		if routebinding.NamespaceSelectorInvalid(entry.AllowedRoutes) {
+			invalidSelector = true
+
+			continue
+		}
+
+		usable = true
 	}
 
-	return false, gatewayv1.ListenerSetReasonListenersNotValid, listenerSetMsgListenersBad
+	switch {
+	case !usable:
+		return false, gatewayv1.ListenerSetReasonListenersNotValid, listenerSetMsgListenersBad
+	case invalidSelector:
+		return true, gatewayv1.ListenerSetReasonListenersNotValid, listenerSetMsgInvalidSelector
+	}
+
+	return true, gatewayv1.ListenerSetReasonAccepted, "ListenerSet attached to parent Gateway"
 }
 
 // listenerSetTargetsGateway returns true when the ListenerSet's spec.parentRef
@@ -586,6 +607,10 @@ func buildListenerSetAggregateConditions(
 }
 
 func listenerSetMessageForAccepted(result listenerSetAcceptanceResult) string {
+	if result.Accepted && result.Reason == gatewayv1.ListenerSetReasonListenersNotValid && result.Message != "" {
+		return result.Message
+	}
+
 	if result.Accepted {
 		return listenerSetMsgAccepted
 	}
@@ -642,7 +667,7 @@ func buildListenerSetEntryStatuses(
 		}
 
 		conditions := listenerEntryConditions(
-			generation, now, merge, entry.Protocol, hasValidKind, hasInvalidKind, refCheck, hasRefCheck,
+			generation, now, merge, entry.Protocol, entry.AllowedRoutes, hasValidKind, hasInvalidKind, refCheck, hasRefCheck,
 		)
 
 		// Advisory (#476): a tenant-authored ListenerSet entry with the
@@ -843,6 +868,7 @@ func listenerEntryConditions(
 	now metav1.Time,
 	merge *listenermerge.MergedListener,
 	protocol gatewayv1.ProtocolType,
+	allowedRoutes *gatewayv1.AllowedRoutes,
 	hasValidKind, hasInvalidKind bool,
 	refCheck listenerEntryRefsCheck,
 	hasRefCheck bool,
@@ -864,7 +890,7 @@ func listenerEntryConditions(
 		return conflictedEntryConditions(generation, now, merge, &resolvedRefsCondition)
 	}
 
-	return acceptedEntryConditions(generation, now, protocol, &resolvedRefsCondition)
+	return acceptedEntryConditions(generation, now, protocol, allowedRoutes, &resolvedRefsCondition)
 }
 
 func conflictedEntryConditions(
@@ -908,9 +934,11 @@ func acceptedEntryConditions(
 	generation int64,
 	now metav1.Time,
 	protocol gatewayv1.ProtocolType,
+	allowedRoutes *gatewayv1.AllowedRoutes,
 	resolvedRefs *metav1.Condition,
 ) []metav1.Condition {
 	acceptedCondition := buildListenerAcceptedCondition(protocol, generation, now)
+	refuseInvalidNamespaceSelector(&acceptedCondition, allowedRoutes)
 
 	programmedStatus := metav1.ConditionTrue
 	programmedReason := string(gatewayv1.ListenerReasonProgrammed)

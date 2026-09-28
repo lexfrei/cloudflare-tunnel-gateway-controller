@@ -116,9 +116,9 @@ func summariseAttachedListenerSets(
 }
 
 // listenerSetEntriesAccepted returns true when at least one entry of the
-// ListenerSet is conflict-free in the merged view AND has its TLS cert refs
-// resolved (or no TLS material at all). Mirrors summariseListenerSet in
-// listenerset_controller.go.
+// ListenerSet is conflict-free in the merged view, has a namespace selector
+// that parses, AND has its TLS cert refs resolved (or no TLS material at
+// all). Mirrors summariseListenerSet in listenerset_controller.go.
 func listenerSetEntriesAccepted(
 	ctx context.Context,
 	cli client.Client,
@@ -130,6 +130,10 @@ func listenerSetEntriesAccepted(
 		mergedEntry := findMergedEntry(merged, listenerSet, entry.Name)
 
 		if mergedEntry != nil && mergedEntry.ConflictReason != "" {
+			continue
+		}
+
+		if routebinding.NamespaceSelectorInvalid(entry.AllowedRoutes) {
 			continue
 		}
 
