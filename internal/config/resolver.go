@@ -285,7 +285,8 @@ func (r *Resolver) readGatewayClass(ctx context.Context, name string) (*gatewayv
 
 	err := r.client.Get(ctx, types.NamespacedName{Name: name}, gatewayClass)
 	if err != nil {
-		return nil, invalidIfNotFound(errors.Wrapf(err, "failed to get GatewayClass %s", name))
+		// The entry point names the class on every error.
+		return nil, invalidIfNotFound(errors.Wrap(err, "failed to get GatewayClass"))
 	}
 
 	return gatewayClass, nil
@@ -316,17 +317,21 @@ func invalidIfNotFound(err error) error {
 	return err
 }
 
-// classError is how every GatewayClass entry point returns an error: a
-// configuration problem is named after the class it belongs to and classified
+// classError is how every GatewayClass entry point returns an error: named
+// after the class it belongs to, and, for a configuration problem, classified
 // ErrInvalidParameters, so a Gateway's status points at the class's
-// spec.parametersRef chain rather than at the Gateway. Anything else is
-// returned as it is.
+// spec.parametersRef chain rather than at the Gateway.
 func classError(gatewayClassName string, err error) error {
-	if err == nil || !errors.Is(err, errClassParameters) {
-		return err
+	if err == nil {
+		return nil
 	}
 
-	return MarkInvalidParameters(errors.Wrapf(err, "GatewayClass %q", gatewayClassName))
+	named := errors.Wrapf(err, "GatewayClass %q", gatewayClassName)
+	if !errors.Is(err, errClassParameters) {
+		return named
+	}
+
+	return MarkInvalidParameters(named)
 }
 
 //nolint:funcorder // private helper
