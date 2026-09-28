@@ -854,8 +854,9 @@ func TestGatewayReconciler_UpdateStatus_SkipsObservedGenerationRegression(t *tes
 // TestGatewayReconciler_ConflictedListenersSetListenersNotValid pins the Gateway
 // API requirement (gateway_types.go:187): when the Gateway contains conflicted
 // listeners, the implementation MUST set a ListenersNotValid condition. Two HTTP
-// listeners sharing the same hostname on the same port conflict, so the Gateway
-// Accepted condition must be False with Reason=ListenersNotValid.
+// listeners sharing the same hostname on the same port conflict, neither wins,
+// and no valid listener remains, so the Gateway Accepted condition must be
+// False with Reason=ListenersNotValid.
 func TestGatewayReconciler_ConflictedListenersSetListenersNotValid(t *testing.T) {
 	t.Parallel()
 
@@ -916,7 +917,7 @@ func TestGatewayReconciler_ConflictedListenersSetListenersNotValid(t *testing.T)
 	accepted := meta.FindStatusCondition(updated.Status.Conditions, string(gatewayv1.GatewayConditionAccepted))
 	require.NotNil(t, accepted)
 	assert.Equal(t, metav1.ConditionFalse, accepted.Status,
-		"a Gateway with conflicted listeners must not be Accepted=True")
+		"a Gateway whose every listener conflicts must not be Accepted=True")
 	assert.Equal(t, string(gatewayv1.GatewayReasonListenersNotValid), accepted.Reason)
 	assert.Contains(t, accepted.Message, "http2",
 		"the message SHOULD name the conflicted listener (gateway_types.go:188)")

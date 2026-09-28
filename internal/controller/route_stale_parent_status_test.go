@@ -281,3 +281,21 @@ func TestStaleStatusRoutesThroughListenerSetAreEnqueued(t *testing.T) {
 		assert.Equal(t, "with-status", requests[0].Name)
 	})
 }
+
+// TestFindRoutesAttachedToListenerSet_DeletedParentEnqueuesOwnStatus pins the
+// ListenerSet mapper when the parent Gateway no longer exists: the routes
+// carrying this controller's status are still enqueued so their entries are
+// released, and the others are not.
+func TestFindRoutesAttachedToListenerSet_DeletedParentEnqueuesOwnStatus(t *testing.T) {
+	t.Parallel()
+
+	ls := &gatewayv1.ListenerSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "ls", Namespace: "default"},
+		Spec:       gatewayv1.ListenerSetSpec{ParentRef: gatewayv1.ParentGatewayReference{Name: "gone-gw"}},
+	}
+	cli := staleStatusClient(t, interceptor.Funcs{}, ls)
+
+	requests := findRoutesAttachedToListenerSet(context.Background(), cli, ls, staleStatusController, listenerSetStaleRoutes())
+	require.Len(t, requests, 1)
+	assert.Equal(t, "with-status", requests[0].Name)
+}

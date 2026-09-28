@@ -256,7 +256,7 @@ func TestResolveRouteParentBinding_ConflictedGatewayListenerRejected(t *testing.
 		Spec: gatewayv1.GatewaySpec{
 			GatewayClassName: gatewayv1.ObjectName(gc.Name),
 			Listeners: []gatewayv1.Listener{
-				// Two listeners share (port=80, hostname) → the second is Conflicted.
+				// Two listeners share (port=80, hostname) → both are Conflicted.
 				{
 					Name: "gw-l1", Port: 80, Protocol: gatewayv1.HTTPProtocolType, Hostname: &host,
 					AllowedRoutes: &gatewayv1.AllowedRoutes{
