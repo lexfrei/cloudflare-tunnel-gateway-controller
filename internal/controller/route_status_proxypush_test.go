@@ -85,7 +85,7 @@ func TestBuildParentStatus_ProxyConfigPushedOmittedWhenRejected(t *testing.T) {
 }
 
 // TestBuildParentStatus_ParentNotEvaluatedReason pins that a route left out of
-// its data plane's config because its parents could not be evaluated carries
+// its data plane's config because a parent could not be evaluated carries
 // the same ProxyConfigPushed=False condition, with a reason that says why
 // rather than claiming a push failed.
 func TestBuildParentStatus_ParentNotEvaluatedReason(t *testing.T) {

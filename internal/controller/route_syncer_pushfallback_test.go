@@ -888,8 +888,8 @@ func TestRecordResync_DoesNotOutliveAnEvictedAndRecreatedPartition(t *testing.T)
 		"a replay from before the partition was recreated must not claim the new partition's endpoints hold its old document")
 }
 
-// TestWithParentNotEvaluatedRequeue pins that a route left out because its
-// parents could not be evaluated schedules a retry: nothing else re-runs the
+// TestWithParentNotEvaluatedRequeue pins that a route left out because a
+// parent could not be evaluated schedules a retry: nothing else re-runs the
 // sync on a quiet cluster, and the route stays unserved until one does. An
 // earlier or equal pending requeue is kept, and other diagnostics request
 // nothing.
@@ -921,7 +921,7 @@ var (
 
 // TestSyncOutcome pins how a sync's push outcome reaches the reconcile result,
 // including the two requeues nothing else would schedule on a quiet cluster: a
-// lost push race and a route left out over its parents.
+// lost push race and a route left out because a parent could not be evaluated.
 func TestSyncOutcome(t *testing.T) {
 	t.Parallel()
 

@@ -192,8 +192,8 @@ func TestGRPCRouteReconciler_updateRouteStatus_EmitsEvent(t *testing.T) {
 
 // TestEmitDiagnosticEvents_ProxyConfigPushReasonFollowsDiagnostic pins that the
 // Warning Event mirroring ProxyConfigPushed=False carries the same reason as
-// the condition: a route left out over its parents is not reported as a failed
-// push.
+// the condition: a route left out because a parent could not be evaluated is
+// not reported as a failed push.
 func TestEmitDiagnosticEvents_ProxyConfigPushReasonFollowsDiagnostic(t *testing.T) {
 	t.Parallel()
 

@@ -391,9 +391,9 @@ func syncAndUpdateStatusCommon(ctx context.Context, params *syncUpdateParams) (c
 }
 
 // syncOutcome folds a sync's push outcome into what the reconcile returns: a
-// lost push race and a route left out over its parents each request a
-// requeue, a sync error propagates unless a requeue interval is already set,
-// and a status update error propagates last.
+// lost push race and a route left out because a parent could not be evaluated
+// each request a requeue, a sync error propagates unless a requeue interval is
+// already set, and a status update error propagates last.
 func syncOutcome(
 	result ctrl.Result,
 	lostRace bool,
