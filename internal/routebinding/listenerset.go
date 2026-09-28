@@ -4,6 +4,8 @@ import (
 	"context"
 
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
+
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/logging"
 )
 
 // ListenerSetAcceptance describes whether a Gateway accepts a particular
@@ -16,7 +18,9 @@ type ListenerSetAcceptance struct {
 // EvaluateListenerSetAcceptance applies the parent Gateway's
 // spec.allowedListeners.namespaces filter to decide if the given ListenerSet
 // is allowed to attach. The default (unset) is From=None, i.e. attachment is
-// rejected unless the Gateway opts in.
+// rejected unless the Gateway opts in. A selector that does not parse admits
+// no ListenerSet. The error is nil today and kept for the namespace read
+// failures #895 covers.
 func (v *Validator) EvaluateListenerSetAcceptance(
 	ctx context.Context,
 	gateway *gatewayv1.Gateway,
@@ -36,7 +40,15 @@ func (v *Validator) EvaluateListenerSetAcceptance(
 	case gatewayv1.NamespacesFromSelector:
 		ok, err := v.listenerSetNamespaceMatchesSelector(ctx, gateway.Spec.AllowedListeners, listenerSet.Namespace)
 		if err != nil {
-			return ListenerSetAcceptance{}, err
+			// The error quotes the Gateway's spec, which the ListenerSet's and
+			// the routes' authors may not be allowed to read, so it is logged
+			// and the ListenerSet is refused like any other that is not allowed.
+			logging.FromContext(ctx).Log(ctx, v.unevaluatedLevel, "Gateway allowedListeners selector could not be evaluated",
+				"gateway", gateway.Namespace+"/"+gateway.Name,
+				"listenerSet", listenerSet.Namespace+"/"+listenerSet.Name,
+				"error", err)
+
+			return rejectedListenerSet(), nil
 		}
 
 		if ok {
