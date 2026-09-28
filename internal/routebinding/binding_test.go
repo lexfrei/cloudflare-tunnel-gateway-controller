@@ -680,9 +680,14 @@ func TestValidateBinding_InvalidSelectorStaysWithItsListener(t *testing.T) {
 
 	route := &RouteInfo{Namespace: "apps", Kind: KindHTTPRoute}
 
-	result, err := NewValidator(setupFakeClient(namespace)).ValidateBinding(context.Background(), gateway, route)
+	logger, logs := logging.TestLogger(t)
+	ctx := logging.WithLogger(context.Background(), logger)
+
+	result, err := NewValidator(setupFakeClient(namespace)).ValidateBinding(ctx, gateway, route)
 	require.NoError(t, err)
 
 	assert.True(t, result.Accepted)
 	assert.Equal(t, []gatewayv1.SectionName{"good"}, result.MatchedListeners)
+	assert.Contains(t, logs.String(), "BogusOperator",
+		"the broken listener is still logged when a sibling admits the route")
 }
