@@ -136,7 +136,7 @@ spec:
     name: cloudflare-tunnel-config
 ```
 
-Leave `parametersRef.namespace` unset. GatewayClassConfig is cluster-scoped, and Gateway API requires the namespace to be unset for a cluster-scoped referent. Since v4.0.0 a GatewayClass that sets it reports `Accepted: False` with reason `InvalidParameters`, and the controller refuses to resolve its configuration.
+Leave `parametersRef.namespace` unset. GatewayClassConfig is cluster-scoped, and Gateway API requires the namespace to be unset for a cluster-scoped referent. Since v4.0.0 a GatewayClass reports `Accepted: False` with reason `InvalidParameters` when its `parametersRef` is missing, names a group or kind other than `cf.k8s.lex.la` `GatewayClassConfig`, sets `namespace`, or names a GatewayClassConfig that does not exist. The message says which. Creating the missing GatewayClassConfig re-evaluates the class. Earlier releases reported every such class as accepted.
 
 One controller serves one GatewayClassConfig. Several GatewayClasses may name the same `controllerName`, but every one of them that a Gateway uses must carry the same `parametersRef`; a class without one conflicts with any class that has one. A class no Gateway uses is ignored while some Gateway uses another; with no Gateway on any class, route sync stays stopped until the classes agree, and the class tunnel keeps its last document until then. While the classes in use disagree, the controller programs no routes, every Gateway on those classes reports `Accepted: False` with reason `InvalidParameters` and a message naming the classes, and no new per-Gateway data plane is rendered. Data planes already running keep the configuration they last received, unless the tunnel rule or the per-namespace cap refuses them, which still removes them; such a Gateway's status reports that refusal rather than the conflict. Their Deployments are frozen too: a `GatewayConfig` edit, an image change or a token rotation reaches a running plane only once the classes agree. Gateways keep the tunnel address in their status, so DNS records published from it stay in place. Delete a GatewayClass you do not use rather than leave it pointing elsewhere. GatewayClass is cluster-scoped, so only the operator can create one, but a Gateway from any namespace that names it puts it back in use and stops route sync for every Gateway.
 
@@ -234,7 +234,11 @@ If the controller cannot find the GatewayClassConfig:
 kubectl get gatewayclassconfig cloudflare-tunnel-config
 ```
 
-Check that the name matches the `parametersRef.name` in GatewayClass.
+Check that the name matches the `parametersRef.name` in GatewayClass. The GatewayClass reports this as `Accepted: False` with reason `InvalidParameters`:
+
+```bash
+kubectl get gatewayclass cloudflare-tunnel --output jsonpath='{.status.conditions[?(@.type=="Accepted")]}'
+```
 
 ### Secret Not Found
 
